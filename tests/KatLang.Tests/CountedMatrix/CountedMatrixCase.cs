@@ -279,5 +279,7 @@ public sealed record CountedMatrixCase
         Result.Bool => "B",
         Result.SequenceValue g => "S[" + string.Join(", ", g.Items.Select(ShapeOf)) + "]",
         Result.ListValue l => "L[" + string.Join(", ", l.Items.Select(ShapeOf)) + "]",
+        // A run result never holds one (the run boundary refuses it).
+        Result.CallReference => "CallReference",
     };
 }

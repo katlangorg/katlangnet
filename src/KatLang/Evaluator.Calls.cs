@@ -201,7 +201,24 @@ public static partial class Evaluator
         if (region.TryGetMaterialized(out var materialized))
             return EvalResult<Algorithm>.Ok(materialized);
 
-        return await region.MaterializeAsync(ctx.Budget.CancellationToken).ConfigureAwait(false);
+        return await MaterializeRequiredRegionAsync(region, ctx).ConfigureAwait(false);
+    }
+
+    // Both evaluator materialization boundaries share source terminality. A required compilation
+    // failure or source-token cancellation must stop the owning run even if an internal receiver
+    // inspects it and returns a value. The region itself still permits retries in a fresh run.
+    private static async ValueTask<EvalResult<Algorithm>> MaterializeRequiredRegionAsync(DeferredModuleRegion region, EvalCtx ctx)
+    {
+        try
+        {
+            var result = await region.MaterializeAsync(ctx.Budget.CancellationToken).ConfigureAwait(false);
+            return result.IsError ? ctx.Budget.RetainRequiredSourceFailure(result.Error) : result;
+        }
+        catch (OperationCanceledException error) when (region.Loader.SourceProcessingCancellationToken.IsCancellationRequested)
+        {
+            ctx.Budget.RetainRequiredSourceCancellation(error);
+            throw;
+        }
     }
 
     // ── Conditional algorithm call (Lean: evalConditionalCallCounted) ───────

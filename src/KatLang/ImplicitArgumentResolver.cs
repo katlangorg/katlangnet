@@ -2765,10 +2765,22 @@ internal static class ImplicitArgumentResolver
         => pattern switch
         {
             CaptureParameterPattern capture
-                => forwardable.Binds(capture.Name) || !existing.Add(capture.Name) ? null : capture,
+                => forwardable.Binds(capture.Name) || !existing.Add(capture.Name) ? null : LiftedCapture(capture),
             SequenceValueParameterPattern or ListValueParameterPattern or UnpackingParameterPattern
                 => MissingGroupCapturePattern(pattern, existing, forwardable),
         };
+
+    /// <summary>
+    /// The caller binding a lifted capture becomes. A META capture (CallReference S1) keeps its mode on
+    /// the callee's DECLARED signature only: lifting gives the caller an ORDINARY binding of the same
+    /// name, which transports its supplied cell into the callee's META slot (so the callee still
+    /// captures the caller's supplied call), and is never itself a META capture of an inferred
+    /// signature. Every other capture lifts as itself (FE-3 record sharing).
+    /// </summary>
+    private static CaptureParameterPattern LiftedCapture(CaptureParameterPattern capture)
+        => capture.Kind == ParameterKind.Meta
+            ? new CaptureParameterPattern(capture.Parameter with { Kind = ParameterKind.Normal })
+            : capture;
 
     /// <summary>
     /// The part of a structural group whose captures no earlier capture binds. The group keeps

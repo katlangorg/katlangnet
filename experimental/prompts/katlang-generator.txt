@@ -473,6 +473,15 @@ Example:
     Divide = y / ~x
     Divide(2, 10)
 
+## Call references (`meta`, `Invoke`, `Arguments`)
+
+- `meta` before ONE plain parameter name captures the CALL written as that argument instead of its value: `Capture(meta operation) = operation`, `R = Capture(Square(5))`. Nothing runs at capture.
+- `R.Invoke()` runs the captured call again (fresh each time, in the place it was written, with the same arguments). `R.Invoke` without `()` and `R.Invoke(args)` are errors.
+- Only a written call `F(args)` can be captured — not a number, a property read, a bare algorithm name or a dot call. `meta` is valid only before a plain, top-level parameter name of a written parameter list (never `meta *xs`, never inside a pattern, never in a clause family).
+- A call reference never leaves the program: never make one a final output or interpolate it; output a value computed from it, such as `R.Invoke()`.
+- `R.Arguments` is a lazy view of the captured call's arguments: `R.Arguments.count` (computes no argument), `R.Arguments[0]` (zero-based; computes only the selected argument), `.first`, `.last`, and `F(R.Arguments*)`, which passes the ORIGINAL arguments to another call (unused ones are never computed). It is not a list: never `sum(R.Arguments)`, `map(R.Arguments, …)` or `[R.Arguments*]` — select the values you need. `Arguments` is a property: never `R.Arguments()`. Like the reference, a view is never a final output.
+- Do not use `meta` for ordinary higher-order code: pass the algorithm itself (`Apply(f, x) = f(x)`). Use `meta` only when the task needs to hold a specific call and run it later.
+
 # 6. Parentheses, braces, groups, count, and arity
 
 Parentheses:
@@ -1200,7 +1209,7 @@ Many(), Many(()), Many((), 3), Many([(1, 2)]*)
 
 === BEGIN GENERATED: katlang-spec-examples (DO NOT EDIT BY HAND) ===
 
-Verified reference examples (161 of the 448-case canonical language specification,
+Verified reference examples (164 of the 459-case canonical language specification,
 tests/KatLang.Tests/LanguageSpec/LanguageSpecCorpus.cs). Every program and expected
 output below is executed against the KatLang engine and (where representable)
 guarded against the Lean model on every build. Treat these as ground truth for the
@@ -3032,5 +3041,45 @@ Regenerate this block from the repo root with:
 
   Displays:
     1-2-1
+
+[meta-capture-invokes-the-original-call] A parameter declared `meta` receives the CALL written as its argument, not the call's value: capturing runs nothing, and the parameter holds a call reference. `R.Invoke()` runs the captured call afresh, in the context where it was written and with the same argument computations, every time it is invoked.
+
+    Square(x) = x * x
+    Capture(meta operation) = operation
+    R = Capture(Square(5))
+
+    R.Invoke()
+    R.Invoke()
+
+  Displays:
+    25
+    25
+
+[call-reference-arguments-view] `R.Arguments` is a lazy, read-only view of the arguments the captured call was written with. Obtaining it runs nothing; `count` counts the supplied arguments without computing them; selection (zero-based), `first` and `last` compute only the arguments they select, each at most once.
+
+    Add(x, y) = x + y
+    Capture(meta op) = op
+    R = Capture(Add(10, 20))
+
+    R.Arguments.count
+    R.Arguments[0]
+    R.Arguments[1]
+
+  Displays:
+    2
+    10
+    20
+
+[arguments-spread-forwards-the-original-arguments] Spreading `R.Arguments*` into another call hands that call the ORIGINAL argument computations, not copies of their values: an argument the new call never uses is never computed (`1 / 0` here), a callable argument stays callable, and an argument computed by one call is not computed again by another.
+
+    Add(x, y) = x + y
+    First(x, y) = x
+    Capture(meta op) = op
+    R = Capture(Add(5, 1 / 0))
+
+    First(R.Arguments*)
+
+  Displays:
+    5
 
 === END GENERATED: katlang-spec-examples ===

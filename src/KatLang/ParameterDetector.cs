@@ -2089,13 +2089,15 @@ internal static class ParameterDetector
         if (memberEdge is { } edge
             && edge.Edge.LexicalFallbackSelectionOf(edge.MissSelection) == LexicalFallbackSelection.Never)
         {
-            // A `.string` edge never selects a lexical callable: its member is a declared member
-            // named `string` like any member, and on a structural miss the intrinsic (Q-17 S-C).
-            reason = !edge.Edge.UsesOrdinaryDotStringIntrinsic() || edge.MissSelection == LexicalFallbackSelection.Never
+            // An intrinsic edge (`.string`, `.Invoke`, `.Arguments`) never selects a lexical callable: its member
+            // is a declared member of that name like any member, and on a structural miss the
+            // intrinsic (Q-17 S-C; CallReference S1/S2).
+            var intrinsic = edge.Edge.Name;
+            reason = !edge.Edge.UsesDotMissIntrinsic() || edge.MissSelection == LexicalFallbackSelection.Never
                 ? $"the member '{name}' always resolves structurally on its receiver, so this occurrence never joins the implicit parameters"
                 : edge.MissSelection == LexicalFallbackSelection.Always
-                    ? "'.string' is the dot-only intrinsic on this receiver, so this occurrence never joins the implicit parameters"
-                    : "'.string' is the dot-only intrinsic unless its receiver declares a member named 'string', and never a lexical callable, so this occurrence never joins the implicit parameters";
+                    ? $"'.{intrinsic}' is the dot-only intrinsic on this receiver, so this occurrence never joins the implicit parameters"
+                    : $"'.{intrinsic}' is the dot-only intrinsic unless its receiver declares a member named '{intrinsic}', and never a lexical callable, so this occurrence never joins the implicit parameters";
         }
         else if (memo.GracePolicy == GraceEffectPolicy.ImplicitSignature
             && memo.OwnParameterNames?.Contains(name) == true)

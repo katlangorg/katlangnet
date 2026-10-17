@@ -310,6 +310,9 @@ partial def dsrNeutralResult : Result -> String
   | .bool b => Result.boolText b
   | .sequenceValue items => "S[" ++ String.intercalate ", " (items.map dsrNeutralResult) ++ "]"
   | .listValue items => "L[" ++ String.intercalate ", " (items.map dsrNeutralResult) ++ "]"
+  -- A run result never holds a call reference (the run boundary refuses it).
+  | .callRef _ => "CallReference"
+  | .argView _ => "CallReference"
 
 /-- The neutral observation of a program: `ok <value>`, or its neutral error tree. -/
 def dsrObserve (program : Expr) : String :=

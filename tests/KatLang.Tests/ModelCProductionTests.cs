@@ -147,5 +147,7 @@ public class ModelCProductionTests
         Result.Str text => text.Value,
         Result.SequenceValue sequence => "(" + string.Join(", ", sequence.Items.Select(Render)) + ")",
         Result.ListValue list => "[" + string.Join(", ", list.Items.Select(Render)) + "]",
+        // A run result never holds one (the run boundary refuses it).
+        Result.CallReference => "CallReference",
     };
 }

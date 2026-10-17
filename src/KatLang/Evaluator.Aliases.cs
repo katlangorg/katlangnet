@@ -231,10 +231,10 @@ public static partial class Evaluator
     /// <see cref="EvalInlineAliasValue"/> — the ONE zero-argument law judged on the TARGET and
     /// reported as its written target reference reports it — whose items are spread; an operand
     /// without output is the spread-specific <see cref="EvalError.SpreadMissingOutput"/>. The
-    /// counterpart of the block arm of <see cref="EvalSequenceSpreadOperandItems"/>.
+    /// counterpart of the block arm of <see cref="EvalSequenceSpreadOperandValue"/>.
     /// </summary>
     [MethodImpl(MethodImplOptions.NoInlining)]
-    private static EvalResult<IReadOnlyList<Result>> EvalAliasSpreadOperandItems(Expr expr, Algorithm alias, EvalCtx ctx, ValEnv valEnv)
+    private static EvalResult<Result> EvalAliasSpreadOperandValue(Expr expr, Algorithm alias, EvalCtx ctx, ValEnv valEnv)
     {
         var targetR = ResolveInlineAliasTarget(alias, ctx);
         if (targetR.IsError)
@@ -247,7 +247,7 @@ public static partial class Evaluator
         var blockR = EvalZeroArgumentDemandOutput(target, ctx, valEnv);
         if (blockR.IsError)
             return IsMissingOutputError(blockR.Error) ? SpreadMissingOutput(expr.Span) : blockR.Error;
-        return EvalResult<IReadOnlyList<Result>>.Ok(blockR.Value.SpreadItems());
+        return blockR;
     }
 
     /// <summary>
@@ -401,8 +401,8 @@ public static partial class Evaluator
         return WithSpan(expr.Span, await EvalZeroArgumentDemandOutputAsync(target, ctx, valEnv).ConfigureAwait(false));
     }
 
-    /// <summary>MIRROR OF <see cref="EvalAliasSpreadOperandItems"/> — keep in lock-step.</summary>
-    private static async ValueTask<EvalResult<IReadOnlyList<Result>>> EvalAliasSpreadOperandItemsAsync(Expr expr, Algorithm alias, EvalCtx ctx, ValEnv valEnv)
+    /// <summary>MIRROR OF <see cref="EvalAliasSpreadOperandValue"/> — keep in lock-step.</summary>
+    private static async ValueTask<EvalResult<Result>> EvalAliasSpreadOperandValueAsync(Expr expr, Algorithm alias, EvalCtx ctx, ValEnv valEnv)
     {
         var targetR = ResolveInlineAliasTarget(alias, ctx);
         if (targetR.IsError)
@@ -415,7 +415,7 @@ public static partial class Evaluator
         var blockR = await EvalZeroArgumentDemandOutputAsync(target, ctx, valEnv).ConfigureAwait(false);
         if (blockR.IsError)
             return IsMissingOutputError(blockR.Error) ? SpreadMissingOutput(expr.Span) : blockR.Error;
-        return EvalResult<IReadOnlyList<Result>>.Ok(blockR.Value.SpreadItems());
+        return blockR;
     }
 
     /// <summary>MIRROR OF <see cref="EvalAliasCallCounted"/> — keep in lock-step.</summary>

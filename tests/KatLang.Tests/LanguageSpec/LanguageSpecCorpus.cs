@@ -7852,5 +7852,175 @@ public static class LanguageSpecCorpus
             ExpectedDiagnosticCode = DiagnosticCode.UnterminatedInterpolationHole,
             Explanation = "A string, its holes included, is written on one line: there are no multiline strings and no multiline holes.",
         },
+        // ==================== call references (CallReference S1) ====================
+        new()
+        {
+            Id = "meta-capture-invokes-the-original-call",
+            Category = "name-resolution",
+            Source = "Square(x) = x * x\nCapture(meta operation) = operation\nR = Capture(Square(5))\n\nR.Invoke()\nR.Invoke()",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "25\n25",
+            ExpectedRaw = "S[25, 25]",
+            ExpectedEmittedCount = 2,
+            Probes =
+            [
+                // A reference is a value: equal to itself (plan identity), carried by lists and `if`.
+                new SpecProbe("Square(x) = x * x\nCapture(meta op) = op\nR = Capture(Square(5))\nR == R", "ok raw=true n=1"),
+                new SpecProbe("Square(x) = x * x\nCapture(meta op) = op\nR = Capture(Square(5))\n[0, R][1].Invoke()", "ok raw=25 n=1"),
+                // Two written calls are two references, however alike they are spelled.
+                new SpecProbe("Square(x) = x * x\nCapture(meta op) = op\nCapture(Square(5)) == Capture(Square(5))", "ok raw=false n=1"),
+            ],
+            IncludeInGeneratorPrompt = true,
+            Explanation = "A parameter declared `meta` receives the CALL written as its argument, not the call's value: capturing runs nothing, and the parameter holds a call reference. `R.Invoke()` runs the captured call afresh, in the context where it was written and with the same argument computations, every time it is invoked.",
+        },
+        new()
+        {
+            Id = "meta-capture-sees-through-forwarding-and-value",
+            Category = "name-resolution",
+            Source = "Square(x) = x * x\nCapture(meta op) = op\nFwd(y) = Capture(y)\nUse(v) = v + Fwd(v).Invoke()\n\nUse(Square(3))",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "18",
+            ExpectedRaw = "18",
+            ExpectedEmittedCount = 1,
+            Explanation = "A supplied call travels through plain parameters as the call itself, so a `meta` parameter reached through any number of forwarding hops captures the ORIGINAL call — even after its value was computed (`v` here) — and invoking it runs that call again with the same arguments.",
+        },
+        new()
+        {
+            Id = "meta-refuses-anything-but-a-written-call",
+            Category = "errors",
+            Source = "Square(x) = x * x\nCapture(meta op) = op\nY = Square(5)\nCapture(Y)",
+            Outcome = SpecOutcome.EvalError,
+            ExpectedErrorCategory = "notAnAlgorithm",
+            Probes =
+            [
+                new SpecProbe("Capture(meta op) = op\nCapture(5)", "err notAnAlgorithm"),
+                new SpecProbe("Square(x) = x * x\nCapture(meta op) = op\nCapture(Square)", "err notAnAlgorithm"),
+            ],
+            Explanation = "Only a written call can be captured: a property read, a number or a bare algorithm name is refused, and nothing is evaluated to find out whether a value came from a call (`Y` holds the value of `Square(5)`, not the call). Capture `Capture(Square(5))` itself.",
+        },
+        new()
+        {
+            Id = "invoke-needs-its-argument-list",
+            Category = "errors",
+            Source = "Square(x) = x * x\nCapture(meta op) = op\nR = Capture(Square(5))\nR.Invoke",
+            Outcome = SpecOutcome.EvalError,
+            ExpectedErrorCategory = "illegalInEval",
+            Probes =
+            [
+                new SpecProbe("Square(x) = x * x\nCapture(meta op) = op\nR = Capture(Square(5))\nR.Invoke(8)", "err arity"),
+            ],
+            Explanation = "`Invoke` is an operation, not a property: `R.Invoke` without parentheses is an error and never runs the call, and `R.Invoke()` takes no arguments (`R.Invoke(8)` is an argument-count error).",
+        },
+        new()
+        {
+            Id = "invoke-is-not-an-extension-call",
+            Category = "name-resolution",
+            Source = "Invoke(r) = r + 1\nInvoke(4)",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "5",
+            ExpectedRaw = "5",
+            ExpectedEmittedCount = 1,
+            Probes =
+            [
+                new SpecProbe("Invoke(r) = r + 1\n5.Invoke()", "err type"),
+                new SpecProbe("Box = { public Invoke = 3 }\nBox.Invoke", "ok raw=3 n=1"),
+            ],
+            Explanation = "A dot edge spelled `Invoke` selects a declared member first; otherwise it is the call-reference operation, so `5.Invoke()` is a type error and never the user's `Invoke(5)`. A plain call `Invoke(4)` stays an ordinary call.",
+        },
+        new()
+        {
+            Id = "call-reference-never-leaves-its-run",
+            Category = "errors",
+            Source = "Square(x) = x * x\nCapture(meta op) = op\nCapture(Square(5))",
+            Outcome = SpecOutcome.EvalError,
+            ExpectedErrorCategory = "type",
+            Probes =
+            [
+                new SpecProbe("Square(x) = x * x\nCapture(meta op) = op\nR = Capture(Square(5))\n\"{R}\"", "err type"),
+                new SpecProbe("Square(x) = x * x\nCapture(meta op) = op\nR = Capture(Square(5))\nR + 1", "err type"),
+            ],
+            Explanation = "A call reference is used inside the program: a program result that contains one, and text built from one, are errors. Output a value computed from it, such as `R.Invoke()`.",
+        },
+        new()
+        {
+            Id = "meta-modifies-one-plain-parameter-name",
+            Category = "parser-layout",
+            Source = "F(meta *items) = 1\nF(1)",
+            Outcome = SpecOutcome.ParseError,
+            ExpectedDiagnosticCode = DiagnosticCode.InvalidMetaParameter,
+            Explanation = "`meta` may modify only a plain parameter name written once at the top level of an ordinary parameter list — never a collecting binding, a pattern, a literal or a clause family. Elsewhere `meta` is an ordinary name: `F(meta) = meta + 1` is fine.",
+        },
+        // ==================== argument views (CallReference S2) ====================
+        new()
+        {
+            Id = "call-reference-arguments-view",
+            Category = "name-resolution",
+            Source = "Add(x, y) = x + y\nCapture(meta op) = op\nR = Capture(Add(10, 20))\n\nR.Arguments.count\nR.Arguments[0]\nR.Arguments[1]",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "2\n10\n20",
+            ExpectedRaw = "S[2, 10, 20]",
+            ExpectedEmittedCount = 3,
+            Probes =
+            [
+                // Selection, first and last read the ORIGINAL argument values; the view never runs the call.
+                new SpecProbe("Add(x, y) = x + y\nCapture(meta op) = op\nR = Capture(Add(10, 20))\nR.Arguments[1, 0]", "ok raw=S[20, 10] n=1"),
+                new SpecProbe("Add(x, y) = x + y\nCapture(meta op) = op\nR = Capture(Add(10, 20))\nlast(R.Arguments)", "ok raw=20 n=1"),
+                // Counting demands no argument value; only a selected argument is computed.
+                new SpecProbe("Add(x, y) = x + y\nCapture(meta op) = op\nR = Capture(Add(5, 1 / 0))\nR.Arguments.count, R.Arguments[0]", "ok raw=S[2, 5] n=2"),
+                // One view per reference, never the reference itself.
+                new SpecProbe("Add(x, y) = x + y\nCapture(meta op) = op\nR = Capture(Add(1, 2))\nR.Arguments == R.Arguments, R == R.Arguments", "ok raw=S[true, false] n=2"),
+            ],
+            IncludeInGeneratorPrompt = true,
+            Explanation = "`R.Arguments` is a lazy, read-only view of the arguments the captured call was written with. Obtaining it runs nothing; `count` counts the supplied arguments without computing them; selection (zero-based), `first` and `last` compute only the arguments they select, each at most once.",
+        },
+        new()
+        {
+            Id = "arguments-spread-forwards-the-original-arguments",
+            Category = "name-resolution",
+            Source = "Add(x, y) = x + y\nFirst(x, y) = x\nCapture(meta op) = op\nR = Capture(Add(5, 1 / 0))\n\nFirst(R.Arguments*)",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "5",
+            ExpectedRaw = "5",
+            ExpectedEmittedCount = 1,
+            Probes =
+            [
+                new SpecProbe("Add(x, y) = x + y\nMul(x, y) = x * y\nCapture(meta op) = op\nR = Capture(Add(10, 20))\nMul(R.Arguments*), R.Invoke()", "ok raw=S[200, 30] n=2"),
+                // A callable argument stays callable.
+                new SpecProbe("Apply(f, x) = f(x)\nSquare(x) = x * x\nCapture(meta op) = op\nR = Capture(Apply(Square, 5))\nApply(R.Arguments*)", "ok raw=25 n=1"),
+            ],
+            IncludeInGeneratorPrompt = true,
+            Explanation = "Spreading `R.Arguments*` into another call hands that call the ORIGINAL argument computations, not copies of their values: an argument the new call never uses is never computed (`1 / 0` here), a callable argument stays callable, and an argument computed by one call is not computed again by another.",
+        },
+        new()
+        {
+            Id = "arguments-view-is-not-a-collection",
+            Category = "errors",
+            Source = "Add(x, y) = x + y\nCapture(meta op) = op\nR = Capture(Add(10, 20))\n[R.Arguments*]",
+            Outcome = SpecOutcome.EvalError,
+            ExpectedErrorCategory = "type",
+            Probes =
+            [
+                new SpecProbe("Add(x, y) = x + y\nCapture(meta op) = op\nR = Capture(Add(10, 20))\nsum(R.Arguments)", "err type"),
+                new SpecProbe("Add(x, y) = x + y\nCapture(meta op) = op\nR = Capture(Add(10, 20))\nR.Arguments()", "err illegalInEval"),
+                new SpecProbe("Add(x, y) = x + y\nCapture(meta op) = op\nR = Capture(Add(10, 20))\nR.Arguments", "err type"),
+            ],
+            Explanation = "An argument view supports only `count`, `first`, `last`, selection and spreading into an argument list. Other collection operations and a spread inside a list or sequence are errors rather than a hidden computation of every argument: select the values you need, e.g. `[R.Arguments[0], R.Arguments[1]]`. `Arguments` is a property, so `R.Arguments()` is an error, and like the reference a view cannot be a program result.",
+        },
+        new()
+        {
+            Id = "arguments-is-not-an-extension-call",
+            Category = "name-resolution",
+            Source = "Arguments(r) = r + 1\nArguments(4)",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "5",
+            ExpectedRaw = "5",
+            ExpectedEmittedCount = 1,
+            Probes =
+            [
+                new SpecProbe("Arguments(r) = r + 1\n5.Arguments", "err type"),
+                new SpecProbe("Box = { public Arguments = 3 }\nBox.Arguments", "ok raw=3 n=1"),
+            ],
+            Explanation = "A dot edge spelled `Arguments` selects a declared member first; otherwise it is the call-reference argument view, so `5.Arguments` is a type error and never the user's `Arguments(5)`. A plain call `Arguments(4)` stays an ordinary call.",
+        },
     ];
 }

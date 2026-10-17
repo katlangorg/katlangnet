@@ -13,6 +13,16 @@ namespace KatLang;
 public static partial class Evaluator
 {
     /// <summary>
+    /// A hole whose value CONTAINS a call reference has no text (CallReference S1): it is refused when the
+    /// hole is reached — earlier holes have run and later ones never do, the ordinary first-failure order —
+    /// positioned at the hole. Every reference-free value is <c>null</c> (appended as before).
+    /// Lean: the <c>requireCallRefFree</c> step of the <c>.interpolatedString</c> arm.
+    /// </summary>
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+    private static EvalError? InterpolationHoleRefusal(Result value, Expr hole)
+        => ContainsCallReference(value) ? new EvalError.TypeMismatch(CallReferenceHasNoTextMessage) { Span = hole.Span } : null;
+
+    /// <summary>
     /// The text of one interpolated-string evaluation: a display sink bounded by the run's LIVE
     /// string capacity, re-read before every append because the holes evaluated in between may
     /// themselves create strings. A hole value is appended as its structural value text

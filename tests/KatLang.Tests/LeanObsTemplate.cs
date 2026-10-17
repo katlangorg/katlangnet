@@ -34,13 +34,16 @@ internal static class LeanObsTemplate
     public const string SharedDefinitions = """
         /-- Neutral raw-structure encoding shared with the C# harness:
             atom -> `1`, string -> `'x'`, Boolean -> `true` / `false`,
-            sequence -> `S[a, b]`, empty -> `S[]`, exact list -> `L[a, b]`. -/
+            sequence -> `S[a, b]`, empty -> `S[]`, exact list -> `L[a, b]`,
+            call reference and argument view -> `CallReference` (never a run result: the run boundary refuses both). -/
         partial def neutral : Result -> String
           | .atom n => toString n
           | .str s => "'" ++ s ++ "'"
           | .bool b => Result.boolText b
           | .sequenceValue rs => "S[" ++ String.intercalate ", " (rs.map neutral) ++ "]"
           | .listValue rs => "L[" ++ String.intercalate ", " (rs.map neutral) ++ "]"
+          | .callRef _ => "CallReference"
+          | .argView _ => "CallReference"
 
         /-- Innermost-error category shared with the C# harness
             (`SemanticExplorerHarness.ErrorCategory`). -/
@@ -119,14 +122,18 @@ internal static class LeanObsTemplate
           let e := (identifyPropertyExpr e).run' 0
           validateExplicitParamOutputInvariantExpr e
           let ctx := { callStack := [preludeAlg] }
-          match e with
-          | .algorithmExpr a =>
-              let wired := wireToCaller ctx a
-              if Algorithm.acceptsZeroSuppliedArguments wired then
-                evalZeroArgumentDemandOutputCounted wired ctx []
-              else
-                .error (Error.unresolvedImplicitParams (Algorithm.params wired))
-          | _ => evalCounted e ctx []
+          -- The run result boundary of `runResultM` (CallReference S1): a counted run result
+          -- that contains a call reference is refused exactly as the plain one is.
+          let counted <- match e with
+            | .algorithmExpr a =>
+                let wired := wireToCaller ctx a
+                if Algorithm.acceptsZeroSuppliedArguments wired then
+                  evalZeroArgumentDemandOutputCounted wired ctx []
+                else
+                  .error (Error.unresolvedImplicitParams (Algorithm.params wired))
+            | _ => evalCounted e ctx []
+          let _ <- exportRunValue counted.fst
+          pure counted
 
         /-- Neutral observation string shared verbatim with the C# harness.
             Also cross-checks Lean's plain (`runResult`) and counted evaluators on

@@ -1444,6 +1444,7 @@ public sealed class Parser
             Expect(TokenKind.RParen);
 
             pattern = ValidateCollectingParameterDeclarations(pattern, nameToken);
+            pattern = ValidateMetaParameterDeclarations(pattern, nameToken);
 
             Expect(TokenKind.Equals);
             // A head that needed any recovery keeps its clause (and its declaration) in
@@ -1679,6 +1680,16 @@ public sealed class Parser
                     ReportError(
                         DiagnosticCode.InvalidCollectingBinding,
                         $"{CollectingClauseBinderDiagnosticStem} for '{name}'.",
+                        spans[i]);
+                }
+
+                // A clause family carries no META binder (CallReference S1): its clauses are
+                // selected by inspecting the supplied values, which a META capture never does.
+                if (condAlg.Branches[i].Pattern.HeadHasBinderOfKind(ParameterKind.Meta))
+                {
+                    ReportError(
+                        DiagnosticCode.InvalidMetaParameter,
+                        $"{InvalidMetaParameterDiagnostic} A clause family cannot declare it ('{name}').",
                         spans[i]);
                 }
             }
@@ -3270,6 +3281,77 @@ public sealed class Parser
         };
 
     /// <summary>
+    /// The CONTEXTUAL <c>meta</c> modifier (CallReference S1, October 2026): the identifier
+    /// <c>meta</c> directly followed, on the same line, by another pattern item is the modifier of
+    /// that item, never a parameter named <c>meta</c> — <c>F(meta)</c>, <c>F(meta, x)</c> and
+    /// <c>meta = 3</c> keep declaring an ordinary name, while <c>Capture(meta operation)</c> declares
+    /// the META parameter <c>operation</c>. Every other identifier stays an ordinary binder.
+    /// </summary>
+    private bool StartsMetaModifier()
+        => Current.Kind == TokenKind.Identifier
+            && string.Equals(Current.StringValue, MetaModifierKeyword, StringComparison.Ordinal)
+            && PeekSignificant(1) is var next
+            && next.Line == Current.Line
+            && CanStartPatternAtom(next.Kind);
+
+    /// <summary>The contextual META modifier's spelling.</summary>
+    internal const string MetaModifierKeyword = "meta";
+
+    /// <summary>
+    /// The one message of a misplaced <c>meta</c> modifier (<see cref="DiagnosticCode.InvalidMetaParameter"/>),
+    /// shared with the pre-evaluation violation <c>PreEvaluationAstViolation.InvalidMetaParameter</c>.
+    /// Lean: <c>invalidMetaParameterMessage</c>.
+    /// </summary>
+    internal const string InvalidMetaParameterDiagnostic =
+        "`meta` may modify only a plain, fixed parameter name written once at the top level of an ordinary parameter list.";
+
+    /// <summary>
+    /// Parses <c>meta item</c> (the modifier recognized by <see cref="StartsMetaModifier"/>): a plain
+    /// binder becomes a META binder (<see cref="ParameterKind.Meta"/>). Any other item — a collecting
+    /// binding, a nested sequence or list pattern, a literal — is reported as
+    /// <see cref="DiagnosticCode.InvalidMetaParameter"/> over the modifier and the item, and the item
+    /// is kept as written without the modifier (recovery never creates a META binder the rule refuses).
+    /// </summary>
+    private Pattern ParseMetaBindingPatternAtom()
+    {
+        var metaToken = Advance(); // consume 'meta'
+        var item = ParsePatternAtom();
+        if (item is Pattern.Bind { ParameterKind: ParameterKind.Normal, IsRecoveryPlaceholder: false } binder)
+            return binder with { ParameterKind = ParameterKind.Meta };
+
+        ReportErrorAcross(DiagnosticCode.InvalidMetaParameter, InvalidMetaParameterDiagnostic, metaToken, Previous);
+        return item;
+    }
+
+    /// <summary>
+    /// Reports a misplaced META binder in an ordinary clause head — inside a structural pattern, or
+    /// with a name the head binds again (<see cref="ParameterPattern.FindMetaViolation"/>) — at the
+    /// clause's name token, and returns the pattern the recovered tree keeps: every META binder of a
+    /// refused head becomes an ordinary binder, so no recovered tree carries a META capture the rule
+    /// refuses. A head that is no ordinary parameter list (it holds a literal) is a clause family,
+    /// whose META binders the family validation reports.
+    /// </summary>
+    private Pattern ValidateMetaParameterDeclarations(Pattern pattern, Token nameToken)
+    {
+        if (pattern.TryGetOrdinaryClauseParameterPatterns() is not { } parameterPatterns
+            || ParameterPattern.FindMetaViolation(parameterPatterns) is null)
+            return pattern;
+
+        ReportErrorAt(DiagnosticCode.InvalidMetaParameter, InvalidMetaParameterDiagnostic, nameToken);
+        return WithoutMetaBinders(pattern);
+    }
+
+    /// <summary>The pattern with every META binder demoted to an ordinary binder (error recovery only).</summary>
+    private static Pattern WithoutMetaBinders(Pattern pattern)
+        => pattern switch
+        {
+            Pattern.Bind { ParameterKind: ParameterKind.Meta } binder => binder with { ParameterKind = ParameterKind.Normal },
+            Pattern.SequenceValue(var items) => new Pattern.SequenceValue(items.Select(WithoutMetaBinders).ToList()),
+            Pattern.ListValue(var items) => new Pattern.ListValue(items.Select(WithoutMetaBinders).ToList()),
+            _ => pattern,
+        };
+
+    /// <summary>
     /// Parses a collecting binding <c>*name</c> at the start of a pattern
     /// atom (the star is not yet consumed). The collect marker must be
     /// DIRECTLY attached to its binding name — a gap reports the targeted
@@ -3443,6 +3525,9 @@ public sealed class Parser
                     var token = Advance();
                     return new Pattern.LitBool(token.Kind == TokenKind.KeywordTrue);
                 }
+
+            case TokenKind.Identifier when StartsMetaModifier():
+                return ParseMetaBindingPatternAtom();
 
             case TokenKind.Identifier:
                 {

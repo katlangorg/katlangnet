@@ -9,9 +9,10 @@ namespace KatLang;
 ///
 /// <para><b>For hosts.</b> Values arrive as <see cref="RunResult.Success.Value"/>, as
 /// direct <see cref="Evaluator"/> results, and as host-operation arguments; a host operation
-/// returns one built with the variant constructors. Read a value by switching over its five
+/// returns one built with the variant constructors. Read a value by switching over its six
 /// variants (<see cref="Atom"/>, <see cref="Str"/>, <see cref="Bool"/>,
-/// <see cref="SequenceValue"/>, <see cref="ListValue"/>) or through the views
+/// <see cref="SequenceValue"/>, <see cref="ListValue"/>, and the run-internal
+/// <see cref="CallReference"/>, which no host ever receives) or through the views
 /// <see cref="AsNum"/> and <see cref="AsBool"/>; compare values with
 /// <see cref="ValueComparer"/>, KatLang's structural equality — C# record equality compares
 /// the item lists of sequence and list values by reference. <see cref="object.ToString"/> is
@@ -64,9 +65,10 @@ namespace KatLang;
 /// parents.</para>
 ///
 /// <para>A C# <c>closed</c> hierarchy, like the Lean inductive: <see cref="Atom"/>,
-/// <see cref="Str"/>, <see cref="Bool"/>, <see cref="SequenceValue"/>, and
-/// <see cref="ListValue"/> are its only variants, no other assembly can derive from it,
-/// and a switch EXPRESSION naming all five is compiler-exhaustive with no catch-all arm
+/// <see cref="Str"/>, <see cref="Bool"/>, <see cref="SequenceValue"/>,
+/// <see cref="ListValue"/> and <see cref="CallReference"/> are its only variants, no other
+/// assembly can derive from it, and a switch EXPRESSION naming all six is compiler-exhaustive
+/// with no catch-all arm
 /// — the value views
 /// here (<see cref="ToItems"/>, <see cref="AsNum"/>) and the evaluator's
 /// Lean-modeled projections are written that way, so a new variant fails the build
@@ -246,6 +248,92 @@ public closed record Result
     }
 
     /// <summary>
+    /// A CALL REFERENCE (CallReference S1, October 2026): the opaque, run-scoped value a
+    /// <c>meta</c> parameter binds — the invocation plan of ONE supplied call computation, captured
+    /// without evaluating it (<c>Capture(meta operation) = operation</c>,
+    /// <c>R = Capture(Square(5))</c>). Its one operation is <c>R.Invoke()</c>, which executes the
+    /// captured call afresh over its original argument cells. Inside its run it is an ordinary
+    /// value — properties, parameters, lists, sequences, selection and <c>if</c> carry it, and
+    /// <c>==</c> compares plan identity — but it has no callable identity, no members, no number,
+    /// Boolean or text view and no ordering.
+    ///
+    /// <para><b>For hosts.</b> A call reference never leaves its run: every evaluator and engine
+    /// result, every host-operation argument and every display or formatting boundary refuses a
+    /// value that contains one (a <see cref="KatLangErrorCode.TypeMismatch"/> naming the boundary),
+    /// so a host never receives this variant and cannot construct one. It exists publicly only
+    /// so that the closed hierarchy stays exhaustive. Lean: <c>Result.callRef</c>.</para>
+    ///
+    /// <para><b>Argument views (CallReference S2).</b> The same variant also carries a reference's
+    /// ARGUMENT VIEW, <c>R.Arguments</c> (an internal facet, <see cref="IsArgumentView"/>; Lean
+    /// <c>Result.argView</c>): the lazy, read-only view of the captured call's ORIGINAL effective
+    /// argument cells. A view and its reference are different values (<c>R == R.Arguments</c> is
+    /// false), a view is never invocable, and it obeys every boundary above. Its operations are
+    /// <c>count</c>, selection, <c>first</c>/<c>last</c> and the argument spread
+    /// <c>F(R.Arguments*)</c>, which transports the original cells.</para>
+    /// </summary>
+    public sealed record CallReference : Result
+    {
+        private CallReference? _argumentView;
+
+        internal CallReference(Evaluator.InvocationPlan plan) => Plan = plan;
+
+        private CallReference(Evaluator.InvocationPlan plan, bool isArgumentView)
+        {
+            Plan = plan;
+            IsArgumentView = isArgumentView;
+        }
+
+        /// <summary>The plan this reference denotes: its identity (one reference per plan).</summary>
+        internal Evaluator.InvocationPlan Plan { get; }
+
+        /// <summary>
+        /// Whether this value is the plan's ARGUMENT VIEW (<c>R.Arguments</c>, CallReference S2) rather
+        /// than the reference itself. Lean: <c>Result.argView</c> versus <c>Result.callRef</c>.
+        /// </summary>
+        internal bool IsArgumentView { get; }
+
+        /// <summary>
+        /// The reference's one argument view, allocated on the first <c>R.Arguments</c>: every read
+        /// returns this same object, so the view has a stable identity. Obtaining it reads nothing.
+        /// Lean: <c>argumentsOfValue</c>.
+        /// </summary>
+        internal CallReference ArgumentView
+            => IsArgumentView
+                ? throw new InvalidOperationException("An argument view has no argument view.")
+                : Volatile.Read(ref _argumentView)
+                    ?? Interlocked.CompareExchange(ref _argumentView, new CallReference(Plan, isArgumentView: true), null)
+                    ?? _argumentView!;
+
+        /// <summary>The owning run's budget: the reference's run identity.</summary>
+        internal Evaluation.EvaluationBudget Budget => Plan.Caller.Budget;
+
+        /// <summary>
+        /// Executes the target afresh over the plan's prepared argument cells (internal seam; the
+        /// language route is <c>R.Invoke()</c>, which adds the run-ownership checks).
+        /// Lean: <c>NeedPlan.invoke</c>.
+        /// </summary>
+        internal EvalResult<Evaluator.CountedResult> Invoke() => Evaluator.InvokePlan(Plan);
+
+        /// <summary>The async twin of <see cref="Invoke"/>.</summary>
+        internal ValueTask<EvalResult<Evaluator.CountedResult>> InvokeAsync() => Evaluator.InvokePlanAsync(Plan);
+
+        /// <summary>
+        /// Record equality is plan identity and facet only — never the lazily cached view handle, so
+        /// reading <c>R.Arguments</c> changes neither equality nor the hash of <c>R</c>.
+        /// </summary>
+        public bool Equals(CallReference? other)
+            => ReferenceEquals(this, other)
+                || other is not null && ReferenceEquals(Plan, other.Plan) && IsArgumentView == other.IsArgumentView;
+
+        /// <inheritdoc />
+        public override int GetHashCode()
+            => HashCode.Combine(System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(Plan), IsArgumentView);
+
+        // No public state: the record's debug text is `CallReference { }` and never shows the plan,
+        // its cells or its context.
+    }
+
+    /// <summary>
     /// The snapshot behind the public collection constructors: one copy of the caller's items,
     /// rejecting a null collection or a null element at the construction site — a value that
     /// held one would otherwise fail far from the host code that built it, inside evaluation
@@ -273,6 +361,14 @@ public closed record Result
     internal Result Normalize() => NormalizeCore(observations: null);
 
     /// <summary>
+    /// Host returns already require the complete DAG-safe normalization walk. Refuse reference
+    /// leaves during that SAME walk instead of traversing a potentially large value twice.
+    /// Internal normalization continues to carry references freely.
+    /// </summary>
+    internal Result NormalizeForHostOperation(string operationName)
+        => NormalizeCore(observations: null, operationName);
+
+    /// <summary>
     /// <see cref="Normalize"/> with a passive observer recording the structural work the walk
     /// performs. The observer changes neither the normalized value, the memoization, nor the
     /// traversal order, and belongs to one measured operation, so counts never cross operations,
@@ -296,10 +392,13 @@ public closed record Result
     /// node is completed and memoized before any parent can reach it again); an ownership-violating
     /// aliased graph is not a supported value and has no normal form to produce.</para>
     /// </summary>
-    private Result NormalizeCore(ValueTraversalObservations? observations)
+    private Result NormalizeCore(ValueTraversalObservations? observations, string? hostOperationName = null)
     {
         if (this is not (SequenceValue or ListValue))
+        {
+            RejectHostReference(this, hostOperationName);
             return this;
+        }
 
         var frames = new Stack<NormalizeFrame>();
         // One entry per distinct nested structure node reached, for the duration of THIS call
@@ -317,6 +416,7 @@ public closed record Result
                 var child = frame.Source[frame.Next];
                 if (child is not (SequenceValue or ListValue))
                 {
+                    RejectHostReference(child, hostOperationName);
                     // A leaf is its own normal form.
                     frame.Accept(child);
                 }
@@ -347,6 +447,13 @@ public closed record Result
             memo![frame.Node] = normalized;
             frames.Peek().Accept(normalized);
         }
+    }
+
+    private static void RejectHostReference(Result value, string? operationName)
+    {
+        if (operationName is not null && value is CallReference)
+            throw new InvalidOperationException(
+                $"Host operation '{operationName}' returned a call reference; call references never leave their run.");
     }
 
     /// <summary>One in-progress structure rebuild in the <see cref="NormalizeCore"/> walk.</summary>
@@ -767,6 +874,7 @@ public closed record Result
                 _ => null,
             },
             ListValue _ => null,
+            CallReference _ => null, // a call reference is no number
         };
     }
 
@@ -790,7 +898,7 @@ public closed record Result
     {
         return this switch
         {
-            Atom or Str or Bool => [this],
+            Atom or Str or Bool or CallReference => [this],
             SequenceValue(var items) => items,
             ListValue _ => [this],
         };
@@ -909,6 +1017,7 @@ public closed record Result
         private const int SequenceTag = 2;
         private const int ListTag = 3;
         private const int BoolTag = 4;
+        private const int CallReferenceTag = 5;
 
         /// <summary>
         /// Placeholder stored for a structure node while its own hash is still being folded, and
@@ -950,6 +1059,13 @@ public closed record Result
                 // structure: equality is total over every kind, so `true == 1` is false.
                 case (Bool(var leftValue), Bool(var rightValue)):
                     return leftValue == rightValue;
+
+                // Call references compare by plan identity and facet (one reference object and one
+                // argument view per plan, so the reference fast path above already decides every
+                // equal pair); a reference never equals its own argument view.
+                case (CallReference leftReference, CallReference rightReference):
+                    return ReferenceEquals(leftReference.Plan, rightReference.Plan)
+                        && leftReference.IsArgumentView == rightReference.IsArgumentView;
 
                 case (SequenceValue(var left), SequenceValue(var right)):
                     if (left.Count != right.Count) return false;
@@ -1024,6 +1140,11 @@ public closed record Result
 
                     case (Bool(var leftValue), Bool(var rightValue)):
                         if (leftValue != rightValue) return false;
+                        continue;
+
+                    case (CallReference leftReference, CallReference rightReference):
+                        if (!ReferenceEquals(leftReference.Plan, rightReference.Plan)
+                            || leftReference.IsArgumentView != rightReference.IsArgumentView) return false;
                         continue;
 
                     case (SequenceValue(var childLeftItems), SequenceValue(var childRightItems)):
@@ -1145,6 +1266,12 @@ public closed record Result
                         accumulator.Add(flag);
                         continue;
 
+                    case CallReference reference:
+                        accumulator.Add(CallReferenceTag);
+                        accumulator.Add(RuntimeHelpers.GetHashCode(reference.Plan));
+                        accumulator.Add(reference.IsArgumentView);
+                        continue;
+
                     case SequenceValue(var sequenceItems):
                         (childTag, childItems) = (SequenceTag, sequenceItems);
                         break;
@@ -1208,6 +1335,13 @@ public closed record Result
                 case Bool(var flag):
                     leaf.Add(BoolTag);
                     leaf.Add(flag);
+                    hash = leaf.ToHashCode();
+                    return true;
+
+                case CallReference reference:
+                    leaf.Add(CallReferenceTag);
+                    leaf.Add(RuntimeHelpers.GetHashCode(reference.Plan));
+                    leaf.Add(reference.IsArgumentView);
                     hash = leaf.ToHashCode();
                     return true;
 

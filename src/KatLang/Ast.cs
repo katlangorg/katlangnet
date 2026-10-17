@@ -264,6 +264,15 @@ public enum ParameterKind
 {
     Normal,
     Collecting,
+
+    /// <summary>
+    /// The META modifier <c>meta name</c> (CallReference S1, October 2026): the capture binds a
+    /// run-scoped call reference (<see cref="Result.CallReference"/>) to the SUPPLIED CALL's
+    /// invocation plan instead of the call's cell, without evaluating it. A fixed, one-slot capture
+    /// valid only as a unique top-level capture of an explicitly written ordinary parameter list
+    /// (<see cref="ParameterPattern.FindMetaViolation"/>). Lean: <c>ParameterKind.metaRef</c>.
+    /// </summary>
+    Meta,
 }
 
 /// <summary>
@@ -324,6 +333,7 @@ public sealed record ParameterDeclaration(string Name, SourceSpan? Span = null, 
     public string DisplayName => Kind switch
     {
         ParameterKind.Collecting => $"*{Name}",
+        ParameterKind.Meta => $"meta {Name}",
         _ => Name,
     };
 
@@ -752,6 +762,102 @@ public closed record ParameterPattern
             : multipleCollectingAtOneLevel ? ParameterSignatureViolation.MultipleCollectingAtOneLevel
             : repeatedNameIncludesCollecting ? ParameterSignatureViolation.RepeatedNameIncludesCollecting
             : null;
+
+    /// <summary>
+    /// THE META PLACEMENT RULE (CallReference S1, October 2026): the first META capture of
+    /// <paramref name="patterns"/> that is misplaced — one inside a sequence, list or unpacking
+    /// pattern, or a top-level one whose name occurs more than once in the list — or <c>null</c>
+    /// for a valid list. A META capture is fixed by construction (<see cref="ParameterKind.Meta"/>
+    /// is not collecting). Clause families carry no META at all: the parser and the pre-evaluation
+    /// preflight reject a META clause binder. Lean: <c>ParameterPattern.metaViolation?</c>.
+    /// </summary>
+    internal static ParameterDeclaration? FindMetaViolation(IReadOnlyList<ParameterPattern> patterns)
+    {
+        if (!HasMetaCapture(patterns))
+            return null;
+
+        // A META capture nested in a structural pattern is misplaced wherever it stands.
+        foreach (var nested in EnumerateMetaValidationCaptures(patterns, nestedOnly: true))
+        {
+            if (nested.Kind == ParameterKind.Meta)
+                return nested;
+        }
+
+        // A top-level META capture whose name the list binds more than once.
+        var occurrences = new Dictionary<string, int>(StringComparer.Ordinal);
+        foreach (var capture in EnumerateMetaValidationCaptures(patterns, nestedOnly: false))
+            occurrences[capture.Name] = Math.Min(2, occurrences.GetValueOrDefault(capture.Name) + 1);
+        foreach (var pattern in patterns)
+        {
+            if (pattern is CaptureParameterPattern { Kind: ParameterKind.Meta } meta && occurrences[meta.Name] > 1)
+                return meta.Parameter;
+        }
+
+        return null;
+    }
+
+    // META validity needs only zero/one/many occurrences, never the expanded capture list.
+    // Visit a shared node at most twice so repeated bindings remain repeated while a small
+    // host DAG cannot expand to exponentially many paths. Nested-only roots omit top-level
+    // captures, preserving the rule's first nested-META rejection before duplicate names.
+    private static IEnumerable<ParameterDeclaration> EnumerateMetaValidationCaptures(
+        IReadOnlyList<ParameterPattern> patterns, bool nestedOnly)
+    {
+        var pending = new Stack<ParameterPattern>();
+        var visits = new Dictionary<ParameterPattern, int>(ReferenceEqualityComparer.Instance);
+        for (var index = patterns.Count - 1; index >= 0; index--)
+        {
+            var pattern = patterns[index];
+            if (!nestedOnly || StructuralItems(pattern) is not null)
+                pending.Push(pattern);
+        }
+        while (pending.TryPop(out var pattern))
+        {
+            var count = visits.GetValueOrDefault(pattern);
+            if (count == 2) continue;
+            visits[pattern] = count + 1;
+            if (StructuralItems(pattern) is { } items)
+                PushItems(pending, items);
+            else
+                yield return ((CaptureParameterPattern)pattern).Parameter;
+        }
+    }
+
+    /// <summary>
+    /// Whether a META capture occurs anywhere in <paramref name="patterns"/>, at any depth. Allocation-free
+    /// for a flat list of capture leaves (the pre-evaluation validation reads it once per signature of
+    /// every run); a structural pattern is walked with an explicit stack.
+    /// </summary>
+    internal static bool HasMetaCapture(IReadOnlyList<ParameterPattern> patterns)
+    {
+        Stack<ParameterPattern>? pending = null;
+        HashSet<ParameterPattern>? expanded = null;
+        for (var index = 0; index < patterns.Count; index++)
+        {
+            switch (patterns[index])
+            {
+                case CaptureParameterPattern { Kind: ParameterKind.Meta }:
+                    return true;
+                case CaptureParameterPattern:
+                    continue;
+                default:
+                    (pending ??= new Stack<ParameterPattern>()).Push(patterns[index]);
+                    break;
+            }
+        }
+
+        while (pending is { Count: > 0 })
+        {
+            var pattern = pending.Pop();
+            if (pattern is CaptureParameterPattern { Kind: ParameterKind.Meta })
+                return true;
+            if (StructuralItems(pattern) is { } items
+                && (expanded ??= new HashSet<ParameterPattern>(ReferenceEqualityComparer.Instance)).Add(pattern))
+                PushItems(pending, items);
+        }
+
+        return false;
+    }
 
     /// <summary>
     /// The recovery shape of a signature with several collecting captures at one level — the
@@ -1465,39 +1571,47 @@ public closed record Pattern
     }
 
     /// <summary>
-    /// Whether this branch head holds a collecting binder (a host-built <see cref="Bind"/>
-    /// whose <see cref="Bind.ParameterKind"/> is collecting) at any depth. Clause binders never
-    /// collect — the parser refuses them in a clause family and Lean's clause binders cannot
-    /// collect — so the pre-evaluation gate refuses such a head
-    /// (<see cref="PreEvaluationAstViolation.CollectingClauseBinder"/>). Iterative, and linear in
-    /// the distinct pattern nodes of a host-built head that shares subtrees.
+    /// Whether this branch head holds a binder of <paramref name="kind"/> (a host-built
+    /// <see cref="Bind"/> whose <see cref="Bind.ParameterKind"/> is that kind) at any depth. Clause
+    /// binders are always ordinary — the parser refuses a collecting or <c>meta</c> binder in a clause
+    /// family, and Lean's clause binders neither collect (<c>NeedPattern.ofClause</c>) nor have a kind —
+    /// so the pre-evaluation gate refuses a head with a collecting binder
+    /// (<see cref="PreEvaluationAstViolation.CollectingClauseBinder"/>) or a META one
+    /// (<see cref="PreEvaluationAstViolation.MetaClauseBinder"/>). Iterative, linear in the distinct
+    /// pattern nodes of a host-built head that shares subtrees, and allocation-free for a head whose
+    /// items are leaves (every run validates every clause head).
     /// </summary>
-    internal bool HeadHasCollectingBinder()
+    internal bool HeadHasBinderOfKind(ParameterKind kind)
     {
-        var pending = new Stack<Pattern>();
-        var visited = new HashSet<Pattern>(ReferenceEqualityComparer.Instance);
-        pending.Push(this);
-        while (pending.Count > 0)
+        if (this is Bind self)
+            return self.ParameterKind == kind;
+
+        Stack<IReadOnlyList<Pattern>>? pending = null;
+        HashSet<Pattern>? expanded = null;
+        var items = StructureItemsOf(this);
+        while (items is not null)
         {
-            var pattern = pending.Pop();
-            if (!visited.Add(pattern))
-                continue;
-            switch (pattern)
+            foreach (var item in items)
             {
-                case Bind { ParameterKind: ParameterKind.Collecting }:
+                if (item is Bind bind && bind.ParameterKind == kind)
                     return true;
-                case SequenceValue(var items):
-                    foreach (var item in items)
-                        pending.Push(item);
-                    break;
-                case ListValue(var items):
-                    foreach (var item in items)
-                        pending.Push(item);
-                    break;
+                if (StructureItemsOf(item) is { Count: > 0 } nested
+                    && (expanded ??= new HashSet<Pattern>(ReferenceEqualityComparer.Instance)).Add(item))
+                    (pending ??= new Stack<IReadOnlyList<Pattern>>()).Push(nested);
             }
+
+            if (pending is null || !pending.TryPop(out items))
+                return false;
         }
 
         return false;
+
+        static IReadOnlyList<Pattern>? StructureItemsOf(Pattern pattern) => pattern switch
+        {
+            SequenceValue(var sequenceItems) => sequenceItems,
+            ListValue(var listItems) => listItems,
+            _ => null,
+        };
     }
 
     /// <summary>
@@ -2886,6 +3000,22 @@ internal closed record PreEvaluationAstViolation
     internal sealed record CollectingClauseBinder() : PreEvaluationAstViolation;
 
     /// <summary>
+    /// A misplaced META capture in a parameter-pattern list (CallReference S1): one inside a
+    /// structural pattern, or one whose name the list binds again
+    /// (<see cref="ParameterPattern.FindMetaViolation"/>). The parser reports
+    /// <see cref="DiagnosticCode.InvalidMetaParameter"/> for a written head, so only a host-built tree
+    /// reaches this. Lean: <c>Error.illegalInEval invalidMetaParameterMessage</c>.
+    /// </summary>
+    internal sealed record InvalidMetaParameter() : PreEvaluationAstViolation;
+
+    /// <summary>
+    /// A clause-family branch head holding a META binder (CallReference S1). The parser reports
+    /// <see cref="DiagnosticCode.InvalidMetaParameter"/> for a written family; C#-only like
+    /// <see cref="CollectingClauseBinder"/>: Lean's clause binders have no kind.
+    /// </summary>
+    internal sealed record MetaClauseBinder() : PreEvaluationAstViolation;
+
+    /// <summary>
     /// A callable alias whose written target is not a STATIC PATH — a name, or an argumentless
     /// structural dot path whose head is a name or a block (the front end only forms an alias over
     /// one, so only a host-built tree reaches this). Lean:
@@ -3470,6 +3600,14 @@ internal static class AlgorithmValidation
                     if (stopAfterFirst)
                         return;
                 }
+
+                // Lean: `ParameterPattern.metaViolation?` follows the X-02 rules (CallReference S1).
+                if (ParameterPattern.FindMetaViolation(algorithm.ParameterPatterns) is not null)
+                {
+                    Violations.Add(new PreEvaluationAstViolation.InvalidMetaParameter());
+                    if (stopAfterFirst)
+                        return;
+                }
             }
 
             // Test the STORED parameter-pattern list, Lean's actual Algorithm.mk field
@@ -3537,9 +3675,19 @@ internal static class AlgorithmValidation
             // the single-clause flat-binder conversion and was ignored by zero-argument
             // acceptance while the binder accepted an empty supply.
             if (checkConditionalBranchArities
-                && algorithm.Branches.Any(static branch => branch.Pattern.HeadHasCollectingBinder()))
+                && algorithm.Branches.Any(static branch => branch.Pattern.HeadHasBinderOfKind(ParameterKind.Collecting)))
             {
                 Violations.Add(new PreEvaluationAstViolation.CollectingClauseBinder());
+                if (stopAfterFirst)
+                    return;
+            }
+
+            // A clause binder is never META (CallReference S1): the parser refuses one in a clause
+            // family, and Lean's clause binders have no kind.
+            if (checkConditionalBranchArities
+                && algorithm.Branches.Any(static branch => branch.Pattern.HeadHasBinderOfKind(ParameterKind.Meta)))
+            {
+                Violations.Add(new PreEvaluationAstViolation.MetaClauseBinder());
                 if (stopAfterFirst)
                     return;
             }

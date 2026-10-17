@@ -520,8 +520,8 @@ public static class SemanticExplorerCorpus
         // Spread of a DIRECT written block whose output is missing: the
         // operand stays syntactically a Block, so evaluation takes the
         // specialized Block arm of the spread-operand evaluator on both
-        // sides (Lean `evalSequenceSpreadOperandItems` `.algorithmExpr`; C#
-        // `EvalSequenceSpreadOperandItems`). Pinned as the spread-specific
+        // sides (Lean `evalSequenceSpreadOperandValue` `.algorithmExpr`; C#
+        // `EvalSequenceSpreadOperandValue`). Pinned as the spread-specific
         // error at every spread position, identical to the resolved-name
         // spelling (T4-2 — this arm was previously uncovered).
         Special("spreadNoOutputBlockRoot", "{A = 1}*, 997"),

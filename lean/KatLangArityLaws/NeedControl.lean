@@ -228,7 +228,7 @@ theorem source_run (a : Nat) (s : EvalState) :
   | none => rfl
   | some cell =>
     cases cell with
-    | mk suspension state callable => cases suspension <;> rfl
+    | mk suspension state callable plan => cases suspension <;> rfl
 
 theorem reopen_run (slice : List Nat) (s : EvalState) :
     (slice.mapM (fun a => do pure (a, ← needWrittenSource? a)) : EvalM (List (Nat × Option Expr))).runState s = (.ok (slice.map (fun a => (a, sourceAt s.needs a))), s) := by
@@ -255,23 +255,23 @@ end KatLang.NeedControl.Provenance
 
 
 namespace KatLang.NeedControl.Memo
-theorem completed_sticky (ev) (demand : Nat → EvalM CountedResult)
+theorem completed_sticky (ev) (route : NeedPlan.Route) (demand : Nat → EvalM CountedResult)
     (a : Nat) (s : EvalState) (cell : NeedCell) (outcome : Except Error CountedResult)
     (hc : s.needs[a]? = some cell) (hs : cell.state = .completed outcome) :
-    (step ev demand a).runState s = (outcome, s) := by
+    (step ev route demand a).runState s = (outcome, s) := by
   simp only [step, KatLang.NeedControl.Collector.bind_run, KatLang.NeedControl.Provenance.get_run, hc, hs]
   cases outcome <;> rfl
 
-theorem suspended_retains_state (ev) (demand : Nat → EvalM CountedResult)
+theorem suspended_retains_state (ev) (route : NeedPlan.Route) (demand : Nat → EvalM CountedResult)
     (a : Nat) (s t : EvalState) (cell : NeedCell) (outcome : Except Error CountedResult)
     (hc : s.needs[a]? = some cell) (hs : cell.state = .suspended)
-    (hr : (suspendedValue ev demand cell.suspension).runState
+    (hr : (suspendedValue ev route demand a cell.suspension).runState
       { s with needs := s.needs.modify a (fun c => { c with state := .evaluating }) } = (outcome, t)) :
-    (step ev demand a).runState s =
+    (step ev route demand a).runState s =
       (outcome, { t with needs := t.needs.modify a (fun c => { c with state := .completed outcome }) }) := by
   simp only [step, KatLang.NeedControl.Collector.bind_run, KatLang.NeedControl.Provenance.get_run, hc, hs]
   change (do
-    let outcome ← evalAttempt (suspendedValue ev demand cell.suspension)
+    let outcome ← evalAttempt (suspendedValue ev route demand a cell.suspension)
     modify fun s => { s with needs := s.needs.modify a (fun c => { c with state := .completed outcome }) }
     return ← outcome : EvalM CountedResult).runState
       { s with needs := s.needs.modify a (fun c => { c with state := .evaluating }) } = _
@@ -296,13 +296,25 @@ theorem ordinary_singleton (ev) (ctx : EvalCtx) (env : ValEnv) (source : Expr)
   exact (hn operand rfl).elim
 
 theorem computed_spread_ready (ev) (ctx : EvalCtx) (env : ValEnv)
-    (operand : Expr) (opened : CountedResult) (s t : EvalState)
+    (operand : Expr) (values : List Result) (s t : EvalState)
     (hk : (spreadCollectorSlice? operand ctx).runState s = (.ok none, s))
-    (he : (ev (.sequenceSpread operand) ctx env).runState s = (.ok opened, t)) :
+    (he : (ev (.sequenceSpread operand) ctx env).runState s = (.ok (.items values), t)) :
     (slot ev ctx env (.sequenceSpread operand)).runState s =
-      ((countedTopLevelValues opened).mapM (fun value => do
+      (values.mapM (fun value => do
         pure (← readyNeed (value, Result.valueCount value), (none : Option Expr)))).runState t := by
   simp only [slot, bind_run, hk, he]
+
+/-- **Cell-preserving spread (CallReference S2).** A computed spread slot whose capability
+    contributes transported CELLS (an argument view's plan supply) supplies EXACTLY those cells,
+    in order, with their sources: the slot itself allocates nothing, wraps nothing and demands
+    nothing beyond the capability's own run. -/
+theorem computed_spread_transports (ev) (ctx : EvalCtx) (env : ValEnv)
+    (operand : Expr) (cells : List NeedSupply.Sourced) (s t : EvalState)
+    (hk : (spreadCollectorSlice? operand ctx).runState s = (.ok none, s))
+    (he : (ev (.sequenceSpread operand) ctx env).runState s = (.ok (.cells cells), t)) :
+    (slot ev ctx env (.sequenceSpread operand)).runState s = (.ok cells, t) := by
+  simp only [slot, bind_run, hk, he]
+  rfl
 
 theorem spread_failure (ev) (ctx : EvalCtx) (env : ValEnv)
     (operand : Expr) (rest : OutputBundle) (s t : EvalState) (e : Error)
@@ -513,8 +525,8 @@ theorem noncollector_parameter (name : Ident) (caller : EvalCtx) (s : EvalState)
   | collector slice => exact (kind slice hs).elim
 
 theorem source_expression_any_state (e : Expr) (ctx : EvalCtx) (env : ValEnv)
-    (status : NeedState) (callable : Option (Except Error (Option Algorithm))) (s : EvalState) (a : Nat)
-    (h : s.needs[a]? = some ⟨.expression e ctx env, status, callable⟩) :
+    (status : NeedState) (callable : Option (Except Error (Option Algorithm))) (plan : NeedPlanSupply) (s : EvalState) (a : Nat)
+    (h : s.needs[a]? = some ⟨.expression e ctx env, status, callable, plan⟩) :
     (needWrittenSource? a).runState s = (.ok (some e), s) := by
   rw [source_run]
   simp only [sourceAt, h]
@@ -547,28 +559,28 @@ theorem completion_preserves_other_cell (s : EvalState) (a b : Nat)
 
 /-- Actual memo shell publication with explicit original validity, nonshrinking heap,
     and retained suspension identity. Callable and state fields may evolve. -/
-theorem suspended_publishes (ev) (demand : Nat → EvalM CountedResult)
+theorem suspended_publishes (ev) (route : NeedPlan.Route) (demand : Nat → EvalM CountedResult)
     (a : Nat) (s t : EvalState) (cell current : NeedCell) (outcome : Except Error CountedResult)
     (hc : s.needs[a]? = some cell) (hs : cell.state = .suspended)
-    (hr : (NeedDemand.suspendedValue ev demand cell.suspension).runState
+    (hr : (NeedDemand.suspendedValue ev route demand a cell.suspension).runState
       {s with needs := s.needs.modify a (fun c => {c with state := .evaluating})} = (outcome, t))
     (valid : a < s.needs.size) (nonshrinking : s.needs.size ≤ t.needs.size)
     (present : t.needs[a]? = some current) (identity : current.suspension = cell.suspension) :
-    ((NeedDemand.step ev demand a).runState s).1 = outcome ∧
-    ((NeedDemand.step ev demand a).runState s).2.needs[a]? =
+    ((NeedDemand.step ev route demand a).runState s).1 = outcome ∧
+    ((NeedDemand.step ev route demand a).runState s).2.needs[a]? =
       some {current with state := .completed outcome} ∧
     current.suspension = cell.suspension ∧ a < t.needs.size := by
-  rw [KatLang.NeedControl.Memo.suspended_retains_state ev demand a s t cell outcome hc hs hr]
+  rw [KatLang.NeedControl.Memo.suspended_retains_state ev route demand a s t cell outcome hc hs hr]
   exact ⟨rfl, completion_publication t a current outcome present, identity,
     size_preserves_valid_address s t a valid nonshrinking⟩
 
 /-- Whole-cell prefix equality is intentionally absent: completion changes NeedState. -/
-theorem completed_reuse_after_publication (ev) (demand : Nat → EvalM CountedResult)
+theorem completed_reuse_after_publication (ev) (route : NeedPlan.Route) (demand : Nat → EvalM CountedResult)
     (s : EvalState) (a : Nat) (current : NeedCell) (outcome : Except Error CountedResult)
     (h : s.needs[a]? = some current) :
     let t := {s with needs := s.needs.modify a (fun c => {c with state := .completed outcome})}
-    (NeedDemand.step ev demand a).runState t = (outcome, t) := by
-  exact KatLang.NeedControl.Memo.completed_sticky ev demand a _ _ outcome (completion_publication s a current outcome h) rfl
+    (NeedDemand.step ev route demand a).runState t = (outcome, t) := by
+  exact KatLang.NeedControl.Memo.completed_sticky ev route demand a _ _ outcome (completion_publication s a current outcome h) rfl
 
 
 end KatLang.NeedControl.Schedule
@@ -586,17 +598,17 @@ theorem evalM_associativity {α β γ : Type} (x : EvalM α) (f : α → EvalM �
     (x.runState >>= fun a => (f a).runState >>= fun b => (g b).runState)
   exact bind_assoc x.runState (fun a => (f a).runState) (fun b => (g b).runState)
 
-/-- The public sourced entry point is the ONE total formation core at evalCounted.
+/-- The public sourced entry point is the ONE total formation core at `evalSupplySpread`.
     Recursive callers install the same specialization directly (a source fact). -/
 theorem sourced_specialization (args : OutputBundle) (ctx : EvalCtx) (env : ValEnv) :
-    formNeedSupplySourced args ctx env = NeedSupply.form evalCounted ctx env args := rfl
+    formNeedSupplySourced args ctx env = NeedSupply.form evalSupplySpread ctx env args := rfl
 
 theorem address_projection (args : OutputBundle) (ctx : EvalCtx) (env : ValEnv) :
     formNeedSupply args ctx env = (do
       pure ((← formNeedSupplySourced args ctx env).map Prod.fst)) := rfl
 
 theorem address_specialization (args : OutputBundle) (ctx : EvalCtx) (env : ValEnv) :
-    formNeedSupply args ctx env = NeedSupply.addresses evalCounted ctx env args := rfl
+    formNeedSupply args ctx env = NeedSupply.addresses evalSupplySpread ctx env args := rfl
 
 /-- Successful address-only formation preserves the sourced order and final state. -/
 theorem address_projection_run (args : OutputBundle) (ctx : EvalCtx) (env : ValEnv)
@@ -609,11 +621,11 @@ theorem address_projection_run (args : OutputBundle) (ctx : EvalCtx) (env : ValE
 /-- The public demand entry point is total. The recursive edge is still opaque;
     this does NOT assert a kernel equality to demandNeedRecursive. -/
 theorem demand_specialization (a : Nat) :
-    demandNeed a = NeedDemand.step evalCounted demandNeedRecursive a := rfl
+    demandNeed a = NeedDemand.step evalCounted productionPlanRoute demandNeedRecursive a := rfl
 
 /-- This is the actual collector arm the production shell executes. -/
-theorem collector_specialization (ev) (recur : Nat → EvalM CountedResult) (slice : List Nat) :
-    NeedDemand.suspendedValue ev recur (.collector slice) =
+theorem collector_specialization (ev) (route : NeedPlan.Route) (recur : Nat → EvalM CountedResult) (a : Nat) (slice : List Nat) :
+    NeedDemand.suspendedValue ev route recur a (.collector slice) =
       NeedDemand.materialize recur slice := rfl
 
 /-- The R3 interface consumes the total formation's projection with no new adapter,
@@ -623,7 +635,7 @@ theorem binder_composition (channels : NeedChannels) (patterns : List NeedPatter
     (do
       let cells ← formNeedSupply args ctx env
       bindNeedPatterns channels patterns cells family) = (do
-      let sourced ← NeedSupply.form evalCounted ctx env args
+      let sourced ← NeedSupply.form evalSupplySpread ctx env args
       NeedBinder.bindPatterns channels.capabilities patterns (sourced.map Prod.fst) family) := by
   simp only [formNeedSupply, formNeedSupplySourced, bindNeedPatterns]
   simp only [evalM_associativity, EvalM.pure_bind]
@@ -632,18 +644,18 @@ theorem completed_reuse (a : Nat) (s : EvalState) (cell : NeedCell)
     (outcome : Except Error CountedResult) (hc : s.needs[a]? = some cell)
     (hs : cell.state = .completed outcome) :
     (demandNeed a).runState s = (outcome, s) :=
-  Memo.completed_sticky evalCounted demandNeedRecursive a s cell outcome hc hs
+  Memo.completed_sticky evalCounted productionPlanRoute demandNeedRecursive a s cell outcome hc hs
 
-theorem evaluating_cycle (ev) (recur : Nat → EvalM CountedResult) (a : Nat)
+theorem evaluating_cycle (ev) (route : NeedPlan.Route) (recur : Nat → EvalM CountedResult) (a : Nat)
     (s : EvalState) (cell : NeedCell) (hc : s.needs[a]? = some cell)
     (hs : cell.state = .evaluating) :
-    (NeedDemand.step ev recur a).runState s = (.error .demandCycle, s) := by
+    (NeedDemand.step ev route recur a).runState s = (.error .demandCycle, s) := by
   simp only [NeedDemand.step, Collector.bind_run, Provenance.get_run, hc, hs]
   rfl
 
-theorem invalid_address (ev) (recur : Nat → EvalM CountedResult) (a : Nat)
+theorem invalid_address (ev) (route : NeedPlan.Route) (recur : Nat → EvalM CountedResult) (a : Nat)
     (s : EvalState) (hc : s.needs[a]? = none) :
-    (NeedDemand.step ev recur a).runState s =
+    (NeedDemand.step ev route recur a).runState s =
       (.error (.illegalInEval "invalid need address"), s) := by
   simp only [NeedDemand.step, Collector.bind_run, Provenance.get_run, hc]
   rfl

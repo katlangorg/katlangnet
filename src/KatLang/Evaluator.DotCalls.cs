@@ -175,7 +175,7 @@ public static partial class Evaluator
         if (items.Count != 1)
             return new EvalError.ArityMismatch(1, items.Count);
 
-        var collectionValuesR = BindSequenceBuiltinCollectionArgument(items[0], ctx, valEnv);
+        var collectionValuesR = BindSequenceBuiltinCollectionArgument(BuiltinId.@filter, items[0], ctx, valEnv);
         if (collectionValuesR.IsError)
             return collectionValuesR.Error;
 
@@ -506,6 +506,10 @@ public static partial class Evaluator
                     if (outR.IsError) return outR.Error;
                     return EvalResult<CountedResult>.Ok(new CountedResult(outR.Value, outR.Value.ValueCount()));
                 }
+                if (dotCall.UsesDotInvokeIntrinsic())
+                    return EvalDotInvokeValueReceiverCounted(dotCall, ctx, valEnv);
+                if (dotCall.UsesDotArgumentsIntrinsic())
+                    return EvalDotArgumentsValueReceiverCounted(dotCall, ctx, valEnv);
                 return CallLexicalWithReceiverCounted(dotCall, ctx, valEnv);
             }
 
@@ -578,7 +582,115 @@ public static partial class Evaluator
             return EvalResult<CountedResult>.Ok(new CountedResult(outR.Value, outR.Value.ValueCount()));
         }
 
+        // A structural miss spelled `Invoke` is the call-reference intrinsic (CallReference S1, J1).
+        if (dotCall.UsesDotInvokeIntrinsic())
+            return EvalDotInvokeIntrinsicCounted(dotCall, targetAlg, receiverIsStructuralMember, ctx, valEnv);
+
+        // A structural miss spelled `Arguments` is the argument-view intrinsic (CallReference S2).
+        if (dotCall.UsesDotArgumentsIntrinsic())
+            return EvalDotArgumentsIntrinsicCounted(dotCall, targetAlg, receiverIsStructuralMember, ctx, valEnv);
+
         return CallLexicalWithReceiverCounted(dotCall, ctx, valEnv);
+    }
+
+    /// <summary>
+    /// The route fact of the <c>Arguments</c> intrinsic (CallReference S2), decided before the receiver is
+    /// demanded: the argument view is a PROPERTY of a call reference, so any written argument list —
+    /// <c>R.Arguments()</c> included — is refused, nothing formed or demanded, and the view is never
+    /// executed. Lean: <c>rejectArgumentsIntrinsicArguments</c>.
+    /// </summary>
+    private static EvalError? RejectDotArgumentsIntrinsicArguments(OutputBundle? argsOpt)
+        => argsOpt is null ? null : new EvalError.IllegalInEval(ArgumentsIsPropertyMessage);
+
+    /// <summary>
+    /// The receiver VALUE of a call-reference intrinsic (<c>Invoke</c>, <c>Arguments</c>) on a structural
+    /// miss of an algorithm receiver, read EXACTLY as the <c>.string</c> intrinsic reads it — an alias as
+    /// its target, the zero-argument demand law, a property through its cache, a parameter through its
+    /// cell (<see cref="EvalDotStringReceiverAlgOutput"/>). Lean: the receiver read shared by the
+    /// <c>"Invoke"</c> and <c>"Arguments"</c> arms of <c>evalDotCallCounted</c>.
+    /// </summary>
+    private static EvalResult<Result> EvalDotReferenceIntrinsicReceiver(
+        Expr.DotCall dotCall, Algorithm targetAlg, bool receiverIsStructuralMember, EvalCtx ctx, ValEnv valEnv)
+    {
+        if (targetAlg is Algorithm.Alias alias)
+        {
+            var aliasTarget = ResolveAliasTarget(alias, ctx);
+            if (aliasTarget.IsError) return aliasTarget.Error;
+            targetAlg = aliasTarget.Value;
+        }
+        return EvalDotStringReceiverAlgOutput(dotCall.Target, targetAlg, receiverIsStructuralMember, ctx, valEnv);
+    }
+
+    /// <summary>
+    /// <c>R.Arguments</c> on a structural miss: the route fact, then the receiver
+    /// (<see cref="EvalDotReferenceIntrinsicReceiver"/>), then the reference's ONE argument view
+    /// (<see cref="ArgumentsOfCallReferenceValue"/>) — nothing else runs. Lean: the <c>"Arguments"</c> arm
+    /// of <c>evalDotCallCounted</c>.
+    /// </summary>
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+    private static EvalResult<CountedResult> EvalDotArgumentsIntrinsicCounted(
+        Expr.DotCall dotCall, Algorithm targetAlg, bool receiverIsStructuralMember, EvalCtx ctx, ValEnv valEnv)
+    {
+        if (RejectDotArgumentsIntrinsicArguments(dotCall.Args) is { } rejection)
+            return rejection;
+        var receiver = EvalDotReferenceIntrinsicReceiver(dotCall, targetAlg, receiverIsStructuralMember, ctx, valEnv);
+        return receiver.IsError ? receiver.Error : ArgumentsOfCallReferenceValue(receiver.Value, ctx);
+    }
+
+    /// <summary>
+    /// <c>x.Arguments</c> whose receiver declares no member (a value receiver, a call result): the route
+    /// fact, then the receiver's ordinary value, then its argument view. Lean: the <c>"Arguments"</c> arm
+    /// of the value-receiver branch of <c>evalDotCallCounted</c>.
+    /// </summary>
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+    private static EvalResult<CountedResult> EvalDotArgumentsValueReceiverCounted(Expr.DotCall dotCall, EvalCtx ctx, ValEnv valEnv)
+    {
+        if (RejectDotArgumentsIntrinsicArguments(dotCall.Args) is { } rejection)
+            return rejection;
+        var receiver = Eval(dotCall.Target, ctx, valEnv);
+        return receiver.IsError ? receiver.Error : ArgumentsOfCallReferenceValue(receiver.Value, ctx);
+    }
+
+    /// <summary>
+    /// The argument-list route fact of the <c>Invoke</c> intrinsic (CallReference S1), decided before the
+    /// receiver is demanded: <c>R.Invoke</c> without a list is refused — the intrinsic is never a property
+    /// read and never executes implicitly — and a written list must supply nothing, formed and rejected
+    /// exactly as for <c>.string</c> (<c>R.Invoke(8)</c> is <c>ArityMismatch(0, 1)</c>: S1 has no
+    /// replacement arguments). Lean: <c>rejectInvokeIntrinsicArguments</c>.
+    /// </summary>
+    private static EvalError? RejectDotInvokeIntrinsicArguments(OutputBundle? argsOpt, EvalCtx ctx, ValEnv valEnv)
+        => argsOpt is null
+            ? new EvalError.IllegalInEval(InvokeRequiresArgumentListMessage)
+            : RejectDotStringIntrinsicArguments(argsOpt, ctx, valEnv);
+
+    /// <summary>
+    /// <c>R.Invoke()</c> on a structural miss: the route fact, then the receiver
+    /// (<see cref="EvalDotReferenceIntrinsicReceiver"/>), then the reference's execution
+    /// (<see cref="InvokeCallReferenceValue"/>). Out of line so the recursive dot frame keeps its size.
+    /// Lean: the <c>"Invoke"</c> arm of <c>evalDotCallCounted</c>.
+    /// </summary>
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+    private static EvalResult<CountedResult> EvalDotInvokeIntrinsicCounted(
+        Expr.DotCall dotCall, Algorithm targetAlg, bool receiverIsStructuralMember, EvalCtx ctx, ValEnv valEnv)
+    {
+        if (RejectDotInvokeIntrinsicArguments(dotCall.Args, ctx, valEnv) is { } rejection)
+            return rejection;
+        var receiver = EvalDotReferenceIntrinsicReceiver(dotCall, targetAlg, receiverIsStructuralMember, ctx, valEnv);
+        return receiver.IsError ? receiver.Error : InvokeCallReferenceValue(receiver.Value, ctx);
+    }
+
+    /// <summary>
+    /// <c>x.Invoke()</c> whose receiver declares no member (a value receiver, a call result): the route
+    /// fact, then the receiver's ordinary value, then the reference's execution. Lean: the
+    /// <c>"Invoke"</c> arm of the value-receiver branch of <c>evalDotCallCounted</c>.
+    /// </summary>
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+    private static EvalResult<CountedResult> EvalDotInvokeValueReceiverCounted(Expr.DotCall dotCall, EvalCtx ctx, ValEnv valEnv)
+    {
+        if (RejectDotInvokeIntrinsicArguments(dotCall.Args, ctx, valEnv) is { } rejection)
+            return rejection;
+        var receiver = Eval(dotCall.Target, ctx, valEnv);
+        return receiver.IsError ? receiver.Error : InvokeCallReferenceValue(receiver.Value, ctx);
     }
 
     /// <summary>

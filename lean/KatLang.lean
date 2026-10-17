@@ -133,10 +133,21 @@ namespace KatLang
 abbrev Ident := String    -- algorithm / property / parameter names
 abbrev Assoc (K V : Type) := List (Prod K V)  -- association list
 
+/-- How a parameter capture binds its one supplied slot. `meta` (CallReference S1,
+    October 2026) is the META modifier `meta name`: the capture binds a run-scoped
+    reference to the SUPPLIED CALL's invocation plan (`Result.callRef`, `NeedPattern.meta`)
+    instead of the call's cell. It is a FIXED, non-collecting capture — one slot, like
+    `normal` — and is valid only as a unique top-level capture of an explicitly written
+    ordinary parameter list (`ParameterPattern.metaViolation?`). C#: `ParameterKind.Meta`. -/
 inductive ParameterKind where
   | normal
   | collecting
-  deriving Repr, BEq, DecidableEq
+  | metaRef
+  deriving Repr, DecidableEq
+
+/-- `==` on parameter kinds IS decidable equality (a lawful `BEq`), so proofs decide kind
+    comparisons by constructor disequality. -/
+instance : BEq ParameterKind := instBEqOfDecidableEq
 
 structure CallableParameter where
   name : Ident
@@ -181,6 +192,7 @@ def CallableParameter.displayName (parameter : CallableParameter) : String :=
   match parameter.kind with
   | .normal => parameter.name
   | .collecting => "*" ++ parameter.name
+  | .metaRef => "meta " ++ parameter.name
 
 namespace ParameterPattern
   partial def captures : ParameterPattern -> List CallableParameter
@@ -268,6 +280,7 @@ namespace ParameterPattern
         match parameter.kind with
         | .normal => true
         | .collecting => false
+        | .metaRef => true
     | [.sequenceValue _] => true
     | [.listValue _] => true
     | [.unpacking _] => true
@@ -386,6 +399,39 @@ namespace ParameterPattern
     else if hasMultipleCollectingCapturesAtAnyLevel patterns then some .multipleCollectingAtOneLevel
     else if hasRepeatedCaptureNameIncludingCollecting patterns then some .repeatedNameIncludesCollecting
     else none
+
+  mutual
+    /-- Whether a META capture occurs anywhere INSIDE a structural pattern. -/
+    def hasNestedMeta : ParameterPattern -> Bool
+      | .capture _ => false
+      | .sequenceValue items => anyHasMetaCapture items
+      | .listValue items => anyHasMetaCapture items
+      | .unpacking items => anyHasMetaCapture items
+
+    /-- Whether a META capture occurs anywhere in a pattern list, at any depth. -/
+    def anyHasMetaCapture : List ParameterPattern -> Bool
+      | [] => false
+      | .capture parameter :: rest => parameter.kind == ParameterKind.metaRef || anyHasMetaCapture rest
+      | pattern :: rest => hasNestedMeta pattern || anyHasMetaCapture rest
+  end
+
+  /-- The names of the TOP-LEVEL META captures of a pattern list, in written order. -/
+  def topLevelMetaNames (patterns : List ParameterPattern) : List Ident :=
+    patterns.filterMap fun
+      | .capture parameter => if parameter.kind == ParameterKind.metaRef then some parameter.name else none
+      | _ => none
+
+  /-- THE META PLACEMENT RULE (CallReference S1, October 2026): `meta` may modify only a
+      TOP-LEVEL capture of a parameter list whose name occurs ONCE in that list — never a
+      capture inside a sequence, list or unpacking pattern, and never a repeated name. A
+      META capture is fixed by construction (`ParameterKind.metaRef` is not `collecting`). Clause
+      families cannot carry META at all: Lean's clause binder `Pattern.bind` has no kind, and
+      the C# front end and preflight reject a META clause binder. `none` for a valid list.
+      C#: `ParameterPattern.FindMetaViolation`. -/
+  def metaViolation? (patterns : List ParameterPattern) : Option Ident :=
+    match patterns.find? hasNestedMeta with
+    | some pattern => some pattern.displayName
+    | none => (topLevelMetaNames patterns).find? (fun name => 2 ≤ anyNameOccurrences name patterns)
 end ParameterPattern
 
 def callableParameterNameStartChar (c : Char) : Bool :=
@@ -450,11 +496,11 @@ def CallableSignature.collectingIndex? (signature : CallableSignature) : Option 
     | index, parameter :: rest =>
         match parameter.kind with
         | .collecting => some index
-        | .normal => go (index + 1) rest
+        | .normal | .metaRef => go (index + 1) rest
   go 0 signature.parameters
 
 def CallableSignature.requiredNormalParameterCount (signature : CallableSignature) : Nat :=
-  (signature.parameters.filter (fun parameter => parameter.kind == ParameterKind.normal)).length
+  (signature.parameters.filter (fun parameter => parameter.kind != ParameterKind.collecting)).length
 
 def CallableSignature.acceptsItemCount (signature : CallableSignature) (count : Nat) : Bool :=
   -- A collecting user signature consumes an item supply: it accepts at least
@@ -1483,6 +1529,28 @@ inductive Result where
   -- distinct values, `listValue []` is distinct from the empty sequence
   -- value, and nesting is preserved exactly. C#: `Result.ListValue`.
   | listValue : List Result -> Result
+  -- CALL REFERENCE (CallReference S1, October 2026): the opaque, run-scoped reference
+  -- a `meta` parameter binds — the INVOCATION PLAN of one supplied call computation,
+  -- identified by that call's need address (`NeedPlan.reify`). It is an ordinary
+  -- transportable value (bindings, properties, `if`, selection, lists and sequences
+  -- carry it unchanged) but no callable algorithm: it has no CALLABLE identity, no
+  -- structural members, no number, Boolean or text view, and no ordering. Two
+  -- references are equal iff they denote the same plan (derived `BEq` on the address).
+  -- Its one operation is the dot intrinsic `R.Invoke()` (`NeedPlan.invoke`). It never
+  -- leaves its run: the run result boundary (`runResultM`) and text conversion
+  -- reject any value containing one (`Result.containsCallRef`). C#: `Result.CallReference`.
+  | callRef : Nat -> Result
+  -- ARGUMENT VIEW (CallReference S2, October 2026): the lazy, read-only view `R.Arguments`
+  -- of the ORIGINAL effective argument supply of the call reference `callRef a` — the same
+  -- plan address, a different object (`argView a ≠ callRef a`). Obtaining it runs nothing:
+  -- no target, no supply preparation, no argument VALUE. Its operations are `count`
+  -- (prepares the plan's ONE sticky supply, demands no argument), selection / `first` /
+  -- `last` (prepare, then demand ONLY the selected cells) and the supply spread `F(V*)`,
+  -- which TRANSPORTS the plan's original cells (`NeedSupply.slot`, `SpreadSupply.cells`).
+  -- Like a call reference it is opaque (no CALLABLE, members, number, Boolean, text,
+  -- ordering), equal only to itself (derived `BEq`), and never leaves its run
+  -- (`containsCallRef`). C#: `Result.CallReference` with `IsArgumentView`.
+  | argView : Nat -> Result
   deriving Repr, BEq
 
 namespace Result
@@ -1499,6 +1567,8 @@ namespace Result
     -- inside a list still normalizes) but never collapse the list boundary
     -- itself — `[7]` stays `[7]`, never `7`.
     | listValue rs => listValue (rs.map normalize)
+    | callRef a => callRef a
+    | argView a => argView a
 
   /-- Language-level atom collection for the `atoms` builtin: recursively
       collect numeric atoms depth-first, left-to-right, through BOTH sequence
@@ -1515,6 +1585,8 @@ namespace Result
     | bool _    => []
     | sequenceValue rs => rs.flatMap languageAtoms
     | listValue rs => rs.flatMap languageAtoms
+    | callRef _ => []
+    | argView _ => []
 
   /-- Host-boundary numeric flattening used by `runFlat`: the numeric atoms
       reachable through sequence AND exact list boundaries, so collection-
@@ -1532,6 +1604,8 @@ namespace Result
     | bool _    => []
     | sequenceValue rs => rs.flatMap hostAtoms
     | listValue rs => rs.flatMap hostAtoms
+    | callRef _ => []
+    | argView _ => []
 
   /-- Canonical text of a Boolean value: lowercase `true` / `false`, the same
       spelling as the literals. C#: `ValueTextRenderer.FormatBool`. -/
@@ -1574,6 +1648,8 @@ namespace Result
         | atom n => some n
         | _      => none
     | listValue _ => none   -- lists never coerce to numbers, not even `[5]`
+    | callRef _ => none     -- a call reference is no number
+    | argView _ => none     -- nor is an argument view
 
   /-- Top-level items of a MULTI-ITEM counted result: a sequence value's items;
       any other value is itself. This is not an opening operation — call
@@ -1595,6 +1671,8 @@ namespace Result
     | bool b   => [bool b]
     | sequenceValue rs => rs
     | listValue rs => [listValue rs]
+    | callRef a => [callRef a]
+    | argView a => [argView a]
 
   /-- Item view used by the spread expression (`expr*`): spread opens exactly ONE
       structure boundary. Sequence values and exact list values open to their
@@ -1708,6 +1786,29 @@ namespace Result
     | bool b => boolText b
     | sequenceValue rs => "(" ++ ", ".intercalate (rs.map canonicalText) ++ ")"
     | listValue rs => "[" ++ ", ".intercalate (rs.map canonicalText) ++ "]"
+    -- A call reference has NO text (CallReference S1): the evaluator's interpolation
+    -- arm rejects a hole whose value contains one BEFORE this function sees it
+    -- (`requireCallRefFree`), so this arm is unreachable from evaluation; it exists only
+    -- to keep the function total and is not a display syntax.
+    | callRef _ => ""
+    | argView _ => ""
+
+  mutual
+    /-- Whether a value CONTAINS a call reference at any depth (CallReference S1). The run
+        result boundary (`runResultM`) and interpolation reject such a value; ordinary
+        language operations transport it. C#: `Evaluator.ContainsCallReference`. -/
+    def containsCallRef : Result -> Bool
+      | callRef _ => true
+      | argView _ => true
+      | sequenceValue rs => anyContainsCallRef rs
+      | listValue rs => anyContainsCallRef rs
+      | _ => false
+
+    /-- Whether some value of a list contains a call reference. -/
+    def anyContainsCallRef : List Result -> Bool
+      | [] => false
+      | r :: rs => containsCallRef r || anyContainsCallRef rs
+  end
 end Result
 
 /-- INTERPOLATION (VAL-12), the TOTAL combinator the evaluator's
@@ -1869,10 +1970,28 @@ inductive NeedSuspension where
   | ready (value : CountedResult)
   deriving Repr
 
+/-- The invocation-plan supply of ONE supplied call computation (CallReference M1.5,
+    October 2026; `NeedPlan`). A cell whose suspension is a supported written call
+    (`NeedPlan.callShape?`) IS an invocation plan, identified by its need address: VALUE
+    demand executes the plan, and the internal META projection (`NeedPlan.reify`) reifies the
+    same address. The plan forms its effective argument supply at most once, through the ONE
+    former `NeedSupply.form`; the outcome — the ordered sourced cells or an ordinary failure —
+    is sticky (D3, provisional) and every later execution of the plan runs over exactly it.
+    `preparing` marks a formation in progress (a reentrant preparation is a `demandCycle`, which
+    no ordinary program reaches: VALUE re-entry is already a cycle of the cell itself).
+    It is semantic run state, never an observation field, and it never holds a VALUE result:
+    the cell's VALUE stays in `NeedState`. Every other cell stays `unprepared`. -/
+inductive NeedPlanSupply where
+  | unprepared
+  | preparing
+  | prepared (outcome : Except Error (List (Nat × Option Expr)))
+  deriving Repr
+
 structure NeedCell where
   suspension : NeedSuspension
   state : NeedState := .suspended
   callable : Option (Except Error (Option Algorithm)) := none
+  plan : NeedPlanSupply := .unprepared
   deriving Repr
 
 /-- The parameter bindings saved by one lexical owner activation: its value
@@ -2188,7 +2307,7 @@ namespace Algorithm
         | index, parameter :: parameters =>
             match parameter.kind with
             | .collecting => some (index, parameter.name)
-            | .normal => go (index + 1) parameters
+            | .normal | .metaRef => go (index + 1) parameters
       go 0 (parameters a)
 
   /-- A callable whose top-level parameter list consumes the supplied call
@@ -2432,6 +2551,12 @@ def multipleCollectingBindingsPerLevelMessage : String :=
 /-- The third X-02 rule, shared by written/inferred signatures and host-built preflight. -/
 def repeatedNameIncludesCollectingMessage : String :=
   "Repeated parameter names cannot include collecting bindings."
+
+/-- The META placement rule's message (CallReference S1, `ParameterPattern.metaViolation?`),
+    shared by the parser's `InvalidMetaParameter` report and the pre-evaluation violation
+    `PreEvaluationAstViolation.InvalidMetaParameter`. -/
+def invalidMetaParameterMessage : String :=
+  "`meta` may modify only a plain, fixed parameter name written once at the top level of an ordinary parameter list."
 
 /-- The collector rule over an algorithm's OWN parameter patterns (X-02): some
     pattern level holds more than one collecting capture. -/
@@ -2700,6 +2825,8 @@ mutual
     | .mk parent? parameters op pr out _ =>
         if let some .repeatedNameIncludesCollecting := ParameterPattern.signatureViolation? parameters then
           .error (Error.illegalInEval repeatedNameIncludesCollectingMessage)
+        if (ParameterPattern.metaViolation? parameters).isSome then
+          .error (Error.illegalInEval invalidMetaParameterMessage)
         if !parameters.isEmpty && out.isEmpty then
           .error Error.explicitParamsRequireOutput
         for openExpr in op do
@@ -3131,6 +3258,8 @@ partial def resultDiagnosticString : Result -> String
   | .bool value => Result.boolText value
   | .sequenceValue items => "(" ++ String.intercalate ", " (items.map resultDiagnosticString) ++ ")"
   | .listValue items => "[" ++ String.intercalate ", " (items.map resultDiagnosticString) ++ "]"
+  | .callRef _ => "a call reference"
+  | .argView _ => "an argument view"
 
 /-- How a diagnostic names one value that failed an operand, condition, or
     predicate requirement: the value KIND first, then the value itself.
@@ -3141,6 +3270,50 @@ def operandDescription : Result -> String
   | .bool value => s!"a Boolean value: {Result.boolText value}"
   | .atom value => s!"numeric value {value}"
   | .listValue items => s!"a list value with {items.length} element{if items.length = 1 then "" else "s"}: {resultDiagnosticString (.listValue items)}"
+  | .callRef _ => "a call reference"
+  | .argView _ => "an argument view"
+
+/-! CallReference S1 diagnostics (October 2026). C#: `CallReferenceMessages`. -/
+
+/-- `R.Invoke` without an argument list: the intrinsic is never a property read. -/
+def invokeRequiresArgumentListMessage : String :=
+  "`Invoke` is a call-reference operation, not a property: write `R.Invoke()`."
+
+/-- `x.Invoke()` whose receiver VALUE is not a call reference. -/
+def invokeRequiresCallReferenceMessage (value : Result) : String :=
+  s!"`Invoke` requires a call reference, got {operandDescription value}"
+
+/-- Text conversion (interpolation) of a value that contains a call reference. -/
+def callReferenceHasNoTextMessage : String :=
+  "A call reference has no text: use a value computed from it, for example `R.Invoke()`."
+
+/-- A run result (or another host-facing value) that contains a call reference. -/
+def callReferenceLeavesRunMessage : String :=
+  "A call reference cannot leave its run: return a value computed from it, for example `R.Invoke()`."
+
+/-! CallReference S2 diagnostics (October 2026). C#: `Evaluator.CallPlans.cs`. -/
+
+/-- `R.Arguments(…)`: the view is a property of the reference, never an operation. -/
+def argumentsIsPropertyMessage : String :=
+  "`Arguments` is a call-reference property, not an operation: write `R.Arguments`."
+
+/-- `x.Arguments` whose receiver VALUE is not a call reference. -/
+def argumentsRequiresCallReferenceMessage (value : Result) : String :=
+  s!"`Arguments` requires a call reference, got {operandDescription value}"
+
+/-- A spread that would open an argument view into VALUES (any spread outside an argument
+    list, or an inner star of a stacked spread). -/
+def argumentViewSpreadMessage : String :=
+  "An argument view spreads only into an argument list, as `F(R.Arguments*)`; select its values with `R.Arguments[i]`."
+
+/-- A collection builtin other than `count`, `first` and `last` over an argument view. -/
+def argumentViewUnsupportedMessage (builtinName : String) : String :=
+  s!"An argument view supports only `count`, `first`, `last`, selection and an argument spread, not `{builtinName}`."
+
+/-- Refuse a value that contains a call reference with `message` (`typeMismatch`); every
+    reference-free value passes unchanged. -/
+def requireCallRefFree (message : String) (value : Result) : EvalM Unit :=
+  if value.containsCallRef then .error (Error.typeMismatch message) else pure ()
 
 /-- Coerce a Result to Int. Every present value that is not a number — a
     string, a Boolean, a sequence (`()` included) or a list — is the value-KIND
@@ -3405,6 +3578,17 @@ def combineOutputSlots : List Result -> Result
   | [r] => r
   | rs => Result.sequenceValue rs
 
+/-- The receiver-independent half of `selectPosition` (CallReference S2): the selector VALUE must
+    be a number (`typeMismatch`, `expectInt`) naming a non-negative position (`badIndex`). An
+    argument view's selection runs it BEFORE the view's supply is prepared
+    (`selectViewWith`); `selectPosition_eq_selectorIndex` relates the two. -/
+def selectorIndex (selector : Result) : EvalM Nat := do
+  let n <- expectInt selector
+  if n < 0 then
+    .error Error.badIndex
+  else
+    pure (Int.toNat n)
+
 /-- VARIADIC POSTFIX SELECTION — ONE supplied selector (October 2026): validate the
     selector VALUE against the receiver and select that position. The checks are the
     retired colon form's, unchanged: a selector that is not a number is the kind failure
@@ -3428,7 +3612,7 @@ def selectPosition (receiver : Result) (selector : Result) : EvalM Result := do
     repeat stored values, never a computation; the receiver is a value already in hand.
     TOTAL and parametrized by the demand, so its laws are theorems; the `.index` arm of
     `evalCounted` instantiates it with `fun cell => Prod.fst <$> demandNeedRecursive cell`
-    over the supply formed by `NeedSupply.addresses evalCounted`.
+    over the supply formed by `NeedSupply.addresses evalSupplySpread`.
     C#: the Index case of `Evaluator.EvalExpressionSpineCounted` and its async twin. -/
 def selectWith {α : Type} (demand : α -> EvalM Result) (receiver : Result) :
     List α -> EvalM (List Result)
@@ -3606,6 +3790,33 @@ def reopenSpreadLayers : Nat -> List Result -> List Result
   | 0, items => items
   | n + 1, items => reopenSpreadLayers n (reopenSpreadItems items)
 
+/-- The VALUE openings of a spread (CallReference S2): the operand VALUE `v` opened by the first
+    written star and every further star's re-capture opened by the next — exactly
+    `reopenSpreadLayers n v.spreadItems` (`openSpreadItems_eq_reopen`) — except that an
+    ARGUMENT VIEW is never opened into values: any star that would open one is the
+    `typeMismatch` `argumentViewSpreadMessage`. Only an argument supply's LAST star transports a
+    view (`openSupplySpread`). TOTAL. C#: the layer loop of `Evaluator.EvalSpreadLayers`. -/
+def openSpreadItems : Nat -> Result -> Except Error (List Result)
+  | _, .argView _ => .error (Error.typeMismatch argumentViewSpreadMessage)
+  | 0, v => .ok v.spreadItems
+  | n + 1, v => openSpreadItems n (Result.normalize (Result.sequenceValue v.spreadItems))
+
+/-- What one written spread contributes to an ARGUMENT SUPPLY (CallReference S2): its opened
+    items, or — when the value its LAST star opens is an argument view — that view's plan, whose
+    original cells the supply transports (`NeedSupply.slot`, `SpreadSupply.cells`). -/
+inductive SpreadOpening where
+  | items (values : List Result)
+  | view (plan : Nat)
+  deriving Repr
+
+/-- The supply openings of a spread: `openSpreadItems`, except that the LAST star's view is
+    `view` (`openSupplySpread_eq_items` when nothing opened is a view). TOTAL. -/
+def openSupplySpread : Nat -> Result -> Except Error SpreadOpening
+  | 0, .argView a => .ok (.view a)
+  | 0, v => .items <$> openSpreadItems 0 v
+  | _ + 1, .argView _ => .error (Error.typeMismatch argumentViewSpreadMessage)
+  | n + 1, v => openSupplySpread n (Result.normalize (Result.sequenceValue v.spreadItems))
+
 /-- The counted result of a spread expression over its final item supply: the supply's
     ordinary capture, emitting the supply's item count (the expression-level face of
     `spread : Value -> Supply`; consumers that read the expression as one value re-count at
@@ -3625,6 +3836,8 @@ def describeSequenceItem : Result -> String
   | .sequenceValue _ => "sequence value"
   | .listValue [] => "empty list value"
   | .listValue _ => "list value"
+  | .callRef _ => "call reference"
+  | .argView _ => "argument view"
 
 def numericSequenceItemErrorContext (b : Builtin) (index : Nat) (item : Result) : String :=
   s!"{builtinDisplayName b} expects each collection element to be a single numeric value; item {index} was {describeSequenceItem item}"
@@ -3662,7 +3875,18 @@ structure BoundSequenceBuiltinArguments where
   preparedInput : PreparedSequenceBuiltinInput
   iterationItems : List CountedResult
   suffixArgs : List PreparedSequenceBuiltinSuffixArg
+  /-- The plan of an ARGUMENT VIEW bound as the whole collection of `count`, `first` or `last`
+      (CallReference S2): the builtin then reads the view's cells, not a collection value. -/
+  view? : Option Nat := none
   deriving Repr
+
+/-- The collection builtins an argument view supports as its WHOLE collection (CallReference
+    S2): `count` reads the cardinality of the plan's supply, `first`/`last` select a cell. Every
+    other collection builtin refuses a view (`argumentViewUnsupportedMessage`) instead of
+    reading it as a one-element collection or materializing it. -/
+def Builtin.readsArgumentView : Builtin -> Bool
+  | .countBuiltin | .firstBuiltin | .lastBuiltin => true
+  | _ => false
 
 /-- One argument a builtin receives. Every argument the evaluator builds is a SUPPLIED
     CELL (`need?`): the builtin arm of `evalResolvedCallCounted` passes the call's
@@ -5534,17 +5758,21 @@ smaller work. The one intentionally non-projected sibling family is the
 slot-view group (`evalAlgOutputSlots`, `evalExplicitSequenceValue*`), which
 returns item lists rather than one counted value.
 -/
-/-- One inspecting-pattern language shared by ordinary calls, families and callbacks. -/
+/-- One inspecting-pattern language shared by ordinary calls, families and callbacks.
+    `meta name` (CallReference S1) is a META capture: it binds `name` to a fresh Ready cell
+    holding the supplied cell's call reference (`NeedCapabilities.reference`), reified when
+    written traversal reaches it; it never demands the supplied cell. -/
 inductive NeedPattern where
   | bind (name : Ident) (collecting : Bool := false)
   | sequence (items : List NeedPattern)
   | list (items : List NeedPattern)
   | unpack (items : List NeedPattern)
   | literal (pattern : Pattern)
+  | metaRef (name : Ident)
   deriving Repr
 
 def NeedPattern.ofParameter : ParameterPattern -> NeedPattern
-  | .capture p => .bind p.name (p.kind == .collecting)
+  | .capture p => if p.kind == .metaRef then .metaRef p.name else .bind p.name (p.kind == .collecting)
   | .sequenceValue ps => .sequence (ps.map ofParameter)
   | .listValue ps => .list (ps.map ofParameter)
   | .unpacking ps => .unpack (ps.map ofParameter)
@@ -5561,9 +5789,11 @@ def NeedPattern.toParameter : NeedPattern -> ParameterPattern
   | .list ps => .listValue (ps.map toParameter)
   | .unpack ps => .unpacking (ps.map toParameter)
   | .literal _ => .capture { name := "_" }
+  | .metaRef name => .capture { name := name, kind := .metaRef }
 
 def NeedPattern.names : NeedPattern -> List Ident
   | .bind name _ => [name]
+  | .metaRef name => [name]
   | .sequence ps | .list ps | .unpack ps => ps.flatMap names
   | .literal _ => []
 
@@ -5581,6 +5811,68 @@ def needAcceptsCardinality (patterns : List NeedPattern) (count : Nat) : Bool :=
 def needClauseHead : Pattern -> List NeedPattern
   | .sequenceValue ps => ps.map NeedPattern.ofClause
   | pattern => [NeedPattern.ofClause pattern]
+
+/- The invocation-plan IDENTITY layer (CallReference M1.5/S1): which cells are plans and
+    META's pure read of one. It stands before the binder core because the production binder's
+    META capability (`NeedPlan.reference`) reifies through it; the plan's preparation,
+    execution and invocation follow `NeedSupply` below (§ Total invocation-plan control). -/
+namespace NeedPlan
+
+/-- The supported call shape (M1 boundary). Dot and computed callees are refused. -/
+structure CallShape where
+  callee : Expr
+  args : OutputBundle
+  caller : EvalCtx
+  values : ValEnv
+  deriving Repr
+
+def callShape? (source : Expr) (caller : EvalCtx) (values : ValEnv) : Option CallShape :=
+  match source with
+  | .call f args =>
+    match f with
+    | .resolve _ | .param _ => some ⟨f, args, caller, values⟩
+    | _ => none
+  | _ => none
+
+/-- The plan a cell is, if it is one. Ready data, collectors, non-call computations and
+    unsupported callees are no plan. -/
+def ofSuspension? : NeedSuspension → Option CallShape
+  | .expression source caller values => callShape? source caller values
+  | _ => none
+
+def shapeAt? (needs : Array NeedCell) (a : Nat) : Option CallShape :=
+  match needs[a]? with
+  | some cell => ofSuspension? cell.suspension
+  | none => none
+
+/-- The stable handle META returns. Its identity IS the plan's need address. -/
+structure CallReference where
+  plan : Nat
+  deriving BEq, DecidableEq, Repr, Inhabited
+
+/-- META's refusal of anything that is not a supplied call computation. -/
+def metaRefusal : Error := Error.notAnAlgorithm "meta: not a supplied call computation"
+
+def reifyResult (needs : Array NeedCell) (a : Nat) : Except Error CallReference :=
+  match shapeAt? needs a with
+  | some _ => .ok ⟨a⟩
+  | none => .error metaRefusal
+
+/-- META: a pure read. The state is returned unchanged on success and on refusal. -/
+def reify (a : Nat) : EvalM CallReference := do
+  return ← reifyResult (← get).needs a
+
+/-- THE META CAPABILITY of the production binder (CallReference S1): reify the supplied
+    cell at `a` (a pure read, `reify`; a non-plan cell is the structured `metaRefusal`, raised
+    with the state unchanged) and allocate ONE fresh Ready cell holding its call reference
+    `Result.callRef a`. The original cell — its suspension, VALUE state, CALLABLE memo and plan
+    supply — is never read beyond its suspension and never written. The adapter has no
+    CALLABLE identity (Ready data). -/
+def reference (a : Nat) : EvalM Nat := do
+  let r ← reify a
+  readyNeed (.callRef r.plan, 1)
+
+end NeedPlan
 
 /-! ### The Model-C binder core (FORMAL-07, October 2026)
 
@@ -5639,6 +5931,10 @@ structure NeedCapabilities (m : Type → Type) where
   value : Nat → m CountedResult
   callable : Nat → m (Option Algorithm)
   allocate : NeedSuspension → m Nat
+  /-- META reification (CallReference S1): validate that the cell is a supplied call and
+      allocate the Ready adapter cell holding its reference. Only a `.metaRef` pattern invokes
+      it. Production: `NeedPlan.reference`. -/
+  reference : Nat → m Nat
 
 /-- The two capabilities the binder may use on a supplied cell: its VALUE demand
     (the evaluator passes `demandNeedRecursive`; public guards may pass `demandNeed`)
@@ -5651,7 +5947,7 @@ structure NeedChannels where
 /-- The production capabilities of the binder core: the evaluator's two channels and the
     one allocator `allocateNeed`. -/
 def NeedChannels.capabilities (channels : NeedChannels) : NeedCapabilities EvalM :=
-  ⟨channels.value, channels.callable, allocateNeed⟩
+  ⟨channels.value, channels.callable, allocateNeed, NeedPlan.reference⟩
 
 /-- What one top-level pattern of a level is bound from: one supplied cell, the exact slice
     a collecting binding collects, or nothing (an unreachable position, `badArity`). -/
@@ -5758,6 +6054,12 @@ mutual
       (repeated : List Ident) (bound : NeedEnv) (family : Bool) : m (Option NeedEnv) := do
     match pattern with
     | .bind name _ => bindName capabilities name address repeated bound family
+    -- A META capture (CallReference S1) is reached in WRITTEN order like every pattern
+    -- (NEED-04): it reifies the supplied cell into a fresh Ready adapter — demanding
+    -- nothing, a non-plan cell refusing — and binds the name to that adapter.
+    | .metaRef name => do
+        let adapter <- capabilities.reference address
+        bindName capabilities name adapter repeated bound family
     | .literal literal => do
         let (value, _) <- capabilities.value address
         pure (if (matchPattern literal value).isSome then some bound else none)
@@ -5906,36 +6208,221 @@ def selectNeedFamilyBranch (channels : NeedChannels) (callee : Algorithm) (cells
   NeedBinder.selectFamily channels.capabilities callee cells calleeName
     (needActivateBranch callee ctx env)
 
+/-- What ONE computed explicit spread slot contributes to a supply (CallReference S2): the
+    spread's opened ITEMS — each becomes one fresh Ready cell — or ORIGINAL CELLS transported
+    with their written sources: an argument view's plan supply (`SpreadOpening.view`), never
+    copied, re-evaluated or wrapped. -/
+inductive SpreadSupply where
+  | items (values : List Result)
+  | cells (cells : List (Nat × Option Expr))
+  deriving Repr
+
 /- Total Model-C supply formation (R5/A2). Only evaluation of a computed spread
     crosses the partial evaluator boundary. Ordinary acquisition and known-slice
     reopening have no VALUE-demand callback. -/
 namespace NeedSupply
 abbrev Sourced := Nat × Option Expr
-def slot (ev : Expr → EvalCtx → ValEnv → EvalM CountedResult)
+
+/-- The evaluator's capability for one COMPUTED spread slot (a spread that is not a collecting
+    parameter's known slice): its supply contribution (`SpreadSupply`). Production:
+    `evalSupplySpread` — the spread expression's top-level items, or an argument view's
+    transported plan cells (CallReference S2). -/
+abbrev SpreadEval := Expr → EvalCtx → ValEnv → EvalM SpreadSupply
+
+def slot (spread : SpreadEval)
     (ctx : EvalCtx) (env : ValEnv) (e : Expr) : EvalM (List Sourced) :=
   match e with
   | .sequenceSpread operand => do
     match ← spreadCollectorSlice? operand ctx with
     | some slice => slice.mapM (fun a => do pure (a, ← needWrittenSource? a))
     | none => do
-      let opened ← ev e ctx env
-      (countedTopLevelValues opened).mapM (fun v => do
-        pure (← readyNeed (v, Result.valueCount v), none))
+      match ← spread e ctx env with
+      | .items values =>
+        values.mapM (fun v => do pure (← readyNeed (v, Result.valueCount v), none))
+      | .cells cells => pure cells
   | _ => do pure [(← supplyNeed e ctx env, some e)]
 
-def form (ev : Expr → EvalCtx → ValEnv → EvalM CountedResult)
+def form (spread : SpreadEval)
     (ctx : EvalCtx) (env : ValEnv) : OutputBundle → EvalM (List Sourced)
   | [] => pure []
   | e :: rest => do
-    let head ← slot ev ctx env e
-    let tail ← form ev ctx env rest
+    let head ← slot spread ctx env e
+    let tail ← form spread ctx env rest
     pure (head ++ tail)
 
 /-- The address-only route projects THE sourced formation, in order. -/
-def addresses (ev : Expr → EvalCtx → ValEnv → EvalM CountedResult)
+def addresses (spread : SpreadEval)
     (ctx : EvalCtx) (env : ValEnv) (args : OutputBundle) : EvalM (List Nat) := do
-  pure ((← form ev ctx env args).map Prod.fst)
+  pure ((← form spread ctx env args).map Prod.fst)
 end NeedSupply
+
+/- Total invocation-plan control (CallReference M1.5, October 2026). ONE supplied call
+    computation — a cell whose suspension is a written call `F(args)` with a lexical-name or
+    parameter callee — is ONE invocation plan, identified by its need address and nothing else
+    (no AST key: two dynamic occurrences of one written call are two cells, two plans).
+    * VALUE: `NeedDemand.step`, the one completion shell, runs `execute` for such a cell
+      (`NeedDemand.suspendedValue`), so EVERY production VALUE demand of the cell — the public
+      `demandNeed`, and the recursive `demandNeedRecursive` behind parameter reads, binder
+      inspection, collectors, selection and builtin roles, at any nesting depth — executes the
+      plan. The original VALUE stays at-most-once in `NeedState`.
+    * META: `reify` is a pure read of the cell's suspension. It runs no target, demands no
+      argument, forms no supply and opens no spread; a completed cell keeps its suspension,
+      so META after VALUE (success or ordinary failure) reifies the same plan.
+    * Invocation: `invoke` is `execute` without the completion shell — a fresh target
+      execution over the plan's one prepared supply that never reads or writes the cell's VALUE.
+    * Forwarding: a parameter supplied onward transports the cell itself (`supplyNeed`), so the
+      plan, its callee and its caller context travel unchanged; no forwarding scope re-resolves.
+    `execute` has the phase order of the ordinary call (`evalCallCountedExpr` →
+    `evalResolvedCallCounted`): the callee in the CALLER's context under the call frame, then,
+    under the frame, alias normalization, the supply, and the ONE dispatch
+    (`evalSuppliedCallCounted`) — the plan only replaces the per-execution `NeedSupply.form` by
+    the plan's single memoized `prepare` over the same former. The target is resolved per
+    execution (D2, provisional). Since S1 (October 2026) source reaches them: a `meta` parameter
+    binds through `reference` (`reify` + one Ready adapter), and the `Invoke` dot intrinsic runs
+    `invoke` (`invokeCallReferenceValue`). -/
+namespace NeedPlan
+
+/-- The target and dispatch phases a plan execution installs. Production: `productionPlanRoute`
+    (`resolveCalleeAlg`, `normalizeCallee`, `evalSuppliedCallCounted`). -/
+structure Route where
+  target : Expr → EvalCtx → EvalM Algorithm
+  normalize : Algorithm → EvalCtx → EvalM Algorithm
+  dispatch : Algorithm → List NeedSupply.Sourced → EvalCtx → ValEnv → String → EvalM CountedResult
+  /-- The spread capability the plan's supply formation runs (production `evalSupplySpread`). -/
+  spread : NeedSupply.SpreadEval
+
+/-- The ordinary call's alias normalization before dispatch (`evalResolvedCallCounted`'s
+    alias arm). -/
+def normalizeCallee (callee : Algorithm) (ctx : EvalCtx) : EvalM Algorithm :=
+  match callee with
+  | .alias _ _ _ _ _ => resolveAliasTarget callee ctx
+  | other => pure other
+
+def setSupply (a : Nat) (supply : NeedPlanSupply) : EvalM Unit :=
+  modify fun s => { s with needs := s.needs.modify a (fun cell => { cell with plan := supply }) }
+
+/-- The plan's ONE supply preparation through `NeedSupply.form`, memoized in the cell. -/
+def prepare (spread : NeedSupply.SpreadEval)
+    (a : Nat) (shape : CallShape) : EvalM (List NeedSupply.Sourced) := do
+  let some cell := (← get).needs[a]? | throw (Error.illegalInEval "invalid need address")
+  match cell.plan with
+  | .prepared outcome => return ← outcome
+  | .preparing => throw Error.demandCycle
+  | .unprepared =>
+    setSupply a .preparing
+    let outcome ← evalAttempt (NeedSupply.form spread shape.caller shape.values shape.args)
+    setSupply a (.prepared outcome)
+    return ← outcome
+
+/-- One execution of plan `a`: the ordinary call's phases over the plan's one supply. -/
+def execute (route : Route) (a : Nat) (shape : CallShape) : EvalM CountedResult := do
+  let callee ← withCtx (CtxMsg.call shape.callee) (route.target shape.callee shape.caller)
+  let result ← withCtx (CtxMsg.call shape.callee) (do
+    let normal ← route.normalize callee shape.caller
+    let cells ← prepare route.spread a shape
+    route.dispatch normal cells shape.caller shape.values (openExprName shape.callee))
+  pure (reCountValueBoundary result)
+
+/-- Explicit invocation through a reference: `execute` with no completion shell. -/
+def invoke (route : Route) (r : CallReference) : EvalM CountedResult := do
+  match shapeAt? (← get).needs r.plan with
+  | some shape => execute route r.plan shape
+  | none => throw metaRefusal
+
+/-- THE ARGUMENT VIEW's supply (CallReference S2): the effective argument cells of plan `a` —
+    its ONE sticky preparation (`prepare`: a prepared plan returns its recorded outcome and runs
+    nothing) — WITHOUT resolving or dispatching the target and without demanding any argument
+    VALUE. `count` reads its length, selection demands only the selected cells, and the supply
+    spread transports them. A non-plan address is META's refusal. -/
+def viewCells (spread : NeedSupply.SpreadEval) (a : Nat) : EvalM (List NeedSupply.Sourced) := do
+  match shapeAt? (← get).needs a with
+  | some shape => prepare spread a shape
+  | none => throw metaRefusal
+
+/-- What an argument view's supply spread contributes (CallReference S2): plan `a`'s ORIGINAL
+    cells (`viewCells`), in order, each with its own written source (`needWrittenSource?`, as a
+    collecting parameter's transported slice reports it) — no cell is allocated, copied or
+    demanded. `evalSupplySpread` returns it for a spread whose last star opens `argView a`. -/
+def viewSupply (spread : NeedSupply.SpreadEval) (a : Nat) : EvalM SpreadSupply := do
+  let cells ← viewCells spread a
+  let transported ← cells.mapM (fun (b, _) => do pure (b, ← needWrittenSource? b))
+  pure (.cells transported)
+
+end NeedPlan
+
+/-! ### Argument views (CallReference S2, October 2026)
+
+`R.Arguments` is the lazy, read-only view `Result.argView a` of plan `a`'s ORIGINAL effective
+argument supply. Its operations are TOTAL here, parametrized by the view's cells (`cellsOf`,
+production `NeedPlan.viewCells evalSupplySpread a`: the plan's ONE sticky preparation) and by
+cell VALUE demand (production `demandNeedRecursive`), so their demand laws are theorems
+(`KatLangArityLaws/ArgumentView.lean`). The supply spread, the third operation, is
+`NeedSupply.slot`'s `SpreadSupply.cells` arm. -/
+
+/-- VARIADIC POSTFIX SELECTION over an ARGUMENT VIEW (CallReference S2): `selectWith`'s order with
+    the view's cells as the positions. Each supplied selector is demanded and validated
+    (`selectorIndex`) BEFORE the view's supply is read — `R.Arguments[]` reads nothing and
+    `R.Arguments[true]` fails before any preparation; then the supply decides the position
+    (`badIndex` past its end) and ONLY the selected cell is demanded, its VALUE kept whole.
+    The first failure ends the selection. C#: the view arm of `Evaluator.AdvanceSelection`. -/
+def selectViewWith {α : Type} (demand : α -> EvalM Result) (cellsOf : EvalM (List NeedSupply.Sourced))
+    (demandCell : Nat -> EvalM Result) : List α -> EvalM (List Result)
+  | [] => pure []
+  | selector :: rest => do
+      let n <- selectorIndex (<- demand selector)
+      let cells <- cellsOf
+      let selected <-
+        match cells[n]? with
+        | some (cell, _) => demandCell cell
+        | none => .error Error.badIndex
+      let tail <- selectViewWith demand cellsOf demandCell rest
+      pure (selected :: tail)
+
+/-- `first`/`last` over an empty argument view: the ordinary empty-collection selection failure
+    (`applySequenceBuiltinEmptyPolicy`'s `requireSelectablePosition`). -/
+def argumentViewEmptySelection (b : Builtin) : Error :=
+  Error.withContext
+    s!"{builtinDisplayName b} selects from an empty collection, which has no position to select"
+    Error.badIndex
+
+/-- `count`, `first` and `last` over an ARGUMENT VIEW bound as their whole collection
+    (CallReference S2). `count` is the number of EFFECTIVE supplied cells — explicit spreads
+    included — read from the plan's supply: no argument VALUE is demanded. `first` / `last`
+    demand exactly the first / last cell and select its VALUE through the ordinary selection
+    boundary (`evalFirstCounted` / `evalLastCounted`); an empty supply is the ordinary empty-collection selection failure (`badIndex`), as for
+    `first([])`. C#: `Evaluator.EvalArgumentViewBuiltin`. -/
+def argumentViewBuiltin (cellsOf : EvalM (List NeedSupply.Sourced)) (demandCell : Nat -> EvalM Result)
+    (b : Builtin) : EvalM CountedResult := do
+  let cells <- cellsOf
+  match b with
+  | .countBuiltin => pure (Result.atom (Int.ofNat cells.length), 1)
+  | .firstBuiltin =>
+      match cells.head? with
+      | some (cell, _) => evalFirstCounted [← demandCell cell]
+      | none => .error (argumentViewEmptySelection b)
+  | .lastBuiltin =>
+      match cells.getLast? with
+      | some (cell, _) => evalLastCounted [← demandCell cell]
+      | none => .error (argumentViewEmptySelection b)
+  | _ => .error (Error.typeMismatch (argumentViewUnsupportedMessage (builtinDisplayName b)))
+
+/-- `R.Arguments` over the receiver's VALUE (CallReference S2): a call reference yields its
+    ARGUMENT VIEW — the same plan address; nothing is run, read, prepared or allocated
+    (`arguments_inert`). Any other value (an argument view included) is the intrinsic's kind
+    rejection. C#: `Evaluator.ArgumentsOfCallReferenceValue`. -/
+def argumentsOfValue (val : Result) : EvalM CountedResult :=
+  match val with
+  | .callRef a => pure (.argView a, 1)
+  | other => .error (Error.typeMismatch (argumentsRequiresCallReferenceMessage other))
+
+/-- The route fact of the `Arguments` intrinsic (CallReference S2): the argument view is a
+    PROPERTY of a call reference, so any written argument list — `R.Arguments()` included — is
+    refused (`argumentsIsPropertyMessage`) before anything is formed or demanded; the view is
+    never executed. C#: `Evaluator.RejectDotArgumentsIntrinsicArguments`. -/
+def rejectArgumentsIntrinsicArguments (argsOpt : Option OutputBundle) : EvalM Unit := do
+  match argsOpt with
+  | none => pure ()
+  | some _ => .error (Error.illegalInEval argumentsIsPropertyMessage)
 
 /- Total collector VALUE sequencing and completion control (R5/B2).
     Recursive expression evaluation and element VALUE demand remain explicit callbacks;
@@ -5946,13 +6433,19 @@ def materialize
   let values ← slice.mapM (fun a => Prod.fst <$> demand a)
   pure (makeCollectionListResult values)
 
+/-- The computation of a suspended cell `a`. A supported supplied call is its invocation
+    plan (`NeedPlan.execute`, M1.5); every other expression is evaluated by `ev`. -/
 def suspendedValue (ev : Expr → EvalCtx → ValEnv → EvalM CountedResult)
-    (demand : Nat → EvalM CountedResult) : NeedSuspension → EvalM CountedResult
+    (route : NeedPlan.Route) (demand : Nat → EvalM CountedResult) (a : Nat) :
+    NeedSuspension → EvalM CountedResult
   | .ready value => pure value
-  | .expression e ctx env => reCountValueBoundary <$> ev e ctx env
+  | .expression e ctx env =>
+    match NeedPlan.callShape? e ctx env with
+    | some shape => NeedPlan.execute route a shape
+    | none => reCountValueBoundary <$> ev e ctx env
   | .collector slice => materialize demand slice
 
-def step (ev : Expr → EvalCtx → ValEnv → EvalM CountedResult)
+def step (ev : Expr → EvalCtx → ValEnv → EvalM CountedResult) (route : NeedPlan.Route)
     (demand : Nat → EvalM CountedResult) (a : Nat) : EvalM CountedResult := do
   let some cell := (← get).needs[a]? | throw (Error.illegalInEval "invalid need address")
   match cell.state with
@@ -5960,7 +6453,7 @@ def step (ev : Expr → EvalCtx → ValEnv → EvalM CountedResult)
   | .evaluating => throw Error.demandCycle
   | .suspended =>
     modify fun s => { s with needs := s.needs.modify a (fun cell => { cell with state := .evaluating }) }
-    let outcome ← evalAttempt (suspendedValue ev demand cell.suspension)
+    let outcome ← evalAttempt (suspendedValue ev route demand a cell.suspension)
     modify fun s => { s with needs := s.needs.modify a (fun cell => { cell with state := .completed outcome }) }
     return ← outcome
 
@@ -5972,7 +6465,31 @@ mutual
       demand shell. Its body is a source-level connection because Lean keeps a
       partial constant opaque; the public entry point below is total. -/
   partial def demandNeedRecursive (address : Nat) : EvalM CountedResult :=
-    NeedDemand.step evalCounted demandNeedRecursive address
+    NeedDemand.step evalCounted
+      ⟨resolveCalleeAlg, NeedPlan.normalizeCallee, evalSuppliedCallCounted, evalSupplySpread⟩
+      demandNeedRecursive address
+
+  /-- THE dispatch of a normalized callee over an already formed sourced supply: the
+      builtin, flat-binder, clause-family and user arms of the ordinary call. The ordinary
+      call (`evalResolvedCallCounted`) forms its supply and calls it; an invocation plan
+      (`NeedPlan.execute`, at `productionPlanRoute`) calls it over the plan's one prepared
+      supply. The alias arm is the dispatch safety net (a normalized callee is never an
+      alias). C#: the arms of `EvalResolvedCallCounted` / `DispatchPlanned`. -/
+  partial def evalSuppliedCallCounted (callee : Algorithm) (cells : List NeedSupply.Sourced)
+      (ctx : EvalCtx) (env : ValEnv) (calleeName : String) : EvalM CountedResult := do
+    match callee with
+    | .builtin b =>
+      let supplied := cells.map fun (address, source?) =>
+        ({ algorithm := Algorithm.ofExpr (.emptySequence 0), need? := some address, source? := source? } : ResolvedArgumentAlgorithm)
+      applyBuiltinCountedResolved b supplied ctx env
+    | .conditional _ _ _ _ =>
+      match flatBinderUserEquivalent? callee with
+      | some simple => evalNeedUserSupply simple (cells.map Prod.fst) ctx env
+      | none => evalNeedFamilySupply callee (cells.map Prod.fst) ctx env calleeName
+    | .alias _ _ _ _ _ => do
+      let target <- resolveAliasTarget callee ctx
+      evalSuppliedCallCounted target cells ctx env calleeName
+    | _ => evalNeedUserSupply callee (cells.map Prod.fst) ctx env
 
   /-- A user algorithm invoked over an already formed cell supply. Its result is the
       call's value boundary (VAL-06): ONE value, re-counted — for an ordinary call and a
@@ -6539,6 +7056,14 @@ mutual
               match sequenceBuiltinValueDemandError? collectionItem with
               | some err => .error err
               | none => .error Error.badArity
+        -- An ARGUMENT VIEW bound as the whole collection (CallReference S2) is no collection
+        -- value: `count`/`first`/`last` read its cells (`view?`); every other builtin refuses it
+        -- before any control argument is demanded.
+        if let .argView a := collectionValue then
+          if b.readsArgumentView then
+            return { preparedInput := { items := [] }, iterationItems := [], suffixArgs := [], view? := some a }
+          else
+            .error (Error.typeMismatch (argumentViewUnsupportedMessage (builtinDisplayName b)))
         -- The one-level builtin collection view applies AFTER binding, to the
         -- bound collection value only: a lone sequence or exact list value
         -- opens to its immediate items, and any other value is a one-element
@@ -6673,6 +7198,8 @@ mutual
       : EvalM CountedResult :=
     do
       let bound <- bindSequenceBuiltinArguments b metadata args ctx env
+      if let some a := bound.view? then
+        return <- evalArgumentViewBuiltin b a
       let withPreparedItems
           (k : List Result -> EvalM CountedResult) : EvalM CountedResult :=
         k bound.preparedInput.items
@@ -6832,6 +7359,9 @@ mutual
 
         | .atomsBuiltin, [a] => do
             let r <- evalArgumentValue a ctx env
+            -- An argument view has no atoms to collect without materializing it (S2).
+            if let .argView _ := r then
+              .error (Error.typeMismatch (argumentViewUnsupportedMessage "atoms"))
             -- `atoms` materializes a collection: one list of
             -- the recursively collected numeric atoms (sequence AND list
             -- boundaries open; strings and Boolean values contribute none).
@@ -6953,7 +7483,7 @@ mutual
   partial def evalUserCallCounted (callee : Algorithm) (args : OutputBundle)
       (ctx : EvalCtx) (env : ValEnv)
       : EvalM CountedResult := do
-    let cells <- NeedSupply.addresses evalCounted ctx env args
+    let cells <- NeedSupply.addresses evalSupplySpread ctx env args
     evalNeedUserSupply callee cells ctx env
 
   /-- Counted conditional call evaluation — the CANONICAL conditional-call
@@ -6983,7 +7513,7 @@ mutual
   partial def evalConditionalCallCounted (callee : Algorithm) (args : OutputBundle)
       (ctx : EvalCtx) (env : ValEnv) (calleeName : String := "conditional")
       : EvalM CountedResult := do
-    let cells <- NeedSupply.addresses evalCounted ctx env args
+    let cells <- NeedSupply.addresses evalSupplySpread ctx env args
     evalNeedFamilySupply callee cells ctx env calleeName
 
   /-- Dispatch an already-resolved callee with plain Result output.
@@ -7004,24 +7534,19 @@ mutual
       (ctx : EvalCtx) (env : ValEnv) (calleeName : String := "conditional")
       : EvalM CountedResult := do
     match callee with
-    | .builtin b => do
-      -- A builtin receives the ordinary supply cells, each with its WRITTEN source (C#:
-      -- `ResolveArgAlgsWithSequenceSpread` → `ResolveNeedSupply`).
-      let cells <- NeedSupply.form evalCounted ctx env args
-      let supplied := cells.map fun (address, source?) =>
-        ({ algorithm := Algorithm.ofExpr (.emptySequence 0), need? := some address, source? := source? } : ResolvedArgumentAlgorithm)
-      applyBuiltinCountedResolved b supplied ctx env
-    | .conditional _ _ _ _ =>
-      match flatBinderUserEquivalent? callee with
-      | some simple => evalUserCallCounted simple args ctx env
-      | none => evalConditionalCallCounted callee args ctx env calleeName
     -- The dispatch safety net: a callee that reached dispatch as an unnormalized alias (a
     -- host-built tree) calls its target with the same written arguments. Every binding lookup
     -- normalizes first. C#: `EvalAliasCallCounted`.
     | .alias _ _ _ _ _ => do
       let target <- resolveAliasTarget callee ctx
       evalResolvedCallCounted target args ctx env calleeName
-    | _ => evalUserCallCounted callee args ctx env
+    | _ => do
+      -- Every callee receives the ordinary supply cells, each with its WRITTEN source (C#:
+      -- `ResolveArgAlgsWithSequenceSpread` → `ResolveNeedSupply`), then the ONE dispatch.
+      -- (The user and family arms formerly formed the address projection of the same supply
+      -- inside `evalUserCallCounted` / `evalConditionalCallCounted`: the same operations.)
+      let cells <- NeedSupply.form evalSupplySpread ctx env args
+      evalSuppliedCallCounted callee cells ctx env calleeName
 
   /-- Context-aware counted call evaluation for expression position — the
       CANONICAL expression-position call dispatch (`evalCallExpr` is its value
@@ -7082,7 +7607,7 @@ mutual
     match argsOpt with
     | none => pure ()
     | some args =>
-      let items <- NeedSupply.addresses evalCounted ctx env args
+      let items <- NeedSupply.addresses evalSupplySpread ctx env args
       if items.length = 0 then pure ()
       else .error (Error.arityMismatch 0 items.length)
 
@@ -7258,6 +7783,36 @@ mutual
               let val <- evalDotStringReceiverValue target targetAlg ctx env
               let out <- resultToString val
               pure (out, Result.valueCount out)
+            else if name = "Invoke" then do
+              -- A structural miss: `Invoke` is the call-reference intrinsic (CallReference
+              -- S1, J1) — it takes the extension call's place, so a lexical `Invoke` is
+              -- never consulted. The argument list is a route fact checked BEFORE the
+              -- receiver is demanded: a bare `R.Invoke` is refused, a non-empty list is the
+              -- zero-parameter cardinality rejection. The receiver is then read exactly as
+              -- the `string` intrinsic reads it (alias target, the zero-argument demand law,
+              -- the ordinary value read) and must be a call reference.
+              rejectInvokeIntrinsicArguments argsOpt ctx env
+              let targetAlg <- resolveAliasTarget targetAlg ctx
+              if !(<- hasSuppliedParameterCell target ctx env) then
+                match zeroArgumentDemandError? (some target) targetAlg with
+                | some err => .error err
+                | none => pure ()
+              let val <- evalDotStringReceiverValue target targetAlg ctx env
+              invokeCallReferenceValue val
+            else if name = "Arguments" then do
+              -- A structural miss: `Arguments` is the call-reference ARGUMENT VIEW intrinsic
+              -- (CallReference S2) — it takes the extension call's place, so a lexical
+              -- `Arguments` is never consulted. A written argument list is refused as a route
+              -- fact before the receiver is demanded; the receiver is read exactly as the
+              -- `Invoke` intrinsic reads it and must be a call reference. Nothing else runs.
+              rejectArgumentsIntrinsicArguments argsOpt
+              let targetAlg <- resolveAliasTarget targetAlg ctx
+              if !(<- hasSuppliedParameterCell target ctx env) then
+                match zeroArgumentDemandError? (some target) targetAlg with
+                | some err => .error err
+                | none => pure ()
+              let val <- evalDotStringReceiverValue target targetAlg ctx env
+              argumentsOfValue val
             else
               callLexicalWithReceiverCounted name target fallback argsOpt ctx env
     | .error (.notAnAlgorithm _) =>
@@ -7267,9 +7822,52 @@ mutual
         let val <- eval target ctx env
         let out <- resultToString val
         pure (out, Result.valueCount out)
+      else if name = "Invoke" then do
+        rejectInvokeIntrinsicArguments argsOpt ctx env
+        let val <- eval target ctx env
+        invokeCallReferenceValue val
+      else if name = "Arguments" then do
+        rejectArgumentsIntrinsicArguments argsOpt
+        let val <- eval target ctx env
+        argumentsOfValue val
       else
         callLexicalWithReceiverCounted name target fallback argsOpt ctx env
     | .error e => .error e
+
+
+  /-- The argument-list route fact of the `Invoke` intrinsic (CallReference S1): `R.Invoke`
+      without a list is refused (`invokeRequiresArgumentListMessage`) — the intrinsic is never
+      a property read and never executes implicitly — and a written list must supply nothing,
+      formed and rejected exactly as for the `string` intrinsic (`R.Invoke(8)` is
+      `arityMismatch 0 1`: S1 has no replacement arguments). Nothing is demanded.
+      C#: `RejectDotInvokeIntrinsicArguments`. -/
+  partial def rejectInvokeIntrinsicArguments (argsOpt : Option OutputBundle)
+      (ctx : EvalCtx) (env : ValEnv) : EvalM Unit := do
+    match argsOpt with
+    | none => .error (Error.illegalInEval invokeRequiresArgumentListMessage)
+    | some _ => rejectDotStringIntrinsicArguments argsOpt ctx env
+
+  /-- `R.Invoke()` over the receiver's VALUE (CallReference S1): a call reference executes
+      its plan afresh through the production plan route (`NeedPlan.invoke` with the route
+      `demandNeedRecursive` installs — exactly `invokeNeedCall`), over the plan's one prepared
+      supply, never reading or writing the original cell's VALUE; any other value is the
+      intrinsic's kind rejection. C#: `InvokeCallReferenceValue`. -/
+  partial def invokeCallReferenceValue (val : Result) : EvalM CountedResult :=
+    match val with
+    | .callRef a =>
+        NeedPlan.invoke
+          ⟨resolveCalleeAlg, NeedPlan.normalizeCallee, evalSuppliedCallCounted, evalSupplySpread⟩ ⟨a⟩
+    | other => .error (Error.typeMismatch (invokeRequiresCallReferenceMessage other))
+
+  /-- The cells of argument view `a` (CallReference S2): the plan's ONE sticky supply
+      (`NeedPlan.viewCells` over the production spread capability). C#: `PrepareArgumentView`. -/
+  partial def argumentViewCells (a : Nat) : EvalM (List NeedSupply.Sourced) :=
+    NeedPlan.viewCells evalSupplySpread a
+
+  /-- `count`/`first`/`last` over argument view `a` at the production capabilities
+      (`argumentViewBuiltin`). -/
+  partial def evalArgumentViewBuiltin (b : Builtin) (a : Nat) : EvalM CountedResult :=
+    argumentViewBuiltin (argumentViewCells a) (fun cell => Prod.fst <$> demandNeedRecursive cell) b
 
   /-- Evaluate a spread operand and supply its immediate items. Spreading an
       operand that has no defined output is the spread-specific
@@ -7283,13 +7881,13 @@ mutual
       formation, the internal join), since handing it the spread node itself would
       spread the spread's captured value again — one boundary too many.
       C#: `EvalSequenceSpreadOperandItems`. -/
-  partial def evalSequenceSpreadOperandItems (e : Expr) (ctx : EvalCtx)
-      (env : ValEnv) : EvalM (List Result) := do
+  partial def evalSequenceSpreadOperandValue (e : Expr) (ctx : EvalCtx)
+      (env : ValEnv) : EvalM Result := do
     match e with
     | .capture rows =>
         match <- evalAttempt (evalCaptureValue rows ctx env) with
         | .ok value =>
-            pure value.spreadItems
+            pure value
         | .error err =>
             if isMissingOutputError err then
               .error Error.spreadMissingOutput
@@ -7307,7 +7905,7 @@ mutual
         | none =>
           match <- evalAttempt (evalZeroArgumentDemandOutput wired ctx env) with
           | .ok value =>
-              pure value.spreadItems
+              pure value
           | .error err =>
               if isMissingOutputError err then
                 .error Error.spreadMissingOutput
@@ -7316,7 +7914,7 @@ mutual
     | _ =>
         match <- evalAttempt (eval e ctx env) with
         | .ok value =>
-            pure value.spreadItems
+            pure value
         | .error err =>
             if isMissingOutputError err then
               .error Error.spreadMissingOutput
@@ -7345,8 +7943,28 @@ mutual
   partial def evalSequenceSpreadCounted (e : Expr) (ctx : EvalCtx) (env : ValEnv)
       : EvalM CountedResult := do
     let (operand, layers) := peelSequenceSpreadLayers e 0
-    let supplied <- evalSequenceSpreadOperandItems operand ctx env
-    pure (spreadSupplyResult (reopenSpreadLayers (layers - 1) supplied))
+    let value <- evalSequenceSpreadOperandValue operand ctx env
+    -- The written stars open the operand VALUE one boundary each (`reopenSpreadLayers`); a
+    -- star that would open an argument view into values is refused (`openSpreadItems`, S2).
+    let supplied <- openSpreadItems (layers - 1) value
+    pure (spreadSupplyResult supplied)
+
+  /-- THE SPREAD CAPABILITY OF SUPPLY FORMATION (CallReference S2; `NeedSupply.SpreadEval`): what
+      a COMPUTED explicit spread slot `e` of an argument or selector supply contributes. The
+      operand is evaluated ONCE, exactly as `evalSequenceSpreadCounted` evaluates it, and its
+      stars open it exactly as there (`openSupplySpread`): the spread's top-level items, as the
+      supply read them before S2 (`countedTopLevelValues` of the spread's counted result), each
+      of which becomes one Ready cell — except that when its LAST star opens an ARGUMENT VIEW,
+      the slot contributes that view's ORIGINAL cells (`argumentViewCells`: the plan's one
+      sticky preparation), each with its own written source (`needWrittenSource?`, as a
+      collecting parameter's transported slice), and demands none of them.
+      C#: `Evaluator.FormSpreadSupplySlot`. -/
+  partial def evalSupplySpread (e : Expr) (ctx : EvalCtx) (env : ValEnv) : EvalM SpreadSupply := do
+    let (operand, layers) := peelSequenceSpreadLayers e 0
+    let value <- evalSequenceSpreadOperandValue operand ctx env
+    match <- openSupplySpread (layers - 1) value with
+    | .items supplied => pure (.items (countedTopLevelValues (spreadSupplyResult supplied)))
+    | .view a => NeedPlan.viewSupply evalSupplySpread a
 
   /-- Evaluate a surface list literal `[e1, ..., en]` as exactly ONE exact
       immutable list value. Element slots reuse the written-parentheses
@@ -7379,7 +7997,7 @@ mutual
       (`evalCounted` + `countedTopLevelValues`), one boundary per written star,
       never reopened, a spread-produced `()` item included — and the result is
       normalized. (Until October 2026 the leaf itself was handed to
-      `evalSequenceSpreadOperandItems`, which re-spread the spread's captured value:
+      `evalSequenceSpreadOperandItems` (since S2 `evalSequenceSpreadOperandValue`), which re-spread the spread's captured value:
       a k-star leaf acted as k+1 layers whenever it supplied one structured item.)
       Written parentheses parse to `capture` nodes and always keep a
       non-spread `()` item visible — surface syntax must never route through
@@ -7605,10 +8223,18 @@ mutual
         let value <- eval receiver ctx env
         -- (2) The selector supply is formed exactly like a call's: explicit
         -- spreads run during formation, ordinary selectors stay suspended cells.
-        let cells <- NeedSupply.addresses evalCounted ctx env selectors
+        let cells <- NeedSupply.addresses evalSupplySpread ctx env selectors
         -- (3) Each supplied selector is demanded, validated and selected left to
         -- right; the first failure ends the selection.
-        let selected <- selectWith (fun cell => Prod.fst <$> demandNeedRecursive cell) value cells
+        -- An ARGUMENT VIEW receiver (CallReference S2) selects among the plan's ORIGINAL cells,
+        -- each selector validated before the view's supply is read and only the selected
+        -- cells demanded (`selectViewWith`).
+        let selected <-
+          match value with
+          | .argView a =>
+              selectViewWith (fun cell => Prod.fst <$> demandNeedRecursive cell)
+                (argumentViewCells a) (fun cell => Prod.fst <$> demandNeedRecursive cell) cells
+          | _ => selectWith (fun cell => Prod.fst <$> demandNeedRecursive cell) value cells
         -- (4) SELECTION IS A VALUE BOUNDARY: the selected values are captured by
         -- ordinary normalization of the result grouping and re-counted.
         -- C#: the Index case of `EvalExpressionSpineCounted`.
@@ -7623,7 +8249,13 @@ mutual
         -- VAL-12: the holes left to right, each once through the ordinary value read
         -- (the read a comparison operand uses), each converted at once; the first failure
         -- ends the node; ONE string value.
-        let text <- interpolateWith (fun hole => eval hole ctx env) head links
+        -- A hole whose value contains a call reference has no text (CallReference S1):
+        -- it is refused when that hole is reached, so earlier holes have run and later
+        -- ones never do — the ordinary first-failure order of interpolation.
+        let text <- interpolateWith (fun hole => do
+            let value <- eval hole ctx env
+            requireCallRefFree callReferenceHasNoTextMessage value
+            pure value) head links
         pure (Result.str text, 1)
     | .boolLiteral b => pure (Result.bool b, 1)
     | .unary op operand =>
@@ -7698,14 +8330,30 @@ end
 /-- First VALUE demand through the total completion shell. Recursive expression and
     element evaluation still cross the opaque partial evaluator boundary. -/
 def demandNeed (address : Nat) : EvalM CountedResult :=
-  NeedDemand.step evalCounted demandNeedRecursive address
+  NeedDemand.step evalCounted
+    ⟨resolveCalleeAlg, NeedPlan.normalizeCallee, evalSuppliedCallCounted, evalSupplySpread⟩
+    demandNeedRecursive address
+
+/-- The production invocation-plan route: the one the recursive VALUE edge installs. -/
+def productionPlanRoute : NeedPlan.Route :=
+  ⟨resolveCalleeAlg, NeedPlan.normalizeCallee, evalSuppliedCallCounted, evalSupplySpread⟩
+
+/-- META projection of a supplied cell (CallReference M1.5); since S1 the binder's `meta`
+    capture reaches it through `NeedPlan.reference`. -/
+def reifyNeedCall (address : Nat) : EvalM NeedPlan.CallReference :=
+  NeedPlan.reify address
+
+/-- Explicit invocation of a reified plan over its one supply; since S1 it is exactly what the
+    `Invoke` dot intrinsic runs for a `Result.callRef` receiver (`invokeCallReferenceValue`). -/
+def invokeNeedCall (reference : NeedPlan.CallReference) : EvalM CountedResult :=
+  NeedPlan.invoke productionPlanRoute reference
 
 /-- THE sourced supply: ordinary slots retain the current written argument, known
     collector slices retain each transported cell's source, computed spreads none.
     The partial callers above install this same total core at evalCounted. -/
 def formNeedSupplySourced (args : OutputBundle) (ctx : EvalCtx) (env : ValEnv)
     : EvalM (List (Nat × Option Expr)) :=
-  NeedSupply.form evalCounted ctx env args
+  NeedSupply.form evalSupplySpread ctx env args
 
 /-- The supply's cells, projected from THE sourced supply without another assembler. -/
 def formNeedSupply (args : OutputBundle) (ctx : EvalCtx) (env : ValEnv) : EvalM (List Nat) := do
@@ -8295,7 +8943,7 @@ mutual
   def ParameterPattern.sourceArgument : ParameterPattern -> Expr
     | .capture parameter =>
         match parameter.kind with
-        | .normal => .param parameter.name
+        | .normal | .metaRef => .param parameter.name
         | .collecting => .sequenceSpread (.param parameter.name)
     | .sequenceValue items => sequenceArgument (ParameterPattern.sourceArguments items)
     | .listValue items => .listLiteral (ParameterPattern.sourceArguments items)
@@ -8854,6 +9502,14 @@ mutual
     return { p with identity := some identity, alg := (<- identifyPropertyAlgorithm p.alg) }
 end
 
+/-- THE RUN RESULT BOUNDARY (CallReference S1, J4): a call reference is run-scoped, so a
+    run result that contains one — at any depth — is refused; every reference-free value
+    leaves unchanged. C#: `Evaluator.ExportRunValue` (every public evaluator and engine
+    result, host-operation arguments, formatting). -/
+def exportRunValue (value : Result) : EvalM Result := do
+  requireCallRefFree callReferenceLeavesRunMessage value
+  pure value
+
 def runResultM (e : Expr) : EvalM Result := do
   let e := (identifyPropertyExpr e).run' 0
   validateExplicitParamOutputInvariantExpr e
@@ -8867,10 +9523,10 @@ def runResultM (e : Expr) : EvalM Result := do
       -- accepts an empty supply (a collecting-only host-built root) binds it
       -- through the shared demand funnel (`evalProgramOutput`).
       if Algorithm.acceptsZeroSuppliedArguments wired then
-        evalProgramOutput wired ctx []
+        exportRunValue (<- evalProgramOutput wired ctx [])
       else
         .error (Error.unresolvedImplicitParams (Algorithm.params wired))
-  | _ => eval e ctx []
+  | _ => exportRunValue (<- eval e ctx [])
 
 def runResultWithState (e : Expr) : Except Error (Result × EvalState) :=
   runResultM e |>.run EvalState.empty

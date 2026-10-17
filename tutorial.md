@@ -1580,6 +1580,81 @@ Parentheses and braces look alike but mean different things:
 
 A brace algorithm without parameters simply produces its output when it is read, so `{1, 2, 3}.count` is `3`, just like `(1, 2, 3).count`. Braces also give an algorithm room for definitions of its own, as [Organizing Programs](#organizing-programs) shows.
 
+### Capturing a Call with `meta`
+
+Writing `meta` before a parameter name makes the parameter receive the *call* written as its argument instead of that call's value. The call is not run when it is captured; the parameter holds a **call reference**, and `.Invoke()` runs the captured call:
+
+```
+Square(x) = x * x
+Capture(meta operation) = operation
+
+R = Capture(Square(5))
+R.Invoke()
+```
+
+**Result:** `25`
+
+Every `.Invoke()` runs the call again, in the place where it was written, with the same arguments. A call reference is an ordinary value that can be stored and passed on:
+
+```
+Square(x) = x * x
+Capture(meta operation) = operation
+Twice(r) = r.Invoke() + r.Invoke()
+
+Twice(Capture(Square(3)))
+```
+
+**Result:** `18`
+
+Only a written call can be captured: `Capture(5)`, `Capture(Square)` and `Capture(Y)` for a property `Y` are errors. `meta` goes before one plain parameter name of a written parameter list (not before `*name`, a pattern or a literal), and `R.Invoke` without parentheses is an error rather than a call. A call reference is used inside the program: a program cannot output one, and it cannot be shown as text:
+
+```
+Square(x) = x * x
+Capture(meta operation) = operation
+
+Capture(Square(5))
+```
+
+**Result:** error
+
+### Looking at a Captured Call's Arguments
+
+`.Arguments` is a view of the arguments supplied to a captured call. `count` tells how many there are, and selection reads one of them (counting from `0`):
+
+```
+Add(x, y) = x + y
+Capture(meta operation) = operation
+
+R = Capture(Add(10, 20))
+R.Arguments.count, R.Arguments[0], R.Arguments[1]
+```
+
+**Results:**
+```
+2
+10
+20
+```
+
+Obtaining the view runs nothing. `count` leaves ordinary argument values suspended, and selecting an argument computes only that one. Counting may evaluate an explicit spread such as `Pair()*` to determine how many arguments it supplies; that preparation happens once and is shared with selection and `R.Invoke()`. Spreading the view into another call passes it the same arguments — `R.Arguments*` hands over the original argument computations, so an argument the new call never uses is never computed:
+
+```
+Add(x, y) = x + y
+First(x, y) = x
+Capture(meta operation) = operation
+
+R = Capture(Add(5, 1 / 0))
+R.Arguments.count, First(R.Arguments*)
+```
+
+**Results:**
+```
+2
+5
+```
+
+`.first` and `.last` work as for a list, but an argument view is not a list: other collection operations such as `sum(R.Arguments)` or `[R.Arguments*]` are errors — select the values you need instead. `Arguments` is a property, so `R.Arguments()` is an error too, and like the reference itself a view cannot be a program result.
+
 ---
 
 ## Working with Collections
@@ -2817,6 +2892,8 @@ Written as `X = A*` followed by the row `X`, the program prints the same `(1, 2)
 | `repeat` | `step.repeat(n, initial...)` | The state after `n` applications of `step` |
 | `while` | `step.while(initial...)` | The state reached while the last output of `step` is `true` |
 | `string` | `number.string` | The number as text (dot form only) |
+| `Invoke` | `reference.Invoke()` | Runs the call a `meta` parameter captured (dot form only; see [Capturing a Call with `meta`](#capturing-a-call-with-meta)) |
+| `Arguments` | `reference.Arguments` | A lazy view of the captured call's arguments: `count`, `[i]`, `first`, `last`, and `F(reference.Arguments*)` (dot form only; see [Looking at a Captured Call's Arguments](#looking-at-a-captured-calls-arguments)) |
 | `Math` | `Math.Sqrt(2)`, `sqrt(2)` | Mathematical functions and constants (see [Math Functions](#math-functions)) |
 
 Operations that produce a collection (`range`, `filter`, `map`, `order`, `orderDesc`, `distinct`, `take`, `skip`, `atoms`) return a list. Built-in names such as `count` and `if` are not reserved: a definition of your own with the same name takes precedence.

@@ -3429,7 +3429,17 @@ public class SemanticModelTests
     [Fact]
     public void PreludeCatalog_DotIntrinsicsAndKeywords()
     {
-        var stringIntrinsic = Assert.Single(PreludeCatalog.DotIntrinsicSymbols);
+        // The dot-only intrinsics, name-ordered: `Arguments` (CallReference S2), `Invoke` (S1) and `string`.
+        Assert.Equal(["Arguments", "Invoke", "string"], PreludeCatalog.DotIntrinsicSymbols.Select(static symbol => symbol.Name));
+        var argumentsIntrinsic = PreludeCatalog.DotIntrinsicSymbols[0];
+        var argumentsSignature = Assert.Single(argumentsIntrinsic.Property!.Signatures);
+        Assert.Equal(PropertyCallStyle.Dot, argumentsSignature.CallStyle);
+        Assert.Equal("reference.Arguments", argumentsSignature.DisplayText);
+        var invokeIntrinsic = PreludeCatalog.DotIntrinsicSymbols[1];
+        var invokeSignature = Assert.Single(invokeIntrinsic.Property!.Signatures);
+        Assert.Equal(PropertyCallStyle.Dot, invokeSignature.CallStyle);
+        Assert.Equal("reference.Invoke()", invokeSignature.DisplayText);
+        var stringIntrinsic = PreludeCatalog.DotIntrinsicSymbols[2];
         Assert.Equal("string", stringIntrinsic.Name);
         var signature = Assert.Single(stringIntrinsic.Property!.Signatures);
         Assert.Equal(PropertyCallStyle.Dot, signature.CallStyle);

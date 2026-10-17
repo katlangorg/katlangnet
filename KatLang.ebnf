@@ -188,6 +188,7 @@ ClauseDefinition = [ "public" ] Identifier "(" Pattern ")" "=" OutputBundle ;
 
 Pattern            = PatternAtom { "," PatternAtom } ;
 PatternAtom        = BindingIdentifier             (* fixed bind *)
+                   | MetaParameter                (* META bind `meta name` (CallReference S1) *)
                    | CollectingBinding            (* collecting bind `*name`; the ONLY
                                                       collecting-binding syntax. Valid only for
                                                       ordinary recursive explicit parameter
@@ -203,6 +204,17 @@ PatternAtom        = BindingIdentifier             (* fixed bind *)
                    | BooleanLiteral                (* litBool: matches only the Boolean value *)
                    | SequencePattern
                    | ListPattern ;
+MetaParameter      = "meta" BindingIdentifier ;    (* CONTEXTUAL: "meta" is an ordinary Identifier and
+                                                      is the modifier only when another pattern item
+                                                      follows it on the same line (F(meta) and
+                                                      F(meta, x) bind a name "meta"). The parameter
+                                                      binds a call reference to the SUPPLIED CALL,
+                                                      without evaluating it. Valid only as a plain,
+                                                      fixed name written once at the top level of an
+                                                      ordinary explicit parameter list; "meta" before
+                                                      any other item, a nested or repeated META name,
+                                                      and a META binder in a clause family are the
+                                                      error InvalidMetaParameter. *)
 SequencePattern    = "(" [ Pattern ] ")" ;          (* matches SEQUENCE values only, of exactly its
                                                       length (a collector: at least its fixed items);
                                                       "()" is the empty sequence. Exactly ONE
@@ -534,7 +546,9 @@ PostfixOp       = "[" [ ExpressionList ] "]"
                                    dot edge as `recv.Name`: structural member
                                    first (any name, `string` included), then on a
                                    structural miss the `.string` intrinsic for
-                                   `string` (Q-17 S-C), otherwise the lexical
+                                   `string` (Q-17 S-C), the call-reference
+                                   intrinsics for `Invoke` and `Arguments`
+                                   (CallReference S1/S2), otherwise the lexical
                                    fallback.
 
                                    Free-name collection follows semantic source order:
@@ -708,7 +722,8 @@ GraceIdentifier = { "~" } Identifier { "~" } ;
                      property, a dot member the receiver is known to declare
                      (`Obj.~V`), any `.string` edge (a declared `string`
                      member or the intrinsic — never a lexical callable,
-                     Q-17 S-C) — or ANY occurrence on a closed level (under
+                     Q-17 S-C; likewise `.Invoke` and `.Arguments`,
+                     CallReference S1/S2) — or ANY occurrence on a closed level (under
                      an explicit parameter list, on a clause branch's own
                      rows; an algorithm nested in a branch is an owner of its
                      own) is the front-end error InvalidGraceMarker ("Grace

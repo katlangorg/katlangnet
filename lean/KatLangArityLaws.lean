@@ -821,6 +821,7 @@ theorem source_argument_sequence_pattern_rebuilds_a_sequence (items : List Param
     | collecting =>
       exact Or.inr ⟨[.sequenceSpread (.param parameter.name)], by
         simp [ParameterPattern.sourceArgument, ParameterPattern.sourceArguments, sequenceArgument, h]⟩
+    | metaRef => simp [ParameterPattern.isSingletonSequenceItems, h] at valid
   | [.sequenceValue _], valid => simp [ParameterPattern.isSingletonSequenceItems] at valid
   | [.listValue _], valid => simp [ParameterPattern.isSingletonSequenceItems] at valid
   | [.unpacking _], valid => simp [ParameterPattern.isSingletonSequenceItems] at valid
@@ -1531,7 +1532,7 @@ theorem spread_of_selected_list_opens_one_boundary (xs ys : List Result) :
 `receiver[s1, …, sn]` replaces the retired colon form. PARENTHESES INVOKE A
 COMPUTATION; POSTFIX BRACKETS SELECT FROM A VALUE; selection never changes how its
 receiver obtains that value. The `.index` arm of `evalCounted` demands the receiver
-once, forms the selector supply like a call's (`NeedSupply.addresses evalCounted`), and instantiates
+once, forms the selector supply like a call's (`NeedSupply.addresses evalSupplySpread`), and instantiates
 the TOTAL core below (`selectWith`) with `fun cell => Prod.fst <$> demandNeedRecursive cell`;
 these laws are about that core
 and the ONE positional view it shares with `count`, `first` and `last`. The arm
@@ -1840,7 +1841,7 @@ cell, then `selectionResult` — give exactly the value-boundary re-count of the
 `reCountValueBoundary (selected, n)` for every count `n` the element carried: the stored value
 itself with `Result.valueCount`, its origin forgotten. The `.index` arm of `evalCounted`
 instantiates `demand` with `fun cell => Prod.fst <$> demandNeedRecursive cell` over the selector
-supply formed by `NeedSupply.addresses evalCounted` and demands the receiver first; that arm is
+supply formed by `NeedSupply.addresses evalSupplySpread` and demands the receiver first; that arm is
 `partial`, so the instantiation (and that every evaluator selection route uses
 this core) is a source fact pinned by CoreTests `SelectionValueBoundary` / `VariadicSelection`.
 (Strengthened from a restatement of `reCountValueBoundary_recounts` that never mentioned
@@ -2277,6 +2278,8 @@ mutual
     | .atom _ => by simp [Result.normalize]
     | .str _ => by simp [Result.normalize]
     | .bool _ => by simp [Result.normalize]
+    | .callRef _ => by simp [Result.normalize]
+    | .argView _ => by simp [Result.normalize]
     | .sequenceValue rs => by
         have hl := normalize_map_idempotent rs
         cases h : rs.map Result.normalize with
@@ -2323,6 +2326,8 @@ mutual
     | .atom _ => true
     | .str _ => true
     | .bool _ => true
+    | .callRef _ => true
+    | .argView _ => true
     | .sequenceValue rs => rs.length != 1 && orphanFreeResultList rs
     -- Exact lists carry NO singleton-orphan rule: `[x]` is literal-writable,
     -- so only the elements are checked (a sequence orphan nested inside a
@@ -2359,6 +2364,8 @@ mutual
     | .atom _ => by simp [Result.normalize, orphanFreeResult]
     | .str _ => by simp [Result.normalize, orphanFreeResult]
     | .bool _ => by simp [Result.normalize, orphanFreeResult]
+    | .callRef _ => by simp [Result.normalize, orphanFreeResult]
+    | .argView _ => by simp [Result.normalize, orphanFreeResult]
     | .sequenceValue rs => by
         have hl := orphanFreeList_map_normalize rs
         cases h : rs.map Result.normalize with
@@ -2442,6 +2449,14 @@ theorem capture_toItems_of_canonical (r : Result) (h : r.normalize = r) :
       show captureForArityLaw [Result.bool b] = Result.bool b
       rw [capture_singleton]
       exact h
+  | callRef a =>
+      show captureForArityLaw [Result.callRef a] = Result.callRef a
+      rw [capture_singleton]
+      exact h
+  | argView a =>
+      show captureForArityLaw [Result.argView a] = Result.argView a
+      rw [capture_singleton]
+      exact h
   | sequenceValue rs =>
       rw [toItems_sequenceValue]
       exact h
@@ -2467,6 +2482,14 @@ theorem capture_spreadItems_of_canonical_non_list (r : Result)
       exact h
   | bool b =>
       show captureForArityLaw [Result.bool b] = Result.bool b
+      rw [capture_singleton]
+      exact h
+  | callRef a =>
+      show captureForArityLaw [Result.callRef a] = Result.callRef a
+      rw [capture_singleton]
+      exact h
+  | argView a =>
+      show captureForArityLaw [Result.argView a] = Result.argView a
       rw [capture_singleton]
       exact h
   | sequenceValue rs =>
@@ -2725,6 +2748,16 @@ theorem spreadItems_canonical_of_canonical {v : Result} (h : v.normalize = v) :
       simp only [Result.spreadItems, Result.toItems, List.mem_singleton] at hr
       subst hr
       exact h
+  | callRef a =>
+      intro r hr
+      simp only [Result.spreadItems, Result.toItems, List.mem_singleton] at hr
+      subst hr
+      exact h
+  | argView a =>
+      intro r hr
+      simp only [Result.spreadItems, Result.toItems, List.mem_singleton] at hr
+      subst hr
+      exact h
   | listValue rs =>
       rw [normalize_listValue] at h
       exact canonical_of_map_normalize_eq (Result.listValue.inj h)
@@ -2928,6 +2961,8 @@ theorem spreadItems_eq_nil_iff (v : Result) :
   | atom n => simp [Result.spreadItems, Result.toItems]
   | str s => simp [Result.spreadItems, Result.toItems]
   | bool b => simp [Result.spreadItems, Result.toItems]
+  | callRef a => simp [Result.spreadItems, Result.toItems]
+  | argView a => simp [Result.spreadItems, Result.toItems]
   | sequenceValue rs => simp [Result.spreadItems, Result.toItems]
   | listValue rs => simp [Result.spreadItems]
 
@@ -3033,6 +3068,8 @@ theorem spreadItems_eq_singleton_self_iff (x : Result) :
   | atom n => simp [Result.spreadItems, Result.toItems, Result.structureItems?]
   | str s => simp [Result.spreadItems, Result.toItems, Result.structureItems?]
   | bool b => simp [Result.spreadItems, Result.toItems, Result.structureItems?]
+  | callRef a => simp [Result.spreadItems, Result.toItems, Result.structureItems?]
+  | argView a => simp [Result.spreadItems, Result.toItems, Result.structureItems?]
   | sequenceValue rs =>
       simp only [Result.structureItems?, reduceCtorEq, iff_false]
       intro h
@@ -3097,6 +3134,8 @@ private theorem spread_weight (r : Result) :
   | atom n => simp [Result.spreadItems, Result.toItems, Result.structureItems?]
   | str s => simp [Result.spreadItems, Result.toItems, Result.structureItems?]
   | bool b => simp [Result.spreadItems, Result.toItems, Result.structureItems?]
+  | callRef a => simp [Result.spreadItems, Result.toItems, Result.structureItems?]
+  | argView a => simp [Result.spreadItems, Result.toItems, Result.structureItems?]
   | sequenceValue rs =>
       have hlt := sum_sizeOf_lt rs
       have hs : sizeOf (Result.sequenceValue rs) = 1 + sizeOf rs := by simp
@@ -3262,6 +3301,8 @@ theorem valueCount_le_one : ∀ r : Result, r.valueCount ≤ 1
   | .atom _ => Nat.le_refl 1
   | .str _ => Nat.le_refl 1
   | .bool _ => Nat.le_refl 1
+  | .callRef _ => Nat.le_refl 1
+  | .argView _ => Nat.le_refl 1
   | .sequenceValue [] => Nat.zero_le 1
   | .sequenceValue (_ :: _) => Nat.le_refl 1
   | .listValue _ => Nat.le_refl 1
@@ -3497,6 +3538,8 @@ mutual
     | .atom n => by rw [atoms_number, hostAtoms_atom]
     | .str s => by rw [atoms_string, hostAtoms_str]
     | .bool b => by rw [atoms_bool, hostAtoms_bool]
+    | .callRef a => by simp [Result.languageAtoms, Result.hostAtoms]
+    | .argView a => by simp [Result.languageAtoms, Result.hostAtoms]
     | .sequenceValue rs => by
         rw [atoms_sequence, hostAtoms_sequence]
         exact languageAtomsList_eq_hostAtomsList rs
@@ -4595,6 +4638,7 @@ theorem plain_patterns_bind_without_any_channel (channels : NeedChannels) (ps : 
           | list _ => simp [NeedPattern.plainName?] at hp
           | unpack _ => simp [NeedPattern.plainName?] at hp
           | literal _ => simp [NeedPattern.plainName?] at hp
+          | metaRef _ => simp [NeedPattern.plainName?] at hp
 
 /-- Corollary at the entry point the evaluator calls: a head of plain binders binding no name
     twice gives the same outcome AND the same run state under any two channel pairs — so the

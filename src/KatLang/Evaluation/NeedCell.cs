@@ -52,6 +52,10 @@ internal sealed class NeedCell
     private EvalResult<Evaluator.CountedResult>? _completed;
     private ExceptionDispatchInfo? _exception;
     private EvalResult<Algorithm?>? _callable;
+    // A written argument's suspension (Lean `NeedSuspension.expression source caller values`),
+    // kept as DATA rather than as closures over it. It is never cleared: CALLABLE projection may
+    // run after VALUE completion, and an invocation plan executes over it again (S0).
+    private readonly Evaluator.ExpressionSuspension? _suspension;
 
     internal NeedCell(
         Func<EvalResult<Evaluator.CountedResult>> evaluate,
@@ -71,6 +75,34 @@ internal sealed class NeedCell
         Span = span;
         Slice = slice;
         Source = source;
+    }
+
+    /// <summary>
+    /// A written argument's cell (<see cref="Evaluator.SupplyCell"/>): its VALUE, async VALUE and
+    /// CALLABLE projection are the evaluator's static operations over <paramref name="suspension"/>,
+    /// so the cell allocates no delegate or closure of its own.
+    /// </summary>
+    internal NeedCell(Expr source, Evaluator.ExpressionSuspension suspension, EvaluationBudget budget, CancellationToken token)
+    {
+        _suspension = suspension;
+        _token = token;
+        _budget = budget;
+        Span = source.Span;
+        Source = source;
+        // An invocation plan's identity IS its one owning cell (Lean: the need address).
+        if (suspension is Evaluator.InvocationPlan plan) plan.Attach(this);
+    }
+
+    /// <summary>
+    /// The written argument's suspension, or <c>null</c> for a Ready, collector or host-built cell.
+    /// An <see cref="Evaluator.InvocationPlan"/> suspension marks the cell as an invocation plan (S0).
+    /// </summary>
+    internal Evaluator.ExpressionSuspension? Suspension => _suspension;
+
+    // Test observation only: whether this cell's VALUE has completed (successfully or not).
+    internal bool HasCompletedValue
+    {
+        get { lock (_gate) return _completed is not null || _exception is not null; }
     }
 
     // Produced data is a calculation value: it never carries callable identity.
@@ -117,7 +149,9 @@ internal sealed class NeedCell
         lock (_gate)
         {
             if (_exception?.SourceException is OperationCanceledException) _exception.Throw();
-            return _callable ??= _project?.Invoke() ?? EvalResult<Algorithm?>.Ok(null);
+            return _callable ??= _suspension is not null
+                ? Evaluator.ProjectSuspendedCallable(Source!, _suspension)
+                : _project?.Invoke() ?? EvalResult<Algorithm?>.Ok(null);
         }
     }
 
@@ -152,7 +186,8 @@ internal sealed class NeedCell
                 var previous = Current.Value;
                 Current.Value = this;
                 try { Complete(RuntimeHelpers.TryEnsureSufficientExecutionStack()
-                    ? _evaluate!() : new EvalError.EvaluationStackExhausted { Span = Span }); }
+                    ? _suspension is not null ? Evaluator.EvalSuspendedValue(this, _suspension) : _evaluate!()
+                    : new EvalError.EvaluationStackExhausted { Span = Span }); }
                 catch (Exception error) { CompleteException(error); }
                 finally { Current.Value = previous; }
             }
@@ -210,7 +245,10 @@ internal sealed class NeedCell
         var previous = Current.Value;
         Current.Value = this;
         try { Complete(RuntimeHelpers.TryEnsureSufficientExecutionStack()
-            ? await _evaluateAsync!().ConfigureAwait(false) : new EvalError.EvaluationStackExhausted { Span = Span }); }
+            ? _suspension is not null
+                ? await Evaluator.EvalSuspendedValueAsync(this, _suspension).ConfigureAwait(false)
+                : await _evaluateAsync!().ConfigureAwait(false)
+            : new EvalError.EvaluationStackExhausted { Span = Span }); }
         catch (Exception error) { CompleteException(error); }
         finally { Current.Value = previous; }
     }
@@ -268,6 +306,35 @@ internal sealed class NeedCell
             var edges = parent._dependencies ??= new(ReferenceEqualityComparer.Instance);
             edges[this] = edges.GetValueOrDefault(this) + 1;
             return true;
+        }
+    }
+
+    /// <summary>
+    /// Whether the current logical flow is running INSIDE this cell's VALUE evaluation: the flow's
+    /// current cell is this cell, or a cell this cell's evaluation is (transitively) waiting on
+    /// through its wait-for edges. It evaluates nothing. An invocation plan whose supply is being
+    /// prepared by this cell's VALUE reads it to report a re-entrant preparation as
+    /// <see cref="EvalError.DemandCycle"/> instead of waiting on itself (S0).
+    /// </summary>
+    internal bool IsEvaluatingInCurrentFlow()
+    {
+        var current = Current.Value;
+        if (current is null) return false;
+        if (ReferenceEquals(current, this)) return true;
+        if (current._budget != _budget) return false;
+        lock (DependencyGate)
+        {
+            if (_dependencies is not { Count: > 0 }) return false;
+            var pending = new Stack<NeedCell>();
+            var visited = new HashSet<NeedCell>(ReferenceEqualityComparer.Instance);
+            pending.Push(this);
+            while (pending.TryPop(out var cell))
+            {
+                if (ReferenceEquals(cell, current)) return true;
+                if (!visited.Add(cell) || cell._dependencies is null) continue;
+                foreach (var dependency in cell._dependencies.Keys) pending.Push(dependency);
+            }
+            return false;
         }
     }
 

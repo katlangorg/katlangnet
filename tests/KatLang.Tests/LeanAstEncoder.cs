@@ -337,6 +337,7 @@ internal sealed class LeanAstEncoding
     {
         ParameterKind.Normal => $"{{ name := {Quote(capture.Name)} }}",
         ParameterKind.Collecting => $"{{ name := {Quote(capture.Name)}, kind := .collecting }}",
+        ParameterKind.Meta => $"{{ name := {Quote(capture.Name)}, kind := .metaRef }}",
         _ => throw new NotSupportedException($"Unhandled parameter kind '{capture.Kind}'."),
     };
 
@@ -397,6 +398,8 @@ internal sealed class LeanAstEncoding
     {
         Pattern.Bind { ParameterKind: ParameterKind.Collecting } =>
             throw new NotSupportedException("Lean clause binders cannot represent collecting bindings."),
+        Pattern.Bind { ParameterKind: ParameterKind.Meta } =>
+            throw new NotSupportedException("Lean clause binders cannot represent META bindings."),
         Pattern.Bind(var name) => $".bind {Quote(name)}",
         Pattern.LitInt(var value) => $".litInt {EncodeNumber(value)}",
         Pattern.LitString(var value) => $".litString {Quote(value)}",

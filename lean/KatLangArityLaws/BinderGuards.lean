@@ -182,6 +182,7 @@ def flakyRepresentative : NeedCapabilities EvalM where
     pure (.atom 1, 1)
   callable _ := pure none
   allocate := allocateNeed
+  reference := NeedPlan.reference
 
 -- The representative's re-demand fails: events end at it, no CALLABLE projection.
 #guard let out := run flakyRepresentative [.bind "x", .bind "x"] [0, 1] (heap [])
@@ -197,6 +198,7 @@ def projectionChannels (failAt : Nat) : NeedCapabilities EvalM where
     else if address == 3 then pure (some (.builtin .sumBuiltin))
     else pure none
   allocate := allocateNeed
+  reference := NeedPlan.reference
 
 -- The representative's CALLABLE projection fails: the current one is never projected.
 #guard let out := run (projectionChannels 0) [.bind "x", .bind "x"] [0, 1] (heap [])
@@ -262,6 +264,7 @@ def countingValue : NeedCapabilities EvalM where
     pure (.atom 1, 1)
   callable _ := pure none
   allocate := allocateNeed
+  reference := NeedPlan.reference
 
 -- A rejected attempt's completed effect is retained: two VALUE invocations, counter 2.
 #guard let out := runFamily countingValue literalFamily [0] EvalCtx.empty [] (heap [])

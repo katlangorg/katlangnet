@@ -59,6 +59,7 @@ def _root_.KatLang.BinderTrace.NeedEvent.address : NeedEvent → Nat
   | .collector a _ => a
   | .ready a => a
   | .expression a => a
+  | .reference a _ => a
 
 /-- Whether an event is a VALUE or CALLABLE invocation. -/
 def _root_.KatLang.BinderTrace.NeedEvent.isInvocation : NeedEvent → Bool
@@ -80,6 +81,9 @@ structure AgreeOutside (V C : Nat → Prop) (k₁ k₂ : NeedCapabilities EvalM)
   allocate : k₁.allocate = k₂.allocate
   value : ∀ a, ¬ V a → k₁.value a = k₂.value a
   callable : ∀ a, ¬ C a → k₁.callable a = k₂.callable a
+  /-- The same META capability (CallReference S1): production capabilities share
+      `NeedPlan.reference`, which reads no channel. -/
+  reference : k₁.reference = k₂.reference
 
 /-- A schedule AVOIDS `V` and `C`: none of its VALUE demands is on a cell of `V`, none of its
     CALLABLE projections on a cell of `C`. -/
@@ -257,6 +261,15 @@ mutual
       constructor
       · simp only [NeedBinder.bindOne, hva]
       · rfl
+    | metaRef name =>
+      simp only [oneEvents] at havoid
+      simp only [NeedBinder.bindOne, oneEvents, ← hk.reference, runEval_bind]
+      rcases h1 : runEval (k₁.reference address) s with ⟨e | adapter, s1⟩
+      · simp
+      · simp only [h1] at havoid
+        obtain ⟨hrun, hev⟩ := name_substitution V C k₁ k₂ hk name adapter repeated bound family s1
+          (avoids_cons havoid).2
+        simp [hrun, hev]
     | sequence ps =>
       exact structural_substitution V C k₁ k₂ hk _ ps (Or.inl rfl) address repeated bound family s
         (fun cells s2 h => sources_substitution V C k₁ k₂ hk ps (needLevelSources ps cells) repeated bound family s2 h)
@@ -334,7 +347,7 @@ theorem production_results_depend_only_on_invoked_cells (V C : Nat → Prop) (c�
     (ps : List NeedPattern) (cells : List Nat) (family : Bool) (s : EvalState)
     (havoid : Avoids V C (patternsEvents c₁.capabilities ps cells family s)) :
     (bindNeedPatterns c₁ ps cells family).runState s = (bindNeedPatterns c₂ ps cells family).runState s :=
-  (results_depend_only_on_invoked_cells V C c₁.capabilities c₂.capabilities ⟨rfl, hv, hc⟩ ps cells family s
+  (results_depend_only_on_invoked_cells V C c₁.capabilities c₂.capabilities ⟨rfl, hv, hc, rfl⟩ ps cells family s
     havoid).1
 
 /-- The extreme case: a run whose schedule invokes NO channel (a head of plain, non-repeated
@@ -369,6 +382,7 @@ theorem production_callable_channel_is_irrelevant_without_repeated_names (c₁ c
     not. -/
 def _root_.KatLang.NeedPattern.inspects (repeated : List Ident) : NeedPattern → Bool
   | .bind name _ => repeated.contains name
+  | .metaRef _ => false
   | _ => true
 
 /-- The supplied cells a level's patterns inspect at their own positions (each pattern's source
@@ -384,6 +398,7 @@ def inspectedCells (repeated : List Ident) : List NeedPattern → List (NeedSour
 def _root_.KatLang.BinderTrace.NeedEvent.allocated? : NeedEvent → Option Nat
   | .ready a => some a
   | .collector a _ => some a
+  | .reference _ adapter => some adapter
   | _ => none
 
 /-- Some allocation event of the schedule created cell `a`. -/
@@ -770,6 +785,34 @@ mutual
       · intro next s' h a ha
         rw [bindOne_literal_result k literal address repeated bound family s next s' h] at ha
         exact Or.inl ha
+    | metaRef name =>
+      constructor
+      · intro ev hev hinv
+        simp only [oneEvents] at hev ⊢
+        rcases h1 : runEval (k.reference address) s with ⟨e | adapter, s1⟩
+        · simp [h1] at hev
+        · simp only [h1] at hev ⊢
+          rcases List.mem_cons.mp hev with rfl | hev
+          · simp [NeedEvent.isInvocation] at hinv
+          · simp only [nameEvents] at hev
+            split at hev
+            · rename_i hr
+              rcases repeatedNameEvents_addresses k adapter _ s1 ev hev with ha | ha
+              · exact Or.inr (Or.inl ⟨.reference address adapter, List.mem_cons_self,
+                  by simp [ha, NeedEvent.allocated?]⟩)
+              · exact Or.inr (Or.inr ⟨name, hr, ha⟩)
+            · simp at hev
+      · intro next s' h a ha
+        simp only [NeedBinder.bindOne, runEval_bind] at h
+        simp only [oneEvents]
+        rcases h1 : runEval (k.reference address) s with ⟨e | adapter, s1⟩
+        · simp [h1] at h
+        · simp only [h1, thenRun_ok] at h ⊢
+          rcases bindName_result k name adapter repeated bound family s1 next s' h with rfl | rfl
+          · exact Or.inl ha
+          · rcases repeatedAt_rebind ha with ha | ⟨hr, rfl⟩
+            · exact Or.inl ha
+            · exact Or.inr (Or.inr ⟨.reference address a, List.mem_cons_self, rfl⟩)
     | sequence ps =>
       exact structural_origin k _ ps (Or.inl rfl) address repeated bound family s
         (fun cells s2 => sources_origin k ps (needLevelSources ps cells) repeated bound family s2)
@@ -921,6 +964,7 @@ theorem plain_cells_are_channel_irrelevant (P : Nat → Prop) (k₁ k₂ : NeedC
       | collector a slice => simp [Hits] at hhit
       | ready a => simp [Hits] at hhit
       | expression a => simp [Hits] at hhit
+      | reference a adapter => simp [Hits] at hhit
     rcases invoked_cells_are_inspected_or_allocated k₁ ps cells family s ev hev hinv with hc | hc
     · exact hplain _ hP hc
     · exact hfresh _ hP hc)
@@ -934,7 +978,7 @@ theorem production_plain_cells_are_channel_irrelevant (P : Nat → Prop) (c₁ c
     (hplain : ∀ c, P c → c ∉ inspectedCells (needRepeatedNames ps) ps (needLevelSources ps cells))
     (hfresh : ∀ c, P c → ¬ Allocated (patternsEvents c₁.capabilities ps cells family s) c) :
     (bindNeedPatterns c₁ ps cells family).runState s = (bindNeedPatterns c₂ ps cells family).runState s :=
-  (plain_cells_are_channel_irrelevant P c₁.capabilities c₂.capabilities ⟨rfl, hv, hc⟩ ps cells family s
+  (plain_cells_are_channel_irrelevant P c₁.capabilities c₂.capabilities ⟨rfl, hv, hc, rfl⟩ ps cells family s
     hplain hfresh).1
 
 /-! ## (c) Mode correspondence: a clause attempt is the ordinary binding up to its first incompatibility -/
@@ -944,6 +988,7 @@ mutual
   def _root_.KatLang.NeedPattern.literalFree : NeedPattern → Bool
     | .literal _ => false
     | .bind _ _ => true
+    | .metaRef _ => true
     | .sequence ps => literalFreeList ps
     | .list ps => literalFreeList ps
     | .unpack ps => literalFreeList ps
@@ -1091,6 +1136,14 @@ mutual
       rw [bindOne_literal_shape k literal address repeated bound true,
         bindOne_literal_shape k literal address repeated bound false]
       exact ⟨rfl, ModeAgree.refl _, rfl⟩
+    | metaRef name =>
+      simp only [NeedBinder.bindOne, oneEvents, runEval_bind]
+      rcases h1 : runEval (k.reference address) s with ⟨e | adapter, s1⟩
+      · simp only [thenRun_error]
+        exact ⟨by trivial, .raised e, by trivial⟩
+      · simp only [thenRun_ok]
+        obtain ⟨hs, hm⟩ := name_modes k name adapter repeated bound s1
+        exact ⟨hs, hm, by trivial⟩
     | sequence ps =>
       exact structural_modes k _ ps (Or.inl rfl) address repeated bound s
         (fun cells s2 => sources_modes k ps (needLevelSources ps cells) repeated bound s2)
@@ -1261,6 +1314,12 @@ mutual
       rw [bindOne_bind_shape]
       exact name_ordinary_is_never_a_non_match k name address repeated bound s
     | literal literal => simp [NeedPattern.literalFree] at hlf
+    | metaRef name =>
+      simp only [NeedBinder.bindOne, runEval_bind]
+      rcases h1 : runEval (k.reference address) s with ⟨e | adapter, s1⟩
+      · simp
+      · simp only [thenRun_ok]
+        exact name_ordinary_is_never_a_non_match k name adapter repeated bound s1
     | sequence ps =>
       simp only [NeedPattern.literalFree] at hlf
       exact structural_ordinary_is_never_a_non_match k _ ps (Or.inl rfl) address repeated bound s
@@ -1307,7 +1366,9 @@ theorem ordinary_binding_is_never_a_non_match (k : NeedCapabilities EvalM) (ps :
 
 mutual
   theorem ofParameter_literalFree : (p : ParameterPattern) → (NeedPattern.ofParameter p).literalFree = true
-    | .capture _ => by simp [NeedPattern.ofParameter, NeedPattern.literalFree]
+    | .capture _ => by
+      simp only [NeedPattern.ofParameter]
+      split <;> simp [NeedPattern.literalFree]
     | .sequenceValue ps => by
       simp only [NeedPattern.ofParameter, NeedPattern.literalFree]
       exact ofParameter_list_literalFree ps

@@ -151,6 +151,9 @@ public static partial class Evaluator
         Result value,
         SourceSpan? span = null)
     {
+        // An argument view has no atoms to collect without materializing it (CallReference S2).
+        if (IsArgumentView(value))
+            return ArgumentViewUnsupported(BuiltinId.@atoms);
         var limit = ctx.Budget.MaxCollectionItems;
         if (!value.TryLanguageAtoms(limit, out var atoms))
             return AtSpanIfMissing(new EvalError.CollectionSizeLimitExceeded(limit, limit + 1L), span);
@@ -569,11 +572,13 @@ public static partial class Evaluator
         _ => false,
     };
 
-    // Supplies a spread's PEELED operand's immediate items; EvalSequenceSpreadCounted is
-    // its one caller. A consumer holding a whole spread EXPRESSION reads its items through
-    // EvalCounted + AddCountedTopLevelValues instead — handing this the spread node itself
-    // would spread the spread's captured value again (one boundary too many).
-    private static EvalResult<IReadOnlyList<Result>> EvalSequenceSpreadOperandItems(
+    // Supplies a spread's PEELED operand's VALUE (the written stars then open it, OpenSpreadLayers);
+    // EvalSequenceSpreadCounted and the supply's spread slot (FormSpreadSupplySlot) are its callers.
+    // A consumer holding a whole spread EXPRESSION reads its items through EvalCounted +
+    // AddCountedTopLevelValues instead — handing this the spread node itself would spread the
+    // spread's captured value again (one boundary too many).
+    // Lean: evalSequenceSpreadOperandValue.
+    private static EvalResult<Result> EvalSequenceSpreadOperandValue(
         Expr expr,
         EvalCtx ctx,
         ValEnv valEnv)
@@ -587,13 +592,13 @@ public static partial class Evaluator
                     ? SpreadMissingOutput(captureSpan)
                     : captureR.Error;
 
-            return EvalResult<IReadOnlyList<Result>>.Ok(captureR.Value.SpreadItems());
+            return captureR;
         }
 
         if (expr is Expr.AlgorithmExpr(var alg))
         {
             if (alg is Algorithm.Alias)
-                return EvalAliasSpreadOperandItems(expr, alg, ctx, valEnv);
+                return EvalAliasSpreadOperandValue(expr, alg, ctx, valEnv);
 
             var wired = WireToCaller(ctx, alg);
             var blockSpan = PreferExpressionSpan(expr.Span, wired.Output);
@@ -609,7 +614,7 @@ public static partial class Evaluator
                     ? SpreadMissingOutput(blockSpan)
                     : blockR.Error;
 
-            return EvalResult<IReadOnlyList<Result>>.Ok(blockR.Value.SpreadItems());
+            return blockR;
         }
 
         var outputR = Eval(expr, ctx, valEnv);
@@ -618,7 +623,61 @@ public static partial class Evaluator
                 ? SpreadMissingOutput(expr.Span)
                 : outputR.Error;
 
-        return EvalResult<IReadOnlyList<Result>>.Ok(outputR.Value.SpreadItems());
+        return outputR;
+    }
+
+    /// <summary>The innermost operand of a (possibly stacked) spread and its number of written stars.</summary>
+    private static Expr PeelSpreadLayers(Expr expr, out int layers)
+    {
+        var operand = expr;
+        layers = 0;
+        while (operand is Expr.SequenceSpread(var supplied))
+        {
+            operand = supplied;
+            layers++;
+        }
+
+        return operand;
+    }
+
+    /// <summary>
+    /// The written stars of a spread over its operand VALUE: each star opens exactly one boundary of the
+    /// value the previous star re-captured, so <c>A**</c> agrees with <c>(A*)*</c>, and the result is the
+    /// last capture with the last star's item count. An ARGUMENT VIEW (CallReference S2) is never opened
+    /// into values: a star that would open one is <see cref="ArgumentViewSpreadMessage"/>, except that
+    /// with <paramref name="transportView"/> (an argument supply's spread slot) the view the LAST star
+    /// opens is returned in <paramref name="view"/> for its cells to be transported (the returned result
+    /// is then meaningless). Lean: <c>openSpreadItems</c> / <c>openSupplySpread</c>.
+    /// </summary>
+    private static EvalResult<CountedResult> OpenSpreadLayers(
+        Result value, int layers, Expr expr, EvalCtx ctx, bool transportView, out Result.CallReference? view)
+    {
+        view = null;
+        var opened = value;
+        for (var layer = 0; layer < layers; layer++)
+        {
+            if (opened is Result.CallReference { IsArgumentView: true } argumentView)
+            {
+                if (transportView && layer == layers - 1)
+                {
+                    view = argumentView;
+                    return EvalResult<CountedResult>.Ok(default);
+                }
+
+                return new EvalError.TypeMismatch(ArgumentViewSpreadMessage) { Span = expr.Span };
+            }
+
+            var items = opened.SpreadItems();
+            var capturedR = MakeCheckedSequenceCapture(ctx, items, expr.Span);
+            if (capturedR.IsError) return capturedR.Error;
+
+            if (layer == layers - 1)
+                return EvalResult<CountedResult>.Ok(new CountedResult(capturedR.Value, items.Count));
+
+            opened = capturedR.Value;
+        }
+
+        throw new InvalidOperationException("Sequence spread must contain at least one layer.");
     }
 
     // Evaluate a unary `sequenceSpread` node by evaluating its single operand
@@ -638,36 +697,19 @@ public static partial class Evaluator
         EvalCtx ctx,
         ValEnv valEnv)
     {
-        var operand = expr;
-        var layers = 0;
-        while (operand is Expr.SequenceSpread(var supplied))
-        {
-            operand = supplied;
-            layers++;
-        }
-
-        var operandR = EvalSequenceSpreadOperandItems(operand, ctx, valEnv);
+        var operand = PeelSpreadLayers(expr, out var layers);
+        var operandR = EvalSequenceSpreadOperandValue(operand, ctx, valEnv);
         if (operandR.IsError) return operandR.Error;
-
-        var items = operandR.Value;
-        for (var layer = 0; layer < layers; layer++)
-        {
-            var capturedR = MakeCheckedSequenceCapture(ctx, items, expr.Span);
-            if (capturedR.IsError) return capturedR.Error;
-
-            if (layer == layers - 1)
-                return EvalResult<CountedResult>.Ok(new CountedResult(capturedR.Value, items.Count));
-
-            items = capturedR.Value.SpreadItems();
-        }
-
-        throw new InvalidOperationException("Sequence spread must contain at least one layer.");
+        return OpenSpreadLayers(operandR.Value, layers, expr, ctx, transportView: false, out _);
     }
 
+    // `ArgumentView` (CallReference S2): the view bound as the whole collection of count/first/last,
+    // whose cells the builtin reads instead of a collection value (Lean `BoundSequenceBuiltinArguments.view?`).
     private readonly record struct BoundSequenceBuiltinArguments(
         PreparedSequenceBuiltinInput PreparedInput,
         IReadOnlyList<CountedResult> IterationItems,
-        IReadOnlyList<PreparedSequenceBuiltinSuffixArg> SuffixArgs);
+        IReadOnlyList<PreparedSequenceBuiltinSuffixArg> SuffixArgs,
+        Result.CallReference? ArgumentView = null);
 
     /// <summary>
     /// The call item of an argument that assembly does not evaluate: its supplied cell, its
@@ -911,6 +953,8 @@ public static partial class Evaluator
         Result.SequenceValue => "sequence value",
         Result.ListValue(var items) when items.Count == 0 => "empty list value",
         Result.ListValue => "list value",
+        Result.CallReference { IsArgumentView: true } => "argument view",
+        Result.CallReference => "call reference",
     };
 
     private static string NumericSequenceItemErrorContext(BuiltinId builtin, int index, Result item)
@@ -1165,8 +1209,25 @@ public static partial class Evaluator
     /// identically under both strategies.
     /// Lean: <c>bindSequenceBuiltinArguments</c> (the collection-item step) /
     /// <c>builtinCollectionItems</c>.
+    /// <para>An ARGUMENT VIEW (CallReference S2) is no collection value: a builtin bound to one as its
+    /// whole collection refuses it here (<see cref="ArgumentViewUnsupported"/>) unless it reads views
+    /// (<c>count</c>/<c>first</c>/<c>last</c>, which <see cref="BindSequenceBuiltinArguments"/> handles
+    /// before this view applies), so neither strategy reads a view as a one-element collection.</para>
     /// </summary>
     private static EvalResult<IReadOnlyList<Result>> BindSequenceBuiltinCollectionArgument(
+        BuiltinId builtin,
+        VariadicCallItem collectionItem,
+        EvalCtx ctx,
+        ValEnv valEnv)
+    {
+        var valueR = BindSequenceBuiltinCollectionValue(collectionItem, ctx, valEnv);
+        if (valueR.IsError) return valueR.Error;
+        if (IsArgumentView(valueR.Value)) return ArgumentViewUnsupported(builtin);
+        return EvalResult<IReadOnlyList<Result>>.Ok(BuiltinCollectionItems(valueR.Value));
+    }
+
+    /// <summary>The demanded VALUE of a collection builtin's <c>collection</c> argument, before any view.</summary>
+    private static EvalResult<Result> BindSequenceBuiltinCollectionValue(
         VariadicCallItem collectionItem,
         EvalCtx ctx,
         ValEnv valEnv)
@@ -1178,7 +1239,7 @@ public static partial class Evaluator
         if (collectionItem.Value is null)
             return SequenceBuiltinValueDemandError(collectionItem) ?? new EvalError.BadArity();
 
-        return EvalResult<IReadOnlyList<Result>>.Ok(BuiltinCollectionItems(collectionItem.Value));
+        return EvalResult<Result>.Ok(collectionItem.Value);
     }
 
     private static EvalResult<BoundSequenceBuiltinArguments> BindSequenceBuiltinArguments(
@@ -1210,9 +1271,15 @@ public static partial class Evaluator
             };
         }
 
-        var collectionValuesR = BindSequenceBuiltinCollectionArgument(items[0], ctx, valEnv);
-        if (collectionValuesR.IsError) return collectionValuesR.Error;
-        var collectionValues = collectionValuesR.Value;
+        var collectionValueR = BindSequenceBuiltinCollectionValue(items[0], ctx, valEnv);
+        if (collectionValueR.IsError) return collectionValueR.Error;
+        // An argument view bound as the whole collection (CallReference S2): count/first/last read
+        // its cells; every other builtin refuses it before any control argument is demanded.
+        if (collectionValueR.Value is Result.CallReference { IsArgumentView: true } view)
+            return ReadsArgumentView(builtin)
+                ? EvalResult<BoundSequenceBuiltinArguments>.Ok(new BoundSequenceBuiltinArguments(default!, [], [], view))
+                : ArgumentViewUnsupported(builtin);
+        var collectionValues = BuiltinCollectionItems(collectionValueR.Value);
 
         var collected = new CollectedSequenceBuiltinInput(collectionValues);
         var preparedInputR = PrepareSequenceBuiltinInput(builtin, metadata, collected);
@@ -1834,16 +1901,20 @@ public static partial class Evaluator
         var boundR = BindSequenceBuiltinArguments(builtin, metadata, args, ctx, valEnv);
         if (boundR.IsError) return boundR.Error;
 
-        var bound = boundR.Value;
+        if (boundR.Value.ArgumentView is { } argumentView)
+            return EvalArgumentViewBuiltin(builtin, argumentView, ctx);
+        // Deconstructed before the local functions capture them, so their closure holds exactly these
+        // three references (the S2 view field never enlarges an ordinary collection-builtin call).
+        var (preparedInput, iterationItems, suffixArgs, _) = boundR.Value;
 
         EvalResult<CountedResult> WithPreparedFlatItems(
             Func<IReadOnlyList<Result>, EvalResult<CountedResult>> handler)
-            => handler(bound.PreparedInput.FlattenedItems);
+            => handler(preparedInput.FlattenedItems);
 
         EvalResult<CountedResult> WithPreparedNumericItems(
             Func<IReadOnlyList<Decimal128>, EvalResult<CountedResult>> handler)
         {
-            var numbersR = ExpectPreparedNumericItems(builtin, bound.PreparedInput);
+            var numbersR = ExpectPreparedNumericItems(builtin, preparedInput);
             if (numbersR.IsError) return numbersR.Error;
 
             return handler(numbersR.Value);
@@ -1851,14 +1922,14 @@ public static partial class Evaluator
 
         EvalResult<CountedResult> WithPreparedSuffixArgs(
             Func<IReadOnlyList<PreparedSequenceBuiltinSuffixArg>, EvalResult<CountedResult>> handler)
-            => handler(bound.SuffixArgs);
+            => handler(suffixArgs);
 
         return builtin switch
         {
             BuiltinId.@filter => WithPreparedSuffixArgs(
                     preparedSuffixArgs =>
                     {
-                        if (bound.IterationItems.Count == 0) return MakeCollectionListResult(ctx, []);
+                        if (iterationItems.Count == 0) return MakeCollectionListResult(ctx, []);
                         var predicateR = ExpectPreparedAlgorithmSuffixArg(
                             builtin,
                             metadata.SuffixArgs,
@@ -1866,12 +1937,12 @@ public static partial class Evaluator
                             0);
                         if (predicateR.IsError) return predicateR.Error;
 
-                        return EvalFilterCounted(bound.IterationItems, predicateR.Value, ctx, valEnv);
+                        return EvalFilterCounted(iterationItems, predicateR.Value, ctx, valEnv);
                     }),
             BuiltinId.@map => WithPreparedSuffixArgs(
                     preparedSuffixArgs =>
                     {
-                        if (bound.IterationItems.Count == 0) return MakeCollectionListResult(ctx, []);
+                        if (iterationItems.Count == 0) return MakeCollectionListResult(ctx, []);
                         var transformR = ExpectPreparedAlgorithmSuffixArg(
                             builtin,
                             metadata.SuffixArgs,
@@ -1879,7 +1950,7 @@ public static partial class Evaluator
                             0);
                         if (transformR.IsError) return transformR.Error;
 
-                        return EvalMapCounted(bound.IterationItems, transformR.Value, ctx, valEnv);
+                        return EvalMapCounted(iterationItems, transformR.Value, ctx, valEnv);
                     }),
             BuiltinId.@order => WithPreparedNumericItems(numbers => EvalOrderCounted(ctx, numbers)),
             BuiltinId.@orderDesc => WithPreparedNumericItems(numbers => EvalOrderDescCounted(ctx, numbers)),
@@ -1936,7 +2007,7 @@ public static partial class Evaluator
                             preparedSuffixArgs,
                             1);
                         if (initialR.IsError) return initialR.Error;
-                        if (bound.IterationItems.Count == 0) return EvalResult<CountedResult>.Ok(new(initialR.Value, initialR.Value.ValueCount()));
+                        if (iterationItems.Count == 0) return EvalResult<CountedResult>.Ok(new(initialR.Value, initialR.Value.ValueCount()));
 
                         var stepR = ExpectPreparedAlgorithmSuffixArg(
                             builtin,
@@ -1946,7 +2017,7 @@ public static partial class Evaluator
                         if (stepR.IsError) return stepR.Error;
 
                         return EvalReduceCounted(
-                            bound.IterationItems,
+                            iterationItems,
                             stepR.Value,
                             initialR.Value,
                             ctx,

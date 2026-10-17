@@ -168,6 +168,8 @@ public static class SemanticExplorerHarness
         Result.Bool b => KatLang.Rendering.ValueTextRenderer.FormatBool(b.Value),
         Result.SequenceValue g => "S[" + string.Join(", ", g.Items.Select(Neutral)) + "]",
         Result.ListValue l => "L[" + string.Join(", ", l.Items.Select(Neutral)) + "]",
+        // A run result never holds one (the run boundary refuses it).
+        Result.CallReference => "CallReference",
     };
 
     /// <summary>

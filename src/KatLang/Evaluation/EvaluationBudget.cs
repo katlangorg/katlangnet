@@ -1,4 +1,5 @@
 using System.Runtime.CompilerServices;
+using System.Runtime.ExceptionServices;
 
 namespace KatLang.Evaluation;
 
@@ -51,16 +52,45 @@ internal sealed class EvaluationBudget
     private long _materializedStringChars;
 
     private EvalError? _terminalFailure;
+    private ExceptionDispatchInfo? _requiredSourceCancellation;
+
+    // A reference may outlive the stack frame through internal caches/test seams, but its
+    // computations may not outlive the owning run. Every run entry closes this lifetime on
+    // success, failure and exception; cancellation and retained source failures keep precedence.
+    private bool _runEnded;
+    internal bool RunEnded => Volatile.Read(ref _runEnded);
+    internal void EndRun() => Volatile.Write(ref _runEnded, true);
 
     internal EvalError? CheckContinuation()
     {
+        Volatile.Read(ref _requiredSourceCancellation)?.Throw();
         ObserveCancellation();
         return _terminalFailure;
     }
 
+    // A loader's source-processing token can differ from the evaluation token. Once required
+    // source work observes its cancellation, a consumer cannot absorb it and continue the run.
+    internal void RetainRequiredSourceCancellation(OperationCanceledException error)
+        => Interlocked.CompareExchange(ref _requiredSourceCancellation, ExceptionDispatchInfo.Capture(error), null);
+
     internal EvalError RetainTerminal(EvalError error)
     {
-        if (!error.IsResourceLimit) throw new ArgumentException("Only a resource limit ends the run.", nameof(error));
+        if (!error.IsResourceLimit) throw new ArgumentException("Expected a resource-limit failure.", nameof(error));
+        return RetainTerminalCore(error);
+    }
+
+    // Required deferred compilation is source admission, not an ordinary recoverable VALUE
+    // failure. Keep its diagnostic classification (IsResourceLimit remains false), but stop
+    // further work even when an internal consumer inspects the failure and returns a value.
+    internal EvalError RetainRequiredSourceFailure(EvalError error)
+    {
+        if (error is not EvalError.ModuleRegionMaterializationFailed)
+            throw new ArgumentException("Expected a required source-materialization failure.", nameof(error));
+        return RetainTerminalCore(error);
+    }
+
+    private EvalError RetainTerminalCore(EvalError error)
+    {
         while (true)
         {
             var previous = Volatile.Read(ref _terminalFailure);
@@ -143,6 +173,40 @@ internal sealed class EvaluationBudget
     /// <see cref="RandomSource"/>.
     /// </summary>
     internal HostOperations? HostOperations { get; }
+
+    /// <summary>
+    /// The run's internal <see cref="InvocationPlanTestSeam"/>, captured from the ambient activation (or
+    /// the test process default) when the budget is created; <c>null</c> for every production run. A seam
+    /// forces plan retention (<see cref="RetainsInvocationPlans"/>) and may register internal META receivers.
+    /// </summary>
+    internal InvocationPlanTestSeam? PlanTestSeam { get; } = InvocationPlanTestSeam.Current;
+
+    /// <summary>
+    /// <b>J7: whether this run retains invocation plans.</b> Every call-shaped supplied cell of a retaining
+    /// run is an invocation plan whose formed supply survives VALUE completion, so a later <c>meta</c>
+    /// capture can reuse it; a non-retaining run allocates ordinary cells only. The run decides ONCE,
+    /// before any supplied cell exists (<see cref="DecideInvocationPlanRetention"/>, from the structural
+    /// preflight's walk over the admitted program, <see cref="AstStructuralPreflight.MayCaptureCalls"/>),
+    /// and the decision is immutable for the rest of the run: it is run state, never a process-wide
+    /// production flag. A test seam (<see cref="PlanTestSeam"/>) always retains.
+    /// </summary>
+    internal bool RetainsInvocationPlans => _retainsInvocationPlans;
+
+    private bool _retainsInvocationPlans = InvocationPlanTestSeam.Current is not null;
+    private bool _invocationPlanRetentionDecided;
+
+    /// <summary>
+    /// Records the run's ONE J7 decision before evaluation starts (see <see cref="RetainsInvocationPlans"/>);
+    /// a test seam keeps retention on whatever the program gate says. Fail-loud on a second decision: a
+    /// run never switches plans on or off midway.
+    /// </summary>
+    internal void DecideInvocationPlanRetention(bool programMayCapture)
+    {
+        if (_invocationPlanRetentionDecided)
+            throw new InvalidOperationException("A run decides invocation-plan retention exactly once, before evaluation.");
+        _invocationPlanRetentionDecided = true;
+        _retainsInvocationPlans |= programMayCapture;
+    }
 
     /// <summary>
     /// The run's normalized CALLABLE-ALIAS targets (FWD-02, binding indirection) for alias bindings

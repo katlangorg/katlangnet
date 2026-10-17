@@ -326,6 +326,7 @@ public enum KatLang.DiagnosticCode : int
   InvalidInterpolationHole = 56
   InterpolationNotAllowedHere = 57
   RetiredColonSelection = 58
+  InvalidMetaParameter = 59
 
 public enum KatLang.DiagnosticSeverity : int
   Hint = 1
@@ -1487,6 +1488,7 @@ public enum KatLang.KatLangErrorCode : int
   InvalidInterpolationHole = 78
   InterpolationNotAllowedHere = 79
   RetiredColonSelection = 80
+  InvalidMetaParameter = 81
 
 public sealed class KatLang.KatLangException : System.Exception
   ctor     public KatLangException(System.Collections.Generic.IReadOnlyList<KatLang.KatLangError> errors)
@@ -1604,6 +1606,7 @@ public sealed record KatLang.ParameterEvaluationContext : KatLang.ErrorContext, 
 public enum KatLang.ParameterKind : int
   Normal = 0
   Collecting = 1
+  Meta = 2
 
 public closed record KatLang.ParameterPattern : System.IEquatable<KatLang.ParameterPattern>
   ctor     protected ParameterPattern(KatLang.ParameterPattern original)
@@ -1859,6 +1862,18 @@ public sealed record KatLang.Result.Bool : KatLang.Result, System.IEquatable<Kat
   method   public override string ToString()
   operator public static bool op_Equality(KatLang.Result.Bool? left, KatLang.Result.Bool? right)
   operator public static bool op_Inequality(KatLang.Result.Bool? left, KatLang.Result.Bool? right)
+
+public sealed record KatLang.Result.CallReference : KatLang.Result, System.IEquatable<KatLang.Result.CallReference>
+  property protected override System.Type EqualityContract { get; }
+  method   public virtual KatLang.Result.CallReference <Clone>$()
+  method   public bool Equals(KatLang.Result.CallReference? other)
+  method   public override bool Equals(object? obj)
+  method   public sealed override bool Equals(KatLang.Result? other)
+  method   public override int GetHashCode()
+  method   protected override bool PrintMembers(System.Text.StringBuilder builder)
+  method   public override string ToString()
+  operator public static bool op_Equality(KatLang.Result.CallReference? left, KatLang.Result.CallReference? right)
+  operator public static bool op_Inequality(KatLang.Result.CallReference? left, KatLang.Result.CallReference? right)
 
 public sealed record KatLang.Result.ListValue : KatLang.Result, System.IEquatable<KatLang.Result.ListValue>
   ctor     public ListValue(System.Collections.Generic.IEnumerable<KatLang.Result> items)

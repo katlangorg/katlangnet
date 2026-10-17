@@ -357,4 +357,7 @@ public enum KatLangErrorCode
 
     /// <summary>Front-end <see cref="DiagnosticCode.RetiredColonSelection"/>.</summary>
     RetiredColonSelection = 80,
+
+    /// <summary>Front-end <see cref="DiagnosticCode.InvalidMetaParameter"/>.</summary>
+    InvalidMetaParameter = 81,
 }

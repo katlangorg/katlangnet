@@ -305,6 +305,44 @@ internal static class AstHelpers
         => string.Equals(dotCall.Name, "string", StringComparison.Ordinal);
 
     /// <summary>
+    /// Whether this edge's MISS ROUTE is the call-reference intrinsic <c>Invoke</c> (CallReference S1,
+    /// J1): an ordinary dot edge spelled <c>Invoke</c> selects a declared member named <c>Invoke</c>
+    /// like any member (DOT-01), and only on a structural miss is it the intrinsic that executes the
+    /// receiver's call reference, which takes the extension call's place — so its lexical fallback is
+    /// never selected (<c>5.Invoke()</c> is the intrinsic's kind error, never a user <c>Invoke(5)</c>).
+    /// A plain call <c>Invoke(x)</c> is unaffected. Lean: the <c>"Invoke"</c> arms of
+    /// <c>evalDotCallCounted</c>.
+    /// </summary>
+    internal static bool UsesDotInvokeIntrinsic(this Expr.DotCall dotCall)
+        => string.Equals(dotCall.Name, InvokeIntrinsicName, StringComparison.Ordinal);
+
+    /// <summary>The call-reference intrinsic's member name.</summary>
+    internal const string InvokeIntrinsicName = "Invoke";
+
+    /// <summary>
+    /// Whether this edge's MISS ROUTE is the argument-view intrinsic <c>Arguments</c> (CallReference S2):
+    /// a declared member named <c>Arguments</c> wins like any member (DOT-01), and only on a structural
+    /// miss is it the intrinsic that yields the receiver's lazy argument view — so its lexical fallback
+    /// is never selected (<c>5.Arguments</c> is the intrinsic's kind error, never a user
+    /// <c>Arguments(5)</c>). A plain call <c>Arguments(x)</c> is unaffected. Lean: the
+    /// <c>"Arguments"</c> arms of <c>evalDotCallCounted</c>.
+    /// </summary>
+    internal static bool UsesDotArgumentsIntrinsic(this Expr.DotCall dotCall)
+        => string.Equals(dotCall.Name, ArgumentsIntrinsicName, StringComparison.Ordinal);
+
+    /// <summary>The argument-view intrinsic's member name.</summary>
+    internal const string ArgumentsIntrinsicName = "Arguments";
+
+    /// <summary>
+    /// Whether this edge's miss route is a dot-only INTRINSIC (<c>.string</c>, <c>.Invoke</c> or
+    /// <c>.Arguments</c>) rather than the extension call: the ONE predicate every static consumer of the
+    /// lexical-fallback selection reads, so no intrinsic name ever becomes an implicit parameter or a
+    /// lifted callee.
+    /// </summary>
+    internal static bool UsesDotMissIntrinsic(this Expr.DotCall dotCall)
+        => dotCall.UsesOrdinaryDotStringIntrinsic() || dotCall.UsesDotInvokeIntrinsic() || dotCall.UsesDotArgumentsIntrinsic();
+
+    /// <summary>
     /// Strips grace ordering wrappers from an expression. Grace annotates
     /// implicit PARAMETER ORDER only — it never changes what the decorated
     /// occurrence resolves to or how a dot edge dispatches — so every
@@ -697,12 +735,13 @@ internal static class AstHelpers
 
     /// <summary>
     /// The lexical-fallback projection of a structural-miss verdict: <see cref="LexicalFallbackSelection.Never"/>
-    /// for an edge whose miss route is the <c>.string</c> intrinsic, the verdict itself otherwise.
+    /// for an edge whose miss route is an intrinsic (<c>.string</c>, <c>.Invoke</c>, <c>.Arguments</c>), the verdict
+    /// itself otherwise.
     /// </summary>
     internal static LexicalFallbackSelection LexicalFallbackSelectionOf(
         this Expr.DotCall dotCall,
         LexicalFallbackSelection missSelection)
-        => dotCall.UsesOrdinaryDotStringIntrinsic() ? LexicalFallbackSelection.Never : missSelection;
+        => dotCall.UsesDotMissIntrinsic() ? LexicalFallbackSelection.Never : missSelection;
 
     /// <summary>
     /// The edge's structural-miss verdict as later passes read it: the ELABORATED scope-aware

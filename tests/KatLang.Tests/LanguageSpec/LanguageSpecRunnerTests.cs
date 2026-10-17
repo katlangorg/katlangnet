@@ -295,6 +295,9 @@ public class LanguageSpecRunnerTests
             "unary-minus-must-be-attached",
             "negative-pattern-sign-must-be-attached",
             "line-final-star-at-eof-is-incomplete",
+            // CallReference S1: the contextual `meta` modifier's placement rule is a
+            // front-end rejection, parse-level by construction.
+            "meta-modifies-one-plain-parameter-name",
             "grace-marker-must-be-attached",
             "collect-marker-must-be-attached",
             // The declaration-head line rule (F7) and the Grace effectiveness

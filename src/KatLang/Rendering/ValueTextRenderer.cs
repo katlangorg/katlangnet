@@ -71,6 +71,8 @@ internal static class ValueTextRenderer
                 items = list.Items;
                 close = "]";
                 break;
+            case Result.CallReference reference:
+                return AppendCallReference(reference, stringPolicy, sink);
             default:
                 throw new InvalidOperationException("Unknown Result variant.");
         }
@@ -113,11 +115,27 @@ internal static class ValueTextRenderer
                     suspended.Push((items, next, close));
                     (items, next, close) = (list.Items, 0, "]");
                     break;
+                case Result.CallReference reference:
+                    if (!AppendCallReference(reference, stringPolicy, sink)) return false;
+                    break;
                 default:
                     throw new InvalidOperationException("Unknown Result variant.");
             }
         }
     }
+
+    /// <summary>
+    /// A call reference has NO text (CallReference S1): interpolation refuses a hole that contains one
+    /// before rendering, and every display and formatting path receives only run results, which the run
+    /// boundary keeps reference-free — so only a DIAGNOSTIC (an error message describing an operand that
+    /// contains a reference) can reach one, and it names the kind in words. Any other route is an
+    /// internal boundary defect and fails loudly rather than inventing a display syntax. An argument view
+    /// (CallReference S2) follows the same rule under its own name.
+    /// </summary>
+    private static bool AppendCallReference(Result.CallReference reference, IStringTextPolicy stringPolicy, IDisplaySink sink)
+        => stringPolicy is QuotedDiagnosticStringPolicy
+            ? sink.Append(reference.IsArgumentView ? "<argument view>" : "<call reference>")
+            : throw new InvalidOperationException(Evaluator.CallReferenceHasNoTextMessage);
 
     /// <summary>
     /// The canonical text of a Boolean value: lowercase <c>true</c> / <c>false</c>, the

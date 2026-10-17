@@ -491,4 +491,14 @@ public enum DiagnosticCode
     /// needs an operand, <c>"{a + :0}"</c>, stays this code).
     /// </summary>
     RetiredColonSelection = 58,
+
+    /// <summary>
+    /// A misplaced <c>meta</c> modifier (CallReference S1, October 2026): <c>meta</c> may modify
+    /// only a plain, fixed parameter name written once at the top level of an ordinary explicit
+    /// parameter list — <c>Capture(meta operation) = operation</c>. Reported for <c>meta</c> before
+    /// a collecting binding, a nested or structural pattern or a literal, for a META name repeated
+    /// in its head, and for a META binder in a clause family (a head with a literal or several
+    /// clauses). Lean: <c>ParameterPattern.metaViolation?</c>, <c>invalidMetaParameterMessage</c>.
+    /// </summary>
+    InvalidMetaParameter = 59,
 }

@@ -880,7 +880,7 @@ public class LeanAstEncoderTests
                 LeanAstEncoder.EncodeExpr(new Expr.Unary(op, new Expr.Num(1))));
         }
 
-        Assert.Equal(new[] { ParameterKind.Normal, ParameterKind.Collecting }, Enum.GetValues<ParameterKind>());
+        Assert.Equal(new[] { ParameterKind.Normal, ParameterKind.Collecting, ParameterKind.Meta }, Enum.GetValues<ParameterKind>());
 
         var value = new Algorithm.User(null, [], [], [], [new Expr.Num(1)]);
         var exposures = new Dictionary<PropertyExposure, string>

@@ -296,15 +296,19 @@ public static partial class Evaluator
                     }
 
                     // (3) + (4): the supplied selectors left to right, then the capture.
-                    completed = AdvanceSelection(ref frame, hasPendingChild ? pendingChild.Value : null, ctx, out requestedChild, out var selectorCell);
+                    completed = AdvanceSelection(ref frame, hasPendingChild ? pendingChild.Value : null, ctx, out requestedChild, out var selectorCell, out var viewIndex);
                     hasPendingChild = false;
                     if (selectorCell is not null)
                     {
                         var demanded = selectorCell.Demand();
                         completed = demanded.IsError
                             ? SelectorFailure(demanded.Error, frame)
-                            : AdvanceSelection(ref frame, demanded.Value.Value, ctx, out requestedChild, out _);
+                            : AdvanceSelection(ref frame, demanded.Value.Value, ctx, out requestedChild, out _, out viewIndex);
                     }
+
+                    // An argument view's validated position: read that ONE cell, demand it (S2).
+                    if (viewIndex >= 0)
+                        completed = SelectArgumentViewSync(ref frame, viewIndex, ctx);
 
                     break;
                 }
@@ -376,6 +380,11 @@ public static partial class Evaluator
                     {
                         // The hole of link Phase just arrived: its text, then the link's text.
                         hasPendingChild = false;
+                        if (InterpolationHoleRefusal(pendingChild.Value, links[frame.Phase].Hole) is { } refusedHole)
+                        {
+                            completed = refusedHole;
+                            break;
+                        }
                         if (!frame.Text.AppendValue(pendingChild.Value) || !frame.Text.Append(links[frame.Phase].Text))
                         {
                             completed = frame.Text.LimitError(frame.Node.Span);
@@ -527,13 +536,20 @@ public static partial class Evaluator
     /// async twin awaits it). After the last selector the selected values are captured
     /// (<see cref="CompleteSelection"/>). Returns the completed result, or null while the selection
     /// continues. Lean: <c>selectWith</c> then <c>selectionResult</c>.
+    /// <para>An ARGUMENT VIEW receiver (CallReference S2) has no positional view of its own: the arrived
+    /// selector is validated (<see cref="SelectorIndex"/>) BEFORE anything else, and the validated position
+    /// is handed back in <paramref name="viewIndex"/> (otherwise -1) for the machine to read that ONE cell
+    /// of the view's supply (<see cref="ArgumentViewSelectionCell"/>, then its demand) and accept its VALUE
+    /// (<see cref="AcceptArgumentViewSelection"/>). Lean: <c>selectViewWith</c>.</para>
     /// </summary>
     [MethodImpl(MethodImplOptions.NoInlining)]
     private static EvalResult<CountedResult>? AdvanceSelection(
-        ref ExpressionSpineFrame frame, Result? arrived, EvalCtx ctx, out Expr? requestedChild, out NeedCell? selectorCell)
+        ref ExpressionSpineFrame frame, Result? arrived, EvalCtx ctx, out Expr? requestedChild, out NeedCell? selectorCell,
+        out int viewIndex)
     {
         requestedChild = null;
         selectorCell = null;
+        viewIndex = -1;
         var selection = (Expr.Index)frame.Node;
         var supplied = frame.Selection;
         var total = supplied?.Count ?? selection.Selectors.Count;
@@ -541,20 +557,20 @@ public static partial class Evaluator
         {
             var position = frame.Phase - 1;
             var slot = supplied is null ? selection.Selectors[position] : supplied[position].Slot;
+            if (IsArgumentView(frame.FirstValue!))
+            {
+                var indexR = SelectorIndex(arrived, slot, selection);
+                if (indexR.IsError)
+                    return indexR.Error;
+                viewIndex = indexR.Value;
+                return null;
+            }
+
             var selectedR = SelectPosition(frame.FirstValue!, arrived, slot, selection);
             if (selectedR.IsError)
                 return selectedR.Error;
 
-            frame.Phase++;
-            // One selector: the selected value itself, with no accumulator.
-            if (total == 1)
-                return CountValue(selectedR.Value);
-
-            (frame.ListItems ??= new List<Result>(Math.Min(total, 16))).Add(selectedR.Value);
-            // Every further selector takes its own machine transition (its own budget checkpoint).
-            if (frame.Phase - 1 < total)
-                return null;
-            return CompleteSelection(frame.ListItems, ctx, selection);
+            return AcceptSelected(ref frame, selectedR.Value, total, ctx, selection);
         }
 
         if (frame.Phase - 1 < total)
@@ -568,6 +584,74 @@ public static partial class Evaluator
         }
 
         return CompleteSelection(frame.ListItems, ctx, selection);
+    }
+
+    /// <summary>
+    /// Records one selected value: a single selection is the value itself; otherwise it joins the
+    /// accumulator and every further selector takes its own machine transition (its own budget
+    /// checkpoint), and after the last the selected values are captured.
+    /// </summary>
+    private static EvalResult<CountedResult>? AcceptSelected(
+        ref ExpressionSpineFrame frame, Result selected, int total, EvalCtx ctx, Expr.Index selection)
+    {
+        frame.Phase++;
+        // One selector: the selected value itself, with no accumulator.
+        if (total == 1)
+            return CountValue(selected);
+
+        (frame.ListItems ??= new List<Result>(Math.Min(total, 16))).Add(selected);
+        if (frame.Phase - 1 < total)
+            return null;
+        return CompleteSelection(frame.ListItems, ctx, selection);
+    }
+
+    /// <summary>
+    /// The cell an ARGUMENT VIEW selection reads at the validated position <paramref name="index"/>
+    /// (CallReference S2), from the view's cells (the plan's one sticky supply,
+    /// <see cref="PrepareArgumentView"/>); a failure is positioned at the selector in flight. The cell is
+    /// returned undemanded: the machine demands exactly it. Lean: the supply read of <c>selectViewWith</c>.
+    /// </summary>
+    private static EvalResult<NeedCell> ArgumentViewSelectionCell(
+        EvalResult<IReadOnlyList<NeedCell>> cells, int index, in ExpressionSpineFrame frame)
+    {
+        if (cells.IsError)
+            return SelectorFailure(cells.Error, frame);
+        var selection = (Expr.Index)frame.Node;
+        var position = frame.Phase - 1;
+        var slot = frame.Selection is { } supplied ? supplied[position].Slot : selection.Selectors[position];
+        return ArgumentViewSelectedCell(cells.Value, index, slot, selection);
+    }
+
+    /// <summary>
+    /// The synchronous machine's argument-view selection step (CallReference S2): the view's cells, the
+    /// ONE cell at the validated position, its demand, then its acceptance. Out of line so the spine
+    /// machine's frame keeps its size.
+    /// </summary>
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static EvalResult<CountedResult>? SelectArgumentViewSync(ref ExpressionSpineFrame frame, int index, EvalCtx ctx)
+    {
+        var view = (Result.CallReference)frame.FirstValue!;
+        var cell = ArgumentViewSelectionCell(PrepareArgumentView(view, ctx), index, frame);
+        if (cell.IsError)
+            return cell.Error;
+        return AcceptArgumentViewSelection(ref frame, cell.Value.Demand(), ctx);
+    }
+
+    /// <summary>
+    /// Accepts the demanded VALUE of an argument-view selection's cell (CallReference S2): the run's
+    /// continuation is observed again (a cell demand never absorbs a terminal run), a failure is
+    /// positioned at the selector in flight, and the value is selected whole.
+    /// </summary>
+    private static EvalResult<CountedResult>? AcceptArgumentViewSelection(
+        ref ExpressionSpineFrame frame, EvalResult<CountedResult> demanded, EvalCtx ctx)
+    {
+        if (demanded.IsError)
+            return SelectorFailure(demanded.Error, frame);
+        if (CheckCallReferenceOwnership((Result.CallReference)frame.FirstValue!, ctx) is { } terminal)
+            return terminal;
+        var selection = (Expr.Index)frame.Node;
+        var total = frame.Selection?.Count ?? selection.Selectors.Count;
+        return AcceptSelected(ref frame, demanded.Value.Value, total, ctx, selection);
     }
 
     /// <summary>
@@ -596,6 +680,9 @@ public static partial class Evaluator
     [MethodImpl(MethodImplOptions.NoInlining)]
     internal static EvalResult<Result> SelectPosition(Result receiver, Result selector, Expr slot, Expr selection)
     {
+        // An argument view's positions are its supply's cells, read by the machine (S2), never here.
+        if (IsArgumentView(receiver))
+            throw new InvalidOperationException("An argument view receiver is selected through its cells.");
         // ExpectInt reports a TypeMismatch from a Result and so has no span of its own.
         var nR = ExpectInt(selector);
         if (nR.IsError)
@@ -613,6 +700,26 @@ public static partial class Evaluator
         return selected is null
             ? new EvalError.BadIndex { Span = slot.Span ?? selection.Span }
             : EvalResult<Result>.Ok(selected);
+    }
+
+    /// <summary>
+    /// The receiver-independent half of <see cref="SelectPosition"/> (CallReference S2), run for an
+    /// argument view BEFORE its supply is read: a selector VALUE that is not a number is the kind failure
+    /// <c>TypeMismatch</c>, and a number that names no position of ANY receiver — fractional, negative,
+    /// NaN or infinite — is <c>BadIndex</c>. A whole number beyond host positions is clamped to
+    /// <see cref="int.MaxValue"/>, past every supply, so it is decided by the supply exactly as Lean's
+    /// unbounded index is. Lean: <c>selectorIndex</c>.
+    /// </summary>
+    private static EvalResult<int> SelectorIndex(Result selector, Expr slot, Expr selection)
+    {
+        var nR = ExpectInt(selector);
+        if (nR.IsError)
+            return AtSpanIfMissing(nR.Error, slot.Span ?? selection.Span);
+
+        var n = nR.Value;
+        if (!Decimal128.IsInteger(n) || n < 0)
+            return new EvalError.BadIndex { Span = slot.Span ?? selection.Span };
+        return EvalResult<int>.Ok(n <= int.MaxValue ? (int)n : int.MaxValue);
     }
 
     // ── Main eval ───────────────────────────────────────────────────────────
@@ -1137,6 +1244,9 @@ public static partial class Evaluator
         if (ValidateHostOperationNativeSignature(hostOperation, argNames) is { } signatureError)
             return signatureError;
 
+        if (TryInvokeMetaReceiver(hostOperation, argNames, ctx) is { } metaReceived)
+            return metaReceived;
+
         var argumentsR = CollectHostOperationArguments(argNames, ctx, valEnv);
         if (argumentsR.IsError) return argumentsR.Error;
 
@@ -1169,7 +1279,9 @@ public static partial class Evaluator
         => value is null
             ? throw new InvalidOperationException(
                 $"Host operation '{hostOperation.Name}' returned null; host operations must return a KatLang value.")
-            : value.Normalize();
+            // The same DAG-safe walk both normalizes and refuses reference leaves, including
+            // nested ones. No preliminary traversal of large ordinary host values is needed.
+            : value.NormalizeForHostOperation(hostOperation.Name);
 
     /// <summary>
     /// A host operation may be reached only through the synthetic wrapper built by its
@@ -1230,6 +1342,8 @@ public static partial class Evaluator
         {
             var valueR = LookupNativeArgument(ctx, valEnv, argNames[i]);
             if (valueR.IsError) return valueR.Error;
+            // A call reference never reaches host code (CallReference S1, J4).
+            if (CallReferenceBoundaryError(valueR.Value) is { } refused) return refused;
             arguments[i] = valueR.Value;
         }
 

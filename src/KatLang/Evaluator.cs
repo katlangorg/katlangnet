@@ -1747,6 +1747,8 @@ public static partial class Evaluator
         Result.Bool(var flag) => $"a Boolean value: {Rendering.ValueTextRenderer.FormatBool(flag)}",
         Result.Atom(var number) => $"numeric value {Rendering.ValueTextRenderer.FormatNumberInvariant(number)}",
         Result.ListValue(var items) => $"a list value with {items.Count} {Pluralize(items.Count, "element")}: {FormatResultForDiagnostic(value)}",
+        Result.CallReference { IsArgumentView: true } => "an argument view",
+        Result.CallReference => "a call reference",
     };
 
     private static string Pluralize(int count, string singular)
@@ -2513,13 +2515,15 @@ public static partial class Evaluator
     /// evaluation): those consume the tree on the CLR stack, so a host-built tree
     /// deeper than the structural limit would otherwise terminate the process with an
     /// unhandleable <see cref="StackOverflowException"/>. Returns <c>null</c> for safe
-    /// trees; runs before any evaluation-budget counter can move and charges nothing.
+    /// trees; runs before any evaluation-budget counter can move and charges nothing. The same walk
+    /// decides the run's J7 plan-retention fact (<paramref name="mayCaptureCalls"/>,
+    /// <see cref="AstStructuralPreflight.MayCaptureCalls"/>).
     /// </summary>
-    private static EvalError? StructuralPreflight(Expr expr, EvaluationLimits? limits)
+    private static EvalError? StructuralPreflight(Expr expr, EvaluationLimits? limits, out bool mayCaptureCalls)
     {
         var effectiveLimit = (limits ?? EvaluationLimits.Default).EffectiveMaxAstDepth;
-        return AstStructuralPreflight.Check(
-                expr, effectiveLimit, AstConsumerProfile.EvaluatorIterativeJoinSpines) is { } rejection
+        return AstStructuralPreflight.CheckAdmittedProgram(
+                expr, effectiveLimit, AstConsumerProfile.EvaluatorIterativeJoinSpines, out mayCaptureCalls) is { } rejection
             ? AstStructuralPreflight.ToEvalError(rejection, effectiveLimit)
             : null;
     }
@@ -2590,6 +2594,8 @@ public static partial class Evaluator
                 new EvalError.IllegalInEval(Parser.RepeatedNameIncludesCollectingDiagnostic),
             PreEvaluationAstViolation.CollectingClauseBinder =>
                 new EvalError.IllegalInEval(Parser.CollectingClauseBinderDiagnostic),
+            PreEvaluationAstViolation.InvalidMetaParameter or PreEvaluationAstViolation.MetaClauseBinder =>
+                new EvalError.IllegalInEval(Parser.InvalidMetaParameterDiagnostic),
             PreEvaluationAstViolation.ConditionalBranchOutputArityMismatch v =>
                 new EvalError.BranchOutputArityMismatch(v.AlgorithmName, v.Expected, v.Actual),
             PreEvaluationAstViolation.AliasTargetNotStaticPath v =>
@@ -2604,7 +2610,7 @@ public static partial class Evaluator
     /// <see cref="Budget"/> is the run's fresh budget in BOTH cases, so the observed
     /// harness entry points can hand back the budget a rejected run would have used.
     /// </summary>
-    private readonly struct PreparedRun
+    private readonly struct PreparedRun : IDisposable
     {
         private readonly EvalCtx _ctx;
 
@@ -2620,6 +2626,10 @@ public static partial class Evaluator
 
         /// <summary>The run's fresh <see cref="EvaluationBudget"/>; valid on both outcomes.</summary>
         internal EvaluationBudget Budget { get; }
+
+        // Run-entry owners dispose on EVERY exit, including an exception. No allocation or
+        // counter charge is added, and nested evaluator calls share the still-live budget.
+        public void Dispose() => Budget.EndRun();
 
         /// <summary>The ready root context. Fail-loud when the preparation was rejected.</summary>
         internal EvalCtx Ctx
@@ -2710,7 +2720,7 @@ public static partial class Evaluator
         // preflight still runs before any budget COUNTER can move and charges nothing.
         var budget = EvaluationBudget.Create(limits, hostOperations, randomSeed, cancellationToken);
 
-        if (StructuralPreflight(expr, limits) is { } structuralError)
+        if (StructuralPreflight(expr, limits, out var mayCaptureCalls) is { } structuralError)
         {
             budget.ObserveCancellation();
             return PreparedRun.Rejected(structuralError, budget);
@@ -2723,6 +2733,10 @@ public static partial class Evaluator
         }
 
         ArgumentNullException.ThrowIfNull(zeroArgPropertyResultCache);
+
+        // J7: the run's one, immutable plan-retention decision, read by the structural preflight's
+        // walk over the admitted program, taken before any supplied cell exists.
+        budget.DecideInvocationPlanRetention(mayCaptureCalls);
 
         return PreparedRun.Ready(CreateRootCtx(
             zeroArgPropertyResultCache,
@@ -2747,7 +2761,7 @@ public static partial class Evaluator
         long? randomSeed = null,
         CancellationToken cancellationToken = default)
     {
-        var preparation = PrepareSynchronousRun(
+        using var preparation = PrepareSynchronousRun(
             expr,
             zeroArgPropertyResultCache,
             enableLoopOptimization,
@@ -2766,6 +2780,9 @@ public static partial class Evaluator
         var result = expr is Expr.AlgorithmExpr(var alg)
             ? EvalRootProgram(alg, expr.Span, ctx)
             : Eval(expr, ctx, []);
+
+        // The run result boundary (CallReference S1): a call reference never leaves its run.
+        result = ExportRunValue(result);
 
         // A cancellation requested during the final operation must not be missed merely
         // because that operation has no later charging checkpoint (for example, the last
@@ -2832,7 +2849,7 @@ public static partial class Evaluator
         long? randomSeed = null,
         CancellationToken cancellationToken = default)
     {
-        var preparation = PrepareSynchronousRun(
+        using var preparation = PrepareSynchronousRun(
             expr,
             zeroArgPropertyResultCache ?? new RunScopedZeroArgPropertyResultCache(),
             enableLoopOptimization: enableOptimizations,
@@ -2848,9 +2865,9 @@ public static partial class Evaluator
             return (preparationError, preparation.Budget);
 
         var ctx = preparation.Ctx;
-        var result = expr is Expr.AlgorithmExpr(var alg)
+        var result = ExportRunValue(expr is Expr.AlgorithmExpr(var alg)
             ? EvalRootProgramCounted(alg, expr.Span, ctx)
-            : EvalCounted(expr, ctx, []);
+            : EvalCounted(expr, ctx, []));
 
         ctx.Budget.ObserveCancellation();
         return (result, ctx.Budget);
@@ -2864,7 +2881,7 @@ public static partial class Evaluator
         long? randomSeed = null,
         CancellationToken cancellationToken = default)
     {
-        var preparation = PrepareSynchronousRun(
+        using var preparation = PrepareSynchronousRun(
             expr,
             zeroArgPropertyResultCache,
             enableLoopOptimization: true,
@@ -2880,9 +2897,9 @@ public static partial class Evaluator
             return preparationError;
 
         var ctx = preparation.Ctx;
-        var result = expr is Expr.AlgorithmExpr(var alg)
+        var result = ExportRunValue(expr is Expr.AlgorithmExpr(var alg)
             ? EvalRootProgramCounted(alg, expr.Span, ctx)
-            : EvalCounted(expr, ctx, []);
+            : EvalCounted(expr, ctx, []));
 
         ctx.Budget.ObserveCancellation();
         return result;
@@ -2897,7 +2914,7 @@ public static partial class Evaluator
         long? randomSeed = null,
         CancellationToken cancellationToken = default)
     {
-        var preparation = PrepareSynchronousRun(
+        using var preparation = PrepareSynchronousRun(
             expr,
             zeroArgPropertyResultCache,
             enableLoopOptimization: true,
@@ -2929,6 +2946,7 @@ public static partial class Evaluator
                     new CountedRootProgramResult(outputR.Value, TopLevelProperty: null));
         }
 
+        result = ExportRunValue(result);
         ctx.Budget.ObserveCancellation();
         return result;
     }

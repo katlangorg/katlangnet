@@ -179,6 +179,24 @@ public static class SemanticModelBuilder
             IsPublic: true,
             StringIntrinsicPropertyInfo,
             StringIntrinsicPropertyInfo);
+        private static readonly PropertyInfo InvokeIntrinsicPropertyInfo = CreateInvokeIntrinsicPropertyInfo();
+        private static readonly SymbolDefinition InvokeIntrinsicSymbol = new(
+            AstHelpers.InvokeIntrinsicName,
+            SymbolKind.Builtin,
+            AlgorithmValue: null,
+            Declaration: null,
+            IsPublic: true,
+            InvokeIntrinsicPropertyInfo,
+            InvokeIntrinsicPropertyInfo);
+        private static readonly PropertyInfo ArgumentsIntrinsicPropertyInfo = CreateArgumentsIntrinsicPropertyInfo();
+        private static readonly SymbolDefinition ArgumentsIntrinsicSymbol = new(
+            AstHelpers.ArgumentsIntrinsicName,
+            SymbolKind.Builtin,
+            AlgorithmValue: null,
+            Declaration: null,
+            IsPublic: true,
+            ArgumentsIntrinsicPropertyInfo,
+            ArgumentsIntrinsicPropertyInfo);
 
         private readonly List<IdentifierOccurrence> _identifierOccurrences = [];
         private readonly List<DeclarationOccurrence> _declarations = [];
@@ -1381,9 +1399,14 @@ public static class SemanticModelBuilder
                 if (IsDeferredModulePlaceholder(targetAlgorithm))
                     return (IdentifierClassification.DeferredModuleReference, null, null);
 
-                // A structural miss: `.string` is the intrinsic, every other member the fallback.
-                return dotCall.UsesOrdinaryDotStringIntrinsic()
-                    ? (IdentifierClassification.Builtin, null, StringIntrinsicSymbol.PropertyInfo)
+                // A structural miss: `.string`, `.Invoke` and `.Arguments` are the intrinsics, every
+                // other member the fallback.
+                if (dotCall.UsesOrdinaryDotStringIntrinsic())
+                    return (IdentifierClassification.Builtin, null, StringIntrinsicSymbol.PropertyInfo);
+                if (dotCall.UsesDotArgumentsIntrinsic())
+                    return (IdentifierClassification.Builtin, null, ArgumentsIntrinsicSymbol.PropertyInfo);
+                return dotCall.UsesDotInvokeIntrinsic()
+                    ? (IdentifierClassification.Builtin, null, InvokeIntrinsicSymbol.PropertyInfo)
                     : ResolveDotMemberFallbackBinding(dotCall, scope);
             }
 
@@ -1397,6 +1420,10 @@ public static class SemanticModelBuilder
             // here, exactly as its other members are not).
             if (dotCall.UsesOrdinaryDotStringIntrinsic())
                 return (IdentifierClassification.Builtin, null, StringIntrinsicSymbol.PropertyInfo);
+            if (dotCall.UsesDotInvokeIntrinsic())
+                return (IdentifierClassification.Builtin, null, InvokeIntrinsicSymbol.PropertyInfo);
+            if (dotCall.UsesDotArgumentsIntrinsic())
+                return (IdentifierClassification.Builtin, null, ArgumentsIntrinsicSymbol.PropertyInfo);
 
             var fallbackSelection = dotCall.GetLexicalFallbackSelection(provider);
             return fallbackSelection switch
@@ -3235,12 +3262,59 @@ public static class SemanticModelBuilder
 
         public static IReadOnlyList<VisibleSymbol> CreateDotIntrinsicCatalog()
         {
-            return [new VisibleSymbol(
-                "string",
-                IdentifierClassification.Builtin,
-                Declaration: null,
-                StringIntrinsicPropertyInfo)];
+            // Name-ordered, like every other catalog: `Arguments` and `Invoke` (ordinal) sort before
+            // `string`.
+            return [
+                new VisibleSymbol(
+                    AstHelpers.ArgumentsIntrinsicName,
+                    IdentifierClassification.Builtin,
+                    Declaration: null,
+                    ArgumentsIntrinsicPropertyInfo),
+                new VisibleSymbol(
+                    AstHelpers.InvokeIntrinsicName,
+                    IdentifierClassification.Builtin,
+                    Declaration: null,
+                    InvokeIntrinsicPropertyInfo),
+                new VisibleSymbol(
+                    "string",
+                    IdentifierClassification.Builtin,
+                    Declaration: null,
+                    StringIntrinsicPropertyInfo)];
         }
+
+        private static PropertyInfo CreateInvokeIntrinsicPropertyInfo()
+            // `.Invoke()` (CallReference S1) is receiver-only with an explicit empty argument list:
+            // it executes the call reference that is the receiver's value.
+            => new(
+                AstHelpers.InvokeIntrinsicName,
+                Declaration: null,
+                PropertyShape.Builtin,
+                IsPublic: true,
+                PropertyExposure.Exported,
+                Parameters: [],
+                ConditionalBranches: [])
+            {
+                PreferredCallStyle = PropertyCallStyle.Dot,
+                Signatures = [new PropertySignatureInfo(PropertyCallStyle.Dot, "reference.Invoke()", [])],
+                SupportsLexicalDotCall = false,
+            };
+
+        private static PropertyInfo CreateArgumentsIntrinsicPropertyInfo()
+            // `.Arguments` (CallReference S2) is a receiver-only property with no argument list: it
+            // reads the lazy argument view of the call reference that is the receiver's value.
+            => new(
+                AstHelpers.ArgumentsIntrinsicName,
+                Declaration: null,
+                PropertyShape.Builtin,
+                IsPublic: true,
+                PropertyExposure.Exported,
+                Parameters: [],
+                ConditionalBranches: [])
+            {
+                PreferredCallStyle = PropertyCallStyle.Dot,
+                Signatures = [new PropertySignatureInfo(PropertyCallStyle.Dot, "reference.Arguments", [])],
+                SupportsLexicalDotCall = false,
+            };
 
         private static PropertyInfo CreateStringIntrinsicPropertyInfo()
             // `.string` is receiver-only — no plain-call form exists — so its one

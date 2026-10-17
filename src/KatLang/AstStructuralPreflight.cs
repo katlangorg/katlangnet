@@ -261,7 +261,51 @@ internal static class AstStructuralPreflight
         int maxDepth,
         AstConsumerProfile profile,
         FrontEndTraversalObservations? observations = null)
+        => CheckCore(root, maxDepth, profile, observations, detectCallCapture: false, out _);
+
+    /// <summary>
+    /// The evaluator's admission walk: <see cref="Check"/>
+    /// over a run's program, which also decides the run's J7 fact in the SAME walk —
+    /// <paramref name="mayCaptureCalls"/> is whether any node it visits
+    /// <see cref="MayCaptureCalls"/> (meaningful only when the tree is accepted). Every node this walk
+    /// can reach is visited exactly once, so the fact is the whole admitted graph's, with no second
+    /// traversal of META-free programs.
+    /// </summary>
+    internal static AstStructuralRejection? CheckAdmittedProgram(
+        object root,
+        int maxDepth,
+        AstConsumerProfile profile,
+        out bool mayCaptureCalls)
+        => CheckCore(root, maxDepth, profile, observations: null, detectCallCapture: true, out mayCaptureCalls);
+
+    /// <summary>
+    /// <b>J7 — PROGRAM-GATED PLAN RETENTION</b> (CallReference). A META capture can only happen at a
+    /// <c>meta</c> parameter binding, and every such binding is written in the program a run admits, so a
+    /// run retains invocation plans iff its admitted graph MAY perform META capture: a node that is a
+    /// <see cref="ParameterKind.Meta"/> capture or clause binder, or a DEFERRED MODULE REGION (its modules
+    /// are unknown until a branch selects it and may declare <c>meta</c>, so a program with any deferred
+    /// region retains plans even if its modules declare none — a recorded performance limitation). The
+    /// walk is this preflight's own child enumeration (<see cref="TryGetChild"/>): root declarations,
+    /// nested blocks and properties, uncalled bodies, clause-family branches, opens, parameter patterns
+    /// and shared implicit-signature templates, eagerly elaborated modules and every host-attached parent
+    /// scope. Host operations and the prelude declare no META. The decision is conservative: a false
+    /// negative would lose the retained supply of a cell a later META observes (the binder fails loudly),
+    /// a false positive costs only plan retention.
+    /// </summary>
+    internal static bool MayCaptureCalls(object node)
+        => node is Algorithm { DeferredRegion: not null }
+            or CaptureParameterPattern { Kind: ParameterKind.Meta }
+            or Pattern.Bind { ParameterKind: ParameterKind.Meta };
+
+    private static AstStructuralRejection? CheckCore(
+        object root,
+        int maxDepth,
+        AstConsumerProfile profile,
+        FrontEndTraversalObservations? observations,
+        bool detectCallCapture,
+        out bool mayCaptureCalls)
     {
+        mayCaptureCalls = false;
         // The hard ceiling is enforced HERE, not only at the configuration surface, so
         // no caller — present or future — can hand in a raised limit and re-open the
         // process-safety hole. The fully-recursive profile may use the larger
@@ -301,6 +345,8 @@ internal static class AstStructuralPreflight
         frames[frameCount++] = new Frame(root, rootWeight, incomingTransitionWeight: 0);
         pathWeight = rootWeight;
         heights[root] = OnStack;
+        if (detectCallCapture)
+            mayCaptureCalls = MayCaptureCalls(root);
 
         while (frameCount > 0)
         {
@@ -356,6 +402,8 @@ internal static class AstStructuralPreflight
                 return new AstStructuralRejection(AstStructuralViolation.DepthExceeded, SpanOf(child, frames, frameCount));
 
             heights[child] = OnStack;
+            if (detectCallCapture && !mayCaptureCalls)
+                mayCaptureCalls = MayCaptureCalls(child);
             if (frameCount == frames.Length)
                 Array.Resize(ref frames, frames.Length * 2);
             frames[frameCount++] = new Frame(child, childWeight, transitionWeight);
@@ -535,11 +583,11 @@ internal static class AstStructuralPreflight
     /// >=2.1x margin in Debug and more in Release. Since the October 2026 spread-leaf fix a
     /// construct's spread leaf runs <c>EvalSequenceConstructCounted</c> -> <c>EvalCounted</c> ->
     /// <c>EvalSequenceSpreadCounted</c> -> ..., one frame shorter than the measured
-    /// <c>EvalSequenceConstructCounted</c> -> <c>EvalSequenceSpreadOperandItems</c> -> <c>Eval</c>
+    /// <c>EvalSequenceConstructCounted</c> -> <c>EvalSequenceSpreadOperandValue</c> -> <c>Eval</c>
     /// hop; the hand-off chains (<c>EvalSequenceConstructCounted</c> -> <c>Eval</c> for a
-    /// construct leaf, <c>EvalSequenceSpreadCounted</c> -> <c>EvalSequenceSpreadOperandItems</c>
+    /// construct leaf, <c>EvalSequenceSpreadCounted</c> -> <c>EvalSequenceSpreadOperandValue</c>
     /// -> the operand's evaluator — <c>Eval</c>, or <c>EvalCaptureValue</c> /
-    /// <c>EvalZeroArgumentDemandOutput</c> / <c>EvalAliasSpreadOperandItems</c> for a capture,
+    /// <c>EvalZeroArgumentDemandOutput</c> / <c>EvalAliasSpreadOperandValue</c> for a capture,
     /// block or alias operand — for a spread operand) are unchanged.
     /// </summary>
     private const int JoinReentryWeight = 8;

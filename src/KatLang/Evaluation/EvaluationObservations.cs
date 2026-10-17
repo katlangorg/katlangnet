@@ -104,4 +104,24 @@ internal sealed class EvaluationObservations
 
     internal void RecordOptimizedLoopHandoverMaterialization()
         => OptimizedLoopHandoverMaterializationCount = checked(OptimizedLoopHandoverMaterializationCount + 1);
+
+    /// <summary>
+    /// Number of invocation plans created during this run: one per call-shaped supplied
+    /// cell allocated while the run retains invocation plans (<c>Evaluator.SupplyCell</c>).
+    /// A transported parameter cell is the original cell and creates none; a non-retaining run observes zero.
+    /// </summary>
+    public long InvocationPlanCount { get; private set; }
+
+    internal void RecordInvocationPlan()
+        => InvocationPlanCount = checked(InvocationPlanCount + 1);
+
+    /// <summary>
+    /// Number of invocation-plan supply preparations performed during this run: one per
+    /// plan whose supply was ever formed, whatever its outcome, however many executions (VALUE and
+    /// invocations) ran over it.
+    /// </summary>
+    public long PlanSupplyFormationCount { get; private set; }
+
+    internal void RecordPlanSupplyFormation()
+        => PlanSupplyFormationCount = checked(PlanSupplyFormationCount + 1);
 }

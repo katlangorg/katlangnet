@@ -14,11 +14,11 @@ This is bounded differential validation over the Lean-guarded partition,
 not a formal verification of the evaluators.
 
 Partition (machine-checked by the `specCaseIds.length` guard below):
-- specification surface cases: 448
-- excluded parse-level cases (Lean has no surface parser): 70
+- specification surface cases: 459
+- excluded parse-level cases (Lean has no surface parser): 71
 - excluded C#-only cases (each carries an explicit reason in the corpus): 22
-- Lean-guarded cases: 356
-- probe observations (C#-only by design): 1345
+- Lean-guarded cases: 366
+- probe observations (C#-only by design): 1366
 - internal-node cases live in the semantic-explorer corpus, not here: see
   lean/SemanticExplorerCases.lean
 
@@ -32,13 +32,16 @@ open KatLang
 
 /-- Neutral raw-structure encoding shared with the C# harness:
     atom -> `1`, string -> `'x'`, Boolean -> `true` / `false`,
-    sequence -> `S[a, b]`, empty -> `S[]`, exact list -> `L[a, b]`. -/
+    sequence -> `S[a, b]`, empty -> `S[]`, exact list -> `L[a, b]`,
+    call reference and argument view -> `CallReference` (never a run result: the run boundary refuses both). -/
 partial def neutral : Result -> String
   | .atom n => toString n
   | .str s => "'" ++ s ++ "'"
   | .bool b => Result.boolText b
   | .sequenceValue rs => "S[" ++ String.intercalate ", " (rs.map neutral) ++ "]"
   | .listValue rs => "L[" ++ String.intercalate ", " (rs.map neutral) ++ "]"
+  | .callRef _ => "CallReference"
+  | .argView _ => "CallReference"
 
 /-- Innermost-error category shared with the C# harness
     (`SemanticExplorerHarness.ErrorCategory`). -/
@@ -117,14 +120,18 @@ def runCountedM (e : Expr) : EvalM CountedResult := do
   let e := (identifyPropertyExpr e).run' 0
   validateExplicitParamOutputInvariantExpr e
   let ctx := { callStack := [preludeAlg] }
-  match e with
-  | .algorithmExpr a =>
-      let wired := wireToCaller ctx a
-      if Algorithm.acceptsZeroSuppliedArguments wired then
-        evalZeroArgumentDemandOutputCounted wired ctx []
-      else
-        .error (Error.unresolvedImplicitParams (Algorithm.params wired))
-  | _ => evalCounted e ctx []
+  -- The run result boundary of `runResultM` (CallReference S1): a counted run result
+  -- that contains a call reference is refused exactly as the plain one is.
+  let counted <- match e with
+    | .algorithmExpr a =>
+        let wired := wireToCaller ctx a
+        if Algorithm.acceptsZeroSuppliedArguments wired then
+          evalZeroArgumentDemandOutputCounted wired ctx []
+        else
+          .error (Error.unresolvedImplicitParams (Algorithm.params wired))
+    | _ => evalCounted e ctx []
+  let _ <- exportRunValue counted.fst
+  pure counted
 
 /-- Neutral observation string shared verbatim with the C# harness.
     Also cross-checks Lean's plain (`runResult`) and counted evaluators on
@@ -1971,7 +1978,57 @@ def case_string_interpolation_hole_without_output : Expr :=
   .algorithmExpr (alg [] [] [privateProp "B" (alg [] [] [privateProp "A" (alg [] [] [] [.num 1])] [])] [(.interpolatedString "" [{ hole := (.resolve "B"), text := "" }])])
 #guard obs case_string_interpolation_hole_without_output == "err missingOutput"
 
--- 356 canonical Lean-guarded specification cases.
+-- meta-capture-invokes-the-original-call [name-resolution]: Square(x) = x * x \n Capture(meta operation) = operation \n R = Capture(Square(5)) \n  \n R.Invoke() \n R.Invoke()
+def case_meta_capture_invokes_the_original_call : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "R" (alg [] [] [] [(.call (.resolve "Capture") [(.call (.resolve "Square") [.num 5])])]), privateProp "Square" (alg ["x"] [] [] [(.binary .mul (.param "x") (.param "x"))]), privateProp "Capture" (algWithParameters [{ name := "operation", kind := .metaRef }] [] [] [.param "operation"])] [(.dotCall (.resolve "R") "Invoke" (some [])), (.dotCall (.resolve "R") "Invoke" (some []))])
+#guard obs case_meta_capture_invokes_the_original_call == "ok raw=S[25, 25] n=2"
+
+-- meta-capture-sees-through-forwarding-and-value [name-resolution]: Square(x) = x * x \n Capture(meta op) = op \n Fwd(y) = Capture(y) \n Use(v) = v + Fwd(v).Invoke() \n  \n Use(Square(3))
+def case_meta_capture_sees_through_forwarding_and_value : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Square" (alg ["x"] [] [] [(.binary .mul (.param "x") (.param "x"))]), privateProp "Capture" (algWithParameters [{ name := "op", kind := .metaRef }] [] [] [.param "op"]), privateProp "Fwd" (alg ["y"] [] [] [(.call (.resolve "Capture") [.param "y"])]), privateProp "Use" (alg ["v"] [] [] [(.binary .add (.param "v") (.dotCall (.call (.resolve "Fwd") [.param "v"]) "Invoke" (some [])))])] [(.call (.resolve "Use") [(.call (.resolve "Square") [.num 3])])])
+#guard obs case_meta_capture_sees_through_forwarding_and_value == "ok raw=18 n=1"
+
+-- meta-refuses-anything-but-a-written-call [errors]: Square(x) = x * x \n Capture(meta op) = op \n Y = Square(5) \n Capture(Y)
+def case_meta_refuses_anything_but_a_written_call : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Y" (alg [] [] [] [(.call (.resolve "Square") [.num 5])]), privateProp "Square" (alg ["x"] [] [] [(.binary .mul (.param "x") (.param "x"))]), privateProp "Capture" (algWithParameters [{ name := "op", kind := .metaRef }] [] [] [.param "op"])] [(.call (.resolve "Capture") [.resolve "Y"])])
+#guard obs case_meta_refuses_anything_but_a_written_call == "err notAnAlgorithm"
+
+-- invoke-needs-its-argument-list [errors]: Square(x) = x * x \n Capture(meta op) = op \n R = Capture(Square(5)) \n R.Invoke
+def case_invoke_needs_its_argument_list : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "R" (alg [] [] [] [(.call (.resolve "Capture") [(.call (.resolve "Square") [.num 5])])]), privateProp "Square" (alg ["x"] [] [] [(.binary .mul (.param "x") (.param "x"))]), privateProp "Capture" (algWithParameters [{ name := "op", kind := .metaRef }] [] [] [.param "op"])] [(.dotCall (.resolve "R") "Invoke" none)])
+#guard obs case_invoke_needs_its_argument_list == "err illegalInEval"
+
+-- invoke-is-not-an-extension-call [name-resolution]: Invoke(r) = r + 1 \n Invoke(4)
+def case_invoke_is_not_an_extension_call : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Invoke" (alg ["r"] [] [] [(.binary .add (.param "r") (.num 1))])] [(.call (.resolve "Invoke") [.num 4])])
+#guard obs case_invoke_is_not_an_extension_call == "ok raw=5 n=1"
+
+-- call-reference-never-leaves-its-run [errors]: Square(x) = x * x \n Capture(meta op) = op \n Capture(Square(5))
+def case_call_reference_never_leaves_its_run : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Square" (alg ["x"] [] [] [(.binary .mul (.param "x") (.param "x"))]), privateProp "Capture" (algWithParameters [{ name := "op", kind := .metaRef }] [] [] [.param "op"])] [(.call (.resolve "Capture") [(.call (.resolve "Square") [.num 5])])])
+#guard obs case_call_reference_never_leaves_its_run == "err type"
+
+-- call-reference-arguments-view [name-resolution]: Add(x, y) = x + y \n Capture(meta op) = op \n R = Capture(Add(10, 20)) \n  \n R.Arguments.count \n R.Arguments[0] \n R.Arguments[1]
+def case_call_reference_arguments_view : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "R" (alg [] [] [] [(.call (.resolve "Capture") [(.call (.resolve "Add") [.num 10, .num 20])])]), privateProp "Add" (alg ["x", "y"] [] [] [(.binary .add (.param "x") (.param "y"))]), privateProp "Capture" (algWithParameters [{ name := "op", kind := .metaRef }] [] [] [.param "op"])] [(.dotCall (.dotCall (.resolve "R") "Arguments" none) "count" none), (.index (.dotCall (.resolve "R") "Arguments" none) [.num 0]), (.index (.dotCall (.resolve "R") "Arguments" none) [.num 1])])
+#guard obs case_call_reference_arguments_view == "ok raw=S[2, 10, 20] n=3"
+
+-- arguments-spread-forwards-the-original-arguments [name-resolution]: Add(x, y) = x + y \n First(x, y) = x \n Capture(meta op) = op \n R = Capture(Add(5, 1 / 0)) \n  \n First(R.Arguments*)
+def case_arguments_spread_forwards_the_original_arguments : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "R" (alg [] [] [] [(.call (.resolve "Capture") [(.call (.resolve "Add") [.num 5, (.binary .div (.num 1) (.num 0))])])]), privateProp "Add" (alg ["x", "y"] [] [] [(.binary .add (.param "x") (.param "y"))]), privateProp "First" (alg ["x", "y"] [] [] [.param "x"]), privateProp "Capture" (algWithParameters [{ name := "op", kind := .metaRef }] [] [] [.param "op"])] [(.call (.resolve "First") [(.sequenceSpread (.dotCall (.resolve "R") "Arguments" none))])])
+#guard obs case_arguments_spread_forwards_the_original_arguments == "ok raw=5 n=1"
+
+-- arguments-view-is-not-a-collection [errors]: Add(x, y) = x + y \n Capture(meta op) = op \n R = Capture(Add(10, 20)) \n [R.Arguments*]
+def case_arguments_view_is_not_a_collection : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "R" (alg [] [] [] [(.call (.resolve "Capture") [(.call (.resolve "Add") [.num 10, .num 20])])]), privateProp "Add" (alg ["x", "y"] [] [] [(.binary .add (.param "x") (.param "y"))]), privateProp "Capture" (algWithParameters [{ name := "op", kind := .metaRef }] [] [] [.param "op"])] [(.listLiteral [(.sequenceSpread (.dotCall (.resolve "R") "Arguments" none))])])
+#guard obs case_arguments_view_is_not_a_collection == "err type"
+
+-- arguments-is-not-an-extension-call [name-resolution]: Arguments(r) = r + 1 \n Arguments(4)
+def case_arguments_is_not_an_extension_call : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Arguments" (alg ["r"] [] [] [(.binary .add (.param "r") (.num 1))])] [(.call (.resolve "Arguments") [.num 4])])
+#guard obs case_arguments_is_not_an_extension_call == "ok raw=5 n=1"
+
+-- 366 canonical Lean-guarded specification cases.
 
 /--
 Machine-checked Lean-guarded partition count: the id list is built by the
@@ -2334,8 +2391,18 @@ def specCaseIds : List String := [
   "string-interpolation-hole-lifts-a-formula",
   "string-interpolation-selection-in-a-hole",
   "string-interpolation-hole-failure",
-  "string-interpolation-hole-without-output"
+  "string-interpolation-hole-without-output",
+  "meta-capture-invokes-the-original-call",
+  "meta-capture-sees-through-forwarding-and-value",
+  "meta-refuses-anything-but-a-written-call",
+  "invoke-needs-its-argument-list",
+  "invoke-is-not-an-extension-call",
+  "call-reference-never-leaves-its-run",
+  "call-reference-arguments-view",
+  "arguments-spread-forwards-the-original-arguments",
+  "arguments-view-is-not-a-collection",
+  "arguments-is-not-an-extension-call"
 ]
-#guard specCaseIds.length == 356
+#guard specCaseIds.length == 366
 
 end LanguageSpecCases

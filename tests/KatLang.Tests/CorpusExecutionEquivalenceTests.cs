@@ -168,6 +168,14 @@ public class CorpusExecutionEquivalenceTests
         var mismatches = new List<string>();
         foreach (var (id, program) in Corpus)
         {
+            // A program that may capture calls (CallReference S1) can OBSERVE the property cache: a
+            // call reference is a generative value whose identity is its supplied call cell, so a
+            // bare property `R = Capture(F(1))` read twice is one reference (the cache, NEED-10, and
+            // Lean's `zeroArgPropertyCache`), while recomputing it mints a new one (`R == R` is true
+            // only with the cache). Production always caches; the uncached strategy is a test oracle
+            // that is exact only for programs the J7 gate proves META-free.
+            if (Evaluator.ProgramMayCaptureCalls(program))
+                continue;
             var cached = Neutral(Evaluator.RunCounted(program, new RunScopedZeroArgPropertyResultCache()));
             var uncached = Neutral(Evaluator.RunCounted(program, UncachedZeroArgPropertyResultCache.CreateForRun()));
             if (cached != uncached)

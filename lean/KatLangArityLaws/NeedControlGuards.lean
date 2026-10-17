@@ -12,7 +12,7 @@ def cycleState : EvalState := { needs := #[{ suspension := .expression (.param "
 #guard match (demandNeed 0).runState cycleState with
   | (.error .demandCycle, s) =>
     match s.needs[0]? with
-    | some (NeedCell.mk _ (.completed (.error .demandCycle)) _) => true
+    | some (NeedCell.mk _ (.completed (.error .demandCycle)) _ _) => true
     | _ => false
   | _ => false
 
@@ -25,14 +25,14 @@ def sliceCtx : EvalCtx := { callStack := [], needEnv := [("xs", 1)] }
   | (.ok [(0, some (.param "missing")), (0, some (.param "missing"))], s) =>
     s.needs.size == 2 &&
     match s.needs[0]?, s.needs[1]? with
-    | some (NeedCell.mk _ .suspended _), some (NeedCell.mk _ .suspended _) => true
+    | some (NeedCell.mk _ .suspended _ _), some (NeedCell.mk _ .suspended _ _) => true
     | _, _ => false
   | _ => false
 
 #guard match (demandNeed 1).runState sliceState with
   | (.error (.unknownName "missing"), s) =>
     match s.needs[1]? with
-    | some (NeedCell.mk _ (.completed (.error (.unknownName "missing"))) _) => true
+    | some (NeedCell.mk _ (.completed (.error (.unknownName "missing"))) _ _) => true
     | _ => false
   | _ => false
 
@@ -47,7 +47,7 @@ end KatLang.NeedControlGuards.Witnesses
 namespace KatLang.NeedControlGuards
 open KatLang.NeedControl.Collector
 /- Adversarial executable guards below exercise actual helpers or current opaque production. -/
-def refuse (_ : Expr) (_ : EvalCtx) (_ : ValEnv) : EvalM CountedResult := throw Error.divByZero
+def refuse (_ : Expr) (_ : EvalCtx) (_ : ValEnv) : EvalM SpreadSupply := throw Error.divByZero
 def ctx (name : Ident) (a : Nat) : EvalCtx := {callStack := [], needEnv := [(name, a)]}
 
 -- A list-valued Ready parameter is not a collector suspension.
@@ -68,11 +68,12 @@ def ctx (name : Ident) (a : Nat) : EvalCtx := {callStack := [], needEnv := [(nam
 def mixedState : EvalState := {needs := #[
   {suspension := .expression (.num 40) EvalCtx.empty []},
   {suspension := .collector [0, 0]}]}
-def observeWritten (e : Expr) (_ : EvalCtx) (_ : ValEnv) : EvalM CountedResult := do
+def observeWritten (e : Expr) (_ : EvalCtx) (_ : ValEnv) : EvalM SpreadSupply := do
   match e with
   | .sequenceSpread (.num 5) =>
     modify fun s => {s with nextRuntimeDeclaration := s.nextRuntimeDeclaration + 1}
-    pure (.sequenceValue [.sequenceValue [], .listValue [], .sequenceValue [.atom 1, .atom 2]], 99)
+    pure (.items (countedTopLevelValues
+      (.sequenceValue [.sequenceValue [], .listValue [], .sequenceValue [.atom 1, .atom 2]], 99)))
   | _ => throw Error.divByZero
 #guard match (form observeWritten (ctx "xs" 1) []
     [.num 9, .sequenceSpread (.param "xs"), .sequenceSpread (.num 5)]).runState mixedState with
@@ -80,9 +81,9 @@ def observeWritten (e : Expr) (_ : EvalCtx) (_ : ValEnv) : EvalM CountedResult :
       (3, none), (4, none), (5, none)], s) =>
     s.needs.size == 6 && s.nextRuntimeDeclaration == 1 &&
     match s.needs[3]?, s.needs[4]?, s.needs[5]? with
-    | some (NeedCell.mk (.ready (.sequenceValue [], 0)) .suspended none),
-      some (NeedCell.mk (.ready (.listValue [], 1)) .suspended none),
-      some (NeedCell.mk (.ready (.sequenceValue [.atom 1, .atom 2], 1)) .suspended none) => true
+    | some (NeedCell.mk (.ready (.sequenceValue [], 0)) .suspended none _),
+      some (NeedCell.mk (.ready (.listValue [], 1)) .suspended none _),
+      some (NeedCell.mk (.ready (.sequenceValue [.atom 1, .atom 2], 1)) .suspended none _) => true
     | _, _, _ => false
   | _ => false
 
@@ -92,7 +93,7 @@ def observeWritten (e : Expr) (_ : EvalCtx) (_ : ValEnv) : EvalM CountedResult :
   | _ => false
 
 -- A failing spread keeps earlier ordinary allocation and the callback's own allocation.
-def failingSpread (_ : Expr) (_ : EvalCtx) (_ : ValEnv) : EvalM CountedResult := do
+def failingSpread (_ : Expr) (_ : EvalCtx) (_ : ValEnv) : EvalM SpreadSupply := do
   let _ ← readyNeed (.atom 7, 1)
   modify fun s => {s with nextRuntimeDeclaration := 23}
   throw Error.divByZero
@@ -100,8 +101,8 @@ def failingSpread (_ : Expr) (_ : EvalCtx) (_ : ValEnv) : EvalM CountedResult :=
     [.num 1, .sequenceSpread (.num 2), .num 3]).runState EvalState.empty with
   | (.error .divByZero, s) => s.needs.size == 2 && s.nextRuntimeDeclaration == 23 &&
     match s.needs[0]?, s.needs[1]? with
-    | some (NeedCell.mk (.expression (.num 1) _ _) .suspended _),
-      some (NeedCell.mk (.ready (.atom 7, 1)) .suspended _) => true
+    | some (NeedCell.mk (.expression (.num 1) _ _) .suspended _ _),
+      some (NeedCell.mk (.ready (.atom 7, 1)) .suspended _ _) => true
     | _, _ => false
   | _ => false
 
@@ -117,17 +118,17 @@ def failWithMemo (_ : Expr) (_ : EvalCtx) (_ : ValEnv) : EvalM CountedResult := 
     nextRuntimeDeclaration := s.nextRuntimeDeclaration + 17}
   throw Error.divByZero
 def oneExpr : EvalState := {needs := #[{suspension := .expression (.num 1) EvalCtx.empty []}]}
-#guard match (NeedDemand.step failWithMemo (fun _ => throw Error.badArity) 0).runState oneExpr with
+#guard match (NeedDemand.step failWithMemo productionPlanRoute (fun _ => throw Error.badArity) 0).runState oneExpr with
   | (.error .divByZero, s) => s.nextRuntimeDeclaration == 17 &&
     match s.needs[0]? with
-    | some (NeedCell.mk (.expression (.num 1) _ _) (.completed (.error .divByZero)) (some (.ok none))) => true
+    | some (NeedCell.mk (.expression (.num 1) _ _) (.completed (.error .divByZero)) (some (.ok none)) _) => true
     | _ => false
   | _ => false
 
 -- A completed failure is reused without restarting its expression or callback.
 #guard match (do
-    let _ ← evalAttempt (NeedDemand.step failWithMemo (fun _ => throw Error.badArity) 0)
-    NeedDemand.step failWithMemo (fun _ => throw Error.badArity) 0).runState oneExpr with
+    let _ ← evalAttempt (NeedDemand.step failWithMemo productionPlanRoute (fun _ => throw Error.badArity) 0)
+    NeedDemand.step failWithMemo productionPlanRoute (fun _ => throw Error.badArity) 0).runState oneExpr with
   | (.error .divByZero, s) => s.nextRuntimeDeclaration == 17
   | _ => false
 
@@ -142,7 +143,7 @@ def oneExpr : EvalState := {needs := #[{suspension := .expression (.num 1) EvalC
 def shrinkExpression (_ : Expr) (_ : EvalCtx) (_ : ValEnv) : EvalM CountedResult := do
   modify fun s => {s with needs := #[]}
   throw Error.badArity
-#guard match (NeedDemand.step shrinkExpression (fun _ => throw Error.badArity) 0).runState oneExpr with
+#guard match (NeedDemand.step shrinkExpression productionPlanRoute (fun _ => throw Error.badArity) 0).runState oneExpr with
   | (.error .badArity, s) => s.needs.size == 0
   | _ => false
 
@@ -158,10 +159,10 @@ def shrinkExpression (_ : Expr) (_ : EvalCtx) (_ : ValEnv) : EvalM CountedResult
 -- Same heap size does not preserve original suspension identity.
 #guard match (NeedDemand.step (fun _ _ _ => do
     modify fun s => {s with needs := #[{suspension := .ready (.atom 99, 1)}]}
-    pure (.atom 1, 1)) (fun _ => throw Error.badArity) 0).runState oneExpr with
+    pure (.atom 1, 1)) productionPlanRoute (fun _ => throw Error.badArity) 0).runState oneExpr with
   | (.ok (.atom 1, 1), s) =>
     match s.needs[0]? with
-    | some (NeedCell.mk (.ready (.atom 99, 1)) (.completed (.ok (.atom 1, 1))) _) => true
+    | some (NeedCell.mk (.ready (.atom 99, 1)) (.completed (.ok (.atom 1, 1))) _ _) => true
     | _ => false
   | _ => false
 

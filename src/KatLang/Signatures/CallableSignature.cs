@@ -17,6 +17,7 @@ internal sealed record CallableParameter(
     public string DisplayName => Kind switch
     {
         ParameterKind.Collecting => $"*{Name}",
+        ParameterKind.Meta => $"meta {Name}",
         _ => Name,
     };
 }

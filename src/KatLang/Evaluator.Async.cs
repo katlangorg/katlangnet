@@ -469,7 +469,7 @@ public static partial class Evaluator
 
         // Twin path: the same shared preparation as the internal synchronous Run(...);
         // only the dispatch below is twin-specific.
-        var preparation = PrepareAsyncTwinRun(
+        using var preparation = PrepareAsyncTwinRun(
             expr, zeroArgPropertyResultCache, loopDiagnostics, sequenceDiagnostics, limits, observations, hostOperations, randomSeed, cancellationToken);
         if (preparation.Error is { } preparationError)
             return preparationError;
@@ -488,7 +488,9 @@ public static partial class Evaluator
                 : EvalResult<Result>.Ok(countedR.Value.Value);
         }
 
-        // Completion-boundary observation, exactly as on the synchronous path.
+        // The run result boundary and the completion-boundary observation, exactly as on the
+        // synchronous path.
+        result = ExportRunValue(result);
         ctx.Budget.ObserveCancellation();
         return result;
     }
@@ -509,15 +511,15 @@ public static partial class Evaluator
 
         // Twin path: the same shared preparation as RunCounted; only the dispatch
         // below is twin-specific.
-        var preparation = PrepareAsyncTwinRun(
+        using var preparation = PrepareAsyncTwinRun(
             expr, zeroArgPropertyResultCache, loopDiagnostics: null, sequenceDiagnostics: null, limits, observations: null, hostOperations, randomSeed, cancellationToken);
         if (preparation.Error is { } preparationError)
             return preparationError;
 
         var ctx = preparation.Ctx;
-        var result = expr is Expr.AlgorithmExpr(var alg)
+        var result = ExportRunValue(expr is Expr.AlgorithmExpr(var alg)
             ? await EvalRootProgramCountedAsync(alg, expr.Span, ctx).ConfigureAwait(false)
-            : await EvalCountedAsync(expr, ctx, []).ConfigureAwait(false);
+            : await EvalCountedAsync(expr, ctx, []).ConfigureAwait(false));
 
         ctx.Budget.ObserveCancellation();
         return result;
@@ -541,7 +543,7 @@ public static partial class Evaluator
 
         // Twin path: the same shared preparation as RunCountedWithTopLevelProperty;
         // only the dispatch below is twin-specific.
-        var preparation = PrepareAsyncTwinRun(
+        using var preparation = PrepareAsyncTwinRun(
             expr, zeroArgPropertyResultCache, loopDiagnostics: null, sequenceDiagnostics: null, limits, observations: null, hostOperations, randomSeed, cancellationToken);
         if (preparation.Error is { } preparationError)
             return preparationError;
@@ -562,6 +564,7 @@ public static partial class Evaluator
                     new CountedRootProgramResult(outputR.Value, TopLevelProperty: null));
         }
 
+        result = ExportRunValue(result);
         ctx.Budget.ObserveCancellation();
         return result;
     }
@@ -601,15 +604,15 @@ public static partial class Evaluator
 
         // Twin path: the same shared preparation as RunCountedObserved; only the
         // dispatch below is twin-specific.
-        var preparation = PrepareAsyncTwinRun(
+        using var preparation = PrepareAsyncTwinRun(
             expr, cache, loopDiagnostics, sequenceDiagnostics, limits, observations, hostOperations, randomSeed, cancellationToken);
         if (preparation.Error is { } preparationError)
             return (preparationError, preparation.Budget);
 
         var ctx = preparation.Ctx;
-        var result = expr is Expr.AlgorithmExpr(var alg)
+        var result = ExportRunValue(expr is Expr.AlgorithmExpr(var alg)
             ? await EvalRootProgramCountedAsync(alg, expr.Span, ctx).ConfigureAwait(false)
-            : await EvalCountedAsync(expr, ctx, []).ConfigureAwait(false);
+            : await EvalCountedAsync(expr, ctx, []).ConfigureAwait(false));
 
         ctx.Budget.ObserveCancellation();
         return (result, ctx.Budget);
@@ -808,6 +811,8 @@ public static partial class Evaluator
         {
             var valueR = await LookupNativeArgumentAsync(ctx, valEnv, argNames[i]).ConfigureAwait(false);
             if (valueR.IsError) return valueR.Error;
+            // MIRROR — a call reference never reaches host code.
+            if (CallReferenceBoundaryError(valueR.Value) is { } refused) return refused;
             arguments[i] = valueR.Value;
         }
 
@@ -830,6 +835,9 @@ public static partial class Evaluator
 
         if (ValidateHostOperationNativeSignature(hostOperation, argNames) is { } signatureError)
             return signatureError;
+
+        if (TryInvokeMetaReceiver(hostOperation, argNames, ctx) is { } metaReceived)
+            return metaReceived;
 
         var argumentsR = await CollectHostOperationArgumentsAsync(argNames, ctx, valEnv).ConfigureAwait(false);
         if (argumentsR.IsError) return argumentsR.Error;
@@ -1166,14 +1174,30 @@ public static partial class Evaluator
                             }
                         }
 
-                        completed = AdvanceSelection(ref frames[top], hasPendingChild ? pendingChild.Value : null, ctx, out requestedChild, out var selectorCell);
+                        completed = AdvanceSelection(ref frames[top], hasPendingChild ? pendingChild.Value : null, ctx, out requestedChild, out var selectorCell, out var viewIndex);
                         hasPendingChild = false;
                         if (selectorCell is not null)
                         {
                             var demanded = await selectorCell.DemandAsync().ConfigureAwait(false);
                             completed = demanded.IsError
                                 ? SelectorFailure(demanded.Error, frames[top])
-                                : AdvanceSelection(ref frames[top], demanded.Value.Value, ctx, out requestedChild, out _);
+                                : AdvanceSelection(ref frames[top], demanded.Value.Value, ctx, out requestedChild, out _, out viewIndex);
+                        }
+
+                        // MIRROR of the sync machine's argument-view step (S2): the view's cells, the ONE
+                        // cell at the validated position, its demand, then its acceptance.
+                        if (viewIndex >= 0)
+                        {
+                            var view = (Result.CallReference)frames[top].FirstValue!;
+                            var viewCells = await PrepareArgumentViewAsync(view, ctx).ConfigureAwait(false);
+                            var viewCell = ArgumentViewSelectionCell(viewCells, viewIndex, frames[top]);
+                            if (viewCell.IsError)
+                                completed = viewCell.Error;
+                            else
+                            {
+                                var viewValue = await viewCell.Value.DemandAsync().ConfigureAwait(false);
+                                completed = AcceptArgumentViewSelection(ref frames[top], viewValue, ctx);
+                            }
                         }
 
                         break;
@@ -1246,6 +1270,11 @@ public static partial class Evaluator
                         {
                             // The hole of link Phase just arrived: its text, then the link's text.
                             hasPendingChild = false;
+                            if (InterpolationHoleRefusal(pendingChild.Value, links[frames[top].Phase].Hole) is { } refusedHole)
+                            {
+                                completed = refusedHole;
+                                break;
+                            }
                             if (!frames[top].Text!.AppendValue(pendingChild.Value)
                                 || !frames[top].Text!.Append(links[frames[top].Phase].Text))
                             {
@@ -1335,7 +1364,7 @@ public static partial class Evaluator
     {
         if (alg.DeferredRegion is { } region)
         {
-            var materialized = await region.MaterializeAsync(ctx.Budget.CancellationToken).ConfigureAwait(false);
+            var materialized = await MaterializeRequiredRegionAsync(region, ctx).ConfigureAwait(false);
             if (materialized.IsError)
                 return materialized.Error;
             // The materialized body takes the placeholder's parameter patterns and parent: Lean's
@@ -2223,6 +2252,12 @@ public static partial class Evaluator
         if (collectionItem.Value is null)
             return SequenceBuiltinValueDemandError(collectionItem) ?? new EvalError.BadArity();
 
+        // An argument view bound as the whole collection (CallReference S2) — see the synchronous twin.
+        if (collectionItem.Value is Result.CallReference { IsArgumentView: true } view)
+            return ReadsArgumentView(builtin)
+                ? EvalResult<BoundSequenceBuiltinArguments>.Ok(new BoundSequenceBuiltinArguments(default!, [], [], view))
+                : ArgumentViewUnsupported(builtin);
+
         var collectionValues = BuiltinCollectionItems(collectionItem.Value);
 
         var collected = new CollectedSequenceBuiltinInput(collectionValues);
@@ -2269,19 +2304,22 @@ public static partial class Evaluator
     {
         var boundR = await BindSequenceBuiltinArgumentsAsync(builtin, metadata, args, ctx, valEnv).ConfigureAwait(false);
         if (boundR.IsError) return boundR.Error;
+        if (boundR.Value.ArgumentView is { } argumentView)
+            return await EvalArgumentViewBuiltinAsync(builtin, argumentView, ctx).ConfigureAwait(false);
 
-        var bound = boundR.Value;
+        // Deconstructed before the local functions capture them — see the synchronous twin.
+        var (preparedInput, iterationItems, suffixArgs, _) = boundR.Value;
 
         // The pure per-builtin execution helpers are shared with the synchronous twin;
         // only the callback-driven builtins (filter, map, reduce) await.
         EvalResult<CountedResult> WithPreparedFlatItems(
             Func<IReadOnlyList<Result>, EvalResult<CountedResult>> handler)
-            => handler(bound.PreparedInput.FlattenedItems);
+            => handler(preparedInput.FlattenedItems);
 
         EvalResult<CountedResult> WithPreparedNumericItems(
             Func<IReadOnlyList<Decimal128>, EvalResult<CountedResult>> handler)
         {
-            var numbersR = ExpectPreparedNumericItems(builtin, bound.PreparedInput);
+            var numbersR = ExpectPreparedNumericItems(builtin, preparedInput);
             if (numbersR.IsError) return numbersR.Error;
 
             return handler(numbersR.Value);
@@ -2291,28 +2329,28 @@ public static partial class Evaluator
         {
             case BuiltinId.@filter:
                 {
-                    if (bound.IterationItems.Count == 0) return MakeCollectionListResult(ctx, []);
+                    if (iterationItems.Count == 0) return MakeCollectionListResult(ctx, []);
                     var predicateR = ExpectPreparedAlgorithmSuffixArg(
                         builtin,
                         metadata.SuffixArgs,
-                        bound.SuffixArgs,
+                        suffixArgs,
                         0);
                     if (predicateR.IsError) return predicateR.Error;
 
-                    return await EvalFilterCountedAsync(bound.IterationItems, predicateR.Value, ctx, valEnv).ConfigureAwait(false);
+                    return await EvalFilterCountedAsync(iterationItems, predicateR.Value, ctx, valEnv).ConfigureAwait(false);
                 }
 
             case BuiltinId.@map:
                 {
-                    if (bound.IterationItems.Count == 0) return MakeCollectionListResult(ctx, []);
+                    if (iterationItems.Count == 0) return MakeCollectionListResult(ctx, []);
                     var transformR = ExpectPreparedAlgorithmSuffixArg(
                         builtin,
                         metadata.SuffixArgs,
-                        bound.SuffixArgs,
+                        suffixArgs,
                         0);
                     if (transformR.IsError) return transformR.Error;
 
-                    return await EvalMapCountedAsync(bound.IterationItems, transformR.Value, ctx, valEnv).ConfigureAwait(false);
+                    return await EvalMapCountedAsync(iterationItems, transformR.Value, ctx, valEnv).ConfigureAwait(false);
                 }
 
             case BuiltinId.@order:
@@ -2327,7 +2365,7 @@ public static partial class Evaluator
                     var searchedItemR = ExpectPreparedValueSuffixArg(
                         builtin,
                         metadata.SuffixArgs,
-                        bound.SuffixArgs,
+                        suffixArgs,
                         0);
                     if (searchedItemR.IsError) return searchedItemR.Error;
 
@@ -2346,7 +2384,7 @@ public static partial class Evaluator
                     var countR = ExpectPreparedWholeNumberSuffixArg(
                         builtin,
                         metadata.SuffixArgs,
-                        bound.SuffixArgs,
+                        suffixArgs,
                         0);
                     if (countR.IsError) return countR.Error;
 
@@ -2358,7 +2396,7 @@ public static partial class Evaluator
                     var countR = ExpectPreparedWholeNumberSuffixArg(
                         builtin,
                         metadata.SuffixArgs,
-                        bound.SuffixArgs,
+                        suffixArgs,
                         0);
                     if (countR.IsError) return countR.Error;
 
@@ -2379,20 +2417,20 @@ public static partial class Evaluator
                     var initialR = ExpectPreparedValueSuffixArg(
                         builtin,
                         metadata.SuffixArgs,
-                        bound.SuffixArgs,
+                        suffixArgs,
                         1);
                     if (initialR.IsError) return initialR.Error;
-                    if (bound.IterationItems.Count == 0) return EvalResult<CountedResult>.Ok(new(initialR.Value, initialR.Value.ValueCount()));
+                    if (iterationItems.Count == 0) return EvalResult<CountedResult>.Ok(new(initialR.Value, initialR.Value.ValueCount()));
 
                     var stepR = ExpectPreparedAlgorithmSuffixArg(
                         builtin,
                         metadata.SuffixArgs,
-                        bound.SuffixArgs,
+                        suffixArgs,
                         0);
                     if (stepR.IsError) return stepR.Error;
 
                     return await EvalReduceCountedAsync(
-                        bound.IterationItems,
+                        iterationItems,
                         stepR.Value,
                         initialR.Value,
                         ctx,
@@ -2605,6 +2643,10 @@ public static partial class Evaluator
                     if (outR.IsError) return outR.Error;
                     return EvalResult<CountedResult>.Ok(new CountedResult(outR.Value, outR.Value.ValueCount()));
                 }
+                if (dotCall.UsesDotInvokeIntrinsic())
+                    return await EvalDotInvokeValueReceiverCountedAsync(dotCall, ctx, valEnv).ConfigureAwait(false);
+                if (dotCall.UsesDotArgumentsIntrinsic())
+                    return await EvalDotArgumentsValueReceiverCountedAsync(dotCall, ctx, valEnv).ConfigureAwait(false);
                 return await CallLexicalWithReceiverCountedAsync(dotCall, ctx, valEnv).ConfigureAwait(false);
             }
 
@@ -2675,7 +2717,76 @@ public static partial class Evaluator
             return EvalResult<CountedResult>.Ok(new CountedResult(outR.Value, outR.Value.ValueCount()));
         }
 
+        // MIRROR — a structural miss spelled `Invoke` is the call-reference intrinsic.
+        if (dotCall.UsesDotInvokeIntrinsic())
+            return await EvalDotInvokeIntrinsicCountedAsync(dotCall, targetAlg, receiverIsStructuralMember, ctx, valEnv).ConfigureAwait(false);
+
+        // MIRROR — a structural miss spelled `Arguments` is the argument-view intrinsic (S2).
+        if (dotCall.UsesDotArgumentsIntrinsic())
+            return await EvalDotArgumentsIntrinsicCountedAsync(dotCall, targetAlg, receiverIsStructuralMember, ctx, valEnv).ConfigureAwait(false);
+
         return await CallLexicalWithReceiverCountedAsync(dotCall, ctx, valEnv).ConfigureAwait(false);
+    }
+
+    /// <summary>MIRROR OF <see cref="EvalDotReferenceIntrinsicReceiver"/> — keep in lock-step.</summary>
+    private static async ValueTask<EvalResult<Result>> EvalDotReferenceIntrinsicReceiverAsync(
+        Expr.DotCall dotCall, Algorithm targetAlg, bool receiverIsStructuralMember, EvalCtx ctx, ValEnv valEnv)
+    {
+        if (targetAlg is Algorithm.Alias alias)
+        {
+            var aliasTarget = ResolveAliasTarget(alias, ctx);
+            if (aliasTarget.IsError) return aliasTarget.Error;
+            targetAlg = aliasTarget.Value;
+        }
+        return await EvalDotStringReceiverAlgOutputAsync(dotCall.Target, targetAlg, receiverIsStructuralMember, ctx, valEnv).ConfigureAwait(false);
+    }
+
+    /// <summary>MIRROR OF <see cref="EvalDotArgumentsIntrinsicCounted"/> — keep in lock-step.</summary>
+    private static async ValueTask<EvalResult<CountedResult>> EvalDotArgumentsIntrinsicCountedAsync(
+        Expr.DotCall dotCall, Algorithm targetAlg, bool receiverIsStructuralMember, EvalCtx ctx, ValEnv valEnv)
+    {
+        if (RejectDotArgumentsIntrinsicArguments(dotCall.Args) is { } rejection)
+            return rejection;
+        var receiver = await EvalDotReferenceIntrinsicReceiverAsync(dotCall, targetAlg, receiverIsStructuralMember, ctx, valEnv).ConfigureAwait(false);
+        return receiver.IsError ? receiver.Error : ArgumentsOfCallReferenceValue(receiver.Value, ctx);
+    }
+
+    /// <summary>MIRROR OF <see cref="EvalDotArgumentsValueReceiverCounted"/> — keep in lock-step.</summary>
+    private static async ValueTask<EvalResult<CountedResult>> EvalDotArgumentsValueReceiverCountedAsync(Expr.DotCall dotCall, EvalCtx ctx, ValEnv valEnv)
+    {
+        if (RejectDotArgumentsIntrinsicArguments(dotCall.Args) is { } rejection)
+            return rejection;
+        // The synchronous twin evaluates the value-only target with plain Eval; the counted twin's
+        // value projection is the same value.
+        var receiver = await EvalCountedAsync(dotCall.Target, ctx, valEnv).ConfigureAwait(false);
+        return receiver.IsError ? receiver.Error : ArgumentsOfCallReferenceValue(receiver.Value.Value, ctx);
+    }
+
+    /// <summary>MIRROR OF <see cref="RejectDotInvokeIntrinsicArguments"/> — keep in lock-step.</summary>
+    private static async ValueTask<EvalError?> RejectDotInvokeIntrinsicArgumentsAsync(OutputBundle? argsOpt, EvalCtx ctx, ValEnv valEnv)
+        => argsOpt is null
+            ? new EvalError.IllegalInEval(InvokeRequiresArgumentListMessage)
+            : await RejectDotStringIntrinsicArgumentsAsync(argsOpt, ctx, valEnv).ConfigureAwait(false);
+
+    /// <summary>MIRROR OF <see cref="EvalDotInvokeIntrinsicCounted"/> — keep in lock-step.</summary>
+    private static async ValueTask<EvalResult<CountedResult>> EvalDotInvokeIntrinsicCountedAsync(
+        Expr.DotCall dotCall, Algorithm targetAlg, bool receiverIsStructuralMember, EvalCtx ctx, ValEnv valEnv)
+    {
+        if (await RejectDotInvokeIntrinsicArgumentsAsync(dotCall.Args, ctx, valEnv).ConfigureAwait(false) is { } rejection)
+            return rejection;
+        var receiver = await EvalDotReferenceIntrinsicReceiverAsync(dotCall, targetAlg, receiverIsStructuralMember, ctx, valEnv).ConfigureAwait(false);
+        return receiver.IsError ? receiver.Error : await InvokeCallReferenceValueAsync(receiver.Value, ctx).ConfigureAwait(false);
+    }
+
+    /// <summary>MIRROR OF <see cref="EvalDotInvokeValueReceiverCounted"/> — keep in lock-step.</summary>
+    private static async ValueTask<EvalResult<CountedResult>> EvalDotInvokeValueReceiverCountedAsync(Expr.DotCall dotCall, EvalCtx ctx, ValEnv valEnv)
+    {
+        if (await RejectDotInvokeIntrinsicArgumentsAsync(dotCall.Args, ctx, valEnv).ConfigureAwait(false) is { } rejection)
+            return rejection;
+        // The synchronous twin evaluates the value-only target with plain Eval; the counted twin's
+        // value projection is the same value.
+        var receiver = await EvalCountedAsync(dotCall.Target, ctx, valEnv).ConfigureAwait(false);
+        return receiver.IsError ? receiver.Error : await InvokeCallReferenceValueAsync(receiver.Value.Value, ctx).ConfigureAwait(false);
     }
 
     /// <summary>MIRROR OF <see cref="CallLexicalWithReceiverCounted"/> — keep in lock-step.</summary>
@@ -2854,8 +2965,8 @@ public static partial class Evaluator
             value.ValueCount()));
     }
 
-    /// <summary>MIRROR OF <see cref="EvalSequenceSpreadOperandItems"/> — keep in lock-step.</summary>
-    private static async ValueTask<EvalResult<IReadOnlyList<Result>>> EvalSequenceSpreadOperandItemsAsync(
+    /// <summary>MIRROR OF <see cref="EvalSequenceSpreadOperandValue"/> — keep in lock-step.</summary>
+    private static async ValueTask<EvalResult<Result>> EvalSequenceSpreadOperandValueAsync(
         Expr expr,
         EvalCtx ctx,
         ValEnv valEnv)
@@ -2869,13 +2980,13 @@ public static partial class Evaluator
                     ? SpreadMissingOutput(captureSpan)
                     : captureR.Error;
 
-            return EvalResult<IReadOnlyList<Result>>.Ok(captureR.Value.SpreadItems());
+            return captureR;
         }
 
         if (expr is Expr.AlgorithmExpr(var alg))
         {
             if (alg is Algorithm.Alias)
-                return await EvalAliasSpreadOperandItemsAsync(expr, alg, ctx, valEnv).ConfigureAwait(false);
+                return await EvalAliasSpreadOperandValueAsync(expr, alg, ctx, valEnv).ConfigureAwait(false);
 
             var wired = WireToCaller(ctx, alg);
             var blockSpan = PreferExpressionSpan(expr.Span, wired.Output);
@@ -2889,7 +3000,7 @@ public static partial class Evaluator
                     ? SpreadMissingOutput(blockSpan)
                     : blockR.Error;
 
-            return EvalResult<IReadOnlyList<Result>>.Ok(blockR.Value.SpreadItems());
+            return blockR;
         }
 
         // The synchronous twin evaluates the operand with plain Eval; the counted
@@ -2900,7 +3011,7 @@ public static partial class Evaluator
                 ? SpreadMissingOutput(expr.Span)
                 : outputR.Error;
 
-        return EvalResult<IReadOnlyList<Result>>.Ok(outputR.Value.Value.SpreadItems());
+        return EvalResult<Result>.Ok(outputR.Value.Value);
     }
 
     /// <summary>MIRROR OF <see cref="EvalSequenceSpreadCounted"/> — keep in lock-step.</summary>
@@ -2909,29 +3020,9 @@ public static partial class Evaluator
         EvalCtx ctx,
         ValEnv valEnv)
     {
-        var operand = expr;
-        var layers = 0;
-        while (operand is Expr.SequenceSpread(var supplied))
-        {
-            operand = supplied;
-            layers++;
-        }
-
-        var operandR = await EvalSequenceSpreadOperandItemsAsync(operand, ctx, valEnv).ConfigureAwait(false);
+        var operand = PeelSpreadLayers(expr, out var layers);
+        var operandR = await EvalSequenceSpreadOperandValueAsync(operand, ctx, valEnv).ConfigureAwait(false);
         if (operandR.IsError) return operandR.Error;
-
-        var items = operandR.Value;
-        for (var layer = 0; layer < layers; layer++)
-        {
-            var capturedR = MakeCheckedSequenceCapture(ctx, items, expr.Span);
-            if (capturedR.IsError) return capturedR.Error;
-
-            if (layer == layers - 1)
-                return EvalResult<CountedResult>.Ok(new CountedResult(capturedR.Value, items.Count));
-
-            items = capturedR.Value.SpreadItems();
-        }
-
-        throw new InvalidOperationException("Sequence spread must contain at least one layer.");
+        return OpenSpreadLayers(operandR.Value, layers, expr, ctx, transportView: false, out _);
     }
 }

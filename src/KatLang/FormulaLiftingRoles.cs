@@ -100,6 +100,16 @@ internal enum DotEdgeKind
     /// whose statically known receiver declares no member <c>string</c>: it converts the receiver's VALUE.</summary>
     StringIntrinsic,
 
+    /// <summary>The call-reference intrinsic <c>Invoke</c> (CallReference S1), the miss route of an edge
+    /// spelled <c>Invoke</c> whose statically known receiver declares no member <c>Invoke</c>: it executes
+    /// the reference that is the receiver's VALUE.</summary>
+    InvokeIntrinsic,
+
+    /// <summary>The argument-view intrinsic <c>Arguments</c> (CallReference S2), the miss route of an edge
+    /// spelled <c>Arguments</c> whose statically known receiver declares no member <c>Arguments</c>: it
+    /// reads the view of the reference that is the receiver's VALUE.</summary>
+    ArgumentsIntrinsic,
+
     /// <summary>A declared member of a statically known receiver (a member named <c>string</c>
     /// included): the receiver is navigated.</summary>
     StructuralMember,
@@ -175,7 +185,8 @@ internal static class FormulaLiftingRoles
             LexicalFallbackSelection.Never => DotEdgeKind.StructuralMember,
             LexicalFallbackSelection.Always => edge.UsesOrdinaryDotStringIntrinsic()
                 ? DotEdgeKind.StringIntrinsic
-                : DotEdgeKind.Fallback,
+                : edge.UsesDotInvokeIntrinsic() ? DotEdgeKind.InvokeIntrinsic
+                : edge.UsesDotArgumentsIntrinsic() ? DotEdgeKind.ArgumentsIntrinsic : DotEdgeKind.Fallback,
             _ => DotEdgeKind.Undecided,
         };
 
@@ -188,7 +199,7 @@ internal static class FormulaLiftingRoles
     public static LiftingRole ReceiverRole(DotEdgeKind kind, LiftingCallee fallbackCallee)
         => kind switch
         {
-            DotEdgeKind.StringIntrinsic => LiftingRole.Value,
+            DotEdgeKind.StringIntrinsic or DotEdgeKind.InvokeIntrinsic or DotEdgeKind.ArgumentsIntrinsic => LiftingRole.Value,
             DotEdgeKind.Fallback => SlotRole(fallbackCallee, 0, positionKnown: true),
             _ => LiftingRole.Callable,
         };

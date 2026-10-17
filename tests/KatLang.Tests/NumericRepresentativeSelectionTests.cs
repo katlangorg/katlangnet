@@ -95,6 +95,8 @@ public sealed class NumericRepresentativeSelectionTests
         Result.Bool boolean => boolean.Value ? "true" : "false",
         Result.SequenceValue sequence => "S[" + string.Join(", ", sequence.Items.Select(Exact)) + "]",
         Result.ListValue list => "L[" + string.Join(", ", list.Items.Select(Exact)) + "]",
+        // A run result never holds one (the run boundary refuses it).
+        Result.CallReference => "CallReference",
     };
 
     /// <summary>The outcome every route agrees on, representation-exactly: <c>ok value</c> or <c>err Code</c>.</summary>

@@ -1,5 +1,124 @@
 # Semantic Alignment Manifest.
 
+CallReference pre-commit cleanup (2026-10-17): C#-only consolidation, no language, Lean or
+observable-outcome change. The J7 plan-retention fact is decided by the run's existing structural
+preflight walk (`AstStructuralPreflight.CheckAdmittedProgram` / `MayCaptureCalls`) instead of a second
+whole-program traversal (`Evaluator.ProgramMayCaptureCalls` remains as the same walk for tests); the
+internal M1 `CallPlanExperiment` switch is renamed `InvocationPlanTestSeam` (test-only: forced retention
+and internal META receivers; production never sets it; whole-suite mode `KATLANG_FORCE_INVOCATION_PLANS=1`);
+the `Invoke`/`Arguments` intrinsics share one receiver read (`EvalDotReferenceIntrinsicReceiver` and its
+async mirror); the collecting and META clause-binder checks share one allocation-light head scan
+(`Pattern.HeadHasBinderOfKind`). The `experimental/features/` reports named below are git-ignored local
+research records, not part of the repository.
+
+CallReference S1 (2026-10-17): language change, Lean first, then C#. Lean: `ParameterKind.metaRef`
+(`ParameterPattern.metaViolation?`, checked by `validateAlgorithmTree`), `Result.callRef`
+(`containsCallRef`; total views give it no number/Boolean/text/structure), `NeedPattern.metaRef` with
+the new binder capability `NeedCapabilities.reference` (production `NeedPlan.reference`: `reify` + one
+Ready adapter; the identity layer of `NeedPlan` moved above the binder core), the `"Invoke"` arms of
+`evalDotCallCounted` (`rejectInvokeIntrinsicArguments`, `invokeCallReferenceValue` = `NeedPlan.invoke`
+at the production route), interpolation's `requireCallRefFree` and the run boundary `exportRunValue`
+in `runResultM`. Laws `KatLangArityLaws/CallReference.lean`, guards `CallReferenceGuards.lean`; the
+R3 trace/correspondence proofs gained the META arm (`NeedEvent.reference`, `AgreeOutside.reference`).
+C#: `ParameterKind.Meta` (public), the contextual `meta` parser rule and `InvalidMetaParameter`
+(public `DiagnosticCode` / `KatLangErrorCode`), `ParameterPattern.FindMetaViolation` + preflight
+violations, the binder's `Meta` arm (`ReferenceAdapterCell`), public `Result.CallReference` (internal
+plan; value equality by plan identity), the `Invoke` miss-route intrinsic (`UsesDotInvokeIntrinsic`,
+`InvokeIntrinsic` lifting edge kind, semantic-model builtin), `InvokeCallReferenceValue` with the ONE
+ownership helper `CheckCallReferenceOwnership`, the run/host/interpolation boundaries, lifted META
+captures demoted to ordinary caller bindings, and the J7 program gate
+(`Evaluator.ProgramMayCaptureCalls`, `EvaluationBudget.DecideInvocationPlanRetention` /
+`RetainsInvocationPlans`) replacing the experiment-only plan gate for production runs. Rules:
+`docs/design/language-rules/call-by-need.md` § Call references. Research record `experimental/features/callreference-s1-meta-invoke.md`. Full V3 (parser, binder, evaluator core,
+Result model, Lean).
+
+S1 independent review (2026-10-17): C# lifetime/boundary correction, no Lean language change.
+All eight owning run entries dispose `PreparedRun` on every exit; `EvaluationBudget.RunEnded`
+and `CheckCallReferenceOwnership` refuse replay after success, ordinary failure or exception,
+while preserving retained source failures and cancellation precedence. Serial Lean cannot
+reenter a completed run. `CallReferenceS1ReviewTests` pins every entry/exit and real async
+suspension/cancellation. The live ignored Constitution's S1 amendment reconciles VAL-01/09/12,
+DOT-01/08 and the Model-C reference capability; existing proof obligations remain open.
+Host-return normalization now rejects reference leaves during its existing DAG-safe walk
+(`Result.NormalizeForHostOperation`), removing a confirmed second traversal of large nested
+ordinary host results without weakening refusal in META-free runs. Run-result, host-input
+and interpolation checks retain their separate consumer boundaries.
+META signature scans also memoize shared pattern nodes: presence visits once and placement/
+duplicate validation visits at most twice (zero/one/many), preserving occurrence-sensitive
+refusal without expanding a host DAG. Ten bounded regressions cover all structural kinds,
+unique/repeated names and nested-META precedence. This changes only C# traversal cost.
+
+CallReference S2 (2026-10-17): language change, Lean first, then C#. Lean: `Result.argView` (the lazy
+argument view of plan `a`; `containsCallRef` covers it, total views give it nothing), the `"Arguments"`
+arms of `evalDotCallCounted` (`rejectArgumentsIntrinsicArguments`, `argumentsOfValue`), the plan's view
+supply `NeedPlan.viewCells` / `viewSupply` (the ONE sticky `prepare`), `selectViewWith` +
+`selectorIndex` in the `.index` arm, `argumentViewBuiltin` through `BoundSequenceBuiltinArguments.view?`
+(`Builtin.readsArgumentView`), `atoms` refusal, and the cell-preserving spread: supply formation's
+computed-spread capability `NeedSupply.SpreadEval` (production `evalSupplySpread`, also the new
+`NeedPlan.Route.spread` field) returns opened items or transported cells (`SpreadSupply`), with the
+pure openers `openSpreadItems` / `openSupplySpread` (value positions refuse a view; elsewhere exactly
+`reopenSpreadLayers`). `NeedPlan.execute` / `invoke` lost their unused evaluator parameter;
+`ProductionDiscipline` gained `evalSupplySpread`. Laws `KatLangArityLaws/ArgumentView.lean`, guards
+`ArgumentViewGuards.lean`; `NeedControl.Formation.computed_spread_transports`. C#: the internal facet
+`Result.CallReference.IsArgumentView` (one view per reference, equality plan + facet, record equality
+excludes the cached view), `UsesDotArgumentsIntrinsic` (+ `ArgumentsIntrinsic` lifting edge kind,
+semantic-model builtin), `ArgumentsOfCallReferenceValue`, `PrepareArgumentView(Async)` over the neutral
+`SourcedPlanSupply` shape (a builtin plan prepared by a view keeps its written sources),
+`EvalArgumentViewBuiltin(Async)`, the view arm of `AdvanceSelection` (`SelectorIndex`, both machines),
+`FormSpreadSupplySlot` transport through `OpenSpreadLayers`, and the refusals in sequence-builtin
+binding (shared with the pipeline optimizer's receiver adapter) and `atoms`. Every view operation uses
+`CheckCallReferenceOwnership`. Rules: `docs/design/language-rules/call-by-need.md` § Argument views.
+Research record `experimental/features/callreference-s2-arguments-view.md`. Full V3.
+
+CallReference S0 (2026-10-16): C#-only, implementation-only representation change; no language,
+Lean or intended ordinary-program outcome change, no public API change. Every written argument's
+cell (`SupplyCell`) now keeps its suspension as DATA — `Evaluator.ExpressionSuspension` (caller
+context and value environment; the written expression stays `NeedCell.Source`), the shape of Lean
+`NeedSuspension.expression` — instead of three closure delegates, and its VALUE, async VALUE and
+CALLABLE projection are static evaluator operations (`EvalSuspendedValue` / its `// MIRROR OF`
+async twin, `ProjectSuspendedCallable`). The suspension is never released, exactly as the closures
+were kept alive through the CALLABLE projection. Behind the unchanged `CallPlanExperiment` gate a
+call-shaped cell's suspension is an `Evaluator.InvocationPlan`, whose ONE lock-free supply slot is
+Lean `NeedCell.plan`: unprepared, a preparing marker, the prepared supply itself (the very cell list
+or builtin argument array the dispatch consumes, so retaining it after VALUE allocates nothing more),
+or a sticky `EvalError` / `ExceptionDispatchInfo`. A re-entrant preparation is `DemandCycle` (Lean
+`preparing`): VALUE-initiated through `NeedCell.IsEvaluatingInCurrentFlow`, invocation-initiated
+through an ambient frame; only a contended waiter allocates a completion source, and the plan's
+`CallReference` is allocated on its first META. The M1 holder (closure-built `PlannedSupplyCell`,
+async-only `DispatchPlanned`, per-plan gate/flight/reference) is gone; the sync and async plan
+routes are separate mirrors over the existing helpers. Fusion stays fail-closed for a plan-routed
+supplied plain call. `EvaluationObservations` gained test-only plan/supply counters. Research record `experimental/features/callreference-s0-retention-prototype.md`. Full V3 is required (evaluator core).
+
+Independent S0 review (2026-10-16): the internal META receiver could absorb a required deferred
+compilation failure or source-processing cancellation and return success. Both evaluator
+materialization boundaries now use `MaterializeRequiredRegionAsync`: the run budget retains the
+original source diagnostic (still not a resource limit) or cancellation exception/token, and its
+continuation check prevents recovery. Failed materializations can still retry in a fresh run.
+`CallPlanRetentionReviewTests.cs` pins VALUE, invocation and preparation-only receivers, both
+materialization boundaries, source cancellation, concurrent failure publication and transitive
+reentry. This is the existing host source-admission law; Lean models no external module loading.
+
+CallReference M1.5 (2026-10-16): authoritative Lean invocation plans; no surface syntax, no
+change to any program's outcome, C# change limited to the experimental gate's comments and one
+parity test. A supplied cell whose suspension is a written call with a lexical-name or parameter
+callee IS an invocation plan (identity = need address); its one supply preparation lives in the
+production `NeedCell.plan` (`NeedPlanSupply`: unprepared / preparing / sticky prepared outcome),
+formed at most once through `NeedSupply.form`. `NeedDemand.suspendedValue` / `step` take a
+`NeedPlan.Route` and the cell address; a plan cell's computation is `NeedPlan.execute` (ordinary
+phase order: callee in the caller context, alias normalization, the plan's supply, the ONE
+dispatch `evalSuppliedCallCounted`, which `evalResolvedCallCounted` now also calls after forming
+its supply). `demandNeed` and the recursive `demandNeedRecursive` both install
+`productionPlanRoute`, so nested demands execute plans too. Internal META `reifyNeedCall` and
+invocation `invokeNeedCall` exist only for proofs/guards. Laws: `KatLangArityLaws/InvocationPlan.lean`
+(heap discipline of form/prepare/execute/step, stable inert META, single sticky preparation,
+completed VALUE independence, shared supply, order agreement, forwarding, independence, fresh plan =
+ordinary call up to the plan record); guards: `InvocationPlanGuards.lean` over `demandNeed`.
+C# keeps the plan behind `CallPlanExperiment` (ordinary runs allocate no plan). Production agreement
+is supported by executable comparisons; the fresh-plan law assumes global plan-record obliviousness,
+which general production dispatch does not satisfy, and is not a universal production-equivalence
+proof. Research record `experimental/features/callreference-m1-5-authoritative-lean.md`.
+Full V3 is required.
+
 R5 (2026-10-15): Lean control extraction, with no language or C# evaluator change.
 `NeedSupply.slot` / `form` are the one total `EvalM` supply assembler, injecting only
 computed-spread evaluation; `addresses` projects its sourced supply. `NeedDemand.materialize`,

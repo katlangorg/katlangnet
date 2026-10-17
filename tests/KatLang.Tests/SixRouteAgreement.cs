@@ -190,5 +190,7 @@ internal static class SixRouteAgreement
         Result.Bool boolean => boolean.Value ? "true" : "false",
         Result.SequenceValue sequence => "S[" + string.Join(", ", sequence.Items.Select(Neutral)) + "]",
         Result.ListValue list => "L[" + string.Join(", ", list.Items.Select(Neutral)) + "]",
+        // A run result never holds one (the run boundary refuses it).
+        Result.CallReference => "CallReference",
     };
 }

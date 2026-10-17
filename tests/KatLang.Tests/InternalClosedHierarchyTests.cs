@@ -31,7 +31,7 @@ public class InternalClosedHierarchyTests
             ["Constant", "StringConstant", "StateSlot", "CapturedSlot", "NeedParameter", "TempSlot", "TempCall", "Unary", "Binary", "Comparison", "If", "Fallback"]),
         (typeof(FilterCountSourcePlan), ["Generic", "DirectRange"]),
         (typeof(PreEvaluationAstViolation),
-            ["ExplicitParametersWithoutOutput", "ConditionalBranchArityMismatch", "ConditionalBranchOutputArityMismatch", "SingletonSequencePattern", "MultipleCollectingCaptures", "RepeatedNameIncludesCollecting", "CollectingClauseBinder", "AliasTargetNotStaticPath", "AliasCycle"]),
+            ["ExplicitParametersWithoutOutput", "ConditionalBranchArityMismatch", "ConditionalBranchOutputArityMismatch", "SingletonSequencePattern", "MultipleCollectingCaptures", "RepeatedNameIncludesCollecting", "CollectingClauseBinder", "InvalidMetaParameter", "MetaClauseBinder", "AliasTargetNotStaticPath", "AliasCycle"]),
         (PreparedSequenceBuiltinSuffixArgType, ["AlgorithmArg", "ValueArg", "WholeNumberArg"]),
         (typeof(OpenCandidate), ["ResolvedOpenCandidate", "UnresolvedOpenCandidate"]),
         (typeof(CallableBindingNode), ["CaptureBindingNode", "CollectingCaptureBindingNode", "SequenceValueBindingNode", "ListValueBindingNode", "UnpackingBindingNode"]),

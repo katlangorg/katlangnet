@@ -307,7 +307,12 @@ internal sealed record CallableBindingCapture(
     ParameterKind Kind,
     CallableParameterSource Source)
 {
-    public string DisplayName => Kind == ParameterKind.Collecting ? $"*{Name}" : Name;
+    public string DisplayName => Kind switch
+    {
+        ParameterKind.Collecting => $"*{Name}",
+        ParameterKind.Meta => $"meta {Name}",
+        _ => Name,
+    };
 }
 
 /// <summary>

@@ -432,6 +432,8 @@ internal static class StructuredLayoutRenderer
                     => CanSpaceJoinTokens(sequence.Items, 0)
                         || (!RequiresStructuredLayout(item, asChild: true) && FitsInline(item, 0, 0)),
                 Result.SequenceValue or Result.ListValue => FitsInline(item, 0, 0),
+                // A run result never holds a call reference (the run boundary refuses it).
+                Result.CallReference => throw new InvalidOperationException(Evaluator.CallReferenceLeavesRunMessage),
             };
 
         /// <summary>

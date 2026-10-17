@@ -37,6 +37,15 @@ public static partial class Evaluator
         => result.IsError && cell.Slice is null && cell.Source is Expr.AlgorithmExpr
             ? ParameterSlotFailure(name, span, result.Error) : result;
 
+    /// <summary>
+    /// The supplied cell of one written argument slot (Lean <c>supplyNeed</c>): a bound parameter
+    /// transports its existing cell; every other expression becomes a suspended cell whose
+    /// suspension (<see cref="ExpressionSuspension"/>: the caller context and value environment)
+    /// is kept as data. In a run that retains invocation plans (J7, <see cref="EvaluationBudget.RetainsInvocationPlans"/>),
+    /// a written call with a lexical-name or parameter callee IS an invocation plan
+    /// (<see cref="InvocationPlan"/>): its VALUE executes through the plan's one supply
+    /// (<see cref="EvalPlannedCallCounted"/>).
+    /// </summary>
     internal static NeedCell SupplyCell(Expr expression, EvalCtx caller, ValEnv values)
     {
         if (expression is Expr.Param(var name))
@@ -44,24 +53,56 @@ public static partial class Evaluator
             var parameterCtx = ParameterContext(name, caller, ref values);
             if (LookupNeed(parameterCtx.NeedEnv, name) is { } existing) return existing;
         }
-        var retainedValues = values;
-        EvalResult<Algorithm?> Project()
+        ExpressionSuspension suspension;
+        if (caller.Budget.RetainsInvocationPlans && IsPlannableCall(expression) is not null)
         {
-            // A dot expression carries the ONE identity its projection gives it in every
-            // algorithm-capable position, the callee included (DOT-09).
-            if (expression is Expr.DotCall edge)
-                return ProjectDotPathCallable(edge, caller);
-            if (ShouldWrapArgExprAsValue(expression)) return EvalResult<Algorithm?>.Ok(null);
-            var resolved = ResolveAlg(expression, caller);
-            return resolved.IsOk ? EvalResult<Algorithm?>.Ok(resolved.Value)
-                : IsLiftableError(resolved.Error) ? EvalResult<Algorithm?>.Ok(null) : resolved.Error;
+            caller.Observations?.RecordInvocationPlan();
+            suspension = new InvocationPlan(caller, values);
         }
-        EvalResult<CountedResult> Finish(EvalResult<CountedResult> result)
-            => result.IsError ? BlameWrittenArgumentSlot(expression, result.Error) : ReCountValueBoundary(result);
-        return new NeedCell(
-            () => Finish(EvalCounted(expression, caller, retainedValues)),
-            async () => Finish(await EvalCountedAsync(expression, caller, retainedValues).ConfigureAwait(false)),
-            Project, expression.Span, source: expression, budget: caller.Budget, token: caller.Budget.CancellationToken);
+        else suspension = new ExpressionSuspension(caller, values);
+        return new NeedCell(expression, suspension, caller.Budget, caller.Budget.CancellationToken);
+    }
+
+    /// <summary>
+    /// The VALUE of a written argument's cell, run inside the cell's single flight: the expression
+    /// in its caller context — or, for an invocation plan, the plan's execution — finished at the
+    /// argument's value boundary with any failure blamed on its written slot.
+    /// </summary>
+    internal static EvalResult<CountedResult> EvalSuspendedValue(NeedCell cell, ExpressionSuspension suspension)
+    {
+        var source = cell.Source!;
+        return FinishSuppliedValue(source, suspension is InvocationPlan plan
+            ? EvalPlannedCallCounted(plan, byInvocation: false)
+            : EvalCounted(source, suspension.Caller, suspension.Values));
+    }
+
+    /// <summary>MIRROR OF <see cref="EvalSuspendedValue"/> — keep in lock-step.</summary>
+    internal static async ValueTask<EvalResult<CountedResult>> EvalSuspendedValueAsync(NeedCell cell, ExpressionSuspension suspension)
+    {
+        var source = cell.Source!;
+        return FinishSuppliedValue(source, suspension is InvocationPlan plan
+            ? await EvalPlannedCallCountedAsync(plan, byInvocation: false).ConfigureAwait(false)
+            : await EvalCountedAsync(source, suspension.Caller, suspension.Values).ConfigureAwait(false));
+    }
+
+    private static EvalResult<CountedResult> FinishSuppliedValue(Expr source, EvalResult<CountedResult> result)
+        => result.IsError ? BlameWrittenArgumentSlot(source, result.Error) : ReCountValueBoundary(result);
+
+    /// <summary>
+    /// The CALLABLE projection of a written argument's cell: identity-only resolution in the
+    /// caller context, which evaluates nothing and demands no VALUE.
+    /// </summary>
+    internal static EvalResult<Algorithm?> ProjectSuspendedCallable(Expr expression, ExpressionSuspension suspension)
+    {
+        var caller = suspension.Caller;
+        // A dot expression carries the ONE identity its projection gives it in every
+        // algorithm-capable position, the callee included (DOT-09).
+        if (expression is Expr.DotCall edge)
+            return ProjectDotPathCallable(edge, caller);
+        if (ShouldWrapArgExprAsValue(expression)) return EvalResult<Algorithm?>.Ok(null);
+        var resolved = ResolveAlg(expression, caller);
+        return resolved.IsOk ? EvalResult<Algorithm?>.Ok(resolved.Value)
+            : IsLiftableError(resolved.Error) ? EvalResult<Algorithm?>.Ok(null) : resolved.Error;
     }
 
     // Sync formation has no suspending operation. Both engines execute this one ordered
@@ -89,10 +130,13 @@ public static partial class Evaluator
     /// list forms — a call's arguments (<see cref="FormNeedSupply"/>) and a postfix selection's
     /// selectors (<see cref="FormSelectionSupply"/>): a collecting parameter's known slice is
     /// transported unforced; any other spread operand is evaluated NOW, during formation, and
-    /// opened one boundary into Ready items. Appends the slot's cells to <paramref name="supply"/>
-    /// (and their written sources to <paramref name="sources"/>) and returns the formation failure,
-    /// if any. Lean: the spread branch of <c>formNeedSupplySourced</c>, whose known-slice test is
-    /// <c>spreadCollectorSlice?</c>.
+    /// opened one boundary into Ready items — except that when the value its LAST star opens is an
+    /// ARGUMENT VIEW (CallReference S2), the slot transports that view's ORIGINAL cells (the plan's
+    /// one sticky supply, <see cref="PrepareArgumentView"/>), each with its own written source, and
+    /// demands none of them: no copy, no Ready wrapper, no second preparation. Appends the slot's cells
+    /// to <paramref name="supply"/> (and their written sources to <paramref name="sources"/>) and
+    /// returns the formation failure, if any. Lean: <c>NeedSupply.slot</c>, whose known-slice test is
+    /// <c>spreadCollectorSlice?</c> and whose computed spread is <c>evalSupplySpread</c>.
     /// </summary>
     private static async ValueTask<EvalError?> FormSpreadSupplySlot(
         Expr.SequenceSpread argument, EvalCtx caller, ValEnv values, bool asynchronous,
@@ -106,10 +150,29 @@ public static partial class Evaluator
             if (sources is not null) sources.AddRange(known.Select(static cell => cell.Source));
             return null;
         }
-        // EvalSequenceSpreadCounted owns output-less spread diagnostics and opening.
-        var opened = asynchronous
-            ? await EvalCountedAsync(argument, caller, values).ConfigureAwait(false)
-            : EvalCounted(argument, caller, values);
+        // The spread node's dispatch checkpoint, which EvalCounted charges before its spread arm; the
+        // operand is then evaluated ONCE and opened exactly as EvalSequenceSpreadCounted opens it
+        // (it owns output-less spread diagnostics), with the last star's view left to transport.
+        if (caller.Budget.TryChargeExpressionNodeWork() is { } nodeWorkError)
+            return nodeWorkError;
+        var operand = PeelSpreadLayers(argument, out var layers);
+        var operandR = asynchronous
+            ? await EvalSequenceSpreadOperandValueAsync(operand, caller, values).ConfigureAwait(false)
+            : EvalSequenceSpreadOperandValue(operand, caller, values);
+        if (operandR.IsError) return operandR.Error;
+        var opened = OpenSpreadLayers(operandR.Value, layers, argument, caller, transportView: true, out var view);
+        if (view is not null)
+        {
+            var cells = asynchronous
+                ? await PrepareArgumentViewAsync(view, caller).ConfigureAwait(false)
+                : PrepareArgumentView(view, caller);
+            if (cells.IsError) return AtSpanIfMissing(cells.Error, argument.Span);
+            supply.AddRange(cells.Value);
+            if (sources is not null)
+                foreach (var cell in cells.Value)
+                    sources.Add(cell.Source);
+            return null;
+        }
         if (opened.IsError) return opened.Error;
         foreach (var item in CountedTopLevelValues(opened.Value))
         {
@@ -194,9 +257,13 @@ public static partial class Evaluator
             token: ctx.Budget.CancellationToken, slice: slice, budget: ctx.Budget);
     }
 
+    // `Meta` (CallReference S1) marks a META capture: its name binds a Ready adapter holding the
+    // supplied call's reference (ReferenceAdapterCell), reified when written traversal reaches it.
+    // Lean: NeedPattern.metaRef.
     private sealed record NeedPattern(
         string? Name = null, bool Collecting = false,
-        IReadOnlyList<NeedPattern>? Children = null, bool List = false, Pattern? Literal = null, bool Unpacking = false, ParameterPattern? Original = null);
+        IReadOnlyList<NeedPattern>? Children = null, bool List = false, Pattern? Literal = null, bool Unpacking = false, ParameterPattern? Original = null,
+        bool Meta = false);
 
     // Translation preserves reference sharing and uses explicit post-order frames. The
     // structural preflight has already rejected cyclic patterns before evaluation begins.
@@ -241,7 +308,8 @@ public static partial class Evaluator
         => TranslateNeedPatterns(patterns, ParameterPattern.StructuralItems,
             static (pattern, nested) => pattern switch
             {
-                CaptureParameterPattern capture => new(capture.Name, capture.Kind == ParameterKind.Collecting, Original: pattern),
+                CaptureParameterPattern capture => new(capture.Name, capture.Kind == ParameterKind.Collecting, Original: pattern,
+                    Meta: capture.Kind == ParameterKind.Meta),
                 SequenceValueParameterPattern => new(Children: nested, Original: pattern),
                 ListValueParameterPattern => new(Children: nested, List: true, Original: pattern),
                 UnpackingParameterPattern => new(Children: nested, Unpacking: true, Original: pattern),
@@ -332,7 +400,14 @@ public static partial class Evaluator
         // non-inspecting binding rules as the general work-stack path.
         if (patterns.Count == 0) return EvalResult<NeedEnv?>.Ok([]);
         if (patterns.Count == 1 && patterns[0].Name is { } onlyName)
+        {
+            if (patterns[0].Meta)
+            {
+                var adapter = ReferenceAdapterCell(supply[0], ctx);
+                return adapter.IsError ? adapter.Error : EvalResult<NeedEnv?>.Ok([(onlyName, adapter.Value)]);
+            }
             return EvalResult<NeedEnv?>.Ok([(onlyName, patterns[0].Collecting ? CollectorCell(supply.ToArray(), ctx) : supply[0])]);
+        }
 
         // Multiplicity is only zero/one/many. Visit a shared pattern node at most twice,
         // so a host DAG cannot expand into exponentially many paths before binding.
@@ -378,6 +453,15 @@ public static partial class Evaluator
         while (pending.TryPop(out var item))
         {
             var (pattern, cell) = item;
+            // A META capture (CallReference S1) is reached in WRITTEN order like every pattern
+            // (NEED-04): it reifies its supplied cell into a fresh Ready adapter — demanding
+            // nothing, a non-plan cell refusing — and binds the name to that adapter.
+            if (pattern.Meta)
+            {
+                var adapter = ReferenceAdapterCell(cell, ctx);
+                if (adapter.IsError) return adapter.Error;
+                cell = adapter.Value;
+            }
             if (pattern.Name is { } name)
             {
                 if (names[name] > 1)

@@ -67,6 +67,9 @@ inductive NeedEvent where
   | ready (address : Nat)
   /-- Emitted after any other allocation (the binder never allocates one). -/
   | expression (address : Nat)
+  /-- Emitted immediately after a META reification of `address` (CallReference S1) returned
+      its Ready adapter cell `adapter`; a refused reification records nothing. -/
+  | reference (address : Nat) (adapter : Nat)
   deriving Repr, BEq, DecidableEq
 
 /-- The semantic evaluator state and the boundary events recorded so far. -/
@@ -124,6 +127,10 @@ def traced (k : NeedCapabilities EvalM) : NeedCapabilities TraceM where
     let address <- liftEval (k.allocate suspension)
     emit (allocationEvent suspension address)
     pure address
+  reference address := do
+    let adapter <- liftEval (k.reference address)
+    emit (.reference address adapter)
+    pure adapter
 
 /-! ### Run equations -/
 
@@ -181,6 +188,16 @@ theorem runTrace_allocate (k : NeedCapabilities EvalM) (suspension : NeedSuspens
         | (.error e, s') => (.error e, ⟨s', tr⟩) := by
   simp only [traced, runTrace_bind, runTrace_liftEval]
   rcases runEval (k.allocate suspension) s with ⟨r, s'⟩
+  cases r <;> simp
+
+theorem runTrace_reference (k : NeedCapabilities EvalM) (address : Nat) (s : EvalState)
+    (tr : List NeedEvent) :
+    runTrace ((traced k).reference address) ⟨s, tr⟩
+      = match runEval (k.reference address) s with
+        | (.ok adapter, s') => (.ok adapter, ⟨s', tr ++ [.reference address adapter]⟩)
+        | (.error e, s') => (.error e, ⟨s', tr⟩) := by
+  simp only [traced, runTrace_bind, runTrace_liftEval]
+  rcases runEval (k.reference address) s with ⟨r, s'⟩
   cases r <;> simp
 
 /-! ## The event schedule
@@ -267,6 +284,10 @@ mutual
       EvalState → List NeedEvent
     | .bind name _, address, repeated, bound, _, s => nameEvents k name address repeated bound s
     | .literal _, address, _, _, _, _ => [.value address]
+    | .metaRef name, address, repeated, bound, _, s =>
+      match runEval (k.reference address) s with
+      | (.error _, _) => []
+      | (.ok adapter, s1) => .reference address adapter :: nameEvents k name adapter repeated bound s1
     | .sequence ps, address, repeated, bound, family, s =>
       .value address ::
         match runEval (k.value address) s with
@@ -428,6 +449,13 @@ mutual
     | literal literal =>
       simp only [NeedBinder.bindOne, oneEvents]
       rcases h1 : runEval (k.value address) s with ⟨_ | ⟨value, count⟩, s1⟩ <;> simp [h1]
+    | metaRef name =>
+      simp only [NeedBinder.bindOne, oneEvents, runTrace_bind, runEval_bind, runTrace_reference]
+      rcases h1 : runEval (k.reference address) s with ⟨_ | adapter, s1⟩
+      · simp
+      · simp only [thenRun_ok]
+        rw [traced_name k name adapter repeated bound family s1]
+        simp
     | sequence ps =>
       simp only [NeedBinder.bindOne, oneEvents]
       rcases h1 : runEval (k.value address) s with ⟨_ | ⟨value, count⟩, s1⟩
@@ -751,9 +779,11 @@ theorem literal_mismatch_is_none_in_both_modes (k : NeedCapabilities EvalM) (lit
   simp [NeedBinder.bindOne, hv, hm]
 
 /-- Whether an occurrence INSPECTS its cell: every literal and structural pattern, and every
-    occurrence of a repeated name. -/
+    occurrence of a repeated name. A META capture (CallReference S1) reifies its cell without
+    demanding it, so it is not an inspection. -/
 def inspectsAt (repeated : List Ident) : NeedPattern → Bool
   | .bind name _ => repeated.contains name
+  | .metaRef _ => false
   | _ => true
 
 /-- (5, 6) A FAILED DEMAND OF AN INSPECTING OCCURRENCE'S OWN CELL IS FINAL: the binder raises
@@ -775,6 +805,7 @@ theorem traced_inspection_failure (k : NeedCapabilities EvalM) (p : NeedPattern)
   | sequence ps => simp [NeedBinder.bindOne, oneEvents, h]
   | list ps => simp [NeedBinder.bindOne, oneEvents, h]
   | unpack ps => simp [NeedBinder.bindOne, oneEvents, h]
+  | metaRef name => simp [inspectsAt] at hi
 
 /-- The production face of `traced_inspection_failure`: the occurrence's schedule is exactly its one
     VALUE event and the production run is that error in that state. -/
@@ -854,6 +885,7 @@ theorem inspecting_occurrence_demands_its_cell_first (k : NeedCapabilities EvalM
   | sequence ps => exact ⟨_, rfl⟩
   | list ps => exact ⟨_, rfl⟩
   | unpack ps => exact ⟨_, rfl⟩
+  | metaRef name => simp [inspectsAt] at hi
 
 /-- (8, 9) THE NESTED GATE FOLLOWS THE READY ALLOCATIONS, for every structural kind: when the
     opened items are allocated (one ready cell each, in item order) but the nested level rejects
@@ -1163,6 +1195,10 @@ mutual
     cases p with
     | bind name collecting => simp [oneEvents, nameEvents]
     | literal literal => simp [oneEvents, NeedEvent.isCallable]
+    | metaRef name =>
+      intro ev hev
+      simp only [oneEvents] at hev
+      split at hev <;> simp_all [nameEvents, NeedEvent.isCallable]
     | sequence ps =>
       intro ev hev
       simp only [oneEvents, List.mem_cons] at hev
@@ -1445,7 +1481,7 @@ def traceReadingValue (k : NeedCapabilities EvalM) (forged : CountedResult) : Ne
 
 /-- A production-shaped record whose every cell holds `()`. -/
 def emptyValues : NeedCapabilities EvalM :=
-  ⟨fun _ => pure (.sequenceValue [], 0), fun _ => pure none, allocateNeed⟩
+  ⟨fun _ => pure (.sequenceValue [], 0), fun _ => pure none, allocateNeed, NeedPlan.reference⟩
 
 /-- Over the trace-reading operation ERASURE FAILS: from a nonempty prefix the unpacking
     receiver sees the forged one-item value, allocates a ready cell and is rejected by its
