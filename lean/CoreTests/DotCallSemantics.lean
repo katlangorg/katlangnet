@@ -693,7 +693,7 @@ def flatFixedSlotAddPairRoot : Algorithm :=
 
 def flatFixedCallStillDoesNotAutoSpread : Bool :=
   match runResult (.algorithmExpr flatFixedSlotAddPairRoot) with
-  | Except.error _ => true
+  | Except.error err => innermostIsArityMismatch 2 1 err
   | Except.ok _ => false
 
 #guard flatFixedCallStillDoesNotAutoSpread
@@ -916,8 +916,12 @@ def caller4 : Algorithm :=
   ]
 
 def test4 : Bool :=
+  let rec isAmbiguousG : Error -> Bool
+    | .withContext _ inner => isAmbiguousG inner
+    | .ambiguousOpen name _ => name == "G"
+    | _ => false
   match runResult (.algorithmExpr caller4) with
-  | Except.error _ => true
+  | Except.error err => isAmbiguousG err
   | Except.ok _ => false
 
 #guard test4
@@ -1151,7 +1155,7 @@ def outer5 : Algorithm :=
 
 def test5a : Bool :=
   match runResult (.algorithmExpr outer5) with
-  | Except.error _ => true   -- structural G found but arity mismatch (no fallback to lexical)
+  | Except.error err => innermostIsArityMismatch 1 0 err   -- structural G found but arity mismatch (no fallback to lexical)
   | Except.ok _ => false
 
 #guard test5a

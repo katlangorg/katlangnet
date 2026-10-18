@@ -360,10 +360,12 @@ def test73b : Bool :=
 
 #guard test73b
 
--- Test 74: builtin arity mismatch still follows normal conventions
+-- Test 74: builtin arity mismatch still follows normal conventions: `filter()`
+-- carries filter's real minimum (collection + predicate = 2, `builtinMinimumArity`)
+-- and the supplied count 0
 def test74 : Bool :=
   match runResult (.call (resolve "filter") []) with
-  | Except.error _ => true
+  | Except.error err => innermostIsArityMismatch 2 0 err
   | _ => false
 
 #guard test74

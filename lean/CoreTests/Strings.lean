@@ -63,7 +63,7 @@ def test56 : Bool :=
 -- ("hello").string → Error.typeMismatch
 def test57 : Bool :=
   match runResult (.dotCall (.stringLiteral "hello") "string" none) with
-  | Except.error _ => true
+  | Except.error err => innermostIsAnyTypeMismatch err
   | _ => false
 
 #guard test57
@@ -72,7 +72,7 @@ def test57 : Bool :=
 -- (1, 2).string -> Error (sequence value is not a numeric atom)
 def test58 : Bool :=
   match runResult (.dotCall (.capture [.num 1, .num 2]) "string" none) with
-  | Except.error _ => true
+  | Except.error err => innermostIsAnyTypeMismatch err
   | _ => false
 
 #guard test58
@@ -353,7 +353,7 @@ def test47 : Bool :=
   match runResult (.algorithmExpr (algPrivate [] [] [("Price", priceAlg)] [
     .call (resolve "Price") [.stringLiteral "bananas"]
   ])) with
-  | Except.error _ => true   -- noMatchingBranch
+  | Except.error err => innermostIsNoMatchingBranch "Price" err
   | Except.ok _    => false
 
 #guard test47

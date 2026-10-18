@@ -566,7 +566,7 @@ def sequenceValueCollectingWithSuffixInsideSequenceValueRequiresSuffixValue : Bo
       .num 4
     ]
   ])) with
-  | Except.error _ => true
+  | Except.error err => innermostIsArityMismatch 1 0 err
   | Except.ok _ => false
 
 #guard sequenceValueCollectingWithSuffixInsideSequenceValueRequiresSuffixValue

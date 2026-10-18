@@ -86,7 +86,7 @@ def receiver9 : Algorithm :=
 
 def test9a : Bool :=
   match runResult (.dotCall (.algorithmExpr receiver9) "Inc" none) with
-  | Except.error _ => true   -- arity mismatch: Inc expects 1 arg, got 0
+  | Except.error err => innermostIsArityMismatch 1 0 err   -- Inc expects 1 arg, got 0
   | Except.ok _ => false
 
 #guard test9a
@@ -291,7 +291,7 @@ def test14b : Bool :=
 -- Test 14d: old length intrinsic name is no longer recognized
 def test14d : Bool :=
   match runResult (.dotCall (.capture [.num 1, .num 2]) "length" none) with
-  | Except.error _ => true
+  | Except.error err => innermostIsUnknownName "length" err
   | Except.ok _ => false
 
 #guard test14d
@@ -404,7 +404,7 @@ def dotCallBoundaryMultiOutputReceiverNoArgsFails16a : Bool :=
   match runResult (.algorithmExpr (algPrivate [] [] [("F", dotCallBoundaryAddAlg16a)] [
     .dotCall (.algorithmExpr dotCallBoundaryPairReceiverAlg16a) "F" none
   ])) with
-  | Except.error _ => true
+  | Except.error err => innermostIsArityMismatch 2 1 err
   | Except.ok _ => false
 
 #guard dotCallBoundaryMultiOutputReceiverNoArgsFails16a
@@ -413,7 +413,7 @@ def dotCallBoundaryMultiOutputReceiverEmptyArgsFails16a : Bool :=
   match runResult (.algorithmExpr (algPrivate [] [] [("F", dotCallBoundaryAddAlg16a)] [
     .dotCall (.algorithmExpr dotCallBoundaryPairReceiverAlg16a) "F" (some [])
   ])) with
-  | Except.error _ => true
+  | Except.error err => innermostIsArityMismatch 2 1 err
   | Except.ok _ => false
 
 #guard dotCallBoundaryMultiOutputReceiverEmptyArgsFails16a
@@ -425,7 +425,7 @@ def dotCallBoundaryCountedPathDoesNotSpread16a : Bool :=
       "count"
       none
   ])) with
-  | Except.error _ => true
+  | Except.error err => innermostIsArityMismatch 2 1 err
   | Except.ok _ => false
 
 #guard dotCallBoundaryCountedPathDoesNotSpread16a
@@ -918,7 +918,7 @@ def test17 : Bool :=
   match runResult (.algorithmExpr (algPrivate [] [] [("Inc", incAlg15), ("TakeFunc", takeFuncAlg17)] [
     .call (resolve "TakeFunc") [resolve "Inc", resolve "Inc"]
   ])) with
-  | Except.error _ => true
+  | Except.error err => innermostIsArityMismatch 1 2 err
   | Except.ok _ => false
 
 #guard test17

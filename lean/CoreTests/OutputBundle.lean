@@ -181,13 +181,13 @@ def captureReceiverDoesNotExposeStructuralMembers : Bool :=
   (match runResult (.algorithmExpr direct) with
    | .ok (Result.atom 7) => true | _ => false) &&
   (match runResult (.algorithmExpr hostGrouped) with
-   | .error _ => true
+   | .error err => innermostIsUnknownName "V" err
    | .ok _ => false) &&
   (match runResult (.algorithmExpr spreadCapture) with
-   | .error _ => true
+   | .error err => innermostIsUnknownName "V" err
    | .ok _ => false) &&
   (match runResult (.algorithmExpr pairCapture) with
-   | .error _ => true
+   | .error err => innermostIsUnknownName "V" err
    | .ok _ => false)
 
 #guard captureReceiverDoesNotExposeStructuralMembers

@@ -249,7 +249,7 @@ def uflNestedValueFormerly : Expr :=
     [.resolve "F"])
 
 #guard match runResult uflNestedValue with | .ok (Result.atom 4) => true | _ => false
-#guard match runResult uflNestedValueFormerly with | .error _ => true | _ => false
+#guard match runResult uflNestedValueFormerly with | .error err => innermostIsArityMismatch 1 0 err | _ => false
 
 /-- `Twice(f) = f(f(1))` / `F = Twice(A)`: a user callable's whole argument stays neutral, so `A`
     is passed as a callable and `F` stays a zero-parameter formula (3). -/

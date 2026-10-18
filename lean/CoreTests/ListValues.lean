@@ -197,14 +197,17 @@ def listEqualityIsKindExact : Bool :=
 
 #guard listEqualityIsKindExact
 
--- Ordinary parentheses stay a redundant SEQUENCE grouping around lists:
--- `([1, 2])` normalizes to the exact list itself.
-def redundantParensAroundListCanonicalize : Bool :=
-  match runResult (.algorithmExpr (alg [] [] [] [.listLiteral [.num 1, .num 2]])) with
-  | Except.ok (Result.listValue [Result.atom 1, Result.atom 2]) => true
-  | _ => false
-
-#guard redundantParensAroundListCanonicalize
+-- Redundant source parentheses around a list (`([1, 2])`) are not a runtime
+-- boundary: the C# parser erases a group of exactly one non-spread slot
+-- (`Parser.IsRedundantGrouping`), so the Lean program is the bare `.listLiteral`
+-- and no guard here can observe them. That property is pinned at the parser
+-- layer by `RedundantParenthesesTransparencyTests`,
+-- `SemanticExplorerTests.DerivedLeanPrograms_MirrorParserParenthesisNormalization`
+-- (`([1])` derives `.listLiteral [.num 1]`) and the `parentheses-group-syntax`
+-- spec case; the value-model fact is `normalize_singleton_sequence_of_list`.
+-- (The former guard `redundantParensAroundListCanonicalize` evaluated a bare
+-- list literal; a root list output stays a list, which `listKeepsVisibleEmptyElement`
+-- below already pins.)
 
 -- A non-spread `()` element stays one visible list element.
 def listKeepsVisibleEmptyElement : Bool :=

@@ -43,18 +43,19 @@ def test62 : Bool :=
 
 #guard test62
 
--- Test 32: Unary / binary composition with 2-arg if is rejected
+-- Test 32: Unary / binary composition with 2-arg if is rejected by the `if`
+-- arity contract (expected 3, actual 2), before the would-be condition is demanded
 def test32 : Bool :=
   match runResult (.binary .add (.num 10) (.unary .minus (.call (resolve "if") [.num 0, .num 5]))) with
-  | Except.error _ => true
+  | Except.error err => innermostIsArityMismatch 3 2 err
   | Except.ok _ => false
 
 #guard test32
 
--- Test 33: if arity mismatch — 1 arg → error
+-- Test 33: if arity mismatch — 1 arg → arityMismatch 3 1
 def test33 : Bool :=
   match runResult (.call (resolve "if") [.num 1]) with
-  | Except.error _ => true
+  | Except.error err => innermostIsArityMismatch 3 1 err
   | Except.ok _ => false
 
 #guard test33

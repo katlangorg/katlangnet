@@ -108,7 +108,7 @@ def receiver2 : Algorithm :=
 
 def test2a : Bool :=
   match runResult (.dotCall (.algorithmExpr receiver2) "F" none) with
-  | Except.error _ => true   -- arity mismatch: F expects 1 arg, got 0
+  | Except.error err => innermostIsArityMismatch 1 0 err   -- F expects 1 arg, got 0
   | Except.ok _ => false
 
 #guard test2a

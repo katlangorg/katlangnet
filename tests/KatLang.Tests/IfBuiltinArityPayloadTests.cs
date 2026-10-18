@@ -3,15 +3,17 @@ namespace KatLang.Tests;
 /// <summary>
 /// The numeric fields of an <c>if</c> builtin arity failure are NORMATIVE:
 /// <c>if</c> requires exactly three arguments, so every reachable <c>if</c>
-/// arity failure carries <c>Expected = 3</c> (never the generic-builtin
-/// placeholder 0) with <c>Actual</c> = the assembled argument count.
+/// arity failure carries <c>Expected = 3</c> with <c>Actual</c> = the assembled
+/// argument count.
 ///
 /// C# populates the payload in <c>WrongBuiltinArity</c> (the one construction
-/// point for builtin arity errors, which special-cases <c>if</c>); these tests
-/// pin the C# side of the cross-implementation contract. Lean twins: the
-/// CoreTests guards <c>ifDotCallUnderArityCarriesExpectedThree</c> /
+/// point for builtin arity errors; since Q-27 payload hygiene every builtin
+/// carries its real minimum, formerly a placeholder 0 for all but <c>if</c>);
+/// these tests pin the C# side of the cross-implementation contract. Lean twins:
+/// the CoreTests guards <c>ifDotCallUnderArityCarriesExpectedThree</c> /
 /// <c>ifDotCallOverArityCarriesExpectedThree</c> against the same dot-call
-/// reproducers.
+/// reproducers, and <c>test22</c>–<c>test24</c> / <c>test32</c> / <c>test33</c>
+/// for the direct spellings.
 ///
 /// <para>SYN-05: the DIRECT spellings reach this payload too, because the parser
 /// no longer counts a call's arguments from its callee spelling. Both surfaces

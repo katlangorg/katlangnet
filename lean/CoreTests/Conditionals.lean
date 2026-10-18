@@ -74,7 +74,7 @@ def test36 : Bool :=
   match runResult (.algorithmExpr (algPrivate [] [] [("Sign", signAlg)] [
     .call (resolve "Sign") [.num 0]
   ])) with
-  | Except.error _ => true    -- noMatchingBranch
+  | Except.error err => innermostIsNoMatchingBranch "Sign" err
   | Except.ok _    => false
 
 #guard test36
@@ -98,31 +98,35 @@ def test37 : Bool :=
 
 #guard test37
 
--- Test 22: 2-arg if is rejected
+-- Test 22: 2-arg if is rejected by its arity contract (expected 3, actual 2).
+-- The numeric would-be condition `1` is never demanded: cardinality fails first,
+-- so a condition `typeMismatch` here would be a precedence regression.
 def test22 : Bool :=
   match runResult (.call (resolve "if") [.num 1, .num 5]) with
-  | Except.error _ => true
+  | Except.error err => innermostIsArityMismatch 3 2 err
   | Except.ok _ => false
 
 #guard test22
 #eval runResult (.call (resolve "if") [.num 1, .num 5])
 
--- Test 23: 2-arg if in addition is rejected
+-- Test 23: 2-arg if in addition is rejected by the same arity contract, before
+-- the numeric would-be condition is demanded.
 def test23 : Bool :=
   match runResult (.binary .add (.num 10) (.call (resolve "if") [.num 1, .num 5])) with
-  | Except.error _ => true
+  | Except.error err => innermostIsArityMismatch 3 2 err
   | Except.ok _ => false
 
 #guard test23
 #eval runResult (.binary .add (.num 10) (.call (resolve "if") [.num 1, .num 5]))
 
--- Test 24: 2-arg if in multiplication is rejected
+-- Test 24: 2-arg if in multiplication is rejected by the same arity contract
+-- (here the would-be condition is a valid Boolean).
 def test24 : Bool :=
   match runResult (.binary .mul (.num 10) (.call (resolve "if") [
     .compare .lt (.num 7) (.num 6),
     .num 1
   ])) with
-  | Except.error _ => true
+  | Except.error err => innermostIsArityMismatch 3 2 err
   | Except.ok _ => false
 
 #guard test24
@@ -132,12 +136,12 @@ def test24 : Bool :=
 ]))
 
 -- The `if` arity payload is NORMATIVE: `if` requires exactly three arguments,
--- so every reachable `if` arity failure carries expected = 3 (never the
--- generic-builtin placeholder 0) with actual = the assembled argument count.
--- Dot-call reproducers (`A = 1` / `A.if(2)`): the receiver is one leading
--- argument, so the assembled arities are 2 and 4. C# twin:
--- IfBuiltinArityPayloadTests (`WrongBuiltinArity` populates expected 3 for
--- `if` alone; other builtins keep the placeholder on both sides).
+-- so every reachable `if` arity failure carries expected = 3 with actual = the
+-- assembled argument count (Q-27 payload hygiene: every builtin's payload is its
+-- real minimum, `builtinMinimumArity`; formerly every builtin but `if` carried a
+-- placeholder 0). Dot-call reproducers (`A = 1` / `A.if(2)`): the receiver is
+-- one leading argument, so the assembled arities are 2 and 4. C# twin:
+-- IfBuiltinArityPayloadTests (`WrongBuiltinArity`).
 def ifDotCallUnderArityProgram : KatLang.Expr :=
   .algorithmExpr (algPrivate [] [] [("A", alg [] [] [] [.num 1])] [
     .dotCall (resolve "A") "if" (some [.num 2])

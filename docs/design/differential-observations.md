@@ -111,8 +111,11 @@ collection invariants already use independent structural expectations. The
 canonical specification's twenty-two numeric/native exclusions already have
 handwritten intent expectations and exact-ID ratchets. No case is newly excluded.
 
-Both generator prompts retain their 161 generated canonical examples. Twenty
-selected handwritten result claims now use the existing TutorialCorpus grammar
+Both generator prompts retain their generated canonical-example block (161
+examples of the then 448-case specification when Q-67 landed in `091ddca4`,
+2026-10-15; the block header records the current count and is verified by
+`LanguageSpecArtifactsGeneratorPromptTests`). Twenty
+selected handwritten result claims (ten per prompt) now use the existing TutorialCorpus grammar
 and TutorialResultSweepTests assertion, with exact first-row inventories.
 This includes the corrected `Many` counts and the decimal Order claim.
 
