@@ -133,7 +133,11 @@ value it passes — a `map`/`filter` element, a `reduce` element and accumulator
 `bindArgs ps [e]` by definition, the direct call `F(e)` (`bindCallback_eq_bindArgs`,
 `callback_element_is_one_ordinary_argument`). In production,
 `evalUserCallbackCallCounted` reaches the ordinary `bindNeedPatterns` — a cross-checked source
-fact; only its allocation step is proved (see Faithfulness). A structured element is one
+fact. Its allocation step is proved (see Faithfulness), and since S5 so is the binder's
+correspondence over two Ready supplies of the same counted values formed at any two heaps
+(`ready_supplies_bind_correspondingly`, `KatLangArityLaws/SupplyCorrespondence.lean`); a
+suspended written argument and its Ready value correspond only under explicit channel premises
+(a Ready cell has no CALLABLE identity and no META plan). A structured element is one
 argument, so a two-fixed flat callee rejects it
 (`callback_two_fixed_rejects_structured_element`: `map([(1, 2)], Add)` fails
 like `Add((1, 2))`), and the reducer's accumulator is one argument beside the
@@ -317,8 +321,16 @@ is the real-model `canonicalSupply_items_of_canonical`; and the grouped spelling
 `(value*)*` is linked through the shallow `combineOutputSlots` of its capture arm
 (`grouped_spread_layer_is_reopen`, `stacked_spread_layer_is_grouped_layer`).
 That the `partial` evaluator routes both spellings through those helpers and
-evaluates the operand once is guard-checked (CoreTests `RepeatedSpread`); the
-equation `value** ≡ (value*)*` over evaluation itself has no theorem (Q-66).
+evaluates the operand once is guard-checked (CoreTests `RepeatedSpread`). Since
+CallReference S2 the evaluator opens through the checked `openSpreadItems`, which
+is these helpers wherever no opening exposes an argument view
+(`openSpreadItems_eq_reopen`), and the stacked star is the grouped recapture for
+the checked opening as well, view refusal included
+(`stacked_star_is_grouped_recapture`). The equation `value** ≡ (value*)*` over
+evaluation itself has no theorem (Q-66), and it can hold for values and errors
+only: C#'s grouped spelling materializes more items, so a resource limit can
+separate them
+(`SequenceConstructSpreadReviewTests.StackedAndGroupedSpreadAgreeInValueButCanDifferUnderAResourceLimit`).
 
 ## Collecting binding collects an exact list
 

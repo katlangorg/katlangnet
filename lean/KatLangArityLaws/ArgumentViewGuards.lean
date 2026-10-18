@@ -183,4 +183,23 @@ def pairs : Expr := callF "Add" [.sequenceSpread (callF "Pair" [])]
   callReferenceHasNoTextMessage
 #guard isTypeMismatchAny (run add1020 [add (args R) (.num 1)])
 
+-- The no-view premise of `openSpreadItems_eq_reopen` is about EVERY opening, not the operand's
+-- outer kind (S5): a singleton container is no view, yet its first re-capture exposes one, so a
+-- second star refuses where the pre-S2 reopening would have produced values.
+#guard !ArgumentViewLaws.isView (.sequenceValue [.argView 3])
+#guard ArgumentViewLaws.isView (ArgumentViewLaws.openingAt 1 (.sequenceValue [.argView 3]))
+#guard match openSpreadItems 1 (.sequenceValue [.argView 3]) with
+  | .error (.typeMismatch m) => m == argumentViewSpreadMessage
+  | _ => false
+#guard reopenSpreadLayers 1 (Result.sequenceValue [.argView 3]).spreadItems == [.argView 3]
+-- `stacked_star_is_grouped_recapture` on both sides of the refusal.
+#guard match openSpreadItems 1 (.sequenceValue [.argView 3]),
+    (openSpreadItems 0 (.sequenceValue [.argView 3])).bind fun items =>
+      openSpreadItems 0 (combineOutputSlots (countedTopLevelValues (spreadSupplyResult items))) with
+  | .error e1, .error e2 => reprStr e1 == reprStr e2
+  | _, _ => false
+#guard match openSpreadItems 1 (.listValue [.listValue [.atom 7]]) with
+  | .ok items => items == [.atom 7]
+  | _ => false
+
 end KatLang.ArgumentViewGuards

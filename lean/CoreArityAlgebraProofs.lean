@@ -1034,8 +1034,11 @@ theorem fixed_parameter_binds_item_unchanged (x : String) (v : Val) :
 
 /-- `bindCallback` is `bindArgs` BY DEFINITION in this algebra: the algebra models callback binding as the ordinary
 call binding of the supplied arguments (`map([e], F)` binding as `F(e)`, `reduce` as `R(e, acc)`).
-It is a fact of the algebra only: production callback-binder agreement (Q-66, HO-02) is not
-proved — both production paths reach `bindNeedPatterns` only inside `partial` definitions. -/
+It is a fact of the algebra only. The production BINDER correspondence over formed supplies is a
+separate theorem (S5, `KatLangArityLaws/SupplyCorrespondence.lean`: `patterns_sim`,
+`ready_supplies_bind_correspondingly`); that both production paths reach `bindNeedPatterns`,
+inside `partial` definitions, stays a source fact, and callback ≡ direct-call EVALUATION stays
+open (Q-66, HO-02, R7). -/
 theorem bindCallback_eq_bindArgs (ps : List Pat) (args : List Val) :
     bindCallback ps args = bindArgs ps args := rfl
 

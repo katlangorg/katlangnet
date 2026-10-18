@@ -53,7 +53,16 @@ EVIDENCE CATEGORIES (R8/X-13, October 2026). Every theorem here is one of:
   PRODUCTION theorem over the generic core's `EvalM` runs at any capability record, which reads
   the schedule functions of `BinderTrace` (their meaning as the actual invocations is
   `traced_patterns`): channel substitution, its static form, and the family/ordinary mode
-  correspondence.
+  correspondence;
+* a SIMULATION theorem (S5, `KatLangArityLaws/SupplyCorrespondence.lean`) — a PRODUCTION theorem
+  relating two runs of the generic core, at two capability records and two states, under an
+  explicit address table and state relation (`CapCorr`, `Sim`); its production instance
+  `HeapCorr` discharges the allocator, the META capability and the VALUE shell on Ready cells as
+  kernel theorems and keeps the two `partial` channels as premises;
+* a REPRESENTATIVE-FOLD theorem (S5, `KatLangArityLaws/RepeatedNameLaws.lean`) — a LOCAL theorem
+  about the pure fold `retain` over stable completed contributions, made a statement about
+  production by `name_step_production` / `production_flat_head_is_flatBind`, which prove the
+  production core computes that fold on stable capability records.
 
 The superseded pre-Model-C Ready binder (completed inputs) and every theorem stated over it
 were retired on 2026-10-12 (owner decision; git history keeps them): no theorem here is about
@@ -70,13 +79,17 @@ records that the production binder is the `EvalM` specialization of the one gene
 in an external boundary trace that erases exactly to the production run and prove its
 syntax-indexed event schedule — written order, inspection, ready allocation, nesting,
 first-failure truncation, the per-occurrence silence of plain non-repeated bindings at any
-position, the repeated-name order and verdict (not Q-28's permutation laws), the clause search
+position, the repeated-name order and verdict, the clause search
 and arbitrary-context activation; `KatLangArityLaws/BinderCorrespondence.lean` proves channel
 substitution per channel (results depend on the channels only through the cells a run invokes),
 its static form (a head invokes its channels only on cells at inspecting positions or on cells
 the run allocated) and the family/ordinary mode correspondence for every head (a literal-free
 head's ordinary binding is never a non-match); `KatLangArityLaws/BinderGuards.lean` executes
-concrete schedules on real heaps. The outcomes of the four opaque helpers stay symbolic there,
+concrete schedules on real heaps. Since S5 (October 2026) `KatLangArityLaws/RepeatedNameLaws.lean`
+proves Q-28's permutation and representative laws over stable completed contributions and
+connects them to this traversal on flat levels of name patterns, and
+`KatLangArityLaws/SupplyCorrespondence.lean` proves a heap-renaming SIMULATION of the whole binder
+and the callback route's Ready-supply correspondence (premises: the two `partial` channels). The outcomes of the opaque helpers stay symbolic there,
 and the CoreTests.ModelC / RepeatedNameConstraints guards remain the evaluator-level
 witnesses. § Repeated spread over the real model (Q-66 item 4) proves the
 repeated-spread laws over `Result` and the production reopening helpers: shallow slot
@@ -2171,8 +2184,13 @@ since R3 `KatLangArityLaws/BinderTrace.lean` proves that per-occurrence order an
 (`repeated_name_binding`, `repeated_events_are_a_prefix_of_the_canonical_order`,
 `repeated_callable_only_after_equal_values`, `traced_repeated_failure_points`) with
 `sameRepeatedCallableIdentity` symbolic. Q-28's PERMUTATION laws (satisfiability, value up to
-`==`, identity and channel availability unchanged when the repeated arguments are permuted) have
-NO theorem (the roadmap's R4). Concrete outcomes are executed by guards — CoreTests `HigherOrderCalls`
+`==`, identity and channel availability unchanged when the repeated arguments are permuted) are
+proved since S5 (October 2026) over stable completed contributions
+(`KatLangArityLaws/RepeatedNameLaws.lean`: `retain_ok_iff_compatible`, `retain_satisfiable_perm`,
+`retain_first_richest`, `retain_perm_preserves_observation`, and `production_flat_binding_is_retain`
+for the production traversal of flat levels), with `==` equality (`Result.beq` is structural) and
+callable identity transitive on its stated domain; nested and mixed heads and the stability of the
+`partial` production channels remain open (roadmap R4, partial). Concrete outcomes are executed by guards — CoreTests `HigherOrderCalls`
 (`repeatedNameCompatibilityAndFirstFailure`, `twoOccurrenceRepeatsKeepThePairwiseRule`,
 `repeatedSuccessfulCallablePermutationsKeepBothChannels`,
 `repeatedCountedBindingChecksTheCompletePair`), `ModelC` (`mixedRepeatedConflicts`,
@@ -2570,8 +2588,13 @@ evaluator calls:
   one slot itself, several one sequence of them, with NO renormalization;
 * `reopenSpreadItems` — one further written spread layer, `spread(capture(items))`;
   `reopenSpreadLayers` — that step once per extra written star; `spreadSupplyResult` — a spread
-  expression's counted result (`evalSequenceSpreadCounted` returns
-  `spreadSupplyResult (reopenSpreadLayers (layers - 1) supplied)`);
+  expression's counted result (since CallReference S2 `evalSequenceSpreadCounted` returns
+  `spreadSupplyResult` of the CHECKED opening `openSpreadItems (layers - 1) value`, which is
+  `reopenSpreadLayers (layers - 1) value.spreadItems` exactly when no opening at any layer exposes
+  an argument view — `openSpreadItems_eq_reopen`, `KatLangArityLaws/ArgumentView.lean`; a singleton
+  container can expose one at a later opening — and supply formation's `evalSupplySpread` opens
+  through `openSupplySpread`, which yields these items or transports a view's ORIGINAL cells,
+  `openSupplySpread_eq_items`);
 * `countedTopLevelValues` — how a spread ROW of a capture (and a spread leaf of the internal
   `sequenceConstruct` join) recovers its slots.
 
@@ -2609,13 +2632,24 @@ through this file's alias `captureForArityLaw`, and the three `shallow_spread_*`
 proves C# code; C# correspondence rests on that inspection plus `StarSyntaxTests` and the
 differential corpora).
 
+FOUR KINDS OF EVIDENCE, kept apart (S5): (a) the total-helper laws of this section, over
+`reopenSpreadItems` / `reopenSpreadLayers` / `spreadSupplyResult`; (b) the CHECKED-opening and
+cell-transport laws of S2 (`openSpreadItems_eq_reopen`, `openSupplySpread_eq_items`,
+`openSpreadItems_refuses_view`, and `stacked_star_is_grouped_recapture`: the stacked star is the
+grouped recapture for the checked opening, argument-view refusal included, with no premise);
+(c) executable routing of the `partial` evaluator (CoreTests `RepeatedSpread`); (d) a future,
+qualified expression-level theorem.
+
 NOT PROVED HERE. That the `partial` evaluator evaluates a spread operand ONCE and routes `A**`
-through `reopenSpreadLayers` and `(A*)*` through the capture arm's `countedTopLevelValues` /
+through `openSpreadItems` and `(A*)*` through the capture arm's `countedTopLevelValues` /
 `combineOutputSlots` is a fact of its source, pinned by CoreTests `RepeatedSpread`; that every
 evaluated value is canonical is the intended runtime invariant, assumed where a theorem states
-`v.normalize = v` and never proved of the evaluator. An evaluator-level theorem
-`eval (E**) = eval ((E*)*)` over arbitrary expressions — errors and resources included — needs a
-total (fuel-indexed) evaluator and remains open (Q-66 item 4).
+`v.normalize = v` and never proved of the evaluator. An expression-level equation
+`eval (E**) = eval ((E*)*)` is at most a VALUE-AND-ERROR equivalence: RESOURCE equivalence is
+FALSE under the C# policy, which Lean does not model — `[1, 2]**` materializes 6 items and
+`([1, 2]*)*` 8, so under `MaxMaterializedItems = 6` the stacked spelling succeeds and the grouped
+one fails (`SequenceConstructSpreadReviewTests.StackedAndGroupedSpreadAgreeInValueButCanDifferUnderAResourceLimit`).
+The qualified value/error theorem needs evaluator refinement (R7) and remains open (Q-66 item 4).
 -/
 
 /-! ### Shallow slot combination is ordinary capture on canonical slots -/
@@ -3888,12 +3922,15 @@ interpretation alike; the one that needs `[LawfulMonad m]` holds of the trace in
 has its own `EvalM` form, `production_plain_step`.
 
 Opaque helpers. The core calls helpers that reach `partial` definitions — literal matching
-`matchPattern` (via `matchPatternInto`/`matchStructureInto`), repeated callable identity
-`sameRepeatedCallableIdentity` (via `sameDeclaringScope`/`compatibleActivations`), the
+`matchPattern` (via `matchPatternInto`/`matchStructureInto`), the
 kind-mismatch payload `structuralPatternKindMismatch` (via `ParameterPattern.displayName` and
 `resultDiagnosticString`) and the duplicate-clause check `Algorithm.hasDuplicateBranchPatterns`
 (via `Pattern.matchEquivalentWithRenaming`). No theorem here or in the R3 modules unfolds them:
-their outcomes appear symbolically, as the very terms the binder computes.
+their outcomes appear symbolically, as the very terms the binder computes. Repeated callable
+identity `sameRepeatedCallableIdentity` was the fourth such helper until S5 (October 2026), when
+`sameDeclaringScope` / `compatibleActivations` became total; the R3 modules still treat its outcome
+symbolically (they need nothing more), and `KatLangArityLaws/RepeatedNameLaws.lean` proves its
+reflexivity, symmetry and (on a stated domain) transitivity for the Q-28 laws.
 -/
 
 namespace KatLang.BinderCore

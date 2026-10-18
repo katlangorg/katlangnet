@@ -10,9 +10,11 @@ operation of a repeated spread as theorems over the TOTAL production helpers:
 step per extra written star), `spreadSupplyResult` (a spread expression's counted result), and
 the grouped layer through the capture arm's `countedTopLevelValues` / `combineOutputSlots`
 (`grouped_spread_layer_is_reopen`). That the `partial` evaluator APPLIES them is a fact of its
-source — `evalSequenceSpreadCounted` evaluates the operand once and returns
-`spreadSupplyResult (reopenSpreadLayers (layers - 1) supplied)`, and a written capture combines
-its spread row's recovered slots shallowly. These guards pin that routing executably:
+source — `evalSequenceSpreadCounted` evaluates the operand once and returns `spreadSupplyResult`
+of the checked opening `openSpreadItems (layers - 1) value` (CallReference S2), which is
+`reopenSpreadLayers (layers - 1) value.spreadItems` when no opening at any layer exposes an
+argument view (`openSpreadItems_eq_reopen`; no operand value below contains one), and a written
+capture combines its spread row's recovered slots shallowly. These guards pin that routing executably:
 
 1. for every mixed spelling with one to three written stars (`A*`, `A**`, `(A*)*`, `A***`,
    `(A**)*`, `(A*)**`, `((A*)*)*`), every adversarial operand value, and every way of writing the

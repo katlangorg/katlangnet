@@ -1,5 +1,43 @@
 # Semantic Alignment Manifest.
 
+S5 — remaining Q-66 formal laws (2026-10-18): Lean proofs and helper totalization; no language,
+C# evaluator or observable-outcome change. TOTALIZED (behaviour-preserving): `BEq Result` is the
+structural `Result.beq` / `Result.beqList` instead of the derived instance (whose handler compiles
+this nested inductive to an opaque `partial` function), and `sameDeclaringScope` /
+`compatibleActivations` are total structural definitions instead of `partial` ones. Preservation
+evidence: kernel equations stating each total helper satisfies the former body
+(`same_declaring_scope_equation`, `compatible_activations_equation`), plus exhaustive executable
+comparisons against the old derived / partial definitions recreated verbatim (15,625 result pairs,
+20,736 scope pairs, zero mismatches; local `artifacts/validation/q66-formal-laws-s5/`). R4 (L5),
+PARTIAL: `KatLangArityLaws/RepeatedNameLaws.lean` proves `LawfulBEq Result` (so the binder's counted
+comparison is equality, count included), reflexivity and symmetry of `sameRepeatedCallableIdentity`
+and its transitivity on an explicit domain (equal parent id-presence profiles), and, for the
+representative fold `retain` over a nonempty list of stable completed contributions: success ⇔
+pairwise compatibility, permutation-invariant satisfiability, retained contribution ∈ the supplied
+ones, callable availability iff any, first among the richest, and permutation-preserved
+value/count/callable identity (not address); the production core computes the fold on flat levels
+of name patterns with stable capability records (`production_flat_head_is_flatBind`,
+`production_flat_binding_is_retain`, `production_flat_binding_succeeds_iff`). Open: nested and
+mixed heads, stability of the `partial` production channels, transitivity across mixed
+identified/anonymous scope chains; failure categories are NOT permutation invariant
+(`CoreTests.ModelC.mixedRepeatedConflicts`). Decimal128 representation stays C# evidence
+(`NumericRepresentativeSelectionTests`). R6 (L6), PARTIAL: `KatLangArityLaws/SupplyCorrespondence.lean`
+proves a heap-renaming SIMULATION of the generic binder (`patterns_sim`, `select_family_sim`:
+corresponding capability records under an address table give corresponding outcomes for every
+pattern kind, either mode, the activated body an explicit continuation) and its production
+instance `HeapCorr` (`allocateNeed`, `NeedPlan.reference` and `NeedDemand.step` on Ready cells are
+kernel-checked; the `partial` CALLABLE projection and recursive collector edge are premises), giving
+`ready_supplies_bind_correspondingly`: the callback route's Ready supplies of the same counted values,
+formed at any two heaps, bind correspondingly. Not claimed: equivalence of a suspended written
+argument and its Ready value (CALLABLE and META differ; guards witness both), body evaluation, builtin
+roles, aliases, budgets, diagnostics presentation. L7: post-S2 spread routing corrected in the laws,
+CoreArityAlgebra and RepeatedSpread commentary; new bridge `stacked_star_is_grouped_recapture`
+(checked opening, view refusal included); the resource-inclusive equivalence claim is withdrawn as
+false for C#. Guards: `RepeatedNameGuards.lean`, `SupplyCorrespondenceGuards.lean`, additions to
+`ArgumentViewGuards.lean`. Q-66 stays OPEN (the dot funnel, callback ≡ direct-call evaluation and the
+expression-level spread equation remain, R7). Report `experimental/features/q66-formal-laws-s5-report.md`
+(local). Full V3.
+
 CallReference pre-commit cleanup (2026-10-17): C#-only consolidation, no language, Lean or
 observable-outcome change. The J7 plan-retention fact is decided by the run's existing structural
 preflight walk (`AstStructuralPreflight.CheckAdmittedProgram` / `MayCaptureCalls`) instead of a second
@@ -1492,8 +1530,8 @@ Lean refactor and proofs, C# tests and documentation: NO observable semantics ch
     - `StarSyntaxTests.RepeatedSpread_EverySpellingFollowsTheReopeningLaw`: visible empties, lone empties and lone chains under seven spellings;
     - `RepeatedSpread_EvaluatesALoneStructuredOperandExactlyOnce_StepAccounting`.
 - **Still open (Q-66 item 4).**
-  - There is no theorem `eval (E**) = eval ((E*)*)` over the `partial` evaluator for arbitrary expressions, errors and resources included; it needs a total evaluator.
-  - That the `partial` evaluator routes `A**` through `reopenSpreadLayers` and `(A*)*` through the capture arm's `countedTopLevelValues` / `combineOutputSlots`, and evaluates the operand once, is a fact of the Lean source. CoreTests `RepeatedSpread` pins it; it is guard evidence, not a theorem.
+  - There is no theorem `eval (E**) = eval ((E*)*)` over the `partial` evaluator for arbitrary expressions. RESOURCE equivalence is false under the C# policy (Lean models no resources): `SequenceConstructSpreadReviewTests.StackedAndGroupedSpreadAgreeInValueButCanDifferUnderAResourceLimit` pins 6 versus 8 materialized items and a `MaxMaterializedItems = 6` run where only the stacked spelling succeeds. A qualified value-and-error theorem needs evaluator refinement (R7). (Corrected by S5, 2026-10-18; the earlier text called the resource-inclusive equation a theorem awaiting a total evaluator.)
+  - That the `partial` evaluator routes `A**` through the checked `openSpreadItems` and `(A*)*` through the capture arm's `countedTopLevelValues` / `combineOutputSlots`, and evaluates the operand once, is a fact of the Lean source. `openSpreadItems_eq_reopen` identifies the checked opening with `reopenSpreadLayers` under the no-opened-view-at-any-layer premise; supply formation instead uses `openSupplySpread`, which can transport original view cells. CoreTests `RepeatedSpread` pins evaluator routing; it is guard evidence, not a theorem. (Post-S2 routing corrected by S5 review, 2026-10-18.)
   - That every evaluated value is canonical remains the runtime invariant, not a theorem.
 
 ### The internal join opens a spread leaf once (October 14 2026)

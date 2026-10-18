@@ -952,8 +952,11 @@ def selectionFeedsEveryConsumerAsOneValue : Bool :=
 
 #guard selectionFeedsEveryConsumerAsOneValue
 
--- A callback is the ordinary call over its supplied cells (THE CALLBACK LAW; Q-66 item 3: no
--- theorem states callback ≡ direct call over formed cells). This guard compares two production
+-- A callback is the ordinary call over its supplied cells (THE CALLBACK LAW; Q-66 item 3). Since
+-- S5 a theorem relates the BINDINGS of two Ready supplies of the same counted values formed at any
+-- two heaps (`KatLangArityLaws/SupplyCorrespondence.lean`), but none relates a callback's Ready
+-- cells to a direct call's suspended ones or the two bodies' evaluation, so this matrix remains the
+-- evidence for that comparison: a broad executable check, not a theorem. It compares two production
 -- routes for EVERY parameter-pattern shape of the matrix — no parameter, fixed, a top-level
 -- collector before, between or after fixed parameters, sequence and list patterns (nested and
 -- empty), and a name repeated across the two supplied cells:

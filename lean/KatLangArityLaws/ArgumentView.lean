@@ -417,6 +417,27 @@ theorem openSupplySpread_eq_items : ∀ (n : Nat) (v : Result),
     have ih := openSupplySpread_eq_items n _ hrest
     cases v <;> simp_all [openSupplySpread, openingAt, isView, reopenSpreadLayers, reopenSpreadItems]
 
+/-- **The stacked star is the grouped recapture, view refusal included** (S5, October 2026).
+    For every value and every number of further stars, `n + 1` further stacked stars over a
+    first opening open exactly what the GROUPED spelling opens: the first star's items, the
+    capture arm's shallow combination of the spread's recovered slots
+    (`combineOutputSlots ∘ countedTopLevelValues ∘ spreadSupplyResult`, the production route of
+    `(A*)`), then the remaining stars — and an argument view is refused at the same point with
+    the same error. No premise: this composes S2's checked opening with the value-level grouped
+    layer law (`grouped_spread_layer_is_reopen`). It is about the total helpers; that the
+    `partial` evaluator routes `A**` and `(A*)*` through them, and evaluates `A` once, stays a
+    fact of its source (CoreTests `RepeatedSpread`). It says nothing about resources: C#'s
+    grouped spelling reserves its inner supply a second time
+    (`SequenceConstructSpreadReviewTests.StackedAndGroupedSpreadAgreeInValueButCanDifferUnderAResourceLimit`).
+    `(V)*` — one star over a grouped VALUE — is a different spelling (`openSupplySpread 0`). -/
+theorem stacked_star_is_grouped_recapture (n : Nat) (v : Result) :
+    openSpreadItems (n + 1) v =
+      ((openSpreadItems 0 v).bind fun items =>
+        openSpreadItems n (combineOutputSlots (countedTopLevelValues (spreadSupplyResult items)))) := by
+  cases v <;>
+    simp [openSpreadItems, Except.bind, countedTopLevelValues_spreadSupplyResult,
+      ← normalize_sequenceValue_eq_combineOutputSlots_map_normalize]
+
 /-! ## The run boundary -/
 
 theorem view_contains_reference (a : Nat) : (Result.argView a).containsCallRef = true := rfl

@@ -1535,7 +1535,7 @@ inductive Result where
   -- transportable value (bindings, properties, `if`, selection, lists and sequences
   -- carry it unchanged) but no callable algorithm: it has no CALLABLE identity, no
   -- structural members, no number, Boolean or text view, and no ordering. Two
-  -- references are equal iff they denote the same plan (derived `BEq` on the address).
+  -- references are equal iff they denote the same plan (`Result.beq` on the address).
   -- Its one operation is the dot intrinsic `R.Invoke()` (`NeedPlan.invoke`). It never
   -- leaves its run: the run result boundary (`runResultM`) and text conversion
   -- reject any value containing one (`Result.containsCallRef`). C#: `Result.CallReference`.
@@ -1548,10 +1548,39 @@ inductive Result where
   -- `last` (prepare, then demand ONLY the selected cells) and the supply spread `F(V*)`,
   -- which TRANSPORTS the plan's original cells (`NeedSupply.slot`, `SpreadSupply.cells`).
   -- Like a call reference it is opaque (no CALLABLE, members, number, Boolean, text,
-  -- ordering), equal only to itself (derived `BEq`), and never leaves its run
+  -- ordering), equal only to itself (`Result.beq`), and never leaves its run
   -- (`containsCallRef`). C#: `Result.CallReference` with `IsArgumentView`.
   | argView : Nat -> Result
-  deriving Repr, BEq
+  deriving Repr
+
+/- VALUE EQUALITY of results (`==`): structural equality — the same constructor with equal
+    payloads, sequence and list items compared in order. Written out (S5, October 2026) instead
+    of `deriving BEq`, whose handler compiles a nested inductive to an OPAQUE `partial`
+    function, so that its laws are kernel theorems (`KatLangArityLaws/RepeatedNameLaws.lean`:
+    `==` is `=`, `LawfulBEq`). It computes exactly the derived comparison: every constructor
+    compares its fields with their own `==` and a list field with `List`'s elementwise `==`.
+    The repeated-name binder's counted-value comparison (NEED-04) is this `==` on
+    `CountedResult`, value and emitted count together. -/
+mutual
+  /-- Structural VALUE EQUALITY of two results: the `BEq Result` instance below. -/
+  def Result.beq : Result -> Result -> Bool
+    | .atom a, .atom b => a == b
+    | .str a, .str b => a == b
+    | .bool a, .bool b => a == b
+    | .sequenceValue xs, .sequenceValue ys => Result.beqList xs ys
+    | .listValue xs, .listValue ys => Result.beqList xs ys
+    | .callRef a, .callRef b => a == b
+    | .argView a, .argView b => a == b
+    | _, _ => false
+
+  /-- `List`'s elementwise `==` over `Result.beq` (the derived comparison's list fields). -/
+  def Result.beqList : List Result -> List Result -> Bool
+    | [], [] => true
+    | x :: xs, y :: ys => Result.beq x y && Result.beqList xs ys
+    | _, _ => false
+end
+
+instance : BEq Result := ⟨Result.beq⟩
 
 namespace Result
   def normalize : Result -> Result
@@ -3069,21 +3098,33 @@ mutual
 end
 
 /-- Known declaration identities compare only the binder view and parent chain. Walking
-    or printing their complete property/output graphs at every lookup is unnecessary. -/
-partial def sameDeclaringScope (left right : ScopeCtx) : Bool :=
-  match left.declarationId, right.declarationId with
-  | some a, some b => a == b && left.params == right.params &&
-      match left.parent, right.parent with
+    or printing their complete property/output graphs at every lookup is unnecessary.
+    TOTAL (S5, October 2026; formerly `partial`): structural recursion over the finite parent
+    chain, matching the constructor so that the parent is visibly a subterm. Its equation is
+    the former body's, field accessor for field accessor
+    (`same_declaring_scope_equation`, `KatLangArityLaws/RepeatedNameLaws.lean`), so the
+    function is unchanged. -/
+def sameDeclaringScope (left right : ScopeCtx) : Bool :=
+  match left, right with
+  | .mk leftParent leftParams _ _ _ _ _ (some a), .mk rightParent rightParams _ _ _ _ _ (some b) =>
+      a == b && leftParams == rightParams &&
+      match leftParent, rightParent with
       | none, none => true
       | some p, some q => sameDeclaringScope p q
       | _, _ => false
   | _, _ => reprStr left.declaration == reprStr right.declaration
 
-partial def compatibleActivations (required actual : Option ScopeCtx) : Bool :=
+/-- Whether the `actual` activation chain satisfies the `required` one, level by level: an
+    unactivated required level accepts any activation. TOTAL (S5, October 2026; formerly
+    `partial`): structural over the finite parent chains, with the former body as its
+    equation (`compatible_activations_equation`). -/
+def compatibleActivations (required actual : Option ScopeCtx) : Bool :=
   match required, actual with
   | none, none => true
-  | some r, some a =>
-      (r.activation.isNone || r.activation == a.activation) && compatibleActivations r.parent a.parent
+  | some (.mk requiredParent _ _ _ _ _ requiredActivation _),
+    some (.mk actualParent _ _ _ _ _ actualActivation _) =>
+      (requiredActivation.isNone || requiredActivation == actualActivation) &&
+        compatibleActivations requiredParent actualParent
   | _, _ => false
 
 def siteScope? (ctx : EvalCtx) : Option ScopeCtx :=
@@ -3737,7 +3778,8 @@ def sequenceConstructLeaves (expr : Expr) : List Expr :=
 
 /-- Peel directly-nested unary sequence spreads down to the innermost operand.
     (Evaluation peels with `peelSequenceSpreadLayers`, which also counts the
-    written layers, and applies them with the total `reopenSpreadLayers`.)
+    written layers, and applies them with the total checked opening `openSpreadItems`, which is
+    `reopenSpreadLayers` wherever no opening exposes an argument view.)
     Stacked spread is COMPOSITIONAL (`A**` agrees with `(A*)*`) — each extra written
     layer re-captures the previous layer's item supply into one value
     (`Result.normalize ∘ Result.sequenceValue`, the ordinary expression
@@ -3772,8 +3814,11 @@ partial def peelSequenceSpreadLayers : Expr -> Nat -> Expr × Nat
     spread's slots — computes exactly this step (`grouped_spread_layer_is_reopen`), so once the
     operand is evaluated `A**` and `(A*)*` perform the same value operation (that the `partial`
     evaluator routes both spellings so is a fact of its source, guard-checked by CoreTests
-    `RepeatedSpread`). `evalSequenceSpreadCounted` applies it through `reopenSpreadLayers`.
-    C#: the layer loop of `Evaluator.EvalSequenceSpreadCounted` (and its async twin), which
+    `RepeatedSpread`). `evalSequenceSpreadCounted` applies it through the checked
+    `openSpreadItems`, which is `reopenSpreadLayers` wherever no opening exposes an argument view
+    (`openSpreadItems_eq_reopen`).
+    C#: the layer loop `Evaluator.OpenSpreadLayers` (of `EvalSequenceSpreadCounted` and its async
+    twin), which
     re-captures with the SHALLOW `MakeCheckedSequenceCapture` (`CombineOutputSlots` after a
     resource reservation); that shallow rule, modelled LOCALLY by `shallowSpreadLayersForLaw`,
     computes the same supply on canonical supplies
@@ -3795,7 +3840,7 @@ def reopenSpreadLayers : Nat -> List Result -> List Result
     `reopenSpreadLayers n v.spreadItems` (`openSpreadItems_eq_reopen`) — except that an
     ARGUMENT VIEW is never opened into values: any star that would open one is the
     `typeMismatch` `argumentViewSpreadMessage`. Only an argument supply's LAST star transports a
-    view (`openSupplySpread`). TOTAL. C#: the layer loop of `Evaluator.EvalSpreadLayers`. -/
+    view (`openSupplySpread`). TOTAL. C#: the layer loop `Evaluator.OpenSpreadLayers`. -/
 def openSpreadItems : Nat -> Result -> Except Error (List Result)
   | _, .argView _ => .error (Error.typeMismatch argumentViewSpreadMessage)
   | 0, v => .ok v.spreadItems
@@ -3824,7 +3869,7 @@ def openSupplySpread : Nat -> Result -> Except Error SpreadOpening
     supply's NORMALIZED items, the items themselves on a canonical supply, through
     `countedTopLevelValues`, `countedTopLevelValues_spreadSupplyResult`).
     `evalSequenceSpreadCounted` returns it. C#: the final layer of
-    `Evaluator.EvalSequenceSpreadCounted` (`CountedResult(capture, items.Count)`). -/
+    `Evaluator.OpenSpreadLayers` (`CountedResult(capture, items.Count)`). -/
 def spreadSupplyResult (items : List Result) : CountedResult :=
   (Result.normalize (Result.sequenceValue items), items.length)
 
@@ -5993,9 +6038,13 @@ because they participated in recursive VALUE demand, so no theorem could say any
 their behaviour (a `partial def` is an opaque constant). They still call
 a few helpers that call `partial` definitions, so their
 outcomes stay opaque to proofs: `matchPattern` (literals, via `matchPatternInto`),
-`sameRepeatedCallableIdentity` (via `sameDeclaringScope`/`compatibleActivations`),
 `structuralPatternKindMismatch` (via `ParameterPattern.displayName`) and
-`Algorithm.hasDuplicateBranchPatterns` (via `matchEquivalentWithRenaming`).
+`Algorithm.hasDuplicateBranchPatterns` (via `matchEquivalentWithRenaming`). Repeated callable
+identity `sameRepeatedCallableIdentity` is no longer one of them (S5, October 2026): its helpers
+`sameDeclaringScope` / `compatibleActivations` are total, so its outcome is a kernel term; only
+the anonymous-declaration fallback of `sameDeclaringScope` compares two `reprStr` strings of
+`ScopeCtx.declaration`, opaque values whose string equality is still lawful
+(`KatLangArityLaws/RepeatedNameLaws.lean` proves the identity laws it needs).
 
 ONE GENERIC CORE (R3, October 2026). The binder and the dispatcher's search are written ONCE,
 in the `NeedBinder` namespace, over any monad with `Error` exceptions and the three
@@ -8073,7 +8122,8 @@ mutual
       members are not recursively flattened. Directly-nested spreads (`A**`)
       are unwrapped iteratively (`peelSequenceSpreadLayers`, stack-safe for deep
       nesting), the operand is evaluated ONCE, and then each further written
-      layer is applied COMPOSITIONALLY by the total `reopenSpreadLayers`: every
+      layer is applied COMPOSITIONALLY by the total checked opening `openSpreadItems`
+      (`reopenSpreadLayers` wherever no opening exposes an argument view): every
       written `sequenceSpread` layer opens exactly one boundary of the value
       the previous layer's supply re-captures (`reopenSpreadItems`), so `A**`
       agrees with `(A*)*`.

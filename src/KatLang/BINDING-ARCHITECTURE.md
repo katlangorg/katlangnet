@@ -7,8 +7,10 @@ publishes completion into the current cell. The total public entry points specia
 helpers; recursive evaluator callers install the same helpers through the thin partial
 `demandNeedRecursive` driver. `KatLangArityLaws/NeedControl.lean` proves formation provenance,
 ordered exact-list materialization, failure-state retention, memo publication and qualified
-heap invariants. The driver and expression evaluator remain opaque; whole-run heap refinement,
-R6 and R7 remain open. These are Lean theorems; C# behavior is supported by tests.
+heap invariants. The driver and expression evaluator remain opaque; whole-run heap refinement
+and R7 remain open. S5 (2026-10-18) proves the binder's correspondence over formed supplies
+(`KatLangArityLaws/SupplyCorrespondence.lean`) and Q-28's repeated-name laws
+(`KatLangArityLaws/RepeatedNameLaws.lean`), both under stated premises. These are Lean theorems; C# behavior is supported by tests.
 
 ## Canonical runtime
 
