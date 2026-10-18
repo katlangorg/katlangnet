@@ -68,14 +68,17 @@ internal static partial class LoopOptimizer
             var continuation = continuationR.Value;
             frame.SetIterationOutput(plan.NextStateOutputs.Count, continuation);
             // One emitted value is the flag itself, read without allocation. A zero-emission row
-            // is its one `()` slot; a multi-emission row (host-built trees only) supplies its
-            // items, the last being the flag — read exactly as the generic row rule reads them.
+            // is its one `()` slot; a multi-emission row supplies its items, the last being the
+            // flag — read exactly as the generic row rule reads them. No public tree reaches that
+            // arm (a non-spread row is a value boundary and a spread continuation row is never
+            // planned); it keeps the planned round total over the row rule.
             var cont = continuation.EmittedCount == 1 ? continuation.AsBool() : null;
             if (cont is null)
             {
-                var flagR = Evaluator.ContinuationFlag(continuation.EmittedCount <= 1
+                var flagRow = plan.ContinuationOutput!.Source;
+                var flagR = Evaluator.ContinuationFlagOfRow(flagRow, continuation.EmittedCount <= 1
                     ? continuation.ToResult()
-                    : FlagRowLastItem(plan.ContinuationOutput!.Source, continuation));
+                    : FlagRowLastItem(flagRow, continuation));
                 if (flagR.IsError)
                 {
                     result = flagR.Error;
@@ -161,7 +164,7 @@ internal static partial class LoopOptimizer
     /// <summary>
     /// The last item a multi-emission continuation row supplies (the generic row rule,
     /// <see cref="AppendGenericLoopOutputSlots"/>): the flag of a round whose continuation row
-    /// is a host-built multi-value tree. Evaluates nothing.
+    /// supplied several items. Evaluates nothing.
     /// </summary>
     private static Result FlagRowLastItem(Expr source, PlannedLoopValue output)
     {

@@ -429,6 +429,256 @@ public sealed class LoopConditionFirstTests
         Assert.Equal(verdict == "true", planned.Loops.FallbackReasons.ContainsKey("loop continuation did not emit exactly one value"));
     }
 
+    // ── Flag diagnostics: a rejected flag is positioned at the written row that supplied it ─────────
+
+    /// <summary>
+    /// source, expected span of the flag-supplying row (start line/column, exclusive end), expected
+    /// host log. The span is the ROW's: a call or spread row's items carry no provenance of their own,
+    /// so no interior expression is blamed (C, D), and discovery passes over trailing empty spreads (E).
+    /// </summary>
+    public static TheoryData<string, int, int, int, int, string> FlagRowSpans() => new()
+    {
+        // A. A literal flag row.
+        { "Step(x) = x + 1, 42\nStep.while(0)", 1, 18, 1, 20, "" },
+        // B. A calculated flag row.
+        { "Step(x) = x + 1, x + 2\nStep.while(0)", 1, 18, 1, 23, "" },
+        // C. Through an ordinary call: the call row, not the callee's interior `x + 2`.
+        { "GetFlag(x) = x + 2\n\nStep(x) = x + 1, GetFlag(x)\nStep.while(0)", 3, 18, 3, 28, "" },
+        // D. A spread row supplies the flag (its last item): the whole spread row.
+        { "P(x) = (x + 1, 7)\nStep(x) = P(x)*\nStep.while(0)", 2, 11, 2, 16, "" },
+        // E. Trailing empty spreads are formed, right to left, and passed over.
+        { "Tail(n) = ()\nStep(n) = n + 1, n + 5, Tail(n)*\nStep.while(0)", 2, 18, 2, 23, "" },
+        { "Tail(n) = ()\nP(n) = n + 1, 7\nStep(n) = P(n)*, Tail(n)*\nStep.while(0)", 3, 11, 3, 16, "" },
+        { EmptyMark + "S(x) = mark(x + 1), mark(7), E(2)*, E(3)*\nS.while(1)", 2, 21, 2, 28, "mark(3),mark(2),mark(7)" },
+        // One row is both the state and the flag; a parenthesized row keeps its group extent.
+        { "Step(x) = 42\nStep.while(0)", 1, 11, 1, 13, "" },
+        { "Step(x) = x + 1, (42)\nStep.while(0)", 1, 18, 1, 22, "" },
+        // Rejected in a later round, after accepted ones; a planned `if` row.
+        { "Step(x) = x + 1, if(x < 2, true, 5)\nStep.while(0)", 1, 18, 1, 36, "" },
+        // A block step and a family-selected clause body.
+        { "{ x + 1, 42 }.while(0)", 1, 10, 1, 12, "" },
+        { "F(0) = 1, false\nF(n) = n - 1, 9\nF.while(2)", 2, 15, 2, 16, "" },
+    };
+
+    [Theory]
+    [MemberData(nameof(FlagRowSpans))]
+    public async Task NonBooleanFlag_IsPositionedAtTheFlagRow_OnEveryRoute(
+        string source, int startLine, int startColumn, int endLine, int endColumn, string hostLog)
+    {
+        // Six-route agreement covers the span too (Describe renders it), so generic, planned, sync,
+        // async and forced-async report the same location.
+        var (observation, _) = await AllRoutesAsync(source);
+        Assert.Equal("err TypeMismatch", observation.Outcome);
+        Assert.Equal(hostLog, string.Join(",", observation.HostCalls));
+
+        var expected = new SourceSpan(startLine, startColumn, endLine, endColumn);
+        var error = Assert.Single(Assert.IsType<RunResult.EvalFailure>(KatLangEngine.Run(source, new RunOptions
+        {
+            HostOperations = Operations(new HostLog(), suspending: false),
+        })).Errors);
+        Assert.Equal(KatLangErrorCode.TypeMismatch, error.Code);
+        Assert.Equal(expected, error.Span);
+        Assert.Contains("while continuation flag (the step's last output) must be a Boolean value", error.Message, StringComparison.Ordinal);
+        // The rule's own error carries the position; no extra context frame was added for it.
+        var innermost = Assert.IsType<EvalError.TypeMismatch>(Innermost(Assert.IsAssignableFrom<EvalError>(error.Source)));
+        Assert.Equal(expected, innermost.Span);
+    }
+
+    [Fact]
+    public void NonBooleanFlag_PlannedLoop_ReportsTheRowSpanWithoutHandover()
+    {
+        foreach (var source in new[] { "Step(x) = x + 1, 42\nStep.while(0)", "Step(x) = x + 1, if(x < 2, true, 5)\nStep.while(0)" })
+        {
+            var run = ObserveOptimized(source);
+            Assert.Equal("err TypeMismatch", run.Value);
+            Assert.Equal(1, run.Loops!.OptimizedLoopHits);
+            Assert.Equal(0, run.Loops.OptimizedLoopFallbacks);
+        }
+    }
+
+    [Fact]
+    public void FlagRowErrors_AndAtomicBuiltinSteps_KeepTheirExistingPositions()
+    {
+        static KatLangError Failure(string source)
+            => Assert.Single(Assert.IsType<RunResult.EvalFailure>(KatLangEngine.Run(source)).Errors);
+
+        // A failure while FORMING the flag row is that row's own error, positioned as before.
+        var condition = Failure("Step(x) = x + 1, if(1, true, false)\nStep.while(0)");
+        Assert.Equal(KatLangErrorCode.TypeMismatch, condition.Code);
+        Assert.Contains("if condition must be a Boolean value", condition.Message, StringComparison.Ordinal);
+        Assert.Equal(new SourceSpan(1, 18, 1, 36), condition.Span);
+        var division = Failure("Step(x) = x + 1, 1 / x > 0\nStep.while(0)");
+        Assert.Equal(KatLangErrorCode.DivisionByZero, division.Code);
+        Assert.Equal(new SourceSpan(1, 18, 1, 23), division.Span);
+
+        // An atomic builtin step has no written row: the flag error stays unpositioned and the
+        // enclosing call's span is the report's.
+        var builtin = Failure("while(count, [1, 2])");
+        Assert.Equal(KatLangErrorCode.TypeMismatch, builtin.Code);
+        Assert.Equal(new SourceSpan(1, 1, 1, 21), builtin.Span);
+        Assert.Null(Innermost(Assert.IsAssignableFrom<EvalError>(builtin.Source)).Span);
+    }
+
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(false, true)]
+    [InlineData(true, false)]
+    [InlineData(true, true)]
+    public async Task HostBuiltFlagRow_UsesHostSpanOrEnclosingCallFallback(bool withSpan, bool withCallSpan)
+    {
+        // The flag row's host-provided span wins. Without it the existing attach-if-missing
+        // law may use the enclosing call's span; no position is fabricated when both are absent.
+        var hostSpan = new SourceSpan(7, 3, 7, 5);
+        SourceSpan? callSpan = withCallSpan ? new SourceSpan(9, 1, 9, 15) : null;
+        Expr flag = withSpan ? new Expr.Num(42) { Span = hostSpan } : new Expr.Num(42);
+        var program = HostBuiltWhile(flag, callSpan);
+        SourceSpan? rowSpan = withSpan ? hostSpan : null;
+        SourceSpan? expected = rowSpan ?? callSpan;
+
+        foreach (var optimized in new[] { false, true })
+        {
+            var loops = new LoopOptimizationDiagnostics();
+            var (result, _) = Evaluator.RunCountedObserved(program, enableOptimizations: optimized, loopDiagnostics: loops);
+            Assert.True(result.IsError);
+            Assert.IsType<EvalError.TypeMismatch>(Innermost(result.Error));
+            Assert.Equal(expected, KatLangError.FromEvalError(result.Error).Span);
+            Assert.Equal(rowSpan, Innermost(result.Error).Span);
+            Assert.Equal(optimized ? 1 : 0, loops.GetSnapshot().OptimizedLoopHits);
+        }
+
+        var sync = Evaluator.Run(program);
+        var async = await Evaluator.RunAsync(program);
+        var forced = await Evaluator.RunCountedObservedAsync(program, zeroArgPropertyResultCache: new RunScopedAsyncZeroArgPropertyResultCache());
+        Assert.Equal(expected, KatLangError.FromEvalError(sync.Error).Span);
+        Assert.Equal(expected, KatLangError.FromEvalError(async.Error).Span);
+        Assert.Equal(expected, KatLangError.FromEvalError(forced.Result.Error).Span);
+        Assert.Equal(rowSpan, Innermost(async.Error).Span);
+        Assert.Equal(rowSpan, Innermost(forced.Result.Error).Span);
+        Assert.Equal(sync.Error.ToString(), async.Error.ToString());
+        Assert.Equal(sync.Error.ToString(), forced.Result.Error.ToString());
+    }
+
+    // ── L10: a host-built continuation row supplies at most one item, so it never reaches the ─────────
+    // planned loop's defensive multi-item branch (MultiItemContinuation_FromTheCountedCellSeam_…)
+
+    /// <summary>
+    /// Representative public non-spread expression kinds, host-built where the parser cannot write them
+    /// (<see cref="Expr.SequenceConstruct"/>, a capture of a lone spread, a value block). A row is a
+    /// value boundary (Q-26): its counted emission is <see cref="Result.ValueCount"/>, so a two-item
+    /// value is ONE item — the flag is the whole sequence, a TypeMismatch on both strategies.
+    /// </summary>
+    public static TheoryData<string> HostBuiltContinuationRows() =>
+        new(HostBuiltContinuationCandidates().Select(static candidate => candidate.Name));
+
+    private static IEnumerable<(string Name, Expr Row)> HostBuiltContinuationCandidates()
+    {
+        Expr Five() => new Expr.Num(5);
+        Expr True() => new Expr.BoolLiteral(true);
+        Expr P() => new Expr.Resolve("P");
+        yield return ("sequence construct", new Expr.SequenceConstruct(Five(), True()));
+        yield return ("sequence construct with a spread leaf", new Expr.SequenceConstruct(new Expr.SequenceSpread(P()), True()));
+        yield return ("property", P());
+        yield return ("member", new Expr.DotCall(new Expr.Resolve("O"), "P"));
+        yield return ("call", new Expr.Call(new Expr.Resolve("G"), new OutputBundle([new Expr.Param("x")])));
+        yield return ("call of a spread argument", new Expr.Call(new Expr.Resolve("Id"), new OutputBundle([new Expr.SequenceSpread(P())])));
+        yield return ("value block", new Expr.AlgorithmExpr(HostAlgorithm([], [], Five(), True())));
+        yield return ("capture", new Expr.Capture(new OutputBundle([Five(), True()])));
+        yield return ("capture of a lone spread", new Expr.Capture(new OutputBundle([new Expr.SequenceSpread(P())])));
+        yield return ("selection", new Expr.Index(P(), new OutputBundle([new Expr.Num(0), new Expr.Num(1)])));
+        yield return ("if", new Expr.Call(new Expr.AlgorithmExpr(new Algorithm.Builtin(BuiltinId.@if)), new OutputBundle([True(), P(), P()])));
+    }
+
+    [Theory]
+    [MemberData(nameof(HostBuiltContinuationRows))]
+    public void HostBuiltContinuationRow_IsOneItem_SoThePlannedLoopNeverTakesTheMultiItemBranch(string name)
+    {
+        var row = HostBuiltContinuationCandidates().Single(candidate => candidate.Name == name).Row;
+        var program = HostBuiltWhile(row);
+        var generic = Evaluator.RunCountedObserved(program, enableOptimizations: false).Result;
+        var loops = new LoopOptimizationDiagnostics();
+        var observations = new EvaluationObservations();
+        var planned = Evaluator.RunCountedObserved(program, enableOptimizations: true, loopDiagnostics: loops, observations: observations).Result;
+
+        Assert.Equal(generic.Error.ToString(), planned.Error.ToString());
+        var mismatch = Assert.IsType<EvalError.TypeMismatch>(Innermost(planned.Error));
+        Assert.Contains("must be a Boolean value (true or false), but was a sequence value with", mismatch.Message, StringComparison.Ordinal);
+        // The loop WAS planned (the row is a generic fallback node inside the plan), and its
+        // continuation supplied one item: no multi-item fallback, no handover materialization.
+        var snapshot = loops.GetSnapshot();
+        Assert.Equal(1, snapshot.OptimizedLoopHits);
+        Assert.False(snapshot.FallbackReasons.ContainsKey("loop continuation did not emit exactly one value"));
+        Assert.Equal(0, snapshot.OptimizedLoopFallbacks);
+        Assert.Equal(0, observations.OptimizedLoopHandoverMaterializationCount);
+        // Unpositioned host-built nodes give an unpositioned report.
+        Assert.Null(KatLangError.FromEvalError(planned.Error).Span);
+    }
+
+    [Fact]
+    public void HostBuiltContinuationRow_ThatSuppliesOneBoolean_RunsPlannedWithoutHandover()
+    {
+        // The reachable host-built shape: a join whose `()` leaf contributes nothing is the one
+        // Boolean item, read by the planned loop's ordinary one-item path in every round.
+        var row = new Expr.SequenceConstruct(new Expr.EmptySequence(0),
+            new Expr.Comparison(new Expr.Param("x"), [new ComparisonLink(ComparisonOp.Lt, new Expr.Num(3))]));
+        var program = HostBuiltWhile(row);
+        var generic = Evaluator.RunCountedObserved(program, enableOptimizations: false);
+        var loops = new LoopOptimizationDiagnostics();
+        var observations = new EvaluationObservations();
+        var planned = Evaluator.RunCountedObserved(program, enableOptimizations: true, loopDiagnostics: loops, observations: observations);
+
+        Assert.Equal("3", SixRouteAgreement.Neutral(generic.Result.Value.Value));
+        Assert.Equal("3", SixRouteAgreement.Neutral(planned.Result.Value.Value));
+        Assert.Equal(generic.Budget.ConsumedSteps, planned.Budget.ConsumedSteps);
+        Assert.Equal(1, loops.GetSnapshot().OptimizedLoopHits);
+        Assert.Equal(0, loops.GetSnapshot().OptimizedLoopFallbacks);
+        Assert.Equal(0, observations.OptimizedLoopHandoverMaterializationCount);
+    }
+
+    [Fact]
+    public void HostBuiltSpreadContinuationRow_IsTheOnlyMultiItemFlagRow_AndIsNeverPlanned()
+    {
+        // The boundary itself: only a spread row supplies several items, and the planner refuses a
+        // spread continuation row (fail closed), so the generic reader is what reads its last item.
+        var program = HostBuiltWhile(new Expr.SequenceSpread(new Expr.Resolve("P")));
+        var generic = Evaluator.RunCountedObserved(program, enableOptimizations: false).Result;
+        var loops = new LoopOptimizationDiagnostics();
+        var planned = Evaluator.RunCountedObserved(program, enableOptimizations: true, loopDiagnostics: loops).Result;
+
+        // `x + 1, 5, true`: the flag is `true`, the next state `(x + 1, 5)` no longer fits `Step(x)`.
+        Assert.Equal(generic.Error.ToString(), planned.Error.ToString());
+        Assert.IsType<EvalError.ArityMismatch>(Innermost(planned.Error));
+        var snapshot = loops.GetSnapshot();
+        Assert.Equal(0, snapshot.OptimizedLoopHits);
+        Assert.Contains(snapshot.LoopPlans, static plan => plan.FallbackReason == "loop plan spread continuation row");
+    }
+
+    /// <summary>
+    /// <c>while(Step, 0)</c> over a host-built root built with the public constructors only, where
+    /// <c>Step(x) = x + 1, ROW</c> and the root declares <c>P = 5, true</c>, <c>O = { P = 5, true }</c>,
+    /// <c>G(y) = 5, true</c> and <c>Id(a, b) = a, b</c>. No node carries a span unless the caller set one.
+    /// </summary>
+    private static Expr HostBuiltWhile(Expr continuationRow, SourceSpan? loopCallSpan = null)
+    {
+        Algorithm.User FiveTrue() => HostAlgorithm([], [], new Expr.Num(5), new Expr.BoolLiteral(true));
+        var step = HostAlgorithm([new CaptureParameterPattern("x")], [],
+            new Expr.Binary(BinaryOp.Add, new Expr.Param("x"), new Expr.Num(1)), continuationRow);
+        var root = HostAlgorithm([],
+            [
+                new Property("P", FiveTrue()),
+                new Property("O", HostAlgorithm([], [new Property("P", FiveTrue(), IsPublic: true)])),
+                new Property("G", HostAlgorithm([new CaptureParameterPattern("y")], [], new Expr.Num(5), new Expr.BoolLiteral(true))),
+                new Property("Id", HostAlgorithm([new CaptureParameterPattern("a"), new CaptureParameterPattern("b")], [],
+                    new Expr.Param("a"), new Expr.Param("b"))),
+                new Property("Step", step),
+            ],
+            new Expr.Call(new Expr.AlgorithmExpr(new Algorithm.Builtin(BuiltinId.@while)),
+                new OutputBundle([new Expr.Resolve("Step"), new Expr.Num(0)])) { Span = loopCallSpan });
+        return new Expr.AlgorithmExpr(root);
+    }
+
+    private static Algorithm.User HostAlgorithm(IReadOnlyList<ParameterPattern> parameters, IReadOnlyList<Property> properties, params Expr[] rows)
+        => new(null, parameters, [], properties, new OutputBundle(rows));
+
     // ── Harness ──────────────────────────────────────────────────────────────────────────────────────
 
     internal sealed record Budget(long Steps, long Checkpoints, int PeakDepth, long MaterializedItems, long MaterializedStringChars);

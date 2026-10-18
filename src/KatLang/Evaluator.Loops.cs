@@ -145,7 +145,7 @@ public static partial class Evaluator
 
         if (flagRow < 0)
             return new EvalError.WithContext(WhileStepWithoutFlagContext, new EvalError.BadArity());
-        var flag = ContinuationFlag(slots[^1]);
+        var flag = ContinuationFlagOfRow(rows[flagRow], slots[^1]);
         if (flag.IsError) return flag.Error;
         if (!flag.Value) return EvalResult<IReadOnlyList<Result>?>.Ok(null);
 
@@ -484,6 +484,17 @@ public static partial class Evaluator
         => flag.AsBool() is { } value
             ? EvalResult<bool>.Ok(value)
             : new EvalError.TypeMismatch(BooleanRequiredMessage(WhileContinuationFlagRole, flag));
+
+    /// <summary>
+    /// <see cref="ContinuationFlag"/> for a flag supplied by a WRITTEN output row (both row
+    /// readers and the planned loop): a rejected flag is positioned at <paramref name="flagRow"/>,
+    /// the row whose last item it is — the narrowest truthful location, since a call or spread
+    /// row's items carry no provenance of their own. The span is read only on error, and a row
+    /// without one (a host-built tree) leaves the error unpositioned. An atomic supply (a builtin
+    /// step) has no row and keeps the bare rule.
+    /// </summary>
+    internal static EvalResult<bool> ContinuationFlagOfRow(Expr flagRow, Result flag)
+        => WithSpanOf(flagRow, ContinuationFlag(flag));
 
     /// <summary>
     /// The next state of an accepted <c>while</c> round from its complete supply (in place): the

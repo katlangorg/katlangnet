@@ -1569,7 +1569,7 @@ public static partial class Evaluator
 
         if (flagRow < 0)
             return new EvalError.WithContext(WhileStepWithoutFlagContext, new EvalError.BadArity());
-        var flag = ContinuationFlag(slots[^1]);
+        var flag = ContinuationFlagOfRow(rows[flagRow], slots[^1]);
         if (flag.IsError) return flag.Error;
         if (!flag.Value) return EvalResult<IReadOnlyList<Result>?>.Ok(null);
 
