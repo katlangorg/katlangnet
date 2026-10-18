@@ -163,7 +163,10 @@ public class FourFixInteractionReviewTests
         Assert.Equal(generic.Outcome, suspending.Outcome);
         Assert.Equal(generic.Budget, planned.Budget);
         Assert.Equal(generic.Budget, suspending.Budget);
-        Assert.Equal(loop == "while" && !failAfterHandover ? 5 : 4, generic.Calls);
+        // LOOP-06 (condition first): the stopping `while` round (state 11) reads only its flag
+        // `state != 11`, so its transition row — the fifth `mutate()` under the retired step-first
+        // order — is never formed: four calls on every loop and route.
+        Assert.Equal(4, generic.Calls);
         Assert.Equal(generic.Calls, planned.Calls);
         Assert.Equal(generic.Calls, suspending.Calls);
         Assert.Equal(1, planned.Hits);

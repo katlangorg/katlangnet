@@ -163,7 +163,8 @@ public class StringAndDisplayLimitsTests
         Assert.IsType<EvalError.StringSizeLimitExceeded>(
             ErrorOf("ToText(x) = x.string\n[12345].map(ToText)", Str(4)));
         Assert.IsType<EvalError.StringSizeLimitExceeded>(
-            ErrorOf("Step(x) = 'abcd', 0\nStep.while(1)", Str(3)));
+            // LOOP-06 (condition first): a Boolean `true` flag lets the round reach the string row.
+            ErrorOf("Step(x) = 'abcd', true\nStep.while(1)", Str(3)));
     }
 
     [Fact]

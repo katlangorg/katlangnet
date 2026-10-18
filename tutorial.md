@@ -2267,7 +2267,19 @@ Countdown.while(5)
 
 **Result:** `1`
 
-Read `Countdown` as "while `x > 1`, replace `x` with `x - 1`": starting from 5, the state becomes 4, 3, 2, and 1, and at 1 the condition `x > 1` is `false`, so the loop stops with `1`. Precisely: each round computes the next state together with the condition; if the condition is `true`, the next state is kept and the loop continues, and if it is `false`, the loop ends and returns the current state. When the condition is written in terms of the step's inputs, as here, `while` behaves like an ordinary while loop. The condition must be a Boolean.
+Read `Countdown` as "while `x > 1`, replace `x` with `x - 1`": starting from 5, the state becomes 4, 3, 2, and 1, and at 1 the condition `x > 1` is `false`, so the loop stops with `1`. Precisely: each round evaluates the **condition first**; if it is `false`, the loop ends and returns the current state without computing the other outputs at all, and if it is `true`, the other outputs are computed, in order, and become the next state. So a condition protects the step from a computation that would fail:
+
+<!-- spec:loop-while-condition-first-skips-transition -->
+```
+Step(x) = 10 / (x - 1), x > 1
+Step.while(1)
+```
+
+**Result:** `1`
+
+The condition `x > 1` is `false` for the initial state, so `10 / (x - 1)` is never evaluated and the initial state comes back unchanged. When the condition is written in terms of the step's inputs, as here, `while` behaves like an ordinary while loop. The condition must be a Boolean.
+
+The condition is the **last item** supplied by the step's outputs. To find it, `while` evaluates output rows from right to left until one supplies an item. Trailing empty spreads still run, including their effects; the last item of the first nonempty row is the condition. That whole row runs before the remaining earlier rows. Anything the condition itself needs is still computed — `Step(x) = 10 / (x - 1), 10 / (x - 1) > 0` divides by zero — and a condition produced inside another call is not separate: with `Pack(x) = 10 / (x - 1), x > 1` and `Step(x) = Pack(x)*`, the call `Pack(x)` computes both of its outputs, so `Step.while(1)` also divides by zero. Write the condition as its own output to get the protection. After `true`, the remaining earlier rows run left to right. This order also applies to random draws and host operations.
 
 Two more examples: how many years it takes 5% interest to double 1000, and how many steps the Collatz sequence needs to get from 27 down to 1:
 
@@ -2890,7 +2902,7 @@ Written as `X = A*` followed by the row `X`, the program prints the same `(1, 2)
 | `take`, `skip` | `xs.take(n)`, `xs.skip(n)` | The first `n` items; the items after the first `n` |
 | `atoms` | `atoms(value)` | Every number in a nested structure, in one flat list |
 | `repeat` | `step.repeat(n, initial...)` | The state after `n` applications of `step` |
-| `while` | `step.while(initial...)` | The state reached while the last output of `step` is `true` |
+| `while` | `step.while(initial...)` | The state reached while the last supplied item of `step` is `true`; each round discovers that condition from right to left and forms the remaining earlier rows only when it is `true` |
 | `string` | `number.string` | The number as text (dot form only) |
 | `Invoke` | `reference.Invoke()` | Runs the call a `meta` parameter captured (dot form only; see [Capturing a Call with `meta`](#capturing-a-call-with-meta)) |
 | `Arguments` | `reference.Arguments` | A lazy view of the captured call's arguments: `count`, `[i]`, `first`, `last`, and `F(reference.Arguments*)` (dot form only; see [Looking at a Captured Call's Arguments](#looking-at-a-captured-calls-arguments)) |

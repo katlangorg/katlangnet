@@ -44,6 +44,7 @@ public class LeanCoreTestsCompositionTests
         "ModelC",
         "LoopCardinality",
         "LoopSteps",
+        "LoopConditionFirst",
         "ErrorTaxonomy",
         "DotIdentity",
         "OpenProviderIdentity",

@@ -304,7 +304,7 @@ Before emitting code, verify silently:
 - `if` multi-output branches are parenthesized; single-value branches need no parens.
 - `repeat` and `while` use the correct step/state shape.
 - Every `repeat`/`while` step is an ordinary callable invoked with the current state slots as its arguments, so the state must suit that call: a user step's parameter pattern (explicit pattern, or inferred implicit parameters when there is no explicit list) — fixed and implicit interfaces need an exact slot count, a top-level variadic interface binds the state as an item supply (fixed prefix and suffix slots required, the collecting parameter collects the remaining middle slots as one exact list, max unbounded) — a clause family's clauses (ordinary clause dispatch each iteration), or a builtin's own signature; captured enclosing names are not state slots.
-- A `while` result does not depend on state changes produced only by the terminating step whose `continue_flag` is `false`; required updates are committed on an earlier continuing step.
+- A `while` round discovers its continuation flag by forming output rows from right to left until one supplies an item; that row's last item is the Boolean flag. Trailing empty spread rows still run, effects included. When the flag is `false`, the loop returns the state that entered the round without forming the remaining earlier rows, so `Step(x) = 10 / (x - 1), x > 1` / `Step.while(1)` is `1`. After `true`, it forms the remaining earlier rows left to right. Required updates are committed on an earlier continuing round. Write the condition as its OWN last output row: a flag produced inside a call or spread row (`Step(x) = Pack(x)*`) gets no early exit, and whatever the condition itself reads still runs first.
 - Constants captured from an enclosing algorithm are not state slots. Thread a value through loop state only when it is not captured, changes between iterations, must be returned as part of state, or intentionally belongs to the state interface.
 - Boolean truth: `true`/`false` values; numbers are never truth values.
 - Ordinary formulas use the lowercase Math aliases (`sin`, `pi`, `sqrt`, ...); `Math.X` appears as the deliberate qualified/disambiguation form; `open Math` appears only when the canonical PascalCase names are specifically wanted.
@@ -1679,7 +1679,7 @@ Many(), Many(()), Many((), 3), Many([(1, 2)]*)
 
 === BEGIN GENERATED: katlang-spec-examples (DO NOT EDIT BY HAND) ===
 
-Verified reference examples (164 of the 459-case canonical language specification,
+Verified reference examples (165 of the 462-case canonical language specification,
 tests/KatLang.Tests/LanguageSpec/LanguageSpecCorpus.cs). Every program and expected
 output below is executed against the KatLang engine and (where representable)
 guarded against the Lean model on every build. Treat these as ground truth for the
@@ -1931,6 +1931,14 @@ Regenerate this block from the repo root with:
 
   Displays:
     0
+
+[loop-while-condition-first-skips-transition] LOOP-06 (condition first): each `while` round evaluates its continuation flag FIRST; `false` returns the state that entered the round without evaluating the other outputs, so the condition protects the transition `10 / (x - 1)`.
+
+    Step(x) = 10 / (x - 1), x > 1
+    Step.while(1)
+
+  Displays:
+    1
 
 [loop-step-builtin-is-one-row-wrapper] A builtin step runs through its ordinary argument roles over the current state; it has no written rows, so its one result value is one next-state slot — exactly the step its one-row wrapper `C(c) = count(c)` makes.
 

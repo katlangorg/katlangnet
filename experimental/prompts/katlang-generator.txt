@@ -1181,7 +1181,7 @@ Idiomatic structure:
 - dot-call is not used as ordinary multi-output spreading;
 - postfix spread stars appear only where spreading is intended and are written attached; a comma separates a spread from a following item on the same line (`A*, B` — `A* B` would multiply), an attached line-final `A*` already ends its row or definition body (`A*` newline `B` is two rows), a detached line-final `A *` would multiply into the next line, and capture parentheses (`y = (A*)`) are used only when one captured value is intended; prefix collecting stars appear only in binding patterns, directly attached to their name;
 - `repeat` / `while` state arity and parameter order are correct;
-- a `while` result does not depend on state changes produced only by the terminating step whose `continue_flag` is `false` — required updates are committed on an earlier continuing step;
+- a `while` round discovers its Boolean continuation flag by forming rows right to left until one supplies an item, whose last item is the flag; trailing empty spreads still run, effects included. On `false` it returns the state that entered the round without forming the remaining earlier rows; on `true` it forms those rows left to right. Required updates are committed on an earlier continuing round, and the condition is written as its own last output row (a flag inside a call or spread row gets no early exit);
 - conditional branches have consistent top-level input and output arity;
 - strings remain strings;
 - Math style is consistent;
@@ -1209,7 +1209,7 @@ Many(), Many(()), Many((), 3), Many([(1, 2)]*)
 
 === BEGIN GENERATED: katlang-spec-examples (DO NOT EDIT BY HAND) ===
 
-Verified reference examples (164 of the 459-case canonical language specification,
+Verified reference examples (165 of the 462-case canonical language specification,
 tests/KatLang.Tests/LanguageSpec/LanguageSpecCorpus.cs). Every program and expected
 output below is executed against the KatLang engine and (where representable)
 guarded against the Lean model on every build. Treat these as ground truth for the
@@ -1461,6 +1461,14 @@ Regenerate this block from the repo root with:
 
   Displays:
     0
+
+[loop-while-condition-first-skips-transition] LOOP-06 (condition first): each `while` round evaluates its continuation flag FIRST; `false` returns the state that entered the round without evaluating the other outputs, so the condition protects the transition `10 / (x - 1)`.
+
+    Step(x) = 10 / (x - 1), x > 1
+    Step.while(1)
+
+  Displays:
+    1
 
 [loop-step-builtin-is-one-row-wrapper] A builtin step runs through its ordinary argument roles over the current state; it has no written rows, so its one result value is one next-state slot — exactly the step its one-row wrapper `C(c) = count(c)` makes.
 

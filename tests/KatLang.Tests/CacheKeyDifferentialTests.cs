@@ -364,9 +364,11 @@ public class CacheKeyDifferentialTests
         Assert.Equal([25m], optimized.Value.ToAtoms());
         Assert.Equal(1, diagnostics.GetSnapshot().OptimizedLoopHits);
 
+        // LOOP-06 (condition first): the stopping round (x = 25) reads only its flag `x < 20`, so
+        // `Val` is requested in the two accepted rounds only — twice each, one environment each.
         var valRequests = recording.Requests.Where(static r => r.Binding.Name == "Val").ToList();
-        Assert.Equal(6, valRequests.Count);
-        Assert.Equal(3, valRequests.Select(static r => r.ValueEnvironmentIdentity).Distinct().Count());
+        Assert.Equal(4, valRequests.Count);
+        Assert.Equal(2, valRequests.Select(static r => r.ValueEnvironmentIdentity).Distinct().Count());
     }
 
     /// <summary>
@@ -429,7 +431,9 @@ public class CacheKeyDifferentialTests
             observations: genericObservations);
         Assert.False(generic.IsError);
         Assert.Equal([65m], generic.Value.Value.ToAtoms());
-        Assert.Equal(3, genericObservations.DeconstructionFullBindCount);
+        // LOOP-06 (condition first): the stopping round (x = 65) forms only its flag row, so the
+        // deconstruction binds once per ACCEPTED round.
+        Assert.Equal(2, genericObservations.DeconstructionFullBindCount);
 
         var optimizedObservations = new EvaluationObservations();
         var diagnostics = new LoopOptimizationDiagnostics();
@@ -440,7 +444,7 @@ public class CacheKeyDifferentialTests
         Assert.False(optimized.IsError);
         Assert.Equal([65m], optimized.Value.Value.ToAtoms());
         Assert.Equal(1, diagnostics.GetSnapshot().OptimizedLoopHits);
-        Assert.Equal(3, optimizedObservations.DeconstructionFullBindCount);
+        Assert.Equal(2, optimizedObservations.DeconstructionFullBindCount);
     }
 
     // ── binding identity within one owner ───────────────────────────────────

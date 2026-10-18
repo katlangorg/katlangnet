@@ -34,6 +34,7 @@ import CoreTests.AliasForwarding
 import CoreTests.ModelC
 import CoreTests.LoopCardinality
 import CoreTests.LoopSteps
+import CoreTests.LoopConditionFirst
 import CoreTests.ErrorTaxonomy
 import CoreTests.DotIdentity
 import CoreTests.OpenProviderIdentity

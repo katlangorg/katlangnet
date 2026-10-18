@@ -14,11 +14,11 @@ This is bounded differential validation over the Lean-guarded partition,
 not a formal verification of the evaluators.
 
 Partition (machine-checked by the `specCaseIds.length` guard below):
-- specification surface cases: 459
+- specification surface cases: 462
 - excluded parse-level cases (Lean has no surface parser): 71
 - excluded C#-only cases (each carries an explicit reason in the corpus): 22
-- Lean-guarded cases: 366
-- probe observations (C#-only by design): 1366
+- Lean-guarded cases: 369
+- probe observations (C#-only by design): 1373
 - internal-node cases live in the semantic-explorer corpus, not here: see
   lean/SemanticExplorerCases.lean
 
@@ -472,6 +472,21 @@ def case_loop_step_clause_family : Expr :=
 def case_loop_step_family_while : Expr :=
   .algorithmExpr (alg [] [] [privateProp "Countdown" (.conditional none [] [⟨.litInt 0, (alg [] [] [] [.num 0, .boolLiteral false])⟩, ⟨.bind "n", (alg [] [] [] [(.binary .sub (.param "n") (.num 1)), .boolLiteral true])⟩])] [(.dotCall (.resolve "Countdown") "while" (some [.num 3]))])
 #guard obs case_loop_step_family_while == "ok raw=0 n=1"
+
+-- loop-while-condition-first-skips-transition [conditionals]: Step(x) = 10 / (x - 1), x > 1 \n Step.while(1)
+def case_loop_while_condition_first_skips_transition : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Step" (alg ["x"] [] [] [(.binary .div (.num 10) (.binary .sub (.param "x") (.num 1))), (.comparison (.param "x") [{ op := .gt, operand := (.num 1) }])])] [(.dotCall (.resolve "Step") "while" (some [.num 1]))])
+#guard obs case_loop_while_condition_first_skips_transition == "ok raw=1 n=1"
+
+-- loop-while-condition-first-trailing-empty-spread [conditionals]: Tail(n) = () \n Step(n) = n + 1, n < 2, Tail(n)* \n Step.while(0)
+def case_loop_while_condition_first_trailing_empty_spread : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Tail" (alg ["n"] [] [] [(.emptySequence 0)]), privateProp "Step" (alg ["n"] [] [] [(.binary .add (.param "n") (.num 1)), (.comparison (.param "n") [{ op := .lt, operand := (.num 2) }]), (.sequenceSpread (.call (.resolve "Tail") [.param "n"]))])] [(.dotCall (.resolve "Step") "while" (some [.num 0]))])
+#guard obs case_loop_while_condition_first_trailing_empty_spread == "ok raw=2 n=1"
+
+-- loop-while-condition-first-row-granular [conditionals]: Pack(x) = x - 1, x > 1 \n Step(x) = Pack(x)* \n Step.while(3)
+def case_loop_while_condition_first_row_granular : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Pack" (alg ["x"] [] [] [(.binary .sub (.param "x") (.num 1)), (.comparison (.param "x") [{ op := .gt, operand := (.num 1) }])]), privateProp "Step" (alg ["x"] [] [] [(.sequenceSpread (.call (.resolve "Pack") [.param "x"]))])] [(.dotCall (.resolve "Step") "while" (some [.num 3]))])
+#guard obs case_loop_while_condition_first_row_granular == "ok raw=1 n=1"
 
 -- loop-step-family-multi-slot [conditionals]: Gcd(a, 0) = a, 0, false \n Gcd(a, b) = b, a mod b, true \n Gcd.while(48, 18)[0]
 def case_loop_step_family_multi_slot : Expr :=
@@ -2028,7 +2043,7 @@ def case_arguments_is_not_an_extension_call : Expr :=
   .algorithmExpr (alg [] [] [privateProp "Arguments" (alg ["r"] [] [] [(.binary .add (.param "r") (.num 1))])] [(.call (.resolve "Arguments") [.num 4])])
 #guard obs case_arguments_is_not_an_extension_call == "ok raw=5 n=1"
 
--- 366 canonical Lean-guarded specification cases.
+-- 369 canonical Lean-guarded specification cases.
 
 /--
 Machine-checked Lean-guarded partition count: the id list is built by the
@@ -2092,6 +2107,9 @@ def specCaseIds : List String := [
   "loop-nested-step-row-is-one-slot",
   "loop-step-clause-family",
   "loop-step-family-while",
+  "loop-while-condition-first-skips-transition",
+  "loop-while-condition-first-trailing-empty-spread",
+  "loop-while-condition-first-row-granular",
   "loop-step-family-multi-slot",
   "loop-step-builtin-is-one-row-wrapper",
   "loop-step-builtin-empty-result-is-one-slot",
@@ -2403,6 +2421,6 @@ def specCaseIds : List String := [
   "arguments-view-is-not-a-collection",
   "arguments-is-not-an-extension-call"
 ]
-#guard specCaseIds.length == 366
+#guard specCaseIds.length == 369
 
 end LanguageSpecCases

@@ -50,8 +50,9 @@ public class ZeroBasePowerContractTests
     [InlineData(true)]
     public void NegativeFractionalPower_ActuallyExecutesThePlannedNumericArm(bool useWhile)
     {
+        // LOOP-06 (condition first): a Boolean `true` flag lets the round reach the power row.
         var source = useWhile
-            ? "S(x) = x ^ -0.5, 0\nwhile(S, -0.0)"
+            ? "S(x) = x ^ -0.5, true\nwhile(S, -0.0)"
             : "S(x) = x ^ -0.5\nrepeat(S, 1, -0.0)";
         var (generic, _) = RunCountedObserved(source, enableLoopOptimization: false);
         var (planned, loop) = RunCountedObserved(source, enableLoopOptimization: true);

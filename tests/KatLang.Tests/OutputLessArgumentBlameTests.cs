@@ -706,7 +706,10 @@ public class OutputLessArgumentBlameTests
     {
         var error = AssertEvalError(source);
         Assert.IsType<EvalError.MissingOutput>(Innermost(error));
-        if (source is "Step(s) = s + 1\nrepeat(Step, 1, {})" or "Step(s) = s, false\nwhile(Step, {})")
+        // LOOP-06 (condition first): the `while` step's false flag is read first and its row `s` is
+        // never formed, so the output-less initial argument fails at the loop's final
+        // materialization (LOOP-07), blamed on the written argument rather than on parameter `s`.
+        if (source is "Step(s) = s + 1\nrepeat(Step, 1, {})")
             Assert.Equal("s", AssertContext<ParameterEvaluationContext>(error).ParameterName);
         else AssertArgumentBlame(error);
         Assert.NotNull(error.Span);

@@ -4572,28 +4572,126 @@ def loopResultCounted (finalSlots : List Result) : CountedResult :=
 def whileStepWithoutFlagContext : String :=
   "a while step must output at least its continuation flag"
 
-/-- Split a loop step output into next state slots and the continuation flag.
-    The step's LAST output is the flag and must be a Boolean value (`true`
-    continues, `false` stops); a number, string, sequence, or list there is a
-    value-kind error, never a truth test. A single-output step keeps the
-    established shape — its one slot is both the next state and the flag — so
-    it must be Boolean too. C#: `Evaluator.SplitContSlots`. -/
+/-! ### Output rows and the condition-first `while` round (LOOP-03, LOOP-06; LOOP-CF1, October 2026)
+
+An algorithm's output is a list of ROWS. Forming a row is ONE ordinary counted evaluation of its
+expression (the evaluator installs `formOutputRow`, which crosses the partial `evalCounted`);
+what the formed row contributes to the row supply is the ONE row rule `OutputRows.items`. The
+two receivers of a step's rows differ only in the ORDER in which they request rows:
+
+* the supply reader (`OutputRows.formLeftToRight`; `evalAlgOutputSlots`, so `repeat`) forms every
+  row once, left to right;
+* the `while` round (`WhileRound.conditionFirst`; `whileVerdictSlots`) discovers its continuation
+  flag first — rows from the LAST backwards until one supplies an item, whose last item is the
+  flag — and forms the remaining earlier rows, left to right, only after a `true` verdict.
+
+Both are TOTAL definitions parameterized by the row-forming capability, so the kernel checks
+theorems about the very definitions the evaluator calls (`KatLangArityLaws/WhileRound.lean`);
+that the partial evaluator passes `formOutputRow` is a fact of its source. -/
+
+namespace OutputRows
+
+/-- What ONE formed output row contributes to its algorithm's row supply (LOOP-03): a spread row
+    `e*` its spread items, possibly none; a NON-spread row exactly one item, its value (`()`
+    included — `out.snd = 0` keeps it as its one slot). C#: `Evaluator.AddOutputRowItems`. -/
+def items (e : Expr) (out : CountedResult) : List Result :=
+  match e with
+  | .sequenceSpread _ => countedTopLevelValues out
+  | _ => if out.snd = 0 then [out.fst] else countedTopLevelValues out
+
+/-- The supply reader: every row formed once, LEFT TO RIGHT, the supply in written order. -/
+def formLeftToRight (form : Expr → EvalM (List Result)) : List Expr → EvalM (List Result)
+  | [] => pure []
+  | e :: rest => do
+      let xs ← form e
+      let ys ← formLeftToRight form rest
+      pure (xs ++ ys)
+
+end OutputRows
+
+namespace WhileRound
+
+/-- The `while` continuation flag rule (LOOP-06): a Boolean value (`true` continues, `false`
+    stops); a number, string, sequence, or list there is a value-kind error, never a truth test.
+    C#: `Evaluator.ContinuationFlag`. -/
+def flag (item : Result) : EvalM Bool :=
+  match Result.asBool? item with
+  | some c => pure c
+  | none => throw (Error.typeMismatch
+      (booleanRequiredMessage "while continuation flag (the step's last output)" item))
+
+/-- The next state of an accepted round from its complete supply: the supply without its last
+    item, the flag — except that a one-item supply is both the next state and the flag. -/
+def nextSlots (supply : List Result) : List Result :=
+  match supply with
+  | [slot] => [slot]
+  | _ => supply.dropLast
+
+/-- FLAG DISCOVERY over the rows in REVERSE written order: form each row until one supplies at
+    least one item. Returns the still-unformed earlier rows (in written order) and that row's
+    items; `none` when no row supplies an item. Rows passed over supplied nothing, so the
+    discovered row's items are the whole supply formed so far. -/
+def discover (form : Expr → EvalM (List Result)) : List Expr → EvalM (Option (List Expr × List Result))
+  | [] => pure none
+  | e :: rest => do
+      let xs ← form e
+      match xs with
+      | [] => discover form rest
+      | _ :: _ => pure (some (rest.reverse, xs))
+
+/-- The missing-flag failure: no row supplied an item (an emitted-slot cardinality failure,
+    `badArity`, Q-27). -/
+def noFlag {α : Type} : EvalM α :=
+  throw (Error.withContext whileStepWithoutFlagContext Error.badArity)
+
+/-- ONE `while` round over a step body's rows (LOOP-06, condition first): discover the flag
+    (`discover`), check it (`flag`); `false` ends the loop (`none`) without forming the remaining
+    earlier rows; `true` forms them LEFT TO RIGHT and the next state is the supply in written
+    order without its last item (`nextSlots`). Every row is formed at most once.
+    C#: `Evaluator.EvalWhileVerdictSlots` and its async mirror. -/
+def conditionFirst (form : Expr → EvalM (List Result)) (rows : List Expr) :
+    EvalM (Option (List Result)) := do
+  match ← discover form rows.reverse with
+  | none => noFlag
+  | some (earlier, flagItems) =>
+    match flagItems.getLast? with
+    | none => noFlag
+    | some f =>
+      if ← flag f then
+        let formed ← OutputRows.formLeftToRight form earlier
+        pure (some (nextSlots (formed ++ flagItems)))
+      else pure none
+
+end WhileRound
+
+/-- Split a COMPLETE loop step supply into next state slots and the continuation flag: the
+    supply's LAST item is the flag (`WhileRound.flag`), and a single-item supply keeps the
+    established shape — its one slot is both the next state and the flag
+    (`WhileRound.nextSlots`). A `while` round reads a step BODY's rows condition first
+    (`WhileRound.conditionFirst`); this split is the round over a supply that is ONE atomic row,
+    a builtin step's result (`WhileRound.ofSupply`). C#: `Evaluator.SplitContSlots`. -/
 def splitContSlots (outputSlots : List Result) : EvalM (List Result × Bool) := do
-  match outputSlots with
-  | [] => .error (Error.withContext whileStepWithoutFlagContext Error.badArity)
-  | [slot] =>
-    match Result.asBool? slot with
-    | some c => pure ([slot], c)
-    | none => .error (Error.typeMismatch
-        (booleanRequiredMessage "while continuation flag (the step's last output)" slot))
-  | _ =>
-    match outputSlots.getLast? with
-    | some last =>
-      match Result.asBool? last with
-      | some c => pure (outputSlots.dropLast, c)
-      | none => .error (Error.typeMismatch
-          (booleanRequiredMessage "while continuation flag (the step's last output)" last))
-    | none => .error Error.badArity
+  match outputSlots.getLast? with
+  | none => WhileRound.noFlag
+  | some last => pure (WhileRound.nextSlots outputSlots, ← WhileRound.flag last)
+
+/-- A `while` round over a supply that is ONE atomic row (a builtin step, a builtin clause body):
+    there are no earlier rows to skip, so the round is the ordinary split. C#:
+    `Evaluator.WhileVerdictOfSupply`. -/
+def WhileRound.ofSupply (supply : List Result) : EvalM (Option (List Result)) := do
+  let (next, cont) ← splitContSlots supply
+  pure (if cont then some next else none)
+
+/-- ONE iteration of the `while` loop over its state cells (`.whileBuiltin`): run the round; a
+    `false` verdict FINISHES the loop (`.inl`) with exactly the cells that entered the round — on
+    the first round the original initial cells (R1: zero accepted transitions), still lazy, whose
+    VALUE materialization is the loop's separate final boundary (LOOP-07) — and a `true` verdict's
+    next slots become Ready cells (`.inr`). Law: `cf3_false_round_keeps_entering_cells`. -/
+def WhileRound.advance (round : List Nat → EvalM (Option (List Result))) (cells : List Nat) :
+    EvalM (Sum (List Nat) (List Nat)) := do
+  match ← round cells with
+  | none => pure (.inl cells)
+  | some next => pure (.inr (← next.mapM (fun value => readyNeed (value, Result.valueCount value))))
 
 /-- The counted view of one iterated collection item as the callback receives
     it. A callback item is a SELECTED value, so it crosses the same ordinary
@@ -6541,29 +6639,51 @@ mutual
       step as the ordinary call names its callee — `loopStepName`); a user step's
       supplied-cardinality failure is the binder's own `arityMismatch` (C# wraps it
       in its loop-state report, the same innermost kind, FORMAL-06), and pattern
-      inspection retains the ordinary binder's error. C#: `Evaluator.InvokeLoopStepSupply`. -/
-  partial def runNeedStepSlots (step : Algorithm) (ctx : EvalCtx) (env : ValEnv)
-      (cells : List Nat) (stepName : String) : EvalM (List Result) := do
+      inspection retains the ordinary binder's error.
+
+      The receiver also fixes the ORDER in which an activated body's rows are formed: it passes
+      its row reader `read` (and `atomic`, its reading of a builtin's one result row). `repeat`
+      reads the supply left to right (`runNeedStepSlots`); a `while` round reads condition first
+      (`runNeedWhileRound`, LOOP-06). There is ONE dispatch: the binder, family dispatch,
+      builtin roles and alias resolution are this definition's for both receivers.
+      C#: `Evaluator.InvokeLoopStepSupply`. -/
+  partial def runNeedStepWith {α : Type} (read : Algorithm → EvalCtx → ValEnv → EvalM α)
+      (atomic : CountedResult → EvalM α) (step : Algorithm) (ctx : EvalCtx) (env : ValEnv)
+      (cells : List Nat) (stepName : String) : EvalM α := do
     match step with
     | .builtin b =>
         withCtx s!"while evaluating call to {stepName}" do
           let supplied := cells.map fun address =>
             ({ algorithm := Algorithm.ofExpr (.emptySequence 0), need? := some address } : ResolvedArgumentAlgorithm)
           let out <- applyBuiltinCountedResolved b supplied ctx env
-          pure (loopStepBuiltinRows out)
+          atomic out
     | .conditional _ _ _ _ =>
         withCtx s!"while evaluating call to {stepName}" do
           let (body, next, values) <- selectNeedFamilyBranch ⟨demandNeedRecursive, projectNeedCallable⟩ step cells ctx env stepName
-          evalAlgOutputSlots body next values
+          read body next values
     | .alias _ _ _ _ _ => do
         let target <- resolveAliasTarget step ctx
-        runNeedStepSlots target ctx env cells stepName
+        runNeedStepWith read atomic target ctx env cells stepName
     | .mk _ _ _ _ _ _ => do
         let some bindings <- bindNeedPatterns ⟨demandNeedRecursive, projectNeedCallable⟩
             ((Algorithm.parameterPatterns step).map NeedPattern.ofParameter) cells
           | throw Error.badArity
         let next <- needBindingContext ctx bindings
-        evalAlgOutputSlots step next (ValEnv.shadow env (Algorithm.params step))
+        read step next (ValEnv.shadow env (Algorithm.params step))
+
+  /-- A `repeat` round: the step's row supply, left to right (`evalAlgOutputSlots`); a builtin's
+      one result is one row (`loopStepBuiltinRows`). -/
+  partial def runNeedStepSlots (step : Algorithm) (ctx : EvalCtx) (env : ValEnv)
+      (cells : List Nat) (stepName : String) : EvalM (List Result) :=
+    runNeedStepWith evalAlgOutputSlots (fun out => pure (loopStepBuiltinRows out)) step ctx env cells stepName
+
+  /-- A `while` round (LOOP-06, condition first): the step's rows read by `whileVerdictSlots`; a
+      builtin's one result row is both the flag and the candidate state (`WhileRound.ofSupply`).
+      `none` is a false verdict. C#: `Evaluator.InvokeLoopStepSupply` with `conditionFirst`. -/
+  partial def runNeedWhileRound (step : Algorithm) (ctx : EvalCtx) (env : ValEnv)
+      (cells : List Nat) (stepName : String) : EvalM (Option (List Result)) :=
+    runNeedStepWith whileVerdictSlots (fun out => WhileRound.ofSupply (loopStepBuiltinRows out))
+      step ctx env cells stepName
 
 
   --------------------------------------------------------------------------
@@ -6609,7 +6729,9 @@ mutual
     evalZeroArgumentDemandOutput a ctx env
 
   /-- The ROW SUPPLY of an algorithm's output (LOOP-03, VAL-07 applied to a loop
-      step): every output row is evaluated once, left to right; a NON-spread row
+      step; the `repeat` receiver's reading — a `while` round reads the same rows condition
+      first, `whileVerdictSlots`): every output row is formed once, left to right
+      (`OutputRows.formLeftToRight` over `formOutputRow`); a NON-spread row
       supplies exactly one item — its value, `()` included (a row's emitted
       count is at most one since every result, loop results included, is a value
       boundary: Q-26, October 2026) — and a spread row `e*` supplies its spread
@@ -6642,17 +6764,40 @@ mutual
         | .mk _ _ _ _ [] _ => .error Error.missingOutput
         | _ => pure ()
         let pushedCtx <- enterAlgorithmBody a ctx env
-        let rec collect : List Expr -> List Result -> EvalM (List Result)
-          | [], acc => pure acc.reverse
-          | e :: rest, acc => do
-              let out <- evalCounted e pushedCtx env
-              let values :=
-                match e with
-                | .sequenceSpread _ => countedTopLevelValues out
-                | _ =>
-                    if out.snd = 0 then [out.fst] else countedTopLevelValues out
-              collect rest (values.reverse ++ acc)
-        collect (Algorithm.output a) []
+        OutputRows.formLeftToRight (formOutputRow pushedCtx env) (Algorithm.output a)
+
+  /-- Form ONE output row in an activated body: one ordinary counted evaluation of the row's
+      expression, contributing `OutputRows.items` (LOOP-03). The one row formation of both row
+      readers (`evalAlgOutputSlots`, `whileVerdictSlots`). C#: `EvalCounted` +
+      `Evaluator.AddOutputRowItems`. -/
+  partial def formOutputRow (ctx : EvalCtx) (env : ValEnv) (e : Expr) : EvalM (List Result) := do
+    let out <- evalCounted e ctx env
+    pure (OutputRows.items e out)
+
+  /-- ONE `while` round's reading of a step body's rows (LOOP-06, condition first — LOOP-CF1,
+      October 2026): the activation and access checks of `evalAlgOutputSlots`, then
+      `WhileRound.conditionFirst` over `formOutputRow` in that one activation, so the flag row and
+      the transition rows share parameter cells and local-property caches. `none` is a `false`
+      verdict (no earlier row formed); `some next` the next state. A builtin body is one atomic
+      row (`WhileRound.ofSupply`). C#: `Evaluator.EvalWhileVerdictSlots`. -/
+  partial def whileVerdictSlots (a : Algorithm) (ctx : EvalCtx) (env : ValEnv)
+      : EvalM (Option (List Result)) := do
+    match a with
+    | .builtin b => do
+        let out <- evalBuiltinValueCounted b
+        WhileRound.ofSupply [out.fst]
+    | _ =>
+      match a.findDuplicatePropName with
+      | some n => .error (Error.duplicateProperty n)
+      | none =>
+        match conditionalValueAccessError? "conditional" a with
+        | some err => .error err
+        | none => pure ()
+        match a with
+        | .mk _ _ _ _ [] _ => .error Error.missingOutput
+        | _ => pure ()
+        let pushedCtx <- enterAlgorithmBody a ctx env
+        WhileRound.conditionFirst (formOutputRow pushedCtx env) (Algorithm.output a)
 
   /-- Evaluate a higher-order sequence callback on one collected iteration
       item (the `filter` predicate). C#: `EvalSequenceCallbackCall`. -/
@@ -7326,12 +7471,14 @@ mutual
             else
             let initialCells <- initAlgs.mapM (fun arg => argumentNeed arg ctx env)
             let stepName <- loopStepName "while" step
+            -- One condition-first round per iteration (LOOP-06, `WhileRound.advance`): a false
+            -- verdict finishes with the cells that entered the round (R1: zero accepted
+            -- transitions return the initial cells), materialized below (LOOP-07).
             let rec loop (cells : List Nat) : EvalM (List Nat) := do
               let algorithm <- projectInvokingSlot (invokingSlotRole .whileBuiltin) (<- invokeNeed step)
-              let outputSlots <- runNeedStepSlots algorithm ctx env cells stepName
-              let (nextSlots, cont) <- splitContSlots outputSlots
-              if cont then loop (<- nextSlots.mapM (fun value => readyNeed (value, Result.valueCount value)))
-              else pure cells
+              match <- WhileRound.advance (fun cells => runNeedWhileRound algorithm ctx env cells stepName) cells with
+              | .inl final => pure final
+              | .inr next => loop next
             let finalCells <- loop initialCells
             let finalSlots <- finalCells.mapM (fun address => Prod.fst <$> demandNeedRecursive address)
             pure (loopResultCounted finalSlots)

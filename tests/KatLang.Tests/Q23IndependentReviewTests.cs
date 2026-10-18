@@ -249,7 +249,8 @@ public partial class LoopStepCallableDispatchTests
         var preparedType = method.GetParameters()[1].ParameterType;
         var invocation = (ValueTask<EvalResult<IReadOnlyList<Result>>>)method.Invoke(null,
             [step, Activator.CreateInstance(preparedType), new[] { cell }, Evaluator.EvalCtx.Empty, Array.Empty<(string, Result)>(),
-                "repeat", method.GetParameters()[6].ParameterType.GetMethod("FromKnown", BindingFlags.Public | BindingFlags.Static)!.Invoke(null, ["F"]), true])!;
+                "repeat", method.GetParameters()[6].ParameterType.GetMethod("FromKnown", BindingFlags.Public | BindingFlags.Static)!.Invoke(null, ["F"]),
+                false, true])!;
         var joined = invocation.AsTask();
         Assert.False(joined.IsCompleted);
         Assert.Equal(1, starts);

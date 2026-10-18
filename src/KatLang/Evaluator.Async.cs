@@ -1519,14 +1519,8 @@ public static partial class Evaluator
                 : EvalResult<IReadOnlyList<Result>>.Ok([countedR.Value.Value]);
         }
 
-        if (alg.FindDuplicatePropName() is { } duplicateName)
-            return new EvalError.DuplicateProperty(duplicateName);
-
-        if (ConditionalValueAccessError("conditional", alg) is { } conditionalError)
-            return conditionalError;
-
-        if (alg is Algorithm.User { Output.Count: 0 })
-            return new EvalError.MissingOutput();
+        if (OutputRowsAccessError(alg) is { } accessError)
+            return accessError;
 
         var slots = new List<Result>();
         var pushedCtx = EnterAlgorithmBody(alg, ctx, valEnv, parameterNames);
@@ -1534,14 +1528,64 @@ public static partial class Evaluator
         {
             var countedR = await EvalCountedAsync(expr, pushedCtx, valEnv).ConfigureAwait(false);
             if (countedR.IsError) return countedR.Error;
-
-            if (expr is Expr.SequenceSpread || countedR.Value.EmittedCount != 0)
-                slots.AddRange(CountedTopLevelValues(countedR.Value));
-            else
-                slots.Add(countedR.Value.Value);
+            AddOutputRowItems(slots, expr, countedR.Value);
         }
 
         return EvalResult<IReadOnlyList<Result>>.Ok(slots);
+    }
+
+    /// <summary>MIRROR OF <see cref="EvalWhileVerdictSlots"/> — keep in lock-step.</summary>
+    private static async ValueTask<EvalResult<IReadOnlyList<Result>?>> EvalWhileVerdictSlotsAsync(
+        Algorithm alg,
+        EvalCtx ctx,
+        ValEnv valEnv,
+        IReadOnlyList<string>? parameterNames = null)
+    {
+        if (alg is Algorithm.Builtin(var builtin))
+        {
+            var countedR = EvalBuiltinValueCounted(builtin);
+            return countedR.IsError ? countedR.Error : WhileVerdictOfSupply([countedR.Value.Value]);
+        }
+
+        if (OutputRowsAccessError(alg) is { } accessError)
+            return accessError;
+
+        var rows = alg.Output;
+        var slots = new List<Result>(rows.Count);
+        var pushedCtx = EnterAlgorithmBody(alg, ctx, valEnv, parameterNames);
+        var flagRow = rows.Count - 1;
+        CountedResult flagRowValue = default;
+        for (; flagRow >= 0; flagRow--)
+        {
+            var countedR = await EvalCountedAsync(rows[flagRow], pushedCtx, valEnv).ConfigureAwait(false);
+            if (countedR.IsError) return countedR.Error;
+            AddOutputRowItems(slots, rows[flagRow], countedR.Value);
+            if (slots.Count != 0)
+            {
+                flagRowValue = countedR.Value;
+                break;
+            }
+        }
+
+        if (flagRow < 0)
+            return new EvalError.WithContext(WhileStepWithoutFlagContext, new EvalError.BadArity());
+        var flag = ContinuationFlag(slots[^1]);
+        if (flag.IsError) return flag.Error;
+        if (!flag.Value) return EvalResult<IReadOnlyList<Result>?>.Ok(null);
+
+        if (flagRow > 0)
+        {
+            slots.Clear();
+            for (var i = 0; i < flagRow; i++)
+            {
+                var countedR = await EvalCountedAsync(rows[i], pushedCtx, valEnv).ConfigureAwait(false);
+                if (countedR.IsError) return countedR.Error;
+                AddOutputRowItems(slots, rows[i], countedR.Value);
+            }
+            AddOutputRowItems(slots, rows[flagRow], flagRowValue);
+        }
+
+        return EvalResult<IReadOnlyList<Result>?>.Ok(WhileNextStateSlots(slots));
     }
 
     // ── Explicit written-slot twins ─────────────────────────────────────────

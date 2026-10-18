@@ -513,11 +513,12 @@ public class LoopStrategyPreparationTests
     }
 
     [Fact]
-    public void OptimizedWhile_StateEmissionHandover_ReturnsCurrentStateWhenContinuationStops()
+    public void OptimizedWhile_StoppingRound_FormsNoStateRow_SoNoHandoverIsNeeded()
     {
-        // The handover iteration's continuation is 0, so the handover branch itself
-        // resolves the loop from the current state — still exactly one
-        // materialization, and no generic continuation is ever entered.
+        // LOOP-06 (condition first): at k == 3 the flag `k < 3` is read FIRST and is false, so
+        // the round returns the current state without forming the state row whose `Empty`
+        // would have emitted zero values. Under the retired step-first order that row forced a
+        // handover materialization; now the planned loop finishes on its own.
         const string source = "Empty = ()\nStep = if(k == 3, Empty, k + 1), k < 3\nStep.while(0)";
 
         var observations = new EvaluationObservations();
@@ -531,19 +532,19 @@ public class LoopStrategyPreparationTests
         Assert.Equal(genericResult.Value.Value.ToAtoms(), result.Value.Value.ToAtoms());
         Assert.Equal([3m], result.Value.Value.ToAtoms());
 
-        Assert.Equal(1, observations.OptimizedLoopHandoverMaterializationCount);
+        Assert.Equal(0, observations.OptimizedLoopHandoverMaterializationCount);
         Assert.Equal(0, observations.GenericLoopStepBindingPreparationCount);
         Assert.Equal(4, diagnostics.LoopIterations);
-        Assert.Equal(1, diagnostics.FallbackReasons["loop expression did not emit exactly one state value"]);
+        Assert.False(diagnostics.FallbackReasons.ContainsKey("loop expression did not emit exactly one state value"));
         Assert.Equal(genericBudget.MaterializedItems, budget.MaterializedItems);
     }
 
     [Fact]
     public void OptimizedWhile_ContinuationEmissionHandover_MatchesGenericError()
     {
-        // The CONTINUATION emits zero values at k == 3; the handover branch assembles
-        // the same slots the generic evaluator would have produced, and the shared
-        // continuation split reports the identical structured error.
+        // The CONTINUATION emits zero values at k == 3: its one `()` slot is the flag. LOOP-06
+        // (condition first): the flag row is read first, so its TypeMismatch is reported at once,
+        // with the generic reader's identical structured error and without any handover.
         const string source = "Empty = ()\nStep = k + 1, if(k < 3, true, Empty)\nStep.while(0)";
 
         var observations = new EvaluationObservations();
@@ -556,8 +557,12 @@ public class LoopStrategyPreparationTests
         Assert.True(genericResult.IsError);
         Assert.Equal(genericResult.Error.ToString(), result.Error.ToString());
 
-        Assert.Equal(1, observations.OptimizedLoopHandoverMaterializationCount);
-        Assert.Equal(1, diagnostics.FallbackReasons["loop continuation did not emit exactly one value"]);
+        var innermost = result.Error;
+        while (innermost is EvalError.WithContext context)
+            innermost = context.Inner;
+        Assert.IsType<EvalError.TypeMismatch>(innermost);
+        Assert.Equal(0, observations.OptimizedLoopHandoverMaterializationCount);
+        Assert.False(diagnostics.FallbackReasons.ContainsKey("loop continuation did not emit exactly one value"));
     }
 
     [Fact]

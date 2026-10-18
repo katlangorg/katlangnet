@@ -1047,6 +1047,64 @@ public static class LanguageSpecCorpus
         },
         new()
         {
+            Id = "loop-while-condition-first-skips-transition",
+            Category = "conditionals",
+            Source = "Step(x) = 10 / (x - 1), x > 1\nStep.while(1)",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "1",
+            ExpectedRaw = "1",
+            ExpectedEmittedCount = 1,
+            Probes =
+            [
+                // A false initial condition returns the initial state without forming any transition row.
+                new SpecProbe("Step(a, b) = b, a + b, a < 100\nStep.while(144, 233)", "ok raw=S[144, 233] n=1"),
+                // The flag row is read first: its non-Boolean value is reported before the failing earlier row.
+                new SpecProbe("S(x) = 1 / 0, 5\nS.while(1)", "err type"),
+                // A true flag forms the remaining rows left to right; the next state excludes the flag.
+                new SpecProbe("Fib(a, b, n) = b, a + b, n - 1, n > 1\nFib.while(0, 1, 10)", "ok raw=S[34, 55, 1] n=1"),
+            ],
+            IncludeInGeneratorPrompt = true,
+            Explanation = "LOOP-06 (condition first): each `while` round evaluates its continuation flag FIRST; `false` returns the state that entered the round without evaluating the other outputs, so the condition protects the transition `10 / (x - 1)`.",
+        },
+        new()
+        {
+            Id = "loop-while-condition-first-trailing-empty-spread",
+            Category = "conditionals",
+            Source = "Tail(n) = ()\nStep(n) = n + 1, n < 2, Tail(n)*\nStep.while(0)",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "2",
+            ExpectedRaw = "2",
+            ExpectedEmittedCount = 1,
+            Probes =
+            [
+                // No row supplies an item: the missing-flag arity failure, after every row was formed.
+                new SpecProbe("E(x) = ()\nS(x) = E(x)*, E(x)*\nS.while(1)", "err arity"),
+                // One effective item is both the flag and the next state.
+                new SpecProbe("S(x) = not x\nS.while(false)", "ok raw=true n=1"),
+            ],
+            Explanation = "LOOP-06 (condition first): the flag is the LAST EFFECTIVE output item, discovered right to left: a trailing spread that supplies nothing is formed and passed over, and the flag comes from the earlier row `n < 2`.",
+        },
+        new()
+        {
+            Id = "loop-while-condition-first-row-granular",
+            Category = "conditionals",
+            Source = "Pack(x) = x - 1, x > 1\nStep(x) = Pack(x)*\nStep.while(3)",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "1",
+            ExpectedRaw = "1",
+            ExpectedEmittedCount = 1,
+            Probes =
+            [
+                // The call `Pack(x)` is one ordinary value formed left to right: its failing first output
+                // is computed before the flag inside it exists ...
+                new SpecProbe("Pack(x) = x + 'a', x > 1\nStep(x) = Pack(x)*\nStep.while(1)", "err type"),
+                // ... while the same rows written directly in the step are skipped by the false flag.
+                new SpecProbe("Step(x) = x + 'a', x > 1\nStep.while(1)", "ok raw=1 n=1"),
+            ],
+            Explanation = "LOOP-06 (condition first) is row-granular: a flag produced inside one call or spread row gets no early exit, because that row is one ordinary value; write the condition as its own output row to protect the transition.",
+        },
+        new()
+        {
             Id = "loop-step-family-multi-slot",
             Category = "conditionals",
             Source = "Gcd(a, 0) = a, 0, false\nGcd(a, b) = b, a mod b, true\nGcd.while(48, 18)[0]",

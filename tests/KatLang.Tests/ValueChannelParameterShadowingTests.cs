@@ -37,7 +37,10 @@ public class ValueChannelParameterShadowingTests
     private const string BinderBody = "    Inner(0) = 0\n    Inner(f) = f(2)\n    Inner(5)\n";
     private const string MapBody = "    Inner(f) = f(2)\n    [5].map(Inner)\n";
     private const string RepeatBody = "    Step(f) = f(2)\n    repeat(Step, 1, 5)\n";
-    private const string WhileBody = "    Step(f) = f(2), 0\n    while(Step, 5)\n";
+    // LOOP-06 (condition first, LOOP-CF1): the flag row is read before the transition row, so the
+    // flag is a Boolean `true` that lets the round reach `f(2)` (a non-Boolean placeholder would now
+    // be the flag's own TypeMismatch, reported first).
+    private const string WhileBody = "    Step(f) = f(2), true\n    while(Step, 5)\n";
     private const string NestedCallBody = "    Inner(f) = {\n        Local(y) = f(y)\n        Local(2)\n    }\n    Inner(5)\n";
     private const string DotFallbackBody = "    Inner(f) = 2.f\n    Inner(5)\n";
 

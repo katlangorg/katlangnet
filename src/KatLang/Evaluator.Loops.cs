@@ -50,14 +50,16 @@ public static partial class Evaluator
 
     /// <summary>
     /// The ROW SUPPLY of an algorithm's output — what a loop step's rows make the next
-    /// state (LOOP-03, VAL-07 applied to a step). Every output row is evaluated once, left
-    /// to right; a NON-spread row supplies exactly one item (its value, <c>()</c> included —
-    /// a surface row's emitted count is at most one, since every result, a completed
-    /// <c>while</c>/<c>repeat</c> included, is a value boundary: Q-26), and a spread row
-    /// <c>e*</c> supplies its spread items, possibly none. The supply depends on the rows
-    /// alone: no parameter-pattern category is consulted (Q-24 retired the former
-    /// pattern-triggered packing of a spread row), so <c>(a, b)</c> is one item and
-    /// <c>(a, b)*</c> two in every step. Lean: <c>evalAlgOutputSlots</c>.
+    /// state (LOOP-03, VAL-07 applied to a step). Every output row is formed once, left
+    /// to right (<see cref="AddOutputRowItems"/>, the one row rule): a NON-spread row supplies
+    /// exactly one item (its value, <c>()</c> included — a surface row's emitted count is at
+    /// most one, since every result, a completed <c>while</c>/<c>repeat</c> included, is a
+    /// value boundary: Q-26), and a spread row <c>e*</c> supplies its spread items, possibly
+    /// none. The supply depends on the rows alone: no parameter-pattern category is consulted
+    /// (Q-24 retired the former pattern-triggered packing of a spread row), so <c>(a, b)</c> is
+    /// one item and <c>(a, b)*</c> two in every step. This is the <c>repeat</c> receiver's
+    /// reading; a <c>while</c> round reads the same rows in its own order
+    /// (<see cref="EvalWhileVerdictSlots"/>, LOOP-06). Lean: <c>evalAlgOutputSlots</c>.
     /// <para>A builtin has no written rows, so its value is ONE row (LOOP-03, Q-23) — never a
     /// re-counted top-level supply, which would read a <c>()</c> result as zero slots. A builtin
     /// loop step never reaches this arm (<see cref="InvokeLoopStepSupply"/> invokes it over the
@@ -78,14 +80,8 @@ public static partial class Evaluator
                 : EvalResult<IReadOnlyList<Result>>.Ok([countedR.Value.Value]);
         }
 
-        if (alg.FindDuplicatePropName() is { } duplicateName)
-            return new EvalError.DuplicateProperty(duplicateName);
-
-        if (ConditionalValueAccessError("conditional", alg) is { } conditionalError)
-            return conditionalError;
-
-        if (alg is Algorithm.User { Output.Count: 0 })
-            return new EvalError.MissingOutput();
+        if (OutputRowsAccessError(alg) is { } accessError)
+            return accessError;
 
         var slots = new List<Result>();
         var pushedCtx = EnterAlgorithmBody(alg, ctx, valEnv, parameterNames);
@@ -93,14 +89,109 @@ public static partial class Evaluator
         {
             var countedR = EvalCounted(expr, pushedCtx, valEnv);
             if (countedR.IsError) return countedR.Error;
-
-            if (expr is Expr.SequenceSpread || countedR.Value.EmittedCount != 0)
-                slots.AddRange(CountedTopLevelValues(countedR.Value));
-            else
-                slots.Add(countedR.Value.Value);
+            AddOutputRowItems(slots, expr, countedR.Value);
         }
 
         return EvalResult<IReadOnlyList<Result>>.Ok(slots);
+    }
+
+    /// <summary>
+    /// ONE <c>while</c> round's reading of a step body's rows (LOOP-06, condition first —
+    /// LOOP-CF1, October 2026). FLAG DISCOVERY forms the rows from the LAST row backwards, each
+    /// row one complete ordinary formation (<see cref="AddOutputRowItems"/>, the row rule the
+    /// supply reader uses), until a row supplies at least one item; that row's LAST item is the
+    /// continuation flag (<see cref="ContinuationFlag"/>). A <c>false</c> flag ends the loop
+    /// (<c>null</c>): the remaining earlier rows are never formed. A <c>true</c> flag forms the
+    /// remaining rows LEFT TO RIGHT, and the next state is the whole supply in written order
+    /// without its last item — a one-item supply is both the state and the flag. Each row is
+    /// formed at most once, in the one activation (<see cref="EnterAlgorithmBody"/>), so the
+    /// flag row and the transition rows share parameter cells and local-property caches; a
+    /// call or spread inside a row stays one ordinary value (row granularity). No row supplies
+    /// an item: the missing-flag <c>BadArity</c>. Lean: <c>whileVerdictSlots</c>.
+    /// </summary>
+    private static EvalResult<IReadOnlyList<Result>?> EvalWhileVerdictSlots(
+        Algorithm alg,
+        EvalCtx ctx,
+        ValEnv valEnv,
+        IReadOnlyList<string>? parameterNames = null)
+    {
+        if (alg is Algorithm.Builtin(var builtin))
+        {
+            var countedR = EvalBuiltinValueCounted(builtin);
+            return countedR.IsError ? countedR.Error : WhileVerdictOfSupply([countedR.Value.Value]);
+        }
+
+        if (OutputRowsAccessError(alg) is { } accessError)
+            return accessError;
+
+        var rows = alg.Output;
+        var slots = new List<Result>(rows.Count);
+        var pushedCtx = EnterAlgorithmBody(alg, ctx, valEnv, parameterNames);
+        // Discovery: every row right of the flag row supplied nothing, so `slots` holds exactly
+        // the flag row's items once one is found.
+        var flagRow = rows.Count - 1;
+        CountedResult flagRowValue = default;
+        for (; flagRow >= 0; flagRow--)
+        {
+            var countedR = EvalCounted(rows[flagRow], pushedCtx, valEnv);
+            if (countedR.IsError) return countedR.Error;
+            AddOutputRowItems(slots, rows[flagRow], countedR.Value);
+            if (slots.Count != 0)
+            {
+                flagRowValue = countedR.Value;
+                break;
+            }
+        }
+
+        if (flagRow < 0)
+            return new EvalError.WithContext(WhileStepWithoutFlagContext, new EvalError.BadArity());
+        var flag = ContinuationFlag(slots[^1]);
+        if (flag.IsError) return flag.Error;
+        if (!flag.Value) return EvalResult<IReadOnlyList<Result>?>.Ok(null);
+
+        if (flagRow > 0)
+        {
+            slots.Clear();
+            for (var i = 0; i < flagRow; i++)
+            {
+                var countedR = EvalCounted(rows[i], pushedCtx, valEnv);
+                if (countedR.IsError) return countedR.Error;
+                AddOutputRowItems(slots, rows[i], countedR.Value);
+            }
+            // The flag row's already formed value, re-read (never re-formed) in written order.
+            AddOutputRowItems(slots, rows[flagRow], flagRowValue);
+        }
+
+        return EvalResult<IReadOnlyList<Result>?>.Ok(WhileNextStateSlots(slots));
+    }
+
+    /// <summary>
+    /// The access failures of an algorithm read as output rows (both row readers and their
+    /// async mirrors): a duplicate property, a conditional read without call arguments, and a
+    /// user algorithm without written output.
+    /// </summary>
+    private static EvalError? OutputRowsAccessError(Algorithm alg)
+    {
+        if (alg.FindDuplicatePropName() is { } duplicateName)
+            return new EvalError.DuplicateProperty(duplicateName);
+        if (ConditionalValueAccessError("conditional", alg) is { } conditionalError)
+            return conditionalError;
+        return alg is Algorithm.User { Output.Count: 0 } ? new EvalError.MissingOutput() : null;
+    }
+
+    /// <summary>
+    /// What ONE formed output row contributes to its algorithm's row supply (LOOP-03): a spread
+    /// row its spread items, possibly none; a non-spread row exactly one item, its value
+    /// (<c>()</c> included). The one row rule of both row readers
+    /// (<see cref="EvalAlgOutputSlots"/>, <see cref="EvalWhileVerdictSlots"/> and their async
+    /// mirrors). Lean: <c>OutputRows.items</c>.
+    /// </summary>
+    private static void AddOutputRowItems(List<Result> into, Expr row, CountedResult formed)
+    {
+        if (row is Expr.SequenceSpread || formed.EmittedCount != 0)
+            AddCountedTopLevelValues(into, formed);
+        else
+            into.Add(formed.Value);
     }
 
     private static EvalError LoopStateArityMismatch(
@@ -351,23 +442,26 @@ public static partial class Evaluator
         _ => null,
     };
 
-    private static EvalResult<IReadOnlyList<Result>> RunStepSlots(
+    private static EvalResult<IReadOnlyList<Result>?> RunStepSlots(
         Algorithm step,
         EvalCtx ctx,
         ValEnv valEnv,
         IReadOnlyList<Result> stateSlots,
         string loopName,
         CallDiagnosticName stepName,
-        PreparedGenericLoopStep prepared)
-        => RunReadyNeedStepSlots(step, stateSlots, ctx, valEnv, loopName, stepName, prepared, asynchronous: false).GetAwaiter().GetResult();
+        PreparedGenericLoopStep prepared,
+        bool conditionFirst)
+        => RunReadyNeedStepSlots(step, stateSlots, ctx, valEnv, loopName, stepName, prepared, conditionFirst, asynchronous: false).GetAwaiter().GetResult();
 
     /// <summary>
-    /// Split a loop step output into next state slots and the continuation flag. The
-    /// step's LAST output is the flag and must be a Boolean value (<c>true</c> continues,
-    /// <c>false</c> stops); a number, string, sequence, or list there is a value-kind
-    /// error, never a truth test. A single-output step keeps the established shape — its
-    /// one slot is both the next state and the flag — so it must be Boolean too.
-    /// Lean: <c>splitContSlots</c>.
+    /// Split a COMPLETE loop step supply into next state slots and the continuation flag
+    /// (<see cref="ContinuationFlag"/>): the supply's LAST item is the flag, and a
+    /// single-item supply keeps the established shape — its one slot is both the next state
+    /// and the flag (<see cref="WhileNextStateSlots"/>). The <c>while</c> round reads a step
+    /// body's rows condition first (<see cref="EvalWhileVerdictSlots"/>); this split remains
+    /// for a supply that is ONE atomic row (a builtin step, <see cref="WhileVerdictOfSupply"/>)
+    /// and for a planned round's handover after its <c>true</c> verdict. Lean:
+    /// <c>splitContSlots</c>.
     /// </summary>
     internal static EvalResult<(IReadOnlyList<Result> NextStateSlots, bool Continue)> SplitContSlots(
         IReadOnlyList<Result> outputSlots)
@@ -375,19 +469,44 @@ public static partial class Evaluator
         if (outputSlots.Count == 0)
             return new EvalError.WithContext(WhileStepWithoutFlagContext, new EvalError.BadArity());
 
-        if (outputSlots.Count == 1)
-        {
-            var flag = outputSlots[0].AsBool();
-            return flag is not null
-                ? EvalResult<(IReadOnlyList<Result>, bool)>.Ok((outputSlots, flag.Value))
-                : new EvalError.TypeMismatch(BooleanRequiredMessage(WhileContinuationFlagRole, outputSlots[0]));
-        }
+        var flag = ContinuationFlag(outputSlots[^1]);
+        if (flag.IsError) return flag.Error;
+        return EvalResult<(IReadOnlyList<Result>, bool)>.Ok((
+            outputSlots.Count == 1 ? outputSlots : outputSlots.Take(outputSlots.Count - 1).ToList(), flag.Value));
+    }
 
-        var last = outputSlots[^1];
-        var cont = last.AsBool();
-        if (cont is null)
-            return new EvalError.TypeMismatch(BooleanRequiredMessage(WhileContinuationFlagRole, last));
-        return EvalResult<(IReadOnlyList<Result>, bool)>.Ok((outputSlots.Take(outputSlots.Count - 1).ToList(), cont.Value));
+    /// <summary>
+    /// The <c>while</c> continuation flag rule (LOOP-06): the flag must be a Boolean value
+    /// (<c>true</c> continues, <c>false</c> stops); a number, string, sequence, or list there is a
+    /// value-kind error, never a truth test. Shared by the generic readers and the planned loop.
+    /// </summary>
+    internal static EvalResult<bool> ContinuationFlag(Result flag)
+        => flag.AsBool() is { } value
+            ? EvalResult<bool>.Ok(value)
+            : new EvalError.TypeMismatch(BooleanRequiredMessage(WhileContinuationFlagRole, flag));
+
+    /// <summary>
+    /// The next state of an accepted <c>while</c> round from its complete supply (in place): the
+    /// supply without its last item, the flag — except that a one-item supply is both the next
+    /// state and the flag.
+    /// </summary>
+    private static List<Result> WhileNextStateSlots(List<Result> supply)
+    {
+        if (supply.Count > 1)
+            supply.RemoveAt(supply.Count - 1);
+        return supply;
+    }
+
+    /// <summary>
+    /// A <c>while</c> round over a supply that is ONE atomic row (a builtin step, a builtin
+    /// clause body): there are no earlier rows to skip, so the round is the ordinary split —
+    /// <c>null</c> for a <c>false</c> flag, the next state otherwise.
+    /// </summary>
+    private static EvalResult<IReadOnlyList<Result>?> WhileVerdictOfSupply(IReadOnlyList<Result> supply)
+    {
+        var split = SplitContSlots(supply);
+        if (split.IsError) return split.Error;
+        return EvalResult<IReadOnlyList<Result>?>.Ok(split.Value.Continue ? split.Value.NextStateSlots : null);
     }
 
     // ── Builtins ─────────────────────────────────────────────────────────────
@@ -414,20 +533,18 @@ public static partial class Evaluator
         ValEnv valEnv,
         CallDiagnosticName stepName)
     {
-        // `while` always runs its step at least once, so the loop-invariant step
-        // binding is prepared unconditionally — once per loop invocation, not per
+        // `while` always invokes its step at least once (its first round binds the step and reads its flag),
+        // so the loop-invariant step binding is prepared unconditionally — once per loop invocation, not per
         // iteration.
         var prepared = PrepareAdmittedLoopStep(step, admittedHead, ctx);
-        var stateSlots = initialStateSlots.ToList();
+        IReadOnlyList<Result> stateSlots = initialStateSlots.ToList();
         while (true)
         {
-            var outputSlotsR = RunStepSlots(step, ctx, valEnv, stateSlots, "while", stepName, prepared);
-            if (outputSlotsR.IsError) return outputSlotsR.Error;
-            var splitR = SplitContSlots(outputSlotsR.Value);
-            if (splitR.IsError) return splitR.Error;
-            var (nextStateSlots, cont) = splitR.Value;
-            if (!cont) return MakeCheckedLoopStateResult(ctx, stateSlots);
-            stateSlots = nextStateSlots.ToList();
+            // A condition-first round (LOOP-06): `null` is a false verdict, the round's state stays.
+            var roundR = RunStepSlots(step, ctx, valEnv, stateSlots, "while", stepName, prepared, conditionFirst: true);
+            if (roundR.IsError) return roundR.Error;
+            if (roundR.Value is not { } nextStateSlots) return MakeCheckedLoopStateResult(ctx, stateSlots);
+            stateSlots = nextStateSlots;
         }
     }
 
@@ -460,9 +577,9 @@ public static partial class Evaluator
         // EvaluatorLoopTests.RepeatLoopGenericCounter_IsLongAtBothMirrorSites.
         for (var k = 0L; k < count; k++)
         {
-            var outputSlotsR = RunStepSlots(step, ctx, valEnv, stateSlots, "repeat", stepName, prepared);
+            var outputSlotsR = RunStepSlots(step, ctx, valEnv, stateSlots, "repeat", stepName, prepared, conditionFirst: false);
             if (outputSlotsR.IsError) return outputSlotsR.Error;
-            stateSlots = outputSlotsR.Value.ToList();
+            stateSlots = outputSlotsR.Value!.ToList();
         }
         return MakeCheckedLoopStateResult(ctx, stateSlots);
     }

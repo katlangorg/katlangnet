@@ -555,13 +555,13 @@ public static partial class Evaluator
     /// the iteration's step charge, then the ONE loop-step invocation over the established state slots
     /// (<see cref="InvokeLoopStepSupply"/>), exactly as <see cref="EvalNeedLoop"/> performs it.
     /// </summary>
-    private static async ValueTask<EvalResult<IReadOnlyList<Result>>> RunReadyNeedStepSlots(
+    private static async ValueTask<EvalResult<IReadOnlyList<Result>?>> RunReadyNeedStepSlots(
         Algorithm step, IReadOnlyList<Result> state, EvalCtx ctx, ValEnv values, string loopName,
-        CallDiagnosticName stepName, PreparedGenericLoopStep prepared, bool asynchronous)
+        CallDiagnosticName stepName, PreparedGenericLoopStep prepared, bool conditionFirst, bool asynchronous)
     {
         if (ctx.Budget.TryChargeStep() is { } limit) return limit;
         var cells = state.Select(value => NeedCell.Ready(new(value, value.ValueCount()))).ToArray();
-        return await InvokeLoopStepSupply(step, prepared, cells, ctx, values, loopName, stepName, asynchronous).ConfigureAwait(false);
+        return await InvokeLoopStepSupply(step, prepared, cells, ctx, values, loopName, stepName, conditionFirst, asynchronous).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -569,7 +569,13 @@ public static partial class Evaluator
     /// October 2026). The state slots are already a formed supply — Model-C cells, never re-opened,
     /// re-counted or demanded here — and the step is invoked on them by the callable's OWN ordinary
     /// machinery; the loop specializes only the RECEIVER: it reads the invocation as a ROW SUPPLY (the
-    /// next state, LOOP-03) instead of as the call's one value.
+    /// next state, LOOP-03) instead of as the call's one value. The receiver also fixes the ORDER in
+    /// which a step body's rows are formed: <c>repeat</c> forms them left to right
+    /// (<see cref="EvalAlgOutputSlots"/>); a <c>while</c> round (<paramref name="conditionFirst"/>)
+    /// discovers its continuation flag first and forms the remaining rows only after a <c>true</c>
+    /// verdict (<see cref="EvalWhileVerdictSlots"/>, LOOP-06), returning <c>null</c> for a
+    /// <c>false</c> verdict and the next state otherwise. A <c>repeat</c> round never returns
+    /// <c>null</c>.
     /// <list type="bullet">
     /// <item>A user algorithm (also a block, a Math member and a host operation, which are user-shaped)
     /// keeps its prepared loop binding: cardinality as the loop-state <see cref="LoopStateBindingContext"/>
@@ -580,7 +586,8 @@ public static partial class Evaluator
     /// selected-branch materialization and activation); the selected clause's rows are the supply.</item>
     /// <item>A builtin runs through its ordinary argument roles (<see cref="ApplyBuiltinCountedResolved"/>,
     /// the callback arm's own route); it has no written rows, so its ONE result value is ONE non-spread
-    /// row — <c>()</c> and collections included — never re-counted into zero or several slots.</item>
+    /// row — <c>()</c> and collections included — never re-counted into zero or several slots; for
+    /// <c>while</c> that one row is both the flag and the candidate state (<see cref="WhileVerdictOfSupply"/>).</item>
     /// </list>
     /// A family's or builtin's failure is its ordinary invocation failure under the step's own call
     /// frame; the loop adds only its outer frame. Nothing here charges a step or enters an invocation
@@ -588,9 +595,9 @@ public static partial class Evaluator
     /// depth protocol for every callable shape, as it always was for user steps. Lean:
     /// <c>runNeedStepSlots</c>.
     /// </summary>
-    private static async ValueTask<EvalResult<IReadOnlyList<Result>>> InvokeLoopStepSupply(
+    private static async ValueTask<EvalResult<IReadOnlyList<Result>?>> InvokeLoopStepSupply(
         Algorithm step, PreparedGenericLoopStep prepared, IReadOnlyList<NeedCell> state, EvalCtx ctx, ValEnv values,
-        string loopName, CallDiagnosticName stepName, bool asynchronous)
+        string loopName, CallDiagnosticName stepName, bool conditionFirst, bool asynchronous)
     {
         switch (step)
         {
@@ -605,20 +612,17 @@ public static partial class Evaluator
                 var names = prepared.BindingContract.ParameterNames;
                 var stepCtx = WithNeedBindings(ctx, bindings.Value!, names);
                 var stepValues = ShadowValEnv(values, names);
-                return asynchronous
-                    ? await EvalAlgOutputSlotsAsync(step, stepCtx, stepValues, names).ConfigureAwait(false)
-                    : EvalAlgOutputSlots(step, stepCtx, stepValues, names);
+                return await ReadLoopStepRows(step, stepCtx, stepValues, names, conditionFirst, asynchronous).ConfigureAwait(false);
             }
             case Algorithm.Conditional:
             {
                 var matched = asynchronous
                     ? await BindNeedFamilySupply(step, state, ctx, values, stepName, asynchronous: true).ConfigureAwait(false)
                     : BindNeedFamilySupplyCounted(step, state, ctx, values, stepName);
-                if (matched.IsError) return WithCallCtx<IReadOnlyList<Result>>(stepName, ctx, matched.Error);
+                if (matched.IsError) return WithCallCtx<IReadOnlyList<Result>?>(stepName, ctx, matched.Error);
                 var activation = matched.Value;
-                return WithCallCtx(stepName, ctx, asynchronous
-                    ? await EvalAlgOutputSlotsAsync(activation.Body, activation.Context, activation.Values).ConfigureAwait(false)
-                    : EvalAlgOutputSlots(activation.Body, activation.Context, activation.Values));
+                return WithCallCtx(stepName, ctx,
+                    await ReadLoopStepRows(activation.Body, activation.Context, activation.Values, null, conditionFirst, asynchronous).ConfigureAwait(false));
             }
             case Algorithm.Builtin(var builtin):
             {
@@ -626,9 +630,10 @@ public static partial class Evaluator
                 var result = asynchronous
                     ? await ApplyBuiltinCountedResolvedAsync(builtin, supplied, ctx, values).ConfigureAwait(false)
                     : ApplyBuiltinCountedResolved(builtin, supplied, ctx, values);
-                return result.IsError
-                    ? WithCallCtx<IReadOnlyList<Result>>(stepName, ctx, result.Error)
-                    : EvalResult<IReadOnlyList<Result>>.Ok([result.Value.Value]);
+                if (result.IsError) return WithCallCtx<IReadOnlyList<Result>?>(stepName, ctx, result.Error);
+                return conditionFirst
+                    ? WhileVerdictOfSupply([result.Value.Value])
+                    : EvalResult<IReadOnlyList<Result>?>.Ok([result.Value.Value]);
             }
             case Algorithm.Alias alias:
             {
@@ -637,13 +642,33 @@ public static partial class Evaluator
                 var target = ResolveAliasTarget(alias, ctx);
                 if (target.IsError) return target.Error;
                 return await InvokeLoopStepSupply(target.Value, PrepareUserLoopStep(target.Value, ctx), state, ctx, values,
-                    loopName, stepName, asynchronous).ConfigureAwait(false);
+                    loopName, stepName, conditionFirst, asynchronous).ConfigureAwait(false);
             }
         }
 
         // A statement-form dispatch over the closed Algorithm hierarchy: the compiler cannot prove it
         // exhaustive, so an unhandled variant fails loudly rather than becoming a silent non-step.
         throw new InvalidOperationException($"Unhandled loop-step callable shape '{step.GetType().Name}'.");
+    }
+
+    /// <summary>
+    /// The receiver's reading of an activated step body's rows: the <c>while</c> verdict reader or the
+    /// <c>repeat</c> supply reader, each with its async mirror.
+    /// </summary>
+    private static async ValueTask<EvalResult<IReadOnlyList<Result>?>> ReadLoopStepRows(
+        Algorithm body, EvalCtx ctx, ValEnv values, IReadOnlyList<string>? parameterNames, bool conditionFirst, bool asynchronous)
+    {
+        if (conditionFirst)
+        {
+            return asynchronous
+                ? await EvalWhileVerdictSlotsAsync(body, ctx, values, parameterNames).ConfigureAwait(false)
+                : EvalWhileVerdictSlots(body, ctx, values, parameterNames);
+        }
+
+        var supply = asynchronous
+            ? await EvalAlgOutputSlotsAsync(body, ctx, values, parameterNames).ConfigureAwait(false)
+            : EvalAlgOutputSlots(body, ctx, values, parameterNames);
+        return supply.IsError ? supply.Error : EvalResult<IReadOnlyList<Result>?>.Ok(supply.Value);
     }
 
     /// <summary>
@@ -949,16 +974,12 @@ public static partial class Evaluator
                 prepared = PrepareUserLoopStep(step, ctx);
             }
             if (ctx.Budget.TryChargeStep() is { } limit) return limit;
-            var output = await InvokeLoopStepSupply(step, prepared, state, ctx, values, loopName, stepName, asynchronous).ConfigureAwait(false);
+            // A `while` round reads its step condition first (LOOP-06): `null` is a false verdict,
+            // and the state that entered the round is the loop's final state.
+            var output = await InvokeLoopStepSupply(step, prepared, state, ctx, values, loopName, stepName,
+                conditionFirst: !repeat, asynchronous).ConfigureAwait(false);
             if (output.IsError) return output.Error;
-            IReadOnlyList<Result> next = output.Value;
-            if (!repeat)
-            {
-                var split = SplitContSlots(next);
-                if (split.IsError) return split.Error;
-                if (!split.Value.Continue) break;
-                next = split.Value.NextStateSlots;
-            }
+            if (output.Value is not { } next) break;
             state = next.Select(item => NeedCell.Ready(new(item, item.ValueCount()))).ToArray();
             if (repeat) remaining--;
         }

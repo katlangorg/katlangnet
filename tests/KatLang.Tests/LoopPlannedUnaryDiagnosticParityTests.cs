@@ -564,7 +564,10 @@ public class LoopPlannedUnaryDiagnosticParityTests
         // starts numeric, and its unary application is wholly planned.
         var continuation = position == "while-continuation";
         var step = continuation ? $"x, {op}value" : $"{op}value";
-        if (position == "while-output") step += ", 1";
+        // LOOP-06 (condition first): the flag row is read before the output row, so a Boolean
+        // `true` flag lets the round reach the unary output (a numeric placeholder would be the
+        // flag's own TypeMismatch, reported first).
+        if (position == "while-output") step += ", true";
         var call = position == "repeat" ? "repeat(S, 1, 0)" : "while(S, 0)";
         var source = $$"""
             Use(value) = {

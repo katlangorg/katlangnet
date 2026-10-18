@@ -53,7 +53,50 @@ internal static partial class LoopOptimizer
 
             ctx.LoopDiagnostics?.RecordLoopIteration();
             frame.BeginIteration();
-            var requiresGenericContinuation = false;
+
+            // The continuation row FIRST (LOOP-06, condition first): the planner admits only a
+            // NON-spread continuation row (TryBuildLoopPlanTemplate), which always supplies at
+            // least one item, so it is the whole of flag discovery. A false verdict returns the
+            // round's state without forming any next-state row.
+            var continuationR = EvalTopLevelLoopExprPlan(plan.ContinuationOutput!, frame);
+            if (continuationR.IsError)
+            {
+                result = continuationR.Error;
+                return true;
+            }
+
+            var continuation = continuationR.Value;
+            frame.SetIterationOutput(plan.NextStateOutputs.Count, continuation);
+            // One emitted value is the flag itself, read without allocation. A zero-emission row
+            // is its one `()` slot; a multi-emission row (host-built trees only) supplies its
+            // items, the last being the flag — read exactly as the generic row rule reads them.
+            var cont = continuation.EmittedCount == 1 ? continuation.AsBool() : null;
+            if (cont is null)
+            {
+                var flagR = Evaluator.ContinuationFlag(continuation.EmittedCount <= 1
+                    ? continuation.ToResult()
+                    : FlagRowLastItem(plan.ContinuationOutput!.Source, continuation));
+                if (flagR.IsError)
+                {
+                    result = flagR.Error;
+                    return true;
+                }
+
+                cont = flagR.Value;
+            }
+
+            if (!cont.Value)
+            {
+                result = frame.CurrentStateResult();
+                return true;
+            }
+
+            // A continuation row supplying other than one item changes the next state's slots
+            // (its items before the flag join it); generic semantics continue from the
+            // already-evaluated outputs.
+            var requiresGenericContinuation = continuation.EmittedCount > 1;
+            if (requiresGenericContinuation)
+                ctx.LoopDiagnostics?.RecordOptimizedLoopFallback("loop continuation did not emit exactly one value");
 
             for (var i = 0; i < plan.NextStateOutputs.Count; i++)
             {
@@ -88,54 +131,18 @@ internal static partial class LoopOptimizer
                 }
             }
 
-            var continuationR = EvalTopLevelLoopExprPlan(plan.ContinuationOutput!, frame);
-            if (continuationR.IsError)
-            {
-                result = continuationR.Error;
-                return true;
-            }
-
-            frame.SetIterationOutput(plan.NextStateOutputs.Count, continuationR.Value);
-
-            // A continuation expression emitting other than one value changes
-            // which generic slot is the continuation flag; generic semantics
-            // must decide from the already-evaluated iteration slots.
-            if (continuationR.Value.EmittedCount != 1)
-            {
-                ctx.LoopDiagnostics?.RecordOptimizedLoopFallback("loop continuation did not emit exactly one value");
-                requiresGenericContinuation = true;
-            }
-
             if (requiresGenericContinuation)
             {
-                var outputSlots = MaterializeGenericHandoverSlots(frame, includeContinuation: true);
-                var splitR = Evaluator.SplitContSlots(outputSlots);
+                // The verdict is already true: the round's complete supply in written order (the
+                // flag row's items last) splits into the next state, never re-evaluating a row.
+                var splitR = Evaluator.SplitContSlots(MaterializeGenericHandoverSlots(frame, includeContinuation: true));
                 if (splitR.IsError)
                 {
                     result = splitR.Error;
                     return true;
                 }
 
-                var (nextStateSlots, continueValue) = splitR.Value;
-                result = continueValue
-                    ? genericContinuation(plan.AdmittedHead, nextStateSlots)
-                    : frame.CurrentStateResult();
-                return true;
-            }
-
-            // MIRROR of Evaluator.SplitContSlots' flag rule: the continuation must be a
-            // Boolean value (never a truth test of a number), with the same message.
-            var cont = continuationR.Value.AsBool();
-            if (cont is null)
-            {
-                result = new EvalError.TypeMismatch(
-                    Evaluator.BooleanRequiredMessage(Evaluator.WhileContinuationFlagRole, continuationR.Value.ToResult()));
-                return true;
-            }
-
-            if (!cont.Value)
-            {
-                result = frame.CurrentStateResult();
+                result = genericContinuation(plan.AdmittedHead, splitR.Value.NextStateSlots);
                 return true;
             }
 
@@ -149,6 +156,18 @@ internal static partial class LoopOptimizer
                 return true;
             }
         }
+    }
+
+    /// <summary>
+    /// The last item a multi-emission continuation row supplies (the generic row rule,
+    /// <see cref="AppendGenericLoopOutputSlots"/>): the flag of a round whose continuation row
+    /// is a host-built multi-value tree. Evaluates nothing.
+    /// </summary>
+    private static Result FlagRowLastItem(Expr source, PlannedLoopValue output)
+    {
+        var items = new List<Result>();
+        AppendGenericLoopOutputSlots(items, source, output);
+        return items[^1];
     }
 
     internal static bool TryEvaluateRepeat(
@@ -350,6 +369,15 @@ internal static partial class LoopOptimizer
         if (userStep.Output.Count != expectedOutputCount)
         {
             RecordLoopPlanFallbackDiagnostic(kind, step, stateArity, ctx, "loop plan output arity mismatch");
+            return null;
+        }
+
+        // A `while` round discovers its flag from the LAST row backwards (LOOP-06). A spread
+        // continuation row may supply no item, and discovery would then need earlier rows, so
+        // such a step runs through the generic condition-first reader (fail closed).
+        if (kind == LoopKind.While && userStep.Output[stateArity] is Expr.SequenceSpread)
+        {
+            RecordLoopPlanFallbackDiagnostic(kind, step, stateArity, ctx, "loop plan spread continuation row");
             return null;
         }
 

@@ -658,8 +658,10 @@ public class IntegerDivisionContractTests
     public void PlannedDivisionByZero_PreservesTheStructuredErrorAndSpan(bool useWhile, string divisor)
     {
         var expression = $"v div {divisor}";
+        // LOOP-06 (condition first): the Boolean `true` flag is read first and lets the round reach
+        // the division row; a non-Boolean placeholder flag would be reported before it.
         var source = useWhile
-            ? $"S(v) = {expression}, 0\nwhile(S, 7)"
+            ? $"S(v) = {expression}, true\nwhile(S, 7)"
             : $"S(v) = {expression}\nrepeat(S, 1, 7)";
         var (generic, _) = RunCountedObserved(source, enableLoopOptimization: false);
         var (planned, observed) = RunCountedObserved(source, enableLoopOptimization: true);

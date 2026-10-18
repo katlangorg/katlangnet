@@ -753,13 +753,17 @@ public class ZeroArgPropertyResultCacheTests
             S = ((1, 2), (3, 4))
             repeat({a + b + Tick, (S[0])*}, 1, 0, 0)
             """;
+        // LOOP-06 (condition first): the `while` round reads its flag row FIRST — here it reads
+        // `Tick` once — and only then forms the state rows, whose spreads emit two and zero items
+        // and so hand the accepted round over (the supply `1, 2, true` is the next state `(1, 2)`);
+        // the generic continuation's second round stops on its flag without reading `Tick`.
         var whileSource = """
             Tick = 42
-            S = ((1, false), (2, 2))
-            while({a + Tick, (S[0])*}, 9)
+            S = ((1, 2), ())
+            while({(S[0])*, (S[1])*, if(a == 1, false, a + b + Tick > 0)}, 9, 0)
             """;
 
-        foreach (var source in new[] { repeatSource, whileSource })
+        foreach (var (source, fallbacks) in new[] { (repeatSource, 1), (whileSource, 2) })
         {
             var parsed = Parser.Parse(source);
             Assert.False(
@@ -777,8 +781,35 @@ public class ZeroArgPropertyResultCacheTests
             Assert.False(result.IsError, result.IsError ? result.Error.ToString() : null);
             Assert.Single(cache.Requests, static request => request.Binding.Name == "Tick");
             Assert.Equal(1, diagnostics.GetSnapshot().OptimizedLoopHits);
-            Assert.Equal(1, diagnostics.GetSnapshot().OptimizedLoopFallbacks);
+            Assert.Equal(fallbacks, diagnostics.GetSnapshot().OptimizedLoopFallbacks);
         }
+    }
+
+    /// <summary>
+    /// LOOP-06 (condition first): a `while` step whose LAST row is a spread may need flag discovery
+    /// past an empty row, so it is never planned (fail closed) — and a false flag found in that
+    /// spread row skips the earlier state row, so `Tick` is never read.
+    /// </summary>
+    [Fact]
+    public void LoopOptimizer_SpreadTailedWhileStep_RunsGenerically_AndSkipsTheEarlierRow()
+    {
+        var parsed = Parser.Parse("""
+            Tick = 42
+            S = ((1, false), (2, 2))
+            while({a + Tick, (S[0])*}, 9)
+            """);
+        Assert.False(parsed.HasErrors);
+        var cache = new RecordingZeroArgPropertyResultCache(UncachedZeroArgPropertyResultCache.Instance);
+        var diagnostics = new LoopOptimizationDiagnostics();
+
+        var result = Evaluator.Run(new Expr.AlgorithmExpr(parsed.Root), cache, enableLoopOptimization: true, diagnostics);
+
+        Assert.False(result.IsError, result.IsError ? result.Error.ToString() : null);
+        Assert.Equal([9m], result.Value.ToAtoms());
+        Assert.DoesNotContain(cache.Requests, static request => request.Binding.Name == "Tick");
+        var snapshot = diagnostics.GetSnapshot();
+        Assert.Equal(0, snapshot.OptimizedLoopHits);
+        Assert.Contains(snapshot.LoopPlans, static plan => plan.FallbackReason == "loop plan spread continuation row");
     }
 
     /// <summary>
