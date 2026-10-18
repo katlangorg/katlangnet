@@ -6,6 +6,11 @@ namespace KatLang.Tests;
 
 public class PropertyCacheBindingIdentityReviewTests
 {
+    // Every bounded wait in this file is a hang guard, never a latency claim: what it waits for
+    // runs as thread-pool work, which a loaded CI runner can delay well past a tight bound (a
+    // 10 s guard timed out in CI in October 2026).
+    private static readonly TimeSpan WaitLimit = TimeSpan.FromSeconds(30);
+
     public static TheoryData<string, int, int[]> Cases() => new()
     {
         { "Outer(x) = { A = Tick() + x\n F(y) = A\n G(y) = F(y)\n A, F(0), G(0), A, Outer.A }\nOuter(0)\nOuter(0)",
@@ -46,7 +51,7 @@ public class PropertyCacheBindingIdentityReviewTests
             {
                 var cache = new HoldingAsyncZeroArgPropertyResultCache(1);
                 var pending = Evaluator.RunCountedObservedAsync(ast, zeroArgPropertyResultCache: cache, hostOperations: operations);
-                await cache.Reached.WaitAsync(TimeSpan.FromSeconds(10));
+                await cache.Reached.WaitAsync(WaitLimit);
                 Assert.False(pending.IsCompleted);
                 cache.Release();
                 (result, _) = await AsyncEvaluationHarness.Complete(pending);

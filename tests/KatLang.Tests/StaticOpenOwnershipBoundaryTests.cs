@@ -5,6 +5,11 @@ namespace KatLang.Tests;
 /// <summary>Completion, host-AST, module, and editor boundaries of static-open ownership.</summary>
 public class StaticOpenOwnershipBoundaryTests
 {
+    // Every bounded wait in this file is a hang guard, never a latency claim: what it waits for
+    // runs as thread-pool work, which a loaded CI runner can delay well past a tight bound (a
+    // 10 s guard timed out in CI in October 2026).
+    private static readonly TimeSpan WaitLimit = TimeSpan.FromSeconds(30);
+
     [Theory]
     [InlineData("")]
     [InlineData("Lib = { public X = 7 }\n")]
@@ -149,7 +154,7 @@ public class StaticOpenOwnershipBoundaryTests
             download.SetException(new IOException("review fetch failure"));
         else
             download.SetResult("public Sub = { public Leaf = { public X = 7 } }");
-        var result = await pending.WaitAsync(TimeSpan.FromSeconds(10));
+        var result = await pending.WaitAsync(WaitLimit);
         var errors = deferred
             ? Assert.IsType<RunResult.EvalFailure>(result).Errors
             : Assert.IsType<RunResult.ParseFailure>(result).Errors;

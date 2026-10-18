@@ -2,6 +2,11 @@ namespace KatLang.Tests;
 
 public sealed class ModuleSecurityHostileReviewTests
 {
+    // Every bounded wait in this file is a hang guard, never a latency claim: what it waits for
+    // runs as thread-pool work, which a loaded CI runner can delay well past a tight bound (a
+    // 10 s guard timed out in CI in October 2026).
+    private static readonly TimeSpan WaitLimit = TimeSpan.FromSeconds(30);
+
     private const string Host = "trusted.example";
     private const string Url = "https://trusted.example/m.kat";
 
@@ -122,7 +127,7 @@ public sealed class ModuleSecurityHostileReviewTests
         Assert.Equal(0, calls);
         using var cancellation = new CancellationTokenSource();
         var run = Evaluator.RunFlatAsync(new Expr.AlgorithmExpr(parsed.Root), limits: null, cancellation.Token);
-        await entered.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        await entered.Task.WaitAsync(WaitLimit);
         Assert.False(run.IsCompleted);
         cancellation.Cancel();
         var error = await Assert.ThrowsAnyAsync<OperationCanceledException>(() => run);

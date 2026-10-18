@@ -18,6 +18,11 @@ namespace KatLang.Tests;
 /// </summary>
 public partial class InvocationPlanTests
 {
+    // Every bounded wait in this file is a hang guard, never a latency claim: what it waits for
+    // runs as thread-pool work, which a loaded CI runner can delay well past a tight bound (a
+    // 10 s guard timed out in CI in October 2026).
+    private static readonly TimeSpan WaitLimit = TimeSpan.FromSeconds(30);
+
     // ── Plan identity and capture inertia ───────────────────────────────────
 
     [Theory]
@@ -662,7 +667,7 @@ public partial class InvocationPlanTests
         var run = probe.RunAsyncTwin("Add2(a, b) = a + b + tick()\nProbe(x) = (Meta(x), x)\nProbe(Add2(pair()*))");
         try
         {
-            await entered.Task.WaitAsync(TimeSpan.FromSeconds(10));
+            await entered.Task.WaitAsync(WaitLimit);
             Assert.False(run.IsCompleted);
             Assert.False(reference!.Plan.Owner.HasCompletedValue);
             Assert.Null(reference.Plan.PreparedCells);
@@ -672,8 +677,8 @@ public partial class InvocationPlanTests
             var reads = await Task.WhenAll(Enumerable.Range(0, 16).Select(_ => Task.Run(() => Reify(reference.Plan.Owner))));
             Assert.All(reads, item => Assert.Same(reference, item));
             release.TrySetResult(new Result.SequenceValue([new Result.Atom(1), new Result.Atom(2)]));
-            Assert.Equal("S[0, 4]", await run.WaitAsync(TimeSpan.FromSeconds(10)));
-            var supply = await joined.WaitAsync(TimeSpan.FromSeconds(10));
+            Assert.Equal("S[0, 4]", await run.WaitAsync(WaitLimit));
+            var supply = await joined.WaitAsync(WaitLimit);
             Assert.Same(supply.Value.Cells, reference.Plan.PreparedCells);
             Assert.Equal("5", Neutral((await reference.InvokeAsync()).Value.Value));
             Assert.Equal("6", Neutral((await reference.InvokeAsync()).Value.Value));
@@ -709,12 +714,12 @@ public partial class InvocationPlanTests
         var run = probe.RunAsyncTwin("F(*xs) = count(xs)\nProbe(x) = (Meta(x), x)\nProbe(F(pair()*))", cancellation.Token);
         try
         {
-            await entered.Task.WaitAsync(TimeSpan.FromSeconds(10));
+            await entered.Task.WaitAsync(WaitLimit);
             var joined = reference!.Plan.PrepareSupply(asynchronous: true).AsTask();
             cancellation.Cancel();
-            var error = await Assert.ThrowsAnyAsync<OperationCanceledException>(() => run.WaitAsync(TimeSpan.FromSeconds(10)));
+            var error = await Assert.ThrowsAnyAsync<OperationCanceledException>(() => run.WaitAsync(WaitLimit));
             Assert.Equal(cancellation.Token, error.CancellationToken);
-            await Assert.ThrowsAnyAsync<OperationCanceledException>(() => joined.WaitAsync(TimeSpan.FromSeconds(10)));
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(() => joined.WaitAsync(WaitLimit));
             await Assert.ThrowsAnyAsync<OperationCanceledException>(() => reference.Plan.PrepareSupply(true).AsTask());
             await Assert.ThrowsAnyAsync<OperationCanceledException>(() => reference.InvokeAsync().AsTask());
             await Assert.ThrowsAnyAsync<OperationCanceledException>(() => reference.Plan.Owner.DemandAsync().AsTask());

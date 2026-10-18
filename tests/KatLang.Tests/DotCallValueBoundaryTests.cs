@@ -29,6 +29,11 @@ namespace KatLang.Tests;
 /// </summary>
 public class DotCallValueBoundaryTests
 {
+    // Every bounded wait in this file is a hang guard, never a latency claim: what it waits for
+    // runs as thread-pool work, which a loaded CI runner can delay well past a tight bound (a
+    // 10 s guard timed out in CI in October 2026).
+    private static readonly TimeSpan WaitLimit = TimeSpan.FromSeconds(30);
+
     /// <summary>
     /// Shared definitions every program starts with: the receivers that need a
     /// name and every callee shape under test.
@@ -423,10 +428,10 @@ public class DotCallValueBoundaryTests
             if (suspend)
             {
                 var pending = Evaluator.RunCountedObservedAsync(ast, hostOperations: operations).AsTask();
-                await entered.Task.WaitAsync(TimeSpan.FromSeconds(10));
+                await entered.Task.WaitAsync(WaitLimit);
                 Assert.False(pending.IsCompleted);
                 release.SetResult();
-                result = (await pending.WaitAsync(TimeSpan.FromSeconds(10))).Result;
+                result = (await pending.WaitAsync(WaitLimit)).Result;
             }
             else
                 result = Evaluator.RunCountedObserved(ast, enableOptimizations: false, hostOperations: operations).Result;

@@ -34,6 +34,11 @@ namespace KatLang.Tests;
 /// </summary>
 public class ExplicitValueOpeningTests
 {
+    // Every bounded wait in this file is a hang guard, never a latency claim: what it waits for
+    // runs as thread-pool work, which a loaded CI runner can delay well past a tight bound (a
+    // 10 s guard timed out in CI in October 2026).
+    private static readonly TimeSpan WaitLimit = TimeSpan.FromSeconds(30);
+
     private const string Coll = "Coll(*xs) = xs\n";
 
     private static string Display(string source)
@@ -932,10 +937,10 @@ public class ExplicitValueOpeningTests
         var asyncOptions = new RunOptions { HostOperations = asyncOperations };
         var parsed = await SourceProvenance.ParseValidAsync(source, asyncOptions);
         var pending = Evaluator.RunCountedObservedAsync(new Expr.AlgorithmExpr(parsed.Root), hostOperations: asyncOperations).AsTask();
-        await entered.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        await entered.Task.WaitAsync(WaitLimit);
         Assert.False(pending.IsCompleted);
         release.SetResult();
-        var asyncResult = (await pending.WaitAsync(TimeSpan.FromSeconds(10))).Result;
+        var asyncResult = (await pending.WaitAsync(WaitLimit)).Result;
 
         Assert.True(asyncResult.IsOk, asyncResult.IsError ? asyncResult.Error.ToString() : "");
         Assert.Equal(AsyncEvaluationHarness.NeutralOf(syncResult), AsyncEvaluationHarness.NeutralOf(asyncResult));
@@ -989,13 +994,13 @@ public class ExplicitValueOpeningTests
         var pending = Evaluator.RunCountedObservedAsync(new Expr.AlgorithmExpr(root), hostOperations: operations).AsTask();
         try
         {
-            await entered[1].Task.WaitAsync(TimeSpan.FromSeconds(10));
+            await entered[1].Task.WaitAsync(WaitLimit);
             Assert.False(pending.IsCompleted);
             Assert.Equal(new[] { 0, 1, 0 }, calls);
             Assert.False(entered[0].Task.IsCompleted);
             Assert.False(entered[2].Task.IsCompleted);
             release[1].SetResult();
-            var (actual, budget) = await pending.WaitAsync(TimeSpan.FromSeconds(10));
+            var (actual, budget) = await pending.WaitAsync(WaitLimit);
             Assert.Equal(AsyncEvaluationHarness.NeutralOf(sync), AsyncEvaluationHarness.NeutralOf(actual));
             Assert.Equal(syncBudget.ConsumedSteps, budget.ConsumedSteps);
             Assert.Equal(new[] { 0, 1, 0 }, calls);

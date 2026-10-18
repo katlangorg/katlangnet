@@ -99,10 +99,10 @@ public class BranchLazyModuleLoadingTests
 
         var evaluation = Evaluator.RunCountedAsync(new Expr.AlgorithmExpr(parsed.Root),
             new AsyncEvaluation.PassThroughAsyncZeroArgPropertyResultCache()).AsTask();
-        await entered.Task.WaitAsync(TimeSpan.FromSeconds(15));
+        await entered.Task.WaitAsync(WaitLimit);
         Assert.False(evaluation.IsCompleted);
         module.SetResult("public Unrelated = 123");
-        var result = await evaluation.WaitAsync(TimeSpan.FromSeconds(15));
+        var result = await evaluation.WaitAsync(WaitLimit);
         Assert.False(result.IsError, result.IsError ? result.Error.ToString() : "");
         Assert.Equal(1, downloads);
 

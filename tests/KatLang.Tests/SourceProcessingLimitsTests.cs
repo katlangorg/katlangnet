@@ -10,6 +10,11 @@ namespace KatLang.Tests;
 /// </summary>
 public class SourceProcessingLimitsTests
 {
+    // Every bounded wait in this file is a hang guard, never a latency claim: what it waits for
+    // runs as thread-pool work, which a loaded CI runner can delay well past a tight bound (a
+    // 10 s guard timed out in CI in October 2026).
+    private static readonly TimeSpan WaitLimit = TimeSpan.FromSeconds(30);
+
     // ── generative in-memory downloaders (no network) ──────────────────────────
 
     private const string Host = "https://katlang.org/gen/";
@@ -882,7 +887,7 @@ public class SourceProcessingLimitsTests
                     _ =>
                     {
                         enteredDownloaders.Signal();
-                        Assert.True(releaseDownloaders.Wait(TimeSpan.FromSeconds(10)));
+                        Assert.True(releaseDownloaders.Wait(WaitLimit));
                         return "public V = 1";
                     }),
                 CancellationToken.None,
@@ -892,7 +897,7 @@ public class SourceProcessingLimitsTests
 
         try
         {
-            Assert.True(enteredDownloaders.Wait(TimeSpan.FromSeconds(10)), "Runs did not overlap inside their downloaders.");
+            Assert.True(enteredDownloaders.Wait(WaitLimit), "Runs did not overlap inside their downloaders.");
         }
         finally
         {

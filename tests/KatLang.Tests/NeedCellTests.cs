@@ -5,6 +5,11 @@ namespace KatLang.Tests;
 
 public class NeedCellTests
 {
+    // Every bounded wait in this file is a hang guard, never a latency claim: what it waits for
+    // runs as thread-pool work, which a loaded CI runner can delay well past a tight bound (a
+    // 10 s guard timed out in CI in October 2026).
+    private static readonly TimeSpan WaitLimit = TimeSpan.FromSeconds(30);
+
     private static EvalResult<Evaluator.CountedResult> Value(int number = 7)
         => EvalResult<Evaluator.CountedResult>.Ok(new(new Result.Atom((Decimal128)number), 1));
 
@@ -22,9 +27,9 @@ public class NeedCellTests
             return Value();
         });
         var demands = Enumerable.Range(0, 64).Select(_ => Task.Run(async () => await cell.DemandAsync())).ToArray();
-        await entered.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        await entered.Task.WaitAsync(WaitLimit);
         release.SetResult();
-        var values = await Task.WhenAll(demands).WaitAsync(TimeSpan.FromSeconds(10));
+        var values = await Task.WhenAll(demands).WaitAsync(WaitLimit);
         Assert.All(values, value => Assert.True(value.IsOk));
         Assert.Equal(1, starts);
         Assert.True(cell.Demand().IsOk);
@@ -123,7 +128,7 @@ public class NeedCellTests
         NeedCell? left = null, right = null;
         left = new NeedCell(() => right!.Demand(), async () => { await Task.Yield(); return await right!.DemandAsync(); });
         right = new NeedCell(() => left.Demand(), async () => { await Task.Yield(); return await left.DemandAsync(); });
-        var result = await left.DemandAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(10));
+        var result = await left.DemandAsync().AsTask().WaitAsync(WaitLimit);
         Assert.Equal(KatLangErrorCode.DemandCycle, result.Error.Code);
         Assert.Equal(KatLangErrorCode.DemandCycle, right.Demand().Error.Code);
     }
@@ -143,7 +148,7 @@ public class NeedCellTests
         left = new NeedCell(() => right!.Demand(), () => Evaluate(() => right!));
         right = new NeedCell(() => left.Demand(), () => Evaluate(() => left));
         var results = await Task.WhenAll(Task.Run(async () => await left.DemandAsync()), Task.Run(async () => await right.DemandAsync()))
-            .WaitAsync(TimeSpan.FromSeconds(10));
+            .WaitAsync(WaitLimit);
         Assert.All(results, result => Assert.Equal(KatLangErrorCode.DemandCycle, result.Error.Code));
         Assert.Equal(2, starts);
     }

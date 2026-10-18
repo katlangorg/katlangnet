@@ -28,6 +28,13 @@ namespace KatLang.Tests;
 /// </summary>
 public class RedundantParenthesesTransparencyTests
 {
+    // Every wait in this file is bounded, so a suspended run that never resumes fails the test
+    // instead of hanging the suite. The bound is a hang guard, never a latency claim: the
+    // resumption runs as thread-pool work, while the timer enforcing the bound is queued ahead
+    // of pool work at high priority, so a tight bound fails spuriously on a loaded CI runner
+    // (10 s did).
+    private static readonly TimeSpan WaitLimit = TimeSpan.FromSeconds(30);
+
     /// <summary>Shared definitions: named values of every kind and every callee shape.</summary>
     private const string Definitions =
         "P = (1, 2)\n" +
@@ -265,10 +272,10 @@ public class RedundantParenthesesTransparencyTests
         if (suspend)
         {
             var pending = Evaluator.RunCountedObservedAsync(ast, hostOperations: operations).AsTask();
-            await entered.Task.WaitAsync(TimeSpan.FromSeconds(10));
+            await entered.Task.WaitAsync(WaitLimit);
             Assert.False(pending.IsCompleted);
             release.SetResult();
-            result = (await pending.WaitAsync(TimeSpan.FromSeconds(10))).Result;
+            result = (await pending.WaitAsync(WaitLimit)).Result;
         }
         else
         {
@@ -573,14 +580,14 @@ public class RedundantParenthesesTransparencyTests
         var pending = Evaluator.RunCountedAsync(ast, cache).AsTask();
         try
         {
-            await cache.Reached.WaitAsync(TimeSpan.FromSeconds(10));
+            await cache.Reached.WaitAsync(WaitLimit);
             Assert.False(pending.IsCompleted);
         }
         finally
         {
             cache.Release();
         }
-        var async = await pending.WaitAsync(TimeSpan.FromSeconds(10));
+        var async = await pending.WaitAsync(WaitLimit);
         Assert.Equal(AsyncEvaluationHarness.NeutralOf(sync), AsyncEvaluationHarness.NeutralOf(async));
         Assert.True(cache.AsyncAccesses > 0);
     }
@@ -606,7 +613,7 @@ public class RedundantParenthesesTransparencyTests
             zeroArgPropertyResultCache: cache, hostOperations: operations, cancellationToken: cancellation.Token).AsTask();
         try
         {
-            await cache.Reached.WaitAsync(TimeSpan.FromSeconds(10));
+            await cache.Reached.WaitAsync(WaitLimit);
             Assert.False(pending.IsCompleted);
             cancellation.Cancel();
         }
@@ -614,7 +621,7 @@ public class RedundantParenthesesTransparencyTests
         {
             cache.Release();
         }
-        var error = await Assert.ThrowsAnyAsync<OperationCanceledException>(() => pending.WaitAsync(TimeSpan.FromSeconds(10)));
+        var error = await Assert.ThrowsAnyAsync<OperationCanceledException>(() => pending.WaitAsync(WaitLimit));
         Assert.Equal(cancellation.Token, error.CancellationToken);
         Assert.Equal(0, calls);
     }

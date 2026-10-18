@@ -38,6 +38,11 @@ namespace KatLang.Tests;
 /// </summary>
 public class IntegerDivisionContractTests
 {
+    // Every bounded wait in this file is a hang guard, never a latency claim: what it waits for
+    // runs as thread-pool work, which a loaded CI runner can delay well past a tight bound (a
+    // 10 s guard timed out in CI in October 2026).
+    private static readonly TimeSpan WaitLimit = TimeSpan.FromSeconds(30);
+
     private static readonly (int Dividend, int Divisor)[] SignCombinations = [(1, 1), (-1, 1), (1, -1), (-1, -1)];
     private static readonly BigInteger OverflowThreshold = (2 * BigInteger.Pow(10, 34) - 1) * 5 * BigInteger.Pow(10, 6110);
 
@@ -754,7 +759,7 @@ public class IntegerDivisionContractTests
         var pending = Evaluator.RunCountedAsync(ast, cache);
         try
         {
-            await cache.Reached.WaitAsync(TimeSpan.FromSeconds(10));
+            await cache.Reached.WaitAsync(WaitLimit);
             Assert.False(pending.IsCompleted);
         }
         finally

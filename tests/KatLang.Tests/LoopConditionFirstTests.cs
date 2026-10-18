@@ -20,6 +20,11 @@ namespace KatLang.Tests;
 /// </summary>
 public sealed class LoopConditionFirstTests
 {
+    // Every bounded wait in this file is a hang guard, never a latency claim: what it waits for
+    // runs as thread-pool work, which a loaded CI runner can delay well past a tight bound (a
+    // 10 s guard timed out in CI in October 2026).
+    private static readonly TimeSpan WaitLimit = TimeSpan.FromSeconds(30);
+
     private const string MarkName = "mark";
     private const string Pack = "Pack(x) = 10 / (x - 1), x > 1\n";
     private const string EmptyMark = "E(n) = if(mark(n) > 0, (), ())\n";
@@ -238,13 +243,13 @@ public sealed class LoopConditionFirstTests
             var pending = Run();
             try
             {
-                await entered.Task.WaitAsync(TimeSpan.FromSeconds(10));
+                await entered.Task.WaitAsync(WaitLimit);
                 Assert.False(pending.IsCompleted);
                 Assert.Equal(inFlag ? "hold" : "mark(true),hold", string.Join(",", calls));
                 cancellation.Cancel();
                 release.TrySetResult();
                 var error = await Assert.ThrowsAnyAsync<OperationCanceledException>(
-                    () => pending.WaitAsync(TimeSpan.FromSeconds(10)));
+                    () => pending.WaitAsync(WaitLimit));
                 Assert.Equal(cancellation.Token, error.CancellationToken);
                 Assert.True(pending.IsCanceled);
                 Assert.Equal(inFlag ? "hold" : "mark(true),hold", string.Join(",", calls));
@@ -253,7 +258,7 @@ public sealed class LoopConditionFirstTests
             {
                 cancellation.Cancel();
                 release.TrySetResult();
-                try { await pending.WaitAsync(TimeSpan.FromSeconds(10)); }
+                try { await pending.WaitAsync(WaitLimit); }
                 catch (OperationCanceledException) { }
             }
         }

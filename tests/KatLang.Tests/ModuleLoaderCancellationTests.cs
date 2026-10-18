@@ -9,6 +9,11 @@ namespace KatLang.Tests;
 /// </summary>
 public class ModuleLoaderCancellationTests
 {
+    // Every bounded wait in this file is a hang guard, never a latency claim: what it waits for
+    // runs as thread-pool work, which a loaded CI runner can delay well past a tight bound (a
+    // 10 s guard timed out in CI in October 2026).
+    private static readonly TimeSpan WaitLimit = TimeSpan.FromSeconds(30);
+
     private const string ModuleUrl = "https://katlang.org/cancellation/module.kat";
     private const string NestedUrl = "https://katlang.org/cancellation/nested.kat";
     private const string Source = $"public Module = load('{ModuleUrl}')\nModule.Value";
@@ -560,7 +565,7 @@ public class ModuleLoaderCancellationTests
         // All four runs are genuinely suspended inside their downloaders at once —
         // run-local loader state and the shared options object never interfere.
         Assert.True(
-            enteredDownloaders.Wait(TimeSpan.FromSeconds(10)),
+            enteredDownloaders.Wait(WaitLimit),
             "Runs did not overlap inside their suspended downloaders.");
         Assert.All(tasks, task => Assert.False(task.IsCompleted));
 

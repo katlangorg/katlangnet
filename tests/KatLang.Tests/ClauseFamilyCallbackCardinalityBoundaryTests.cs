@@ -4,6 +4,11 @@ namespace KatLang.Tests;
 
 public sealed partial class ClauseFamilyCallbackCardinalityTests
 {
+    // Every bounded wait in this file is a hang guard, never a latency claim: what it waits for
+    // runs as thread-pool work, which a loaded CI runner can delay well past a tight bound (a
+    // 10 s guard timed out in CI in October 2026).
+    private static readonly TimeSpan WaitLimit = TimeSpan.FromSeconds(30);
+
     public static TheoryData<string, string, string> RepeatedBranchCallbacks() => new()
     {
         { "compatible repeated binding", "F((x, x)) = 10\nF((x, y)) = 20\nmap([(1, 1)], F)", "L[10]" },
@@ -235,12 +240,12 @@ public sealed partial class ClauseFamilyCallbackCardinalityTests
         Assert.Equal(0, attempts);
         var program = new Expr.AlgorithmExpr(parsed.Root);
         var first = Evaluator.RunCountedAsync(program, new RunScopedAsyncZeroArgPropertyResultCache(), cancellationToken: cancellation.Token).AsTask();
-        await entered.Task.WaitAsync(TimeSpan.FromSeconds(15));
+        await entered.Task.WaitAsync(WaitLimit);
         Assert.False(first.IsCompleted);
         cancellation.Cancel();
-        var exception = await Assert.ThrowsAnyAsync<OperationCanceledException>(() => first.WaitAsync(TimeSpan.FromSeconds(15)));
+        var exception = await Assert.ThrowsAnyAsync<OperationCanceledException>(() => first.WaitAsync(WaitLimit));
         Assert.Equal(cancellation.Token, exception.CancellationToken);
-        var retry = await Evaluator.RunCountedAsync(program, new RunScopedAsyncZeroArgPropertyResultCache()).AsTask().WaitAsync(TimeSpan.FromSeconds(15));
+        var retry = await Evaluator.RunCountedAsync(program, new RunScopedAsyncZeroArgPropertyResultCache()).AsTask().WaitAsync(WaitLimit);
         // The retry acquires the source again (the cancelled acquisition was never cached) and the selected clause's
         // two rows are its ordinary call result, one element (HO-03).
         Assert.True(retry.IsOk, retry.IsError ? retry.Error.ToString() : "");

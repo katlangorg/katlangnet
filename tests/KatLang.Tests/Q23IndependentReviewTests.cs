@@ -5,6 +5,11 @@ namespace KatLang.Tests;
 
 public partial class LoopStepCallableDispatchTests
 {
+    // Every bounded wait in this file is a hang guard, never a latency claim: what it waits for
+    // runs as thread-pool work, which a loaded CI runner can delay well past a tight bound (a
+    // 10 s guard timed out in CI in October 2026).
+    private static readonly TimeSpan WaitLimit = TimeSpan.FromSeconds(30);
+
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
@@ -216,10 +221,10 @@ public partial class LoopStepCallableDispatchTests
                     hostOperations: operations, cancellationToken: cancellation.Token).AsTask();
             }
             else run = KatLangEngine.RunAsync(source, new RunOptions { HostOperations = operations, EvaluationCancellationToken = cancellation.Token });
-            await entered.Task.WaitAsync(TimeSpan.FromSeconds(10));
+            await entered.Task.WaitAsync(WaitLimit);
             Assert.False(run.IsCompleted);
             cancellation.Cancel();
-            var error = await Assert.ThrowsAnyAsync<OperationCanceledException>(() => run.WaitAsync(TimeSpan.FromSeconds(10)));
+            var error = await Assert.ThrowsAnyAsync<OperationCanceledException>(() => run.WaitAsync(WaitLimit));
             Assert.Equal(cancellation.Token, error.CancellationToken);
             Assert.Equal(1, starts);
         }
@@ -241,7 +246,7 @@ public partial class LoopStepCallableDispatchTests
             return EvalResult<Evaluator.CountedResult>.Ok(new(new Result.Atom(3), 1));
         });
         var first = cell.DemandAsync().AsTask();
-        await entered.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        await entered.Task.WaitAsync(WaitLimit);
         var step = family
             ? ParseValid("F(0) = 9\nF(x) = x\n0", HostOperations.Create()).Properties.Single(p => p.Name == "F").Value
             : new Algorithm.Builtin(BuiltinId.count);
@@ -255,8 +260,8 @@ public partial class LoopStepCallableDispatchTests
         Assert.False(joined.IsCompleted);
         Assert.Equal(1, starts);
         release.SetResult();
-        Assert.True((await first.WaitAsync(TimeSpan.FromSeconds(10))).IsOk);
-        var output = await joined.WaitAsync(TimeSpan.FromSeconds(10));
+        Assert.True((await first.WaitAsync(WaitLimit)).IsOk);
+        var output = await joined.WaitAsync(WaitLimit);
         Assert.True(output.IsOk);
         Assert.Equal(family ? "3" : "1", SixRouteAgreement.Neutral(Assert.Single(output.Value)));
         Assert.Equal(1, starts);

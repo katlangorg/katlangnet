@@ -9,6 +9,11 @@ namespace KatLang.Tests;
 /// </summary>
 public class GraceIndependentHostileTests
 {
+    // Every bounded wait in this file is a hang guard, never a latency claim: what it waits for
+    // runs as thread-pool work, which a loaded CI runner can delay well past a tight bound (a
+    // 10 s guard timed out in CI in October 2026).
+    private static readonly TimeSpan WaitLimit = TimeSpan.FromSeconds(30);
+
     [Theory]
     [InlineData("\n", "~x")]
     [InlineData("\r\n", "x~~")]
@@ -112,14 +117,14 @@ public class GraceIndependentHostileTests
             });
         try
         {
-            await acquired.Task.WaitAsync(TimeSpan.FromSeconds(10));
+            await acquired.Task.WaitAsync(WaitLimit);
         }
         finally
         {
             cancellation.Cancel();
         }
         await Assert.ThrowsAnyAsync<OperationCanceledException>(
-            () => run.WaitAsync(TimeSpan.FromSeconds(10)));
+            () => run.WaitAsync(WaitLimit));
     }
 
     [Fact]

@@ -6,6 +6,11 @@ namespace KatLang.Tests;
 
 public class NumericSemanticLawReviewTests
 {
+    // Every bounded wait in this file is a hang guard, never a latency claim: what it waits for
+    // runs as thread-pool work, which a loaded CI runner can delay well past a tight bound (a
+    // 10 s guard timed out in CI in October 2026).
+    private static readonly TimeSpan WaitLimit = TimeSpan.FromSeconds(30);
+
     private const string Maximum = "9999999999999999999999999999999999e6111";
     private static Decimal128 N(string text) => Decimal128.Parse(text, CultureInfo.InvariantCulture);
     private static RunResult.Success Run(string source, RunOptions? options = null)
@@ -281,7 +286,7 @@ public class NumericSemanticLawReviewTests
         var pending = KatLangEngine.RunAsync($"AfterGate(x) = if(x == 0, {{\n{source}\n}}, 99)\nAfterGate(ReviewGate())", options);
         try
         {
-            await entered.Task.WaitAsync(TimeSpan.FromSeconds(10));
+            await entered.Task.WaitAsync(WaitLimit);
             Assert.False(pending.IsCompleted);
         }
         finally { release.TrySetResult(new Result.Atom(0)); }

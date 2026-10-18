@@ -5,6 +5,11 @@ namespace KatLang.Tests;
 /// <summary>Independent FA-OQ-1 seam regressions; expectations come from Option B and Model C.</summary>
 public class InlineAliasFinalReviewTests
 {
+    // Every bounded wait in this file is a hang guard, never a latency claim: what it waits for
+    // runs as thread-pool work, which a loaded CI runner can delay well past a tight bound (a
+    // 10 s guard timed out in CI in October 2026).
+    private static readonly TimeSpan WaitLimit = TimeSpan.FromSeconds(30);
+
     private const string Inc = "Inc(x) = x + 1\n";
 
     public static TheoryData<string, string, string, string?, string?, string[]> Witnesses => new()
@@ -109,10 +114,10 @@ public class InlineAliasFinalReviewTests
         {
             if (selected)
             {
-                await entered.Task.WaitAsync(TimeSpan.FromSeconds(10));
+                await entered.Task.WaitAsync(WaitLimit);
                 Assert.False(pending.IsCompleted); // Demand must actually cross an asynchronous acquisition seam.
                 release.SetResult("public Imported(x) = x + 1");
-                var failure = Assert.IsType<RunResult.EvalFailure>(await pending.WaitAsync(TimeSpan.FromSeconds(10)));
+                var failure = Assert.IsType<RunResult.EvalFailure>(await pending.WaitAsync(WaitLimit));
                 var error = Assert.Single(failure.Errors);
                 Assert.Equal(KatLangErrorCode.ArityMismatch, error.Code);
                 Assert.Contains("Property 'Imported' expects 1 parameter, but was called with 0 arguments.", error.Message);
@@ -121,7 +126,7 @@ public class InlineAliasFinalReviewTests
             }
             else
             {
-                var success = Assert.IsType<RunResult.Success>(await pending.WaitAsync(TimeSpan.FromSeconds(10)));
+                var success = Assert.IsType<RunResult.Success>(await pending.WaitAsync(WaitLimit));
                 Assert.Equal("7", Neutral(success.Value));
                 Assert.Equal(0, reads);
             }
@@ -129,7 +134,7 @@ public class InlineAliasFinalReviewTests
         finally
         {
             release.TrySetResult("public Imported(x) = x + 1");
-            await pending.WaitAsync(TimeSpan.FromSeconds(10));
+            await pending.WaitAsync(WaitLimit);
         }
     }
 }

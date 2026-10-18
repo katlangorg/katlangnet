@@ -26,6 +26,11 @@ namespace KatLang.Tests;
 /// </summary>
 public sealed class CallbackResultBoundaryTests
 {
+    // Every bounded wait in this file is a hang guard, never a latency claim: what it waits for
+    // runs as thread-pool work, which a loaded CI runner can delay well past a tight bound (a
+    // 10 s guard timed out in CI in October 2026).
+    private static readonly TimeSpan WaitLimit = TimeSpan.FromSeconds(30);
+
     // ── 1. The investigation's frozen matrix (68 programs + 24 adversarial probes), Option B ───────────────
 
     /// <summary>id, source, expected outcome (<c>ok VALUE</c> or <c>err CODE</c>), expected host-call log.</summary>
@@ -521,7 +526,7 @@ public sealed class CallbackResultBoundaryTests
         var task = KatLangEngine.RunAsync(source, new RunOptions { HostOperations = operations, EvaluationCancellationToken = cancellation.Token });
         try
         {
-            await reached.Task.WaitAsync(TimeSpan.FromSeconds(10));
+            await reached.Task.WaitAsync(WaitLimit);
             Assert.False(task.IsCompleted);
             cancellation.Cancel();
         }

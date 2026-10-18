@@ -10,6 +10,11 @@ namespace KatLang.Tests;
 /// </summary>
 public class DeferredSourceAdmissionTests
 {
+    // Every bounded wait in this file is a hang guard, never a latency claim: what it waits for
+    // runs as thread-pool work, which a loaded CI runner can delay well past a tight bound (a
+    // 10 s guard timed out in CI in October 2026).
+    private static readonly TimeSpan WaitLimit = TimeSpan.FromSeconds(30);
+
     private const string Url = "https://katlang.org/admission/big.kat";
     private static readonly string Module = "public X = 1\npublic Inc(x) = x + 1\n#".PadRight(295, 'p');
     private const string HistoricalUrl = "https://mods.test/big.kat";
@@ -283,11 +288,11 @@ public class DeferredSourceAdmissionTests
         var region = Region(provenance.Root);
         var pending = Evaluator.RunCountedAsync(new Expr.AlgorithmExpr(provenance.Root), new SuspendingAsyncZeroArgPropertyResultCache(),
             hostOperations: options.HostOperations, cancellationToken: sourceCancellation ? default : cancellation.Token).AsTask();
-        await entered.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        await entered.Task.WaitAsync(WaitLimit);
         cancellation.Cancel();
-        var error = await Assert.ThrowsAsync<OperationCanceledException>(async () => await pending.WaitAsync(TimeSpan.FromSeconds(10)));
-        await aborted.Task.WaitAsync(TimeSpan.FromSeconds(10));
-        await region.Loader.MaterializationGate.WaitAsync().WaitAsync(TimeSpan.FromSeconds(10));
+        var error = await Assert.ThrowsAsync<OperationCanceledException>(async () => await pending.WaitAsync(WaitLimit));
+        await aborted.Task.WaitAsync(WaitLimit);
+        await region.Loader.MaterializationGate.WaitAsync().WaitAsync(WaitLimit);
         region.Loader.MaterializationGate.Release();
         Assert.Equal(cancellation.Token, error.CancellationToken);
         Assert.Equal(1, fetches);

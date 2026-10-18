@@ -6,6 +6,11 @@ namespace KatLang.Tests;
 
 public class ImplicitArgumentSharingHostileReviewTests
 {
+    // Every bounded wait in this file is a hang guard, never a latency claim: what it waits for
+    // runs as thread-pool work, which a loaded CI runner can delay well past a tight bound (a
+    // 10 s guard timed out in CI in October 2026).
+    private static readonly TimeSpan WaitLimit = TimeSpan.FromSeconds(30);
+
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
@@ -215,7 +220,7 @@ public class ImplicitArgumentSharingHostileReviewTests
         Assert.Empty(parsed.Diagnostics);
         var program = new Expr.AlgorithmExpr(parsed.Root);
         var run = Evaluator.RunCountedObservedAsync(program, hostOperations: operations, cancellationToken: cancellation.Token).AsTask();
-        await entered.Task.WaitAsync(TimeSpan.FromSeconds(15));
+        await entered.Task.WaitAsync(WaitLimit);
         Assert.False(run.IsCompleted);
         Assert.Equal(2, calls);
         cancellation.Cancel();

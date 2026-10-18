@@ -4,6 +4,11 @@ namespace KatLang.Tests;
 
 public class Fe3HostileReviewTests
 {
+    // Every bounded wait in this file is a hang guard, never a latency claim: what it waits for
+    // runs as thread-pool work, which a loaded CI runner can delay well past a tight bound (a
+    // 10 s guard timed out in CI in October 2026).
+    private static readonly TimeSpan WaitLimit = TimeSpan.FromSeconds(30);
+
     private static Algorithm.User Body(params Expr[] rows) => new(null, [], [], [], new OutputBundle(rows));
 
     [Theory]
@@ -125,7 +130,7 @@ public class Fe3HostileReviewTests
         if (async)
             for (var i = 0; i < 4; i++)
             {
-                await entered[i].Task.WaitAsync(TimeSpan.FromSeconds(15));
+                await entered[i].Task.WaitAsync(WaitLimit);
                 Assert.False(run.IsCompleted);
                 gates[i].SetResult(new Result.Atom(0));
             }
@@ -158,7 +163,7 @@ public class Fe3HostileReviewTests
             parsed.Root.Properties.Single(p => p.Name == "B").Value.ParameterPatterns);
         var program = new Expr.AlgorithmExpr(parsed.Root);
         var run = Evaluator.RunCountedObservedAsync(program, hostOperations: operations, cancellationToken: cancellation.Token).AsTask();
-        await entered.Task.WaitAsync(TimeSpan.FromSeconds(15));
+        await entered.Task.WaitAsync(WaitLimit);
         Assert.False(run.IsCompleted);
         cancellation.Cancel();
         var error = await Assert.ThrowsAnyAsync<OperationCanceledException>(async () => await run);

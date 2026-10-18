@@ -6,6 +6,11 @@ namespace KatLang.Tests;
 /// <summary>Independent C-full review probes, with hand-written supply expectations.</summary>
 public class CFullHostileReviewTests
 {
+    // Every bounded wait in this file is a hang guard, never a latency claim: what it waits for
+    // runs as thread-pool work, which a loaded CI runner can delay well past a tight bound (a
+    // 10 s guard timed out in CI in October 2026).
+    private static readonly TimeSpan WaitLimit = TimeSpan.FromSeconds(30);
+
     private static readonly string[] Values =
         ["1", "()", "[]", "(1, 2)", "[1, 2]", "((1, 2), 3)", "[[1, 2], 3]", "[(1, 2)]", "[()]"];
 
@@ -210,7 +215,7 @@ public class CFullHostileReviewTests
         var pending = Evaluator.RunCountedObservedAsync(new Expr.AlgorithmExpr(parsed.Root), hostOperations: asyncOps).AsTask();
         try
         {
-            await entered.Task.WaitAsync(TimeSpan.FromSeconds(10));
+            await entered.Task.WaitAsync(WaitLimit);
             Assert.False(pending.IsCompleted);
             var supplied = Assert.IsType<Result.ListValue>(seen[^1]);
             Assert.Equal(operation == "reduce" ? 2 : 1, supplied.Items.Count);
@@ -220,7 +225,7 @@ public class CFullHostileReviewTests
         {
             release.TrySetResult();
         }
-        var (actual, budget) = await pending.WaitAsync(TimeSpan.FromSeconds(10));
+        var (actual, budget) = await pending.WaitAsync(WaitLimit);
         Assert.Equal(AsyncEvaluationHarness.NeutralOf(sync), AsyncEvaluationHarness.NeutralOf(actual));
         Assert.Equal(syncBudget.ConsumedSteps, budget.ConsumedSteps);
         Assert.Equal(syncSeen.Count, seen.Count);

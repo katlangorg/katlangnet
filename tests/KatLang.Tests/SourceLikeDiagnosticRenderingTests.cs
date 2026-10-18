@@ -12,6 +12,11 @@ namespace KatLang.Tests;
 /// </summary>
 public class SourceLikeDiagnosticRenderingTests(ITestOutputHelper output)
 {
+    // Every bounded wait in this file is a hang guard, never a latency claim: what it waits for
+    // runs as thread-pool work, which a loaded CI runner can delay well past a tight bound (a
+    // 10 s guard timed out in CI in October 2026).
+    private static readonly TimeSpan WaitLimit = TimeSpan.FromSeconds(30);
+
     private static readonly string[] Operators =
         ["+", "-", "*", "/", "div", "mod", "^", "and", "xor", "or"];
     private static readonly string[] Comparisons = ["<", ">", "<=", ">=", "==", "!="];
@@ -210,10 +215,10 @@ public class SourceLikeDiagnosticRenderingTests(ITestOutputHelper output)
         Assert.True(sync.IsError);
         var cache = new HoldingAsyncZeroArgPropertyResultCache(1);
         var pending = Evaluator.RunAsync(expr, cache).AsTask();
-        await cache.Reached.WaitAsync(TimeSpan.FromSeconds(10));
+        await cache.Reached.WaitAsync(WaitLimit);
         try { Assert.False(pending.IsCompleted); }
         finally { cache.Release(); }
-        var asynchronous = await pending.WaitAsync(TimeSpan.FromSeconds(10));
+        var asynchronous = await pending.WaitAsync(WaitLimit);
         Assert.True(asynchronous.IsError);
         var syncError = KatLangError.FromEvalError(sync.Error);
         var asyncError = KatLangError.FromEvalError(asynchronous.Error);

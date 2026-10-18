@@ -23,6 +23,11 @@ namespace KatLang.Tests;
 /// </summary>
 public class DiagnosticBudgetTests
 {
+    // Every bounded wait in this file is a hang guard, never a latency claim: what it waits for
+    // runs as thread-pool work, which a loaded CI runner can delay well past a tight bound (a
+    // 10 s guard timed out in CI in October 2026).
+    private static readonly TimeSpan WaitLimit = TimeSpan.FromSeconds(30);
+
     private const string Host = "https://katlang.org/budget/";
     private const int Limit = SourceProcessingLimits.MaxSupportedDiagnosticCount;
 
@@ -663,21 +668,21 @@ public class DiagnosticBudgetTests
         using (var cancellation = new CancellationTokenSource())
         {
             var run = Evaluator.RunFlatAsync(root, limits: null, cancellation.Token);
-            await slowStarted.Task.WaitAsync(TimeSpan.FromSeconds(10));
+            await slowStarted.Task.WaitAsync(WaitLimit);
             cancellation.Cancel();
-            await Assert.ThrowsAnyAsync<OperationCanceledException>(() => run.WaitAsync(TimeSpan.FromSeconds(10)));
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(() => run.WaitAsync(WaitLimit));
         }
 
         // Wait for the abandoned walk to unwind (it releases the materialization gate last).
         var region = Region(parsed.Root, "F", 1);
-        using (var gateTimeout = new CancellationTokenSource(TimeSpan.FromSeconds(10)))
+        using (var gateTimeout = new CancellationTokenSource(WaitLimit))
         {
             await region.Loader.MaterializationGate.WaitAsync(gateTimeout.Token);
             region.Loader.MaterializationGate.Release();
         }
 
         slowRelease.SetResult(slowSource);
-        var retry = await Evaluator.RunFlatAsync(root).WaitAsync(TimeSpan.FromSeconds(10));
+        var retry = await Evaluator.RunFlatAsync(root).WaitAsync(WaitLimit);
         Assert.False(retry.IsError, retry.IsError ? retry.Error.ToString() : "");
         Assert.Equal([42m], retry.Value);
     }
@@ -817,7 +822,7 @@ public class DiagnosticBudgetTests
             {
                 if (Interlocked.Increment(ref arrived) == 2)
                     both.SetResult();
-                await both.Task.WaitAsync(TimeSpan.FromSeconds(10));
+                await both.Task.WaitAsync(WaitLimit);
                 return $"open {Refused(3)}\npublic V = 1";
             },
             SourceProcessingLimits = Limits(6),
