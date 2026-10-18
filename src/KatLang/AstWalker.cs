@@ -210,15 +210,13 @@ public abstract class AstWalker
                 VisitExpr(left);
                 VisitExpr(right);
                 break;
-            case Expr.Comparison(var first, var links):
+            case Expr.Comparison(var first, _):
                 VisitExpr(first);
-                foreach (var link in links)
-                    VisitExpr(link.Operand);
+                VisitComparisonOperands(expr);
                 break;
-            case Expr.Index(var target, var selectors):
+            case Expr.Index(var target, _):
                 VisitExpr(target);
-                foreach (var selector in selectors)
-                    VisitExpr(selector);
+                VisitIndexSelectors(expr);
                 break;
             case Expr.SequenceConstruct(var left, var right):
                 VisitExpr(left);
@@ -227,9 +225,8 @@ public abstract class AstWalker
             case Expr.SequenceSpread(var operand):
                 VisitExpr(operand);
                 break;
-            case Expr.ListLiteral(var items):
-                foreach (var item in items)
-                    VisitExpr(item);
+            case Expr.ListLiteral:
+                VisitListItems(expr);
                 break;
             case Expr.InterpolatedString:
                 VisitInterpolationHoles(expr);
@@ -258,9 +255,8 @@ public abstract class AstWalker
             case Expr.AlgorithmExpr(var algorithm):
                 VisitAlgorithm(algorithm);
                 break;
-            case Expr.Capture(var body):
-                foreach (var item in body)
-                    VisitExpr(item);
+            case Expr.Capture:
+                VisitCaptureItems(expr);
                 break;
             case Expr.Call(var function, var args):
                 VisitExpr(function);
@@ -290,13 +286,44 @@ public abstract class AstWalker
         }
     }
 
-    // Keep interpolation's deconstruction/enumerator locals out of the recursive
-    // dispatch frame: even unrelated unary spines must fit the calibrated stack.
+    // Keep every child loop's deconstruction/enumerator locals out of the recursive
+    // dispatch frame: even unrelated unary spines must fit the calibrated stack. A loop
+    // left in VisitExpr also makes it a method with loops, which tiered PGO jits as
+    // INSTRUMENTED Tier-0 code on first call — measured in Release at ~1.4 KB per
+    // validation level instead of ~0.9 KB, enough to overflow the 384 KiB spine pin.
     [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
     private void VisitInterpolationHoles(Expr expr)
     {
         foreach (var link in ((Expr.InterpolatedString)expr).Links)
             VisitExpr(link.Hole);
+    }
+
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+    private void VisitComparisonOperands(Expr expr)
+    {
+        foreach (var link in ((Expr.Comparison)expr).Links)
+            VisitExpr(link.Operand);
+    }
+
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+    private void VisitIndexSelectors(Expr expr)
+    {
+        foreach (var selector in ((Expr.Index)expr).Selectors)
+            VisitExpr(selector);
+    }
+
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+    private void VisitListItems(Expr expr)
+    {
+        foreach (var item in ((Expr.ListLiteral)expr).Items)
+            VisitExpr(item);
+    }
+
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+    private void VisitCaptureItems(Expr expr)
+    {
+        foreach (var item in ((Expr.Capture)expr).Body)
+            VisitExpr(item);
     }
 
     /// <summary>

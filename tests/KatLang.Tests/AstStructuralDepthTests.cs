@@ -1,5 +1,7 @@
 using System.Diagnostics;
 using System.Numerics;
+using System.Reflection;
+using System.Reflection.Emit;
 
 namespace KatLang.Tests;
 
@@ -1545,6 +1547,87 @@ public class AstStructuralDepthTests
         Assert.Equal(AstStructuralViolation.DepthExceeded, rejection.Kind);
     }
 
+    /// <summary>
+    /// The per-level frames of the pre-evaluation validation walk — the recursion the 384 KiB
+    /// spine pin in <see cref="AstStructuralDepthProcessTests.NearBoundaryShapes_ProbeChild"/>
+    /// must hold — stay loop-free. Under tiered PGO the JIT compiles a method WITH loops as
+    /// instrumented Tier-0 code on first call; in Release that made each validation level ~1.4 KB
+    /// and overflowed the pin's thread (S3/L3), while Debug code (always minimally optimized)
+    /// never showed it. Loops belong in the NoInlining child helpers. Pinned on the IL, which
+    /// keeps its loops in every build configuration, so this also guards Debug-only CI.
+    /// </summary>
+    [Fact]
+    public void ValidationWalkDispatchFrames_ContainNoLoops()
+    {
+        var walker = typeof(AlgorithmValidation).GetNestedType("PreEvaluationValidationWalker", BindingFlags.NonPublic)!;
+        Assert.False(HasBackwardBranch(typeof(AstWalker).GetMethod(nameof(AstWalker.VisitExpr))!));
+        Assert.False(HasBackwardBranch(walker.GetMethod(nameof(AstWalker.VisitExpr))!));
+
+        // Positive control: the detector does see a foreach loop.
+        Assert.True(HasBackwardBranch(typeof(AstWalker).GetMethod("VisitListItems", BindingFlags.NonPublic | BindingFlags.Instance)!));
+    }
+
+    private static readonly Dictionary<short, OpCode> OpCodesByValue = typeof(OpCodes)
+        .GetFields(BindingFlags.Public | BindingFlags.Static)
+        .Select(field => (OpCode)field.GetValue(null)!)
+        .ToDictionary(opCode => opCode.Value);
+
+    private static bool HasBackwardBranch(MethodInfo method)
+    {
+        var il = method.GetMethodBody()!.GetILAsByteArray()!;
+        var offset = 0;
+        while (offset < il.Length)
+        {
+            var start = offset;
+            short value = il[offset++];
+            if (value == 0xFE)
+                value = (short)(0xFE00 | il[offset++]);
+            var opCode = OpCodesByValue[value];
+            switch (opCode.OperandType)
+            {
+                case OperandType.ShortInlineBrTarget:
+                    if ((sbyte)il[offset] + offset + 1 <= start)
+                        return true;
+                    offset += 1;
+                    break;
+                case OperandType.InlineBrTarget:
+                    if (BitConverter.ToInt32(il, offset) + offset + 4 <= start)
+                        return true;
+                    offset += 4;
+                    break;
+                case OperandType.InlineSwitch:
+                    var count = BitConverter.ToInt32(il, offset);
+                    var next = offset + 4 + (4 * count);
+                    for (var i = 0; i < count; i++)
+                    {
+                        if (BitConverter.ToInt32(il, offset + 4 + (4 * i)) + next <= start)
+                            return true;
+                    }
+
+                    offset = next;
+                    break;
+                case OperandType.InlineNone:
+                    break;
+                case OperandType.ShortInlineI:
+                case OperandType.ShortInlineVar:
+                    offset += 1;
+                    break;
+                case OperandType.InlineVar:
+                    offset += 2;
+                    break;
+                case OperandType.InlineI8:
+                case OperandType.InlineR:
+                    offset += 8;
+                    break;
+                default:
+                    offset += 4;
+                    break;
+            }
+        }
+
+        return false;
+    }
+
     private sealed class VirtualHugeBranchList(CondBranch first) : IReadOnlyList<CondBranch>
     {
         public int Count => int.MaxValue;
@@ -2093,11 +2176,15 @@ public class AstStructuralDepthProcessTests
             }
         });
 
-        // ── The iterative-spine pin: a 384 KiB thread comfortably holds the
-        // entry path's small-framed validation walk (~2 small frames per node) but
-        // CANNOT hold ~300 recursive evaluation frames (~1.5 KB each in Release,
-        // ~3 KB in Debug), so these succeeding is the deterministic proof that
-        // spine evaluation is NOT depth-proportional.
+        // ── The iterative-spine pin: a 384 KiB thread holds the entry path's
+        // recursive validation walk (2 frames per node, measured at ~0.6-0.9 KB per
+        // level cold in Debug and Release, <= ~240 KB at the ceiling) but CANNOT hold
+        // ~300 recursive evaluation levels (block evaluation measures ~2 KB per level
+        // in Release, ~2.7 KB in Debug), so these succeeding is the deterministic
+        // proof that spine evaluation is NOT depth-proportional. The walk fits only
+        // while its dispatch frames stay loop-free: a loop there made Release's
+        // instrumented Tier-0 frames ~1.4 KB per level and overflowed this thread
+        // (pinned by AstStructuralDepthTests.ValidationWalkDispatchFrames_ContainNoLoops).
         RunOnThreadWithStack(393_216, () =>
         {
             AssertFlatValue(AstStructuralDepthTests.UnarySpine(max), UnaryValue(max));

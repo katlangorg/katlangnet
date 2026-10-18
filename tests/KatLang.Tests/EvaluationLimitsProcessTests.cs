@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Runtime.CompilerServices;
+using KatLang.Evaluation;
 using KatLang.Optimizations.Loops;
 
 namespace KatLang.Tests;
@@ -153,6 +154,291 @@ public class EvaluationLimitsProcessTests
                         stopped == Outcome(witness, limits, high - 1),
                         $"{name} changed the outcome with the {minimumKiB - granuleKiB} KiB of headroom the unconfigured run stops with:\n{witness}");
                 }
+            }
+        });
+
+        WriteProbeMarker();
+    }
+
+    [Fact]
+    public async Task HostStackStops_ChargeTheGenericPrefix_OnEveryRoute_InSubprocess()
+        => await RunProbeChild(nameof(HostStackStops_ChargeTheGenericPrefix_OnEveryRoute_ProbeChild));
+
+    /// <summary>
+    /// Q-09a and Q-09b at the host-stack backstop itself (S3/L9). Unbounded recursions stop at a
+    /// route-dependent depth — the forced async twin's frames are larger, so on the same stack it
+    /// stops at roughly half the synchronous depth (the historical LOOP-CF1 x5 witness: 122
+    /// synchronous steps against 59 on the twin). Those different <c>ConsumedSteps</c> are
+    /// permitted variability: the runs stopped at different points. What must NOT differ is the
+    /// charge for the same logical prefix, so wherever a route stops, its counters must lie on
+    /// the generic strategy's accounting trajectory: with <c>s</c> steps consumed, its expression
+    /// checkpoints fall between those of the generic run refused at invocation <c>s</c> and at
+    /// invocation <c>s + 1</c> (a step budget of <c>s - 1</c> and <c>s</c>), measured on a roomy
+    /// stack. No stopping depth is asserted. A budget that binds before every route's stop gives
+    /// every route the identical verdict and counters, the depth scopes are balanced, and the
+    /// failure is terminal: the row after the recursion never runs.
+    /// </summary>
+    [Fact]
+    public void HostStackStops_ChargeTheGenericPrefix_OnEveryRoute_ProbeChild()
+    {
+        if (Environment.GetEnvironmentVariable(ProbeChildEnvironment) != "1")
+            return;
+
+        string[] witnesses =
+        [
+            "P = P + 1\nP",
+            "F(n) = F(n + 1) + 1\nF(0)",
+            "G(a) = a\nF(n) = G(F(n + 1))\nF(0)",
+            "F(n) = sum(map([n + 1], F))\nF(0)",
+            "S(x) = {\nP = P + 1\nP, x < 1\n}\nS.while(0)",
+            "P = P + 1\nmark(1), P, mark(2)",
+        ];
+        string[] routes = ["generic", "planned", "twin"];
+
+        (EvalResult<Evaluator.CountedResult> Result, EvaluationBudget Budget, string Effects) Run(
+            string source, string route, EvaluationLimits? limits)
+        {
+            var effects = new List<string>();
+            var operations = HostOperations.Create(HostOperation.Create("mark", (args, _) =>
+            {
+                effects.Add(SemanticExplorerHarness.Neutral(args[0]));
+                return args[0];
+            }, "value"));
+            var parsed = Parser.Parse(source, new RunOptions { HostOperations = operations });
+            Assert.False(parsed.HasErrors, string.Join(Environment.NewLine, parsed.Diagnostics.Select(static d => d.Message)));
+            var program = new Expr.AlgorithmExpr(parsed.Root);
+            var (result, budget) = route == "twin"
+                ? Evaluator.RunCountedObservedAsync(
+                    program,
+                    limits,
+                    zeroArgPropertyResultCache: new AsyncEvaluation.PassThroughAsyncZeroArgPropertyResultCache(),
+                    hostOperations: operations).AsTask().GetAwaiter().GetResult()
+                : Evaluator.RunCountedObserved(program, limits, enableOptimizations: route == "planned", hostOperations: operations);
+            return (result, budget, string.Join(",", effects));
+        }
+
+        static string Describe(EvalResult<Evaluator.CountedResult> result, EvaluationBudget budget)
+            => (result.IsError ? LoopDiagnosticParityAssertions.DescribeErrorTree(result.Error) : SemanticExplorerHarness.Neutral(result.Value.Value))
+                + $" steps={budget.ConsumedSteps} checkpoints={budget.ConsumedExpressionCheckpoints} peak={budget.PeakDepth}";
+
+        foreach (var witness in witnesses)
+        {
+            // Each route's unconfigured stop, on the documented minimum 1 MiB stack.
+            var stops = new Dictionary<string, (long Steps, long Checkpoints)>();
+            AstStructuralDepthProcessTests.RunOnThreadWithStack(1_048_576, () =>
+            {
+                foreach (var route in routes)
+                {
+                    var (result, budget, effects) = Run(witness, route, limits: null);
+                    Assert.True(result.IsError, $"{route} completed an unbounded recursion:\n{witness}");
+                    var leaf = result.Error;
+                    while (leaf is EvalError.WithContext(_, var inner))
+                        leaf = inner;
+                    Assert.True(
+                        leaf is EvalError.EvaluationStackExhausted or EvalError.EvaluationDepthExceeded,
+                        $"{route} stopped with {leaf.GetType().Name}:\n{witness}");
+                    Assert.Equal(0, budget.CurrentDepth);
+                    if (witness.Contains("mark", StringComparison.Ordinal))
+                        Assert.Equal("1", effects);
+                    stops[route] = (budget.ConsumedSteps, budget.ConsumedExpressionCheckpoints);
+                }
+            });
+
+            // The generic accounting trajectory, on a stack roomy enough that only the step
+            // budget binds (the deterministic depth ceiling exceeds every step budget used here).
+            AstStructuralDepthProcessTests.RunOnThreadWithStack(16 * 1_048_576, () =>
+            {
+                long CheckpointsRefusedAt(long invocation)
+                {
+                    var (result, budget, _) = Run(witness, "generic", new EvaluationLimits { MaxSteps = invocation - 1 });
+                    var leaf = result.Error;
+                    while (leaf is EvalError.WithContext(_, var inner))
+                        leaf = inner;
+                    Assert.IsType<EvalError.EvaluationStepLimitExceeded>(leaf);
+                    Assert.Equal(invocation - 1, budget.ConsumedSteps);
+                    return budget.ConsumedExpressionCheckpoints;
+                }
+
+                foreach (var (route, (steps, checkpoints)) in stops)
+                {
+                    var low = CheckpointsRefusedAt(steps);
+                    var high = CheckpointsRefusedAt(steps + 1);
+                    Assert.True(
+                        low <= checkpoints && checkpoints <= high,
+                        $"{route} stopped after {steps} steps with {checkpoints} checkpoints, off the generic "
+                        + $"trajectory [{low}, {high}]:\n{witness}");
+                }
+
+                // A budget binding before every route's stop: identical verdicts and counters.
+                var binding = Math.Max(1, stops.Values.Min(stop => stop.Steps) / 2);
+                var limits = new EvaluationLimits { MaxSteps = binding };
+                var (genericResult, genericBudget, _) = Run(witness, "generic", limits);
+                var expected = Describe(genericResult, genericBudget);
+                Assert.Contains("EvaluationStepLimitExceeded", expected, StringComparison.Ordinal);
+                foreach (var route in routes)
+                {
+                    var (result, budget, _) = Run(witness, route, limits);
+                    Assert.Equal(expected, Describe(result, budget));
+                }
+            });
+        }
+
+        WriteProbeMarker();
+    }
+
+    [Fact]
+    public async Task StructuralAndDynamicDepthComposition_IsSafe_InSubprocess()
+        => await RunProbeChild(nameof(StructuralAndDynamicDepthComposition_ProbeChild));
+
+    [Fact]
+    public void StructuralAndDynamicDepthComposition_ProbeChild()
+    {
+        if (Environment.GetEnvironmentVariable(ProbeChildEnvironment) != "1")
+            return;
+
+        // Host-built bodies avoid the parser's separate nesting ceiling. The last admitted
+        // body of each kind exercises the evaluation gate itself, alongside moderate nesting
+        // repeated by dynamic calls. The September row-funnel probes must protect both.
+        var root = SourceProvenance.ParseValid("F(n) = F(n + 1) + 1\nF(0)").Root;
+        var property = Assert.Single(root.Properties);
+        var function = Assert.IsType<Algorithm.User>(property.Value);
+        Expr[] Wrap(Expr inner) =>
+        [
+            new Expr.AlgorithmExpr(new Algorithm.User(null, [], [], [], [inner])),
+            new Expr.Capture([inner, new Expr.Num(0)]),
+            new Expr.Call(new Expr.Resolve("if"), [new Expr.BoolLiteral(true), inner, new Expr.Num(0)]),
+        ];
+
+        for (var kind = 0; kind < 3; kind++)
+        {
+            var cases = new List<Expr>();
+            Expr body = Assert.Single(function.Output);
+            Expr? lastAdmitted = null;
+            for (var nesting = 1; nesting <= EvaluationLimits.MaxSupportedAstDepth; nesting++)
+            {
+                body = Wrap(body)[kind];
+                var program = new Expr.AlgorithmExpr(root with
+                {
+                    Properties = [property with { Value = function with { Output = [body] } }],
+                });
+                if (AstStructuralPreflight.Check(program, EvaluationLimits.MaxSupportedAstDepth,
+                        AstConsumerProfile.EvaluatorIterativeJoinSpines) is not null)
+                    break;
+                lastAdmitted = program;
+                if (nesting is 8 or 32)
+                    cases.Add(program);
+            }
+
+            Assert.NotNull(lastAdmitted);
+            cases.Add(lastAdmitted);
+            AstStructuralDepthProcessTests.RunOnThreadWithStack(1_048_576, () =>
+            {
+                foreach (var program in cases)
+                foreach (var route in new[] { "generic", "planned", "twin" })
+                {
+                    var limits = new EvaluationLimits { MaxDepth = 32 };
+                    var (result, budget) = route == "twin"
+                        ? Evaluator.RunCountedObservedAsync(program, limits,
+                            zeroArgPropertyResultCache: new AsyncEvaluation.PassThroughAsyncZeroArgPropertyResultCache())
+                            .AsTask().GetAwaiter().GetResult()
+                        : Evaluator.RunCountedObserved(program, limits, enableOptimizations: route == "planned");
+                    Assert.True(result.IsError, $"kind={kind}, route={route} completed unbounded recursion");
+                    var leaf = result.Error;
+                    while (leaf is EvalError.WithContext(_, var inner))
+                        leaf = inner;
+                    Assert.True(leaf is EvalError.EvaluationStackExhausted or EvalError.EvaluationDepthExceeded,
+                        $"kind={kind}, route={route}: {leaf.GetType().Name}");
+                    Assert.InRange(budget.PeakDepth, 1, 32);
+                    Assert.Equal(0, budget.CurrentDepth);
+                }
+            });
+        }
+
+        WriteProbeMarker();
+    }
+
+    [Fact]
+    public async Task GenuineSuspension_RecursiveLimitsAndCancellation_ArePreserved_InSubprocess()
+        => await RunProbeChild(nameof(GenuineSuspension_RecursiveLimitsAndCancellation_ProbeChild));
+
+    [Fact]
+    public void GenuineSuspension_RecursiveLimitsAndCancellation_ProbeChild()
+    {
+        if (Environment.GetEnvironmentVariable(ProbeChildEnvironment) != "1")
+            return;
+
+        // yield MUST be demanded before descending. F(yield(n) + 1) alone never demands
+        // n under call-by-need, so an async operation there would not prove suspension.
+        const string source = "F(n) = if(yield(n) >= 0, F(n + 1) + 1, 0)\nF(0), mark(2)";
+        (string Error, long Steps, long Checkpoints, int Peak, long Items, long Strings, int Calls) Run(
+            bool forceTwin, EvaluationLimits limits, bool cancel)
+        {
+            using var cancellation = new CancellationTokenSource();
+            var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            var calls = 0;
+            var laterRows = 0;
+            var operations = HostOperations.Create(
+                HostOperation.CreateAsync("yield", async (args, token) =>
+                {
+                    if (++calls == 1)
+                        await release.Task.ConfigureAwait(false);
+                    else
+                        await Task.Yield();
+                    if (cancel && calls == 3)
+                        cancellation.Cancel();
+                    token.ThrowIfCancellationRequested();
+                    return args[0];
+                }, "value"),
+                HostOperation.Create("mark", (args, _) => { laterRows++; return args[0]; }, "value"));
+            var parsed = Parser.Parse(source, new RunOptions { HostOperations = operations });
+            Assert.False(parsed.HasErrors, string.Join(Environment.NewLine, parsed.Diagnostics.Select(d => d.Message)));
+            var pending = Evaluator.RunCountedObservedAsync(new Expr.AlgorithmExpr(parsed.Root), limits,
+                zeroArgPropertyResultCache: forceTwin ? new AsyncEvaluation.PassThroughAsyncZeroArgPropertyResultCache() : null,
+                hostOperations: operations, cancellationToken: cancellation.Token);
+
+            // The first host call cannot complete until this assertion has observed the
+            // suspended run. Later continuations use host-owned stacks, as Q-09a permits.
+            Assert.Equal(1, calls);
+            Assert.False(pending.IsCompleted);
+            release.SetResult();
+            if (cancel)
+            {
+                var error = Assert.ThrowsAny<OperationCanceledException>(() => pending.AsTask().GetAwaiter().GetResult());
+                Assert.Equal(cancellation.Token, error.CancellationToken);
+                Assert.Equal(3, calls);
+                Assert.Equal(0, laterRows);
+                return default;
+            }
+
+            var (result, budget) = pending.AsTask().GetAwaiter().GetResult();
+            Assert.True(result.IsError);
+            Assert.True(calls > 1);
+            Assert.Equal(0, budget.CurrentDepth);
+            Assert.Equal(0, laterRows);
+            return (LoopDiagnosticParityAssertions.DescribeErrorTree(result.Error), budget.ConsumedSteps,
+                budget.ConsumedExpressionCheckpoints, budget.PeakDepth, budget.MaterializedItems,
+                budget.MaterializedStringChars, calls);
+        }
+
+        AstStructuralDepthProcessTests.RunOnThreadWithStack(1_048_576, () =>
+        {
+            // Low semantic limits isolate equivalent work from host-stack headroom.
+            var depth = new EvaluationLimits { MaxDepth = 12 };
+            var baseline = Run(false, depth, cancel: false);
+            Assert.Contains("EvaluationDepthExceeded", baseline.Error, StringComparison.Ordinal);
+            foreach (var forceTwin in new[] { false, true })
+            {
+                Assert.Equal(baseline, Run(forceTwin, depth, cancel: false));
+                Assert.Equal(baseline, Run(forceTwin, depth with
+                {
+                    MaxSteps = 1_000_000, MaxCollectionItems = 50_000, MaxMaterializedItems = 1_000_000,
+                    MaxStringLength = 500_000, MaxMaterializedStringChars = 1_000_000,
+                }, cancel: false));
+                var steps = Run(forceTwin, new EvaluationLimits { MaxSteps = 10 }, cancel: false);
+                Assert.Contains("EvaluationStepLimitExceeded", steps.Error, StringComparison.Ordinal);
+                Assert.Equal(10, steps.Steps);
+                Assert.Equal(Run(false, new EvaluationLimits { MaxSteps = 10 }, cancel: false), steps);
+                Run(forceTwin, depth, cancel: true);
             }
         });
 
