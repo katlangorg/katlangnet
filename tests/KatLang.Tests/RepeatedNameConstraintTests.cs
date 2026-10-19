@@ -37,7 +37,10 @@ namespace KatLang.Tests;
 /// R3 proves the Lean binder's per-occurrence repeated-name order and verdict in
 /// <c>KatLangArityLaws/BinderTrace.lean</c>; since S5 Q-28's permutation and representative laws
 /// are Lean theorems over stable completed contributions (<c>KatLangArityLaws/RepeatedNameLaws.lean</c>,
-/// flat levels; nested heads open). These Lean theorems do not prove the C# implementation.</para>
+/// flat levels; since S6a nested and mixed heads over completed and Ready cells under the
+/// stated initial identity-domain premises,
+/// <c>KatLangArityLaws/NestedRepeatedNames.lean</c>). These Lean theorems do not prove the C#
+/// implementation.</para>
 /// </summary>
 public class RepeatedNameConstraintTests
 {

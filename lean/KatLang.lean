@@ -6081,14 +6081,20 @@ CALLABLE projection, passed in as `NeedChannels` (with cell allocation, the gene
 `NeedCapabilities`; see ONE GENERIC CORE below). Their own recursion is
 structural over the written patterns (never over runtime values), so they live here,
 above the evaluator recursion core, and the kernel checks their termination; the evaluator
-recursion core instantiates them with `⟨demandNeedRecursive, projectNeedCallable⟩` at every binding site
-(`evalNeedUserSupply`, `evalNeedFamilySupply`, `runNeedStepSlots` — twice —,
-`evalZeroArgumentDemandOutputCounted`). Every theorem stated for ALL channels
+recursion core instantiates them at every binding site (`evalNeedUserSupply`,
+`evalNeedFamilySupply`, `runNeedStepWith` — twice —, `evalZeroArgumentDemandOutputCounted`) with
+the TOTAL channel record `NeedChannels.shell evalSuppliedAt ⟨…⟩ demandNeedRecursive
+projectNeedWrittenAt` (`bindingChannels`; S6a, October 2026) — the VALUE shell `NeedDemand.step`
+and the CALLABLE shell `NeedProjection.step` over the opaque recursive drivers, i.e. exactly one
+unfolding of `demandNeedRecursive` / `projectNeedCallable`, whose bodies they are (formerly the
+sites passed those two `partial` constants themselves). Every theorem stated for ALL channels
 (`KatLangArityLaws.lean` § Model-C production binder laws) therefore holds for the
-definitions the evaluator calls (that the `partial` call sites pass these channels is a fact
-of their source, not of the kernel). The total public `demandNeed` is one unfolding of the
-same `NeedDemand.step` used by the thin partial `demandNeedRecursive` driver; its specialization
-is kernel-checked in `KatLangArityLaws/NeedControl.lean`, while the recursive edge stays opaque.
+definitions the evaluator calls, and what the shells do on completed and Ready cells is a kernel
+fact at that boundary (`KatLangArityLaws/NestedRepeatedNames.lean`, `shell_model_caps`); that the
+`partial` call sites pass this record is a fact of their source, not of the kernel. The total
+public `demandNeed` is the same `NeedDemand.step` unfolding (`bindingChannels.value = demandNeed`
+by definition); its specialization is kernel-checked in `KatLangArityLaws/NeedControl.lean`, while
+the recursive edges stay opaque.
 Until October 2026 these binder functions were `partial` members of the evaluator block
 because they participated in recursive VALUE demand, so no theorem could say anything about
 their behaviour (a `partial def` is an opaque constant). They still call
@@ -6100,7 +6106,9 @@ identity `sameRepeatedCallableIdentity` is no longer one of them (S5, October 20
 `sameDeclaringScope` / `compatibleActivations` are total, so its outcome is a kernel term; only
 the anonymous-declaration fallback of `sameDeclaringScope` compares two `reprStr` strings of
 `ScopeCtx.declaration`, opaque values whose string equality is still lawful
-(`KatLangArityLaws/RepeatedNameLaws.lean` proves the identity laws it needs).
+(`KatLangArityLaws/RepeatedNameLaws.lean` proves the identity laws it needs;
+`KatLangArityLaws/CallableIdentityDomain.lean` proves transitivity whenever no compared level
+decides an identified/anonymous pair through that fallback).
 
 ONE GENERIC CORE (R3, October 2026). The binder and the dispatcher's search are written ONCE,
 in the `NeedBinder` namespace, over any monad with `Error` exceptions and the three
@@ -6140,9 +6148,10 @@ structure NeedCapabilities (m : Type → Type) where
   reference : Nat → m Nat
 
 /-- The two capabilities the binder may use on a supplied cell: its VALUE demand
-    (the evaluator passes `demandNeedRecursive`; public guards may pass `demandNeed`)
-    and its CALLABLE projection (`projectNeedCallable`, which never forces
-    VALUE, NEED-06). Plain binding uses neither (NEED-01, NEED-03). -/
+    and its CALLABLE projection (which never forces this cell's VALUE, NEED-06). The evaluator passes
+    `NeedChannels.shell` over `demandNeedRecursive` / `projectNeedWrittenAt` (`bindingChannels`);
+    public guards may pass `demandNeed` and `projectNeedCallable`. Plain binding uses neither
+    (NEED-01, NEED-03). -/
 structure NeedChannels where
   value : Nat -> EvalM CountedResult
   callable : Nat -> EvalM (Option Algorithm)
@@ -6751,6 +6760,23 @@ def step (ev : Expr → EvalCtx → ValEnv → EvalM CountedResult) (route : Nee
 
 end NeedDemand
 
+/-- THE BINDER'S CHANNELS AS THE TWO TOTAL SHELLS (S6a, October 2026): VALUE is `NeedDemand.step`
+    over the cell's written-expression evaluator `ev a`, the plan route and the recursive VALUE
+    driver `demand`; CALLABLE is `NeedProjection.step` over the cell's written resolver
+    `written a`. Every binder call site of the evaluator recursion core passes this record with
+    `evalSuppliedAt`, the production route, `demandNeedRecursive` and `projectNeedWrittenAt` —
+    exactly ONE unfolding of `demandNeedRecursive` and `projectNeedCallable`, whose bodies are
+    these two shells, so evaluation and effect order are unchanged. Because the record is total,
+    what the shells do on completed and Ready cells (memo reuse, Ready completion, identityless
+    projection) is a kernel fact at the binder boundary
+    (`KatLangArityLaws/NestedRepeatedNames.lean`, `shell_model_caps`); only the recursive drivers
+    stay opaque. -/
+def NeedChannels.shell (ev : Nat → Expr → EvalCtx → ValEnv → EvalM CountedResult)
+    (route : NeedPlan.Route) (demand : Nat → EvalM CountedResult)
+    (written : Nat → Expr → EvalCtx → EvalM (Option Algorithm)) : NeedChannels :=
+  ⟨fun a => NeedDemand.step (ev a) route demand a,
+   fun a => NeedProjection.step (NeedProjection.suspended (written a)) a⟩
+
 mutual
 -- META-S3-1: the identity resolvers live in the evaluator recursion core, so a RUNTIME
 -- projection (a `.Algorithm` link) can demand VALUE (`demandNeedRecursive`).
@@ -7261,7 +7287,9 @@ partial def algorithmIntrinsicRoute (receiver : Expr) (ctx : EvalCtx) : EvalM Bo
   partial def evalNeedUserSupply (callee : Algorithm) (cells : List Nat)
       (ctx : EvalCtx) (env : ValEnv) : EvalM CountedResult := do
     let patterns := (Algorithm.parameterPatterns callee).map NeedPattern.ofParameter
-    let some bindings <- bindNeedPatterns ⟨demandNeedRecursive, projectNeedCallable⟩ patterns cells | throw Error.badArity
+    let some bindings <- bindNeedPatterns (NeedChannels.shell evalSuppliedAt
+      ⟨resolveCalleeAlg, NeedPlan.normalizeCallee, evalSuppliedCallCounted, evalSupplySpread⟩
+      demandNeedRecursive projectNeedWrittenAt) patterns cells | throw Error.badArity
     if (Algorithm.output callee).isEmpty then throw Error.missingOutput
     let next <- needBindingContext ctx bindings
     if let some address ← takeTerminalAliasInvocation callee then
@@ -7274,7 +7302,9 @@ partial def algorithmIntrinsicRoute (receiver : Expr) (ctx : EvalCtx) : EvalM Bo
       callback invocation alike (HO-03, PAT-11). C#: `EvalNeedFamilySupply`. -/
   partial def evalNeedFamilySupply (callee : Algorithm) (cells : List Nat)
       (ctx : EvalCtx) (env : ValEnv) (calleeName : String) : EvalM CountedResult := do
-    let (body, next, values) <- selectNeedFamilyBranch ⟨demandNeedRecursive, projectNeedCallable⟩ callee cells ctx env calleeName
+    let (body, next, values) <- selectNeedFamilyBranch (NeedChannels.shell evalSuppliedAt
+      ⟨resolveCalleeAlg, NeedPlan.normalizeCallee, evalSuppliedCallCounted, evalSupplySpread⟩
+      demandNeedRecursive projectNeedWrittenAt) callee cells ctx env calleeName
     let result <- evalAlgOutputCounted body next values
     pure (reCountValueBoundary result)
 
@@ -7326,13 +7356,17 @@ partial def algorithmIntrinsicRoute (receiver : Expr) (ctx : EvalCtx) : EvalM Bo
           atomic out
     | .conditional _ _ _ _ =>
         withCtx s!"while evaluating call to {stepName}" do
-          let (body, next, values) <- selectNeedFamilyBranch ⟨demandNeedRecursive, projectNeedCallable⟩ step cells ctx env stepName
+          let (body, next, values) <- selectNeedFamilyBranch (NeedChannels.shell evalSuppliedAt
+            ⟨resolveCalleeAlg, NeedPlan.normalizeCallee, evalSuppliedCallCounted, evalSupplySpread⟩
+            demandNeedRecursive projectNeedWrittenAt) step cells ctx env stepName
           read body next values
     | .alias _ _ _ _ _ => do
         let target <- resolveAliasTarget step ctx
         runNeedStepWith read atomic target ctx env cells stepName
     | .mk _ _ _ _ _ _ => do
-        let some bindings <- bindNeedPatterns ⟨demandNeedRecursive, projectNeedCallable⟩
+        let some bindings <- bindNeedPatterns (NeedChannels.shell evalSuppliedAt
+            ⟨resolveCalleeAlg, NeedPlan.normalizeCallee, evalSuppliedCallCounted, evalSupplySpread⟩
+            demandNeedRecursive projectNeedWrittenAt)
             ((Algorithm.parameterPatterns step).map NeedPattern.ofParameter) cells
           | throw Error.badArity
         let next <- needBindingContext ctx bindings
@@ -7617,7 +7651,9 @@ partial def algorithmIntrinsicRoute (receiver : Expr) (ctx : EvalCtx) : EvalM Bo
       if (Algorithm.parameterPatterns a).isEmpty then
         evalAlgOutputCounted a ctx env
       else do
-        let some bindings <- bindNeedPatterns ⟨demandNeedRecursive, projectNeedCallable⟩
+        let some bindings <- bindNeedPatterns (NeedChannels.shell evalSuppliedAt
+            ⟨resolveCalleeAlg, NeedPlan.normalizeCallee, evalSuppliedCallCounted, evalSupplySpread⟩
+            demandNeedRecursive projectNeedWrittenAt)
             ((Algorithm.parameterPatterns a).map NeedPattern.ofParameter) []
           | throw Error.badArity
         let newCtx <- needBindingContext ctx bindings
@@ -9182,6 +9218,13 @@ def demandNeed (address : Nat) : EvalM CountedResult :=
 /-- The production invocation-plan route: the one the recursive VALUE edge installs. -/
 def productionPlanRoute : NeedPlan.Route :=
   ⟨resolveCalleeAlg, NeedPlan.normalizeCallee, evalSuppliedCallCounted, evalSupplySpread⟩
+
+/-- The channels every binder call site of the evaluator recursion core passes (written out at
+    `evalNeedUserSupply`, `evalNeedFamilySupply`, `runNeedStepWith` — twice — and
+    `evalZeroArgumentDemandOutputCounted`; that they pass this term is a fact of their `partial`
+    source). Its VALUE channel is the public `demandNeed` by definition. -/
+def bindingChannels : NeedChannels :=
+  NeedChannels.shell evalSuppliedAt productionPlanRoute demandNeedRecursive projectNeedWrittenAt
 
 /-- META projection of a supplied cell (CallReference M1.5); since S1 the binder's `meta`
     capture reaches it through `NeedPlan.reference`. -/

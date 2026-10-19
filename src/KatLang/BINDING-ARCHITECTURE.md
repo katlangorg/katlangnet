@@ -10,7 +10,11 @@ ordered exact-list materialization, failure-state retention, memo publication an
 heap invariants. The driver and expression evaluator remain opaque; whole-run heap refinement
 and R7 remain open. S5 (2026-10-18) proves the binder's correspondence over formed supplies
 (`KatLangArityLaws/SupplyCorrespondence.lean`) and Q-28's repeated-name laws
-(`KatLangArityLaws/RepeatedNameLaws.lean`), both under stated premises. These are Lean theorems; C# behavior is supported by tests.
+(`KatLangArityLaws/RepeatedNameLaws.lean`), both under stated premises; S6a (2026-10-20) extends the
+repeated-name laws to validated nested and mixed heads with a production stability instance for the
+binder channels on completed and Ready cells (`KatLangArityLaws/NestedRepeatedNames.lean`) and widens
+callable-identity transitivity (`KatLangArityLaws/CallableIdentityDomain.lean`). These are Lean
+theorems; C# behavior is supported by tests.
 
 ## Canonical runtime
 

@@ -30,8 +30,10 @@ THE EQUALITY LAWS THE PROOFS USE, and where they come from:
   of equal `parentProfile` (`same_identity_trans`): builtins, parentless algorithms and algorithms whose
   parent chains have the same declaration-id presence profile. Outside that domain the
   anonymous-declaration fallback compares opaque `reprStr` strings, and transitivity across a
-  MIXED profile (an identified chain, an anonymous one, an identified one) is NOT proved —
-  the premise is explicit wherever it is used (`CallableTransOn`).
+  MIXED profile (an identified chain, an anonymous one, an identified one) is NOT proved here —
+  the premise is explicit wherever it is used (`CallableTransOn`). S6a
+  (`CallableIdentityDomain.lean`) proves transitivity whenever no compared level is decided by
+  such a mixed fallback, and full transitivity under one explicit printer residual.
 
 THE OPTIONAL-CALLABLE TRAP. Compatibility of two OPTIONAL callable contributions is not
 transitive: a value-only contribution is compatible with each of two different callable
@@ -68,13 +70,16 @@ one. NUMERIC REPRESENTATION: Lean numbers are `Int`, so "retains the original re
 results 3 and 5 (an original contribution by address); Decimal128 representation (`1.5` versus
 `1.50`, signed zero, NaN, quantum) is C# evidence (`NumericRepresentativeSelectionTests`).
 
-THE LIFTING BOUNDARY. Result 7 is proved for flat levels of name patterns (fixed and repeated
-names, no literal, structural pattern, collector or META capture). For nested structural
+THE LIFTING BOUNDARY (S5). Result 7 is proved here for flat levels of name patterns (fixed and
+repeated names, no literal, structural pattern, collector or META capture). For nested structural
 patterns the same `bindName` step runs at every depth (R3's schedule), but the occurrences there
 bind FRESH ready cells allocated by the run, so a nested contribution is an allocated cell, not
-a supplied one; the fold law for mixed and nested heads, and stability of the production
-channels themselves (`demandNeedRecursive`, `projectNeedCallable`, both `partial`), remain open.
-Repeated collecting names and repeated META binders are invalid signatures and are not covered.
+a supplied one. S6a (October 2026) closes that boundary in `NestedRepeatedNames.lean`: the fold
+law for validated nested and mixed heads, with fresh-cell provenance, and a production instance
+of the stability premise for the binder channels the evaluator passes (`NeedChannels.shell`,
+`shell_model_caps`) on completed and Ready cells; `CallableIdentityDomain.lean` widens the
+transitivity domain below. Repeated collecting names and repeated META binders are invalid
+signatures.
 -/
 
 namespace KatLang.RepeatedNameLaws
@@ -1162,10 +1167,11 @@ def CompletedWith (obs : Nat → CountedResult × Option Algorithm) (cells : Lis
   ∀ a ∈ cells, ∃ cell, s.needs[a]? = some cell ∧ cell.state = .completed (.ok (obs a).1)
 
 /-- The total public VALUE channel `demandNeed` is stable on completed cells: it returns the
-    memoized counted value and leaves the state unchanged (`NeedControl.completed_reuse`). The
-    CALLABLE half for the production projection `projectNeedCallable` (`partial`) remains a
-    premise: that it returns a cell's memoized projection without a state change is a fact of
-    its source, not a kernel theorem. -/
+    memoized counted value and leaves the state unchanged (`NeedControl.completed_reuse`). S5
+    left the CALLABLE half for the `partial` `projectNeedCallable` a premise; since S6a the
+    evaluator's binder call sites pass the total shells (`NeedChannels.shell`), whose two
+    channels are stable on completed and Ready cells as kernel theorems
+    (`NestedRepeatedNames.shell_model_caps`). -/
 theorem demand_need_stable_on_completed (obs : Nat → CountedResult × Option Algorithm) (cells : List Nat)
     (a : Nat) (ha : a ∈ cells) (s : EvalState) (hs : CompletedWith obs cells s) :
     ∃ t, runEval (demandNeed a) s = (.ok (obs a).1, t) ∧ CompletedWith obs cells t := by

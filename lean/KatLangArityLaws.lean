@@ -62,7 +62,11 @@ EVIDENCE CATEGORIES (R8/X-13, October 2026). Every theorem here is one of:
 * a REPRESENTATIVE-FOLD theorem (S5, `KatLangArityLaws/RepeatedNameLaws.lean`) — a LOCAL theorem
   about the pure fold `retain` over stable completed contributions, made a statement about
   production by `name_step_production` / `production_flat_head_is_flatBind`, which prove the
-  production core computes that fold on stable capability records.
+  production core computes that fold on stable capability records; since S6a
+  (`KatLangArityLaws/NestedRepeatedNames.lean`) on every validated nested or mixed head through an
+  observation-level walk whose erasure IS the production run (`head_model`), with a concrete
+  production instance of the stability premise for the evaluator's binder channels
+  (`shell_model_caps`, `production_head_walk`).
 
 The superseded pre-Model-C Ready binder (completed inputs) and every theorem stated over it
 were retired on 2026-10-12 (owner decision; git history keeps them): no theorem here is about
@@ -87,7 +91,11 @@ the run allocated) and the family/ordinary mode correspondence for every head (a
 head's ordinary binding is never a non-match); `KatLangArityLaws/BinderGuards.lean` executes
 concrete schedules on real heaps. Since S5 (October 2026) `KatLangArityLaws/RepeatedNameLaws.lean`
 proves Q-28's permutation and representative laws over stable completed contributions and
-connects them to this traversal on flat levels of name patterns, and
+connects them to this traversal on flat levels of name patterns; since S6a
+`KatLangArityLaws/NestedRepeatedNames.lean` connects them to nested and mixed heads (fresh Ready
+children, collectors, literals, META) and proves the stability premise for the production binder
+channels on completed and Ready cells, and `KatLangArityLaws/CallableIdentityDomain.lean` widens
+callable-identity transitivity to every pair without an identified/anonymous fallback; and
 `KatLangArityLaws/SupplyCorrespondence.lean` proves a heap-renaming SIMULATION of the whole binder
 and the callback route's Ready-supply correspondence (premises: the two `partial` channels). The outcomes of the opaque helpers stay symbolic there,
 and the CoreTests.ModelC / RepeatedNameConstraints guards remain the evaluator-level
@@ -2215,8 +2223,15 @@ proved since S5 (October 2026) over stable completed contributions
 (`KatLangArityLaws/RepeatedNameLaws.lean`: `retain_ok_iff_compatible`, `retain_satisfiable_perm`,
 `retain_first_richest`, `retain_perm_preserves_observation`, and `production_flat_binding_is_retain`
 for the production traversal of flat levels), with `==` equality (`Result.beq` is structural) and
-callable identity transitive on its stated domain; nested and mixed heads and the stability of the
-`partial` production channels remain open (roadmap R4, partial). Concrete outcomes are executed by guards — CoreTests `HigherOrderCalls`
+callable identity transitive on its stated domain. Since S6a (October 2026) the same laws hold of
+validated nested and mixed heads (`KatLangArityLaws/NestedRepeatedNames.lean`:
+`production_head_walk`, `head_binding_is_retain`, `head_conflict`, `head_representative`,
+`head_perm_preserves_observation`), over the production binder channels' completed and Ready
+cells (`shell_model_caps`), and callable identity is transitive whenever no compared level is
+decided by an identified/anonymous printed-declaration fallback
+(`KatLangArityLaws/CallableIdentityDomain.lean`); arbitrary suspended or failing contributions and
+full transitivity (one residual about the opaque printer, `ReprSeparatesPresence`) remain open
+(roadmap R4). Concrete outcomes are executed by guards — CoreTests `HigherOrderCalls`
 (`repeatedNameCompatibilityAndFirstFailure`, `twoOccurrenceRepeatsKeepThePairwiseRule`,
 `repeatedSuccessfulCallablePermutationsKeepBothChannels`,
 `repeatedCountedBindingChecksTheCompletePair`), `ModelC` (`mixedRepeatedConflicts`,
@@ -3956,7 +3971,8 @@ their outcomes appear symbolically, as the very terms the binder computes. Repea
 identity `sameRepeatedCallableIdentity` was the fourth such helper until S5 (October 2026), when
 `sameDeclaringScope` / `compatibleActivations` became total; the R3 modules still treat its outcome
 symbolically (they need nothing more), and `KatLangArityLaws/RepeatedNameLaws.lean` proves its
-reflexivity, symmetry and (on a stated domain) transitivity for the Q-28 laws.
+reflexivity, symmetry and (on a stated domain) transitivity for the Q-28 laws
+(`KatLangArityLaws/CallableIdentityDomain.lean` widens the domain, S6a).
 -/
 
 namespace KatLang.BinderCore
@@ -4181,7 +4197,8 @@ Since October 2026 the Model-C binder is a TOTAL definition of `KatLang.lean` �
 `bindNeedLevel`, `bindNeedPatterns` and the clause-family dispatcher `selectNeedFamilyBranch`
 — parametrized by the two capabilities of a supplied cell (`NeedChannels`: VALUE demand and
 CALLABLE projection). The evaluator recursion core instantiates every one of them with
-`⟨demandNeedRecursive, projectNeedCallable⟩`. Every binder law below that takes a `channels` argument is
+`bindingChannels` (the total `NeedChannels.shell` over `demandNeedRecursive` / `projectNeedWrittenAt`,
+S6a). Every binder law below that takes a `channels` argument is
 stated for ALL channels, so it holds of whatever channels a caller passes — in particular of
 that instantiation. The other laws concern the binder's channel-free parts (the allocation
 `needLevelSources` and the cardinality gate `needAcceptsCardinality`), the laws-file helpers
@@ -4189,7 +4206,7 @@ that instantiation. The other laws concern the binder's channel-free parts (the 
 paper algebra's correspondence with the allocation, or `makeCollectionListResult`.
 
 What they do NOT establish:
-* that the evaluator calls these definitions with `⟨demandNeedRecursive, projectNeedCallable⟩` — the
+* that the evaluator calls these definitions with `bindingChannels` — the
   call sites are bodies of `partial` defs, so that link is a fact of the source (and of every
   guard that runs a call), not of the kernel;
 * the behavior of the opaque recursive driver `demandNeedRecursive` or `evalCounted`.
@@ -4705,7 +4722,7 @@ theorem plain_patterns_bind_without_any_channel (channels : NeedChannels) (ps : 
 
 /-- Corollary at the entry point the evaluator calls: a head of plain binders binding no name
     twice gives the same outcome AND the same run state under any two channel pairs — so the
-    production instantiation `⟨demandNeedRecursive, projectNeedCallable⟩` demands and projects
+    production instantiation `bindingChannels` demands and projects
     nothing while binding it. -/
 theorem plain_head_binding_is_channel_independent (first second : NeedChannels)
     (ps : List NeedPattern) (names : List Ident)

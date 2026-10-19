@@ -1,5 +1,45 @@
 # Semantic Alignment Manifest.
 
+S6a — R4 / Q-66 repeated-name laws for nested and mixed heads (2026-10-20): Lean proofs and one
+behaviour-preserving Lean wiring change; no language, C# or observable-outcome change. WIRING: the
+evaluator's five binder call sites (`evalNeedUserSupply`, `evalNeedFamilySupply`, `runNeedStepWith`
+twice, `evalZeroArgumentDemandOutputCounted`) pass the total `NeedChannels.shell evalSuppliedAt ⟨…⟩
+demandNeedRecursive projectNeedWrittenAt` (`bindingChannels`) instead of the two `partial` constants —
+exactly one unfolding of their bodies (`NeedDemand.step` / `NeedProjection.step` over the same
+drivers), so evaluation and effect order are unchanged (a source fact, checked by V3); C#
+`BindNeedPatterns` is untouched. A (traversal): `KatLangArityLaws/NestedRepeatedNames.lean` reads one
+binder run as an observation-level walk over a growing model (fresh Ready children, collector cells,
+META adapters) with an occurrence log; its erasure IS the production run for every capability record
+the model describes (`one_model`, `sources_model`, `head_model`); it is defined on every head whose
+repeated names are non-collecting (`head_defined`); per repeated name, success binds `retain` over the
+logged contributions in written traversal order at every depth (`head_binding_is_retain`), a refused
+fold is exactly the run's stop with the binder's verdict (`head_conflict`), contributions are supplied
+or fresh and fresh ones identityless with their allocation's counted value, earlier observations kept
+(`head_provenance`), with the representative laws (`head_representative`,
+`head_fresh_contributions_identityless`) and permutation of completed contributions up to addresses
+(`head_perm_preserves_observation`); whole-head success is not compatibility
+(`compatible_is_not_success`). B (stability): `shell_model_caps` / `binding_channels_model_caps` prove
+the binder channels stable on completed VALUE cells with a published successful CALLABLE (`some` or
+`none`) and on Ready cells (first demand and first identityless projection publish their memos), with
+`allocateNeed` and `NeedPlan.reference`, along the invariant `ProdRel`; `production_head_walk` composes
+A and B. The recursive drivers stay opaque; suspended expression, failing and collector-materializing
+contributions are outside the domain. C (identity): `KatLangArityLaws/CallableIdentityDomain.lean`
+proves transitivity whenever neither compared pair decides an identified/anonymous level through the
+printed-declaration fallback (`same_identity_trans_of_no_cross`, strictly broader than S5's
+equal-profile domain), full transitivity under one residual `ReprSeparatesPresence` (the opaque derived
+`Repr` of the `partial` `ScopeCtx.declaration`; executable evidence only), and that an intransitive
+triple would make satisfiability order dependent (`intransitive_identity_breaks_permutation`). Guards:
+`NestedRepeatedNameGuards.lean`. Independent review adds the production-domain bridge
+`production_head_walk_no_cross`: its initial observed CALLABLEs satisfy `ModelNoCross`, a
+condition proved sufficient by `model_no_cross_of_profiles` for equal-profile observations.
+`model_present_before_growth` proves that Ready children, collector allocation and META adapters
+add no callable identities; `head_callable_trans_on_of_no_cross` therefore discharges
+`CallableTransOn` for final contribution lists. This is a restricted production domain, not a
+reachability theorem for every callable from a validated program. Full mixed-profile transitivity
+remains open. Singleton sequence patterns in the new guards were replaced with valid list or
+two-item sequence patterns; conflict checks inspect Error constructors. Q-66 stays OPEN. Report
+`experimental/features/s6a-r4-repeated-name-laws.md` (local). Full V3.
+
 META-S3-2 final review status (2026-10-19): the D4 ordinary-property fallback is implemented as the owner decided it — the binding cell's already-performed receiver work is consumed by the FIRST ordinary observation (a bare read or a terminal call), whichever operation performed the eligibility projection — so eligibility checking never duplicates a receiver evaluation. RF1's flow-local invocation token (C# `AliasInvocation`, Lean `withAliasInvocation` / `aliasProbeScope` / `aliasTerminal`) was removed: it refused to lend a CALLABLE-only observation's work, which made `Navigate(f) = f.K` / `Navigate(A), A` evaluate the receiver twice and made the bare read's value depend on incidental call nesting (`K(x) = x` against `K(x) = Id(x)`). Final evidence: `experimental/features/meta-s3-2-final-review-and-closeout.md`.
 
 RF1 (2026-10-19, as corrected by the final review): D4 separates ordinary terminal-property observations from the retained CALLABLE identity. C# `RuntimeAliasBinding` and Lean NeedCell `aliasUse` / `aliasBare` assign the initial eligibility computation once, to the first ordinary observation; `takeTerminalAliasInvocation` is consumed by the ordinary need binders after cardinality. A new bare observation after a terminal call enters a fresh binding context, preserving its local property-cache ownership. Bare reads cache independently after an explicit call; later explicit calls run the original row afresh. D3 eligible targets still share their receiver. R2 classification follows static chains, forward references and opens while preserving alias-owned members and static alias restrictions. Total helper laws: `terminal_initial_claim_once`, `bare_value_excludes_terminal_reuse`, `terminal_claim_excludes_later_terminal_reuse`, `unclaimed_cell_is_claimed_once`, `eligible_target_keeps_declared_parameters` and `runtime_namespace_direct`; production installation and whole-program lifetimes are executable guard evidence, not whole-run heap refinement or C# async/concurrency proofs. `NeedPlan.execute`, `evalCallCountedExpr` and `evalDotCallCounted` are again the plain phase compositions (no invocation wrapper), and `InvocationPlan.lean`'s `execute_prepared` / `fresh_plan_is_ordinary_call` are stated over them directly.

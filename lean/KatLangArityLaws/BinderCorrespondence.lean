@@ -340,7 +340,7 @@ theorem results_depend_only_on_invoked_cells (V C : Nat → Prop) (k₁ k₂ : N
     exact sources_substitution V C k₁ k₂ hk ps (needLevelSources ps cells) (needRepeatedNames ps) [] family s havoid
 
 /-- The production instance: two pairs of production channels over the one allocator
-    `allocateNeed` — the evaluator's `⟨demandNeedRecursive, projectNeedCallable⟩` against any other pair —
+    `allocateNeed` — the evaluator's `bindingChannels` against any other pair —
     bind every head the same way when they agree wherever the run invokes them. -/
 theorem production_results_depend_only_on_invoked_cells (V C : Nat → Prop) (c₁ c₂ : NeedChannels)
     (hv : ∀ a, ¬ V a → c₁.value a = c₂.value a) (hc : ∀ a, ¬ C a → c₁.callable a = c₂.callable a)
