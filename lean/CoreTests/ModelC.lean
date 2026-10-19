@@ -104,7 +104,8 @@ def failedCompletionDoesNoFurtherWork : EvalM Bool := do
   let first <- evalAttempt (demandNeed address)
   let afterFirst := (<- get).nextBindingContext
   let second <- evalAttempt (demandNeed address)
-  pure (reprStr first == reprStr second && afterFirst > 1 && (<- get).nextBindingContext == afterFirst)
+  pure ((match first with | .error err => innermostIsDivByZero err | .ok _ => false)
+    && reprStr first == reprStr second && afterFirst > 1 && (<- get).nextBindingContext == afterFirst)
 #guard (runEvalM failedCompletionDoesNoFurtherWork).toOption == some true
 
 def attemptsShareCompletion : EvalM Bool := do
@@ -300,7 +301,9 @@ def differentCallablePairStopsBeforeTheLaterFailure : EvalM Bool := do
   let last <- supplyNeed bad ctx []
   let outcome <- evalAttempt (bindNeedPatterns ⟨demandNeed, projectNeedCallable⟩
     [.bind "x", .bind "x", .bind "x"] [first, second, last])
-  pure ((match outcome with | .error (.typeMismatch _) => true | _ => false) && (<- isSuspended last))
+  pure ((match outcome with
+      | .error (.typeMismatch "Repeated bind equality requires the same callable identity") => true
+      | _ => false) && (<- isSuspended last))
 #guard (runEvalM differentCallablePairStopsBeforeTheLaterFailure).toOption == some true
 
 -- The need-cell tier is the only inherited parameter tier `bindParameters` manages

@@ -82,7 +82,9 @@ def addSq : Expr := callF "Add" [sq 5, sq 6]
 /-! ## Laziness: obtaining, counting, selecting -/
 
 -- Obtaining the view prepares nothing (no `Sq(5)` argument cell exists).
-#guard cellsOf (heap addSq [.compare .eq (args R) (args R)]) (sq 5) == 0
+#guard match runResultWithState (program (withR addSq) [.compare .eq (args R) (args R)]) with
+  | .ok (.bool true, state) => cellsOf state.needs (sq 5) == 0
+  | _ => false
 -- `count` prepares the supply (one `Sq(5)` cell) but executes no `Sq` (no `x * x` cell).
 #guard valueIs (run addSq [dot (args R) "count"]) (.atom 2)
 #guard cellsOf (heap addSq [dot (args R) "count"]) (sq 5) == 1

@@ -150,6 +150,31 @@ def builtinsFailingArityParity : List String :=
 
 #guard builtinsFailingArityParity == []
 
+-- The sweep above classifies a rejection by constructor only (`.arityRejected`),
+-- so it cannot see the payload. Since Q-27 every builtin arity rejection carries
+-- the builtin's real minimum and the actual supplied count: pin that payload for
+-- every swept builtin and rejected count. The expected minimums are written out
+-- from the builtin signatures (tutorial builtin table), not read from
+-- `builtinMinimumArity`.
+def builtinWrittenMinimumArity : KatLang.Builtin -> Nat
+  | .ifBuiltin => 3 | .whileBuiltin => 2 | .repeatBuiltin => 3 | .atomsBuiltin => 1
+  | .rangeBuiltin => 2 | .filterBuiltin => 2 | .mapBuiltin => 2 | .orderBuiltin => 1
+  | .orderDescBuiltin => 1 | .countBuiltin => 1 | .containsBuiltin => 2 | .firstBuiltin => 1
+  | .lastBuiltin => 1 | .distinctBuiltin => 1 | .takeBuiltin => 2 | .skipBuiltin => 2
+  | .minBuiltin => 1 | .maxBuiltin => 1 | .sumBuiltin => 1 | .avgBuiltin => 1
+  | .reduceBuiltin => 3
+
+def builtinArityRejectionCarriesMinimum (b : KatLang.Builtin) (maxArgCount : Nat := 6) : Bool :=
+  (List.range (maxArgCount + 1)).all fun argCount =>
+    KatLang.builtinAcceptsArity b argCount ||
+      (builtinApplyResults b (builtinProbeArgsFor b argCount)).all fun result =>
+        match result with
+        | .error err => innermostIsArityMismatch (builtinWrittenMinimumArity b) argCount err
+        | .ok _ => false
+
+#guard (builtinArityParityTargets.filter (fun b => !(builtinArityRejectionCarriesMinimum b))).map
+  KatLang.builtinDisplayName == []
+
 -- Keep the probe arguments honest: representative accepted counts must
 -- actually succeed (not merely avoid arity errors), so a silently broken
 -- dummy argument cannot make the accepted direction of the sweep vacuous.

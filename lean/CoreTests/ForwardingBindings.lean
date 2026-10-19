@@ -188,7 +188,7 @@ def fwdReportSuperseded : Expr :=
     (alg ["width", "height"] [] [] [.binary .mul (.call (.resolve "Area") [.param "width", .param "height"]) (.num 2)]))
 
 #guard match runResult fwdReportDecided with | .ok (Result.atom 24) => true | _ => false
-#guard match runResult fwdReportSuperseded with | .error err => innermostIsAnyArityMismatch err | _ => false
+#guard match runResult fwdReportSuperseded with | .error err => innermostIsArityMismatch 2 0 err | _ => false
 
 /-- `v = 99` / `Need(v) = v` / `Outer = { Inner = v ⏎ Inner + Need }` / `Outer(7)`:
     Inner's `v` keeps the root property (106); the superseded rebinding read Outer's

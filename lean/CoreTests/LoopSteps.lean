@@ -182,13 +182,16 @@ private def lsFails (rows : List KatLang.Expr) (check : Error -> Bool) : Bool :=
 -- take([1, 2, 3], 2) is one slot, so the next `take` call has one argument.
 #guard lsOk [lsRepeat (resolve "take") 1 [.listLiteral [.num 1, .num 2, .num 3], .num 2]]
   (.listValue [.atom 1, .atom 2])
-#guard lsFails [lsRepeat (resolve "take") 2 [.listLiteral [.num 1, .num 2, .num 3], .num 2]] innermostIsAnyArityMismatch
+#guard lsFails [lsRepeat (resolve "take") 2 [.listLiteral [.num 1, .num 2, .num 3], .num 2]] (innermostIsArityMismatch 2 1)
 
 -- A builtin `()` result is ONE `()` slot: as a `while` step it is the flag and a
 -- Boolean is required (a zero-slot reading would be "Bad arity" instead), exactly
 -- like its one-row wrapper.
-#guard lsFails [lsWhile (resolve "first") [.listLiteral [.emptySequence 0]]] innermostIsAnyTypeMismatch
-#guard lsFails [lsWhile (resolve "Fi") [.listLiteral [.emptySequence 0]]] innermostIsAnyTypeMismatch
+private def lsEmptyFlagRequired : Error -> Bool :=
+  innermostIsBooleanRequired "while continuation flag (the step's last output)"
+    "a sequence value with 0 sequence elements: ()"
+#guard lsFails [lsWhile (resolve "first") [.listLiteral [.emptySequence 0]]] lsEmptyFlagRequired
+#guard lsFails [lsWhile (resolve "Fi") [.listLiteral [.emptySequence 0]]] lsEmptyFlagRequired
 
 -- `if` keeps its lazy roles as a step: the unselected branch is never demanded.
 #guard lsOk [lsRepeat (resolve "if") 1 [.boolLiteral false, .binary .div (.num 1) (.num 0), .num 2]] (.atom 2)

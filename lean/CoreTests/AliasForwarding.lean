@@ -286,7 +286,7 @@ def afBuiltinSupplies : List (List KatLang.Expr) :=
 #guard afSucceedsWith [afCall "A_if" [.boolLiteral true, num 1, .binary .div (num 1) (num 0)]] (.atom 1)
 #guard afSucceedsWith [afCall "A_map" [.listLiteral [], resolve "Bad"]] (.listValue [])
 #guard afSameOutcome (afRun [afCall "A_repeat" [resolve "Inc"]]).fst (afRun [afCall "repeat" [resolve "Inc"]]).fst
-#guard afFailsWith innermostIsAnyArityMismatch [afCall "A_repeat" [resolve "Inc"]]
+#guard afFailsWith (innermostIsArityMismatch 3 1) [afCall "A_repeat" [resolve "Inc"]]
 #guard afSucceedsWith [afCall "CountC" [.listLiteral [num 1, num 2]]] (.atom 2)
 -- A builtin alias as a CALLBACK step and as a callback argument: the callable is the builtin.
 #guard afSucceedsWith [afCall "map" [.listLiteral [.listLiteral [num 1], .listLiteral [num 1, num 2]], resolve "CountC"]]
@@ -313,7 +313,8 @@ def afRejectedWith (rejection : BareForwardingRejection) : Except BareForwarding
   | .ok _ => false
 
 #guard afRejectedWith .noForwardingContract (bareForwardingRowOf "SA" [afCap "x"] ["x"] [] afSign)
-#guard (bareForwardingRowOf "CountC" [afCap "collection"] ["collection"] [] (.builtin .countBuiltin)).toOption.isSome
+#guard reprStr (bareForwardingRowOf "CountC" [afCap "collection"] ["collection"] [] (.builtin .countBuiltin)).toOption
+  == reprStr (some (afCall "CountC" [param "collection"]))
 #guard afRejectedWith .unforwardableParameter
   (bareForwardingRowOf "CountC" [afCap "items"] ["items"] [] (.builtin .countBuiltin))
 #guard afSucceedsWith [afCall "WCount" [.listLiteral [num 1, num 2, num 3]]] (.atom 3)

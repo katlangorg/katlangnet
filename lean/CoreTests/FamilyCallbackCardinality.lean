@@ -188,8 +188,10 @@ private def fcPair (a b : Int) : Result := .sequenceValue [.atom a, .atom b]
 -- `filter` reads its predicate's VALUE: a Boolean is required, so a two-row
 -- predicate is the Boolean-required type error for a family and a user
 -- algorithm alike, while a one-row family predicate filters.
-#guard fcFails [fcFilter [.num 0, .num 3] (resolve "Both")] innermostIsAnyTypeMismatch
-#guard fcFails [fcFilter [.num 0] (resolve "Q")] innermostIsAnyTypeMismatch
+private def fcTwoRowPredicateRejected : Error -> Bool :=
+  innermostIsBooleanRequired "filter predicate result" "a sequence value with 2 sequence elements: (true, true)"
+#guard fcFails [fcFilter [.num 0, .num 3] (resolve "Both")] fcTwoRowPredicateRejected
+#guard fcFails [fcFilter [.num 0] (resolve "Q")] fcTwoRowPredicateRejected
 #guard fcOk [fcFilter [.num 0, .num 1, .num 0] (resolve "IsZero")] (.listValue [.atom 0, .atom 0])
 
 -- A loop step is not a callback: the selected clause's two rows are the next

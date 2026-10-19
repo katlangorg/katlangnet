@@ -186,7 +186,7 @@ private def cfFails (rows : List KatLang.Expr) (check : Error -> Bool) : Bool :=
 #guard cfFails [cfWhile "Ee" [.num 1]] innermostIsBadArity
 #guard cfFails [cfWhile "Ee" [.num 1]] (hasContext "a while step must output at least its continuation flag")
 -- 20. The next round's binder checks an accepted state; a false round forms no candidate.
-#guard cfFails [cfWhile "Ar" [.num 1, .num 2]] innermostIsAnyArityMismatch
+#guard cfFails [cfWhile "Ar" [.num 1, .num 2]] (innermostIsArityMismatch 2 1)
 #guard cfOk [cfWhile "Dc" [.num 1, .num 2]] (.sequenceValue [.atom 1, .atom 2])
 -- 21. A failing unread initial component fails at the final materialization (LOOP-07);
 --     an overwritten one is never demanded.
@@ -194,7 +194,8 @@ private def cfFails (rows : List KatLang.Expr) (check : Error -> Bool) : Bool :=
 #guard cfOk [cfWhile "Over" [.num 1, cfDiv (.num 1) (.num 0)]] (.sequenceValue [.atom 0, .atom 0])
 -- Error precedence: the flag row's non-Boolean value is reported before an earlier failure.
 #guard cfFails [cfWhile "Nb1" [.num 1]] innermostIsAnyTypeMismatch
-#guard cfFails [cfWhile "Nb2" [.num 1]] innermostIsAnyTypeMismatch
+#guard cfFails [cfWhile "Nb2" [.num 1]]
+  (innermostIsBooleanRequired "while continuation flag (the step's last output)" "numeric value 5")
 -- 26. An earlier failing row is skipped by a false flag (step-first failed with DivByZero).
 #guard cfOk [cfWhile "Ok" [.num 1]] (.atom 1)
 -- 27. A cycle reached only from a skipped row is never entered.

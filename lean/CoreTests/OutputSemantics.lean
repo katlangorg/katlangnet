@@ -238,8 +238,8 @@ def explicitEmptyNoOutputContainer : Algorithm :=
   algPrivate [] [] [("Prop", alg [] [] [] [.num 7])] []
 
 def explicitEmptyProducesZeroValues : Bool :=
-  match runResult explicitEmptyExpr, runFlat explicitEmptyExpr with
-  | Except.ok (.sequenceValue []), Except.ok [] => true
+  match runCountedProgram explicitEmptyExpr, runFlat explicitEmptyExpr with
+  | Except.ok (.sequenceValue [], 0), Except.ok [] => true
   | _, _ => false
 
 #guard explicitEmptyProducesZeroValues
@@ -289,21 +289,21 @@ def explicitEmptyEquality : Bool :=
 
 -- Internal sequence construction of spreads:
 -- `sequenceConstruct (sequenceConstruct (sequenceSpread 1) empty) (sequenceSpread 2)`.
--- The `empty` contribution adds no items (join semantics), so the flat
--- result is [1, 2].
+-- The `empty` contribution adds no items (join semantics). The join constructs
+-- one sequence value `(1, 2)`, so its emitted count is 1.
 def spreadEmptyJoinContributesNoItems : Bool :=
-  match runFlat (.sequenceConstruct
+  match runCountedProgram (.sequenceConstruct
       (.sequenceConstruct (sequenceSpread (.num 1)) explicitEmptyExpr)
       (sequenceSpread (.num 2))) with
-  | Except.ok [1, 2] => true
+  | Except.ok (.sequenceValue [.atom 1, .atom 2], 1) => true
   | _ => false
 
 #guard spreadEmptyJoinContributesNoItems
 
 -- `()*` spreads the empty sequence value, contributing zero items.
 def spreadOfEmptyContributesNoItems : Bool :=
-  match runFlat (sequenceSpread explicitEmptyExpr) with
-  | Except.ok [] => true
+  match runCountedProgram (sequenceSpread explicitEmptyExpr) with
+  | Except.ok (.sequenceValue [], 0) => true
   | _ => false
 
 #guard spreadOfEmptyContributesNoItems

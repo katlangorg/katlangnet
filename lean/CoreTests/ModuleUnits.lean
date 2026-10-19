@@ -90,7 +90,9 @@ def repeatedCallable (a b : Algorithm) : KatLang.Expr :=
 #guard evaluatesTo (repeatedCallable (fiveModule 0) (fiveModule 0)) (.atom 5)
 
 -- … while two declarations (two canonical URLs, however equal their bytes) are two callables.
-#guard !evaluatesTo (repeatedCallable (fiveModule 0) (fiveModule 1)) (.atom 5)
+#guard match runResult (repeatedCallable (fiveModule 0) (fiveModule 1)) with
+  | .error err => innermostIsTypeMismatch "Repeated bind equality requires the same callable identity" err
+  | .ok _ => false
 
 -- … and one open provider (Q-19 D-I), while two declarations are two.
 def openTwoHolders (a b : Algorithm) : KatLang.Expr :=
@@ -125,6 +127,9 @@ def validates (a : Algorithm) : Bool :=
   | .error _ => false
 
 #guard validates (alg [] [] [helperAlias, privateProp "M" (aliasBody.withDeclarationId (some (.module 0)))] [.num 1])
-#guard !validates (alg [] [] [helperAlias, privateProp "M" aliasBody] [.num 1])
+#guard match KatLang.runEvalM (KatLang.validateExplicitParamOutputInvariant
+    (alg [] [] [helperAlias, privateProp "M" aliasBody] [.num 1])) with
+  | .error err => innermostIsIllegalInEval KatLang.aliasCycleMessage err
+  | .ok _ => false
 
 end KatLangTests.ModuleUnits

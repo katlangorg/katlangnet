@@ -143,7 +143,11 @@ def xx : Expr := mul (.param "x") (.param "x")
 #guard valueIs (runResult (program refR [invoke (.resolve "R")])) (.atom 25)
 
 -- Capture is inert: `R` read without invoking executes nothing of `Sq` (no `x * x` cell).
-#guard cellsOf (finalHeap (program refR [.boolLiteral (true)])) xx == 0
+-- Equality actually reads R and keeps the reference inside the run. Require success:
+-- `finalHeap`'s error fallback must not turn a failed capture into "no executions".
+#guard match runResultWithState (program refR [.compare .eq (.resolve "R") (.resolve "R")]) with
+  | .ok (.bool true, state) => cellsOf state.needs xx == 0 && cellsOf state.needs (.num 5) == 0
+  | _ => false
 #guard valueIs (runResult (program (refR ++ [("K", alg [] [] [] [.resolve "R", .num 1])])
     [.index (.resolve "K") [.num 1]])) (.atom 1)
 #guard cellsOf (finalHeap (program (refR ++ [("K", alg [] [] [] [.resolve "R", .num 1])])
@@ -213,7 +217,7 @@ def xx : Expr := mul (.param "x") (.param "x")
 -- An adapter has no CALLABLE identity: `Again(meta op) = op(3)`.
 #guard match runResult (program [("Again", algWithParameters [metaParam "op"] [] [] [.call (.param "op") [.num 3]])]
     [call "Again" [call "Sq" [.num 5]]]) with
-  | .error e => match innermost e with | .notAnAlgorithm _ => true | _ => false
+  | .error e => match innermost e with | .notAnAlgorithm "param(op)" => true | _ => false
   | .ok _ => false
 
 -- Written-order refusal (J8b): an earlier inspecting pattern's failure wins…

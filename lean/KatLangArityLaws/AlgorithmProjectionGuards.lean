@@ -114,7 +114,7 @@ def R : Expr := .resolve "R"
 #guard isArity (run refR [.listLiteral [algorithm R]]) 1 0
 -- …and `if` selects a VALUE: `Ap(if(true, R.Algorithm, 0), 8)` has no callable.
 #guard match run refR [callN "Ap" [callN "if" [.boolLiteral true, algorithm R, .num 0], .num 8]] with
-  | .error e => match innermost e with | .notAnAlgorithm _ => true | _ => false
+  | .error e => match innermost e with | .notAnAlgorithm "param(f)" => true | _ => false
   | .ok _ => false
 -- A zero-parameter callee read bare is its property value.
 #guard valueIs (run [("P", alg [] [] [] [.num 42]), ("Q", alg [] [] [] [callN "Capture" [.call (.resolve "P") []]])]

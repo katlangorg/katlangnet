@@ -75,9 +75,17 @@ def variadicNestedSequenceValuesRoot : Algorithm :=
 -- `list = [((1, 2), (3, 4))]` (count 1, the nested value intact), and `atoms`
 -- still reaches all four numeric leaves through the collected list.
 def variadicPreservesNestedSequenceValues : Bool :=
-  match runFlat (.algorithmExpr variadicNestedSequenceValuesRoot) with
-  | Except.ok [1, 4] => true
-  | _ => false
+  -- Counting one argument and four atoms alone also accepts the WRONG `[ (1, 2, 3, 4) ]`.
+  -- Read the collected value as well: both inner sequence boundaries must survive.
+  let nested : Result := .sequenceValue [.sequenceValue [.atom 1, .atom 2], .sequenceValue [.atom 3, .atom 4]]
+  let collected := runResult (.algorithmExpr (algPrivate [] [] [
+    ("Arg", alg [] [] [] [.capture [.num 1, .num 2], .capture [.num 3, .num 4]]),
+    ("Collect", variadicCollectAlg)
+  ] [.dotCall (resolve "Arg") "Collect" none]))
+  (match collected with | .ok value => value == .listValue [nested] | .error _ => false) &&
+    (match runFlat (.algorithmExpr variadicNestedSequenceValuesRoot) with
+     | Except.ok [1, 4] => true
+     | _ => false)
 
 #guard variadicPreservesNestedSequenceValues
 
@@ -350,7 +358,8 @@ def variadicScaleMatchesBuiltinMap : Bool :=
   let builtinMap := .dotCall (resolve "Arg") "map" (some [
     .algorithmExpr (alg ["n"] [] [] [.binary .mul (.param "n") (.num 10)])
   ])
-  match runFlat (.algorithmExpr (algPrivate [] [] [
+  -- Structured: the two results are the SAME list, not merely the same flat atoms.
+  match runResult (.algorithmExpr (algPrivate [] [] [
     ("Arg", alg [] [] [] [.num 1, .num 2, .num 3]),
     ("Scale", variadicScaleAlg)
   ] [
@@ -360,7 +369,8 @@ def variadicScaleMatchesBuiltinMap : Bool :=
           "Scale" (some [.num 10]))
         builtinMap)
   ])) with
-  | Except.ok [10, 20, 30, 10, 20, 30] => true
+  | Except.ok (.sequenceValue [scaled, mapped]) =>
+      scaled == mapped && scaled == .listValue [.atom 10, .atom 20, .atom 30]
   | _ => false
 
 #guard variadicScaleMatchesBuiltinMap

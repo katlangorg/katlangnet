@@ -69,10 +69,25 @@ def valueIs (r : Except Error CountedResult) (v : Int) : Bool :=
   | .ok (value, _) => value == .atom v
   | .error _ => false
 
-def isError {α : Type} (r : Except Error α) : Bool :=
+/-- The innermost error under its context frames. -/
+def innermostError : Error -> Error
+  | .withContext _ inner => innermostError inner
+  | err => err
+
+/-- `r` failed, and its innermost error is exactly `expected` (constructor and payload). -/
+def failsAs {α : Type} (r : Except Error α) (expected : Error) : Bool :=
   match r with
   | .ok _ => false
-  | .error _ => true
+  | .error err => reprStr (innermostError err) == reprStr expected
+
+-- The observer rejects success, another constructor and another payload, through frames.
+#guard failsAs (.error (.withContext "c" (.withContext "d" .divByZero)) : Except Error Nat) .divByZero
+#guard !failsAs (.ok 1 : Except Error Nat) .divByZero
+#guard !failsAs (.error (.withContext "c" .badArity) : Except Error Nat) .divByZero
+#guard !failsAs (.error (.arityMismatch 1 3) : Except Error Nat) (.arityMismatch 1 2)
+
+/-- The META refusal of a cell that is not a supplied call computation. -/
+def metaRefusal : Error := .notAnAlgorithm "meta: not a supplied call computation"
 
 def suspendedAt (s : EvalState) (a : Nat) : Bool :=
   match s.needs[a]? with
@@ -242,9 +257,9 @@ def failingSpreadIsSticky : Bool :=
     let (v2, s4) := run (demandNeed a) s3
     let (r2, s5) := run (reifyNeedCall a) s4
     refOk r a && reprStr s1 == reprStr s0 &&
-    isError v && preparationFailed s2 a &&
+    failsAs v .divByZero && preparationFailed s2 a &&
     -- The invocation reuses the failed preparation: no second spread, no new cell.
-    isError i && s3.needs.size == s2.needs.size && planRecords s3 == planRecords s2 &&
+    failsAs i .divByZero && s3.needs.size == s2.needs.size && planRecords s3 == planRecords s2 &&
     s3.nextBindingContext == s2.nextBindingContext &&    -- `BadPair()` was not called again
     reprStr v2 == reprStr v && reprStr s4 == reprStr s3 &&
     refOk r2 a && reprStr s5 == reprStr s4
@@ -272,7 +287,7 @@ def arityBeforeDemand : Bool :=
     let (r, s1) := run (reifyNeedCall a) s0
     let (i, s2) := run (invokeNeedCall ⟨a⟩) s1
     let (v, s3) := run (demandNeed a) s2
-    refOk r a && isError i && isError v && reprStr i == reprStr v &&
+    refOk r a && failsAs i (.arityMismatch 1 2) && failsAs v (.arityMismatch 1 2) && reprStr i == reprStr v &&
     (match suppliedCells s3 a with
      | some [x, y] => suspendedAt s3 x && suspendedAt s3 y
      | _ => false)
@@ -289,10 +304,10 @@ def failingValueThenMeta : Bool :=
     let (v2, s3) := run (demandNeed a) s2
     let (i, s4) := run (invokeNeedCall ⟨a⟩) s3
     let (v3, s5) := run (demandNeed a) s4
-    isError v1 && refOk r a && reprStr s2 == reprStr s1 &&
+    failsAs v1 .divByZero && refOk r a && reprStr s2 == reprStr s1 &&
     reprStr v2 == reprStr v1 && reprStr s3 == reprStr s1 &&
     -- The invocation fails afresh (a fresh target execution), without touching the VALUE.
-    isError i && reprStr v3 == reprStr v1 && completedAt s5 a &&
+    failsAs i .divByZero && reprStr v3 == reprStr v1 && completedAt s5 a &&
     suppliedCells s5 a == suppliedCells s1 a
   | none => false
 #guard failingValueThenMeta
@@ -307,7 +322,7 @@ def recoveredFailureThenMeta : Bool :=
       let r ← reifyNeedCall a
       pure (v, r)
     match run observe s0 with
-    | (.ok (v, r), s1) => isError v && r.plan == a && completedAt s1 a
+    | (.ok (v, r), s1) => failsAs v .divByZero && r.plan == a && completedAt s1 a
     | _ => false
   | none => false
 #guard recoveredFailureThenMeta
@@ -589,7 +604,7 @@ def readyAndUnsupportedStayOrdinary : Bool :=
     let (vn, s1) := run (demandNeed n) s0
     let (vu, s2) := run (demandNeed u) s1
     valueIs vn 7 && valueIs vu 1 &&
-    isError (run (reifyNeedCall n) s2).1 && isError (run (reifyNeedCall u) s2).1 &&
+    failsAs (run (reifyNeedCall n) s2).1 metaRefusal && failsAs (run (reifyNeedCall u) s2).1 metaRefusal &&
     s2.needs.toList.all (fun c => match c.plan with | .unprepared => true | _ => false)
   | none => false
 #guard readyAndUnsupportedStayOrdinary

@@ -632,12 +632,17 @@ def uniformBranchOutputArityPasses : Bool :=
     ⟨ .litInt 0, alg [] [] [] [.num 1, .num 2] ⟩,
     ⟨ .bind "x", alg [] [] [] [.param "x", .param "x"] ⟩
   ]
-  match runFlat (.algorithmExpr (algPrivate [] [] [("F", cond)] [
+  let program := .algorithmExpr (algPrivate [] [] [("F", cond)] [
     .call (resolve "F") [.num 0],
     .call (resolve "F") [.num 7]
-  ])) with
-  | Except.ok [1, 2, 7, 7] => true
-  | _ => false
+  ])
+  -- Keep whole-program validation, and separately read the actual root count: two
+  -- call rows, each holding ONE two-value sequence (flattening would hide this).
+  match runResult program, runCountedProgram program with
+  | Except.ok value, Except.ok (countedValue, emitted) =>
+      value == .sequenceValue [.sequenceValue [.atom 1, .atom 2], .sequenceValue [.atom 7, .atom 7]] &&
+        countedValue == value && emitted == 2
+  | _, _ => false
 
 #guard uniformBranchOutputArityPasses
 

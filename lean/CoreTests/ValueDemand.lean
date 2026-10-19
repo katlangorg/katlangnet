@@ -210,7 +210,10 @@ def familyDemandKeepsName (row : KatLang.Expr) : Bool :=
 #guard familyDemandKeepsName (.call (resolve "reduce") [.listLiteral [], resolve "Add", resolve "F"])
 
 -- Callback controls: collecting and conditional algorithms receive actual inputs.
-#guard flatOk [.call (resolve "map") [.listLiteral [.num 1, .num 2], resolve "Collect"]] [1, 2]
+-- (Structured: each element is one supplied input, which the collector collects as `[x]`.)
+#guard match runResult (valueDemandRoot [.call (resolve "map") [.listLiteral [.num 1, .num 2], resolve "Collect"]]) with
+  | .ok value => value == .listValue [.listValue [.atom 1], .listValue [.atom 2]]
+  | .error _ => false
 #guard expectFlat (runFlat (.algorithmExpr (algPrivate [] [] [("F", valueDemandFamily)]
     [.call (resolve "map") [.listLiteral [.num 0, .num 1], resolve "F"]]))) [10, 2]
 
@@ -396,8 +399,10 @@ def zeroCallRejectsWithMinimum (name : KatLang.Ident) (minimum : Nat) : Bool :=
 -- The ALGORITHM channel is untouched: `map` still receives `Only` as a callback,
 -- so each element is collected, and a callable that cannot accept zero supplied
 -- arguments is still a perfectly good callback.
-#guard expectFlat (runFlat (arityRoot signatureFamilies
-    [.call (resolve "map") [.listLiteral [.num 1, .num 2], resolve "Only"]])) [1, 2]
+#guard match runResult (arityRoot signatureFamilies
+    [.call (resolve "map") [.listLiteral [.num 1, .num 2], resolve "Only"]]) with
+  | .ok value => value == .listValue [.listValue [.atom 1], .listValue [.atom 2]]
+  | .error _ => false
 #guard expectFlat (runFlat (arityRoot signatureFamilies
     [.call (resolve "map") [.listLiteral [.num 1, .num 2], resolve "Head"]])) [1, 2]
 
@@ -405,7 +410,7 @@ def zeroCallRejectsWithMinimum (name : KatLang.Ident) (minimum : Nat) : Bool :=
 -- builtin's own arity error (the very error `sum()` reports) rather than a
 -- parameter-list one.
 #guard (match runResult (arityRoot signatureFamilies [resolve "sum"]) with
-        | Except.error err => innermostIsBadArity err || innermostIsAnyArityMismatch err
+        | Except.error err => innermostIsArityMismatch 1 0 err
         | _ => false)
 
 -- Host-built zero-capture signatures may not take a plain-output shortcut in
