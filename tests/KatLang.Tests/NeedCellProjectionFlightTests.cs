@@ -623,7 +623,7 @@ public sealed class NeedCellProjectionFlightTests
     // ── Terminality and cancellation at observation entry ────────────────────────────────────
 
     [Fact]
-    public void TerminalRunAnswersBeforeAMemoizedIdentity_AndStartsNoProjection()
+    public async Task TerminalRunAnswersBeforeAMemoizedIdentity_AndStartsNoProjection()
     {
         var budget = EvaluationBudget.Create(null);
         var count = new Algorithm.Builtin(BuiltinId.@count);
@@ -633,7 +633,7 @@ public sealed class NeedCellProjectionFlightTests
         Assert.Same(count, identityOnly.ProjectCallable().Value);
         var terminal = budget.RetainTerminal(new EvalError.EvaluationStepLimitExceeded(3));
         Assert.Same(terminal, memoized.ProjectCallable().Error);
-        Assert.Same(terminal, memoized.ProjectCallableAsync().AsTask().GetAwaiter().GetResult().Error);
+        Assert.Same(terminal, (await memoized.ProjectCallableAsync()).Error);
         Assert.Same(terminal, identityOnly.ProjectCallable().Error);
         var attempts = 0;
         var fresh = Runtime(budget, () => { attempts++; return Identity(count); });
@@ -753,7 +753,7 @@ public sealed class NeedCellProjectionFlightTests
     }
 
     [Fact]
-    public void IdentityOnlyProjection_HasNoNodeOrFlight_AndRereadsAllocateNothing()
+    public async Task IdentityOnlyProjection_HasNoNodeOrFlight_AndRereadsAllocateNothing()
     {
         var budget = EvaluationBudget.Create(null);
         var count = new Algorithm.Builtin(BuiltinId.@count);
@@ -763,13 +763,16 @@ public sealed class NeedCellProjectionFlightTests
         Assert.Same(count, hostBuilt.ProjectCallable().Value);
         Assert.True(written.ProjectCallable().IsOk);
         // Warm the paths, then measure memo re-reads on this thread.
-        for (var i = 0; i < 16; i++) { hostBuilt.ProjectCallable(); written.ProjectCallable(); hostBuilt.ProjectCallableAsync(); }
+        for (var i = 0; i < 16; i++) { hostBuilt.ProjectCallable(); written.ProjectCallable(); _ = hostBuilt.ProjectCallableAsync(); }
         var before = GC.GetAllocatedBytesForCurrentThread();
         for (var i = 0; i < 1_000; i++)
         {
             hostBuilt.ProjectCallable();
             written.ProjectCallable();
-            _ = hostBuilt.ProjectCallableAsync().Result;
+            // A memo re-read completes synchronously, so the await never leaves the measured thread.
+            var reread = hostBuilt.ProjectCallableAsync();
+            Assert.True(reread.IsCompletedSuccessfully);
+            _ = await reread;
         }
         Assert.Equal(0, GC.GetAllocatedBytesForCurrentThread() - before);
         Assert.Equal(1, projections);
