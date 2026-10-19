@@ -12,13 +12,15 @@ namespace KatLang.Tests;
 /// promoted to permanent source-level tests over the public <c>R.Algorithm</c>. Each case runs in its own
 /// bounded task on the synchronous generic evaluator, the synchronous optimized evaluator and the
 /// asynchronous engine (with genuinely asynchronous host operations), and every mode must give the
-/// recorded outcome, the recorded host effects, identical diagnostics and spans, and — except where host-stack headroom decides which
-/// resource limit is reached first (Q-09a) — the same semantic step count; the optimized mode must also
+/// recorded outcome, the recorded host effects, identical diagnostics and spans, and the same semantic step
+/// count — except that where host-stack headroom decides (Q-09a), a mode may instead stop at the host-stack
+/// backstop after a prefix of the recorded effects; the optimized mode must also
 /// show the recorded loop and fusion counters. The expectations were verified against the R2 prototype's
 /// recorded outcomes; the deliberate differences are the runtime aliases (<c>RA*</c>, <c>AS3</c>–
 /// <c>AS6</c>, <c>AS13</c>: ordinary property semantics until META-S3-2, now runtime-target callable aliases,
 /// FWD-02 — their call is the projected identity's fresh call), diagnostic enrichment that may not start a
-/// runtime projection (<c>AS11</c>, <c>AS12</c>) and headroom (<c>C3b</c>, <c>C8b</c>). Parser probes are
+/// runtime projection (<c>AS11</c>, <c>AS12</c>) and headroom (<c>C3b</c>, <c>C8b</c>: they record the
+/// outcome a run reaches when the host stack does not stop it first). Parser probes are
 /// kept separately (<see cref="FrontEndProbes_AreParseErrors"/>), and bounded <c>MaxSteps</c> scans compare
 /// the three modes at every limit (<see cref="StepLimitScans_AgreeAcrossModes"/>).
 /// </summary>
@@ -81,7 +83,7 @@ public class CallReferenceS3CorpusTests
         new("C7f", "Box = { G(x) = x * 10 }\nMk(p) = Hold(p.G)\nR = Mk(Box)\nR.Algorithm(3), Apply(R.Algorithm, 4)", "ok (30, 40)", "", "0/0", "0/0"),
         new("C7g", "Mk(g) = Capture(g(5))\nR = Mk(Square)\nQ = Mk(R.Algorithm)\nS = Mk(Q.Algorithm)\nS.Algorithm(2), Q.Algorithm(3), Apply(S.Algorithm, 4)", "ok (4, 9, 16)", "2,3,4", "0/0", "0/0"),
         new("C8a", Chain(40) + "R40.Algorithm(3)", "ok 9", "3", "0/0", "0/0"),
-        new("C8b", Chain(3000) + "R3000.Algorithm(3)", "err EvaluationStackExhausted", "", "0/0", "0/0", HeadroomSensitive: true),
+        new("C8b", Chain(3000) + "R3000.Algorithm(3)", "ok 9", "3", "0/0", "0/0", HeadroomSensitive: true),
         new("AS1", "R = if(aflag(), Capture(Square(5)), Capture(Inc(5)))\nUse(f) = 9.f\nUse(R.Algorithm)", "ok 81", "9", "0/0", "0/0"),
         new("AS1b", "R = if(aflag(), Capture(Square(5)), Capture(Inc(5)))\nUse(f) = 9.f\ncount((R, 0)), Use(R.Algorithm)", "ok (2, 81)", "9", "0/0", "0/0"),
         new("AS2", "MkBox(k) = {\n  G(x) = x * 10\n  k\n}\nR = if(aflag(), Capture(MkBox(1)), 0)\nUse(b) = b.G(3)\nUse(R.Algorithm)", "ok 30", "", "0/0", "0/0"),
@@ -331,20 +333,35 @@ public class CallReferenceS3CorpusTests
 
     private static Task<Observation> Bounded(Func<Task<Observation>> run) => Task.Run(run).WaitAsync(WaitLimit);
 
+    private const string HostStackBackstop = "err EvaluationStackExhausted";
+
     private static void Check(Case c, string mode, Observation observed)
     {
-        if (c.HeadroomSensitive)
+        // Q-09a: where host-stack headroom decides, the backstop may end a run before its recorded
+        // outcome — before the depth limit of an unbounded recursion (C3b), or before a long chain that
+        // holds no evaluation depth completes (C8b: a 1.5 MiB Windows thread-pool stack stops it, while
+        // the 8 MiB Linux default, or a larger stack glibc reuses, lets it finish). It is the only other
+        // permitted outcome — never a hang, a host fault or another error — and nothing runs after it,
+        // so the effects before it are a prefix of the recorded ones.
+        if (c.HeadroomSensitive && observed.Outcome == HostStackBackstop)
         {
-            // Q-09a: which resource limit (evaluation depth or host-stack headroom) ends an unbounded
-            // recursion first is strategy-dependent; it must be one of them, never a hang or a host fault.
-            Assert.True(observed.Outcome is "err EvaluationDepthExceeded" or "err EvaluationStackExhausted",
-                $"{c.Id} {mode}: {observed.Outcome}");
+            Assert.True(IsTracePrefix(observed.Traces, c.Traces),
+                $"{c.Id} {mode}: traces [{observed.Traces}] before the host-stack backstop, recorded [{c.Traces}]");
             return;
         }
 
-        Assert.True(c.Expected == observed.Outcome, $"{c.Id} {mode}: {observed.Outcome}, expected {c.Expected}");
+        Assert.True(c.Expected == observed.Outcome, $"{c.Id} {mode}: {observed.Outcome}, expected {c.Expected}"
+            + (c.HeadroomSensitive ? " or " + HostStackBackstop : ""));
         Assert.True(c.Traces == observed.Traces, $"{c.Id} {mode}: traces [{observed.Traces}], expected [{c.Traces}]");
         Assert.Equal(c.Module is null ? 0 : c.ExpectedAdmissions, observed.Admissions);
+    }
+
+    private static bool IsTracePrefix(string traces, string recorded)
+    {
+        if (traces.Length == 0) return true;
+        var items = traces.Split(',');
+        var all = recorded.Split(',');
+        return items.Length <= all.Length && items.SequenceEqual(all.Take(items.Length));
     }
 
     [Theory]
