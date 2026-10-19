@@ -455,23 +455,8 @@ internal static class PropertyExposureResolver
             new ExposureWalkMemos(summaryMemo, observations, finalLevel.Root, run));
         var rewrittenOutput = RewriteExprList(algorithm.Output, memos);
 
-        return algorithm switch
-        {
-            Algorithm.User user => user with
-            {
-                Opens = rewrittenOpens,
-                Properties = rewrittenProperties,
-                Output = OutputBundle.From(rewrittenOutput),
-            },
-            Algorithm.Alias alias => alias with
-            {
-                Opens = rewrittenOpens,
-                Properties = rewrittenProperties,
-                Target = rewrittenOutput[0],
-            },
-            Algorithm.Builtin or Algorithm.Conditional => throw new InvalidOperationException(
-                "Only a scope body (a user algorithm or a callable alias) has scope-body exposure."),
-        };
+        // The same variant back: a user's rewritten bundle, or an alias's one rewritten target row.
+        return algorithm.WithOwnScopeBody(rewrittenOpens, rewrittenProperties, rewrittenOutput);
     }
 
     /// <summary>

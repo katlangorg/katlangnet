@@ -2295,6 +2295,47 @@ public closed record Algorithm
         Builtin or Conditional or Alias => this,
     };
 
+    /// <summary>
+    /// Replace a SCOPE BODY's own <c>open</c> targets and declarations — those of a user algorithm
+    /// or a callable alias, the two variants that own both (Lean: the <c>opens</c> and
+    /// <c>properties</c> fields of <c>Algorithm.mk</c> and <c>Algorithm.alias</c>) — as a
+    /// <c>with</c> copy of the SAME variant: the declaration identity, parent, module-root mark and
+    /// every other carried field stay, including a user's parameter patterns, explicit-list bit and
+    /// output and an alias's target row and elaborated target facts. The lists are stored as given,
+    /// never copied. A builtin owns no scope and a family's opens are not a scope body's, so either
+    /// receiver is a caller defect rather than a silent identity. A front-end rewrite with no Lean
+    /// counterpart (Lean's tree is already elaborated).
+    /// </summary>
+    internal Algorithm WithOwnScope(IReadOnlyList<Expr> opens, IReadOnlyList<Property> properties) => this switch
+    {
+        User user => user with { Opens = opens, Properties = properties },
+        Alias alias => alias with { Opens = opens, Properties = properties },
+        Builtin or Conditional => throw new InvalidOperationException(
+            $"Only a scope body (a user algorithm or a callable alias) has an own scope to replace, not a {GetType().Name}."),
+    };
+
+    /// <summary>
+    /// <see cref="WithOwnScope"/> that also replaces the body's stored OUTPUT rows, read as the total
+    /// <c>Output</c> accessor reads them: a user algorithm's output bundle, or an alias's ONE target
+    /// row (Lean: <c>Algorithm.output (.alias …) = [target]</c>). An alias stays an alias with
+    /// exactly one row, so any other row count is an internal defect that throws instead of
+    /// truncating or inventing a target; a user is never turned into an alias or back. These are
+    /// output rows only, not the complete written-row stream of <c>AstHelpers.WrittenRows</c>.
+    /// </summary>
+    internal Algorithm WithOwnScopeBody(
+        IReadOnlyList<Expr> opens,
+        IReadOnlyList<Property> properties,
+        IReadOnlyList<Expr> rows) => this switch
+        {
+            User user => user with { Opens = opens, Properties = properties, Output = OutputBundle.From(rows) },
+            Alias alias => rows.Count == 1
+                ? alias with { Opens = opens, Properties = properties, Target = rows[0] }
+                : throw new InvalidOperationException(
+                    $"A callable alias has exactly one written row, its target reference; a rewrite produced {rows.Count}."),
+            Builtin or Conditional => throw new InvalidOperationException(
+                $"Only a scope body (a user algorithm or a callable alias) has an own scope to replace, not a {GetType().Name}."),
+        };
+
     /// <summary>One flat normal capture per name. Lean: <c>Algorithm.normalParameters</c>.</summary>
     internal static IReadOnlyList<ParameterPattern> NormalParameters(IEnumerable<string> names)
         => names.Select(static name => (ParameterPattern)new CaptureParameterPattern(name)).ToList();

@@ -2043,16 +2043,9 @@ internal static class ImplicitArgumentResolver
         // indirection, nothing synthesized) or bare forwarding (a written parameter list or a
         // clause branch: the callee receives the existing bindings of its parameters' names, never
         // renamed, reshaped or added). Every other body keeps formula lifting below.
+        // A lone row completes to a user body or a callable alias; either keeps its variant.
         if (!isRoot && TryCompleteLoneCalleeRow(alg, branchContext, visibleParamMap, ownForwarding, walkMemos) is { } completed)
-        {
-            return completed switch
-            {
-                Algorithm.Alias alias => alias with { Opens = newOpens, Properties = newProperties },
-                Algorithm.User user => user with { Opens = newOpens, Properties = newProperties },
-                Algorithm.Builtin or Algorithm.Conditional => throw new InvalidOperationException(
-                    "A lone row completes to a user body or a callable alias."),
-            };
-        }
+            return completed.WithOwnScope(newOpens, newProperties);
 
         // A lone bare row FWD-02 did not complete stays what it is — a bare reference, the cached
         // zero-argument read — and is never formula-lifted: which callables a lone row can alias or
