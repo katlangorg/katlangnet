@@ -12,7 +12,9 @@ namespace KatLang.Tests;
 /// signatures), each time found only by review. The scan below reads every declared parameter
 /// list of the KatLang assembly through reflection — methods, constructors (positional records
 /// included), local functions, and delegate signatures — so a violation fails here instead.
-/// Several tokens may end a list together; nothing may follow one.
+/// Several tokens may end a list together; nothing may follow one. Later violations were caught
+/// only by the full V3 run, because focused runs left this class out; run it right after any
+/// signature change with <c>scripts/check-cancellation-token-order.ps1</c>.
 /// </summary>
 public class CancellationTokenParameterOrderTests
 {
@@ -26,7 +28,10 @@ public class CancellationTokenParameterOrderTests
 
         // The evaluator and loader entry points take tokens, so an empty scan is a broken scan.
         Assert.True(tokenLists > 0, "The scan found no parameter list with a CancellationToken.");
-        Assert.Empty(violations);
+        // Every full signature, one per line: Assert.Empty would truncate each to its first fifty characters.
+        Assert.True(violations.Count == 0,
+            "Parameters follow a CancellationToken (move them before the token):\n"
+            + string.Join("\n", violations.Order(StringComparer.Ordinal)));
     }
 
     [Fact]
