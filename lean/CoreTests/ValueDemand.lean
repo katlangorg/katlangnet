@@ -893,7 +893,7 @@ def rirParameterSlotProjectsNothing : Bool :=
   match KatLang.runEvalM (do
       let outcome <- KatLang.evalAttempt (KatLang.runResultM rirReduceInitialThroughParameter)
       let state <- get
-      pure (outcome.isOk, state.needs.all (fun cell => cell.callable.isNone))) with
+      pure (outcome.isOk, state.needs.all (fun cell => cell.callable matches .unprojected))) with
   | .ok (false, true) => true
   | _ => false
 #guard rirParameterSlotProjectsNothing

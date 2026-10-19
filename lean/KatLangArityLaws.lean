@@ -370,19 +370,24 @@ theorem spread_dot_receiver_is_ordinary_spread_argument (operand : Expr) (args :
       = .sequenceSpread operand :: args := rfl
 
 /-- CALLEE-position dot resolution unfolds to the structural projection followed by alias
-normalization (DOT-09; Q-18 C-B3): `resolveCalleeAlg` of a dot callee is
-`projectNeedStructuralMember`, then `resolveAliasTarget`, and a computed dot value with no
-structural member is `notAnAlgorithm`. This is the definition of the total `resolveCalleeAlg`'s
-dot arm; both composed functions are `partial`. That the supplied-argument projection
-(`projectNeedCallable`'s dot arm, `partial`) agrees with it — the single callable identity in
-every position, `(Box.G)(2)` as the member call `Box.G(2)` — is a source fact pinned by guards,
-not part of this statement. -/
+normalization (DOT-09; Q-18 C-B3): the callee law `resolveCalleeAlgWith project normalize resolve` of
+a dot callee is `project`, then `normalize`, and a computed dot value with no structural member is
+`notAnAlgorithm`, for EVERY structural projection `project` and alias normalizer `normalize`. This is
+the definition of the total callee law's dot arm. Since META-S3-1 the production `resolveCalleeAlg` is
+a `partial` member of the evaluator recursion core (a runtime projection may demand VALUE) that
+installs `projectNeedStructuralMember`, `resolveAliasTarget` (since META-S3-2 a core member too: a
+runtime-target alias's step projects its binding cell) and `resolveAlg`; that installation, and that
+the supplied-argument projection (`projectNeedCallable`'s dot arm, `partial`) agrees with it — the
+single callable identity in every position, `(Box.G)(2)` as the member call `Box.G(2)` — are source
+facts pinned by guards, not part of this statement. -/
 theorem dot_callee_resolution_is_structural_projection_then_alias
+    (project : Expr → EvalCtx → EvalM (Option Algorithm))
+    (normalize : Algorithm → EvalCtx → EvalM Algorithm) (resolve : Expr → EvalCtx → EvalM Algorithm)
     (receiver : Expr) (name : Ident) (fallback : Expr) (args : Option OutputBundle) (ctx : EvalCtx) :
-    resolveCalleeAlg (.dotMember receiver name fallback args) ctx =
+    resolveCalleeAlgWith project normalize resolve (.dotMember receiver name fallback args) ctx =
       (do
-        match <- projectNeedStructuralMember (.dotMember receiver name fallback args) ctx with
-        | some algorithm => resolveAliasTarget algorithm ctx
+        match <- project (.dotMember receiver name fallback args) ctx with
+        | some algorithm => normalize algorithm ctx
         | none => .error (Error.notAnAlgorithm computedDotCalleeDescription)) := rfl
 
 /-
@@ -1184,14 +1189,16 @@ theorem alias_has_no_callable_surface_of_its_own (p : Option ScopeCtx) (op : Lis
       ∧ (Algorithm.alias p op pr target id).parameterPatterns = [] :=
   ⟨rfl, rfl, rfl⟩
 
-/-- WRITTEN `open A` NEVER TURNS A CALLABLE ALIAS INTO A NAMESPACE: whatever its target, when
-the open target resolves to an alias, the production `resolveOpen` refuses it with
-`illegalInOpen` (its gate reads `Algorithm.requiresArguments`, `true` for every alias), leaving
-the state the resolution reached. (Strengthened from the `requiresArguments` fact alone,
-R8/X-13; the resolution `resolveAlgForOpen` itself is `partial`.) -/
+/-- WRITTEN `open A` NEVER TURNS A STATIC CALLABLE ALIAS INTO A NAMESPACE: whatever its target,
+when the open target resolves to an alias whose static chain reaches no runtime row, the production
+`resolveOpen` refuses it with `illegalInOpen` (its gate reads `Algorithm.requiresArguments`, `true`
+for every static alias), leaving the state the resolution reached. (Strengthened from the
+`requiresArguments` fact alone, R8/X-13; the resolution `resolveAlgForOpen` itself is `partial`.) -/
 theorem alias_is_never_an_open_provider (e : Expr) (ctx : EvalCtx) (p : Option ScopeCtx)
     (op : List Expr) (pr : List PropDef) (target : Expr) (id : Option PropertyIdentity)
     (state state' : EvalState)
+    (hstatic : Algorithm.runtimeAliasNamespace ((Algorithm.alias p op pr target id).aliasCount + 1)
+      ((p.map ScopeCtx.staticChain).getD []) (.alias p op pr target id) = false)
     (h : (resolveAlgForOpen e ctx).runState state = (.ok (.alias p op pr target id), state')) :
     (resolveOpen e ctx).runState state
       = (.error (Error.illegalInOpen
@@ -1199,6 +1206,25 @@ theorem alias_is_never_an_open_provider (e : Expr) (ctx : EvalCtx) (p : Option S
   show ((resolveAlgForOpen e ctx).runState >>= fun a => _) state = _
   simp only [bind, ExceptT.bind, ExceptT.mk, ExceptT.bindCont, StateT.bind]
   rw [h]
+  simp [Algorithm.requiresArguments, Algorithm.parent, hstatic]
+  rfl
+
+/-- A RUNTIME-TARGET ALIAS IS A NAMESPACE OF ITS OWN DECLARATIONS (FWD-02, META-S3-2): when the open
+target resolves to an alias whose chain reaches a runtime row, the production
+`resolveOpen` accepts it unchanged — exactly as it accepts that alias's ordinary zero-parameter
+property — because whether a callable identity is supplied is known only at run time and `open`
+imports declarations, never a callable. -/
+theorem runtime_alias_is_its_own_open_namespace (e : Expr) (ctx : EvalCtx) (p : Option ScopeCtx)
+    (op : List Expr) (pr : List PropDef) (target : Expr) (id : Option PropertyIdentity)
+    (state state' : EvalState)
+    (hruntime : Algorithm.runtimeAliasNamespace ((Algorithm.alias p op pr target id).aliasCount + 1)
+      ((p.map ScopeCtx.staticChain).getD []) (.alias p op pr target id) = true)
+    (h : (resolveAlgForOpen e ctx).runState state = (.ok (.alias p op pr target id), state')) :
+    (resolveOpen e ctx).runState state = (.ok (.alias p op pr target id), state') := by
+  show ((resolveAlgForOpen e ctx).runState >>= fun a => _) state = _
+  simp only [bind, ExceptT.bind, ExceptT.mk, ExceptT.bindCont, StateT.bind]
+  rw [h]
+  simp [Algorithm.requiresArguments, Algorithm.parent, hruntime]
   rfl
 
 /-- THE CACHE KEY CARRIES THE BINDING'S NAME: `zeroArgPropertyCacheKey` reads the BINDING —

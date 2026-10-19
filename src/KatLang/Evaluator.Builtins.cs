@@ -826,8 +826,8 @@ public static partial class Evaluator
         if (item.Source is Expr.Param(var name))
             return item with { ValueError = DemandParameter(cell, result, name, item.Source.Span).Error };
         if (result.Error.IsResourceLimit) return item with { ValueError = result.Error };
-        var callable = cell.ProjectCallable();
-        return item with { ValueError = result.Error, Callable = callable.IsOk ? callable.Value : null };
+        // Diagnostic enrichment only (the message choice): a NON-INITIATING read (META-S3-0b).
+        return item with { ValueError = result.Error, Callable = cell.PeekCallable() };
     }
 
     private static VariadicCallItem DemandSequenceBuiltinCallItemValue(
@@ -2180,7 +2180,7 @@ public static partial class Evaluator
         if (ctx.CallStack.Count == 0)
             return new EvalError.UnknownName(name) { Span = target.Span };
 
-        var resolvedR = LookupLexical(ctx.CallStack[0], name, ctx);
+        var resolvedR = LookupLexicalForValue(ctx.CallStack[0], name, ctx);
         if (resolvedR.IsError)
             return AtSpanIfMissing(resolvedR.Error, target.Span);
 

@@ -12,7 +12,7 @@ def cycleState : EvalState := { needs := #[{ suspension := .expression (.param "
 #guard match (demandNeed 0).runState cycleState with
   | (.error .demandCycle, s) =>
     match s.needs[0]? with
-    | some (NeedCell.mk _ (.completed (.error .demandCycle)) _ _) => true
+    | some (NeedCell.mk _ (.completed (.error .demandCycle)) _ _ _ _ _ _) => true
     | _ => false
   | _ => false
 
@@ -25,14 +25,14 @@ def sliceCtx : EvalCtx := { callStack := [], needEnv := [("xs", 1)] }
   | (.ok [(0, some (.param "missing")), (0, some (.param "missing"))], s) =>
     s.needs.size == 2 &&
     match s.needs[0]?, s.needs[1]? with
-    | some (NeedCell.mk _ .suspended _ _), some (NeedCell.mk _ .suspended _ _) => true
+    | some (NeedCell.mk _ .suspended _ _ _ _ _ _), some (NeedCell.mk _ .suspended _ _ _ _ _ _) => true
     | _, _ => false
   | _ => false
 
 #guard match (demandNeed 1).runState sliceState with
   | (.error (.unknownName "missing"), s) =>
     match s.needs[1]? with
-    | some (NeedCell.mk _ (.completed (.error (.unknownName "missing"))) _ _) => true
+    | some (NeedCell.mk _ (.completed (.error (.unknownName "missing"))) _ _ _ _ _ _) => true
     | _ => false
   | _ => false
 
@@ -81,9 +81,9 @@ def observeWritten (e : Expr) (_ : EvalCtx) (_ : ValEnv) : EvalM SpreadSupply :=
       (3, none), (4, none), (5, none)], s) =>
     s.needs.size == 6 && s.nextRuntimeDeclaration == 1 &&
     match s.needs[3]?, s.needs[4]?, s.needs[5]? with
-    | some (NeedCell.mk (.ready (.sequenceValue [], 0)) .suspended none _),
-      some (NeedCell.mk (.ready (.listValue [], 1)) .suspended none _),
-      some (NeedCell.mk (.ready (.sequenceValue [.atom 1, .atom 2], 1)) .suspended none _) => true
+    | some (NeedCell.mk (.ready (.sequenceValue [], 0)) .suspended .unprojected _ _ _ _ _),
+      some (NeedCell.mk (.ready (.listValue [], 1)) .suspended .unprojected _ _ _ _ _),
+      some (NeedCell.mk (.ready (.sequenceValue [.atom 1, .atom 2], 1)) .suspended .unprojected _ _ _ _ _) => true
     | _, _, _ => false
   | _ => false
 
@@ -101,8 +101,8 @@ def failingSpread (_ : Expr) (_ : EvalCtx) (_ : ValEnv) : EvalM SpreadSupply := 
     [.num 1, .sequenceSpread (.num 2), .num 3]).runState EvalState.empty with
   | (.error .divByZero, s) => s.needs.size == 2 && s.nextRuntimeDeclaration == 23 &&
     match s.needs[0]?, s.needs[1]? with
-    | some (NeedCell.mk (.expression (.num 1) _ _) .suspended _ _),
-      some (NeedCell.mk (.ready (.atom 7, 1)) .suspended _ _) => true
+    | some (NeedCell.mk (.expression (.num 1) _ _) .suspended _ _ _ _ _ _),
+      some (NeedCell.mk (.ready (.atom 7, 1)) .suspended _ _ _ _ _ _) => true
     | _, _ => false
   | _ => false
 
@@ -114,14 +114,14 @@ def failingSpread (_ : Expr) (_ : EvalCtx) (_ : ValEnv) : EvalM SpreadSupply := 
 -- Completion must preserve callable memo changes made by the callback even on failure.
 def failWithMemo (_ : Expr) (_ : EvalCtx) (_ : ValEnv) : EvalM CountedResult := do
   modify fun s => {s with
-    needs := s.needs.modify 0 (fun c => {c with callable := some (.ok none)})
+    needs := s.needs.modify 0 (fun c => {c with callable := .projected (.ok none)})
     nextRuntimeDeclaration := s.nextRuntimeDeclaration + 17}
   throw Error.divByZero
 def oneExpr : EvalState := {needs := #[{suspension := .expression (.num 1) EvalCtx.empty []}]}
 #guard match (NeedDemand.step failWithMemo productionPlanRoute (fun _ => throw Error.badArity) 0).runState oneExpr with
   | (.error .divByZero, s) => s.nextRuntimeDeclaration == 17 &&
     match s.needs[0]? with
-    | some (NeedCell.mk (.expression (.num 1) _ _) (.completed (.error .divByZero)) (some (.ok none)) _) => true
+    | some (NeedCell.mk (.expression (.num 1) _ _) (.completed (.error .divByZero)) (.projected (.ok none)) _ _ _ _ _) => true
     | _ => false
   | _ => false
 
@@ -162,7 +162,7 @@ def shrinkExpression (_ : Expr) (_ : EvalCtx) (_ : ValEnv) : EvalM CountedResult
     pure (.atom 1, 1)) productionPlanRoute (fun _ => throw Error.badArity) 0).runState oneExpr with
   | (.ok (.atom 1, 1), s) =>
     match s.needs[0]? with
-    | some (NeedCell.mk (.ready (.atom 99, 1)) (.completed (.ok (.atom 1, 1))) _ _) => true
+    | some (NeedCell.mk (.ready (.atom 99, 1)) (.completed (.ok (.atom 1, 1))) _ _ _ _ _ _) => true
     | _ => false
   | _ => false
 
@@ -180,3 +180,57 @@ def shrinkExpression (_ : Expr) (_ : EvalCtx) (_ : ValEnv) : EvalM CountedResult
   | _ => false
 
 end KatLang.NeedControlGuards
+
+/-! ## Projection (META-S3-0a): the production `projectNeedCallable` runs `NeedProjection.step`.
+The partial driver is opaque to the kernel, so these executable guards witness its wiring
+to the total shell whose laws are `KatLang.NeedControl.Projection`. -/
+namespace KatLang.NeedControlGuards.Projection
+
+-- An active projection: re-entry is `demandCycle` and leaves the marker in place.
+def activeState : EvalState :=
+  { needs := #[{ suspension := .expression (.num 5) EvalCtx.empty [], callable := .projecting }] }
+#guard match (projectNeedCallable 0).runState activeState with
+  | (.error .demandCycle, s) => (s.needs[0]? matches some (NeedCell.mk _ .suspended .projecting _ _ _ _ _))
+  | _ => false
+
+-- A completed failure is sticky: returned unchanged, nothing recomputed.
+def failedState : EvalState :=
+  { needs := #[{ suspension := .expression (.num 5) EvalCtx.empty [], callable := .projected (.error .divByZero) }] }
+#guard match (projectNeedCallable 0).runState failedState with
+  | (.error .divByZero, s) => (s.needs[0]? matches some (NeedCell.mk _ .suspended (.projected (.error .divByZero)) _ _ _ _ _))
+  | _ => false
+
+-- A computed value has no identity: SUCCESSFUL absence, published, VALUE still suspended.
+def numberState : EvalState := { needs := #[{ suspension := .expression (.num 5) EvalCtx.empty [] }] }
+#guard match (projectNeedCallable 0).runState numberState with
+  | (.ok none, s) => (s.needs[0]? matches some (NeedCell.mk _ .suspended (.projected (.ok none)) _ _ _ _ _))
+  | _ => false
+
+-- A resolution failure that is not an absence report (`isLiftableArgResolutionError`) is the
+-- projection's ordinary FAILURE: published, and returned again by a later projection.
+def unknownState : EvalState :=
+  { needs := #[{ suspension := .expression (.resolve "missing") EvalCtx.empty [] }] }
+#guard match (do
+    let first ← evalAttempt (projectNeedCallable 0)
+    let second ← evalAttempt (projectNeedCallable 0)
+    pure (first, second)).runState unknownState with
+  | (.ok (.error (.unknownName "missing"), .error (.unknownName "missing")), s) =>
+    (s.needs[0]? matches some (NeedCell.mk _ .suspended (.projected (.error (.unknownName "missing"))) _ _ _ _ _))
+  | _ => false
+
+-- A computation re-entering its own cell gets `demandCycle`, which the outer projection
+-- publishes as the cell's sticky outcome (`self_reentry_publishes_cycle`).
+#guard match (NeedProjection.step (fun _ => projectNeedCallable 0) 0).runState numberState with
+  | (.error .demandCycle, s) =>
+    (s.needs[0]? matches some (NeedCell.mk _ .suspended (.projected (.error .demandCycle)) _ _ _ _ _))
+  | _ => false
+
+-- VALUE demand leaves a published CALLABLE outcome alone, and projection leaves VALUE alone.
+#guard match (do
+    let _ ← projectNeedCallable 0
+    demandNeed 0).runState { needs := #[{ suspension := .ready (.atom 3, 1) }] } with
+  | (.ok (.atom 3, 1), s) =>
+    (s.needs[0]? matches some (NeedCell.mk _ (.completed (.ok (.atom 3, 1))) (.projected (.ok none)) _ _ _ _ _))
+  | _ => false
+
+end KatLang.NeedControlGuards.Projection

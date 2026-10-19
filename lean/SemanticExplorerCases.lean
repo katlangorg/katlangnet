@@ -13129,7 +13129,7 @@ def case_special__openParentScopeReachesChild : Expr :=
 
 -- special__openNestedDoesNotLeakOutward: Lib = { \n     public X = 101 \n } \n A = { \n     Inner = { \n         open Lib \n         X \n     } \n     X \n } \n A(707)
 def case_special__openNestedDoesNotLeakOutward : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "Lib" (alg [] [] [publicProp "X" (alg [] [] [] [.num 101])] []), privateProp "A" (alg ["X"] [] [{ (privateLocalProp "Inner" (.localCapturedAncestorParams ["X"]) (alg [] [.resolve "Lib"] [] [.param "X"])) with requiredOwnerDepths := some [("X", some 0)] }] [.param "X"])] [(.call (.resolve "A") [.num 707])])
+  .algorithmExpr (alg [] [] [privateProp "Lib" (alg [] [] [publicProp "X" (alg [] [] [] [.num 101])] []), privateProp "A" (alg ["X"] [] [{ (privateLocalProp "Inner" (.localCapturedAncestorParams ["X"]) (.alias none [.resolve "Lib"] [] (.param "X"))) with requiredOwnerDepths := some [("X", some 0)] }] [.param "X"])] [(.call (.resolve "A") [.num 707])])
 #guard obs case_special__openNestedDoesNotLeakOutward == "ok raw=707 n=1"
 
 -- special__openHeadDefinedLater: A = { \n     open Lib \n     X \n } \n Lib = { \n     public X = 101 \n } \n A

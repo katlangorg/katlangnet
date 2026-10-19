@@ -719,7 +719,7 @@ theorem meta_value_orders (ev : Expr → EvalCtx → ValEnv → EvalM CountedRes
 
 /-- The public VALUE entry point installs the production plan route in the ONE shell. -/
 theorem production_demand (a : Nat) :
-    demandNeed a = NeedDemand.step evalCounted productionPlanRoute demandNeedRecursive a := rfl
+    demandNeed a = NeedDemand.step (evalSuppliedAt a) productionPlanRoute demandNeedRecursive a := rfl
 
 theorem production_route :
     productionPlanRoute = ⟨resolveCalleeAlg, NeedPlan.normalizeCallee, evalSuppliedCallCounted, evalSupplySpread⟩ := rfl
@@ -764,7 +764,7 @@ theorem production_value_executes_plan (a : Nat) (s : EvalState) (cell : NeedCel
       (let r := (NeedPlan.execute productionPlanRoute a shape).runState (withState a .evaluating s)
        (r.1, withState a (.completed r.1) r.2)) := by
   rw [production_demand]
-  have hv : NeedDemand.suspendedValue evalCounted productionPlanRoute demandNeedRecursive a cell.suspension =
+  have hv : NeedDemand.suspendedValue (evalSuppliedAt a) productionPlanRoute demandNeedRecursive a cell.suspension =
       NeedPlan.execute productionPlanRoute a shape := by
     rw [hsus]
     exact suspended_call_is_plan _ _ _ a e c v shape hshape
@@ -777,11 +777,13 @@ theorem production_value_executes_plan (a : Nat) (s : EvalState) (cell : NeedCel
 /-- THE opaque boundary of the production specializations below: the partial production
     callbacks are disciplined (they keep every existing cell's suspension, completed VALUE and
     prepared plan). By source inspection the evaluator writes the heap only through
-    `allocateNeed`, `projectNeedCallable`'s CALLABLE memo, `NeedPlan.prepare` and
-    `NeedDemand.step`, the last two proved disciplined here; Lean cannot unfold the `partial`
-    definitions, so this is an explicit hypothesis, exercised by `InvocationPlanGuards`. -/
+    `allocateNeed`, `projectNeedCallable`'s CALLABLE memo, `NeedPlan.prepare`, `NeedDemand.step`
+    and the META-S3-1 memo records `NeedPlan.setCallee` / `NeedLink.setReceiver` (which write only
+    the `callee` / `receiver` field, kept by `CellKept`), `prepare` and `step` proved disciplined
+    here; Lean cannot unfold the `partial` definitions, so this is an explicit hypothesis,
+    exercised by `InvocationPlanGuards`. -/
 def ProductionDiscipline : Prop :=
-  (∀ e c v, Disciplined (evalCounted e c v)) ∧
+  (∀ a e c v, Disciplined (evalSuppliedAt a e c v)) ∧
   (∀ f c, Disciplined (resolveCalleeAlg f c)) ∧
   (∀ g c, Disciplined (NeedPlan.normalizeCallee g c)) ∧
   (∀ g cells c v n, Disciplined (evalSuppliedCallCounted g cells c v n)) ∧
@@ -790,7 +792,7 @@ def ProductionDiscipline : Prop :=
 
 theorem production_value_disciplined (hp : ProductionDiscipline) (a : Nat) :
     Disciplined (demandNeed a) :=
-  disciplined_step _ productionPlanRoute _ hp.1 hp.2.2.2.2.2 hp.2.1 hp.2.2.1 hp.2.2.2.1 hp.2.2.2.2.1 a
+  disciplined_step _ productionPlanRoute _ (hp.1 a) hp.2.2.2.2.2 hp.2.1 hp.2.2.1 hp.2.2.2.1 hp.2.2.2.2.1 a
 
 theorem production_invoke_disciplined (hp : ProductionDiscipline) (r : NeedPlan.CallReference) :
     Disciplined (invokeNeedCall r) :=
@@ -820,7 +822,7 @@ theorem production_meta_value_orders (hp : ProductionDiscipline) (a : Nat) (s : 
     (let value := (demandNeed a).runState s
      let metaAfter := (reifyNeedCall a).runState value.2
      (metaAfter.1, value.1, metaAfter.2)) :=
-  meta_value_orders _ productionPlanRoute _ hp.1 hp.2.2.2.2.2 hp.2.1 hp.2.2.1 hp.2.2.2.1 hp.2.2.2.2.1 a s shape hshape
+  meta_value_orders _ productionPlanRoute _ (hp.1 a) hp.2.2.2.2.2 hp.2.1 hp.2.2.1 hp.2.2.2.1 hp.2.2.2.2.1 a s shape hshape
 
 /-! ## Transparent forwarding (actual `supplyNeed`) -/
 

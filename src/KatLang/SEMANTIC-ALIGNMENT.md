@@ -1,5 +1,119 @@
 # Semantic Alignment Manifest.
 
+META-S3-2 final review status (2026-10-19): the D4 ordinary-property fallback is implemented as the owner decided it — the binding cell's already-performed receiver work is consumed by the FIRST ordinary observation (a bare read or a terminal call), whichever operation performed the eligibility projection — so eligibility checking never duplicates a receiver evaluation. RF1's flow-local invocation token (C# `AliasInvocation`, Lean `withAliasInvocation` / `aliasProbeScope` / `aliasTerminal`) was removed: it refused to lend a CALLABLE-only observation's work, which made `Navigate(f) = f.K` / `Navigate(A), A` evaluate the receiver twice and made the bare read's value depend on incidental call nesting (`K(x) = x` against `K(x) = Id(x)`). Final evidence: `experimental/features/meta-s3-2-final-review-and-closeout.md`.
+
+RF1 (2026-10-19, as corrected by the final review): D4 separates ordinary terminal-property observations from the retained CALLABLE identity. C# `RuntimeAliasBinding` and Lean NeedCell `aliasUse` / `aliasBare` assign the initial eligibility computation once, to the first ordinary observation; `takeTerminalAliasInvocation` is consumed by the ordinary need binders after cardinality. A new bare observation after a terminal call enters a fresh binding context, preserving its local property-cache ownership. Bare reads cache independently after an explicit call; later explicit calls run the original row afresh. D3 eligible targets still share their receiver. R2 classification follows static chains, forward references and opens while preserving alias-owned members and static alias restrictions. Total helper laws: `terminal_initial_claim_once`, `bare_value_excludes_terminal_reuse`, `terminal_claim_excludes_later_terminal_reuse`, `unclaimed_cell_is_claimed_once`, `eligible_target_keeps_declared_parameters` and `runtime_namespace_direct`; production installation and whole-program lifetimes are executable guard evidence, not whole-run heap refinement or C# async/concurrency proofs. `NeedPlan.execute`, `evalCallCountedExpr` and `evalDotCallCounted` are again the plain phase compositions (no invocation wrapper), and `InvocationPlan.lean`'s `execute_prepared` / `fresh_plan_is_ordinary_call` are stated over them directly.
+
+META-S3-2 — runtime-target callable aliases (2026-10-19; FWD-02, owner decisions D1 = yes, D2 = Option
+A with Q-75 unchanged, D3 = fresh invocation): language change, Lean and C# together. LEAN: the alias
+representation is unchanged (`Algorithm.alias`); a RUNTIME ROW (`Expr.isRuntimeAliasRow`: a parameter,
+an argumentless `.Algorithm` link, an argumentless parameter-rooted path) is admitted by
+`validateAlgorithmTree`. Alias normalization moved INTO the evaluator recursion core
+(`resolveAliasChase` with the CALLABLE / VALUE entries `resolveAliasTarget` / `resolveAliasValueTarget`,
+plus `lookupLexicalProperty`, `lookupLexicalValueProperty`, `lookupLexical`, `NeedPlan.normalizeCallee`),
+because a runtime step projects its binding cell; `resolveCalleeAlgWith` takes the normalizer as a
+capability. Total definitions stand above the core: the binding cell `aliasBindingCell` (a parameter
+row's own cell, else `aliasBindingCellRecorded` keyed by `aliasCellKey` — declaration, resolving scope
+shape and declaring activation chain — in the new `EvalState.aliasCells`), the step `runtimeAliasStepWith`, the finish
+`runtimeAliasFinish`, the terminal property `Algorithm.aliasPropertyView`; `aliasStepIsRuntime`
+decides an `.Algorithm` row member-first by `algorithmIntrinsicRoute`; the bare read `aliasValue`
+demands the binding cell (a parameter row: the parameter read). `requiresArguments` is false for a
+runtime alias. Theorems `KatLangArityLaws/RuntimeAlias.lean`; guards `RuntimeAliasGuards.lean`,
+`CoreTests/AliasForwarding.lean` § 16; eight generated `runtime-alias-*` `LanguageSpecCases`.
+C#: `Evaluator.Aliases.cs` — `ResolveAliasTarget(…, callable)` (static memo of the chain's STATIC end,
+runtime step through `AliasBindingCell` / `IsRuntimeAliasStep`, `Algorithm.User(Alias)` terminal,
+`DeclaresParameterizedStructure` finish), `EvalRuntimeAliasValueCounted`, VALUE-chase sites
+(`LookupLexicalForValue`, the demand funnel, member/`.string`/intrinsic receivers, inline and spread,
+top-level read), async CALLABLE chases through `ResolveAsync` (`ResolveAliasTargetAsync`, the plan and
+fallback-name sites); `FinishSuppliedValue` gives a cell under an alias head property provenance.
+C#-ONLY (no Lean counterpart): the front-end Option A classification (`RuntimeAliasRow`,
+`Algorithm.Alias.HasRuntimeTarget`, FORMAL-02), the run pre-mark (`AdmittedProgramFacts`,
+`EvaluationBudget.DecideRuntimeAliasReach`), reference-cell classification at formation
+(`ReferenceReachesRuntimeAlias`), first-wins CAS establishment and Guard B, non-initiating
+recognition, and the editor's unknown signature (`PropertyInfo.HasUnknownRuntimeSignature`).
+Deliberate differences of representation, not of outcome on front-end trees: C# keys a binding cell by
+declaration and scope identity on the nearest activation, Lean by declaration id, resolving scope shape
+and activation chain (including a shared declaration wired under distinct unactivated namespaces);
+C# skips the runtime step for an `.Algorithm` edge the front end proved statically selected
+(`EffectiveMissSelection == Never`), Lean reaches the same static step through the member-first route.
+Pinned by `RuntimeCallableAliasCorpusTests`, `RuntimeCallableAliasMechanismTests`. Report
+`experimental/features/meta-s3-2-runtime-alias-implementation.md` (local). Full V3.
+
+META-S3-1 — general `R.Algorithm` callable projection (2026-10-19): language change, Lean first,
+then C#. LEAN: `NeedCell` gains the two memo records `callee` (CR-13, set by `NeedPlan.calleeCell`:
+the plan's written callee through `supplyNeed` in the captured caller context — a parameter callee
+is its own cell) and `receiver` (CR-15, set by `NeedLink.receiverCell`); the total link channels
+`NeedLink.decodeCallee` / `value` / `callable` and the typed parameter projection
+`projectParameterWith` (L2) stand above the recursion core. The identity resolvers (`resolveAlg`,
+`projectNeedCallable`, `projectNeedWritten`, `projectNeedStructuralMember`, `resolveCalleeAlg` — now
+`resolveCalleeAlgWith` installed at the production resolvers — the suffix-callback projection and
+`resolveDotReceiver`, now the TYPED `resolveDotReceiver?`) moved INTO the evaluator recursion core so
+a link's CALLABLE can demand VALUE; `projectNeedCallable a` installs `projectNeedWrittenAt a`, the
+production VALUE route installs the address-indexed `evalSuppliedAt a` (a link's VALUE is
+`linkValue`, every other expression `evalCounted`), `evalDotCallCounted` gains the `"Algorithm"`
+arms (`algorithmOfValue`) and `evalCallCountedExpr` the callee link arm (`algorithmCalleeOf`).
+Theorems: `KatLangArityLaws/AlgorithmProjection.lean` (L3/CR-13, CR-15, P5, P6, P7, L2); guards
+`AlgorithmProjectionGuards.lean`; four generated `LanguageSpecCases`; the S5 supply correspondence
+generalizes its VALUE-shell premise to an address-indexed expression evaluation, and
+`dot_callee_resolution_is_structural_projection_then_alias` is stated for `resolveCalleeAlgWith`.
+C#: `Evaluator.AlgorithmProjection.cs` — `InvocationPlan.CalleeCell` (CAS), `LinkSuspension`
+(one CAS receiver cell), the dot-route arms and the callee-position intercept in
+`EvalCallCountedExpr` (+ async twins), the link's VALUE (`TryEvalLinkValue`) and CALLABLE
+(`ProjectLinkCallable`, a runtime projection node attached by `SupplyCell`, async through
+`ResolveAsync`); a parameter-rooted path is a runtime projection in a run that has one. FRONT END:
+`Algorithm` is a reserved structural-miss dot intrinsic (`UsesDotMissIntrinsic`, the
+`AlgorithmIntrinsic` lifting edge kind, editor symbol and `PreludeCatalog.DotIntrinsicSymbols`).
+Runtime aliases were deferred to S3-2 (implemented, above). Pinned by `CallReferenceS3AlgorithmTests`,
+`CallReferenceS3CorpusTests` (the META-S3 research corpus on every engine, MaxSteps scans).
+Report `experimental/features/meta-s3-1-algorithm-projection-implementation.md` (local). Full V3.
+
+META-S3-0b — async projection observation, outcome replay and failure provenance (2026-10-19):
+C#-only execution control over the S3-0a graph and flight; no language, syntax, Lean or
+observable-outcome change. LEAN: no change. The async surface has no Lean counterpart (the sync
+evaluator is the oracle), and the reviewed production definitions — `projectNeedCallable` /
+`NeedProjection.step`, `isLiftableArgResolutionError`, `resolveAlg`'s `.param` arm and
+`projectNeedStructuralMember` — needed no edit at S3-0b: Lean's projection was typed and no
+then-supported program reached a runtime projection. S3-1 adds the public runtime route and
+parameter-path refinement (L2/L3) described above.
+C#: `Evaluator.ResolveAsync` runs the ONE synchronous resolver as a NON-INITIATING observation
+(`NeedCell.ObservationScope`: terminality/cancellation → memo → resolution-recorded outcome →
+pending), awaits exactly the pending (cell, channel) step, records its outcome published or not,
+and reruns the resolver (VALUE and CALLABLE replay; Guard A no-progress, Guard B fresh
+runtime-projection allocation while observing, and a sync-runtime-projection-in-async-run guard
+fail loud). The async twin's callee (`EvalCallCountedExprAsync`, `EvalPlannedCallCountedAsync`),
+dot receiver and `.string` member re-navigation, lexical fallback, `map`/`filter`/`reduce`
+callbacks and loop step go through it; the repeated-name binder awaits both projections.
+Optimizer recognition and diagnostic enrichment observe without initiating (`PeekResolve`,
+`NeedCell.PeekCallable`). A completed runtime projection's ordinary failure carries the
+equality-transparent `EvalError.IsProjectionFailure` mark, which `IsLiftableError` and
+`IsAbsentIdentity` (the value-receiver routes and recognition's eligibility test) never read as
+absence. A run without a runtime projection resolves directly with no scope; S3-1 marks the run
+when a supplied runtime projection is formed. Pinned by `NeedCellAsyncResolutionTests`. Report
+`experimental/features/meta-s3-0b-async-projection-implementation.md` (local). Full V3.
+
+META-S3-0a — projection dependency graph and CALLABLE single-flight infrastructure (2026-10-18):
+Lean-first control change plus C# infrastructure; no language, syntax or observable-outcome change.
+LEAN: the CALLABLE memo `NeedCell.callable : Option (Except Error (Option Algorithm))` becomes
+`NeedCallableState` (`unprojected` / `projecting` / `projected outcome`), and `projectNeedCallable`
+is the total shell `NeedProjection.step` over `NeedProjection.suspended projectNeedWritten` (the
+former body, split; same order and outcomes). `KatLangArityLaws/NeedControl.lean` § CALLABLE
+projection control proves P1 stickiness (`projected_sticky`), P2 re-entry (`projecting_reentry_cycle`),
+P3 publication (`unprojected_publishes`, `unprojected_publication_sticky`,
+`self_reentry_publishes_cycle`), P4 channel independence (`unprojected_value_channel`,
+`suspended_callable_channel`) and P10 identity-only compatibility
+(`transparent_projection_is_marker_free`, `identityless_projection`) over the production helpers;
+the `partial` driver's wiring is source evidence plus `NeedControlGuards.lean` § Projection.
+At S3-0a, source-reachable projections never re-entered their own cells, so no terminating program
+observed the marker; S3-1 makes runtime projection re-entry source-reachable. C#: `NeedNode` is the ONE run wait-for graph for VALUE and CALLABLE nodes (edges, gate,
+reachability, cleanup moved unchanged from `NeedCell`); a host-built cell made by
+`NeedCell.WithRuntimeProjection` holds a projection node running the VALUE single-flight protocol
+on the CALLABLE channel (one computation, joiners, flow-local `DemandCycle`, sticky outcome,
+shared cancellation/host exception, terminal-before-memo, run-retained limits). S3-0a exposed this
+only to host-built cells; S3-1 adds the evaluator construction path. Identity-only projection is unchanged and ordinary cells
+keep the HEAD field set and size (`NeedCellProjectionFlightTests`). Lean is serial: single flight,
+joining, cancellation and resources stay C#-only and test-pinned. Report
+`experimental/features/meta-s3-0a-projection-control-implementation.md` (local). Full V3.
+
 S5 — remaining Q-66 formal laws (2026-10-18): Lean proofs and helper totalization; no language,
 C# evaluator or observable-outcome change. TOTALIZED (behaviour-preserving): `BEq Result` is the
 structural `Result.beq` / `Result.beqList` instead of the derived instance (whose handler compiles

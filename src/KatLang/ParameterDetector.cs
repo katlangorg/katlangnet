@@ -2089,9 +2089,9 @@ internal static class ParameterDetector
         if (memberEdge is { } edge
             && edge.Edge.LexicalFallbackSelectionOf(edge.MissSelection) == LexicalFallbackSelection.Never)
         {
-            // An intrinsic edge (`.string`, `.Invoke`, `.Arguments`) never selects a lexical callable: its member
+            // An intrinsic edge (`.string`, `.Invoke`, `.Arguments`, `.Algorithm`) never selects a lexical callable: its member
             // is a declared member of that name like any member, and on a structural miss the
-            // intrinsic (Q-17 S-C; CallReference S1/S2).
+            // intrinsic (Q-17 S-C; CallReference S1/S2; META-S3-1).
             var intrinsic = edge.Edge.Name;
             reason = !edge.Edge.UsesDotMissIntrinsic() || edge.MissSelection == LexicalFallbackSelection.Never
                 ? $"the member '{name}' always resolves structurally on its receiver, so this occurrence never joins the implicit parameters"

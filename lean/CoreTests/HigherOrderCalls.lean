@@ -2209,6 +2209,7 @@ def pcnNeutralLeaf : Error -> String
       s!"localOnlyProperty {object} {member} {pcnExposure exposure}"
   | .badOpenForm reason => s!"badOpenForm {reason}"
   | .illegalInEval reason => s!"illegalInEval {reason}"
+  | .unknownName name => s!"unknownName {name}"
   | other => s!"other {reprStr other}"
 
 /-- The neutral error tree: every frame outermost first, then the leaf. -/
@@ -2250,7 +2251,7 @@ def pcnBranchOnlyMemberOfParameterReceiver : Expr :=
 
 /-- `G(x) = { public Sub = { public Q = 1 ⏎ x } ⏎ 0 }` / `Get(obj) = obj.Sub` / `Get(G)` -/
 def pcnLocalOnlyMemberOfParameterReceiver : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "G" (alg ["x"] [] [{ (publicLocalProp "Sub" (.localCapturedAncestorParams ["x"]) (alg [] [] [publicProp "Q" (alg [] [] [] [.num 1])] [.param "x"])) with requiredOwnerDepths := some [("x", some 0)] }] [.num 0]), privateProp "Get" (alg ["obj"] [] [] [(.dotCall (.param "obj") "Sub" none)])] [(.call (.resolve "Get") [.resolve "G"])])
+  .algorithmExpr (alg [] [] [privateProp "G" (alg ["x"] [] [{ (publicLocalProp "Sub" (.localCapturedAncestorParams ["x"]) (.alias none [] [publicProp "Q" (alg [] [] [] [.num 1])] (.param "x"))) with requiredOwnerDepths := some [("x", some 0)] }] [.num 0]), privateProp "Get" (alg ["obj"] [] [] [(.dotCall (.param "obj") "Sub" none)])] [(.call (.resolve "Get") [.resolve "G"])])
 #guard pcnObserve pcnLocalOnlyMemberOfParameterReceiver == "call Get > dotCall .Sub of obj > localOnlyProperty obj Sub captured [x]"
 
 /-- `C(0) = { public Q = 1 ⏎ 0 }` / `C(1) = 2` / `Apply(g) = g(1)` / `Get(obj) = Apply(obj.Q)` / `Get(C)` -/
@@ -2281,7 +2282,7 @@ def pcnHostOpenTargetParameter : Expr :=
 /-- host-built: a callable alias `A` whose target is the parameter reference `f` -/
 def pcnHostAliasTargetParameter : Expr :=
   .algorithmExpr (alg [] [] [privateProp "A" (.alias none [] [] (.param "f"))] [.resolve "A"])
-#guard pcnObserve pcnHostAliasTargetParameter == "illegalInEval callable alias target f is not a name or a declared member path"
+#guard pcnObserve pcnHostAliasTargetParameter == "unknownName f"
 
 end ParameterCalleeNames
 

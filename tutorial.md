@@ -1537,6 +1537,26 @@ Twice(Square, 3)
 
 Passing works in one direction: an algorithm's result is always a calculated value, never an algorithm. With `Pick(f) = f`, the call `Apply(Pick(Square), 4)` is an error, because `Pick(Square)` is a computation rather than something to call. A call must also receive all of its arguments: for `Add(x, y) = x + y`, `Add(10)` is an argument-count error, not a partly applied `Add`.
 
+### Naming a Received Algorithm
+
+A definition whose only row is a parameter gives that parameter a second name. `A` below is whatever algorithm `f` receives, so `A(9)` calls `Square(9)`, `2.A` is `Square(2)`, and `A` can be passed on like `f` itself:
+
+<!-- spec:runtime-alias-of-a-parameter -->
+```
+Square(x) = x * x
+Apply(f, x) = f(x)
+Use(f) = {
+    A = f
+    A(9), 2.A, Apply(A, 4)
+}
+
+Use(Square)
+```
+
+**Result:** `(81, 4, 16)`
+
+Each call of `A` is a fresh call with exactly the arguments written there. If `f` receives a plain value instead of an algorithm, `A` is an ordinary property holding that value: `A` reads it, and `A(9)` is an argument-count error. The same works for a member of a parameter — inside `Use(b)`, `A = b.G` calls the `G` that `b` itself declares — as long as `G` is a name KatLang already knows; an unknown `G` in `A = b.G` is still an input of `A` (see [Formulas That Use Formulas](#formulas-that-use-formulas)). Written `A.K` always means `A`'s own member `K`; an algorithm passed on through `A` keeps its own members.
+
 ### Brace Algorithms
 
 Braces write an algorithm without giving it a name. The undefined names inside the braces become the brace algorithm's own parameters, in order of first appearance:
@@ -1654,6 +1674,58 @@ R.Arguments.count, First(R.Arguments*)
 ```
 
 `.first` and `.last` work as for a list, but an argument view is not a list: other collection operations such as `sum(R.Arguments)` or `[R.Arguments*]` are errors — select the values you need instead. `Arguments` is a property, so `R.Arguments()` is an error too, and like the reference itself a view cannot be a program result.
+
+### Calling a Captured Call's Algorithm
+
+`.Algorithm` is the captured call's algorithm itself, without its arguments. Calling it runs that algorithm afresh with exactly the arguments you give it, while `R.Invoke()` still runs the captured call:
+
+```
+Square(x) = x * x
+Capture(meta operation) = operation
+
+R = Capture(Square(5))
+R.Algorithm(8), R.Invoke()
+```
+
+**Results:**
+```
+64
+25
+```
+
+It is an ordinary callable, so it can be passed to a higher-order parameter, used as a `map` or `filter` callback, or called with the original arguments through `R.Arguments*`:
+
+```
+Square(x) = x * x
+Apply(f, x) = f(x)
+Capture(meta operation) = operation
+
+R = Capture(Square(5))
+Apply(R.Algorithm, 7), [1, 2, 3].map(R.Algorithm), R.Algorithm(R.Arguments*)
+```
+
+**Results:**
+```
+49
+[1, 4, 9]
+25
+```
+
+Together with `.Arguments*`, a `meta` parameter can drive a loop over the captured step from the captured starting state:
+
+```
+Step(x) = x + 1, x < 3
+Loop(meta operation) = operation.Algorithm.while(operation.Arguments*)
+
+Step(0).Loop
+```
+
+**Result:** `3`
+
+Obtaining `R.Algorithm` does not run the captured call or compute its arguments. A clause family is chosen again by the new arguments, and the algorithm keeps the names it was written with. Written without arguments, `R.Algorithm` is the captured algorithm read as a value, so for `Square`, which needs an argument, `R.Algorithm` alone is an error; `R.Algorithm()` calls it with no arguments, which is an error too — it never repeats the captured `5` (that is `R.Invoke()`). A property such as `A = R.Algorithm` is a new name for the captured algorithm, as in [Naming a Received Algorithm](#naming-a-received-algorithm): `A(8)` calls it afresh, `[1, 2].map(A)` uses it, and `A` alone is its value. Like `Invoke` and `Arguments`, `x.Algorithm` means the call-reference operation unless `x` has its own member named `Algorithm`; a definition named `Algorithm` of your own is still called as `Algorithm(x)`.
+
+If a received target is an ordinary zero-parameter property, the alias keeps ordinary property behavior: repeated bare reads share its value, while each explicit `A()` evaluates the alias's expression once afresh. Checking whether the target is callable does not repeat that expression within the call. An earlier higher-order member lookup does not supply a later call or bare read's computation. A runtime alias also keeps its own declared members through alias chains; opening it imports those members, without importing the target's members. Static callable aliases still cannot be opened.
+
 
 ---
 
@@ -2906,6 +2978,7 @@ Written as `X = A*` followed by the row `X`, the program prints the same `(1, 2)
 | `string` | `number.string` | The number as text (dot form only) |
 | `Invoke` | `reference.Invoke()` | Runs the call a `meta` parameter captured (dot form only; see [Capturing a Call with `meta`](#capturing-a-call-with-meta)) |
 | `Arguments` | `reference.Arguments` | A lazy view of the captured call's arguments: `count`, `[i]`, `first`, `last`, and `F(reference.Arguments*)` (dot form only; see [Looking at a Captured Call's Arguments](#looking-at-a-captured-calls-arguments)) |
+| `Algorithm` | `reference.Algorithm(args)` | The captured call's algorithm as a callable: call it with new arguments, pass it on, or use it as a callback or loop step (dot form only; see [Calling a Captured Call's Algorithm](#calling-a-captured-calls-algorithm)) |
 | `Math` | `Math.Sqrt(2)`, `sqrt(2)` | Mathematical functions and constants (see [Math Functions](#math-functions)) |
 
 Operations that produce a collection (`range`, `filter`, `map`, `order`, `orderDesc`, `distinct`, `take`, `skip`, `atoms`) return a list. Built-in names such as `count` and `if` are not reserved: a definition of your own with the same name takes precedence.

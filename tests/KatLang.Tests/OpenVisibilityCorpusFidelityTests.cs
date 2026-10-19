@@ -158,11 +158,13 @@ public class OpenVisibilityCorpusFidelityTests
             // `A`'s own `X` is unresolvable there, so it becomes A's implicit parameter — the
             // nested open never leaks outward. That parameter is an owned declaration of a
             // scope enclosing `Inner`, and the owner walk reaches it before any open is
-            // consulted, so `Inner`'s `X` reads it too (and `Inner` is therefore local-only).
+            // consulted, so `Inner`'s `X` reads it too (and `Inner` is therefore local-only). Its one
+            // row is then that parameter, so `Inner` is a runtime-target alias of it (FWD-02,
+            // META-S3-2) that keeps its own `open`.
             ["openNestedDoesNotLeakOutward"] = Golden(
                 LibPublicX
                     + ", privateProp \"A\" (alg [\"X\"] [] [{ (privateLocalProp \"Inner\" (.localCapturedAncestorParams [\"X\"]) "
-                    + "(alg [] [.resolve \"Lib\"] [] [.param \"X\"])) with requiredOwnerDepths := some [(\"X\", some 0)] }] "
+                    + "(.alias none [.resolve \"Lib\"] [] (.param \"X\"))) with requiredOwnerDepths := some [(\"X\", some 0)] }] "
                     + "[.param \"X\"])",
                 CallA707),
 

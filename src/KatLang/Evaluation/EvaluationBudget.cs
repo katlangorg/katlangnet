@@ -61,6 +61,26 @@ internal sealed class EvaluationBudget
     internal bool RunEnded => Volatile.Read(ref _runEnded);
     internal void EndRun() => Volatile.Write(ref _runEnded, true);
 
+    // META-S3-0b: whether this run executes on the async twin family. A RUNTIME CALLABLE
+    // projection observed synchronously in such a run, outside a non-initiating observation, is
+    // a missing async resolution site (NeedCell fails loud).
+    internal bool IsAsynchronousRun { get; private set; }
+    internal void MarkAsynchronousRun() => IsAsynchronousRun = true;
+
+    // META-S3-0b: whether any cell of this run has a RUNTIME CALLABLE projection. Until one
+    // exists, no resolver can reach a pending runtime projection or VALUE (identity resolution
+    // demands no VALUE), so asynchronous resolution and non-initiating observations run the
+    // synchronous resolver directly, with no observation scope.
+    private bool _hasRuntimeProjections;
+    internal bool HasRuntimeProjections => Volatile.Read(ref _hasRuntimeProjections);
+    internal void NoteRuntimeProjection() => Volatile.Write(ref _hasRuntimeProjections, true);
+
+    // Test observation only: how many pending operations this run's asynchronous resolutions
+    // awaited before retrying their resolver (Evaluator.ResolveAsync).
+    private long _resolutionRetries;
+    internal long ResolutionRetries => Interlocked.Read(ref _resolutionRetries);
+    internal void NoteResolutionRetry() => Interlocked.Increment(ref _resolutionRetries);
+
     internal EvalError? CheckContinuation()
     {
         Volatile.Read(ref _requiredSourceCancellation)?.Throw();
@@ -222,6 +242,51 @@ internal sealed class EvaluationBudget
     internal Dictionary<Evaluator.AliasTargetKey, Algorithm> AliasTargets => _aliasTargets ??= [];
 
     private Dictionary<Evaluator.AliasTargetKey, Algorithm>? _aliasTargets;
+
+    /// <summary>
+    /// The run's runtime-alias BINDING CELLS (FWD-02, META-S3-2) for runtime-target aliases declared
+    /// OUTSIDE every activation, keyed like <see cref="AliasTargets"/> by the alias's declaration and
+    /// the resolving identity of its declaring scope chain: ONE retained cell per declaring scope, whose
+    /// VALUE is the alias's bare read and whose CALLABLE projection is the alias's runtime identity. A
+    /// binding declared under an activation keeps its cell on that activation
+    /// (<see cref="ParameterActivation.AliasBindingCells"/>). First-wins under the dictionary's own
+    /// lock, so racing establishments agree on one cell.
+    /// </summary>
+    internal Dictionary<Evaluator.AliasTargetKey, Evaluator.RuntimeAliasBinding> AliasBindingCells
+        => Volatile.Read(ref _aliasBindingCells)
+           ?? Interlocked.CompareExchange(ref _aliasBindingCells, [], null)
+           ?? _aliasBindingCells!;
+
+    private Dictionary<Evaluator.AliasTargetKey, Evaluator.RuntimeAliasBinding>? _aliasBindingCells;
+
+    /// <summary>
+    /// <b>Whether this run may reach a runtime-target alias</b> (FWD-02, META-S3-2): decided ONCE before
+    /// evaluation from the structural preflight's walk over the admitted program
+    /// (<see cref="AstStructuralPreflight.MayReachRuntimeAlias"/>). Such a run is PRE-MARKED as one with
+    /// runtime projections — so every asynchronous resolution and every non-initiating recognition
+    /// observes before it could initiate — and a supplied REFERENCE cell (a name, an argumentless dot
+    /// path, an inline alias block) whose static resolution reaches a runtime alias is a runtime
+    /// projection from its formation (<see cref="Evaluator.SupplyCell"/>). A run that cannot reach one
+    /// keeps every identity-only fast path.
+    /// </summary>
+    internal bool MayReachRuntimeAliases { get; private set; }
+
+    /// <summary>
+    /// Whether this run's admitted program holds a deferred module region: its modules are unknown until a
+    /// branch selects it, so in a run that may reach a runtime alias every supplied reference cell is
+    /// conservatively a runtime projection (its static resolution is never attempted at formation, which
+    /// could require a deferred unit early).
+    /// </summary>
+    internal bool HasDeferredModuleRegions { get; private set; }
+
+    internal void DecideRuntimeAliasReach(bool programMayReach, bool hasDeferredModuleRegions)
+    {
+        if (!programMayReach)
+            return;
+        MayReachRuntimeAliases = true;
+        HasDeferredModuleRegions = hasDeferredModuleRegions;
+        NoteRuntimeProjection();
+    }
 
     /// <summary>
     /// First-declaration property selection for this run, shared across wired views by

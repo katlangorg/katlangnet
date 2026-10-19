@@ -1470,6 +1470,23 @@ end
     C#: `OutputBundle`. -/
 abbrev OutputBundle := List Expr
 
+/-- Whether an argumentless reference path is rooted at a PARAMETER: the parameter itself, or an
+    argumentless member edge over a parameter-rooted path (`b.G`, `b.H.G`). -/
+def Expr.isParamHeaded : Expr -> Bool
+  | .param _ => true
+  | .dotMember receiver _ _ none => receiver.isParamHeaded
+  | _ => false
+
+/-- The RUNTIME ROWS of a callable alias (FWD-02 runtime-target aliases, META-S3-2): the argumentless
+    reference shapes whose CALLABLE is a supplied cell's runtime projection — a parameter reference,
+    an argumentless edge spelled `Algorithm` (a link; whether it takes the intrinsic route is decided
+    member-first at run time, `aliasStepIsRuntime`), and an argumentless member path whose head is a
+    parameter. C#: `AliasTargetRows.IsRuntimeRow`. -/
+def Expr.isRuntimeAliasRow : Expr -> Bool
+  | .param _ => true
+  | e@(.dotMember _ member _ none) => member == "Algorithm" || e.isParamHeaded
+  | _ => false
+
 /-- Ordinary/lexical dot-call smart constructor: `a.f` / `a.f(args)` with the
     unelaborated fallback identity `.resolve f`. Hand-built ASTs keep plain
     lexical-fallback semantics through this form; elaborated trees carry the
@@ -2016,11 +2033,36 @@ inductive NeedPlanSupply where
   | prepared (outcome : Except Error (List (Nat × Option Expr)))
   deriving Repr
 
+/-- CALLABLE state, separate from the VALUE state (META-S3-0a, NEED-06/NEED-09). A
+    completed projection keeps its outcome: a callable identity (`.ok (some _)`), the
+    SUCCESSFUL absence of one (`.ok none`), or an ordinary failure (`.error _`). `projecting`
+    marks a projection in progress, so re-entering it is a `demandCycle` exactly as
+    re-entering an `evaluating` VALUE is (`NeedProjection.step`). An identity-only projection
+    never observes the marker (`KatLangArityLaws/NeedControl.lean` § Projection). -/
+inductive NeedCallableState where
+  | unprojected
+  | projecting
+  | projected (outcome : Except Error (Option Algorithm))
+  deriving Repr
+
 structure NeedCell where
   suspension : NeedSuspension
   state : NeedState := .suspended
-  callable : Option (Except Error (Option Algorithm)) := none
+  callable : NeedCallableState := .unprojected
   plan : NeedPlanSupply := .unprepared
+  /-- META-S3-1, CR-13: an invocation plan's canonical CALLEE CELL, established lazily by the
+      first observation that needs it (`NeedPlan.calleeCell`) and never changed again. -/
+  callee : Option Nat := none
+  /-- META-S3-1, CR-15: a supplied `X.Algorithm` link's canonical RECEIVER CELL, established
+      lazily by the first channel that needs it (`NeedLink.receiverCell`) and shared by the
+      link's VALUE and CALLABLE. -/
+  receiver : Option Nat := none
+  /-- D4: the first ordinary observation of an alias binding cell's already-performed work:
+      unclaimed (0), the bare VALUE (1), or a terminal invocation (2). A projection never claims it;
+      whichever operation performed the projection, the first ordinary observation owns its work. -/
+  aliasUse : Nat := 0
+  /-- Bare VALUE after a terminal invocation claimed the cell has a separate ordinary memo domain. -/
+  aliasBare : Option Nat := none
   deriving Repr
 
 /-- The parameter bindings saved by one lexical owner activation: its value
@@ -2046,6 +2088,9 @@ structure EvalState where
   nextBindingContext : Nat := 1
   lexicalActivations : Array ParameterActivation := #[]
   nextRuntimeDeclaration : Nat := 0
+  /-- META-S3-2: the BINDING CELL of each runtime-target alias per declaring activation
+      (`aliasCellKey`), established on first use by `aliasBindingCell` and never changed. -/
+  aliasCells : List (String × Nat) := []
   deriving Repr
 
 namespace EvalState
@@ -2876,7 +2921,7 @@ mutual
         if let some scope := parent? then
           validateScopeTree scope aliases
     | .alias parent? op pr target _ =>
-        if !target.isStaticAliasPath then
+        if !(target.isStaticAliasPath || target.isRuntimeAliasRow) then
           .error (Error.illegalInEval (aliasTargetNotStaticPathMessage (openExprName target)))
         if staticAliasCycle aliases chain a then
           .error (Error.illegalInEval aliasCycleMessage)
@@ -2989,10 +3034,58 @@ namespace ScopeCtx
     | .mk _ _ _ _ _ _ _ id => id
 end ScopeCtx
 
+/- Namespace classification is read-only structural lookup, including static opens. It
+   never projects a runtime cell. Source admission already checks visibility/ambiguity;
+   duplicates of the same selected provider are collapsed here as in ordinary lookup. -/
+mutual
+  def namespaceStaticLookup? : Nat → List Algorithm → Ident → Option (Algorithm × List Algorithm)
+    | 0, _, _ => none
+    | fuel + 1, scope, name =>
+      (staticLexicalLookup? scope name).orElse fun _ =>
+        let rec levels : List Algorithm → Option (Algorithm × List Algorithm)
+          | [] => none
+          | owner :: outer =>
+            let localScope := (owner :: outer).reverse
+            let hits := owner.opens.filterMap fun edge =>
+              (namespaceStaticPath? fuel localScope edge).bind fun (provider, providerChain) =>
+                (Algorithm.lookupPublicProp provider name).map fun member =>
+                  (member, providerChain ++ [provider])
+            let unique := hits.foldl (fun acc hit =>
+              if acc.any (fun x => reprStr x == reprStr hit) then acc else hit :: acc) []
+            match unique with
+            | [hit] => some hit
+            | [] => levels outer
+            | _ => none
+        levels scope.reverse
+
+  def namespaceStaticPath? : Nat → List Algorithm → Expr → Option (Algorithm × List Algorithm)
+    | 0, _, _ => none
+    | fuel + 1, scope, target =>
+      (Expr.staticAliasPath? target).bind fun (head, steps) =>
+        let start := match head with
+          | .resolve name => namespaceStaticLookup? fuel scope name
+          | .algorithmExpr block => some (block, scope)
+          | _ => none
+        (steps.foldl (fun acc step => acc.bind fun (value, valueChain) =>
+          (Algorithm.lookupPropDefAny? value step).map fun prop =>
+            (prop.alg, (if value.isModuleRoot then [] else valueChain) ++ [value])) start).map
+              fun (value, valueChain) => (value, if value.isModuleRoot then [] else valueChain)
+end
+
 namespace Algorithm
   /-- Create a temporary algorithm from a ScopeCtx for open resolution. -/
   def forOpens (sc : ScopeCtx) : Algorithm :=
     .mk (some sc) [] (ScopeCtx.opens sc) [] []
+
+  /-- Namespace classification follows static alias links, including forward references,
+      without projecting any cell. Fuel is the admitted graph's alias count. -/
+  def runtimeAliasNamespace : Nat -> List Algorithm -> Algorithm -> Bool
+    | 0, _, _ => false
+    | fuel + 1, chain, a@(.alias _ _ _ target _) =>
+        match namespaceStaticPath? ((reprStr chain).length + (reprStr a).length + 1) (chain ++ [a]) target with
+        | some (next, nextChain) => runtimeAliasNamespace fuel nextChain next
+        | none => target.isRuntimeAliasRow
+    | _, _, _ => false
 
   /-- Whether an algorithm needs a call to have members: a parameterized algorithm
       (explicit or inferred parameters), a clause family (whose branches always take
@@ -3003,7 +3096,10 @@ namespace Algorithm
       (C#: `Evaluator.RequiresArguments`). -/
   def requiresArguments : Algorithm -> Bool
     | .conditional _ _ _ _ => true
-    | .alias _ _ _ _ _ => true
+    -- A RUNTIME-TARGET alias (META-S3-2; `Expr.isRuntimeAliasRow`) is a namespace of its own
+    -- declarations, as its ordinary property is: `open` imports declarations, never a callable.
+    | a@(.alias _ _ _ _ _) =>
+        !runtimeAliasNamespace (a.aliasCount + 1) ((a.parent.map ScopeCtx.staticChain).getD []) a
     | a => !(params a).isEmpty
 
   /-- Lift a single expression into an algorithm whose output is that expression. -/
@@ -3205,6 +3301,18 @@ def hasSuppliedParameterCell (target : Expr) (ctx : EvalCtx) (env : ValEnv) : Ev
       pure (lookupAssoc x parameterCtx.needEnv).isSome
   | _ => pure false
 
+/-- A parameter's CALLABLE as its supplied cell's TYPED projection outcome (META-S3-1, L2): the cell
+    found exactly as `supplyNeed` finds it, projected by `project`; a parameter with no cell has no
+    identity. The outcome is never re-classified: a projection FAILURE of any kind propagates
+    (`parameter_projection_failure_propagates`) and only `none` is absence. Production:
+    `projectParameterCallable` (`project = projectNeedCallable`). -/
+def projectParameterWith (project : Nat → EvalM (Option Algorithm)) (x : Ident) (ctx : EvalCtx) :
+    EvalM (Option Algorithm) := do
+  let activation ← capturedParameterActivation? x ctx
+  match lookupAssoc x (activation.map ParameterActivation.needs |>.getD ctx.needEnv) with
+  | some address => project address
+  | none => pure none
+
 def supplyNeed (source : Expr) (caller : EvalCtx) (values : ValEnv) : EvalM Nat := do
   if let .param name := source then
     let activation <- capturedParameterActivation? name caller
@@ -3331,6 +3439,15 @@ def callReferenceHasNoTextMessage : String :=
 /-- A run result (or another host-facing value) that contains a call reference. -/
 def callReferenceLeavesRunMessage : String :=
   "A call reference cannot leave its run: return a value computed from it, for example `R.Invoke()`."
+
+/-! META-S3-1 diagnostics (October 2026). C#: `Evaluator.AlgorithmProjection.cs`. -/
+
+/-- `x.Algorithm` whose receiver VALUE is not a call reference. -/
+def algorithmRequiresCallReferenceMessage (value : Result) : String :=
+  s!"`Algorithm` requires a call reference, got {operandDescription value}"
+
+/-- The absence report of a captured callee without CALLABLE identity (NEED-06). -/
+def capturedCalleeDescription : String := "captured callee"
 
 /-! CallReference S2 diagnostics (October 2026). C#: `Evaluator.CallPlans.cs`. -/
 
@@ -5564,49 +5681,146 @@ def resolveAliasStep (step : Algorithm) (target : Expr) (ctx : EvalCtx) : EvalM 
         start
       pure navigated.fst
 
-/-- THE ONE NORMALIZATION (FWD-02, binding indirection; decided 2026-10-01):
-    `ResolveCallable(A) = A is an alias ? ResolveCallable(target of A, resolved in A's own
-    scope) : A`. Every place a binding becomes a CALLABLE goes through it — lexical lookup
-    (`lookupLexicalProperty`), a structurally navigated member, an inline block — so calls,
-    callbacks and loop steps, the callable channel of an argument, and value demands all
-    receive the TARGET, while the BINDING — the property and its zero-argument cache key
-    (`zeroArgPropertyCacheKey` reads the binding, never the resolved algorithm) — stays the
-    alias's own. An alias is never an invocation: resolving it binds nothing, opens no
-    binding context and charges nothing. A chase that reaches an alias of the same shape in
-    the same scope again (`cacheAlgorithmShape`: the chase is deterministic in the shape) is a
-    CYCLE, which only a host-built tree can form past the pre-evaluation check
-    (`staticAliasCycle`): `illegalInEval aliasCycleMessage`, never a non-terminating chase.
-    C#: `Evaluator.ResolveAliasTarget`. -/
-partial def resolveAliasTarget (a : Algorithm) (ctx : EvalCtx) (visited : List String := []) : EvalM Algorithm :=
+/-- The ORDINARY ZERO-PARAMETER PROPERTY of a runtime-target alias (FWD-02, META-S3-2): the same
+    written declaration, wired where the alias is, with the alias's own opens and declarations and
+    its one row as its output — exactly the open body the alias was elaborated from. A runtime alias
+    whose projected identity declares no parameterized callable structure (absence, a value, a
+    zero-parameter property) normalizes to it, so no consumer ever receives the unresolved alias
+    again. C#: `Algorithm.User(Algorithm.Alias)`. -/
+def Algorithm.aliasPropertyView : Algorithm -> Algorithm
+  | .alias parent opens props target id => .mk parent [] opens props [target] id
+  | other => other
+
+/-- FWD-02 target eligibility of a callable identity the RUN supplies (META-S3-2): a builtin, a
+    clause family, or a user algorithm with at least one parameter pattern. An alias is never asked:
+    a projected identity is already normalized. C#: `Evaluator.DeclaresParameterizedStructure`. -/
+def Algorithm.isEligibleRuntimeAliasTarget : Algorithm -> Bool
+  | .mk _ parameters _ _ _ _ => !parameters.isEmpty
+  | .builtin _ => true
+  | .conditional _ _ _ _ => true
+  | .alias _ _ _ _ _ => false
+
+/-- The activation identities along a scope chain, innermost first. -/
+def ScopeCtx.activationChain : Option ScopeCtx -> List (Option Nat)
+  | none => []
+  | some (.mk parent _ _ _ _ _ activation _) => activation :: ScopeCtx.activationChain parent
+
+/-- The memo key of a runtime-target alias's BINDING CELL (META-S3-2): the alias's declaration,
+    resolving scope shape and the activations of its declaring scope chain — ONE cell per declaring
+    scope and activation, the run-level case (no activation) included. A shared declaration wired
+    under different namespaces must not share its cell merely because both scopes are unactivated.
+    C#: `Evaluator.AliasTargetKey` over the alias's declaration and structural owner identity, on the
+    nearest activation's memo (or the run's). -/
+def aliasCellKey (wired : Algorithm) : String :=
+  reprStr wired.declarationId ++ "@" ++ reprStr (wired.parent.map cacheScopeShape)
+    ++ "@" ++ reprStr (ScopeCtx.activationChain wired.parent)
+
+/-- The RECORDED binding cell of a non-parameter row (`aliasBindingCell`): the recorded address, or
+    the row supplied in the alias's entered body context and recorded under `aliasCellKey`. -/
+def aliasBindingCellRecorded (wired : Algorithm) (target : Expr) (ctx : EvalCtx) : EvalM Nat := do
+  let key := aliasCellKey wired
+  match lookupAssoc key (← get).aliasCells with
+  | some address => pure address
+  | none =>
+    let declaringCtx ← enterAlgorithmBody wired ctx []
+    let address ← supplyNeed target declaringCtx []
+    modify fun s => { s with aliasCells := (key, address) :: s.aliasCells }
+    pure address
+
+/-- THE BINDING CELL of the runtime-target alias `wired` with row `target` (FWD-02, META-S3-2): the
+    row supplied in the alias's OWN declaring context — the alias entered as the head, exactly where
+    its body is evaluated — through the ONE supplier (`supplyNeed`, the construction META-S3-1's
+    callee cell uses). A parameter row IS that parameter's own cell (NEED-01 transport, nothing
+    allocated, `aliasBindingCell_parameter_transport`); every other row is established ONCE per
+    declaration and declaring activation (`aliasCellKey`) and recorded in `EvalState.aliasCells`, so
+    every later use reads the record (`aliasBindingCell_canonical`). Establishing it evaluates
+    nothing: it may enter the alias's body scope, allocate one suspended cell and record its address
+    (`aliasBindingCell_inert`). Its VALUE is the alias's bare read (`aliasValue`), its CALLABLE the
+    alias's runtime identity, so eligible targets share receiver demands; D4 terminal observations claim
+    its already-performed work through `aliasBareCell` / `takeTerminalAliasInvocation`.
+    C#: `Evaluator.AliasBindingCell`. -/
+def aliasBindingCell (wired : Algorithm) (target : Expr) (ctx : EvalCtx) : EvalM Nat :=
+  match target with
+  | .param _ => supplyNeed target (ctx.push wired) []
+  | _ => aliasBindingCellRecorded wired target ctx
+
+/-- THE BARE PROPERTY'S CELL (D4, owner decision 2026-10-19). The first ordinary observation — the
+    bare VALUE or a terminal invocation, whichever comes first — owns the canonical cell's
+    already-performed receiver work, whichever operation performed the eligibility projection (a
+    call, a bare read, a navigation through a parameter, a callback): eligibility checking never
+    duplicates a receiver evaluation. After a terminal invocation claimed the cell, a bare
+    observation gets a fresh suspension, retained for every later bare read. NEED channels remain
+    sticky. C#: `RuntimeAliasBinding.BareCell`. -/
+def aliasBareCell (wired : Algorithm) (target : Expr) (ctx : EvalCtx) : EvalM Nat := do
+  let address ← aliasBindingCell wired target ctx
+  let state ← get
+  let some cell := state.needs[address]? | pure address
+  if cell.aliasUse != 2 then
+    set { state with needs := state.needs.set! address { cell with aliasUse := 1 } }
+    pure address
+  else
+    match cell.aliasBare with
+    | some bare => pure bare
+    | none =>
+      -- A new bare observation has its own body binding context, just as an
+      -- ordinary property observation after an explicit call does. Reusing the
+      -- probe suspension would retain the call's captured local-property caches.
+      let bindingCtx ← EvalCtx.bindParameters [] ctx
+      let declaringCtx ← enterAlgorithmBody wired bindingCtx []
+      let bare ← supplyNeed target declaringCtx []
+      modify fun s => { s with needs := s.needs.set! address { cell with aliasBare := some bare } }
+      pure bare
+
+/-- Claim the initial computation once, without changing either Need channel: only an unclaimed
+    cell is claimed (a bare read that came first excludes it, `bare_value_excludes_terminal_reuse`). -/
+def claimTerminalAliasInitial (cell : NeedCell) : Option NeedCell :=
+  if cell.aliasUse = 0 then some { cell with aliasUse := 2 } else none
+
+/-- Consume the binding cell's already-performed work at the ordinary body's boundary, AFTER
+    cardinality, for the FIRST terminal invocation when no bare read came first — whichever
+    operation performed the eligibility projection (D4). A property view has the alias's
+    declaration/scope key; ordinary algorithms have no such record. Later invocations follow the
+    original row's normal evaluation, without using this cell. C#: `TakeTerminalAliasInvocation`. -/
+def takeTerminalAliasInvocation (a : Algorithm) : EvalM (Option Nat) := do
   match a with
-  | .alias _ _ _ target _ => do
-      let key := reprStr (cacheAlgorithmShape a)
-      if visited.contains key then
-        .error (Error.illegalInEval aliasCycleMessage)
-      else
-        let next <- resolveAliasStep a target ctx
-        resolveAliasTarget next ctx (key :: visited)
-  | other => pure other
+  | .mk _ [] _ _ [_] _ =>
+    let state ← get
+    match lookupAssoc (aliasCellKey a) state.aliasCells with
+    | none => pure none
+    | some address =>
+      let some cell := state.needs[address]? | pure none
+      match claimTerminalAliasInitial cell with
+      | none => pure none
+      | some claimed =>
+        set { state with needs := state.needs.set! address claimed }
+        pure (some address)
+  | _ => pure none
 
-/-- The canonical lexical lookup with the selected binding made CALLABLE: a binding that is a
-    callable alias keeps its own property as the binding (its zero-argument cache key, its
-    exposure and accessibility) while its resolved algorithm is the alias's normalized target
-    (`resolveAliasTarget`). C#: `Evaluator.LookupLexical` (over `NormalizeAliasBinding`). -/
-def lookupLexicalProperty (a : Algorithm) (name : Ident) (ctx : EvalCtx)
-    : EvalM ResolvedProperty := do
-  let resolved <- lookupLexicalPropertyRaw a name ctx
-  match resolved.alg with
-  | .alias _ _ _ _ _ => pure { resolved with alg := (<- resolveAliasTarget resolved.alg ctx) }
-  | _ => pure resolved
+/-- The outcome of ONE runtime step of the alias chase (META-S3-2): the alias's ordinary
+    zero-parameter property (`terminal` — no callable identity was supplied), or the projected
+    identity the chase continues with (`continue`). -/
+inductive RuntimeAliasStep where
+  | terminal (property : Algorithm)
+  | continue (identity : Algorithm)
 
-/-- Algorithm-position lexical lookup (call callees, dot-call targets).
-    This is the algorithm PROJECTION of `lookupLexicalProperty`: the canonical
-    property-carrying chain owns ownership-first ordering, open dedup,
-    ambiguity, and precedence, and this projection only discards the
-    owner/binding metadata that algorithm-position consumers never read. -/
-def lookupLexical (a : Algorithm) (name : Ident) (ctx : EvalCtx) : EvalM Algorithm := do
-  let resolved <- lookupLexicalProperty a name ctx
-  pure resolved.alg
+/-- ONE RUNTIME STEP of the alias chase over its CALLABLE capability `project` (META-S3-2): the
+    runtime-target alias `owner`'s binding cell (`aliasBindingCell`), projected. Absence of an
+    identity is the alias's ordinary property (`runtimeAliasStep_absence_is_property`); a supplied
+    identity continues the chase; a projection FAILURE propagates unchanged — it is never absence
+    (`runtimeAliasStep_failure_propagates`). Production: `resolveAliasChase` installs
+    `projectNeedCallable`. C#: the runtime arm of `Evaluator.ResolveAliasTarget`. -/
+def runtimeAliasStepWith (project : Nat → EvalM (Option Algorithm)) (owner : Algorithm) (target : Expr)
+    (ctx : EvalCtx) : EvalM RuntimeAliasStep := do
+  match ← project (← aliasBindingCell owner target ctx) with
+  | none => pure (.terminal owner.aliasPropertyView)
+  | some identity => pure (.continue identity)
+
+/-- The end of a chase that took a runtime step from `owner` (META-S3-2): FWD-02's eligibility applied
+    to the identity the run supplied — an identity declaring parameterized callable structure is the
+    alias's callable, anything else leaves the alias its ordinary property. C#: the final arm of
+    `Evaluator.ResolveAliasTarget`. -/
+def runtimeAliasFinish (owner final : Algorithm) : Algorithm :=
+  if final.isEligibleRuntimeAliasTarget then final else owner.aliasPropertyView
 
 /-- Runtime-created callable wrappers have identities too. C# mints a DeclarationIdentity
     on every new Algorithm.User; retaining this token through parameter forwarding makes
@@ -5616,125 +5830,41 @@ def identifyRuntimeAlgorithm (algorithm : Algorithm) : EvalM Algorithm := do
   set { state with nextRuntimeDeclaration := state.nextRuntimeDeclaration + 1 }
   pure (algorithm.withDeclarationId (some (.runtime state.nextRuntimeDeclaration)))
 
-mutual
-partial def resolveAlg (e : Expr) (ctx : EvalCtx) : EvalM Algorithm :=
-  match e with
-  | .sequenceConstruct _ _ =>
-    .error (Error.notAnAlgorithm "sequence construct expression")
-  | .sequenceSpread _ =>
-    .error (Error.notAnAlgorithm "spread expression")
-  -- An inline block whose one row names a parameterized callable is a callable alias
-  -- (`{ F }`): its callable is its target's.
-  | .algorithmExpr a => resolveAliasTarget (wireToCaller ctx a) ctx
-  -- Capture is not algorithm identity: the algorithm channel sees only a
-  -- zero-parameter value thunk over the bundle, exactly as the pre-split
-  -- transparent wrapper behaved. `Apply((Inc, Dec))` therefore never receives
-  -- either callable identity: a capture ARGUMENT has no CALLABLE channel at all
-  -- (`projectNeedCallable` declines it through `shouldWrapArgExprAsValue`), so
-  -- `f(9)` is `notAnAlgorithm` (Q-06, NEED-06), while
-  -- the redundant group `Apply((Increment))` IS `Apply(Increment)` — the
-  -- parser erases it before this node exists (parentheses group syntax).
-  -- C#: `CaptureValueThunk`.
-  | .capture rows => identifyRuntimeAlgorithm (wireToCaller ctx (Algorithm.mk none [] [] [] rows))
-  | .resolve n =>
-      match ctx.callStack with
-      | a::_ => lookupLexical a n ctx
-      | []   => .error (Error.unknownName n)
-  | .dotMember o n fallback args =>
-      -- The internal CARRIER of a dot RESULT used as a RECEIVER: a memberless
-      -- wrapper whose evaluation (evalDotCall) owns every dot semantic
-      -- (structural member, `.string` intrinsic, extension call). The whole
-      -- node — including its elaborated fallback identity — rides along
-      -- unchanged. Its only consumer is `resolveDotReceiver` below, where a
-      -- structural miss or an argument-bearing edge is a VALUE (DOT-02); it is
-      -- never a program-visible callable — every algorithm-capable position,
-      -- the callee included, reads a dot expression's identity through
-      -- `projectNeedStructuralMember` (DOT-09; `projectNeedCallable`,
-      -- `resolveCalleeAlg`).
-      identifyRuntimeAlgorithm (wireToCaller ctx (Algorithm.ofExpr (.dotMember o n fallback args)))
-  -- Explicit errors for syntactic forms that cannot resolve to algorithms
-  | .param x =>
-      -- Higher-order parameter: its supplied cell projects its CALLABLE identity
-      -- (`projectNeedCallable`, never a VALUE demand). A cell without one — a
-      -- computed value — and a name with no cell are not callable. The
-      -- environment reaching here was shadowed by every enclosing binding's
-      -- parameter names (`EvalCtx.bindParameters`), so a parameter never reaches
-      -- a same-named caller binding.
-      do
-      let activation <- capturedParameterActivation? x ctx
-      if let some address := lookupAssoc x (activation.map ParameterActivation.needs |>.getD ctx.needEnv) then
-        match <- projectNeedCallable address with
-        | some algorithm => return algorithm
-        | none => return <- .error (Error.notAnAlgorithm s!"param({x})")
-      .error (Error.notAnAlgorithm s!"param({x})")
-  | .num n   => .error (Error.notAnAlgorithm s!"num({n})")
-  | .emptySequence _ => .error (Error.notAnAlgorithm "empty sequence value")
-  | .listLiteral _ => .error (Error.notAnAlgorithm "list literal")
-  | .unary _ _ => .error (Error.notAnAlgorithm "unary expression")
-  | .binary _ _ _ => .error (Error.notAnAlgorithm "binary expression")
-  | .comparison _ _ => .error (Error.notAnAlgorithm "comparison expression")
-  | .index _ _ => .error (Error.notAnAlgorithm "index expression")
-  | .call _ _ => .error (Error.notAnAlgorithm "call expression")
-  | .stringLiteral _ => .error (Error.notAnAlgorithm "string literal")
-  | .interpolatedString _ _ => .error (Error.notAnAlgorithm "interpolated string")
-  | .boolLiteral _ => .error (Error.notAnAlgorithm "Boolean literal")
+/- Total CALLABLE projection control (META-S3-0a), the CALLABLE twin of `NeedDemand`.
+    Written-expression resolution stays an explicit callback; this is not a second
+    resolver. C#: `NeedCell.ProjectCallable` / `ProjectCallableAsync`. -/
+namespace NeedProjection
 
-/-- Project identity without a VALUE demand or an invocation. -/
-partial def projectNeedCallable (address : Nat) : EvalM (Option Algorithm) := do
-  let state <- get
-  let some cell := state.needs[address]? | throw (Error.illegalInEval "invalid need address")
-  if let some outcome := cell.callable then
-    return <- outcome
-  let outcome <- evalAttempt <| match cell.suspension with
-    | .ready _ => pure none
-    | .collector _ => pure none
-    | .expression source caller _ => do
-      if shouldWrapArgExprAsValue source then return none
-      if let .dotMember _ _ _ _ := source then
-        let selected <- projectNeedStructuralMember source caller
-        match selected with
-        | some algorithm => pure (some (<- resolveAliasTarget algorithm caller))
-        | none => pure none
-      else
-        match <- evalAttempt (resolveAlg source caller) with
-        | .ok algorithm => pure (some algorithm)
-        | .error err => if isLiftableArgResolutionError err then pure none else throw err
-  modify fun current => { current with needs := (current.needs.modify address (fun currentCell => { currentCell with callable := some outcome })) }
-  return <- outcome
+/-- The CALLABLE computation of a cell's suspension. Produced data and a collector slice
+    carry no identity, nor does a capture (`shouldWrapArgExprAsValue`); every other written
+    expression is resolved by `written` in its captured caller context. -/
+def suspended (written : Expr → EvalCtx → EvalM (Option Algorithm)) :
+    NeedSuspension → EvalM (Option Algorithm)
+  | .ready _ => pure none
+  | .collector _ => pure none
+  | .expression source caller _ =>
+    if shouldWrapArgExprAsValue source then pure none else written source caller
 
-/-- Identity-only structural navigation: THE ONE CALLABLE PROJECTION of a dot
-    expression (DOT-09), shared by a supplied argument (`projectNeedCallable`, NEED-06)
-    and a callee (`resolveCalleeAlg`, Q-18 C-B3). An argumentless path whose every edge
-    selects a DECLARED member — a member named `string` included (Q-17 S-C) — is that
-    member (accessibility checked after selection); a computed dot result (an
-    argument-bearing edge, a structural miss) has no callable channel, and resolving a
-    receiver must not mint a value-thunk identity. C#: `ProjectDotPathCallable`. -/
-partial def projectNeedStructuralMember (source : Expr) (ctx : EvalCtx) : EvalM (Option Algorithm) := do
-  match source with
-  | .dotMember receiver name _ none =>
-      let container <- projectNeedStructuralMember receiver ctx
-      let some algorithm := container | return none
-      match Algorithm.lookupPropDefAny? algorithm name with
-      | some property =>
-          if !(memberAccessible? ctx algorithm property) then
-            throw (Error.localOnlyProperty (openExprName receiver) name property.exposure)
-          pure (some (childOfInContext algorithm property.alg ctx))
-      | none =>
-          if Algorithm.conditionalBranchesDefineProperty algorithm name then
-            throw (Error.localOnlyProperty (openExprName receiver) name .localConditional)
-          return none
-  | .resolve name =>
-      match ctx.callStack with
-      | owner :: _ => pure (some (<- lookupLexicalPropertyRaw owner name ctx).alg)
-      | [] => throw (Error.unknownName name)
-  | .algorithmExpr algorithm => pure (some (wireToCaller ctx algorithm))
-  | .param _ =>
-      match <- evalAttempt (resolveAlg source ctx) with
-      | .ok algorithm => pure (some algorithm)
-      | .error (.notAnAlgorithm _) => pure none
-      | .error error => throw error
-  | _ => pure none
-end
+/-- THE one CALLABLE completion shell (NEED-06/NEED-09): a completed projection is reused
+    and changes nothing; re-entering an active projection is `demandCycle` and leaves its
+    `projecting` state in place; otherwise the cell is marked `projecting`, `project` runs
+    over its suspension, and the outcome — identity, absence or failure, a propagated
+    `demandCycle` included — is published as the cell's sticky CALLABLE outcome. The
+    VALUE state is never read or written here. -/
+def step (project : NeedSuspension → EvalM (Option Algorithm)) (a : Nat) :
+    EvalM (Option Algorithm) := do
+  let some cell := (← get).needs[a]? | throw (Error.illegalInEval "invalid need address")
+  match cell.callable with
+  | .projected outcome => return ← outcome
+  | .projecting => throw Error.demandCycle
+  | .unprojected =>
+    modify fun s => { s with needs := s.needs.modify a (fun cell => { cell with callable := .projecting }) }
+    let outcome ← evalAttempt (project cell.suspension)
+    modify fun s => { s with needs := s.needs.modify a (fun cell => { cell with callable := .projected outcome }) }
+    return ← outcome
+
+end NeedProjection
+
 
 /-- The structured `notAnAlgorithm` description of a dot expression in CALLEE position
     that carries no callable identity — a computed VALUE (an extension call's or the
@@ -5748,14 +5878,19 @@ def computedDotCalleeDescription : String := "dot result"
     path is its member's own callable — `(Box.G)(2)` is the member call `Box.G(2)` and
     `(Box.V)()` the explicit fresh call `Box.V()`, grouping never changing identity — and
     every other dot expression is a computed value with no callable identity. Every other
-    callee shape resolves through canonical `resolveAlg`. C#: `Evaluator.ResolveCallee`. -/
-def resolveCalleeAlg (f : Expr) (ctx : EvalCtx) : EvalM Algorithm := do
+    callee shape resolves through canonical `resolveAlg`. C#: `Evaluator.ResolveCallee`.
+    Written over its two resolvers so the law is a kernel term; the production `resolveCalleeAlg`
+    (in the evaluator recursion core, since META-S3-1) installs `projectNeedStructuralMember` and
+    `resolveAlg`. -/
+def resolveCalleeAlgWith (project : Expr → EvalCtx → EvalM (Option Algorithm))
+    (normalize : Algorithm → EvalCtx → EvalM Algorithm)
+    (resolve : Expr → EvalCtx → EvalM Algorithm) (f : Expr) (ctx : EvalCtx) : EvalM Algorithm := do
   match f with
   | .dotMember _ _ _ _ =>
-      match <- projectNeedStructuralMember f ctx with
-      | some algorithm => resolveAliasTarget algorithm ctx
+      match <- project f ctx with
+      | some algorithm => normalize algorithm ctx
       | none => .error (Error.notAnAlgorithm computedDotCalleeDescription)
-  | _ => resolveAlg f ctx
+  | _ => resolve f ctx
 
 /-- The ROLE of a builtin's invoking (CALLABLE) slot — its callback, or a
     loop's step: the description of the slot's missing-callability verdict
@@ -5784,85 +5919,6 @@ def invokingSlotRole : Builtin -> String
 def projectInvokingSlot (role : String) : Option Algorithm -> EvalM Algorithm
   | some algorithm => pure algorithm
   | none => .error (Error.notAnAlgorithm role)
-
-/-- The CALLBACK a sequence builtin invokes from an algorithm suffix slot (the
-    `filter` predicate, the `map` mapper, the `reduce` reducer), through the ONE
-    invoking-slot rule (`projectInvokingSlot`): a supplied cell's CALLABLE projection
-    (`projectNeedCallable`), or, for an argument without a cell, its algorithm. -/
-partial def expectPreparedSequenceBuiltinAlgorithmSuffixArg
-    (b : Builtin) (descriptors : List SequenceBuiltinSuffixArgDescriptor)
-    (args : List PreparedSequenceBuiltinSuffixArg) (index : Nat) : EvalM Algorithm :=
-  expectPreparedSequenceBuiltinSuffixArgAt b descriptors args index .algorithm fun descriptor arg =>
-    match arg with
-    | .needAlgorithm address => do
-        projectInvokingSlot (invokingSlotRole b) (<- projectNeedCallable address)
-    | .algorithm algorithm =>
-        projectInvokingSlot (invokingSlotRole b) (some algorithm)
-    | _ =>
-        internalSequenceBuiltinSuffixArgMetadataError b
-          s!"prepared suffix argument {index + 1} ({descriptor.name}) did not match metadata kind {sequenceBuiltinSuffixArgKindDesc .algorithm}"
-
-/-- Resolve a dot edge's RECEIVER in algorithm position — the structural half
-    of the ordinary DotCall law applied at EVERY level of a chain.
-
-    Every receiver shape resolves through canonical `resolveAlg` except an
-    argumentless dot edge `X.M`, which NAVIGATES: when `X` (resolved the same
-    way, recursively) is an algorithm that declares `M` (any visibility;
-    selection never depends on exposure), the receiver IS that member algorithm
-    wired to `X` (`childOfInContext`), so `Lib.Sub.Q` reads `Sub`'s own `Q`
-    before any lexical `Q(x)` is considered, exactly as `Lib.Q` reads `Lib`'s.
-    A member named `string` is navigated like any member (Q-17 S-C:
-    `Obj.string.Q` reads the declared `string`'s own `Q`). A declared `M` that
-    is inaccessible from the site (`memberAccessible?`), or one defined only
-    inside conditional branches, is the same structural error that evaluating
-    `X.M` itself reports — never a fallback. When `X` does not declare `M` (or
-    is not an algorithm at all), the edge is an ordinary dot RESULT — its
-    lexical fallback's value, or, for `string`, the intrinsic's text — and
-    resolves to `resolveAlg`'s memberless wrapper, the internal carrier of that
-    VALUE, so the chain continues by value (`3.A.B` stays `B(A(3))`). An
-    argument-bearing edge is a call, hence a value, and never navigates; a
-    capture receiver keeps suppressing structural identity (`(A, B).V` and
-    `(A*).V` fall back — a redundant group never reaches this node, so the
-    sources `(Obj).V` and `(Lib.Sub).Q` are simply `Obj.V` and `Lib.Sub.Q`:
-    parentheses group syntax and never change which receiver is navigated).
-
-    The resolution is identity navigation only: no intermediate edge is
-    evaluated, so a parameterized or output-less container navigates exactly
-    as it does at the first level (`F.Q` works while `F` alone is an arity or
-    missing-output error). A dot expression's CALLABLE identity is read by
-    `projectNeedStructuralMember` alone (DOT-09). C#: `ResolveDotReceiver`. -/
-def resolveDotReceiver (e : Expr) (ctx : EvalCtx) : EvalM Algorithm :=
-  match e with
-  | .dotMember o n _ none =>
-      do
-        match <- evalAttempt (resolveDotReceiver o ctx) with
-        | .ok a =>
-            match Algorithm.lookupPropDefAny? a n with
-            | some p =>
-                if !(memberAccessible? ctx a p) then
-                  .error (Error.localOnlyProperty (openExprName o) n p.exposure)
-                else
-                  pure (childOfInContext a p.alg ctx)
-            | none =>
-                if Algorithm.conditionalBranchesDefineProperty a n then
-                  .error (Error.localOnlyProperty (openExprName o) n .localConditional)
-                else
-                  -- Structural miss: the edge is an ordinary dot result.
-                  resolveAlg e ctx
-        -- A value receiver makes the edge an ordinary dot result too.
-        | .error (.notAnAlgorithm _) => resolveAlg e ctx
-        | .error err => .error err
-  -- A written receiver HEAD is navigated, so a name or a block is the binding's own
-  -- algorithm, RAW: an alias declares only its own members, never its target's — written
-  -- member access never follows an alias (FWD-02). C#: `Evaluator.ResolveReceiverHead`.
-  | .resolve n =>
-      match ctx.callStack with
-      | a :: _ => do
-          let resolved <- lookupLexicalPropertyRaw a n ctx
-          pure resolved.alg
-      | [] => .error (Error.unknownName n)
-  | .algorithmExpr a => pure (wireToCaller ctx a)
-  | _ => resolveAlg e ctx
 
 /-
 Evaluator recursion core.
@@ -6438,13 +6494,6 @@ structure Route where
   /-- The spread capability the plan's supply formation runs (production `evalSupplySpread`). -/
   spread : NeedSupply.SpreadEval
 
-/-- The ordinary call's alias normalization before dispatch (`evalResolvedCallCounted`'s
-    alias arm). -/
-def normalizeCallee (callee : Algorithm) (ctx : EvalCtx) : EvalM Algorithm :=
-  match callee with
-  | .alias _ _ _ _ _ => resolveAliasTarget callee ctx
-  | other => pure other
-
 def setSupply (a : Nat) (supply : NeedPlanSupply) : EvalM Unit :=
   modify fun s => { s with needs := s.needs.modify a (fun cell => { cell with plan := supply }) }
 
@@ -6495,7 +6544,103 @@ def viewSupply (spread : NeedSupply.SpreadEval) (a : Nat) : EvalM SpreadSupply :
   let transported ← cells.mapM (fun (b, _) => do pure (b, ← needWrittenSource? b))
   pure (.cells transported)
 
+/-- Records plan `a`'s canonical callee cell (CR-13). -/
+def setCallee (a c : Nat) : EvalM Unit :=
+  modify fun s => { s with needs := s.needs.modify a (fun cell => { cell with callee := some c }) }
+
+/-- THE CANONICAL CALLEE CELL of plan `a` (META-S3-1, CR-13): the plan's WRITTEN callee supplied in
+    the plan's captured caller context through the ONE supplier (`supplyNeed`) — so a parameter
+    callee is that parameter's existing cell (NEED-01) and a name callee a fresh suspended cell over
+    the name — established by the first observation that needs it and recorded in the plan cell
+    (`NeedCell.callee`); every later observation reads the record (`calleeCell_canonical`).
+    Establishing it evaluates, prepares and demands nothing (`calleeCell_inert`): it reads the plan's
+    suspension, may allocate one suspended cell and records the address. A non-plan address is
+    META's refusal. C#: `InvocationPlan.CalleeCell`. -/
+def calleeCell (a : Nat) : EvalM Nat := do
+  let some cell := (← get).needs[a]? | throw (Error.illegalInEval "invalid need address")
+  match cell.callee with
+  | some c => pure c
+  | none =>
+    match ofSuspension? cell.suspension with
+    | none => throw metaRefusal
+    | some shape =>
+      let c ← supplyNeed shape.callee shape.caller shape.values
+      setCallee a c
+      pure c
+
+/-- The written name of plan `a`'s callee, which names a fresh call of the captured callee for
+    dispatch diagnostics exactly as the plan's own execution names it (`execute`). -/
+def calleeName (a : Nat) : EvalM String := do
+  match shapeAt? (← get).needs a with
+  | some shape => pure (openExprName shape.callee)
+  | none => throw metaRefusal
+
 end NeedPlan
+
+/-- The written shape of a `.Algorithm` LINK (META-S3-1, CR-14/CR-15): an argumentless dot edge
+    spelled `Algorithm`, as its receiver and fallback. Whether the edge is the intrinsic or a declared
+    member is decided at run time, member-first (`algorithmIntrinsicRoute`). -/
+def linkEdge? : Expr → Option (Expr × Expr)
+  | .dotMember receiver name fallback none =>
+    if name = "Algorithm" then some (receiver, fallback) else none
+  | _ => none
+
+/-- Decodes the receiver VALUE of `.Algorithm` into the plan address of its call reference; any
+    other value (an argument view included) is the intrinsic's kind rejection. Serial Lean has one
+    run, so the C# ownership check has no counterpart. C#: `Evaluator.DecodeAlgorithmReceiver`. -/
+def decodeCallRef (val : Result) : EvalM Nat :=
+  match val with
+  | .callRef a => pure a
+  | other => .error (Error.typeMismatch (algorithmRequiresCallReferenceMessage other))
+
+/- THE LINK of a supplied `X.Algorithm` (META-S3-1, CR-15): one link cell whose receiver `X` is ONE
+    receiver cell, established lazily and recorded in the link cell (`NeedCell.receiver`), so the
+    link's VALUE (`linkValue`) and its CALLABLE (`linkCallable`) demand the SAME receiver VALUE. -/
+namespace NeedLink
+
+/-- Records link `a`'s canonical receiver cell. -/
+def setReceiver (a r : Nat) : EvalM Unit :=
+  modify fun s => { s with needs := s.needs.modify a (fun cell => { cell with receiver := some r }) }
+
+/-- The canonical RECEIVER CELL of link `a`: the link's written receiver supplied in the link's
+    caller context through `supplyNeed` (a parameter receiver is its existing cell), established
+    by the first channel that needs it and recorded; evaluates nothing (`receiverCell_canonical`).
+    C#: `Evaluator.LinkSuspension.Receiver`. -/
+def receiverCell (a : Nat) : EvalM Nat := do
+  let some cell := (← get).needs[a]? | throw (Error.illegalInEval "invalid need address")
+  match cell.receiver with
+  | some r => pure r
+  | none =>
+    match cell.suspension with
+    | .expression source caller values =>
+      match linkEdge? source with
+      | some (receiver, _) =>
+        let r ← supplyNeed receiver caller values
+        setReceiver a r
+        pure r
+      | none => throw (Error.illegalInEval "not a link")
+    | _ => throw (Error.illegalInEval "not a link")
+
+/-- The callee cell BOTH channels of link `a` reach (CR-15): the link's ONE receiver cell, its VALUE
+    through `demand`, decoded into its plan, then the plan's canonical callee cell. Production:
+    `demand = demandNeedRecursive`. -/
+def decodeCallee (demand : Nat → EvalM CountedResult) (a : Nat) : EvalM Nat := do
+  let receiver ← receiverCell a
+  let (value, _) ← demand receiver
+  let plan ← decodeCallRef value
+  NeedPlan.calleeCell plan
+
+/-- The link's VALUE (CR-14 b): the callee cell's VALUE. Production: `linkValue`. -/
+def value (demand : Nat → EvalM CountedResult) (a : Nat) : EvalM CountedResult := do
+  demand (← decodeCallee demand a)
+
+/-- The link's CALLABLE (CR-14 a): the callee cell's CALLABLE — `demand` is used only for the
+    receiver (`callable_value_only_at_receiver`). Production: `linkCallable`. -/
+def callable (demand : Nat → EvalM CountedResult) (project : Nat → EvalM (Option Algorithm))
+    (a : Nat) : EvalM (Option Algorithm) := do
+  project (← decodeCallee demand a)
+
+end NeedLink
 
 /-! ### Argument views (CallReference S2, October 2026)
 
@@ -6607,14 +6752,485 @@ def step (ev : Expr → EvalCtx → ValEnv → EvalM CountedResult) (route : Nee
 end NeedDemand
 
 mutual
+-- META-S3-1: the identity resolvers live in the evaluator recursion core, so a RUNTIME
+-- projection (a `.Algorithm` link) can demand VALUE (`demandNeedRecursive`).
+-- META-S3-2: callable-alias normalization lives here too — a runtime-target alias's step projects
+-- its binding cell's CALLABLE (`projectNeedCallable`) and decides an `.Algorithm` row's route
+-- member-first (`algorithmIntrinsicRoute`), and every lexical lookup normalizes through it.
+
+/-- Whether the alias `step` with row `target` takes a RUNTIME step (FWD-02, META-S3-2): its row is a
+    runtime row (`Expr.isRuntimeAliasRow`) and — for an `.Algorithm` link whose receiver is not
+    parameter-rooted — the edge takes the intrinsic route in the alias's own scope, decided
+    member-first exactly as the dot route decides it (`algorithmIntrinsicRoute`); a receiver that
+    declares a member `Algorithm` is an ordinary static step. A route failure is the runtime cell's
+    own failure, reported by its projection or VALUE. Identity navigation only.
+    C#: `Evaluator.IsRuntimeAliasStep`. -/
+partial def aliasStepIsRuntime (step : Algorithm) (target : Expr) (ctx : EvalCtx) : EvalM Bool := do
+  if !target.isRuntimeAliasRow then return false
+  match target with
+  | .dotMember receiver _ _ none =>
+      if receiver.isParamHeaded then return true
+      match <- evalAttempt (algorithmIntrinsicRoute receiver (ctx.push step)) with
+      | .ok intrinsic => pure intrinsic
+      | .error _ => pure true
+  | _ => pure true
+
+/-- THE BARE READ of a runtime-target alias `wired` (FWD-02, META-S3-2): its binding cell's VALUE
+    (`aliasBindingCell`) — the very cell its CALLABLE projects, so a computed receiver
+    (`A = Mk(5).Algorithm`) is shared for eligible targets; a D4 bare VALUE claims it through `aliasBareCell`. A parameter row is its
+    property body's ordinary parameter read, which demands that parameter's own cell. Never a
+    CALLABLE projection. C#: `Evaluator.EvalRuntimeAliasValueCounted`. -/
+partial def aliasValue (wired : Algorithm) (ctx : EvalCtx) (env : ValEnv) : EvalM CountedResult := do
+  match wired with
+  | .alias _ _ _ target _ =>
+      match target with
+      | .param _ => evalCounted target (ctx.push wired) env
+      | _ => demandNeedRecursive (<- aliasBareCell wired target ctx)
+  | other => evalZeroArgumentDemandOutputCounted other ctx env
+
+/-- THE ONE NORMALIZATION (FWD-02, binding indirection; decided 2026-10-01; runtime targets
+    META-S3-2): `ResolveCallable(A) = A is an alias ? ResolveCallable(target of A, resolved in A's own
+    scope) : A`. Every place a binding becomes a CALLABLE goes through it — lexical lookup
+    (`lookupLexicalProperty`), a structurally navigated member, an inline block — so calls,
+    callbacks and loop steps, the callable channel of an argument all receive the TARGET, while the
+    BINDING — the property and its zero-argument cache key (`zeroArgPropertyCacheKey` reads the
+    binding, never the resolved algorithm) — stays the alias's own. An alias is never an invocation:
+    resolving it binds nothing and charges nothing.
+
+    A static step resolves the written target (`resolveAliasStep`). A RUNTIME step
+    (`aliasStepIsRuntime`) projects the alias's binding cell (`aliasBindingCell`,
+    `projectNeedCallable`), and the chase ends in one of three outcomes: an ELIGIBLE callable
+    (`Algorithm.isEligibleRuntimeAliasTarget` — FWD-02's own test, applied to the identity the run
+    supplies), the alias's ORDINARY PROPERTY (`Algorithm.aliasPropertyView`: absence or an ineligible
+    identity — never the unresolved alias again), or the projection's FAILURE, which propagates with
+    its kind (never absence). `callable = false` is the VALUE chase: static steps only, ending AT the
+    first runtime-target alias (`resolveAliasValueTarget`), whose bare read is its binding cell's VALUE
+    (`aliasValue`) — a VALUE read never initiates a CALLABLE projection.
+
+    A chase that reaches an alias of the same shape again (`cacheAlgorithmShape`) is a CYCLE:
+    `illegalInEval aliasCycleMessage`, never a non-terminating chase — statically only possible in a
+    host-built tree past the pre-evaluation check (`staticAliasCycle`), at run time a completed
+    projection that leads back into its own chain; an ACTIVE projection re-entered is `demandCycle`
+    (`NeedProjection.step`, NEED-09). C#: `Evaluator.ResolveAliasTarget`. -/
+partial def resolveAliasChase (callable : Bool) (a : Algorithm) (ctx : EvalCtx)
+    (visited : List String) (projectedFrom : Option Algorithm) : EvalM Algorithm :=
+  match a with
+  | .alias _ _ _ target _ => do
+      let key := reprStr (cacheAlgorithmShape a)
+      if visited.contains key then
+        .error (Error.illegalInEval aliasCycleMessage)
+      else if (<- aliasStepIsRuntime a target ctx) then
+        if !callable then pure a
+        else
+          match <- runtimeAliasStepWith projectNeedCallable a target ctx with
+          | .terminal property => pure property
+          | .continue identity => resolveAliasChase callable identity ctx (key :: visited) (some a)
+      else
+        let next <- resolveAliasStep a target ctx
+        resolveAliasChase callable next ctx (key :: visited) projectedFrom
+  | other =>
+      match projectedFrom with
+      | some owner => pure (runtimeAliasFinish owner other)
+      | none => pure other
+
+/-- The CALLABLE chase (`resolveAliasChase`): a callable alias's normalized target. -/
+partial def resolveAliasTarget (a : Algorithm) (ctx : EvalCtx) : EvalM Algorithm :=
+  resolveAliasChase true a ctx [] none
+
+/-- The VALUE chase (`resolveAliasChase`, META-S3-2): static steps only — a non-alias target, or the
+    runtime-target alias the chain reaches, whose bare read is its binding cell (`aliasValue`). -/
+partial def resolveAliasValueTarget (a : Algorithm) (ctx : EvalCtx) : EvalM Algorithm :=
+  resolveAliasChase false a ctx [] none
+
+/-- The canonical lexical lookup with the selected binding made CALLABLE: a binding that is a
+    callable alias keeps its own property as the binding (its zero-argument cache key, its
+    exposure and accessibility) while its resolved algorithm is the alias's normalized target
+    (`resolveAliasTarget`). C#: `Evaluator.LookupLexical` (over `NormalizeAliasBinding`). -/
+partial def lookupLexicalProperty (a : Algorithm) (name : Ident) (ctx : EvalCtx)
+    : EvalM ResolvedProperty := do
+  let resolved <- lookupLexicalPropertyRaw a name ctx
+  match resolved.alg with
+  | .alias _ _ _ _ _ => pure { resolved with alg := (<- resolveAliasTarget resolved.alg ctx) }
+  | _ => pure resolved
+
+/-- The lexical lookup of a VALUE read (a property read `A`, a `.string` receiver): exactly
+    `lookupLexicalProperty`, except that an alias binding is normalized by the VALUE chase
+    (`resolveAliasValueTarget`), which stops at a runtime-target alias (META-S3-2). For a static alias
+    the two lookups agree. C#: `Evaluator.LookupLexicalForValue`. -/
+partial def lookupLexicalValueProperty (a : Algorithm) (name : Ident) (ctx : EvalCtx)
+    : EvalM ResolvedProperty := do
+  let resolved <- lookupLexicalPropertyRaw a name ctx
+  match resolved.alg with
+  | .alias _ _ _ _ _ => pure { resolved with alg := (<- resolveAliasValueTarget resolved.alg ctx) }
+  | _ => pure resolved
+
+/-- Algorithm-position lexical lookup (call callees, dot-call targets).
+    This is the algorithm PROJECTION of `lookupLexicalProperty`: the canonical
+    property-carrying chain owns ownership-first ordering, open dedup,
+    ambiguity, and precedence, and this projection only discards the
+    owner/binding metadata that algorithm-position consumers never read. -/
+partial def lookupLexical (a : Algorithm) (name : Ident) (ctx : EvalCtx) : EvalM Algorithm := do
+  let resolved <- lookupLexicalProperty a name ctx
+  pure resolved.alg
+
+/-- The ordinary call's alias normalization before dispatch (`evalResolvedCallCounted`'s
+    alias arm). -/
+partial def NeedPlan.normalizeCallee (callee : Algorithm) (ctx : EvalCtx) : EvalM Algorithm :=
+  match callee with
+  | .alias _ _ _ _ _ => resolveAliasTarget callee ctx
+  | other => pure other
+
+partial def resolveAlg (e : Expr) (ctx : EvalCtx) : EvalM Algorithm :=
+  match e with
+  | .sequenceConstruct _ _ =>
+    .error (Error.notAnAlgorithm "sequence construct expression")
+  | .sequenceSpread _ =>
+    .error (Error.notAnAlgorithm "spread expression")
+  -- An inline block whose one row names a parameterized callable is a callable alias
+  -- (`{ F }`): its callable is its target's.
+  | .algorithmExpr a => resolveAliasTarget (wireToCaller ctx a) ctx
+  -- Capture is not algorithm identity: the algorithm channel sees only a
+  -- zero-parameter value thunk over the bundle, exactly as the pre-split
+  -- transparent wrapper behaved. `Apply((Inc, Dec))` therefore never receives
+  -- either callable identity: a capture ARGUMENT has no CALLABLE channel at all
+  -- (`projectNeedCallable` declines it through `shouldWrapArgExprAsValue`), so
+  -- `f(9)` is `notAnAlgorithm` (Q-06, NEED-06), while
+  -- the redundant group `Apply((Increment))` IS `Apply(Increment)` — the
+  -- parser erases it before this node exists (parentheses group syntax).
+  -- C#: `CaptureValueThunk`.
+  | .capture rows => identifyRuntimeAlgorithm (wireToCaller ctx (Algorithm.mk none [] [] [] rows))
+  | .resolve n =>
+      match ctx.callStack with
+      | a::_ => lookupLexical a n ctx
+      | []   => .error (Error.unknownName n)
+  | .dotMember o n fallback args =>
+      -- The internal CARRIER of a dot RESULT used as a RECEIVER: a memberless
+      -- wrapper whose evaluation (evalDotCall) owns every dot semantic
+      -- (structural member, `.string` intrinsic, extension call). The whole
+      -- node — including its elaborated fallback identity — rides along
+      -- unchanged. Its only consumer is `resolveDotReceiver` below, where a
+      -- structural miss or an argument-bearing edge is a VALUE (DOT-02); it is
+      -- never a program-visible callable — every algorithm-capable position,
+      -- the callee included, reads a dot expression's identity through
+      -- `projectNeedStructuralMember` (DOT-09; `projectNeedCallable`,
+      -- `resolveCalleeAlg`).
+      identifyRuntimeAlgorithm (wireToCaller ctx (Algorithm.ofExpr (.dotMember o n fallback args)))
+  -- Explicit errors for syntactic forms that cannot resolve to algorithms
+  | .param x =>
+      -- Higher-order parameter: its supplied cell projects its CALLABLE identity
+      -- (`projectNeedCallable`, never a VALUE demand). A cell without one — a
+      -- computed value — and a name with no cell are not callable. The
+      -- environment reaching here was shadowed by every enclosing binding's
+      -- parameter names (`EvalCtx.bindParameters`), so a parameter never reaches
+      -- a same-named caller binding.
+      do
+      match <- projectParameterCallable x ctx with
+      | some algorithm => pure algorithm
+      | none => .error (Error.notAnAlgorithm s!"param({x})")
+  | .num n   => .error (Error.notAnAlgorithm s!"num({n})")
+  | .emptySequence _ => .error (Error.notAnAlgorithm "empty sequence value")
+  | .listLiteral _ => .error (Error.notAnAlgorithm "list literal")
+  | .unary _ _ => .error (Error.notAnAlgorithm "unary expression")
+  | .binary _ _ _ => .error (Error.notAnAlgorithm "binary expression")
+  | .comparison _ _ => .error (Error.notAnAlgorithm "comparison expression")
+  | .index _ _ => .error (Error.notAnAlgorithm "index expression")
+  | .call _ _ => .error (Error.notAnAlgorithm "call expression")
+  | .stringLiteral _ => .error (Error.notAnAlgorithm "string literal")
+  | .interpolatedString _ _ => .error (Error.notAnAlgorithm "interpolated string")
+  | .boolLiteral _ => .error (Error.notAnAlgorithm "Boolean literal")
+
+/-- Project identity without demanding the projected cell's VALUE or invoking anything: the ONE
+    CALLABLE completion shell (`NeedProjection.step`) over the cell's suspension, written at the
+    cell's own address (`projectNeedWrittenAt`). An identity-only projection never re-enters its own
+    cell and never observes `projecting`; a RUNTIME projection — a supplied `X.Algorithm` link
+    (`linkCallable`, META-S3-1) or a parameter-rooted path over one — demands other cells' VALUE on
+    its callee route, and re-entering it is `demandCycle` (NEED-09). -/
+partial def projectNeedCallable (address : Nat) : EvalM (Option Algorithm) :=
+  NeedProjection.step (NeedProjection.suspended (projectNeedWrittenAt address)) address
+
+/-- The CALLABLE of the written expression supplied at `address`: a supplied `X.Algorithm` LINK on the
+    intrinsic route is `linkCallable` (CR-15; a declared member `Algorithm` keeps the structural
+    projection), every other expression `projectNeedWritten`. C#: `ProjectSuspendedCallable`. -/
+partial def projectNeedWrittenAt (address : Nat) (source : Expr) (caller : EvalCtx) : EvalM (Option Algorithm) := do
+  match linkEdge? source with
+  | some (receiver, _) =>
+      if <- algorithmIntrinsicRoute receiver caller then linkCallable address
+      else projectNeedWritten source caller
+  | none => projectNeedWritten source caller
+
+/-- The CALLABLE of a supplied `X.Algorithm` LINK at `address` (META-S3-1, CR-15/CR-16): the link's ONE
+    receiver cell's VALUE (`NeedLink.receiverCell`, shared with `linkValue`), decoded into its plan,
+    then the plan's canonical callee cell's CALLABLE — never the link's own VALUE and never the callee
+    cell's VALUE (`callable_value_only_at_receiver`). A receiver, decode or callee-route failure is the
+    projection's failure, published by `NeedProjection.step` with its kind. C#: `ProjectLinkCallable`. -/
+partial def linkCallable (address : Nat) : EvalM (Option Algorithm) :=
+  NeedLink.callable demandNeedRecursive projectNeedCallable address
+
+/-- A parameter's CALLABLE as its supplied cell's TYPED projection outcome (META-S3-1, L2): `some`
+    identity, `none` the successful absence of one (a computed value, or no cell), and every
+    projection FAILURE — whatever its kind, `notAnAlgorithm` and `illegalInEval` included —
+    propagates instead of being read as absence. C#: `ResolveNeedParameterAlgorithm` with
+    `IsProjectionFailure`. -/
+partial def projectParameterCallable (x : Ident) (ctx : EvalCtx) : EvalM (Option Algorithm) :=
+  projectParameterWith projectNeedCallable x ctx
+
+/-- The identity of a written supplied expression (NEED-06): a structural dot path's member
+    (aliases normalized), or the expression's resolved algorithm, where a resolution that
+    only reports absence (`isLiftableArgResolutionError`) is the successful outcome "no
+    identity". -/
+partial def projectNeedWritten (source : Expr) (caller : EvalCtx) : EvalM (Option Algorithm) := do
+  if let .dotMember _ _ _ _ := source then
+    let selected <- projectNeedStructuralMember source caller
+    match selected with
+    | some algorithm => pure (some (<- resolveAliasTarget algorithm caller))
+    | none => pure none
+  else
+    -- META-S3-2: a name or inline block whose static alias chain reaches a runtime-target alias is a
+    -- RUNTIME projection — every failure of its normalization propagates (NEED-06); any other keeps the
+    -- static rule that a resolution reporting only absence is "no identity".
+    -- C#: `ReferenceReachesRuntimeAlias` makes exactly those supplied cells runtime projections.
+    let lifted : EvalM Algorithm → EvalM (Option Algorithm) := fun resolution => do
+      match <- evalAttempt resolution with
+      | .ok algorithm => pure (some algorithm)
+      | .error err => if isLiftableArgResolutionError err then pure none else throw err
+    let throughAlias : Algorithm → EvalM (Option Algorithm) := fun alias => do
+      match <- evalAttempt (resolveAliasValueTarget alias caller) with
+      | .ok (.alias _ _ _ _ _) => pure (some (<- resolveAliasTarget alias caller))
+      | _ => lifted (resolveAliasTarget alias caller)
+    match source with
+    | .resolve n =>
+        match caller.callStack with
+        | owner :: _ =>
+            match <- evalAttempt (lookupLexicalPropertyRaw owner n caller) with
+            | .ok resolved =>
+                match resolved.alg with
+                | .alias _ _ _ _ _ => throughAlias resolved.alg
+                | other => pure (some other)
+            | .error err => if isLiftableArgResolutionError err then pure none else throw err
+        | [] => .error (Error.unknownName n)
+    | .algorithmExpr a =>
+        match wireToCaller caller a with
+        | wired@(.alias _ _ _ _ _) => throughAlias wired
+        | wired => pure (some wired)
+    | _ => lifted (resolveAlg source caller)
+
+/-- Identity-only structural navigation: THE ONE CALLABLE PROJECTION of a dot
+    expression (DOT-09), shared by a supplied argument (`projectNeedCallable`, NEED-06)
+    and a callee (`resolveCalleeAlg`, Q-18 C-B3). An argumentless path whose every edge
+    selects a DECLARED member — a member named `string` included (Q-17 S-C) — is that
+    member (accessibility checked after selection); a computed dot result (an
+    argument-bearing edge, a structural miss) has no callable channel, and resolving a
+    receiver must not mint a value-thunk identity. C#: `ProjectDotPathCallable`. -/
+partial def projectNeedStructuralMember (source : Expr) (ctx : EvalCtx) : EvalM (Option Algorithm) := do
+  match source with
+  | .dotMember receiver name _ none =>
+      let container <- projectNeedStructuralMember receiver ctx
+      let some algorithm := container | return none
+      match Algorithm.lookupPropDefAny? algorithm name with
+      | some property =>
+          if !(memberAccessible? ctx algorithm property) then
+            throw (Error.localOnlyProperty (openExprName receiver) name property.exposure)
+          pure (some (childOfInContext algorithm property.alg ctx))
+      | none =>
+          if Algorithm.conditionalBranchesDefineProperty algorithm name then
+            throw (Error.localOnlyProperty (openExprName receiver) name .localConditional)
+          return none
+  | .resolve name =>
+      match ctx.callStack with
+      | owner :: _ => pure (some (<- lookupLexicalPropertyRaw owner name ctx).alg)
+      | [] => throw (Error.unknownName name)
+  | .algorithmExpr algorithm => pure (some (wireToCaller ctx algorithm))
+  -- L2 (META-S3-1): a parameter head is its supplied cell's TYPED CALLABLE outcome — absence is
+  -- `none`, and a runtime projection failure propagates whatever its kind (never read as absence).
+  | .param x => projectParameterCallable x ctx
+  | _ => pure none
+
+/-- The production callee law: `resolveCalleeAlgWith` at the evaluator's structural projection and
+    canonical resolution. C#: `Evaluator.ResolveCallee`. -/
+partial def resolveCalleeAlg (f : Expr) (ctx : EvalCtx) : EvalM Algorithm :=
+  resolveCalleeAlgWith projectNeedStructuralMember resolveAliasTarget resolveAlg f ctx
+
+/-- The CALLBACK a sequence builtin invokes from an algorithm suffix slot (the
+    `filter` predicate, the `map` mapper, the `reduce` reducer), through the ONE
+    invoking-slot rule (`projectInvokingSlot`): a supplied cell's CALLABLE projection
+    (`projectNeedCallable`), or, for an argument without a cell, its algorithm. -/
+partial def expectPreparedSequenceBuiltinAlgorithmSuffixArg
+    (b : Builtin) (descriptors : List SequenceBuiltinSuffixArgDescriptor)
+    (args : List PreparedSequenceBuiltinSuffixArg) (index : Nat) : EvalM Algorithm :=
+  expectPreparedSequenceBuiltinSuffixArgAt b descriptors args index .algorithm fun descriptor arg =>
+    match arg with
+    | .needAlgorithm address => do
+        projectInvokingSlot (invokingSlotRole b) (<- projectNeedCallable address)
+    | .algorithm algorithm =>
+        projectInvokingSlot (invokingSlotRole b) (some algorithm)
+    | _ =>
+        internalSequenceBuiltinSuffixArgMetadataError b
+          s!"prepared suffix argument {index + 1} ({descriptor.name}) did not match metadata kind {sequenceBuiltinSuffixArgKindDesc .algorithm}"
+
+/-- Resolve a dot edge's RECEIVER in algorithm position — the structural half
+    of the ordinary DotCall law applied at EVERY level of a chain.
+
+    Every receiver shape resolves through canonical `resolveAlg` except an
+    argumentless dot edge `X.M`, which NAVIGATES: when `X` (resolved the same
+    way, recursively) is an algorithm that declares `M` (any visibility;
+    selection never depends on exposure), the receiver IS that member algorithm
+    wired to `X` (`childOfInContext`), so `Lib.Sub.Q` reads `Sub`'s own `Q`
+    before any lexical `Q(x)` is considered, exactly as `Lib.Q` reads `Lib`'s.
+    A member named `string` is navigated like any member (Q-17 S-C:
+    `Obj.string.Q` reads the declared `string`'s own `Q`). A declared `M` that
+    is inaccessible from the site (`memberAccessible?`), or one defined only
+    inside conditional branches, is the same structural error that evaluating
+    `X.M` itself reports — never a fallback. When `X` does not declare `M` (or
+    is not an algorithm at all), the edge is an ordinary dot RESULT — its
+    lexical fallback's value, or, for `string`, the intrinsic's text — and
+    resolves to `resolveAlg`'s memberless wrapper, the internal carrier of that
+    VALUE, so the chain continues by value (`3.A.B` stays `B(A(3))`). An
+    argument-bearing edge is a call, hence a value, and never navigates; a
+    capture receiver keeps suppressing structural identity (`(A, B).V` and
+    `(A*).V` fall back — a redundant group never reaches this node, so the
+    sources `(Obj).V` and `(Lib.Sub).Q` are simply `Obj.V` and `Lib.Sub.Q`:
+    parentheses group syntax and never change which receiver is navigated).
+
+    The resolution is identity navigation only: no intermediate edge is
+    evaluated, so a parameterized or output-less container navigates exactly
+    as it does at the first level (`F.Q` works while `F` alone is an arity or
+    missing-output error). A dot expression's CALLABLE identity is read by
+    `projectNeedStructuralMember` alone (DOT-09). C#: `ResolveDotReceiver`.
+
+    The outcome is TYPED (META-S3-1, L2): `some` the navigated receiver (or the carrier of a dot
+    result), `none` no identity — a written value head or a parameter whose cell projects none — and
+    every failure, a parameter cell's runtime projection failure of any kind included, propagates. -/
+partial def resolveDotReceiver? (e : Expr) (ctx : EvalCtx) : EvalM (Option Algorithm) :=
+  match e with
+  | .dotMember o n _ none =>
+      do
+        match <- resolveDotReceiver? o ctx with
+        | some a =>
+            match Algorithm.lookupPropDefAny? a n with
+            | some p =>
+                if !(memberAccessible? ctx a p) then
+                  .error (Error.localOnlyProperty (openExprName o) n p.exposure)
+                else
+                  pure (some (childOfInContext a p.alg ctx))
+            | none =>
+                if Algorithm.conditionalBranchesDefineProperty a n then
+                  .error (Error.localOnlyProperty (openExprName o) n .localConditional)
+                else
+                  -- Structural miss: the edge is an ordinary dot result.
+                  some <$> resolveAlg e ctx
+        -- A value receiver makes the edge an ordinary dot result too.
+        | none => some <$> resolveAlg e ctx
+  -- A written receiver HEAD is navigated, so a name or a block is the binding's own
+  -- algorithm, RAW: an alias declares only its own members, never its target's — written
+  -- member access never follows an alias (FWD-02). C#: `Evaluator.ResolveReceiverHead`.
+  | .resolve n =>
+      match ctx.callStack with
+      | a :: _ => do
+          let resolved <- lookupLexicalPropertyRaw a n ctx
+          pure (some resolved.alg)
+      | [] => .error (Error.unknownName n)
+  | .algorithmExpr a => pure (some (wireToCaller ctx a))
+  -- L2 (META-S3-1): a parameter head is its cell's TYPED CALLABLE outcome.
+  | .param x => projectParameterCallable x ctx
+  -- Every other head is a written value shape: no identity is the absence report.
+  | _ => do
+      match <- evalAttempt (resolveAlg e ctx) with
+      | .ok a => pure (some a)
+      | .error (.notAnAlgorithm _) => pure none
+      | .error err => .error err
+
+/-- `resolveDotReceiver?` with the absence report raised (`notAnAlgorithm`), for the consumers that
+    treat every resolution failure alike. -/
+partial def resolveDotReceiver (e : Expr) (ctx : EvalCtx) : EvalM Algorithm := do
+  match <- resolveDotReceiver? e ctx with
+  | some a => pure a
+  | none => resolveAlg e ctx
+
+/-- The route fact of an argumentless edge spelled `Algorithm` (META-S3-1, CR-14), decided
+    member-first exactly as `evalDotCallCounted` decides it: `true` on a structural miss (a value
+    receiver included) — the intrinsic — and `false` when the receiver declares `Algorithm` (a member,
+    or a branch-only member whose error the ordinary route reports). Identity navigation only.
+    C#: `Evaluator.IsAlgorithmIntrinsicRoute`. -/
+partial def algorithmIntrinsicRoute (receiver : Expr) (ctx : EvalCtx) : EvalM Bool := do
+  match <- resolveDotReceiver? receiver ctx with
+  | none => pure true
+  | some a =>
+      pure ((Algorithm.lookupPropDefAny? a "Algorithm").isNone
+        && !(Algorithm.conditionalBranchesDefineProperty a "Algorithm"))
+
 
   /-- The recursive VALUE edge installs the evaluator callbacks in the ONE total
       demand shell. Its body is a source-level connection because Lean keeps a
       partial constant opaque; the public entry point below is total. -/
   partial def demandNeedRecursive (address : Nat) : EvalM CountedResult :=
-    NeedDemand.step evalCounted
+    NeedDemand.step (evalSuppliedAt address)
       ⟨resolveCalleeAlg, NeedPlan.normalizeCallee, evalSuppliedCallCounted, evalSupplySpread⟩
       demandNeedRecursive address
+
+  /-- The VALUE computation of the written expression supplied at `address` (the `ev` the production
+      VALUE shell installs): a supplied `X.Algorithm` LINK on the intrinsic route is `linkValue`
+      (CR-15; a declared member `Algorithm` keeps the ordinary evaluation), every other expression
+      `evalCounted`. C#: `Evaluator.EvalSuspendedValue` / `TryEvalLinkValue`. -/
+  partial def evalSuppliedAt (address : Nat) (e : Expr) (ctx : EvalCtx) (env : ValEnv) : EvalM CountedResult := do
+    match linkEdge? e with
+    | some (receiver, _) =>
+        if <- algorithmIntrinsicRoute receiver ctx then linkValue address
+        else evalCounted e ctx env
+    | none => evalCounted e ctx env
+
+  /-- The VALUE of a supplied `X.Algorithm` LINK at `address` (META-S3-1, CR-14 b / CR-15): the link's
+      ONE receiver cell's VALUE — the very demand `linkCallable` makes — decoded into its plan, then
+      the plan's canonical callee cell's VALUE: the captured callee read as an ordinary value in its
+      captured context, with its property cache, computation or arity rejection. C#:
+      `Evaluator.TryEvalLinkValue`. -/
+  partial def linkValue (address : Nat) : EvalM CountedResult :=
+    NeedLink.value demandNeedRecursive address
+
+  /-- The `.Algorithm` intrinsic over its receiver's VALUE (META-S3-1, CR-14): the decoded plan's
+      canonical callee cell — its VALUE when the edge is bare (b), otherwise a FRESH ordinary call of
+      its CALLABLE with exactly the written arguments (c), named by the plan's written callee. The
+      plan's captured invocation, original supply and VALUE are never touched (CR-16).
+      C#: `Evaluator.ApplyAlgorithmIntrinsic`. -/
+  partial def algorithmOfValue (val : Result) (argsOpt : Option OutputBundle)
+      (ctx : EvalCtx) (env : ValEnv) : EvalM CountedResult := do
+    let plan <- decodeCallRef val
+    let callee <- NeedPlan.calleeCell plan
+    match argsOpt with
+    | none => reCountValueBoundary <$> demandNeedRecursive callee
+    | some args =>
+        let algorithm <- capturedCallee callee
+        evalResolvedCallCounted algorithm args ctx env (<- NeedPlan.calleeName plan)
+
+  /-- The CALLABLE of a decoded callee cell, or the captured callee's absence report (NEED-06). -/
+  partial def capturedCallee (callee : Nat) : EvalM Algorithm := do
+    match <- projectNeedCallable callee with
+    | some algorithm => pure algorithm
+    | none => .error (Error.notAnAlgorithm capturedCalleeDescription)
+
+  /-- The receiver VALUE of a call-reference intrinsic on a structural miss of an algorithm receiver,
+      read exactly as the `string` intrinsic reads it (alias target, the zero-argument demand law, the
+      ordinary value read). C#: `Evaluator.EvalDotReferenceIntrinsicReceiver`. -/
+  partial def referenceReceiverValue (target : Expr) (targetAlg : Algorithm)
+      (ctx : EvalCtx) (env : ValEnv) : EvalM Result := do
+    let targetAlg <- resolveAliasValueTarget targetAlg ctx
+    if !(<- hasSuppliedParameterCell target ctx env) then
+      match zeroArgumentDemandError? (some target) targetAlg with
+      | some err => .error err
+      | none => pure ()
+    evalDotStringReceiverValue target targetAlg ctx env
+
+  /-- A callee written `X.Algorithm` on the intrinsic route (META-S3-1, CR-14 a/c): `X`'s VALUE read as
+      the dot route reads it, decoded, and the callee cell's CALLABLE, with the plan's callee name —
+      so `(R.Algorithm)(args)` is the fresh call `R.Algorithm(args)`. C#:
+      `Evaluator.EvalAlgorithmCalleeCallCounted`. -/
+  partial def algorithmCalleeOf (receiver : Expr) (ctx : EvalCtx) (env : ValEnv) : EvalM (Algorithm × String) := do
+    let value <-
+      match <- resolveDotReceiver? receiver ctx with
+      | none => eval receiver ctx env
+      | some targetAlg => referenceReceiverValue receiver targetAlg ctx env
+    let plan <- decodeCallRef value
+    let callee <- capturedCallee (<- NeedPlan.calleeCell plan)
+    pure (callee, <- NeedPlan.calleeName plan)
 
   /-- THE dispatch of a normalized callee over an already formed sourced supply: the
       builtin, flat-binder, clause-family and user arms of the ordinary call. The ordinary
@@ -6648,6 +7264,8 @@ mutual
     let some bindings <- bindNeedPatterns ⟨demandNeedRecursive, projectNeedCallable⟩ patterns cells | throw Error.badArity
     if (Algorithm.output callee).isEmpty then throw Error.missingOutput
     let next <- needBindingContext ctx bindings
+    if let some address ← takeTerminalAliasInvocation callee then
+      return reCountValueBoundary (← demandNeedRecursive address)
     let result <- evalAlgOutputCounted callee next (ValEnv.shadow env (Algorithm.params callee))
     pure (reCountValueBoundary result)
 
@@ -6987,11 +7605,14 @@ mutual
       (ctx : EvalCtx) (env : ValEnv) : EvalM CountedResult := do
     match a with
     | .conditional _ _ _ _ => evalConditionalCallCounted a [] ctx env
-    -- An alias demanded with zero arguments is its target's zero-supply demand (only an
-    -- unnormalized alias — a host-built tree — reaches here; every lookup normalizes first).
+    -- An alias demanded with zero arguments is its target's zero-supply demand — or, when its
+    -- chain reaches a runtime-target alias, that alias's bare read through its binding cell
+    -- (META-S3-2; the VALUE chase never initiates a CALLABLE projection).
     | .alias _ _ _ _ _ => do
-        let target <- resolveAliasTarget a ctx
-        evalZeroArgumentDemandOutputCounted target ctx env
+        let target <- resolveAliasValueTarget a ctx
+        match target with
+        | .alias _ _ _ _ _ => aliasValue target ctx env
+        | _ => evalZeroArgumentDemandOutputCounted target ctx env
     | _ =>
       if (Algorithm.parameterPatterns a).isEmpty then
         evalAlgOutputCounted a ctx env
@@ -7750,6 +8371,12 @@ mutual
       The callee is resolved by `resolveCalleeAlg` (DOT-09). -/
   partial def evalCallCountedExpr (f : Expr) (args : OutputBundle)
       (ctx : EvalCtx) (env : ValEnv) : EvalM CountedResult := do
+    -- META-S3-1: a callee written `X.Algorithm` is the call-reference intrinsic on a structural miss
+    -- (`algorithmCalleeOf`); a declared member `Algorithm` keeps the ONE callee law.
+    if let some (receiver, _) := linkEdge? f then
+      if <- withCtx (CtxMsg.call f) (algorithmIntrinsicRoute receiver ctx) then
+        let (callee, calleeName) <- withCtx (CtxMsg.call f) (algorithmCalleeOf receiver ctx env)
+        return <- withCtx (CtxMsg.call f) <| evalResolvedCallCounted callee args ctx env calleeName
     let callee <- withCtx (CtxMsg.call f) <| resolveCalleeAlg f ctx
     withCtx (CtxMsg.call f) <| evalResolvedCallCounted callee args ctx env (openExprName f)
 
@@ -7833,7 +8460,7 @@ mutual
     | .resolve n =>
         match ctx.callStack with
         | owner :: _ =>
-            let resolved <- lookupLexicalProperty owner n ctx
+            let resolved <- lookupLexicalValueProperty owner n ctx
             let counted <- evalZeroArgPropertyAccessCounted .lexical resolved.owner resolved.binding resolved.alg ctx env
             pure counted.fst
         | [] => evalZeroArgumentDemandOutput targetAlg ctx env
@@ -7897,8 +8524,10 @@ mutual
   partial def evalDotCallCounted (target : Expr) (name : Ident)
       (fallback : Expr) (argsOpt : Option OutputBundle)
       (ctx : EvalCtx) (env : ValEnv) : EvalM CountedResult := do
-    match <- evalAttempt (resolveDotReceiver target ctx) with
-    | .ok targetAlg =>
+    -- The receiver's TYPED identity (META-S3-1, L2): `none` is a value receiver; a failure — a
+    -- parameter cell's runtime projection failure of any kind included — propagates.
+    match <- resolveDotReceiver? target ctx with
+    | some targetAlg =>
         -- ONE structural lookup decides the route, whatever the member's spelling: a
         -- declared member wins (a member named `string` included — Q-17 S-C), then a
         -- branch-only member is the local-only error, and only a structural MISS takes
@@ -7911,8 +8540,11 @@ mutual
               .error (Error.localOnlyProperty (openExprName target) name p.exposure)
             else do
             -- A member that is a callable alias is read or called as its TARGET, while its
-            -- BINDING `p` keys the zero-argument read (C#: `EvalAliasMemberCounted`).
-            let wired <- resolveAliasTarget (childOfInContext targetAlg p.alg ctx) ctx
+            -- BINDING `p` keys the zero-argument read (C#: `EvalAliasMemberCounted`): a read
+            -- takes the VALUE chase (META-S3-2), a call the CALLABLE chase.
+            let wired <- match argsOpt with
+              | none => resolveAliasValueTarget (childOfInContext targetAlg p.alg ctx) ctx
+              | some _ => resolveAliasTarget (childOfInContext targetAlg p.alg ctx) ctx
             match argsOpt with
             | none =>
                 -- A structurally navigated member read with NO argument list is an
@@ -7954,8 +8586,8 @@ mutual
               -- C#: `RejectDotStringIntrinsicArguments`.
               rejectDotStringIntrinsicArguments argsOpt ctx env
               -- A receiver that is a callable alias is demanded as its TARGET, read through the
-              -- alias's own binding (C#: `EvalAliasDotStringCounted`).
-              let targetAlg <- resolveAliasTarget targetAlg ctx
+              -- alias's own binding (C#: `EvalAliasDotStringCounted`; the VALUE chase).
+              let targetAlg <- resolveAliasValueTarget targetAlg ctx
               -- The receiver is demanded for its VALUE with zero arguments. A PARAMETER
               -- bound to a supplied cell is a VALUE demand of that cell (CALL-06): the
               -- first demand evaluates the written argument once, and its outcome is
@@ -7988,7 +8620,7 @@ mutual
               -- the `string` intrinsic reads it (alias target, the zero-argument demand law,
               -- the ordinary value read) and must be a call reference.
               rejectInvokeIntrinsicArguments argsOpt ctx env
-              let targetAlg <- resolveAliasTarget targetAlg ctx
+              let targetAlg <- resolveAliasValueTarget targetAlg ctx
               if !(<- hasSuppliedParameterCell target ctx env) then
                 match zeroArgumentDemandError? (some target) targetAlg with
                 | some err => .error err
@@ -8002,16 +8634,23 @@ mutual
               -- fact before the receiver is demanded; the receiver is read exactly as the
               -- `Invoke` intrinsic reads it and must be a call reference. Nothing else runs.
               rejectArgumentsIntrinsicArguments argsOpt
-              let targetAlg <- resolveAliasTarget targetAlg ctx
+              let targetAlg <- resolveAliasValueTarget targetAlg ctx
               if !(<- hasSuppliedParameterCell target ctx env) then
                 match zeroArgumentDemandError? (some target) targetAlg with
                 | some err => .error err
                 | none => pure ()
               let val <- evalDotStringReceiverValue target targetAlg ctx env
               argumentsOfValue val
+            else if name = "Algorithm" then do
+              -- A structural miss: `Algorithm` is the callable-projection intrinsic (META-S3-1,
+              -- CR-14) — it takes the extension call's place, so a lexical `Algorithm` is never
+              -- consulted. The receiver is read exactly as the `Invoke` intrinsic reads it; bare,
+              -- the edge is the captured callee's VALUE, with arguments a fresh call of it.
+              let val <- referenceReceiverValue target targetAlg ctx env
+              algorithmOfValue val argsOpt ctx env
             else
               callLexicalWithReceiverCounted name target fallback argsOpt ctx env
-    | .error (.notAnAlgorithm _) =>
+    | none =>
       -- A value receiver declares no member: the edge's miss route applies directly.
       if name = "string" then do
         rejectDotStringIntrinsicArguments argsOpt ctx env
@@ -8026,9 +8665,11 @@ mutual
         rejectArgumentsIntrinsicArguments argsOpt
         let val <- eval target ctx env
         argumentsOfValue val
+      else if name = "Algorithm" then do
+        let val <- eval target ctx env
+        algorithmOfValue val argsOpt ctx env
       else
         callLexicalWithReceiverCounted name target fallback argsOpt ctx env
-    | .error e => .error e
 
 
   /-- The argument-list route fact of the `Invoke` intrinsic (CallReference S1): `R.Invoke`
@@ -8091,12 +8732,13 @@ mutual
               .error err
     | .algorithmExpr a => do
         -- An inline alias block is demanded as its target, a rejection reported as its written
-        -- target reference (FA-OQ-1; C#: `EvalAliasSpreadOperandItems`).
-        let wired <- resolveAliasTarget (wireToCaller ctx a) ctx
+        -- target reference (FA-OQ-1; C#: `EvalAliasSpreadOperandItems`); a chain reaching a
+        -- runtime-target alias reads that alias's binding cell (META-S3-2).
+        let wired <- resolveAliasValueTarget (wireToCaller ctx a) ctx
         -- A spread operand is demanded for its VALUE with zero arguments, so the
         -- ONE law decides and shapes its report here too: a block whose parameter
         -- list accepts an empty supply is demanded through the shared funnel.
-        match zeroArgumentDemandError? (some e) wired with
+        match (match wired with | .alias _ _ _ _ _ => none | _ => zeroArgumentDemandError? (some e) wired) with
         | some err => .error err
         | none =>
           match <- evalAttempt (evalZeroArgumentDemandOutput wired ctx env) with
@@ -8389,8 +9031,14 @@ mutual
     | .algorithmExpr a => do
         -- An inline alias block (`{ F }`) is demanded as its TARGET, and a rejected demand is
         -- reported as its written target reference `F` reports it (`zeroArgumentDemandError?`,
-        -- FA-OQ-1; C#: `EvalInlineAliasValue`).
-        let wired <- resolveAliasTarget (wireToCaller ctx a) ctx
+        -- FA-OQ-1; C#: `EvalInlineAliasValue`); a chain reaching a runtime-target alias reads
+        -- that alias's binding cell (META-S3-2).
+        let wired <- resolveAliasValueTarget (wireToCaller ctx a) ctx
+        match wired with
+        | .alias _ _ _ _ _ =>
+          let r <- aliasValue wired ctx env
+          pure (r.fst, Result.valueCount r.fst)
+        | _ =>
         match zeroArgumentDemandError? (some e) wired with
         | some err => .error err
         | none =>
@@ -8405,7 +9053,7 @@ mutual
     | .resolve n => do
         match ctx.callStack with
         | owner :: _ =>
-            let resolved <- lookupLexicalProperty owner n ctx
+            let resolved <- lookupLexicalValueProperty owner n ctx
             match zeroArgumentDemandError? (some e) resolved.alg with
             | some err => .error err
             | none =>
@@ -8527,7 +9175,7 @@ end
 /-- First VALUE demand through the total completion shell. Recursive expression and
     element evaluation still cross the opaque partial evaluator boundary. -/
 def demandNeed (address : Nat) : EvalM CountedResult :=
-  NeedDemand.step evalCounted
+  NeedDemand.step (evalSuppliedAt address)
     ⟨resolveCalleeAlg, NeedPlan.normalizeCallee, evalSuppliedCallCounted, evalSupplySpread⟩
     demandNeedRecursive address
 

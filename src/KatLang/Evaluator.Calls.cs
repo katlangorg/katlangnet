@@ -41,14 +41,39 @@ public static partial class Evaluator
     /// <summary>
     /// Errors that indicate an expression simply isn't an algorithm form and can
     /// have no independent callable identity. VALUE remains its suspended computation.
+    /// A runtime CALLABLE projection's FAILURE (<see cref="EvalError.IsProjectionFailure"/>, at any
+    /// wrapping depth) is never one: the computation failed, so its error propagates (NEED-06).
     /// </summary>
-    private static bool IsLiftableError(EvalError error) => error switch
+    private static bool IsLiftableError(EvalError error) => !error.IsProjectionFailure && error switch
     {
         EvalError.NotAnAlgorithm => true,
         EvalError.IllegalInEval => true,
         EvalError.WithContext(_, var inner) => IsLiftableError(inner),
         _ => false,
     };
+
+    /// <summary>
+    /// Whether an identity-resolution error is the completed FAILURE of a runtime CALLABLE
+    /// projection, at any wrapping depth (META-S3-0b provenance) — never the static absence of
+    /// an identity, whatever its kind.
+    /// </summary>
+    internal static bool IsProjectionFailure(EvalError error)
+    {
+        for (var current = error; ; current = ((EvalError.WithContext)current).Inner)
+        {
+            if (current.IsProjectionFailure) return true;
+            if (current is not EvalError.WithContext) return false;
+        }
+    }
+
+    /// <summary>
+    /// The value-receiver routes' test "this receiver simply is not an algorithm" (a value
+    /// receiver or a structural miss: static ABSENCE of identity, which a runtime projection
+    /// FAILURE never is, NEED-06). Lean: the <c>notAnAlgorithm</c> catch of
+    /// <c>resolveDotReceiver</c> / <c>projectNeedStructuralMember</c>.
+    /// </summary>
+    internal static bool IsAbsentIdentity(EvalError error)
+        => error is EvalError.NotAnAlgorithm && !error.IsProjectionFailure;
 
 
 
@@ -141,6 +166,11 @@ public static partial class Evaluator
         EvalCtx ctx,
         ValEnv valEnv)
     {
+        // META-S3-1: a callee spelled `X.Algorithm` is the call-reference intrinsic on a structural miss
+        // (`(R.Algorithm)(x)` is the fresh call `R.Algorithm(x)`), decided out of line.
+        if (IsAlgorithmEdgeCallee(func))
+            return EvalAlgorithmCalleeCallCounted((Expr.DotCall)func, args, ctx, valEnv);
+
         var diagnosticName = CallDiagnosticName.FromExpression(func);
         var calleeR = ResolveCallee(func, ctx);
         if (calleeR.IsError)

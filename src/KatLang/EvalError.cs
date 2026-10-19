@@ -49,6 +49,25 @@ public closed record EvalError
     /// <summary>Source location of the expression that caused this error.</summary>
     public SourceSpan? Span { get; init; }
 
+    private readonly RuntimeStateSlot<bool> _isProjectionFailure;
+
+    /// <summary>
+    /// Provenance (META-S3-0b, NEED-06): this error is the completed outcome of a RUNTIME
+    /// CALLABLE projection — a computation that FAILED to obtain an identity — never the
+    /// successful absence of one. It is set at exactly one place, the CALLABLE single flight's
+    /// completion (<c>NeedCell</c>), and read only by the absence classifiers
+    /// (<c>Evaluator.IsLiftableError</c>, <c>Evaluator.IsAbsentIdentity</c>), so a runtime
+    /// <see cref="NotAnAlgorithm"/> or <see cref="IllegalInEval"/> keeps its kind, span and
+    /// context instead of becoming "no identity". C#-side metadata with no Lean counterpart
+    /// (Lean's projection is already typed), carried in an equality-transparent slot that every
+    /// <c>with</c> copy keeps; kind, payload, message, code and equality are unchanged.
+    /// </summary>
+    internal bool IsProjectionFailure
+    {
+        get => _isProjectionFailure.Value;
+        init => _isProjectionFailure = new(value);
+    }
+
     private EvalError() { }
 
     /// <summary>
@@ -150,6 +169,7 @@ public closed record EvalError
                 AstDepthLimitExceeded => KatLangErrorCode.AstDepthLimitExceeded,
                 AstCycleDetected => KatLangErrorCode.AstCycleDetected,
                 ModuleRegionMaterializationFailed e => KatLangError.MapDiagnosticCode(e.Primary.Code),
+                ObservationPending => throw ObservationPending.Escaped(),
             };
         }
     }
@@ -504,6 +524,22 @@ public closed record EvalError
             var error = new ModuleRegionMaterializationFailed(diagnostics);
             return error with { Span = error.Primary.Span };
         }
+    }
+
+    /// <summary>
+    /// The answer of a NON-INITIATING observation (META-S3-0b) that reached a computation with no
+    /// observable outcome yet — a VALUE that is not complete or a runtime CALLABLE projection that
+    /// is not published — which the observation must not start. It exists only inside an
+    /// observation scope (<c>NeedCell.ObservationScope</c>): the scope's owner discards the
+    /// resolver's result whenever the scope recorded a pending operation, so the marker never
+    /// reaches a cell memo, a host, a diagnostic or a report. Not a KatLang error category.
+    /// </summary>
+    internal sealed record ObservationPending : EvalError
+    {
+        internal static ObservationPending Instance { get; } = new();
+
+        internal static System.Diagnostics.UnreachableException Escaped()
+            => new("META-S3-0b: a non-initiating observation's pending marker escaped its observation scope.");
     }
 
     /// <summary>Contextual wrapper attaching structured context to an inner error.</summary>

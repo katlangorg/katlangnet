@@ -423,6 +423,7 @@ public static partial class Evaluator
             observations,
             hostOperations,
             randomSeed,
+            asynchronousRun: true,
             cancellationToken);
     }
 
@@ -997,7 +998,7 @@ public static partial class Evaluator
         if (ctx.CallStack.Count == 0)
             return new EvalError.UnknownName(name) { Span = span };
 
-        var resolvedR = LookupLexical(ctx.CallStack[0], name, ctx);
+        var resolvedR = LookupLexicalForValue(ctx.CallStack[0], name, ctx);
         if (resolvedR.IsError)
             return AtSpanIfMissing(resolvedR.Error, span);
 
@@ -1925,9 +1926,13 @@ public static partial class Evaluator
         ValEnv valEnv)
     {
         ThrowIfAsyncStrategyPinningViolated(ctx);
+        // META-S3-1: a callee spelled `X.Algorithm` (see the synchronous twin).
+        if (IsAlgorithmEdgeCallee(func))
+            return await EvalAlgorithmCalleeCallCountedAsync((Expr.DotCall)func, args, ctx, valEnv).ConfigureAwait(false);
 
         var diagnosticName = CallDiagnosticName.FromExpression(func);
-        var calleeR = ResolveCallee(func, ctx);
+        // META-S3-0b: the ONE callee law through the async resolution adapter.
+        var calleeR = await ResolveCalleeAsync(func, ctx).ConfigureAwait(false);
         if (calleeR.IsError)
             return CalleeResolutionFailure(diagnosticName, ctx, calleeR.Error);
 
@@ -2374,11 +2379,8 @@ public static partial class Evaluator
             case BuiltinId.@filter:
                 {
                     if (iterationItems.Count == 0) return MakeCollectionListResult(ctx, []);
-                    var predicateR = ExpectPreparedAlgorithmSuffixArg(
-                        builtin,
-                        metadata.SuffixArgs,
-                        suffixArgs,
-                        0);
+                    // META-S3-0b: the ONE synchronous slot projection; its awaited outcome is consumed by the async resolution.
+                    var predicateR = await ExpectPreparedAlgorithmSuffixArgAsync(builtin, metadata.SuffixArgs, suffixArgs, 0, ctx).ConfigureAwait(false);
                     if (predicateR.IsError) return predicateR.Error;
 
                     return await EvalFilterCountedAsync(iterationItems, predicateR.Value, ctx, valEnv).ConfigureAwait(false);
@@ -2387,11 +2389,8 @@ public static partial class Evaluator
             case BuiltinId.@map:
                 {
                     if (iterationItems.Count == 0) return MakeCollectionListResult(ctx, []);
-                    var transformR = ExpectPreparedAlgorithmSuffixArg(
-                        builtin,
-                        metadata.SuffixArgs,
-                        suffixArgs,
-                        0);
+                    // META-S3-0b: the ONE synchronous slot projection; its awaited outcome is consumed by the async resolution.
+                    var transformR = await ExpectPreparedAlgorithmSuffixArgAsync(builtin, metadata.SuffixArgs, suffixArgs, 0, ctx).ConfigureAwait(false);
                     if (transformR.IsError) return transformR.Error;
 
                     return await EvalMapCountedAsync(iterationItems, transformR.Value, ctx, valEnv).ConfigureAwait(false);
@@ -2466,11 +2465,8 @@ public static partial class Evaluator
                     if (initialR.IsError) return initialR.Error;
                     if (iterationItems.Count == 0) return EvalResult<CountedResult>.Ok(new(initialR.Value, initialR.Value.ValueCount()));
 
-                    var stepR = ExpectPreparedAlgorithmSuffixArg(
-                        builtin,
-                        metadata.SuffixArgs,
-                        suffixArgs,
-                        0);
+                    // META-S3-0b: the ONE synchronous slot projection; its awaited outcome is consumed by the async resolution.
+                    var stepR = await ExpectPreparedAlgorithmSuffixArgAsync(builtin, metadata.SuffixArgs, suffixArgs, 0, ctx).ConfigureAwait(false);
                     if (stepR.IsError) return stepR.Error;
 
                     return await EvalReduceCountedAsync(
@@ -2669,10 +2665,13 @@ public static partial class Evaluator
         var name = dotCall.Name;
         var argsOpt = dotCall.Args;
 
-        var targetResult = ResolveDotReceiver(target, ctx, out var receiverIsStructuralMember);
+        // META-S3-0b: receiver navigation can project a parameter's cell — resolved asynchronously.
+        var navigated = await ResolveDotReceiverAsync(target, ctx).ConfigureAwait(false);
+        var targetResult = navigated.IsError ? EvalResult<Algorithm>.Err(navigated.Error) : EvalResult<Algorithm>.Ok(navigated.Value.Receiver);
+        var receiverIsStructuralMember = navigated.IsOk && navigated.Value.IsStructuralMember;
         if (targetResult.IsError)
         {
-            if (targetResult.Error is EvalError.NotAnAlgorithm)
+            if (IsAbsentIdentity(targetResult.Error))
             {
                 // MIRROR — a value receiver declares no member: the miss route applies directly.
                 if (dotCall.UsesOrdinaryDotStringIntrinsic())
@@ -2691,6 +2690,8 @@ public static partial class Evaluator
                     return await EvalDotInvokeValueReceiverCountedAsync(dotCall, ctx, valEnv).ConfigureAwait(false);
                 if (dotCall.UsesDotArgumentsIntrinsic())
                     return await EvalDotArgumentsValueReceiverCountedAsync(dotCall, ctx, valEnv).ConfigureAwait(false);
+                if (dotCall.UsesDotAlgorithmIntrinsic())
+                    return await EvalDotAlgorithmValueReceiverCountedAsync(dotCall, ctx, valEnv).ConfigureAwait(false);
                 return await CallLexicalWithReceiverCountedAsync(dotCall, ctx, valEnv).ConfigureAwait(false);
             }
 
@@ -2769,6 +2770,10 @@ public static partial class Evaluator
         if (dotCall.UsesDotArgumentsIntrinsic())
             return await EvalDotArgumentsIntrinsicCountedAsync(dotCall, targetAlg, receiverIsStructuralMember, ctx, valEnv).ConfigureAwait(false);
 
+        // MIRROR — a structural miss spelled `Algorithm` is the callable-projection intrinsic (META-S3-1).
+        if (dotCall.UsesDotAlgorithmIntrinsic())
+            return await EvalDotAlgorithmIntrinsicCountedAsync(dotCall, targetAlg, receiverIsStructuralMember, ctx, valEnv).ConfigureAwait(false);
+
         return await CallLexicalWithReceiverCountedAsync(dotCall, ctx, valEnv).ConfigureAwait(false);
     }
 
@@ -2778,7 +2783,7 @@ public static partial class Evaluator
     {
         if (targetAlg is Algorithm.Alias alias)
         {
-            var aliasTarget = ResolveAliasTarget(alias, ctx);
+            var aliasTarget = ResolveAliasTarget(alias, ctx, callable: false);
             if (aliasTarget.IsError) return aliasTarget.Error;
             targetAlg = aliasTarget.Value;
         }
@@ -2844,7 +2849,8 @@ public static partial class Evaluator
         if (dotCall.EffectiveLexicalFallback is not Expr.Resolve(var fallbackName))
             return await CallLexicalFallbackCalleeWithReceiverCountedAsync(dotCall, ctx, valEnv).ConfigureAwait(false);
 
-        var calleeR = ResolveNamedAlgorithm(fallbackName, span: null, ctx);
+        // META-S3-2: the fallback name may be a runtime-target alias, whose CALLABLE is awaited.
+        var calleeR = await ResolveAsync(ctx, (fallbackName, ctx), static state => ResolveNamedAlgorithm(state.fallbackName, span: null, state.ctx)).ConfigureAwait(false);
         if (calleeR.IsError) return calleeR.Error;
         return await EvalResolvedCallCountedAsync(
             calleeR.Value,
@@ -2866,7 +2872,8 @@ public static partial class Evaluator
         EvalCtx ctx,
         ValEnv valEnv)
     {
-        var calleeR = ResolveAlg(dotCall.EffectiveLexicalFallback, ctx);
+        // META-S3-0b: a parameter fallback projects its cell — resolved asynchronously.
+        var calleeR = await ResolveAsync(ctx, (dotCall.EffectiveLexicalFallback, ctx), static state => ResolveAlg(state.EffectiveLexicalFallback, state.ctx)).ConfigureAwait(false);
         if (calleeR.IsError) return calleeR.Error;
         return await EvalResolvedCallCountedAsync(
             calleeR.Value,
@@ -2926,7 +2933,7 @@ public static partial class Evaluator
         if (ctx.CallStack.Count == 0)
             return new EvalError.UnknownName(name) { Span = target.Span };
 
-        var resolvedR = LookupLexical(ctx.CallStack[0], name, ctx);
+        var resolvedR = LookupLexicalForValue(ctx.CallStack[0], name, ctx);
         if (resolvedR.IsError)
             return AtSpanIfMissing(resolvedR.Error, target.Span);
 
@@ -2946,8 +2953,11 @@ public static partial class Evaluator
         EvalCtx ctx,
         ValEnv valEnv)
     {
-        var containerR = ResolveDotReceiver(edge.Target, ctx, out _);
-        if (containerR.IsOk && LookupPropBinding(containerR.Value, edge.Name, ctx.Budget) is { } member)
+        // META-S3-0b: the container's re-navigation goes through the async resolution adapter
+        // too, so its correctness follows from the general rule (an awaited outcome is consumed
+        // or replayed), not from an earlier navigation having completed the same projection.
+        var navigated = await ResolveDotReceiverAsync(edge.Target, ctx).ConfigureAwait(false);
+        if (navigated.IsOk && LookupPropBinding(navigated.Value.Receiver, edge.Name, ctx.Budget) is { } member)
         {
             if (TryEnterArgumentEvaluationLevel(ctx, out var level) is { } limitError)
                 return limitError;
@@ -2955,7 +2965,7 @@ public static partial class Evaluator
             using (level)
             {
                 return ProjectCountedValue(await EvalZeroArgPropertyAccessCountedAsync(
-                    containerR.Value,
+                    navigated.Value.Receiver,
                     member,
                     ZeroArgPropertyAccessKind.CountedStructural,
                     TryGetFlatBinderUserEquivalent(targetAlg) ?? targetAlg,

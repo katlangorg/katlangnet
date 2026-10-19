@@ -48,6 +48,9 @@ public static class DifferentialErrors
         {
             // The loop has eliminated this variant; it is named only to keep the switch exhaustive.
             EvalError.WithContext => throw new System.Diagnostics.UnreachableException(),
+            // A non-initiating observation's internal pending marker (META-S3-0b) never leaves its
+            // observation scope, so no run outcome can carry it.
+            EvalError.ObservationPending => throw new System.Diagnostics.UnreachableException("internal observation marker"),
             EvalError.ArityMismatch e => Fields("arity", "arity", counts: [e.Expected, e.Actual]),
             EvalError.VariadicArityMismatch e => Fields("arity", "arity", counts: [e.ExpectedMinimum, e.Actual], partial: true),
             EvalError.BadArity => Fields("arity", "badArity"),

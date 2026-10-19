@@ -38,9 +38,34 @@ internal sealed class ParameterActivation
     /// (<see cref="Evaluator.AliasTargetKey"/>): an alias declared inside a call's body is resolved
     /// once per activation and forgotten with it. Runtime-only memoization, like the activation.
     /// </summary>
-    internal Dictionary<Evaluator.AliasTargetKey, Algorithm> AliasTargets => _aliasTargets ??= [];
+    internal Dictionary<Evaluator.AliasTargetKey, Algorithm> AliasTargets => AliasMemos;
 
-    private Dictionary<Evaluator.AliasTargetKey, Algorithm>? _aliasTargets;
+    /// <summary>
+    /// The runtime-alias BINDING CELLS of runtime-target aliases declared under this activation (FWD-02,
+    /// META-S3-2; <see cref="Evaluation.EvaluationBudget.AliasBindingCells"/>): one retained cell per alias
+    /// declaration and declaring scope, established on first use and forgotten with the activation.
+    /// </summary>
+    internal Dictionary<Evaluator.AliasTargetKey, Evaluator.RuntimeAliasBinding> AliasBindingCells => AliasMemos.BindingCells;
+
+    // Both alias memos hang off ONE lazily created holder (published first-wins, so racing binding-cell
+    // establishments meet in one dictionary): an activation that never meets an alias pays one null field.
+    private AliasMemo AliasMemos
+        => Volatile.Read(ref _aliasMemos)
+           ?? Interlocked.CompareExchange(ref _aliasMemos, new AliasMemo(), null)
+           ?? _aliasMemos!;
+
+    private AliasMemo? _aliasMemos;
+
+    // The alias-target memo itself, carrying the binding-cell memo created on first use.
+    private sealed class AliasMemo : Dictionary<Evaluator.AliasTargetKey, Algorithm>
+    {
+        private Dictionary<Evaluator.AliasTargetKey, Evaluator.RuntimeAliasBinding>? _bindingCells;
+
+        public Dictionary<Evaluator.AliasTargetKey, Evaluator.RuntimeAliasBinding> BindingCells
+            => Volatile.Read(ref _bindingCells)
+               ?? Interlocked.CompareExchange(ref _bindingCells, [], null)
+               ?? _bindingCells!;
+    }
 
     /// <summary>
     /// Captures the bindings of <paramref name="names"/> from the two tiers of a binding

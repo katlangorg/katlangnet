@@ -2447,6 +2447,26 @@ public closed record Algorithm
             this.Output = Output;
         }
 
+        /// <summary>
+        /// The ORDINARY ZERO-PARAMETER PROPERTY of a runtime-target alias (FWD-02, META-S3-2): the same
+        /// written declaration (<see cref="Algorithm.Declaration"/>), wired where the alias is, with the
+        /// alias's own opens and declarations and its one row as its output — exactly the open body the
+        /// alias was elaborated from. A runtime alias whose projected identity declares no parameterized
+        /// callable structure (absence, a value, a zero-parameter property) normalizes to it, so every
+        /// callable consumer receives an ordinary property and never the unresolved alias again. Lean:
+        /// <c>Algorithm.aliasPropertyView</c>.
+        /// </summary>
+        internal User(Alias alias)
+            : base(alias.Declaration)
+        {
+            Parent = alias.Parent;
+            ParameterPatterns = [];
+            Opens = alias.Opens;
+            Properties = alias.Properties;
+            Output = OutputBundle.From([alias.Target]);
+            IsModuleElaborated = alias.IsModuleElaborated;
+        }
+
         /// <summary>Lean: the <c>parent</c> field of <c>Algorithm.mk</c>.</summary>
         public ScopeCtx? Parent { get; init; }
 
@@ -2819,17 +2839,24 @@ public closed record Algorithm
     /// algorithm keeps its declaration, exposure, zero-argument cache entry and editor symbol, and
     /// the alias declares only what its own body declares (<see cref="Properties"/>, normally none)
     /// — never its target's members, so written member access <c>A.K</c> takes the ordinary
-    /// fallback and <c>open A</c> is refused. The CALLABLE is the target's: every callable use
+    /// fallback; a runtime-row alias can provide its own namespace to <c>open</c>, while a static
+    /// alias cannot. The CALLABLE is the target's: every callable use
     /// of the alias — a call, a callback or loop step, the callable channel of an argument, a
-    /// zero-argument value demand — is the use of the callable its <see cref="Target"/> resolves
+    /// invocation through a parameter — is the use of the callable its <see cref="Target"/> resolves
     /// to IN THE ALIAS'S OWN SCOPE (never re-resolved at a use site), through that callable's own
     /// invocation (user binder, builtin adapter, clause dispatch, Math or host wrapper). The
     /// evaluator normalizes an alias to its target where it resolves a binding; the alias is not
     /// an invocation and charges no step or depth.</para>
     ///
-    /// <para><see cref="Target"/> is a STATIC PATH: a name (<see cref="Expr.Resolve"/>) or an
-    /// argumentless structural dot path whose head is a name or a block. A host-built alias whose
-    /// target is anything else, or whose targets form a cycle, is rejected before evaluation
+    /// <para><see cref="Target"/> is a STATIC PATH — a name (<see cref="Expr.Resolve"/>) or an
+    /// argumentless structural dot path whose head is a name or a block — or a RUNTIME ROW
+    /// (<see cref="AliasTargetRows.IsRuntimeRow"/>, META-S3-2): a parameter reference, an argumentless
+    /// <c>.Algorithm</c> link, or an argumentless parameter-rooted member path, whose callable identity
+    /// is known only at run time. A RUNTIME-TARGET ALIAS is an alias whose own target is a runtime row;
+    /// its callable is the identity its ONE binding cell projects per declaring activation when that
+    /// identity declares parameterized callable structure, and otherwise the alias is exactly its
+    /// ordinary zero-parameter property (<see cref="User(Alias)"/>). A host-built alias whose target is
+    /// anything else, or whose static targets form a cycle, is rejected before evaluation
     /// (<see cref="EvalError.IllegalInEval"/>).</para>
     /// </summary>
     public sealed record Alias : Algorithm
@@ -2903,7 +2930,65 @@ public closed record Algorithm
             get => _resolvedTarget.Value;
             init => _resolvedTarget = new(value);
         }
+
+        private readonly RuntimeStateSlot<bool> _hasRuntimeTarget;
+
+        /// <summary>
+        /// The FRONT END's classification of an alias whose callable identity is known only at run
+        /// time (FWD-02 runtime-target alias, META-S3-2): its own row is a runtime row
+        /// (<see cref="AliasTargetRows.IsRuntimeRow"/>), or its static row names another such alias (a
+        /// chain). Such an alias has no <see cref="ResolvedTarget"/> — no known arity, lifting
+        /// signature, forwarding contract or static target identity — and every front-end question
+        /// asked of it is answered as for its ordinary zero-parameter property; the editor presents an
+        /// unknown signature. The namespace gate reads it; callable normalization still decides each runtime
+        /// step by the written row and structural route, exactly as Lean does. Equality-transparent, like
+        /// <see cref="ResolvedTarget"/>.
+        /// </summary>
+        internal bool HasRuntimeTarget
+        {
+            get => _hasRuntimeTarget.Value;
+            init => _hasRuntimeTarget = new(value);
+        }
     }
+}
+
+/// <summary>
+/// The RUNTIME ROWS of a callable alias (FWD-02 runtime-target aliases, META-S3-2): the argumentless
+/// reference shapes whose CALLABLE is the NEED-06 runtime projection of a supplied cell, exactly the
+/// META-S3-1 runtime projection sources — a parameter reference (its own cell), an argumentless edge
+/// spelled <c>Algorithm</c> whose intrinsic route is not statically excluded (a link), and an
+/// argumentless member path whose head is a parameter (a structural hit transports the member's
+/// identity; a miss is a computed value with none). <see cref="IsRuntimeRowShape"/> is the shape
+/// alone (Lean: <c>Expr.isRuntimeAliasRow</c>); <see cref="IsRuntimeRow"/> also reads the front end's
+/// structural verdict, so an <c>Algorithm</c> edge whose receiver statically declares that member is
+/// the ordinary static path it denotes (the run decides it member-first just the same).
+/// </summary>
+internal static class AliasTargetRows
+{
+    internal static bool IsRuntimeRow(Expr target)
+        => IsRuntimeRowShape(target)
+            && !(target is Expr.DotCall edge && !IsParamHeaded(edge.Target)
+                && edge.EffectiveMissSelection() == LexicalFallbackSelection.Never);
+
+    /// <summary>The runtime-row SHAPE (Lean: <c>Expr.isRuntimeAliasRow</c>).</summary>
+    internal static bool IsRuntimeRowShape(Expr target)
+        => target is Expr.Param
+            || (target is Expr.DotCall { Args: null } edge && (edge.UsesDotAlgorithmIntrinsic() || IsParamHeaded(edge.Target)));
+
+    /// <summary>A parameter, or an argumentless member path rooted at one (Lean: <c>Expr.isParamHeaded</c>).</summary>
+    internal static bool IsParamHeaded(Expr expr)
+    {
+        while (expr is Expr.DotCall { Args: null } inner)
+            expr = inner.Target;
+        return expr is Expr.Param;
+    }
+
+    /// <summary>
+    /// The targets pre-evaluation admits (FWD-02): a static path (<see cref="StaticAliasTargets.IsStaticPath"/>)
+    /// or a runtime row. Lean: <c>Expr.isAliasTarget</c>.
+    /// </summary>
+    internal static bool IsAdmitted(Expr target)
+        => StaticAliasTargets.IsStaticPath(target) || IsRuntimeRow(target);
 }
 
 /// <summary>
@@ -3146,6 +3231,25 @@ internal sealed class StaticAliasTargets(IReadOnlySet<string>? targetHeads = nul
 
         _settled.UnionWith(onChain);
         return null;
+    }
+
+    // Namespace classification follows static links without projecting a supplied cell. In
+    // particular a forward reference has the same status as its final runtime row.
+    internal bool ReachesRuntimeRow(Algorithm.Alias alias, IReadOnlyList<Algorithm> enclosing)
+    {
+        var visited = new HashSet<AliasSite>();
+        var current = alias;
+        var chain = enclosing;
+        while (visited.Add(new AliasSite(current, ContextOf(chain))))
+        {
+            // A declared member named Algorithm is a static edge, even though its spelling
+            // has runtime-row shape. Structural selection precedes the intrinsic.
+            if (!TryResolve(current, chain, out var next, out chain))
+                return AliasTargetRows.IsRuntimeRow(current.Target);
+            if (next is not Algorithm.Alias link) return false;
+            current = link;
+        }
+        return false;
     }
 
     private bool TryResolve(Algorithm.Alias alias, IReadOnlyList<Algorithm> chain, out Algorithm value, out IReadOnlyList<Algorithm> valueChain)
@@ -3487,7 +3591,7 @@ internal static class AlgorithmValidation
         {
             if (checkConditionalBranchArities)
             {
-                PreEvaluationAstViolation? aliasViolation = !StaticAliasTargets.IsStaticPath(algorithm.Target)
+                PreEvaluationAstViolation? aliasViolation = !AliasTargetRows.IsAdmitted(algorithm.Target)
                     ? new PreEvaluationAstViolation.AliasTargetNotStaticPath(algorithm.Target)
                     : (_aliasTargets ??= new()).FindCycle(algorithm, _chain.GetRange(0, _chain.Count - 1)) is { } cycleTarget
                         ? new PreEvaluationAstViolation.AliasCycle(cycleTarget)

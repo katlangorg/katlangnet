@@ -110,6 +110,11 @@ internal enum DotEdgeKind
     /// reads the view of the reference that is the receiver's VALUE.</summary>
     ArgumentsIntrinsic,
 
+    /// <summary>The callable-projection intrinsic <c>Algorithm</c> (META-S3-1, CR-14), the miss route of an
+    /// edge spelled <c>Algorithm</c> whose statically known receiver declares no member <c>Algorithm</c>:
+    /// it denotes the captured callee of the reference that is the receiver's VALUE.</summary>
+    AlgorithmIntrinsic,
+
     /// <summary>A declared member of a statically known receiver (a member named <c>string</c>
     /// included): the receiver is navigated.</summary>
     StructuralMember,
@@ -186,7 +191,8 @@ internal static class FormulaLiftingRoles
             LexicalFallbackSelection.Always => edge.UsesOrdinaryDotStringIntrinsic()
                 ? DotEdgeKind.StringIntrinsic
                 : edge.UsesDotInvokeIntrinsic() ? DotEdgeKind.InvokeIntrinsic
-                : edge.UsesDotArgumentsIntrinsic() ? DotEdgeKind.ArgumentsIntrinsic : DotEdgeKind.Fallback,
+                : edge.UsesDotArgumentsIntrinsic() ? DotEdgeKind.ArgumentsIntrinsic
+                : edge.UsesDotAlgorithmIntrinsic() ? DotEdgeKind.AlgorithmIntrinsic : DotEdgeKind.Fallback,
             _ => DotEdgeKind.Undecided,
         };
 
@@ -199,7 +205,8 @@ internal static class FormulaLiftingRoles
     public static LiftingRole ReceiverRole(DotEdgeKind kind, LiftingCallee fallbackCallee)
         => kind switch
         {
-            DotEdgeKind.StringIntrinsic or DotEdgeKind.InvokeIntrinsic or DotEdgeKind.ArgumentsIntrinsic => LiftingRole.Value,
+            DotEdgeKind.StringIntrinsic or DotEdgeKind.InvokeIntrinsic or DotEdgeKind.ArgumentsIntrinsic
+                or DotEdgeKind.AlgorithmIntrinsic => LiftingRole.Value,
             DotEdgeKind.Fallback => SlotRole(fallbackCallee, 0, positionKnown: true),
             _ => LiftingRole.Callable,
         };

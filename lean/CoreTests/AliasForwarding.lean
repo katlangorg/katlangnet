@@ -489,4 +489,54 @@ def afHostScopeRevisit : KatLang.Expr :=
   (bareForwardingRow "F" [flat] (afNames [flat]) [] [nested]).isNone &&
   (bareForwardingRow "F" [nested] (afNames [nested]) [] [flat]).isNone
 
+-- 16. RUNTIME-TARGET ALIASES (META-S3-2; FWD-02 D1/D2/D3): an alias whose row is a RUNTIME ROW
+--    (`Expr.isRuntimeAliasRow`: a parameter, an `.Algorithm` link, a parameter-rooted member path)
+--    calls the identity its binding cell projects when that identity declares parameterized
+--    structure, with exactly the written new supply, and is otherwise its ordinary zero-parameter
+--    property (`Algorithm.aliasPropertyView`). Its bare read is the binding cell's VALUE. The C# front
+--    end classifies such a body only after Q-75 inference and formula lifting left it parameterless
+--    (Option A; FORMAL-02: a front-end fact). Laws: `KatLangArityLaws/RuntimeAlias.lean`; whole-program
+--    guards with heap evidence: `KatLangArityLaws/RuntimeAliasGuards.lean`.
+
+/-- `Sq(x) = x * x`, `Use(f) = { A = f ⏎ A(9), A(2) }`, `UseV(f) = { A = f ⏎ A + 1 }`,
+    `Chain(f) = { B = A ⏎ A = f ⏎ B(3) }` (a link declared before its target). -/
+def afRuntimeRoot (out : List KatLang.Expr) : KatLang.Expr :=
+  .algorithmExpr (algPrivate [] []
+    [ ("Sq", alg ["x"] [] [] [.binary .mul (param "x") (param "x")])
+    , ("Use", algPrivate ["f"] [] [("A", .alias none [] [] (param "f"))]
+        [afCall "A" [num 9], afCall "A" [num 2]])
+    , ("UseV", algPrivate ["f"] [] [("A", .alias none [] [] (param "f"))]
+        [.binary .add (resolve "A") (num 1)])
+    , ("Chain", algPrivate ["f"] [] [("B", afAlias "A"), ("A", .alias none [] [] (param "f"))]
+        [afCall "B" [num 3]]) ]
+    out)
+
+def afRuntimeRun (out : List KatLang.Expr) : Except Error Result × Nat :=
+  let (result, state) := (runResultM (afRuntimeRoot out)).runState EvalState.empty
+  (result, state.nextBindingContext - 1)
+
+def afRuntimeSucceedsWith (out : List KatLang.Expr) (expected : Result) : Bool :=
+  match (afRuntimeRun out).fst with
+  | .ok value => value == expected
+  | .error _ => false
+
+def afFailsWithArity (r : Except Error Result) (expected actual : Nat) : Bool :=
+  match r with
+  | .error err =>
+      match afInnermost err with
+      | .arityMismatch e a => e == expected && a == actual
+      | _ => false
+  | .ok _ => false
+
+-- D1/D3: the supplied callable, called afresh with each written supply.
+#guard afRuntimeSucceedsWith [afCall "Use" [resolve "Sq"]] (.sequenceValue [.atom 81, .atom 4])
+-- The bare read is the parameter's own VALUE; a value supplies no identity (the ordinary property).
+#guard afRuntimeSucceedsWith [afCall "UseV" [num 5]] (.atom 6)
+#guard afFailsWithArity (afRuntimeRun [afCall "Use" [num 5]]).fst 0 1
+-- A chain link declared before its runtime target is the same callable.
+#guard afRuntimeSucceedsWith [afCall "Chain" [resolve "Sq"]] (.atom 9)
+-- An alias is no invocation: through the runtime alias, `Use(Sq)` opens Use's context and Sq's two,
+-- exactly as `Ap(f, x) = f(x)` would — nothing for the alias itself.
+#guard (afRuntimeRun [afCall "Use" [resolve "Sq"]]).snd == 3
+
 end KatLangTests

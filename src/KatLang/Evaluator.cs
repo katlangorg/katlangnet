@@ -529,11 +529,26 @@ public static partial class Evaluator
     /// callable alias (it denotes a callable whose target declares parameterized structure, never
     /// a namespace: an alias declares no members of its target). Such an algorithm is not an
     /// <c>open</c> provider — <c>open</c> imports a namespace and never creates an activation, so
-    /// there is no value its members could read their inputs from (Lean:
+    /// there is no value its members could read their inputs from. A RUNTIME-TARGET alias (FWD-02,
+    /// META-S3-2; its target a runtime row) is a namespace of its own declarations exactly as its
+    /// ordinary zero-parameter property is: whether a callable identity is supplied is known only at
+    /// run time, and <c>open</c> imports declarations, never a callable (Lean:
     /// <c>Algorithm.requiresArguments</c>).
     /// </summary>
     internal static bool RequiresArguments(Algorithm algorithm)
-        => algorithm is Algorithm.Conditional or Algorithm.Alias || algorithm.ParameterCount > 0;
+        => algorithm is Algorithm.Conditional
+            || (algorithm is Algorithm.Alias alias && !HasRuntimeAliasNamespace(alias))
+            || algorithm.ParameterCount > 0;
+
+    private static bool HasRuntimeAliasNamespace(Algorithm.Alias alias)
+    {
+        if (alias.HasRuntimeTarget) return true;
+        var chain = new List<Algorithm>();
+        for (var scope = alias.Parent; scope is not null; scope = scope.Parent)
+            chain.Add(new Algorithm.User(null, [], scope.Opens, scope.Properties, []));
+        chain.Reverse();
+        return new StaticAliasTargets().ReachesRuntimeRow(alias, chain);
+    }
 
     private static EvalError OpenTargetRequiresArguments(string targetDescription, Algorithm provider)
         => new EvalError.IllegalInOpen(FormatOpenTargetRequiresArguments(targetDescription, provider));
@@ -1325,7 +1340,7 @@ public static partial class Evaluator
         if (resolved.IsError)
             return resolved;
 
-        return RequiresArguments(resolved.Value)
+        return (resolved.Value is Algorithm.Alias ? AliasOpenRequiresArguments(resolved.Value, in ctx) : RequiresArguments(resolved.Value))
             ? OpenTargetRequiresArguments(OpenExprName(openExpr), resolved.Value) with { Span = openExpr.Span }
             : resolved;
     }
@@ -1567,7 +1582,10 @@ public static partial class Evaluator
 
     internal static bool ResolvesToBuiltinAlgorithm(string name, BuiltinId builtinId, EvalCtx ctx)
     {
-        var result = ResolveNamedAlgorithm(name, span: null, ctx);
+        // Optimizer recognition: non-initiating (META-S3-0b/S3-2) — a name whose identity needs a
+        // runtime projection (a runtime-target alias) is declined, never projected to learn it.
+        if (PeekResolve(ctx, (name, ctx), static state => ResolveNamedAlgorithm(state.name, span: null, state.ctx)) is not { } result)
+            return false;
         return !result.IsError
             && result.Value is Algorithm.Builtin(var resolvedBuiltinId)
             && resolvedBuiltinId == builtinId;
@@ -1588,6 +1606,23 @@ public static partial class Evaluator
         var resolved = LookupLexicalRaw(alg, name, ctx);
         return resolved.IsOk && resolved.Value.ResolvedAlgorithm is Algorithm.Alias
             ? NormalizeAliasBinding(resolved.Value, ctx)
+            : resolved;
+    }
+
+    /// <summary>
+    /// The lexical lookup of a VALUE read (a property read <c>A</c>, a <c>.string</c> receiver): exactly
+    /// <see cref="LookupLexical"/>, except that an alias binding is normalized by the VALUE chase, which
+    /// stops at a runtime-target alias (FWD-02, META-S3-2) — its bare read is its binding cell's VALUE,
+    /// and a VALUE read never initiates a CALLABLE projection. For a static alias the two lookups agree.
+    /// Lean: <c>lookupLexicalValueProperty</c>.
+    /// </summary>
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+    private static EvalResult<ResolvedLexicalProperty> LookupLexicalForValue(
+        Algorithm alg, string name, EvalCtx ctx)
+    {
+        var resolved = LookupLexicalRaw(alg, name, ctx);
+        return resolved.IsOk && resolved.Value.ResolvedAlgorithm is Algorithm.Alias
+            ? NormalizeAliasBinding(resolved.Value, ctx, callable: false)
             : resolved;
     }
 
@@ -2516,14 +2551,15 @@ public static partial class Evaluator
     /// deeper than the structural limit would otherwise terminate the process with an
     /// unhandleable <see cref="StackOverflowException"/>. Returns <c>null</c> for safe
     /// trees; runs before any evaluation-budget counter can move and charges nothing. The same walk
-    /// decides the run's J7 plan-retention fact (<paramref name="mayCaptureCalls"/>,
-    /// <see cref="AstStructuralPreflight.MayCaptureCalls"/>).
+    /// decides the run's program facts (<paramref name="facts"/>): its J7 plan-retention fact
+    /// (<see cref="AstStructuralPreflight.MayCaptureCalls"/>) and its runtime-alias reach
+    /// (<see cref="AstStructuralPreflight.MayReachRuntimeAlias"/>).
     /// </summary>
-    private static EvalError? StructuralPreflight(Expr expr, EvaluationLimits? limits, out bool mayCaptureCalls)
+    private static EvalError? StructuralPreflight(Expr expr, EvaluationLimits? limits, out AstStructuralPreflight.AdmittedProgramFacts facts)
     {
         var effectiveLimit = (limits ?? EvaluationLimits.Default).EffectiveMaxAstDepth;
         return AstStructuralPreflight.CheckAdmittedProgram(
-                expr, effectiveLimit, AstConsumerProfile.EvaluatorIterativeJoinSpines, out mayCaptureCalls) is { } rejection
+                expr, effectiveLimit, AstConsumerProfile.EvaluatorIterativeJoinSpines, out facts) is { } rejection
             ? AstStructuralPreflight.ToEvalError(rejection, effectiveLimit)
             : null;
     }
@@ -2685,6 +2721,7 @@ public static partial class Evaluator
             observations,
             hostOperations,
             randomSeed,
+            asynchronousRun: false,
             cancellationToken);
     }
 
@@ -2713,14 +2750,18 @@ public static partial class Evaluator
         EvaluationObservations? observations,
         HostOperations? hostOperations,
         long? randomSeed,
+        bool asynchronousRun,
         CancellationToken cancellationToken)
     {
         // Creating the budget is field initialization plus the run's random-stream
         // construction (unseeded entropy is acquired here, once) — the structural
         // preflight still runs before any budget COUNTER can move and charges nothing.
         var budget = EvaluationBudget.Create(limits, hostOperations, randomSeed, cancellationToken);
+        // META-S3-0b: the async twin family's run (its unpublished runtime projections are
+        // resolved through the async resolution adapter, never synchronously).
+        if (asynchronousRun) budget.MarkAsynchronousRun();
 
-        if (StructuralPreflight(expr, limits, out var mayCaptureCalls) is { } structuralError)
+        if (StructuralPreflight(expr, limits, out var programFacts) is { } structuralError)
         {
             budget.ObserveCancellation();
             return PreparedRun.Rejected(structuralError, budget);
@@ -2736,7 +2777,9 @@ public static partial class Evaluator
 
         // J7: the run's one, immutable plan-retention decision, read by the structural preflight's
         // walk over the admitted program, taken before any supplied cell exists.
-        budget.DecideInvocationPlanRetention(mayCaptureCalls);
+        budget.DecideInvocationPlanRetention(programFacts.MayCaptureCalls);
+        // META-S3-2: a run that may reach a runtime-target alias is pre-marked before any resolver runs.
+        budget.DecideRuntimeAliasReach(programFacts.MayReachRuntimeAlias, programFacts.HasDeferredModuleRegion);
 
         return PreparedRun.Ready(CreateRootCtx(
             zeroArgPropertyResultCache,

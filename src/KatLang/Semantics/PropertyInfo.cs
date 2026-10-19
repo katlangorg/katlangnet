@@ -319,6 +319,15 @@ public sealed record PropertyInfo
     /// </summary>
     public PropertyAliasTargetInfo? AliasTarget { get; init; }
 
+    /// <summary>
+    /// Whether this property is a RUNTIME-TARGET callable alias (FWD-02, META-S3-2: <c>A = f</c>,
+    /// <c>A = R.Algorithm</c>, <c>A = b.G</c> on a parameter, or a chain to one): its callable is the
+    /// identity the run supplies, so its signature is UNKNOWN — not a known zero-parameter property,
+    /// although it shows no parameters, because none is known. It takes a lexical dot receiver
+    /// (<see cref="SupportsLexicalDotCall"/>), as the identity may.
+    /// </summary>
+    internal bool HasUnknownRuntimeSignature { get; init; }
+
     public PropertyCallStyle PreferredCallStyle { get; init; } = PropertyCallStyle.Plain;
 
     public IReadOnlyList<PropertySignatureInfo> Signatures

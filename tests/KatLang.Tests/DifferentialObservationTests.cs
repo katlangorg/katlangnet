@@ -29,9 +29,11 @@ public class DifferentialObservationTests
         var hostNames = new[] { "EvaluationDepthExceeded", "EvaluationStepLimitExceeded", "EvaluationStackExhausted",
             "CollectionSizeLimitExceeded", "MaterializationLimitExceeded", "StringSizeLimitExceeded", "StringMaterializationLimitExceeded",
             "DisplayLengthLimitExceeded", "AstDepthLimitExceeded", "AstCycleDetected", "ModuleRegionMaterializationFailed" };
+        // Internal markers that are never a run outcome (META-S3-0b's non-initiating observation).
+        var internalNames = new[] { "ObservationPending" };
         var variants = typeof(EvalError).GetNestedTypes(System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic)
             .Where(t => t.BaseType == typeof(EvalError)).ToArray();
-        var expectedNames = contracts.Select(c => c.Error.GetType().Name).Distinct().Concat(hostNames).Order().ToArray();
+        var expectedNames = contracts.Select(c => c.Error.GetType().Name).Distinct().Concat(hostNames).Concat(internalNames).Order().ToArray();
         Assert.Equal(expectedNames, variants.Select(t => t.Name).Order());
         foreach (var contract in contracts)
         {
@@ -46,6 +48,8 @@ public class DifferentialObservationTests
             Assert.Equal(ErrorComparison.HostOnly, DifferentialErrors.Observe(error).Comparison);
             Assert.Null(DifferentialErrors.Observe(error).Payload);
         }
+        Assert.Throws<System.Diagnostics.UnreachableException>(() => DifferentialErrors.Observe(EvalError.ObservationPending.Instance));
+        Assert.Throws<System.Diagnostics.UnreachableException>(() => EvalError.ObservationPending.Instance.Code);
         // The Lean switches are exhaustive (no wildcard); every new Lean constructor must be classified too.
         var lean = File.ReadAllText(Path.Combine(RepoRoot.Find(), "lean/KatLang.lean"));
         var taxonomy = lean[lean.IndexOf("inductive Error where", StringComparison.Ordinal)..];

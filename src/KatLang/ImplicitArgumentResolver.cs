@@ -2170,7 +2170,7 @@ internal static class ImplicitArgumentResolver
         // stored channel; Parameters/Params follow it. The patterns forwarding appended are
         // marked (Q-04): they complete the signature for callers, and no written name ever
         // denotes them.
-        return alg with
+        var lifted = alg with
         {
             ParameterPatterns = finalPatterns,
             ForwardingParameterStart = alg.ForwardingParameterStart
@@ -2179,6 +2179,49 @@ internal static class ImplicitArgumentResolver
             Properties = newProperties,
             Output = rewrittenOutput,
         };
+
+        // A RUNTIME-TARGET ALIAS (FWD-02, META-S3-2, Option A): decided only AFTER inference — Q-75's
+        // implicit parameters and formula lifting — has completed, so a body that owns a parameter
+        // keeps it and stays a formula, exactly as before.
+        return !isRoot && RuntimeAliasRow(lifted, visibleParamMap, walkMemos) is { } runtimeRow
+            ? new Algorithm.Alias(lifted, runtimeRow) { HasRuntimeTarget = true }
+            : lifted;
+    }
+
+    /// <summary>
+    /// THE RUNTIME-TARGET ALIAS RULE (FWD-02, META-S3-2; owner decision D2 = Option A, Q-75 unchanged):
+    /// the row of an OPEN, non-root body that is completed with NO parameter of its own — no written
+    /// list, no clause branch, nothing inferred (Q-75 / DOT-05) and nothing lifted — and whose ONE
+    /// written row is a reference whose callable identity only the run can supply:
+    /// <list type="bullet">
+    ///   <item>a RUNTIME ROW (<see cref="AliasTargetRows.IsRuntimeRow"/>): an enclosing parameter binding,
+    ///   an argumentless <c>.Algorithm</c> link, or an argumentless parameter-rooted member path;</item>
+    ///   <item>a name or static structural path whose identity resolution (<see cref="TryResolveCallable"/>)
+    ///   selects another runtime-target alias — a chain, forward references included (the on-demand
+    ///   property processing settles the target first).</item>
+    /// </list>
+    /// Null for every other body. The classification is by binding and elaboration (the row's kind
+    /// after detection, the selected declaration), never by spelling; the synthetic deconstruction
+    /// plumbing keeps its own shape.
+    /// </summary>
+    private static Expr? RuntimeAliasRow(Algorithm.User body, SignatureMap paramMap, ResolverWalkMemos memos)
+    {
+        if (body.HasExplicitParameterList
+            || body.ParameterPatterns.Count != 0
+            || body.IsSyntheticDeconstructionPlumbing
+            || body.Output.Count != 1
+            || AstHelpers.WrittenRows(body).Count != 1)
+        {
+            return null;
+        }
+
+        var row = body.Output[0];
+        if (AliasTargetRows.IsRuntimeRow(row))
+            return row;
+        return row is Expr.Resolve or Expr.DotCall { Args: null }
+            && TryResolveCallable(row, paramMap, memos, out _) is { Algorithm: Algorithm.Alias { HasRuntimeTarget: true } }
+            ? row
+            : null;
     }
 
     private static IReadOnlyList<Expr> ProcessOpenExprs(
@@ -3705,7 +3748,9 @@ internal static class ImplicitArgumentResolver
                 {
                     return entry.Value switch
                     {
-                        Algorithm.Alias alias => alias.ResolvedTarget,
+                        // A runtime-target alias has no static target: every front-end question is
+                        // answered as for its ordinary zero-parameter property (META-S3-2).
+                        Algorithm.Alias { HasRuntimeTarget: false } alias => alias.ResolvedTarget,
                         Algorithm.Conditional family => new AliasTarget(family, name, family, FamilyLiftingSignature(name, family, run), IsStrictValue: false),
                         _ => new AliasTarget(entry, name, entry.Value, LiftingSignature.Of(entry.Signature), run.Prelude.IsStrictValue(entry.Value)),
                     };
@@ -3732,7 +3777,7 @@ internal static class ImplicitArgumentResolver
         // A callable outside the document's map (a prelude member, an opened or dotted member): its
         // algorithm is its identity; an alias among them is its recorded target.
         static AliasTarget? OfResolvedMember(string name, Algorithm algorithm, ResolutionRun run)
-            => algorithm is Algorithm.Alias alias
+            => algorithm is Algorithm.Alias { HasRuntimeTarget: false } alias
                 ? alias.ResolvedTarget
                 : new AliasTarget(algorithm, name, algorithm, LiftingSignatureOf(name, algorithm, run), run.Prelude.IsStrictValue(algorithm));
     }
@@ -3953,7 +3998,8 @@ internal static class ImplicitArgumentResolver
     /// </summary>
     private static bool MayBecomeAlias(Algorithm algorithm)
         => algorithm is Algorithm.User { HasExplicitParameterList: false, ParameterPatterns.Count: 0 } user
-            && HasLoneBareRowShape(user);
+            && (HasLoneBareRowShape(user)
+                || (user.Output.Count == 1 && AliasTargetRows.IsRuntimeRow(user.Output[0]) && AstHelpers.WrittenRows(user).Count == 1));
 
     /// <summary>
     /// The sibling-order channel's view of a callee's kind, which can demand nothing (the order is

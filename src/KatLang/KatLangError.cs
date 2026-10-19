@@ -353,6 +353,7 @@ public sealed class KatLangError
                 "The program tree contains a reference cycle, so it is not a valid KatLang program structure. "
                 + "KatLang ASTs must be acyclic: shared subtrees are allowed, but no node may reach itself through its own children",
             EvalError.ModuleRegionMaterializationFailed e => FormatModuleRegionMaterializationFailed(e),
+            EvalError.ObservationPending => throw EvalError.ObservationPending.Escaped(),
             EvalError.WithContext e => $"{e.Context}: {FormatEvalError(e.Inner)}",
         };
     }

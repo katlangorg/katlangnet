@@ -130,8 +130,11 @@ public static partial class Evaluator
             EvaluateDotReceiverIterationItems: receiver => EvaluateDotReceiverIterationItemsForSequenceOptimizer(receiver, ctx, valEnv),
             ResolveArgumentAlgorithms: args => ResolveArgAlgsWithSequenceSpread(args, ctx, valEnv),
             // Recognition resolves CALLEES (`filter` in `count(filter(…))`, `range` in its source),
-            // so it reads the ONE callee identity the generic call reads (DOT-09).
-            ResolveAlgorithm: expr => ResolveCallee(expr, ctx),
+            // so it reads the ONE callee identity the generic call reads (DOT-09) — through a
+            // NON-INITIATING observation (META-S3-0b): an identity that needs a runtime step is
+            // unknown here, so recognition declines and the generic path runs.
+            ResolveAlgorithm: expr => PeekResolve(ctx, (expr, ctx), static state => ResolveCallee(state.expr, state.ctx))
+                ?? new EvalError.NotAnAlgorithm(RecognitionNeedsRuntimeStepDescription),
             EvaluateRangeCallArguments: (function, args, callSpan) => EvaluateRangeCallArgumentsForSequenceOptimizer(function, args, callSpan, ctx, valEnv));
 
         return SequencePipelineOptimizer.TryExecuteRecognized(
@@ -269,7 +272,10 @@ public static partial class Evaluator
         if (dotCall.EffectiveLexicalFallback is not Expr.Resolve(var fallbackName))
             return $"{name} is bound as a parameter in the calling context";
 
-        var targetResult = ResolveDotReceiver(dotCall.Target, ctx, out _);
+        // Receiver navigation through a NON-INITIATING observation (META-S3-0b): recognition
+        // never starts a runtime projection to learn an identity.
+        if (PeekResolve(ctx, (dotCall.Target, ctx), static state => ResolveDotReceiver(state.Target, state.ctx, out _)) is not { } targetResult)
+            return $"{name} receiver identity needs a runtime projection";
         if (targetResult.IsOk)
         {
             if (LookupPropBinding(targetResult.Value, name, ctx.Budget) is not null)
@@ -278,12 +284,14 @@ public static partial class Evaluator
             if (targetResult.Value.DefinesConditionalBranchProperty(name))
                 return $"{name} is shadowed by a conditional structural property";
         }
-        else if (targetResult.Error is not EvalError.NotAnAlgorithm)
+        else if (!IsAbsentIdentity(targetResult.Error))
         {
             return $"{name} receiver resolution failed";
         }
 
-        var calleeR = ResolveNamedAlgorithm(fallbackName, span: null, ctx);
+        // Non-initiating too (META-S3-2): the fallback name may be a runtime-target alias.
+        if (PeekResolve(ctx, (fallbackName, ctx), static state => ResolveNamedAlgorithm(state.fallbackName, span: null, state.ctx)) is not { } calleeR)
+            return $"{name} fallback identity needs a runtime projection";
         if (calleeR.IsError
             || calleeR.Value is not Algorithm.Builtin(var builtin)
             || builtin != expectedBuiltin)
@@ -343,7 +351,7 @@ public static partial class Evaluator
         var receiverResult = ResolveDotReceiver(edge.Target, ctx, out _);
         if (receiverResult.IsError)
         {
-            return receiverResult.Error is EvalError.NotAnAlgorithm
+            return IsAbsentIdentity(receiverResult.Error)
                 ? ResolveAlg(target, ctx)
                 : receiverResult.Error;
         }
@@ -458,6 +466,8 @@ public static partial class Evaluator
     /// 3. A STRUCTURAL MISS takes the edge's miss route:
     ///    - spelled <c>string</c> → the number-to-text intrinsic (DOT-08): the
     ///      receiver's VALUE converted; a lexical <c>string</c> is never consulted;
+    ///    - spelled <c>Invoke</c>, <c>Arguments</c> or <c>Algorithm</c> → the call-reference
+    ///      intrinsics (CallReference S1/S2, META-S3-1), which read the receiver's VALUE;
     ///    - otherwise → extension fallback (<see cref="CallLexicalWithReceiverCounted"/>):
     ///      DOT-CALL PASSES A VALUE — <c>a.f(args)</c> is exactly the call
     ///      <c>f(a, args)</c>, the receiver being the ordinary first argument slot
@@ -493,7 +503,7 @@ public static partial class Evaluator
         var targetResult = ResolveDotReceiver(target, ctx, out var receiverIsStructuralMember);
         if (targetResult.IsError)
         {
-            if (targetResult.Error is EvalError.NotAnAlgorithm)
+            if (IsAbsentIdentity(targetResult.Error))
             {
                 // A value receiver declares no member: the edge's miss route applies directly.
                 if (dotCall.UsesOrdinaryDotStringIntrinsic())
@@ -510,6 +520,8 @@ public static partial class Evaluator
                     return EvalDotInvokeValueReceiverCounted(dotCall, ctx, valEnv);
                 if (dotCall.UsesDotArgumentsIntrinsic())
                     return EvalDotArgumentsValueReceiverCounted(dotCall, ctx, valEnv);
+                if (dotCall.UsesDotAlgorithmIntrinsic())
+                    return EvalDotAlgorithmValueReceiverCounted(dotCall, ctx, valEnv);
                 return CallLexicalWithReceiverCounted(dotCall, ctx, valEnv);
             }
 
@@ -590,6 +602,10 @@ public static partial class Evaluator
         if (dotCall.UsesDotArgumentsIntrinsic())
             return EvalDotArgumentsIntrinsicCounted(dotCall, targetAlg, receiverIsStructuralMember, ctx, valEnv);
 
+        // A structural miss spelled `Algorithm` is the callable-projection intrinsic (META-S3-1, CR-14).
+        if (dotCall.UsesDotAlgorithmIntrinsic())
+            return EvalDotAlgorithmIntrinsicCounted(dotCall, targetAlg, receiverIsStructuralMember, ctx, valEnv);
+
         return CallLexicalWithReceiverCounted(dotCall, ctx, valEnv);
     }
 
@@ -614,7 +630,7 @@ public static partial class Evaluator
     {
         if (targetAlg is Algorithm.Alias alias)
         {
-            var aliasTarget = ResolveAliasTarget(alias, ctx);
+            var aliasTarget = ResolveAliasTarget(alias, ctx, callable: false);
             if (aliasTarget.IsError) return aliasTarget.Error;
             targetAlg = aliasTarget.Value;
         }

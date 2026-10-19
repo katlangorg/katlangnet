@@ -727,8 +727,7 @@ public class ElaboratedLookupAccelerationTests
             """;
         Assert.Equal("ok raw=707 n=1", SemanticExplorerHarness.Observe("m18.preludeShadow", preludeCollision).Neutral);
         var preludeRoot = Assert.IsType<Algorithm.User>(SourceProvenance.ParseValid(preludeCollision).Root);
-        var innerBody = InnerOf(preludeRoot);
-        Assert.IsType<Expr.Param>(innerBody.Output[0]);
+        Assert.IsType<Expr.Param>(InnerRow(preludeRoot));
 
         // A FARTHER property does not shadow: `Outer` owns the parameter and is
         // reached before the root's declaration.
@@ -744,7 +743,7 @@ public class ElaboratedLookupAccelerationTests
             """;
         Assert.Equal("ok raw=707 n=1", SemanticExplorerHarness.Observe("m18.fartherProperty", fartherProperty).Neutral);
         var fartherRoot = Assert.IsType<Algorithm.User>(SourceProvenance.ParseValid(fartherProperty).Root);
-        Assert.IsType<Expr.Param>(InnerOf(fartherRoot).Output[0]);
+        Assert.IsType<Expr.Param>(InnerRow(fartherRoot));
 
         // In invalid recovery source a NEARER property shadows: `Inner` owns it, so the walk decides
         // there and never reaches `Outer`'s parameter.
@@ -761,16 +760,27 @@ public class ElaboratedLookupAccelerationTests
         var nearerParsed = SourceProvenance.ParseAllowingDiagnostics(nearerProperty);
         Assert.Equal(DiagnosticCode.ParameterPropertyCollision, Assert.Single(nearerParsed.Diagnostics).Code);
         var nearerRoot = Assert.IsType<Algorithm.User>(nearerParsed.Root);
-        Assert.IsType<Expr.Resolve>(InnerOf(nearerRoot).Output[^1]);
+        Assert.IsType<Expr.Resolve>(InnerRow(nearerRoot));
 
         Assert.Equal(0, MeasureDetection(nearerProperty).LookupRootDiscoveryWalks);
         Assert.Equal(0, MeasureDetection(fartherProperty).LookupRootDiscoveryWalks);
 
-        static Algorithm.User InnerOf(Algorithm.User root)
+    }
+
+    /// <summary>
+    /// The last written row of <c>Outer.Inner</c>. A lone row that is an enclosing PARAMETER makes
+    /// <c>Inner</c> a runtime-target callable alias of it (FWD-02, META-S3-2), whose row is its target;
+    /// any other body keeps its rows.
+    /// </summary>
+    private static Expr InnerRow(Algorithm.User root)
+    {
+        var outer = Assert.IsType<Algorithm.User>(root.Properties.Single(p => p.Name == "Outer").Value);
+        return outer.Properties.Single(p => p.Name == "Inner").Value switch
         {
-            var outer = Assert.IsType<Algorithm.User>(root.Properties.Single(p => p.Name == "Outer").Value);
-            return Assert.IsType<Algorithm.User>(outer.Properties.Single(p => p.Name == "Inner").Value);
-        }
+            Algorithm.Alias { HasRuntimeTarget: true } alias => alias.Target,
+            Algorithm.User user => user.Output[^1],
+            var other => throw new Xunit.Sdk.XunitException($"Outer.Inner elaborated to {other.GetType().Name}"),
+        };
     }
 
     /// <summary>
@@ -794,9 +804,7 @@ public class ElaboratedLookupAccelerationTests
         for (var run = 0; run < 2; run++)
         {
             var root = Assert.IsType<Algorithm.User>(SourceProvenance.ParseValid(source).Root);
-            var outer = Assert.IsType<Algorithm.User>(root.Properties.Single(p => p.Name == "Outer").Value);
-            var inner = Assert.IsType<Algorithm.User>(outer.Properties.Single(p => p.Name == "Inner").Value);
-            Assert.IsType<Expr.Param>(inner.Output[0]);
+            Assert.IsType<Expr.Param>(InnerRow(root));
         }
     }
 
@@ -826,9 +834,7 @@ public class ElaboratedLookupAccelerationTests
 
         Assert.Equal("ok raw=707 n=1", SemanticExplorerHarness.Observe("m18.openCapturedShadow", source).Neutral);
         var root = Assert.IsType<Algorithm.User>(SourceProvenance.ParseValid(source).Root);
-        var outer = Assert.IsType<Algorithm.User>(root.Properties.Single(p => p.Name == "Outer").Value);
-        var inner = Assert.IsType<Algorithm.User>(outer.Properties.Single(p => p.Name == "Inner").Value);
-        Assert.IsType<Expr.Param>(inner.Output[0]);
+        Assert.IsType<Expr.Param>(InnerRow(root));
 
         const string withoutParameter = """
             Lib = {
@@ -845,9 +851,7 @@ public class ElaboratedLookupAccelerationTests
             """;
         Assert.Equal("ok raw=101 n=1", SemanticExplorerHarness.Observe("m18.openNoCapture", withoutParameter).Neutral);
         var openRoot = Assert.IsType<Algorithm.User>(SourceProvenance.ParseValid(withoutParameter).Root);
-        var openOuter = Assert.IsType<Algorithm.User>(openRoot.Properties.Single(p => p.Name == "Outer").Value);
-        var openInner = Assert.IsType<Algorithm.User>(openOuter.Properties.Single(p => p.Name == "Inner").Value);
-        Assert.IsType<Expr.Resolve>(openInner.Output[0]);
+        Assert.IsType<Expr.Resolve>(InnerRow(openRoot));
     }
 
     /// <summary>

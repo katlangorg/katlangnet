@@ -132,9 +132,12 @@ public class AliasAndBareForwardingHostileReviewTests
         { "builtin-alias-keeps-its-laziness", "A = { if }\nA(true, 1, 1 / 0)", "ok 1" },
         { "opened-member-is-an-alias-target", "open Lib\nLib = { public F(x) = x + 1 }\nA = F\nA(5)", "ok 6" },
         { "dotted-member-is-an-alias-target", "Lib = { public F(x) = x + 1 }\nA = Lib.F\nA(5)", "ok 6" },
-        // A reference with no static identity is never an alias: a callable PARAMETER is known only at
-        // run time, so the row stays a zero-argument demand.
-        { "callable-parameter-is-no-alias-target", "F(x) = x + 1\nG(F) = {\n    A = F\n    A(1)\n}\nG(F)", "err ArityMismatch: while evaluating call to G: Callable `A` expects 0 arguments, but was called with 1 argument." },
+        // A callable PARAMETER is known only at run time: a RUNTIME-TARGET alias (FWD-02, META-S3-2)
+        // whose call is the identity the run supplies — here F's own, so `A(1)` is 2.
+        { "callable-parameter-is-a-runtime-alias-target", "F(x) = x + 1\nG(F) = {\n    A = F\n    A(1)\n}\nG(F)", "ok 2" },
+        // A parameter bound to a VALUE supplies no callable identity: the alias is its ordinary
+        // zero-parameter property, so the call is the property's own arity rejection.
+        { "value-parameter-alias-is-an-ordinary-property", "G(F) = {\n    A = F\n    A(1)\n}\nG(5)", "err ArityMismatch: while evaluating call to G: Callable `A` expects 0 arguments, but was called with 1 argument." },
         { "shadowed-math-name-is-a-value", "sin = 5\nA = sin\nA", "ok 5" },
     };
 

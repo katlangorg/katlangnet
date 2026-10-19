@@ -265,18 +265,34 @@ internal static class AstStructuralPreflight
 
     /// <summary>
     /// The evaluator's admission walk: <see cref="Check"/>
-    /// over a run's program, which also decides the run's J7 fact in the SAME walk —
-    /// <paramref name="mayCaptureCalls"/> is whether any node it visits
-    /// <see cref="MayCaptureCalls"/> (meaningful only when the tree is accepted). Every node this walk
-    /// can reach is visited exactly once, so the fact is the whole admitted graph's, with no second
-    /// traversal of META-free programs.
+    /// over a run's program, which also decides the run's program facts in the SAME walk
+    /// (<see cref="AdmittedProgramFacts"/>, meaningful only when the tree is accepted): its J7 fact
+    /// (<see cref="MayCaptureCalls"/>), its runtime-alias fact (<see cref="MayReachRuntimeAlias"/>) and
+    /// whether it holds a deferred module region. Every node this walk can reach is visited exactly once,
+    /// so the facts are the whole admitted graph's, with no second traversal of META-free programs.
     /// </summary>
     internal static AstStructuralRejection? CheckAdmittedProgram(
         object root,
         int maxDepth,
         AstConsumerProfile profile,
-        out bool mayCaptureCalls)
-        => CheckCore(root, maxDepth, profile, observations: null, detectCallCapture: true, out mayCaptureCalls);
+        out AdmittedProgramFacts facts)
+        => CheckCore(root, maxDepth, profile, observations: null, detectCallCapture: true, out facts);
+
+    /// <summary>The program facts the admission walk decides (<see cref="CheckAdmittedProgram"/>).</summary>
+    internal readonly record struct AdmittedProgramFacts(bool MayCaptureCalls, bool MayReachRuntimeAlias, bool HasDeferredModuleRegion);
+
+    /// <summary>
+    /// <b>PROGRAM-GATED RUNTIME-ALIAS REACH</b> (FWD-02, META-S3-2). A runtime-target alias is an alias
+    /// node whose own target is a runtime row (<see cref="AliasTargetRows.IsRuntimeRow"/>), and every such
+    /// node is part of the program a run admits — or of a DEFERRED MODULE REGION, whose modules are
+    /// unknown until a branch selects it (conservatively a reach, as for J7). A run reaches a runtime
+    /// alias only if its admitted graph holds one, so the run is pre-marked from this fact before any
+    /// resolver runs (<see cref="Evaluation.EvaluationBudget.MayReachRuntimeAliases"/>). Conservative: a
+    /// false positive costs only identity-only fast paths.
+    /// </summary>
+    internal static bool MayReachRuntimeAlias(object node)
+        => node is Algorithm { DeferredRegion: not null }
+            || (node is Algorithm.Alias alias && AliasTargetRows.IsRuntimeRow(alias.Target));
 
     /// <summary>
     /// <b>J7 — PROGRAM-GATED PLAN RETENTION</b> (CallReference). A META capture can only happen at a
@@ -303,9 +319,12 @@ internal static class AstStructuralPreflight
         AstConsumerProfile profile,
         FrontEndTraversalObservations? observations,
         bool detectCallCapture,
-        out bool mayCaptureCalls)
+        out AdmittedProgramFacts facts)
     {
-        mayCaptureCalls = false;
+        var mayCaptureCalls = false;
+        var mayReachRuntimeAlias = false;
+        var hasDeferredRegion = false;
+        facts = default;
         // The hard ceiling is enforced HERE, not only at the configuration surface, so
         // no caller — present or future — can hand in a raised limit and re-open the
         // process-safety hole. The fully-recursive profile may use the larger
@@ -346,7 +365,11 @@ internal static class AstStructuralPreflight
         pathWeight = rootWeight;
         heights[root] = OnStack;
         if (detectCallCapture)
+        {
             mayCaptureCalls = MayCaptureCalls(root);
+            mayReachRuntimeAlias = MayReachRuntimeAlias(root);
+            hasDeferredRegion = root is Algorithm { DeferredRegion: not null };
+        }
 
         while (frameCount > 0)
         {
@@ -402,14 +425,22 @@ internal static class AstStructuralPreflight
                 return new AstStructuralRejection(AstStructuralViolation.DepthExceeded, SpanOf(child, frames, frameCount));
 
             heights[child] = OnStack;
-            if (detectCallCapture && !mayCaptureCalls)
-                mayCaptureCalls = MayCaptureCalls(child);
+            if (detectCallCapture)
+            {
+                if (!mayCaptureCalls)
+                    mayCaptureCalls = MayCaptureCalls(child);
+                if (!mayReachRuntimeAlias)
+                    mayReachRuntimeAlias = MayReachRuntimeAlias(child);
+                if (!hasDeferredRegion)
+                    hasDeferredRegion = child is Algorithm { DeferredRegion: not null };
+            }
             if (frameCount == frames.Length)
                 Array.Resize(ref frames, frames.Length * 2);
             frames[frameCount++] = new Frame(child, childWeight, transitionWeight);
             pathWeight += transitionWeight + childWeight;
         }
 
+        facts = new AdmittedProgramFacts(mayCaptureCalls, mayReachRuntimeAlias, hasDeferredRegion);
         return null;
     }
 

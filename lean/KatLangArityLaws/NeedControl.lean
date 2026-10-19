@@ -525,8 +525,9 @@ theorem noncollector_parameter (name : Ident) (caller : EvalCtx) (s : EvalState)
   | collector slice => exact (kind slice hs).elim
 
 theorem source_expression_any_state (e : Expr) (ctx : EvalCtx) (env : ValEnv)
-    (status : NeedState) (callable : Option (Except Error (Option Algorithm))) (plan : NeedPlanSupply) (s : EvalState) (a : Nat)
-    (h : s.needs[a]? = some ⟨.expression e ctx env, status, callable, plan⟩) :
+    (status : NeedState) (callable : NeedCallableState) (plan : NeedPlanSupply)
+    (callee receiver : Option Nat) (aliasUse : Nat) (aliasBare : Option Nat) (s : EvalState) (a : Nat)
+    (h : s.needs[a]? = some ⟨.expression e ctx env, status, callable, plan, callee, receiver, aliasUse, aliasBare⟩) :
     (needWrittenSource? a).runState s = (.ok (some e), s) := by
   rw [source_run]
   simp only [sourceAt, h]
@@ -619,9 +620,11 @@ theorem address_projection_run (args : OutputBundle) (ctx : EvalCtx) (env : ValE
   rfl
 
 /-- The public demand entry point is total. The recursive edge is still opaque;
-    this does NOT assert a kernel equality to demandNeedRecursive. -/
+    this does NOT assert a kernel equality to demandNeedRecursive. Since META-S3-1 its expression
+    evaluation is address-indexed (`evalSuppliedAt a`: a supplied `.Algorithm` link reads its own
+    receiver cell); every other expression is `evalCounted` (source fact of the `partial` body). -/
 theorem demand_specialization (a : Nat) :
-    demandNeed a = NeedDemand.step evalCounted productionPlanRoute demandNeedRecursive a := rfl
+    demandNeed a = NeedDemand.step (evalSuppliedAt a) productionPlanRoute demandNeedRecursive a := rfl
 
 /-- This is the actual collector arm the production shell executes. -/
 theorem collector_specialization (ev) (route : NeedPlan.Route) (recur : Nat → EvalM CountedResult) (a : Nat) (slice : List Nat) :
@@ -644,7 +647,7 @@ theorem completed_reuse (a : Nat) (s : EvalState) (cell : NeedCell)
     (outcome : Except Error CountedResult) (hc : s.needs[a]? = some cell)
     (hs : cell.state = .completed outcome) :
     (demandNeed a).runState s = (outcome, s) :=
-  Memo.completed_sticky evalCounted productionPlanRoute demandNeedRecursive a s cell outcome hc hs
+  Memo.completed_sticky (evalSuppliedAt a) productionPlanRoute demandNeedRecursive a s cell outcome hc hs
 
 theorem evaluating_cycle (ev) (route : NeedPlan.Route) (recur : Nat → EvalM CountedResult) (a : Nat)
     (s : EvalState) (cell : NeedCell) (hc : s.needs[a]? = some cell)
@@ -764,3 +767,242 @@ theorem publication_preserves_callable (s : EvalState) (a : Nat) (current : Need
   rfl
 
 end KatLang.NeedControl.Production
+
+/-!
+## CALLABLE projection control (META-S3-0a)
+
+PRODUCTION theorems over the total `NeedProjection.step` and `NeedProjection.suspended` in
+KatLang.lean; `projectNeedCallable` installs them (`NeedProjection.step (NeedProjection.suspended
+projectNeedWritten)`). That driver and `projectNeedWritten` are `partial`, so their wiring is
+source evidence and executable guards (`NeedControlGuards.lean`, projection section), not kernel
+equations. Lean is serial: nothing here concerns C# single flight, joining, cancellation,
+host exceptions or resource limits, which are C#-only (`NeedCellProjectionFlightTests`).
+-/
+namespace KatLang.NeedControl.Projection
+open Collector Provenance
+
+/-- The projection shell's own CALLABLE write at `a`, spelled exactly as the shell writes it. -/
+def setCallable (a : Nat) (v : NeedCallableState) (s : EvalState) : EvalState :=
+  { s with needs := s.needs.modify a (fun c => { c with callable := v }) }
+
+theorem setCallable_at (s : EvalState) (a : Nat) (v : NeedCallableState) (current : NeedCell)
+    (h : s.needs[a]? = some current) :
+    (setCallable a v s).needs[a]? = some { current with callable := v } := by
+  simp [setCallable, Array.getElem?_modify, h]
+
+theorem setCallable_other (s : EvalState) (a b : Nat) (v : NeedCallableState) (different : b ≠ a) :
+    (setCallable a v s).needs[b]? = s.needs[b]? := by
+  simp [setCallable, Array.getElem?_modify, Ne.symm different]
+
+theorem setCallable_twice (s : EvalState) (a : Nat) (v w : NeedCallableState) :
+    setCallable a w (setCallable a v s) = setCallable a w s := by
+  simp only [setCallable]
+  congr 1
+  apply Array.ext_getElem?
+  intro b
+  simp only [Array.getElem?_modify]
+  split
+  · cases s.needs[b]? <;> rfl
+  · rfl
+
+/-- P4 (the projection shell's half): its CALLABLE write leaves every cell's VALUE state,
+    suspension and plan record, and the heap size, exactly as they were. -/
+theorem setCallable_preserves_value_channel (s : EvalState) (a : Nat) (v : NeedCallableState) (b : Nat) :
+    ((setCallable a v s).needs[b]?).map (fun c => (c.suspension, c.state, c.plan)) =
+      (s.needs[b]?).map (fun c => (c.suspension, c.state, c.plan)) ∧
+    (setCallable a v s).needs.size = s.needs.size := by
+  refine ⟨?_, by simp [setCallable]⟩
+  by_cases h : b = a
+  · subst h
+    cases hb : s.needs[b]? with
+    | none => simp [setCallable, Array.getElem?_modify, hb]
+    | some cell => rw [setCallable_at s b v cell hb]; rfl
+  · rw [setCallable_other s a b v h]
+
+/-- P4 (the VALUE shell's half): `NeedDemand.step`'s own writes — `evaluating` and the
+    completed outcome — leave every cell's CALLABLE state and the heap size unchanged. -/
+theorem demand_write_preserves_callable_channel (s : EvalState) (a : Nat) (state : NeedState) (b : Nat) :
+    ((s.needs.modify a (fun c => { c with state := state }))[b]?).map NeedCell.callable =
+      (s.needs[b]?).map NeedCell.callable ∧
+    (s.needs.modify a (fun c => { c with state := state })).size = s.needs.size := by
+  refine ⟨?_, by simp⟩
+  simp only [Array.getElem?_modify]
+  split
+  · cases s.needs[b]? <;> rfl
+  · rfl
+
+/-- P1: a completed projection returns its stored outcome — identity, absence or failure —
+    and leaves the whole state unchanged. -/
+theorem projected_sticky (project : NeedSuspension → EvalM (Option Algorithm)) (a : Nat)
+    (s : EvalState) (cell : NeedCell) (outcome : Except Error (Option Algorithm))
+    (hc : s.needs[a]? = some cell) (hs : cell.callable = .projected outcome) :
+    (NeedProjection.step project a).runState s = (outcome, s) := by
+  simp only [NeedProjection.step, bind_run, get_run, hc, hs]
+  cases outcome <;> rfl
+
+/-- P2: re-entering an active projection is `demandCycle` for the re-entering observation
+    only: the state, and so the active `projecting` marker, is unchanged and nothing runs. -/
+theorem projecting_reentry_cycle (project : NeedSuspension → EvalM (Option Algorithm)) (a : Nat)
+    (s : EvalState) (cell : NeedCell)
+    (hc : s.needs[a]? = some cell) (hs : cell.callable = .projecting) :
+    (NeedProjection.step project a).runState s = (.error .demandCycle, s) := by
+  simp only [NeedProjection.step, bind_run, get_run, hc, hs]
+  rfl
+
+theorem invalid_address (project : NeedSuspension → EvalM (Option Algorithm)) (a : Nat)
+    (s : EvalState) (hc : s.needs[a]? = none) :
+    (NeedProjection.step project a).runState s =
+      (.error (.illegalInEval "invalid need address"), s) := by
+  simp only [NeedProjection.step, bind_run, get_run, hc]
+  rfl
+
+/-- P3: an unprojected cell is marked `projecting`, the computation runs over its suspension
+    from that state, and its outcome — success or ANY error, a propagated `demandCycle`
+    included — is returned and published over the computation's own final state. -/
+theorem unprojected_publishes (project : NeedSuspension → EvalM (Option Algorithm)) (a : Nat)
+    (s t : EvalState) (cell : NeedCell) (outcome : Except Error (Option Algorithm))
+    (hc : s.needs[a]? = some cell) (hs : cell.callable = .unprojected)
+    (hr : (project cell.suspension).runState (setCallable a .projecting s) = (outcome, t)) :
+    (NeedProjection.step project a).runState s =
+      (outcome, setCallable a (.projected outcome) t) := by
+  simp only [NeedProjection.step, bind_run, get_run, hc, hs]
+  change (do
+    let outcome ← evalAttempt (project cell.suspension)
+    modify fun s => { s with needs := s.needs.modify a (fun c => { c with callable := .projected outcome }) }
+    return ← outcome : EvalM (Option Algorithm)).runState (setCallable a .projecting s) = _
+  simp only [bind_run, evalAttempt, hr]
+  cases outcome <;> rfl
+
+/-- P3 publication: when the cell is still present after the computation, the published
+    cell is that CURRENT cell with the outcome as its CALLABLE state, and a later projection
+    reuses the outcome without running anything (P1). -/
+theorem unprojected_publication_sticky (project : NeedSuspension → EvalM (Option Algorithm)) (a : Nat)
+    (s t : EvalState) (cell current : NeedCell) (outcome : Except Error (Option Algorithm))
+    (hc : s.needs[a]? = some cell) (hs : cell.callable = .unprojected)
+    (hr : (project cell.suspension).runState (setCallable a .projecting s) = (outcome, t))
+    (present : t.needs[a]? = some current) (other : NeedSuspension → EvalM (Option Algorithm)) :
+    ((NeedProjection.step project a).runState s).2.needs[a]? =
+      some { current with callable := .projected outcome } ∧
+    (NeedProjection.step other a).runState ((NeedProjection.step project a).runState s).2 =
+      (outcome, ((NeedProjection.step project a).runState s).2) := by
+  rw [unprojected_publishes project a s t cell outcome hc hs hr]
+  have hat := setCallable_at t a (.projected outcome) current present
+  exact ⟨hat, projected_sticky other a _ _ outcome hat rfl⟩
+
+/-- P4 over the whole shell: the projection's VALUE states are exactly those its computation
+    left, and the computation starts from VALUE states equal to the caller's. -/
+theorem unprojected_value_channel (project : NeedSuspension → EvalM (Option Algorithm)) (a : Nat)
+    (s t : EvalState) (cell : NeedCell) (outcome : Except Error (Option Algorithm))
+    (hc : s.needs[a]? = some cell) (hs : cell.callable = .unprojected)
+    (hr : (project cell.suspension).runState (setCallable a .projecting s) = (outcome, t)) (b : Nat) :
+    (((NeedProjection.step project a).runState s).2.needs[b]?).map (fun c => (c.suspension, c.state, c.plan)) =
+      (t.needs[b]?).map (fun c => (c.suspension, c.state, c.plan)) ∧
+    ((setCallable a .projecting s).needs[b]?).map (fun c => (c.suspension, c.state, c.plan)) =
+      (s.needs[b]?).map (fun c => (c.suspension, c.state, c.plan)) := by
+  rw [unprojected_publishes project a s t cell outcome hc hs hr]
+  exact ⟨(setCallable_preserves_value_channel t a _ b).1,
+    (setCallable_preserves_value_channel s a _ b).1⟩
+
+/-- P4 for the VALUE shell: `NeedDemand.step`'s CALLABLE states are exactly those its
+    computation left, and the computation starts from CALLABLE states equal to the caller's. -/
+theorem suspended_callable_channel (ev) (route : NeedPlan.Route) (demand : Nat → EvalM CountedResult)
+    (a : Nat) (s t : EvalState) (cell : NeedCell) (outcome : Except Error CountedResult)
+    (hc : s.needs[a]? = some cell) (hs : cell.state = .suspended)
+    (hr : (NeedDemand.suspendedValue ev route demand a cell.suspension).runState
+      { s with needs := s.needs.modify a (fun c => { c with state := .evaluating }) } = (outcome, t)) (b : Nat) :
+    (((NeedDemand.step ev route demand a).runState s).2.needs[b]?).map NeedCell.callable =
+      (t.needs[b]?).map NeedCell.callable ∧
+    ((s.needs.modify a (fun c => { c with state := .evaluating }))[b]?).map NeedCell.callable =
+      (s.needs[b]?).map NeedCell.callable := by
+  rw [Memo.suspended_retains_state ev route demand a s t cell outcome hc hs hr]
+  exact ⟨(demand_write_preserves_callable_channel t a _ b).1,
+    (demand_write_preserves_callable_channel s a _ b).1⟩
+
+/-- P2 + P3 composed: a computation that re-enters its own cell receives `demandCycle`
+    without disturbing the active marker, and the outer computation then publishes that
+    propagated cycle as the cell's sticky outcome. -/
+theorem self_reentry_publishes_cycle (inner : NeedSuspension → EvalM (Option Algorithm)) (a : Nat)
+    (s : EvalState) (cell : NeedCell)
+    (hc : s.needs[a]? = some cell) (hs : cell.callable = .unprojected) :
+    (NeedProjection.step (fun _ => NeedProjection.step inner a) a).runState s =
+      (.error .demandCycle, setCallable a (.projected (.error .demandCycle)) s) ∧
+    (setCallable a (.projected (.error .demandCycle)) s).needs[a]? =
+      some { cell with callable := .projected (.error .demandCycle) } := by
+  have hp := setCallable_at s a .projecting cell hc
+  have hr := projecting_reentry_cycle inner a (setCallable a .projecting s) _ hp rfl
+  rw [unprojected_publishes (fun _ => NeedProjection.step inner a) a s _ cell _ hc hs hr,
+    setCallable_twice]
+  exact ⟨rfl, setCallable_at s a _ cell hc⟩
+
+/-- A computation that neither observes nor changes cell `a`'s CALLABLE state: running it
+    after any CALLABLE write at `a` gives the same outcome and the same final state up to that
+    write. Identity-only resolution is of this kind, because it never projects its own cell. -/
+def CallableTransparent {α : Type} (a : Nat) (m : EvalM α) : Prop :=
+  ∀ s v, m.runState (setCallable a v s) = ((m.runState s).1, setCallable a v (m.runState s).2)
+
+theorem transparent_pure {α : Type} (a : Nat) (x : α) : CallableTransparent a (pure x : EvalM α) :=
+  fun _ _ => rfl
+
+theorem transparent_throw {α : Type} (a : Nat) (e : Error) :
+    CallableTransparent a (throw e : EvalM α) := fun _ _ => rfl
+
+theorem transparent_bind {α β : Type} (a : Nat) (m : EvalM α) (f : α → EvalM β)
+    (hm : CallableTransparent a m) (hf : ∀ x, CallableTransparent a (f x)) :
+    CallableTransparent a (m >>= f) := by
+  intro s v
+  rw [bind_run, bind_run, hm s v]
+  cases m.runState s with
+  | mk out next =>
+    cases out with
+    | error e => rfl
+    | ok x => exact hf x next v
+
+/-- P10: for a transparent (identity-only) computation the `projecting` marker is
+    unobservable. The shell's outcome and final state are those of running the computation on
+    the ORIGINAL state and then publishing its outcome — the marker-free memo shell. -/
+theorem transparent_projection_is_marker_free (project : NeedSuspension → EvalM (Option Algorithm))
+    (a : Nat) (s : EvalState) (cell : NeedCell)
+    (hc : s.needs[a]? = some cell) (hs : cell.callable = .unprojected)
+    (ht : CallableTransparent a (project cell.suspension)) :
+    (NeedProjection.step project a).runState s =
+      (((project cell.suspension).runState s).1,
+        setCallable a (.projected ((project cell.suspension).runState s).1)
+          ((project cell.suspension).runState s).2) := by
+  rw [unprojected_publishes project a s _ cell _ hc hs (ht s .projecting), setCallable_twice]
+
+/-- The production suspension arms that need no written resolution are transparent:
+    produced data, a collector slice and a capture carry no identity. -/
+theorem suspended_transparent_without_written
+    (written : Expr → EvalCtx → EvalM (Option Algorithm)) (a : Nat) (suspension : NeedSuspension)
+    (h : ∀ source caller values, suspension = .expression source caller values →
+      shouldWrapArgExprAsValue source = true) :
+    CallableTransparent a (NeedProjection.suspended written suspension) := by
+  cases suspension with
+  | ready _ => exact transparent_pure a none
+  | collector _ => exact transparent_pure a none
+  | expression source caller values =>
+    simp only [NeedProjection.suspended, h source caller values rfl, if_true]
+    exact transparent_pure a none
+
+/-- P10 instance on the production arms: projecting a Ready, collector or capture cell is
+    the successful absence of identity, published without any other state change, for every
+    written resolver (so for `projectNeedCallable`'s `projectNeedWritten`). -/
+theorem identityless_projection (written : Expr → EvalCtx → EvalM (Option Algorithm)) (a : Nat)
+    (s : EvalState) (cell : NeedCell)
+    (hc : s.needs[a]? = some cell) (hs : cell.callable = .unprojected)
+    (h : ∀ source caller values, cell.suspension = .expression source caller values →
+      shouldWrapArgExprAsValue source = true) :
+    (NeedProjection.step (NeedProjection.suspended written) a).runState s =
+      (.ok none, setCallable a (.projected (.ok none)) s) := by
+  rw [transparent_projection_is_marker_free _ a s cell hc hs
+    (suspended_transparent_without_written written a cell.suspension h)]
+  have hnone : (NeedProjection.suspended written cell.suspension).runState s = (.ok none, s) := by
+    cases hsus : cell.suspension with
+    | ready _ => rfl
+    | collector _ => rfl
+    | expression source caller values =>
+      simp only [NeedProjection.suspended, h source caller values hsus, if_true]
+      rfl
+  rw [hnone]
+
+end KatLang.NeedControl.Projection

@@ -94,6 +94,7 @@ public static partial class Evaluator
     {
         private NeedCell? _owner;
         private Result.CallReference? _reference;
+        private NeedCell? _calleeCell;
 
         /// <summary>The plan's supply slot (see the type summary). Written only by the plan's preparation.</summary>
         internal object? Supply;
@@ -113,6 +114,18 @@ public static partial class Evaluator
         /// <summary>The plan's one reference, allocated on the first META. Every META returns this same object.</summary>
         internal Result.CallReference Reference
             => Volatile.Read(ref _reference) ?? Interlocked.CompareExchange(ref _reference, new Result.CallReference(this), null) ?? _reference!;
+
+        /// <summary>
+        /// The plan's ONE canonical callee cell (META-S3-1, CR-13; Lean <c>NeedPlan.calleeCell</c>): the
+        /// written callee supplied in the captured caller context (<see cref="CalleeCellOf"/>), established
+        /// on the first observation that needs it and retained. Establishing it evaluates, prepares and
+        /// demands nothing; a racing establishment may construct a candidate that is discarded unused.
+        /// </summary>
+        internal NeedCell CalleeCell
+            => Volatile.Read(ref _calleeCell) ?? Interlocked.CompareExchange(ref _calleeCell, CalleeCellOf(this), null) ?? _calleeCell!;
+
+        // Test observation only: whether the callee cell has been established.
+        internal bool HasCalleeCell => Volatile.Read(ref _calleeCell) is not null;
 
         /// <summary>Test observation: how many times this plan formed its supply (at most once).</summary>
         internal int SupplyFormations => Volatile.Read(ref Formations);
@@ -516,7 +529,8 @@ public static partial class Evaluator
             return nodeWorkError;
         ThrowIfAsyncStrategyPinningViolated(ctx);
         var name = CallDiagnosticName.FromExpression(call.Function);
-        var callee = ResolveCallee(call.Function, ctx);
+        // META-S3-0b: the ONE callee law through the async resolution adapter.
+        var callee = await ResolveCalleeAsync(call.Function, ctx).ConfigureAwait(false);
         if (callee.IsError)
             return WithSpanOf<CountedResult>(call, CalleeResolutionFailure(name, ctx, callee.Error));
         return WithSpanOf(call, WithCallCtx(name, ctx,
@@ -530,7 +544,7 @@ public static partial class Evaluator
         var ctx = plan.Caller;
         if (callee is Algorithm.Alias alias)
         {
-            var target = ResolveAliasTarget(alias, ctx);
+            var target = await ResolveAliasTargetAsync(alias, ctx).ConfigureAwait(false);
             return target.IsError
                 ? target.Error
                 : await DispatchPlannedAsync(plan, target.Value, name, byInvocation).ConfigureAwait(false);
@@ -911,6 +925,6 @@ public static partial class Evaluator
     /// </summary>
     internal static bool ProgramMayCaptureCalls(Expr expr)
         => AstStructuralPreflight.CheckAdmittedProgram(
-                expr, EvaluationLimits.MaxSupportedAstDepth, AstConsumerProfile.EvaluatorIterativeJoinSpines, out var mayCaptureCalls) is not null
-            || mayCaptureCalls;
+                expr, EvaluationLimits.MaxSupportedAstDepth, AstConsumerProfile.EvaluatorIterativeJoinSpines, out var facts) is not null
+            || facts.MayCaptureCalls;
 }

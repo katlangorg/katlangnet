@@ -547,9 +547,9 @@ PostfixOp       = "[" [ ExpressionList ] "]"
                                    first (any name, `string` included), then on a
                                    structural miss the `.string` intrinsic for
                                    `string` (Q-17 S-C), the call-reference
-                                   intrinsics for `Invoke` and `Arguments`
-                                   (CallReference S1/S2), otherwise the lexical
-                                   fallback.
+                                   intrinsics for `Invoke`, `Arguments` and
+                                   `Algorithm` (CallReference S1/S2,
+                                   META-S3-1), otherwise the lexical fallback.
 
                                    Free-name collection follows semantic source order:
                                    receiver, participating member fallback,
@@ -722,8 +722,9 @@ GraceIdentifier = { "~" } Identifier { "~" } ;
                      property, a dot member the receiver is known to declare
                      (`Obj.~V`), any `.string` edge (a declared `string`
                      member or the intrinsic — never a lexical callable,
-                     Q-17 S-C; likewise `.Invoke` and `.Arguments`,
-                     CallReference S1/S2) — or ANY occurrence on a closed level (under
+                     Q-17 S-C; likewise `.Invoke`, `.Arguments` and
+                     `.Algorithm`, CallReference S1/S2, META-S3-1) — or ANY
+                     occurrence on a closed level (under
                      an explicit parameter list, on a clause branch's own
                      rows; an algorithm nested in a branch is an owner of its
                      own) is the front-end error InvalidGraceMarker ("Grace

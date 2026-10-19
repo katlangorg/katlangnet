@@ -471,15 +471,19 @@ public class CallableAliasBindingIndirectionTests
         Assert.Equal(1, downloads);
     }
 
-    // ── 7. Negative controls: no alias without one static target identity ───────────────────
+    // ── 7. Negative controls: no STATIC alias without one static target identity ────────────
 
     [Fact]
-    public void RuntimeOnlyAmbiguousAndUnresolvedNames_AreNeverAliases()
+    public void RuntimeOnlyAmbiguousAndUnresolvedNames_AreNeverStaticAliases()
     {
-        // A callable PARAMETER is known only at run time.
+        // A callable PARAMETER is known only at run time: a RUNTIME-TARGET alias (META-S3-2), never a
+        // static one — no recorded target, no fabricated signature.
         var parameter = SourceProvenance.ParseValid("Apply(f) = {\n    A = f\n    A\n}\nInc(x) = x + 1\nApply(Inc)").Root;
         var apply = Assert.IsType<Algorithm.User>(parameter.Properties.Single(p => p.Name == "Apply").Value);
-        Assert.IsNotType<Algorithm.Alias>(apply.Properties.Single(p => p.Name == "A").Value);
+        var runtime = Assert.IsType<Algorithm.Alias>(apply.Properties.Single(p => p.Name == "A").Value);
+        Assert.True(runtime.HasRuntimeTarget);
+        Assert.Null(runtime.ResolvedTarget);
+        Assert.IsType<Expr.Param>(runtime.Target);
 
         // An ambiguous open selects nothing.
         var ambiguous = SourceProvenance.ParseAllowingDiagnostics(

@@ -104,8 +104,11 @@ public class KatLangErrorCodeTests
     [Fact]
     public void EveryConcreteEvalErrorVariant_IsCoveredByTheSampleTable()
     {
+        // The internal non-initiating observation marker (META-S3-0b) is never a run outcome and
+        // deliberately has no code: classifying it fails loud.
+        Assert.Throws<System.Diagnostics.UnreachableException>(() => EvalError.ObservationPending.Instance.Code);
         var concreteVariants = typeof(EvalError).Assembly.GetTypes()
-            .Where(t => t.IsAssignableTo(typeof(EvalError)) && !t.IsAbstract)
+            .Where(t => t.IsAssignableTo(typeof(EvalError)) && !t.IsAbstract && t != typeof(EvalError.ObservationPending))
             .ToHashSet();
 
         Assert.NotEmpty(concreteVariants);

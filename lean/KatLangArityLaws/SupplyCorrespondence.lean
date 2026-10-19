@@ -754,13 +754,13 @@ theorem materialize_sim (recur : Nat → EvalM CountedResult)
     subst hvw
     exact sim_pure HeapCorr _ t1 _ _ rfl
 
-theorem suspended_value_sim (ev : Expr → EvalCtx → ValEnv → EvalM CountedResult) (route : NeedPlan.Route)
+theorem suspended_value_sim (ev1 ev2 : Expr → EvalCtx → ValEnv → EvalM CountedResult) (route : NeedPlan.Route)
     (recur : Nat → EvalM CountedResult)
     (hrec : ∀ t b1 b2, Addr t b1 b2 → Sim HeapCorr (fun _ v w => v = w) t (recur b1) (recur b2))
     (t : Table) (a1 a2 : Nat) :
     ∀ (sp1 sp2 : NeedSuspension), SuspCorr t sp1 sp2 →
-      Sim HeapCorr (fun _ v w => v = w) t (NeedDemand.suspendedValue ev route recur a1 sp1)
-        (NeedDemand.suspendedValue ev route recur a2 sp2)
+      Sim HeapCorr (fun _ v w => v = w) t (NeedDemand.suspendedValue ev1 route recur a1 sp1)
+        (NeedDemand.suspendedValue ev2 route recur a2 sp2)
   | .ready v, .ready w, h => by
       simp only [SuspCorr] at h; subst h
       exact sim_pure HeapCorr _ t _ _ rfl
@@ -779,48 +779,48 @@ theorem res_corr_eq {α : Type} {o1 o2 : Except Error α} (h : ResCorr (fun v w 
     outcome unchanged, reports a cycle on an evaluating cell, and on a suspended Ready cell
     publishes its value — in both runs alike. A collector cell's materialization goes through
     the recursive edge `recur`, whose correspondence is the premise `hrec`. -/
-theorem step_sim (ev : Expr → EvalCtx → ValEnv → EvalM CountedResult) (route : NeedPlan.Route)
+theorem step_sim (ev : Nat → Expr → EvalCtx → ValEnv → EvalM CountedResult) (route : NeedPlan.Route)
     (recur : Nat → EvalM CountedResult)
     (hrec : ∀ t b1 b2, Addr t b1 b2 → Sim HeapCorr (fun _ v w => v = w) t (recur b1) (recur b2))
     (t : Table) (a1 a2 : Nat) (ha : Addr t a1 a2) :
-    Sim HeapCorr (fun _ v w => v = w) t (NeedDemand.step ev route recur a1) (NeedDemand.step ev route recur a2) := by
+    Sim HeapCorr (fun _ v w => v = w) t (NeedDemand.step (ev a1) route recur a1) (NeedDemand.step (ev a2) route recur a2) := by
   intro s1 s2 hR
   obtain ⟨c1, c2, h1, h2, hc⟩ := hR.1 _ ha
   obtain ⟨hsusp, hst, -, -⟩ := hc
   cases hs : c1.state with
   | completed o =>
     have hs2 : c2.state = .completed o := hst ▸ hs
-    have e1 : runEval (NeedDemand.step ev route recur a1) s1 = (o, s1) :=
-      KatLang.NeedControl.Memo.completed_sticky ev route recur a1 s1 c1 o h1 hs
-    have e2 : runEval (NeedDemand.step ev route recur a2) s2 = (o, s2) :=
-      KatLang.NeedControl.Memo.completed_sticky ev route recur a2 s2 c2 o h2 hs2
+    have e1 : runEval (NeedDemand.step (ev a1) route recur a1) s1 = (o, s1) :=
+      KatLang.NeedControl.Memo.completed_sticky (ev a1) route recur a1 s1 c1 o h1 hs
+    have e2 : runEval (NeedDemand.step (ev a2) route recur a2) s2 = (o, s2) :=
+      KatLang.NeedControl.Memo.completed_sticky (ev a2) route recur a2 s2 c2 o h2 hs2
     rw [e1, e2]
     exact ⟨t, extends_refl t, hR, by cases o <;> simp [ResCorr]⟩
   | evaluating =>
     have hs2 : c2.state = .evaluating := hst ▸ hs
-    have e1 : runEval (NeedDemand.step ev route recur a1) s1 = (.error .demandCycle, s1) :=
-      KatLang.NeedControl.Production.evaluating_cycle ev route recur a1 s1 c1 h1 hs
-    have e2 : runEval (NeedDemand.step ev route recur a2) s2 = (.error .demandCycle, s2) :=
-      KatLang.NeedControl.Production.evaluating_cycle ev route recur a2 s2 c2 h2 hs2
+    have e1 : runEval (NeedDemand.step (ev a1) route recur a1) s1 = (.error .demandCycle, s1) :=
+      KatLang.NeedControl.Production.evaluating_cycle (ev a1) route recur a1 s1 c1 h1 hs
+    have e2 : runEval (NeedDemand.step (ev a2) route recur a2) s2 = (.error .demandCycle, s2) :=
+      KatLang.NeedControl.Production.evaluating_cycle (ev a2) route recur a2 s2 c2 h2 hs2
     rw [e1, e2]
     exact ⟨t, extends_refl t, hR, rfl⟩
   | suspended =>
     have hs2 : c2.state = .suspended := hst ▸ hs
     have hR' := heap_modify t s1 s2 a1 a2 (fun c => { c with state := .evaluating }) hR ha
       (state_update_corr t .evaluating)
-    obtain ⟨t1, x1, r1, c⟩ := suspended_value_sim ev route recur hrec t a1 a2 _ _ hsusp _ _ hR'
+    obtain ⟨t1, x1, r1, c⟩ := suspended_value_sim (ev a1) (ev a2) route recur hrec t a1 a2 _ _ hsusp _ _ hR'
     have ho := res_corr_eq c
-    rcases hv1 : runEval (NeedDemand.suspendedValue ev route recur a1 c1.suspension)
+    rcases hv1 : runEval (NeedDemand.suspendedValue (ev a1) route recur a1 c1.suspension)
         { s1 with needs := s1.needs.modify a1 (fun c => { c with state := .evaluating }) } with ⟨o1, u1⟩
-    rcases hv2 : runEval (NeedDemand.suspendedValue ev route recur a2 c2.suspension)
+    rcases hv2 : runEval (NeedDemand.suspendedValue (ev a2) route recur a2 c2.suspension)
         { s2 with needs := s2.needs.modify a2 (fun c => { c with state := .evaluating }) } with ⟨o2, u2⟩
     rw [hv1, hv2] at ho r1
     simp only at ho r1
     subst ho
-    have e1 := KatLang.NeedControl.Memo.suspended_retains_state ev route recur a1 s1 u1 c1 o1 h1 hs hv1
-    have e2 := KatLang.NeedControl.Memo.suspended_retains_state ev route recur a2 s2 u2 c2 o1 h2 hs2 hv2
-    show RunCorr HeapCorr _ t ((NeedDemand.step ev route recur a1).runState s1)
-      ((NeedDemand.step ev route recur a2).runState s2)
+    have e1 := KatLang.NeedControl.Memo.suspended_retains_state (ev a1) route recur a1 s1 u1 c1 o1 h1 hs hv1
+    have e2 := KatLang.NeedControl.Memo.suspended_retains_state (ev a2) route recur a2 s2 u2 c2 o1 h2 hs2 hv2
+    show RunCorr HeapCorr _ t ((NeedDemand.step (ev a1) route recur a1).runState s1)
+      ((NeedDemand.step (ev a2) route recur a2).runState s2)
     rw [e1, e2]
     refine ⟨t1, x1, heap_modify t1 u1 u2 a1 a2 _ r1 (x1 _ ha) (state_update_corr t1 _), ?_⟩
     cases o1 <;> simp [ResCorr]
@@ -831,8 +831,8 @@ theorem step_sim (ev : Expr → EvalCtx → ValEnv → EvalM CountedResult) (rou
     channel given as a premise (`projectNeedCallable` is `partial`; that it answers a Ready or
     collector cell from that cell's memo and suspension alone is a fact of its source). -/
 theorem heap_corr_capabilities (channels : NeedChannels)
-    (ev : Expr → EvalCtx → ValEnv → EvalM CountedResult) (route : NeedPlan.Route)
-    (recur : Nat → EvalM CountedResult) (hv : channels.value = NeedDemand.step ev route recur)
+    (ev : Nat → Expr → EvalCtx → ValEnv → EvalM CountedResult) (route : NeedPlan.Route)
+    (recur : Nat → EvalM CountedResult) (hv : channels.value = fun a => NeedDemand.step (ev a) route recur a)
     (hrec : ∀ t b1 b2, Addr t b1 b2 → Sim HeapCorr (fun _ v w => v = w) t (recur b1) (recur b2))
     (hcal : ∀ t b1 b2, Addr t b1 b2 →
       Sim HeapCorr (fun _ v w => v = w) t (channels.callable b1) (channels.callable b2)) :
@@ -873,8 +873,8 @@ theorem ready_formation_sim (args : List CountedResult) (t : Table) :
     nested structural, literal, META, repeated names) in either mode. The premises are the two
     `partial` channels' correspondence (`hrec`, `hcal`). -/
 theorem ready_supplies_bind_correspondingly (channels : NeedChannels)
-    (ev : Expr → EvalCtx → ValEnv → EvalM CountedResult) (route : NeedPlan.Route)
-    (recur : Nat → EvalM CountedResult) (hv : channels.value = NeedDemand.step ev route recur)
+    (ev : Nat → Expr → EvalCtx → ValEnv → EvalM CountedResult) (route : NeedPlan.Route)
+    (recur : Nat → EvalM CountedResult) (hv : channels.value = fun a => NeedDemand.step (ev a) route recur a)
     (hrec : ∀ t b1 b2, Addr t b1 b2 → Sim HeapCorr (fun _ v w => v = w) t (recur b1) (recur b2))
     (hcal : ∀ t b1 b2, Addr t b1 b2 →
       Sim HeapCorr (fun _ v w => v = w) t (channels.callable b1) (channels.callable b2))
@@ -890,8 +890,8 @@ theorem ready_supplies_bind_correspondingly (channels : NeedChannels)
 /-- The same for the clause-family route (`evalConditionalCallbackCallCounted`'s dispatcher),
     with the activated body as an explicit continuation premise. -/
 theorem ready_supplies_select_correspondingly {γ : Type} (channels : NeedChannels)
-    (ev : Expr → EvalCtx → ValEnv → EvalM CountedResult) (route : NeedPlan.Route)
-    (recur : Nat → EvalM CountedResult) (hv : channels.value = NeedDemand.step ev route recur)
+    (ev : Nat → Expr → EvalCtx → ValEnv → EvalM CountedResult) (route : NeedPlan.Route)
+    (recur : Nat → EvalM CountedResult) (hv : channels.value = fun a => NeedDemand.step (ev a) route recur a)
     (hrec : ∀ t b1 b2, Addr t b1 b2 → Sim HeapCorr (fun _ v w => v = w) t (recur b1) (recur b2))
     (hcal : ∀ t b1 b2, Addr t b1 b2 →
       Sim HeapCorr (fun _ v w => v = w) t (channels.callable b1) (channels.callable b2))
@@ -909,13 +909,15 @@ theorem ready_supplies_select_correspondingly {γ : Type} (channels : NeedChanne
       hact t' c1 c2 hc)
     s1 s2 (heap_corr_empty s1 s2)
 
-/-- The public channels: `demandNeed` IS `NeedDemand.step` at the production route and the
-    recursive edge (`NeedControl.Production.demand_specialization`), so the two premises left
-    are exactly the `partial` recursive edge `demandNeedRecursive` (reached only by collector
-    cells) and the `partial` projection `projectNeedCallable`. -/
+/-- The public channels: `demandNeed` IS `NeedDemand.step` at the production route, the
+    address-indexed expression evaluation `evalSuppliedAt` (META-S3-1: a supplied `.Algorithm` link's
+    VALUE reads its own receiver cell) and the recursive edge
+    (`NeedControl.Production.demand_specialization`), so the two premises left are exactly the
+    `partial` recursive edge `demandNeedRecursive` (reached only by collector cells) and the `partial`
+    projection `projectNeedCallable`. -/
 theorem public_channels_value :
     (⟨demandNeed, projectNeedCallable⟩ : NeedChannels).value =
-      NeedDemand.step evalCounted productionPlanRoute demandNeedRecursive := by
+      fun a => NeedDemand.step (evalSuppliedAt a) productionPlanRoute demandNeedRecursive a := by
   funext a
   exact KatLang.NeedControl.Production.demand_specialization a
 

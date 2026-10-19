@@ -582,13 +582,14 @@ Bad: `Expense(2, 3)`
 
 Unless numeric coding was explicitly part of the user's request.
 
-## Call References (`meta`, `Invoke`, `Arguments`)
+## Call References (`meta`, `Invoke`, `Arguments`, `Algorithm`)
 
 - `meta` before ONE plain parameter name captures the CALL written as that argument instead of its value: `Capture(meta operation) = operation`, `R = Capture(Square(5))`. Nothing runs at capture.
 - `R.Invoke()` runs the captured call again (fresh each time, in the place it was written, with the same arguments). `R.Invoke` without `()` and `R.Invoke(args)` are errors.
 - Only a written call `F(args)` can be captured — not a number, a property read, a bare algorithm name or a dot call. `meta` is valid only before a plain, top-level parameter name of a written parameter list (never `meta *xs`, never inside a pattern, never in a clause family).
 - A call reference never leaves the program: never make one a final output or interpolate it; output a value computed from it, such as `R.Invoke()`.
 - `R.Arguments` is a lazy view of the captured call's arguments: `R.Arguments.count` (computes no argument), `R.Arguments[0]` (zero-based; computes only the selected argument), `.first`, `.last`, and `F(R.Arguments*)`, which passes the ORIGINAL arguments to another call (unused ones are never computed). It is not a list: never `sum(R.Arguments)`, `map(R.Arguments, …)` or `[R.Arguments*]` — select the values you need. `Arguments` is a property: never `R.Arguments()`. Like the reference, a view is never a final output.
+- `R.Algorithm` is the captured call's algorithm as a callable, WITHOUT its arguments: `R.Algorithm(8)` (or `(R.Algorithm)(8)`) calls it afresh with exactly the new arguments, `Apply(R.Algorithm, 7)` and `[1, 2, 3].map(R.Algorithm)` pass it on, and `R.Algorithm(R.Arguments*)` calls it with the ORIGINAL arguments. With `R.Arguments*` it drives a loop: `R.Algorithm.while(R.Arguments*)`, `Loop(meta operation) = operation.Algorithm.while(operation.Arguments*)`. `R.Algorithm()` supplies NO arguments (it never repeats the captured ones — that is `R.Invoke()`), and bare `R.Algorithm` is the algorithm read as a value (an arity error for an algorithm that needs arguments). `A = R.Algorithm` names it: `A` is an alias of the captured algorithm, so `A(8)` calls it afresh and `[1, 2].map(A)` passes it; bare `A` is its value.
 - Do not use `meta` for ordinary higher-order code: pass the algorithm itself (`Apply(f, x) = f(x)`). Use `meta` only when the task needs to hold a specific call and run it later.
 
 ## Parentheses vs Braces
@@ -801,7 +802,7 @@ The step outputs `(new_a, new_b, new_total, limit, continue_flag)`. The init pro
 - Free identifiers in property bodies become implicit parameters unless they resolve to properties, built-ins, or opened names, but only for algorithms without an explicit parameter list.
 - If an algorithm has an explicit parameter list, that list is closed. Names not declared in the parameter pattern must resolve from the surrounding scope; otherwise they are reported as unresolved. That includes the member name of a dot call whose receiver certainly lacks the member — a number, a value, or an algorithm that declares no such member — because the dot call IS the call `name(receiver, ...)`: `Get(x) = 5.size` needs a visible `size` exactly like `Get(x) = size(5)`, while `Get(obj) = obj.size` (a parameter receiver may declare `size`) is resolved at run time. Implicit parameters are inferred only for algorithms without an explicit parameter list.
 - Parameter order follows first appearance (left-to-right, depth-first), unless adjusted with grace `~`.
-- For implicit-parameter algorithms, parameters are handed on transitively through the formulas a property USES inside an expression (automatic parameter forwarding). Only a used callable that REQUIRES supplied arguments is forwarded to: one that works with no arguments — no parameters, or only a collecting parameter such as `Count(*items)` — is read as its cached value wherever its bare name appears in an expression (an operand, a list element, a Math argument), so hand arguments on to it with an explicit call (`Count(items*)`). A definition whose WHOLE body is the bare name of a formula with parameters is not a formula: `Alias = F` is a callable ALIAS: another name for F itself, so a call through it IS the call of F, with F's own parameters (repeated names, structural `(...)`/`[...]` parameters and collectors included — `Alias = Count` takes arguments like `Count`; read bare, it is Count's no-argument value, remembered under its own name). Every callable that takes parameters can be aliased this way — your formulas, builtins (`C = count`, `I = if`, `M = map`), Math functions, host operations, members reached with a dot or through `open`, and conditional algorithms — while a name for a VALUE (`A = Z` with `Z = 2 + 3`) is an ordinary definition. An alias is not a namespace: `A.K` does not reach F's member, and `open A` is an error. `Forward(x) = F`, with an explicit parameter list, forwards BY NAME: each of F's parameters must be an existing parameter of the SAME name and the SAME pattern — one of Forward's own, or an enclosing algorithm's — and nothing is renamed, matched by position, or added to the list. So with `Sub(y, x) = y - x`, `G(x, y) = Sub` is `Sub(y, x)` (`G(10, 3)` is -7), while `Other(y)` / `Bad(x) = Other`, `F(p, q)` / `A(p) = F`, `Single([x])` / `Bad(x) = Single` and `Add((a, b))` / `Pair(a, b) = Add` are errors, and so is forwarding a conditional algorithm whose clauses name no input (`S(1) = 1` / `S(-1) = -1` / `W(x) = S`). An explicit call is different — its arguments are exactly what is written, whatever the callee calls its parameters: write `Bad(x) = Other(x)`, `Bad(x) = Single(x)` or `Pair(a, b) = Add((a, b))`, and PREFER the explicit call whenever the parameter names or shapes differ. A written call `G = Add((x, y))` takes the names written in it: `G(x, y)`.
+- For implicit-parameter algorithms, parameters are handed on transitively through the formulas a property USES inside an expression (automatic parameter forwarding). Only a used callable that REQUIRES supplied arguments is forwarded to: one that works with no arguments — no parameters, or only a collecting parameter such as `Count(*items)` — is read as its cached value wherever its bare name appears in an expression (an operand, a list element, a Math argument), so hand arguments on to it with an explicit call (`Count(items*)`). A definition whose WHOLE body is the bare name of a formula with parameters is not a formula: `Alias = F` is a callable ALIAS: another name for F itself, so a call through it IS the call of F, with F's own parameters (repeated names, structural `(...)`/`[...]` parameters and collectors included — `Alias = Count` takes arguments like `Count`; read bare, it is Count's no-argument value, remembered under its own name). Every callable that takes parameters can be aliased this way — your formulas, builtins (`C = count`, `I = if`, `M = map`), Math functions, host operations, members reached with a dot or through `open`, and conditional algorithms — while a name for a VALUE (`A = Z` with `Z = 2 + 3`) is an ordinary definition. An alias is not a namespace: `A.K` does not reach F's member, and `open A` is an error. A definition whose whole body is a PARAMETER (`A = f` inside `Use(f)`, then `A(9)`), a parameter's member whose name is known (`A = b.G` with a visible `G`) or `R.Algorithm` is an alias of whatever algorithm that names when the program runs: each `A(args)` is a fresh call of it with exactly `args`, and bare `A` reads the value; if no algorithm is supplied (a plain value, or a receiver without that member), `A` is an ordinary value property and `A(9)` is an arity error. Such a definition stays a namespace of its own declarations (`open` works on it). An unknown member name keeps its ordinary meaning: inside `Use(b)`, `A = b.G` with no `G` anywhere is `A(G) = b.G`, whose argument supplies `G`. `Forward(x) = F`, with an explicit parameter list, forwards BY NAME: each of F's parameters must be an existing parameter of the SAME name and the SAME pattern — one of Forward's own, or an enclosing algorithm's — and nothing is renamed, matched by position, or added to the list. So with `Sub(y, x) = y - x`, `G(x, y) = Sub` is `Sub(y, x)` (`G(10, 3)` is -7), while `Other(y)` / `Bad(x) = Other`, `F(p, q)` / `A(p) = F`, `Single([x])` / `Bad(x) = Single` and `Add((a, b))` / `Pair(a, b) = Add` are errors, and so is forwarding a conditional algorithm whose clauses name no input (`S(1) = 1` / `S(-1) = -1` / `W(x) = S`). An explicit call is different — its arguments are exactly what is written, whatever the callee calls its parameters: write `Bad(x) = Other(x)`, `Bad(x) = Single(x)` or `Pair(a, b) = Add((a, b))`, and PREFER the explicit call whenever the parameter names or shapes differ. A written call `G = Add((x, y))` takes the names written in it: `G(x, y)`.
 - Automatic parameter forwarding hands on PARAMETERS only and never changes what a written name refers to. Inside an algorithm that already has a parameter of the needed name — its own, or an enclosing algorithm's, a branch binder included — that parameter is handed on and nothing is added: with `Area = width * height`, the helper in `Report(width, height) = { Doubled = Area * 2 ... }` is an ordinary property that reads Report's `width` and `height`. A new parameter is added only when no parameter of that name is available, and never to an explicit parameter list. A property, opened name, or builtin with a matching name is never handed on (`v = 99` does not supply `Need(v)`, so `Outer = Need + 1` still takes its own `v`); pass such a value explicitly when the formula should use it.
 - Automatic parameter forwarding in a formula is by binding name: one name is one input, however many times a callee's parameter list uses it. `Common(x, x) = x` / `Twice = Common * 2` means `Twice(x) = Common(x, x) * 2` and takes ONE argument, exactly as `H = F + G` with `F(x)` and `G(x)` means `H(x) = F(x) + G(x)`. The bare alias `Same = Common` instead IS Common, with its two arguments. To pass two separate values that must be equal, write the call with two parameters: `Both(a, b) = Common(a, b)` (`Both(7, 8)` fails like `Common(7, 8)`).
 - Automatic parameter forwarding applies to EVERY kind of callable a formula uses as a VALUE: your own formulas, builtins (`Total = count + 0` means `Total(collection) = count(collection) + 0`, with the builtin's own parameter names), Math functions in any spelling, host operations, members reached with a dot (`Lib.Inc + 0`) or through `open`, and conditional algorithms whose clauses name their inputs (`E(0) = 100` / `E(n) = n` / `Fam = E + 1` means `Fam(n) = E(n) + 1`). A conditional algorithm whose clauses name no input (`S(1) = 1` / `S(-1) = -1`) cannot be used as a value in a formula — call it explicitly: `G(v) = S(v) + 0`. A name is handed the inputs where its VALUE is needed — an operand, a comparison, a list or tuple element, an `if` argument (the branch not taken too; evaluation stays lazy), a builtin's collection or value argument, a Math argument, `.string`, the receiver of a builtin dot call (`Inc.count` is `count(Inc)`) — and is passed as it is where it is itself a function: a callee, an argument of your own algorithm (`Apply(Inc)`), a `map`/`filter`/`reduce` function, or a loop step. A name inside a larger argument is judged by that expression (`Apply(Inc + 0)` hands `x` to `Inc`). A bare name alone on a top-level line is not a formula (`count` alone is an arity error), and `C = count` is not a formula but an alias of `count` (`C([1, 2])` is 2) — write `C = count + 0` for the formula `C(collection) = count(collection) + 0`.
@@ -1679,7 +1680,7 @@ Many(), Many(()), Many((), 3), Many([(1, 2)]*)
 
 === BEGIN GENERATED: katlang-spec-examples (DO NOT EDIT BY HAND) ===
 
-Verified reference examples (165 of the 462-case canonical language specification,
+Verified reference examples (171 of the 474-case canonical language specification,
 tests/KatLang.Tests/LanguageSpec/LanguageSpecCorpus.cs). Every program and expected
 output below is executed against the KatLang engine and (where representable)
 guarded against the Lean model on every build. Treat these as ground truth for the
@@ -3560,4 +3561,91 @@ Regenerate this block from the repo root with:
   Displays:
     5
 
+[call-reference-algorithm-projection] `R.Algorithm` is the captured call's callee as a callable, without its arguments: `R.Algorithm(8)` and `(R.Algorithm)(8)` call it afresh with exactly the new arguments, it can be passed to a higher-order parameter or used as a callback, and `R.Algorithm(R.Arguments*)` calls it with the original arguments. `R.Invoke()` still runs the captured call itself. Written without arguments it is the callee read as a value (so a callable that needs arguments is an arity error).
+
+    Square(x) = x * x
+    Capture(meta op) = op
+    R = Capture(Square(5))
+
+    R.Algorithm(8)
+    (R.Algorithm)(8)
+    R.Invoke()
+
+  Displays:
+    64
+    64
+    25
+
+[call-reference-algorithm-loops] Because `R.Algorithm` is an ordinary callable and `R.Arguments*` passes the original arguments, a captured call can drive the ordinary `while` and `repeat` loops: `R.Algorithm.while(R.Arguments*)` runs the captured step from its captured start state. A `meta` wrapper such as `Loop(meta operation) = operation.Algorithm.while(operation.Arguments*)` makes `Step(0).Loop` loop the step from 0.
+
+    Step(x) = x + 1, x < 3
+    Loop(meta operation) = operation.Algorithm.while(operation.Arguments*)
+
+    Step(0).Loop
+
+  Displays:
+    3
+
+[runtime-alias-of-a-parameter] A body whose one row names a parameter is a callable alias of whatever callable the parameter receives: inside `Use(f)`, `A = f` makes `A(9)`, `2.A` and `Apply(A, 4)` call the supplied `Square` with exactly those new arguments. When the parameter receives a plain value, `A` is an ordinary property that reads it, so `A(1)` is an arity error.
+
+    Square(x) = x * x
+    Apply(f, x) = f(x)
+    Use(f) = {
+        A = f
+        A(9), 2.A, Apply(A, 4)
+    }
+
+    Use(Square)
+
+  Displays:
+    (81, 4, 16)
+
+[runtime-alias-of-a-projection] `A = R.Algorithm` names the captured call's callee, so `A` is an alias of it: `A(9)` is a fresh call with the new argument, `[1, 2].map(A)` uses it as a callback, and an alias of `A` (`B = A`, also declared before its target) is the same callable. Written bare, `A` is the callee read as a value.
+
+    Square(x) = x * x
+    Capture(meta op) = op
+    R = Capture(Square(5))
+    A = R.Algorithm
+    B = A
+
+    A(9)
+    B(3)
+    [1, 2].map(A)
+
+  Displays:
+    81
+    9
+    [1, 4]
+
+[runtime-alias-of-a-parameter-member] When the fallback name `G` resolves, `A = b.G` has no parameter of its own and is an alias of the member `b` actually declares: `Use(Box)` calls `Box.G(3)`, never the lexical `G`. On a receiver that lacks `G`, `b.G` is the computed value `G(b)`, so `A` is an ordinary property and calling it is an arity error.
+
+    G(o) = o + 100
+    Box = { G(x) = x * 10 }
+    Use(b) = {
+        A = b.G
+        A(3)
+    }
+
+    Use(Box)
+
+  Displays:
+    30
+
+[runtime-alias-unresolved-fallback-stays-a-parameter] A fallback name that nothing declares is still the body's own parameter (Q-75 is unchanged): `A = b.G` is `A(G) = b.G`, so `A(Thousand)` supplies `G` and, on the receiver `5` that lacks a member `G`, computes `Thousand(5)`.
+
+    Thousand(v) = v * 1000
+    Use(b) = {
+        A = b.G
+        A(Thousand)
+    }
+
+    Use(5)
+
+  Displays:
+    5000
+
 === END GENERATED: katlang-spec-examples ===
+
+Runtime alias fallback (META-S3-2 D4): an ineligible or genuinely zero-parameter target keeps ordinary property caching for bare reads; each explicit zero-supply call independently evaluates the alias expression once. Eligibility checking never repeats the receiver: the receiver work it performs, whichever operation performed it, is consumed by the first bare read or terminal call. Eligible parameterized targets keep fresh invocation with the new supply (D3) and a shared receiver. Runtime alias chains keep their own openable namespace; opening never imports target members, and static callable aliases remain non-openable.
+
+For D4 terminal properties, `A`, `A, A`, `A()`, `A(), A()`, `A, A()` and `A(), A` evaluate an effectful alias expression 1, 1, 1, 2, 2 and 2 times, exactly as an ordinary property would; a bare read never supplies an explicit call and an explicit call never fills the bare cache.

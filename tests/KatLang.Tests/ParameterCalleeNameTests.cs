@@ -75,7 +75,9 @@ public class ParameterCalleeNameTests
             "F(0) = 1\nRun(step) = repeat(step, 1, 5)\nRun(F)",
             "call Run > call repeat > call F > noMatchingBranch F"),
         // Host-built trees: the front end refuses a parameter-headed open target
-        // (OpenTargetIsParameter) and never forms an alias over a parameter.
+        // (OpenTargetIsParameter). An alias over a parameter is a RUNTIME-TARGET alias (FWD-02,
+        // META-S3-2), admitted before evaluation; here nothing binds `f`, so its bare read is the
+        // parameter read's own unknown name.
         HostBuilt("host-open-target-parameter",
             static () => new Algorithm.User(null, [], [new Expr.Param("f")], [], [new Expr.Resolve("Zzz")]),
             "badOpenForm param: f"),
@@ -83,7 +85,7 @@ public class ParameterCalleeNameTests
             static () => new Algorithm.User(null, [], [],
                 [new Property("A", new Algorithm.Alias(null, [], [], new Expr.Param("f")))],
                 [new Expr.Resolve("A")]),
-            "illegalInEval callable alias target f is not a name or a declared member path"),
+            "unknownName f"),
     ];
 
     public static TheoryData<string> CaseIds()
@@ -201,6 +203,7 @@ public class ParameterCalleeNameTests
                 $"localOnlyProperty {localOnly.ObjectDesc} {localOnly.PropertyName} {NeutralExposure(localOnly)}",
             EvalError.BadOpenForm badOpenForm => $"badOpenForm {badOpenForm.Reason}",
             EvalError.IllegalInEval illegal => $"illegalInEval {illegal.Reason}",
+            EvalError.UnknownName unknown => $"unknownName {unknown.Name}",
             _ => $"other {error.GetType().Name}",
         });
         return string.Join(" > ", parts);

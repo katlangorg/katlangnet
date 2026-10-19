@@ -160,7 +160,8 @@ public static class SemanticModelBuilder
 
     /// <summary>
     /// Builds <see cref="PreludeCatalog.DotIntrinsicSymbols"/> (the receiver-only
-    /// <c>.string</c> value intrinsic).
+    /// <c>.string</c> value intrinsic and the call-reference intrinsics <c>.Algorithm</c>,
+    /// <c>.Arguments</c> and <c>.Invoke</c>).
     /// </summary>
     internal static IReadOnlyList<VisibleSymbol> CreateDotIntrinsicCatalogSymbols()
         => Builder.CreateDotIntrinsicCatalog();
@@ -197,6 +198,15 @@ public static class SemanticModelBuilder
             IsPublic: true,
             ArgumentsIntrinsicPropertyInfo,
             ArgumentsIntrinsicPropertyInfo);
+        private static readonly PropertyInfo AlgorithmIntrinsicPropertyInfo = CreateAlgorithmIntrinsicPropertyInfo();
+        private static readonly SymbolDefinition AlgorithmIntrinsicSymbol = new(
+            AstHelpers.AlgorithmIntrinsicName,
+            SymbolKind.Builtin,
+            AlgorithmValue: null,
+            Declaration: null,
+            IsPublic: true,
+            AlgorithmIntrinsicPropertyInfo,
+            AlgorithmIntrinsicPropertyInfo);
 
         private readonly List<IdentifierOccurrence> _identifierOccurrences = [];
         private readonly List<DeclarationOccurrence> _declarations = [];
@@ -1399,12 +1409,14 @@ public static class SemanticModelBuilder
                 if (IsDeferredModulePlaceholder(targetAlgorithm))
                     return (IdentifierClassification.DeferredModuleReference, null, null);
 
-                // A structural miss: `.string`, `.Invoke` and `.Arguments` are the intrinsics, every
-                // other member the fallback.
+                // A structural miss: `.string`, `.Invoke`, `.Arguments` and `.Algorithm` are the
+                // intrinsics, every other member the fallback.
                 if (dotCall.UsesOrdinaryDotStringIntrinsic())
                     return (IdentifierClassification.Builtin, null, StringIntrinsicSymbol.PropertyInfo);
                 if (dotCall.UsesDotArgumentsIntrinsic())
                     return (IdentifierClassification.Builtin, null, ArgumentsIntrinsicSymbol.PropertyInfo);
+                if (dotCall.UsesDotAlgorithmIntrinsic())
+                    return (IdentifierClassification.Builtin, null, AlgorithmIntrinsicSymbol.PropertyInfo);
                 return dotCall.UsesDotInvokeIntrinsic()
                     ? (IdentifierClassification.Builtin, null, InvokeIntrinsicSymbol.PropertyInfo)
                     : ResolveDotMemberFallbackBinding(dotCall, scope);
@@ -1424,6 +1436,8 @@ public static class SemanticModelBuilder
                 return (IdentifierClassification.Builtin, null, InvokeIntrinsicSymbol.PropertyInfo);
             if (dotCall.UsesDotArgumentsIntrinsic())
                 return (IdentifierClassification.Builtin, null, ArgumentsIntrinsicSymbol.PropertyInfo);
+            if (dotCall.UsesDotAlgorithmIntrinsic())
+                return (IdentifierClassification.Builtin, null, AlgorithmIntrinsicSymbol.PropertyInfo);
 
             var fallbackSelection = dotCall.GetLexicalFallbackSelection(provider);
             return fallbackSelection switch
@@ -1688,8 +1702,14 @@ public static class SemanticModelBuilder
             PropertyExposure exposure,
             TemplatePropertyMetadataCache? templateMetadata)
         {
+            // A runtime-target alias (META-S3-2) has no static target: its signature is unknown, never
+            // fabricated, and it may take a lexical dot receiver as its runtime identity may.
             if (alias.ResolvedTarget is not { } target)
-                return new PropertyInfo(name, declaration, PropertyShape.Ordinary, isPublic, exposure, [], []);
+                return new PropertyInfo(name, declaration, PropertyShape.Ordinary, isPublic, exposure, [], [])
+                {
+                    SupportsLexicalDotCall = alias.HasRuntimeTarget,
+                    HasUnknownRuntimeSignature = alias.HasRuntimeTarget,
+                };
 
             var surface = templateMetadata?.AliasSurfaceFor(target, BuildAliasSurface) ?? BuildAliasSurface(target);
             var signatures = new List<PropertySignatureInfo>(surface.Signatures.Count);
@@ -1747,7 +1767,10 @@ public static class SemanticModelBuilder
             {
                 Algorithm.User user => user.ParameterPatterns.Count > 0,
                 // An alias is called as its target, so it takes a dot receiver exactly when the target does.
-                Algorithm.Alias alias => alias.ResolvedTarget is { } aliasTarget && SupportsLexicalDotCall(aliasTarget.Algorithm),
+                // A runtime-target alias's identity is known only at run time and may take one.
+                Algorithm.Alias alias => alias.ResolvedTarget is { } aliasTarget
+                    ? SupportsLexicalDotCall(aliasTarget.Algorithm)
+                    : alias.HasRuntimeTarget,
                 Algorithm.Conditional conditional =>
                     ConditionalSignatureHead(conditional)?.TopLevelArity() > 0,
                 Algorithm.Builtin(var builtin) =>
@@ -3262,9 +3285,14 @@ public static class SemanticModelBuilder
 
         public static IReadOnlyList<VisibleSymbol> CreateDotIntrinsicCatalog()
         {
-            // Name-ordered, like every other catalog: `Arguments` and `Invoke` (ordinal) sort before
-            // `string`.
+            // Name-ordered, like every other catalog: `Algorithm`, `Arguments` and `Invoke` (ordinal)
+            // sort before `string`.
             return [
+                new VisibleSymbol(
+                    AstHelpers.AlgorithmIntrinsicName,
+                    IdentifierClassification.Builtin,
+                    Declaration: null,
+                    AlgorithmIntrinsicPropertyInfo),
                 new VisibleSymbol(
                     AstHelpers.ArgumentsIntrinsicName,
                     IdentifierClassification.Builtin,
@@ -3313,6 +3341,23 @@ public static class SemanticModelBuilder
             {
                 PreferredCallStyle = PropertyCallStyle.Dot,
                 Signatures = [new PropertySignatureInfo(PropertyCallStyle.Dot, "reference.Arguments", [])],
+                SupportsLexicalDotCall = false,
+            };
+
+        private static PropertyInfo CreateAlgorithmIntrinsicPropertyInfo()
+            // `.Algorithm` (META-S3-1) is a receiver-only member: bare, it reads the captured callee's
+            // value; with an argument list, it calls the captured callee afresh with exactly those arguments.
+            => new(
+                AstHelpers.AlgorithmIntrinsicName,
+                Declaration: null,
+                PropertyShape.Builtin,
+                IsPublic: true,
+                PropertyExposure.Exported,
+                Parameters: [],
+                ConditionalBranches: [])
+            {
+                PreferredCallStyle = PropertyCallStyle.Dot,
+                Signatures = [new PropertySignatureInfo(PropertyCallStyle.Dot, "reference.Algorithm(arguments)", [])],
                 SupportsLexicalDotCall = false,
             };
 

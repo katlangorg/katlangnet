@@ -44,9 +44,14 @@ public static partial class Evaluator
     /// is kept as data. In a run that retains invocation plans (J7, <see cref="EvaluationBudget.RetainsInvocationPlans"/>),
     /// a written call with a lexical-name or parameter callee IS an invocation plan
     /// (<see cref="InvocationPlan"/>): its VALUE executes through the plan's one supply
-    /// (<see cref="EvalPlannedCallCounted"/>).
+    /// (<see cref="EvalPlannedCallCounted"/>). An argumentless dot edge whose CALLABLE may be a
+    /// RUNTIME projection (<see cref="IsRuntimeProjectionSource"/>, META-S3-1) gets its projection
+    /// node — an edge spelled <c>Algorithm</c> whose intrinsic route is not statically excluded as a
+    /// link (<see cref="LinkSuspension"/>, CR-15); a statically selected member stays identity-only.
+    /// <paramref name="retained"/> marks a cell an owner establishes once and retains (a link's
+    /// receiver, a plan's callee cell), which is retry-stable and therefore exempt from Guard B.
     /// </summary>
-    internal static NeedCell SupplyCell(Expr expression, EvalCtx caller, ValEnv values)
+    internal static NeedCell SupplyCell(Expr expression, EvalCtx caller, ValEnv values, bool retained = false)
     {
         if (expression is Expr.Param(var name))
         {
@@ -54,13 +59,82 @@ public static partial class Evaluator
             if (LookupNeed(parameterCtx.NeedEnv, name) is { } existing) return existing;
         }
         ExpressionSuspension suspension;
+        var runtimeProjection = false;
         if (caller.Budget.RetainsInvocationPlans && IsPlannableCall(expression) is not null)
         {
             caller.Observations?.RecordInvocationPlan();
             suspension = new InvocationPlan(caller, values);
         }
+        else if (expression is Expr.DotCall { Args: null } edge && IsRuntimeProjectionSource(edge, caller.Budget))
+        {
+            if (!retained) NeedCell.ThrowIfAllocatingRuntimeProjectionWhileObserving();
+            runtimeProjection = true;
+            suspension = edge.UsesDotAlgorithmIntrinsic() ? new LinkSuspension(caller, values) : new ExpressionSuspension(caller, values);
+        }
+        else if (caller.Budget.MayReachRuntimeAliases && MayResolveThroughAlias(expression)
+            && (caller.Budget.HasDeferredModuleRegions || ReferenceReachesRuntimeAlias(expression, caller)))
+        {
+            // META-S3-2: resolving this reference's identity reaches a runtime-target alias's runtime
+            // projection, so the reference cell is a runtime projection from its formation — never
+            // runtime work under an identity-only cell lock, and never a second wrapper cell.
+            if (!retained) NeedCell.ThrowIfAllocatingRuntimeProjectionWhileObserving();
+            runtimeProjection = true;
+            suspension = new ExpressionSuspension(caller, values);
+        }
         else suspension = new ExpressionSuspension(caller, values);
-        return new NeedCell(expression, suspension, caller.Budget, caller.Budget.CancellationToken);
+        return new NeedCell(expression, suspension, caller.Budget, runtimeProjection, caller.Budget.CancellationToken);
+    }
+
+    /// <summary>
+    /// The written REFERENCE shapes whose identity resolution normalizes a callable alias (FWD-02): a
+    /// name, an argumentless dot path, and an inline alias block. Every other written expression is a
+    /// value with no identity, or a parameter, whose own cell is transported.
+    /// </summary>
+    private static bool MayResolveThroughAlias(Expr expression)
+        => expression is Expr.Resolve or Expr.DotCall { Args: null } or Expr.AlgorithmExpr { Algorithm: Algorithm.Alias };
+
+    /// <summary>
+    /// Whether the identity resolution of a written REFERENCE reaches a runtime-target alias (META-S3-2):
+    /// its binding — a name by the ownership-first lookup, a dot path by structural navigation, an inline
+    /// alias block itself — is an alias whose STATIC chain (the VALUE chase, <see cref="ResolveAliasTarget"/>)
+    /// ends at a runtime-target alias. Static identity work only, exactly the steps the reference's own
+    /// projection takes first. A static resolution failure is no reach: the reference keeps the static
+    /// rule (absence lifted, any other failure propagated), as Lean's <c>projectNeedWritten</c>.
+    /// A parameter-rooted path and an <c>.Algorithm</c> link are classified by <see cref="IsRuntimeProjectionSource"/> before this.
+    /// </summary>
+    private static bool ReferenceReachesRuntimeAlias(Expr expression, EvalCtx caller)
+    {
+        switch (expression)
+        {
+            case Expr.Resolve(var name):
+            {
+                if (caller.CallStack.Count == 0)
+                    return false;
+                var binding = LookupLexicalRaw(caller.CallStack[0], name, caller);
+                return binding.IsOk
+                    && binding.Value.ResolvedAlgorithm is Algorithm.Alias alias
+                    && ChainReachesRuntimeAlias(alias, caller, binding.Value.Binding);
+            }
+
+            case Expr.DotCall edge:
+            {
+                var member = ResolveDotReceiver(edge, caller, out var isStructuralMember);
+                return member.IsOk
+                    && isStructuralMember && member.Value is Algorithm.Alias alias && ChainReachesRuntimeAlias(alias, caller, null);
+            }
+
+            case Expr.AlgorithmExpr { Algorithm: Algorithm.Alias inline }:
+                return ChainReachesRuntimeAlias((Algorithm.Alias)WireToCaller(caller, inline), caller, null);
+
+            default:
+                return false;
+        }
+
+        static bool ChainReachesRuntimeAlias(Algorithm.Alias alias, EvalCtx ctx, Property? binding)
+        {
+            var end = ResolveAliasTarget(alias, ctx, binding, callable: false);
+            return end.IsOk && end.Value is Algorithm.Alias;
+        }
     }
 
     /// <summary>
@@ -71,7 +145,9 @@ public static partial class Evaluator
     internal static EvalResult<CountedResult> EvalSuspendedValue(NeedCell cell, ExpressionSuspension suspension)
     {
         var source = cell.Source!;
-        return FinishSuppliedValue(source, suspension is InvocationPlan plan
+        if (suspension is LinkSuspension link && TryEvalLinkValue((Expr.DotCall)source, link) is { } linked)
+            return FinishSuppliedLinkValue(source, suspension, linked);
+        return FinishSuppliedValue(source, suspension, suspension is InvocationPlan plan
             ? EvalPlannedCallCounted(plan, byInvocation: false)
             : EvalCounted(source, suspension.Caller, suspension.Values));
     }
@@ -80,25 +156,50 @@ public static partial class Evaluator
     internal static async ValueTask<EvalResult<CountedResult>> EvalSuspendedValueAsync(NeedCell cell, ExpressionSuspension suspension)
     {
         var source = cell.Source!;
-        return FinishSuppliedValue(source, suspension is InvocationPlan plan
+        if (suspension is LinkSuspension link
+            && await TryEvalLinkValueAsync((Expr.DotCall)source, link).ConfigureAwait(false) is { } linked)
+            return FinishSuppliedLinkValue(source, suspension, linked);
+        return FinishSuppliedValue(source, suspension, suspension is InvocationPlan plan
             ? await EvalPlannedCallCountedAsync(plan, byInvocation: false).ConfigureAwait(false)
             : await EvalCountedAsync(source, suspension.Caller, suspension.Values).ConfigureAwait(false));
     }
 
-    private static EvalResult<CountedResult> FinishSuppliedValue(Expr source, EvalResult<CountedResult> result)
-        => result.IsError ? BlameWrittenArgumentSlot(source, result.Error) : ReCountValueBoundary(result);
+    /// <summary>
+    /// The value boundary of a supplied cell: a written argument's failure is blamed on its slot and
+    /// its value re-counted at the argument boundary. A cell supplied under an ALIAS head — a
+    /// runtime-target alias's binding cell and the cells it establishes (FWD-02, META-S3-2) — is that
+    /// alias's PROPERTY BODY: its outcome is the body's own, with property-style provenance and no
+    /// argument slot.
+    /// </summary>
+    // Keep finishing out of the recursive VALUE frame. Passing EvalCtx by value here made
+    // Debug reserve its copies while the child was still evaluating (+704 B per level).
+    // The suspension already owns that context; read it only after the child returns.
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+    private static EvalResult<CountedResult> FinishSuppliedValue(Expr source, ExpressionSuspension suspension, EvalResult<CountedResult> result)
+        => suspension.Caller.Head is Algorithm.Alias ? result
+            : result.IsError ? BlameWrittenArgumentSlot(source, result.Error) : ReCountValueBoundary(result);
+
+    // A link's VALUE under an alias head is the property body's row `X.Algorithm`: its failure carries
+    // the row's dot-call context and position, exactly as evaluating the row reports it.
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+    private static EvalResult<CountedResult> FinishSuppliedLinkValue(Expr source, ExpressionSuspension suspension, EvalResult<CountedResult> linked)
+        => FinishSuppliedValue(source, suspension, suspension.Caller.Head is Algorithm.Alias
+            ? WithSpanOf(source, WithDotCallCtx((Expr.DotCall)source, suspension.Caller, linked)) : linked);
 
     /// <summary>
     /// The CALLABLE projection of a written argument's cell: identity-only resolution in the
-    /// caller context, which evaluates nothing and demands no VALUE.
+    /// caller context, which evaluates nothing and demands no VALUE — except a supplied
+    /// <c>X.Algorithm</c> link, whose projection demands its receiver cell's VALUE and projects
+    /// the decoded callee cell (<see cref="ProjectLinkCallable"/>, CR-15), and a parameter-rooted
+    /// path, which projects its head parameter's cell; both run as the cell's runtime projection.
     /// </summary>
-    internal static EvalResult<Algorithm?> ProjectSuspendedCallable(Expr expression, ExpressionSuspension suspension)
+    internal static EvalResult<Algorithm?> ProjectSuspendedCallable(NeedCell cell, Expr expression, ExpressionSuspension suspension)
     {
         var caller = suspension.Caller;
         // A dot expression carries the ONE identity its projection gives it in every
         // algorithm-capable position, the callee included (DOT-09).
         if (expression is Expr.DotCall edge)
-            return ProjectDotPathCallable(edge, caller);
+            return suspension is LinkSuspension link ? ProjectLinkCallable(edge, link) : ProjectDotPathCallable(edge, caller);
         if (ShouldWrapArgExprAsValue(expression)) return EvalResult<Algorithm?>.Ok(null);
         var resolved = ResolveAlg(expression, caller);
         return resolved.IsOk ? EvalResult<Algorithm?>.Ok(resolved.Value)
@@ -476,9 +577,10 @@ public static partial class Evaluator
                         // the context names the violated agreement.
                         if (before.Value.EmittedCount != value.Value.EmittedCount || !Result.ValueComparer.Equals(before.Value.Value, value.Value.Value))
                             return Mismatch(new EvalError.WithContext(RepeatedParameterContext(name), new EvalError.BadArity()));
-                        var first = previous.ProjectCallable();
+                        // META-S3-0b: the async binder awaits and consumes both outcomes directly.
+                        var first = asynchronous ? await previous.ProjectCallableAsync().ConfigureAwait(false) : previous.ProjectCallable();
                         if (first.IsError) return first.Error;
-                        var second = cell.ProjectCallable();
+                        var second = asynchronous ? await cell.ProjectCallableAsync().ConfigureAwait(false) : cell.ProjectCallable();
                         if (second.IsError) return second.Error;
                         if (first.Value is { } a && second.Value is { } b && !SameRepeatedCallableIdentity(a, b))
                             return Mismatch(new EvalError.TypeMismatch("Repeated bind equality requires the same callable identity"));
@@ -740,6 +842,8 @@ public static partial class Evaluator
         if (bindings.IsError) return bindings.Error;
         if (callee.Output.Count == 0) return new EvalError.MissingOutput();
         var names = callee.Params;
+        if (ctx.Budget.MayReachRuntimeAliases && TakeTerminalAliasInvocation(callee, ctx) is { } terminalCell)
+            return ReCountValueBoundary(terminalCell.Demand());
         return ReCountValueBoundary(EvalAlgOutputCounted(callee, WithNeedBindings(ctx, bindings.Value!, names), ShadowValEnv(values, names)));
     }
 
@@ -764,6 +868,8 @@ public static partial class Evaluator
         var names = callee.Params;
         var boundCtx = WithNeedBindings(ctx, bindings.Value!, names);
         var boundValues = ShadowValEnv(values, names);
+        if (TakeTerminalAliasInvocation(callee, ctx) is { } terminalCell)
+            return ReCountValueBoundary(await DemandCell(terminalCell, asynchronous).ConfigureAwait(false));
         return ReCountValueBoundary(asynchronous
             ? await EvalAlgOutputCountedCoreAsync(callee, boundCtx, boundValues).ConfigureAwait(false)
             : EvalAlgOutputCounted(callee, boundCtx, boundValues));
@@ -956,7 +1062,11 @@ public static partial class Evaluator
                 // CALLABLE projection only now, when an iteration needs the step: a zero-iteration
                 // `repeat` never projects or validates it (LOOP-05), and a step argument with no
                 // CALLABLE identity is NotAnAlgorithm (Q-06, LOOP-08), never a VALUE demand.
-                var projection = ProjectLoopStep(arguments[0], builtin);
+                // META-S3-0b: the async loop consumes the awaited projection outcome through the
+                // async resolution adapter (same slot, same point, same diagnostics).
+                var projection = asynchronous
+                    ? await ProjectLoopStepAsync(arguments[0], builtin, ctx).ConfigureAwait(false)
+                    : ProjectLoopStep(arguments[0], builtin);
                 if (projection.IsError) return projection.Error;
                 step = projection.Value;
                 var eligible = IsOptimizedLoopShapeEligible(step, out var shapeFallback);

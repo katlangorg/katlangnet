@@ -8080,5 +8080,192 @@ public static class LanguageSpecCorpus
             ],
             Explanation = "A dot edge spelled `Arguments` selects a declared member first; otherwise it is the call-reference argument view, so `5.Arguments` is a type error and never the user's `Arguments(5)`. A plain call `Arguments(4)` stays an ordinary call.",
         },
+        // ==================== callable projection (META-S3-1) ====================
+        new()
+        {
+            Id = "call-reference-algorithm-projection",
+            Category = "name-resolution",
+            Source = "Square(x) = x * x\nCapture(meta op) = op\nR = Capture(Square(5))\n\nR.Algorithm(8)\n(R.Algorithm)(8)\nR.Invoke()",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "64\n64\n25",
+            ExpectedRaw = "S[64, 64, 25]",
+            ExpectedEmittedCount = 3,
+            Probes =
+            [
+                // The projection is an ordinary callable: parameters, callbacks and the original arguments.
+                new SpecProbe("Apply(f, x) = f(x)\nSquare(x) = x * x\nCapture(meta op) = op\nR = Capture(Square(5))\nApply(R.Algorithm, 7)", "ok raw=49 n=1"),
+                new SpecProbe("Square(x) = x * x\nCapture(meta op) = op\nR = Capture(Square(5))\n[1, 2, 3].map(R.Algorithm)", "ok raw=L[1, 4, 9] n=1"),
+                new SpecProbe("Square(x) = x * x\nCapture(meta op) = op\nR = Capture(Square(5))\nR.Algorithm(R.Arguments*)", "ok raw=25 n=1"),
+                // A fresh call never reuses the captured arguments, and a family is dispatched by the new ones.
+                new SpecProbe("Square(x) = x * x\nCapture(meta op) = op\nR = Capture(Square(5))\nR.Algorithm()", "err arity"),
+                new SpecProbe("F(0) = 100\nF(n) = n * 2\nCapture(meta op) = op\nR = Capture(F(0))\nR.Algorithm(3), R.Invoke()", "ok raw=S[6, 100] n=2"),
+                // Without arguments, `R.Algorithm` is the captured callee read as a value.
+                new SpecProbe("Square(x) = x * x\nCapture(meta op) = op\nR = Capture(Square(5))\nR.Algorithm", "err arity"),
+            ],
+            IncludeInGeneratorPrompt = true,
+            Explanation = "`R.Algorithm` is the captured call's callee as a callable, without its arguments: `R.Algorithm(8)` and `(R.Algorithm)(8)` call it afresh with exactly the new arguments, it can be passed to a higher-order parameter or used as a callback, and `R.Algorithm(R.Arguments*)` calls it with the original arguments. `R.Invoke()` still runs the captured call itself. Written without arguments it is the callee read as a value (so a callable that needs arguments is an arity error).",
+        },
+        new()
+        {
+            Id = "call-reference-algorithm-loops",
+            Category = "variadic-calls",
+            Source = "Step(x) = x + 1, x < 3\nLoop(meta operation) = operation.Algorithm.while(operation.Arguments*)\n\nStep(0).Loop",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "3",
+            ExpectedRaw = "3",
+            ExpectedEmittedCount = 1,
+            Probes =
+            [
+                new SpecProbe("Step(x) = x + 1, x < 3\nCapture(meta op) = op\nR = Capture(Step(0))\nR.Algorithm.while(R.Arguments*)", "ok raw=3 n=1"),
+                new SpecProbe("Increment(x) = x + 1\nCapture(meta op) = op\nS = Capture(Increment(0))\nS.Algorithm.repeat(5, S.Arguments*)", "ok raw=5 n=1"),
+            ],
+            IncludeInGeneratorPrompt = true,
+            Explanation = "Because `R.Algorithm` is an ordinary callable and `R.Arguments*` passes the original arguments, a captured call can drive the ordinary `while` and `repeat` loops: `R.Algorithm.while(R.Arguments*)` runs the captured step from its captured start state. A `meta` wrapper such as `Loop(meta operation) = operation.Algorithm.while(operation.Arguments*)` makes `Step(0).Loop` loop the step from 0.",
+        },
+        new()
+        {
+            Id = "algorithm-is-not-an-extension-call",
+            Category = "name-resolution",
+            Source = "Algorithm(r) = r + 1\nAlgorithm(4)",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "5",
+            ExpectedRaw = "5",
+            ExpectedEmittedCount = 1,
+            Probes =
+            [
+                new SpecProbe("Algorithm(r) = r + 1\n5.Algorithm", "err type"),
+                new SpecProbe("Box = { public Algorithm = 3 }\nBox.Algorithm", "ok raw=3 n=1"),
+                new SpecProbe("Lib = { public Algorithm(x) = x + 1000 }\nApply(f, x) = f(x)\nLib.Algorithm(1), Apply(Lib.Algorithm, 2)", "ok raw=S[1001, 1002] n=2"),
+            ],
+            Explanation = "A dot edge spelled `Algorithm` selects a declared member first; otherwise it is the call reference's callable projection, so `5.Algorithm` is a type error and never the user's `Algorithm(5)`. A plain call `Algorithm(4)` stays an ordinary call.",
+        },
+        new()
+        {
+            Id = "algorithm-projection-cycle",
+            Category = "errors",
+            Source = "Hold(g) = Capture(g(0))\nCapture(meta op) = op\nR = Hold(R.Algorithm)\nR.Algorithm(1)",
+            Outcome = SpecOutcome.EvalError,
+            ExpectedErrorCategory = "demandCycle",
+            Probes =
+            [
+                new SpecProbe("Hold(g) = Capture(g(0))\nCapture(meta op) = op\nApply(f, x) = f(x)\nR = Hold(R.Algorithm)\nApply(R.Algorithm, 1)", "err demandCycle"),
+            ],
+            Explanation = "A callable projection that needs its own result is a demand cycle: `R = Hold(R.Algorithm)` captures a call whose callee is `R.Algorithm` itself, so calling it can never resolve and reports `DemandCycle` instead of looping.",
+        },
+
+        // ==================== runtime-target callable aliases (META-S3-2) ====================
+        new()
+        {
+            Id = "runtime-alias-of-a-parameter",
+            Category = "name-resolution",
+            Source = "Square(x) = x * x\nApply(f, x) = f(x)\nUse(f) = {\n    A = f\n    A(9), 2.A, Apply(A, 4)\n}\n\nUse(Square)",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "(81, 4, 16)",
+            ExpectedRaw = "S[81, 4, 16]",
+            ExpectedEmittedCount = 1,
+            Probes =
+            [
+                // The bare read is the parameter's own VALUE; a value supplies no callable identity.
+                new SpecProbe("Use(f) = {\n    A = f\n    A + 1\n}\nUse(5)", "ok raw=6 n=1"),
+                new SpecProbe("Use(f) = {\n    A = f\n    A(1)\n}\nUse(5)", "err arity"),
+                // A clause family is dispatched afresh by the new supply.
+                new SpecProbe("Describe(0) = 'zero'\nDescribe(n) = 'other'\nUse(f) = {\n    A = f\n    A(0), A(5)\n}\nUse(Describe)", "ok raw=S['zero', 'other'] n=1"),
+            ],
+            IncludeInGeneratorPrompt = true,
+            Explanation = "A body whose one row names a parameter is a callable alias of whatever callable the parameter receives: inside `Use(f)`, `A = f` makes `A(9)`, `2.A` and `Apply(A, 4)` call the supplied `Square` with exactly those new arguments. When the parameter receives a plain value, `A` is an ordinary property that reads it, so `A(1)` is an arity error.",
+        },
+        new()
+        {
+            Id = "runtime-alias-of-a-projection",
+            Category = "name-resolution",
+            Source = "Square(x) = x * x\nCapture(meta op) = op\nR = Capture(Square(5))\nA = R.Algorithm\nB = A\n\nA(9)\nB(3)\n[1, 2].map(A)",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "81\n9\n[1, 4]",
+            ExpectedRaw = "S[81, 9, L[1, 4]]",
+            ExpectedEmittedCount = 3,
+            Probes =
+            [
+                // Bare `A` is the projection's VALUE: the captured callee read as a value.
+                new SpecProbe("Square(x) = x * x\nCapture(meta op) = op\nR = Capture(Square(5))\nA = R.Algorithm\nA", "err arity"),
+                // A ten-link chain declared before its target.
+                new SpecProbe("Square(x) = x * x\nCapture(meta op) = op\nS1 = S2\nS2 = S3\nS3 = S4\nS4 = S5\nS5 = S6\nS6 = S7\nS7 = S8\nS8 = S9\nS9 = S10\nS10 = R.Algorithm\nR = Capture(Square(5))\nS1(9)", "ok raw=81 n=1"),
+            ],
+            IncludeInGeneratorPrompt = true,
+            Explanation = "`A = R.Algorithm` names the captured call's callee, so `A` is an alias of it: `A(9)` is a fresh call with the new argument, `[1, 2].map(A)` uses it as a callback, and an alias of `A` (`B = A`, also declared before its target) is the same callable. Written bare, `A` is the callee read as a value.",
+        },
+        new()
+        {
+            Id = "runtime-alias-of-a-parameter-member",
+            Category = "name-resolution",
+            Source = "G(o) = o + 100\nBox = { G(x) = x * 10 }\nUse(b) = {\n    A = b.G\n    A(3)\n}\n\nUse(Box)",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "30",
+            ExpectedRaw = "30",
+            ExpectedEmittedCount = 1,
+            Probes =
+            [
+                // On a structural miss `b.G` is a computed value with no callable identity: an ordinary property.
+                new SpecProbe("G(o) = o + 100\nUse(b) = {\n    A = b.G\n    A, A(3)\n}\nUse(5)", "err arity"),
+            ],
+            IncludeInGeneratorPrompt = true,
+            Explanation = "When the fallback name `G` resolves, `A = b.G` has no parameter of its own and is an alias of the member `b` actually declares: `Use(Box)` calls `Box.G(3)`, never the lexical `G`. On a receiver that lacks `G`, `b.G` is the computed value `G(b)`, so `A` is an ordinary property and calling it is an arity error.",
+        },
+        new()
+        {
+            Id = "runtime-alias-unresolved-fallback-stays-a-parameter",
+            Category = "name-resolution",
+            Source = "Thousand(v) = v * 1000\nUse(b) = {\n    A = b.G\n    A(Thousand)\n}\n\nUse(5)",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "5000",
+            ExpectedRaw = "5000",
+            ExpectedEmittedCount = 1,
+            IncludeInGeneratorPrompt = true,
+            Explanation = "A fallback name that nothing declares is still the body's own parameter (Q-75 is unchanged): `A = b.G` is `A(G) = b.G`, so `A(Thousand)` supplies `G` and, on the receiver `5` that lacks a member `G`, computes `Thousand(5)`.",
+        },
+        new()
+        {
+            Id = "runtime-alias-transport-reads-the-target-members",
+            Category = "access-boundaries",
+            Source = "Lib(*xs) = {\n    public K = 99\n    0\n}\nK(v) = 7\nNavigate(f) = f.K\nUse(f) = {\n    A = f\n    Navigate(A), A.K\n}\n\nUse(Lib)",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "(99, 7)",
+            ExpectedRaw = "S[99, 7]",
+            ExpectedEmittedCount = 1,
+            Probes =
+            [
+                // Written member access selects the alias's OWN declarations.
+                new SpecProbe("Lib(*xs) = {\n    public K = 99\n    0\n}\nUse(f) = {\n    A = { public K = 5\n    f }\n    A.K\n}\nUse(Lib)", "ok raw=5 n=1"),
+            ],
+            Explanation = "Passing a runtime alias to a callable passes its target: `Navigate(A)` reads `Lib`'s own member `K` (99). Written member access on the alias itself never follows it: `A.K` takes the ordinary fallback `K(A)` (7), and an alias that declares its own `K` reads that one.",
+        },
+        new()
+        {
+            Id = "runtime-alias-namespace-of-its-own-declarations",
+            Category = "access-boundaries",
+            Source = "Outer(n) = {\n    Lib = { public X = 10\n    n }\n    P = { open Lib\n    X }\n    P + Lib\n}\n\nOuter(1)",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "11",
+            ExpectedRaw = "11",
+            ExpectedEmittedCount = 1,
+            Explanation = "A structure whose one row names a parameter is still a namespace of its own declarations: `open Lib` imports `X`, and the bare `Lib` reads the parameter's value.",
+        },
+        new()
+        {
+            Id = "runtime-alias-failure-is-not-absence",
+            Category = "errors",
+            Source = "R = 5\nA = R.Algorithm\n\nA(9)",
+            Outcome = SpecOutcome.EvalError,
+            ExpectedErrorCategory = "type",
+            Explanation = "Calling `A = R.Algorithm` needs `R`'s call reference; `R = 5` is not one, so the call reports that type mismatch instead of treating `A` as an ordinary property.",
+        },
+        new()
+        {
+            Id = "runtime-alias-cycle",
+            Category = "errors",
+            Source = "Capture(meta op) = op\nA = R.Algorithm\nR = Capture(A(1))\n\nA(2)",
+            Outcome = SpecOutcome.EvalError,
+            ExpectedErrorCategory = "demandCycle",
+            Explanation = "`A` needs `R`'s callee, and `R` captures a call of `A` itself, so resolving `A` re-enters its own resolution: a demand cycle, never a loop.",
+        },
     ];
 }
