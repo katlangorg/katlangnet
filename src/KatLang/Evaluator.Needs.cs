@@ -1095,8 +1095,14 @@ public static partial class Evaluator
                         : LoopOptimizer.TryEvaluateWhile(step, state, ctx, values,
                             (admittedHead, slots) => WhileLoopGenericCounted(step, admittedHead, slots, ctx, values, stepName), out optimized);
                     if (taken) return optimized;
+                    // The planner refused the step and already recorded that ONE fallback under
+                    // its own reason (OPT-FB-1); it is not recorded again here.
                 }
-                ctx.LoopDiagnostics?.RecordOptimizedLoopFallback(asynchronous || !ctx.EnableLoopOptimization ? "loop optimization disabled" : shapeFallback ?? "loop plan unsupported step shape");
+                else
+                {
+                    // No plan was attempted: this loop entry owns the fallback.
+                    ctx.LoopDiagnostics?.RecordOptimizedLoopFallback(asynchronous || !ctx.EnableLoopOptimization ? "loop optimization disabled" : shapeFallback ?? "loop plan unsupported step shape");
+                }
                 prepared = PrepareUserLoopStep(step, ctx);
             }
             if (ctx.Budget.TryChargeStep() is { } limit) return limit;

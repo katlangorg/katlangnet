@@ -451,7 +451,9 @@ public class LoopPlanEligibilityFailClosedTests
         var plan = Assert.Single(optimizing.Loops.LoopPlans);
         Assert.False(plan.Optimized);
         Assert.Equal(UnsupportedShape, plan.FallbackReason);
-        Assert.DoesNotContain(PlanUnavailable, optimizing.Loops.FallbackReasons.Keys);
+        // The planner's refusal is the loop's ONE fallback (OPT-FB-1).
+        Assert.Equal(1, optimizing.Loops.OptimizedLoopFallbacks);
+        AssertOnlyReason(optimizing.Loops.FallbackReasons, UnsupportedShape);
     }
 
     // ── 5. Control: a zero-iteration repeat never decides eligibility (LOOP-05) ──────────────

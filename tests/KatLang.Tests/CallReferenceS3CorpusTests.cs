@@ -189,7 +189,7 @@ public class CallReferenceS3CorpusTests
         new("E4b", "Q5(f) = f(1)\nBad = Q5(5)\nUse(f) = Apply(f, 0)\nUse(Bad.Algorithm)", "err NotAnAlgorithm", "", "0/0", "0/0"),  // control
         new("E5", "Mk(k) = Capture(k(1))\nR0 = Mk(Bad.Algorithm)\nBad = min([])\nUse(p) = Apply(p.G, 0)\nUse(R0.Algorithm)", "err IllegalInEval", "", "0/0", "0/0"),  // transitive callee route
         new("E6", "Bad = min([])\nUse(p) = [1].map(p.G)\nUse(Bad.Algorithm)", "err IllegalInEval", "", "0/0", "0/0"),  // callback
-        new("E7", "Bad = min([])\nUse(p) = {\n  A = p.G\n  A(0).while\n}\nUse(Bad.Algorithm)", "err IllegalInEval", "", "0/2", "0/0"),  // loop step: the planner's and the loop's own fallback records
+        new("E7", "Bad = min([])\nUse(p) = {\n  A = p.G\n  A(0).while\n}\nUse(Bad.Algorithm)", "err IllegalInEval", "", "0/1", "0/0"),  // loop step: the planner's one fallback record (OPT-FB-1)
         new("E8", "Bad = if(aflag(), min([]), 0)\nUse(p) = Apply(p.G, 0)\nUse(Bad.Algorithm)", "err IllegalInEval", "", "0/0", "0/0"),  // async receiver
         new("E9", "Bad = if(stop(), Capture(Square(5)), 0)\nUse(p) = Apply(p.G, 0)\nUse(Bad.Algorithm), trace(1)", "cancelled", "", "0/0", "0/0", WithCancel: true),
         new("E10", $"F(0) = Capture(Inc(0))\nF(n) = {{ open '{ModuleUrl}'\n Capture(Inc2(n)) }}\nR = F(1)\nUse(p) = Apply(p.G, 5)\nUse(R.Algorithm), trace(99)", "err LoadFetchFailed", "", "", "", AsyncOnly: true, Module: "<fail>"),

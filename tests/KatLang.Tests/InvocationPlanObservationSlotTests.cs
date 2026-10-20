@@ -200,7 +200,7 @@ public partial class InvocationPlanTests
         { "Inc(x) = x + 1\nInc(0).repeat(1000)", "1000", 1, 1, 0 },
         { "Inc(x) = x + 1\nInc(0).repeat(0)", "0", 1, 0, 0 },
         { "Fib(a, b) = b, a + b\nFib(0, 1).repeat(10)", "S[55, 89]", 1, 1, 0 },
-        { "Z = false\nZ().while", "S[]", 1, 0, 2 },
+        { "Z = false\nZ().while", "S[]", 1, 0, 1 },
     };
 
     [Theory]

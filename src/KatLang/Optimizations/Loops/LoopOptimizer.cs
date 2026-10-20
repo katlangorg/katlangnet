@@ -125,7 +125,15 @@ internal static partial class LoopOptimizer
                 // would duplicate property evaluation, random draws, or errors.
                 if (outputR.Value.EmittedCount != 1)
                 {
-                    ctx.LoopDiagnostics?.RecordOptimizedLoopFallback("loop expression did not emit exactly one state value");
+                    // One iteration hands over once, even when several rows cannot fit the
+                    // frame. Retain every cause without counting that handover again.
+                    if (ctx.LoopDiagnostics is { } diagnostics)
+                    {
+                        if (requiresGenericContinuation)
+                            diagnostics.RecordFallbackReason("loop expression did not emit exactly one state value");
+                        else
+                            diagnostics.RecordOptimizedLoopFallback("loop expression did not emit exactly one state value");
+                    }
                     requiresGenericContinuation = true;
                 }
                 else if (!requiresGenericContinuation)
@@ -240,7 +248,14 @@ internal static partial class LoopOptimizer
                 // next state to the generic evaluator for remaining iterations.
                 if (outputR.Value.EmittedCount != 1)
                 {
-                    ctx.LoopDiagnostics?.RecordOptimizedLoopFallback("loop expression did not emit exactly one state value");
+                    // As in while, count this handover once and retain every row's reason.
+                    if (ctx.LoopDiagnostics is { } diagnostics)
+                    {
+                        if (requiresGenericContinuation)
+                            diagnostics.RecordFallbackReason("loop expression did not emit exactly one state value");
+                        else
+                            diagnostics.RecordOptimizedLoopFallback("loop expression did not emit exactly one state value");
+                    }
                     requiresGenericContinuation = true;
                 }
                 else if (!requiresGenericContinuation)
@@ -507,6 +522,13 @@ internal static partial class LoopOptimizer
         IReadOnlyList<string> stateNames)
         => Evaluator.ShadowInheritedParameterEnvironments(ctx, stateNames);
 
+    /// <summary>
+    /// Records a planner refusal: the ONE <see cref="LoopOptimizationDiagnostics.OptimizedLoopFallbacks"/>
+    /// count of the refused loop entry, under the planner's specific reason, plus its plan
+    /// diagnostic. Every <c>null</c> return of <see cref="TryBuildLoopPlanTemplate"/> records here, so
+    /// a <c>false</c> from <c>TryEvaluateWhile</c> or <c>TryEvaluateRepeat</c> is an
+    /// already-recorded fallback, which the loop entry does not record again (OPT-FB-1).
+    /// </summary>
     private static void RecordLoopPlanFallbackDiagnostic(
         LoopKind kind,
         Algorithm step,

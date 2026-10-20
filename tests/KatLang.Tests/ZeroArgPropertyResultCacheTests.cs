@@ -765,7 +765,7 @@ public class ZeroArgPropertyResultCacheTests
             while(Step(9, 0))
             """;
 
-        foreach (var (source, fallbacks) in new[] { (repeatSource, 1), (whileSource, 2) })
+        foreach (var (source, causes) in new[] { (repeatSource, 1), (whileSource, 2) })
         {
             var parsed = Parser.Parse(source);
             Assert.False(
@@ -783,7 +783,9 @@ public class ZeroArgPropertyResultCacheTests
             Assert.False(result.IsError, result.IsError ? result.Error.ToString() : null);
             Assert.Single(cache.Requests, static request => request.Binding.Name == "Tick");
             Assert.Equal(1, diagnostics.GetSnapshot().OptimizedLoopHits);
-            Assert.Equal(fallbacks, diagnostics.GetSnapshot().OptimizedLoopFallbacks);
+            // Several incompatible rows still cause only ONE handover (OPT-FB-1).
+            Assert.Equal(1, diagnostics.GetSnapshot().OptimizedLoopFallbacks);
+            Assert.Equal(causes, diagnostics.FallbackReasons["loop expression did not emit exactly one state value"]);
         }
     }
 
