@@ -234,9 +234,10 @@ internal static class FormulaLiftingRoles
     /// beyond the signature are VALUE roles, as is every argument of a Math member, a host operation
     /// and a clause family, so no role depends on how many arguments a call supplies. This static
     /// classification does not demand the argument: Model C rejects cardinality before ordinary
-    /// VALUE demand (NEED-05), superseding PV-05's earlier demand-before-arity rule. The loops invoke
-    /// their step (position 0) and take values in every
-    /// later position; <c>if</c>, <c>atoms</c> and <c>range</c> take values only.
+    /// VALUE demand (NEED-05), superseding PV-05's earlier demand-before-arity rule. A META position
+    /// (<see cref="BuiltinDescriptor.IsMetaPosition"/>: a loop's <c>step</c>) transports its supplied
+    /// cell — the CALLABLE role every META parameter has — and every other position is a value;
+    /// <c>if</c>, <c>atoms</c> and <c>range</c> take values only. Lean: <c>builtinLiftingSlotRole</c>.
     /// </summary>
     private static LiftingRole BuiltinSlotRole(BuiltinId builtin, int position)
     {
@@ -244,7 +245,7 @@ internal static class FormulaLiftingRoles
         if (descriptor.SequenceMetadata is { } metadata)
             return metadata.SlotRole(position) == SequenceBuiltinSlotRole.Callback ? LiftingRole.Callable : LiftingRole.Value;
 
-        return IsLoop(builtin) && position == 0 ? LiftingRole.Callable : LiftingRole.Value;
+        return descriptor.IsMetaPosition(position) ? LiftingRole.Callable : LiftingRole.Value;
     }
 
     private static bool EveryBuiltinSlotIsAValue(BuiltinId builtin)
@@ -253,8 +254,6 @@ internal static class FormulaLiftingRoles
         if (descriptor.SequenceMetadata is { } metadata)
             return metadata.SuffixArgs.All(static suffix => suffix.Kind != SequenceBuiltinSuffixArgKind.Algorithm);
 
-        return !IsLoop(builtin);
+        return !descriptor.DeclaresMetaParameter;
     }
-
-    private static bool IsLoop(BuiltinId builtin) => builtin is BuiltinId.@while or BuiltinId.@repeat;
 }

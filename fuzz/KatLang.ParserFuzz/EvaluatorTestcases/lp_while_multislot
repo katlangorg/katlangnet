@@ -1,2 +1,2 @@
 Step = a + 1, b + a, a < 4
-Step.while(0, 0)
+Step(0, 0).while

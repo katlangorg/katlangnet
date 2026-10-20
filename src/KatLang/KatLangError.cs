@@ -811,12 +811,12 @@ public sealed class KatLangError
 
     private static string FormatArityMismatch(EvalError.ArityMismatch arity)
         => arity.Signature is { } signature
-            ? CallableSignatureDiagnostics.FormatBadArity(signature, arity.Actual, arity.AcceptedArity)
+            ? CallableSignatureDiagnostics.FormatBadArity(signature, arity.Actual)
             : FormatGenericArityMismatch(arity.Expected, arity.Actual);
 
     private static string FormatArityMismatch(EvalError.ArityMismatch arity, string calleeDesc, bool preferPropertyName)
         => arity.Signature is { } signature
-            ? CallableSignatureDiagnostics.FormatBadArity(signature, arity.Actual, arity.AcceptedArity)
+            ? CallableSignatureDiagnostics.FormatBadArity(signature, arity.Actual)
             : FormatNamedArityMismatch(calleeDesc, arity.Expected, arity.Actual, preferPropertyName);
 
     /// <summary>
@@ -843,6 +843,11 @@ public sealed class KatLangError
         if (description.StartsWith("num(", StringComparison.Ordinal) && description.EndsWith(')'))
             return $"The number {description[4..^1]} is not callable.";
 
+        // A META parameter (user-defined or a builtin's, such as `while(meta step)`) whose supplied
+        // argument is not a call computation (CR-2): the binder refused it before evaluating anything.
+        if (string.Equals(description, Evaluator.MetaRefusalDescription, StringComparison.Ordinal))
+            return MetaRefusalMessage;
+
         // A dot expression in callee position that carries no callable identity (DOT-09, Q-18).
         // With its call frame the callee is named (TryFormatComputedDotCallee).
         if (string.Equals(description, Evaluator.ComputedDotCalleeDescription, StringComparison.Ordinal))
@@ -850,6 +855,10 @@ public sealed class KatLangError
 
         return $"Not an algorithm: {description}";
     }
+
+    /// <summary>The rendering of META's refusal (CR-2), shared by every META parameter.</summary>
+    internal const string MetaRefusalMessage
+        = "A meta parameter needs a supplied call computation: a written call whose callee is a name or a parameter, such as `Step(0)`. The argument supplied for it is not one (a value, a property read, a bare callable, an existing call reference, and a call through a dot or computed callee are not captured).";
 
     private const string ComputedDotCalleeReason
         = "a dot expression can be called only when it names a member that its receiver declares (such as `Lib.F`); otherwise it evaluates to a value.";

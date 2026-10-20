@@ -939,6 +939,8 @@ theorem EvalBody.applyBuiltinCountedSequence_pres (rec : EvalRec) (hrec : ∀ c,
     Preserves R (EvalBody.applyBuiltinCountedSequence rec b metadata args ctx env) := by
   unfold EvalBody.applyBuiltinCountedSequence; pres_tac
 
+-- META-S3-3 enlarged this body (the builtin META binding branch); the same tactic needs more time.
+set_option maxHeartbeats 1600000 in
 theorem EvalBody.applyBuiltinCounted_pres (rec : EvalRec) (hrec : ∀ c, Preserves R (rec c)) (b : Builtin) (args : List ResolvedArgumentAlgorithm) (ctx : EvalCtx) (env : ValEnv) :
     Preserves R (EvalBody.applyBuiltinCounted rec b args ctx env) := by
   unfold EvalBody.applyBuiltinCounted; pres_tac

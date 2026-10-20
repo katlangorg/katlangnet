@@ -366,7 +366,7 @@ public class MetamorphicPhase3FamilyTests
     [Fact]
     public void ZeroIterationRepeat_IsShortCircuitedRatherThanFallenBack()
     {
-        var observation = ObserveWithEvidence("MmStep = x + 1\nMmStep.repeat(0, 0)", enableOptimizations: true);
+        var observation = ObserveWithEvidence("MmStep = x + 1\nMmStep(0).repeat(0)", enableOptimizations: true);
         var evidence = Assert.IsType<MetamorphicOptimizerEvidence>(observation.OptimizerEvidence);
 
         Assert.True(evidence.Paths.HasFlag(MetamorphicOptimizerPath.LoopShortCircuited));
@@ -1125,7 +1125,7 @@ public class MetamorphicPhase3FamilyTests
         {
             $"{MetamorphicTables.ReceiverProperty} = range(1, 8)\n" +
             $"{MetamorphicTables.ReceiverProperty}.count, {MetamorphicTables.ReceiverProperty}.sum",
-            $"{MetamorphicTables.ReceiverProperty}Step = x + 1\n{MetamorphicTables.ReceiverProperty}Step.repeat(6, 0)",
+            $"{MetamorphicTables.ReceiverProperty}Step = x + 1\n{MetamorphicTables.ReceiverProperty}Step(0).repeat(6)",
             "'abcd', 'ef', 'ghij'",
         };
 

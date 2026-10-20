@@ -541,7 +541,7 @@ public class DottedReceiverEvaluationTests
     // Both spellings fuse over a direct `range` source.
     [InlineData("B(x) = x > 3\nrange(1, 6).filter(B).count", "B(x) = x > 3\ncount(filter(range(1, 6), B))", 1, 1, false)]
     // Both spellings run the planned loop.
-    [InlineData("Step(s) = s + 1\nStep.repeat(5, 0)", "Step(s) = s + 1\nrepeat(Step, 5, 0)", 0, 0, true)]
+    [InlineData("Step(s) = s + 1\nStep(0).repeat(5)", "Step(s) = s + 1\nrepeat(Step(0), 5)", 0, 0, true)]
     public void OptimizedDotCalls_ChargeExactlyTheirWrittenCall(
         string dotted, string written, long dottedFusions, long writtenFusions, bool planned)
     {
@@ -585,7 +585,7 @@ public class DottedReceiverEvaluationTests
     [Theory]
     [InlineData("range(1, 6).count")]
     [InlineData("'text'.sum")]
-    [InlineData("S = 5\nwhile(S*, 1)")]
+    [InlineData("S = 5\nRun(f, *s) = while(f(s*))\nRun(S*, 1)")]
     [InlineData("((), ()).reduce(map, ())")]
     public void ObservationPresence_IsSemanticallyAndOperationallyPassive(string source)
     {
@@ -605,7 +605,7 @@ public class DottedReceiverEvaluationTests
     {
         // Ready data has no CALLABLE identity: an invoking slot that receives it is
         // NotAnAlgorithm (Q-06) — the spread step here, `map`'s mapper slot below.
-        var loopStep = Observe("S = 5\nwhile(S*, 1)");
+        var loopStep = Observe("S = 5\nRun(f, *s) = while(f(s*))\nRun(S*, 1)");
         Assert.Equal("err:notAnAlgorithm", loopStep.Outcome);
 
         var suffixSlot = Observe("(5, 6).reduce(map, ())");
@@ -614,8 +614,13 @@ public class DottedReceiverEvaluationTests
         var success = Observe("((), ()).reduce(map, ())");
         Assert.Equal("ok:L[]", success.Outcome);
 
-        var notRequested = Observe("R = (1, 2)\nR.reduce(repeat, 0)");
+        // `while(meta step)` takes ONE argument: the reducer's two-argument call is its arity failure.
+        var notRequested = Observe("R = (1, 2)\nR.reduce(while, 0)");
         Assert.Equal("err:arity", notRequested.Outcome);
+
+        // `repeat(meta step, count)` accepts two, and its META parameter refuses the Ready accumulator.
+        var metaRefused = Observe("R = (1, 2)\nR.reduce(repeat, 0)");
+        Assert.Equal("err:notAnAlgorithm", metaRefused.Outcome);
 
         var neverInvoked = Observe("().reduce(map, 7)");
         Assert.Equal("ok:7", neverInvoked.Outcome);

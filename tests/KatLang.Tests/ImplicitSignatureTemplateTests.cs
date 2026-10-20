@@ -561,7 +561,7 @@ public class ImplicitSignatureTemplateTests
     public void PlannedLoop_OverATemplateOwner_MatchesGenericExecution()
     {
         var program = new Expr.AlgorithmExpr(SourceProvenance.ParseValid(
-            "G = x * 2\nK = G + 1\nStep(x) = K(x) + G(x) + x\nrepeat(Step, 3, 1)").Root);
+            "G = x * 2\nK = G + 1\nStep(x) = K(x) + G(x) + x\nrepeat(Step(1), 3)").Root);
         var diagnostics = new LoopOptimizationDiagnostics();
 
         var optimized = Evaluator.RunCountedObserved(program, enableOptimizations: true, loopDiagnostics: diagnostics).Result;

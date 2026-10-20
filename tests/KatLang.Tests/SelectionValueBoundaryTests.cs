@@ -271,7 +271,7 @@ public class SelectionValueBoundaryTests
 
         foreach (var (_, definition, selection) in SelectionForms)
         {
-            var source = string.Format(definition, selected) + "S(x, y) = " + selection + ", y + 1\nrepeat(S, 1, 0, 0)";
+            var source = string.Format(definition, selected) + "S(x, y) = " + selection + ", y + 1\nrepeat(S(0, 0), 1)";
             foreach (var optimize in new[] { false, true })
             {
                 var result = EvalFull(source, optimize);
@@ -365,7 +365,7 @@ public class SelectionValueBoundaryTests
             ("(first(A))*.Coll", "(last(A))*.Coll"),
             ("first(A)*.Coll", "last(A)*.Coll"),
             ("[first(A), 9]", "[last(A), 9]"),
-            ("S(x, y) = first(A), y + 1\nrepeat(S, 1, 0, 0)", "S(x, y) = last(A), y + 1\nrepeat(S, 1, 0, 0)"),
+            ("S(x, y) = first(A), y + 1\nrepeat(S(0, 0), 1)", "S(x, y) = last(A), y + 1\nrepeat(S(0, 0), 1)"),
             ("F(x) = first(A)\nmap((1), F)", "F(x) = last(A)\nmap((1), F)"),
             ("X = first(A)\nX.Coll", "X = last(A)\nX.Coll"),
         })
@@ -520,8 +520,8 @@ public class SelectionValueBoundaryTests
             var step = "S(x, k) = { T = " + selection + "\nif(k == 0, T, x), k + 1";
             foreach (var (tail, call) in new[]
             {
-                (" }\n", "repeat(S, 3, 0, 0)"),
-                (", k < 3 }\n", "while(S, 0, 0)"),
+                (" }\n", "repeat(S(0, 0), 3)"),
+                (", k < 3 }\n", "while(S(0, 0))"),
             })
             {
                 // The selected value stays ONE state slot through every iteration; the

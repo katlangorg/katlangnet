@@ -55,7 +55,7 @@ def collectingCall (body : List Expr) (arguments : OutputBundle) : Expr :=
 #guard (runResult (.algorithmExpr (alg [] [] [] [.call (.resolve "map") [.listLiteral [], bad]]))).toOption == some (.listValue [])
 #guard (runResult (.algorithmExpr (alg [] [] [] [.call (.resolve "filter") [.listLiteral [], bad]]))).toOption == some (.listValue [])
 #guard (runResult (.algorithmExpr (alg [] [] [] [.call (.resolve "reduce") [.listLiteral [], bad, .num 4]]))).toOption == some (.atom 4)
-#guard (runResult (.algorithmExpr (alg [] [] [] [.call (.resolve "repeat") [.algorithmExpr (alg ["x"] [] [] [.num 8]), .num 1, bad]]))).toOption == some (.atom 8)
+#guard (runResult (.algorithmExpr (algPrivate [] [] [("Eight", alg ["x"] [] [] [.num 8])] [.call (.resolve "repeat") [.call (.resolve "Eight") [bad], .num 1]]))).toOption == some (.atom 8)
 
 def sharesAddress : EvalM Bool := do
   let address <- supplyNeed (.num 7) EvalCtx.empty []

@@ -266,7 +266,7 @@ public class ReentrancyTests
     [Fact]
     public void SharedCacheInstance_SequentialRuns_NeverServeEntriesAcrossRuns()
     {
-        const string program = "Box = {P = {step(s) = s + 1\nrepeat(step, 500, 0)}\nQ = 1}\nBox.P, Box.Q";
+        const string program = "Box = {P = {step(s) = s + 1\nrepeat(step(0), 500)}\nQ = 1}\nBox.P, Box.Q";
         var root = ConcurrencyHarness.ParseRoot(program);
         var tiny = new EvaluationLimits { MaxSteps = 50 };
 
@@ -299,7 +299,7 @@ public class ReentrancyTests
     [Fact]
     public void SharedCacheInstance_NestedRunInsideOuter_IsStillRunIsolated()
     {
-        const string program = "Box = {P = {step(s) = s + 1\nrepeat(step, 500, 0)}\nQ = 1}\nBox.P, Box.Q";
+        const string program = "Box = {P = {step(s) = s + 1\nrepeat(step(0), 500)}\nQ = 1}\nBox.P, Box.Q";
         var root = ConcurrencyHarness.ParseRoot(program);
         var tiny = new EvaluationLimits { MaxSteps = 50 };
 

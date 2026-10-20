@@ -27,8 +27,9 @@ public class Q06Q27FinalHostileReviewTests
         {
             BuiltinId.@map or BuiltinId.@filter => [collection, slot],
             BuiltinId.@reduce => [collection, slot, new Expr.Num(0)],
-            BuiltinId.@repeat => [slot, new Expr.Num(empty ? 0 : 1), new Expr.Num(0)],
-            BuiltinId.@while => [slot, new Expr.Num(0)],
+            // META-S3-3: the loop captures the written call `f(0)`; `f` is the captured call's callee.
+            BuiltinId.@repeat => [new Expr.Call(slot, new OutputBundle([new Expr.Num(0)])), new Expr.Num(empty ? 0 : 1)],
+            BuiltinId.@while => [new Expr.Call(slot, new OutputBundle([new Expr.Num(0)]))],
             _ => throw new ArgumentOutOfRangeException(nameof(builtin)),
         };
         return new Expr.Call(new Expr.AlgorithmExpr(new Algorithm.Builtin(builtin)), new OutputBundle(args));
@@ -118,6 +119,8 @@ public class Q06Q27FinalHostileReviewTests
         foreach (var twin in new[] { false, true })
         {
             var ctx = Evaluator.EvalCtx.Empty.WithNeedEnv([("f", cell)]);
+            // This seam bypasses the preflight: record the J7 decision a META builtin needs.
+            ctx.Budget.DecideInvocationPlanRetention(programMayCapture: builtin is BuiltinId.@repeat or BuiltinId.@while);
             var result = twin ? await EvaluateTwin(Consumer(builtin, empty: true), ctx)
                 : Evaluator.EvalCounted(Consumer(builtin, empty: true), ctx, []);
             Assert.True(result.IsOk);
@@ -132,8 +135,8 @@ public class Q06Q27FinalHostileReviewTests
     [InlineData("map([1], 5)", "map([1], { 5 })")]
     [InlineData("filter([1], 5)", "filter([1], { true })")]
     [InlineData("reduce([1], 5, 0)", "reduce([1], { 5 }, 0)")]
-    [InlineData("repeat(5, 1, 0)", "repeat({ 5 }, 1, 0)")]
-    [InlineData("while(5, 0)", "while({ true }, 0)")]
+    [InlineData("repeat(5, 1)", "Step = { 5 }\nrepeat(Step(0), 1)")]
+    [InlineData("while(5)", "Step = { true }\nwhile(Step(0))")]
     [InlineData("count(filter(range(1, 3), 5))", "count(filter(range(1, 3), { true }))")]
     public async Task MissingCallablePaysNoInvocationOrIterationCharge(string rejected, string realCallable)
     {
@@ -149,7 +152,12 @@ public class Q06Q27FinalHostileReviewTests
             Assert.Equal(0, failed.Budget.ConsumedSteps);
             Assert.Equal(0, failed.Budget.PeakDepth);
             Assert.Equal(1, control.Budget.ConsumedSteps);
-            Assert.Equal(control.Budget.ConsumedExpressionCheckpoints, failed.Budget.ConsumedExpressionCheckpoints);
+            // META-S3-3: a value supplied for `meta step` is refused at binding, before the step callee is
+            // even projected, so it pays at most the control's checkpoints; every other slot pays the same.
+            if (rejected.StartsWith("repeat(", StringComparison.Ordinal) || rejected.StartsWith("while(", StringComparison.Ordinal))
+                Assert.True(failed.Budget.ConsumedExpressionCheckpoints <= control.Budget.ConsumedExpressionCheckpoints);
+            else
+                Assert.Equal(control.Budget.ConsumedExpressionCheckpoints, failed.Budget.ConsumedExpressionCheckpoints);
             Assert.Equal(control.Budget.MaterializedItems, failed.Budget.MaterializedItems);
         }
     }
@@ -202,7 +210,7 @@ public class Q06Q27FinalHostileReviewTests
     [InlineData("map([1], f)")]
     [InlineData("filter([1], f)")]
     [InlineData("reduce([1], f, 0)")]
-    [InlineData("repeat(f, 1, 0)")]
+    [InlineData("repeat(f(0), 1)")]
     [InlineData("count(filter(range(1, 3), f))")]
     public async Task ThreeForwardingLevelsKeepTheOriginalArgumentSpanAndNoInvocationFrame(string use)
     {
@@ -223,7 +231,7 @@ public class Q06Q27FinalHostileReviewTests
     [InlineData("F(0) = 0\nF(n) = n\nA = F\nB = A\nB(1, 2)", KatLangErrorCode.ArityMismatch)]
     [InlineData("F(0) = 0\nF(n) = n\nApp(f) = f(1, 2)\nApp(F)", KatLangErrorCode.ArityMismatch)]
     [InlineData("F(0, a) = a\nF(n, a) = n\nmap([2], F)", KatLangErrorCode.ArityMismatch)]
-    [InlineData("F(0, a) = a\nF(n, a) = n\nrepeat(F, 1, 0)", KatLangErrorCode.ArityMismatch)]
+    [InlineData("F(0, a) = a\nF(n, a) = n\nrepeat(F(0), 1)", KatLangErrorCode.ArityMismatch)]
     [InlineData("F((0, 1)) = 1\nF((1, 0)) = 2\nF([0, 1])", KatLangErrorCode.NoMatchingBranch)]
     [InlineData("F(0) = 0\nF(1) = 1\nF(2)", KatLangErrorCode.NoMatchingBranch)]
     public async Task FamilySupplyCardinalityPrecedesMatchingWhileValidSupplyCanFailToMatch(string source, KatLangErrorCode expected)

@@ -60,27 +60,27 @@ public class PlannedLoopAdmittedSnapshotTests
     {
         // The host call keeps the row generic, so the loop is partially planned and REBINDS its state
         // every iteration; the rewrite happens in iteration 1.
-        ["rebind repeat"] = new("Step(state) = state + mutate()\nrepeat(Step, 3, 0)", 1, "ok 6", HandsOver: false),
-        ["rebind while"] = new("Step(state) = state + mutate(), state < 2\nwhile(Step, 0)", 1, "ok 3", HandsOver: false),
+        ["rebind repeat"] = new("Step(state) = state + mutate()\nrepeat(Step(0), 3)", 1, "ok 6", HandsOver: false),
+        ["rebind while"] = new("Step(state) = state + mutate(), state < 2\nwhile(Step(0))", 1, "ok 3", HandsOver: false),
         // A block in the generic row reads the step's parameter as a CAPTURED parameter, found in the
         // need environment the rebinding builds.
-        ["captured repeat"] = new("Call(f) = f()\nStep(state) = Call({ state + mutate() })\nrepeat(Step, 3, 0)", 1, "ok 6", HandsOver: false),
-        ["captured while"] = new("Call(f) = f()\nStep(state) = Call({ state + mutate() }), state < 2\nwhile(Step, 0)", 1, "ok 3", HandsOver: false),
+        ["captured repeat"] = new("Call(f) = f()\nStep(state) = Call({ state + mutate() })\nrepeat(Step(0), 3)", 1, "ok 6", HandsOver: false),
+        ["captured while"] = new("Call(f) = f()\nStep(state) = Call({ state + mutate() }), state < 2\nwhile(Step(0))", 1, "ok 3", HandsOver: false),
         // The callee's own `state` shadows that environment, so the block's read of the STEP's `state`
         // goes through the activated head scope, whose parameter names the rebinding supplies.
-        ["shadowed repeat"] = new("Call(state) = state()\nStep(state) = Call({ state + mutate() })\nrepeat(Step, 3, 0)", 1, "ok 6", HandsOver: false),
-        ["shadowed while"] = new("Call(state) = state()\nStep(state) = Call({ state + mutate() }), state < 2\nwhile(Step, 0)", 1, "ok 3", HandsOver: false),
+        ["shadowed repeat"] = new("Call(state) = state()\nStep(state) = Call({ state + mutate() })\nrepeat(Step(0), 3)", 1, "ok 6", HandsOver: false),
+        ["shadowed while"] = new("Call(state) = state()\nStep(state) = Call({ state + mutate() }), state < 2\nwhile(Step(0))", 1, "ok 3", HandsOver: false),
         // Two state slots; the generic call row reads `a` through the rebinding.
-        ["two-slot repeat"] = new("Add(x, y) = x + y\nStep(a, b) = b, Add(a, mutate())\nrepeat(Step, 3, 1, 10)", 1, "ok S[12, 5]", HandsOver: false),
-        ["two-slot while"] = new("Add(x, y) = x + y\nStep(a, b) = b, Add(a, mutate()), a < 20\nwhile(Step, 1, 10)", 1, "ok S[22, 17]", HandsOver: false),
+        ["two-slot repeat"] = new("Add(x, y) = x + y\nStep(a, b) = b, Add(a, mutate())\nrepeat(Step(1, 10), 3)", 1, "ok S[12, 5]", HandsOver: false),
+        ["two-slot while"] = new("Add(x, y) = x + y\nStep(a, b) = b, Add(a, mutate()), a < 20\nwhile(Step(1, 10))", 1, "ok S[22, 17]", HandsOver: false),
         // A FULLY planned loop whose first initial-state value is pending: demanding it runs the host
         // call, and the next state read happens after the rewrite.
-        ["pending repeat"] = new("Step(a, b) = a + b, b\nrepeat(Step, 1, mutate(), 5)", 1, "ok S[6, 5]", HandsOver: false),
-        ["pending while"] = new("Step(a, b) = a + b, b, false\nwhile(Step, mutate(), 5)", 1, "ok S[1, 5]", HandsOver: false),
+        ["pending repeat"] = new("Step(a, b) = a + b, b\nrepeat(Step(mutate(), 5), 1)", 1, "ok S[6, 5]", HandsOver: false),
+        ["pending while"] = new("Step(a, b) = a + b, b, false\nwhile(Step(mutate(), 5))", 1, "ok S[1, 5]", HandsOver: false),
         // Iteration 2 rewrites the head and emits `()`, so the planned loop hands over in that very
         // iteration; the generic continuation runs the rest.
-        ["handover repeat"] = new("Empty = ()\nStep(s) = if(mutate() == 2, Empty, if(s == (), 10, s + 1))\nrepeat(Step, 4, 0)", 2, "ok 11", HandsOver: true),
-        ["handover while"] = new("Empty = ()\nStep(s) = if(mutate() == 2, Empty, if(s == (), 10, s + 1)), s != 11\nwhile(Step, 0)", 2, "ok 11", HandsOver: true),
+        ["handover repeat"] = new("Empty = ()\nStep(s) = if(mutate() == 2, Empty, if(s == (), 10, s + 1))\nrepeat(Step(0), 4)", 2, "ok 11", HandsOver: true),
+        ["handover while"] = new("Empty = ()\nStep(s) = if(mutate() == 2, Empty, if(s == (), 10, s + 1)), s != 11\nwhile(Step(0))", 2, "ok 11", HandsOver: true),
     };
 
     /// <summary>The head rewrites. <c>permute</c>, <c>shift</c> and <c>shrink</c> need two slots.</summary>

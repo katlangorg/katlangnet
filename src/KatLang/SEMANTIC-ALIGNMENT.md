@@ -35,6 +35,28 @@ laws, the dot funnel, Q-25, plan conservativity and the admitted public-run brid
 constructor required one line in the shared generated-artifact template (`LeanObsTemplate`) and the
 regenerated `SemanticExplorerCases.lean` / `LanguageSpecCases.lean` headers.
 
+META-S3-3 — `while(meta step)` / `repeat(meta step, count)` (2026-10-20; an INTENTIONAL breaking
+language change, owner decisions D1/D2/D6/D7, OD-1, RP-1; Lean and C# changed together). Lean is
+authoritative: `builtinSignature` (the ONE builtin signature, read by `builtinAcceptsArity` /
+`builtinMinimumArity` / `builtinArityDesc` — the loops are exact, 1 and 2 —, `builtinLiftingSignature`
+and `builtinLiftingSlotRole` via `builtinMetaAt`), `builtinDeclaresMeta`, and the META branch of
+`EvalBody.applyBuiltinCounted` (arity gate, then `bindNeedPatterns` over the signature, whose `.metaRef`
+arm is `NeedPlan.reference`), with the total helpers `metaLoopCapture` (adapter → `decodeCallRef` →
+`argumentViewCells` → `NeedPlan.calleeCell`) and `metaRepeatSetup` (RP-1: setup before count). C# twins:
+`BuiltinDescriptor.PlainSignature` / `DeclaresMetaParameter` / `IsMetaPosition`,
+`BuiltinRegistry.MetaBuiltinNames` (the J7 clause of `AstStructuralPreflight.MayCaptureCalls`),
+`Evaluator.ApplyMetaBuiltinCounted` (cached `NeedPattern`s, `BindAcceptedNeedPatterns`, sync and async
+from `ApplyBuiltinCountedResolved[Async]`), `EvalMetaLoop` (`PrepareArgumentView[Async]` → count →
+`InvocationPlan.CalleeCell`) and `EvalNeedLoop` over (step, remaining, state cells). The retired
+loop-only minimum-arity path (`minimumArity`, `ToolingPlainSignature` / `ToolingDotSignature`,
+`EvalError.ArityMismatch.AcceptedArity`, Lean `Builtin.isLoop`) is deleted. The META refusal keeps its
+structured payload (`NotAnAlgorithm "meta: not a supplied call computation"`, Lean `metaRefusal`); only
+its C# rendering is new and general (`KatLangError.MetaRefusalMessage`, every META parameter alike).
+`PropertyParameterInfo.IsMeta` is an additive public API (user and builtin META). Laws
+`KatLangArityLaws/MetaLoop.lean`, guards `MetaLoopGuards.lean`; C# `MetaLoopInterfaceTests`; report
+`experimental/features/meta-s3-3-implementation.md` (local). C#-only, as for S1–S3-2: J7, async
+resolution, cancellation, ownership checks and diagnostics wording.
+
 S6a — R4 / Q-66 repeated-name laws for nested and mixed heads (2026-10-20): Lean proofs and one
 behaviour-preserving Lean wiring change; no language, C# or observable-outcome change. WIRING: the
 evaluator's five binder call sites (`evalNeedUserSupply`, `evalNeedFamilySupply`, `runNeedStepWith`
@@ -1183,7 +1205,7 @@ An INTENTIONAL pre-release valid-source semantic change, classified under the "L
 
 Observable consequences (deliberate; every canonical case, explorer special, tutorial example, generator block and test that relied on the old positions was rewritten or moved under a closed list): builtin value slots (`if(true, Inc, 0)`, `count(K)`, `repeat(Step, 1, Inc)`, `reduce`'s initial), capture elements (`Apply((Inc, Inc))`), nested argument expressions (`Id(Math.Abs(A))`), spread operands, the `.string` receiver (`A(n) = A.string` is now the charged recursive call `A(n).string`), fallback receivers, family arguments (`Same(Inc, 1)`), and builtins, host operations, opened and dotted members and clause families as callees in any value position now lift in an inferring body — so a ROOT program that used them there needs the lifted parameters (`UnresolvedImplicitParams`) where it formerly failed at run time with the reference's own arity error, a closed list keeps that runtime demand, and Q-15's strict-value diagnostic now also meets builtins, families, opened members and nested Math calls under a closed list (`F(x) = Math.Abs(count)`, `F(x) = Id(Math.Abs(A))`) — but never beneath a lazy `if` branch (`FormulaLiftingRoles.IsLazySlot`, `ResolverWalkMemos.LazyDepth` with the `LazilyRewritten` replay for shared host nodes): the role table is blind to laziness, the diagnostic is not, so `K(y) = if(false, abs(A), 0)` still runs to `0`; a bare root `abs`/`Math.Random` is its own `ArityMismatch`. Lean (considered and edited): the definitions above with the laws `family_arguments_are_value_slots`, `strict_value_arguments_are_value_slots`, `user_and_dynamic_arguments_stay_neutral`, `builtin_slot_roles_follow_the_registry`, `unknown_builtin_position_is_a_value_only_when_every_slot_is`, the `family_*` naming laws, `builtin_reference_lifts_and_is_never_cacheable`, `nameable_family_reference_lifts` and the six `x02_*`/collector validity laws (`KatLangArityLaws.lean`), guards in `CoreTests/ForwardingBindings.lean` § 3 and `CoreTests/StructuralPatterns.lean` § 10, and the renamed `secondCollectingCaptureIsIllegalBeforeEvaluation`. C# tests: the new `UnifiedFormulaLiftingTests` and `InferredSignatureValidityTests`; the retargeted `LazySlotZeroArgumentDemandTests`, `NativeArgumentValueDemandTests`, `ClosedListStrictValueDiagnosticTests` (now `ClosedListValueDemandTests`), `CollectionBuiltinBindingTests`, `BuiltinArgumentRoleTests`, `EvaluatorSequenceCallbackTests`, `ImplicitForwardingByBindingNameTests`, `AutomaticForwardingBindingTests`, `RepeatedNameConstraintTests`, `ConditionalBranchElaborationTests`, `EvaluationLimitsTests` and neighbours; the new spec cases `formula-lifting-is-one-law-for-every-callable`, `formula-lifting-follows-the-consumers-role` and the parse-level `unliftable-clause-family`; thirteen `formulaLifting*` explorer specials; and the regenerated `LanguageSpecCases.lean` / `SemanticExplorerCases.lean`. Public API: `DiagnosticCode.UnliftableClauseFamily`, `KatLangErrorCode.UnliftableClauseFamily` (baseline regenerated). Full rules: `docs/design/language-rules/ownership-and-lookup.md` § The unified formula-lifting law, § Inferred signatures are held to the rules of written ones. V3.
 
-### X-04 / X-07 / X-09: sibling-cycle order, the inferred-parameter output rule, loop minimum arity (October 1 2026)
+### X-04 / X-07 / X-09: sibling-cycle order, the inferred-parameter output rule, loop minimum arity (October 1 2026; X-09's loop minimum superseded by META-S3-3, 2026-10-20: the loops are exact-arity META builtins and the `AcceptedArity` channel is gone)
 
 Three C# defects the post-lifting constitution re-baseline found still reproducing against a settled oracle, fixed without deciding any open semantics. V3.
 

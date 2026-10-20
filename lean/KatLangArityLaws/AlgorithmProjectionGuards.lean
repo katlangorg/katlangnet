@@ -84,16 +84,20 @@ def R : Expr := .resolve "R"
 -- Original argument forwarding: `R.Algorithm(R.Arguments*)` transports the ORIGINAL cell.
 #guard valueIs (run refR [algorithmCall R [.sequenceSpread (arguments R)]]) (.atom 25)
 #guard cellsOf (heap refR [algorithmCall R [.sequenceSpread (arguments R)], invoke R]) (.num 5) == 1
--- `R.Algorithm.while(R.Arguments*)` uses the ordinary condition-first `while`.
-#guard valueIs (run [("S", alg [] [] [] [callN "Capture" [callN "Step" [.num 0]]])]
-    [.dotCall (algorithm (.resolve "S")) "while" (some [.sequenceSpread (arguments (.resolve "S"))])]) (.atom 3)
--- A user META wrapper: `Loop(meta operation) = operation.Algorithm.while(operation.Arguments*)`.
-#guard valueIs (run [("Loop", algWithParameters [metaParam "operation"] [] []
-      [.dotCall (algorithm (.param "operation")) "while" (some [.sequenceSpread (arguments (.param "operation"))])])]
+-- `SA = S.Algorithm` / `SA(S.Arguments*).while` uses the ordinary condition-first `while`: the
+-- named runtime alias is the captured call's callee (META-S3-3, CR-2 needs a named callee).
+#guard valueIs (run [("S", alg [] [] [] [callN "Capture" [callN "Step" [.num 0]]]),
+      ("SA", .alias none [] [] (algorithm (.resolve "S")))]
+    [.dotCall (callN "SA" [.sequenceSpread (arguments (.resolve "S"))]) "while" none]) (.atom 3)
+-- A user META wrapper: `Loop(meta operation) = { A = operation.Algorithm; A(operation.Arguments*).while }`.
+#guard valueIs (run [("Loop", algWithParameters [metaParam "operation"] []
+      (propsPrivate [("A", .alias none [] [] (algorithm (.param "operation")))])
+      [.dotCall (callN "A" [.sequenceSpread (arguments (.param "operation"))]) "while" none])]
     [callN "Loop" [callN "Step" [.num 0]]]) (.atom 3)
--- `repeat`, argument order unchanged: `S.Algorithm.repeat(5, S.Arguments*)` over `Inc(0)`.
-#guard valueIs (run [("S", alg [] [] [] [callN "Capture" [callN "Inc" [.num 0]]])]
-    [.dotCall (algorithm (.resolve "S")) "repeat" (some [.num 5, .sequenceSpread (arguments (.resolve "S"))])]) (.atom 5)
+-- `repeat`, the captured arguments as the state: `SA(S.Arguments*).repeat(5)` over `Inc(0)`.
+#guard valueIs (run [("S", alg [] [] [] [callN "Capture" [callN "Inc" [.num 0]]]),
+      ("SA", .alias none [] [] (algorithm (.resolve "S")))]
+    [.dotCall (callN "SA" [.sequenceSpread (arguments (.resolve "S"))]) "repeat" (some [.num 5])]) (.atom 5)
 
 /-! ## P8 — fresh family dispatch; lexical ownership -/
 

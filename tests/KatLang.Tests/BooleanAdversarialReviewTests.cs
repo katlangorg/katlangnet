@@ -28,10 +28,10 @@ public class BooleanAdversarialReviewTests
         { "P = true\nF(x) = (P)\nrange(0, 2).filter(F).count", "3" },
         { "Apply(f, x) = f(x)\nF(x) = Apply({v >= 0}, x)\nrange(-2, 2).filter(F).count", "3" },
         { "F(x) = if(x, false, true)\nmap([true, false], F)", "L[false, true]" },
-        { "S(x) = if(x == true, 0, true)\nS.repeat(4, true)", "true" },
-        { "S(x) = if(x == true, 0, true), x != 0\nS.while(true)", "0" },
-        { "S(b) = not b\nS.while(false)", "true" },
-        { "S(x) = [true, false], false\nS.while(7)", "7" },
+        { "S(x) = if(x == true, 0, true)\nS(true).repeat(4)", "true" },
+        { "S(x) = if(x == true, 0, true), x != 0\nS(true).while", "0" },
+        { "S(b) = not b\nS(false).while", "true" },
+        { "S(x) = [true, false], false\nS(7).while", "7" },
         { "if({true}, false, 1 / 0)", "false" },
         { "F(x) = { true, ()* }\nrange(0, 2).filter(F).count", "3" },
         { "F(x) = ()*, false\nrange(0, 2).filter(F).count", "0" },
@@ -53,8 +53,8 @@ public class BooleanAdversarialReviewTests
         {
             data.Add($"if({shape}, 10, 20)", "if condition");
             data.Add($"F(x) = {shape}\nrange(0, 2).filter(F).count", "filter predicate result");
-            data.Add($"S(x) = x, {shape}\nS.while(0)", "while continuation flag");
-            data.Add($"S(x) = if({shape}, x, x)\nS.repeat(1, true)", "if condition");
+            data.Add($"S(x) = x, {shape}\nS(0).while", "while continuation flag");
+            data.Add($"S(x) = if({shape}, x, x)\nS(true).repeat(1)", "if condition");
         }
         return data;
     }
@@ -73,7 +73,7 @@ public class BooleanAdversarialReviewTests
         var data = new TheoryData<string>();
         foreach (var op in new[] { "<", "<=", ">", ">=", "==", "!=", "and", "or", "xor", "+", "-", "*", "/", "div", "mod", "^" })
         foreach (var values in new[] { ("true", "false"), ("true", "1"), ("1", "true"), ("1", "0") })
-            data.Add($"S(x, y) = x {op} y, y\nS.repeat(1, {values.Item1}, {values.Item2})");
+            data.Add($"S(x, y) = x {op} y, y\nS({values.Item1}, {values.Item2}).repeat(1)");
         return data;
     }
 
@@ -83,12 +83,12 @@ public class BooleanAdversarialReviewTests
         => await AssertPaths(source, requirePlan: true);
 
     [Theory]
-    [InlineData("S(b) = not b\nS.repeat(5, false)")]
-    [InlineData("S(x) = if(x == true, 0, true)\nS.repeat(4, true)")]
-    [InlineData("S(x) = if(x == true, 0, true), x != 0\nS.while(true)")]
-    [InlineData("S(x) = if(x, false, true)\nS.repeat(4, false)")]
-    [InlineData("S(x) = false and (1 / 0 == x)\nS.repeat(1, true)")]
-    [InlineData("S(x) = true or (1 / 0 == x)\nS.repeat(1, true)")]
+    [InlineData("S(b) = not b\nS(false).repeat(5)")]
+    [InlineData("S(x) = if(x == true, 0, true)\nS(true).repeat(4)")]
+    [InlineData("S(x) = if(x == true, 0, true), x != 0\nS(true).while")]
+    [InlineData("S(x) = if(x, false, true)\nS(false).repeat(4)")]
+    [InlineData("S(x) = false and (1 / 0 == x)\nS(true).repeat(1)")]
+    [InlineData("S(x) = true or (1 / 0 == x)\nS(true).repeat(1)")]
     public async Task BooleanPlans_ActuallyExecuteWithoutExpressionFallback(string source)
         => await AssertPaths(source, requirePlan: true);
 

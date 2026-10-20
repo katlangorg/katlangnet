@@ -46,8 +46,8 @@ public class ResultValueBoundaryTests
         { "Z=7\n" + ReturnF + "Apply0(f)=f()\nApply0(ReturnF(Z))", KatLangErrorCode.NotAnAlgorithm },
         { "V=[1,2,3]\nApply0(f)=f()\nApply0(V.sum)", KatLangErrorCode.NotAnAlgorithm },
         // A loop's final state is materialized as values.
-        { Inc + "Step(s)=s\nT(f)=repeat(Step,1,f)\nT(Inc)", KatLangErrorCode.ArityMismatch },
-        { Inc + "Step(s)=s\nT(f)=repeat(Step,0,f)\nT(Inc)", KatLangErrorCode.ArityMismatch },
+        { Inc + "Step(s)=s\nT(f)=repeat(Step(f), 1)\nT(Inc)", KatLangErrorCode.ArityMismatch },
+        { Inc + "Step(s)=s\nT(f)=repeat(Step(f), 0)\nT(Inc)", KatLangErrorCode.ArityMismatch },
         // A bare callable at the root is its own zero-supply demand.
         { Inc + "Inc", KatLangErrorCode.ArityMismatch },
         { Inc + "A=Inc\nA", KatLangErrorCode.ArityMismatch },

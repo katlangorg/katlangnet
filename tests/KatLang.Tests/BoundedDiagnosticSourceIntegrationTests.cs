@@ -9,7 +9,7 @@ namespace KatLang.Tests;
 /// message by <see cref="Evaluator.FormatResultForDiagnostic"/>.
 ///
 /// <para>The program that reaches this is three lines long. <c>Wrap = [x, x]</c> stores its one
-/// bound argument in both element slots, so <c>Wrap.repeat(n, 1)</c> is an ordinary in-budget loop
+/// bound argument in both element slots, so <c>Wrap(1).repeat(n)</c> is an ordinary in-budget loop
 /// producing n+1 distinct nodes reachable through 2^n paths; adding <c>A + 1</c> asks the evaluator
 /// to explain that a list is not a numeric operand. The unbounded renderer answered with
 /// <c>5*2^n - 4</c> UTF-16 units — 327,676 at depth 16, and roughly 5.5 x 10^12 at depth 40, which
@@ -26,7 +26,7 @@ public class BoundedDiagnosticSourceIntegrationTests
     private static string DagProgram(string body, int depth = 40)
         => $"""
             Wrap = [x, x]
-            A = Wrap.repeat({depth}, 1)
+            A = Wrap(1).repeat({depth})
             {body}
             """;
 

@@ -380,7 +380,7 @@ public class ParameterOwnershipTests
     [Fact]
     public void PlannedLoopStep_ReadsTheSelectedBinding_AndAgreesWithTheGenericStrategy()
     {
-        const string source = "v = 99\nOuter(v) = repeat({x + v}, 3, 0)\nOuter(7)";
+        const string source = "v = 99\nOuter(v) = {\n  S = {x + v}\n  S(0).repeat(3)\n}\nOuter(7)";
         var program = new Expr.AlgorithmExpr(SourceProvenance.ParseValid(source).Root);
 
         var diagnostics = new LoopOptimizationDiagnostics();

@@ -27,7 +27,7 @@ public class AsyncEvaluationApiTests
         "Math.Exp(1)\nexp(-1)",
         "F(x) = x * 2\nF(21)",
         "F(x) = x * 2\n[1, 2, 3].map(F)",
-        "Step(n, acc) = (n + 1, acc + n)\nrepeat(Step, 5, 0, 0)",
+        "Step(n, acc) = (n + 1, acc + n)\nrepeat(Step(0, 0), 5)",
         "Fib(0) = 0\nFib(1) = 1\nFib(n) = Fib(n - 1) + Fib(n - 2)\nFib(12)",
         "x, *rest = [1, 2, 3]\nrest",
         "1 / 0",
@@ -129,7 +129,7 @@ public class AsyncEvaluationApiTests
     {
         // program, maxDepth, maxSteps, maxCollectionItems
         { "Fib(0) = 0\nFib(1) = 1\nFib(n) = Fib(n - 1) + Fib(n - 2)\nFib(12)", 8, null, null },
-        { "Step(n) = (n + 1, 1)\nwhile(Step, 0)", null, 100, null },
+        { "Step(n) = (n + 1, 1)\nwhile(Step(0))", null, 100, null },
         { "range(1, 100)", null, null, 10 },
         { "A = 'aaaaaaaaaa'\nB = A + A\nB + B", null, null, null },
     };

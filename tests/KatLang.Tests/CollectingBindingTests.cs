@@ -651,10 +651,10 @@ public class CollectingBindingTests
     public void LoopStep_GroupedMiddleRemainsOneCollectedSequenceSlot()
     {
         const string source =
-            "Step(first, *middle, last) = middle\nStep.repeat(1, 10, (20, 30), 40)";
+            "Step(first, *middle, last) = middle\nStep(10, (20, 30), 40).repeat(1)";
         AssertCollects(source, List(Seq(Atom(20), Atom(30))));
         AssertCollects(
-            "Step(first, *middle, last) = middle.count\nStep.repeat(1, 10, (20, 30), 40)",
+            "Step(first, *middle, last) = middle.count\nStep(10, (20, 30), 40).repeat(1)",
             Atom(1));
     }
 
@@ -667,17 +667,17 @@ public class CollectingBindingTests
         // `middle == [...]` comparison pins the collected KIND (an exact
         // immutable list), not just the flattened atoms.
         AssertCollects(
-            "Step(n, *middle, last) = n + 10, (middle == [(20, 30)]), last, n < 2\nStep.while(1, (20, 30), 40)",
+            "Step(n, *middle, last) = n + 10, (middle == [(20, 30)]), last, n < 2\nStep(1, (20, 30), 40).while",
             Seq(Atom(11), Bool(true), Atom(40)));
 
         // Empty collected segment: `[]`, never `()` and never an arity error.
         AssertCollects(
-            "Step(n, *middle, last) = n + 10, (middle == []), last, n < 2\nStep.while(1, 40)",
+            "Step(n, *middle, last) = n + 10, (middle == []), last, n < 2\nStep(1, 40).while",
             Seq(Atom(11), Bool(true), Atom(40)));
 
         // Multi-item collected segment.
         AssertCollects(
-            "Step(n, *middle, last) = n + 10, (middle == [7, 8]), last, n < 2\nStep.while(1, 7, 8, 40)",
+            "Step(n, *middle, last) = n + 10, (middle == [7, 8]), last, n < 2\nStep(1, 7, 8, 40).while",
             Seq(Atom(11), Bool(true), Atom(40)));
     }
 

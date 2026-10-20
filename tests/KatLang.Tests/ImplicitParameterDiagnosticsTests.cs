@@ -843,7 +843,7 @@ public class ImplicitParameterDiagnosticsTests
             """
             M = { public Value = 42 }
             Step = state + M.Valeu
-            repeat(Step, 1, 0)
+            repeat(Step(0), 1)
             """);
 
         var loopArity = Assert.IsType<EvalError.ArityMismatch>(Innermost(error));

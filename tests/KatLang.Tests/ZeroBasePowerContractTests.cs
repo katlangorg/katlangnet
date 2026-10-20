@@ -52,8 +52,8 @@ public class ZeroBasePowerContractTests
     {
         // LOOP-06 (condition first): a Boolean `true` flag lets the round reach the power row.
         var source = useWhile
-            ? "S(x) = x ^ -0.5, true\nwhile(S, -0.0)"
-            : "S(x) = x ^ -0.5\nrepeat(S, 1, -0.0)";
+            ? "S(x) = x ^ -0.5, true\nwhile(S(-0.0))"
+            : "S(x) = x ^ -0.5\nrepeat(S(-0.0), 1)";
         var (generic, _) = RunCountedObserved(source, enableLoopOptimization: false);
         var (planned, loop) = RunCountedObserved(source, enableLoopOptimization: true);
         Assert.True(generic.IsError);

@@ -451,7 +451,7 @@ public class ImplicitForwardingByBindingNameTests
         { "F(0) = 0\nF(x) = @ + x\nF(#)", "7" },
         { "Outer(x) = {\n  Inner = [@][0]\n  Inner\n}\nOuter(#)", "7" },
         { "A = [@][0]\nB = A + 1\nC = [B, A]\nC(#)", "7" },
-        { "Step = @ + 1\nrepeat(Step, 2, #)", "0" },
+        { "Step = @ + 1\nrepeat(Step(#), 2)", "0" },
         { "Some = [@][0]\nmap([#, 2], Some)", "7" },
     };
 

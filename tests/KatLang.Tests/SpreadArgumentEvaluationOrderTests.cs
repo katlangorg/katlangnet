@@ -62,13 +62,13 @@ public class SpreadArgumentEvaluationOrderTests
         // Leftmost is P (division by zero).
         data.Add($"{FailingSlots}range(P*, Q*)", true);
         data.Add($"{FailingSlots}if(P*, Q*, 0)", true);
-        data.Add($"{FailingSlots}repeat(P*, Q*, 1)", true);
+        data.Add($"{FailingSlots}repeat(P*, Q*)", true);
         data.Add($"{FailingSlots}while(P*, Q*)", true);
 
         // Leftmost is Q (type mismatch).
         data.Add($"{FailingSlots}range(Q*, P*)", false);
         data.Add($"{FailingSlots}if(Q*, P*, 0)", false);
-        data.Add($"{FailingSlots}repeat(Q*, P*, 1)", false);
+        data.Add($"{FailingSlots}repeat(Q*, P*)", false);
         data.Add($"{FailingSlots}while(Q*, P*)", false);
 
         return data;

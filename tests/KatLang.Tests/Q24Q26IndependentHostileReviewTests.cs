@@ -14,8 +14,7 @@ public class Q24Q26IndependentHostileReviewTests
         var drop = new Algorithm.User(null,
             [new CaptureParameterPattern("xs", Kind: ParameterKind.Collecting)], [], [],
             [new Expr.SequenceSpread(new Expr.EmptySequence(0))]);
-        var loop = new Expr.Call(new Expr.Resolve("repeat"),
-            new OutputBundle([new Expr.AlgorithmExpr(drop), new Expr.Num(1), new Expr.Num(5)]));
+        var loop = new Expr.AlgorithmExpr(new Algorithm.User(null, [], [], [new Property("S", drop)], [new Expr.Call(new Expr.Resolve("repeat"), [new Expr.Call(new Expr.Resolve("S"), [new Expr.Num(5)]), new Expr.Num(1)])]));
         var (generic, _) = Evaluator.RunCountedObserved(loop, enableOptimizations: false);
         var planned = Evaluator.RunCounted(loop);
         var twin = await Evaluator.RunCountedAsync(loop,
@@ -24,12 +23,15 @@ public class Q24Q26IndependentHostileReviewTests
         {
             Assert.True(result.IsOk);
             Assert.Equal("S[]", SixRouteAgreement.Neutral(result.Value.Value));
-            Assert.Equal(0, result.Value.EmittedCount);
+            // META-S3-3: the captured `S(5)` names its callee, so the loop is written inside a root
+            // (a bare host call has no name scope); the root re-counts the one completed loop as ONE
+            // row (Q-26). Its internal zero-slot count is what the spread below observes.
+            Assert.Equal(1, result.Value.EmittedCount);
         }
-        var root = Assert.IsType<RunResult.Success>(KatLangEngine.Run("Drop(*xs) = { ()* }\nrepeat(Drop, 1, 5)"));
+        var root = Assert.IsType<RunResult.Success>(KatLangEngine.Run("Drop(*xs) = { ()* }\nrepeat(Drop(5), 1)"));
         Assert.Equal(1, root.EmittedCount);
         Assert.Single(root.OutputRows);
-        var spread = Assert.IsType<RunResult.Success>(KatLangEngine.Run("Drop(*xs) = { ()* }\nrepeat(Drop, 1, 5)*, 997"));
+        var spread = Assert.IsType<RunResult.Success>(KatLangEngine.Run("Drop(*xs) = { ()* }\nrepeat(Drop(5), 1)*, 997"));
         Assert.Equal(1, spread.EmittedCount);
         Assert.Equal(new Result.Atom(997), Assert.Single(spread.OutputRows));
     }
@@ -46,11 +48,11 @@ public class Q24Q26IndependentHostileReviewTests
     }
 
     [Theory]
-    [InlineData("Ignore(x) = 5\nrepeat(Ignore, 2, trace(9))", "5")]
-    [InlineData("Ignore(x) = 5\nrepeat(Ignore, 2, { 1 / 0 })", "5")]
-    [InlineData("Ignore(x) = 5\nRun(step, x) = repeat(step, 2, x)\nRun(Ignore, trace(9))", "5")]
-    [InlineData("Ignore(x) = 5\nOuter(v) = map([1, 2], { repeat(Ignore, 2, v) + 0 * x })\nOuter(trace(9))", "L[5, 5]")]
-    [InlineData("Drop(*xs) = { ()* }\nrepeat(Drop, 2, trace(9))", "S[]")]
+    [InlineData("Ignore(x) = 5\nrepeat(Ignore(trace(9)), 2)", "5")]
+    [InlineData("Ignore(x) = 5\nrepeat(Ignore({ 1 / 0 }), 2)", "5")]
+    [InlineData("Ignore(x) = 5\nRun(step, x) = repeat(step(x), 2)\nRun(Ignore, trace(9))", "5")]
+    [InlineData("Ignore(x) = 5\nOuter(v) = map([1, 2], { repeat(Ignore(v), 2) + 0 * x })\nOuter(trace(9))", "L[5, 5]")]
+    [InlineData("Drop(*xs) = { ()* }\nrepeat(Drop(trace(9)), 2)", "S[]")]
     public async Task CardinalityDoesNotDemandUnusedTransportedComputations(string source, string expected)
     {
         var result = await SixRouteAgreement.OnEveryRouteAsync(source);
@@ -62,15 +64,17 @@ public class Q24Q26IndependentHostileReviewTests
     [Fact]
     public async Task LoopProperty_UsesItsOwnCacheAndExplicitCallBypassesIt()
     {
-        var result = await SixRouteAgreement.OnEveryRouteAsync("Keep(x) = x\nP = repeat(Keep, 0, trace(9))\nP, P, P(), P*, 997");
+        var result = await SixRouteAgreement.OnEveryRouteAsync("Keep(x) = x\nP = repeat(Keep(trace(9)), 0)\nP, P, P(), P*, 997");
         Assert.Equal("ok", result.Kind);
         Assert.Equal("S[9, 9, 9, 9, 997]", result.Value);
         Assert.Equal(new[] { "trace(9)", "trace(9)" }, result.HostCalls);
     }
 
     [Theory]
-    [InlineData("repeat((), 1, 1)")]
-    [InlineData("repeat(5, 1, 1)")]
+    [InlineData("Run(f) = repeat(f(1), 1)\nRun(())")]
+    [InlineData("Run(f) = repeat(f(1), 1)\nRun(5)")]
+    [InlineData("repeat((), 1)")]
+    [InlineData("repeat(5, 1)")]
     public async Task Q23_NonCallableValueStepsStayRejected(string source)
     {
         // Q-23 made every CALLABLE an eligible step; a value still has no callable identity
@@ -81,10 +85,10 @@ public class Q24Q26IndependentHostileReviewTests
     }
 
     [Theory]
-    [InlineData("F(0) = 0\nF(n) = n + 1\nrepeat(F, 1, 0)", "0")]
-    [InlineData("F(0) = 0\nF(n) = n + 1\nA = F\nrepeat(A, 1, 0)", "0")]
-    [InlineData("repeat(count, 1, (1, 2))", "2")]
-    [InlineData("A = count\nrepeat(A, 1, (1, 2))", "2")]
+    [InlineData("F(0) = 0\nF(n) = n + 1\nrepeat(F(0), 1)", "0")]
+    [InlineData("F(0) = 0\nF(n) = n + 1\nA = F\nrepeat(A(0), 1)", "0")]
+    [InlineData("repeat(count((1, 2)), 1)", "2")]
+    [InlineData("A = count\nrepeat(A((1, 2)), 1)", "2")]
     public async Task Q23_FamilyAndBuiltinSteps_AreOrdinaryCallables(string source, string expected)
     {
         // These four rows pinned the rejection while Q-23 was open; the decision (October 2026) makes
@@ -94,10 +98,10 @@ public class Q24Q26IndependentHostileReviewTests
     }
 
     [Theory]
-    [InlineData("repeat(Math.Abs, 2, -3)", "3")]
-    [InlineData("repeat(trace, 2, 3)", "3")]
-    [InlineData("M = { public S(x) = x + 1 }\nrepeat(M.S, 2, 3)", "5")]
-    [InlineData("S(x) = x + 1\nA = S\nrepeat(A, 2, 3)", "5")]
+    [InlineData("A = Math.Abs\nA(-3).repeat(2)", "3")]
+    [InlineData("repeat(trace(3), 2)", "3")]
+    [InlineData("M = { public S(x) = x + 1 }\nS = M.S\nrepeat(S(3), 2)", "5")]
+    [InlineData("S(x) = x + 1\nA = S\nrepeat(A(3), 2)", "5")]
     public async Task Q23_AcceptedStepCategoriesStayAccepted(string source, string expected)
     {
         var result = await SixRouteAgreement.OnEveryRouteAsync(source);
@@ -107,23 +111,23 @@ public class Q24Q26IndependentHostileReviewTests
 
     public static TheoryData<string> SensitivePrograms() => new()
     {
-        "Fib(a, b) = b, a + b\nStep(p, n) = repeat(Fib, 2, trace(n), n), n + 1\nrepeat(Step, 4, 0, 0)",
-        "Fib(a, b) = b, a + b\nStep(a, b) = { repeat(Fib, 2, a, trace(b))* }\nrepeat(Step, 4, 0, 1)",
-        "S(x, x) = { (x + 1, x + 1)* }\nrepeat(S, 4, trace(1), 1)",
-        "S((a, b)) = (b, a + b)\nrepeat(S, 4, (trace(1), 2))",
-        "Drop(*xs) = { ()* }\nrepeat(Drop, 3, { trace(1) })",
-        "I(n) = n + 1, n < 3\nS(p, n) = while(I, trace(n)), n + 1\nrepeat(S, 3, 0, 0)",
-        "I(x) = x + 1\nS(n) = repeat(I, 2, trace(n)), n < 4\nwhile(S, 0)",
-        "I(n) = n + 1, n < 1\nS(n) = while(I, trace(n)), false\nwhile(S, 0)",
-        "I(x) = x + Math.RandomInt(1, 9)\nS(p, n) = repeat(I, 2, trace(n)), n + 1\nrepeat(S, 4, 0, 0)",
-        "Fib(a, b) = b, a + b\nmap([1, 2], { repeat(Fib, 2, trace(x), 1) })",
-        "Fib(a, b) = b, a + b\nreduce([1, 2], { repeat(Fib, 2, x, 1) }, (0, 1))",
-        "I(x) = [x, x]\nmap([1, 2], { repeat(I, 1, x) }).filter({ x.count == 2 })",
-        "I(s) = s + 'x'\nS(p, n) = repeat(I, 2, 'a'), n + 1\nrepeat(S, 3, '', 0)",
-        "I(s) = s + 'x'\nP = repeat(I, 2, 'a')\nP, P(), P*, 997",
+        "Fib(a, b) = b, a + b\nStep(p, n) = repeat(Fib(trace(n), n), 2), n + 1\nrepeat(Step(0, 0), 4)",
+        "Fib(a, b) = b, a + b\nStep(a, b) = { repeat(Fib(a, trace(b)), 2)* }\nrepeat(Step(0, 1), 4)",
+        "S(x, x) = { (x + 1, x + 1)* }\nrepeat(S(trace(1), 1), 4)",
+        "S((a, b)) = (b, a + b)\nrepeat(S((trace(1), 2)), 4)",
+        "Drop(*xs) = { ()* }\nrepeat(Drop({ trace(1) }), 3)",
+        "I(n) = n + 1, n < 3\nS(p, n) = while(I(trace(n))), n + 1\nrepeat(S(0, 0), 3)",
+        "I(x) = x + 1\nS(n) = repeat(I(trace(n)), 2), n < 4\nwhile(S(0))",
+        "I(n) = n + 1, n < 1\nS(n) = while(I(trace(n))), false\nwhile(S(0))",
+        "I(x) = x + Math.RandomInt(1, 9)\nS(p, n) = repeat(I(trace(n)), 2), n + 1\nrepeat(S(0, 0), 4)",
+        "Fib(a, b) = b, a + b\nmap([1, 2], { repeat(Fib(trace(x), 1), 2) })",
+        "Fib(a, b) = b, a + b\nreduce([1, 2], { repeat(Fib(x, 1), 2) }, (0, 1))",
+        "I(x) = [x, x]\nmap([1, 2], { repeat(I(x), 1) }).filter({ x.count == 2 })",
+        "I(s) = s + 'x'\nS(p, n) = repeat(I('a'), 2), n + 1\nrepeat(S('', 0), 3)",
+        "I(s) = s + 'x'\nP = repeat(I('a'), 2)\nP, P(), P*, 997",
         // The empty branch forces a later handover after several planned nested rows.
-        "I(a, b) = a, b\nS(p, n) = if(n < 2, repeat(I, 1, trace(n), n), ()), n + 1\nrepeat(S, 4, 0, 0)",
-        "I(a, b) = a, b\nS(p, n) = if(n < 2, repeat(I, 1, n, n), ()), 1 / (3 - n)\nrepeat(S, 5, 0, 0)",
+        "I(a, b) = a, b\nS(p, n) = if(n < 2, repeat(I(trace(n), n), 1), ()), n + 1\nrepeat(S(0, 0), 4)",
+        "I(a, b) = a, b\nS(p, n) = if(n < 2, repeat(I(n, n), 1), ()), 1 / (3 - n)\nrepeat(S(0, 0), 5)",
     };
 
     [Theory]
@@ -180,8 +184,7 @@ public class Q24Q26IndependentHostileReviewTests
         Expr initial = list
             ? new Expr.ListLiteral([new Expr.Num(20), new Expr.Num(30)])
             : new Expr.Capture(new OutputBundle([new Expr.Num(20), new Expr.Num(30)]));
-        var program = new Expr.Call(new Expr.Resolve("repeat"),
-            new OutputBundle([new Expr.AlgorithmExpr(step), new Expr.Num(1), initial]));
+        var program = new Expr.AlgorithmExpr(new Algorithm.User(null, [], [], [new Property("S", step)], [new Expr.Call(new Expr.Resolve("repeat"), [new Expr.Call(new Expr.Resolve("S"), [initial]), new Expr.Num(1)])]));
         var (generic, _) = Evaluator.RunCountedObserved(program, enableOptimizations: false);
         var planned = Evaluator.RunCounted(program);
         var twin = await Evaluator.RunCountedAsync(program, zeroArgPropertyResultCache: new RunScopedAsyncZeroArgPropertyResultCache());

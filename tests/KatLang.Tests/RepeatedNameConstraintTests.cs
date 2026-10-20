@@ -400,7 +400,7 @@ public class RepeatedNameConstraintTests
         { "higher-order-invocation", Inc + "P(x, x) = x, x(5)\nApply(f, a, b) = f(a, b)\nApply(P, Inc, 1)",
             IncValueDemand(Call("Apply") + Call("f")) },
         // Formerly `ok 2`: each step added the spliced value 1.
-        { "loop-step-body", Inc + "P(x, x) = x\nStep(s) = s + P(1, Inc)\nrepeat(Step, 2, 0)",
+        { "loop-step-body", Inc + "P(x, x) = x\nStep(s) = s + P(1, Inc)\nrepeat(Step(0), 2)",
             IncValueDemand(Call("repeat") + Call("P")) },
         // Formerly `ok 2` (fused filter -> count) and `ok L[1, 2]`.
         { "fused-filter-count-predicate", Inc + "P(x, x) = x\n[1, 2].filter({P(x, Inc) == x}).count",

@@ -190,7 +190,7 @@ def brSucceedsReadingNothing (out : List KatLang.Expr) (expected : Result) : Boo
 #guard brSucceedsReadingNothing [brCall "reduce" [.listLiteral [], resolve "A", num 0]] (.atom 0)
 #guard brSucceedsReadingNothing [.dotCall (.listLiteral []) "map" (some [resolve "A"])] (.listValue [])
 #guard brSucceedsReadingNothing [brCall "map" [.listLiteral [], .algorithmExpr brGoodAlg]] (.listValue [])
-#guard brSucceedsReadingNothing [brCall "repeat" [resolve "A", num 0, num 5]] (.atom 5)
+#guard brSucceedsReadingNothing [brCall "repeat" [.call (resolve "A") [num 5], num 0]] (.atom 5)
 
 -- An unused callback cannot fail and cannot recurse: `map([], L)` with `L = L + 1` and
 -- `D = filter(E, D)` terminate (formerly the eager attempt read `L` / `D` forever).

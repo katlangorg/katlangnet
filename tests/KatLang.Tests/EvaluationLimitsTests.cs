@@ -188,8 +188,8 @@ public class EvaluationLimitsTests
     [InlineData("A = [1, 2].take(A)\nA")]
     [InlineData("A = sum([A])\nA")]
     [InlineData("Add(a, b) = a + b\nA = [1, 2].reduce(Add, A)\nA")]
-    [InlineData("Step = x, false\nA = Step.while(A)\nA")]
-    [InlineData("Inc = x + 1\nA = Inc.repeat(A, 0)\nA")]
+    [InlineData("Step = x, false\nA = Step(A).while\nA")]
+    [InlineData("Inc = x + 1\nA = Inc(0).repeat(A)\nA")]
     [InlineData("A = B.count\nB = A.count\nA")]
     public void BuiltinArgumentRecursion_ReturnsAStructuredResourceError(string source)
     {
@@ -579,7 +579,7 @@ public class EvaluationLimitsTests
     [Fact]
     public void StepLimitError_PublicDisplayIsStable()
     {
-        var display = Run("Step = x, true\nStep.while(0)", Steps(25)).ToDisplayString();
+        var display = Run("Step = x, true\nStep(0).while", Steps(25)).ToDisplayString();
         Assert.Contains("Evaluation step limit of 25 was exceeded", display);
     }
 
@@ -771,12 +771,12 @@ public class EvaluationLimitsTests
     [Fact]
     public void InfiniteWhile_TerminatesWithStepLimitError()
         => Assert.IsType<EvalError.EvaluationStepLimitExceeded>(
-            ErrorOf("Step = x, true\nStep.while(0)", Steps(500)));
+            ErrorOf("Step = x, true\nStep(0).while", Steps(500)));
 
     [Fact]
     public void FiniteWhile_WithSufficientBudget_Succeeds()
     {
-        var result = Eval("Step = x - 1, x > 1\nStep.while(200)", Steps(10_000));
+        var result = Eval("Step = x - 1, x > 1\nStep(200).while", Steps(10_000));
         Assert.False(result.IsError);
     }
 
@@ -785,14 +785,14 @@ public class EvaluationLimitsTests
     {
         // 100 iterations plus the `Inc` step invocations must not fit in 100 steps,
         // and comfortably fit in 10_000.
-        Assert.IsType<EvalError.EvaluationStepLimitExceeded>(ErrorOf("Inc = x + 1\nInc.repeat(100, 0)", Steps(50)));
-        Assert.False(Eval("Inc = x + 1\nInc.repeat(100, 0)", Steps(10_000)).IsError);
+        Assert.IsType<EvalError.EvaluationStepLimitExceeded>(ErrorOf("Inc = x + 1\nInc(0).repeat(100)", Steps(50)));
+        Assert.False(Eval("Inc = x + 1\nInc(0).repeat(100)", Steps(10_000)).IsError);
     }
 
     [Fact]
     public void LoopWithCallback_IsCharged()
         => Assert.IsType<EvalError.EvaluationStepLimitExceeded>(
-            ErrorOf("G(y) = y + 1\nInc = G(x)\nInc.repeat(1000, 0)", Steps(200)));
+            ErrorOf("G(y) = y + 1\nInc = G(x)\nInc(0).repeat(1000)", Steps(200)));
 
     [Fact]
     public void CollectionCallbackPipeline_IsCharged()
@@ -826,7 +826,7 @@ public class EvaluationLimitsTests
     {
         // The documented default is depth-bounded but work-unbounded, so existing
         // long-running programs keep working with no options supplied.
-        var result = KatLangEngine.Run("Inc = x + 1\nInc.repeat(50000, 0)");
+        var result = KatLangEngine.Run("Inc = x + 1\nInc(0).repeat(50000)");
         Assert.Equal("50000", Assert.IsType<RunResult.Success>(result).ToDisplayString());
     }
 
@@ -888,7 +888,7 @@ public class EvaluationLimitsTests
         // the planned loop, which charges exactly the generic loop's steps, so the charged
         // count cannot depend on whether an optimization applied to this shape. (Until
         // 2026-10-04 a configured step budget forced the generic paths instead — PV-07.)
-        var program = new Expr.AlgorithmExpr(SourceProvenance.ParseValid("Inc = x + 1\nInc.repeat(500, 0)").Root);
+        var program = new Expr.AlgorithmExpr(SourceProvenance.ParseValid("Inc = x + 1\nInc(0).repeat(500)").Root);
         var loops = new LoopOptimizationDiagnostics();
         var (budgeted, budgetedBudget) = Evaluator.RunCountedObserved(program, Steps(100_000), loopDiagnostics: loops);
         var (generic, genericBudget) = Evaluator.RunCountedObserved(program, enableOptimizations: false);
@@ -902,8 +902,8 @@ public class EvaluationLimitsTests
     }
 
     [Theory]
-    [InlineData("Inc = x + 1\nInc.repeat(200, 0)")]
-    [InlineData("Step = x - 1, x > 1\nStep.while(200)")]
+    [InlineData("Inc = x + 1\nInc(0).repeat(200)")]
+    [InlineData("Step = x - 1, x > 1\nStep(200).while")]
     [InlineData("F(x) = x * 2\nrange(1, 50).map(F).sum")]
     [InlineData("range(1, 50).filter(IsBig).count\nIsBig(x) = x > 10")]
     public void BudgetedAndUnbudgetedRuns_ProduceTheSameValue(string source)

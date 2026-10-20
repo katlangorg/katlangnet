@@ -202,35 +202,26 @@ internal sealed class BuiltinDescriptor
 {
     public BuiltinDescriptor(
         BuiltinId id,
-        int? fixedArity,
+        int fixedArity,
         IReadOnlyList<CallableParameter> plainParameters,
         IReadOnlyList<CallableParameter> dotParameters,
-        SequenceBuiltinMetadata? sequenceMetadata = null,
-        IReadOnlyList<CallableParameter>? toolingPlainParameters = null,
-        IReadOnlyList<CallableParameter>? toolingDotParameters = null,
-        int? minimumArity = null)
+        SequenceBuiltinMetadata? sequenceMetadata = null)
     {
-        if ((fixedArity is null) == (minimumArity is null))
-            throw new ArgumentException($"Builtin '{id}' must declare exactly one of a fixed arity and a minimum arity.");
-
         Id = id;
         Name = id.ToString();
         FixedArity = fixedArity;
-        ArityFacts = fixedArity is { } exact
-            ? new CallableArityFacts(exact, exact, HasTopLevelCollecting: false, TopLevelCollectingCount: 0)
-            : new CallableArityFacts(minimumArity!.Value, MaxTopLevelArgumentCount: null, HasTopLevelCollecting: true, TopLevelCollectingCount: 1);
         PlainParameters = plainParameters;
         DotParameters = dotParameters;
         PlainParameterNames = plainParameters.Select(static parameter => parameter.DisplayName).ToArray();
         DotParameterNames = dotParameters.Select(static parameter => parameter.DisplayName).ToArray();
         PlainSignature = new CallableSignature(Name, plainParameters);
         DotSignature = new CallableSignature(Name, dotParameters);
-        ToolingPlainSignature = new CallableSignature(Name, toolingPlainParameters ?? plainParameters);
-        ToolingDotSignature = new CallableSignature(Name, toolingDotParameters ?? dotParameters);
         PlainSignature.ValidateOrThrow();
         DotSignature.ValidateOrThrow();
-        ToolingPlainSignature.ValidateOrThrow();
-        ToolingDotSignature.ValidateOrThrow();
+        ArityFacts = CallableSignatureDiagnostics.GetArityFacts(PlainSignature);
+        if (ArityFacts.MinTopLevelArgumentCount != fixedArity || ArityFacts.MaxTopLevelArgumentCount != fixedArity)
+            throw new ArgumentException($"Builtin '{id}' declares arity {fixedArity}, but its signature `{PlainSignature.DisplayText}` accepts a different count.");
+        DeclaresMetaParameter = plainParameters.Any(static parameter => parameter.Kind == ParameterKind.Meta);
         SequenceMetadata = sequenceMetadata;
     }
 
@@ -238,31 +229,43 @@ internal sealed class BuiltinDescriptor
 
     public string Name { get; }
 
-    /// <summary>The exact argument count of a fixed-arity builtin; null for the variadic-state loops.</summary>
-    public int? FixedArity { get; }
+    /// <summary>The exact argument count: every builtin is a fixed-arity callable (the loops
+    /// <c>while(meta step)</c> and <c>repeat(meta step, count)</c> too, META-S3-3).</summary>
+    public int FixedArity { get; }
 
     /// <summary>
-    /// The argument counts a call of this builtin ACCEPTS: the ONE arity contract
-    /// <see cref="AcceptsArity"/>, <see cref="DescribeArity"/> and the builtin arity error read (Lean
-    /// <c>builtinAcceptsArity</c> / <c>builtinArityDesc</c>). Exactly <see cref="FixedArity"/> for a
-    /// fixed-arity builtin; for the variadic-state loops <c>while</c> and <c>repeat</c>, AT LEAST their
-    /// runtime parameters — the step (and the count) and one initial state — any further argument
-    /// being more initial state, a contract their runtime signature's patterns cannot spell.
+    /// The argument counts a call of this builtin ACCEPTS, read from its ONE signature
+    /// (<see cref="PlainSignature"/>): the arity contract <see cref="AcceptsArity"/>,
+    /// <see cref="DescribeArity"/> and the builtin arity error read (Lean <c>builtinAcceptsArity</c> /
+    /// <c>builtinArityDesc</c>), exactly <see cref="FixedArity"/>.
     /// </summary>
     public CallableArityFacts ArityFacts { get; }
 
+    /// <summary>
+    /// THE ONE AUTHORITATIVE SIGNATURE of the builtin (Lean <c>builtinSignature</c>): its runtime
+    /// arity, the parameter kinds its META binding reads, formula lifting and forwarding, the
+    /// lifting roles of its META positions, semantic-model metadata, signature help and arity
+    /// diagnostics all read it, so a builtin's editor surface is its runtime surface.
+    /// </summary>
     public CallableSignature PlainSignature { get; }
 
+    /// <summary>The dot-call surface, derived by ordinary receiver injection: the plain signature
+    /// without its leading parameter (the receiver).</summary>
     public CallableSignature DotSignature { get; }
 
     /// <summary>
-    /// Editor-facing callable surfaces. These normally equal the runtime
-    /// signatures; loop builtins use a collecting <c>*init</c> display while
-    /// retaining their stricter runtime minimum of one initial-state slot.
+    /// Whether the signature declares a META parameter (META-S3-3; Lean
+    /// <c>builtinDeclaresMeta</c>): a call binds its supplied cells through THE ONE inspecting binder
+    /// over <see cref="PlainSignature"/> before its native arm runs
+    /// (<c>Evaluator.ApplyMetaBuiltinCounted</c>), and a program that may reach it retains invocation
+    /// plans (J7, <see cref="BuiltinRegistry.MetaBuiltinNames"/>).
     /// </summary>
-    public CallableSignature ToolingPlainSignature { get; }
+    public bool DeclaresMetaParameter { get; }
 
-    public CallableSignature ToolingDotSignature { get; }
+    /// <summary>Whether supplied position <paramref name="position"/> is a META parameter (Lean
+    /// <c>builtinMetaAt</c>), the CALLABLE lifting role every META parameter has.</summary>
+    public bool IsMetaPosition(int position)
+        => position < PlainParameters.Count && PlainParameters[position].Kind == ParameterKind.Meta;
 
     public IReadOnlyList<CallableParameter> PlainParameters { get; }
 
@@ -274,10 +277,9 @@ internal sealed class BuiltinDescriptor
 
     public SequenceBuiltinMetadata? SequenceMetadata { get; }
 
-    // Collection builtins are ordinary fixed-arity callables (`count(collection)` is exactly 1,
-    // `take(collection, count)` is exactly 2), the same rule as every other fixed builtin; only the
-    // variadic-state loops accept a minimum.
-    public bool AcceptsArity(int count) => ArityFacts.AcceptsArgumentCount(count);
+    // Every builtin is an ordinary fixed-arity callable (`count(collection)` is exactly 1,
+    // `take(collection, count)` is exactly 2, `repeat(meta step, count)` is exactly 2).
+    public bool AcceptsArity(int count) => count == FixedArity;
 
     public string DescribeArity()
     {
@@ -301,9 +303,6 @@ internal sealed class BuiltinDescriptor
 
     public CallableSignature GetSignature(BuiltinCallStyle callStyle)
         => callStyle == BuiltinCallStyle.Dot ? DotSignature : PlainSignature;
-
-    public CallableSignature GetToolingSignature(BuiltinCallStyle callStyle)
-        => callStyle == BuiltinCallStyle.Dot ? ToolingDotSignature : ToolingPlainSignature;
 }
 
 internal enum MathAlgorithmFlavor
@@ -376,8 +375,8 @@ internal static class BuiltinRegistry
     private static readonly BuiltinDescriptor[] Builtins =
     [
         Fixed(BuiltinId.@if, "condition", "whenTrue", "whenFalse"),
-        Loop(BuiltinId.@while, "step"),
-        Loop(BuiltinId.@repeat, "step", "count"),
+        Loop(BuiltinId.@while),
+        Loop(BuiltinId.@repeat, "count"),
         Fixed(BuiltinId.@atoms, "value"),
         Fixed(BuiltinId.@range, "start", "stop"),
         Sequence(BuiltinId.@filter, FilterSequenceMetadata),
@@ -548,6 +547,19 @@ internal static class BuiltinRegistry
     public static IReadOnlyList<string> BuiltinNames { get; } = Builtins
         .Select(static descriptor => descriptor.Name)
         .ToArray();
+
+    /// <summary>
+    /// The prelude names of the builtins whose signature declares a META parameter
+    /// (<see cref="BuiltinDescriptor.DeclaresMetaParameter"/>: <c>while</c>, <c>repeat</c>), derived
+    /// from the registry. The J7 plan-retention gate reads it
+    /// (<see cref="AstStructuralPreflight.MayCaptureCalls"/>): every route by which admitted source can
+    /// reach such a builtin spells its name (a plain call, a dot edge, an alias target, a higher-order
+    /// argument) or carries its host-built node.
+    /// </summary>
+    internal static FrozenSet<string> MetaBuiltinNames { get; } = Builtins
+        .Where(static descriptor => descriptor.DeclaresMetaParameter)
+        .Select(static descriptor => descriptor.Name)
+        .ToFrozenSet(StringComparer.Ordinal);
 
     /// <summary>
     /// The predefined lower-camel-case prelude aliases, one per Math member, in
@@ -802,31 +814,17 @@ internal static class BuiltinRegistry
         return new(id, parameterNames.Length, parameters, parameters.Skip(1).ToArray());
     }
 
-    // A variadic-state loop: its fixed parameters and ONE initial state are required, and every
-    // further argument is more initial state, so its arity is a MINIMUM (the runtime signature spells
-    // the required parameters; the tooling signature shows the state as the collecting `*init`).
-    private static BuiltinDescriptor Loop(BuiltinId id, params string[] fixedParameterNames)
+    // A loop (META-S3-3): an ordinary fixed-arity builtin whose FIRST parameter is a genuine META
+    // parameter — `while(meta step)`, `repeat(meta step, count)`. The captured call's own supply is the
+    // loop's initial state, so the signature has no state parameter; dot syntax binds the receiver to
+    // `step` by the ordinary receiver-injection rule (`step.while`, `step.repeat(count)`).
+    private static BuiltinDescriptor Loop(BuiltinId id, params string[] valueParameterNames)
     {
-        var runtimeParameters = fixedParameterNames
-            .Append("initialState")
+        var parameters = valueParameterNames
             .Select(static name => new CallableParameter(name, Source: CallableParameterSource.Builtin))
+            .Prepend(new CallableParameter("step", ParameterKind.Meta, CallableParameterSource.Builtin))
             .ToArray();
-        var toolingParameters = fixedParameterNames
-            .Select(static name => new CallableParameter(name, Source: CallableParameterSource.Builtin))
-            .Append(new CallableParameter(
-                "init",
-                ParameterKind.Collecting,
-                CallableParameterSource.Builtin))
-            .ToArray();
-
-        return new(
-            id,
-            fixedArity: null,
-            runtimeParameters,
-            runtimeParameters.Skip(1).ToArray(),
-            toolingPlainParameters: toolingParameters,
-            toolingDotParameters: toolingParameters.Skip(1).ToArray(),
-            minimumArity: runtimeParameters.Length);
+        return new(id, parameters.Length, parameters, parameters.Skip(1).ToArray());
     }
 
     private static BuiltinDescriptor Sequence(BuiltinId id, SequenceBuiltinMetadata metadata)

@@ -287,7 +287,7 @@ public class AutomaticForwardingBindingTests
         { "reduce-callback-reuses-ancestor", "A = y + 1\nF(y) = reduce([1, 2], { e + acc + A }, 0)\nF(3)", "ok 11" },
         { "filter-callback-reuses-ancestor", "A = y + 1\nF(y) = filter([1, 5, 9], { e > A })\nF(3)", "ok L[5, 9]" },
         { "map-callback-reuses-ancestor", "A = n + 1\nF(n) = map([1, 2], { A + e })\nF(10)", "ok L[12, 13]" },
-        { "loop-step-reuses-ancestor", "A = y + 1\nF(y) = repeat({ s + A }, 2, 0)\nF(3)", "ok 8" },
+        { "loop-step-reuses-ancestor", "A = y + 1\nF(y) = {\n    S = { s + A }\n    S(0).repeat(2)\n}\nF(3)", "ok 8" },
         // Only the unbound half is forwarded; H's closed list then supplies it (formerly ArityMismatch).
         { "partial-reuse-forwards-only-the-unbound-name", "A = y + z\nF(y) = {\n    G = A * 10\n    H(z) = G\n    H(100)\n}\nF(3)", "ok 1030" },
         { "partial-reuse-inside-a-branch", "A = y + 1\nF(0) = 0\nF(y) = {\n    G(q) = A + q\n    G(1)\n}\nF(3)", "ok 5" },

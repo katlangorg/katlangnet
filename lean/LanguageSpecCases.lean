@@ -14,11 +14,11 @@ This is bounded differential validation over the Lean-guarded partition,
 not a formal verification of the evaluators.
 
 Partition (machine-checked by the `specCaseIds.length` guard below):
-- specification surface cases: 474
+- specification surface cases: 481
 - excluded parse-level cases (Lean has no surface parser): 71
 - excluded C#-only cases (each carries an explicit reason in the corpus): 22
-- Lean-guarded cases: 381
-- probe observations (C#-only by design): 1392
+- Lean-guarded cases: 388
+- probe observations (C#-only by design): 1411
 - internal-node cases live in the semantic-explorer corpus, not here: see
   lean/SemanticExplorerCases.lean
 
@@ -238,9 +238,9 @@ def case_need_family_shares_failed_attempt_value : Expr :=
   .algorithmExpr (alg [] [] [privateProp "F" (.conditional none [] [⟨.sequenceValue [.litInt 0, .bind "x"], (alg [] [] [] [.num 7])⟩, ⟨.sequenceValue [.bind "n", .litInt 0], (alg [] [] [] [.param "n"])⟩])] [(.call (.resolve "F") [.num 3, .num 0])])
 #guard obs case_need_family_shares_failed_attempt_value == "ok raw=3 n=1"
 
--- need-first-loop-step-can-ignore-initial [variadic-calls]: Step(x) = 7 \n repeat(Step, 1, 1 / 0)
+-- need-first-loop-step-can-ignore-initial [variadic-calls]: Step(x) = 7 \n repeat(Step(1 / 0), 1)
 def case_need_first_loop_step_can_ignore_initial : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "Step" (alg ["x"] [] [] [.num 7])] [(.call (.resolve "repeat") [.resolve "Step", .num 1, (.binary .div (.num 1) (.num 0))])])
+  .algorithmExpr (alg [] [] [privateProp "Step" (alg ["x"] [] [] [.num 7])] [(.call (.resolve "repeat") [(.call (.resolve "Step") [(.binary .div (.num 1) (.num 0))]), .num 1])])
 #guard obs case_need_first_loop_step_can_ignore_initial == "ok raw=7 n=1"
 
 -- need-closed-demand-can-remain-unused [variadic-calls]: A(q) = q + 1 \n Keep(x) = 7 \n F(x) = Keep(count(A)) \n F(0)
@@ -330,9 +330,9 @@ def case_boolean_predicates_and_patterns : Expr :=
   .algorithmExpr (alg [] [] [privateProp "F" (.conditional none [] [⟨.litBool true, (alg [] [] [] [.boolLiteral false])⟩, ⟨.litBool false, (alg [] [] [] [.boolLiteral true])⟩])] [(.call (.resolve "F") [.boolLiteral true]), (.call (.resolve "F") [.boolLiteral false]), (.dotCall (.call (.resolve "range") [(.unary .minus (.num 2)), .num 2]) "filter" (some [(.algorithmExpr (alg ["x"] [] [] [(.comparison (.param "x") [{ op := .ge, operand := (.num 0) }])]))])), (.dotCall (.dotCall (.call (.resolve "range") [(.unary .minus (.num 2)), .num 2]) "map" (some [(.algorithmExpr (alg ["x"] [] [] [(.comparison (.param "x") [{ op := .ge, operand := (.num 0) }])]))])) "contains" (some [.boolLiteral true])), (.call (.resolve "if") [(.unary .not (.comparison (.num 1) [{ op := .eq, operand := (.num 1) }])), .num 10, .num 20])])
 #guard obs case_boolean_predicates_and_patterns == "ok raw=S[false, true, L[0, 1, 2], true, 20] n=5"
 
--- boolean-loop-state-transition [conditionals]: S(x) = if(x == true, 0, true), x != 0 \n S.while(true)
+-- boolean-loop-state-transition [conditionals]: S(x) = if(x == true, 0, true), x != 0 \n S(true).while
 def case_boolean_loop_state_transition : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "S" (alg ["x"] [] [] [(.call (.resolve "if") [(.comparison (.param "x") [{ op := .eq, operand := (.boolLiteral true) }]), .num 0, .boolLiteral true]), (.comparison (.param "x") [{ op := .ne, operand := (.num 0) }])])] [(.dotCall (.resolve "S") "while" (some [.boolLiteral true]))])
+  .algorithmExpr (alg [] [] [privateProp "S" (alg ["x"] [] [] [(.call (.resolve "if") [(.comparison (.param "x") [{ op := .eq, operand := (.boolLiteral true) }]), .num 0, .boolLiteral true]), (.comparison (.param "x") [{ op := .ne, operand := (.num 0) }])])] [(.dotCall (.call (.resolve "S") [.boolLiteral true]) "while" none)])
 #guard obs case_boolean_loop_state_transition == "ok raw=0 n=1"
 
 -- boolean-predicate-rejects-visible-empty [conditionals]: F(x) = true, () \n range(0, 2).filter(F).count
@@ -450,85 +450,120 @@ def case_call_value_boundary : Expr :=
   .algorithmExpr (alg [] [] [privateProp "F" (algWithParameters [{ name := "a", kind := .collecting }] [] [] [.param "a"])] [(.call (.resolve "F") [.num 5, .num 9]), (.sequenceSpread (.call (.resolve "F") [.num 5, .num 9])), .num 997])
 #guard obs case_call_value_boundary == "ok raw=S[L[5, 9], 5, 9, 997] n=4"
 
--- loop-result-is-one-value [item-supply-vs-value]: Fibonacci(a, b) = b, a + b \n Fibonacci.repeat(10, 0, 1) \n Fibonacci.repeat(10, 0, 1)*, \n Fibonacci.repeat(10, 0, 1), 7
+-- loop-result-is-one-value [item-supply-vs-value]: Fibonacci(a, b) = b, a + b \n Fibonacci(0, 1).repeat(10) \n Fibonacci(0, 1).repeat(10)*, \n Fibonacci(0, 1).repeat(10), 7
 def case_loop_result_is_one_value : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "Fibonacci" (alg ["a", "b"] [] [] [.param "b", (.binary .add (.param "a") (.param "b"))])] [(.dotCall (.resolve "Fibonacci") "repeat" (some [.num 10, .num 0, .num 1])), (.sequenceSpread (.dotCall (.resolve "Fibonacci") "repeat" (some [.num 10, .num 0, .num 1]))), (.dotCall (.resolve "Fibonacci") "repeat" (some [.num 10, .num 0, .num 1])), .num 7])
+  .algorithmExpr (alg [] [] [privateProp "Fibonacci" (alg ["a", "b"] [] [] [.param "b", (.binary .add (.param "a") (.param "b"))])] [(.dotCall (.call (.resolve "Fibonacci") [.num 0, .num 1]) "repeat" (some [.num 10])), (.sequenceSpread (.dotCall (.call (.resolve "Fibonacci") [.num 0, .num 1]) "repeat" (some [.num 10]))), (.dotCall (.call (.resolve "Fibonacci") [.num 0, .num 1]) "repeat" (some [.num 10])), .num 7])
 #guard obs case_loop_result_is_one_value == "ok raw=S[S[55, 89], 55, 89, S[55, 89], 7] n=5"
 
--- loop-step-patterns-only-bind [item-supply-vs-value]: Dup(x, x) = { (x + 1, x + 1)* } \n Same(x, x) = { x + 1, x + 1 } \n Step((a, b)) = (b, a + b) \n Dup.repeat(2, 1, 1), Same.repeat(2, 1, 1), Step.repeat(3, (0, 1))
+-- loop-step-patterns-only-bind [item-supply-vs-value]: Dup(x, x) = { (x + 1, x + 1)* } \n Same(x, x) = { x + 1, x + 1 } \n Step((a, b)) = (b, a + b) \n Dup(1, 1).repeat(2), Same(1, 1).repeat(2), Step((0, 1)).repeat(3)
 def case_loop_step_patterns_only_bind : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "Dup" (alg ["x", "x"] [] [] [(.sequenceSpread (.capture [(.binary .add (.param "x") (.num 1)), (.binary .add (.param "x") (.num 1))]))]), privateProp "Same" (alg ["x", "x"] [] [] [(.binary .add (.param "x") (.num 1)), (.binary .add (.param "x") (.num 1))]), privateProp "Step" (algWithParameterPatterns [.sequenceValue [.capture { name := "a" }, .capture { name := "b" }]] [] [] [(.capture [.param "b", (.binary .add (.param "a") (.param "b"))])])] [(.dotCall (.resolve "Dup") "repeat" (some [.num 2, .num 1, .num 1])), (.dotCall (.resolve "Same") "repeat" (some [.num 2, .num 1, .num 1])), (.dotCall (.resolve "Step") "repeat" (some [.num 3, (.capture [.num 0, .num 1])]))])
+  .algorithmExpr (alg [] [] [privateProp "Dup" (alg ["x", "x"] [] [] [(.sequenceSpread (.capture [(.binary .add (.param "x") (.num 1)), (.binary .add (.param "x") (.num 1))]))]), privateProp "Same" (alg ["x", "x"] [] [] [(.binary .add (.param "x") (.num 1)), (.binary .add (.param "x") (.num 1))]), privateProp "Step" (algWithParameterPatterns [.sequenceValue [.capture { name := "a" }, .capture { name := "b" }]] [] [] [(.capture [.param "b", (.binary .add (.param "a") (.param "b"))])])] [(.dotCall (.call (.resolve "Dup") [.num 1, .num 1]) "repeat" (some [.num 2])), (.dotCall (.call (.resolve "Same") [.num 1, .num 1]) "repeat" (some [.num 2])), (.dotCall (.call (.resolve "Step") [(.capture [.num 0, .num 1])]) "repeat" (some [.num 3]))])
 #guard obs case_loop_step_patterns_only_bind == "ok raw=S[S[3, 3], S[3, 3], S[2, 3]] n=3"
 
--- loop-nested-step-row-is-one-slot [item-supply-vs-value]: Fibonacci(a, b) = b, a + b \n Two(a, b) = { repeat(Fibonacci, 2, a, b)* } \n Two.repeat(3, 0, 1)
+-- loop-nested-step-row-is-one-slot [item-supply-vs-value]: Fibonacci(a, b) = b, a + b \n Two(a, b) = { repeat(Fibonacci(a, b), 2)* } \n Two(0, 1).repeat(3)
 def case_loop_nested_step_row_is_one_slot : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "Fibonacci" (alg ["a", "b"] [] [] [.param "b", (.binary .add (.param "a") (.param "b"))]), privateProp "Two" (alg ["a", "b"] [] [] [(.sequenceSpread (.call (.resolve "repeat") [.resolve "Fibonacci", .num 2, .param "a", .param "b"]))])] [(.dotCall (.resolve "Two") "repeat" (some [.num 3, .num 0, .num 1]))])
+  .algorithmExpr (alg [] [] [privateProp "Fibonacci" (alg ["a", "b"] [] [] [.param "b", (.binary .add (.param "a") (.param "b"))]), privateProp "Two" (alg ["a", "b"] [] [] [(.sequenceSpread (.call (.resolve "repeat") [(.call (.resolve "Fibonacci") [.param "a", .param "b"]), .num 2]))])] [(.dotCall (.call (.resolve "Two") [.num 0, .num 1]) "repeat" (some [.num 3]))])
 #guard obs case_loop_nested_step_row_is_one_slot == "ok raw=S[8, 13] n=1"
 
--- loop-step-clause-family [conditionals]: Step(0) = 0 \n Step(n) = n - 1 \n repeat(Step, 2, 3), Step.repeat(5, 3), Step(Step(3))
+-- loop-step-clause-family [conditionals]: Step(0) = 0 \n Step(n) = n - 1 \n repeat(Step(3), 2), Step(3).repeat(5), Step(Step(3))
 def case_loop_step_clause_family : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "Step" (.conditional none [] [⟨.litInt 0, (alg [] [] [] [.num 0])⟩, ⟨.bind "n", (alg [] [] [] [(.binary .sub (.param "n") (.num 1))])⟩])] [(.call (.resolve "repeat") [.resolve "Step", .num 2, .num 3]), (.dotCall (.resolve "Step") "repeat" (some [.num 5, .num 3])), (.call (.resolve "Step") [(.call (.resolve "Step") [.num 3])])])
+  .algorithmExpr (alg [] [] [privateProp "Step" (.conditional none [] [⟨.litInt 0, (alg [] [] [] [.num 0])⟩, ⟨.bind "n", (alg [] [] [] [(.binary .sub (.param "n") (.num 1))])⟩])] [(.call (.resolve "repeat") [(.call (.resolve "Step") [.num 3]), .num 2]), (.dotCall (.call (.resolve "Step") [.num 3]) "repeat" (some [.num 5])), (.call (.resolve "Step") [(.call (.resolve "Step") [.num 3])])])
 #guard obs case_loop_step_clause_family == "ok raw=S[1, 0, 1] n=3"
 
--- loop-step-family-while [conditionals]: Countdown(0) = 0, false \n Countdown(n) = n - 1, true \n Countdown.while(3)
+-- loop-step-family-while [conditionals]: Countdown(0) = 0, false \n Countdown(n) = n - 1, true \n Countdown(3).while
 def case_loop_step_family_while : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "Countdown" (.conditional none [] [⟨.litInt 0, (alg [] [] [] [.num 0, .boolLiteral false])⟩, ⟨.bind "n", (alg [] [] [] [(.binary .sub (.param "n") (.num 1)), .boolLiteral true])⟩])] [(.dotCall (.resolve "Countdown") "while" (some [.num 3]))])
+  .algorithmExpr (alg [] [] [privateProp "Countdown" (.conditional none [] [⟨.litInt 0, (alg [] [] [] [.num 0, .boolLiteral false])⟩, ⟨.bind "n", (alg [] [] [] [(.binary .sub (.param "n") (.num 1)), .boolLiteral true])⟩])] [(.dotCall (.call (.resolve "Countdown") [.num 3]) "while" none)])
 #guard obs case_loop_step_family_while == "ok raw=0 n=1"
 
--- loop-while-condition-first-skips-transition [conditionals]: Step(x) = 10 / (x - 1), x > 1 \n Step.while(1)
+-- loop-while-condition-first-skips-transition [conditionals]: Step(x) = 10 / (x - 1), x > 1 \n Step(1).while
 def case_loop_while_condition_first_skips_transition : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "Step" (alg ["x"] [] [] [(.binary .div (.num 10) (.binary .sub (.param "x") (.num 1))), (.comparison (.param "x") [{ op := .gt, operand := (.num 1) }])])] [(.dotCall (.resolve "Step") "while" (some [.num 1]))])
+  .algorithmExpr (alg [] [] [privateProp "Step" (alg ["x"] [] [] [(.binary .div (.num 10) (.binary .sub (.param "x") (.num 1))), (.comparison (.param "x") [{ op := .gt, operand := (.num 1) }])])] [(.dotCall (.call (.resolve "Step") [.num 1]) "while" none)])
 #guard obs case_loop_while_condition_first_skips_transition == "ok raw=1 n=1"
 
--- loop-while-condition-first-trailing-empty-spread [conditionals]: Tail(n) = () \n Step(n) = n + 1, n < 2, Tail(n)* \n Step.while(0)
+-- loop-while-condition-first-trailing-empty-spread [conditionals]: Tail(n) = () \n Step(n) = n + 1, n < 2, Tail(n)* \n Step(0).while
 def case_loop_while_condition_first_trailing_empty_spread : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "Tail" (alg ["n"] [] [] [(.emptySequence 0)]), privateProp "Step" (alg ["n"] [] [] [(.binary .add (.param "n") (.num 1)), (.comparison (.param "n") [{ op := .lt, operand := (.num 2) }]), (.sequenceSpread (.call (.resolve "Tail") [.param "n"]))])] [(.dotCall (.resolve "Step") "while" (some [.num 0]))])
+  .algorithmExpr (alg [] [] [privateProp "Tail" (alg ["n"] [] [] [(.emptySequence 0)]), privateProp "Step" (alg ["n"] [] [] [(.binary .add (.param "n") (.num 1)), (.comparison (.param "n") [{ op := .lt, operand := (.num 2) }]), (.sequenceSpread (.call (.resolve "Tail") [.param "n"]))])] [(.dotCall (.call (.resolve "Step") [.num 0]) "while" none)])
 #guard obs case_loop_while_condition_first_trailing_empty_spread == "ok raw=2 n=1"
 
--- loop-while-condition-first-row-granular [conditionals]: Pack(x) = x - 1, x > 1 \n Step(x) = Pack(x)* \n Step.while(3)
+-- loop-while-condition-first-row-granular [conditionals]: Pack(x) = x - 1, x > 1 \n Step(x) = Pack(x)* \n Step(3).while
 def case_loop_while_condition_first_row_granular : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "Pack" (alg ["x"] [] [] [(.binary .sub (.param "x") (.num 1)), (.comparison (.param "x") [{ op := .gt, operand := (.num 1) }])]), privateProp "Step" (alg ["x"] [] [] [(.sequenceSpread (.call (.resolve "Pack") [.param "x"]))])] [(.dotCall (.resolve "Step") "while" (some [.num 3]))])
+  .algorithmExpr (alg [] [] [privateProp "Pack" (alg ["x"] [] [] [(.binary .sub (.param "x") (.num 1)), (.comparison (.param "x") [{ op := .gt, operand := (.num 1) }])]), privateProp "Step" (alg ["x"] [] [] [(.sequenceSpread (.call (.resolve "Pack") [.param "x"]))])] [(.dotCall (.call (.resolve "Step") [.num 3]) "while" none)])
 #guard obs case_loop_while_condition_first_row_granular == "ok raw=1 n=1"
 
--- loop-step-family-multi-slot [conditionals]: Gcd(a, 0) = a, 0, false \n Gcd(a, b) = b, a mod b, true \n Gcd.while(48, 18)[0]
+-- loop-step-family-multi-slot [conditionals]: Gcd(a, 0) = a, 0, false \n Gcd(a, b) = b, a mod b, true \n Gcd(48, 18).while[0]
 def case_loop_step_family_multi_slot : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "Gcd" (.conditional none [] [⟨.sequenceValue [.bind "a", .litInt 0], (alg [] [] [] [.param "a", .num 0, .boolLiteral false])⟩, ⟨.sequenceValue [.bind "a", .bind "b"], (alg [] [] [] [.param "b", (.binary .mod (.param "a") (.param "b")), .boolLiteral true])⟩])] [(.index (.dotCall (.resolve "Gcd") "while" (some [.num 48, .num 18])) [.num 0])])
+  .algorithmExpr (alg [] [] [privateProp "Gcd" (.conditional none [] [⟨.sequenceValue [.bind "a", .litInt 0], (alg [] [] [] [.param "a", .num 0, .boolLiteral false])⟩, ⟨.sequenceValue [.bind "a", .bind "b"], (alg [] [] [] [.param "b", (.binary .mod (.param "a") (.param "b")), .boolLiteral true])⟩])] [(.index (.dotCall (.call (.resolve "Gcd") [.num 48, .num 18]) "while" none) [.num 0])])
 #guard obs case_loop_step_family_multi_slot == "ok raw=6 n=1"
 
--- loop-step-builtin-is-one-row-wrapper [collection-builtins]: C(c) = count(c) \n repeat(count, 1, [1, 2]) == repeat(C, 1, [1, 2]), count.repeat(1, [1, 2])
+-- loop-step-builtin-is-one-row-wrapper [collection-builtins]: C(c) = count(c) \n repeat(count([1, 2]), 1) == repeat(C([1, 2]), 1), count([1, 2]).repeat(1)
 def case_loop_step_builtin_is_one_row_wrapper : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "C" (alg ["c"] [] [] [(.call (.resolve "count") [.param "c"])])] [(.comparison (.call (.resolve "repeat") [.resolve "count", .num 1, (.listLiteral [.num 1, .num 2])]) [{ op := .eq, operand := (.call (.resolve "repeat") [.resolve "C", .num 1, (.listLiteral [.num 1, .num 2])]) }]), (.dotCall (.resolve "count") "repeat" (some [.num 1, (.listLiteral [.num 1, .num 2])]))])
+  .algorithmExpr (alg [] [] [privateProp "C" (alg ["c"] [] [] [(.call (.resolve "count") [.param "c"])])] [(.comparison (.call (.resolve "repeat") [(.call (.resolve "count") [(.listLiteral [.num 1, .num 2])]), .num 1]) [{ op := .eq, operand := (.call (.resolve "repeat") [(.call (.resolve "C") [(.listLiteral [.num 1, .num 2])]), .num 1]) }]), (.dotCall (.call (.resolve "count") [(.listLiteral [.num 1, .num 2])]) "repeat" (some [.num 1]))])
 #guard obs case_loop_step_builtin_is_one_row_wrapper == "ok raw=S[true, 2] n=2"
 
--- loop-step-builtin-empty-result-is-one-slot [empty-visible-vs-spread]: while(first, [()])
+-- loop-step-builtin-empty-result-is-one-slot [empty-visible-vs-spread]: while(first([()]))
 def case_loop_step_builtin_empty_result_is_one_slot : Expr :=
-  .algorithmExpr (alg [] [] [] [(.call (.resolve "while") [.resolve "first", (.listLiteral [(.emptySequence 0)])])])
+  .algorithmExpr (alg [] [] [] [(.call (.resolve "while") [(.call (.resolve "first") [(.listLiteral [(.emptySequence 0)])])])])
 #guard obs case_loop_step_builtin_empty_result_is_one_slot == "err type"
 
--- loop-step-alias-follows-target [name-resolution]: Step(0) = 0 \n Step(n) = n - 1 \n A = Step \n C = count \n repeat(A, 2, 3), repeat(C, 1, [1, 2])
+-- loop-step-alias-follows-target [name-resolution]: Step(0) = 0 \n Step(n) = n - 1 \n A = Step \n C = count \n repeat(A(3), 2), repeat(C([1, 2]), 1)
 def case_loop_step_alias_follows_target : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "A" (.alias none [] [] (.resolve "Step")), privateProp "C" (.alias none [] [] (.resolve "count")), privateProp "Step" (.conditional none [] [⟨.litInt 0, (alg [] [] [] [.num 0])⟩, ⟨.bind "n", (alg [] [] [] [(.binary .sub (.param "n") (.num 1))])⟩])] [(.call (.resolve "repeat") [.resolve "A", .num 2, .num 3]), (.call (.resolve "repeat") [.resolve "C", .num 1, (.listLiteral [.num 1, .num 2])])])
+  .algorithmExpr (alg [] [] [privateProp "A" (.alias none [] [] (.resolve "Step")), privateProp "C" (.alias none [] [] (.resolve "count")), privateProp "Step" (.conditional none [] [⟨.litInt 0, (alg [] [] [] [.num 0])⟩, ⟨.bind "n", (alg [] [] [] [(.binary .sub (.param "n") (.num 1))])⟩])] [(.call (.resolve "repeat") [(.call (.resolve "A") [.num 3]), .num 2]), (.call (.resolve "repeat") [(.call (.resolve "C") [(.listLiteral [.num 1, .num 2])]), .num 1])])
 #guard obs case_loop_step_alias_follows_target == "ok raw=S[1, 2] n=2"
 
--- loop-step-value-is-rejected [errors]: repeat(5, 1, 0)
+-- loop-step-value-is-rejected [errors]: Run(f) = repeat(f(0), 1) \n Run(5)
 def case_loop_step_value_is_rejected : Expr :=
-  .algorithmExpr (alg [] [] [] [(.call (.resolve "repeat") [.num 5, .num 1, .num 0])])
+  .algorithmExpr (alg [] [] [privateProp "Run" (alg ["f"] [] [] [(.call (.resolve "repeat") [(.call (.param "f") [.num 0]), .num 1])])] [(.call (.resolve "Run") [.num 5])])
 #guard obs case_loop_step_value_is_rejected == "err notAnAlgorithm"
 
--- loop-step-zero-iterations-never-projects [item-supply-vs-value]: repeat(5, 0, 1), repeat(1 / 0, 0, 5)
+-- loop-step-zero-iterations-never-projects [item-supply-vs-value]: Run(f, s) = repeat(f(s), 0) \n Run(5, 1), Run(1 / 0, 5)
 def case_loop_step_zero_iterations_never_projects : Expr :=
-  .algorithmExpr (alg [] [] [] [(.call (.resolve "repeat") [.num 5, .num 0, .num 1]), (.call (.resolve "repeat") [(.binary .div (.num 1) (.num 0)), .num 0, .num 5])])
+  .algorithmExpr (alg [] [] [privateProp "Run" (alg ["f", "s"] [] [] [(.call (.resolve "repeat") [(.call (.param "f") [.param "s"]), .num 0])])] [(.call (.resolve "Run") [.num 5, .num 1]), (.call (.resolve "Run") [(.binary .div (.num 1) (.num 0)), .num 5])])
 #guard obs case_loop_step_zero_iterations_never_projects == "ok raw=S[1, 5] n=2"
 
--- loop-step-family-no-match-is-ordinary [conditionals]: F(0) = 1 \n F(1) = 2 \n repeat(F, 1, 5)
+-- loop-step-family-no-match-is-ordinary [conditionals]: F(0) = 1 \n F(1) = 2 \n repeat(F(5), 1)
 def case_loop_step_family_no_match_is_ordinary : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "F" (.conditional none [] [⟨.litInt 0, (alg [] [] [] [.num 1])⟩, ⟨.litInt 1, (alg [] [] [] [.num 2])⟩])] [(.call (.resolve "repeat") [.resolve "F", .num 1, .num 5])])
+  .algorithmExpr (alg [] [] [privateProp "F" (.conditional none [] [⟨.litInt 0, (alg [] [] [] [.num 1])⟩, ⟨.litInt 1, (alg [] [] [] [.num 2])⟩])] [(.call (.resolve "repeat") [(.call (.resolve "F") [.num 5]), .num 1])])
 #guard obs case_loop_step_family_no_match_is_ordinary == "err branch"
 
--- loop-step-lazy-builtin-roles [collection-builtins]: repeat(if, 1, false, 1 / 0, 2)
+-- loop-step-lazy-builtin-roles [collection-builtins]: repeat(if(false, 1 / 0, 2), 1)
 def case_loop_step_lazy_builtin_roles : Expr :=
-  .algorithmExpr (alg [] [] [] [(.call (.resolve "repeat") [.resolve "if", .num 1, .boolLiteral false, (.binary .div (.num 1) (.num 0)), .num 2])])
+  .algorithmExpr (alg [] [] [] [(.call (.resolve "repeat") [(.call (.resolve "if") [.boolLiteral false, (.binary .div (.num 1) (.num 0)), .num 2]), .num 1])])
 #guard obs case_loop_step_lazy_builtin_roles == "ok raw=2 n=1"
+
+-- loop-meta-plain-and-dot [variadic-calls]: Step(x) = x + 1, x < 3 \n Inc(x) = x + 1 \n while(Step(0)), Step(0).while, Step(0).while(), repeat(Inc(0), 5), Inc(0).repeat(5)
+def case_loop_meta_plain_and_dot : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Step" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 1)), (.comparison (.param "x") [{ op := .lt, operand := (.num 3) }])]), privateProp "Inc" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 1))])] [(.call (.resolve "while") [(.call (.resolve "Step") [.num 0])]), (.dotCall (.call (.resolve "Step") [.num 0]) "while" none), (.dotCall (.call (.resolve "Step") [.num 0]) "while" (some [])), (.call (.resolve "repeat") [(.call (.resolve "Inc") [.num 0]), .num 5]), (.dotCall (.call (.resolve "Inc") [.num 0]) "repeat" (some [.num 5]))])
+#guard obs case_loop_meta_plain_and_dot == "ok raw=S[3, 3, 3, 5, 5] n=5"
+
+-- loop-meta-no-implicit-provenance [errors]: Step(x) = x + 1, x < 3 \n Start = Step(0) \n Start.while
+def case_loop_meta_no_implicit_provenance : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Start" (alg [] [] [] [(.call (.resolve "Step") [.num 0])]), privateProp "Step" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 1)), (.comparison (.param "x") [{ op := .lt, operand := (.num 3) }])])] [(.dotCall (.resolve "Start") "while" none)])
+#guard obs case_loop_meta_no_implicit_provenance == "err notAnAlgorithm"
+
+-- loop-meta-zero-state [empty-visible-vs-spread]: Z = false \n Z().while, Z().repeat(0)
+def case_loop_meta_zero_state : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Z" (alg [] [] [] [.boolLiteral false])] [(.dotCall (.call (.resolve "Z") []) "while" none), (.dotCall (.call (.resolve "Z") []) "repeat" (some [.num 0]))])
+#guard obs case_loop_meta_zero_state == "ok raw=S[S[], S[]] n=2"
+
+-- loop-meta-spread-before-count [errors]: Inc(x) = x + 1 \n Inc([1][5]*).repeat(1 / 0)
+def case_loop_meta_spread_before_count : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Inc" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 1))])] [(.dotCall (.call (.resolve "Inc") [(.sequenceSpread (.index (.listLiteral [.num 1]) [.num 5]))]) "repeat" (some [(.binary .div (.num 1) (.num 0))]))])
+#guard obs case_loop_meta_spread_before_count == "err index"
+
+-- loop-meta-qualified-step-needs-a-name [name-resolution]: Box = { S(x) = x + 1, x < 3 } \n S = Box.S \n S(0).while
+def case_loop_meta_qualified_step_needs_a_name : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Box" (alg [] [] [privateProp "S" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 1)), (.comparison (.param "x") [{ op := .lt, operand := (.num 3) }])])] []), privateProp "S" (.alias none [] [] ((.dotCall (.resolve "Box") "S" none)))] [(.dotCall (.call (.resolve "S") [.num 0]) "while" none)])
+#guard obs case_loop_meta_qualified_step_needs_a_name == "ok raw=3 n=1"
+
+-- loop-meta-exact-arity [errors]: Step(x) = x + 1, x < 3 \n while(Step, 0)
+def case_loop_meta_exact_arity : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Step" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 1)), (.comparison (.param "x") [{ op := .lt, operand := (.num 3) }])])] [(.call (.resolve "while") [.resolve "Step", .num 0])])
+#guard obs case_loop_meta_exact_arity == "err arity"
+
+-- loop-meta-forwarding [variadic-calls]: Step(x) = x + 1, x < 3 \n W(step) = while(step) \n W(Step(0))
+def case_loop_meta_forwarding : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Step" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 1)), (.comparison (.param "x") [{ op := .lt, operand := (.num 3) }])]), privateProp "W" (alg ["step"] [] [] [(.call (.resolve "while") [.param "step"])])] [(.call (.resolve "W") [(.call (.resolve "Step") [.num 0])])])
+#guard obs case_loop_meta_forwarding == "ok raw=3 n=1"
 
 -- property-value-boundary [item-supply-vs-value]: Coordinates = 10, 20 \n Coordinates \n Coordinates*, 997
 def case_property_value_boundary : Expr :=
@@ -1275,9 +1310,9 @@ def case_callback_nested_pattern_binds_like_call : Expr :=
   .algorithmExpr (alg [] [] [privateProp "Head" (algWithParameterPatterns [.sequenceValue [.capture { name := "x" }, .capture { name := "rest", kind := .collecting }]] [] [] [(.listLiteral [.param "x", .param "rest"])])] [(.call (.resolve "Head") [(.capture [.num 7, .num 8])]), (.dotCall (.listLiteral [(.capture [.num 7, .num 8])]) "map" (some [.resolve "Head"])), (.call (.resolve "map") [(.listLiteral [(.capture [.num 7, .num 8]), (.capture [.num 9, .num 10, .num 11])]), .resolve "Head"])])
 #guard obs case_callback_nested_pattern_binds_like_call == "ok raw=S[L[7, L[8]], L[L[7, L[8]]], L[L[7, L[8]], L[9, L[10, 11]]]] n=3"
 
--- forwarded-callable-keeps-its-algorithm-channel [collection-builtins]: Cnt(*xs) = xs.count \n SumWhile(*s) = s.sum + 1, s.sum + 1 < 3 \n Apply(f, xs) = xs.map(f) \n Loop(g) = while(g, 0) \n Outer(xs) = { \n   Inner(g) = xs.map(g) \n   Inner(Cnt) \n } \n  \n Apply(Cnt, [1, 2]) \n Loop(SumWhile) \n Outer([1, 2])
+-- forwarded-callable-keeps-its-algorithm-channel [collection-builtins]: Cnt(*xs) = xs.count \n SumWhile(*s) = s.sum + 1, s.sum + 1 < 3 \n Apply(f, xs) = xs.map(f) \n Loop(g) = while(g(0)) \n Outer(xs) = { \n   Inner(g) = xs.map(g) \n   Inner(Cnt) \n } \n  \n Apply(Cnt, [1, 2]) \n Loop(SumWhile) \n Outer([1, 2])
 def case_forwarded_callable_keeps_its_algorithm_channel : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "Cnt" (algWithParameters [{ name := "xs", kind := .collecting }] [] [] [(.dotCall (.param "xs") "count" none)]), privateProp "SumWhile" (algWithParameters [{ name := "s", kind := .collecting }] [] [] [(.binary .add (.dotCall (.param "s") "sum" none) (.num 1)), (.comparison (.binary .add (.dotCall (.param "s") "sum" none) (.num 1)) [{ op := .lt, operand := (.num 3) }])]), privateProp "Apply" (alg ["f", "xs"] [] [] [(.dotCall (.param "xs") "map" (some [.param "f"]))]), privateProp "Loop" (alg ["g"] [] [] [(.call (.resolve "while") [.param "g", .num 0])]), privateProp "Outer" (alg ["xs"] [] [{ (privateLocalProp "Inner" (.localCapturedAncestorParams ["xs"]) (alg ["g"] [] [] [(.dotCall (.param "xs") "map" (some [.param "g"]))])) with requiredOwnerDepths := some [("xs", some 0)] }] [(.call (.resolve "Inner") [.resolve "Cnt"])])] [(.call (.resolve "Apply") [.resolve "Cnt", (.listLiteral [.num 1, .num 2])]), (.call (.resolve "Loop") [.resolve "SumWhile"]), (.call (.resolve "Outer") [(.listLiteral [.num 1, .num 2])])])
+  .algorithmExpr (alg [] [] [privateProp "Cnt" (algWithParameters [{ name := "xs", kind := .collecting }] [] [] [(.dotCall (.param "xs") "count" none)]), privateProp "SumWhile" (algWithParameters [{ name := "s", kind := .collecting }] [] [] [(.binary .add (.dotCall (.param "s") "sum" none) (.num 1)), (.comparison (.binary .add (.dotCall (.param "s") "sum" none) (.num 1)) [{ op := .lt, operand := (.num 3) }])]), privateProp "Apply" (alg ["f", "xs"] [] [] [(.dotCall (.param "xs") "map" (some [.param "f"]))]), privateProp "Loop" (alg ["g"] [] [] [(.call (.resolve "while") [(.call (.param "g") [.num 0])])]), privateProp "Outer" (alg ["xs"] [] [{ (privateLocalProp "Inner" (.localCapturedAncestorParams ["xs"]) (alg ["g"] [] [] [(.dotCall (.param "xs") "map" (some [.param "g"]))])) with requiredOwnerDepths := some [("xs", some 0)] }] [(.call (.resolve "Inner") [.resolve "Cnt"])])] [(.call (.resolve "Apply") [.resolve "Cnt", (.listLiteral [.num 1, .num 2])]), (.call (.resolve "Loop") [.resolve "SumWhile"]), (.call (.resolve "Outer") [(.listLiteral [.num 1, .num 2])])])
 #guard obs case_forwarded_callable_keeps_its_algorithm_channel == "ok raw=S[L[1, 1], 2, L[1, 1]] n=3"
 
 -- builtin-call-assembly-respects-argument-roles [collection-builtins]: L = L + 1 \n Add(a, b) = a + b \n  \n map([], L) \n filter([], L) \n reduce([], L, 7) \n reduce([1, 2], Add, 10)
@@ -1880,9 +1915,9 @@ def case_lazy_slot_demand_is_the_ordinary_zero_argument_demand : Expr :=
   .algorithmExpr (alg [] [] [privateProp "Inc" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 1))]), privateProp "Probe" (alg ["u"] [] [] [(.call (.resolve "if") [.boolLiteral true, .resolve "Inc", .num 0])])] [(.call (.resolve "Probe") [.num 0])])
 #guard obs case_lazy_slot_demand_is_the_ordinary_zero_argument_demand == "err arity"
 
--- lazy-slot-demand-covers-every-builtin-value-slot [collection-builtins]: Inc(x) = x + 1 \n Step(s) = s + 1 \n Probe(u) = repeat(Step, 1, Inc) \n Probe(0)
+-- lazy-slot-demand-covers-every-builtin-value-slot [collection-builtins]: Inc(x) = x + 1 \n Step(s) = s + 1 \n Probe(u) = repeat(Step(0), Inc) \n Probe(0)
 def case_lazy_slot_demand_covers_every_builtin_value_slot : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "Inc" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 1))]), privateProp "Step" (alg ["s"] [] [] [(.binary .add (.param "s") (.num 1))]), privateProp "Probe" (alg ["u"] [] [] [(.call (.resolve "repeat") [.resolve "Step", .num 1, .resolve "Inc"])])] [(.call (.resolve "Probe") [.num 0])])
+  .algorithmExpr (alg [] [] [privateProp "Inc" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 1))]), privateProp "Step" (alg ["s"] [] [] [(.binary .add (.param "s") (.num 1))]), privateProp "Probe" (alg ["u"] [] [] [(.call (.resolve "repeat") [(.call (.resolve "Step") [.num 0]), .resolve "Inc"])])] [(.call (.resolve "Probe") [.num 0])])
 #guard obs case_lazy_slot_demand_covers_every_builtin_value_slot == "err arity"
 
 -- dot-string-receiver-is-a-zero-argument-value-demand [strings]: Inc(x) = x + 1 \n Probe(u) = Inc.string \n Probe(0)
@@ -2050,9 +2085,9 @@ def case_call_reference_algorithm_projection : Expr :=
   .algorithmExpr (alg [] [] [privateProp "R" (alg [] [] [] [(.call (.resolve "Capture") [(.call (.resolve "Square") [.num 5])])]), privateProp "Square" (alg ["x"] [] [] [(.binary .mul (.param "x") (.param "x"))]), privateProp "Capture" (algWithParameters [{ name := "op", kind := .metaRef }] [] [] [.param "op"])] [(.dotCall (.resolve "R") "Algorithm" (some [.num 8])), (.call (.dotCall (.resolve "R") "Algorithm" none) [.num 8]), (.dotCall (.resolve "R") "Invoke" (some []))])
 #guard obs case_call_reference_algorithm_projection == "ok raw=S[64, 64, 25] n=3"
 
--- call-reference-algorithm-loops [variadic-calls]: Step(x) = x + 1, x < 3 \n Loop(meta operation) = operation.Algorithm.while(operation.Arguments*) \n  \n Step(0).Loop
+-- call-reference-algorithm-loops [variadic-calls]: Step(x) = x + 1, x < 3 \n Loop(meta operation) = { \n   S = operation.Algorithm \n   S(operation.Arguments*).while \n } \n  \n Step(0).Loop
 def case_call_reference_algorithm_loops : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "Step" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 1)), (.comparison (.param "x") [{ op := .lt, operand := (.num 3) }])]), privateProp "Loop" (algWithParameters [{ name := "operation", kind := .metaRef }] [] [] [(.dotCall (.dotCall (.param "operation") "Algorithm" none) "while" (some [(.sequenceSpread (.dotCall (.param "operation") "Arguments" none))]))])] [(.dotCall (.call (.resolve "Step") [.num 0]) "Loop" none)])
+  .algorithmExpr (alg [] [] [privateProp "Step" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 1)), (.comparison (.param "x") [{ op := .lt, operand := (.num 3) }])]), privateProp "Loop" (algWithParameters [{ name := "operation", kind := .metaRef }] [] [{ (privateLocalProp "S" (.localCapturedAncestorParams ["operation"]) (.alias none [] [] ((.dotCall (.param "operation") "Algorithm" none)))) with requiredOwnerDepths := some [("operation", some 0)] }] [(.dotCall (.call (.resolve "S") [(.sequenceSpread (.dotCall (.param "operation") "Arguments" none))]) "while" none)])] [(.dotCall (.call (.resolve "Step") [.num 0]) "Loop" none)])
 #guard obs case_call_reference_algorithm_loops == "ok raw=3 n=1"
 
 -- algorithm-is-not-an-extension-call [name-resolution]: Algorithm(r) = r + 1 \n Algorithm(4)
@@ -2105,7 +2140,7 @@ def case_runtime_alias_cycle : Expr :=
   .algorithmExpr (alg [] [] [privateProp "A" (.alias none [] [] ((.dotCall (.resolve "R") "Algorithm" none))), privateProp "R" (alg [] [] [] [(.call (.resolve "Capture") [(.call (.resolve "A") [.num 1])])]), privateProp "Capture" (algWithParameters [{ name := "op", kind := .metaRef }] [] [] [.param "op"])] [(.call (.resolve "A") [.num 2])])
 #guard obs case_runtime_alias_cycle == "err demandCycle"
 
--- 381 canonical Lean-guarded specification cases.
+-- 388 canonical Lean-guarded specification cases.
 
 /--
 Machine-checked Lean-guarded partition count: the id list is built by the
@@ -2180,6 +2215,13 @@ def specCaseIds : List String := [
   "loop-step-zero-iterations-never-projects",
   "loop-step-family-no-match-is-ordinary",
   "loop-step-lazy-builtin-roles",
+  "loop-meta-plain-and-dot",
+  "loop-meta-no-implicit-provenance",
+  "loop-meta-zero-state",
+  "loop-meta-spread-before-count",
+  "loop-meta-qualified-step-needs-a-name",
+  "loop-meta-exact-arity",
+  "loop-meta-forwarding",
   "property-value-boundary",
   "spread-capture-count",
   "repeated-spread-fixed-point",
@@ -2495,6 +2537,6 @@ def specCaseIds : List String := [
   "runtime-alias-failure-is-not-absence",
   "runtime-alias-cycle"
 ]
-#guard specCaseIds.length == 381
+#guard specCaseIds.length == 388
 
 end LanguageSpecCases

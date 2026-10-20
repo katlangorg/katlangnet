@@ -535,7 +535,7 @@ public class CallableBindingPlanParityTests
         AssertEval(
             """
             Step(first, *rest) = first*, rest
-            Step.repeat(1, 1, 2, 3)
+            Step(1, 2, 3).repeat(1)
             """,
             1, 2, 3);
     }
@@ -557,7 +557,7 @@ public class CallableBindingPlanParityTests
             loopSource:
             """
             Step(first, *middle, last) = first, middle.count, last
-            Step.repeat(1, 10, 20, 30, 40)
+            Step(10, 20, 30, 40).repeat(1)
             """,
             expected: ResultFromAtoms(10, 2, 40));
         AssertUserCallAndLoopStepParity(
@@ -569,7 +569,7 @@ public class CallableBindingPlanParityTests
             loopSource:
             """
             Step(first, *middle, last) = first, middle.count, last
-            Step.repeat(1, 10, [20, 30], 40)
+            Step(10, [20, 30], 40).repeat(1)
             """,
             expected: ResultFromAtoms(10, 1, 40));
     }
@@ -592,7 +592,7 @@ public class CallableBindingPlanParityTests
 
         const string loopSource = """
             Step(first, *middle, last) = first, middle.count, last
-            Step.repeat(1, 10, (20, 30), 40)
+            Step(10, (20, 30), 40).repeat(1)
             """;
         AssertResult(ResultFromAtoms(10, 1, 40), EvalResult(loopSource, enableLoopOptimization: false));
         AssertResult(ResultFromAtoms(10, 1, 40), EvalResult(loopSource, enableLoopOptimization: true));
@@ -614,7 +614,7 @@ public class CallableBindingPlanParityTests
             loopSource:
             """
             Step(first, *middle, a, b) = first, middle.count, a, b
-            Step.repeat(1, 10, 20, 30, 40, 50)
+            Step(10, 20, 30, 40, 50).repeat(1)
             """,
             expected: ResultFromAtoms(10, 2, 40, 50));
     }
@@ -630,7 +630,7 @@ public class CallableBindingPlanParityTests
         AssertEval(
             """
             Step((first, *middle, a, b)) = first, middle.count, a, b
-            Step.repeat(1, (10, 20, 30, 40, 50))
+            Step((10, 20, 30, 40, 50)).repeat(1)
             """,
             10, 2, 40, 50);
     }
@@ -649,7 +649,7 @@ public class CallableBindingPlanParityTests
             loopSource:
             """
             Step(*values) = values.count
-            Step.repeat(1, 7, 8, 9)
+            Step(7, 8, 9).repeat(1)
             """,
             expected: ResultFromAtoms(3));
     }
@@ -660,7 +660,7 @@ public class CallableBindingPlanParityTests
         var (result, stats) = EvalResultWithLoopDiagnostics(
             """
             Step(*values) = values
-            Step.repeat(1, 1, 2, 3)
+            Step(1, 2, 3).repeat(1)
             """,
             enableLoopOptimization: true);
 

@@ -607,7 +607,7 @@ public class ImplicitArgumentSharingTests
     [Fact]
     public void PlannedLoop_OverLiftedCalls_MatchesGenericExecution()
     {
-        var program = new Expr.AlgorithmExpr(SourceProvenance.ParseValid("G = x * 2\nStep(x) = G + G + x\nrepeat(Step, 3, 1)").Root);
+        var program = new Expr.AlgorithmExpr(SourceProvenance.ParseValid("G = x * 2\nStep(x) = G + G + x\nrepeat(Step(1), 3)").Root);
         var diagnostics = new LoopOptimizationDiagnostics();
 
         var optimized = Evaluator.RunCountedObserved(program, enableOptimizations: true, loopDiagnostics: diagnostics).Result;

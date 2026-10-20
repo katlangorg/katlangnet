@@ -259,7 +259,7 @@ public class OperationalMetamorphicTests
     [InlineData("range(1, 20).sum")]
     [InlineData("B(x) = x > 5\nrange(1, 20).filter(B).count")]
     [InlineData("D(x) = x * 2\nrange(1, 20).map(D)")]
-    [InlineData("Inc = x + 1\nInc.repeat(20, 0)")]
+    [InlineData("Inc = x + 1\nInc(0).repeat(20)")]
     public void OptimizedAndGenericPaths_AgreeSemanticallyAndNeverCostMore(string source)
     {
         var optimized = Observe(source, optimize: true);
@@ -546,7 +546,7 @@ public class OperationalMetamorphicTests
         var errors = new EvalError[]
         {
             RunError("f(0) = 0\nf(n) = f(n - 1)\nf(50)", new EvaluationLimits { MaxDepth = 8 }),
-            RunError("Step = x, true\nStep.while(0)", new EvaluationLimits { MaxSteps = 25 }),
+            RunError("Step = x, true\nStep(0).while", new EvaluationLimits { MaxSteps = 25 }),
             RunError("range(1, 6)", new EvaluationLimits { MaxCollectionItems = 5 }),
             RunError("[1, 2]", new EvaluationLimits { MaxMaterializedItems = 1 }),
             RunError("'abcdef'", new EvaluationLimits { MaxStringLength = 5 }),

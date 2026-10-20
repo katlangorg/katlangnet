@@ -67,7 +67,7 @@ public class DotSemanticsDecisionTests
         { "opened member and dotted member agree", "open Obj\n" + ObjStringValue + "string, Obj.string", "ok S[5, 5]", "" },
         { "supplied callable", Apply + ObjStringCallable + "Apply(Obj.string, 5)", "ok 10", "" },
         { "callback", ObjStringCallable + "map([1, 2], Obj.string)", "ok L[2, 4]", "" },
-        { "loop step", "Obj = {\n    public string(s) = s + 2\n    7\n}\nrepeat(Obj.string, 3, 1), Obj.string.repeat(3, 1)", "ok S[7, 7]", "" },
+        { "loop step", "Obj = {\n    public string(s) = s + 2\n    7\n}\nS = Obj.string\nrepeat(S(1), 3), S(1).repeat(3)", "ok S[7, 7]", "" },
         { "grouped callee", ObjStringCallable + "(Obj.string)(5)", "ok 10", "" },
         { "callable alias of the member", ObjStringCallable + "A = Obj.string\nA(3)", "ok 6", "" },
         { "member without output", "Obj = {\n    public string = {\n        A = 1\n    }\n    7\n}\nObj.string", "err MissingOutput", "" },
@@ -338,8 +338,8 @@ public class DotSemanticsDecisionTests
         var (observation, _) = await AllRoutesAsync(
             Apply
             + "Lib = {\n    public F(x) = x + 5\n    public Inc(x) = x + 1\n    public Step(s) = s + 2\n    public X = 7\n    public Sub = {\n        public Q = 1\n    }\n}\n"
-            + "P(f, f) = f\nG(p) = p.Q\n"
-            + "Apply(Lib.F, 5), map([1, 2], Lib.Inc), repeat(Lib.Step, 3, 0), Lib.Step.repeat(2, 0), P(Lib.X, Lib.X), G(Lib.Sub)");
+            + "P(f, f) = f\nG(p) = p.Q\nLS = Lib.Step\n"
+            + "Apply(Lib.F, 5), map([1, 2], Lib.Inc), repeat(LS(0), 3), LS(0).repeat(2), P(Lib.X, Lib.X), G(Lib.Sub)");
         Assert.Equal("ok S[10, L[2, 3], 6, 4, 7, 1]", observation.Semantic);
 
         var (calls, _) = await AllRoutesAsync(Box + "Call0(f) = f()\nCall0(Box.V), Call0(Box.V), Box.V");

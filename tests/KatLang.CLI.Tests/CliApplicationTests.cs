@@ -293,7 +293,7 @@ public sealed class CliApplicationTests
     // fact, never as a step that "has no parameters". (A value step has no callable identity at all:
     // Eval_ValueStep_IsNotCallable. Clause families and builtins are ordinary callables since Q-23:
     // see Eval_FamilyAndBuiltinSteps_AreOrdinaryCallables.)
-    [InlineData("Z = 5\nrepeat(Z, 2, 1)", "[2:1] while evaluating call to repeat: `repeat` cannot bind the current loop state to its step: the current loop state has 1 state value, but the loop found no step parameter to bind it to.")]
+    [InlineData("Z = 5\nrepeat(Z(1), 2)", "[2:1] while evaluating call to repeat: `repeat` cannot bind the current loop state to its step: the current loop state has 1 state value, but the loop found no step parameter to bind it to.")]
     public async Task Eval_LoopStepWithNoBindableParameter_ReportsTheBindingFact(string source, string expected)
     {
         var result = await Cli.InvokeAsync("eval", source);
@@ -307,8 +307,10 @@ public sealed class CliApplicationTests
     [Theory]
     // Q-06: a value in an invoking position has no callable identity — NotAnAlgorithm, named by the
     // slot's role and positioned at the supplied argument, never the loop-state binding fact.
-    [InlineData("while(5, 1)", "[1:7] while evaluating call to while: The while step is not callable: the argument supplied for it is a value, not an algorithm. Pass an algorithm: a named algorithm, a builtin, or a block { ... }.")]
-    [InlineData("repeat([1], 2, 1)", "[1:8] while evaluating call to repeat: The repeat step is not callable: the argument supplied for it is a value, not an algorithm. Pass an algorithm: a named algorithm, a builtin, or a block { ... }.")]
+    [InlineData("Run(f) = while(f(1))\nRun(5)", "[2:5] while evaluating call to Run: while evaluating call to while: The while step is not callable: the argument supplied for it is a value, not an algorithm. Pass an algorithm: a named algorithm, a builtin, or a block { ... }.")]
+    [InlineData("Run(f) = repeat(f(1), 2)\nRun([1])", "[2:5] while evaluating call to Run: while evaluating call to repeat: The repeat step is not callable: the argument supplied for it is a value, not an algorithm. Pass an algorithm: a named algorithm, a builtin, or a block { ... }.")]
+    // META-S3-3: a value written as the loop's `meta step` argument is refused by META capture.
+    [InlineData("while(5)", "[1:7] while evaluating call to while: A meta parameter needs a supplied call computation: a written call whose callee is a name or a parameter, such as `Step(0)`. The argument supplied for it is not one (a value, a property read, a bare callable, an existing call reference, and a call through a dot or computed callee are not captured).")]
     public async Task Eval_ValueStep_IsNotCallable(string source, string expected)
     {
         var result = await Cli.InvokeAsync("eval", source);
@@ -340,11 +342,11 @@ public sealed class CliApplicationTests
     // Q-23: a loop step is an ordinary callable invoked over the current state supply — a clause
     // family through its ordinary dispatch, a builtin through its argument roles (its one result is
     // one state slot); a zero-iteration loop never projects its step.
-    [InlineData("F(0) = 5\nF(n) = n * 10\nrepeat(F, 2, 1)", "100")]
-    [InlineData("Countdown(0) = 0, false\nCountdown(n) = n - 1, true\nCountdown.while(3)", "0")]
-    [InlineData("repeat(count, 1, [1, 2])", "2")]
-    [InlineData("repeat(take, 1, [1, 2, 3], 2)", "[1, 2]")]
-    [InlineData("repeat(1 / 0, 0, 5)", "5")]
+    [InlineData("F(0) = 5\nF(n) = n * 10\nrepeat(F(1), 2)", "100")]
+    [InlineData("Countdown(0) = 0, false\nCountdown(n) = n - 1, true\nCountdown(3).while", "0")]
+    [InlineData("repeat(count([1, 2]), 1)", "2")]
+    [InlineData("repeat(take([1, 2, 3], 2), 1)", "[1, 2]")]
+    [InlineData("Run(f) = repeat(f(5), 0)\nRun(1 / 0)", "5")]
     public async Task Eval_FamilyAndBuiltinSteps_AreOrdinaryCallables(string source, string expected)
     {
         var result = await Cli.InvokeAsync("eval", source);
@@ -359,7 +361,7 @@ public sealed class CliApplicationTests
     {
         // `first([()])` returns `()`: ONE state slot, so as a `while` step it is the flag — a kind
         // error, never the "Bad arity" a zero-slot reading would give.
-        var result = await Cli.InvokeAsync("eval", "while(first, [()])");
+        var result = await Cli.InvokeAsync("eval", "while(first([()]))");
 
         Assert.Equal(Failure, result.ExitCode);
         Assert.Equal("", result.Output);
@@ -370,7 +372,7 @@ public sealed class CliApplicationTests
     [Fact]
     public async Task Eval_FamilyStepWithNoMatchingClause_ReportsTheOrdinaryFailure()
     {
-        var result = await Cli.InvokeAsync("eval", "F(0) = 1\nF(1) = 2\nrepeat(F, 1, 5)");
+        var result = await Cli.InvokeAsync("eval", "F(0) = 1\nF(1) = 2\nrepeat(F(5), 1)");
 
         Assert.Equal(Failure, result.ExitCode);
         Assert.Equal("", result.Output);

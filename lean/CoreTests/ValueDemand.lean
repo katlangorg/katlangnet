@@ -136,22 +136,23 @@ def blockSlotReportsUnresolvedImplicitParams : Bool :=
   | _ => false
 #guard blockSlotReportsUnresolvedImplicitParams
 
--- Loop VALUE slots: `repeat(Step, 1, Inc)` (initial state), `repeat(Step, Inc, 0)`
--- (count), `while(Down, Inc)` (initial state); the zero-parameter controls run.
-#guard rejectsAsPropertyArity [.call (resolve "repeat") [resolve "Step", .num 1, resolve "Inc"]]
-#guard rejectsAsPropertyArity [.call (resolve "repeat") [resolve "Step", resolve "Inc", .num 0]]
-#guard rejectsAsPropertyArity [.call (resolve "while") [resolve "Down", resolve "Inc"]]
-#guard flatOk [.call (resolve "repeat") [resolve "Step", .num 1, resolve "A"]] [8]
-#guard flatOk [.call (resolve "while") [resolve "Down", resolve "A"]] [0]
+-- Loop VALUE slots: `repeat(Step(Inc), 1)` (the captured call's state argument, demanded
+-- by the step's body), `repeat(Step(0), Inc)` (count), `while(Down(Inc))` (state argument);
+-- the zero-parameter controls run.
+#guard rejectsAsPropertyArity [.call (resolve "repeat") [.call (resolve "Step") [resolve "Inc"], .num 1]]
+#guard rejectsAsPropertyArity [.call (resolve "repeat") [.call (resolve "Step") [.num 0], resolve "Inc"]]
+#guard rejectsAsPropertyArity [.call (resolve "while") [.call (resolve "Down") [resolve "Inc"]]]
+#guard flatOk [.call (resolve "repeat") [.call (resolve "Step") [resolve "A"], .num 1]] [8]
+#guard flatOk [.call (resolve "while") [.call (resolve "Down") [resolve "A"]]] [0]
 
 -- `atoms(Inc)` / `range(1, Inc)` are value slots too; `atoms(A)` is the list `[7]`.
 #guard rejectsAsPropertyArity [.call (resolve "atoms") [resolve "Inc"]]
 #guard rejectsAsPropertyArity [.call (resolve "range") [.num 1, resolve "Inc"]]
 #guard flatOk [.call (resolve "atoms") [resolve "A"]] [7]
 
--- Callback slots supply arguments and never consult the law: `repeat(Inc, 2, 0)`,
+-- Callback slots supply arguments and never consult the law: `repeat(Inc(0), 2)`,
 -- `map([1, 2], Inc)`, `reduce([1, 2], Add, 0)`.
-#guard flatOk [.call (resolve "repeat") [resolve "Inc", .num 2, .num 0]] [2]
+#guard flatOk [.call (resolve "repeat") [.call (resolve "Inc") [.num 0], .num 2]] [2]
 #guard flatOk [.call (resolve "map") [.listLiteral [.num 1, .num 2], resolve "Inc"]] [2, 3]
 #guard flatOk [.call (resolve "reduce") [.listLiteral [.num 1, .num 2], resolve "Add", .num 0]] [3]
 
@@ -523,8 +524,8 @@ def forwardingRoot (out : List KatLang.Expr) : KatLang.Expr :=
     , ("ApplyMap", forwardCallbackAlg "map"), ("ApplyFilter", forwardCallbackAlg "filter")
     , ("ApplyReduce", alg ["f", "xs"] [] []
         [.call (resolve "reduce") [.param "xs", .param "f", .num 0]])
-    , ("ApplyRepeat", alg ["g"] [] [] [.call (resolve "repeat") [.param "g", .num 3, .num 9]])
-    , ("ApplyWhile", alg ["g"] [] [] [.call (resolve "while") [.param "g", .num 0]])
+    , ("ApplyRepeat", alg ["g"] [] [] [.call (resolve "repeat") [.call (.param "g") [.num 9], .num 3]])
+    , ("ApplyWhile", alg ["g"] [] [] [.call (resolve "while") [.call (.param "g") [.num 0]]])
     , ("ApplyCount", alg ["xs"] [] [] [.call (resolve "count") [.param "xs"]])
     , ("ApplyInitial", alg ["i"] [] []
         [.call (resolve "reduce") [.listLiteral [.num 1, .num 2], resolve "Add", .param "i"]]) ]
@@ -552,10 +553,10 @@ def forwardedCallbackAgrees (direct forwarded : KatLang.Expr) (expected : List I
   (.call (resolve "ApplyReduce") [resolve "SumAll", .listLiteral [.num 1, .num 2, .num 3]]) [6]
 -- Loop steps: `repeat` and `while`.
 #guard forwardedCallbackAgrees
-  (.call (resolve "repeat") [resolve "CountStep", .num 3, .num 9])
+  (.call (resolve "repeat") [.call (resolve "CountStep") [.num 9], .num 3])
   (.call (resolve "ApplyRepeat") [resolve "CountStep"]) [2]
 #guard forwardedCallbackAgrees
-  (.call (resolve "while") [resolve "SumWhile", .num 0])
+  (.call (resolve "while") [.call (resolve "SumWhile") [.num 0]])
   (.call (resolve "ApplyWhile") [resolve "SumWhile"]) [2]
 -- A zero-argument-demand-ineligible callable was never bound on the value
 -- channel and keeps working (`Add` needs two supplied values).

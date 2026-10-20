@@ -75,10 +75,10 @@ public class AsyncTwinDifferentialTests
     /// both routes now consume 81990 steps for the Math.Abs row.
     /// </summary>
     [Theory]
-    [InlineData("repeat({x + 1}, 40960, 0)", 41020L)]
-    [InlineData("repeat({Math.Abs(x) + 1}, 40960, 0)", 81990L)]
-    [InlineData("repeat({x + 'a'.count}, 40960, 0)", null)]
-    [InlineData("G(y) = 1\nrepeat({x + G(x)}, 40960, 0)", null)]
+    [InlineData("Step = {x + 1}\nrepeat(Step(0), 40960)", 41020L)]
+    [InlineData("Step = {Math.Abs(x) + 1}\nrepeat(Step(0), 40960)", 81990L)]
+    [InlineData("Step = {x + 'a'.count}\nrepeat(Step(0), 40960)", null)]
+    [InlineData("Step = {x + G(x)}\nG(y) = 1\nrepeat(Step(0), 40960)", null)]
     public async Task LargeLoop_AsyncTwinPath_ChargesExactlyTheSyncGenericSteps(string source, long? expectedSteps)
     {
         var ast = AsyncEvaluationHarness.Ast(source);
@@ -139,7 +139,7 @@ public class AsyncTwinDifferentialTests
     [InlineData(4096, 4102)]
     public async Task IncrementLoop_ExactSmallAndBulkBoundaryCosts(int iterations, long expectedSteps)
     {
-        var ast = AsyncEvaluationHarness.Ast($"repeat({{x + 1}}, {iterations}, 0)");
+        var ast = AsyncEvaluationHarness.Ast($"Step = {{x + 1}}\nrepeat(Step(0), {iterations})");
         foreach (var limit in new[] { Math.Max(1, expectedSteps - 1), Math.Max(1, expectedSteps), expectedSteps + 1 })
         {
             var limits = new EvaluationLimits { MaxSteps = limit };
@@ -162,10 +162,10 @@ public class AsyncTwinDifferentialTests
     }
 
     [Theory]
-    [InlineData("repeat({if(x < 2000, x + 1, 1 / 0)}, 4096, 0)")]
-    [InlineData("repeat({-x}, 4096, 'bad')")]
-    [InlineData("repeat({Math.Abs(x)}, 4096, 'bad')")]
-    [InlineData("F(x) = 1 / x\nrepeat({F(x)}, 4096, 0)")]
+    [InlineData("Step = {if(x < 2000, x + 1, 1 / 0)}\nrepeat(Step(0), 4096)")]
+    [InlineData("Step = {-x}\nrepeat(Step('bad'), 4096)")]
+    [InlineData("Step = {Math.Abs(x)}\nrepeat(Step('bad'), 4096)")]
+    [InlineData("Step = {F(x)}\nF(x) = 1 / x\nrepeat(Step(0), 4096)")]
     public async Task RepeatedBodyFailures_MatchFullDiagnosticsAndCounters(string source)
     {
         var ast = AsyncEvaluationHarness.Ast(source);

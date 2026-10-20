@@ -1,2 +1,2 @@
 Step = a + 1, b + a
-Step.repeat(3, 0, 0)
+Step(0, 0).repeat(3)

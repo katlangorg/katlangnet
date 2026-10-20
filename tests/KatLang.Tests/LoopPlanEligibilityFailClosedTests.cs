@@ -199,8 +199,9 @@ public class LoopPlanEligibilityFailClosedTests
             items[1] = new CaptureParameterPattern("b", Kind: ParameterKind.Collecting);
             var step = new Algorithm.User(Parent: null, ParameterPatterns: template, Opens: [], Properties: [],
                 Output: [new Expr.Param("a"), new Expr.Param("b")]);
-            return (new Expr.Call(new Expr.Resolve("repeat"),
-                [new Expr.AlgorithmExpr(step), new Expr.Num(1), new Expr.Num(10), new Expr.Num(20)]), step);
+            return (new Expr.AlgorithmExpr(new Algorithm.User(null, [], [], [new Property("S", step)],
+                [new Expr.Call(new Expr.Resolve("repeat"),
+                    [new Expr.Call(new Expr.Resolve("S"), [new Expr.Num(10), new Expr.Num(20)]), new Expr.Num(1)])])), step);
         }
 
         var refusal = Assert.Throws<InvalidOperationException>(
@@ -317,19 +318,19 @@ public class LoopPlanEligibilityFailClosedTests
 
     public static TheoryData<string, string> PlannedSteps => new()
     {
-        { "S(k) = k + 1\nS.repeat(5, 0)", "5" },
-        { "Fib(a, b) = b, a + b\nFib.repeat(10, 0, 1)", "S[55, 89]" },
-        { "T(a, b, c) = b, c, a + b + c\nT.repeat(4, 1, 1, 1)", "S[5, 9, 17]" },
-        { "Step = k + 1\nStep.repeat(5, 0)", "5" },
-        { "W(k) = k + 1, k < 9\nW.while(0)", "9" },
-        { "W(a, b) = b, a + b, b < 50\nW.while(0, 1)", "S[34, 55]" },
-        { "S(k) = k + 1\nA = S\nA.repeat(3, 0)", "3" },
-        { "Use(f) = f.repeat(3, 0)\nS(k) = k + 1\nUse(S)", "3" },
+        { "S(k) = k + 1\nS(0).repeat(5)", "5" },
+        { "Fib(a, b) = b, a + b\nFib(0, 1).repeat(10)", "S[55, 89]" },
+        { "T(a, b, c) = b, c, a + b + c\nT(1, 1, 1).repeat(4)", "S[5, 9, 17]" },
+        { "Step = k + 1\nStep(0).repeat(5)", "5" },
+        { "W(k) = k + 1, k < 9\nW(0).while", "9" },
+        { "W(a, b) = b, a + b, b < 50\nW(0, 1).while", "S[34, 55]" },
+        { "S(k) = k + 1\nA = S\nA(0).repeat(3)", "3" },
+        { "Use(f) = f(0).repeat(3)\nS(k) = k + 1\nUse(S)", "3" },
         // A step calling a recursive helper.
-        { "F(n) = if(n == 0, 0, F(n - 1) + 2)\nS(k) = F(k)\nS.repeat(2, 3)", "12" },
-        { "Inner(y) = y + 1\nOuter(x) = Inner.repeat(2, x)\nOuter.repeat(3, 0)", "6" },
+        { "F(n) = if(n == 0, 0, F(n - 1) + 2)\nS(k) = F(k)\nS(3).repeat(2)", "12" },
+        { "Inner(y) = y + 1\nOuter(x) = Inner(x).repeat(2)\nOuter(0).repeat(3)", "6" },
         // A Math member is user-shaped (a native wrapper with one flat parameter), so it is planned.
-        { "repeat(abs, 2, -3)", "3" },
+        { "repeat(abs(-3), 2)", "3" },
     };
 
     [Theory]
@@ -374,8 +375,8 @@ public class LoopPlanEligibilityFailClosedTests
     /// <c>Step</c>'s own <c>s</c>, a composed template.
     /// </summary>
     [Theory]
-    [InlineData("A = k + 1\nStep = A + 0\nStep.repeat(5, 0)", false, "5")]
-    [InlineData("A = k + 1\nStep = s + 1, A + 0\nStep.repeat(3, 0, 0)", true, "S[3, 3]")]
+    [InlineData("A = k + 1\nStep = A + 0\nStep(0).repeat(5)", false, "5")]
+    [InlineData("A = k + 1\nStep = s + 1, A + 0\nStep(0, 0).repeat(3)", true, "S[3, 3]")]
     public void LiftedTemplateSteps_StayPlanned(string source, bool composed, string expected)
     {
         var step = Assert.IsType<Algorithm.User>(
@@ -400,10 +401,10 @@ public class LoopPlanEligibilityFailClosedTests
     public static TheoryData<string, string> VariadicSteps => new()
     {
         // A collecting step binds a list; a planned frame would bind the plain value instead.
-        { "C(*xs) = xs\nC.repeat(1, 5)", "L[5]" },
-        { "C(h, *t) = h, t\nC.repeat(1, 1, 2)", "S[1, L[2]]" },
-        { "P((a, b)) = (b, a + b)\nP.repeat(3, (0, 1))", "S[2, 3]" },
-        { "D(x, x) = x, x\nD.repeat(1, 3, 3)", "S[3, 3]" },
+        { "C(*xs) = xs\nC(5).repeat(1)", "L[5]" },
+        { "C(h, *t) = h, t\nC(1, 2).repeat(1)", "S[1, L[2]]" },
+        { "P((a, b)) = (b, a + b)\nP((0, 1)).repeat(3)", "S[2, 3]" },
+        { "D(x, x) = x, x\nD(3, 3).repeat(1)", "S[3, 3]" },
     };
 
     [Theory]
@@ -426,9 +427,9 @@ public class LoopPlanEligibilityFailClosedTests
 
     public static TheoryData<string, string> NonUserSteps => new()
     {
-        { "repeat(order, 1, [3, 1, 2])", "L[1, 2, 3]" },
-        { "F(0) = 0\nF(n) = n - 1\nrepeat(F, 2, 5)", "3" },
-        { "A = order\nrepeat(A, 1, [3, 1, 2])", "L[1, 2, 3]" },
+        { "repeat(order([3, 1, 2]), 1)", "L[1, 2, 3]" },
+        { "F(0) = 0\nF(n) = n - 1\nrepeat(F(5), 2)", "3" },
+        { "A = order\nrepeat(A([3, 1, 2]), 1)", "L[1, 2, 3]" },
     };
 
     [Theory]
@@ -458,7 +459,7 @@ public class LoopPlanEligibilityFailClosedTests
     [Fact]
     public void ZeroIterationRepeat_NeverProjectsTheStep_SoNoEligibilityIsDecided()
     {
-        var optimizing = RunSource("S(k) = k + 1\nS.repeat(0, 7)", optimize: true);
+        var optimizing = RunSource("S(k) = k + 1\nS(7).repeat(0)", optimize: true);
 
         Assert.Equal("ok 7", optimizing.Outcome);
         Assert.Equal(1, optimizing.Loops.LoopExecutions);
@@ -587,14 +588,15 @@ public class LoopPlanEligibilityFailClosedTests
             if (trigger == Trigger.HostMutation)
             {
                 Expr state = new Expr.SequenceSpread(new Expr.NativeCall(reshape.NativeName, []));
-                Program = new Expr.Call(new Expr.Resolve(loop), [new Expr.AlgorithmExpr(step), .. count, state]);
+                Program = new Expr.AlgorithmExpr(new Algorithm.User(null, [], [], [new Property("S", step)],
+                    [new Expr.Call(new Expr.Resolve(loop), [new Expr.Call(new Expr.Resolve("S"), [state]), .. count])]));
                 return;
             }
 
             var builtin = new Algorithm.Builtin(loop == "repeat" ? BuiltinId.@repeat : BuiltinId.@while);
             var run = new Algorithm.User(Parent: null, ParameterPatterns: [], Opens: [], Properties: [],
                 Output: [new Expr.Call(new Expr.AlgorithmExpr(builtin),
-                    [new Expr.Resolve("Step"), .. count, new Expr.Num(10), new Expr.Num(20)])]);
+                    [new Expr.Call(new Expr.Resolve("Step"), [new Expr.Num(10), new Expr.Num(20)]), .. count])]);
             var hostScope = new ScopeCtx(null, [], [new Property("Step", step)]);
             var block = new Algorithm.User(Parent: hostScope, ParameterPatterns: [], Opens: [],
                 Properties: [new Property("Run", run, IsPublic: true)], Output: []);

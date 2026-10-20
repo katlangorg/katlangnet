@@ -193,12 +193,12 @@ public class EvaluatorValueBoundaryTests
     // protocol; the result it hands its consumer is ONE value with count valueCount.
     [Fact]
     public void Eval_Repeat_MultiSlotLoopResult_IsOneValueBoundary()
-        => AssertEvalCounted("repeat({a + 1, b + a}, 3, 0, 0)", 1, ResultFromAtoms(3, 3));
+        => AssertEvalCounted("Step = {a + 1, b + a}\nrepeat(Step(0, 0), 3)", 1, ResultFromAtoms(3, 3));
 
     // Only an explicit spread opens the loop result into items.
     [Fact]
     public void Eval_Repeat_MultiSlotLoopResult_SpreadOpensTheValue()
-        => EvaluatorTestSupport.AssertRootSpreadCountedWithSentinel("repeat({a + 1, b + a}, 3, 0, 0)*", 2, ResultFromAtoms(3, 3));
+        => EvaluatorTestSupport.AssertRootSpreadCountedWithSentinel("Step = {a + 1, b + a}\nrepeat(Step(0, 0), 3)*", 2, ResultFromAtoms(3, 3));
 
     // Regression: redundant empty-sequence nesting is normalized before the
     // public boundary is observed.

@@ -962,7 +962,7 @@ public class ListValueTests
     [Fact]
     public void LoopState_CanCarryListValues()
         => AssertEvalCounted(
-            "Step(state, i) = state, i + 1, i < 3\nStep.while([], 1)",
+            "Step(state, i) = state, i + 1, i < 3\nStep([], 1).while",
             // The list slot survives every iteration; the completed loop is ONE value (Q-26).
             1,
             SequenceValue(ListValue(), Atom(3)));

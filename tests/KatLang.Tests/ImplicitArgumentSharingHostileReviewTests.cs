@@ -52,7 +52,7 @@ public class ImplicitArgumentSharingHostileReviewTests
         string Sum(int start, int count) => count == 1 ? $"v{start}"
             : $"({Sum(start, count / 2)} + {Sum(start + count / 2, count - count / 2)})";
         var source = $"Step = {{\nG = {Sum(0, n)}\n{string.Join(", ", Enumerable.Repeat("G", n))}\n}}\n"
-            + $"repeat(Step, 1, {string.Join(", ", Enumerable.Range(1, n))})";
+            + $"repeat(Step({string.Join(", ", Enumerable.Range(1, n))}), 1)";
         var root = SourceProvenance.ParseValid(source).Root;
         var step = root.Properties.Single(p => p.Name == "Step").Value;
         var calls = step.Output.Cast<Expr.Call>().ToArray();

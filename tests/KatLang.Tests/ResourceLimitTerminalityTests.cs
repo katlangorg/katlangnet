@@ -501,7 +501,7 @@ public class ResourceLimitTerminalityTests
     [InlineData("Outer(v) = map([1, 2], {x + 0})\nOuter(DeepP)")]
     [InlineData("a, *rest = DeepP, 1, 2\nIgnore(v) = 7\nIgnore(rest)")]
     [InlineData("5.string(DeepP)")]
-    [InlineData("Ignore(v) = false\nStep(s) = s + 1, Ignore({DeepP})\nwhile(Step, 0)")]
+    [InlineData("Ignore(v) = false\nStep(s) = s + 1, Ignore({DeepP})\nwhile(Step(0))")]
     [InlineData("Coll(*xs) = 7\nColl(DeepP)")]
     [InlineData("Coll(*xs) = 7\nColl(1, DeepP, 2)")]
     [InlineData("P((a, b)) = 7\nP(DeepP)")]
@@ -525,8 +525,8 @@ public class ResourceLimitTerminalityTests
     [InlineData("count({DeepP}, 2)")]
     [InlineData("take([1, 2], {DeepP})")]
     [InlineData("F(v) = 7\nrange(1, 3).filter({x > F({DeepP})}).count")]
-    [InlineData("Step(s) = s + 1\nrepeat(Step, 2, {DeepP})")]
-    [InlineData("Ignore(v) = 0\nStep(s) = s + Ignore({DeepP})\nrepeat(Step, 2, 0)")]
+    [InlineData("Step(s) = s + 1\nrepeat(Step({DeepP}), 2)")]
+    [InlineData("Ignore(v) = 0\nStep(s) = s + Ignore({DeepP})\nrepeat(Step(0), 2)")]
     public async Task EveryBindingShape_RespectsActualDemand(string program)
     {
         var result = await OnEveryRouteAsync(WithDeepPrelude(program) + ", trace(2)", limits: Shallow);
@@ -808,7 +808,7 @@ public class ResourceLimitTerminalityTests
         AssertOk(await OnEveryRouteAsync(WithDeepPrelude("reduce([], DeepP, 7)"), limits: Shallow), "7");
         AssertOk(await OnEveryRouteAsync(WithDeepPrelude("[].filter(DeepP).count"), limits: Shallow), "0");
         AssertOk(await OnEveryRouteAsync(WithDeepPrelude("Step(s) = DeepP + s\nIgnore(f) = 7\nIgnore(Step)"), limits: Shallow), "7");
-        AssertOk(await OnEveryRouteAsync(WithDeepPrelude("Step(s) = DeepP + s\nrepeat(Step, 0, 7)"), limits: Shallow), "7");
+        AssertOk(await OnEveryRouteAsync(WithDeepPrelude("Step(s) = DeepP + s\nrepeat(Step(7), 0)"), limits: Shallow), "7");
         AssertOk(await OnEveryRouteAsync(WithDeepPrelude("x, y = DeepP, 1\n7"), limits: Shallow), "7");
         AssertOk(await OnEveryRouteAsync(WithDeepPrelude("Unused = DeepP\n7"), limits: Shallow), "7");
     }
@@ -853,8 +853,8 @@ public class ResourceLimitTerminalityTests
         { "collecting-only-argument", DeepDefinition + "Only(*xs) = Deep(12) + randomInt(0, 1000)\nIgnore(f) = 7\nIgnore(Only), randomInt(0, 1000)" },
         { "collector", DrawingPrelude + "Coll(*xs) = 0\nColl({DeepP}) + randomInt(0, 1000)" },
         { "callback-capture", DrawingPrelude + "Outer(v) = map([1, 2], {x + 0})\nOuter(DeepP), randomInt(0, 1000)" },
-        { "loop-step", DrawingPrelude + "Ignore(v) = 0\nStep(s) = s + Ignore({DeepP})\nrepeat(Step, 3, 0), randomInt(0, 1000)" },
-        { "while-step", DrawingPrelude + "Ignore(v) = false\nStep(s) = s + 1, Ignore({DeepP})\nwhile(Step, 0), randomInt(0, 1000)" },
+        { "loop-step", DrawingPrelude + "Ignore(v) = 0\nStep(s) = s + Ignore({DeepP})\nrepeat(Step(0), 3), randomInt(0, 1000)" },
+        { "while-step", DrawingPrelude + "Ignore(v) = false\nStep(s) = s + 1, Ignore({DeepP})\nwhile(Step(0)), randomInt(0, 1000)" },
         { "collecting-deconstruction", DrawingPrelude + "a, *rest = DeepP, 1, 2\nIgnore(v) = 7\nIgnore(rest), randomInt(0, 1000)" },
         { "forwarded", DrawingPrelude + "Keep(w) = randomInt(0, 1000)\nF(v) = Keep(v)\nF(DeepP)" },
         { "dot-receiver", DrawingPrelude + "Ignore(v, w) = w\nDeepP.Ignore(randomInt(0, 1000))" },

@@ -242,8 +242,8 @@ public class OutputLessArgumentBlameTests
     [InlineData("map((1, 2, 3), { })")]
     [InlineData("filter((1, 2, 3), { })")]
     [InlineData("reduce((1, 2, 3), {}, 0)")]
-    [InlineData("repeat({}, 1, 0)")]
-    [InlineData("while({}, 0)")]
+    [InlineData("Step = {}\nrepeat(Step(0), 1)")]
+    [InlineData("Step = {}\nwhile(Step(0))")]
     public void CallbackSlot_IsNotValueDemanded_ByTheArgumentBlame(string source)
     {
         var error = AssertEvalError(source);
@@ -630,7 +630,7 @@ public class OutputLessArgumentBlameTests
     [InlineData(Collector + "\nColl(1, { }, 3)")]
     [InlineData("map((1, 2, 3), { })")]
     [InlineData("S = (1, 2, 3)\nS.filter({ }).count")]
-    [InlineData("Step(s) = s + 1\nrepeat(Step, 3, { })")]
+    [InlineData("Step(s) = s + 1\nrepeat(Step({ }), 3)")]
     public void GenericAndOptimizedExecution_ProduceTheSameBlame(string source)
     {
         var generic = EvalFull(source, enableLoopOptimization: false, enableSequencePipelineOptimization: false);
@@ -695,9 +695,9 @@ public class OutputLessArgumentBlameTests
     [InlineData("F((x, y), *rest) = x\nF({}, 3)")]
     [InlineData("F(0) = 0\nF(x) = x\nF({})")]
     [InlineData("F((0, y)) = y\nF((x, y)) = x\nF({})")]
-    [InlineData("Step(s) = s + 1\nrepeat(Step, {}, 0)")]
-    [InlineData("Step(s) = s + 1\nrepeat(Step, 1, {})")]
-    [InlineData("Step(s) = s, false\nwhile(Step, {})")]
+    [InlineData("Step(s) = s + 1\nrepeat(Step(0), {})")]
+    [InlineData("Step(s) = s + 1\nrepeat(Step({}), 1)")]
+    [InlineData("Step(s) = s, false\nwhile(Step({}))")]
     [InlineData("Step(v, acc) = v + acc\nreduce([1], Step, {})")]
     [InlineData("Coll(*xs) = xs\nColl({}[0])")]
     [InlineData("Coll(*xs) = xs\nColl([1, {}])")]
@@ -709,7 +709,7 @@ public class OutputLessArgumentBlameTests
         // LOOP-06 (condition first): the `while` step's false flag is read first and its row `s` is
         // never formed, so the output-less initial argument fails at the loop's final
         // materialization (LOOP-07), blamed on the written argument rather than on parameter `s`.
-        if (source is "Step(s) = s + 1\nrepeat(Step, 1, {})")
+        if (source is "Step(s) = s + 1\nrepeat(Step({}), 1)")
             Assert.Equal("s", AssertContext<ParameterEvaluationContext>(error).ParameterName);
         else AssertArgumentBlame(error);
         Assert.NotNull(error.Span);
@@ -773,10 +773,10 @@ public class OutputLessArgumentBlameTests
     }
 
     [Theory]
-    [InlineData("Step(s) = if(true, {}, s)\nrepeat(Step, 1, 0)")]
-    [InlineData("Step(s) = if({}, s, s)\nrepeat(Step, 1, 0)")]
-    [InlineData("Step(s) = if(false, s, 1 + {})\nrepeat(Step, 1, 0)")]
-    [InlineData("Coll(*xs) = xs\nStep(s) = Coll({})\nrepeat(Step, 1, 0)")]
+    [InlineData("Step(s) = if(true, {}, s)\nrepeat(Step(0), 1)")]
+    [InlineData("Step(s) = if({}, s, s)\nrepeat(Step(0), 1)")]
+    [InlineData("Step(s) = if(false, s, 1 + {})\nrepeat(Step(0), 1)")]
+    [InlineData("Coll(*xs) = xs\nStep(s) = Coll({})\nrepeat(Step(0), 1)")]
     public void PlannedLoop_ArgumentFailure_HasGenericBlame(string source)
     {
         var (generic, genericStats, _) = LoopDiagnosticParityAssertions.RunObserved(source, false);

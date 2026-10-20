@@ -120,8 +120,8 @@ def consumerReusesTheRead (consumer : KatLang.Expr) (ownCalls : Nat) : Bool :=
 #guard consumerReusesTheRead (.call (resolve "if") [.boolLiteral true, resolve "A", num 0]) 0
 #guard consumerReusesTheRead (.call (resolve "if") [.boolLiteral false, num 0, resolve "A"]) 0
 -- Loop initial state and `reduce`'s initial accumulator.
-#guard consumerReusesTheRead (.call (resolve "repeat") [resolve "Keep", num 0, resolve "A"]) 0
-#guard consumerReusesTheRead (.call (resolve "repeat") [resolve "Keep", num 1, resolve "A"]) 1
+#guard consumerReusesTheRead (.call (resolve "repeat") [.call (resolve "Keep") [resolve "A"], num 0]) 0
+#guard consumerReusesTheRead (.call (resolve "repeat") [.call (resolve "Keep") [resolve "A"], num 1]) 1
 #guard consumerReusesTheRead (.call (resolve "reduce") [.listLiteral [], resolve "Add", resolve "A"]) 0
 -- Higher-order builtins: the collection is the cached value; the callbacks are
 -- their own calls (two elements, two callback invocations).

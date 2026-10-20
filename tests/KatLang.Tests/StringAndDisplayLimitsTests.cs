@@ -46,7 +46,7 @@ public class StringAndDisplayLimitsTests
 
     private static Expr BuildStringRepeatAst(string value, long count)
     {
-        var parsed = SourceProvenance.ParseValid($"Step(x) = 'placeholder'\nStep.repeat({count}, 0)").Root;
+        var parsed = SourceProvenance.ParseValid($"Step(x) = 'placeholder'\nStep(0).repeat({count})").Root;
         var properties = parsed.Properties.Select(property =>
         {
             if (property.Name != "Step") return property;
@@ -164,7 +164,7 @@ public class StringAndDisplayLimitsTests
             ErrorOf("ToText(x) = x.string\n[12345].map(ToText)", Str(4)));
         Assert.IsType<EvalError.StringSizeLimitExceeded>(
             // LOOP-06 (condition first): a Boolean `true` flag lets the round reach the string row.
-            ErrorOf("Step(x) = 'abcd', true\nStep.while(1)", Str(3)));
+            ErrorOf("Step(x) = 'abcd', true\nStep(1).while", Str(3)));
     }
 
     [Fact]

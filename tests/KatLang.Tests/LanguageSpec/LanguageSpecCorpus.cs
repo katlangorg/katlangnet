@@ -200,7 +200,7 @@ public static class LanguageSpecCorpus
         {
             Id = "need-first-loop-step-can-ignore-initial",
             Category = "variadic-calls",
-            Source = "Step(x) = 7\nrepeat(Step, 1, 1 / 0)",
+            Source = "Step(x) = 7\nrepeat(Step(1 / 0), 1)",
             Outcome = SpecOutcome.Evaluates,
             ExpectedDisplay = "7",
             ExpectedRaw = "7",
@@ -403,7 +403,7 @@ public static class LanguageSpecCorpus
         {
             Id = "boolean-loop-state-transition",
             Category = "conditionals",
-            Source = "S(x) = if(x == true, 0, true), x != 0\nS.while(true)",
+            Source = "S(x) = if(x == true, 0, true), x != 0\nS(true).while",
             Outcome = SpecOutcome.Evaluates,
             ExpectedDisplay = "0",
             ExpectedRaw = "0",
@@ -938,11 +938,11 @@ public static class LanguageSpecCorpus
                 // A map callback returns the same ordinary call result (HO-03): D's two rows are ONE element.
                 new SpecProbe("D(x) = x, x\n[1].map(D)", "ok raw=L[S[1, 1]] n=1"),
                 // A completed loop is a value boundary too (Q-26): the finished multi-slot loop is ONE value at the root ...
-                new SpecProbe("Step = a + 1, b + 1\nStep.repeat(1, 0, 0)", "ok raw=S[1, 1] n=1"),
+                new SpecProbe("Step = a + 1, b + 1\nStep(0, 0).repeat(1)", "ok raw=S[1, 1] n=1"),
                 // ... exactly as through an ordinary property boundary ...
-                new SpecProbe("Step = a + 1, b + 1\nR = Step.repeat(1, 0, 0)\nR", "ok raw=S[1, 1] n=1"),
+                new SpecProbe("Step = a + 1, b + 1\nR = Step(0, 0).repeat(1)\nR", "ok raw=S[1, 1] n=1"),
                 // ... and only the explicit spread opens it into items.
-                new SpecProbe("Step = a + 1, b + 1\nStep.repeat(1, 0, 0)*, 997", "ok raw=S[1, 1, 997] n=3"),
+                new SpecProbe("Step = a + 1, b + 1\nStep(0, 0).repeat(1)*, 997", "ok raw=S[1, 1, 997] n=3"),
             ],
             IncludeInGeneratorPrompt = true,
             Explanation = "A call returns exactly one value — here the collected list `[5, 9]` — and only the explicit caller-site spread `value*` opens it back into the surrounding item supply.",
@@ -951,7 +951,7 @@ public static class LanguageSpecCorpus
         {
             Id = "loop-result-is-one-value",
             Category = "item-supply-vs-value",
-            Source = "Fibonacci(a, b) = b, a + b\nFibonacci.repeat(10, 0, 1)\nFibonacci.repeat(10, 0, 1)*,\nFibonacci.repeat(10, 0, 1), 7",
+            Source = "Fibonacci(a, b) = b, a + b\nFibonacci(0, 1).repeat(10)\nFibonacci(0, 1).repeat(10)*,\nFibonacci(0, 1).repeat(10), 7",
             Outcome = SpecOutcome.Evaluates,
             ExpectedDisplay = "(55, 89)\n55\n89\n(55, 89)\n7",
             ExpectedRaw = "S[S[55, 89], 55, 89, S[55, 89], 7]",
@@ -959,11 +959,11 @@ public static class LanguageSpecCorpus
             Probes =
             [
                 // The same one value through a property ...
-                new SpecProbe("Fibonacci(a, b) = b, a + b\nX = Fibonacci.repeat(10, 0, 1)\nX", "ok raw=S[55, 89] n=1"),
+                new SpecProbe("Fibonacci(a, b) = b, a + b\nX = Fibonacci(0, 1).repeat(10)\nX", "ok raw=S[55, 89] n=1"),
                 // ... and through `while`: the final two-slot state is one value too.
-                new SpecProbe("Cd(n, acc) = n - 1, acc + n, n > 1\nwhile(Cd, 3, 0)", "ok raw=S[1, 5] n=1"),
+                new SpecProbe("Cd(n, acc) = n - 1, acc + n, n > 1\nwhile(Cd(3, 0))", "ok raw=S[1, 5] n=1"),
                 // A zero-slot final state is the one visible value `()`; its spread supplies nothing.
-                new SpecProbe("Drop(*xs) = { ()* }\nrepeat(Drop, 1, 1), repeat(Drop, 1, 1)*, 997", "ok raw=S[S[], 997] n=2"),
+                new SpecProbe("Drop(*xs) = { ()* }\nrepeat(Drop(1), 1), repeat(Drop(1), 1)*, 997", "ok raw=S[S[], 997] n=2"),
             ],
             IncludeInGeneratorPrompt = true,
             Explanation = "A completed `repeat`/`while` is ONE value, like every call result: the two final state slots come back as the one value `(55, 89)` — one row alone or beside other rows — and only the explicit spread `…*` opens it into separate items.",
@@ -972,7 +972,7 @@ public static class LanguageSpecCorpus
         {
             Id = "loop-step-patterns-only-bind",
             Category = "item-supply-vs-value",
-            Source = "Dup(x, x) = { (x + 1, x + 1)* }\nSame(x, x) = { x + 1, x + 1 }\nStep((a, b)) = (b, a + b)\nDup.repeat(2, 1, 1), Same.repeat(2, 1, 1), Step.repeat(3, (0, 1))",
+            Source = "Dup(x, x) = { (x + 1, x + 1)* }\nSame(x, x) = { x + 1, x + 1 }\nStep((a, b)) = (b, a + b)\nDup(1, 1).repeat(2), Same(1, 1).repeat(2), Step((0, 1)).repeat(3)",
             Outcome = SpecOutcome.Evaluates,
             ExpectedDisplay = "(3, 3)\n(3, 3)\n(2, 3)",
             ExpectedRaw = "S[S[3, 3], S[3, 3], S[2, 3]]",
@@ -980,11 +980,11 @@ public static class LanguageSpecCorpus
             Probes =
             [
                 // A structural step's spread row supplies TWO slots, which its one-pattern head cannot re-bind.
-                new SpecProbe("Step2((a, b)) = { (b, a + b)* }\nStep2.repeat(3, (0, 1))", "err arity"),
+                new SpecProbe("Step2((a, b)) = { (b, a + b)* }\nStep2((0, 1)).repeat(3)", "err arity"),
                 // Diverging rows of a repeated-name step fail the NEXT binding, like the direct call `Dup(2, 3)`.
-                new SpecProbe("Dup(x, x) = { x + 1, x + 2 }\nDup.repeat(2, 1, 1)", "err arity"),
+                new SpecProbe("Dup(x, x) = { x + 1, x + 2 }\nDup(1, 1).repeat(2)", "err arity"),
                 // An exact list keeps a growing history as ONE slot.
-                new SpecProbe("Grow([*h], n) = [h*, n], n + 1\nGrow.repeat(3, [], 0)[0]", "ok raw=L[0, 1, 2] n=1"),
+                new SpecProbe("Grow([*h], n) = [h*, n], n + 1\nGrow([], 0).repeat(3)[0]", "ok raw=L[0, 1, 2] n=1"),
             ],
             IncludeInGeneratorPrompt = true,
             Explanation = "A loop step's parameter patterns only bind the incoming state; its rows — with `*` opening a value, as everywhere — are the next state. `Dup`'s spread row supplies the same two slots as `Same`'s two rows, and `Step` keeps its pair as ONE slot by writing one value.",
@@ -993,7 +993,7 @@ public static class LanguageSpecCorpus
         {
             Id = "loop-nested-step-row-is-one-slot",
             Category = "item-supply-vs-value",
-            Source = "Fibonacci(a, b) = b, a + b\nTwo(a, b) = { repeat(Fibonacci, 2, a, b)* }\nTwo.repeat(3, 0, 1)",
+            Source = "Fibonacci(a, b) = b, a + b\nTwo(a, b) = { repeat(Fibonacci(a, b), 2)* }\nTwo(0, 1).repeat(3)",
             Outcome = SpecOutcome.Evaluates,
             ExpectedDisplay = "(8, 13)",
             ExpectedRaw = "S[8, 13]",
@@ -1001,9 +1001,9 @@ public static class LanguageSpecCorpus
             Probes =
             [
                 // Unspread, the inner loop is ONE next-state slot, which `Two(a, b)` cannot re-bind ...
-                new SpecProbe("Fibonacci(a, b) = b, a + b\nTwo(a, b) = repeat(Fibonacci, 2, a, b)\nTwo.repeat(3, 0, 1)", "err arity"),
+                new SpecProbe("Fibonacci(a, b) = b, a + b\nTwo(a, b) = repeat(Fibonacci(a, b), 2)\nTwo(0, 1).repeat(3)", "err arity"),
                 // ... exactly as a helper returning the same loop.
-                new SpecProbe("Fibonacci(a, b) = b, a + b\nInner(a, b) = repeat(Fibonacci, 2, a, b)\nTwo(a, b) = { Inner(a, b)* }\nTwo.repeat(3, 0, 1)", "ok raw=S[8, 13] n=1"),
+                new SpecProbe("Fibonacci(a, b) = b, a + b\nInner(a, b) = repeat(Fibonacci(a, b), 2)\nTwo(a, b) = { Inner(a, b)* }\nTwo(0, 1).repeat(3)", "ok raw=S[8, 13] n=1"),
             ],
             IncludeInGeneratorPrompt = true,
             Explanation = "A nested loop written as a step row is ONE next-state slot, like any call result; spread it with `*` to supply its final items as the next state.",
@@ -1012,7 +1012,7 @@ public static class LanguageSpecCorpus
         {
             Id = "loop-step-clause-family",
             Category = "conditionals",
-            Source = "Step(0) = 0\nStep(n) = n - 1\nrepeat(Step, 2, 3), Step.repeat(5, 3), Step(Step(3))",
+            Source = "Step(0) = 0\nStep(n) = n - 1\nrepeat(Step(3), 2), Step(3).repeat(5), Step(Step(3))",
             Outcome = SpecOutcome.Evaluates,
             ExpectedDisplay = "1\n0\n1",
             ExpectedRaw = "S[1, 0, 1]",
@@ -1020,18 +1020,18 @@ public static class LanguageSpecCorpus
             Probes =
             [
                 // A wrong state arity is the family's own ordinary arity failure.
-                new SpecProbe("Step(0) = 0\nStep(n) = n - 1\nrepeat(Step, 1, 1, 2)", "err arity"),
+                new SpecProbe("Step(0) = 0\nStep(n) = n - 1\nrepeat(Step(1, 2), 1)", "err arity"),
                 // The selected clause's ROWS are the next state: two rows are two slots.
-                new SpecProbe("Two(0) = 9, 9\nTwo(n) = n, n\nrepeat(Two, 2, 1)", "err arity"),
+                new SpecProbe("Two(0) = 9, 9\nTwo(n) = n, n\nrepeat(Two(1), 2)", "err arity"),
             ],
             IncludeInGeneratorPrompt = true,
-            Explanation = "A loop step is an ordinary callable: each iteration invokes a clause family exactly as the call `Step(state…)` would — ordinary clause dispatch over the current state — and the selected clause's rows become the next state, so `repeat(Step, 2, 3)` is `Step(Step(3))`.",
+            Explanation = "A loop step is an ordinary callable: each iteration invokes a clause family exactly as the call `Step(state…)` would — ordinary clause dispatch over the current state — and the selected clause's rows become the next state, so `repeat(Step(3), 2)` is `Step(Step(3))`.",
         },
         new()
         {
             Id = "loop-step-family-while",
             Category = "conditionals",
-            Source = "Countdown(0) = 0, false\nCountdown(n) = n - 1, true\nCountdown.while(3)",
+            Source = "Countdown(0) = 0, false\nCountdown(n) = n - 1, true\nCountdown(3).while",
             Outcome = SpecOutcome.Evaluates,
             ExpectedDisplay = "0",
             ExpectedRaw = "0",
@@ -1039,8 +1039,8 @@ public static class LanguageSpecCorpus
             Probes =
             [
                 // A clause that matches nothing is the ordinary NoMatchingBranch, never loop termination.
-                new SpecProbe("S(2) = 1, true\nS(1) = 0, true\nwhile(S, 2)", "err branch"),
-                new SpecProbe("S(2) = 1, true\nS(1) = 0, false\nwhile(S, 2)", "ok raw=1 n=1"),
+                new SpecProbe("S(2) = 1, true\nS(1) = 0, true\nwhile(S(2))", "err branch"),
+                new SpecProbe("S(2) = 1, true\nS(1) = 0, false\nwhile(S(2))", "ok raw=1 n=1"),
             ],
             IncludeInGeneratorPrompt = true,
             Explanation = "A clause family is a natural `while` step with a base case: the selected clause's last row is the continuation flag, as for any step.",
@@ -1049,7 +1049,7 @@ public static class LanguageSpecCorpus
         {
             Id = "loop-while-condition-first-skips-transition",
             Category = "conditionals",
-            Source = "Step(x) = 10 / (x - 1), x > 1\nStep.while(1)",
+            Source = "Step(x) = 10 / (x - 1), x > 1\nStep(1).while",
             Outcome = SpecOutcome.Evaluates,
             ExpectedDisplay = "1",
             ExpectedRaw = "1",
@@ -1057,11 +1057,11 @@ public static class LanguageSpecCorpus
             Probes =
             [
                 // A false initial condition returns the initial state without forming any transition row.
-                new SpecProbe("Step(a, b) = b, a + b, a < 100\nStep.while(144, 233)", "ok raw=S[144, 233] n=1"),
+                new SpecProbe("Step(a, b) = b, a + b, a < 100\nStep(144, 233).while", "ok raw=S[144, 233] n=1"),
                 // The flag row is read first: its non-Boolean value is reported before the failing earlier row.
-                new SpecProbe("S(x) = 1 / 0, 5\nS.while(1)", "err type"),
+                new SpecProbe("S(x) = 1 / 0, 5\nS(1).while", "err type"),
                 // A true flag forms the remaining rows left to right; the next state excludes the flag.
-                new SpecProbe("Fib(a, b, n) = b, a + b, n - 1, n > 1\nFib.while(0, 1, 10)", "ok raw=S[34, 55, 1] n=1"),
+                new SpecProbe("Fib(a, b, n) = b, a + b, n - 1, n > 1\nFib(0, 1, 10).while", "ok raw=S[34, 55, 1] n=1"),
             ],
             IncludeInGeneratorPrompt = true,
             Explanation = "LOOP-06 (condition first): each `while` round evaluates its continuation flag FIRST; `false` returns the state that entered the round without evaluating the other outputs, so the condition protects the transition `10 / (x - 1)`.",
@@ -1070,7 +1070,7 @@ public static class LanguageSpecCorpus
         {
             Id = "loop-while-condition-first-trailing-empty-spread",
             Category = "conditionals",
-            Source = "Tail(n) = ()\nStep(n) = n + 1, n < 2, Tail(n)*\nStep.while(0)",
+            Source = "Tail(n) = ()\nStep(n) = n + 1, n < 2, Tail(n)*\nStep(0).while",
             Outcome = SpecOutcome.Evaluates,
             ExpectedDisplay = "2",
             ExpectedRaw = "2",
@@ -1078,9 +1078,9 @@ public static class LanguageSpecCorpus
             Probes =
             [
                 // No row supplies an item: the missing-flag arity failure, after every row was formed.
-                new SpecProbe("E(x) = ()\nS(x) = E(x)*, E(x)*\nS.while(1)", "err arity"),
+                new SpecProbe("E(x) = ()\nS(x) = E(x)*, E(x)*\nS(1).while", "err arity"),
                 // One effective item is both the flag and the next state.
-                new SpecProbe("S(x) = not x\nS.while(false)", "ok raw=true n=1"),
+                new SpecProbe("S(x) = not x\nS(false).while", "ok raw=true n=1"),
             ],
             Explanation = "LOOP-06 (condition first): the flag is the LAST EFFECTIVE output item, discovered right to left: a trailing spread that supplies nothing is formed and passed over, and the flag comes from the earlier row `n < 2`.",
         },
@@ -1088,7 +1088,7 @@ public static class LanguageSpecCorpus
         {
             Id = "loop-while-condition-first-row-granular",
             Category = "conditionals",
-            Source = "Pack(x) = x - 1, x > 1\nStep(x) = Pack(x)*\nStep.while(3)",
+            Source = "Pack(x) = x - 1, x > 1\nStep(x) = Pack(x)*\nStep(3).while",
             Outcome = SpecOutcome.Evaluates,
             ExpectedDisplay = "1",
             ExpectedRaw = "1",
@@ -1097,9 +1097,9 @@ public static class LanguageSpecCorpus
             [
                 // The call `Pack(x)` is one ordinary value formed left to right: its failing first output
                 // is computed before the flag inside it exists ...
-                new SpecProbe("Pack(x) = x + 'a', x > 1\nStep(x) = Pack(x)*\nStep.while(1)", "err type"),
+                new SpecProbe("Pack(x) = x + 'a', x > 1\nStep(x) = Pack(x)*\nStep(1).while", "err type"),
                 // ... while the same rows written directly in the step are skipped by the false flag.
-                new SpecProbe("Step(x) = x + 'a', x > 1\nStep.while(1)", "ok raw=1 n=1"),
+                new SpecProbe("Step(x) = x + 'a', x > 1\nStep(1).while", "ok raw=1 n=1"),
             ],
             Explanation = "LOOP-06 (condition first) is row-granular: a flag produced inside one call or spread row gets no early exit, because that row is one ordinary value; write the condition as its own output row to protect the transition.",
         },
@@ -1107,15 +1107,15 @@ public static class LanguageSpecCorpus
         {
             Id = "loop-step-family-multi-slot",
             Category = "conditionals",
-            Source = "Gcd(a, 0) = a, 0, false\nGcd(a, b) = b, a mod b, true\nGcd.while(48, 18)[0]",
+            Source = "Gcd(a, 0) = a, 0, false\nGcd(a, b) = b, a mod b, true\nGcd(48, 18).while[0]",
             Outcome = SpecOutcome.Evaluates,
             ExpectedDisplay = "6",
             ExpectedRaw = "6",
             ExpectedEmittedCount = 1,
             Probes =
             [
-                new SpecProbe("Gcd(a, 0) = a, 0, false\nGcd(a, b) = b, a mod b, true\nwhile(Gcd, 48, 18)", "ok raw=S[6, 0] n=1"),
-                new SpecProbe("Gcd(a, 0) = a, 0, false\nGcd(a, b) = b, a mod b, true\nwhile(Gcd, 7, 0)", "ok raw=S[7, 0] n=1"),
+                new SpecProbe("Gcd(a, 0) = a, 0, false\nGcd(a, b) = b, a mod b, true\nwhile(Gcd(48, 18))", "ok raw=S[6, 0] n=1"),
+                new SpecProbe("Gcd(a, 0) = a, 0, false\nGcd(a, b) = b, a mod b, true\nwhile(Gcd(7, 0))", "ok raw=S[7, 0] n=1"),
             ],
             Explanation = "A multi-slot family step matches its literals against the current state slots through ordinary clause dispatch; the selected clause's rows are the next state and its last row is the flag.",
         },
@@ -1123,7 +1123,7 @@ public static class LanguageSpecCorpus
         {
             Id = "loop-step-builtin-is-one-row-wrapper",
             Category = "collection-builtins",
-            Source = "C(c) = count(c)\nrepeat(count, 1, [1, 2]) == repeat(C, 1, [1, 2]), count.repeat(1, [1, 2])",
+            Source = "C(c) = count(c)\nrepeat(count([1, 2]), 1) == repeat(C([1, 2]), 1), count([1, 2]).repeat(1)",
             Outcome = SpecOutcome.Evaluates,
             ExpectedDisplay = "true\n2",
             ExpectedRaw = "S[true, 2]",
@@ -1131,9 +1131,9 @@ public static class LanguageSpecCorpus
             Probes =
             [
                 // A collection result is ONE state slot, never its element count ...
-                new SpecProbe("repeat(take, 1, [1, 2, 3], 2)", "ok raw=L[1, 2] n=1"),
+                new SpecProbe("repeat(take([1, 2, 3], 2), 1)", "ok raw=L[1, 2] n=1"),
                 // ... so the next `take` invocation has one argument: take's own arity failure.
-                new SpecProbe("repeat(take, 2, [1, 2, 3], 2)", "err arity"),
+                new SpecProbe("repeat(take([1, 2, 3], 2), 2)", "err arity"),
             ],
             IncludeInGeneratorPrompt = true,
             Explanation = "A builtin step runs through its ordinary argument roles over the current state; it has no written rows, so its one result value is one next-state slot — exactly the step its one-row wrapper `C(c) = count(c)` makes.",
@@ -1142,14 +1142,14 @@ public static class LanguageSpecCorpus
         {
             Id = "loop-step-builtin-empty-result-is-one-slot",
             Category = "empty-visible-vs-spread",
-            Source = "while(first, [()])",
+            Source = "while(first([()]))",
             Outcome = SpecOutcome.EvalError,
             ExpectedErrorCategory = "type",
             Probes =
             [
                 // The one-row wrapper fails the same way: its `()` row is one slot, so it is the flag.
-                new SpecProbe("Fi(c) = first(c)\nwhile(Fi, [()])", "err type"),
-                new SpecProbe("repeat(first, 1, [()])", "ok raw=S[] n=1"),
+                new SpecProbe("Fi(c) = first(c)\nwhile(Fi([()]))", "err type"),
+                new SpecProbe("repeat(first([()]), 1)", "ok raw=S[] n=1"),
             ],
             Explanation = "A builtin's `()` result is ONE state slot holding `()`, like a `()` row: as a `while` step that slot is the flag, so a Boolean is required (a zero-slot reading would instead be the empty-supply arity failure).",
         },
@@ -1157,14 +1157,14 @@ public static class LanguageSpecCorpus
         {
             Id = "loop-step-alias-follows-target",
             Category = "name-resolution",
-            Source = "Step(0) = 0\nStep(n) = n - 1\nA = Step\nC = count\nrepeat(A, 2, 3), repeat(C, 1, [1, 2])",
+            Source = "Step(0) = 0\nStep(n) = n - 1\nA = Step\nC = count\nrepeat(A(3), 2), repeat(C([1, 2]), 1)",
             Outcome = SpecOutcome.Evaluates,
             ExpectedDisplay = "1\n2",
             ExpectedRaw = "S[1, 2]",
             ExpectedEmittedCount = 2,
             Probes =
             [
-                new SpecProbe("Step(0) = 0\nStep(n) = n - 1\nRun(f, *s) = repeat(f, 2, s*)\nRun(Step, 3)", "ok raw=1 n=1"),
+                new SpecProbe("Step(0) = 0\nStep(n) = n - 1\nRun(f, *s) = repeat(f(s*), 2)\nRun(Step, 3)", "ok raw=1 n=1"),
             ],
             Explanation = "A callable alias — and a parameter forwarding a callable — is its target's callable as a loop step too: a family or builtin target is invoked exactly as when written directly.",
         },
@@ -1172,29 +1172,30 @@ public static class LanguageSpecCorpus
         {
             Id = "loop-step-value-is-rejected",
             Category = "errors",
-            Source = "repeat(5, 1, 0)",
+            Source = "Run(f) = repeat(f(0), 1)\nRun(5)",
             Outcome = SpecOutcome.EvalError,
             ExpectedErrorCategory = "notAnAlgorithm",
             Probes =
             [
-                new SpecProbe("A = 1, 2\nrepeat(A[0], 1, 0)", "err notAnAlgorithm"),
+                new SpecProbe("A = 1, 2\nRun(f) = repeat(f(0), 1)\nRun(A[0])", "err notAnAlgorithm"),
                 // A genuinely zero-parameter callable is eligible, but one state value fails its ordinary arity.
-                new SpecProbe("Z = 5\nrepeat(Z, 1, 0)", "err arity"),
+                new SpecProbe("Z = 5\nrepeat(Z(0), 1)", "err arity"),
             ],
-            Explanation = "Any callable is an eligible step, but a value has no callable identity: a number, list, selection or call result is still no step, and the first iteration that needs it reports NotAnAlgorithm (Q-06) — by CALLABLE projection, never by demanding the value. A real zero-parameter callable is a step whose interface cannot bind one state value: ArityMismatch.",
+            Explanation = "Any callable is an eligible step, but a value has no callable identity: a number, list, selection or call result supplied for the captured call's callee is still no step, and the first iteration that needs it reports NotAnAlgorithm (Q-06) — by CALLABLE projection, never by demanding the value. A real zero-parameter callable is a step whose interface cannot bind one state value: ArityMismatch.",
         },
         new()
         {
             Id = "loop-step-zero-iterations-never-projects",
             Category = "item-supply-vs-value",
-            Source = "repeat(5, 0, 1), repeat(1 / 0, 0, 5)",
+            Source = "Run(f, s) = repeat(f(s), 0)\nRun(5, 1), Run(1 / 0, 5)",
             Outcome = SpecOutcome.Evaluates,
             ExpectedDisplay = "1\n5",
             ExpectedRaw = "S[1, 5]",
             ExpectedEmittedCount = 2,
             Probes =
             [
-                new SpecProbe("F(0) = 1\nrepeat(F, 0, 5)", "ok raw=5 n=1"),
+                new SpecProbe("F(0) = 1\nrepeat(F(5), 0)", "ok raw=5 n=1"),
+                new SpecProbe("N = 5\nN(1).repeat(0)", "ok raw=1 n=1"),
             ],
             Explanation = "A zero-iteration `repeat` returns its initial state without projecting, validating or evaluating its step.",
         },
@@ -1202,7 +1203,7 @@ public static class LanguageSpecCorpus
         {
             Id = "loop-step-family-no-match-is-ordinary",
             Category = "conditionals",
-            Source = "F(0) = 1\nF(1) = 2\nrepeat(F, 1, 5)",
+            Source = "F(0) = 1\nF(1) = 2\nrepeat(F(5), 1)",
             Outcome = SpecOutcome.EvalError,
             ExpectedErrorCategory = "branch",
             Explanation = "A family step whose clauses match none of the current state is the family's ordinary NoMatchingBranch, exactly as the call `F(5)`.",
@@ -1211,7 +1212,7 @@ public static class LanguageSpecCorpus
         {
             Id = "loop-step-lazy-builtin-roles",
             Category = "collection-builtins",
-            Source = "repeat(if, 1, false, 1 / 0, 2)",
+            Source = "repeat(if(false, 1 / 0, 2), 1)",
             Outcome = SpecOutcome.Evaluates,
             ExpectedDisplay = "2",
             ExpectedRaw = "2",
@@ -1219,9 +1220,134 @@ public static class LanguageSpecCorpus
             Probes =
             [
                 // A callback slot of a builtin step invokes the callable the state supplies.
-                new SpecProbe("repeat(map, 1, [1, 2], { x + 1 })", "ok raw=L[2, 3] n=1"),
+                new SpecProbe("repeat(map([1, 2], { x + 1 }), 1)", "ok raw=L[2, 3] n=1"),
             ],
             Explanation = "A builtin step keeps its ordinary argument roles: `if` demands its condition and the selected branch only, so the unselected failing branch is never evaluated.",
+        },
+        new()
+        {
+            Id = "loop-meta-plain-and-dot",
+            Category = "variadic-calls",
+            Source = "Step(x) = x + 1, x < 3\nInc(x) = x + 1\nwhile(Step(0)), Step(0).while, Step(0).while(), repeat(Inc(0), 5), Inc(0).repeat(5)",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "3\n3\n3\n5\n5",
+            ExpectedRaw = "S[3, 3, 3, 5, 5]",
+            ExpectedEmittedCount = 5,
+            Probes =
+            [
+                // Several state slots: the captured call's own arguments.
+                new SpecProbe("Fib(a, b) = b, a + b\nFib(0, 1).repeat(10)", "ok raw=S[55, 89] n=1"),
+                // An explicit spread inside the captured call supplies its items as state slots.
+                new SpecProbe("Fib(a, b) = b, a + b\nP = 0, 1\nFib(P*).repeat(10)", "ok raw=S[55, 89] n=1"),
+                // A non-spread argument is ONE state slot, whatever its value.
+                new SpecProbe("Id(x) = x\nP = 0, 1\nId(P).repeat(2)", "ok raw=S[0, 1] n=1"),
+            ],
+            IncludeInGeneratorPrompt = true,
+            Explanation = "`while(meta step)` and `repeat(meta step, count)` capture the written step CALL through their `meta` parameter: the call's callee is the step and its own arguments are the initial state. The dot spelling `Step(0).while` passes the same call as the ordinary leading argument, and `Inc(0).repeat(5)` passes the count as the second.",
+        },
+        new()
+        {
+            Id = "loop-meta-no-implicit-provenance",
+            Category = "errors",
+            Source = "Step(x) = x + 1, x < 3\nStart = Step(0)\nStart.while",
+            Outcome = SpecOutcome.EvalError,
+            ExpectedErrorCategory = "notAnAlgorithm",
+            Probes =
+            [
+                new SpecProbe("Step(x) = x + 1, x < 3\nStart = Step(0)\nwhile(Start)", "err notAnAlgorithm"),
+                // A bare callable and a value are not supplied calls either.
+                new SpecProbe("Step(x) = x + 1, x < 3\nwhile(Step)", "err notAnAlgorithm"),
+                new SpecProbe("repeat(5, 1)", "err notAnAlgorithm"),
+                // The explicit call `Start()` is a fresh call: its step is `Start` over zero state, whose
+                // one row `(1, true)` is not a Boolean continuation flag.
+                new SpecProbe("Step(x) = x + 1, x < 3\nStart = Step(0)\nStart().while", "err type"),
+            ],
+            IncludeInGeneratorPrompt = true,
+            Explanation = "A `meta` parameter captures only a supplied call computation. Reading the property `Start` is an ordinary VALUE read: the loop never recovers the call `Step(0)` written in its definition, so `Start.while` is the ordinary META refusal, with nothing evaluated.",
+        },
+        new()
+        {
+            Id = "loop-meta-zero-state",
+            Category = "empty-visible-vs-spread",
+            Source = "Z = false\nZ().while, Z().repeat(0)",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "()\n()",
+            ExpectedRaw = "S[S[], S[]]",
+            ExpectedEmittedCount = 2,
+            Probes =
+            [
+                // A collecting step over zero slots: each iteration supplies zero slots again.
+                new SpecProbe("C(*xs) = xs*\nC().repeat(3)", "ok raw=S[] n=1"),
+                // A step that needs a state value fails through its own binding.
+                new SpecProbe("Inc(x) = x + 1\nInc().repeat(1)", "err arity"),
+            ],
+            Explanation = "A captured call with no arguments starts the loop from the ordinary empty state: zero state slots, completed as `()`. A step that needs parameters reports its own arity failure.",
+        },
+        new()
+        {
+            Id = "loop-meta-spread-before-count",
+            Category = "errors",
+            Source = "Inc(x) = x + 1\nInc([1][5]*).repeat(1 / 0)",
+            Outcome = SpecOutcome.EvalError,
+            ExpectedErrorCategory = "index",
+            Probes =
+            [
+                // After a successful captured spread the count is demanded and validated ...
+                new SpecProbe("Inc(x) = x + 1\nP = 0\nInc(P*).repeat(1 / 0)", "err div0"),
+                // ... while a non-spread initial argument stays unevaluated until the loop needs it.
+                new SpecProbe("Inc(x) = x + 1\nInc(1 / 0).repeat(-1)", "err illegalInEval"),
+                // Zero iterations still return (and so evaluate) the initial state.
+                new SpecProbe("Inc(x) = x + 1\nInc(1 / 0).repeat(0)", "err div0"),
+            ],
+            Explanation = "`repeat` prepares the captured call's arguments (opening its explicit spreads) BEFORE it demands its count, so the captured spread's failure is reported first; ordinary arguments are not evaluated by that preparation.",
+        },
+        new()
+        {
+            Id = "loop-meta-qualified-step-needs-a-name",
+            Category = "name-resolution",
+            Source = "Box = { S(x) = x + 1, x < 3 }\nS = Box.S\nS(0).while",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "3",
+            ExpectedRaw = "3",
+            ExpectedEmittedCount = 1,
+            Probes =
+            [
+                new SpecProbe("Box = { S(x) = x + 1, x < 3 }\nBox.S(0).while", "err notAnAlgorithm"),
+                // An anonymous block step is named the same way.
+                new SpecProbe("Inc = { x + 1 }\nInc(0).repeat(3)", "ok raw=3 n=1"),
+            ],
+            IncludeInGeneratorPrompt = true,
+            Explanation = "A `meta` parameter captures a call whose callee is a name or a parameter; a call through a dot (`Box.S(0)`) is not captured. Name the step first (`S = Box.S`, or `Inc = { x + 1 }` for a block) and loop over a call of that name.",
+        },
+        new()
+        {
+            Id = "loop-meta-exact-arity",
+            Category = "errors",
+            Source = "Step(x) = x + 1, x < 3\nwhile(Step, 0)",
+            Outcome = SpecOutcome.EvalError,
+            ExpectedErrorCategory = "arity",
+            Probes =
+            [
+                new SpecProbe("Inc(x) = x + 1\nrepeat(Inc, 3, 0)", "err arity"),
+                new SpecProbe("Step(x) = x + 1, x < 3\nStep(0).while(1)", "err arity"),
+            ],
+            Explanation = "`while` takes exactly one argument and `repeat` exactly two; the initial state is written inside the captured step call, never after it.",
+        },
+        new()
+        {
+            Id = "loop-meta-forwarding",
+            Category = "variadic-calls",
+            Source = "Step(x) = x + 1, x < 3\nW(step) = while(step)\nW(Step(0))",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "3",
+            ExpectedRaw = "3",
+            ExpectedEmittedCount = 1,
+            Probes =
+            [
+                // A META parameter hands on a captured reference, which is not a supplied call.
+                new SpecProbe("Step(x) = x + 1, x < 3\nW(meta step) = while(step)\nW(Step(0))", "err notAnAlgorithm"),
+            ],
+            Explanation = "An ordinary parameter forwards the original supplied call to the loop, which captures it; a `meta` parameter would forward its captured reference instead, which the loop's own `meta step` refuses.",
         },
         new()
         {
@@ -2252,7 +2378,7 @@ public static class LanguageSpecCorpus
                 // A member reached through `open`, a loop builtin, `if`, a Math function and a host
                 // operation lift from their own signatures exactly the same way.
                 new SpecProbe("Lib = {\n    public Inc(x) = x + 1\n}\nG = {\n    open Lib\n    Inc + 0\n}\nG(4)", "ok raw=5 n=1"),
-                new SpecProbe("Step(s) = s + 1\nG = repeat + 0\nG(Step, 2, 0)", "ok raw=2 n=1"),
+                new SpecProbe("Step(s) = s + 1\nG = repeat + 0\nG(Step(0), 2)", "ok raw=2 n=1"),
                 new SpecProbe("G = if + 0\nG(false, 1, 2)", "ok raw=2 n=1"),
                 new SpecProbe("G = abs + 0\nG(0 - 4)", "ok raw=4 n=1"),
                 new SpecProbe("G = Math.Abs * 2\nG(0 - 4)", "ok raw=8 n=1"),
@@ -2284,7 +2410,7 @@ public static class LanguageSpecCorpus
             [
                 // Callbacks and loop steps are called, never lifted.
                 new SpecProbe("Inc(x) = x + 1\nG = map([1, 2], Inc)\nG", "ok raw=L[2, 3] n=1"),
-                new SpecProbe("Inc(x) = x + 1\nG = repeat(Inc, 2, 0)\nG", "ok raw=2 n=1"),
+                new SpecProbe("Inc(x) = x + 1\nG = repeat(Inc(0), 2)\nG", "ok raw=2 n=1"),
                 // A nested expression takes its own consumer's role, whatever slot encloses it.
                 new SpecProbe("Inc(x) = x + 1\nId(v) = v\nG = Id(Inc + 0)\nG(4)", "ok raw=5 n=1"),
                 new SpecProbe("Inc(x) = x + 1\nG = (Inc, 0)\nG(4)", "ok raw=S[5, 0] n=1"),
@@ -3478,7 +3604,7 @@ public static class LanguageSpecCorpus
                 new SpecProbe("Outer(n) = {\n Inner = { public X = n }\n Read(n) = { open Inner\n X }\n Read(7)\n}\nOuter(5), Outer(9)", "ok raw=S[5, 9] n=2"),
                 new SpecProbe("Outer(n) = {\n Q = n\n Mid(n) = { public X = Q\n X }\n Mid.X\n}\nOuter(5)", "ok raw=5 n=1"),
                 new SpecProbe("Outer(n) = {\n Q = n\n Mid(n) = { public X = Q + n\n X }\n Mid(7)\n}\nOuter(5)", "ok raw=12 n=1"),
-                new SpecProbe("Outer(n) = {\n Lib = { public X = n }\n Step(n) = Lib.X + n\n repeat(Step, 2, 0)\n}\nOuter(5), Outer(7)", "ok raw=S[10, 14] n=2"),
+                new SpecProbe("Outer(n) = {\n Lib = { public X = n }\n Step(n) = Lib.X + n\n repeat(Step(0), 2)\n}\nOuter(5), Outer(7)", "ok raw=S[10, 14] n=2"),
             ],
             IncludeInGeneratorPrompt = true,
             Explanation = "A `public` member that captures an enclosing parameter is local-only, and local-only means local-context-dependent, not universally hidden: `Inner` is a zero-parameter provider whose `X` reads the active `Outer.n`, so inside `Outer` — the owner of that parameter — `open Inner` provides `X` and `Inner.X` reaches it, from Outer's own body and from any sibling or nested scope under the same activation. Both channels apply the ONE accessibility rule: a local-only member may be used from every lexical context inside the owner of each parameter it captures.",
@@ -4112,7 +4238,7 @@ public static class LanguageSpecCorpus
                 new SpecProbe("D(x) = x, x\nF(0) = D(0)\nF(n) = D(n)\nmap([0, 3], F)", "ok raw=L[S[0, 0], S[3, 3]] n=1"),
                 new SpecProbe("IsZero(0) = true\nIsZero(n) = false\nfilter([0, 1, 0], IsZero)", "ok raw=L[0, 0] n=1"),
                 // A loop step is no callback: the selected clause's two rows are the next state.
-                new SpecProbe("S(0) = 1, 2\nS(n) = n, n\nrepeat(S, 1, 0)", "ok raw=S[1, 2] n=1"),
+                new SpecProbe("S(0) = 1, 2\nS(n) = n, n\nrepeat(S(0), 1)", "ok raw=S[1, 2] n=1"),
             ],
             Explanation = "A callback result is its ordinary call result: a family clause's one value — a sequence `(1, 2)`, a list, `[]`, or an inner call's one value — is one mapped element, and the family's ordinary call is that same value (`F(0) == P(0)`). A loop step is no callback: its rows are the next state.",
         },
@@ -4307,7 +4433,7 @@ public static class LanguageSpecCorpus
         {
             Id = "forwarded-callable-keeps-its-algorithm-channel",
             Category = "collection-builtins",
-            Source = "Cnt(*xs) = xs.count\nSumWhile(*s) = s.sum + 1, s.sum + 1 < 3\nApply(f, xs) = xs.map(f)\nLoop(g) = while(g, 0)\nOuter(xs) = {\n  Inner(g) = xs.map(g)\n  Inner(Cnt)\n}\n\nApply(Cnt, [1, 2])\nLoop(SumWhile)\nOuter([1, 2])",
+            Source = "Cnt(*xs) = xs.count\nSumWhile(*s) = s.sum + 1, s.sum + 1 < 3\nApply(f, xs) = xs.map(f)\nLoop(g) = while(g(0))\nOuter(xs) = {\n  Inner(g) = xs.map(g)\n  Inner(Cnt)\n}\n\nApply(Cnt, [1, 2])\nLoop(SumWhile)\nOuter([1, 2])",
             Outcome = SpecOutcome.Evaluates,
             ExpectedDisplay = "[1, 1]\n2\n[1, 1]",
             ExpectedRaw = "S[L[1, 1], 2, L[1, 1]]",
@@ -4321,7 +4447,7 @@ public static class LanguageSpecCorpus
                 new SpecProbe("Big(*xs) = xs.sum > 1\nKeep(f, xs) = xs.filter(f)\nKeep(Big, [1, 2, 3])", "ok raw=L[2, 3] n=1"),
                 new SpecProbe("Big(*xs) = xs.sum > 1\nHits(f, xs) = xs.filter(f).count\nHits(Big, [1, 2, 3])", "ok raw=2 n=1"),
                 new SpecProbe("SumAll(*xs) = xs.sum\nFold(f, xs) = xs.reduce(f, 0)\nFold(SumAll, [1, 2, 3])", "ok raw=6 n=1"),
-                new SpecProbe("CountStep(*s) = s.count + 1\nRun(g) = repeat(g, 3, 9)\nRun(CountStep)", "ok raw=2 n=1"),
+                new SpecProbe("CountStep(*s) = s.count + 1\nRun(g) = repeat(g(9), 3)\nRun(CountStep)", "ok raw=2 n=1"),
                 new SpecProbe("Only(*xs) = xs\nG(*xs) = Only(xs*)\nApply(f, xs) = map(xs, f)\nApply(G, [1])", "ok raw=L[L[1]] n=1"),
                 new SpecProbe("Only(*xs) = xs\nG = Only\nApply(f, xs) = map(xs, f)\nApply(G, [1])", "ok raw=L[L[1]] n=1"),
                 // VALUE slots read the bound value: the collection and reduce's initial
@@ -4353,7 +4479,7 @@ public static class LanguageSpecCorpus
                 // A CALLBACK slot is never evaluated merely because it was supplied: an unused
                 // callback cannot fail and cannot recurse, exactly like an unused loop step.
                 new SpecProbe("E = ()\nD = E.filter(D)\nD.count", "ok raw=0 n=1"),
-                new SpecProbe("A = 1 / 0\nmap([], A), repeat(A, 0, 5)", "ok raw=S[L[], 5] n=2"),
+                new SpecProbe("A = 1 / 0\nmap([], A), repeat(A(5), 0)", "ok raw=S[L[], 5] n=2"),
                 new SpecProbe("A = 5\nmap([1], A)", "err arity"),
                 // reduce's initial is a VALUE slot, demanded once: its failure is the call's
                 // failure, and a callable it cannot read keeps reduce's own report.
@@ -5723,15 +5849,15 @@ public static class LanguageSpecCorpus
                 new SpecProbe("reduce([1, 2], 5, 0)", "err notAnAlgorithm"),
                 new SpecProbe("count(filter([1, 2], 5))", "err notAnAlgorithm"),
                 new SpecProbe("[1, 2].map(5)", "err notAnAlgorithm"),
-                new SpecProbe("repeat(5, 1, 0)", "err notAnAlgorithm"),
-                new SpecProbe("while(true, 0)", "err notAnAlgorithm"),
-                new SpecProbe("repeat(map, 1, [1, 2], 5)", "err notAnAlgorithm"),
+                new SpecProbe("Run(f) = repeat(f(0), 1)\nRun(5)", "err notAnAlgorithm"),
+                new SpecProbe("Run(f) = while(f(0))\nRun(true)", "err notAnAlgorithm"),
+                new SpecProbe("repeat(map([1, 2], 5), 1)", "err notAnAlgorithm"),
                 new SpecProbe("Through(xs, f) = map(xs, f)\nThrough([1], 5)", "err notAnAlgorithm"),
                 new SpecProbe("App(f, x) = f(x)\nApp(5, 1)", "err notAnAlgorithm"),
                 // A slot that is never invoked is never projected.
                 new SpecProbe("map([], 5)", "ok raw=L[] n=1"),
                 new SpecProbe("reduce([], 5, 7)", "ok raw=7 n=1"),
-                new SpecProbe("repeat(5, 0, 1)", "ok raw=1 n=1"),
+                new SpecProbe("Run(f) = repeat(f(1), 0)\nRun(5)", "ok raw=1 n=1"),
             ],
             Notes = "Q-06, decided 2026-10-05: missing CALLABLE capability is NotAnAlgorithm in every invoking position (formerly a hand-written ArityMismatch(0, k) for builtin slots).",
             Explanation = "A position that INVOKES its argument — the `map` transform, the `filter` predicate, the `reduce` reducer, a `while` or `repeat` step, a user higher-order parameter — needs a callable. A value has no callable identity, so the first invocation that needs one reports NotAnAlgorithm, decided by CALLABLE projection alone: the value is never demanded (`map([1, 2], 1 / 0)` is not a division by zero), and a slot that is never invoked is never projected (`map([], 5)` is `[]`).",
@@ -5748,7 +5874,7 @@ public static class LanguageSpecCorpus
                 new SpecProbe("map([1, 2], { 5 })", "err arity"),
                 new SpecProbe("Lib = { public V = 5 }\nmap([1], Lib.V)", "err arity"),
                 new SpecProbe("map([1], Math.Pi)", "err arity"),
-                new SpecProbe("Z = 5\nrepeat(Z, 1, 0)", "err arity"),
+                new SpecProbe("Z = 5\nrepeat(Z(0), 1)", "err arity"),
                 new SpecProbe("A = 7\nApp(f, x) = f(x)\nApp(A, 1)", "err arity"),
                 new SpecProbe("map([1, 2], take)", "err arity"),
                 // Supply cardinality stays arity for every binder, a clause family included.
@@ -5772,7 +5898,7 @@ public static class LanguageSpecCorpus
                 new SpecProbe("sqrt((4, 9))", "err type"),
                 new SpecProbe("A = 1, 2\nA[[0]]", "err type"),
                 new SpecProbe("range([1], 3)", "err type"),
-                new SpecProbe("repeat({ x }, [1], 0)", "err type"),
+                new SpecProbe("Step = { x }\nrepeat(Step(0), [1])", "err type"),
                 new SpecProbe("sum((1, true))", "err type"),
                 new SpecProbe("order((3, [1]))", "err type"),
                 new SpecProbe("take([1, 2], 'x')", "err type"),
@@ -5841,8 +5967,8 @@ public static class LanguageSpecCorpus
                 // The same rule at other builtins that expand spread arguments.
                 new SpecProbe("P = 1 / 0\nQ = 'x' + 1\nif(P*, Q*, 0)", "err div0"),
                 new SpecProbe("P = 1 / 0\nQ = 'x' + 1\nif(Q*, P*, 0)", "err type"),
-                new SpecProbe("P = 1 / 0\nQ = 'x' + 1\nrepeat(P*, Q*, 1)", "err div0"),
-                new SpecProbe("P = 1 / 0\nQ = 'x' + 1\nrepeat(Q*, P*, 1)", "err type"),
+                new SpecProbe("P = 1 / 0\nQ = 'x' + 1\nrepeat(P*, Q*)", "err div0"),
+                new SpecProbe("P = 1 / 0\nQ = 'x' + 1\nrepeat(Q*, P*)", "err type"),
             ],
             Notes = "Pins the forced-spread evaluation ORDER, not just the reported category: each spread-marked slot is forced exactly once, left to right, and expanding a spread slot is part of evaluating that slot. Non-spread slots remain builtin-lazy algorithms at this stage (SpreadArgumentEvaluationOrderTests pins the mixed spread/non-spread interaction).",
             Explanation = "Spread-marked argument slots are forced exactly once in left-to-right written order, so the leftmost failing spread slot's error is the one reported; non-spread argument slots remain builtin-lazy and are evaluated or skipped by the builtin's own semantics.",
@@ -6467,7 +6593,7 @@ public static class LanguageSpecCorpus
                 new SpecProbe("Inc(x) = x + 1\nApply(f) = {\n    Inner(f, *rest) = f(2)\n    Inner(5, 1)\n}\nApply(Inc)", "err notAnAlgorithm"),
                 // A parameter bound per item or per iteration owns its name the same way.
                 new SpecProbe("Inc(x) = x + 1\nApply(f) = {\n    Inner(f) = f(2)\n    [5].map(Inner)\n}\nApply(Inc)", "err notAnAlgorithm"),
-                new SpecProbe("Inc(x) = x + 1\nApply(f) = {\n    Inner(f) = f(2)\n    repeat(Inner, 1, 5)\n}\nApply(Inc)", "err notAnAlgorithm"),
+                new SpecProbe("Inc(x) = x + 1\nApply(f) = {\n    Inner(f) = f(2)\n    repeat(Inner(5), 1)\n}\nApply(Inc)", "err notAnAlgorithm"),
                 // The lexical dot-call fallback and argument forwarding read the same shadowed binding.
                 new SpecProbe("Inc(x) = x + 1\nApply(f) = {\n    Inner(f) = 2.f\n    Inner(5)\n}\nApply(Inc)", "err notAnAlgorithm"),
                 new SpecProbe("Inc(x) = x + 1\nApply(f) = {\n    Pass(g) = g(1)\n    Inner(f) = Pass(f)\n    Inner(5)\n}\nApply(Inc)", "err notAnAlgorithm"),
@@ -6693,8 +6819,8 @@ public static class LanguageSpecCorpus
                 new SpecProbe("v = 99\nAdd1(n) = n + 1\nOuter(v) = {\n    Inner = v.Add1\n    Inner\n}\nOuter(7)", "ok raw=8 n=1"),
                 // A callback callee and a loop step read the same binding per element and per iteration.
                 new SpecProbe("v = 99\nOuter(v) = {\n    Add(n) = n + v\n    [1, 2].map(Add)\n}\nOuter(7)", "ok raw=L[8, 9] n=1"),
-                new SpecProbe("v = 99\nOuter(v) = {\n    Step(s) = s + v\n    repeat(Step, 2, 0)\n}\nOuter(7)", "ok raw=14 n=1"),
-                new SpecProbe("v = 99\nOuter(v) = repeat({x + v}, 2, 0)\nOuter(7)", "ok raw=14 n=1"),
+                new SpecProbe("v = 99\nOuter(v) = {\n    Step(s) = s + v\n    repeat(Step(0), 2)\n}\nOuter(7)", "ok raw=14 n=1"),
+                new SpecProbe("v = 99\nOuter(v) = {\n    S = {x + v}\n    S(0).repeat(2)\n}\nOuter(7)", "ok raw=14 n=1"),
                 // `Inner` is owned by `Outer` because it is written inside Outer's braces: it is not a root
                 // property, and it is local-only because it reads Outer's parameter.
                 new SpecProbe("Outer(v) = {\n    Inner = v + 1\n    Inner\n}\nOuter(7)\nInner(7)", "err unresolvedImplicitParams"),
@@ -7232,22 +7358,23 @@ public static class LanguageSpecCorpus
         {
             Id = "lazy-slot-demand-covers-every-builtin-value-slot",
             Category = "collection-builtins",
-            Source = "Inc(x) = x + 1\nStep(s) = s + 1\nProbe(u) = repeat(Step, 1, Inc)\nProbe(0)",
+            Source = "Inc(x) = x + 1\nStep(s) = s + 1\nProbe(u) = repeat(Step(0), Inc)\nProbe(0)",
             Outcome = SpecOutcome.EvalError,
             ExpectedErrorCategory = "arity",
             Probes =
             [
-                // The repeat count and while's initial state are value slots too.
-                new SpecProbe("Inc(x) = x + 1\nStep(s) = s + 1\nProbe(u) = repeat(Step, Inc, 0)\nProbe(0)", "err arity"),
-                new SpecProbe("Inc(x) = x + 1\nDown(s) = s - 1, s\nProbe(u) = while(Down, Inc)\nProbe(0)", "err arity"),
+                // A captured step's state arguments are its own call's arguments (META-S3-3): the
+                // step's body demands them as values.
+                new SpecProbe("Inc(x) = x + 1\nStep(s) = s + 1\nProbe(u) = repeat(Step(Inc), 1)\nProbe(0)", "err arity"),
+                new SpecProbe("Inc(x) = x + 1\nDown(s) = s - 1, s\nProbe(u) = while(Down(Inc))\nProbe(0)", "err arity"),
                 // So are the atoms and range arguments.
                 new SpecProbe("Inc(x) = x + 1\nProbe(u) = atoms(Inc)\nProbe(0)", "err arity"),
                 new SpecProbe("Inc(x) = x + 1\nProbe(u) = range(1, Inc)\nProbe(0)", "err arity"),
                 // Zero-parameter controls evaluate as before.
-                new SpecProbe("A = 0\nStep(s) = s + 1\nrepeat(Step, 1, A)", "ok raw=1 n=1"),
+                new SpecProbe("A = 0\nStep(s) = s + 1\nrepeat(Step(A), 1)", "ok raw=1 n=1"),
                 new SpecProbe("A = 7\natoms(A)", "ok raw=L[7] n=1"),
                 // Callback slots supply arguments and never consult the rule.
-                new SpecProbe("Inc(x) = x + 1\nrepeat(Inc, 2, 0)", "ok raw=2 n=1"),
+                new SpecProbe("Inc(x) = x + 1\nrepeat(Inc(0), 2)", "ok raw=2 n=1"),
                 new SpecProbe("Inc(x) = x + 1\nmap([1, 2], Inc)", "ok raw=L[2, 3] n=1"),
                 new SpecProbe("Add(e, a) = e + a\nreduce([1, 2], Add, 0)", "ok raw=3 n=1"),
                 // reduce's initial accumulator keeps its dedicated hint, decided from the signature: K never runs.
@@ -7259,12 +7386,12 @@ public static class LanguageSpecCorpus
                 new SpecProbe("K(x) = 5\nProbe(u) = skip([1], K)\nProbe(0)", "err arity"),
                 // In a formula that infers its parameters each value slot lifts the reference instead,
                 // while a callback slot keeps it (the unified formula-lifting law).
-                new SpecProbe("Inc(x) = x + 1\nStep(s) = s + 1\nG = repeat(Step, 1, Inc)\nG(4)", "ok raw=6 n=1"),
+                new SpecProbe("Inc(x) = x + 1\nStep(s) = s + 1\nG = repeat(Step(0), Inc)\nG(2)", "ok raw=3 n=1"),
                 new SpecProbe("Inc(x) = x + 1\nG = count(Inc)\nG(4)", "ok raw=1 n=1"),
                 new SpecProbe("Inc(x) = x + 1\nG = map([1, 2], Inc)\nG", "ok raw=L[2, 3] n=1"),
             ],
             IncludeInGeneratorPrompt = true,
-            Explanation = "Every builtin value slot — a loop's initial state, the `repeat` count, `atoms`, `range`, a collection, or a fixed value control — applies the ordinary zero-argument value-demand law to its argument wherever nothing forwards to it, as under a closed parameter list: an algorithm that still needs arguments is rejected at its reference before its body runs, and `reduce` keeps its dedicated initial-accumulator hint. In a formula that infers its parameters the same value slots lift the reference instead (`G = count(Inc)` is `G(x) = count(Inc(x))`). Callback slots (`repeat`/`while` steps, `map`, `filter`, `reduce` steps) supply arguments and are unaffected either way.",
+            Explanation = "Every builtin value slot — the `repeat` count, `atoms`, `range`, a collection, or a fixed value control — applies the ordinary zero-argument value-demand law to its argument wherever nothing forwards to it, as under a closed parameter list: an algorithm that still needs arguments is rejected at its reference before its body runs, and `reduce` keeps its dedicated initial-accumulator hint. In a formula that infers its parameters the same value slots lift the reference instead (`G = count(Inc)` is `G(x) = count(Inc(x))`). Callback slots (`map`, `filter`, `reduce` steps) supply arguments and are unaffected either way, and a loop's `meta step` captures its written call, whose arguments are that call's own (META-S3-3).",
         },
         new()
         {
@@ -8109,18 +8236,20 @@ public static class LanguageSpecCorpus
         {
             Id = "call-reference-algorithm-loops",
             Category = "variadic-calls",
-            Source = "Step(x) = x + 1, x < 3\nLoop(meta operation) = operation.Algorithm.while(operation.Arguments*)\n\nStep(0).Loop",
+            Source = "Step(x) = x + 1, x < 3\nLoop(meta operation) = {\n  S = operation.Algorithm\n  S(operation.Arguments*).while\n}\n\nStep(0).Loop",
             Outcome = SpecOutcome.Evaluates,
             ExpectedDisplay = "3",
             ExpectedRaw = "3",
             ExpectedEmittedCount = 1,
             Probes =
             [
-                new SpecProbe("Step(x) = x + 1, x < 3\nCapture(meta op) = op\nR = Capture(Step(0))\nR.Algorithm.while(R.Arguments*)", "ok raw=3 n=1"),
-                new SpecProbe("Increment(x) = x + 1\nCapture(meta op) = op\nS = Capture(Increment(0))\nS.Algorithm.repeat(5, S.Arguments*)", "ok raw=5 n=1"),
+                new SpecProbe("Step(x) = x + 1, x < 3\nCapture(meta op) = op\nR = Capture(Step(0))\nRA = R.Algorithm\nRA(R.Arguments*).while", "ok raw=3 n=1"),
+                new SpecProbe("Increment(x) = x + 1\nCapture(meta op) = op\nS = Capture(Increment(0))\nSA = S.Algorithm\nSA(S.Arguments*).repeat(5)", "ok raw=5 n=1"),
+                // Plain forwarding hands the loop the original supplied call.
+                new SpecProbe("Step(x) = x + 1, x < 3\nLoop(operation) = while(operation)\nStep(0).Loop", "ok raw=3 n=1"),
             ],
             IncludeInGeneratorPrompt = true,
-            Explanation = "Because `R.Algorithm` is an ordinary callable and `R.Arguments*` passes the original arguments, a captured call can drive the ordinary `while` and `repeat` loops: `R.Algorithm.while(R.Arguments*)` runs the captured step from its captured start state. A `meta` wrapper such as `Loop(meta operation) = operation.Algorithm.while(operation.Arguments*)` makes `Step(0).Loop` loop the step from 0.",
+            Explanation = "Because `R.Algorithm` is an ordinary callable and `R.Arguments*` passes the original arguments, a captured call can drive the ordinary `while` and `repeat` loops once its callable has a name: `RA = R.Algorithm` then `RA(R.Arguments*).while` runs the captured step from its captured start state. A `meta` wrapper names the projection the same way, so `Step(0).Loop` loops the step from 0; a plain wrapper `Loop(operation) = while(operation)` forwards the call itself.",
         },
         new()
         {

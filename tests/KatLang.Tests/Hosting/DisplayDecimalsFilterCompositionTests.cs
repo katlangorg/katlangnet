@@ -443,7 +443,7 @@ public sealed class DisplayDecimalsFilterCompositionTests
     [Fact]
     public async Task StepHeavySourceFilter_IsChargedToTheRun_WhateverTheHostFilter()
     {
-        const string source = "S(x) = x + 1\nDisplayDecimals = repeat(S, 500, 0) * 0 + 2\n1 / 3";
+        const string source = "S(x) = x + 1\nDisplayDecimals = repeat(S(0), 500) * 0 + 2\n1 / 3";
         var limits = new EvaluationLimits { MaxSteps = 200 };
 
         foreach (var host in new int?[] { null, 0, 1, 5 })

@@ -3711,8 +3711,8 @@ internal static class ImplicitArgumentResolver
     /// reached it), its processed algorithm (its kind and invocation) and its lifting signature:
     /// <list type="bullet">
     ///   <item>a user algorithm: its parameter patterns, as processed;</item>
-    ///   <item>a builtin: its callable interface (<see cref="BuiltinDescriptor.ToolingPlainSignature"/>:
-    ///   the registry's parameter names, a loop's variadic initial state as <c>*init</c>);</item>
+    ///   <item>a builtin: its ONE registry signature (<see cref="BuiltinDescriptor.PlainSignature"/>:
+    ///   e.g. <c>while(meta step)</c>, <c>repeat(meta step, count)</c>);</item>
     ///   <item>a Math member (alias, <c>Math.X</c>, or opened) or a host operation: its declared
     ///   parameters;</item>
     ///   <item>a member reached through <c>open</c> or a structural dot path: that member's own
@@ -3793,7 +3793,7 @@ internal static class ImplicitArgumentResolver
         var signature = algorithm switch
         {
             Algorithm.User user => LiftingSignature.Of(CallableSignature.FromUserAlgorithm(name, user)),
-            Algorithm.Builtin(var builtin) => LiftingSignature.Of(BuiltinRegistry.GetBuiltin(builtin).ToolingPlainSignature),
+            Algorithm.Builtin(var builtin) => LiftingSignature.Of(BuiltinRegistry.GetBuiltin(builtin).PlainSignature),
             Algorithm.Conditional family => DeriveFamilyLiftingSignature(name, family),
             // An alias's is its target's (an alias with no recorded target declares nothing).
             Algorithm.Alias alias => alias.ResolvedTarget?.Signature ?? LiftingSignature.Of(new CallableSignature(name, [])),

@@ -61,13 +61,12 @@ internal static class CallableSignatureDiagnostics
         => signature.DisplayText;
 
     /// <summary>
-    /// The arity message of a call of <paramref name="signature"/>: the counts the callee accepts —
-    /// <paramref name="acceptedArity"/> when the caller knows a contract the signature's patterns
-    /// cannot spell (a builtin's <see cref="BuiltinDescriptor.ArityFacts"/>), else the signature's
-    /// own — so a minimum is never rendered as an exact count.
+    /// The arity message of a call of <paramref name="signature"/>: the counts its own top-level
+    /// patterns accept (<see cref="GetArityFacts"/>) — for a builtin its one registry signature,
+    /// whose patterns ARE its arity contract (every builtin is fixed-arity since META-S3-3).
     /// </summary>
-    public static string FormatBadArity(CallableSignature signature, int actualArgumentCount, CallableArityFacts? acceptedArity = null)
-        => $"Callable `{signature.DisplayText}` expects {FormatExpectedArgumentCount(acceptedArity ?? GetArityFacts(signature))}, but was called with {FormatCount(actualArgumentCount, "argument")}.";
+    public static string FormatBadArity(CallableSignature signature, int actualArgumentCount)
+        => $"Callable `{signature.DisplayText}` expects {FormatExpectedArgumentCount(GetArityFacts(signature))}, but was called with {FormatCount(actualArgumentCount, "argument")}.";
 
     public static string FormatMultipleTopLevelCollectingCaptures(CallableSignature signature)
         => $"Callable signature `{signature.DisplayText}` cannot contain more than one collecting parameter.";

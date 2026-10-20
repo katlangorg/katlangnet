@@ -2013,7 +2013,7 @@ public static partial class Evaluator
     internal static string BuiltinDisplayName(BuiltinId builtin)
         => BuiltinRegistry.GetBuiltin(builtin).Name;
 
-    /// <summary>Lean: builtinAcceptsArity. Every builtin is fixed-arity except the variadic-state loops <c>while</c>/<c>repeat</c>; collection builtins expect exactly one collection argument plus their fixed control arguments.</summary>
+    /// <summary>Lean: builtinAcceptsArity. Every builtin is fixed-arity (the loops <c>while(meta step)</c>/<c>repeat(meta step, count)</c> too, META-S3-3); collection builtins expect exactly one collection argument plus their fixed control arguments.</summary>
     private static bool BuiltinAcceptsArity(BuiltinId builtin, int argumentCount)
         => BuiltinRegistry.GetBuiltin(builtin).AcceptsArity(argumentCount);
 
@@ -2024,18 +2024,12 @@ public static partial class Evaluator
     private static EvalError WrongBuiltinArity(BuiltinId builtin, int actualCount)
     {
         var descriptor = BuiltinRegistry.GetBuiltin(builtin);
-        // The payload is the builtin's real arity contract: its fixed arity, or a variadic-state
-        // loop's minimum (every builtin; formerly a placeholder 0 for all but `if`). Lean:
-        // `builtinMinimumArity`, read by `builtinArityError`.
-        var expected = descriptor.ArityFacts.MinTopLevelArgumentCount;
-
-        // The message renders the descriptor's arity CONTRACT beside the runtime signature: the
-        // variadic-state loops accept at least their runtime parameters, which the signature's
-        // patterns alone would render as an exact count (X-09).
-        return new EvalError.ArityMismatch(expected, actualCount)
+        // The payload is the builtin's real arity contract, its fixed arity (formerly a placeholder
+        // 0 for all but `if`). Lean: `builtinMinimumArity`, read by `builtinArityError`. The message
+        // renders it from the one registry signature, whose patterns are that contract.
+        return new EvalError.ArityMismatch(descriptor.FixedArity, actualCount)
         {
             Signature = descriptor.PlainSignature,
-            AcceptedArity = descriptor.ArityFacts,
         };
     }
 

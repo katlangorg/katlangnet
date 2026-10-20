@@ -102,14 +102,9 @@ def builtinProbeArgsFor (b : KatLang.Builtin) (argCount : Nat) : List Algorithm 
   | .containsBuiltin | .takeBuiltin | .skipBuiltin =>
       if argCount == 0 then []
       else builtinProbeValueArgs (argCount - 1) ++ [builtinProbeValueArg 1]
-  | .whileBuiltin =>
-      if argCount == 0 then []
-      else builtinProbeLoopStepArg (argCount - 1) :: builtinProbeValueArgs (argCount - 1)
-  | .repeatBuiltin =>
-      if argCount == 0 then []
-      else if argCount == 1 then [builtinProbeLoopStepArg 0]
-      else builtinProbeLoopStepArg (argCount - 2) :: builtinProbeValueArg 0
-        :: builtinProbeValueArgs (argCount - 2)
+  -- The loops (META-S3-3) bind a `meta step`, which only a supplied call cell satisfies; this
+  -- cell-less seam supplies VALUES, so an accepted loop count is the META refusal here and the
+  -- loops' success paths are pinned on whole programs (`KatLangArityLaws/MetaLoopGuards.lean`).
   | _ => builtinProbeValueArgs argCount
 
 /-- Every builtin is swept for spec/dispatch arity parity. -/
@@ -157,7 +152,7 @@ def builtinsFailingArityParity : List String :=
 -- from the builtin signatures (tutorial builtin table), not read from
 -- `builtinMinimumArity`.
 def builtinWrittenMinimumArity : KatLang.Builtin -> Nat
-  | .ifBuiltin => 3 | .whileBuiltin => 2 | .repeatBuiltin => 3 | .atomsBuiltin => 1
+  | .ifBuiltin => 3 | .whileBuiltin => 1 | .repeatBuiltin => 2 | .atomsBuiltin => 1
   | .rangeBuiltin => 2 | .filterBuiltin => 2 | .mapBuiltin => 2 | .orderBuiltin => 1
   | .orderDescBuiltin => 1 | .countBuiltin => 1 | .containsBuiltin => 2 | .firstBuiltin => 1
   | .lastBuiltin => 1 | .distinctBuiltin => 1 | .takeBuiltin => 2 | .skipBuiltin => 2
@@ -178,13 +173,11 @@ def builtinArityRejectionCarriesMinimum (b : KatLang.Builtin) (maxArgCount : Nat
 -- Keep the probe arguments honest: representative accepted counts must
 -- actually succeed (not merely avoid arity errors), so a silently broken
 -- dummy argument cannot make the accepted direction of the sweep vacuous.
--- Covers each builtin's accepted count (fixed-arity builtins have exactly
--- one) plus one extra-argument count for the variable-arity loop builtins
--- (`while`/`repeat`).
+-- Covers each builtin's accepted count (every builtin is fixed-arity, so exactly
+-- one). The META loops are omitted: through this cell-less seam their accepted count
+-- is the META refusal (see `builtinProbeArgsFor`), pinned below as an explicit case.
 def builtinAcceptedAritySpotCases : List (KatLang.Builtin × Nat) :=
   [ (.ifBuiltin, 3),
-    (.whileBuiltin, 2), (.whileBuiltin, 4),
-    (.repeatBuiltin, 3), (.repeatBuiltin, 5),
     (.atomsBuiltin, 1), (.rangeBuiltin, 2),
     (.countBuiltin, 1),
     (.sumBuiltin, 1),
@@ -316,12 +309,14 @@ def builtinProjectionExplicitCases
     ("if/atom-free-condition", .ifBuiltin,
       [alg [] [] [] [.emptySequence 0], builtinProbeValueArg 1, builtinProbeValueArg 2],
       .failedOtherwise),
-    ("while/iterates", .whileBuiltin,
-      [builtinProbeDecrementStepArg, builtinProbeValueArg 2], .succeeded),
-    ("repeat/iterates", .repeatBuiltin,
-      [builtinProbeIncrementStepArg, builtinProbeValueArg 2, builtinProbeValueArg 5], .succeeded),
-    ("repeat/negative-count", .repeatBuiltin,
-      [builtinProbeLoopStepArg 1, builtinProbeValueArg (-1), builtinProbeValueArg 5], .failedOtherwise),
+    -- A VALUE supplied for `meta step` (no call cell) is the META refusal, before the count.
+    ("while/seam-value-is-meta-refused", .whileBuiltin,
+      [builtinProbeValueArg 2], .failedOtherwise),
+    ("repeat/seam-value-is-meta-refused", .repeatBuiltin,
+      [builtinProbeValueArg 2, builtinProbeValueArg (-1)], .failedOtherwise),
+    -- The retired three-argument spelling is the exact-arity rejection.
+    ("repeat/retired-spelling-is-arity", .repeatBuiltin,
+      [builtinProbeIncrementStepArg, builtinProbeValueArg 2, builtinProbeValueArg 5], .arityRejected),
     ("order/sequenceValue-item", .orderBuiltin, [builtinProbeSequenceValueOutputArg], .succeeded),
     ("avg/empty-collection", .avgBuiltin, [builtinProbeEmptyOutputArg], .failedOtherwise),
     ("take/non-numeric-count", .takeBuiltin,

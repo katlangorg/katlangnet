@@ -92,29 +92,29 @@ internal static class MetamorphicOptimizerTemplate
         // `RepeatLoopCounted` returns the initial state when the count is zero, before the
         // optimizer flag, the shape check, or the state-slot check are reached. Declaring it as
         // an optimizer hit would be false; declaring the short circuit is what is actually proven.
-        new("repeat-zero-iterations", $"{Loop} = x + 1\n{Loop}.repeat(0, 0)", ShortCircuit),
+        new("repeat-zero-iterations", $"{Loop} = x + 1\n{Loop}(0).repeat(0)", ShortCircuit),
 
         // ── Loops: the loop optimizer selecting a plan ─────────────────────────
-        new("repeat-one-iteration", $"{Loop} = x + 1\n{Loop}.repeat(1, 0)", Planned),
-        new("repeat-many-iterations", $"{Loop} = x + 1\n{Loop}.repeat(12, 0)", Planned),
-        new("repeat-multi-slot-state", $"{Loop} = a + 1, total + a\n{Loop}.repeat(6, 1, 0)[1]", Planned),
-        new("while-scalar-state", $"{Loop} = x - 1, x > 1\n{Loop}.while(9)", Planned),
-        new("while-multi-slot-state", $"{Loop} = n - 1, total + n, n > 1\n{Loop}.while(8, 0)[1]", Planned),
+        new("repeat-one-iteration", $"{Loop} = x + 1\n{Loop}(0).repeat(1)", Planned),
+        new("repeat-many-iterations", $"{Loop} = x + 1\n{Loop}(0).repeat(12)", Planned),
+        new("repeat-multi-slot-state", $"{Loop} = a + 1, total + a\n{Loop}(1, 0).repeat(6)[1]", Planned),
+        new("while-scalar-state", $"{Loop} = x - 1, x > 1\n{Loop}(9).while", Planned),
+        new("while-multi-slot-state", $"{Loop} = n - 1, total + n, n > 1\n{Loop}(8, 0).while[1]", Planned),
         new("repeat-conditional-body",
-            $"{Loop} = x + if(x > 3, 2, 1)\n{Loop}.repeat(7, 0)", Planned),
-        new("repeat-boolean-state", $"{Loop}(b) = not b\n{Loop}.repeat(7, false)", Planned),
+            $"{Loop} = x + if(x > 3, 2, 1)\n{Loop}(0).repeat(7)", Planned),
+        new("repeat-boolean-state", $"{Loop}(b) = not b\n{Loop}(false).repeat(7)", Planned),
         new("while-boolean-state-transition",
-            $"{Loop}(x) = if(x == true, 0, true), x != 0\n{Loop}.while(true)", Planned),
-        new("repeat-boolean-equality", $"{Loop}(b) = b == 1\n{Loop}.repeat(3, true)", Planned),
+            $"{Loop}(x) = if(x == true, 0, true), x != 0\n{Loop}(true).while", Planned),
+        new("repeat-boolean-equality", $"{Loop}(b) = b == 1\n{Loop}(true).repeat(3)", Planned),
 
         // ── Loops: suspended initial cells remain demandable in a plan ──────────
-        new("repeat-list-state", $"{Loop} = xs\n{Loop}.repeat(3, [1, 2])", Planned),
-        new("repeat-sequence-state", $"{Loop} = xs\n{Loop}.repeat(3, (1, 2))", Planned),
-        new("repeat-string-state", $"{Loop} = xs\n{Loop}.repeat(2, 'ab')", Planned),
-        new("repeat-nested-list-state", $"{Loop} = xs\n{Loop}.repeat(2, [[1, 2], [3]])", Planned),
-        new("repeat-empty-list-state", $"{Loop} = xs\n{Loop}.repeat(2, [])", Planned),
+        new("repeat-list-state", $"{Loop} = xs\n{Loop}([1, 2]).repeat(3)", Planned),
+        new("repeat-sequence-state", $"{Loop} = xs\n{Loop}((1, 2)).repeat(3)", Planned),
+        new("repeat-string-state", $"{Loop} = xs\n{Loop}('ab').repeat(2)", Planned),
+        new("repeat-nested-list-state", $"{Loop} = xs\n{Loop}([[1, 2], [3]]).repeat(2)", Planned),
+        new("repeat-empty-list-state", $"{Loop} = xs\n{Loop}([]).repeat(2)", Planned),
 
-        new("repeat-clause-family-step", $"{Loop}(0) = 0\n{Loop}(n) = n + 1\n{Loop}.repeat(2, 1)", FellBack),
+        new("repeat-clause-family-step", $"{Loop}(0) = 0\n{Loop}(n) = n + 1\n{Loop}(1).repeat(2)", FellBack),
 
         // ── Sequence-pipeline fusion ───────────────────────────────────────────
         new("fuse-dotted-range-filter-count",
@@ -164,12 +164,12 @@ internal static class MetamorphicOptimizerTemplate
         // ── Both optimizers in one program ─────────────────────────────────────
         new("loop-and-fusion",
             $"{Pred}(x) = x mod 2 == 0\n{Loop} = x + 1\n" +
-            $"{Loop}.repeat(5, 0), range(1, 10).filter({Pred}).count",
+            $"{Loop}(0).repeat(5), range(1, 10).filter({Pred}).count",
             Planned | Fused),
         new("loop-with-string-constant",
-            $"{Loop} = x + count('ab')\n{Loop}.repeat(4, 0)", PartiallyPlanned),
+            $"{Loop} = x + count('ab')\n{Loop}(0).repeat(4)", PartiallyPlanned),
         new("loop-with-user-callback-body",
-            $"{Double}(x) = x * 2\n{Loop} = {Double}(x)\n{Loop}.repeat(4, 1)", PartiallyPlanned),
+            $"{Double}(x) = x * 2\n{Loop} = {Double}(x)\n{Loop}(1).repeat(4)", PartiallyPlanned),
     ];
 
     internal static int SourceCount => Sources.Length;

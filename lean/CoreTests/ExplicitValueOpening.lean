@@ -533,16 +533,16 @@ def loopStateSlotsAreEstablishedItems : Bool :=
   let mixedStepAlg := algWithParameters [{ name := "xs", kind := .collecting }, { name := "last" }] [] []
     [.dotCall (.param "xs") "count" none, .param "last"]
   (match runFlat (.algorithmExpr (algPrivate [] [] [("Step", stepAlg)] [
-      .call (resolve "repeat") [resolve "Step", .num 1, pair12],
-      .call (resolve "repeat") [resolve "Step", .num 1, .num 1, .num 2],
-      .call (resolve "repeat") [resolve "Step", .num 1, .listLiteral [.num 1, .num 2]],
-      .call (resolve "repeat") [resolve "Step", .num 1, sequenceSpread pair12]
+      .call (resolve "repeat") [.call (resolve "Step") [pair12], .num 1],
+      .call (resolve "repeat") [.call (resolve "Step") [.num 1, .num 2], .num 1],
+      .call (resolve "repeat") [.call (resolve "Step") [.listLiteral [.num 1, .num 2]], .num 1],
+      .call (resolve "repeat") [.call (resolve "Step") [sequenceSpread pair12], .num 1]
     ])) with
    | Except.ok [1, 2, 1, 2] => true
    | _ => false) &&
   (match runFlat (.algorithmExpr (algPrivate [] [] [("Step", mixedStepAlg)] [
-      .call (resolve "repeat") [resolve "Step", .num 1, pair12, .num 3],
-      .call (resolve "repeat") [resolve "Step", .num 1, pair12, .num 3, .num 4]
+      .call (resolve "repeat") [.call (resolve "Step") [pair12, .num 3], .num 1],
+      .call (resolve "repeat") [.call (resolve "Step") [pair12, .num 3, .num 4], .num 1]
     ])) with
    | Except.ok [1, 3, 2, 4] => true
    | _ => false)
@@ -876,7 +876,7 @@ def reduceStepIsTheOrdinaryTwoArgumentCall : Bool :=
 
 -- Loop state slots are the loop's ESTABLISHED supply and are never reopened or
 -- collapsed: one scalar, sequence, or list state is one slot for a fixed step
--- (`repeat(Id, 1, S)` returns `S` unchanged); an explicit structural step
+-- (`repeat(Id(S), 1)` returns `S` unchanged); an explicit structural step
 -- pattern opens a state of its OWN kind (`Swap((a, b)) = (b, a)` a sequence
 -- state, never a list state);
 -- several written state arguments are several slots; and a collecting `while`
@@ -897,24 +897,24 @@ def loopStateMatrix : Bool :=
     match run out with
     | Except.ok value => value == expected
     | _ => false
-  is (.atom 7) (.call (resolve "repeat") [resolve "Id", .num 1, .num 7]) &&
-  is seq12 (.call (resolve "repeat") [resolve "Id", .num 1, pair12]) &&
-  is list12 (.call (resolve "repeat") [resolve "Id", .num 1, .listLiteral [.num 1, .num 2]]) &&
-  is (.sequenceValue []) (.call (resolve "repeat") [resolve "Id", .num 1, .emptySequence 0]) &&
-  is (.sequenceValue [.atom 2, .atom 1]) (.call (resolve "repeat") [resolve "Swap", .num 1, pair12]) &&
-  (match run (.call (resolve "repeat") [resolve "Swap", .num 1, .listLiteral [.num 1, .num 2]]) with
+  is (.atom 7) (.call (resolve "repeat") [.call (resolve "Id") [.num 7], .num 1]) &&
+  is seq12 (.call (resolve "repeat") [.call (resolve "Id") [pair12], .num 1]) &&
+  is list12 (.call (resolve "repeat") [.call (resolve "Id") [.listLiteral [.num 1, .num 2]], .num 1]) &&
+  is (.sequenceValue []) (.call (resolve "repeat") [.call (resolve "Id") [.emptySequence 0], .num 1]) &&
+  is (.sequenceValue [.atom 2, .atom 1]) (.call (resolve "repeat") [.call (resolve "Swap") [pair12], .num 1]) &&
+  (match run (.call (resolve "repeat") [.call (resolve "Swap") [.listLiteral [.num 1, .num 2]], .num 1]) with
    | Except.error err => innermostIsAnyTypeMismatch err
    | _ => false) &&
-  is seq12 (.call (resolve "repeat") [resolve "Swap", .num 2, pair12]) &&
-  is (.atom 1) (.call (resolve "repeat") [resolve "Cnt", .num 1, pair12]) &&
-  is (.atom 1) (.call (resolve "repeat") [resolve "Cnt", .num 1, .listLiteral [.num 1, .num 2]]) &&
-  is (.atom 2) (.call (resolve "repeat") [resolve "Cnt", .num 1, .num 1, .num 2]) &&
-  is (.atom 2) (.call (resolve "repeat") [resolve "Cnt", .num 1, sequenceSpread pair12]) &&
-  is (.sequenceValue [.atom 1, .atom 1]) (.call (resolve "while") [resolve "W", .num 0, pair12]) &&
+  is seq12 (.call (resolve "repeat") [.call (resolve "Swap") [pair12], .num 2]) &&
+  is (.atom 1) (.call (resolve "repeat") [.call (resolve "Cnt") [pair12], .num 1]) &&
+  is (.atom 1) (.call (resolve "repeat") [.call (resolve "Cnt") [.listLiteral [.num 1, .num 2]], .num 1]) &&
+  is (.atom 2) (.call (resolve "repeat") [.call (resolve "Cnt") [.num 1, .num 2], .num 1]) &&
+  is (.atom 2) (.call (resolve "repeat") [.call (resolve "Cnt") [sequenceSpread pair12], .num 1]) &&
+  is (.sequenceValue [.atom 1, .atom 1]) (.call (resolve "while") [.call (resolve "W") [.num 0, pair12]]) &&
   is (.sequenceValue [.atom 1, .atom 1])
-    (.call (resolve "while") [resolve "W", .num 0, .listLiteral [.num 1, .num 2]]) &&
+    (.call (resolve "while") [.call (resolve "W") [.num 0, .listLiteral [.num 1, .num 2]]]) &&
   is (.sequenceValue [.atom 1, .atom 2])
-    (.call (resolve "while") [resolve "W", .num 0, .num 1, .num 2])
+    (.call (resolve "while") [.call (resolve "W") [.num 0, .num 1, .num 2]])
 
 #guard loopStateMatrix
 

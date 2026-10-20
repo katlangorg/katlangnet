@@ -447,24 +447,24 @@ public class BuiltinCallableIdentityTests
     /// builtin and when a nearer binding has shadowed it into an ordinary user call.
     /// </summary>
     [Theory]
-    [InlineData("Step(n, acc) = n - 1, acc + if(n mod 2 == 0, n, 0), n > 1\nStep.while(10, 0)[1]", 30)]
-    [InlineData("Step(n, acc) = n - 1, acc + (n > 1).if(1, 0), n > 1\nStep.while(5, 0)[1]", 4)]
-    [InlineData("Step(n, acc) = n - 1, acc + if(n > 3, n, 1)\nStep.repeat(5, 5, 0)[1]", 12)]
-    [InlineData("Args = (true, 10, 20)\nStep(n, acc) = n - 1, acc + if(Args*), n > 1\nStep.while(3, 0)[1]", 20)]
+    [InlineData("Step(n, acc) = n - 1, acc + if(n mod 2 == 0, n, 0), n > 1\nStep(10, 0).while[1]", 30)]
+    [InlineData("Step(n, acc) = n - 1, acc + (n > 1).if(1, 0), n > 1\nStep(5, 0).while[1]", 4)]
+    [InlineData("Step(n, acc) = n - 1, acc + if(n > 3, n, 1)\nStep(5, 0).repeat(5)[1]", 12)]
+    [InlineData("Args = (true, 10, 20)\nStep(n, acc) = n - 1, acc + if(Args*), n > 1\nStep(3, 0).while[1]", 20)]
     // A user `if` in the step body: planning must NOT treat the spelling as the
     // intrinsic conditional. Builtin `if(n, 1, 0)` would add 1 per iteration;
     // the user callable adds n + 1 + 0.
     // (`while` discards the state whose continue condition is false, so only the
     // n = 3 and n = 2 iterations contribute: 4 + 3 = 7, and 30 + 20 = 50.)
-    [InlineData("if(a, b, c) = a + b + c\nStep(n, acc) = n - 1, acc + if(n, 1, 0), n > 1\nStep.while(3, 0)[1]", 7)]
-    [InlineData("if(x) = x * 10\nStep(n, acc) = n - 1, acc + if(n), n > 1\nStep.while(3, 0)[1]", 50)]
+    [InlineData("if(a, b, c) = a + b + c\nStep(n, acc) = n - 1, acc + if(n, 1, 0), n > 1\nStep(3, 0).while[1]", 7)]
+    [InlineData("if(x) = x * 10\nStep(n, acc) = n - 1, acc + if(n), n > 1\nStep(3, 0).while[1]", 50)]
     public void OptimizedAndGenericLoops_Agree(string source, int expected)
         => AssertEvalLoopModes(source, expected);
 
     [Fact]
     public void ALocalUserIf_UsesUserCallFallbackInsideAnOptimizedLoop()
     {
-        const string source = "Step(a, b, c) = { if(a, b, c) = a + b + c\n if(a, b, c), b, c }\nrepeat(Step, 2, 1, 10, 20)[0]";
+        const string source = "Step(a, b, c) = { if(a, b, c) = a + b + c\n if(a, b, c), b, c }\nrepeat(Step(1, 10, 20), 2)[0]";
         AssertEvalLoopModes(source, 61);
 
         var (result, diagnostics, _) = LoopDiagnosticParityAssertions.RunObserved(source, true);

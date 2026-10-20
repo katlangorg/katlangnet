@@ -262,9 +262,9 @@ public class CollectionMaterializationLimitsTests
 
     public static TheoryData<string> MultiSlotLoopSources => new()
     {
-        "Step(a, b) = a, b\nStep.repeat(0, 1, 2)",
-        "Step(a, b) = a + 1, b + 1\nStep.repeat(3, 1, 2)",
-        "Step(a, b) = a + 1, b + 1, a < 2\nStep.while(0, 2)",
+        "Step(a, b) = a, b\nStep(1, 2).repeat(0)",
+        "Step(a, b) = a + 1, b + 1\nStep(1, 2).repeat(3)",
+        "Step(a, b) = a + 1, b + 1, a < 2\nStep(0, 2).while",
     };
 
     [Theory]
@@ -307,7 +307,7 @@ public class CollectionMaterializationLimitsTests
         // strategies. The planned loop used to compile `T()` to its memoized per-iteration
         // slot and stopped at 2000, so a configured MaxMaterializedStringChars between the
         // two decided the verdict by execution strategy.
-        const string source = "Step = {\n    T = 'xxxxxxxxxx'\n    n + if(T() == T(), 1, 0)\n}\nStep.repeat(200, 0)";
+        const string source = "Step = {\n    T = 'xxxxxxxxxx'\n    n + if(T() == T(), 1, 0)\n}\nStep(0).repeat(200)";
 
         foreach (var optimized in new[] { false, true })
         {
@@ -547,7 +547,7 @@ public class CollectionMaterializationLimitsTests
         Assert.IsType<EvalError.EvaluationDepthExceeded>(
             ErrorOf("f(0) = 0\nf(n) = f(n - 1)\nf(40)", new EvaluationLimits { MaxDepth = 8 }));
         Assert.IsType<EvalError.EvaluationStepLimitExceeded>(
-            ErrorOf("Step = x, true\nStep.while(0)", new EvaluationLimits { MaxSteps = 500 }));
+            ErrorOf("Step = x, true\nStep(0).while", new EvaluationLimits { MaxSteps = 500 }));
     }
 
     [Fact]

@@ -133,9 +133,9 @@ public class RuntimeCallableAliasCorpusTests
         new("E07-map-filter-reduce", "IsBig(x) = x > 1\nAdd(a, b) = a + b\nRm = Capture(Square(5))\nRf = Capture(IsBig(5))\nRr = Capture(Add(1, 2))\nM = Rm.Algorithm\nF = Rf.Algorithm\nD = Rr.Algorithm\n[1, 2].map(M), [1, 2, 3].filter(F), [1, 2, 3].reduce(D, 0)", "ok ([1, 4], [2, 3], 6)", "1,2", Was: "err ArityMismatch"),
         new("E07s-static-oracle", "IsBig(x) = x > 1\nAdd(a, b) = a + b\nM = Square\nF = IsBig\nD = Add\n[1, 2].map(M), [1, 2, 3].filter(F), [1, 2, 3].reduce(D, 0)", "ok ([1, 4], [2, 3], 6)", "1,2"),
         new("E08-family-redispatch", "Describe(0) = 'zero'\nDescribe(n) = 'other'\nUse(f) = {\n  A = f\n  [0, 1].map(A)\n}\nUse(Describe)", "ok ['zero', 'other']", "", Was: "err ArityMismatch"),
-        new("E09-while", "Step(x) = x + 1, x < 3\nR = Capture(Step(0))\nA = R.Algorithm\nA.while(0)", "ok 3", "", Loops: "1/0", Was: "err ArityMismatch"),
-        new("E09b-repeat", "Step(x) = x + 1\nR = Capture(Step(0))\nA = R.Algorithm\nA.repeat(4, 0)", "ok 4", "", Loops: "1/0", Was: "err ArityMismatch"),
-        new("E09s-static-oracle", "Step(x) = x + 1, x < 3\nA = Step\nA.while(0)", "ok 3", "", Loops: "1/0"),
+        new("E09-while", "Step(x) = x + 1, x < 3\nR = Capture(Step(0))\nA = R.Algorithm\nA(0).while", "ok 3", "", Loops: "1/0", Was: "err ArityMismatch"),
+        new("E09b-repeat", "Step(x) = x + 1\nR = Capture(Step(0))\nA = R.Algorithm\nA(0).repeat(4)", "ok 4", "", Loops: "1/0", Was: "err ArityMismatch"),
+        new("E09s-static-oracle", "Step(x) = x + 1, x < 3\nA = Step\nA(0).while", "ok 3", "", Loops: "1/0"),
         new("E10-capture-alias-call", "R = Capture(Square(5))\nA = R.Algorithm\nR2 = Capture(A(4))\nR2.Invoke(), R2.Algorithm(5)", "ok (16, 25)", "4,5", Was: "err ArityMismatch"),
         new("E10s-static-oracle", "A = Square\nR2 = Capture(A(4))\nR2.Invoke(), R2.Algorithm(5)", "ok (16, 25)", "4,5"),
         new("E11-bare-forwarding", "Use(f) = {\n  A = f\n  W(x) = A\n  W(4)\n}\nUse(Square)", "err ArityMismatch", "", Diagnostic: "while evaluating call to Use: while evaluating call to W: Property 'Square' expects 1 parameter, but was called with 0 arguments. @[10:5, 10:11)"),
@@ -158,14 +158,14 @@ public class RuntimeCallableAliasCorpusTests
         new("G03-not-an-algorithm", "Q5(f) = f(1)\nBad = Q5(5)\nUse(f) = {\n  A = f\n  A(9)\n}\nUse(Bad.Algorithm)", "err NotAnAlgorithm", "", Diagnostic: "while evaluating call to Use: while evaluating call to A: while evaluating call to Q5: while evaluating call to f: Parameter 'f' is not callable here: it is bound to a value, not to an algorithm. Pass an algorithm for 'f', or read it as a value. @[5:9, 5:10)", Was: "err ArityMismatch"),
         new("G03b-not-an-algorithm-direct", "Q5(f) = f(1)\nBad = Q5(5)\nUse(f) = f(9)\nUse(Bad.Algorithm)", "err NotAnAlgorithm", "", Diagnostic: "while evaluating call to Use: while evaluating call to f: while evaluating call to Q5: while evaluating call to f: Parameter 'f' is not callable here: it is bound to a value, not to an algorithm. Pass an algorithm for 'f', or read it as a value. @[5:9, 5:10)"),
         new("G04-cycle", "A = R.Algorithm\nR = Capture(A(1))\nA(2)", "err DemandCycle", "", Diagnostic: "while evaluating call to A: Demand cycle: the argument depends on its own value while it is being evaluated. @[5:5, 5:16)", Was: "err ArityMismatch"),
-        new("G04b-cycle-direct", "R = Capture(R.Algorithm(1))\nR.Algorithm(2)", "err NotAnAlgorithm", "", Diagnostic: "while evaluating dotCall .Algorithm of R: while evaluating call to Capture: Not an algorithm: meta: not a supplied call computation @[5:13, 5:27)"),
+        new("G04b-cycle-direct", "R = Capture(R.Algorithm(1))\nR.Algorithm(2)", "err NotAnAlgorithm", "", Diagnostic: "while evaluating dotCall .Algorithm of R: while evaluating call to Capture: A meta parameter needs a supplied call computation: a written call whose callee is a name or a parameter, such as `Step(0)`. The argument supplied for it is not one (a value, a property read, a bare callable, an existing call reference, and a call through a dot or computed callee are not captured). @[5:13, 5:27)"),
         new("G05-unresolved-member-fallback", "Use(b) = {\n  A = b.G\n  A(3)\n}\nUse(5)", "err NotAnAlgorithm", "", Diagnostic: "while evaluating call to Use: while evaluating call to A: while evaluating dotCall .G of b: Parameter 'G' is not callable here: it is bound to a value, not to an algorithm. Pass an algorithm for 'G', or read it as a value. @[6:9, 6:10)"),
         new("G06-cancel", "R = if(stop(), Capture(Square(5)), 0)\nA = R.Algorithm\nA(9), trace(1)", "cancelled", "", WithCancel: true, Was: "err ArityMismatch"),
         new("G07-async-receiver", "R = if(aflag(), Capture(Square(5)), 0)\nA = R.Algorithm\nA(9), Apply(R.Algorithm, 9)", "ok (81, 81)", "9,9", Was: "err ArityMismatch"),
         new("G08-deferred-source", "F(0) = Capture(Inc(0))\nF(n) = { open 'https://modules.example/m.kat'\n Capture(Inc2(n)) }\nR = F(1)\nA = R.Algorithm\nA(5), Apply(R.Algorithm, 5)", "ok (7, 7)", "", Module: "public Inc2(x) = x + 2", Downloads: 1, Was: "err ArityMismatch"),
         new("G09-steps-runtime", "R = Capture(Square(5))\nA = R.Algorithm\nA", "err ArityMismatch", "", Diagnostic: "while evaluating dotCall .Algorithm of R: Property 'Square' expects 1 parameter, but was called with 0 arguments. @[5:13, 5:19)", MaxSteps: 3),
         new("G09b-steps-static", "A = Square\nA(9)", "ok 81", "9", MaxSteps: 3),
-        new("G10-optimizer", "Step(x) = x + 1, x < 3\nUse(f) = {\n  A = f\n  A.while(0)\n}\nUse(Step)", "ok 3", "", Loops: "1/0", Was: "err ArityMismatch"),
+        new("G10-optimizer", "Step(x) = x + 1, x < 3\nUse(f) = {\n  A = f\n  A(0).while\n}\nUse(Step)", "ok 3", "", Loops: "1/0", Was: "err ArityMismatch"),
         new("V01-C01-static-exact", "G(o) = o + 100\nBox = { G(x) = x * 10 }\nA = Box.G\nA, A(3)", "err ArityMismatch", "", Diagnostic: "Property 'A' expects 1 parameter, but was called with 0 arguments. @[8:1, 8:2)"),
         new("V02-C04-hit-static-exact", "Thousand(v) = v * 1000\nBox = { G(x) = x * 10 }\nA = Box.G\nA(Thousand)", "err ArityMismatch", "", Diagnostic: "while evaluating call to A: Property 'Thousand' expects 1 parameter, but was called with 0 arguments. @[8:3, 8:11)"),
         new("V03-B05-direct-exact", "Describe(0) = 'zero'\nDescribe(n) = 'other'\nR = Capture(Describe(0))\nR.Algorithm(5)", "ok 'other'", ""),
@@ -179,7 +179,7 @@ public class RuntimeCallableAliasCorpusTests
         new("V11-structural-supply-async", "R = if(aflag(), Capture(Square(5)), 0)\nBox = { A = R.Algorithm }\nApply(Box.A, 9)", "ok 81", "9", Was: "err ArityMismatch"),
         new("V12-param-structural-supply-async", "R = if(aflag(), Capture(Square(5)), 0)\nBox = { A = R.Algorithm }\nUse(b) = Apply(b.A, 9)\nUse(Box)", "ok 81", "9", Was: "err ArityMismatch"),
         new("V13-structural-map-async", "R = if(aflag(), Capture(Square(5)), 0)\nBox = { A = R.Algorithm }\n[1, 2].map(Box.A)", "ok [1, 4]", "1,2", Was: "err ArityMismatch"),
-        new("V14-structural-while-async", "Step(x) = x + 1, x < 3\nR = if(aflag(), Capture(Step(0)), 0)\nBox = { A = R.Algorithm }\nBox.A.while(0)", "ok 3", "", Loops: "1/0", Was: "err ArityMismatch"),
+        new("V14-structural-while-async", "Step(x) = x + 1, x < 3\nR = if(aflag(), Capture(Step(0)), 0)\nBox = { A = R.Algorithm }\nBA = Box.A\nBA(0).while", "ok 3", "", Loops: "1/0", Was: "err ArityMismatch"),
         new("V15-param-algorithm-alias-async", "Use(r) = {\n A = r.Algorithm\n A(9)\n}\nUse(if(aflag(), Capture(Square(5)), 0))", "ok 81", "9", Was: "err ArityMismatch"),
         new("V16-identity-through-runtime-alias-name", "Lib(*xs) = { public K(x) = x + 100\n 0 }\nUse(f) = {\n A = f\n B = A.K\n B(3)\n}\nUse(Lib)", "err NotAnAlgorithm", "", Diagnostic: "while evaluating call to Use: while evaluating call to B: while evaluating dotCall .K of A: Parameter 'K' is not callable here: it is bound to a value, not to an algorithm. Pass an algorithm for 'K', or read it as a value. @[9:8, 9:9)"),
         new("V17-identity-through-runtime-alias-param", "Lib(*xs) = { public K(x) = x + 100\n 0 }\nUse(f) = {\n A = f\n C(b) = {\n  K(o) = 7\n  B = b.K\n  B(3)\n }\n C(A)\n}\nUse(Lib)", "ok 103", "", Was: "err ArityMismatch"),
@@ -208,7 +208,7 @@ public class RuntimeCallableAliasCorpusTests
         new("X04b-structural-chain", "R = Capture(Square(5))\nA = R.Algorithm\nBox = { Inner = { B = A } }\nC = Box.Inner.B\nC(9), Box.Inner.B(3), Apply(C, 2)", "ok (81, 9, 4)", "9,3,2", Was: "err ArityMismatch"),
         new("X05-two-activations", "Mk(g) = {\n  A = g\n  A(3)\n}\nMk(Square), Mk(Inc)", "ok (9, 4)", "3", Was: "err ArityMismatch"),
         new("X05b-recursive-activations", "Walk(n, f) = {\n  A = f\n  if(n <= 0, A(0), A(n) + Walk(n - 1, f))\n}\nWalk(3, Inc)", "ok 10", "", Was: "err ArityMismatch"),
-        new("X06-repeat", "Use(f) = {\n  A = f\n  A.repeat(3, 0)\n}\nUse(Inc)", "ok 3", "", Loops: "1/0", Was: "err ArityMismatch"),
+        new("X06-repeat", "Use(f) = {\n  A = f\n  A(0).repeat(3)\n}\nUse(Inc)", "ok 3", "", Loops: "1/0", Was: "err ArityMismatch"),
         new("X06b-filter", "IsBig(x) = x > 1\nUse(p) = {\n  A = p\n  [1, 2, 3].filter(A)\n}\nUse(IsBig)", "ok [2, 3]", "", Was: "err ArityMismatch"),
         new("X06c-reduce", "Add(a, b) = a + b\nUse(p) = {\n  A = p\n  [1, 2, 3].reduce(A, 0)\n}\nUse(Add)", "ok 6", "", Was: "err ArityMismatch"),
         new("X06d-family-member-path", "F(o) = o\nBox = {\n  F(0) = 'z'\n  F(n) = 'o'\n}\nUse(b) = {\n  A = b.F\n  A(0), A(1)\n}\nUse(Box)", "ok ('z', 'o')", "", Was: "err ArityMismatch"),
@@ -322,7 +322,9 @@ public class RuntimeCallableAliasCorpusTests
     }
 
     [Theory]
-    [InlineData("Z = false\nMk(n) = if(trace(n) == n, Capture(Z()), 0)\nA = Mk(5).Algorithm\nA.while()", "err ArityMismatch", "")]
+    // META-S3-3: a bare alias is no supplied call computation, so `while`'s meta step refuses it
+    // before the alias (or its terminal `Mk(5)` body) is ever demanded.
+    [InlineData("Z = false\nMk(n) = if(trace(n) == n, Capture(Z()), 0)\nA = Mk(5).Algorithm\nA.while()", "err NotAnAlgorithm", "")]
     [InlineData("Z = 1 / 0\nMk(n) = if(trace(n) == n, Capture(Z()), 0)\nA = Mk(5).Algorithm\nA()", "err DivisionByZero", "5")]
     [InlineData("G(o) = trace(o) / 0\nUse(b) = { A = b.G\n A() }\nUse(5)", "err DivisionByZero", "5")]
     public async Task RF1_TerminalBodyConsumers_PreserveEffectsAndDiagnostics(string source, string expected, string traces)

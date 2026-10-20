@@ -90,9 +90,9 @@ public class EvaluationLimitsProcessTests
             // W1: recursion through a fused filter predicate.
             "R(n) = if(n > 0, range(n, n).filter({ R(x - 1) >= 0 }).count, 0)\nR(30)",
             // rc_10_50: a planned ten-temp loop at the bottom of a recursion.
-            step10 + "R(n) = if(n > 0, R(n - 1), repeat(Step, 2, 0))\nR(50)",
+            step10 + "R(n) = if(n > 0, R(n - 1), repeat(Step(0), 2))\nR(50)",
             // looprec: recursion routed through a loop step (the generic loop used LESS stack).
-            "S(s) = R(s - 1)\nR(n) = if(n > 0, repeat(S, 1, n), 0)\nR(25)",
+            "S(s) = R(s - 1)\nR(n) = if(n > 0, repeat(S(n), 1), 0)\nR(25)",
         };
 
         // The run with `headroomGranules` of the probe thread's stack left to it: this frame's
@@ -190,7 +190,7 @@ public class EvaluationLimitsProcessTests
             "F(n) = F(n + 1) + 1\nF(0)",
             "G(a) = a\nF(n) = G(F(n + 1))\nF(0)",
             "F(n) = sum(map([n + 1], F))\nF(0)",
-            "S(x) = {\nP = P + 1\nP, x < 1\n}\nS.while(0)",
+            "S(x) = {\nP = P + 1\nP, x < 1\n}\nS(0).while",
             "P = P + 1\nmark(1), P, mark(2)",
         ];
         string[] routes = ["generic", "planned", "twin"];
@@ -505,7 +505,7 @@ public class EvaluationLimitsProcessTests
         // produce the hand-computed result, and preserve the generic budget relations.
         foreach (var (step, expected) in new[] { (chain80, 160), (chain200, 400) })
         {
-            var program = new Expr.AlgorithmExpr(SourceProvenance.ParseValid(step + "\nStep.repeat(2, 0)").Root);
+            var program = new Expr.AlgorithmExpr(SourceProvenance.ParseValid(step + "\nStep(0).repeat(2)").Root);
             var diagnostics = new LoopOptimizationDiagnostics();
             var planned = Evaluator.RunCountedObserved(program, loopDiagnostics: diagnostics);
             var generic = Evaluator.RunCountedObserved(program, enableOptimizations: false);
@@ -529,7 +529,7 @@ public class EvaluationLimitsProcessTests
 
         foreach (var (recursion, step) in new[] { (55, chain80), (60, chain80), (40, chain200), (50, nestedIfs), (30, nestedIfs) })
         {
-            var source = $"Rec(n) = if(n == 0, Step.repeat(2, 0), Rec(n - 1))\n{step}\nRec({recursion})";
+            var source = $"Rec(n) = if(n == 0, Step(0).repeat(2), Rec(n - 1))\n{step}\nRec({recursion})";
             var program = new Expr.AlgorithmExpr(SourceProvenance.ParseValid(source).Root);
 
             // Public engine path under DEFAULT limits — the configuration an embedding host runs with.
@@ -578,8 +578,8 @@ public class EvaluationLimitsProcessTests
             "A = take([1, 2, 3], A)\nA",
             "A = [1, 2].take(A)\nA",
             "Add(a, b) = a + b\nA = [1, 2].reduce(Add, A)\nA",
-            "Step = x, false\nA = Step.while(A)\nA",
-            "Inc = x + 1\nA = Inc.repeat(A, 0)\nA",
+            "Step = x, false\nA = Step(A).while\nA",
+            "Inc = x + 1\nA = Inc(0).repeat(A)\nA",
         })
         {
             var failure = Assert.IsType<RunResult.EvalFailure>(KatLangEngine.Run(source));

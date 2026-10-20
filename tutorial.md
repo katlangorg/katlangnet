@@ -1711,11 +1711,14 @@ Apply(R.Algorithm, 7), [1, 2, 3].map(R.Algorithm), R.Algorithm(R.Arguments*)
 25
 ```
 
-Together with `.Arguments*`, a `meta` parameter can drive a loop over the captured step from the captured starting state:
+Together with `.Arguments*`, a `meta` parameter can drive a loop over the captured step from the captured starting state. A loop needs a call whose algorithm has a name (see [Loops](#loops)), so name the captured algorithm first:
 
 ```
 Step(x) = x + 1, x < 3
-Loop(meta operation) = operation.Algorithm.while(operation.Arguments*)
+Loop(meta operation) = {
+  S = operation.Algorithm
+  S(operation.Arguments*).while
+}
 
 Step(0).Loop
 ```
@@ -2295,24 +2298,24 @@ Without a collecting name, the number of names must match the number of items: `
 
 ### Repeating a Step with `repeat`
 
-`repeat` applies a step algorithm a fixed number of times, feeding each result back in as the next input:
+`repeat` applies a step algorithm a fixed number of times, feeding each result back in as the next input. You write the step as a call with its starting value, and the number of rounds after it:
 
 ```
 Increment = x + 1
-Increment.repeat(5, 0)
+Increment(0).repeat(5)
 ```
 
 **Result:** `5`
 
-`Increment.repeat(5, 0)` — the dot spelling of `repeat(Increment, 5, 0)` — starts from `0` and applies `Increment` five times.
+`Increment(0).repeat(5)` — the dot spelling of `repeat(Increment(0), 5)` — starts from `0` and applies `Increment` five times. `repeat` does not simply run the call `Increment(0)`: it takes it apart, using `Increment` as the step and the call's arguments as the starting state. That is what its parameter `meta step` means (see [Capturing a Call with `meta`](#capturing-a-call-with-meta)).
 
 ### State with Several Values
 
-A step with several outputs carries several values from one round to the next; together they are the loop's **state**. Give one initial value for each state value:
+A step with several outputs carries several values from one round to the next; together they are the loop's **state**. Write the step's call with one initial value for each state value:
 
 ```
 Fibonacci(a, b) = b, a + b
-Final = Fibonacci.repeat(10, 0, 1)
+Final = Fibonacci(0, 1).repeat(10)
 
 Final
 Final[0]
@@ -2326,7 +2329,27 @@ Final[0]
 
 Each round turns the state `(a, b)` into `(b, a + b)`. Starting from `(0, 1)`, ten rounds reach `(55, 89)`, and `[0]` selects the tenth Fibonacci number.
 
-Each initial value is one state value, and values stay values here too: to start from a stored pair such as `Start = 0, 1`, spread it, as in `Fibonacci.repeat(10, Start*)`.
+Each argument of the step's call is one state value, and values stay values here too: to start from a stored pair such as `Start = 0, 1`, spread it inside the call, as in `Fibonacci(Start*).repeat(10)`. A step can also start from no values at all: with `Done = false`, `Done().while` is `()`.
+
+### Naming the Step
+
+The loop must see the call itself, written with the step's name: `Increment(0).repeat(5)` and `while(Countdown(5))` work, and so does a call through a parameter, as in `Run(step, start) = step(start).while`. Anything else is an error, and nothing is computed: a plain value (`repeat(5, 2)`), a property that only holds the result of a call (with `Start = Increment(0)`, `Start.repeat(5)` reads the value of `Start` and cannot look back at how it was computed), the algorithm without a call (`Increment.repeat(5)`), and a call reached through a dot such as `Box.Step(0)`. Give such a step a name first:
+
+```
+Box = { Step(x) = x + 1, x < 3 }
+S = Box.Step
+Add = { x + 10 }
+
+S(0).while, Add(0).repeat(3)
+```
+
+**Results:**
+```
+3
+30
+```
+
+The count of `repeat` is an ordinary value. The step's starting values are prepared before the count is computed, but only a spread among them is computed at that point; the others are computed when the loop needs them.
 
 ### Looping While a Condition Holds
 
@@ -2334,7 +2357,7 @@ Each initial value is one state value, and values stay values here too: to start
 
 ```
 Countdown = x - 1, x > 1
-Countdown.while(5)
+Countdown(5).while
 ```
 
 **Result:** `1`
@@ -2344,14 +2367,14 @@ Read `Countdown` as "while `x > 1`, replace `x` with `x - 1`": starting from 5, 
 <!-- spec:loop-while-condition-first-skips-transition -->
 ```
 Step(x) = 10 / (x - 1), x > 1
-Step.while(1)
+Step(1).while
 ```
 
 **Result:** `1`
 
 The condition `x > 1` is `false` for the initial state, so `10 / (x - 1)` is never evaluated and the initial state comes back unchanged. When the condition is written in terms of the step's inputs, as here, `while` behaves like an ordinary while loop. The condition must be a Boolean.
 
-The condition is the **last item** supplied by the step's outputs. To find it, `while` evaluates output rows from right to left until one supplies an item. Trailing empty spreads still run, including their effects; the last item of the first nonempty row is the condition. That whole row runs before the remaining earlier rows. Anything the condition itself needs is still computed — `Step(x) = 10 / (x - 1), 10 / (x - 1) > 0` divides by zero — and a condition produced inside another call is not separate: with `Pack(x) = 10 / (x - 1), x > 1` and `Step(x) = Pack(x)*`, the call `Pack(x)` computes both of its outputs, so `Step.while(1)` also divides by zero. Write the condition as its own output to get the protection. After `true`, the remaining earlier rows run left to right. This order also applies to random draws and host operations.
+The condition is the **last item** supplied by the step's outputs. To find it, `while` evaluates output rows from right to left until one supplies an item. Trailing empty spreads still run, including their effects; the last item of the first nonempty row is the condition. That whole row runs before the remaining earlier rows. Anything the condition itself needs is still computed — `Step(x) = 10 / (x - 1), 10 / (x - 1) > 0` divides by zero — and a condition produced inside another call is not separate: with `Pack(x) = 10 / (x - 1), x > 1` and `Step(x) = Pack(x)*`, the call `Pack(x)` computes both of its outputs, so `Step(1).while` also divides by zero. Write the condition as its own output to get the protection. After `true`, the remaining earlier rows run left to right. This order also applies to random draws and host operations.
 
 Two more examples: how many years it takes 5% interest to double 1000, and how many steps the Collatz sequence needs to get from 27 down to 1:
 
@@ -2359,8 +2382,8 @@ Two more examples: how many years it takes 5% interest to double 1000, and how m
 Grow(years, balance) = years + 1, balance * 1.05, balance < 2000
 Collatz(n, steps) = if(n mod 2 == 0, n / 2, 3 * n + 1), steps + 1, n != 1
 
-Grow.while(0, 1000)[0]
-Collatz.while(27, 0)[1]
+Grow(0, 1000).while[0]
+Collatz(27, 0).while[1]
 ```
 
 **Results:**
@@ -2379,12 +2402,12 @@ A step is called exactly as it would be called directly, with the current state 
 ```
 Countdown(0) = 0, false
 Countdown(n) = n - 1, true
-Countdown.while(3)
+Countdown(3).while
 ```
 
 **Result:** `0`
 
-Each round calls `Countdown` on the state and the matching clause's outputs form the next state and the condition, so the state becomes 2, 1 and 0, where the first clause returns `false`. A builtin step works the same way: `repeat(count, 1, [1, 2])` is `count([1, 2])`, which is `2`.
+Each round calls `Countdown` on the state and the matching clause's outputs form the next state and the condition, so the state becomes 2, 1 and 0, where the first clause returns `false`. A builtin step works the same way: `repeat(count([1, 2]), 1)` is `count([1, 2])`, which is `2`.
 
 ---
 
@@ -2973,8 +2996,8 @@ Written as `X = A*` followed by the row `X`, the program prints the same `(1, 2)
 | `distinct` | `xs.distinct` | The items without later duplicates |
 | `take`, `skip` | `xs.take(n)`, `xs.skip(n)` | The first `n` items; the items after the first `n` |
 | `atoms` | `atoms(value)` | Every number in a nested structure, in one flat list |
-| `repeat` | `step.repeat(n, initial...)` | The state after `n` applications of `step` |
-| `while` | `step.while(initial...)` | The state reached while the last supplied item of `step` is `true`; each round discovers that condition from right to left and forms the remaining earlier rows only when it is `true` |
+| `repeat` | `step(initial...).repeat(n)` | The state after `n` applications of `step`, starting from the arguments of the written call |
+| `while` | `step(initial...).while` | The state reached while the last supplied item of `step` is `true`; each round discovers that condition from right to left and forms the remaining earlier rows only when it is `true` |
 | `string` | `number.string` | The number as text (dot form only) |
 | `Invoke` | `reference.Invoke()` | Runs the call a `meta` parameter captured (dot form only; see [Capturing a Call with `meta`](#capturing-a-call-with-meta)) |
 | `Arguments` | `reference.Arguments` | A lazy view of the captured call's arguments: `count`, `[i]`, `first`, `last`, and `F(reference.Arguments*)` (dot form only; see [Looking at a Captured Call's Arguments](#looking-at-a-captured-calls-arguments)) |

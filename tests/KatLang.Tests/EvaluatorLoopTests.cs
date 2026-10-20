@@ -91,30 +91,30 @@ public class EvaluatorLoopTests
 
     [Fact]
     public void Eval_Repeat_SingleParam()
-        => AssertEval("repeat({x + 1}, (3), (0))", 3);
+        => AssertEval("Step = {x + 1}\nrepeat(Step((0)), (3))", 3);
 
     [Fact]
     public void Eval_Repeat_ZeroIterations()
-        => AssertEval("repeat({x + 1}, (0), (5))", 5);
+        => AssertEval("Step = {x + 1}\nrepeat(Step((5)), (0))", 5);
 
     [Fact]
     public void Eval_Repeat_MultipleParams()
-        => AssertEval("repeat({a + 1, b + a}, 3, 0, 0)", 3, 3);
+        => AssertEval("Step = {a + 1, b + a}\nrepeat(Step(0, 0), 3)", 3, 3);
 
     [Fact]
     public void Eval_Repeat_NegativeCount_Fails()
-        => AssertEvalFails("repeat({x}, (-1), (0))");
+        => AssertEvalFails("Step = {x}\nrepeat(Step((0)), (-1))");
 
     [Fact]
     public void Eval_Repeat_Factorial()
-        => AssertEval("repeat({n + 1, acc * n}, 5, 1, 1)[1]", 120);
+        => AssertEval("Step = {n + 1, acc * n}\nrepeat(Step(1, 1), 5)[1]", 120);
 
     [Fact]
     public void Eval_Repeat_SimultaneousUpdate_UsesOldStateForAllOutputs()
     {
         var source = """
             Step = b, ~a
-            Step.repeat(1, 1, 2)
+            Step(1, 2).repeat(1)
             """;
         AssertEvalLoopModes(source, 2, 1);
     }
@@ -126,32 +126,32 @@ public class EvaluatorLoopTests
         {
             ("""
                 Step = k + 1
-                Step.repeat(5, 2)[0]
+                Step(2).repeat(5)[0]
                 """, [7m]),
             ("""
                 Step = k + 1, k <= 10
-                Step.while(2)[0]
+                Step(2).while[0]
                 """, [11m]),
             ("""
                 Step = k + 1, k * k <= 100
-                Step.while(2)[0]
+                Step(2).while[0]
                 """, [11m]),
             ("""
                 Outer(num) = {
                     Step = k + 1, k * k <= num
-                    Step.while(2)[0]
+                    Step(2).while[0]
                 }
                 Outer(100)
                 """, [11m]),
             ("""
                 Test = {
                     Step = k + 1, k <= 10
-                    Step.while(2)[0]
+                    Step(2).while[0]
                 }
 
                 Run(n) = {
                     Step = value + 1, total + Test()
-                    Step.repeat(n, 1, 0)[1]
+                    Step(1, 0).repeat(n)[1]
                 }
 
                 Run(5)
@@ -167,7 +167,7 @@ public class EvaluatorLoopTests
     {
         var source = """
             Step = k + 1
-            Step.repeat(5, 2)[0]
+            Step(2).repeat(5)[0]
             """;
 
         var (result, stats) = EvalFullWithLoopDiagnostics(source);
@@ -199,7 +199,7 @@ public class EvaluatorLoopTests
     {
         var source = """
             Step = k + 1, k <= 100
-            Step.while(2)[0]
+            Step(2).while[0]
             """;
 
         var (result, stats) = EvalFullWithLoopDiagnostics(source);
@@ -226,7 +226,7 @@ public class EvaluatorLoopTests
     {
         var source = """
             Step(*values) = values, false
-            Step.while(1, 2, 3)
+            Step(1, 2, 3).while
             """;
 
         AssertEvalLoopModes(source, 1, 2, 3);
@@ -245,7 +245,7 @@ public class EvaluatorLoopTests
     {
         var source = """
             Step((x, y)) = x + 1, y + 1, false
-            Step.while((1, 2))
+            Step((1, 2)).while
             """;
 
         AssertEvalLoopModes(source, 1, 2);
@@ -264,7 +264,7 @@ public class EvaluatorLoopTests
     {
         var source = """
             Step(x) = x + 1, x < 3
-            Step.while(1)
+            Step(1).while
             """;
 
         AssertEvalLoopModes(source, 3);
@@ -285,7 +285,7 @@ public class EvaluatorLoopTests
     {
         var source = """
             Step = x + if(x == 2, 10, 1)
-            Step.repeat(3, 1)[0]
+            Step(1).repeat(3)[0]
             """;
 
         AssertEvalLoopModes(source, 13);
@@ -308,7 +308,7 @@ public class EvaluatorLoopTests
         var source = """
             Outer(n) = {
                 Step = x + if(x <= n, 1, 0)
-                Step.repeat(5, 0)[0]
+                Step(0).repeat(5)[0]
             }
             Outer(3)
             """;
@@ -332,7 +332,7 @@ public class EvaluatorLoopTests
     {
         var source = """
             Step = x + if(x == 1, 1, 1 / 0)
-            Step.repeat(1, 1)[0]
+            Step(1).repeat(1)[0]
             """;
 
         AssertEvalLoopModes(source, 2);
@@ -354,7 +354,7 @@ public class EvaluatorLoopTests
         var source = """
             if(a, b, c) = b + c
             Step = if(x, 10, 1)
-            Step.repeat(1, 0)[0]
+            Step(0).repeat(1)[0]
             """;
 
         AssertEvalLoopModes(source, 11);
@@ -377,7 +377,7 @@ public class EvaluatorLoopTests
                 A = x + 1
                 A
             }
-            Step.repeat(3, 0)[0]
+            Step(0).repeat(3)[0]
             """;
 
         AssertEvalLoopModes(source, 3);
@@ -405,7 +405,7 @@ public class EvaluatorLoopTests
                 A = x
                 A + 1
             }
-            Step.repeat(3, 0)[0]
+            Step(0).repeat(3)[0]
             """;
 
         AssertEvalLoopModes(source, 3);
@@ -432,7 +432,7 @@ public class EvaluatorLoopTests
                 A = 1 / 0
                 x + 1
             }
-            Step.repeat(1, 0)[0]
+            Step(0).repeat(1)[0]
             """;
 
         AssertEvalLoopModes(source, 1);
@@ -459,7 +459,7 @@ public class EvaluatorLoopTests
                 A = x + 1
                 A, A <= 5
             }
-            Step.while(0)[0]
+            Step(0).while[0]
             """;
 
         AssertEvalLoopModes(source, 5);
@@ -488,11 +488,19 @@ public class EvaluatorLoopTests
     [Theory]
     [InlineData("RepeatLoopGenericCounted")]
     [InlineData("EvalNeedLoop")]
+    [InlineData("EvalMetaLoop")]
     public void RepeatLoopGenericCounter_IsLongAtBothMirrorSites(string methodName)
     {
         var method = typeof(Evaluator).GetMethod(methodName, BindingFlags.NonPublic | BindingFlags.Static)!;
         if (methodName == "RepeatLoopGenericCounted")
             Assert.Equal(typeof(long), Assert.Single(method.GetParameters(), parameter => parameter.Name == "count").ParameterType);
+        // META-S3-3: the kernel receives the validated count as its `remaining` parameter; the META entry
+        // (EvalMetaLoop) computes it into its one long local.
+        if (methodName == "EvalNeedLoop")
+        {
+            Assert.Equal(typeof(long), Assert.Single(method.GetParameters(), parameter => parameter.Name == "remaining").ParameterType);
+            return;
+        }
         var stateMachine = method.GetCustomAttribute<AsyncStateMachineAttribute>()?.StateMachineType;
         var numericLocals = stateMachine is null
             ? method.GetMethodBody()!.LocalVariables.Select(local => local.LocalType)
@@ -513,7 +521,7 @@ public class EvaluatorLoopTests
                     K2 = k * k
                     k + 1, s + if(num mod K2 == 0, 1, 0), K2 <= num and s <= 0
                 }
-                Step.while(2, 0)[1] == 0
+                Step(2, 0).while[1] == 0
             }
             IsSquareFree(100)
             """;
@@ -551,7 +559,7 @@ public class EvaluatorLoopTests
                 A(x) = x + 1
                 A(k), k <= 10
             }
-            Step.while(0)[0]
+            Step(0).while[0]
             """;
 
         AssertEvalLoopModes(source, 11);
@@ -580,7 +588,7 @@ public class EvaluatorLoopTests
         var source = """
             IsSquareFree(num) = {
                 Step = k + 1, s + if(num mod (k * k) == 0, 1, 0), k * k <= num and s <= 0
-                Step.while(2, 0)[1] == 0
+                Step(2, 0).while[1] == 0
             }
             IsSquareFree(100)
             """;
@@ -616,12 +624,12 @@ public class EvaluatorLoopTests
         var source = """
             IsSquareFree(num) = {
                 Step = k + 1, s + if(num mod (k * k) == 0, 1, 0), k * k <= num and s <= 0
-                Step.while(2, 0)[1] == 0
+                Step(2, 0).while[1] == 0
             }
 
             SquareFreeCount(n) = {
                 Step = value + 1, total + if(IsSquareFree(value), 1, 0)
-                Step.repeat(n, 1, 0)[1]
+                Step(1, 0).repeat(n)[1]
             }
 
             SquareFreeCount(20)
@@ -652,21 +660,21 @@ public class EvaluatorLoopTests
 
     [Fact]
     public void Eval_While_CountDown()
-        => AssertEval("while({x - 1, x - 1 > 0}, (3))", 1);
+        => AssertEval("Step = {x - 1, x - 1 > 0}\nwhile(Step((3)))", 1);
 
     [Fact]
     public void Eval_While_SingleOutputStep_UsesGenericSingletonSemantics()
         // One output is both the continuation flag and the next state, so it must be a
         // Boolean: `not x` toggles false -> true (continue) -> false (stop), and the loop
         // returns the state before the stopping iteration.
-        => AssertEvalResultLoopModes("while({not x}, false)", new Result.Bool(true));
+        => AssertEvalResultLoopModes("Step = {not x}\nwhile(Step(false))", new Result.Bool(true));
 
     [Fact]
     public void Eval_While_GcdDotCall_ProjectsFinalState()
     {
         var source = """
             GcdStep = b, ~a mod b, a mod b != 0
-            GcdStep.while(12, 30)[1]
+            GcdStep(12, 30).while[1]
             """;
         AssertEvalLoopModes(source, 6);
     }
@@ -676,7 +684,7 @@ public class EvaluatorLoopTests
     {
         var source = """
             Step = x + 10, x < 3
-            Step.while(0)
+            Step(0).while
             """;
         AssertEvalLoopModes(source, 10);
     }
@@ -689,7 +697,7 @@ public class EvaluatorLoopTests
                 A = x
                 A + 1, x < 3
             }
-            Step.while(0)
+            Step(0).while
             """;
         AssertEvalLoopModes(source, 3);
     }
@@ -700,7 +708,7 @@ public class EvaluatorLoopTests
         var source = """
             Outer(n) = {
                 Step = x + n, x < 10
-                Step.while(0)
+                Step(0).while
             }
             Outer(2)
             """;
@@ -714,7 +722,7 @@ public class EvaluatorLoopTests
             Outer(limit, offset) = {
                 Reached = candidate + offset >= limit
                 Step = candidate + 1, not Reached
-                Step.while(0)
+                Step(0).while
             }
             Outer(6, 2)
             """;
@@ -724,7 +732,7 @@ public class EvaluatorLoopTests
     [Fact]
     public void Eval_While_BadContinuationValue_KeepsTypeMismatchMeaning()
     {
-        var (_, optimizedError) = AssertEvalFailsInBothLoopModes("while({x + 1, 'keep'}, 0)");
+        var (_, optimizedError) = AssertEvalFailsInBothLoopModes("Step = {x + 1, 'keep'}\nwhile(Step(0))");
         var error = Innermost(optimizedError);
         var typeMismatch = Assert.IsType<EvalError.TypeMismatch>(error);
         Assert.Contains("must be a Boolean value", typeMismatch.Message, StringComparison.Ordinal);
@@ -733,7 +741,7 @@ public class EvaluatorLoopTests
     [Fact]
     public void Eval_Repeat_BadStateArity_KeepsLoopBindingContext()
     {
-        var (_, optimizedError) = AssertEvalFailsInBothLoopModes("repeat({x + 1}, 2, 0, 1)");
+        var (_, optimizedError) = AssertEvalFailsInBothLoopModes("Step = {x + 1}\nrepeat(Step(0, 1), 2)");
         var formatted = KatLangError.FromEvalError(optimizedError).Message;
         Assert.Contains("`repeat` step expects 1 state value", formatted, StringComparison.Ordinal);
         Assert.Contains("current loop state has 2 state values", formatted, StringComparison.Ordinal);
@@ -749,7 +757,7 @@ public class EvaluatorLoopTests
         // pre-check semantics return the prior state (total=44), not the updated one.
         var source = """
             Algo = b, ~a + b, total + if(b mod 2 == 0, b, 0), b <= 100
-            Sum = Algo.while(1, 2, 0)[2]
+            Sum = Algo(1, 2, 0).while[2]
             Sum
             """;
         AssertEval(source, 44);
@@ -757,14 +765,14 @@ public class EvaluatorLoopTests
 
     [Fact]
     public void Eval_While_ImmediateExit()
-        => AssertEval("while({x, false}, (5))", 5);
+        => AssertEval("Step = {x, false}\nwhile(Step((5)))", 5);
 
     [Fact]
     public void Eval_While_DotCall_SumMultiplesOf3Or5()
     {
         var source = """
             Algo = n - 1, result + if(n mod 3==0 or n mod 5==0, n, 0), n > 2
-            Sum = Algo.while(x, 0)[1]
+            Sum = Algo(x, 0).while[1]
             Sum(999)
             """;
         AssertEval(source, 233168);
@@ -775,10 +783,10 @@ public class EvaluatorLoopTests
     [Fact]
     public void Eval_While_DotCall_BareComma_Works()
     {
-        // Algo.while(x, 0) with bare comma starts with two explicit state slots.
+        // Algo(x, 0).while with bare comma starts with two explicit state slots.
         var source = """
             Algo = n - 1, result + if(n mod 3==0 or n mod 5==0, n, 0), n > 2
-            Sum = Algo.while(x, 0)[1]
+            Sum = Algo(x, 0).while[1]
             Sum(999)
             """;
         AssertEval(source, 233168);
@@ -789,7 +797,7 @@ public class EvaluatorLoopTests
     {
         var source = """
             Algo = n - 1, result + if(n mod 3==0 or n mod 5==0, n, 0), n > 2
-            Sum = Algo.while((x, 0))[1]
+            Sum = Algo((x, 0)).while[1]
             Sum(999)
             """;
         AssertEvalFails(source);
@@ -801,7 +809,7 @@ public class EvaluatorLoopTests
         var source = """
             Algo = n - 1, result + if(n mod 3==0 or n mod 5==0, n, 0), n > 2
             Init = x, 0
-            Sum = Algo.while(Init(x)[0], Init(x)[1])[1]
+            Sum = Algo(Init(x)[0], Init(x)[1]).while[1]
             Sum(999)
             """;
         AssertEval(source, 233168);
@@ -812,7 +820,7 @@ public class EvaluatorLoopTests
     {
         var source = """
             Algo = n - 1, result + if(n mod 3==0 or n mod 5==0, n, 0), n > 2
-            Sum = Algo.while(x, 0)[1]
+            Sum = Algo(x, 0).while[1]
             Sum(999)
             """;
         AssertEval(source, 233168);
@@ -823,10 +831,10 @@ public class EvaluatorLoopTests
     [Fact]
     public void Eval_While_DirectCall_MultiInit()
     {
-        // while(Step, s1, s2, ...) starts with one state slot per explicit init arg.
+        // while(Step(s1, s2, ...)) starts with one state slot per explicit init arg.
         var source = """
             Step = n - 1, acc + n, n > 1
-            while(Step, 5, 0)[1]
+            while(Step(5, 0))[1]
             """;
         // 5+4+3+2 = 14 (stops when n=1, cont=0, returns prior state)
         AssertEval(source, 14);
@@ -835,10 +843,10 @@ public class EvaluatorLoopTests
     [Fact]
     public void Eval_Repeat_DirectCall_MultiInit()
     {
-        // repeat(Step, n, s1, s2) starts with two explicit state slots.
+        // repeat(Step(s1, s2), n) starts with two explicit state slots.
         var source = """
             Step = a + 1, b + a
-            repeat(Step, 3, 0, 0)
+            repeat(Step(0, 0), 3)
             """;
         AssertEval(source, 3, 3);
     }
@@ -846,10 +854,10 @@ public class EvaluatorLoopTests
     [Fact]
     public void Eval_Repeat_DotCall_MultiInit()
     {
-        // Step.repeat(n, s1, s2) lexical fallback preserves the explicit state slots.
+        // Step(s1, s2).repeat(n) lexical fallback preserves the explicit state slots.
         var source = """
             Step = a + 1, b + a
-            Step.repeat(3, 0, 0)
+            Step(0, 0).repeat(3)
             """;
         AssertEval(source, 3, 3);
     }
@@ -859,7 +867,7 @@ public class EvaluatorLoopTests
     {
         var source = """
             Step = x - 1, x - 1 > 0
-            Step.while(3)
+            Step(3).while
             """;
         AssertEval(source, 1);
     }
@@ -869,18 +877,18 @@ public class EvaluatorLoopTests
     {
         var source = """
             Step = x + 1
-            Step.repeat(3, 0)
+            Step(0).repeat(3)
             """;
         AssertEval(source, 3);
     }
 
     [Fact]
     public void Eval_While_DirectCall_SingleInit_StillWorks()
-        => AssertEval("while({x - 1, x - 1 > 0}, 3)", 1);
+        => AssertEval("Step = {x - 1, x - 1 > 0}\nwhile(Step(3))", 1);
 
     [Fact]
     public void Eval_Repeat_DirectCall_SingleInit_StillWorks()
-        => AssertEval("repeat({x + 1}, 3, 0)", 3);
+        => AssertEval("Step = {x + 1}\nrepeat(Step(0), 3)", 3);
 
     [Fact]
     public void Eval_DotCall_TrailingBrace_StillWorks()
@@ -957,7 +965,7 @@ public class EvaluatorLoopTests
                     Square = k * k
                     k + 1, s + if(num mod Square == 0, 1, 0), Square <= num and s <= 0
                 }
-                Step.while(2, 0)[1] == 0
+                Step(2, 0).while[1] == 0
             }
 
             SquareFreeCount = range(1,N).filter(IsSquareFree).count
@@ -1012,7 +1020,7 @@ public class EvaluatorLoopTests
         var source = """
             Pred(num) = {
                 Step = k + 1, k <= num
-                Step.while(1)[0] > 0
+                Step(1).while[0] > 0
             }
 
             range(1,10).filter(Pred).count
@@ -1043,7 +1051,7 @@ public class EvaluatorLoopTests
         var source = """
             Inner = {
                 Step = n + 1, n < limit
-                Step.while(limit - limit)[0]
+                Step(limit - limit).while[0]
             }
 
             UsesInner = Inner(n)
@@ -1079,7 +1087,7 @@ public class EvaluatorLoopTests
         var source = """
             Inner = {
                 Step = n + 1
-                Step.repeat(limit, 0)[0]
+                Step(0).repeat(limit)[0]
             }
 
             UsesInner = Inner(n)
@@ -1110,7 +1118,7 @@ public class EvaluatorLoopTests
         var source = """
             Inner = {
                 Step = n + 1, n < limit
-                Step.while(limit - limit)[0]
+                Step(limit - limit).while[0]
             }
 
             Keep = Inner(n) == n
@@ -1127,7 +1135,7 @@ public class EvaluatorLoopTests
         var source = """
             Inner = {
                 Step = n + 1
-                Step.repeat(limit, 0)[0]
+                Step(0).repeat(limit)[0]
             }
 
             AddInner(n, acc) = acc + Inner(n)
@@ -1146,12 +1154,12 @@ public class EvaluatorLoopTests
                 Step = {
                     k+1, s + if(n mod k == 0, 1, 0), k <= n div 2 and s <= 0
                 }
-                n > 1 and Step.while(2,0)[1] == 0
+                n > 1 and Step(2, 0).while[1] == 0
             }
 
             Reverse = {
                 Step = Math.Floor(n / 10), rev * 10 + n mod 10, n > 0
-                Step.while(x, 0)[1]
+                Step(x, 0).while[1]
             }
 
             IsEmirp = n > 11 and IsPrime(n) and IsPrime(Reverse(n))
@@ -1185,7 +1193,7 @@ public class EvaluatorLoopTests
         var source = """
             Inner = {
                 Step = n + 1, n < limit
-                Step.while(limit - limit)[0]
+                Step(limit - limit).while[0]
             }
 
             UsesInner = Inner(m)
@@ -1211,7 +1219,7 @@ public class EvaluatorLoopTests
         var source = """
             Inner = {
                 Step = s + 1, s < limit
-                Step.while(limit - limit)[0]
+                Step(limit - limit).while[0]
             }
 
             UsesInner = Inner(n)
@@ -1237,7 +1245,7 @@ public class EvaluatorLoopTests
         var source = """
             UsesLimit = {
                 Step = s + 1, s < limit
-                Step.while(limit - limit)[0]
+                Step(limit - limit).while[0]
             }
 
             (2,3).map(UsesLimit)
@@ -1264,7 +1272,7 @@ public class EvaluatorLoopTests
         var source = """
             Pred(num) = {
                 Step = k + 1, k <= num
-                Step.while(1)[0]
+                Step(1).while[0]
             }
 
             Pred(10)
@@ -1293,7 +1301,7 @@ public class EvaluatorLoopTests
         var source = """
             Pred(text) = {
                 Step = if(text == 'a', k + 1, k + 1), k <= 1
-                Step.while(0)[0] > 0
+                Step(0).while[0] > 0
             }
 
             ('a').filter(Pred).count
@@ -1329,7 +1337,7 @@ public class EvaluatorLoopTests
         var source = """
             Pred(item) = {
                 Step = if(true, k + 1, item), k <= 1
-                Step.while(0)[0] > 0
+                Step(0).while[0] > 0
             }
 
             (((1, 2), (3, 4))).filter(Pred).count
@@ -1380,14 +1388,14 @@ public class EvaluatorLoopTests
         AssertEvalResultLoopModes(
             """
             Step(a, b) = take(a, 1), count(a)
-            Step.repeat(2, 1, 0)
+            Step(1, 0).repeat(2)
             """,
             Result.FromItems([ListValue(Atom(1)), Atom(1)]));
 
         AssertEvalResultLoopModes(
             """
             Step(a, b) = take(a, 1), b + 1, b < 2
-            Step.while(5, 0)
+            Step(5, 0).while
             """,
             Result.FromItems([ListValue(Atom(5)), Atom(2)]));
     }
@@ -1399,7 +1407,7 @@ public class EvaluatorLoopTests
         => AssertEvalLoopModes(
             """
             Step(a, b) = if(a == 1, (()), a.take(1)), count(a)
-            Step.repeat(2, 1, 0)
+            Step(1, 0).repeat(2)
             """,
             0);
 
@@ -1416,7 +1424,7 @@ public class EvaluatorLoopTests
         var source = """
             Outer(pair) = {
                 Step = x + if(pair == pair, 1, 0)
-                Step.repeat(5, 0)
+                Step(0).repeat(5)
             }
             Outer((1, 2))
             """;
@@ -1451,7 +1459,7 @@ public class EvaluatorLoopTests
         AssertEvalLoopModes(
             """
             Step(a, b) = b, a + b, a + b < 10
-            Step.while(1, 1)
+            Step(1, 1).while
             """,
             5, 8);
     }
@@ -1462,7 +1470,7 @@ public class EvaluatorLoopTests
         var (generic, optimized) = AssertEvalFailsInBothLoopModes(
             """
             Step((x, y)) = x + y
-            Step.repeat(1, 1, 2)
+            Step(1, 2).repeat(1)
             """);
 
         foreach (var error in new[] { generic, optimized })
@@ -1487,7 +1495,7 @@ public class EvaluatorLoopTests
         AssertEvalLoopModes(
             """
             GcdStep = b, ~a mod b, a mod b != 0
-            Gcd = GcdStep.while(a, b)[1]
+            Gcd = GcdStep(a, b).while[1]
 
             FindNext(*history, pre1, pre2) = {
                 IsYSCandidate(candidate) = not history.contains(candidate) and
@@ -1495,7 +1503,7 @@ public class EvaluatorLoopTests
                     Gcd(candidate, pre2) != 1
 
                 FindStep = candidate + 1, not IsYSCandidate(candidate)
-                FindStep.while(1)[0]
+                FindStep(1).while[0]
             }
 
             YSStep((*history), pre2, pre1) = {
@@ -1503,7 +1511,7 @@ public class EvaluatorLoopTests
                 (history*, Next), pre1, Next
             }
 
-            YSStep.repeat(27, (1, 2, 3), 2, 3)[0]
+            YSStep((1, 2, 3), 2, 3).repeat(27)[0]
             """,
             1, 2, 3, 4, 9, 8, 15, 14, 5, 6,
             25, 12, 35, 16, 7, 10, 21, 20, 27, 22,
@@ -1516,7 +1524,7 @@ public class EvaluatorLoopTests
         AssertEvalResultLoopModes(
             """
             AppendNext(*history) = history*, history.atoms.last + 1
-            AppendNext.repeat(1, 1, 2, 4)
+            AppendNext(1, 2, 4).repeat(1)
             """,
             ResultFromAtoms(1, 2, 4, 5));
     }
@@ -1527,7 +1535,7 @@ public class EvaluatorLoopTests
         AssertEvalResultLoopModes(
             """
             AppendNext(*history) = history*, history.atoms.last + 1
-            AppendNext.repeat(2, 1, 2, 4)
+            AppendNext(1, 2, 4).repeat(2)
             """,
             ResultFromAtoms(1, 2, 4, 5, 6));
     }
@@ -1549,7 +1557,7 @@ public class EvaluatorLoopTests
         var (generic, optimized) = AssertEvalFailsInBothLoopModes(
             """
             AppendNext = history*, history.atoms.last + 1
-            AppendNext.repeat(1, 1, 2, 4)
+            AppendNext(1, 2, 4).repeat(1)
             """);
 
         foreach (var error in new[] { generic, optimized })
@@ -1568,7 +1576,7 @@ public class EvaluatorLoopTests
         AssertEvalResultLoopModes(
             """
             Step(first, *rest) = first*, rest
-            Step.repeat(1, 1, 2, 3)
+            Step(1, 2, 3).repeat(1)
             """,
             Result.FromItems([Atom(1), ListValue(Atom(2), Atom(3))]));
     }
@@ -1579,7 +1587,7 @@ public class EvaluatorLoopTests
         AssertEvalResultLoopModes(
             """
             Step(*values, last) = values*, last
-            Step.repeat(1, 1, 2, 3)
+            Step(1, 2, 3).repeat(1)
             """,
             ResultFromAtoms(1, 2, 3));
     }
@@ -1590,7 +1598,7 @@ public class EvaluatorLoopTests
         AssertEvalResultLoopModes(
             """
             Step(first, *middle, last) = first*, middle*, last
-            Step.repeat(1, 1, 2, 3, 4)
+            Step(1, 2, 3, 4).repeat(1)
             """,
             ResultFromAtoms(1, 2, 3, 4));
     }
@@ -1605,7 +1613,7 @@ public class EvaluatorLoopTests
         AssertEvalLoopModes(
             """
             Step(first, *middle, last) = first + 1, middle*, last + 1
-            Step.repeat(2, 0, 5, 5, 10)
+            Step(0, 5, 5, 10).repeat(2)
             """,
             2, 5, 5, 12);
     }
@@ -1616,7 +1624,7 @@ public class EvaluatorLoopTests
         AssertEvalLoopModes(
             """
             Step(first, *middle, last) = first, middle.count, last
-            Step.repeat(1, 10, 20, 30, 40)
+            Step(10, 20, 30, 40).repeat(1)
             """,
             10, 2, 40);
     }
@@ -1630,7 +1638,7 @@ public class EvaluatorLoopTests
         var (generic, optimized) = AssertEvalFailsInBothLoopModes(
             """
             Step(first, *rest, last) = first*, rest*, last
-            Step.repeat(1, 1)
+            Step(1).repeat(1)
             """);
 
         foreach (var error in new[] { generic, optimized })
@@ -1660,7 +1668,7 @@ public class EvaluatorLoopTests
         AssertEvalResultLoopModes(
             """
             Step(first, *middle, last) = first, (middle == []), middle.count, last
-            Step.repeat(1, 10, 20)
+            Step(10, 20).repeat(1)
             """,
             Result.FromItems([new Result.Atom(10), new Result.Bool(true), new Result.Atom(0), new Result.Atom(20)]));
     }
@@ -1677,14 +1685,16 @@ public class EvaluatorLoopTests
         AssertEvalLoopModes(
             """
             S = (1, 2), (3, 4)
-            repeat({(S[0])*, a + b}, 1, 0, 0)
+            Step = {(S[0])*, a + b}
+            repeat(Step(0, 0), 1)
             """,
             1, 2, 0);
 
         AssertEvalResultLoopModes(
             """
             S = (1, 2), (3, 4)
-            repeat({(S[0])*, a + b}, 1, 0, 0)
+            Step = {(S[0])*, a + b}
+            repeat(Step(0, 0), 1)
             """,
             ResultFromAtoms(1, 2, 0));
 
@@ -1695,7 +1705,8 @@ public class EvaluatorLoopTests
         AssertEvalResultLoopModes(
             """
             S = 1, (2, 3)
-            repeat({a + 1, (S[a + b - b])*}, 2, 0, 9)
+            Step = {a + 1, (S[a + b - b])*}
+            repeat(Step(0, 9), 2)
             """,
             ResultFromAtoms(2, 2, 3));
     }
@@ -1709,14 +1720,16 @@ public class EvaluatorLoopTests
         AssertEvalResultLoopModes(
             """
             S = (1, 2), (3, 4)
-            repeat({S[0], a + b}, 1, 0, 0)
+            Step = {S[0], a + b}
+            repeat(Step(0, 0), 1)
             """,
             Result.FromItems([Result.FromItems([new Result.Atom(1), new Result.Atom(2)]), new Result.Atom(0)]));
 
         AssertEvalResultLoopModes(
             """
             S = (1, 2), (3, 4)
-            repeat({first(S), a + b}, 1, 0, 0)
+            Step = {first(S), a + b}
+            repeat(Step(0, 0), 1)
             """,
             Result.FromItems([Result.FromItems([new Result.Atom(1), new Result.Atom(2)]), new Result.Atom(0)]));
 
@@ -1725,7 +1738,8 @@ public class EvaluatorLoopTests
         AssertEvalResultLoopModes(
             """
             S = (), 5
-            repeat({S[0], a + b}, 1, 0, 0)
+            Step = {S[0], a + b}
+            repeat(Step(0, 0), 1)
             """,
             Result.FromItems([new Result.SequenceValue([]), new Result.Atom(0)]));
 
@@ -1734,7 +1748,8 @@ public class EvaluatorLoopTests
         var (generic, optimized) = AssertEvalFailsInBothLoopModes(
             """
             S = (1, false), (2, 2)
-            while({a + 1, S[0]}, 9)
+            Step = {a + 1, S[0]}
+            while(Step(9))
             """);
         Assert.IsType<EvalError.TypeMismatch>(Innermost(generic));
         Assert.IsType<EvalError.TypeMismatch>(Innermost(optimized));
@@ -1754,7 +1769,8 @@ public class EvaluatorLoopTests
         AssertEvalLoopModes(
             """
             S = (1, false), (2, 2)
-            while({a + 1, (S[0])*}, 9)
+            Step = {a + 1, (S[0])*}
+            while(Step(9))
             """,
             9);
     }
@@ -1766,18 +1782,18 @@ public class EvaluatorLoopTests
         // optimizer must complete that iteration once and hand off the
         // shrunken slot vector without replaying it.
         AssertEvalResultLoopModes(
-            "repeat({if(a == 0, (), ())*, b}, 1, 0, 9)",
+            "Step = {if(a == 0, (), ())*, b}\nrepeat(Step(0, 9), 1)",
             ResultFromAtoms(9));
 
         // A spread-empty continuation leaves the preceding Boolean output as
         // the generic continuation slot; false stops and returns the old state.
         AssertEvalResultLoopModes(
-            "while({a == 0, if(a == -1, (), ())*}, -1)",
+            "Step = {a == 0, if(a == -1, (), ())*}\nwhile(Step(-1))",
             ResultFromAtoms(-1));
 
         // Non-spread `()` is a visible output slot, so it is an invalid
         // continuation value in both modes rather than disappearing.
-        var (generic, optimized) = AssertEvalFailsInBothLoopModes("while({a + 1, ()}, 0)");
+        var (generic, optimized) = AssertEvalFailsInBothLoopModes("Step = {a + 1, ()}\nwhile(Step(0))");
         Assert.IsType<EvalError.TypeMismatch>(Innermost(generic));
         Assert.IsType<EvalError.TypeMismatch>(Innermost(optimized));
         Assert.Equal(
@@ -1792,7 +1808,7 @@ public class EvaluatorLoopTests
         // state three slots against a two-parameter step; both modes must
         // report the same loop-state arity mismatch at the same program point.
         var (generic, optimized) = AssertEvalFailsInBothLoopModes(
-            "repeat({(a + 1, a + 2)*, b}, 2, 0, 9)");
+            "Step = {(a + 1, a + 2)*, b}\nrepeat(Step(0, 9), 2)");
 
         var genericArity = Assert.IsType<EvalError.ArityMismatch>(Innermost(generic));
         var optimizedArity = Assert.IsType<EvalError.ArityMismatch>(Innermost(optimized));
@@ -1808,7 +1824,8 @@ public class EvaluatorLoopTests
         var (laterGeneric, laterOptimized) = AssertEvalFailsInBothLoopModes(
             """
             S = 1, (2, 3)
-            repeat({a + 1, (S[a + b - b])*}, 3, 0, 9)
+            Step = {a + 1, (S[a + b - b])*}
+            repeat(Step(0, 9), 3)
             """);
         var laterGenericArity = Assert.IsType<EvalError.ArityMismatch>(Innermost(laterGeneric));
         var laterOptimizedArity = Assert.IsType<EvalError.ArityMismatch>(Innermost(laterOptimized));
@@ -1824,13 +1841,13 @@ public class EvaluatorLoopTests
         // Structural state slots (exact lists, growing via spread) are bound
         // and rebuilt identically in both loop modes.
         AssertEvalResultLoopModes(
-            "repeat({[a*, 1]}, 3, [])",
+            "Step = {[a*, 1]}\nrepeat(Step([]), 3)",
             ListValue(ResultFromAtoms(1), ResultFromAtoms(1), ResultFromAtoms(1)));
 
         AssertEvalResultLoopModes(
             """
             Step(acc, *x) = acc + x.count, 0
-            repeat(Step, 1, 5)
+            repeat(Step(5), 1)
             """,
             SequenceValue(ResultFromAtoms(5), ResultFromAtoms(0)));
     }
@@ -1844,7 +1861,7 @@ public class EvaluatorLoopTests
         AssertEvalResultLoopModes(
             """
             Step(a, *rest, a) = rest, 0
-            repeat(Step, 1, 7, 7)
+            repeat(Step(7, 7), 1)
             """,
             SequenceValue(ListValue(), ResultFromAtoms(0)));
     }
@@ -1859,14 +1876,14 @@ public class EvaluatorLoopTests
         AssertEvalResultLoopModes(
             """
             Step(*x) = { x.skip(1)* }
-            repeat(Step, 3, 7, 8)
+            repeat(Step(7, 8), 3)
             """,
             SequenceValue());
 
         AssertEvalResultLoopModes(
             """
             Step(*x) = { x.skip(1)* }
-            repeat(Step, 1, 7, 8)
+            repeat(Step(7, 8), 1)
             """,
             ResultFromAtoms(8));
     }
@@ -1877,7 +1894,7 @@ public class EvaluatorLoopTests
         AssertEvalResultLoopModes(
             """
             AppendWhile(*history) = (history*, history.atoms.last + 1), history.atoms.last + 1 < 6
-            AppendWhile.while(1, 2, 4)
+            AppendWhile(1, 2, 4).while
             """,
             ResultFromAtoms(1, 2, 4, 5));
     }
@@ -1888,7 +1905,7 @@ public class EvaluatorLoopTests
         AssertEvalLoopModes(
             """
             Step = a + 1, b + a
-            Step.repeat(3, 0, 0)
+            Step(0, 0).repeat(3)
             """,
             3, 3);
     }
@@ -1900,7 +1917,7 @@ public class EvaluatorLoopTests
             """
             Pair = (1, 2)
             Step = pair[0] + pair[1]
-            Step.repeat(1, Pair)
+            Step(Pair).repeat(1)
             """,
             3);
     }
@@ -1912,7 +1929,7 @@ public class EvaluatorLoopTests
             """
             Pair = (1, 2)
             Step = a + b
-            Step.repeat(1, Pair)
+            Step(Pair).repeat(1)
             """);
 
         foreach (var error in new[] { generic, optimized })
@@ -1930,7 +1947,7 @@ public class EvaluatorLoopTests
             """
             Pair = (1, 2)
             Step = a + b
-            Step.repeat(1, Pair[0], Pair[1])
+            Step(Pair[0], Pair[1]).repeat(1)
             """,
             3);
     }
@@ -1942,7 +1959,7 @@ public class EvaluatorLoopTests
             """
             History = (1, 2, 4)
             Step = (history, history.atoms.last + 1)
-            Step.repeat(2, History)
+            Step(History).repeat(2)
             """,
             1, 2, 4, 5, 6);
     }
@@ -1953,7 +1970,7 @@ public class EvaluatorLoopTests
             """
             History = (1, 2, 4)
             Step = (history*, history.atoms.last + 1)
-            Step.repeat(2, History)
+            Step(History).repeat(2)
             """,
             ResultFromAtoms(1, 2, 4, 5, 6));
 
@@ -1971,17 +1988,17 @@ public class EvaluatorLoopTests
                 Tail = history[history.atoms.count-1]
                 IsCandidate(candidate) = not history.contains(candidate)
                 FindStep = x + 1, not IsCandidate(x)
-                FindStep.while(Tail+1)[0]
+                FindStep(Tail+1).while[0]
             }
             LIST = 1, 2, 4
             """;
 
         AssertEvalResultLoopModes(
-            definitions + "\nTestStep = (history*, FindNext(history*))\nTestStep.repeat(1, LIST)",
+            definitions + "\nTestStep = (history*, FindNext(history*))\nTestStep(LIST).repeat(1)",
             ResultFromAtoms(1, 2, 4, 5));
 
         var adjacent = EvalFull(
-            definitions + "\nTestStep = (history* FindNext(history*))\nTestStep.repeat(1, LIST)");
+            definitions + "\nTestStep = (history* FindNext(history*))\nTestStep(LIST).repeat(1)");
         Assert.True(adjacent.IsError, "adjacency after a spread must multiply, not supply a second slot");
         Assert.Contains("*", adjacent.Error!.ToString());
     }
@@ -1994,11 +2011,11 @@ public class EvaluatorLoopTests
                 Tail = history[history.atoms.count-1]
                 IsCandidate(candidate) = not history.contains(candidate)
                 FindStep = x + 1, not IsCandidate(x)
-                FindStep.while(Tail+1)[0]
+                FindStep(Tail+1).while[0]
             }
             TestStep = (history*, FindNext(history*))
             LIST = 1, 2, 4
-            TestStep.repeat(2, LIST)
+            TestStep(LIST).repeat(2)
             """,
             ResultFromAtoms(1, 2, 4, 5, 6));
 
@@ -2011,10 +2028,10 @@ public class EvaluatorLoopTests
                 Tail = history[history.atoms.count-1]
                 IsCandidate(candidate) = not history.contains(candidate)
                 FindStep = x + 1, not IsCandidate(x)
-                FindStep.while(Tail+1)[0]
+                FindStep(Tail+1).while[0]
             }
             TestStep(*history) = history*, FindNext(history*)
-            TestStep.repeat(2, 1, 2, 4)
+            TestStep(1, 2, 4).repeat(2)
             """,
             ResultFromAtoms(1, 2, 4, 5, 6));
     }
@@ -2024,7 +2041,7 @@ public class EvaluatorLoopTests
     {
         const string source = """
             Step((*history), previous) = (history*, previous + 1), previous + 1
-            Step.repeat(2, (1, 2), 2)[0]
+            Step((1, 2), 2).repeat(2)[0]
             """;
 
         AssertEvalResultLoopModes(source, ResultFromAtoms(1, 2, 3, 4));
@@ -2042,7 +2059,7 @@ public class EvaluatorLoopTests
             """
             Pair = 1, 2
             Step = pair[0] + pair[1]
-            Step.repeat(1, Pair)
+            Step(Pair).repeat(1)
             """,
             3);
     }
@@ -2054,7 +2071,7 @@ public class EvaluatorLoopTests
             """
             Pair = 1, 2
             Step = a + b
-            Step.repeat(1, Pair[0], Pair[1])
+            Step(Pair[0], Pair[1]).repeat(1)
             """,
             3);
     }

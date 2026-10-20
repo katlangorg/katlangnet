@@ -415,9 +415,9 @@ def dsrReadThenString : Expr :=
   .algorithmExpr (alg [] [] [privateProp "Z" (alg [] [] [] [.num 5]), privateProp "Show" (alg ["v"] [] [] [(.binary .add (.param "v") (.num 0)), (.dotCall (.param "v") "string" none)])] [(.call (.resolve "Show") [.resolve "Z"])])
 #guard dsrObserve dsrReadThenString == "ok S[5, '5']"
 
-/-- `Inc(z) = z + 1` / `Show(v) = v.string` / `Step(x) = Show(Inc)` / `repeat(Step, 1, 0)` -/
+/-- `Inc(z) = z + 1` / `Show(v) = v.string` / `Step(x) = Show(Inc)` / `repeat(Step(0), 1)` -/
 def dsrLoopStep : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "Inc" (alg ["z"] [] [] [(.binary .add (.param "z") (.num 1))]), privateProp "Show" (alg ["v"] [] [] [(.dotCall (.param "v") "string" none)]), privateProp "Step" (alg ["x"] [] [] [(.call (.resolve "Show") [.resolve "Inc"])])] [(.call (.resolve "repeat") [.resolve "Step", .num 1, .num 0])])
+  .algorithmExpr (alg [] [] [privateProp "Inc" (alg ["z"] [] [] [(.binary .add (.param "z") (.num 1))]), privateProp "Show" (alg ["v"] [] [] [(.dotCall (.param "v") "string" none)]), privateProp "Step" (alg ["x"] [] [] [(.call (.resolve "Show") [.resolve "Inc"])])] [(.call (.resolve "repeat") [(.call (.resolve "Step") [.num 0]), .num 1])])
 #guard dsrObserve dsrLoopStep == "call repeat > call Show > dotCall .string of v > property Inc > arityMismatch 1 0"
 
 /-- `Inc(z) = z + 1` / `Show(*vs) = vs.string` / `Show(Inc)` -/

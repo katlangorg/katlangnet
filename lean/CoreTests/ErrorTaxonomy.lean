@@ -90,15 +90,15 @@ def case_guard_callability__forwarded : Expr :=
 #guard obsFine case_guard_callability__forwarded == "err notAnAlgorithm"
 
 def case_guard_callability__repeat_number : Expr :=
-  .algorithmExpr (alg [] [] [] [(.call (.resolve "repeat") [.num 5, .num 1, .num 0])])
+  .algorithmExpr (alg [] [] [] [(.call (.resolve "repeat") [.num 5, .num 1])])
 #guard obsFine case_guard_callability__repeat_number == "err notAnAlgorithm"
 
 def case_guard_callability__while_boolean : Expr :=
-  .algorithmExpr (alg [] [] [] [(.call (.resolve "while") [.boolLiteral true, .num 0])])
+  .algorithmExpr (alg [] [] [] [(.call (.resolve "while") [.boolLiteral true])])
 #guard obsFine case_guard_callability__while_boolean == "err notAnAlgorithm"
 
 def case_guard_callability__builtin_step_callback : Expr :=
-  .algorithmExpr (alg [] [] [] [(.call (.resolve "repeat") [.resolve "map", .num 1, (.listLiteral [.num 1, .num 2]), .num 5])])
+  .algorithmExpr (alg [] [] [] [(.call (.resolve "repeat") [.call (.resolve "map") [(.listLiteral [.num 1, .num 2]), .num 5], .num 1])])
 #guard obsFine case_guard_callability__builtin_step_callback == "err notAnAlgorithm"
 
 def case_guard_callability__user_hof : Expr :=
@@ -114,7 +114,7 @@ def case_guard_zero_parameter__block_in_map : Expr :=
 #guard obsFine case_guard_zero_parameter__block_in_map == "err arityMismatch(0,1)"
 
 def case_guard_zero_parameter__property_step : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "Z" (alg [] [] [] [.num 5])] [(.call (.resolve "repeat") [.resolve "Z", .num 1, .num 0])])
+  .algorithmExpr (alg [] [] [privateProp "Z" (alg [] [] [] [.num 5])] [(.call (.resolve "repeat") [.call (.resolve "Z") [.num 0], .num 1])])
 #guard obsFine case_guard_zero_parameter__property_step == "err arityMismatch(0,1)"
 
 def case_guard_zero_parameter__user_hof_property : Expr :=
@@ -146,7 +146,7 @@ def case_guard_kind__range_list : Expr :=
 #guard obsFine case_guard_kind__range_list == "err typeMismatch"
 
 def case_guard_kind__repeat_count_list : Expr :=
-  .algorithmExpr (alg [] [] [] [(.call (.resolve "repeat") [(.algorithmExpr (alg ["x"] [] [] [.param "x"])), (.listLiteral [.num 1]), .num 0])])
+  .algorithmExpr (alg [] [] [privateProp "Id" (alg ["x"] [] [] [.param "x"])] [(.call (.resolve "repeat") [.call (.resolve "Id") [.num 0], (.listLiteral [.num 1])])])
 #guard obsFine case_guard_kind__repeat_count_list == "err typeMismatch"
 
 def case_guard_kind__sum_boolean : Expr :=
@@ -194,7 +194,7 @@ def case_guard_domain__index_empty : Expr :=
 #guard obsFine case_guard_domain__index_empty == "err badIndex"
 
 def case_guard_domain__repeat_negative : Expr :=
-  .algorithmExpr (alg [] [] [] [(.call (.resolve "repeat") [(.algorithmExpr (alg ["x"] [] [] [.param "x"])), (.unary .minus (.num 1)), .num 0])])
+  .algorithmExpr (alg [] [] [privateProp "Id" (alg ["x"] [] [] [.param "x"])] [(.call (.resolve "repeat") [.call (.resolve "Id") [.num 0], (.unary .minus (.num 1))])])
 #guard obsFine case_guard_domain__repeat_negative == "err illegalInEval"
 
 def case_guard_cardinality__user_call : Expr :=
@@ -206,7 +206,7 @@ def case_guard_cardinality__builtin_call : Expr :=
 #guard obsFine case_guard_cardinality__builtin_call == "err arityMismatch(1,2)"
 
 def case_guard_cardinality__loop_state : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "S" (alg ["a", "b"] [] [] [.param "a", .param "b"])] [(.call (.resolve "repeat") [.resolve "S", .num 1, .num 1])])
+  .algorithmExpr (alg [] [] [privateProp "S" (alg ["a", "b"] [] [] [.param "a", .param "b"])] [(.call (.resolve "repeat") [.call (.resolve "S") [.num 1], .num 1])])
 #guard obsFine case_guard_cardinality__loop_state == "err arityMismatch(2,1)"
 
 def case_guard_cardinality__pattern_length : Expr :=
@@ -220,7 +220,7 @@ def case_callback_result__map_result_rows_are_one_value : Expr :=
 #guard obsFine case_callback_result__map_result_rows_are_one_value == "ok n=1"
 
 def case_guard_cardinality__while_no_slot : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "W" (alg ["x"] [] [] [(.sequenceSpread (.param "x"))])] [(.call (.resolve "while") [.resolve "W", (.emptySequence 0)])])
+  .algorithmExpr (alg [] [] [privateProp "W" (alg ["x"] [] [] [(.sequenceSpread (.param "x"))])] [(.call (.resolve "while") [.call (.resolve "W") [(.emptySequence 0)]])])
 #guard obsFine case_guard_cardinality__while_no_slot == "err badArity"
 
 def case_guard_cardinality__repeated_values : Expr :=
@@ -246,7 +246,7 @@ def case_guard_unused__reduce_empty : Expr :=
 #guard obsFine case_guard_unused__reduce_empty == "ok n=1"
 
 def case_guard_unused__repeat_zero : Expr :=
-  .algorithmExpr (alg [] [] [] [(.call (.resolve "repeat") [.num 5, .num 0, .num 1])])
+  .algorithmExpr (alg [] [] [privateProp "Run" (alg ["f"] [] [] [.call (.resolve "repeat") [.call (.param "f") [.num 1], .num 0]])] [(.call (.resolve "Run") [.num 5])])
 #guard obsFine case_guard_unused__repeat_zero == "ok n=1"
 
 end KatLangTests.ErrorTaxonomy

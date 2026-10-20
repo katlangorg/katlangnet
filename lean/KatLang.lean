@@ -798,29 +798,47 @@ def builtinDisplayName : Builtin -> String
   | .avgBuiltin => "avg"
   | .reduceBuiltin => "reduce"
 
-/-- Normative arity-acceptance specification for builtins, mirrored by the C#
-    `BuiltinRegistry.AcceptsArity` (which the C# evaluator consults directly).
-    The Lean `applyBuiltinCounted` dispatch enforces the same arities
-    structurally via pattern-match fall-through to `builtinArityError`, and
-    `applyBuiltin` inherits them as its Result projection; the two encodings
-    must stay in agreement (pinned by the CoreTests arity parity guards). -/
-def builtinAcceptsArity : Builtin -> Nat -> Bool
-  | b, n =>
-      match sequenceBuiltinMetadata? b with
-      | some metadata =>
-          -- Collection builtins are ordinary fixed-arity callables:
-          -- `count(collection)` is exactly 1 argument and
-          -- `take(collection, count)` is exactly 2, the same rule as every
-          -- other fixed builtin.
-          n = 1 + metadata.suffixArgs.length
-      | none =>
-          match b, n with
-          | .ifBuiltin, 3 => true
-          | .whileBuiltin, n => n >= 2
-          | .repeatBuiltin, n => n >= 3
-          | .atomsBuiltin, 1 => true
-          | .rangeBuiltin, 2 => true
-          | _, _ => false
+/-- THE ONE AUTHORITATIVE BUILTIN SIGNATURE (META-S3-3, October 2026): a builtin's ordinary
+    parameter patterns, read by its runtime arity (`builtinAcceptsArity`), the META binding of
+    a builtin that declares a `meta` parameter (`applyBuiltinCounted`, through the ONE
+    binder `bindNeedPatterns`), formula lifting and forwarding (`builtinLiftingSignature`) and
+    the lifting roles (`builtinLiftingSlotRole`). Every builtin is an ordinary FIXED-arity
+    callable: a collection builtin's registry parameters, `if`'s three, `atoms`' value,
+    `range`'s bounds, and the loops `while(meta step)` / `repeat(meta step, count)`, whose
+    step is a genuine META parameter (D1): the captured call's own supply is the loop's
+    initial state, so there is no variadic `*init` (D2). C#: `BuiltinDescriptor.PlainSignature`. -/
+def builtinSignature (b : Builtin) : List ParameterPattern :=
+  let fixed (names : List Ident) := names.map (fun name => ParameterPattern.capture { name := name })
+  match sequenceBuiltinMetadata? b with
+  | some metadata => metadata.parameters.map ParameterPattern.capture
+  | none =>
+      match b with
+      | .ifBuiltin => fixed ["condition", "whenTrue", "whenFalse"]
+      | .whileBuiltin => [.capture { name := "step", kind := .metaRef }]
+      | .repeatBuiltin => [.capture { name := "step", kind := .metaRef }] ++ fixed ["count"]
+      | .atomsBuiltin => fixed ["value"]
+      | .rangeBuiltin => fixed ["start", "stop"]
+      | _ => []
+
+/-- Whether a builtin's signature declares a META parameter (META-S3-3): such a builtin binds
+    its supplied cells through the ONE inspecting binder before its native arm runs
+    (`applyBuiltinCounted`). C#: `BuiltinDescriptor.DeclaresMetaParameter`. -/
+def builtinDeclaresMeta (b : Builtin) : Bool :=
+  ParameterPattern.anyHasMetaCapture (builtinSignature b)
+
+/-- Whether supplied position `position` of a builtin is one of its META parameters (the
+    lifting role table reads it: a META position transports its cell, `builtinLiftingSlotRole`).
+    C#: `BuiltinDescriptor.IsMetaPosition`. -/
+def builtinMetaAt (b : Builtin) (position : Nat) : Bool :=
+  match (builtinSignature b)[position]? with
+  | some (.capture parameter) => parameter.kind == .metaRef
+  | _ => false
+
+/-- The exact arity gate of every builtin, read from THE signature that its binder and
+    lifting use. Every builtin parameter is fixed, including META parameters. C#:
+    `BuiltinDescriptor.AcceptsArity` (whose fixed arity is checked against its signature). -/
+def builtinAcceptsArity (b : Builtin) (n : Nat) : Bool :=
+  n == (builtinSignature b).length
 
 /-- Human-readable expected arity string for error messages. -/
 def builtinArityDesc : Builtin -> String
@@ -835,30 +853,13 @@ def builtinArityDesc : Builtin -> String
           else
             let parameters := String.intercalate ", " (signature.parameters.map CallableParameter.displayName)
             s!"{totalArgCountDesc} arguments ({signature.name}({parameters}))"
-      | none =>
-          match b with
-          | .ifBuiltin => "3"
-          | .whileBuiltin => "at least 2"
-          | .repeatBuiltin => "at least 3"
-          | .atomsBuiltin => "1"
-          | .rangeBuiltin => "2"
-          | _ => "?"
+      | none => toString (builtinSignature b).length
 
-/-- The fewest arguments a call of the builtin accepts — its fixed arity, or a
-    variadic-state loop's minimum (its fixed parameters plus one initial state):
-    exactly the arities `builtinAcceptsArity` admits. C#:
+/-- The arity of the builtin (every builtin is fixed-arity, the loops too since META-S3-3):
+    exactly the arity `builtinAcceptsArity` admits, the payload of `builtinArityError`. C#:
     `BuiltinDescriptor.ArityFacts.MinTopLevelArgumentCount`. -/
 def builtinMinimumArity (b : Builtin) : Nat :=
-  match sequenceBuiltinMetadata? b with
-  | some metadata => 1 + metadata.suffixArgs.length
-  | none =>
-      match b with
-      | .ifBuiltin => 3
-      | .whileBuiltin => 2
-      | .repeatBuiltin => 3
-      | .atomsBuiltin => 1
-      | .rangeBuiltin => 2
-      | _ => 0
+  (builtinSignature b).length
 
 def builtinArityError (b : Builtin) (actual : Nat) : Error :=
   -- The numeric payload is the builtin's real arity contract (Q-27 payload
@@ -4144,7 +4145,7 @@ structure ResolvedArgumentAlgorithm where
     a CALLBACK is projected on the CALLABLE channel only when the builtin invokes it
     per element (CALL-03, HO-04), so an unused callback runs no body, has no effect,
     cannot fail and cannot recurse (`map([], A)` never reads `A`, exactly as
-    `repeat(A, 0, 5)` never runs `A`); a VALUE slot is demanded only when the builtin
+    `Run(f) = repeat(f(5), 0)` / `Run(A)` never runs `A`); a VALUE slot is demanded only when the builtin
     executes it, after the arity check, through its cell and at most once, so no later
     read retries it (`reduce`'s `initial` included, HO-04;
     `demandSequenceBuiltinCallItemValue`); a SURPLUS slot is never demanded: the call
@@ -4524,7 +4525,7 @@ end CtxMsg
     algorithm's body is entered wherever a resolved algorithm is demanded for its
     VALUE with zero explicit arguments: the value-position `resolve` /
     `algorithmExpr` arms of `evalCounted`, every lazy builtin VALUE slot (the `if`
-    condition and branches, `while`/`repeat` initial state, the `repeat` count,
+    condition and branches, the `repeat` count,
     `atoms`, `range` — `evalArgumentValueCounted`), and the ordinary-dot `string`
     intrinsic's receiver. A read of a parameter bound to a supplied cell does NOT
     consult it — neither the value-position `param` arm nor a `string` receiver
@@ -6663,6 +6664,34 @@ def decodeCallRef (val : Result) : EvalM Nat :=
   match val with
   | .callRef a => pure a
   | other => .error (Error.typeMismatch (algorithmRequiresCallReferenceMessage other))
+
+/-- THE CAPTURED STEP'S LOOP SETUP (META-S3-3, D1/CR-9/CR-13), the one definition the `while` and
+    `repeat` arms run after the builtin META binding: the Ready adapter cell bound to `meta step`
+    read through `read` (production: the recursive VALUE driver; an adapter holds its reference, so
+    reading it runs nothing) and decoded into its plan (`decodeCallRef`); then the plan's ONE sticky
+    supply through `view` (production: `argumentViewCells` = `NeedPlan.viewCells`: its recorded
+    preparation or exactly one formation, opening only the explicit spreads written inside the
+    captured call and demanding no argument VALUE) — the loop's initial state, the ORIGINAL argument
+    cells, never re-formed (an empty supply is the ordinary zero-slot state, OD-1); then the plan's
+    canonical callee cell (`NeedPlan.calleeCell`, CR-13, inert) — the step, projected only when an
+    iteration runs. The captured call itself is never dispatched. Laws: `KatLangArityLaws.MetaLoop`. -/
+def metaLoopCapture (read : Nat → EvalM CountedResult) (view : Nat → EvalM (List NeedSupply.Sourced))
+    (adapter : Nat) : EvalM (Nat × List Nat) := do
+  let (reference, _) ← read adapter
+  let plan ← decodeCallRef reference
+  let initialCells := (← view plan).map Prod.fst
+  let stepCell ← NeedPlan.calleeCell plan
+  pure (stepCell, initialCells)
+
+/-- THE `repeat` SETUP ORDER (META-S3-3, RP-1): the captured step's setup (`metaLoopCapture`,
+    which prepares the captured supply) runs BEFORE the count — the outer call's own VALUE
+    argument, demanded and validated once by `count` — so a captured spread's failure or effect
+    precedes the count's, exactly as LOOP-01/05 ordered the retired surface; a failing setup never
+    demands the count. Laws: `repeat_setup_order`, `repeat_setup_failure_skips_count`. -/
+def metaRepeatSetup {α : Type} (setup : EvalM α) (count : EvalM Int) : EvalM (α × Int) := do
+  let captured ← setup
+  let n ← count
+  pure (captured, n)
 
 /- THE LINK of a supplied `X.Algorithm` (META-S3-1, CR-15): one link cell whose receiver `X` is ONE
     receiver cell, established lazily and recorded in the link cell (`NeedCell.receiver`), so the
@@ -9086,18 +9115,80 @@ def EvalBody.algorithmIntrinsicRoute (rec : EvalRec) (receiver : Expr) (ctx : Ev
 
   /-- Builtin application with counted output shape (a builtin callback's one
       result is already a value, counted by `Result.valueCount`).
-      Every VALUE slot (the `if` condition and branches, loop initial state, the
+      Every VALUE slot (the `if` condition and branches, the
       `repeat` count, `atoms`, `range`) is demanded through
       `evalArgumentValueCounted`, so a parameterized algorithm in a selected slot
       is the ordinary zero-argument arity rejection and never enters its body;
       ALGORITHM slots (loop steps) invoke the argument's CALLABLE projection
       (`invokeNeed`), so a step forwarded through a parameter is the callable
-      itself, never its demanded value. -/
+      itself, never its demanded value. A builtin declaring a META parameter (the
+      loops) binds through the ONE binder first (META-S3-3); a loop's initial state is
+      its captured call's supply, demanded by the step and the final materialization. -/
   def EvalBody.applyBuiltinCounted (rec : EvalRec) (b : Builtin) (args : List ResolvedArgumentAlgorithm) (ctx : EvalCtx) (env : ValEnv) : EvalM CountedResult :=
     match sequenceBuiltinMetadata? b with
     | some metadata =>
       rec.applyBuiltinCountedSequence b metadata args ctx env
     | none =>
+      if builtinDeclaresMeta b then do
+        -- THE META BINDING OF A BUILTIN (META-S3-3, October 2026): a builtin whose signature
+        -- declares a META parameter (`builtinDeclaresMeta`) is an ordinary fixed-arity callable:
+        -- its arity gate (before any demand), then its supplied cells bound through THE ONE
+        -- inspecting binder over its signature (`bindNeedPatterns`), whose `.metaRef` arm
+        -- captures the supplied call exactly as for a user algorithm (`NeedPlan.reference`:
+        -- inert; a non-call cell is `metaRefusal`), then its native arm over the bound
+        -- environment. Every evaluator route supplies cells; an argument WITHOUT a cell (the
+        -- fixture seam) is a VALUE, which META refuses. C#: `Evaluator.ApplyMetaBuiltinCounted`.
+        if !builtinAcceptsArity b args.length then throw (builtinArityError b args.length)
+        let cells <- args.mapM (fun arg => rec.argumentNeed arg ctx env)
+        let some bindings <- bindNeedPatterns (rec.bindingChannels) ((builtinSignature b).map NeedPattern.ofParameter) cells
+          | throw Error.badArity
+        let bound (name : Ident) : EvalM Nat :=
+          match lookupAssoc name bindings with
+          | some address => pure address
+          | none => throw (Error.illegalInEval s!"unbound builtin parameter {name}")
+        -- The captured step's loop (D1, CR-9, CR-13): the reference bound to `meta step` (its
+        -- Ready adapter, read without running anything) decoded into its plan; the plan's ONE
+        -- sticky supply (`argumentViewCells`: its recorded preparation or exactly one formation,
+        -- opening only the explicit spreads written inside the captured call and demanding no
+        -- argument VALUE) is the initial state -- the ORIGINAL argument cells, never re-formed;
+        -- an empty supply is the ordinary zero-slot state (OD-1) -- and the plan's canonical
+        -- callee cell (`NeedPlan.calleeCell`, inert) is the step, projected only when an
+        -- iteration runs. The captured call itself is never dispatched.
+        let capture : EvalM (ResolvedArgumentAlgorithm × List Nat) := do
+          let (stepCell, initialCells) <- metaLoopCapture rec.demandNeedRecursive rec.argumentViewCells (<- bound "step")
+          pure ({ algorithm := Algorithm.ofExpr (.emptySequence 0), need? := some stepCell }, initialCells)
+        match b, args with
+        | .whileBuiltin, _ => do
+            let (step, initialCells) <- capture
+            let stepName <- loopStepName "while" step
+            -- One condition-first round per iteration (LOOP-06, `WhileRound.advance`): a false
+            -- verdict finishes with the cells that entered the round (R1: zero accepted
+            -- transitions return the initial cells), materialized below (LOOP-07).
+            let finalCells <- rec.whileLoop step ctx env stepName initialCells
+            let finalSlots <- finalCells.mapM (fun address => Prod.fst <$> rec.demandNeedRecursive address)
+            pure (loopResultCounted finalSlots)
+        | .repeatBuiltin, [_, countAlg] => do
+            -- RP-1: capture, then the captured supply, THEN the count -- the outer call's own
+            -- VALUE argument, demanded and validated once -- so a captured spread's failure or
+            -- effect precedes the count's, as LOOP-01/05 ordered it before META-S3-3.
+            let ((step, initialCells), n) <- metaRepeatSetup capture (do
+              expectInt (<- rec.evalArgumentValue { countAlg with need? := some (<- bound "count") } ctx env))
+            if n < 0 then
+              .error (Error.illegalInEval "Repeat count must be >= 0")
+            else
+              let stepName <- loopStepName "repeat" step
+              let rec repeatLoop : Nat → List Nat → EvalM (List Nat)
+                | 0, cells => pure cells
+                | remaining + 1, cells => do
+                  let algorithm <- projectInvokingSlot (invokingSlotRole .repeatBuiltin) (<- rec.invokeNeed step)
+                  let outputSlots <- rec.runNeedStepSlots algorithm ctx env cells stepName
+                  let next <- outputSlots.mapM (fun value => readyNeed (value, Result.valueCount value))
+                  repeatLoop remaining next
+              let finalCells <- repeatLoop n.toNat initialCells
+              let finalSlots <- finalCells.mapM (fun address => Prod.fst <$> rec.demandNeedRecursive address)
+              pure (loopResultCounted finalSlots)
+        | _, _ => .error (builtinArityError b args.length)
+      else
         match b, args with
         | .ifBuiltin, [c,t,e] => do
             let cr <- rec.evalArgumentValue c ctx env
@@ -9119,41 +9210,6 @@ def EvalBody.algorithmIntrinsicRoute (rec : EvalRec) (receiver : Expr) (ctx : Ev
                 let r <- rec.evalArgumentValueCounted t ctx env
                 pure (r.fst, Result.valueCount r.fst)
             | none => .error (Error.typeMismatch (booleanRequiredMessage "if condition" cr))
-
-        | .whileBuiltin, step :: initAlgs => do
-            if initAlgs.isEmpty then
-              .error (builtinArityError b args.length)
-            else
-            let initialCells <- initAlgs.mapM (fun arg => rec.argumentNeed arg ctx env)
-            let stepName <- loopStepName "while" step
-            -- One condition-first round per iteration (LOOP-06, `WhileRound.advance`): a false
-            -- verdict finishes with the cells that entered the round (R1: zero accepted
-            -- transitions return the initial cells), materialized below (LOOP-07).
-            let finalCells <- rec.whileLoop step ctx env stepName initialCells
-            let finalSlots <- finalCells.mapM (fun address => Prod.fst <$> rec.demandNeedRecursive address)
-            pure (loopResultCounted finalSlots)
-
-        | .repeatBuiltin, step :: countAlg :: initAlgs => do
-            if initAlgs.isEmpty then
-              .error (builtinArityError b args.length)
-            else
-            let cr <- rec.evalArgumentValue countAlg ctx env
-            let n <- expectInt cr
-            if n < 0 then
-              .error (Error.illegalInEval "Repeat count must be >= 0")
-            else
-              let initialCells <- initAlgs.mapM (fun arg => rec.argumentNeed arg ctx env)
-              let stepName <- loopStepName "repeat" step
-              let rec repeatLoop : Nat → List Nat → EvalM (List Nat)
-                | 0, cells => pure cells
-                | remaining + 1, cells => do
-                  let algorithm <- projectInvokingSlot (invokingSlotRole .repeatBuiltin) (<- rec.invokeNeed step)
-                  let outputSlots <- rec.runNeedStepSlots algorithm ctx env cells stepName
-                  let next <- outputSlots.mapM (fun value => readyNeed (value, Result.valueCount value))
-                  repeatLoop remaining next
-              let finalCells <- repeatLoop n.toNat initialCells
-              let finalSlots <- finalCells.mapM (fun address => Prod.fst <$> rec.demandNeedRecursive address)
-              pure (loopResultCounted finalSlots)
 
         | .atomsBuiltin, [a] => do
             let r <- rec.evalArgumentValue a ctx env
@@ -10116,7 +10172,7 @@ def EvalBody.algorithmIntrinsicRoute (rec : EvalRec) (receiver : Expr) (ctx : Ev
     `WhileRound.advance`): a false verdict finishes with the cells that entered the round (R1: zero
     accepted transitions return the initial cells). The round loop is not structurally bounded, so
     it is its own evaluator call: every round costs one fuel unit (R7). Reached only from the
-    `while` arm of `applyBuiltinCounted`. C#: the `while` loop of `Evaluator.EvalLoopBuiltin`. -/
+    `while` arm of `applyBuiltinCounted`'s META branch. C#: the `while` loop of `Evaluator.EvalNeedLoop`. -/
 def EvalBody.whileLoop (rec : EvalRec) (step : ResolvedArgumentAlgorithm) (ctx : EvalCtx) (env : ValEnv)
     (stepName : String) (cells : List Nat) : EvalM (List Nat) := do
   let algorithm <- projectInvokingSlot (invokingSlotRole .whileBuiltin) (<- rec.invokeNeed step)
@@ -11024,28 +11080,25 @@ def Algorithm.liftingCalleeKind? : Algorithm -> Option LiftingCalleeKind
   | .conditional _ _ _ _ => some .family
   | .alias _ _ _ _ _ => none
 
-/-- A loop builtin invokes its step (position 0); its count and initial state are values. -/
-def Builtin.isLoop : Builtin -> Bool
-  | .whileBuiltin | .repeatBuiltin => true
-  | _ => false
-
 /-- The role of supplied position `position` of a builtin: only a callback keeps its callable
     identity. The collection, the value controls and a SURPLUS position beyond the signature have
     the static VALUE role (at run time a surplus slot is never demanded: cardinality fails first),
     just as every argument of a Math member, a host operation and a clause family is a value
-    whatever the call's arity, so no role depends on how many arguments a call supplies. A loop's step is
-    invoked and every later position is a value; `if`, `atoms` and `range` take values only. -/
+    whatever the call's arity, so no role depends on how many arguments a call supplies. A META
+    position (`builtinMetaAt`: a loop's step) transports its supplied cell, the CALLABLE role
+    every META parameter has, and every other position is a value; `if`, `atoms` and `range`
+    take values only. -/
 def builtinLiftingSlotRole (b : Builtin) (position : Nat) : LiftingRole :=
   match sequenceBuiltinMetadata? b with
   | some metadata => if metadata.slotRole position == .callback then .callable else .value
-  | none => if b.isLoop && position == 0 then .callable else .value
+  | none => if builtinMetaAt b position then .callable else .value
 
 /-- Whether every position of a builtin is a value slot (a position after a spread slot is known
     only at run time, so it is a value slot only then). -/
 def builtinEverySlotIsValue (b : Builtin) : Bool :=
   match sequenceBuiltinMetadata? b with
   | some metadata => metadata.suffixArgs.all (fun suffix => suffix.kind != .algorithm)
-  | none => !b.isLoop
+  | none => !builtinDeclaresMeta b
 
 /-- THE ROLE TABLE of a call's supplied positions (C#: `FormulaLiftingRoles.SlotRole`): every
     argument of a clause family, a Math member and a host operation has the static VALUE role (for
@@ -11101,21 +11154,11 @@ def familyLiftingSignature? (branches : List CondBranch) : Option (List Paramete
         then some (named.map (fun name => ParameterPattern.capture { name := name }))
         else none
 
-/-- A builtin's callable interface as formula lifting reads it (C#: `ToolingPlainSignature`): a
-    collection builtin's registry parameters, `if`'s three, `atoms`' value, `range`'s bounds, and a
-    loop's step (and count) with its variadic initial state `*init`. -/
+/-- A builtin's callable interface as formula lifting reads it: THE builtin signature
+    (`builtinSignature`, META-S3-3; C#: `PlainSignature`), so `while(meta step)` and
+    `repeat(meta step, count)` lift and forward exactly as their runtime binds. -/
 def builtinLiftingSignature (b : Builtin) : List ParameterPattern :=
-  let fixed (names : List Ident) := names.map (fun name => ParameterPattern.capture { name := name })
-  match sequenceBuiltinMetadata? b with
-  | some metadata => metadata.parameters.map ParameterPattern.capture
-  | none =>
-      match b with
-      | .ifBuiltin => fixed ["condition", "whenTrue", "whenFalse"]
-      | .whileBuiltin => fixed ["step"] ++ [.capture { name := "init", kind := .collecting }]
-      | .repeatBuiltin => fixed ["step", "count"] ++ [.capture { name := "init", kind := .collecting }]
-      | .atomsBuiltin => fixed ["value"]
-      | .rangeBuiltin => fixed ["start", "stop"]
-      | _ => []
+  builtinSignature b
 
 /-- THE ONE LIFTING SIGNATURE of every algorithm kind (the unified formula-lifting law): a user
     algorithm's parameter patterns, a builtin's callable interface, a clause family's derived
@@ -11452,26 +11495,29 @@ def forwardParameter : List OwnerLevel -> Ident -> List OwnerLevel
    construction.  `f((a + b) mod 2, c)` parses normally as two arguments.
 
    **while/repeat initial state** preserves explicit argument boundaries.
-   The evaluator accepts variable arity for these builtins:
+   The loops are ordinary fixed-arity builtins whose step is a META parameter
+   (META-S3-3, `builtinSignature`):
 
-     while(step, s1, s2, ..., sk)         -- k ≥ 1
-     repeat(step, count, s1, s2, ..., sk) -- k ≥ 1
+     while(meta step)          -- step: a written call Step(s1, ..., sk), k ≥ 0
+     repeat(meta step, count)
 
-   Each explicit init argument is supplied independently (one demand cell,
-   never evaluated by the loop itself) and becomes exactly one initial state
-   slot.  Therefore `repeat(Step, 3, a, b)` starts with two
-   slots, while `repeat(Step, 3, Pair)` starts with one slot even if `Pair`
-   evaluates to multiple values.  Use explicit selections such as `Pair[0],
-   Pair[1]` (or the spread `Pair*`) when the intended initial state is two slots.
+   Each argument of the captured step call is supplied independently (one
+   demand cell, never evaluated by the loop itself) and becomes exactly one
+   initial state slot (the plan's ONE sticky supply, `argumentViewCells`).
+   Therefore `repeat(Step(a, b), 3)` starts with two slots, while
+   `repeat(Step(Pair), 3)` starts with one slot even if `Pair` evaluates to
+   multiple values.  Use explicit selections such as `Pair[0], Pair[1]` (or
+   the spread `Pair*` inside the call) when the intended initial state is two
+   slots.  Zero arguments are the empty state (`Z().while` is `()`).
 
-   DotCall lexical fallback (`Step.repeat(...)` / `Step.while(...)`) injects
-   the receiver as the step argument and keeps the remaining explicit args in
-   the same boundary-preserving form after structural property lookup.
+   DotCall lexical fallback (`Step(x).repeat(n)` / `Step(x).while`) injects
+   the receiver as the ordinary leading argument — the captured call — after
+   structural property lookup.
 
    Any callable is a step (LOOP-08, Q-23, October 2026): each iteration
    invokes it as the ORDINARY call over the current state slots
    (`runNeedStepSlots`) — a clause family dispatches its clauses, a builtin
-   binds them through its argument roles — so `repeat(F, 1, s)` is `F(s)` for
+   binds them through its argument roles — so `repeat(F(s), 1)` is `F(s)` for
    every callable; a builtin's one result value is one next-state slot
    (`loopStepBuiltinRows`), and a value with no callable identity is no step.
 
@@ -11482,12 +11528,12 @@ def forwardParameter : List OwnerLevel -> Ident -> List OwnerLevel
    one structured slot across iterations, write it as one value — a capture
    `(history*, next)` or a list `[history*, next]`; multi-output steps
    intentionally become many next-state slots.  A nested loop written as a
-   step row is ONE slot like any other result (Q-26): `repeat(Inner, 2, a, b)*`
+   step row is ONE slot like any other result (Q-26): `repeat(Inner(a, b), 2)*`
    supplies its final state's items.
 
    The completed loop is ONE value with emitted count `Result.valueCount`
-   (`loopResultCounted`), so `Fibonacci.repeat(10, 0, 1)` is one row `(55, 89)`
-   and `Fibonacci.repeat(10, 0, 1)*` two rows.
+   (`loopResultCounted`), so `Fibonacci(0, 1).repeat(10)` is one row `(55, 89)`
+   and `Fibonacci(0, 1).repeat(10)*` two rows.
 
    Expr.capture semantics
    ----------------------
@@ -11498,13 +11544,14 @@ def forwardParameter : List OwnerLevel -> Ident -> List OwnerLevel
 
    Examples
    --------
-     while(Step, 5, 0)       -- initial state has two slots
-     repeat(Step, 3, 0, 0)   -- initial state has two slots
-     Step.while(x, 0)        -- initial state has two slots
-     Step.repeat(3, x, 0)    -- initial state has two slots
-     Step.while((x, 0))      -- initial state has one sequence-value slot
-     while(Step, init)        -- initial state has one slot
-     repeat(Step, n, init)    -- initial state has one slot -/
+     while(Step(5, 0))       -- initial state has two slots
+     repeat(Step(0, 0), 3)   -- initial state has two slots
+     Step(x, 0).while        -- initial state has two slots
+     Step(x, 0).repeat(3)    -- initial state has two slots
+     Step((x, 0)).while      -- initial state has one sequence-value slot
+     while(Step(init))       -- initial state has one slot
+     repeat(Step(init), n)   -- initial state has one slot
+     Z().while               -- initial state has zero slots -/
 
 /- **Collection builtin inputs** are evaluated at the builtin-dispatch
    layer, not by parser rewriting.

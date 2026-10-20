@@ -44,11 +44,11 @@ internal static class EvaluatorProbe
         new("rec_cb_finite",  "recursion", n => $"F(0) = 0\nF(n) = [n - 1].map(F).first\nF({n})", 1_000_000, false),
         new("rec_dot_finite", "recursion", n => $"f(0) = 0\nf(n) = (n - 1).f\nf({n})", 1_000_000, false),
         // ── loops ────────────────────────────────────────────────────────────
-        new("while_infinite", "loop", _ => "Step = x, true\nStep.while(0)", 1, true),
-        new("while_finite",   "loop", n => $"Step = x - 1, x > 1\nStep.while({n})", 10_000_000, false),
-        new("repeat_count",   "loop", n => $"Inc = x + 1\nInc.repeat({n}, 0)", 10_000_000, false),
-        new("while_multislot","loop", n => $"Step = a + 1, b + a, a < {n}\nStep.while(0, 0)", 10_000_000, false),
-        new("loop_callback",  "loop", n => $"G(y) = y + 1\nInc = G(x)\nInc.repeat({n}, 0)", 1_000_000, false),
+        new("while_infinite", "loop", _ => "Step = x, true\nStep(0).while", 1, true),
+        new("while_finite",   "loop", n => $"Step = x - 1, x > 1\nStep({n}).while", 10_000_000, false),
+        new("repeat_count",   "loop", n => $"Inc = x + 1\nInc(0).repeat({n})", 10_000_000, false),
+        new("while_multislot","loop", n => $"Step = a + 1, b + a, a < {n}\nStep(0, 0).while", 10_000_000, false),
+        new("loop_callback",  "loop", n => $"G(y) = y + 1\nInc = G(x)\nInc(0).repeat({n})", 1_000_000, false),
         // ── allocation growth ────────────────────────────────────────────────
         new("range_alloc",    "allocation", n => $"range(1, {n}).count", 5_000_000, false),
         new("map_pipeline",   "allocation", n => $"F(x) = x + 1\nrange(1, {n}).map(F).count", 2_000_000, false),

@@ -736,9 +736,10 @@ def preparedAlgorithmOutputKeepsSelectedSlotWhole : Bool :=
     value `(1, 2)` with count 1 — formerly count 2 for one slot. -/
 def preparedAlgorithmOutputCountsAMultiSlotLoopOnce : Bool :=
   let loop := KatLang.Expr.call (resolve "repeat")
-    [.algorithmExpr (alg ["a", "b"] [] [] [.param "a", .param "b"]), .num 1, .num 1, .num 2]
+    [.call (resolve "Pair") [.num 1, .num 2], .num 1]
   let ctx : KatLang.EvalCtx := { callStack := [KatLang.preludeAlg] }
-  let output := KatLang.wireToCaller ctx (alg [] [] [] [loop])
+  let output := KatLang.wireToCaller ctx
+    (algPrivate [] [] [("Pair", alg ["a", "b"] [] [] [.param "a", .param "b"])] [loop])
   match (KatLang.evalAlgOutputPreparedCore output ctx []).run KatLang.EvalState.empty with
   | .ok ({
       counted := (.sequenceValue [.atom 1, .atom 2], 1),
@@ -1129,11 +1130,7 @@ def sequenceValueCollectingLoopStepSpreadGrowsHistoryFlat : Bool :=
   ]
   match runResult (.algorithmExpr (algPrivate [] [] [("Step", step)] [
     .index
-      (.dotCall (resolve "Step") "repeat" (some [
-        .num 2,
-        .capture [.num 1, .num 2],
-        .num 2
-      ]))
+      (.dotCall (.call (resolve "Step") [.capture [.num 1, .num 2], .num 2]) "repeat" (some [.num 2]))
       [.num 0]
   ])) with
   | Except.ok (.sequenceValue [.atom 1, .atom 2, .atom 3, .atom 4]) => true
@@ -1167,11 +1164,7 @@ def sequenceValueCollectingLoopStepWithSuffixInsideSequenceValuePreservesStateSh
   -- Asserting the exact `Result` pins this flat shape.
   match runResult (.algorithmExpr (algPrivate [] [] [("Step", step)] [
     .index
-      (.dotCall (resolve "Step") "repeat" (some [
-        .num 2,
-        .capture [.num 1, .num 2],
-        .num 3
-      ]))
+      (.dotCall (.call (resolve "Step") [.capture [.num 1, .num 2], .num 3]) "repeat" (some [.num 2]))
       [.num 0]
   ])) with
   | Except.ok (.sequenceValue [.atom 1, .atom 3]) => true
@@ -1210,7 +1203,7 @@ def loopVariadicInitialState : Algorithm :=
 
 def variadicLoopStepRepeatOneIterationCapturesStateItems : Bool :=
   match runResult (.algorithmExpr (algPrivate [] [] [("Step", loopVariadicAppendNextAlg)] [
-    .dotCall (resolve "Step") "repeat" (some [.num 1, .num 1, .num 2, .num 4])
+    .dotCall (.call (resolve "Step") [.num 1, .num 2, .num 4]) "repeat" (some [.num 1])
   ])) with
   | Except.ok (.sequenceValue [.atom 1, .atom 2, .atom 4, .atom 5]) => true
   | _ => false
@@ -1219,7 +1212,7 @@ def variadicLoopStepRepeatOneIterationCapturesStateItems : Bool :=
 
 def variadicLoopStepRepeatTwoIterationsKeepsExpandedState : Bool :=
   match runResult (.algorithmExpr (algPrivate [] [] [("Step", loopVariadicAppendNextAlg)] [
-    .dotCall (resolve "Step") "repeat" (some [.num 2, .num 1, .num 2, .num 4])
+    .dotCall (.call (resolve "Step") [.num 1, .num 2, .num 4]) "repeat" (some [.num 2])
   ])) with
   | Except.ok (.sequenceValue [.atom 1, .atom 2, .atom 4, .atom 5, .atom 6]) => true
   | _ => false
@@ -1231,7 +1224,7 @@ def variadicLoopStepRepeatTwoIterationsKeepsExpandedState : Bool :=
 -- (mirrors C# `EvaluatorLoopTests.Eval_VariadicLoopStep_WhileUsesExpandedState`).
 def variadicLoopStepWhileUsesExpandedState : Bool :=
   match runResult (.algorithmExpr (algPrivate [] [] [("Step", loopVariadicWhileAppendNextAlg)] [
-    .dotCall (resolve "Step") "while" (some [.num 1, .num 2, .num 4])
+    .dotCall (.call (resolve "Step") [.num 1, .num 2, .num 4]) "while" none
   ])) with
   | Except.ok (.sequenceValue [.atom 1, .atom 2, .atom 4, .atom 5]) => true
   | _ => false
@@ -1249,7 +1242,7 @@ def loopVariadicWhileOneRowAlg : Algorithm :=
 
 def variadicLoopStepWhileOneRowSlotIsNotAFlag : Bool :=
   match runResult (.algorithmExpr (algPrivate [] [] [("Step", loopVariadicWhileOneRowAlg)] [
-    .dotCall (resolve "Step") "while" (some [.num 1, .num 2, .num 4])
+    .dotCall (.call (resolve "Step") [.num 1, .num 2, .num 4]) "while" none
   ])) with
   | Except.error err =>
       innermostIsBooleanRequired "while continuation flag (the step's last output)"
@@ -1261,7 +1254,7 @@ def variadicLoopStepWhileOneRowSlotIsNotAFlag : Bool :=
 def sequenceBuiltinDotCallVariadicRepeatReceiverTakeUsesFinalStateSlots : Bool :=
   match runFlat (.algorithmExpr (algPrivate [] [] [("Step", loopVariadicAppendNextAlg)] [
     .dotCall
-      (.dotCall (resolve "Step") "repeat" (some [.num 3, .num 1, .num 2, .num 4]))
+      (.dotCall (.call (resolve "Step") [.num 1, .num 2, .num 4]) "repeat" (some [.num 3]))
       "take"
       (some [.num 5])
   ])) with
@@ -1302,7 +1295,7 @@ def loopVariadicPrefixMiddleSuffixIncrementAlg : Algorithm :=
 -- (count 2). Mirrors C# Eval_VariadicLoopStep_WithPrefixMiddleSuffix_PreservesDeclarationOrderBindings.
 def variadicLoopStepCapturesExtraMiddleStateSlots : Bool :=
   match runFlat (.algorithmExpr (algPrivate [] [] [("Step", loopVariadicPrefixMiddleSuffixAlg)] [
-    .dotCall (resolve "Step") "repeat" (some [.num 1, .num 10, .num 20, .num 30, .num 40])
+    .dotCall (.call (resolve "Step") [.num 10, .num 20, .num 30, .num 40]) "repeat" (some [.num 1])
   ])) with
   | Except.ok [10, 2, 40] => true
   | _ => false
@@ -1312,7 +1305,7 @@ def variadicLoopStepCapturesExtraMiddleStateSlots : Bool :=
 -- Exact structural count: 3 state slots bind first=10/last=30 and middle = [20] (count 1).
 def variadicLoopStepExactStructuralCountBinds : Bool :=
   match runFlat (.algorithmExpr (algPrivate [] [] [("Step", loopVariadicPrefixMiddleSuffixAlg)] [
-    .dotCall (resolve "Step") "repeat" (some [.num 1, .num 10, .num 20, .num 30])
+    .dotCall (.call (resolve "Step") [.num 10, .num 20, .num 30]) "repeat" (some [.num 1])
   ])) with
   | Except.ok [10, 1, 30] => true
   | _ => false
@@ -1324,7 +1317,7 @@ def variadicLoopStepExactStructuralCountBinds : Bool :=
 -- as every other collecting binding.
 def variadicLoopStepEmptyMiddleBindsEmptyList : Bool :=
   match runFlat (.algorithmExpr (algPrivate [] [] [("Step", loopVariadicPrefixMiddleSuffixAlg)] [
-    .dotCall (resolve "Step") "repeat" (some [.num 1, .num 10, .num 20])
+    .dotCall (.call (resolve "Step") [.num 10, .num 20]) "repeat" (some [.num 1])
   ])) with
   | Except.ok [10, 0, 20] => true
   | _ => false
@@ -1335,7 +1328,7 @@ def variadicLoopStepEmptyMiddleBindsEmptyList : Bool :=
 -- parameters first + last, so this is arityMismatch 2 1.
 def variadicLoopStepBelowFixedMinimumFails : Bool :=
   match runResult (.algorithmExpr (algPrivate [] [] [("Step", loopVariadicPrefixMiddleSuffixAlg)] [
-    .dotCall (resolve "Step") "repeat" (some [.num 1, .num 10])
+    .dotCall (.call (resolve "Step") [.num 10]) "repeat" (some [.num 1])
   ])) with
   | Except.error err => innermostIsArityMismatch 2 1 err
   | _ => false
@@ -1343,13 +1336,13 @@ def variadicLoopStepBelowFixedMinimumFails : Bool :=
 #guard variadicLoopStepBelowFixedMinimumFails
 
 -- The exact reviewed case: Step(first, *middle, last) = first + 1, middle*, last + 1
--- with Step.repeat(2, 0, 5, 5, 10) binds first=0, middle=[5, 5] (the collected exact
+-- with Step(0, 5, 5, 10).repeat(2) binds first=0, middle=[5, 5] (the collected exact
 -- list), last=10 and, after two iterations (the body re-spreads middle with
 -- `.sequenceSpread (.param "middle")`),
 -- yields 2, 5, 5, 12 (previously rejected by Lean as arityMismatch 3 4).
 def variadicLoopStepExtraMiddleRepeatsTwice : Bool :=
   match runFlat (.algorithmExpr (algPrivate [] [] [("Step", loopVariadicPrefixMiddleSuffixIncrementAlg)] [
-    .dotCall (resolve "Step") "repeat" (some [.num 2, .num 0, .num 5, .num 5, .num 10])
+    .dotCall (.call (resolve "Step") [.num 0, .num 5, .num 5, .num 10]) "repeat" (some [.num 2])
   ])) with
   | Except.ok [2, 5, 5, 12] => true
   | _ => false
@@ -1383,11 +1376,7 @@ def loopBoundarySequenceValueWhileStepAlg : Algorithm :=
 def sequenceBuiltinDotCallRepeatReceiverTakeUsesFinalStateSlots : Bool :=
   match runFlat (.algorithmExpr (algPrivate [] [] [("Step", loopBoundaryPairStepAlg)] [
     .dotCall
-      (.dotCall (resolve "Step") "repeat" (some [
-        .num 1,
-        .num 1,
-        .num 2
-      ]))
+      (.dotCall (.call (resolve "Step") [.num 1, .num 2]) "repeat" (some [.num 1]))
       "take"
       (some [.num 1])
   ])) with
@@ -1399,11 +1388,7 @@ def sequenceBuiltinDotCallRepeatReceiverTakeUsesFinalStateSlots : Bool :=
 def sequenceBuiltinDotCallRepeatReceiverCountUsesFinalStateSlots : Bool :=
   match runFlat (.algorithmExpr (algPrivate [] [] [("Step", loopBoundaryPairStepAlg)] [
     .dotCall
-      (.dotCall (resolve "Step") "repeat" (some [
-        .num 1,
-        .num 1,
-        .num 2
-      ]))
+      (.dotCall (.call (resolve "Step") [.num 1, .num 2]) "repeat" (some [.num 1]))
       "count"
       none
   ])) with
@@ -1415,10 +1400,7 @@ def sequenceBuiltinDotCallRepeatReceiverCountUsesFinalStateSlots : Bool :=
 def sequenceBuiltinDotCallRepeatSequenceValueStateCountsOneItem : Bool :=
   match runFlat (.algorithmExpr (algPrivate [] [] [("Step", loopBoundarySequenceValueRepeatStepAlg)] [
     .dotCall
-      (.dotCall (resolve "Step") "repeat" (some [
-        .num 1,
-        .num 1
-      ]))
+      (.dotCall (.call (resolve "Step") [.num 1]) "repeat" (some [.num 1]))
       "count"
       none
   ])) with
@@ -1430,10 +1412,7 @@ def sequenceBuiltinDotCallRepeatSequenceValueStateCountsOneItem : Bool :=
 def sequenceBuiltinDotCallWhileReceiverTakeUsesFinalStateSlots : Bool :=
   match runFlat (.algorithmExpr (algPrivate [] [] [("Step", loopBoundaryPairWhileStepAlg)] [
     .dotCall
-      (.dotCall (resolve "Step") "while" (some [
-        .num 0,
-        .num 0
-      ]))
+      (.dotCall (.call (resolve "Step") [.num 0, .num 0]) "while" none)
       "take"
       (some [.num 1])
   ])) with
@@ -1445,10 +1424,7 @@ def sequenceBuiltinDotCallWhileReceiverTakeUsesFinalStateSlots : Bool :=
 def sequenceBuiltinDotCallWhileReceiverCountUsesFinalStateSlots : Bool :=
   match runFlat (.algorithmExpr (algPrivate [] [] [("Step", loopBoundaryPairWhileStepAlg)] [
     .dotCall
-      (.dotCall (resolve "Step") "while" (some [
-        .num 0,
-        .num 0
-      ]))
+      (.dotCall (.call (resolve "Step") [.num 0, .num 0]) "while" none)
       "count"
       none
   ])) with
@@ -1460,9 +1436,7 @@ def sequenceBuiltinDotCallWhileReceiverCountUsesFinalStateSlots : Bool :=
 def sequenceBuiltinDotCallWhileSequenceValueStateCountsOneItem : Bool :=
   match runFlat (.algorithmExpr (algPrivate [] [] [("Step", loopBoundarySequenceValueWhileStepAlg)] [
     .dotCall
-      (.dotCall (resolve "Step") "while" (some [
-        .num 1
-      ]))
+      (.dotCall (.call (resolve "Step") [.num 1]) "while" none)
       "count"
       none
   ])) with
@@ -1496,7 +1470,7 @@ def loopBoundarySpreadHistoryStepAlg : Algorithm :=
 
 def loopInitialManyExplicitArgsCreateManySlots : Bool :=
   match runResult (.algorithmExpr (algPrivate [] [] [("Step", loopBoundaryPairStepAlg)] [
-    .dotCall (resolve "Step") "repeat" (some [.num 1, .num 1, .num 2])
+    .dotCall (.call (resolve "Step") [.num 1, .num 2]) "repeat" (some [.num 1])
   ])) with
   | Except.ok (.sequenceValue [.atom 2, .atom 3]) => true
   | _ => false
@@ -1509,7 +1483,7 @@ def loopInitialManyExplicitArgsCreateManySlots : Bool :=
 -- old strict path did.
 def loopInitialExplicitVariadicStepCapturesManySlots : Bool :=
   match runResult (.algorithmExpr (algPrivate [] [] [("Step", loopBoundaryVariadicIdentityAlg)] [
-    .dotCall (resolve "Step") "repeat" (some [.num 1, .num 1, .num 2, .num 3])
+    .dotCall (.call (resolve "Step") [.num 1, .num 2, .num 3]) "repeat" (some [.num 1])
   ])) with
   | Except.ok (.listValue [.atom 1, .atom 2, .atom 3]) => true
   | _ => false
@@ -1521,7 +1495,7 @@ def loopInitialSequenceValuePropertyArgIsOneSlot : Bool :=
     ("Step", loopBoundaryIdentityAlg),
     ("List", alg [] [] [] [.num 1, .num 2, .num 4])
   ] [
-    .dotCall (resolve "Step") "repeat" (some [.num 1, resolve "List"])
+    .dotCall (.call (resolve "Step") [resolve "List"]) "repeat" (some [.num 1])
   ])) with
   | Except.ok (.sequenceValue [.atom 1, .atom 2, .atom 4]) => true
   | _ => false
@@ -1533,7 +1507,7 @@ def loopInitialSequenceValueArgDoesNotSatisfyTwoOrdinaryParams : Bool :=
     ("Step", loopBoundarySumPairStepAlg),
     ("Pair", alg [] [] [] [.num 1, .num 2])
   ] [
-    .dotCall (resolve "Step") "repeat" (some [.num 1, resolve "Pair"])
+    .dotCall (.call (resolve "Step") [resolve "Pair"]) "repeat" (some [.num 1])
   ])) with
   | Except.error err => innermostIsArityMismatch 2 1 err
   | _ => false
@@ -1545,11 +1519,7 @@ def loopInitialExplicitSelectionsSplitSequenceValueArg : Bool :=
     ("Step", loopBoundarySumPairStepAlg),
     ("Pair", alg [] [] [] [.num 1, .num 2])
   ] [
-    .dotCall (resolve "Step") "repeat" (some [
-      .num 1,
-      .index (resolve "Pair") [.num 0],
-      .index (resolve "Pair") [.num 1]
-    ])
+    .dotCall (.call (resolve "Step") [.index (resolve "Pair") [.num 0], .index (resolve "Pair") [.num 1]]) "repeat" (some [.num 1])
   ])) with
   | Except.ok (.atom 3) => true
   | _ => false
@@ -1561,7 +1531,7 @@ def loopInitialSequenceValueHistorySlotCanBePreservedAcrossRepeat : Bool :=
     ("Step", loopBoundarySequenceValueHistoryStepAlg),
     ("List", alg [] [] [] [.num 1, .num 2, .num 4])
   ] [
-    .dotCall (resolve "Step") "repeat" (some [.num 2, resolve "List"])
+    .dotCall (.call (resolve "Step") [resolve "List"]) "repeat" (some [.num 2])
   ])) with
   | Except.ok (.sequenceValue [.atom 1, .atom 2, .atom 4, .atom 5, .atom 6]) => true
   | _ => false
@@ -1573,7 +1543,7 @@ def loopInitialSpreadStepOutputStillBecomesNextStateSlots : Bool :=
     ("Step", loopBoundarySpreadHistoryStepAlg),
     ("List", alg [] [] [] [.num 1, .num 2, .num 4])
   ] [
-    .dotCall (resolve "Step") "repeat" (some [.num 2, resolve "List"])
+    .dotCall (.call (resolve "Step") [resolve "List"]) "repeat" (some [.num 2])
   ])) with
   | Except.ok (.sequenceValue [.atom 1, .atom 2, .atom 4, .atom 5, .atom 6]) => true
   | _ => false
@@ -1585,7 +1555,7 @@ def loopInitialMultiOutputPropertyArgIsOneSlot : Bool :=
     ("Step", loopBoundaryIdentityAlg),
     ("Values", alg [] [] [] [.num 1, .num 2, .num 4])
   ] [
-    .dotCall (resolve "Step") "repeat" (some [.num 1, resolve "Values"])
+    .dotCall (.call (resolve "Step") [resolve "Values"]) "repeat" (some [.num 1])
   ])) with
   | Except.ok (.sequenceValue [.atom 1, .atom 2, .atom 4]) => true
   | _ => false
@@ -1600,12 +1570,7 @@ def loopInitialExplicitSelectionsSplitMultiOutputProperty : Bool :=
     ("Step", loopBoundaryVariadicIdentityAlg),
     ("Values", alg [] [] [] [.num 1, .num 2, .num 4])
   ] [
-    .dotCall (resolve "Step") "repeat" (some [
-      .num 1,
-      .index (resolve "Values") [.num 0],
-      .index (resolve "Values") [.num 1],
-      .index (resolve "Values") [.num 2]
-    ])
+    .dotCall (.call (resolve "Step") [.index (resolve "Values") [.num 0], .index (resolve "Values") [.num 1], .index (resolve "Values") [.num 2]]) "repeat" (some [.num 1])
   ])) with
   | Except.ok (.listValue [.atom 1, .atom 2, .atom 4]) => true
   | _ => false

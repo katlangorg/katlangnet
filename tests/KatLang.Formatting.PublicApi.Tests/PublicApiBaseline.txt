@@ -2165,6 +2165,7 @@ public sealed record KatLang.Semantics.PropertyParameterInfo : System.IEquatable
   property public string DisplayName { get; }
   property public string? DisplayNameOverride { get; init; }
   property public bool IsCollecting { get; init; }
+  property public bool IsMeta { get; init; }
   property public KatLang.Semantics.PropertyParameterKind Kind { get; init; }
   property public string Name { get; init; }
   property public KatLang.SourceSpan? Span { get; init; }

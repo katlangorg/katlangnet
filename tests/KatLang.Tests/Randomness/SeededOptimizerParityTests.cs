@@ -21,7 +21,7 @@ public class SeededOptimizerParityTests
 
     private const string RandomLoop =
         "Step(n) = n + Math.RandomInt(0, 10)\n" +
-        "repeat(Step, 5, 0)";
+        "repeat(Step(0), 5)";
 
     private const string RandomFilterCount =
         "V(x) = Math.Random(0, 1) < 0.5\n" +

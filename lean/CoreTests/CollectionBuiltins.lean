@@ -125,14 +125,14 @@ def spreadBuiltinArgumentsIfMirroredFailsFirstSlot : Bool :=
 -- repeat(P*, Q*, 1) / repeat(Q*, P*, 1) — expansion runs before the loop's own
 -- step/count/state binding.
 def spreadBuiltinArgumentsRepeatFailLeftToRight : Bool :=
-  match runResult (spreadBuiltinArgumentProgram "repeat" [spreadP, spreadQ, .num 1]) with
+  match runResult (spreadBuiltinArgumentProgram "repeat" [spreadP, spreadQ]) with
   | Except.error err => innermostIsDivByZero err
   | _ => false
 
 #guard spreadBuiltinArgumentsRepeatFailLeftToRight
 
 def spreadBuiltinArgumentsRepeatMirroredFailsFirstSlot : Bool :=
-  match runResult (spreadBuiltinArgumentProgram "repeat" [spreadQ, spreadP, .num 1]) with
+  match runResult (spreadBuiltinArgumentProgram "repeat" [spreadQ, spreadP]) with
   | Except.error err => innermostIsAnyTypeMismatch err
   | _ => false
 

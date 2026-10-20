@@ -2,6 +2,6 @@
 Outer(limit, offset) = {
     Reached = candidate + offset >= limit
     Step = candidate + 1, not Reached
-    Step.while(0)
+    Step(0).while
 }
 Outer(2500, 7)

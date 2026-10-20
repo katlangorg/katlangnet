@@ -72,7 +72,7 @@ public class ParameterCalleeNameTests
         // A loop step's cell keeps its WRITTEN source through parameter transport (LOOP-08), so
         // the step is named by the argument written for it, F — never by the parameter step.
         FromSource("loop-step-through-parameter",
-            "F(0) = 1\nRun(step) = repeat(step, 1, 5)\nRun(F)",
+            "F(0) = 1\nRun(step) = repeat(step(5), 1)\nRun(F)",
             "call Run > call repeat > call F > noMatchingBranch F"),
         // Host-built trees: the front end refuses a parameter-headed open target
         // (OpenTargetIsParameter). An alias over a parameter is a RUNTIME-TARGET alias (FWD-02,

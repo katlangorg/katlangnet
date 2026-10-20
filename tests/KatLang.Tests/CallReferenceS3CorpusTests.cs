@@ -90,7 +90,7 @@ public class CallReferenceS3CorpusTests
         new("AS3", "R = if(aflag(), Capture(Square(5)), 0)\nBox = { A = R.Algorithm }\nUse(f) = f(4)\nUse(Box.A)", "ok 16", "4", "0/0", "0/0"),
         new("AS4", "R = if(aflag(), Capture(Square(5)), 0)\nBox = { A = R.Algorithm }\nUse(b) = Apply(b.A, 4)\nUse(Box)", "ok 16", "4", "0/0", "0/0"),
         new("AS5", "R = if(aflag(), Capture(Square(5)), 0)\nBox = { A = R.Algorithm }\n[1, 2].map(Box.A)", "ok [1, 4]", "1,2", "0/0", "0/0"),
-        new("AS6", "Step(x) = x + 1, x < 3\nR = if(aflag(), Capture(Step(0)), 0)\nBox = { A = R.Algorithm }\nBox.A.while(0)", "ok 3", "", "1/0", "0/0"),
+        new("AS6", "Step(x) = x + 1, x < 3\nR = if(aflag(), Capture(Step(0)), 0)\nBox = { A = R.Algorithm }\nBA = Box.A\nBA(0).while", "ok 3", "", "1/0", "0/0"),
         new("AS7", "R = if(aflag(), 1 / 0, 0)\nUse(f) = 9.f\nUse(R.Algorithm)", "err DivisionByZero", "", "0/0", "0/0"),
         new("AS8", "R = if(aflag(), 5, 0)\nUse(f) = 9.f\nUse(R.Algorithm)", "err TypeMismatch", "", "0/0", "0/0"),
         new("AS9", "R = if(stop(), Capture(Square(5)), 0)\nUse(f) = 9.f\nUse(R.Algorithm), trace(1)", "cancelled", "", "0/0", "0/0", WithCancel: true),
@@ -125,7 +125,7 @@ public class CallReferenceS3CorpusTests
         new("RA3", "R = Capture(Square(5))\nBox = { A = R.Algorithm }\nBox.A(9)", "ok 81", "9", "0/0", "0/0"),
         new("RA4", "R = Capture(Square(5))\nBox = { A = R.Algorithm }\n(Box.A)(9)", "ok 81", "9", "0/0", "0/0"),
         new("RA5", "R = Capture(Square(5))\nA = R.Algorithm\nApply(A, 9)", "ok 81", "9", "0/0", "0/0"),
-        new("RA6", "Step(x) = x + 1, x < 3\nR = Capture(Step(0))\nA = R.Algorithm\nA.while(0)", "ok 3", "", "1/0", "0/0"),
+        new("RA6", "Step(x) = x + 1, x < 3\nR = Capture(Step(0))\nA = R.Algorithm\nA(0).while", "ok 3", "", "1/0", "0/0"),
         new("RA7", "R = Capture(Square(5))\nA = R.Algorithm\n[1, 2].map(A)", "ok [1, 4]", "1,2", "0/0", "0/0"),
         new("RA8", "R = Capture(Square(5))\nA = R.Algorithm\nB = A\nB(9)", "ok 81", "9", "0/0", "0/0"),
         new("RA10", "Use(f) = {\n  A = f\n  9.A\n}\nUse(Square)", "ok 81", "9", "0/0", "0/0"),
@@ -147,20 +147,20 @@ public class CallReferenceS3CorpusTests
         new("VC9a", "K(*xs) = count(xs)\nSel(t) = if(atrace(t) > 0, Capture(K(t)), 0)\nBoth(f) = (f, f(7, 8))\nBoth(Sel(1).Algorithm)", "ok (0, 2)", "a1", "0/0", "0/0"),
         new("VC9b", "K(*xs) = count(xs)\nSel(t) = if(atrace(t) > 0, Capture(K(t)), 0)\nBoth(f) = (f(7, 8), f)\nBoth(Sel(1).Algorithm)", "ok (2, 0)", "a1", "0/0", "0/0"),
         new("VC10", "T(x) = x * x\nProject(meta op) = op.Algorithm(8)\nAfter(x) = if(x > 0, (Project(x), x), 0)\nAfter(T(atrace(5)))", "ok (64, 25)", "a5", "0/0", "0/0"),
-        new("LP1", "Step(x) = x + 1, x < 3\nR = Capture(Step(0))\nR.Algorithm.while(R.Arguments*)", "ok 3", "", "1/0", "0/0"),
-        new("LP2", "Fib(a, b, n) = b, a + b, n - 1, n > 1\nR = Capture(Fib(0, 1, 10))\nR.Algorithm.while(R.Arguments*), Fib.while(0, 1, 10)", "ok ((34, 55, 1), (34, 55, 1))", "", "2/0", "0/0"),
-        new("LP3", "Step(x) = x + 1, x < 3\nLoop(meta operation) = operation.Algorithm.while(operation.Arguments*)\nLoop(Step(0)), Step(0).Loop", "ok (3, 3)", "", "2/0", "0/0"),
-        new("LP4", "Step(x) = x + 1, x < 3\nR = if(aflag(), Capture(Step(0)), Capture(Step(1)))\nR.Algorithm.while(R.Arguments*)", "ok 3", "", "1/0", "0/0"),
-        new("LP5", "G(x) = x + 1 + 0 * (1 / (3 - x)), x < 3\nR = Capture(G(0))\nR.Algorithm.while(R.Arguments*), G.while(0)", "ok (3.000000000000000000000000000000000, 3.000000000000000000000000000000000)", "", "2/0", "0/0"),
-        new("LP6", "Step(x) = x + 1, x < 3\nR = Capture(Step(5))\nR.Algorithm.while(R.Arguments*), Step.while(5)", "ok (5, 5)", "", "2/0", "0/0"),
-        new("LP7", "Increment(x) = x + 1\nTimes(meta operation, n) = operation.Algorithm.repeat(n, operation.Arguments*)\nIncrement(0).Times(5)", "ok 5", "", "1/0", "0/0"),
+        new("LP1", "Step(x) = x + 1, x < 3\nR = Capture(Step(0))\nRA = R.Algorithm\nRA(R.Arguments*).while", "ok 3", "", "1/0", "0/0"),
+        new("LP2", "Fib(a, b, n) = b, a + b, n - 1, n > 1\nR = Capture(Fib(0, 1, 10))\nRA = R.Algorithm\nRA(R.Arguments*).while, Fib(0, 1, 10).while", "ok ((34, 55, 1), (34, 55, 1))", "", "2/0", "0/0"),
+        new("LP3", "Step(x) = x + 1, x < 3\nLoop(meta operation) = {\n  S = operation.Algorithm\n  S(operation.Arguments*).while\n}\nLoop(Step(0)), Step(0).Loop", "ok (3, 3)", "", "2/0", "0/0"),
+        new("LP4", "Step(x) = x + 1, x < 3\nR = if(aflag(), Capture(Step(0)), Capture(Step(1)))\nRA = R.Algorithm\nRA(R.Arguments*).while", "ok 3", "", "1/0", "0/0"),
+        new("LP5", "G(x) = x + 1 + 0 * (1 / (3 - x)), x < 3\nR = Capture(G(0))\nRA = R.Algorithm\nRA(R.Arguments*).while, G(0).while", "ok (3.000000000000000000000000000000000, 3.000000000000000000000000000000000)", "", "2/0", "0/0"),
+        new("LP6", "Step(x) = x + 1, x < 3\nR = Capture(Step(5))\nRA = R.Algorithm\nRA(R.Arguments*).while, Step(5).while", "ok (5, 5)", "", "2/0", "0/0"),
+        new("LP7", "Increment(x) = x + 1\nTimes(meta operation, n) = {\n  S = operation.Algorithm\n  S(operation.Arguments*).repeat(n)\n}\nIncrement(0).Times(5)", "ok 5", "", "1/0", "0/0"),
         new("Q1", Q + "Use(x) = Apply(x.Algorithm, 0)\nR = Capture(Take(Use(R.Arguments*)))\nR.Invoke()", "err DemandCycle", "", "0/0", "0/0"),  // Codex, verbatim
         new("Q1b", Q + "Use(x) = x.Algorithm(0)\nR = Capture(Take(Use(R.Arguments*)))\nR.Invoke()", "err DemandCycle", "", "0/0", "0/0"),  // fresh invocation
         new("Q1c", Q + "Use(x) = (x.Algorithm)(0)\nR = Capture(Take(Use(R.Arguments*)))\nR.Invoke()", "err DemandCycle", "", "0/0", "0/0"),  // callee position
         new("Q1d", Q + "Use(x) = [0].map(x.Algorithm)\nR = Capture(Take(Use(R.Arguments*)))\nR.Invoke()", "err DemandCycle", "", "0/0", "0/0"),  // map callback
         new("Q1e", Q + "Use(x) = [0].filter(x.Algorithm)\nR = Capture(Take(Use(R.Arguments*)))\nR.Invoke()", "err DemandCycle", "", "0/0", "0/0"),  // filter callback
         new("Q1f", Q + "Use(x) = [1, 2].reduce(x.Algorithm, 0)\nR = Capture(Take(Use(R.Arguments*)))\nR.Invoke()", "err DemandCycle", "", "0/0", "0/0"),  // reduce callback
-        new("Q1g", Q + "Use(x) = x.Algorithm.while(0)\nR = Capture(Take(Use(R.Arguments*)))\nR.Invoke()", "err DemandCycle", "", "0/0", "0/0"),  // loop step
+        new("Q1g", Q + "Use(x) = {\n  A = x.Algorithm\n  A(0).while\n}\nR = Capture(Take(Use(R.Arguments*)))\nR.Invoke()", "err DemandCycle", "", "0/0", "0/0"),  // loop step
         new("Q1h", Q + "Use(x) = x.Algorithm\nR = Capture(Take(Use(R.Arguments*)))\nR.Invoke()", "err DemandCycle", "", "0/0", "0/0"),  // bare VALUE
         new("Q1i", Q + "Same(f, f) = f(0)\nUse(x) = Same(x.Algorithm, x.Algorithm)\nR = Capture(Take(Use(R.Arguments*)))\nR.Invoke()", "err DemandCycle", "", "0/0", "0/0"),  // repeated name
         new("Q1j", Q + "Use(x) = Forward(x.Algorithm, 0)\nR = Capture(Take(Use(R.Arguments*)))\nR.Invoke()", "err DemandCycle", "", "0/0", "0/0"),  // forwarded twice
@@ -189,7 +189,7 @@ public class CallReferenceS3CorpusTests
         new("E4b", "Q5(f) = f(1)\nBad = Q5(5)\nUse(f) = Apply(f, 0)\nUse(Bad.Algorithm)", "err NotAnAlgorithm", "", "0/0", "0/0"),  // control
         new("E5", "Mk(k) = Capture(k(1))\nR0 = Mk(Bad.Algorithm)\nBad = min([])\nUse(p) = Apply(p.G, 0)\nUse(R0.Algorithm)", "err IllegalInEval", "", "0/0", "0/0"),  // transitive callee route
         new("E6", "Bad = min([])\nUse(p) = [1].map(p.G)\nUse(Bad.Algorithm)", "err IllegalInEval", "", "0/0", "0/0"),  // callback
-        new("E7", "Bad = min([])\nUse(p) = p.G.while(0)\nUse(Bad.Algorithm)", "err IllegalInEval", "", "0/0", "0/0"),  // loop step
+        new("E7", "Bad = min([])\nUse(p) = {\n  A = p.G\n  A(0).while\n}\nUse(Bad.Algorithm)", "err IllegalInEval", "", "0/2", "0/0"),  // loop step: the planner's and the loop's own fallback records
         new("E8", "Bad = if(aflag(), min([]), 0)\nUse(p) = Apply(p.G, 0)\nUse(Bad.Algorithm)", "err IllegalInEval", "", "0/0", "0/0"),  // async receiver
         new("E9", "Bad = if(stop(), Capture(Square(5)), 0)\nUse(p) = Apply(p.G, 0)\nUse(Bad.Algorithm), trace(1)", "cancelled", "", "0/0", "0/0", WithCancel: true),
         new("E10", $"F(0) = Capture(Inc(0))\nF(n) = {{ open '{ModuleUrl}'\n Capture(Inc2(n)) }}\nR = F(1)\nUse(p) = Apply(p.G, 5)\nUse(R.Algorithm), trace(99)", "err LoadFetchFailed", "", "", "", AsyncOnly: true, Module: "<fail>"),
@@ -199,11 +199,11 @@ public class CallReferenceS3CorpusTests
         new("Q5", "F(f) = f\nR = Capture(F(Q.Algorithm))\nQ = if(count([0].map(R.Arguments*)) > 0, Capture(Inc(0)), 0)\nApply(R.Arguments*, 1)", "err DemandCycle", "", "0/0", "0/0"),
         new("Q5b", "F(f) = f\nR = Capture(F(Q.Algorithm))\nQ = if(count([0].filter(R.Arguments*)) > 0, Capture(Inc(0)), 0)\nApply(R.Arguments*, 1)", "err DemandCycle", "", "0/0", "0/0"),
         new("Q5c", "F(f) = f\nR = Capture(F(Q.Algorithm))\nQ = if([1].reduce(R.Arguments*, 0) > 0, Capture(Inc(0)), 0)\nApply(R.Arguments*, 1)", "err DemandCycle", "", "0/0", "0/0"),
-        new("Q5d", "F(f) = f\nW(s) = s.while(0)\nR = Capture(F(Q.Algorithm))\nQ = if(W(R.Arguments*) > 0, Capture(Inc(0)), 0)\nApply(R.Arguments*, 1)", "err DemandCycle", "", "0/0", "0/0"),
+        new("Q5d", "F(f) = f\nW(s) = s(0).while\nR = Capture(F(Q.Algorithm))\nQ = if(W(R.Arguments*) > 0, Capture(Inc(0)), 0)\nApply(R.Arguments*, 1)", "err DemandCycle", "", "0/0", "0/0"),
         new("Q5e", "F(f) = f\nM(g) = [0].map(g)\nR = Capture(F(Q.Algorithm))\nQ = if(count(M(R.Arguments*)) > 0, Capture(Inc(0)), 0)\nApply(R.Arguments*, 1)", "err DemandCycle", "", "0/0", "0/0"),
         new("Q5f", "F(f) = f\nR = Capture(F(Q.Algorithm))\nQ = if(count([0].map(R.Arguments*)) > 0, Capture(Inc(0)), 0)\n[5].map(R.Arguments*)", "err DemandCycle", "", "0/0", "0/0"),
-        new("Q5h", "F(f) = f\nW(s) = while(s, 0)\nR = Capture(F(Q.Algorithm))\nQ = if(W(R.Arguments*) > 0, Capture(Inc(0)), 0)\nApply(R.Arguments*, 1)", "err DemandCycle", "", "0/0", "0/0"),  // call-form loop step
-        new("Q5i", "F(f) = f\nW(s) = repeat(s, 2, 0)\nR = Capture(F(Q.Algorithm))\nQ = if(W(R.Arguments*) > 0, Capture(Inc(0)), 0)\nApply(R.Arguments*, 1)", "err DemandCycle", "", "0/0", "0/0"),
+        new("Q5h", "F(f) = f\nW(s) = while(s(0))\nR = Capture(F(Q.Algorithm))\nQ = if(W(R.Arguments*) > 0, Capture(Inc(0)), 0)\nApply(R.Arguments*, 1)", "err DemandCycle", "", "0/0", "0/0"),  // call-form loop step
+        new("Q5i", "F(f) = f\nW(s) = repeat(s(0), 2)\nR = Capture(F(Q.Algorithm))\nQ = if(W(R.Arguments*) > 0, Capture(Inc(0)), 0)\nApply(R.Arguments*, 1)", "err DemandCycle", "", "0/0", "0/0"),
         new("Q5g", "F(f) = f\nR = Capture(F(Q.Algorithm))\nQ = if(aflag(), if(count([0].map(R.Arguments*)) > 0, Capture(Inc(0)), 0), 0)\nApply(R.Arguments*, 1)", "err DemandCycle", "", "0/0", "0/0"),
         new("E12", "Bad = min([])\nUse(p) = Apply(p.G.H, 0)\nUse(Bad.Algorithm)", "err IllegalInEval", "", "0/0", "0/0"),  // deeper path
         new("E14", "Bad = min([])\nUse(p) = Apply(p.G, 0)\nUse(Bad.Algorithm), trace(1)", "err IllegalInEval", "", "0/0", "0/0"),

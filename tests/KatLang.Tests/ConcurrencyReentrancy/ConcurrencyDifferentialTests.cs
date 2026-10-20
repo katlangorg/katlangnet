@@ -341,7 +341,7 @@ public class ConcurrencyDifferentialTests
     [Fact]
     public void GatedRunWithStepBudget_OtherRunExhaustsItsOwnBudget_GatedStillCompletesWithinBudget()
     {
-        const string gatedProgram = "P = 3\nstep(s) = s + P\nrepeat(step, 2000, 0)";
+        const string gatedProgram = "P = 3\nstep(s) = s + P\nrepeat(step(0), 2000)";
         var gatedLimits = new EvaluationLimits { MaxSteps = 50_000 };
 
         var baselineGated = ConcurrencyHarness.Observe(EvalEntryPoint.RunCounted, gatedProgram, gatedLimits);

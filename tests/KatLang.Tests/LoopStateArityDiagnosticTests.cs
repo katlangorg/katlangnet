@@ -5,7 +5,7 @@ namespace KatLang.Tests;
 /// <summary>
 /// Patterned loop-step state diagnostics report the binder-computed TOP-LEVEL
 /// state-slot count, never the flattened capture count: <c>Step((x, y))</c> has
-/// ONE state slot, so <c>Step.repeat(3, 1, 1)</c> is <c>ArityMismatch(1, 2)</c>
+/// ONE state slot, so <c>Step(1, 1).repeat(3)</c> is <c>ArityMismatch(1, 2)</c>
 /// — not the formerly contradictory <c>ArityMismatch(2, 2)</c>. The context's
 /// parameter names are the matching top-level display labels
 /// (<c>"(x, y)"</c> is one entry). Covers <c>repeat</c> and <c>while</c>, loop
@@ -117,7 +117,7 @@ public class LoopStateArityDiagnosticTests
         var (message, errors) = FailInAllEvaluationModes(
             """
             Step((x, y)) = (y, x + y)
-            Step.repeat(3, 1, 1)
+            Step(1, 1).repeat(3)
             """);
 
         AssertLoopStatePayload(errors, expectedStateSlots: 1, actualStateValues: 2, ["(x, y)"]);
@@ -134,7 +134,7 @@ public class LoopStateArityDiagnosticTests
         var (message, errors) = FailInAllEvaluationModes(
             """
             Step((x, y)) = (y, x + y), 0
-            Step.while(1, 1)
+            Step(1, 1).while
             """);
 
         AssertLoopStatePayload(errors, expectedStateSlots: 1, actualStateValues: 2, ["(x, y)"]);
@@ -151,7 +151,7 @@ public class LoopStateArityDiagnosticTests
         var (message, errors) = FailInAllEvaluationModes(
             """
             Step((x, y), z) = z
-            Step.repeat(1, 1, 2, 3)
+            Step(1, 2, 3).repeat(1)
             """);
 
         AssertLoopStatePayload(errors, expectedStateSlots: 2, actualStateValues: 3, ["(x, y)", "z"]);
@@ -169,7 +169,7 @@ public class LoopStateArityDiagnosticTests
         var program = Program(
             """
             Step((x, y)) = (y, x + y)
-            Step.repeat(3, (1, 1))
+            Step((1, 1)).repeat(3)
             """);
         var expected = new Result.SequenceValue([new Result.Atom(3), new Result.Atom(5)]);
 

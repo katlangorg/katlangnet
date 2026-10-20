@@ -94,10 +94,10 @@ public class BuiltinRegistryParityTests
         {
             var semanticPlain = BuiltinRegistryParitySnapshot.SemanticBuiltinParameterNames(builtin.Id, PropertyCallStyle.Plain);
             var semanticDot = BuiltinRegistryParitySnapshot.SemanticBuiltinParameterNames(builtin.Id, PropertyCallStyle.Dot);
-            var expectedPlain = builtin.ToolingPlainSignature.Parameters
+            var expectedPlain = builtin.PlainSignature.Parameters
                 .Select(static parameter => parameter.DisplayName)
                 .ToArray();
-            var expectedDot = builtin.ToolingDotSignature.Parameters
+            var expectedDot = builtin.DotSignature.Parameters
                 .Select(static parameter => parameter.DisplayName)
                 .ToArray();
 
@@ -126,8 +126,6 @@ public class BuiltinRegistryParityTests
         {
             AddValidationFailure(failures, builtin.PlainSignature);
             AddValidationFailure(failures, builtin.DotSignature);
-            AddValidationFailure(failures, builtin.ToolingPlainSignature);
-            AddValidationFailure(failures, builtin.ToolingDotSignature);
         }
 
         AssertNoFailures(failures);

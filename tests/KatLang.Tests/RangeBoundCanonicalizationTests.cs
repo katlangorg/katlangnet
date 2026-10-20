@@ -364,7 +364,7 @@ public class RangeBoundCanonicalizationTests
     [InlineData("0.5 + 0.5", "1.0")]
     [InlineData("-0.0", "-0.0")]
     [InlineData("[1.00, 2.00][0.0]", "1.00")]
-    [InlineData("repeat({s}, 2.0, 1.00)", "1.00")]
+    [InlineData("Step = {s}\nrepeat(Step(1.00), 2.0)", "1.00")]
     [InlineData("Lo = 1.00\nR = range(Lo, 3)\nR.count * 0 + Lo", "1.00")]
     public async Task UnrelatedValues_KeepTheirQuantumAndZeroSign(string source, string expectedSpelling)
     {

@@ -185,12 +185,12 @@ public sealed class BinderCardinalityGateTests
         },
         // A user loop step: the loop-state report, after the spread of the initial state.
         {
-            "Step(a, b) = a, b\nrepeat(Step, 1, trace(1), [trace(2), trace(3)]*)",
+            "Step(a, b) = a, b\nrepeat(Step(trace(1), [trace(2), trace(3)]*), 1)",
             "ArityMismatch: while evaluating call to repeat: `repeat` step expects 2 state values for 2 parameters 'a' and 'b', but the current loop state has 3 state values. Loop state values are bound positionally to the step's parameters. If this is a nested step with inferred parameters, remember that names already bound by an enclosing algorithm are captured, not added as step parameters; use a distinct state-slot name such as `candidate` when threading an outer value through the loop state. @ [2:1, 2:49)",
             "trace(2),trace(3)"
         },
         {
-            "Step(a, b, *r) = a, b\nrepeat(Step, 1, trace(1))",
+            "Step(a, b, *r) = a, b\nrepeat(Step(trace(1)), 1)",
             "ArityMismatch: while evaluating call to repeat: `repeat` variadic step expects at least 2 state values for fixed parameter(s) 'a' and 'b', but the current loop state has 1 state value. A collecting loop parameter collects the remaining state values as an exact list with `*name`; ordinary parameters still bind one state value each. @ [2:1, 2:26)",
             ""
         },
@@ -201,7 +201,7 @@ public sealed class BinderCardinalityGateTests
             "trace(6)"
         },
         {
-            "Fam(0, acc) = 0, acc\nFam(n, acc) = n - 1, acc + n\nrepeat(Fam, 1, 1)",
+            "Fam(0, acc) = 0, acc\nFam(n, acc) = n - 1, acc + n\nrepeat(Fam(1), 1)",
             "ArityMismatch: while evaluating call to repeat: Property 'Fam' expects 2 parameters, but was called with 1 argument. @ [3:1, 3:18)",
             ""
         },
@@ -297,7 +297,7 @@ public sealed class BinderCardinalityGateTests
         Assert.Equal((2, 3), Payload(Innermost(unpacking)));
         Assert.Contains(Contexts(unpacking), context => context is DeconstructionBindingContext);
 
-        var loop = RunError("Step(a, b) = a, b\nrepeat(Step, 1, 1, 2, 3)");
+        var loop = RunError("Step(a, b) = a, b\nrepeat(Step(1, 2, 3), 1)");
         Assert.Equal((2, 3), Payload(Innermost(loop)));
         Assert.Contains(Contexts(loop), context => context is LoopStateBindingContext);
 

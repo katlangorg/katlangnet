@@ -202,7 +202,7 @@ public class ComparisonChainHostileReviewTests
     public async Task OperandTraces_AreIncrementalAcrossCallbacksLoopsAndTwins(
         string chain, string expectedTrace, KatLangErrorCode? expectedError)
     {
-        foreach (var template in new[] { "{0}", "map([0], {{ if(x == 0, {0}, true) }})", "range(0, 0).filter{{ if(x == 0, {0}, true) }}.count", "Step(x) = x + if({0}, 1, 0)\nStep.repeat(1, 0)" })
+        foreach (var template in new[] { "{0}", "map([0], {{ if(x == 0, {0}, true) }})", "range(0, 0).filter{{ if(x == 0, {0}, true) }}.count", "Step(x) = x + if({0}, 1, 0)\nStep(0).repeat(1)" })
         {
             var source = string.Format(System.Globalization.CultureInfo.InvariantCulture, template, chain);
             foreach (var mode in new[] { "generic", "optimized", "async" })
@@ -284,7 +284,7 @@ public class ComparisonChainHostileReviewTests
     [InlineData("3 < 2 < true == T()", 0, true)]
     public void FullyPlannedChains_AreEagerAfterFalseAndStopAtALinkError(string condition, long units, bool error)
     {
-        var parsed = SourceProvenance.ParseValid($"Step = {{\nT = 'xxxxxxxxxx'\nn + if({condition}, 1, 0)\n}}\nStep.repeat(1, 0)");
+        var parsed = SourceProvenance.ParseValid($"Step = {{\nT = 'xxxxxxxxxx'\nn + if({condition}, 1, 0)\n}}\nStep(0).repeat(1)");
         foreach (var optimized in new[] { false, true })
         {
             var diagnostics = new LoopOptimizationDiagnostics();

@@ -15,7 +15,7 @@ public class DeconstructionExplicitCallDecisionTests
     [InlineData("F(x) = {a, b = tick() + x, 5\na(), a(), b(), a}\nF(10), F(20)",
         "S[S[11, 11, 5, 11], S[22, 22, 5, 22]]", "tick#1 | tick#2")]
     [InlineData("a, b = tick(), 5\nIgnore(x) = 0\nIgnore(a), Ignore(b), 42", "S[0, 0, 42]", "")]
-    [InlineData("a, b = tick(), 5\nStep(x) = x + a()\nrepeat(Step, 3, 0), a()", "S[3, 1]", "tick#1")]
+    [InlineData("a, b = tick(), 5\nStep(x) = x + a()\nrepeat(Step(0), 3), a()", "S[3, 1]", "tick#1")]
     public async Task ExplicitTargetCalls_ReselectTheSharedSourceAcrossSixRoutes(
         string source, string expected, string effects)
     {

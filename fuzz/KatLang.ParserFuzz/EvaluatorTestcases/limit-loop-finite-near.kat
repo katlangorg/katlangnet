@@ -1,2 +1,2 @@
 Step = x - 1, x > 1
-Step.while(500)
+Step(500).while

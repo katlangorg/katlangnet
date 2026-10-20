@@ -837,7 +837,7 @@ public class EvaluatorSequencePipelineTests
                     Square = k * k
                     k + 1, s + if(num mod Square == 0, 1, 0), Square <= num and s <= 0
                 }
-                Step.while(2, 0)[1] == 0
+                Step(2, 0).while[1] == 0
             }
 
             SquareFreeCount(N) = range(1, N).filter(IsSquareFree).count
@@ -872,7 +872,7 @@ public class EvaluatorSequencePipelineTests
                     Square = k * k
                     k + 1, s + if(num mod Square == 0, 1, 0), Square <= num and s <= 0
                 }
-                Step.while(2, 0)[1] == 0
+                Step(2, 0).while[1] == 0
             }
 
             SquareFreeCount = range(1,N).filter(IsSquareFree).count

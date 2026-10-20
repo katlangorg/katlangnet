@@ -249,9 +249,9 @@ public class LazySlotZeroArgumentDemandTests
     // ── 6. Every builtin value slot — and the .string receiver ──────────────
 
     [Theory]
-    [InlineData("Step(s) = s + 1\nrepeat(Step, 1, Inc)", 3, 17)]
-    [InlineData("Step(s) = s + 1\nrepeat(Step, Inc, 0)", 3, 14)]
-    [InlineData("Down(s) = s - 1, s > 0\nwhile(Down, Inc)", 3, 13)]
+    [InlineData("Step(s) = s + 1\nrepeat(Step(Inc), 1)", 3, 13)]
+    [InlineData("Step(s) = s + 1\nrepeat(Step(0), Inc)", 3, 17)]
+    [InlineData("Down(s) = s - 1, s > 0\nwhile(Down(Inc))", 3, 12)]
     [InlineData("atoms(Inc)", 2, 7)]
     [InlineData("range(1, Inc)", 2, 10)]
     [InlineData("Inc.string", 2, 1)]
@@ -282,9 +282,9 @@ public class LazySlotZeroArgumentDemandTests
     [Fact]
     public void EveryBuiltinValueSlot_ZeroParameterControlsEvaluate()
     {
-        AssertEvaluatesTo(new Result.Atom(1), "A = 0\nStep(s) = s + 1\nrepeat(Step, 1, A)");
-        AssertEvaluatesTo(new Result.Atom(2), "A = 2\nStep(s) = s + 1\nrepeat(Step, A, 0)");
-        AssertEvaluatesTo(new Result.Atom(0), "A = 3\nDown(s) = s - 1, s > 0\nwhile(Down, A)");
+        AssertEvaluatesTo(new Result.Atom(1), "A = 0\nStep(s) = s + 1\nrepeat(Step(A), 1)");
+        AssertEvaluatesTo(new Result.Atom(2), "A = 2\nStep(s) = s + 1\nrepeat(Step(0), A)");
+        AssertEvaluatesTo(new Result.Atom(0), "A = 3\nDown(s) = s - 1, s > 0\nwhile(Down(A))");
         AssertEvaluatesTo(List(new Result.Atom(7)), "A = 7\natoms(A)");
         AssertEvaluatesTo(List(new Result.Atom(1), new Result.Atom(2), new Result.Atom(3)), "A = 3\nrange(1, A)");
         AssertEvaluatesTo(new Result.Str("7"), "A = 7\nA.string");
@@ -295,13 +295,13 @@ public class LazySlotZeroArgumentDemandTests
     [Fact]
     public void CallbackSlots_SupplyArguments_AndNeverConsultTheLaw()
     {
-        AssertEvaluatesTo(new Result.Atom(2), Inc + "repeat(Inc, 2, 0)");
-        AssertEvaluatesTo(new Result.Atom(0), "Down(s) = s - 1, s > 0\nwhile(Down, 3)");
+        AssertEvaluatesTo(new Result.Atom(2), Inc + "repeat(Inc(0), 2)");
+        AssertEvaluatesTo(new Result.Atom(0), "Down(s) = s - 1, s > 0\nwhile(Down(3))");
         AssertEvaluatesTo(List(new Result.Atom(2), new Result.Atom(3)), Inc + "map([1, 2], Inc)");
         AssertEvaluatesTo(List(new Result.Atom(2), new Result.Atom(3)), "IsBig(n) = n > 1\nfilter([1, 2, 3], IsBig)");
         AssertEvaluatesTo(new Result.Atom(3), "Add(e, a) = e + a\nreduce([1, 2], Add, 0)");
         AssertEvaluatesTo(new Result.SequenceValue([new Result.Atom(2), new Result.Atom(14)]),
-            "Step(a, b) = a + 1, b + 2\nrepeat(Step, 2, 0, 10)");
+            "Step(a, b) = a + 1, b + 2\nrepeat(Step(0, 10), 2)");
         AssertEvaluatesTo(List(List(new Result.Atom(1)), List(new Result.Atom(2))),
             "Collect(*xs) = xs\nmap([1, 2], Collect)");
         AssertEvaluatesTo(List(new Result.Atom(10), new Result.Atom(2)),
@@ -327,9 +327,9 @@ public class LazySlotZeroArgumentDemandTests
     [InlineData("if(true, K, 0)")]
     [InlineData("if(false, 0, K)")]
     [InlineData("if(K, 1, 0)")]
-    [InlineData("repeat(Step, 1, K)")]
-    [InlineData("repeat(Step, K, 0)")]
-    [InlineData("while(Step, K)")]
+    [InlineData("repeat(Step(K), 1)")]
+    [InlineData("repeat(Step(0), K)")]
+    [InlineData("while(Step(K))")]
     [InlineData("reduce([], Add, K)")]
     [InlineData("K.string")]
     [InlineData("atoms(K)")]
@@ -537,9 +537,9 @@ public class LazySlotZeroArgumentDemandTests
             "F(0) = 10\nF(x) = x + 1\nif(true, F, 0)",
             Inc + "Apply(g) = if(true, g, 0)\nApply(Inc)",
             "if(true, {x + 1}, 0)",
-            Inc + "Step(s) = s + 1\nrepeat(Step, 1, Inc)",
-            Inc + "Step(s) = s + 1\nrepeat(Step, Inc, 0)",
-            Inc + "Down(s) = s - 1, s > 0\nwhile(Down, Inc)",
+            Inc + "Step(s) = s + 1\nrepeat(Step(Inc), 1)",
+            Inc + "Step(s) = s + 1\nrepeat(Step(0), Inc)",
+            Inc + "Down(s) = s - 1, s > 0\nwhile(Down(Inc))",
             Inc + "atoms(Inc)",
             Inc + "range(1, Inc)",
             Inc + "Inc.string",
@@ -552,7 +552,7 @@ public class LazySlotZeroArgumentDemandTests
             "K(x) = 5\nskip([1], K)",
             "F(0) = 10\nF(x) = x + 1\ncount(F)",
             "F(0) = 10\nF(x) = x + 1\nAdd(e, a) = e + a\nreduce([], Add, F)",
-            Inc + "repeat(Inc, 2, 0)",
+            Inc + "repeat(Inc(0), 2)",
             Inc + "map([1, 2], Inc)",
             "Outer(v) = { Inner = v + 1\n if(true, Inner, 0) }\nOuter(7)",
         };
@@ -606,7 +606,7 @@ public class LazySlotZeroArgumentDemandTests
         var source = """
             Step(s) = { Inc(x) = x + 1
              if(s < 3, Inc, 0) }
-            repeat(Step, 2, 0)
+            repeat(Step(0), 2)
             """;
 
         var error = AssertOptimizerTransparentFailure(source);
@@ -626,7 +626,10 @@ public class LazySlotZeroArgumentDemandTests
     {
         var source = """
             Inc(x) = x + 1
-            Run(g) = repeat({if(s < 1, g, 0)}, 1, 0)
+            Run(g) = {
+              S = {if(s < 1, g, 0)}
+              S(0).repeat(1)
+            }
             Run(Inc)
             """;
 
@@ -642,7 +645,7 @@ public class LazySlotZeroArgumentDemandTests
         var source = """
             Step(s) = { T = s + 1
              if(s < 3, T, 0) }
-            repeat(Step, 2, 0)
+            repeat(Step(0), 2)
             """;
 
         EvaluatorTestSupport.AssertEvalLoopModes(source, 2m);

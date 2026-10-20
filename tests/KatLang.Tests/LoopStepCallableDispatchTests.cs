@@ -25,7 +25,7 @@ public partial class LoopStepCallableDispatchTests
     private const string Gcd = "Gcd(a, 0) = a, 0, false\nGcd(a, b) = b, a mod b, true\n";
     private const string Partial = "F(0) = 1\nF(1) = 2\n";
     private const string Lib = "Lib = {\n  public Step(0) = 0\n  public Step(n) = n - 1\n  public C = count\n}\n";
-    private const string Forward = "Run(f, *s) = repeat(f, 2, s*)\nRun1(f, *s) = repeat(f, 1, s*)\nRun2(g, *s) = Run(g, s*)\n";
+    private const string Forward = "Run(f, *s) = repeat(f(s*), 2)\nRun1(f, *s) = repeat(f(s*), 1)\nRun2(g, *s) = Run(g, s*)\n";
     private const string NoStepParameter = "but the loop found no step parameter to bind";
 
     // ── 1. The callable-category matrix: no privileged category ────────────────────────────────
@@ -35,24 +35,24 @@ public partial class LoopStepCallableDispatchTests
     /// value with no callable identity and a genuinely zero-parameter callable both report).</summary>
     public static TheoryData<string, string, string> CallableCategories() => new()
     {
-        { "user algorithm", "S(n) = n - 1\nrepeat(S, 2, 3)", "ok 1" },
-        { "inferred user algorithm", "S = n - 1\nrepeat(S, 2, 3)", "ok 1" },
-        { "block", "repeat({ x - 1 }, 2, 3)", "ok 1" },
-        { "single-clause structural user definition", "Sw((a, b)) = (b, a)\nrepeat(Sw, 1, (1, 2))", "ok S[2, 1]" },
-        { "clause family", Step + "repeat(Step, 2, 3)", "ok 1" },
-        { "clause family, while", Countdown + "while(Countdown, 3)", "ok 0" },
-        { "builtin", "repeat(count, 1, [1, 2])", "ok 2" },
-        { "lazy builtin", "repeat(if, 1, true, 1, 2)", "ok 1" },
-        { "Math function", "repeat(abs, 2, -3)", "ok 3" },
-        { "Math function, canonical", "repeat(Math.Pow, 1, 2, 3)", "ok 8" },
-        { "host operation", "repeat(trace, 2, 5)", "ok 5" },
-        { "alias of a user algorithm", "S(n) = n - 1\nA = S\nB = A\nrepeat(B, 2, 3)", "ok 1" },
-        { "alias of a clause family", Step + "A = Step\nB = A\nrepeat(B, 2, 3)", "ok 1" },
-        { "alias of a builtin", "A = count\nB = A\nrepeat(B, 1, [1, 2])", "ok 2" },
-        { "alias of a Math function", "A = abs\nB = A\nrepeat(B, 2, -3)", "ok 3" },
-        { "alias of a host operation", "A = trace\nB = A\nrepeat(B, 2, 5)", "ok 5" },
-        { "inline-block alias of a family", Step + "repeat({ Step }, 2, 3)", "ok 1" },
-        { "inline-block alias of a builtin", "repeat({ count }, 1, [1, 2])", "ok 2" },
+        { "user algorithm", "S(n) = n - 1\nrepeat(S(3), 2)", "ok 1" },
+        { "inferred user algorithm", "S = n - 1\nrepeat(S(3), 2)", "ok 1" },
+        { "block", "Step = { x - 1 }\nrepeat(Step(3), 2)", "ok 1" },
+        { "single-clause structural user definition", "Sw((a, b)) = (b, a)\nrepeat(Sw((1, 2)), 1)", "ok S[2, 1]" },
+        { "clause family", Step + "repeat(Step(3), 2)", "ok 1" },
+        { "clause family, while", Countdown + "while(Countdown(3))", "ok 0" },
+        { "builtin", "repeat(count([1, 2]), 1)", "ok 2" },
+        { "lazy builtin", "repeat(if(true, 1, 2), 1)", "ok 1" },
+        { "Math function", "repeat(abs(-3), 2)", "ok 3" },
+        { "Math function, canonical (named, CR-2)", "P = Math.Pow\nrepeat(P(2, 3), 1)", "ok 8" },
+        { "host operation", "repeat(trace(5), 2)", "ok 5" },
+        { "alias of a user algorithm", "S(n) = n - 1\nA = S\nB = A\nrepeat(B(3), 2)", "ok 1" },
+        { "alias of a clause family", Step + "A = Step\nB = A\nrepeat(B(3), 2)", "ok 1" },
+        { "alias of a builtin", "A = count\nB = A\nrepeat(B([1, 2]), 1)", "ok 2" },
+        { "alias of a Math function", "A = abs\nB = A\nrepeat(B(-3), 2)", "ok 3" },
+        { "alias of a host operation", "A = trace\nB = A\nrepeat(B(5), 2)", "ok 5" },
+        { "inline-block alias of a family", Step + "B = { Step }\nrepeat(B(3), 2)", "ok 1" },
+        { "inline-block alias of a builtin", "Step = { count }\nrepeat(Step([1, 2]), 1)", "ok 2" },
         { "forwarded user algorithm", Forward + "S(n) = n - 1\nRun(S, 3)", "ok 1" },
         { "forwarded clause family", Forward + Step + "Run(Step, 3)", "ok 1" },
         { "forwarded builtin", Forward + "Run1(count, [1, 2])", "ok 2" },
@@ -60,27 +60,32 @@ public partial class LoopStepCallableDispatchTests
         { "forwarded host operation", Forward + "Run(trace, 5)", "ok 5" },
         { "forwarded alias of a family", Forward + Step + "A = Step\nRun(A, 3)", "ok 1" },
         { "family forwarded through two levels", Forward + Step + "Run2(Step, 3)", "ok 1" },
-        { "qualified family member", Lib + "repeat(Lib.Step, 2, 3)", "ok 1" },
-        { "fluent family member", Lib + "Lib.Step.repeat(2, 3)", "ok 1" },
-        { "opened family member", "open Lib\n" + Lib + "repeat(Step, 2, 3)", "ok 1" },
-        { "alias member of a builtin", Lib + "repeat(Lib.C, 1, [1, 2])", "ok 2" },
+        { "qualified family member (named, CR-2)", Lib + "S = Lib.Step\nrepeat(S(3), 2)", "ok 1" },
+        { "fluent family member (named, CR-2)", Lib + "S = Lib.Step\nS(3).repeat(2)", "ok 1" },
+        { "opened family member", "open Lib\n" + Lib + "repeat(Step(3), 2)", "ok 1" },
+        { "alias member of a builtin (named, CR-2)", Lib + "C = Lib.C\nrepeat(C([1, 2]), 1)", "ok 2" },
         { "forwarded family member", Forward + Lib + "Run(Lib.Step, 3)", "ok 1" },
-        { "dot spelling of a family", Step + "Step.repeat(2, 3)", "ok 1" },
-        { "dot spelling of a builtin", "count.repeat(1, [1, 2])", "ok 2" },
-        { "dot spelling of a Math function", "abs.repeat(2, -3)", "ok 3" },
-        { "clause family, wrong state arity", Step + "repeat(Step, 1, 1, 2)", "err ArityMismatch" },
-        { "clause family, no matching clause", Partial + "repeat(F, 1, 5)", "err NoMatchingBranch" },
-        { "builtin, wrong state arity", "repeat(take, 1, [1, 2])", "err ArityMismatch" },
-        { "builtin, wrong argument kind", "repeat(if, 1, 5, 1, 2)", "err TypeMismatch" },
-        { "Math function, wrong state arity", "repeat(Math.Pow, 1, 2)", "err ArityMismatch" },
-        { "number", "repeat(5, 1, 0)", "notAnAlgorithm" },
-        { "list", "repeat([1], 1, 0)", "notAnAlgorithm" },
-        { "empty sequence", "repeat((), 1, 0)", "notAnAlgorithm" },
-        { "call result", "Inc(x) = x + 1\nrepeat(Inc(1), 1, 0)", "notAnAlgorithm" },
-        { "selection", "A = 1, 2\nrepeat(A[0], 1, 0)", "notAnAlgorithm" },
-        { "zero-parameter property", "Z = 5\nrepeat(Z, 1, 0)", "unbound" },
-        { "zero-parameter host operation", "repeat(tick, 1, 0)", "unbound" },
-        { "zero-parameter Math member", "repeat(pi, 1, 0)", "unbound" },
+        { "dot spelling of a family", Step + "Step(3).repeat(2)", "ok 1" },
+        { "dot spelling of a builtin", "count([1, 2]).repeat(1)", "ok 2" },
+        { "dot spelling of a Math function", "abs(-3).repeat(2)", "ok 3" },
+        { "clause family, wrong state arity", Step + "repeat(Step(1, 2), 1)", "err ArityMismatch" },
+        { "clause family, no matching clause", Partial + "repeat(F(5), 1)", "err NoMatchingBranch" },
+        { "builtin, wrong state arity", "repeat(take([1, 2]), 1)", "err ArityMismatch" },
+        { "builtin, wrong argument kind", "repeat(if(5, 1, 2), 1)", "err TypeMismatch" },
+        { "Math function, wrong state arity", "P = Math.Pow\nrepeat(P(2), 1)", "err ArityMismatch" },
+        { "number", Forward + "Run(5, 0)", "notAnAlgorithm" },
+        { "list", Forward + "Run([1], 0)", "notAnAlgorithm" },
+        { "empty sequence", Forward + "Run((), 0)", "notAnAlgorithm" },
+        { "call result", "Inc(x) = x + 1\n" + Forward + "Run(Inc(1), 0)", "notAnAlgorithm" },
+        { "selection", "A = 1, 2\n" + Forward + "Run(A[0], 0)", "notAnAlgorithm" },
+        // META-S3-3: a value, a dot callee or a property read written as the META argument itself is
+        // refused by META capture (CR-2, D6), before any step exists.
+        { "number as the META argument", "repeat(5, 1)", "metaRefusal" },
+        { "qualified member call as the META argument", Lib + "repeat(Lib.Step(3), 2)", "metaRefusal" },
+        { "property read as the META argument", Step + "Start = Step(3)\nrepeat(Start, 2)", "metaRefusal" },
+        { "zero-parameter property", "Z = 5\nrepeat(Z(0), 1)", "unbound" },
+        { "zero-parameter host operation", "repeat(tick(0), 1)", "unbound" },
+        { "zero-parameter Math member", "repeat(pi(0), 1)", "unbound" },
     };
 
     [Theory]
@@ -107,6 +112,13 @@ public partial class LoopStepCallableDispatchTests
             return;
         }
 
+        if (expected == "metaRefusal")
+        {
+            Assert.StartsWith("NotAnAlgorithm: ", error, StringComparison.Ordinal);
+            Assert.Contains(KatLangError.MetaRefusalMessage, error, StringComparison.Ordinal);
+            return;
+        }
+
         if (expected == "unbound")
         {
             // A callable whose real arity is zero: the loop-state binding failure (X-23's truthful
@@ -127,21 +139,21 @@ public partial class LoopStepCallableDispatchTests
     [Fact]
     public async Task Family_CanonicalWitness_IteratesLikeNestedCalls()
     {
-        var (observation, _) = await AllRoutesAsync(Step + "repeat(Step, 2, 3), Step.repeat(5, 3), Step(Step(3))");
+        var (observation, _) = await AllRoutesAsync(Step + "repeat(Step(3), 2), Step(3).repeat(5), Step(Step(3))");
         Assert.Equal(("ok", "S[1, 0, 1]"), (observation.Kind, observation.Value));
     }
 
     [Fact]
     public async Task Family_While_ReadsTheSelectedClausesLastRowAsTheFlag()
     {
-        var (observation, _) = await AllRoutesAsync(Countdown + "Countdown.while(3), while(Countdown, 0), Countdown(3)");
+        var (observation, _) = await AllRoutesAsync(Countdown + "Countdown(3).while, while(Countdown(0)), Countdown(3)");
         Assert.Equal(("ok", "S[0, 0, S[2, true]]"), (observation.Kind, observation.Value));
     }
 
     [Fact]
     public async Task Family_MultiSlotWhile_MatchesLiteralsAndSuppliesTheSelectedRows()
     {
-        var (observation, _) = await AllRoutesAsync(Gcd + "while(Gcd, 48, 18), Gcd.while(48, 18)[0], while(Gcd, 7, 0)");
+        var (observation, _) = await AllRoutesAsync(Gcd + "while(Gcd(48, 18)), Gcd(48, 18).while[0], while(Gcd(7, 0))");
         Assert.Equal(("ok", "S[S[6, 0], 6, S[7, 0]]"), (observation.Kind, observation.Value));
     }
 
@@ -149,16 +161,16 @@ public partial class LoopStepCallableDispatchTests
     public async Task Family_ClauseOrder_IsTheFamilysOwn()
     {
         // The first matching clause wins in the loop exactly as in the call: no specificity sorting.
-        var (observation, _) = await AllRoutesAsync("F(x) = 1\nF(0) = 2\nrepeat(F, 1, 0), F(0)");
+        var (observation, _) = await AllRoutesAsync("F(x) = 1\nF(0) = 2\nrepeat(F(0), 1), F(0)");
         Assert.Equal(("ok", "S[1, 1]"), (observation.Kind, observation.Value));
     }
 
     [Theory]
-    [InlineData("Sw((a, b)) = (b, a)\nSw([a, b]) = [b, a]\nrepeat(Sw, 1, (1, 2)), repeat(Sw, 1, [1, 2])", "S[S[2, 1], L[2, 1]]")]
-    [InlineData("P((0, b)) = (b, 1)\nP((a, b)) = (b, a + b)\nrepeat(P, 3, (0, 1)), P(P(P((0, 1))))", "S[S[2, 3], S[2, 3]]")]
-    [InlineData("N(((a, b), c)) = ((c, b), a)\nN(x) = x\nrepeat(N, 2, ((1, 2), 3)), N(N(((1, 2), 3)))", "S[S[S[1, 2], 3], S[S[1, 2], 3]]")]
-    [InlineData("R((x, x)) = 0\nR((x, y)) = 1\nrepeat(R, 1, (1, 1)), repeat(R, 1, (1, 2))", "S[0, 1]")]
-    [InlineData("H(0) = 1\nH([x]) = x\nrepeat(H, 1, 0), repeat(H, 1, [5])", "S[1, 5]")]
+    [InlineData("Sw((a, b)) = (b, a)\nSw([a, b]) = [b, a]\nrepeat(Sw((1, 2)), 1), repeat(Sw([1, 2]), 1)", "S[S[2, 1], L[2, 1]]")]
+    [InlineData("P((0, b)) = (b, 1)\nP((a, b)) = (b, a + b)\nrepeat(P((0, 1)), 3), P(P(P((0, 1))))", "S[S[2, 3], S[2, 3]]")]
+    [InlineData("N(((a, b), c)) = ((c, b), a)\nN(x) = x\nrepeat(N(((1, 2), 3)), 2), N(N(((1, 2), 3)))", "S[S[S[1, 2], 3], S[S[1, 2], 3]]")]
+    [InlineData("R((x, x)) = 0\nR((x, y)) = 1\nrepeat(R((1, 1)), 1), repeat(R((1, 2)), 1)", "S[0, 1]")]
+    [InlineData("H(0) = 1\nH([x]) = x\nrepeat(H(0), 1), repeat(H([5]), 1)", "S[1, 5]")]
     public async Task Family_StructuralClauses_BindThroughTheOrdinaryDispatcher(string source, string expected)
     {
         var (observation, _) = await AllRoutesAsync(source);
@@ -169,12 +181,12 @@ public partial class LoopStepCallableDispatchTests
     public async Task Family_RepeatedNames_BindTheIncomingStateOnly()
     {
         // E(0, 2) -> (1, 2) -> (2, 2) -> E(2, 2) = (0, 0): equality decides the clause.
-        var (converge, _) = await AllRoutesAsync("E(x, x) = 0, 0\nE(a, b) = a + 1, b\nrepeat(E, 3, 0, 2)");
+        var (converge, _) = await AllRoutesAsync("E(x, x) = 0, 0\nE(a, b) = a + 1, b\nrepeat(E(0, 2), 3)");
         Assert.Equal(("ok", "S[0, 0]"), (converge.Kind, converge.Value));
 
         // A repeated-name clause's spread row supplies its items: no pattern category repacks the
         // outgoing state (Q-24), so the second iteration re-binds two slots.
-        var (spread, _) = await AllRoutesAsync("D(x, x) = { (x, x)* }\nD(a, b) = { (a, b)* }\nrepeat(D, 2, 1, 1)");
+        var (spread, _) = await AllRoutesAsync("D(x, x) = { (x, x)* }\nD(a, b) = { (a, b)* }\nrepeat(D(1, 1), 2)");
         Assert.Equal(("ok", "S[1, 1]"), (spread.Kind, spread.Value));
     }
 
@@ -183,30 +195,30 @@ public partial class LoopStepCallableDispatchTests
     {
         // Two rows are two slots: a second iteration of the one-parameter family is its ordinary arity
         // failure. Reading the clause as the call's one value would re-bind the pair instead.
-        var (twice, _) = await AllRoutesAsync("Two(0) = 9, 9\nTwo(n) = n, n\nrepeat(Two, 2, 1)");
+        var (twice, _) = await AllRoutesAsync("Two(0) = 9, 9\nTwo(n) = n, n\nrepeat(Two(1), 2)");
         Assert.Equal("err", twice.Kind);
         Assert.StartsWith("ArityMismatch: while evaluating call to repeat: Property 'Two' expects 1 parameter, but was called with 2 arguments.",
             Assert.Single(twice.Errors), StringComparison.Ordinal);
 
         var (shapes, _) = await AllRoutesAsync(
             "One(0) = (9, 9)\nOne(n) = (n, n)\nSpread(0) = { (9, 9)* }\nSpread(n) = { (n, n)* }\nNone(0) = { ()* }\nNone(n) = { ()* }\nEmpty(0) = ()\nEmpty(n) = ()\n"
-            + "repeat(One, 2, 1), repeat(Spread, 1, 1), repeat(None, 1, 1), repeat(Empty, 2, 1)");
+            + "repeat(One(1), 2), repeat(Spread(1), 1), repeat(None(1), 1), repeat(Empty(1), 2)");
         Assert.Equal(("ok", "S[S[S[1, 1], S[1, 1]], S[1, 1], S[], S[]]"), (shapes.Kind, shapes.Value));
     }
 
     [Fact]
     public async Task Family_NoMatch_IsTheOrdinaryNoMatchingBranch_NeverTermination()
     {
-        var (first, _) = await AllRoutesAsync(Partial + "repeat(F, 1, 5)");
+        var (first, _) = await AllRoutesAsync(Partial + "repeat(F(5), 1)");
         Assert.Equal(
             ["NoMatchingBranch: while evaluating call to repeat: while evaluating call to F: No matching branch for 'F' @ [3:1, 3:16)"],
             first.Errors);
 
         // A non-match on a LATER iteration is the same failure; only a `false` flag ends a `while`.
-        var (later, _) = await AllRoutesAsync("S(2) = 1, true\nS(1) = 0, true\nwhile(S, 2)");
+        var (later, _) = await AllRoutesAsync("S(2) = 1, true\nS(1) = 0, true\nwhile(S(2))");
         Assert.Equal("err", later.Kind);
         Assert.StartsWith("NoMatchingBranch: ", Assert.Single(later.Errors), StringComparison.Ordinal);
-        var (stops, _) = await AllRoutesAsync("S(2) = 1, true\nS(1) = 0, false\nwhile(S, 2)");
+        var (stops, _) = await AllRoutesAsync("S(2) = 1, true\nS(1) = 0, false\nwhile(S(2))");
         Assert.Equal(("ok", "1"), (stops.Kind, stops.Value));
     }
 
@@ -215,7 +227,7 @@ public partial class LoopStepCallableDispatchTests
     {
         // The step's own frame names the expression its SUPPLY CELL retains (Lean `loopStepName`): a cell
         // transported through the parameter `f` is still the one written `F` at the outer call, so the
-        // forwarded step reports exactly as the direct `repeat(F, 1, 5)` does.
+        // forwarded step reports exactly as the direct `repeat(F(5), 1)` does.
         var (forwarded, _) = await AllRoutesAsync(Partial + Forward + "Run1(F, 5)");
         Assert.Equal("err", forwarded.Kind);
         Assert.Contains("while evaluating call to repeat: while evaluating call to F: No matching branch for 'F'",
@@ -227,7 +239,7 @@ public partial class LoopStepCallableDispatchTests
     [Fact]
     public async Task Family_WrongStateArity_IsTheFamilysOrdinaryArityFailure()
     {
-        var (loop, _) = await AllRoutesAsync(Step + "repeat(Step, 1, 1, 2)");
+        var (loop, _) = await AllRoutesAsync(Step + "repeat(Step(1, 2), 1)");
         var (call, _) = await AllRoutesAsync(Step + "Step(1, 2)");
         Assert.Equal(
             ["ArityMismatch: while evaluating call to repeat: Property 'Step' expects 1 parameter, but was called with 2 arguments. @ [3:1, 3:22)"],
@@ -237,15 +249,15 @@ public partial class LoopStepCallableDispatchTests
 
         // The structured error is the ordinary invocation's under the loop's frame: the inner frame
         // names the family, never the loop builtin.
-        var error = GenericError(Step + "repeat(Step, 1, 1, 2)");
+        var error = GenericError(Step + "repeat(Step(1, 2), 1)");
         Assert.Equal(["while evaluating call to repeat", "while evaluating call to Step"], Frames(error));
         var arity = Assert.IsType<EvalError.ArityMismatch>(Innermost(error));
         Assert.Equal((1, 2), (arity.Expected, arity.Actual));
     }
 
     [Theory]
-    [InlineData("F(0) = 1 / 0\nF(n) = n\n", "repeat(F, 1, 0)", "F(0)", "DivisionByZero")]
-    [InlineData("F(0) = 0\nF(n) = n + 'x'\n", "repeat(F, 1, 2)", "F(2)", "TypeMismatch")]
+    [InlineData("F(0) = 1 / 0\nF(n) = n\n", "repeat(F(0), 1)", "F(0)", "DivisionByZero")]
+    [InlineData("F(0) = 0\nF(n) = n + 'x'\n", "repeat(F(2), 1)", "F(2)", "TypeMismatch")]
     public async Task Family_SelectedBodyFailure_IsTheOrdinaryFailure(string definitions, string loop, string call, string code)
     {
         var (looped, _) = await AllRoutesAsync(definitions + loop);
@@ -261,19 +273,19 @@ public partial class LoopStepCallableDispatchTests
     public async Task Builtin_IsItsOneRowWrapper()
     {
         var (observation, _) = await AllRoutesAsync(
-            "C(c) = count(c)\nrepeat(count, 1, [1, 2]) == repeat(C, 1, [1, 2]), count.repeat(1, [1, 2]), repeat(count, 2, [1, 2]), count(count([1, 2]))");
+            "C(c) = count(c)\nrepeat(count([1, 2]), 1) == repeat(C([1, 2]), 1), count([1, 2]).repeat(1), repeat(count([1, 2]), 2), count(count([1, 2]))");
         Assert.Equal(("ok", "S[true, 2, 1, 1]"), (observation.Kind, observation.Value));
     }
 
     [Theory]
-    [InlineData("repeat(take, 1, [1, 2, 3], 2)", "L[1, 2]")]
-    [InlineData("repeat(skip, 1, [1, 2, 3], 1)", "L[2, 3]")]
-    [InlineData("repeat(order, 1, [3, 1, 2])", "L[1, 2, 3]")]
-    [InlineData("repeat(orderDesc, 2, [1, 3, 2])", "L[3, 2, 1]")]
-    [InlineData("repeat(distinct, 1, [1, 1, 2])", "L[1, 2]")]
-    [InlineData("repeat(atoms, 1, (1, (2, 3)))", "L[1, 2, 3]")]
-    [InlineData("repeat(range, 1, 1, 3)", "L[1, 2, 3]")]
-    [InlineData("repeat(take, 1, [1, 2], 0)", "L[]")]
+    [InlineData("repeat(take([1, 2, 3], 2), 1)", "L[1, 2]")]
+    [InlineData("repeat(skip([1, 2, 3], 1), 1)", "L[2, 3]")]
+    [InlineData("repeat(order([3, 1, 2]), 1)", "L[1, 2, 3]")]
+    [InlineData("repeat(orderDesc([1, 3, 2]), 2)", "L[3, 2, 1]")]
+    [InlineData("repeat(distinct([1, 1, 2]), 1)", "L[1, 2]")]
+    [InlineData("repeat(atoms((1, (2, 3))), 1)", "L[1, 2, 3]")]
+    [InlineData("repeat(range(1, 3), 1)", "L[1, 2, 3]")]
+    [InlineData("repeat(take([1, 2], 0), 1)", "L[]")]
     public async Task Builtin_CollectionResult_IsOneStateSlot(string source, string expected)
     {
         var (observation, _) = await AllRoutesAsync(source);
@@ -284,16 +296,16 @@ public partial class LoopStepCallableDispatchTests
     public async Task Builtin_CollectionResult_NeverBecomesTheNextStateArity()
     {
         // take([1, 2, 3], 2) is ONE slot holding [1, 2]: the next `take` call has one argument.
-        var (observation, _) = await AllRoutesAsync("repeat(take, 2, [1, 2, 3], 2)");
+        var (observation, _) = await AllRoutesAsync("repeat(take([1, 2, 3], 2), 2)");
         Assert.Equal(
             ["ArityMismatch: while evaluating call to repeat: Callable `take(collection, count)` expects 2 arguments, but was called with 1 argument. @ [1:1, 1:30)"],
             observation.Errors);
     }
 
     [Theory]
-    [InlineData("repeat(first, 1, [()])", "Fi(c) = first(c)\nrepeat(Fi, 1, [()])")]
-    [InlineData("repeat(if, 1, true, (), 1)", "I(c, t, e) = if(c, t, e)\nrepeat(I, 1, true, (), 1)")]
-    [InlineData("while(first, [()])", "Fi(c) = first(c)\nwhile(Fi, [()])")]
+    [InlineData("repeat(first([()]), 1)", "Fi(c) = first(c)\nrepeat(Fi([()]), 1)")]
+    [InlineData("repeat(if(true, (), 1), 1)", "I(c, t, e) = if(c, t, e)\nrepeat(I(true, (), 1), 1)")]
+    [InlineData("while(first([()]))", "Fi(c) = first(c)\nwhile(Fi([()]))")]
     public async Task Builtin_EmptyResult_IsOneEmptySlot_LikeItsWrapper(string direct, string wrapper)
     {
         var (builtin, _) = await AllRoutesAsync(direct);
@@ -314,21 +326,21 @@ public partial class LoopStepCallableDispatchTests
     [Fact]
     public async Task Builtin_If_KeepsItsLazyRoles()
     {
-        var (unselected, _) = await AllRoutesAsync("repeat(if, 1, false, 1 / 0, 2)");
+        var (unselected, _) = await AllRoutesAsync("repeat(if(false, 1 / 0, 2), 1)");
         Assert.Equal(("ok", "2"), (unselected.Kind, unselected.Value));
 
-        var (loop, _) = await AllRoutesAsync("repeat(if, 1, trace(false), trace(1) / 0, trace(2))");
+        var (loop, _) = await AllRoutesAsync("repeat(if(trace(false), trace(1) / 0, trace(2)), 1)");
         var (call, _) = await AllRoutesAsync("if(trace(false), trace(1) / 0, trace(2))");
         Assert.Equal(call.Semantic, loop.Semantic);
         Assert.Equal(["trace(false)", "trace(2)"], loop.HostCalls);
     }
 
     [Theory]
-    [InlineData("Go(f) = repeat(map, 1, [1, 2], f)\nInc(x) = trace(x) + 1\nGo(Inc)", "Go(f) = map([1, 2], f)\nInc(x) = trace(x) + 1\nGo(Inc)")]
-    [InlineData("repeat(map, 1, [1, 2], { trace(x) + 1 })", "map([1, 2], { trace(x) + 1 })")]
-    [InlineData("repeat(filter, 1, [1, 2, 3], { trace(x) mod 2 == 1 })", "filter([1, 2, 3], { trace(x) mod 2 == 1 })")]
-    [InlineData("repeat(reduce, 1, [1, 2, 3], { trace(e) + a }, 0)", "reduce([1, 2, 3], { trace(e) + a }, 0)")]
-    [InlineData("Go(f) = repeat(reduce, 1, [1, 2, 3], f, 0)\nAdd(e, a) = e + trace(a)\nGo(Add)", "Go(f) = reduce([1, 2, 3], f, 0)\nAdd(e, a) = e + trace(a)\nGo(Add)")]
+    [InlineData("Go(f) = repeat(map([1, 2], f), 1)\nInc(x) = trace(x) + 1\nGo(Inc)", "Go(f) = map([1, 2], f)\nInc(x) = trace(x) + 1\nGo(Inc)")]
+    [InlineData("repeat(map([1, 2], { trace(x) + 1 }), 1)", "map([1, 2], { trace(x) + 1 })")]
+    [InlineData("repeat(filter([1, 2, 3], { trace(x) mod 2 == 1 }), 1)", "filter([1, 2, 3], { trace(x) mod 2 == 1 })")]
+    [InlineData("repeat(reduce([1, 2, 3], { trace(e) + a }, 0), 1)", "reduce([1, 2, 3], { trace(e) + a }, 0)")]
+    [InlineData("Go(f) = repeat(reduce([1, 2, 3], f, 0), 1)\nAdd(e, a) = e + trace(a)\nGo(Add)", "Go(f) = reduce([1, 2, 3], f, 0)\nAdd(e, a) = e + trace(a)\nGo(Add)")]
     public async Task Builtin_CallbackTaking_InvokesTheCallableStateSlotLikeTheCall(string loop, string call)
     {
         var (looped, _) = await AllRoutesAsync(loop);
@@ -343,14 +355,14 @@ public partial class LoopStepCallableDispatchTests
         // A callable carried by a parameter cell into the initial state is invocable by the first
         // iteration (the state is a Model-C supply); a later state is the step's rows, and results
         // never export callable identity.
-        var (first, _) = await AllRoutesAsync("Run(f) = repeat(S, 1, f, 0)\nS(g, y) = g(y), y\nInc(x) = x + 1\nRun(Inc), S(Inc, 0)");
+        var (first, _) = await AllRoutesAsync("Run(f) = repeat(S(f, 0), 1)\nS(g, y) = g(y), y\nInc(x) = x + 1\nRun(Inc), S(Inc, 0)");
         Assert.Equal(("ok", "S[S[1, 0], S[1, 0]]"), (first.Kind, first.Value));
 
-        var (second, _) = await AllRoutesAsync("Run(f) = repeat(S, 2, f, 0)\nS(g, y) = g(y), y\nInc(x) = x + 1\nRun(Inc)");
+        var (second, _) = await AllRoutesAsync("Run(f) = repeat(S(f, 0), 2)\nS(g, y) = g(y), y\nInc(x) = x + 1\nRun(Inc)");
         Assert.Equal("err", second.Kind);
         Assert.StartsWith("NotAnAlgorithm: ", Assert.Single(second.Errors), StringComparison.Ordinal);
 
-        var (builtin, _) = await AllRoutesAsync("Go(f) = repeat(map, 2, [1, 2], f)\nInc(x) = x + 1\nGo(Inc)");
+        var (builtin, _) = await AllRoutesAsync("Go(f) = repeat(map([1, 2], f), 2)\nInc(x) = x + 1\nGo(Inc)");
         Assert.Equal("err", builtin.Kind);
         Assert.Contains("Callable `map(collection, mapper)` expects 2 arguments, but was called with 1 argument.",
             Assert.Single(builtin.Errors), StringComparison.Ordinal);
@@ -359,25 +371,25 @@ public partial class LoopStepCallableDispatchTests
     [Fact]
     public async Task LoopBuiltins_AsSteps_NeedNoExclusion()
     {
-        var (nested, _) = await AllRoutesAsync("repeat(repeat, 1, { x + 1 }, 2, 0), repeat(while, 1, { x + 1, x < 3 }, 0)");
+        var (nested, _) = await AllRoutesAsync("Step2 = { x + 1, x < 3 }\nStep = { x + 1 }\nrepeat(repeat(Step(0), 2), 1), repeat(while(Step2(0)), 1)");
         Assert.Equal(("ok", "S[2, 3]"), (nested.Kind, nested.Value));
 
         // The second iteration's state is the inner loop's one result: `repeat`'s own arity failure.
-        var (second, _) = await AllRoutesAsync("repeat(repeat, 2, { x + 1 }, 2, 0)");
-        Assert.Contains("Callable `repeat(step, count, initialState)` expects at least 3 arguments, but was called with 1 argument.",
+        var (second, _) = await AllRoutesAsync("Step = { x + 1 }\nrepeat(repeat(Step(0), 2), 2)");
+        Assert.Contains("Callable `repeat(meta step, count)` expects 2 arguments, but was called with 1 argument.",
             Assert.Single(second.Errors), StringComparison.Ordinal);
 
         // `while` over `repeat`: the one result slot is the flag.
-        var (flag, _) = await AllRoutesAsync("while(repeat, { x + 1 }, 1, 0)");
+        var (flag, _) = await AllRoutesAsync("Step = { x + 1 }\nwhile(repeat(Step(0), 1))");
         Assert.StartsWith("TypeMismatch: ", Assert.Single(flag.Errors), StringComparison.Ordinal);
     }
 
     [Theory]
-    [InlineData("repeat(take, 1, [1, 2], 1.5)", "take([1, 2], 1.5)")]
-    [InlineData("repeat(sum, 1, ['a'])", "sum(['a'])")]
-    [InlineData("repeat(if, 1, 5, 1, 2)", "if(5, 1, 2)")]
-    [InlineData("repeat(map, 1, [1, 2], 5)", "map([1, 2], 5)")]
-    [InlineData("repeat(count, 1, [1], [2])", "count([1], [2])")]
+    [InlineData("repeat(take([1, 2], 1.5), 1)", "take([1, 2], 1.5)")]
+    [InlineData("repeat(sum(['a']), 1)", "sum(['a'])")]
+    [InlineData("repeat(if(5, 1, 2), 1)", "if(5, 1, 2)")]
+    [InlineData("repeat(map([1, 2], 5), 1)", "map([1, 2], 5)")]
+    [InlineData("repeat(count([1], [2]), 1)", "count([1], [2])")]
     public async Task Builtin_Failures_AreTheOrdinaryInvocationFailures(string loop, string call)
     {
         var (looped, _) = await AllRoutesAsync(loop);
@@ -394,10 +406,10 @@ public partial class LoopStepCallableDispatchTests
     }
 
     [Theory]
-    [InlineData("while(contains, [1, 2], 3)", "ok", "S[L[1, 2], 3]")]
-    [InlineData("while(contains, [1, 2], 1)", "err", "Callable `contains(collection, item)` expects 2 arguments, but was called with 1 argument.")]
-    [InlineData("while(count, [1, 2])", "err", "while continuation flag (the step's last output) must be a Boolean value (true or false), but was numeric value 2")]
-    [InlineData("while(first, [false])", "ok", "L[false]")]
+    [InlineData("while(contains([1, 2], 3))", "ok", "S[L[1, 2], 3]")]
+    [InlineData("while(contains([1, 2], 1))", "err", "Callable `contains(collection, item)` expects 2 arguments, but was called with 1 argument.")]
+    [InlineData("while(count([1, 2]))", "err", "while continuation flag (the step's last output) must be a Boolean value (true or false), but was numeric value 2")]
+    [InlineData("while(first([false]))", "ok", "L[false]")]
     public async Task Builtin_WhileStep_ItsOneResultRowIsAlsoTheFlag(string source, string kind, string expected)
     {
         var (observation, _) = await AllRoutesAsync(source);
@@ -415,18 +427,18 @@ public partial class LoopStepCallableDispatchTests
     /// cardinality (exercised by the later iterations), error cause, effects and demand.</summary>
     public static TheoryData<string, string> DirectAndWrapper() => new()
     {
-        { Step + "repeat(Step, 3, trace(3))", Step + "W(n) = Step(n)\nrepeat(W, 3, trace(3))" },
-        { Step + "repeat(Step, 2, 1, 2)", Step + "W(a, b) = Step(a, b)\nrepeat(W, 2, 1, 2)" },
-        { Countdown + "while(Countdown, trace(3))", Countdown + "W(n) = { Countdown(n)* }\nwhile(W, trace(3))" },
-        { Gcd + "while(Gcd, trace(48), trace(18))", Gcd + "W(a, b) = { Gcd(a, b)* }\nwhile(W, trace(48), trace(18))" },
-        { Partial + "repeat(F, 2, trace(0))", Partial + "W(n) = F(n)\nrepeat(W, 2, trace(0))" },
-        { "Two(0) = 9, 9\nTwo(n) = n, n\nrepeat(Two, 2, 1)", "Two(0) = 9, 9\nTwo(n) = n, n\nW(n) = { Two(n)* }\nrepeat(W, 2, 1)" },
-        { "repeat(count, 2, trace([1, 2]))", "W(c) = count(c)\nrepeat(W, 2, trace([1, 2]))" },
-        { "repeat(take, 2, trace([1, 2, 3]), trace(2))", "W(c, n) = take(c, n)\nrepeat(W, 2, trace([1, 2, 3]), trace(2))" },
-        { "repeat(if, 1, trace(true), trace(()), trace(1))", "W(c, t, e) = if(c, t, e)\nrepeat(W, 1, trace(true), trace(()), trace(1))" },
-        { "while(contains, trace([1, 2]), trace(3))", "W(c, x) = contains(c, x)\nwhile(W, trace([1, 2]), trace(3))" },
-        { "while(first, [()])", "W(c) = first(c)\nwhile(W, [()])" },
-        { "repeat(range, 1, 1, trace(3))", "W(a, b) = range(a, b)\nrepeat(W, 1, 1, trace(3))" },
+        { Step + "repeat(Step(trace(3)), 3)", Step + "W(n) = Step(n)\nrepeat(W(trace(3)), 3)" },
+        { Step + "repeat(Step(1, 2), 2)", Step + "W(a, b) = Step(a, b)\nrepeat(W(1, 2), 2)" },
+        { Countdown + "while(Countdown(trace(3)))", Countdown + "W(n) = { Countdown(n)* }\nwhile(W(trace(3)))" },
+        { Gcd + "while(Gcd(trace(48), trace(18)))", Gcd + "W(a, b) = { Gcd(a, b)* }\nwhile(W(trace(48), trace(18)))" },
+        { Partial + "repeat(F(trace(0)), 2)", Partial + "W(n) = F(n)\nrepeat(W(trace(0)), 2)" },
+        { "Two(0) = 9, 9\nTwo(n) = n, n\nrepeat(Two(1), 2)", "Two(0) = 9, 9\nTwo(n) = n, n\nW(n) = { Two(n)* }\nrepeat(W(1), 2)" },
+        { "repeat(count(trace([1, 2])), 2)", "W(c) = count(c)\nrepeat(W(trace([1, 2])), 2)" },
+        { "repeat(take(trace([1, 2, 3]), trace(2)), 2)", "W(c, n) = take(c, n)\nrepeat(W(trace([1, 2, 3]), trace(2)), 2)" },
+        { "repeat(if(trace(true), trace(()), trace(1)), 1)", "W(c, t, e) = if(c, t, e)\nrepeat(W(trace(true), trace(()), trace(1)), 1)" },
+        { "while(contains(trace([1, 2]), trace(3)))", "W(c, x) = contains(c, x)\nwhile(W(trace([1, 2]), trace(3)))" },
+        { "while(first([()]))", "W(c) = first(c)\nwhile(W([()]))" },
+        { "repeat(range(1, trace(3)), 1)", "W(a, b) = range(a, b)\nrepeat(W(1, trace(3)), 1)" },
     };
 
     [Theory]
@@ -446,9 +458,9 @@ public partial class LoopStepCallableDispatchTests
     [InlineData("", "trace", "5")]
     public async Task Aliases_AreTheirTargets(string definitions, string target, string state)
     {
-        var (direct, _) = await AllRoutesAsync($"{definitions}repeat({target}, 1, {state}), repeat({target}, 0, {state})");
-        var (alias, _) = await AllRoutesAsync($"{definitions}A = {target}\nrepeat(A, 1, {state}), repeat(A, 0, {state})");
-        var (chain, _) = await AllRoutesAsync($"{definitions}A = {target}\nB = A\nrepeat(B, 1, {state}), repeat(B, 0, {state})");
+        var (direct, _) = await AllRoutesAsync($"{definitions}repeat({target}({state}), 1), repeat({target}({state}), 0)");
+        var (alias, _) = await AllRoutesAsync($"{definitions}A = {target}\nrepeat(A({state}), 1), repeat(A({state}), 0)");
+        var (chain, _) = await AllRoutesAsync($"{definitions}A = {target}\nB = A\nrepeat(B({state}), 1), repeat(B({state}), 0)");
         Assert.Equal("ok", direct.Kind);
         Assert.Equal(direct.Semantic, alias.Semantic);
         Assert.Equal(direct.Semantic, chain.Semantic);
@@ -464,7 +476,7 @@ public partial class LoopStepCallableDispatchTests
     [InlineData(Gcd, "Gcd", "48, 18")]
     public async Task ForwardedCallables_FollowTheResolvedTarget(string definitions, string target, string state)
     {
-        var (direct, _) = await AllRoutesAsync($"{definitions}repeat({target}, 2, {state})");
+        var (direct, _) = await AllRoutesAsync($"{definitions}repeat({target}({state}), 2)");
         var (once, _) = await AllRoutesAsync($"{definitions}{Forward}Run({target}, {state})");
         var (twice, _) = await AllRoutesAsync($"{definitions}{Forward}Run2({target}, {state})");
         Assert.Equal(direct.Semantic, once.Semantic);
@@ -474,13 +486,11 @@ public partial class LoopStepCallableDispatchTests
     // ── 5. Zero iterations never project the step (LOOP-05) ────────────────────────────────────
 
     [Theory]
-    [InlineData(Step + "repeat(Step, 0, trace(1))")]
-    [InlineData(Partial + "repeat(F, 0, trace(1))")]
-    [InlineData("repeat(count, 0, trace(1))")]
-    [InlineData("repeat(5, 0, trace(1))")]
-    [InlineData("repeat(trace(9) / 0, 0, trace(1))")]
-    [InlineData(Step + "A = Step\nrepeat(A, 0, trace(1))")]
-    [InlineData("A = count\nB = A\nrepeat(B, 0, trace(1))")]
+    [InlineData(Step + "repeat(Step(trace(1)), 0)")]
+    [InlineData(Partial + "repeat(F(trace(1)), 0)")]
+    [InlineData("repeat(count(trace(1)), 0)")]
+    [InlineData(Step + "A = Step\nrepeat(A(trace(1)), 0)")]
+    [InlineData("A = count\nB = A\nrepeat(B(trace(1)), 0)")]
     public async Task ZeroIterations_NeverProjectOrInvokeTheStep(string source)
     {
         // The step expression is never evaluated (no trace(9)); the initial cell is demanded only by
@@ -488,7 +498,21 @@ public partial class LoopStepCallableDispatchTests
         var (observation, budget) = await AllRoutesAsync(source);
         Assert.Equal(("ok", "1"), (observation.Kind, observation.Value));
         Assert.Equal(["trace(1)"], observation.HostCalls);
-        var (_, reference) = await AllRoutesAsync("U(n) = n\nrepeat(U, 0, trace(1))");
+        var (_, reference) = await AllRoutesAsync("U(n) = n\nrepeat(U(trace(1)), 0)");
+        Assert.Equal(reference, budget);
+    }
+
+    /// <summary>A callee with no callable identity reaches the step slot through a parameter
+    /// (META-S3-3): zero iterations never project it either.</summary>
+    [Theory]
+    [InlineData("Run(f, s) = repeat(f(s), 0)\nRun(5, trace(1))")]
+    [InlineData("Run(f, s) = repeat(f(s), 0)\nRun(trace(9) / 0, trace(1))")]
+    public async Task ZeroIterations_NeverProjectAValueCallee(string source)
+    {
+        var (observation, budget) = await AllRoutesAsync(source);
+        Assert.Equal(("ok", "1"), (observation.Kind, observation.Value));
+        Assert.Equal(["trace(1)"], observation.HostCalls);
+        var (_, reference) = await AllRoutesAsync("U(n) = n\nRun(f, s) = repeat(f(s), 0)\nRun(U, trace(1))");
         Assert.Equal(reference, budget);
     }
 
@@ -521,17 +545,17 @@ public partial class LoopStepCallableDispatchTests
             "builtin lazy branches" => "if",
             _ => "take",
         } : definitions[..definitions.IndexOf('(')];
-        var (loop, _) = await AllRoutesAsync($"{definitions}repeat({callee}, 1, {supply})");
+        var (loop, _) = await AllRoutesAsync($"{definitions}repeat({callee}({supply}), 1)");
         var (call, _) = await AllRoutesAsync($"{definitions}{callee}({supply})");
         Assert.Equal(call.Semantic, loop.Semantic);
     }
 
     [Theory]
-    [InlineData("Run(x, y) = repeat(F, 1, x, y)\nF(0, b) = b\nF(a, b) = a\nRun(trace(4), trace(5))",
+    [InlineData("Run(x, y) = repeat(F(x, y), 1)\nF(0, b) = b\nF(a, b) = a\nRun(trace(4), trace(5))",
         "Run(x, y) = F(x, y)\nF(0, b) = b\nF(a, b) = a\nRun(trace(4), trace(5))")]
-    [InlineData("Outer(k) = {\n  S(0) = k\n  S(n) = n - 1\n  repeat(S, 2, 1)\n}\nOuter(trace(9))",
+    [InlineData("Outer(k) = {\n  S(0) = k\n  S(n) = n - 1\n  repeat(S(1), 2)\n}\nOuter(trace(9))",
         "Outer(k) = {\n  S(0) = k\n  S(n) = n - 1\n  S(S(1))\n}\nOuter(trace(9))")]
-    [InlineData("A = trace(7)\nF(0) = A\nF(n) = A + n\nrepeat(F, 2, 1), A",
+    [InlineData("A = trace(7)\nF(0) = A\nF(n) = A + n\nrepeat(F(1), 2), A",
         "A = trace(7)\nF(0) = A\nF(n) = A + n\nF(F(1)), A")]
     public async Task ForwardedAndCapturedCells_AreTransportedNotForced(string loop, string calls)
     {
@@ -544,17 +568,17 @@ public partial class LoopStepCallableDispatchTests
     public async Task FamilyStep_LocalPropertiesBelongToEachIterationsActivation()
     {
         const string definitions = "A = tick()\nF(0) = 0\nF(n) = {\n  T = n + tick()\n  n - 1 + A - A + T - T\n}\n";
-        var (loop, _) = await AllRoutesAsync(definitions + "repeat(F, 3, 3), A");
+        var (loop, _) = await AllRoutesAsync(definitions + "repeat(F(3), 3), A");
         var (call, _) = await AllRoutesAsync(definitions + "F(F(F(3))), A");
         Assert.Equal(call.Semantic, loop.Semantic);
         Assert.Equal(["tick#1", "tick#2", "tick#3", "tick#4"], loop.HostCalls);
     }
 
     [Theory]
-    [InlineData("F(0, b) = b\nF(a, b) = a\n", "repeat(F, 1, randomInt(0, 1), random(0, 1))", "F(randomInt(0, 1), random(0, 1))")]
-    [InlineData("F(0) = randomInt(0, 9)\nF(n) = n + randomInt(0, 9)\n", "repeat(F, 2, 0)", "F(F(0))")]
-    [InlineData("", "repeat(range, 1, randomInt(1, 3), randomInt(3, 5))", "range(randomInt(1, 3), randomInt(3, 5))")]
-    [InlineData("Go(f) = repeat(map, 1, [1, 2], f)\nR(x) = x + randomInt(0, 9)\n", "Go(R)", "map([1, 2], R)")]
+    [InlineData("F(0, b) = b\nF(a, b) = a\n", "repeat(F(randomInt(0, 1), random(0, 1)), 1)", "F(randomInt(0, 1), random(0, 1))")]
+    [InlineData("F(0) = randomInt(0, 9)\nF(n) = n + randomInt(0, 9)\n", "repeat(F(0), 2)", "F(F(0))")]
+    [InlineData("", "repeat(range(randomInt(1, 3), randomInt(3, 5)), 1)", "range(randomInt(1, 3), randomInt(3, 5))")]
+    [InlineData("Go(f) = repeat(map([1, 2], f), 1)\nR(x) = x + randomInt(0, 9)\n", "Go(R)", "map([1, 2], R)")]
     public async Task SeededRandomness_DrawsInTheOrdinaryOrder(string definitions, string loop, string call)
     {
         foreach (var seed in new long[] { 3, 7, 11 })
@@ -567,11 +591,11 @@ public partial class LoopStepCallableDispatchTests
     }
 
     [Theory]
-    [InlineData(Step + "repeat(Step, cancel(1), trace(3))", null)]
-    [InlineData("F(0, b) = 0\nF(a, b) = a + b\nrepeat(F, 1, cancel(5), trace(6))", "F(0, b) = 0\nF(a, b) = a + b\nF(cancel(5), trace(6))")]
-    [InlineData("repeat(take, 1, cancel([1, 2]), trace(1))", "take(cancel([1, 2]), trace(1))")]
-    [InlineData("F(0) = 0\nF(n) = cancel(n) - 1 + trace(100)\nrepeat(F, 3, 3)", "F(0) = 0\nF(n) = cancel(n) - 1 + trace(100)\nF(F(F(3)))")]
-    [InlineData("Go(f) = repeat(map, 1, [1, 2], f)\nInc(x) = cancel(x) + trace(x)\nGo(Inc)", "Go(f) = map([1, 2], f)\nInc(x) = cancel(x) + trace(x)\nGo(Inc)")]
+    [InlineData(Step + "repeat(Step(trace(3)), cancel(1))", null)]
+    [InlineData("F(0, b) = 0\nF(a, b) = a + b\nrepeat(F(cancel(5), trace(6)), 1)", "F(0, b) = 0\nF(a, b) = a + b\nF(cancel(5), trace(6))")]
+    [InlineData("repeat(take(cancel([1, 2]), trace(1)), 1)", "take(cancel([1, 2]), trace(1))")]
+    [InlineData("F(0) = 0\nF(n) = cancel(n) - 1 + trace(100)\nrepeat(F(3), 3)", "F(0) = 0\nF(n) = cancel(n) - 1 + trace(100)\nF(F(F(3)))")]
+    [InlineData("Go(f) = repeat(map([1, 2], f), 1)\nInc(x) = cancel(x) + trace(x)\nGo(Inc)", "Go(f) = map([1, 2], f)\nInc(x) = cancel(x) + trace(x)\nGo(Inc)")]
     public async Task Cancellation_IsObservedWhereTheOrdinaryCallObservesIt(string loop, string? call)
     {
         var (looped, _) = await AllRoutesAsync(loop);
@@ -591,19 +615,19 @@ public partial class LoopStepCallableDispatchTests
 
     public static TheoryData<string, string> LimitedPrograms() => new()
     {
-        { Step + "repeat(Step, 50, 50)", "max-steps=40" },
-        { Step + "repeat(Step, 50, 50)", "max-depth=1" },
-        { "F(0) = 0\nF(n) = F(n - 1)\nrepeat(F, 1, 30)", "max-depth=12" },
-        { "repeat(range, 1, 1, 50)", "max-coll=30" },
-        { "repeat(order, 5, [5, 4, 3, 2, 1, 6, 7, 8, 9, 10])", "max-mat=40" },
-        { "repeat(count, 1, 'abcdefghijkl')", "max-string=8" },
-        { "F(0) = 'done'\nF(n) = n.string\nrepeat(F, 1, 12345)", "max-string-chars=3" },
-        { "while(first, [true])", "max-steps=200" },
-        { "F(0) = 0, false\nF(n) = n, true\nwhile(F, 1)", "max-steps=200" },
-        { "S(x) = repeat(F, 2, x)\nF(0) = 0\nF(n) = n - 1\nrepeat(S, 3, 10)", "max-steps=9" },
-        { "S(x) = repeat(W, 2, x)\nW(n) = F(n)\nF(0) = 0\nF(n) = n - 1\nrepeat(S, 3, 10)", "max-steps=9" },
-        { "S(c) = repeat(order, 1, c)\nrepeat(S, 2, [3, 1, 2])", "default" },
-        { "S(x) = repeat(F, 1, x + 2), x < 5\nF(0) = 0\nF(n) = n - 1\nwhile(S, 0)", "default" },
+        { Step + "repeat(Step(50), 50)", "max-steps=40" },
+        { Step + "repeat(Step(50), 50)", "max-depth=1" },
+        { "F(0) = 0\nF(n) = F(n - 1)\nrepeat(F(30), 1)", "max-depth=12" },
+        { "repeat(range(1, 50), 1)", "max-coll=30" },
+        { "repeat(order([5, 4, 3, 2, 1, 6, 7, 8, 9, 10]), 5)", "max-mat=40" },
+        { "repeat(count('abcdefghijkl'), 1)", "max-string=8" },
+        { "F(0) = 'done'\nF(n) = n.string\nrepeat(F(12345), 1)", "max-string-chars=3" },
+        { "while(first([true]))", "max-steps=200" },
+        { "F(0) = 0, false\nF(n) = n, true\nwhile(F(1))", "max-steps=200" },
+        { "S(x) = repeat(F(x), 2)\nF(0) = 0\nF(n) = n - 1\nrepeat(S(10), 3)", "max-steps=9" },
+        { "S(x) = repeat(W(x), 2)\nW(n) = F(n)\nF(0) = 0\nF(n) = n - 1\nrepeat(S(10), 3)", "max-steps=9" },
+        { "S(c) = repeat(order(c), 1)\nrepeat(S([3, 1, 2]), 2)", "default" },
+        { "S(x) = repeat(F(x + 2), 1), x < 5\nF(0) = 0\nF(n) = n - 1\nwhile(S(0))", "default" },
     };
 
     [Theory]
@@ -622,9 +646,9 @@ public partial class LoopStepCallableDispatchTests
     {
         // One step per iteration and the step's own expression work; no hidden wrapper call and no
         // invocation level (a loop-step invocation is outside the depth protocol for every shape).
-        var family = Observe(Step + "repeat(Step, 50, 50)", optimize: false);
-        var user = Observe("U(n) = n - 1\nrepeat(U, 50, 50)", optimize: false);
-        var wrapper = Observe(Step + "W(n) = Step(n)\nrepeat(W, 50, 50)", optimize: false);
+        var family = Observe(Step + "repeat(Step(50), 50)", optimize: false);
+        var user = Observe("U(n) = n - 1\nrepeat(U(50), 50)", optimize: false);
+        var wrapper = Observe(Step + "W(n) = Step(n)\nrepeat(W(50), 50)", optimize: false);
 
         Assert.Equal("0", family.Value);
         Assert.Equal(user.Budget, family.Budget);
@@ -634,9 +658,9 @@ public partial class LoopStepCallableDispatchTests
     }
 
     [Theory]
-    [InlineData("repeat(range, 1, 1, 50)", "W(a, b) = range(a, b)\nrepeat(W, 1, 1, 50)")]
-    [InlineData("repeat(order, 5, [5, 4, 3, 2, 1, 6, 7, 8, 9, 10])", "W(c) = order(c)\nrepeat(W, 5, [5, 4, 3, 2, 1, 6, 7, 8, 9, 10])")]
-    [InlineData("repeat(first, 3, [[[7]]])", "W(c) = first(c)\nrepeat(W, 3, [[[7]]])")]
+    [InlineData("repeat(range(1, 50), 1)", "W(a, b) = range(a, b)\nrepeat(W(1, 50), 1)")]
+    [InlineData("repeat(order([5, 4, 3, 2, 1, 6, 7, 8, 9, 10]), 5)", "W(c) = order(c)\nrepeat(W([5, 4, 3, 2, 1, 6, 7, 8, 9, 10]), 5)")]
+    [InlineData("repeat(first([[[7]]]), 3)", "W(c) = first(c)\nrepeat(W([[[7]]]), 3)")]
     public void BuiltinStep_OneRowReading_ChargesNoExtraWork(string direct, string wrapper)
     {
         // Reading the builtin's one result as one row is cardinality, not evaluation: the builtin's own
@@ -654,9 +678,9 @@ public partial class LoopStepCallableDispatchTests
     {
         foreach (var source in new[]
                  {
-                     "S(x) = repeat(F, 2, x)\nF(0) = 0\nF(n) = n - 1\nrepeat(S, 3, 10)",
-                     "S(c) = repeat(order, 1, c)\nrepeat(S, 2, [3, 1, 2])",
-                     "S(x) = repeat(F, 1, x + 2), x < 5\nF(0) = 0\nF(n) = n - 1\nwhile(S, 0)",
+                     "S(x) = repeat(F(x), 2)\nF(0) = 0\nF(n) = n - 1\nrepeat(S(10), 3)",
+                     "S(c) = repeat(order(c), 1)\nrepeat(S([3, 1, 2]), 2)",
+                     "S(x) = repeat(F(x + 2), 1), x < 5\nF(0) = 0\nF(n) = n - 1\nwhile(S(0))",
                  })
         {
             var generic = Observe(source, optimize: false);
@@ -678,8 +702,8 @@ public partial class LoopStepCallableDispatchTests
         // continuation, whose iterations run the family/builtin inner loops as ordinary steps.
         foreach (var source in new[]
                  {
-                     "I(0) = 0\nI(n) = n - 1\nS(p, n) = if(n < 2, repeat(I, 1, n + 1), ()), n + 1\nrepeat(S, 4, 0, 0)",
-                     "S(p, n) = if(n < 2, repeat(count, 1, [n]), ()), n + 1\nrepeat(S, 4, 0, 0)",
+                     "I(0) = 0\nI(n) = n - 1\nS(p, n) = if(n < 2, repeat(I(n + 1), 1), ()), n + 1\nrepeat(S(0, 0), 4)",
+                     "S(p, n) = if(n < 2, repeat(count([n]), 1), ()), n + 1\nrepeat(S(0, 0), 4)",
                  })
         {
             var generic = Observe(source, optimize: false);
@@ -693,9 +717,9 @@ public partial class LoopStepCallableDispatchTests
     // ── 8. Source admission (Q-71): a selected clause's module is acquired only when selected ─────
 
     [Theory]
-    [InlineData("repeat(F, 3, 2)", "11", 1)]
-    [InlineData("repeat(F, 1, 2)", "1", 0)]
-    [InlineData("repeat(F, 0, 0)", "0", 0)]
+    [InlineData("repeat(F(2), 3)", "11", 1)]
+    [InlineData("repeat(F(2), 1)", "1", 0)]
+    [InlineData("repeat(F(0), 0)", "0", 0)]
     [InlineData("F(F(F(2)))", "11", 1)]
     public async Task DeferredClauseSource_IsAcquiredOnlyWhenTheClauseIsSelected(string output, string expected, int expectedFetches)
     {
@@ -740,7 +764,7 @@ public partial class LoopStepCallableDispatchTests
     [MemberData(nameof(OneIterationCases))]
     public async Task OneIteration_EqualsTheOrdinaryCall(string callee, string supply)
     {
-        var loop = OneIterationDefinitions + $"repeat({callee}, 1, {supply})";
+        var loop = OneIterationDefinitions + $"repeat({callee}({supply}), 1)";
         var call = OneIterationDefinitions + $"{callee}({supply})";
         var (looped, _) = await AllRoutesAsync(loop);
         var (called, _) = await AllRoutesAsync(call);

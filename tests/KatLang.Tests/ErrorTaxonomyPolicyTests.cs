@@ -59,16 +59,18 @@ public class ErrorTaxonomyPolicyTests
         "open Lib\nLib = { public Apply(xs, f) = filter(xs, f) }\nApply([1], 5)",
         "M = map\nM([1, 2], 5)",
         "Each(xs, f) = xs.map(f)\nEach([1], 5)",
-        // loop steps and a builtin used as a step
-        "repeat(5, 1, 0)",
-        "repeat(trace(1) / 0, 1, 0)",
-        "while(true, 0)",
-        "while(tick(), 0)",
-        "5.repeat(1, 0)",
-        "Run(f) = repeat(f, 1, 0)\nRun(trace(7))",
-        "Run(f) = while(f, 0)\nTwice(g) = Run(g)\nTwice(1 / 0)",
-        "repeat(map, 1, [1, 2], 5)",
-        "repeat(filter, 1, [1, 2], trace(5))",
+        // loop steps and a builtin used as a step: a value supplied for `meta step` is refused by
+        // META capture (META-S3-3), a captured callee with no callable identity by the step slot
+        "repeat(5, 1)",
+        "repeat(trace(1) / 0, 1)",
+        "while(true)",
+        "Run(f) = while(f(0))\nRun(tick())",
+        "5.repeat(1)",
+        "Run(f) = repeat(f(0), 1)\nRun(5)",
+        "Run(f) = repeat(f(0), 1)\nRun(trace(7))",
+        "Run(f) = while(f(0))\nTwice(g) = Run(g)\nTwice(1 / 0)",
+        "repeat(map([1, 2], 5), 1)",
+        "repeat(filter([1, 2], trace(5)), 1)",
         // the user higher-order parameter
         "App(f, x) = f(x)\nApp(trace(5), 1)",
         "App(f, x) = f(x)\nApp(1 / 0, 1)",
@@ -95,9 +97,9 @@ public class ErrorTaxonomyPolicyTests
     [InlineData("filter([1], true)", "filter predicate", "[1:13, 1:17)")]
     [InlineData("reduce([1, 2], 5, 0)", "reduce reducer", "[1:16, 1:17)")]
     [InlineData("count(filter([1, 2], 5))", "filter predicate", "[1:22, 1:23)")]
-    [InlineData("repeat(5, 1, 0)", "repeat step", "[1:8, 1:9)")]
-    [InlineData("while(true, 0)", "while step", "[1:7, 1:11)")]
-    [InlineData("repeat(map, 1, [1, 2], 5)", "map transform", "[1:24, 1:25)")]
+    [InlineData("Run(f) = repeat(f(0), 1)\nRun(5)", "repeat step", "[2:5, 2:6)")]
+    [InlineData("Run(f) = while(f(0))\nRun(true)", "while step", "[2:5, 2:9)")]
+    [InlineData("repeat(map([1, 2], 5), 1)", "map transform", "[1:20, 1:21)")]
     // a cell keeps the ORIGINAL written argument's span across transport (argument blame)
     [InlineData("Through(xs, f) = map(xs, f)\nThrough([1], 5)", "map transform", "[2:14, 2:15)")]
     public void TheRejection_NamesTheSlotRole_AtTheWrittenArgument(string source, string role, string span)
@@ -135,8 +137,8 @@ public class ErrorTaxonomyPolicyTests
         { "map([1], Math.Pi)", "map([1], 3.14)" },
         { "map([1], pi)", "map([1], 3.14)" },
         // loop step
-        { "Z = 5\nrepeat(Z, 1, 0)", "repeat(5, 1, 0)" },
-        { "W = true\nwhile(W, 0)", "while(true, 0)" },
+        { "Z = 5\nrepeat(Z(0), 1)", "repeat(5, 1)" },
+        { "W = true\nwhile(W(0))", "while(true)" },
         // builtin callback whose own interface cannot bind one item
         { "map([1, 2], take)", "map([1, 2], 2)" },
         // user higher-order parameter
@@ -158,12 +160,13 @@ public class ErrorTaxonomyPolicyTests
     public static TheoryData<string, string> SameCellEveryConsumer() => new()
     {
         { "App(f, x) = f(x)\nApp(5, 1)", "map([1], 5)" },
-        { "App(f, x) = f(x)\nApp(5, 1)", "repeat(5, 1, 1)" },
-        { "App(f, x) = f(x)\nApp(5, 1)", "while(5, 1)" },
+        { "App(f, x) = f(x)\nApp(5, 1)", "repeat(5, 1)" },
+        { "App(f, x) = f(x)\nApp(5, 1)", "while(5)" },
+        { "App(f, x) = f(x)\nApp(5, 1)", "Run(f) = repeat(f(1), 1)\nRun(5)" },
         { "App(f, x) = f(x)\nApp(1 / 0, 1)", "filter([1], 1 / 0)" },
         { "App(f, x) = f(x)\nApp(1 / 0, 1)", "reduce([1], 1 / 0, 0)" },
         { "App(f, x) = f(x)\nA = 7\nApp(A, 1)", "A = 7\nmap([1], A)" },
-        { "App(f, x) = f(x)\nA = 7\nApp(A, 1)", "A = 7\nrepeat(A, 1, 1)" },
+        { "App(f, x) = f(x)\nA = 7\nApp(A, 1)", "A = 7\nrepeat(A(1), 1)" },
     };
 
     [Theory]
@@ -186,12 +189,13 @@ public class ErrorTaxonomyPolicyTests
         { "reduce([], 5, 7)", "ok 7" },
         { "reduce([], trace(5), 7)", "ok 7" },
         { "reduce([], 1 / 0, 7)", "ok 7" },
-        { "repeat(5, 0, 1)", "ok 1" },
-        { "repeat(trace(5), 0, 1)", "ok 1" },
-        { "repeat(1 / 0, 0, 1)", "ok 1" },
+        { "Run(f) = repeat(f(1), 0)\nRun(5)", "ok 1" },
+        { "Run(f) = repeat(f(1), 0)\nRun(trace(5))", "ok 1" },
+        { "Run(f) = repeat(f(1), 0)\nRun(1 / 0)", "ok 1" },
+        { "N = 5\nN(1).repeat(0)", "ok 1" },
         { "[].map(5)", "ok L[]" },
         { "Through(xs, f) = map(xs, f)\nThrough([], 5)", "ok L[]" },
-        { "Run(f) = repeat(f, 0, 1)\nRun(trace(3))", "ok 1" },
+        { "Run(f) = repeat(f(1), 0)\nRun(trace(3))", "ok 1" },
     };
 
     [Theory]
@@ -210,9 +214,10 @@ public class ErrorTaxonomyPolicyTests
     [Theory]
     [InlineData("map([], Math.Random(0, 1))", false)]
     [InlineData("reduce([], Math.Random(0, 1), 7)", false)]
-    [InlineData("repeat(Math.RandomInt(1, 9), 0, 1)", false)]
+    [InlineData("Run(f) = repeat(f(1), 0)\nRun(Math.RandomInt(1, 9))", false)]
     [InlineData("map([1], Math.Random(0, 1))", true)]
-    [InlineData("repeat(Math.Random(0, 1), 1, 0)", true)]
+    [InlineData("Run(f) = repeat(f(0), 1)\nRun(Math.Random(0, 1))", true)]
+    [InlineData("repeat(Math.Random(0, 1), 1)", true)]
     public void NoRandomDraw_ForAnUninvokedOrRejectedSlot(string source, bool rejected)
     {
         const long seed = 20261005;
@@ -231,10 +236,10 @@ public class ErrorTaxonomyPolicyTests
     /// may observe it.
     /// </summary>
     [Theory]
-    [InlineData("W(x) = x, true\nmap([1], while(W, 0))", true)]
-    [InlineData("W(x) = x, true\nrepeat(while(W, 0), 1, 0)", true)]
-    [InlineData("W(x) = x, true\nmap([], while(W, 0))", false)]
-    [InlineData("W(x) = x, true\nreduce([], while(W, 0), 7)", false)]
+    [InlineData("W(x) = x, true\nmap([1], while(W(0)))", true)]
+    [InlineData("W(x) = x, true\nRun(f) = repeat(f(0), 1)\nRun(while(W(0)))", true)]
+    [InlineData("W(x) = x, true\nmap([], while(W(0)))", false)]
+    [InlineData("W(x) = x, true\nreduce([], while(W(0)), 7)", false)]
     public void ANonTerminatingSlotValue_IsNeverDemanded(string source, bool rejected)
     {
         using var guard = new CancellationTokenSource(TimeSpan.FromSeconds(30));
@@ -254,9 +259,11 @@ public class ErrorTaxonomyPolicyTests
         { "map(1 / 0, 5)", "DivisionByZero" },          // the collection VALUE before callback validity
         { "map(trace(1) / 0, 5)", "DivisionByZero" },
         { "reduce([1], 5, 1 / 0)", "DivisionByZero" },  // reduce's initial VALUE before reducer projection
-        { "repeat(5, 'x', 0)", "TypeMismatch" },        // the repeat count's kind before step projection
-        { "repeat(5, -1, 0)", "IllegalInEval" },        // the repeat count's domain before step projection
-        { "repeat(5, 1.5, 0)", "IllegalInEval" },
+        { "Run(f) = repeat(f(0), 'x')\nRun(5)", "TypeMismatch" },  // the repeat count's kind before step projection
+        { "Run(f) = repeat(f(0), -1)\nRun(5)", "IllegalInEval" },  // the repeat count's domain before step projection
+        { "Run(f) = repeat(f(0), 1.5)\nRun(5)", "IllegalInEval" },
+        { "repeat(5, 'x')", "NotAnAlgorithm" },          // META capture of `step` before the count (META-S3-3)
+        { "while(Step(0), 1)\nStep(x) = x, false", "ArityMismatch" }, // exact outer arity before META capture
         { "App(f, x) = f(x)\nApp(5)", "ArityMismatch" }, // user call arity before parameter callability
         { "map([], 5, 6)", "ArityMismatch" },
     };
@@ -279,7 +286,7 @@ public class ErrorTaxonomyPolicyTests
         // range bounds
         "range([1], 3)", "range(1, ())", "range('a', 2)", "range(1, true)",
         // repeat count
-        "repeat({ x }, [1], 0)", "repeat({ x }, 'a', 0)", "repeat({ x }, true, 0)", "repeat({ x }, (1, 2), 0)",
+        "Id(x) = x\nId(0).repeat([1])", "Id(x) = x\nId(0).repeat('a')", "Id(x) = x\nId(0).repeat(true)", "Id(x) = x\nId(0).repeat((1, 2))",
         // take / skip count
         "take([1, 2], 'x')", "take([1, 2], [1])", "skip([1, 2], ())", "take([1, 2], true)", "skip([1, 2], (1, 2))",
         // collection elements
@@ -313,8 +320,8 @@ public class ErrorTaxonomyPolicyTests
         { "avg(())", "IllegalInEval" }, { "min(filter([1], { x > 5 }))", "IllegalInEval" },
         // whole-number controls: a number, but not a whole one
         { "take([1, 2], 1.5)", "IllegalInEval" }, { "skip([1, 2], 2.5)", "IllegalInEval" },
-        { "range(1.5, 3)", "IllegalInEval" }, { "repeat({ x }, -1, 0)", "IllegalInEval" },
-        { "repeat({ x }, 0.5, 0)", "IllegalInEval" }, { "0 ^ -1", "IllegalInEval" },
+        { "range(1.5, 3)", "IllegalInEval" }, { "Id(x) = x\nId(0).repeat(-1)", "IllegalInEval" },
+        { "Id(x) = x\nId(0).repeat(0.5)", "IllegalInEval" }, { "0 ^ -1", "IllegalInEval" },
         { "Math.RandomInt(1.5, 3)", "IllegalInEval" }, { "Math.Random(3, 1)", "IllegalInEval" },
         { "1 / 0", "DivisionByZero" }, { "5 mod 0", "DivisionByZero" },
         // selection naming no position
@@ -353,9 +360,9 @@ public class ErrorTaxonomyPolicyTests
     public static TheoryData<string> GenuineCardinality() => new()
     {
         "F(x) = x\nF(1, 2)", "Add(x, y) = x + y\nAdd((1, 2))", "count()", "count([1], [2])", "range(1)",
-        "H(x, *rest) = x\nH()", "S(a, b) = a, b\nrepeat(S, 1, 1)", "P((a, b)) = a\nP((1, 2, 3))",
+        "H(x, *rest) = x\nH()", "S(a, b) = a, b\nrepeat(S(1), 1)", "P((a, b)) = a\nP((1, 2, 3))",
         "a, b = 1, 2, 3\na",
-        "while(W, ())\nW(x) = { x* }", "Same(x, x) = x\nSame(4, 5)", "5.string(1)",
+        "while(W(()))\nW(x) = { x* }", "Same(x, x) = x\nSame(4, 5)", "5.string(1)",
         "F(g) = g\nInc(x) = x + 1\nF(Inc)",
         // the clause-family supply cardinality witness the investigation's mutation sweep found missing
         "F(0) = 0\nF(n) = n\nF(1, 2)",
@@ -378,14 +385,14 @@ public class ErrorTaxonomyPolicyTests
         => Assert.Equal(expected, CodeOf(await SixRouteAgreement.OnEveryRouteAsync(source)));
 
     /// <summary>
-    /// The builtin arity payload reports the real fixed arity or loop minimum (formerly a placeholder
+    /// The builtin arity payload reports the real fixed arity (formerly a placeholder
     /// 0 for every builtin but <c>if</c>); Lean <c>builtinArityError</c> reports the same.
     /// </summary>
     [Theory]
     [InlineData("range(1)", 2, 1)]
     [InlineData("atoms(1, 2)", 1, 2)]
-    [InlineData("W(x) = x, false\nwhile(W)", 2, 1)]
-    [InlineData("S(x) = x\nrepeat(S, 1)", 3, 2)]
+    [InlineData("W(x) = x, false\nwhile(W, 0)", 1, 2)]
+    [InlineData("S(x) = x\nrepeat(S(0))", 2, 1)]
     [InlineData("A = 1, 2\nA.if(2)", 3, 2)]
     [InlineData("count", 1, 0)]
     [InlineData("take", 2, 0)]
@@ -408,7 +415,7 @@ public class ErrorTaxonomyPolicyTests
     /// innermost variant stays <c>BadArity</c>, NEED-04 and the loop-output rule unchanged).</summary>
     [Theory]
     [InlineData("Same(x, x) = x\nSame(4, 5)", "repeated parameter 'x' requires equal arguments: Bad arity")]
-    [InlineData("while(W, ())\nW(x) = { x* }", "a while step must output at least its continuation flag: Bad arity")]
+    [InlineData("while(W(()))\nW(x) = { x* }", "a while step must output at least its continuation flag: Bad arity")]
     public void CardinalityVerdicts_NameTheirContract(string source, string message)
     {
         var failure = Assert.IsType<RunResult.EvalFailure>(KatLangEngine.Run(source));
@@ -422,7 +429,8 @@ public class ErrorTaxonomyPolicyTests
 
     [Theory]
     [InlineData("map([1], 5)", KatLangErrorCode.NotAnAlgorithm, typeof(EvalError.NotAnAlgorithm))]
-    [InlineData("repeat(5, 1, 0)", KatLangErrorCode.NotAnAlgorithm, typeof(EvalError.NotAnAlgorithm))]
+    [InlineData("repeat(5, 1)", KatLangErrorCode.NotAnAlgorithm, typeof(EvalError.NotAnAlgorithm))]
+    [InlineData("Run(f) = repeat(f(0), 1)\nRun(5)", KatLangErrorCode.NotAnAlgorithm, typeof(EvalError.NotAnAlgorithm))]
     [InlineData("A = 7\nmap([1], A)", KatLangErrorCode.ArityMismatch, typeof(EvalError.ArityMismatch))]
     [InlineData("-()", KatLangErrorCode.TypeMismatch, typeof(EvalError.TypeMismatch))]
     [InlineData("sum((1, true))", KatLangErrorCode.TypeMismatch, typeof(EvalError.TypeMismatch))]

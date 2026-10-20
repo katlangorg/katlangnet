@@ -22,7 +22,7 @@ namespace KatLang.Tests;
 ///
 /// <para>REACHABILITY. The optimized loop entry gate routes any loop whose
 /// INITIAL state slots are not all numeric atoms to the generic path
-/// ("non-scalar loop state slot"), so <c>repeat(S, 2, [1, 2])</c> never reaches
+/// ("non-scalar loop state slot"), so <c>repeat(S([1, 2]), 2)</c> never reaches
 /// the planned evaluator; a planned unary meets a non-numeric operand only when
 /// the state CHANGES KIND mid-loop — a fallback-planned sibling slot (or a
 /// planned <c>if</c> string branch) writes the value into state and the planned
@@ -50,7 +50,7 @@ public class LoopPlannedUnaryDiagnosticParityTests
     private const string PlannedListRegressionSource = """
         Lst = [1, 2]
         S(x, y) = -y, Lst
-        repeat(S, 3, 0, 0)
+        repeat(S(0, 0), 3)
         """;
 
     private static LoopPlanDiagnosticSnapshot AssertOptimizedLoopPlan(
@@ -151,7 +151,7 @@ public class LoopPlannedUnaryDiagnosticParityTests
                 """
                 Lst = [1, 2]
                 S(x, y) = -y, Lst
-                repeat(S, 3, 0, 0)
+                repeat(S(0, 0), 3)
                 """
             },
             {
@@ -159,21 +159,21 @@ public class LoopPlannedUnaryDiagnosticParityTests
                 """
                 Lst = [1, 2]
                 S(x, y) = not y, Lst
-                repeat(S, 3, 0, false)
+                repeat(S(0, false), 3)
                 """
             },
             {
                 "minus over sequence state (repeat)", "S.repeat", "output", 0, "Negate(StateSlot(y))",
                 """
                 S(x, y) = -y, (x, 9)
-                repeat(S, 3, 0, 0)
+                repeat(S(0, 0), 3)
                 """
             },
             {
                 "not over sequence state (repeat)", "S.repeat", "output", 0, "Not(StateSlot(y))",
                 """
                 S(x, y) = not y, (x, 9)
-                repeat(S, 3, 0, false)
+                repeat(S(0, false), 3)
                 """
             },
             {
@@ -181,7 +181,7 @@ public class LoopPlannedUnaryDiagnosticParityTests
                 """
                 Lst = [1, 2]
                 S(x, y) = -y, Lst, x < 3
-                while(S, 0, 0)
+                while(S(0, 0))
                 """
             },
             {
@@ -189,7 +189,7 @@ public class LoopPlannedUnaryDiagnosticParityTests
                 """
                 Lst = [1, 2]
                 S(x, y) = x + 1, Lst, not y
-                while(S, 0, false)
+                while(S(0, false))
                 """
             },
         };
@@ -236,7 +236,7 @@ public class LoopPlannedUnaryDiagnosticParityTests
         // columns 8..30.
         var source = """
             S(x) = -if(x > 0, x - 1, 'ab')
-            repeat(S, 3, 1)
+            repeat(S(1), 3)
             """;
 
         var error = AssertOptimizerTransparentFailure(source);
@@ -279,7 +279,7 @@ public class LoopPlannedUnaryDiagnosticParityTests
         var source = """
             Txt = 'ab'
             S(x, y) = not y, Txt
-            repeat(S, 3, 0, false)
+            repeat(S(0, false), 3)
             """;
 
         var error = AssertOptimizerTransparentFailure(source);
@@ -310,7 +310,7 @@ public class LoopPlannedUnaryDiagnosticParityTests
         // columns 23..41 (`not` needs a Boolean, so the negation feeds a planned comparison).
         var source = """
             S(x, y) = x - 1, not (-if(x > 0, y, 'ab') > 0)
-            repeat(S, 3, 1, 0)
+            repeat(S(1, 0), 3)
             """;
 
         var optimizedError = AssertOptimizerTransparentFailure(source);
@@ -343,7 +343,7 @@ public class LoopPlannedUnaryDiagnosticParityTests
                 "repeated negation",
                 """
                 S(a) = -a
-                repeat(S, 3, 5)
+                repeat(S(5), 3)
                 """,
                 "-5"
             },
@@ -351,7 +351,7 @@ public class LoopPlannedUnaryDiagnosticParityTests
                 "repeated not from true",
                 """
                 S(a) = not a
-                repeat(S, 1, true)
+                repeat(S(true), 1)
                 """,
                 "false"
             },
@@ -359,7 +359,7 @@ public class LoopPlannedUnaryDiagnosticParityTests
                 "repeated not from false",
                 """
                 S(a) = not a
-                repeat(S, 1, false)
+                repeat(S(false), 1)
                 """,
                 "true"
             },
@@ -367,7 +367,7 @@ public class LoopPlannedUnaryDiagnosticParityTests
                 "chained double negation",
                 """
                 S(x) = --x
-                repeat(S, 2, 3)
+                repeat(S(3), 2)
                 """,
                 "3"
             },
@@ -375,7 +375,7 @@ public class LoopPlannedUnaryDiagnosticParityTests
                 "negation in while next-state",
                 """
                 S(a) = -a, a > 0
-                while(S, 5)
+                while(S(5))
                 """,
                 "-5"
             },
@@ -405,7 +405,7 @@ public class LoopPlannedUnaryDiagnosticParityTests
     {
         var source = """
             S(a) = -a
-            repeat(S, 3, 5)
+            repeat(S(5), 3)
             """;
 
         var (result, loop, _) = RunObserved(source, enableLoopOptimization: true);
@@ -423,7 +423,7 @@ public class LoopPlannedUnaryDiagnosticParityTests
                 "negative zero",
                 """
                 S(a) = -a
-                repeat(S, 1, 0)
+                repeat(S(0), 1)
                 """,
                 "-0"
             },
@@ -431,7 +431,7 @@ public class LoopPlannedUnaryDiagnosticParityTests
                 "Decimal128 quantum",
                 """
                 S(a) = -a
-                repeat(S, 1, 1.50)
+                repeat(S(1.50), 1)
                 """,
                 "-1.50"
             },
@@ -440,7 +440,7 @@ public class LoopPlannedUnaryDiagnosticParityTests
                 """
                 N = Math.Sqrt(-1)
                 S(a) = -a
-                repeat(S, 1, N)
+                repeat(S(N), 1)
                 """,
                 "NaN"
             },
@@ -480,7 +480,7 @@ public class LoopPlannedUnaryDiagnosticParityTests
     {
         var source = """
             S(a) = not a
-            repeat(S, 1, false)
+            repeat(S(false), 1)
             """;
 
         var (generic, _) = RunCountedObserved(source, enableLoopOptimization: false);
@@ -505,7 +505,7 @@ public class LoopPlannedUnaryDiagnosticParityTests
         // planned operand, whose kind rejection and span must match the generic path.
         var source = """
             S(a) = -a
-            repeat(S, 2, [1, 2])
+            repeat(S([1, 2]), 2)
             """;
 
         var error = AssertOptimizerTransparentFailure(source);
@@ -532,7 +532,7 @@ public class LoopPlannedUnaryDiagnosticParityTests
         // Both strategies first demand this state at the unary operand.
         var source = $"""
             S(a) = {op}a
-            repeat(S, 2, ())
+            repeat(S(()), 2)
             """;
 
         var error = AssertOptimizerTransparentFailure(source);
@@ -568,7 +568,7 @@ public class LoopPlannedUnaryDiagnosticParityTests
         // `true` flag lets the round reach the unary output (a numeric placeholder would be the
         // flag's own TypeMismatch, reported first).
         if (position == "while-output") step += ", true";
-        var call = position == "repeat" ? "repeat(S, 1, 0)" : "while(S, 0)";
+        var call = position == "repeat" ? "repeat(S(0), 1)" : "while(S(0))";
         var source = $$"""
             Use(value) = {
                 S(x) = {{step}}
@@ -615,7 +615,7 @@ public class LoopPlannedUnaryDiagnosticParityTests
         var source = """
             Lst = [1, 2]
             S(x, y) = -y, Lst
-            Total = repeat(S, 3, 0, 0) + 100
+            Total = repeat(S(0, 0), 3) + 100
             Total
             """;
 

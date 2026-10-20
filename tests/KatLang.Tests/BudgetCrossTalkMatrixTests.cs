@@ -471,7 +471,7 @@ public class BudgetCrossTalkMatrixTests
         Source("TinyScalar", "Probe = 1\n1"),
 
         // Step-heavy, shallow, no strings and no collections.
-        Source("StepHeavyShallowLoop", "Probe = 1\nInc = x + 1\nInc.repeat(400, 0)", MaxStepsDim),
+        Source("StepHeavyShallowLoop", "Probe = 1\nInc = x + 1\nInc(0).repeat(400)", MaxStepsDim),
 
         // Deep evaluation, tiny result: depth and steps, nothing else.
         Source("DeepRecursionTinyResult", $"Probe = 1\n{CountDown}f(40)", MaxDepthDim, MaxStepsDim),
@@ -496,7 +496,7 @@ public class BudgetCrossTalkMatrixTests
             MaxDepthDim),
 
         // Shared VALUE DAG (F5): equality/hash over a value with exponential unfolding.
-        Source("SharedValueDag", "Probe = 1\nWrap = [x, x]\nD = Wrap.repeat(10, 1)\nD == D",
+        Source("SharedValueDag", "Probe = 1\nWrap = [x, x]\nD = Wrap(1).repeat(10)\nD == D",
             MaxMaterializedItemsDim, MaxCollectionItemsDim),
 
         // A deterministic non-resource failure: its error kind must survive every
@@ -523,17 +523,17 @@ public class BudgetCrossTalkMatrixTests
         // planned nodes used to charge nothing, so a MaxDepth verdict depended on which
         // unrelated budget happened to select the strategy.
         Source("PlannedNestedIfLoop",
-            "Probe = 1\nStep = n + if(n < 30, if(n < 10, 1, 2), 3)\nf(0) = Step.repeat(40, 0)\nf(k) = f(k - 1)\nf(12)",
+            "Probe = 1\nStep = n + if(n < 30, if(n < 10, 1, 2), 3)\nf(0) = Step(0).repeat(40)\nf(k) = f(k - 1)\nf(12)",
             MaxDepthDim, MaxStepsDim),
         Source("PlannedTempReadAndCallLoop",
-            "Probe = 1\nStep = {\n    T = 7\n    U = n + 1\n    n + if(n < 30, if(T < 5, T, U - n), T() + 0)\n}\nf(0) = Step.repeat(50, 0)\nf(k) = f(k - 1)\nf(12)",
+            "Probe = 1\nStep = {\n    T = 7\n    U = n + 1\n    n + if(n < 30, if(T < 5, T, U - n), T() + 0)\n}\nf(0) = Step(0).repeat(50)\nf(k) = f(k - 1)\nf(12)",
             MaxDepthDim, MaxStepsDim),
 
         // A string temp CALLED twice per iteration: a call bypasses the property cache,
         // so both strategies must materialize the string on every call (the memoized
         // planned slot used to halve the cumulative string boundary).
         Source("PlannedStringTempCallLoop",
-            "Probe = 1\nStep = {\n    T = 'xxxxxxxxxx'\n    n + (T() == T())\n}\nStep.repeat(200, 0)",
+            "Probe = 1\nStep = {\n    T = 'xxxxxxxxxx'\n    n + (T() == T())\n}\nStep(0).repeat(200)",
             MaxDepthDim, MaxStringLengthDim, MaxMaterializedStringCharsDim),
 
         // The B3 follow-up's EXTENDED planned-node corpus: every remaining planned node
@@ -541,46 +541,46 @@ public class BudgetCrossTalkMatrixTests
         // boundary is decisive. A `while` loop with nested planned `if`s in its state
         // output and a temp CALL in its continuation.
         Source("PlannedWhileTempCallLoop",
-            "Probe = 1\nStep = {\n    T = 7\n    n + if(n < 30, if(n < 10, 1, 2), 3), (T() > 5) * (n < 40)\n}\nf(0) = Step.while(0)\nf(k) = f(k - 1)\nf(12)",
+            "Probe = 1\nStep = {\n    T = 7\n    n + if(n < 30, if(n < 10, 1, 2), 3), (T() > 5) * (n < 40)\n}\nf(0) = Step(0).while\nf(k) = f(k - 1)\nf(12)",
             MaxDepthDim, MaxStepsDim),
 
         // A CAPTURED slot (the enclosing algorithm's parameter, read from the
         // inherited value environment) as a direct `if` condition, inside a temp body,
         // and through a temp call.
         Source("PlannedCapturedSlotLoop",
-            "Probe = 1\nG(a) = {\n    Step = {\n        T = a + 1\n        n + if(a, T, T() + 1)\n    }\n    Step.repeat(20, 0)\n}\nf(0) = G(1)\nf(k) = f(k - 1)\nf(12)",
+            "Probe = 1\nG(a) = {\n    Step = {\n        T = a + 1\n        n + if(a, T, T() + 1)\n    }\n    Step(0).repeat(20)\n}\nf(0) = G(1)\nf(k) = f(k - 1)\nf(12)",
             MaxDepthDim, MaxStepsDim),
 
         // A COUNTED parameter slot (a callback-bound parameter of the enclosing `map`
         // callback) in the same three positions.
         Source("PlannedCountedParamSlotLoop",
-            "Probe = 1\nH(a) = {\n    Step = {\n        T = a * 2\n        n + if(a, T, T())\n    }\n    Step.repeat(5, 0)\n}\nf(0) = range(1, 3).map(H).sum\nf(k) = f(k - 1)\nf(12)",
+            "Probe = 1\nH(a) = {\n    Step = {\n        T = a * 2\n        n + if(a, T, T())\n    }\n    Step(0).repeat(5)\n}\nf(0) = range(1, 3).map(H).sum\nf(k) = f(k - 1)\nf(12)",
             MaxDepthDim, MaxStepsDim, MaxCollectionItemsDim, MaxMaterializedItemsDim),
 
         // A temp ALIAS chain (`E = D = C`): a bare read charges one access per link, a
         // direct `if` argument evaluates the alias's own body on the algorithm channel,
         // and an explicit call bypasses every memo.
         Source("PlannedTempAliasIfLoop",
-            "Probe = 1\nStep = {\n    C = 1\n    D = C\n    E = D\n    n + if(D, E, E()) + E()\n}\nf(0) = Step.repeat(30, 0)\nf(k) = f(k - 1)\nf(12)",
+            "Probe = 1\nStep = {\n    C = 1\n    D = C\n    E = D\n    n + if(D, E, E()) + E()\n}\nf(0) = Step(0).repeat(30)\nf(k) = f(k - 1)\nf(12)",
             MaxDepthDim, MaxStepsDim),
 
         // Temp CALLS whose bodies read and call other temps: each call suspends the
         // caller's memo, so the nested reads charge exactly like the generic callee's
         // fresh environments.
         Source("PlannedTempCallChainLoop",
-            "Probe = 1\nStep = {\n    A = 7\n    B = A + 1\n    C = A() + B\n    n + B() + C()\n}\nf(0) = Step.repeat(30, 0)\nf(k) = f(k - 1)\nf(12)",
+            "Probe = 1\nStep = {\n    A = 7\n    B = A + 1\n    C = A() + B\n    n + B() + C()\n}\nf(0) = Step(0).repeat(30)\nf(k) = f(k - 1)\nf(12)",
             MaxDepthDim, MaxStepsDim),
 
         // A STRING temp as a direct `if` argument (the property's own algorithm on the
         // argument channel materializes the string fresh) compared against its fresh call.
         Source("PlannedStringTempIfLoop",
-            "Probe = 1\nStep = {\n    T = 'aaaa'\n    n + (if(true, T, 'b') == T())\n}\nf(0) = Step.repeat(100, 0)\nf(k) = f(k - 1)\nf(12)",
+            "Probe = 1\nStep = {\n    T = 'aaaa'\n    n + (if(true, T, 'b') == T())\n}\nf(0) = Step(0).repeat(100)\nf(k) = f(k - 1)\nf(12)",
             MaxDepthDim, MaxStepsDim, MaxStringLengthDim, MaxMaterializedStringCharsDim),
 
         // Multi-slot state: a temp called in BOTH next-state outputs, one of them inside
         // a planned `if` condition, with the loop result indexed.
         Source("PlannedMultiStateIfTempLoop",
-            "Probe = 1\nStep = {\n    T = a + b\n    T() + a, if(T() < 40, a, b)\n}\nf(0) = Step.repeat(5, 1, 1)[0]\nf(k) = f(k - 1)\nf(12)",
+            "Probe = 1\nStep = {\n    T = a + b\n    T() + a, if(T() < 40, a, b)\n}\nf(0) = Step(1, 1).repeat(5)[0]\nf(k) = f(k - 1)\nf(12)",
             MaxDepthDim, MaxStepsDim, MaxCollectionItemsDim, MaxMaterializedItemsDim),
     ];
 

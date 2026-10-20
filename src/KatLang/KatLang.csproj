@@ -66,7 +66,7 @@
 		<SymbolPackageFormat>snupkg</SymbolPackageFormat>
 		<PublishRepositoryUrl>true</PublishRepositoryUrl>
 
-		<PackageReleaseNotes>Pre-release public .NET API cleanup: implementation-only planners and unbounded value projections are internal; source execution uses KatLangEngine.Run/RunAsync. Engine and parser results have read-only payloads and are produced by the library. XML documentation is included and NativeAOT compatibility is enabled. This release includes breaking API changes; see README.md for supported entry points.</PackageReleaseNotes>
+		<PackageReleaseNotes>0.9.0 BREAKING LANGUAGE CHANGE (META-S3-3): the loop builtins are now while(meta step) and repeat(meta step, count). The step is a written call whose arguments are the initial state: write Step(0).while or while(Step(0)) instead of while(Step, 0), and Inc(0).repeat(5) or repeat(Inc(0), 5) instead of repeat(Inc, 5, 0); Fib(0, 1).repeat(10) replaces repeat(Fib, 10, 0, 1). The retired forms are removed with no compatibility overload: while takes exactly one argument and repeat exactly two. A loop may start with zero state values (Done().while). A qualified step callee is not captured; name it first (S = Box.Step, then S(0).while). A property holding a call result is a value, so Start = Step(0) followed by Start.while is refused. Public API: PropertyParameterInfo.IsMeta reports meta parameters for user and builtin algorithms. Earlier notes: implementation-only planners and unbounded value projections are internal; source execution uses KatLangEngine.Run/RunAsync; see README.md for supported entry points.</PackageReleaseNotes>
 
 		<Title>KatLang</Title>
 	</PropertyGroup>

@@ -296,22 +296,32 @@ internal static class AstStructuralPreflight
 
     /// <summary>
     /// <b>J7 — PROGRAM-GATED PLAN RETENTION</b> (CallReference). A META capture can only happen at a
-    /// <c>meta</c> parameter binding, and every such binding is written in the program a run admits, so a
-    /// run retains invocation plans iff its admitted graph MAY perform META capture: a node that is a
-    /// <see cref="ParameterKind.Meta"/> capture or clause binder, or a DEFERRED MODULE REGION (its modules
-    /// are unknown until a branch selects it and may declare <c>meta</c>, so a program with any deferred
-    /// region retains plans even if its modules declare none — a recorded performance limitation). The
-    /// walk is this preflight's own child enumeration (<see cref="TryGetChild"/>): root declarations,
-    /// nested blocks and properties, uncalled bodies, clause-family branches, opens, parameter patterns
-    /// and shared implicit-signature templates, eagerly elaborated modules and every host-attached parent
-    /// scope. Host operations and the prelude declare no META. The decision is conservative: a false
-    /// negative would lose the retained supply of a cell a later META observes (the binder fails loudly),
-    /// a false positive costs only plan retention.
+    /// <c>meta</c> parameter binding — of a user algorithm, or of a builtin whose registry signature
+    /// declares one (META-S3-3: <c>while(meta step)</c>, <c>repeat(meta step, count)</c>) — so a run
+    /// retains invocation plans iff its admitted graph MAY perform META capture: a node that is a
+    /// <see cref="ParameterKind.Meta"/> capture or clause binder; a node that may reach a META-declaring
+    /// builtin — a name or dot edge spelled with its prelude name
+    /// (<see cref="BuiltinRegistry.MetaBuiltinNames"/>: every route admitted source has to such a
+    /// builtin spells it — a plain call, a dot fallback, an alias target, a higher-order argument, an
+    /// opened or parent-scope declaration — and a user declaration of the same name is a conservative
+    /// false positive) or a host-built builtin node of one; or a DEFERRED MODULE REGION (its modules are
+    /// unknown until a branch selects it and may declare <c>meta</c> or reach a loop, so a program with
+    /// any deferred region retains plans even if its modules declare none — a recorded performance
+    /// limitation). The walk is this preflight's own child enumeration (<see cref="TryGetChild"/>):
+    /// root declarations, nested blocks and properties, uncalled bodies, clause-family branches, opens,
+    /// parameter patterns and shared implicit-signature templates, eagerly elaborated modules and every
+    /// host-attached parent scope. Host operations declare no META; the prelude is not walked, which is
+    /// why the builtin clause keys on the spelled name. The decision is conservative: a false negative
+    /// would lose the retained supply of a cell a later META observes (the binder fails loudly), a false
+    /// positive costs only plan retention.
     /// </summary>
     internal static bool MayCaptureCalls(object node)
         => node is Algorithm { DeferredRegion: not null }
-            or CaptureParameterPattern { Kind: ParameterKind.Meta }
-            or Pattern.Bind { ParameterKind: ParameterKind.Meta };
+                or CaptureParameterPattern { Kind: ParameterKind.Meta }
+                or Pattern.Bind { ParameterKind: ParameterKind.Meta }
+            || node is Expr.Resolve resolve && BuiltinRegistry.MetaBuiltinNames.Contains(resolve.Name)
+            || node is Expr.DotCall dot && BuiltinRegistry.MetaBuiltinNames.Contains(dot.Name)
+            || node is Algorithm.Builtin builtin && BuiltinRegistry.GetBuiltin(builtin.Id).DeclaresMetaParameter;
 
     private static AstStructuralRejection? CheckCore(
         object root,

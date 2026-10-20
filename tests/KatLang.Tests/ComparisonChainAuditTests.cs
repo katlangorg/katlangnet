@@ -70,7 +70,7 @@ public class ComparisonChainAuditTests
             Evaluator.RunCountedObservedAsync(ast, zeroArgPropertyResultCache: new PassThroughAsyncZeroArgPropertyResultCache()));
         Assert.Equal(AsyncEvaluationHarness.NeutralOf(sync), AsyncEvaluationHarness.NeutralOf(twin));
 
-        var loop = new Expr.AlgorithmExpr(SourceProvenance.ParseValid($"Step = {{\n    n + if({source}, 1, 0)\n}}\nStep.repeat(3, 0)").Root);
+        var loop = new Expr.AlgorithmExpr(SourceProvenance.ParseValid($"Step = {{\n    n + if({source}, 1, 0)\n}}\nStep(0).repeat(3)").Root);
         var diagnostics = new LoopOptimizationDiagnostics();
         var (planned, _) = Evaluator.RunCountedObserved(loop, enableOptimizations: true, loopDiagnostics: diagnostics);
         var (generic, _) = Evaluator.RunCountedObserved(loop, enableOptimizations: false);

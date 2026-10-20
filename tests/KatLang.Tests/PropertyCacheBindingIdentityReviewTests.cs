@@ -25,7 +25,7 @@ public class PropertyCacheBindingIdentityReviewTests
             2, [1, 1, 1, 1, 1, 2, 2, 2, 2, 1] },
         { "Outer(x) = { Inner = { A = Tick() + x\n F(y) = A\n A, F(0), A }\n Inner(), Inner() }\nOuter(0)",
             2, [1, 1, 1, 2, 2, 2] },
-        { "Outer(x) = { A = Tick() + x\n Step(s) = s + A\n A, repeat(Step, 2, 0), A }\nOuter(0)\nOuter(0)",
+        { "Outer(x) = { A = Tick() + x\n Step(s) = s + A\n A, repeat(Step(0), 2), A }\nOuter(0)\nOuter(0)",
             2, [1, 2, 1, 2, 4, 2] },
         { "A = Tick()\n Outer(x) = { A = Tick() + x\n F(y) = A\n A, F(0), A }\n A, Outer(0), A, Outer(0), A",
             3, [1, 2, 2, 2, 1, 3, 3, 3, 1] },

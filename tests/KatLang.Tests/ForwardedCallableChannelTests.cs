@@ -55,8 +55,8 @@ public class ForwardedCallableChannelTests
         { "dot filter", "[1, 2, 3].filter(Big)", "Apply(f, xs) = xs.filter(f)\nApply(Big, [1, 2, 3])", "[2, 3]" },
         { "reduce", "reduce([1, 2, 3], SumAll, 0)", "Apply(f, xs) = reduce(xs, f, 0)\nApply(SumAll, [1, 2, 3])", "6" },
         { "dot reduce", "[1, 2, 3].reduce(SumAll, 0)", "Apply(f, xs) = xs.reduce(f, 0)\nApply(SumAll, [1, 2, 3])", "6" },
-        { "repeat step", "repeat(CountStep, 3, 9)", "Apply(g) = repeat(g, 3, 9)\nApply(CountStep)", "2" },
-        { "while step", "while(SumWhile, 0)", "Apply(g) = while(g, 0)\nApply(SumWhile)", "2" },
+        { "repeat step", "repeat(CountStep(9), 3)", "Apply(g) = repeat(g(9), 3)\nApply(CountStep)", "2" },
+        { "while step", "while(SumWhile(0))", "Apply(g) = while(g(0))\nApply(SumWhile)", "2" },
         { "nested captured parameter", "[1, 2].map(Cnt)", "Outer(xs) = { Inner(g) = xs.map(g)\nInner(Cnt) }\nOuter([1, 2])", "[1, 1]" },
         // A forwarding alias written out (the bare callable alias `G = Only` is the same callable,
         // FWD-02).
@@ -110,7 +110,7 @@ public class ForwardedCallableChannelTests
     [InlineData("R(x, acc) = acc + x\nApply(i) = reduce([1, 2], R, i)\nApply(Seed)", "10")]
     [InlineData("Apply(xs) = count(xs)\nApply(Seed)", "1")]
     [InlineData("Apply(f) = if(true, f, 0)\nApply(Seed)", "7")]
-    [InlineData("Step(s) = s + 1\nApply(i) = repeat(Step, 2, i)\nApply(Seed)", "9")]
+    [InlineData("Step(s) = s + 1\nApply(i) = repeat(Step(i), 2)\nApply(Seed)", "9")]
     [InlineData("Apply(i) = take([1, 2, 3], i)\nApply(Seed)", "[1, 2, 3]")]
     [InlineData("Apply(i) = skip([1, 2, 3], i)\nApply(Seed)", "[]")]
     [InlineData("Apply(i) = range(i, i)\nApply(Seed)", "[7]")]
@@ -145,7 +145,7 @@ public class ForwardedCallableChannelTests
     [Theory]
     [InlineData("map([1], 5)", "Apply(f, xs) = map(xs, f)\nApply(5, [1])")]
     [InlineData("A = 5\nmap([1], A)", "A = 5\nApply(f, xs) = map(xs, f)\nApply(A, [1])")]
-    [InlineData("repeat(5, 1, 0)", "Apply(g) = repeat(g, 1, 0)\nApply(5)")]
+    [InlineData("A = 5\nrepeat(A(0), 1)", "A = 5\nApply(g) = repeat(g(0), 1)\nApply(A)")]
     public void ZeroParameterCallbacks_AreRejectedAlike_DirectAndForwarded(string direct, string forwarded)
     {
         // A value-only parameter has no algorithm binding, so the invoking slot still receives
@@ -244,8 +244,8 @@ public class ForwardedCallableChannelTests
     }
 
     [Theory]
-    [InlineData("repeat(Step, 3, 0)", "3")]
-    [InlineData("while(Step, 0)", "2")]
+    [InlineData("repeat(Step(0), 3)", "3")]
+    [InlineData("while(Step(0))", "2")]
     public void ForwardedFixedStep_ActuallyExecutesAnOptimizedLoop(string call, string expected)
     {
         var step = call.StartsWith("while", StringComparison.Ordinal) ? "Step = s + 1, s + 1 < 3\n" : "Step = s + 1\n";

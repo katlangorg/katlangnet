@@ -390,7 +390,7 @@ public class AtomViewSharedValueGraphTests
     private static string SeqDagProgram(string body, string leaf = "1", int depth = DeepDepth)
         => $"""
             Wrap = (x, x)
-            D = Wrap.repeat({depth}, {leaf})
+            D = Wrap({leaf}).repeat({depth})
             {body}
             """;
 
@@ -437,7 +437,7 @@ public class AtomViewSharedValueGraphTests
         // The premise of every case below: the loop builds a sequence DAG, not a tree. Without
         // sharing the depth-40 values would be 2^40 nodes and could not be built at all.
         var expr = new Expr.AlgorithmExpr(
-            SourceProvenance.ParseValid("Wrap = (x, x)\nWrap.repeat(3, 1)").Root);
+            SourceProvenance.ParseValid("Wrap = (x, x)\nWrap(1).repeat(3)").Root);
 
         var plain = Evaluator.Run(expr);
         if (plain.IsError)
@@ -496,7 +496,7 @@ public class AtomViewSharedValueGraphTests
         var source = SeqDagProgram("""
             Outer(d) = {
                 Step(n) = if(d == d, n + 1, n)
-                Step.repeat(1, 0)
+                Step(0).repeat(1)
             }
             Outer(D)
             """);

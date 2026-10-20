@@ -61,7 +61,7 @@ public class SharedValueGraphTransportTests
     private static string DagProgram(string body, int depth = DeepDepth)
         => $"""
             Wrap = [x, x]
-            A = Wrap.repeat({depth}, 1)
+            A = Wrap(1).repeat({depth})
             {body}
             """;
 
@@ -69,8 +69,8 @@ public class SharedValueGraphTransportTests
     /// Build one depth-<paramref name="dagDepth"/> shared value DAG, then duplicate that SAME
     /// result reference into 2^<paramref name="duplicationDepth"/> emitted slots in only
     /// <paramref name="duplicationDepth"/> loop steps. Grouping <c>B*</c> makes those slots one
-    /// sequence-valued collection item, which builtin <c>while</c> used as the reducer receives
-    /// as ONE argument (one sequence value — selection is a value boundary).
+    /// sequence-valued collection item, which the reducer receives as ONE argument (one sequence
+    /// value — selection is a value boundary) and supplies as the callee of its loop's captured call.
     /// </summary>
     private static string MultiEmissionDagProgram(
         string body,
@@ -78,9 +78,9 @@ public class SharedValueGraphTransportTests
         int duplicationDepth = 5)
         => $$"""
             Wrap = [x, x]
-            A = Wrap.repeat({{dagDepth}}, 1)
+            A = Wrap(1).repeat({{dagDepth}})
             Dup(*xs) = { xs*, xs* }
-            B = Dup.repeat({{duplicationDepth}}, A)
+            B = Dup(A).repeat({{duplicationDepth}})
             {{body}}
             """;
 
@@ -137,7 +137,7 @@ public class SharedValueGraphTransportTests
     [InlineData(true)]
     public void LoopStepSlot_ReadyValueHasNoCallableIdentity(bool optimize)
     {
-        var run = ObserveSource(DagProgram("while(A*, 1)"), optimize);
+        var run = ObserveSource(DagProgram("Run(f, *s) = while(f(s*))\nRun(A*, 1)"), optimize);
 
         // A spread item is Ready data with no CALLABLE identity: it is no step (Q-06).
         Assert.True(run.IsError);
@@ -175,11 +175,11 @@ public class SharedValueGraphTransportTests
     public void SequenceItemSlot_RepeatedReferencesAreReadyDataWithNoCallableIdentity(bool optimize)
     {
         var run = ObserveSource(
-            MultiEmissionDagProgram("[(B*)].reduce(while, 1)"),
+            MultiEmissionDagProgram("Loop(f, s) = while(f(s))\n[(B*)].reduce(Loop, 1)"),
             optimize);
 
-        // `while` invoked as the reducer receives the element as ITS step: Ready data
-        // with no CALLABLE identity (Q-06).
+        // The reducer loops over the element as the CALLEE of its captured `f(s)` (META-S3-3): Ready
+        // data with no CALLABLE identity is no step (Q-06).
         Assert.True(run.IsError);
         Assert.Equal("while step", Assert.IsType<EvalError.NotAnAlgorithm>(run.InnermostError).Description);
     }
@@ -190,7 +190,7 @@ public class SharedValueGraphTransportTests
     public void SequenceItemSlot_SharedDescendantsAreReadyDataWithNoCallableIdentity(bool optimize)
     {
         var run = ObserveSource(
-            DagProgram("[([A, 1], [A, 2])].reduce(while, 1)", ShallowDepth),
+            DagProgram("Loop(f, s) = while(f(s))\n[([A, 1], [A, 2])].reduce(Loop, 1)", ShallowDepth),
             optimize);
 
         Assert.True(run.IsError);
@@ -206,10 +206,10 @@ public class SharedValueGraphTransportTests
     {
         var source = scenario switch
         {
-            0 => DagProgram("while(A*, 1)"),
+            0 => DagProgram("Run(f, *s) = while(f(s*))\nRun(A*, 1)"),
             1 => DagProgram("((), ()).reduce(map, A)"),
-            2 => MultiEmissionDagProgram("[(B*)].reduce(while, 1)"),
-            3 => DagProgram("[([A, 1], [A, 2])].reduce(while, 1)", ShallowDepth),
+            2 => MultiEmissionDagProgram("Loop(f, s) = while(f(s))\n[(B*)].reduce(Loop, 1)"),
+            3 => DagProgram("Loop(f, s) = while(f(s))\n[([A, 1], [A, 2])].reduce(Loop, 1)", ShallowDepth),
             _ => throw new ArgumentOutOfRangeException(nameof(scenario)),
         };
         var generic = ObserveSource(source, optimize: false);
@@ -280,7 +280,7 @@ public class SharedValueGraphTransportTests
     [Fact]
     public void LoopStepReadyValue_ErrorEntryPointsAgree()
     {
-        var source = DagProgram("while(A*, 1)");
+        var source = DagProgram("Run(f, *s) = while(f(s*))\nRun(A*, 1)");
         var expr = new Expr.AlgorithmExpr(SourceProvenance.ParseValid(source).Root);
 
         var plain = Evaluator.Run(expr);

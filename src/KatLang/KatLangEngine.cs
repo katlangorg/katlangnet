@@ -177,7 +177,7 @@ public closed record RunResult
         /// one row to this view — whatever produced its value: a literal, a
         /// property, a call, a selection (<c>A[i]</c>, <c>first</c>,
         /// <c>last</c>), or a completed <c>while</c>/<c>repeat</c>, all of
-        /// which are value boundaries, so <c>Fibonacci.repeat(10, 0, 1)</c>
+        /// which are value boundaries, so <c>Fibonacci(0, 1).repeat(10)</c>
         /// is the one row <c>(55, 89)</c> — while a spread row <c>E*</c>
         /// contributes the items it supplies, possibly none.
         /// <see cref="OutputRows"/> is authoritative for presentation.</para>

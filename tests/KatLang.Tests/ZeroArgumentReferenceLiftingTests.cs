@@ -309,9 +309,9 @@ public class ZeroArgumentReferenceLiftingTests
         { "Twice(v) = v + v", "Twice(Only)" },
         { "Twice(v) = v + v", "Only.Twice" },
         { "", "map([1, 2], {x + Only})" },
-        { "", "repeat({s + Only}, 3, 0)" },
-        { "Step = s + Only", "repeat(Step, 3, 0)" },
-        { "", "while({s + Only, s + Only < 3}, 0)" },
+        { "Step = {s + Only}", "repeat(Step(0), 3)" },
+        { "Step = s + Only", "repeat(Step(0), 3)" },
+        { "Step = {s + Only, s + Only < 3}", "while(Step(0))" },
         { "a, b = Only + 0, Only * 10", "a + b" },
     };
 
@@ -595,9 +595,9 @@ public class ZeroArgumentReferenceLiftingTests
     [Fact]
     public async Task LoopSteps_ReadTheCachedValue()
     {
-        AssertOk(await OnEveryRouteAsync($"{Only}\nrepeat({{s + Only}}, 3, 0)"), "3", "tick#1");
-        AssertOk(await OnEveryRouteAsync($"{Only}\nStep = s + Only\nrepeat(Step, 3, 0)"), "3", "tick#1");
-        AssertOk(await OnEveryRouteAsync($"{Only}\nwhile({{s + Only, s + Only < 3}}, 0)"), "2", "tick#1");
+        AssertOk(await OnEveryRouteAsync($"Step = {{s + Only}}\n{Only}\nrepeat(Step(0), 3)"), "3", "tick#1");
+        AssertOk(await OnEveryRouteAsync($"{Only}\nStep = s + Only\nrepeat(Step(0), 3)"), "3", "tick#1");
+        AssertOk(await OnEveryRouteAsync($"Step = {{s + Only, s + Only < 3}}\n{Only}\nwhile(Step(0))"), "2", "tick#1");
     }
 
     // ── 8. Collectors: a failed read is that read's failure ──────────────────────────

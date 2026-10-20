@@ -133,12 +133,13 @@ private def cfProgram (rows : List KatLang.Expr) : KatLang.Expr :=
     ("Ar", cfArityAlg), ("Dc", cfDiscardedAlg), ("Nb1", cfNonBoolCmpAlg), ("Nb2", cfNonBoolNumAlg),
     ("Ok", cfFailThenFalseAlg), ("Cy", cfCycleAlg), ("C1", cfInputFlagAlg), ("C2", cfCandidateFlagAlg),
     ("Al", .alias none [] [] (resolve "Count")),
-    -- Run(f, x) = while(f, x)
-    ("Run", alg ["f", "x"] [] [] [.call (resolve "while") [.param "f", .param "x"]])
+    -- Run(f, x) = while(f(x))
+    ("Run", alg ["f", "x"] [] [] [.call (resolve "while") [.call (.param "f") [.param "x"]]])
   ] rows)
 
+/-- `while(step(state…))` (META-S3-3): the loop captures the written step call. -/
 private def cfWhile (step : String) (state : List KatLang.Expr) : KatLang.Expr :=
-  .call (resolve "while") (resolve step :: state)
+  .call (resolve "while") [.call (resolve step) state]
 
 private def cfOk (rows : List KatLang.Expr) (expected : Result) : Bool :=
   match runResult (cfProgram rows) with
@@ -153,7 +154,7 @@ private def cfFails (rows : List KatLang.Expr) (check : Error -> Bool) : Bool :=
 -- 1. Initially false: the division row is never formed; the initial state returns.
 #guard cfOk [cfWhile "Step" [.num 1]] (.atom 1)
 -- ... while `repeat` (and the ordinary call) still form every row left to right.
-#guard cfFails [.call (resolve "repeat") [resolve "Step", .num 1, .num 1]] innermostIsDivByZero
+#guard cfFails [.call (resolve "repeat") [.call (resolve "Step") [.num 1], .num 1]] innermostIsDivByZero
 #guard cfFails [.call (resolve "Step") [.num 1]] innermostIsDivByZero
 -- 2. Initially true: the transition runs.
 #guard cfOk [cfWhile "Count" [.num 4]] (.atom 1)

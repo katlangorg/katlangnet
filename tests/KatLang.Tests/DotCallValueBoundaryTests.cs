@@ -486,7 +486,7 @@ public class DotCallValueBoundaryTests
         foreach (var (receiver, expected) in new[] { ("()", "3"), ("(1, 2)", "3"), ("[]", "3"), ("[1, 2]", "3") })
         {
             var prefix = definitions + $"Step(n) = n + count(Apply({receiver}, Coll))\n";
-            var source = prefix + "repeat(Step, 3, 0)";
+            var source = prefix + "repeat(Step(0), 3)";
             var loop = new LoopOptimizationDiagnostics();
             var ast = AsyncEvaluationHarness.Ast(source);
             var (planned, _) = Evaluator.RunCountedObserved(ast, loopDiagnostics: loop);

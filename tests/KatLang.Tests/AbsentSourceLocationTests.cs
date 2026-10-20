@@ -39,9 +39,9 @@ public class AbsentSourceLocationTests
     /// </summary>
     private const string PlannableStepModule = "public Step(a) = {\n  u = a + 1\n  t = u + 1\n  if(t > 0, t, 0)\n}";
 
-    private const string PlannedLoopDocument = "open '" + Lib + "'\nrepeat(Step, 3, 1)";
+    private const string PlannedLoopDocument = "open '" + Lib + "'\nrepeat(Step(1), 3)";
 
-    /// <summary>The document's own <c>repeat(Step, 3, 1)</c> row — the legitimate enclosing location.</summary>
+    /// <summary>The document's own <c>repeat(Step(1), 3)</c> row — the legitimate enclosing location.</summary>
     private static readonly SourceSpan PlannedLoopCallSpan = new(2, 1, 2, 19);
 
     private static RunOptions ModuleOptions(
@@ -361,8 +361,8 @@ public class AbsentSourceLocationTests
         // Nested deconstruction inside a brace body.
         "F = {\n  p, q = 1, 2\n  p\n}\nF",
         // Deconstruction feeding a loop step, and a plannable loop temporary beside it.
-        "Step(a) = {\n  p, q = a, a\n  p + q\n}\nrepeat(Step, 3, 1)",
-        "Step(a) = {\n  t = a + 1\n  if(t > 0, t, 0)\n}\nrepeat(Step, 3, 1)",
+        "Step(a) = {\n  p, q = a, a\n  p + q\n}\nrepeat(Step(1), 3)",
+        "Step(a) = {\n  t = a + 1\n  if(t > 0, t, 0)\n}\nrepeat(Step(1), 3)",
         // Prelude and Math bindings declare no source name either.
         "A = Math.Pi\nA",
         "A = Math.Pi\nB = A\nB",

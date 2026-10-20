@@ -31,13 +31,15 @@ public sealed class FinalCandidateBoundaryTests(ITestOutputHelper output)
             [BuiltinId.take] = 2, [BuiltinId.skip] = 2, [BuiltinId.min] = 1,
             [BuiltinId.max] = 1, [BuiltinId.sum] = 1, [BuiltinId.avg] = 1,
             [BuiltinId.reduce] = 3,
+            // META-S3-3: `while(meta step)` and `repeat(meta step, count)` are fixed-arity too.
+            [BuiltinId.@while] = 1, [BuiltinId.@repeat] = 2,
         };
-        Assert.Equal(Enum.GetValues<BuiltinId>().Order(), exact.Keys.Append(BuiltinId.@repeat).Append(BuiltinId.@while).Order());
+        Assert.Equal(Enum.GetValues<BuiltinId>().Order(), exact.Keys.Order());
         foreach (var id in Enum.GetValues<BuiltinId>())
         {
             var descriptor = BuiltinRegistry.GetBuiltin(id);
             for (var count = 0; count <= 20; count++)
-                Assert.Equal(id == BuiltinId.@repeat ? count >= 3 : id == BuiltinId.@while ? count >= 2 : count == exact[id], descriptor.AcceptsArity(count));
+                Assert.Equal(count == exact[id], descriptor.AcceptsArity(count));
         }
     }
 
@@ -45,13 +47,10 @@ public sealed class FinalCandidateBoundaryTests(ITestOutputHelper output)
     public void ArityRenderingMetadataSurvivesCopiesAndContextsWithoutChangingEquality()
     {
         var signature = BuiltinRegistry.GetBuiltin(BuiltinId.@repeat).PlainSignature;
-        var plain = new EvalError.ArityMismatch(0, 2) { Signature = signature };
-        var annotated = plain with { AcceptedArity = BuiltinRegistry.GetBuiltin(BuiltinId.@repeat).ArityFacts };
-        Assert.Equal(plain, annotated);
-        Assert.Equal(plain.GetHashCode(), annotated.GetHashCode());
+        var annotated = new EvalError.ArityMismatch(2, 3) { Signature = signature };
         var copy = annotated with { Span = new SourceSpan(2, 3, 2, 9) };
-        Assert.Same(annotated.AcceptedArity, copy.AcceptedArity);
-        Assert.Contains("expects at least 3 arguments", KatLangError.FromEvalError(copy).Message, StringComparison.Ordinal);
+        Assert.Same(annotated.Signature, copy.Signature);
+        Assert.Contains("Callable `repeat(meta step, count)` expects 2 arguments, but was called with 3 arguments.", KatLangError.FromEvalError(copy).Message, StringComparison.Ordinal);
         Assert.Equal(new SourceSpan(2, 3, 2, 9), KatLangError.FromEvalError(copy).Span);
     }
 

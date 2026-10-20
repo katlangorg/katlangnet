@@ -309,7 +309,7 @@ public class Decimal128NearOneLogarithmTests
     public async Task NegativeNearOneBasePower_AgreesAcrossExecutionStrategies()
     {
         // A loop step raising its own (negative) state takes the planned numeric arm.
-        const string source = "Step(x) = x ^ 10000000000000000001\nrepeat(Step, 1, -1.0000000000000000001)";
+        const string source = "Step(x) = x ^ 10000000000000000001\nrepeat(Step(-1.0000000000000000001), 1)";
         var generic = EvaluatorTestSupport.Eval(source, enableLoopOptimization: false);
         var planned = EvaluatorTestSupport.Eval(source, enableLoopOptimization: true);
         Assert.False(generic.IsError);

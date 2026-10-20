@@ -477,8 +477,8 @@ public class BudgetConservationTests
             "1 / 0",                                               // structured non-limit error
             "Missing",                                             // unknown name
             "count(1, 2)",                                         // arity error
-            "while(S, 4)\nS(n) = n + 1, n < 3",                    // loop
-            "repeat(S, 4, 0)\nS(n) = n + 1",                       // repeat loop
+            "while(S(4))\nS(n) = n + 1, n < 3",                    // loop
+            "repeat(S(0), 4)\nS(n) = n + 1",                       // repeat loop
             "'abc'.string",                                        // string materialization
         ];
 

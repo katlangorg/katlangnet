@@ -196,7 +196,7 @@ private def fcTwoRowPredicateRejected : Error -> Bool :=
 
 -- A loop step is not a callback: the selected clause's two rows are the next
 -- state (two slots), whose completed loop is one value.
-#guard fcOk [.call (resolve "repeat") [resolve "F", .num 1, .num 0]] (fcPair 1 2)
+#guard fcOk [.call (resolve "repeat") [.call (resolve "F") [.num 0], .num 1]] (fcPair 1 2)
 
 /-- THE CALLBACK-RESULT LAW FOR FAMILIES: a family callback is judged exactly
     like its SELECTED CLAUSE written as a user callback — value for value, and
@@ -269,7 +269,7 @@ private def fcHostProgram (repeated oneRow : Bool) (row : KatLang.Expr) : KatLan
   (.sequenceValue [.atom 1, .atom 0])
 #guard fcExpected (fcHostProgram false false (.call (resolve "F") [.num 1, .num 0]))
   (.sequenceValue [.atom 1, .atom 0])
-#guard fcExpected (fcHostProgram false false (.call (resolve "repeat") [resolve "F", .num 1, .num 1, .num 0]))
+#guard fcExpected (fcHostProgram false false (.call (resolve "repeat") [.call (resolve "F") [.num 1, .num 0], .num 1]))
   (.sequenceValue [.atom 1, .atom 0])
 #guard fcExpected (fcHostProgram true true (fcReduce [.num 1] (resolve "F") (.num 1))) (.atom 1)
 #guard match runResult (fcHostProgram true true (fcReduce [.num 1] (resolve "F") (.num 0))) with

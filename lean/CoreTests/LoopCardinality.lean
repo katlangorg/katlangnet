@@ -87,15 +87,15 @@ def lcForms (a b : KatLang.Expr) : List (List KatLang.Expr × Result) := [
   ([.capture [sequenceSpread (.emptySequence 0)]], .sequenceValue [.sequenceValue [], .atom 0]),
   ([sequenceSpread (.capture [a, .capture [a, b]])],
     .sequenceValue [.atom 1, .sequenceValue [.atom 1, .atom 2], .atom 0]),
-  ([.call (resolve "repeat") [resolve "Fib", .num 1, a, b]],
+  ([.call (resolve "repeat") [.call (resolve "Fib") [a, b], .num 1]],
     .sequenceValue [.sequenceValue [.atom 2, .atom 3], .atom 0]),
-  ([sequenceSpread (.call (resolve "repeat") [resolve "Fib", .num 1, a, b])],
+  ([sequenceSpread (.call (resolve "repeat") [.call (resolve "Fib") [a, b], .num 1])],
     .sequenceValue [.atom 2, .atom 3, .atom 0])
 ]
 
 /-- Q-24: equal rows form an equal next state whatever the step's head. For
     every head category and every output form, one iteration
-    `repeat(S, 1, init)` captures exactly the row supply the form defines, and
+    `repeat(S(init), 1)` captures exactly the row supply the form defines, and
     equals the direct call `S(init)` in value. A packed spread row (the retired
     LOOP-04) would turn `(a, b)*, 0` into the two-slot state `((1, 2), 0)`
     under the pattern-bound heads only. -/
@@ -104,7 +104,7 @@ def stepRowsIgnorePatternCategory : Bool :=
     (lcForms head.a head.b).all fun (rows, expected) =>
       let step := algWithParameterPatterns head.patterns [] [] (rows ++ [.num 0])
       match runResult (.algorithmExpr (algPrivate [] [] [("Fib", lcFibAlg), ("S", step)]
-          [.call (resolve "repeat") ([resolve "S", .num 1] ++ head.init),
+          [.call (resolve "repeat") [.call (resolve "S") head.init, .num 1],
            .call (resolve "S") head.init])) with
       | .ok value => value == .sequenceValue [expected, expected]
       | _ => false
@@ -118,8 +118,8 @@ def stepRowsIgnorePatternCategoryThroughAWrapper : Bool :=
     let inner := algWithParameterPatterns [.sequenceValue [lcCap "a", lcCap "b"]] [] [] (rows ++ [.num 0])
     let wrapper := alg ["p"] [] [] [sequenceSpread (.call (resolve "P") [.param "p"])]
     match runResult (.algorithmExpr (algPrivate [] [] [("Fib", lcFibAlg), ("P", inner), ("W", wrapper)]
-        [.call (resolve "repeat") [resolve "W", .num 1, lcPair 1 2],
-         .call (resolve "repeat") [resolve "P", .num 1, lcPair 1 2]])) with
+        [.call (resolve "repeat") [.call (resolve "W") [lcPair 1 2], .num 1],
+         .call (resolve "repeat") [.call (resolve "P") [lcPair 1 2], .num 1]])) with
     | .ok value => value == .sequenceValue [expected, expected]
     | _ => false
 
@@ -138,14 +138,14 @@ def repeatedNameStepRowsAreTheNextState : Bool :=
     alg ["x", "x"] [] [] (rows spread second)
   let run (step : Algorithm) (out : List KatLang.Expr) : Except Error Result :=
     runResult (.algorithmExpr (algPrivate [] [] [("Dup", step)] out))
-  let twice := [KatLang.Expr.call (resolve "repeat") [resolve "Dup", .num 2, .num 1, .num 1]]
+  let twice := [KatLang.Expr.call (resolve "repeat") [.call (resolve "Dup") [.num 1, .num 1], .num 2]]
   let same := KatLang.Expr.binary .add (.param "x") (.num 1)
   let diverging := KatLang.Expr.binary .add (.param "x") (.num 2)
   (match run (dup false same) twice, run (dup true same) twice with
    | .ok left, .ok right => left == .sequenceValue [.atom 3, .atom 3] && right == left
    | _, _ => false) &&
   [false, true].all fun spread =>
-    (match run (dup spread diverging) [.call (resolve "repeat") [resolve "Dup", .num 1, .num 1, .num 1]] with
+    (match run (dup spread diverging) [.call (resolve "repeat") [.call (resolve "Dup") [.num 1, .num 1], .num 1]] with
      | .ok value => value == .sequenceValue [.atom 2, .atom 3]
      | _ => false) &&
     (match run (dup spread diverging) twice, run (dup spread diverging) [.call (resolve "Dup") [.num 2, .num 3]] with
@@ -172,25 +172,25 @@ def structuralStepRowsAreOrdinaryRows : Bool :=
     [.listLiteral [sequenceSpread (.param "h"), .param "n"], .binary .add (.param "n") (.num 1)]
   let run (props : List (Prod String Algorithm)) (out : KatLang.Expr) : Except Error Result :=
     runResult (.algorithmExpr (algPrivate [] [] props [out]))
-  (match run [("Step", oneSlot)] (.call (resolve "repeat") [resolve "Step", .num 3, lcPair 0 1]) with
+  (match run [("Step", oneSlot)] (.call (resolve "repeat") [.call (resolve "Step") [lcPair 0 1], .num 3]) with
    | .ok value => value == .sequenceValue [.atom 2, .atom 3]
    | _ => false) &&
-  (match run [("Step2", twoItems)] (.call (resolve "repeat") [resolve "Step2", .num 1, lcPair 0 1]) with
+  (match run [("Step2", twoItems)] (.call (resolve "repeat") [.call (resolve "Step2") [lcPair 0 1], .num 1]) with
    | .ok value => value == .sequenceValue [.atom 1, .atom 1]
    | _ => false) &&
-  (match run [("Step2", twoItems)] (.call (resolve "repeat") [resolve "Step2", .num 3, lcPair 0 1]) with
+  (match run [("Step2", twoItems)] (.call (resolve "repeat") [.call (resolve "Step2") [lcPair 0 1], .num 3]) with
    | .error err => innermostIsArityMismatch 1 2 err
    | _ => false) &&
-  (match run [("P", history)] (.call (resolve "repeat") [resolve "P", .num 2, lcPair 1 2, .num 0]) with
+  (match run [("P", history)] (.call (resolve "repeat") [.call (resolve "P") [lcPair 1 2, .num 0], .num 2]) with
    | .ok value => value == .sequenceValue [.sequenceValue [.atom 1, .atom 2], .atom 2]
    | _ => false) &&
   -- Without the capture the history's items become separate slots; the second
   -- binding of `((*h), n)` then sees three slots.
-  (match run [("P", flatHistory)] (.call (resolve "repeat") [resolve "P", .num 2, lcPair 1 2, .num 0]) with
+  (match run [("P", flatHistory)] (.call (resolve "repeat") [.call (resolve "P") [lcPair 1 2, .num 0], .num 2]) with
    | .error err => innermostIsArityMismatch 2 3 err
    | _ => false) &&
   (match run [("Grow", grow)]
-      (.index (.call (resolve "repeat") [resolve "Grow", .num 3, .listLiteral [], .num 0]) [.num 0]) with
+      (.index (.call (resolve "repeat") [.call (resolve "Grow") [.listLiteral [], .num 0], .num 3]) [.num 0]) with
    | .ok value => value == .listValue [.atom 0, .atom 1, .atom 2]
    | _ => false)
 
@@ -209,7 +209,7 @@ def oneIterationEqualsTheDirectCall : Bool :=
   let swapList := algWithParameterPatterns [.listValue [lcCap "a", lcCap "b"]] [] []
     [sequenceSpread (.listLiteral [.param "b", .param "a"]), .num 9]
   let nested := alg ["a", "b"] [] []
-    [.call (resolve "repeat") [resolve "Step", .num 1, .param "a", .param "b"], .param "a"]
+    [.call (resolve "repeat") [.call (resolve "Step") [.param "a", .param "b"], .num 1], .param "a"]
   let props := [("Step", step), ("P", history), ("Dup", dup), ("L", swapList), ("N", nested)]
   let cases : List (String × List KatLang.Expr × KatLang.CountedResult) := [
     ("Step", [.num 3, .num 4], (.sequenceValue [.atom 4, .atom 7], 1)),
@@ -220,7 +220,7 @@ def oneIterationEqualsTheDirectCall : Bool :=
   ]
   cases.all fun (name, init, expected) =>
     match runCountedProgram (.algorithmExpr (algPrivate [] [] props
-            [.call (resolve "repeat") ([resolve name, .num 1] ++ init)])),
+            [.call (resolve "repeat") [.call (resolve name) init, .num 1]])),
           runCountedProgram (.algorithmExpr (algPrivate [] [] props [.call (resolve name) init])) with
     | .ok loop, .ok call => loop == expected && call == expected
     | _, _ => false
@@ -237,7 +237,7 @@ def loopResultIsAValueBoundary : Bool :=
   let drop := algWithParameters [{ name := "xs", kind := .collecting }] [] []
     [sequenceSpread (.emptySequence 0)]
   let props := [("Fib", lcFibAlg), ("Inc", lcIncAlg), ("Cd", countdown), ("Drop", drop)]
-  let fib := KatLang.Expr.call (resolve "repeat") [resolve "Fib", .num 10, .num 0, .num 1]
+  let fib := KatLang.Expr.call (resolve "repeat") [.call (resolve "Fib") [.num 0, .num 1], .num 10]
   let pair5589 : Result := .sequenceValue [.atom 55, .atom 89]
   let counted (rows : List KatLang.Expr) (expected : KatLang.CountedResult) : Bool :=
     match runCountedProgram (.algorithmExpr (algPrivate [] [] props rows)) with
@@ -246,12 +246,12 @@ def loopResultIsAValueBoundary : Bool :=
   counted [fib] (pair5589, 1) &&
   counted [fib, .num 7] (.sequenceValue [pair5589, .atom 7], 2) &&
   counted [sequenceSpread fib] (pair5589, 2) &&
-  counted [.call (resolve "while") [resolve "Cd", .num 3, .num 0]] (.sequenceValue [.atom 1, .atom 5], 1) &&
-  counted [.call (resolve "repeat") [resolve "Inc", .num 3, .num 0]] (.atom 3, 1) &&
+  counted [.call (resolve "while") [.call (resolve "Cd") [.num 3, .num 0]]] (.sequenceValue [.atom 1, .atom 5], 1) &&
+  counted [.call (resolve "repeat") [.call (resolve "Inc") [.num 0], .num 3]] (.atom 3, 1) &&
   -- zero final slots: the result is `()`, emitted count 0 at the loop and one
   -- visible root row; its spread supplies nothing
-  counted [.call (resolve "repeat") [resolve "Drop", .num 1, .num 1]] (.sequenceValue [], 1) &&
-  counted [sequenceSpread (.call (resolve "repeat") [resolve "Drop", .num 1, .num 1])] (.sequenceValue [], 0) &&
+  counted [.call (resolve "repeat") [.call (resolve "Drop") [.num 1], .num 1]] (.sequenceValue [], 1) &&
+  counted [sequenceSpread (.call (resolve "repeat") [.call (resolve "Drop") [.num 1], .num 1])] (.sequenceValue [], 0) &&
   KatLang.loopResultCounted [] == (.sequenceValue [], 0) &&
   KatLang.loopResultCounted [.atom 3] == (.atom 3, 1) &&
   KatLang.loopResultCounted [.atom 55, .atom 89] == (pair5589, 1)
@@ -271,8 +271,8 @@ def completedLoopForgetsItsSlotCount : Bool :=
   let run (out : KatLang.Expr) := runCountedProgram (.algorithmExpr (algPrivate [] [] props [out]))
   KatLang.loopResultCounted [.sequenceValue [.atom 20, .atom 30]]
     == KatLang.loopResultCounted [.atom 20, .atom 30] &&
-  match run (.call (resolve "repeat") [resolve "P1", .num 1, lcPair 10 20]),
-        run (.call (resolve "repeat") [resolve "P2", .num 1, .num 10, .num 20]) with
+  match run (.call (resolve "repeat") [.call (resolve "P1") [lcPair 10 20], .num 1]),
+        run (.call (resolve "repeat") [.call (resolve "P2") [.num 10, .num 20], .num 1]) with
   | .ok one, .ok two => one == (.sequenceValue [.atom 20, .atom 30], 1) && two == one
   | _, _ => false
 
@@ -280,19 +280,19 @@ def completedLoopForgetsItsSlotCount : Bool :=
 
 /-- Q-26: a nested loop written as a step row is ONE next-state slot, exactly
     like a helper call returning it (η-parity); the explicit spread supplies
-    its items. `Two(a, b) = repeat(Fib, 2, a, b)` leaves one slot for the
+    its items. `Two(a, b) = repeat(Fib(a, b), 2)` leaves one slot for the
     two-parameter head (formerly SUP-01's nested-loop exception spliced two). -/
 def nestedLoopRowIsOneSlot : Bool :=
-  let inner := alg ["a", "b"] [] [] [.call (resolve "repeat") [resolve "Fib", .num 2, .param "a", .param "b"]]
-  let direct := alg ["a", "b"] [] [] [.call (resolve "repeat") [resolve "Fib", .num 2, .param "a", .param "b"]]
+  let inner := alg ["a", "b"] [] [] [.call (resolve "repeat") [.call (resolve "Fib") [.param "a", .param "b"], .num 2]]
+  let direct := alg ["a", "b"] [] [] [.call (resolve "repeat") [.call (resolve "Fib") [.param "a", .param "b"], .num 2]]
   let wrapped := alg ["a", "b"] [] [] [.call (resolve "Inner") [.param "a", .param "b"]]
   let directSpread := alg ["a", "b"] [] []
-    [sequenceSpread (.call (resolve "repeat") [resolve "Fib", .num 2, .param "a", .param "b"])]
+    [sequenceSpread (.call (resolve "repeat") [.call (resolve "Fib") [.param "a", .param "b"], .num 2])]
   let wrappedSpread := alg ["a", "b"] [] [] [sequenceSpread (.call (resolve "Inner") [.param "a", .param "b"])]
   let props := [("Fib", lcFibAlg), ("Inner", inner), ("Two", direct), ("TwoW", wrapped),
     ("TwoS", directSpread), ("TwoWS", wrappedSpread)]
   let run (step : String) := runResult (.algorithmExpr (algPrivate [] [] props
-    [.call (resolve "repeat") [resolve step, .num 3, .num 0, .num 1]]))
+    [.call (resolve "repeat") [.call (resolve step) [.num 0, .num 1], .num 3]]))
   ["Two", "TwoW"].all (fun step =>
     match run step with
     | .error err => innermostIsArityMismatch 2 1 err
@@ -310,7 +310,7 @@ def nestedLoopRowIsOneSlot : Bool :=
     the call boundary captures again: the callback's ordinary call result is the
     same one value (HO-03). -/
 def callbackBodyLoopIsOneValue : Bool :=
-  let loop := KatLang.Expr.call (resolve "repeat") [resolve "Fib", .num 2, .param "x", .num 1]
+  let loop := KatLang.Expr.call (resolve "repeat") [.call (resolve "Fib") [.param "x", .num 1], .num 2]
   let helper := alg ["x"] [] [] [loop]
   let viaHelper := alg ["x"] [] [] [.call (resolve "H") [.param "x"]]
   let spreadBody := alg ["x"] [] [] [sequenceSpread loop]

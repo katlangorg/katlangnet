@@ -122,7 +122,7 @@ public class OptimizerEquivalenceSweepTests
                 {
                     Compare(
                         $"repeat/{op}/{operand}/{init}",
-                        $"{Prelude}S(x) = x {op} {operand}\nrepeat(S, 3, {init})",
+                        $"{Prelude}S(x) = x {op} {operand}\nrepeat(S({init}), 3)",
                         sweep);
                 }
             }
@@ -144,19 +144,19 @@ public class OptimizerEquivalenceSweepTests
                     // One state slot; the continuation is a literal, so exactly one iteration runs.
                     Compare(
                         $"while1/{op}/{operand}/{init}",
-                        $"{Prelude}S(x) = x {op} {operand}, 0\nwhile(S, {init})",
+                        $"{Prelude}S(x) = x {op} {operand}, 0\nwhile(S({init}))",
                         sweep);
 
                     // Two slots: slot 0 is a bounded counter, slot 1 carries the tested expression.
                     Compare(
                         $"while2/{op}/{operand}/{init}",
-                        $"{Prelude}S(k, y) = k - 1, y {op} {operand}, k > 0\nwhile(S, 3, {init})",
+                        $"{Prelude}S(k, y) = k - 1, y {op} {operand}, k > 0\nwhile(S(3, {init}))",
                         sweep);
 
                     // The tested expression IS the continuation slot.
                     Compare(
                         $"whileCont/{op}/{operand}/{init}",
-                        $"{Prelude}S(k, y) = k - 1, y, if(k > 0, y {op} {operand}, 0)\nwhile(S, 3, {init})",
+                        $"{Prelude}S(k, y) = k - 1, y, if(k > 0, y {op} {operand}, 0)\nwhile(S(3, {init}))",
                         sweep);
                 }
             }
@@ -196,15 +196,15 @@ public class OptimizerEquivalenceSweepTests
         {
             foreach (var init in Inits)
             {
-                Compare($"repeatBody/{body}/{init}", $"{Prelude}{extra}S(x) = {body}\nrepeat(S, 2, {init})", sweep);
-                Compare($"whileBody1/{body}/{init}", $"{Prelude}{extra}S(x) = {body}, 0\nwhile(S, {init})", sweep);
+                Compare($"repeatBody/{body}/{init}", $"{Prelude}{extra}S(x) = {body}\nrepeat(S({init}), 2)", sweep);
+                Compare($"whileBody1/{body}/{init}", $"{Prelude}{extra}S(x) = {body}, 0\nwhile(S({init}))", sweep);
                 Compare(
                     $"whileBody2/{body}/{init}",
-                    $"{Prelude}{extra}S(k, x) = k - 1, {body}, k > 0\nwhile(S, 2, {init})",
+                    $"{Prelude}{extra}S(k, x) = k - 1, {body}, k > 0\nwhile(S(2, {init}))",
                     sweep);
                 Compare(
                     $"whileCont/{body}/{init}",
-                    $"{Prelude}{extra}S(k, x) = k - 1, x, if(k > 0, {body}, 0)\nwhile(S, 2, {init})",
+                    $"{Prelude}{extra}S(k, x) = k - 1, x, if(k > 0, {body}, 0)\nwhile(S(2, {init}))",
                     sweep);
             }
         }
@@ -262,61 +262,61 @@ public class OptimizerEquivalenceSweepTests
     {
         var programs = new (string Id, string Source)[]
         {
-            ("loop-in-callback", "Inner(x) = x + 1\nM(a) = repeat(Inner, a, 0)\nmap((1, 2, 3), M)"),
-            ("loop-in-callback-while", "Inner(x) = x - 1, x > 0\nM(a) = while(Inner, a)\nmap((1, 2, 3), M)"),
-            ("nested-loops", "Inner(y) = y + 1\nOuter(x) = repeat(Inner, 2, x)\nrepeat(Outer, 3, 0)"),
-            ("loop-temp-property", "S(x) = {\n    T = x * 2\n    T + 1\n}\nrepeat(S, 3, 1)"),
-            ("loop-counted-param", "Step(x) = x + 1\nM(a) = repeat(Step, 2, a)\nmap(((1, 2), 3), M)"),
-            ("loop-reduce-callback", "Add(a, b) = a + b\nS(x) = reduce((1, 2), Add, x)\nrepeat(S, 3, 0)"),
-            ("state-becomes-list", "S(x) = if(x > 0, x - 1, [1, 2])\nrepeat(S, 3, 2)"),
-            ("state-becomes-string", "S(x) = if(x > 0, x - 1, 'ab')\nrepeat(S, 3, 2)"),
-            ("state-becomes-sequence", "S(x) = if(x > 0, x - 1, (1, 2))\nrepeat(S, 3, 2)"),
-            ("state-becomes-empty", "S(x) = if(x > 0, x - 1, ())\nrepeat(S, 3, 2)"),
-            ("while-state-becomes-sequence", "S(x) = if(x > 0, x - 1, (1, 2)), 1\nwhile(S, 2)"),
+            ("loop-in-callback", "Inner(x) = x + 1\nM(a) = repeat(Inner(0), a)\nmap((1, 2, 3), M)"),
+            ("loop-in-callback-while", "Inner(x) = x - 1, x > 0\nM(a) = while(Inner(a))\nmap((1, 2, 3), M)"),
+            ("nested-loops", "Inner(y) = y + 1\nOuter(x) = repeat(Inner(x), 2)\nrepeat(Outer(0), 3)"),
+            ("loop-temp-property", "S(x) = {\n    T = x * 2\n    T + 1\n}\nrepeat(S(1), 3)"),
+            ("loop-counted-param", "Step(x) = x + 1\nM(a) = repeat(Step(a), 2)\nmap(((1, 2), 3), M)"),
+            ("loop-reduce-callback", "Add(a, b) = a + b\nS(x) = reduce((1, 2), Add, x)\nrepeat(S(0), 3)"),
+            ("state-becomes-list", "S(x) = if(x > 0, x - 1, [1, 2])\nrepeat(S(2), 3)"),
+            ("state-becomes-string", "S(x) = if(x > 0, x - 1, 'ab')\nrepeat(S(2), 3)"),
+            ("state-becomes-sequence", "S(x) = if(x > 0, x - 1, (1, 2))\nrepeat(S(2), 3)"),
+            ("state-becomes-empty", "S(x) = if(x > 0, x - 1, ())\nrepeat(S(2), 3)"),
+            ("while-state-becomes-sequence", "S(x) = if(x > 0, x - 1, (1, 2)), 1\nwhile(S(2))"),
             // A bounded counter `k` drives the loop, so the second state slot can
             // become `()` and stay `()` without the continuation ever depending on
             // it. The guarded `if` keeps `x - 1` off the empty slot; the companion
             // case below is the one that feeds `()` straight into an operator.
-            ("while-state-becomes-empty", "S(k, x) = k - 1, if(k > 1, x - 1, ()), k > 0\nwhile(S, 3, 2)"),
+            ("while-state-becomes-empty", "S(k, x) = k - 1, if(k > 1, x - 1, ()), k > 0\nwhile(S(3, 2))"),
             // SYN-01: an empty state slot reaching an operator is a type error, and
             // the planned and generic strategies must agree on that error.
-            ("empty-state-reaches-operator", "S(x) = x - 1\nrepeat(S, 2, ())"),
-            ("empty-state-reaches-continuation", "S(x) = x - 1, x > 0\nwhile(S, ())"),
-            ("multi-slot-state-kind-change", "S(x, y) = y, if(x > 0, x - 1, (1, 2))\nrepeat(S, 3, 2, 2)"),
-            ("step-shadows-outer-name", "x = 99\nS(x) = x + 1\nrepeat(S, 3, 0)"),
-            ("cached-property-in-step", "P = 1, 2\nS(x) = x + P.count\nrepeat(S, 3, 0)"),
-            ("native-call-in-step", "S(x) = x + Math.Abs(-1)\nrepeat(S, 3, 0)"),
-            ("div-zero-late", "S(x) = 10 div (x - 2)\nrepeat(S, 4, 0)"),
-            ("div-zero-in-continuation", "S(x) = x + 1, 10 div (x - 2)\nwhile(S, 0)"),
+            ("empty-state-reaches-operator", "S(x) = x - 1\nrepeat(S(()), 2)"),
+            ("empty-state-reaches-continuation", "S(x) = x - 1, x > 0\nwhile(S(()))"),
+            ("multi-slot-state-kind-change", "S(x, y) = y, if(x > 0, x - 1, (1, 2))\nrepeat(S(2, 2), 3)"),
+            ("step-shadows-outer-name", "x = 99\nS(x) = x + 1\nrepeat(S(0), 3)"),
+            ("cached-property-in-step", "P = 1, 2\nS(x) = x + P.count\nrepeat(S(0), 3)"),
+            ("native-call-in-step", "S(x) = x + Math.Abs(-1)\nrepeat(S(0), 3)"),
+            ("div-zero-late", "S(x) = 10 div (x - 2)\nrepeat(S(0), 4)"),
+            ("div-zero-in-continuation", "S(x) = x + 1, 10 div (x - 2)\nwhile(S(0))"),
             // G-3: the planned numeric arm and the generic spine share ONE exact
             // integer division — a 34-digit quotient that IEEE rounds up, a small
             // quotient landing on an integer from either side, a quotient beyond the
             // consecutive-integer domain, and the digit-extraction idiom.
-            ("div-exact-34-digit-quotient", "S(x) = x div 3\nrepeat(S, 1, 8999999999999999999999999999999999)"),
-            ("div-landing-from-below", "S(x) = x div 3e32\nrepeat(S, 1, 3899999999999999999999999999999999)"),
-            ("div-landing-from-above", "S(x) = x div 3e32\nrepeat(S, 1, 3600000000000000000000000000000001)"),
-            ("div-beyond-consecutive-integers", "S(x) = x div 7\nrepeat(S, 1, 1e35)"),
-            ("div-negative-exact-quotient", "S(x, r) = x div -3, x mod -3, 0\nwhile(S, -8999999999999999999999999999999999, 0)"),
-            ("div-mod-digit-extraction", "S(n, s) = n div 10, s + n mod 10, n > 0\nwhile(S, 9999999999999999999999999999999999, 0)"),
-            ("string-state-planned", "S(x) = x\nrepeat(S, 3, 'ab')"),
-            ("error-in-planned-branch", "S(x) = if(x > 1, x - 1, min(()))\nrepeat(S, 4, 3)"),
-            ("spread-step-output", "S(x) = { (x, 1)* }\nrepeat(S, 2, 0)"),
-            ("spread-while-output", "S(x) = { (x - 1, x > 0)* }\nwhile(S, 3)"),
-            ("zero-emission-step", "S(x) = ()\nrepeat(S, 2, 1)"),
-            ("zero-emission-while", "S(x) = (), 0\nwhile(S, 1)"),
+            ("div-exact-34-digit-quotient", "S(x) = x div 3\nrepeat(S(8999999999999999999999999999999999), 1)"),
+            ("div-landing-from-below", "S(x) = x div 3e32\nrepeat(S(3899999999999999999999999999999999), 1)"),
+            ("div-landing-from-above", "S(x) = x div 3e32\nrepeat(S(3600000000000000000000000000000001), 1)"),
+            ("div-beyond-consecutive-integers", "S(x) = x div 7\nrepeat(S(1e35), 1)"),
+            ("div-negative-exact-quotient", "S(x, r) = x div -3, x mod -3, 0\nwhile(S(-8999999999999999999999999999999999, 0))"),
+            ("div-mod-digit-extraction", "S(n, s) = n div 10, s + n mod 10, n > 0\nwhile(S(9999999999999999999999999999999999, 0))"),
+            ("string-state-planned", "S(x) = x\nrepeat(S('ab'), 3)"),
+            ("error-in-planned-branch", "S(x) = if(x > 1, x - 1, min(()))\nrepeat(S(3), 4)"),
+            ("spread-step-output", "S(x) = { (x, 1)* }\nrepeat(S(0), 2)"),
+            ("spread-while-output", "S(x) = { (x - 1, x > 0)* }\nwhile(S(3))"),
+            ("zero-emission-step", "S(x) = ()\nrepeat(S(1), 2)"),
+            ("zero-emission-while", "S(x) = (), 0\nwhile(S(1))"),
             // SELECTION IS A VALUE BOUNDARY: an unspread selection is ONE state slot
             // in both strategies (a selected pair, a selected `()`, a selected list),
             // `first`/`last` agree with the index form, and only the explicit spread
             // grows the state-slot vector (the generic handover).
-            ("selection-pair-one-slot", "P = ((1, 2), (3, 4))\nS(x, y) = P[0], y + 1\nrepeat(S, 2, 0, 0)"),
-            ("selection-first-one-slot", "P = ((1, 2), (3, 4))\nS(x, y) = first(P), y + 1\nrepeat(S, 2, 0, 0)"),
-            ("selection-last-one-slot", "P = ((3, 4), (1, 2))\nS(x, y) = last(P), y + 1\nrepeat(S, 2, 0, 0)"),
-            ("selection-empty-one-slot", "P = (), 5\nS(x, y) = P[0], y + 1\nrepeat(S, 2, 0, 0)"),
-            ("selection-list-one-slot", "P = [1, 2], 5\nS(x, y) = P[0], y + 1\nrepeat(S, 2, 0, 0)"),
-            ("selection-spread-grows-state", "P = ((1, 2), (3, 4))\nS(x, y) = (P[0])*, y + 1\nrepeat(S, 1, 0, 0)"),
-            ("selection-as-continuation", "P = ((1, false), (2, 2))\nS(x) = x + 1, P[0]\nwhile(S, 9)"),
-            ("selection-in-callback-loop", "Step(x) = x\nM(a) = repeat(Step, 2, a)\nmap(((1, 2), 3), M)"),
-            ("selection-callback-item-count", "Coll(*xs) = xs\nF(a) = a.Coll\nS(x) = map(((1, 2), 3), F)\nrepeat(S, 1, 0)"),
+            ("selection-pair-one-slot", "P = ((1, 2), (3, 4))\nS(x, y) = P[0], y + 1\nrepeat(S(0, 0), 2)"),
+            ("selection-first-one-slot", "P = ((1, 2), (3, 4))\nS(x, y) = first(P), y + 1\nrepeat(S(0, 0), 2)"),
+            ("selection-last-one-slot", "P = ((3, 4), (1, 2))\nS(x, y) = last(P), y + 1\nrepeat(S(0, 0), 2)"),
+            ("selection-empty-one-slot", "P = (), 5\nS(x, y) = P[0], y + 1\nrepeat(S(0, 0), 2)"),
+            ("selection-list-one-slot", "P = [1, 2], 5\nS(x, y) = P[0], y + 1\nrepeat(S(0, 0), 2)"),
+            ("selection-spread-grows-state", "P = ((1, 2), (3, 4))\nS(x, y) = (P[0])*, y + 1\nrepeat(S(0, 0), 1)"),
+            ("selection-as-continuation", "P = ((1, false), (2, 2))\nS(x) = x + 1, P[0]\nwhile(S(9))"),
+            ("selection-in-callback-loop", "Step(x) = x\nM(a) = repeat(Step(a), 2)\nmap(((1, 2), 3), M)"),
+            ("selection-callback-item-count", "Coll(*xs) = xs\nF(a) = a.Coll\nS(x) = map(((1, 2), 3), F)\nrepeat(S(0), 1)"),
         };
 
         var sweep = new SweepResult();

@@ -101,7 +101,7 @@ public static class ConcurrencyCorpus
 
     public const string Deconstruct = "x, *y, z = (1, 2, 3, 4)\nx, y, z";
 
-    public const string Loop = "step(s) = s * 2\nrepeat(step, 8, 1)";
+    public const string Loop = "step(s) = s * 2\nrepeat(step(1), 8)";
 
     /// <summary>Legal recursion well under the depth ceiling (128).</summary>
     public const string RecursionLegal = "F(0) = 0\nF(x) = F(x - 1)\nF(60)";
@@ -113,7 +113,7 @@ public static class ConcurrencyCorpus
     public const string FailingIndex = "(1, 2)[9]";
 
     /// <summary>Substantial but legal work under a configured step budget.</summary>
-    public const string HeavyLoop = "step(s) = s + 1\nrepeat(step, 4000, 0)";
+    public const string HeavyLoop = "step(s) = s + 1\nrepeat(step(0), 4000)";
 
     public const string PreludeMath = "Math.Pi, sum((1, 2, 3)), avg((2, 4)), min((9, 4, 7))";
 
@@ -159,7 +159,7 @@ public static class ConcurrencyCorpus
     public const string SensitiveUserCall = "P = 5\nF(x) = x + P\nF(1), F(2)";
 
     /// <summary>First property access happens inside a loop step.</summary>
-    public const string SensitiveLoopStep = "P = 3\nstep(s) = s + P\nrepeat(step, 4, 0)";
+    public const string SensitiveLoopStep = "P = 3\nstep(s) = s + P\nrepeat(step(0), 4)";
 
     /// <summary>First property access happens inside a map-callback invocation.</summary>
     public const string SensitiveMapCallback = "P = 2\nM(x) = x * P\n[1, 2, 3].map(M)";
@@ -183,7 +183,7 @@ public static class ConcurrencyCorpus
     /// would change the observation.</summary>
     public const string SeededRandom =
         "P = Math.RandomInt(0, 1000000)\nStep(n) = n + randomInt(0, 10)\n"
-        + "Math.Random(0, 1), random(2, 6), P, P, P(), repeat(Step, 4, 0), Math.RandomInt(-5, 5)";
+        + "Math.Random(0, 1), random(2, 6), P, P, P(), repeat(Step(0), 4), Math.RandomInt(-5, 5)";
 
     /// <summary>A second seeded program with a different draw pattern (fraction
     /// draws first, then integers) for cross-lane pairing.</summary>

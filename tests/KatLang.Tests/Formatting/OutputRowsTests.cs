@@ -163,7 +163,7 @@ public class OutputRowsTests
         foreach (var source in new[]
         {
             "7", "1, 2, 3", "(1, 2)", "1, (2, 3)", "[1, 2]", "''", "()", "[]",
-            "E = ()\nE*, 997", "S = ((1, 2), (3, 4))\nS[0]", "repeat({a, b}, 1, 1, 2)",
+            "E = ()\nE*, 997", "S = ((1, 2), (3, 4))\nS[0]", "Step = {a, b}\nrepeat(Step(1, 2), 1)",
         })
         {
             var success = Success(source);
@@ -181,7 +181,7 @@ public class OutputRowsTests
     [Fact]
     public void MultiSlotLoopResultAlongsideAnotherExpression_PreservesDisplayRows()
     {
-        var success = Success("repeat({a, b}, 1, 1, 2)\n5");
+        var success = Success("Step = {a, b}\nrepeat(Step(1, 2), 1)\n5");
 
         // A completed loop is an ordinary value boundary (Q-26): its two-slot final
         // state is ONE row of the root supply, so the emitted count is the two written
@@ -201,7 +201,7 @@ public class OutputRowsTests
     {
         // Q-26: a lone multi-slot loop row is ONE row — its value — exactly like the same
         // loop read through a property (formerly one row per final-state slot, X-33).
-        var success = Success("repeat({a, b}, 1, 1, 2)");
+        var success = Success("Step = {a, b}\nrepeat(Step(1, 2), 1)");
 
         Assert.Equal(1, success.EmittedCount);
         var row = Assert.Single(success.OutputRows);
@@ -209,7 +209,7 @@ public class OutputRowsTests
             new Result.SequenceValue([new Result.Atom(1), new Result.Atom(2)]), row));
         Assert.Equal("(1, 2)", success.ToDisplayString());
 
-        var property = Success("L = repeat({a, b}, 1, 1, 2)\nL");
+        var property = Success("Step = {a, b}\nL = repeat(Step(1, 2), 1)\nL");
         Assert.Equal(success.EmittedCount, property.EmittedCount);
         Assert.Equal(success.ToDisplayString(), property.ToDisplayString());
     }
@@ -218,7 +218,7 @@ public class OutputRowsTests
     public void SpreadMultiSlotLoopResult_EmitsTheValueItemsAsRows()
     {
         // Only the explicit spread opens the loop result into separate rows.
-        var success = Success("repeat({a, b}, 1, 1, 2)*, 997");
+        var success = Success("Step = {a, b}\nrepeat(Step(1, 2), 1)*, 997");
 
         Assert.Equal(3, success.EmittedCount);
         Assert.Equal([new Result.Atom(1), new Result.Atom(2), new Result.Atom(997)], success.OutputRows);

@@ -617,9 +617,9 @@ public class DeconstructionDiagnosticTransparencyTests
     /// and off — whole structured error tree, context chain, message, and span.
     /// </summary>
     [Theory]
-    [InlineData("Step(acc) = {\n  a, b = acc / 0, 1\n  a + b\n}\nrepeat(Step, 3, 1)")]
-    [InlineData("Step(acc) = {\n  a, b = acc\n  a + b\n}\nrepeat(Step, 3, 1)")]
-    [InlineData("Step(acc) = {\n  a, b = { }\n  a + b\n}\nrepeat(Step, 3, 1)")]
+    [InlineData("Step(acc) = {\n  a, b = acc / 0, 1\n  a + b\n}\nrepeat(Step(1), 3)")]
+    [InlineData("Step(acc) = {\n  a, b = acc\n  a + b\n}\nrepeat(Step(1), 3)")]
+    [InlineData("Step(acc) = {\n  a, b = { }\n  a + b\n}\nrepeat(Step(1), 3)")]
     public void PlannedLoopExecution_SuppressesTheSameFrames(string source)
     {
         var error = AssertOptimizerTransparentFailure(source);

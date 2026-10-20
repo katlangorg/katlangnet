@@ -40,9 +40,9 @@ public class LoopCardinalityLawTests
     public async Task RepeatedNameStep_RowsAndTheirSpread_FormTheSameTwoSlotState(string step)
     {
         // Both forms supply two next-state slots, which Dup(x, x) re-binds on the second iteration.
-        AssertOk(await OnEveryRouteAsync(step + "\nDup.repeat(2, 1, 1)"), "S[3, 3]", 1, "S[3, 3]");
-        AssertOk(await OnEveryRouteAsync(step + "\nrepeat(Dup, 2, 1, 1)"), "S[3, 3]", 1, "S[3, 3]");
-        AssertOk(await OnEveryRouteAsync(step + "\nDup.repeat(2, 1, 1)*, 997"), "S[3, 3, 997]", 3, "3", "3", "997");
+        AssertOk(await OnEveryRouteAsync(step + "\nDup(1, 1).repeat(2)"), "S[3, 3]", 1, "S[3, 3]");
+        AssertOk(await OnEveryRouteAsync(step + "\nrepeat(Dup(1, 1), 2)"), "S[3, 3]", 1, "S[3, 3]");
+        AssertOk(await OnEveryRouteAsync(step + "\nDup(1, 1).repeat(2)*, 997"), "S[3, 3, 997]", 3, "3", "3", "997");
     }
 
     [Theory]
@@ -50,17 +50,17 @@ public class LoopCardinalityLawTests
     [InlineData("Dup(x, x) = { (x + 1, x + 2)* }")]
     public async Task RepeatedNameStep_DivergingRows_FailTheNextBindingWithTheOrdinaryRepeatedNameError(string step)
     {
-        AssertOk(await OnEveryRouteAsync(step + "\nDup.repeat(1, 1, 1)"), "S[2, 3]", 1, "S[2, 3]");
+        AssertOk(await OnEveryRouteAsync(step + "\nDup(1, 1).repeat(1)"), "S[2, 3]", 1, "S[2, 3]");
 
         // The NEXT binding of Dup(x, x) compares 2 with 3: the ordinary repeated-name failure of
         // the one inspecting binder (NEED-04) — never the former packing-derived loop-state
         // cardinality failure ("expects 2 state values ... has 1 state value").
-        var loop = await OnEveryRouteAsync(step + "\nDup.repeat(2, 1, 1)");
+        var loop = await OnEveryRouteAsync(step + "\nDup(1, 1).repeat(2)");
         var loopError = Assert.Single(loop.Errors);
         Assert.Equal("err", loop.Kind);
         Assert.StartsWith("ArityMismatch: ", loopError, StringComparison.Ordinal);
         Assert.DoesNotContain("state value", loopError, StringComparison.Ordinal);
-        Assert.IsType<EvalError.BadArity>(Innermost(GenericError(step + "\nDup.repeat(2, 1, 1)")));
+        Assert.IsType<EvalError.BadArity>(Innermost(GenericError(step + "\nDup(1, 1).repeat(2)")));
 
         // ... exactly the direct call's own failure on the same values.
         var call = await OnEveryRouteAsync(step + "\nDup(2, 3)");
@@ -72,15 +72,15 @@ public class LoopCardinalityLawTests
     public async Task StructuralStep_CaptureRowIsOneSlot_SpreadRowSuppliesItsItems()
     {
         // One sequence value is ONE slot, re-bound by (a, b) every iteration.
-        AssertOk(await OnEveryRouteAsync("Step((a, b)) = (b, a + b)\nStep.repeat(3, (0, 1))"), "S[2, 3]", 1, "S[2, 3]");
+        AssertOk(await OnEveryRouteAsync("Step((a, b)) = (b, a + b)\nStep((0, 1)).repeat(3)"), "S[2, 3]", 1, "S[2, 3]");
 
         // Its spread supplies TWO items — the ordinary spread, whatever the head — so one
         // iteration completes ...
-        AssertOk(await OnEveryRouteAsync("Step2((a, b)) = { (b, a + b)* }\nStep2.repeat(1, (0, 1))"), "S[1, 1]", 1, "S[1, 1]");
+        AssertOk(await OnEveryRouteAsync("Step2((a, b)) = { (b, a + b)* }\nStep2((0, 1)).repeat(1)"), "S[1, 1]", 1, "S[1, 1]");
 
         // ... and the one-pattern head cannot bind the two-slot state of the next iteration.
         AssertLoopStateArity(
-            await OnEveryRouteAsync("Step2((a, b)) = { (b, a + b)* }\nStep2.repeat(3, (0, 1))"),
+            await OnEveryRouteAsync("Step2((a, b)) = { (b, a + b)* }\nStep2((0, 1)).repeat(3)"),
             "`repeat` step expects 1 state value for 1 parameter '(a, b)', but the current loop state has 2 state values.");
     }
 
@@ -88,17 +88,17 @@ public class LoopCardinalityLawTests
     public async Task HistorySteps_KeepStructureOnlyThroughAnExplicitCaptureOrList()
     {
         // The explicit capture keeps the history as ONE state slot ...
-        AssertOk(await OnEveryRouteAsync("P((*h), n) = (h*), n + 1\nP.repeat(2, (1, 2), 0)"), "S[S[1, 2], 2]", 1, "S[S[1, 2], 2]");
+        AssertOk(await OnEveryRouteAsync("P((*h), n) = (h*), n + 1\nP((1, 2), 0).repeat(2)"), "S[S[1, 2], 2]", 1, "S[S[1, 2], 2]");
         // ... as does the exact list, at every history length, the empty one included.
-        AssertOk(await OnEveryRouteAsync("Grow([*h], n) = [h*, n], n + 1\nGrow.repeat(3, [], 0)[0]"), "L[0, 1, 2]", 1, "L[0, 1, 2]");
-        AssertOk(await OnEveryRouteAsync("Grow([*h], n) = [h*, n], n + 1\nGrow.repeat(0, [], 0)[0]"), "L[]", 1, "L[]");
+        AssertOk(await OnEveryRouteAsync("Grow([*h], n) = [h*, n], n + 1\nGrow([], 0).repeat(3)[0]"), "L[0, 1, 2]", 1, "L[0, 1, 2]");
+        AssertOk(await OnEveryRouteAsync("Grow([*h], n) = [h*, n], n + 1\nGrow([], 0).repeat(0)[0]"), "L[]", 1, "L[]");
 
         // Without it, the spread row supplies the history's items as separate slots (no implicit
         // packing): one iteration equals the direct call, and the second binding sees three slots.
-        AssertOk(await OnEveryRouteAsync("P((*h), n) = h*, n + 1\nrepeat(P, 1, (1, 2), 0), P((1, 2), 0)"),
+        AssertOk(await OnEveryRouteAsync("P((*h), n) = h*, n + 1\nrepeat(P((1, 2), 0), 1), P((1, 2), 0)"),
             "S[S[1, 2, 1], S[1, 2, 1]]", 2, "S[1, 2, 1]", "S[1, 2, 1]");
         AssertLoopStateArity(
-            await OnEveryRouteAsync("P((*h), n) = h*, n + 1\nP.repeat(2, (1, 2), 0)"),
+            await OnEveryRouteAsync("P((*h), n) = h*, n + 1\nP((1, 2), 0).repeat(2)"),
             "`repeat` step expects 2 state values for 2 parameters '(*h)' and 'n', but the current loop state has 3 state values.");
     }
 
@@ -110,7 +110,7 @@ public class LoopCardinalityLawTests
         // it never depended on packing; its patterned head only BINDS the history slot.
         const string source = """
             GcdStep = b, ~a mod b, a mod b != 0
-            Gcd = GcdStep.while(a, b)[1]
+            Gcd = GcdStep(a, b).while[1]
 
             FindNext(*history, pre1, pre2) = {
                 IsYSCandidate(candidate) = not history.contains(candidate) and
@@ -118,7 +118,7 @@ public class LoopCardinalityLawTests
                     Gcd(candidate, pre2) != 1
 
                 FindStep = candidate + 1, not IsYSCandidate(candidate)
-                FindStep.while(1)[0]
+                FindStep(1).while[0]
             }
 
             YSStep((*history), pre2, pre1) = {
@@ -126,7 +126,7 @@ public class LoopCardinalityLawTests
                 (history*, Next), pre1, Next
             }
 
-            YSStep.repeat(7, (1, 2, 3), 2, 3)[0]
+            YSStep((1, 2, 3), 2, 3).repeat(7)[0]
             """;
         AssertOk(await OnEveryRouteAsync(source),
             "S[1, 2, 3, 4, 9, 8, 15, 14, 5, 6]", 1, "S[1, 2, 3, 4, 9, 8, 15, 14, 5, 6]");
@@ -142,7 +142,7 @@ public class LoopCardinalityLawTests
     {
         foreach (var head in Heads)
         {
-            var source = head.Definitions(row) + $"\nrepeat(S, 1, {head.Init}), S({head.Init})";
+            var source = head.Definitions(row) + $"\nrepeat(S({head.Init}), 1), S({head.Init})";
             var observation = await OnEveryRouteAsync(source);
             Assert.True(observation.Kind == "ok", $"{head.Name}: {why}: {observation}");
             Assert.Equal($"S[{expected}, {expected}]", observation.Value);
@@ -204,8 +204,8 @@ public class LoopCardinalityLawTests
         ("Only(a, b)", "S[L[1, 2], 0]"),
         ("Only(a, b)*", "S[1, 2, 0]"),
         ("if(a < b, (a, b), ())*", "S[1, 2, 0]"),
-        ("repeat(Fib, 1, a, b)", "S[S[2, 3], 0]"),
-        ("repeat(Fib, 1, a, b)*", "S[2, 3, 0]"),
+        ("repeat(Fib(a, b), 1)", "S[S[2, 3], 0]"),
+        ("repeat(Fib(a, b), 1)*", "S[2, 3, 0]"),
         ("[a, b][1]", "S[2, 0]"),
         ("a, (b, a)*", "S[1, 2, 1, 0]"),
         ("[a, b], (a, b)*", "S[L[1, 2], 1, 2, 0]"),
@@ -236,10 +236,10 @@ public class LoopCardinalityLawTests
         var expected = Forms.Single(form => form.Rows == rows).Expected;
         var definitions = Helpers + head.Definitions(rows);
 
-        var both = await OnEveryRouteAsync(definitions + $"\nrepeat(S, 1, {head.Init}), S({head.Init})");
+        var both = await OnEveryRouteAsync(definitions + $"\nrepeat(S({head.Init}), 1), S({head.Init})");
         AssertOk(both, $"S[{expected}, {expected}]", 2, expected, expected);
 
-        var loop = await OnEveryRouteAsync(definitions + $"\nrepeat(S, 1, {head.Init})");
+        var loop = await OnEveryRouteAsync(definitions + $"\nrepeat(S({head.Init}), 1)");
         var call = await OnEveryRouteAsync(definitions + $"\nS({head.Init})");
         Assert.Equal(call.Value, loop.Value);
         Assert.Equal(call.Emitted, loop.Emitted);
@@ -252,13 +252,13 @@ public class LoopCardinalityLawTests
     [Fact]
     public async Task Fibonacci_LoopIsOneValue_SpreadOpensIt_BesideAnotherRowItIsOneRow()
     {
-        AssertOk(await OnEveryRouteAsync(Fibonacci + "Fibonacci.repeat(10, 0, 1)"), "S[55, 89]", 1, "S[55, 89]");
-        AssertOk(await OnEveryRouteAsync(Fibonacci + "Fibonacci.repeat(10, 0, 1)*, 997"), "S[55, 89, 997]", 3, "55", "89", "997");
-        AssertOk(await OnEveryRouteAsync(Fibonacci + "Fibonacci.repeat(10, 0, 1), 7"), "S[S[55, 89], 7]", 2, "S[55, 89]", "7");
+        AssertOk(await OnEveryRouteAsync(Fibonacci + "Fibonacci(0, 1).repeat(10)"), "S[55, 89]", 1, "S[55, 89]");
+        AssertOk(await OnEveryRouteAsync(Fibonacci + "Fibonacci(0, 1).repeat(10)*, 997"), "S[55, 89, 997]", 3, "55", "89", "997");
+        AssertOk(await OnEveryRouteAsync(Fibonacci + "Fibonacci(0, 1).repeat(10), 7"), "S[S[55, 89], 7]", 2, "S[55, 89]", "7");
 
-        Assert.Equal("(55, 89)", Display(Fibonacci + "Fibonacci.repeat(10, 0, 1)"));
-        Assert.Equal("55\n89\n997", Display(Fibonacci + "Fibonacci.repeat(10, 0, 1)*, 997"));
-        Assert.Equal("(55, 89)\n7", Display(Fibonacci + "Fibonacci.repeat(10, 0, 1), 7"));
+        Assert.Equal("(55, 89)", Display(Fibonacci + "Fibonacci(0, 1).repeat(10)"));
+        Assert.Equal("55\n89\n997", Display(Fibonacci + "Fibonacci(0, 1).repeat(10)*, 997"));
+        Assert.Equal("(55, 89)\n7", Display(Fibonacci + "Fibonacci(0, 1).repeat(10), 7"));
     }
 
     /// <summary>
@@ -266,19 +266,19 @@ public class LoopCardinalityLawTests
     /// like every other non-spread expression, so the root's emitted count equals its display rows.
     /// </summary>
     [Theory]
-    [InlineData("Fibonacci.repeat(10, 0, 1)", 1)]
-    [InlineData("Fibonacci.repeat(10, 0, 1), 7", 2)]
-    [InlineData("7, Fibonacci.repeat(10, 0, 1), Fibonacci.repeat(1, 0, 1)", 3)]
-    [InlineData("Fibonacci.repeat(10, 0, 1)*, 7", 3)]
-    [InlineData("while({a + 1, b + a, a < 2}, 0, 0)", 1)]
-    [InlineData("while({a + 1, b + a, a < 2}, 0, 0), ()", 2)]
-    [InlineData("repeat(Drop, 1, 5)", 1)]
-    [InlineData("repeat(Drop, 1, 5)*, 997", 1)]
-    [InlineData("repeat(Drop, 1, 5), repeat(Drop, 1, 5)*, 9", 2)]
-    [InlineData("repeat({x + 1}, 3, 0)", 1)]
-    [InlineData("{ Fibonacci.repeat(10, 0, 1), 7 }", 1)]
-    [InlineData("(Fibonacci.repeat(10, 0, 1), 7)", 1)]
-    [InlineData("[Fibonacci.repeat(10, 0, 1), 7]", 1)]
+    [InlineData("Fibonacci(0, 1).repeat(10)", 1)]
+    [InlineData("Fibonacci(0, 1).repeat(10), 7", 2)]
+    [InlineData("7, Fibonacci(0, 1).repeat(10), Fibonacci(0, 1).repeat(1)", 3)]
+    [InlineData("Fibonacci(0, 1).repeat(10)*, 7", 3)]
+    [InlineData("Step = {a + 1, b + a, a < 2}\nwhile(Step(0, 0))", 1)]
+    [InlineData("Step = {a + 1, b + a, a < 2}\nwhile(Step(0, 0)), ()", 2)]
+    [InlineData("repeat(Drop(5), 1)", 1)]
+    [InlineData("repeat(Drop(5), 1)*, 997", 1)]
+    [InlineData("repeat(Drop(5), 1), repeat(Drop(5), 1)*, 9", 2)]
+    [InlineData("Step = {x + 1}\nrepeat(Step(0), 3)", 1)]
+    [InlineData("{ Fibonacci(0, 1).repeat(10), 7 }", 1)]
+    [InlineData("(Fibonacci(0, 1).repeat(10), 7)", 1)]
+    [InlineData("[Fibonacci(0, 1).repeat(10), 7]", 1)]
     public async Task RootRows_EmittedCountEqualsDisplayRows(string rows, int expected)
     {
         var observation = await OnEveryRouteAsync(Fibonacci + "Drop(*xs) = { ()* }\n" + rows);
@@ -291,14 +291,14 @@ public class LoopCardinalityLawTests
     public async Task LoopRowInBodiesCapturesAndLists_IsOneItem()
     {
         // A body, a capture and a list receive the loop as ONE item — the same structure.
-        var body = await OnEveryRouteAsync(Fibonacci + "{ Fibonacci.repeat(10, 0, 1), 7 }");
-        var capture = await OnEveryRouteAsync(Fibonacci + "(Fibonacci.repeat(10, 0, 1), 7)");
-        var list = await OnEveryRouteAsync(Fibonacci + "[Fibonacci.repeat(10, 0, 1), 7]");
+        var body = await OnEveryRouteAsync(Fibonacci + "{ Fibonacci(0, 1).repeat(10), 7 }");
+        var capture = await OnEveryRouteAsync(Fibonacci + "(Fibonacci(0, 1).repeat(10), 7)");
+        var list = await OnEveryRouteAsync(Fibonacci + "[Fibonacci(0, 1).repeat(10), 7]");
         Assert.Equal("S[S[55, 89], 7]", body.Value);
         Assert.Equal(body.Value, capture.Value);
         Assert.Equal("L[S[55, 89], 7]", list.Value);
-        AssertOk(await OnEveryRouteAsync(Fibonacci + "{ Fibonacci.repeat(10, 0, 1), 7 }.count"), "2", 1, "2");
-        AssertOk(await OnEveryRouteAsync(Fibonacci + "(Fibonacci.repeat(10, 0, 1)*, 7).count"), "3", 1, "3");
+        AssertOk(await OnEveryRouteAsync(Fibonacci + "{ Fibonacci(0, 1).repeat(10), 7 }.count"), "2", 1, "2");
+        AssertOk(await OnEveryRouteAsync(Fibonacci + "(Fibonacci(0, 1).repeat(10)*, 7).count"), "3", 1, "3");
     }
 
     [Fact]
@@ -307,15 +307,15 @@ public class LoopCardinalityLawTests
         // Two(a, b) = repeat(...) is ONE next-state slot (formerly SUP-01's exception spliced two),
         // so the two-parameter head cannot bind it on the next iteration ...
         AssertLoopStateArity(
-            await OnEveryRouteAsync(Fibonacci + "Two(a, b) = repeat(Fibonacci, 2, a, b)\nTwo.repeat(3, 0, 1)"),
+            await OnEveryRouteAsync(Fibonacci + "Two(a, b) = repeat(Fibonacci(a, b), 2)\nTwo(0, 1).repeat(3)"),
             "`repeat` step expects 2 state values for 2 parameters 'a' and 'b', but the current loop state has 1 state value.");
 
         // ... while the explicit spread supplies the inner loop's final items as the next state.
-        AssertOk(await OnEveryRouteAsync(Fibonacci + "Two(a, b) = { repeat(Fibonacci, 2, a, b)* }\nTwo.repeat(3, 0, 1)"),
+        AssertOk(await OnEveryRouteAsync(Fibonacci + "Two(a, b) = { repeat(Fibonacci(a, b), 2)* }\nTwo(0, 1).repeat(3)"),
             "S[8, 13]", 1, "S[8, 13]");
 
         // A one-slot step consumes the nested loop's ONE value whole.
-        AssertOk(await OnEveryRouteAsync(Fibonacci + "One((a, b)) = repeat(Fibonacci, 1, a, b)\nOne.repeat(3, (0, 1))"),
+        AssertOk(await OnEveryRouteAsync(Fibonacci + "One((a, b)) = repeat(Fibonacci(a, b), 1)\nOne((0, 1)).repeat(3)"),
             "S[2, 3]", 1, "S[2, 3]");
     }
 
@@ -324,20 +324,20 @@ public class LoopCardinalityLawTests
     {
         // η-parity: a helper returning the loop and the loop itself are the same one value —
         // both non-spread forms are one slot, both spread forms supply the items.
-        const string inner = "Inner(a, b) = repeat(Fibonacci, 2, a, b)\n";
-        var direct = await OnEveryRouteAsync(Fibonacci + "Two(a, b) = repeat(Fibonacci, 2, a, b)\nTwo.repeat(3, 0, 1)");
-        var wrapped = await OnEveryRouteAsync(Fibonacci + inner + "Two(a, b) = Inner(a, b)\nTwo.repeat(3, 0, 1)");
+        const string inner = "Inner(a, b) = repeat(Fibonacci(a, b), 2)\n";
+        var direct = await OnEveryRouteAsync(Fibonacci + "Two(a, b) = repeat(Fibonacci(a, b), 2)\nTwo(0, 1).repeat(3)");
+        var wrapped = await OnEveryRouteAsync(Fibonacci + inner + "Two(a, b) = Inner(a, b)\nTwo(0, 1).repeat(3)");
         Assert.Equal(MessagesOnly(direct), MessagesOnly(wrapped));
 
-        var directSpread = await OnEveryRouteAsync(Fibonacci + "Two(a, b) = { repeat(Fibonacci, 2, a, b)* }\nTwo.repeat(3, 0, 1)");
-        var wrappedSpread = await OnEveryRouteAsync(Fibonacci + inner + "Two(a, b) = { Inner(a, b)* }\nTwo.repeat(3, 0, 1)");
+        var directSpread = await OnEveryRouteAsync(Fibonacci + "Two(a, b) = { repeat(Fibonacci(a, b), 2)* }\nTwo(0, 1).repeat(3)");
+        var wrappedSpread = await OnEveryRouteAsync(Fibonacci + inner + "Two(a, b) = { Inner(a, b)* }\nTwo(0, 1).repeat(3)");
         AssertOk(directSpread, "S[8, 13]", 1, "S[8, 13]");
         Assert.Equal(directSpread with { HostCalls = [] }, wrappedSpread with { HostCalls = [] });
 
         // At the root and beside other rows, the helper and the loop agree in value and count.
         foreach (var rows in new[] { "{0}", "{0}, 7", "{0}*, 997", "({0}, 7)" })
         {
-            var loop = await OnEveryRouteAsync(Fibonacci + inner + string.Format(rows, "repeat(Fibonacci, 2, 0, 1)"));
+            var loop = await OnEveryRouteAsync(Fibonacci + inner + string.Format(rows, "repeat(Fibonacci(0, 1), 2)"));
             var helper = await OnEveryRouteAsync(Fibonacci + inner + string.Format(rows, "Inner(0, 1)"));
             Assert.Equal(loop, helper);
         }
@@ -346,22 +346,22 @@ public class LoopCardinalityLawTests
     [Fact]
     public async Task CallbackBodyLoop_IsOneValue_LikeAHelper()
     {
-        const string defs = "Fib(x, y) = y, x + y\nH(x) = repeat(Fib, 2, x, 1)\n";
+        const string defs = "Fib(x, y) = y, x + y\nH(x) = repeat(Fib(x, 1), 2)\n";
         // A callback whose body row is a multi-slot loop returns ONE value, exactly like a helper
         // returning it (formerly the loop's slot count leaked into the single-element contract).
-        foreach (var call in new[] { "[0, 1].map(H)", "[0, 1].map({ repeat(Fib, 2, x, 1) })", "map([0, 1], { H(x) })" })
+        foreach (var call in new[] { "[0, 1].map(H)", "[0, 1].map({ repeat(Fib(x, 1), 2) })", "map([0, 1], { H(x) })" })
             AssertOk(await OnEveryRouteAsync(defs + call), "L[S[1, 2], S[2, 3]]", 1, "L[S[1, 2], S[2, 3]]");
 
         // The reducer step likewise receives and returns one value.
-        const string reducer = "Step(x, acc) = acc[0] + x, acc[1] + 1\nR(x, acc) = repeat(Step, 1, x, acc)\n";
-        foreach (var call in new[] { "[1, 2, 3].reduce(R, (0, 0))", "[1, 2, 3].reduce({ repeat(Step, 1, x, acc) }, (0, 0))" })
+        const string reducer = "Step(x, acc) = acc[0] + x, acc[1] + 1\nR(x, acc) = repeat(Step(x, acc), 1)\n";
+        foreach (var call in new[] { "[1, 2, 3].reduce(R, (0, 0))", "[1, 2, 3].reduce({ repeat(Step(x, acc), 1) }, (0, 0))" })
             AssertOk(await OnEveryRouteAsync(reducer + call), "S[6, 3]", 1, "S[6, 3]");
 
         // An explicit spread inside the callback body re-opens the loop result into two rows, and
         // the call boundary captures them again: the callback's ordinary call result is the same one
         // value (HO-03, Q-25 resolved October 2026; formerly the single-element contract rejected
         // it). A spread inside a body is local to that body's output (VAL-06), as for a helper.
-        var spread = await OnEveryRouteAsync(defs + "[0, 1].map({ repeat(Fib, 2, x, 1)* })");
+        var spread = await OnEveryRouteAsync(defs + "[0, 1].map({ repeat(Fib(x, 1), 2)* })");
         AssertOk(spread, "L[S[1, 2], S[2, 3]]", 1, "L[S[1, 2], S[2, 3]]");
         var helperSpread = await OnEveryRouteAsync("D(x) = x, x\n[0, 1].map({ D(x)* })");
         AssertOk(helperSpread, "L[S[0, 0], S[1, 1]]", 1, "L[S[0, 0], S[1, 1]]");
@@ -372,35 +372,35 @@ public class LoopCardinalityLawTests
     {
         // zero final slots: the result is () — a visible root row, and its spread supplies nothing
         const string drop = "Drop(*xs) = { ()* }\n";
-        AssertOk(await OnEveryRouteAsync(drop + "repeat(Drop, 1, 1)"), "S[]", 1, "S[]");
-        AssertOk(await OnEveryRouteAsync(drop + "repeat(Drop, 1, 1)*, 9"), "9", 1, "9");
-        AssertOk(await OnEveryRouteAsync(drop + "(repeat(Drop, 1, 1), 9)"), "S[S[], 9]", 1, "S[S[], 9]");
-        AssertOk(await OnEveryRouteAsync(drop + "Coll(*xs) = xs\nColl(repeat(Drop, 1, 1)), Coll(repeat(Drop, 1, 1)*)"),
+        AssertOk(await OnEveryRouteAsync(drop + "repeat(Drop(1), 1)"), "S[]", 1, "S[]");
+        AssertOk(await OnEveryRouteAsync(drop + "repeat(Drop(1), 1)*, 9"), "9", 1, "9");
+        AssertOk(await OnEveryRouteAsync(drop + "(repeat(Drop(1), 1), 9)"), "S[S[], 9]", 1, "S[S[], 9]");
+        AssertOk(await OnEveryRouteAsync(drop + "Coll(*xs) = xs\nColl(repeat(Drop(1), 1)), Coll(repeat(Drop(1), 1)*)"),
             "S[L[S[]], L[]]", 2, "L[S[]]", "L[]");
         // ... and a zero-slot state is re-bound by a step that accepts an empty supply (a collector).
-        AssertOk(await OnEveryRouteAsync(drop + "repeat(Drop, 3, 1)"), "S[]", 1, "S[]");
+        AssertOk(await OnEveryRouteAsync(drop + "repeat(Drop(1), 3)"), "S[]", 1, "S[]");
 
         // one final slot: unchanged
-        AssertOk(await OnEveryRouteAsync("Inc(x) = x + 1\nrepeat(Inc, 3, 0)"), "3", 1, "3");
-        AssertOk(await OnEveryRouteAsync("Inc(x) = x + 1\nrepeat(Inc, 3, 0)*, 997"), "S[3, 997]", 2, "3", "997");
+        AssertOk(await OnEveryRouteAsync("Inc(x) = x + 1\nrepeat(Inc(0), 3)"), "3", 1, "3");
+        AssertOk(await OnEveryRouteAsync("Inc(x) = x + 1\nrepeat(Inc(0), 3)*, 997"), "S[3, 997]", 2, "3", "997");
 
         // several final slots: one value, opened only by the spread
-        AssertOk(await OnEveryRouteAsync("G(*h) = h*, h.count\nrepeat(G, 3, 0)"), "S[0, 1, 2, 3]", 1, "S[0, 1, 2, 3]");
-        AssertOk(await OnEveryRouteAsync("G(*h) = h*, h.count\nrepeat(G, 3, 0)*, 997"), "S[0, 1, 2, 3, 997]", 5, "0", "1", "2", "3", "997");
+        AssertOk(await OnEveryRouteAsync("G(*h) = h*, h.count\nrepeat(G(0), 3)"), "S[0, 1, 2, 3]", 1, "S[0, 1, 2, 3]");
+        AssertOk(await OnEveryRouteAsync("G(*h) = h*, h.count\nrepeat(G(0), 3)*, 997"), "S[0, 1, 2, 3, 997]", 5, "0", "1", "2", "3", "997");
     }
 
     [Fact]
     public async Task OneSlotPairAndTwoSlotState_CompleteToTheSameValue()
     {
         const string defs = "P1(p) = (p[0] + 10, p[1] + 10)\nP2(a, b) = a + 10, b + 10\n";
-        var onePair = await OnEveryRouteAsync(defs + "repeat(P1, 1, (10, 20))");
-        var twoSlots = await OnEveryRouteAsync(defs + "repeat(P2, 1, 10, 20)");
+        var onePair = await OnEveryRouteAsync(defs + "repeat(P1((10, 20)), 1)");
+        var twoSlots = await OnEveryRouteAsync(defs + "repeat(P2(10, 20), 1)");
         AssertOk(onePair, "S[20, 30]", 1, "S[20, 30]");
         Assert.Equal(onePair, twoSlots);
-        AssertOk(await OnEveryRouteAsync(defs + "repeat(P1, 1, (10, 20)) == repeat(P2, 1, 10, 20)"), "true", 1, "true");
+        AssertOk(await OnEveryRouteAsync(defs + "repeat(P1((10, 20)), 1) == repeat(P2(10, 20), 1)"), "true", 1, "true");
 
         // The slot difference stays inside the loop: each state re-binds only its own head.
-        AssertOk(await OnEveryRouteAsync(defs + "repeat(P1, 2, (10, 20)), repeat(P2, 2, 10, 20)"),
+        AssertOk(await OnEveryRouteAsync(defs + "repeat(P1((10, 20)), 2), repeat(P2(10, 20), 2)"),
             "S[S[30, 40], S[30, 40]]", 2, "S[30, 40]", "S[30, 40]");
     }
 
@@ -408,11 +408,11 @@ public class LoopCardinalityLawTests
     public async Task StepRowsStillFormTheNextState_TheLoopProtocolIsUnchanged()
     {
         // Q-26 never collapses a step's rows into its call value: two rows are two slots ...
-        AssertOk(await OnEveryRouteAsync("Fib(a, b) = b, a + b\nrepeat(Fib, 3, 0, 1)"), "S[2, 3]", 1, "S[2, 3]");
+        AssertOk(await OnEveryRouteAsync("Fib(a, b) = b, a + b\nrepeat(Fib(0, 1), 3)"), "S[2, 3]", 1, "S[2, 3]");
         // ... while one parenthesized row is ONE slot holding a sequence.
-        AssertOk(await OnEveryRouteAsync("G(p) = (p[1], p[0] + p[1])\nrepeat(G, 3, (0, 1))"), "S[2, 3]", 1, "S[2, 3]");
+        AssertOk(await OnEveryRouteAsync("G(p) = (p[1], p[0] + p[1])\nrepeat(G((0, 1)), 3)"), "S[2, 3]", 1, "S[2, 3]");
         AssertLoopStateArity(
-            await OnEveryRouteAsync("G(a, b) = (b, a + b)\nrepeat(G, 2, 0, 1)"),
+            await OnEveryRouteAsync("G(a, b) = (b, a + b)\nrepeat(G(0, 1), 2)"),
             "`repeat` step expects 2 state values for 2 parameters 'a' and 'b', but the current loop state has 1 state value.");
     }
 
@@ -420,9 +420,9 @@ public class LoopCardinalityLawTests
     public async Task WhileFlag_IsStillTheLastItemOfTheStepsRowSupply()
     {
         // The flag position, the Boolean requirement and the state/flag split are unchanged.
-        AssertOk(await OnEveryRouteAsync("Cd(n, acc) = n - 1, acc + n, n > 1\nwhile(Cd, 3, 0)"), "S[1, 5]", 1, "S[1, 5]");
-        AssertOk(await OnEveryRouteAsync("Cd(n, acc) = { (n - 1, acc + n, n > 1)* }\nwhile(Cd, 3, 0)"), "S[1, 5]", 1, "S[1, 5]");
-        var pairFlag = await OnEveryRouteAsync("S(x) = (x + 1, x < 3)\nwhile(S, 0)");
+        AssertOk(await OnEveryRouteAsync("Cd(n, acc) = n - 1, acc + n, n > 1\nwhile(Cd(3, 0))"), "S[1, 5]", 1, "S[1, 5]");
+        AssertOk(await OnEveryRouteAsync("Cd(n, acc) = { (n - 1, acc + n, n > 1)* }\nwhile(Cd(3, 0))"), "S[1, 5]", 1, "S[1, 5]");
+        var pairFlag = await OnEveryRouteAsync("S(x) = (x + 1, x < 3)\nwhile(S(0))");
         Assert.Equal("err", pairFlag.Kind);
         Assert.StartsWith("TypeMismatch: ", Assert.Single(pairFlag.Errors), StringComparison.Ordinal);
 
@@ -430,10 +430,10 @@ public class LoopCardinalityLawTests
         // flag — arrives as ONE value, so as a lone row it is the flag itself and must be a Boolean;
         // the explicit spread supplies its items, the last of which is the flag.
         const string body = "Body(a) = a + 1, a < 3\n";
-        var oneValue = await OnEveryRouteAsync(body + "W(a) = repeat(Body, 1, a)\nwhile(W, 0)");
+        var oneValue = await OnEveryRouteAsync(body + "W(a) = repeat(Body(a), 1)\nwhile(W(0))");
         Assert.Equal("err", oneValue.Kind);
         Assert.StartsWith("TypeMismatch: ", Assert.Single(oneValue.Errors), StringComparison.Ordinal);
-        AssertOk(await OnEveryRouteAsync(body + "W(a) = { repeat(Body, 1, a)* }\nwhile(W, 0)"), "3", 1, "3");
+        AssertOk(await OnEveryRouteAsync(body + "W(a) = { repeat(Body(a), 1)* }\nwhile(W(0))"), "3", 1, "3");
     }
 
     // ── The combined law: binding, production and opening are independent ───────
@@ -452,30 +452,30 @@ public class LoopCardinalityLawTests
         // state, so one iteration completes to the same value under each ...
         var heads = new[] { ("S(a, b)", "0, 1"), ("S((a, b))", "(0, 1)"), ("S(a, b, b)", "0, 1, 1") };
         foreach (var (head, init) in heads)
-            AssertOk(await OnEveryRouteAsync($"{head} = b, a + b\nrepeat(S, 1, {init})"), "S[1, 1]", 1, "S[1, 1]");
+            AssertOk(await OnEveryRouteAsync($"{head} = b, a + b\nrepeat(S({init}), 1)"), "S[1, 1]", 1, "S[1, 1]");
 
         // ... and only the next BINDING tells the heads apart: the flat head accepts the two slots,
         // the structural and the repeated-name heads reject them.
-        AssertOk(await OnEveryRouteAsync("S(a, b) = b, a + b\nrepeat(S, 2, 0, 1)"), "S[1, 2]", 1, "S[1, 2]");
-        AssertLoopStateArity(await OnEveryRouteAsync("S((a, b)) = b, a + b\nrepeat(S, 2, (0, 1))"),
+        AssertOk(await OnEveryRouteAsync("S(a, b) = b, a + b\nrepeat(S(0, 1), 2)"), "S[1, 2]", 1, "S[1, 2]");
+        AssertLoopStateArity(await OnEveryRouteAsync("S((a, b)) = b, a + b\nrepeat(S((0, 1)), 2)"),
             "but the current loop state has 2 state values.");
-        AssertLoopStateArity(await OnEveryRouteAsync("S(a, b, b) = b, a + b\nrepeat(S, 2, 0, 1, 1)"),
+        AssertLoopStateArity(await OnEveryRouteAsync("S(a, b, b) = b, a + b\nrepeat(S(0, 1, 1), 2)"),
             "but the current loop state has 2 state values.");
 
         // PRODUCTION varies; the flat head and the absence of a spread stay: the rows alone decide
         // the slots — two rows two, one sequence row one, three rows three.
-        AssertOk(await OnEveryRouteAsync("S(a, b) = (b, a + b)\nrepeat(S, 1, 0, 1)"), "S[1, 1]", 1, "S[1, 1]");
-        AssertLoopStateArity(await OnEveryRouteAsync("S(a, b) = (b, a + b)\nrepeat(S, 2, 0, 1)"),
+        AssertOk(await OnEveryRouteAsync("S(a, b) = (b, a + b)\nrepeat(S(0, 1), 1)"), "S[1, 1]", 1, "S[1, 1]");
+        AssertLoopStateArity(await OnEveryRouteAsync("S(a, b) = (b, a + b)\nrepeat(S(0, 1), 2)"),
             "but the current loop state has 1 state value.");
-        AssertOk(await OnEveryRouteAsync("S(a, b) = b, a + b, a\nrepeat(S, 1, 0, 1)"), "S[1, 1, 0]", 1, "S[1, 1, 0]");
-        AssertLoopStateArity(await OnEveryRouteAsync("S(a, b) = b, a + b, a\nrepeat(S, 2, 0, 1)"),
+        AssertOk(await OnEveryRouteAsync("S(a, b) = b, a + b, a\nrepeat(S(0, 1), 1)"), "S[1, 1, 0]", 1, "S[1, 1, 0]");
+        AssertLoopStateArity(await OnEveryRouteAsync("S(a, b) = b, a + b, a\nrepeat(S(0, 1), 2)"),
             "but the current loop state has 3 state values.");
 
         // OPENING varies; the flat head and the one written row stay: the spread opens the row's
         // value into two slots — exactly the two-row step — ...
-        AssertOk(await OnEveryRouteAsync("S(a, b) = { (b, a + b)* }\nrepeat(S, 2, 0, 1)"), "S[1, 2]", 1, "S[1, 2]");
+        AssertOk(await OnEveryRouteAsync("S(a, b) = { (b, a + b)* }\nrepeat(S(0, 1), 2)"), "S[1, 2]", 1, "S[1, 2]");
         // ... and at the consumer it opens the completed loop: one row, or its two items.
-        AssertOk(await OnEveryRouteAsync("S(a, b) = b, a + b\nrepeat(S, 2, 0, 1)*, 997"), "S[1, 2, 997]", 3, "1", "2", "997");
+        AssertOk(await OnEveryRouteAsync("S(a, b) = b, a + b\nrepeat(S(0, 1), 2)*, 997"), "S[1, 2, 997]", 3, "1", "2", "997");
     }
 
     // ── One iteration equals the direct step call ──────────────────────────────
@@ -492,22 +492,22 @@ public class LoopCardinalityLawTests
     [InlineData("Step(x, x) = { (x + 1, x + 1)* }", "1, 1")]
     [InlineData("Step(*xs) = xs*, xs.count", "5, 6")]
     [InlineData("Step([a, b]) = [b, a]*, 9", "[1, 2]")]
-    [InlineData("Step(a, b) = repeat({x + 1, y + x}, 1, a, b), a", "3, 4")]
-    [InlineData("Step(a, b) = { repeat({x + 1, y + x}, 1, a, b)* }", "3, 4")]
+    [InlineData("P = {x + 1, y + x}\nStep(a, b) = repeat(P(a, b), 1), a", "3, 4")]
+    [InlineData("P = {x + 1, y + x}\nStep(a, b) = { repeat(P(a, b), 1)* }", "3, 4")]
     [InlineData("Step((a, b)) = (b, a + b)", "(0, 1)")]
     [InlineData("Step(a) = { ()* }", "7")]
     public async Task OneRepeatIteration_EqualsTheDirectCall_InValueAndEmittedCount(string step, string state)
     {
-        var loop = await OnEveryRouteAsync(step + $"\nrepeat(Step, 1, {state})");
+        var loop = await OnEveryRouteAsync(step + $"\nrepeat(Step({state}), 1)");
         var call = await OnEveryRouteAsync(step + $"\nStep({state})");
         Assert.Equal("ok", loop.Kind);
         Assert.Equal(call, loop);
-        AssertOk(await OnEveryRouteAsync(step + $"\nrepeat(Step, 1, {state}) == Step({state})"), "true", 1, "true");
+        AssertOk(await OnEveryRouteAsync(step + $"\nrepeat(Step({state}), 1) == Step({state})"), "true", 1, "true");
     }
 
     /// <summary>
     /// Iterating is not nesting calls: the next state is the step's row SUPPLY, while a call's result
-    /// is ONE value. So <c>repeat(S, 2, s…)</c> equals <c>S(S(s…))</c> when the first iteration supplies
+    /// is ONE value. So <c>repeat(S(s…), 2)</c> equals <c>S(S(s…))</c> when the first iteration supplies
     /// exactly one item (whatever its value), and <c>S(S(s…)*)</c> when it supplies zero or several — and
     /// the mismatched nestings are arity errors.
     /// </summary>
@@ -515,7 +515,7 @@ public class LoopCardinalityLawTests
     public async Task IteratingIsNotNestingCalls()
     {
         const string defs = "Pair(x) = (x, x)\nFib(a, b) = b, a + b\n";
-        AssertOk(await OnEveryRouteAsync(defs + "repeat(Pair, 2, 1) == Pair(Pair(1)), repeat(Fib, 2, 0, 1) == Fib(Fib(0, 1)*)"),
+        AssertOk(await OnEveryRouteAsync(defs + "repeat(Pair(1), 2) == Pair(Pair(1)), repeat(Fib(0, 1), 2) == Fib(Fib(0, 1)*)"),
             "S[true, true]", 2, "true", "true");
         Assert.Equal("err", (await OnEveryRouteAsync(defs + "Pair(Pair(1)*)")).Kind);
         Assert.Equal("err", (await OnEveryRouteAsync(defs + "Fib(Fib(0, 1))")).Kind);
@@ -532,7 +532,7 @@ public class LoopCardinalityLawTests
     [Fact]
     public void NestedLoopRow_StaysPlanned_AndChargesExactlyTheGenericBudgets()
     {
-        const string source = "Fib(x, y) = y, x + y\nStepN(p, n) = repeat(Fib, 1, n, trace(n)), n + 1\nrepeat(StepN, 4, 0, 0)";
+        const string source = "Fib(x, y) = y, x + y\nStepN(p, n) = repeat(Fib(n, trace(n)), 1), n + 1\nrepeat(StepN(0, 0), 4)";
         var (genericResult, genericBudget, genericCalls, _) = RunWithTrace(source, optimize: false);
         var (plannedResult, plannedBudget, plannedCalls, loops) = RunWithTrace(source, optimize: true);
 

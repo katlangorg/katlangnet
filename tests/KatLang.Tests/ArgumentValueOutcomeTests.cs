@@ -437,7 +437,7 @@ public class ArgumentValueOutcomeTests
         { "Inc(y) = y + 1\nMapWith(f, xs) = map(xs, f)\nMapWith(Inc, [1, 2])", "L[2, 3]" },
         { "Big(y) = y > 1\nKeepWith(f, xs) = filter(xs, f)\nKeepWith(Big, [1, 2, 3])", "L[2, 3]" },
         { "Add(e, a) = e + a\nFold(f, xs) = reduce(xs, f, 0)\nFold(Add, [1, 2, 3])", "6" },
-        { "Step(s) = s + 1\nLoop(f) = repeat(f, 3, 0)\nLoop(Step)", "3" },
+        { "Step(s) = s + 1\nLoop(f) = repeat(f(0), 3)\nLoop(Step)", "3" },
         { "Box = { public X = 5 }\nMember(o) = o.X\nMember(Box)", "5" },
         { "Twice = f(f(x))\nSquare = n * n\nTwice(Square, 3)", "81" },
         { "Apply(f, x) = f(x)\nApply({n + 1}, 4)", "5" },
@@ -504,7 +504,7 @@ public class ArgumentValueOutcomeTests
         "G(v) = if(true, v, 0), v\nG(Bad)",
         "G(v) = v.string, v\nG(Bad)",
         "Add(e, a) = e + a\nG(v) = reduce([1], Add, v)\nG(Bad)",
-        "Keep(s) = s\nG(v) = repeat(Keep, 1, v)\nG(Bad)",
+        "Keep(s) = s\nG(v) = repeat(Keep(v), 1)\nG(Bad)",
         "G(v) = range(v, 3)\nG(Bad)",
         "G(v) = v.filter({x > 0}).count\nG(Bad)",
         "G(v) = [v, v]\nG(Bad)",
@@ -514,7 +514,7 @@ public class ArgumentValueOutcomeTests
         "Coll(*xs) = xs\nG(v) = Coll(v*)\nG(Bad)",
         // A captured parameter read by a nested property, and a loop body.
         "G(v) = {\n    Inner = v + 1\n    Inner, Inner\n}\nG(Bad)",
-        "G(v) = repeat({s + v}, 3, 0)\nG(Bad)",
+        "G(v) = {\n    S = {s + v}\n    S(0).repeat(3)\n}\nG(Bad)",
         // Collecting, mixed, nested-pattern, and clause-family callees surface the failure
         // at binding — still one evaluation.
         "Coll(*xs) = xs, xs\nColl(Bad)",
@@ -546,17 +546,17 @@ public class ArgumentValueOutcomeTests
     [InlineData("take([1], v)")]
     [InlineData("range(v, 3)")]
     [InlineData("if(true, v, 0)")]
-    [InlineData("repeat({s + 1}, v, 0)")]
-    [InlineData("repeat({s + 1}, 1, v)")]
-    [InlineData("while({false}, {s + 1}, v)")]
-    [InlineData("while({s + 1, false}, v)")]
+    [InlineData("repeat(abs(0), v)")]
+    [InlineData("repeat(abs(v), 1)")]
+    [InlineData("while(abs({s + 1}, v))")]
+    [InlineData("while(atoms(v))")]
     [InlineData("reduce([1], {e + a}, v)")]
     [InlineData("v.string")]
     [InlineData("v.filter({x > 0}).count")]
     public async Task FailedCallableSlot_KeepsItsOriginalErrorAtEveryValueBoundary(string consumer)
         => AssertFails(
             await OnEveryRouteAsync($"G(v) = {consumer}\nG({{x + 1}})"),
-            consumer == "while({false}, {s + 1}, v)" ? KatLangErrorCode.ArityMismatch : KatLangErrorCode.UnresolvedImplicitParams);
+            consumer == "while(abs({s + 1}, v))" ? KatLangErrorCode.ArityMismatch : KatLangErrorCode.UnresolvedImplicitParams);
 
     [Fact]
     public async Task DeepForwarding_AndManyReads_KeepOneOutcome()
@@ -628,8 +628,8 @@ public class ArgumentValueOutcomeTests
     public async Task UndemandedBuiltinAndAlgorithmOnlySlots_StayLazy()
     {
         AssertOk(await OnEveryRouteAsync("if(false, trace(1), 7)"), "7");
-        AssertOk(await OnEveryRouteAsync("Step(s) = trace(s + 1)\nrepeat(Step, 0, 7)"), "7");
-        AssertOk(await OnEveryRouteAsync("Step(s) = trace(s + 1)\nFwd(f) = repeat(f, 0, 7)\nFwd(Step)"), "7");
+        AssertOk(await OnEveryRouteAsync("Step(s) = trace(s + 1)\nrepeat(Step(7), 0)"), "7");
+        AssertOk(await OnEveryRouteAsync("Step(s) = trace(s + 1)\nFwd(f) = repeat(f(7), 0)\nFwd(Step)"), "7");
         AssertOk(await OnEveryRouteAsync("Step(s) = trace(s + 1)\nIgnore(f) = 7\nIgnore(Step)"), "7");
     }
 

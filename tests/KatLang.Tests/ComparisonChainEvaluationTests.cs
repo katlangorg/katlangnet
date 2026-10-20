@@ -422,18 +422,18 @@ public class ComparisonChainEvaluationTests
     [Fact]
     public void Chains_AgreeAcrossLoopStrategies()
     {
-        AssertEvalLoopModes("Step = x + 1, 0 <= x < 5\nStep.while(0)", 5);
+        AssertEvalLoopModes("Step = x + 1, 0 <= x < 5\nStep(0).while", 5);
         // 0 → 1 → 11 → 12 … → 20; the proposed 21 is never committed (20 < 20 is false).
-        AssertEvalLoopModes("Step = x + if(1 <= x <= 3, 10, 1), x < 20\nStep.while(0)", 20);
+        AssertEvalLoopModes("Step = x + if(1 <= x <= 3, 10, 1), x < 20\nStep(0).while", 20);
         // (0, 1) → (1, 3) → (2, 5) → (3, 7) → (4, 9) → (5, 11); then 5 < 11 <= 10 is false.
-        AssertEvalResultLoopModes("Step(a, b) = a + 1, b + 2, a < b <= 10\nStep.while(0, 1)", Result.FromItems([new Result.Atom(5), new Result.Atom(11)]));
-        AssertEvalResultLoopModes("Step(x) = x + 1, not 1 < x < 3\nStep.while(0)", new Result.Atom(2));
-        AssertEvalResultLoopModes("Step(x) = x + 1, x == x == x and x < 2\nStep.while(0)", new Result.Atom(2));
+        AssertEvalResultLoopModes("Step(a, b) = a + 1, b + 2, a < b <= 10\nStep(0, 1).while", Result.FromItems([new Result.Atom(5), new Result.Atom(11)]));
+        AssertEvalResultLoopModes("Step(x) = x + 1, not 1 < x < 3\nStep(0).while", new Result.Atom(2));
+        AssertEvalResultLoopModes("Step(x) = x + 1, x == x == x and x < 2\nStep(0).while", new Result.Atom(2));
     }
 
     [Theory]
-    [InlineData("Step = x + 1, 0 <= x < true\nStep.while(0)")]
-    [InlineData("Step = x + 1, 3 < 2 < 'x'\nStep.while(0)")]
+    [InlineData("Step = x + 1, 0 <= x < true\nStep(0).while")]
+    [InlineData("Step = x + 1, 3 < 2 < 'x'\nStep(0).while")]
     public void ChainRejections_AgreeAcrossLoopStrategies(string source)
     {
         var generic = EvalFull(source, enableLoopOptimization: false);
@@ -451,8 +451,8 @@ public class ComparisonChainEvaluationTests
         // how often the middle operand ran: the chain form materializes 30 units per
         // iteration (the two literals and ONE call) on BOTH strategies, the
         // `and`-rewrite 40 (the two literals and TWO calls).
-        const string chain = "Step = {\n    T = 'xxxxxxxxxx'\n    n + if('xxxxxxxxxx' == T() != 'yyyyyyyyyy', 1, 0)\n}\nStep.repeat(200, 0)";
-        const string rewritten = "Step = {\n    T = 'xxxxxxxxxx'\n    n + if('xxxxxxxxxx' == T() and T() != 'yyyyyyyyyy', 1, 0)\n}\nStep.repeat(200, 0)";
+        const string chain = "Step = {\n    T = 'xxxxxxxxxx'\n    n + if('xxxxxxxxxx' == T() != 'yyyyyyyyyy', 1, 0)\n}\nStep(0).repeat(200)";
+        const string rewritten = "Step = {\n    T = 'xxxxxxxxxx'\n    n + if('xxxxxxxxxx' == T() and T() != 'yyyyyyyyyy', 1, 0)\n}\nStep(0).repeat(200)";
 
         var diagnostics = new LoopOptimizationDiagnostics();
         var (planned, plannedBudget) = Evaluator.RunCountedObserved(

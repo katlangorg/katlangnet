@@ -5,7 +5,7 @@ namespace KatLangTests
 open KatLang (alg algWithParameters algWithParameterPatterns algPrivate privateProp publicProp privateLocalProp publicLocalProp runFlat runResult Algorithm Error Result PropExposure)
 
 -- Test 6: Numbers.count as algorithm argument to Repeat
--- Repeat(step, Numbers.count, init) where Numbers = [10,20,30]
+-- repeat(Step(init), Numbers.count) where Numbers = [10,20,30]
 -- step(x) = x + 1, init = 0, count = Numbers.count = 3
 -- Result: 0 → 1 → 2 → 3
 open KatLang (resolve param num)
@@ -17,14 +17,10 @@ def numbersAlg : Algorithm :=
 def stepAlg : Algorithm :=
   alg ["x"] [] [] [.binary .add (.param "x") (.num 1)]
 
--- Root algorithm that calls Repeat(step, Numbers.count, init)
+-- Root algorithm that calls repeat(Step(init), Numbers.count)
 def repeatArityRoot : Algorithm :=
   algPrivate [] [] [("Numbers", numbersAlg), ("Step", stepAlg)] [
-    .call (resolve "repeat") [
-        resolve "Step",
-        .dotCall (resolve "Numbers") "count" none,
-        .num 0
-      ]
+    .call (resolve "repeat") [.call (resolve "Step") [.num 0], .dotCall (resolve "Numbers") "count" none]
   ]
 
 def test6 : Bool :=
@@ -42,11 +38,10 @@ def numbersAlg7 : Algorithm :=
   alg [] [] [] [.num 3, .num 5, .num 9, .num 1, .num 0, .num 6]
 
 def testAlg7 : Algorithm :=
-  algPrivate [] [] [("Numbers", numbersAlg7)] [
+  algPrivate [] [] [("Numbers", numbersAlg7), ("Inc", alg ["x"] [] [] [.binary .add (.param "x") (.num 1)])] [
     .call (resolve "repeat") [
-        .algorithmExpr (alg ["x"] [] [] [.binary .add (.param "x") (.num 1)]),  -- step: increment
-        .dotCall (resolve "Numbers") "count" none,                      -- count: 6
-        .num 0                                   -- init: 0
+        .call (resolve "Inc") [.num 0],              -- step: increment, init: 0
+        .dotCall (resolve "Numbers") "count" none    -- count: 6
       ]
   ]
 
@@ -114,27 +109,25 @@ def receiver10 : Algorithm :=
   algPrivate [] [] [("Count", countAlg)] [.num 99]
 
 def test10 : Bool :=
-  match runFlat (.algorithmExpr (algPrivate [] [] [("R", receiver10)] [
+  match runFlat (.algorithmExpr (algPrivate [] [] [("R", receiver10), ("Add10", alg ["x"] [] [] [.binary .add (.param "x") (.num 10)])] [
     .call (resolve "repeat") [
-        .algorithmExpr (alg ["x"] [] [] [.binary .add (.param "x") (.num 10)]),  -- step
-        .dotCall (resolve "R") "Count" (some [.num 1]),   -- count: R.Count(1) = 3
-        .num 0                                     -- init
+        .call (resolve "Add10") [.num 0],                 -- step, init
+        .dotCall (resolve "R") "Count" (some [.num 1])    -- count: R.Count(1) = 3
       ]
   ])) with
   | Except.ok [30] => true
   | _ => false
 
 #guard test10
-#eval runFlat (.algorithmExpr (algPrivate [] [] [("R", receiver10)] [
+#eval runFlat (.algorithmExpr (algPrivate [] [] [("R", receiver10), ("Add10", alg ["x"] [] [] [.binary .add (.param "x") (.num 10)])] [
   .call (resolve "repeat") [
-      .algorithmExpr (alg ["x"] [] [] [.binary .add (.param "x") (.num 10)]),
-      .dotCall (resolve "R") "Count" (some [.num 1]),
-      .num 0
+      .call (resolve "Add10") [.num 0],
+      .dotCall (resolve "R") "Count" (some [.num 1])
     ]
 ]))
 
 -- Test 11: dotCall none syntax for count in Repeat argument position
--- Repeat(Add, Numbers.count, 0, 0) where Numbers.count is encoded as .dotCall
+-- repeat(Add(0, 0), Numbers.count) where Numbers.count is encoded as .dotCall
 -- Numbers = [3,5,9,1,0,6] → count = 6
 -- Add(a,sum) = (a+1, sum + Numbers[a])
 -- Result: sum of all Numbers = 3+5+9+1+0+6 = 24, extracted via index 1
@@ -151,10 +144,8 @@ def testAlg11 : Algorithm :=
   algPrivate [] [] [("Numbers", numbersAlg11), ("Add", addAlg11)] [
     .index
       (.call (resolve "repeat") [
-          resolve "Add",
-          .dotCall (resolve "Numbers") "count" none,     -- ← no-arg dotCall
-          .num 0,
-          .num 0
+          .call (resolve "Add") [.num 0, .num 0],
+          .dotCall (resolve "Numbers") "count" none      -- ← no-arg dotCall
         ])
       [.num 1]
   ]
@@ -175,11 +166,10 @@ def numbersAlg12 : Algorithm :=
   alg [] [] [] [.num 10, .num 20, .num 30]
 
 def testAlg12 : Algorithm :=
-  algPrivate [] [] [("Numbers", numbersAlg12)] [
+  algPrivate [] [] [("Numbers", numbersAlg12), ("Inc", alg ["x"] [] [] [.binary .add (.param "x") (.num 1)])] [
     .call (resolve "repeat") [
-        .algorithmExpr (alg ["x"] [] [] [.binary .add (.param "x") (.num 1)]),  -- step
-        .dotCall (resolve "Numbers") "count" none,                       -- ← no-arg dotCall
-        .num 0                                   -- init
+        .call (resolve "Inc") [.num 0],               -- step, init
+        .dotCall (resolve "Numbers") "count" none     -- ← no-arg dotCall
       ]
   ]
 
@@ -839,9 +829,7 @@ def collectingParameterForwardingLoopStepSequenceValueCaptureSpreadsCompatibleSl
     ("YSStep", collectingParameterForwardingSequenceValueLoopStepAlg)
   ] [
     .index
-      (.dotCall (resolve "YSStep") "repeat" (some [
-        .num 1, collectingParameterForwardingSequenceValueHistoryArg, .num 2, .num 3
-      ]))
+      (.dotCall (.call (resolve "YSStep") [collectingParameterForwardingSequenceValueHistoryArg, .num 2, .num 3]) "repeat" (some [.num 1]))
       [.num 0]
   ])) with
   | Except.ok [8] => true
@@ -2099,11 +2087,11 @@ def testValueCallbackParamShadowsCallerAlgorithm : Bool :=
 
 #guard testValueCallbackParamShadowsCallerAlgorithm
 
--- Loop step: repeat(Inner, 1, 5) binds the state slot to `f`.
+-- Loop step: repeat(Inner(5), 1) binds the state slot to `f`.
 def testValueLoopStepParamShadowsCallerAlgorithm : Bool :=
   expectNotCallableParamF (runFlat (.algorithmExpr
     (valueShadowRoot valueShadowedFlatCallee
-      [.call (resolve "repeat") [resolve "Inner", .num 1, .num 5]])))
+      [.call (resolve "repeat") [.call (resolve "Inner") [.num 5], .num 1]])))
 
 #guard testValueLoopStepParamShadowsCallerAlgorithm
 
@@ -2271,7 +2259,7 @@ def pcnDotFallbackThroughParameter : Expr :=
 
 /-- `F(0) = 1` / `Run(step) = repeat(step, 1, 5)` / `Run(F)` (the step cell keeps its written source `F`) -/
 def pcnLoopStepThroughParameter : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "F" (.conditional none [] [⟨.litInt 0, (alg [] [] [] [.num 1])⟩]), privateProp "Run" (alg ["step"] [] [] [(.call (.resolve "repeat") [.param "step", .num 1, .num 5])])] [(.call (.resolve "Run") [.resolve "F"])])
+  .algorithmExpr (alg [] [] [privateProp "F" (.conditional none [] [⟨.litInt 0, (alg [] [] [] [.num 1])⟩]), privateProp "Run" (alg ["step"] [] [] [(.call (.resolve "repeat") [(.call (.param "step") [.num 5]), .num 1])])] [(.call (.resolve "Run") [.resolve "F"])])
 #guard pcnObserve pcnLoopStepThroughParameter == "call Run > call repeat > call F > noMatchingBranch F"
 
 /-- host-built: a root whose `open` target is the parameter reference `f`, reading `Zzz` -/

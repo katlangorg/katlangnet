@@ -178,7 +178,7 @@ private def countedReduce (items : List KatLang.Expr) (step : Algorithm) (initia
   | .error e => KatLangTests.innermostIsBooleanRequired "filter predicate result"
       "a sequence value with 2 sequence elements: (true, true)" e
   | _ => false
-#guard okIs (.call (resolve "repeat") [resolve "D", .num 1, .num 5]) (pair 5 5)
-#guard okIs (.listLiteral [.call (resolve "repeat") [resolve "E", .num 1, .num 5]]) (.listValue [.sequenceValue []])
+#guard okIs (.call (resolve "repeat") [.call (resolve "D") [.num 5], .num 1]) (pair 5 5)
+#guard okIs (.listLiteral [.call (resolve "repeat") [.call (resolve "E") [.num 5], .num 1]]) (.listValue [.sequenceValue []])
 
 end KatLangTests.CallbackResultBoundary

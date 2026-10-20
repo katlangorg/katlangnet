@@ -1,2 +1,2 @@
 Inc = x + 1
-Inc.repeat(100, 0)
+Inc(0).repeat(100)

@@ -127,15 +127,15 @@ public class PatternBindingErrorPrecedenceTests
     {
         // Loop state binds through the ordinary binder: the unequal x of the first two state
         // slots is reported before the third slot's nested (a, b) is inspected.
-        var result = Run("Step(x, x, (a, b)) = x, x, (a, b)\nrepeat(Step, 1, 1, 2, 7)");
+        var result = Run("Step(x, x, (a, b)) = x, x, (a, b)\nrepeat(Step(1, 2, 7), 1)");
         Assert.True(result.IsError);
         Assert.Equal("BadArity in []", BindingReason(result.Error));
-        var arity = Run("Step(x, x, (a, b)) = x, x, (a, b)\nrepeat(Step, 1, 1, 2, (7, 8, 9))");
+        var arity = Run("Step(x, x, (a, b)) = x, x, (a, b)\nrepeat(Step(1, 2, (7, 8, 9)), 1)");
         Assert.True(arity.IsError);
         Assert.Equal("BadArity in []", BindingReason(arity.Error));
 
         // The matching state binds; its three-slot final state is ONE loop result value (Q-26).
-        AssertDisplay("Step(x, x, (a, b)) = x, x, (a, b)\nrepeat(Step, 1, 1, 1, (2, 3))", "(1, 1, (2, 3))");
+        AssertDisplay("Step(x, x, (a, b)) = x, x, (a, b)\nrepeat(Step(1, 1, (2, 3)), 1)", "(1, 1, (2, 3))");
     }
 
     [Fact]
@@ -207,7 +207,7 @@ public class PatternBindingErrorPrecedenceTests
     [InlineData("P(x, x) = x, x(5)\nP(1, Inc)")]
     [InlineData("K((x, x, (a, b))) = true\n[(1, 2, 7), (1, 1, (2, 3))].filter(K).count")]
     [InlineData("R(x, *m, x, (a, b)) = [a]\nreduce([1], R, (9, 2, 7))")]
-    [InlineData("Step(x, x, (a, b)) = x, x, (a, b)\nrepeat(Step, 1, 1, 2, 7)")]
+    [InlineData("Step(x, x, (a, b)) = x, x, (a, b)\nrepeat(Step(1, 2, 7), 1)")]
     public async Task Precedence_AgreesAcrossGenericOptimizedAndAsyncExecution(string program)
     {
         var ast = AsyncEvaluationHarness.Ast(Definitions + program);

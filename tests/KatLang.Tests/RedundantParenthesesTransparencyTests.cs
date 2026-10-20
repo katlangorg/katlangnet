@@ -131,7 +131,7 @@ public class RedundantParenthesesTransparencyTests
         "map([$], Id)",
         "filter([$], Keep)",
         "reduce([1], Reduce, $)",
-        "repeat(Step, 1, $)",
+        "repeat(Step($), 1)",
         "$ == $",
         "count($)",
         "first($)",
@@ -428,12 +428,12 @@ public class RedundantParenthesesTransparencyTests
     [InlineData("7")]
     [InlineData("[1, 2]")]
     [InlineData("(1, 2)")]
-    [InlineData("repeat({a, b}, 1, 1, 2)")]
+    [InlineData("repeat(Step(1, 2), 1)")]
     public async Task HostBuiltSingleRowCapture_PatternBindingUsesItsValue(string expression)
     {
         // The host API still supports this node even though redundant expression
         // grouping no longer produces it. A pattern must not see the host row list.
-        var root = ParseValidRoot("P((*xs)) = xs\nP(" + expression + ")");
+        var root = ParseValidRoot("Step = {a, b}\nP((*xs)) = xs\nP(" + expression + ")");
         var call = Assert.IsType<Expr.Call>(Assert.Single(root.Output));
         var argument = Assert.Single(call.Args);
         var expected = AsyncEvaluationHarness.NeutralOf(Evaluator.RunCounted(new Expr.AlgorithmExpr(root)));
@@ -551,7 +551,7 @@ public class RedundantParenthesesTransparencyTests
     [InlineData("(n) + (T) * ((2))")]
     public void PlannedLoop_PlansGroupedSpellingsLikeTheBareOnes(string expression)
     {
-        var source = "Step(n) = {\n    T = 2\n    " + expression + "\n}\nStep.repeat(3, 0)";
+        var source = "Step(n) = {\n    T = 2\n    " + expression + "\n}\nStep(0).repeat(3)";
         var loop = new LoopOptimizationDiagnostics();
         var ast = AsyncEvaluationHarness.Ast(source);
         var (planned, _) = Evaluator.RunCountedObserved(ast, loopDiagnostics: loop);

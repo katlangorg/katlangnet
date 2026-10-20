@@ -281,12 +281,12 @@ def afBuiltinSupplies : List (List KatLang.Expr) :=
     afSameOutcome (afRun [afCall ("A_" ++ name) supply]).fst (afRun [afCall name supply]).fst
 
 -- The §33 witnesses: `count`'s adapter, `if`'s laziness, `map`'s callback non-demand, `repeat`'s
--- own minimum arity, and a builtin alias chain.
+-- own exact arity (META-S3-3: `repeat(meta step, count)`), and a builtin alias chain.
 #guard afSucceedsWith [afCall "A_count" [.listLiteral [num 1, num 2, num 3]]] (.atom 3)
 #guard afSucceedsWith [afCall "A_if" [.boolLiteral true, num 1, .binary .div (num 1) (num 0)]] (.atom 1)
 #guard afSucceedsWith [afCall "A_map" [.listLiteral [], resolve "Bad"]] (.listValue [])
 #guard afSameOutcome (afRun [afCall "A_repeat" [resolve "Inc"]]).fst (afRun [afCall "repeat" [resolve "Inc"]]).fst
-#guard afFailsWith (innermostIsArityMismatch 3 1) [afCall "A_repeat" [resolve "Inc"]]
+#guard afFailsWith (innermostIsArityMismatch 2 1) [afCall "A_repeat" [resolve "Inc"]]
 #guard afSucceedsWith [afCall "CountC" [.listLiteral [num 1, num 2]]] (.atom 2)
 -- A builtin alias as a CALLBACK step and as a callback argument: the callable is the builtin.
 #guard afSucceedsWith [afCall "map" [.listLiteral [.listLiteral [num 1], .listLiteral [num 1, num 2]], resolve "CountC"]]

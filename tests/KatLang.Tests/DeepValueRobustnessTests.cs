@@ -36,9 +36,9 @@ public class DeepValueRobustnessTests
     private static string DeepListProgram(string body, int depthA = LanguageDepth, int depthB = LanguageDepth)
         => $"""
             Wrap = [x]
-            A = Wrap.repeat({depthA}, 0)
-            B = Wrap.repeat({depthB}, 0)
-            C = Wrap.repeat({depthA}, 1)
+            A = Wrap(0).repeat({depthA})
+            B = Wrap(0).repeat({depthB})
+            C = Wrap(1).repeat({depthA})
             {body}
             """;
 
@@ -62,9 +62,9 @@ public class DeepValueRobustnessTests
     public void DeepSequenceEquality()
         => EvaluatorTestSupport.AssertEvalBools($"""
             Wrap = (x, 7)
-            A = Wrap.repeat({LanguageDepth}, 0)
-            B = Wrap.repeat({LanguageDepth}, 0)
-            C = Wrap.repeat({LanguageDepth}, 1)
+            A = Wrap(0).repeat({LanguageDepth})
+            B = Wrap(0).repeat({LanguageDepth})
+            C = Wrap(1).repeat({LanguageDepth})
             A == B, A == C
             """, true, false);
 

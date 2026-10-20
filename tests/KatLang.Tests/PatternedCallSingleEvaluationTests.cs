@@ -294,7 +294,7 @@ public class PatternedCallSingleEvaluationTests
 
     [Theory]
     [InlineData("S[0]")]
-    [InlineData("repeat({a, b}, 1, 1, 2)")]
+    [InlineData("repeat(Step(1, 2), 1)")]
     public void SelectionOrMultiSlotLoop_IsOneValueThatThePatternOpens(string expression)
     {
         // The argument is ONE value however it was produced — a selected pair
@@ -305,7 +305,7 @@ public class PatternedCallSingleEvaluationTests
         // elements, so the pair pattern `(x, y)` binds x = 1, y = 2 in every spelling:
         // the host-built block argument, the direct expression, and the grouped
         // expression alike.
-        var parsed = SourceProvenance.ParseValid("S = ((1, 2), (3, 4))\nF((x, y)) = [x, y]\n" + expression);
+        var parsed = SourceProvenance.ParseValid("S = ((1, 2), (3, 4))\nStep = {a, b}\nF((x, y)) = [x, y]\n" + expression);
         var selectionBlock = new Expr.AlgorithmExpr(new Algorithm.User(
             Parent: null,
             ParameterPatterns: [],
@@ -317,8 +317,8 @@ public class PatternedCallSingleEvaluationTests
         {
             Output = [new Expr.Call(new Expr.Resolve("F"), callArgs)],
         };
-        var direct = SourceProvenance.ParseValid("S = ((1, 2), (3, 4))\nF((x, y)) = [x, y]\nF(" + expression + ")").Root;
-        var grouped = SourceProvenance.ParseValid("S = ((1, 2), (3, 4))\nF((x, y)) = [x, y]\nF((" + expression + "))").Root;
+        var direct = SourceProvenance.ParseValid("S = ((1, 2), (3, 4))\nStep = {a, b}\nF((x, y)) = [x, y]\nF(" + expression + ")").Root;
+        var grouped = SourceProvenance.ParseValid("S = ((1, 2), (3, 4))\nStep = {a, b}\nF((x, y)) = [x, y]\nF((" + expression + "))").Root;
 
         foreach (var program in new[] { root, direct, grouped })
         foreach (var optimize in new[] { false, true })
@@ -334,7 +334,7 @@ public class PatternedCallSingleEvaluationTests
         // A one-element list opens to exactly one element, which the one-element list
         // pattern binds whole: the pair itself.
         var (bound, _) = Evaluator.RunCountedObserved(
-            new Expr.AlgorithmExpr(SourceProvenance.ParseValid("S = ((1, 2), (3, 4))\nF([x]) = x\nF([" + expression + "])").Root),
+            new Expr.AlgorithmExpr(SourceProvenance.ParseValid("S = ((1, 2), (3, 4))\nStep = {a, b}\nF([x]) = x\nF([" + expression + "])").Root),
             enableOptimizations: false);
         Assert.True(bound.IsOk, Failure("one-element list", bound));
         AssertSemanticallyEqual(Seq(Atom(1), Atom(2)), bound.Value.Value);

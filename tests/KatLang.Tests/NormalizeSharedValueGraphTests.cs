@@ -755,7 +755,7 @@ public class NormalizeSharedValueGraphTests
     private static string DagProgram(string body, int depth = DeepDepth)
         => $"""
             Wrap = [x, x]
-            A = Wrap.repeat({depth}, 1)
+            A = Wrap(1).repeat({depth})
             {body}
             """;
 

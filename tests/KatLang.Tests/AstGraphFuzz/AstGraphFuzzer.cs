@@ -162,7 +162,7 @@ public static class AstGraphFuzzer
         L = [1, 2, 3]
         F(x) = x + 1
         Wrap(x) = [x, x]
-        D = Wrap.repeat(6, 1)
+        D = Wrap(1).repeat(6)
         """;
 
     // ── generation ──────────────────────────────────────────────────────────

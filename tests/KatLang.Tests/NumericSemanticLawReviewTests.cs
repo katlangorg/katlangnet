@@ -301,7 +301,7 @@ public class NumericSemanticLawReviewTests
     [InlineData("1.0000000000000000001", "-9223372036854775808")]
     public void PowerLoop_HasAWitnessOfPlannedDispatch(string basis, string exponent)
     {
-        var program = new Expr.AlgorithmExpr(SourceProvenance.ParseValid($"Step(x) = x ^ ({exponent})\nrepeat(Step, 1, {basis})").Root);
+        var program = new Expr.AlgorithmExpr(SourceProvenance.ParseValid($"Step(x) = x ^ ({exponent})\nrepeat(Step({basis}), 1)").Root);
         var diagnostics = new LoopOptimizationDiagnostics();
         var (planned, _) = Evaluator.RunCountedObserved(program, loopDiagnostics: diagnostics);
         var (generic, _) = Evaluator.RunCountedObserved(program, enableOptimizations: false);

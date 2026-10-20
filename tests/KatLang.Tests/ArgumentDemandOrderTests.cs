@@ -61,7 +61,7 @@ public class ArgumentDemandOrderTests
     [InlineData("range('a', 1 / 0)", "err TypeMismatch", "")]
     [InlineData("if('a', 1 / 0, 2)", "err TypeMismatch", "")]
     [InlineData("range(trace('a'), trace(1))", "err TypeMismatch", "trace('a')")]
-    [InlineData("repeat({x + 1}, trace('a'), trace(1))", "err TypeMismatch", "trace('a')")]
+    [InlineData("Step = {x + 1}\nrepeat(Step(trace(1)), trace('a'))", "err TypeMismatch", "trace('a')")]
     public async Task EachValueSlot_IsValidatedBeforeTheNextIsDemanded(string source, string outcome, string hostCalls)
         => AssertOutcome(await OnEveryRouteAsync(source), outcome, hostCalls);
 

@@ -161,8 +161,8 @@ public class OutermostPropertyCachePublicationTests
 
         // Loop steps: an exported step property is one run-wide key, owned at the first
         // iteration (2 + 2 + 2); a local-only one reads the step's state (A * 10 + A over 7).
-        { "Step(n) = {\n    A = if(tick() < 3, A + 1, 0)\n    n + A\n}\nStep.repeat(3, 0)", "6", Ticks(3) },
-        { "Step(n) = {\n    A = if(tick() < 3, A + 1, n)\n    A * 10 + A\n}\nStep.repeat(1, 5)", "77", Ticks(3) },
+        { "Step(n) = {\n    A = if(tick() < 3, A + 1, 0)\n    n + A\n}\nStep(0).repeat(3)", "6", Ticks(3) },
+        { "Step(n) = {\n    A = if(tick() < 3, A + 1, n)\n    A * 10 + A\n}\nStep(5).repeat(1)", "77", Ticks(3) },
 
         // Assignment deconstruction: the targets are ordinary properties over the hoisted source, so a
         // re-entrant target read re-reads the source re-entrantly and a target's owner publishes its own
@@ -226,7 +226,7 @@ public class OutermostPropertyCachePublicationTests
     public async Task ResourceLimit_AfterAnInnerSameKeySuccess_PublishesNothing()
     {
         // The innermost A completes with 0; its caller then reaches the step limit inside Heavy.
-        const string source = "S(x) = x + 1\nHeavy = repeat(S, 1000, 0)\nA = if(tick() < 3, A + Heavy, 0)\nA";
+        const string source = "S(x) = x + 1\nHeavy = repeat(S(0), 1000)\nA = if(tick() < 3, A + Heavy, 0)\nA";
         var limits = new EvaluationLimits { MaxSteps = 300 };
         var oracle = await SixRouteAgreement.OnEveryRouteAsync(source, limits: limits);
         Assert.Equal("err", oracle.Kind);

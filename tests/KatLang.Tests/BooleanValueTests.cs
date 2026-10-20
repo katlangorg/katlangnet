@@ -457,14 +457,14 @@ public class BooleanValueTests
         AssertEvalBool("All(e, acc) = e and acc\nreduce((true, false, true), All, true)", false);
         AssertEvalBool("Any(e, acc) = e or acc\nreduce((false, true), Any, false)", true);
         AssertEvalBool("Both(p, q, v) = p(v) and q(v)\nBoth({x > 1}, {x < 5}, 3)", true);
-        AssertEval("IsSmall(v) = v < 3\nStep(x) = x + 1, IsSmall(x)\nStep.while(0)", 3);
+        AssertEval("IsSmall(v) = v < 3\nStep(x) = x + 1, IsSmall(x)\nStep(0).while", 3);
     }
 
     [Fact]
     public void BooleanProperties_AreCachedLikeAnyOtherValue()
     {
         AssertEvalBools("Flag = 1 < 2\nFlag, Flag, Flag == Flag", true, true, true);
-        AssertEval("Limit = 5 > 2\nStep = x + 1, Limit and x < 3\nStep.while(0)", 3);
+        AssertEval("Limit = 5 > 2\nStep = x + 1, Limit and x < 3\nStep(0).while", 3);
         var cache = new RunScopedZeroArgPropertyResultCache();
         var result = Evaluator.Run(Program("Flag = 1 < 2\nFlag, Flag, not Flag"), cache);
         Assert.False(result.IsError);
@@ -480,26 +480,26 @@ public class BooleanValueTests
     [Fact]
     public void Loops_AgreeAcrossStrategies_WithBooleanStateAndFlags()
     {
-        AssertEvalLoopModes("Step = x + 1, x < 10\nStep.while(0)", 10);
-        AssertEvalResultLoopModes("Toggle(b) = not b\nToggle.repeat(3, false)", new Result.Bool(true));
+        AssertEvalLoopModes("Step = x + 1, x < 10\nStep(0).while", 10);
+        AssertEvalResultLoopModes("Toggle(b) = not b\nToggle(false).repeat(3)", new Result.Bool(true));
         AssertEvalResultLoopModes(
-            "Step(a, b) = a + 1, not b, a < 3\nStep.while(0, true)",
+            "Step(a, b) = a + 1, not b, a < 3\nStep(0, true).while",
             Result.FromItems([new Result.Atom(3), new Result.Bool(false)]));
-        AssertEvalLoopModes("Outer(flag) = { Step = x + if(flag, 1, 2)\n Step.repeat(3, 0) }\nOuter(true)", 3);
-        AssertEvalLoopModes("Outer(flag) = { Step = x + if(flag, 1, 2)\n Step.repeat(3, 0) }\nOuter(false)", 6);
-        AssertEvalLoopModes("Step = x + 1, (x mod 2 == 0) or x < 5\nStep.while(0)", 5);
-        AssertEvalResultLoopModes("Step(x) = x + 1, x < 2\nStep.while(0) == 2", new Result.Bool(true));
+        AssertEvalLoopModes("Outer(flag) = { Step = x + if(flag, 1, 2)\n Step(0).repeat(3) }\nOuter(true)", 3);
+        AssertEvalLoopModes("Outer(flag) = { Step = x + if(flag, 1, 2)\n Step(0).repeat(3) }\nOuter(false)", 6);
+        AssertEvalLoopModes("Step = x + 1, (x mod 2 == 0) or x < 5\nStep(0).while", 5);
+        AssertEvalResultLoopModes("Step(x) = x + 1, x < 2\nStep(0).while == 2", new Result.Bool(true));
     }
 
     [Theory]
-    [InlineData("Step = x + 1, x\nStep.while(0)", "numeric value 0")]
-    [InlineData("Step = x, 1\nStep.while(5)", "numeric value 1")]
-    [InlineData("Step = x + 1, 'go'\nStep.while(0)", "a string: 'go'")]
-    [InlineData("Step = x + 1, (true, true)\nStep.while(0)", "a sequence value with 2 sequence elements: (true, true)")]
+    [InlineData("Step = x + 1, x\nStep(0).while", "numeric value 0")]
+    [InlineData("Step = x, 1\nStep(5).while", "numeric value 1")]
+    [InlineData("Step = x + 1, 'go'\nStep(0).while", "a string: 'go'")]
+    [InlineData("Step = x + 1, (true, true)\nStep(0).while", "a sequence value with 2 sequence elements: (true, true)")]
     // ONE output row is a single slot — both the next state and the flag — so the
     // requirement names the whole sequence, never a truth test of its last element
     // (Lean: CoreTests `variadicLoopStepWhileOneRowSlotIsNotAFlag`).
-    [InlineData("Step(*h) = (h*, h.atoms.last + 1, h.atoms.last + 1 < 6)\nStep.while(1, 2, 4)", "a sequence value with 5 sequence elements: (1, 2, 4, 5, true)")]
+    [InlineData("Step(*h) = (h*, h.atoms.last + 1, h.atoms.last + 1 < 6)\nStep(1, 2, 4).while", "a sequence value with 5 sequence elements: (1, 2, 4, 5, true)")]
     public void While_RejectsANonBooleanContinuationFlag_InBothStrategies(string source, string described)
     {
         var expected = $"while continuation flag (the step's last output) must be a Boolean value (true or false), but was {described}";
@@ -558,7 +558,7 @@ public class BooleanValueTests
         Assert.Equal(KatLangErrorCode.TypeMismatch, not.Code);
         Assert.Equal(new SourceSpan(2, 1, 2, 6), not.Span);
 
-        var flag = EngineFailure("Step = x, 1\nStep.while(0)");
+        var flag = EngineFailure("Step = x, 1\nStep(0).while");
         Assert.Equal(KatLangErrorCode.TypeMismatch, flag.Code);
         Assert.Contains("while continuation flag (the step's last output) must be a Boolean value (true or false), but was numeric value 1", flag.Message, StringComparison.Ordinal);
     }
@@ -614,9 +614,9 @@ public class BooleanValueTests
     [InlineData("filter((1, 2), {x})")]
     [InlineData("filter((1, 2), {x * 0 + 1})")]
     [InlineData("(1, 2).filter{x - x}")]
-    [InlineData("Step = x, 1\nStep.while(0)")]
-    [InlineData("while({x + 1, x - 2}, 0)")]
-    [InlineData("Step = x - 1, x - 1\nStep.while(3)")]
+    [InlineData("Step = x, 1\nStep(0).while")]
+    [InlineData("Step = {x + 1, x - 2}\nwhile(Step(0))")]
+    [InlineData("Step = x - 1, x - 1\nStep(3).while")]
     public void ProgramsThatReliedOnNumericTruth_NowFailWithATypeMismatch(string source)
     {
         var error = FailureOf(source);

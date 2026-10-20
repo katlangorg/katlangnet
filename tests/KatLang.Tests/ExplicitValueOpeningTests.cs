@@ -642,20 +642,20 @@ public class ExplicitValueOpeningTests
     // ── 9. Loops keep their established state slots ─────────────────────────
 
     [Theory]
-    [InlineData("repeat(Id, 1, 7)", "7")]
-    [InlineData("repeat(Id, 1, (1, 2))", "(1, 2)")]
-    [InlineData("repeat(Id, 1, [1, 2])", "[1, 2]")]
-    [InlineData("repeat(Swap, 1, (1, 2))", "(2, 1)")]
-    [InlineData("repeat(LSwap, 1, [1, 2])", "[2, 1]")]
-    [InlineData("repeat(Swap, 2, (1, 2))", "(1, 2)")]
-    [InlineData("repeat(Fib, 5, 0, 1)", "(5, 8)")]
-    [InlineData("repeat(Cnt, 1, (1, 2))", "1")]
-    [InlineData("repeat(Cnt, 1, [1, 2])", "1")]
-    [InlineData("repeat(Cnt, 1, 1, 2)", "2")]
-    [InlineData("repeat(Cnt, 1, (1, 2)*)", "2")]
-    [InlineData("while(W, 0, (1, 2))", "(1, 1)")]
-    [InlineData("while(W, 0, [1, 2])", "(1, 1)")]
-    [InlineData("while(W, 0, 1, 2)", "(1, 2)")]
+    [InlineData("repeat(Id(7), 1)", "7")]
+    [InlineData("repeat(Id((1, 2)), 1)", "(1, 2)")]
+    [InlineData("repeat(Id([1, 2]), 1)", "[1, 2]")]
+    [InlineData("repeat(Swap((1, 2)), 1)", "(2, 1)")]
+    [InlineData("repeat(LSwap([1, 2]), 1)", "[2, 1]")]
+    [InlineData("repeat(Swap((1, 2)), 2)", "(1, 2)")]
+    [InlineData("repeat(Fib(0, 1), 5)", "(5, 8)")]
+    [InlineData("repeat(Cnt((1, 2)), 1)", "1")]
+    [InlineData("repeat(Cnt([1, 2]), 1)", "1")]
+    [InlineData("repeat(Cnt(1, 2), 1)", "2")]
+    [InlineData("repeat(Cnt((1, 2)*), 1)", "2")]
+    [InlineData("while(W(0, (1, 2)))", "(1, 1)")]
+    [InlineData("while(W(0, [1, 2]))", "(1, 1)")]
+    [InlineData("while(W(0, 1, 2))", "(1, 2)")]
     public void LoopStateSlots_AreEstablishedItems(string call, string expected)
     {
         // A structured state slot stays ONE item through every iteration (`xs.count` is 1 for a
@@ -670,7 +670,7 @@ public class ExplicitValueOpeningTests
     [Fact]
     public void LoopStateSlots_KeepTheirItems_AndCollectingStepsDeclinePlanning()
     {
-        const string source = "Step(*xs) = xs.count\nrepeat(Step, 1, (1, 2)), repeat(Step, 1, 1, 2), repeat(Step, 1, [1, 2])";
+        const string source = "Step(*xs) = xs.count\nrepeat(Step((1, 2)), 1), repeat(Step(1, 2), 1), repeat(Step([1, 2]), 1)";
         Assert.Equal("1\n2\n1", Display(source));
         var ast = AsyncEvaluationHarness.Ast(source);
         var loop = new LoopOptimizationDiagnostics();
@@ -681,7 +681,7 @@ public class ExplicitValueOpeningTests
         Assert.Equal(0, loop.OptimizedLoopHits);
         Assert.Equal(3, loop.FallbackReasons["variadic loop step"]);
 
-        const string mixed = "Step(*xs, last) = xs.count, last\nrepeat(Step, 1, (1, 2), 3), repeat(Step, 1, (1, 2), 3, 4)";
+        const string mixed = "Step(*xs, last) = xs.count, last\nrepeat(Step((1, 2), 3), 1), repeat(Step((1, 2), 3, 4), 1)";
         Assert.Equal("(1, 3)\n(2, 4)", Display(mixed));
     }
 
@@ -693,7 +693,7 @@ public class ExplicitValueOpeningTests
     {
         var source = Coll + "V = " + value + "\n" +
             "S(x, k) = { T = Coll(if(k == 0, V, x))\nif(k == 0, T, x), k + 1 }\n" +
-            "repeat(S, 2, 0, 0)";
+            "repeat(S(0, 0), 2)";
         Assert.Equal(expected, Display(source));
         var ast = AsyncEvaluationHarness.Ast(source);
         var loop = new LoopOptimizationDiagnostics();

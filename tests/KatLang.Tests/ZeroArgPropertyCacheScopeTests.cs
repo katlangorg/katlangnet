@@ -138,7 +138,7 @@ public class ZeroArgPropertyCacheScopeTests
     [InlineData(true)]
     public void ExportedRootProperty_IsEvaluatedOncePerRun_AcrossLoopIterations(bool optimize)
     {
-        var (cache, result) = Run("Big = 1 + 2\nStep = n + Big\nStep.repeat(3, 0)", optimize);
+        var (cache, result) = Run("Big = 1 + 2\nStep = n + Big\nStep(0).repeat(3)", optimize);
 
         Assert.Equal([9m], Atoms(result));
         Assert.Equal(3, cache.RequestsOf("Big"));
@@ -414,7 +414,7 @@ public class ZeroArgPropertyCacheScopeTests
         // while the loop shape opens it in the step body that reads it.
         var outerOpen = loop ? "" : "    open Make\n";
         var body = loop
-            ? "    Step(n) = {\n        open Make\n        P = Box.g\n        n + P\n    }\n    Step.repeat(2, 0)"
+            ? "    Step(n) = {\n        open Make\n        P = Box.g\n        n + P\n    }\n    Step(0).repeat(2)"
             : "    P = Box.g\n    P, P";
         return AssertHostCounterPaths(
             "Inc(x) = Data() + x\n"
@@ -507,7 +507,7 @@ public class ZeroArgPropertyCacheScopeTests
     [InlineData("Outer(*items) = {\n P = Data() + items.sum\n P + P\n}\nOuter(1, 2), Outer(1, 2)", "206,406", 2)]
     [InlineData("Outer(s) = {\n F(x) = {\n  P = Data() + s + x\n  P + P\n }\n [1, 1].map(F)* }\nOuter(1)", "204,404", 2)]
     [InlineData("F(n) = {\n P = Data() + n\n if(n == 0, P + P, P + P + F(n - 1))\n}\nF(2)", "1206", 3)]
-    [InlineData("Step(n) = {\n P = Data() + n\n P + P - n\n}\nStep.repeat(3, 0)", "1200", 3)]
+    [InlineData("Step(n) = {\n P = Data() + n\n P + P - n\n}\nStep(0).repeat(3)", "1200", 3)]
     [InlineData("Outer(x) = {\n P = Data() + x\n Q = P + P\n Q(), Q()\n}\nOuter(1)", "202,202", 1)]
     [InlineData("Outer(x) = {\n P = Data() + x\n Q = P + P\n P, Q, P\n}\nOuter(1)", "101,202,101", 1)]
     [InlineData("Outer(x) = {\n A = {\n P = Data() + x\n P\n }\n if(true, A, 0), if(true, A, 0)\n}\nOuter(1)", "101,101", 1)]
@@ -573,14 +573,14 @@ public class ZeroArgPropertyCacheScopeTests
         "Outer(n) = {\n Inner = { public X = n }\n Read(n) = Inner.X\n Read(7)\n}\nOuter(5), Outer(9)",
         "Outer(n) = {\n Inner = { public X = n }\n Read(n) = { open Inner\n X }\n Read(7)\n}\nOuter(5), Outer(9)",
         "Outer(n) = {\n Q = n\n Mid(n) = { public X = Q\n X }\n Mid.X\n}\nOuter(5), Outer(9)",
-        "Outer(n) = {\n Lib = { public X = n }\n Step(n) = Lib.X + n\n repeat(Step, 2, 0)\n}\nOuter(5), Outer(7)",
+        "Outer(n) = {\n Lib = { public X = n }\n Step(n) = Lib.X + n\n repeat(Step(0), 2)\n}\nOuter(5), Outer(7)",
         "Big = range(1, 100).sum\nF(x) = Big + x\nF(1), F(2), F(3)",
         "Big = range(1, 100).sum\nF(x) = Big + x\nrange(1, 5).map(F)",
         "Outer(x) = {\n    P = x * 10\n    P + P\n}\nOuter(2), Outer(10)",
         "Outer(x) = {\n    Mid = {\n        K = 1 + 2\n        K + x\n    }\n    Mid\n}\nOuter(1), Outer(2)",
         "open Lib\nLib = { public Big = 1 + 2 }\nBig + Big",
         "A = 41 + 1\nB = A, A\nB(), B()",
-        "Big = 1 + 2\nStep = n + Big\nStep.repeat(3, 0)",
+        "Big = 1 + 2\nStep = n + Big\nStep(0).repeat(3)",
         "Apply(f) = {\n    Data = [1, 2, 3]\n    Big = Data.f\n    Big\n}\nSum(v) = v.sum\nCnt(v) = v.count\nApply(Sum), Apply(Cnt)",
     };
 
@@ -633,7 +633,7 @@ public class ZeroArgPropertyCacheScopeTests
         // twenty iterations — because each iteration and each call ran in fresh
         // environments). `n` still walks 0, 1, 3, 7, ... (2^20 - 1).
         const string source =
-            "Step = {\n    T = 'xxxxxxxxxx'\n    A = x + if(T == T, 1, 0)\n    if(T == T, 1, 0) + A + A - 2 + if(T == T, 1, 0) - 1\n}\nStep.repeat(20, 0)";
+            "Step = {\n    T = 'xxxxxxxxxx'\n    A = x + if(T == T, 1, 0)\n    if(T == T, 1, 0) + A + A - 2 + if(T == T, 1, 0) - 1\n}\nStep(0).repeat(20)";
         var expr = Program(source);
 
         var genericCache = new CountingCache();

@@ -107,7 +107,7 @@ internal static class MetamorphicBudgetLawTemplate
         new("string-rows", "'abcd', 'ef'"),
         new("string-projection", "range(1, 4).count.string"),
         new("direct-recursion", $"{F}(0) = 0\n{F}(n) = {F}(n - 1)\n{F}(5)"),
-        new("counted-loop", $"{V}Step = x + 1\n{V}Step.repeat(6, 0)"),
+        new("counted-loop", $"{V}Step = x + 1\n{V}Step(0).repeat(6)"),
         new("map-pipeline", $"{Double}(x) = x * 2\nrange(1, 6).map({Double})"),
         new("filter-count-pipeline", $"{Big}(x) = x > 2\nrange(1, 9).filter({Big}).count"),
         new("nested-structures", "[[1, 2], [3, 4]], (5, 6)"),

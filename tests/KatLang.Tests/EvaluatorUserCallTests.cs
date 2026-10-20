@@ -79,7 +79,7 @@ public class EvaluatorUserCallTests
         var source = """
             Numbers = 3, 5, 9, 1, 0, 6
             Add = a + 1, total + Numbers[a]
-            Sum = repeat(Add, (6), 0, 0)[1]
+            Sum = repeat(Add(0, 0), (6))[1]
             Sum
             """;
         AssertEval(source, 24);
@@ -90,7 +90,7 @@ public class EvaluatorUserCallTests
     {
         var source = """
             Fib = a + b, a
-            repeat(Fib, (10), 1, 0)[0]
+            repeat(Fib(1, 0), (10))[0]
             """;
         AssertEval(source, 89);
     }

@@ -365,7 +365,7 @@ public class GraceEffectivenessTests
     [InlineData("K = a~.t\nK({a+1}, 7)", "8")]
     [InlineData("K = a.~t\nK({a+1}, 7)", "8")]
     [InlineData("K = a~.~t\nK({a+1}, 7)", "8")]
-    [InlineData("Fib = b~, a + b\nFib.repeat(10, 0, 1)[0]", "55")]
+    [InlineData("Fib = b~, a + b\nFib(0, 1).repeat(10)[0]", "55")]
     [InlineData("K = {\n  a\n  ~b\n}\nK(10, 20)", "(20, 10)")]
     [InlineData("F(v, w) = w\nK = F(y, ~x)\nK(1, 2)", "1")]
     [InlineData("K = (y, ~x)\nK(1, 2)", "(2, 1)")]

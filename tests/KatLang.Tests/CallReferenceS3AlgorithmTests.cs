@@ -216,17 +216,20 @@ public class CallReferenceS3AlgorithmTests
 
     [Fact]
     public void While_UsesTheOrdinaryConditionFirstLoop_AndTheOriginalArguments()
-        => Assert.Equal("ok 3", Run("Step(x) = x + 1, x < 3\nR = Capture(Step(0))\nR.Algorithm.while(R.Arguments*)"));
+        => Assert.Equal("ok 3", Run("Step(x) = x + 1, x < 3\nR = Capture(Step(0))\nRA = R.Algorithm\nRA(R.Arguments*).while"));
 
     [Fact]
     public void Repeat_KeepsItsArgumentOrder()
-        => Assert.Equal("ok 5", Run("Increment(x) = x + 1\nS = Capture(Increment(0))\nS.Algorithm.repeat(5, S.Arguments*)"));
+        => Assert.Equal("ok 5", Run("Increment(x) = x + 1\nS = Capture(Increment(0))\nSA = S.Algorithm\nSA(S.Arguments*).repeat(5)"));
 
     [Fact]
     public void AUserDefinedMetaWrapper_IsOrdinaryMetaCaptureDotCallAndLoop()
         => Assert.Equal("ok S[3, 3]", Run("""
             Step(x) = x + 1, x < 3
-            Loop(meta operation) = operation.Algorithm.while(operation.Arguments*)
+            Loop(meta operation) = {
+              S = operation.Algorithm
+              S(operation.Arguments*).while
+            }
             Loop(Step(0)), Step(0).Loop
             """));
 
@@ -235,17 +238,18 @@ public class CallReferenceS3AlgorithmTests
         => Assert.Equal("ok S[S[34, 55, 1], S[34, 55, 1]]", Run("""
             Fib(a, b, n) = b, a + b, n - 1, n > 1
             R = Capture(Fib(0, 1, 10))
-            R.Algorithm.while(R.Arguments*), Fib.while(0, 1, 10)
+            RA = R.Algorithm
+            RA(R.Arguments*).while, Fib(0, 1, 10).while
             """));
 
     [Fact]
     public void AFalseFirstContinuation_ReturnsTheIncomingState()
-        => Assert.Equal("ok S[5, 5]", Run("Step(x) = x + 1, x < 3\nR = Capture(Step(5))\nR.Algorithm.while(R.Arguments*), Step.while(5)"));
+        => Assert.Equal("ok S[5, 5]", Run("Step(x) = x + 1, x < 3\nR = Capture(Step(5))\nRA = R.Algorithm\nRA(R.Arguments*).while, Step(5).while"));
 
     [Fact]
     public void TheOptimizedLoop_RecognizesAProjectedStep_WithoutChangingTheOutcome()
     {
-        const string source = Prelude + "\nStep(x) = x + 1, x < 3\nR = Capture(Step(0))\nR.Algorithm.while(R.Arguments*)";
+        const string source = Prelude + "\nStep(x) = x + 1, x < 3\nR = Capture(Step(0))\nRA = R.Algorithm\nRA(R.Arguments*).while";
         var loops = new LoopOptimizationDiagnostics();
         var optimized = Direct(source, new Effects(), optimized: true, loops);
         Assert.Equal("ok 3", optimized.Outcome);
@@ -386,7 +390,7 @@ public class CallReferenceS3AlgorithmTests
     public void TheReservedEdge_IsNeverInferredAsAnImplicitParameter()
     {
         Assert.Equal("ok 9", Run("H = r.Algorithm(3)\nH(Capture(Square(5)))"));
-        var parsed = Parser.Parse("G = R.Algorithm\nH = R.Algorithm(1)\nK = (R.Algorithm)(2)\nL = R.Algorithm.while(0)");
+        var parsed = Parser.Parse("G = R.Algorithm\nH = R.Algorithm(1)\nK = (R.Algorithm)(2)\nL = R.Algorithm.while");
         Assert.False(parsed.HasErrors, string.Join(Environment.NewLine, parsed.Diagnostics.Select(static d => d.Message)));
         foreach (var name in new[] { "G", "H", "K" })
         {
@@ -441,7 +445,7 @@ public class CallReferenceS3AlgorithmTests
     [InlineData("R1 = Hold(R2.Algorithm)\nR2 = Hold(R1.Algorithm)\nR1.Algorithm(1)")]
     [InlineData("Take(x) = x\nUse(x) = Apply(x.Algorithm, 0)\nR = Capture(Take(Use(R.Arguments*)))\nR.Invoke()")]
     [InlineData("Take(x) = x\nUse(x) = [0].map(x.Algorithm)\nR = Capture(Take(Use(R.Arguments*)))\nR.Invoke()")]
-    [InlineData("Take(x) = x\nUse(x) = x.Algorithm.while(0)\nR = Capture(Take(Use(R.Arguments*)))\nR.Invoke()")]
+    [InlineData("Take(x) = x\nUse(x) = {\n  A = x.Algorithm\n  A(0).while\n}\nR = Capture(Take(Use(R.Arguments*)))\nR.Invoke()")]
     [InlineData("F(f) = f\nR = Capture(F(Q.Algorithm))\nQ = if(count([0].map(R.Arguments*)) > 0, Capture(Inc(0)), 0)\nApply(R.Arguments*, 1)")]
     public void ProjectionCycles_AreDemandCycle_OnEveryEngine(string body)
         => Assert.Equal("err DemandCycle: DemandCycle", Run("Hold(g) = Capture(g(0))\n" + body));
@@ -451,7 +455,7 @@ public class CallReferenceS3AlgorithmTests
     [InlineData("p.G(0)", "err IllegalInEval: min requires a non-empty collection")]
     [InlineData("(p.G)(0)", "err IllegalInEval: min requires a non-empty collection")]
     [InlineData("[1].map(p.G)", "err IllegalInEval: min requires a non-empty collection")]
-    [InlineData("p.G.while(0)", "err IllegalInEval: min requires a non-empty collection")]
+    [InlineData("{\n  A = p.G\n  A(0).while\n}", "err IllegalInEval: min requires a non-empty collection")]
     [InlineData("Apply(p.G.H, 0)", "err IllegalInEval: min requires a non-empty collection")]
     public void AParameterRootedPathOverAFailingLink_KeepsTheFailure_NeverAbsence(string use, string expected)
         => Assert.Equal(expected, Run($"Bad = min([])\nUse(p) = {use}\nUse(Bad.Algorithm)"));

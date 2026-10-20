@@ -46,6 +46,7 @@ public class PropertyCacheConsumerTransparencyTests
         Twice(v) = Once(v) + sum(v)
         Apply(f, xs) = map(xs, f)
         Pass(v) = Apply(Double, v)
+        Up7(s) = s + 1, s < 7
         """;
 
     /// <summary>
@@ -64,7 +65,7 @@ public class PropertyCacheConsumerTransparencyTests
         // The lazy `if`, both branches.
         { "A", "if(true, A, 0)" }, { "A", "if(false, 0, A)" },
         // Loop initial state and the reduce initial accumulator.
-        { "A", "repeat(Keep, 2, A)" }, { "A", "reduce([], Add, A)" },
+        { "A", "repeat(Keep(A), 2)" }, { "A", "reduce([], Add, A)" },
         // Higher-order builtins: the collection is the cached value.
         { "A", "map(A, Double)" }, { "A", "A.map(Double)" }, { "A", "filter(A, Big)" },
         { "A", "reduce(A, Add, 0)" }, { "A", "A.reduce(Add, 0)" }, { "A", "map(A, {x * 2})" },
@@ -75,7 +76,7 @@ public class PropertyCacheConsumerTransparencyTests
         // Numeric consumers, the `.string` intrinsic, loops, and forwarding.
         { "N", "N.string" }, { "N", "Show(N)" }, { "N", "N.Show" }, { "N", "if(N > 0, N, 0)" },
         { "N", "N + N" }, { "N", "Twice(N)" }, { "N", "sum(N)" }, { "N", "range(N, 7)" },
-        { "N", "repeat(Keep, 1, N)" }, { "N", "while({s + 1, s < 7}, N)" }, { "N", "reduce([1], Add, N)" },
+        { "N", "repeat(Keep(N), 1)" }, { "N", "while(Up7(N))" }, { "N", "reduce([1], Add, N)" },
         // An inline callback reading the property on every element.
         { "N", "map([1, 2, 3], {x + N})" }, { "N", "[1, 2].filter({x < N}).count" },
         // A structurally navigated member.
@@ -241,7 +242,7 @@ public class PropertyCacheConsumerTransparencyTests
     [InlineData("if(true, A, 0), if(false, 0, A), if(true, (A), 0)")]
     [InlineData("take(A, 1), A.take(1), first(A)")]
     [InlineData("A.string, (A).string, A.string")]
-    [InlineData("repeat(Keep, 1, A), while({s + 1, s < 9}, A), reduce([], Add, A)")]
+    [InlineData("Step = {s + 1, s < 9}\nrepeat(Keep(A), 1), while(Step(A)), reduce([], Add, A)")]
     public void BuiltinSlots_RequestTheEntry_AndEvaluateTheBodyOnce(string consumers)
     {
         var (cache, result) = RunCounting($"A = 7\nKeep(s) = s\nAdd(e, acc) = e + acc\nA\n{consumers}");
@@ -493,6 +494,6 @@ public class PropertyCacheConsumerTransparencyTests
         Assert.Equal(2, Invocations("Only(*xs) = xs.count + Tick()\nmap([1, 2], Only)"));
         Assert.Equal(0, Invocations("Only(*xs) = xs.count + Tick()\nmap([], Only)"));
         // A loop step is CALLED once per iteration, never read as a cached value.
-        Assert.Equal(3, Invocations("Step(s) = s + Tick()\nrepeat(Step, 3, 0)"));
+        Assert.Equal(3, Invocations("Step(s) = s + Tick()\nrepeat(Step(0), 3)"));
     }
 }

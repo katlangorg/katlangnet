@@ -542,7 +542,7 @@ public class CallReferenceS1Tests
     public void ALoopStep_MayCapture_TheInitialStatesOriginalCall()
         => Assert.Equal("ok S[25, 25]", Observe(Prelude + """
 
-            R = repeat(Capture, 1, Square(5))
+            R = repeat(Capture(Square(5)), 1)
             R.Invoke(), R.Invoke()
             """).Outcome);
 
@@ -898,7 +898,7 @@ public class CallReferenceS1Tests
     {
         const string body = """
             Step(i, acc) = i + 1, acc + i
-            repeat(Step, 1000, 0, 0)
+            repeat(Step(0, 0), 1000)
             """;
         foreach (var prefix in new[] { "", "Unused(meta op) = op\n" })
         {

@@ -104,7 +104,7 @@ public class WrittenSlotReificationTests
     [Fact]
     public void ListLiteral_LoopResult_ReifiesAsOneElement()
         => AssertEvaluates(
-            "[repeat({a + 1, b + a}, 3, 0, 0), 9]",
+            "Step = {a + 1, b + a}\n[repeat(Step(0, 0), 3), 9]",
             List(Seq(Atom(3), Atom(3)), Atom(9)));
 
     [Fact]

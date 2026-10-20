@@ -10,7 +10,7 @@ namespace KatLang.Tests;
 /// <c>LoopExprPlan.If</c> and evaluates it directly, which dropped the
 /// <c>while evaluating call to if</c> frame the generic evaluator (and Lean)
 /// attach at the ordinary <c>if</c> call boundary. The reported reproducer
-/// <c>S(n) = if(n &lt; 3, n + 1, 1 / 0)</c> / <c>repeat(S, 5, 1)</c> produced
+/// <c>S(n) = if(n &lt; 3, n + 1, 1 / 0)</c> / <c>repeat(S(1), 5)</c> produced
 /// "while evaluating call to repeat: Division by zero" with the optimizer on and
 /// "while evaluating call to repeat: while evaluating call to if: Division by
 /// zero" with it off.</para>
@@ -32,7 +32,7 @@ public class LoopPlannedIfDiagnosticParityTests
     {
         var source = """
             S(n) = if(n < 3, n + 1, 1 / 0)
-            repeat(S, 5, 1)
+            repeat(S(1), 5)
             """;
 
         var error = AssertOptimizerTransparentFailure(source);
@@ -55,7 +55,7 @@ public class LoopPlannedIfDiagnosticParityTests
         // generic evaluator.
         var source = """
             S(n) = if(n < 3, n + 1, 1 / 0)
-            repeat(S, 5, 1)
+            repeat(S(1), 5)
             """;
 
         var (result, loop, _) = RunObserved(source, enableLoopOptimization: true);
@@ -85,7 +85,7 @@ public class LoopPlannedIfDiagnosticParityTests
             "condition",
             """
             S(n) = if(1 / 0, n + 1, n)
-            repeat(S, 5, 1)
+            repeat(S(1), 5)
             """);
 
         // Selected TRUE branch failure (n starts at 1, so the first iteration takes it).
@@ -93,7 +93,7 @@ public class LoopPlannedIfDiagnosticParityTests
             "selected true branch",
             """
             S(n) = if(n < 3, 1 / 0, n)
-            repeat(S, 5, 1)
+            repeat(S(1), 5)
             """);
 
         // Selected FALSE branch failure (taken once n reaches 3).
@@ -101,7 +101,7 @@ public class LoopPlannedIfDiagnosticParityTests
             "selected false branch",
             """
             S(n) = if(n < 3, n + 1, 1 / 0)
-            repeat(S, 5, 1)
+            repeat(S(1), 5)
             """);
 
         // The `if` itself: a string condition has no truth value.
@@ -109,7 +109,7 @@ public class LoopPlannedIfDiagnosticParityTests
             "condition without a truth value",
             """
             S(n) = if('x', n + 1, n)
-            repeat(S, 5, 1)
+            repeat(S(1), 5)
             """);
 
         return data;
@@ -140,7 +140,7 @@ public class LoopPlannedIfDiagnosticParityTests
         // divergence even when the rendered message and outermost span agree.
         var source = """
             S(n) = if('x', n + 1, n)
-            repeat(S, 5, 1)
+            repeat(S(1), 5)
             """;
 
         // The optimized run really exercises the planned `if` (not a fallback).
@@ -185,7 +185,7 @@ public class LoopPlannedIfDiagnosticParityTests
         // branch, so the generic composition attaches TWO `if` frames.
         var source = """
             S(n) = if(n < 3, n + 1, if(true, 1 / 0, 0))
-            repeat(S, 5, 1)
+            repeat(S(1), 5)
             """;
 
         var error = AssertOptimizerTransparentFailure(source);
@@ -207,7 +207,7 @@ public class LoopPlannedIfDiagnosticParityTests
         // planned too, so pin the loop kind that reaches the plan by a second route.
         var source = """
             S(n) = if(n < 3, n + 1, 1 / 0), n <= 10
-            S.while(1)[0]
+            S(1).while[0]
             """;
 
         var error = AssertOptimizerTransparentFailure(source);
@@ -225,7 +225,7 @@ public class LoopPlannedIfDiagnosticParityTests
         // line-2 expression.
         var source = """
             S(n) = if(n < 3, n + 1, 1 / 0)
-            Total = repeat(S, 5, 1) + 100
+            Total = repeat(S(1), 5) + 100
             Total
             """;
 
@@ -248,11 +248,11 @@ public class LoopPlannedIfDiagnosticParityTests
     [Fact]
     public void PlannedIf_SuccessfulRuns_AreUnchangedInBothModes()
     {
-        // `repeat(S, 2, 1)` never selects the failing false branch, so a lazily
+        // `repeat(S(1), 2)` never selects the failing false branch, so a lazily
         // evaluated planned `if` succeeds: branch laziness is preserved.
         var source = """
             S(n) = if(n < 3, n + 1, 1 / 0)
-            repeat(S, 2, 1)
+            repeat(S(1), 2)
             """;
 
         var generic = Run(source, enableLoopOptimization: false);
@@ -275,7 +275,7 @@ public class LoopPlannedIfDiagnosticParityTests
         // iteration's `<`, `if`, and failing `/`.
         var source = """
             S(n) = if(n < 3, n + 1, 1 / 0)
-            repeat(S, 5, 1)
+            repeat(S(1), 5)
             """;
 
         var (result, loop, cache) = RunObserved(source, enableLoopOptimization: true);

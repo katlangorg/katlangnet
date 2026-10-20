@@ -30,7 +30,7 @@ public class LoopStepSpreadContributionTests
         // the two-parameter step and fail the second bind.
         Assert.Equal(
             [12m, 22m],
-            FlatValues("E = ()\nStep(x, y) = E*, x + 1, y + 1\nStep.repeat(2, 10, 20)"));
+            FlatValues("E = ()\nStep(x, y) = E*, x + 1, y + 1\nStep(10, 20).repeat(2)"));
     }
 
     [Fact]
@@ -41,7 +41,7 @@ public class LoopStepSpreadContributionTests
         // value slot) would under-supply the state instead.
         Assert.Equal(
             [12m, 22m],
-            FlatValues("Step(x, y) = { (x + 1, y + 1)* }\nStep.repeat(2, 10, 20)"));
+            FlatValues("Step(x, y) = { (x + 1, y + 1)* }\nStep(10, 20).repeat(2)"));
     }
 
     [Fact]
@@ -52,7 +52,7 @@ public class LoopStepSpreadContributionTests
         // position stable across iterations.
         Assert.Equal(
             [12m, 22m],
-            FlatValues("E = ()\nStep(x, y) = E*, x + 1, y + 1, x < 12\nStep.while(10, 20)"));
+            FlatValues("E = ()\nStep(x, y) = E*, x + 1, y + 1, x < 12\nStep(10, 20).while"));
     }
 
     [Fact]
@@ -60,9 +60,9 @@ public class LoopStepSpreadContributionTests
     {
         foreach (var source in new[]
         {
-            "E = ()\nStep(x, y) = E*, x + 1, y + 1\nStep.repeat(2, 10, 20)",
-            "Step(x, y) = { (x + 1, y + 1)* }\nStep.repeat(2, 10, 20)",
-            "E = ()\nStep(x, y) = E*, x + 1, y + 1, x < 12\nStep.while(10, 20)",
+            "E = ()\nStep(x, y) = E*, x + 1, y + 1\nStep(10, 20).repeat(2)",
+            "Step(x, y) = { (x + 1, y + 1)* }\nStep(10, 20).repeat(2)",
+            "E = ()\nStep(x, y) = E*, x + 1, y + 1, x < 12\nStep(10, 20).while",
         })
         {
             var expr = new Expr.AlgorithmExpr(SourceProvenance.ParseValid(source).Root);

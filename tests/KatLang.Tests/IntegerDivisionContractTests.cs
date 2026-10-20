@@ -288,7 +288,7 @@ public class IntegerDivisionContractTests
 
                 // The planned loop arm must plan the division and agree with the
                 // generic strategy on the same operands.
-                var loop = $"S(v) = v div {yText}\nrepeat(S, 1, {xText})";
+                var loop = $"S(v) = v div {yText}\nrepeat(S({xText}), 1)";
                 var (generic, _) = RunCountedObserved(loop, enableLoopOptimization: false);
                 var (planned, observed) = RunCountedObserved(loop, enableLoopOptimization: true);
                 var genericNeutral = Neutral(generic);
@@ -488,7 +488,7 @@ public class IntegerDivisionContractTests
     {
         var source =
             $"Step(v, s) = v div 10, s + v mod 10, v > 0\n" +
-            $"R = while(Step, {n}, 0)\n" +
+            $"R = while(Step({n}, 0))\n" +
             "R[1]";
         EvaluatorTestSupport.AssertEvalLoopModes(source, expectedDigitSum);
     }
@@ -632,8 +632,8 @@ public class IntegerDivisionContractTests
         // false, so a counter slot admits exactly one continuing iteration: the
         // quotient computed by the first step is the state the second step reads.
         var source = useWhile
-            ? $"S(v, k) = v div {y}, k + 1, k < 1\nwhile(S, {x}, 0)"
-            : $"S(v) = v div {y}\nrepeat(S, 1, {x})";
+            ? $"S(v, k) = v div {y}, k + 1, k < 1\nwhile(S({x}, 0))"
+            : $"S(v) = v div {y}\nrepeat(S({x}), 1)";
         var (generic, _) = RunCountedObserved(source, enableLoopOptimization: false);
         var (planned, loop) = RunCountedObserved(source, enableLoopOptimization: true);
         Assert.False(generic.IsError);
@@ -666,8 +666,8 @@ public class IntegerDivisionContractTests
         // LOOP-06 (condition first): the Boolean `true` flag is read first and lets the round reach
         // the division row; a non-Boolean placeholder flag would be reported before it.
         var source = useWhile
-            ? $"S(v) = {expression}, true\nwhile(S, 7)"
-            : $"S(v) = {expression}\nrepeat(S, 1, 7)";
+            ? $"S(v) = {expression}, true\nwhile(S(7))"
+            : $"S(v) = {expression}\nrepeat(S(7), 1)";
         var (generic, _) = RunCountedObserved(source, enableLoopOptimization: false);
         var (planned, observed) = RunCountedObserved(source, enableLoopOptimization: true);
         Assert.True(generic.IsError);
@@ -683,7 +683,7 @@ public class IntegerDivisionContractTests
     [Fact]
     public void UnplannedDivisionExpression_UsesTheSameExactQuotient()
     {
-        const string source = "S(v) = v div Math.Abs(-3)\nrepeat(S, 1, 8999999999999999999999999999999999)";
+        const string source = "S(v) = v div Math.Abs(-3)\nrepeat(S(8999999999999999999999999999999999), 1)";
         // The Math dot-call is unsupported by the expression planner, forcing the
         // division expression through the generic evaluator inside the optimized loop.
         var (generic, _) = RunCountedObserved(source, enableLoopOptimization: false);

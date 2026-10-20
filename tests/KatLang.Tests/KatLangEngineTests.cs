@@ -127,7 +127,7 @@ public class KatLangEngineTests
 
     [Fact]
     public void Run_LoopStepEmptySequenceOutput_PreservesVisibleStateSlot()
-        => AssertDisplay("Step(x) = ()\nStep.repeat(1, 1)", "()");
+        => AssertDisplay("Step(x) = ()\nStep(1).repeat(1)", "()");
 
     [Fact]
     public void Run_IfMultiOutputBranchProperty_DisplaysOneGroupedRow()
@@ -293,7 +293,7 @@ public class KatLangEngineTests
                     acc < 3
                 }
 
-                Step.while(n, 0)[1]
+                Step(n, 0).while[1]
             }
 
             Outer(5)
@@ -319,7 +319,7 @@ public class KatLangEngineTests
                     acc + 1
                 }
 
-                Step.repeat(1, n, 0)[1]
+                Step(n, 0).repeat(1)[1]
             }
 
             Outer(5)

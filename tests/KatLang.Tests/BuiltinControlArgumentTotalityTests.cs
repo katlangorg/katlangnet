@@ -170,8 +170,8 @@ public class BuiltinControlArgumentTotalityTests
         // guard, so both are pinned.
         foreach (var source in new[]
         {
-            $"Inc = x + 1\nInc.repeat(0 - {DecMax}, 0)",
-            $"Inc = x + 1\nrepeat(Inc, 0 - {DecMax}, 0)",
+            $"Inc = x + 1\nInc(0).repeat(0 - {DecMax})",
+            $"Inc = x + 1\nrepeat(Inc(0), 0 - {DecMax})",
         })
         {
             var expr = Program(source);
@@ -191,7 +191,7 @@ public class BuiltinControlArgumentTotalityTests
         // saturate (not overflow) and then stop on the ordinary step budget exactly
         // like any other over-budget loop.
         var error = StructuredError(
-            $"Inc = x + 1\nInc.repeat({DecMax}, 0)",
+            $"Inc = x + 1\nInc(0).repeat({DecMax})",
             new EvaluationLimits { MaxSteps = 1_000 });
         Assert.IsType<EvalError.EvaluationStepLimitExceeded>(UnwrapContext(error));
     }
@@ -226,10 +226,10 @@ public class BuiltinControlArgumentTotalityTests
                 $"skip([1, 2, 3], 0 - {max})",
                 $"take([1, 2, 3]*, {max})",
                 // repeat count extremes (step budget bounds the saturated run)
-                $"Inc = x + 1\nInc.repeat({max}, 0)",
-                $"Inc = x + 1\nInc.repeat(0 - {max}, 0)",
-                "Inc = x + 1\nInc.repeat(2147483648, 0)",
-                $"Inc = x + 1\nrepeat(Inc, {max}, 0)",
+                $"Inc = x + 1\nInc(0).repeat({max})",
+                $"Inc = x + 1\nInc(0).repeat(0 - {max})",
+                "Inc = x + 1\nInc(0).repeat(2147483648)",
+                $"Inc = x + 1\nrepeat(Inc(0), {max})",
                 // other builtins receiving extreme numeric arguments
                 $"[1, 2, 3].contains({max})",
                 $"[1, 2, 3].contains(0 - {max})",

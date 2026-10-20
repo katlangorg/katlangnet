@@ -324,7 +324,7 @@ public class SequenceValueImmutabilityTests
     [Theory]
     [InlineData("Data = 4, 1, 3, 2\nData.filter({a > 1})")]
     [InlineData("Data = 4, 1, 3, 2\nData.order")]
-    [InlineData("Step(a, b) = b, a + b, b < 20\nStep.while(1, 1)")]
+    [InlineData("Step(a, b) = b, a + b, b < 20\nStep(1, 1).while")]
     public void OptimizerModes_AgreeAndBothProduceImmutableCollections(string source)
     {
         var parseResult = Parser.Parse(source);

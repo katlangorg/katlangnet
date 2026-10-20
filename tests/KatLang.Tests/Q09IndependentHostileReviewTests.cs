@@ -85,10 +85,10 @@ public class Q09IndependentHostileReviewTests
     }
 
     [Theory]
-    [InlineData("Step(s) = if(true, s, 0)\nrepeat(Step, 1, { 1 / 0 })")]
-    [InlineData("Step(s) = if(s, 1, 0)\nrepeat(Step, 1, { 1 / 0 })")]
-    [InlineData("Step(s) = if(true, s, 0)\nF(v) = repeat(Step, 1, v)\nF({ 1 / 0 })")]
-    [InlineData("Step(s) = if(true, s, 0)\nrepeat(Step, 1, { })")]
+    [InlineData("Step(s) = if(true, s, 0)\nrepeat(Step({ 1 / 0 }), 1)")]
+    [InlineData("Step(s) = if(s, 1, 0)\nrepeat(Step({ 1 / 0 }), 1)")]
+    [InlineData("Step(s) = if(true, s, 0)\nF(v) = repeat(Step(v), 1)\nF({ 1 / 0 })")]
+    [InlineData("Step(s) = if(true, s, 0)\nrepeat(Step({ }), 1)")]
     public async Task TransportedIfStateDemand_KeepsTheGenericErrorTree(string source)
     {
         var generic = await Run(source, 0);
@@ -117,37 +117,37 @@ public class Q09IndependentHostileReviewTests
                 };
             var n = seed % 13 + 1;
             var initial = seed % 4 == 0 ? "{ trace(randomInt(0, 8)) }" : "2";
-            yield return $"Step(s) = {{\nT = s + 2\nF(s) = s + 3\n{e}\n}}\nrepeat(Step, {n}, {initial})";
+            yield return $"Step(s) = {{\nT = s + 2\nF(s) = s + 3\n{e}\n}}\nrepeat(Step({initial}), {n})";
         }
         for (var n = 0; n < 20; n++)
         {
             yield return $"range(trace({n + 1}), trace(1)).filter({{ trace(randomInt(0, 8)) > 3 }}).count";
             yield return $"P(v) = {{ A = v + 0\ntrace(A) mod 3 == 0 }}\nAlias = P\nrange(0, {n}).map({{ x + 1 }}).filter(Alias).count";
             yield return $"F(v) = range(1, {n + 1}).filter({{ trace(v) > x }}).count\nF({{ trace(8) }})";
-            yield return $"Step(s, t) = s + 1, if(s > {n}, 'abcdef', 'xy')\nrepeat(Step, {n + 2}, 0, {{ trace('z') }})";
+            yield return $"Step(s, t) = s + 1, if(s > {n}, 'abcdef', 'xy')\nrepeat(Step(0, {{ trace('z') }}), {n + 2})";
         }
         string[] shapes =
         [
-            "Step(s) = if(s == 2, (), s + 1)\nrepeat(Step, 7, 0)",
-            "Step(s) = if(s == 2, (s, 8), s + 1)\nrepeat(Step, 7, 0)",
-            "Step(s) = if(s == 2, (), s + 1), s < 7\nwhile(Step, 0)",
-            "Step(s) = { T = s + 1\n T(), T < 8 }\nwhile(Step, 0)",
-            "Step(s) = 1 / (s - 3)\nrepeat(Step, 5, 3)",
-            "Step(s, t) = s + 1, 1 / (s - 3)\nrepeat(Step, 6, 0, 1)",
-            "Ignore(a, b) = b\nStep(s) = Ignore({ 1 / 0 }, s + 1)\nrepeat(Step, 4, 0)",
-            "Ignore(a, b) = b\nStep(s) = Ignore(trace(randomInt(0, 99)), s + 1)\nrepeat(Step, 4, 0)",
-            "Step(s) = if(true, s, s)\nrepeat(Step, 2, { trace(7) })",
-            "Step(s) = if(s, 2, 3)\nrepeat(Step, 1, { true })",
-            "Step(s) = s[0]\nrepeat(Step, 1, [trace(7)])",
-            "Id(v) = v\nStep(s) = Id(s)\nrepeat(Step, 1, { trace(7) })",
-            "Z = trace(randomInt(0, 99))\nA = Z\nStep(s) = s + A - Z\nrepeat(Step, 3, 0)",
-            "Step(s) = range(1, 8).filter({ x < 5 }).count + s\nrepeat(Step, 2, 0)",
-            "range(1, 8).filter({ repeat({ x + 1 }, 2, x) > 5 }).count",
+            "Step(s) = if(s == 2, (), s + 1)\nrepeat(Step(0), 7)",
+            "Step(s) = if(s == 2, (s, 8), s + 1)\nrepeat(Step(0), 7)",
+            "Step(s) = if(s == 2, (), s + 1), s < 7\nwhile(Step(0))",
+            "Step(s) = { T = s + 1\n T(), T < 8 }\nwhile(Step(0))",
+            "Step(s) = 1 / (s - 3)\nrepeat(Step(3), 5)",
+            "Step(s, t) = s + 1, 1 / (s - 3)\nrepeat(Step(0, 1), 6)",
+            "Ignore(a, b) = b\nStep(s) = Ignore({ 1 / 0 }, s + 1)\nrepeat(Step(0), 4)",
+            "Ignore(a, b) = b\nStep(s) = Ignore(trace(randomInt(0, 99)), s + 1)\nrepeat(Step(0), 4)",
+            "Step(s) = if(true, s, s)\nrepeat(Step({ trace(7) }), 2)",
+            "Step(s) = if(s, 2, 3)\nrepeat(Step({ true }), 1)",
+            "Step(s) = s[0]\nrepeat(Step([trace(7)]), 1)",
+            "Id(v) = v\nStep(s) = Id(s)\nrepeat(Step({ trace(7) }), 1)",
+            "Z = trace(randomInt(0, 99))\nA = Z\nStep(s) = s + A - Z\nrepeat(Step(0), 3)",
+            "Step(s) = range(1, 8).filter({ x < 5 }).count + s\nrepeat(Step(0), 2)",
+            "Step = { x + 1 }\nrange(1, 8).filter({ repeat(Step(x), 2) > 5 }).count",
             "range(1, 8).filter({ trace(x) > 3 }).filter({ trace(x) < 7 }).count",
             "range(1, 8).filter({ trace(x) > 3 }).map({ trace(x) + 1 })",
             "range(1, 8).filter({ 1 / (x - 4) > 0 }).count",
             "range(1, 8).filter({ trace('ab') == 'ab' }).count",
-            "Step(s) = if(true, s, 1 / 0)\nrepeat(Step, 0, { trace(7) })",
+            "Step(s) = if(true, s, 1 / 0)\nrepeat(Step({ trace(7) }), 0)",
         ];
         foreach (var source in shapes) yield return source;
     }
@@ -203,15 +203,15 @@ public class Q09IndependentHostileReviewTests
     public async Task ExactRawTargets_AndEveryTransitionNearBulkBoundary_OnThreeRoutes()
     {
         string[] sources = [
-            "Step(s) = -(-(s + 1))\nrepeat(Step, 7, { trace(2) })",
-            "Step(s) = if(0 < s < 8 != false, s + 1, s)\nrepeat(Step, 7, { trace(2) })",
-            "Step(s) = { T = s + 1\n T() + if(true, T, s) }\nrepeat(Step, 7, { trace(2) })",
+            "Step(s) = -(-(s + 1))\nrepeat(Step({ trace(2) }), 7)",
+            "Step(s) = if(0 < s < 8 != false, s + 1, s)\nrepeat(Step({ trace(2) }), 7)",
+            "Step(s) = { T = s + 1\n T() + if(true, T, s) }\nrepeat(Step({ trace(2) }), 7)",
             "range(trace(1), trace(5)).filter({ trace(x) mod 2 == 0 }).count",
-            "Step(s) = if(true, s, 0)\nrepeat(Step, 1, { trace(7) })",
+            "Step(s) = if(true, s, 0)\nrepeat(Step({ trace(7) }), 1)",
             // Q-26 changes planner coverage here; move checkpoint blocks through the inner
             // invocation and the subsequent row as well as through a spread handover.
-            "Fib(a, b) = b, a + b\nStep(p, n) = repeat(Fib, 2, trace(n), n), n + 1\nrepeat(Step, 3, 0, 0)",
-            "Fib(a, b) = b, a + b\nStep(a, b) = { repeat(Fib, 2, trace(a), b)* }\nrepeat(Step, 3, 0, 1)",
+            "Fib(a, b) = b, a + b\nStep(p, n) = repeat(Fib(trace(n), n), 2), n + 1\nrepeat(Step(0, 0), 3)",
+            "Fib(a, b) = b, a + b\nStep(a, b) = { repeat(Fib(trace(a), b), 2)* }\nrepeat(Step(0, 1), 3)",
         ];
         var runs = 0;
         foreach (var body in sources)
@@ -250,16 +250,16 @@ public class Q09IndependentHostileReviewTests
     }
 
     [Theory]
-    [InlineData("Step(s, t) = s + 1, trace(s)\nrepeat(Step, 8, 0, 0)")]
+    [InlineData("Step(s, t) = s + 1, trace(s)\nrepeat(Step(0, 0), 8)")]
     [InlineData("range(trace(1), trace(7)).filter({ trace(x) > 3 }).count")]
-    [InlineData("Step(s) = s + 1\nrepeat(Step, trace(7), { trace(0) })")]
-    [InlineData("Step(s) = if(true, s, 0)\nrepeat(Step, 1, { trace(7) })")]
+    [InlineData("Step(s) = s + 1\nrepeat(Step({ trace(0) }), trace(7))")]
+    [InlineData("Step(s) = if(true, s, 0)\nrepeat(Step({ trace(7) }), 1)")]
     [InlineData("Reject(x) = trace(false)\nrange(1, 1).filter(Reject).count")]
     // Q-26: a nested loop step row is one value, so this outer loop now stays planned through it.
-    [InlineData("Fib(x, y) = y, x + y\nStepT(p, n) = repeat(Fib, 1, trace(n), n), n + 1\nrepeat(StepT, 6, 0, 0)")]
-    [InlineData("Fib(a, b) = trace(b), trace(a + b)\nStep(a, b) = { repeat(Fib, 2, a, b)* }\nrepeat(Step, 3, 0, 1)")]
-    [InlineData("Inner(n) = trace(n + 1), trace(n < 3)\nOuter(p, n) = while(Inner, n), trace(n + 1)\nrepeat(Outer, 3, 0, 0)")]
-    [InlineData("Fib(a, b) = trace(b), trace(a + b)\nmap([1, 2], { repeat(Fib, 2, x, 1) })")]
+    [InlineData("Fib(x, y) = y, x + y\nStepT(p, n) = repeat(Fib(trace(n), n), 1), n + 1\nrepeat(StepT(0, 0), 6)")]
+    [InlineData("Fib(a, b) = trace(b), trace(a + b)\nStep(a, b) = { repeat(Fib(a, b), 2)* }\nrepeat(Step(0, 1), 3)")]
+    [InlineData("Inner(n) = trace(n + 1), trace(n < 3)\nOuter(p, n) = while(Inner(n)), trace(n + 1)\nrepeat(Outer(0, 0), 3)")]
+    [InlineData("Fib(a, b) = trace(b), trace(a + b)\nmap([1, 2], { repeat(Fib(x, 1), 2) })")]
     public async Task CancellationAtEveryEffect_KeepsCountersAndEffects_OnThreeRoutes(string body)
     {
         var source = "Probe = 0\nProbe\n" + body;
@@ -283,7 +283,7 @@ public class Q09IndependentHostileReviewTests
     [Fact]
     public async Task AsyncObservedEntry_KeepsStrategyUnderEquivalentConfigurations()
     {
-        var parsed = Parser.Parse("A = 2\nStep(s) = s + 1\nrepeat(Step, 3, 0) + range(1, 5).filter({ x > 2 }).count + A");
+        var parsed = Parser.Parse("A = 2\nStep(s) = s + 1\nrepeat(Step(0), 3) + range(1, 5).filter({ x > 2 }).count + A");
         Assert.False(parsed.HasErrors);
         var program = new Expr.AlgorithmExpr(parsed.Root);
         string? expected = null;
@@ -339,6 +339,9 @@ public class Q09IndependentHostileReviewTests
                 {
                     var limits = new EvaluationLimits { MaxSteps = maxSteps };
                     var budget = EvaluationBudget.Create(limits);
+                    // The loop builtin binds a META parameter: this seam bypasses the preflight, so the run's
+                    // J7 decision (plan retention) is recorded here as the program gate would (META-S3-3).
+                    budget.DecideInvocationPlanRetention(programMayCapture: true);
                     var effects = new List<string>();
                     var loops = new LoopOptimizationDiagnostics();
                     var ctx = Evaluator.EvalCtx.Empty with
@@ -376,7 +379,7 @@ public class Q09IndependentHostileReviewTests
                     if (shape == 7)
                         output = new Expr.Call(new Expr.Resolve("if"), new OutputBundle([new Expr.BoolLiteral(true), output, new Expr.Param("s")]));
                     var step = new Algorithm.User(null, [new CaptureParameterPattern("s")], [], [new Property("T", temp)], [output]);
-                    var call = new Expr.Call(new Expr.Resolve("repeat"), new OutputBundle([new Expr.AlgorithmExpr(step), new Expr.Num(2), new Expr.Num(0)]));
+                    var call = new Expr.AlgorithmExpr(new Algorithm.User(null, [], [], [new Property("S", step)], [new Expr.Call(new Expr.Resolve("repeat"), [new Expr.Call(new Expr.Resolve("S"), [new Expr.Num(0)]), new Expr.Num(2)])]));
                     var result = Evaluator.EvalCounted(call, ctx, []);
                     Assert.Equal(0, budget.CurrentDepth);
                     if (maxSteps == long.MaxValue)
@@ -430,9 +433,9 @@ public class Q09IndependentHostileReviewTests
     }
 
     [Theory]
-    [InlineData("Step(s) = if(s == 2, (trace(s), trace(8)), trace(s + 1))\nrepeat(Step, 3, 0)")]
-    [InlineData("Step(s) = if(s == 2, (), trace(s + 1))\nrepeat(Step, 3, 0)")]
-    [InlineData("Step(s) = [(1, 2)][0]\nrepeat(Step, 3, 0)")]
+    [InlineData("Step(s) = if(s == 2, (trace(s), trace(8)), trace(s + 1))\nrepeat(Step(0), 3)")]
+    [InlineData("Step(s) = if(s == 2, (), trace(s + 1))\nrepeat(Step(0), 3)")]
+    [InlineData("Step(s) = [(1, 2)][0]\nrepeat(Step(0), 3)")]
     public async Task FinalIterationHandover_DoesNotStartAnotherGenericIteration(string source)
     {
         var baseline = await Run(source, 0);

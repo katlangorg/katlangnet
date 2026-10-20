@@ -3445,7 +3445,7 @@ A loop step is invoked as the ORDINARY call over the current state supply
 dispatcher `selectNeedFamilyBranch`, the ordinary builtin argument roles
 `applyBuiltinCountedResolved`); only the receiver is the loop's. That dispatch is
 exercised by `CoreTests/LoopSteps.lean` (including the one-iteration law:
-`repeat(F, 1, s…)` equals `F(s…)` value for value and failure category for
+`repeat(F(s…), 1)` equals `F(s…)` value for value and failure category for
 failure category, for families, builtins, aliases and wrappers). The laws below
 pin the one piece of new receiver arithmetic — how a builtin's result becomes the
 next state — as total facts.

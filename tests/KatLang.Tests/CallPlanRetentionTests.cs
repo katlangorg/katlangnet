@@ -429,7 +429,7 @@ public partial class InvocationPlanTests
         // An expression-position pipeline is no supplied cell at all.
         const string rowPipeline = "count(filter(range(1, 20), {v > 2}))";
         // A planned loop inside a plan's builtin arm: the loop optimizer is untouched.
-        const string supplyLoop = "Step(k) = k + 1\nG(x) = x\nG(repeat(Step, 200, 0))";
+        const string supplyLoop = "Step(k) = k + 1\nG(x) = x\nG(repeat(Step(0), 200))";
         foreach (var source in new[] { dotPipeline, rowPipeline, supplyLoop })
         {
             var ordinary = Observe(source, plans: false);
@@ -463,8 +463,8 @@ public partial class InvocationPlanTests
         "Down(n) = if(n == 0, trace(0), Down(n - 1))\nDown(25)",
         "Inc(n) = n + 1\nG(x) = x\nG(map(range(1, 5), {Inc(Inc(v))}))",
         "Pick(c, a, b) = if(c, a, b)\nPick(true, trace(1), trace(1 / 0))",
-        "Step(k) = k + 1\nG(x) = x\nG(repeat(Step, 50, trace(0)))",
-        "Step(k) = k + 1, k < 10\nG(x) = x\nG(while(Step, trace(0)))",
+        "Step(k) = k + 1\nG(x) = x\nG(repeat(Step(trace(0)), 50))",
+        "Step(k) = k + 1, k < 10\nG(x) = x\nG(while(Step(trace(0))))",
         "Fib(0) = 0\nFib(1) = 1\nFib(n) = Fib(n - 1) + Fib(n - 2)\nG(x) = x\nG(Fib(trace(10)))",
         "F(v) = v / 0\nH(x) = x + 1\nG(x) = x\nG(H(F(trace(3))))",
         "F(v) = v + 1\nG(x) = \"{x}!\"\nG(F(trace(2)))",

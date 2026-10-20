@@ -53,8 +53,11 @@ public class FourFixInteractionReviewTests
         var head = new FailingHostHead(failure);
         var arm = HostOperation.Create("arm", (_, _) => { head.Armed = true; return new Result.Atom(1); });
         var step = new Algorithm.User(null, head, [], [], [new Expr.Param("x")]);
-        var expression = new Expr.Call(new Expr.Resolve("repeat"),
-            [new Expr.AlgorithmExpr(step), new Expr.NativeCall(arm.NativeName, []), new Expr.Num(3)]);
+        // META-S3-3: the step is named and its captured call `S(3)` supplies the initial state; the count
+        // is demanded after that supply is prepared (RP-1), still before the first iteration.
+        var expression = new Expr.AlgorithmExpr(new Algorithm.User(null, [], [], [new Property("S", step)],
+            [new Expr.Call(new Expr.Resolve("repeat"),
+                [new Expr.Call(new Expr.Resolve("S"), [new Expr.Num(3)]), new Expr.NativeCall(arm.NativeName, [])])]));
         var loops = new LoopOptimizationDiagnostics();
         var observations = new EvaluationObservations();
         var thrown = Record.Exception(() => Evaluator.RunCountedObserved(expression,
@@ -110,7 +113,7 @@ public class FourFixInteractionReviewTests
             [new("A", step), new("B", new Algorithm.Alias(null, [], [], new Expr.Resolve("A")))]);
         var inner = new ScopeCtx(outer, [], [new("A", new Algorithm.Alias(null, [], [], new Expr.Resolve("B")))]);
         var expression = OpenedThrough(inner, new Expr.Call(new Expr.AlgorithmExpr(new Algorithm.Builtin(BuiltinId.@repeat)),
-            [new Expr.Resolve("A"), new Expr.Num(3), new Expr.Num(0)]));
+            [new Expr.Call(new Expr.Resolve("A"), [new Expr.Num(0)]), new Expr.Num(3)]));
         Assert.Null(AlgorithmValidation.FindFirstPreEvaluationViolation(expression));
         var (generic, genericBudget) = Evaluator.RunCountedObserved(expression, enableOptimizations: false);
         var loops = new LoopOptimizationDiagnostics();
@@ -199,7 +202,7 @@ public class FourFixInteractionReviewTests
                 : HostOperation.Create("mutate", (_, _) => Mutate()));
             var next = failAfterHandover ? "if(n == 4, 1 / 0, if(state == (), 10, state + 1))" : "if(state == (), 10, state + 1)";
             var source = "Call(state) = state()\nEmpty = ()\nNext(state, n) = if(n == 2, Empty, " + next + ")\nStep(state) = Call({ Next(state, mutate()) })"
-                + (loop == "while" ? ", state != 11\nwhile(Step, 0)" : "\nrepeat(Step, 4, 0)");
+                + (loop == "while" ? ", state != 11\nwhile(Step(0))" : "\nrepeat(Step(0), 4)");
             var parsed = Parser.Parse(source, new RunOptions { HostOperations = operations });
             Assert.False(parsed.HasErrors, string.Join("\n", parsed.Diagnostics.Select(d => d.Message)));
             var members = parsed.Root.Properties.ToArray();

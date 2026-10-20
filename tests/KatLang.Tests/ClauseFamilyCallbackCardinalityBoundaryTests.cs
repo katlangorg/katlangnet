@@ -186,7 +186,7 @@ public sealed partial class ClauseFamilyCallbackCardinalityTests
         Expr output = operation switch
         {
             "call" => new Expr.Call(new Expr.Resolve("F"), [new Expr.Num(1), new Expr.Num(0)]),
-            "repeat" => new Expr.Call(new Expr.Resolve("repeat"), [new Expr.Resolve("F"), new Expr.Num(1), new Expr.Num(1), new Expr.Num(0)]),
+            "repeat" => new Expr.Call(new Expr.Resolve("repeat"), [new Expr.Call(new Expr.Resolve("F"), [new Expr.Num(1), new Expr.Num(0)]), new Expr.Num(1)]),
             _ => new Expr.Call(new Expr.Resolve("reduce"), [new Expr.ListLiteral([new Expr.Num(1)]), new Expr.Resolve("F"), new Expr.Num(operation == "compatible" ? 1 : 0)]),
         };
         var program = new Expr.AlgorithmExpr(new Algorithm.User(null, [], [], [new Property("F", family)], [output]));

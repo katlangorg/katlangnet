@@ -47,7 +47,7 @@ public class ModelCStackProcessTests
             Success(aliases, "7"); Success(forwarding, "8");
             Success("Down(0)=0\nDown(n)=Down(n-1)\nDown(16)", "0");
             Success("F(n)=if(n==0,0,first(map([n-1],F)))\nF(8)", "0");
-            foreach (var source in new[] { "F(n)=F(n+1)\nF(0)", "F(n)=first(map([n+1],F))\nF(0)", "F(n)=repeat(F,1,n)\nF(0)" })
+            foreach (var source in new[] { "F(n)=F(n+1)\nF(0)", "F(n)=first(map([n+1],F))\nF(0)", "F(n)=repeat(F(n), 1)\nF(0)" })
             {
                 var result = KatLangEngine.Run(source, new RunOptions { EvaluationLimits = new EvaluationLimits { MaxDepth = 32 } });
                 var error = Assert.Single(Assert.IsType<RunResult.EvalFailure>(result).Errors);

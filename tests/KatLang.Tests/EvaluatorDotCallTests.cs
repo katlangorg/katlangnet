@@ -12,13 +12,13 @@ public class EvaluatorDotCallTests
     private static string YellowstoneSource(string finalExpression) =>
         $$"""
           GcdStep = b~, a mod b, a mod b != 0
-          Gcd = GcdStep.while(a, b)[1]
+          Gcd = GcdStep(a, b).while[1]
 
           FindNext(*history, pre1, pre2) = {
               IsYSCandidate = not history.contains(candidate) and
                   Gcd(candidate, pre1) == 1 and Gcd(candidate, pre2) != 1
               FindStep = candidate + 1, not IsYSCandidate
-              FindStep.while(1)[0]
+              FindStep(1).while[0]
           }
           YSStep((*history), pre2, pre1) = {
               Next = FindNext(history*, pre1, pre2)
@@ -546,7 +546,7 @@ public class EvaluatorDotCallTests
         => AssertEvalLoopModes(
             """
             Step(a, b) = a + 1, b + 1, false
-            Step.while(1, 2).count
+            Step(1, 2).while.count
             """,
             2);
 
@@ -555,7 +555,7 @@ public class EvaluatorDotCallTests
         => AssertEvalLoopModes(
             """
             Step(x) = (x, x + 1), false
-            Step.while(1).count
+            Step(1).while.count
             """,
             1);
 
@@ -564,7 +564,7 @@ public class EvaluatorDotCallTests
         => AssertEvalLoopModes(
             """
             Step(a, b) = a + 1, b + 1
-            Step.repeat(1, 1, 2).count
+            Step(1, 2).repeat(1).count
             """,
             2);
 
@@ -573,7 +573,7 @@ public class EvaluatorDotCallTests
         => AssertEvalLoopModes(
             """
             Step(x) = (x, x + 1)
-            Step.repeat(1, 1).count
+            Step(1).repeat(1).count
             """,
             2);
 
@@ -582,7 +582,7 @@ public class EvaluatorDotCallTests
         => AssertEvalLoopModes(
             """
             Step(a, b) = a + 1, b + 1
-            Step.repeat(1, 1, 2).take(1)
+            Step(1, 2).repeat(1).take(1)
             """,
             2);
 
@@ -597,7 +597,7 @@ public class EvaluatorDotCallTests
         };
 
         AssertEval(
-            YellowstoneSource("YSStep.repeat(27, (1, 2, 3), 2, 3)[0]"),
+            YellowstoneSource("YSStep((1, 2, 3), 2, 3).repeat(27)[0]"),
             expectedPrefix);
     }
 
@@ -605,7 +605,7 @@ public class EvaluatorDotCallTests
     public void Eval_SequenceReceiverBoundary_YellowstoneWithoutTakeKeepsHelperStateSlots()
     {
         AssertEvalResultLoopModes(
-            YellowstoneSource("YSStep.repeat(27, (1, 2, 3), 2, 3)"),
+            YellowstoneSource("YSStep((1, 2, 3), 2, 3).repeat(27)"),
             Result.FromItems([
                 ResultFromAtoms(
                     1, 2, 3, 4, 9, 8, 15, 14, 5, 6,
@@ -631,13 +631,13 @@ public class EvaluatorDotCallTests
 
         var source = """
             GcdStep = b, ~a mod b, a mod b != 0
-            Gcd = GcdStep.while(a, b)[1]
+            Gcd = GcdStep(a, b).while[1]
 
             FindNext(history, pre1, pre2) = {
                 IsYSCandidate(candidate) = not contains(history, candidate) and
                     Gcd(candidate, pre1) == 1 and Gcd(candidate, pre2) != 1
                 FindStep = candidate + 1, not IsYSCandidate(candidate)
-                FindStep.while(1)[0]
+                FindStep(1).while[0]
             }
 
             YSStep(history, pre2, pre1) = {
@@ -647,7 +647,7 @@ public class EvaluatorDotCallTests
             """;
 
         AssertEvalResultLoopModes(
-            source + "\nYSStep.repeat(27, (1, 2, 3), 2, 3)",
+            source + "\nYSStep((1, 2, 3), 2, 3).repeat(27)",
             Result.FromItems([
                 ResultFromAtoms(expectedHistory),
                 new Result.Atom(32),
@@ -655,7 +655,7 @@ public class EvaluatorDotCallTests
             ]));
 
         AssertEvalLoopModes(
-            source + "\nYSStep.repeat(27, (1, 2, 3), 2, 3)[0]",
+            source + "\nYSStep((1, 2, 3), 2, 3).repeat(27)[0]",
             expectedHistory);
     }
 

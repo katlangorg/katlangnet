@@ -69,7 +69,7 @@ public class LoopPlannedBinaryEmptyOperandParityTests
         var continuation = position == "while-continuation";
         var step = continuation ? $"x, {binary}" : binary;
         if (position == "while-output") step += ", true";
-        var call = position == "repeat" ? "repeat(S, 1, 0)" : "while(S, 0)";
+        var call = position == "repeat" ? "repeat(S(0), 1)" : "while(S(0))";
         return $$"""
             Use(value) = {
                 S(x) = {{step}}
@@ -272,7 +272,7 @@ public class LoopPlannedBinaryEmptyOperandParityTests
         // operand demands it and reports the same error as generic evaluation.
         var source = """
             S(x) = x - 1
-            repeat(S, 2, ())
+            repeat(S(()), 2)
             """;
 
         var error = AssertOptimizerTransparentFailure(source);
@@ -295,7 +295,7 @@ public class LoopPlannedBinaryEmptyOperandParityTests
         var source = """
             Emp = ()
             S(x, y) = y + 1, Emp
-            repeat(S, 3, 0, 0)
+            repeat(S(0, 0), 3)
             """;
 
         var error = AssertOptimizerTransparentFailure(source);

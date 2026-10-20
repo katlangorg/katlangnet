@@ -19,8 +19,8 @@ public class AsyncSuspensionTests
     {
         { "nested-calls", "A = 10\nF(x) = G(x) + A\nG(y) = y * A\nF(2)" },
         { "recursion", "A = 1\nFib(0) = A - 1\nFib(1) = A\nFib(n) = Fib(n - 1) + Fib(n - 2)\nFib(10)" },
-        { "repeat-loop", "Base = 2\nStep(n) = n * Base\nrepeat(Step, 8, 1)" },
-        { "while-loop", "Limit = 5\nStep(n, acc) = (n + 1, acc + n, n < Limit)\nwhile(Step, 0, 0)" },
+        { "repeat-loop", "Base = 2\nStep(n) = n * Base\nrepeat(Step(1), 8)" },
+        { "while-loop", "Limit = 5\nStep(n, acc) = (n + 1, acc + n, n < Limit)\nwhile(Step(0, 0))" },
         { "map-callback", "Offset = 10\nF(x) = x + Offset\n[1, 2, 3].map(F)" },
         { "filter-callback", "Threshold = 2\nP(x) = x > Threshold\n[1, 2, 3, 4].filter(P)" },
         // The callback body touches `Zero` per step and the initial accumulator is an
@@ -30,7 +30,7 @@ public class AsyncSuspensionTests
         // A bare property name in a builtin ARGUMENT position reads through the SAME seam:
         // the argument's value channel is the ordinary property read (how a property value
         // is consumed does not affect caching), in every slot kind and both spellings.
-        { "builtin-argument-reads", "Base = 100\nZero = 0\nXs = [1, 2, 3]\nR(el, acc) = acc + el\nXs.reduce(R, Base), sum(Xs), Xs.max, if(Zero == 0, Base, Zero), Base.string, repeat(Keep, 0, Base)\nKeep(s) = s" },
+        { "builtin-argument-reads", "Base = 100\nZero = 0\nXs = [1, 2, 3]\nR(el, acc) = acc + el\nXs.reduce(R, Base), sum(Xs), Xs.max, if(Zero == 0, Base, Zero), Base.string, repeat(Keep(Base), 0)\nKeep(s) = s" },
         { "deconstruction", "Src = (1, (2, 3), 4)\nx, y, z = Src\ny" },
         { "structural-dot", "Lib = {public V = 41}\nLib.V + 1" },
         // A named receiver of a BUILTIN is that builtin's written argument (dot-call

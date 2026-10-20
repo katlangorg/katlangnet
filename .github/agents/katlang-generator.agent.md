@@ -23,7 +23,7 @@ Return only KatLang source code — never prose, markdown fences, JSON, XML, or 
 - Square brackets construct a list value: `[1, 2, 3]`, `[]`, `[[1, 2], [3, 4]]`. Lists are a second collection kind, distinct from sequence values: sequence normalization never applies to list structure (`[7] != 7`, `[[]] != []`, `[] != ()`, `[1, 2] != (1, 2)`), while ordinary parentheses AROUND a list stay redundant grouping (`([1, 2]) == [1, 2]`). Equality is structural and recursive. A `[` at the start of an expression or slot, or on a later line, begins a list literal; a same-line `[` after a completed expression (spaces allowed: `A [1]`) is postfix selection `A[1]`, and `A, [1]` is two slots. `[` is never a call delimiter. Postfix selection `[i]` indexes lists positionally: `[1, 2, 3][0]` is `1` under exactly the same zero-based index rules as sequence selection, the selected element keeps its exact kind (`[[1, 2], [3, 4]][0]` is the stored list `[1, 2]`, and chaining selects one level at a time: `[[1, 2], [3, 4]][1][0]` is `3`), and `[][0]` or `[1, 2][2]` is the ordinary out-of-range index error. Element slots follow the ordinary expression-list model, including spread: with `A = 1, 2, 3`, `[A*]` is `[1, 2, 3]` and `[0, A*, 4]` is `[0, 1, 2, 3, 4]`; `[1, []*, 2]` is `[1, 2]`. The spread star on a list-valued expression opens exactly ONE list boundary (`[]*` supplies zero items, `[[7]]*` supplies `[7]`), so `x = A` preserves a stored list while `x = { A* }` captures the canonical sequence of its elements. Calls never open lists implicitly (`F(A)` is one list argument; write `F(A*)` to supply elements), while a multi-target deconstruction whose right side is exactly one list opens it (`x, y, z = [1, 2, 3]`); collecting bindings collect exact lists (`x, *rest = [1, 2, 3]` gives `rest = [2, 3]`, and `rest == skip([1, 2, 3], 1)` holds). Collection builtins ACCEPT list values: a lone list bound as the one collection argument is opened one boundary exactly like a lone grouped sequence value, so `count([1, 2, 3])` is `3` and `sum([1, 2, 3])` is `6` (explicit spread supplies ordinary call arguments, so `count([1, 2, 3]*)` is a three-argument arity error — pass the list directly; a nested list inside a collection stays one opaque item: `count((1, [2], 3))` is `3`). Collection-producing builtins (`order`, `orderDesc`, `distinct`, `take`, `skip`, `filter`, `map`, `range`, `atoms`) return list values. Prefer sequence values for arity/supply plumbing and lists when exact cardinality/nesting must be preserved as data.
 - Flat fixed calls preserve expression boundaries. A property reference used as one argument is one argument expression, even if it evaluates to multiple outputs. Do not pass `Pair` to `Add(x, y)` expecting `Pair = 10, 20` or `Pair.atoms` to fill both parameters. Use separate arguments such as `Add(10, 20)`, explicit indexing such as `Add(Pair[0], Pair[1])`, or an explicit spread such as `Use(1, Tail*)` when a result sequence should spread into fixed parameters.
 - For ordinary user-defined dot-call fallback, DOT-CALL PASSES A VALUE: `A.B(C, D)` is exactly `B(A, C, D)` — the receiver is one ordinary leading argument, it never satisfies extra fixed-parameter arity, a fixed parameter binds it as one value, and a collecting parameter collects it as ONE item exactly as it collects the written argument (values stay values — a sequence and a list alike). Do not generate `(a, b).F` expecting fixed parameters `F(a, b)`; use `F(a, b)` or `a.F(b)`. With `Mean(*Vector) = Vector.sum / Vector.count` and `Arg = 1, 2, 3`, `Mean(1, 2, 3)`, `(1, 2, 3)*.Mean`, `[1, 2, 3]*.Mean`, and `Arg*.Mean` all average the three items, while `(1, 2, 3).Mean`, `Arg.Mean`, and `[1, 2, 3].Mean` each pass ONE value (`Vector = [(1, 2, 3)]` or `[[1, 2, 3]]`) and the numeric sum fails — spread the receiver (`Arg*.Mean`) when the helper needs its items.
-- A property/call/builtin RESULT is ONE value (a value boundary). A multi-output body returns one sequence value, displayed as `(…)` on a single row — not as separate rows: `F(x) = x, x + 1` then `F(5)` is `(5, 6)`. Collection-producing builtins (`order`, `orderDesc`, `distinct`, `take`, `skip`, `filter`, `map`, `range`, `atoms`) return ONE list value, displayed as `[…]`: `X = 1, 2, 3` then `X.order` is `[1, 2, 3]`. `atoms` recursively collects numeric atoms through both sequence and list boundaries and returns them as one exact list (`atoms(7)` is `[7]`, `atoms([1, [2]])` is `[1, 2]`, `atoms('text')` is `[]`); lists still have no truth value, so an `atoms` result is not an `if` condition. Use an explicit spread star at the call site to spread the returned value into separate rows/items: `F(5)*` and `X.order*` emit the items (spread opens one returned boundary). This mirrors `if` (a multi-output branch becomes one value). A collecting binding stores an exact list, so `F(*a) = sum(a)` works because the builtin opens the bound list after binding, while `a*` explicitly spreads that list for forwarding. List results are EXACT — no singleton or empty erasure: a collection builtin that keeps exactly ONE item returns a one-element list, so `take(((1, 2), (3, 4)), 1)` is `[(1, 2)]`, and zero kept items return `[]` (never `()`) — never generate code assuming the single survivor is unwrapped. NOT value boundaries (still multi-output): root program output (`1, 2, 3` shows three rows) and explicit caller-site spread. A completed `while`/`repeat` IS a value boundary too: its final state is ONE value — `Fibonacci.repeat(10, 0, 1)` with `Fibonacci(a, b) = b, a + b` is `(55, 89)` on one row, and `Fibonacci.repeat(10, 0, 1)*` emits `55` and `89` as two rows; a multi-slot loop written as a row beside other rows is one row, and a nested loop used as a step row is ONE next-state slot unless it is spread (`repeat(Inner, 2, a, b)*`). Scalar/reduction builtins (`count`, `sum`, `avg`, `min`, `max`, `contains`, `first`, `last`, `reduce`) already return one value; a `map`/`reduce` callback returns its ORDINARY call result — ONE value, exactly what calling it directly returns (a multi-row body is one sequence value, `()` and `[]` are ordinary values) — which `map` stores whole as one element and `reduce` passes whole as the next accumulator, never spread.
+- A property/call/builtin RESULT is ONE value (a value boundary). A multi-output body returns one sequence value, displayed as `(…)` on a single row — not as separate rows: `F(x) = x, x + 1` then `F(5)` is `(5, 6)`. Collection-producing builtins (`order`, `orderDesc`, `distinct`, `take`, `skip`, `filter`, `map`, `range`, `atoms`) return ONE list value, displayed as `[…]`: `X = 1, 2, 3` then `X.order` is `[1, 2, 3]`. `atoms` recursively collects numeric atoms through both sequence and list boundaries and returns them as one exact list (`atoms(7)` is `[7]`, `atoms([1, [2]])` is `[1, 2]`, `atoms('text')` is `[]`); lists still have no truth value, so an `atoms` result is not an `if` condition. Use an explicit spread star at the call site to spread the returned value into separate rows/items: `F(5)*` and `X.order*` emit the items (spread opens one returned boundary). This mirrors `if` (a multi-output branch becomes one value). A collecting binding stores an exact list, so `F(*a) = sum(a)` works because the builtin opens the bound list after binding, while `a*` explicitly spreads that list for forwarding. List results are EXACT — no singleton or empty erasure: a collection builtin that keeps exactly ONE item returns a one-element list, so `take(((1, 2), (3, 4)), 1)` is `[(1, 2)]`, and zero kept items return `[]` (never `()`) — never generate code assuming the single survivor is unwrapped. NOT value boundaries (still multi-output): root program output (`1, 2, 3` shows three rows) and explicit caller-site spread. A completed `while`/`repeat` IS a value boundary too: its final state is ONE value — `Fibonacci(0, 1).repeat(10)` with `Fibonacci(a, b) = b, a + b` is `(55, 89)` on one row, and `Fibonacci(0, 1).repeat(10)*` emits `55` and `89` as two rows; a multi-slot loop written as a row beside other rows is one row, and a nested loop used as a step row is ONE next-state slot unless it is spread (`repeat(Inner(a, b), 2)*`). Scalar/reduction builtins (`count`, `sum`, `avg`, `min`, `max`, `contains`, `first`, `last`, `reduce`) already return one value; a `map`/`reduce` callback returns its ORDINARY call result — ONE value, exactly what calling it directly returns (a multi-row body is one sequence value, `()` and `[]` are ordinary values) — which `map` stores whole as one element and `reduce` passes whole as the next accumulator, never spread.
 - Collection-builtin results index directly: `Sorted = X.order` stores an exact list and `Sorted[0]` selects its first element (`range(1, 3)[2]` is `3`, `[3, 1, 2].order[0]` is `1`), so no spread-capture step is needed for bracket selection. Scalar arithmetic, ordering, and logical operators reject whole list and sequence values, including `()`, through ordinary operand validation; structural `==` and `!=` remain valid — select an element first (`Sorted[0] + 1`) or spread-capture (`Sorted = { X.order* }`) when a canonical sequence VALUE is specifically wanted. Unary `-()` and `not ()` are type errors too: `-` needs a numeric scalar and `not` a Boolean, exactly as for other sequence/list operands. Terminal builtin steps need no spread-capture: a lone list result supplied as the next builtin's collection is opened one boundary, so pipelines like `range(1, 10).filter(IsEven).sum` keep working.
 - For a reusable collection helper that collects supplied arguments, declare a lone collecting parameter, such as `Many(*values) = values.count`. A user `*values` collecting parameter collects EXACTLY the arguments allocated to it — VALUES STAY VALUES: a non-spread argument is ONE item whatever its value (a sequence, a list, `()`, `[]` alike), and only an explicit spread supplies a value's items (which are never reopened). With `Arg = 1, 2, 3`, `Many(Arg*)` and `Many(1, 2, 3)` bind `values = [1, 2, 3]` (count 3), while `Many(Arg)` and `Arg.Many` bind `[(1, 2, 3)]` (count 1 — a collector counts arguments, while `Arg.count` counts the value's elements); `Many(Arg, 0)` binds `[(1, 2, 3), 0]` (count 2); `Many([1, 2, 3])` binds `[[1, 2, 3]]` (count 1) while `Many([1, 2, 3]*)` binds the items; `Many()` returns `0`, `Many(())` returns `1`, and `Many((), 3)` returns `2`; nested structure stays intact (`Many(((1, 2), 3))` binds `[((1, 2), 3)]`). A parameter list with two or more captures containing one collecting parameter binds the fixed positions from the front and back first — a fixed position never opens a sequence argument — and then collects the remaining middle arguments exactly (`Tail(first, *rest) = rest` gives `Tail(1, (2, 3))` → `[(2, 3)]`, `Tail(1, (2, 3), 4)` → `[(2, 3), 4]`, and `Tail(1, (2, 3)*)` → `[2, 3]`); write an explicit spread star whenever a sequence or list value should supply separate items. The same comma binding pattern on the left of `=` is, by contrast, an unpacking receiver (Python-style): assignment deconstruction opens one lone sequence- or list-valued right-hand side before binding, so with `A = 1, 2, 3`, `x, y, z = A` binds `x = 1`, `y = 2`, `z = 3` and `x, y, z = A*` supplies the same items (`first, *rest = A` unpacks to `first = 1`, `rest = [2, 3]` — the collecting binding collects an exact list). This unpacking is assignment-specific — an ordinary call `F(A)` still passes `A` as one argument, so calls need `F(A*)`. At most one collecting binding is allowed. Do not use `atoms` unless recursive flattening is intentionally required.
 - Collection builtins are ordinary FIXED-ARITY callables: `count(collection)`, `sum(collection)`, `avg(collection)`, `min(collection)`, `max(collection)`, `first(collection)`, `last(collection)`, `order(collection)`, `orderDesc(collection)`, `distinct(collection)`, `take(collection, count)`, `skip(collection, count)`, `contains(collection, item)`, `map(collection, mapper)`, `filter(collection, predicate)`, and `reduce(collection, reducer, initial)`. Each receives ONE collection object plus its fixed controls. Use `()` for a canonical sequence, `[]` for an exact list, or receiver-style syntax for concise expressions — the dot receiver fills the collection parameter (`Values.count`, `X.take(2)`). After binding, the one bound collection opens one outer sequence OR list boundary (a scalar or string is a one-element collection; nested collections stay opaque items), so with `Values = 1, 2, 3`, `count(Values)`, `Values.count`, `count((1, 2, 3))`, and `count([1, 2, 3])` are all `3`, and `count(3)` is `1`. Inline items are an arity error: `count(1, 2, 3)` is three arguments, not a collection. Spread supplies ordinary argument slots that must fit the fixed arity, so `count(Values*)` and `sum(A*, B*)` are arity errors; group the spread into one collection argument instead — `count((Values*))` is `3`, and `sum((A*, B*))` is the concatenation rewrite. `count()` is an arity error, distinct from `count(())` which is `0` — absence of an argument is never an empty collection.
@@ -304,7 +304,7 @@ Before emitting code, verify silently:
 - `if` multi-output branches are parenthesized; single-value branches need no parens.
 - `repeat` and `while` use the correct step/state shape.
 - Every `repeat`/`while` step is an ordinary callable invoked with the current state slots as its arguments, so the state must suit that call: a user step's parameter pattern (explicit pattern, or inferred implicit parameters when there is no explicit list) — fixed and implicit interfaces need an exact slot count, a top-level variadic interface binds the state as an item supply (fixed prefix and suffix slots required, the collecting parameter collects the remaining middle slots as one exact list, max unbounded) — a clause family's clauses (ordinary clause dispatch each iteration), or a builtin's own signature; captured enclosing names are not state slots.
-- A `while` round discovers its continuation flag by forming output rows from right to left until one supplies an item; that row's last item is the Boolean flag. Trailing empty spread rows still run, effects included. When the flag is `false`, the loop returns the state that entered the round without forming the remaining earlier rows, so `Step(x) = 10 / (x - 1), x > 1` / `Step.while(1)` is `1`. After `true`, it forms the remaining earlier rows left to right. Required updates are committed on an earlier continuing round. Write the condition as its OWN last output row: a flag produced inside a call or spread row (`Step(x) = Pack(x)*`) gets no early exit, and whatever the condition itself reads still runs first.
+- A `while` round discovers its continuation flag by forming output rows from right to left until one supplies an item; that row's last item is the Boolean flag. Trailing empty spread rows still run, effects included. When the flag is `false`, the loop returns the state that entered the round without forming the remaining earlier rows, so `Step(x) = 10 / (x - 1), x > 1` / `Step(1).while` is `1`. After `true`, it forms the remaining earlier rows left to right. Required updates are committed on an earlier continuing round. Write the condition as its OWN last output row: a flag produced inside a call or spread row (`Step(x) = Pack(x)*`) gets no early exit, and whatever the condition itself reads still runs first.
 - Constants captured from an enclosing algorithm are not state slots. Thread a value through loop state only when it is not captured, changes between iterations, must be returned as part of state, or intentionally belongs to the state interface.
 - Boolean truth: `true`/`false` values; numbers are never truth values.
 - Ordinary formulas use the lowercase Math aliases (`sin`, `pi`, `sqrt`, ...); `Math.X` appears as the deliberate qualified/disambiguation form; `open Math` appears only when the canonical PascalCase names are specifically wanted.
@@ -589,7 +589,7 @@ Unless numeric coding was explicitly part of the user's request.
 - Only a written call `F(args)` can be captured — not a number, a property read, a bare algorithm name or a dot call. `meta` is valid only before a plain, top-level parameter name of a written parameter list (never `meta *xs`, never inside a pattern, never in a clause family).
 - A call reference never leaves the program: never make one a final output or interpolate it; output a value computed from it, such as `R.Invoke()`.
 - `R.Arguments` is a lazy view of the captured call's arguments: `R.Arguments.count` (computes no argument), `R.Arguments[0]` (zero-based; computes only the selected argument), `.first`, `.last`, and `F(R.Arguments*)`, which passes the ORIGINAL arguments to another call (unused ones are never computed). It is not a list: never `sum(R.Arguments)`, `map(R.Arguments, …)` or `[R.Arguments*]` — select the values you need. `Arguments` is a property: never `R.Arguments()`. Like the reference, a view is never a final output.
-- `R.Algorithm` is the captured call's algorithm as a callable, WITHOUT its arguments: `R.Algorithm(8)` (or `(R.Algorithm)(8)`) calls it afresh with exactly the new arguments, `Apply(R.Algorithm, 7)` and `[1, 2, 3].map(R.Algorithm)` pass it on, and `R.Algorithm(R.Arguments*)` calls it with the ORIGINAL arguments. With `R.Arguments*` it drives a loop: `R.Algorithm.while(R.Arguments*)`, `Loop(meta operation) = operation.Algorithm.while(operation.Arguments*)`. `R.Algorithm()` supplies NO arguments (it never repeats the captured ones — that is `R.Invoke()`), and bare `R.Algorithm` is the algorithm read as a value (an arity error for an algorithm that needs arguments). `A = R.Algorithm` names it: `A` is an alias of the captured algorithm, so `A(8)` calls it afresh and `[1, 2].map(A)` passes it; bare `A` is its value.
+- `R.Algorithm` is the captured call's algorithm as a callable, WITHOUT its arguments: `R.Algorithm(8)` (or `(R.Algorithm)(8)`) calls it afresh with exactly the new arguments, `Apply(R.Algorithm, 7)` and `[1, 2, 3].map(R.Algorithm)` pass it on, and `R.Algorithm(R.Arguments*)` calls it with the ORIGINAL arguments. With `R.Arguments*` it drives a loop once the algorithm has a name (a loop never captures a call through a dot): `RA = R.Algorithm` then `RA(R.Arguments*).while`; inside a wrapper, `Loop(meta operation) = { S = operation.Algorithm` / `S(operation.Arguments*).while }` (on separate lines). `R.Algorithm()` supplies NO arguments (it never repeats the captured ones — that is `R.Invoke()`), and bare `R.Algorithm` is the algorithm read as a value (an arity error for an algorithm that needs arguments). `A = R.Algorithm` names it: `A` is an alias of the captured algorithm, so `A(8)` calls it afresh and `[1, 2].map(A)` passes it; bare `A` is its value.
 - Do not use `meta` for ordinary higher-order code: pass the algorithm itself (`Apply(f, x) = f(x)`). Use `meta` only when the task needs to hold a specific call and run it later.
 
 ## Parentheses vs Braces
@@ -622,15 +622,15 @@ Properties can contain nested property definitions using `{ ... }` syntax. This 
 
 ## Step–State Arity in repeat/while
 
-The initial state must provide the slots the interface requires. A fixed or implicit interface needs an exact slot count. A top-level variadic interface — a step with a collecting parameter such as `Step(first, *middle, last)` — instead binds the loop state as an item supply: the fixed prefix and suffix slots are required, and the collecting parameter collects the remaining middle slots as one list. This is not an exact three-slot interface, and `*middle` is not a single required sequence-valued state slot; the step accepts additional middle slots (max unbounded) and requires at least as many state slots as it has fixed parameters (two here: `*middle` may collect none, so `Step.repeat(2, 0, 10)` is valid). For example, `Step(first, *middle, last)` with `Step.repeat(2, 0, 5, 5, 10)` binds `first = 0`, `middle = [5, 5]`, and `last = 10`. The step output must be bindable as the next iteration's state interface, and `while` adds one extra final continue flag after the next-state output. Captured enclosing names consume no loop-state slots.
+The initial state must provide the slots the interface requires. A fixed or implicit interface needs an exact slot count. A top-level variadic interface — a step with a collecting parameter such as `Step(first, *middle, last)` — instead binds the loop state as an item supply: the fixed prefix and suffix slots are required, and the collecting parameter collects the remaining middle slots as one list. This is not an exact three-slot interface, and `*middle` is not a single required sequence-valued state slot; the step accepts additional middle slots (max unbounded) and requires at least as many state slots as it has fixed parameters (two here: `*middle` may collect none, so `Step(0, 10).repeat(2)` is valid). For example, `Step(first, *middle, last)` with `Step(0, 5, 5, 10).repeat(2)` binds `first = 0`, `middle = [5, 5]`, and `last = 10`. The step output must be bindable as the next iteration's state interface, and `while` adds one extra final continue flag after the next-state output. Captured enclosing names consume no loop-state slots.
 
 Any callable can be a step, with no wrapper: a user algorithm, a clause family, a builtin, a Math function, a host operation, an alias, or a callable passed through a parameter. Each iteration invokes the step exactly as the ordinary call `Step(state…)` would. A clause family dispatches its clauses over the current state each iteration (a state no clause matches is an error, never loop termination), which makes it a natural `while` step with a base case; a builtin runs with its ordinary argument roles and its ONE result value is ONE next-state slot (a collection result is one slot, `()` too). A value — a number, list, selection, or call result — is never a step.
 
 ```
 Countdown(0) = 0, false
 Countdown(n) = n - 1, true
-Countdown.while(3)             # a clause family is a while step with a base case
-repeat(count, 1, [1, 2])       # a builtin's one result is one next-state slot
+Countdown(3).while             # a clause family is a while step with a base case
+repeat(count([1, 2]), 1)       # a builtin's one result is one next-state slot
 ```
 
 **Results:**
@@ -643,7 +643,7 @@ Explicit-signature step (valid even though `x` is not a free identifier):
 
 ```
 Step(x) = x + 1
-Step.repeat(3, 0)
+Step(0).repeat(3)
 ```
 
 **Result:** `3`
@@ -652,7 +652,7 @@ Sequence-value-state step (one sequence-value slot threaded across iterations):
 
 ```
 Step((*history, previous)) = (history*, previous + 1)
-Step.repeat(3, (1, 2))[1]
+Step((1, 2)).repeat(3)[1]
 ```
 
 **Result:** `5`
@@ -661,7 +661,7 @@ Variadic-state step (prefix + collecting + suffix bound as an item supply; the c
 
 ```
 Step(first, *middle, last) = first + 1, middle*, last + 1
-Step.repeat(2, 0, 5, 5, 10)    # the completed loop is one value
+Step(0, 5, 5, 10).repeat(2)    # the completed loop is one value
 ```
 
 **Result:** `(2, 5, 5, 12)`
@@ -671,7 +671,7 @@ Nested capture (a nested step may capture enclosing parameters; the captured nam
 ```
 Outer(limit) = {
     Step = k + 1, k < limit    # k is loop state; limit is captured, not a slot
-    Step.while(0)
+    Step(0).while
 }
 Outer(5)
 ```
@@ -686,7 +686,7 @@ For a step WITHOUT an explicit parameter list, count ALL implicit parameters of 
 
 A nested step can capture a constant from its enclosing algorithm — the captured name consumes no state slot. Thread a constant through state only when it is not captured (for example a sibling step whose constant is one of its own implicit parameters):
 
-1. Add it as an extra explicit initial state argument: `Step.repeat(n, changing1, changing2, constant)`.
+1. Add it as an extra explicit initial state argument: `Step(changing1, changing2, constant).repeat(n)`.
 2. Add it as an extra output of the step body so it passes through unchanged: `Step = new_changing1, new_changing2, constant`.
 3. After `repeat`, use `[index]` to select the meaningful result(s), discarding the threaded constant. For example, select the second field of `(changing, found, constant)` with `[1]`, not `[0][1]`.
 
@@ -698,13 +698,13 @@ Defining a step at the same level as the algorithm that calls it, where the step
 
     # WRONG: Step has 3 params (a, b, x) but init provides only 2
     Step = a + 1, b * if(x mod a != 0, 1, 0)
-    Check = repeat(Step, x - 1, 2, 1)[1]
+    Check = repeat(Step(2, 1), x - 1)[1]
 
 Here `x` in `Step` is not a sibling property — it becomes an implicit parameter. Fix by threading `x` through the state:
 
     # CORRECT: Step has 3 params (a, b, x), init provides 3
     Step = a + 1, b * if(x mod a != 0, 1, 0), x
-    Check = repeat(Step, x - 1, 2, 1, x)[1]
+    Check = repeat(Step(2, 1, x), x - 1)[1]
 
 ### Common Nested Capture Mistake
 
@@ -719,7 +719,7 @@ Defining a nested step where the step reuses the enclosing algorithm's parameter
             hasSquareFactor == 0 and factor * factor <= n
         }
 
-        CheckNextFactor.while(n, 2, 0)[2] == 0
+        CheckNextFactor(n, 2, 0).while[2] == 0
     }
 
 Fix by naming the threaded state slot distinctly and initializing it from the outer parameter:
@@ -733,7 +733,7 @@ Fix by naming the threaded state slot distinctly and initializing it from the ou
             hasSquareFactor == 0 and factor * factor <= candidate
         }
 
-        CheckNextFactor.while(n, 2, 0)[2] == 0
+        CheckNextFactor(n, 2, 0).while[2] == 0
     }
 
 ### Parameter Order Mismatch
@@ -743,11 +743,11 @@ Implicit parameter order is determined by first appearance in the step body (lef
     # WRONG: first-appearance order is [b, a, total, limit], but init is (a=1, b=2, total=0, limit)
     #        so b receives 1 and a receives 2 — swapped!
     Step = b, a + b, total + if(b mod 2 == 0, b, 0), limit, b <= limit
-    Step.while(1, 2, 0, limit)[2]
+    Step(1, 2, 0, limit).while[2]
 
     # CORRECT: b~ shifts b one position right → parameter order [a, b, total, limit]
     Step = b~, a + b, total + if(b mod 2 == 0, b, 0), limit, b <= limit
-    Step.while(1, 2, 0, limit)[2]
+    Step(1, 2, 0, limit).while[2]
 
 The step outputs `(new_a, new_b, new_total, limit, continue_flag)`. The init provides `(a=1, b=2, total=0, limit)`. (The accumulator is named `total`, not `sum`: `sum` is a builtin, and a free name that resolves to a builtin is never inferred as an implicit parameter.) Since `b` appears before `a` in the body, without grace the parameter binding would be `b=1, a=2` — the opposite of what the init arguments intend. Adding `b~` shifts `b` after `a`, producing parameter order `[a, b, total, limit]` which matches the init arguments.
 
@@ -790,11 +790,11 @@ The step outputs `(new_a, new_b, new_total, limit, continue_flag)`. The init pro
 - `F(5)` — one argument. `F(3, 4)` — two arguments. `F{a + b}` — an algorithm-block argument with parameters `a` and `b`.
 - Parentheses group syntax; they do not introduce a semantic boundary. A group of exactly one non-spread expression is that expression, whatever its kind: `(x)` is `x`, `(F(1))` is `F(1)`, `(Obj.X)` is `Obj.X`, `(A[0])` is `A[0]`, `((1, 2))` is `(1, 2)`, `(())` is `()` — the same value, count, binding, caching, receiver, and spread in every position (`(A).count` is `A.count`, `(Obj).X` is `Obj.X`, `F((A))` is `F(A)`, `(F)(1)` is `F(1)`). Only a group of several slots (`(1, 2)`, a sequence value) or of a lone spread (`(A*)`, the capture of the spread items) does something. Never add parentheses expecting them to change a call's binding, a pattern's matching, or a property read.
 - `while`/`repeat` initial state preserves explicit argument boundaries:
-    - `Step.while(x, 0)` starts with two state slots
-    - `Step.repeat(n, x, 0)` starts with two state slots
-    - `while(Step, x, 0)` starts with two state slots
-    - `repeat(Step, n, x, 0)` starts with two state slots
-    - `Step.while((x, 0))` starts with one sequence-value state slot
+    - `Step(x, 0).while` starts with two state slots
+    - `Step(x, 0).repeat(n)` starts with two state slots
+    - `while(Step(x, 0))` starts with two state slots
+    - `repeat(Step(x, 0), n)` starts with two state slots
+    - `Step((x, 0)).while` starts with one sequence-value state slot
     - Use `Pair[0], Pair[1]` when a sequence value should intentionally provide multiple initial slots
 
 ## Implicit Parameters
@@ -888,15 +888,15 @@ Grace only affects parameter detection order. It does not change the runtime val
 
 ### `if`
 
-Builtin `if` has exactly 3 arguments: `if(condition, thenExpr, elseExpr)`. The condition must be a Boolean (`true`/`false`, typically a comparison); a numeric condition is a type error. Normally generate the three arguments directly. Explicit spread in call-argument position is valid when the spread value supplies exactly three values: `if(X*)` with `X = true, 2, 3` opens into the three slots and equals `if(true, 2, 3)`, and `if(true, Pair*)` with `Pair = 2, 3` is also valid. A direct `if(X*)` behaves the same as a user-defined wrapper such as `MyIF(a, b, c) = if(a, b, c)` called as `MyIF(X*)`. A non-spread `if(X)` is one argument and is invalid; never generate a 2-argument call to builtin `if`. A branch must be a value or a call. Under an explicit parameter list, a bare reference to an algorithm that still needs arguments (`G(c) = if(c, Inc, 0)` with `Inc(x) = x + 1`) is an arity error whenever that branch is selected, exactly as the root row `Inc` alone would be — write `Inc(4)`. In a formula without a parameter list the name is handed the formula's inputs instead, whichever branch is selected (`F = if(c, Inc, 0)` means `F(c, x) = if(c, Inc(x), 0)`), and on a top-level output row such an inferred input has no caller, so the program is rejected before it runs. The same holds for every builtin value slot (the `if` condition, `repeat`/`while` initial state, the `repeat` count, `atoms`, `range`, collection arguments and fixed value controls), never for callback slots such as `map`'s mapper or a loop step. Parenthesize branch bodies only when they contain multiple comma-separated outputs: `if(cond, (a, b), (c, d))`. Single-value branches need no parentheses: `if(x > 0, 1, 0)`. `if` returns the selected branch as one value boundary, so a multi-output property branch such as `X = 1, 2, 3` yields the grouped sequence value `(1, 2, 3)` (emitted count 1), exactly like referencing `X` directly; use a result spread `if(cond, X, Y)*` to contribute that result as separate output slots. Builtin names are ordinary prelude bindings, not reserved words: declaring `if`, `count`, or `sum` yourself SHADOWS the builtin completely (resolution ignores arity, so there is no fallback to the builtin at a different argument count). Do not reuse a builtin name for a property or parameter unless shadowing is the intent.
+Builtin `if` has exactly 3 arguments: `if(condition, thenExpr, elseExpr)`. The condition must be a Boolean (`true`/`false`, typically a comparison); a numeric condition is a type error. Normally generate the three arguments directly. Explicit spread in call-argument position is valid when the spread value supplies exactly three values: `if(X*)` with `X = true, 2, 3` opens into the three slots and equals `if(true, 2, 3)`, and `if(true, Pair*)` with `Pair = 2, 3` is also valid. A direct `if(X*)` behaves the same as a user-defined wrapper such as `MyIF(a, b, c) = if(a, b, c)` called as `MyIF(X*)`. A non-spread `if(X)` is one argument and is invalid; never generate a 2-argument call to builtin `if`. A branch must be a value or a call. Under an explicit parameter list, a bare reference to an algorithm that still needs arguments (`G(c) = if(c, Inc, 0)` with `Inc(x) = x + 1`) is an arity error whenever that branch is selected, exactly as the root row `Inc` alone would be — write `Inc(4)`. In a formula without a parameter list the name is handed the formula's inputs instead, whichever branch is selected (`F = if(c, Inc, 0)` means `F(c, x) = if(c, Inc(x), 0)`), and on a top-level output row such an inferred input has no caller, so the program is rejected before it runs. The same holds for every builtin value slot (the `if` condition, the `repeat` count, `atoms`, `range`, collection arguments and fixed value controls), never for callback slots such as `map`'s mapper or a loop step. Parenthesize branch bodies only when they contain multiple comma-separated outputs: `if(cond, (a, b), (c, d))`. Single-value branches need no parentheses: `if(x > 0, 1, 0)`. `if` returns the selected branch as one value boundary, so a multi-output property branch such as `X = 1, 2, 3` yields the grouped sequence value `(1, 2, 3)` (emitted count 1), exactly like referencing `X` directly; use a result spread `if(cond, X, Y)*` to contribute that result as separate output slots. Builtin names are ordinary prelude bindings, not reserved words: declaring `if`, `count`, or `sum` yourself SHADOWS the builtin completely (resolution ignores arity, so there is no fallback to the builtin at a different argument count). Do not reuse a builtin name for a property or parameter unless shadowing is the intent.
 
 ### `repeat`
 
-`repeat(step, count, *init)` — fixed-count iteration. `step` returns next state, `count` is a non-negative integer, and each explicit init argument becomes one initial state slot. `repeat(Step, 3, a, b)` starts with two slots; `repeat(Step, 3, Pair)` starts with one slot even if `Pair` evaluates to multiple values. Step output boundaries become next-state slots: `Step = history*, next` emits history's items followed by `next` as separate slots (the comma is required — `history* next` would be the multiplication `history * next`), while `Step = (history*, next)` groups them into one slot. To keep an updated sequence-value history slot, spread `history`'s items beside the new value inside parentheses with a comma: `Step((*history), previous) = (history*, previous + 1), previous + 1` emits the sequence-value history slot `(history*, previous + 1)` followed by the helper slot, so callers can select `[0]`. This is the same whatever the step's parameter patterns: patterns only bind the incoming state and never repack the step's rows, so a structural step `Step((a, b)) = (b, a + b)*` supplies TWO next-state slots (which its one-pattern head cannot re-bind) while `Step((a, b)) = (b, a + b)` keeps ONE, and `Dup(x, x) = (x + 1, x + 1)*` supplies the same two slots as `Dup(x, x) = x + 1, x + 1`. The completed loop is ONE value (a value boundary like any call result): select outputs with `[index]`; for a state `(candidate, found)`, use `repeat(...)[1]` for `found`, not `repeat(...)[0][1]`, and spread the loop result (`repeat(...)*`) only to emit or pass its final items separately.
+`repeat(meta step, count)` — fixed-count iteration. The loop's first argument is a `meta step`: write the step as a CALL with its initial state as that call's arguments — `Step(0).repeat(5)`, `repeat(Step(0), 5)`, `Fib(0, 1).repeat(10)`, `Step(0).while`, `while(Step(0))`. The loop takes the written call apart: its callee is the step and its arguments are the initial state (the call itself is never run as a call). The callee must be a NAME or a parameter: never pass the bare step (`Step.while(0)`, `while(Step, 0)`, `repeat(Step, 5, 0)` are arity errors), a value, a property that only holds a call's result (`Start = Step(0)` then `Start.while` is an error), or a call through a dot (`Box.Step(0).while`, `Math.Abs(-3).repeat(2)` are errors) — name such a step first: `S = Box.Step` then `S(0).while`, `A = Math.Abs` then `A(-3).repeat(2)`, `Add = { x + 10 }` then `Add(0).repeat(3)`. A wrapper forwards the call through an ORDINARY parameter: `Run(step) = while(step)` then `Run(Step(0))`. A step call with no arguments starts from the empty state: `Done = false` then `Done().while` is `()`. `repeat` prepares the call's arguments before it computes its count, but only a spread among them is computed then. `step` returns next state, `count` is a non-negative integer, and each argument of the step call becomes one initial state slot. `repeat(Step(a, b), 3)` starts with two slots; `repeat(Step(Pair), 3)` starts with one slot even if `Pair` evaluates to multiple values. Step output boundaries become next-state slots: `Step = history*, next` emits history's items followed by `next` as separate slots (the comma is required — `history* next` would be the multiplication `history * next`), while `Step = (history*, next)` groups them into one slot. To keep an updated sequence-value history slot, spread `history`'s items beside the new value inside parentheses with a comma: `Step((*history), previous) = (history*, previous + 1), previous + 1` emits the sequence-value history slot `(history*, previous + 1)` followed by the helper slot, so callers can select `[0]`. This is the same whatever the step's parameter patterns: patterns only bind the incoming state and never repack the step's rows, so a structural step `Step((a, b)) = (b, a + b)*` supplies TWO next-state slots (which its one-pattern head cannot re-bind) while `Step((a, b)) = (b, a + b)` keeps ONE, and `Dup(x, x) = (x + 1, x + 1)*` supplies the same two slots as `Dup(x, x) = x + 1, x + 1`. The completed loop is ONE value (a value boundary like any call result): select outputs with `[index]`; for a state `(candidate, found)`, use `repeat(...)[1]` for `found`, not `repeat(...)[0][1]`, and spread the loop result (`repeat(...)*`) only to emit or pass its final items separately.
 
 ### `while`
 
-`while(step, *init)` or dot-call `Step.while(*init)` — condition-based loop. Step returns `(new_state*, continue_flag)`. Flag is the last item and must be a Boolean (`true` or `false`; a numeric flag is a type error); when it is `false`, `while` returns the state from before that final step. Each explicit init argument becomes one initial state slot: `Step.while(x, 0)` and `while(Step, x, 0)` start with two slots, while `Step.while((x, 0))` starts with one sequence-value slot.
+`while(meta step)` or dot-call `Step(a, b).while` — condition-based loop, with the same `meta step` call rules as `repeat`. Step returns `(new_state*, continue_flag)`. Flag is the last item and must be a Boolean (`true` or `false`; a numeric flag is a type error); when it is `false`, `while` returns the state from before that final step. Each explicit init argument becomes one initial state slot: `Step(x, 0).while` and `while(Step(x, 0))` start with two slots, while `Step((x, 0)).while` starts with one sequence-value slot.
 
 Because the final step, whose `continue_flag` is `false`, is discarded, do not place the only meaningful update in that final step. For trial division and other searches, let the step that records `found = true` continue once, then stop on the following step so the returned previous state contains the recorded value.
 
@@ -1567,12 +1567,12 @@ GOOD — runnable output with assumed value:
 ### repeat: Fibonacci (8 iterations)
 
     Fib = a + b, a
-    repeat(Fib, 8, 1, 0)[0]
+    repeat(Fib(1, 0), 8)[0]
 
 ### while: GCD
 
     GcdStep = b~, a mod b, a mod b != 0
-    Gcd = GcdStep.while(a, b)[1]
+    Gcd = GcdStep(a, b).while[1]
     Gcd(48, 18)
 
 ### Named formula: series circuit
@@ -1680,7 +1680,7 @@ Many(), Many(()), Many((), 3), Many([(1, 2)]*)
 
 === BEGIN GENERATED: katlang-spec-examples (DO NOT EDIT BY HAND) ===
 
-Verified reference examples (171 of the 474-case canonical language specification,
+Verified reference examples (174 of the 481-case canonical language specification,
 tests/KatLang.Tests/LanguageSpec/LanguageSpecCorpus.cs). Every program and expected
 output below is executed against the KatLang engine and (where representable)
 guarded against the Lean model on every build. Treat these as ground truth for the
@@ -1881,9 +1881,9 @@ Regenerate this block from the repo root with:
 [loop-result-is-one-value] A completed `repeat`/`while` is ONE value, like every call result: the two final state slots come back as the one value `(55, 89)` — one row alone or beside other rows — and only the explicit spread `…*` opens it into separate items.
 
     Fibonacci(a, b) = b, a + b
-    Fibonacci.repeat(10, 0, 1)
-    Fibonacci.repeat(10, 0, 1)*,
-    Fibonacci.repeat(10, 0, 1), 7
+    Fibonacci(0, 1).repeat(10)
+    Fibonacci(0, 1).repeat(10)*,
+    Fibonacci(0, 1).repeat(10), 7
 
   Displays:
     (55, 89)
@@ -1897,7 +1897,7 @@ Regenerate this block from the repo root with:
     Dup(x, x) = { (x + 1, x + 1)* }
     Same(x, x) = { x + 1, x + 1 }
     Step((a, b)) = (b, a + b)
-    Dup.repeat(2, 1, 1), Same.repeat(2, 1, 1), Step.repeat(3, (0, 1))
+    Dup(1, 1).repeat(2), Same(1, 1).repeat(2), Step((0, 1)).repeat(3)
 
   Displays:
     (3, 3)
@@ -1907,17 +1907,17 @@ Regenerate this block from the repo root with:
 [loop-nested-step-row-is-one-slot] A nested loop written as a step row is ONE next-state slot, like any call result; spread it with `*` to supply its final items as the next state.
 
     Fibonacci(a, b) = b, a + b
-    Two(a, b) = { repeat(Fibonacci, 2, a, b)* }
-    Two.repeat(3, 0, 1)
+    Two(a, b) = { repeat(Fibonacci(a, b), 2)* }
+    Two(0, 1).repeat(3)
 
   Displays:
     (8, 13)
 
-[loop-step-clause-family] A loop step is an ordinary callable: each iteration invokes a clause family exactly as the call `Step(state…)` would — ordinary clause dispatch over the current state — and the selected clause's rows become the next state, so `repeat(Step, 2, 3)` is `Step(Step(3))`.
+[loop-step-clause-family] A loop step is an ordinary callable: each iteration invokes a clause family exactly as the call `Step(state…)` would — ordinary clause dispatch over the current state — and the selected clause's rows become the next state, so `repeat(Step(3), 2)` is `Step(Step(3))`.
 
     Step(0) = 0
     Step(n) = n - 1
-    repeat(Step, 2, 3), Step.repeat(5, 3), Step(Step(3))
+    repeat(Step(3), 2), Step(3).repeat(5), Step(Step(3))
 
   Displays:
     1
@@ -1928,7 +1928,7 @@ Regenerate this block from the repo root with:
 
     Countdown(0) = 0, false
     Countdown(n) = n - 1, true
-    Countdown.while(3)
+    Countdown(3).while
 
   Displays:
     0
@@ -1936,7 +1936,7 @@ Regenerate this block from the repo root with:
 [loop-while-condition-first-skips-transition] LOOP-06 (condition first): each `while` round evaluates its continuation flag FIRST; `false` returns the state that entered the round without evaluating the other outputs, so the condition protects the transition `10 / (x - 1)`.
 
     Step(x) = 10 / (x - 1), x > 1
-    Step.while(1)
+    Step(1).while
 
   Displays:
     1
@@ -1944,11 +1944,41 @@ Regenerate this block from the repo root with:
 [loop-step-builtin-is-one-row-wrapper] A builtin step runs through its ordinary argument roles over the current state; it has no written rows, so its one result value is one next-state slot — exactly the step its one-row wrapper `C(c) = count(c)` makes.
 
     C(c) = count(c)
-    repeat(count, 1, [1, 2]) == repeat(C, 1, [1, 2]), count.repeat(1, [1, 2])
+    repeat(count([1, 2]), 1) == repeat(C([1, 2]), 1), count([1, 2]).repeat(1)
 
   Displays:
     true
     2
+
+[loop-meta-plain-and-dot] `while(meta step)` and `repeat(meta step, count)` capture the written step CALL through their `meta` parameter: the call's callee is the step and its own arguments are the initial state. The dot spelling `Step(0).while` passes the same call as the ordinary leading argument, and `Inc(0).repeat(5)` passes the count as the second.
+
+    Step(x) = x + 1, x < 3
+    Inc(x) = x + 1
+    while(Step(0)), Step(0).while, Step(0).while(), repeat(Inc(0), 5), Inc(0).repeat(5)
+
+  Displays:
+    3
+    3
+    3
+    5
+    5
+
+[loop-meta-no-implicit-provenance] A `meta` parameter captures only a supplied call computation. Reading the property `Start` is an ordinary VALUE read: the loop never recovers the call `Step(0)` written in its definition, so `Start.while` is the ordinary META refusal, with nothing evaluated.
+
+    Step(x) = x + 1, x < 3
+    Start = Step(0)
+    Start.while
+
+  Fails with an evaluation error (notAnAlgorithm).
+
+[loop-meta-qualified-step-needs-a-name] A `meta` parameter captures a call whose callee is a name or a parameter; a call through a dot (`Box.S(0)`) is not captured. Name the step first (`S = Box.S`, or `Inc = { x + 1 }` for a block) and loop over a call of that name.
+
+    Box = { S(x) = x + 1, x < 3 }
+    S = Box.S
+    S(0).while
+
+  Displays:
+    3
 
 [spread-capture-count] Parentheses around a supply-producing expression perform CAPTURE — they are not always redundant grouping: `(A*).count` counts one captured sequence value (3), while the fluent `A*.count` is the call `count(A*)` whose three argument slots do not fit the fixed `count(collection)` signature (an arity error).
 
@@ -2898,7 +2928,7 @@ Regenerate this block from the repo root with:
     Cnt(*xs) = xs.count
     SumWhile(*s) = s.sum + 1, s.sum + 1 < 3
     Apply(f, xs) = xs.map(f)
-    Loop(g) = while(g, 0)
+    Loop(g) = while(g(0))
     Outer(xs) = {
       Inner(g) = xs.map(g)
       Inner(Cnt)
@@ -3446,11 +3476,11 @@ Regenerate this block from the repo root with:
 
   Fails with an evaluation error (arity).
 
-[lazy-slot-demand-covers-every-builtin-value-slot] Every builtin value slot — a loop's initial state, the `repeat` count, `atoms`, `range`, a collection, or a fixed value control — applies the ordinary zero-argument value-demand law to its argument wherever nothing forwards to it, as under a closed parameter list: an algorithm that still needs arguments is rejected at its reference before its body runs, and `reduce` keeps its dedicated initial-accumulator hint. In a formula that infers its parameters the same value slots lift the reference instead (`G = count(Inc)` is `G(x) = count(Inc(x))`). Callback slots (`repeat`/`while` steps, `map`, `filter`, `reduce` steps) supply arguments and are unaffected either way.
+[lazy-slot-demand-covers-every-builtin-value-slot] Every builtin value slot — the `repeat` count, `atoms`, `range`, a collection, or a fixed value control — applies the ordinary zero-argument value-demand law to its argument wherever nothing forwards to it, as under a closed parameter list: an algorithm that still needs arguments is rejected at its reference before its body runs, and `reduce` keeps its dedicated initial-accumulator hint. In a formula that infers its parameters the same value slots lift the reference instead (`G = count(Inc)` is `G(x) = count(Inc(x))`). Callback slots (`map`, `filter`, `reduce` steps) supply arguments and are unaffected either way, and a loop's `meta step` captures its written call, whose arguments are that call's own (META-S3-3).
 
     Inc(x) = x + 1
     Step(s) = s + 1
-    Probe(u) = repeat(Step, 1, Inc)
+    Probe(u) = repeat(Step(0), Inc)
     Probe(0)
 
   Fails with an evaluation error (arity).
@@ -3576,10 +3606,13 @@ Regenerate this block from the repo root with:
     64
     25
 
-[call-reference-algorithm-loops] Because `R.Algorithm` is an ordinary callable and `R.Arguments*` passes the original arguments, a captured call can drive the ordinary `while` and `repeat` loops: `R.Algorithm.while(R.Arguments*)` runs the captured step from its captured start state. A `meta` wrapper such as `Loop(meta operation) = operation.Algorithm.while(operation.Arguments*)` makes `Step(0).Loop` loop the step from 0.
+[call-reference-algorithm-loops] Because `R.Algorithm` is an ordinary callable and `R.Arguments*` passes the original arguments, a captured call can drive the ordinary `while` and `repeat` loops once its callable has a name: `RA = R.Algorithm` then `RA(R.Arguments*).while` runs the captured step from its captured start state. A `meta` wrapper names the projection the same way, so `Step(0).Loop` loops the step from 0; a plain wrapper `Loop(operation) = while(operation)` forwards the call itself.
 
     Step(x) = x + 1, x < 3
-    Loop(meta operation) = operation.Algorithm.while(operation.Arguments*)
+    Loop(meta operation) = {
+      S = operation.Algorithm
+      S(operation.Arguments*).while
+    }
 
     Step(0).Loop
 

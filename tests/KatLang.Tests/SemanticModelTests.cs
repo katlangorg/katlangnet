@@ -1423,7 +1423,7 @@ public class SemanticModelTests
         var model = BuildModel(
             """
             Algo = b, ~a + b, total + if(b mod 2 == 0, b, 0), b <= 100
-            Sum = Algo.while(1, 2, 0)[2]
+            Sum = Algo(1, 2, 0).while[2]
             Sum
             """);
 
@@ -3255,14 +3255,21 @@ public class SemanticModelTests
         var range = Assert.Single(PreludeCatalog.Symbols, symbol => symbol.Name == "range");
         Assert.Equal("start.range(stop)", range.Property!.FindSignature(PropertyCallStyle.Dot)!.DisplayText);
 
+        // META-S3-3: the loops' ONE registry signature declares a genuine META step, displayed and
+        // flagged exactly like a user META parameter; the dot surface omits the receiver as usual.
         var whileSymbol = Assert.Single(PreludeCatalog.Symbols, symbol => symbol.Name == "while");
-        Assert.Equal("while(step, *init)", whileSymbol.Property!.GetDisplaySignature(PropertyCallStyle.Plain));
-        Assert.Equal("step.while(*init)", whileSymbol.Property!.GetDisplaySignature(PropertyCallStyle.Dot));
-        Assert.True(whileSymbol.Property.GetParameters(PropertyCallStyle.Dot).Single().IsCollecting);
+        Assert.Equal("while(meta step)", whileSymbol.Property!.GetDisplaySignature(PropertyCallStyle.Plain));
+        Assert.Equal("step.while", whileSymbol.Property!.GetDisplaySignature(PropertyCallStyle.Dot));
+        var whileStep = Assert.Single(whileSymbol.Property.GetParameters(PropertyCallStyle.Plain));
+        Assert.True(whileStep.IsMeta);
+        Assert.Equal("meta step", whileStep.DisplayName);
+        Assert.Empty(whileSymbol.Property.GetParameters(PropertyCallStyle.Dot));
 
         var repeat = Assert.Single(PreludeCatalog.Symbols, symbol => symbol.Name == "repeat");
-        Assert.Equal("repeat(step, count, *init)", repeat.Property!.GetDisplaySignature(PropertyCallStyle.Plain));
-        Assert.Equal("step.repeat(count, *init)", repeat.Property!.GetDisplaySignature(PropertyCallStyle.Dot));
+        Assert.Equal("repeat(meta step, count)", repeat.Property!.GetDisplaySignature(PropertyCallStyle.Plain));
+        Assert.Equal("step.repeat(count)", repeat.Property!.GetDisplaySignature(PropertyCallStyle.Dot));
+        Assert.Equal([true, false], repeat.Property.GetParameters(PropertyCallStyle.Plain).Select(static parameter => parameter.IsMeta));
+        Assert.False(Assert.Single(repeat.Property.GetParameters(PropertyCallStyle.Dot)).IsMeta);
 
         // `load` is front-end sugar, not a runtime lexical callable. It must
         // never be offered as the fallback in `receiver.load(...)`.

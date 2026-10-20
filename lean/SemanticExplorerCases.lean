@@ -10,11 +10,11 @@ the neutral observation recorded from the C# evaluator. A failing guard is a
 Lean/C# divergence on that case.
 
 Partition (machine-checked by the `*CaseIds.length` guards below):
-- surface corpus cases: 2641
+- surface corpus cases: 2649
 - excluded parse-level cases (Lean has no surface parser): 11
-- Lean-representable surface cases: 2630
+- Lean-representable surface cases: 2638
 - internal-node cases: 19
-- neutral guards: 2649 case guards + 2 count guards
+- neutral guards: 2657 case guards + 2 count guards
 - supplementary errorObs guards compare supported shared payloads independently
 
 Regenerate from the repo root with:
@@ -12358,9 +12358,9 @@ def case_special__eqSpreadSeqLiteral : Expr :=
   .algorithmExpr (alg [] [] [privateProp "P" (alg [] [] [] [(.capture [.num 1, .num 2])])] [(.comparison (.capture [(.sequenceSpread (.resolve "P")), .num 99]) [{ op := .eq, operand := (.capture [.num 1, .num 2, .num 99]) }])])
 #guard obs case_special__eqSpreadSeqLiteral == "ok raw=true n=1"
 
--- special__loopSpreadHistoryFlat: Step((*history), previous) = (history*, previous + 1), previous + 1 \n Step.repeat(2, (1, 2), 2)[0]
+-- special__loopSpreadHistoryFlat: Step((*history), previous) = (history*, previous + 1), previous + 1 \n Step((1, 2), 2).repeat(2)[0]
 def case_special__loopSpreadHistoryFlat : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "Step" (algWithParameterPatterns [.sequenceValue [.capture { name := "history", kind := .collecting }], .capture { name := "previous" }] [] [] [(.capture [(.sequenceSpread (.param "history")), (.binary .add (.param "previous") (.num 1))]), (.binary .add (.param "previous") (.num 1))])] [(.index (.dotCall (.resolve "Step") "repeat" (some [.num 2, (.capture [.num 1, .num 2]), .num 2])) [.num 0])])
+  .algorithmExpr (alg [] [] [privateProp "Step" (algWithParameterPatterns [.sequenceValue [.capture { name := "history", kind := .collecting }], .capture { name := "previous" }] [] [] [(.capture [(.sequenceSpread (.param "history")), (.binary .add (.param "previous") (.num 1))]), (.binary .add (.param "previous") (.num 1))])] [(.index (.dotCall (.call (.resolve "Step") [(.capture [.num 1, .num 2]), .num 2]) "repeat" (some [.num 2])) [.num 0])])
 #guard obs case_special__loopSpreadHistoryFlat == "ok raw=S[1, 2, 3, 4] n=1"
 
 -- special__ifBranchSeq: if(true, (1, 2), 3)
@@ -12846,184 +12846,226 @@ def case_special__orderDescDot : Expr :=
   .algorithmExpr (alg [] [] [privateProp "x" (alg [] [] [] [.num 1, .num 3, .num 2])] [(.dotCall (.resolve "x") "orderDesc" none)])
 #guard obs case_special__orderDescDot == "ok raw=L[3, 2, 1] n=1"
 
--- special__whileCountdown: S(a) = a - 1, a > 1 \n while(S, 3)
+-- special__whileCountdown: S(a) = a - 1, a > 1 \n while(S(3))
 def case_special__whileCountdown : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "S" (alg ["a"] [] [] [(.binary .sub (.param "a") (.num 1)), (.comparison (.param "a") [{ op := .gt, operand := (.num 1) }])])] [(.call (.resolve "while") [.resolve "S", .num 3])])
+  .algorithmExpr (alg [] [] [privateProp "S" (alg ["a"] [] [] [(.binary .sub (.param "a") (.num 1)), (.comparison (.param "a") [{ op := .gt, operand := (.num 1) }])])] [(.call (.resolve "while") [(.call (.resolve "S") [.num 3])])])
 #guard obs case_special__whileCountdown == "ok raw=1 n=1"
 
--- special__whileZeroIterations: S(a) = a, 0 \n while(S, 5)
+-- special__whileZeroIterations: S(a) = a, 0 \n while(S(5))
 def case_special__whileZeroIterations : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "S" (alg ["a"] [] [] [.param "a", .num 0])] [(.call (.resolve "while") [.resolve "S", .num 5])])
+  .algorithmExpr (alg [] [] [privateProp "S" (alg ["a"] [] [] [.param "a", .num 0])] [(.call (.resolve "while") [(.call (.resolve "S") [.num 5])])])
 #guard obs case_special__whileZeroIterations == "err type"
 
--- special__whileTwoSlotState: S(a, b) = a + 1, b * 2, a < 3 \n while(S, 1, 1)
+-- special__whileTwoSlotState: S(a, b) = a + 1, b * 2, a < 3 \n while(S(1, 1))
 def case_special__whileTwoSlotState : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "S" (alg ["a", "b"] [] [] [(.binary .add (.param "a") (.num 1)), (.binary .mul (.param "b") (.num 2)), (.comparison (.param "a") [{ op := .lt, operand := (.num 3) }])])] [(.call (.resolve "while") [.resolve "S", .num 1, .num 1])])
+  .algorithmExpr (alg [] [] [privateProp "S" (alg ["a", "b"] [] [] [(.binary .add (.param "a") (.num 1)), (.binary .mul (.param "b") (.num 2)), (.comparison (.param "a") [{ op := .lt, operand := (.num 3) }])])] [(.call (.resolve "while") [(.call (.resolve "S") [.num 1, .num 1])])])
 #guard obs case_special__whileTwoSlotState == "ok raw=S[3, 4] n=1"
 
--- special__whileEmptyInitialState: S(a) = a, 0 \n while(S, ())
+-- special__whileEmptyInitialState: S(a) = a, 0 \n while(S(()))
 def case_special__whileEmptyInitialState : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "S" (alg ["a"] [] [] [.param "a", .num 0])] [(.call (.resolve "while") [.resolve "S", (.emptySequence 0)])])
+  .algorithmExpr (alg [] [] [privateProp "S" (alg ["a"] [] [] [.param "a", .num 0])] [(.call (.resolve "while") [(.call (.resolve "S") [(.emptySequence 0)])])])
 #guard obs case_special__whileEmptyInitialState == "err type"
 
--- special__whileNonNumericContinuation: S(a) = a, () \n while(S, 1)
+-- special__whileNonNumericContinuation: S(a) = a, () \n while(S(1))
 def case_special__whileNonNumericContinuation : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "S" (alg ["a"] [] [] [.param "a", (.emptySequence 0)])] [(.call (.resolve "while") [.resolve "S", .num 1])])
+  .algorithmExpr (alg [] [] [privateProp "S" (alg ["a"] [] [] [.param "a", (.emptySequence 0)])] [(.call (.resolve "while") [(.call (.resolve "S") [.num 1])])])
 #guard obs case_special__whileNonNumericContinuation == "err type"
 
--- special__whileDot: S(a) = a - 1, a > 1 \n S.while(3)
+-- special__whileDot: S(a) = a - 1, a > 1 \n S(3).while
 def case_special__whileDot : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "S" (alg ["a"] [] [] [(.binary .sub (.param "a") (.num 1)), (.comparison (.param "a") [{ op := .gt, operand := (.num 1) }])])] [(.dotCall (.resolve "S") "while" (some [.num 3]))])
+  .algorithmExpr (alg [] [] [privateProp "S" (alg ["a"] [] [] [(.binary .sub (.param "a") (.num 1)), (.comparison (.param "a") [{ op := .gt, operand := (.num 1) }])])] [(.dotCall (.call (.resolve "S") [.num 3]) "while" none)])
 #guard obs case_special__whileDot == "ok raw=1 n=1"
 
--- special__loopResultIsOneRow: Fibonacci(a, b) = b, a + b \n Fibonacci.repeat(10, 0, 1)
+-- special__loopResultIsOneRow: Fibonacci(a, b) = b, a + b \n Fibonacci(0, 1).repeat(10)
 def case_special__loopResultIsOneRow : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "Fibonacci" (alg ["a", "b"] [] [] [.param "b", (.binary .add (.param "a") (.param "b"))])] [(.dotCall (.resolve "Fibonacci") "repeat" (some [.num 10, .num 0, .num 1]))])
+  .algorithmExpr (alg [] [] [privateProp "Fibonacci" (alg ["a", "b"] [] [] [.param "b", (.binary .add (.param "a") (.param "b"))])] [(.dotCall (.call (.resolve "Fibonacci") [.num 0, .num 1]) "repeat" (some [.num 10]))])
 #guard obs case_special__loopResultIsOneRow == "ok raw=S[55, 89] n=1"
 
--- special__loopResultBesideAnotherRow: Fibonacci(a, b) = b, a + b \n Fibonacci.repeat(10, 0, 1), 7
+-- special__loopResultBesideAnotherRow: Fibonacci(a, b) = b, a + b \n Fibonacci(0, 1).repeat(10), 7
 def case_special__loopResultBesideAnotherRow : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "Fibonacci" (alg ["a", "b"] [] [] [.param "b", (.binary .add (.param "a") (.param "b"))])] [(.dotCall (.resolve "Fibonacci") "repeat" (some [.num 10, .num 0, .num 1])), .num 7])
+  .algorithmExpr (alg [] [] [privateProp "Fibonacci" (alg ["a", "b"] [] [] [.param "b", (.binary .add (.param "a") (.param "b"))])] [(.dotCall (.call (.resolve "Fibonacci") [.num 0, .num 1]) "repeat" (some [.num 10])), .num 7])
 #guard obs case_special__loopResultBesideAnotherRow == "ok raw=S[S[55, 89], 7] n=2"
 
--- special__loopResultSpreadOpensIt: Fibonacci(a, b) = b, a + b \n Fibonacci.repeat(10, 0, 1)*, 997
+-- special__loopResultSpreadOpensIt: Fibonacci(a, b) = b, a + b \n Fibonacci(0, 1).repeat(10)*, 997
 def case_special__loopResultSpreadOpensIt : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "Fibonacci" (alg ["a", "b"] [] [] [.param "b", (.binary .add (.param "a") (.param "b"))])] [(.sequenceSpread (.dotCall (.resolve "Fibonacci") "repeat" (some [.num 10, .num 0, .num 1]))), .num 997])
+  .algorithmExpr (alg [] [] [privateProp "Fibonacci" (alg ["a", "b"] [] [] [.param "b", (.binary .add (.param "a") (.param "b"))])] [(.sequenceSpread (.dotCall (.call (.resolve "Fibonacci") [.num 0, .num 1]) "repeat" (some [.num 10]))), .num 997])
 #guard obs case_special__loopResultSpreadOpensIt == "ok raw=S[55, 89, 997] n=3"
 
--- special__loopZeroSlotResult: Drop(*xs) = { ()* } \n repeat(Drop, 1, 5), repeat(Drop, 1, 5)*, 9
+-- special__loopZeroSlotResult: Drop(*xs) = { ()* } \n repeat(Drop(5), 1), repeat(Drop(5), 1)*, 9
 def case_special__loopZeroSlotResult : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "Drop" (algWithParameters [{ name := "xs", kind := .collecting }] [] [] [(.sequenceSpread (.emptySequence 0))])] [(.call (.resolve "repeat") [.resolve "Drop", .num 1, .num 5]), (.sequenceSpread (.call (.resolve "repeat") [.resolve "Drop", .num 1, .num 5])), .num 9])
+  .algorithmExpr (alg [] [] [privateProp "Drop" (algWithParameters [{ name := "xs", kind := .collecting }] [] [] [(.sequenceSpread (.emptySequence 0))])] [(.call (.resolve "repeat") [(.call (.resolve "Drop") [.num 5]), .num 1]), (.sequenceSpread (.call (.resolve "repeat") [(.call (.resolve "Drop") [.num 5]), .num 1])), .num 9])
 #guard obs case_special__loopZeroSlotResult == "ok raw=S[S[], 9] n=2"
 
--- special__repeatedNameStepSpreadRowIsTwoSlots: Dup(x, x) = { (x + 1, x + 1)* } \n Dup.repeat(2, 1, 1)
+-- special__repeatedNameStepSpreadRowIsTwoSlots: Dup(x, x) = { (x + 1, x + 1)* } \n Dup(1, 1).repeat(2)
 def case_special__repeatedNameStepSpreadRowIsTwoSlots : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "Dup" (alg ["x", "x"] [] [] [(.sequenceSpread (.capture [(.binary .add (.param "x") (.num 1)), (.binary .add (.param "x") (.num 1))]))])] [(.dotCall (.resolve "Dup") "repeat" (some [.num 2, .num 1, .num 1]))])
+  .algorithmExpr (alg [] [] [privateProp "Dup" (alg ["x", "x"] [] [] [(.sequenceSpread (.capture [(.binary .add (.param "x") (.num 1)), (.binary .add (.param "x") (.num 1))]))])] [(.dotCall (.call (.resolve "Dup") [.num 1, .num 1]) "repeat" (some [.num 2]))])
 #guard obs case_special__repeatedNameStepSpreadRowIsTwoSlots == "ok raw=S[3, 3] n=1"
 
--- special__repeatedNameStepDivergingRowsRebindFails: Dup(x, x) = { x + 1, x + 2 } \n Dup.repeat(2, 1, 1)
+-- special__repeatedNameStepDivergingRowsRebindFails: Dup(x, x) = { x + 1, x + 2 } \n Dup(1, 1).repeat(2)
 def case_special__repeatedNameStepDivergingRowsRebindFails : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "Dup" (alg ["x", "x"] [] [] [(.binary .add (.param "x") (.num 1)), (.binary .add (.param "x") (.num 2))])] [(.dotCall (.resolve "Dup") "repeat" (some [.num 2, .num 1, .num 1]))])
+  .algorithmExpr (alg [] [] [privateProp "Dup" (alg ["x", "x"] [] [] [(.binary .add (.param "x") (.num 1)), (.binary .add (.param "x") (.num 2))])] [(.dotCall (.call (.resolve "Dup") [.num 1, .num 1]) "repeat" (some [.num 2]))])
 #guard obs case_special__repeatedNameStepDivergingRowsRebindFails == "err arity"
 
 #guard errorObs case_special__repeatedNameStepDivergingRowsRebindFails == .matched (some { kind := "badArity", names := [], counts := [] })
--- special__structuralStepSpreadRowSuppliesItems: Step2((a, b)) = { (b, a + b)* } \n repeat(Step2, 1, (0, 1)), Step2((0, 1))
+-- special__structuralStepSpreadRowSuppliesItems: Step2((a, b)) = { (b, a + b)* } \n repeat(Step2((0, 1)), 1), Step2((0, 1))
 def case_special__structuralStepSpreadRowSuppliesItems : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "Step2" (algWithParameterPatterns [.sequenceValue [.capture { name := "a" }, .capture { name := "b" }]] [] [] [(.sequenceSpread (.capture [.param "b", (.binary .add (.param "a") (.param "b"))]))])] [(.call (.resolve "repeat") [.resolve "Step2", .num 1, (.capture [.num 0, .num 1])]), (.call (.resolve "Step2") [(.capture [.num 0, .num 1])])])
+  .algorithmExpr (alg [] [] [privateProp "Step2" (algWithParameterPatterns [.sequenceValue [.capture { name := "a" }, .capture { name := "b" }]] [] [] [(.sequenceSpread (.capture [.param "b", (.binary .add (.param "a") (.param "b"))]))])] [(.call (.resolve "repeat") [(.call (.resolve "Step2") [(.capture [.num 0, .num 1])]), .num 1]), (.call (.resolve "Step2") [(.capture [.num 0, .num 1])])])
 #guard obs case_special__structuralStepSpreadRowSuppliesItems == "ok raw=S[S[1, 1], S[1, 1]] n=2"
 
--- special__structuralStepSpreadRowCannotRebind: Step2((a, b)) = { (b, a + b)* } \n Step2.repeat(2, (0, 1))
+-- special__structuralStepSpreadRowCannotRebind: Step2((a, b)) = { (b, a + b)* } \n Step2((0, 1)).repeat(2)
 def case_special__structuralStepSpreadRowCannotRebind : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "Step2" (algWithParameterPatterns [.sequenceValue [.capture { name := "a" }, .capture { name := "b" }]] [] [] [(.sequenceSpread (.capture [.param "b", (.binary .add (.param "a") (.param "b"))]))])] [(.dotCall (.resolve "Step2") "repeat" (some [.num 2, (.capture [.num 0, .num 1])]))])
+  .algorithmExpr (alg [] [] [privateProp "Step2" (algWithParameterPatterns [.sequenceValue [.capture { name := "a" }, .capture { name := "b" }]] [] [] [(.sequenceSpread (.capture [.param "b", (.binary .add (.param "a") (.param "b"))]))])] [(.dotCall (.call (.resolve "Step2") [(.capture [.num 0, .num 1])]) "repeat" (some [.num 2]))])
 #guard obs case_special__structuralStepSpreadRowCannotRebind == "err arity"
 
 #guard errorObs case_special__structuralStepSpreadRowCannotRebind == .matched (some { kind := "arity", names := [], counts := [1, 2] })
--- special__historyStepSpreadRowEqualsDirectCall: P((*h), n) = { h*, n + 1 } \n repeat(P, 1, (1, 2), 0) == P((1, 2), 0)
+-- special__historyStepSpreadRowEqualsDirectCall: P((*h), n) = { h*, n + 1 } \n repeat(P((1, 2), 0), 1) == P((1, 2), 0)
 def case_special__historyStepSpreadRowEqualsDirectCall : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "P" (algWithParameterPatterns [.sequenceValue [.capture { name := "h", kind := .collecting }], .capture { name := "n" }] [] [] [(.sequenceSpread (.param "h")), (.binary .add (.param "n") (.num 1))])] [(.comparison (.call (.resolve "repeat") [.resolve "P", .num 1, (.capture [.num 1, .num 2]), .num 0]) [{ op := .eq, operand := (.call (.resolve "P") [(.capture [.num 1, .num 2]), .num 0]) }])])
+  .algorithmExpr (alg [] [] [privateProp "P" (algWithParameterPatterns [.sequenceValue [.capture { name := "h", kind := .collecting }], .capture { name := "n" }] [] [] [(.sequenceSpread (.param "h")), (.binary .add (.param "n") (.num 1))])] [(.comparison (.call (.resolve "repeat") [(.call (.resolve "P") [(.capture [.num 1, .num 2]), .num 0]), .num 1]) [{ op := .eq, operand := (.call (.resolve "P") [(.capture [.num 1, .num 2]), .num 0]) }])])
 #guard obs case_special__historyStepSpreadRowEqualsDirectCall == "ok raw=true n=1"
 
--- special__nestedLoopStepRowIsOneSlot: Fibonacci(a, b) = b, a + b \n Two(a, b) = repeat(Fibonacci, 2, a, b) \n Two.repeat(3, 0, 1)
+-- special__nestedLoopStepRowIsOneSlot: Fibonacci(a, b) = b, a + b \n Two(a, b) = repeat(Fibonacci(a, b), 2) \n Two(0, 1).repeat(3)
 def case_special__nestedLoopStepRowIsOneSlot : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "Fibonacci" (alg ["a", "b"] [] [] [.param "b", (.binary .add (.param "a") (.param "b"))]), privateProp "Two" (alg ["a", "b"] [] [] [(.call (.resolve "repeat") [.resolve "Fibonacci", .num 2, .param "a", .param "b"])])] [(.dotCall (.resolve "Two") "repeat" (some [.num 3, .num 0, .num 1]))])
+  .algorithmExpr (alg [] [] [privateProp "Fibonacci" (alg ["a", "b"] [] [] [.param "b", (.binary .add (.param "a") (.param "b"))]), privateProp "Two" (alg ["a", "b"] [] [] [(.call (.resolve "repeat") [(.call (.resolve "Fibonacci") [.param "a", .param "b"]), .num 2])])] [(.dotCall (.call (.resolve "Two") [.num 0, .num 1]) "repeat" (some [.num 3]))])
 #guard obs case_special__nestedLoopStepRowIsOneSlot == "err arity"
 
 #guard errorObs case_special__nestedLoopStepRowIsOneSlot == .matched (some { kind := "arity", names := [], counts := [2, 1] })
--- special__nestedLoopStepRowSpread: Fibonacci(a, b) = b, a + b \n Two(a, b) = { repeat(Fibonacci, 2, a, b)* } \n Two.repeat(3, 0, 1)
+-- special__nestedLoopStepRowSpread: Fibonacci(a, b) = b, a + b \n Two(a, b) = { repeat(Fibonacci(a, b), 2)* } \n Two(0, 1).repeat(3)
 def case_special__nestedLoopStepRowSpread : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "Fibonacci" (alg ["a", "b"] [] [] [.param "b", (.binary .add (.param "a") (.param "b"))]), privateProp "Two" (alg ["a", "b"] [] [] [(.sequenceSpread (.call (.resolve "repeat") [.resolve "Fibonacci", .num 2, .param "a", .param "b"]))])] [(.dotCall (.resolve "Two") "repeat" (some [.num 3, .num 0, .num 1]))])
+  .algorithmExpr (alg [] [] [privateProp "Fibonacci" (alg ["a", "b"] [] [] [.param "b", (.binary .add (.param "a") (.param "b"))]), privateProp "Two" (alg ["a", "b"] [] [] [(.sequenceSpread (.call (.resolve "repeat") [(.call (.resolve "Fibonacci") [.param "a", .param "b"]), .num 2]))])] [(.dotCall (.call (.resolve "Two") [.num 0, .num 1]) "repeat" (some [.num 3]))])
 #guard obs case_special__nestedLoopStepRowSpread == "ok raw=S[8, 13] n=1"
 
--- special__callbackBodyLoopIsOneValue: Fib(x, y) = y, x + y \n [0, 1].map({ repeat(Fib, 2, x, 1) })
+-- special__callbackBodyLoopIsOneValue: Fib(x, y) = y, x + y \n [0, 1].map({ repeat(Fib(x, 1), 2) })
 def case_special__callbackBodyLoopIsOneValue : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "Fib" (alg ["x", "y"] [] [] [.param "y", (.binary .add (.param "x") (.param "y"))])] [(.dotCall (.listLiteral [.num 0, .num 1]) "map" (some [(.algorithmExpr (alg ["x"] [] [] [(.call (.resolve "repeat") [.resolve "Fib", .num 2, .param "x", .num 1])]))]))])
+  .algorithmExpr (alg [] [] [privateProp "Fib" (alg ["x", "y"] [] [] [.param "y", (.binary .add (.param "x") (.param "y"))])] [(.dotCall (.listLiteral [.num 0, .num 1]) "map" (some [(.algorithmExpr (alg ["x"] [] [] [(.call (.resolve "repeat") [(.call (.resolve "Fib") [.param "x", .num 1]), .num 2])]))]))])
 #guard obs case_special__callbackBodyLoopIsOneValue == "ok raw=L[S[1, 2], S[2, 3]] n=1"
 
--- special__loopStepClauseFamily: Step(0) = 0 \n Step(n) = n - 1 \n repeat(Step, 2, 3), Step.repeat(5, 3), Step(Step(3))
+-- special__loopStepClauseFamily: Step(0) = 0 \n Step(n) = n - 1 \n repeat(Step(3), 2), Step(3).repeat(5), Step(Step(3))
 def case_special__loopStepClauseFamily : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "Step" (.conditional none [] [⟨.litInt 0, (alg [] [] [] [.num 0])⟩, ⟨.bind "n", (alg [] [] [] [(.binary .sub (.param "n") (.num 1))])⟩])] [(.call (.resolve "repeat") [.resolve "Step", .num 2, .num 3]), (.dotCall (.resolve "Step") "repeat" (some [.num 5, .num 3])), (.call (.resolve "Step") [(.call (.resolve "Step") [.num 3])])])
+  .algorithmExpr (alg [] [] [privateProp "Step" (.conditional none [] [⟨.litInt 0, (alg [] [] [] [.num 0])⟩, ⟨.bind "n", (alg [] [] [] [(.binary .sub (.param "n") (.num 1))])⟩])] [(.call (.resolve "repeat") [(.call (.resolve "Step") [.num 3]), .num 2]), (.dotCall (.call (.resolve "Step") [.num 3]) "repeat" (some [.num 5])), (.call (.resolve "Step") [(.call (.resolve "Step") [.num 3])])])
 #guard obs case_special__loopStepClauseFamily == "ok raw=S[1, 0, 1] n=3"
 
--- special__loopStepFamilyWhile: Countdown(0) = 0, false \n Countdown(n) = n - 1, true \n while(Countdown, 3)
+-- special__loopStepFamilyWhile: Countdown(0) = 0, false \n Countdown(n) = n - 1, true \n while(Countdown(3))
 def case_special__loopStepFamilyWhile : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "Countdown" (.conditional none [] [⟨.litInt 0, (alg [] [] [] [.num 0, .boolLiteral false])⟩, ⟨.bind "n", (alg [] [] [] [(.binary .sub (.param "n") (.num 1)), .boolLiteral true])⟩])] [(.call (.resolve "while") [.resolve "Countdown", .num 3])])
+  .algorithmExpr (alg [] [] [privateProp "Countdown" (.conditional none [] [⟨.litInt 0, (alg [] [] [] [.num 0, .boolLiteral false])⟩, ⟨.bind "n", (alg [] [] [] [(.binary .sub (.param "n") (.num 1)), .boolLiteral true])⟩])] [(.call (.resolve "while") [(.call (.resolve "Countdown") [.num 3])])])
 #guard obs case_special__loopStepFamilyWhile == "ok raw=0 n=1"
 
--- special__loopStepFamilyMultiSlot: Gcd(a, 0) = a, 0, false \n Gcd(a, b) = b, a mod b, true \n while(Gcd, 48, 18)
+-- special__loopStepFamilyMultiSlot: Gcd(a, 0) = a, 0, false \n Gcd(a, b) = b, a mod b, true \n while(Gcd(48, 18))
 def case_special__loopStepFamilyMultiSlot : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "Gcd" (.conditional none [] [⟨.sequenceValue [.bind "a", .litInt 0], (alg [] [] [] [.param "a", .num 0, .boolLiteral false])⟩, ⟨.sequenceValue [.bind "a", .bind "b"], (alg [] [] [] [.param "b", (.binary .mod (.param "a") (.param "b")), .boolLiteral true])⟩])] [(.call (.resolve "while") [.resolve "Gcd", .num 48, .num 18])])
+  .algorithmExpr (alg [] [] [privateProp "Gcd" (.conditional none [] [⟨.sequenceValue [.bind "a", .litInt 0], (alg [] [] [] [.param "a", .num 0, .boolLiteral false])⟩, ⟨.sequenceValue [.bind "a", .bind "b"], (alg [] [] [] [.param "b", (.binary .mod (.param "a") (.param "b")), .boolLiteral true])⟩])] [(.call (.resolve "while") [(.call (.resolve "Gcd") [.num 48, .num 18])])])
 #guard obs case_special__loopStepFamilyMultiSlot == "ok raw=S[6, 0] n=1"
 
--- special__loopStepFamilyRowsAreTheNextState: Two(0) = 9, 9 \n Two(n) = n, n \n repeat(Two, 2, 1)
+-- special__loopStepFamilyRowsAreTheNextState: Two(0) = 9, 9 \n Two(n) = n, n \n repeat(Two(1), 2)
 def case_special__loopStepFamilyRowsAreTheNextState : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "Two" (.conditional none [] [⟨.litInt 0, (alg [] [] [] [.num 9, .num 9])⟩, ⟨.bind "n", (alg [] [] [] [.param "n", .param "n"])⟩])] [(.call (.resolve "repeat") [.resolve "Two", .num 2, .num 1])])
+  .algorithmExpr (alg [] [] [privateProp "Two" (.conditional none [] [⟨.litInt 0, (alg [] [] [] [.num 9, .num 9])⟩, ⟨.bind "n", (alg [] [] [] [.param "n", .param "n"])⟩])] [(.call (.resolve "repeat") [(.call (.resolve "Two") [.num 1]), .num 2])])
 #guard obs case_special__loopStepFamilyRowsAreTheNextState == "err arity"
 
 #guard errorObs case_special__loopStepFamilyRowsAreTheNextState == .matched (some { kind := "arity", names := [], counts := [1, 2] })
--- special__loopStepFamilyNoMatch: F(0) = 1 \n F(1) = 2 \n repeat(F, 1, 5)
+-- special__loopStepFamilyNoMatch: F(0) = 1 \n F(1) = 2 \n repeat(F(5), 1)
 def case_special__loopStepFamilyNoMatch : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "F" (.conditional none [] [⟨.litInt 0, (alg [] [] [] [.num 1])⟩, ⟨.litInt 1, (alg [] [] [] [.num 2])⟩])] [(.call (.resolve "repeat") [.resolve "F", .num 1, .num 5])])
+  .algorithmExpr (alg [] [] [privateProp "F" (.conditional none [] [⟨.litInt 0, (alg [] [] [] [.num 1])⟩, ⟨.litInt 1, (alg [] [] [] [.num 2])⟩])] [(.call (.resolve "repeat") [(.call (.resolve "F") [.num 5]), .num 1])])
 #guard obs case_special__loopStepFamilyNoMatch == "err branch"
 
--- special__loopStepFamilyClauseOrder: F(x) = 1 \n F(0) = 2 \n repeat(F, 1, 0), F(0)
+-- special__loopStepFamilyClauseOrder: F(x) = 1 \n F(0) = 2 \n repeat(F(0), 1), F(0)
 def case_special__loopStepFamilyClauseOrder : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "F" (.conditional none [] [⟨.bind "x", (alg [] [] [] [.num 1])⟩, ⟨.litInt 0, (alg [] [] [] [.num 2])⟩])] [(.call (.resolve "repeat") [.resolve "F", .num 1, .num 0]), (.call (.resolve "F") [.num 0])])
+  .algorithmExpr (alg [] [] [privateProp "F" (.conditional none [] [⟨.bind "x", (alg [] [] [] [.num 1])⟩, ⟨.litInt 0, (alg [] [] [] [.num 2])⟩])] [(.call (.resolve "repeat") [(.call (.resolve "F") [.num 0]), .num 1]), (.call (.resolve "F") [.num 0])])
 #guard obs case_special__loopStepFamilyClauseOrder == "ok raw=S[1, 1] n=2"
 
--- special__loopStepFamilyStructural: Sw((a, b)) = (b, a) \n Sw([a, b]) = [b, a] \n repeat(Sw, 1, (1, 2)), repeat(Sw, 1, [1, 2])
+-- special__loopStepFamilyStructural: Sw((a, b)) = (b, a) \n Sw([a, b]) = [b, a] \n repeat(Sw((1, 2)), 1), repeat(Sw([1, 2]), 1)
 def case_special__loopStepFamilyStructural : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "Sw" (.conditional none [] [⟨.sequenceValue [.sequenceValue [.bind "a", .bind "b"]], (alg [] [] [] [(.capture [.param "b", .param "a"])])⟩, ⟨.sequenceValue [.listValue [.bind "a", .bind "b"]], (alg [] [] [] [(.listLiteral [.param "b", .param "a"])])⟩])] [(.call (.resolve "repeat") [.resolve "Sw", .num 1, (.capture [.num 1, .num 2])]), (.call (.resolve "repeat") [.resolve "Sw", .num 1, (.listLiteral [.num 1, .num 2])])])
+  .algorithmExpr (alg [] [] [privateProp "Sw" (.conditional none [] [⟨.sequenceValue [.sequenceValue [.bind "a", .bind "b"]], (alg [] [] [] [(.capture [.param "b", .param "a"])])⟩, ⟨.sequenceValue [.listValue [.bind "a", .bind "b"]], (alg [] [] [] [(.listLiteral [.param "b", .param "a"])])⟩])] [(.call (.resolve "repeat") [(.call (.resolve "Sw") [(.capture [.num 1, .num 2])]), .num 1]), (.call (.resolve "repeat") [(.call (.resolve "Sw") [(.listLiteral [.num 1, .num 2])]), .num 1])])
 #guard obs case_special__loopStepFamilyStructural == "ok raw=S[S[2, 1], L[2, 1]] n=2"
 
--- special__loopStepFamilyRepeatedName: E(x, x) = 0, 0 \n E(a, b) = a + 1, b \n repeat(E, 3, 0, 2)
+-- special__loopStepFamilyRepeatedName: E(x, x) = 0, 0 \n E(a, b) = a + 1, b \n repeat(E(0, 2), 3)
 def case_special__loopStepFamilyRepeatedName : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "E" (.conditional none [] [⟨.sequenceValue [.bind "x", .bind "x"], (alg [] [] [] [.num 0, .num 0])⟩, ⟨.sequenceValue [.bind "a", .bind "b"], (alg [] [] [] [(.binary .add (.param "a") (.num 1)), .param "b"])⟩])] [(.call (.resolve "repeat") [.resolve "E", .num 3, .num 0, .num 2])])
+  .algorithmExpr (alg [] [] [privateProp "E" (.conditional none [] [⟨.sequenceValue [.bind "x", .bind "x"], (alg [] [] [] [.num 0, .num 0])⟩, ⟨.sequenceValue [.bind "a", .bind "b"], (alg [] [] [] [(.binary .add (.param "a") (.num 1)), .param "b"])⟩])] [(.call (.resolve "repeat") [(.call (.resolve "E") [.num 0, .num 2]), .num 3])])
 #guard obs case_special__loopStepFamilyRepeatedName == "ok raw=S[0, 0] n=1"
 
--- special__loopStepBuiltinOneRow: C(c) = count(c) \n repeat(count, 1, [1, 2]), repeat(C, 1, [1, 2]), repeat(take, 1, [1, 2, 3], 2)
+-- special__loopStepBuiltinOneRow: C(c) = count(c) \n repeat(count([1, 2]), 1), repeat(C([1, 2]), 1), repeat(take([1, 2, 3], 2), 1)
 def case_special__loopStepBuiltinOneRow : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "C" (alg ["c"] [] [] [(.call (.resolve "count") [.param "c"])])] [(.call (.resolve "repeat") [.resolve "count", .num 1, (.listLiteral [.num 1, .num 2])]), (.call (.resolve "repeat") [.resolve "C", .num 1, (.listLiteral [.num 1, .num 2])]), (.call (.resolve "repeat") [.resolve "take", .num 1, (.listLiteral [.num 1, .num 2, .num 3]), .num 2])])
+  .algorithmExpr (alg [] [] [privateProp "C" (alg ["c"] [] [] [(.call (.resolve "count") [.param "c"])])] [(.call (.resolve "repeat") [(.call (.resolve "count") [(.listLiteral [.num 1, .num 2])]), .num 1]), (.call (.resolve "repeat") [(.call (.resolve "C") [(.listLiteral [.num 1, .num 2])]), .num 1]), (.call (.resolve "repeat") [(.call (.resolve "take") [(.listLiteral [.num 1, .num 2, .num 3]), .num 2]), .num 1])])
 #guard obs case_special__loopStepBuiltinOneRow == "ok raw=S[2, 2, L[1, 2]] n=3"
 
--- special__loopStepBuiltinCollectionNextArity: repeat(take, 2, [1, 2, 3], 2)
+-- special__loopStepBuiltinCollectionNextArity: repeat(take([1, 2, 3], 2), 2)
 def case_special__loopStepBuiltinCollectionNextArity : Expr :=
-  .algorithmExpr (alg [] [] [] [(.call (.resolve "repeat") [.resolve "take", .num 2, (.listLiteral [.num 1, .num 2, .num 3]), .num 2])])
+  .algorithmExpr (alg [] [] [] [(.call (.resolve "repeat") [(.call (.resolve "take") [(.listLiteral [.num 1, .num 2, .num 3]), .num 2]), .num 2])])
 #guard obs case_special__loopStepBuiltinCollectionNextArity == "err arity"
 
 #guard errorObs case_special__loopStepBuiltinCollectionNextArity == .matched (some { kind := "arity", names := [], counts := [2, 1] })
--- special__loopStepBuiltinEmptyResultIsTheFlag: while(first, [()])
+-- special__loopStepBuiltinEmptyResultIsTheFlag: while(first([()]))
 def case_special__loopStepBuiltinEmptyResultIsTheFlag : Expr :=
-  .algorithmExpr (alg [] [] [] [(.call (.resolve "while") [.resolve "first", (.listLiteral [(.emptySequence 0)])])])
+  .algorithmExpr (alg [] [] [] [(.call (.resolve "while") [(.call (.resolve "first") [(.listLiteral [(.emptySequence 0)])])])])
 #guard obs case_special__loopStepBuiltinEmptyResultIsTheFlag == "err type"
 
--- special__loopStepBuiltinLazyIf: repeat(if, 1, false, 1 / 0, 2)
+-- special__loopStepBuiltinLazyIf: repeat(if(false, 1 / 0, 2), 1)
 def case_special__loopStepBuiltinLazyIf : Expr :=
-  .algorithmExpr (alg [] [] [] [(.call (.resolve "repeat") [.resolve "if", .num 1, .boolLiteral false, (.binary .div (.num 1) (.num 0)), .num 2])])
+  .algorithmExpr (alg [] [] [] [(.call (.resolve "repeat") [(.call (.resolve "if") [.boolLiteral false, (.binary .div (.num 1) (.num 0)), .num 2]), .num 1])])
 #guard obs case_special__loopStepBuiltinLazyIf == "ok raw=2 n=1"
 
--- special__loopStepAliasOfFamilyAndBuiltin: Step(0) = 0 \n Step(n) = n - 1 \n A = Step \n C = count \n repeat(A, 2, 3), repeat(C, 1, [1, 2])
+-- special__loopStepAliasOfFamilyAndBuiltin: Step(0) = 0 \n Step(n) = n - 1 \n A = Step \n C = count \n repeat(A(3), 2), repeat(C([1, 2]), 1)
 def case_special__loopStepAliasOfFamilyAndBuiltin : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "A" (.alias none [] [] (.resolve "Step")), privateProp "C" (.alias none [] [] (.resolve "count")), privateProp "Step" (.conditional none [] [⟨.litInt 0, (alg [] [] [] [.num 0])⟩, ⟨.bind "n", (alg [] [] [] [(.binary .sub (.param "n") (.num 1))])⟩])] [(.call (.resolve "repeat") [.resolve "A", .num 2, .num 3]), (.call (.resolve "repeat") [.resolve "C", .num 1, (.listLiteral [.num 1, .num 2])])])
+  .algorithmExpr (alg [] [] [privateProp "A" (.alias none [] [] (.resolve "Step")), privateProp "C" (.alias none [] [] (.resolve "count")), privateProp "Step" (.conditional none [] [⟨.litInt 0, (alg [] [] [] [.num 0])⟩, ⟨.bind "n", (alg [] [] [] [(.binary .sub (.param "n") (.num 1))])⟩])] [(.call (.resolve "repeat") [(.call (.resolve "A") [.num 3]), .num 2]), (.call (.resolve "repeat") [(.call (.resolve "C") [(.listLiteral [.num 1, .num 2])]), .num 1])])
 #guard obs case_special__loopStepAliasOfFamilyAndBuiltin == "ok raw=S[1, 2] n=2"
 
--- special__loopStepForwardedFamily: Step(0) = 0 \n Step(n) = n - 1 \n Run(f, *s) = repeat(f, 2, s*) \n Run(Step, 3)
+-- special__loopStepForwardedFamily: Step(0) = 0 \n Step(n) = n - 1 \n Run(f, *s) = repeat(f(s*), 2) \n Run(Step, 3)
 def case_special__loopStepForwardedFamily : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "Step" (.conditional none [] [⟨.litInt 0, (alg [] [] [] [.num 0])⟩, ⟨.bind "n", (alg [] [] [] [(.binary .sub (.param "n") (.num 1))])⟩]), privateProp "Run" (algWithParameters [{ name := "f" }, { name := "s", kind := .collecting }] [] [] [(.call (.resolve "repeat") [.param "f", .num 2, (.sequenceSpread (.param "s"))])])] [(.call (.resolve "Run") [.resolve "Step", .num 3])])
+  .algorithmExpr (alg [] [] [privateProp "Step" (.conditional none [] [⟨.litInt 0, (alg [] [] [] [.num 0])⟩, ⟨.bind "n", (alg [] [] [] [(.binary .sub (.param "n") (.num 1))])⟩]), privateProp "Run" (algWithParameters [{ name := "f" }, { name := "s", kind := .collecting }] [] [] [(.call (.resolve "repeat") [(.call (.param "f") [(.sequenceSpread (.param "s"))]), .num 2])])] [(.call (.resolve "Run") [.resolve "Step", .num 3])])
 #guard obs case_special__loopStepForwardedFamily == "ok raw=1 n=1"
 
--- special__loopStepValueRejected: repeat(5, 1, 0)
+-- special__loopStepValueRejected: Run(f) = repeat(f(0), 1) \n Run(5)
 def case_special__loopStepValueRejected : Expr :=
-  .algorithmExpr (alg [] [] [] [(.call (.resolve "repeat") [.num 5, .num 1, .num 0])])
+  .algorithmExpr (alg [] [] [privateProp "Run" (alg ["f"] [] [] [(.call (.resolve "repeat") [(.call (.param "f") [.num 0]), .num 1])])] [(.call (.resolve "Run") [.num 5])])
 #guard obs case_special__loopStepValueRejected == "err notAnAlgorithm"
 
--- special__loopStepZeroIterationsNeverProject: repeat(5, 0, 1), repeat(1 / 0, 0, 5)
+-- special__loopStepZeroIterationsNeverProject: Run(f, s) = repeat(f(s), 0) \n Run(5, 1), Run(1 / 0, 5)
 def case_special__loopStepZeroIterationsNeverProject : Expr :=
-  .algorithmExpr (alg [] [] [] [(.call (.resolve "repeat") [.num 5, .num 0, .num 1]), (.call (.resolve "repeat") [(.binary .div (.num 1) (.num 0)), .num 0, .num 5])])
+  .algorithmExpr (alg [] [] [privateProp "Run" (alg ["f", "s"] [] [] [(.call (.resolve "repeat") [(.call (.param "f") [.param "s"]), .num 0])])] [(.call (.resolve "Run") [.num 5, .num 1]), (.call (.resolve "Run") [(.binary .div (.num 1) (.num 0)), .num 5])])
 #guard obs case_special__loopStepZeroIterationsNeverProject == "ok raw=S[1, 5] n=2"
 
--- special__loopStepLoopBuiltinAsStep: repeat(repeat, 1, { x + 1 }, 2, 0)
+-- special__loopMetaValueRefused: repeat(5, 1)
+def case_special__loopMetaValueRefused : Expr :=
+  .algorithmExpr (alg [] [] [] [(.call (.resolve "repeat") [.num 5, .num 1])])
+#guard obs case_special__loopMetaValueRefused == "err notAnAlgorithm"
+
+-- special__loopMetaPropertyReadRefused: Step(x) = x + 1, x < 3 \n Start = Step(0) \n Start.while
+def case_special__loopMetaPropertyReadRefused : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Start" (alg [] [] [] [(.call (.resolve "Step") [.num 0])]), privateProp "Step" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 1)), (.comparison (.param "x") [{ op := .lt, operand := (.num 3) }])])] [(.dotCall (.resolve "Start") "while" none)])
+#guard obs case_special__loopMetaPropertyReadRefused == "err notAnAlgorithm"
+
+-- special__loopMetaPlainAndDot: Step(x) = x + 1, x < 3 \n Inc(x) = x + 1 \n while(Step(0)), Step(0).while, Step(0).while(), repeat(Inc(0), 5), Inc(0).repeat(5)
+def case_special__loopMetaPlainAndDot : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Step" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 1)), (.comparison (.param "x") [{ op := .lt, operand := (.num 3) }])]), privateProp "Inc" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 1))])] [(.call (.resolve "while") [(.call (.resolve "Step") [.num 0])]), (.dotCall (.call (.resolve "Step") [.num 0]) "while" none), (.dotCall (.call (.resolve "Step") [.num 0]) "while" (some [])), (.call (.resolve "repeat") [(.call (.resolve "Inc") [.num 0]), .num 5]), (.dotCall (.call (.resolve "Inc") [.num 0]) "repeat" (some [.num 5]))])
+#guard obs case_special__loopMetaPlainAndDot == "ok raw=S[3, 3, 3, 5, 5] n=5"
+
+-- special__loopMetaZeroState: Z = false \n Z().while, Z().repeat(0)
+def case_special__loopMetaZeroState : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Z" (alg [] [] [] [.boolLiteral false])] [(.dotCall (.call (.resolve "Z") []) "while" none), (.dotCall (.call (.resolve "Z") []) "repeat" (some [.num 0]))])
+#guard obs case_special__loopMetaZeroState == "ok raw=S[S[], S[]] n=2"
+
+-- special__loopMetaSpreadBeforeCount: Inc(x) = x + 1 \n Inc([1][5]*).repeat(1 / 0)
+def case_special__loopMetaSpreadBeforeCount : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Inc" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 1))])] [(.dotCall (.call (.resolve "Inc") [(.sequenceSpread (.index (.listLiteral [.num 1]) [.num 5]))]) "repeat" (some [(.binary .div (.num 1) (.num 0))]))])
+#guard obs case_special__loopMetaSpreadBeforeCount == "err index"
+
+#guard errorObs case_special__loopMetaSpreadBeforeCount == .matched (some { kind := "index", names := [], counts := [] })
+-- special__loopMetaExactArity: Step(x) = x + 1, x < 3 \n while(Step, 0)
+def case_special__loopMetaExactArity : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Step" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 1)), (.comparison (.param "x") [{ op := .lt, operand := (.num 3) }])])] [(.call (.resolve "while") [.resolve "Step", .num 0])])
+#guard obs case_special__loopMetaExactArity == "err arity"
+
+#guard errorObs case_special__loopMetaExactArity == .matched (some { kind := "arity", names := [], counts := [1, 2] })
+-- special__loopMetaQualifiedCalleeRefused: Box = { S(x) = x + 1, x < 3 } \n Box.S(0).while
+def case_special__loopMetaQualifiedCalleeRefused : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Box" (alg [] [] [privateProp "S" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 1)), (.comparison (.param "x") [{ op := .lt, operand := (.num 3) }])])] [])] [(.dotCall (.dotCall (.resolve "Box") "S" (some [.num 0])) "while" none)])
+#guard obs case_special__loopMetaQualifiedCalleeRefused == "err notAnAlgorithm"
+
+-- special__loopMetaNamedAlias: Box = { S(x) = x + 1, x < 3 } \n S = Box.S \n S(0).while
+def case_special__loopMetaNamedAlias : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Box" (alg [] [] [privateProp "S" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 1)), (.comparison (.param "x") [{ op := .lt, operand := (.num 3) }])])] []), privateProp "S" (.alias none [] [] ((.dotCall (.resolve "Box") "S" none)))] [(.dotCall (.call (.resolve "S") [.num 0]) "while" none)])
+#guard obs case_special__loopMetaNamedAlias == "ok raw=3 n=1"
+
+-- special__loopStepLoopBuiltinAsStep: Step = { x + 1 } \n repeat(repeat(Step(0), 2), 1)
 def case_special__loopStepLoopBuiltinAsStep : Expr :=
-  .algorithmExpr (alg [] [] [] [(.call (.resolve "repeat") [.resolve "repeat", .num 1, (.algorithmExpr (alg ["x"] [] [] [(.binary .add (.param "x") (.num 1))])), .num 2, .num 0])])
+  .algorithmExpr (alg [] [] [privateProp "Step" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 1))])] [(.call (.resolve "repeat") [(.call (.resolve "repeat") [(.call (.resolve "Step") [.num 0]), .num 2]), .num 1])])
 #guard obs case_special__loopStepLoopBuiltinAsStep == "ok raw=2 n=1"
 
 -- special__containsSequenceItem: contains(((1, 2), 3), (1, 2))
@@ -13243,21 +13285,21 @@ def case_special__ifAlgorithmChannelParameterSlotIsArity : Expr :=
 #guard obs case_special__ifAlgorithmChannelParameterSlotIsArity == "err arity"
 
 #guard errorObs case_special__ifAlgorithmChannelParameterSlotIsArity == .matched (some { kind := "arity", names := [], counts := [1, 0] })
--- special__repeatInitialParameterizedSlotIsArity: Inc(x) = x + 1 \n Step(s) = s + 1 \n Probe(u) = repeat(Step, 1, Inc) \n Probe(0)
+-- special__repeatInitialParameterizedSlotIsArity: Inc(x) = x + 1 \n Step(s) = s + 1 \n Probe(u) = repeat(Step(Inc), 1) \n Probe(0)
 def case_special__repeatInitialParameterizedSlotIsArity : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "Inc" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 1))]), privateProp "Step" (alg ["s"] [] [] [(.binary .add (.param "s") (.num 1))]), privateProp "Probe" (alg ["u"] [] [] [(.call (.resolve "repeat") [.resolve "Step", .num 1, .resolve "Inc"])])] [(.call (.resolve "Probe") [.num 0])])
+  .algorithmExpr (alg [] [] [privateProp "Inc" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 1))]), privateProp "Step" (alg ["s"] [] [] [(.binary .add (.param "s") (.num 1))]), privateProp "Probe" (alg ["u"] [] [] [(.call (.resolve "repeat") [(.call (.resolve "Step") [.resolve "Inc"]), .num 1])])] [(.call (.resolve "Probe") [.num 0])])
 #guard obs case_special__repeatInitialParameterizedSlotIsArity == "err arity"
 
 #guard errorObs case_special__repeatInitialParameterizedSlotIsArity == .matched (some { kind := "arity", names := [], counts := [1, 0] })
--- special__repeatCountParameterizedSlotIsArity: Inc(x) = x + 1 \n Step(s) = s + 1 \n Probe(u) = repeat(Step, Inc, 0) \n Probe(0)
+-- special__repeatCountParameterizedSlotIsArity: Inc(x) = x + 1 \n Step(s) = s + 1 \n Probe(u) = repeat(Step(0), Inc) \n Probe(0)
 def case_special__repeatCountParameterizedSlotIsArity : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "Inc" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 1))]), privateProp "Step" (alg ["s"] [] [] [(.binary .add (.param "s") (.num 1))]), privateProp "Probe" (alg ["u"] [] [] [(.call (.resolve "repeat") [.resolve "Step", .resolve "Inc", .num 0])])] [(.call (.resolve "Probe") [.num 0])])
+  .algorithmExpr (alg [] [] [privateProp "Inc" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 1))]), privateProp "Step" (alg ["s"] [] [] [(.binary .add (.param "s") (.num 1))]), privateProp "Probe" (alg ["u"] [] [] [(.call (.resolve "repeat") [(.call (.resolve "Step") [.num 0]), .resolve "Inc"])])] [(.call (.resolve "Probe") [.num 0])])
 #guard obs case_special__repeatCountParameterizedSlotIsArity == "err arity"
 
 #guard errorObs case_special__repeatCountParameterizedSlotIsArity == .matched (some { kind := "arity", names := [], counts := [1, 0] })
--- special__whileInitialParameterizedSlotIsArity: Inc(x) = x + 1 \n Down(s) = s - 1, s \n Probe(u) = while(Down, Inc) \n Probe(0)
+-- special__whileInitialParameterizedSlotIsArity: Inc(x) = x + 1 \n Down(s) = s - 1, s \n Probe(u) = while(Down(Inc)) \n Probe(0)
 def case_special__whileInitialParameterizedSlotIsArity : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "Inc" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 1))]), privateProp "Down" (alg ["s"] [] [] [(.binary .sub (.param "s") (.num 1)), .param "s"]), privateProp "Probe" (alg ["u"] [] [] [(.call (.resolve "while") [.resolve "Down", .resolve "Inc"])])] [(.call (.resolve "Probe") [.num 0])])
+  .algorithmExpr (alg [] [] [privateProp "Inc" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 1))]), privateProp "Down" (alg ["s"] [] [] [(.binary .sub (.param "s") (.num 1)), .param "s"]), privateProp "Probe" (alg ["u"] [] [] [(.call (.resolve "while") [(.call (.resolve "Down") [.resolve "Inc"])])])] [(.call (.resolve "Probe") [.num 0])])
 #guard obs case_special__whileInitialParameterizedSlotIsArity == "err arity"
 
 #guard errorObs case_special__whileInitialParameterizedSlotIsArity == .matched (some { kind := "arity", names := [], counts := [1, 0] })
@@ -13291,9 +13333,9 @@ def case_special__reduceParameterIgnoringInitialStillRejected : Expr :=
 #guard obs case_special__reduceParameterIgnoringInitialStillRejected == "err arity"
 
 #guard errorObs case_special__reduceParameterIgnoringInitialStillRejected == .matched (some { kind := "badArity", names := [], counts := [] })
--- special__repeatParameterizedStepIsCallback: Inc(x) = x + 1 \n repeat(Inc, 2, 0)
+-- special__repeatParameterizedStepIsCallback: Inc(x) = x + 1 \n repeat(Inc(0), 2)
 def case_special__repeatParameterizedStepIsCallback : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "Inc" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 1))])] [(.call (.resolve "repeat") [.resolve "Inc", .num 2, .num 0])])
+  .algorithmExpr (alg [] [] [privateProp "Inc" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 1))])] [(.call (.resolve "repeat") [(.call (.resolve "Inc") [.num 0]), .num 2])])
 #guard obs case_special__repeatParameterizedStepIsCallback == "ok raw=2 n=1"
 
 -- special__formulaLiftingIfBranchLiftsWhileStayingLazy: Inc(x) = x + 1 \n G = if(false, Inc, 7) \n G(4)
@@ -13319,9 +13361,10 @@ def case_special__formulaLiftingBuiltinSignature : Expr :=
 
 -- special__formulaLiftingLoopSignature: Step(s) = s + 1 \n G = repeat + 0 \n G(Step, 2, 0)
 def case_special__formulaLiftingLoopSignature : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "G" (algWithParameters [{ name := "step" }, { name := "count" }, { name := "init", kind := .collecting }] [] [] [(.binary .add (.call (.resolve "repeat") [.param "step", .param "count", (.sequenceSpread (.param "init"))]) (.num 0))]), privateProp "Step" (alg ["s"] [] [] [(.binary .add (.param "s") (.num 1))])] [(.call (.resolve "G") [.resolve "Step", .num 2, .num 0])])
-#guard obs case_special__formulaLiftingLoopSignature == "ok raw=2 n=1"
+  .algorithmExpr (alg [] [] [privateProp "G" (alg ["step", "count"] [] [] [(.binary .add (.call (.resolve "repeat") [.param "step", .param "count"]) (.num 0))]), privateProp "Step" (alg ["s"] [] [] [(.binary .add (.param "s") (.num 1))])] [(.call (.resolve "G") [.resolve "Step", .num 2, .num 0])])
+#guard obs case_special__formulaLiftingLoopSignature == "err arity"
 
+#guard errorObs case_special__formulaLiftingLoopSignature == .matched (some { kind := "arity", names := [], counts := [2, 3] })
 -- special__formulaLiftingDottedMember: Lib = { \n     public Inc(x) = x + 1 \n } \n G = Lib.Inc + 0 \n G(4)
 def case_special__formulaLiftingDottedMember : Expr :=
   .algorithmExpr (alg [] [] [privateProp "Lib" (alg [] [] [publicProp "Inc" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 1))])] []), privateProp "G" (alg ["x"] [] [] [(.binary .add (.dotCall (.resolve "Lib") "Inc" (some [.param "x"])) (.num 0))])] [(.call (.resolve "G") [.num 4])])
@@ -13529,7 +13572,7 @@ def case_special__aliasOfRepeatKeepsMinimumArity : Expr :=
   .algorithmExpr (alg [] [] [privateProp "R" (.alias none [] [] (.resolve "repeat")), privateProp "Inc" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 1))])] [(.call (.resolve "R") [.resolve "Inc"])])
 #guard obs case_special__aliasOfRepeatKeepsMinimumArity == "err arity"
 
-#guard errorObs case_special__aliasOfRepeatKeepsMinimumArity == .matched (some { kind := "arity", names := [], counts := [3, 1] })
+#guard errorObs case_special__aliasOfRepeatKeepsMinimumArity == .matched (some { kind := "arity", names := [], counts := [2, 1] })
 -- special__aliasChainOfBuiltin: A = count \n B = A \n C = B \n C([1, 2])
 def case_special__aliasChainOfBuiltin : Expr :=
   .algorithmExpr (alg [] [] [privateProp "A" (.alias none [] [] (.resolve "count")), privateProp "B" (.alias none [] [] (.resolve "A")), privateProp "C" (.alias none [] [] (.resolve "B"))] [(.call (.resolve "C") [(.listLiteral [.num 1, .num 2])])])
@@ -13631,7 +13674,7 @@ def case_special__writtenCallIgnoresCalleeBinderNames : Expr :=
   .algorithmExpr (alg [] [] [privateProp "G" (alg ["x", "y"] [] [] [(.call (.resolve "Add") [(.capture [.param "x", .param "y"])])]), privateProp "Add" (algWithParameterPatterns [.sequenceValue [.capture { name := "left" }, .capture { name := "right" }]] [] [] [(.binary .add (.param "left") (.param "right"))])] [(.call (.resolve "G") [.num 2, .num 3])])
 #guard obs case_special__writtenCallIgnoresCalleeBinderNames == "ok raw=5 n=1"
 
--- 2630 differential cases.
+-- 2638 differential cases.
 
 /--
 Machine-checked surface partition count: the id list is built by the same
@@ -16154,6 +16197,14 @@ def surfaceCaseIds : List String := [
   "special__loopStepForwardedFamily",
   "special__loopStepValueRejected",
   "special__loopStepZeroIterationsNeverProject",
+  "special__loopMetaValueRefused",
+  "special__loopMetaPropertyReadRefused",
+  "special__loopMetaPlainAndDot",
+  "special__loopMetaZeroState",
+  "special__loopMetaSpreadBeforeCount",
+  "special__loopMetaExactArity",
+  "special__loopMetaQualifiedCalleeRefused",
+  "special__loopMetaNamedAlias",
   "special__loopStepLoopBuiltinAsStep",
   "special__containsSequenceItem",
   "special__containsListItem",
@@ -16270,7 +16321,7 @@ def surfaceCaseIds : List String := [
   "special__writtenCallInfersWrittenNames",
   "special__writtenCallIgnoresCalleeBinderNames"
 ]
-#guard surfaceCaseIds.length == 2630
+#guard surfaceCaseIds.length == 2638
 
 /-!
 Direct internal-node cases: `Expr.sequenceConstruct` is an INTERNAL node —
@@ -16403,5 +16454,5 @@ def internalNodeCaseIds : List String := [
 #guard internalNodeCaseIds.length == 19
 
 -- 19 internal-node cases.
--- Total: 2649 case guards (2630 surface + 19 internal-node).
+-- Total: 2657 case guards (2638 surface + 19 internal-node).
 end SemanticExplorerCases

@@ -99,7 +99,7 @@ public class CallableAliasBindingIndirectionTests
     [InlineData("I = if\nI(true, 1, 1 / 0)", "ok 1")]
     [InlineData("Bad(x) = trace(x) / 0\nM = map\nM([], Bad)", "ok L[]")]
     [InlineData("Inc(x) = x + 1\nR = repeat\nR(Inc)",
-        "err ArityMismatch: Callable `repeat(step, count, initialState)` expects at least 3 arguments, but was called with 1 argument.")]
+        "err ArityMismatch: Callable `repeat(meta step, count)` expects 2 arguments, but was called with 1 argument.")]
     [InlineData("Fact(0) = 1\nFact(n) = n * Fact(n - 1)\nF = Fact\nF(1, 2)",
         "err ArityMismatch: Property 'F' expects 1 parameter, but was called with 2 arguments.")]
     [InlineData("Inc(x) = x + 1\nA = abs\nK = A(Inc)\nK(-5)", "ok 4")]
@@ -114,7 +114,7 @@ public class CallableAliasBindingIndirectionTests
         "ok S[1, 2, 3, 4, 1] [tick#1,tick#2,tick#3,tick#4]")]
     [InlineData("F = y + 1\nLib = {\n    public A = F\n}\nG = {\n    W(x) = Lib.A\n    W(1) + y\n}\nG(10)", "ok 21")]
     [InlineData("I = if\nB = I\nApply(f) = f(true, trace(1), trace(2) / 0)\nApply(B)", "ok 1 [trace(1)]")]
-    [InlineData("Inc(x) = trace(x) + 1\nR = repeat\nB = R\nApply(f) = f(Inc, 3, 0)\nApply(B)", "ok 3 [trace(0),trace(1),trace(2)]")]
+    [InlineData("Inc(x) = trace(x) + 1\nR = repeat\nB = R\nApply(f) = f(Inc(0), 3)\nApply(B)", "ok 3 [trace(0),trace(1),trace(2)]")]
     [InlineData("U((0, x)) = x\nU([x, 0]) = x\nA = U\nB = A\nmap([(0, 4), [5, 0]], B)", "ok L[4, 5]")]
     [InlineData("Only(*xs) = tick()\nA = Only\nP(f, f) = f()\nP(A, Only)",
         "err ArityMismatch: while evaluating call to P: repeated parameter 'f' requires equal arguments: Bad arity [tick#1,tick#2]")]
@@ -586,7 +586,7 @@ public class CallableAliasBindingIndirectionTests
     [InlineData("F(x) = x\nA = F", "A", "A(x)", "F", "F(x)")]
     [InlineData("C = count", "C", "C(collection)", "count", "count(collection)")]
     [InlineData("I = if", "I", "I(condition, whenTrue, whenFalse)", "if", "if(condition, whenTrue, whenFalse)")]
-    [InlineData("R = repeat", "R", "R(step, count, *init)", "repeat", "repeat(step, count, *init)")]
+    [InlineData("R = repeat", "R", "R(meta step, count)", "repeat", "repeat(meta step, count)")]
     // A family displays its first clause's positions (`Fact(0)` names none: `value`), alias and target alike.
     [InlineData("Fact(0) = 1\nFact(n) = n * Fact(n - 1)\nF = Fact", "F", "F(value)", "Fact", "Fact(value)")]
     [InlineData("U(1) = 1\nU(-1) = -1\nUA = U", "UA", "UA(value)", "U", "U (clause family without nameable positions)")]

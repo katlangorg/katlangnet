@@ -31,15 +31,15 @@ public class LoopStepUnboundStateMessageTests
     public static TheoryData<string, string, string, int, string[]> NoBindableStepParameter() => new()
     {
         // zero-parameter user algorithms
-        { "zero-parameter property", "Z = 5\nrepeat(Z, 1, 1)", "repeat", 1, ["while evaluating call to repeat"] },
-        { "zero-parameter block", "repeat({ 1 }, 1, 1)", "repeat", 1, ["while evaluating call to repeat"] },
-        { "zero-parameter property, while", "Z = true\nwhile(Z, 1)", "while", 1, ["while evaluating call to while"] },
-        { "nested step whose names were captured", "Outer(x) = {\n  Step = x + 1\n  repeat(Step, 2, x)\n}\nOuter(1)", "repeat", 1, ["while evaluating call to Outer", "while evaluating call to repeat"] },
+        { "zero-parameter property", "Z = 5\nrepeat(Z(1), 1)", "repeat", 1, ["while evaluating call to repeat"] },
+        { "zero-parameter block", "Step = { 1 }\nrepeat(Step(1), 1)", "repeat", 1, ["while evaluating call to repeat"] },
+        { "zero-parameter property, while", "Z = true\nwhile(Z(1))", "while", 1, ["while evaluating call to while"] },
+        { "nested step whose names were captured", "Outer(x) = {\n  Step = x + 1\n  repeat(Step(x), 2)\n}\nOuter(1)", "repeat", 1, ["while evaluating call to Outer", "while evaluating call to repeat"] },
         // (Q-23: clause families, builtins, and aliases or forwarded parameters of either are ordinary
         // callables and never reach this shape — see FormerlyUnboundStepCategories below.)
         // zero-parameter prelude members
-        { "zero-parameter Math member", "repeat(pi, 1, 1)", "repeat", 1, ["while evaluating call to repeat"] },
-        { "zero-parameter host operation", "repeat(tick, 1, 1)", "repeat", 1, ["while evaluating call to repeat"] },
+        { "zero-parameter Math member", "repeat(pi(1), 1)", "repeat", 1, ["while evaluating call to repeat"] },
+        { "zero-parameter host operation", "repeat(tick(1), 1)", "repeat", 1, ["while evaluating call to repeat"] },
         // (Q-06: a value with no CALLABLE identity is not a step at all — see NoCallableIdentityStep.)
     };
 
@@ -49,19 +49,66 @@ public class LoopStepUnboundStateMessageTests
     /// </summary>
     public static TheoryData<string, string, string, int, string[]> NoCallableIdentityStep() => new()
     {
-        { "number", "repeat(5, 1, 1)", "repeat", 8, ["while evaluating call to repeat"] },
-        { "number, while", "while(5, 1)", "while", 7, ["while evaluating call to while"] },
-        { "string", "repeat('a', 1, 1)", "repeat", 8, ["while evaluating call to repeat"] },
-        { "Boolean", "repeat(true, 1, 1)", "repeat", 8, ["while evaluating call to repeat"] },
-        { "list", "repeat([1, 2], 1, 1)", "repeat", 8, ["while evaluating call to repeat"] },
-        { "sequence", "repeat((1, 2), 1, 1)", "repeat", 8, ["while evaluating call to repeat"] },
-        { "empty sequence", "repeat((), 1, 1)", "repeat", 8, ["while evaluating call to repeat"] },
-        { "operator result", "repeat(2 + 3, 1, 1)", "repeat", 8, ["while evaluating call to repeat"] },
-        { "call result", "Inc(x) = x + 1\nrepeat(Inc(1), 1, 1)", "repeat", 8, ["while evaluating call to repeat"] },
-        { "selection", "A = 1, 2\nrepeat(A[0], 1, 1)", "repeat", 8, ["while evaluating call to repeat"] },
-        { "dot-call value", "A = 3\nrepeat(A.abs, 1, 1)", "repeat", 8, ["while evaluating call to repeat"] },
-        { "value forwarded through a parameter", "Run(s) = repeat(s, 1, 1)\nRun(5)", "repeat", 5, ["while evaluating call to Run", "while evaluating call to repeat"] },
+        // META-S3-3: the step of `repeat(meta step, count)` is the captured call's callee, so a value
+        // reaches the step slot as the callee of a call through a parameter (a value written as the
+        // META argument itself is refused by META capture — MetaRefusalStep below).
+        { "number", "Run(s) = repeat(s(1), 1)\nRun(5)", "repeat", 5, ["while evaluating call to Run", "while evaluating call to repeat"] },
+        { "number, while", "Run(s) = while(s(1))\nRun(5)", "while", 5, ["while evaluating call to Run", "while evaluating call to while"] },
+        { "string", "Run(s) = repeat(s(1), 1)\nRun('a')", "repeat", 5, ["while evaluating call to Run", "while evaluating call to repeat"] },
+        { "Boolean", "Run(s) = repeat(s(1), 1)\nRun(true)", "repeat", 5, ["while evaluating call to Run", "while evaluating call to repeat"] },
+        { "list", "Run(s) = repeat(s(1), 1)\nRun([1, 2])", "repeat", 5, ["while evaluating call to Run", "while evaluating call to repeat"] },
+        { "sequence", "Run(s) = repeat(s(1), 1)\nRun((1, 2))", "repeat", 5, ["while evaluating call to Run", "while evaluating call to repeat"] },
+        { "empty sequence", "Run(s) = repeat(s(1), 1)\nRun(())", "repeat", 5, ["while evaluating call to Run", "while evaluating call to repeat"] },
+        { "operator result", "Run(s) = repeat(s(1), 1)\nRun(2 + 3)", "repeat", 5, ["while evaluating call to Run", "while evaluating call to repeat"] },
+        { "call result", "Inc(x) = x + 1\nRun(s) = repeat(s(1), 1)\nRun(Inc(1))", "repeat", 5, ["while evaluating call to Run", "while evaluating call to repeat"] },
+        { "selection", "A = 1, 2\nRun(s) = repeat(s(1), 1)\nRun(A[0])", "repeat", 5, ["while evaluating call to Run", "while evaluating call to repeat"] },
+        { "dot-call value", "A = 3\nRun(s) = repeat(s(1), 1)\nRun(A.abs)", "repeat", 5, ["while evaluating call to Run", "while evaluating call to repeat"] },
     };
+
+    /// <summary>
+    /// A value written as the loop's META argument itself (META-S3-3, CR-2): refused by META capture —
+    /// the ordinary META refusal every META parameter reports, at the argument, with nothing evaluated.
+    /// The source, and the 1-based column of the META argument on the last source line.
+    /// </summary>
+    public static TheoryData<string, int> MetaRefusalStep() => new()
+    {
+        { "repeat(5, 1)", 8 },
+        { "while(5)", 7 },
+        { "repeat('a', 1)", 8 },
+        { "repeat(true, 1)", 8 },
+        { "repeat([1, 2], 1)", 8 },
+        { "repeat((1, 2), 1)", 8 },
+        { "repeat((), 1)", 8 },
+        { "repeat(2 + 3, 1)", 8 },
+        { "A = 1, 2\nrepeat(A[0], 1)", 8 },
+        { "A = 3\nrepeat(A.abs, 1)", 8 },
+        { "Inc(x) = x + 1\nrepeat(Inc, 1)", 8 },
+        { "Inc(x) = x + 1\nStart = Inc(0)\nrepeat(Start, 1)", 8 },
+        { "Lib = { public Inc(x) = x + 1 }\nrepeat(Lib.Inc(0), 1)", 8 },
+        { "repeat(trace(1) / 0, 1)", 8 },
+    };
+
+    [Theory]
+    [MemberData(nameof(MetaRefusalStep))]
+    public async Task MetaRefusalStep_IsTheOrdinaryMetaRefusal_OnEveryRoute(string source, int column)
+    {
+        var observation = await SixRouteAgreement.OnEveryRouteAsync(source);
+        Assert.Equal("err", observation.Kind);
+        var error = Assert.Single(observation.Errors);
+        var loop = source.Contains("while(", StringComparison.Ordinal) ? "while" : "repeat";
+        Assert.StartsWith($"{KatLangErrorCode.NotAnAlgorithm}: while evaluating call to {loop}: {KatLangError.MetaRefusalMessage}", error, StringComparison.Ordinal);
+        Assert.Empty(observation.HostCalls);
+
+        var lastLine = source.Split('\n').Length;
+        foreach (var (route, routeError) in await ErrorsOnEveryRouteAsync(source))
+        {
+            var inner = Assert.IsAssignableFrom<EvalError>(routeError.Source);
+            while (inner is EvalError.WithContext withContext)
+                inner = withContext.Inner;
+            Assert.Equal(Evaluator.MetaRefusalDescription, Assert.IsType<EvalError.NotAnAlgorithm>(inner).Description);
+            Assert.True(new SourcePosition(lastLine, column) == routeError.Span?.Start, $"{route}: {routeError.Span}");
+        }
+    }
 
     private static string NotCallableSentence(string loop)
         => $"The {loop} step is not callable: the argument supplied for it is a value, not an algorithm. "
@@ -199,7 +246,6 @@ public class LoopStepUnboundStateMessageTests
             var arity = Assert.IsType<EvalError.ArityMismatch>(current);
             Assert.Equal((0, stateValues), (arity.Expected, arity.Actual));
             Assert.Null(arity.Signature);
-            Assert.Null(arity.AcceptedArity);
             Assert.True(arity.InferredImplicitParameters is null or { Count: 0 }, route);
         }
     }
@@ -207,7 +253,7 @@ public class LoopStepUnboundStateMessageTests
     [Fact]
     public void Message_ForAZeroParameterStep_IsPinnedVerbatim()
     {
-        var failure = Assert.IsType<RunResult.EvalFailure>(KatLangEngine.Run("Z = 5\nrepeat(Z, 2, 1)"));
+        var failure = Assert.IsType<RunResult.EvalFailure>(KatLangEngine.Run("Z = 5\nrepeat(Z(1), 2)"));
         var error = Assert.Single(failure.Errors);
         Assert.Equal(KatLangErrorCode.ArityMismatch, error.Code);
         Assert.Equal(new SourceSpan(2, 1, 2, 16), error.Span);
@@ -223,14 +269,15 @@ public class LoopStepUnboundStateMessageTests
     [Fact]
     public void Message_ForANonCallableValueStep_IsPinnedVerbatim()
     {
-        // Q-06: the call result `F(1)` has no CALLABLE identity — it is not a step, whatever it
-        // would evaluate to; nothing evaluates it to find that out.
-        var failure = Assert.IsType<RunResult.EvalFailure>(KatLangEngine.Run("F(0) = 5\nF(n) = n * 10\nrepeat(F(1), 2, 1)"));
+        // Q-06: the call result `F(1)` has no CALLABLE identity — supplied for the parameter `s` whose
+        // call the loop captures, it is not a step, whatever it would evaluate to; nothing evaluates it
+        // to find that out.
+        var failure = Assert.IsType<RunResult.EvalFailure>(KatLangEngine.Run("F(0) = 5\nF(n) = n * 10\nRun(s) = repeat(s(1), 2)\nRun(F(1))"));
         var error = Assert.Single(failure.Errors);
         Assert.Equal(KatLangErrorCode.NotAnAlgorithm, error.Code);
-        Assert.Equal(new SourceSpan(3, 8, 3, 12), error.Span);
+        Assert.Equal(new SourceSpan(4, 5, 4, 9), error.Span);
         Assert.Equal(
-            "while evaluating call to repeat: The repeat step is not callable: the argument supplied for it is a value, "
+            "while evaluating call to Run: while evaluating call to repeat: The repeat step is not callable: the argument supplied for it is a value, "
             + "not an algorithm. Pass an algorithm: a named algorithm, a builtin, or a block { ... }.",
             error.Message);
     }
@@ -256,15 +303,15 @@ public class LoopStepUnboundStateMessageTests
     // ── Labelled shapes describe their binding facts, without guessing declaration syntax ───
 
     [Theory]
-    [InlineData("Step(x) = x + 1\nrepeat(Step, 2, 1, 2)",
+    [InlineData("Step(x) = x + 1\nrepeat(Step(1, 2), 2)",
         "`repeat` step expects 1 state value for 1 parameter 'x', but the current loop state has 2 state values. Loop state values are bound positionally to the step's parameters.")]
-    [InlineData("Step(x) = x + 1\nA = Step\nrepeat(A, 2, 1, 2)",
+    [InlineData("Step(x) = x + 1\nA = Step\nrepeat(A(1, 2), 2)",
         "`repeat` step expects 1 state value for 1 parameter 'x', but the current loop state has 2 state values. Loop state values are bound positionally to the step's parameters.")]
-    [InlineData("Step(a, b) = a + b, b\nrepeat(Step, 2, 1)",
+    [InlineData("Step(a, b) = a + b, b\nrepeat(Step(1), 2)",
         "`repeat` step expects 2 state values for 2 parameters 'a' and 'b', but the current loop state has 1 state value. Loop state values are bound positionally to the step's parameters.")]
-    [InlineData("Step((x, y)) = (y, x + y)\nrepeat(Step, 3, 1, 1)",
+    [InlineData("Step((x, y)) = (y, x + y)\nrepeat(Step(1, 1), 3)",
         "`repeat` step expects 1 state value for 1 parameter '(x, y)', but the current loop state has 2 state values. Loop state values are bound positionally to the step's parameters.")]
-    [InlineData("Head2(x, y, *rest) = x, y\nrepeat(Head2, 1, 1)",
+    [InlineData("Head2(x, y, *rest) = x, y\nrepeat(Head2(1), 1)",
         "`repeat` variadic step expects at least 2 state values for fixed parameter(s) 'x' and 'y', but the current loop state has 1 state value.")]
     public async Task LabelledShapes_DescribeTheirParameterCounts(string source, string expected)
     {
@@ -274,11 +321,11 @@ public class LoopStepUnboundStateMessageTests
     }
 
     [Theory]
-    [InlineData("Step(x) = x + 1\nrepeat(Step, 1, 1, 2)")]
-    [InlineData("Step = x + 1\nrepeat(Step, 1, 1, 2)")]
-    [InlineData("Step((x, y)) = x + y\nrepeat(Step, 1, 1, 2)")]
-    [InlineData("Step(x, y, *rest) = x\nrepeat(Step, 1, 1)")]
-    [InlineData("Outer(x) = {\n  Step(x) = x + 1\n  repeat(Step, 1, x, x)\n}\nOuter(3)")]
+    [InlineData("Step(x) = x + 1\nrepeat(Step(1, 2), 1)")]
+    [InlineData("Step = x + 1\nrepeat(Step(1, 2), 1)")]
+    [InlineData("Step((x, y)) = x + y\nrepeat(Step(1, 2), 1)")]
+    [InlineData("Step(x, y, *rest) = x\nrepeat(Step(1), 1)")]
+    [InlineData("Outer(x) = {\n  Step(x) = x + 1\n  repeat(Step(x, x), 1)\n}\nOuter(3)")]
     public async Task BindingExplanation_DoesNotClaimTheParametersWereInferred(string source)
     {
         // Written and inferred step heads share the state-binding renderer. An explicit nested
@@ -300,24 +347,24 @@ public class LoopStepUnboundStateMessageTests
     /// message. The full category matrix is <see cref="LoopStepCallableDispatchTests"/>.
     /// </summary>
     [Theory]
-    [InlineData("clause family", "F(0) = 5\nF(n) = n * 10\nrepeat(F, 2, 1)", "ok 100")]
-    [InlineData("clause family, while", "S(0) = 1, false\nS(n) = n + 1, n < 3\nwhile(S, 0)", "ok 0")]
-    [InlineData("unnameable clause family", "G(0) = 0\nG(1) = 1\nrepeat(G, 1, 0)", "ok 0")]
-    [InlineData("clause family with two parameters", "T(0, b) = b\nT(a, b) = a + b\nrepeat(T, 1, 1, 2)", "ok 3")]
-    [InlineData("clause family with different clause kinds", "H(0) = 1\nH([x]) = x\nrepeat(H, 1, 0)", "ok 1")]
-    [InlineData("fluent clause family step", "F(0) = 5\nF(n) = n * 10\nF.repeat(2, 1)", "ok 100")]
-    [InlineData("clause family forwarded through a parameter", "F(0) = 5\nF(n) = n * 10\nRun(s) = repeat(s, 2, 1)\nRun(F)", "ok 100")]
-    [InlineData("alias of a clause family", "F(0) = 5\nF(n) = n * 10\nW = F\nrepeat(W, 2, 1)", "ok 100")]
-    [InlineData("alias chain to a clause family", "F(0) = 5\nF(n) = n * 10\nW = F\nV = W\nrepeat(V, 2, 1)", "ok 100")]
-    [InlineData("alias of a builtin", "C = count\nrepeat(C, 1, [1, 2])", "ok 2")]
-    [InlineData("alias chain to a builtin", "C = count\nD = C\nrepeat(D, 1, [1, 2])", "ok 2")]
-    [InlineData("builtin", "repeat(count, 1, [1, 2])", "ok 2")]
-    [InlineData("builtin, while", "while(count, [1, 2])", "err TypeMismatch")]
-    [InlineData("callback-taking builtin", "repeat(map, 1, [1, 2], [3])", "err NotAnAlgorithm")]
-    [InlineData("if", "repeat(if, 1, true, 1, 2)", "ok 1")]
-    [InlineData("a loop builtin", "repeat(while, 1, 1, 2)", "err NotAnAlgorithm")]
-    [InlineData("fluent builtin step", "sum.repeat(1, [1, 2])", "ok 3")]
-    [InlineData("builtin forwarded through a parameter", "Run(s) = repeat(s, 1, [1, 2])\nRun(count)", "ok 2")]
+    [InlineData("clause family", "F(0) = 5\nF(n) = n * 10\nrepeat(F(1), 2)", "ok 100")]
+    [InlineData("clause family, while", "S(0) = 1, false\nS(n) = n + 1, n < 3\nwhile(S(0))", "ok 0")]
+    [InlineData("unnameable clause family", "G(0) = 0\nG(1) = 1\nrepeat(G(0), 1)", "ok 0")]
+    [InlineData("clause family with two parameters", "T(0, b) = b\nT(a, b) = a + b\nrepeat(T(1, 2), 1)", "ok 3")]
+    [InlineData("clause family with different clause kinds", "H(0) = 1\nH([x]) = x\nrepeat(H(0), 1)", "ok 1")]
+    [InlineData("fluent clause family step", "F(0) = 5\nF(n) = n * 10\nF(1).repeat(2)", "ok 100")]
+    [InlineData("clause family forwarded through a parameter", "F(0) = 5\nF(n) = n * 10\nRun(s) = repeat(s(1), 2)\nRun(F)", "ok 100")]
+    [InlineData("alias of a clause family", "F(0) = 5\nF(n) = n * 10\nW = F\nrepeat(W(1), 2)", "ok 100")]
+    [InlineData("alias chain to a clause family", "F(0) = 5\nF(n) = n * 10\nW = F\nV = W\nrepeat(V(1), 2)", "ok 100")]
+    [InlineData("alias of a builtin", "C = count\nrepeat(C([1, 2]), 1)", "ok 2")]
+    [InlineData("alias chain to a builtin", "C = count\nD = C\nrepeat(D([1, 2]), 1)", "ok 2")]
+    [InlineData("builtin", "repeat(count([1, 2]), 1)", "ok 2")]
+    [InlineData("builtin, while", "while(count([1, 2]))", "err TypeMismatch")]
+    [InlineData("callback-taking builtin", "repeat(map([1, 2], [3]), 1)", "err NotAnAlgorithm")]
+    [InlineData("if", "repeat(if(true, 1, 2), 1)", "ok 1")]
+    [InlineData("a loop builtin", "repeat(while(5), 1)", "err NotAnAlgorithm")]
+    [InlineData("fluent builtin step", "sum([1, 2]).repeat(1)", "ok 3")]
+    [InlineData("builtin forwarded through a parameter", "Run(s) = repeat(s([1, 2]), 1)\nRun(count)", "ok 2")]
     public async Task FormerlyUnboundStepCategories_AreOrdinaryCallables(string category, string source, string expected)
     {
         var observation = await SixRouteAgreement.OnEveryRouteAsync(source);
@@ -328,9 +375,10 @@ public class LoopStepUnboundStateMessageTests
             return;
         }
 
-        // An ordinary failure of the invoked callable: `while(count, …)`'s numeric result is the flag;
-        // `map`'s callback slot holds a list and the inner `while` gets a value as ITS step — neither
-        // has CALLABLE identity, so each is the invoked builtin's own NotAnAlgorithm (Q-06).
+        // An ordinary failure of the invoked callable: `while(count(…))`'s numeric result is the flag;
+        // `map`'s callback slot holds a list (Q-06), and the inner `while` gets the state cell `5` for
+        // ITS `meta step` — not a supplied call, so META refuses it: each is the invoked builtin's own
+        // NotAnAlgorithm.
         Assert.Equal("err", observation.Kind);
         var error = Assert.Single(observation.Errors);
         Assert.StartsWith(expected[4..] + ": ", error, StringComparison.Ordinal);
@@ -340,13 +388,13 @@ public class LoopStepUnboundStateMessageTests
     // ── Steps that bound before Q-23 are unchanged ──────────────────────────────────────────────
 
     [Theory]
-    [InlineData("F(0) = 5\nF(n) = n * 10\nWrap(n) = F(n)\nrepeat(Wrap, 2, 1)", "100")]
-    [InlineData("repeat(abs, 2, -3)", "3")]
-    [InlineData("repeat(Math.Abs, 1, -2)", "2")]
-    [InlineData("A = abs\nrepeat(A, 1, -2)", "2")]
-    [InlineData("Lib = { public Step(x) = x + 1 }\nrepeat(Lib.Step, 2, 0)", "2")]
-    [InlineData("Coll(*xs) = xs.count\nrepeat(Coll, 1, 1, 2)", "2")]
-    [InlineData("Step = x + 1\nrepeat(Step, 3, 0)", "3")]
+    [InlineData("F(0) = 5\nF(n) = n * 10\nWrap(n) = F(n)\nrepeat(Wrap(1), 2)", "100")]
+    [InlineData("repeat(abs(-3), 2)", "3")]
+    [InlineData("M = Math.Abs\nM(-2).repeat(1)", "2")]
+    [InlineData("A = abs\nrepeat(A(-2), 1)", "2")]
+    [InlineData("Lib = { public Step(x) = x + 1 }\nS = Lib.Step\nrepeat(S(0), 2)", "2")]
+    [InlineData("Coll(*xs) = xs.count\nrepeat(Coll(1, 2), 1)", "2")]
+    [InlineData("Step = x + 1\nrepeat(Step(0), 3)", "3")]
     public async Task AcceptedSteps_AreUnchanged(string source, string expected)
     {
         var observation = await SixRouteAgreement.OnEveryRouteAsync(source);

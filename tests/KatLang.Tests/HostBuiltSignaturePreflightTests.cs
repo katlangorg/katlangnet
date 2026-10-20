@@ -28,7 +28,7 @@ public class HostBuiltSignaturePreflightTests
             "call" => "F(1, 2)",
             "bare" => "F",
             "callback" => "map([1], F)",
-            "loop" => "repeat(F, 1, 0)",
+            "loop" => "repeat(F(0), 1)",
             "alias" => "Alias(1, 2)",
             _ => throw new ArgumentOutOfRangeException(nameof(use)),
         });

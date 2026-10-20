@@ -22,7 +22,7 @@ public class ChainedDotExecutionPathTests
     [InlineData("Call0(f) = f()\nForward(f) = Call0(f)\nForward(Lib.Sub.Q)", "7")]
     [InlineData("Alias = Lib.Sub\nQ(x) = x + 1\nAlias.Q", "4")]
     [InlineData("if(false, Lib.Sub.F(0), Lib.Sub.Q)", "7")]
-    [InlineData("Step(x) = x + Lib.Sub.Q\nrepeat(Step, 3, 0)", "21")]
+    [InlineData("Step(x) = x + Lib.Sub.Q\nrepeat(Step(0), 3)", "21")]
     [InlineData("[1, 2].map({x + Lib.Sub.Q})", "[8, 9]")]
     [InlineData("K(Sub, Q) = Lib.Sub.Q\nK(99, 100)", "7")]
     [InlineData("K(Lib) = Lib.Sub.Q\nK({public Sub = {public Q = 11}})", "11")]

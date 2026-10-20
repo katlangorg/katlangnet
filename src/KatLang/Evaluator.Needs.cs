@@ -1030,23 +1030,21 @@ public static partial class Evaluator
             () => EvalResult<Algorithm?>.Ok(argument.Algorithm),
             argument.Source?.Span, source: argument.Source, budget: ctx.Budget, token: ctx.Budget.CancellationToken);
 
+    /// <summary>
+    /// THE NATIVE LOOP KERNEL of <c>while</c>/<c>repeat</c> over its logical components (META-S3-3): the
+    /// step argument (the captured plan's canonical callee cell), the remaining iteration count of a
+    /// <c>repeat</c> (already demanded and validated, RP-1; ignored by <c>while</c>), and the initial
+    /// state cells (the captured plan's ONE sticky supply, possibly empty, OD-1). The step's CALLABLE is
+    /// projected only when an iteration needs it; <c>while</c> rounds read their flag condition first
+    /// (LOOP-CF1); the optimizer (<see cref="LoopOptimizer"/>) is tried once the step is projected; the
+    /// final state is materialized at the one result site (<see cref="MakeCheckedLoopStateResult"/>).
+    /// Lean: the loop arms of <c>applyBuiltinCounted</c> after <c>metaLoopCapture</c>.
+    /// </summary>
     private static async ValueTask<EvalResult<CountedResult>> EvalNeedLoop(
-        BuiltinId builtin, IReadOnlyList<ResolvedArgumentAlgorithm> arguments,
-        EvalCtx ctx, ValEnv values, bool asynchronous)
+        BuiltinId builtin, ResolvedArgumentAlgorithm stepArgument, long remaining,
+        IReadOnlyList<NeedCell> state, EvalCtx ctx, ValEnv values, bool asynchronous)
     {
         var repeat = builtin == BuiltinId.@repeat;
-        long remaining = long.MaxValue;
-        if (repeat)
-        {
-            var count = await DemandCell(ExistingArgumentCell(arguments[1], ctx, values), asynchronous).ConfigureAwait(false);
-            if (count.IsError) return count.Error;
-            var integer = ExpectWholeInt(count.Value.Value, "Repeat count");
-            if (integer.IsError) return integer.Error;
-            if (integer.Value < 0) return new EvalError.IllegalInEval("Repeat count must be >= 0");
-            remaining = integer.Value >= long.MaxValue ? long.MaxValue : (long)integer.Value;
-        }
-        IReadOnlyList<NeedCell> state = arguments.Skip(repeat ? 2 : 1)
-            .Select(argument => ExistingArgumentCell(argument, ctx, values)).ToArray();
         ctx.LoopDiagnostics?.RecordLoopExecution();
 
         Algorithm? step = null;
@@ -1054,7 +1052,7 @@ public static partial class Evaluator
         var loopName = repeat ? "repeat" : "while";
         // The step's written spelling names its own call frame (LOOP-08): a family's or builtin's
         // ordinary failure is reported under it, exactly as the ordinary call reports it.
-        var stepName = StepDiagnosticName(arguments[0], loopName);
+        var stepName = StepDiagnosticName(stepArgument, loopName);
         while (!repeat || remaining > 0)
         {
             if (step is null)
@@ -1065,8 +1063,8 @@ public static partial class Evaluator
                 // META-S3-0b: the async loop consumes the awaited projection outcome through the
                 // async resolution adapter (same slot, same point, same diagnostics).
                 var projection = asynchronous
-                    ? await ProjectLoopStepAsync(arguments[0], builtin, ctx).ConfigureAwait(false)
-                    : ProjectLoopStep(arguments[0], builtin);
+                    ? await ProjectLoopStepAsync(stepArgument, builtin, ctx).ConfigureAwait(false)
+                    : ProjectLoopStep(stepArgument, builtin);
                 if (projection.IsError) return projection.Error;
                 step = projection.Value;
                 var eligible = IsOptimizedLoopShapeEligible(step, out var shapeFallback);

@@ -95,7 +95,7 @@ public sealed partial class ClauseFamilyCallbackCardinalityTests
         { "spread dot receiver", Fam + "[[0]]*.map(F)", "L[S[1, 2]]" },
         { "nested map", Fam + "map([[0]], { map(x, F) })", "L[L[S[1, 2]]]" },
         { "after filter", Fam + "map(filter([0, 3], { x > 0 }), F)", "L[S[3, 3]]" },
-        { "inside a loop step", Fam + "Step(xs) = map(xs, F)\nrepeat(Step, 1, [0])", "L[S[1, 2]]" },
+        { "inside a loop step", Fam + "Step(xs) = map(xs, F)\nrepeat(Step([0]), 1)", "L[S[1, 2]]" },
         { "reduce, binder clause selected", Red + "reduce([1], R, 5)", "S[1, 5]" },
         { "reduce, one-branch family", "R(e, 0) = e, 0\nreduce([1], R, 0)", "S[1, 0]" },
         { "reduce, the second step", "R(e, 0) = { [e + 1]* }\nR(e, acc) = { [e, acc]* }\nZ = 0\nreduce([1, 2], R, 0)", "S[2, 2]" },
@@ -155,7 +155,7 @@ public sealed partial class ClauseFamilyCallbackCardinalityTests
         { "one string", "F(0) = 'zero'\nF(n) = n.string\nmap([0, 3], F)", "L['zero', '3']" },
         { "an inner call's one value", "D(x) = x, x\nF(0) = D(0)\nF(n) = D(n)\nmap([0, 3], F)", "L[S[0, 0], S[3, 3]]" },
         { "a recursive clause's inner call", "F(0) = { [1, 2]* }\nF(n) = { [F(n - 1)]* }\nZ = 0\nmap([1], F)", "L[S[1, 2]]" },
-        { "a completed loop", "Fib(x, y) = y, x + y\nF(0) = repeat(Fib, 2, 0, 1)\nF(n) = repeat(Fib, 2, n, 1)\nmap([0, 1], F)", "L[S[1, 2], S[2, 3]]" },
+        { "a completed loop", "Fib(x, y) = y, x + y\nF(0) = repeat(Fib(0, 1), 2)\nF(n) = repeat(Fib(n, 1), 2)\nmap([0, 1], F)", "L[S[1, 2], S[2, 3]]" },
         { "a spread of one item", "F(0) = { [5]* }\nF(n) = n\nmap([0, 3], F)", "L[5, 3]" },
         { "a spread of a bound scalar", "F((0, 0)) = { (0, 0)* }\nF(p) = { p* }\nZ = 0\nmap([5, 7], F)", "L[5, 7]" },
         { "η-expanded block", Fam + "map([0, 3], { F(x) })", "L[S[1, 2], S[3, 3]]" },
@@ -167,7 +167,7 @@ public sealed partial class ClauseFamilyCallbackCardinalityTests
             "S[L['z', 3, 30], 'z', 3, 30]" },
         { "qualified member", "Lib = {\n  public F(0) = 1\n  public F(n) = n * 2\n}\nmap([0, 3], Lib.F)", "L[1, 6]" },
         { "callable alias", Pair + "G = P\nmap([0], G)", "L[S[1, 2]]" },
-        { "inside a loop step", Pair + "Step(xs) = map(xs, P)\nrepeat(Step, 1, [0, 3])", "L[S[1, 2], S[3, 3]]" },
+        { "inside a loop step", Pair + "Step(xs) = map(xs, P)\nrepeat(Step([0, 3]), 1)", "L[S[1, 2], S[3, 3]]" },
         { "reduce, one value", "Add(e, 0) = e\nAdd(e, acc) = e + acc\nreduce([1, 2, 3], Add, 0)", "6" },
         { "reduce, one sequence accumulator", "R(e, 0) = (e, 0)\nR(e, acc) = (e, acc)\nreduce([1], R, 0)", "S[1, 0]" },
         { "reduce, η-expanded block", Red + "reduce([1], { R(e, a) }, 0)", "S[1, 0]" },
@@ -324,11 +324,11 @@ public sealed partial class ClauseFamilyCallbackCardinalityTests
 
     public static TheoryData<string, string, string> FamilyLoopSteps() => new()
     {
-        { "two rows are two state slots", "S(0) = 1, 2\nS(n) = n, n\nrepeat(S, 1, 0)", "ok S[1, 2]" },
-        { "dot spelling", "S(0) = 1, 2\nS(n) = n, n\nS.repeat(1, 0)", "ok S[1, 2]" },
-        { "the next iteration binds the two slots", "S(0) = 1, 2\nS(n) = n, n\nrepeat(S, 2, 0)", "err ArityMismatch" },
-        { "a two-parameter family", "T(a, 0) = a, 1\nT(a, b) = a + b, b + 1\nrepeat(T, 3, 0, 0)", "ok S[3, 3]" },
-        { "the while flag row", "Step(0) = 0, false\nStep(n) = n - 1, true\nwhile(Step, 3)", "ok 0" },
+        { "two rows are two state slots", "S(0) = 1, 2\nS(n) = n, n\nrepeat(S(0), 1)", "ok S[1, 2]" },
+        { "dot spelling", "S(0) = 1, 2\nS(n) = n, n\nS(0).repeat(1)", "ok S[1, 2]" },
+        { "the next iteration binds the two slots", "S(0) = 1, 2\nS(n) = n, n\nrepeat(S(0), 2)", "err ArityMismatch" },
+        { "a two-parameter family", "T(a, 0) = a, 1\nT(a, b) = a + b, b + 1\nrepeat(T(0, 0), 3)", "ok S[3, 3]" },
+        { "the while flag row", "Step(0) = 0, false\nStep(n) = n - 1, true\nwhile(Step(3))", "ok 0" },
     };
 
     [Theory]
@@ -353,8 +353,8 @@ public sealed partial class ClauseFamilyCallbackCardinalityTests
     {
         foreach (var (source, value) in new[]
         {
-            (Fam + "Step(xs) = map(xs, F)\nrepeat(Step, 1, [0])", "L[S[1, 2]]"),
-            (Pair + "Step(xs) = map(xs, P)\nrepeat(Step, 1, [0, 3])", "L[S[1, 2], S[3, 3]]"),
+            (Fam + "Step(xs) = map(xs, F)\nrepeat(Step([0]), 1)", "L[S[1, 2]]"),
+            (Pair + "Step(xs) = map(xs, P)\nrepeat(Step([0, 3]), 1)", "L[S[1, 2], S[3, 3]]"),
         })
         {
             var optimized = Observe(source, optimize: true);

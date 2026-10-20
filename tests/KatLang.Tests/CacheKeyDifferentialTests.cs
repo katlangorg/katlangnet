@@ -307,7 +307,7 @@ public class CacheKeyDifferentialTests
                 Val = x * 2
                 x + Val + Val + [0][0]
             }
-            repeat(Step, 3, 1)
+            repeat(Step(1), 3)
             """;
         var expr = ParseValidProgram(source);
 
@@ -347,7 +347,7 @@ public class CacheKeyDifferentialTests
                 x + Val + Val + [0][0],
                 x < 20
             }
-            while(Step, 1)
+            while(Step(1))
             """;
         var expr = ParseValidProgram(source);
 
@@ -385,7 +385,7 @@ public class CacheKeyDifferentialTests
                 a, b = (x + 1, x * 2)
                 a + b
             }
-            repeat(StepD, 3, 1)
+            repeat(StepD(1), 3)
             """;
         var expr = ParseValidProgram(source);
 
@@ -420,7 +420,7 @@ public class CacheKeyDifferentialTests
                 a * b + x,
                 x < 20
             }
-            while(StepD, 1)
+            while(StepD(1))
             """;
         var expr = ParseValidProgram(source);
 

@@ -473,7 +473,7 @@ public class HostOperationApiTests
         };
 
         var result = Assert.IsType<RunResult.Success>(
-            KatLangEngine.Run("Step(n) = n + Tick()\nrepeat(Step, 3, 0)", options));
+            KatLangEngine.Run("Step(n) = n + Tick()\nrepeat(Step(0), 3)", options));
         Assert.Equal("3", result.ToDisplayString());
         Assert.Equal(3, counter.Count);
     }

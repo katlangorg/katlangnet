@@ -337,15 +337,15 @@ public class TutorialSemanticContractTests
 
         // A completed loop is a value boundary like every call (Q-26): its multi-slot final state
         // reaches the root as ONE row, exactly like the same loop read through a property ...
-        var lone = RunSuccess("Step = a + 1, b + 1\nStep.repeat(1, 0, 0)");
+        var lone = RunSuccess("Step = a + 1, b + 1\nStep(0, 0).repeat(1)");
         Assert.Single(lone.OutputRows);
         Assert.Equal("(1, 1)", lone.ToDisplayString());
-        var captured = RunSuccess("Step = a + 1, b + 1\nR = Step.repeat(1, 0, 0)\nR");
+        var captured = RunSuccess("Step = a + 1, b + 1\nR = Step(0, 0).repeat(1)\nR");
         Assert.Single(captured.OutputRows);
         Assert.Equal("(1, 1)", captured.ToDisplayString());
 
         // ... and only the explicit spread opens it into rows.
-        Assert.Equal(3, RunSuccess("Step = a + 1, b + 1\nStep.repeat(1, 0, 0)*, 997").OutputRows.Count);
+        Assert.Equal(3, RunSuccess("Step = a + 1, b + 1\nStep(0, 0).repeat(1)*, 997").OutputRows.Count);
     }
 
     // ── "Formulas That Use Formulas": forwarded inputs follow the formula's own names and are handed on by name ──

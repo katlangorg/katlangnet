@@ -141,6 +141,17 @@ variable {γ : Type} [PartialOrder γ]
     monotone (fun x => WhileRound.advance (round x) cells) := by
   unfold WhileRound.advance; mono_cb_tac
 
+@[partial_fixpoint_monotone] theorem monotone_metaLoopCapture
+    (read : γ → Nat → EvalM CountedResult) (hr : monotone read)
+    (view : γ → Nat → EvalM (List NeedSupply.Sourced)) (hv : monotone view) (adapter : Nat) :
+    monotone (fun x => metaLoopCapture (read x) (view x) adapter) := by
+  unfold metaLoopCapture; mono_cb_tac
+
+@[partial_fixpoint_monotone] theorem monotone_metaRepeatSetup {α : Type}
+    (setup : γ → EvalM α) (hs : monotone setup) (count : γ → EvalM Int) (hc : monotone count) :
+    monotone (fun x => metaRepeatSetup (setup x) (count x)) := by
+  unfold metaRepeatSetup; mono_cb_tac
+
 @[partial_fixpoint_monotone] theorem monotone_runtimeAliasStepWith
     (project : γ → Nat → EvalM (Option Algorithm)) (h : monotone project)
     (owner : Algorithm) (target : Expr) (ctx : EvalCtx) :

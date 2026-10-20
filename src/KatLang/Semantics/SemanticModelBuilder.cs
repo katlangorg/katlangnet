@@ -1851,6 +1851,7 @@ public static class SemanticModelBuilder
                     documentLocalSpans ? GetSourceSpan(parameter) : null)
                 {
                     IsCollecting = parameter.Kind == ParameterKind.Collecting,
+                    IsMeta = parameter.Kind == ParameterKind.Meta,
                 });
             }
 
@@ -1879,6 +1880,7 @@ public static class SemanticModelBuilder
                     Span: null)
                 {
                     DisplayNameOverride = pattern.DisplayName,
+                    IsMeta = pattern is CaptureParameterPattern { Kind: ParameterKind.Meta },
                 })
                 .ToList();
 
@@ -2028,6 +2030,7 @@ public static class SemanticModelBuilder
                     .Select(pattern => new PropertyParameterInfo(pattern.DisplayName, patternParameterKind, Span: null)
                     {
                         DisplayNameOverride = pattern.DisplayName,
+                        IsMeta = pattern is CaptureParameterPattern { Kind: ParameterKind.Meta },
                     })]);
             var signatureParameters = useFlatParameters ? flat : patternParameters;
             var dot = new SharedPropertyParameterList([.. signatureParameters.Skip(1)]);
@@ -2204,7 +2207,7 @@ public static class SemanticModelBuilder
             if (algorithm is not Algorithm.Builtin(var builtin))
                 return new CallableSignature(name, []);
 
-            return BuiltinRegistry.GetBuiltin(builtin).GetToolingSignature(
+            return BuiltinRegistry.GetBuiltin(builtin).GetSignature(
                 callStyle == PropertyCallStyle.Dot ? BuiltinCallStyle.Dot : BuiltinCallStyle.Plain);
         }
 
@@ -2219,6 +2222,7 @@ public static class SemanticModelBuilder
                     GetSourceSpan(parameter))
                 {
                     IsCollecting = parameter.Kind == ParameterKind.Collecting,
+                    IsMeta = parameter.Kind == ParameterKind.Meta,
                 })
                 .ToList();
         }

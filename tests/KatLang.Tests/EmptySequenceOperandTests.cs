@@ -523,7 +523,7 @@ public class EmptySequenceOperandTests
     [InlineData("F(a) = 2 / a\nF(())", "while evaluating call to F", "2 / a", "right")]
     [InlineData("if(true, () + 1, 0)", "while evaluating call to if", "() + 1", "left")]
     [InlineData("M(a) = a + 1\nmap(((), 2), M)", "while evaluating call to map", "a + 1", "left")]
-    [InlineData("S(x) = x - 1\nrepeat(S, 2, ())", "while evaluating call to repeat", "x - 1", "left")]
+    [InlineData("S(x) = x - 1\nrepeat(S(()), 2)", "while evaluating call to repeat", "x - 1", "left")]
     [InlineData("A = ()\nB = A > 0\nB", "while evaluating `A > 0`", "A > 0", "left")]
     [InlineData("A = ()\nB = A and true\nB", "while evaluating `A and true`", "A and true", "left")]
     public void EmptyOperand_InNestedContexts_IsRejectedWithContextualBlame(

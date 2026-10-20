@@ -371,7 +371,7 @@ public class ZeroArgumentDemandArityTests
     [Fact]
     public void CollectingLocalProperty_DeclinesTempPlanning_InsideAnActuallyPlannedLoop()
     {
-        const string source = "Step(s, prior) = { R(*xs) = s\ns + 1, R }\nrepeat(Step, 3, 0, 0)";
+        const string source = "Step(s, prior) = { R(*xs) = s\ns + 1, R }\nrepeat(Step(0, 0), 3)";
         var ast = AsyncEvaluationHarness.Ast(source);
         var diagnostics = new LoopOptimizationDiagnostics();
         var (planned, _) = Evaluator.RunCountedObserved(ast, loopDiagnostics: diagnostics);
@@ -514,7 +514,7 @@ public class ZeroArgumentDemandArityTests
         Assert.Equal("[3]", Display("Big(*xs) = xs.first > 2\nfilter((1, 2, 3), Big)"));
 
         // A loop step position is an algorithm position too.
-        Assert.Equal("1", Display("Step(*s) = s.count\nrepeat(Step, 1, 9)"));
+        Assert.Equal("1", Display("Step(*s) = s.count\nrepeat(Step(9), 1)"));
 
         // A higher-order algorithm argument bound to a fixed parameter keeps BOTH
         // channels: calling it supplies arguments, reading it demands the value.
@@ -743,7 +743,7 @@ public class ZeroArgumentDemandArityTests
         const string source = """
             Only(*xs) = xs
             Step(s) = s + (Only, Only).count
-            repeat(Step, 3, 0), Only.count, count(Only), (Only, Only).count
+            repeat(Step(0), 3), Only.count, count(Only), (Only, Only).count
             """;
 
         var ast = AsyncEvaluationHarness.Ast(source);

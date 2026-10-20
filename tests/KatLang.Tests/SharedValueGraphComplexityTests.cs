@@ -336,9 +336,9 @@ public class SharedValueGraphComplexityTests
     private static string DagProgram(string body, int depth = DeepDepth)
         => $"""
             Wrap = [x, x]
-            A = Wrap.repeat({depth}, 1)
-            B = Wrap.repeat({depth}, 1)
-            C = Wrap.repeat({depth}, 2)
+            A = Wrap(1).repeat({depth})
+            B = Wrap(1).repeat({depth})
+            C = Wrap(2).repeat({depth})
             {body}
             """;
 
@@ -368,7 +368,7 @@ public class SharedValueGraphComplexityTests
         // The premise of every case below: the loop builds a DAG, not a tree. Without sharing the
         // depth-40 values would be 2^40 nodes and could not be built at all.
         var expr = new Expr.AlgorithmExpr(
-            SourceProvenance.ParseValid("Wrap = [x, x]\nWrap.repeat(3, 1)").Root);
+            SourceProvenance.ParseValid("Wrap = [x, x]\nWrap(1).repeat(3)").Root);
 
         var plain = Evaluator.Run(expr);
         if (plain.IsError)

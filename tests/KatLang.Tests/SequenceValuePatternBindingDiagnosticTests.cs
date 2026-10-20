@@ -227,7 +227,7 @@ public class SequenceValuePatternBindingDiagnosticTests
         var (message, error) = FailWithParity(
             """
             Step((x, y)) = (y, x + y)
-            Step.repeat(3, (1, 2, 3))
+            Step((1, 2, 3)).repeat(3)
             """);
 
         Assert.Equal("Sequence pattern `(x, y)` expects 2 elements, but received 3 elements.", message);

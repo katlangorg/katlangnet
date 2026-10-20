@@ -41,6 +41,9 @@ public sealed class NeedCellAsyncResolutionTests
     private static EvaluationBudget NewBudget(bool asynchronous = false, CancellationToken token = default, EvaluationLimits? limits = null)
     {
         var budget = EvaluationBudget.Create(limits, cancellationToken: token);
+        // These programs are evaluated below the preflight; a loop builtin binds a META parameter
+        // (META-S3-3), so record the run's J7 decision the program gate would make.
+        budget.DecideInvocationPlanRetention(programMayCapture: true);
         if (asynchronous) budget.MarkAsynchronousRun();
         return budget;
     }
@@ -757,8 +760,8 @@ public sealed class NeedCellAsyncResolutionTests
             Projecting(() => EvalResult<Algorithm?>.Ok(Predicate)), "f", "ok L[1, 2]"),
         "reduce" => (new Expr.Call(Builtin(BuiltinId.@reduce), [List(1, 2), new Expr.Param("f"), new Expr.Num(0)]),
             Projecting(() => EvalResult<Algorithm?>.Ok(Reducer)), "f", "ok"),
-        "repeat" => (new Expr.Call(Builtin(BuiltinId.@repeat), [new Expr.Param("f"), new Expr.Num(2), new Expr.Num(5)]), Projecting(Identity), "f", "ok 5"),
-        "while-failure" => (new Expr.Call(Builtin(BuiltinId.@while), [new Expr.Param("f"), new Expr.Num(0)]),
+        "repeat" => (new Expr.Call(Builtin(BuiltinId.@repeat), [new Expr.Call(new Expr.Param("f"), [new Expr.Num(5)]), new Expr.Num(2)]), Projecting(Identity), "f", "ok 5"),
+        "while-failure" => (new Expr.Call(Builtin(BuiltinId.@while), [new Expr.Call(new Expr.Param("f"), [new Expr.Num(0)])]),
             Projecting(() => new EvalError.IllegalInEval("step projection failed") { Span = SpanB }), "f", "err"),
         "dot-receiver-call" => (new Expr.DotCall(new Expr.Param("p"), "G", [new Expr.Num(3)]), Projecting(() => EvalResult<Algorithm?>.Ok(Box)), "p", "ok 3"),
         "dot-callee" => (new Expr.Call(new Expr.DotCall(new Expr.Param("p"), "G"), [new Expr.Num(3)]), Projecting(() => EvalResult<Algorithm?>.Ok(Box)), "p", "ok 3"),
@@ -772,7 +775,7 @@ public sealed class NeedCellAsyncResolutionTests
             Projecting(Identity), "f", "ok L[L[1, 2]]"),
         "family-map" => (new Expr.Call(Builtin(BuiltinId.@map), [List(1, 2), new Expr.Param("f")]),
             Projecting(() => EvalResult<Algorithm?>.Ok(IdentityFamily)), "f", "ok L[1, 2]"),
-        "while-success" => (new Expr.Call(Builtin(BuiltinId.@while), [new Expr.Param("f"), new Expr.Num(0)]),
+        "while-success" => (new Expr.Call(Builtin(BuiltinId.@while), [new Expr.Call(new Expr.Param("f"), [new Expr.Num(0)])]),
             Projecting(() => EvalResult<Algorithm?>.Ok(IncrementingWhileStep)), "f", "ok 2"),
         _ => throw new ArgumentOutOfRangeException(nameof(route)),
     };
@@ -796,7 +799,7 @@ public sealed class NeedCellAsyncResolutionTests
     [Fact]
     public async Task ZeroIterationRepeat_NeverProjectsItsRuntimeStep()
     {
-        var program = new Expr.Call(Builtin(BuiltinId.@repeat), [new Expr.Param("f"), new Expr.Num(0), new Expr.Num(5)]);
+        var program = new Expr.Call(Builtin(BuiltinId.@repeat), [new Expr.Call(new Expr.Param("f"), [new Expr.Num(5)]), new Expr.Num(0)]);
         var runs = await SyncAndAsync(program, Projecting(Identity));
         AssertAgree(runs);
         Assert.Equal("ok 5", Show(runs.Async.Result));
@@ -807,7 +810,7 @@ public sealed class NeedCellAsyncResolutionTests
     [Fact]
     public async Task OptimizedSyncLoop_AgreesWithTheGenericAndAsyncLoopsOverARuntimeStep()
     {
-        var program = new Expr.Call(Builtin(BuiltinId.@repeat), [new Expr.Param("f"), new Expr.Num(3), new Expr.Num(5)]);
+        var program = new Expr.Call(Builtin(BuiltinId.@repeat), [new Expr.Call(new Expr.Param("f"), [new Expr.Num(5)]), new Expr.Num(3)]);
         var budget = NewBudget();
         var cell = Projecting(Identity)(budget);
         var loops = new LoopOptimizationDiagnostics();
@@ -823,7 +826,7 @@ public sealed class NeedCellAsyncResolutionTests
     [Fact]
     public async Task StepBudget_IsChargedIdenticallyOnBothEngines_AtEveryLimit()
     {
-        var program = new Expr.Call(Builtin(BuiltinId.@repeat), [new Expr.Param("f"), new Expr.Num(3), new Expr.Num(5)]);
+        var program = new Expr.Call(Builtin(BuiltinId.@repeat), [new Expr.Call(new Expr.Param("f"), [new Expr.Num(5)]), new Expr.Num(3)]);
         for (var limit = 1; limit <= 12; limit++)
         {
             var limits = new EvaluationLimits { MaxSteps = limit };
@@ -849,7 +852,7 @@ public sealed class NeedCellAsyncResolutionTests
         {
             "map" => new Expr.Call(Builtin(BuiltinId.@map), [List(1), new Expr.Param("f")]),
             "reduce" => new Expr.Call(Builtin(BuiltinId.@reduce), [List(1), new Expr.Param("f"), new Expr.Num(0)]),
-            "repeat" => new Expr.Call(Builtin(BuiltinId.@repeat), [new Expr.Param("f"), new Expr.Num(1), new Expr.Num(0)]),
+            "repeat" => new Expr.Call(Builtin(BuiltinId.@repeat), [new Expr.Call(new Expr.Param("f"), [new Expr.Num(0)]), new Expr.Num(1)]),
             _ => new Expr.Call(new Expr.Param("f"), [new Expr.Num(3)]),
         };
         async Task<(EvalResult<Evaluator.CountedResult> Result, NeedCell Owner, NeedCell Projection, long Steps)> Observe(bool asynchronous)

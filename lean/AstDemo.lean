@@ -34,11 +34,7 @@ def SumAlg : Algorithm :=
     [ KatLang.index
         (KatLang.call
           (KatLang.resolve "repeat")
-          [ KatLang.resolve "Add"
-          , KatLang.algorithmExpr (KatLang.alg [] [] [] [ KatLang.dotCall (KatLang.resolve "Numbers") "count" ])
-          , KatLang.num 0
-          , KatLang.num 0
-          ])
+          [.call (KatLang.resolve "Add") [KatLang.num 0, KatLang.num 0], KatLang.algorithmExpr (KatLang.alg [] [] [] [ KatLang.dotCall (KatLang.resolve "Numbers") "count" ])])
         [KatLang.num 1]
     ]
 

@@ -91,7 +91,7 @@ public class LocalMemberAccessTests
     }
 
     [Theory]
-    [InlineData("Outer(n) = {\n Lib = { public X = n }\n Step(n) = Lib.X + n\n repeat(Step, 2, 0)\n}\nOuter(5), Outer(7)", "10\n14")]
+    [InlineData("Outer(n) = {\n Lib = { public X = n }\n Step(n) = Lib.X + n\n repeat(Step(0), 2)\n}\nOuter(5), Outer(7)", "10\n14")]
     [InlineData("Inc(x) = x + 1\nTen(x) = x * 10\nOuter(f) = {\n Lib = { public X = f(2) }\n Read(f) = Lib.X\n Read(Ten)\n}\nOuter(Inc)", "3")]
     public async Task CaptureOwnerBinding_SurvivesLoopsAndAlgorithmChannelShadowing(string source, string expected)
     {

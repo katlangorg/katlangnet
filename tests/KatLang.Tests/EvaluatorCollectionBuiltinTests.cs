@@ -718,7 +718,7 @@ public class EvaluatorCollectionBuiltinTests
         => AssertEvalLoopModes(
             """
             Step(a, b) = a + 1, b + 10
-            Step.repeat(3, 0, 0).take(1)
+            Step(0, 0).repeat(3).take(1)
             """,
             3);
 
@@ -727,7 +727,7 @@ public class EvaluatorCollectionBuiltinTests
         => AssertEvalLoopModes(
             """
             Grow(*history, tail) = (history*, tail + 1), tail + 1
-            Grow.repeat(3, 1, 2).take(4)
+            Grow(1, 2).repeat(3).take(4)
             """,
             1,
             3,
@@ -740,7 +740,7 @@ public class EvaluatorCollectionBuiltinTests
         => AssertEvalLoopModes(
             """
             Step(a, b) = a + 1, b + 10, a < 2
-            Step.while(0, 0).take(1)
+            Step(0, 0).while.take(1)
             """,
             2);
 

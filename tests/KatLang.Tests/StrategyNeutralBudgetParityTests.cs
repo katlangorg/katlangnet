@@ -132,41 +132,41 @@ public class StrategyNeutralBudgetParityTests
     /// </summary>
     public static readonly IReadOnlyList<(string Id, string Source, Exercises Exercises)> Corpus =
     [
-        ("inline-step", "repeat({x + 1}, 50, 0)", Exercises.PlannedLoop),
-        ("named-step", "Step(s) = s + 1\nrepeat(Step, 50, 0)", Exercises.PlannedLoop),
-        ("bare-state-row", "Step(s) = s\nrepeat(Step, 30, 7)", Exercises.PlannedLoop),
-        ("block-initial-state", "Step(s, t) = s + 1, if(s > 2, t, t + 1)\nrepeat(Step, 30, { 7 }, { 1 + 2 })", Exercises.PlannedLoop),
-        ("forwarded-block-initial-state", "Step(s) = s * 2 mod 1000\nF(x) = repeat(Step, 20, x)\nF({ 3 })", Exercises.PlannedLoop),
-        ("constant-row", "Step(s) = 5\nrepeat(Step, 30, 7)", Exercises.PlannedLoop),
-        ("nested-spine", "Step(s) = (s + 1) * 2 - s / 4\nrepeat(Step, 40, 1)", Exercises.PlannedLoop),
-        ("unary", "Step(s) = -s + 1\nrepeat(Step, 40, 3)", Exercises.PlannedLoop),
-        ("unary-of-spine", "Step(s) = -(s - 3)\nrepeat(Step, 41, 1)", Exercises.PlannedLoop),
-        ("not-and-logic", "Step(s, b) = s + 1, not b and (s > 2 or b)\nrepeat(Step, 25, 0, true)", Exercises.PlannedLoop),
-        ("comparison-chain", "Step(s, t) = s + 1, if(0 < s < 30 <= 40, t + 1, t)\nrepeat(Step, 45, 0, 0)", Exercises.PlannedLoop),
-        ("comparison-false-link", "Step(s, t) = s + 1, if(s < 3 < 2 != false, t + 1, t)\nrepeat(Step, 20, 0, 0)", Exercises.PlannedLoop),
-        ("if-state-branches", "Step(s) = if(s > 10, s, s + 2)\nrepeat(Step, 40, 0)", Exercises.PlannedLoop),
-        ("if-constant-branches", "Step(s, t) = s + 1, if(s > 10, 1, 2)\nrepeat(Step, 30, 0, 0)", Exercises.PlannedLoop),
-        ("nested-if", "Step(s) = if(s > 10, if(s > 20, s - 3, s - 1), s + 2)\nrepeat(Step, 60, 0)", Exercises.PlannedLoop),
-        ("if-in-spine", "Step(s) = 1 + if(s > 4, s, 2 * s) * 2\nrepeat(Step, 12, 1)", Exercises.PlannedLoop),
-        ("string-branches", "Step(s, t) = s + 1, if(s > 3, 'big', 'small')\nrepeat(Step, 9, 0, 'none')", Exercises.PlannedLoop),
-        ("temps", "Step(s) = {\n  T1 = s + 1\n  T2 = T1 * 2\n  T2 - s\n}\nrepeat(Step, 30, 1)", Exercises.PlannedLoop),
-        ("temp-as-if-argument", "Step(s) = {\n  T = s * 2\n  if(s > 5, T, s + 1)\n}\nrepeat(Step, 25, 0)", Exercises.PlannedLoop),
-        ("temp-explicit-call", "Step(s) = {\n  T = s * 2\n  T() + T - 1\n}\nrepeat(Step, 20, 1)", Exercises.PlannedLoop),
-        ("temp-chain", "Step(s) = {\n  A = s + 1\n  B = A + A\n  C = B * A\n  C - B\n}\nrepeat(Step, 15, 1)", Exercises.PlannedLoop),
-        ("while-loop", "Step(s) = s + 1, s < 60\nwhile(Step, 0)", Exercises.PlannedLoop),
-        ("while-two-state", "Step(a, b) = b, a + b, b < 1000\nwhile(Step, 0, 1)", Exercises.PlannedLoop),
-        ("while-temps", "Step(s) = {\n  N = s + 3\n  N, N < 90\n}\nwhile(Step, 0)", Exercises.PlannedLoop),
-        ("need-parameter", "F(k) = repeat({x + k}, 30, 0)\nF(5)", Exercises.PlannedLoop),
-        ("need-parameter-if-argument", "F(k) = repeat({if(x > k, k, x + 1)}, 30, 0)\nF(7)", Exercises.PlannedLoop),
-        ("pending-initial-state", "Seed = 3 * 4\nrepeat({x + 1}, 10, Seed)", Exercises.PlannedLoop),
-        ("pending-initial-state-if", "Seed = 3 * 4\nStep(s) = if(s > 20, s, s + 1)\nrepeat(Step, 15, Seed)", Exercises.PlannedLoop),
-        ("partial-fallback-row", "Step(s, t) = s + 1, t + [s].count\nrepeat(Step, 25, 0, 0)", Exercises.PlannedLoop),
-        ("fallback-with-temps", "Step(s, t) = {\n  T = s * 3\n  s + 1, t + [T].count\n}\nrepeat(Step, 20, 0, 0)", Exercises.PlannedLoop),
-        ("handover-arity-change", "Step(s) = if(s > 3, (s, s), s + 1)\nrepeat(Step, 6, 0)", Exercises.PlannedLoop),
-        ("nested-loops", "Inner(n) = repeat({x + 1}, n, 0)\nStep(s) = s + Inner(3)\nrepeat(Step, 20, 0)", Exercises.PlannedLoop),
-        ("loop-in-temp-call", "F(n) = repeat({x * 2}, n, 1)\nStep(s) = s + F(4)\nrepeat(Step, 10, 0)", Exercises.PlannedLoop),
-        ("division-by-zero", "Step(s) = 10 / (s - 5)\nrepeat(Step, 9, 0)", Exercises.PlannedLoop),
-        ("type-error-in-if", "Step(s) = if(s, 1, 2)\nrepeat(Step, 3, 0)", Exercises.PlannedLoop),
+        ("inline-step", "Step = {x + 1}\nrepeat(Step(0), 50)", Exercises.PlannedLoop),
+        ("named-step", "Step(s) = s + 1\nrepeat(Step(0), 50)", Exercises.PlannedLoop),
+        ("bare-state-row", "Step(s) = s\nrepeat(Step(7), 30)", Exercises.PlannedLoop),
+        ("block-initial-state", "Step(s, t) = s + 1, if(s > 2, t, t + 1)\nrepeat(Step({ 7 }, { 1 + 2 }), 30)", Exercises.PlannedLoop),
+        ("forwarded-block-initial-state", "Step(s) = s * 2 mod 1000\nF(x) = repeat(Step(x), 20)\nF({ 3 })", Exercises.PlannedLoop),
+        ("constant-row", "Step(s) = 5\nrepeat(Step(7), 30)", Exercises.PlannedLoop),
+        ("nested-spine", "Step(s) = (s + 1) * 2 - s / 4\nrepeat(Step(1), 40)", Exercises.PlannedLoop),
+        ("unary", "Step(s) = -s + 1\nrepeat(Step(3), 40)", Exercises.PlannedLoop),
+        ("unary-of-spine", "Step(s) = -(s - 3)\nrepeat(Step(1), 41)", Exercises.PlannedLoop),
+        ("not-and-logic", "Step(s, b) = s + 1, not b and (s > 2 or b)\nrepeat(Step(0, true), 25)", Exercises.PlannedLoop),
+        ("comparison-chain", "Step(s, t) = s + 1, if(0 < s < 30 <= 40, t + 1, t)\nrepeat(Step(0, 0), 45)", Exercises.PlannedLoop),
+        ("comparison-false-link", "Step(s, t) = s + 1, if(s < 3 < 2 != false, t + 1, t)\nrepeat(Step(0, 0), 20)", Exercises.PlannedLoop),
+        ("if-state-branches", "Step(s) = if(s > 10, s, s + 2)\nrepeat(Step(0), 40)", Exercises.PlannedLoop),
+        ("if-constant-branches", "Step(s, t) = s + 1, if(s > 10, 1, 2)\nrepeat(Step(0, 0), 30)", Exercises.PlannedLoop),
+        ("nested-if", "Step(s) = if(s > 10, if(s > 20, s - 3, s - 1), s + 2)\nrepeat(Step(0), 60)", Exercises.PlannedLoop),
+        ("if-in-spine", "Step(s) = 1 + if(s > 4, s, 2 * s) * 2\nrepeat(Step(1), 12)", Exercises.PlannedLoop),
+        ("string-branches", "Step(s, t) = s + 1, if(s > 3, 'big', 'small')\nrepeat(Step(0, 'none'), 9)", Exercises.PlannedLoop),
+        ("temps", "Step(s) = {\n  T1 = s + 1\n  T2 = T1 * 2\n  T2 - s\n}\nrepeat(Step(1), 30)", Exercises.PlannedLoop),
+        ("temp-as-if-argument", "Step(s) = {\n  T = s * 2\n  if(s > 5, T, s + 1)\n}\nrepeat(Step(0), 25)", Exercises.PlannedLoop),
+        ("temp-explicit-call", "Step(s) = {\n  T = s * 2\n  T() + T - 1\n}\nrepeat(Step(1), 20)", Exercises.PlannedLoop),
+        ("temp-chain", "Step(s) = {\n  A = s + 1\n  B = A + A\n  C = B * A\n  C - B\n}\nrepeat(Step(1), 15)", Exercises.PlannedLoop),
+        ("while-loop", "Step(s) = s + 1, s < 60\nwhile(Step(0))", Exercises.PlannedLoop),
+        ("while-two-state", "Step(a, b) = b, a + b, b < 1000\nwhile(Step(0, 1))", Exercises.PlannedLoop),
+        ("while-temps", "Step(s) = {\n  N = s + 3\n  N, N < 90\n}\nwhile(Step(0))", Exercises.PlannedLoop),
+        ("need-parameter", "F(k) = {\n  S = {x + k}\n  S(0).repeat(30)\n}\nF(5)", Exercises.PlannedLoop),
+        ("need-parameter-if-argument", "F(k) = {\n  S = {if(x > k, k, x + 1)}\n  S(0).repeat(30)\n}\nF(7)", Exercises.PlannedLoop),
+        ("pending-initial-state", "Step = {x + 1}\nSeed = 3 * 4\nrepeat(Step(Seed), 10)", Exercises.PlannedLoop),
+        ("pending-initial-state-if", "Seed = 3 * 4\nStep(s) = if(s > 20, s, s + 1)\nrepeat(Step(Seed), 15)", Exercises.PlannedLoop),
+        ("partial-fallback-row", "Step(s, t) = s + 1, t + [s].count\nrepeat(Step(0, 0), 25)", Exercises.PlannedLoop),
+        ("fallback-with-temps", "Step(s, t) = {\n  T = s * 3\n  s + 1, t + [T].count\n}\nrepeat(Step(0, 0), 20)", Exercises.PlannedLoop),
+        ("handover-arity-change", "Step(s) = if(s > 3, (s, s), s + 1)\nrepeat(Step(0), 6)", Exercises.PlannedLoop),
+        ("nested-loops", "Inc1 = {x + 1}\nInner(n) = repeat(Inc1(0), n)\nStep(s) = s + Inner(3)\nrepeat(Step(0), 20)", Exercises.PlannedLoop),
+        ("loop-in-temp-call", "Dbl = {x * 2}\nF(n) = repeat(Dbl(1), n)\nStep(s) = s + F(4)\nrepeat(Step(0), 10)", Exercises.PlannedLoop),
+        ("division-by-zero", "Step(s) = 10 / (s - 5)\nrepeat(Step(0), 9)", Exercises.PlannedLoop),
+        ("type-error-in-if", "Step(s) = if(s, 1, 2)\nrepeat(Step(0), 3)", Exercises.PlannedLoop),
         ("fused-dot-range", "P(x) = x > 10\nrange(1, 50).filter(P).count", Exercises.Fusion),
         ("fused-dot-block", "range(1, 60).filter({ x mod 3 == 0 }).count", Exercises.Fusion),
         ("fused-plain-plain", "count(filter(range(1, 40), { x > 5 }))", Exercises.Fusion),
@@ -177,39 +177,39 @@ public class StrategyNeutralBudgetParityTests
         ("fused-all-kept", "range(1, 30).filter({ x > 0 }).count", Exercises.Fusion),
         ("fused-predicate-error", "range(1, 10).filter({ 10 / (x - 4) > 0 }).count", Exercises.Fusion),
         ("fused-recursive", "R(n) = if(n > 0, range(n, n).filter({ R(x - 1) >= 0 }).count, 0)\nR(12)", Exercises.Fusion),
-        ("fused-in-loop-row", "Step(s) = s + range(1, 10).filter({ x > 3 }).count\nrepeat(Step, 12, 0)", Exercises.PlannedLoop | Exercises.Fusion),
-        ("loop-in-predicate", "range(1, 15).filter({ repeat({ y + 1 }, x, 0) > 5 }).count", Exercises.PlannedLoop | Exercises.Fusion),
-        ("host-effects-in-loop", "Step(s) = s + 1\nG(a, b) = a + b\nG(trace(1) + repeat(Step, 20, 0), trace(2))", Exercises.PlannedLoop),
-        ("host-effects-in-fallback-row", "Step(s, t) = s + 1, t + trace(s)\nrepeat(Step, 12, 0, 0)", Exercises.PlannedLoop),
+        ("fused-in-loop-row", "Step(s) = s + range(1, 10).filter({ x > 3 }).count\nrepeat(Step(0), 12)", Exercises.PlannedLoop | Exercises.Fusion),
+        ("loop-in-predicate", "Step = { y + 1 }\nrange(1, 15).filter({ repeat(Step(0), x) > 5 }).count", Exercises.PlannedLoop | Exercises.Fusion),
+        ("host-effects-in-loop", "Step(s) = s + 1\nG(a, b) = a + b\nG(trace(1) + repeat(Step(0), 20), trace(2))", Exercises.PlannedLoop),
+        ("host-effects-in-fallback-row", "Step(s, t) = s + 1, t + trace(s)\nrepeat(Step(0, 0), 12)", Exercises.PlannedLoop),
         ("host-effects-in-predicate", "range(1, 12).filter({ trace(x) > 6 }).count", Exercises.Fusion),
-        ("seeded-random-in-loop", "Step(s, t) = s + 1, t + randomInt(0, 9)\nrepeat(Step, 15, 0, 0)", Exercises.PlannedLoop),
-        ("temp-slot-row", "Step(s) = {\n  T = s + 2\n  T\n}\nrepeat(Step, 25, 0)", Exercises.PlannedLoop),
-        ("temp-call-row", "Step(s) = {\n  T = s + 2\n  T()\n}\nrepeat(Step, 25, 0)", Exercises.PlannedLoop),
-        ("temp-call-if-argument", "Step(s) = {\n  T = s + 2\n  if(s < 20, T(), T)\n}\nrepeat(Step, 25, 0)", Exercises.PlannedLoop),
-        ("temp-forwarding-call", "Step = {\n  G = v0 + v1\n  G, G + v0\n}\nrepeat(Step, 12, 1, 2)", Exercises.PlannedLoop),
-        ("exported-temp", "Step(s) = {\n  K = 10 * 3\n  s + K\n}\nrepeat(Step, 25, 0)", Exercises.PlannedLoop),
-        ("comparison-spine-child", "Step(s, b) = s + 1, (s < 3) == (b != false)\nrepeat(Step, 12, 0, true)", Exercises.PlannedLoop),
-        ("string-constant-row", "Step(s, t) = s + 1, 'tag'\nrepeat(Step, 10, 0, 'start')", Exercises.PlannedLoop),
-        ("string-operand", "Step(s, b) = s + 1, 'ab' == 'ab'\nrepeat(Step, 10, 0, false)", Exercises.PlannedLoop),
-        ("alias-step", "Step(s) = s * 2 + 1\nA = Step\nrepeat(A, 12, 0)", Exercises.PlannedLoop),
-        ("dotted-step", "Lib = {\n  Step(s) = s + 3\n}\nrepeat(Lib.Step, 12, 0)", Exercises.PlannedLoop),
-        ("crosstalk-captured", "G(a) = {\n    Step = {\n        T = a + 1\n        n + if(a > 0, T, T() + 1)\n    }\n    Step.repeat(20, 0)\n}\nf(0) = G(1)\nf(k) = f(k - 1)\nf(6)", Exercises.PlannedLoop),
-        ("crosstalk-callback-bound", "H(a) = {\n    Step = {\n        T = a * 2\n        n + if(a > 1, T, T())\n    }\n    Step.repeat(5, 0)\n}\nrange(1, 3).map(H).sum", Exercises.PlannedLoop),
-        ("crosstalk-temp-alias-chain", "Step = {\n    C = 1\n    D = C\n    E = D\n    n + if(D > 0, E, E()) + E()\n}\nStep.repeat(30, 0)", Exercises.PlannedLoop),
-        ("crosstalk-temp-call-chain", "Step = {\n    A = 7\n    B = A + 1\n    C = A() + B\n    n + B() + C()\n}\nStep.repeat(30, 0)", Exercises.PlannedLoop),
-        ("crosstalk-string-temp-if", "Step = {\n    T = 'aaaa'\n    n + if(T == T(), 1, 0)\n}\nStep.repeat(40, 0)", Exercises.PlannedLoop),
-        ("crosstalk-multi-state", "Step = {\n    T = a + b\n    T() + a, if(T() < 40, a, b)\n}\nStep.repeat(5, 1, 1)[0]", Exercises.PlannedLoop),
-        ("while-nested-if-temp-call", "Step = {\n    T = 7\n    n + if(n < 30, if(n < 10, 1, 2), 3), T() > 5 and n < 40\n}\nStep.while(0)", Exercises.PlannedLoop),
+        ("seeded-random-in-loop", "Step(s, t) = s + 1, t + randomInt(0, 9)\nrepeat(Step(0, 0), 15)", Exercises.PlannedLoop),
+        ("temp-slot-row", "Step(s) = {\n  T = s + 2\n  T\n}\nrepeat(Step(0), 25)", Exercises.PlannedLoop),
+        ("temp-call-row", "Step(s) = {\n  T = s + 2\n  T()\n}\nrepeat(Step(0), 25)", Exercises.PlannedLoop),
+        ("temp-call-if-argument", "Step(s) = {\n  T = s + 2\n  if(s < 20, T(), T)\n}\nrepeat(Step(0), 25)", Exercises.PlannedLoop),
+        ("temp-forwarding-call", "Step = {\n  G = v0 + v1\n  G, G + v0\n}\nrepeat(Step(1, 2), 12)", Exercises.PlannedLoop),
+        ("exported-temp", "Step(s) = {\n  K = 10 * 3\n  s + K\n}\nrepeat(Step(0), 25)", Exercises.PlannedLoop),
+        ("comparison-spine-child", "Step(s, b) = s + 1, (s < 3) == (b != false)\nrepeat(Step(0, true), 12)", Exercises.PlannedLoop),
+        ("string-constant-row", "Step(s, t) = s + 1, 'tag'\nrepeat(Step(0, 'start'), 10)", Exercises.PlannedLoop),
+        ("string-operand", "Step(s, b) = s + 1, 'ab' == 'ab'\nrepeat(Step(0, false), 10)", Exercises.PlannedLoop),
+        ("alias-step", "Step(s) = s * 2 + 1\nA = Step\nrepeat(A(0), 12)", Exercises.PlannedLoop),
+        ("dotted-step", "Lib = {\n  Step(s) = s + 3\n}\nS = Lib.Step\nrepeat(S(0), 12)", Exercises.PlannedLoop),
+        ("crosstalk-captured", "G(a) = {\n    Step = {\n        T = a + 1\n        n + if(a > 0, T, T() + 1)\n    }\n    Step(0).repeat(20)\n}\nf(0) = G(1)\nf(k) = f(k - 1)\nf(6)", Exercises.PlannedLoop),
+        ("crosstalk-callback-bound", "H(a) = {\n    Step = {\n        T = a * 2\n        n + if(a > 1, T, T())\n    }\n    Step(0).repeat(5)\n}\nrange(1, 3).map(H).sum", Exercises.PlannedLoop),
+        ("crosstalk-temp-alias-chain", "Step = {\n    C = 1\n    D = C\n    E = D\n    n + if(D > 0, E, E()) + E()\n}\nStep(0).repeat(30)", Exercises.PlannedLoop),
+        ("crosstalk-temp-call-chain", "Step = {\n    A = 7\n    B = A + 1\n    C = A() + B\n    n + B() + C()\n}\nStep(0).repeat(30)", Exercises.PlannedLoop),
+        ("crosstalk-string-temp-if", "Step = {\n    T = 'aaaa'\n    n + if(T == T(), 1, 0)\n}\nStep(0).repeat(40)", Exercises.PlannedLoop),
+        ("crosstalk-multi-state", "Step = {\n    T = a + b\n    T() + a, if(T() < 40, a, b)\n}\nStep(1, 1).repeat(5)[0]", Exercises.PlannedLoop),
+        ("while-nested-if-temp-call", "Step = {\n    T = 7\n    n + if(n < 30, if(n < 10, 1, 2), 3), T() > 5 and n < 40\n}\nStep(0).while", Exercises.PlannedLoop),
         // Q-26 (2026-10-04): a nested loop written as a step row is ONE value, so the planned frame
         // keeps such a step planned where it formerly handed the iteration over to the generic loop;
         // the spread row still supplies several items and hands over. Both must charge exactly the
         // generic accounting, effects and draws included.
-        ("nested-loop-row-one-slot", "Fib(x, y) = y, x + y\nStepN(p, n) = repeat(Fib, 1, n, n), n + 1\nrepeat(StepN, 20, 0, 0)", Exercises.PlannedLoop),
-        ("nested-loop-row-spread-handover", "Fib(x, y) = y, x + y\nStepM(a, b) = { repeat(Fib, 1, a, b)* }\nrepeat(StepM, 12, 0, 1)", Exercises.PlannedLoop),
-        ("nested-while-row-one-slot", "Body(a) = a + 1, a < 3\nStepW(p, n) = while(Body, n), n + 1\nrepeat(StepW, 15, 0, 0)", Exercises.PlannedLoop),
-        ("nested-zero-slot-loop-row", "Drop(*xs) = { ()* }\nStepZ(p, n) = repeat(Drop, 1, n), n + 1\nrepeat(StepZ, 10, 0, 0)", Exercises.PlannedLoop),
-        ("nested-loop-row-host-effects", "Fib(x, y) = y, x + y\nStepT(p, n) = repeat(Fib, 1, trace(n), n), n + 1\nrepeat(StepT, 8, 0, 0)", Exercises.PlannedLoop),
-        ("nested-loop-row-seeded-random", "Fib(x, y) = y, x + y\nStepR(p, n) = repeat(Fib, 1, randomInt(0, 9), n), n + 1\nrepeat(StepR, 10, 0, 0)", Exercises.PlannedLoop),
+        ("nested-loop-row-one-slot", "Fib(x, y) = y, x + y\nStepN(p, n) = repeat(Fib(n, n), 1), n + 1\nrepeat(StepN(0, 0), 20)", Exercises.PlannedLoop),
+        ("nested-loop-row-spread-handover", "Fib(x, y) = y, x + y\nStepM(a, b) = { repeat(Fib(a, b), 1)* }\nrepeat(StepM(0, 1), 12)", Exercises.PlannedLoop),
+        ("nested-while-row-one-slot", "Body(a) = a + 1, a < 3\nStepW(p, n) = while(Body(n)), n + 1\nrepeat(StepW(0, 0), 15)", Exercises.PlannedLoop),
+        ("nested-zero-slot-loop-row", "Drop(*xs) = { ()* }\nStepZ(p, n) = repeat(Drop(n), 1), n + 1\nrepeat(StepZ(0, 0), 10)", Exercises.PlannedLoop),
+        ("nested-loop-row-host-effects", "Fib(x, y) = y, x + y\nStepT(p, n) = repeat(Fib(trace(n), n), 1), n + 1\nrepeat(StepT(0, 0), 8)", Exercises.PlannedLoop),
+        ("nested-loop-row-seeded-random", "Fib(x, y) = y, x + y\nStepR(p, n) = repeat(Fib(randomInt(0, 9), n), 1), n + 1\nrepeat(StepR(0, 0), 10)", Exercises.PlannedLoop),
     ];
 
     public static TheoryData<string> CorpusIds()
@@ -355,11 +355,11 @@ public class StrategyNeutralBudgetParityTests
     /// a step budget of exactly the consumption (and one less) must give the same verdict.
     /// </summary>
     [Theory]
-    [InlineData("repeat({x + 1}, {N}, 0)", 6, 3)]
-    [InlineData("Step(s) = {\n  T1 = s + 1\n  T2 = T1 + 1\n  T3 = T2 + 1\n  T4 = T3 + 1\n  T5 = T4 + 1\n  T6 = T5 + 1\n  T7 = T6 + 1\n  T8 = T7 + 1\n  T9 = T8 + 1\n  T10 = T9 + 1\n  T10\n}\nrepeat(Step, {N}, 0)", null, null)]
-    [InlineData("Step(s) = if(s > 5, s - 1, s + 2) * 1\nrepeat(Step, {N}, 0)", null, null)]
-    [InlineData("Step(s, t) = s + 1, if(0 < s < 1000000 != false, t + 1, t)\nrepeat(Step, {N}, 0, 0)", null, null)]
-    [InlineData("Step(s) = s + 1, s < {N}\nwhile(Step, 0)", null, null)]
+    [InlineData("Step = {x + 1}\nrepeat(Step(0), {N})", 6, 3)]
+    [InlineData("Step(s) = {\n  T1 = s + 1\n  T2 = T1 + 1\n  T3 = T2 + 1\n  T4 = T3 + 1\n  T5 = T4 + 1\n  T6 = T5 + 1\n  T7 = T6 + 1\n  T8 = T7 + 1\n  T9 = T8 + 1\n  T10 = T9 + 1\n  T10\n}\nrepeat(Step(0), {N})", null, null)]
+    [InlineData("Step(s) = if(s > 5, s - 1, s + 2) * 1\nrepeat(Step(0), {N})", null, null)]
+    [InlineData("Step(s, t) = s + 1, if(0 < s < 1000000 != false, t + 1, t)\nrepeat(Step(0, 0), {N})", null, null)]
+    [InlineData("Step(s) = s + 1, s < {N}\nwhile(Step(0))", null, null)]
     public void LongLoops_ChargeExactlyTheGenericCheckpoints_AcrossBlockBoundaries(string template, int? perIteration, int? setup)
     {
         var counts = new SortedSet<long> { 1, 99_999 };
@@ -415,10 +415,10 @@ public class StrategyNeutralBudgetParityTests
     /// an <c>if</c> argument, inside a temp body, and after being forwarded through a parameter.
     /// </summary>
     [Theory]
-    [InlineData("Step(s) = s + 1\n{ROWS}repeat(Step, 1, { 7 })", 1L)]
-    [InlineData("Step(s) = if(s > 0, s, 0)\n{ROWS}repeat(Step, 1, { 7 })", 1L)]
-    [InlineData("Step(s) = {\n  T = s * 2\n  T + 1\n}\n{ROWS}repeat(Step, 1, { 7 })", 2L)]
-    [InlineData("Step(s) = s + 1\nF(x) = repeat(Step, 1, x)\n{ROWS}F({ 7 })", 2L)]
+    [InlineData("Step(s) = s + 1\n{ROWS}repeat(Step({ 7 }), 1)", 1L)]
+    [InlineData("Step(s) = if(s > 0, s, 0)\n{ROWS}repeat(Step({ 7 }), 1)", 1L)]
+    [InlineData("Step(s) = {\n  T = s * 2\n  T + 1\n}\n{ROWS}repeat(Step({ 7 }), 1)", 2L)]
+    [InlineData("Step(s) = s + 1\nF(x) = repeat(Step(x), 1)\n{ROWS}F({ 7 })", 2L)]
     public void PendingBlockStateRead_PositionsAStepLimitLikeTheGenericRead(string template, long maxSteps)
     {
         var limits = new EvaluationLimits { MaxSteps = maxSteps };
@@ -473,9 +473,7 @@ public class StrategyNeutralBudgetParityTests
             ParameterPatterns: [],
             Opens: [],
             Properties: [],
-            Output: [new Expr.Call(
-                new Expr.Resolve("repeat"),
-                new OutputBundle([new Expr.AlgorithmExpr(step), new Expr.Num(3), new Expr.Num(5)]))]));
+            Output: [new Expr.AlgorithmExpr(new Algorithm.User(null, [], [], [new Property("S", step)], [new Expr.Call(new Expr.Resolve("repeat"), [new Expr.Call(new Expr.Resolve("S"), [new Expr.Num(5)]), new Expr.Num(3)])]))]));
 
         string Describe(bool optimize, LoopOptimizationDiagnostics loops)
         {
@@ -501,10 +499,10 @@ public class StrategyNeutralBudgetParityTests
     /// hang.
     /// </summary>
     [Theory]
-    [InlineData("Step(s) = s + 1, true\nwhile(Step, 0)", 50_000L)]
-    [InlineData("Step(s) = s + 1, s > -1\nwhile(Step, 0)", 777L)]
-    [InlineData("Step(s) = s * 1\nrepeat(Step, 1000000000000000, 1)", 123_457L)]
-    [InlineData("Step(s) = {\n  T = s + 1\n  if(T > 0, T, s)\n}\nrepeat(Step, 1000000000000000, 0)", 9_999L)]
+    [InlineData("Step(s) = s + 1, true\nwhile(Step(0))", 50_000L)]
+    [InlineData("Step(s) = s + 1, s > -1\nwhile(Step(0))", 777L)]
+    [InlineData("Step(s) = s * 1\nrepeat(Step(1), 1000000000000000)", 123_457L)]
+    [InlineData("Step(s) = {\n  T = s + 1\n  if(T > 0, T, s)\n}\nrepeat(Step(0), 1000000000000000)", 9_999L)]
     public void RunawayPlannedLoop_StopsAtTheGenericStepBudget(string source, long maxSteps)
     {
         var program = Program(source, operations: null);

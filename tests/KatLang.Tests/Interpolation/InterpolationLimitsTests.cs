@@ -90,11 +90,11 @@ public class InterpolationLimitsTests
         // D doubles its argument: twenty doublings of 'x' would be 2^20 = 1,048,576 units, past
         // the 1,000,000 ceiling; the crossing append is the second half of the twentieth.
         var limit = Assert.IsType<EvalError.StringSizeLimitExceeded>(
-            ErrorOf("D(s) = \"{s}{s}\"\nD.repeat(20, 'x')", new EvaluationLimits()));
+            ErrorOf("D(s) = \"{s}{s}\"\nD('x').repeat(20)", new EvaluationLimits()));
         Assert.Equal(EvaluationLimits.MaxSupportedStringLength, limit.Limit);
         Assert.Equal(1L << 20, limit.Requested);
 
-        var (nineteen, _) = Observe("D(s) = \"{s}{s}\"\nD.repeat(19, 'x')", null);
+        var (nineteen, _) = Observe("D(s) = \"{s}{s}\"\nD('x').repeat(19)", null);
         Assert.False(nineteen.IsError);
         Assert.Equal(1 << 19, Assert.IsType<Result.Str>(nineteen.Value.Value).Value.Length);
     }

@@ -122,10 +122,10 @@ public sealed class NumericRepresentativeSelectionTests
 
     /// <summary>The origins of two contributions: literal, call result, dot receiver, forwarded parameter, loop state.</summary>
     private static string[] Binders(string x, string y) =>
-        [$"P({x}, {y})", $"P(Id({x}), Id({y}))", $"({x}).P({y})", $"Fwd({x}, {y})", $"repeat(Step, 1, {x}, {y})"];
+        [$"P({x}, {y})", $"P(Id({x}), Id({y}))", $"({x}).P({y})", $"Fwd({x}, {y})", $"repeat(Step({x}, {y}), 1)"];
 
     private static string[] Families(string x, string y) =>
-        [$"E({x}, {y})", $"E(Id({x}), Id({y}))", $"repeat(E, 1, {x}, {y})"];
+        [$"E({x}, {y})", $"E(Id({x}), Id({y}))", $"repeat(E({x}, {y}), 1)"];
 
     // ── One equality: == ignores representation, at every depth ─────────────────
 

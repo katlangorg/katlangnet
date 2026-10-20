@@ -270,7 +270,7 @@ public class InlineAliasValueDemandLawTests
     [InlineData(Inc + "K(z) = [{ Inc }*]\nK(1)", "while evaluating call to K: ")]
     [InlineData(Inc + "K(z) = range(1, { Inc })\nK(1)", "while evaluating call to K: while evaluating call to range: ")]
     [InlineData(Inc + "K(z) = atoms({ Inc })\nK(1)", "while evaluating call to K: while evaluating call to atoms: ")]
-    [InlineData(Inc + "Step(n) = n + 1\nK(z) = repeat(Step, 1, { Inc })\nK(1)", "while evaluating call to K: while evaluating call to repeat: ")]
+    [InlineData(Inc + "Step(n) = n + 1\nK(z) = repeat(Step({ Inc }), 1)\nK(1)", "while evaluating call to K: while evaluating call to repeat: ")]
     [InlineData(Inc + "Id(v) = v\nId({ Inc })", "while evaluating call to Id: ")]
     [InlineData(Inc + "F(g) = g\nF({ Inc })", "while evaluating call to F: ")]
     [InlineData(Inc + "Id(v) = v\nFwd(w) = Id(w)\nFwd({ Inc })", "while evaluating call to Fwd: while evaluating call to Id: ")]
@@ -403,7 +403,7 @@ public class InlineAliasValueDemandLawTests
     [InlineData("Apply(f) = f(-5)\nApply({ abs })", "5")]
     [InlineData(Inc + "Apply(f, v) = f(v)\nFwd(f) = Apply(f, 3)\nFwd({ Inc })", "4")]
     [InlineData(Inc + "First(f, *rest) = f(2)\nFirst({ Inc }, 9)", "3")]
-    [InlineData(Inc + "K(z) = repeat({ Inc }, 2, 0)\nK(1)", "2")]
+    [InlineData(Inc + "K(z) = {\n  S = { Inc }\n  S(0).repeat(2)\n}\nK(1)", "2")]
     [InlineData(Inc + "K(z) = map([1, 2], { Inc })\nK(1)", "L[2, 3]")]
     [InlineData(Inc + "K(z) = count({ Inc(z) })\nK(1)", "1")]
     public async Task UnusedInvokedAndForwardedAliases_AreUnchanged(string source, string value)
@@ -469,7 +469,7 @@ public class InlineAliasValueDemandLawTests
     [Fact]
     public void PlannedLoop_InlineAliasStepIsPlanned_AndChargedLikeTheGenericLoop()
     {
-        const string source = "Step(n) = n + 1\nK(z) = repeat({ Step }, 5, 0)\nK(1)";
+        const string source = "Step(n) = n + 1\nK(z) = {\n  S = { Step }\n  S(0).repeat(5)\n}\nK(1)";
         var generic = Observe(source, optimized: false);
         var optimized = Observe(source, optimized: true);
 
@@ -487,7 +487,7 @@ public class InlineAliasValueDemandLawTests
     {
         // The planner plans the loop and evaluates the step's `count({ Inc })` generically inside
         // it; both routes report Inc's cardinality and charge the same budget.
-        const string source = Inc + "Step(n) = n + count({ Inc })\nK(z) = repeat(Step, 2, 0)\nK(1)";
+        const string source = Inc + "Step(n) = n + count({ Inc })\nK(z) = repeat(Step(0), 2)\nK(1)";
         var generic = Observe(source, optimized: false);
         var optimized = Observe(source, optimized: true);
 

@@ -93,8 +93,8 @@ public sealed class CallbackResultBoundaryTests
         { "P8-builtin-returns-empty-seq", "map([[()], [1]], first)", "ok L[S[], 1]", "" },
         { "P8-math-callback", "map([-1, 2], abs)", "ok L[1, 2]", "" },
         { "P8-host-callback-empty-seq", "map([()], trace)", "ok L[S[]]", "trace(S[])" },
-        { "LOOP-two-row-step", "Step(x) = x, x\nrepeat(Step, 1, 5)", "ok S[5, 5]", "" },
-        { "LOOP-empty-seq-step", "Step(x) = ()\n[repeat(Step, 1, 5)]", "ok L[S[]]", "" },
+        { "LOOP-two-row-step", "Step(x) = x, x\nrepeat(Step(5), 1)", "ok S[5, 5]", "" },
+        { "LOOP-empty-seq-step", "Step(x) = ()\n[repeat(Step(5), 1)]", "ok L[S[]]", "" },
         { "FILTER-two-row-predicate", "P(x) = x > 1, x < 5\nfilter([2], P)", "err TypeMismatch", "" },
         { "REAL-accidental-row-map", "Net(x) = {\n  x * 2\n  -1\n}\nmap([1, 2], Net)", "ok L[S[2, -1], S[4, -1]]", "" },
         { "REAL-accidental-row-sum", "Net(x) = {\n  x * 2\n  -1\n}\nsum(map([1, 2], Net))", "err TypeMismatch", "" },
@@ -110,8 +110,8 @@ public sealed class CallbackResultBoundaryTests
         { "ADV-defend-A-AD4-running-max-forgot-else", "MaxStep(x, acc) = if(x > acc, x, ())\nBest = reduce([3, 1], MaxStep, 0)\n[Best, Best == 3]", "ok L[S[], false]", "" },
         { "ADV-defend-A-AD5-append-forgot-spread-nests", "Append(x, acc) = acc, x\nR = reduce([1, 2, 3], Append, ())\n[count(R), R]", "ok L[2, S[S[S[S[], 1], 2], 3]]", "" },
         { "ADV-defend-A-AD6-reduce-leftover-row-displaced-error", "Fold(d, acc) = {\n  acc * 10\n  acc * 10 - d\n}\nreduce([1, 2], Fold, 0)", "err TypeMismatch", "" },
-        { "ADV-defend-A-AD7-map-equals-one-iteration-repeat", "D(x) = x, x\nE(x) = ()\nZ(x) = { ()* }\n[map([5], D)[0] == repeat(D, 1, 5), map([5], E)[0] == repeat(E, 1, 5), map([5], Z)[0] == repeat(Z, 1, 5)]", "ok L[true, true, true]", "" },
-        { "ADV-defend-A-AD8-compat-positive-control-special-routes", "H(x) = (x, x * 10)\nP = [1, 2].map(H)\nStep(n) = n + count(map([n, n], H))\nColl(*xs) = xs\nR(x, acc) = [acc*, x * 2]\n[P[1], repeat(Step, 3, 0), Coll(P*), count(filter(range(1, 4), {last(first(map([k], H))) > 15})), last(P[0]).string, reduce([1, 2], R, [])]", "ok L[S[2, 20], 6, L[S[1, 10], S[2, 20]], 3, '10', L[2, 4]]", "" },
+        { "ADV-defend-A-AD7-map-equals-one-iteration-repeat", "D(x) = x, x\nE(x) = ()\nZ(x) = { ()* }\n[map([5], D)[0] == repeat(D(5), 1), map([5], E)[0] == repeat(E(5), 1), map([5], Z)[0] == repeat(Z(5), 1)]", "ok L[true, true, true]", "" },
+        { "ADV-defend-A-AD8-compat-positive-control-special-routes", "H(x) = (x, x * 10)\nP = [1, 2].map(H)\nStep(n) = n + count(map([n, n], H))\nColl(*xs) = xs\nR(x, acc) = [acc*, x * 2]\n[P[1], repeat(Step(0), 3), Coll(P*), count(filter(range(1, 4), {last(first(map([k], H))) > 15})), last(P[0]).string, reduce([1, 2], R, [])]", "ok L[S[2, 20], 6, L[S[1, 10], S[2, 20]], 3, '10', L[2, 4]]", "" },
         { "ADV-attack-B-ADV-B1-reduce-empty-skip-discards-state", "Keep(x, acc) = if(x < 0, (), (acc*, x))\nreduce([1, 2, -1, 3], Keep, ())", "ok 3", "" },
         { "ADV-attack-B-ADV-B2-accidental-row-never-detected", "Net(x) = {\n  x * 2\n  -2\n}\n[1, 2, 3].map(Net).filter({v != 0}).count", "ok 3", "" },
         { "ADV-attack-B-ADV-B3-lookup-shape-depends-on-match-count", "Data = [10, 20, 20]\nFind(k) = { filter(Data, {v == k})* }\nmap([10, 20, 30], Find)", "ok L[10, S[20, 20], S[]]", "" },
@@ -119,7 +119,7 @@ public sealed class CallbackResultBoundaryTests
         { "ADV-attack-B-ADV-B5-structured-fold-empty-skip-same-code-new-site", "Acc(x, (s, n)) = if(x < 0, (), (s + x, n + 1))\nreduce([4, -1, 6], Acc, (0, 0))", "err ArityMismatch", "" },
         { "ADV-attack-B-ADV-B6-empty-element-fails-in-another-callback", "Opt(x) = if(x > 1, trace(x), ())\nfilter(map([1, 2, 3], Opt), {v > 1})", "err TypeMismatch", "trace(2) | trace(3)" },
         { "ADV-attack-B-ADV-B7-family-empty-branch-then-container", "Lib = { public V = 1 }\nF(0) = { []* }\nF(n) = Lib\nmap([0, 1], F)", "err MissingOutput", "" },
-        { "ADV-attack-B-ADV-B8-loop-step-row-is-reduce-returning-empty", "Z(x, acc) = ()\nStep(s) = reduce([s], Z, 0)\n[repeat(Step, 1, 5)]", "ok L[S[]]", "" },
+        { "ADV-attack-B-ADV-B8-loop-step-row-is-reduce-returning-empty", "Z(x, acc) = ()\nStep(s) = reduce([s], Z, 0)\n[repeat(Step(5), 1)]", "ok L[S[]]", "" },
         { "ADV-attack-C-C-split-spread", "map([[1, 2], []], {x*})", "ok L[S[1, 2], S[]]", "" },
         { "ADV-attack-C-C-reduce-concat-order", "Cat(x, acc) = { acc*, x* }\n[reduce([[1, 2], []], Cat, ()), reduce([[], [1, 2]], Cat, ())]", "ok L[S[1, 2], S[1, 2]]", "" },
         { "ADV-attack-C-C-count-empty-seq", "count(map([1, 2, 3], {if(x == 2, (), x)}))", "ok 3", "" },
@@ -245,7 +245,7 @@ public sealed class CallbackResultBoundaryTests
     [InlineData("D(x) = x, x\n[[1, 2]]*.map(D)")]
     [InlineData("D(x) = x, x\nLib = { public M(xs) = map(xs, D) }\nLib.M([1, 2])")]
     [InlineData("F(1) = 1, 1\nF(n) = n, n\nmap([1, 2], F)")]
-    [InlineData("D(x) = x, x\nStep(xs) = map(xs, D)\nrepeat(Step, 1, [1, 2])")]
+    [InlineData("D(x) = x, x\nStep(xs) = map(xs, D)\nrepeat(Step([1, 2]), 1)")]
     public async Task EverySpellingOfTheSamePairCallable_MapsToTheSamePairs(string source)
     {
         var (observation, _) = await AllRoutesAsync(source);
@@ -409,15 +409,15 @@ public sealed class CallbackResultBoundaryTests
     // Independent Q-25 review: interactions outside the frozen investigation matrix.
 
     [Theory]
-    [InlineData("Z(x, acc) = ()\nStep(s) = reduce([s], Z, 0)\nrepeat(Step, 3, 5)", "ok S[]")]
-    [InlineData("Z(x, acc) = ()\nStep(a, b) = trace(a), reduce([b], Z, 0)\nrepeat(Step, 3, 5, 5)", "ok S[5, S[]]")]
+    [InlineData("Z(x, acc) = ()\nStep(s) = reduce([s], Z, 0)\nrepeat(Step(5), 3)", "ok S[]")]
+    [InlineData("Z(x, acc) = ()\nStep(a, b) = trace(a), reduce([b], Z, 0)\nrepeat(Step(5, 5), 3)", "ok S[5, S[]]")]
     [InlineData("E(x) = ()\nR(x, acc) = map([x], E), acc\nreduce([1, 2], R, ())", "ok S[L[S[]], S[L[S[]], S[]]]")]
     [InlineData("R(x, acc) = ()\nP(x, x) = x\n[P(reduce([1], R, 0), ()), P((), reduce([1], R, 0))]", "ok L[S[], S[]]")]
     [InlineData("R(x, acc) = ()\nC(*xs) = xs\n[C(reduce([1], R, 0)), C(reduce([1], R, 0)*)]", "ok L[L[S[]], L[]]")]
     [InlineData("R(x, acc) = ()\n[reduce([1], R, 0), reduce([1], R, 0).string]", "err TypeMismatch")]
     [InlineData("R(x, acc) = ()\n[reduce([1], R, 0), tick(), reduce([2], R, ()), tick()]", "ok L[S[], 1, S[], 2]")]
     [InlineData("D(0) = (), []\nD(n) = n, []\nKeep(x) = true\ncount(filter(map([0, 1], D), Keep))", "ok 2")]
-    [InlineData("D(x) = repeat({s, s + 1}, 1, x)\nmap([1, 2], D)", "ok L[S[1, 2], S[2, 3]]")]
+    [InlineData("Pair = {s, s + 1}\nD(x) = repeat(Pair(x), 1)\nmap([1, 2], D)", "ok L[S[1, 2], S[2, 3]]")]
     [InlineData("D(x) = x, x\nApply(f, *xs) = map(xs, f)\nApply(D, (), [])", "ok L[S[S[], S[]], S[L[], L[]]]")]
     public async Task Independent_ComposedConsumers_PreserveTheCompleteResult(string source, string expected)
     {
@@ -428,7 +428,7 @@ public sealed class CallbackResultBoundaryTests
     [Fact]
     public async Task Independent_EmptyReduceResult_PreservesPlannedLoopHandover()
     {
-        const string source = "Z(x, acc) = ()\nStep(s) = reduce([s], Z, 0)\nrepeat(Step, 3, 5)";
+        const string source = "Z(x, acc) = ()\nStep(s) = reduce([s], Z, 0)\nrepeat(Step(5), 3)";
         var (observation, _) = await AllRoutesAsync(source);
         Assert.Equal("ok S[]", observation.Outcome);
         var diagnostics = new LoopOptimizationDiagnostics();

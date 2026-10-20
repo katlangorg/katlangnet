@@ -349,7 +349,7 @@ public class EvaluationCancellationTests
         using var cts = new CancellationTokenSource();
 
         var budget = RunCancelling(
-            "K = 1\nS(n) = n + K, n < 50000\nwhile(S, 0)",
+            "K = 1\nS(n) = n + K, n < 50000\nwhile(S(0))",
             cancelAtAccess: 50,
             cts,
             enableOptimizations: false);
@@ -363,7 +363,7 @@ public class EvaluationCancellationTests
         using var cts = new CancellationTokenSource();
 
         var budget = RunCancelling(
-            "K = 1\nS(n) = n + K\nrepeat(S, 50000, 0)",
+            "K = 1\nS(n) = n + K\nrepeat(S(0), 50000)",
             cancelAtAccess: 50,
             cts,
             enableOptimizations: false);
@@ -386,7 +386,7 @@ public class EvaluationCancellationTests
         using var cts = new CancellationTokenSource();
 
         RunCancelling(
-            "S(n) = n + 1\nTrigger = 0\nTrigger\nrepeat(S, 5000000, 0)",
+            "S(n) = n + 1\nTrigger = 0\nTrigger\nrepeat(S(0), 5000000)",
             cancelAtAccess: 1,
             cts,
             enableOptimizations: true);
@@ -535,8 +535,8 @@ public class EvaluationCancellationTests
             "(1, 2, 3).map(F).sum\nF(x) = x * 2",
             "1 / 0",
             "Missing",
-            "while(S, 4)\nS(n) = n + 1, n < 3",
-            "repeat(S, 4, 0)\nS(n) = n + 1",
+            "while(S(4))\nS(n) = n + 1, n < 3",
+            "repeat(S(0), 4)\nS(n) = n + 1",
             "'abc'.string",
         ];
 

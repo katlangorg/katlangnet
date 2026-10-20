@@ -41,7 +41,7 @@ public class NestedMaterializationReservationTests(ITestOutputHelper output)
         // input list 2 + two callback constructions of sequence 2/list 1
         { "R(x,acc)=[(x,acc)]\nreduce([1,2],R,0)", "L[S[2, L[S[1, 0]]]]", 8 },
         // two steps each capture 2/list 1; singleton final state reuses its value
-        { "Step(x)=[(x,x)]\nrepeat(Step,2,1)", "L[S[L[S[1, 1]], L[S[1, 1]]]]", 6 },
+        { "Step(x)=[(x,x)]\nrepeat(Step(1), 2)", "L[S[L[S[1, 1]], L[S[1, 1]]]]", 6 },
         // two captures 2 each + list 2 + selection sequence 2
         { "[(1,2),(3,4)][1,0]", "S[S[3, 4], S[1, 2]]", 8 },
     };
@@ -352,7 +352,7 @@ public class NestedMaterializationReservationTests(ITestOutputHelper output)
     {
         // Each iteration: input list 1 + callback sequence 2/list 1 = 4.
         // The completed singleton loop state reuses its already materialized value.
-        const string source = "R(x,acc)=[(x,acc)]\nStep(s)=reduce([s],R,0)\nrepeat(Step,2,5)";
+        const string source = "R(x,acc)=[(x,acc)]\nStep(s)=reduce([s],R,0)\nrepeat(Step(5), 2)";
         const string shape = "L[S[L[S[5, 0]], 0]]";
         var ast = Ast(source);
         var diagnostics = new KatLang.Optimizations.Loops.LoopOptimizationDiagnostics();

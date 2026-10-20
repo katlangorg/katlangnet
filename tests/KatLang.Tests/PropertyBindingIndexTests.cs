@@ -213,7 +213,7 @@ public class PropertyBindingIndexTests
     [InlineData("Outer(x) = {\n{PAD}Value = tick() + x\nInner = { Value, Value }\nInner\n}\nOuter(10), Outer(20)", "ok S[S[11, 11], S[22, 22]] [tick#1,tick#2]")]
     [InlineData("Lib = {\n{PAD}public X = tick()\n}\nRead = {\nopen Lib\n{PAD}X, Lib.X, X\n}\nRead", "ok S[1, 1, 1] [tick#1]")]
     [InlineData("Inc(x) = x + 1\nA = Inc\nB = A\nOuter = {\n{PAD}Inc(x) = x + 100\nB(1)\n}\nOuter", "ok 2")]
-    [InlineData("Step(x) = {\n{PAD}Next = x + 1\nNext\n}\nrepeat(Step, 20, 0)", "ok 20")]
+    [InlineData("Step(x) = {\n{PAD}Next = x + 1\nNext\n}\nrepeat(Step(0), 20)", "ok 20")]
     public async Task IndexedScopes_PreserveOwnershipCacheAndAliasesOnSixRoutes(string source, string expected)
     {
         source = Padding + source.Replace("{PAD}", Padding, StringComparison.Ordinal);

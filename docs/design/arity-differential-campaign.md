@@ -166,9 +166,15 @@ of the plain algebra:
    > differing from the fluent `V*.Gather` except on a singleton supply, and
    > `spread-vs-literal-items` agrees on every shape. Loop init and state
    > slots are still unchanged (`Snap.repeat(1, V)` collects `[V]`).
-2. **Loop init arity floor** — `repeat`/`while` require at least one initial
-   state slot, so a zero-item spread in init position (`Snap.repeat(1, ()*)`)
-   is an ordinary arity rejection after spreading.
+2. **Loop init arity floor — RETIRED (October 2026, META-S3-3 OD-1).**
+   The public signatures are `while(meta step)` / `repeat(meta step, count)`;
+   the captured call's effective supplied cells are the initial state, with
+   zero slots allowed. `Snap(()*).repeat(1)` therefore calls the collecting
+   step with an empty supply and returns its exact collected list `[]`.
+   The `loop-init-snapshot`, `loop-flat-respread` and `loop-result-row`
+   matrix cases cover that state without an outer loop arity rejection.
+   Earlier dated examples above use the retired loop spelling; for example,
+   `Snap.repeat(1, V)` is now `Snap(V).repeat(1)` and still collects `[V]`.
 3. **Counted callback scalar strictness — RESOLVED (September 2026, S3).**
    The callback pattern matcher's scalar fallback used to be
    singleton-pattern-only (`bindCountedParameterPattern`: `if items.length ==

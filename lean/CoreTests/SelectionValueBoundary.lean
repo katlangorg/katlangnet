@@ -231,7 +231,7 @@ def writtenSlotsReifyTheSelectionAsOneValue : Bool :=
 #guard writtenSlotsReifyTheSelectionAsOneValue
 
 -- A loop-step output row keeps the selection as ONE state slot:
--- `S(x, y) = selection, y + 1` with `repeat(S, 1, 0, 0)` ends in the two-slot
+-- `S(x, y) = selection, y + 1` with `repeat(S(0, 0), 1)` ends in the two-slot
 -- state `(V, 1)`, whatever V is (a selected pair is never opened into two
 -- slots, a selected `()` stays one visible slot). The completed loop is ONE
 -- value (Q-26, `loopResultCounted`), so the root row emits count 1 and the two
@@ -242,8 +242,8 @@ def loopStepOutputRowKeepsTheSelectionAsOneStateSlot : Bool :=
     (selectionForms selected).all fun (collection, selection) =>
       let step := alg ["x", "y"] [] [] [selection, .binary .add (.param "y") (.num 1)]
       match literalValue, runCountedProgram (.algorithmExpr (algPrivate [] []
-          [("Coll", selectionCollAlg), ("A", collection)]
-          [.call (resolve "repeat") [.algorithmExpr step, .num 1, .num 0, .num 0]])) with
+          [("Coll", selectionCollAlg), ("A", collection), ("Step", step)]
+          [.call (resolve "repeat") [.call (resolve "Step") [.num 0, .num 0], .num 1]])) with
       | .ok value, .ok (.sequenceValue [slot, .atom 1], 1) => slot == value
       | _, _ => false
 

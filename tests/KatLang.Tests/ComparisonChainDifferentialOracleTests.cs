@@ -412,7 +412,7 @@ public class ComparisonChainDifferentialOracleTests
                 .ToArray();
             var operands = picks.Select(pick => new Operand($"T{pick}()", $"T{pick}(...)", new Text(new string('x', lengths[pick])))).ToArray();
             var (chain, _) = Spell(operands, ops);
-            var source = $"Step = {{\n{temps}    n + if({chain}, 1, 0)\n}}\nStep.repeat({Iterations}, 0)";
+            var source = $"Step = {{\n{temps}    n + if({chain}, 1, 0)\n}}\nStep(0).repeat({Iterations})";
 
             var (expected, _, trace) = ModelChain(operands, ops);
             var unitsPerIteration = trace.Sum(index => lengths[picks[index]]);
@@ -473,7 +473,7 @@ public class ComparisonChainDifferentialOracleTests
             var operands = Enumerable.Range(0, count).Select(_ => plannable[random.Next(plannable.Length)]).ToArray();
             var ops = Enumerable.Range(0, count - 1).Select(_ => Operators[random.Next(Operators.Length)]).ToArray();
             var (chain, _) = Spell(operands, ops);
-            var program = new Expr.AlgorithmExpr(SourceProvenance.ParseValid($"Step = {{\n    n + if({chain}, 1, 0)\n}}\nStep.repeat(2, 0)").Root);
+            var program = new Expr.AlgorithmExpr(SourceProvenance.ParseValid($"Step = {{\n    n + if({chain}, 1, 0)\n}}\nStep(0).repeat(2)").Root);
 
             var diagnostics = new LoopOptimizationDiagnostics();
             var (planned, _) = Evaluator.RunCountedObserved(program, enableOptimizations: true, loopDiagnostics: diagnostics);
@@ -865,7 +865,7 @@ public class ComparisonChainDifferentialOracleTests
 
             if (sample % 5 == 0 && expected is not long)
             {
-                var program = new Expr.AlgorithmExpr(SourceProvenance.ParseValid($"Step = {{\n    n + if({source}, 1, 0)\n}}\nStep.repeat(1, 0)").Root);
+                var program = new Expr.AlgorithmExpr(SourceProvenance.ParseValid($"Step = {{\n    n + if({source}, 1, 0)\n}}\nStep(0).repeat(1)").Root);
                 var (planned, _) = Evaluator.RunCountedObserved(program, enableOptimizations: true);
                 var (generic, _) = Evaluator.RunCountedObserved(program, enableOptimizations: false);
                 var (twin, _) = await AsyncEvaluationHarness.Complete(

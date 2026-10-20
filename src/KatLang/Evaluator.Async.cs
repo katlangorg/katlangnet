@@ -2119,6 +2119,10 @@ public static partial class Evaluator
         // Supplied cells — see the synchronous twin.
         var args = resolvedArgs;
 
+        // META binding first — see the synchronous twin.
+        if (BuiltinRegistry.GetBuiltin(builtin) is { DeclaresMetaParameter: true } metaBuiltin)
+            return await ApplyMetaBuiltinCounted(metaBuiltin, args, ctx, valEnv, asynchronous: true).ConfigureAwait(false);
+
         switch (builtin, args.Count)
         {
             case (BuiltinId.@if, 3):
@@ -2137,10 +2141,6 @@ public static partial class Evaluator
                     return EvalResult<CountedResult>.Ok(
                         new CountedResult(branchR.Value.Value, branchR.Value.Value.ValueCount()));
                 }
-
-            case (BuiltinId.@while, _) when args.Count >= 2:
-            case (BuiltinId.@repeat, _) when args.Count >= 3:
-                return await EvalNeedLoop(builtin, args, ctx, valEnv, asynchronous: true).ConfigureAwait(false);
 
             case (BuiltinId.@atoms, 1):
                 {

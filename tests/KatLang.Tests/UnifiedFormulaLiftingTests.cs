@@ -106,7 +106,7 @@ public class UnifiedFormulaLiftingTests
         { "user-argument", Inc + "Apply(f) = f(1)\nG = Apply(Inc)", "", "G", "ok 2" },
         { "grouped-user-argument", Inc + "Apply(f) = f(1)\nG = Apply((Inc))", "", "G", "ok 2" },
         { "callback", Inc + "G = map([1, 2], Inc)", "", "G", "ok L[2, 3]" },
-        { "loop-step", Inc + "G = repeat(Inc, 2, 0)", "", "G", "ok 2" },
+        { "loop-step", Inc + "G = repeat(Inc(0), 2)", "", "G", "ok 2" },
         { "reducer", "Add(e, a) = e + a\nG = reduce([1, 2], Add, 0)", "", "G", "ok 3" },
         { "dynamic-callee-argument", Inc + "Apply(g) = g(1)\nG = f(Inc)", "f", "G(Apply)", "ok 2" },
         { "navigated-receiver", "Obj(x) = {\n    public V = 7\n    x\n}\nG = Obj.V + 0", "", "G", "ok 7" },
@@ -138,7 +138,9 @@ public class UnifiedFormulaLiftingTests
         { "math-declared-names", "", "G = round + 0", "value, digits", "G(2.345, 2)", "ok 2.35" },
         { "collection-builtin", "", "G = count + 0", "collection", "G((1, 2, 3))", "ok 3" },
         { "conditional-builtin", "", "G = if + 0", "condition, whenTrue, whenFalse", "G(false, 1, 2)", "ok 2" },
-        { "loop-builtin", "Step(s) = s + 1\n", "G = repeat + 0", "step, count, *init", "G(Step, 2, 0)", "ok 2" },
+        // META-S3-3: `repeat(meta step, count)` — the lifted `step` is an ordinary binding whose cell
+        // (the written call `Step(0)`) is transported into the builtin's META slot.
+        { "loop-builtin", "Step(s) = s + 1\n", "G = repeat + 0", "step, count", "G(Step(0), 2)", "ok 2" },
         { "host-operation", "", "G = trace + 0", "x", "G(4)", "ok 4 [trace(4)]" },
         { "opened-member", "Lib = {\n    public Inc(x) = x + 1\n}\n", "G = {\n    open Lib\n    Inc + 0\n}", "x", "G(4)", "ok 5" },
         { "dotted-member", "Lib = {\n    public Inc(x) = x + 1\n}\n", "G = Lib.Inc + 0", "x", "G(4)", "ok 5" },
@@ -377,12 +379,14 @@ public class UnifiedFormulaLiftingTests
     public void DistinctCollectors_FromAnyCategory_AreTheDefinitionsFrontEndError()
     {
         var diagnostic = Assert.Single(
-            SourceProvenance.ExpectFrontEndError("C1(a, *p) = a\nK = C1 + while\n0"),
+            SourceProvenance.ExpectFrontEndError("C1(a, *p) = a\nC2(b, *q) = b\nK = C1 + C2\n0"),
             static diagnostic => diagnostic.Severity == DiagnosticSeverity.Error);
         Assert.Equal(DiagnosticCode.InvalidCollectingBinding, diagnostic.Code);
 
-        // One collecting NAME shared by two callees is one binding, so the loops compose.
-        Assert.Equal("step, *init, count", SignatureOf("K = while + repeat\n0", "K"));
+        // One collecting NAME shared by two callees is one binding.
+        Assert.Equal("a, *p, b", SignatureOf("C1(a, *p) = a\nC3(b, *p) = b\nK = C1 + C3\n0", "K"));
+        // The META loops (no collector since META-S3-3) share `step` by name.
+        Assert.Equal("step, count", SignatureOf("K = while + repeat\n0", "K"));
     }
 
     // ── 8. What the law does not touch ────────────────────────────────────────────────────

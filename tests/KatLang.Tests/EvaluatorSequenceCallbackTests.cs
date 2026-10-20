@@ -251,11 +251,11 @@ public class EvaluatorSequenceCallbackTests
     {
         // Loop steps bind their state through the same counted funnel as flat
         // callbacks, so a native-call wrapper works as a step reference too.
-        AssertEval("repeat(abs, 2, -5)", 5);
+        AssertEval("repeat(abs(-5), 2)", 5);
 
         // The loop-step binder must also shadow a same-named counted binding
         // inherited from an enclosing callback before the native body runs.
-        AssertEval("F(x) = repeat(abs, 2, -5)\n[99].map(F)", 5);
+        AssertEval("F(x) = repeat(abs(-5), 2)\n[99].map(F)", 5);
     }
 
     [Fact]

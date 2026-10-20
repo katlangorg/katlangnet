@@ -106,18 +106,21 @@ private def lsProgram (rows : List KatLang.Expr) : KatLang.Expr :=
     ("C", lsCountWrapperAlg), ("Fi", lsFirstWrapperAlg),
     ("A", .alias none [] [] (resolve "Step")), ("B", .alias none [] [] (resolve "A")),
     ("Cnt", .alias none [] [] (resolve "count")), ("Cnt2", .alias none [] [] (resolve "Cnt")),
-    -- Run1(f, s) = repeat(f, 1, s)
-    ("Run1", alg ["f", "s"] [] [] [.call (resolve "repeat") [.param "f", .num 1, .param "s"]])
+    -- Run1(f, s) = repeat(f(s), 1); Run0(f, s) = repeat(f(s), 0)
+    ("Run1", alg ["f", "s"] [] [] [.call (resolve "repeat") [.call (.param "f") [.param "s"], .num 1]]),
+    ("Run0", alg ["f", "s"] [] [] [.call (resolve "repeat") [.call (.param "f") [.param "s"], .num 0]])
   ] rows)
 
 private def lsCall (callee : String) (args : List KatLang.Expr) : KatLang.Expr :=
   .call (resolve callee) args
 
+/-- `repeat(step(state…), count)` (META-S3-3): the loop captures the written step call. -/
 private def lsRepeat (step : KatLang.Expr) (count : Int) (state : List KatLang.Expr) : KatLang.Expr :=
-  .call (resolve "repeat") ([step, .num count] ++ state)
+  .call (resolve "repeat") [.call step state, .num count]
 
+/-- `while(step(state…))` (META-S3-3). -/
 private def lsWhile (step : KatLang.Expr) (state : List KatLang.Expr) : KatLang.Expr :=
-  .call (resolve "while") (step :: state)
+  .call (resolve "while") [.call step state]
 
 private def lsOk (rows : List KatLang.Expr) (expected : Result) : Bool :=
   match runResult (lsProgram rows) with
@@ -129,10 +132,10 @@ private def lsFails (rows : List KatLang.Expr) (check : Error -> Bool) : Bool :=
   | .error e => check e
   | _ => false
 
--- The canonical family witness: repeat(Step, 2, 3) = Step(Step(3)) = 1, and the
--- base clause is a fixed point (Step.repeat(5, 3) = 0).
+-- The canonical family witness: repeat(Step(3), 2) = Step(Step(3)) = 1, and the
+-- base clause is a fixed point (Step(3).repeat(5) = 0).
 #guard lsOk [lsRepeat (resolve "Step") 2 [.num 3], lsCall "Step" [lsCall "Step" [.num 3]],
-    .dotMember (resolve "Step") "repeat" (resolve "repeat") (some [.num 5, .num 3])]
+    .dotMember (.call (resolve "Step") [.num 3]) "repeat" (resolve "repeat") (some [.num 5])]
   (.sequenceValue [.atom 1, .atom 1, .atom 0])
 
 -- A family `while` step: the selected clause's LAST row is the flag.
@@ -175,7 +178,7 @@ private def lsFails (rows : List KatLang.Expr) (check : Error -> Bool) : Bool :=
 -- A builtin step is its one-row user wrapper: one result value, one slot.
 #guard lsOk [lsRepeat (resolve "count") 1 [.listLiteral [.num 1, .num 2]],
     lsRepeat (resolve "C") 1 [.listLiteral [.num 1, .num 2]],
-    .dotMember (resolve "count") "repeat" (resolve "repeat") (some [.num 1, .listLiteral [.num 1, .num 2]])]
+    .dotMember (.call (resolve "count") [.listLiteral [.num 1, .num 2]]) "repeat" (resolve "repeat") (some [.num 1])]
   (.sequenceValue [.atom 2, .atom 2, .atom 2])
 
 -- A builtin's collection result is ONE state slot (never its element count):
@@ -201,13 +204,16 @@ private def lsEmptyFlagRequired : Error -> Bool :=
     lsRepeat (resolve "Cnt") 1 [.listLiteral [.num 1, .num 2]], lsRepeat (resolve "Cnt2") 1 [.listLiteral [.num 1, .num 2]]]
   (.sequenceValue [.atom 1, .atom 1, .atom 2, .atom 2])
 
--- A value has no callable identity: still no step, and the iteration that needs
--- it reports `notAnAlgorithm` (Q-06), never by demanding the value.
-#guard lsFails [lsRepeat (.num 5) 1 [.num 0]] (innermostIsNotAnAlgorithm "repeat step")
-#guard lsFails [lsRepeat (.binary .div (.num 1) (.num 0)) 1 [.num 0]] (innermostIsNotAnAlgorithm "repeat step")
+-- A value has no callable identity: supplied as the captured call's callee (through `f`),
+-- still no step, and the iteration that needs it reports `notAnAlgorithm` (Q-06), never by
+-- demanding the value. Written as the META argument's callee itself, the call is no plan,
+-- so META refuses it first (META-S3-3).
+#guard lsFails [lsCall "Run1" [.num 5, .num 0]] (innermostIsNotAnAlgorithm "repeat step")
+#guard lsFails [lsCall "Run1" [.binary .div (.num 1) (.num 0), .num 0]] (innermostIsNotAnAlgorithm "repeat step")
+#guard lsFails [lsRepeat (.num 5) 1 [.num 0]] (innermostIsNotAnAlgorithm "meta: not a supplied call computation")
 
 -- Zero iterations never project the step: a value and a failing expression alike.
-#guard lsOk [lsRepeat (.num 5) 0 [.num 1], lsRepeat (.binary .div (.num 1) (.num 0)) 0 [.num 5],
+#guard lsOk [lsCall "Run0" [.num 5, .num 1], lsCall "Run0" [.binary .div (.num 1) (.num 0), .num 5],
     lsRepeat (resolve "F") 0 [.num 5]]
   (.sequenceValue [.atom 1, .atom 5, .atom 5])
 

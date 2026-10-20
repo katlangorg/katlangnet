@@ -246,14 +246,14 @@ public class SignedZeroExtremaTests
     /// entering an extremum.
     /// </summary>
     [Theory]
-    [InlineData("S(x) = min((x, -0))\nrepeat(S, 3, 0)", "-0")]
-    [InlineData("S(x) = max((x, 0))\nrepeat(S, 3, -0)", "0")]
-    [InlineData("S(x) = max((-0, x))\nrepeat(S, 3, -0)", "-0")]
-    [InlineData("S(x) = -x\nrepeat(S, 1, max((0, -0)))", "-0")]
-    [InlineData("S(x, y) = min((x, y)), -y\nrepeat(S, 2, 0, 0)", "S[-0, 0]")]
-    [InlineData("S(x, y) = max((x, y)), -y\nrepeat(S, 2, -0, -0)", "S[0, -0]")]
-    [InlineData("S(x, y) = min((y, x)), max((x, y))\nrepeat(S, 3, 0, -0)", "S[-0, 0]")]
-    [InlineData("S(x, n) = max((x, 0)), n - 1, n > 1\nwhile(S, -0, 3)", "S[0, 1]")]
+    [InlineData("S(x) = min((x, -0))\nrepeat(S(0), 3)", "-0")]
+    [InlineData("S(x) = max((x, 0))\nrepeat(S(-0), 3)", "0")]
+    [InlineData("S(x) = max((-0, x))\nrepeat(S(-0), 3)", "-0")]
+    [InlineData("S(x) = -x\nrepeat(S(max((0, -0))), 1)", "-0")]
+    [InlineData("S(x, y) = min((x, y)), -y\nrepeat(S(0, 0), 2)", "S[-0, 0]")]
+    [InlineData("S(x, y) = max((x, y)), -y\nrepeat(S(-0, -0), 2)", "S[0, -0]")]
+    [InlineData("S(x, y) = min((y, x)), max((x, y))\nrepeat(S(0, -0), 3)", "S[-0, 0]")]
+    [InlineData("S(x, n) = max((x, 0)), n - 1, n > 1\nwhile(S(-0, 3))", "S[0, 1]")]
     public void PlannedLoops_CarryTheExtremumSignLikeTheGenericPath(string source, string expected)
     {
         var ast = Program(source);

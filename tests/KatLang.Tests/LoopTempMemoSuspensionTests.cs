@@ -60,7 +60,7 @@ public class LoopTempMemoSuspensionTests
     public void TempCall_KeepsTheDeclaringStepMemoForSiblingReads()
     {
         // A evaluates once per iteration; B() reads that same A and adds one.
-        const string source = "Step(n) = {\n    A = n * 10\n    B = A + 1\n    A + B() + A\n}\nStep.repeat(2, 0)";
+        const string source = "Step(n) = {\n    A = n * 10\n    B = A + 1\n    A + B() + A\n}\nStep(0).repeat(2)";
 
         var generic = Observe(source, optimized: false);
         var planned = Observe(source, optimized: true);
@@ -77,7 +77,7 @@ public class LoopTempMemoSuspensionTests
     public void NestedTempCalls_KeepTheDeclaringStepMemo()
     {
         // B() and C() read the same sibling A; only their own bodies run fresh.
-        const string source = "Step(n) = {\n    A = n * 10\n    C = A\n    B = A + C() + A\n    A + B() + A\n}\nStep.repeat(2, 1)";
+        const string source = "Step(n) = {\n    A = n * 10\n    C = A\n    B = A + C() + A\n    A + B() + A\n}\nStep(1).repeat(2)";
 
         var generic = Observe(source, optimized: false);
         var planned = Observe(source, optimized: true);

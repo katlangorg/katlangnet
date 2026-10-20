@@ -138,7 +138,7 @@ public class LimitConfigurationTransparencyTests
     [Fact]
     public void EveryNonBindingConfiguration_KeepsLoopPlanningAndFusionEnabled()
     {
-        const string source = "Step(s) = s + 1\nP(x) = x > 2\nrepeat(Step, 3, 0) + range(1, 5).filter(P).count";
+        const string source = "Step(s) = s + 1\nP(x) = x > 2\nrepeat(Step(0), 3) + range(1, 5).filter(P).count";
         foreach (var (name, limits) in NonBindingConfigurations)
         {
             var observed = Observe(source, optimize: true, limits: limits);
@@ -155,10 +155,10 @@ public class LimitConfigurationTransparencyTests
     /// including for a run that FAILS on another limit and for the steps it charged on the way.
     /// </summary>
     [Theory]
-    [InlineData("Step(s) = s + 1\nrepeat(Step, 5000, 0)")]
+    [InlineData("Step(s) = s + 1\nrepeat(Step(0), 5000)")]
     [InlineData("range(1, 2000).filter({ x mod 7 == 0 }).count")]
     [InlineData("R(n) = if(n > 0, range(n, n).filter({ R(x - 1) >= 0 }).count, 0)\nR(20)")]
-    [InlineData("Step(s, t) = s + 1, 10 / (s - 40)\nrepeat(Step, 80, 0, 0)")]
+    [InlineData("Step(s, t) = s + 1, 10 / (s - 40)\nrepeat(Step(0, 0), 80)")]
     public void ExplicitDefaults_AreTheUnconfiguredBudget(string source)
     {
         var equivalents = new (EvaluationLimits? Left, EvaluationLimits? Right)[]
@@ -191,10 +191,10 @@ public class LimitConfigurationTransparencyTests
     /// effects — on either strategy.
     /// </summary>
     [Theory]
-    [InlineData("Step(s) = s + 1\nG(a, b) = a + b\nG(trace(1) + repeat(Step, 400, 0), trace(2))", "steps", 120L)]
+    [InlineData("Step(s) = s + 1\nG(a, b) = a + b\nG(trace(1) + repeat(Step(0), 400), trace(2))", "steps", 120L)]
     [InlineData("range(1, 300).filter({ trace(x) mod 50 == 0 }).count", "steps", 100L)]
     [InlineData("A = range(1, 400).filter({ x > 3 }).count\nB = range(1, 400).filter({ x > 7 }).count\nA + B", "items", 1000L)]
-    [InlineData("Step(s, t) = s + 1, if(s > 2, 'abcdef', 'xy')\nrepeat(Step, 40, 0, 'z')", "string-chars", 60L)]
+    [InlineData("Step(s, t) = s + 1, if(s > 2, 'abcdef', 'xy')\nrepeat(Step(0, 'z'), 40)", "string-chars", 60L)]
     public void OneBindingLimit_IsUnaffectedByOtherNonBindingLimits(string source, string binding, long value)
     {
         EvaluationLimits Bind(EvaluationLimits limits) => binding switch
@@ -267,7 +267,7 @@ public class LimitConfigurationTransparencyTests
         }
 
         // Each configured limit still binds, on the optimized strategy.
-        var runaway = Observe("Step(s) = s + 1, true\nwhile(Step, 0)", optimize: true, limits: host);
+        var runaway = Observe("Step(s) = s + 1, true\nwhile(Step(0))", optimize: true, limits: host);
         Assert.Equal("err EvaluationStepLimitExceeded", runaway.Outcome);
         Assert.Equal(1, runaway.LoopHits);
         Assert.Equal(200_000, runaway.Steps);
@@ -276,7 +276,7 @@ public class LimitConfigurationTransparencyTests
         Assert.Equal("err MaterializationLimitExceeded", items.Outcome);
         Assert.True(items.FusionHits > 0);
 
-        var longString = Observe($"Step(s, t) = s + 1, '{new string('a', 9_000)}'\nrepeat(Step, 30, 0, 'z')", optimize: true, limits: host);
+        var longString = Observe($"Step(s, t) = s + 1, '{new string('a', 9_000)}'\nrepeat(Step(0, 'z'), 30)", optimize: true, limits: host);
         Assert.Equal("err StringMaterializationLimitExceeded", longString.Outcome);
         Assert.Equal(1, longString.LoopHits);
 
@@ -293,9 +293,9 @@ public class LimitConfigurationTransparencyTests
     [Theory]
     [InlineData("Deep(n) = if(n > 0, Deep(n - 1) + 1, 0)\nG(x, y) = y\nG(Deep(60), 5)")]
     [InlineData("G(x, y) = y\nG(randomInt(0, 999), randomInt(0, 999))")]
-    [InlineData("G(x, y) = y\nG(trace(1) + repeat({ z + 1 }, 50, 0), trace(2))")]
-    [InlineData("F(k) = repeat({ x + 1 }, 20, 0)\nF(trace(9))")]
-    [InlineData("F(k) = repeat({ if(x > 30, k, x + 1) }, 25, 0)\nF(trace(4))")]
+    [InlineData("Step = { z + 1 }\nG(x, y) = y\nG(trace(1) + repeat(Step(0), 50), trace(2))")]
+    [InlineData("Step = { x + 1 }\nF(k) = repeat(Step(0), 20)\nF(trace(9))")]
+    [InlineData("F(k) = {\n  S = { if(x > 30, k, x + 1) }\n  S(0).repeat(25)\n}\nF(trace(4))")]
     [InlineData("C(v) = range(1, 10).filter({ x > 20 }).count + 0 * 0\nH(v) = C(v)\nH(trace(3))")]
     public void Limits_NeverDemandAnUndemandedComputation(string source)
     {
@@ -318,8 +318,8 @@ public class LimitConfigurationTransparencyTests
     /// stay far inside every route's headroom, so only the accounting is compared.
     /// </summary>
     [Theory]
-    [InlineData("Step(s) = s + 1\nrepeat(Step, 60, 0)")]
-    [InlineData("Step(s) = {\n  T = s * 2\n  if(T > 30, s - 1, T() - s + 1)\n}\nrepeat(Step, 25, 1)")]
+    [InlineData("Step(s) = s + 1\nrepeat(Step(0), 60)")]
+    [InlineData("Step(s) = {\n  T = s * 2\n  if(T > 30, s - 1, T() - s + 1)\n}\nrepeat(Step(1), 25)")]
     [InlineData("range(1, 40).filter({ x mod 3 == 0 }).count")]
     [InlineData("R(n) = if(n > 0, range(n, n).filter({ R(x - 1) >= 0 }).count, 0)\nR(8)")]
     public async Task TightStepBudgets_GiveTheSameVerdictOnEveryRoute(string source)
@@ -356,7 +356,7 @@ public class LimitConfigurationTransparencyTests
     [Fact]
     public async Task AsyncEntryPoints_KeepTheInlineSynchronousRoute_UnderEveryNonBindingConfiguration()
     {
-        const string source = "A = 4\nStep(s) = s + 1\nP(x) = x > 2\nrepeat(Step, 3, 0) + range(1, 5).filter(P).count + A";
+        const string source = "A = 4\nStep(s) = s + 1\nP(x) = x > 2\nrepeat(Step(0), 3) + range(1, 5).filter(P).count + A";
         var program = Program(source, operations: null);
         var expectedFlat = Evaluator.RunFlat(program).Value;
         foreach (var (name, limits) in NonBindingConfigurations)
@@ -457,7 +457,7 @@ public class LimitConfigurationTransparencyTests
     [Fact]
     public void Cancellation_IsUnchanged_UnderLimitsAndPlannedAccounting()
     {
-        const string source = "Step(s) = s + 1\nrepeat(Step, 3000, 0) + range(1, 100).filter({ x > 50 }).count";
+        const string source = "Step(s) = s + 1\nrepeat(Step(0), 3000) + range(1, 100).filter({ x > 50 }).count";
         var program = Program(source, operations: null);
         foreach (var (name, limits) in NonBindingConfigurations)
         {
@@ -483,7 +483,7 @@ public class LimitConfigurationTransparencyTests
         // iteration, and the cache cancels on its third read — never by a wall-clock timer, which
         // could fire before a starved test thread reaches the loop (cancellation is then observed
         // at an earlier chokepoint and the loop is never entered).
-        var runaway = Program("Step(s) = {\n  One = 1\n  s + One, true\n}\nwhile(Step, 0)", operations: null);
+        var runaway = Program("Step(s) = {\n  One = 1\n  s + One, true\n}\nwhile(Step(0))", operations: null);
         foreach (var limits in new EvaluationLimits?[] { null, new EvaluationLimits { MaxSteps = long.MaxValue } })
         {
             using var during = new CancellationTokenSource();

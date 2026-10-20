@@ -2334,6 +2334,10 @@ public static partial class Evaluator
         // callback's element cells.
         var args = resolvedArgs;
 
+        // A builtin declaring a META parameter binds through the ONE binder first (META-S3-3).
+        if (BuiltinRegistry.GetBuiltin(builtin) is { DeclaresMetaParameter: true } metaBuiltin)
+            return ApplyMetaBuiltinCounted(metaBuiltin, args, ctx, valEnv, asynchronous: false).GetAwaiter().GetResult();
+
         switch (builtin, args.Count)
         {
             case (BuiltinId.@if, 3):
@@ -2361,10 +2365,6 @@ public static partial class Evaluator
                     return EvalResult<CountedResult>.Ok(
                         new CountedResult(branchR.Value.Value, branchR.Value.Value.ValueCount()));
                 }
-
-            case (BuiltinId.@while, _) when args.Count >= 2:
-            case (BuiltinId.@repeat, _) when args.Count >= 3:
-                return EvalNeedLoop(builtin, args, ctx, valEnv, asynchronous: false).GetAwaiter().GetResult();
 
             case (BuiltinId.@atoms, 1):
                 {

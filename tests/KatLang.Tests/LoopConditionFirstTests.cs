@@ -36,98 +36,98 @@ public sealed class LoopConditionFirstTests
     public static TheoryData<string, string, string, string> Corpus() => new()
     {
         // 1/3. Initially false: the division row is never formed; zero transitions return the initial state.
-        { "initial false skips division", "Step(x) = 10 / (x - 1), x > 1\nStep.while(1)", "ok 1", "" },
-        { "initial false keeps two slots", "S(a, b) = mark(b), mark(a + b), a < 100\nS.while(144, 233)", "ok S[144, 233]", "" },
+        { "initial false skips division", "Step(x) = 10 / (x - 1), x > 1\nStep(1).while", "ok 1", "" },
+        { "initial false keeps two slots", "S(a, b) = mark(b), mark(a + b), a < 100\nS(144, 233).while", "ok S[144, 233]", "" },
         // 2/4. Initially true: the flag row first, then the transition rows, every round.
-        { "initial true runs transition", "Step(x) = mark(x - 1), mark(x > 1)\nStep.while(3)", "ok 1",
+        { "initial true runs transition", "Step(x) = mark(x - 1), mark(x > 1)\nStep(3).while", "ok 1",
             "mark(true),mark(2),mark(true),mark(1),mark(false)" },
-        { "countdown", "Count(x) = mark(x - 1), x > 1\nCount.while(4)", "ok 1", "mark(3),mark(2),mark(1)" },
+        { "countdown", "Count(x) = mark(x - 1), x > 1\nCount(4).while", "ok 1", "mark(3),mark(2),mark(1)" },
         // 5/6. Multi-slot state and the canonical iterations keep their values.
-        { "fibonacci", "Fib(a, b, n) = b, a + b, n - 1, n > 1\nFib.while(0, 1, 10)", "ok S[34, 55, 1]", "" },
-        { "fibonacci stops before the first transition", "Step(a, b) = b, a + b, a < 100\nStep.while(144, 233)", "ok S[144, 233]", "" },
-        { "collatz count", "C(n, k) = if(n mod 2 == 0, n / 2, 3 * n + 1), k + 1, n != 1\nC.while(27, 0)[1]", "ok 111", "" },
-        { "collatz already stopped", "C(n, k) = mark(if(n mod 2 == 0, n / 2, 3 * n + 1)), k + 1, n != 1\nC.while(1, 0)", "ok S[1, 0]", "" },
+        { "fibonacci", "Fib(a, b, n) = b, a + b, n - 1, n > 1\nFib(0, 1, 10).while", "ok S[34, 55, 1]", "" },
+        { "fibonacci stops before the first transition", "Step(a, b) = b, a + b, a < 100\nStep(144, 233).while", "ok S[144, 233]", "" },
+        { "collatz count", "C(n, k) = if(n mod 2 == 0, n / 2, 3 * n + 1), k + 1, n != 1\nC(27, 0).while[1]", "ok 111", "" },
+        { "collatz already stopped", "C(n, k) = mark(if(n mod 2 == 0, n / 2, 3 * n + 1)), k + 1, n != 1\nC(1, 0).while", "ok S[1, 0]", "" },
         // 8. A shared local property is computed once per round, by the row that demands it first.
-        { "shared local demanded by the flag", "S(x) = {\n  D = mark(x - 1)\n  D, D > 0\n}\nS.while(3)", "ok 1",
+        { "shared local demanded by the flag", "S(x) = {\n  D = mark(x - 1)\n  D, D > 0\n}\nS(3).while", "ok 1",
             "mark(2),mark(1),mark(0)" },
-        { "shared local with effectful flag", "S(x) = {\n  Go = mark(x > 1)\n  mark(x - 1), Go\n}\nS.while(3)", "ok 1",
+        { "shared local with effectful flag", "S(x) = {\n  Go = mark(x > 1)\n  mark(x - 1), Go\n}\nS(3).while", "ok 1",
             "mark(true),mark(2),mark(true),mark(1),mark(false)" },
         { "bare local is shared but explicit calls stay fresh",
-            "S(x) = {\n  P = mark(x)\n  P + P() + 1, P < 1\n}\nS.while(0)", "ok 1",
+            "S(x) = {\n  P = mark(x)\n  P + P() + 1, P < 1\n}\nS(0).while", "ok 1",
             "mark(0),mark(0),mark(1)" },
         // 9/10. What the flag itself needs still runs; protection is row-granular.
-        { "flag needs the failing division", "Step(x) = 10 / (x - 1), 10 / (x - 1) > 0\nStep.while(1)", "err DivByZero", "" },
-        { "shared failing local", "S(x) = {\n  Q = 10 / (x - 1)\n  Q, Q > 0\n}\nS.while(1)", "err DivByZero", "" },
-        { "flag inside an atomic spread", Pack + "Step(x) = Pack(x)*\nStep.while(1)", "err DivByZero", "" },
+        { "flag needs the failing division", "Step(x) = 10 / (x - 1), 10 / (x - 1) > 0\nStep(1).while", "err DivByZero", "" },
+        { "shared failing local", "S(x) = {\n  Q = 10 / (x - 1)\n  Q, Q > 0\n}\nS(1).while", "err DivByZero", "" },
+        { "flag inside an atomic spread", Pack + "Step(x) = Pack(x)*\nStep(1).while", "err DivByZero", "" },
         { "flag inside an atomic call row runs the call left to right",
-            "P(x) = mark(x - 1), mark(x > 1)\nStep(x) = P(x)*\nStep.while(3)", "ok 1",
+            "P(x) = mark(x - 1), mark(x > 1)\nStep(x) = P(x)*\nStep(3).while", "ok 1",
             "mark(2),mark(true),mark(1),mark(true),mark(0),mark(false)" },
         // 11/12. Trailing empty spreads: discovery forms them right to left, effects included.
-        { "trailing empty spread", "Tail(n) = ()\nStep(n) = n + 1, n < 2, Tail(n)*\nStep.while(0)", "ok 2", "" },
-        { "effectful trailing empty spreads, false", EmptyMark + "S(x) = mark(x + 1), mark(false), E(2)*, E(3)*\nS.while(1)", "ok 1",
+        { "trailing empty spread", "Tail(n) = ()\nStep(n) = n + 1, n < 2, Tail(n)*\nStep(0).while", "ok 2", "" },
+        { "effectful trailing empty spreads, false", EmptyMark + "S(x) = mark(x + 1), mark(false), E(2)*, E(3)*\nS(1).while", "ok 1",
             "mark(3),mark(2),mark(false)" },
-        { "effectful trailing empty spreads, true", EmptyMark + "S(x) = mark(x + 1), mark(x < 2), E(2)*, E(3)*\nS.while(1)", "ok 2",
+        { "effectful trailing empty spreads, true", EmptyMark + "S(x) = mark(x + 1), mark(x < 2), E(2)*, E(3)*\nS(1).while", "ok 2",
             "mark(3),mark(2),mark(true),mark(2),mark(3),mark(2),mark(false)" },
-        { "spread flag row supplies the flag", "Done(n) = (n - 1, n > 1)\nS(a, n) = mark(a + 1), Done(n)*\nS.while(0, 3)", "ok S[2, 1]",
+        { "spread flag row supplies the flag", "Done(n) = (n - 1, n > 1)\nS(a, n) = mark(a + 1), Done(n)*\nS(0, 3).while", "ok S[2, 1]",
             "mark(1),mark(2)" },
         // 13. Dynamic output cardinality: earlier spreads form only after true.
-        { "growing state", "Step(n, *h) = n + 1, (h*, mark(n))*, mark(n < 3)\nStep.while(0)", "ok S[3, 0, 1, 2]",
+        { "growing state", "Step(n, *h) = n + 1, (h*, mark(n))*, mark(n < 3)\nStep(0).while", "ok S[3, 0, 1, 2]",
             "mark(true),mark(0),mark(true),mark(1),mark(true),mark(2),mark(false)" },
         // 14. A family dispatches first, then its selected clause's rows are read condition first.
-        { "family-selected body", "F(0) = mark(0), mark(false)\nF(n) = mark(n - 1), mark(n > 0)\nF.while(2)", "ok 0",
+        { "family-selected body", "F(0) = mark(0), mark(false)\nF(n) = mark(n - 1), mark(n > 0)\nF(2).while", "ok 0",
             "mark(true),mark(1),mark(true),mark(0),mark(false)" },
         // 15–17. Builtin, host, alias and higher-order steps keep their eligibility.
-        { "builtin step", "if.while(true, false, true)", "ok S[true, false, true]", "" },
-        { "host step", "mark.while(false)", "ok false", "mark(false)" },
-        { "alias step", "Count(x) = mark(x - 1), x > 1\nTwice = Count\nTwice.while(3)", "ok 1", "mark(2),mark(1)" },
-        { "higher-order step", "Count(x) = mark(x - 1), x > 1\nRun(f, x) = f.while(x)\nRun(Count, 3)", "ok 1", "mark(2),mark(1)" },
-        { "block step", "{ mark(x - 1), mark(x > 1) }.while(3)", "ok 1", "mark(true),mark(2),mark(true),mark(1),mark(false)" },
+        { "builtin step", "if(true, false, true).while", "ok S[true, false, true]", "" },
+        { "host step", "mark(false).while", "ok false", "mark(false)" },
+        { "alias step", "Count(x) = mark(x - 1), x > 1\nTwice = Count\nTwice(3).while", "ok 1", "mark(2),mark(1)" },
+        { "higher-order step", "Count(x) = mark(x - 1), x > 1\nRun(f, x) = f(x).while\nRun(Count, 3)", "ok 1", "mark(2),mark(1)" },
+        { "block step", "B = { mark(x - 1), mark(x > 1) }\nB(3).while", "ok 1", "mark(true),mark(2),mark(true),mark(1),mark(false)" },
         // 18/19. One effective item is both the flag and the state; no item is the missing-flag BadArity.
-        { "one-item supply", "S(x) = not x\nS.while(false)", "ok true", "" },
-        { "one-item supply false", "S(x) = mark(not x)\nS.while(true)", "ok true", "mark(false)" },
-        { "all-empty output", "E(x) = ()\nS(x) = E(x)*, E(x)*\nS.while(1)", "err BadArity", "" },
-        { "non-Boolean flag", "S(x) = 1 / 0, 5\nS.while(1)", "err TypeMismatch", "" },
-        { "non-Boolean flag precedes a failing row", "S(x) = 1 / 0, 'a' < 1\nS.while(1)", "err TypeMismatch", "" },
+        { "one-item supply", "S(x) = not x\nS(false).while", "ok true", "" },
+        { "one-item supply false", "S(x) = mark(not x)\nS(true).while", "ok true", "mark(false)" },
+        { "all-empty output", "E(x) = ()\nS(x) = E(x)*, E(x)*\nS(1).while", "err BadArity", "" },
+        { "non-Boolean flag", "S(x) = 1 / 0, 5\nS(1).while", "err TypeMismatch", "" },
+        { "non-Boolean flag precedes a failing row", "S(x) = 1 / 0, 'a' < 1\nS(1).while", "err TypeMismatch", "" },
         // 20. The next round's binding checks the accepted state's arity; a false round forms no candidate.
-        { "next-round arity mismatch", "Bad(a, b) = a + b, true\nBad.while(1, 2)", "err ArityMismatch", "" },
-        { "discarded candidate arity", "Bad(a, b) = (a, b, a)*, a > 5\nBad.while(1, 2)", "ok S[1, 2]", "" },
+        { "next-round arity mismatch", "Bad(a, b) = a + b, true\nBad(1, 2).while", "err ArityMismatch", "" },
+        { "discarded candidate arity", "Bad(a, b) = (a, b, a)*, a > 5\nBad(1, 2).while", "ok S[1, 2]", "" },
         // 21. A failing initial component fails at the final materialization (LOOP-07); an overwritten one never runs.
-        { "failing unread initial component", "S(x, y) = x - 1, y, x > 0\nS.while(0, 1 / 0)", "err DivByZero", "" },
-        { "overwritten failing initial component", "S(x, y) = x - 1, 0, x > 0\nS.while(1, 1 / 0)", "ok S[0, 0]", "" },
+        { "failing unread initial component", "S(x, y) = x - 1, y, x > 0\nS(0, 1 / 0).while", "err DivByZero", "" },
+        { "overwritten failing initial component", "S(x, y) = x - 1, 0, x > 0\nS(1, 1 / 0).while", "ok S[0, 0]", "" },
         // 22. Lazy initial cells are demanded in flag-first order.
-        { "lazy initial-cell order", "S(a, b) = a + b, b > 100\nS.while(mark(1), mark(2))", "ok S[1, 2]", "mark(2),mark(1)" },
+        { "lazy initial-cell order", "S(a, b) = a + b, b > 100\nS(mark(1), mark(2)).while", "ok S[1, 2]", "mark(2),mark(1)" },
         // 25/26. The independent review's counterexamples: neither direction of effect inclusion holds.
-        { "old success becomes failure", "S(x) = 1 / (1 - pulse()), pulse() == 0\nS.while(2)", "err DivByZero", "pulse#0,pulse#1" },
-        { "old failure becomes success", "S(x) = 1 / 0, mark(false)\nS.while(1)", "ok 1", "mark(false)" },
+        { "old success becomes failure", "S(x) = 1 / (1 - pulse()), pulse() == 0\nS(2).while", "err DivByZero", "pulse#0,pulse#1" },
+        { "old failure becomes success", "S(x) = 1 / 0, mark(false)\nS(1).while", "ok 1", "mark(false)" },
         // 27. A diverging or cyclic transition row is skipped by a false flag.
-        { "skipped nested divergence", "Spin(x) = x + 1, true\nS(x) = Spin.while(x), mark(false)\nS.while(1)", "ok 1", "mark(false)" },
-        { "skipped cyclic local", "S(x) = {\n  P = P + 1\n  P, x > 1\n}\nS.while(1)", "ok 1", "" },
-        { "nested loop in the flag", "In(k) = k + 1, k < 2\nS(x) = mark(x + 1), mark(In.while(x)) > x\nS.while(0)", "ok 2",
+        { "skipped nested divergence", "Spin(x) = x + 1, true\nS(x) = Spin(x).while, mark(false)\nS(1).while", "ok 1", "mark(false)" },
+        { "skipped cyclic local", "S(x) = {\n  P = P + 1\n  P, x > 1\n}\nS(1).while", "ok 1", "" },
+        { "nested loop in the flag", "In(k) = k + 1, k < 2\nS(x) = mark(x + 1), mark(In(x).while) > x\nS(0).while", "ok 2",
             "mark(2),mark(1),mark(2),mark(2),mark(2)" },
         // 30. Handover from the planned round after a true verdict: no row is re-formed.
         { "zero-emission handover keeps the single-item rule",
-            "W(x) = if(x == 2, (), x + 1)\nS(x) = W(x)*, mark(x != true)\nS.while(1)", "ok true",
+            "W(x) = if(x == 2, (), x + 1)\nS(x) = W(x)*, mark(x != true)\nS(1).while", "ok true",
             "mark(true),mark(true),mark(false)" },
-        { "multi-emission handover", "G(x) = (x + 1, x + 1)\nS(x) = G(x)*, mark(x < 1)\nS.while(0)", "err ArityMismatch", "mark(true)" },
+        { "multi-emission handover", "G(x) = (x + 1, x + 1)\nS(x) = G(x)*, mark(x < 1)\nS(0).while", "err ArityMismatch", "mark(true)" },
         // 31/32. META references and argument views cross rounds and the final VALUE boundary unchanged.
         { "call reference carried across rounds",
-            Capture + "S(r, k) = {\n  V = r.Invoke()\n  r, k + V, k < 14\n}\nS.while(R, 0)[1]", "ok 14", "mark(7)" },
+            Capture + "S(r, k) = {\n  V = r.Invoke()\n  r, k + V, k < 14\n}\nS(R, 0).while[1]", "ok 14", "mark(7)" },
         { "Invoke reruns the target but retains its argument cell",
             "Capture(meta r) = r\nF(x) = mark(x)\nR = Capture(F(mark(7)))\n"
-                + "S(r, k) = r, k + r.Invoke(), k < 14\nS.while(R, 0)[1]", "ok 14",
+                + "S(r, k) = r, k + r.Invoke(), k < 14\nS(R, 0).while[1]", "ok 14",
             "mark(7),mark(7),mark(7)" },
         { "META step capture stays inert until false-round final materialization",
-            "F(x) = mark(x)\nS(meta r) = r.Invoke(), false\nS.while(F(mark(7)))", "ok 7",
+            "F(x) = mark(x)\nS(meta r) = r.Invoke(), false\nS(F(mark(7))).while", "ok 7",
             "mark(7),mark(7)" },
         { "argument view forwards the same cell across rounds",
-            Capture + "Read(x) = x\nS(r, k) = r, k + Read(r.Arguments*), k < 14\nS.while(R, 0)[1]",
+            Capture + "Read(x) = x\nS(r, k) = r, k + Read(r.Arguments*), k < 14\nS(R, 0).while[1]",
             "ok 14", "mark(7)" },
         { "argument view inspected, never demanded",
-            Capture + "S(v) = v[0], v.count < 0\nS.while(R.Arguments)", "err TypeMismatch", "" },
+            Capture + "S(v) = v[0], v.count < 0\nS(R.Arguments).while", "err TypeMismatch", "" },
         { "spread argument view, false round, final materialization",
-            Capture + "S(x) = mark(x + 1), false\nS.while(R.Arguments*)", "ok 7", "mark(7)" },
+            Capture + "S(x) = mark(x + 1), false\nS(R.Arguments*).while", "ok 7", "mark(7)" },
         // repeat is unchanged: its rows are formed left to right.
-        { "repeat stays left to right", "S(x) = mark(x - 1), mark(x > 1)\nrepeat(S, 1, 3)", "ok S[2, true]", "mark(2),mark(true)" },
+        { "repeat stays left to right", "S(x) = mark(x - 1), mark(x > 1)\nrepeat(S(3), 1)", "ok S[2, true]", "mark(2),mark(true)" },
         { "ordinary call stays left to right", "S(x) = mark(x - 1), mark(x > 1)\nS(3)", "ok S[2, true]", "mark(2),mark(true)" },
     };
 
@@ -145,7 +145,7 @@ public sealed class LoopConditionFirstTests
     [Fact]
     public async Task Newton_ConvergesOnEveryRoute()
     {
-        var (oracle, _) = await AllRoutesAsync("N(x) = (x + 2 / x) / 2, abs(x * x - 2) > 0.000001\nN.while(1)");
+        var (oracle, _) = await AllRoutesAsync("N(x) = (x + 2 / x) / 2, abs(x * x - 2) > 0.000001\nN(1).while");
         Assert.StartsWith("ok 1.41421356", oracle.Outcome);
     }
 
@@ -158,10 +158,10 @@ public sealed class LoopConditionFirstTests
     [Fact]
     public async Task SeededRandom_DrawsFollowTheFlagFirstOrder()
     {
-        const string plain = "W(x) = x + randomInt(1, 9), randomInt(1, 100) < 70\nW.while(0)";
-        const string flagFirst = "W(x) = {\n  C = randomInt(1, 100) + 0 * x < 70\n  if(C, x + randomInt(1, 9), x), C\n}\nW.while(0)";
-        const string oldOrder = "W(x) = {\n  Nx = x + randomInt(1, 9)\n  Nx, (Nx == Nx) and randomInt(1, 100) < 70\n}\nW.while(0)";
-        const string oldOrderEmulation = "W(x) = {\n  Nx = x + randomInt(1, 9)\n  C = randomInt(1, 100) + 0 * x < 70\n  Nx, (Nx == Nx) and C\n}\nW.while(0)";
+        const string plain = "W(x) = x + randomInt(1, 9), randomInt(1, 100) < 70\nW(0).while";
+        const string flagFirst = "W(x) = {\n  C = randomInt(1, 100) + 0 * x < 70\n  if(C, x + randomInt(1, 9), x), C\n}\nW(0).while";
+        const string oldOrder = "W(x) = {\n  Nx = x + randomInt(1, 9)\n  Nx, (Nx == Nx) and randomInt(1, 100) < 70\n}\nW(0).while";
+        const string oldOrderEmulation = "W(x) = {\n  Nx = x + randomInt(1, 9)\n  C = randomInt(1, 100) + 0 * x < 70\n  Nx, (Nx == Nx) and C\n}\nW(0).while";
         var (plainResult, _) = await AllRoutesAsync(plain, seed: 7);
         var (flagFirstResult, _) = await AllRoutesAsync(flagFirst, seed: 7);
         var (oldOrderResult, _) = await AllRoutesAsync(oldOrder, seed: 7);
@@ -176,9 +176,9 @@ public sealed class LoopConditionFirstTests
     // ── Cancellation in either row ───────────────────────────────────────────────────────────────────
 
     [Theory]
-    [InlineData("S(x) = mark(x - 1), cancel(x > 1)\nS.while(3)", "cancel(true)")]
-    [InlineData("S(x) = cancel(x - 1), mark(x > 1)\nS.while(3)", "mark(true),cancel(2)")]
-    [InlineData("S(x) = mark(x - 1), cancel(x > 3)\nS.while(3)", "cancel(false)")]
+    [InlineData("S(x) = mark(x - 1), cancel(x > 1)\nS(3).while", "cancel(true)")]
+    [InlineData("S(x) = cancel(x - 1), mark(x > 1)\nS(3).while", "mark(true),cancel(2)")]
+    [InlineData("S(x) = mark(x - 1), cancel(x > 3)\nS(3).while", "cancel(false)")]
     public async Task HostCancellation_InEitherRow_IsObservedAtTheNextCheckpoint(string source, string hostLog)
     {
         var (oracle, _) = await AllRoutesAsync(source);
@@ -191,7 +191,7 @@ public sealed class LoopConditionFirstTests
     {
         foreach (var route in SixRouteAgreement.Routes)
         {
-            var (observation, _) = await ObserveAsync(route, "S(x) = mark(x - 1), mark(x > 1)\nS.while(3)", seed: null,
+            var (observation, _) = await ObserveAsync(route, "S(x) = mark(x - 1), mark(x > 1)\nS(3).while", seed: null,
                 limits: null, preCancel: true);
             Assert.True(observation.Kind == "cancelled", $"{route}: {observation}");
             Assert.Empty(observation.HostCalls);
@@ -225,8 +225,8 @@ public sealed class LoopConditionFirstTests
                     return args[0];
                 }, "x"));
             var source = inFlag
-                ? "S(x) = mark(x - 1), hold(x > 1)\nS.while(3)"
-                : "S(x) = hold(x - 1), mark(x > 1)\nS.while(3)";
+                ? "S(x) = mark(x - 1), hold(x > 1)\nS(3).while"
+                : "S(x) = hold(x - 1), mark(x > 1)\nS(3).while";
             var options = new RunOptions { HostOperations = operations, EvaluationCancellationToken = cancellation.Token };
             var parsed = Parser.Parse(source, options);
             Assert.False(parsed.HasErrors);
@@ -268,16 +268,16 @@ public sealed class LoopConditionFirstTests
 
     public static TheoryData<string> SweepSources() => new()
     {
-        "Step(x) = 10 / (x - 1), x > 1\nStep.while(1)",
-        "Count(x) = mark(x - 1), x > 1\nCount.while(4)",
-        "S(x) = {\n  D = mark(x - 1)\n  D, D > 0\n}\nS.while(3)",
-        EmptyMark + "S(x) = mark(x + 1), mark(x < 2), E(2)*, E(3)*\nS.while(1)",
-        "Fib(a, b, n) = b, a + b, n - 1, n > 1\nFib.while(0, 1, 6)",
-        "S(x) = 1 / 0, mark(false)\nS.while(1)",
-        "Spin(x) = x + 1, true\nS(x) = Spin.while(x), mark(false)\nS.while(1)",
-        "W(x) = if(x == 2, (), x + 1)\nS(x) = W(x)*, mark(x != true)\nS.while(1)",
-        "S(x) = \"{x}ab\", x == ''\nS.while('')",
-        Capture + "S(r, k) = {\n  V = r.Invoke()\n  r, k + V, k < 14\n}\nS.while(R, 0)[1]",
+        "Step(x) = 10 / (x - 1), x > 1\nStep(1).while",
+        "Count(x) = mark(x - 1), x > 1\nCount(4).while",
+        "S(x) = {\n  D = mark(x - 1)\n  D, D > 0\n}\nS(3).while",
+        EmptyMark + "S(x) = mark(x + 1), mark(x < 2), E(2)*, E(3)*\nS(1).while",
+        "Fib(a, b, n) = b, a + b, n - 1, n > 1\nFib(0, 1, 6).while",
+        "S(x) = 1 / 0, mark(false)\nS(1).while",
+        "Spin(x) = x + 1, true\nS(x) = Spin(x).while, mark(false)\nS(1).while",
+        "W(x) = if(x == 2, (), x + 1)\nS(x) = W(x)*, mark(x != true)\nS(1).while",
+        "S(x) = \"{x}ab\", x == ''\nS('').while",
+        Capture + "S(r, k) = {\n  V = r.Invoke()\n  r, k + V, k < 14\n}\nS(R, 0).while[1]",
     };
 
     [Theory]
@@ -303,8 +303,8 @@ public sealed class LoopConditionFirstTests
     }
 
     [Theory]
-    [InlineData("S(k, v) = mark(k + 1), [k, k], mark(k < 1)\nS.while(0, ())[1]", false)]
-    [InlineData("S(k, s) = k + 1, mark(\"{s}ab\"), mark(k < 2)\nS.while(0, '')[1]", true)]
+    [InlineData("S(k, v) = mark(k + 1), [k, k], mark(k < 1)\nS(0, ()).while[1]", false)]
+    [InlineData("S(k, s) = k + 1, mark(\"{s}ab\"), mark(k < 2)\nS(0, '').while[1]", true)]
     public async Task MaterializationEdges_AgreeOnEveryRoute(string source, bool strings)
     {
         var (complete, budget) = await AllRoutesAsync(source);
@@ -341,8 +341,8 @@ public sealed class LoopConditionFirstTests
     {
         // The stopping round forms only the flag row: the loop with a costly transition row and the
         // loop whose transition row is a plain parameter read charge the same.
-        var (_, costly) = await AllRoutesAsync("S(x) = x * x * x * x * x * x, x > 1\nS.while(1)");
-        var (_, plain) = await AllRoutesAsync("S(x) = x, x > 1\nS.while(1)");
+        var (_, costly) = await AllRoutesAsync("S(x) = x * x * x * x * x * x, x > 1\nS(1).while");
+        var (_, plain) = await AllRoutesAsync("S(x) = x, x > 1\nS(1).while");
         Assert.Equal(plain, costly);
     }
 
@@ -351,7 +351,7 @@ public sealed class LoopConditionFirstTests
     [Fact]
     public void PlainStep_IsPlanned_AndReadsItsFlagFirst()
     {
-        var run = ObserveOptimized("Step(x) = 10 / (x - 1), x > 1\nStep.while(1)");
+        var run = ObserveOptimized("Step(x) = 10 / (x - 1), x > 1\nStep(1).while");
         Assert.Equal("1", run.Value);
         Assert.Equal(1, run.Loops!.OptimizedLoopHits);
         Assert.Equal(1, run.Loops.LoopIterations);
@@ -361,7 +361,7 @@ public sealed class LoopConditionFirstTests
     public void SpreadTailedStep_FallsBackWithAReason_AndAgreesWithGeneric()
     {
         // The shape is otherwise plannable (one state slot, two rows); only the spread last row refuses it.
-        const string source = "Flag(n) = n > 1\nStep(n) = n - 1, Flag(n)*\nStep.while(3)";
+        const string source = "Flag(n) = n > 1\nStep(n) = n - 1, Flag(n)*\nStep(3).while";
         var optimized = ObserveOptimized(source);
         Assert.Equal("1", optimized.Value);
         Assert.Equal(0, optimized.Loops!.OptimizedLoopHits);
@@ -371,7 +371,7 @@ public sealed class LoopConditionFirstTests
     [Fact]
     public void ZeroEmissionHandover_MaterializesOnce_AfterTheTrueVerdict()
     {
-        const string source = "W(x) = if(x == 2, (), x + 1)\nS(x) = W(x)*, mark(x != true)\nS.while(1)";
+        const string source = "W(x) = if(x == 2, (), x + 1)\nS(x) = W(x)*, mark(x != true)\nS(1).while";
         var optimized = ObserveOptimized(source);
         Assert.Equal("true", optimized.Value);
         Assert.Equal(1, optimized.Loops!.OptimizedLoopHits);
@@ -404,12 +404,19 @@ public sealed class LoopConditionFirstTests
             var continuation = Cell("flag", new(new Result.SequenceValue([new Result.Atom(5), flag]), 2));
             var transition = Cell("transition", new(new Result.Atom(9), 1));
             var loops = new LoopOptimizationDiagnostics();
-            var ctx = (Evaluator.EvalCtx.Empty with { EnableLoopOptimization = optimized, LoopDiagnostics = loops })
-                .WithNeedEnv([("flag", continuation), ("transition", transition)]);
             var step = new Algorithm.User(null, [new CaptureParameterPattern("x")], [], [],
                 [new Expr.Param("transition"), new Expr.Param("flag")]);
+            // META-S3-3: the loop captures the written call `s(0)`; the parameter `s` supplies the step's
+            // CALLABLE (the captured plan's callee cell is that parameter's own cell, CR-13).
+            var stepCell = new NeedCell(
+                () => EvalResult<Evaluator.CountedResult>.Ok(new(new Result.Atom(0), 1)),
+                () => ValueTask.FromResult(EvalResult<Evaluator.CountedResult>.Ok(new(new Result.Atom(0), 1))),
+                () => EvalResult<Algorithm?>.Ok(step));
+            var ctx = (Evaluator.EvalCtx.Empty with { EnableLoopOptimization = optimized, LoopDiagnostics = loops })
+                .WithNeedEnv([("flag", continuation), ("transition", transition), ("s", stepCell)]);
+            ctx.Budget.DecideInvocationPlanRetention(programMayCapture: true);
             var program = new Expr.Call(new Expr.AlgorithmExpr(new Algorithm.Builtin(BuiltinId.@while)),
-                [new Expr.AlgorithmExpr(step), new Expr.Num(0)]);
+                [new Expr.Call(new Expr.Param("s"), [new Expr.Num(0)])]);
             var result = Evaluator.EvalCounted(program, ctx, Array.Empty<(string, Result)>());
             var budget = ctx.Budget;
             return (result, new(budget.ConsumedSteps, budget.ConsumedExpressionCheckpoints, budget.PeakDepth,
@@ -444,25 +451,25 @@ public sealed class LoopConditionFirstTests
     public static TheoryData<string, int, int, int, int, string> FlagRowSpans() => new()
     {
         // A. A literal flag row.
-        { "Step(x) = x + 1, 42\nStep.while(0)", 1, 18, 1, 20, "" },
+        { "Step(x) = x + 1, 42\nStep(0).while", 1, 18, 1, 20, "" },
         // B. A calculated flag row.
-        { "Step(x) = x + 1, x + 2\nStep.while(0)", 1, 18, 1, 23, "" },
+        { "Step(x) = x + 1, x + 2\nStep(0).while", 1, 18, 1, 23, "" },
         // C. Through an ordinary call: the call row, not the callee's interior `x + 2`.
-        { "GetFlag(x) = x + 2\n\nStep(x) = x + 1, GetFlag(x)\nStep.while(0)", 3, 18, 3, 28, "" },
+        { "GetFlag(x) = x + 2\n\nStep(x) = x + 1, GetFlag(x)\nStep(0).while", 3, 18, 3, 28, "" },
         // D. A spread row supplies the flag (its last item): the whole spread row.
-        { "P(x) = (x + 1, 7)\nStep(x) = P(x)*\nStep.while(0)", 2, 11, 2, 16, "" },
+        { "P(x) = (x + 1, 7)\nStep(x) = P(x)*\nStep(0).while", 2, 11, 2, 16, "" },
         // E. Trailing empty spreads are formed, right to left, and passed over.
-        { "Tail(n) = ()\nStep(n) = n + 1, n + 5, Tail(n)*\nStep.while(0)", 2, 18, 2, 23, "" },
-        { "Tail(n) = ()\nP(n) = n + 1, 7\nStep(n) = P(n)*, Tail(n)*\nStep.while(0)", 3, 11, 3, 16, "" },
-        { EmptyMark + "S(x) = mark(x + 1), mark(7), E(2)*, E(3)*\nS.while(1)", 2, 21, 2, 28, "mark(3),mark(2),mark(7)" },
+        { "Tail(n) = ()\nStep(n) = n + 1, n + 5, Tail(n)*\nStep(0).while", 2, 18, 2, 23, "" },
+        { "Tail(n) = ()\nP(n) = n + 1, 7\nStep(n) = P(n)*, Tail(n)*\nStep(0).while", 3, 11, 3, 16, "" },
+        { EmptyMark + "S(x) = mark(x + 1), mark(7), E(2)*, E(3)*\nS(1).while", 2, 21, 2, 28, "mark(3),mark(2),mark(7)" },
         // One row is both the state and the flag; a parenthesized row keeps its group extent.
-        { "Step(x) = 42\nStep.while(0)", 1, 11, 1, 13, "" },
-        { "Step(x) = x + 1, (42)\nStep.while(0)", 1, 18, 1, 22, "" },
+        { "Step(x) = 42\nStep(0).while", 1, 11, 1, 13, "" },
+        { "Step(x) = x + 1, (42)\nStep(0).while", 1, 18, 1, 22, "" },
         // Rejected in a later round, after accepted ones; a planned `if` row.
-        { "Step(x) = x + 1, if(x < 2, true, 5)\nStep.while(0)", 1, 18, 1, 36, "" },
+        { "Step(x) = x + 1, if(x < 2, true, 5)\nStep(0).while", 1, 18, 1, 36, "" },
         // A block step and a family-selected clause body.
-        { "{ x + 1, 42 }.while(0)", 1, 10, 1, 12, "" },
-        { "F(0) = 1, false\nF(n) = n - 1, 9\nF.while(2)", 2, 15, 2, 16, "" },
+        { "B = { x + 1, 42 }\nB(0).while", 1, 14, 1, 16, "" },
+        { "F(0) = 1, false\nF(n) = n - 1, 9\nF(2).while", 2, 15, 2, 16, "" },
     };
 
     [Theory]
@@ -492,7 +499,7 @@ public sealed class LoopConditionFirstTests
     [Fact]
     public void NonBooleanFlag_PlannedLoop_ReportsTheRowSpanWithoutHandover()
     {
-        foreach (var source in new[] { "Step(x) = x + 1, 42\nStep.while(0)", "Step(x) = x + 1, if(x < 2, true, 5)\nStep.while(0)" })
+        foreach (var source in new[] { "Step(x) = x + 1, 42\nStep(0).while", "Step(x) = x + 1, if(x < 2, true, 5)\nStep(0).while" })
         {
             var run = ObserveOptimized(source);
             Assert.Equal("err TypeMismatch", run.Value);
@@ -508,17 +515,17 @@ public sealed class LoopConditionFirstTests
             => Assert.Single(Assert.IsType<RunResult.EvalFailure>(KatLangEngine.Run(source)).Errors);
 
         // A failure while FORMING the flag row is that row's own error, positioned as before.
-        var condition = Failure("Step(x) = x + 1, if(1, true, false)\nStep.while(0)");
+        var condition = Failure("Step(x) = x + 1, if(1, true, false)\nStep(0).while");
         Assert.Equal(KatLangErrorCode.TypeMismatch, condition.Code);
         Assert.Contains("if condition must be a Boolean value", condition.Message, StringComparison.Ordinal);
         Assert.Equal(new SourceSpan(1, 18, 1, 36), condition.Span);
-        var division = Failure("Step(x) = x + 1, 1 / x > 0\nStep.while(0)");
+        var division = Failure("Step(x) = x + 1, 1 / x > 0\nStep(0).while");
         Assert.Equal(KatLangErrorCode.DivisionByZero, division.Code);
         Assert.Equal(new SourceSpan(1, 18, 1, 23), division.Span);
 
         // An atomic builtin step has no written row: the flag error stays unpositioned and the
         // enclosing call's span is the report's.
-        var builtin = Failure("while(count, [1, 2])");
+        var builtin = Failure("while(count([1, 2]))");
         Assert.Equal(KatLangErrorCode.TypeMismatch, builtin.Code);
         Assert.Equal(new SourceSpan(1, 1, 1, 21), builtin.Span);
         Assert.Null(Innermost(Assert.IsAssignableFrom<EvalError>(builtin.Source)).Span);
@@ -658,7 +665,7 @@ public sealed class LoopConditionFirstTests
     }
 
     /// <summary>
-    /// <c>while(Step, 0)</c> over a host-built root built with the public constructors only, where
+    /// <c>while(Step(0))</c> over a host-built root built with the public constructors only, where
     /// <c>Step(x) = x + 1, ROW</c> and the root declares <c>P = 5, true</c>, <c>O = { P = 5, true }</c>,
     /// <c>G(y) = 5, true</c> and <c>Id(a, b) = a, b</c>. No node carries a span unless the caller set one.
     /// </summary>
@@ -677,7 +684,7 @@ public sealed class LoopConditionFirstTests
                 new Property("Step", step),
             ],
             new Expr.Call(new Expr.AlgorithmExpr(new Algorithm.Builtin(BuiltinId.@while)),
-                new OutputBundle([new Expr.Resolve("Step"), new Expr.Num(0)])) { Span = loopCallSpan });
+                new OutputBundle([new Expr.Call(new Expr.Resolve("Step"), [new Expr.Num(0)])])) { Span = loopCallSpan });
         return new Expr.AlgorithmExpr(root);
     }
 

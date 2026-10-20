@@ -751,7 +751,8 @@ public class ZeroArgPropertyResultCacheTests
         var repeatSource = """
             Tick = 42
             S = ((1, 2), (3, 4))
-            repeat({a + b + Tick, (S[0])*}, 1, 0, 0)
+            Step = {a + b + Tick, (S[0])*}
+            repeat(Step(0, 0), 1)
             """;
         // LOOP-06 (condition first): the `while` round reads its flag row FIRST — here it reads
         // `Tick` once — and only then forms the state rows, whose spreads emit two and zero items
@@ -760,7 +761,8 @@ public class ZeroArgPropertyResultCacheTests
         var whileSource = """
             Tick = 42
             S = ((1, 2), ())
-            while({(S[0])*, (S[1])*, if(a == 1, false, a + b + Tick > 0)}, 9, 0)
+            Step = {(S[0])*, (S[1])*, if(a == 1, false, a + b + Tick > 0)}
+            while(Step(9, 0))
             """;
 
         foreach (var (source, fallbacks) in new[] { (repeatSource, 1), (whileSource, 2) })
@@ -796,7 +798,8 @@ public class ZeroArgPropertyResultCacheTests
         var parsed = Parser.Parse("""
             Tick = 42
             S = ((1, false), (2, 2))
-            while({a + Tick, (S[0])*}, 9)
+            Step = {a + Tick, (S[0])*}
+            while(Step(9))
             """);
         Assert.False(parsed.HasErrors);
         var cache = new RecordingZeroArgPropertyResultCache(UncachedZeroArgPropertyResultCache.Instance);

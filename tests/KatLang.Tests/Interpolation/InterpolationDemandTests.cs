@@ -204,7 +204,7 @@ public class InterpolationDemandTests
     [InlineData("\"{1 div 0}\"")]
     [InlineData("B = { A = 1 }\n\"{B}\"")]
     [InlineData("\"<{\"[{\"({1})\"}]\"}>\"")]
-    [InlineData("Step(s) = \"{s}x\"\nStep.repeat(3, '')")]
+    [InlineData("Step(s) = \"{s}x\"\nStep('').repeat(3)")]
     public async Task TheAsyncTwin_AgreesWithTheSyncEvaluator(string source)
     {
         var expr = new Expr.AlgorithmExpr(SourceProvenance.ParseValid(source).Root);
@@ -224,8 +224,8 @@ public class InterpolationDemandTests
     }
 
     [Theory]
-    [InlineData("Step(s) = \"{s}x\"\nStep.repeat(4, '')", "xxxx")]
-    [InlineData("Step(s, n) = \"{s}{n}\", n + 1\nStep.repeat(3, '', 1)", "(123, 4)")]
+    [InlineData("Step(s) = \"{s}x\"\nStep('').repeat(4)", "xxxx")]
+    [InlineData("Step(s, n) = \"{s}{n}\", n + 1\nStep('', 1).repeat(3)", "(123, 4)")]
     public void ALoopStepThatInterpolates_RunsIdenticallyOnEveryStrategy(string source, string expected)
     {
         var expr = new Expr.AlgorithmExpr(SourceProvenance.ParseValid(source).Root);

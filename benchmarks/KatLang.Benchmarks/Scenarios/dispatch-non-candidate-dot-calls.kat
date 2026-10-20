@@ -2,4 +2,4 @@
 # never pipeline candidates, so every iteration pays exactly one recognition probe.
 Add(a, b) = a + b
 Step = k.Add(1)
-Step.repeat(100000, 0)[0]
+Step(0).repeat(100000)[0]

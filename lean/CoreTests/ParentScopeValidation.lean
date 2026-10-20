@@ -241,7 +241,7 @@ def shadowedAncestorChain : ScopeCtx :=
       privateProp "B" (.alias none [] [] (resolve "A"))]))
 
 #guard acceptedAs (.atom 3) (openedThrough shadowedAncestorChain
-  (call (.algorithmExpr (.builtin .repeatBuiltin)) [resolve "A", num 3, num 0]))
+  (call (.algorithmExpr (.builtin .repeatBuiltin)) [call (resolve "A") [num 0], num 3]))
 
 -- A shared outer scope is entered at the earlier property edge, before an inner scope's later
 -- invalid property. Merely scheduling the outer parent is not the same as having validated it.

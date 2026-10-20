@@ -37,12 +37,22 @@ public sealed record PropertyParameterInfo(string Name, PropertyParameterKind Ki
 {
     public bool IsCollecting { get; init; }
 
+    /// <summary>
+    /// Whether the parameter is a META parameter (<c>meta name</c>): it binds a reference to the
+    /// supplied call computation instead of the call's value. Set alike for a user-defined META
+    /// parameter and a builtin's (<c>while(meta step)</c>, <c>repeat(meta step, count)</c>), from the
+    /// same callable signature the runtime binds.
+    /// </summary>
+    public bool IsMeta { get; init; }
+
     public string? DisplayNameOverride { get; init; }
 
     public string DisplayName => DisplayNameOverride
         ?? (IsCollecting
             ? $"*{Name}"
-            : Name);
+            : IsMeta
+                ? $"meta {Name}"
+                : Name);
 }
 
 /// <summary>

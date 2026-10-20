@@ -373,7 +373,7 @@ public class BuiltinArgumentRoleTests
     public async Task UnusedCallback_BehavesLikeAZeroIterationLoopStep()
     {
         // The same algorithm-channel rule the loop builtins always had.
-        AssertOk(await OnEveryRouteAsync("A = tick()\nrepeat(A, 0, 5)"), "5");
+        AssertOk(await OnEveryRouteAsync("A = tick()\nrepeat(A(5), 0)"), "5");
         AssertOk(await OnEveryRouteAsync("A = tick()\nmap([], A)"), "L[]");
     }
 
@@ -382,7 +382,7 @@ public class BuiltinArgumentRoleTests
     [InlineData("filter([], R)", "L[]")]
     [InlineData("reduce([], R, 7)", "7")]
     [InlineData("[].filter(R).count", "0")]
-    [InlineData("repeat(R, 0, 5)", "5")]
+    [InlineData("repeat(R(5), 0)", "5")]
     public async Task UnusedCallback_ConsumesNoRandomDraw(string row, string value)
     {
         // The root's own draw is the stream's FIRST value: formerly the unused callback took
@@ -592,7 +592,7 @@ public class BuiltinArgumentRoleTests
     {
         // All these consumers leave unused cells unevaluated.
         AssertOk(await OnEveryRouteAsync("if(true, 7, tick())"), "7");
-        AssertOk(await OnEveryRouteAsync("repeat({tick()}, 0, 5)"), "5");
+        AssertOk(await OnEveryRouteAsync("Step = {tick()}\nrepeat(Step(5), 0)"), "5");
         AssertOk(await OnEveryRouteAsync("Ignore(f) = 0\nIgnore({1 / 0})"), "0");
         // Supplied cardinality is checked before any ordinary cell is demanded.
         AssertFails(await OnEveryRouteAsync("count(trace(1), trace(2))"), KatLangErrorCode.ArityMismatch);
@@ -653,7 +653,9 @@ public class BuiltinArgumentRoleTests
     {
         const string prelude = "A = tick()\nBox = {\n    public V = tick()\n}\nL = L + 1\n";
         var viaBuiltin = await OnEveryRouteAsync(prelude + builtin.Replace("C", callback, StringComparison.Ordinal));
-        var viaLoop = await OnEveryRouteAsync(prelude + $"repeat({callback}, 0, 5)");
+        // The callback supplied as the callee of the loop's captured call (META-S3-3): a zero-iteration
+        // `repeat` never projects or invokes it either.
+        var viaLoop = await OnEveryRouteAsync(prelude + $"Run(f) = repeat(f(5), 0)\nRun({callback})");
         Assert.Equal("ok", viaBuiltin.Kind);
         Assert.Equal("ok", viaLoop.Kind);
         Assert.Equal(viaLoop.HostCalls, viaBuiltin.HostCalls);

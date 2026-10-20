@@ -219,7 +219,7 @@ public class AlgorithmParameterNamesTests
     [InlineData("PairSum((x, y)) = x + y\nPairSum((1, 2))")]
     [InlineData("x, *rest, z = (1, 2, 3, 4)\nx + z")]
     [InlineData("Square = x * x\nAdd(x, acc) = acc + x\nrange(1, 5).map(Square).reduce(Add, 0)")]
-    [InlineData("Step = k + 1\nStep.repeat(3, 2)[0]")]
+    [InlineData("Step = k + 1\nStep(2).repeat(3)[0]")]
     [InlineData("Outer(n) = {\n  public Twice = n * 2\n  Twice\n}\nOuter(3)")]
     public void EveryElaboratedAlgorithm_DerivesItsParametersFromItsPatterns(string source)
     {

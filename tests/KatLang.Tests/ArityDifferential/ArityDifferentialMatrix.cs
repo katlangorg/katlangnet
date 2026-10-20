@@ -776,27 +776,15 @@ public static class ArityDifferentialMatrix
         // T20: collecting snapshot step — init args are written slots.
         var initSlots = ArgSupply(shape, m);
         var arg = ArgText(m);
-        if (initSlots.Count == 0)
-        {
-            b.Add("loop-init-snapshot", ReceiverKind.LoopStep, BindingForm.Collect, shape, m,
-                $"V = {shape.Literal}\nSnap(*slots) = slots\nSnap.repeat(1, {arg})",
-                SupplyLaw(m, ReceiverLaw.LOOP_INIT_ARGS_ARE_WRITTEN_SLOTS),
-                Err(Arity),
-                SupplyTrace(shape, m)
-                    .Append("the zero-item spread leaves repeat with no initial state slot")
-                    .Append("repeat(step, count, init1, ...) requires at least one init argument — an ordinary arity floor after spreading"));
-        }
-        else
-        {
-            var snapped = Collect(initSlots);
-            b.Add("loop-init-snapshot", ReceiverKind.LoopStep, BindingForm.Collect, shape, m,
-                $"V = {shape.Literal}\nSnap(*slots) = slots\nSnap.repeat(1, {arg})",
-                SupplyLaw(m, ReceiverLaw.LOOP_INIT_ARGS_ARE_WRITTEN_SLOTS),
-                Ok(snapped, 1),
-                SupplyTrace(shape, m)
-                    .Append($"initial state slots = {SupplyNeutral(initSlots)} (each written init argument is one slot)")
-                    .Append($"step collects the slots -> final state is the one list {snapped.Neutral}"));
-        }
+        // OD-1: a zero-item spread is zero initial state slots — no arity floor (META-S3-3).
+        var snapped = Collect(initSlots);
+        b.Add("loop-init-snapshot", ReceiverKind.LoopStep, BindingForm.Collect, shape, m,
+            $"V = {shape.Literal}\nSnap(*slots) = slots\nSnap({arg}).repeat(1)",
+            SupplyLaw(m, ReceiverLaw.LOOP_INIT_ARGS_ARE_WRITTEN_SLOTS),
+            Ok(snapped, 1),
+            SupplyTrace(shape, m)
+                .Append($"initial state slots = {SupplyNeutral(initSlots)} (each written init argument is one slot)")
+                .Append($"step collects the slots -> final state is the one list {snapped.Neutral}"));
 
         // T21 (chain multiplicity One / Repeated): flat step re-spreads its output spread into state slots.
         // The written chain is: [optional init spread] -> collect -> step-output spread.
@@ -804,61 +792,34 @@ public static class ArityDifferentialMatrix
         {
             var chainMult = m == SpreadMultiplicity.Zero ? SpreadMultiplicity.One : SpreadMultiplicity.Repeated;
             var initial = ArgSupply(shape, m);
-            if (initial.Count == 0)
-            {
-                b.Add("loop-flat-respread", ReceiverKind.LoopStep, BindingForm.Spread, shape, chainMult,
-                    $"V = {shape.Literal}\nGrow(*slots) = slots*, 0\nGrow.repeat(1, {arg})",
-                    ReceiverLaw.LOOP_STEP_ROWS_ARE_THE_NEXT_STATE,
-                    Err(Arity),
-                    SupplyTrace(shape, m)
-                        .Append("the zero-item spread leaves repeat with no initial state slot")
-                        .Append("repeat(step, count, init1, ...) requires at least one init argument — an ordinary arity floor after spreading"),
-                    notes: "Chain multiplicity counts the step-output spread plus any init spread.");
-            }
-            else
-            {
-                var state = initial.Append(OracleVal.Atom(0)).ToArray();
-                var loopResult = Capture(state);
-                var (rootValue, emitted) = RootNonSpreadRow(loopResult, ValueCount(loopResult));
-                b.Add("loop-flat-respread", ReceiverKind.LoopStep, BindingForm.Spread, shape, chainMult,
-                    $"V = {shape.Literal}\nGrow(*slots) = slots*, 0\nGrow.repeat(1, {arg})",
-                    ReceiverLaw.LOOP_STEP_ROWS_ARE_THE_NEXT_STATE,
-                    Ok(rootValue, emitted),
-                    SupplyTrace(shape, m)
-                        .Append($"initial state slots = {SupplyNeutral(initial)}")
-                        .Append($"flat step output `slots*, 0` re-spreads the collected list into separate state slots: {SupplyNeutral(state)}")
-                        .Append($"the completed loop is ONE value (LOOP_RESULT_IS_A_VALUE_BOUNDARY): capture(state) = {loopResult.Neutral}; the lone root row emits n={emitted}"),
-                    notes: "Chain multiplicity counts the step-output spread plus any init spread; the step's row supply is the next state, and the loop result is one value.");
-            }
+            var state = initial.Append(OracleVal.Atom(0)).ToArray();
+            var loopResult = Capture(state);
+            var (rootValue, emitted) = RootNonSpreadRow(loopResult, ValueCount(loopResult));
+            b.Add("loop-flat-respread", ReceiverKind.LoopStep, BindingForm.Spread, shape, chainMult,
+                $"V = {shape.Literal}\nGrow(*slots) = slots*, 0\nGrow({arg}).repeat(1)",
+                ReceiverLaw.LOOP_STEP_ROWS_ARE_THE_NEXT_STATE,
+                Ok(rootValue, emitted),
+                SupplyTrace(shape, m)
+                    .Append($"initial state slots = {SupplyNeutral(initial)}")
+                    .Append($"flat step output `slots*, 0` re-spreads the collected list into separate state slots: {SupplyNeutral(state)}")
+                    .Append($"the completed loop is ONE value (LOOP_RESULT_IS_A_VALUE_BOUNDARY): capture(state) = {loopResult.Neutral}; the lone root row emits n={emitted}"),
+                notes: "Chain multiplicity counts the step-output spread plus any init spread; the step's row supply is the next state, and the loop result is one value.");
         }
 
         // T21b (chain multiplicity = the init spread): a completed loop written as a row beside another
         // row is ONE item of the root supply, whatever its final slot count (Q-26).
         {
             var initial = ArgSupply(shape, m);
-            if (initial.Count == 0)
-            {
-                b.Add("loop-result-row", ReceiverKind.LoopStep, BindingForm.Capture, shape, m,
-                    $"V = {shape.Literal}\nKeep(*s) = {{ s* }}\nKeep.repeat(1, {arg}), 0",
-                    SupplyLaw(m, ReceiverLaw.LOOP_RESULT_IS_A_VALUE_BOUNDARY),
-                    Err(Arity),
-                    SupplyTrace(shape, m)
-                        .Append("the zero-item spread leaves repeat with no initial state slot")
-                        .Append("repeat(step, count, init1, ...) requires at least one init argument — an ordinary arity floor after spreading"));
-            }
-            else
-            {
-                var loopResult = Capture(initial);
-                b.Add("loop-result-row", ReceiverKind.LoopStep, BindingForm.Capture, shape, m,
-                    $"V = {shape.Literal}\nKeep(*s) = {{ s* }}\nKeep.repeat(1, {arg}), 0",
-                    ReceiverLaw.LOOP_RESULT_IS_A_VALUE_BOUNDARY,
-                    Ok(OracleVal.Seq(loopResult, OracleVal.Atom(0)), 2),
-                    SupplyTrace(shape, m)
-                        .Append($"initial state slots = {SupplyNeutral(initial)}; the step `s*` re-supplies them unchanged")
-                        .Append($"the completed loop is ONE value capture(state) = {loopResult.Neutral} (valueCount, never the {initial.Count}-slot count)")
-                        .Append($"root rows [loop, 0] -> two rows {OracleVal.Seq(loopResult, OracleVal.Atom(0)).Neutral}, n=2"),
-                    notes: "A loop result beside another row is one root row; its slot count is not observable outside the loop.");
-            }
+            var loopResult = Capture(initial);
+            b.Add("loop-result-row", ReceiverKind.LoopStep, BindingForm.Capture, shape, m,
+                $"V = {shape.Literal}\nKeep(*s) = {{ s* }}\nKeep({arg}).repeat(1), 0",
+                ReceiverLaw.LOOP_RESULT_IS_A_VALUE_BOUNDARY,
+                Ok(OracleVal.Seq(loopResult, OracleVal.Atom(0)), 2),
+                SupplyTrace(shape, m)
+                    .Append($"initial state slots = {SupplyNeutral(initial)}; the step `s*` re-supplies them unchanged")
+                    .Append($"the completed loop is ONE value capture(state) = {loopResult.Neutral} (valueCount, never the {initial.Count}-slot count)")
+                    .Append($"root rows [loop, 0] -> two rows {OracleVal.Seq(loopResult, OracleVal.Atom(0)).Neutral}, n=2"),
+                notes: "A loop result beside another row is one root row; its slot count is not observable outside the loop.");
         }
 
         // T22 (chain multiplicity One / Repeated): a patterned step's top-level output spread
@@ -898,7 +859,7 @@ public static class ArityDifferentialMatrix
             }
 
             b.Add("loop-patterned-spread", ReceiverKind.LoopStep, BindingForm.Capture, shape, chainMult,
-                $"V = {shape.Literal}\nSpreadStep((*h), p) = h*, p + 1\nSpreadStep.repeat(1, {arg}, 10)",
+                $"V = {shape.Literal}\nSpreadStep((*h), p) = h*, p + 1\nSpreadStep({arg}, 10).repeat(1)",
                 ReceiverLaw.LOOP_STEP_PATTERNS_ONLY_BIND_THE_INCOMING_STATE,
                 expected,
                 trace,
@@ -936,7 +897,7 @@ public static class ArityDifferentialMatrix
         var atom = ShapesById["atom"];
 
         b.Add("loop-while-flag", ReceiverKind.LoopStep, BindingForm.Capture, atom, SpreadMultiplicity.Zero,
-            "Dec = x - 1, x > 1\nDec.while(3)",
+            "Dec = x - 1, x > 1\nDec(3).while",
             ReceiverLaw.WHILE_LAST_SLOT_IS_CONTINUE_FLAG,
             Ok(OracleVal.Atom(1), 1),
             new[]
@@ -947,7 +908,7 @@ public static class ArityDifferentialMatrix
             notes: "The while flag family is numeric by necessity; state-shape laws are exercised through repeat.");
 
         b.Add("loop-while-state", ReceiverKind.LoopStep, BindingForm.Capture, atom, SpreadMultiplicity.Zero,
-            "Sum = a + 1, total + a, a < 3\nSum.while(1, 0)",
+            "Sum = a + 1, total + a, a < 3\nSum(1, 0).while",
             ReceiverLaw.WHILE_LAST_SLOT_IS_CONTINUE_FLAG,
             Ok(OracleVal.Seq(OracleVal.Atom(3), OracleVal.Atom(3)), 1),
             new[]
@@ -1460,7 +1421,7 @@ public static class ArityDifferentialMatrix
         {
             Id = "add-loop-patterned-wrong-slots",
             Family = "arity-after-spread",
-            Source = "SpreadStep((*h), p) = h*, p + 1\nSpreadStep.repeat(1, 7, 8, 9)",
+            Source = "SpreadStep((*h), p) = h*, p + 1\nSpreadStep(7, 8, 9).repeat(1)",
             PrimaryLaw = ReceiverLaw.LOOP_STEP_PATTERNS_ONLY_BIND_THE_INCOMING_STATE,
             ExpectedErrorCategory = Arity,
         });

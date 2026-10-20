@@ -20,15 +20,13 @@ public partial class LoopStepCallableDispatchTests
             () => throw new InvalidOperationException("unused step VALUE"),
             () => throw new InvalidOperationException("unused step VALUE"),
             () => { projections++; return EvalResult<Algorithm?>.Ok(new Algorithm.Builtin(BuiltinId.count)); });
-        var arguments = new[]
-        {
-            new Evaluator.ResolvedArgumentAlgorithm(null) { Cell = step },
-            new Evaluator.ResolvedArgumentAlgorithm(null) { Cell = NeedCell.Ready(new(new Result.Atom(0), 1)) },
-            new Evaluator.ResolvedArgumentAlgorithm(null) { Cell = NeedCell.Ready(new(new Result.Atom(7), 1)) }
-        };
+        // META-S3-3: the native kernel takes its logical components — the step argument (a captured
+        // plan's callee cell), the validated remaining count and the initial state cells.
+        var stepArgument = new Evaluator.ResolvedArgumentAlgorithm(null) { Cell = step };
+        IReadOnlyList<NeedCell> state = [NeedCell.Ready(new(new Result.Atom(7), 1))];
         var method = typeof(Evaluator).GetMethod("EvalNeedLoop", BindingFlags.Static | BindingFlags.NonPublic)!;
         var invocation = (ValueTask<EvalResult<Evaluator.CountedResult>>)method.Invoke(null,
-            [BuiltinId.@repeat, arguments, Evaluator.EvalCtx.Empty, Array.Empty<(string, Result)>(), asynchronous])!;
+            [BuiltinId.@repeat, stepArgument, 0L, state, Evaluator.EvalCtx.Empty, Array.Empty<(string, Result)>(), asynchronous])!;
         var result = await invocation;
         Assert.True(result.IsOk);
         Assert.Equal("7", SixRouteAgreement.Neutral(result.Value.Value));
@@ -81,7 +79,7 @@ public partial class LoopStepCallableDispatchTests
         Add("family-spread", "F(0, b) = { (1, b)* }\nF(a, b) = { (a + 1, b)* }\n", "F", "1, 3", 2, true);
         Add("family-empty-row", "F(0) = ()\nF(x) = ()\n", "F", "1", 1);
         Add("family-zero-rows", "F(0) = { ()* }\nF(x) = { ()* }\n", "F", "1", 1, true);
-        Add("family-nested-loop", "F(0) = 0\nF(x) = repeat(count, 1, [x])\n", "F", "3", 1);
+        Add("family-nested-loop", "F(0) = 0\nF(x) = repeat(count([x]), 1)\n", "F", "3", 1);
         Add("math", "", "abs", "trace(-3)", 1);
         Add("host", "", "trace", "trace(7)", 1);
         Add("user", "F(x) = x + 1\n", "F", "trace(2)", 1);
@@ -107,9 +105,9 @@ public partial class LoopStepCallableDispatchTests
         var wrapper = $"W({parameters}) = {wrapperBody}\n";
         foreach (var iterations in new[] { 0, 1, 2 })
         {
-            var directSource = Complete("", $"repeat({callable}, {iterations}, {supply})");
+            var directSource = Complete("", $"repeat({callable}({supply}), {iterations})");
             var (direct, _) = await AllRoutesAsync(directSource, seed: 313);
-            var (wrapped, _) = await AllRoutesAsync(Complete(wrapper, $"repeat(W, {iterations}, {supply})"), seed: 313);
+            var (wrapped, _) = await AllRoutesAsync(Complete(wrapper, $"repeat(W({supply}), {iterations})"), seed: 313);
             Assert.True(direct.Semantic == wrapped.Semantic, $"{id}/{iterations}: {direct} != {wrapped}");
             if (iterations == 1)
             {
@@ -120,9 +118,9 @@ public partial class LoopStepCallableDispatchTests
             }
             foreach (var route in new[]
             {
-                Complete($"AliasOne = {callable}\nAliasTwo = AliasOne\nAliasThree = AliasTwo\n", $"repeat(AliasThree, {iterations}, {supply})"),
-                Complete("", $"{callable}.repeat({iterations}, {supply})"),
-                Complete($"Run(f, *s) = repeat(f, {iterations}, s*)\nNext(g, *s) = Run(g, s*)\n", $"Next({callable}, {supply})"),
+                Complete($"AliasOne = {callable}\nAliasTwo = AliasOne\nAliasThree = AliasTwo\n", $"repeat(AliasThree({supply}), {iterations})"),
+                Complete("", $"{callable}({supply}).repeat({iterations})"),
+                Complete($"Run(f, *s) = repeat(f(s*), {iterations})\nNext(g, *s) = Run(g, s*)\n", $"Next({callable}, {supply})"),
             })
             {
                 var (routed, _) = await AllRoutesAsync(route, seed: 313);
@@ -136,34 +134,37 @@ public partial class LoopStepCallableDispatchTests
     [InlineData("last", "[()]", "W(c) = last(c)\n")]
     [InlineData("if", "true, (), 9", "W(c, t, e) = if(c, t, e)\n")]
     [InlineData("reduce", "[], { e + a }, ()", "W(c, f, a) = reduce(c, f, a)\n")]
-    [InlineData("repeat", "{ if(x == x, (), ())* }, 1, 0", "W(f, n, x) = repeat(f, n, x)\n")]
+    [InlineData("repeat", "{ if(x == x, (), ())* }, 1, 0", "W(f, n, x) = repeat(f(x), n)\n")]
     public async Task Independent_EmptyBuiltinResultIsOneSlotInEverySpelling(string builtin, string supply, string wrapper)
     {
-        foreach (var step in new[] { builtin, "A", "W" })
+        // A meta builtin invoked as the loop step receives state VALUES, which its meta slot refuses;
+        // only the wrapper spelling supplies `repeat` a written call (META-S3-3).
+        foreach (var step in builtin == "repeat" ? new[] { "W" } : new[] { builtin, "A", "W" })
         {
             var definitions = wrapper + $"A = {builtin}\n";
-            var (flag, _) = await AllRoutesAsync(definitions + $"while({step}, {supply})");
-            Assert.True(Assert.Single(flag.Errors).StartsWith("TypeMismatch:", StringComparison.Ordinal), flag.ToString() + "\n" + definitions + $"while({step}, {supply})");
+            var (flag, _) = await AllRoutesAsync(definitions + $"while({step}({supply}))");
+            Assert.True(Assert.Single(flag.Errors).StartsWith("TypeMismatch:", StringComparison.Ordinal), flag.ToString() + "\n" + definitions + $"while({step}({supply}))");
             Assert.Contains("sequence value with 0 sequence elements", flag.Errors[0], StringComparison.Ordinal);
         }
         // A second unary call distinguishes [] from [()] without relying on final rendering.
         if (builtin is "first" or "last")
         {
             // The second call selects from `()`, which has no position: BadIndex (SEQ-04, Q-27).
-            var (twice, _) = await AllRoutesAsync($"repeat({builtin}, 2, {supply})");
-            Assert.IsType<EvalError.BadIndex>(Innermost(GenericError($"repeat({builtin}, 2, {supply})")));
+            var (twice, _) = await AllRoutesAsync($"repeat({builtin}({supply}), 2)");
+            Assert.IsType<EvalError.BadIndex>(Innermost(GenericError($"repeat({builtin}({supply}), 2)")));
         }
     }
 
     [Theory]
     [InlineData("F(0) = 1\nF(1) = 2\n", "F", "5", "F")]
     [InlineData("F(0) = 1\nF(1) = 2\nA = F\nB = A\nC = B\n", "C", "5", "C")]
-    [InlineData("Lib = {\n public F(0) = 1\n public F(1) = 2\n}\n", "Lib.F", "5", "Lib.F")]
+    // CR-2: a qualified callee is no captured step, so the module member is named by an alias first.
+    [InlineData("Lib = {\n public F(0) = 1\n public F(1) = 2\n}\nLibF = Lib.F\n", "LibF", "5", "LibF")]
     [InlineData("open Lib\nLib = {\n public F(0) = 1\n public F(1) = 2\n}\n", "F", "5", "F")]
     public async Task Independent_NoMatchNamesWrittenIdentityAcrossRoutes(string definitions, string step, string supply, string expected)
     {
-        foreach (var expression in new[] { $"repeat({step}, 1, {supply})", $"{step}.repeat(1, {supply})", $"while({step}, {supply})",
-            $"Run(f, *s) = repeat(f, 1, s*)\nNext(g, *s) = Run(g, s*)\nNext({step}, {supply})" })
+        foreach (var expression in new[] { $"repeat({step}({supply}), 1)", $"{step}({supply}).repeat(1)", $"while({step}({supply}))",
+            $"Run(f, *s) = repeat(f(s*), 1)\nNext(g, *s) = Run(g, s*)\nNext({step}, {supply})" })
         {
             var (observed, _) = await AllRoutesAsync(definitions + expression);
             Assert.StartsWith("NoMatchingBranch:", Assert.Single(observed.Errors), StringComparison.Ordinal);
@@ -174,11 +175,11 @@ public partial class LoopStepCallableDispatchTests
     }
 
     [Theory]
-    [InlineData("F(0) = 0\nF(x) = trace(x) + 1\nrepeat(F, 3, 1)")]
-    [InlineData("repeat(range, 1, 1, 4)")]
-    [InlineData("repeat(map, 1, [1, 2], { trace(x) + 1 })")]
-    [InlineData("repeat(if, 1, false, trace(1) / 0, trace('abc'))")]
-    [InlineData("F(0) = 0, false\nF(x) = x - 1, x > 1\nwhile(F, 3)")]
+    [InlineData("F(0) = 0\nF(x) = trace(x) + 1\nrepeat(F(1), 3)")]
+    [InlineData("repeat(range(1, 4), 1)")]
+    [InlineData("repeat(map([1, 2], { trace(x) + 1 }), 1)")]
+    [InlineData("repeat(if(false, trace(1) / 0, trace('abc')), 1)")]
+    [InlineData("F(0) = 0, false\nF(x) = x - 1, x > 1\nwhile(F(3))")]
     public async Task Independent_ExactBudgetBoundariesAreStrategyNeutral(string source)
     {
         var (_, budget) = await AllRoutesAsync(source);
@@ -191,13 +192,13 @@ public partial class LoopStepCallableDispatchTests
     }
 
     [Theory]
-    [InlineData("F(0) = 1\nF(x) = x + 1\nrepeat(F, 1, awaitValue(1))")]
-    [InlineData("F(0) = 1\nF(x) = awaitValue(x)\nrepeat(F, 1, 1)")]
-    [InlineData("repeat(count, 1, awaitValue([1]))")]
-    [InlineData("repeat(if, 1, true, awaitValue(1), 0)")]
-    [InlineData("repeat(map, 1, [1], { awaitValue(x) })")]
-    [InlineData("repeat(filter, 1, [1], { awaitValue(x) > 0 })")]
-    [InlineData("repeat(reduce, 1, [1], { awaitValue(e) + a }, 0)")]
+    [InlineData("F(0) = 1\nF(x) = x + 1\nrepeat(F(awaitValue(1)), 1)")]
+    [InlineData("F(0) = 1\nF(x) = awaitValue(x)\nrepeat(F(1), 1)")]
+    [InlineData("repeat(count(awaitValue([1])), 1)")]
+    [InlineData("repeat(if(true, awaitValue(1), 0), 1)")]
+    [InlineData("repeat(map([1], { awaitValue(x) }), 1)")]
+    [InlineData("repeat(filter([1], { awaitValue(x) > 0 }), 1)")]
+    [InlineData("repeat(reduce([1], { awaitValue(e) + a }, 0), 1)")]
     public async Task Independent_CancellationWhileHostIsSuspendedRetainsOriginalToken(string source)
     {
         foreach (var forced in new[] { false, true })
@@ -273,7 +274,7 @@ public partial class LoopStepCallableDispatchTests
     public async Task Independent_UserInspectionFailureRetainsTheOrdinaryBinderError(
         string definition, string supply, string expectedType)
     {
-        var source = definition + $"repeat(F, 1, {supply})";
+        var source = definition + $"repeat(F({supply}), 1)";
         var (loop, _) = await AllRoutesAsync(source);
         var (ordinary, _) = await AllRoutesAsync(definition + $"F({supply})");
         Assert.Equal(ordinary.Semantic, loop.Semantic);

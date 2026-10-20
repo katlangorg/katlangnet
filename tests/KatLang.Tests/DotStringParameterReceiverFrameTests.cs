@@ -100,7 +100,7 @@ public class DotStringParameterReceiverFrameTests
             "Z = 5\nShow(v) = v + 0, v.string\nShow(Z)",
             "ok S[5, '5']"),
         new("loop-step",
-            "Inc(z) = z + 1\nShow(v) = v.string\nStep(x) = Show(Inc)\nrepeat(Step, 1, 0)",
+            "Inc(z) = z + 1\nShow(v) = v.string\nStep(x) = Show(Inc)\nrepeat(Step(0), 1)",
             "call repeat > call Show > dotCall .string of v > property Inc > arityMismatch 1 0"),
         new("collecting-parameter",
             "Inc(z) = z + 1\nShow(*vs) = vs.string\nShow(Inc)",

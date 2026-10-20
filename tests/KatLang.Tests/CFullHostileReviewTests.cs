@@ -59,7 +59,7 @@ public class CFullHostileReviewTests
     [InlineData("F(a, b, c) = 0\nF(1, (2, 3))", 3, 2)]
     [InlineData("Inc(x) = x + 1\nUse(f, x, y) = f(x) + y\nUse(Inc, (2, 3))", 3, 2)]
     [InlineData("Inc(x) = x + 1\nF(x, y) = x(y)\nF(Inc)", 2, 1)]
-    [InlineData("Step(a, b) = a, b\nrepeat(Step, 1, (1, 2))", 2, 1)]
+    [InlineData("Step(a, b) = a, b\nrepeat(Step((1, 2)), 1)", 2, 1)]
     public async Task FlatBindingArity_ReportsCompleteBindingInputLengths(string source, int expected, int actual)
     {
         // AcrossStrategies compares only the neutral observation (the error CATEGORY) across its
@@ -103,7 +103,7 @@ public class CFullHostileReviewTests
     public async Task CountedMultiSlotOrigin_DoesNotChangeOrdinarySupplyOrForwarding()
     {
         const string defs = "Step(a, b) = a, b\nColl(*xs) = xs\nFwd(*xs) = Coll(xs*)\nFwd2(*xs) = Fwd(xs*)\n";
-        var multi = await AcrossStrategies(defs + "repeat(Step, 1, 1, 2)");
+        var multi = await AcrossStrategies(defs + "repeat(Step(1, 2), 1)");
         var single = await AcrossStrategies(defs + "(1, 2)");
         // A completed loop is an ordinary value boundary (Q-26): its two-slot final state
         // is ONE value with the very count of the written pair — the loop origin is not
@@ -112,7 +112,7 @@ public class CFullHostileReviewTests
         Assert.Equal(1, single.Value.EmittedCount);
         Assert.True(Result.ValueComparer.Equals(multi.Value.Value, single.Value.Value));
 
-        foreach (var origin in new[] { "(1, 2)", "repeat(Step, 1, 1, 2)", "if(true, repeat(Step, 1, 1, 2), 0)" })
+        foreach (var origin in new[] { "(1, 2)", "repeat(Step(1, 2), 1)", "if(true, repeat(Step(1, 2), 1), 0)" })
         {
             foreach (var call in new[] { $"Coll({origin})", $"Fwd2({origin})", $"({origin}).Fwd2", $"Fwd2([{origin}]*)" })
                 AssertValue(await AcrossStrategies(defs + call), "[(1, 2)]");
@@ -162,7 +162,7 @@ public class CFullHostileReviewTests
     public async Task LoopState_PreservesEmptyAndStructuredSlotsAcrossIterations(string value)
     {
         const string defs = "R(x, n) = x, n + 1\nW(x, n) = x, n + 1, n < 2\nColl(*xs) = xs\n";
-        foreach (var call in new[] { $"repeat(R, 2, {value}, 0)", $"while(W, {value}, 0)" })
+        foreach (var call in new[] { $"repeat(R({value}, 0), 2)", $"while(W({value}, 0))" })
         {
             var raw = await AcrossStrategies(defs + call);
             Assert.True(raw.IsOk);

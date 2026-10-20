@@ -79,7 +79,7 @@ public class LoopStrategyPreparationTests
     public void GenericRepeat_PreparesStepBindingOncePerLoopInvocation(int count, decimal expected)
     {
         var observations = new EvaluationObservations();
-        var (result, _) = RunGeneric($"Step = k + 1\nStep.repeat({count}, 0)", observations);
+        var (result, _) = RunGeneric($"Step = k + 1\nStep(0).repeat({count})", observations);
 
         Assert.False(result.IsError, $"generic repeat failed: {(result.IsError ? result.Error : null)}");
         Assert.Equal([expected], result.Value.Value.ToAtoms());
@@ -91,7 +91,7 @@ public class LoopStrategyPreparationTests
     public void GenericWhile_PreparesStepBindingOncePerLoopInvocation()
     {
         var observations = new EvaluationObservations();
-        var (result, _) = RunGeneric("Step = k + 1, k < 100\nStep.while(0)", observations);
+        var (result, _) = RunGeneric("Step = k + 1, k < 100\nStep(0).while", observations);
 
         Assert.False(result.IsError, $"generic while failed: {(result.IsError ? result.Error : null)}");
         Assert.Equal([100m], result.Value.Value.ToAtoms());
@@ -105,7 +105,7 @@ public class LoopStrategyPreparationTests
         // step algorithm prepares again (no static or cross-loop cache may exist).
         var observations = new EvaluationObservations();
         var (result, _) = RunGeneric(
-            "Step = k + 1\nA = Step.repeat(10, 0)\nB = Step.repeat(10, 5)\nA + B",
+            "Step = k + 1\nA = Step(0).repeat(10)\nB = Step(5).repeat(10)\nA + B",
             observations);
 
         Assert.False(result.IsError, $"two-loop program failed: {(result.IsError ? result.Error : null)}");
@@ -122,7 +122,7 @@ public class LoopStrategyPreparationTests
         // reference-keyed cross-invocation preparation cache.
         var observations = new EvaluationObservations();
         var (result, _) = RunGeneric(
-            "Use(f) = f.repeat(2, 0) + f.repeat(3, 10)\nStep = k + 1\nUse(Step)",
+            "Use(f) = f(0).repeat(2) + f(10).repeat(3)\nStep = k + 1\nUse(Step)",
             observations);
 
         Assert.False(result.IsError, $"higher-order two-loop program failed: {(result.IsError ? result.Error : null)}");
@@ -137,7 +137,7 @@ public class LoopStrategyPreparationTests
         // loop, and each inner INVOCATION prepares once on its own stack frame.
         var observations = new EvaluationObservations();
         var (result, _) = RunGeneric(
-            "Inner = y + 1\nOuter = Inner.repeat(2, x)\nOuter.repeat(3, 0)",
+            "Inner = y + 1\nOuter = Inner(x).repeat(2)\nOuter(0).repeat(3)",
             observations);
 
         Assert.False(result.IsError, $"nested-loop program failed: {(result.IsError ? result.Error : null)}");
@@ -151,14 +151,14 @@ public class LoopStrategyPreparationTests
         // A zero-iteration repeat never binds its step, so it must not gain step
         // preparation either — in generic mode and in default (optimized) mode alike.
         var genericObservations = new EvaluationObservations();
-        var (genericResult, _) = RunGeneric("Step = k + 1\nStep.repeat(0, 7)", genericObservations);
+        var (genericResult, _) = RunGeneric("Step = k + 1\nStep(7).repeat(0)", genericObservations);
 
         Assert.False(genericResult.IsError);
         Assert.Equal([7m], genericResult.Value.Value.ToAtoms());
         Assert.Equal(0, genericObservations.GenericLoopStepBindingPreparationCount);
 
         var defaultObservations = new EvaluationObservations();
-        var (defaultResult, _, _) = RunOptimized("Step = k + 1\nStep.repeat(0, 7)", defaultObservations);
+        var (defaultResult, _, _) = RunOptimized("Step = k + 1\nStep(7).repeat(0)", defaultObservations);
 
         Assert.False(defaultResult.IsError);
         Assert.Equal([7m], defaultResult.Value.Value.ToAtoms());
@@ -173,7 +173,7 @@ public class LoopStrategyPreparationTests
         // per-iteration binding — preparation happened once and the structured error
         // is unchanged (LoopStateArityDiagnosticTests pins the cross-mode message).
         var observations = new EvaluationObservations();
-        var (result, _) = RunGeneric("Step(a, b) = a + b, 1\nStep.while(5)", observations);
+        var (result, _) = RunGeneric("Step(a, b) = a + b, 1\nStep(5).while", observations);
 
         Assert.True(result.IsError, "arity-mismatched while step must fail");
         Assert.Equal(1, observations.GenericLoopStepBindingPreparationCount);
@@ -182,7 +182,7 @@ public class LoopStrategyPreparationTests
     [Fact]
     public void GenericRepeat_PreparationAddsNoStepCharge()
     {
-        const string source = "Step = k + 1\nStep.repeat(3, 0)";
+        const string source = "Step = k + 1\nStep(0).repeat(3)";
         var observations = new EvaluationObservations();
         var (unbounded, unboundedBudget) = RunGeneric(source, observations);
 
@@ -219,7 +219,7 @@ public class LoopStrategyPreparationTests
         // iteration 2 takes the binder clause.
         var observations = new EvaluationObservations();
         var (result, _) = RunGeneric(
-            "Advance(0) = 1\nAdvance(x) = x + 1\nStep = Advance(k)\nStep.repeat(2, 0)",
+            "Advance(0) = 1\nAdvance(x) = x + 1\nStep = Advance(k)\nStep(0).repeat(2)",
             observations);
 
         Assert.False(result.IsError, $"conditional loop failed: {(result.IsError ? result.Error : null)}");
@@ -236,7 +236,7 @@ public class LoopStrategyPreparationTests
         var cache = new RecordingZeroArgPropertyResultCache();
         var observations = new EvaluationObservations();
         var (result, _) = Evaluator.RunCountedObserved(
-            Program("Step(x) = { Val = x + 1\nVal }\nStep.repeat(3, 0)"),
+            Program("Step(x) = { Val = x + 1\nVal }\nStep(0).repeat(3)"),
             enableOptimizations: false,
             zeroArgPropertyResultCache: cache,
             observations: observations);
@@ -285,9 +285,7 @@ public class LoopStrategyPreparationTests
             Opens: [],
             Properties: [],
             Output: [new Expr.NativeCall(operation.NativeName, [])]);
-        var expression = new Expr.Call(
-            new Expr.Resolve("repeat"),
-            [new Expr.AlgorithmExpr(step), new Expr.Num(2), new Expr.Num(0)]);
+        var expression = new Expr.AlgorithmExpr(new Algorithm.User(null, [], [], [new Property("S", step)], [new Expr.Call(new Expr.Resolve("repeat"), [new Expr.Call(new Expr.Resolve("S"), [new Expr.Num(0)]), new Expr.Num(2)])]));
         var observations = new EvaluationObservations();
         var loops = new LoopOptimizationDiagnostics();
 
@@ -349,9 +347,7 @@ public class LoopStrategyPreparationTests
         {
             ParameterPatterns = [pattern],
         };
-        var expression = new Expr.Call(
-            new Expr.Resolve("repeat"),
-            [new Expr.AlgorithmExpr(step), new Expr.Num(2), new Expr.ListLiteral([new Expr.Num(0)])]);
+        var expression = new Expr.AlgorithmExpr(new Algorithm.User(null, [], [], [new Property("S", step)], [new Expr.Call(new Expr.Resolve("repeat"), [new Expr.Call(new Expr.Resolve("S"), [new Expr.ListLiteral([new Expr.Num(0)])]), new Expr.Num(2)])]));
         var observations = new EvaluationObservations();
         var loops = new LoopOptimizationDiagnostics();
 
@@ -380,7 +376,7 @@ public class LoopStrategyPreparationTests
         var cache = new PassThroughAsyncZeroArgPropertyResultCache();
         var (result, _) = await AsyncEvaluationHarness.Complete(
             Evaluator.RunCountedObservedAsync(
-                Program("Step = k + 1\nStep.repeat(10, 0)"),
+                Program("Step = k + 1\nStep(0).repeat(10)"),
                 zeroArgPropertyResultCache: cache,
                 observations: observations));
 
@@ -397,7 +393,7 @@ public class LoopStrategyPreparationTests
         var cache = new PassThroughAsyncZeroArgPropertyResultCache();
         var (result, _) = await AsyncEvaluationHarness.Complete(
             Evaluator.RunCountedObservedAsync(
-                Program("Step = k + 1, k < 100\nStep.while(0)"),
+                Program("Step = k + 1, k < 100\nStep(0).while"),
                 zeroArgPropertyResultCache: cache,
                 observations: observations));
 
@@ -414,7 +410,7 @@ public class LoopStrategyPreparationTests
         var cache = new PassThroughAsyncZeroArgPropertyResultCache();
         var (result, _) = await AsyncEvaluationHarness.Complete(
             Evaluator.RunCountedObservedAsync(
-                Program("Step = k + 1\nStep.repeat(0, 7)"),
+                Program("Step = k + 1\nStep(7).repeat(0)"),
                 zeroArgPropertyResultCache: cache,
                 observations: observations));
 
@@ -431,7 +427,7 @@ public class LoopStrategyPreparationTests
         var cache = new PassThroughAsyncZeroArgPropertyResultCache();
         var (result, _) = await AsyncEvaluationHarness.Complete(
             Evaluator.RunCountedObservedAsync(
-                Program("Step = k + 1\nStep.repeat(-1, 7)"),
+                Program("Step = k + 1\nStep(7).repeat(-1)"),
                 zeroArgPropertyResultCache: cache,
                 observations: observations));
 
@@ -446,7 +442,7 @@ public class LoopStrategyPreparationTests
     public void OptimizedRepeat_NoHandover_NeverMaterializesGenericSlots()
     {
         var observations = new EvaluationObservations();
-        var (result, _, diagnostics) = RunOptimized("Step = k + 1\nStep.repeat(1000, 0)", observations);
+        var (result, _, diagnostics) = RunOptimized("Step = k + 1\nStep(0).repeat(1000)", observations);
 
         Assert.False(result.IsError, $"optimized repeat failed: {(result.IsError ? result.Error : null)}");
         Assert.Equal([1000m], result.Value.Value.ToAtoms());
@@ -462,7 +458,7 @@ public class LoopStrategyPreparationTests
     public void OptimizedWhile_NoHandover_NeverMaterializesGenericSlots()
     {
         var observations = new EvaluationObservations();
-        var (result, _, diagnostics) = RunOptimized("Step = k + 1, k < 100\nStep.while(0)", observations);
+        var (result, _, diagnostics) = RunOptimized("Step = k + 1, k < 100\nStep(0).while", observations);
 
         Assert.False(result.IsError, $"optimized while failed: {(result.IsError ? result.Error : null)}");
         Assert.Equal([100m], result.Value.Value.ToAtoms());
@@ -488,7 +484,7 @@ public class LoopStrategyPreparationTests
         // and replaced rather than fed to arithmetic; equality is total over value
         // kinds, so `v == ()` is the test. The state sequence, iteration counts, and
         // final value are unchanged by that spelling.
-        const string source = "Empty = ()\nStep = if(v == 3, Empty, if(v == (), 1, v + 1))\nStep.repeat(10, 0)";
+        const string source = "Empty = ()\nStep = if(v == 3, Empty, if(v == (), 1, v + 1))\nStep(0).repeat(10)";
 
         var observations = new EvaluationObservations();
         var (result, budget, diagnostics) = RunOptimized(source, observations);
@@ -519,7 +515,7 @@ public class LoopStrategyPreparationTests
         // the round returns the current state without forming the state row whose `Empty`
         // would have emitted zero values. Under the retired step-first order that row forced a
         // handover materialization; now the planned loop finishes on its own.
-        const string source = "Empty = ()\nStep = if(k == 3, Empty, k + 1), k < 3\nStep.while(0)";
+        const string source = "Empty = ()\nStep = if(k == 3, Empty, k + 1), k < 3\nStep(0).while";
 
         var observations = new EvaluationObservations();
         var (result, budget, diagnostics) = RunOptimized(source, observations);
@@ -545,7 +541,7 @@ public class LoopStrategyPreparationTests
         // The CONTINUATION emits zero values at k == 3: its one `()` slot is the flag. LOOP-06
         // (condition first): the flag row is read first, so its TypeMismatch is reported at once,
         // with the generic reader's identical structured error and without any handover.
-        const string source = "Empty = ()\nStep = k + 1, if(k < 3, true, Empty)\nStep.while(0)";
+        const string source = "Empty = ()\nStep = k + 1, if(k < 3, true, Empty)\nStep(0).while";
 
         var observations = new EvaluationObservations();
         var (result, _, diagnostics) = RunOptimized(source, observations);
@@ -575,7 +571,7 @@ public class LoopStrategyPreparationTests
         // first slot's `a + 1` would then receive `()` and type-error (SYN-01).
         // The inner `if` recovers slot 1 from its empty state explicitly, since `()`
         // is an ordinary operand for `*`; slot values and counts are unchanged.
-        const string source = "Empty = ()\nStepTwo = a + 1, if(a == 1, Empty, if(b == (), 2, b * 2))\nStepTwo.repeat(3, 0, 5)";
+        const string source = "Empty = ()\nStepTwo = a + 1, if(a == 1, Empty, if(b == (), 2, b * 2))\nStepTwo(0, 5).repeat(3)";
 
         var observations = new EvaluationObservations();
         var (result, budget, diagnostics) = RunOptimized(source, observations);
@@ -599,7 +595,7 @@ public class LoopStrategyPreparationTests
     [Fact]
     public void OptimizedRepeat_OutputError_ReturnsImmediatelyWithoutHandoverMaterialization()
     {
-        const string source = "Step(a, b) = a + 1, 1 / 0\nStep.repeat(3, 0, 5)";
+        const string source = "Step(a, b) = a + 1, 1 / 0\nStep(0, 5).repeat(3)";
         var observations = new EvaluationObservations();
         var (result, _, diagnostics) = RunOptimized(source, observations);
         var genericObservations = new EvaluationObservations();
@@ -618,7 +614,7 @@ public class LoopStrategyPreparationTests
         // The handover branch fires on the LAST iteration: zero remaining
         // iterations, so the branch completes the loop directly from the
         // materialized slots and no generic loop invocation ever begins.
-        const string source = "Empty = ()\nStep = if(v == 3, Empty, v + 1)\nStep.repeat(4, 0)";
+        const string source = "Empty = ()\nStep = if(v == 3, Empty, v + 1)\nStep(0).repeat(4)";
 
         var observations = new EvaluationObservations();
         var (result, budget, _) = RunOptimized(source, observations);
@@ -644,7 +640,7 @@ public class LoopStrategyPreparationTests
         // Every output emits exactly one value, but the committed single next-state
         // value packs two top-level items — the scratch commit refuses and the loop
         // hands the state-only slots over once.
-        const string source = "Pair = 1, 2\nStep = if(v == 0, Pair, count(v) + 10)\nStep.repeat(3, 0)";
+        const string source = "Pair = 1, 2\nStep = if(v == 0, Pair, count(v) + 10)\nStep(0).repeat(3)";
 
         var observations = new EvaluationObservations();
         var (result, budget, diagnostics) = RunOptimized(source, observations);
@@ -667,7 +663,7 @@ public class LoopStrategyPreparationTests
     [Fact]
     public void OptimizedWhile_StateArityGrowthHandover_MaterializesExactlyOnce()
     {
-        const string source = "Pair = 1, 2\nStep = if(k == 0, Pair, count(k) + 10), k == 0\nStep.while(0)";
+        const string source = "Pair = 1, 2\nStep = if(k == 0, Pair, count(k) + 10), k == 0\nStep(0).while";
 
         var observations = new EvaluationObservations();
         var (result, budget, diagnostics) = RunOptimized(source, observations);
@@ -703,9 +699,7 @@ public class LoopStrategyPreparationTests
                 new Expr.NativeCall(operation.NativeName, []),
                 new Expr.SequenceSpread(new Expr.EmptySequence(0)),
             ]);
-        var expression = new Expr.Call(
-            new Expr.Resolve("repeat"),
-            [new Expr.AlgorithmExpr(step), new Expr.Num(1), new Expr.Num(0), new Expr.Num(0)]);
+        var expression = new Expr.AlgorithmExpr(new Algorithm.User(null, [], [], [new Property("S", step)], [new Expr.Call(new Expr.Resolve("repeat"), [new Expr.Call(new Expr.Resolve("S"), [new Expr.Num(0), new Expr.Num(0)]), new Expr.Num(1)])]));
         var observations = new EvaluationObservations();
         var diagnostics = new LoopOptimizationDiagnostics();
 
@@ -748,9 +742,7 @@ public class LoopStrategyPreparationTests
             Opens: [],
             Properties: [],
             Output: [new Expr.NativeCall(operation.NativeName, ["state"])]);
-        var expression = new Expr.Call(
-            new Expr.Resolve("repeat"),
-            [new Expr.AlgorithmExpr(step), new Expr.Num(2), new Expr.Num(0)]);
+        var expression = new Expr.AlgorithmExpr(new Algorithm.User(null, [], [], [new Property("S", step)], [new Expr.Call(new Expr.Resolve("repeat"), [new Expr.Call(new Expr.Resolve("S"), [new Expr.Num(0)]), new Expr.Num(2)])]));
         var observations = new EvaluationObservations();
         var diagnostics = new LoopOptimizationDiagnostics();
 
@@ -776,7 +768,7 @@ public class LoopStrategyPreparationTests
     [InlineData("Math.Sqrt(-1)")]
     public void RepeatedPlannedNumericState_PreservesDecimal128RepresentationParity(string initial)
     {
-        var source = $"Step(x) = x + 0.00\nStep.repeat(5, {initial})";
+        var source = $"Step(x) = x + 0.00\nStep({initial}).repeat(5)";
         var genericObservations = new EvaluationObservations();
         var (generic, _) = RunGeneric(source, genericObservations);
         var optimizedObservations = new EvaluationObservations();

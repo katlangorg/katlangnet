@@ -306,8 +306,8 @@ public sealed class NeedCellConcurrencyContractTests
     [
         ("Fib(n) = if(n < 2, n, Fib(n - 1) + Fib(n - 2))\nFib(12)",
             "Fib(n) = if(id(n) < 2, n, Fib(n - 1) + Fib(n - 2))\nFib(12)"),
-        ("S(*xs) = sum(xs)\nStep(i, acc) = i + 1, acc + S(i, i, i) + S()\nrepeat(Step, 150, 0, 0)",
-            "S(*xs) = sum(xs)\nStep(i, acc) = i + 1, acc + S(id(i), i, i) + S()\nrepeat(Step, 150, 0, 0)"),
+        ("S(*xs) = sum(xs)\nStep(i, acc) = i + 1, acc + S(i, i, i) + S()\nrepeat(Step(0, 0), 150)",
+            "S(*xs) = sum(xs)\nStep(i, acc) = i + 1, acc + S(id(i), i, i) + S()\nrepeat(Step(0, 0), 150)"),
         ("P((a, b), [c, *d]) = a + b + c + count(d)\nP((1, 2), [3, 4, 5]) + P((6, 7), [8])",
             "P((a, b), [c, *d]) = a + b + c + count(d)\nP((id(1), 2), [3, 4, 5]) + P((6, 7), [id(8)])"),
         ("Fact(0) = 1\nFact(n) = n * Fact(n - 1)\nmap([3, 4, 5], Fact)",

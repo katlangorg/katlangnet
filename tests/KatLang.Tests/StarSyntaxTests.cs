@@ -428,11 +428,11 @@ public class StarSyntaxTests
     {
         // Attached (issue #183): `x.skip(1)*` completes the step body, and the `repeat` call is
         // the root row, which runs the spread step.
-        Assert.Equal("8", Display("Step(*x) = x.skip(1)*\nrepeat(Step, 1, 7, 8)"));
+        Assert.Equal("8", Display("Step(*x) = x.skip(1)*\nrepeat(Step(7, 8), 1)"));
 
         // Detached: `repeat` begins an operand and no declaration, so the star multiplies and the
-        // step body continues across the newline: `Step(*x) = x.skip(1) * repeat(Step, 1, 7, 8)`.
-        const string source = "Step(*x) = x.skip(1) *\nrepeat(Step, 1, 7, 8)";
+        // step body continues across the newline: `Step(*x) = x.skip(1) * repeat(Step(7, 8), 1)`.
+        const string source = "Step(*x) = x.skip(1) *\nrepeat(Step(7, 8), 1)";
         var parsed = SourceProvenance.ParseValid(source);
         Assert.Empty(parsed.Diagnostics);
         Assert.Empty(parsed.Root.Output);
@@ -442,7 +442,7 @@ public class StarSyntaxTests
         // This is valid arithmetic in an unused definition, and the layout is language law with no
         // warning or error, so the engine reports no program output — never an invented diagnostic.
         Assert.IsType<RunResult.NoProgramOutput>(KatLangEngine.Run(source));
-        Assert.Equal("8", Display("Step(*x) = { x.skip(1)* }\nrepeat(Step, 1, 7, 8)"));
+        Assert.Equal("8", Display("Step(*x) = { x.skip(1)* }\nrepeat(Step(7, 8), 1)"));
     }
 
     [Theory]
