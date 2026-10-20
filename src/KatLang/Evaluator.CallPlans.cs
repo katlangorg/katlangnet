@@ -18,7 +18,9 @@ namespace KatLang;
 /// (<see cref="ExpressionSuspension"/>: the caller context and value environment; the written expression is
 /// the cell's <see cref="NeedCell.Source"/>). A call-shaped supplied cell (<see cref="IsPlannableCall"/>) IS
 /// its plan, exactly as a Lean need address is: its suspension is an <see cref="InvocationPlan"/>, which adds
-/// ONE supply slot holding the plan's preparation state (Lean <c>NeedCell.plan : NeedPlanSupply</c>). The slot
+/// ONE supply slot holding the plan's preparation state (Lean <c>NeedCell.plan : NeedPlanSupply</c>) and, for a
+/// written form whose route is not its source alone, ONE route slot (META-S3-4, <see cref="PlanRouteOf"/>;
+/// Lean <c>NeedCell.route</c>). The slot
 /// holds the very supply object the dispatch consumes (the formed cell list, or a builtin's argument array),
 /// so retaining the supply after VALUE allocates nothing beyond the ordinary call. On the VALUE path there is
 /// no flight, reference or holder object: a waiter's completion source is allocated only when a second party
@@ -52,12 +54,175 @@ public static partial class Evaluator
     internal const string MetaRefusalDescription = "meta: not a supplied call computation";
 
     /// <summary>
-    /// The supported plan shape: a written call whose callee is a lexical name or a parameter. A dot
-    /// callee (structural or extension route) and every non-call expression are deliberately out of
-    /// scope: they keep the ordinary cell, and META refuses them.
+    /// The structured refusal of a route-dependent reference operation over a captured invocation whose
+    /// route is a non-callable intrinsic (META-S3-4, D-1A): <c>5.string()</c>, <c>R.Invoke()</c>,
+    /// <c>R.Arguments(…)</c>. Lean: <c>NeedPlan.invocationRefusal</c>.
     /// </summary>
-    private static Expr.Call? IsPlannableCall(Expr expression)
-        => expression is Expr.Call { Function: Expr.Resolve or Expr.Param } call ? call : null;
+    internal const string InvocationRefusalDescription = "meta: not a callable invocation";
+
+    /// <summary>
+    /// THE INVOCATION DOMAIN (META-S3-4, CR-2, D-2A; Lean: <c>NeedPlan.callShape?</c>): a WRITTEN invocation —
+    /// a call whose callee is a lexical name, a parameter or an argumentless dot path (every call the parser
+    /// produces, <c>(t.Algorithm)(args)</c> included), or an argument-bearing dot edge <c>t.N(args)</c> (an
+    /// explicitly empty list included). The decision is syntactic, total and evaluation-free: it never asks
+    /// what the written form invokes (the plan's route, <see cref="PlanRouteOf"/>, decides that later).
+    /// Argumentless dot edges (<c>5.Inc</c>, <c>Box.G</c>), names, values, computed and host-built callees
+    /// keep the ordinary cell, and META refuses them.
+    /// </summary>
+    private static bool IsPlannableCall(Expr expression)
+        => expression is Expr.Call { Function: Expr.Resolve or Expr.Param or Expr.DotCall { Args: null } }
+            or Expr.DotCall { Args: not null };
+
+    // ── META-S3-4: the plan's ROUTE (what a written invocation form invokes) ─────────────────────────────
+
+    /// <summary>
+    /// What a plan's written invocation form invokes (META-S3-4; Lean: <c>PlanRoute</c>):
+    /// <list type="bullet">
+    /// <item><see cref="Call"/> — a written call <c>f(args)</c> (its callee resolved by the one callee law on
+    /// every execution), a call through a declared member spelled <c>Algorithm</c> included;</item>
+    /// <item><see cref="Member"/> — <c>t.N(args)</c> selecting a declared member: callee the argumentless path
+    /// <c>t.N</c> (DOT-09), supply <c>args</c>;</item>
+    /// <item><see cref="AlgorithmIntrinsic"/> — <c>t.Algorithm(args)</c> or <c>(t.Algorithm)(args)</c> on a
+    /// structural miss: callee the link <c>t.Algorithm</c> (CR-15), whose ONE receiver cell the plan's VALUE,
+    /// every <c>Invoke()</c>, <c>.Algorithm</c> and a loop share (D-3), supply <c>args</c>;</item>
+    /// <item><see cref="Extension"/> — <c>t.F(args)</c> on any other structural miss: the extension call
+    /// <c>F(t, args)</c> (DOT-03, D-5), callee the lexical fallback, supply <c>t, args</c>;</item>
+    /// <item><see cref="Intrinsic"/> — <c>t.string(…)</c>, <c>t.Invoke(…)</c>, <c>t.Arguments(…)</c> on a structural
+    /// miss: no callable invocation (D-1A) — VALUE is the ordinary dot evaluation, every route-dependent
+    /// reference operation the refusal <see cref="InvocationRefusalDescription"/>.</item>
+    /// </list>
+    /// </summary>
+    internal enum PlanRouteKind : byte { Call, Member, AlgorithmIntrinsic, Extension, Intrinsic }
+
+    /// <summary>
+    /// A plan's retained route (<see cref="InvocationPlan.RouteState"/>). The three routes that carry no data
+    /// are shared singletons, so a call-form plan and an intrinsic or <c>.Algorithm</c> dot plan allocate no
+    /// route object; only a member route (the selected member and its wired algorithm, so executions
+    /// never repeat the selection) and an extension route (its receiver-first bundle) allocate one.
+    /// </summary>
+    internal sealed class PlanRoute
+    {
+        internal static readonly PlanRoute Call = new(PlanRouteKind.Call);
+        internal static readonly PlanRoute AlgorithmIntrinsic = new(PlanRouteKind.AlgorithmIntrinsic);
+        internal static readonly PlanRoute Intrinsic = new(PlanRouteKind.Intrinsic);
+
+        internal PlanRoute(PlanRouteKind kind) => Kind = kind;
+
+        internal PlanRouteKind Kind { get; }
+
+        /// <summary>Member route: the selected member (it keys an alias member's binding).</summary>
+        internal Property? Member { get; init; }
+
+        /// <summary>Member route: the member wired to its receiver (an alias is chased per execution).</summary>
+        internal Algorithm? Wired { get; init; }
+
+        /// <summary>Extension route: the effective bundle <c>t, args</c> (<see cref="BuildLexicalReceiverCallArgs"/>).</summary>
+        internal OutputBundle? ExtensionArgs { get; init; }
+    }
+
+    /// <summary>
+    /// The plan's route (Lean: <c>NeedPlan.routeOf</c>), decided ONCE by the first route-dependent operation —
+    /// VALUE, <c>Invoke()</c>, reading the argument supply, <c>.Algorithm</c>, loop setup — and retained
+    /// (compare-and-set: the first publication wins; a route failure is retained as the plan's failure,
+    /// never absence). A name or parameter call — and a call through any argumentless path other than an
+    /// <c>X.Algorithm</c> edge — has the call route by its source: nothing is classified or allocated.
+    /// Classification is identity-only (<see cref="ComputePlanRoute"/>: the ordinary receiver resolution
+    /// and the ONE dot-edge decision <see cref="SelectDotEdge"/>); through a runtime-projection receiver it
+    /// performs that projection's existing single-flight receiver demand (D-4). A computation that ran
+    /// under a non-initiating observation reporting a pending step is never retained.
+    /// </summary>
+    internal static EvalResult<PlanRoute> PlanRouteOf(InvocationPlan plan)
+    {
+        if (!plan.NeedsRoute) return EvalResult<PlanRoute>.Ok(PlanRoute.Call);
+        if (Volatile.Read(ref plan.RouteState) is { } known)
+            return known is PlanRoute route ? EvalResult<PlanRoute>.Ok(route) : (EvalError)known;
+        var computed = ComputePlanRoute(plan);
+        if (NeedCell.CurrentObservation?.Pending is not null || (computed.IsError && NeedCell.IsObservationPending(computed.Error)))
+            return computed;
+        Interlocked.CompareExchange(ref plan.RouteState, computed.IsOk ? computed.Value : computed.Error, null);
+        var final = Volatile.Read(ref plan.RouteState)!;
+        return final is PlanRoute retained ? EvalResult<PlanRoute>.Ok(retained) : (EvalError)final;
+    }
+
+    /// <summary>MIRROR OF <see cref="PlanRouteOf"/>: the route through the async resolution adapter (S3-0b),
+    /// which awaits a suspended runtime receiver instead of blocking on it.</summary>
+    internal static ValueTask<EvalResult<PlanRoute>> PlanRouteOfAsync(InvocationPlan plan)
+    {
+        if (!plan.NeedsRoute) return ValueTask.FromResult(EvalResult<PlanRoute>.Ok(PlanRoute.Call));
+        if (Volatile.Read(ref plan.RouteState) is { } known)
+            return ValueTask.FromResult(known is PlanRoute route ? EvalResult<PlanRoute>.Ok(route) : (EvalError)known);
+        return ResolveAsync(plan.Caller, plan, static p => PlanRouteOf(p));
+    }
+
+    /// <summary>
+    /// Classifies a plan's route (Lean: <c>classifyPlanRouteWith</c>): a call through an <c>X.Algorithm</c>
+    /// edge takes the <c>.Algorithm</c> route fact (<see cref="IsAlgorithmIntrinsicRoute"/>, as
+    /// <see cref="EvalCallCountedExpr"/> does); an argument-bearing dot edge resolves its receiver and takes
+    /// the ordinary dot decision (<see cref="SelectDotEdge"/>, exactly as <see cref="EvalDotCallCounted"/>):
+    /// a member, the <c>.Algorithm</c> intrinsic, a non-callable intrinsic, or the extension call. A receiver
+    /// or selection failure is the route's failure.
+    /// </summary>
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+    private static EvalResult<PlanRoute> ComputePlanRoute(InvocationPlan plan)
+    {
+        var ctx = plan.Caller;
+        if (plan.Source is Expr.Call call)
+        {
+            var intrinsic = IsAlgorithmIntrinsicRoute((Expr.DotCall)call.Function, ctx);
+            if (intrinsic.IsError) return intrinsic.Error;
+            return EvalResult<PlanRoute>.Ok(intrinsic.Value ? PlanRoute.AlgorithmIntrinsic : PlanRoute.Call);
+        }
+
+        var dot = (Expr.DotCall)plan.Source;
+        var target = ResolveDotReceiver(dot.Target, ctx, out _);
+        if (target.IsError && !IsAbsentIdentity(target.Error))
+            return target.Error;
+        var receiver = target.IsError ? null : target.Value;
+        if (SelectDotEdge(dot, receiver, ctx, out var route, out var member) is { } selectionError)
+            return selectionError;
+        return EvalResult<PlanRoute>.Ok(route switch
+        {
+            DotEdgeRoute.Member => new PlanRoute(PlanRouteKind.Member)
+            {
+                Member = member,
+                Wired = ChildOfInContext(receiver!, member!.Value, ctx),
+            },
+            DotEdgeRoute.AlgorithmIntrinsic => PlanRoute.AlgorithmIntrinsic,
+            DotEdgeRoute.Extension => new PlanRoute(PlanRouteKind.Extension)
+            {
+                ExtensionArgs = BuildLexicalReceiverCallArgs(dot.Target, dot.Args),
+            },
+            _ => PlanRoute.Intrinsic,
+        });
+    }
+
+    /// <summary>A callable route, or the D-1A refusal for an intrinsic route.</summary>
+    private static EvalResult<PlanRoute> InvocationRouteOf(EvalResult<PlanRoute> route, InvocationPlan plan)
+        => route.IsOk && route.Value.Kind == PlanRouteKind.Intrinsic ? InvocationRefusal(plan) : route;
+
+    private static EvalError InvocationRefusal(InvocationPlan plan)
+        => new EvalError.NotAnAlgorithm(InvocationRefusalDescription) { Span = plan.Owner.Span };
+
+    /// <summary>
+    /// The plan's canonical callee cell after its route (CR-13): the route is established first (D-4), an
+    /// intrinsic route is the D-1A refusal. Lean: <c>NeedPlan.calleeCell</c>.
+    /// </summary>
+    internal static EvalResult<NeedCell> PlanCalleeCell(InvocationPlan plan)
+    {
+        var route = InvocationRouteOf(PlanRouteOf(plan), plan);
+        return route.IsError ? route.Error : EvalResult<NeedCell>.Ok(plan.CalleeCell);
+    }
+
+    /// <summary>MIRROR OF <see cref="PlanCalleeCell"/> — the route through the async resolution adapter.</summary>
+    internal static async ValueTask<EvalResult<NeedCell>> PlanCalleeCellAsync(InvocationPlan plan)
+    {
+        var route = InvocationRouteOf(await PlanRouteOfAsync(plan).ConfigureAwait(false), plan);
+        return route.IsError ? route.Error : EvalResult<NeedCell>.Ok(plan.CalleeCell);
+    }
+
+    /// <summary>The written callee name a fresh call of the plan's callee reports (route known).</summary>
+    private static CallDiagnosticName PlanCalleeName(InvocationPlan plan)
+        => CallDiagnosticName.FromExpression(plan.CalleeExpression);
 
     /// <summary>
     /// A written argument's suspension (Lean <c>NeedSuspension.expression source caller values</c>; the
@@ -102,11 +267,49 @@ public static partial class Evaluator
         // Written only by PublishPlanSupply; read through SupplyFormations.
         internal int Formations;
 
+        /// <summary>
+        /// META-S3-4: the retained route of a plan that <see cref="NeedsRoute"/> — <c>null</c> until
+        /// established, then a <see cref="PlanRoute"/> or the route's <see cref="EvalError"/>, never changed
+        /// again (Lean <c>NeedCell.route</c>). Written only by <see cref="PlanRouteOf"/>.
+        /// </summary>
+        internal object? RouteState;
+
         /// <summary>The supplied cell this plan belongs to: its original VALUE cell.</summary>
         internal NeedCell Owner => _owner!;
 
-        /// <summary>The written call (the owner's source).</summary>
-        internal Expr.Call Source => (Expr.Call)_owner!.Source!;
+        /// <summary>The written invocation (the owner's source): a call or an argument-bearing dot edge.</summary>
+        internal Expr Source => _owner!.Source!;
+
+        /// <summary>
+        /// Whether the route is more than the source says (META-S3-4): an argument-bearing dot edge, or a
+        /// call through an <c>X.Algorithm</c> edge. Every other call is the call route by its source.
+        /// </summary>
+        internal bool NeedsRoute
+            => Source is Expr.DotCall || (Source is Expr.Call { Function: Expr.DotCall { Args: null } edge } && edge.UsesDotAlgorithmIntrinsic());
+
+        /// <summary>The established route (only read after a route-establishing operation succeeded).</summary>
+        internal PlanRoute Route
+            => !NeedsRoute ? PlanRoute.Call
+                : Volatile.Read(ref RouteState) as PlanRoute ?? EstablishedRoute(this);
+
+        /// <summary>The bundle the plan's ONE supply forms (route known): an extension's is receiver-first.</summary>
+        internal OutputBundle Args => Source switch
+        {
+            Expr.Call call => call.Args,
+            Expr.DotCall dot => Route.ExtensionArgs ?? dot.Args!,
+            _ => throw new InvalidOperationException("Not a plannable invocation."),
+        };
+
+        /// <summary>
+        /// The written callee the plan's callee cell supplies (route known; CR-13): a call's callee, the
+        /// argumentless member path or <c>.Algorithm</c> edge of a dot edge, or an extension's lexical fallback.
+        /// </summary>
+        internal Expr CalleeExpression => Source switch
+        {
+            Expr.Call call => call.Function,
+            Expr.DotCall dot => Route.Kind == PlanRouteKind.Extension ? dot.EffectiveLexicalFallback : dot.ArgumentlessEdge(),
+            _ => throw new InvalidOperationException("Not a plannable invocation."),
+        };
 
         // Called once, by the owning cell's constructor, before the cell is published.
         internal void Attach(NeedCell owner) => _owner = owner;
@@ -117,9 +320,11 @@ public static partial class Evaluator
 
         /// <summary>
         /// The plan's ONE canonical callee cell (META-S3-1, CR-13; Lean <c>NeedPlan.calleeCell</c>): the
-        /// written callee supplied in the captured caller context (<see cref="CalleeCellOf"/>), established
-        /// on the first observation that needs it and retained. Establishing it evaluates, prepares and
-        /// demands nothing; a racing establishment may construct a candidate that is discarded unused.
+        /// route's callee supplied in the captured caller context (<see cref="CalleeCellOf"/>), established
+        /// on the first observation that needs it and retained. Read it after the route
+        /// (<see cref="PlanCalleeCell"/>); once the route is established, establishing the cell evaluates,
+        /// prepares and demands nothing; a racing establishment may construct a candidate that is discarded
+        /// unused.
         /// </summary>
         internal NeedCell CalleeCell
             => Volatile.Read(ref _calleeCell) ?? Interlocked.CompareExchange(ref _calleeCell, CalleeCellOf(this), null) ?? _calleeCell!;
@@ -148,11 +353,25 @@ public static partial class Evaluator
         /// </summary>
         internal async ValueTask<EvalResult<PreparedSupply>> PrepareSupply(bool asynchronous)
         {
+            // META-S3-4: the route first, through the async adapter when asynchronous (never the
+            // synchronous resolver under the async engine), with the D-1A refusal of an intrinsic route.
+            var route = InvocationRouteOf(asynchronous ? await PlanRouteOfAsync(this).ConfigureAwait(false) : PlanRouteOf(this), this);
+            if (route.IsError) return route.Error;
             var supply = asynchronous
                 ? await PreparePlanSupplyAsync(this, PlanSupplyShape.Cells, byInvocation: true).ConfigureAwait(false)
                 : PreparePlanSupplyCounted(this, PlanSupplyShape.Cells, byInvocation: true);
             return supply.IsError ? supply.Error : EvalResult<PreparedSupply>.Ok(new PreparedSupply(PlanCells(supply.Value)));
         }
+    }
+
+    /// <summary>
+    /// The route read before any route-establishing operation — test seams that read the callee cell or
+    /// the bundle directly. Production operations establish the route first.
+    /// </summary>
+    private static PlanRoute EstablishedRoute(InvocationPlan plan)
+    {
+        var route = PlanRouteOf(plan);
+        return route.IsOk ? route.Value : throw new InvalidOperationException("The plan's route failed: " + route.Error);
     }
 
     /// <summary>
@@ -321,8 +540,10 @@ public static partial class Evaluator
     /// The cells of argument <paramref name="view"/> (CallReference S2): the plan's ONE sticky supply —
     /// its recorded preparation, or exactly one formation through the ordinary
     /// <see cref="FormNeedSupply"/> in the plan's caller context, shared with the original VALUE and every
-    /// <c>Invoke()</c> — WITHOUT resolving or dispatching the target and without demanding any argument
-    /// VALUE (formation demands nothing; only an arbitrary spread's own evaluation runs). An unprepared
+    /// <c>Invoke()</c> — over the bundle of the plan's ROUTE (META-S3-4, CR-9/D-4: the route is
+    /// established first by identity resolution, which through a runtime-projection receiver performs
+    /// that projection's existing receiver demand), WITHOUT dispatching the target and without demanding
+    /// any argument VALUE (formation demands nothing; only an arbitrary spread's own evaluation runs). An unprepared
     /// plan records the neutral <see cref="SourcedPlanSupply"/>. The view's ownership is checked before
     /// any plan work and again after a formation, so a terminal run is never absorbed.
     /// Lean: <c>NeedPlan.viewCells</c> (<c>argumentViewCells</c>).
@@ -331,6 +552,11 @@ public static partial class Evaluator
     {
         if (CheckCallReferenceOwnership(view, ctx) is { } rejected)
             return rejected;
+        // META-S3-4 (D-4/D-5): which bundle the supply is (`t.F(a)` supplies `t, a`) is the plan's route,
+        // established here — identity resolution, never the target's dispatch; an intrinsic route has
+        // no callable supply (D-1A).
+        var route = InvocationRouteOf(PlanRouteOf(view.Plan), view.Plan);
+        if (route.IsError) return route.Error;
         var supply = PreparePlanSupplyCounted(view.Plan, PlanSupplyShape.Sourced, byInvocation: true);
         if (supply.IsError) return supply.Error;
         if (CheckCallReferenceOwnership(view, ctx) is { } terminal)
@@ -343,6 +569,8 @@ public static partial class Evaluator
     {
         if (CheckCallReferenceOwnership(view, ctx) is { } rejected)
             return rejected;
+        var route = InvocationRouteOf(await PlanRouteOfAsync(view.Plan).ConfigureAwait(false), view.Plan);
+        if (route.IsError) return route.Error;
         var supply = await PreparePlanSupplyAsync(view.Plan, PlanSupplyShape.Sourced, byInvocation: true).ConfigureAwait(false);
         if (supply.IsError) return supply.Error;
         if (CheckCallReferenceOwnership(view, ctx) is { } terminal)
@@ -436,21 +664,155 @@ public static partial class Evaluator
 
     /// <summary>
     /// One execution of <paramref name="plan"/>. As the owner's VALUE it runs inside that cell's single
-    /// flight (<paramref name="byInvocation"/> false); as an explicit invocation it runs outside it.
-    /// Lean: <c>NeedPlan.execute</c>.
+    /// flight (<paramref name="byInvocation"/> false); as an explicit invocation it runs outside it. The
+    /// node's dispatch checkpoint, then the plan's route (META-S3-4), then the route's ordinary phases under
+    /// the written form's own frame: a call form exactly as <see cref="EvalCallCountedExpr"/> (its
+    /// <c>.Algorithm</c> callee as <see cref="EvalAlgorithmCalleeCallCounted"/>), a dot edge exactly as
+    /// <see cref="EvalCounted"/>'s dot arm. Lean: <c>NeedPlan.execute</c> / <c>executeAlong</c>.
     /// </summary>
     private static EvalResult<CountedResult> EvalPlannedCallCounted(InvocationPlan plan, bool byInvocation)
     {
         var ctx = plan.Caller;
-        var call = plan.Source;
-        // The call node's dispatch checkpoint, which EvalCounted charges before its Call arm.
+        // The node's dispatch checkpoint, which EvalCounted charges before its Call / DotCall arm.
         if (ctx.Budget.TryChargeExpressionNodeWork() is { } nodeWorkError)
             return nodeWorkError;
+        if (plan.Source is Expr.DotCall dot)
+            return WithSpanOf(dot, WithDotCallCtx(dot, ctx, DispatchPlannedDotCounted(plan, dot, byInvocation)));
+        var call = (Expr.Call)plan.Source;
         var name = CallDiagnosticName.FromExpression(call.Function);
+        if (plan.NeedsRoute)
+        {
+            var route = PlanRouteOf(plan);
+            if (route.IsError)
+                return WithSpanOf<CountedResult>(call, CalleeResolutionFailure(name, ctx, route.Error));
+            if (route.Value.Kind == PlanRouteKind.AlgorithmIntrinsic)
+                return EvalPlannedAlgorithmCalleeCallCounted(plan, call, name, byInvocation);
+        }
         var callee = ResolveCallee(call.Function, ctx);
         if (callee.IsError)
             return WithSpanOf<CountedResult>(call, CalleeResolutionFailure(name, ctx, callee.Error));
         return WithSpanOf(call, WithCallCtx(name, ctx, DispatchPlannedCounted(plan, callee.Value, name, byInvocation)));
+    }
+
+    /// <summary>
+    /// A planned <c>(t.Algorithm)(args)</c> on the intrinsic route: exactly <see cref="EvalAlgorithmCalleeCallCounted"/>
+    /// — the receiver, decoded, and the captured callee's CALLABLE, each failure the callee's resolution
+    /// failure — over the plan's ONE retained receiver cell (D-3) and ONE supply.
+    /// </summary>
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+    private static EvalResult<CountedResult> EvalPlannedAlgorithmCalleeCallCounted(
+        InvocationPlan plan, Expr.Call call, CallDiagnosticName name, bool byInvocation)
+    {
+        var ctx = plan.Caller;
+        var edge = (Expr.DotCall)call.Function;
+        var callee = ProjectPlannedAlgorithmCallee(plan, edge, spanDecodeFailure: true);
+        if (callee.IsError)
+            return WithSpanOf<CountedResult>(call, CalleeResolutionFailure(name, ctx, callee.Error));
+        return WithSpanOf(call, WithCallCtx(name, ctx, DispatchPlannedCounted(plan, callee.Value.Callee, callee.Value.Name, byInvocation)));
+    }
+
+    /// <summary>
+    /// The planned dot invocation (META-S3-4): the route's dispatch over the plan's ONE supply, with the
+    /// ordinary dot evaluation's charges, contexts and spans (the caller attaches the dot-call context and
+    /// span as <see cref="EvalCounted"/> does). Each callable route ends in the shared final dispatcher
+    /// <see cref="DispatchPlannedCounted"/>; a non-callable intrinsic route is the ordinary dot evaluation
+    /// as VALUE and the D-1A refusal as an invocation.
+    /// </summary>
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+    private static EvalResult<CountedResult> DispatchPlannedDotCounted(InvocationPlan plan, Expr.DotCall dot, bool byInvocation)
+    {
+        var ctx = plan.Caller;
+        var route = PlanRouteOf(plan);
+        if (route.IsError) return route.Error;
+        switch (route.Value.Kind)
+        {
+            case PlanRouteKind.Member:
+            {
+                // MIRROR OF the member arm of EvalDotCallCounted: an alias member is called as its
+                // target through its own binding (EvalAliasMemberCounted, the CALLABLE chase).
+                var wired = route.Value.Wired!;
+                if (wired is Algorithm.Alias alias)
+                {
+                    var target = ResolveBindingAliasTarget(route.Value.Member!, alias, ctx, callable: true);
+                    if (target.IsError) return target.Error;
+                    wired = target.Value;
+                }
+                return DispatchPlannedCounted(plan, wired, CallDiagnosticName.FromKnown(dot.Name), byInvocation);
+            }
+            case PlanRouteKind.Extension:
+            {
+                // MIRROR OF CallLexicalWithReceiverCounted: the stored fallback identity decides the channel.
+                var callee = dot.EffectiveLexicalFallback is Expr.Resolve(var fallbackName)
+                    ? ResolveNamedAlgorithm(fallbackName, span: null, ctx)
+                    : ResolveAlg(dot.EffectiveLexicalFallback, ctx);
+                if (callee.IsError) return callee.Error;
+                var name = dot.EffectiveLexicalFallback is Expr.Resolve(var known) ? known : dot.Name;
+                return DispatchPlannedCounted(plan, callee.Value, CallDiagnosticName.FromKnown(name), byInvocation);
+            }
+            case PlanRouteKind.AlgorithmIntrinsic:
+            {
+                var callee = ProjectPlannedAlgorithmCallee(plan, dot, spanDecodeFailure: false);
+                if (callee.IsError) return callee.Error;
+                return DispatchPlannedCounted(plan, callee.Value.Callee, callee.Value.Name, byInvocation);
+            }
+            default:
+                return byInvocation ? InvocationRefusal(plan) : EvalDotCallCounted(dot, ctx, plan.Values);
+        }
+    }
+
+    /// <summary>
+    /// The callee of a planned <c>t.Algorithm(args)</c> / <c>(t.Algorithm)(args)</c> on the intrinsic route
+    /// (CR-14 c): the plan's ONE retained receiver cell — its callee cell is the link <c>t.Algorithm</c>, whose
+    /// receiver cell evaluates through the ordinary invocation receiver evaluator
+    /// (<see cref="EvalAlgorithmReceiver"/>; a parameter receiver is that parameter's own cell), so the
+    /// receiver is demanded at most once for the plan, shared by its VALUE, every <c>Invoke()</c>, its
+    /// <c>.Algorithm</c> and a loop (D-3) — decoded, then the captured plan's callee cell's CALLABLE, named by
+    /// that plan's written callee. Every step's failure is reported as the ordinary intrinsic reports it: a
+    /// receiver failure as it is, a decode failure positioned at the edge in callee position
+    /// (<paramref name="spanDecodeFailure"/>), a missing identity as the captured callee's absence.
+    /// </summary>
+    private static EvalResult<(Algorithm Callee, CallDiagnosticName Name)> ProjectPlannedAlgorithmCallee(
+        InvocationPlan plan, Expr.DotCall edge, bool spanDecodeFailure)
+    {
+        var link = plan.CalleeCell;
+        var receiverCell = ((LinkSuspension)link.Suspension!).Receiver((Expr.DotCall)link.Source!);
+        // Transporting a parameter retains its original cell (D-3), but an invocation still reads
+        // the WRITTEN parameter through the ordinary receiver evaluator. In particular, an absent
+        // CALLABLE takes Eval(param), including its dispatch checkpoint; an algorithm receiver takes
+        // the uncharged parameter-demand route. Demanding the transported cell directly erases that
+        // distinction and changes ordinary VALUE accounting merely because J7 retained a plan.
+        var receiver = edge.Target is Expr.Param
+            ? EvalAlgorithmReceiver(edge, plan.Caller, plan.Values)
+            : ProjectCountedValue(receiverCell.Demand());
+        if (receiver.IsError) return receiver.Error;
+        var captured = DecodeAlgorithmReceiver(receiver.Value, plan.Caller);
+        if (captured.IsError)
+            return spanDecodeFailure ? captured.Error with { Span = captured.Error.Span ?? edge.Span } : captured.Error;
+        var calleeCell = PlanCalleeCell(captured.Value);
+        if (calleeCell.IsError) return calleeCell.Error;
+        var callable = RequireCapturedCallee(calleeCell.Value.ProjectCallable(), edge.Span);
+        if (callable.IsError) return callable.Error;
+        return EvalResult<(Algorithm, CallDiagnosticName)>.Ok((callable.Value, PlanCalleeName(captured.Value)));
+    }
+
+    /// <summary>MIRROR OF <see cref="ProjectPlannedAlgorithmCallee"/> — keep in lock-step.</summary>
+    private static async ValueTask<EvalResult<(Algorithm Callee, CallDiagnosticName Name)>> ProjectPlannedAlgorithmCalleeAsync(
+        InvocationPlan plan, Expr.DotCall edge, bool spanDecodeFailure)
+    {
+        var link = plan.CalleeCell;
+        var receiverCell = ((LinkSuspension)link.Suspension!).Receiver((Expr.DotCall)link.Source!);
+        var receiver = edge.Target is Expr.Param
+            ? await EvalAlgorithmReceiverAsync(edge, plan.Caller, plan.Values).ConfigureAwait(false)
+            : ProjectCountedValue(await receiverCell.DemandAsync().ConfigureAwait(false));
+        if (receiver.IsError) return receiver.Error;
+        var captured = DecodeAlgorithmReceiver(receiver.Value, plan.Caller);
+        if (captured.IsError)
+            return spanDecodeFailure ? captured.Error with { Span = captured.Error.Span ?? edge.Span } : captured.Error;
+        var calleeCell = await PlanCalleeCellAsync(captured.Value).ConfigureAwait(false);
+        if (calleeCell.IsError) return calleeCell.Error;
+        var callable = RequireCapturedCallee(await ProjectCellCallableAsync(calleeCell.Value, plan.Caller).ConfigureAwait(false), edge.Span);
+        if (callable.IsError) return callable.Error;
+        return EvalResult<(Algorithm, CallDiagnosticName)>.Ok((callable.Value, PlanCalleeName(captured.Value)));
     }
 
     /// <summary>
@@ -484,7 +846,7 @@ public static partial class Evaluator
         if (callee is Algorithm.Conditional)
         {
             if (ctx.Budget.TryEnterInvocation() is { } limitError)
-                return AtFirstSpanIfMissing(limitError, plan.Source.Args);
+                return AtFirstSpanIfMissing(limitError, plan.Args);
             try
             {
                 var supply = PreparePlanSupplyCounted(plan, PlanSupplyShape.Cells, byInvocation);
@@ -506,7 +868,7 @@ public static partial class Evaluator
         InvocationPlan plan, Algorithm callee, CallDiagnosticName name, bool byInvocation)
     {
         var ctx = plan.Caller;
-        var args = plan.Source.Args;
+        var args = plan.Args;
         if (TryEnterDynamicInvocation(ctx, UserCallLimitSpan(args), out var level) is { } limitError)
             return limitError;
         using (level)
@@ -524,17 +886,73 @@ public static partial class Evaluator
     private static async ValueTask<EvalResult<CountedResult>> EvalPlannedCallCountedAsync(InvocationPlan plan, bool byInvocation)
     {
         var ctx = plan.Caller;
-        var call = plan.Source;
         if (ctx.Budget.TryChargeExpressionNodeWork() is { } nodeWorkError)
             return nodeWorkError;
         ThrowIfAsyncStrategyPinningViolated(ctx);
+        if (plan.Source is Expr.DotCall dot)
+            return WithSpanOf(dot, WithDotCallCtx(dot, ctx, await DispatchPlannedDotAsync(plan, dot, byInvocation).ConfigureAwait(false)));
+        var call = (Expr.Call)plan.Source;
         var name = CallDiagnosticName.FromExpression(call.Function);
+        if (plan.NeedsRoute)
+        {
+            var route = await PlanRouteOfAsync(plan).ConfigureAwait(false);
+            if (route.IsError)
+                return WithSpanOf<CountedResult>(call, CalleeResolutionFailure(name, ctx, route.Error));
+            if (route.Value.Kind == PlanRouteKind.AlgorithmIntrinsic)
+            {
+                var projected = await ProjectPlannedAlgorithmCalleeAsync(plan, (Expr.DotCall)call.Function, spanDecodeFailure: true).ConfigureAwait(false);
+                if (projected.IsError)
+                    return WithSpanOf<CountedResult>(call, CalleeResolutionFailure(name, ctx, projected.Error));
+                return WithSpanOf(call, WithCallCtx(name, ctx,
+                    await DispatchPlannedAsync(plan, projected.Value.Callee, projected.Value.Name, byInvocation).ConfigureAwait(false)));
+            }
+        }
         // META-S3-0b: the ONE callee law through the async resolution adapter.
         var callee = await ResolveCalleeAsync(call.Function, ctx).ConfigureAwait(false);
         if (callee.IsError)
             return WithSpanOf<CountedResult>(call, CalleeResolutionFailure(name, ctx, callee.Error));
         return WithSpanOf(call, WithCallCtx(name, ctx,
             await DispatchPlannedAsync(plan, callee.Value, name, byInvocation).ConfigureAwait(false)));
+    }
+
+    /// <summary>MIRROR OF <see cref="DispatchPlannedDotCounted"/> — keep in lock-step.</summary>
+    private static async ValueTask<EvalResult<CountedResult>> DispatchPlannedDotAsync(InvocationPlan plan, Expr.DotCall dot, bool byInvocation)
+    {
+        var ctx = plan.Caller;
+        var route = await PlanRouteOfAsync(plan).ConfigureAwait(false);
+        if (route.IsError) return route.Error;
+        switch (route.Value.Kind)
+        {
+            case PlanRouteKind.Member:
+            {
+                var wired = route.Value.Wired!;
+                if (wired is Algorithm.Alias alias)
+                {
+                    var target = await ResolveAliasTargetAsync(alias, ctx, route.Value.Member!).ConfigureAwait(false);
+                    if (target.IsError) return target.Error;
+                    wired = target.Value;
+                }
+                return await DispatchPlannedAsync(plan, wired, CallDiagnosticName.FromKnown(dot.Name), byInvocation).ConfigureAwait(false);
+            }
+            case PlanRouteKind.Extension:
+            {
+                var fallback = dot.EffectiveLexicalFallback;
+                var callee = fallback is Expr.Resolve(var fallbackName)
+                    ? await ResolveAsync(ctx, (fallbackName, ctx), static state => ResolveNamedAlgorithm(state.fallbackName, span: null, state.ctx)).ConfigureAwait(false)
+                    : await ResolveAsync(ctx, (fallback, ctx), static state => ResolveAlg(state.fallback, state.ctx)).ConfigureAwait(false);
+                if (callee.IsError) return callee.Error;
+                var name = fallback is Expr.Resolve(var known) ? known : dot.Name;
+                return await DispatchPlannedAsync(plan, callee.Value, CallDiagnosticName.FromKnown(name), byInvocation).ConfigureAwait(false);
+            }
+            case PlanRouteKind.AlgorithmIntrinsic:
+            {
+                var callee = await ProjectPlannedAlgorithmCalleeAsync(plan, dot, spanDecodeFailure: false).ConfigureAwait(false);
+                if (callee.IsError) return callee.Error;
+                return await DispatchPlannedAsync(plan, callee.Value.Callee, callee.Value.Name, byInvocation).ConfigureAwait(false);
+            }
+            default:
+                return byInvocation ? InvocationRefusal(plan) : await EvalDotCallCountedAsync(dot, ctx, plan.Values).ConfigureAwait(false);
+        }
     }
 
     /// <summary>MIRROR OF <see cref="DispatchPlannedCounted"/> — keep in lock-step.</summary>
@@ -563,7 +981,7 @@ public static partial class Evaluator
         if (callee is Algorithm.Conditional)
         {
             if (ctx.Budget.TryEnterInvocation() is { } limitError)
-                return AtFirstSpanIfMissing(limitError, plan.Source.Args);
+                return AtFirstSpanIfMissing(limitError, plan.Args);
             try
             {
                 var supply = await PreparePlanSupplyAsync(plan, PlanSupplyShape.Cells, byInvocation).ConfigureAwait(false);
@@ -584,7 +1002,7 @@ public static partial class Evaluator
         InvocationPlan plan, Algorithm callee, CallDiagnosticName name, bool byInvocation)
     {
         var ctx = plan.Caller;
-        var args = plan.Source.Args;
+        var args = plan.Args;
         if (TryEnterDynamicInvocation(ctx, UserCallLimitSpan(args), out var level) is { } limitError)
             return limitError;
         using (level)
@@ -632,7 +1050,7 @@ public static partial class Evaluator
         if (byInvocation) PreparingInvocations.Value = new InvocationPreparationFrame(plan, previous);
         try
         {
-            var args = plan.Source.Args;
+            var args = plan.Args;
             var sources = shape == PlanSupplyShape.Cells ? null : new List<Expr?>(args.Count);
             var formed = FormNeedSupply(args, plan.Caller, plan.Values, asynchronous: false, sources).GetAwaiter().GetResult();
             return PublishPlanSupply(plan, formed, shape, sources);
@@ -688,7 +1106,7 @@ public static partial class Evaluator
         if (byInvocation) PreparingInvocations.Value = new InvocationPreparationFrame(plan, previous);
         try
         {
-            var args = plan.Source.Args;
+            var args = plan.Args;
             var sources = shape == PlanSupplyShape.Cells ? null : new List<Expr?>(args.Count);
             var formed = await FormNeedSupply(args, plan.Caller, plan.Values, asynchronous: true, sources).ConfigureAwait(false);
             return PublishPlanSupply(plan, formed, shape, sources);

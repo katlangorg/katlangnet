@@ -84,7 +84,7 @@ public class LoopStepUnboundStateMessageTests
         { "A = 3\nrepeat(A.abs, 1)", 8 },
         { "Inc(x) = x + 1\nrepeat(Inc, 1)", 8 },
         { "Inc(x) = x + 1\nStart = Inc(0)\nrepeat(Start, 1)", 8 },
-        { "Lib = { public Inc(x) = x + 1 }\nrepeat(Lib.Inc(0), 1)", 8 },
+        { "Lib = { public Inc(x) = x + 1 }\nrepeat(Lib.Inc, 1)", 8 },
         { "repeat(trace(1) / 0, 1)", 8 },
     };
 

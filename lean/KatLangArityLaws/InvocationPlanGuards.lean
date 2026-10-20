@@ -125,9 +125,10 @@ def callCellsTo (s : EvalState) (name : Ident) : List Nat :=
     | some { suspension := .expression (.call (.resolve n) _) _ _, .. } => n == name
     | _ => false
 
-/-- Erase one cell's plan record (`agrees` compares everything else). -/
+/-- Erase one cell's plan bookkeeping — its supply record and (META-S3-4) its route record
+    (`agrees` compares everything else). -/
 def erasePlan (a : Nat) (s : EvalState) : EvalState :=
-  { s with needs := s.needs.modify a (fun c => { c with plan := .unprepared }) }
+  { s with needs := s.needs.modify a (fun c => { c with plan := .unprepared, route := none }) }
 
 /-! ## Plan-routed VALUE = the pre-M1.5 ordinary completion (result and heap) -/
 
@@ -573,12 +574,16 @@ def nestedCallUsesThePlan : Bool :=
 
 /-! ## META refuses what is not a supplied call, with no effect -/
 
+/-- META-S3-4 (CR-2, D-2A): the refusal domain. A value, a Ready cell, a collector, an ARGUMENTLESS dot
+    edge (`Box.F`: a member path, not an invocation), host-built calls with a computed callee and an
+    invalid address are refused with no effect. (Before META-S3-4 the grouped member call
+    `(Box.F)()` was refused here too; it is now a written invocation — `groupedMemberCallIsCaptured`.) -/
 def refusals : Bool :=
   match start (do
     let n ← supplyNeed (.num 7) ctx []
     let r ← readyNeed (.atom 7, 1)
     let k ← allocateNeed (.collector [n])
-    let d ← supplyNeed (.call (.dotMember (.resolve "Box") "F" (.resolve "F") none) []) ctx []
+    let d ← supplyNeed (.dotMember (.resolve "Box") "F" (.resolve "F") none) ctx []
     let c ← supplyNeed (.call (.num 7) []) ctx []
     let b ← supplyNeed (.call (.algorithmExpr (alg ["x"] [] [] [.param "x"])) [.num 1]) ctx []
     pure (n, r, k, d, c, b)) with
@@ -592,6 +597,22 @@ def refusals : Bool :=
        | (.ok _, _) => false)
   | none => false
 #guard refusals
+
+/-- META-S3-4: the grouped member call `(Box.F)()` and the argument-bearing dot edge `Box.F()` are
+    written invocations — META reifies each to its own cell with no effect (capture inertia), and
+    two spellings of one member are two distinct plans. -/
+def groupedMemberCallIsCaptured : Bool :=
+  match start (do
+    let d ← supplyNeed (.call (.dotMember (.resolve "Box") "F" (.resolve "F") none) []) ctx []
+    let e ← supplyNeed (.dotMember (.resolve "Box") "F" (.resolve "F") (some [])) ctx []
+    pure (d, e)) with
+  | some ((d, e), s0) =>
+    (match run (reifyNeedCall d) s0, run (reifyNeedCall e) s0 with
+     | (.ok rd, sd), (.ok re, se) =>
+       rd.plan == d && re.plan == e && d != e && reprStr sd == reprStr s0 && reprStr se == reprStr s0
+     | _, _ => false)
+  | none => false
+#guard groupedMemberCallIsCaptured
 
 /-- A completed scalar argument cell does not become an invocation, and an unsupported call
     cell stays on the ordinary route (no plan record) after VALUE. -/

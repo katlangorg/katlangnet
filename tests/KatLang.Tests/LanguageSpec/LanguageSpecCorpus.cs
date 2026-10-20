@@ -1303,21 +1303,26 @@ public static class LanguageSpecCorpus
         },
         new()
         {
-            Id = "loop-meta-qualified-step-needs-a-name",
+            Id = "loop-meta-qualified-step",
             Category = "name-resolution",
-            Source = "Box = { S(x) = x + 1, x < 3 }\nS = Box.S\nS(0).while",
+            Source = "Box = { S(x) = x + 1, x < 3 }\nBox.S(0).while",
             Outcome = SpecOutcome.Evaluates,
             ExpectedDisplay = "3",
             ExpectedRaw = "3",
             ExpectedEmittedCount = 1,
             Probes =
             [
-                new SpecProbe("Box = { S(x) = x + 1, x < 3 }\nBox.S(0).while", "err notAnAlgorithm"),
-                // An anonymous block step is named the same way.
+                // A named alias of the member still works ...
+                new SpecProbe("Box = { S(x) = x + 1, x < 3 }\nS = Box.S\nS(0).while", "ok raw=3 n=1"),
+                // ... and so does a projected step rebuilt inside a wrapper.
+                new SpecProbe("Step(x) = x + 1, x < 3\nLoop(meta op) = op.Algorithm(op.Arguments*).while\nStep(0).Loop", "ok raw=3 n=1"),
+                // A bare member path is not an invocation: there is no argument list to capture.
+                new SpecProbe("Box = { S(x) = x + 1, x < 3 }\nBox.S.while", "err notAnAlgorithm"),
+                // An anonymous block step is named first.
                 new SpecProbe("Inc = { x + 1 }\nInc(0).repeat(3)", "ok raw=3 n=1"),
             ],
             IncludeInGeneratorPrompt = true,
-            Explanation = "A `meta` parameter captures a call whose callee is a name or a parameter; a call through a dot (`Box.S(0)`) is not captured. Name the step first (`S = Box.S`, or `Inc = { x + 1 }` for a block) and loop over a call of that name.",
+            Explanation = "A `meta` parameter captures any written invocation with an argument list — `Step(0)`, `Box.S(0)`, `Math.Abs(-3)`, `op.Algorithm(op.Arguments*)` — so a qualified member call loops directly. A bare member path such as `Box.S` (no argument list) is not an invocation and is refused.",
         },
         new()
         {
@@ -8236,20 +8241,24 @@ public static class LanguageSpecCorpus
         {
             Id = "call-reference-algorithm-loops",
             Category = "variadic-calls",
-            Source = "Step(x) = x + 1, x < 3\nLoop(meta operation) = {\n  S = operation.Algorithm\n  S(operation.Arguments*).while\n}\n\nStep(0).Loop",
+            Source = "Step(x) = x + 1, x < 3\nLoop(meta operation) = operation.Algorithm(operation.Arguments*).while\n\nStep(0).Loop",
             Outcome = SpecOutcome.Evaluates,
             ExpectedDisplay = "3",
             ExpectedRaw = "3",
             ExpectedEmittedCount = 1,
             Probes =
             [
+                new SpecProbe("Step(x) = x + 1, x < 3\nCapture(meta op) = op\nR = Capture(Step(0))\nR.Algorithm(R.Arguments*).while", "ok raw=3 n=1"),
+                new SpecProbe("Increment(x) = x + 1\nCapture(meta op) = op\nS = Capture(Increment(0))\nS.Algorithm(S.Arguments*).repeat(5)", "ok raw=5 n=1"),
+                // Naming the projection first still works.
                 new SpecProbe("Step(x) = x + 1, x < 3\nCapture(meta op) = op\nR = Capture(Step(0))\nRA = R.Algorithm\nRA(R.Arguments*).while", "ok raw=3 n=1"),
-                new SpecProbe("Increment(x) = x + 1\nCapture(meta op) = op\nS = Capture(Increment(0))\nSA = S.Algorithm\nSA(S.Arguments*).repeat(5)", "ok raw=5 n=1"),
+                // A wrapper of a wrapper rebuilds the captured call again.
+                new SpecProbe("Step(x) = x + 1, x < 3\nLoop(meta op) = op.Algorithm(op.Arguments*).while\nLoop2(meta op) = op.Algorithm(op.Arguments*).Loop\nStep(0).Loop2", "ok raw=3 n=1"),
                 // Plain forwarding hands the loop the original supplied call.
                 new SpecProbe("Step(x) = x + 1, x < 3\nLoop(operation) = while(operation)\nStep(0).Loop", "ok raw=3 n=1"),
             ],
             IncludeInGeneratorPrompt = true,
-            Explanation = "Because `R.Algorithm` is an ordinary callable and `R.Arguments*` passes the original arguments, a captured call can drive the ordinary `while` and `repeat` loops once its callable has a name: `RA = R.Algorithm` then `RA(R.Arguments*).while` runs the captured step from its captured start state. A `meta` wrapper names the projection the same way, so `Step(0).Loop` loops the step from 0; a plain wrapper `Loop(operation) = while(operation)` forwards the call itself.",
+            Explanation = "Because `R.Algorithm` is an ordinary callable and `R.Arguments*` passes the original arguments, `R.Algorithm(R.Arguments*)` is a written call of the captured step over its captured start state, and a loop captures it like any other call: `R.Algorithm(R.Arguments*).while`. A `meta` wrapper rebuilds the call the same way, so with `Loop(meta operation) = operation.Algorithm(operation.Arguments*).while`, `Step(0).Loop` loops the step from 0; a plain wrapper `Loop(operation) = while(operation)` forwards the call itself.",
         },
         new()
         {

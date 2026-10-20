@@ -10,11 +10,13 @@ namespace KatLang;
 /// <c>docs/design/language-rules/call-by-need.md</c> § Callable projection, CR-13..CR-16).
 ///
 /// <para><b>The callee cell (CR-13).</b> Every invocation plan has at most one canonical callee cell
-/// (<see cref="InvocationPlan.CalleeCell"/>): the plan's WRITTEN callee supplied in the plan's captured
-/// caller context through the ONE supply-cell constructor (<see cref="SupplyCell"/>) — so a parameter
-/// callee is that parameter's existing cell (NEED-01) and a name callee an identity-only cell over the
-/// name. It is established lazily and compare-and-set retained; establishing it evaluates, prepares and
-/// demands nothing.</para>
+/// (<see cref="InvocationPlan.CalleeCell"/>): its ROUTE's callee (META-S3-4: the written callee, the
+/// argumentless member path, the <c>.Algorithm</c> link, or an extension's lexical fallback) supplied in the
+/// plan's captured caller context through the ONE supply-cell constructor (<see cref="SupplyCell"/>) — so a
+/// parameter callee is that parameter's existing cell (NEED-01) and a name callee an identity-only cell over
+/// the name. It is established lazily, after the route, and compare-and-set retained; once the route is
+/// established, establishing it evaluates, prepares and demands nothing (establishing the route itself may
+/// demand a runtime-projection receiver, D-4).</para>
 ///
 /// <para><b>The intrinsic (CR-14).</b> On a structural miss an edge spelled <c>Algorithm</c> reads its
 /// receiver exactly as <c>Invoke</c> and <c>Arguments</c> do and requires a call reference of the
@@ -53,21 +55,66 @@ public static partial class Evaluator
     {
         private NeedCell? _receiver;
 
+        /// <summary>
+        /// META-S3-4 (D-3): the link is a planned invocation's <c>.Algorithm</c> callee, whose receiver must keep
+        /// the ordinary INVOCATION receiver evaluator (<see cref="EvalAlgorithmReceiver"/>): supplying the
+        /// receiver as a new VALUE expression would add a dispatch checkpoint the ordinary invocation does not
+        /// charge. A parameter receiver is still that parameter's own cell.
+        /// </summary>
+        internal bool InvocationReceiver { get; init; }
+
         internal NeedCell Receiver(Expr.DotCall edge)
             => Volatile.Read(ref _receiver)
-               ?? Interlocked.CompareExchange(ref _receiver, SupplyCell(edge.Target, Caller, Values, retained: true), null)
+               ?? Interlocked.CompareExchange(ref _receiver, NewReceiver(edge), null)
                ?? _receiver!;
+
+        private NeedCell NewReceiver(Expr.DotCall edge)
+            => !InvocationReceiver || edge.Target is Expr.Param
+                ? SupplyCell(edge.Target, Caller, Values, retained: true)
+                : new NeedCell(edge.Target, new InvocationReceiverSuspension(edge, Caller, Values), Caller.Budget,
+                    runtimeProjection: false, Caller.Budget.CancellationToken);
 
         // Test observation only: whether the receiver cell has been established.
         internal bool HasReceiver => Volatile.Read(ref _receiver) is not null;
     }
 
     /// <summary>
-    /// The canonical callee cell of <paramref name="plan"/> (CR-13): the written callee supplied in the
-    /// captured caller context. Lean: <c>NeedPlan.calleeCell</c>.
+    /// The canonical callee cell of <paramref name="plan"/> (CR-13; route known): the route's callee supplied
+    /// in the captured caller context — for the <c>.Algorithm</c> route, the link <c>t.Algorithm</c> itself, a
+    /// runtime projection whose receiver keeps the invocation receiver evaluator (D-3). Lean:
+    /// <c>NeedPlan.calleeCell</c>.
     /// </summary>
     internal static NeedCell CalleeCellOf(InvocationPlan plan)
-        => SupplyCell(plan.Source.Function, plan.Caller, plan.Values, retained: true);
+        => plan.Route.Kind == PlanRouteKind.AlgorithmIntrinsic
+            ? new NeedCell(plan.CalleeExpression, new LinkSuspension(plan.Caller, plan.Values) { InvocationReceiver = true },
+                plan.Caller.Budget, runtimeProjection: true, plan.Caller.Budget.CancellationToken)
+            : SupplyCell(plan.CalleeExpression, plan.Caller, plan.Values, retained: true);
+
+    /// <summary>
+    /// The receiver cell of a planned <c>.Algorithm</c> invocation (META-S3-4, D-3): its first VALUE demand
+    /// is the ORDINARY invocation receiver read (<see cref="EvalAlgorithmReceiver"/>) — the same charges,
+    /// provenance and failures as evaluating <c>t.Algorithm(args)</c> — retained once for the plan.
+    /// </summary>
+    internal sealed class InvocationReceiverSuspension(Expr.DotCall edge, EvalCtx caller, ValEnv values)
+        : ExpressionSuspension(caller, values)
+    {
+        internal Expr.DotCall Edge { get; } = edge;
+    }
+
+    // Keep the receiver-specific context copies outside the recursive suspended-VALUE frame.
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+    private static EvalResult<CountedResult> EvalInvocationReceiver(InvocationReceiverSuspension receiver)
+    {
+        var value = EvalAlgorithmReceiver(receiver.Edge, receiver.Caller, receiver.Values);
+        return value.IsError ? value.Error : EvalResult<CountedResult>.Ok(new CountedResult(value.Value, value.Value.ValueCount()));
+    }
+
+    /// <summary>MIRROR OF <see cref="EvalInvocationReceiver"/> — keep in lock-step.</summary>
+    private static async ValueTask<EvalResult<CountedResult>> EvalInvocationReceiverAsync(InvocationReceiverSuspension receiver)
+    {
+        var value = await EvalAlgorithmReceiverAsync(receiver.Edge, receiver.Caller, receiver.Values).ConfigureAwait(false);
+        return value.IsError ? value.Error : EvalResult<CountedResult>.Ok(new CountedResult(value.Value, value.Value.ValueCount()));
+    }
 
     /// <summary>
     /// Whether a supplied argumentless dot edge's CALLABLE may be a RUNTIME projection — one that can
@@ -113,10 +160,13 @@ public static partial class Evaluator
     private static EvalResult<bool> IsAlgorithmIntrinsicRoute(Expr.DotCall edge, EvalCtx ctx)
     {
         var receiver = ResolveDotReceiver(edge.Target, ctx, out _);
-        if (receiver.IsError)
-            return IsAbsentIdentity(receiver.Error) ? EvalResult<bool>.Ok(true) : receiver.Error;
-        return EvalResult<bool>.Ok(LookupPropBinding(receiver.Value, edge.Name, ctx.Budget) is null
-            && !receiver.Value.DefinesConditionalBranchProperty(edge.Name));
+        if (receiver.IsError && !IsAbsentIdentity(receiver.Error))
+            return receiver.Error;
+        // The ONE dot-edge decision (META-S3-4): the intrinsic exactly on its miss; a declared member,
+        // an inaccessible member or a branch-only member is the ordinary callee, whose own route reports it.
+        return EvalResult<bool>.Ok(
+            SelectDotEdge(edge, receiver.IsError ? null : receiver.Value, ctx, out var route, out _) is null
+            && route == DotEdgeRoute.AlgorithmIntrinsic);
     }
 
     // A bare VALUE read of the callee cell, after which the run's continuation is observed again (a cell
@@ -169,12 +219,14 @@ public static partial class Evaluator
     {
         var plan = DecodeAlgorithmReceiver(receiver, ctx);
         if (plan.IsError) return plan.Error;
-        var callee = plan.Value.CalleeCell;
+        var calleeCell = PlanCalleeCell(plan.Value);
+        if (calleeCell.IsError) return calleeCell.Error;
+        var callee = calleeCell.Value;
         if (args is null)
             return CalleeValue(callee.Demand(), ctx);
         var callable = RequireCapturedCallee(callee.ProjectCallable(), edge.Span);
         if (callable.IsError) return callable.Error;
-        return EvalResolvedCallCounted(callable.Value, args, ctx, valEnv, CallDiagnosticName.FromExpression(plan.Value.Source.Function));
+        return EvalResolvedCallCounted(callable.Value, args, ctx, valEnv, PlanCalleeName(plan.Value));
     }
 
     /// <summary>MIRROR OF <see cref="EvalDotAlgorithmIntrinsicCounted"/> — keep in lock-step.</summary>
@@ -201,12 +253,14 @@ public static partial class Evaluator
     {
         var plan = DecodeAlgorithmReceiver(receiver, ctx);
         if (plan.IsError) return plan.Error;
-        var callee = plan.Value.CalleeCell;
+        var calleeCell = await PlanCalleeCellAsync(plan.Value).ConfigureAwait(false);
+        if (calleeCell.IsError) return calleeCell.Error;
+        var callee = calleeCell.Value;
         if (args is null)
             return CalleeValue(await callee.DemandAsync().ConfigureAwait(false), ctx);
         var callable = RequireCapturedCallee(await ProjectCellCallableAsync(callee, ctx).ConfigureAwait(false), edge.Span);
         if (callable.IsError) return callable.Error;
-        return await EvalResolvedCallCountedAsync(callable.Value, args, ctx, valEnv, CallDiagnosticName.FromExpression(plan.Value.Source.Function)).ConfigureAwait(false);
+        return await EvalResolvedCallCountedAsync(callable.Value, args, ctx, valEnv, PlanCalleeName(plan.Value)).ConfigureAwait(false);
     }
 
     /// <summary>A cell's CALLABLE in the async engine: the one projection through the async resolution adapter.</summary>
@@ -244,11 +298,14 @@ public static partial class Evaluator
         var plan = DecodeAlgorithmReceiver(receiver.Value, ctx);
         if (plan.IsError)
             return CalleeResolutionFailure(diagnosticName, ctx, plan.Error with { Span = plan.Error.Span ?? edge.Span });
-        var callable = RequireCapturedCallee(plan.Value.CalleeCell.ProjectCallable(), edge.Span);
+        var calleeCell = PlanCalleeCell(plan.Value);
+        if (calleeCell.IsError)
+            return CalleeResolutionFailure(diagnosticName, ctx, calleeCell.Error);
+        var callable = RequireCapturedCallee(calleeCell.Value.ProjectCallable(), edge.Span);
         if (callable.IsError)
             return CalleeResolutionFailure(diagnosticName, ctx, callable.Error);
         return WithCallCtx(diagnosticName, ctx,
-            EvalResolvedCallCounted(callable.Value, args, ctx, valEnv, CallDiagnosticName.FromExpression(plan.Value.Source.Function)));
+            EvalResolvedCallCounted(callable.Value, args, ctx, valEnv, PlanCalleeName(plan.Value)));
     }
 
     /// <summary>MIRROR OF <see cref="EvalAlgorithmCalleeCallCounted"/> — keep in lock-step.</summary>
@@ -275,11 +332,14 @@ public static partial class Evaluator
         var plan = DecodeAlgorithmReceiver(receiver.Value, ctx);
         if (plan.IsError)
             return CalleeResolutionFailure(diagnosticName, ctx, plan.Error with { Span = plan.Error.Span ?? edge.Span });
-        var callable = RequireCapturedCallee(await ProjectCellCallableAsync(plan.Value.CalleeCell, ctx).ConfigureAwait(false), edge.Span);
+        var calleeCell = await PlanCalleeCellAsync(plan.Value).ConfigureAwait(false);
+        if (calleeCell.IsError)
+            return CalleeResolutionFailure(diagnosticName, ctx, calleeCell.Error);
+        var callable = RequireCapturedCallee(await ProjectCellCallableAsync(calleeCell.Value, ctx).ConfigureAwait(false), edge.Span);
         if (callable.IsError)
             return CalleeResolutionFailure(diagnosticName, ctx, callable.Error);
         return WithCallCtx(diagnosticName, ctx,
-            await EvalResolvedCallCountedAsync(callable.Value, args, ctx, valEnv, CallDiagnosticName.FromExpression(plan.Value.Source.Function)).ConfigureAwait(false));
+            await EvalResolvedCallCountedAsync(callable.Value, args, ctx, valEnv, PlanCalleeName(plan.Value)).ConfigureAwait(false));
     }
 
     /// <summary>
@@ -351,7 +411,9 @@ public static partial class Evaluator
         var receiver = link.Receiver(edge).Demand();
         if (receiver.IsError) return receiver.Error;
         var plan = DecodeAlgorithmReceiver(receiver.Value.Value, link.Caller);
-        return plan.IsError ? plan.Error : CalleeValue(plan.Value.CalleeCell.Demand(), link.Caller);
+        if (plan.IsError) return plan.Error;
+        var calleeCell = PlanCalleeCell(plan.Value);
+        return calleeCell.IsError ? calleeCell.Error : CalleeValue(calleeCell.Value.Demand(), link.Caller);
     }
 
     /// <summary>MIRROR OF <see cref="TryEvalLinkValue"/> — keep in lock-step.</summary>
@@ -363,7 +425,9 @@ public static partial class Evaluator
         var receiver = await link.Receiver(edge).DemandAsync().ConfigureAwait(false);
         if (receiver.IsError) return receiver.Error;
         var plan = DecodeAlgorithmReceiver(receiver.Value.Value, link.Caller);
-        return plan.IsError ? plan.Error : CalleeValue(await plan.Value.CalleeCell.DemandAsync().ConfigureAwait(false), link.Caller);
+        if (plan.IsError) return plan.Error;
+        var calleeCell = await PlanCalleeCellAsync(plan.Value).ConfigureAwait(false);
+        return calleeCell.IsError ? calleeCell.Error : CalleeValue(await calleeCell.Value.DemandAsync().ConfigureAwait(false), link.Caller);
     }
 
     /// <summary>
@@ -381,7 +445,9 @@ public static partial class Evaluator
         var receiver = link.Receiver(edge).Demand();
         if (receiver.IsError) return receiver.Error;
         var plan = DecodeAlgorithmReceiver(receiver.Value.Value, link.Caller);
-        return plan.IsError ? plan.Error : plan.Value.CalleeCell.ProjectCallable();
+        if (plan.IsError) return plan.Error;
+        var calleeCell = PlanCalleeCell(plan.Value);
+        return calleeCell.IsError ? calleeCell.Error : calleeCell.Value.ProjectCallable();
     }
 
     /// <summary>

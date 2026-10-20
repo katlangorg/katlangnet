@@ -514,8 +514,7 @@ public partial class InvocationPlanTests
     [InlineData("Probe(5 + 1)")]
     [InlineData("Probe((1, 2))")]
     [InlineData("Probe(Box.V)")]
-    [InlineData("Probe(Box.Get(1))")]
-    [InlineData("Probe((Box.Get)(1))")]
+    [InlineData("Probe(Box.Get)")]
     public void Meta_RefusesWhatIsNotAPlannableSuppliedCall_WithoutDemandingIt(string call)
     {
         var probe = new Probe();
@@ -539,6 +538,38 @@ public partial class InvocationPlanTests
         Assert.True(refused!.Value.IsError);
         Assert.Equal(Evaluator.MetaRefusalDescription, Assert.IsType<EvalError.NotAnAlgorithm>(refused.Value.Error).Description);
         Assert.Equal(0, probe.Traces);
+    }
+
+    /// <summary>
+    /// META-S3-4 (CR-2): a written member invocation — through the dot edge or a grouped member path —
+    /// IS a plan: META reifies it without demanding anything, and its invocation runs the member.
+    /// </summary>
+    [Theory]
+    [InlineData("Probe(Box.Get(1))")]
+    [InlineData("Probe((Box.Get)(1))")]
+    [InlineData("Probe(Box.V())")]
+    public void Meta_CapturesAWrittenMemberInvocation_WithoutDemandingIt(string call)
+    {
+        var probe = new Probe();
+        EvalResult<Result.CallReference>? captured = null;
+        probe.OnMeta = cells =>
+        {
+            captured = Evaluator.ReifyMeta(cells[0]);
+            Assert.False(cells[0]!.HasCompletedValue);
+            Assert.Equal(0, probe.Traces);
+            return captured.Value.IsOk ? captured.Value.Value.Invoke().Value.Value : Zero;
+        };
+
+        Assert.Equal("1", probe.Run($$"""
+            Box = {
+                public V = trace(1)
+                public Get(k) = trace(k)
+            }
+            Probe(x) = Meta(x)
+            {{call}}
+            """));
+
+        Assert.True(captured!.Value.IsOk);
     }
 
     [Fact]

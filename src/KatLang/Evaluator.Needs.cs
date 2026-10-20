@@ -42,8 +42,9 @@ public static partial class Evaluator
     /// transports its existing cell; every other expression becomes a suspended cell whose
     /// suspension (<see cref="ExpressionSuspension"/>: the caller context and value environment)
     /// is kept as data. In a run that retains invocation plans (J7, <see cref="EvaluationBudget.RetainsInvocationPlans"/>),
-    /// a written call with a lexical-name or parameter callee IS an invocation plan
-    /// (<see cref="InvocationPlan"/>): its VALUE executes through the plan's one supply
+    /// a WRITTEN INVOCATION (<see cref="IsPlannableCall"/>, META-S3-4: a call through a name, parameter or
+    /// argumentless path, or an argument-bearing dot edge) IS an invocation plan
+    /// (<see cref="InvocationPlan"/>): its VALUE executes through the plan's route and one supply
     /// (<see cref="EvalPlannedCallCounted"/>). An argumentless dot edge whose CALLABLE may be a
     /// RUNTIME projection (<see cref="IsRuntimeProjectionSource"/>, META-S3-1) gets its projection
     /// node — an edge spelled <c>Algorithm</c> whose intrinsic route is not statically excluded as a
@@ -60,7 +61,7 @@ public static partial class Evaluator
         }
         ExpressionSuspension suspension;
         var runtimeProjection = false;
-        if (caller.Budget.RetainsInvocationPlans && IsPlannableCall(expression) is not null)
+        if (caller.Budget.RetainsInvocationPlans && IsPlannableCall(expression))
         {
             caller.Observations?.RecordInvocationPlan();
             suspension = new InvocationPlan(caller, values);
@@ -145,6 +146,10 @@ public static partial class Evaluator
     internal static EvalResult<CountedResult> EvalSuspendedValue(NeedCell cell, ExpressionSuspension suspension)
     {
         var source = cell.Source!;
+        // META-S3-4 (D-3): a planned `.Algorithm` invocation's retained receiver is read by the ordinary
+        // invocation receiver evaluator.
+        if (suspension is InvocationReceiverSuspension receiver)
+            return EvalInvocationReceiver(receiver);
         if (suspension is LinkSuspension link && TryEvalLinkValue((Expr.DotCall)source, link) is { } linked)
             return FinishSuppliedLinkValue(source, suspension, linked);
         return FinishSuppliedValue(source, suspension, suspension is InvocationPlan plan
@@ -156,6 +161,8 @@ public static partial class Evaluator
     internal static async ValueTask<EvalResult<CountedResult>> EvalSuspendedValueAsync(NeedCell cell, ExpressionSuspension suspension)
     {
         var source = cell.Source!;
+        if (suspension is InvocationReceiverSuspension receiver)
+            return await EvalInvocationReceiverAsync(receiver).ConfigureAwait(false);
         if (suspension is LinkSuspension link
             && await TryEvalLinkValueAsync((Expr.DotCall)source, link).ConfigureAwait(false) is { } linked)
             return FinishSuppliedLinkValue(source, suspension, linked);

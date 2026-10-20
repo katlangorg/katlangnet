@@ -2667,50 +2667,21 @@ public static partial class Evaluator
 
         // META-S3-0b: receiver navigation can project a parameter's cell — resolved asynchronously.
         var navigated = await ResolveDotReceiverAsync(target, ctx).ConfigureAwait(false);
-        var targetResult = navigated.IsError ? EvalResult<Algorithm>.Err(navigated.Error) : EvalResult<Algorithm>.Ok(navigated.Value.Receiver);
+        if (navigated.IsError && !IsAbsentIdentity(navigated.Error))
+            return navigated.Error;
+        var targetAlg = navigated.IsError ? null : navigated.Value.Receiver;
         var receiverIsStructuralMember = navigated.IsOk && navigated.Value.IsStructuralMember;
-        if (targetResult.IsError)
+
+        // MIRROR — ONE structural lookup decides the route (SelectDotEdge); a member named `string` wins too.
+        if (SelectDotEdge(dotCall, targetAlg, ctx, out var route, out var prop) is { } selectionError)
+            return selectionError;
+
+        if (route == DotEdgeRoute.Member)
         {
-            if (IsAbsentIdentity(targetResult.Error))
-            {
-                // MIRROR — a value receiver declares no member: the miss route applies directly.
-                if (dotCall.UsesOrdinaryDotStringIntrinsic())
-                {
-                    if (await RejectDotStringIntrinsicArgumentsAsync(argsOpt, ctx, valEnv).ConfigureAwait(false) is { } arityRejection)
-                        return arityRejection;
-                    // The synchronous twin evaluates the value-only target with plain
-                    // Eval; the counted twin's value projection is the same value.
-                    var valCountedR = await EvalCountedAsync(target, ctx, valEnv).ConfigureAwait(false);
-                    if (valCountedR.IsError) return valCountedR.Error;
-                    var outR = ResultToString(ctx, valCountedR.Value.Value);
-                    if (outR.IsError) return outR.Error;
-                    return EvalResult<CountedResult>.Ok(new CountedResult(outR.Value, outR.Value.ValueCount()));
-                }
-                if (dotCall.UsesDotInvokeIntrinsic())
-                    return await EvalDotInvokeValueReceiverCountedAsync(dotCall, ctx, valEnv).ConfigureAwait(false);
-                if (dotCall.UsesDotArgumentsIntrinsic())
-                    return await EvalDotArgumentsValueReceiverCountedAsync(dotCall, ctx, valEnv).ConfigureAwait(false);
-                if (dotCall.UsesDotAlgorithmIntrinsic())
-                    return await EvalDotAlgorithmValueReceiverCountedAsync(dotCall, ctx, valEnv).ConfigureAwait(false);
-                return await CallLexicalWithReceiverCountedAsync(dotCall, ctx, valEnv).ConfigureAwait(false);
-            }
-
-            return targetResult.Error;
-        }
-
-        var targetAlg = targetResult.Value;
-
-        // MIRROR — ONE structural lookup decides the route; a member named `string` wins too.
-        var prop = LookupPropBinding(targetAlg, name, ctx.Budget);
-        if (prop is not null)
-        {
-            if (!IsAccessibleFrom(prop, targetAlg, ctx))
-                return LocalOnlyPropertyError(OpenExprName(target), prop);
-
-            var wired = ChildOfInContext(targetAlg, prop.Value, ctx);
+            var wired = ChildOfInContext(targetAlg!, prop!.Value, ctx);
             // MIRROR — a member that is an alias is read and called as its target.
             if (wired is Algorithm.Alias)
-                return await EvalAliasMemberCountedAsync(targetAlg, prop, wired, argsOpt, name, ctx, valEnv).ConfigureAwait(false);
+                return await EvalAliasMemberCountedAsync(targetAlg!, prop, wired, argsOpt, name, ctx, valEnv).ConfigureAwait(false);
             if (argsOpt is null)
             {
                 // See the synchronous twin: the ONE law decides, and the rejection names
@@ -2721,14 +2692,14 @@ public static partial class Evaluator
                     return AcceptsZeroArgumentValueDemand(simpleCallee)
                         ? MarkSelectedMemberOutput(ReCountValueBoundary(
                             await EvalZeroArgPropertyAccessCountedAsync(
-                                targetAlg, prop, ZeroArgPropertyAccessKind.CountedStructural, simpleCallee, ctx, valEnv).ConfigureAwait(false)))
+                                targetAlg!, prop, ZeroArgPropertyAccessKind.CountedStructural, simpleCallee, ctx, valEnv).ConfigureAwait(false)))
                         : ZeroArgumentDemandArityMismatch(simpleCallee);
                 }
 
                 if (AcceptsZeroArgumentValueDemand(wired))
                     return MarkSelectedMemberOutput(ReCountValueBoundary(
                         await EvalZeroArgPropertyAccessCountedAsync(
-                            targetAlg, prop, ZeroArgPropertyAccessKind.CountedStructural, wired, ctx, valEnv).ConfigureAwait(false)));
+                            targetAlg!, prop, ZeroArgPropertyAccessKind.CountedStructural, wired, ctx, valEnv).ConfigureAwait(false)));
 
                 if (wired is Algorithm.Conditional)
                     return new EvalError.NoMatchingBranch(name);
@@ -2744,37 +2715,52 @@ public static partial class Evaluator
                 CallDiagnosticName.FromKnown(name)).ConfigureAwait(false);
         }
 
-        if (targetAlg.DefinesConditionalBranchProperty(name))
-            return new EvalError.LocalOnlyProperty(OpenExprName(target), name, PropertyExposure.LocalOnlyConditionalAlgorithm);
-
-        // MIRROR — a structural miss: `string` is the intrinsic, every other member the extension call.
-        if (dotCall.UsesOrdinaryDotStringIntrinsic())
+        // MIRROR — a structural miss: the intrinsics, or the extension call.
+        switch (route)
         {
-            if (await RejectDotStringIntrinsicArgumentsAsync(argsOpt, ctx, valEnv).ConfigureAwait(false) is { } arityRejection)
-                return arityRejection;
-            // MIRROR — the `.string` receiver is judged on the alias's target.
-            if (targetAlg is Algorithm.Alias)
-                return await EvalAliasDotStringCountedAsync(target, targetAlg, receiverIsStructuralMember, ctx, valEnv).ConfigureAwait(false);
-            var val = await EvalDotStringReceiverAlgOutputAsync(target, targetAlg, receiverIsStructuralMember, ctx, valEnv).ConfigureAwait(false);
-            if (val.IsError) return val.Error;
-            var outR = ResultToString(ctx, val.Value);
-            if (outR.IsError) return outR.Error;
-            return EvalResult<CountedResult>.Ok(new CountedResult(outR.Value, outR.Value.ValueCount()));
+            case DotEdgeRoute.StringIntrinsic:
+            {
+                if (await RejectDotStringIntrinsicArgumentsAsync(argsOpt, ctx, valEnv).ConfigureAwait(false) is { } arityRejection)
+                    return arityRejection;
+                Result value;
+                if (targetAlg is null)
+                {
+                    // The synchronous twin evaluates the value-only target with plain
+                    // Eval; the counted twin's value projection is the same value.
+                    var valCountedR = await EvalCountedAsync(target, ctx, valEnv).ConfigureAwait(false);
+                    if (valCountedR.IsError) return valCountedR.Error;
+                    value = valCountedR.Value.Value;
+                }
+                else if (targetAlg is Algorithm.Alias)
+                {
+                    // MIRROR — the `.string` receiver is judged on the alias's target.
+                    return await EvalAliasDotStringCountedAsync(target, targetAlg, receiverIsStructuralMember, ctx, valEnv).ConfigureAwait(false);
+                }
+                else
+                {
+                    var val = await EvalDotStringReceiverAlgOutputAsync(target, targetAlg, receiverIsStructuralMember, ctx, valEnv).ConfigureAwait(false);
+                    if (val.IsError) return val.Error;
+                    value = val.Value;
+                }
+                var outR = ResultToString(ctx, value);
+                if (outR.IsError) return outR.Error;
+                return EvalResult<CountedResult>.Ok(new CountedResult(outR.Value, outR.Value.ValueCount()));
+            }
+            case DotEdgeRoute.InvokeIntrinsic:
+                return targetAlg is null
+                    ? await EvalDotInvokeValueReceiverCountedAsync(dotCall, ctx, valEnv).ConfigureAwait(false)
+                    : await EvalDotInvokeIntrinsicCountedAsync(dotCall, targetAlg, receiverIsStructuralMember, ctx, valEnv).ConfigureAwait(false);
+            case DotEdgeRoute.ArgumentsIntrinsic:
+                return targetAlg is null
+                    ? await EvalDotArgumentsValueReceiverCountedAsync(dotCall, ctx, valEnv).ConfigureAwait(false)
+                    : await EvalDotArgumentsIntrinsicCountedAsync(dotCall, targetAlg, receiverIsStructuralMember, ctx, valEnv).ConfigureAwait(false);
+            case DotEdgeRoute.AlgorithmIntrinsic:
+                return targetAlg is null
+                    ? await EvalDotAlgorithmValueReceiverCountedAsync(dotCall, ctx, valEnv).ConfigureAwait(false)
+                    : await EvalDotAlgorithmIntrinsicCountedAsync(dotCall, targetAlg, receiverIsStructuralMember, ctx, valEnv).ConfigureAwait(false);
+            default:
+                return await CallLexicalWithReceiverCountedAsync(dotCall, ctx, valEnv).ConfigureAwait(false);
         }
-
-        // MIRROR — a structural miss spelled `Invoke` is the call-reference intrinsic.
-        if (dotCall.UsesDotInvokeIntrinsic())
-            return await EvalDotInvokeIntrinsicCountedAsync(dotCall, targetAlg, receiverIsStructuralMember, ctx, valEnv).ConfigureAwait(false);
-
-        // MIRROR — a structural miss spelled `Arguments` is the argument-view intrinsic (S2).
-        if (dotCall.UsesDotArgumentsIntrinsic())
-            return await EvalDotArgumentsIntrinsicCountedAsync(dotCall, targetAlg, receiverIsStructuralMember, ctx, valEnv).ConfigureAwait(false);
-
-        // MIRROR — a structural miss spelled `Algorithm` is the callable-projection intrinsic (META-S3-1).
-        if (dotCall.UsesDotAlgorithmIntrinsic())
-            return await EvalDotAlgorithmIntrinsicCountedAsync(dotCall, targetAlg, receiverIsStructuralMember, ctx, valEnv).ConfigureAwait(false);
-
-        return await CallLexicalWithReceiverCountedAsync(dotCall, ctx, valEnv).ConfigureAwait(false);
     }
 
     /// <summary>MIRROR OF <see cref="EvalDotReferenceIntrinsicReceiver"/> — keep in lock-step.</summary>

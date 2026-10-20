@@ -1711,19 +1711,18 @@ Apply(R.Algorithm, 7), [1, 2, 3].map(R.Algorithm), R.Algorithm(R.Arguments*)
 25
 ```
 
-Together with `.Arguments*`, a `meta` parameter can drive a loop over the captured step from the captured starting state. A loop needs a call whose algorithm has a name (see [Loops](#loops)), so name the captured algorithm first:
+Together with `.Arguments*`, a `meta` parameter can drive a loop over the captured step from the captured starting state. `operation.Algorithm(operation.Arguments*)` is itself a written call — of the captured algorithm, over the captured arguments — so a loop captures it like any other call (see [Loops](#loops)):
 
 ```
 Step(x) = x + 1, x < 3
-Loop(meta operation) = {
-  S = operation.Algorithm
-  S(operation.Arguments*).while
-}
+Loop(meta operation) = operation.Algorithm(operation.Arguments*).while
 
 Step(0).Loop
 ```
 
 **Result:** `3`
+
+The rebuilt call is a new call, but its arguments are the very arguments of the captured one: each is computed at most once, whichever call needs it first.
 
 Obtaining `R.Algorithm` does not run the captured call or compute its arguments. A clause family is chosen again by the new arguments, and the algorithm keeps the names it was written with. Written without arguments, `R.Algorithm` is the captured algorithm read as a value, so for `Square`, which needs an argument, `R.Algorithm` alone is an error; `R.Algorithm()` calls it with no arguments, which is an error too — it never repeats the captured `5` (that is `R.Invoke()`). A property such as `A = R.Algorithm` is a new name for the captured algorithm, as in [Naming a Received Algorithm](#naming-a-received-algorithm): `A(8)` calls it afresh, `[1, 2].map(A)` uses it, and `A` alone is its value. Like `Invoke` and `Arguments`, `x.Algorithm` means the call-reference operation unless `x` has its own member named `Algorithm`; a definition named `Algorithm` of your own is still called as `Algorithm(x)`.
 
@@ -2331,20 +2330,20 @@ Each round turns the state `(a, b)` into `(b, a + b)`. Starting from `(0, 1)`, t
 
 Each argument of the step's call is one state value, and values stay values here too: to start from a stored pair such as `Start = 0, 1`, spread it inside the call, as in `Fibonacci(Start*).repeat(10)`. A step can also start from no values at all: with `Done = false`, `Done().while` is `()`.
 
-### Naming the Step
+### Which Calls Are Steps
 
-The loop must see the call itself, written with the step's name: `Increment(0).repeat(5)` and `while(Countdown(5))` work, and so does a call through a parameter, as in `Run(step, start) = step(start).while`. Anything else is an error, and nothing is computed: a plain value (`repeat(5, 2)`), a property that only holds the result of a call (with `Start = Increment(0)`, `Start.repeat(5)` reads the value of `Start` and cannot look back at how it was computed), the algorithm without a call (`Increment.repeat(5)`), and a call reached through a dot such as `Box.Step(0)`. Give such a step a name first:
+The loop must see the call itself — a call written with its argument list: `Increment(0).repeat(5)` and `while(Countdown(5))` work, and so do a call through a parameter, as in `Run(step, start) = step(start).while`, a call of a member or of a module algorithm, such as `Box.Step(0).while` or `Math.Abs(-3).repeat(2)`, and a call rebuilt from a captured call, `op.Algorithm(op.Arguments*).while`. Anything else is an error, and nothing is computed: a plain value (`repeat(5, 2)`), a property that only holds the result of a call (with `Start = Increment(0)`, `Start.repeat(5)` reads the value of `Start` and cannot look back at how it was computed), the algorithm without a call (`Increment.repeat(5)`), and a member without an argument list (`Box.Step.while`). An anonymous block is given a name first, so that it can be called:
 
 ```
 Box = { Step(x) = x + 1, x < 3 }
-S = Box.Step
 Add = { x + 10 }
 
-S(0).while, Add(0).repeat(3)
+Box.Step(0).while, Math.Abs(-3).repeat(2), Add(0).repeat(3)
 ```
 
 **Results:**
 ```
+3
 3
 30
 ```

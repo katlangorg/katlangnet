@@ -427,8 +427,8 @@ public class CallReferenceS1Tests
     [InlineData("Capture(Square)")]
     [InlineData("Y = Square(5)\nCapture(Y)")]
     [InlineData("R = Capture(Square(5))\nCapture(R)")]
-    [InlineData("Box = { public F(x) = x }\nCapture(Box.F(1))")]
-    [InlineData("Capture(5.Inc())")]
+    [InlineData("Box = { public F(x) = x }\nCapture(Box.F)")]
+    [InlineData("Capture(5.Inc)")]
     [InlineData("Capture(1 + Square(2))")]
     [InlineData("Capture({ Square(2) })")]
     [InlineData("Again(meta op) = Capture(op)\nAgain(Square(5))")]
@@ -436,6 +436,21 @@ public class CallReferenceS1Tests
     {
         var (outcome, effects) = Observe(Prelude + "\n" + body);
         Assert.Equal("err NotAnAlgorithm: meta: not a supplied call computation", outcome);
+        Assert.Equal("ticks=0 traces=0 pairs=0", effects.ToString());
+    }
+
+    /// <summary>
+    /// META-S3-4 (CR-2): a written member or extension invocation — before S3-4 refused — is captured,
+    /// inertly: nothing runs, and the reference it yields is refused only at the run boundary (CR-6).
+    /// </summary>
+    [Theory]
+    [InlineData("Box = { public F(x) = x + tick() }\nCapture(Box.F(T(1)))")]
+    [InlineData("Capture(5.Inc())")]
+    [InlineData("Capture(T(5).Add(T(1)))")]
+    public void WrittenDotInvocations_AreCaptured_WithoutEvaluatingAnything(string body)
+    {
+        var (outcome, effects) = Observe(Prelude + "\n" + body);
+        Assert.Equal("err TypeMismatch: " + Evaluator.CallReferenceLeavesRunMessage, outcome);
         Assert.Equal("ticks=0 traces=0 pairs=0", effects.ToString());
     }
 

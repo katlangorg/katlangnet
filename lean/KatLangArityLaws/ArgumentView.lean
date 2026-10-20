@@ -101,82 +101,152 @@ theorem view_is_opaque (a : Nat) :
 
 /-! ## The view's supply: the plan's ONE sticky preparation (actual `NeedPlan.viewCells`) -/
 
-theorem viewCells_run (sp : NeedSupply.SpreadEval) (a : Nat) (s : EvalState)
+/-- The view's supply reads the plan's route first (META-S3-4, D-4: recorded, or classified now),
+    then — on a callable route — the plan's ONE sticky preparation over the route's effective
+    bundle; an intrinsic route is the refusal (D-1A). -/
+theorem viewCells_routes (sp : NeedSupply.SpreadEval) (classify : NeedPlan.CallShape → EvalM PlanRoute)
+    (a : Nat) (s : EvalState)
     (shape : NeedPlan.CallShape) (h : NeedPlan.shapeAt? s.needs a = some shape) :
-    (NeedPlan.viewCells sp a).runState s = (NeedPlan.prepare sp a shape).runState s := by
+    (NeedPlan.viewCells sp classify a).runState s =
+      (match (NeedPlan.routeOf classify a shape).runState s with
+       | (.error e, t) => (.error e, t)
+       | (.ok r, t) =>
+         if r = .intrinsic then (.error NeedPlan.invocationRefusal, t)
+         else (NeedPlan.prepare sp a (NeedPlan.effective shape r)).runState t) := by
   simp only [NeedPlan.viewCells, bind_run, get_run, h]
+  rcases (NeedPlan.routeOf classify a shape).runState s with ⟨_ | r, t⟩
+  · rfl
+  · by_cases hi : r = .intrinsic
+    · subst hi; rfl
+    · have hb : (r == PlanRoute.intrinsic) = false := by
+        cases r <;> first | rfl | exact absurd rfl hi
+      simp only [hb, Bool.false_eq_true, ↓reduceIte, if_neg hi]
 
-theorem viewCells_refuses (sp : NeedSupply.SpreadEval) (a : Nat) (s : EvalState)
+/-- With the plan's callable route recorded, the view's supply IS the plan's preparation over the
+    route's effective bundle. -/
+theorem viewCells_run (sp : NeedSupply.SpreadEval) (classify : NeedPlan.CallShape → EvalM PlanRoute)
+    (a : Nat) (s : EvalState) (shape : NeedPlan.CallShape) (cell : NeedCell) (r : PlanRoute)
+    (h : NeedPlan.shapeAt? s.needs a = some shape) (hc : s.needs[a]? = some cell)
+    (hr : cell.route = some r) (hi : r ≠ .intrinsic) :
+    (NeedPlan.viewCells sp classify a).runState s =
+      (NeedPlan.prepare sp a (NeedPlan.effective shape r)).runState s := by
+  rw [viewCells_routes sp classify a s shape h, routeOf_recorded classify a shape s cell r hc hr]
+  exact if_neg hi
+
+/-- D-1A: the view of an intrinsic-routed capture has no supply — the refusal, with no effect. -/
+theorem viewCells_intrinsic (sp : NeedSupply.SpreadEval) (classify : NeedPlan.CallShape → EvalM PlanRoute)
+    (a : Nat) (s : EvalState) (shape : NeedPlan.CallShape) (cell : NeedCell)
+    (h : NeedPlan.shapeAt? s.needs a = some shape) (hc : s.needs[a]? = some cell)
+    (hr : cell.route = some .intrinsic) :
+    (NeedPlan.viewCells sp classify a).runState s = (.error NeedPlan.invocationRefusal, s) := by
+  rw [viewCells_routes sp classify a s shape h, routeOf_recorded classify a shape s cell .intrinsic hc hr]
+  rfl
+
+theorem viewCells_refuses (sp : NeedSupply.SpreadEval) (classify : NeedPlan.CallShape → EvalM PlanRoute)
+    (a : Nat) (s : EvalState)
     (h : NeedPlan.shapeAt? s.needs a = none) :
-    (NeedPlan.viewCells sp a).runState s = (.error NeedPlan.metaRefusal, s) := by
+    (NeedPlan.viewCells sp classify a).runState s = (.error NeedPlan.metaRefusal, s) := by
   simp only [NeedPlan.viewCells, bind_run, get_run, h]
   rfl
 
 /-- **A prepared plan answers from its record**: the view's supply is the recorded outcome —
     cells or an ordinary failure — and nothing runs or changes. -/
-theorem viewCells_prepared (sp : NeedSupply.SpreadEval) (a : Nat) (s : EvalState)
-    (shape : NeedPlan.CallShape) (cell : NeedCell) (outcome : Except Error (List NeedSupply.Sourced))
+theorem viewCells_prepared (sp : NeedSupply.SpreadEval) (classify : NeedPlan.CallShape → EvalM PlanRoute)
+    (a : Nat) (s : EvalState)
+    (shape : NeedPlan.CallShape) (cell : NeedCell) (r : PlanRoute) (outcome : Except Error (List NeedSupply.Sourced))
     (hs : NeedPlan.shapeAt? s.needs a = some shape) (hc : s.needs[a]? = some cell)
+    (hr : cell.route = some r) (hi : r ≠ .intrinsic)
     (hp : cell.plan = .prepared outcome) :
-    (NeedPlan.viewCells sp a).runState s = (outcome, s) := by
-  rw [viewCells_run sp a s shape hs, prepare_prepared sp a shape s cell outcome hc hp]
+    (NeedPlan.viewCells sp classify a).runState s = (outcome, s) := by
+  rw [viewCells_run sp classify a s shape cell r hs hc hr hi, prepare_prepared sp a _ s cell outcome hc hp]
 
-/-- **An unprepared plan forms its supply exactly once**, through the ONE former over the plan's
-    own written arguments in the plan's caller context — the formation VALUE and `Invoke()` run —
-    and records the outcome. The target is never resolved and no argument VALUE is demanded by
-    the view itself (formation demands nothing; only an arbitrary spread's own evaluation runs). -/
-theorem viewCells_unprepared (sp : NeedSupply.SpreadEval) (a : Nat) (s : EvalState)
-    (shape : NeedPlan.CallShape) (cell : NeedCell)
+/-- **An unprepared plan forms its supply exactly once**, through the ONE former over the route's
+    effective bundle (META-S3-4: an extension's receiver first) in the plan's caller context — the
+    formation VALUE and `Invoke()` run — and records the outcome. The target is never resolved and
+    no argument VALUE is demanded by the view itself (formation demands nothing; only an arbitrary
+    spread's own evaluation runs). -/
+theorem viewCells_unprepared (sp : NeedSupply.SpreadEval) (classify : NeedPlan.CallShape → EvalM PlanRoute)
+    (a : Nat) (s : EvalState)
+    (shape : NeedPlan.CallShape) (cell : NeedCell) (r : PlanRoute)
     (hs : NeedPlan.shapeAt? s.needs a = some shape) (hc : s.needs[a]? = some cell)
+    (hr : cell.route = some r) (hi : r ≠ .intrinsic)
     (hp : cell.plan = .unprepared)
-    (hcomplete : ((NeedSupply.form sp shape.caller shape.values shape.args).runState
+    (hcomplete : ((NeedSupply.form sp shape.caller shape.values (NeedPlan.effective shape r).args).runState
       (withPlan a .preparing s)).1.isIncomplete = false) :
-    (NeedPlan.viewCells sp a).runState s =
-      (let r := (NeedSupply.form sp shape.caller shape.values shape.args).runState (withPlan a .preparing s)
-       (r.1, withPlan a (.prepared r.1) r.2)) := by
-  rw [viewCells_run sp a s shape hs, prepare_unprepared sp a shape s cell hc hp hcomplete]
+    (NeedPlan.viewCells sp classify a).runState s =
+      (let res := (NeedSupply.form sp shape.caller shape.values (NeedPlan.effective shape r).args).runState
+          (withPlan a .preparing s)
+       (res.1, withPlan a (.prepared res.1) res.2)) := by
+  rw [viewCells_run sp classify a s shape cell r hs hc hr hi]
+  have := prepare_unprepared sp a (NeedPlan.effective shape r) s cell hc hp
+    (by simp only [effective_caller, effective_values]; exact hcomplete)
+  simp only [effective_caller, effective_values] at this
+  exact this
 
 theorem disciplined_viewCells (sp : NeedSupply.SpreadEval) (hsp : ∀ e c v, Disciplined (sp e c v))
-    (a : Nat) : Disciplined (NeedPlan.viewCells sp a) := by
+    (classify : NeedPlan.CallShape → EvalM PlanRoute) (hclassify : ∀ shape, Disciplined (classify shape))
+    (a : Nat) : Disciplined (NeedPlan.viewCells sp classify a) := by
   intro s
   cases h : NeedPlan.shapeAt? s.needs a with
-  | none => rw [viewCells_refuses sp a s h]; exact HeapKept.refl _
-  | some shape => rw [viewCells_run sp a s shape h]; exact disciplined_prepare sp hsp a shape s
+  | none => rw [viewCells_refuses sp classify a s h]; exact HeapKept.refl _
+  | some shape =>
+    rw [viewCells_routes sp classify a s shape h]
+    have k := disciplined_routeOf classify hclassify a shape s
+    rcases hro : (NeedPlan.routeOf classify a shape).runState s with ⟨_ | r, t⟩ <;> rw [hro] at k
+    · exact k
+    · dsimp only
+      by_cases hi : r = .intrinsic
+      · rw [if_pos hi]; exact k
+      · rw [if_neg hi]; exact k.trans (disciplined_prepare sp hsp a _ t)
 
-/-- **Supply formation happens once.** After a first view read of an unprepared plan (and then
-    any disciplined computation — the original VALUE, `Invoke()`, other view operations,
-    forwarding), the next view read returns EXACTLY the first outcome and changes nothing: an
-    arbitrary spread among the arguments is never evaluated again, and a sticky failure stays. -/
+/-- **Supply formation happens once.** After a first view read of an unprepared plan with a recorded
+    route (and then any disciplined computation — the original VALUE, `Invoke()`, other view
+    operations, forwarding), the next view read returns EXACTLY the first outcome and changes
+    nothing: an arbitrary spread among the arguments is never evaluated again, and a sticky failure
+    stays. -/
 theorem viewCells_forms_once (sp : NeedSupply.SpreadEval) (hsp : ∀ e c v, Disciplined (sp e c v))
-    (a : Nat) (s : EvalState) (shape : NeedPlan.CallShape) (cell : NeedCell)
+    (classify : NeedPlan.CallShape → EvalM PlanRoute)
+    (a : Nat) (s : EvalState) (shape : NeedPlan.CallShape) (cell : NeedCell) (r : PlanRoute)
     (hs : NeedPlan.shapeAt? s.needs a = some shape) (hc : s.needs[a]? = some cell)
+    (hr : cell.route = some r) (hi : r ≠ .intrinsic)
     (hp : cell.plan = .unprepared) {α : Type} (m : EvalM α) (hm : Disciplined m)
-    (hcomplete : ((NeedSupply.form sp shape.caller shape.values shape.args).runState
+    (hcomplete : ((NeedSupply.form sp shape.caller shape.values (NeedPlan.effective shape r).args).runState
       (withPlan a .preparing s)).1.isIncomplete = false) :
-    (NeedPlan.viewCells sp a).runState (m.runState ((NeedPlan.viewCells sp a).runState s).2).2 =
-      (((NeedPlan.viewCells sp a).runState s).1, (m.runState ((NeedPlan.viewCells sp a).runState s).2).2) := by
-  obtain ⟨c', hc', hplan, _⟩ := prepare_records sp hsp a shape s cell hc hp hcomplete
-  rw [viewCells_run sp a s shape hs]
-  have hs2 := shapeAt_kept (hm _) a shape (shapeAt_kept (disciplined_prepare sp hsp a shape s) a shape hs)
-  rw [viewCells_run sp a _ shape hs2]
-  exact prepared_survives m hm sp a shape _ c' _ hc' hplan
+    (NeedPlan.viewCells sp classify a).runState (m.runState ((NeedPlan.viewCells sp classify a).runState s).2).2 =
+      (((NeedPlan.viewCells sp classify a).runState s).1,
+        (m.runState ((NeedPlan.viewCells sp classify a).runState s).2).2) := by
+  obtain ⟨c', hc', hplan, _⟩ := prepare_records sp hsp a (NeedPlan.effective shape r) s cell hc hp
+    (by simp only [effective_caller, effective_values]; exact hcomplete)
+  rw [viewCells_run sp classify a s shape cell r hs hc hr hi]
+  have kprep := disciplined_prepare sp hsp a (NeedPlan.effective shape r) s
+  have hs2 := shapeAt_kept (hm _) a shape (shapeAt_kept kprep a shape hs)
+  -- The route record is sticky: preparation and `m` keep it (`CellKept.routed`).
+  obtain ⟨c1, hc1, k1⟩ := kprep a cell hc
+  rw [hc'] at hc1
+  cases hc1
+  obtain ⟨c2, hc2, k2⟩ := hm _ a c' hc'
+  rw [viewCells_run sp classify a _ shape c2 r hs2 hc2 (k2.routed r (k1.routed r hr)) hi]
+  exact prepared_survives m hm sp a (NeedPlan.effective shape r) _ c' _ hc' hplan
 
-/-- **The view and every invocation read the same cells.** With plan `a` prepared — by its VALUE,
-    an `Invoke()` or an earlier view operation — the view's supply is exactly the recorded cells
-    and an explicit invocation is `callOver` those same cells. -/
+/-- **The view and every invocation read the same cells.** With plan `a`'s callable route recorded
+    and its supply prepared — by its VALUE, an `Invoke()` or an earlier view operation — the view's
+    supply is exactly the recorded cells and an explicit invocation is `callOver` those same cells. -/
 theorem view_and_invoke_share_cells (route : NeedPlan.Route)
     (htarget : ∀ f c, Disciplined (route.target f c))
     (hnormal : ∀ g c, Disciplined (route.normalize g c))
-    (a : Nat) (s : EvalState) (cell : NeedCell) (shape : NeedPlan.CallShape)
+    (hclassify : ∀ shape, Disciplined (route.classify shape))
+    (hproject : ∀ c, Disciplined (route.project c))
+    (a : Nat) (s : EvalState) (cell : NeedCell) (shape : NeedPlan.CallShape) (r : PlanRoute)
     (cells : List NeedSupply.Sourced)
     (hc : s.needs[a]? = some cell) (hshape : NeedPlan.ofSuspension? cell.suspension = some shape)
+    (hr : cell.route = some r) (hi : r ≠ .intrinsic)
     (hp : cell.plan = .prepared (.ok cells)) :
-    (NeedPlan.viewCells route.spread a).runState s = (.ok cells, s) ∧
-    (NeedPlan.invoke route ⟨a⟩).runState s = (callOver route shape cells).runState s := by
+    (NeedPlan.viewCells route.spread route.classify a).runState s = (.ok cells, s) ∧
+    (NeedPlan.invoke route ⟨a⟩).runState s = (callOver route a shape r cells).runState s := by
   have hsa : NeedPlan.shapeAt? s.needs a = some shape := by simp [NeedPlan.shapeAt?, hc, hshape]
-  refine ⟨viewCells_prepared route.spread a s shape cell _ hsa hc hp, ?_⟩
+  refine ⟨viewCells_prepared route.spread route.classify a s shape cell r _ hsa hc hr hi hp, ?_⟩
   rw [invoke_run route a s shape hsa]
-  exact execute_prepared route htarget hnormal a shape s cell cells hc hp
+  exact execute_prepared route htarget hnormal hclassify hproject a shape s cell r cells hc hr hi hp
 
 /-! ## The argument spread transports the ORIGINAL cells (actual `NeedPlan.viewSupply`) -/
 
@@ -200,13 +270,15 @@ theorem sourced_map_run (cells : List NeedSupply.Sourced) (s : EvalState) :
 /-- **Cell-preserving spread over a prepared plan.** The argument spread of `argView a` contributes
     exactly the plan's recorded cell ADDRESSES, in order, each with its own written source, and
     changes nothing: no cell is allocated, copied, wrapped or demanded. -/
-theorem viewSupply_prepared (sp : NeedSupply.SpreadEval) (a : Nat) (s : EvalState)
-    (shape : NeedPlan.CallShape) (cell : NeedCell) (cells : List NeedSupply.Sourced)
+theorem viewSupply_prepared (sp : NeedSupply.SpreadEval) (classify : NeedPlan.CallShape → EvalM PlanRoute)
+    (a : Nat) (s : EvalState)
+    (shape : NeedPlan.CallShape) (cell : NeedCell) (r : PlanRoute) (cells : List NeedSupply.Sourced)
     (hs : NeedPlan.shapeAt? s.needs a = some shape) (hc : s.needs[a]? = some cell)
+    (hr : cell.route = some r) (hi : r ≠ .intrinsic)
     (hp : cell.plan = .prepared (.ok cells)) :
-    (NeedPlan.viewSupply sp a).runState s =
+    (NeedPlan.viewSupply sp classify a).runState s =
       (.ok (.cells (cells.map fun p => (p.1, KatLang.NeedControl.Provenance.sourceAt s.needs p.1))), s) := by
-  simp only [NeedPlan.viewSupply, bind_run, viewCells_prepared sp a s shape cell _ hs hc hp]
+  simp only [NeedPlan.viewSupply, bind_run, viewCells_prepared sp classify a s shape cell r _ hs hc hr hi hp]
   rw [sourced_map_run]
   rfl
 
@@ -215,16 +287,18 @@ theorem viewSupply_prepared (sp : NeedSupply.SpreadEval) (a : Nat) (s : EvalStat
     recorded addresses — the identities the original call's VALUE and every `Invoke()` bind —
     and leaves the state unchanged. This relates the production SUPPLY REPRESENTATION, not
     computed values. -/
-theorem view_spread_slot (ev sp : NeedSupply.SpreadEval) (ctx : EvalCtx) (env : ValEnv)
+theorem view_spread_slot (ev sp : NeedSupply.SpreadEval) (classify : NeedPlan.CallShape → EvalM PlanRoute)
+    (ctx : EvalCtx) (env : ValEnv)
     (operand : Expr) (a : Nat) (s : EvalState) (shape : NeedPlan.CallShape) (cell : NeedCell)
-    (cells : List NeedSupply.Sourced)
+    (r : PlanRoute) (cells : List NeedSupply.Sourced)
     (hk : (spreadCollectorSlice? operand ctx).runState s = (.ok none, s))
-    (hv : (ev (.sequenceSpread operand) ctx env).runState s = (NeedPlan.viewSupply sp a).runState s)
+    (hv : (ev (.sequenceSpread operand) ctx env).runState s = (NeedPlan.viewSupply sp classify a).runState s)
     (hs : NeedPlan.shapeAt? s.needs a = some shape) (hc : s.needs[a]? = some cell)
+    (hr : cell.route = some r) (hi : r ≠ .intrinsic)
     (hp : cell.plan = .prepared (.ok cells)) :
     ∃ sourced, (NeedSupply.slot ev ctx env (.sequenceSpread operand)).runState s = (.ok sourced, s) ∧
       sourced.map Prod.fst = cells.map Prod.fst := by
-  rw [viewSupply_prepared sp a s shape cell cells hs hc hp] at hv
+  rw [viewSupply_prepared sp classify a s shape cell r cells hs hc hr hi hp] at hv
   refine ⟨_, KatLang.NeedControl.Formation.computed_spread_transports ev ctx env operand _ s s hk hv, ?_⟩
   simp
 

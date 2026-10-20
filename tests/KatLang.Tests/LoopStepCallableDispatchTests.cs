@@ -78,10 +78,12 @@ public partial class LoopStepCallableDispatchTests
         { "empty sequence", Forward + "Run((), 0)", "notAnAlgorithm" },
         { "call result", "Inc(x) = x + 1\n" + Forward + "Run(Inc(1), 0)", "notAnAlgorithm" },
         { "selection", "A = 1, 2\n" + Forward + "Run(A[0], 0)", "notAnAlgorithm" },
-        // META-S3-3: a value, a dot callee or a property read written as the META argument itself is
-        // refused by META capture (CR-2, D6), before any step exists.
+        // META-S3-3: a value, a bare member path or a property read written as the META argument itself
+        // is refused by META capture (CR-2, D6), before any step exists. META-S3-4: a written qualified
+        // member invocation is captured, and its family member is the step.
         { "number as the META argument", "repeat(5, 1)", "metaRefusal" },
-        { "qualified member call as the META argument", Lib + "repeat(Lib.Step(3), 2)", "metaRefusal" },
+        { "qualified member call as the META argument", Lib + "repeat(Lib.Step(3), 2)", "ok 1" },
+        { "bare member path as the META argument", Lib + "repeat(Lib.Step, 2)", "metaRefusal" },
         { "property read as the META argument", Step + "Start = Step(3)\nrepeat(Start, 2)", "metaRefusal" },
         { "zero-parameter property", "Z = 5\nrepeat(Z(0), 1)", "unbound" },
         { "zero-parameter host operation", "repeat(tick(0), 1)", "unbound" },

@@ -2055,11 +2055,29 @@ inductive NeedCallableState where
   | projected (outcome : Except Error (Option Algorithm))
   deriving Repr
 
+/-- META-S3-4 (CR-2/CR-13): which invocation a plan's written form performs, decided ONCE by the
+    first route-dependent operation (`NeedPlan.routeOf`) through identity resolution only
+    (`classifyPlanRouteWith`, the ordinary dot decision `selectDotEdge`): an ordinary call
+    (`f(args)`, or `t.N(args)` selecting a declared member — callee the argumentless path, DOT-09),
+    the `.Algorithm` intrinsic (`t.Algorithm(args)` / `(t.Algorithm)(args)` on a structural miss —
+    callee the link `t.Algorithm`, CR-15), an extension call (`t.F(args)` on any other structural
+    miss is `F(t, args)`, DOT-03), or a non-callable intrinsic (`.string`, `.Invoke`, `.Arguments`):
+    the plan's VALUE is the ordinary evaluation and every route-dependent reference operation is
+    `NeedPlan.invocationRefusal` (D-1A). -/
+inductive PlanRoute where
+  | call
+  | algorithm
+  | extension
+  | intrinsic
+  deriving Repr, BEq, DecidableEq
+
 structure NeedCell where
   suspension : NeedSuspension
   state : NeedState := .suspended
   callable : NeedCallableState := .unprojected
   plan : NeedPlanSupply := .unprepared
+  /-- META-S3-4: the plan's recorded route (`NeedPlan.routeOf`), written once and never changed. -/
+  route : Option PlanRoute := none
   /-- META-S3-1, CR-13: an invocation plan's canonical CALLEE CELL, established lazily by the
       first observation that needs it (`NeedPlan.calleeCell`) and never changed again. -/
   callee : Option Nat := none
@@ -6078,21 +6096,57 @@ def needClauseHead : Pattern -> List NeedPattern
     execution and invocation follow `NeedSupply` below (§ Total invocation-plan control). -/
 namespace NeedPlan
 
-/-- The supported call shape (M1 boundary). Dot and computed callees are refused. -/
+/-- META-S3-4: the written invocation FORM of a plan: a call `f(args)`, or an argument-bearing dot
+    edge `receiver.name(args)` (an explicitly empty list included), whose route decides what it
+    invokes. -/
+inductive CallForm where
+  | call
+  | dot (receiver : Expr) (name : Ident) (fallback : Expr)
+  deriving Repr
+
+/-- A written invocation (META-S3-4, CR-2): a written call `f(args)` whose callee is a name, a
+    parameter or an argumentless dot path — every call the parser produces — or an argument-bearing
+    dot edge `t.N(args)`, whose `callee` is its argumentless edge `t.N` (the route's `effective`
+    shape says what is actually called). The decision is syntactic, total and evaluation-free:
+    argumentless dot edges (`5.Inc`, `Box.G`), names (`Start`), values and computed callees are no
+    invocation (D-2A). -/
 structure CallShape where
   callee : Expr
   args : OutputBundle
   caller : EvalCtx
   values : ValEnv
+  form : CallForm := .call
   deriving Repr
 
 def callShape? (source : Expr) (caller : EvalCtx) (values : ValEnv) : Option CallShape :=
   match source with
   | .call f args =>
     match f with
-    | .resolve _ | .param _ => some ⟨f, args, caller, values⟩
+    | .resolve _ | .param _ | .dotMember _ _ _ none => some ⟨f, args, caller, values, .call⟩
     | _ => none
+  | .dotMember receiver name fallback (some args) =>
+    some ⟨.dotMember receiver name fallback none, args, caller, values, .dot receiver name fallback⟩
   | _ => none
+
+/-- The shape a route invokes (D-5): an extension route calls the fallback with the receiver as the
+    ordinary first argument (DOT-03, `prepareLexicalDotCallArgs`) — `5.Add(1)` is `Add(5, 1)`;
+    every other route keeps the shape (a member's callee is its argumentless path, the `.Algorithm`
+    route's the link edge). -/
+def effective (shape : CallShape) : PlanRoute → CallShape
+  | .extension =>
+    match shape.form with
+    | .dot receiver _ fallback =>
+      { shape with callee := fallback, args := prepareLexicalDotCallArgs receiver (some shape.args) }
+    | .call => shape
+  | _ => shape
+
+/-- The error context of a plan's written form, exactly the one its ordinary evaluation attaches:
+    `evalCallCountedExpr`'s `CtxMsg.call f` for a call, `evalCounted`'s `CtxMsg.dotCall t N` for a
+    dot edge. -/
+def CallShape.ctxMsg (shape : CallShape) : String :=
+  match shape.form with
+  | .call => CtxMsg.call shape.callee
+  | .dot receiver name _ => CtxMsg.dotCall receiver name
 
 /-- The plan a cell is, if it is one. Ready data, collectors, non-call computations and
     unsupported callees are no plan. -/
@@ -6112,6 +6166,12 @@ structure CallReference where
 
 /-- META's refusal of anything that is not a supplied call computation. -/
 def metaRefusal : Error := Error.notAnAlgorithm "meta: not a supplied call computation"
+
+/-- META-S3-4 (D-1A): the refusal of a route-dependent reference operation (invocation, callable
+    projection, argument-supply observation, loop setup) over a captured invocation whose route is a
+    non-callable intrinsic (`5.string()`, `R.Invoke()`, `R.Arguments(…)`). Capture itself, reference
+    identity and obtaining the argument view stay inert. -/
+def invocationRefusal : Error := Error.notAnAlgorithm "meta: not a callable invocation"
 
 def reifyResult (needs : Array NeedCell) (a : Nat) : Except Error CallReference :=
   match shapeAt? needs a with
@@ -6565,9 +6625,37 @@ structure Route where
   dispatch : Algorithm → List NeedSupply.Sourced → EvalCtx → ValEnv → String → EvalM CountedResult
   /-- The spread capability the plan's supply formation runs (production `evalSupplySpread`). -/
   spread : NeedSupply.SpreadEval
+  /-- META-S3-4: the route classifier (production `classifyPlanRouteWith` over
+      `resolveDotReceiver?` and `algorithmIntrinsicRoute`: identity resolution only; a runtime
+      projection receiver is demanded through its own single-flight cell). -/
+  classify : CallShape → EvalM PlanRoute
+  /-- META-S3-4: a cell's CALLABLE (production `projectNeedCallable`), used for the `.Algorithm`
+      route's callee cell — the link, whose receiver is demanded once per plan (D-3). -/
+  project : Nat → EvalM (Option Algorithm)
 
 def setSupply (a : Nat) (supply : NeedPlanSupply) : EvalM Unit :=
   modify fun s => { s with needs := s.needs.modify a (fun cell => { cell with plan := supply }) }
+
+def setRoute (a : Nat) (r : PlanRoute) : EvalM Unit :=
+  modify fun s => { s with needs := s.needs.modify a (fun cell => { cell with route := some r }) }
+
+/-- META-S3-4: plan `a`'s route, classified once by the first route-dependent operation and
+    recorded in the plan cell (`NeedCell.route`); every later operation reads the record, and the
+    record is never rewritten: a classification that finds the route recorded meanwhile (a nested
+    observation of the same plan) returns that record — the first writer wins, as C#'s CAS does. A
+    classification failure records nothing and propagates (it is the plan's failure, never
+    absence; C# retains it). -/
+def routeOf (classify : CallShape → EvalM PlanRoute) (a : Nat) (shape : CallShape) : EvalM PlanRoute := do
+  let some cell := (← get).needs[a]? | throw (Error.illegalInEval "invalid need address")
+  match cell.route with
+  | some r => pure r
+  | none =>
+    let r ← classify shape
+    match ((← get).needs[a]?).bind NeedCell.route with
+    | some recorded => pure recorded
+    | none =>
+      setRoute a r
+      pure r
 
 /-- The plan's ONE supply preparation through `NeedSupply.form`, memoized in the cell. -/
 def prepare (spread : NeedSupply.SpreadEval)
@@ -6582,53 +6670,19 @@ def prepare (spread : NeedSupply.SpreadEval)
     setSupply a (.prepared outcome)
     return ← outcome
 
-/-- One execution of plan `a`: the ordinary call's phases over the plan's one supply. -/
-def execute (route : Route) (a : Nat) (shape : CallShape) : EvalM CountedResult := do
-  let callee ← withCtx (CtxMsg.call shape.callee) (route.target shape.callee shape.caller)
-  let result ← withCtx (CtxMsg.call shape.callee) (do
-    let normal ← route.normalize callee shape.caller
-    let cells ← prepare route.spread a shape
-    route.dispatch normal cells shape.caller shape.values (openExprName shape.callee))
-  pure (reCountValueBoundary result)
-
-/-- Explicit invocation through a reference: `execute` with no completion shell. -/
-def invoke (route : Route) (r : CallReference) : EvalM CountedResult := do
-  match shapeAt? (← get).needs r.plan with
-  | some shape => execute route r.plan shape
-  | none => throw metaRefusal
-
-/-- THE ARGUMENT VIEW's supply (CallReference S2): the effective argument cells of plan `a` —
-    its ONE sticky preparation (`prepare`: a prepared plan returns its recorded outcome and runs
-    nothing) — WITHOUT resolving or dispatching the target and without demanding any argument
-    VALUE. `count` reads its length, selection demands only the selected cells, and the supply
-    spread transports them. A non-plan address is META's refusal. -/
-def viewCells (spread : NeedSupply.SpreadEval) (a : Nat) : EvalM (List NeedSupply.Sourced) := do
-  match shapeAt? (← get).needs a with
-  | some shape => prepare spread a shape
-  | none => throw metaRefusal
-
-/-- What an argument view's supply spread contributes (CallReference S2): plan `a`'s ORIGINAL
-    cells (`viewCells`), in order, each with its own written source (`needWrittenSource?`, as a
-    collecting parameter's transported slice reports it) — no cell is allocated, copied or
-    demanded. `evalSupplySpread` returns it for a spread whose last star opens `argView a`. -/
-def viewSupply (spread : NeedSupply.SpreadEval) (a : Nat) : EvalM SpreadSupply := do
-  let cells ← viewCells spread a
-  let transported ← cells.mapM (fun (b, _) => do pure (b, ← needWrittenSource? b))
-  pure (.cells transported)
-
 /-- Records plan `a`'s canonical callee cell (CR-13). -/
 def setCallee (a c : Nat) : EvalM Unit :=
   modify fun s => { s with needs := s.needs.modify a (fun cell => { cell with callee := some c }) }
 
-/-- THE CANONICAL CALLEE CELL of plan `a` (META-S3-1, CR-13): the plan's WRITTEN callee supplied in
-    the plan's captured caller context through the ONE supplier (`supplyNeed`) — so a parameter
-    callee is that parameter's existing cell (NEED-01) and a name callee a fresh suspended cell over
-    the name — established by the first observation that needs it and recorded in the plan cell
-    (`NeedCell.callee`); every later observation reads the record (`calleeCell_canonical`).
-    Establishing it evaluates, prepares and demands nothing (`calleeCell_inert`): it reads the plan's
-    suspension, may allocate one suspended cell and records the address. A non-plan address is
-    META's refusal. C#: `InvocationPlan.CalleeCell`. -/
-def calleeCell (a : Nat) : EvalM Nat := do
+/-- THE CANONICAL CALLEE CELL of plan `a` (META-S3-1, CR-13; META-S3-4: the callee of its ROUTE —
+    the written callee, the argumentless member path, the link `t.Algorithm`, or an extension's
+    fallback): supplied in the plan's captured caller context through the ONE supplier
+    (`supplyNeed`) — so a parameter callee is that parameter's existing cell (NEED-01) — and
+    recorded in the plan cell (`NeedCell.callee`); every later observation reads the record. Once
+    the route is recorded, establishing it evaluates, prepares and demands nothing; establishing
+    the ROUTE may demand a runtime-projection receiver (D-4). An intrinsic route is
+    `invocationRefusal`, a non-plan address META's refusal. C#: `InvocationPlan.CalleeCell`. -/
+def calleeCell (classify : CallShape → EvalM PlanRoute) (a : Nat) : EvalM Nat := do
   let some cell := (← get).needs[a]? | throw (Error.illegalInEval "invalid need address")
   match cell.callee with
   | some c => pure c
@@ -6636,15 +6690,86 @@ def calleeCell (a : Nat) : EvalM Nat := do
     match ofSuspension? cell.suspension with
     | none => throw metaRefusal
     | some shape =>
-      let c ← supplyNeed shape.callee shape.caller shape.values
+      let r ← routeOf classify a shape
+      if r == .intrinsic then throw invocationRefusal
+      let eff := effective shape r
+      let c ← supplyNeed eff.callee eff.caller eff.values
       setCallee a c
       pure c
 
-/-- The written name of plan `a`'s callee, which names a fresh call of the captured callee for
-    dispatch diagnostics exactly as the plan's own execution names it (`execute`). -/
-def calleeName (a : Nat) : EvalM String := do
+/-- The callee plan `a` invokes along route `r` over its effective shape `eff`: the ordinary callee
+    law of the written callee (a call, a member path, an extension fallback), or — for the
+    `.Algorithm` route — the CALLABLE of the plan's canonical callee cell, the link (CR-14 c), so the
+    link's receiver is demanded once per plan (D-3). -/
+def calleeAlong (route : Route) (a : Nat) (eff : CallShape) : PlanRoute → EvalM Algorithm
+  | .algorithm => do
+    match ← route.project (← calleeCell route.classify a) with
+    | some algorithm => pure algorithm
+    | none => throw (Error.notAnAlgorithm capturedCalleeDescription)
+  | .intrinsic => throw invocationRefusal
+  | _ => route.target eff.callee eff.caller
+
+/-- One execution of plan `a` along its recorded route `r`: the ordinary call's phases (callee,
+    normalization, the plan's ONE supply over the route's effective bundle, the one dispatch) under
+    the written form's own error context. -/
+def executeAlong (route : Route) (a : Nat) (shape : CallShape) (r : PlanRoute) : EvalM CountedResult := do
+  let eff := effective shape r
+  let callee ← withCtx shape.ctxMsg (calleeAlong route a eff r)
+  let result ← withCtx shape.ctxMsg (do
+    let normal ← route.normalize callee eff.caller
+    let cells ← prepare route.spread a eff
+    route.dispatch normal cells eff.caller eff.values (openExprName eff.callee))
+  pure (reCountValueBoundary result)
+
+/-- One execution of plan `a` (META-S3-4): its route — recorded, or established now — then
+    `executeAlong`. An intrinsic route is no callable invocation (D-1A). -/
+def execute (route : Route) (a : Nat) (shape : CallShape) : EvalM CountedResult := do
+  match ← withCtx shape.ctxMsg (routeOf route.classify a shape) with
+  | .intrinsic => throw invocationRefusal
+  | r => executeAlong route a shape r
+
+/-- Explicit invocation through a reference: `execute` with no completion shell. -/
+def invoke (route : Route) (r : CallReference) : EvalM CountedResult := do
+  match shapeAt? (← get).needs r.plan with
+  | some shape => execute route r.plan shape
+  | none => throw metaRefusal
+
+/-- THE ARGUMENT VIEW's supply (CallReference S2): the effective argument cells of plan `a` — its
+    ONE sticky preparation (`prepare`: a prepared plan returns its recorded outcome and runs
+    nothing) over its ROUTE's bundle (META-S3-4, D-4/D-5: reading the supply first establishes the
+    route; an extension's receiver is its first argument) — WITHOUT dispatching the target and
+    without demanding any argument VALUE. `count` reads its length, selection demands only the
+    selected cells, and the supply spread transports them. An intrinsic route is
+    `invocationRefusal`, a non-plan address META's refusal. -/
+def viewCells (spread : NeedSupply.SpreadEval) (classify : CallShape → EvalM PlanRoute) (a : Nat) :
+    EvalM (List NeedSupply.Sourced) := do
   match shapeAt? (← get).needs a with
-  | some shape => pure (openExprName shape.callee)
+  | some shape =>
+    let r ← routeOf classify a shape
+    if r == .intrinsic then throw invocationRefusal
+    prepare spread a (effective shape r)
+  | none => throw metaRefusal
+
+/-- What an argument view's supply spread contributes (CallReference S2): plan `a`'s ORIGINAL
+    cells (`viewCells`), in order, each with its own written source (`needWrittenSource?`, as a
+    collecting parameter's transported slice reports it) — no cell is allocated, copied or
+    demanded. `evalSupplySpread` returns it for a spread whose last star opens `argView a`. -/
+def viewSupply (spread : NeedSupply.SpreadEval) (classify : CallShape → EvalM PlanRoute) (a : Nat) :
+    EvalM SpreadSupply := do
+  let cells ← viewCells spread classify a
+  let transported ← cells.mapM (fun (b, _) => do pure (b, ← needWrittenSource? b))
+  pure (.cells transported)
+
+/-- The written name of plan `a`'s callee — its route's effective callee once the route is recorded
+    (an extension names its fallback), which names a fresh call of the captured callee for dispatch
+    diagnostics exactly as the plan's own execution names it (`executeAlong`). -/
+def calleeName (a : Nat) : EvalM String := do
+  let needs := (← get).needs
+  match shapeAt? needs a with
+  | some shape =>
+    match needs[a]? with
+    | some { route := some r, .. } => pure (openExprName (effective shape r).callee)
+    | _ => pure (openExprName shape.callee)
   | none => throw metaRefusal
 
 end NeedPlan
@@ -6675,12 +6800,13 @@ def decodeCallRef (val : Result) : EvalM Nat :=
     cells, never re-formed (an empty supply is the ordinary zero-slot state, OD-1); then the plan's
     canonical callee cell (`NeedPlan.calleeCell`, CR-13, inert) — the step, projected only when an
     iteration runs. The captured call itself is never dispatched. Laws: `KatLangArityLaws.MetaLoop`. -/
-def metaLoopCapture (read : Nat → EvalM CountedResult) (view : Nat → EvalM (List NeedSupply.Sourced))
+def metaLoopCapture (classify : NeedPlan.CallShape → EvalM PlanRoute)
+    (read : Nat → EvalM CountedResult) (view : Nat → EvalM (List NeedSupply.Sourced))
     (adapter : Nat) : EvalM (Nat × List Nat) := do
   let (reference, _) ← read adapter
   let plan ← decodeCallRef reference
   let initialCells := (← view plan).map Prod.fst
-  let stepCell ← NeedPlan.calleeCell plan
+  let stepCell ← NeedPlan.calleeCell classify plan
   pure (stepCell, initialCells)
 
 /-- THE `repeat` SETUP ORDER (META-S3-3, RP-1): the captured step's setup (`metaLoopCapture`,
@@ -6724,21 +6850,24 @@ def receiverCell (a : Nat) : EvalM Nat := do
 /-- The callee cell BOTH channels of link `a` reach (CR-15): the link's ONE receiver cell, its VALUE
     through `demand`, decoded into its plan, then the plan's canonical callee cell. Production:
     `demand = demandNeedRecursive`. -/
-def decodeCallee (demand : Nat → EvalM CountedResult) (a : Nat) : EvalM Nat := do
+def decodeCallee (classify : NeedPlan.CallShape → EvalM PlanRoute)
+    (demand : Nat → EvalM CountedResult) (a : Nat) : EvalM Nat := do
   let receiver ← receiverCell a
   let (value, _) ← demand receiver
   let plan ← decodeCallRef value
-  NeedPlan.calleeCell plan
+  NeedPlan.calleeCell classify plan
 
 /-- The link's VALUE (CR-14 b): the callee cell's VALUE. Production: `linkValue`. -/
-def value (demand : Nat → EvalM CountedResult) (a : Nat) : EvalM CountedResult := do
-  demand (← decodeCallee demand a)
+def value (classify : NeedPlan.CallShape → EvalM PlanRoute)
+    (demand : Nat → EvalM CountedResult) (a : Nat) : EvalM CountedResult := do
+  demand (← decodeCallee classify demand a)
 
 /-- The link's CALLABLE (CR-14 a): the callee cell's CALLABLE — `demand` is used only for the
     receiver (`callable_value_only_at_receiver`). Production: `linkCallable`. -/
-def callable (demand : Nat → EvalM CountedResult) (project : Nat → EvalM (Option Algorithm))
+def callable (classify : NeedPlan.CallShape → EvalM PlanRoute)
+    (demand : Nat → EvalM CountedResult) (project : Nat → EvalM (Option Algorithm))
     (a : Nat) : EvalM (Option Algorithm) := do
-  project (← decodeCallee demand a)
+  project (← decodeCallee classify demand a)
 
 end NeedLink
 
@@ -6833,7 +6962,12 @@ def suspendedValue (ev : Expr → EvalCtx → ValEnv → EvalM CountedResult)
   | .ready value => pure value
   | .expression e ctx env =>
     match NeedPlan.callShape? e ctx env with
-    | some shape => NeedPlan.execute route a shape
+    | some shape => do
+      -- META-S3-4 (D-1A): a non-callable intrinsic route is the ordinary evaluation; every other
+      -- route executes the plan over its one supply.
+      match ← withCtx shape.ctxMsg (NeedPlan.routeOf route.classify a shape) with
+      | .intrinsic => reCountValueBoundary <$> ev e ctx env
+      | r => NeedPlan.executeAlong route a shape r
     | none => reCountValueBoundary <$> ev e ctx env
   | .collector slice => materialize demand slice
 
@@ -7415,10 +7549,79 @@ abbrev EvalRec : Type := (c : EvalCall) → EvalM c.Ret
 @[inline] def EvalRec.eval (rec : EvalRec) (e : Expr) (ctx : EvalCtx) (env : ValEnv) : EvalM Result :=
   rec (.eval e ctx env)
 
+/-- META-S3-4: what a dot edge `target.name` selects on a structural MISS: one of the receiver
+    intrinsics (`string`, DOT-08; `Invoke`, CallReference S1; `Arguments`, S2; `Algorithm`, CR-14)
+    or the extension call through the edge's lexical fallback (DOT-03). Decided by spelling only. -/
+inductive DotMiss where
+  | string
+  | invoke
+  | arguments
+  | algorithm
+  | extension
+  deriving Repr, BEq, DecidableEq
+
+def DotMiss.ofName (name : Ident) : DotMiss :=
+  if name = "string" then .string
+  else if name = "Invoke" then .invoke
+  else if name = "Arguments" then .arguments
+  else if name = "Algorithm" then .algorithm
+  else .extension
+
+/-- META-S3-4: THE dot-edge route decision over the receiver's typed identity (`none` = a value
+    receiver): ONE structural lookup, member-first whatever the member's spelling (Q-17 S-C); the
+    member's accessibility from the site is judged after selection; a branch-only member is the
+    local-only error (never a miss); only a structural miss takes the miss route. Pure: it reads
+    the already resolved identity and evaluates nothing. Ordinary dot evaluation
+    (`evalDotCallCounted`), the `.Algorithm` route fact (`algorithmIntrinsicRoute`) and the
+    invocation-plan route (`classifyPlanRouteWith`) all decide through it.
+    C#: `Evaluator.SelectDotEdge`. -/
+inductive DotSelection where
+  | member (targetAlg : Algorithm) (p : PropDef)
+  | miss (kind : DotMiss)
+
+def selectDotEdge (ctx : EvalCtx) (target : Expr) (name : Ident) : Option Algorithm → Except Error DotSelection
+  | none => .ok (.miss (DotMiss.ofName name))
+  | some targetAlg =>
+    match Algorithm.lookupPropDefAny? targetAlg name with
+    | some p =>
+      if !(memberAccessible? ctx targetAlg p) then
+        .error (Error.localOnlyProperty (openExprName target) name p.exposure)
+      else .ok (.member targetAlg p)
+    | none =>
+      if Algorithm.conditionalBranchesDefineProperty targetAlg name then
+        .error (Error.localOnlyProperty (openExprName target) name .localConditional)
+      else .ok (.miss (DotMiss.ofName name))
+
+/-- The plan route a structural miss takes: the three non-callable intrinsics are `intrinsic`. -/
+def DotMiss.planRoute : DotMiss → PlanRoute
+  | .string | .invoke | .arguments => .intrinsic
+  | .algorithm => .algorithm
+  | .extension => .extension
+
+/-- META-S3-4: a plan's ROUTE (CR-2/CR-13), over identity resolution only: a written call keeps the
+    ordinary callee law, except that `(t.Algorithm)(args)` on a structural miss is the `.Algorithm`
+    intrinsic (`algorithmRoute`, the same route fact `evalCallCountedExpr` consults); an
+    argument-bearing dot edge takes `selectDotEdge` — a declared member is an ordinary call of the
+    argumentless member path (DOT-09), a miss its `DotMiss.planRoute`. A selection failure is the
+    route's failure. C#: `Evaluator.ComputePlanRoute`. -/
+def classifyPlanRouteWith (resolveReceiver? : Expr → EvalCtx → EvalM (Option Algorithm))
+    (algorithmRoute : Expr → EvalCtx → EvalM Bool) (shape : NeedPlan.CallShape) : EvalM PlanRoute := do
+  match shape.form with
+  | .call =>
+    match linkEdge? shape.callee with
+    | some (receiver, _) => if ← algorithmRoute receiver shape.caller then pure .algorithm else pure .call
+    | none => pure .call
+  | .dot receiver name _ =>
+    match selectDotEdge shape.caller receiver name (← resolveReceiver? receiver shape.caller) with
+    | .error err => throw err
+    | .ok (.member _ _) => pure .call
+    | .ok (.miss kind) => pure kind.planRoute
+
 /-- The production invocation-plan route over an evaluator answer `rec`: the one route every
     recursive VALUE edge installs (`productionPlanRoute` is it at the production answer). -/
 def EvalRec.planRoute (rec : EvalRec) : NeedPlan.Route :=
-  ⟨rec.resolveCalleeAlg, rec.needPlanNormalizeCallee, rec.evalSuppliedCallCounted, rec.evalSupplySpread⟩
+  ⟨rec.resolveCalleeAlg, rec.needPlanNormalizeCallee, rec.evalSuppliedCallCounted, rec.evalSupplySpread,
+   classifyPlanRouteWith rec.resolveDotReceiver? rec.algorithmIntrinsicRoute, rec.projectNeedCallable⟩
 
 /-- The binder channels every binding site of the core passes (`bindingChannels` is it at the
     production answer): the two total shells over `rec`'s written-expression evaluator, plan route,
@@ -8044,7 +8247,7 @@ def EvalBody.projectNeedWrittenAt (rec : EvalRec) (address : Nat) (source : Expr
     cell's VALUE (`callable_value_only_at_receiver`). A receiver, decode or callee-route failure is the
     projection's failure, published by `NeedProjection.step` with its kind. C#: `ProjectLinkCallable`. -/
 def EvalBody.linkCallable (rec : EvalRec) (address : Nat) : EvalM (Option Algorithm) :=
-  NeedLink.callable rec.demandNeedRecursive rec.projectNeedCallable address
+  NeedLink.callable rec.planRoute.classify rec.demandNeedRecursive rec.projectNeedCallable address
 
 /-- A parameter's CALLABLE as its supplied cell's TYPED projection outcome (META-S3-1, L2): `some`
     identity, `none` the successful absence of one (a computed value, or no cell), and every
@@ -8230,11 +8433,9 @@ def EvalBody.resolveDotReceiver (rec : EvalRec) (e : Expr) (ctx : EvalCtx) : Eva
     or a branch-only member whose error the ordinary route reports). Identity navigation only.
     C#: `Evaluator.IsAlgorithmIntrinsicRoute`. -/
 def EvalBody.algorithmIntrinsicRoute (rec : EvalRec) (receiver : Expr) (ctx : EvalCtx) : EvalM Bool := do
-  match <- rec.resolveDotReceiver? receiver ctx with
-  | none => pure true
-  | some a =>
-      pure ((Algorithm.lookupPropDefAny? a "Algorithm").isNone
-        && !(Algorithm.conditionalBranchesDefineProperty a "Algorithm"))
+  match selectDotEdge ctx receiver "Algorithm" (<- rec.resolveDotReceiver? receiver ctx) with
+  | .ok (.miss .algorithm) => pure true
+  | _ => pure false
 
 
   /-- The recursive VALUE edge installs the evaluator callbacks in the ONE total
@@ -8262,7 +8463,7 @@ def EvalBody.algorithmIntrinsicRoute (rec : EvalRec) (receiver : Expr) (ctx : Ev
       captured context, with its property cache, computation or arity rejection. C#:
       `Evaluator.TryEvalLinkValue`. -/
   def EvalBody.linkValue (rec : EvalRec) (address : Nat) : EvalM CountedResult :=
-    NeedLink.value rec.demandNeedRecursive address
+    NeedLink.value rec.planRoute.classify rec.demandNeedRecursive address
 
   /-- The `.Algorithm` intrinsic over its receiver's VALUE (META-S3-1, CR-14): the decoded plan's
       canonical callee cell — its VALUE when the edge is bare (b), otherwise a FRESH ordinary call of
@@ -8271,7 +8472,7 @@ def EvalBody.algorithmIntrinsicRoute (rec : EvalRec) (receiver : Expr) (ctx : Ev
       C#: `Evaluator.ApplyAlgorithmIntrinsic`. -/
   def EvalBody.algorithmOfValue (rec : EvalRec) (val : Result) (argsOpt : Option OutputBundle) (ctx : EvalCtx) (env : ValEnv) : EvalM CountedResult := do
     let plan <- decodeCallRef val
-    let callee <- NeedPlan.calleeCell plan
+    let callee <- NeedPlan.calleeCell rec.planRoute.classify plan
     match argsOpt with
     | none => reCountValueBoundary <$> rec.demandNeedRecursive callee
     | some args =>
@@ -8305,7 +8506,7 @@ def EvalBody.algorithmIntrinsicRoute (rec : EvalRec) (receiver : Expr) (ctx : Ev
       | none => rec.eval receiver ctx env
       | some targetAlg => rec.referenceReceiverValue receiver targetAlg ctx env
     let plan <- decodeCallRef value
-    let callee <- rec.capturedCallee (<- NeedPlan.calleeCell plan)
+    let callee <- rec.capturedCallee (<- NeedPlan.calleeCell rec.planRoute.classify plan)
     pure (callee, <- NeedPlan.calleeName plan)
 
   /-- THE dispatch of a normalized callee over an already formed sourced supply: the
@@ -9155,7 +9356,7 @@ def EvalBody.algorithmIntrinsicRoute (rec : EvalRec) (receiver : Expr) (ctx : Ev
         -- callee cell (`NeedPlan.calleeCell`, inert) is the step, projected only when an
         -- iteration runs. The captured call itself is never dispatched.
         let capture : EvalM (ResolvedArgumentAlgorithm × List Nat) := do
-          let (stepCell, initialCells) <- metaLoopCapture rec.demandNeedRecursive rec.argumentViewCells (<- bound "step")
+          let (stepCell, initialCells) <- metaLoopCapture rec.planRoute.classify rec.demandNeedRecursive rec.argumentViewCells (<- bound "step")
           pure ({ algorithm := Algorithm.ofExpr (.emptySequence 0), need? := some stepCell }, initialCells)
         match b, args with
         | .whileBuiltin, _ => do
@@ -9539,151 +9740,145 @@ def EvalBody.algorithmIntrinsicRoute (rec : EvalRec) (receiver : Expr) (ctx : Ev
   def EvalBody.evalDotCallCounted (rec : EvalRec) (target : Expr) (name : Ident) (fallback : Expr) (argsOpt : Option OutputBundle) (ctx : EvalCtx) (env : ValEnv) : EvalM CountedResult := do
     -- The receiver's TYPED identity (META-S3-1, L2): `none` is a value receiver; a failure — a
     -- parameter cell's runtime projection failure of any kind included — propagates.
-    match <- rec.resolveDotReceiver? target ctx with
-    | some targetAlg =>
-        -- ONE structural lookup decides the route, whatever the member's spelling: a
-        -- declared member wins (a member named `string` included — Q-17 S-C), then a
-        -- branch-only member is the local-only error, and only a structural MISS takes
-        -- the miss route.
-        match Algorithm.lookupPropDefAny? targetAlg name with
-        | some p =>
-            -- Selection is by declaration (structural access ignores `public`); the
-            -- member's accessibility from THIS site is decided afterwards.
-            if !(memberAccessible? ctx targetAlg p) then
-              .error (Error.localOnlyProperty (openExprName target) name p.exposure)
-            else do
-            -- A member that is a callable alias is read or called as its TARGET, while its
-            -- BINDING `p` keys the zero-argument read (C#: `EvalAliasMemberCounted`): a read
-            -- takes the VALUE chase (META-S3-2), a call the CALLABLE chase.
-            let wired <- match argsOpt with
-              | none => rec.resolveAliasValueTarget (childOfInContext targetAlg p.alg ctx) ctx
-              | some _ => rec.resolveAliasTarget (childOfInContext targetAlg p.alg ctx) ctx
-            match argsOpt with
-            | none =>
-                -- A structurally navigated member read with NO argument list is an
-                -- ordinary zero-argument value demand, so the ONE law decides
-                -- (`acceptsZeroArgumentValueDemand`) and the rejection names the
-                -- member's true minimum supply (`minimumSuppliedSlots`), never its
-                -- flattened declared capture count.
-                match flatBinderUserEquivalent? wired with
-                | some simple =>
-                    if acceptsZeroArgumentValueDemand simple then
-                      reCountValueBoundary <$> rec.evalZeroArgPropertyAccessCounted .structural targetAlg p simple ctx env
-                    else
-                      .error (Error.arityMismatch
-                        (ParameterPattern.minimumSuppliedSlots (Algorithm.parameterPatterns simple)) 0)
-                | none =>
-                    if acceptsZeroArgumentValueDemand wired then
-                      reCountValueBoundary <$> rec.evalZeroArgPropertyAccessCounted .structural targetAlg p wired ctx env
-                    else
-                      match wired with
-                      | .conditional _ _ _ _ => .error (Error.noMatchingBranch name)
-                      | _ =>
-                          .error (Error.arityMismatch
-                            (ParameterPattern.minimumSuppliedSlots (Algorithm.parameterPatterns wired)) 0)
-            | some args =>
-                rec.evalResolvedCallCounted wired args ctx env name
+    let targetAlg? <- rec.resolveDotReceiver? target ctx
+    -- ONE structural lookup decides the route, whatever the member's spelling (`selectDotEdge`,
+    -- META-S3-4: the same decision an invocation plan's route takes): a declared member wins (a
+    -- member named `string` included — Q-17 S-C), its accessibility from THIS site is decided
+    -- afterwards, a branch-only member is the local-only error, and only a structural MISS (a
+    -- value receiver declares no member) takes the miss route.
+    match selectDotEdge ctx target name targetAlg? with
+    | .error err => throw err
+    | .ok (.member targetAlg p) => do
+        -- A member that is a callable alias is read or called as its TARGET, while its
+        -- BINDING `p` keys the zero-argument read (C#: `EvalAliasMemberCounted`): a read
+        -- takes the VALUE chase (META-S3-2), a call the CALLABLE chase.
+        let wired <- match argsOpt with
+          | none => rec.resolveAliasValueTarget (childOfInContext targetAlg p.alg ctx) ctx
+          | some _ => rec.resolveAliasTarget (childOfInContext targetAlg p.alg ctx) ctx
+        match argsOpt with
         | none =>
-            if Algorithm.conditionalBranchesDefineProperty targetAlg name then
-              .error (Error.localOnlyProperty (openExprName target) name .localConditional)
-            else if name = "string" then do
-              -- A structural miss: `string` is the number-to-text intrinsic (DOT-08) —
-              -- it takes the extension call's place, so a lexical `string` is never
-              -- consulted.
-              -- The intrinsic is a ZERO-parameter member: a written argument list is
-              -- formed like every call's supply (explicit spreads opened, every other
-              -- slot a suspended need) and rejected by its cardinality before any
-              -- argument or the receiver is demanded, exactly as `Obj.V(1)` is for a
-              -- declared zero-parameter member; `x.string()` (an empty list) stays the
-              -- intrinsic.
-              -- C#: `RejectDotStringIntrinsicArguments`.
-              rec.rejectDotStringIntrinsicArguments argsOpt ctx env
-              -- A receiver that is a callable alias is demanded as its TARGET, read through the
-              -- alias's own binding (C#: `EvalAliasDotStringCounted`; the VALUE chase).
-              let targetAlg <- rec.resolveAliasValueTarget targetAlg ctx
-              -- The receiver is demanded for its VALUE with zero arguments. A PARAMETER
-              -- bound to a supplied cell is a VALUE demand of that cell (CALL-06): the
-              -- first demand evaluates the written argument once, and its outcome is
-              -- reported exactly as that argument reports it, as every other read of the
-              -- parameter reports it — `Show(v) = v.string` / `Show(Inc)` is Inc's
-              -- property-context arity error, `Show({ x + 1 })` the block's
-              -- `unresolvedImplicitParams`, a clause family its own `noMatchingBranch` —
-              -- never a report re-judged against the parameter's callable. Every other
-              -- receiver is judged by the ONE zero-argument demand law from the resolved
-              -- receiver's signature before its body is entered: `Inc.string` with
-              -- `Inc(x)` is the property arity error, a navigated parameterized member the
-              -- bare one, and a written parameterized block `unresolvedImplicitParams`.
-              -- The receiver is then READ like a value position reads it
-              -- (`evalDotStringReceiverValue`): a named property through its cached
-              -- property access, a parameter through its bound value.
-              -- C#: `EvalDotStringReceiverAlgOutput`.
-              if !(<- hasSuppliedParameterCell target ctx env) then
-                match zeroArgumentDemandError? (some target) targetAlg with
-                | some err => .error err
-                | none => pure ()
-              let val <- rec.evalDotStringReceiverValue target targetAlg ctx env
-              let out <- resultToString val
-              pure (out, Result.valueCount out)
-            else if name = "Invoke" then do
-              -- A structural miss: `Invoke` is the call-reference intrinsic (CallReference
-              -- S1, J1) — it takes the extension call's place, so a lexical `Invoke` is
-              -- never consulted. The argument list is a route fact checked BEFORE the
-              -- receiver is demanded: a bare `R.Invoke` is refused, a non-empty list is the
-              -- zero-parameter cardinality rejection. The receiver is then read exactly as
-              -- the `string` intrinsic reads it (alias target, the zero-argument demand law,
-              -- the ordinary value read) and must be a call reference.
-              rec.rejectInvokeIntrinsicArguments argsOpt ctx env
-              let targetAlg <- rec.resolveAliasValueTarget targetAlg ctx
-              if !(<- hasSuppliedParameterCell target ctx env) then
-                match zeroArgumentDemandError? (some target) targetAlg with
-                | some err => .error err
-                | none => pure ()
-              let val <- rec.evalDotStringReceiverValue target targetAlg ctx env
-              rec.invokeCallReferenceValue val
-            else if name = "Arguments" then do
-              -- A structural miss: `Arguments` is the call-reference ARGUMENT VIEW intrinsic
-              -- (CallReference S2) — it takes the extension call's place, so a lexical
-              -- `Arguments` is never consulted. A written argument list is refused as a route
-              -- fact before the receiver is demanded; the receiver is read exactly as the
-              -- `Invoke` intrinsic reads it and must be a call reference. Nothing else runs.
-              rejectArgumentsIntrinsicArguments argsOpt
-              let targetAlg <- rec.resolveAliasValueTarget targetAlg ctx
-              if !(<- hasSuppliedParameterCell target ctx env) then
-                match zeroArgumentDemandError? (some target) targetAlg with
-                | some err => .error err
-                | none => pure ()
-              let val <- rec.evalDotStringReceiverValue target targetAlg ctx env
-              argumentsOfValue val
-            else if name = "Algorithm" then do
-              -- A structural miss: `Algorithm` is the callable-projection intrinsic (META-S3-1,
-              -- CR-14) — it takes the extension call's place, so a lexical `Algorithm` is never
-              -- consulted. The receiver is read exactly as the `Invoke` intrinsic reads it; bare,
-              -- the edge is the captured callee's VALUE, with arguments a fresh call of it.
-              let val <- rec.referenceReceiverValue target targetAlg ctx env
-              rec.algorithmOfValue val argsOpt ctx env
-            else
-              rec.callLexicalWithReceiverCounted name target fallback argsOpt ctx env
-    | none =>
-      -- A value receiver declares no member: the edge's miss route applies directly.
-      if name = "string" then do
-        rec.rejectDotStringIntrinsicArguments argsOpt ctx env
-        let val <- rec.eval target ctx env
-        let out <- resultToString val
-        pure (out, Result.valueCount out)
-      else if name = "Invoke" then do
-        rec.rejectInvokeIntrinsicArguments argsOpt ctx env
-        let val <- rec.eval target ctx env
-        rec.invokeCallReferenceValue val
-      else if name = "Arguments" then do
-        rejectArgumentsIntrinsicArguments argsOpt
-        let val <- rec.eval target ctx env
-        argumentsOfValue val
-      else if name = "Algorithm" then do
-        let val <- rec.eval target ctx env
-        rec.algorithmOfValue val argsOpt ctx env
-      else
+            -- A structurally navigated member read with NO argument list is an
+            -- ordinary zero-argument value demand, so the ONE law decides
+            -- (`acceptsZeroArgumentValueDemand`) and the rejection names the
+            -- member's true minimum supply (`minimumSuppliedSlots`), never its
+            -- flattened declared capture count.
+            match flatBinderUserEquivalent? wired with
+            | some simple =>
+                if acceptsZeroArgumentValueDemand simple then
+                  reCountValueBoundary <$> rec.evalZeroArgPropertyAccessCounted .structural targetAlg p simple ctx env
+                else
+                  .error (Error.arityMismatch
+                    (ParameterPattern.minimumSuppliedSlots (Algorithm.parameterPatterns simple)) 0)
+            | none =>
+                if acceptsZeroArgumentValueDemand wired then
+                  reCountValueBoundary <$> rec.evalZeroArgPropertyAccessCounted .structural targetAlg p wired ctx env
+                else
+                  match wired with
+                  | .conditional _ _ _ _ => .error (Error.noMatchingBranch name)
+                  | _ =>
+                      .error (Error.arityMismatch
+                        (ParameterPattern.minimumSuppliedSlots (Algorithm.parameterPatterns wired)) 0)
+        | some args =>
+            rec.evalResolvedCallCounted wired args ctx env name
+    | .ok (.miss .string) =>
+        -- `string` is the number-to-text intrinsic (DOT-08) — it takes the extension call's
+        -- place, so a lexical `string` is never consulted.
+        -- The intrinsic is a ZERO-parameter member: a written argument list is
+        -- formed like every call's supply (explicit spreads opened, every other
+        -- slot a suspended need) and rejected by its cardinality before any
+        -- argument or the receiver is demanded, exactly as `Obj.V(1)` is for a
+        -- declared zero-parameter member; `x.string()` (an empty list) stays the
+        -- intrinsic.
+        -- C#: `RejectDotStringIntrinsicArguments`.
+        match targetAlg? with
+        | some targetAlg => do
+          rec.rejectDotStringIntrinsicArguments argsOpt ctx env
+          -- A receiver that is a callable alias is demanded as its TARGET, read through the
+          -- alias's own binding (C#: `EvalAliasDotStringCounted`; the VALUE chase).
+          let targetAlg <- rec.resolveAliasValueTarget targetAlg ctx
+          -- The receiver is demanded for its VALUE with zero arguments. A PARAMETER
+          -- bound to a supplied cell is a VALUE demand of that cell (CALL-06): the
+          -- first demand evaluates the written argument once, and its outcome is
+          -- reported exactly as that argument reports it, as every other read of the
+          -- parameter reports it — `Show(v) = v.string` / `Show(Inc)` is Inc's
+          -- property-context arity error, `Show({ x + 1 })` the block's
+          -- `unresolvedImplicitParams`, a clause family its own `noMatchingBranch` —
+          -- never a report re-judged against the parameter's callable. Every other
+          -- receiver is judged by the ONE zero-argument demand law from the resolved
+          -- receiver's signature before its body is entered: `Inc.string` with
+          -- `Inc(x)` is the property arity error, a navigated parameterized member the
+          -- bare one, and a written parameterized block `unresolvedImplicitParams`.
+          -- The receiver is then READ like a value position reads it
+          -- (`evalDotStringReceiverValue`): a named property through its cached
+          -- property access, a parameter through its bound value.
+          -- C#: `EvalDotStringReceiverAlgOutput`.
+          if !(<- hasSuppliedParameterCell target ctx env) then
+            match zeroArgumentDemandError? (some target) targetAlg with
+            | some err => .error err
+            | none => pure ()
+          let val <- rec.evalDotStringReceiverValue target targetAlg ctx env
+          let out <- resultToString val
+          pure (out, Result.valueCount out)
+        | none => do
+          rec.rejectDotStringIntrinsicArguments argsOpt ctx env
+          let val <- rec.eval target ctx env
+          let out <- resultToString val
+          pure (out, Result.valueCount out)
+    | .ok (.miss .invoke) =>
+        -- `Invoke` is the call-reference intrinsic (CallReference S1, J1) — it takes the
+        -- extension call's place, so a lexical `Invoke` is never consulted. The argument list
+        -- is a route fact checked BEFORE the receiver is demanded: a bare `R.Invoke` is
+        -- refused, a non-empty list is the zero-parameter cardinality rejection. The receiver
+        -- is then read exactly as the `string` intrinsic reads it (alias target, the
+        -- zero-argument demand law, the ordinary value read) and must be a call reference.
+        match targetAlg? with
+        | some targetAlg => do
+          rec.rejectInvokeIntrinsicArguments argsOpt ctx env
+          let targetAlg <- rec.resolveAliasValueTarget targetAlg ctx
+          if !(<- hasSuppliedParameterCell target ctx env) then
+            match zeroArgumentDemandError? (some target) targetAlg with
+            | some err => .error err
+            | none => pure ()
+          let val <- rec.evalDotStringReceiverValue target targetAlg ctx env
+          rec.invokeCallReferenceValue val
+        | none => do
+          rec.rejectInvokeIntrinsicArguments argsOpt ctx env
+          let val <- rec.eval target ctx env
+          rec.invokeCallReferenceValue val
+    | .ok (.miss .arguments) =>
+        -- `Arguments` is the call-reference ARGUMENT VIEW intrinsic (CallReference S2) — it
+        -- takes the extension call's place, so a lexical `Arguments` is never consulted. A
+        -- written argument list is refused as a route fact before the receiver is demanded;
+        -- the receiver is read exactly as the `Invoke` intrinsic reads it and must be a call
+        -- reference. Nothing else runs.
+        match targetAlg? with
+        | some targetAlg => do
+          rejectArgumentsIntrinsicArguments argsOpt
+          let targetAlg <- rec.resolveAliasValueTarget targetAlg ctx
+          if !(<- hasSuppliedParameterCell target ctx env) then
+            match zeroArgumentDemandError? (some target) targetAlg with
+            | some err => .error err
+            | none => pure ()
+          let val <- rec.evalDotStringReceiverValue target targetAlg ctx env
+          argumentsOfValue val
+        | none => do
+          rejectArgumentsIntrinsicArguments argsOpt
+          let val <- rec.eval target ctx env
+          argumentsOfValue val
+    | .ok (.miss .algorithm) =>
+        -- `Algorithm` is the callable-projection intrinsic (META-S3-1, CR-14) — it takes the
+        -- extension call's place, so a lexical `Algorithm` is never consulted. The receiver is
+        -- read exactly as the `Invoke` intrinsic reads it; bare, the edge is the captured
+        -- callee's VALUE, with arguments a fresh call of it.
+        match targetAlg? with
+        | some targetAlg => do
+          let val <- rec.referenceReceiverValue target targetAlg ctx env
+          rec.algorithmOfValue val argsOpt ctx env
+        | none => do
+          let val <- rec.eval target ctx env
+          rec.algorithmOfValue val argsOpt ctx env
+    | .ok (.miss .extension) =>
         rec.callLexicalWithReceiverCounted name target fallback argsOpt ctx env
-
 
   /-- The argument-list route fact of the `Invoke` intrinsic (CallReference S1): `R.Invoke`
       without a list is refused (`invokeRequiresArgumentListMessage`) — the intrinsic is never
@@ -9711,7 +9906,7 @@ def EvalBody.algorithmIntrinsicRoute (rec : EvalRec) (receiver : Expr) (ctx : Ev
   /-- The cells of argument view `a` (CallReference S2): the plan's ONE sticky supply
       (`NeedPlan.viewCells` over the production spread capability). C#: `PrepareArgumentView`. -/
   def EvalBody.argumentViewCells (rec : EvalRec) (a : Nat) : EvalM (List NeedSupply.Sourced) :=
-    NeedPlan.viewCells rec.evalSupplySpread a
+    NeedPlan.viewCells rec.evalSupplySpread rec.planRoute.classify a
 
   /-- `count`/`first`/`last` over argument view `a` at the production capabilities
       (`argumentViewBuiltin`). -/
@@ -9813,7 +10008,7 @@ def EvalBody.algorithmIntrinsicRoute (rec : EvalRec) (receiver : Expr) (ctx : Ev
     let value <- rec.evalSequenceSpreadOperandValue operand ctx env
     match <- openSupplySpread (layers - 1) value with
     | .items supplied => pure (.items (countedTopLevelValues (spreadSupplyResult supplied)))
-    | .view a => NeedPlan.viewSupply rec.evalSupplySpread a
+    | .view a => NeedPlan.viewSupply rec.evalSupplySpread rec.planRoute.classify a
 
   /-- Evaluate a surface list literal `[e1, ..., en]` as exactly ONE exact
       immutable list value. Element slots reuse the written-parentheses
@@ -10622,12 +10817,14 @@ def eval (e : Expr) (ctx : EvalCtx) (env : ValEnv) : EvalM Result :=
     total core under its fuel search, R7). -/
 def demandNeed (address : Nat) : EvalM CountedResult :=
   NeedDemand.step (evalSuppliedAt address)
-    ⟨resolveCalleeAlg, NeedPlan.normalizeCallee, evalSuppliedCallCounted, evalSupplySpread⟩
+    ⟨resolveCalleeAlg, NeedPlan.normalizeCallee, evalSuppliedCallCounted, evalSupplySpread,
+     classifyPlanRouteWith resolveDotReceiver? algorithmIntrinsicRoute, projectNeedCallable⟩
     demandNeedRecursive address
 
 /-- The production invocation-plan route: the one the recursive VALUE edge installs. -/
 def productionPlanRoute : NeedPlan.Route :=
-  ⟨resolveCalleeAlg, NeedPlan.normalizeCallee, evalSuppliedCallCounted, evalSupplySpread⟩
+  ⟨resolveCalleeAlg, NeedPlan.normalizeCallee, evalSuppliedCallCounted, evalSupplySpread,
+   classifyPlanRouteWith resolveDotReceiver? algorithmIntrinsicRoute, projectNeedCallable⟩
 
 /-- The channels every binder call site of the evaluator recursion core passes, at the production
     answer: `EvalRec.bindingChannels evalUnbounded` (`bindingChannels_is_core`, by `rfl`; the

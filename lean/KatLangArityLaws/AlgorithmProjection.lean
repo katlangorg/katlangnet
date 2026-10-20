@@ -36,8 +36,10 @@ address-indexed VALUE and CALLABLE of a supplied cell. That installation is a SO
 Proved here, over the total definitions:
 
 * L3 / CR-13 — the callee cell is CANONICAL (`calleeCell_canonical`: a second observation returns
-  the recorded cell and changes nothing), its establishment is INERT (`calleeCell_inert`: every
-  existing cell keeps its suspension, VALUE state, CALLABLE state and plan supply), and a
+  the recorded cell and changes nothing), its establishment AFTER ROUTE ESTABLISHMENT is INERT
+  (`calleeCell_inert`: every existing cell keeps its suspension, VALUE state, CALLABLE state and
+  plan supply; META-S3-4: establishing the ROUTE itself runs the route classifier, which may demand
+  a runtime-projection receiver — `calleeCell_route_first` — and is not claimed inert), and a
   PARAMETER callee is that parameter's own cell, allocating
   nothing (`calleeCell_parameter_transport`, P6);
 * CR-15 — the link's receiver cell is canonical and inert likewise (`receiverCell_canonical`,
@@ -163,33 +165,100 @@ theorem setCallee_run (a c : Nat) (s : EvalState) :
     (NeedPlan.setCallee a c).runState s =
       (.ok (), { s with needs := s.needs.modify a (fun cell => { cell with callee := some c }) }) := rfl
 
-/-- A recorded callee cell is read: nothing is supplied, allocated or written. -/
-theorem calleeCell_recorded (a c : Nat) (s : EvalState) (cell : NeedCell)
+/-- A recorded callee cell is read: nothing is classified, supplied, allocated or written. -/
+theorem calleeCell_recorded (classify : NeedPlan.CallShape → EvalM PlanRoute)
+    (a c : Nat) (s : EvalState) (cell : NeedCell)
     (hc : s.needs[a]? = some cell) (h : cell.callee = some c) :
-    (NeedPlan.calleeCell a).runState s = (.ok c, s) := by
+    (NeedPlan.calleeCell classify a).runState s = (.ok c, s) := by
   simp only [NeedPlan.calleeCell, bind_run, get_run, hc, h]
   rfl
 
-/-- The first observation supplies the plan's written callee in the captured caller context and
-    records the cell. -/
-theorem calleeCell_establishes (a : Nat) (s : EvalState) (cell : NeedCell) (shape : NeedPlan.CallShape)
+/-- The first observation of an unrecorded callee (META-S3-4): the plan's route (recorded, or
+    classified now — `NeedPlan.routeOf`), then — on a callable route — the route's callee
+    (`NeedPlan.effective`) supplied in the captured caller context and recorded; an intrinsic route
+    is the refusal. -/
+theorem calleeCell_unrecorded (classify : NeedPlan.CallShape → EvalM PlanRoute)
+    (a : Nat) (s : EvalState) (cell : NeedCell) (shape : NeedPlan.CallShape)
     (hc : s.needs[a]? = some cell) (h : cell.callee = none)
     (hshape : NeedPlan.ofSuspension? cell.suspension = some shape) :
-    (NeedPlan.calleeCell a).runState s =
-      (match (supplyNeed shape.callee shape.caller shape.values).runState s with
+    (NeedPlan.calleeCell classify a).runState s =
+      (match (NeedPlan.routeOf classify a shape).runState s with
+       | (.error e, t) => (.error e, t)
+       | (.ok r, t) =>
+         if r = .intrinsic then (.error NeedPlan.invocationRefusal, t) else
+         match (supplyNeed (NeedPlan.effective shape r).callee shape.caller shape.values).runState t with
+         | (.ok c, u) => (.ok c, { u with needs := u.needs.modify a (fun cell => { cell with callee := some c }) })
+         | (.error e, u) => (.error e, u)) := by
+  simp only [NeedPlan.calleeCell, bind_run, get_run, hc, h, hshape]
+  rcases (NeedPlan.routeOf classify a shape).runState s with ⟨_ | r, t⟩
+  · rfl
+  · by_cases hi : r = .intrinsic
+    · subst hi; rfl
+    · have hb : (r == PlanRoute.intrinsic) = false := by
+        cases r <;> first | rfl | exact absurd rfl hi
+      simp only [hb, Bool.false_eq_true, ↓reduceIte, if_neg hi, bind_run, effective_caller, effective_values]
+      rcases (supplyNeed (NeedPlan.effective shape r).callee shape.caller shape.values).runState t with ⟨_ | c, u⟩ <;> rfl
+
+/-- The inert half of the first observation (META-S3-4): with the plan's route `r` recorded and
+    callable, the first observation supplies the route's callee in the captured caller context and
+    records the cell. -/
+theorem calleeCell_establishes (classify : NeedPlan.CallShape → EvalM PlanRoute)
+    (a : Nat) (s : EvalState) (cell : NeedCell) (shape : NeedPlan.CallShape) (r : PlanRoute)
+    (hc : s.needs[a]? = some cell) (h : cell.callee = none)
+    (hshape : NeedPlan.ofSuspension? cell.suspension = some shape) (hr : cell.route = some r)
+    (hi : r ≠ .intrinsic) :
+    (NeedPlan.calleeCell classify a).runState s =
+      (match (supplyNeed (NeedPlan.effective shape r).callee shape.caller shape.values).runState s with
        | (.ok c, t) => (.ok c, { t with needs := t.needs.modify a (fun cell => { cell with callee := some c }) })
        | (.error e, t) => (.error e, t)) := by
-  simp only [NeedPlan.calleeCell, bind_run, get_run, hc, h, hshape]
-  rcases (supplyNeed shape.callee shape.caller shape.values).runState s with ⟨o, t⟩
-  cases o <;> rfl
+  rw [calleeCell_unrecorded classify a s cell shape hc h hshape,
+    routeOf_recorded classify a shape s cell r hc hr]
+  exact if_neg hi
+
+/-- D-1A: an intrinsic route has no callee cell — the refusal, with no effect. -/
+theorem calleeCell_intrinsic (classify : NeedPlan.CallShape → EvalM PlanRoute)
+    (a : Nat) (s : EvalState) (cell : NeedCell) (shape : NeedPlan.CallShape)
+    (hc : s.needs[a]? = some cell) (h : cell.callee = none)
+    (hshape : NeedPlan.ofSuspension? cell.suspension = some shape) (hr : cell.route = some .intrinsic) :
+    (NeedPlan.calleeCell classify a).runState s = (.error NeedPlan.invocationRefusal, s) := by
+  rw [calleeCell_unrecorded classify a s cell shape hc h hshape,
+    routeOf_recorded classify a shape s cell .intrinsic hc hr]
+  rfl
+
+/-- **Route first (META-S3-4, D-4).** With neither the callee nor the route recorded, the first
+    observation runs the route classifier FIRST — the only part that may evaluate (a
+    runtime-projection receiver's demand) — and then exactly the inert establishment from the state
+    where the route is recorded. -/
+theorem calleeCell_route_first (classify : NeedPlan.CallShape → EvalM PlanRoute)
+    (a : Nat) (s : EvalState) (cell : NeedCell) (shape : NeedPlan.CallShape)
+    (hc : s.needs[a]? = some cell) (h : cell.callee = none)
+    (hshape : NeedPlan.ofSuspension? cell.suspension = some shape) (hr : cell.route = none) :
+    (NeedPlan.calleeCell classify a).runState s =
+      (match (classify shape).runState s with
+       | (.error e, t) => (.error e, t)
+       | (.ok r, t) =>
+         let (r, t) := recordRoute a r t
+         if r = .intrinsic then (.error NeedPlan.invocationRefusal, t) else
+         match (supplyNeed (NeedPlan.effective shape r).callee shape.caller shape.values).runState t with
+         | (.ok c, u) => (.ok c, { u with needs := u.needs.modify a (fun cell => { cell with callee := some c }) })
+         | (.error e, u) => (.error e, u)) := by
+  rw [calleeCell_unrecorded classify a s cell shape hc h hshape,
+    routeOf_fresh classify a shape s cell hc hr]
+  rcases (classify shape).runState s with ⟨_ | r, t⟩ <;> rfl
 
 /-- **CR-13, canonical identity (L3).** Whatever cell the first successful observation of plan `a`'s
     callee returns, observing it again from the resulting state returns the SAME cell and changes
     nothing: one canonical callee cell per plan, reused by CALLABLE projection, bare VALUE and fresh
-    invocation alike. -/
-theorem calleeCell_canonical (a c : Nat) (s t : EvalState)
-    (h : (NeedPlan.calleeCell a).runState s = (.ok c, t)) :
-    (NeedPlan.calleeCell a).runState t = (.ok c, t) := by
+    invocation alike. (META-S3-4: the route classifier runs at most at the first observation; it is
+    assumed disciplined — it keeps every existing cell — as `ProductionDiscipline` proves for the
+    production classifier.) -/
+theorem calleeCell_canonical (classify : NeedPlan.CallShape → EvalM PlanRoute)
+    (hclassify : ∀ shape, Disciplined (classify shape))
+    (a c : Nat) (s t : EvalState)
+    (h : (NeedPlan.calleeCell classify a).runState s = (.ok c, t)) :
+    (NeedPlan.calleeCell classify a).runState t = (.ok c, t) := by
+  have hd := disciplined_calleeCell classify hclassify a s
+  rw [h] at hd
   cases hc : s.needs[a]? with
   | none =>
     simp only [NeedPlan.calleeCell, bind_run, get_run, hc] at h
@@ -197,33 +266,44 @@ theorem calleeCell_canonical (a c : Nat) (s t : EvalState)
   | some cell =>
     cases hcal : cell.callee with
     | some c0 =>
-      rw [calleeCell_recorded a c0 s cell hc hcal] at h
+      rw [calleeCell_recorded classify a c0 s cell hc hcal] at h
       cases h
-      exact calleeCell_recorded a _ s cell hc hcal
+      exact calleeCell_recorded classify a _ s cell hc hcal
     | none =>
-      cases hshape : NeedPlan.ofSuspension? cell.suspension with
-      | none =>
-        simp only [NeedPlan.calleeCell, bind_run, get_run, hc, hcal, hshape] at h
-        cases h
-      | some shape =>
-        rw [calleeCell_establishes a s cell shape hc hcal hshape] at h
-        cases hsup : (supplyNeed shape.callee shape.caller shape.values).runState s with
-        | mk o u =>
-          rw [hsup] at h
-          cases o with
-          | error e => cases h
-          | ok c1 =>
-            cases h
-            have hkeep := (supply_heap_core _ _ _ s _ u hsup).2 a cell hc
-            apply calleeCell_recorded a c _ { cell with callee := some c }
-            · simp [Array.getElem?_modify, hkeep]
-            · rfl
+      -- Every successful first observation ends with the callee record of `a`.
+      have hrec : ∃ d, t.needs[a]? = some d ∧ d.callee = some c := by
+        cases hshape : NeedPlan.ofSuspension? cell.suspension with
+        | none =>
+          simp only [NeedPlan.calleeCell, bind_run, get_run, hc, hcal, hshape] at h
+          cases h
+        | some shape =>
+          rw [calleeCell_unrecorded classify a s cell shape hc hcal hshape] at h
+          have k1 := disciplined_routeOf classify hclassify a shape s
+          generalize hro : (NeedPlan.routeOf classify a shape).runState s = ro at h k1
+          rcases ro with ⟨_ | r, t1⟩
+          · cases h
+          · obtain ⟨c1, hc1, _⟩ := k1 a cell hc
+            dsimp only at h
+            by_cases hi : r = .intrinsic
+            · rw [if_pos hi] at h; cases h
+            · rw [if_neg hi] at h
+              have k2 := disciplined_supply (NeedPlan.effective shape r).callee shape.caller shape.values t1
+              generalize hsu : (supplyNeed (NeedPlan.effective shape r).callee shape.caller shape.values).runState t1 = su at h k2
+              rcases su with ⟨_ | c2, t2⟩
+              · cases h
+              · obtain ⟨c3, hc3, _⟩ := k2 a c1 hc1
+                cases h
+                exact ⟨{ c3 with callee := some c }, by simp [Array.getElem?_modify, hc3], rfl⟩
+      obtain ⟨d, hd', hdc⟩ := hrec
+      exact calleeCell_recorded classify a c t d hd' hdc
 
-/-- **CR-13, inert establishment.** Establishing (or reading) the callee cell evaluates, prepares,
-    projects and demands nothing: every existing cell keeps its suspension, VALUE state, CALLABLE
-    state and plan supply, whatever the outcome. -/
-theorem calleeCell_inert (a : Nat) (s : EvalState) :
-    HeapCore s.needs ((NeedPlan.calleeCell a).runState s).2.needs := by
+/-- **CR-13, inert establishment after route establishment.** With the plan's route recorded,
+    establishing (or reading) the callee cell evaluates, prepares, projects and demands nothing:
+    every existing cell keeps its suspension, VALUE state, CALLABLE state and plan supply, whatever
+    the outcome. (Establishing the route itself is `calleeCell_route_first`.) -/
+theorem calleeCell_inert (classify : NeedPlan.CallShape → EvalM PlanRoute) (a : Nat) (s : EvalState)
+    (hroute : ∀ cell, s.needs[a]? = some cell → cell.callee = none → ∃ r, cell.route = some r) :
+    HeapCore s.needs ((NeedPlan.calleeCell classify a).runState s).2.needs := by
   cases hc : s.needs[a]? with
   | none =>
     simp only [NeedPlan.calleeCell, bind_run, get_run, hc]
@@ -231,7 +311,7 @@ theorem calleeCell_inert (a : Nat) (s : EvalState) :
   | some cell =>
     cases hcal : cell.callee with
     | some c0 =>
-      rw [calleeCell_recorded a c0 s cell hc hcal]
+      rw [calleeCell_recorded classify a c0 s cell hc hcal]
       exact HeapCore.refl _
     | none =>
       cases hshape : NeedPlan.ofSuspension? cell.suspension with
@@ -239,32 +319,40 @@ theorem calleeCell_inert (a : Nat) (s : EvalState) :
         simp only [NeedPlan.calleeCell, bind_run, get_run, hc, hcal, hshape]
         exact HeapCore.refl _
       | some shape =>
-        rw [calleeCell_establishes a s cell shape hc hcal hshape]
-        cases hsup : (supplyNeed shape.callee shape.caller shape.values).runState s with
-        | mk o u =>
-          have hcore := supply_heap_core shape.callee shape.caller shape.values s
-          cases o with
-          | error e =>
-            show HeapCore s.needs u.needs
-            obtain ⟨r, hr⟩ := supply_shape shape.callee shape.caller shape.values s
-            rcases hr with hr | ⟨hr, _⟩ <;> rw [hr] at hsup <;> cases hsup
-          | ok c1 =>
-            show HeapCore s.needs (u.needs.modify a _)
-            exact (hcore c1 u hsup).1.trans (HeapCore.memo _ a _ (fun _ => ⟨rfl, rfl, rfl, rfl⟩))
+        obtain ⟨r, hr⟩ := hroute cell hc hcal
+        by_cases hi : r = .intrinsic
+        · subst hi
+          rw [calleeCell_intrinsic classify a s cell shape hc hcal hshape hr]
+          exact HeapCore.refl _
+        · rw [calleeCell_establishes classify a s cell shape r hc hcal hshape hr hi]
+          generalize hsrc : (NeedPlan.effective shape r).callee = src
+          cases hsup : (supplyNeed src shape.caller shape.values).runState s with
+          | mk o u =>
+            have hcore := supply_heap_core src shape.caller shape.values s
+            cases o with
+            | error e =>
+              show HeapCore s.needs u.needs
+              obtain ⟨r', hr'⟩ := supply_shape src shape.caller shape.values s
+              rcases hr' with hr' | ⟨hr', _⟩ <;> rw [hr'] at hsup <;> cases hsup
+            | ok c1 =>
+              show HeapCore s.needs (u.needs.modify a _)
+              exact (hcore c1 u hsup).1.trans (HeapCore.memo _ a _ (fun _ => ⟨rfl, rfl, rfl, rfl⟩))
 
-/-- **P6, parameter callee transport.** A plan whose written callee is a PARAMETER bound to a
+/-- **P6, parameter callee transport.** A plan whose route's callee is a PARAMETER bound to a
     supplied cell `p` has `p` itself as its callee cell — the parameter's existing cell (NEED-01),
     never a replacement: no cell is allocated, and only the memo of `a` is written. -/
-theorem calleeCell_parameter_transport (a p : Nat) (name : Ident) (s : EvalState) (cell : NeedCell)
-    (shape : NeedPlan.CallShape) (activation : Option ParameterActivation)
+theorem calleeCell_parameter_transport (classify : NeedPlan.CallShape → EvalM PlanRoute)
+    (a p : Nat) (name : Ident) (s : EvalState) (cell : NeedCell)
+    (shape : NeedPlan.CallShape) (r : PlanRoute) (activation : Option ParameterActivation)
     (hc : s.needs[a]? = some cell) (h : cell.callee = none)
-    (hshape : NeedPlan.ofSuspension? cell.suspension = some shape)
-    (hcallee : shape.callee = .param name)
+    (hshape : NeedPlan.ofSuspension? cell.suspension = some shape) (hr : cell.route = some r)
+    (hi : r ≠ .intrinsic)
+    (hcallee : (NeedPlan.effective shape r).callee = .param name)
     (hact : (capturedParameterActivation? name shape.caller).runState s = (.ok activation, s))
     (hfind : lookupAssoc name (activation.map ParameterActivation.needs |>.getD shape.caller.needEnv) = some p) :
-    (NeedPlan.calleeCell a).runState s =
+    (NeedPlan.calleeCell classify a).runState s =
       (.ok p, { s with needs := s.needs.modify a (fun cell => { cell with callee := some p }) }) := by
-  rw [calleeCell_establishes a s cell shape hc h hshape, hcallee,
+  rw [calleeCell_establishes classify a s cell shape r hc h hshape hr hi, hcallee,
     KatLang.NeedControl.Allocation.supply_param_transports name shape.caller shape.values s activation p hact hfind]
 
 /-! ## CR-15 — the link's canonical receiver cell -/
@@ -375,13 +463,15 @@ theorem receiverCell_inert (a : Nat) (s : EvalState) :
 /-! ## P5 / P7 — the link's two channels share one receiver and one callee cell -/
 
 /-- The link's VALUE is the decoded callee cell's VALUE (CR-14 b). -/
-theorem link_value_is_callee_value (demand : Nat → EvalM CountedResult) (a : Nat) :
-    NeedLink.value demand a = (do demand (← NeedLink.decodeCallee demand a)) := rfl
+theorem link_value_is_callee_value (classify : NeedPlan.CallShape → EvalM PlanRoute)
+    (demand : Nat → EvalM CountedResult) (a : Nat) :
+    NeedLink.value classify demand a = (do demand (← NeedLink.decodeCallee classify demand a)) := rfl
 
 /-- The link's CALLABLE is the decoded callee cell's CALLABLE (CR-14 a). -/
-theorem link_callable_is_callee_callable (demand : Nat → EvalM CountedResult)
+theorem link_callable_is_callee_callable (classify : NeedPlan.CallShape → EvalM PlanRoute)
+    (demand : Nat → EvalM CountedResult)
     (project : Nat → EvalM (Option Algorithm)) (a : Nat) :
-    NeedLink.callable demand project a = (do project (← NeedLink.decodeCallee demand a)) := rfl
+    NeedLink.callable classify demand project a = (do project (← NeedLink.decodeCallee classify demand a)) := rfl
 
 /-- **P5, receiver sharing.** Once link `a`'s receiver cell `r` is recorded and its VALUE has
     completed with call reference `p`, whose callee cell `c` is recorded, decoding the link — by its
@@ -394,21 +484,22 @@ theorem decoded_link_reuses_receiver (ev : Expr → EvalCtx → ValEnv → EvalM
     (hr : s.needs[r]? = some receiverCell)
     (hdone : receiverCell.state = .completed (.ok (.callRef p, n)))
     (hp : s.needs[p]? = some planCell) (hcal : planCell.callee = some c) :
-    (NeedLink.decodeCallee (NeedDemand.step ev route recur) a).runState s = (.ok c, s) := by
+    (NeedLink.decodeCallee route.classify (NeedDemand.step ev route recur) a).runState s = (.ok c, s) := by
   simp only [NeedLink.decodeCallee, bind_run, receiverCell_recorded a r s link hl hrec,
     KatLang.NeedControl.Memo.completed_sticky ev route recur r s receiverCell _ hr hdone]
   simp only [decodeCallRef, pure_run]
-  rw [calleeCell_recorded p c s planCell hp hcal]
+  rw [calleeCell_recorded route.classify p c s planCell hp hcal]
 
 /-- **P7, CALLABLE channel independence.** Once the receiver cell `r` is recorded, the link's
     CALLABLE depends on VALUE demand ONLY at `r`: any two demand functions that agree there give the
     same projection run — so the projection never demands the link's own VALUE nor the callee
     cell's VALUE (unless one of them IS the receiver cell). -/
-theorem callable_value_only_at_receiver (d1 d2 : Nat → EvalM CountedResult)
+theorem callable_value_only_at_receiver (classify : NeedPlan.CallShape → EvalM PlanRoute)
+    (d1 d2 : Nat → EvalM CountedResult)
     (project : Nat → EvalM (Option Algorithm)) (a r : Nat) (s : EvalState) (link : NeedCell)
     (hl : s.needs[a]? = some link) (hrec : link.receiver = some r)
     (hagree : ∀ t, (d1 r).runState t = (d2 r).runState t) :
-    (NeedLink.callable d1 project a).runState s = (NeedLink.callable d2 project a).runState s := by
+    (NeedLink.callable classify d1 project a).runState s = (NeedLink.callable classify d2 project a).runState s := by
   simp only [NeedLink.callable, NeedLink.decodeCallee, bind_run, receiverCell_recorded a r s link hl hrec,
     hagree s]
 

@@ -533,9 +533,9 @@ theorem noncollector_parameter (name : Ident) (caller : EvalCtx) (s : EvalState)
   | collector slice => exact (kind slice hs).elim
 
 theorem source_expression_any_state (e : Expr) (ctx : EvalCtx) (env : ValEnv)
-    (status : NeedState) (callable : NeedCallableState) (plan : NeedPlanSupply)
+    (status : NeedState) (callable : NeedCallableState) (plan : NeedPlanSupply) (route : Option PlanRoute)
     (callee receiver : Option Nat) (aliasUse : Nat) (aliasBare : Option Nat) (s : EvalState) (a : Nat)
-    (h : s.needs[a]? = some ⟨.expression e ctx env, status, callable, plan, callee, receiver, aliasUse, aliasBare⟩) :
+    (h : s.needs[a]? = some ⟨.expression e ctx env, status, callable, plan, route, callee, receiver, aliasUse, aliasBare⟩) :
     (needWrittenSource? a).runState s = (.ok (some e), s) := by
   rw [source_run]
   simp only [sourceAt, h]

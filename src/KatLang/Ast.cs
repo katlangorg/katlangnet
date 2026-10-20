@@ -1332,6 +1332,29 @@ public closed record Expr
             get => _inferredFallbackProvenance.Value;
             init => _inferredFallbackProvenance = new(value);
         }
+
+        // META-S3-4: the argumentless edge of this argument-bearing edge, derived once by an invocation
+        // plan's route and memoized on THIS node. The memo names its owner: a `with` copy — whose
+        // synthesized copy constructor copies the slot — derives its own edge instead of reusing a stale
+        // one. Equality-transparent (RuntimeStateSlot), so structural identity, hashing and printing are
+        // unchanged; a racing derivation stores an equal edge.
+        private RuntimeStateSlot<ArgumentlessEdgeMemo?> _argumentlessEdge;
+
+        private sealed record ArgumentlessEdgeMemo(DotCall Owner, DotCall Edge);
+
+        /// <summary>
+        /// The argumentless edge <c>Target.Name</c> of this edge — the same receiver, name, elaborated facts
+        /// and spans, without the argument list (this node itself when it has none): the callee of a planned
+        /// member or <c>.Algorithm</c> invocation (META-S3-4). Allocated at most once per node.
+        /// </summary>
+        internal DotCall ArgumentlessEdge()
+        {
+            if (Args is null) return this;
+            if (_argumentlessEdge.Value is { } memo && ReferenceEquals(memo.Owner, this)) return memo.Edge;
+            var edge = this with { Args = null };
+            _argumentlessEdge = new(new ArgumentlessEdgeMemo(this, edge));
+            return edge;
+        }
     }
 
     /// <summary>

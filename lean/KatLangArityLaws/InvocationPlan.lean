@@ -126,12 +126,14 @@ structure CellKept (c c' : NeedCell) : Prop where
   suspension : c'.suspension = c.suspension
   completed : ∀ o, c.state = .completed o → c'.state = .completed o
   prepared : ∀ o, c.plan = .prepared o → c'.plan = .prepared o
+  /-- META-S3-4: a recorded plan route is never rewritten (`NeedPlan.routeOf`, first writer wins). -/
+  routed : ∀ r, c.route = some r → c'.route = some r
 
-theorem CellKept.refl (c : NeedCell) : CellKept c c := ⟨rfl, fun _ h => h, fun _ h => h⟩
+theorem CellKept.refl (c : NeedCell) : CellKept c c := ⟨rfl, fun _ h => h, fun _ h => h, fun _ h => h⟩
 
 theorem CellKept.trans {c d e : NeedCell} (h1 : CellKept c d) (h2 : CellKept d e) : CellKept c e :=
   ⟨h2.suspension.trans h1.suspension, fun o h => h2.completed o (h1.completed o h),
-    fun o h => h2.prepared o (h1.prepared o h)⟩
+    fun o h => h2.prepared o (h1.prepared o h), fun r h => h2.routed r (h1.routed r h)⟩
 
 def HeapKept (h h' : Array NeedCell) : Prop :=
   ∀ (a : Nat) (c : NeedCell), h[a]? = some c → ∃ c', h'[a]? = some c' ∧ CellKept c c'
@@ -383,7 +385,8 @@ theorem keep_withPlan_preparing (s : EvalState) (a : Nat) (cell : NeedCell)
   by_cases hab : a = b
   · subst hab
     rw [h] at hc; cases hc
-    refine ⟨{ cell with plan := .preparing }, by simp [withPlan, modify_get, h], rfl, fun _ ho => ho, ?_⟩
+    refine ⟨{ cell with plan := .preparing }, by simp [withPlan, modify_get, h], rfl, fun _ ho => ho, ?_,
+      fun _ ho => ho⟩
     intro o ho; rw [hp] at ho; cases ho
   · exact ⟨c, by simp [withPlan, modify_get, hab, hc], CellKept.refl c⟩
 
@@ -424,7 +427,7 @@ theorem disciplined_prepare (ev : NeedSupply.SpreadEval)
           simp [withPlan, modify_get, h]
         obtain ⟨c1, hc1, k1⟩ := kf a _ h1
         refine ⟨{ c1 with plan := .prepared r.1 }, by simp [withPlan, modify_get, hc1], ?_⟩
-        refine ⟨k1.suspension, fun o ho => k1.completed o ho, fun o ho => ?_⟩
+        refine ⟨k1.suspension, fun o ho => k1.completed o ho, fun o ho => ?_, fun r hr => k1.routed r hr⟩
         rw [hp] at ho
         cases ho
       · have h1 : (withPlan a .preparing s).needs[b]? = some c := by
@@ -432,19 +435,193 @@ theorem disciplined_prepare (ev : NeedSupply.SpreadEval)
         obtain ⟨c1, hc1, k1⟩ := kf b c h1
         exact ⟨c1, by simp [withPlan, modify_get, hab, hc1], k1⟩
 
+/-- A route's effective shape keeps the plan's captured caller context and values (only an
+    extension changes the callee and the bundle). -/
+@[simp] theorem effective_caller (shape : NeedPlan.CallShape) (r : PlanRoute) :
+    (NeedPlan.effective shape r).caller = shape.caller := by
+  cases r <;> simp only [NeedPlan.effective] <;> split <;> rfl
+
+@[simp] theorem effective_values (shape : NeedPlan.CallShape) (r : PlanRoute) :
+    (NeedPlan.effective shape r).values = shape.values := by
+  cases r <;> simp only [NeedPlan.effective] <;> split <;> rfl
+
+/-- The route write of `NeedPlan.setRoute`, as a state function (META-S3-4). -/
+def withRoute (a : Nat) (r : PlanRoute) (s : EvalState) : EvalState :=
+  { s with needs := s.needs.modify a (fun c => { c with route := some r }) }
+
+theorem setRoute_run (a : Nat) (r : PlanRoute) (s : EvalState) :
+    (NeedPlan.setRoute a r).runState s = (.ok (), withRoute a r s) := rfl
+
+/-- The callee write of `NeedPlan.setCallee`, as a state function. -/
+def withCallee (a c : Nat) (s : EvalState) : EvalState :=
+  { s with needs := s.needs.modify a (fun cell => { cell with callee := some c }) }
+
+theorem setCallee_run (a c : Nat) (s : EvalState) :
+    (NeedPlan.setCallee a c).runState s = (.ok (), withCallee a c s) := rfl
+
+/-- A FIRST route record keeps every cell (it writes neither suspension, VALUE nor supply, and only
+    an unrecorded route). -/
+theorem keep_withRoute (s : EvalState) (a : Nat) (r : PlanRoute)
+    (hnone : ∀ c, s.needs[a]? = some c → c.route = none) :
+    HeapKept s.needs (withRoute a r s).needs :=
+  HeapKept.modify _ a _ (fun c hc => ⟨rfl, fun _ h => h, fun _ h => h,
+    fun r' h => by rw [hnone c hc] at h; cases h⟩)
+
+/-- A callee record keeps every cell. -/
+theorem keep_withCallee (s : EvalState) (a c : Nat) :
+    HeapKept s.needs (withCallee a c s).needs :=
+  HeapKept.modify _ a _ (fun _ _ => ⟨rfl, fun _ h => h, fun _ h => h, fun _ h => h⟩)
+
+theorem disciplined_setCallee (a c : Nat) : Disciplined (NeedPlan.setCallee a c) := by
+  intro s; rw [setCallee_run]; exact keep_withCallee s a c
+
+/-! ## The plan's ROUTE (META-S3-4): one record, written by the first classification -/
+
+theorem routeOf_invalid (classify : NeedPlan.CallShape → EvalM PlanRoute) (a : Nat)
+    (shape : NeedPlan.CallShape) (s : EvalState) (h : s.needs[a]? = none) :
+    (NeedPlan.routeOf classify a shape).runState s = (.error (.illegalInEval "invalid need address"), s) := by
+  simp only [NeedPlan.routeOf, bind_run, get_run, h]
+  rfl
+
+/-- **Route stickiness.** A recorded route is returned as it is: nothing is classified, nothing
+    changes. -/
+theorem routeOf_recorded (classify : NeedPlan.CallShape → EvalM PlanRoute) (a : Nat)
+    (shape : NeedPlan.CallShape) (s : EvalState) (cell : NeedCell) (r : PlanRoute)
+    (h : s.needs[a]? = some cell) (hr : cell.route = some r) :
+    (NeedPlan.routeOf classify a shape).runState s = (.ok r, s) := by
+  simp only [NeedPlan.routeOf, bind_run, get_run, h, hr]
+  rfl
+
+/-- The record step after a classification: a route recorded meanwhile wins; otherwise `r` is
+    recorded. -/
+def recordRoute (a : Nat) (r : PlanRoute) (t : EvalState) : PlanRoute × EvalState :=
+  match (t.needs[a]?).bind NeedCell.route with
+  | some recorded => (recorded, t)
+  | none => (r, withRoute a r t)
+
+/-- **First classification.** An unrecorded route runs the classifier ONCE over the plan's shape
+    and records a successful result (unless the route was recorded meanwhile, whose record wins); a
+    failure records nothing and propagates. -/
+theorem routeOf_fresh (classify : NeedPlan.CallShape → EvalM PlanRoute) (a : Nat)
+    (shape : NeedPlan.CallShape) (s : EvalState) (cell : NeedCell)
+    (h : s.needs[a]? = some cell) (hr : cell.route = none) :
+    (NeedPlan.routeOf classify a shape).runState s =
+      (match (classify shape).runState s with
+       | (.ok r, t) => (.ok (recordRoute a r t).1, (recordRoute a r t).2)
+       | (.error e, t) => (.error e, t)) := by
+  simp only [NeedPlan.routeOf, bind_run, get_run, h, hr]
+  rcases (classify shape).runState s with ⟨_ | r, t⟩
+  · rfl
+  · simp only [recordRoute]
+    cases hb : (t.needs[a]?).bind NeedCell.route <;> first | rfl | (simp only [hb]; rfl)
+
+theorem keep_recordRoute (a : Nat) (r : PlanRoute) (t : EvalState) :
+    HeapKept t.needs (recordRoute a r t).2.needs := by
+  unfold recordRoute
+  split
+  · exact HeapKept.refl _
+  · rename_i hno
+    exact keep_withRoute t a r (fun c hc => by simpa [hc] using hno)
+
+theorem disciplined_setRoute_first (a : Nat) (r : PlanRoute) (s : EvalState)
+    (hnone : ∀ c, s.needs[a]? = some c → c.route = none) :
+    HeapKept s.needs ((NeedPlan.setRoute a r).runState s).2.needs := by
+  rw [setRoute_run]; exact keep_withRoute s a r hnone
+
+theorem disciplined_routeOf (classify : NeedPlan.CallShape → EvalM PlanRoute)
+    (hclassify : ∀ shape, Disciplined (classify shape)) (a : Nat) (shape : NeedPlan.CallShape) :
+    Disciplined (NeedPlan.routeOf classify a shape) := by
+  intro s
+  cases h : s.needs[a]? with
+  | none => rw [routeOf_invalid classify a shape s h]; exact HeapKept.refl _
+  | some cell =>
+    cases hr : cell.route with
+    | some r => rw [routeOf_recorded classify a shape s cell r h hr]; exact HeapKept.refl _
+    | none =>
+      rw [routeOf_fresh classify a shape s cell h hr]
+      have k := hclassify shape s
+      rcases hc : (classify shape).runState s with ⟨_ | r, t⟩ <;> rw [hc] at k
+      · exact k
+      · exact k.trans (keep_recordRoute a r t)
+
+/-- **The callee cell's establishment is disciplined**: the route (its classifier's discipline), at
+    most one supplied cell (`supplyNeed`) and the callee record. -/
+theorem disciplined_calleeCell (classify : NeedPlan.CallShape → EvalM PlanRoute)
+    (hclassify : ∀ shape, Disciplined (classify shape)) (a : Nat) :
+    Disciplined (NeedPlan.calleeCell classify a) := by
+  have hjoin : ∀ (eff : NeedPlan.CallShape), Disciplined (do
+      let c ← supplyNeed eff.callee eff.caller eff.values
+      NeedPlan.setCallee a c
+      pure c : EvalM Nat) := fun eff =>
+    Disciplined.bind (disciplined_supply _ _ _) (fun c =>
+      Disciplined.bind (disciplined_setCallee a c) (fun _ => disciplined_pure _))
+  unfold NeedPlan.calleeCell
+  refine Disciplined.bind disciplined_get (fun st => ?_)
+  split
+  next cell _ =>
+    split
+    next => exact disciplined_pure _
+    next =>
+      split
+      next => exact disciplined_throw _
+      next shape _ =>
+        refine Disciplined.bind (disciplined_routeOf classify hclassify a shape) (fun r => ?_)
+        dsimp only
+        split
+        next => exact Disciplined.bind (disciplined_throw _) (fun _ => hjoin _)
+        next => exact hjoin _
+  next => exact disciplined_throw _
+
+theorem disciplined_calleeAlong (route : NeedPlan.Route)
+    (htarget : ∀ f c, Disciplined (route.target f c))
+    (hclassify : ∀ shape, Disciplined (route.classify shape))
+    (hproject : ∀ c, Disciplined (route.project c))
+    (a : Nat) (eff : NeedPlan.CallShape) (r : PlanRoute) :
+    Disciplined (NeedPlan.calleeAlong route a eff r) := by
+  cases r with
+  | algorithm =>
+    simp only [NeedPlan.calleeAlong]
+    refine Disciplined.bind (disciplined_calleeCell route.classify hclassify a) (fun c => ?_)
+    refine Disciplined.bind (hproject c) (fun o => ?_)
+    cases o with
+    | some _ => exact disciplined_pure _
+    | none => exact disciplined_throw _
+  | intrinsic => exact disciplined_throw _
+  | call => exact htarget _ _
+  | extension => exact htarget _ _
+
+/-- **One plan execution along a route is disciplined** whenever its installed callbacks are. -/
+theorem disciplined_executeAlong (route : NeedPlan.Route)
+    (hspread : ∀ e c v, Disciplined (route.spread e c v))
+    (htarget : ∀ f c, Disciplined (route.target f c))
+    (hnormal : ∀ g c, Disciplined (route.normalize g c))
+    (hdispatch : ∀ g cells c v n, Disciplined (route.dispatch g cells c v n))
+    (hclassify : ∀ shape, Disciplined (route.classify shape))
+    (hproject : ∀ c, Disciplined (route.project c))
+    (a : Nat) (shape : NeedPlan.CallShape) (r : PlanRoute) :
+    Disciplined (NeedPlan.executeAlong route a shape r) := by
+  unfold NeedPlan.executeAlong
+  exact Disciplined.bind (Disciplined.withCtx _
+      (disciplined_calleeAlong route htarget hclassify hproject a _ r)) (fun callee =>
+    Disciplined.bind (Disciplined.withCtx _ (Disciplined.bind (hnormal _ _) (fun normal =>
+      Disciplined.bind (disciplined_prepare route.spread hspread a _) (fun cells => hdispatch _ _ _ _ _))))
+      (fun _ => disciplined_pure _))
+
 /-- **One plan execution is disciplined** whenever its installed callbacks are. -/
 theorem disciplined_execute (route : NeedPlan.Route)
     (hspread : ∀ e c v, Disciplined (route.spread e c v))
     (htarget : ∀ f c, Disciplined (route.target f c))
     (hnormal : ∀ g c, Disciplined (route.normalize g c))
     (hdispatch : ∀ g cells c v n, Disciplined (route.dispatch g cells c v n))
+    (hclassify : ∀ shape, Disciplined (route.classify shape))
+    (hproject : ∀ c, Disciplined (route.project c))
     (a : Nat) (shape : NeedPlan.CallShape) :
     Disciplined (NeedPlan.execute route a shape) := by
   unfold NeedPlan.execute
-  exact Disciplined.bind (Disciplined.withCtx _ (htarget _ _)) (fun callee =>
-    Disciplined.bind (Disciplined.withCtx _ (Disciplined.bind (hnormal _ _) (fun normal =>
-      Disciplined.bind (disciplined_prepare route.spread hspread a shape) (fun cells => hdispatch _ _ _ _ _))))
-      (fun _ => disciplined_pure _))
+  refine Disciplined.bind (Disciplined.withCtx _ (disciplined_routeOf route.classify hclassify a shape)) (fun r => ?_)
+  cases r with
+  | intrinsic => exact disciplined_throw _
+  | _ => exact disciplined_executeAlong route hspread htarget hnormal hdispatch hclassify hproject a shape _
 
 theorem disciplined_suspendedValue (ev : Expr → EvalCtx → ValEnv → EvalM CountedResult)
     (route : NeedPlan.Route) (demand : Nat → EvalM CountedResult)
@@ -453,6 +630,8 @@ theorem disciplined_suspendedValue (ev : Expr → EvalCtx → ValEnv → EvalM C
     (htarget : ∀ f c, Disciplined (route.target f c))
     (hnormal : ∀ g c, Disciplined (route.normalize g c))
     (hdispatch : ∀ g cells c v n, Disciplined (route.dispatch g cells c v n))
+    (hclassify : ∀ shape, Disciplined (route.classify shape))
+    (hproject : ∀ c, Disciplined (route.project c))
     (hdemand : ∀ b, Disciplined (demand b)) (a : Nat) (suspension : NeedSuspension) :
     Disciplined (NeedDemand.suspendedValue ev route demand a suspension) := by
   cases suspension with
@@ -460,7 +639,10 @@ theorem disciplined_suspendedValue (ev : Expr → EvalCtx → ValEnv → EvalM C
   | expression e c v =>
     simp only [NeedDemand.suspendedValue]
     split
-    · exact disciplined_execute route hspread htarget hnormal hdispatch a _
+    · refine Disciplined.bind (Disciplined.withCtx _ (disciplined_routeOf route.classify hclassify a _)) (fun r => ?_)
+      cases r with
+      | intrinsic => exact Disciplined.map _ (hev e c v)
+      | _ => exact disciplined_executeAlong route hspread htarget hnormal hdispatch hclassify hproject a _ _
     · exact Disciplined.map _ (hev e c v)
   | collector slice =>
     exact Disciplined.bind (disciplined_mapM _ (fun b => Disciplined.map _ (hdemand b)) slice)
@@ -480,6 +662,8 @@ theorem disciplined_step (ev : Expr → EvalCtx → ValEnv → EvalM CountedResu
     (htarget : ∀ f c, Disciplined (route.target f c))
     (hnormal : ∀ g c, Disciplined (route.normalize g c))
     (hdispatch : ∀ g cells c v n, Disciplined (route.dispatch g cells c v n))
+    (hclassify : ∀ shape, Disciplined (route.classify shape))
+    (hproject : ∀ c, Disciplined (route.project c))
     (hdemand : ∀ b, Disciplined (demand b)) (a : Nat) :
     Disciplined (NeedDemand.step ev route demand a) := by
   intro s
@@ -496,7 +680,7 @@ theorem disciplined_step (ev : Expr → EvalCtx → ValEnv → EvalM CountedResu
       rw [KatLang.NeedControl.Production.evaluating_cycle ev route demand a s cell h hs]
       exact HeapKept.refl _
     | suspended =>
-      have kv := disciplined_suspendedValue ev route demand hev hspread htarget hnormal hdispatch hdemand a
+      have kv := disciplined_suspendedValue ev route demand hev hspread htarget hnormal hdispatch hclassify hproject hdemand a
         cell.suspension (withState a .evaluating s)
       generalize hr : (NeedDemand.suspendedValue ev route demand a cell.suspension).runState
         (withState a .evaluating s) = r at kv
@@ -509,7 +693,8 @@ theorem disciplined_step (ev : Expr → EvalCtx → ValEnv → EvalM CountedResu
         by_cases hab : a = b
         · subst hab
           rw [h] at hc; cases hc
-          refine ⟨{ cell with state := .evaluating }, by simp [withState, modify_get, h], rfl, ?_, fun _ ho => ho⟩
+          refine ⟨{ cell with state := .evaluating }, by simp [withState, modify_get, h], rfl, ?_, fun _ ho => ho,
+            fun _ ho => ho⟩
           intro o ho; rw [hs] at ho; cases ho
         · exact ⟨c, by simp [withState, modify_get, hab, hc], CellKept.refl c⟩
       | false =>
@@ -523,7 +708,7 @@ theorem disciplined_step (ev : Expr → EvalCtx → ValEnv → EvalM CountedResu
           simp [withState, modify_get, h]
         obtain ⟨c1, hc1, k1⟩ := kv a _ h1
         refine ⟨{ c1 with state := .completed outcome }, by simp [modify_get, hc1], ?_⟩
-        refine ⟨k1.suspension, fun o ho => ?_, fun o ho => k1.prepared o ho⟩
+        refine ⟨k1.suspension, fun o ho => ?_, fun o ho => k1.prepared o ho, fun r hr => k1.routed r hr⟩
         rw [hs] at ho
         cases ho
       · have h1 : (withState a .evaluating s).needs[b]? = some c := by
@@ -613,13 +798,15 @@ theorem disciplined_invoke (route : NeedPlan.Route)
     (htarget : ∀ f c, Disciplined (route.target f c))
     (hnormal : ∀ g c, Disciplined (route.normalize g c))
     (hdispatch : ∀ g cells c v n, Disciplined (route.dispatch g cells c v n))
+    (hclassify : ∀ shape, Disciplined (route.classify shape))
+    (hproject : ∀ c, Disciplined (route.project c))
     (r : NeedPlan.CallReference) : Disciplined (NeedPlan.invoke route r) := by
   intro s
   cases h : NeedPlan.shapeAt? s.needs r.plan with
   | none => rw [invoke_refuses route r.plan s h]; exact HeapKept.refl _
   | some shape =>
     rw [invoke_run route r.plan s shape h]
-    exact disciplined_execute route hspread htarget hnormal hdispatch r.plan shape s
+    exact disciplined_execute route hspread htarget hnormal hdispatch hclassify hproject r.plan shape s
 
 /-! ## The original VALUE and the plan's supply survive every disciplined computation -/
 
@@ -668,13 +855,15 @@ theorem prepare_records (ev : NeedSupply.SpreadEval)
 
 /-! ## One shared supply for VALUE and every invocation -/
 
-/-- A plan's computation over given argument cells: `execute` with the supply already formed. -/
-def callOver (route : NeedPlan.Route) (shape : NeedPlan.CallShape) (cells : List NeedSupply.Sourced) :
-    EvalM CountedResult := do
-  let callee ← withCtx (CtxMsg.call shape.callee) (route.target shape.callee shape.caller)
-  let result ← withCtx (CtxMsg.call shape.callee) (do
-    let normal ← route.normalize callee shape.caller
-    route.dispatch normal cells shape.caller shape.values (openExprName shape.callee))
+/-- A plan's computation along route `r` over given argument cells: `executeAlong` with the supply
+    already formed. -/
+def callOver (route : NeedPlan.Route) (a : Nat) (shape : NeedPlan.CallShape) (r : PlanRoute)
+    (cells : List NeedSupply.Sourced) : EvalM CountedResult := do
+  let eff := NeedPlan.effective shape r
+  let callee ← withCtx shape.ctxMsg (NeedPlan.calleeAlong route a eff r)
+  let result ← withCtx shape.ctxMsg (do
+    let normal ← route.normalize callee eff.caller
+    route.dispatch normal cells eff.caller eff.values (openExprName eff.callee))
   pure (reCountValueBoundary result)
 
 theorem withCtx_run {α : Type} (c : String) (m : EvalM α) (st : EvalState) :
@@ -689,71 +878,117 @@ theorem withCtx_run {α : Type} (c : String) (m : EvalM α) (st : EvalState) :
   | ok a => rfl
   | error e => cases e <;> rfl
 
+/-- With its route recorded, a plan's execution IS its execution along that route: the route is
+    read, not classified again, and changes nothing. -/
+theorem execute_recorded (route : NeedPlan.Route) (a : Nat) (shape : NeedPlan.CallShape)
+    (s : EvalState) (cell : NeedCell) (r : PlanRoute)
+    (hc : s.needs[a]? = some cell) (hr : cell.route = some r) (hi : r ≠ .intrinsic) :
+    (NeedPlan.execute route a shape).runState s = (NeedPlan.executeAlong route a shape r).runState s := by
+  simp only [NeedPlan.execute, bind_run, withCtx_run, routeOf_recorded route.classify a shape s cell r hc hr]
+  all_goals (try (cases r <;> first | rfl | exact absurd rfl hi))
+
 /-- **A prepared plan executes over exactly its cells.** With prepared cells, one plan execution
-    is `callOver` those cells: the dispatch receives the recorded supply, never a re-formed one
-    (given disciplined target and normalization, which keep the record). -/
-theorem execute_prepared (route : NeedPlan.Route)
-    (htarget : ∀ f c, Disciplined (route.target f c))
+    along a route is `callOver` those cells: the dispatch receives the recorded supply, never a
+    re-formed one (given a disciplined callee phase and normalization, which keep the record). -/
+theorem executeAlong_prepared (route : NeedPlan.Route) (a : Nat) (shape : NeedPlan.CallShape) (r : PlanRoute)
+    (hcallee : ∀ eff, Disciplined (NeedPlan.calleeAlong route a eff r))
     (hnormal : ∀ g c, Disciplined (route.normalize g c))
-    (a : Nat) (shape : NeedPlan.CallShape) (s : EvalState) (cell : NeedCell)
+    (s : EvalState) (cell : NeedCell)
     (cells : List NeedSupply.Sourced)
     (hc : s.needs[a]? = some cell) (hp : cell.plan = .prepared (.ok cells)) :
-    (NeedPlan.execute route a shape).runState s = (callOver route shape cells).runState s := by
-  simp only [NeedPlan.execute, callOver, bind_run, withCtx_run]
-  have k1 := htarget shape.callee shape.caller s
-  generalize hr1 : (route.target shape.callee shape.caller).runState s = r1 at k1
+    (NeedPlan.executeAlong route a shape r).runState s = (callOver route a shape r cells).runState s := by
+  simp only [NeedPlan.executeAlong, callOver, bind_run, withCtx_run]
+  have k1 := hcallee (NeedPlan.effective shape r) s
+  generalize hr1 : (NeedPlan.calleeAlong route a (NeedPlan.effective shape r) r).runState s = r1 at k1
   rcases r1 with ⟨o1, t1⟩
   cases o1 with
   | error e => rfl
   | ok callee =>
     dsimp only
-    have k2 := hnormal callee shape.caller t1
-    generalize hr2 : (route.normalize callee shape.caller).runState t1 = r2 at k2
+    have k2 := hnormal callee (NeedPlan.effective shape r).caller t1
+    generalize hr2 : (route.normalize callee (NeedPlan.effective shape r).caller).runState t1 = r2 at k2
     rcases r2 with ⟨o2, t2⟩
     cases o2 with
     | error e => rfl
     | ok normal =>
       dsimp only
       obtain ⟨c2, hc2, kc⟩ := (k1.trans k2) a cell hc
-      rw [prepare_prepared route.spread a shape t2 c2 (.ok cells) hc2 (kc.prepared _ hp)]
+      rw [prepare_prepared route.spread a _ t2 c2 (.ok cells) hc2 (kc.prepared _ hp)]
 
-/-- **Invocation and VALUE share the prepared supply.** With the plan's cells prepared, an
-    explicit invocation is `callOver` those cells, and VALUE of the still-suspended original
-    cell is the completion shell around `callOver` the SAME cells. -/
+/-- **A prepared plan with a recorded route executes over exactly its cells** (META-S3-4: every
+    callable route — call, member, `.Algorithm`, extension). -/
+theorem execute_prepared (route : NeedPlan.Route)
+    (htarget : ∀ f c, Disciplined (route.target f c))
+    (hnormal : ∀ g c, Disciplined (route.normalize g c))
+    (hclassify : ∀ shape, Disciplined (route.classify shape))
+    (hproject : ∀ c, Disciplined (route.project c))
+    (a : Nat) (shape : NeedPlan.CallShape) (s : EvalState) (cell : NeedCell) (r : PlanRoute)
+    (cells : List NeedSupply.Sourced)
+    (hc : s.needs[a]? = some cell) (hr : cell.route = some r) (hi : r ≠ .intrinsic)
+    (hp : cell.plan = .prepared (.ok cells)) :
+    (NeedPlan.execute route a shape).runState s = (callOver route a shape r cells).runState s := by
+  rw [execute_recorded route a shape s cell r hc hr hi]
+  exact executeAlong_prepared route a shape r
+    (fun eff => disciplined_calleeAlong route htarget hclassify hproject a eff r) hnormal s cell cells hc hp
+
+/-- **The original VALUE of a plan whose route is recorded and callable is its execution**
+    (META-S3-4): the completion shell's suspended computation reads the route and runs
+    `executeAlong`, exactly as `execute` does. -/
+theorem suspendedValue_recorded (ev : Expr → EvalCtx → ValEnv → EvalM CountedResult)
+    (route : NeedPlan.Route) (demand : Nat → EvalM CountedResult) (a : Nat)
+    (e : Expr) (c : EvalCtx) (v : ValEnv) (shape : NeedPlan.CallShape)
+    (hshape : NeedPlan.callShape? e c v = some shape)
+    (s : EvalState) (cell : NeedCell) (r : PlanRoute)
+    (hc : s.needs[a]? = some cell) (hr : cell.route = some r) (hi : r ≠ .intrinsic) :
+    (NeedDemand.suspendedValue ev route demand a (.expression e c v)).runState s =
+      (NeedPlan.execute route a shape).runState s := by
+  rw [execute_recorded route a shape s cell r hc hr hi]
+  simp only [NeedDemand.suspendedValue, hshape, bind_run, withCtx_run,
+    routeOf_recorded route.classify a shape s cell r hc hr]
+  all_goals (try (cases r <;> first | rfl | exact absurd rfl hi))
+
+/-- **Invocation and VALUE share the prepared supply.** With the plan's route recorded and its
+    cells prepared, an explicit invocation is `callOver` those cells, and VALUE of the
+    still-suspended original cell is the completion shell around `callOver` the SAME cells. -/
 theorem invoke_and_value_share_cells (ev : Expr → EvalCtx → ValEnv → EvalM CountedResult)
     (route : NeedPlan.Route) (demand : Nat → EvalM CountedResult)
     (htarget : ∀ f c, Disciplined (route.target f c))
     (hnormal : ∀ g c, Disciplined (route.normalize g c))
-    (a : Nat) (s : EvalState) (cell : NeedCell) (shape : NeedPlan.CallShape)
+    (hclassify : ∀ shape, Disciplined (route.classify shape))
+    (hproject : ∀ c, Disciplined (route.project c))
+    (a : Nat) (s : EvalState) (cell : NeedCell) (shape : NeedPlan.CallShape) (r : PlanRoute)
     (cells : List NeedSupply.Sourced)
     (hc : s.needs[a]? = some cell) (hshape : NeedPlan.ofSuspension? cell.suspension = some shape)
+    (hr : cell.route = some r) (hi : r ≠ .intrinsic)
     (hp : cell.plan = .prepared (.ok cells)) (hs : cell.state = .suspended)
-    (hcomplete : ((callOver route shape cells).runState (withState a .evaluating s)).1.isIncomplete = false) :
-    (NeedPlan.invoke route ⟨a⟩).runState s = (callOver route shape cells).runState s ∧
+    (hcomplete : ((callOver route a shape r cells).runState (withState a .evaluating s)).1.isIncomplete = false) :
+    (NeedPlan.invoke route ⟨a⟩).runState s = (callOver route a shape r cells).runState s ∧
     (NeedDemand.step ev route demand a).runState s =
-      (let r := (callOver route shape cells).runState (withState a .evaluating s)
-       (r.1, withState a (.completed r.1) r.2)) := by
+      (let res := (callOver route a shape r cells).runState (withState a .evaluating s)
+       (res.1, withState a (.completed res.1) res.2)) := by
   have hsa : NeedPlan.shapeAt? s.needs a = some shape := by simp [NeedPlan.shapeAt?, hc, hshape]
   refine ⟨?_, ?_⟩
   · rw [invoke_run route a s shape hsa]
-    exact execute_prepared route htarget hnormal a shape s cell cells hc hp
+    exact execute_prepared route htarget hnormal hclassify hproject a shape s cell r cells hc hr hi hp
   · have he : (withState a .evaluating s).needs[a]? = some { cell with state := .evaluating } := by
       simp [withState, modify_get, hc]
-    have hv : NeedDemand.suspendedValue ev route demand a cell.suspension =
-        NeedPlan.execute route a shape := by
+    obtain ⟨e, c, v, hsus, hcs⟩ : ∃ e c v, cell.suspension = .expression e c v ∧
+        NeedPlan.callShape? e c v = some shape := by
       cases hsus : cell.suspension with
       | expression e c v =>
         rw [hsus] at hshape
-        simp only [NeedPlan.ofSuspension?] at hshape
-        simp [NeedDemand.suspendedValue, hshape]
+        exact ⟨e, c, v, rfl, hshape⟩
       | ready _ => rw [hsus] at hshape; cases hshape
       | collector _ => rw [hsus] at hshape; cases hshape
-    have hr := execute_prepared route htarget hnormal a shape (withState a .evaluating s)
-      { cell with state := .evaluating } cells he hp
-    rw [← hv] at hr
-    generalize hres : (callOver route shape cells).runState (withState a .evaluating s) = r at hr hcomplete
-    rcases r with ⟨o, t⟩
-    exact KatLang.NeedControl.Memo.suspended_retains_state ev route demand a s t cell o hc hs hr hcomplete
+    have hr' := execute_prepared route htarget hnormal hclassify hproject a shape (withState a .evaluating s)
+      { cell with state := .evaluating } r cells he hr hi hp
+    have hv := suspendedValue_recorded ev route demand a e c v shape hcs (withState a .evaluating s)
+      { cell with state := .evaluating } r he hr hi
+    rw [hr'] at hv
+    rw [← hsus] at hv
+    generalize hres : (callOver route a shape r cells).runState (withState a .evaluating s) = res at hv hcomplete
+    rcases res with ⟨o, t⟩
+    exact KatLang.NeedControl.Memo.suspended_retains_state ev route demand a s t cell o hc hs hv hcomplete
 
 /-! ## Observation order -/
 
@@ -767,6 +1002,8 @@ theorem meta_value_orders (ev : Expr → EvalCtx → ValEnv → EvalM CountedRes
     (htarget : ∀ f c, Disciplined (route.target f c))
     (hnormal : ∀ g c, Disciplined (route.normalize g c))
     (hdispatch : ∀ g cells c v n, Disciplined (route.dispatch g cells c v n))
+    (hclassify : ∀ shape, Disciplined (route.classify shape))
+    (hproject : ∀ c, Disciplined (route.project c))
     (hdemand : ∀ b, Disciplined (demand b))
     (a : Nat) (s : EvalState) (shape : NeedPlan.CallShape)
     (hshape : NeedPlan.shapeAt? s.needs a = some shape) :
@@ -776,7 +1013,7 @@ theorem meta_value_orders (ev : Expr → EvalCtx → ValEnv → EvalM CountedRes
     (let value := (NeedDemand.step ev route demand a).runState s
      let metaAfter := (NeedPlan.reify a).runState value.2
      (metaAfter.1, value.1, metaAfter.2)) := by
-  have hstep := disciplined_step ev route demand hev hspread htarget hnormal hdispatch hdemand a
+  have hstep := disciplined_step ev route demand hev hspread htarget hnormal hdispatch hclassify hproject hdemand a
   simp only [reify_identity a s shape hshape,
     meta_after _ hstep a s shape hshape]
 
@@ -788,20 +1025,59 @@ theorem production_demand (a : Nat) :
     demandNeed a = NeedDemand.step (evalSuppliedAt a) productionPlanRoute demandNeedRecursive a := rfl
 
 theorem production_route :
-    productionPlanRoute = ⟨resolveCalleeAlg, NeedPlan.normalizeCallee, evalSuppliedCallCounted, evalSupplySpread⟩ := rfl
+    productionPlanRoute = ⟨resolveCalleeAlg, NeedPlan.normalizeCallee, evalSuppliedCallCounted, evalSupplySpread,
+      classifyPlanRouteWith resolveDotReceiver? algorithmIntrinsicRoute, projectNeedCallable⟩ := rfl
 
 theorem production_reify (a : Nat) : reifyNeedCall a = NeedPlan.reify a := rfl
 
 theorem production_invoke (r : NeedPlan.CallReference) :
     invokeNeedCall r = NeedPlan.invoke productionPlanRoute r := rfl
 
-/-- A supported supplied call's suspended computation IS its plan execution. -/
-theorem suspended_call_is_plan (ev : Expr → EvalCtx → ValEnv → EvalM CountedResult)
+/-- **A supported supplied invocation's suspended computation routes it** (META-S3-4): the plan's
+    route under the written form's own context, then — for every callable route — the plan's
+    execution along it, and — for a non-callable intrinsic route — the ordinary evaluation (D-1A). -/
+theorem suspended_call_routes (ev : Expr → EvalCtx → ValEnv → EvalM CountedResult)
     (route : NeedPlan.Route) (demand : Nat → EvalM CountedResult) (a : Nat)
     (e : Expr) (c : EvalCtx) (v : ValEnv) (shape : NeedPlan.CallShape)
     (h : NeedPlan.callShape? e c v = some shape) :
-    NeedDemand.suspendedValue ev route demand a (.expression e c v) = NeedPlan.execute route a shape := by
-  simp [NeedDemand.suspendedValue, h]
+    NeedDemand.suspendedValue ev route demand a (.expression e c v) = (do
+      match ← withCtx shape.ctxMsg (NeedPlan.routeOf route.classify a shape) with
+      | .intrinsic => reCountValueBoundary <$> ev e c v
+      | r => NeedPlan.executeAlong route a shape r) := by
+  simp only [NeedDemand.suspendedValue, h]
+  rfl
+
+/-- **A supported supplied invocation's suspended computation IS its plan execution** whenever its
+    route is not the non-callable intrinsic: both read (or establish) the same route first and then
+    run `executeAlong`. -/
+theorem suspended_call_is_plan (ev : Expr → EvalCtx → ValEnv → EvalM CountedResult)
+    (route : NeedPlan.Route) (demand : Nat → EvalM CountedResult) (a : Nat)
+    (e : Expr) (c : EvalCtx) (v : ValEnv) (shape : NeedPlan.CallShape)
+    (h : NeedPlan.callShape? e c v = some shape) (s : EvalState)
+    (hcallable : ((withCtx shape.ctxMsg (NeedPlan.routeOf route.classify a shape)).runState s).1 ≠ .ok .intrinsic) :
+    (NeedDemand.suspendedValue ev route demand a (.expression e c v)).runState s =
+      (NeedPlan.execute route a shape).runState s := by
+  rw [suspended_call_routes ev route demand a e c v shape h]
+  simp only [NeedPlan.execute, bind_run]
+  revert hcallable
+  rcases (withCtx shape.ctxMsg (NeedPlan.routeOf route.classify a shape)).runState s with ⟨_ | r, t⟩
+  · intro _; rfl
+  · intro hcallable
+    cases r with
+    | intrinsic => exact absurd rfl hcallable
+    | _ => rfl
+
+/-- **A captured non-callable intrinsic keeps its ordinary VALUE** (D-1A): with that route, the
+    suspended computation is the ordinary evaluation of the written expression (after the route). -/
+theorem suspended_intrinsic_is_ordinary (ev : Expr → EvalCtx → ValEnv → EvalM CountedResult)
+    (route : NeedPlan.Route) (demand : Nat → EvalM CountedResult) (a : Nat)
+    (e : Expr) (c : EvalCtx) (v : ValEnv) (shape : NeedPlan.CallShape)
+    (h : NeedPlan.callShape? e c v = some shape) (s : EvalState) (cell : NeedCell)
+    (hc : s.needs[a]? = some cell) (hr : cell.route = some .intrinsic) :
+    (NeedDemand.suspendedValue ev route demand a (.expression e c v)).runState s =
+      (reCountValueBoundary <$> ev e c v).runState s := by
+  rw [suspended_call_routes ev route demand a e c v shape h]
+  simp only [bind_run, withCtx_run, routeOf_recorded route.classify a shape s cell .intrinsic hc hr]
 
 /-- **Conservative extension of the shell.** Every other expression cell keeps the pre-M1.5
     computation (`reCountValueBoundary <$> ev e c v`); Ready and collector cells are untouched. -/
@@ -811,60 +1087,88 @@ theorem suspended_other_is_ordinary (ev : Expr → EvalCtx → ValEnv → EvalM 
     NeedDemand.suspendedValue ev route demand a (.expression e c v) = reCountValueBoundary <$> ev e c v := by
   simp [NeedDemand.suspendedValue, h]
 
-/-- The supported shapes: a written call with a lexical-name or parameter callee, nothing else. -/
-theorem callShape_supported (f : Expr) (args : OutputBundle) (c : EvalCtx) (v : ValEnv) :
-    (NeedPlan.callShape? (.call f args) c v).isSome = (match f with
-      | .resolve _ | .param _ => true
+/-- **THE INVOCATION DOMAIN** (META-S3-4, CR-2, D-2A): a written expression is a plan exactly when it
+    is a written call whose callee is a name, a parameter or an argumentless dot path, or an
+    argument-bearing dot edge (an explicitly empty list included). Every other form — values,
+    names, argumentless dot edges, computed callees, collectors' sources — is no plan. The
+    decision reads only the expression's outer syntax. -/
+theorem callShape_supported (source : Expr) (c : EvalCtx) (v : ValEnv) :
+    (NeedPlan.callShape? source c v).isSome = (match source with
+      | .call (.resolve _) _ | .call (.param _) _ | .call (.dotMember _ _ _ none) _ => true
+      | .dotMember _ _ _ (some _) => true
       | _ => false) := by
-  cases f <;> rfl
+  cases source with
+  | call f args =>
+    cases f with
+    | dotMember r n fb argsOpt => cases argsOpt <;> rfl
+    | _ => rfl
+  | dotMember r n fb argsOpt => cases argsOpt <;> rfl
+  | _ => rfl
+
+/-- An argumentless dot edge (`5.Inc`, `Box.G`) is never a plan (D-2A, DOT-09). -/
+theorem argumentless_edge_not_plan (r : Expr) (n : Ident) (fb : Expr) (c : EvalCtx) (v : ValEnv) :
+    NeedPlan.callShape? (.dotMember r n fb none) c v = none := rfl
+
+/-- An argument-bearing dot edge is a dot-form plan whose callee is its argumentless edge and whose
+    written bundle is its own argument list. -/
+theorem dot_edge_shape (r : Expr) (n : Ident) (fb : Expr) (args : OutputBundle) (c : EvalCtx) (v : ValEnv) :
+    NeedPlan.callShape? (.dotMember r n fb (some args)) c v =
+      some ⟨.dotMember r n fb none, args, c, v, .dot r n fb⟩ := rfl
 
 /-- **The production VALUE of a suspended supported call executes its plan**: `demandNeed` is
     the completion shell around `NeedPlan.execute productionPlanRoute`, whose supply
-    is the cell's own `NeedPlan.prepare`. The recursive edge `demandNeedRecursive` installs the
-    same route by its source (it is `partial`, so this is a source fact for nested demands). -/
+    is the cell's own `NeedPlan.prepare` — here for a plan whose callable route is recorded (META-S3-4;
+    an unrecorded route is established by the same first step, `suspended_call_is_plan`). -/
 theorem production_value_executes_plan (a : Nat) (s : EvalState) (cell : NeedCell)
-    (e : Expr) (c : EvalCtx) (v : ValEnv) (shape : NeedPlan.CallShape)
+    (e : Expr) (c : EvalCtx) (v : ValEnv) (shape : NeedPlan.CallShape) (r : PlanRoute)
     (hc : s.needs[a]? = some cell) (hsus : cell.suspension = .expression e c v)
     (hshape : NeedPlan.callShape? e c v = some shape) (hs : cell.state = .suspended)
+    (hr : cell.route = some r) (hi : r ≠ .intrinsic)
     (hcomplete : ((NeedPlan.execute productionPlanRoute a shape).runState
       (withState a .evaluating s)).1.isIncomplete = false) :
     (demandNeed a).runState s =
-      (let r := (NeedPlan.execute productionPlanRoute a shape).runState (withState a .evaluating s)
-       (r.1, withState a (.completed r.1) r.2)) := by
+      (let res := (NeedPlan.execute productionPlanRoute a shape).runState (withState a .evaluating s)
+       (res.1, withState a (.completed res.1) res.2)) := by
   rw [production_demand]
-  have hv : NeedDemand.suspendedValue (evalSuppliedAt a) productionPlanRoute demandNeedRecursive a cell.suspension =
-      NeedPlan.execute productionPlanRoute a shape := by
-    rw [hsus]
-    exact suspended_call_is_plan _ _ _ a e c v shape hshape
-  generalize hr : (NeedPlan.execute productionPlanRoute a shape).runState
-    (withState a .evaluating s) = r at hcomplete
-  rcases r with ⟨o, t⟩
-  rw [← hv] at hr
-  exact KatLang.NeedControl.Memo.suspended_retains_state _ _ _ a s t cell o hc hs hr hcomplete
+  have he : (withState a .evaluating s).needs[a]? = some { cell with state := .evaluating } := by
+    simp [withState, modify_get, hc]
+  have hv := suspendedValue_recorded (evalSuppliedAt a) productionPlanRoute demandNeedRecursive a e c v shape
+    hshape (withState a .evaluating s) { cell with state := .evaluating } r he hr hi
+  rw [← hsus] at hv
+  generalize hres : (NeedPlan.execute productionPlanRoute a shape).runState
+    (withState a .evaluating s) = res at hcomplete
+  rcases res with ⟨o, t⟩
+  rw [hres] at hv
+  exact KatLang.NeedControl.Memo.suspended_retains_state _ _ _ a s t cell o hc hs hv hcomplete
 
 /-- (Historical name of the M1.5 boundary; R7 PROVES it: `productionDiscipline_holds` in
     `KatLangArityLaws/EvaluatorDiscipline.lean`.) The production callbacks are disciplined (they keep every existing cell's suspension, completed VALUE and
     prepared plan). By source inspection the evaluator writes the heap only through
     `allocateNeed`, `projectNeedCallable`'s CALLABLE memo, `NeedPlan.prepare`, `NeedDemand.step`
-    and the META-S3-1 memo records `NeedPlan.setCallee` / `NeedLink.setReceiver` (which write only
-    the `callee` / `receiver` field, kept by `CellKept`), `prepare` and `step` proved disciplined
-    here; Lean cannot unfold the `partial` definitions, so this is an explicit hypothesis,
-    exercised by `InvocationPlanGuards`. -/
+    and the memo records `NeedPlan.setCallee` / `NeedLink.setReceiver` / `NeedPlan.setRoute`
+    (META-S3-1/S3-4: they write only the `callee` / `receiver` / `route` field, kept by `CellKept`),
+    `prepare` and `step` proved disciplined here; Lean cannot unfold the `partial` definitions, so
+    this is an explicit hypothesis, exercised by `InvocationPlanGuards`. META-S3-4 adds the route
+    classifier and the CALLABLE projection the plan route installs. -/
 def ProductionDiscipline : Prop :=
   (∀ a e c v, Disciplined (evalSuppliedAt a e c v)) ∧
   (∀ f c, Disciplined (resolveCalleeAlg f c)) ∧
   (∀ g c, Disciplined (NeedPlan.normalizeCallee g c)) ∧
   (∀ g cells c v n, Disciplined (evalSuppliedCallCounted g cells c v n)) ∧
   (∀ b, Disciplined (demandNeedRecursive b)) ∧
-  (∀ e c v, Disciplined (evalSupplySpread e c v))
+  (∀ e c v, Disciplined (evalSupplySpread e c v)) ∧
+  (∀ shape, Disciplined (classifyPlanRouteWith resolveDotReceiver? algorithmIntrinsicRoute shape)) ∧
+  (∀ b, Disciplined (projectNeedCallable b))
 
 theorem production_value_disciplined (hp : ProductionDiscipline) (a : Nat) :
     Disciplined (demandNeed a) :=
-  disciplined_step _ productionPlanRoute _ (hp.1 a) hp.2.2.2.2.2 hp.2.1 hp.2.2.1 hp.2.2.2.1 hp.2.2.2.2.1 a
+  disciplined_step _ productionPlanRoute _ (hp.1 a) hp.2.2.2.2.2.1 hp.2.1 hp.2.2.1 hp.2.2.2.1
+    hp.2.2.2.2.2.2.1 hp.2.2.2.2.2.2.2 hp.2.2.2.2.1 a
 
 theorem production_invoke_disciplined (hp : ProductionDiscipline) (r : NeedPlan.CallReference) :
     Disciplined (invokeNeedCall r) :=
-  disciplined_invoke productionPlanRoute hp.2.2.2.2.2 hp.2.1 hp.2.2.1 hp.2.2.2.1 r
+  disciplined_invoke productionPlanRoute hp.2.2.2.2.2.1 hp.2.1 hp.2.2.1 hp.2.2.2.1
+    hp.2.2.2.2.2.2.1 hp.2.2.2.2.2.2.2 r
 
 /-- Production: META after the production VALUE (success or failure) reifies the same plan. -/
 theorem production_value_then_meta (hp : ProductionDiscipline) (a : Nat) (s : EvalState)
@@ -890,7 +1194,8 @@ theorem production_meta_value_orders (hp : ProductionDiscipline) (a : Nat) (s : 
     (let value := (demandNeed a).runState s
      let metaAfter := (reifyNeedCall a).runState value.2
      (metaAfter.1, value.1, metaAfter.2)) :=
-  meta_value_orders _ productionPlanRoute _ (hp.1 a) hp.2.2.2.2.2 hp.2.1 hp.2.2.1 hp.2.2.2.1 hp.2.2.2.2.1 a s shape hshape
+  meta_value_orders _ productionPlanRoute _ (hp.1 a) hp.2.2.2.2.2.1 hp.2.1 hp.2.2.1 hp.2.2.2.1
+    hp.2.2.2.2.2.2.1 hp.2.2.2.2.2.2.2 hp.2.2.2.2.1 a s shape hshape
 
 /-! ## Transparent forwarding (actual `supplyNeed`) -/
 
@@ -1025,18 +1330,21 @@ theorem withPlan_self (a : Nat) (p : NeedPlanSupply) (s : EvalState) (cell : Nee
 def Oblivious {α : Type} (a : Nat) (m : EvalM α) : Prop :=
   ∀ s p, a < s.needs.size → m.runState (withPlan a p s) = ((m.runState s).1, withPlan a p (m.runState s).2)
 
-/-- The ordinary call composition of a plan's written call — the phase order of the production
-    `evalCallCountedExpr` → `evalResolvedCallCounted` (the latter forms the supply with
-    `NeedSupply.form evalSupplySpread` and dispatches through `evalSuppliedCallCounted`, the same
-    dispatch `productionPlanRoute` installs). The correspondence with the `partial` production
-    definitions is a source fact, checked executably by `InvocationPlanGuards.agrees`. -/
-def ordinaryCall (route : NeedPlan.Route)
-    (shape : NeedPlan.CallShape) : EvalM CountedResult := do
-  let callee ← withCtx (CtxMsg.call shape.callee) (route.target shape.callee shape.caller)
-  let result ← withCtx (CtxMsg.call shape.callee) (do
-    let normal ← route.normalize callee shape.caller
-    let cells ← NeedSupply.form route.spread shape.caller shape.values shape.args
-    route.dispatch normal cells shape.caller shape.values (openExprName shape.callee))
+/-- The ordinary call composition of a plan's written invocation along route `r` — the phase order
+    of the production `evalCallCountedExpr` → `evalResolvedCallCounted` (the latter forms the supply
+    with `NeedSupply.form evalSupplySpread` and dispatches through `evalSuppliedCallCounted`, the
+    same dispatch `productionPlanRoute` installs) over the route's callee and effective bundle
+    (META-S3-4: an extension is the call `F(t, args)`, `effective`). The correspondence with the
+    `partial` production definitions is a source fact, checked executably by
+    `InvocationPlanGuards.agrees` and `InvocationRouteGuards`. -/
+def ordinaryCall (route : NeedPlan.Route) (a : Nat)
+    (shape : NeedPlan.CallShape) (r : PlanRoute) : EvalM CountedResult := do
+  let eff := NeedPlan.effective shape r
+  let callee ← withCtx shape.ctxMsg (NeedPlan.calleeAlong route a eff r)
+  let result ← withCtx shape.ctxMsg (do
+    let normal ← route.normalize callee eff.caller
+    let cells ← NeedSupply.form route.spread eff.caller eff.values eff.args
+    route.dispatch normal cells eff.caller eff.values (openExprName eff.callee))
   pure (reCountValueBoundary result)
 
 theorem valid_of_get {h : Array NeedCell} {a : Nat} {c : NeedCell} (hc : h[a]? = some c) :
@@ -1053,33 +1361,40 @@ theorem oblivious_keeps_record {α : Type} {m : EvalM α} {a : Nat} (hm : Oblivi
   rw [withPlan_self a p s cell h hp] at e
   exact congrArg Prod.snd e
 
-/-- **A fresh plan is the ordinary call.** On a plan whose supply is not yet prepared, one plan
-    execution has EXACTLY the outcome of the ordinary call composition, and its final state
-    differs from the ordinary one at most in the plan record of the plan's own cell.
-    Assumptions: the callbacks are disciplined (they keep the cell present) and oblivious of
-    that cell's plan record — both structural contracts of the callbacks, not of the result. -/
+/-- **A fresh plan is the ordinary call.** On a plan whose route `r` is recorded (callable) and whose
+    supply is not yet prepared, one plan execution has EXACTLY the outcome of the ordinary call
+    composition along that route, and its final state differs from the ordinary one at most in the
+    plan record of the plan's own cell. Assumptions: the callbacks are disciplined (they keep the
+    cell present) and oblivious of that cell's plan record — both structural contracts of the
+    callbacks, not of the result. -/
 theorem fresh_plan_is_ordinary_call
-    (route : NeedPlan.Route) (a : Nat) (shape : NeedPlan.CallShape) (s : EvalState) (cell : NeedCell)
+    (route : NeedPlan.Route) (a : Nat) (shape : NeedPlan.CallShape) (r : PlanRoute)
+    (s : EvalState) (cell : NeedCell)
     (hc : s.needs[a]? = some cell) (hp : cell.plan = .unprepared)
+    (hr : cell.route = some r) (hi : r ≠ .intrinsic)
     (hev : ∀ e c v, Disciplined (route.spread e c v))
-    (dtarget : ∀ f c, Disciplined (route.target f c))
+    (dcallee : Disciplined (NeedPlan.calleeAlong route a (NeedPlan.effective shape r) r))
     (dnormal : ∀ g c, Disciplined (route.normalize g c))
-    (otarget : ∀ f c, Oblivious a (route.target f c))
+    (ocallee : Oblivious a (NeedPlan.calleeAlong route a (NeedPlan.effective shape r) r))
     (onormal : ∀ g c, Oblivious a (route.normalize g c))
-    (oform : Oblivious a (NeedSupply.form route.spread shape.caller shape.values shape.args))
+    (oform : Oblivious a (NeedSupply.form route.spread (NeedPlan.effective shape r).caller
+      (NeedPlan.effective shape r).values (NeedPlan.effective shape r).args))
     (odispatch : ∀ g cells, Oblivious a
-      (route.dispatch g cells shape.caller shape.values (openExprName shape.callee))) :
-    ((NeedPlan.execute route a shape).runState s).1 = ((ordinaryCall route shape).runState s).1 ∧
-    (((NeedPlan.execute route a shape).runState s).2 = ((ordinaryCall route shape).runState s).2 ∨
+      (route.dispatch g cells (NeedPlan.effective shape r).caller (NeedPlan.effective shape r).values
+        (openExprName (NeedPlan.effective shape r).callee))) :
+    ((NeedPlan.execute route a shape).runState s).1 = ((ordinaryCall route a shape r).runState s).1 ∧
+    (((NeedPlan.execute route a shape).runState s).2 = ((ordinaryCall route a shape r).runState s).2 ∨
       (∃ o, ((NeedPlan.execute route a shape).runState s).2 =
-        withPlan a (.prepared o) ((ordinaryCall route shape).runState s).2) ∨
+        withPlan a (.prepared o) ((ordinaryCall route a shape r).runState s).2) ∨
       (((NeedPlan.execute route a shape).runState s).1 = .error .fuelExhausted ∧
         ((NeedPlan.execute route a shape).runState s).2 =
-          withPlan a .preparing ((ordinaryCall route shape).runState s).2)) := by
-  simp only [NeedPlan.execute, ordinaryCall, bind_run, withCtx_run]
-  have k1 := dtarget shape.callee shape.caller s
-  have r1keep := oblivious_keeps_record (otarget shape.callee shape.caller) .unprepared s cell hc hp
-  generalize hr1 : (route.target shape.callee shape.caller).runState s = r1 at k1 r1keep
+          withPlan a .preparing ((ordinaryCall route a shape r).runState s).2)) := by
+  rw [execute_recorded route a shape s cell r hc hr hi]
+  generalize heff : NeedPlan.effective shape r = eff at dcallee ocallee oform odispatch
+  simp only [NeedPlan.executeAlong, ordinaryCall, bind_run, withCtx_run, heff]
+  have k1 := dcallee s
+  have r1keep := oblivious_keeps_record ocallee .unprepared s cell hc hp
+  generalize hr1 : (NeedPlan.calleeAlong route a eff r).runState s = r1 at k1 r1keep
   rcases r1 with ⟨o1, t1⟩
   cases o1 with
   | error e => exact ⟨rfl, Or.inl rfl⟩
@@ -1090,9 +1405,9 @@ theorem fresh_plan_is_ordinary_call
       have := congrArg (fun st : EvalState => (st.needs[a]?).map NeedCell.plan) r1keep
       simp [withPlan, modify_get, hc1] at this
       exact this
-    have k2 := dnormal callee shape.caller t1
-    have r2keep := oblivious_keeps_record (onormal callee shape.caller) .unprepared t1 c1 hc1 hp1
-    generalize hr2 : (route.normalize callee shape.caller).runState t1 = r2 at k2 r2keep
+    have k2 := dnormal callee eff.caller t1
+    have r2keep := oblivious_keeps_record (onormal callee eff.caller) .unprepared t1 c1 hc1 hp1
+    generalize hr2 : (route.normalize callee eff.caller).runState t1 = r2 at k2 r2keep
     rcases r2 with ⟨o2, t2⟩
     cases o2 with
     | error e => exact ⟨rfl, Or.inl rfl⟩
@@ -1103,26 +1418,26 @@ theorem fresh_plan_is_ordinary_call
         have := congrArg (fun st : EvalState => (st.needs[a]?).map NeedCell.plan) r2keep
         simp [withPlan, modify_get, hc2] at this
         exact this
-      cases hinc : ((NeedSupply.form route.spread shape.caller shape.values shape.args).runState
+      cases hinc : ((NeedSupply.form route.spread eff.caller eff.values eff.args).runState
           t2).1.isIncomplete with
       | true =>
-        have hinc' : ((NeedSupply.form route.spread shape.caller shape.values shape.args).runState
+        have hinc' : ((NeedSupply.form route.spread eff.caller eff.values eff.args).runState
             (withPlan a .preparing t2)).1.isIncomplete = true := by
           rw [oform t2 .preparing (valid_of_get hc2)]; exact hinc
-        rw [prepare_unprepared_incomplete route.spread a shape t2 c2 hc2 hp2 hinc',
+        rw [prepare_unprepared_incomplete route.spread a eff t2 c2 hc2 hp2 hinc',
           oform t2 .preparing (valid_of_get hc2)]
-        generalize hr3 : (NeedSupply.form route.spread shape.caller shape.values shape.args).runState t2 = r3
+        generalize hr3 : (NeedSupply.form route.spread eff.caller eff.values eff.args).runState t2 = r3
           at hinc
         rcases r3 with ⟨o3, t3⟩
         dsimp only at hinc ⊢
         rw [Except.isIncomplete_eq_true hinc]
         exact ⟨rfl, Or.inr (Or.inr ⟨rfl, rfl⟩)⟩
       | false =>
-      rw [prepare_unprepared route.spread a shape t2 c2 hc2 hp2
+      rw [prepare_unprepared route.spread a eff t2 c2 hc2 hp2
         (by rw [oform t2 .preparing (valid_of_get hc2)]; exact hinc)]
       dsimp only
       rw [oform t2 .preparing (valid_of_get hc2)]
-      generalize hr3 : (NeedSupply.form route.spread shape.caller shape.values shape.args).runState t2 = r3
+      generalize hr3 : (NeedSupply.form route.spread eff.caller eff.values eff.args).runState t2 = r3
         at hinc
       rcases r3 with ⟨o3, t3⟩
       dsimp only at hinc ⊢
@@ -1132,12 +1447,12 @@ theorem fresh_plan_is_ordinary_call
       | ok cells =>
         dsimp only
         have hv3 : a < t3.needs.size := by
-          obtain ⟨c3, hc3, _⟩ := disciplined_form route.spread hev shape.caller shape.values shape.args t2 a c2 hc2
+          obtain ⟨c3, hc3, _⟩ := disciplined_form route.spread hev eff.caller eff.values eff.args t2 a c2 hc2
           rw [hr3] at hc3
           exact valid_of_get hc3
         rw [odispatch normal cells t3 (.prepared (.ok cells)) hv3]
-        generalize (route.dispatch normal cells shape.caller shape.values
-          (openExprName shape.callee)).runState t3 = r4
+        generalize (route.dispatch normal cells eff.caller eff.values
+          (openExprName eff.callee)).runState t3 = r4
         rcases r4 with ⟨o4, t4⟩
         cases o4 with
         | error e => exact ⟨rfl, Or.inr (Or.inl ⟨.ok cells, rfl⟩)⟩
@@ -1183,15 +1498,17 @@ theorem oblivious_pure {α : Type} (a : Nat) (x : α) : Oblivious a (pure x : Ev
 theorem fresh_plan_contracts_satisfiable (a : Nat) (callee : Expr) (caller : EvalCtx) (values : ValEnv)
     (alg : Algorithm) (out : CountedResult) :
     let route : NeedPlan.Route :=
-      ⟨fun _ _ => pure alg, fun g _ => pure g, fun _ _ _ _ _ => pure out, fun _ _ _ => pure (.items [])⟩
-    let shape : NeedPlan.CallShape := ⟨callee, [], caller, values⟩
+      ⟨fun _ _ => pure alg, fun g _ => pure g, fun _ _ _ _ _ => pure out, fun _ _ _ => pure (.items []),
+       fun _ => pure .call, fun _ => pure none⟩
+    let shape : NeedPlan.CallShape := ⟨callee, [], caller, values, .call⟩
+    let eff := NeedPlan.effective shape .call
     (∀ e c v, Disciplined (route.spread e c v)) ∧
-    (∀ f c, Disciplined (route.target f c)) ∧ (∀ g c, Disciplined (route.normalize g c)) ∧
-    (∀ f c, Oblivious a (route.target f c)) ∧ (∀ g c, Oblivious a (route.normalize g c)) ∧
-    Oblivious a (NeedSupply.form route.spread shape.caller shape.values shape.args) ∧
-    (∀ g cells, Oblivious a (route.dispatch g cells shape.caller shape.values (openExprName shape.callee))) :=
-  ⟨fun _ _ _ => disciplined_pure _, fun _ _ => disciplined_pure _, fun _ _ => disciplined_pure _,
-   fun _ _ => oblivious_pure a _, fun _ _ => oblivious_pure a _, oblivious_pure a _,
+    Disciplined (NeedPlan.calleeAlong route a eff .call) ∧ (∀ g c, Disciplined (route.normalize g c)) ∧
+    Oblivious a (NeedPlan.calleeAlong route a eff .call) ∧ (∀ g c, Oblivious a (route.normalize g c)) ∧
+    Oblivious a (NeedSupply.form route.spread eff.caller eff.values eff.args) ∧
+    (∀ g cells, Oblivious a (route.dispatch g cells eff.caller eff.values (openExprName eff.callee))) :=
+  ⟨fun _ _ _ => disciplined_pure _, disciplined_pure _, fun _ _ => disciplined_pure _,
+   oblivious_pure a _, fun _ _ => oblivious_pure a _, oblivious_pure a _,
    fun _ _ => oblivious_pure a _⟩
 
 end KatLang.CallPlan

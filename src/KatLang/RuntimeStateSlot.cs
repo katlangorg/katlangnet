@@ -7,7 +7,9 @@ namespace KatLang;
 /// the diagnostic provenance notes of inferred parameters
 /// (<see cref="ParameterDeclaration.InferredProvenance"/>,
 /// <see cref="CaptureParameterPattern.InferredProvenance"/>,
-/// <see cref="Expr.DotCall.InferredFallbackProvenance"/>,
+/// <see cref="Expr.DotCall.InferredFallbackProvenance"/>, the derived argumentless edge an invocation
+/// plan's route memoizes on its dot node (<see cref="Expr.DotCall.ArgumentlessEdge"/>, which validates the
+/// memo's owner so a <c>with</c> copy never reuses it),
 /// <see cref="EvalError.ArityMismatch.InferredImplicitParameters"/>,
 /// <see cref="EvalError.UnresolvedImplicitParams.InferredImplicitParameters"/>).
 /// <para>Declared as a private field of the carrying record and exposed through an

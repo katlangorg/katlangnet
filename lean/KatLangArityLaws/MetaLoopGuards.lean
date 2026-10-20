@@ -200,17 +200,21 @@ def unit : Result := .sequenceValue []
 -- Zero repetitions of a parameterized step never bind it.
 #guard valueIs (run [] [dot (callN "Inc" []) "repeat" (some [.num 0])]) unit
 
-/-! ## CR-2: dot callees are not plans; the named alias works -/
+/-! ## CR-2 (META-S3-4): a qualified member invocation is a plan; the named alias still works -/
 
-#guard isMetaRefusal (run [] [dot (dot (.resolve "Box") "S" (some [.num 0])) "while" none])
+-- Before META-S3-4 this was the META refusal (a dot callee); it is now a written invocation.
+#guard valueIs (run [] [dot (dot (.resolve "Box") "S" (some [.num 0])) "while" none]) (.atom 3)
+-- An argumentless member path is still no invocation (D-2A).
+#guard isMetaRefusal (run [] [dot (dot (.resolve "Box") "S" none) "while" none])
 #guard valueIs (run [("S2", aliasOf (dot (.resolve "Box") "S" none))] [dot (callN "S2" [.num 0]) "while" none]) (.atom 3)
 
 /-! ## Wrappers (CR-3/CR-4) -/
 
--- `While(meta step) = while(step.Algorithm(step.Arguments*))`: a dot callee, refused.
-#guard isMetaRefusal (run [("While", algWithParameters [metaParam "step"] [] []
+-- `While(meta step) = while(step.Algorithm(step.Arguments*))`: before META-S3-4 a refused dot
+-- callee; now the rebuilt projected invocation is itself captured (CR-14).
+#guard valueIs (run [("While", algWithParameters [metaParam "step"] [] []
       [callN "while" [Expr.dotCall (.param "step") "Algorithm" (some [.sequenceSpread (argumentsOf (.param "step"))])]])]
-    [callN "While" [callN "Step" [.num 0]]])
+    [callN "While" [callN "Step" [.num 0]]]) (.atom 3)
 -- Through a runtime alias of the projection: a name callee, captured.
 def aliasWrapper : List (Ident × Algorithm) :=
   [("While", algWithParameters [metaParam "step"] [] (propsPrivate [("S", aliasOf (algorithmOf (.param "step")))])

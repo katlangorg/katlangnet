@@ -35,6 +35,33 @@ laws, the dot funnel, Q-25, plan conservativity and the admitted public-run brid
 constructor required one line in the shared generated-artifact template (`LeanObsTemplate`) and the
 regenerated `SemanticExplorerCases.lean` / `LanguageSpecCases.lean` headers.
 
+META-S3-4 — generalized META capture of written invocations (2026-10-20; an INTENTIONAL language
+extension, owner decisions D-1A/D-2A/D-4, consequences D-3/D-5; Lean first, then C#). The capture domain
+is syntactic in both engines (Lean `NeedPlan.callShape?` with `CallForm`, C# `IsPlannableCall`): a call
+through a name, parameter or argumentless dot path, or an argument-bearing dot edge. Each plan has ONE
+route (Lean `PlanRoute`, `NeedCell.route`, `NeedPlan.routeOf` — first writer wins — over
+`classifyPlanRouteWith`; C# `PlanRouteOf` / `PlanRouteOfAsync` / `ComputePlanRoute`, compare-and-set,
+a computation under a pending non-initiating observation never retained), decided by THE ONE dot
+decision both engines' ordinary dot evaluation also takes (Lean `selectDotEdge` / `DotMiss` in
+`evalDotCallCounted`, `algorithmIntrinsicRoute` and the plan classifier; C# `SelectDotEdge` /
+`DotEdgeRoute` in `EvalDotCallCounted`, its async twin, `IsAlgorithmIntrinsicRoute` and
+`ComputePlanRoute`). Execution follows the route (Lean `NeedPlan.effective` / `calleeAlong` /
+`executeAlong` under `CallShape.ctxMsg`; C# `DispatchPlannedDotCounted[Async]`,
+`EvalPlannedAlgorithmCalleeCallCounted`, ending in the shared `DispatchPlannedCounted[Async]`); the
+callee cell, argument view and loop setup are route-aware; an intrinsic route is the ordinary VALUE and
+the structured refusal `NotAnAlgorithm "meta: not a callable invocation"` (Lean `NeedPlan.invocationRefusal`)
+for every route-dependent reference operation. The C# `.Algorithm`-route receiver cell
+(`InvocationReceiverSuspension`) reads through `EvalAlgorithmReceiver`, which keeps the ordinary
+checkpoint accounting (C#-only; Lean has no checkpoint counter). For a transported parameter receiver, each planned ordinary invocation also takes `EvalAlgorithmReceiver[Async]`: its ordinary value-receiver checkpoint and parameter error provenance, while retaining the original parameter cell. Lean's `ProductionDiscipline` gained
+the classifier and `projectNeedCallable` conjuncts (proved, `EvaluatorDiscipline.classify_disciplined`),
+and `CellKept` a route-stickiness field. A Lean-only representation note: the `.Algorithm` route's
+dispatch names the fresh call by the plan's written callee (`openExprName`), where C# names it by the
+captured plan's callee (`PlanCalleeName`) — diagnostics text is C#-only. The META refusal's C# rendering
+names the new domain. Laws `KatLangArityLaws/InvocationRoute.lean`, guards `InvocationRouteGuards.lean`;
+C# `InvocationRoute/InvocationRouteCorpusTests`, `InvocationRouteTests`; report
+`experimental/features/meta-s3-4-implementation.md` (local). C#-only: J7, async route resolution,
+compare-and-set, cancellation, ownership checks, checkpoint accounting and diagnostics wording.
+
 META-S3-3 — `while(meta step)` / `repeat(meta step, count)` (2026-10-20; an INTENTIONAL breaking
 language change, owner decisions D1/D2/D6/D7, OD-1, RP-1; Lean and C# changed together). Lean is
 authoritative: `builtinSignature` (the ONE builtin signature, read by `builtinAcceptsArity` /
@@ -350,7 +377,8 @@ reentry. This is the existing host source-admission law; Lean models no external
 CallReference M1.5 (2026-10-16): authoritative Lean invocation plans; no surface syntax, no
 change to any program's outcome, C# change limited to the experimental gate's comments and one
 parity test. A supplied cell whose suspension is a written call with a lexical-name or parameter
-callee IS an invocation plan (identity = need address); its one supply preparation lives in the
+callee (since META-S3-4: any written invocation, see the META-S3-4 entry) IS an invocation plan
+(identity = need address); its one supply preparation lives in the
 production `NeedCell.plan` (`NeedPlanSupply`: unprepared / preparing / sticky prepared outcome),
 formed at most once through `NeedSupply.form`. `NeedDemand.suspendedValue` / `step` take a
 `NeedPlan.Route` and the cell address; a plan cell's computation is `NeedPlan.execute` (ordinary

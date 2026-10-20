@@ -141,10 +141,22 @@ variable {γ : Type} [PartialOrder γ]
     monotone (fun x => WhileRound.advance (round x) cells) := by
   unfold WhileRound.advance; mono_cb_tac
 
+@[partial_fixpoint_monotone] theorem monotone_planRouteOf
+    (classify : γ → NeedPlan.CallShape → EvalM PlanRoute) (h : monotone classify) (a : Nat)
+    (shape : NeedPlan.CallShape) :
+    monotone (fun x => NeedPlan.routeOf (classify x) a shape) := by
+  unfold NeedPlan.routeOf; mono_cb_tac
+
+@[partial_fixpoint_monotone] theorem monotone_planCalleeCell
+    (classify : γ → NeedPlan.CallShape → EvalM PlanRoute) (h : monotone classify) (a : Nat) :
+    monotone (fun x => NeedPlan.calleeCell (classify x) a) := by
+  unfold NeedPlan.calleeCell; mono_cb_tac
+
 @[partial_fixpoint_monotone] theorem monotone_metaLoopCapture
+    (classify : γ → NeedPlan.CallShape → EvalM PlanRoute) (hc : monotone classify)
     (read : γ → Nat → EvalM CountedResult) (hr : monotone read)
     (view : γ → Nat → EvalM (List NeedSupply.Sourced)) (hv : monotone view) (adapter : Nat) :
-    monotone (fun x => metaLoopCapture (read x) (view x) adapter) := by
+    monotone (fun x => metaLoopCapture (classify x) (read x) (view x) adapter) := by
   unfold metaLoopCapture; mono_cb_tac
 
 @[partial_fixpoint_monotone] theorem monotone_metaRepeatSetup {α : Type}
@@ -260,11 +272,28 @@ structure RouteMono (route : γ → NeedPlan.Route) : Prop where
   normalize : monotone (fun x => (route x).normalize)
   dispatch : monotone (fun x => (route x).dispatch)
   spread : monotone (fun x => (route x).spread)
+  classify : monotone (fun x => (route x).classify)
+  project : monotone (fun x => (route x).project)
+
+theorem monotone_planCalleeAlong (route : γ → NeedPlan.Route) (h : RouteMono route) (a : Nat)
+    (eff : NeedPlan.CallShape) (r : PlanRoute) :
+    monotone (fun x => NeedPlan.calleeAlong (route x) a eff r) := by
+  have ht := h.target; have hp := h.project
+  have := monotone_planCalleeCell (fun x => (route x).classify) h.classify a
+  cases r <;> (simp only [NeedPlan.calleeAlong]; mono_cb_tac)
+
+theorem monotone_planExecuteAlong (route : γ → NeedPlan.Route) (h : RouteMono route) (a : Nat)
+    (shape : NeedPlan.CallShape) (r : PlanRoute) :
+    monotone (fun x => NeedPlan.executeAlong (route x) a shape r) := by
+  have hn := h.normalize; have hd := h.dispatch; have hs := h.spread
+  have := monotone_planCalleeAlong route h a (NeedPlan.effective shape r) r
+  unfold NeedPlan.executeAlong; dsimp only; mono_cb_tac
 
 theorem monotone_planExecute (route : γ → NeedPlan.Route) (h : RouteMono route) (a : Nat)
     (shape : NeedPlan.CallShape) :
     monotone (fun x => NeedPlan.execute (route x) a shape) := by
-  have ht := h.target; have hn := h.normalize; have hd := h.dispatch; have hs := h.spread
+  have := monotone_planRouteOf (fun x => (route x).classify) h.classify a shape
+  have := monotone_planExecuteAlong route h a shape
   unfold NeedPlan.execute; mono_cb_tac
 
 theorem monotone_planInvoke (route : γ → NeedPlan.Route) (h : RouteMono route)
@@ -275,13 +304,15 @@ theorem monotone_planInvoke (route : γ → NeedPlan.Route) (h : RouteMono route
   mono_cb_tac
 
 @[partial_fixpoint_monotone] theorem monotone_planViewCells
-    (spread : γ → NeedSupply.SpreadEval) (h : monotone spread) (a : Nat) :
-    monotone (fun x => NeedPlan.viewCells (spread x) a) := by
+    (spread : γ → NeedSupply.SpreadEval) (h : monotone spread)
+    (classify : γ → NeedPlan.CallShape → EvalM PlanRoute) (hc : monotone classify) (a : Nat) :
+    monotone (fun x => NeedPlan.viewCells (spread x) (classify x) a) := by
   unfold NeedPlan.viewCells; mono_cb_tac
 
 @[partial_fixpoint_monotone] theorem monotone_planViewSupply
-    (spread : γ → NeedSupply.SpreadEval) (h : monotone spread) (a : Nat) :
-    monotone (fun x => NeedPlan.viewSupply (spread x) a) := by
+    (spread : γ → NeedSupply.SpreadEval) (h : monotone spread)
+    (classify : γ → NeedPlan.CallShape → EvalM PlanRoute) (hc : monotone classify) (a : Nat) :
+    monotone (fun x => NeedPlan.viewSupply (spread x) (classify x) a) := by
   unfold NeedPlan.viewSupply; mono_cb_tac
 
 @[partial_fixpoint_monotone] theorem monotone_demandMaterialize
@@ -298,12 +329,15 @@ theorem monotone_suspendedValue
   | ready v => exact monotone_const _
   | collector slice => exact monotone_demandMaterialize demand hd slice
   | expression e c v =>
-    show monotone (fun x => match NeedPlan.callShape? e c v with
-      | some shape => NeedPlan.execute (route x) a shape
-      | none => reCountValueBoundary <$> ev x e c v)
-    split
-    · exact monotone_planExecute route hroute a _
-    · exact monotone_map_evalM _ _ (monotone_apply _ _ (monotone_apply _ _ (monotone_apply _ _ hev)))
+    simp only [NeedDemand.suspendedValue]
+    cases NeedPlan.callShape? e c v with
+    | none => exact monotone_map_evalM _ _ (monotone_apply _ _ (monotone_apply _ _ (monotone_apply _ _ hev)))
+    | some shape =>
+      have := monotone_planExecuteAlong route hroute a shape
+      have := monotone_planRouteOf (fun x => (route x).classify) hroute.classify a shape
+      have hm : monotone (fun x => reCountValueBoundary <$> ev x e c v) :=
+        monotone_map_evalM _ _ (monotone_apply _ _ (monotone_apply _ _ (monotone_apply _ _ hev)))
+      mono_cb_tac
 
 theorem monotone_demandStep
     (ev : γ → Expr → EvalCtx → ValEnv → EvalM CountedResult) (hev : monotone ev)
@@ -314,20 +348,30 @@ theorem monotone_demandStep
   unfold NeedDemand.step; mono_cb_tac
 
 @[partial_fixpoint_monotone] theorem monotone_linkDecodeCallee
+    (classify : γ → NeedPlan.CallShape → EvalM PlanRoute) (hc : monotone classify)
     (demand : γ → Nat → EvalM CountedResult) (h : monotone demand) (a : Nat) :
-    monotone (fun x => NeedLink.decodeCallee (demand x) a) := by
+    monotone (fun x => NeedLink.decodeCallee (classify x) (demand x) a) := by
   unfold NeedLink.decodeCallee; mono_cb_tac
 
 @[partial_fixpoint_monotone] theorem monotone_linkValue
+    (classify : γ → NeedPlan.CallShape → EvalM PlanRoute) (hc : monotone classify)
     (demand : γ → Nat → EvalM CountedResult) (h : monotone demand) (a : Nat) :
-    monotone (fun x => NeedLink.value (demand x) a) := by
+    monotone (fun x => NeedLink.value (classify x) (demand x) a) := by
   unfold NeedLink.value; mono_cb_tac
 
 @[partial_fixpoint_monotone] theorem monotone_linkCallable
+    (classify : γ → NeedPlan.CallShape → EvalM PlanRoute) (hc : monotone classify)
     (demand : γ → Nat → EvalM CountedResult) (h : monotone demand)
     (project : γ → Nat → EvalM (Option Algorithm)) (hp : monotone project) (a : Nat) :
-    monotone (fun x => NeedLink.callable (demand x) (project x) a) := by
+    monotone (fun x => NeedLink.callable (classify x) (demand x) (project x) a) := by
   unfold NeedLink.callable; mono_cb_tac
+
+@[partial_fixpoint_monotone] theorem monotone_classifyPlanRouteWith
+    (resolve : γ → Expr → EvalCtx → EvalM (Option Algorithm)) (hr : monotone resolve)
+    (route : γ → Expr → EvalCtx → EvalM Bool) (hg : monotone route) :
+    monotone (fun x => classifyPlanRouteWith (resolve x) (route x)) := by
+  apply Lean.Order.monotone_of_monotone_apply; intro shape
+  unfold classifyPlanRouteWith; mono_cb_tac
 
 /-! ### The generic binder and the family dispatcher -/
 
@@ -430,7 +474,12 @@ end Helpers
 theorem planRoute_mono {γ : Type} [PartialOrder γ] (recOf : γ → EvalRec) (h : monotone recOf) :
     RouteMono (fun x => (recOf x).planRoute) :=
   ⟨fun _ _ hxy _ _ => h _ _ hxy _, fun _ _ hxy _ _ => h _ _ hxy _,
-   fun _ _ hxy _ _ _ _ _ => h _ _ hxy _, fun _ _ hxy _ _ _ => h _ _ hxy _⟩
+   fun _ _ hxy _ _ _ _ _ => h _ _ hxy _, fun _ _ hxy _ _ _ => h _ _ hxy _,
+   monotone_classifyPlanRouteWith _ (fun _ _ hxy _ _ => h _ _ hxy _) _ (fun _ _ hxy _ _ => h _ _ hxy _),
+   fun _ _ hxy _ => h _ _ hxy _⟩
+
+theorem planRoute_classify_mono : monotone (fun rec : EvalRec => rec.planRoute.classify) :=
+  (planRoute_mono (fun rec : EvalRec => rec) (fun _ _ h => h)).classify
 
 theorem bindingCaps_mono {γ : Type} [PartialOrder γ] (recOf : γ → EvalRec) (h : monotone recOf) :
     CapsMono (fun x => (recOf x).bindingChannels.capabilities) := by
@@ -592,7 +641,7 @@ theorem EvalBody.projectNeedWrittenAt_mono (address : Nat) (source : Expr) (call
 
 theorem EvalBody.linkCallable_mono (address : Nat) :
     monotone (fun rec : EvalRec => EvalBody.linkCallable rec address) := by
-  unfold EvalBody.linkCallable; mono_tac
+  have := planRoute_classify_mono; unfold EvalBody.linkCallable; mono_tac
 
 theorem EvalBody.projectParameterCallable_mono (x : Ident) (ctx : EvalCtx) :
     monotone (fun rec : EvalRec => EvalBody.projectParameterCallable rec x ctx) := by
@@ -636,11 +685,11 @@ theorem EvalBody.evalSuppliedAt_mono (address : Nat) (e : Expr) (ctx : EvalCtx) 
 
 theorem EvalBody.linkValue_mono (address : Nat) :
     monotone (fun rec : EvalRec => EvalBody.linkValue rec address) := by
-  unfold EvalBody.linkValue; mono_tac
+  have := planRoute_classify_mono; unfold EvalBody.linkValue; mono_tac
 
 theorem EvalBody.algorithmOfValue_mono (val : Result) (argsOpt : Option OutputBundle) (ctx : EvalCtx) (env : ValEnv) :
     monotone (fun rec : EvalRec => EvalBody.algorithmOfValue rec val argsOpt ctx env) := by
-  unfold EvalBody.algorithmOfValue; mono_tac
+  have := planRoute_classify_mono; unfold EvalBody.algorithmOfValue; mono_tac
 
 theorem EvalBody.capturedCallee_mono (callee : Nat) :
     monotone (fun rec : EvalRec => EvalBody.capturedCallee rec callee) := by
@@ -652,7 +701,7 @@ theorem EvalBody.referenceReceiverValue_mono (target : Expr) (targetAlg : Algori
 
 theorem EvalBody.algorithmCalleeOf_mono (receiver : Expr) (ctx : EvalCtx) (env : ValEnv) :
     monotone (fun rec : EvalRec => EvalBody.algorithmCalleeOf rec receiver ctx env) := by
-  unfold EvalBody.algorithmCalleeOf; mono_tac
+  have := planRoute_classify_mono; unfold EvalBody.algorithmCalleeOf; mono_tac
 
 theorem EvalBody.evalSuppliedCallCounted_mono (callee : Algorithm) (cells : List NeedSupply.Sourced) (ctx : EvalCtx) (env : ValEnv) (calleeName : String) :
     monotone (fun rec : EvalRec => EvalBody.evalSuppliedCallCounted rec callee cells ctx env calleeName) := by
@@ -812,7 +861,7 @@ theorem EvalBody.applyBuiltinCountedSequence_mono (b : Builtin) (metadata : Sequ
 
 theorem EvalBody.applyBuiltinCounted_mono (b : Builtin) (args : List ResolvedArgumentAlgorithm) (ctx : EvalCtx) (env : ValEnv) :
     monotone (fun rec : EvalRec => EvalBody.applyBuiltinCounted rec b args ctx env) := by
-  unfold EvalBody.applyBuiltinCounted; mono_tac
+  have := planRoute_classify_mono; unfold EvalBody.applyBuiltinCounted; mono_tac
 
 theorem EvalBody.applyBuiltin_mono (b : Builtin) (args : List ResolvedArgumentAlgorithm) (ctx : EvalCtx) (env : ValEnv) :
     monotone (fun rec : EvalRec => EvalBody.applyBuiltin rec b args ctx env) := by
@@ -880,7 +929,7 @@ theorem EvalBody.invokeCallReferenceValue_mono (val : Result) :
 
 theorem EvalBody.argumentViewCells_mono (a : Nat) :
     monotone (fun rec : EvalRec => EvalBody.argumentViewCells rec a) := by
-  unfold EvalBody.argumentViewCells; mono_tac
+  have := planRoute_classify_mono; unfold EvalBody.argumentViewCells; mono_tac
 
 theorem EvalBody.evalArgumentViewBuiltin_mono (b : Builtin) (a : Nat) :
     monotone (fun rec : EvalRec => EvalBody.evalArgumentViewBuiltin rec b a) := by
@@ -896,7 +945,7 @@ theorem EvalBody.evalSequenceSpreadCounted_mono (e : Expr) (ctx : EvalCtx) (env 
 
 theorem EvalBody.evalSupplySpread_mono (e : Expr) (ctx : EvalCtx) (env : ValEnv) :
     monotone (fun rec : EvalRec => EvalBody.evalSupplySpread rec e ctx env) := by
-  unfold EvalBody.evalSupplySpread; mono_tac
+  have := planRoute_classify_mono; unfold EvalBody.evalSupplySpread; mono_tac
 
 theorem EvalBody.evalListLiteralCounted_mono (elements : List Expr) (ctx : EvalCtx) (env : ValEnv) :
     monotone (fun rec : EvalRec => EvalBody.evalListLiteralCounted rec elements ctx env) := by

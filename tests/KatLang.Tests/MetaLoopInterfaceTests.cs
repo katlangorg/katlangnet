@@ -187,13 +187,21 @@ public class MetaLoopInterfaceTests
     [InlineData("Countdown(0) = 0, false\nCountdown(n) = n - 1, true\nCountdown(3).while, while(Countdown(2))", "S[0, 0]")]
     public Task OrdinaryLookup_SelectsTheCallable(string source, string expected) => AssertOk(source, expected);
 
-    // ── CR-2 is unchanged: a dot callee needs a name ─────────────────────────────────────────
+    // ── CR-2 (META-S3-4): a qualified invocation is captured; a bare member path is not ─────────
 
     [Theory]
-    [InlineData("Box = { S(x) = x + 1, x < 3 }\nBox.S(0).while")]
-    [InlineData("Math.Abs(-3).repeat(2)")]
-    [InlineData("Lib = { public Inc(x) = x + 1 }\nrepeat(Lib.Inc(0), 2)")]
-    public async Task AQualifiedCallee_IsRefused(string source)
+    [InlineData("Box = { S(x) = x + 1, x < 3 }\nBox.S(0).while", "3")]
+    [InlineData("Math.Abs(-3).repeat(2)", "3")]
+    [InlineData("Lib = { public Inc(x) = x + 1 }\nrepeat(Lib.Inc(0), 2)", "2")]
+    [InlineData("Box = { S(x) = x + 1, x < 3 }\n(Box.S)(0).while", "3")]
+    [InlineData("Step(x) = x + 1, x < 3\nLoop(meta op) = op.Algorithm(op.Arguments*).while\nStep(0).Loop", "3")]
+    public Task AQualifiedCallee_IsCaptured(string source, string expected) => AssertOk(source, expected);
+
+    [Theory]
+    [InlineData("Box = { S(x) = x + 1, x < 3 }\nBox.S.while")]
+    [InlineData("Box = { S(x) = x + 1, x < 3 }\nwhile(Box.S)")]
+    [InlineData("Lib = { public Inc(x) = x + 1 }\nrepeat(Lib.Inc, 2)")]
+    public async Task ABareMemberPath_IsRefused(string source)
         => Assert.Contains(KatLangError.MetaRefusalMessage, await AssertFails(source, "NotAnAlgorithm"), StringComparison.Ordinal);
 
     [Theory]

@@ -446,6 +446,69 @@ public static partial class Evaluator
     }
 
     /// <summary>
+    /// What a dot edge <c>target.name</c> selects (META-S3-4; Lean: <c>DotSelection</c> / <c>DotMiss</c>):
+    /// a declared member, or — on a structural miss — one of the receiver intrinsics (<c>string</c>,
+    /// DOT-08; <c>Invoke</c>, S1; <c>Arguments</c>, S2; <c>Algorithm</c>, CR-14) or the extension call
+    /// through the edge's lexical fallback (DOT-03).
+    /// </summary>
+    internal enum DotEdgeRoute : byte
+    {
+        Member,
+        StringIntrinsic,
+        InvokeIntrinsic,
+        ArgumentsIntrinsic,
+        AlgorithmIntrinsic,
+        Extension,
+    }
+
+    /// <summary>
+    /// THE dot-edge route decision (META-S3-4; Lean: <c>selectDotEdge</c>), over the receiver's already
+    /// resolved typed identity (<paramref name="receiver"/> <c>null</c> = a value receiver): ONE structural
+    /// lookup, member-first whatever the member's spelling (Q-17 S-C); the selected member's accessibility
+    /// from the site is judged AFTER selection (K1-08); a member declared only in conditional branches is
+    /// the local-only error, never a miss; only a structural miss takes the miss route, decided by
+    /// spelling. It evaluates nothing and allocates nothing on a successful selection. Ordinary dot
+    /// evaluation (<see cref="EvalDotCallCounted"/> and its async twin), the <c>.Algorithm</c> route fact
+    /// (<see cref="IsAlgorithmIntrinsicRoute"/>) and an invocation plan's route (<see cref="ComputePlanRoute"/>)
+    /// all decide through it; returns the selection failure, or <c>null</c>.
+    /// </summary>
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static EvalError? SelectDotEdge(
+        Expr.DotCall dotCall, Algorithm? receiver, EvalCtx ctx, out DotEdgeRoute route, out Property? member)
+    {
+        member = null;
+        if (receiver is not null)
+        {
+            var prop = LookupPropBinding(receiver, dotCall.Name, ctx.Budget);
+            if (prop is not null)
+            {
+                route = DotEdgeRoute.Member;
+                // Selection is by declaration (structural access ignores `public`); the member's
+                // accessibility from THIS site is decided afterwards.
+                if (!IsAccessibleFrom(prop, receiver, ctx))
+                    return LocalOnlyPropertyError(OpenExprName(dotCall.Target), prop);
+                member = prop;
+                return null;
+            }
+            if (receiver.DefinesConditionalBranchProperty(dotCall.Name))
+            {
+                route = DotEdgeRoute.Member;
+                return new EvalError.LocalOnlyProperty(OpenExprName(dotCall.Target), dotCall.Name, PropertyExposure.LocalOnlyConditionalAlgorithm);
+            }
+        }
+        route = DotMissRoute(dotCall);
+        return null;
+    }
+
+    /// <summary>The miss route of a dot edge, by spelling (Lean: <c>DotMiss.ofName</c>).</summary>
+    private static DotEdgeRoute DotMissRoute(Expr.DotCall dotCall)
+        => dotCall.UsesOrdinaryDotStringIntrinsic() ? DotEdgeRoute.StringIntrinsic
+            : dotCall.UsesDotInvokeIntrinsic() ? DotEdgeRoute.InvokeIntrinsic
+            : dotCall.UsesDotArgumentsIntrinsic() ? DotEdgeRoute.ArgumentsIntrinsic
+            : dotCall.UsesDotAlgorithmIntrinsic() ? DotEdgeRoute.AlgorithmIntrinsic
+            : DotEdgeRoute.Extension;
+
+    /// <summary>
     /// Counted dotCall evaluation — the CANONICAL owner of dot-call dispatch
     /// (<see cref="EvalDotCall"/> is its value projection).
     /// The ROUTE is decided first, member-first at every edge (DOT-01; Q-17 S-C):
@@ -501,49 +564,23 @@ public static partial class Evaluator
         var argsOpt = dotCall.Args;
 
         var targetResult = ResolveDotReceiver(target, ctx, out var receiverIsStructuralMember);
-        if (targetResult.IsError)
-        {
-            if (IsAbsentIdentity(targetResult.Error))
-            {
-                // A value receiver declares no member: the edge's miss route applies directly.
-                if (dotCall.UsesOrdinaryDotStringIntrinsic())
-                {
-                    if (RejectDotStringIntrinsicArguments(argsOpt, ctx, valEnv) is { } arityRejection)
-                        return arityRejection;
-                    var val = Eval(target, ctx, valEnv);
-                    if (val.IsError) return val.Error;
-                    var outR = ResultToString(ctx, val.Value);
-                    if (outR.IsError) return outR.Error;
-                    return EvalResult<CountedResult>.Ok(new CountedResult(outR.Value, outR.Value.ValueCount()));
-                }
-                if (dotCall.UsesDotInvokeIntrinsic())
-                    return EvalDotInvokeValueReceiverCounted(dotCall, ctx, valEnv);
-                if (dotCall.UsesDotArgumentsIntrinsic())
-                    return EvalDotArgumentsValueReceiverCounted(dotCall, ctx, valEnv);
-                if (dotCall.UsesDotAlgorithmIntrinsic())
-                    return EvalDotAlgorithmValueReceiverCounted(dotCall, ctx, valEnv);
-                return CallLexicalWithReceiverCounted(dotCall, ctx, valEnv);
-            }
-
+        if (targetResult.IsError && !IsAbsentIdentity(targetResult.Error))
             return targetResult.Error;
-        }
+        // A value receiver (absent identity) declares no member: the selection is its miss route.
+        var targetAlg = targetResult.IsError ? null : targetResult.Value;
 
-        var targetAlg = targetResult.Value;
+        // ONE structural lookup decides the route, whatever the member's spelling (SelectDotEdge, the
+        // decision an invocation plan's route shares): a declared member wins (a member named `string`
+        // included — Q-17 S-C), then a branch-only member is the local-only error, and only a
+        // structural MISS takes the miss route below.
+        if (SelectDotEdge(dotCall, targetAlg, ctx, out var route, out var prop) is { } selectionError)
+            return selectionError;
 
-        // ONE structural lookup decides the route, whatever the member's spelling: a declared
-        // member wins (a member named `string` included — Q-17 S-C), then a branch-only member
-        // is the local-only error, and only a structural MISS takes the miss route below.
-        var prop = LookupPropBinding(targetAlg, name, ctx.Budget);
-        if (prop is not null)
+        if (route == DotEdgeRoute.Member)
         {
-            // Selection is by declaration (structural access ignores `public`); the
-            // member's accessibility from THIS site is decided afterwards.
-            if (!IsAccessibleFrom(prop, targetAlg, ctx))
-                return LocalOnlyPropertyError(OpenExprName(target), prop);
-
-            var wired = ChildOfInContext(targetAlg, prop.Value, ctx);
+            var wired = ChildOfInContext(targetAlg!, prop!.Value, ctx);
             if (wired is Algorithm.Alias)
-                return EvalAliasMemberCounted(targetAlg, prop, wired, argsOpt, name, ctx, valEnv);
+                return EvalAliasMemberCounted(targetAlg!, prop, wired, argsOpt, name, ctx, valEnv);
             if (argsOpt is null)
             {
                 // A structurally navigated member read with NO argument list is an
@@ -554,12 +591,12 @@ public static partial class Evaluator
                 if (simpleCallee is not null)
                 {
                     return AcceptsZeroArgumentValueDemand(simpleCallee)
-                        ? MarkSelectedMemberOutput(ReCountValueBoundary(EvalZeroArgPropertyAccessCounted(targetAlg, prop, ZeroArgPropertyAccessKind.CountedStructural, simpleCallee, ctx, valEnv)))
+                        ? MarkSelectedMemberOutput(ReCountValueBoundary(EvalZeroArgPropertyAccessCounted(targetAlg!, prop, ZeroArgPropertyAccessKind.CountedStructural, simpleCallee, ctx, valEnv)))
                         : ZeroArgumentDemandArityMismatch(simpleCallee);
                 }
 
                 if (AcceptsZeroArgumentValueDemand(wired))
-                    return MarkSelectedMemberOutput(ReCountValueBoundary(EvalZeroArgPropertyAccessCounted(targetAlg, prop, ZeroArgPropertyAccessKind.CountedStructural, wired, ctx, valEnv)));
+                    return MarkSelectedMemberOutput(ReCountValueBoundary(EvalZeroArgPropertyAccessCounted(targetAlg!, prop, ZeroArgPropertyAccessKind.CountedStructural, wired, ctx, valEnv)));
 
                 if (wired is Algorithm.Conditional)
                     return new EvalError.NoMatchingBranch(name);
@@ -575,38 +612,44 @@ public static partial class Evaluator
                 CallDiagnosticName.FromKnown(name));
         }
 
-        if (targetAlg.DefinesConditionalBranchProperty(name))
-            return new EvalError.LocalOnlyProperty(OpenExprName(target), name, PropertyExposure.LocalOnlyConditionalAlgorithm);
-
         // A structural miss: `string` is the number-to-text intrinsic (DOT-08) — it takes the
-        // extension call's place, so a lexical `string` is never consulted — and every other
-        // member is the extension call `name(target, args)` (DOT-03).
-        if (dotCall.UsesOrdinaryDotStringIntrinsic())
+        // extension call's place, so a lexical `string` is never consulted — `Invoke`, `Arguments`
+        // and `Algorithm` are the call-reference intrinsics (S1, S2, META-S3-1), and every other
+        // member is the extension call `name(target, args)` (DOT-03). A value receiver reads its
+        // ordinary value; an algorithm receiver is read as the `.string` intrinsic reads it.
+        switch (route)
         {
-            if (RejectDotStringIntrinsicArguments(argsOpt, ctx, valEnv) is { } arityRejection)
-                return arityRejection;
-            if (targetAlg is Algorithm.Alias)
-                return EvalAliasDotStringCounted(target, targetAlg, receiverIsStructuralMember, ctx, valEnv);
-            var val = EvalDotStringReceiverAlgOutput(target, targetAlg, receiverIsStructuralMember, ctx, valEnv);
-            if (val.IsError) return val.Error;
-            var outR = ResultToString(ctx, val.Value);
-            if (outR.IsError) return outR.Error;
-            return EvalResult<CountedResult>.Ok(new CountedResult(outR.Value, outR.Value.ValueCount()));
+            case DotEdgeRoute.StringIntrinsic:
+            {
+                if (RejectDotStringIntrinsicArguments(argsOpt, ctx, valEnv) is { } arityRejection)
+                    return arityRejection;
+                EvalResult<Result> val;
+                if (targetAlg is null)
+                    val = Eval(target, ctx, valEnv);
+                else if (targetAlg is Algorithm.Alias)
+                    return EvalAliasDotStringCounted(target, targetAlg, receiverIsStructuralMember, ctx, valEnv);
+                else
+                    val = EvalDotStringReceiverAlgOutput(target, targetAlg, receiverIsStructuralMember, ctx, valEnv);
+                if (val.IsError) return val.Error;
+                var outR = ResultToString(ctx, val.Value);
+                if (outR.IsError) return outR.Error;
+                return EvalResult<CountedResult>.Ok(new CountedResult(outR.Value, outR.Value.ValueCount()));
+            }
+            case DotEdgeRoute.InvokeIntrinsic:
+                return targetAlg is null
+                    ? EvalDotInvokeValueReceiverCounted(dotCall, ctx, valEnv)
+                    : EvalDotInvokeIntrinsicCounted(dotCall, targetAlg, receiverIsStructuralMember, ctx, valEnv);
+            case DotEdgeRoute.ArgumentsIntrinsic:
+                return targetAlg is null
+                    ? EvalDotArgumentsValueReceiverCounted(dotCall, ctx, valEnv)
+                    : EvalDotArgumentsIntrinsicCounted(dotCall, targetAlg, receiverIsStructuralMember, ctx, valEnv);
+            case DotEdgeRoute.AlgorithmIntrinsic:
+                return targetAlg is null
+                    ? EvalDotAlgorithmValueReceiverCounted(dotCall, ctx, valEnv)
+                    : EvalDotAlgorithmIntrinsicCounted(dotCall, targetAlg, receiverIsStructuralMember, ctx, valEnv);
+            default:
+                return CallLexicalWithReceiverCounted(dotCall, ctx, valEnv);
         }
-
-        // A structural miss spelled `Invoke` is the call-reference intrinsic (CallReference S1, J1).
-        if (dotCall.UsesDotInvokeIntrinsic())
-            return EvalDotInvokeIntrinsicCounted(dotCall, targetAlg, receiverIsStructuralMember, ctx, valEnv);
-
-        // A structural miss spelled `Arguments` is the argument-view intrinsic (CallReference S2).
-        if (dotCall.UsesDotArgumentsIntrinsic())
-            return EvalDotArgumentsIntrinsicCounted(dotCall, targetAlg, receiverIsStructuralMember, ctx, valEnv);
-
-        // A structural miss spelled `Algorithm` is the callable-projection intrinsic (META-S3-1, CR-14).
-        if (dotCall.UsesDotAlgorithmIntrinsic())
-            return EvalDotAlgorithmIntrinsicCounted(dotCall, targetAlg, receiverIsStructuralMember, ctx, valEnv);
-
-        return CallLexicalWithReceiverCounted(dotCall, ctx, valEnv);
     }
 
     /// <summary>

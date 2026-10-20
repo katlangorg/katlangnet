@@ -845,6 +845,9 @@ public sealed class KatLangError
 
         // A META parameter (user-defined or a builtin's, such as `while(meta step)`) whose supplied
         // argument is not a call computation (CR-2): the binder refused it before evaluating anything.
+        if (string.Equals(description, Evaluator.InvocationRefusalDescription, StringComparison.Ordinal))
+            return InvocationRefusalMessage;
+
         if (string.Equals(description, Evaluator.MetaRefusalDescription, StringComparison.Ordinal))
             return MetaRefusalMessage;
 
@@ -856,9 +859,16 @@ public sealed class KatLangError
         return $"Not an algorithm: {description}";
     }
 
-    /// <summary>The rendering of META's refusal (CR-2), shared by every META parameter.</summary>
+    /// <summary>The rendering of META's refusal (CR-2, META-S3-4), shared by every META parameter.</summary>
     internal const string MetaRefusalMessage
-        = "A meta parameter needs a supplied call computation: a written call whose callee is a name or a parameter, such as `Step(0)`. The argument supplied for it is not one (a value, a property read, a bare callable, an existing call reference, and a call through a dot or computed callee are not captured).";
+        = "A meta parameter needs a supplied call computation: a written invocation with an argument list, such as `Step(0)`, `Box.Step(0)` or `x.F(1)`. The argument supplied for it is not one (a value, a property read, a bare callable or member path such as `Box.Step`, an existing call reference, and a computed callee are not captured).";
+
+    /// <summary>
+    /// The rendering of the D-1A refusal (META-S3-4): a captured invocation whose written form selects a
+    /// non-callable intrinsic has no callable to invoke, project or supply.
+    /// </summary>
+    internal const string InvocationRefusalMessage
+        = "The captured expression is not a callable invocation: its written form selects a value operation such as `x.string()`, `R.Invoke()` or `R.Arguments(...)`, which has no algorithm to invoke, project or supply arguments to.";
 
     private const string ComputedDotCalleeReason
         = "a dot expression can be called only when it names a member that its receiver declares (such as `Lib.F`); otherwise it evaluates to a value.";

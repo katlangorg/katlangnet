@@ -18,7 +18,7 @@ Partition (machine-checked by the `specCaseIds.length` guard below):
 - excluded parse-level cases (Lean has no surface parser): 71
 - excluded C#-only cases (each carries an explicit reason in the corpus): 22
 - Lean-guarded cases: 388
-- probe observations (C#-only by design): 1411
+- probe observations (C#-only by design): 1415
 - internal-node cases live in the semantic-explorer corpus, not here: see
   lean/SemanticExplorerCases.lean
 
@@ -550,10 +550,10 @@ def case_loop_meta_spread_before_count : Expr :=
   .algorithmExpr (alg [] [] [privateProp "Inc" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 1))])] [(.dotCall (.call (.resolve "Inc") [(.sequenceSpread (.index (.listLiteral [.num 1]) [.num 5]))]) "repeat" (some [(.binary .div (.num 1) (.num 0))]))])
 #guard obs case_loop_meta_spread_before_count == "err index"
 
--- loop-meta-qualified-step-needs-a-name [name-resolution]: Box = { S(x) = x + 1, x < 3 } \n S = Box.S \n S(0).while
-def case_loop_meta_qualified_step_needs_a_name : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "Box" (alg [] [] [privateProp "S" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 1)), (.comparison (.param "x") [{ op := .lt, operand := (.num 3) }])])] []), privateProp "S" (.alias none [] [] ((.dotCall (.resolve "Box") "S" none)))] [(.dotCall (.call (.resolve "S") [.num 0]) "while" none)])
-#guard obs case_loop_meta_qualified_step_needs_a_name == "ok raw=3 n=1"
+-- loop-meta-qualified-step [name-resolution]: Box = { S(x) = x + 1, x < 3 } \n Box.S(0).while
+def case_loop_meta_qualified_step : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Box" (alg [] [] [privateProp "S" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 1)), (.comparison (.param "x") [{ op := .lt, operand := (.num 3) }])])] [])] [(.dotCall (.dotCall (.resolve "Box") "S" (some [.num 0])) "while" none)])
+#guard obs case_loop_meta_qualified_step == "ok raw=3 n=1"
 
 -- loop-meta-exact-arity [errors]: Step(x) = x + 1, x < 3 \n while(Step, 0)
 def case_loop_meta_exact_arity : Expr :=
@@ -2085,9 +2085,9 @@ def case_call_reference_algorithm_projection : Expr :=
   .algorithmExpr (alg [] [] [privateProp "R" (alg [] [] [] [(.call (.resolve "Capture") [(.call (.resolve "Square") [.num 5])])]), privateProp "Square" (alg ["x"] [] [] [(.binary .mul (.param "x") (.param "x"))]), privateProp "Capture" (algWithParameters [{ name := "op", kind := .metaRef }] [] [] [.param "op"])] [(.dotCall (.resolve "R") "Algorithm" (some [.num 8])), (.call (.dotCall (.resolve "R") "Algorithm" none) [.num 8]), (.dotCall (.resolve "R") "Invoke" (some []))])
 #guard obs case_call_reference_algorithm_projection == "ok raw=S[64, 64, 25] n=3"
 
--- call-reference-algorithm-loops [variadic-calls]: Step(x) = x + 1, x < 3 \n Loop(meta operation) = { \n   S = operation.Algorithm \n   S(operation.Arguments*).while \n } \n  \n Step(0).Loop
+-- call-reference-algorithm-loops [variadic-calls]: Step(x) = x + 1, x < 3 \n Loop(meta operation) = operation.Algorithm(operation.Arguments*).while \n  \n Step(0).Loop
 def case_call_reference_algorithm_loops : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "Step" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 1)), (.comparison (.param "x") [{ op := .lt, operand := (.num 3) }])]), privateProp "Loop" (algWithParameters [{ name := "operation", kind := .metaRef }] [] [{ (privateLocalProp "S" (.localCapturedAncestorParams ["operation"]) (.alias none [] [] ((.dotCall (.param "operation") "Algorithm" none)))) with requiredOwnerDepths := some [("operation", some 0)] }] [(.dotCall (.call (.resolve "S") [(.sequenceSpread (.dotCall (.param "operation") "Arguments" none))]) "while" none)])] [(.dotCall (.call (.resolve "Step") [.num 0]) "Loop" none)])
+  .algorithmExpr (alg [] [] [privateProp "Step" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 1)), (.comparison (.param "x") [{ op := .lt, operand := (.num 3) }])]), privateProp "Loop" (algWithParameters [{ name := "operation", kind := .metaRef }] [] [] [(.dotCall (.dotCall (.param "operation") "Algorithm" (some [(.sequenceSpread (.dotCall (.param "operation") "Arguments" none))])) "while" none)])] [(.dotCall (.call (.resolve "Step") [.num 0]) "Loop" none)])
 #guard obs case_call_reference_algorithm_loops == "ok raw=3 n=1"
 
 -- algorithm-is-not-an-extension-call [name-resolution]: Algorithm(r) = r + 1 \n Algorithm(4)
@@ -2219,7 +2219,7 @@ def specCaseIds : List String := [
   "loop-meta-no-implicit-provenance",
   "loop-meta-zero-state",
   "loop-meta-spread-before-count",
-  "loop-meta-qualified-step-needs-a-name",
+  "loop-meta-qualified-step",
   "loop-meta-exact-arity",
   "loop-meta-forwarding",
   "property-value-boundary",

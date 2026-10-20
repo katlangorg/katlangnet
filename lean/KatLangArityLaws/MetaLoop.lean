@@ -117,57 +117,61 @@ theorem step_capture_inert (channels : NeedChannels) (address : Nat) (s : EvalSt
 
 /-- The run of `metaLoopCapture` once the adapter reads as plan `a`'s reference and the plan's
     view yields `cells`: the state is `cells` and the step is `NeedPlan.calleeCell a`. -/
-theorem metaLoopCapture_run (read : Nat → EvalM CountedResult)
+theorem metaLoopCapture_run (classify : NeedPlan.CallShape → EvalM PlanRoute) (read : Nat → EvalM CountedResult)
     (view : Nat → EvalM (List NeedSupply.Sourced)) (adapter a k : Nat)
     (cells : List NeedSupply.Sourced) (s s1 s2 : EvalState)
     (hread : (read adapter).runState s = (.ok (.callRef a, k), s1))
     (hview : (view a).runState s1 = (.ok cells, s2)) :
-    (metaLoopCapture read view adapter).runState s =
-      (match (NeedPlan.calleeCell a).runState s2 with
+    (metaLoopCapture classify read view adapter).runState s =
+      (match (NeedPlan.calleeCell classify a).runState s2 with
        | (.ok c, t) => (.ok (c, cells.map Prod.fst), t)
        | (.error e, t) => (.error e, t)) := by
   simp only [metaLoopCapture, bind_run, hread, decodeCallRef, pure_run, hview]
-  rcases (NeedPlan.calleeCell a).runState s2 with ⟨_ | c, t⟩ <;> rfl
+  rcases (NeedPlan.calleeCell classify a).runState s2 with ⟨_ | c, t⟩ <;> rfl
 
 /-- **CR-9: the initial state IS the plan's view cells** — the original argument cells, never
     re-formed or copied. -/
-theorem state_is_view_cells (read : Nat → EvalM CountedResult)
+theorem state_is_view_cells (classify : NeedPlan.CallShape → EvalM PlanRoute) (read : Nat → EvalM CountedResult)
     (view : Nat → EvalM (List NeedSupply.Sourced)) (adapter a k : Nat)
     (cells : List NeedSupply.Sourced) (s s1 s2 t : EvalState) (step : Nat) (state : List Nat)
     (hread : (read adapter).runState s = (.ok (.callRef a, k), s1))
     (hview : (view a).runState s1 = (.ok cells, s2))
-    (h : (metaLoopCapture read view adapter).runState s = (.ok (step, state), t)) :
+    (h : (metaLoopCapture classify read view adapter).runState s = (.ok (step, state), t)) :
     state = cells.map Prod.fst := by
-  rw [metaLoopCapture_run read view adapter a k cells s s1 s2 hread hview] at h
-  rcases hc : (NeedPlan.calleeCell a).runState s2 with ⟨_ | c, u⟩ <;> rw [hc] at h <;> cases h
+  rw [metaLoopCapture_run classify read view adapter a k cells s s1 s2 hread hview] at h
+  rcases hc : (NeedPlan.calleeCell classify a).runState s2 with ⟨_ | c, u⟩ <;> rw [hc] at h <;> cases h
   rfl
 
 /-- **The production view of a prepared plan**: the initial state is the plan's RECORDED supply —
     the cells the captured call's own VALUE, `Invoke()` and `Arguments` share — and nothing runs. -/
-theorem state_of_prepared_plan (sp : NeedSupply.SpreadEval) (a : Nat) (s : EvalState)
-    (shape : NeedPlan.CallShape) (cell : NeedCell) (cells : List NeedSupply.Sourced)
+theorem state_of_prepared_plan (sp : NeedSupply.SpreadEval) (classify : NeedPlan.CallShape → EvalM PlanRoute)
+    (a : Nat) (s : EvalState)
+    (shape : NeedPlan.CallShape) (cell : NeedCell) (r : PlanRoute) (cells : List NeedSupply.Sourced)
     (hs : NeedPlan.shapeAt? s.needs a = some shape) (hc : s.needs[a]? = some cell)
+    (hr : cell.route = some r) (hi : r ≠ .intrinsic)
     (hp : cell.plan = .prepared (.ok cells)) :
-    (NeedPlan.viewCells sp a).runState s = (.ok cells, s) :=
-  ArgumentViewLaws.viewCells_prepared sp a s shape cell (.ok cells) hs hc hp
+    (NeedPlan.viewCells sp classify a).runState s = (.ok cells, s) :=
+  ArgumentViewLaws.viewCells_prepared sp classify a s shape cell r (.ok cells) hs hc hr hi hp
 
 /-- **CR-13: the step IS the plan's canonical callee cell.** Once recorded, the capture's step is
     that cell and establishing it changes nothing. -/
-theorem step_is_recorded_callee_cell (read : Nat → EvalM CountedResult)
+theorem step_is_recorded_callee_cell (classify : NeedPlan.CallShape → EvalM PlanRoute) (read : Nat → EvalM CountedResult)
     (view : Nat → EvalM (List NeedSupply.Sourced)) (adapter a k c : Nat)
     (cells : List NeedSupply.Sourced) (s s1 s2 : EvalState) (cell : NeedCell)
     (hread : (read adapter).runState s = (.ok (.callRef a, k), s1))
     (hview : (view a).runState s1 = (.ok cells, s2))
     (hc : s2.needs[a]? = some cell) (hcallee : cell.callee = some c) :
-    (metaLoopCapture read view adapter).runState s = (.ok (c, cells.map Prod.fst), s2) := by
-  rw [metaLoopCapture_run read view adapter a k cells s s1 s2 hread hview,
-    AlgorithmProjectionLaws.calleeCell_recorded a c s2 cell hc hcallee]
+    (metaLoopCapture classify read view adapter).runState s = (.ok (c, cells.map Prod.fst), s2) := by
+  rw [metaLoopCapture_run classify read view adapter a k cells s s1 s2 hread hview,
+    AlgorithmProjectionLaws.calleeCell_recorded classify a c s2 cell hc hcallee]
 
-/-- Establishing the step is inert: every cell existing after the view keeps its suspension, VALUE
-    state, CALLABLE state and plan supply. -/
-theorem step_establishment_inert (a : Nat) (s2 : EvalState) :
-    AlgorithmProjectionLaws.HeapCore s2.needs ((NeedPlan.calleeCell a).runState s2).2.needs :=
-  AlgorithmProjectionLaws.calleeCell_inert a s2
+/-- Establishing the step is inert: every cell existing after the view — which established the
+    plan's route (META-S3-4, D-4) — keeps its suspension, VALUE state, CALLABLE state and plan
+    supply. -/
+theorem step_establishment_inert (classify : NeedPlan.CallShape → EvalM PlanRoute) (a : Nat) (s2 : EvalState)
+    (hroute : ∀ cell, s2.needs[a]? = some cell → cell.callee = none → ∃ r, cell.route = some r) :
+    AlgorithmProjectionLaws.HeapCore s2.needs ((NeedPlan.calleeCell classify a).runState s2).2.needs :=
+  AlgorithmProjectionLaws.calleeCell_inert classify a s2 hroute
 
 /-! ## RP-1: the captured supply before the count -/
 
@@ -197,14 +201,14 @@ theorem repeat_setup_failure_skips_count {α : Type} (setup : EvalM α) (count :
 /-! ## OD-1: zero effective initial state -/
 
 /-- An empty captured supply is the ordinary zero-slot state. -/
-theorem zero_state_capture (read : Nat → EvalM CountedResult)
+theorem zero_state_capture (classify : NeedPlan.CallShape → EvalM PlanRoute) (read : Nat → EvalM CountedResult)
     (view : Nat → EvalM (List NeedSupply.Sourced)) (adapter a k : Nat) (s s1 s2 t : EvalState)
     (step : Nat) (state : List Nat)
     (hread : (read adapter).runState s = (.ok (.callRef a, k), s1))
     (hview : (view a).runState s1 = (.ok [], s2))
-    (h : (metaLoopCapture read view adapter).runState s = (.ok (step, state), t)) :
+    (h : (metaLoopCapture classify read view adapter).runState s = (.ok (step, state), t)) :
     state = [] :=
-  state_is_view_cells read view adapter a k [] s s1 s2 t step state hread hview h
+  state_is_view_cells classify read view adapter a k [] s s1 s2 t step state hread hview h
 
 /-- A completed zero-slot loop is `()`, emitted count 0 (LOOP-07). -/
 theorem zero_state_result : loopResultCounted [] = (.sequenceValue [], 0) := by

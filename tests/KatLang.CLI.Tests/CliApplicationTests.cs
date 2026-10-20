@@ -310,7 +310,7 @@ public sealed class CliApplicationTests
     [InlineData("Run(f) = while(f(1))\nRun(5)", "[2:5] while evaluating call to Run: while evaluating call to while: The while step is not callable: the argument supplied for it is a value, not an algorithm. Pass an algorithm: a named algorithm, a builtin, or a block { ... }.")]
     [InlineData("Run(f) = repeat(f(1), 2)\nRun([1])", "[2:5] while evaluating call to Run: while evaluating call to repeat: The repeat step is not callable: the argument supplied for it is a value, not an algorithm. Pass an algorithm: a named algorithm, a builtin, or a block { ... }.")]
     // META-S3-3: a value written as the loop's `meta step` argument is refused by META capture.
-    [InlineData("while(5)", "[1:7] while evaluating call to while: A meta parameter needs a supplied call computation: a written call whose callee is a name or a parameter, such as `Step(0)`. The argument supplied for it is not one (a value, a property read, a bare callable, an existing call reference, and a call through a dot or computed callee are not captured).")]
+    [InlineData("while(5)", "[1:7] while evaluating call to while: A meta parameter needs a supplied call computation: a written invocation with an argument list, such as `Step(0)`, `Box.Step(0)` or `x.F(1)`. The argument supplied for it is not one (a value, a property read, a bare callable or member path such as `Box.Step`, an existing call reference, and a computed callee are not captured).")]
     public async Task Eval_ValueStep_IsNotCallable(string source, string expected)
     {
         var result = await Cli.InvokeAsync("eval", source);

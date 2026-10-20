@@ -217,7 +217,7 @@ public class ErrorTaxonomyPolicyTests
     [InlineData("Run(f) = repeat(f(1), 0)\nRun(Math.RandomInt(1, 9))", false)]
     [InlineData("map([1], Math.Random(0, 1))", true)]
     [InlineData("Run(f) = repeat(f(0), 1)\nRun(Math.Random(0, 1))", true)]
-    [InlineData("repeat(Math.Random(0, 1), 1)", true)]
+    [InlineData("repeat(Math.Random, 1)", true)]
     public void NoRandomDraw_ForAnUninvokedOrRejectedSlot(string source, bool rejected)
     {
         const long seed = 20261005;
@@ -228,6 +228,22 @@ public class ErrorTaxonomyPolicyTests
             Assert.IsType<EvalError.NotAnAlgorithm>(Innermost(result.Error));
         var (_, fresh) = Evaluator.RunCountedObserved(new Expr.AlgorithmExpr(SourceProvenance.ParseValid("0").Root), randomSeed: seed);
         Assert.Equal(fresh.RandomSource.NextUInt64(), budget.RandomSource.NextUInt64());
+    }
+
+    /// <summary>
+    /// META-S3-4: a qualified module invocation is a written invocation META captures, so
+    /// <c>repeat(Math.Random(0, 1), 1)</c> — before S3-4 a META refusal that drew nothing — is a valid step
+    /// whose one iteration invokes <c>Math.Random</c> and draws from the run's stream.
+    /// </summary>
+    [Fact]
+    public void AQualifiedRandomStep_IsInvoked_AndDraws()
+    {
+        const long seed = 20261005;
+        var program = new Expr.AlgorithmExpr(SourceProvenance.ParseValid("repeat(Math.Random(0, 1), 1)").Root);
+        var (result, budget) = Evaluator.RunCountedObserved(program, randomSeed: seed);
+        Assert.True(result.IsOk, result.IsError ? result.Error.ToString() : "");
+        var (_, fresh) = Evaluator.RunCountedObserved(new Expr.AlgorithmExpr(SourceProvenance.ParseValid("0").Root), randomSeed: seed);
+        Assert.NotEqual(fresh.RandomSource.NextUInt64(), budget.RandomSource.NextUInt64());
     }
 
     /// <summary>

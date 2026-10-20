@@ -165,8 +165,8 @@ theorem disc_modify (f : EvalState → EvalState) (h : ∀ s, HeapKept s.needs (
     Disciplined (modify f : EvalM Unit) := fun s => h s
 
 theorem cellKept_of_same (c c' : NeedCell) (hs : c'.suspension = c.suspension)
-    (hst : c'.state = c.state) (hp : c'.plan = c.plan) : CellKept c c' :=
-  ⟨hs, fun _ h => hst ▸ h, fun _ h => hp ▸ h⟩
+    (hst : c'.state = c.state) (hp : c'.plan = c.plan) (hr : c'.route = c.route) : CellKept c c' :=
+  ⟨hs, fun _ h => hst ▸ h, fun _ h => hp ▸ h, fun _ h => hr ▸ h⟩
 
 /-! ## Reads, writes and loops -/
 
@@ -240,7 +240,7 @@ theorem cellKept_of_claim (cell claimed : NeedCell) (h : claimTerminalAliasIniti
     CellKept cell claimed := by
   unfold claimTerminalAliasInitial at h
   split at h
-  · cases h; exact cellKept_of_same _ _ rfl rfl rfl
+  · cases h; exact cellKept_of_same _ _ rfl rfl rfl rfl
   · cases h
 
 
@@ -255,7 +255,7 @@ macro "disc_tac_base" : tactic => `(tactic| ((try disc_unfold_rec) <;> repeat' (
   | (with_reducible apply DiscAt.bind)
   | (with_reducible apply DiscAt.set; first
       | exact HeapKept.refl _
-      | (apply HeapKept.set_bang <;> first | disc_hyp | (exact cellKept_of_same _ _ rfl rfl rfl) | (apply cellKept_of_claim; disc_hyp)))
+      | (apply HeapKept.set_bang <;> first | disc_hyp | (exact cellKept_of_same _ _ rfl rfl rfl rfl) | (apply cellKept_of_claim; disc_hyp)))
   | (with_reducible apply Disciplined.withCtx)
   | (with_reducible apply Disciplined.attempt)
   | (with_reducible apply Disciplined.map)
@@ -271,6 +271,8 @@ macro "disc_tac_base" : tactic => `(tactic| ((try disc_unfold_rec) <;> repeat' (
   | (with_reducible apply disciplined_form)
   | (with_reducible apply disciplined_slot)
   | (with_reducible apply disciplined_prepare)
+  | (with_reducible apply disciplined_routeOf)
+  | (with_reducible apply disciplined_calleeCell)
   | (with_reducible apply disciplined_execute)
   | (with_reducible apply disciplined_step)
   | (with_reducible apply disciplined_reify)
@@ -279,7 +281,7 @@ macro "disc_tac_base" : tactic => `(tactic| ((try disc_unfold_rec) <;> repeat' (
   | (with_reducible apply disciplined_viewCells)
   | (with_reducible apply disc_modify; intro s; first
       | exact HeapKept.refl _
-      | (apply HeapKept.modify; intro c _; exact cellKept_of_same _ _ rfl rfl rfl))
+      | (apply HeapKept.modify; intro c _; exact cellKept_of_same _ _ rfl rfl rfl rfl))
   | (with_reducible apply disc_forIn)
   | (with_reducible apply disc_forM)
   | (with_reducible apply disc_foldlM)
@@ -554,7 +556,7 @@ theorem disc_aliasBareTail (wired : Algorithm) (target : Expr) (ctx : EvalCtx) (
       | ok bare =>
         simp only at kp hc3 ⊢
         rw [bind_run, modify_run]
-        exact kp.trans (HeapKept.set_bang _ _ _ _ hc3 (cellKept_of_same _ _ rfl rfl rfl))
+        exact kp.trans (HeapKept.set_bang _ _ _ _ hc3 (cellKept_of_same _ _ rfl rfl rfl rfl))
 
 theorem disc_aliasBareCell (wired : Algorithm) (target : Expr) (ctx : EvalCtx)
     (hbind : Disciplined (aliasBindingCell wired target ctx)) :
@@ -568,7 +570,7 @@ theorem disc_aliasBareCell (wired : Algorithm) (target : Expr) (ctx : EvalCtx)
   · rename_i cell hcell
     split
     · apply DiscAt.bind
-      · exact DiscAt.set (HeapKept.set_bang _ _ _ _ hcell (cellKept_of_same _ _ rfl rfl rfl))
+      · exact DiscAt.set (HeapKept.set_bang _ _ _ _ hcell (cellKept_of_same _ _ rfl rfl rfl rfl))
       · intro _; exact disciplined_pure _
     · split
       · exact DiscAt.of_disc (disciplined_pure _)
@@ -586,7 +588,7 @@ macro "disc_tac" : tactic => `(tactic| ((try disc_unfold_rec) <;> repeat' (first
   | (with_reducible apply DiscAt.bind)
   | (with_reducible apply DiscAt.set; first
       | exact HeapKept.refl _
-      | (apply HeapKept.set_bang <;> first | disc_hyp | (exact cellKept_of_same _ _ rfl rfl rfl) | (apply cellKept_of_claim; disc_hyp)))
+      | (apply HeapKept.set_bang <;> first | disc_hyp | (exact cellKept_of_same _ _ rfl rfl rfl rfl) | (apply cellKept_of_claim; disc_hyp)))
   | (with_reducible apply Disciplined.withCtx)
   | (with_reducible apply Disciplined.attempt)
   | (with_reducible apply Disciplined.map)
@@ -602,6 +604,8 @@ macro "disc_tac" : tactic => `(tactic| ((try disc_unfold_rec) <;> repeat' (first
   | (with_reducible apply disciplined_form)
   | (with_reducible apply disciplined_slot)
   | (with_reducible apply disciplined_prepare)
+  | (with_reducible apply disciplined_routeOf)
+  | (with_reducible apply disciplined_calleeCell)
   | (with_reducible apply disciplined_execute)
   | (with_reducible apply disciplined_step)
   | (with_reducible apply disciplined_reify)
@@ -610,7 +614,7 @@ macro "disc_tac" : tactic => `(tactic| ((try disc_unfold_rec) <;> repeat' (first
   | (with_reducible apply disciplined_viewCells)
   | (with_reducible apply disc_modify; intro s; first
       | exact HeapKept.refl _
-      | (apply HeapKept.modify; intro c _; exact cellKept_of_same _ _ rfl rfl rfl))
+      | (apply HeapKept.modify; intro c _; exact cellKept_of_same _ _ rfl rfl rfl rfl))
   | (with_reducible apply disc_forIn)
   | (with_reducible apply disc_forM)
   | (with_reducible apply disc_foldlM)
@@ -1187,6 +1191,19 @@ theorem evalUnbounded_disciplined (c : EvalCall) : Disciplined (evalUnbounded c)
   production_preserves (fun s t => HeapKept s.needs t.needs) (fun _ => HeapKept.refl _)
     body_step_disciplined c
 
+/-- META-S3-4: the production plan-route classifier is disciplined — identity resolution through
+    the production receiver resolver and the `.Algorithm` route fact, then a pure selection. -/
+theorem classify_disciplined (shape : NeedPlan.CallShape) :
+    Disciplined (classifyPlanRouteWith resolveDotReceiver? algorithmIntrinsicRoute shape) := by
+  unfold classifyPlanRouteWith
+  split
+  · split
+    · exact Disciplined.bind (evalUnbounded_disciplined (.algorithmIntrinsicRoute _ _))
+        (fun b => by split <;> exact disciplined_pure _)
+    · exact disciplined_pure _
+  · exact Disciplined.bind (evalUnbounded_disciplined (.resolveDotReceiver? _ _))
+      (fun t => by split <;> first | exact disciplined_throw _ | exact disciplined_pure _)
+
 /-- **`ProductionDiscipline` IS A THEOREM (R7).** The named opaque obligation of the M1.5
     invocation-plan laws — that the production callbacks keep every existing cell's suspension,
     completed VALUE and prepared plan — holds for the actual production operations, over ALL
@@ -1197,7 +1214,9 @@ theorem productionDiscipline_holds : ProductionDiscipline :=
    fun g c => evalUnbounded_disciplined (.needPlanNormalizeCallee g c),
    fun g cells c v n => evalUnbounded_disciplined (.evalSuppliedCallCounted g cells c v n),
    fun b => evalUnbounded_disciplined (.demandNeedRecursive b),
-   fun e c v => evalUnbounded_disciplined (.evalSupplySpread e c v)⟩
+   fun e c v => evalUnbounded_disciplined (.evalSupplySpread e c v),
+   classify_disciplined,
+   fun b => evalUnbounded_disciplined (.projectNeedCallable b)⟩
 
 /-- The production VALUE demand is disciplined, now without any hypothesis. -/
 theorem production_value_disciplined' (a : Nat) : Disciplined (demandNeed a) :=

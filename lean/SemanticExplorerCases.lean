@@ -10,11 +10,11 @@ the neutral observation recorded from the C# evaluator. A failing guard is a
 Lean/C# divergence on that case.
 
 Partition (machine-checked by the `*CaseIds.length` guards below):
-- surface corpus cases: 2649
+- surface corpus cases: 2652
 - excluded parse-level cases (Lean has no surface parser): 11
-- Lean-representable surface cases: 2638
+- Lean-representable surface cases: 2641
 - internal-node cases: 19
-- neutral guards: 2657 case guards + 2 count guards
+- neutral guards: 2660 case guards + 2 count guards
 - supplementary errorObs guards compare supported shared payloads independently
 
 Regenerate from the repo root with:
@@ -13053,10 +13053,25 @@ def case_special__loopMetaExactArity : Expr :=
 #guard obs case_special__loopMetaExactArity == "err arity"
 
 #guard errorObs case_special__loopMetaExactArity == .matched (some { kind := "arity", names := [], counts := [1, 2] })
--- special__loopMetaQualifiedCalleeRefused: Box = { S(x) = x + 1, x < 3 } \n Box.S(0).while
-def case_special__loopMetaQualifiedCalleeRefused : Expr :=
+-- special__loopMetaQualifiedCalleeCaptured: Box = { S(x) = x + 1, x < 3 } \n Box.S(0).while
+def case_special__loopMetaQualifiedCalleeCaptured : Expr :=
   .algorithmExpr (alg [] [] [privateProp "Box" (alg [] [] [privateProp "S" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 1)), (.comparison (.param "x") [{ op := .lt, operand := (.num 3) }])])] [])] [(.dotCall (.dotCall (.resolve "Box") "S" (some [.num 0])) "while" none)])
-#guard obs case_special__loopMetaQualifiedCalleeRefused == "err notAnAlgorithm"
+#guard obs case_special__loopMetaQualifiedCalleeCaptured == "ok raw=3 n=1"
+
+-- special__loopMetaBareMemberPathRefused: Box = { S(x) = x + 1, x < 3 } \n Box.S.while
+def case_special__loopMetaBareMemberPathRefused : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Box" (alg [] [] [privateProp "S" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 1)), (.comparison (.param "x") [{ op := .lt, operand := (.num 3) }])])] [])] [(.dotCall (.dotCall (.resolve "Box") "S" none) "while" none)])
+#guard obs case_special__loopMetaBareMemberPathRefused == "err notAnAlgorithm"
+
+-- special__loopMetaRebuiltProjectedStep: Step(x) = x + 1, x < 3 \n Loop(meta op) = op.Algorithm(op.Arguments*).while \n Step(0).Loop
+def case_special__loopMetaRebuiltProjectedStep : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Step" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 1)), (.comparison (.param "x") [{ op := .lt, operand := (.num 3) }])]), privateProp "Loop" (algWithParameters [{ name := "op", kind := .metaRef }] [] [] [(.dotCall (.dotCall (.param "op") "Algorithm" (some [(.sequenceSpread (.dotCall (.param "op") "Arguments" none))])) "while" none)])] [(.dotCall (.call (.resolve "Step") [.num 0]) "Loop" none)])
+#guard obs case_special__loopMetaRebuiltProjectedStep == "ok raw=3 n=1"
+
+-- special__metaExtensionReceiverIsSupplied: Add(a, b) = a + b \n Capture(meta op) = op \n R = Capture(5.Add(1)) \n R.Arguments.count, R.Invoke()
+def case_special__metaExtensionReceiverIsSupplied : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "R" (alg [] [] [] [(.call (.resolve "Capture") [(.dotCall (.num 5) "Add" (some [.num 1]))])]), privateProp "Add" (alg ["a", "b"] [] [] [(.binary .add (.param "a") (.param "b"))]), privateProp "Capture" (algWithParameters [{ name := "op", kind := .metaRef }] [] [] [.param "op"])] [(.dotCall (.dotCall (.resolve "R") "Arguments" none) "count" none), (.dotCall (.resolve "R") "Invoke" (some []))])
+#guard obs case_special__metaExtensionReceiverIsSupplied == "ok raw=S[2, 6] n=2"
 
 -- special__loopMetaNamedAlias: Box = { S(x) = x + 1, x < 3 } \n S = Box.S \n S(0).while
 def case_special__loopMetaNamedAlias : Expr :=
@@ -13674,7 +13689,7 @@ def case_special__writtenCallIgnoresCalleeBinderNames : Expr :=
   .algorithmExpr (alg [] [] [privateProp "G" (alg ["x", "y"] [] [] [(.call (.resolve "Add") [(.capture [.param "x", .param "y"])])]), privateProp "Add" (algWithParameterPatterns [.sequenceValue [.capture { name := "left" }, .capture { name := "right" }]] [] [] [(.binary .add (.param "left") (.param "right"))])] [(.call (.resolve "G") [.num 2, .num 3])])
 #guard obs case_special__writtenCallIgnoresCalleeBinderNames == "ok raw=5 n=1"
 
--- 2638 differential cases.
+-- 2641 differential cases.
 
 /--
 Machine-checked surface partition count: the id list is built by the same
@@ -16203,7 +16218,10 @@ def surfaceCaseIds : List String := [
   "special__loopMetaZeroState",
   "special__loopMetaSpreadBeforeCount",
   "special__loopMetaExactArity",
-  "special__loopMetaQualifiedCalleeRefused",
+  "special__loopMetaQualifiedCalleeCaptured",
+  "special__loopMetaBareMemberPathRefused",
+  "special__loopMetaRebuiltProjectedStep",
+  "special__metaExtensionReceiverIsSupplied",
   "special__loopMetaNamedAlias",
   "special__loopStepLoopBuiltinAsStep",
   "special__containsSequenceItem",
@@ -16321,7 +16339,7 @@ def surfaceCaseIds : List String := [
   "special__writtenCallInfersWrittenNames",
   "special__writtenCallIgnoresCalleeBinderNames"
 ]
-#guard surfaceCaseIds.length == 2638
+#guard surfaceCaseIds.length == 2641
 
 /-!
 Direct internal-node cases: `Expr.sequenceConstruct` is an INTERNAL node —
@@ -16454,5 +16472,5 @@ def internalNodeCaseIds : List String := [
 #guard internalNodeCaseIds.length == 19
 
 -- 19 internal-node cases.
--- Total: 2657 case guards (2638 surface + 19 internal-node).
+-- Total: 2660 case guards (2641 surface + 19 internal-node).
 end SemanticExplorerCases
