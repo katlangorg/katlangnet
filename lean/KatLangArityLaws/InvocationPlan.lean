@@ -590,6 +590,15 @@ theorem disciplined_calleeAlong (route : NeedPlan.Route)
   | call => exact htarget _ _
   | extension => exact htarget _ _
 
+/-- META-S3-4-DIAG: the dispatch name is a pure read of the heap — it changes nothing. -/
+theorem dispatchName_run (a : Nat) (eff : NeedPlan.CallShape) (r : PlanRoute) (s : EvalState) :
+    (NeedPlan.dispatchName a eff r).runState s = (.ok (NeedPlan.dispatchNameIn s.needs a eff r), s) := rfl
+
+theorem disciplined_dispatchName (a : Nat) (eff : NeedPlan.CallShape) (r : PlanRoute) :
+    Disciplined (NeedPlan.dispatchName a eff r) := by
+  unfold NeedPlan.dispatchName
+  exact Disciplined.bind disciplined_get (fun _ => disciplined_pure _)
+
 /-- **One plan execution along a route is disciplined** whenever its installed callbacks are. -/
 theorem disciplined_executeAlong (route : NeedPlan.Route)
     (hspread : ∀ e c v, Disciplined (route.spread e c v))
@@ -603,9 +612,10 @@ theorem disciplined_executeAlong (route : NeedPlan.Route)
   unfold NeedPlan.executeAlong
   exact Disciplined.bind (Disciplined.withCtx _
       (disciplined_calleeAlong route htarget hclassify hproject a _ r)) (fun callee =>
+    Disciplined.bind (disciplined_dispatchName a _ r) (fun name =>
     Disciplined.bind (Disciplined.withCtx _ (Disciplined.bind (hnormal _ _) (fun normal =>
       Disciplined.bind (disciplined_prepare route.spread hspread a _) (fun cells => hdispatch _ _ _ _ _))))
-      (fun _ => disciplined_pure _))
+      (fun _ => disciplined_pure _)))
 
 /-- **One plan execution is disciplined** whenever its installed callbacks are. -/
 theorem disciplined_execute (route : NeedPlan.Route)
@@ -861,9 +871,10 @@ def callOver (route : NeedPlan.Route) (a : Nat) (shape : NeedPlan.CallShape) (r 
     (cells : List NeedSupply.Sourced) : EvalM CountedResult := do
   let eff := NeedPlan.effective shape r
   let callee ← withCtx shape.ctxMsg (NeedPlan.calleeAlong route a eff r)
+  let name ← NeedPlan.dispatchName a eff r
   let result ← withCtx shape.ctxMsg (do
     let normal ← route.normalize callee eff.caller
-    route.dispatch normal cells eff.caller eff.values (openExprName eff.callee))
+    route.dispatch normal cells eff.caller eff.values name)
   pure (reCountValueBoundary result)
 
 theorem withCtx_run {α : Type} (c : String) (m : EvalM α) (st : EvalState) :
@@ -897,7 +908,7 @@ theorem executeAlong_prepared (route : NeedPlan.Route) (a : Nat) (shape : NeedPl
     (cells : List NeedSupply.Sourced)
     (hc : s.needs[a]? = some cell) (hp : cell.plan = .prepared (.ok cells)) :
     (NeedPlan.executeAlong route a shape r).runState s = (callOver route a shape r cells).runState s := by
-  simp only [NeedPlan.executeAlong, callOver, bind_run, withCtx_run]
+  simp only [NeedPlan.executeAlong, callOver, bind_run, withCtx_run, dispatchName_run]
   have k1 := hcallee (NeedPlan.effective shape r) s
   generalize hr1 : (NeedPlan.calleeAlong route a (NeedPlan.effective shape r) r).runState s = r1 at k1
   rcases r1 with ⟨o1, t1⟩
@@ -1341,10 +1352,11 @@ def ordinaryCall (route : NeedPlan.Route) (a : Nat)
     (shape : NeedPlan.CallShape) (r : PlanRoute) : EvalM CountedResult := do
   let eff := NeedPlan.effective shape r
   let callee ← withCtx shape.ctxMsg (NeedPlan.calleeAlong route a eff r)
+  let name ← NeedPlan.dispatchName a eff r
   let result ← withCtx shape.ctxMsg (do
     let normal ← route.normalize callee eff.caller
     let cells ← NeedSupply.form route.spread eff.caller eff.values eff.args
-    route.dispatch normal cells eff.caller eff.values (openExprName eff.callee))
+    route.dispatch normal cells eff.caller eff.values name)
   pure (reCountValueBoundary result)
 
 theorem valid_of_get {h : Array NeedCell} {a : Nat} {c : NeedCell} (hc : h[a]? = some c) :
@@ -1366,7 +1378,9 @@ theorem oblivious_keeps_record {α : Type} {m : EvalM α} {a : Nat} (hm : Oblivi
     composition along that route, and its final state differs from the ordinary one at most in the
     plan record of the plan's own cell. Assumptions: the callbacks are disciplined (they keep the
     cell present) and oblivious of that cell's plan record — both structural contracts of the
-    callbacks, not of the result. -/
+    callbacks, not of the result. Dispatch needs this contract only at the ONE name read after the
+    callee phase, not at every string; on non-`.Algorithm` routes this is the original written-name
+    contract. -/
 theorem fresh_plan_is_ordinary_call
     (route : NeedPlan.Route) (a : Nat) (shape : NeedPlan.CallShape) (r : PlanRoute)
     (s : EvalState) (cell : NeedCell)
@@ -1381,7 +1395,9 @@ theorem fresh_plan_is_ordinary_call
       (NeedPlan.effective shape r).values (NeedPlan.effective shape r).args))
     (odispatch : ∀ g cells, Oblivious a
       (route.dispatch g cells (NeedPlan.effective shape r).caller (NeedPlan.effective shape r).values
-        (openExprName (NeedPlan.effective shape r).callee))) :
+        (NeedPlan.dispatchNameIn
+          ((NeedPlan.calleeAlong route a (NeedPlan.effective shape r) r).runState s).2.needs
+          a (NeedPlan.effective shape r) r))) :
     ((NeedPlan.execute route a shape).runState s).1 = ((ordinaryCall route a shape r).runState s).1 ∧
     (((NeedPlan.execute route a shape).runState s).2 = ((ordinaryCall route a shape r).runState s).2 ∨
       (∃ o, ((NeedPlan.execute route a shape).runState s).2 =
@@ -1391,15 +1407,15 @@ theorem fresh_plan_is_ordinary_call
           withPlan a .preparing ((ordinaryCall route a shape r).runState s).2)) := by
   rw [execute_recorded route a shape s cell r hc hr hi]
   generalize heff : NeedPlan.effective shape r = eff at dcallee ocallee oform odispatch
-  simp only [NeedPlan.executeAlong, ordinaryCall, bind_run, withCtx_run, heff]
+  simp only [NeedPlan.executeAlong, ordinaryCall, bind_run, withCtx_run, heff, dispatchName_run]
   have k1 := dcallee s
   have r1keep := oblivious_keeps_record ocallee .unprepared s cell hc hp
-  generalize hr1 : (NeedPlan.calleeAlong route a eff r).runState s = r1 at k1 r1keep
+  generalize hr1 : (NeedPlan.calleeAlong route a eff r).runState s = r1 at k1 r1keep odispatch
   rcases r1 with ⟨o1, t1⟩
   cases o1 with
   | error e => exact ⟨rfl, Or.inl rfl⟩
   | ok callee =>
-    dsimp only at r1keep ⊢
+    dsimp only at r1keep odispatch ⊢
     obtain ⟨c1, hc1, kc1⟩ := k1 a cell hc
     have hp1 : c1.plan = .unprepared := by
       have := congrArg (fun st : EvalState => (st.needs[a]?).map NeedCell.plan) r1keep
@@ -1452,7 +1468,7 @@ theorem fresh_plan_is_ordinary_call
           exact valid_of_get hc3
         rw [odispatch normal cells t3 (.prepared (.ok cells)) hv3]
         generalize (route.dispatch normal cells eff.caller eff.values
-          (openExprName eff.callee)).runState t3 = r4
+          (NeedPlan.dispatchNameIn t1.needs a eff r)).runState t3 = r4
         rcases r4 with ⟨o4, t4⟩
         cases o4 with
         | error e => exact ⟨rfl, Or.inr (Or.inl ⟨.ok cells, rfl⟩)⟩

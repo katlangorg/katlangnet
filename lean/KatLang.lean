@@ -6762,16 +6762,63 @@ def calleeAlong (route : Route) (a : Nat) (eff : CallShape) : PlanRoute → Eval
   | .intrinsic => throw invocationRefusal
   | _ => route.target eff.callee eff.caller
 
+/-- The written name of plan `a`'s callee in heap `needs`, total (`calleeName`'s law): its route's
+    effective callee once the route is recorded (an extension names its fallback), otherwise the
+    written callee; `none` for a non-plan address. -/
+def calleeNameIn? (needs : Array NeedCell) (a : Nat) : Option String :=
+  match shapeAt? needs a with
+  | some shape =>
+    match needs[a]? with
+    | some { route := some r, .. } => some (openExprName (effective shape r).callee)
+    | _ => some (openExprName shape.callee)
+  | none => none
+
+/-- The plan a supplied `X.Algorithm` LINK at `link` decoded, read from heap `needs` alone: the
+    link's recorded receiver cell (`NeedLink.receiverCell`) completed with a call reference. It
+    demands, projects and records nothing; once the link's CALLABLE has been obtained
+    (`NeedLink.callable`) it is exactly the plan that CALLABLE was decoded from, because a completed
+    VALUE and a recorded receiver are never rewritten. -/
+def linkedPlanIn? (needs : Array NeedCell) (link : Nat) : Option Nat :=
+  match needs[link]? with
+  | some { receiver := some r, .. } =>
+    match needs[r]? with
+    | some { state := .completed (.ok (.callRef p, _)), .. } => some p
+    | _ => none
+  | _ => none
+
+/-- META-S3-4-DIAG (October 20 2026): the callee name plan `a`'s execution along route `r` passes
+    to its dispatch, read from heap `needs` alone (total; no demand, projection or preparation).
+    Every route names its effective written callee (`openExprName eff.callee`) — the call's callee,
+    the argumentless member path, an extension's fallback — except the `.Algorithm` route: its
+    callee is the CAPTURED plan's callee, so it is named exactly as the ordinary intrinsic names a
+    fresh call of it (`algorithmOfValue` / `algorithmCalleeOf`: `calleeName` of the decoded plan),
+    and `R.Algorithm(1)` with `R = Capture(F(0))` reports `noMatchingBranch "F"`, never
+    `"R.Algorithm"`. The decoded plan is the one the link's CALLABLE came from (`linkedPlanIn?`);
+    were it unreadable, the written link names the dispatch. C#: `ProjectPlannedAlgorithmCallee`'s
+    `PlanCalleeName(captured)`. -/
+def dispatchNameIn (needs : Array NeedCell) (a : Nat) (eff : CallShape) : PlanRoute → String
+  | .algorithm =>
+    match ((needs[a]?).bind NeedCell.callee).bind (linkedPlanIn? needs) |>.bind (calleeNameIn? needs) with
+    | some name => name
+    | none => openExprName eff.callee
+  | _ => openExprName eff.callee
+
+/-- `dispatchNameIn` over the current heap: a pure state read. -/
+def dispatchName (a : Nat) (eff : CallShape) (r : PlanRoute) : EvalM String := do
+  pure (dispatchNameIn (← get).needs a eff r)
+
 /-- One execution of plan `a` along its recorded route `r`: the ordinary call's phases (callee,
     normalization, the plan's ONE supply over the route's effective bundle, the one dispatch) under
-    the written form's own error context. -/
+    the written form's own error context. The dispatch is named by `dispatchName`, read right after
+    the callee phase established the callee. -/
 def executeAlong (route : Route) (a : Nat) (shape : CallShape) (r : PlanRoute) : EvalM CountedResult := do
   let eff := effective shape r
   let callee ← withCtx shape.ctxMsg (calleeAlong route a eff r)
+  let name ← dispatchName a eff r
   let result ← withCtx shape.ctxMsg (do
     let normal ← route.normalize callee eff.caller
     let cells ← prepare route.spread a eff
-    route.dispatch normal cells eff.caller eff.values (openExprName eff.callee))
+    route.dispatch normal cells eff.caller eff.values name)
   pure (reCountValueBoundary result)
 
 /-- One execution of plan `a` (META-S3-4): its route — recorded, or established now — then
@@ -6814,15 +6861,12 @@ def viewSupply (spread : NeedSupply.SpreadEval) (classify : CallShape → EvalM 
   pure (.cells transported)
 
 /-- The written name of plan `a`'s callee — its route's effective callee once the route is recorded
-    (an extension names its fallback), which names a fresh call of the captured callee for dispatch
-    diagnostics exactly as the plan's own execution names it (`executeAlong`). -/
+    (an extension names its fallback). This names a fresh invocation of the projected callee; a plan
+    on the `.Algorithm` route has its own written link as that name, while executing that plan uses
+    the immediately captured plan's name (`dispatchName`). -/
 def calleeName (a : Nat) : EvalM String := do
-  let needs := (← get).needs
-  match shapeAt? needs a with
-  | some shape =>
-    match needs[a]? with
-    | some { route := some r, .. } => pure (openExprName (effective shape r).callee)
-    | _ => pure (openExprName shape.callee)
+  match calleeNameIn? (← get).needs a with
+  | some name => pure name
   | none => throw metaRefusal
 
 end NeedPlan

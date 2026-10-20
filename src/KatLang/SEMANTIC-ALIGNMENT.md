@@ -64,9 +64,16 @@ for every route-dependent reference operation. The C# `.Algorithm`-route receive
 (`InvocationReceiverSuspension`) reads through `EvalAlgorithmReceiver`, which keeps the ordinary
 checkpoint accounting (C#-only; Lean has no checkpoint counter). For a transported parameter receiver, each planned ordinary invocation also takes `EvalAlgorithmReceiver[Async]`: its ordinary value-receiver checkpoint and parameter error provenance, while retaining the original parameter cell. Lean's `ProductionDiscipline` gained
 the classifier and `projectNeedCallable` conjuncts (proved, `EvaluatorDiscipline.classify_disciplined`),
-and `CellKept` a route-stickiness field. A Lean-only representation note: the `.Algorithm` route's
-dispatch names the fresh call by the plan's written callee (`openExprName`), where C# names it by the
-captured plan's callee (`PlanCalleeName`) — diagnostics text is C#-only. The META refusal's C# rendering
+and `CellKept` a route-stickiness field. The `.Algorithm` route's dispatch names the fresh call by the
+CAPTURED plan's callee in both engines (Lean `NeedPlan.dispatchName` / `dispatchNameIn`, the decoded plan's
+`calleeNameIn?` — the ordinary intrinsic's `calleeName`; C# `PlanCalleeName(captured)`): `Id(R.Algorithm(1))`
+with `R = Capture(F(0))` is `NoMatchingBranch "F"`, as the unplanned `R.Algorithm(1)` is. *History:* until
+META-S3-4-DIAG (2026-10-20) Lean named it by the reconstructed invocation's written callee (`openExprName`,
+`"R.Algorithm"`); laws `InvocationRoute.lean` (`dispatchName_algorithm`, `planned_name_is_ordinary_name`,
+`dispatchName_inert`, `executeAlong_changes_only_the_name`), guards `InvocationRouteGuards` § G, C#
+`InvocationRoute/AlgorithmRouteDiagnosticNameTests`. Still different, found then and out of that scope: a
+PLANNED member route names its dispatch by the argumentless member path in Lean (`Id(Box.F(1))`:
+`"Box.F"`) and by the member name in C# (`"F"`, as both engines' unplanned member call). The META refusal's C# rendering
 names the new domain. Laws `KatLangArityLaws/InvocationRoute.lean`, guards `InvocationRouteGuards.lean`;
 C# `InvocationRoute/InvocationRouteCorpusTests`, `InvocationRouteTests`; report
 `experimental/features/meta-s3-4-implementation.md` (local). C#-only: J7, async route resolution,

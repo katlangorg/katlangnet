@@ -52,6 +52,11 @@ Proved here over those definitions (the general plan laws are in `InvocationPlan
 * **Distinct plans, shared cells** — two written invocations are two plans
   (`written_invocations_distinct`); a rebuilt `op.Algorithm(op.Arguments*)` prepares the ORIGINAL
   argument cells of `op` (`ArgumentViewLaws.view_spread_slot`, restated as `rebuilt_supply_slot`).
+* **Dispatch names** (META-S3-4-DIAG, October 20 2026) — every route but `.Algorithm` keeps its
+  effective written callee (`dispatchName_ordinary`); the `.Algorithm` route names the CAPTURED
+  plan's callee (`dispatchName_algorithm`), which is exactly the ordinary intrinsic's `calleeName`
+  (`planned_name_is_ordinary_name`); the name is a pure heap read (`dispatchName_inert`), and the
+  correction changes nothing but the string dispatch receives (`executeAlong_changes_only_the_name`).
 
 NOT claimed: kernel refinement of whole runs (the executable `InvocationRouteGuards` pin whole
 programs); the error-context strings of the extension route against `callLexicalWithReceiverCounted`
@@ -394,5 +399,102 @@ theorem rebuilt_supply_slot (ev sp : NeedSupply.SpreadEval) (classify : NeedPlan
     ∃ sourced, (NeedSupply.slot ev ctx env (.sequenceSpread operand)).runState s = (.ok sourced, s) ∧
       sourced.map Prod.fst = cells.map Prod.fst :=
   ArgumentViewLaws.view_spread_slot ev sp classify ctx env operand a s shape cell r cells hk hv hs hc hr hi hp
+
+
+/-! ## Dispatch diagnostic names (META-S3-4-DIAG, October 20 2026)
+
+A plan's execution names its dispatch by `NeedPlan.dispatchName`, a pure read of the heap
+(`dispatchNameIn`). Until this date `executeAlong` passed the effective written callee
+(`openExprName eff.callee`) on every route, so a planned `.Algorithm` invocation `Id(R.Algorithm(1))`
+with `R = Capture(F(0))` reported `noMatchingBranch "R.Algorithm"` while the ordinary intrinsic
+(`algorithmOfValue` / `algorithmCalleeOf`) and C# report `"F"`. -/
+
+/-- **Ordinary routes keep their names.** Every route but `.Algorithm` names its dispatch exactly as
+    before: its effective written callee — the call's callee, the argumentless member path, an
+    extension's fallback. -/
+theorem dispatchName_ordinary (needs : Array NeedCell) (a : Nat) (eff : NeedPlan.CallShape)
+    (r : PlanRoute) (h : r ≠ .algorithm) :
+    NeedPlan.dispatchNameIn needs a eff r = openExprName eff.callee := by
+  cases r <;> first | rfl | exact absurd rfl h
+
+/-- **The `.Algorithm` route names the captured plan's callee.** When plan `a`'s callee cell is a
+    link whose recorded receiver completed with the call reference of plan `p` — the state
+    `NeedLink.callable` leaves behind once the callee phase obtained the link's CALLABLE — the
+    dispatch is named by `p`'s own callee name (`calleeNameIn?`: its route's effective callee). -/
+theorem dispatchName_algorithm (needs : Array NeedCell) (a l rc p k : Nat) (eff : NeedPlan.CallShape)
+    (c cl cr : NeedCell) (n : String)
+    (hc : needs[a]? = some c) (hl : c.callee = some l) (hcl : needs[l]? = some cl)
+    (hrc : cl.receiver = some rc) (hcr : needs[rc]? = some cr)
+    (hst : cr.state = .completed (.ok (.callRef p, k)))
+    (hn : NeedPlan.calleeNameIn? needs p = some n) :
+    NeedPlan.dispatchNameIn needs a eff .algorithm = n := by
+  have hlink : NeedPlan.linkedPlanIn? needs l = some p := by
+    unfold NeedPlan.linkedPlanIn?
+    rcases cl with ⟨_, _, _, _, _, _, receiver, _, _⟩
+    rcases cr with ⟨_, state, _, _, _, _, _, _, _⟩
+    simp only at hrc hst
+    subst hrc hst
+    simp [hcl, hcr]
+  simp [NeedPlan.dispatchNameIn, hc, hl, hlink, hn]
+
+/-- An unreadable link (no recorded callee cell, receiver or call-reference VALUE) falls back to the
+    written link, so the name is total. -/
+theorem dispatchName_algorithm_fallback (needs : Array NeedCell) (a : Nat) (eff : NeedPlan.CallShape)
+    (h : ((needs[a]?).bind NeedCell.callee).bind (NeedPlan.linkedPlanIn? needs) = none) :
+    NeedPlan.dispatchNameIn needs a eff .algorithm = openExprName eff.callee := by
+  simp [NeedPlan.dispatchNameIn, h]
+
+/-- **One naming rule.** `NeedPlan.calleeName` — the name the ORDINARY `.Algorithm` intrinsic gives a
+    fresh call of a decoded plan (`algorithmOfValue`, `algorithmCalleeOf`) — is `calleeNameIn?` over
+    the current heap, read without any state change. -/
+theorem calleeName_reads (p : Nat) (s : EvalState) (n : String)
+    (h : NeedPlan.calleeNameIn? s.needs p = some n) :
+    (NeedPlan.calleeName p).runState s = (.ok n, s) := by
+  simp only [NeedPlan.calleeName, bind_run, get_run, h]
+  rfl
+
+/-- **The planned and the ordinary `.Algorithm` invocation are named alike**: over the heap where the
+    captured plan `p` is decoded, the planned dispatch name IS the ordinary intrinsic's
+    `calleeName p`. -/
+theorem planned_name_is_ordinary_name (s : EvalState) (a l rc p k : Nat) (eff : NeedPlan.CallShape)
+    (c cl cr : NeedCell) (n : String)
+    (hc : s.needs[a]? = some c) (hl : c.callee = some l) (hcl : s.needs[l]? = some cl)
+    (hrc : cl.receiver = some rc) (hcr : s.needs[rc]? = some cr)
+    (hst : cr.state = .completed (.ok (.callRef p, k)))
+    (hn : NeedPlan.calleeNameIn? s.needs p = some n) :
+    (NeedPlan.calleeName p).runState s = (.ok (NeedPlan.dispatchNameIn s.needs a eff .algorithm), s) := by
+  rw [dispatchName_algorithm s.needs a l rc p k eff c cl cr n hc hl hcl hrc hcr hst hn]
+  exact calleeName_reads p s n hn
+
+/-- **Naming demands nothing.** Reading the dispatch name leaves the state EXACTLY as it was: no
+    cell is allocated, demanded, projected or prepared, so every supplied cell, VALUE, CALLABLE,
+    plan record, route record, callee cell and receiver cell is preserved, and no receiver or
+    argument is evaluated again. -/
+theorem dispatchName_inert (a : Nat) (eff : NeedPlan.CallShape) (r : PlanRoute) (s : EvalState) :
+    (NeedPlan.dispatchName a eff r).runState s = (.ok (NeedPlan.dispatchNameIn s.needs a eff r), s) :=
+  dispatchName_run a eff r s
+
+/-- `executeAlong` as it was before META-S3-4-DIAG: the dispatch named by the effective written
+    callee on every route. -/
+def executeAlongWritten (route : NeedPlan.Route) (a : Nat) (shape : NeedPlan.CallShape) (r : PlanRoute) :
+    EvalM CountedResult := do
+  let eff := NeedPlan.effective shape r
+  let callee ← withCtx shape.ctxMsg (NeedPlan.calleeAlong route a eff r)
+  let result ← withCtx shape.ctxMsg (do
+    let normal ← route.normalize callee eff.caller
+    let cells ← NeedPlan.prepare route.spread a eff
+    route.dispatch normal cells eff.caller eff.values (openExprName eff.callee))
+  pure (reCountValueBoundary result)
+
+/-- **The correction changes only the name.** For a dispatch whose behaviour does not depend on the
+    name it is given (`d` is name-free), the corrected `executeAlong` and the former one have the
+    same outcome and the same final state from every state — the same callee phase, supply, effects
+    and records; only the diagnostic string passed to dispatch changed. -/
+theorem executeAlong_changes_only_the_name (route : NeedPlan.Route) (a : Nat) (shape : NeedPlan.CallShape)
+    (r : PlanRoute)
+    (d : Algorithm → List NeedSupply.Sourced → EvalCtx → ValEnv → EvalM CountedResult)
+    (hname : ∀ g cells c v n, route.dispatch g cells c v n = d g cells c v) (s : EvalState) :
+    (NeedPlan.executeAlong route a shape r).runState s = (executeAlongWritten route a shape r).runState s := by
+  simp only [NeedPlan.executeAlong, executeAlongWritten, bind_run, dispatchName_run, hname]
 
 end KatLang.InvocationRouteLaws
