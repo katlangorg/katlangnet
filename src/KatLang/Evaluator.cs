@@ -161,8 +161,12 @@ public static partial class Evaluator
     /// <summary>Value environment: maps parameter names to results. Lean: ValEnv.lookup (Option).</summary>
     private static Result? LookupVal(ValEnv env, string name)
     {
-        foreach (var (n, v) in env)
+        // Indexed like LookupNeed: no boxed enumerator per lookup (PERF-ORD-1).
+        for (var i = 0; i < env.Count; i++)
+        {
+            var (n, v) = env[i];
             if (n == name) return v;
+        }
         return null;
     }
 

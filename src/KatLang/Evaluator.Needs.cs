@@ -5,10 +5,16 @@ namespace KatLang;
 
 public static partial class Evaluator
 {
+    // Indexed, not `foreach`: enumerating the interface boxes an enumerator on every lookup unless
+    // the JIT happens to devirtualize and stack-allocate it (PERF-ORD-1). Every environment list has
+    // an O(1) indexer; the scan order and first-match rule are unchanged.
     private static NeedCell? LookupNeed(NeedEnv env, string name)
     {
-        foreach (var binding in env)
+        for (var i = 0; i < env.Count; i++)
+        {
+            var binding = env[i];
             if (binding.Name == name) return binding.Cell;
+        }
         return null;
     }
 
@@ -619,7 +625,12 @@ public static partial class Evaluator
                     : StructuralPatternArityMismatch(pattern.Original!, arity.Minimum, items.Count);
             PushLevel(pattern.Children!, items.Select(value => NeedCell.Ready(new(value, value.ValueCount()))).ToArray());
         }
-        return EvalResult<NeedEnv?>.Ok(bound.Select(pair => (pair.Key, pair.Value)).ToArray());
+        // The dictionary's own (struct) enumeration order, as before, without a LINQ iterator and a
+        // boxed enumerator per binding (PERF-ORD-1).
+        var env = new (string Name, NeedCell Cell)[bound.Count];
+        var next = 0;
+        foreach (var (boundName, boundCell) in bound) env[next++] = (boundName, boundCell);
+        return EvalResult<NeedEnv?>.Ok(env);
     }
 
     private static async ValueTask<EvalResult<IReadOnlyList<NeedCell>>> BindNeedDeconstruction(

@@ -18,9 +18,13 @@ internal sealed class PropertyBindingIndexCache
     {
         if (properties.Count < MinimumIndexedPropertyCount)
         {
-            foreach (var property in properties)
+            // Indexed, not `foreach`: no boxed enumerator per lookup (PERF-ORD-1).
+            for (var i = 0; i < properties.Count; i++)
+            {
+                var property = properties[i];
                 if (property.Name == name)
                     return property;
+            }
             return null;
         }
 
