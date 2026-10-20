@@ -1,5 +1,15 @@
 # Semantic Alignment Manifest.
 
+P1 — J7 per-plan representation (2026-10-20): C#-only, implementation-only allocation change; no
+language, Lean or observable-outcome change. A retaining run's per-transition cost in nested
+supplied-call loops (`S(x) = Id(Id(Id(x + 1))), x < n; S(0).while`) was measured as exactly the size
+growth of each plannable argument's suspension (`InvocationPlan` 152 B vs `ExpressionSuspension`
+104 B, two plans per transition). The plan's route, reference and canonical callee cell now share ONE
+observation slot (`InvocationPlan._observation`: the route alone, or an out-of-line holder created
+only when an observation needs the reference or callee cell), so an unobserved plan is 136 B. Lean's
+`NeedCell.route` / `NeedPlan.calleeCell` / `NeedPlan.reference` are unchanged: each is still written
+once (route first-writer-wins, callee cell and reference compare-and-set) and read identically.
+
 S6d — R7 evaluator checkpoint (2026-10-20; R7 remains OPEN): a restructuring of the Lean
 evaluator intended to preserve accepted behavior, plus proofs; C# production is unchanged.
 Recursive evaluator control in the former `partial` mutual block is now a total fuel-indexed core — one

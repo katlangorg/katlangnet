@@ -333,7 +333,7 @@ public class InvocationRouteTests
                 Assert.Same(cells[1], rebuilt.Plan.Owner);
                 Assert.Equal(0, original.Plan.SupplyFormations);
                 Assert.Equal(0, rebuilt.Plan.SupplyFormations);
-                Assert.Null(Volatile.Read(ref rebuilt.Plan.RouteState));
+                Assert.Null(rebuilt.Plan.RouteState);
                 Assert.Equal(0, traces);
                 Assert.Equal(0, ticks);
                 Assert.Equal("8", InvocationRouteCorpus.Value(rebuilt.Invoke().Value.Value));
@@ -351,7 +351,7 @@ public class InvocationRouteTests
                 Assert.Equal(1, original.Plan.SupplyFormations);
                 Assert.Equal(1, rebuilt.Plan.SupplyFormations);
                 // The rebuilt `op.Algorithm(...)` plan retained its `.Algorithm` route (a shared singleton).
-                Assert.Same(Evaluator.PlanRoute.AlgorithmIntrinsic, Volatile.Read(ref rebuilt.Plan.RouteState));
+                Assert.Same(Evaluator.PlanRoute.AlgorithmIntrinsic, rebuilt.Plan.RouteState);
                 return new Result.Atom(0);
             },
         });
@@ -436,7 +436,7 @@ public class InvocationRouteTests
             Assert.Equal(0, receivers);
             Assert.Equal(0, traces);
             Assert.Equal(0, bodies);
-            Assert.Null(Volatile.Read(ref reference.Plan.RouteState));
+            Assert.Null(reference.Plan.RouteState);
             // Asynchronous supply preparation must await the route through the async adapter (§ O.2),
             // overlapping two thread-pool route/callee observers while the receiver is suspended.
             var preparing = reference.Plan.PrepareSupply(asynchronous: true).AsTask();
@@ -450,7 +450,7 @@ public class InvocationRouteTests
             var cells = await Task.WhenAll(first, second).WaitAsync(Wait);
             Assert.All(cells, c => Assert.True(c.IsOk));
             Assert.Same(cells[0].Value, cells[1].Value);
-            Assert.IsType<Evaluator.PlanRoute>(Volatile.Read(ref reference.Plan.RouteState));
+            Assert.IsType<Evaluator.PlanRoute>(reference.Plan.RouteState);
             Assert.Equal(1, receivers);
             Assert.Equal(0, traces);
             Assert.Equal(0, bodies);
@@ -611,8 +611,8 @@ public class InvocationRouteTests
         Assert.True(result.IsOk, result.IsError ? result.Error.ToString() : "");
         Assert.Equal(4, plans.Count);
         // `Inc(1)`, `f(2)` and `(Box.G)(3)` need no route state at all; the member edge `Box.G(4)` retains one.
-        Assert.All(plans.Take(3), plan => { Assert.False(plan.NeedsRoute); Assert.Null(Volatile.Read(ref plan.RouteState)); });
-        var member = Assert.IsType<Evaluator.PlanRoute>(Volatile.Read(ref plans[3].RouteState));
+        Assert.All(plans.Take(3), plan => { Assert.False(plan.NeedsRoute); Assert.Null(plan.RouteState); });
+        var member = Assert.IsType<Evaluator.PlanRoute>(plans[3].RouteState);
         Assert.Equal(Evaluator.PlanRouteKind.Member, member.Kind);
     }
 }

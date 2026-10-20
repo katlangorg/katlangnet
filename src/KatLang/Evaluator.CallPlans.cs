@@ -18,12 +18,14 @@ namespace KatLang;
 /// (<see cref="ExpressionSuspension"/>: the caller context and value environment; the written expression is
 /// the cell's <see cref="NeedCell.Source"/>). A call-shaped supplied cell (<see cref="IsPlannableCall"/>) IS
 /// its plan, exactly as a Lean need address is: its suspension is an <see cref="InvocationPlan"/>, which adds
-/// ONE supply slot holding the plan's preparation state (Lean <c>NeedCell.plan : NeedPlanSupply</c>) and, for a
-/// written form whose route is not its source alone, ONE route slot (META-S3-4, <see cref="PlanRouteOf"/>;
-/// Lean <c>NeedCell.route</c>). The slot
+/// ONE supply slot holding the plan's preparation state (Lean <c>NeedCell.plan : NeedPlanSupply</c>) and ONE
+/// observation slot: the route of a written form whose route is not its source alone (META-S3-4,
+/// <see cref="PlanRouteOf"/>; Lean <c>NeedCell.route</c>), moved together with the reference and the
+/// canonical callee cell into an out-of-line holder only when an observation (META, <c>Invoke()</c>,
+/// <c>.Algorithm</c>, a loop, an <c>.Algorithm</c>-route execution) needs either. The supply slot
 /// holds the very supply object the dispatch consumes (the formed cell list, or a builtin's argument array),
 /// so retaining the supply after VALUE allocates nothing beyond the ordinary call. On the VALUE path there is
-/// no flight, reference or holder object: a waiter's completion source is allocated only when a second party
+/// no flight, reference or supply-holder object: a waiter's completion source is allocated only when a second party
 /// finds a preparation in progress, and the plan's <see cref="Result.CallReference"/> only on META.</para>
 ///
 /// <para><b>Operations.</b> The cell's ordinary VALUE (<see cref="NeedCell.Demand"/>) runs
@@ -134,13 +136,12 @@ public static partial class Evaluator
     internal static EvalResult<PlanRoute> PlanRouteOf(InvocationPlan plan)
     {
         if (!plan.NeedsRoute) return EvalResult<PlanRoute>.Ok(PlanRoute.Call);
-        if (Volatile.Read(ref plan.RouteState) is { } known)
+        if (plan.RouteState is { } known)
             return known is PlanRoute route ? EvalResult<PlanRoute>.Ok(route) : (EvalError)known;
         var computed = ComputePlanRoute(plan);
         if (NeedCell.CurrentObservation?.Pending is not null || (computed.IsError && NeedCell.IsObservationPending(computed.Error)))
             return computed;
-        Interlocked.CompareExchange(ref plan.RouteState, computed.IsOk ? computed.Value : computed.Error, null);
-        var final = Volatile.Read(ref plan.RouteState)!;
+        var final = plan.PublishRouteState(computed.IsOk ? computed.Value : computed.Error);
         return final is PlanRoute retained ? EvalResult<PlanRoute>.Ok(retained) : (EvalError)final;
     }
 
@@ -149,7 +150,7 @@ public static partial class Evaluator
     internal static ValueTask<EvalResult<PlanRoute>> PlanRouteOfAsync(InvocationPlan plan)
     {
         if (!plan.NeedsRoute) return ValueTask.FromResult(EvalResult<PlanRoute>.Ok(PlanRoute.Call));
-        if (Volatile.Read(ref plan.RouteState) is { } known)
+        if (plan.RouteState is { } known)
             return ValueTask.FromResult(known is PlanRoute route ? EvalResult<PlanRoute>.Ok(route) : (EvalError)known);
         return ResolveAsync(plan.Caller, plan, static p => PlanRouteOf(p));
     }
@@ -258,8 +259,6 @@ public static partial class Evaluator
     internal sealed class InvocationPlan(EvalCtx caller, ValEnv values) : ExpressionSuspension(caller, values)
     {
         private NeedCell? _owner;
-        private Result.CallReference? _reference;
-        private NeedCell? _calleeCell;
 
         /// <summary>The plan's supply slot (see the type summary). Written only by the plan's preparation.</summary>
         internal object? Supply;
@@ -268,11 +267,70 @@ public static partial class Evaluator
         internal int Formations;
 
         /// <summary>
+        /// The plan's OBSERVATION slot (P1, implementation-only): the state no ordinary VALUE of a call-form
+        /// plan reads, kept out of line so a plan that is never observed carries one slot for it instead of
+        /// three. <c>null</c> until needed; then either the plan's established route alone — a
+        /// <see cref="PlanRoute"/> or the route's <see cref="EvalError"/>, so the VALUE of a route-bearing
+        /// plan allocates nothing more — or a <see cref="PlanObservation"/> holding the route (if any), the
+        /// one reference and the canonical callee cell. A route never changes once written, and the slot only
+        /// moves from <c>null</c> to a route, from <c>null</c> to a holder, or from a route to a holder that
+        /// carries it, so every reader sees the same route.
+        /// </summary>
+        private object? _observation;
+
+        /// <summary>The out-of-line observation state (<see cref="_observation"/>); each field is written once.</summary>
+        private sealed class PlanObservation(object? routeState)
+        {
+            internal object? RouteState = routeState;
+            internal Result.CallReference? Reference;
+            internal NeedCell? CalleeCell;
+        }
+
+        /// <summary>
         /// META-S3-4: the retained route of a plan that <see cref="NeedsRoute"/> — <c>null</c> until
         /// established, then a <see cref="PlanRoute"/> or the route's <see cref="EvalError"/>, never changed
-        /// again (Lean <c>NeedCell.route</c>). Written only by <see cref="PlanRouteOf"/>.
+        /// again (Lean <c>NeedCell.route</c>). Written only by <see cref="PlanRouteOf"/>, through
+        /// <see cref="PublishRouteState"/>.
         /// </summary>
-        internal object? RouteState;
+        internal object? RouteState
+        {
+            get
+            {
+                var state = Volatile.Read(ref _observation);
+                return state is PlanObservation holder ? Volatile.Read(ref holder.RouteState) : state;
+            }
+        }
+
+        /// <summary>
+        /// Publishes a computed route (first writer wins) and returns the retained one: <paramref name="computed"/>
+        /// or the route another party published first.
+        /// </summary>
+        internal object PublishRouteState(object computed)
+        {
+            while (true)
+            {
+                var state = Volatile.Read(ref _observation);
+                if (state is PlanObservation holder)
+                    return Interlocked.CompareExchange(ref holder.RouteState, computed, null) ?? computed;
+                if (state is not null) return state;
+                if (Interlocked.CompareExchange(ref _observation, computed, null) is null) return computed;
+            }
+        }
+
+        // The holder, created on the first observation that needs one; it carries a route already published.
+        private PlanObservation Observation
+        {
+            get
+            {
+                while (true)
+                {
+                    var state = Volatile.Read(ref _observation);
+                    if (state is PlanObservation holder) return holder;
+                    var created = new PlanObservation(state);
+                    if (ReferenceEquals(Interlocked.CompareExchange(ref _observation, created, state), state)) return created;
+                }
+            }
+        }
 
         /// <summary>The supplied cell this plan belongs to: its original VALUE cell.</summary>
         internal NeedCell Owner => _owner!;
@@ -290,7 +348,7 @@ public static partial class Evaluator
         /// <summary>The established route (only read after a route-establishing operation succeeded).</summary>
         internal PlanRoute Route
             => !NeedsRoute ? PlanRoute.Call
-                : Volatile.Read(ref RouteState) as PlanRoute ?? EstablishedRoute(this);
+                : RouteState as PlanRoute ?? EstablishedRoute(this);
 
         /// <summary>The bundle the plan's ONE supply forms (route known): an extension's is receiver-first.</summary>
         internal OutputBundle Args => Source switch
@@ -316,7 +374,15 @@ public static partial class Evaluator
 
         /// <summary>The plan's one reference, allocated on the first META. Every META returns this same object.</summary>
         internal Result.CallReference Reference
-            => Volatile.Read(ref _reference) ?? Interlocked.CompareExchange(ref _reference, new Result.CallReference(this), null) ?? _reference!;
+        {
+            get
+            {
+                var holder = Observation;
+                return Volatile.Read(ref holder.Reference)
+                    ?? Interlocked.CompareExchange(ref holder.Reference, new Result.CallReference(this), null)
+                    ?? holder.Reference!;
+            }
+        }
 
         /// <summary>
         /// The plan's ONE canonical callee cell (META-S3-1, CR-13; Lean <c>NeedPlan.calleeCell</c>): the
@@ -327,10 +393,22 @@ public static partial class Evaluator
         /// unused.
         /// </summary>
         internal NeedCell CalleeCell
-            => Volatile.Read(ref _calleeCell) ?? Interlocked.CompareExchange(ref _calleeCell, CalleeCellOf(this), null) ?? _calleeCell!;
+        {
+            get
+            {
+                var holder = Observation;
+                return Volatile.Read(ref holder.CalleeCell)
+                    ?? Interlocked.CompareExchange(ref holder.CalleeCell, CalleeCellOf(this), null)
+                    ?? holder.CalleeCell!;
+            }
+        }
+
+        // Test observation only: whether an observation moved the slot to its out-of-line holder.
+        internal bool HasObservationHolder => Volatile.Read(ref _observation) is PlanObservation;
 
         // Test observation only: whether the callee cell has been established.
-        internal bool HasCalleeCell => Volatile.Read(ref _calleeCell) is not null;
+        internal bool HasCalleeCell
+            => Volatile.Read(ref _observation) is PlanObservation holder && Volatile.Read(ref holder.CalleeCell) is not null;
 
         /// <summary>Test observation: how many times this plan formed its supply (at most once).</summary>
         internal int SupplyFormations => Volatile.Read(ref Formations);
