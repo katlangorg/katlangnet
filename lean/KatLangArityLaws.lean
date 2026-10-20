@@ -14,6 +14,8 @@ total Model-C binder.
 This file proves laws over real KatLang `Result` constructors, normalization,
 value views and the total helpers of `KatLang.lean`.
 
+R7 NOTE (October 2026): the evaluator is no longer `partial`. Its operations are the bodies of the total fuel-indexed core (`KatLang.lean` § The fuel-indexed evaluator core), so a caller's use of a helper is now a kernel term, and `KatLangArityLaws/EvaluatorCore.lean` relates every completed production run to that core (`production_completes_iff`, `production_unfolds`). Statements below that call an evaluator definition `partial`, opaque, or a fact of its source are historical: they record what was proved WITHOUT that bridge, and no theorem here was strengthened by it unless it says so.
+
 EVIDENCE CATEGORIES (R8/X-13, October 2026). Every theorem here is one of:
 
 * a PRODUCTION theorem — about TOTAL definitions of `KatLang.lean` that the evaluator
@@ -29,7 +31,7 @@ EVIDENCE CATEGORIES (R8/X-13, October 2026). Every theorem here is one of:
   `partial` evaluator definitions that call those helpers (`evalCounted`, `demandNeedRecursive`,
   `evalResolvedCallCounted`, `callLexicalWithReceiverCounted`, …): that
   a `partial` caller applies a helper is a fact of the source, checked by the CoreTests
-  guards and the Lean/C# differential corpora, never a kernel fact;
+  guards and the Lean/C# differential corpora, never a kernel fact (see the R7 NOTE below);
 * a SPECIFICATION theorem — about a Lean specification of a C#-only front-end decision that
   the evaluator never calls (`liftsBareValueReference`, `forwardingSource`,
   `bareForwarding*`, `liftingSlotRole`, `familyLiftingSignature?`, the static alias chase

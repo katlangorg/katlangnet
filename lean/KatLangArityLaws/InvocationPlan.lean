@@ -25,7 +25,11 @@ behavior matters, the assumption is a STRUCTURAL contract, never the conclusion:
   supply. `NeedSupply.form`, `NeedPlan.prepare`, `NeedPlan.execute`, `NeedDemand.suspendedValue`,
   `NeedDemand.step`, `NeedPlan.reify` and `NeedPlan.invoke` are PROVED disciplined from their
   callbacks' discipline; that the `partial` production callbacks are disciplined is the one
-  named opaque obligation `ProductionDiscipline` (source fact, executable guards).
+  named opaque obligation `ProductionDiscipline` (source fact, executable guards). R7 (October
+  2026): it is now a THEOREM, `KatLang.EvaluatorDiscipline.productionDiscipline_holds`
+  (`KatLangArityLaws/EvaluatorDiscipline.lean`, which imports this file), in this exact general
+  form; the `production_*` specializations below keep their hypothesis here and are restated
+  without it there (`production_value_disciplined'`, …).
 * `Oblivious a m` (only for `fresh_plan_is_ordinary_call`): `m` neither reads nor writes the plan
   record of cell `a`, over ALL valid input heaps and plan records. This is a sufficient
   abstract callback contract, NOT a property established for the production dispatch:
@@ -33,7 +37,8 @@ behavior matters, the assumption is a STRUCTURAL contract, never the conclusion:
   pins that counterexample. Ordinary VALUE starts with `a` evaluating, a narrower invariant
   not expressed by this global contract; production conservativity remains executable evidence.
 
-Not claimed: kernel refinement of the `partial` evaluator (`evalCounted`, `demandNeedRecursive`,
+Not claimed (here; R7 adds the production bridge in `EvaluatorCore.lean` and discharges
+`ProductionDiscipline` in `EvaluatorDiscipline.lean`): kernel refinement of the `partial` evaluator (`evalCounted`, `demandNeedRecursive`,
 `evalSuppliedCallCounted`, `evalCallCountedExpr`) — that the ordinary call is `ordinaryCall` and
 that the recursive edge installs `productionPlanRoute` are source facts, checked executably by
 `InvocationPlanGuards`; C# concurrency, cancellation, terminality and resource accounting.
@@ -65,7 +70,9 @@ theorem lift_run {α : Type} (o : Except Error α) (s : EvalState) :
     (monadLift o : EvalM α).runState s = (o, s) := by
   cases o <;> rfl
 theorem evalAttempt_run {α : Type} (m : EvalM α) (s : EvalState) :
-    (evalAttempt m).runState s = (.ok (m.runState s).1, (m.runState s).2) := rfl
+    (evalAttempt m).runState s =
+      (if (m.runState s).1.isIncomplete then (.error .fuelExhausted, (m.runState s).2)
+       else (.ok (m.runState s).1, (m.runState s).2)) := rfl
 
 theorem captured_readonly (name : Ident) (ctx : EvalCtx) (s : EvalState) :
     ((capturedParameterActivation? name ctx).runState s).2 = s := by
@@ -201,7 +208,10 @@ theorem disciplined_lift {α : Type} (o : Except Error α) : Disciplined (monadL
   disciplined_of_needs _ (fun s => by rw [lift_run])
 
 theorem Disciplined.attempt {α : Type} {m : EvalM α} (hm : Disciplined m) :
-    Disciplined (evalAttempt m) := fun s => hm s
+    Disciplined (evalAttempt m) := by
+  intro s
+  rw [evalAttempt_run]
+  split <;> exact hm s
 
 theorem Disciplined.withCtx {α : Type} {m : EvalM α} (c : String) (hm : Disciplined m) :
     Disciplined (withCtx c m) := by
@@ -307,13 +317,32 @@ theorem prepare_preparing (ev : NeedSupply.SpreadEval) (a : Nat)
     context, and records the outcome (success or failure) as `prepared`. -/
 theorem prepare_unprepared (ev : NeedSupply.SpreadEval) (a : Nat)
     (shape : NeedPlan.CallShape) (s : EvalState) (cell : NeedCell)
-    (h : s.needs[a]? = some cell) (hp : cell.plan = .unprepared) :
+    (h : s.needs[a]? = some cell) (hp : cell.plan = .unprepared)
+    (hcomplete : ((NeedSupply.form ev shape.caller shape.values shape.args).runState
+      (withPlan a .preparing s)).1.isIncomplete = false) :
     (NeedPlan.prepare ev a shape).runState s =
       (let r := (NeedSupply.form ev shape.caller shape.values shape.args).runState (withPlan a .preparing s)
        (r.1, withPlan a (.prepared r.1) r.2)) := by
   simp only [NeedPlan.prepare, bind_run, get_run, h, hp, setSupply_run, evalAttempt_run]
+  revert hcomplete
   cases (NeedSupply.form ev shape.caller shape.values shape.args).runState (withPlan a .preparing s) with
-  | mk out t => cases out <;> rfl
+  | mk out t =>
+    intro hcomplete
+    cases out with
+    | ok _ => rfl
+    | error e => cases e <;> first | rfl | (simp [Except.isIncomplete] at hcomplete)
+
+/-- R7: an INCOMPLETE formation records nothing: the plan stays `preparing` and the incomplete
+    outcome propagates with the formation's state. -/
+theorem prepare_unprepared_incomplete (ev : NeedSupply.SpreadEval) (a : Nat)
+    (shape : NeedPlan.CallShape) (s : EvalState) (cell : NeedCell)
+    (h : s.needs[a]? = some cell) (hp : cell.plan = .unprepared)
+    (hinc : ((NeedSupply.form ev shape.caller shape.values shape.args).runState
+      (withPlan a .preparing s)).1.isIncomplete = true) :
+    (NeedPlan.prepare ev a shape).runState s =
+      (.error .fuelExhausted, ((NeedSupply.form ev shape.caller shape.values shape.args).runState
+        (withPlan a .preparing s)).2) := by
+  simp only [NeedPlan.prepare, bind_run, get_run, h, hp, setSupply_run, evalAttempt_run, hinc, if_true]
 
 
 theorem modify_get (h : Array NeedCell) (a b : Nat) (f : NeedCell → NeedCell) :
@@ -347,6 +376,18 @@ theorem bookkeeping_get (h : Array NeedCell) (a b : Nat) (g : NeedCell → NeedC
     simp only [hab, if_false] at hc
     exact ⟨hab, hc⟩
 
+theorem keep_withPlan_preparing (s : EvalState) (a : Nat) (cell : NeedCell)
+    (h : s.needs[a]? = some cell) (hp : cell.plan = .unprepared) :
+    HeapKept s.needs (withPlan a .preparing s).needs := by
+  intro b c hc
+  by_cases hab : a = b
+  · subst hab
+    rw [h] at hc; cases hc
+    refine ⟨{ cell with plan := .preparing }, by simp [withPlan, modify_get, h], rfl, fun _ ho => ho, ?_⟩
+    intro o ho; rw [hp] at ho; cases ho
+  · exact ⟨c, by simp [withPlan, modify_get, hab, hc], CellKept.refl c⟩
+
+
 /-- **Preparation is disciplined**: it writes only the plan record of its own cell `a`, and
     only from `unprepared`; any formation effect is a disciplined evaluator's. -/
 theorem disciplined_prepare (ev : NeedSupply.SpreadEval)
@@ -360,7 +401,14 @@ theorem disciplined_prepare (ev : NeedSupply.SpreadEval)
     | prepared o => rw [prepare_prepared ev a shape s cell o h hp]; exact HeapKept.refl _
     | preparing => rw [prepare_preparing ev a shape s cell h hp]; exact HeapKept.refl _
     | unprepared =>
-      rw [prepare_unprepared ev a shape s cell h hp]
+      cases hinc : ((NeedSupply.form ev shape.caller shape.values shape.args).runState
+          (withPlan a .preparing s)).1.isIncomplete with
+      | true =>
+        rw [prepare_unprepared_incomplete ev a shape s cell h hp hinc]
+        exact (keep_withPlan_preparing s a cell h hp).trans
+          (disciplined_form ev hev shape.caller shape.values shape.args (withPlan a .preparing s))
+      | false =>
+      rw [prepare_unprepared ev a shape s cell h hp hinc]
       dsimp only
       generalize hr : (NeedSupply.form ev shape.caller shape.values shape.args).runState
         (withPlan a .preparing s) = r
@@ -453,7 +501,19 @@ theorem disciplined_step (ev : Expr → EvalCtx → ValEnv → EvalM CountedResu
       generalize hr : (NeedDemand.suspendedValue ev route demand a cell.suspension).runState
         (withState a .evaluating s) = r at kv
       rcases r with ⟨outcome, t⟩
-      rw [KatLang.NeedControl.Memo.suspended_retains_state ev route demand a s t cell outcome h hs hr]
+      cases hinc : outcome.isIncomplete with
+      | true =>
+        rw [KatLang.NeedControl.Memo.suspended_incomplete ev route demand a s t cell outcome h hs hr hinc]
+        refine HeapKept.trans ?_ kv
+        intro b c hc
+        by_cases hab : a = b
+        · subst hab
+          rw [h] at hc; cases hc
+          refine ⟨{ cell with state := .evaluating }, by simp [withState, modify_get, h], rfl, ?_, fun _ ho => ho⟩
+          intro o ho; rw [hs] at ho; cases ho
+        · exact ⟨c, by simp [withState, modify_get, hab, hc], CellKept.refl c⟩
+      | false =>
+      rw [KatLang.NeedControl.Memo.suspended_retains_state ev route demand a s t cell outcome h hs hr hinc]
       intro b c hc
       by_cases hab : a = b
       · subst hab
@@ -590,12 +650,14 @@ theorem prepared_survives {α : Type} (m : EvalM α) (hm : Disciplined m)
     disciplined evaluator, which keeps the cell present). -/
 theorem prepare_records (ev : NeedSupply.SpreadEval)
     (hev : ∀ e c v, Disciplined (ev e c v)) (a : Nat) (shape : NeedPlan.CallShape)
-    (s : EvalState) (cell : NeedCell) (h : s.needs[a]? = some cell) (hp : cell.plan = .unprepared) :
+    (s : EvalState) (cell : NeedCell) (h : s.needs[a]? = some cell) (hp : cell.plan = .unprepared)
+    (hcomplete : ((NeedSupply.form ev shape.caller shape.values shape.args).runState
+      (withPlan a .preparing s)).1.isIncomplete = false) :
     ∃ c', ((NeedPlan.prepare ev a shape).runState s).2.needs[a]? = some c' ∧
       c'.plan = .prepared ((NeedPlan.prepare ev a shape).runState s).1 ∧
       ((NeedPlan.prepare ev a shape).runState s).1 =
         ((NeedSupply.form ev shape.caller shape.values shape.args).runState (withPlan a .preparing s)).1 := by
-  rw [prepare_unprepared ev a shape s cell h hp]
+  rw [prepare_unprepared ev a shape s cell h hp hcomplete]
   dsimp only
   have h1 : (withPlan a .preparing s).needs[a]? = some { cell with plan := .preparing } := by
     simp [withPlan, modify_get, h]
@@ -619,10 +681,13 @@ theorem withCtx_run {α : Type} (c : String) (m : EvalM α) (st : EvalState) :
     (withCtx c m).runState st =
       (match m.runState st with
        | (.ok a, t) => (.ok a, t)
-       | (.error e, t) => (.error (Error.withContext c e), t)) := by
-  simp only [withCtx, bind_run, evalAttempt]
+       | (.error e, t) =>
+         (.error (if (Except.error e : Except Error Unit).isIncomplete then e else Error.withContext c e), t)) := by
+  simp only [withCtx, bind_run, evalAttempt_run]
   rcases m.runState st with ⟨out, t⟩
-  cases out <;> rfl
+  cases out with
+  | ok a => rfl
+  | error e => cases e <;> rfl
 
 /-- **A prepared plan executes over exactly its cells.** With prepared cells, one plan execution
     is `callOver` those cells: the dispatch receives the recorded supply, never a re-formed one
@@ -662,7 +727,8 @@ theorem invoke_and_value_share_cells (ev : Expr → EvalCtx → ValEnv → EvalM
     (a : Nat) (s : EvalState) (cell : NeedCell) (shape : NeedPlan.CallShape)
     (cells : List NeedSupply.Sourced)
     (hc : s.needs[a]? = some cell) (hshape : NeedPlan.ofSuspension? cell.suspension = some shape)
-    (hp : cell.plan = .prepared (.ok cells)) (hs : cell.state = .suspended) :
+    (hp : cell.plan = .prepared (.ok cells)) (hs : cell.state = .suspended)
+    (hcomplete : ((callOver route shape cells).runState (withState a .evaluating s)).1.isIncomplete = false) :
     (NeedPlan.invoke route ⟨a⟩).runState s = (callOver route shape cells).runState s ∧
     (NeedDemand.step ev route demand a).runState s =
       (let r := (callOver route shape cells).runState (withState a .evaluating s)
@@ -685,9 +751,9 @@ theorem invoke_and_value_share_cells (ev : Expr → EvalCtx → ValEnv → EvalM
     have hr := execute_prepared route htarget hnormal a shape (withState a .evaluating s)
       { cell with state := .evaluating } cells he hp
     rw [← hv] at hr
-    generalize hres : (callOver route shape cells).runState (withState a .evaluating s) = r at hr
+    generalize hres : (callOver route shape cells).runState (withState a .evaluating s) = r at hr hcomplete
     rcases r with ⟨o, t⟩
-    exact KatLang.NeedControl.Memo.suspended_retains_state ev route demand a s t cell o hc hs hr
+    exact KatLang.NeedControl.Memo.suspended_retains_state ev route demand a s t cell o hc hs hr hcomplete
 
 /-! ## Observation order -/
 
@@ -759,7 +825,9 @@ theorem callShape_supported (f : Expr) (args : OutputBundle) (c : EvalCtx) (v : 
 theorem production_value_executes_plan (a : Nat) (s : EvalState) (cell : NeedCell)
     (e : Expr) (c : EvalCtx) (v : ValEnv) (shape : NeedPlan.CallShape)
     (hc : s.needs[a]? = some cell) (hsus : cell.suspension = .expression e c v)
-    (hshape : NeedPlan.callShape? e c v = some shape) (hs : cell.state = .suspended) :
+    (hshape : NeedPlan.callShape? e c v = some shape) (hs : cell.state = .suspended)
+    (hcomplete : ((NeedPlan.execute productionPlanRoute a shape).runState
+      (withState a .evaluating s)).1.isIncomplete = false) :
     (demandNeed a).runState s =
       (let r := (NeedPlan.execute productionPlanRoute a shape).runState (withState a .evaluating s)
        (r.1, withState a (.completed r.1) r.2)) := by
@@ -769,13 +837,13 @@ theorem production_value_executes_plan (a : Nat) (s : EvalState) (cell : NeedCel
     rw [hsus]
     exact suspended_call_is_plan _ _ _ a e c v shape hshape
   generalize hr : (NeedPlan.execute productionPlanRoute a shape).runState
-    (withState a .evaluating s) = r
+    (withState a .evaluating s) = r at hcomplete
   rcases r with ⟨o, t⟩
   rw [← hv] at hr
-  exact KatLang.NeedControl.Memo.suspended_retains_state _ _ _ a s t cell o hc hs hr
+  exact KatLang.NeedControl.Memo.suspended_retains_state _ _ _ a s t cell o hc hs hr hcomplete
 
-/-- THE opaque boundary of the production specializations below: the partial production
-    callbacks are disciplined (they keep every existing cell's suspension, completed VALUE and
+/-- (Historical name of the M1.5 boundary; R7 PROVES it: `productionDiscipline_holds` in
+    `KatLangArityLaws/EvaluatorDiscipline.lean`.) The production callbacks are disciplined (they keep every existing cell's suspension, completed VALUE and
     prepared plan). By source inspection the evaluator writes the heap only through
     `allocateNeed`, `projectNeedCallable`'s CALLABLE memo, `NeedPlan.prepare`, `NeedDemand.step`
     and the META-S3-1 memo records `NeedPlan.setCallee` / `NeedLink.setReceiver` (which write only
@@ -901,11 +969,11 @@ theorem prepare_allocates_fresh_cell (ev : NeedSupply.SpreadEval)
     (hs : ∀ operand, e ≠ .sequenceSpread operand) :
     ((NeedPlan.prepare ev a shape).runState s).1 = .ok [(s.needs.size, some e)] ∧
     ((NeedPlan.prepare ev a shape).runState s).2.needs.size = s.needs.size + 1 := by
-  rw [prepare_unprepared ev a shape s cell h hp]
   have hsup := KatLang.NeedControl.Allocation.supply_nonparameter e shape.caller shape.values
     (withPlan a .preparing s) hn
   have hf := KatLang.NeedControl.Formation.ordinary_singleton ev shape.caller shape.values e
     (withPlan a .preparing s) _ _ hs hsup
+  rw [prepare_unprepared ev a shape s cell h hp (by rw [hargs, hf]; rfl)]
   rw [hargs, hf]
   simp [withPlan_size]
 
@@ -1003,8 +1071,11 @@ theorem fresh_plan_is_ordinary_call
       (route.dispatch g cells shape.caller shape.values (openExprName shape.callee))) :
     ((NeedPlan.execute route a shape).runState s).1 = ((ordinaryCall route shape).runState s).1 ∧
     (((NeedPlan.execute route a shape).runState s).2 = ((ordinaryCall route shape).runState s).2 ∨
-      ∃ o, ((NeedPlan.execute route a shape).runState s).2 =
-        withPlan a (.prepared o) ((ordinaryCall route shape).runState s).2) := by
+      (∃ o, ((NeedPlan.execute route a shape).runState s).2 =
+        withPlan a (.prepared o) ((ordinaryCall route shape).runState s).2) ∨
+      (((NeedPlan.execute route a shape).runState s).1 = .error .fuelExhausted ∧
+        ((NeedPlan.execute route a shape).runState s).2 =
+          withPlan a .preparing ((ordinaryCall route shape).runState s).2)) := by
   simp only [NeedPlan.execute, ordinaryCall, bind_run, withCtx_run]
   have k1 := dtarget shape.callee shape.caller s
   have r1keep := oblivious_keeps_record (otarget shape.callee shape.caller) .unprepared s cell hc hp
@@ -1032,15 +1103,32 @@ theorem fresh_plan_is_ordinary_call
         have := congrArg (fun st : EvalState => (st.needs[a]?).map NeedCell.plan) r2keep
         simp [withPlan, modify_get, hc2] at this
         exact this
-      rw [prepare_unprepared route.spread a shape t2 c2 hc2 hp2]
+      cases hinc : ((NeedSupply.form route.spread shape.caller shape.values shape.args).runState
+          t2).1.isIncomplete with
+      | true =>
+        have hinc' : ((NeedSupply.form route.spread shape.caller shape.values shape.args).runState
+            (withPlan a .preparing t2)).1.isIncomplete = true := by
+          rw [oform t2 .preparing (valid_of_get hc2)]; exact hinc
+        rw [prepare_unprepared_incomplete route.spread a shape t2 c2 hc2 hp2 hinc',
+          oform t2 .preparing (valid_of_get hc2)]
+        generalize hr3 : (NeedSupply.form route.spread shape.caller shape.values shape.args).runState t2 = r3
+          at hinc
+        rcases r3 with ⟨o3, t3⟩
+        dsimp only at hinc ⊢
+        rw [Except.isIncomplete_eq_true hinc]
+        exact ⟨rfl, Or.inr (Or.inr ⟨rfl, rfl⟩)⟩
+      | false =>
+      rw [prepare_unprepared route.spread a shape t2 c2 hc2 hp2
+        (by rw [oform t2 .preparing (valid_of_get hc2)]; exact hinc)]
       dsimp only
       rw [oform t2 .preparing (valid_of_get hc2)]
       generalize hr3 : (NeedSupply.form route.spread shape.caller shape.values shape.args).runState t2 = r3
+        at hinc
       rcases r3 with ⟨o3, t3⟩
-      dsimp only
+      dsimp only at hinc ⊢
       rw [withPlan_withPlan]
       cases o3 with
-      | error e => exact ⟨rfl, Or.inr ⟨.error e, rfl⟩⟩
+      | error e => exact ⟨rfl, Or.inr (Or.inl ⟨.error e, rfl⟩)⟩
       | ok cells =>
         dsimp only
         have hv3 : a < t3.needs.size := by
@@ -1052,8 +1140,8 @@ theorem fresh_plan_is_ordinary_call
           (openExprName shape.callee)).runState t3 = r4
         rcases r4 with ⟨o4, t4⟩
         cases o4 with
-        | error e => exact ⟨rfl, Or.inr ⟨.ok cells, rfl⟩⟩
-        | ok v => exact ⟨rfl, Or.inr ⟨.ok cells, rfl⟩⟩
+        | error e => exact ⟨rfl, Or.inr (Or.inl ⟨.ok cells, rfl⟩)⟩
+        | ok v => exact ⟨rfl, Or.inr (Or.inl ⟨.ok cells, rfl⟩)⟩
 
 
 theorem captured_withPlan (name : Ident) (ctx : EvalCtx) (a : Nat) (p : NeedPlanSupply)
@@ -1075,7 +1163,6 @@ theorem prepare_transports_parameter (ev : NeedSupply.SpreadEval)
     (hl : lookupAssoc name (activation.map ParameterActivation.needs |>.getD shape.caller.needEnv) = some c) :
     (NeedPlan.prepare ev a shape).runState s =
       (.ok [(c, some (.param name))], withPlan a (.prepared (.ok [(c, some (.param name))])) s) := by
-  rw [prepare_unprepared ev a shape s cell h hp]
   have hc' : (capturedParameterActivation? name shape.caller).runState (withPlan a .preparing s) =
       (.ok activation, withPlan a .preparing s) := by
     rw [captured_withPlan, hc]
@@ -1083,6 +1170,7 @@ theorem prepare_transports_parameter (ev : NeedSupply.SpreadEval)
     (withPlan a .preparing s) activation c hc' hl
   have hf := KatLang.NeedControl.Formation.ordinary_singleton ev shape.caller shape.values (.param name)
     (withPlan a .preparing s) _ _ (fun _ h => by cases h) hsup
+  rw [prepare_unprepared ev a shape s cell h hp (by rw [hargs, hf]; rfl)]
   rw [hargs, hf]
   simp only [withPlan_withPlan]
 

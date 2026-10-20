@@ -4,6 +4,11 @@ import KatLangArityLaws.CallReference
 
 open KatLang KatLang.BinderTrace KatLang.BinderCorrespondence
 
+/-! R7 checkpoint: the evaluator's recursive control is now total and completed production
+operations are connected by `EvaluatorCore.production_unfolds`. The source-only/partial-driver
+descriptions below are historical; the `hcal`/`hrec` correspondence premises and the binder-only
+observation boundary remain. Whole-body callback/direct-call refinement is still open. -/
+
 /-!
 # Callback / direct-call binder correspondence over formed supplies (R6, S5, October 2026)
 
@@ -817,8 +822,17 @@ theorem step_sim (ev : Nat → Expr → EvalCtx → ValEnv → EvalM CountedResu
     rw [hv1, hv2] at ho r1
     simp only at ho r1
     subst ho
-    have e1 := KatLang.NeedControl.Memo.suspended_retains_state (ev a1) route recur a1 s1 u1 c1 o1 h1 hs hv1
-    have e2 := KatLang.NeedControl.Memo.suspended_retains_state (ev a2) route recur a2 s2 u2 c2 o1 h2 hs2 hv2
+    cases hinc : o1.isIncomplete with
+    | true =>
+      have e1 := KatLang.NeedControl.Memo.suspended_incomplete (ev a1) route recur a1 s1 u1 c1 o1 h1 hs hv1 hinc
+      have e2 := KatLang.NeedControl.Memo.suspended_incomplete (ev a2) route recur a2 s2 u2 c2 o1 h2 hs2 hv2 hinc
+      show RunCorr HeapCorr _ t ((NeedDemand.step (ev a1) route recur a1).runState s1)
+        ((NeedDemand.step (ev a2) route recur a2).runState s2)
+      rw [e1, e2]
+      exact ⟨t1, x1, r1, rfl⟩
+    | false =>
+    have e1 := KatLang.NeedControl.Memo.suspended_retains_state (ev a1) route recur a1 s1 u1 c1 o1 h1 hs hv1 hinc
+    have e2 := KatLang.NeedControl.Memo.suspended_retains_state (ev a2) route recur a2 s2 u2 c2 o1 h2 hs2 hv2 hinc
     show RunCorr HeapCorr _ t ((NeedDemand.step (ev a1) route recur a1).runState s1)
       ((NeedDemand.step (ev a2) route recur a2).runState s2)
     rw [e1, e2]

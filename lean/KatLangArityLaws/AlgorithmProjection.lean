@@ -2,6 +2,12 @@ import KatLangArityLaws.CallReference
 
 open KatLang KatLang.CallPlan
 
+/-! R7 checkpoint: the recursive evaluator control is now the total `EvalBody`/`evalFuel` core.
+The `partial`/source-only installation descriptions below record the original proof boundary;
+`EvaluatorCore.production_unfolds` connects completed operations to those bodies. This does not
+prove reachable link-address validity, completed CALLABLE stability or end-to-end projection
+refinement. The local theorems below retain their stated premises. -/
+
 /-!
 # META-S3-1: the callable projection of a call reference, `R.Algorithm` (October 2026)
 

@@ -7,9 +7,10 @@ open KatLang KatLang.NeedDemand
 
 PRODUCTION theorems below concern the actual total helpers in KatLang.lean.
 Schedules and heap predicates are LOCAL observations, not alternative evaluators.
-The public entry points specialize these helpers by definition. The recursive
-driver and evalCounted remain partial: their wiring is source/guard evidence,
-not universal kernel refinement of the old opaque evaluator. Publication needs
+The public entry points specialize these helpers by definition. (Until R7 the recursive
+driver and evalCounted were partial, so their wiring was source/guard evidence; since R7 they are
+production wrappers of the total core, related to it by `KatLangArityLaws/EvaluatorCore.lean`.
+No theorem here was changed by that, beyond the incomplete-outcome premises.) Publication needs
 a present post-callback cell; size alone does not preserve suspension identity.
 No theorem here concerns C# concurrency, cancellation or whole-run heap refinement.
 -/
@@ -266,19 +267,26 @@ theorem suspended_retains_state (ev) (route : NeedPlan.Route) (demand : Nat → 
     (a : Nat) (s t : EvalState) (cell : NeedCell) (outcome : Except Error CountedResult)
     (hc : s.needs[a]? = some cell) (hs : cell.state = .suspended)
     (hr : (suspendedValue ev route demand a cell.suspension).runState
-      { s with needs := s.needs.modify a (fun c => { c with state := .evaluating }) } = (outcome, t)) :
+      { s with needs := s.needs.modify a (fun c => { c with state := .evaluating }) } = (outcome, t))
+    (hcomplete : outcome.isIncomplete = false) :
     (step ev route demand a).runState s =
       (outcome, { t with needs := t.needs.modify a (fun c => { c with state := .completed outcome }) }) := by
-  simp only [step, KatLang.NeedControl.Collector.bind_run, KatLang.NeedControl.Provenance.get_run, hc, hs]
-  change (do
-    let outcome ← evalAttempt (suspendedValue ev route demand a cell.suspension)
-    modify fun s => { s with needs := s.needs.modify a (fun c => { c with state := .completed outcome }) }
-    return ← outcome : EvalM CountedResult).runState
-      { s with needs := s.needs.modify a (fun c => { c with state := .evaluating }) } = _
-  simp only [KatLang.NeedControl.Collector.bind_run, evalAttempt, hr]
+  simp only [step, KatLang.NeedControl.Collector.bind_run, KatLang.NeedControl.Provenance.get_run, hc, hs,
+    EvalM.modify_runState, evalAttempt_runState_of_complete _ _ _ _ hr hcomplete]
   cases outcome <;> rfl
 
-
+/-- R7: an INCOMPLETE computation completes nothing: the cell stays `evaluating` in the
+    computation's final state and the incomplete outcome propagates. -/
+theorem suspended_incomplete (ev) (route : NeedPlan.Route) (demand : Nat → EvalM CountedResult)
+    (a : Nat) (s t : EvalState) (cell : NeedCell) (outcome : Except Error CountedResult)
+    (hc : s.needs[a]? = some cell) (hs : cell.state = .suspended)
+    (hr : (suspendedValue ev route demand a cell.suspension).runState
+      { s with needs := s.needs.modify a (fun c => { c with state := .evaluating }) } = (outcome, t))
+    (hinc : outcome.isIncomplete = true) :
+    (step ev route demand a).runState s = (.error .fuelExhausted, t) := by
+  rw [Except.isIncomplete_eq_true hinc] at hr
+  simp only [step, KatLang.NeedControl.Collector.bind_run, KatLang.NeedControl.Provenance.get_run, hc, hs,
+    EvalM.modify_runState, evalAttempt_runState_of_incomplete _ _ _ hr]
 
 end KatLang.NeedControl.Memo
 
@@ -566,12 +574,13 @@ theorem suspended_publishes (ev) (route : NeedPlan.Route) (demand : Nat → Eval
     (hr : (NeedDemand.suspendedValue ev route demand a cell.suspension).runState
       {s with needs := s.needs.modify a (fun c => {c with state := .evaluating})} = (outcome, t))
     (valid : a < s.needs.size) (nonshrinking : s.needs.size ≤ t.needs.size)
-    (present : t.needs[a]? = some current) (identity : current.suspension = cell.suspension) :
+    (present : t.needs[a]? = some current) (identity : current.suspension = cell.suspension)
+    (hcomplete : outcome.isIncomplete = false) :
     ((NeedDemand.step ev route demand a).runState s).1 = outcome ∧
     ((NeedDemand.step ev route demand a).runState s).2.needs[a]? =
       some {current with state := .completed outcome} ∧
     current.suspension = cell.suspension ∧ a < t.needs.size := by
-  rw [KatLang.NeedControl.Memo.suspended_retains_state ev route demand a s t cell outcome hc hs hr]
+  rw [KatLang.NeedControl.Memo.suspended_retains_state ev route demand a s t cell outcome hc hs hr hcomplete]
   exact ⟨rfl, completion_publication t a current outcome present, identity,
     size_preserves_valid_address s t a valid nonshrinking⟩
 
@@ -862,15 +871,13 @@ theorem invalid_address (project : NeedSuspension → EvalM (Option Algorithm)) 
 theorem unprojected_publishes (project : NeedSuspension → EvalM (Option Algorithm)) (a : Nat)
     (s t : EvalState) (cell : NeedCell) (outcome : Except Error (Option Algorithm))
     (hc : s.needs[a]? = some cell) (hs : cell.callable = .unprojected)
-    (hr : (project cell.suspension).runState (setCallable a .projecting s) = (outcome, t)) :
+    (hr : (project cell.suspension).runState (setCallable a .projecting s) = (outcome, t))
+    (hcomplete : outcome.isIncomplete = false) :
     (NeedProjection.step project a).runState s =
       (outcome, setCallable a (.projected outcome) t) := by
-  simp only [NeedProjection.step, bind_run, get_run, hc, hs]
-  change (do
-    let outcome ← evalAttempt (project cell.suspension)
-    modify fun s => { s with needs := s.needs.modify a (fun c => { c with callable := .projected outcome }) }
-    return ← outcome : EvalM (Option Algorithm)).runState (setCallable a .projecting s) = _
-  simp only [bind_run, evalAttempt, hr]
+  simp only [NeedProjection.step, bind_run, get_run, hc, hs, EvalM.modify_runState]
+  simp only [setCallable] at hr
+  simp only [evalAttempt_runState_of_complete _ _ _ _ hr hcomplete]
   cases outcome <;> rfl
 
 /-- P3 publication: when the cell is still present after the computation, the published
@@ -880,12 +887,13 @@ theorem unprojected_publication_sticky (project : NeedSuspension → EvalM (Opti
     (s t : EvalState) (cell current : NeedCell) (outcome : Except Error (Option Algorithm))
     (hc : s.needs[a]? = some cell) (hs : cell.callable = .unprojected)
     (hr : (project cell.suspension).runState (setCallable a .projecting s) = (outcome, t))
-    (present : t.needs[a]? = some current) (other : NeedSuspension → EvalM (Option Algorithm)) :
+    (present : t.needs[a]? = some current) (other : NeedSuspension → EvalM (Option Algorithm))
+    (hcomplete : outcome.isIncomplete = false) :
     ((NeedProjection.step project a).runState s).2.needs[a]? =
       some { current with callable := .projected outcome } ∧
     (NeedProjection.step other a).runState ((NeedProjection.step project a).runState s).2 =
       (outcome, ((NeedProjection.step project a).runState s).2) := by
-  rw [unprojected_publishes project a s t cell outcome hc hs hr]
+  rw [unprojected_publishes project a s t cell outcome hc hs hr hcomplete]
   have hat := setCallable_at t a (.projected outcome) current present
   exact ⟨hat, projected_sticky other a _ _ outcome hat rfl⟩
 
@@ -894,12 +902,13 @@ theorem unprojected_publication_sticky (project : NeedSuspension → EvalM (Opti
 theorem unprojected_value_channel (project : NeedSuspension → EvalM (Option Algorithm)) (a : Nat)
     (s t : EvalState) (cell : NeedCell) (outcome : Except Error (Option Algorithm))
     (hc : s.needs[a]? = some cell) (hs : cell.callable = .unprojected)
-    (hr : (project cell.suspension).runState (setCallable a .projecting s) = (outcome, t)) (b : Nat) :
+    (hr : (project cell.suspension).runState (setCallable a .projecting s) = (outcome, t)) (b : Nat)
+    (hcomplete : outcome.isIncomplete = false) :
     (((NeedProjection.step project a).runState s).2.needs[b]?).map (fun c => (c.suspension, c.state, c.plan)) =
       (t.needs[b]?).map (fun c => (c.suspension, c.state, c.plan)) ∧
     ((setCallable a .projecting s).needs[b]?).map (fun c => (c.suspension, c.state, c.plan)) =
       (s.needs[b]?).map (fun c => (c.suspension, c.state, c.plan)) := by
-  rw [unprojected_publishes project a s t cell outcome hc hs hr]
+  rw [unprojected_publishes project a s t cell outcome hc hs hr hcomplete]
   exact ⟨(setCallable_preserves_value_channel t a _ b).1,
     (setCallable_preserves_value_channel s a _ b).1⟩
 
@@ -909,12 +918,13 @@ theorem suspended_callable_channel (ev) (route : NeedPlan.Route) (demand : Nat �
     (a : Nat) (s t : EvalState) (cell : NeedCell) (outcome : Except Error CountedResult)
     (hc : s.needs[a]? = some cell) (hs : cell.state = .suspended)
     (hr : (NeedDemand.suspendedValue ev route demand a cell.suspension).runState
-      { s with needs := s.needs.modify a (fun c => { c with state := .evaluating }) } = (outcome, t)) (b : Nat) :
+      { s with needs := s.needs.modify a (fun c => { c with state := .evaluating }) } = (outcome, t)) (b : Nat)
+    (hcomplete : outcome.isIncomplete = false) :
     (((NeedDemand.step ev route demand a).runState s).2.needs[b]?).map NeedCell.callable =
       (t.needs[b]?).map NeedCell.callable ∧
     ((s.needs.modify a (fun c => { c with state := .evaluating }))[b]?).map NeedCell.callable =
       (s.needs[b]?).map NeedCell.callable := by
-  rw [Memo.suspended_retains_state ev route demand a s t cell outcome hc hs hr]
+  rw [Memo.suspended_retains_state ev route demand a s t cell outcome hc hs hr hcomplete]
   exact ⟨(demand_write_preserves_callable_channel t a _ b).1,
     (demand_write_preserves_callable_channel s a _ b).1⟩
 
@@ -930,7 +940,7 @@ theorem self_reentry_publishes_cycle (inner : NeedSuspension → EvalM (Option A
       some { cell with callable := .projected (.error .demandCycle) } := by
   have hp := setCallable_at s a .projecting cell hc
   have hr := projecting_reentry_cycle inner a (setCallable a .projecting s) _ hp rfl
-  rw [unprojected_publishes (fun _ => NeedProjection.step inner a) a s _ cell _ hc hs hr,
+  rw [unprojected_publishes (fun _ => NeedProjection.step inner a) a s _ cell _ hc hs hr rfl,
     setCallable_twice]
   exact ⟨rfl, setCallable_at s a _ cell hc⟩
 
@@ -963,12 +973,13 @@ theorem transparent_bind {α β : Type} (a : Nat) (m : EvalM α) (f : α → Eva
 theorem transparent_projection_is_marker_free (project : NeedSuspension → EvalM (Option Algorithm))
     (a : Nat) (s : EvalState) (cell : NeedCell)
     (hc : s.needs[a]? = some cell) (hs : cell.callable = .unprojected)
-    (ht : CallableTransparent a (project cell.suspension)) :
+    (ht : CallableTransparent a (project cell.suspension))
+    (hcomplete : ((project cell.suspension).runState s).1.isIncomplete = false) :
     (NeedProjection.step project a).runState s =
       (((project cell.suspension).runState s).1,
         setCallable a (.projected ((project cell.suspension).runState s).1)
           ((project cell.suspension).runState s).2) := by
-  rw [unprojected_publishes project a s _ cell _ hc hs (ht s .projecting), setCallable_twice]
+  rw [unprojected_publishes project a s _ cell _ hc hs (ht s .projecting) hcomplete, setCallable_twice]
 
 /-- The production suspension arms that need no written resolution are transparent:
     produced data, a collector slice and a capture carry no identity. -/
@@ -994,8 +1005,6 @@ theorem identityless_projection (written : Expr → EvalCtx → EvalM (Option Al
       shouldWrapArgExprAsValue source = true) :
     (NeedProjection.step (NeedProjection.suspended written) a).runState s =
       (.ok none, setCallable a (.projected (.ok none)) s) := by
-  rw [transparent_projection_is_marker_free _ a s cell hc hs
-    (suspended_transparent_without_written written a cell.suspension h)]
   have hnone : (NeedProjection.suspended written cell.suspension).runState s = (.ok none, s) := by
     cases hsus : cell.suspension with
     | ready _ => rfl
@@ -1003,6 +1012,8 @@ theorem identityless_projection (written : Expr → EvalCtx → EvalM (Option Al
     | expression source caller values =>
       simp only [NeedProjection.suspended, h source caller values hsus, if_true]
       rfl
+  rw [transparent_projection_is_marker_free _ a s cell hc hs
+    (suspended_transparent_without_written written a cell.suspension h) (by rw [hnone]; rfl)]
   rw [hnone]
 
 end KatLang.NeedControl.Projection

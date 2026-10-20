@@ -45,7 +45,8 @@ Explicit invocation reuses the M1.5 laws unchanged: `invoke_run` (fresh `execute
 
 NOT claimed (source facts, executable guards in `CallReferenceGuards.lean`): that the `partial`
 evaluator's `Invoke` arm, the user-call driver and the dot route call these definitions; the
-reachable-state refinement and `ProductionDiscipline` (still open, M1.5 §8); run identity — Lean
+reachable-state refinement (still open, M1.5 §8) and `ProductionDiscipline` (open until R7; now
+the theorem `productionDiscipline_holds`, `EvaluatorDiscipline.lean`); run identity — Lean
 has one run per `EvalState` and no channel that brings a value into another run, so foreign-run
 and terminal-run rejection are C#-only obligations; C# concurrency, cancellation and resources.
 -/
@@ -128,7 +129,7 @@ theorem adapter_value (ev : Expr → EvalCtx → ValEnv → EvalM CountedResult)
     ((NeedDemand.step ev route demand b).runState s).1 = .ok (.callRef a, 1) := by
   have := KatLang.NeedControl.Memo.suspended_retains_state ev route demand b s
     { s with needs := s.needs.modify b (fun c => { c with state := .evaluating }) }
-    (adapterCell a) (.ok (.callRef a, 1)) h rfl rfl
+    (adapterCell a) (.ok (.callRef a, 1)) h rfl rfl rfl
   rw [this]
 
 /-- References are equal values iff they denote the same need address (the plan identity); the

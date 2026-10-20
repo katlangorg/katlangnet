@@ -21,7 +21,10 @@ What is NOT proved here, and stays a source-level or executable fact:
 * anything about C# (budgets, cancellation, host effects, random draws, async suspension):
   those are covered by the C# differential tests (`LoopConditionFirstTests`);
 * whole-run heap/cache refinement, the existing `ProductionDiscipline` and reachable-state /
-  active-cell obligations: unchanged and still open.
+  active-cell obligations: unchanged and still open. (R7, October 2026: `ProductionDiscipline` is
+  now a theorem, `KatLangArityLaws/EvaluatorDiscipline.lean`; the whole-run property-cache laws
+  are `KatLangArityLaws/EvaluatorCacheLaws.lean`; the reachable-state / active-cell obligations
+  stay open; `formOutputRow` is now a body of the total core, but no CF-4 theorem uses that.)
 
 The CF-7 equivalence with the retired step-first reading holds ONLY under its stated premise:
 every row succeeds with a state-INDEPENDENT result and leaves the state unchanged. It does not

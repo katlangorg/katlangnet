@@ -46,8 +46,9 @@ Every theorem below is about those authoritative definitions. Proved here:
 
 NOT claimed (source facts, executable guards in `ArgumentViewGuards.lean`): that the `partial`
 evaluator's `Arguments` arm, `.index` arm, sequence-builtin binding and `evalSupplySpread` call
-these definitions; the reachable-state refinement and `ProductionDiscipline` (which now also names
-`evalSupplySpread`; still open, M1.5 §8); run identity and the ended-run, foreign-run and terminal
+these definitions; the reachable-state refinement (still open, M1.5 §8) and `ProductionDiscipline`
+(which now also names `evalSupplySpread`; open until R7, now the theorem `productionDiscipline_holds`,
+`EvaluatorDiscipline.lean`); run identity and the ended-run, foreign-run and terminal
 refusals (C#-only obligations: Lean has one run per state); C# concurrency, cancellation and
 resource accounting.
 -/
@@ -127,11 +128,13 @@ theorem viewCells_prepared (sp : NeedSupply.SpreadEval) (a : Nat) (s : EvalState
 theorem viewCells_unprepared (sp : NeedSupply.SpreadEval) (a : Nat) (s : EvalState)
     (shape : NeedPlan.CallShape) (cell : NeedCell)
     (hs : NeedPlan.shapeAt? s.needs a = some shape) (hc : s.needs[a]? = some cell)
-    (hp : cell.plan = .unprepared) :
+    (hp : cell.plan = .unprepared)
+    (hcomplete : ((NeedSupply.form sp shape.caller shape.values shape.args).runState
+      (withPlan a .preparing s)).1.isIncomplete = false) :
     (NeedPlan.viewCells sp a).runState s =
       (let r := (NeedSupply.form sp shape.caller shape.values shape.args).runState (withPlan a .preparing s)
        (r.1, withPlan a (.prepared r.1) r.2)) := by
-  rw [viewCells_run sp a s shape hs, prepare_unprepared sp a shape s cell hc hp]
+  rw [viewCells_run sp a s shape hs, prepare_unprepared sp a shape s cell hc hp hcomplete]
 
 theorem disciplined_viewCells (sp : NeedSupply.SpreadEval) (hsp : ∀ e c v, Disciplined (sp e c v))
     (a : Nat) : Disciplined (NeedPlan.viewCells sp a) := by
@@ -147,10 +150,12 @@ theorem disciplined_viewCells (sp : NeedSupply.SpreadEval) (hsp : ∀ e c v, Dis
 theorem viewCells_forms_once (sp : NeedSupply.SpreadEval) (hsp : ∀ e c v, Disciplined (sp e c v))
     (a : Nat) (s : EvalState) (shape : NeedPlan.CallShape) (cell : NeedCell)
     (hs : NeedPlan.shapeAt? s.needs a = some shape) (hc : s.needs[a]? = some cell)
-    (hp : cell.plan = .unprepared) {α : Type} (m : EvalM α) (hm : Disciplined m) :
+    (hp : cell.plan = .unprepared) {α : Type} (m : EvalM α) (hm : Disciplined m)
+    (hcomplete : ((NeedSupply.form sp shape.caller shape.values shape.args).runState
+      (withPlan a .preparing s)).1.isIncomplete = false) :
     (NeedPlan.viewCells sp a).runState (m.runState ((NeedPlan.viewCells sp a).runState s).2).2 =
       (((NeedPlan.viewCells sp a).runState s).1, (m.runState ((NeedPlan.viewCells sp a).runState s).2).2) := by
-  obtain ⟨c', hc', hplan, _⟩ := prepare_records sp hsp a shape s cell hc hp
+  obtain ⟨c', hc', hplan, _⟩ := prepare_records sp hsp a shape s cell hc hp hcomplete
   rw [viewCells_run sp a s shape hs]
   have hs2 := shapeAt_kept (hm _) a shape (shapeAt_kept (disciplined_prepare sp hsp a shape s) a shape hs)
   rw [viewCells_run sp a _ shape hs2]

@@ -2,6 +2,11 @@ import KatLangArityLaws.AlgorithmProjection
 
 open KatLang KatLang.CallPlan KatLang.AlgorithmProjectionLaws
 
+/-! R7 checkpoint: alias recursion now goes through the total `EvalBody`/`evalFuel` core and its
+production fuel search. The source-only descriptions below are historical limitations of these
+local theorems. `EvaluatorCore.production_unfolds` covers completed operations; reachable alias
+bindings, declaring activations, D4 ownership and end-to-end alias refinement remain open. -/
+
 /-!
 # META-S3-2: runtime-target callable aliases (October 2026)
 

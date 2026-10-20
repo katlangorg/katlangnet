@@ -55,7 +55,9 @@ public class DifferentialObservationTests
         var taxonomy = lean[lean.IndexOf("inductive Error where", StringComparison.Ordinal)..];
         taxonomy = taxonomy[..taxonomy.IndexOf("deriving Repr", StringComparison.Ordinal)];
         var constructors = System.Text.RegularExpressions.Regex.Matches(taxonomy, @"(?m)^  \| (\w+)").Select(m => m.Groups[1].Value).ToArray();
-        Assert.Equal(25, constructors.Length);
+        // 25 language error kinds plus R7's Lean-only incomplete outcome `fuelExhausted` of the
+        // fuel-indexed evaluator core, which no public run returns.
+        Assert.Equal(26, constructors.Length);
         foreach (var name in constructors)
             Assert.Contains("| ." + name, LeanObsTemplate.SharedDefinitions, StringComparison.Ordinal);
     }

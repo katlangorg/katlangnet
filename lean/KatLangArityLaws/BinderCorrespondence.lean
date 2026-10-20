@@ -2,6 +2,11 @@ import KatLangArityLaws.BinderTrace
 
 open KatLang KatLang.BinderTrace
 
+/-! R7 checkpoint: `EvaluatorDiscipline.productionDiscipline_holds` now proves the production
+channels preserve existing suspensions, completed VALUEs and prepared supplies. The historical
+partial-driver descriptions below predate that bridge. Address validity and the production
+instantiation of the schedule freshness premise below are not proved by this module. -/
+
 /-!
 # Two correspondences of the Model-C binder (R3, October 2026)
 

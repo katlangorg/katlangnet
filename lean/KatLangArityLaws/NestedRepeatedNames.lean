@@ -1570,7 +1570,7 @@ theorem shell_value (M : Model) (s : EvalState) (a : Nat) (hs : ProdRel M s) (ha
         { s with needs := s.needs.modify a (fun c => { c with state := .evaluating }) } =
         (.ok o.1, { s with needs := s.needs.modify a (fun c => { c with state := .evaluating }) }) := by
       rw [hsus]; rfl
-    refine ⟨_, Memo.suspended_retains_state (ev a) route demand a s _ c (.ok o.1) hc hv hr, ?_⟩
+    refine ⟨_, Memo.suspended_retains_state (ev a) route demand a s _ c (.ok o.1) hc hv hr rfl, ?_⟩
     refine prodRel_update (c' := { c with state := .completed (.ok o.1) }) hs hc ?_ (by simp) ?_ rfl ?_
     · simp [Array.getElem?_modify, hc]
     · intro b hb; simp [Array.getElem?_modify, Ne.symm hb]

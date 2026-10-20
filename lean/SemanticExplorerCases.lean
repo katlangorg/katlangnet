@@ -66,6 +66,8 @@ partial def errCategory : Error -> String
   | .duplicateBranchPattern => "duplicateBranchPattern"
   | .explicitParamsRequireOutput => "explicitParamsRequireOutput"
   | .unresolvedImplicitParams _ => "unresolvedImplicitParams"
+  -- Lean-only: the R7 incomplete outcome of the fuel-indexed core; no public run returns it.
+  | .fuelExhausted => "incomplete"
 
 /-- Supplementary Q-67 fields; not a change to FORMAL-06 or `obs`.
     Descriptions, messages, contexts, branch display names and host policy are excluded. -/
@@ -106,7 +108,7 @@ partial def sharedError : Error -> Option SharedErrorPayload
   | .missingOutput => some { kind := "missingOutput" }
   | .spreadMissingOutput => some { kind := "spreadMissingOutput" }
   | .typeMismatch _ | .noMatchingBranch _ | .notAnAlgorithm _
-    | .illegalInOpen _ | .badOpenForm _ | .illegalInEval _ => none
+    | .illegalInOpen _ | .badOpenForm _ | .illegalInEval _ | .fuelExhausted => none
 
 /-- Counted variant of `runResultM`: the same declaration identification and root wiring, but keeping the
     root emitted count (`evalAlgOutputCounted` / `evalCounted`), matching the
