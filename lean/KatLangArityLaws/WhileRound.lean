@@ -13,18 +13,28 @@ installed by `evalAlgOutputSlots`), `WhileRound.ofSupply` / `splitContSlots` (on
 the row-forming capability `form` and the whole `EvalState`, so rows may have arbitrary
 state-dependent effects (heap allocation, cell completion, cache publication) and failures.
 
-What is NOT proved here, and stays a source-level or executable fact:
+This module is row CONTROL only. Its connection to the production evaluator (CF-4, S6c, October
+2026) is `KatLangArityLaws/WhileRoundProduction.lean`: the shared activated-body boundary
+`ActivatedBody.readRows` (one body entry, ONE `form pushedCtx env` closure for every row), the
+production `formOutputRow` as one `evalCounted` plus `OutputRows.items` (an exact equation), the
+finite-use converse that makes the production `whileVerdictSlots` EQUAL its activated-body run
+wherever that completes, and these laws restated about the production operation
+(`production_cf1_*`, `production_cf2_*`, `production_cf5_*`, …), with the separately stated
+cell- and cache-sharing subclaims.
 
-* that the partial evaluator installs `formOutputRow` with ONE activation context for every row
-  of a round (CF-4: shared parameter cells and property caches) — `whileVerdictSlots`'s source;
-* that `formOutputRow` is one ordinary counted evaluation (`evalCounted` is partial/opaque);
+What is NOT proved here or there, and stays a source-level, executable or open fact:
+
+* that every ordinary expression evaluation routes its property reads through the production
+  property access with stable key inputs (evaluator internals), and key stability for LOCAL-only
+  bindings across rows (a whole-run lexical-activation invariant; `propertyOwnerBindingContext`
+  is `partial`);
+* the round's dispatch (`runNeedWhileRound`) is proved only for COMPLETED runs
+  (`production_unfolds`); the binder/family channels are not covered by the finite-use converse;
 * anything about C# (budgets, cancellation, host effects, random draws, async suspension):
   those are covered by the C# differential tests (`LoopConditionFirstTests`);
-* whole-run heap/cache refinement, the existing `ProductionDiscipline` and reachable-state /
-  active-cell obligations: unchanged and still open. (R7, October 2026: `ProductionDiscipline` is
-  now a theorem, `KatLangArityLaws/EvaluatorDiscipline.lean`; the whole-run property-cache laws
-  are `KatLangArityLaws/EvaluatorCacheLaws.lean`; the reachable-state / active-cell obligations
-  stay open; `formOutputRow` is now a body of the total core, but no CF-4 theorem uses that.)
+* whole-run heap/cache refinement and the reachable-state / active-cell obligations: still open.
+  (R7, October 2026: `ProductionDiscipline` is a theorem, `KatLangArityLaws/EvaluatorDiscipline.lean`;
+  the whole-run property-cache laws are `KatLangArityLaws/EvaluatorCacheLaws.lean`.)
 
 The CF-7 equivalence with the retired step-first reading holds ONLY under its stated premise:
 every row succeeds with a state-INDEPENDENT result and leaves the state unchanged. It does not

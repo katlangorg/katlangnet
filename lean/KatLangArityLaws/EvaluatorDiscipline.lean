@@ -808,7 +808,7 @@ theorem EvalBody.evalProgramOutput_disciplined (rec : EvalRec) (hrec : ∀ c, Di
 
 theorem EvalBody.evalAlgOutputSlots_disciplined (rec : EvalRec) (hrec : ∀ c, Disciplined (rec c)) (a : Algorithm) (ctx : EvalCtx) (env : ValEnv) :
     Disciplined (EvalBody.evalAlgOutputSlots rec a ctx env) := by
-  unfold EvalBody.evalAlgOutputSlots; disc_tac
+  unfold EvalBody.evalAlgOutputSlots ActivatedBody.readRows; disc_tac
 
 theorem EvalBody.formOutputRow_disciplined (rec : EvalRec) (hrec : ∀ c, Disciplined (rec c)) (ctx : EvalCtx) (env : ValEnv) (e : Expr) :
     Disciplined (EvalBody.formOutputRow rec ctx env e) := by
@@ -816,7 +816,7 @@ theorem EvalBody.formOutputRow_disciplined (rec : EvalRec) (hrec : ∀ c, Discip
 
 theorem EvalBody.whileVerdictSlots_disciplined (rec : EvalRec) (hrec : ∀ c, Disciplined (rec c)) (a : Algorithm) (ctx : EvalCtx) (env : ValEnv) :
     Disciplined (EvalBody.whileVerdictSlots rec a ctx env) := by
-  unfold EvalBody.whileVerdictSlots; disc_tac
+  unfold EvalBody.whileVerdictSlots ActivatedBody.readRows; disc_tac
 
 theorem EvalBody.evalSequenceCallbackCall_disciplined (rec : EvalRec) (hrec : ∀ c, Disciplined (rec c)) (callee : Algorithm) (item : CountedResult) (ctx : EvalCtx) (env : ValEnv) (calleeName : String) :
     Disciplined (EvalBody.evalSequenceCallbackCall rec callee item ctx env calleeName) := by

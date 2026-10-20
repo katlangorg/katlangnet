@@ -829,7 +829,7 @@ theorem EvalBody.evalProgramOutput_pres (rec : EvalRec) (hrec : ∀ c, Preserves
 
 theorem EvalBody.evalAlgOutputSlots_pres (rec : EvalRec) (hrec : ∀ c, Preserves R (rec c)) (a : Algorithm) (ctx : EvalCtx) (env : ValEnv) :
     Preserves R (EvalBody.evalAlgOutputSlots rec a ctx env) := by
-  unfold EvalBody.evalAlgOutputSlots; pres_tac
+  unfold EvalBody.evalAlgOutputSlots ActivatedBody.readRows; pres_tac
 
 theorem EvalBody.formOutputRow_pres (rec : EvalRec) (hrec : ∀ c, Preserves R (rec c)) (ctx : EvalCtx) (env : ValEnv) (e : Expr) :
     Preserves R (EvalBody.formOutputRow rec ctx env e) := by
@@ -837,7 +837,7 @@ theorem EvalBody.formOutputRow_pres (rec : EvalRec) (hrec : ∀ c, Preserves R (
 
 theorem EvalBody.whileVerdictSlots_pres (rec : EvalRec) (hrec : ∀ c, Preserves R (rec c)) (a : Algorithm) (ctx : EvalCtx) (env : ValEnv) :
     Preserves R (EvalBody.whileVerdictSlots rec a ctx env) := by
-  unfold EvalBody.whileVerdictSlots; pres_tac
+  unfold EvalBody.whileVerdictSlots ActivatedBody.readRows; pres_tac
 
 theorem EvalBody.evalSequenceCallbackCall_pres (rec : EvalRec) (hrec : ∀ c, Preserves R (rec c)) (callee : Algorithm) (item : CountedResult) (ctx : EvalCtx) (env : ValEnv) (calleeName : String) :
     Preserves R (EvalBody.evalSequenceCallbackCall rec callee item ctx env calleeName) := by

@@ -745,7 +745,7 @@ theorem EvalBody.evalProgramOutput_mono (a : Algorithm) (ctx : EvalCtx) (env : V
 
 theorem EvalBody.evalAlgOutputSlots_mono (a : Algorithm) (ctx : EvalCtx) (env : ValEnv) :
     monotone (fun rec : EvalRec => EvalBody.evalAlgOutputSlots rec a ctx env) := by
-  unfold EvalBody.evalAlgOutputSlots; mono_tac
+  unfold EvalBody.evalAlgOutputSlots ActivatedBody.readRows; mono_tac
 
 theorem EvalBody.formOutputRow_mono (ctx : EvalCtx) (env : ValEnv) (e : Expr) :
     monotone (fun rec : EvalRec => EvalBody.formOutputRow rec ctx env e) := by
@@ -753,7 +753,7 @@ theorem EvalBody.formOutputRow_mono (ctx : EvalCtx) (env : ValEnv) (e : Expr) :
 
 theorem EvalBody.whileVerdictSlots_mono (a : Algorithm) (ctx : EvalCtx) (env : ValEnv) :
     monotone (fun rec : EvalRec => EvalBody.whileVerdictSlots rec a ctx env) := by
-  unfold EvalBody.whileVerdictSlots; mono_tac
+  unfold EvalBody.whileVerdictSlots ActivatedBody.readRows; mono_tac
 
 theorem EvalBody.evalSequenceCallbackCall_mono (callee : Algorithm) (item : CountedResult) (ctx : EvalCtx) (env : ValEnv) (calleeName : String) :
     monotone (fun rec : EvalRec => EvalBody.evalSequenceCallbackCall rec callee item ctx env calleeName) := by

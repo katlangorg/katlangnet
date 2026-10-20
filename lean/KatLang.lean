@@ -4822,14 +4822,20 @@ two receivers of a step's rows differ only in the ORDER in which they request ro
   flag — and forms the remaining earlier rows, left to right, only after a `true` verdict.
 
 Both are TOTAL definitions parameterized by the row-forming capability, so the kernel checks
-theorems about the very definitions the evaluator calls (`KatLangArityLaws/WhileRound.lean`);
-that the partial evaluator passes `formOutputRow` is a fact of its source. -/
+theorems about the very definitions the evaluator calls (`KatLangArityLaws/WhileRound.lean`).
+Both receivers set the body up through the ONE activated-body boundary `ActivatedBody.readRows`
+(below), passing `formOutputRow`; the production connection — one body entry, one context for
+every row, the production row formation and the production `whileVerdictSlots` — is proved in
+`KatLangArityLaws/WhileRoundProduction.lean` (CF-4, S6c). -/
 
 namespace OutputRows
 
 /-- What ONE formed output row contributes to its algorithm's row supply (LOOP-03): a spread row
-    `e*` its spread items, possibly none; a NON-spread row exactly one item, its value (`()`
-    included — `out.snd = 0` keeps it as its one slot). C#: `Evaluator.AddOutputRowItems`. -/
+    uses `countedTopLevelValues`; a non-spread row with count zero keeps its value as one visible
+    slot (`()` included), otherwise it also uses `countedTopLevelValues`. Ordinary value-boundary
+    results have count zero or one. The rule also preserves multi-item counted results, including
+    host-built Ready cells; no single-slot premise is imposed on arbitrary `CountedResult`s.
+    C#: `Evaluator.AddOutputRowItems`. -/
 def items (e : Expr) (out : CountedResult) : List Result :=
   match e with
   | .sequenceSpread _ => countedTopLevelValues out
@@ -4928,6 +4934,53 @@ def WhileRound.advance (round : List Nat → EvalM (Option (List Result))) (cell
   match ← round cells with
   | none => pure (.inl cells)
   | some next => pure (.inr (← next.mapM (fun value => readyNeed (value, Result.valueCount value))))
+
+/-! ### The activated-body boundary of a row reader (CF-4, S6c, October 2026)
+
+Both receivers of a step body's rows — the supply reader (`evalAlgOutputSlots`, so `repeat`) and
+the `while` round (`whileVerdictSlots`) — set the body up the SAME way and differ only in the
+ORDER in which they request rows. `ActivatedBody.readRows` is that one setup, TOTAL and
+parameterized by the row-forming capability `form` (the evaluator passes `formOutputRow`), the
+row reader `read` (`OutputRows.formLeftToRight` or `WhileRound.conditionFirst`) and the reading of
+a builtin body's ONE atomic row: a builtin body is one counted value; any other body passes the
+body checks (`check`), is ENTERED ONCE (`enterAlgorithmBody`), and `read` receives the ONE
+`form pushedCtx env` closure over that entered context — so every row the reader requests,
+discovery and transitions alike, is formed in the same context, environment and parameter cells,
+from the state the previous row left. Laws: `KatLangArityLaws/WhileRoundProduction.lean`. -/
+
+namespace ActivatedBody
+
+/-- The body checks of a row reader, in order: a duplicate property name (`duplicateProperty`),
+    a clause family read as a value (`conditionalValueAccessError?`), a user body without written
+    output (`missingOutput`). Reads no state and writes none. C#: `Evaluator.OutputRowsAccessError`. -/
+def check (a : Algorithm) : EvalM Unit := do
+  match a.findDuplicatePropName with
+  | some n => .error (Error.duplicateProperty n)
+  | none =>
+    match conditionalValueAccessError? "conditional" a with
+    | some err => .error err
+    | none => pure ()
+    match a with
+    | .mk _ _ _ _ [] _ => .error Error.missingOutput
+    | _ => pure ()
+
+/-- Read a body's rows in ONE activation: a builtin body is one atomic counted value (`atomic`);
+    any other body is checked (`check`), entered once (`enterAlgorithmBody`), and its written rows
+    are read by `read` over the one `form pushedCtx env` closure. C#: the shared prelude of
+    `Evaluator.EvalAlgOutputSlots` / `Evaluator.EvalWhileVerdictSlots` and their async mirrors. -/
+def readRows {α : Type} (form : EvalCtx → ValEnv → Expr → EvalM (List Result))
+    (read : (Expr → EvalM (List Result)) → List Expr → EvalM α)
+    (atomic : CountedResult → EvalM α) (a : Algorithm) (ctx : EvalCtx) (env : ValEnv) : EvalM α :=
+  match a with
+  | .builtin b => do
+      let out <- evalBuiltinValueCounted b
+      atomic out
+  | _ => do
+      check a
+      let pushedCtx <- enterAlgorithmBody a ctx env
+      read (form pushedCtx env) (Algorithm.output a)
+
+end ActivatedBody
 
 /-- The counted view of one iterated collection item as the callback receives
     it. A callback item is a SELECTED value, so it crosses the same ordinary
@@ -8684,24 +8737,10 @@ def EvalBody.algorithmIntrinsicRoute (rec : EvalRec) (receiver : Expr) (ctx : Ev
       as zero slots; a builtin loop step never reaches this arm (`runNeedStepSlots`
       invokes it over the state supply), only a host-built clause body that IS a
       builtin does, read with nothing supplied as the ordinary family call reads it.
-      C#: `Evaluator.EvalAlgOutputSlots`. -/
-  def EvalBody.evalAlgOutputSlots (rec : EvalRec) (a : Algorithm) (ctx : EvalCtx) (env : ValEnv) : EvalM (List Result) := do
-    match a with
-    | .builtin b => do
-        let out <- evalBuiltinValueCounted b
-        pure [out.fst]
-    | _ =>
-      match a.findDuplicatePropName with
-      | some n => .error (Error.duplicateProperty n)
-      | none =>
-        match conditionalValueAccessError? "conditional" a with
-        | some err => .error err
-        | none => pure ()
-        match a with
-        | .mk _ _ _ _ [] _ => .error Error.missingOutput
-        | _ => pure ()
-        let pushedCtx <- enterAlgorithmBody a ctx env
-        OutputRows.formLeftToRight (rec.formOutputRow pushedCtx env) (Algorithm.output a)
+      The body checks, the ONE body entry and the builtin route are the shared activated-body
+      boundary `ActivatedBody.readRows` (CF-4). C#: `Evaluator.EvalAlgOutputSlots`. -/
+  def EvalBody.evalAlgOutputSlots (rec : EvalRec) (a : Algorithm) (ctx : EvalCtx) (env : ValEnv) : EvalM (List Result) :=
+    ActivatedBody.readRows rec.formOutputRow OutputRows.formLeftToRight (fun out => pure [out.fst]) a ctx env
 
   /-- Form ONE output row in an activated body: one ordinary counted evaluation of the row's
       expression, contributing `OutputRows.items` (LOOP-03). The one row formation of both row
@@ -8712,28 +8751,16 @@ def EvalBody.algorithmIntrinsicRoute (rec : EvalRec) (receiver : Expr) (ctx : Ev
     pure (OutputRows.items e out)
 
   /-- ONE `while` round's reading of a step body's rows (LOOP-06, condition first — LOOP-CF1,
-      October 2026): the activation and access checks of `evalAlgOutputSlots`, then
-      `WhileRound.conditionFirst` over `formOutputRow` in that one activation, so the flag row and
-      the transition rows share parameter cells and local-property caches. `none` is a `false`
-      verdict (no earlier row formed); `some next` the next state. A builtin body is one atomic
-      row (`WhileRound.ofSupply`). C#: `Evaluator.EvalWhileVerdictSlots`. -/
-  def EvalBody.whileVerdictSlots (rec : EvalRec) (a : Algorithm) (ctx : EvalCtx) (env : ValEnv) : EvalM (Option (List Result)) := do
-    match a with
-    | .builtin b => do
-        let out <- evalBuiltinValueCounted b
-        WhileRound.ofSupply [out.fst]
-    | _ =>
-      match a.findDuplicatePropName with
-      | some n => .error (Error.duplicateProperty n)
-      | none =>
-        match conditionalValueAccessError? "conditional" a with
-        | some err => .error err
-        | none => pure ()
-        match a with
-        | .mk _ _ _ _ [] _ => .error Error.missingOutput
-        | _ => pure ()
-        let pushedCtx <- enterAlgorithmBody a ctx env
-        WhileRound.conditionFirst (rec.formOutputRow pushedCtx env) (Algorithm.output a)
+      October 2026): the activated-body boundary `ActivatedBody.readRows` it shares with
+      `evalAlgOutputSlots` (the same body checks, ONE body entry), then
+      `WhileRound.conditionFirst` over the one `formOutputRow pushedCtx env` closure, so the flag
+      row and the transition rows share the entered context, its parameter cells and the evolving
+      state (CF-4; laws `KatLangArityLaws/WhileRoundProduction.lean`). `none` is a `false` verdict
+      (no earlier row formed); `some next` the next state. A builtin body is one atomic row
+      (`WhileRound.ofSupply`). C#: `Evaluator.EvalWhileVerdictSlots`. -/
+  def EvalBody.whileVerdictSlots (rec : EvalRec) (a : Algorithm) (ctx : EvalCtx) (env : ValEnv) : EvalM (Option (List Result)) :=
+    ActivatedBody.readRows rec.formOutputRow WhileRound.conditionFirst
+      (fun out => WhileRound.ofSupply [out.fst]) a ctx env
 
   /-- Evaluate a higher-order sequence callback on one collected iteration
       item (the `filter` predicate). C#: `EvalSequenceCallbackCall`. -/
