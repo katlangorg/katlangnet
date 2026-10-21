@@ -263,6 +263,15 @@ dotnet run --project fuzz\KatLang.ParserFuzz -- fuzz\KatLang.ParserFuzz\Testcase
 dotnet run --project fuzz\KatLang.ParserFuzz -- fuzz\artifacts\crashes
 ```
 
+**Instrumented versus ordinary replay:** The `dotnet run` commands above use an
+ordinary, uninstrumented harness. After the SharpFuzz step, `fuzz/artifacts/publish-linux`
+and the manual `out/` publication contain an instrumented `KatLang.dll`. Passing replay
+file or directory arguments directly to an instrumented apphost enters `Replay.Run`,
+bypassing SharpFuzz's coverage-memory initialization, and may terminate the process
+with an access violation. To replay an input with an instrumented publication, pass
+the input file to the native `libfuzzer-dotnet` driver with `--target_path` pointing to
+that apphost; this uses `Fuzzer.LibFuzzer.Run` to initialize coverage tracking.
+
 Minimize a crashing input with libFuzzer before triaging:
 
 ```bash
