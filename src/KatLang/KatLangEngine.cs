@@ -114,6 +114,40 @@ public closed record RunResult
 
     internal DisplayOptions DisplayOptions { get; init; } = DisplayOptions.Default;
 
+    private readonly RuntimeStateSlot<PropertyObservations?> _propertyObservations;
+
+    /// <summary>
+    /// The root property values this run's ordinary evaluation published, in publication order,
+    /// when <see cref="RunOptions.ObservePropertyValues"/> was set; otherwise <c>null</c>.
+    /// <para>A <see cref="ParseFailure"/> never evaluated anything and is always <c>null</c>. With
+    /// observation requested, a <see cref="Success"/>, a <see cref="NoProgramOutput"/>, and an
+    /// <see cref="EvalFailure"/> carry a non-null snapshot, possibly empty; an
+    /// <see cref="EvalFailure"/>'s snapshot holds what was published before the run failed, and the
+    /// variant itself marks the run incomplete. Absence of a property from the snapshot is not
+    /// proof that it was never calculated.</para>
+    /// <para>The snapshot is ancillary host data, not part of the result's identity: it takes no part
+    /// in this record's equality, hashing, or printing, and a <c>with</c> copy (including
+    /// <see cref="WithHostDisplayDecimals"/>) shares it. Render an available value with
+    /// <see cref="RenderPropertyValue"/>.</para>
+    /// </summary>
+    public PropertyObservations? PropertyObservations
+    {
+        get => _propertyObservations.Value;
+        internal init => _propertyObservations = new(value);
+    }
+
+    /// <summary>
+    /// The record printing of the public members declared here, written out so that
+    /// <see cref="PropertyObservations"/>, like the other ancillary state, stays out of it.
+    /// </summary>
+    protected virtual bool PrintMembers(StringBuilder builder)
+    {
+        builder.Append("IsSuccess = ").Append(IsSuccess);
+        builder.Append(", IsNoProgramOutput = ").Append(IsNoProgramOutput);
+        builder.Append(", IsFailure = ").Append(IsFailure);
+        return true;
+    }
+
     /// <summary>True when the run succeeded.</summary>
     public bool IsSuccess => this is Success;
 
@@ -182,13 +216,20 @@ public closed record RunResult
         /// contributes the items it supplies, possibly none.
         /// <see cref="OutputRows"/> is authoritative for presentation.</para>
         /// </summary>
-        public IReadOnlyList<Result> OutputRows => EmittedCount switch
-        {
-            0 => Array.Empty<Result>(),
-            1 => Array.AsReadOnly([Value]),
-            _ => Value.ToItems(),
-        };
+        public IReadOnlyList<Result> OutputRows => RowsOf(Value, EmittedCount);
     }
+
+    /// <summary>
+    /// The row view of a value that emitted <paramref name="emittedCount"/> slots, shared by
+    /// <see cref="Success.OutputRows"/> and <see cref="RenderPropertyValue"/>: zero rows, the one
+    /// value, or its top-level items.
+    /// </summary>
+    private static IReadOnlyList<Result> RowsOf(Result value, int emittedCount) => emittedCount switch
+    {
+        0 => Array.Empty<Result>(),
+        1 => Array.AsReadOnly([value]),
+        _ => value.ToItems(),
+    };
 
     /// <summary>Parse and evaluation completed, but the top-level program did not define output.</summary>
     public sealed record NoProgramOutput : RunResult
@@ -355,6 +396,37 @@ public closed record RunResult
             },
             NoProgramOutput or ParseFailure or EvalFailure => this,
         };
+    }
+
+    /// <summary>
+    /// Renders an available observed property value (<see cref="PropertyObservations"/>) to bounded
+    /// display text with the property's OWN value boundary — exactly as a program whose output is the
+    /// property's body would display: one row per emitted slot
+    /// (<see cref="PropertyValueObservation.EmittedCount"/>; <c>P = 1, 2</c> is two rows, whereas the
+    /// output row <c>P</c> reads it as one sequence value), the canonical value text, this result's
+    /// effective display decimals, and its display-length bound with the same overflow response as
+    /// <see cref="RenderDisplay"/>. Only a <see cref="Success"/> carries display decimals —
+    /// the program's own <c>DisplayDecimals</c> composed with the host filter — so the values of a
+    /// <see cref="NoProgramOutput"/> or <see cref="EvalFailure"/> render at canonical full precision.
+    /// Presentation only: nothing is evaluated, charged, or observed for cancellation.
+    /// </summary>
+    /// <param name="observation">An observation whose <see cref="PropertyValueObservation.Status"/> is
+    /// <see cref="PropertyValueStatus.Available"/>, normally one of this result's own.</param>
+    /// <exception cref="ArgumentNullException"><paramref name="observation"/> is null.</exception>
+    /// <exception cref="ArgumentException">The observation's value is withheld.</exception>
+    public DisplayRendering RenderPropertyValue(PropertyValueObservation observation)
+    {
+        ArgumentNullException.ThrowIfNull(observation);
+        if (observation.Value is not { } value)
+        {
+            throw new ArgumentException(
+                $"The value of property '{observation.Name}' is withheld and cannot be displayed.",
+                nameof(observation));
+        }
+
+        var writer = new BoundedDisplayWriter(DisplayOptions.MaxDisplayLength);
+        AppendSuccessRows(RowsOf(value, observation.EmittedCount), DisplayOptions, writer);
+        return Finish(writer, DisplayOptions.MaxDisplayLength);
     }
 
     private static DisplayRendering FormatSuccess(Success success)
@@ -532,7 +604,8 @@ public static class KatLangEngine
             return FrontEndFailureResult(frontEndResult, diagnosticDisplayOptions);
         }
 
-        var zeroArgPropertyResultCache = new RunScopedZeroArgPropertyResultCache();
+        var observationSink = CreateObservationSink(frontEndResult, options);
+        var zeroArgPropertyResultCache = new RunScopedZeroArgPropertyResultCache(observationSink);
 
         // One budget for the whole run: the program output and the root's own
         // DisplayDecimals property (the source display filter) are evaluated under the
@@ -553,13 +626,15 @@ public static class KatLangEngine
             options?.RandomSeed,
             evaluationCancellationToken);
 
-        return ProjectEvaluationOutcome(
-            frontEndResult,
-            evalResult,
-            limits,
-            options?.DefaultDisplayDecimals,
-            diagnosticDisplayOptions,
-            evaluationCancellationToken);
+        return AttachPropertyObservations(
+            ProjectEvaluationOutcome(
+                frontEndResult,
+                evalResult,
+                limits,
+                options?.DefaultDisplayDecimals,
+                diagnosticDisplayOptions,
+                evaluationCancellationToken),
+            observationSink);
     }
 
     /// <summary>
@@ -633,8 +708,9 @@ public static class KatLangEngine
         // configurations and for roots carrying deferred module regions):
         // Evaluator.CreateRunScopedZeroArgPropertyResultCache.
         var program = new Expr.AlgorithmExpr(frontEndResult.ElaboratedRoot);
+        var observationSink = CreateObservationSink(frontEndResult, options);
         var zeroArgPropertyResultCache =
-            Evaluator.CreateRunScopedZeroArgPropertyResultCache(program, hostOperations);
+            Evaluator.CreateRunScopedZeroArgPropertyResultCache(program, hostOperations, observationSink);
 
         // One budget for the whole run, exactly as in Run; the host display filter is
         // likewise consumed only afterwards, by the shared projection.
@@ -647,13 +723,15 @@ public static class KatLangEngine
             options?.RandomSeed,
             evaluationCancellationToken).ConfigureAwait(false);
 
-        return ProjectEvaluationOutcome(
-            frontEndResult,
-            evalResult,
-            limits,
-            options?.DefaultDisplayDecimals,
-            diagnosticDisplayOptions,
-            evaluationCancellationToken);
+        return AttachPropertyObservations(
+            ProjectEvaluationOutcome(
+                frontEndResult,
+                evalResult,
+                limits,
+                options?.DefaultDisplayDecimals,
+                diagnosticDisplayOptions,
+                evaluationCancellationToken),
+            observationSink);
     }
 
     /// <summary>
@@ -677,6 +755,29 @@ public static class KatLangEngine
             DisplayOptions = diagnosticDisplayOptions,
         };
     }
+
+    /// <summary>
+    /// The run's root-property observation sink (<see cref="RunOptions.ObservePropertyValues"/>),
+    /// built from the FINAL elaborated root before evaluation can publish anything — or <c>null</c>,
+    /// allocating nothing, when observation was not requested. Shared by <see cref="Run"/> and
+    /// <see cref="RunAsync"/>; each run gets its own.
+    /// </summary>
+    private static RootPropertyObservationSink? CreateObservationSink(FrontEndResult frontEndResult, RunOptions? options)
+        => options?.ObservePropertyValues == true
+            ? new RootPropertyObservationSink(frontEndResult.ElaboratedRoot)
+            : null;
+
+    /// <summary>
+    /// The ONE observation finalizer of <see cref="Run"/> and <see cref="RunAsync"/>: after the
+    /// unchanged outcome projection and its cancellation checks, attaches the immutable snapshot of
+    /// the run's root-property publications. Pure post-processing — the sink classifies each value
+    /// with the context-free call-reference predicate and releases its records; nothing is
+    /// evaluated, charged, or observed for cancellation, so the outcome itself cannot change.
+    /// </summary>
+    private static RunResult AttachPropertyObservations(RunResult outcome, RootPropertyObservationSink? observationSink)
+        => observationSink is null
+            ? outcome
+            : outcome with { PropertyObservations = observationSink.Complete() };
 
     /// <summary>
     /// Shared post-evaluation projection for <see cref="Run"/> and

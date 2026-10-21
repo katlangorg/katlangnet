@@ -65,9 +65,10 @@ internal interface IAsyncZeroArgPropertyResultCache : IZeroArgPropertyResultCach
 /// twin path awaits the asynchronous one), and within the async family each access is
 /// awaited before evaluation continues, so the dictionary is never touched concurrently.
 /// </summary>
-internal sealed class RunScopedAsyncZeroArgPropertyResultCache : IAsyncZeroArgPropertyResultCache
+internal sealed class RunScopedAsyncZeroArgPropertyResultCache(RootPropertyObservationSink? observationSink = null)
+    : IAsyncZeroArgPropertyResultCache
 {
-    private readonly ZeroArgPropertyPublications _results = new();
+    private readonly ZeroArgPropertyPublications _results = new(observationSink);
 
     /// <summary>Number of published entries.</summary>
     internal int PublishedCount => _results.Count;

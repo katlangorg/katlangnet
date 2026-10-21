@@ -2,14 +2,15 @@ namespace KatLang;
 
 /// <summary>
 /// Per-run configuration for <see cref="KatLangEngine"/> and <see cref="Parser"/>: resource
-/// limits, cancellation, host operations, module loading, a random seed, and a host display
-/// filter — every option a run has, in one place.
+/// limits, cancellation, host operations, module loading, a random seed, a host display
+/// filter, and passive root-property observation — every option a run has, in one place.
 /// <para><b>Defaults.</b> <c>new RunOptions()</c> — and a <c>null</c> options argument, which
 /// means the same — runs with <see cref="KatLang.EvaluationLimits.Default"/> and
 /// <see cref="KatLang.SourceProcessingLimits.Default"/>, no cancellation, no host operations,
 /// no module loading (a program using <c>load</c> gets a diagnostic and nothing is fetched),
-/// fresh entropy for random operations, and no host display filter: canonical full-precision
-/// display unless the program root declares its own <c>DisplayDecimals</c> filter.</para>
+/// fresh entropy for random operations, no host display filter (canonical full-precision
+/// display unless the program root declares its own <c>DisplayDecimals</c> filter), and no
+/// property observation.</para>
 /// <para><b>Lifetime.</b> Every member is init-only; collection inputs are snapshotted when the
 /// object is initialized. Configuration is safe to share across sequential and
 /// concurrent runs: each run creates its own budgets, caches, and random stream, and no run
@@ -329,4 +330,26 @@ public sealed class RunOptions
     /// processing state.
     /// </summary>
     public SourceProcessingLimits? SourceProcessingLimits { get; init; }
+
+    /// <summary>
+    /// When <c>true</c>, the run additionally captures the values its ordinary evaluation
+    /// PUBLISHED in the zero-argument property cache for source-declared ROOT properties, and
+    /// returns them as <see cref="RunResult.PropertyObservations"/> (default <c>false</c>: no
+    /// capture and a <c>null</c> snapshot).
+    /// <para><b>Passive.</b> Capturing never causes evaluation: an unused property stays
+    /// unevaluated and has no observation. Values, errors, evaluation order, host effects, random
+    /// draws, resource accounting, cancellation points, and the evaluation strategy are exactly
+    /// those of the same run without capture.</para>
+    /// <para><b>Scope.</b> One observation per published root property — the outermost successful
+    /// property-style read, which every later read reuses. Explicit calls (<c>A()</c>), re-entrant
+    /// reads, nested and imported declarations, and synthetic source-less bindings are not
+    /// observed. This is not expression tracing or a calculation history: absence of an
+    /// observation is not proof that a property was never calculated.</para>
+    /// <para><b>Partial runs.</b> An <see cref="RunResult.EvalFailure"/> carries the values
+    /// published before the failure; its errors are unchanged. Cancellation still propagates as
+    /// <see cref="OperationCanceledException"/>, so no snapshot is returned.</para>
+    /// <para><b>Export safety.</b> A published value containing a run-internal call reference is
+    /// <see cref="PropertyValueStatus.Withheld"/>, never exposed.</para>
+    /// </summary>
+    public bool ObservePropertyValues { get; init; }
 }

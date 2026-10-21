@@ -1804,6 +1804,29 @@ public enum KatLang.PropertyExposure : int
   LocalOnlyCapturedAncestorParameters = 1
   LocalOnlyConditionalAlgorithm = 2
 
+public sealed class KatLang.PropertyObservations : System.Collections.Generic.IReadOnlyList<KatLang.PropertyValueObservation>
+  property public int Count { get; }
+  indexer  public KatLang.PropertyValueObservation this[int index] { get; }
+  method   public System.Collections.Generic.IEnumerator<KatLang.PropertyValueObservation> GetEnumerator()
+
+public sealed record KatLang.PropertyValueObservation : System.IEquatable<KatLang.PropertyValueObservation>
+  property public KatLang.SourceSpan DeclarationSpan { get; }
+  property public int EmittedCount { get; }
+  property public string Name { get; }
+  property public KatLang.PropertyValueStatus Status { get; }
+  property public KatLang.Result? Value { get; }
+  method   public KatLang.PropertyValueObservation <Clone>$()
+  method   public bool Equals(KatLang.PropertyValueObservation? other)
+  method   public override bool Equals(object? obj)
+  method   public override int GetHashCode()
+  method   public override string ToString()
+  operator public static bool op_Equality(KatLang.PropertyValueObservation? left, KatLang.PropertyValueObservation? right)
+  operator public static bool op_Inequality(KatLang.PropertyValueObservation? left, KatLang.PropertyValueObservation? right)
+
+public enum KatLang.PropertyValueStatus : int
+  Available = 0
+  Withheld = 1
+
 public sealed record KatLang.ReduceInitialAccumulatorContext : KatLang.ErrorContext, System.IEquatable<KatLang.ReduceInitialAccumulatorContext>
   ctor     public ReduceInitialAccumulatorContext(System.Collections.Generic.IReadOnlyList<string> RequiredParameterNames)
   property protected override System.Type EqualityContract { get; }
@@ -1929,6 +1952,7 @@ public sealed class KatLang.RunOptions
   property public System.Threading.CancellationToken EvaluationCancellationToken { get; init; }
   property public KatLang.EvaluationLimits? EvaluationLimits { get; init; }
   property public KatLang.HostOperations? HostOperations { get; init; }
+  property public bool ObservePropertyValues { get; init; }
   property public long? RandomSeed { get; init; }
   property public System.Threading.CancellationToken SourceProcessingCancellationToken { get; init; }
   property public KatLang.SourceProcessingLimits? SourceProcessingLimits { get; init; }
@@ -1939,12 +1963,14 @@ public closed record KatLang.RunResult : System.IEquatable<KatLang.RunResult>
   property public bool IsFailure { get; }
   property public bool IsNoProgramOutput { get; }
   property public bool IsSuccess { get; }
+  property public KatLang.PropertyObservations? PropertyObservations { get; }
   method   public abstract KatLang.RunResult <Clone>$()
   method   public override bool Equals(object? obj)
   method   public virtual bool Equals(KatLang.RunResult? other)
   method   public override int GetHashCode()
   method   protected virtual bool PrintMembers(System.Text.StringBuilder builder)
   method   public KatLang.DisplayRendering RenderDisplay()
+  method   public KatLang.DisplayRendering RenderPropertyValue(KatLang.PropertyValueObservation observation)
   method   public string ToDisplayString()
   method   public override string ToString()
   method   public KatLang.RunResult WithHostDisplayDecimals(int? hostDisplayDecimals)

@@ -372,19 +372,22 @@ public static partial class Evaluator
     /// operations or purely synchronous ones, and no deferred module region) keeps the
     /// ordinary run-scoped cache and with it the synchronous fast path.
     /// Every call constructs a FRESH cache belonging to one run alone — the pairing
-    /// rule never introduces sharing.
+    /// rule never introduces sharing. An engine run's optional
+    /// <paramref name="observationSink"/> is attached to whichever cache the rule selects and
+    /// takes no part in the selection.
     /// <see cref="ThrowIfAsyncHostOperationsWithoutAsyncCapableCache"/> enforces the
     /// same pairing fail-loud for internal callers that supply their own cache.
     /// </summary>
     internal static IZeroArgPropertyResultCache CreateRunScopedZeroArgPropertyResultCache(
         Expr expr,
-        HostOperations? hostOperations)
+        HostOperations? hostOperations,
+        RootPropertyObservationSink? observationSink = null)
         => hostOperations?.ContainsAsynchronousOperations == true
             // B2c: a root carrying deferred module regions runs on the twin path too, and
             // so pairs with the async-capable cache by the same rule.
             || DeferredModuleRegion.RequiresAsyncEvaluation(expr)
-            ? new RunScopedAsyncZeroArgPropertyResultCache()
-            : new RunScopedZeroArgPropertyResultCache();
+            ? new RunScopedAsyncZeroArgPropertyResultCache(observationSink)
+            : new RunScopedZeroArgPropertyResultCache(observationSink);
 
     /// <summary>
     /// Run-entry preparation for the ASYNC TWIN family — the twin-path counterpart of

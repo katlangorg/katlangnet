@@ -242,6 +242,27 @@ KatLang source may contain double-quoted strings and interpolation (`"Total: {2 
 
 `null` (or no CLI option) means NO host filter — never zero places, and never a reason to ignore the program's own filter; `0` is a real filter. The source filter is read by `KatLangEngine` (and so by the CLI and hosts built on it), never by the raw `Evaluator.Run*`: after the program's output has succeeded, the engine performs one ordinary zero-parameter read of the root's own `DisplayDecimals` in the same run — same budget, random stream, property cache, host operations and cancellation token — whatever the host filter is. That read is evaluation: it can trace, draw, spend steps, be cancelled, or fail, and an invalid value (`DisplayDecimals = -1`, `100`, `1.5`, `1 / 0`) fails the run with its own diagnostic even when the host filter is stricter. Only the root's own declaration is a filter; a nested, opened, member, module or parameter `DisplayDecimals` is an ordinary binding. The host filter is display-only host configuration, not a KatLang property — nothing is added to the program, so name resolution, diagnostics, and editor tooling see the source as written — and it is never evaluated: it consumes no evaluation budget, draws no random value, invokes no host operation, and changes no value, atom, comparison, or control flow. Rendering with the effective count is inert: it never changes a value, its Decimal128 representation, `.string`, or anything already evaluated. Every rendering surface of the result uses the same effective setting with the same rounding (midpoints away from zero), special-value spellings, and display-length bound: `ToDisplayString`, `RenderDisplay`, and the `exact`/`readable`/`concise` and custom formatters. `RunOptions.MaxDisplayDecimals` is the shared upper bound; a host filter outside 0 through 99 throws `ArgumentOutOfRangeException` when the options object is initialized, and the CLI reports it as a usage error — values are rejected, never clamped. Like `--random-seed`, `--display-decimals` takes its value as the next token (`--display-decimals=2` is not accepted, and a leading sign or zeros such as `+2` or `02` spell the same integer) and is refused by `check`, which validates the source's syntax and front-end semantics but does not evaluate — so it never runs the engine's source-filter read either.
 
+## Observing intermediate property values
+
+A host that wants to show the intermediate results of a calculation — a calculator's or an editor's "Price = 200, VAT = 42" panel — sets `RunOptions.ObservePropertyValues`. The run then also returns, as `RunResult.PropertyObservations`, the values its ordinary evaluation PUBLISHED for the program's root properties, in the order it published them, each with the property's name and declaration span:
+
+```c#
+var source = "Price = 200\nVAT = Price * 0.21\nTotal = Price + VAT\nUnused = 6 * 7\nTotal";
+var result = KatLangEngine.Run(source, new RunOptions { ObservePropertyValues = true });
+foreach (var observation in result.PropertyObservations ?? Enumerable.Empty<PropertyValueObservation>())
+{
+    var text = observation.Status == PropertyValueStatus.Available
+        ? result.RenderPropertyValue(observation).Text   // display decimals and length bound of the run
+        : "(not displayable)";                           // Withheld: a run-internal call reference
+    Console.WriteLine($"{observation.Name} {observation.DeclarationSpan}: {text}");
+}
+// Price [1:1, 1:6): 200
+// VAT [2:1, 2:4): 42.00
+// Total [3:1, 3:6): 242.00
+```
+
+Observation is passive: it never evaluates anything, so `Unused` is not calculated and has no entry, and values, errors, evaluation order, host operations, random draws, resource accounting and cancellation are exactly those of the same run without it. An entry is the value the run's zero-parameter property cache published — the property's outermost successful read, which every later read reused; explicit calls such as `A()`, re-entrant reads, nested and imported declarations are not observed. The snapshot is therefore not a calculation history, and a property without an entry must not be shown as "never calculated". A failed run (`RunResult.EvalFailure`) still carries what was published before it failed; a `ParseFailure` and a run without the option carry `null`; cancellation propagates as before. A value containing a run-internal call reference is `Withheld` and exposes no value. The declaration spans are coordinates in the source that run evaluated: correlating them with an editor's document version is the host's job, for example through `SemanticModel.FindResolutionAt` on the same text. The snapshot is ancillary data and takes no part in `RunResult` equality.
+
 ## Nuget package
 https://www.nuget.org/packages/KatLang
 

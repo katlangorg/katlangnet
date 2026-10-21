@@ -160,6 +160,17 @@ internal sealed class StructuralOwnerIdentity
         => FromOwner(owner, includeDeclaration: true);
 
     /// <summary>
+    /// True when this is the property-owner identity of an owner with the declaration token
+    /// <paramref name="declaration"/> whose OWN property list is <paramref name="properties"/>
+    /// (by reference): the root-owner check of <see cref="RootPropertyObservationSink"/>. The
+    /// parent chain is deliberately not compared — wiring gives the root a run-specific parent.
+    /// </summary>
+    internal bool IsPropertyOwner(object? declaration, IReadOnlyList<Property> properties)
+        => ReferenceEquals(_declaration, declaration)
+            && _scopeChain.Length != 0
+            && ReferenceEquals(_scopeChain[0].Properties, properties);
+
+    /// <summary>
     /// The resolving identity of a SCOPE chain itself — each level's opens and properties, from
     /// <paramref name="scope"/> outward — with no owner declaration: what a name looked up from a
     /// body wired under <paramref name="scope"/> can select. A null scope is the empty chain.
@@ -294,8 +305,13 @@ internal sealed class ZeroArgPropertyCacheKeyComparer : IEqualityComparer<ZeroAr
 /// cache instance never sees another run's owners. Ordinary hits pay nothing extra; a miss
 /// adds one set insertion and removal around the body. Not thread-safe, like the caches
 /// that use it (run-scoped, sequential access).
+/// <para><b>Passive observation (IV-1).</b> An optional run-owned
+/// <see cref="RootPropertyObservationSink"/> is told about each publication right after this
+/// law has made it, in publication order, and about nothing else: never a hit, a re-entrant
+/// completion, or a failure. The sink only records; it cannot change the decision, the stored
+/// entry, or the returned result. Without a sink the cost is one null check per publication.</para>
 /// </summary>
-internal sealed class ZeroArgPropertyPublications
+internal sealed class ZeroArgPropertyPublications(RootPropertyObservationSink? sink = null)
 {
     private readonly Dictionary<ZeroArgPropertyCacheKey, ZeroArgPropertyResult> _published =
         new(ZeroArgPropertyCacheKeyComparer.Instance);
@@ -333,8 +349,12 @@ internal sealed class ZeroArgPropertyPublications
             _active.Remove(key);
         }
 
-        if (!result.IsError)
-            published = _published.TryAdd(key, result.Value);
+        if (!result.IsError && _published.TryAdd(key, result.Value))
+        {
+            published = true;
+            sink?.Published(key, result.Value);
+        }
+
         return result;
     }
 
@@ -356,8 +376,8 @@ internal sealed class ZeroArgPropertyPublications
             _active.Remove(key);
         }
 
-        if (!result.IsError)
-            _published.TryAdd(key, result.Value);
+        if (!result.IsError && _published.TryAdd(key, result.Value))
+            sink?.Published(key, result.Value);
         return result;
     }
 }
@@ -415,9 +435,10 @@ internal sealed class UncachedZeroArgPropertyResultCache : IZeroArgPropertyResul
             maxCacheSize: 0);
 }
 
-internal sealed class RunScopedZeroArgPropertyResultCache : IZeroArgPropertyResultCache
+internal sealed class RunScopedZeroArgPropertyResultCache(RootPropertyObservationSink? observationSink = null)
+    : IZeroArgPropertyResultCache
 {
-    private readonly ZeroArgPropertyPublications _results = new();
+    private readonly ZeroArgPropertyPublications _results = new(observationSink);
     private readonly HashSet<ZeroArgPropertyCacheKey> _seenKeys = new(ZeroArgPropertyCacheKeyComparer.Instance);
     private readonly HashSet<ZeroArgPropertyCacheKey> _missedKeysWithoutStore = new(ZeroArgPropertyCacheKeyComparer.Instance);
     private readonly ZeroArgPropertyResultCacheStatsCollector _stats = new();

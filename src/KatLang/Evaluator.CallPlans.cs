@@ -1377,7 +1377,17 @@ public static partial class Evaluator
     /// Lean: <c>Result.containsCallRef</c>.
     /// </summary>
     internal static bool ContainsCallReference(Result value)
-        => ScanForCallReference(value, budget: null, ScanBudgetUse.None, observations: null, out _);
+        => ScanForCallReference(value, budget: null, ScanBudgetUse.None, observations: null, completed: null, out _);
+
+    /// <summary>
+    /// <see cref="ContainsCallReference(Result)"/> for one of SEVERAL values classified together, which may
+    /// share structure: <paramref name="completed"/> holds completed presence verdicts by reference
+    /// identity. A fully inspected structure is clean; finding a reference proves its open ancestors
+    /// forbidden, never clean. Completed clean prefixes remain reusable even when a later sibling is
+    /// forbidden. Both verdicts are reused across roots (the root-property observation snapshot).
+    /// </summary>
+    internal static bool ContainsCallReference(Result value, Dictionary<Result, bool> completed)
+        => ScanForCallReference(value, budget: null, ScanBudgetUse.None, observations: null, completed, out _);
 
     /// <summary>
     /// The HOST-ARGUMENT boundary (CallReference S1, J4; charged since SEC-01-FU): the
@@ -1398,14 +1408,14 @@ public static partial class Evaluator
         EvaluationBudget budget,
         ValueTraversalObservations? observations)
     {
-        var found = ScanForCallReference(value, budget, ScanBudgetUse.ChargeStructuralWork, observations, out var limit);
+        var found = ScanForCallReference(value, budget, ScanBudgetUse.ChargeStructuralWork, observations, completed: null, out var limit);
         return limit ?? (found ? new EvalError.TypeMismatch(CallReferenceLeavesRunMessage) : null);
     }
 
     /// <summary>How <see cref="ScanForCallReference"/> uses the run budget it is given.</summary>
     private enum ScanBudgetUse : byte
     {
-        /// <summary>No budget: the context-free <see cref="ContainsCallReference"/>.</summary>
+        /// <summary>No budget: the context-free <see cref="ContainsCallReference(Result)"/>.</summary>
         None,
 
         /// <summary>The host-argument boundary: nested structure work is charged (<see cref="HostArgumentBoundaryError"/>).</summary>
@@ -1416,19 +1426,21 @@ public static partial class Evaluator
     }
 
     /// <summary>
-    /// The one call-reference scan (<see cref="ContainsCallReference"/>). With
+    /// The one call-reference scan (<see cref="ContainsCallReference(Result)"/>). With
     /// <see cref="ScanBudgetUse.ChargeStructuralWork"/> it charges nested structure work to
     /// <paramref name="budget"/> (<see cref="HostArgumentBoundaryError"/>), and a refused charge stops the
     /// scan with <paramref name="limit"/> set; with <see cref="ScanBudgetUse.ObserveCancellation"/> it charges
     /// nothing and observes the run's cancellation whenever at least
     /// <see cref="Result.ValueSemanticComparer.UnitsPerCharge"/> slots were inspected since the last
-    /// checkpoint (<see cref="RunExportBoundaryError"/>).
+    /// checkpoint (<see cref="RunExportBoundaryError"/>). A non-null <paramref name="completed"/> is the
+    /// cross-scan memo of <see cref="ContainsCallReference(Result, Dictionary{Result, bool})"/>.
     /// </summary>
     private static bool ScanForCallReference(
         Result value,
         EvaluationBudget? budget,
         ScanBudgetUse budgetUse,
         ValueTraversalObservations? observations,
+        Dictionary<Result, bool>? completed,
         out EvalError? limit)
     {
         limit = null;
@@ -1437,12 +1449,15 @@ public static partial class Evaluator
             observations?.RecordRunExportScan();
         if (StructureItemsOf(value) is not { } items)
             return value is Result.CallReference;
+        if (completed is not null && completed.TryGetValue(value, out var cached))
+            return cached;
 
         // Indexed continuations keep pending storage proportional to depth, never to the
         // number of sibling structures. Flat values need neither a memo nor a stack, and
         // indexing avoids a boxed enumerator.
-        Stack<(IReadOnlyList<Result> Items, int Next)>? pending = null;
+        Stack<(Result Node, int Next)>? pending = null;
         HashSet<Result>? expanded = null;
+        var current = value;
         var next = 0;
         var isRoot = true;
         var units = 0;
@@ -1452,6 +1467,7 @@ public static partial class Evaluator
             var segmentStart = next;
             var found = false;
             IReadOnlyList<Result>? descend = null;
+            Result? descendNode = null;
             while (next < items.Count)
             {
                 var item = items[next++];
@@ -1461,10 +1477,21 @@ public static partial class Evaluator
                     break;
                 }
 
-                if (StructureItemsOf(item) is { } nestedItems
-                    && (expanded ??= new HashSet<Result>(ReferenceEqualityComparer.Instance)).Add(item))
+                if (StructureItemsOf(item) is not { } nestedItems)
+                    continue;
+
+                if (completed is not null && completed.TryGetValue(item, out var nestedVerdict))
+                {
+                    if (!nestedVerdict)
+                        continue;
+                    found = true;
+                    break;
+                }
+
+                if ((expanded ??= new HashSet<Result>(ReferenceEqualityComparer.Instance)).Add(item))
                 {
                     descend = nestedItems;
+                    descendNode = item;
                     break;
                 }
             }
@@ -1504,23 +1531,42 @@ public static partial class Evaluator
                     return false;
             }
 
+            if (completed is not null)
+            {
+                if (found)
+                {
+                    // Only the active path contains this reference. Earlier completed siblings
+                    // keep their clean verdict; unvisited suffixes acquire no verdict at all.
+                    completed[current] = true;
+                    if (pending is not null)
+                    {
+                        foreach (var ancestor in pending)
+                            completed[ancestor.Node] = true;
+                    }
+                }
+                else if (descend is null)
+                    completed[current] = false;
+            }
+
             if (done)
                 return found;
 
             if (descend is not null)
             {
-                (pending ??= new()).Push((items, next));
+                (pending ??= new()).Push((current, next));
                 if (exporting)
                     observations?.RecordRunExportScanPendingFrames(pending.Count);
                 else
                     observations?.RecordCallReferenceScanPendingFrames(pending.Count);
                 items = descend;
+                current = descendNode!;
                 next = 0;
                 isRoot = false;
             }
             else
             {
-                (items, next) = pending!.Pop();
+                (current, next) = pending!.Pop();
+                items = StructureItemsOf(current)!;
                 isRoot = pending.Count == 0;
             }
         }
@@ -1576,7 +1622,7 @@ public static partial class Evaluator
         }
 
         return ScanForCallReference(value, ctx.Budget, ScanBudgetUse.ObserveCancellation,
-                ctx.Observations?.StructuralTraversal, out _)
+                ctx.Observations?.StructuralTraversal, completed: null, out _)
             ? new EvalError.TypeMismatch(CallReferenceLeavesRunMessage)
             : null;
     }
