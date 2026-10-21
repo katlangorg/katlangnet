@@ -18,6 +18,14 @@ namespace KatLang;
 internal sealed class EvaluationObservations
 {
     /// <summary>
+    /// Optional observer handed to every operation comparer the run's <c>contains</c> and
+    /// <c>distinct</c> evaluations create (SEC-02), so a language-level test can read the
+    /// structural pair/hash expansions and budget charges of those walks across the whole run.
+    /// Supplied by the measuring test; <c>null</c> records nothing.
+    /// </summary>
+    public ValueTraversalObservations? StructuralTraversal { get; init; }
+
+    /// <summary>
     /// Number of COMPLETE assignment-deconstruction binding computations begun during this run. A
     /// deconstruction group binds its shared N-capture pattern once per (group, binding context): the
     /// first demanded target of a group performs the full bind and increments this once (whether the

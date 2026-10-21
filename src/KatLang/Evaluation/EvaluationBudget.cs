@@ -322,7 +322,9 @@ internal sealed class EvaluationBudget
     /// passes one: the optimized loop executor charges its one step per iteration through
     /// <see cref="TryChargeStep"/> exactly where the generic loop does, and its planned
     /// expressions charge the generic evaluator's expression-work checkpoints
-    /// (<see cref="TryChargeExpressionNodeWork"/>).</para>
+    /// (<see cref="TryChargeExpressionNodeWork"/>). A long structural value walk inside one
+    /// <c>contains</c> or <c>distinct</c> passes one per small block of child inspections or frame completions
+    /// (<see cref="TryChargeStructuralWork"/>, SEC-02).</para>
     /// </summary>
     internal void ObserveCancellation() => _cancellationToken.ThrowIfCancellationRequested();
 
@@ -651,10 +653,69 @@ internal sealed class EvaluationBudget
     private long _expressionEvaluationCheckpoints;
 
     /// <summary>
+    /// The number of structural value-traversal work units that make up ONE bulk step
+    /// (<see cref="TryChargeStructuralWork"/>).
+    /// </summary>
+    internal const int StructuralWorkUnitsPerStep = 4096;
+
+    /// <summary>
+    /// Structural value-traversal work units charged so far by this run
+    /// (<see cref="TryChargeStructuralWork"/>). Diagnostics and tests only.
+    /// </summary>
+    internal long ConsumedStructuralWorkUnits => _structuralWorkUnits;
+
+    /// <summary>
+    /// Bulk work bound for the structural VALUE walks an evaluator operation performs (SEC-02):
+    /// the equality and hash walks of <c>contains</c> and <c>distinct</c>, run through an
+    /// operation comparer (<see cref="Result.CreateOperationComparer"/>). One unit is one child
+    /// slot inspected or one expanded structure completed (equal, unequal, or hashed); charging
+    /// completions also bounds a deep chain's otherwise inspection-free unwind. A memo hit is the one inspection that
+    /// found it, never its subtree again, and top-level leaf items cost nothing, so flat
+    /// collections charge no unit at all. Every <see cref="StructuralWorkUnitsPerStep"/> units
+    /// charge ONE step, from a batch of their own: the expression-work checkpoint batch and its
+    /// counter (<see cref="ConsumedExpressionCheckpoints"/>) are untouched, and a step stays
+    /// one dynamic invocation, one loop iteration, or one bulk block of either kind.
+    ///
+    /// <para>The walks flush their units here in small blocks, so this is also their
+    /// host-cancellation checkpoint (observed first, like every chokepoint). The units are a
+    /// deterministic function of the operands' reference graphs and the operation's own memo, never
+    /// of timing or configuration; every strategy reaches these builtins through the same
+    /// evaluator implementation. As with <see cref="TryChargeExpressionNodeWork"/>, the batch
+    /// position advances only past an admitted step, so a refused block cannot admit later work
+    /// against an exhausted budget.</para>
+    /// </summary>
+    internal EvalError? TryChargeStructuralWork(int units)
+    {
+        if (CheckContinuation() is { } terminal) return terminal;
+
+        if (units <= 0)
+            throw new ArgumentOutOfRangeException(nameof(units), units, "Structural work must be positive.");
+
+        var inBatch = _structuralWorkUnitsInBatch + units;
+        while (inBatch >= StructuralWorkUnitsPerStep)
+        {
+            if (TryChargeStep() is { } stepError)
+                return stepError;
+            inBatch -= StructuralWorkUnitsPerStep;
+            _structuralWorkUnits += StructuralWorkUnitsPerStep - _structuralWorkUnitsInBatch;
+            _structuralWorkUnitsInBatch = 0;
+            units = inBatch;
+        }
+
+        _structuralWorkUnitsInBatch = inBatch;
+        _structuralWorkUnits += units;
+        return null;
+    }
+
+    private int _structuralWorkUnitsInBatch;
+    private long _structuralWorkUnits;
+
+    /// <summary>
     /// Charges one unit of semantic work (currently: one dynamic invocation, one
-    /// loop iteration, or one bulk block of 4096 expression-evaluation checkpoints via
-    /// <see cref="TryChargeExpressionNodeWork"/>). Returns <c>null</c> when the
-    /// work may proceed.
+    /// loop iteration, one bulk block of 4096 expression-evaluation checkpoints via
+    /// <see cref="TryChargeExpressionNodeWork"/>, or one bulk block of 4096 structural
+    /// value-traversal units via <see cref="TryChargeStructuralWork"/>). Returns <c>null</c>
+    /// when the work may proceed.
     /// </summary>
     internal EvalError? TryChargeStep()
     {

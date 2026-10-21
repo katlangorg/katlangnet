@@ -48,6 +48,32 @@ internal sealed class ValueTraversalObservations
         => HashStructureExpansionCount = checked(HashStructureExpansionCount + 1);
 
     /// <summary>
+    /// Number of structural-work CHARGES an operation comparer (<see cref="Result.CreateOperationComparer"/>,
+    /// SEC-02) made to its run's budget: one per full block of
+    /// <see cref="Result.ValueSemanticComparer.UnitsPerCharge"/> child inspections or structure completions, plus one for
+    /// a pending remainder at the operation's completion. Every charge is a host-cancellation
+    /// observation.
+    /// </summary>
+    public long StructuralWorkChargeCount { get; private set; }
+
+    /// <summary>Total child-inspection and structure-completion units those charges carried.</summary>
+    public long StructuralWorkUnits { get; private set; }
+
+    /// <summary>
+    /// Optional test hook invoked with the 1-based charge ordinal just BEFORE that charge reaches
+    /// the budget, so a test can request cancellation at a deterministic structural checkpoint and
+    /// observe that exact charge throw.
+    /// </summary>
+    public Action<long>? BeforeStructuralWorkCharge { get; init; }
+
+    internal void RecordStructuralWorkCharge(int units)
+    {
+        StructuralWorkChargeCount = checked(StructuralWorkChargeCount + 1);
+        StructuralWorkUnits = checked(StructuralWorkUnits + units);
+        BeforeStructuralWorkCharge?.Invoke(StructuralWorkChargeCount);
+    }
+
+    /// <summary>
     /// Number of structure NODES expanded across the <see cref="Result.Normalize"/> operations this
     /// observer measured: the top-level structure of each normalization, plus every nested sequence
     /// or list value descended into. Leaves normalize to themselves and record nothing, and a node

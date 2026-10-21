@@ -1675,13 +1675,58 @@ public static partial class Evaluator
     /// some item equals the searched item, otherwise <c>false</c>).
     /// Search is top-level only: sequence values compare structurally as single
     /// items and are not searched recursively.
+    ///
+    /// <para>The scan stops at the first match. Its comparisons share ONE operation comparer
+    /// (SEC-02, <see cref="Result.CreateOperationComparer"/>): the same value equality as
+    /// <see cref="Result.ValueComparer"/>, with reference-pair verdicts reused across the whole
+    /// scan and the walks' work charged to the run's budget.</para>
     /// </summary>
     private static EvalResult<CountedResult> EvalContainsCounted(
+        EvalCtx ctx,
         IReadOnlyList<Result> items,
         Result searchedItem)
-        => EvalResult<CountedResult>.Ok(new CountedResult(
-            new Result.Bool(items.Any(item => Result.ValueComparer.Equals(item, searchedItem))),
-            1));
+    {
+        var comparer = Result.CreateOperationComparer(ctx.Budget, ctx.Observations?.StructuralTraversal);
+        bool found;
+        try
+        {
+            found = ContainsItem(comparer, items, searchedItem);
+        }
+        catch (StructuralWorkRefusedException refused)
+        {
+            return refused.Error;
+        }
+
+        if (comparer.CompleteOperation() is { } error)
+            return error;
+
+        return EvalResult<CountedResult>.Ok(new CountedResult(new Result.Bool(found), 1));
+    }
+
+    // The scans live outside the protected regions so the tiered JIT can promote their loops by
+    // on-stack replacement within one long builtin call (measured: a 100,000-item flat scan inside
+    // the try block stayed in unoptimized code for the whole call).
+    private static bool ContainsItem(Result.ValueSemanticComparer comparer, IReadOnlyList<Result> items, Result searchedItem)
+    {
+        for (var i = 0; i < items.Count; i++)
+        {
+            if (comparer.Equals(items[i], searchedItem))
+                return true;
+        }
+
+        return false;
+    }
+
+    private static void KeepFirstOccurrences(Result.ValueSemanticComparer comparer, IReadOnlyList<Result> items, List<Result> distinctItems)
+    {
+        var seen = new HashSet<Result>(comparer);
+        for (var i = 0; i < items.Count; i++)
+        {
+            var item = items[i];
+            if (seen.Add(item))
+                distinctItems.Add(item);
+        }
+    }
 
     /// <summary>
     /// Evaluate <c>distinct(collection)</c> by removing later duplicate top-level
@@ -1690,18 +1735,29 @@ public static partial class Evaluator
     /// Duplicate detection follows KatLang value
     /// semantics, so atoms compare by numeric value, strings by exact string
     /// value, and sequence/list values structurally by their elements.
+    ///
+    /// <para>Every hash and duplicate comparison shares ONE operation comparer (SEC-02,
+    /// <see cref="Result.CreateOperationComparer"/>): node hashes and pair verdicts are reused
+    /// across the whole collection, and the walks' work is charged to the run's budget before
+    /// the kept items are materialized.</para>
     /// </summary>
     private static EvalResult<CountedResult> EvalDistinctCounted(
         EvalCtx ctx,
         IReadOnlyList<Result> items)
     {
         var distinctItems = new List<Result>(items.Count);
-        var seen = new HashSet<Result>(Result.ValueComparer);
-        foreach (var item in items)
+        var comparer = Result.CreateOperationComparer(ctx.Budget, ctx.Observations?.StructuralTraversal);
+        try
         {
-            if (seen.Add(item))
-                distinctItems.Add(item);
+            KeepFirstOccurrences(comparer, items, distinctItems);
         }
+        catch (StructuralWorkRefusedException refused)
+        {
+            return refused.Error;
+        }
+
+        if (comparer.CompleteOperation() is { } error)
+            return error;
 
         return MakeCollectionListResult(ctx, distinctItems);
     }
@@ -2084,7 +2140,7 @@ public static partial class Evaluator
                             0);
                         if (searchedItemR.IsError) return searchedItemR.Error;
 
-                        return WithPreparedFlatItems(items => EvalContainsCounted(items, searchedItemR.Value));
+                        return WithPreparedFlatItems(items => EvalContainsCounted(ctx, items, searchedItemR.Value));
                     }),
             BuiltinId.@distinct => WithPreparedFlatItems(items => EvalDistinctCounted(ctx, items)),
             BuiltinId.@first => WithPreparedFlatItems(EvalFirstCounted),

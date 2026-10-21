@@ -55,7 +55,12 @@ namespace KatLang;
 /// above: it is O(distinct nodes or pairs actually reached), never O(paths),
 /// and it is allocated lazily so flat values still allocate none. Memo state
 /// belongs to one call and is discarded with it; no hash, comparison result,
-/// normal form, or atom fact is ever cached on a <see cref="Result"/>.</para>
+/// normal form, or atom fact is ever cached on a <see cref="Result"/>. The one
+/// wider lifetime is an evaluator OPERATION comparer (SEC-02,
+/// <c>CreateOperationComparer</c>): one <c>contains</c> or <c>distinct</c>
+/// evaluation shares one equality/hash memo across all its items, keeps only
+/// completed verdicts and hashes, charges its walks to the run's budget, and
+/// drops the memo when the builtin returns.</para>
 ///
 /// <para>A value-PRODUCING walk must also preserve sharing, or it converts a
 /// compact DAG into the exponentially larger tree its paths spell out and hands
@@ -98,6 +103,28 @@ public closed record Result
     /// </summary>
     internal static IEqualityComparer<Result> CreateObservedValueComparer(ValueTraversalObservations? observations)
         => observations is null ? ValueComparer : new ValueSemanticComparer(observations);
+
+    /// <summary>
+    /// Returns a fresh OPERATION comparer for one evaluator operation over many values — one
+    /// <c>contains</c> or one <c>distinct</c> evaluation (SEC-02). It decides exactly the
+    /// <see cref="ValueComparer"/> equality and the same hashes, but its reference-identity memos
+    /// live for the whole operation instead of one top-level call: completed pair verdicts (equal
+    /// AND unequal) and completed node hashes of every pair or node worth retaining (see
+    /// <see cref="ValueSemanticComparer.RetainedWidth"/>) are reused by every later comparison or
+    /// hash of the operation, so N references to one deep value are walked once, not N times. Its walks charge
+    /// their work to <paramref name="budget"/> (<see cref="Evaluation.EvaluationBudget.TryChargeStructuralWork"/>),
+    /// which also observes the run's host cancellation during a long walk. A refused charge
+    /// throws <see cref="Evaluation.StructuralWorkRefusedException"/> out of the comparer; the owning
+    /// operation catches it and returns its retained error. Discard the comparer with the operation:
+    /// after any exception escapes a walk, the comparer refuses further use, so no incomplete memo
+    /// entry is ever read.
+    /// </summary>
+    internal static ValueSemanticComparer CreateOperationComparer(
+        Evaluation.EvaluationBudget budget, ValueTraversalObservations? observations = null)
+    {
+        ArgumentNullException.ThrowIfNull(budget);
+        return ValueSemanticComparer.ForOperation(budget, observations);
+    }
 
     /// <summary>
     /// A single numeric value, backed by IEEE 754 <see cref="Decimal128"/>
@@ -1005,10 +1032,44 @@ public closed record Result
     /// 2^n root-to-leaf paths, and a walk that expands paths instead of nodes is exponential in n.
     /// The memos hold ONLY object references; they never call value equality or the structural hash
     /// on themselves, which would re-enter the very walks they bound.
+    ///
+    /// <para>An OPERATION comparer (<see cref="CreateOperationComparer"/>, SEC-02) runs operation
+    /// twins of the two walks (<see cref="EqualsInOperation"/>, <see cref="HashInOperation"/>) over an
+    /// <see cref="OperationMemo"/>: the memos then span every call of one evaluator operation, the
+    /// walks retain COMPLETED verdicts and hashes of the pairs and nodes worth retaining, and every
+        /// child slot inspected and expanded structure completed is charged to the run's budget in small blocks. The per-call walks
+    /// below are unchanged by it. Without it, the memos died
+    /// with each top-level call, so <c>contains</c> over N references to one deep value re-walked it
+    /// N times — O(N × D) uncharged, uncancellable work from O(N + D) construction.</para>
     /// </summary>
-    private sealed class ValueSemanticComparer(ValueTraversalObservations? observations)
-        : IEqualityComparer<Result>
+    internal sealed class ValueSemanticComparer : IEqualityComparer<Result>
     {
+        private readonly ValueTraversalObservations? observations;
+        private readonly OperationMemo? operation;
+
+        internal ValueSemanticComparer(ValueTraversalObservations? observations)
+            : this(observations, operation: null)
+        {
+        }
+
+        private ValueSemanticComparer(ValueTraversalObservations? observations, OperationMemo? operation)
+        {
+            this.observations = observations;
+            this.operation = operation;
+        }
+
+        /// <summary>A fresh operation comparer (see <see cref="CreateOperationComparer"/>).</summary>
+        internal static ValueSemanticComparer ForOperation(
+            Evaluation.EvaluationBudget budget, ValueTraversalObservations? observations)
+            => new(observations, new OperationMemo(budget));
+
+        /// <summary>
+        /// Child inspections or structure completions between two budget charges of an operation comparer: the
+        /// bound on structural work between two host-cancellation observations. Each unit is O(1)
+        /// work (a leaf comparison or hash, at most one memo probe), except a string leaf, which is
+        /// bounded by the per-string length limit.
+        /// </summary>
+        internal const int UnitsPerCharge = 256;
         // Value-kind tags mixed into every structural hash, so a list value never hashes like a
         // sequence value over the same elements. These are the tags the previous streaming hash
         // used, kept for continuity of the recipe.
@@ -1082,6 +1143,9 @@ public closed record Result
                 default:
                     return false;
             }
+
+            if (operation is not null)
+                return EqualsInOperation(x, y, leftItems, rightItems);
 
             observations?.RecordEqualityPairExpansion();
 
@@ -1201,6 +1265,8 @@ public closed record Result
                 return leafHash;
             if (!TryOpenStructure(obj, out var tag, out var items))
                 return InProgressHash;
+            if (operation is not null)
+                return HashInOperation(obj, tag, items);
 
             // Post-order visit with indexed continuation frames (see the depth note on the class):
             // the registers hold the node being folded, its collection, the next child index, and
@@ -1308,6 +1374,389 @@ public closed record Result
                 accumulator = new HashCode();
                 accumulator.Add(childTag);
                 accumulator.Add(childItems.Count);
+            }
+        }
+
+        /// <summary>
+        /// Width at which an operation walk retains a pair or node that opened no nested structure
+        /// (see <see cref="EqualsInOperation"/>): re-walking a smaller one costs fewer than this many
+        /// O(1) inspections, so retaining it would cost more than it saves on shallow collections.
+        /// </summary>
+        internal const int RetainedWidth = 16;
+
+        /// <summary>
+        /// The operation comparer's equality walk over a structure pair whose kinds and counts the
+        /// top-level dispatch in <see cref="Equals(Result?, Result?)"/> already matched. Same verdict
+        /// as the per-call walk there, and the same left-to-right order and early mismatch return.
+        ///
+        /// <para>OPERATION MEMO. Verdicts outlive the comparison, so the memo records how each
+        /// retained pair ENDED: a pair is EQUAL when its frame completes and, on a mismatch, the
+        /// mismatching pair and every retained pair still open above it are UNEQUAL (each of their
+        /// children includes the unequal pair below it); every other pair it entered had completed.
+        /// The walk keeps every frame for this — no tail-descent drop, one frame per open level,
+        /// still O(depth) — and the frame records whether its pair was seeded.</para>
+        ///
+        /// <para>WHAT IS RETAINED. A nested pair is retained when it DESCENDS into a nested pair:
+        /// only such a pair can be reached again along many paths of a shared DAG, so it is seeded IN
+        /// PROGRESS at its first descent (which also keeps an invariant-violating cyclic graph total,
+        /// exactly as in the per-call walk) and finalized at completion or mismatch. A pair that
+        /// never descends — its children are leaves, empties, or memo answers — is retained only when
+        /// it is at least <see cref="RetainedWidth"/> wide; a narrower one costs fewer inspections to
+        /// re-walk than to remember. The top-level pair is retained by width alone: a repeated
+        /// top-level pair's re-walk inspects its own children, each a leaf, a memo answer, or a narrow
+        /// leaf pair, so it is bounded by RetainedWidth² whatever lies below. That keeps the memo at
+        /// zero entries for ordinary shallow collections while every deep or wide repetition is
+        /// answered from it.</para>
+        /// </summary>
+        private bool EqualsInOperation(Result x, Result y, IReadOnlyList<Result> leftItems, IReadOnlyList<Result> rightItems)
+        {
+            var op = operation!;
+            op.EnterWalk();
+            var equal = EqualsInOperationWalk(op, x, y, leftItems, rightItems);
+            op.ExitWalk();
+            return equal;
+        }
+
+        private bool EqualsInOperationWalk(
+            OperationMemo op, Result x, Result y, IReadOnlyList<Result> leftItems, IReadOnlyList<Result> rightItems)
+        {
+            // A top-level pair is never in progress outside its own walk, so a retained entry is a verdict.
+            var pairs = op.Verdicts;
+            if (pairs is not null && pairs.TryGetValue(new ReferencePair(x, y), out var known))
+                return known == PairState.Equal;
+
+            observations?.RecordEqualityPairExpansion();
+
+            var suspended = new Stack<EqualityFrame>();
+            var (leftNode, rightNode, seeded, next) = (x, y, false, 0);
+
+            while (true)
+            {
+                if (next >= leftItems.Count)
+                {
+                    // A singleton chain can finish thousands of frames without inspecting another
+                    // child. Account for completion too, so that unwind remains cancellable.
+                    op.Charge(observations);
+                    if (seeded || leftItems.Count >= RetainedWidth)
+                        (pairs ??= op.Verdicts = [])[new ReferencePair(leftNode, rightNode)] = PairState.Equal;
+                    if (suspended.Count == 0) return true;
+                    (leftNode, rightNode, leftItems, rightItems, next, seeded) = suspended.Pop();
+                    continue;
+                }
+
+                var left = leftItems[next];
+                var right = rightItems[next];
+                next++;
+                op.Charge(observations);
+
+                if (ReferenceEquals(left, right)) continue;
+                if (left is null || right is null) return Mismatch(op, leftNode, rightNode, leftItems.Count, seeded, suspended);
+
+                IReadOnlyList<Result> childLeft;
+                IReadOnlyList<Result> childRight;
+                switch (left, right)
+                {
+                    // The per-call walk's value semantics, case for case.
+                    case (Atom(var leftValue), Atom(var rightValue)):
+                        if (!leftValue.Equals(rightValue)) return Mismatch(op, leftNode, rightNode, leftItems.Count, seeded, suspended);
+                        continue;
+
+                    case (Str(var leftValue), Str(var rightValue)):
+                        if (!StringComparer.Ordinal.Equals(leftValue, rightValue)) return Mismatch(op, leftNode, rightNode, leftItems.Count, seeded, suspended);
+                        continue;
+
+                    case (Bool(var leftValue), Bool(var rightValue)):
+                        if (leftValue != rightValue) return Mismatch(op, leftNode, rightNode, leftItems.Count, seeded, suspended);
+                        continue;
+
+                    case (CallReference leftReference, CallReference rightReference):
+                        if (!ReferenceEquals(leftReference.Plan, rightReference.Plan)
+                            || leftReference.IsArgumentView != rightReference.IsArgumentView)
+                            return Mismatch(op, leftNode, rightNode, leftItems.Count, seeded, suspended);
+                        continue;
+
+                    case (SequenceValue(var childLeftItems), SequenceValue(var childRightItems)):
+                        if (childLeftItems.Count != childRightItems.Count) return Mismatch(op, leftNode, rightNode, leftItems.Count, seeded, suspended);
+                        (childLeft, childRight) = (childLeftItems, childRightItems);
+                        break;
+
+                    case (ListValue(var childLeftItems), ListValue(var childRightItems)):
+                        if (childLeftItems.Count != childRightItems.Count) return Mismatch(op, leftNode, rightNode, leftItems.Count, seeded, suspended);
+                        (childLeft, childRight) = (childLeftItems, childRightItems);
+                        break;
+
+                    default:
+                        return Mismatch(op, leftNode, rightNode, leftItems.Count, seeded, suspended);
+                }
+
+                if (childLeft.Count == 0) continue;
+
+                // A retained verdict answers the pair. IN PROGRESS means the pair is open above —
+                // reachable only through an invalid cyclic graph — and is skipped coinductively.
+                if (pairs is not null && pairs.TryGetValue(new ReferencePair(left, right), out var state))
+                {
+                    if (state == PairState.Unequal) return Mismatch(op, leftNode, rightNode, leftItems.Count, seeded, suspended);
+                    continue;
+                }
+
+                if (!seeded && suspended.Count != 0)
+                {
+                    (pairs ??= op.Verdicts = [])[new ReferencePair(leftNode, rightNode)] = PairState.InProgress;
+                    seeded = true;
+                }
+
+                observations?.RecordEqualityPairExpansion();
+
+                suspended.Push(new EqualityFrame(leftNode, rightNode, leftItems, rightItems, next, seeded));
+                (leftNode, rightNode, leftItems, rightItems, next, seeded) = (left, right, childLeft, childRight, 0, false);
+            }
+        }
+
+        /// <summary>
+        /// The <c>false</c> of an operation walk that found a mismatch, after retaining it: the
+        /// mismatching pair and every pair still open above it are UNEQUAL where retained (seeded,
+        /// or at least <see cref="RetainedWidth"/> wide). Every seeded pair is open on this path, so
+        /// none is left in progress.
+        /// </summary>
+        private bool Mismatch(
+            OperationMemo op, Result leftNode, Result rightNode, int count, bool seeded, Stack<EqualityFrame> suspended)
+        {
+            op.Charge(observations);
+            if (seeded || count >= RetainedWidth)
+                (op.Verdicts ??= [])[new ReferencePair(leftNode, rightNode)] = PairState.Unequal;
+            foreach (var frame in suspended)
+            {
+                op.Charge(observations);
+                if (frame.Seeded || frame.Left.Count >= RetainedWidth)
+                    (op.Verdicts ??= [])[new ReferencePair(frame.LeftNode, frame.RightNode)] = PairState.Unequal;
+            }
+
+            return false;
+        }
+
+        /// <summary>One suspended pair of an operation equality walk.</summary>
+        private readonly record struct EqualityFrame(
+            Result LeftNode,
+            Result RightNode,
+            IReadOnlyList<Result> Left,
+            IReadOnlyList<Result> Right,
+            int Next,
+            bool Seeded);
+
+        /// <summary>
+        /// The operation comparer's hash walk over a non-empty structure, with exactly the per-call
+        /// walk's bottom-up recipe (so every hash equals <see cref="ValueComparer"/>'s) and the
+        /// retention rule of <see cref="EqualsInOperation"/>: a nested node is seeded at its first
+        /// descent and stored at completion; a node that never descends is stored only when at
+        /// least <see cref="RetainedWidth"/> wide; the top-level node by width alone.
+        /// </summary>
+        private int HashInOperation(Result obj, int tag, IReadOnlyList<Result> items)
+        {
+            var op = operation!;
+            op.EnterWalk();
+            var hash = HashInOperationWalk(op, obj, tag, items);
+            op.ExitWalk();
+            return hash;
+        }
+
+        private int HashInOperationWalk(OperationMemo op, Result obj, int tag, IReadOnlyList<Result> items)
+        {
+            var hashes = op.NodeHashes;
+            if (hashes is not null && hashes.TryGetValue(obj, out var known))
+                return known;
+
+            var node = obj;
+            var accumulator = new HashCode();
+            accumulator.Add(tag);
+            accumulator.Add(items.Count);
+            var next = 0;
+            var seeded = false;
+
+            var suspended = new Stack<(Result Node, IReadOnlyList<Result> Items, int Next, HashCode Accumulator, bool Seeded)>();
+
+            observations?.RecordHashStructureExpansion();
+
+            while (true)
+            {
+                if (next >= items.Count)
+                {
+                    op.Charge(observations);
+                    var nodeHash = accumulator.ToHashCode();
+                    if (seeded || items.Count >= RetainedWidth)
+                        (hashes ??= op.NodeHashes = new Dictionary<Result, int>(ReferenceEqualityComparer.Instance))[node] = nodeHash;
+                    if (suspended.Count == 0)
+                        return nodeHash;
+
+                    (node, items, next, accumulator, seeded) = suspended.Pop();
+                    accumulator.Add(nodeHash);
+                    continue;
+                }
+
+                var child = items[next];
+                next++;
+                op.Charge(observations);
+
+                int childTag;
+                IReadOnlyList<Result> childItems;
+                switch (child)
+                {
+                    // The per-call walk's leaf folding, token for token.
+                    case Atom(var number):
+                        accumulator.Add(AtomTag);
+                        accumulator.Add(number);
+                        continue;
+
+                    case Str(var text):
+                        accumulator.Add(StrTag);
+                        accumulator.Add(text, StringComparer.Ordinal);
+                        continue;
+
+                    case Bool(var flag):
+                        accumulator.Add(BoolTag);
+                        accumulator.Add(flag);
+                        continue;
+
+                    case CallReference reference:
+                        accumulator.Add(CallReferenceTag);
+                        accumulator.Add(RuntimeHelpers.GetHashCode(reference.Plan));
+                        accumulator.Add(reference.IsArgumentView);
+                        continue;
+
+                    case SequenceValue(var sequenceItems):
+                        (childTag, childItems) = (SequenceTag, sequenceItems);
+                        break;
+
+                    case ListValue(var listItems):
+                        (childTag, childItems) = (ListTag, listItems);
+                        break;
+
+                    default:
+                        continue;
+                }
+
+                if (childItems.Count == 0)
+                {
+                    accumulator.Add(EmptyStructureHash(childTag));
+                    continue;
+                }
+
+                if (hashes is not null && hashes.TryGetValue(child, out var memoized))
+                {
+                    accumulator.Add(memoized);
+                    continue;
+                }
+
+                if (!seeded && suspended.Count != 0)
+                {
+                    (hashes ??= op.NodeHashes = new Dictionary<Result, int>(ReferenceEqualityComparer.Instance))[node] = InProgressHash;
+                    seeded = true;
+                }
+
+                observations?.RecordHashStructureExpansion();
+
+                suspended.Push((node, items, next, accumulator, seeded));
+                (node, items, next, seeded) = (child, childItems, 0, false);
+                accumulator = new HashCode();
+                accumulator.Add(childTag);
+                accumulator.Add(childItems.Count);
+            }
+        }
+
+        /// <summary>
+        /// Retires an operation comparer at the normal end of its operation: charges the work units
+        /// still pending below one charge block — so the run is charged for every unit regardless of
+        /// how the walks split them — and drops the memos so no state outlives the operation.
+        /// Returns the budget's refusal of that final charge, or <c>null</c>. A comparer whose walk
+        /// ended by an exception must not be completed; it is simply discarded.
+        /// </summary>
+        internal EvalError? CompleteOperation()
+        {
+            if (operation is null)
+                throw new InvalidOperationException("Only an operation comparer can be completed.");
+
+            operation.EnterWalk();
+            var error = operation.Flush(observations);
+            operation.Release();
+            operation.ExitWalk();
+            return error;
+        }
+
+        /// <summary>
+        /// How a retained pair of an operation comparer's memo stands: <see cref="InProgress"/> from
+        /// its first descent until its walk finalizes it as <see cref="Equal"/> or
+        /// <see cref="Unequal"/>. A finished walk leaves no pair in progress.
+        /// </summary>
+        private enum PairState : byte
+        {
+            InProgress = 0,
+            Equal = 1,
+            Unequal = 2,
+        }
+
+        /// <summary>
+        /// The state of ONE operation comparer (SEC-02): the cross-call reference memos and the
+        /// work-charging link to the owning run's budget. Created per evaluator operation and
+        /// discarded with it — never static, never shared between operations, runs, or threads, and
+        /// never attached to a <see cref="Result"/>. Its memos grow with the distinct pairs and
+        /// nodes the walks actually expand, never with paths, and every entry corresponds to
+        /// at least one charged unit, so the step budget bounds the memo as well as the work.
+        /// </summary>
+        private sealed class OperationMemo(Evaluation.EvaluationBudget budget)
+        {
+            /// <summary>Equality verdicts by ordered reference pair: completed ones, plus the open path of the running walk.</summary>
+            internal Dictionary<ReferencePair, PairState>? Verdicts;
+
+            /// <summary>Completed structure hashes by reference, plus the open path of the running walk.</summary>
+            internal Dictionary<Result, int>? NodeHashes;
+
+            private int pendingUnits;
+            private bool walking;
+            private bool released;
+
+            /// <summary>
+            /// Starts one walk. A walk is never re-entered, and a walk that ended by an exception
+            /// (cancellation or a refused charge) never ran <see cref="ExitWalk"/>: it may have left
+            /// IN-PROGRESS entries that a later walk would misread as decided, so every later use
+            /// fails loud instead.
+            /// </summary>
+            internal void EnterWalk()
+            {
+                if (walking || released)
+                    throw new InvalidOperationException(
+                        "A structural operation comparer cannot be used after its operation ended or a walk failed.");
+                walking = true;
+            }
+
+            internal void ExitWalk() => walking = false;
+
+            /// <summary>
+            /// Counts one child inspection or expanded-structure completion and, every <see cref="UnitsPerCharge"/> units,
+            /// charges them — which also observes host cancellation. A refused charge throws
+            /// <see cref="Evaluation.StructuralWorkRefusedException"/> carrying the retained error.
+            /// </summary>
+            internal void Charge(ValueTraversalObservations? observations)
+            {
+                if (++pendingUnits < UnitsPerCharge)
+                    return;
+                if (Flush(observations) is { } error)
+                    throw new Evaluation.StructuralWorkRefusedException(error);
+            }
+
+            internal EvalError? Flush(ValueTraversalObservations? observations)
+            {
+                var units = pendingUnits;
+                if (units == 0)
+                    return null;
+                pendingUnits = 0;
+                observations?.RecordStructuralWorkCharge(units);
+                return budget.TryChargeStructuralWork(units);
+            }
+
+            internal void Release()
+            {
+                Verdicts = null;
+                NodeHashes = null;
+                released = true;
             }
         }
 

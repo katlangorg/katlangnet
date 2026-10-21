@@ -242,10 +242,12 @@ public sealed record EvaluationLimits
     /// <summary>
     /// Maximum cumulative evaluation steps for one run, or <c>null</c> for no step
     /// budget (the default). One step is charged for each dynamic algorithm
-    /// invocation, each loop iteration, and each bulk block of 4096 expression-
-    /// evaluation work checkpoints. The bulk charge bounds pathological repeated
-    /// evaluation of shared host-built expression subtrees while leaving small
-    /// ordinary programs' accounting unchanged.
+    /// invocation, each loop iteration, each bulk block of 4096 expression-
+    /// evaluation work checkpoints, and each bulk block of 4096 structural value-traversal
+    /// units (one per inspected child position and per expanded collection completed by
+    /// <c>contains</c> or <c>distinct</c>). The bulk charges bound pathological repeated
+    /// evaluation of shared host-built expression subtrees and long structural comparisons
+    /// while leaving small ordinary programs' accounting unchanged.
     ///
     /// <para>Steps are LOGICAL work: every internal evaluation strategy — optimized loops
     /// and fused sequence pipelines included — charges exactly the same steps at the same

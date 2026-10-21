@@ -2435,7 +2435,7 @@ public static partial class Evaluator
                         0);
                     if (searchedItemR.IsError) return searchedItemR.Error;
 
-                    return WithPreparedFlatItems(items => EvalContainsCounted(items, searchedItemR.Value));
+                    return WithPreparedFlatItems(items => EvalContainsCounted(ctx, items, searchedItemR.Value));
                 }
 
             case BuiltinId.@distinct:
