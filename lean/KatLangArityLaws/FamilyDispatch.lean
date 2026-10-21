@@ -27,8 +27,9 @@ The laws are stated at the layer they belong to:
 * § Trace — the dispatcher in the trace interpretation: its events are its attempts' binder
   events, in order, and activation adds none.
 
-Not claimed: anything about `Algorithm.hasDuplicateBranchPatterns` beyond its Boolean (it calls
-`partial` definitions), the partial callers that pass the channels (`evalNeedFamilySupply`,
+Not claimed here: anything about `Algorithm.hasDuplicateBranchPatterns` beyond its Boolean (total
+since R3′; `KatLangArityLaws/PatternHelpers.lean` characterizes it and proves the production
+dispatcher's rejection of a renamed duplicate head from `select_duplicate_first`), the partial callers that pass the channels (`evalNeedFamilySupply`,
 `runNeedStepSlots`), or C#. A raw family-mode `none` is a clause NON-MATCH; it is not the
 ordinary call's arity error — the ordinary driver `evalNeedUserSupply` (`partial`) turns an
 unexpected `none` into `badArity` itself, a source fact — and the raw binder returns `none` for

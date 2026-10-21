@@ -1,5 +1,33 @@
 # Semantic Alignment Manifest.
 
+R3′ — pattern helper totalization (2026-10-21; FORMAL-07 roadmap item R3′, NOT the 2026-10-14
+repeated-spread work that reused the label): a Lean restructuring with proofs; no observable
+semantic change in Lean or C#, C# unchanged. The pure helpers the total Model-C binder and
+clause dispatcher reach were `partial` (opaque to the kernel): value-pattern matching
+`matchPatternInto`/`matchStructureInto`, the kind-mismatch rendering `ParameterPattern.displayName`
+and `resultDiagnosticString`, duplicate-clause comparison
+`Pattern.matchEquivalentWithRenaming`/`matchEquivalentItemsWithRenaming`, and the adjacent
+`ParameterPattern.captures`, `Pattern.parameterPattern?` and `plainClauseParameterPatterns?`. Each is
+now structural recursion over finite pattern/value syntax, its hidden `map`/`flatMap`/`mapM`/local
+`go` replaced by an explicit list walker (`capturesOfList`, `displayNames`, `parameterPatternsOf?`,
+`matchEquivalentPairsWithRenaming`, `resultDiagnosticStrings`, `matchItemsInto`); names, arguments,
+result types, traversal order, environment/table accumulation, every string and the
+`some`/`none` distinctions are unchanged (no fuel, depth limit or default). PROOFS
+(`KatLangArityLaws/PatternHelpers.lean`, guards `PatternHelperGuards.lean`; standard axioms only):
+each walker is its former higher-order form and each definition satisfies its former recurrence;
+literal matching succeeds iff the same constructor and payload; a successful match keeps the
+incoming environment as a prefix and appends only fresh, distinct names; the clause-to-ordinary
+conversion is eligible iff literal-free and yields the clause's own binder head; the duplicate
+relation is exactly structural equality up to an injective binder renaming covering every binder
+(`isMatchEquivalent_iff`; reflexive and symmetric), and duplicate detection is the pairwise
+check over clause patterns only; production specializations give the binder's literal arm per
+literal constructor, its kind-mismatch error as an explicit string, and the dispatcher's
+rejection of a renamed duplicate head before any effect. Preservation: these equations plus a
+bounded executable comparison against verbatim frozen pre-R3′ copies (local evidence,
+`experimental/features/r3prime-pattern-helper-totalization.md`). Not established: recursive
+VALUE demand, whole-run refinement (R7), Q-66, or anything about C#'s mutable matching
+accumulator or Decimal128 text. V3.
+
 P1 — J7 per-plan representation (2026-10-20): C#-only, implementation-only allocation change; no
 language, Lean or observable-outcome change. A retaining run's per-transition cost in nested
 supplied-call loops (`S(x) = Id(Id(Id(x + 1))), x < n; S(0).while`) was measured as exactly the size
@@ -476,7 +504,7 @@ signature — is never a non-match in ordinary mode; errors are classified by va
 roadmap's "non-match iff incompatibility error kind" holds only in that one direction. This
 supersedes the FORMAL-07 entry's statement that demand order and repeated-name binding are
 executably checked, never proved. That roadmap also defined an "R3′" — totalizing
-the binder's opaque helpers — which remains open and is NOT the 2026-10-14 "R3′" repeated-spread
+the binder's opaque helpers — which remained open at this entry (implemented 2026-10-21, see the R3′ entry at the top) and is NOT the 2026-10-14 "R3′" repeated-spread
 work, which reused the label. Q-66 stays OPEN. Full V3.
 
 Q-67 (2026-10-15): test-only correspondence strengthening; no production semantics

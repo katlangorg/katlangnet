@@ -99,7 +99,10 @@ children, collectors, literals, META) and proves the stability premise for the p
 channels on completed and Ready cells, and `KatLangArityLaws/CallableIdentityDomain.lean` widens
 callable-identity transitivity to every pair without an identified/anonymous fallback; and
 `KatLangArityLaws/SupplyCorrespondence.lean` proves a heap-renaming SIMULATION of the whole binder
-and the callback route's Ready-supply correspondence (premises: the two `partial` channels). The outcomes of the opaque helpers stay symbolic there,
+and the callback route's Ready-supply correspondence (premises: the two `partial` channels). The outcomes of the pattern helpers (literal
+matching, kind-mismatch payload, duplicate-clause check) stay symbolic there — they need no more —
+although since R3′ (October 2026) those helpers are total and their laws are kernel theorems in
+`KatLangArityLaws/PatternHelpers.lean`;
 and the CoreTests.ModelC / RepeatedNameConstraints guards remain the evaluator-level
 witnesses. § Repeated spread over the real model (Q-66 item 4) proves the
 repeated-spread laws over `Result` and the production reopening helpers: shallow slot
@@ -606,8 +609,8 @@ theorem inline_alias_of_a_required_argument_callable_is_its_arity
       = some (Error.withContext (CtxMsg.property name) (Error.arityMismatch 1 0)) := rfl
 
 /-- A written block that is NOT an alias reports its OWN inferred parameters (the
-block's `Algorithm.params`; `ParameterPattern.captures` is `partial`, so the list is
-stated through it rather than computed). -/
+block's `Algorithm.params`; stated through it, and computed by
+`written_block_reports_its_parameter_names` now that `ParameterPattern.captures` is total, R3′). -/
 theorem written_block_reports_its_own_unresolved_implicit_params
     (x : Ident) (op : List Expr) (props : List PropDef) (out : List Expr) :
     zeroArgumentDemandError?
@@ -615,6 +618,14 @@ theorem written_block_reports_its_own_unresolved_implicit_params
         (Algorithm.mk none [.capture { name := x }] op props out)
       = some (Error.unresolvedImplicitParams
           (Algorithm.params (Algorithm.mk none [.capture { name := x }] op props out))) := rfl
+
+/-- The same report, computed: the block's one written parameter name. -/
+theorem written_block_reports_its_parameter_names
+    (x : Ident) (op : List Expr) (props : List PropDef) (out : List Expr) :
+    zeroArgumentDemandError?
+        (some (.algorithmExpr (Algorithm.mk none [.capture { name := x }] op props out)))
+        (Algorithm.mk none [.capture { name := x }] op props out)
+      = some (Error.unresolvedImplicitParams [x]) := rfl
 
 /-
 ## Implicit-lifting eligibility follows zero-argument acceptance (Q-03, September 2026)
@@ -3677,7 +3688,7 @@ theorem asInt_bool_none (b : Bool) : Result.asInt? (Result.bool b) = none := rfl
 -- by `CoreTests/ArgumentValueOutcome.lean` and `CoreTests/ModelC.lean`. The second is the
 -- production binder's per-occurrence inspection (`bindNeedName`), whose order and verdict are
 -- proved since R3 in `KatLangArityLaws/BinderTrace.lean` (`repeated_name_binding` and the
--- repeated-name trace laws; its callable-identity check calls `partial` definitions and stays
+-- repeated-name trace laws; its callable-identity check, total since S5, stays
 -- symbolic), and executed by `CoreTests/RepeatedNameConstraints.lean` (evaluator programs and the
 -- binder itself, both argument orders) and `CoreTests/ModelC.lean`. A plain (non-repeated) binder transports its
 -- cell and demands nothing: `plain_patterns_bind_without_any_channel`,
@@ -3964,12 +3975,16 @@ are stated for every monad and capability record: those without `[LawfulMonad m]
 interpretation alike; the one that needs `[LawfulMonad m]` holds of the trace interpretation and
 has its own `EvalM` form, `production_plain_step`.
 
-Opaque helpers. The core calls helpers that reach `partial` definitions — literal matching
-`matchPattern` (via `matchPatternInto`/`matchStructureInto`), the
-kind-mismatch payload `structuralPatternKindMismatch` (via `ParameterPattern.displayName` and
+Pattern helpers. The core calls three helper families that reached `partial` definitions until
+R3′ (October 2026) — literal matching `matchPattern` (via `matchPatternInto`/`matchStructureInto`),
+the kind-mismatch payload `structuralPatternKindMismatch` (via `ParameterPattern.displayName` and
 `resultDiagnosticString`) and the duplicate-clause check `Algorithm.hasDuplicateBranchPatterns`
-(via `Pattern.matchEquivalentWithRenaming`). No theorem here or in the R3 modules unfolds them:
-their outcomes appear symbolically, as the very terms the binder computes. Repeated callable
+(via `Pattern.matchEquivalentWithRenaming`). Since R3′ all of them are structural recursion and
+`KatLangArityLaws/PatternHelpers.lean` proves their laws and their production specializations
+(the literal arm per literal constructor, the kind-mismatch error as an explicit string, the
+dispatcher's rejection of a renamed duplicate head). No theorem here or in the R3 modules
+unfolds them: their outcomes appear symbolically, as the very terms the binder computes, which
+is all those laws need. Repeated callable
 identity `sameRepeatedCallableIdentity` was the fourth such helper until S5 (October 2026), when
 `sameDeclaringScope` / `compatibleActivations` became total; the R3 modules still treat its outcome
 symbolically (they need nothing more), and `KatLangArityLaws/RepeatedNameLaws.lean` proves its
@@ -4227,11 +4242,12 @@ What they do NOT establish:
   clause search and activation in `KatLangArityLaws/FamilyDispatch.lean`, and channel
   substitution and the family/ordinary mode correspondence in
   `KatLangArityLaws/BinderCorrespondence.lean`;
-* outcomes decided by helpers that call `partial` definitions and are therefore opaque:
-  literal matching (`matchPattern`), repeated callable identity
+* the outcomes of literal matching (`matchPattern`), repeated callable identity
   (`sameRepeatedCallableIdentity`), the kind-mismatch payload
   (`structuralPatternKindMismatch`) and the duplicate-clause check
-  (`Algorithm.hasDuplicateBranchPatterns`);
+  (`Algorithm.hasDuplicateBranchPatterns`), which stay symbolic here — the helpers are total
+  (S5, R3′) and their laws are `KatLangArityLaws/RepeatedNameLaws.lean` and
+  `KatLangArityLaws/PatternHelpers.lean`;
 * the bound ENVIRONMENT for repeated names (allocation is position-only; the repeated-name
   verdict is `repeated_name_binding` in `KatLangArityLaws/BinderTrace.lean`), or anything
   about C#.
@@ -4452,7 +4468,7 @@ theorem call_binder_rejects_unaccepted_supply_before_any_effect (channels : Need
 /-- A FAMILY REPORTS `NoMatchingBranch` ONLY FOR AN ACCEPTED COUNT (NEED-05, CALL-04): when
     no clause head accepts the supply count, production dispatch fails before any clause is
     attempted and before any effect — with the duplicate-clause error if the family has
-    duplicate heads (checked first; the check calls `partial` definitions, so it is opaque), and
+    duplicate heads (checked first; characterized in `KatLangArityLaws/PatternHelpers.lean`), and
     otherwise with the arity error whose payload is the first clause's minimum and the
     complete supply count. Never `noMatchingBranch`. -/
 theorem family_dispatch_rejects_unaccepted_supply_before_any_effect (channels : NeedChannels)

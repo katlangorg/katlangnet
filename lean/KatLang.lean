@@ -195,11 +195,21 @@ def CallableParameter.displayName (parameter : CallableParameter) : String :=
   | .metaRef => "meta " ++ parameter.name
 
 namespace ParameterPattern
-  partial def captures : ParameterPattern -> List CallableParameter
-    | .capture parameter => [parameter]
-    | .sequenceValue items => items.flatMap captures
-    | .listValue items => items.flatMap captures
-    | .unpacking items => items.flatMap captures
+  mutual
+    /-- The captures of a pattern, left to right at every depth, repeated names and capture
+        kinds kept (structural recursion; R3′, October 2026: `capturesOfList items` is
+        `items.flatMap captures`, `PatternHelpers.capturesOfList_eq_flatMap`). -/
+    def captures : ParameterPattern -> List CallableParameter
+      | .capture parameter => [parameter]
+      | .sequenceValue items => capturesOfList items
+      | .listValue items => capturesOfList items
+      | .unpacking items => capturesOfList items
+
+    /-- The captures of a pattern list, in order: `items.flatMap captures`. -/
+    def capturesOfList : List ParameterPattern -> List CallableParameter
+      | [] => []
+      | item :: rest => captures item ++ capturesOfList rest
+  end
 
   def fromParameters (parameters : List CallableParameter) : List ParameterPattern :=
     parameters.map .capture
@@ -257,14 +267,22 @@ namespace ParameterPattern
     | .listValue _ :: rest => topLevelCaptureKind? name rest
     | .unpacking _ :: rest => topLevelCaptureKind? name rest
 
-  /-- The written form of a pattern, for diagnostics: `x`, `*xs`, `(x, y)`,
-      `[x, *rest]`, and a deconstruction's written target list `x, *rest`.
-      C#: `ParameterPattern.DisplayName`. -/
-  partial def displayName : ParameterPattern -> String
-    | .capture parameter => parameter.displayName
-    | .sequenceValue items => "(" ++ String.intercalate ", " (items.map displayName) ++ ")"
-    | .listValue items => "[" ++ String.intercalate ", " (items.map displayName) ++ "]"
-    | .unpacking items => String.intercalate ", " (items.map displayName)
+  mutual
+    /-- The written form of a pattern, for diagnostics: `x`, `*xs`, `(x, y)`,
+        `[x, *rest]`, and a deconstruction's written target list `x, *rest`.
+        C#: `ParameterPattern.DisplayName`. -/
+    def displayName : ParameterPattern -> String
+      | .capture parameter => parameter.displayName
+      | .sequenceValue items => "(" ++ String.intercalate ", " (displayNames items) ++ ")"
+      | .listValue items => "[" ++ String.intercalate ", " (displayNames items) ++ "]"
+      | .unpacking items => String.intercalate ", " (displayNames items)
+
+    /-- The written forms of a pattern list, in order: `items.map displayName` (structural
+        recursion; R3′, `PatternHelpers.displayNames_eq_map`). -/
+    def displayNames : List ParameterPattern -> List String
+      | [] => []
+      | item :: rest => displayName item :: displayNames rest
+  end
 
   /-- THE SINGLETON RULE (September 2026): a sequence pattern whose items are
       exactly ONE non-collecting pattern describes a one-item sequence boundary,
@@ -1003,33 +1021,44 @@ namespace Pattern
             | _ => none)
     | _ => none
 
-  /-- Return parameter names when a sole surface clause head consists only of
-      recursive binder/structural (sequence or list) parameter patterns.
+  mutual
+    /-- Return parameter names when a sole surface clause head consists only of
+        recursive binder/structural (sequence or list) parameter patterns.
 
-      This is only an eligibility helper for the whole same-name clause-group
-      elaboration rule; it does not by itself decide ordinary-vs-conditional.
+        This is only an eligibility helper for the whole same-name clause-group
+        elaboration rule; it does not by itself decide ordinary-vs-conditional.
 
-      Rejected on purpose:
-      - literal or mixed non-binder pattern structure
+        Rejected on purpose:
+        - literal or mixed non-binder pattern structure
 
-      This is the ordinary clause-elaboration boundary: capture/structural-only
-      recursive parameter patterns elaborate as ordinary algorithms, while
-      literal or mixed patterns stay conditional. Each structural pattern keeps
-      its kind: a sequence pattern stays a sequence pattern and a list pattern a
-      list pattern. -/
-  partial def parameterPattern? : Pattern -> Option ParameterPattern
-    | .bind x => some (.capture { name := x })
-    | .sequenceValue ps => do
-        let patterns <- ps.mapM parameterPattern?
-        some (.sequenceValue patterns)
-    | .listValue ps => do
-        let patterns <- ps.mapM parameterPattern?
-        some (.listValue patterns)
-    | _ => none
+        This is the ordinary clause-elaboration boundary: capture/structural-only
+        recursive parameter patterns elaborate as ordinary algorithms, while
+        literal or mixed patterns stay conditional. Each structural pattern keeps
+        its kind: a sequence pattern stays a sequence pattern and a list pattern a
+        list pattern. -/
+    def parameterPattern? : Pattern -> Option ParameterPattern
+      | .bind x => some (.capture { name := x })
+      | .sequenceValue ps => do
+          let patterns <- parameterPatternsOf? ps
+          some (.sequenceValue patterns)
+      | .listValue ps => do
+          let patterns <- parameterPatternsOf? ps
+          some (.listValue patterns)
+      | _ => none
 
-  partial def plainClauseParameterPatterns? : Pattern -> Option (List ParameterPattern)
+    /-- `ps.mapM parameterPattern?`, left to right, the first ineligible item ending the walk
+        (structural recursion; R3′, `PatternHelpers.parameterPatternsOf?_eq_mapM`). -/
+    def parameterPatternsOf? : List Pattern -> Option (List ParameterPattern)
+      | [] => some []
+      | p :: rest => do
+          let pattern <- parameterPattern? p
+          let patterns <- parameterPatternsOf? rest
+          some (pattern :: patterns)
+  end
+
+  def plainClauseParameterPatterns? : Pattern -> Option (List ParameterPattern)
     | .bind x => some [.capture { name := x }]
-    | .sequenceValue ps => ps.mapM parameterPattern?
+    | .sequenceValue ps => parameterPatternsOf? ps
     | .listValue ps => (parameterPattern? (.listValue ps)).map (fun pattern => [pattern])
     | _ => none
 
@@ -1059,7 +1088,7 @@ namespace Pattern
     | (_, right) :: rest => right = name || binderTargetUsed name rest
 
   mutual
-  partial def matchEquivalentWithRenaming : Pattern -> Pattern ->
+  def matchEquivalentWithRenaming : Pattern -> Pattern ->
       List (Ident × Ident) -> Option (List (Ident × Ident))
     | .bind left, .bind right, pairs =>
         match binderRenaming? left pairs with
@@ -1074,25 +1103,31 @@ namespace Pattern
     | .litBool b, .litBool c, pairs =>
         if b = c then some pairs else none
     | .sequenceValue ps, .sequenceValue qs, pairs =>
-        matchEquivalentItemsWithRenaming ps qs pairs
+        if ps.length != qs.length then none else matchEquivalentPairsWithRenaming ps qs pairs
     | .listValue ps, .listValue qs, pairs =>
-        matchEquivalentItemsWithRenaming ps qs pairs
+        if ps.length != qs.length then none else matchEquivalentPairsWithRenaming ps qs pairs
     | _, _, _ => none
 
-  /-- Pairwise match-equivalence of two structural patterns' items of ONE kind. -/
-  partial def matchEquivalentItemsWithRenaming (ps qs : List Pattern)
-      (pairs : List (Ident × Ident)) : Option (List (Ident × Ident)) :=
-    if ps.length != qs.length then
-      none
-    else
-      let rec go : List (Pattern × Pattern) ->
-          List (Ident × Ident) -> Option (List (Ident × Ident))
-        | [], current => some current
-        | (p, q) :: rest, current => do
-            let next <- matchEquivalentWithRenaming p q current
-            go rest next
-      go (ps.zip qs) pairs
+  /-- The items of two equally long structural patterns compared in lockstep, left to right,
+      threading the renaming table; the first non-equivalent pair ends the walk (structural
+      recursion over the left items; R3′, October 2026 — the former local `go` over
+      `ps.zip qs`, `PatternHelpers.matchEquivalentPairs_eq_foldlM_zip`). -/
+  def matchEquivalentPairsWithRenaming : List Pattern -> List Pattern ->
+      List (Ident × Ident) -> Option (List (Ident × Ident))
+    | [], [], current => some current
+    | p :: ps, q :: qs, current => do
+        let next <- matchEquivalentWithRenaming p q current
+        matchEquivalentPairsWithRenaming ps qs next
+    | _, _, _ => none
   end
+
+  /-- Pairwise match-equivalence of two structural patterns' items of ONE kind: unequal
+      lengths are never equivalent, equal lengths compare in lockstep. It is the structural
+      arm of `matchEquivalentWithRenaming` (`PatternHelpers.matchEquivalent_sequenceValue`,
+      `PatternHelpers.matchEquivalent_listValue`). -/
+  def matchEquivalentItemsWithRenaming (ps qs : List Pattern)
+      (pairs : List (Ident × Ident)) : Option (List (Ident × Ident)) :=
+    if ps.length != qs.length then none else matchEquivalentPairsWithRenaming ps qs pairs
 
   def isMatchEquivalent (left right : Pattern) : Bool :=
     (matchEquivalentWithRenaming left right []).isSome
@@ -3473,14 +3508,25 @@ def resultToString (r : Result) : EvalM Result :=
 -- Semantics
 --------------------------------------------------------------------------------
 
-partial def resultDiagnosticString : Result -> String
-  | .atom value => toString value
-  | .str value => "'" ++ value ++ "'"
-  | .bool value => Result.boolText value
-  | .sequenceValue items => "(" ++ String.intercalate ", " (items.map resultDiagnosticString) ++ ")"
-  | .listValue items => "[" ++ String.intercalate ", " (items.map resultDiagnosticString) ++ "]"
-  | .callRef _ => "a call reference"
-  | .argView _ => "an argument view"
+mutual
+  /-- The diagnostic text of a value: a number in Lean's `Int` rendering, a string quoted
+      with `'` (no escaping), a Boolean's spelling, a structure's items comma-separated in
+      its delimiters, and the fixed descriptions of a call reference and an argument view
+      (whose plan is never inspected). Structural recursion (R3′, October 2026). -/
+  def resultDiagnosticString : Result -> String
+    | .atom value => toString value
+    | .str value => "'" ++ value ++ "'"
+    | .bool value => Result.boolText value
+    | .sequenceValue items => "(" ++ String.intercalate ", " (resultDiagnosticStrings items) ++ ")"
+    | .listValue items => "[" ++ String.intercalate ", " (resultDiagnosticStrings items) ++ "]"
+    | .callRef _ => "a call reference"
+    | .argView _ => "an argument view"
+
+  /-- `items.map resultDiagnosticString` (`PatternHelpers.resultDiagnosticStrings_eq_map`). -/
+  def resultDiagnosticStrings : List Result -> List String
+    | [] => []
+    | item :: rest => resultDiagnosticString item :: resultDiagnosticStrings rest
+end
 
 /-- How a diagnostic names one value that failed an operand, condition, or
     predicate requirement: the value KIND first, then the value itself.
@@ -4682,8 +4728,14 @@ mutual
       length, recursively (`patternStructureMembers?`)
 
     Bindings accumulate left-to-right. Repeated names compare against the
-    first bound value and do not add another environment entry. -/
-partial def matchPatternInto (p : Pattern) (r : Result) (env : ValEnv)
+    first bound value and do not add another environment entry.
+
+    Structural recursion over the pattern (R3′, October 2026): a structural arm reads its
+    members once (`patternStructureMembers?`) and walks them with `matchItemsInto`, so
+    `matchPatternInto (.sequenceValue ps) r env` IS `matchStructureInto ps
+    (patternStructureMembers? (Result.sequencePatternItems? r) ps.length) env` by definition
+    (`PatternHelpers.matchPatternInto_sequenceValue`; the list arm likewise). -/
+def matchPatternInto (p : Pattern) (r : Result) (env : ValEnv)
     : Option ValEnv :=
   match p with
   | .bind x =>
@@ -4702,24 +4754,35 @@ partial def matchPatternInto (p : Pattern) (r : Result) (env : ValEnv)
       match r with
       | .bool v => if v = b then some env else none
       | _       => none
-  | .sequenceValue ps  => matchStructureInto ps (patternStructureMembers? (Result.sequencePatternItems? r) ps.length) env
-  | .listValue ps  => matchStructureInto ps (patternStructureMembers? (Result.listPatternItems? r) ps.length) env
+  | .sequenceValue ps  =>
+      match patternStructureMembers? (Result.sequencePatternItems? r) ps.length with
+      | none => none
+      | some rs => matchItemsInto ps rs env
+  | .listValue ps  =>
+      match patternStructureMembers? (Result.listPatternItems? r) ps.length with
+      | none => none
+      | some rs => matchItemsInto ps rs env
+
+/-- A structural pattern's items against the elements its value supplied, in lockstep and
+    left to right, carrying the accumulated environment; the first non-match, or a length
+    difference, ends the walk with `none` (structural recursion over the items; the former
+    local `go` of `matchStructureInto`). -/
+def matchItemsInto : List Pattern -> List Result -> ValEnv -> Option ValEnv
+  | [], [], current => some current
+  | p::ps', r::rs', current => do
+      let next <- matchPatternInto p r current
+      matchItemsInto ps' rs' next
+  | _, _, _ => none
+end
 
 /-- Match a structural pattern's items against the elements its value supplied
-    (`none` when the value is not of the pattern's kind or length). -/
-partial def matchStructureInto (ps : List Pattern) (members? : Option (List Result)) (env : ValEnv)
+    (`none` when the value is not of the pattern's kind or length). The structural arms of
+    `matchPatternInto` are this helper over `patternStructureMembers?`. -/
+def matchStructureInto (ps : List Pattern) (members? : Option (List Result)) (env : ValEnv)
     : Option ValEnv :=
   match members? with
   | none => none
-  | some rs =>
-      let rec go : List Pattern -> List Result -> ValEnv -> Option ValEnv
-        | [], [], current => some current
-        | p::ps', r::rs', current => do
-            let next <- matchPatternInto p r current
-            go ps' rs' next
-        | _, _, _ => none
-      go ps rs env
-end
+  | some rs => matchItemsInto ps rs env
 
 def matchPattern (p : Pattern) (r : Result) : Option ValEnv :=
   matchPatternInto p r []
@@ -6273,12 +6336,18 @@ public `demandNeed` is the same `NeedDemand.step` unfolding (`bindingChannels.va
 by definition); its specialization is kernel-checked in `KatLangArityLaws/NeedControl.lean`.
 Until October 2026 these binder functions were `partial` members of the evaluator block
 because they participated in recursive VALUE demand, so no theorem could say anything about
-their behaviour (a `partial def` is an opaque constant). They still call
-a few helpers that call `partial` definitions, so their
-outcomes stay opaque to proofs: `matchPattern` (literals, via `matchPatternInto`),
-`structuralPatternKindMismatch` (via `ParameterPattern.displayName`) and
-`Algorithm.hasDuplicateBranchPatterns` (via `matchEquivalentWithRenaming`). Repeated callable
-identity `sameRepeatedCallableIdentity` is no longer one of them (S5, October 2026): its helpers
+their behaviour (a `partial def` is an opaque constant). Until R3′ (October 2026) they also
+called three helper families that reached `partial` definitions — literal matching
+`matchPattern` (via `matchPatternInto`/`matchStructureInto`), the kind-mismatch payload
+`structuralPatternKindMismatch` (via `ParameterPattern.displayName` and
+`resultDiagnosticString`) and the duplicate-clause check `Algorithm.hasDuplicateBranchPatterns`
+(via `Pattern.matchEquivalentWithRenaming`). All of them, with the adjacent
+`ParameterPattern.captures` and `Pattern.parameterPattern?`, are now structural recursion over
+finite pattern/value syntax, so those outcomes are kernel terms
+(`KatLangArityLaws/PatternHelpers.lean`: literal success iff the same constructor and payload,
+the payload as an explicit string, and duplicate clauses characterized as structural equality
+up to an injective binder renaming). Repeated callable
+identity `sameRepeatedCallableIdentity` is no longer opaque either (S5, October 2026): its helpers
 `sameDeclaringScope` / `compatibleActivations` are total, so its outcome is a kernel term; only
 the anonymous-declaration fallback of `sameDeclaringScope` compares two `reprStr` strings of
 `ScopeCtx.declaration`, opaque values whose string equality is still lawful
