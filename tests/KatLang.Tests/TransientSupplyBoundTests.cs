@@ -402,6 +402,24 @@ public class TransientSupplyBoundTests(ITestOutputHelper output)
     }
 
     [Fact]
+    public void RepeatRows_PlannedHandover_FormsTheSameBoundedSupply()
+    {
+        // Multi-item spread rows hand the planned round over to the generic continuation
+        // (LoopOptimizer.MaterializeGenericHandoverSlots), which re-forms the row supply under the bound.
+        var effects = new Effects();
+        var operations = Operations(effects);
+        var loops = new LoopOptimizationDiagnostics();
+        var observations = new EvaluationObservations();
+        var (result, budget) = Evaluator.RunCountedObserved(Program(RepeatStep, operations),
+            new EvaluationLimits { MaxCollectionItems = 5 }, loopDiagnostics: loops, observations: observations, hostOperations: operations);
+        Assert.Equal("ok S[0, 1, 2, 3, 4]", Text(result));
+        Assert.Equal(1, loops.OptimizedLoopHits);
+        Assert.Equal(1, observations.OptimizedLoopHandoverMaterializationCount);
+        Assert.Equal(5, budget.PeakTransientExpansion);
+        Assert.Equal("ok S[0, 1, 2, 3, 4]", Observe(RepeatStep, 5).Text);
+    }
+
+    [Fact]
     public void RepeatRows_SingleItemSpreads_EnforceTheBoundDuringPlannedIterations()
     {
         const string source = "S(a, b, c) = a*, b*, c*\nrepeat(S(1, 2, 3), 2)";

@@ -53,6 +53,46 @@ public static partial class Evaluator
         public TransientSupply Supply;
     }
 
+    /// <summary>
+    /// A ListLiteral frame's element accumulator. Only a literal with an explicit spread element can
+    /// ever expand its supply, so only such a literal carries the bound (<see cref="ListSlotAccumulator"/>);
+    /// any other literal's supply is purely written — never expanded, never overflowed, its total
+    /// always its count — and accumulates in a plain list, without the bound's per-literal storage
+    /// (SEC-01-FU allocation follow-up). The two accumulators admit, retain and refuse identically.
+    /// </summary>
+    private static List<Result> NewListSlots(IReadOnlyList<Expr> elements)
+    {
+        for (var i = 0; i < elements.Count; i++)
+        {
+            if (elements[i] is Expr.SequenceSpread)
+                return new ListSlotAccumulator();
+        }
+
+        return [];
+    }
+
+    /// <summary>One written element's value into a ListLiteral accumulator (<see cref="NewListSlots"/>).</summary>
+    private static void AddListSlot(List<Result> slots, Result slot, EvaluationBudget budget)
+    {
+        if (slots is ListSlotAccumulator bounded)
+            AddSlotBounded(bounded, slot, budget, ref bounded.Supply);
+        else
+            slots.Add(slot);
+    }
+
+    /// <summary>One element's slots into a ListLiteral accumulator (<see cref="NewListSlots"/>).</summary>
+    private static void AddListSlots(List<Result> slots, IReadOnlyList<Result> values, EvaluationBudget budget, bool expansion)
+    {
+        if (slots is ListSlotAccumulator bounded)
+            AddSlotsBounded(bounded, values, budget, ref bounded.Supply, expansion);
+        else
+            slots.AddRange(values);
+    }
+
+    /// <summary>The ListLiteral supply's full size: an overflowed accumulator's counted total, else its count.</summary>
+    private static long ListSlotTotal(List<Result> slots)
+        => slots is ListSlotAccumulator bounded ? bounded.Supply.Total : slots.Count;
+
     /// <summary>One in-progress spine node in <see cref="EvalExpressionSpineCounted"/>.</summary>
     private struct ExpressionSpineFrame(Expr node)
     {
@@ -327,13 +367,13 @@ public static partial class Evaluator
 
                 case Expr.ListLiteral(var elements):
                 {
-                    frame.ListItems ??= new ListSlotAccumulator();
+                    frame.ListItems ??= NewListSlots(elements);
                     if (hasPendingChild)
                     {
                         // WRITTEN-SLOT REIFICATION: a machine-kind element is never a
                         // spread, so its counted supply contributes exactly ONE value.
                         hasPendingChild = false;
-                        AddSlotBounded(frame.ListItems, pendingChild.Value, ctx.Budget, ref ((ListSlotAccumulator)frame.ListItems).Supply);
+                        AddListSlot(frame.ListItems, pendingChild.Value, ctx.Budget);
                         frame.Phase++;
                     }
 
@@ -352,7 +392,7 @@ public static partial class Evaluator
 
                         // The written slots' accumulator is transient-bounded BEFORE it grows
                         // (SEC-01): `[A*, A*]` never retains more spread items than the list may.
-                        AddSlotsBounded(frame.ListItems, slotsR.Value, ctx.Budget, ref ((ListSlotAccumulator)frame.ListItems).Supply, element is Expr.SequenceSpread);
+                        AddListSlots(frame.ListItems, slotsR.Value, ctx.Budget, element is Expr.SequenceSpread);
                         frame.Phase++;
                     }
 
@@ -369,7 +409,7 @@ public static partial class Evaluator
                     // expansion) are evaluated, so the reservation happens before the
                     // persistent list is built.
                     // An overflowed accumulator (SEC-01) reserves its full counted size: the same refusal.
-                    if (ReserveCollection(ctx, ((ListSlotAccumulator)frame.ListItems).Supply.Total, frame.Node.Span) is { } limitError)
+                    if (ReserveCollection(ctx, ListSlotTotal(frame.ListItems), frame.Node.Span) is { } limitError)
                     {
                         completed = limitError;
                         break;
@@ -1266,7 +1306,7 @@ public static partial class Evaluator
         if (argumentsR.IsError) return argumentsR.Error;
 
         var value = implementation(argumentsR.Value, ctx.Budget.CancellationToken);
-        return EvalResult<Result>.Ok(NormalizeHostOperationValue(hostOperation, value));
+        return NormalizeHostOperationValue(hostOperation, value, ctx.Budget, ctx.Observations?.StructuralTraversal);
     }
 
     /// <summary>
@@ -1289,14 +1329,24 @@ public static partial class Evaluator
     /// values only: host exceptions, faulted awaitables, and cancellation propagate
     /// before this helper runs, and a null return remains the fail-loud host contract
     /// violation.
+    ///
+    /// <para>The same walk ADMITS the value (SEC-01-FU, <see cref="Result.AdmitHostOperationValue"/>):
+    /// every distinct nested collection's immediate count and every string's length must fit the
+    /// run's effective per-collection and per-string limits, nested structures charge structural
+    /// work and observe cancellation, and a refusal is the run's terminal resource error — the
+    /// wrapper body fails with it, so no consumer and no cache ever receives the value.</para>
     /// </summary>
-    private static Result NormalizeHostOperationValue(HostOperation hostOperation, Result? value)
+    private static EvalResult<Result> NormalizeHostOperationValue(
+        HostOperation hostOperation,
+        Result? value,
+        Evaluation.EvaluationBudget budget,
+        ValueTraversalObservations? observations)
         => value is null
             ? throw new InvalidOperationException(
                 $"Host operation '{hostOperation.Name}' returned null; host operations must return a KatLang value.")
-            // The same DAG-safe walk both normalizes and refuses reference leaves, including
-            // nested ones. No preliminary traversal of large ordinary host values is needed.
-            : value.NormalizeForHostOperation(hostOperation.Name);
+            // The same DAG-safe walk normalizes, admits, and refuses reference leaves, including
+            // nested ones. No preliminary traversal of large host values is needed.
+            : value.AdmitHostOperationValue(hostOperation.Name, budget, observations);
 
     /// <summary>
     /// A host operation may be reached only through the synthetic wrapper built by its
@@ -1357,8 +1407,9 @@ public static partial class Evaluator
         {
             var valueR = LookupNativeArgument(ctx, valEnv, argNames[i]);
             if (valueR.IsError) return valueR.Error;
-            // A call reference never reaches host code (CallReference S1, J4).
-            if (CallReferenceBoundaryError(valueR.Value) is { } refused) return refused;
+            // A call reference never reaches host code (CallReference S1, J4); the scan is charged
+            // structural work because it repeats for every host call (SEC-01-FU).
+            if (HostArgumentBoundaryError(valueR.Value, ctx.Budget, ctx.Observations?.StructuralTraversal) is { } refused) return refused;
             arguments[i] = valueR.Value;
         }
 

@@ -52,7 +52,9 @@ internal sealed class ValueTraversalObservations
     /// SEC-02) made to its run's budget: one per full block of
     /// <see cref="Result.ValueSemanticComparer.UnitsPerCharge"/> child inspections or structure completions, plus one for
     /// a pending remainder at the operation's completion. Every charge is a host-cancellation
-    /// observation.
+    /// observation. A host-value admission walk (<see cref="Result.AdmitHostOperationValue"/>, SEC-01-FU)
+    /// records its charges here too: one whenever at least that many units are pending at the end of
+    /// a scan segment or a nested completion, plus the remainder at completion.
     /// </summary>
     public long StructuralWorkChargeCount { get; private set; }
 
@@ -72,6 +74,15 @@ internal sealed class ValueTraversalObservations
         StructuralWorkUnits = checked(StructuralWorkUnits + units);
         BeforeStructuralWorkCharge?.Invoke(StructuralWorkChargeCount);
     }
+
+    /// <summary>
+    /// Largest number of suspended continuation frames in a call-reference boundary scan.
+    /// Traversal storage must follow nesting depth, never the number of pending siblings.
+    /// </summary>
+    public int CallReferenceScanPeakPendingFrames { get; private set; }
+
+    internal void RecordCallReferenceScanPendingFrames(int count)
+        => CallReferenceScanPeakPendingFrames = Math.Max(CallReferenceScanPeakPendingFrames, count);
 
     /// <summary>
     /// Number of structure NODES expanded across the <see cref="Result.Normalize"/> operations this

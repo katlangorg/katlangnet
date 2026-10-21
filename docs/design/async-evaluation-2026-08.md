@@ -364,7 +364,10 @@ module — rather than inventing a parallel subsystem:
   counting). One shared helper (`Evaluator.NormalizeHostOperationValue`) serves the
   synchronous dispatch and the async twin's await site, so sync/async cannot drift;
   failures (host exceptions, faulted awaitables, cancellation, diagnostics) are never
-  routed through normalization.
+  routed through normalization. Since SEC-01-FU (October 2026) the same walk also ADMITS
+  the value against the per-collection and per-string limits, charging nested structure
+  work and observing cancellation (`Result.AdmitHostOperationValue`; see
+  `language-rules/evaluator-and-hosting.md` § Budgets and cancellation, HOST-VALUE ADMISSION).
 - **Suspension (exactly-once)**: an incomplete awaitable from an asynchronous
   operation suspends the whole evaluation spine — no thread is blocked, `RunAsync`
   does not imply background-thread execution, and thread placement of the resumption

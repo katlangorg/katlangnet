@@ -34,6 +34,22 @@ namespace KatLang;
 /// an explicit call (<c>Data()</c>) bypasses that property's cache entry, exactly like
 /// any other KatLang property.</para>
 ///
+/// <para><b>Resource limits on returned values.</b> In the same pass, a successful return is
+/// ADMITTED against the run's <see cref="EvaluationLimits"/> before anything uses it: every
+/// sequence or list it contains, at any depth, may hold at most
+/// <see cref="EvaluationLimits.MaxCollectionItems"/> immediate items (a nested value counts as
+/// one item of its parent), and every string at most <see cref="EvaluationLimits.MaxStringLength"/>
+/// UTF-16 code units — the same per-value ceilings every program-built value obeys. A value that
+/// exceeds one ends the run with the corresponding
+/// <see cref="KatLangErrorCode.CollectionSizeLimitExceeded"/> or
+/// <see cref="KatLangErrorCode.StringSizeLimitExceeded"/> failure (an evaluation failure, not an
+/// exception); it is neither cached nor seen by the program. Admitting a nested value is
+/// structural work charged to <see cref="EvaluationLimits.MaxSteps"/> and observes cancellation.
+/// Returned values are not counted toward <see cref="EvaluationLimits.MaxMaterializedItems"/> or
+/// <see cref="EvaluationLimits.MaxMaterializedStringChars"/>, which measure what evaluation itself
+/// constructs. KatLang cannot limit what the delegate allocates before it returns: keep returned
+/// values within the configured limits.</para>
+///
 /// <para><b>Exception contract.</b> Exceptions thrown by the delegate (or a faulted
 /// awaitable returned by an asynchronous operation) propagate to the host unchanged —
 /// they are host exceptions, never converted into KatLang diagnostics or absorbed into

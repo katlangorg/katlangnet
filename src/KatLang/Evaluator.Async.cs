@@ -813,7 +813,7 @@ public static partial class Evaluator
             var valueR = await LookupNativeArgumentAsync(ctx, valEnv, argNames[i]).ConfigureAwait(false);
             if (valueR.IsError) return valueR.Error;
             // MIRROR — a call reference never reaches host code.
-            if (CallReferenceBoundaryError(valueR.Value) is { } refused) return refused;
+            if (HostArgumentBoundaryError(valueR.Value, ctx.Budget, ctx.Observations?.StructuralTraversal) is { } refused) return refused;
             arguments[i] = valueR.Value;
         }
 
@@ -844,7 +844,7 @@ public static partial class Evaluator
         if (argumentsR.IsError) return argumentsR.Error;
 
         var value = implementation(argumentsR.Value, ctx.Budget.CancellationToken);
-        return EvalResult<Result>.Ok(NormalizeHostOperationValue(hostOperation, value));
+        return NormalizeHostOperationValue(hostOperation, value, ctx.Budget, ctx.Observations?.StructuralTraversal);
     }
 
     /// <summary>
@@ -1206,13 +1206,13 @@ public static partial class Evaluator
 
                 case Expr.ListLiteral(var elements):
                     {
-                        frames[top].ListItems ??= new ListSlotAccumulator();
+                        frames[top].ListItems ??= NewListSlots(elements);
                         if (hasPendingChild)
                         {
                             // WRITTEN-SLOT REIFICATION: a machine-kind element is never a
                             // spread, so its counted supply contributes exactly ONE value.
                             hasPendingChild = false;
-                            AddSlotBounded(frames[top].ListItems!, pendingChild.Value, ctx.Budget, ref ((ListSlotAccumulator)frames[top].ListItems!).Supply);
+                            AddListSlot(frames[top].ListItems!, pendingChild.Value, ctx.Budget);
                             frames[top].Phase++;
                         }
 
@@ -1230,7 +1230,7 @@ public static partial class Evaluator
                             }
 
                             // Transient-bounded before it grows (SEC-01); mirrors the sync machine.
-                            AddSlotsBounded(frames[top].ListItems!, slotsR.Value, ctx.Budget, ref ((ListSlotAccumulator)frames[top].ListItems!).Supply, element is Expr.SequenceSpread);
+                            AddListSlots(frames[top].ListItems!, slotsR.Value, ctx.Budget, element is Expr.SequenceSpread);
                             frames[top].Phase++;
                         }
 
@@ -1246,7 +1246,7 @@ public static partial class Evaluator
                         // Cardinality is known once the written slots (including spread
                         // expansion) are evaluated, so the reservation happens before the
                         // persistent list is built.
-                        if (ReserveCollection(ctx, ((ListSlotAccumulator)frames[top].ListItems!).Supply.Total, frames[top].Node.Span) is { } limitError)
+                        if (ReserveCollection(ctx, ListSlotTotal(frames[top].ListItems!), frames[top].Node.Span) is { } limitError)
                         {
                             completed = limitError;
                             break;
@@ -1886,8 +1886,9 @@ public static partial class Evaluator
     /// implementation's <see cref="ValueTask{TResult}"/> is awaited, so an incomplete
     /// awaitable suspends the whole spine and resumes it — never re-invoking the
     /// operation — when the host completes it. Host exceptions and faulted awaitables
-    /// propagate unchanged; the invocation runs inside the wrapper call's
-    /// already-charged region, so no budget counter moves here.
+    /// propagate unchanged; the invocation runs inside the wrapper call's already-charged region.
+    /// Argument scanning and return admission charge their structural work through the shared
+    /// boundaries, exactly as synchronous dispatch does.
     /// </summary>
     private static async ValueTask<EvalResult<CountedResult>> EvalAsynchronousHostOperationCountedAsync(
         HostOperation hostOperation,
@@ -1912,10 +1913,12 @@ public static partial class Evaluator
         // Observation-only — no counter moves, matching every other observation point.
         ctx.Budget.ObserveCancellation();
 
-        // Shared canonical-value boundary (null contract included) — see
+        // Shared canonical-value and admission boundary (null contract included) — see
         // NormalizeHostOperationValue; a cancelled-while-suspended run was already
-        // honored above, so only genuinely successful values are normalized.
-        var normalized = NormalizeHostOperationValue(hostOperation, value);
+        // honored above, so only genuinely successful values are normalized and admitted.
+        var normalizedR = NormalizeHostOperationValue(hostOperation, value, ctx.Budget, ctx.Observations?.StructuralTraversal);
+        if (normalizedR.IsError) return normalizedR.Error;
+        var normalized = normalizedR.Value;
         return EvalResult<CountedResult>.Ok(new CountedResult(normalized, normalized.ValueCount()));
     }
 

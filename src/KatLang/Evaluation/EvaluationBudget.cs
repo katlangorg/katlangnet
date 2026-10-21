@@ -504,7 +504,9 @@ internal sealed class EvaluationBudget
     /// <summary>
     /// The largest admitted total count of an expanded supply (including an internal join)
     /// (<see cref="AdmitsTransientExpansion"/>). Diagnostics and tests only (SEC-01 allocation
-    /// evidence): never above <see cref="MaxCollectionItems"/>.
+    /// evidence): never above <see cref="MaxCollectionItems"/>. Kept on the budget deliberately
+    /// (SEC-01-FU measurement): the field fills existing object padding, so moving it to test-only
+    /// observations would save no production allocation.
     /// </summary>
     internal int PeakTransientExpansion => _peakTransientExpansion;
 
@@ -545,6 +547,31 @@ internal sealed class EvaluationBudget
     [MethodImpl(MethodImplOptions.NoInlining)]
     internal EvalError RefuseTransientSupply(long requested)
         => RetainTerminal(new EvalError.CollectionSizeLimitExceeded(_maxCollectionItems, requested));
+
+    /// <summary>
+    /// HOST-VALUE ADMISSION of one sequence or list node a host operation returned
+    /// (<c>Result.AdmitHostOperationValue</c>, SEC-01-FU): its IMMEDIATE item count must fit the
+    /// same effective per-collection limit evaluation-built collections obey, or the run ends with
+    /// <see cref="EvalError.CollectionSizeLimitExceeded"/>, retained as terminal. A size check, NOT a
+    /// reservation: the host constructed the value, so <see cref="MaterializedItems"/> never moves.
+    /// </summary>
+    internal EvalError? TryAdmitHostCollection(int count)
+        => count > _maxCollectionItems
+            ? RefuseHostValue(new EvalError.CollectionSizeLimitExceeded(_maxCollectionItems, count))
+            : null;
+
+    /// <summary>
+    /// HOST-VALUE ADMISSION of one string a host operation returned, at any depth: the per-string
+    /// counterpart of <see cref="TryAdmitHostCollection"/>, refused with
+    /// <see cref="EvalError.StringSizeLimitExceeded"/>; <see cref="MaterializedStringChars"/> never moves.
+    /// </summary>
+    internal EvalError? TryAdmitHostString(int length)
+        => length > _maxStringLength
+            ? RefuseHostValue(new EvalError.StringSizeLimitExceeded(_maxStringLength, length))
+            : null;
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private EvalError RefuseHostValue(EvalError limit) => CheckContinuation() ?? RetainTerminal(limit);
 
     /// <summary>The enforced single-string length limit, in UTF-16 code units.</summary>
     internal int MaxStringLength => _maxStringLength;
@@ -667,7 +694,8 @@ internal sealed class EvaluationBudget
     /// <summary>
     /// Bulk work bound for the structural VALUE walks an evaluator operation performs (SEC-02):
     /// the equality and hash walks of <c>contains</c> and <c>distinct</c>, run through an
-    /// operation comparer (<see cref="Result.CreateOperationComparer"/>). One unit is one child
+    /// operation comparer (<see cref="Result.CreateOperationComparer"/>), and, since SEC-01-FU, the
+    /// host-value admission walk (<c>Result.AdmitHostOperationValue</c>, same unit). One unit is one child
     /// slot inspected or one expanded structure completed (equal, unequal, or hashed); charging
     /// completions also bounds a deep chain's otherwise inspection-free unwind. A memo hit is the one inspection that
     /// found it, never its subtree again, and top-level leaf items cost nothing, so flat

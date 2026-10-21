@@ -385,15 +385,46 @@ public closed record Result
     /// list still normalizes) but the list boundary itself never collapses.
     /// Lean: Result.normalize
     /// </summary>
-    internal Result Normalize() => NormalizeCore(observations: null);
+    internal Result Normalize()
+    {
+        var none = default(HostValueAdmission);
+        return NormalizeCore(observations: null, ref none, out _)!;
+    }
 
     /// <summary>
-    /// Host returns already require the complete DAG-safe normalization walk. Refuse reference
-    /// leaves during that SAME walk instead of traversing a potentially large value twice.
-    /// Internal normalization continues to carry references freely.
+    /// HOST-VALUE ADMISSION (SEC-01-FU, October 2026): the ONE boundary a successful host-operation
+    /// return crosses before any consumer, cache, or later evaluation sees it. Host code built the
+    /// value outside every evaluator reservation, so the SAME DAG-safe walk that normalizes it also
+    /// admits it — no second traversal:
+    /// <list type="bullet">
+    ///   <item>every distinct sequence or list node's IMMEDIATE item count is checked against the
+    ///   run's effective <see cref="EvaluationLimits.MaxCollectionItems"/> BEFORE its children are
+    ///   visited or any rebuilt storage is allocated (a nested value occupies one parent slot);</item>
+    ///   <item>every string leaf is checked against the effective
+    ///   <see cref="EvaluationLimits.MaxStringLength"/>;</item>
+    ///   <item>a call-reference leaf stays the fail-loud host contract violation it was;</item>
+    ///   <item>nested structures charge structural work (the SEC-02 unit: one per slot inspected
+    ///   inside a nested structure and one per nested structure completed; the top-level value's own
+    ///   slots are bounded by its admitted count and charge nothing), counted per scan segment and
+    ///   flushed through <see cref="Evaluation.EvaluationBudget.TryChargeStructuralWork"/> — which also
+    ///   observes host cancellation — whenever at least <see cref="ValueSemanticComparer.UnitsPerCharge"/>
+    ///   are pending, and at completion. A segment is at most one admitted node's slots, so
+    ///   cancellation latency stays bounded by the per-collection limit.</item>
+    /// </list>
+    /// A refusal is the terminal resource error the budget retained; the value is neither returned
+    /// nor cached. Admission is a size check, NOT a reservation: the cumulative materialization
+    /// counters record what evaluation CONSTRUCTS, and the host, not the run, constructed this value
+    /// (a host may return an argument, a value it keeps, or one shared across calls and runs).
     /// </summary>
-    internal Result NormalizeForHostOperation(string operationName)
-        => NormalizeCore(observations: null, operationName);
+    internal EvalResult<Result> AdmitHostOperationValue(
+        string operationName,
+        Evaluation.EvaluationBudget budget,
+        ValueTraversalObservations? observations)
+    {
+        var admission = new HostValueAdmission(operationName, budget, observations);
+        var normalized = NormalizeCore(observations, ref admission, out var refusal);
+        return refusal is null ? EvalResult<Result>.Ok(normalized!) : refusal;
+    }
 
     /// <summary>
     /// <see cref="Normalize"/> with a passive observer recording the structural work the walk
@@ -402,7 +433,10 @@ public closed record Result
     /// runs, or threads. Used only by the shared-value-graph complexity regressions.
     /// </summary>
     internal Result NormalizeObserved(ValueTraversalObservations observations)
-        => NormalizeCore(observations);
+    {
+        var none = default(HostValueAdmission);
+        return NormalizeCore(observations, ref none, out _)!;
+    }
 
     /// <summary>
     /// Post-order rebuild with explicit frames (see the depth note on the class) and a
@@ -418,32 +452,54 @@ public closed record Result
     /// output unchanged. Termination relies on the acyclicity every constructible value has (a
     /// node is completed and memoized before any parent can reach it again); an ownership-violating
     /// aliased graph is not a supported value and has no normal form to produce.</para>
+    ///
+    /// <para>With an ACTIVE <paramref name="admission"/> (host returns only,
+    /// <see cref="AdmitHostOperationValue"/>) a node's count is checked when its frame is created,
+    /// before any child is visited, so the first violation in depth-first, left-to-right order stops
+    /// the walk: <paramref name="refusal"/> is set and <c>null</c> returned.</para>
     /// </summary>
-    private Result NormalizeCore(ValueTraversalObservations? observations, string? hostOperationName = null)
+    private Result? NormalizeCore(
+        ValueTraversalObservations? observations,
+        ref HostValueAdmission admission,
+        out EvalError? refusal)
     {
+        refusal = null;
         if (this is not (SequenceValue or ListValue))
         {
-            RejectHostReference(this, hostOperationName);
-            return this;
+            if (admission.IsActive)
+                refusal = admission.AdmitLeaf(this);
+            return refusal is null ? this : null;
         }
+
+        var root = new NormalizeFrame(this);
+        if (admission.IsActive && (refusal = admission.AdmitStructure(root.Count)) is not null)
+            return null;
 
         var frames = new Stack<NormalizeFrame>();
         // One entry per distinct nested structure node reached, for the duration of THIS call
         // only; allocated on the first nested descent, so flat values allocate none.
         Dictionary<Result, Result>? memo = null;
-        frames.Push(new NormalizeFrame(this));
+        frames.Push(root);
         observations?.RecordNormalizeStructureExpansion();
 
         while (true)
         {
             var frame = frames.Peek();
+            // Admission charges only the slots of NESTED structures, counted per scan segment
+            // (every slot this pass inspects, the one it descends into included) rather than per
+            // slot; a segment is at most one admitted node's slots.
+            var charged = admission.IsActive && frames.Count > 1;
+            var segmentStart = frame.Next;
+            var descend = false;
 
             while (frame.Next < frame.Count)
             {
                 var child = frame.Source[frame.Next];
                 if (child is not (SequenceValue or ListValue))
                 {
-                    RejectHostReference(child, hostOperationName);
+                    // Numbers and Booleans are fixed-size: only strings and references need admission.
+                    if (child is Str or CallReference && admission.IsActive && (refusal = admission.AdmitLeaf(child)) is not null)
+                        return null;
                     // A leaf is its own normal form.
                     frame.Accept(child);
                 }
@@ -453,14 +509,21 @@ public closed record Result
                 }
                 else
                 {
+                    descend = true;
                     break;
                 }
             }
 
-            if (frame.Next < frame.Count)
+            if (charged && (refusal = admission.Charge(frame.Next - segmentStart + (descend ? 1 : 0))) is not null)
+                return null;
+
+            if (descend)
             {
+                var nested = new NormalizeFrame(frame.Source[frame.Next]);
+                if (admission.IsActive && (refusal = admission.AdmitStructure(nested.Count)) is not null)
+                    return null;
                 memo ??= new Dictionary<Result, Result>(ReferenceEqualityComparer.Instance);
-                frames.Push(new NormalizeFrame(frame.Source[frame.Next]));
+                frames.Push(nested);
                 observations?.RecordNormalizeStructureExpansion();
                 continue;
             }
@@ -468,7 +531,15 @@ public closed record Result
             var normalized = frame.Complete();
             frames.Pop();
             if (frames.Count == 0)
+            {
+                if (admission.IsActive && (refusal = admission.Flush()) is not null)
+                    return null;
                 return normalized;
+            }
+
+            // A nested structure's completion is one admission unit.
+            if (charged && (refusal = admission.Charge(1)) is not null)
+                return null;
 
             // Every non-root frame was pushed through the descent above, which allocates the memo.
             memo![frame.Node] = normalized;
@@ -476,11 +547,54 @@ public closed record Result
         }
     }
 
-    private static void RejectHostReference(Result value, string? operationName)
+    /// <summary>
+    /// The state of ONE host-value admission walk (<see cref="AdmitHostOperationValue"/>), held by
+    /// reference on the walk's own stack frame (no allocation): the limits come from the run's
+    /// budget, and pending structural-work units are flushed to it in blocks. The default value is
+    /// INACTIVE — ordinary normalization admits nothing. Never shared, so no count crosses returns,
+    /// runs, or threads.
+    /// </summary>
+    private struct HostValueAdmission(
+        string operationName,
+        Evaluation.EvaluationBudget budget,
+        ValueTraversalObservations? observations)
     {
-        if (operationName is not null && value is CallReference)
-            throw new InvalidOperationException(
-                $"Host operation '{operationName}' returned a call reference; call references never leave their run.");
+        private readonly string operationName = operationName;
+        private readonly Evaluation.EvaluationBudget? budget = budget;
+        private readonly ValueTraversalObservations? observations = observations;
+        private int pendingUnits;
+
+        public readonly bool IsActive => budget is not null;
+
+        /// <summary>A leaf: a call reference is the host contract violation; a string is length-checked.</summary>
+        public readonly EvalError? AdmitLeaf(Result leaf)
+        {
+            if (leaf is CallReference)
+                throw new InvalidOperationException(
+                    $"Host operation '{operationName}' returned a call reference; call references never leave their run.");
+            return leaf is Str(var text) ? budget!.TryAdmitHostString(text.Length) : null;
+        }
+
+        /// <summary>A structure node's immediate item count, checked before any of its children.</summary>
+        public readonly EvalError? AdmitStructure(int count) => budget!.TryAdmitHostCollection(count);
+
+        /// <summary>
+        /// Counts <paramref name="units"/> and charges the pending units once they reach
+        /// <see cref="ValueSemanticComparer.UnitsPerCharge"/>.
+        /// </summary>
+        public EvalError? Charge(int units)
+            => (pendingUnits += units) < ValueSemanticComparer.UnitsPerCharge ? null : Flush();
+
+        /// <summary>Charges the pending units, observing host cancellation, when there are any.</summary>
+        public EvalError? Flush()
+        {
+            var units = pendingUnits;
+            if (units == 0)
+                return null;
+            pendingUnits = 0;
+            observations?.RecordStructuralWorkCharge(units);
+            return budget!.TryChargeStructuralWork(units);
+        }
     }
 
     /// <summary>One in-progress structure rebuild in the <see cref="NormalizeCore"/> walk.</summary>

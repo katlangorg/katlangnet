@@ -307,6 +307,12 @@ public sealed record EvaluationLimits
     /// more is refused with <see cref="EvalError.CollectionSizeLimitExceeded"/> without building
     /// the oversized expansion. Purely written supplies stay bounded by the source instead;
     /// internal sequence joins stream their leaf occurrences and bound every contribution.</para>
+    ///
+    /// <para>It also bounds every collection a HOST OPERATION returns, at any depth: each
+    /// sequence or list node's immediate item count is admitted against the effective limit
+    /// before the value is used or cached, and an oversized one ends the run with
+    /// <see cref="EvalError.CollectionSizeLimitExceeded"/>. Admission is a size check, not a
+    /// reservation: host-returned values never count toward <see cref="MaxMaterializedItems"/>.</para>
     /// </summary>
     public const int MaxSupportedCollectionItems = 100_000;
 
@@ -353,7 +359,10 @@ public sealed record EvaluationLimits
     /// strategy that elides a collection the evaluation semantically creates (a fused
     /// <c>filter</c>/<c>count</c> pipeline never allocates its range or its filtered list)
     /// still charges those slots at the same point, so the budget has one meaning on every
-    /// strategy and configuring it changes nothing about a run that does not reach it.
+    /// strategy and configuring it changes nothing about a run that does not reach it. A value a
+    /// host operation RETURNS was constructed by the host, not the run, and is not counted (it is
+    /// admitted against <see cref="MaxCollectionItems"/> instead); a collection the run builds from
+    /// it is.
     /// </summary>
     /// <exception cref="ArgumentOutOfRangeException">The value is zero or negative.</exception>
     public long? MaxMaterializedItems
@@ -381,7 +390,10 @@ public sealed record EvaluationLimits
     /// real compact-source boundary: <c>D(s) = "{s}{s}"</c> doubles a string per call, so
     /// twenty calls exceed a million units. The other producers are string literals (bounded by
     /// the source text), <c>.string</c> on a number (at most about 6,200 units), and host
-    /// operations. An interpolated string checks every piece of its text against this ceiling
+    /// operations, whose returned strings (at any depth) are admitted against the effective limit
+    /// before use, refused with <see cref="EvalError.StringSizeLimitExceeded"/>, and never counted
+    /// toward <see cref="MaxMaterializedStringChars"/>. An interpolated string checks every piece
+    /// of its text against this ceiling
     /// and the cumulative <see cref="MaxMaterializedStringChars"/> budget BEFORE appending it
     /// (no oversized intermediate text is built, and no later hole is evaluated once the text
     /// has crossed a limit), then reserves its finished length once.</para>

@@ -1328,7 +1328,7 @@ public static partial class Evaluator
         // A receiver can inspect a failed demand/invocation and return its own value. A reached
         // resource limit or cancellation still ends the run (NEED-09); the seam cannot absorb it.
         if (ctx.Budget.CheckContinuation() is { } terminal) return terminal;
-        return EvalResult<Result>.Ok(NormalizeHostOperationValue(hostOperation, value));
+        return NormalizeHostOperationValue(hostOperation, value, ctx.Budget, ctx.Observations?.StructuralTraversal);
     }
 
     /// <summary>A plan's prepared argument cells, in order (test observation of <see cref="InvocationPlan.PrepareSupply"/>).</summary>
@@ -1377,27 +1377,113 @@ public static partial class Evaluator
     /// Lean: <c>Result.containsCallRef</c>.
     /// </summary>
     internal static bool ContainsCallReference(Result value)
+        => ScanForCallReference(value, budget: null, observations: null, out _);
+
+    /// <summary>
+    /// The HOST-ARGUMENT boundary (CallReference S1, J4; charged since SEC-01-FU): the
+    /// <see cref="CallReferenceBoundaryError"/> scan of one host-operation argument, charged to the run as
+    /// structural work. Unlike the once-per-run result export, this scan repeats for EVERY host call, so a
+    /// program passing one large nested value to many calls re-walked it uncharged and uncancellably per
+    /// call. Each nested structure now costs one unit per slot plus one for the structure (the unit of
+    /// <c>Result.AdmitHostOperationValue</c>; the top-level value's own slots are free, so flat and scalar
+    /// arguments charge nothing), flushed through <see cref="EvaluationBudget.TryChargeStructuralWork"/> —
+    /// which observes cancellation — whenever 256 units are pending and at the end. A refused charge is the
+    /// run's terminal limit error; a contained reference stays the ordinary <c>TypeMismatch</c>.
+    /// Indexed continuation frames retain only open ancestors, and the depth-first scan charges
+    /// only inspected slots and completed nested verdicts, including empty structures, never an
+    /// untouched suffix. Memoized structures are not scanned or completed again.
+    /// </summary>
+    internal static EvalError? HostArgumentBoundaryError(
+        Result value,
+        EvaluationBudget budget,
+        ValueTraversalObservations? observations)
     {
+        var found = ScanForCallReference(value, budget, observations, out var limit);
+        return limit ?? (found ? new EvalError.TypeMismatch(CallReferenceLeavesRunMessage) : null);
+    }
+
+    /// <summary>
+    /// The one call-reference scan (<see cref="ContainsCallReference"/>), charging nested structure work to
+    /// <paramref name="budget"/> when one is given (<see cref="HostArgumentBoundaryError"/>); a refused
+    /// charge stops the scan with <paramref name="limit"/> set.
+    /// </summary>
+    private static bool ScanForCallReference(
+        Result value,
+        EvaluationBudget? budget,
+        ValueTraversalObservations? observations,
+        out EvalError? limit)
+    {
+        limit = null;
         if (StructureItemsOf(value) is not { } items)
             return value is Result.CallReference;
 
-        // The structure being scanned is held in registers; a nested structure is deferred to the
-        // lazily allocated stack, so a flat result (the common case) allocates nothing.
-        Stack<IReadOnlyList<Result>>? pending = null;
+        // Indexed continuations keep pending storage proportional to depth, never to the
+        // number of sibling structures. Flat values need neither a memo nor a stack, and
+        // indexing avoids a boxed enumerator.
+        Stack<(IReadOnlyList<Result> Items, int Next)>? pending = null;
         HashSet<Result>? expanded = null;
+        var next = 0;
+        var isRoot = true;
+        var units = 0;
         while (true)
         {
-            foreach (var item in items)
+            var segmentStart = next;
+            var found = false;
+            IReadOnlyList<Result>? descend = null;
+            while (next < items.Count)
             {
+                var item = items[next++];
                 if (item is Result.CallReference)
-                    return true;
-                if (StructureItemsOf(item) is { Count: > 0 } nested
+                {
+                    found = true;
+                    break;
+                }
+
+                if (StructureItemsOf(item) is { } nestedItems
                     && (expanded ??= new HashSet<Result>(ReferenceEqualityComparer.Instance)).Add(item))
-                    (pending ??= new Stack<IReadOnlyList<Result>>()).Push(nested);
+                {
+                    descend = nestedItems;
+                    break;
+                }
             }
 
-            if (pending is null || !pending.TryPop(out items!))
-                return false;
+            if (budget is not null && !isRoot)
+            {
+                units += next - segmentStart;
+                // Finding a reference completes every open nested verdict. Otherwise only
+                // a fully scanned frame completes. Never charge an untouched sibling/suffix.
+                if (found)
+                    units += pending!.Count;
+                else if (descend is null)
+                    units++;
+            }
+
+            var done = found || (descend is null && (pending is null || pending.Count == 0));
+            if (budget is not null && units > 0 && (done || units >= Result.ValueSemanticComparer.UnitsPerCharge))
+            {
+                observations?.RecordStructuralWorkCharge(units);
+                limit = budget.TryChargeStructuralWork(units);
+                units = 0;
+                if (limit is not null)
+                    return false;
+            }
+
+            if (done)
+                return found;
+
+            if (descend is not null)
+            {
+                (pending ??= new()).Push((items, next));
+                observations?.RecordCallReferenceScanPendingFrames(pending.Count);
+                items = descend;
+                next = 0;
+                isRoot = false;
+            }
+            else
+            {
+                (items, next) = pending!.Pop();
+                isRoot = pending.Count == 0;
+            }
         }
 
         static IReadOnlyList<Result>? StructureItemsOf(Result node) => node switch
