@@ -85,17 +85,63 @@ the harness never asserts that malformed input is rejected.
 
 ## Prerequisites
 
-* **.NET 10 SDK** on Windows (to publish/instrument the harness).
+* The **.NET SDK pinned by `global.json`** (currently .NET 11) on Windows, to build,
+  publish, and replay the `net11.0` harness.
+* The **.NET 10 runtime**, which the pinned `SharpFuzz.CommandLine` 2.3.0 instrumenter runs
+  on (the package ships `net8.0`/`net9.0`/`net10.0` builds; with the .NET 11 SDK the
+  `net10.0` build is selected). Roll-forward is disabled for the tool, so a machine with only
+  the .NET 11 runtime fails at the instrumentation step instead of silently running it on
+  another runtime.
 * A **WSL distro with `clang`** (e.g. Ubuntu). WSL runs the actual libFuzzer campaign.
-* Internet access on first run, to fetch the `libfuzzer-dotnet` driver source and, if
-  missing, the `sharpfuzz` tool.
+* Internet access on first run, to fetch the `libfuzzer-dotnet` driver source and to
+  restore the pinned local tools. No global SharpFuzz install is needed.
+
+### SharpFuzz instrumenter (pinned local tool)
+
+The `sharpfuzz` instrumenter is a **repository-local .NET tool**: the committed root
+manifest [`dotnet-tools.json`](../dotnet-tools.json) pins `sharpfuzz.commandline` to
+exactly `2.3.0` with `"rollForward": false`, beside the existing `dotnet-stryker` entry.
+The launcher runs `dotnet tool restore --tool-manifest <repo>/dotnet-tools.json` and then
+`dotnet tool run sharpfuzz <publish>/KatLang.dll`, both from the repository root, so the
+same manifest is used whatever directory you start it from. It never installs anything
+globally, never looks for `sharpfuzz` on `PATH`, and does not fall back to a global tool if
+restore or instrumentation fails: either failure stops the run before libFuzzer starts.
+Any SharpFuzz you installed globally earlier is left alone and simply not used.
+
+Restoring is a no-op when the pinned version is already in the NuGet package cache, so
+offline runs work once the tools have been restored. To restore and instrument by hand,
+from the repository root:
+
+```powershell
+dotnet tool restore
+dotnet tool run sharpfuzz fuzz\artifacts\publish-linux\KatLang.dll
+```
+
+`dotnet tool run` finds the manifest by searching upward from the current directory, so
+run it inside the repository. Pass the assembly path directly after `sharpfuzz` (no `--`;
+the tool would read `--` as the assembly path).
+
+The pin controls which version is restored; it is not an independent verification of the
+package contents beyond what NuGet itself checks. To move to a new SharpFuzz release
+deliberately:
+
+1. Identify the release and review its changes.
+2. Check that it supports the harness's target framework and the installed runtimes.
+3. Update the exact `version` of `sharpfuzz.commandline` in `dotnet-tools.json`.
+4. Update the `SharpFuzz` `PackageReference` in `KatLang.ParserFuzz.csproj` if the release
+   requires it (the library and the CLI are separate packages, kept on the same version).
+5. Run `dotnet tool restore`, an instrumentation run (`scripts\fuzz-parser.ps1
+   -MaxTotalTime 60`), and the deterministic replay below.
+6. Review the manifest and dependency diffs and commit them together.
+
+The launcher itself never checks for or installs newer versions.
 
 ### Why WSL?
 
 libFuzzer needs the native `libfuzzer-dotnet` driver, which is built with
 `clang -fsanitize=fuzzer`. This machine has no native Windows clang, but its WSL Ubuntu
 already has clang. To avoid needing .NET inside WSL, the harness is **cross-published
-self-contained for `linux-x64`** on the Windows side (it bundles the .NET 10 runtime),
+self-contained for `linux-x64`** on the Windows side (it bundles the .NET 11 runtime),
 so WSL only builds the tiny C driver and runs the campaign.
 
 ## Running a campaign
@@ -109,13 +155,14 @@ powershell -ExecutionPolicy Bypass -File scripts\fuzz-parser.ps1
 Defaults match the standard bounded campaign: `-MaxTotalTime 600` (10 min),
 `-MaxLen 16384` (16 KiB), `-Timeout 5` (per input), `-RssLimitMb 2048` (~2 GiB).
 Useful switches: `-FreshCorpus` (clear the writable corpus first), `-SkipBuild` (reuse
-an existing publish + instrumentation), `-Distro <name>` (pin a WSL distro).
+an existing publish + instrumentation; it neither restores nor runs SharpFuzz),
+`-Distro <name>` (pin a WSL distro).
 
 The script:
 
-1. `dotnet publish` the harness self-contained for `linux-x64` into
-   `fuzz/artifacts/publish-linux`.
-2. Instruments `KatLang.dll` with the `sharpfuzz` global tool (installs it if missing).
+1. Restores the pinned local tools from `dotnet-tools.json`, then `dotnet publish` the
+   harness self-contained for `linux-x64` into `fuzz/artifacts/publish-linux`.
+2. Instruments `KatLang.dll` with the pinned local tool (`dotnet tool run sharpfuzz`).
 3. Runs `fuzz/run-campaign.sh` in WSL, which builds/caches the `libfuzzer-dotnet` driver
    and launches libFuzzer with the seed corpus + dictionary.
 
@@ -125,12 +172,13 @@ the tracked `Testcases/` seeds are read-only. Crash/timeout artifacts are writte
 
 ### Manual / Linux-native equivalent
 
-If you already have a Linux box with .NET 10 + clang, publish + instrument there and run
-the driver directly:
+If you already have a Linux box with the pinned .NET SDK, the .NET 10 runtime, and clang,
+publish + instrument there (from the repository root) and run the driver directly:
 
 ```bash
+dotnet tool restore
 dotnet publish fuzz/KatLang.ParserFuzz -c Release -r linux-x64 --self-contained -o out
-sharpfuzz out/KatLang.dll
+dotnet tool run sharpfuzz out/KatLang.dll
 # build the driver once:
 curl -fsSL https://raw.githubusercontent.com/Metalnem/libfuzzer-dotnet/master/libfuzzer-dotnet.cc -o d.cc
 clang -fsanitize=fuzzer d.cc -o libfuzzer-dotnet
@@ -144,7 +192,7 @@ clang -fsanitize=fuzzer d.cc -o libfuzzer-dotnet
 
 The harness has a deterministic **replay mode**: pass one or more files/directories and
 it parses each once with the invariants enabled and no fuzzing engine. This is the
-triage reproducer and a cross-platform smoke test that works on plain Windows .NET 10:
+triage reproducer and a cross-platform smoke test that works with the plain .NET SDK on Windows:
 
 ```powershell
 # replay the whole seed corpus (expect: "0 failure(s)")
@@ -701,7 +749,7 @@ powershell -ExecutionPolicy Bypass -File scripts\fuzz-parser.ps1 -Mode metamorph
 `fuzz/artifacts/corpus-metamorphic` and `fuzz/artifacts/crashes-metamorphic` directories, so no
 other campaign's corpus is touched.
 
-Deterministic replay (no fuzzing loop, works on plain Windows .NET 10):
+Deterministic replay (no fuzzing loop, works with the plain .NET SDK on Windows):
 
 ```powershell
 # replay every curated seed; each case runs twice, so non-determinism is itself a failure

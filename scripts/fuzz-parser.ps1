@@ -4,14 +4,18 @@
     (Parser.ParseSyntax) using SharpFuzz + libFuzzer.
 
 .DESCRIPTION
-    This machine has the .NET 10 SDK on Windows but no native clang/libFuzzer, so the
+    This machine has the .NET SDK on Windows but no native clang/libFuzzer, so the
     actual libFuzzer run is delegated to WSL (which has clang and can build the
     libfuzzer-dotnet fork-server driver). The harness is cross-published self-contained
     for linux-x64, so WSL needs no .NET install of its own.
 
     Pipeline:
-      1. dotnet publish the harness self-contained for linux-x64 (fuzz/artifacts/publish-linux).
-      2. Instrument KatLang.dll (the target) with the `sharpfuzz` global tool.
+      1. Restore the repository-local tools from dotnet-tools.json (SharpFuzz.CommandLine is
+         pinned there to an exact version), then dotnet publish the harness self-contained
+         for linux-x64 (fuzz/artifacts/publish-linux).
+      2. Instrument KatLang.dll (the target) with `dotnet tool run sharpfuzz`.
+         A `sharpfuzz` on PATH or installed as a global tool is
+         never used, and nothing is installed globally.
       3. In WSL: build/cache the libfuzzer-dotnet driver, then run libFuzzer with the
          seed corpus + dictionary and the campaign bounds (fuzz/run-campaign.sh).
 
@@ -21,8 +25,10 @@
     unaffected.
 
 .NOTES
-    Requires: .NET 10 SDK (Windows); a WSL distro with clang (e.g. Ubuntu); internet
-    access on first run (to fetch the driver source and, if missing, the sharpfuzz tool).
+    Requires: the .NET SDK pinned by global.json (Windows) plus the .NET 10 runtime, which the
+    pinned SharpFuzz.CommandLine tool runs on; a WSL distro with clang (e.g. Ubuntu); internet
+    access on first run (to fetch the driver source and to restore the pinned local tools;
+    later runs reuse the restored tool from the NuGet cache).
     Written for Windows PowerShell 5.1.
 
 .EXAMPLE
@@ -66,6 +72,7 @@ $publishDir = Join-Path $fuzzDir 'artifacts\publish-linux'
 $dictFile   = Join-Path $fuzzDir 'katlang.dict'
 $runnerSh   = Join-Path $fuzzDir 'run-campaign.sh'
 $targetDll  = Join-Path $publishDir 'KatLang.dll'
+$toolManifest = Join-Path $repoRoot 'dotnet-tools.json'
 
 # Each target keeps its own writable corpus and crash directory, so switching modes never
 # mixes one target's coverage-increasing inputs into another's. An unset -Mode is the raw
@@ -161,23 +168,40 @@ function ConvertTo-WslPath([string]$Path) {
 Test-Wsl
 
 if (-not $SkipBuild) {
+    # The instrumenter is the repository-local tool pinned in dotnet-tools.json, never whatever
+    # `sharpfuzz` happens to be on PATH or installed globally: instrumentation must be reproducible
+    # from the commit, and the developer's global tool environment is left exactly as it was.
+    # `dotnet tool run` resolves the manifest from the working directory, so both steps run from
+    # the repository root whatever directory the script was started from. Restoring first means a
+    # restore failure stops the run before the existing publish is replaced.
+    Write-Section 'Restore pinned local tools (dotnet-tools.json)'
+    Push-Location $repoRoot
+    try {
+        & dotnet tool restore --tool-manifest $toolManifest
+        if ($LASTEXITCODE -ne 0) {
+            throw "Local tool restore failed (exit $LASTEXITCODE) for $toolManifest. Check NuGet access, or restore once while online; no global sharpfuzz is used as a fallback."
+        }
+    }
+    finally {
+        Pop-Location
+    }
+
     Write-Section 'Publish (self-contained linux-x64)'
     if (Test-Path $publishDir) { Remove-Item -Recurse -Force $publishDir }
     & dotnet publish $proj -c Release -r linux-x64 --self-contained true -o $publishDir
     if ($LASTEXITCODE -ne 0) { throw 'dotnet publish failed.' }
 
-    Write-Section 'Instrument KatLang.dll (sharpfuzz)'
-    $sharpfuzz = Get-Command sharpfuzz -ErrorAction SilentlyContinue
-    if (-not $sharpfuzz) {
-        Write-Host 'sharpfuzz tool not found; installing SharpFuzz.CommandLine globally...'
-        & dotnet tool install --global SharpFuzz.CommandLine
-        $toolsDir = Join-Path $env:USERPROFILE '.dotnet\tools'
-        if (Test-Path $toolsDir) { $env:PATH = "$toolsDir;$env:PATH" }
-        $sharpfuzz = Get-Command sharpfuzz -ErrorAction SilentlyContinue
-        if (-not $sharpfuzz) { throw "sharpfuzz not found after install; ensure $toolsDir is on PATH." }
+    Write-Section 'Instrument KatLang.dll (local sharpfuzz tool)'
+    Push-Location $repoRoot
+    try {
+        & dotnet tool run sharpfuzz $targetDll
+        if ($LASTEXITCODE -ne 0) {
+            throw "sharpfuzz instrumentation failed (exit $LASTEXITCODE) for $targetDll; libFuzzer was not started."
+        }
     }
-    & sharpfuzz $targetDll
-    if ($LASTEXITCODE -ne 0) { throw "sharpfuzz instrumentation failed (exit $LASTEXITCODE)." }
+    finally {
+        Pop-Location
+    }
 }
 else {
     if (-not (Test-Path $targetDll)) { throw "-SkipBuild set but no publish found at $publishDir. Run without -SkipBuild first." }
