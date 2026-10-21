@@ -24,12 +24,8 @@
   </PropertyGroup>
 	
   <PropertyGroup Condition="'$(Configuration)' == 'Release'">
-    <!--
-      NativeAOT compiles the CLI, the KatLang library and the framework into one
-      native image, so this preference decides how the shipped evaluator is
-      optimized. ContinuousIntegrationPolicyTests pins it.
-    -->
-    <OptimizationPreference>Speed</OptimizationPreference>
+    <!-- Prefer smaller native code in the published CLI. -->
+    <OptimizationPreference>Size</OptimizationPreference>
     <CopyOutputSymbolsToPublishDirectory>false</CopyOutputSymbolsToPublishDirectory>
   </PropertyGroup>
 

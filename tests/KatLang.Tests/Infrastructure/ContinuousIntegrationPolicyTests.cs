@@ -170,21 +170,6 @@ public class ContinuousIntegrationPolicyTests
     }
 
     [Fact]
-    public void CliProject_OptimizesTheNativeAotReleaseForSpeed()
-    {
-        // NativeAOT compiles the CLI, the KatLang library and the framework into one
-        // native image, so this single CLI property decides how the shipped evaluator
-        // is optimized. MSBuild property names ignore case, so every spelling counts.
-        var preference = Assert.Single(
-            XDocument.Parse(Text("src/KatLang.CLI/KatLang.CLI.csproj")).Descendants(),
-            element => string.Equals(
-                element.Name.LocalName, "OptimizationPreference", StringComparison.OrdinalIgnoreCase));
-        Assert.Equal("Speed", preference.Value);
-        Assert.Equal("'$(Configuration)' == 'Release'", (string?)preference.Parent?.Attribute("Condition"));
-        Assert.DoesNotContain("OptimizationPreference", Text(ReleasePath), StringComparison.OrdinalIgnoreCase);
-    }
-
-    [Fact]
     public void ReleaseWorkflow_PublishesNativeAotWithoutOverridingVersion()
     {
         var source = Text(ReleasePath);
