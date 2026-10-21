@@ -137,6 +137,27 @@ internal sealed class EvaluationObservations
     /// </summary>
     public long PlanSupplyFormationCount { get; private set; }
 
-    internal void RecordPlanSupplyFormation()
-        => PlanSupplyFormationCount = checked(PlanSupplyFormationCount + 1);
+    // PERF-STATE-1: the exact per-plan formation witness, keyed by plan identity. It lives here rather
+    // than on every plan so an unobserved plan carries no test-only counter. A plan records into the
+    // observations of the run that created it (its caller context's), from its first formation on.
+    private readonly Dictionary<Evaluator.InvocationPlan, int> _planSupplyFormations = new(ReferenceEqualityComparer.Instance);
+
+    // Called by the plan's ONE supply publication (Evaluator.PublishPlanSupply) before the outcome is
+    // published, so a reader that sees the outcome also sees the count. Locked: references may prepare
+    // plans of one run from several threads.
+    internal void RecordPlanSupplyFormation(Evaluator.InvocationPlan plan)
+    {
+        lock (_planSupplyFormations)
+        {
+            _planSupplyFormations[plan] = checked(_planSupplyFormations.GetValueOrDefault(plan) + 1);
+            PlanSupplyFormationCount = checked(PlanSupplyFormationCount + 1);
+        }
+    }
+
+    /// <summary>How many times <paramref name="plan"/> formed its supply in this run (at most once).</summary>
+    internal int PlanSupplyFormations(Evaluator.InvocationPlan plan)
+    {
+        lock (_planSupplyFormations)
+            return _planSupplyFormations.GetValueOrDefault(plan);
+    }
 }

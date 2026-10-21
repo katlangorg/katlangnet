@@ -52,12 +52,18 @@ public sealed class NeedCellAsyncResolutionTests
         => (Evaluator.EvalCtx.Empty with
             {
                 Budget = budget,
-                EnableLoopOptimization = false,
-                EnableSequencePipelineOptimization = false,
-                // Async-capable (the async twin requires it); the sync engine uses its sync member.
-                ZeroArgPropertyResultCache = new KatLang.Evaluation.Caching.RunScopedAsyncZeroArgPropertyResultCache(),
+                Services = Evaluator.RunServices.Unconfigured with
+                {
+                    EnableLoopOptimization = false,
+                    EnableSequencePipelineOptimization = false,
+                    // Async-capable (the async twin requires it); the sync engine uses its sync member.
+                    ZeroArgPropertyResultCache = new KatLang.Evaluation.Caching.RunScopedAsyncZeroArgPropertyResultCache(),
+                },
             })
             .WithNeedEnv(needs);
+
+    private static Evaluator.EvalCtx WithLoops(Evaluator.EvalCtx ctx, LoopOptimizationDiagnostics loops)
+        => ctx with { Services = ctx.Services with { EnableLoopOptimization = true, LoopDiagnostics = loops } };
 
     private static NeedCell Runtime(EvaluationBudget budget, Func<EvalResult<Algorithm?>> project,
         Func<ValueTask<EvalResult<Algorithm?>>>? projectAsync = null, SourceSpan? span = null,
@@ -814,7 +820,7 @@ public sealed class NeedCellAsyncResolutionTests
         var budget = NewBudget();
         var cell = Projecting(Identity)(budget);
         var loops = new LoopOptimizationDiagnostics();
-        var optimized = Evaluator.EvalCounted(program, Ctx(budget, ("f", cell)) with { EnableLoopOptimization = true, LoopDiagnostics = loops }, []);
+        var optimized = Evaluator.EvalCounted(program, WithLoops(Ctx(budget, ("f", cell)), loops), []);
         var runs = await SyncAndAsync(program, Projecting(Identity));
         AssertAgree(runs);
         Assert.Equal(Show(runs.Sync.Result), Show(optimized));

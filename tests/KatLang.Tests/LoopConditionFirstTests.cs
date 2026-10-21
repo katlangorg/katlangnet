@@ -412,7 +412,7 @@ public sealed class LoopConditionFirstTests
                 () => EvalResult<Evaluator.CountedResult>.Ok(new(new Result.Atom(0), 1)),
                 () => ValueTask.FromResult(EvalResult<Evaluator.CountedResult>.Ok(new(new Result.Atom(0), 1))),
                 () => EvalResult<Algorithm?>.Ok(step));
-            var ctx = (Evaluator.EvalCtx.Empty with { EnableLoopOptimization = optimized, LoopDiagnostics = loops })
+            var ctx = (Evaluator.EvalCtx.Empty with { Services = Evaluator.RunServices.Unconfigured with { EnableLoopOptimization = optimized, LoopDiagnostics = loops } })
                 .WithNeedEnv([("flag", continuation), ("transition", transition), ("s", stepCell)]);
             ctx.Budget.DecideInvocationPlanRetention(programMayCapture: true);
             var program = new Expr.Call(new Expr.AlgorithmExpr(new Algorithm.Builtin(BuiltinId.@while)),

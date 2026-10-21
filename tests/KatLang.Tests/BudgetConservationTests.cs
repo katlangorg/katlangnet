@@ -877,7 +877,7 @@ public class BudgetConservationTests
         var ctx = Evaluator.EvalCtx.Empty with
         {
             Budget = budget,
-            EnableSequencePipelineOptimization = false,
+            Services = Evaluator.RunServices.Unconfigured with { EnableSequencePipelineOptimization = false },
         };
 
         var handled = SequencePipelineOptimizer.TryExecute(

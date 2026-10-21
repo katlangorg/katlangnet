@@ -125,8 +125,8 @@ public class CallReferenceS2ReviewTests
             var root = new Expr.AlgorithmExpr(parsed.Root);
             var (result, _) = asynchronous
                 ? await Evaluator.RunCountedObservedAsync(root,
-                    zeroArgPropertyResultCache: new RunScopedAsyncZeroArgPropertyResultCache(), hostOperations: operations)
-                : Evaluator.RunCountedObserved(root, hostOperations: operations);
+                    zeroArgPropertyResultCache: new RunScopedAsyncZeroArgPropertyResultCache(), hostOperations: operations, observations: new EvaluationObservations())
+                : Evaluator.RunCountedObserved(root, hostOperations: operations, observations: new EvaluationObservations());
             Assert.True(result.IsOk);
         }
         Assert.True(checkedPlan);
@@ -264,8 +264,8 @@ public class CallReferenceS2ReviewTests
         var root = new Expr.AlgorithmExpr(parsed.Root);
         var (result, _) = asynchronous
             ? await Evaluator.RunCountedObservedAsync(root,
-                zeroArgPropertyResultCache: new RunScopedAsyncZeroArgPropertyResultCache(), hostOperations: operations)
-            : Evaluator.RunCountedObserved(root, hostOperations: operations);
+                zeroArgPropertyResultCache: new RunScopedAsyncZeroArgPropertyResultCache(), hostOperations: operations, observations: new EvaluationObservations())
+            : Evaluator.RunCountedObserved(root, hostOperations: operations, observations: new EvaluationObservations());
         Assert.True(result.IsOk); // An ordinary failure can be inspected by this internal seam.
         Assert.True(checkedPlan);
     }

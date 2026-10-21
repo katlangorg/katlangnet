@@ -335,7 +335,6 @@ public class EvaluatorIdentityStateTests
         Assert.Null(Evaluator.EnterAlgorithmBody(callee, callerCtx, values).HeadScope);
         Assert.Null(entered.Push(callee).HeadScope);
         Assert.Same(head, entered.WithNeedEnv([]).HeadScope);
-        Assert.Same(head, entered.WithZeroArgPropertyResultCache(new RunScopedZeroArgPropertyResultCache()).HeadScope);
     }
 
     [Fact]

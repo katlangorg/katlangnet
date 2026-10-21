@@ -348,8 +348,7 @@ public class Q09IndependentHostileReviewTests
                     {
                         CallStack = [BuiltinRegistry.CreateRuntimePreludeAlgorithm()],
                         Budget = budget,
-                        EnableLoopOptimization = optimize,
-                        LoopDiagnostics = loops,
+                        Services = Evaluator.RunServices.Unconfigured with { EnableLoopOptimization = optimize, LoopDiagnostics = loops },
                     };
                     var supplied = new Expr.AlgorithmExpr(new Algorithm.User(null, [], [], [], [new Expr.Num(7)]));
                     EvalResult<Evaluator.CountedResult> Demand()
@@ -415,8 +414,7 @@ public class Q09IndependentHostileReviewTests
                 {
                     Budget = budget,
                     CallStack = [operations.RuntimePreludeAlgorithm],
-                    EnableSequencePipelineOptimization = optimize,
-                    SequenceDiagnostics = diagnostics,
+                    Services = Evaluator.RunServices.Unconfigured with { EnableSequencePipelineOptimization = optimize, SequenceDiagnostics = diagnostics },
                 };
                 // Enter the internal expression evaluator directly: the top-level completion
                 // cancellation check would mask a missing empty-list reservation.

@@ -231,7 +231,7 @@ public class PlannedLoopAdmittedSnapshotTests
         var rows = Enumerable.Range(0, stateArity).Select(index => (Expr)new Expr.Num(index)).ToArray();
         var step = new Algorithm.User(Parent: null, ParameterPatterns: patterns, Opens: [], Properties: [], Output: OutputBundle.From(rows));
         var diagnostics = new LoopOptimizationDiagnostics();
-        var ctx = Evaluator.EvalCtx.Empty with { Budget = EvaluationBudget.Create(null), LoopDiagnostics = diagnostics };
+        var ctx = Evaluator.EvalCtx.Empty with { Budget = EvaluationBudget.Create(null), Services = Evaluator.RunServices.Unconfigured with { LoopDiagnostics = diagnostics } };
         var state = Enumerable.Range(0, stateArity).Select(index => (Result)new Result.Atom(index)).ToArray();
 
         var planned = LoopOptimizer.TryEvaluateRepeat(

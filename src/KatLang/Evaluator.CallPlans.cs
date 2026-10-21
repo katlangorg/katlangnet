@@ -263,9 +263,6 @@ public static partial class Evaluator
         /// <summary>The plan's supply slot (see the type summary). Written only by the plan's preparation.</summary>
         internal object? Supply;
 
-        // Written only by PublishPlanSupply; read through SupplyFormations.
-        internal int Formations;
-
         /// <summary>
         /// The plan's OBSERVATION slot (P1, implementation-only): the state no ordinary VALUE of a call-form
         /// plan reads, kept out of line so a plan that is never observed carries one slot for it instead of
@@ -410,8 +407,13 @@ public static partial class Evaluator
         internal bool HasCalleeCell
             => Volatile.Read(ref _observation) is PlanObservation holder && Volatile.Read(ref holder.CalleeCell) is not null;
 
-        /// <summary>Test observation: how many times this plan formed its supply (at most once).</summary>
-        internal int SupplyFormations => Volatile.Read(ref Formations);
+        /// <summary>
+        /// Test observation: how many times this plan formed its supply (at most once), as recorded by the
+        /// <see cref="EvaluationObservations"/> of the run that created it. A plan of an unobserved run has
+        /// no witness: reading it throws rather than reporting zero.
+        /// </summary>
+        internal int SupplyFormations => Caller.Observations?.PlanSupplyFormations(this)
+            ?? throw new InvalidOperationException("The plan's run has no EvaluationObservations; its supply formations are not observed.");
 
         /// <summary>
         /// Test observation: the prepared argument cells, or <c>null</c> before preparation or after a failure.
@@ -1245,12 +1247,11 @@ public static partial class Evaluator
         return EvalResult<object>.Ok(prepared);
     }
 
-    // Records the final outcome (never changed again) and wakes the waiters, if any. The formation count
-    // is published first, so an observer that sees the outcome also sees the count.
+    // Records the final outcome (never changed again) and wakes the waiters, if any. An observed run
+    // records the formation first, so an observer that sees the outcome also sees the count.
     private static void PublishPlanSupply(InvocationPlan plan, object outcome)
     {
-        Interlocked.Increment(ref plan.Formations);
-        plan.Caller.Observations?.RecordPlanSupplyFormation();
+        plan.Caller.Observations?.RecordPlanSupplyFormation(plan);
         if (Interlocked.Exchange(ref plan.Supply, outcome) is PlanPreparation { Waiters: { } waiters })
             waiters.TrySetResult();
     }

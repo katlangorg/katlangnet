@@ -95,7 +95,7 @@ public class CallReferenceRunExportTests
         return Evaluator.EvalCtx.Empty with
         {
             Budget = budget,
-            Observations = new EvaluationObservations { StructuralTraversal = scan },
+            Services = Evaluator.RunServices.Unconfigured with { Observations = new EvaluationObservations { StructuralTraversal = scan } },
         };
     }
 
@@ -148,7 +148,7 @@ public class CallReferenceRunExportTests
         var budget = EvaluationBudget.Create(null);
         budget.DecideInvocationPlanRetention(programMayCapture: false);
         var scan = new ValueTraversalObservations();
-        var ctx = Evaluator.EvalCtx.Empty with { Budget = budget, Observations = new EvaluationObservations { StructuralTraversal = scan } };
+        var ctx = Evaluator.EvalCtx.Empty with { Budget = budget, Services = Evaluator.RunServices.Unconfigured with { Observations = new EvaluationObservations { StructuralTraversal = scan } } };
 
         var exported = Evaluator.ExportRunValue(EvalResult<Result>.Ok(value), ctx);
 
@@ -275,7 +275,7 @@ public class CallReferenceRunExportTests
         var scan = new ValueTraversalObservations();
         var budget = EvaluationBudget.Create(null);
         budget.DecideInvocationPlanRetention(programMayCapture: false);
-        var ctx = Evaluator.EvalCtx.Empty with { Budget = budget, Observations = new EvaluationObservations { StructuralTraversal = scan } };
+        var ctx = Evaluator.EvalCtx.Empty with { Budget = budget, Services = Evaluator.RunServices.Unconfigured with { Observations = new EvaluationObservations { StructuralTraversal = scan } } };
         var value = new Evaluator.CountedResult(new Result.ListValue([Num(1)]), 1);
 
         var exported = Evaluator.ExportRunValue(

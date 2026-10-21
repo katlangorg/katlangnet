@@ -363,7 +363,8 @@ public class InvocationRouteTests
             """, new RunOptions { HostOperations = operations });
         Assert.False(parsed.HasErrors, string.Join(" | ", parsed.Diagnostics.Select(d => d.Message)));
         using var activation = InvocationPlanTestSeam.Activate(seam);
-        var (result, _) = Evaluator.RunCountedObserved(new Expr.AlgorithmExpr(parsed.Root), enableOptimizations: optimized, hostOperations: operations);
+        var (result, _) = Evaluator.RunCountedObserved(new Expr.AlgorithmExpr(parsed.Root), enableOptimizations: optimized, hostOperations: operations,
+            observations: new EvaluationObservations());
         Assert.True(result.IsOk, result.IsError ? result.Error.ToString() : "");
         Assert.Equal(1, traces);
         Assert.Equal(3, ticks);
@@ -427,7 +428,8 @@ public class InvocationRouteTests
             """, options);
         Assert.False(parsed.HasErrors, string.Join(" | ", parsed.Diagnostics.Select(d => d.Message)));
         using var activation = InvocationPlanTestSeam.Activate(seam);
-        var running = Evaluator.RunCountedObservedAsync(new Expr.AlgorithmExpr(parsed.Root), hostOperations: operations).AsTask();
+        var running = Evaluator.RunCountedObservedAsync(new Expr.AlgorithmExpr(parsed.Root), hostOperations: operations,
+            observations: new EvaluationObservations()).AsTask();
         try
         {
             reference = await captured.Task.WaitAsync(Wait);

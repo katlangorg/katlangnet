@@ -224,9 +224,7 @@ public class SequencePreparationParityTests
         var ctx = Evaluator.EvalCtx.Empty with
         {
             CallStack = [BuiltinRegistry.CreateRuntimePreludeAlgorithm()],
-            EnableLoopOptimization = false,
-            EnableSequencePipelineOptimization = fused,
-            SequenceDiagnostics = diagnostics,
+            Services = Evaluator.RunServices.Unconfigured with { EnableLoopOptimization = false, EnableSequencePipelineOptimization = fused, SequenceDiagnostics = diagnostics },
             Budget = EvaluationBudget.Create(limits),
         };
         return (Evaluator.EvalCounted(ast, ctx, []), ctx.Budget);

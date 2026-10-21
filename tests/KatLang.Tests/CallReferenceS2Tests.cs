@@ -558,7 +558,7 @@ public class CallReferenceS2Tests
     {
         var budget = EvaluationBudget.Create(null, cancellationToken: token);
         budget.DecideInvocationPlanRetention(programMayCapture: true);
-        return Evaluator.EvalCtx.Empty with { Budget = budget };
+        return Evaluator.EvalCtx.Empty with { Budget = budget, Services = Evaluator.RunServices.Unconfigured with { Observations = new EvaluationObservations() } };
     }
 
     /// <summary>

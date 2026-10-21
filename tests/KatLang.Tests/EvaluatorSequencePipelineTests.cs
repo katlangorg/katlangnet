@@ -35,13 +35,7 @@ public class EvaluatorSequencePipelineTests
         => new(
             [BuiltinRegistry.CreateRuntimePreludeAlgorithm()],
             HeadScope: null,
-            UncachedZeroArgPropertyResultCache.Instance,
-            UncachedDeconstructionBindingCache.Instance,
-            EnableLoopOptimization: true,
-            LoopDiagnostics: null,
-            EnableSequencePipelineOptimization: true,
-            SequenceDiagnostics: null,
-            Observations: null,
+            Evaluator.RunServices.Unconfigured,
             Budget: EvaluationBudget.Create(null));
 
     [Fact]

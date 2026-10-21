@@ -35,13 +35,18 @@ public partial class InvocationPlanTests
 
         using (InvocationPlanTestSeam.Activate(new InvocationPlanTestSeam()))
         {
-            var planCtx = Evaluator.EvalCtx.Empty;
+            var planCtx = Evaluator.EvalCtx.Empty with { Services = Evaluator.RunServices.Unconfigured with { Observations = new EvaluationObservations() } };
             var planned = Evaluator.SupplyCell(call, planCtx, []);
             var plan = Assert.IsType<Evaluator.InvocationPlan>(planned.Suspension);
             Assert.Same(planned, plan.Owner);
             Assert.Same(call, plan.Source);
             Assert.Null(plan.Supply);
             Assert.Equal(0, plan.SupplyFormations);
+
+            // PERF-STATE-1: the formation witness belongs to the run's observations; a plan of an
+            // unobserved run has none, and reading it refuses instead of reporting zero.
+            var unobserved = Assert.IsType<Evaluator.InvocationPlan>(Evaluator.SupplyCell(call, Evaluator.EvalCtx.Empty, []).Suspension);
+            Assert.Throws<InvalidOperationException>(() => unobserved.SupplyFormations);
 
             // A transported parameter is the ORIGINAL cell: no new cell, no new plan.
             var withParameter = planCtx.WithNeedEnv([("x", planned)]);
@@ -51,6 +56,28 @@ public partial class InvocationPlanTests
             var other = Evaluator.SupplyCell(new Expr.Num(5), planCtx, []);
             Assert.IsType<Evaluator.ExpressionSuspension>(other.Suspension);
         }
+    }
+
+    [Fact]
+    public void S0_FormationWitness_IsExactPerPlan_AndCountsADuplicateFormation()
+    {
+        // The witness counts every recorded formation of each plan separately: a second formation of one
+        // plan reads 2 (so a duplicate preparation cannot hide behind "prepared"), and another plan of the
+        // same run keeps its own count.
+        using var seam = InvocationPlanTestSeam.Activate(new InvocationPlanTestSeam());
+        var observations = new EvaluationObservations();
+        var ctx = Evaluator.EvalCtx.Empty with { Services = Evaluator.RunServices.Unconfigured with { Observations = observations } };
+        var call = new Expr.Call(new Expr.Resolve("F"), [new Expr.Num(1)]);
+        var first = Assert.IsType<Evaluator.InvocationPlan>(Evaluator.SupplyCell(call, ctx, []).Suspension);
+        var second = Assert.IsType<Evaluator.InvocationPlan>(Evaluator.SupplyCell(call, ctx, []).Suspension);
+
+        observations.RecordPlanSupplyFormation(first);
+        Assert.Equal(1, first.SupplyFormations);
+        Assert.Equal(0, second.SupplyFormations);
+        observations.RecordPlanSupplyFormation(first);
+        Assert.Equal(2, first.SupplyFormations);
+        Assert.Equal(0, second.SupplyFormations);
+        Assert.Equal(2, observations.PlanSupplyFormationCount);
     }
 
     [Theory]

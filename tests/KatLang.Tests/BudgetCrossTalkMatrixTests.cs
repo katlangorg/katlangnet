@@ -1322,7 +1322,7 @@ public class BudgetCrossTalkMatrixTests
             semanticServiceReached = false;
             var ctx = Evaluator.EvalCtx.Empty with
             {
-                EnableSequencePipelineOptimization = optimizationEnabled,
+                Services = Evaluator.RunServices.Unconfigured with { EnableSequencePipelineOptimization = optimizationEnabled },
             };
             var handled = SequencePipelineOptimizer.TryExecute(
                 invocation,

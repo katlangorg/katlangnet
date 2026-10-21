@@ -1,5 +1,22 @@
 # Semantic Alignment Manifest.
 
+PERF-STATE-1 — evaluator storage (2026-10-21): C#-only, implementation-only representation and
+test-instrumentation change; no language, Lean or observable-outcome change, so no Lean edit. (1) The
+per-plan supply-formation witness left `InvocationPlan` (its `Formations` field and the atomic
+increment every publication paid): `PublishPlanSupply` records the formation, before publishing the
+outcome, into the opt-in run-scoped `EvaluationObservations` of the plan's caller context, keyed by plan
+identity; `InvocationPlan.SupplyFormations` reads that record and refuses (throws) for a plan of an
+unobserved run instead of reporting zero. The event counted is unchanged — one per supply publication,
+any outcome — so Lean `NeedPlan.prepare`'s at-most-once preparation is witnessed exactly as before.
+(2) `EvalCtx` keeps its activation state (call stack, head scope, need environment) and the run budget,
+and carries the seven fields every derived context copied unchanged — zero-argument and deconstruction
+caches, optimizer selection and diagnostics, observations — in ONE run-invariant `RunServices`
+reference created with the root context (80 B → 40 B per context; `ExpressionSuspension` 104 → 64 B,
+`InvocationPlan` 136 → 88 B). No production code ever replaced one of those fields below the root, so
+the unused `WithZeroArgPropertyResultCache` override was deleted; cache, run and binding identities
+are the referenced objects' own, never the holder's. Lean's `EvalCtx` (call stack, need environment,
+binding context, head scope) and `EvalM` state are unaffected. V3.
+
 R3′ — pattern helper totalization (2026-10-21; FORMAL-07 roadmap item R3′, NOT the 2026-10-14
 repeated-spread work that reused the label): a Lean restructuring with proofs; no observable
 semantic change in Lean or C#, C# unchanged. The pure helpers the total Model-C binder and

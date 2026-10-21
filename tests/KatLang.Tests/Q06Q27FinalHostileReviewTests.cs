@@ -11,7 +11,7 @@ public class Q06Q27FinalHostileReviewTests
     private static ValueTask<EvalResult<Evaluator.CountedResult>> EvaluateTwin(Expr expression, Evaluator.EvalCtx ctx)
         => (ValueTask<EvalResult<Evaluator.CountedResult>>)typeof(Evaluator)
             .GetMethod("EvalCountedAsync", System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.NonPublic)!
-            .Invoke(null, [expression, ctx with { EnableLoopOptimization = false, EnableSequencePipelineOptimization = false }, Array.Empty<(string, Result)>()])!;
+            .Invoke(null, [expression, ctx with { Services = ctx.Services with { EnableLoopOptimization = false, EnableSequencePipelineOptimization = false } }, Array.Empty<(string, Result)>()])!;
 
     private static EvalError Inner(EvalError error)
     {

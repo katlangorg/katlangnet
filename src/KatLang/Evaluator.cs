@@ -68,22 +68,18 @@ public static partial class Evaluator
     /// (<c>SiteScope</c>); every push resets it, because it describes the head alone.
     /// NeedEnv carries the invocation's shared parameter cells: a parameter's VALUE outcome
     /// and its CALLABLE identity (higher-order dispatch projects the callable from the cell).
-    /// Budget is the run-scoped resource budget: it is a REFERENCE deliberately carried
-    /// by this copied struct, so every derived context charges the same run's counters
-    /// and no copy can reset them.
+    /// Services is the run's ONE <see cref="RunServices"/> (caches, optimizer selection,
+    /// diagnostics, observations), and Budget the run-scoped resource budget: both are
+    /// REFERENCES deliberately carried by this copied struct, so every derived context
+    /// shares the same run's services, charges the same run's counters, and no copy can
+    /// reset them.
     /// Lean: structure EvalCtx where callStack : List Algorithm; needEnv; bindingContext;
     /// headScope : Option ScopeCtx := none.
     /// </summary>
     internal readonly record struct EvalCtx(
         IReadOnlyList<Algorithm> CallStack,
         ScopeCtx? HeadScope,
-        IZeroArgPropertyResultCache ZeroArgPropertyResultCache,
-        IDeconstructionBindingCache DeconstructionBindingCache,
-        bool EnableLoopOptimization,
-        LoopOptimizationDiagnostics? LoopDiagnostics,
-        bool EnableSequencePipelineOptimization,
-        SequencePipelineDiagnostics? SequenceDiagnostics,
-        EvaluationObservations? Observations,
+        RunServices Services,
         EvaluationBudget Budget)
     {
         internal NeedEnv NeedEnv { get; init; } = [];
@@ -92,12 +88,9 @@ public static partial class Evaluator
         /// A fresh empty context. This is a PROPERTY, not a shared static instance:
         /// every use must get its own budget — and with it its own UNSEEDED random
         /// stream — because a shared one would be global mutable evaluation state.
+        /// Its services are the stateless <see cref="RunServices.Unconfigured"/>.
         /// </summary>
-        public static EvalCtx Empty => new(
-            [], null, UncachedZeroArgPropertyResultCache.Instance, UncachedDeconstructionBindingCache.Instance,
-            true, null, true, null,
-            null,
-            EvaluationBudget.Create(null));
+        public static EvalCtx Empty => new([], null, RunServices.Unconfigured, EvaluationBudget.Create(null));
 
         /// <summary>
         /// Lean: EvalCtx.push — prepend an algorithm to the call stack. The pushed head has no
@@ -109,34 +102,50 @@ public static partial class Evaluator
 
         /// <summary>Prepend an algorithm to the call stack with its activated head scope.</summary>
         public EvalCtx Push(Algorithm alg, ScopeCtx? headScope)
-            => new(
-                Prepend(alg, CallStack),
-                headScope,
-                ZeroArgPropertyResultCache,
-                DeconstructionBindingCache,
-                EnableLoopOptimization,
-                LoopDiagnostics,
-                EnableSequencePipelineOptimization,
-                SequenceDiagnostics,
-                Observations,
-                Budget) { NeedEnv = NeedEnv };
+            => this with { CallStack = Prepend(alg, CallStack), HeadScope = headScope };
 
         /// <summary>Lean: EvalCtx.head? — first algorithm in the call stack.</summary>
         public Algorithm? Head => CallStack.Count > 0 ? CallStack[0] : null;
 
-        /// <summary>Replace the zero-argument property cache for a scoped evaluation subtree.</summary>
-        public EvalCtx WithZeroArgPropertyResultCache(IZeroArgPropertyResultCache zeroArgPropertyResultCache)
-            => new(
-                CallStack,
-                HeadScope,
-                zeroArgPropertyResultCache,
-                DeconstructionBindingCache,
-                EnableLoopOptimization,
-                LoopDiagnostics,
-                EnableSequencePipelineOptimization,
-                SequenceDiagnostics,
-                Observations,
-                Budget) { NeedEnv = NeedEnv };
+        internal IZeroArgPropertyResultCache ZeroArgPropertyResultCache => Services.ZeroArgPropertyResultCache;
+        internal IDeconstructionBindingCache DeconstructionBindingCache => Services.DeconstructionBindingCache;
+        internal bool EnableLoopOptimization => Services.EnableLoopOptimization;
+        internal LoopOptimizationDiagnostics? LoopDiagnostics => Services.LoopDiagnostics;
+        internal bool EnableSequencePipelineOptimization => Services.EnableSequencePipelineOptimization;
+        internal SequencePipelineDiagnostics? SequenceDiagnostics => Services.SequenceDiagnostics;
+        internal EvaluationObservations? Observations => Services.Observations;
+    }
+
+    /// <summary>
+    /// The run-invariant services of an evaluation context (PERF-STATE-1, implementation-only): what
+    /// the run's entry point chose once — its zero-argument property cache, its deconstruction
+    /// shared-bind cache, the optimizer selection and the optimizers' diagnostics, and the passive
+    /// observations. ONE instance is created with a run's root context and every context derived from
+    /// it carries the same reference; no derivation replaces it and nothing mutates it, so a context
+    /// holds these in one slot instead of copying seven fields into every context and suspension.
+    /// The caches and sinks it references are the run's own mutable objects, exactly as before: their
+    /// identities, not this holder's, remain the cache and run identities. Activation state (call
+    /// stack, head scope, parameter cells) and the run budget stay fields of <see cref="EvalCtx"/>.
+    /// </summary>
+    internal sealed record RunServices(
+        IZeroArgPropertyResultCache ZeroArgPropertyResultCache,
+        IDeconstructionBindingCache DeconstructionBindingCache,
+        bool EnableLoopOptimization,
+        LoopOptimizationDiagnostics? LoopDiagnostics,
+        bool EnableSequencePipelineOptimization,
+        SequencePipelineDiagnostics? SequenceDiagnostics,
+        EvaluationObservations? Observations)
+    {
+        /// <summary>
+        /// The services of a context built outside a run entry (<see cref="EvalCtx.Empty"/>): no caching
+        /// (both caches are the stateless pass-through singletons), both optimizers enabled, no diagnostics
+        /// and no observations. It holds no mutable state, so one shared instance is safe.
+        /// </summary>
+        internal static RunServices Unconfigured { get; } = new(
+            UncachedZeroArgPropertyResultCache.Instance, UncachedDeconstructionBindingCache.Instance,
+            EnableLoopOptimization: true, LoopDiagnostics: null,
+            EnableSequencePipelineOptimization: true, SequenceDiagnostics: null,
+            Observations: null);
     }
 
     // ── Environment types ────────────────────────────────────────────────────
@@ -2511,13 +2520,14 @@ public static partial class Evaluator
         return new EvalCtx(
             [budget.HostOperations?.RuntimePreludeAlgorithm ?? PreludeAlg],
             null,
-            zeroArgPropertyResultCache,
-            new RunScopedDeconstructionBindingCache(),
-            enableLoopOptimization,
-            loopDiagnostics,
-            enableSequencePipelineOptimization,
-            sequenceDiagnostics,
-            observations,
+            new RunServices(
+                zeroArgPropertyResultCache,
+                new RunScopedDeconstructionBindingCache(),
+                enableLoopOptimization,
+                loopDiagnostics,
+                enableSequencePipelineOptimization,
+                sequenceDiagnostics,
+                observations),
             budget);
     }
 

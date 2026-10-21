@@ -684,9 +684,10 @@ public sealed class TerminalSafeDiagnosticsTests
         Assert.True(largeBytes <= 64L * large.Length, $"allocated {largeBytes} bytes for {large.Length} code units");
 
         var safe = new string('a', 40_000);
-        var beforeSafe = GC.GetAllocatedBytesForCurrentThread();
-        Assert.Same(safe, TerminalSafeText.EscapeLine(safe));
-        Assert.Equal(0, GC.GetAllocatedBytesForCurrentThread() - beforeSafe);
+        // Use the same warmed, operation-only window; assertions are not escaping work.
+        var safeBytes = Measure(safe, out var safeEscaped);
+        Assert.Same(safe, safeEscaped);
+        Assert.Equal(0, safeBytes);
     }
 
     private sealed class ThrowingTextWriter(Exception exception) : TextWriter
