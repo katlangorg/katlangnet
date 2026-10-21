@@ -39,6 +39,37 @@ public sealed record Diagnostic(
     DiagnosticSeverity Severity,
     SourceSpan? Span)
 {
+    // Presentation provenance is equality-transparent, like the runtime metadata on AST
+    // records. A `with` copy that bounds Message keeps the offsets; rendering checks that
+    // each complete structural separator still lies inside that bounded prefix.
+    private readonly RuntimeStateSlot<IReadOnlyList<int>?> _lineBreakOffsets;
+
+    internal Diagnostic(DiagnosticMessage message, DiagnosticSeverity severity, SourceSpan? span)
+        : this(message.Text, severity, span)
+        => _lineBreakOffsets = new(message.LineBreakOffsets);
+
+    internal string RenderMessage(Func<string, string> renderFragment)
+    {
+        if (_lineBreakOffsets.Value is not { Count: > 0 } offsets)
+            return renderFragment(Message);
+
+        System.Text.StringBuilder? builder = null;
+        var start = 0;
+        foreach (var offset in offsets)
+        {
+            if (offset < start || offset > Message.Length - Environment.NewLine.Length
+                || !Message.AsSpan(offset, Environment.NewLine.Length).SequenceEqual(Environment.NewLine))
+                break;
+
+            builder ??= new System.Text.StringBuilder();
+            builder.Append(renderFragment(Message[start..offset])).Append(Environment.NewLine);
+            start = offset + Environment.NewLine.Length;
+        }
+
+        return builder is null ? renderFragment(Message)
+            : builder.Append(renderFragment(Message[start..])).ToString();
+    }
+
     /// <summary>
     /// Stable machine-readable identity of the diagnostic's semantic family —
     /// the supported classification channel (<see cref="Message"/> remains
@@ -53,6 +84,29 @@ public sealed record Diagnostic(
     /// init-only, not positional).</para>
     /// </summary>
     public DiagnosticCode Code { get; init; } = DiagnosticCode.Unspecified;
+}
+
+/// <summary>
+/// A front-end explanation and its repair are separate fragments. Keep the separators'
+/// provenance when joining them; raw newlines in either fragment remain untrusted.
+/// </summary>
+internal readonly record struct DiagnosticMessage(string Text, IReadOnlyList<int> LineBreakOffsets)
+{
+    internal static DiagnosticMessage JoinLines(string first, string second)
+        => new(first + Environment.NewLine + second, [first.Length]);
+
+    internal static DiagnosticMessage JoinLines(IReadOnlyList<string> lines)
+    {
+        var offsets = new int[Math.Max(0, lines.Count - 1)];
+        var offset = 0;
+        for (var i = 0; i < offsets.Length; i++)
+        {
+            offset += lines[i].Length;
+            offsets[i] = offset;
+            offset += Environment.NewLine.Length;
+        }
+        return new(string.Join(Environment.NewLine, lines), offsets);
+    }
 }
 
 /// <summary>

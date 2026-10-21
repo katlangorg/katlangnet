@@ -41,23 +41,27 @@ public static class CliApplication
         ArgumentNullException.ThrowIfNull(output);
         ArgumentNullException.ThrowIfNull(error);
 
+        // The raw stderr writer stops here: everything below reports through the one
+        // terminal-safe diagnostic channel (SEC-07).
+        var diagnostics = new DiagnosticWriter(error);
+
         try
         {
             return await RunCoreAsync(
                 args,
                 output,
-                error,
+                diagnostics,
                 loadingDownloader,
                 cancellationToken).ConfigureAwait(false);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
-            error.WriteLine($"{CommandLine.ProgramName}: cancelled.");
+            diagnostics.WriteLine($"{CommandLine.ProgramName}: cancelled.");
             return FailureExitCode;
         }
         catch (Exception ex)
         {
-            WriteUnexpectedError(ex, error);
+            diagnostics.WriteUnexpectedError(ex);
             return FailureExitCode;
         }
     }
@@ -65,13 +69,15 @@ public static class CliApplication
     private static async Task<int> RunCoreAsync(
         IReadOnlyList<string> args,
         TextWriter output,
-        TextWriter error,
+        DiagnosticWriter error,
         Func<string, CancellationToken, ValueTask<string>>? loadingDownloader,
         CancellationToken cancellationToken)
     {
         var parsed = CommandLine.Parse(args);
         if (parsed.Error is { } usageError)
         {
+            // The usage error quotes raw arguments; as one CLI line, any line break or
+            // control character in them is escaped.
             error.WriteLine($"{CommandLine.ProgramName}: {usageError}");
             error.WriteLine(HelpText.UsageHint);
             return FailureExitCode;
@@ -149,7 +155,7 @@ public static class CliApplication
         string source,
         RunOptions options,
         TextWriter output,
-        TextWriter error)
+        DiagnosticWriter error)
     {
         var result = await KatLangEngine.RunAsync(source, options).ConfigureAwait(false);
 
@@ -171,11 +177,12 @@ public static class CliApplication
                     // stays empty, and the exit code says so. The decision is
                     // structural, so a program whose genuine output happens to
                     // equal the notice text still prints it as output.
-                    error.WriteLine(rendering.LimitError.ToString());
+                    error.WriteDiagnostic(rendering.LimitError);
                     return FailureExitCode;
                 }
 
-                // The package's canonical display form, unmodified.
+                // The package's canonical display form, unmodified: program output is
+                // stdout, outside the stderr diagnostic policy.
                 output.WriteLine(rendering.Text);
                 return SuccessExitCode;
 
@@ -185,11 +192,11 @@ public static class CliApplication
                 return SuccessExitCode;
 
             case RunResult.ParseFailure parseFailure:
-                error.WriteLine(parseFailure.ToDisplayString());
+                error.WriteFailure(parseFailure);
                 return FailureExitCode;
 
             case RunResult.EvalFailure evalFailure:
-                error.WriteLine(evalFailure.ToDisplayString());
+                error.WriteFailure(evalFailure);
                 return FailureExitCode;
 
             default:
@@ -206,7 +213,7 @@ public static class CliApplication
     private static async Task<int> CheckAsync(
         string source,
         RunOptions options,
-        TextWriter error)
+        DiagnosticWriter error)
     {
         var parseResult = await Parser.ParseAsync(source, options).ConfigureAwait(false);
 
@@ -214,7 +221,7 @@ public static class CliApplication
         {
             // KatLangError renders "[line:column] message", the same form the
             // run/eval diagnostics use.
-            error.WriteLine(KatLangError.FromDiagnostic(diagnostic).ToString());
+            error.WriteDiagnostic(KatLangError.FromDiagnostic(diagnostic));
         }
 
         if (!parseResult.HasErrors)
@@ -225,7 +232,7 @@ public static class CliApplication
 
     private static async Task<(bool Success, string Source)> TryReadSourceFileAsync(
         string path,
-        TextWriter error,
+        DiagnosticWriter error,
         CancellationToken cancellationToken)
     {
         try
@@ -269,16 +276,5 @@ public static class CliApplication
         => $"Source length exceeds the maximum of {limit.ToString(CultureInfo.InvariantCulture)} UTF-16 code unit{(limit == 1 ? "" : "s")}.";
 
     internal static void WriteUnexpectedError(Exception exception, TextWriter error)
-    {
-        var message = exception.Message
-            .Replace("\r\n", " ", StringComparison.Ordinal)
-            .Replace('\r', ' ')
-            .Replace('\n', ' ')
-            .Trim();
-
-        if (message.Length == 0)
-            message = "An unexpected error occurred.";
-
-        error.WriteLine($"{CommandLine.ProgramName}: unexpected error: {message}");
-    }
+        => new DiagnosticWriter(error).WriteUnexpectedError(exception);
 }

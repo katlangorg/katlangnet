@@ -214,6 +214,7 @@ public class KatLangErrorTotalityTests
             {
                 var report = KatLangError.FromEvalError(error);
                 Assert.NotNull(report.Message);
+                Assert.Equal(report.ToString(), report.RenderDiagnostic(static fragment => fragment));
             }
             catch (Exception exception) when (exception is not Xunit.Sdk.XunitException)
             {

@@ -142,6 +142,17 @@ internal sealed class DiagnosticBag : IReadOnlyList<Diagnostic>
             _stored.Add(new Diagnostic(BoundMessage(formatMessage(state)), DiagnosticSeverity.Error, span) { Code = code });
     }
 
+    /// <summary>The same lazy report, retaining the formatter's structural separators.</summary>
+    internal void Report<TState>(DiagnosticCode code, SourceSpan? span, TState state, Func<TState, DiagnosticMessage> formatMessage)
+    {
+        if (!CountReport(code, DiagnosticSeverity.Error))
+            return;
+        var diagnostic = new Diagnostic(formatMessage(state), DiagnosticSeverity.Error, span) { Code = code };
+        _stored.Add(diagnostic.Message.Length <= MaxRetainedMessageLength
+            ? diagnostic
+            : diagnostic with { Message = BoundMessage(diagnostic.Message) });
+    }
+
     // Counts one report and says whether it is stored. A report past the capacity truncates the
     // list: the first one appends the marker, and a later, more severe one raises its severity.
     private bool CountReport(DiagnosticCode code, DiagnosticSeverity severity)

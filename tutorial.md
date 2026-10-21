@@ -40,6 +40,8 @@ A program that contains double-quoted strings needs shell quoting that keeps its
 
 Each example below is followed by its result: **Result** for one output, **Results** for several outputs in order, and **Result:** error for an example that is intentionally invalid. These results are checked automatically against the current implementation of KatLang.
 
+The command-line tool writes errors to stderr. Controls and invisible formatting characters in diagnostic text appear as visible `\uXXXX` escapes; explanatory notes keep their line breaks. Successful program output keeps its ordinary rendering.
+
 ### Your First Program
 
 A program can be a single expression:

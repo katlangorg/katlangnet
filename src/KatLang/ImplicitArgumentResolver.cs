@@ -1061,7 +1061,7 @@ internal static class ImplicitArgumentResolver
     /// <summary>One branch-body report, minus the family name that words it.</summary>
     private readonly record struct BranchDiagnosticTemplate(
         DiagnosticCode Code,
-        Func<string?, string> FormatMessage,
+        Func<string?, DiagnosticMessage> FormatMessage,
         SourceSpan? Span);
 
     /// <summary>
@@ -2636,7 +2636,7 @@ internal static class ImplicitArgumentResolver
     /// adds the second one; otherwise the rule and the first lifted reference. Everything a callee
     /// contributes is echoed bounded.
     /// </summary>
-    private static (string Message, Expr? Reference) DescribeInvalidLiftedSignature(
+    private static (DiagnosticMessage Message, Expr? Reference) DescribeInvalidLiftedSignature(
         IReadOnlyList<ParameterPattern> signature,
         ParameterSignatureViolation violation,
         IReadOnlyList<LiftedDependency> deps)
@@ -2675,8 +2675,7 @@ internal static class ImplicitArgumentResolver
                 }
 
                 var offending = collectors[1].Callee;
-                return (string.Join(
-                        Environment.NewLine,
+                return (DiagnosticMessage.JoinLines(
                         $"Formula lifting cannot complete this definition's signature: it would need the collecting parameters {sink.Finish()} "
                             + "at the same pattern level, but a signature may declare at most one collecting parameter per pattern level.",
                         offending is { } second
@@ -2686,16 +2685,14 @@ internal static class ImplicitArgumentResolver
             }
 
             case ParameterSignatureViolation.RepeatedNameIncludesCollecting:
-                return (string.Join(
-                        Environment.NewLine,
+                return (DiagnosticMessage.JoinLines(
                         "Formula lifting cannot complete this definition's signature: it would repeat a parameter name with a collecting binding, "
                             + "which a signature may not declare.",
                         Repair),
                     firstReference);
 
             case ParameterSignatureViolation.SingletonSequencePattern:
-                return (string.Join(
-                        Environment.NewLine,
+                return (DiagnosticMessage.JoinLines(
                         "Formula lifting cannot complete this definition's signature: it would contain a sequence pattern with exactly one "
                             + "non-collecting item, which a signature may not declare (KatLang has no one-item sequence value).",
                         Repair),
@@ -2704,8 +2701,7 @@ internal static class ImplicitArgumentResolver
 
         // A collector violation below the top level: every lifted group is a callee's own valid group
         // (or part of one), so only a host-built callee can reach this.
-        return (string.Join(
-                Environment.NewLine,
+        return (DiagnosticMessage.JoinLines(
                 "Formula lifting cannot complete this definition's signature: it would place more than one collecting parameter "
                     + "at one pattern level, but a signature may declare at most one collecting parameter per pattern level.",
                 Repair),
@@ -3415,7 +3411,7 @@ internal static class ImplicitArgumentResolver
                 continue;
             var parameterDisplayName = parameter.DisplayName;
 
-            string Format(string? family)
+            DiagnosticMessage Format(string? family)
                 => FormatUnforwardableParameter(calleeDisplayName, parameterDisplayName, differentPattern, family);
             diagnostics.Add(new Diagnostic(Format(branchName), DiagnosticSeverity.Error, span)
             {
@@ -3430,7 +3426,7 @@ internal static class ImplicitArgumentResolver
     /// runtime value-demand rejection: what bare forwarding could not supply, why
     /// (the list is closed; nothing is renamed or reshaped), and the two repairs.
     /// </summary>
-    private static string FormatUnforwardableParameter(
+    private static DiagnosticMessage FormatUnforwardableParameter(
         string calleeDisplayName,
         string parameterDisplayName,
         bool differentPattern,
@@ -3442,14 +3438,12 @@ internal static class ImplicitArgumentResolver
         if (conditionalBranchName is not null)
         {
             return differentPattern
-                ? string.Join(
-                    Environment.NewLine,
+                ? DiagnosticMessage.JoinLines(
                     $"'{calleeDisplayName}' is forwarded by name here, but the pattern of conditional branch '{conditionalBranchName}' "
                         + $"does not bind its parameter '{parameterDisplayName}' in that form.",
                     "Bare forwarding reuses an existing binding only with the same pattern and never reshapes an argument. "
                         + $"Bind '{parameterDisplayName}' in the branch pattern, or call '{calleeDisplayName}' with explicit arguments.")
-                : string.Join(
-                    Environment.NewLine,
+                : DiagnosticMessage.JoinLines(
                     $"'{calleeDisplayName}' is forwarded by name here, but its parameter '{parameterDisplayName}' "
                         + $"is not bound by the pattern of conditional branch '{conditionalBranchName}'.",
                     "Bare forwarding reuses an existing binding only under its own name, and conditional branch patterns are closed, "
@@ -3458,14 +3452,12 @@ internal static class ImplicitArgumentResolver
         }
 
         return differentPattern
-            ? string.Join(
-                Environment.NewLine,
+            ? DiagnosticMessage.JoinLines(
                 $"'{calleeDisplayName}' is forwarded by name here, but the enclosing explicit parameter list "
                     + $"does not declare its parameter '{parameterDisplayName}' in that form.",
                 "Bare forwarding reuses an existing parameter only with the same pattern and never reshapes an argument. "
                     + $"Declare the parameter '{parameterDisplayName}', or call '{calleeDisplayName}' with explicit arguments.")
-            : string.Join(
-                Environment.NewLine,
+            : DiagnosticMessage.JoinLines(
                 $"'{calleeDisplayName}' is forwarded by name here, but its parameter '{parameterDisplayName}' "
                     + "is not a parameter of the enclosing explicit parameter list.",
                 "Bare forwarding reuses an existing parameter only under its own name, and explicit parameter lists are closed, "
@@ -3491,15 +3483,14 @@ internal static class ImplicitArgumentResolver
         memos.BranchDiagnosticTemplates?.Add(new BranchDiagnosticTemplate(DiagnosticCode.UnforwardableCallable, _ => message, span));
     }
 
-    private static string FormatUnforwardableCallable(string writtenName, AliasTarget target)
+    private static DiagnosticMessage FormatUnforwardableCallable(string writtenName, AliasTarget target)
     {
         var written = ExprNameRenderer.BoundName(writtenName);
         var callable = DescribeCallable(writtenName, target);
         var reason = target.Signature.Unnameable is { } unnameable
             ? FormatUnnameableReason(unnameable)
             : "it declares no parameter names";
-        return string.Join(
-            Environment.NewLine,
+        return DiagnosticMessage.JoinLines(
             $"'{written}' is forwarded by name here, but {callable} has no parameter names to forward by: {reason}.",
             "Bare forwarding supplies a callable's parameters from existing bindings of the same names, and literal, structural and binderless clause patterns name nothing. "
                 + $"Call '{written}' with explicit arguments.");
@@ -4575,14 +4566,13 @@ internal static class ImplicitArgumentResolver
         memos.BranchDiagnosticTemplates?.Add(new BranchDiagnosticTemplate(DiagnosticCode.UnliftableClauseFamily, _ => message, span));
     }
 
-    private static string FormatUnliftableClauseFamily(string displayName, string? aliasedFamily, UnnameableFamily unnameable)
+    private static DiagnosticMessage FormatUnliftableClauseFamily(string displayName, string? aliasedFamily, UnnameableFamily unnameable)
     {
         var family = ExprNameRenderer.BoundName(displayName);
         var callable = aliasedFamily is null
             ? $"clause family '{family}'"
             : $"'{family}', an alias of clause family '{ExprNameRenderer.BoundName(aliasedFamily)}',";
-        return string.Join(
-            Environment.NewLine,
+        return DiagnosticMessage.JoinLines(
             $"'{family}' is used as a value here, but {callable} has no formula-lifting signature: {FormatUnnameableReason(unnameable)}.",
             "Formula lifting forwards arguments by parameter name, and literal, structural and binderless clause patterns name nothing. "
                 + $"Call '{family}' with explicit arguments, or bind that position with one plain parameter name in the clauses that bind it.");

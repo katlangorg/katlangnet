@@ -50,10 +50,9 @@
   <ItemGroup>
     <!--
       KatLang is the integration boundary: the CLI is a thin consumer of its
-      PUBLIC API and contains no language semantics. That stays true across the
-      project reference because KatLang.CLI is deliberately absent from
-      KatLang's InternalsVisibleTo list, so reaching for an internal would be a
-      compile error until someone adds it there in a reviewable change.
+      PUBLIC API and contains no language semantics. The sole internal integration
+      is KatLangError.RenderDiagnostic (SEC-07): KatLang owns structural diagnostic
+      line separators; the CLI supplies the escaping policy for untrusted fragments.
     -->
     <ProjectReference Include="..\KatLang\KatLang.csproj" />
   </ItemGroup>

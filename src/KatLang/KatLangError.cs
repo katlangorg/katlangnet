@@ -51,6 +51,8 @@ public sealed class KatLangError
     /// </summary>
     public EvalError? Source { get; }
 
+    private readonly Diagnostic? _diagnostic;
+
     /// <summary>
     /// True when this error is a host resource-limit outcome of evaluation or display rendering.
     /// Display overflow is reported by <see cref="DisplayRendering.LimitError"/> and does not
@@ -68,12 +70,14 @@ public sealed class KatLangError
     /// </summary>
     public bool IsResourceLimit => Source?.IsResourceLimit ?? false;
 
-    private KatLangError(string message, SourceSpan? span, KatLangErrorCode code, EvalError? source)
+    private KatLangError(
+        string message, SourceSpan? span, KatLangErrorCode code, EvalError? source, Diagnostic? diagnostic = null)
     {
         Message = message;
         Span = span;
         Code = code;
         Source = source;
+        _diagnostic = diagnostic;
     }
 
     /// <summary>
@@ -88,7 +92,7 @@ public sealed class KatLangError
     public static KatLangError FromDiagnostic(Diagnostic diag)
     {
         ArgumentNullException.ThrowIfNull(diag);
-        return new(diag.Message, diag.Span, MapDiagnosticCode(diag.Code), source: null);
+        return new(diag.Message, diag.Span, MapDiagnosticCode(diag.Code), source: null, diagnostic: diag);
     }
 
     /// <summary>
@@ -104,6 +108,25 @@ public sealed class KatLangError
         ArgumentNullException.ThrowIfNull(error);
         return new(AppendInferredImplicitParameterNotes(FormatEvalError(error), error), error.Span, error.Code, error);
     }
+
+    /// <summary>
+    /// Presentation seam for the CLI: render untrusted single-line fragments before the
+    /// owning formatter inserts its structural line separators. The public message and
+    /// original error are unchanged. Never infer trusted newlines from already joined text.
+    /// </summary>
+    internal string RenderDiagnostic(Func<string, string> renderFragment)
+    {
+        var message = Source is { } source
+            ? AppendInferredImplicitParameterNotes(FormatEvalError(source, renderFragment), source, renderFragment)
+            : _diagnostic is { } diagnostic ? diagnostic.RenderMessage(renderFragment) : renderFragment(Message);
+        return Span is { } span ? $"[{span.Start.Line}:{span.Start.Column}] {message}" : message;
+    }
+
+    private static string RenderFragment(string text, Func<string, string>? renderFragment)
+        => renderFragment is null ? text : renderFragment(text);
+
+    private static string RenderLines(string first, string second, Func<string, string>? renderFragment)
+        => RenderFragment(first, renderFragment) + "\n" + RenderFragment(second, renderFragment);
 
     /// <summary>
     /// Total mapping from front-end <see cref="DiagnosticCode"/> families to the
@@ -204,7 +227,8 @@ public sealed class KatLangError
     /// is rendered with its origin location.</item>
     /// </list>
     /// </summary>
-    private static string AppendInferredImplicitParameterNotes(string message, EvalError error)
+    private static string AppendInferredImplicitParameterNotes(
+        string message, EvalError error, Func<string, string>? renderFragment = null)
     {
         var terminal = error;
         while (terminal is EvalError.WithContext withContext)
@@ -221,16 +245,16 @@ public sealed class KatLangError
                         if (!single && note.DotMemberOrigin is { } origin)
                         {
                             builder.Append('\n');
-                            builder.Append(FormatDotMemberFallbackInference(note.Name, origin.ReceiverDescription, note.Span));
+                            builder.Append(RenderFragment(FormatDotMemberFallbackInference(note.Name, origin.ReceiverDescription, note.Span), renderFragment));
                         }
 
                         if (note.SuggestedName is not { } suggestion)
                             continue;
 
                         builder.Append('\n');
-                        builder.Append(single
+                        builder.Append(RenderFragment(single
                             ? $"Did you mean '{suggestion}'?"
-                            : $"Did you mean '{suggestion}' instead of '{note.Name}'?");
+                            : $"Did you mean '{suggestion}' instead of '{note.Name}'?", renderFragment));
                     }
 
                     return builder.ToString();
@@ -246,17 +270,17 @@ public sealed class KatLangError
                             continue;
 
                         builder.Append('\n');
-                        builder.Append(note.Span is { } noteSpan
+                        builder.Append(RenderFragment(note.Span is { } noteSpan
                             ? $"An implicit parameter '{note.Name}' was inferred at [{noteSpan.Start.Line}:{noteSpan.Start.Column}]."
-                            : $"An implicit parameter '{note.Name}' was inferred from an unresolved name.");
+                            : $"An implicit parameter '{note.Name}' was inferred from an unresolved name.", renderFragment));
                         if (note.DotMemberOrigin is { } origin)
                         {
                             builder.Append('\n');
-                            builder.Append(FormatDotMemberFallbackInference(note.Name, origin.ReceiverDescription, at: null));
+                            builder.Append(RenderFragment(FormatDotMemberFallbackInference(note.Name, origin.ReceiverDescription, at: null), renderFragment));
                         }
 
                         if (note.SuggestedName is { } suggestion)
-                            builder.Append($"\nDid you mean '{suggestion}'?");
+                            builder.Append('\n').Append(RenderFragment($"Did you mean '{suggestion}'?", renderFragment));
                     }
 
                     return builder.ToString();
@@ -267,66 +291,68 @@ public sealed class KatLangError
         }
     }
 
-    private static string FormatEvalError(EvalError error)
+    private static string FormatEvalError(EvalError error, Func<string, string>? renderFragment = null)
     {
         if (TryFormatDotCallUnknownName(error, out var formattedDotCallError))
-            return formattedDotCallError;
+            return RenderFragment(formattedDotCallError, renderFragment);
         if (TryFormatLocalOnlyProperty(error, out var formattedLocalOnlyProperty))
-            return formattedLocalOnlyProperty;
-        if (TryFormatMissingOutput(error, out var formattedMissingOutput))
+            return RenderFragment(formattedLocalOnlyProperty, renderFragment);
+        if (TryFormatMissingOutput(error, out var formattedMissingOutput, renderFragment))
             return formattedMissingOutput;
         if (TryFormatLoopStateArityMismatch(error, out var formattedLoopStateArityMismatch))
-            return formattedLoopStateArityMismatch;
+            return RenderFragment(formattedLoopStateArityMismatch, renderFragment);
         if (TryFormatDeconstructionBindingMismatch(error, out var formattedDeconstructionMismatch))
-            return formattedDeconstructionMismatch;
+            return RenderFragment(formattedDeconstructionMismatch, renderFragment);
         if (TryFormatStructuralPatternBindingMismatch(error, out var formattedStructuralPatternMismatch))
-            return formattedStructuralPatternMismatch;
+            return RenderFragment(formattedStructuralPatternMismatch, renderFragment);
         if (TryFormatArityMismatch(error, out var formattedArityMismatch))
-            return formattedArityMismatch;
+            return RenderFragment(formattedArityMismatch, renderFragment);
         if (TryFormatUnresolvedImplicitParams(error, out var formattedImplicitParams))
-            return formattedImplicitParams;
+            return RenderFragment(formattedImplicitParams, renderFragment);
         if (TryFormatReduceInitialAccumulator(error, out var formattedReduceInitialAccumulator))
-            return formattedReduceInitialAccumulator;
+            return RenderFragment(formattedReduceInitialAccumulator, renderFragment);
         if (TryFormatComputedDotCallee(error, out var formattedComputedDotCallee))
-            return formattedComputedDotCallee;
+            return RenderFragment(formattedComputedDotCallee, renderFragment);
+
+        string Text(string text) => RenderFragment(text, renderFragment);
 
         // Compiler-exhaustive over the closed EvalError hierarchy: a new variant
         // fails this build until it has a message, instead of silently rendering
         // through a catch-all as its record ToString().
         return error switch
         {
-            EvalError.UnknownName e => $"Unknown name: {e.Name}",
-            EvalError.UnknownProperty e => $"Unknown property '{e.PropertyName}' on {e.ObjectDesc}",
-            EvalError.NotPublicProperty e => $"Property '{e.PropertyName}' on {e.ObjectDesc} is not public",
-            EvalError.LocalOnlyProperty e => FormatLocalOnlyProperty(e.ObjectDesc, e.PropertyName, e.Exposure, e.RequiredParameters),
-            EvalError.NotAnAlgorithm e => FormatNotAnAlgorithm(e.Description),
-            EvalError.IllegalInOpen e => $"Illegal in open: {e.Reason}",
-            EvalError.BadOpenForm e => $"Bad open form: {e.Reason}",
-            EvalError.IllegalInEval e => $"Illegal in eval: {e.Reason}",
+            EvalError.UnknownName e => Text($"Unknown name: {e.Name}"),
+            EvalError.UnknownProperty e => Text($"Unknown property '{e.PropertyName}' on {e.ObjectDesc}"),
+            EvalError.NotPublicProperty e => Text($"Property '{e.PropertyName}' on {e.ObjectDesc} is not public"),
+            EvalError.LocalOnlyProperty e => Text(FormatLocalOnlyProperty(e.ObjectDesc, e.PropertyName, e.Exposure, e.RequiredParameters)),
+            EvalError.NotAnAlgorithm e => Text(FormatNotAnAlgorithm(e.Description)),
+            EvalError.IllegalInOpen e => Text($"Illegal in open: {e.Reason}"),
+            EvalError.BadOpenForm e => Text($"Bad open form: {e.Reason}"),
+            EvalError.IllegalInEval e => Text($"Illegal in eval: {e.Reason}"),
             EvalError.DemandCycle => "Demand cycle: the argument depends on its own value while it is being evaluated.",
-            EvalError.AmbiguousOpen e => $"Ambiguous open '{e.Name}': provided by {string.Join(", ", e.Providers)}",
-            EvalError.ArityMismatch e => FormatArityMismatch(e),
-            EvalError.VariadicArityMismatch e => FormatVariadicArityMismatch(e),
+            EvalError.AmbiguousOpen e => Text($"Ambiguous open '{e.Name}': provided by {string.Join(", ", e.Providers)}"),
+            EvalError.ArityMismatch e => Text(FormatArityMismatch(e)),
+            EvalError.VariadicArityMismatch e => Text(FormatVariadicArityMismatch(e)),
             EvalError.BadArity => "Bad arity",
-            EvalError.TypeMismatch e => $"Type mismatch: {e.Message}",
+            EvalError.TypeMismatch e => Text($"Type mismatch: {e.Message}"),
             EvalError.BadIndex => "Bad index",
             EvalError.DivByZero => "Division by zero",
-            EvalError.NoMatchingBranch e => $"No matching branch for '{e.AlgorithmName}'",
+            EvalError.NoMatchingBranch e => Text($"No matching branch for '{e.AlgorithmName}'"),
             EvalError.BranchArityMismatch e =>
-                $"All branches of conditional algorithm '{e.AlgorithmName}' must have the same top-level pattern arity. " +
-                $"Expected {e.Expected} (from first branch), but a branch has arity {e.Actual}",
+                Text($"All branches of conditional algorithm '{e.AlgorithmName}' must have the same top-level pattern arity. " +
+                $"Expected {e.Expected} (from first branch), but a branch has arity {e.Actual}"),
             EvalError.BranchOutputArityMismatch e =>
-                $"All branches of conditional algorithm '{e.AlgorithmName}' must have the same top-level output arity. " +
-                $"Expected {e.Expected} (from first branch), but a branch has output arity {e.Actual}",
+                Text($"All branches of conditional algorithm '{e.AlgorithmName}' must have the same top-level output arity. " +
+                $"Expected {e.Expected} (from first branch), but a branch has output arity {e.Actual}"),
             // Both are ordinarily caught by the front end (DiagnosticCode.DuplicateProperty /
             // DuplicateBranchPattern) and reach the evaluator only from host-built trees; the
             // former catch-all rendered them as the record's ToString().
-            EvalError.DuplicateProperty e => $"Property '{e.Name}' is already defined",
+            EvalError.DuplicateProperty e => Text($"Property '{e.Name}' is already defined"),
             EvalError.DuplicateBranchPattern => "Duplicate branch pattern",
             EvalError.ExplicitParametersRequireOutput => AlgorithmValidation.ExplicitParametersRequireOutputMessage,
-            EvalError.MissingOutput => FormatGenericMissingOutput(),
-            EvalError.SpreadMissingOutput => FormatSpreadMissingOutput(),
-            EvalError.UnresolvedImplicitParams e => FormatUnresolvedImplicitParams(e),
+            EvalError.MissingOutput => FormatGenericMissingOutput(renderFragment),
+            EvalError.SpreadMissingOutput => FormatSpreadMissingOutput(renderFragment),
+            EvalError.UnresolvedImplicitParams e => Text(FormatUnresolvedImplicitParams(e)),
             EvalError.EvaluationDepthExceeded e => $"Evaluation recursion limit of {e.Limit} was exceeded",
             EvalError.EvaluationStepLimitExceeded e => $"Evaluation step limit of {e.Limit} was exceeded",
             EvalError.CollectionSizeLimitExceeded e =>
@@ -352,9 +378,9 @@ public sealed class KatLangError
             EvalError.AstCycleDetected =>
                 "The program tree contains a reference cycle, so it is not a valid KatLang program structure. "
                 + "KatLang ASTs must be acyclic: shared subtrees are allowed, but no node may reach itself through its own children",
-            EvalError.ModuleRegionMaterializationFailed e => FormatModuleRegionMaterializationFailed(e),
+            EvalError.ModuleRegionMaterializationFailed e => FormatModuleRegionMaterializationFailed(e, renderFragment),
             EvalError.ObservationPending => throw EvalError.ObservationPending.Escaped(),
-            EvalError.WithContext e => $"{e.Context}: {FormatEvalError(e.Inner)}",
+            EvalError.WithContext e => $"{Text(e.Context)}: {FormatEvalError(e.Inner, renderFragment)}",
         };
     }
 
@@ -363,17 +389,21 @@ public sealed class KatLangError
     /// as the equivalent eager load reports them: the primary diagnostic's own message first,
     /// then any further error messages on their own lines.
     /// </summary>
-    private static string FormatModuleRegionMaterializationFailed(EvalError.ModuleRegionMaterializationFailed error)
+    private static string FormatModuleRegionMaterializationFailed(
+        EvalError.ModuleRegionMaterializationFailed error, Func<string, string>? renderFragment)
     {
         var primary = error.Primary;
-        var lines = new List<string> { primary.Message };
+        var lines = new List<string> { RenderMessage(primary) };
         foreach (var diagnostic in error.Diagnostics)
         {
             if (!ReferenceEquals(diagnostic, primary) && diagnostic.Severity == DiagnosticSeverity.Error)
-                lines.Add(diagnostic.Message);
+                lines.Add(RenderMessage(diagnostic));
         }
 
         return string.Join(Environment.NewLine, lines);
+
+        string RenderMessage(Diagnostic diagnostic)
+            => renderFragment is null ? diagnostic.Message : diagnostic.RenderMessage(renderFragment);
     }
 
     private static bool TryGetTextContext(EvalError error, out string context, out EvalError inner)
@@ -432,31 +462,32 @@ public sealed class KatLangError
         return true;
     }
 
-    private static bool TryFormatMissingOutput(EvalError error, out string message)
+    private static bool TryFormatMissingOutput(
+        EvalError error, out string message, Func<string, string>? renderFragment = null)
     {
         message = string.Empty;
 
         if (error is EvalError.MissingOutput)
         {
-            message = FormatGenericMissingOutput();
+            message = FormatGenericMissingOutput(renderFragment);
             return true;
         }
 
         if (error is EvalError.WithContext { ErrorContext: PropertyEvaluationContext propertyContext, Inner: EvalError.MissingOutput })
         {
-            message = FormatPropertyMissingOutput(propertyContext.PropertyName);
+            message = FormatPropertyMissingOutput(propertyContext.PropertyName, renderFragment);
             return true;
         }
 
         if (error is EvalError.WithContext { ErrorContext: ParameterEvaluationContext parameterContext, Inner: EvalError.MissingOutput })
         {
-            message = FormatParameterMissingOutput(parameterContext.ParameterName);
+            message = FormatParameterMissingOutput(parameterContext.ParameterName, renderFragment);
             return true;
         }
 
         if (error is EvalError.WithContext { ErrorContext: ArgumentEvaluationContext argumentContext, Inner: EvalError.MissingOutput })
         {
-            message = FormatArgumentMissingOutput(argumentContext.ArgumentDescription);
+            message = FormatArgumentMissingOutput(argumentContext.ArgumentDescription, renderFragment);
             return true;
         }
 
@@ -468,13 +499,13 @@ public sealed class KatLangError
 
         if (error is EvalError.WithContext { ErrorContext: CallContext callContext, Inner: EvalError.MissingOutput })
         {
-            message = FormatCallMissingOutput(callContext.CalleeDescription);
+            message = FormatCallMissingOutput(callContext.CalleeDescription, renderFragment);
             return true;
         }
 
         if (error is EvalError.WithContext { ErrorContext: DotCallContext dotCallContext, Inner: EvalError.MissingOutput missing })
         {
-            message = FormatDotCallMissingOutput(dotCallContext.ReceiverDescription, dotCallContext.PropertyName, missing.IsSelectedMemberOutput);
+            message = FormatDotCallMissingOutput(dotCallContext.ReceiverDescription, dotCallContext.PropertyName, missing.IsSelectedMemberOutput, renderFragment);
             return true;
         }
 
@@ -486,19 +517,19 @@ public sealed class KatLangError
 
         if (TryParsePropertyContext(context, out var propertyName))
         {
-            message = FormatPropertyMissingOutput(propertyName);
+            message = FormatPropertyMissingOutput(propertyName, renderFragment);
             return true;
         }
 
         if (TryParseCallContext(context, out var calleeDesc))
         {
-            message = FormatCallMissingOutput(calleeDesc);
+            message = FormatCallMissingOutput(calleeDesc, renderFragment);
             return true;
         }
 
         if (TryParseDotCallContext(context, out var receiverDesc, out var dotPropertyName))
         {
-            message = FormatDotCallMissingOutput(receiverDesc, dotPropertyName, isSelectedMemberOutput: false);
+            message = FormatDotCallMissingOutput(receiverDesc, dotPropertyName, isSelectedMemberOutput: false, renderFragment);
             return true;
         }
 
@@ -767,10 +798,11 @@ public sealed class KatLangError
     /// (<see cref="EvalError.MissingOutput.IsSelectedMemberOutput"/>) and names the member
     /// reference like every other member's.
     /// </summary>
-    private static string FormatDotCallMissingOutput(string receiverDesc, string propertyName, bool isSelectedMemberOutput)
+    private static string FormatDotCallMissingOutput(
+        string receiverDesc, string propertyName, bool isSelectedMemberOutput, Func<string, string>? renderFragment)
         => !isSelectedMemberOutput && string.Equals(propertyName, "string", StringComparison.Ordinal)
-            ? FormatReferenceMissingOutput(receiverDesc)
-            : FormatReferenceMissingOutput($"{receiverDesc}.{propertyName}");
+            ? FormatReferenceMissingOutput(receiverDesc, renderFragment)
+            : FormatReferenceMissingOutput($"{receiverDesc}.{propertyName}", renderFragment);
 
     private static string FormatPropertyArityMismatch(EvalError.ArityMismatch arity, string propertyName)
         => FormatArityMismatch(arity, propertyName, preferPropertyName: true);
@@ -893,24 +925,27 @@ public sealed class KatLangError
         return false;
     }
 
-    private static string FormatPropertyMissingOutput(string propertyName)
-        => $"Property '{propertyName}' has no defined output.\nAdd an output expression to '{propertyName}', or use `()` if the empty sequence value was intended. To use one of its properties, write `{propertyName}.X`.";
+    private static string FormatPropertyMissingOutput(string propertyName, Func<string, string>? renderFragment)
+        => RenderLines($"Property '{propertyName}' has no defined output.",
+            $"Add an output expression to '{propertyName}', or use `()` if the empty sequence value was intended. To use one of its properties, write `{propertyName}.X`.", renderFragment);
 
     /// <summary>
     /// The argument bound to a parameter had no output when the parameter was read for
     /// its value: blame the argument, never the callee (whose own call context still
     /// encloses this message).
     /// </summary>
-    private static string FormatParameterMissingOutput(string parameterName)
-        => $"Parameter '{parameterName}' has no defined output: the argument bound to it is an algorithm without an output expression.\nAdd an output expression to that argument, or use `()` if the empty sequence value was intended.";
+    private static string FormatParameterMissingOutput(string parameterName, Func<string, string>? renderFragment)
+        => RenderLines($"Parameter '{parameterName}' has no defined output: the argument bound to it is an algorithm without an output expression.",
+            "Add an output expression to that argument, or use `()` if the empty sequence value was intended.", renderFragment);
 
     /// <summary>
     /// A WRITTEN argument that had to supply a value and produced none. It names the
     /// argument the reader has to change — never the callee, and never the argumentless
     /// spelling of the call: <c>count({ })</c> is not <c>count()</c>.
     /// </summary>
-    private static string FormatArgumentMissingOutput(string argumentDescription)
-        => $"The argument `{argumentDescription}` has no defined output.\nAdd an output expression to that argument, or use `()` if the empty sequence value was intended.";
+    private static string FormatArgumentMissingOutput(string argumentDescription, Func<string, string>? renderFragment)
+        => RenderLines($"The argument `{argumentDescription}` has no defined output.",
+            "Add an output expression to that argument, or use `()` if the empty sequence value was intended.", renderFragment);
 
     private static string FormatParameterList(IReadOnlyList<string> names)
         => names.Count == 1
@@ -929,22 +964,26 @@ public sealed class KatLangError
             _ => $"Property '{propertyName}' on `{objectDesc}` is local-only.",
         };
 
-    private static string FormatReferenceMissingOutput(string referenceDesc)
+    private static string FormatReferenceMissingOutput(string referenceDesc, Func<string, string>? renderFragment)
         => IsSimpleIdentifier(referenceDesc)
-            ? FormatPropertyMissingOutput(referenceDesc)
-            : $"The value `{referenceDesc}` has no defined output.\nAdd an output expression, or use `()` if the empty sequence value was intended. To use one of its properties, access it explicitly.";
+            ? FormatPropertyMissingOutput(referenceDesc, renderFragment)
+            : RenderLines($"The value `{referenceDesc}` has no defined output.",
+                "Add an output expression, or use `()` if the empty sequence value was intended. To use one of its properties, access it explicitly.", renderFragment);
 
-    private static string FormatCallMissingOutput(string calleeDesc)
-        => $"Cannot call '{calleeDesc}' because it has no defined output.\nAdd an output expression, or use `()` if the empty sequence value was intended. To call one of its properties, use property access instead.";
+    private static string FormatCallMissingOutput(string calleeDesc, Func<string, string>? renderFragment)
+        => RenderLines($"Cannot call '{calleeDesc}' because it has no defined output.",
+            "Add an output expression, or use `()` if the empty sequence value was intended. To call one of its properties, use property access instead.", renderFragment);
 
-    private static string FormatGenericMissingOutput()
-        => $"Algorithm has no defined output.\nAdd an output expression, or use `()` if the empty sequence value was intended.";
+    private static string FormatGenericMissingOutput(Func<string, string>? renderFragment)
+        => RenderLines("Algorithm has no defined output.",
+            "Add an output expression, or use `()` if the empty sequence value was intended.", renderFragment);
 
     private static string FormatProgramMissingOutput()
         => RunResult.NoProgramOutput.DefaultMessage;
 
-    private static string FormatSpreadMissingOutput()
-        => "Cannot spread because the spread operand has no defined output.\nUse `()*` if you intended to spread zero items.";
+    private static string FormatSpreadMissingOutput(Func<string, string>? renderFragment)
+        => RenderLines("Cannot spread because the spread operand has no defined output.",
+            "Use `()*` if you intended to spread zero items.", renderFragment);
 
     private static string FormatGenericArityMismatch(int expected, int actual)
         => $"Expected {FormatCount(expected, "parameter")}, but was called with {FormatCount(actual, "argument")}.";

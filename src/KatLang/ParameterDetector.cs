@@ -1195,9 +1195,8 @@ internal static class ParameterDetector
     /// needs — the name resolves to a parameter, and a parameter is not a static open target —
     /// plus the two repairs, in KatLang terms and without implementation vocabulary.
     /// </summary>
-    private static string FormatOpenTargetIsParameter(string targetName, string headName)
-        => string.Join(
-            Environment.NewLine,
+    private static DiagnosticMessage FormatOpenTargetIsParameter(string targetName, string headName)
+        => DiagnosticMessage.JoinLines(
             targetName == headName
                 ? $"Cannot open '{headName}': '{headName}' refers to a parameter, and a parameter cannot be used as an open target."
                 : $"Cannot open '{targetName}': its first name '{headName}' refers to a parameter, and a parameter cannot be used as an open target.",
@@ -1633,7 +1632,7 @@ internal static class ParameterDetector
 
     // The family's name is echoed once per undeclared reference in its branches, so it is
     // bounded like every name a diagnostic repeats (ExprNameRenderer.BoundName).
-    private static string FormatUndeclaredName(UndeclaredName undeclared, string? branchName)
+    private static DiagnosticMessage FormatUndeclaredName(UndeclaredName undeclared, string? branchName)
     {
         var name = ExprNameRenderer.BoundName(undeclared.Name);
         var remedy = branchName is null
@@ -1641,8 +1640,7 @@ internal static class ParameterDetector
             : "If you want to use a parameter, declare it in the pattern, for example: `A(y) = y`.";
         if (undeclared.MemberOf is not { } edge)
         {
-            return string.Join(
-                Environment.NewLine,
+            return DiagnosticMessage.JoinLines(
                 branchName is null
                     ? $"Identifier '{undeclared.Name}' is used in an explicitly parameterized algorithm, but it is not declared in the parameter list."
                     : $"Identifier '{name}' is used in conditional branch '{ExprNameRenderer.BoundName(branchName)}', but it is not declared in the branch pattern.",
@@ -1666,7 +1664,7 @@ internal static class ParameterDetector
         };
         if (undeclared.MemberSuggestion?.Evaluate()?.EligibleName is { } suggestion)
             lines.Add($"Did you mean '{suggestion}'?");
-        return string.Join(Environment.NewLine, lines);
+        return DiagnosticMessage.JoinLines(lines);
     }
 
     private static void ReportUndeclaredExplicitParameterNames(

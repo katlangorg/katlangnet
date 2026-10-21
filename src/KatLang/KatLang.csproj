@@ -75,6 +75,9 @@
 		<InternalsVisibleTo Include="KatLang.Tests" />
 		<InternalsVisibleTo Include="KatLang.Benchmarks" />
 		<InternalsVisibleTo Include="KatLang.ParserFuzz" />
+		<!-- SEC-07: CLI presentation uses KatLangError.RenderDiagnostic so only the
+		     owning renderer can authorize structural diagnostic line separators. -->
+		<InternalsVisibleTo Include="KatLang.CLI" />
 	</ItemGroup>
 
 	<ItemGroup>

@@ -530,7 +530,8 @@ public sealed class BoundedSourceReaderTests
 
         Assert.Equal(Failure, result.ExitCode);
         Assert.Equal("", result.Output);
-        Assert.Equal("katlang: cannot read file 'invalid\0path.kat': the path is not valid.", result.TrimmedError);
+        // SEC-07: the echoed path is terminal-safe, so its NUL is shown, not written.
+        Assert.Equal("katlang: cannot read file 'invalid\\u0000path.kat': the path is not valid.", result.TrimmedError);
     }
 
     [Theory]
