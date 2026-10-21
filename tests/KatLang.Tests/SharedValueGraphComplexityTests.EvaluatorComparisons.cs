@@ -52,6 +52,7 @@ public partial class SharedValueGraphComplexityTests
         HostOperations? hostOperations = null,
         Action<long>? beforeCharge = null,
         EvaluationObservations? evaluation = null,
+        bool requireSuspension = true,
         CancellationToken token = default)
     {
         var observations = evaluation
@@ -78,7 +79,7 @@ public partial class SharedValueGraphComplexityTests
             observations: observations,
             hostOperations: hostOperations,
             cancellationToken: token);
-        if (suspendingCache is not null)
+        if (suspendingCache is not null && requireSuspension)
             Assert.True(suspendingCache.AsyncAccesses > 0);
         return (asyncResult, asyncBudget, traversal);
     }
@@ -685,6 +686,29 @@ public partial class SharedValueGraphComplexityTests
         Assert.True(cancelledDiagnostics.PlannedBuiltinOperations > 0);
         Assert.Empty(cancelledDiagnostics.FallbackReasons);
         Assert.Equal(2, traversal.StructuralWorkChargeCount);
+    }
+
+    [Theory]
+    [InlineData("Same(v, v) = 1\nSame([A, [[1]], A], [B, [[1]], B])", true)]
+    [InlineData("F(v, v) = 1\nF(a, b) = 2\nF([A, [[1]], A], [B, [[1]], B])", true)]
+    [InlineData("contains([[A, [[1]], A]], [B, [[1]], B])", false)]
+    public async Task MixedStringAndStructureVerdicts_RetainTheFirstPayloadComparison_OnEveryRoute(
+        string body, bool numericResult)
+    {
+        // Each cached text is one Result.Str reused twice; the two texts are independently built.
+        // The nested lists create the first structural memo entry between the two string visits.
+        var text = new string('k', 16_449);
+        var source = $"A = \"{text}\"\nB = \"{text}\"\n{body}";
+        foreach (var route in AllRoutes)
+        {
+            var (result, budget, traversal) = await RunComparisonOn(route, source);
+            Assert.False(result.IsError, result.IsError ? $"{route}: {result.Error}" : null);
+            Result expected = numericResult ? new Result.Atom(1) : new Result.Bool(true);
+            Assert.Equal(expected, result.Value.Value, Result.ValueComparer);
+            Assert.Equal(3, traversal.EqualityPairExpansionCount);
+            Assert.Equal(8 + 16_449 / Result.ValueSemanticComparer.StringCharsPerUnit, traversal.StructuralWorkUnits);
+            Assert.Equal(traversal.StructuralWorkUnits, budget.ConsumedStructuralWorkUnits);
+        }
     }
 
     // ── T15: sessions never outlive their comparison or run ───────────────────────────────

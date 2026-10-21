@@ -458,7 +458,7 @@ public static partial class Evaluator
         ref Result.ValueSemanticComparer? session, Result before, Result value, EvalCtx ctx)
     {
         if (!Result.ValueSemanticComparer.RequiresChargedWalk(before, value))
-            return EvalResult<bool>.Ok(Result.ValueComparer.Equals(before, value));
+            return EvalResult<bool>.Ok(Result.SharedValueComparer.Equals(before, value));
         session ??= Result.CreateOperationComparer(ctx.Budget, ctx.Observations?.StructuralTraversal);
         return session.TryEquals(before, value);
     }

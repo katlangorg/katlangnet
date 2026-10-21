@@ -34,6 +34,18 @@ internal sealed class ValueTraversalObservations
         => EqualityPairExpansionCount = checked(EqualityPairExpansionCount + 1);
 
     /// <summary>
+    /// Number of parent frames an operation equality walk suspended to descend into a nested pair
+    /// (SEC-02-FU2). The operation walk of <c>contains</c>, <c>distinct</c>, and the binder keeps one
+    /// per descent; the single-comparison walk of <see cref="Result.EvaluatorValueEquals"/> keeps one
+    /// only for a parent with children still to visit, so a descent through last children suspends
+    /// nothing (its completions are still charged level by level).
+    /// </summary>
+    public long EqualityFrameSuspensionCount { get; private set; }
+
+    internal void RecordEqualityFrameSuspension()
+        => EqualityFrameSuspensionCount = checked(EqualityFrameSuspensionCount + 1);
+
+    /// <summary>
     /// Number of collection NODES structurally expanded across the hash computations this observer's
     /// comparer performed: the top-level collection of each hash, plus every nested NON-EMPTY
     /// collection descended into. Leaves and nested empty collections are hashed in place and record

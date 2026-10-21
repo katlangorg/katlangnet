@@ -26,6 +26,13 @@ internal sealed class EvaluationObservations
     public ValueTraversalObservations? StructuralTraversal { get; init; }
 
     /// <summary>
+    /// Optional record of the run's conditional-clause attempts (SEC-02-FU2): which clauses each
+    /// family dispatch actually began binding, in order, and how each attempt ended. Supplied by the
+    /// measuring test; <c>null</c> records nothing.
+    /// </summary>
+    public ClauseAttemptObservations? ClauseAttempts { get; init; }
+
+    /// <summary>
     /// Number of COMPLETE assignment-deconstruction binding computations begun during this run. A
     /// deconstruction group binds its shared N-capture pattern once per (group, binding context): the
     /// first demanded target of a group performs the full bind and increments this once (whether the

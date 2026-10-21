@@ -92,7 +92,10 @@ public closed record Result
     /// and sequence and list values structurally by ordered child results.
     /// Different value kinds compare unequal (a list never equals a sequence).
     /// </summary>
-    public static IEqualityComparer<Result> ValueComparer { get; } = new ValueSemanticComparer(observations: null);
+    public static IEqualityComparer<Result> ValueComparer => SharedValueComparer;
+
+    /// <summary><see cref="ValueComparer"/> typed as its sealed class, so internal callers bind its methods directly.</summary>
+    internal static readonly ValueSemanticComparer SharedValueComparer = new(observations: null);
 
     /// <summary>
     /// Returns a value comparer bound to <paramref name="observations"/>: the shared observer-less
@@ -141,9 +144,30 @@ public closed record Result
     /// </summary>
     internal static EvalResult<bool> EvaluatorValueEquals(
         Result x, Result y, Evaluation.EvaluationBudget budget, ValueTraversalObservations? observations)
-        => ValueSemanticComparer.RequiresChargedWalk(x, y)
+    {
+        // SEC-02-FU2: the scalar pairs an ordinary program compares are decided in place, with the
+        // comparer's own value semantics (Decimal128.Equals: NaN is one value, quantum and the sign
+        // of zero are ignored; a number never equals a Boolean), before any further dispatch; so are
+        // one shared reference and a pair of strings the comparer decides in O(1).
+        if (x is Atom(var leftNumber))
+            return EvalResult<bool>.Ok(y is Atom(var rightNumber) && leftNumber.Equals(rightNumber));
+        if (x is Bool(var leftFlag))
+            return EvalResult<bool>.Ok(y is Bool(var rightFlag) && leftFlag == rightFlag);
+        if (ReferenceEquals(x, y))
+            return EvalResult<bool>.Ok(true);
+        if (x is Str(var leftText))
+        {
+            if (y is not Str(var rightText))
+                return EvalResult<bool>.Ok(false);
+            return ValueSemanticComparer.RequiresChargedStringWalk(leftText, rightText)
+                ? ValueSemanticComparer.SingleChargedEquals(x, y, budget, observations)
+                : EvalResult<bool>.Ok(string.Equals(leftText, rightText, StringComparison.Ordinal));
+        }
+
+        return ValueSemanticComparer.RequiresChargedWalk(x, y)
             ? ValueSemanticComparer.SingleChargedEquals(x, y, budget, observations)
-            : EvalResult<bool>.Ok(ValueComparer.Equals(x, y));
+            : EvalResult<bool>.Ok(SharedValueComparer.Equals(x, y));
+    }
 
     /// <summary>
     /// A single numeric value, backed by IEEE 754 <see cref="Decimal128"/>
@@ -1194,19 +1218,47 @@ public closed record Result
         /// <summary>A fresh operation comparer (see <see cref="CreateOperationComparer"/>).</summary>
         internal static ValueSemanticComparer ForOperation(
             Evaluation.EvaluationBudget budget, ValueTraversalObservations? observations)
-            => new(observations, new OperationMemo(budget, singleComparison: false));
+            => new(observations, new OperationMemo(budget));
 
         /// <summary>
-        /// One charged evaluator comparison (SEC-02-FU, <see cref="EvaluatorValueEquals"/>) through a
-        /// fresh comparer for exactly that comparison: the operation walk and its charges, retaining only
-        /// what the comparison itself can meet again (the DAG pairs it descends through), never a verdict
-        /// only a later comparison could read. <see cref="TryEquals"/> retires it.
+        /// One charged evaluator comparison (SEC-02-FU, <see cref="EvaluatorValueEquals"/>) over a fresh
+        /// memo for exactly that comparison: the single-comparison walk (<see cref="EqualsSingleWalk"/>,
+        /// SEC-02-FU2) and its charges, retaining only what the comparison itself can meet again (the
+        /// DAG pairs it descends through), never a verdict only a later comparison could read. The
+        /// pending units are flushed at the end — a refusal of that final partial batch is the
+        /// comparison's error — and the memo is dropped with the call whatever the outcome.
         /// </summary>
         internal static EvalResult<bool> SingleChargedEquals(
             Result x, Result y, Evaluation.EvaluationBudget budget, ValueTraversalObservations? observations)
         {
             ArgumentNullException.ThrowIfNull(budget);
-            return new ValueSemanticComparer(observations, new OperationMemo(budget, singleComparison: true)).TryEquals(x, y);
+            if (ReferenceEquals(x, y))
+                return EvalResult<bool>.Ok(true);
+
+            // The comparison owns its memo outright, so no comparer object or walk guard is needed:
+            // the memo dies here whatever happens, and a refusal or cancellation simply drops it.
+            var op = new OperationMemo(budget);
+            bool equal;
+            try
+            {
+                equal = (x, y) switch
+                {
+                    (Str(var left), Str(var right)) => StringEqualsInOperation(op, x, y, left, right, observations),
+                    (SequenceValue(var left), SequenceValue(var right)) when left.Count == right.Count
+                        => EqualsSingleWalk(op, observations, left, right),
+                    (ListValue(var left), ListValue(var right)) when left.Count == right.Count
+                        => EqualsSingleWalk(op, observations, left, right),
+                    // Nothing to walk (see RequiresChargedWalk): the context-free verdict.
+                    _ => SharedValueComparer.Equals(x, y),
+                };
+            }
+            catch (Evaluation.StructuralWorkRefusedException refused)
+            {
+                return refused.Error;
+            }
+
+            var error = op.Flush(observations);
+            return error is null ? EvalResult<bool>.Ok(equal) : error;
         }
 
         /// <summary>
@@ -1246,11 +1298,18 @@ public closed record Result
                     && left.Count != 0 && left.Count == right.Count && !ReferenceEquals(x, y),
                 ListValue(var left) => y is ListValue(var right)
                     && left.Count != 0 && left.Count == right.Count && !ReferenceEquals(x, y),
-                Str(var left) => y is Str(var right)
-                    && left.Length >= StringCharsPerUnit
-                    && left.Length == right.Length
-                    && !ReferenceEquals(left, right),
+                Str(var left) => y is Str(var right) && RequiresChargedStringWalk(left, right),
             };
+
+        /// <summary>
+        /// Whether comparing <paramref name="left"/> with <paramref name="right"/> reads string payload
+        /// worth charging: two distinct texts of one length of at least <see cref="StringCharsPerUnit"/>
+        /// code units (see <see cref="RequiresChargedWalk"/>).
+        /// </summary>
+        internal static bool RequiresChargedStringWalk(string left, string right)
+            => left.Length >= StringCharsPerUnit
+                && left.Length == right.Length
+                && !ReferenceEquals(left, right);
 
         /// <summary>
         /// One charged comparison through this operation comparer (SEC-02-FU): the verdict, after the
@@ -1277,7 +1336,7 @@ public closed record Result
 
             operation.EnterWalk();
             var error = operation.Flush(observations);
-            if (operation.SingleComparison || error is not null)
+            if (error is not null)
                 operation.Release();
             operation.ExitWalk();
             return error is null ? EvalResult<bool>.Ok(equal) : error;
@@ -1330,7 +1389,7 @@ public closed record Result
                     if (operation is null)
                         return StringComparer.Ordinal.Equals(leftValue, rightValue);
                     operation.EnterWalk();
-                    var equalText = StringEqualsInOperation(operation, x, y, leftValue, rightValue);
+                    var equalText = StringEqualsInOperation(operation, x, y, leftValue, rightValue, observations);
                     operation.ExitWalk();
                     return equalText;
 
@@ -1668,12 +1727,10 @@ public closed record Result
                     // A singleton chain can finish thousands of frames without inspecting another
                     // child. Account for completion too, so that unwind remains cancellable.
                     op.Charge(observations);
-                    var open = suspended?.Count ?? 0;
-                    // A single comparison's own top-level verdict can never be asked again.
-                    if (seeded || (leftItems.Count >= RetainedWidth && (open != 0 || !op.SingleComparison)))
-                        (pairs ??= op.Verdicts = [])[new ReferencePair(leftNode, rightNode)] = PairState.Equal;
-                    if (open == 0) return true;
-                    (leftNode, rightNode, leftItems, rightItems, next, seeded) = suspended!.Pop();
+                    if (seeded || leftItems.Count >= RetainedWidth)
+                        (pairs ??= op.Verdicts ??= [])[new ReferencePair(leftNode, rightNode)] = PairState.Equal;
+                    if (suspended is not { Count: not 0 }) return true;
+                    (leftNode, rightNode, leftItems, rightItems, next, seeded) = suspended.Pop();
                     continue;
                 }
 
@@ -1683,46 +1740,13 @@ public closed record Result
                 op.Charge(observations);
 
                 if (ReferenceEquals(left, right)) continue;
-                if (left is null || right is null) return Mismatch(op, leftNode, rightNode, leftItems.Count, seeded, suspended);
-
-                IReadOnlyList<Result> childLeft;
-                IReadOnlyList<Result> childRight;
-                switch (left, right)
+                switch (InspectChildPair(op, observations, left, right, out var childLeft, out var childRight))
                 {
-                    // The per-call walk's value semantics, case for case.
-                    case (Atom(var leftValue), Atom(var rightValue)):
-                        if (!leftValue.Equals(rightValue)) return Mismatch(op, leftNode, rightNode, leftItems.Count, seeded, suspended);
+                    case ChildPair.Equal:
                         continue;
-
-                    case (Str(var leftValue), Str(var rightValue)):
-                        if (!StringEqualsInOperation(op, left, right, leftValue, rightValue)) return Mismatch(op, leftNode, rightNode, leftItems.Count, seeded, suspended);
-                        continue;
-
-                    case (Bool(var leftValue), Bool(var rightValue)):
-                        if (leftValue != rightValue) return Mismatch(op, leftNode, rightNode, leftItems.Count, seeded, suspended);
-                        continue;
-
-                    case (CallReference leftReference, CallReference rightReference):
-                        if (!ReferenceEquals(leftReference.Plan, rightReference.Plan)
-                            || leftReference.IsArgumentView != rightReference.IsArgumentView)
-                            return Mismatch(op, leftNode, rightNode, leftItems.Count, seeded, suspended);
-                        continue;
-
-                    case (SequenceValue(var childLeftItems), SequenceValue(var childRightItems)):
-                        if (childLeftItems.Count != childRightItems.Count) return Mismatch(op, leftNode, rightNode, leftItems.Count, seeded, suspended);
-                        (childLeft, childRight) = (childLeftItems, childRightItems);
-                        break;
-
-                    case (ListValue(var childLeftItems), ListValue(var childRightItems)):
-                        if (childLeftItems.Count != childRightItems.Count) return Mismatch(op, leftNode, rightNode, leftItems.Count, seeded, suspended);
-                        (childLeft, childRight) = (childLeftItems, childRightItems);
-                        break;
-
-                    default:
+                    case ChildPair.Unequal:
                         return Mismatch(op, leftNode, rightNode, leftItems.Count, seeded, suspended);
                 }
-
-                if (childLeft.Count == 0) continue;
 
                 // A retained verdict answers the pair. IN PROGRESS means the pair is open above —
                 // reachable only through an invalid cyclic graph — and is skipped coinductively.
@@ -1734,12 +1758,15 @@ public closed record Result
 
                 if (!seeded && suspended is { Count: not 0 })
                 {
-                    (pairs ??= op.Verdicts = [])[new ReferencePair(leftNode, rightNode)] = PairState.InProgress;
+                    // A preceding string inspection may already have created the shared verdict
+                    // dictionary. Adopt it instead of replacing its retained payload verdicts.
+                    (pairs ??= op.Verdicts ??= [])[new ReferencePair(leftNode, rightNode)] = PairState.InProgress;
                     seeded = true;
                 }
 
                 observations?.RecordEqualityPairExpansion();
 
+                observations?.RecordEqualityFrameSuspension();
                 (suspended ??= new Stack<EqualityFrame>()).Push(new EqualityFrame(leftNode, rightNode, leftItems, rightItems, next, seeded));
                 (leftNode, rightNode, leftItems, rightItems, next, seeded) = (left, right, childLeft, childRight, 0, false);
             }
@@ -1749,26 +1776,193 @@ public closed record Result
         /// The <c>false</c> of an operation walk that found a mismatch, after retaining it: the
         /// mismatching pair and every pair still open above it are UNEQUAL where retained (seeded,
         /// or at least <see cref="RetainedWidth"/> wide). Every seeded pair is open on this path, so
-        /// none is left in progress. A single comparison (<see cref="OperationMemo.SingleComparison"/>)
-        /// ends here, so it retains nothing; every frame is still charged, so the unwind stays cancellable.
+        /// none is left in progress. Every frame is charged, so the unwind stays cancellable.
         /// </summary>
         private bool Mismatch(
             OperationMemo op, Result leftNode, Result rightNode, int count, bool seeded, Stack<EqualityFrame>? suspended)
         {
-            var retain = !op.SingleComparison;
             op.Charge(observations);
-            if (retain && (seeded || count >= RetainedWidth))
+            if (seeded || count >= RetainedWidth)
                 (op.Verdicts ??= [])[new ReferencePair(leftNode, rightNode)] = PairState.Unequal;
             if (suspended is null)
                 return false;
             foreach (var frame in suspended)
             {
                 op.Charge(observations);
-                if (retain && (frame.Seeded || frame.Left.Count >= RetainedWidth))
+                if (frame.Seeded || frame.Left.Count >= RetainedWidth)
                     (op.Verdicts ??= [])[new ReferencePair(frame.LeftNode, frame.RightNode)] = PairState.Unequal;
             }
 
             return false;
+        }
+
+        /// <summary>
+        /// The ONE evaluator comparison's walk (SEC-02-FU2, <see cref="SingleChargedEquals"/>) over a
+        /// structure pair of one kind and count: exactly the verdict, inspection order, expanded pairs,
+        /// and charged units of <see cref="EqualsInOperationWalk"/>, with only the state that one
+        /// comparison can read.
+        ///
+        /// <para>EXPANDED, NOT FINALIZED. The walk returns <c>false</c> at its first mismatch, so a pair
+        /// it meets again after expanding it has finished equal — or is open above it, which only an
+        /// invalid cyclic graph allows and which is skipped coinductively. A pair is therefore recorded
+        /// as expanded — in a set, like the per-call walk's memo — once: when it is seeded (the moment
+        /// it first descends into a nested pair, as above) or entered (when at least
+        /// <see cref="RetainedWidth"/> wide). No in-progress state, no finalization, no unequal
+        /// verdict, and the top-level pair is never recorded.</para>
+        ///
+        /// <para>TAIL DESCENT WITH COUNTED COMPLETIONS. Since nothing is finalized, a parent whose last
+        /// child is being descended into keeps no frame: its completion is added to the child's
+        /// <c>levels</c>, the number of logical levels that complete when the current one does. A frame
+        /// is kept only for a parent with children still to visit. Every completion and every level
+        /// a mismatch abandons is still charged one unit through <see cref="OperationMemo.ChargeEach"/>,
+        /// which emulates that many successive single-unit charges — so the unit total, every charge
+        /// boundary, and every cancellation checkpoint fall exactly where the frame-per-level walk puts
+        /// them, and a deep unwind can never complete without its checkpoints.</para>
+        /// </summary>
+        private static bool EqualsSingleWalk(
+            OperationMemo op, ValueTraversalObservations? observations, IReadOnlyList<Result> leftItems, IReadOnlyList<Result> rightItems)
+        {
+            observations?.RecordEqualityPairExpansion();
+
+            // Allocated at the first descent that leaves siblings behind, so a flat pair or a chain
+            // descended through last children needs no frame stack at all.
+            Stack<SingleFrame>? suspended = null;
+            // The expanded pairs, the per-call walk's memo shape: the walk needs no verdict, only
+            // whether a pair was already expanded. Allocated at the first record.
+            HashSet<ReferencePair>? expanded = null;
+            // The current level's own pair, read only while the level is unsettled (not yet recorded);
+            // the top-level pair is settled from the start, since it is never recorded.
+            Result leftNode = null!, rightNode = null!;
+            var (next, levels, settled) = (0, 1, true);
+
+            while (true)
+            {
+                if (next >= leftItems.Count)
+                {
+                    op.ChargeEach(levels, observations);
+                    if (suspended is not { Count: not 0 }) return true;
+                    // A suspended level has descended, so it was recorded (or is the top level).
+                    (leftItems, rightItems, next, levels) = suspended.Pop();
+                    settled = true;
+                    continue;
+                }
+
+                var left = leftItems[next];
+                var right = rightItems[next];
+                next++;
+                op.Charge(observations);
+
+                if (ReferenceEquals(left, right)) continue;
+                switch (InspectChildPair(op, observations, left, right, out var childLeft, out var childRight))
+                {
+                    case ChildPair.Equal:
+                        continue;
+                    case ChildPair.Unequal:
+                        return SingleMismatch(op, observations, levels, suspended);
+                }
+
+                // Recorded once expanded: equal (or an open cyclic ancestor, skipped coinductively).
+                if (expanded is not null && expanded.Contains(new ReferencePair(left, right)))
+                    continue;
+
+                if (!settled)
+                {
+                    (expanded ??= []).Add(new ReferencePair(leftNode, rightNode));
+                    settled = true;
+                }
+
+                observations?.RecordEqualityPairExpansion();
+
+                if (next < leftItems.Count)
+                {
+                    observations?.RecordEqualityFrameSuspension();
+                    (suspended ??= new Stack<SingleFrame>()).Push(new SingleFrame(leftItems, rightItems, next, levels));
+                    levels = 1;
+                }
+                else
+                {
+                    levels++;
+                }
+
+                (leftNode, rightNode, leftItems, rightItems, next) = (left, right, childLeft, childRight, 0);
+                settled = childLeft.Count >= RetainedWidth;
+                if (settled)
+                    (expanded ??= []).Add(new ReferencePair(left, right));
+            }
+        }
+
+        /// <summary>
+        /// The <c>false</c> of the single-comparison walk: every logical level still open — the
+        /// current one, the parents folded into it by tail descent, and every suspended frame's — is
+        /// charged one unit, exactly as <see cref="Mismatch"/> charges one per frame, so a deep
+        /// mismatch's propagation stays cancellable and finitely budgeted.
+        /// </summary>
+        private static bool SingleMismatch(
+            OperationMemo op, ValueTraversalObservations? observations, int levels, Stack<SingleFrame>? suspended)
+        {
+            op.ChargeEach(levels, observations);
+            if (suspended is not null)
+            {
+                foreach (var frame in suspended)
+                    op.ChargeEach(frame.Levels, observations);
+            }
+
+            return false;
+        }
+
+        /// <summary>How a child pair of an operation walk stands after its O(1) inspection.</summary>
+        private enum ChildPair : byte
+        {
+            Equal,
+            Unequal,
+            /// <summary>Two non-empty structures of one kind and count: the walk must descend.</summary>
+            Structures,
+        }
+
+        /// <summary>
+        /// The per-call walk's value semantics for one child pair, case for case, shared by both
+        /// operation walks: leaves are decided here (a long string's payload charged), structures of
+        /// different kinds or counts are unequal, empty ones equal, and only a non-empty structure
+        /// pair of one kind and count returns <see cref="ChildPair.Structures"/> with its children.
+        /// </summary>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private static ChildPair InspectChildPair(
+            OperationMemo op, ValueTraversalObservations? observations, Result left, Result right,
+            out IReadOnlyList<Result> childLeft, out IReadOnlyList<Result> childRight)
+        {
+            childLeft = childRight = [];
+            switch (left, right)
+            {
+                case (Atom(var leftValue), Atom(var rightValue)):
+                    return leftValue.Equals(rightValue) ? ChildPair.Equal : ChildPair.Unequal;
+
+                case (Str(var leftValue), Str(var rightValue)):
+                    return StringEqualsInOperation(op, left, right, leftValue, rightValue, observations) ? ChildPair.Equal : ChildPair.Unequal;
+
+                case (Bool(var leftValue), Bool(var rightValue)):
+                    return leftValue == rightValue ? ChildPair.Equal : ChildPair.Unequal;
+
+                case (CallReference leftReference, CallReference rightReference):
+                    return ReferenceEquals(leftReference.Plan, rightReference.Plan)
+                        && leftReference.IsArgumentView == rightReference.IsArgumentView
+                        ? ChildPair.Equal
+                        : ChildPair.Unequal;
+
+                case (SequenceValue(var leftItems), SequenceValue(var rightItems)):
+                    (childLeft, childRight) = (leftItems, rightItems);
+                    break;
+
+                case (ListValue(var leftItems), ListValue(var rightItems)):
+                    (childLeft, childRight) = (leftItems, rightItems);
+                    break;
+
+                // Different kinds, or a null slot.
+                default:
+                    return ChildPair.Unequal;
+            }
+
+            if (childLeft.Count != childRight.Count) return ChildPair.Unequal;
+            return childLeft.Count == 0 ? ChildPair.Equal : ChildPair.Structures;
         }
 
         /// <summary>
@@ -1779,7 +1973,8 @@ public closed record Result
         /// verdict worth at least <see cref="RetainedWidth"/> units is retained by reference pair, so
         /// a repeated long comparison of the same two values is answered without re-reading them.
         /// </summary>
-        private bool StringEqualsInOperation(OperationMemo op, Result x, Result y, string left, string right)
+        private static bool StringEqualsInOperation(
+            OperationMemo op, Result x, Result y, string left, string right, ValueTraversalObservations? observations)
         {
             if (left.Length != right.Length) return false;
             var units = left.Length / StringCharsPerUnit;
@@ -1829,6 +2024,17 @@ public closed record Result
             IReadOnlyList<Result> Right,
             int Next,
             bool Seeded);
+
+        /// <summary>
+        /// One suspended level of the single-comparison walk: a parent with children still to visit,
+        /// and the logical levels (itself plus the parents folded into it by tail descent) that
+        /// complete with it.
+        /// </summary>
+        private readonly record struct SingleFrame(
+            IReadOnlyList<Result> Left,
+            IReadOnlyList<Result> Right,
+            int Next,
+            int Levels);
 
         /// <summary>
         /// The operation comparer's hash walk over a non-empty structure, with exactly the per-call
@@ -1989,14 +2195,8 @@ public closed record Result
         /// nodes the walks actually expand, never with paths, and every entry corresponds to
         /// at least one charged unit, so the step budget bounds the memo as well as the work.
         /// </summary>
-        private sealed class OperationMemo(Evaluation.EvaluationBudget budget, bool singleComparison)
+        private sealed class OperationMemo(Evaluation.EvaluationBudget budget)
         {
-            /// <summary>
-            /// The comparer decides exactly one comparison and is then retired (SEC-02-FU), so a verdict
-            /// only a later comparison could read is not retained.
-            /// </summary>
-            internal readonly bool SingleComparison = singleComparison;
-
             /// <summary>Equality verdicts by ordered reference pair: completed ones, plus the open path of the running walk.</summary>
             internal Dictionary<ReferencePair, PairState>? Verdicts;
 
@@ -2037,6 +2237,24 @@ public closed record Result
                     return;
                 if (Flush(observations) is { } error)
                     throw new Evaluation.StructuralWorkRefusedException(error);
+            }
+
+            /// <summary>
+            /// Exactly <paramref name="count"/> successive <see cref="Charge(ValueTraversalObservations?)"/>
+            /// calls (SEC-02-FU2): the same units, flushed at the same unit boundaries — so the same
+            /// charges and cancellation checkpoints, in the same order — in O(count / UnitsPerCharge)
+            /// steps. The single-comparison walk completes the levels it folded by tail descent here.
+            /// </summary>
+            internal void ChargeEach(int count, ValueTraversalObservations? observations)
+            {
+                while (count > 0)
+                {
+                    var taken = Math.Min(count, Math.Max(1, UnitsPerCharge - pendingUnits));
+                    count -= taken;
+                    pendingUnits += taken;
+                    if (pendingUnits >= UnitsPerCharge && Flush(observations) is { } error)
+                        throw new Evaluation.StructuralWorkRefusedException(error);
+                }
             }
 
             /// <summary>

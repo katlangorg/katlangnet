@@ -1044,6 +1044,31 @@ public static partial class Evaluator
             : new EvalError.ArityMismatch(heads.Length == 0 ? 0 : NeedMinimumSuppliedSlots(heads[0]), supplied);
     }
 
+    // The clause-attempt observation both family drivers share (SEC-02-FU2, ClauseAttemptObservations):
+    // an attempt is recorded just before the clause's binder, which may demand its supplied values,
+    // and its outcome from the binder's own result. Passive — a null observer records nothing, and
+    // no call demands, checkpoints, or decides anything. The opt-in collector owns dispatch/attempt
+    // bookkeeping: no observation locals or extra frames survive across a recursive binder demand.
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]
+    private static void ObserveFamilyStart(Algorithm callee, in EvalCtx ctx)
+        => ctx.Observations?.ClauseAttempts?.BeginDispatch(callee);
+
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]
+    private static void ObserveClauseAttempt(int clause, in EvalCtx ctx)
+        => ctx.Observations?.ClauseAttempts?.RecordAttempt(clause);
+
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]
+    private static void ObserveClauseOutcome(in EvalResult<NeedEnv?> bindings, in EvalCtx ctx)
+    {
+        if (ctx.Observations?.ClauseAttempts is not { } observer) return;
+        observer.RecordOutcome(bindings.IsError ? ClauseAttemptOutcome.Error
+            : bindings.Value is null ? ClauseAttemptOutcome.NonMatch : ClauseAttemptOutcome.Matched);
+    }
+
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]
+    private static void ObserveFamilyUnmatched(in EvalCtx ctx)
+        => ctx.Observations?.ClauseAttempts?.EndUnmatchedDispatch();
+
     private static NeedFamilyActivation ActivateNeedFamilyBranch(
         Algorithm callee, Algorithm selected, NeedEnv matched, EvalCtx ctx, ValEnv values)
     {
@@ -1063,17 +1088,21 @@ public static partial class Evaluator
         var prepared = PrepareNeedFamilyHeads(callee, supply.Count);
         if (prepared.IsError) return prepared.Error;
         var heads = prepared.Value;
+        ObserveFamilyStart(callee, ctx);
         for (var i = 0; i < heads.Count; i++)
         {
             // The clause's ONE cardinality gate, in family mode: a refused count is its non-match.
             // Decided here rather than in a gated binder frame, so a literal or structural pattern
             // that demands a recursive argument holds no extra frame (stack headroom per level).
             if (!NeedAcceptsCardinality(heads[i], supply.Count)) continue;
+            ObserveClauseAttempt(i, ctx);
             var bindings = BindAcceptedNeedPatterns(heads[i], supply, ctx, asynchronous: false, family: true).GetAwaiter().GetResult();
+            ObserveClauseOutcome(bindings, ctx);
             if (bindings.IsError) return bindings.Error;
             if (bindings.Value is not { } matched) continue;
             return EvalResult<NeedFamilyActivation>.Ok(ActivateNeedFamilyBranch(callee, SelectedBranchBody(callee.Branches[i]), matched, ctx, values));
         }
+        ObserveFamilyUnmatched(ctx);
         return new EvalError.NoMatchingBranch(name.Render(ctx));
     }
 
@@ -1085,10 +1114,13 @@ public static partial class Evaluator
         var prepared = PrepareNeedFamilyHeads(callee, supply.Count);
         if (prepared.IsError) return prepared.Error;
         var heads = prepared.Value;
+        ObserveFamilyStart(callee, ctx);
         for (var i = 0; i < heads.Count; i++)
         {
             if (!NeedAcceptsCardinality(heads[i], supply.Count)) continue;
+            ObserveClauseAttempt(i, ctx);
             var bindings = await BindAcceptedNeedPatterns(heads[i], supply, ctx, asynchronous, family: true).ConfigureAwait(false);
+            ObserveClauseOutcome(bindings, ctx);
             if (bindings.IsError) return bindings.Error;
             if (bindings.Value is not { } matched) continue;
             var selected = asynchronous
@@ -1097,6 +1129,7 @@ public static partial class Evaluator
             if (selected.IsError) return selected.Error;
             return EvalResult<NeedFamilyActivation>.Ok(ActivateNeedFamilyBranch(callee, selected.Value, matched, ctx, values));
         }
+        ObserveFamilyUnmatched(ctx);
         return new EvalError.NoMatchingBranch(name.Render(ctx));
     }
 
