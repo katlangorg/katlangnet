@@ -223,6 +223,18 @@ theorem Disciplined.withCtx {α : Type} {m : EvalM α} (c : String) (hm : Discip
   | ok x => exact disciplined_pure x
   | error e => exact disciplined_evalError _
 
+/-- META-DIAG-1: a META capture keeps the heap discipline of its capture. -/
+theorem Disciplined.captureMeta (name : Ident) {m : EvalM Nat} (hm : Disciplined m) :
+    Disciplined (NeedBinder.captureMeta name m) := by
+  intro s
+  have k := hm s
+  show HeapKept s.needs ((NeedBinder.captureMeta name m).runState s).2.needs
+  rw [NeedBinder.captureMeta_runState]
+  revert k
+  rcases m.runState s with ⟨r, t⟩
+  intro k
+  cases r <;> exact k
+
 theorem disciplined_allocate (suspension : NeedSuspension) : Disciplined (allocateNeed suspension) := by
   intro s
   rw [KatLang.NeedControl.Allocation.allocate_run]

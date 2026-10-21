@@ -129,6 +129,20 @@ its C# rendering is new and general (`KatLangError.MetaRefusalMessage`, every ME
 `experimental/features/meta-s3-3-implementation.md` (local). C#-only, as for S1–S3-2: J7, async
 resolution, cancellation, ownership checks and diagnostics wording.
 
+META-DIAG-1 — a binder-level META refusal names its parameter (2026-10-21): diagnostics only, no
+eligibility, evaluation-order or outcome-category change. Lean: the `.metaRef name` arm of
+`NeedBinder.bindOne` runs the reference capability through `NeedBinder.captureMeta name`, which maps a
+refusal through `NeedPlan.bindingRefusal` — the canonical `metaRefusal` becomes
+`NeedPlan.metaBindingRefusal name` (`withContext "while binding meta parameter 'name'" metaRefusal`);
+every other error, the incomplete outcome and `invocationRefusal` included, passes unchanged.
+`NeedPlan.reify` / `NeedPlan.reference` are untouched (a direct refusal stays unframed). C# twins:
+`Evaluator.CaptureMeta` / `AnnotateMetaBindingRefusal` / `MetaParameterContext` at both META sites of
+`BindAcceptedNeedPatterns`. Laws `CallReference.lean` (`production_meta_refusal`,
+`metaBindingRefusal_shape`, `bindingRefusal_*`), the binder framework lemmas (`captureMeta_runState`,
+`runTrace_captureMeta`, `monotone_captureMeta`, `pres_captureMeta`, `Disciplined.captureMeta`,
+`sim_captureMeta`); guards `InvocationRouteGuards.lean` § META-DIAG-1; C#
+`MetaBindingRefusalDiagnosticTests`.
+
 S6a — R4 / Q-66 repeated-name laws for nested and mixed heads (2026-10-20): Lean proofs and one
 behaviour-preserving Lean wiring change; no language, C# or observable-outcome change. WIRING: the
 evaluator's five binder call sites (`evalNeedUserSupply`, `evalNeedFamilySupply`, `runNeedStepWith`

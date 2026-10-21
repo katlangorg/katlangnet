@@ -391,4 +391,62 @@ def plannedAddress? : Option Nat :=
      | none => false)
   | none => false
 
+/-! ## META-DIAG-1: a binder-level META refusal names its parameter
+
+The innermost error stays the canonical `metaRefusal` (`isMetaRefusal`), framed ONCE, directly,
+with the name of the META parameter being bound; a later invocation-route refusal (D-1A) and the
+direct reification (`NeedPlan.reference`, `InvocationPlanGuards`) carry no binding name. -/
+
+/-- The frames of an error chain, outermost first. -/
+def frames : Error → List String
+  | .withContext c inner => c :: frames inner
+  | _ => []
+
+/-- `r` is the canonical META refusal, framed directly by THE binding frame of `name`, and no
+    other META binding frame appears in its chain. -/
+def refusedBinding (r : Except Error Result) (name : Ident) : Bool :=
+  isMetaRefusal r &&
+  match r with
+  | .error e =>
+    (frames e).getLast? == some s!"while binding meta parameter '{name}'" &&
+    ((frames e).filter (fun c => c.startsWith "while binding meta parameter")).length == 1
+  | .ok _ => false
+
+/-- No META binding frame anywhere in the chain. -/
+def noBindingFrame (r : Except Error Result) : Bool :=
+  match r with
+  | .error e => ((frames e).filter (fun c => c.startsWith "while binding meta parameter")).isEmpty
+  | .ok _ => true
+
+/-- `Store(meta item) = item`, `Use(meta first, meta second) = 0`, `W(meta s) = while(s)`. -/
+def diag1Decls : List (Ident × Algorithm) :=
+  [("Store", algWithParameters [metaParam "item"] [] [] [.param "item"]),
+   ("Use", algWithParameters [metaParam "first", metaParam "second"] [] [] [.num 0]),
+   ("W", algWithParameters [metaParam "s"] [] [] [callN "while" [.param "s"]])]
+
+-- Tests A/B: the declared name, never a placeholder.
+#guard refusedBinding (run [] [callN "Capture" [.num 5]]) "op"
+#guard refusedBinding (run diag1Decls [callN "Store" [.num 42]]) "item"
+-- Test C: the first failing pattern in written order.
+#guard refusedBinding (run diag1Decls [callN "Use" [callN "Id" [.num 1], .num 5]]) "second"
+#guard refusedBinding (run diag1Decls [callN "Use" [.num 5, callN "Id" [.num 1]]]) "first"
+#guard refusedBinding (run diag1Decls [callN "Use" [.num 5, .num 6]]) "first"
+#guard valueIs (run diag1Decls [callN "Use" [callN "Id" [.num 1], callN "Id" [.num 2]]]) (.atom 0)
+-- Test D: a builtin META parameter is named by its declared `step`.
+#guard refusedBinding (run [] [callN "while" [.num 5]]) "step"
+#guard refusedBinding (run [] [callN "repeat" [.num 5, .num 2]]) "step"
+#guard refusedBinding (run [] [dot (.resolve "Start") "while" none]) "step"
+-- Test E: forwarding — the outer `s` captures; the inner `while(meta step)` refuses the
+-- ordinary parameter read and is the one named binding.
+#guard refusedBinding (run diag1Decls [callN "W" [callN "Step" [.num 0]]]) "step"
+-- Test G: D-1A — inert capture succeeds; the later invocation-route refusal is unframed.
+#guard valueIs (run [] [callN "Ignore" [dot (.num 5) "string" (some [])]]) (.atom 0)
+#guard isInvocationRefusal (run [("R", alg [] [] [] [callN "Capture" [dot (.num 5) "string" (some [])]])]
+  [invoke (.resolve "R")])
+#guard noBindingFrame (run [("R", alg [] [] [] [callN "Capture" [dot (.num 5) "string" (some [])]])]
+  [invoke (.resolve "R")])
+-- Success is unchanged.
+#guard valueIs (run [] [dot (callN "Step" [.num 0]) "while" none]) (.atom 3)
+#guard valueIs (run [] [dot (callN "Step" [.num 0]) "Loop" none]) (.atom 3)
+
 end KatLang.InvocationRouteGuards

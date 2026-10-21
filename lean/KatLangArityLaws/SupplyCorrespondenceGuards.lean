@@ -110,10 +110,12 @@ def readyHeap : EvalState :=
   (.atom 25)
 #guard CallReferenceGuards.isMetaRefusal (runResult (CallReferenceGuards.program []
   [.call (resolve "map") [.listLiteral [CallReferenceGuards.call "Sq" [.num 5]], resolve "Capture"]]))
--- At the binder: a Ready cell's META capture is the structured refusal, in either mode.
+-- At the binder: a Ready cell's META capture is the structured refusal, in either mode, framed
+-- with the bound parameter's name (META-DIAG-1).
 #guard match outcome EvalState.empty [(.atom 25, 1)] [.metaRef "op"],
              outcome EvalState.empty [(.atom 25, 1)] [.metaRef "op"] true with
-  | .error (.notAnAlgorithm _), .error (.notAnAlgorithm _) => true
+  | .error (.withContext c1 (.notAnAlgorithm _)), .error (.withContext c2 (.notAnAlgorithm _)) =>
+      c1 == "while binding meta parameter 'op'" && c2 == c1
   | _, _ => false
 
 end KatLang.SupplyCorrespondenceGuards

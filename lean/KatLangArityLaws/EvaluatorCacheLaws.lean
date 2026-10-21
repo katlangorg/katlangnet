@@ -103,6 +103,18 @@ theorem pres_withCtx {α : Type} (c : String) {m : EvalM α} (hm : Preserves R m
   | ok x => exact pres_pure x
   | error e => exact pres_evalError _
 
+/-- META-DIAG-1: a META capture is disciplined when its capture is (refusal naming writes nothing). -/
+theorem pres_captureMeta (name : Ident) {m : EvalM Nat} (hm : Preserves R m) :
+    Preserves R (NeedBinder.captureMeta name m) := by
+  intro s
+  have k := hm s
+  show R s ((NeedBinder.captureMeta name m).runState s).2
+  rw [NeedBinder.captureMeta_runState]
+  revert k
+  rcases m.runState s with ⟨r, t⟩
+  intro k
+  cases r <;> exact k
+
 theorem pres_get_bind {β : Type} (f : EvalState → EvalM β) (h : ∀ st, PresAt R st (f st)) :
     Preserves R (get >>= f) := by
   intro s
@@ -316,6 +328,7 @@ macro "pres_tac_base" : tactic => `(tactic| ((try pres_unfold_rec) <;> repeat' (
   | (with_reducible apply PresAt.bind)
   | ((with_reducible apply PresAt.set); first | pres_frame | pres_rel_close)
   | (with_reducible apply pres_withCtx)
+  | (with_reducible apply pres_captureMeta)
   | (with_reducible apply pres_attempt)
   | (with_reducible apply pres_map)
   | (with_reducible apply pres_bind)
@@ -368,6 +381,7 @@ macro "pres_tac_mid" : tactic => `(tactic| ((try pres_unfold_rec) <;> repeat' (f
   | (with_reducible apply PresAt.bind)
   | ((with_reducible apply PresAt.set); first | pres_frame | pres_rel_close)
   | (with_reducible apply pres_withCtx)
+  | (with_reducible apply pres_captureMeta)
   | (with_reducible apply pres_attempt)
   | (with_reducible apply pres_map)
   | (with_reducible apply pres_bind)
@@ -614,6 +628,7 @@ macro "pres_tac" : tactic => `(tactic| ((try pres_unfold_rec) <;> repeat' (first
   | (with_reducible apply PresAt.bind)
   | ((with_reducible apply PresAt.set); first | pres_frame | pres_rel_close)
   | (with_reducible apply pres_withCtx)
+  | (with_reducible apply pres_captureMeta)
   | (with_reducible apply pres_attempt)
   | (with_reducible apply pres_map)
   | (with_reducible apply pres_bind)

@@ -268,7 +268,7 @@ mutual
       · rfl
     | metaRef name =>
       simp only [oneEvents] at havoid
-      simp only [NeedBinder.bindOne, oneEvents, ← hk.reference, runEval_bind]
+      simp only [NeedBinder.bindOne, oneEvents, ← hk.reference, runEval_bind, runEval_captureMeta]
       rcases h1 : runEval (k₁.reference address) s with ⟨e | adapter, s1⟩
       · simp
       · simp only [h1] at havoid
@@ -808,7 +808,7 @@ mutual
               · exact Or.inr (Or.inr ⟨name, hr, ha⟩)
             · simp at hev
       · intro next s' h a ha
-        simp only [NeedBinder.bindOne, runEval_bind] at h
+        simp only [NeedBinder.bindOne, runEval_bind, runEval_captureMeta] at h
         simp only [oneEvents]
         rcases h1 : runEval (k.reference address) s with ⟨e | adapter, s1⟩
         · simp [h1] at h
@@ -1142,10 +1142,10 @@ mutual
         bindOne_literal_shape k literal address repeated bound false]
       exact ⟨rfl, ModeAgree.refl _, rfl⟩
     | metaRef name =>
-      simp only [NeedBinder.bindOne, oneEvents, runEval_bind]
+      simp only [NeedBinder.bindOne, oneEvents, runEval_bind, runEval_captureMeta]
       rcases h1 : runEval (k.reference address) s with ⟨e | adapter, s1⟩
       · simp only [thenRun_error]
-        exact ⟨by trivial, .raised e, by trivial⟩
+        exact ⟨by trivial, .raised _, by trivial⟩
       · simp only [thenRun_ok]
         obtain ⟨hs, hm⟩ := name_modes k name adapter repeated bound s1
         exact ⟨hs, hm, by trivial⟩
@@ -1320,7 +1320,7 @@ mutual
       exact name_ordinary_is_never_a_non_match k name address repeated bound s
     | literal literal => simp [NeedPattern.literalFree] at hlf
     | metaRef name =>
-      simp only [NeedBinder.bindOne, runEval_bind]
+      simp only [NeedBinder.bindOne, runEval_bind, runEval_captureMeta]
       rcases h1 : runEval (k.reference address) s with ⟨e | adapter, s1⟩
       · simp
       · simp only [thenRun_ok]

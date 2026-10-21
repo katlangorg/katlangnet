@@ -73,9 +73,12 @@ def callableConflict (r : Except Error (Option NeedEnv) × EvalState) : Bool :=
   | .error (.typeMismatch message) => message == "Repeated bind equality requires the same callable identity"
   | _ => false
 
+/-- The binder-level META refusal of the parameter `m` (META-DIAG-1): the canonical refusal inside
+    the frame naming the parameter. -/
 def metaRefused (r : Except Error (Option NeedEnv) × EvalState) : Bool :=
   match r.1 with
-  | .error (.notAnAlgorithm message) => message == "meta: not a supplied call computation"
+  | .error (.withContext context (.notAnAlgorithm message)) =>
+      context == "while binding meta parameter 'm'" && message == "meta: not a supplied call computation"
   | _ => false
 
 def size (r : Except Error (Option NeedEnv) × EvalState) : Nat := r.2.needs.size

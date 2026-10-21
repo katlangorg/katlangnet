@@ -119,6 +119,21 @@ theorem sim_throw {α β : Type} (R : StateRel) (P : Table → α → β → Pro
   intro s1 s2 hR
   exact ⟨t, extends_refl t, by simpa using hR, by simp [ResCorr]⟩
 
+/-- META-DIAG-1: a META capture of corresponding captures corresponds (equal errors stay equal
+    under `NeedPlan.bindingRefusal`). -/
+theorem sim_captureMeta {P : Table → Nat → Nat → Prop} (R : StateRel) (t : Table) (name : Ident)
+    (x y : EvalM Nat) (h : Sim R P t x y) :
+    Sim R P t (NeedBinder.captureMeta name x) (NeedBinder.captureMeta name y) := by
+  intro s1 s2 hR
+  obtain ⟨t', e, r, c⟩ := h s1 s2 hR
+  refine ⟨t', e, ?_⟩
+  simp only [runEval, NeedBinder.captureMeta_runState]
+  simp only [runEval] at r c
+  revert r c
+  rcases x.runState s1 with ⟨e1 | a1, u1⟩ <;> rcases y.runState s2 with ⟨e2 | a2, u2⟩ <;>
+    intro r c <;> simp only [ResCorr] at c ⊢ <;>
+    first | (subst c; exact ⟨r, rfl⟩) | exact ⟨r, c⟩ | exact c.elim
+
 theorem sim_bind {α β γ δ : Type} (R : StateRel) (P : Table → α → β → Prop)
     (Q : Table → γ → δ → Prop) (t : Table) (x : EvalM α) (y : EvalM β)
     (f : α → EvalM γ) (g : β → EvalM δ) (hxy : Sim R P t x y)
@@ -495,7 +510,7 @@ mutual
     | bind name collecting => exact name_sim R k1 k2 hk name a1 a2 repeated b1 b2 family t ha hb
     | metaRef name =>
       simp only [NeedBinder.bindOne]
-      refine sim_bind R Addr OptEnvCorr t _ _ _ _ (hk.reference t a1 a2 ha) ?_
+      refine sim_bind R Addr OptEnvCorr t _ _ _ _ (sim_captureMeta R t name _ _ (hk.reference t a1 a2 ha)) ?_
       intro t1 d1 d2 x1 hd
       exact name_sim R k1 k2 hk name d1 d2 repeated b1 b2 family t1 hd (env_mono x1 hb)
     | literal literal =>

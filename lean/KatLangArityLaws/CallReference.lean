@@ -29,7 +29,10 @@ Every theorem below is about the authoritative definitions. Proved here:
   unequal ones, through any chain of forwarding hops and after any disciplined computation —
   in particular after the original VALUE completed (`reference_identity`, `forwarded_capture`,
   `capture_after`);
-* the binder's META arm is that capability followed by the ordinary name transport; a META
+* the binder's META arm is that capability followed by the ordinary name transport; a refusal at
+  the binder is the canonical `metaRefusal` framed with the bound parameter's name and changes no
+  state (META-DIAG-1: `production_meta_refusal`, `metaBindingRefusal_shape`, and the
+  `bindingRefusal_*` laws: only that refusal is framed); a META
   occurrence never demands or projects its supplied cell (`meta_occurrence_events`), and a head
   WITHOUT a META capture binds identically under every `reference` capability
   (`meta_free_binding_ignores_reference`, production form
@@ -186,13 +189,13 @@ theorem repeated_capture_same_plan (a : Nat) (s : EvalState) (shape : NeedPlan.C
 
 /-! ## The binder's META arm -/
 
-/-- The META arm of the generic core: the `reference` capability, then the ordinary name
-    transport of the adapter. -/
+/-- The META arm of the generic core: the `reference` capability (its refusal framed with the
+    parameter's name, `NeedBinder.captureMeta`), then the ordinary name transport of the adapter. -/
 theorem bindOne_metaRef_shape {m : Type → Type} [Monad m] [MonadExceptOf Error m]
     (k : NeedCapabilities m) (name : Ident) (address : Nat) (repeated : List Ident) (bound : NeedEnv)
     (family : Bool) :
     NeedBinder.bindOne k (.metaRef name) address repeated bound family = (do
-      let adapter ← k.reference address
+      let adapter ← NeedBinder.captureMeta name (k.reference address)
       NeedBinder.bindName k name adapter repeated bound family) := rfl
 
 /-- **A META occurrence demands nothing**: its boundary events are exactly the one reification
@@ -219,8 +222,50 @@ theorem production_meta_binding (channels : NeedChannels) (name : Ident) (addres
         { s with needs := s.needs.push (adapterCell address) }) := by
   have hr' : name ∉ repeated := by simpa using hr
   simp only [bindNeedOne, NeedChannels.capabilities, NeedBinder.bindOne, bind_run,
-    capture_on_plan address s shape h]
+    NeedBinder.captureMeta_runState, capture_on_plan address s shape h]
   simp [NeedBinder.bindName, hr']
+
+/-! ## META-DIAG-1: a binder-level refusal names its parameter -/
+
+/-- The binder-level refusal is the canonical refusal, unchanged, inside the frame naming the
+    parameter: the category (`notAnAlgorithm`) and description stay those of `metaRefusal`. -/
+theorem metaBindingRefusal_shape (name : Ident) :
+    NeedPlan.metaBindingRefusal name
+      = .withContext s!"while binding meta parameter '{name}'" NeedPlan.metaRefusal := rfl
+
+/-- Only the canonical capture refusal is framed: any other `notAnAlgorithm` description —
+    the D-1A `invocationRefusal` in particular — and every other error pass unchanged. -/
+theorem bindingRefusal_other_description (name : Ident) (d : String)
+    (h : d ≠ NeedPlan.metaRefusalDescription) :
+    NeedPlan.bindingRefusal name (.notAnAlgorithm d) = .notAnAlgorithm d := by
+  simp [NeedPlan.bindingRefusal, h]
+
+theorem bindingRefusal_invocationRefusal (name : Ident) :
+    NeedPlan.bindingRefusal name NeedPlan.invocationRefusal = NeedPlan.invocationRefusal := by
+  simp [NeedPlan.bindingRefusal, NeedPlan.invocationRefusal, NeedPlan.metaRefusalDescription]
+
+/-- The R7 incomplete outcome is never framed. -/
+theorem bindingRefusal_incomplete (name : Ident) :
+    NeedPlan.bindingRefusal name .fuelExhausted = .fuelExhausted := rfl
+
+/-- Any error that is not a `notAnAlgorithm` passes unchanged. -/
+theorem bindingRefusal_not_notAnAlgorithm (name : Ident) (e : Error)
+    (h : ∀ d, e ≠ .notAnAlgorithm d) : NeedPlan.bindingRefusal name e = e := by
+  cases e <;> first | rfl | exact absurd rfl (h _)
+
+/-- **The production META refusal names its parameter and changes nothing**: a supplied cell
+    that is no call computation is refused at the binder as `metaBindingRefusal name` — the
+    canonical `metaRefusal` framed with the bound name — with the state unchanged (no adapter
+    allocated, no cell written). Its boundary events are empty (`meta_occurrence_events`: no
+    VALUE or CALLABLE demand). A direct `NeedPlan.reference` keeps the unframed refusal
+    (`capture_refuses`). -/
+theorem production_meta_refusal (channels : NeedChannels) (name : Ident) (address : Nat)
+    (repeated : List Ident) (bound : NeedEnv) (family : Bool) (s : EvalState)
+    (h : NeedPlan.shapeAt? s.needs address = none) :
+    (bindNeedOne channels (.metaRef name) address repeated bound family).runState s =
+      (.error (NeedPlan.metaBindingRefusal name), s) := by
+  simp only [bindNeedOne, NeedChannels.capabilities, NeedBinder.bindOne, bind_run,
+    NeedBinder.captureMeta_runState, capture_refuses address s h, NeedPlan.bindingRefusal_metaRefusal]
 
 /-! ## Conservative extension: META-free heads ignore the reference capability -/
 

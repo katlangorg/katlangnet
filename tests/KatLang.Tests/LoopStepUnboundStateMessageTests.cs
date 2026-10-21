@@ -96,16 +96,19 @@ public class LoopStepUnboundStateMessageTests
         Assert.Equal("err", observation.Kind);
         var error = Assert.Single(observation.Errors);
         var loop = source.Contains("while(", StringComparison.Ordinal) ? "while" : "repeat";
-        Assert.StartsWith($"{KatLangErrorCode.NotAnAlgorithm}: while evaluating call to {loop}: {KatLangError.MetaRefusalMessage}", error, StringComparison.Ordinal);
+        // META-DIAG-1: the refusal names the builtin's declared META parameter, `step`.
+        Assert.StartsWith($"{KatLangErrorCode.NotAnAlgorithm}: while evaluating call to {loop}: while binding meta parameter 'step': {KatLangError.MetaRefusalMessage}", error, StringComparison.Ordinal);
         Assert.Empty(observation.HostCalls);
 
         var lastLine = source.Split('\n').Length;
         foreach (var (route, routeError) in await ErrorsOnEveryRouteAsync(source))
         {
             var inner = Assert.IsAssignableFrom<EvalError>(routeError.Source);
+            EvalError.WithContext? frame = null;
             while (inner is EvalError.WithContext withContext)
-                inner = withContext.Inner;
+                (frame, inner) = (withContext, withContext.Inner);
             Assert.Equal(Evaluator.MetaRefusalDescription, Assert.IsType<EvalError.NotAnAlgorithm>(inner).Description);
+            Assert.Equal(new TextErrorContext("while binding meta parameter 'step'"), frame?.ErrorContext);
             Assert.True(new SourcePosition(lastLine, column) == routeError.Span?.Start, $"{route}: {routeError.Span}");
         }
     }

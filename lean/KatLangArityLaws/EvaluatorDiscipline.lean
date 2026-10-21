@@ -257,6 +257,7 @@ macro "disc_tac_base" : tactic => `(tactic| ((try disc_unfold_rec) <;> repeat' (
       | exact HeapKept.refl _
       | (apply HeapKept.set_bang <;> first | disc_hyp | (exact cellKept_of_same _ _ rfl rfl rfl rfl) | (apply cellKept_of_claim; disc_hyp)))
   | (with_reducible apply Disciplined.withCtx)
+  | (with_reducible apply Disciplined.captureMeta)
   | (with_reducible apply Disciplined.attempt)
   | (with_reducible apply Disciplined.map)
   | (with_reducible apply Disciplined.bind)
@@ -590,6 +591,7 @@ macro "disc_tac" : tactic => `(tactic| ((try disc_unfold_rec) <;> repeat' (first
       | exact HeapKept.refl _
       | (apply HeapKept.set_bang <;> first | disc_hyp | (exact cellKept_of_same _ _ rfl rfl rfl rfl) | (apply cellKept_of_claim; disc_hyp)))
   | (with_reducible apply Disciplined.withCtx)
+  | (with_reducible apply Disciplined.captureMeta)
   | (with_reducible apply Disciplined.attempt)
   | (with_reducible apply Disciplined.map)
   | (with_reducible apply Disciplined.bind)

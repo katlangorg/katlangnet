@@ -517,7 +517,7 @@ public static partial class Evaluator
         {
             if (patterns[0].Meta)
             {
-                var adapter = ReferenceAdapterCell(supply[0], ctx);
+                var adapter = CaptureMeta(onlyName, supply[0], ctx);
                 return adapter.IsError ? adapter.Error : EvalResult<NeedEnv?>.Ok([(onlyName, adapter.Value)]);
             }
             return EvalResult<NeedEnv?>.Ok([(onlyName, patterns[0].Collecting ? CollectorCell(supply.ToArray(), ctx) : supply[0])]);
@@ -569,10 +569,11 @@ public static partial class Evaluator
             var (pattern, cell) = item;
             // A META capture (CallReference S1) is reached in WRITTEN order like every pattern
             // (NEED-04): it reifies its supplied cell into a fresh Ready adapter — demanding
-            // nothing, a non-plan cell refusing — and binds the name to that adapter.
+            // nothing, a non-plan cell refusing (named by the parameter, META-DIAG-1) — and binds
+            // the name to that adapter.
             if (pattern.Meta)
             {
-                var adapter = ReferenceAdapterCell(cell, ctx);
+                var adapter = CaptureMeta(pattern.Name!, cell, ctx);
                 if (adapter.IsError) return adapter.Error;
                 cell = adapter.Value;
             }

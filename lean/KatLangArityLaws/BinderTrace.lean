@@ -200,6 +200,27 @@ theorem runTrace_reference (k : NeedCapabilities EvalM) (address : Nat) (s : Eva
   rcases runEval (k.reference address) s with ⟨r, s'⟩
   cases r <;> simp
 
+/-- META-DIAG-1: a META capture (`NeedBinder.captureMeta`) in the trace interpretation keeps its
+    capture's outcome, state and trace, the error mapped through `NeedPlan.bindingRefusal`. -/
+@[simp] theorem runTrace_captureMeta (name : Ident) (x : TraceM Nat) (t : TraceState) :
+    runTrace (NeedBinder.captureMeta name x) t
+      = match runTrace x t with
+        | (.ok a, t') => (.ok a, t')
+        | (.error e, t') => (.error (NeedPlan.bindingRefusal name e), t') := by
+  simp only [runTrace, NeedBinder.captureMeta, tryCatchThe, throwThe, MonadExceptOf.tryCatch,
+    MonadExceptOf.throw, ExceptT.tryCatch, ExceptT.mk, bind, StateT.bind]
+  rcases x t with ⟨r, t'⟩
+  cases r <;> rfl
+
+/-- META-DIAG-1: the production META capture maps the capture's error through
+    `NeedPlan.bindingRefusal`, keeping its outcome and state otherwise. -/
+@[simp] theorem runEval_captureMeta (name : Ident) (y : EvalM Nat) (s : EvalState) :
+    runEval (NeedBinder.captureMeta name y) s
+      = match runEval y s with
+        | (.ok a, s') => (.ok a, s')
+        | (.error e, s') => (.error (NeedPlan.bindingRefusal name e), s') :=
+  NeedBinder.captureMeta_runState name y s
+
 /-! ## The event schedule
 
 `TracesAs x y events` says that the traced computation `x` is an exact, protected observation
@@ -450,7 +471,8 @@ mutual
       simp only [NeedBinder.bindOne, oneEvents]
       rcases h1 : runEval (k.value address) s with ⟨_ | ⟨value, count⟩, s1⟩ <;> simp [h1]
     | metaRef name =>
-      simp only [NeedBinder.bindOne, oneEvents, runTrace_bind, runEval_bind, runTrace_reference]
+      simp only [NeedBinder.bindOne, oneEvents, runTrace_bind, runEval_bind, runTrace_captureMeta,
+        runEval_captureMeta, runTrace_reference]
       rcases h1 : runEval (k.reference address) s with ⟨_ | adapter, s1⟩
       · simp
       · simp only [thenRun_ok]

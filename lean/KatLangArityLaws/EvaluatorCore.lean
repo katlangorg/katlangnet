@@ -392,6 +392,17 @@ structure CapsMono (caps : γ → NeedCapabilities EvalM) : Prop where
     monotone (fun x => NeedBinder.sourceAddress (allocate x) source) := by
   unfold NeedBinder.sourceAddress; mono_cb_tac
 
+/-- META-DIAG-1: the META capture combinator is monotone in its capture (its handler is fixed). -/
+@[partial_fixpoint_monotone] theorem monotone_captureMeta (name : Ident) (capture : γ → EvalM Nat)
+    (h : monotone capture) : monotone (fun x => NeedBinder.captureMeta name (capture x)) := by
+  intro a b hab s
+  show EvalM.IsIncompleteAt _ s ∨ _
+  unfold EvalM.IsIncompleteAt
+  rw [NeedBinder.captureMeta_runState, NeedBinder.captureMeta_runState]
+  rcases h a b hab s with hs | hs
+  · left; unfold EvalM.IsIncompleteAt at hs; rw [hs]; rfl
+  · right; rw [hs]
+
 theorem monotone_bindName (caps : γ → NeedCapabilities EvalM) (hc : CapsMono caps)
     (name : Ident) (address : Nat) (repeated : List Ident) (bound : NeedEnv) (family : Bool) :
     monotone (fun x => NeedBinder.bindName (caps x) name address repeated bound family) := by

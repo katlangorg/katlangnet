@@ -6280,8 +6280,35 @@ structure CallReference where
   plan : Nat
   deriving BEq, DecidableEq, Repr, Inhabited
 
+/-- The description of META's capture refusal. C#: `Evaluator.MetaRefusalDescription`. -/
+def metaRefusalDescription : String := "meta: not a supplied call computation"
+
 /-- META's refusal of anything that is not a supplied call computation. -/
-def metaRefusal : Error := Error.notAnAlgorithm "meta: not a supplied call computation"
+def metaRefusal : Error := Error.notAnAlgorithm metaRefusalDescription
+
+/-- META-DIAG-1: the binder frame naming the META parameter whose capture refused.
+    C#: `Evaluator.MetaParameterContext`. -/
+def metaParameterContext (name : Ident) : String := s!"while binding meta parameter '{name}'"
+
+/-- META-DIAG-1: the binder-level capture refusal of the META parameter `name` — the canonical
+    `metaRefusal`, unchanged, inside the frame naming the parameter. -/
+def metaBindingRefusal (name : Ident) : Error := .withContext (metaParameterContext name) metaRefusal
+
+/-- META-DIAG-1: the binder's report of a failed capture of the META parameter `name`. ONLY the
+    canonical capture refusal (`metaRefusal`) is framed with the parameter's name, the refusal
+    itself kept as the inner error; every other error — the incomplete outcome, a later
+    `invocationRefusal`, any other failure — passes unchanged. A direct `reify`/`reference` has
+    no binding site and keeps the unframed refusal. C#: `Evaluator.AnnotateMetaBindingRefusal`. -/
+def bindingRefusal (name : Ident) : Error → Error
+  | .notAnAlgorithm description =>
+      if description = metaRefusalDescription then metaBindingRefusal name
+      else .notAnAlgorithm description
+  | error => error
+
+/-- META-DIAG-1: the canonical refusal, at a binding site, is exactly the named binder frame over it. -/
+@[simp] theorem bindingRefusal_metaRefusal (name : Ident) :
+    bindingRefusal name metaRefusal = metaBindingRefusal name := by
+  simp [bindingRefusal, metaRefusal]
 
 /-- META-S3-4 (D-1A): the refusal of a route-dependent reference operation (invocation, callable
     projection, argument-supply observation, loop setup) over a captured invocation whose route is a
@@ -6454,6 +6481,12 @@ namespace NeedBinder
 
 variable {m : Type → Type} [Monad m] [MonadExceptOf Error m]
 
+/-- META-DIAG-1: the META capture of the parameter `name`, its refusal reported through
+    `NeedPlan.bindingRefusal` (the canonical refusal framed with the name; any other error
+    re-raised unchanged). Success is the capture's own outcome. -/
+def captureMeta (name : Ident) (capture : m Nat) : m Nat :=
+  tryCatchThe Error capture (fun error => throwThe Error (NeedPlan.bindingRefusal name error))
+
 /-- The address one pattern binds: a supplied cell is TRANSPORTED (no new cell, nothing
     evaluated), a collecting binding gets ONE fresh suspended collector cell over its slice.
     Production: `needSourceAddress`. -/
@@ -6513,9 +6546,10 @@ mutual
     | .bind name _ => bindName capabilities name address repeated bound family
     -- A META capture (CallReference S1) is reached in WRITTEN order like every pattern
     -- (NEED-04): it reifies the supplied cell into a fresh Ready adapter — demanding
-    -- nothing, a non-plan cell refusing — and binds the name to that adapter.
+    -- nothing, a non-plan cell refusing — and binds the name to that adapter. A refusal names
+    -- the parameter (META-DIAG-1, `NeedPlan.bindingRefusal`); any other error passes unchanged.
     | .metaRef name => do
-        let adapter <- capabilities.reference address
+        let adapter <- captureMeta name (capabilities.reference address)
         bindName capabilities name adapter repeated bound family
     | .literal literal => do
         let (value, _) <- capabilities.value address
@@ -7238,6 +7272,24 @@ theorem bind_runState {α β : Type} (m : EvalM α) (f : α → EvalM β) (s : E
   cases r <;> rfl
 
 end EvalM
+
+/-- META-DIAG-1 at `EvalM`: a META capture keeps the capture's outcome and state, its error
+    mapped through `NeedPlan.bindingRefusal` (which leaves the incomplete outcome, the one error
+    `EvalM`'s handler does not observe, unchanged). -/
+theorem NeedBinder.captureMeta_runState (name : Ident) (capture : EvalM Nat) (s : EvalState) :
+    (NeedBinder.captureMeta name capture).runState s =
+      (match capture.runState s with
+       | (.ok a, next) => (.ok a, next)
+       | (.error e, next) => (.error (NeedPlan.bindingRefusal name e), next)) := by
+  unfold NeedBinder.captureMeta tryCatchThe
+  rcases h : capture.runState s with ⟨_ | a, next⟩
+  · rename_i err
+    by_cases hi : (Except.error err : Except Error Unit).isIncomplete = true
+    · cases Except.isIncomplete_eq_true hi
+      simp [MonadExceptOf.tryCatch, h, NeedPlan.bindingRefusal, Except.isIncomplete]
+    · simp [MonadExceptOf.tryCatch, h, hi, throwThe, MonadExceptOf.throw]
+      rfl
+  · simp [MonadExceptOf.tryCatch, h]
 
 instance instPartialOrderEvalM {α : Type} : Lean.Order.PartialOrder (EvalM α) where
   rel := EvalM.Approx

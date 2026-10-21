@@ -538,6 +538,33 @@ public static partial class Evaluator
     }
 
     /// <summary>
+    /// The binder's META capture of the parameter <paramref name="name"/> (META-DIAG-1):
+    /// <see cref="ReferenceAdapterCell"/>, its canonical refusal (<see cref="MetaRefusalDescription"/>)
+    /// framed with the parameter's name. Every other outcome — the adapter, a terminal resource failure,
+    /// a thrown cancellation or J7 invariant violation — is the capture's own, unchanged. Lean:
+    /// <c>NeedBinder.captureMeta</c>.
+    /// </summary>
+    private static EvalResult<NeedCell> CaptureMeta(string name, NeedCell cell, EvalCtx ctx)
+    {
+        var adapter = ReferenceAdapterCell(cell, ctx);
+        return adapter.IsError ? AnnotateMetaBindingRefusal(name, adapter.Error) : adapter;
+    }
+
+    /// <summary>
+    /// META-DIAG-1: the binder's report of a failed capture of the META parameter <paramref name="name"/>.
+    /// Only the canonical capture refusal gains the frame naming the parameter, positioned where the
+    /// refusal is (the supplied argument); any other error — the D-1A invocation refusal included —
+    /// passes unchanged. Lean: <c>NeedPlan.bindingRefusal</c>.
+    /// </summary>
+    internal static EvalError AnnotateMetaBindingRefusal(string name, EvalError error)
+        => error is EvalError.NotAnAlgorithm { Description: MetaRefusalDescription }
+            ? new EvalError.WithContext(MetaParameterContext(name), error) { Span = error.Span }
+            : error;
+
+    /// <summary>The binder frame of a META parameter's refusal. Lean: <c>NeedPlan.metaParameterContext</c>.</summary>
+    internal static string MetaParameterContext(string name) => $"while binding meta parameter '{name}'";
+
+    /// <summary>
     /// THE ONE RUN-OWNERSHIP CHECK of a call reference (CallReference S1), shared by every operation that
     /// decodes a reference — <c>R.Invoke()</c> now, and any later projection of the same plan. A reference
     /// belongs to the run that captured it: one of another run is refused (its cells, caller context and

@@ -186,7 +186,7 @@ mutual
           some (nameStep (M.push (adapterObs address)).obs repeated family bound name M.size,
             M.push (adapterObs address), [(name, M.size)])
         else none
-      else some (.error NeedPlan.metaRefusal, M, [])
+      else some (.error (NeedPlan.metaBindingRefusal name), M, [])
     | .literal literal, address, _, bound, _ =>
       if M.observed address then
         some (.ok (if (matchPattern literal (M.obs address).1.1).isSome then some bound else none), M, [])
@@ -370,7 +370,7 @@ mutual
       · cases hw
     | metaRef name =>
       simp only [walkOne] at hw
-      simp only [NeedBinder.bindOne, runEval_bind]
+      simp only [NeedBinder.bindOne, runEval_bind, runEval_captureMeta]
       cases hp : M.plan address
       · simp only [hp, Bool.false_eq_true, ↓reduceIte, Option.some.injEq] at hw
         subst hw
