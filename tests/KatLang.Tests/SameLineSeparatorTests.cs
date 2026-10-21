@@ -815,7 +815,7 @@ public class SameLineSeparatorTests
             Assert.Equal(kind, sampleTokens[0].Kind);
             Assert.Equal(startsPattern, Assert.IsType<bool>(classify.Invoke(null, [kind])));
             var atomDiagnostics = new DiagnosticBag();
-            var parser = constructor.Invoke([sampleTokens, atomDiagnostics, Array.Empty<SourcePosition>(), null]);
+            var parser = constructor.Invoke([sampleTokens, atomDiagnostics, Array.Empty<SourcePosition>(), null, CancellationToken.None, CancellationToken.None]);
             Assert.IsAssignableFrom<Pattern>(parseAtom.Invoke(parser, null));
             // Comments are transparent to Current, so a comment-only stream
             // reaches the ordinary EOF recovery arm. A bad token is skipped the same
@@ -847,7 +847,7 @@ public class SameLineSeparatorTests
                 ? Token.CreateInterpolatedStringText("t", 0, 1, 1, 1)
                 : Token.Create(kind, 0, 1, 1, 1);
             var atomDiagnostics = new DiagnosticBag();
-            var parser = constructor.Invoke([new[] { token, Token.EndOfFile(1, 1, 2) }, atomDiagnostics, Array.Empty<SourcePosition>(), null]);
+            var parser = constructor.Invoke([new[] { token, Token.EndOfFile(1, 1, 2) }, atomDiagnostics, Array.Empty<SourcePosition>(), null, CancellationToken.None, CancellationToken.None]);
             Assert.IsAssignableFrom<Pattern>(parseAtom.Invoke(parser, null));
             Assert.Contains(atomDiagnostics, d => d.Message ==
                 $"Unexpected {Parser.DescribeTokenKind(kind, includeArticle: false)} in a pattern.");

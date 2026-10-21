@@ -1258,8 +1258,8 @@ public class Decimal128NumericsTests
     // Source syntax cannot spell a NaN literal, but the public AST can build
     // Pattern.LitInt(NaN); matching and match-equivalence must use the same
     // structural semantics as == / distinct / contains, or a NaN clause could
-    // never match anything — including itself — and hashed clause-family
-    // comparers would see an irreflexive equality.
+    // never match anything — including itself — and the clause-family duplicate
+    // index would see an irreflexive equality.
 
     private static Algorithm.User ClauseBody(Decimal128 value)
         => new(Parent: null, ParameterPatterns: [], Opens: [], Properties: [], Output: [new Expr.Num(value)]);
@@ -1303,14 +1303,17 @@ public class Decimal128NumericsTests
     {
         Assert.True(new Pattern.LitInt(Decimal128.NaN).IsMatchEquivalent(new Pattern.LitInt(Decimal128.NaN)));
 
-        var comparer = Pattern.CreateMatchEquivalenceComparer(null);
-        Assert.True(comparer.Equals(new Pattern.LitInt(Decimal128.NaN), new Pattern.LitInt(Decimal128.NaN)));
+        // The duplicate index's canonical key is reflexive for NaN too, so its
+        // classification agrees with IsMatchEquivalent.
         Assert.Equal(
-            comparer.GetHashCode(new Pattern.LitInt(Decimal128.NaN)),
-            comparer.GetHashCode(new Pattern.LitInt(Decimal128.NaN)));
+            PatternMatchEquivalenceIndex.CanonicalKey(new Pattern.LitInt(Decimal128.NaN)),
+            PatternMatchEquivalenceIndex.CanonicalKey(new Pattern.LitInt(Decimal128.NaN)));
+        var index = new PatternMatchEquivalenceIndex();
+        Assert.True(index.TryAdd(new Pattern.LitInt(Decimal128.NaN)));
+        Assert.False(index.TryAdd(new Pattern.LitInt(Decimal128.NaN)));
 
         // Two NaN-literal clauses are match-equivalent duplicates, exactly like
-        // two `F(0)` clauses — the reflexivity the comparer machinery assumes.
+        // two `F(0)` clauses — the reflexivity the duplicate index assumes.
         var duplicated = new Algorithm.Conditional(
             Parent: null,
             Opens: [],
@@ -1331,12 +1334,19 @@ public class Decimal128NumericsTests
     [Fact]
     public void LitIntPatterns_IgnoreQuantumAndZeroSign_LikeStructuralEquality()
     {
-        var comparer = Pattern.CreateMatchEquivalenceComparer(null);
-        Assert.True(comparer.Equals(new Pattern.LitInt(N("1.5")), new Pattern.LitInt(N("1.50"))));
+        Assert.True(new Pattern.LitInt(N("1.5")).IsMatchEquivalent(new Pattern.LitInt(N("1.50"))));
         Assert.Equal(
-            comparer.GetHashCode(new Pattern.LitInt(N("1.5"))),
-            comparer.GetHashCode(new Pattern.LitInt(N("1.50"))));
-        Assert.True(comparer.Equals(new Pattern.LitInt(Decimal128.NegativeZero), new Pattern.LitInt(Decimal128.Zero)));
+            PatternMatchEquivalenceIndex.CanonicalKey(new Pattern.LitInt(N("1.5"))),
+            PatternMatchEquivalenceIndex.CanonicalKey(new Pattern.LitInt(N("1.50"))));
+        Assert.True(new Pattern.LitInt(Decimal128.NegativeZero).IsMatchEquivalent(new Pattern.LitInt(Decimal128.Zero)));
+        Assert.Equal(
+            PatternMatchEquivalenceIndex.CanonicalKey(new Pattern.LitInt(Decimal128.NegativeZero)),
+            PatternMatchEquivalenceIndex.CanonicalKey(new Pattern.LitInt(Decimal128.Zero)));
+        var index = new PatternMatchEquivalenceIndex();
+        Assert.True(index.TryAdd(new Pattern.LitInt(N("1.5"))));
+        Assert.False(index.TryAdd(new Pattern.LitInt(N("1.50"))));
+        Assert.True(index.TryAdd(new Pattern.LitInt(Decimal128.Zero)));
+        Assert.False(index.TryAdd(new Pattern.LitInt(Decimal128.NegativeZero)));
 
         // Runtime matching agrees: a -0 literal clause matches a +0 argument.
         var family = new Algorithm.Conditional(

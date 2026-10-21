@@ -28,10 +28,17 @@ internal static class FrontEndPipeline
     /// </summary>
     /// <exception cref="InvalidOperationException">
     /// <see cref="RunOptions.DownloadCode"/> is configured; use the asynchronous pipeline
-    /// (<see cref="ProcessAsync"/> via <see cref="KatLangEngine.RunAsync"/> or
+    /// (<see cref="ProcessAsync(string, RunOptions?)"/> via <see cref="KatLangEngine.RunAsync"/> or
     /// <see cref="Parser.ParseAsync"/>).
     /// </exception>
     internal static FrontEndResult Process(string source, RunOptions? options)
+        => Process(source, options, comparisonObservations: null);
+
+    /// <summary>
+    /// <see cref="Process(string, RunOptions?)"/> with a passive clause-family duplicate-detection
+    /// observer (null in production; see <see cref="PatternComparisonObservations"/>). Test entry.
+    /// </summary>
+    internal static FrontEndResult Process(string source, RunOptions? options, PatternComparisonObservations? comparisonObservations)
     {
         // Validation only: no loader exists on the synchronous path, but a nonsensical
         // allow-list fails loudly at every options boundary, not just the loading one.
@@ -46,8 +53,15 @@ internal static class FrontEndPipeline
             return rejected;
 
         // The operation's ONE bounded diagnostic list: the parse opens it and every later
-        // stage reports into it (see DiagnosticBag).
-        var syntaxResult = Parser.ParseSyntax(source, budget.CreateDiagnosticBag());
+        // stage reports into it (see DiagnosticBag). The parse observes the configured token
+        // inside clause-family duplicate detection (SEC-03).
+        var syntaxResult = Parser.ParseSyntax(
+            source,
+            initialNestingDebt: 0,
+            budget.CreateDiagnosticBag(),
+            comparisonObservations,
+            cancellationToken,
+            CancellationToken.None);
         cancellationToken.ThrowIfCancellationRequested();
 
         return ProcessWithoutModuleElaboration(syntaxResult, options?.HostOperations, cancellationToken);
@@ -62,7 +76,18 @@ internal static class FrontEndPipeline
     /// synchronously) the returned task completes synchronously on the calling thread —
     /// no work is scheduled elsewhere and nothing yields artificially.
     /// </summary>
-    internal static async ValueTask<FrontEndResult> ProcessAsync(string source, RunOptions? options)
+    internal static ValueTask<FrontEndResult> ProcessAsync(string source, RunOptions? options)
+        => ProcessAsync(source, options, comparisonObservations: null);
+
+    /// <summary>
+    /// <see cref="ProcessAsync(string, RunOptions?)"/> with a passive clause-family
+    /// duplicate-detection observer shared by the main parse and every module parse (null in
+    /// production; see <see cref="PatternComparisonObservations"/>). Test entry.
+    /// </summary>
+    internal static async ValueTask<FrontEndResult> ProcessAsync(
+        string source,
+        RunOptions? options,
+        PatternComparisonObservations? comparisonObservations)
     {
         // MIRROR OF Process(string, RunOptions?) — keep in lock-step; only module
         // elaboration is awaited.
@@ -76,8 +101,15 @@ internal static class FrontEndPipeline
             return rejected;
 
         // The operation's ONE bounded diagnostic list: the parse, the module loader (every
-        // module and nested module), and every elaboration pass report into it.
-        var syntaxResult = Parser.ParseSyntax(source, budget.CreateDiagnosticBag());
+        // module and nested module), and every elaboration pass report into it. The parse
+        // observes the configured token inside clause-family duplicate detection (SEC-03).
+        var syntaxResult = Parser.ParseSyntax(
+            source,
+            initialNestingDebt: 0,
+            budget.CreateDiagnosticBag(),
+            comparisonObservations,
+            cancellationToken,
+            CancellationToken.None);
         cancellationToken.ThrowIfCancellationRequested();
 
         if (options?.DownloadCode is not null)
@@ -87,6 +119,7 @@ internal static class FrontEndPipeline
                 allowedHosts,
                 budget,
                 options.HostOperations,
+                comparisonObservations,
                 cancellationToken).ConfigureAwait(false);
 
         return ProcessWithoutModuleElaboration(syntaxResult, options?.HostOperations, cancellationToken);
@@ -209,6 +242,7 @@ internal static class FrontEndPipeline
         IEnumerable<string>? allowedHosts,
         SourceProcessingBudget budget,
         HostOperations? hostOperations,
+        PatternComparisonObservations? comparisonObservations,
         CancellationToken cancellationToken)
     {
         var diagnostics = syntaxResult.Diagnostics;
@@ -218,7 +252,10 @@ internal static class FrontEndPipeline
             downloadCode,
             allowedHosts,
             budget,
-            cancellationToken);
+            cancellationToken)
+        {
+            ComparisonObservations = comparisonObservations,
+        };
         var loadElaboratedRoot = await loader.ElaborateAsync(syntaxResult.SyntaxRoot).ConfigureAwait(false);
         cancellationToken.ThrowIfCancellationRequested();
 

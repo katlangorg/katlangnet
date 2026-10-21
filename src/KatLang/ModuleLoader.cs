@@ -204,6 +204,12 @@ internal sealed partial class ModuleLoader
     /// </summary>
     internal FrontEndTraversalObservations? TraversalObservations { get; set; }
 
+    /// <summary>
+    /// Passive test-only clause-family duplicate-detection observer for every module parse this
+    /// loader performs (see <see cref="PatternComparisonObservations"/>); null in production.
+    /// </summary>
+    internal PatternComparisonObservations? ComparisonObservations { get; set; }
+
     // Run-scoped host-runtime budget: import depth, distinct-module count, per-module and aggregate
     // source length. Its immutable SourceProcessingLimits carry the effective ceilings; the mutable
     // counters are private to this run. The per-module source ceiling here (EffectiveMaxSourceLength)
@@ -1888,7 +1894,16 @@ internal sealed partial class ModuleLoader
             // below, never spliced into this document's list, so they go to a bag of their own —
             // of the run's capacity, so a malformed module never holds more than one list's
             // worth while it is classified (classification reads reported codes, not stored ones).
-            var syntaxResult = Parser.ParseSyntax(source, parseStackDebt, _budget.CreateDiagnosticBag());
+            // Clause-family duplicate detection inside this parse observes the configured
+            // source-processing token first, then the active (materialization-linked) token, with
+            // the same identity rule as ThrowIfCancellationRequested (SEC-03).
+            var syntaxResult = Parser.ParseSyntax(
+                source,
+                parseStackDebt,
+                _budget.CreateDiagnosticBag(),
+                ComparisonObservations,
+                _sourceProcessingCancellationToken,
+                _cancellationToken);
 
             if (syntaxResult.HasErrors)
             {

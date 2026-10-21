@@ -71,8 +71,9 @@ public sealed record SourceProcessingLimits
     /// <para>Checked before tokenization, so an oversized submission never allocates tokens or
     /// nodes. Calibrated by the process-isolated source probes (<c>fuzz/KatLang.ParserFuzz</c>,
     /// <c>source-probe</c>): measured token and ordinary node counts scale linearly once the
-    /// frontend O(P^2) sibling-map passes, the wide-deconstruction elaboration, and the
-    /// conditional clause-family duplicate check were made linear. A maximal 2 MiB source of dense
+    /// frontend O(P^2) sibling-map passes and the wide-deconstruction elaboration were made linear
+    /// and conditional clause-family duplicate checks bounded by ordered canonical keys and binder
+    /// maps, independently of any hash (SEC-03; see PatternMatchEquivalenceIndex). A maximal 2 MiB source of dense
     /// declarations costs roughly 600-900 MB of peak working set. The value matches
     /// the pre-existing per-module download ceiling, so the main program and imported modules
     /// share one consistent bound. Ordinary programs are orders of magnitude smaller (the whole

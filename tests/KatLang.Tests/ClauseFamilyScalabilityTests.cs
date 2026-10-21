@@ -11,17 +11,20 @@ namespace KatLang.Tests;
 /// binder positions must agree). That check was an all-pairs scan: inserting the k-th clause compared
 /// it against all k-1 earlier clauses, so a family of C clauses did O(C^2) exact comparisons both at
 /// parse time (the insert scan) and at evaluation time (<see cref="Algorithm.Conditional.HasDuplicateBranchPatterns"/>).
-/// The correction indexes patterns in a hashed set whose equality IS <c>IsMatchEquivalent</c> and whose
-/// hash is a deterministic structural fingerprint consistent with it, making both checks O(C) while
+/// Both checks now go through <see cref="PatternMatchEquivalenceIndex"/>: exact canonical keys (equal
+/// exactly when the patterns are match-equivalent) in a balanced ordered set, O(S log C) for C literal
+/// clauses of total key size S; binder numbering adds O(T log(B + 1)) for T name units and at most B
+/// names/head (SEC-03 replaced a hashed set whose deterministic fingerprint
+/// let colliding literals force all-pairs work; see <see cref="ClauseFamilyCollisionSecurityTests"/>),
 /// preserving branch order, the duplicate diagnostics, and their order/spans.
 ///
 /// <para>These tests pin (a) the equivalence SEMANTICS across the pattern kinds it distinguishes,
-/// (b) the diagnostics and their order, and (c) the linear growth of the duplicate-detection work.
-/// The comparison count is measured through a passive OPERATION-SCOPED
-/// <see cref="PatternComparisonObservations"/> passed to the indexed comparer for one parse (no static
-/// state, no reset), proving the indexed lookup does O(C) exact comparisons. A separate allocation-ratio
-/// guard is design-independent and fails under the old all-pairs implementation even though that
-/// implementation would bypass the observed comparer entirely.</para>
+/// (b) the diagnostics and their order, and (c) the near-linear growth of the duplicate-detection work.
+/// The work is measured through a passive OPERATION-SCOPED <see cref="PatternComparisonObservations"/>
+/// passed to the family indexes of one parse (no static state, no reset): traversal, key writing/copying,
+/// binder names and both indexes' comparison units. A separate allocation-ratio guard is
+/// design-independent and fails under the old all-pairs implementation even though that implementation
+/// would bypass the observed index entirely.</para>
 /// </summary>
 public class ClauseFamilyScalabilityTests
 {
@@ -165,49 +168,45 @@ public class ClauseFamilyScalabilityTests
             e => e.Message.Contains("Duplicate branch", StringComparison.Ordinal));
     }
 
-    // ───────────────────────── scaling regression: exact-comparison work is linear ─────────────
+    // ───────────────────────── scaling regression: index work is O(S log N) ─────────────
 
     [Fact]
-    public void DistinctClauseFamily_ExactComparisonWork_IsLinearNotQuadratic()
+    public void DistinctClauseFamily_IndexWork_IsNearLinearNotQuadratic()
     {
-        // A family of N DISTINCT literal clauses has no duplicates, so the indexed set resolves every
-        // insertion by hash with at most a rare structural-collision comparison: O(N) exact
-        // comparisons total. This measures the indexed comparer directly through a fresh operation-scoped
-        // observer (no static state, no reset). We assert a generous linear bound: for N = 3000 the
-        // indexed lookup does ~0 exact comparisons, far below 4*N = 12000, while an all-pairs scan
-        // routed through this comparer would do ~4.5 million. (Allocation-ratio guard below catches an
-        // all-pairs reversion that bypasses the comparer entirely.)
+        // A family of N DISTINCT literal clauses has no duplicates; every insertion builds one short key
+        // and does O(log N) ordinal comparisons each bounded by that key's length. Assert the claimed
+        // O(S log N) bound with a generous constant: an all-pairs scan would examine ~N^2/2 keys.
         const int n = 3000;
-        var comparisons = MeasureComparisons(n);
+        var observations = MeasureIndexWork(n);
+        var log2N = Math.Log2(n);
 
+        Assert.Equal(n, observations.CanonicalKeyCount);
         Assert.True(
-            comparisons <= 4L * n,
-            $"clause-family duplicate detection did {comparisons} exact IsMatchEquivalent comparisons for " +
-            $"{n} distinct clauses (expected O(N) <= {4L * n}); an all-pairs scan would do ~{(long)n * (n - 1) / 2}.");
+            observations.TotalIndexWork <= 2.0 * observations.CanonicalKeyUnits * (log2N + 2),
+            $"clause-family duplicate detection did {observations.TotalIndexWork} work units for {n} distinct clauses " +
+            $"of total key size {observations.CanonicalKeyUnits} (expected O(S log N)); " +
+            $"{observations.KeyComparisonCount} key comparisons, an all-pairs scan would do ~{(long)n * (n - 1) / 2}.");
+        Assert.True(observations.KeyComparisonCount <= (long)(2 * n * (log2N + 2)), $"{observations.KeyComparisonCount} key comparisons");
     }
 
     [Fact]
-    public void ExactComparisonWork_GrowsLinearlyWhenClauseCountDoubles()
+    public void IndexWork_GrowsNearLinearlyWhenClauseCountDoubles()
     {
-        // Growth form: doubling the clause count must not roughly quadruple the exact-comparison work.
-        // Both counts are near zero for distinct clauses, so guard the absolute linear bound rather than
-        // a brittle ratio of small numbers; an all-pairs scan through this comparer blows past it.
-        var atN = MeasureComparisons(1500);
-        var at2N = MeasureComparisons(3000);
+        // Growth form: doubling the clause count must not roughly quadruple the index work. O(N log N)
+        // gives ~2.2x here; an all-pairs scan gives ~4x.
+        var atN = MeasureIndexWork(1500).TotalIndexWork;
+        var at2N = MeasureIndexWork(3000).TotalIndexWork;
 
-        Assert.True(atN <= 3L * 1500, $"comparisons at N=1500 were {atN}");
-        Assert.True(at2N <= 3L * 3000, $"comparisons at 2N=3000 were {at2N}");
+        var ratio = (double)at2N / atN;
+        Assert.True(ratio < 2.6, $"index work grew {ratio:F2}x when the clause count doubled (N={atN}, 2N={at2N}).");
     }
 
-    private static long MeasureComparisons(int n)
+    private static PatternComparisonObservations MeasureIndexWork(int n)
     {
-        var source = DistinctFamily(n);
-        _ = Parser.ParseSyntax(source, new PatternComparisonObservations()); // JIT the observed path first
-
         // A fresh observer belongs to this one parse; nothing crosses parses or threads.
         var observations = new PatternComparisonObservations();
-        _ = Parser.ParseSyntax(source, observations);
-        return observations.MatchEquivalenceComparisonCount;
+        _ = Parser.ParseSyntax(DistinctFamily(n), observations);
+        return observations;
     }
 
     [Fact]
@@ -217,7 +216,8 @@ public class ClauseFamilyScalabilityTests
         // of where comparisons are counted. Parse allocation for 2N distinct clauses must grow only a
         // small linear factor over N. The old all-pairs duplicate scan allocated two dictionaries per
         // exact comparison and did ~C^2/2 comparisons, so its parse allocation was O(C^2) and doubling C
-        // roughly quadrupled it (~4x); the indexed hashed lookup is ~2x. Thread-local allocation is
+        // roughly quadrupled it (~4x); the ordered key index allocates one key and one tree node per
+        // distinct clause, ~2x. Thread-local allocation is
         // measured (parallel tests never pollute it) and only the GROWTH RATIO is asserted, never elapsed
         // time, so the guard is machine-independent yet fails under the quadratic implementation.
         _ = Parser.ParseSyntax(DistinctFamily(256)); // warm
@@ -243,22 +243,25 @@ public class ClauseFamilyScalabilityTests
     }
 
     [Fact]
-    public void ConcurrentParses_ObserveIndependentComparisonCounts()
+    public void ConcurrentParses_ObserveIndependentIndexWork()
     {
-        // Each parse owns its own PatternComparisonObservations, passed explicitly to the comparer, so
+        // Each parse owns its own PatternComparisonObservations, passed explicitly to its indexes, so
         // concurrent parses never contend or leak — the exact failure mode a static/ambient counter
-        // risks. Every parallel parse must observe the SAME small linear count for the same source.
+        // risks. The index is deterministic, so every parallel parse must observe EXACTLY the work a
+        // sequential parse of the same source observes.
         var source = DistinctFamily(500);
+        var sequential = new PatternComparisonObservations();
+        _ = Parser.ParseSyntax(source, sequential);
         var counts = new long[32];
 
         Parallel.For(0, counts.Length, i =>
         {
             var observations = new PatternComparisonObservations();
             _ = Parser.ParseSyntax(source, observations);
-            counts[i] = observations.MatchEquivalenceComparisonCount;
+            counts[i] = observations.TotalIndexWork;
         });
 
-        Assert.All(counts, count => Assert.True(count <= 3L * 500, $"a concurrent parse observed {count} comparisons"));
+        Assert.All(counts, count => Assert.Equal(sequential.TotalIndexWork, count));
     }
 
     private static string DistinctFamily(int n)

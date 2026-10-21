@@ -236,9 +236,11 @@ and timing/allocation calibration across 104 rows. In this run the observed rati
 1.05 tokens, 1.568 nodes, and 1.02 diagnostics per code unit; these are MEASURED samples,
 not universal proof bounds. `frontendNodes = parserNodes` across the included shapes after the
 sibling-map cloning and declaration duplicate-scan fixes. The formerly quadratic per-construct
-paths were subsequently made linear too: the wide-deconstruction elaboration, and then the
+paths were subsequently bounded too: linear wide-deconstruction elaboration, and then the
 conditional clause-family duplicate check (`many_clauses`: hashed match-equivalence lookup
-replacing the all-pairs scan) plus the evaluate-all deconstruction bind (`eval_all_deconstruct`:
+replacing the all-pairs scan; since SEC-03 ordered canonical keys and binder maps, independent of
+hash collisions: O(S log(N + 1) + T log(B + 1)) for N clauses, S key units, T binder-name units and
+at most B names/head) plus the evaluate-all deconstruction bind (`eval_all_deconstruct`:
 one shared run-scoped bind per group). The import loader overflowed the host stack at ~562 transitive levels on the
 measured Windows configuration — calibration for the 2 MiB per-source, 64 import-depth, 8 MiB
 aggregate, and 256 module-count ceilings, not a cross-platform stack measurement. With those

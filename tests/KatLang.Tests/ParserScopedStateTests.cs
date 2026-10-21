@@ -25,7 +25,7 @@ public class ParserScopedStateTests
     // the public parse result deliberately discards the parser instance on those paths.
     private static Parser NewParser()
         => (Parser)typeof(Parser).GetConstructors(BindingFlags.NonPublic | BindingFlags.Instance).Single()
-            .Invoke([Lexer.Tokenize("1").Tokens, new DiagnosticBag(), Array.Empty<SourcePosition>(), null]);
+            .Invoke([Lexer.Tokenize("1").Tokens, new DiagnosticBag(), Array.Empty<SourcePosition>(), null, CancellationToken.None, CancellationToken.None]);
 
     // The three scoped protocols: a base nesting level, a heavy delimited production, and an
     // interpolation hole (STR-02), whose ownership barrier saves and zeroes the enclosing

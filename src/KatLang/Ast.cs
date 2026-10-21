@@ -1817,6 +1817,8 @@ public closed record Pattern
     /// binder names impose equality constraints whose position must agree, and the
     /// structural KIND is part of the shape: a sequence pattern is never
     /// match-equivalent to a list pattern. Lean: <c>Pattern.isMatchEquivalent</c>.
+    /// Duplicate detection over many patterns uses <see cref="PatternMatchEquivalenceIndex"/>,
+    /// whose canonical key encodes exactly this relation.
     /// </summary>
     internal bool IsMatchEquivalent(Pattern other)
     {
@@ -1838,10 +1840,10 @@ public closed record Pattern
                     return true;
 
                 // Structural numeric equality (Decimal128.Equals), matching runtime
-                // LitInt matching and the value-consistent fingerprint below: NaN is
-                // one value and quantum is ignored, so a LitInt(NaN) pattern stays
-                // match-equivalent to itself and hashed clause-family comparers keep
-                // a reflexive equality.
+                // LitInt matching and the value-canonical key of
+                // PatternMatchEquivalenceIndex: NaN is one value and quantum is ignored,
+                // so a LitInt(NaN) pattern stays match-equivalent to itself and the
+                // duplicate index keeps a reflexive equality.
                 case (LitInt leftInt, LitInt rightInt):
                     return leftInt.Value.Equals(rightInt.Value);
 
@@ -1877,128 +1879,6 @@ public closed record Pattern
         }
 
         return Match(this, other);
-    }
-
-    /// <summary>
-    /// Equality comparer whose equality is exactly <see cref="IsMatchEquivalent"/> and whose
-    /// hash is a deterministic structural fingerprint consistent with it: match-equivalent
-    /// patterns always hash equally, so a hashed set/dictionary groups an equivalence class
-    /// into one bucket and resolves any unrelated hash collision through the exact comparison.
-    /// This turns clause-family duplicate detection from an all-pairs O(clauses^2) scan into an
-    /// O(clauses) hashed lookup while preserving branch order, diagnostics, and spans, which
-    /// stay owned by the ordered branch list.
-    ///
-    /// <para>The fingerprint ignores exactly what match-equivalence ignores — binder spelling
-    /// (only first-occurrence position matters) and source spans — and includes literal values
-    /// and sequence-value shape. It uses an FNV-1a fold rather than <see cref="HashCode"/> so it
-    /// is process-stable, not a per-run randomized value; the set is still purely in-memory and
-    /// run-local, and no fingerprint is persisted.</para>
-    ///
-    /// <para>This shared instance carries NO observer, so it has no mutable state and is safe to
-    /// share across concurrent parses and the runtime duplicate-branch guard. A test that needs to
-    /// count exact comparisons of ONE indexed operation passes an explicit
-    /// <see cref="PatternComparisonObservations"/> to <see cref="CreateMatchEquivalenceComparer"/>
-    /// instead; that observer belongs to that one operation and is never static.</para>
-    /// </summary>
-    internal static IEqualityComparer<Pattern> MatchEquivalenceComparer { get; } = new MatchEquivalenceComparerImpl(observations: null);
-
-    /// <summary>
-    /// Returns a match-equivalence comparer bound to <paramref name="observations"/>: the shared
-    /// observer-less instance when it is <c>null</c> (production parser and runtime paths), otherwise
-    /// a fresh comparer that records one exact comparison per <see cref="IsMatchEquivalent"/> call it
-    /// performs. The observer is passive — it changes neither equality, hashing, nor bucket layout —
-    /// and belongs to a single parse or measured operation, so counts never cross operations or runs.
-    /// </summary>
-    internal static IEqualityComparer<Pattern> CreateMatchEquivalenceComparer(PatternComparisonObservations? observations)
-        => observations is null ? MatchEquivalenceComparer : new MatchEquivalenceComparerImpl(observations);
-
-    private sealed class MatchEquivalenceComparerImpl(PatternComparisonObservations? observations) : IEqualityComparer<Pattern>
-    {
-        public bool Equals(Pattern? x, Pattern? y)
-        {
-            if (ReferenceEquals(x, y))
-                return true;
-            if (x is null || y is null)
-                return false;
-
-            // Record only when an actual exact comparison is performed (never on the reference or
-            // null short-circuits), so the count is exactly the IsMatchEquivalent calls this
-            // comparer makes for its owning indexed operation.
-            observations?.RecordExactComparison();
-            return x.IsMatchEquivalent(y);
-        }
-
-        public int GetHashCode(Pattern pattern)
-        {
-            const uint fnvOffset = 2166136261;
-            const uint fnvPrime = 16777619;
-            var hash = fnvOffset;
-
-            void Mix(uint value)
-            {
-                hash = (hash ^ (value & 0xFF)) * fnvPrime;
-                hash = (hash ^ ((value >> 8) & 0xFF)) * fnvPrime;
-                hash = (hash ^ ((value >> 16) & 0xFF)) * fnvPrime;
-                hash = (hash ^ ((value >> 24) & 0xFF)) * fnvPrime;
-            }
-
-            // First-occurrence (De Bruijn-style) binder numbering: two match-equivalent
-            // patterns visit binders in the same pre-order and share the same repeat
-            // structure, so they mix the same index sequence regardless of spelling.
-            var firstOccurrence = new Dictionary<string, int>(StringComparer.Ordinal);
-
-            void Visit(Pattern node)
-            {
-                switch (node)
-                {
-                    case Bind bind:
-                        Mix(1);
-                        if (!firstOccurrence.TryGetValue(bind.Name, out var index))
-                        {
-                            index = firstOccurrence.Count;
-                            firstOccurrence[bind.Name] = index;
-                        }
-                        Mix((uint)index);
-                        break;
-                    case LitInt litInt:
-                        Mix(2);
-                        // Value hash, not representation bits: IsMatchEquivalent compares
-                        // literal patterns by numeric VALUE (quantum-insensitive), so the
-                        // fingerprint must not distinguish equal values spelled with
-                        // different quanta. Decimal128.GetHashCode is exactly that
-                        // value-consistent hash.
-                        Mix(unchecked((uint)litInt.Value.GetHashCode()));
-                        break;
-                    case LitString litString:
-                        Mix(3);
-                        Mix((uint)litString.Value.Length);
-                        foreach (var ch in litString.Value)
-                            Mix(ch);
-                        break;
-                    case LitBool litBool:
-                        Mix(5);
-                        Mix(litBool.Value ? 1u : 0u);
-                        break;
-                    case SequenceValue sequence:
-                        Mix(4);
-                        Mix((uint)sequence.Items.Count);
-                        foreach (var item in sequence.Items)
-                            Visit(item);
-                        break;
-                    case ListValue list:
-                        // A distinct tag: the kind is part of the shape, so a list pattern and
-                        // a sequence pattern of one length never share a fingerprint by design.
-                        Mix(6);
-                        Mix((uint)list.Items.Count);
-                        foreach (var item in list.Items)
-                            Visit(item);
-                        break;
-                }
-            }
-
-            Visit(pattern);
-            return unchecked((int)hash);
-        }
     }
 }
 
@@ -2865,19 +2745,20 @@ public closed record Algorithm
         /// </summary>
         public bool HasDuplicateBranchPatterns()
         {
-            // Single O(branches) pass: a branch duplicates an earlier one exactly when its
-            // pattern fails to enter the match-equivalence set (the ordered branch list is
-            // untouched). This replaces the former O(branches^2) all-pairs scan; the boolean
-            // result is identical because match-equivalence is a genuine equivalence relation,
-            // so one representative per class suffices for membership.
+            // Single pass over the shared duplicate index: a branch duplicates an earlier one
+            // exactly when its pattern fails to enter the index (the ordered branch list is
+            // untouched). The boolean equals the all-pairs scan's because match-equivalence is a
+            // genuine equivalence relation, so one representative per class suffices. The index
+            // uses ordered canonical keys and binder maps (see its precise worst-case bound),
+            // independently of any hash (SEC-03; no bucket an attacker or a host-built AST could flood).
             var branches = Branches;
             if (branches.Count < 2)
                 return false;
 
-            var seen = new HashSet<Pattern>(Pattern.MatchEquivalenceComparer);
+            var seen = new PatternMatchEquivalenceIndex();
             foreach (var branch in branches)
             {
-                if (!seen.Add(branch.Pattern))
+                if (!seen.TryAdd(branch.Pattern))
                     return true;
             }
             return false;

@@ -26,11 +26,18 @@ public sealed class Parser
     // the bag stored its diagnostic, so clause-head recovery never depends on the budget.
     private readonly IReadOnlyList<SourcePosition> _lexicalErrorStarts;
 
-    // Optional, parse-scoped observer of exact clause-family pattern comparisons. Null for every
+    // Optional, parse-scoped observer of clause-family duplicate-detection work. Null for every
     // production parse (no observation requested); a test measuring the indexed duplicate-detection
-    // work passes one through the observed ParseSyntax overload. It only feeds the match-equivalence
-    // comparer used by clause-group index sets, so it cannot affect the AST, diagnostics, or spans.
+    // work passes one through an observed entry. It only feeds the clause-group duplicate indexes
+    // (PatternMatchEquivalenceIndex), so it cannot affect the AST, diagnostics, or spans.
     private readonly PatternComparisonObservations? _comparisonObservations;
+
+    // Source-processing cancellation observed inside clause-family duplicate detection (SEC-03):
+    // the configured host token, checked FIRST so a host cancellation always carries its identity,
+    // then the caller's active token (the module loader's materialization-linked token). Both are
+    // None on the raw, non-cancellable parse entries. Per-parse instance state, never ambient.
+    private readonly CancellationToken _sourceProcessingCancellationToken;
+    private readonly CancellationToken _activeCancellationToken;
     private int _pos;
 
     // Passive per-parse count of token-index steps: one per consumed token (Advance)
@@ -70,12 +77,16 @@ public sealed class Parser
         IReadOnlyList<Token> tokens,
         DiagnosticBag diagnostics,
         IReadOnlyList<SourcePosition> lexicalErrorStarts,
-        PatternComparisonObservations? comparisonObservations = null)
+        PatternComparisonObservations? comparisonObservations,
+        CancellationToken sourceProcessingCancellationToken,
+        CancellationToken activeCancellationToken)
     {
         _tokens = tokens;
         _diagnostics = diagnostics;
         _lexicalErrorStarts = lexicalErrorStarts;
         _comparisonObservations = comparisonObservations;
+        _sourceProcessingCancellationToken = sourceProcessingCancellationToken;
+        _activeCancellationToken = activeCancellationToken;
     }
 
     // ── Parser recursion-depth budget ───────────────────────────────────────
@@ -515,7 +526,14 @@ public sealed class Parser
     /// (<see cref="DiagnosticBag"/>).
     /// </summary>
     internal static SyntaxParseResult ParseSyntax(string source, DiagnosticBag diagnostics)
-        => ParseSyntaxCore(source, comparisonObservations: null, initialNestingDebt: 0, traversalObservations: null, diagnostics);
+        => ParseSyntaxCore(
+            source,
+            comparisonObservations: null,
+            initialNestingDebt: 0,
+            traversalObservations: null,
+            diagnostics,
+            CancellationToken.None,
+            CancellationToken.None);
 
     /// <summary>
     /// Raw parse that begins with part of the parser recursion budget already spent.
@@ -530,24 +548,54 @@ public sealed class Parser
         => ParseSyntax(source, comparisonObservations: null, initialNestingDebt);
 
     /// <summary>
-    /// The loader's module parse (see <see cref="ParseSyntax(string, int)"/>) into a bag of the
-    /// run's diagnostic capacity, so even a module whose own diagnostics are summarized at its
-    /// load site never holds more than one list's worth while it is classified.
+    /// The configured front end's and the module loader's parse: into an operation's diagnostic
+    /// bag (for a module, a bag of the run's diagnostic capacity, so even a module whose own
+    /// diagnostics are summarized at its load site never holds more than one list's worth while it
+    /// is classified), starting at <paramref name="initialNestingDebt"/> (see
+    /// <see cref="ParseSyntax(string, int)"/>), and observing source-processing cancellation inside
+    /// clause-family duplicate detection: <paramref name="sourceProcessingCancellationToken"/> is the
+    /// configured host token, observed first so a host cancellation keeps its identity, and
+    /// <paramref name="activeCancellationToken"/> the caller's active token (the loader's
+    /// materialization-linked token; <see cref="CancellationToken.None"/> otherwise).
+    /// <paramref name="comparisonObservations"/> is null in production.
     /// </summary>
-    internal static SyntaxParseResult ParseSyntax(string source, int initialNestingDebt, DiagnosticBag diagnostics)
-        => ParseSyntaxCore(source, comparisonObservations: null, initialNestingDebt, traversalObservations: null, diagnostics);
+    /// <exception cref="OperationCanceledException">A supplied token was cancelled during the parse.</exception>
+    internal static SyntaxParseResult ParseSyntax(
+        string source,
+        int initialNestingDebt,
+        DiagnosticBag diagnostics,
+        PatternComparisonObservations? comparisonObservations,
+        CancellationToken sourceProcessingCancellationToken,
+        CancellationToken activeCancellationToken)
+        => ParseSyntaxCore(
+            source,
+            comparisonObservations,
+            initialNestingDebt,
+            traversalObservations: null,
+            diagnostics,
+            sourceProcessingCancellationToken,
+            activeCancellationToken);
 
     /// <summary>
-    /// Raw parse that additionally records exact clause-family pattern comparisons into
-    /// <paramref name="comparisonObservations"/>. Test/measurement-only entry: the observed and
-    /// unobserved paths share this one implementation, so the AST, diagnostics, and spans are
-    /// identical — only the passive comparison count differs.
+    /// Raw parse that additionally records clause-family duplicate-detection work into
+    /// <paramref name="comparisonObservations"/> and observes <paramref name="cancellationToken"/>
+    /// inside duplicate detection. Test/measurement-only entry: the observed and unobserved paths
+    /// share this one implementation, so the AST, diagnostics, and spans are identical — only the
+    /// passive counts differ.
     /// </summary>
     internal static SyntaxParseResult ParseSyntax(
         string source,
         PatternComparisonObservations? comparisonObservations,
-        int initialNestingDebt = 0)
-        => ParseSyntaxCore(source, comparisonObservations, initialNestingDebt, traversalObservations: null, new DiagnosticBag());
+        int initialNestingDebt = 0,
+        CancellationToken cancellationToken = default)
+        => ParseSyntaxCore(
+            source,
+            comparisonObservations,
+            initialNestingDebt,
+            traversalObservations: null,
+            new DiagnosticBag(),
+            cancellationToken,
+            CancellationToken.None);
 
     /// <summary>
     /// Raw parse that additionally records the parser's token-traversal work into
@@ -561,7 +609,14 @@ public sealed class Parser
         ParserTraversalObservations traversalObservations)
     {
         ArgumentNullException.ThrowIfNull(traversalObservations);
-        return ParseSyntaxCore(source, comparisonObservations: null, initialNestingDebt: 0, traversalObservations, new DiagnosticBag());
+        return ParseSyntaxCore(
+            source,
+            comparisonObservations: null,
+            initialNestingDebt: 0,
+            traversalObservations,
+            new DiagnosticBag(),
+            CancellationToken.None,
+            CancellationToken.None);
     }
 
     private static SyntaxParseResult ParseSyntaxCore(
@@ -569,7 +624,9 @@ public sealed class Parser
         PatternComparisonObservations? comparisonObservations,
         int initialNestingDebt,
         ParserTraversalObservations? traversalObservations,
-        DiagnosticBag diagnostics)
+        DiagnosticBag diagnostics,
+        CancellationToken sourceProcessingCancellationToken,
+        CancellationToken activeCancellationToken)
     {
         // Always-active host-runtime backstop: reject an oversized source before allocating any
         // tokens or nodes. The configured (possibly lower) per-source limit is applied earlier by
@@ -578,9 +635,10 @@ public sealed class Parser
         // the supported maximum. Measured token and ordinary node counts scale with source length,
         // so this one bound caps those counts; the diagnostics they cause are bounded further by
         // the operation's bag (DiagnosticBag), which stores at most one list. The formerly quadratic per-construct
-        // paths (wide assignment deconstruction and large clause families) are now linear in the
-        // number of targets/clauses; this remains a resource ceiling, not a blanket linear-time
-        // claim for every possible construct.
+        // paths are bounded independently of it: wide assignment deconstruction is linear in its
+        // targets, and clause-family duplicate detection uses ordered canonical keys and binder maps
+        // (PatternMatchEquivalenceIndex's bound, SEC-03). This remains a resource ceiling, not a blanket
+        // linear-time claim for every possible construct.
         if (source.Length > SourceProcessingLimits.MaxSupportedSourceLength)
         {
             diagnostics.Add(SourceProcessingDiagnostics.SourceLengthExceeded(source.Length, SourceProcessingLimits.MaxSupportedSourceLength));
@@ -592,7 +650,13 @@ public sealed class Parser
         // clause-head recovery reads whether or not the bag stored its diagnostic.
         var lexicalErrorStarts = new List<SourcePosition>();
         var tokens = Lexer.Tokenize(source, diagnostics, lexicalErrorStarts);
-        var parser = new Parser(tokens, diagnostics, lexicalErrorStarts, comparisonObservations);
+        var parser = new Parser(
+            tokens,
+            diagnostics,
+            lexicalErrorStarts,
+            comparisonObservations,
+            sourceProcessingCancellationToken,
+            activeCancellationToken);
         // Pre-charge the caller's live stack debt (nested-module parses under active
         // module-loader frames). Every recursive charge is released by its scope's
         // Dispose, so the counter's floor stays at the debt for the whole parse.
@@ -1171,10 +1235,20 @@ public sealed class Parser
     private static Property PropertyDeclaredAt(string name, Algorithm body, bool isPublic, Token nameToken)
         => new(name, body, IsPublic: isPublic) { DeclarationSpans = [nameToken.Span] };
 
-    /// <summary>Records a clause spanning its name token through the last consumed token; false for a duplicate pattern.</summary>
+    /// <summary>
+    /// Records a clause spanning its name token through the last consumed token; false for a duplicate
+    /// pattern. Duplicate detection observes this parse's source-processing cancellation (SEC-03).
+    /// </summary>
     [System.Runtime.CompilerServices.MethodImpl(LeafFrame)]
     private bool AddClauseFrom(ClauseGroupBuilder group, Pattern pattern, Algorithm body, Token nameToken, bool headRecovered)
-        => group.AddClause(pattern, body, MakeSpan(nameToken), nameToken.Span, headRecovered);
+        => group.AddClause(
+            pattern,
+            body,
+            MakeSpan(nameToken),
+            nameToken.Span,
+            headRecovered,
+            _sourceProcessingCancellationToken,
+            _activeCancellationToken);
 
     // ── Algorithm parsing ───────────────────────────────────────────────────
     // Reads property definitions (Name = ...) and output expression lines.
@@ -1239,8 +1313,10 @@ public sealed class Parser
     /// (<c>Name(pattern) = body</c> rows) while a body is being parsed: the
     /// visibility of its first clause, the clauses in written order with their
     /// whole-clause and name-token spans (index-aligned), and the
-    /// match-equivalence index that makes duplicate-branch detection O(1) per
-    /// clause. One family name owns exactly one builder for the lifetime of one
+    /// match-equivalence index (<see cref="PatternMatchEquivalenceIndex"/>) that makes
+    /// duplicate-branch detection bounded by logarithmic key and binder-name lookups,
+    /// independently of any hash (SEC-03; see the index's precise bound). One family
+    /// name owns exactly one builder for the lifetime of one
     /// <see cref="ParseAlgorithmBodyParts"/> call; the builder never reaches the
     /// AST — the post-loop elaboration reads it once and appends the family's
     /// property.
@@ -1249,13 +1325,13 @@ public sealed class Parser
     {
         // Lookup accelerator only: the ordered Branches list stays the source of
         // truth for branch order, diagnostics, and spans.
-        private readonly HashSet<Pattern> _seenPatterns;
+        private readonly PatternMatchEquivalenceIndex _seenPatterns;
 
-        public ClauseGroupBuilder(string name, bool isPublic, IEqualityComparer<Pattern> matchEquivalence)
+        public ClauseGroupBuilder(string name, bool isPublic, PatternComparisonObservations? comparisonObservations)
         {
             Name = name;
             IsPublic = isPublic;
-            _seenPatterns = new HashSet<Pattern>(matchEquivalence);
+            _seenPatterns = new PatternMatchEquivalenceIndex(comparisonObservations);
         }
 
         public string Name { get; }
@@ -1277,11 +1353,20 @@ public sealed class Parser
         /// clause is recorded either way so error recovery keeps a truthful family.
         /// A clause whose head needed recovery is neither compared with nor
         /// recorded against the others: its recovered pattern says nothing reliable
-        /// about the family.
+        /// about the family. Indexing observes the two cancellation tokens (the
+        /// configured source-processing token first).
         /// </summary>
-        public bool AddClause(Pattern pattern, Algorithm body, SourceSpan clauseSpan, SourceSpan nameSpan, bool headRecovered)
+        public bool AddClause(
+            Pattern pattern,
+            Algorithm body,
+            SourceSpan clauseSpan,
+            SourceSpan nameSpan,
+            bool headRecovered,
+            CancellationToken sourceProcessingCancellationToken,
+            CancellationToken activeCancellationToken)
         {
-            var isDistinct = headRecovered || _seenPatterns.Add(pattern);
+            var isDistinct = headRecovered
+                || _seenPatterns.TryAdd(pattern, sourceProcessingCancellationToken, activeCancellationToken);
             Branches.Add(new CondBranch(pattern, body) { HasRecoveredHead = headRecovered });
             ClauseSpans.Add(clauseSpan);
             NameSpans.Add(nameSpan);
@@ -1457,10 +1542,7 @@ public sealed class Parser
 
             if (!clauseGroups.TryGetValue(name, out var group))
             {
-                group = new ClauseGroupBuilder(
-                    name,
-                    isPublic,
-                    Pattern.CreateMatchEquivalenceComparer(_comparisonObservations));
+                group = new ClauseGroupBuilder(name, isPublic, _comparisonObservations);
                 clauseGroups[name] = group;
                 clauseGroupsInSourceOrder.Add(group);
             }
