@@ -7,8 +7,9 @@
 # clang, then run libFuzzer against the self-contained, sharpfuzz-instrumented harness
 # publish produced on the Windows side by scripts/fuzz-parser.ps1.
 #
-# It needs clang on PATH and, on first run only, internet access to fetch the driver
-# source. No .NET install is required in WSL because the harness publish is
+# It needs clang and sha256sum on PATH and, on first run only, internet access to fetch
+# the driver source, which fuzz/libfuzzer-driver.sh verifies against the repository pin
+# before compiling. No .NET install is required in WSL because the harness publish is
 # self-contained (linux-x64).
 #
 # Usage (all paths must be WSL paths, e.g. /mnt/d/...):
@@ -24,18 +25,16 @@ fi
 PUB=$1; SEEDS=$2; CORPUS=$3; CRASHES=$4; DICT=$5
 MAXTIME=$6; MAXLEN=$7; TIMEOUT=$8; RSS=$9
 DRIVER_DIR=${10:-$HOME/katlang-fuzz}
-DRIVER_SRC_URL=https://raw.githubusercontent.com/Metalnem/libfuzzer-dotnet/master/libfuzzer-dotnet.cc
+SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 
 mkdir -p "$DRIVER_DIR" "$CORPUS" "$CRASHES"
-DRIVER="$DRIVER_DIR/libfuzzer-dotnet"
 
-# Build the driver once and cache it (the WSL home dir persists across instance stops;
-# /tmp does not).
-if [ ! -x "$DRIVER" ]; then
-  echo "[driver] building libfuzzer-dotnet with clang..."
-  command -v clang >/dev/null 2>&1 || { echo "ERROR: clang not found in this WSL distro." >&2; exit 3; }
-  curl -fsSL "$DRIVER_SRC_URL" -o "$DRIVER_DIR/libfuzzer-dotnet.cc"
-  clang -fsanitize=fuzzer "$DRIVER_DIR/libfuzzer-dotnet.cc" -o "$DRIVER"
+# The driver comes only from the verified bootstrap: source pinned to one reviewed upstream commit
+# and SHA-256, built once and cached under DRIVER_DIR (the WSL home dir persists across instance
+# stops; /tmp does not), and re-verified on every reuse. Any failure stops the campaign here.
+if ! DRIVER=$(bash "$SCRIPT_DIR/libfuzzer-driver.sh" "$DRIVER_DIR"); then
+  echo "ERROR: no verified libfuzzer-dotnet driver is available (see the [driver] messages above)." >&2
+  exit 3
 fi
 
 APPHOST="$PUB/KatLang.ParserFuzz"

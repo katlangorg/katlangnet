@@ -49,7 +49,9 @@ fuzz/
                                 #   relations, fingerprint, replay)
     Utf16Testcases/             # tracked UTF-16 seeds (payloads in hex, never source text)
   katlang.dict                  # libFuzzer dictionary of KatLang fragments
-  run-campaign.sh               # WSL-side: build driver + run libFuzzer
+  run-campaign.sh               # WSL-side: get the verified driver + run libFuzzer
+  libfuzzer-driver.sh           # WSL-side: pinned, digest-verified driver build + cache
+  tests/libfuzzer-driver.tests.sh  # offline security tests for the driver bootstrap
   README.md                     # this file
   artifacts/                    # gitignored: publish output, corpus, crashes, logs
 scripts/
@@ -93,7 +95,8 @@ the harness never asserts that malformed input is rejected.
   the .NET 11 runtime fails at the instrumentation step instead of silently running it on
   another runtime.
 * A **WSL distro with `clang`** (e.g. Ubuntu). WSL runs the actual libFuzzer campaign.
-* Internet access on first run, to fetch the `libfuzzer-dotnet` driver source and to
+* `sha256sum` (coreutils) and `curl` in that distro, for the verified driver bootstrap.
+* Internet access on first run, to fetch the pinned `libfuzzer-dotnet` driver source and to
   restore the pinned local tools. No global SharpFuzz install is needed.
 
 ### SharpFuzz instrumenter (pinned local tool)
@@ -136,6 +139,64 @@ deliberately:
 
 The launcher itself never checks for or installs newer versions.
 
+### Native driver (pinned libfuzzer-dotnet)
+
+The native fork-server driver is built from ONE reviewed upstream revision, never a branch:
+
+| | |
+| --- | --- |
+| Upstream | <https://github.com/Metalnem/libfuzzer-dotnet> |
+| Commit | `bd39d4e88d715ab460a929943645be2a186cde52` |
+| File | `libfuzzer-dotnet.cc` |
+| SHA-256 | `90f019e2e9ad3a0b93c7ecc2c5afb2fbfc8b5aab6aac51c7e0d349ec79354f36` |
+
+Both values are pinned in [`libfuzzer-driver.sh`](libfuzzer-driver.sh), the only supported way
+to obtain the driver; `run-campaign.sh` calls it, and so should any manual workflow:
+
+```bash
+DRIVER=$(bash fuzz/libfuzzer-driver.sh)          # optional argument: DRIVER_DIR
+```
+
+It prints the verified driver path on stdout and its `[driver]` log on stderr:
+
+* **Verification.** On a cache miss it downloads the file from
+  `raw.githubusercontent.com/Metalnem/libfuzzer-dotnet/<commit>/libfuzzer-dotnet.cc` (HTTPS
+  only) into a private temporary directory, compares its `sha256sum` with the pinned digest,
+  and only then runs `clang -fsanitize=fuzzer`. Download or verification failures and missing
+  `sha256sum`/`curl`/`clang` stop before compilation. A compile failure also stops with a nonzero
+  exit before publication or execution; the campaign is not started and nothing falls back to `master`.
+* **Caching.** A completed build is published by one rename into
+  `DRIVER_DIR/libfuzzer-dotnet-<commit prefix>-<digest prefix>/` (default `DRIVER_DIR` is
+  `$HOME/katlang-fuzz`) with the verified source, the driver, and a `driver.manifest` recording
+  the commit, source digest, build flags, compiler version, and the driver's SHA-256. Every reuse
+  re-checks the manifest against the pin, the cached source against the pinned digest, and the
+  driver against its recorded digest; any mismatch or missing piece means "rebuild". The
+  recorded driver digest detects accidental or unexpected cache changes; it is not a signature
+  and does not vouch for the compiler. Changing the pin selects a new cache directory.
+* **Legacy cache.** The executable earlier runners built from mutable `master`
+  (`DRIVER_DIR/libfuzzer-dotnet`) has no verification metadata and is ignored (logged, never
+  run, never deleted); remove it and its `.cc` whenever convenient.
+* **Offline.** A valid cache needs no network. Without one the run fails with a message asking
+  for one online run; there is no other source.
+* **Clearing.** To force a rebuild, delete the `libfuzzer-dotnet-*` directory (and any stale
+  `.build.*` directory left by a killed build, which is never used) under `DRIVER_DIR`.
+
+To update the driver deliberately:
+
+1. Choose a full upstream commit SHA (not a branch or tag) and review the
+   `libfuzzer-dotnet.cc` diff since the pinned commit.
+2. Fetch that exact file (e.g. `git show <commit>:libfuzzer-dotnet.cc` from a clone, or the
+   raw URL at the commit), compute `sha256sum`, and cross-check it against a second source
+   (the other of those two, or the blob SHA from the GitHub contents API).
+3. Update `LIBFUZZER_DOTNET_COMMIT` and `LIBFUZZER_DOTNET_SHA256` in `libfuzzer-driver.sh` and
+   the table above together.
+4. Run `bash fuzz/tests/libfuzzer-driver.tests.sh` (offline) and a short campaign
+   (`scriptsuzz-parser.ps1 -MaxTotalTime 60`); the log must show the new commit, "source
+   sha256 verified", and a fresh build in a new cache directory.
+5. Review and commit the pin, digest, and documentation in one change.
+
+The bootstrap never looks for newer upstream revisions.
+
 ### Why WSL?
 
 libFuzzer needs the native `libfuzzer-dotnet` driver, which is built with
@@ -163,8 +224,9 @@ The script:
 1. Restores the pinned local tools from `dotnet-tools.json`, then `dotnet publish` the
    harness self-contained for `linux-x64` into `fuzz/artifacts/publish-linux`.
 2. Instruments `KatLang.dll` with the pinned local tool (`dotnet tool run sharpfuzz`).
-3. Runs `fuzz/run-campaign.sh` in WSL, which builds/caches the `libfuzzer-dotnet` driver
-   and launches libFuzzer with the seed corpus + dictionary.
+3. Runs `fuzz/run-campaign.sh` in WSL, which obtains the pinned, digest-verified
+   `libfuzzer-dotnet` driver (see "Native driver" above) and launches libFuzzer with the seed
+   corpus + dictionary.
 
 New coverage-increasing inputs land in `fuzz/artifacts/corpus` (the writable corpus);
 the tracked `Testcases/` seeds are read-only. Crash/timeout artifacts are written to
@@ -179,10 +241,9 @@ publish + instrument there (from the repository root) and run the driver directl
 dotnet tool restore
 dotnet publish fuzz/KatLang.ParserFuzz -c Release -r linux-x64 --self-contained -o out
 dotnet tool run sharpfuzz out/KatLang.dll
-# build the driver once:
-curl -fsSL https://raw.githubusercontent.com/Metalnem/libfuzzer-dotnet/master/libfuzzer-dotnet.cc -o d.cc
-clang -fsanitize=fuzzer d.cc -o libfuzzer-dotnet
-./libfuzzer-dotnet --target_path=out/KatLang.ParserFuzz \
+# the pinned, digest-verified driver (built once, then reused from the cache):
+DRIVER=$(bash fuzz/libfuzzer-driver.sh)
+"$DRIVER" --target_path=out/KatLang.ParserFuzz \
   -max_len=16384 -timeout=5 -rss_limit_mb=2048 -max_total_time=600 \
   -dict=fuzz/katlang.dict -artifact_prefix=crashes/ -print_final_stats=1 \
   corpus fuzz/KatLang.ParserFuzz/Testcases
@@ -205,7 +266,8 @@ dotnet run --project fuzz\KatLang.ParserFuzz -- fuzz\artifacts\crashes
 Minimize a crashing input with libFuzzer before triaging:
 
 ```bash
-./libfuzzer-dotnet --target_path=out/KatLang.ParserFuzz -minimize_crash=1 \
+DRIVER=$(bash fuzz/libfuzzer-driver.sh)
+"$DRIVER" --target_path=out/KatLang.ParserFuzz -minimize_crash=1 \
   -exact_artifact_path=min -runs=100000 crashes/crash-<hash>
 ```
 
@@ -825,7 +887,7 @@ dotnet run --project fuzz\KatLang.ParserFuzz -- metamorphic-replay --raw fuzz\ar
 fresh directory, then replay it before trusting it:
 
 ```bash
-"$HOME/katlang-fuzz/libfuzzer-dotnet" --target_path=<publish>/KatLang.ParserFuzz \
+"$(bash fuzz/libfuzzer-driver.sh)" --target_path=<publish>/KatLang.ParserFuzz \
   -merge=1 <merged-dir> <corpus-b> <corpus-c>
 ```
 

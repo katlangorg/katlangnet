@@ -16,7 +16,8 @@
       2. Instrument KatLang.dll (the target) with `dotnet tool run sharpfuzz`.
          A `sharpfuzz` on PATH or installed as a global tool is
          never used, and nothing is installed globally.
-      3. In WSL: build/cache the libfuzzer-dotnet driver, then run libFuzzer with the
+      3. In WSL: build/cache the pinned, SHA-256-verified libfuzzer-dotnet driver
+         (fuzz/libfuzzer-driver.sh), then run libFuzzer with the
          seed corpus + dictionary and the campaign bounds (fuzz/run-campaign.sh).
 
     Seeds (fuzz/KatLang.ParserFuzz/Testcases) are read-only during the run. New

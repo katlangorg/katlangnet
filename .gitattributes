@@ -17,6 +17,8 @@ fuzz/KatLang.ParserFuzz/EvaluatorTestcases/** -text whitespace=cr-at-eol
 # The global rule already makes them LF; they stay explicit so the intent
 # survives any future change to that rule.
 fuzz/run-campaign.sh text eol=lf
+fuzz/libfuzzer-driver.sh text eol=lf
+fuzz/tests/*.sh text eol=lf
 fuzz/katlang.dict     text eol=lf
 
 # This test source embeds literal NUL bytes (the UTF-16 lexer contract), which
