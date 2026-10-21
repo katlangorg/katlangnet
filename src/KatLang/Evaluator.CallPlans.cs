@@ -1377,7 +1377,7 @@ public static partial class Evaluator
     /// Lean: <c>Result.containsCallRef</c>.
     /// </summary>
     internal static bool ContainsCallReference(Result value)
-        => ScanForCallReference(value, budget: null, observations: null, out _);
+        => ScanForCallReference(value, budget: null, ScanBudgetUse.None, observations: null, out _);
 
     /// <summary>
     /// The HOST-ARGUMENT boundary (CallReference S1, J4; charged since SEC-01-FU): the
@@ -1398,22 +1398,43 @@ public static partial class Evaluator
         EvaluationBudget budget,
         ValueTraversalObservations? observations)
     {
-        var found = ScanForCallReference(value, budget, observations, out var limit);
+        var found = ScanForCallReference(value, budget, ScanBudgetUse.ChargeStructuralWork, observations, out var limit);
         return limit ?? (found ? new EvalError.TypeMismatch(CallReferenceLeavesRunMessage) : null);
     }
 
+    /// <summary>How <see cref="ScanForCallReference"/> uses the run budget it is given.</summary>
+    private enum ScanBudgetUse : byte
+    {
+        /// <summary>No budget: the context-free <see cref="ContainsCallReference"/>.</summary>
+        None,
+
+        /// <summary>The host-argument boundary: nested structure work is charged (<see cref="HostArgumentBoundaryError"/>).</summary>
+        ChargeStructuralWork,
+
+        /// <summary>The run-result export: nothing is charged, cancellation is observed (<see cref="RunExportBoundaryError"/>).</summary>
+        ObserveCancellation,
+    }
+
     /// <summary>
-    /// The one call-reference scan (<see cref="ContainsCallReference"/>), charging nested structure work to
-    /// <paramref name="budget"/> when one is given (<see cref="HostArgumentBoundaryError"/>); a refused
-    /// charge stops the scan with <paramref name="limit"/> set.
+    /// The one call-reference scan (<see cref="ContainsCallReference"/>). With
+    /// <see cref="ScanBudgetUse.ChargeStructuralWork"/> it charges nested structure work to
+    /// <paramref name="budget"/> (<see cref="HostArgumentBoundaryError"/>), and a refused charge stops the
+    /// scan with <paramref name="limit"/> set; with <see cref="ScanBudgetUse.ObserveCancellation"/> it charges
+    /// nothing and observes the run's cancellation whenever at least
+    /// <see cref="Result.ValueSemanticComparer.UnitsPerCharge"/> slots were inspected since the last
+    /// checkpoint (<see cref="RunExportBoundaryError"/>).
     /// </summary>
     private static bool ScanForCallReference(
         Result value,
         EvaluationBudget? budget,
+        ScanBudgetUse budgetUse,
         ValueTraversalObservations? observations,
         out EvalError? limit)
     {
         limit = null;
+        var exporting = budgetUse == ScanBudgetUse.ObserveCancellation;
+        if (exporting)
+            observations?.RecordRunExportScan();
         if (StructureItemsOf(value) is not { } items)
             return value is Result.CallReference;
 
@@ -1425,6 +1446,7 @@ public static partial class Evaluator
         var next = 0;
         var isRoot = true;
         var units = 0;
+        var uncheckedSlots = 0;
         while (true)
         {
             var segmentStart = next;
@@ -1447,7 +1469,21 @@ public static partial class Evaluator
                 }
             }
 
-            if (budget is not null && !isRoot)
+            if (exporting)
+            {
+                var inspected = next - segmentStart;
+                observations?.RecordRunExportScanSlots(inspected);
+                // A cancellation checkpoint per block of inspected slots, never a charge: the
+                // export scan runs once, after evaluation, over a value the run already paid for.
+                uncheckedSlots += inspected;
+                if (uncheckedSlots >= Result.ValueSemanticComparer.UnitsPerCharge)
+                {
+                    uncheckedSlots = 0;
+                    observations?.RecordRunExportScanCancellationCheckpoint();
+                    budget!.ObserveCancellation();
+                }
+            }
+            else if (budgetUse == ScanBudgetUse.ChargeStructuralWork && !isRoot)
             {
                 units += next - segmentStart;
                 // Finding a reference completes every open nested verdict. Otherwise only
@@ -1459,10 +1495,10 @@ public static partial class Evaluator
             }
 
             var done = found || (descend is null && (pending is null || pending.Count == 0));
-            if (budget is not null && units > 0 && (done || units >= Result.ValueSemanticComparer.UnitsPerCharge))
+            if (units > 0 && (done || units >= Result.ValueSemanticComparer.UnitsPerCharge))
             {
                 observations?.RecordStructuralWorkCharge(units);
-                limit = budget.TryChargeStructuralWork(units);
+                limit = budget!.TryChargeStructuralWork(units);
                 units = 0;
                 if (limit is not null)
                     return false;
@@ -1474,7 +1510,10 @@ public static partial class Evaluator
             if (descend is not null)
             {
                 (pending ??= new()).Push((items, next));
-                observations?.RecordCallReferenceScanPendingFrames(pending.Count);
+                if (exporting)
+                    observations?.RecordRunExportScanPendingFrames(pending.Count);
+                else
+                    observations?.RecordCallReferenceScanPendingFrames(pending.Count);
                 items = descend;
                 next = 0;
                 isRoot = false;
@@ -1503,22 +1542,64 @@ public static partial class Evaluator
     internal static EvalError? CallReferenceBoundaryError(Result value)
         => ContainsCallReference(value) ? new EvalError.TypeMismatch(CallReferenceLeavesRunMessage) : null;
 
-    /// <summary>The run result boundary applied to a run's counted outcome.</summary>
-    internal static EvalResult<CountedResult> ExportRunValue(EvalResult<CountedResult> result)
-        => result.IsOk && CallReferenceBoundaryError(result.Value.Value) is { } refused ? refused : result;
+    /// <summary>
+    /// THE RUN-RESULT EXPORT (CallReference S1, J4; SEC-01-FU2): <see cref="CallReferenceBoundaryError"/> for
+    /// one value a run hands out, given the run's root context <paramref name="ctx"/>.
+    ///
+    /// <para><b>Skipped when no reference can exist.</b> A <see cref="Result.CallReference"/> (a reference or
+    /// its argument view) is constructed only from an <see cref="InvocationPlan"/>, and a plan is allocated
+    /// only in a run that RETAINS plans (<see cref="SupplyCell"/> under
+    /// <see cref="EvaluationBudget.RetainsInvocationPlans"/>: the J7 gate or a test seam, decided once before
+    /// evaluation and never switched off). No reference enters a run from outside: every run result,
+    /// host-operation argument and interpolation refuses one, a host-operation return holding one is a host
+    /// contract violation (<c>Result.AdmitHostOperationValue</c> throws), the property cache is keyed by run,
+    /// and hosts cannot construct one. So a run that does not retain plans holds no reference anywhere, and
+    /// its result is exported as is, with no traversal. Every retaining run — META-capable programs,
+    /// programs with a deferred module region, test seams — keeps the full scan.</para>
+    ///
+    /// <para><b>Charging and cancellation.</b> The export scan runs ONCE, after evaluation, over a value the
+    /// run already built and paid for (the memo bounds the walk by distinct nodes and their slots), so it
+    /// charges no step or structural work: a successful run never fails merely because its result was
+    /// inspected. Unlike the per-host-call argument scan (<see cref="HostArgumentBoundaryError"/>, charged),
+    /// it observes cancellation at segment boundaries after at least
+    /// <see cref="Result.ValueSemanticComparer.UnitsPerCharge"/> inspected slots. Each segment is bounded
+    /// by one admitted collection's slots (<see cref="EvaluationLimits.MaxCollectionItems"/>). It throws
+    /// the run token's <see cref="OperationCanceledException"/> — the outcome of the
+    /// completion-boundary check that follows the export, only sooner.</para>
+    /// </summary>
+    private static EvalError? RunExportBoundaryError(Result value, EvalCtx ctx)
+    {
+        if (!ctx.Budget.RetainsInvocationPlans)
+        {
+            ctx.Observations?.StructuralTraversal?.RecordRunExportScanSkipped();
+            return null;
+        }
 
-    /// <summary>The run result boundary applied to a run's value outcome.</summary>
-    internal static EvalResult<Result> ExportRunValue(EvalResult<Result> result)
-        => result.IsOk && CallReferenceBoundaryError(result.Value) is { } refused ? refused : result;
+        return ScanForCallReference(value, ctx.Budget, ScanBudgetUse.ObserveCancellation,
+                ctx.Observations?.StructuralTraversal, out _)
+            ? new EvalError.TypeMismatch(CallReferenceLeavesRunMessage)
+            : null;
+    }
 
-    /// <summary>The run result boundary applied to a run's output and its named top-level property.</summary>
-    internal static EvalResult<CountedRootProgramResult> ExportRunValue(EvalResult<CountedRootProgramResult> result)
+    /// <summary>The run result boundary applied to a run's counted outcome (<see cref="RunExportBoundaryError"/>).</summary>
+    internal static EvalResult<CountedResult> ExportRunValue(EvalResult<CountedResult> result, EvalCtx ctx)
+        => result.IsOk && RunExportBoundaryError(result.Value.Value, ctx) is { } refused ? refused : result;
+
+    /// <summary>The run result boundary applied to a run's value outcome (<see cref="RunExportBoundaryError"/>).</summary>
+    internal static EvalResult<Result> ExportRunValue(EvalResult<Result> result, EvalCtx ctx)
+        => result.IsOk && RunExportBoundaryError(result.Value, ctx) is { } refused ? refused : result;
+
+    /// <summary>
+    /// The run result boundary applied to a run's output AND its named top-level property: both leave the
+    /// run, so both are checked (<see cref="RunExportBoundaryError"/>).
+    /// </summary>
+    internal static EvalResult<CountedRootProgramResult> ExportRunValue(EvalResult<CountedRootProgramResult> result, EvalCtx ctx)
     {
         if (!result.IsOk)
             return result;
-        if (CallReferenceBoundaryError(result.Value.Output.Value) is { } refusedOutput)
+        if (RunExportBoundaryError(result.Value.Output.Value, ctx) is { } refusedOutput)
             return refusedOutput;
-        return result.Value.TopLevelProperty is { } property && CallReferenceBoundaryError(property.Value) is { } refusedProperty
+        return result.Value.TopLevelProperty is { } property && RunExportBoundaryError(property.Value, ctx) is { } refusedProperty
             ? refusedProperty
             : result;
     }

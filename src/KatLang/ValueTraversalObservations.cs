@@ -87,6 +87,56 @@ internal sealed class ValueTraversalObservations
         => CallReferenceScanPeakPendingFrames = Math.Max(CallReferenceScanPeakPendingFrames, count);
 
     /// <summary>
+    /// Number of values the RUN-RESULT EXPORT scanned for a call reference (SEC-01-FU2): one per exported
+    /// value — the run's output, plus its named top-level property — of a run that retains invocation plans.
+    /// The export counters below are this boundary's own; the host-argument scan records elsewhere.
+    /// </summary>
+    public long RunExportScanCount { get; private set; }
+
+    internal void RecordRunExportScan() => RunExportScanCount = checked(RunExportScanCount + 1);
+
+    /// <summary>
+    /// Number of exported values whose scan was SKIPPED because the run retains no invocation plans, so no
+    /// call reference can exist in it.
+    /// </summary>
+    public long RunExportScanSkippedCount { get; private set; }
+
+    internal void RecordRunExportScanSkipped() => RunExportScanSkippedCount = checked(RunExportScanSkippedCount + 1);
+
+    /// <summary>
+    /// Slots the run-result export scans inspected, every level included; a memoized shared structure is
+    /// expanded once, so this stays bounded by the distinct reachable structures' slots, never by paths.
+    /// </summary>
+    public long RunExportScanSlots { get; private set; }
+
+    internal void RecordRunExportScanSlots(int slots) => RunExportScanSlots = checked(RunExportScanSlots + slots);
+
+    /// <summary>Largest number of suspended continuation frames in a run-result export scan (nesting depth).</summary>
+    public int RunExportScanPeakPendingFrames { get; private set; }
+
+    internal void RecordRunExportScanPendingFrames(int count)
+        => RunExportScanPeakPendingFrames = Math.Max(RunExportScanPeakPendingFrames, count);
+
+    /// <summary>
+    /// Cancellation checkpoints the run-result export scans reached (at segment boundaries after at least
+    /// <see cref="Result.ValueSemanticComparer.UnitsPerCharge"/> inspected slots), each just BEFORE it observes
+    /// the run token; <see cref="BeforeRunExportCancellationCheckpoint"/> runs at the same point.
+    /// </summary>
+    public long RunExportScanCancellationCheckpoints { get; private set; }
+
+    /// <summary>
+    /// Optional test hook invoked with the 1-based export checkpoint ordinal just BEFORE that checkpoint
+    /// observes cancellation, so a test can cancel at a deterministic point of a large export scan.
+    /// </summary>
+    public Action<long>? BeforeRunExportCancellationCheckpoint { get; init; }
+
+    internal void RecordRunExportScanCancellationCheckpoint()
+    {
+        RunExportScanCancellationCheckpoints = checked(RunExportScanCancellationCheckpoints + 1);
+        BeforeRunExportCancellationCheckpoint?.Invoke(RunExportScanCancellationCheckpoints);
+    }
+
+    /// <summary>
     /// Number of structure NODES expanded across the <see cref="Result.Normalize"/> operations this
     /// observer measured: the top-level structure of each normalization, plus every nested sequence
     /// or list value descended into. Leaves normalize to themselves and record nothing, and a node
