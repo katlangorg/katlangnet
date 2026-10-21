@@ -1,3 +1,5 @@
+using System.Globalization;
+
 namespace KatLang.CLI;
 
 /// <summary>
@@ -228,8 +230,19 @@ public static class CliApplication
     {
         try
         {
-            var source = await File.ReadAllTextAsync(path, cancellationToken).ConfigureAwait(false);
-            return (true, source);
+            // Bounded while reading: an oversized, growing, or endless file is refused as
+            // soon as its decoded text crosses KatLang's source-length ceiling, never read
+            // whole and then measured. The refusal is the front end's own limit, worded in
+            // its family; only the lower bound is known, so no total length is claimed.
+            var read = await BoundedSourceReader.ReadFileAsync(
+                path,
+                SourceProcessingLimits.MaxSupportedSourceLength,
+                cancellationToken).ConfigureAwait(false);
+
+            if (!read.ExceedsLimit)
+                return (true, read.Source!);
+
+            error.WriteLine(SourceLengthExceededMessage(SourceProcessingLimits.MaxSupportedSourceLength));
         }
         catch (Exception ex) when (ex is FileNotFoundException or DirectoryNotFoundException)
         {
@@ -251,6 +264,9 @@ public static class CliApplication
 
         return (false, string.Empty);
     }
+
+    internal static string SourceLengthExceededMessage(int limit)
+        => $"Source length exceeds the maximum of {limit.ToString(CultureInfo.InvariantCulture)} UTF-16 code unit{(limit == 1 ? "" : "s")}.";
 
     internal static void WriteUnexpectedError(Exception exception, TextWriter error)
     {
