@@ -49,16 +49,18 @@ internal sealed class ValueTraversalObservations
 
     /// <summary>
     /// Number of structural-work CHARGES an operation comparer (<see cref="Result.CreateOperationComparer"/>,
-    /// SEC-02) made to its run's budget: one per full block of
-    /// <see cref="Result.ValueSemanticComparer.UnitsPerCharge"/> child inspections or structure completions, plus one for
-    /// a pending remainder at the operation's completion. Every charge is a host-cancellation
+    /// SEC-02) made to its run's budget: one whenever a full block of
+    /// <see cref="Result.ValueSemanticComparer.UnitsPerCharge"/> units — child inspections, structure completions,
+    /// or string payload (<see cref="Result.ValueSemanticComparer.StringCharsPerUnit"/>, SEC-02-FU) — is pending,
+    /// plus one for a pending remainder at the operation's completion or at the end of one charged
+    /// evaluator comparison (<see cref="Result.EvaluatorValueEquals"/>). Every charge is a host-cancellation
     /// observation. A host-value admission walk (<see cref="Result.AdmitHostOperationValue"/>, SEC-01-FU)
     /// records its charges here too: one whenever at least that many units are pending at the end of
     /// a scan segment or a nested completion, plus the remainder at completion.
     /// </summary>
     public long StructuralWorkChargeCount { get; private set; }
 
-    /// <summary>Total child-inspection and structure-completion units those charges carried.</summary>
+    /// <summary>Total child-inspection, structure-completion, and string-payload units those charges carried.</summary>
     public long StructuralWorkUnits { get; private set; }
 
     /// <summary>

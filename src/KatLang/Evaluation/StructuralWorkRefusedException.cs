@@ -10,7 +10,9 @@ namespace KatLang.Evaluation;
 /// intermediate frame (a <see cref="HashSet{T}"/>) is abandoned on the way.
 ///
 /// <para>Internal and never visible to hosts: it cannot escape an operation, because every
-/// operation comparer is created and consumed inside one builtin evaluation that catches it.
+/// operation comparer is created and consumed inside one builtin evaluation that catches it, or
+/// is driven through <see cref="Result.ValueSemanticComparer.TryEquals"/>, which catches it for one
+/// evaluator-owned comparison (SEC-02-FU: <c>==</c>/<c>!=</c> and repeated-name agreement).
 /// Host cancellation is NOT carried this way — it stays the
 /// <see cref="OperationCanceledException"/> the budget throws.</para>
 /// </summary>

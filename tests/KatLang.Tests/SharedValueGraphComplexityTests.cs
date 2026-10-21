@@ -18,7 +18,7 @@ namespace KatLang.Tests;
 /// <see cref="Result.CreateObservedValueComparer"/>; the production comparer carries no observer.
 /// Timing is deliberately not a pass/fail signal.</para>
 /// </summary>
-public class SharedValueGraphComplexityTests
+public partial class SharedValueGraphComplexityTests
 {
     /// <summary>Depths chosen so the previous path-expanding walks differ by 2^20 between them.</summary>
     private const int ShallowDepth = 20;

@@ -445,6 +445,25 @@ public static partial class Evaluator
         => $"repeated parameter '{name}' requires equal arguments";
 
     /// <summary>
+    /// NEED-04's VALUE agreement between two demanded contributions of one repeated name: exactly
+    /// the <see cref="Result.ValueComparer"/> verdict, charged to the run's budget like every
+    /// evaluator-owned comparison (SEC-02-FU, <see cref="Result.EvaluatorValueEquals"/>). A
+    /// comparison with structural or long-string work runs through <paramref name="session"/>, the
+    /// binder activation's one operation comparer, created on first use, so the agreements of one
+    /// head reuse the verdicts of the shared subgraphs they already walked; it dies with the
+    /// activation. A refusal is returned as the error it is — the caller must never turn it into
+    /// the agreement's <c>BadArity</c> or a clause non-match.
+    /// </summary>
+    private static EvalResult<bool> RepeatedValueEquals(
+        ref Result.ValueSemanticComparer? session, Result before, Result value, EvalCtx ctx)
+    {
+        if (!Result.ValueSemanticComparer.RequiresChargedWalk(before, value))
+            return EvalResult<bool>.Ok(Result.ValueComparer.Equals(before, value));
+        session ??= Result.CreateOperationComparer(ctx.Budget, ctx.Observations?.StructuralTraversal);
+        return session.TryEquals(before, value);
+    }
+
+    /// <summary>
     /// NEED-04's callable-identity agreement between two contributions of one repeated name that
     /// both carry CALLABLE identity. They must be the same builtin, or the same declaration in the
     /// same declaring scope with compatible captured activations. Comparing identities evaluates

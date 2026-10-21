@@ -1125,7 +1125,7 @@ public static partial class Evaluator
                         var link = links[frames[top].Phase - 1];
                         var previousOperand = frames[top].Phase == 1 ? first : links[frames[top].Phase - 2].Operand;
                         var linkR = ApplyComparison(
-                            link.Op, previousOperand, link.Operand, frames[top].FirstValue!, pendingChild.Value, frames[top].Node.Span);
+                            link.Op, previousOperand, link.Operand, frames[top].FirstValue!, pendingChild.Value, frames[top].Node.Span, ctx);
                         if (linkR.IsError)
                         {
                             completed = linkR.Error;

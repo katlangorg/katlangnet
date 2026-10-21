@@ -244,8 +244,9 @@ public sealed record EvaluationLimits
     /// budget (the default). One step is charged for each dynamic algorithm
     /// invocation, each loop iteration, each bulk block of 4096 expression-
     /// evaluation work checkpoints, and each bulk block of 4096 structural value-traversal
-    /// units (one per inspected child position and per expanded collection completed by
-    /// <c>contains</c> or <c>distinct</c>). The bulk charges bound pathological repeated
+    /// units (one per inspected child position and per expanded collection completed, and one per
+    /// 64 code units of string payload read, by the structural equality and hashing of
+    /// <c>contains</c>, <c>distinct</c>, <c>==</c>, <c>!=</c>, repeated-parameter agreement and literal-string matching). The bulk charges bound pathological repeated
     /// evaluation of shared host-built expression subtrees and long structural comparisons
     /// while leaving small ordinary programs' accounting unchanged.
     ///

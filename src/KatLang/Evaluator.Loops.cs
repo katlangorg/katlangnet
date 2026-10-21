@@ -404,6 +404,10 @@ public static partial class Evaluator
     /// THIS link (<c>while evaluating `2 &lt; true`</c>, never a nested binary spelling of
     /// the chain) and the link's span: the hull of its two operands' spans, or the
     /// chain's own span when an operand is unpositioned. Lean: <c>applyComparison</c>.
+    ///
+    /// <para>Equality's structural work is charged to <paramref name="ctx"/>'s budget
+    /// (SEC-02-FU, <see cref="ValueEquals"/>); its refusal is the only error <c>==</c>/<c>!=</c>
+    /// can return, and it ends the chain like any link error — never a false link.</para>
     /// </summary>
     internal static EvalResult<bool> ApplyComparison(
         ComparisonOp op,
@@ -411,12 +415,15 @@ public static partial class Evaluator
         Expr right,
         Result leftValue,
         Result rightValue,
-        SourceSpan? chainSpan)
+        SourceSpan? chainSpan,
+        EvalCtx ctx)
     {
-        if (op == ComparisonOp.Eq)
-            return EvalResult<bool>.Ok(ValueEquals(leftValue, rightValue));
-        if (op == ComparisonOp.Ne)
-            return EvalResult<bool>.Ok(!ValueEquals(leftValue, rightValue));
+        if (op is ComparisonOp.Eq or ComparisonOp.Ne)
+        {
+            var equalR = ValueEquals(leftValue, rightValue, ctx);
+            if (equalR.IsError) return equalR.Error;
+            return EvalResult<bool>.Ok(equalR.Value == (op == ComparisonOp.Eq));
+        }
 
         // SYN-01: `()` is an ordinary non-scalar operand here too — it reaches the
         // string contract and the numeric-scalar validation exactly like `(1, 2)`.

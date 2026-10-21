@@ -1715,11 +1715,14 @@ public static partial class Evaluator
     /// length plus recursive pairwise equality. Different value kinds compare
     /// unequal rather than raising a type mismatch. This mirrors Lean's
     /// <c>resultValueEq</c> (the derived structural <c>BEq</c> on <c>Result</c>)
-    /// and reuses <see cref="Result.ValueComparer"/>, the same value equality
-    /// already used by builtins such as <c>contains</c> and <c>distinct</c>.
+    /// and decides exactly the <see cref="Result.ValueComparer"/> verdict, the same value
+    /// equality the builtins <c>contains</c> and <c>distinct</c> use. Like theirs, its
+    /// structural and long-string work is charged to the run's budget and observes host
+    /// cancellation (SEC-02-FU, <see cref="Result.EvaluatorValueEquals"/>): a refused charge is
+    /// the run's terminal error, never inequality.
     /// </summary>
-    private static bool ValueEquals(Result left, Result right)
-        => Result.ValueComparer.Equals(left, right);
+    private static EvalResult<bool> ValueEquals(Result left, Result right, EvalCtx ctx)
+        => Result.EvaluatorValueEquals(left, right, ctx.Budget, ctx.Observations?.StructuralTraversal);
 
     private static EvalResult<Decimal128> RequireNumericScalarOperand(BinaryOp op, string side, Result value)
         => RequireNumericScalarOperand(ExprNameRenderer.BinaryOpText(op), side, value);

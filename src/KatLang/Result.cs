@@ -106,7 +106,9 @@ public closed record Result
 
     /// <summary>
     /// Returns a fresh OPERATION comparer for one evaluator operation over many values — one
-    /// <c>contains</c> or one <c>distinct</c> evaluation (SEC-02). It decides exactly the
+    /// <c>contains</c> or one <c>distinct</c> evaluation (SEC-02), one charged comparison, or one
+    /// binder activation's repeated-name agreements (SEC-02-FU, <see cref="EvaluatorValueEquals"/>).
+    /// It decides exactly the
     /// <see cref="ValueComparer"/> equality and the same hashes, but its reference-identity memos
     /// live for the whole operation instead of one top-level call: completed pair verdicts (equal
     /// AND unequal) and completed node hashes of every pair or node worth retaining (see
@@ -125,6 +127,23 @@ public closed record Result
         ArgumentNullException.ThrowIfNull(budget);
         return ValueSemanticComparer.ForOperation(budget, observations);
     }
+
+    /// <summary>
+    /// ONE evaluator-owned value comparison (SEC-02-FU): <c>==</c>/<c>!=</c> and every other single
+    /// language-level equality the evaluator decides. Exactly the <see cref="ValueComparer"/> verdict,
+    /// but a comparison that has real structural or string work to do runs through a fresh operation
+    /// comparer, so its walk charges <paramref name="budget"/> and observes the run's host cancellation
+    /// exactly like <c>contains</c> and <c>distinct</c>. Every other pair — scalars, references to one
+    /// value, different kinds or counts, empty structures, short strings — is decided by the
+    /// context-free comparer in O(1) without allocating anything. Returns the budget's terminal
+    /// refusal as an error, never as inequality; cancellation stays the budget's
+    /// <see cref="OperationCanceledException"/>.
+    /// </summary>
+    internal static EvalResult<bool> EvaluatorValueEquals(
+        Result x, Result y, Evaluation.EvaluationBudget budget, ValueTraversalObservations? observations)
+        => ValueSemanticComparer.RequiresChargedWalk(x, y)
+            ? ValueSemanticComparer.SingleChargedEquals(x, y, budget, observations)
+            : EvalResult<bool>.Ok(ValueComparer.Equals(x, y));
 
     /// <summary>
     /// A single numeric value, backed by IEEE 754 <see cref="Decimal128"/>
@@ -1175,15 +1194,95 @@ public closed record Result
         /// <summary>A fresh operation comparer (see <see cref="CreateOperationComparer"/>).</summary>
         internal static ValueSemanticComparer ForOperation(
             Evaluation.EvaluationBudget budget, ValueTraversalObservations? observations)
-            => new(observations, new OperationMemo(budget));
+            => new(observations, new OperationMemo(budget, singleComparison: false));
 
         /// <summary>
-        /// Child inspections or structure completions between two budget charges of an operation comparer: the
-        /// bound on structural work between two host-cancellation observations. Each unit is O(1)
-        /// work (a leaf comparison or hash, at most one memo probe), except a string leaf, which is
-        /// bounded by the per-string length limit.
+        /// One charged evaluator comparison (SEC-02-FU, <see cref="EvaluatorValueEquals"/>) through a
+        /// fresh comparer for exactly that comparison: the operation walk and its charges, retaining only
+        /// what the comparison itself can meet again (the DAG pairs it descends through), never a verdict
+        /// only a later comparison could read. <see cref="TryEquals"/> retires it.
+        /// </summary>
+        internal static EvalResult<bool> SingleChargedEquals(
+            Result x, Result y, Evaluation.EvaluationBudget budget, ValueTraversalObservations? observations)
+        {
+            ArgumentNullException.ThrowIfNull(budget);
+            return new ValueSemanticComparer(observations, new OperationMemo(budget, singleComparison: true)).TryEquals(x, y);
+        }
+
+        /// <summary>
+        /// Work units between two budget charges of an operation comparer: the bound on structural
+        /// work between two host-cancellation observations. A unit is one child inspection or one
+        /// structure completion — O(1) work: a leaf comparison or hash, at most one memo probe — or
+        /// <see cref="StringCharsPerUnit"/> code units of string payload (see there).
         /// </summary>
         internal const int UnitsPerCharge = 256;
+
+        /// <summary>
+        /// UTF-16 code units of string payload per work unit (SEC-02-FU). An operation walk charges a
+        /// string equality whose two texts are distinct objects of EQUAL length (only then can ordinal
+        /// equality read past the length check), and a string hash, <c>length / StringCharsPerUnit</c>
+        /// units BEFORE the runtime's vectorized comparison or hash runs — a deterministic upper bound
+        /// of the payload it reads, never a timing measure. A string shorter than this adds nothing,
+        /// so ordinary short strings keep the plain one-unit inspection cost. The comparison or hash
+        /// itself stays one native call: no checkpoint lies inside it, so the longest uninterruptible
+        /// payload operation is one string of at most <see cref="EvaluationLimits.MaxSupportedStringLength"/>
+        /// code units, whose units are charged — and cancellation observed — just before it.
+        /// </summary>
+        internal const int StringCharsPerUnit = 64;
+
+        /// <summary>
+        /// Whether one evaluator-owned comparison of <paramref name="x"/> and <paramref name="y"/> has
+        /// work worth charging (see <see cref="EvaluatorValueEquals"/>): two non-empty structures of one
+        /// kind and count, or two distinct equal-length strings of at least
+        /// <see cref="StringCharsPerUnit"/> code units. Every other pair the context-free comparer
+        /// decides in O(1).
+        /// </summary>
+        internal static bool RequiresChargedWalk(Result x, Result y)
+            => x switch
+            {
+                // Scalars first: an ordinary comparison is of numbers or Booleans.
+                Atom or Bool or CallReference => false,
+                SequenceValue(var left) => y is SequenceValue(var right)
+                    && left.Count != 0 && left.Count == right.Count && !ReferenceEquals(x, y),
+                ListValue(var left) => y is ListValue(var right)
+                    && left.Count != 0 && left.Count == right.Count && !ReferenceEquals(x, y),
+                Str(var left) => y is Str(var right)
+                    && left.Length >= StringCharsPerUnit
+                    && left.Length == right.Length
+                    && !ReferenceEquals(left, right),
+            };
+
+        /// <summary>
+        /// One charged comparison through this operation comparer (SEC-02-FU): the verdict, after the
+        /// walk's pending work units are flushed to the budget, or the budget's refusal. Unlike
+        /// <see cref="CompleteOperation"/> it keeps the memos, so one evaluator activation that decides
+        /// several related comparisons — the repeated names of one binder head — reuses the verdicts of
+        /// the shared subgraphs it already walked. A refused or cancelled comparison retires the
+        /// comparer, exactly like a refused walk of <c>contains</c>.
+        /// </summary>
+        internal EvalResult<bool> TryEquals(Result x, Result y)
+        {
+            if (operation is null)
+                throw new InvalidOperationException("Only an operation comparer charges a comparison.");
+
+            bool equal;
+            try
+            {
+                equal = Equals(x, y);
+            }
+            catch (Evaluation.StructuralWorkRefusedException refused)
+            {
+                return refused.Error;
+            }
+
+            operation.EnterWalk();
+            var error = operation.Flush(observations);
+            if (operation.SingleComparison || error is not null)
+                operation.Release();
+            operation.ExitWalk();
+            return error is null ? EvalResult<bool>.Ok(equal) : error;
+        }
+
         // Value-kind tags mixed into every structural hash, so a list value never hashes like a
         // sequence value over the same elements. These are the tags the previous streaming hash
         // used, kept for continuity of the recipe.
@@ -1228,7 +1327,12 @@ public closed record Result
                     return leftValue.Equals(rightValue);
 
                 case (Str(var leftValue), Str(var rightValue)):
-                    return StringComparer.Ordinal.Equals(leftValue, rightValue);
+                    if (operation is null)
+                        return StringComparer.Ordinal.Equals(leftValue, rightValue);
+                    operation.EnterWalk();
+                    var equalText = StringEqualsInOperation(operation, x, y, leftValue, rightValue);
+                    operation.ExitWalk();
+                    return equalText;
 
                 // Booleans compare by value and never equal a number, a string, or a
                 // structure: equality is total over every kind, so `true == 1` is false.
@@ -1375,6 +1479,18 @@ public closed record Result
             // are not observable and never were — System.HashCode is seeded per process, so they
             // already differed between runs, and no KatLang result depends on them (distinct keeps
             // input order and uses its set only as a duplicate filter).
+            if (operation is not null && obj is Str(var hashedText))
+            {
+                // TryHashLeaf's recipe with the text's ordinal hash charged and memoized (SEC-02-FU):
+                // HashCode.Add(text, comparer) adds exactly comparer.GetHashCode(text).
+                operation.EnterWalk();
+                var textHash = StringHashInOperation(operation, obj, hashedText);
+                operation.ExitWalk();
+                var stringLeaf = new HashCode();
+                stringLeaf.Add(StrTag);
+                stringLeaf.Add(textHash);
+                return stringLeaf.ToHashCode();
+            }
             if (TryHashLeaf(obj, out var leafHash))
                 return leafHash;
             if (!TryOpenStructure(obj, out var tag, out var items))
@@ -1541,7 +1657,8 @@ public closed record Result
 
             observations?.RecordEqualityPairExpansion();
 
-            var suspended = new Stack<EqualityFrame>();
+            // Allocated at the first descent, so a flat pair needs no frame stack at all.
+            Stack<EqualityFrame>? suspended = null;
             var (leftNode, rightNode, seeded, next) = (x, y, false, 0);
 
             while (true)
@@ -1551,10 +1668,12 @@ public closed record Result
                     // A singleton chain can finish thousands of frames without inspecting another
                     // child. Account for completion too, so that unwind remains cancellable.
                     op.Charge(observations);
-                    if (seeded || leftItems.Count >= RetainedWidth)
+                    var open = suspended?.Count ?? 0;
+                    // A single comparison's own top-level verdict can never be asked again.
+                    if (seeded || (leftItems.Count >= RetainedWidth && (open != 0 || !op.SingleComparison)))
                         (pairs ??= op.Verdicts = [])[new ReferencePair(leftNode, rightNode)] = PairState.Equal;
-                    if (suspended.Count == 0) return true;
-                    (leftNode, rightNode, leftItems, rightItems, next, seeded) = suspended.Pop();
+                    if (open == 0) return true;
+                    (leftNode, rightNode, leftItems, rightItems, next, seeded) = suspended!.Pop();
                     continue;
                 }
 
@@ -1576,7 +1695,7 @@ public closed record Result
                         continue;
 
                     case (Str(var leftValue), Str(var rightValue)):
-                        if (!StringComparer.Ordinal.Equals(leftValue, rightValue)) return Mismatch(op, leftNode, rightNode, leftItems.Count, seeded, suspended);
+                        if (!StringEqualsInOperation(op, left, right, leftValue, rightValue)) return Mismatch(op, leftNode, rightNode, leftItems.Count, seeded, suspended);
                         continue;
 
                     case (Bool(var leftValue), Bool(var rightValue)):
@@ -1613,7 +1732,7 @@ public closed record Result
                     continue;
                 }
 
-                if (!seeded && suspended.Count != 0)
+                if (!seeded && suspended is { Count: not 0 })
                 {
                     (pairs ??= op.Verdicts = [])[new ReferencePair(leftNode, rightNode)] = PairState.InProgress;
                     seeded = true;
@@ -1621,7 +1740,7 @@ public closed record Result
 
                 observations?.RecordEqualityPairExpansion();
 
-                suspended.Push(new EqualityFrame(leftNode, rightNode, leftItems, rightItems, next, seeded));
+                (suspended ??= new Stack<EqualityFrame>()).Push(new EqualityFrame(leftNode, rightNode, leftItems, rightItems, next, seeded));
                 (leftNode, rightNode, leftItems, rightItems, next, seeded) = (left, right, childLeft, childRight, 0, false);
             }
         }
@@ -1630,22 +1749,76 @@ public closed record Result
         /// The <c>false</c> of an operation walk that found a mismatch, after retaining it: the
         /// mismatching pair and every pair still open above it are UNEQUAL where retained (seeded,
         /// or at least <see cref="RetainedWidth"/> wide). Every seeded pair is open on this path, so
-        /// none is left in progress.
+        /// none is left in progress. A single comparison (<see cref="OperationMemo.SingleComparison"/>)
+        /// ends here, so it retains nothing; every frame is still charged, so the unwind stays cancellable.
         /// </summary>
         private bool Mismatch(
-            OperationMemo op, Result leftNode, Result rightNode, int count, bool seeded, Stack<EqualityFrame> suspended)
+            OperationMemo op, Result leftNode, Result rightNode, int count, bool seeded, Stack<EqualityFrame>? suspended)
         {
+            var retain = !op.SingleComparison;
             op.Charge(observations);
-            if (seeded || count >= RetainedWidth)
+            if (retain && (seeded || count >= RetainedWidth))
                 (op.Verdicts ??= [])[new ReferencePair(leftNode, rightNode)] = PairState.Unequal;
+            if (suspended is null)
+                return false;
             foreach (var frame in suspended)
             {
                 op.Charge(observations);
-                if (frame.Seeded || frame.Left.Count >= RetainedWidth)
+                if (retain && (frame.Seeded || frame.Left.Count >= RetainedWidth))
                     (op.Verdicts ??= [])[new ReferencePair(frame.LeftNode, frame.RightNode)] = PairState.Unequal;
             }
 
             return false;
+        }
+
+        /// <summary>
+        /// Ordinal string equality inside an operation walk (SEC-02-FU), with the payload charged:
+        /// texts of different lengths are decided by the length check and two references to one text
+        /// by identity, both free; two distinct equal-length texts are charged
+        /// <c>length / </c><see cref="StringCharsPerUnit"/> units before the one native comparison. A
+        /// verdict worth at least <see cref="RetainedWidth"/> units is retained by reference pair, so
+        /// a repeated long comparison of the same two values is answered without re-reading them.
+        /// </summary>
+        private bool StringEqualsInOperation(OperationMemo op, Result x, Result y, string left, string right)
+        {
+            if (left.Length != right.Length) return false;
+            var units = left.Length / StringCharsPerUnit;
+            if (units == 0 || ReferenceEquals(left, right))
+                return StringComparer.Ordinal.Equals(left, right);
+
+            var retained = units >= RetainedWidth;
+            if (retained && op.Verdicts is { } pairs && pairs.TryGetValue(new ReferencePair(x, y), out var known))
+                return known == PairState.Equal;
+
+            op.Charge(units, observations);
+            var equal = StringComparer.Ordinal.Equals(left, right);
+            if (retained)
+                (op.Verdicts ??= [])[new ReferencePair(x, y)] = equal ? PairState.Equal : PairState.Unequal;
+            return equal;
+        }
+
+        /// <summary>
+        /// The ordinal hash of a string value inside an operation walk (SEC-02-FU): the very int
+        /// <c>HashCode.Add(text, StringComparer.Ordinal)</c> folds, charged
+        /// <c>length / </c><see cref="StringCharsPerUnit"/> units before the native hash runs, and
+        /// retained by reference for a string worth at least <see cref="RetainedWidth"/> units, so N
+        /// references to one long string hash it once.
+        /// </summary>
+        private int StringHashInOperation(OperationMemo op, Result value, string text)
+        {
+            var units = text.Length / StringCharsPerUnit;
+            if (units == 0)
+                return StringComparer.Ordinal.GetHashCode(text);
+
+            var retained = units >= RetainedWidth;
+            if (retained && op.StringHashes is { } hashes && hashes.TryGetValue(value, out var known))
+                return known;
+
+            op.Charge(units, observations);
+            var hash = StringComparer.Ordinal.GetHashCode(text);
+            if (retained)
+                (op.StringHashes ??= new Dictionary<Result, int>(ReferenceEqualityComparer.Instance))[value] = hash;
+            return hash;
         }
 
         /// <summary>One suspended pair of an operation equality walk.</summary>
@@ -1714,7 +1887,8 @@ public closed record Result
                 IReadOnlyList<Result> childItems;
                 switch (child)
                 {
-                    // The per-call walk's leaf folding, token for token.
+                    // The per-call walk's leaf folding, token for token (a string's ordinal hash
+                    // is the int HashCode.Add(text, comparer) would add, charged and memoized).
                     case Atom(var number):
                         accumulator.Add(AtomTag);
                         accumulator.Add(number);
@@ -1722,7 +1896,7 @@ public closed record Result
 
                     case Str(var text):
                         accumulator.Add(StrTag);
-                        accumulator.Add(text, StringComparer.Ordinal);
+                        accumulator.Add(StringHashInOperation(op, child, text));
                         continue;
 
                     case Bool(var flag):
@@ -1815,13 +1989,22 @@ public closed record Result
         /// nodes the walks actually expand, never with paths, and every entry corresponds to
         /// at least one charged unit, so the step budget bounds the memo as well as the work.
         /// </summary>
-        private sealed class OperationMemo(Evaluation.EvaluationBudget budget)
+        private sealed class OperationMemo(Evaluation.EvaluationBudget budget, bool singleComparison)
         {
+            /// <summary>
+            /// The comparer decides exactly one comparison and is then retired (SEC-02-FU), so a verdict
+            /// only a later comparison could read is not retained.
+            /// </summary>
+            internal readonly bool SingleComparison = singleComparison;
+
             /// <summary>Equality verdicts by ordered reference pair: completed ones, plus the open path of the running walk.</summary>
             internal Dictionary<ReferencePair, PairState>? Verdicts;
 
             /// <summary>Completed structure hashes by reference, plus the open path of the running walk.</summary>
             internal Dictionary<Result, int>? NodeHashes;
+
+            /// <summary>Ordinal text hashes of long string values by reference (SEC-02-FU).</summary>
+            internal Dictionary<Result, int>? StringHashes;
 
             private int pendingUnits;
             private bool walking;
@@ -1856,6 +2039,19 @@ public closed record Result
                     throw new Evaluation.StructuralWorkRefusedException(error);
             }
 
+            /// <summary>
+            /// Counts <paramref name="units"/> units of string payload at once (SEC-02-FU) and, once
+            /// <see cref="UnitsPerCharge"/> are pending, charges them before the payload is read.
+            /// </summary>
+            internal void Charge(int units, ValueTraversalObservations? observations)
+            {
+                pendingUnits += units;
+                if (pendingUnits < UnitsPerCharge)
+                    return;
+                if (Flush(observations) is { } error)
+                    throw new Evaluation.StructuralWorkRefusedException(error);
+            }
+
             internal EvalError? Flush(ValueTraversalObservations? observations)
             {
                 var units = pendingUnits;
@@ -1870,6 +2066,7 @@ public closed record Result
             {
                 Verdicts = null;
                 NodeHashes = null;
+                StringHashes = null;
                 released = true;
             }
         }

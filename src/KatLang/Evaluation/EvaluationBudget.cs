@@ -694,12 +694,16 @@ internal sealed class EvaluationBudget
     /// <summary>
     /// Bulk work bound for the structural VALUE walks an evaluator operation performs (SEC-02):
     /// the equality and hash walks of <c>contains</c> and <c>distinct</c>, run through an
-    /// operation comparer (<see cref="Result.CreateOperationComparer"/>), and, since SEC-01-FU, the
+    /// operation comparer (<see cref="Result.CreateOperationComparer"/>); since SEC-02-FU every
+    /// other evaluator-owned comparison too — <c>==</c>/<c>!=</c>, repeated-name agreement and literal-string matching
+    /// (<see cref="Result.EvaluatorValueEquals"/>); and, since SEC-01-FU, the
     /// host-value admission walk (<c>Result.AdmitHostOperationValue</c>, same unit). One unit is one child
-    /// slot inspected or one expanded structure completed (equal, unequal, or hashed); charging
+    /// slot inspected, one expanded structure completed (equal, unequal, or hashed), or
+    /// <see cref="Result.ValueSemanticComparer.StringCharsPerUnit"/> code units of string payload an
+    /// equality or hash reads (SEC-02-FU, charged before the read); charging
     /// completions also bounds a deep chain's otherwise inspection-free unwind. A memo hit is the one inspection that
-    /// found it, never its subtree again, and top-level leaf items cost nothing, so flat
-    /// collections charge no unit at all. Every <see cref="StructuralWorkUnitsPerStep"/> units
+    /// found it, never its subtree again. Top-level fixed-size leaf processing costs nothing;
+    /// long string payloads still charge their length. Every <see cref="StructuralWorkUnitsPerStep"/> units
     /// charge ONE step, from a batch of their own: the expression-work checkpoint batch and its
     /// counter (<see cref="ConsumedExpressionCheckpoints"/>) are untouched, and a step stays
     /// one dynamic invocation, one loop iteration, or one bulk block of either kind.

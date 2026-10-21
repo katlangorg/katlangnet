@@ -792,7 +792,7 @@ internal static partial class LoopOptimizer
             if (RecordSpineTransition(frame) is { } linkLimit) return linkLimit;
             frame.Diagnostics?.RecordPlannedBuiltinOperation();
             var linkR = ApplyPlannedComparison(
-                link.Op, previousSource, link.Operand.Source, previous, nextR.Value, comparison.Source.Span);
+                link.Op, previousSource, link.Operand.Source, previous, nextR.Value, comparison.Source.Span, frame.IterationCtx);
             if (linkR.IsError) return linkR.Error;
             holds &= linkR.Value;
             previous = nextR.Value;
@@ -911,13 +911,14 @@ internal static partial class LoopOptimizer
         Expr rightExpr,
         PlannedLoopValue left,
         PlannedLoopValue right,
-        SourceSpan? chainSpan)
+        SourceSpan? chainSpan,
+        Evaluator.EvalCtx ctx)
     {
         if (op is not (ComparisonOp.Eq or ComparisonOp.Ne)
             && left.AsNum() is { } x && right.AsNum() is { } y)
             return EvalResult<bool>.Ok(Evaluator.TryCompareNumeric(op, x, y)!.Value);
 
-        return Evaluator.ApplyComparison(op, leftExpr, rightExpr, left.ToResult(), right.ToResult(), chainSpan);
+        return Evaluator.ApplyComparison(op, leftExpr, rightExpr, left.ToResult(), right.ToResult(), chainSpan, ctx);
     }
 
     private static EvalResult<PlannedLoopValue> ApplyPlannedNumericBinary(

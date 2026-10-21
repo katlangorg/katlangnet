@@ -585,6 +585,9 @@ public static partial class Evaluator
         }
         var bound = new Dictionary<string, NeedCell>(StringComparer.Ordinal);
         var pending = new Stack<(NeedPattern Pattern, NeedCell Cell)>();
+        // ONE charged comparison session per binder activation, created by the first repeated-name
+        // comparison with structural work (SEC-02-FU): this head's agreements share its verdicts.
+        Result.ValueSemanticComparer? repeatedValues = null;
         EvalResult<NeedEnv?> Mismatch(EvalError error)
             => family ? EvalResult<NeedEnv?>.Ok(null) : error;
 
@@ -634,8 +637,14 @@ public static partial class Evaluator
                         var before = asynchronous ? await previous.DemandAsync().ConfigureAwait(false) : previous.Demand();
                         if (before.IsError) return before.Error;
                         // NEED-04 (frozen): unequal VALUE contributions are the binder's BadArity;
-                        // the context names the violated agreement.
-                        if (before.Value.EmittedCount != value.Value.EmittedCount || !Result.ValueComparer.Equals(before.Value.Value, value.Value.Value))
+                        // the context names the violated agreement. The comparison is charged
+                        // (SEC-02-FU): its refusal is the run's terminal error, returned as is —
+                        // never routed through Mismatch, so no later clause is ever tried.
+                        if (before.Value.EmittedCount != value.Value.EmittedCount)
+                            return Mismatch(new EvalError.WithContext(RepeatedParameterContext(name), new EvalError.BadArity()));
+                        var agreed = RepeatedValueEquals(ref repeatedValues, before.Value.Value, value.Value.Value, ctx);
+                        if (agreed.IsError) return agreed.Error;
+                        if (!agreed.Value)
                             return Mismatch(new EvalError.WithContext(RepeatedParameterContext(name), new EvalError.BadArity()));
                         // META-S3-0b: the async binder awaits and consumes both outcomes directly.
                         var first = asynchronous ? await previous.ProjectCallableAsync().ConfigureAwait(false) : previous.ProjectCallable();
@@ -655,7 +664,9 @@ public static partial class Evaluator
             var inspected = outcome.Value.Value;
             if (pattern.Literal is { } literal)
             {
-                if (!MatchPattern(literal, inspected, new List<(string Name, Result Value)>()))
+                var matched = MatchLiteralPattern(literal, inspected, ctx);
+                if (matched.IsError) return matched.Error;
+                if (!matched.Value)
                     return EvalResult<NeedEnv?>.Ok(null);
                 continue;
             }

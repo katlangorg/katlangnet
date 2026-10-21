@@ -18,67 +18,39 @@ public static partial class Evaluator
     // ── Pattern matching (for conditional algorithms) ────────────────────────
 
     /// <summary>
-    /// Match a pattern against a Result, returning accumulated bindings on success.
-    /// Lean: matchPattern. Compiler-exhaustive over the closed Pattern hierarchy,
-    /// like Lean's total match: a new pattern kind fails this build instead of
-    /// silently matching nothing.
+    /// Match a LITERAL pattern against the demanded value it inspects — the one use of Lean's
+    /// <c>matchPattern</c> that production evaluation has (<c>bindNeedOne</c> applies it to a
+    /// literal pattern; names, repeated names, and structural patterns are bound by the inspecting
+    /// binder, <see cref="BindAcceptedNeedPatterns"/>, whose repeated-name agreement is the charged
+    /// comparison <see cref="RepeatedValueEquals"/>). String literals use that same charged equality:
+    /// their written length bounds one comparison, but a run can repeat it many times. A refused
+    /// comparison returns its error, never a clause non-match. The former bind and sequence-value
+    /// arms, unreachable from any binder, compared values with the
+    /// context-free <see cref="Result.ValueComparer"/> and are removed (SEC-02-FU) rather than left
+    /// as an unbudgeted comparison route. Lean's total matcher keeps those arms for its own guards.
+    /// Compiler-exhaustive over the closed Pattern hierarchy: a new pattern kind fails this build.
     /// </summary>
-    private static bool MatchPattern(
-        Pattern pattern,
-        Result result,
-        List<(string Name, Result Value)> bindings)
-        => pattern switch
+    private static EvalResult<bool> MatchLiteralPattern(Pattern literal, Result result, EvalCtx ctx)
+        => literal switch
         {
-            Pattern.Bind(var name) => MatchBindPattern(name, result, bindings),
             // Literal patterns match by STRUCTURAL numeric equality (Decimal128.Equals:
-            // NaN is one value, quantum ignored) — the same semantics the repeated-binder
-            // arm above and Result.ValueComparer use. The IEEE `==` operator would make a
-            // host-built LitInt(NaN) pattern unable to match anything, including itself.
-            Pattern.LitInt(var n) => result is Result.Atom(var v) && v.Equals(n),
-            Pattern.LitString(var s) => result is Result.Str(var sv)
-                && string.Equals(sv, s, StringComparison.Ordinal),
+            // NaN is one value, quantum ignored) — the same semantics Result.ValueComparer
+            // uses. The IEEE `==` operator would make a host-built LitInt(NaN) pattern
+            // unable to match anything, including itself.
+            Pattern.LitInt(var n) => EvalResult<bool>.Ok(result is Result.Atom(var v) && v.Equals(n)),
+            // Keep ordinary short literals allocation-free; longer texts use the same operation
+            // comparer and payload policy as ==, including its O(1) length/identity decisions.
+            Pattern.LitString(var s) => result is not Result.Str value
+                ? EvalResult<bool>.Ok(false)
+                : value.Value.Length < Result.ValueSemanticComparer.StringCharsPerUnit
+                    ? EvalResult<bool>.Ok(string.Equals(value.Value, s, StringComparison.Ordinal))
+                    : ValueEquals(value, new Result.Str(s), ctx),
             // A Boolean literal pattern matches only a Boolean value (never the number
             // it would once have encoded).
-            Pattern.LitBool(var b) => result is Result.Bool(var bv) && bv == b,
-            // STRUCTURAL PATTERN DELIMITERS SELECT THE VALUE KIND THEY DESTRUCTURE: a sequence
-            // pattern matches only a sequence value, a list pattern only a list value, each
-            // of exactly its length (Lean: `patternStructureMembers?`).
-            Pattern.SequenceValue(var items) => MatchStructurePattern(items, result.SequencePatternItems(), bindings),
-            Pattern.ListValue(var items) => MatchStructurePattern(items, result.ListPatternItems(), bindings),
+            Pattern.LitBool(var b) => EvalResult<bool>.Ok(result is Result.Bool(var bv) && bv == b),
+            Pattern.Bind or Pattern.SequenceValue or Pattern.ListValue => throw new System.Diagnostics.UnreachableException(
+                "Only a literal pattern is matched by value; the binder owns names and structural patterns."),
         };
-
-    private static bool MatchBindPattern(string name, Result result, List<(string Name, Result Value)> bindings)
-    {
-        var existing = LookupVal(bindings, name);
-        if (existing is not null)
-            return Result.ValueComparer.Equals(existing, result);
-
-        bindings.Add((name, result));
-        return true;
-    }
-
-    /// <summary>
-    /// Matches a structural pattern's items against the elements its value supplied
-    /// (<paramref name="members"/> is <c>null</c> when the value is not of the pattern's kind).
-    /// The lengths must be equal: there is no singleton adaptation — a one-item sequence
-    /// pattern is invalid, and no value is a one-item structure of another kind.
-    /// Lean: <c>matchStructureInto</c> over <c>patternStructureMembers?</c>.
-    /// </summary>
-    private static bool MatchStructurePattern(
-        IReadOnlyList<Pattern> items,
-        IReadOnlyList<Result>? members,
-        List<(string Name, Result Value)> bindings)
-    {
-        if (members is null || members.Count != items.Count)
-            return false;
-
-        for (var i = 0; i < items.Count; i++)
-        {
-            if (!MatchPattern(items[i], members[i], bindings))
-                return false;
-        }
-        return true;
-    }
 
     /// <summary>
     /// Compatibility fallback for manually constructed core conditionals.
