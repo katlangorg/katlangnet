@@ -297,6 +297,14 @@ public sealed record EvaluationLimits
     /// much smaller practical budgets. It leaves a 100x margin against the established
     /// <c>range(1, 10000000)</c> reproducer while staying far above the collection sizes
     /// realistic KatLang programs build.</para>
+    ///
+    /// <para>The same effective limit also bounds every TRANSIENT item supply evaluation forms
+    /// (a call's argument supply, a selection's selector supply, a loop step's row supply, and the
+    /// slot accumulators of lists and captures): an expanded supply's total size, including written
+    /// prefix and suffix slots, is bounded before retaining its expansion. A supply that would hold
+    /// more is refused with <see cref="EvalError.CollectionSizeLimitExceeded"/> without building
+    /// the oversized expansion. Purely written supplies stay bounded by the source instead;
+    /// internal sequence joins stream their leaf occurrences and bound every contribution.</para>
     /// </summary>
     public const int MaxSupportedCollectionItems = 100_000;
 

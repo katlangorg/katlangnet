@@ -225,18 +225,34 @@ public static partial class Evaluator
         OutputBundle arguments, EvalCtx caller, ValEnv values, bool asynchronous, List<Expr?>? sources = null)
     {
         var supply = new List<NeedCell>(arguments.Count);
+        // SEC-01: the supply is transient-bounded (TransientSupply); an overflowed supply forms
+        // count-only to its end, then is refused at the slot that overflowed it.
+        TransientSupply bound = default;
+        SourceSpan? overflowAt = null;
         foreach (var argument in arguments)
         {
             if (argument is not Expr.SequenceSpread spread)
             {
-                supply.Add(SupplyCell(argument, caller, values));
-                sources?.Add(argument);
+                var overflowed = bound.Overflowed;
+                if (AdmitTransient(caller.Budget, ref bound, 1, expansion: false))
+                {
+                    supply.Add(SupplyCell(argument, caller, values));
+                    sources?.Add(argument);
+                }
+                if (bound.Overflowed && !overflowed)
+                    overflowAt = argument.Span;
                 continue;
             }
-            if (await FormSpreadSupplySlot(spread, caller, values, asynchronous, supply, sources).ConfigureAwait(false) is { } failure)
+            var formed = await FormSpreadSupplySlot(spread, caller, values, asynchronous, supply, sources, bound).ConfigureAwait(false);
+            if (formed.Failure is { } failure)
                 return failure;
+            if (formed.Supply.Overflowed && !bound.Overflowed)
+                overflowAt = spread.Span;
+            bound = formed.Supply;
         }
-        return EvalResult<IReadOnlyList<NeedCell>>.Ok(supply);
+        return bound.Overflowed
+            ? RefuseTransientSupply(caller.Budget, bound, overflowAt)
+            : EvalResult<IReadOnlyList<NeedCell>>.Ok(supply);
     }
 
     /// <summary>
@@ -251,50 +267,67 @@ public static partial class Evaluator
     /// to <paramref name="supply"/> (and their written sources to <paramref name="sources"/>) and
     /// returns the formation failure, if any. Lean: <c>NeedSupply.slot</c>, whose known-slice test is
     /// <c>spreadCollectorSlice?</c> and whose computed spread is <c>evalSupplySpread</c>.
+    /// <para>The supply is TRANSIENT-BOUNDED (SEC-01, <see cref="AdmitTransient"/>): the slot's
+    /// cardinality — a known slice's or view's cell count, a computed spread's opened item count — is
+    /// admitted into <paramref name="bound"/> BEFORE any cell is appended or created; an overflowed
+    /// supply only counts the slot (the computed spread is still evaluated, exactly as without the
+    /// bound). Returns the updated bound with the formation failure.</para>
     /// </summary>
-    private static async ValueTask<EvalError?> FormSpreadSupplySlot(
+    private static async ValueTask<SpreadSlotFormation> FormSpreadSupplySlot(
         Expr.SequenceSpread argument, EvalCtx caller, ValEnv values, bool asynchronous,
-        List<NeedCell> supply, List<Expr?>? sources)
+        List<NeedCell> supply, List<Expr?>? sources, TransientSupply bound)
     {
         // A collecting parameter's known slice, found exactly as SupplyCell finds a parameter's
         // cell — without allocating a cell for any other operand.
         if (argument.Operand is Expr.Param(var name) && ParameterNeedCell(name, caller) is { Slice: { } known })
         {
-            supply.AddRange(known);
-            if (sources is not null) sources.AddRange(known.Select(static cell => cell.Source));
-            return null;
+            if (AdmitTransient(caller.Budget, ref bound, known.Count, expansion: true))
+            {
+                supply.AddRange(known);
+                if (sources is not null) sources.AddRange(known.Select(static cell => cell.Source));
+            }
+            return new(null, bound);
         }
         // The spread node's dispatch checkpoint, which EvalCounted charges before its spread arm; the
         // operand is then evaluated ONCE and opened exactly as EvalSequenceSpreadCounted opens it
         // (it owns output-less spread diagnostics), with the last star's view left to transport.
         if (caller.Budget.TryChargeExpressionNodeWork() is { } nodeWorkError)
-            return nodeWorkError;
+            return new(nodeWorkError, bound);
         var operand = PeelSpreadLayers(argument, out var layers);
         var operandR = asynchronous
             ? await EvalSequenceSpreadOperandValueAsync(operand, caller, values).ConfigureAwait(false)
             : EvalSequenceSpreadOperandValue(operand, caller, values);
-        if (operandR.IsError) return operandR.Error;
+        if (operandR.IsError) return new(operandR.Error, bound);
         var opened = OpenSpreadLayers(operandR.Value, layers, argument, caller, transportView: true, out var view);
         if (view is not null)
         {
             var cells = asynchronous
                 ? await PrepareArgumentViewAsync(view, caller).ConfigureAwait(false)
                 : PrepareArgumentView(view, caller);
-            if (cells.IsError) return AtSpanIfMissing(cells.Error, argument.Span);
-            supply.AddRange(cells.Value);
-            if (sources is not null)
-                foreach (var cell in cells.Value)
-                    sources.Add(cell.Source);
-            return null;
+            if (cells.IsError) return new(AtSpanIfMissing(cells.Error, argument.Span), bound);
+            if (AdmitTransient(caller.Budget, ref bound, cells.Value.Count, expansion: true))
+            {
+                supply.AddRange(cells.Value);
+                if (sources is not null)
+                    foreach (var cell in cells.Value)
+                        sources.Add(cell.Source);
+            }
+            return new(null, bound);
         }
-        if (opened.IsError) return opened.Error;
-        foreach (var item in CountedTopLevelValues(opened.Value))
+        if (opened.IsError) return new(opened.Error, bound);
+        if (AdmitTransient(caller.Budget, ref bound, CountedTopLevelValueCount(opened.Value), expansion: true))
         {
-            supply.Add(NeedCell.Ready(new(item, item.ValueCount())));
-            sources?.Add(null);
+            foreach (var item in CountedTopLevelValues(opened.Value))
+            {
+                supply.Add(NeedCell.Ready(new(item, item.ValueCount())));
+                sources?.Add(null);
+            }
         }
-        return null;
+        return new(null, bound);
     }
+
+    /// <summary>One spread slot's formation (<see cref="FormSpreadSupplySlot"/>): its failure, if any, and the supply's updated SEC-01 bound.</summary>
+    private readonly record struct SpreadSlotFormation(EvalError? Failure, TransientSupply Supply);
 
     /// <summary>
     /// Forms the SELECTOR SUPPLY of a postfix selection <c>R[s1, …, sn]</c> exactly as a call forms
@@ -312,21 +345,34 @@ public static partial class Evaluator
     {
         var supplied = new List<SuppliedSelector>(selection.Selectors.Count);
         List<NeedCell>? cells = null;
+        // SEC-01: the selector supply is transient-bounded like a call's (FormNeedSupply).
+        TransientSupply bound = default;
+        SourceSpan? overflowAt = null;
         foreach (var slot in selection.Selectors)
         {
             if (slot is not Expr.SequenceSpread spread)
             {
-                supplied.Add(new SuppliedSelector(slot, null));
+                var overflowed = bound.Overflowed;
+                if (AdmitTransient(ctx.Budget, ref bound, 1, expansion: false))
+                    supplied.Add(new SuppliedSelector(slot, null));
+                if (bound.Overflowed && !overflowed)
+                    overflowAt = slot.Span ?? selection.Span;
                 continue;
             }
             cells ??= [];
             cells.Clear();
-            if (await FormSpreadSupplySlot(spread, ctx, valEnv, asynchronous, cells, sources: null).ConfigureAwait(false) is { } failure)
+            var formed = await FormSpreadSupplySlot(spread, ctx, valEnv, asynchronous, cells, sources: null, bound).ConfigureAwait(false);
+            if (formed.Failure is { } failure)
                 return AtSpanIfMissing(failure, slot.Span ?? selection.Span);
+            if (formed.Supply.Overflowed && !bound.Overflowed)
+                overflowAt = slot.Span ?? selection.Span;
+            bound = formed.Supply;
             foreach (var cell in cells)
                 supplied.Add(new SuppliedSelector(slot, cell));
         }
-        return EvalResult<List<SuppliedSelector>>.Ok(supplied);
+        return bound.Overflowed
+            ? RefuseTransientSupply(ctx.Budget, bound, overflowAt)
+            : EvalResult<List<SuppliedSelector>>.Ok(supplied);
     }
 
     /// <summary>The synchronous engine's call of <see cref="FormSelectionSupply"/>, kept out of the spine machine's frame.</summary>

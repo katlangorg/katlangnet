@@ -319,14 +319,18 @@ public static partial class Evaluator
             return new EvalError.EvaluationStackExhausted();
 
         var slots = new List<Result>();
+        // SEC-01: an overflowed group forms count-only; its owner's reservation refuses the full size.
+        TransientSupply bound = default;
         foreach (var expr in rows)
         {
             var exprSlotsR = EvalExplicitSequenceValueExprSlots(expr, rowCtx, valEnv);
             if (exprSlotsR.IsError) return exprSlotsR.Error;
-            slots.AddRange(exprSlotsR.Value);
+            AddSlotsBounded(slots, exprSlotsR.Value, rowCtx.Budget, ref bound, expr is Expr.SequenceSpread);
         }
 
-        return EvalResult<IReadOnlyList<Result>>.Ok(slots);
+        return bound.Overflowed
+            ? RefuseOverflowedCaptureAtRows(rowCtx.Budget, bound, rows)
+            : EvalResult<IReadOnlyList<Result>>.Ok(slots);
     }
 
     private static EvalResult<IReadOnlyList<Result>> EvalExplicitSequenceValueExprSlots(

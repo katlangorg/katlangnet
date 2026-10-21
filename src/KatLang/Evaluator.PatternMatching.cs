@@ -317,15 +317,19 @@ public static partial class Evaluator
 
         var results = new List<Result>();
         var emittedCount = 0;
+        TransientSupply bound = default;
 
         foreach (var expr in rows)
         {
             var countedR = EvalCounted(expr, rowCtx, valEnv);
             if (countedR.IsError) return countedR.Error;
 
+            // The row-slot accumulator is transient-bounded BEFORE it grows (SEC-01): once `(A*, A*)`
+            // passes the limit the remaining rows are formed count-only and the capture's own
+            // reservation below refuses the full size.
             if (expr is Expr.SequenceSpread)
             {
-                AddCountedTopLevelValues(results, countedR.Value);
+                AddCountedTopLevelValuesBounded(results, countedR.Value, reserveCtx.Budget, ref bound, expansion: true);
                 emittedCount += countedR.Value.EmittedCount;
                 continue;
             }
@@ -333,13 +337,15 @@ public static partial class Evaluator
             // A non-spread output expression is always one visible output slot,
             // even when it evaluates to the empty sequence value `()`. Only an
             // explicit spread opens a sequence and can contribute zero items.
-            results.Add(countedR.Value.Value);
+            AddSlotBounded(results, countedR.Value.Value, reserveCtx.Budget, ref bound);
             emittedCount += countedR.Value.EmittedCount == 0 ? 1 : countedR.Value.EmittedCount;
         }
 
         // Output-slot capture is a persistent collection: spread can expand it well beyond
         // any single input (`(A*, A*)` doubles), so the reservation happens
         // here, before the sequence value is built.
+        if (bound.Overflowed)
+            return RefuseOverflowedCaptureAtRows(reserveCtx.Budget, bound, rows);
         var capturedR = MakeCheckedSequenceCaptureAtRows(reserveCtx.Budget, results, rows);
         if (capturedR.IsError) return capturedR.Error;
 

@@ -1206,13 +1206,13 @@ public static partial class Evaluator
 
                 case Expr.ListLiteral(var elements):
                     {
-                        frames[top].ListItems ??= [];
+                        frames[top].ListItems ??= new ListSlotAccumulator();
                         if (hasPendingChild)
                         {
                             // WRITTEN-SLOT REIFICATION: a machine-kind element is never a
                             // spread, so its counted supply contributes exactly ONE value.
                             hasPendingChild = false;
-                            frames[top].ListItems!.Add(pendingChild.Value);
+                            AddSlotBounded(frames[top].ListItems!, pendingChild.Value, ctx.Budget, ref ((ListSlotAccumulator)frames[top].ListItems!).Supply);
                             frames[top].Phase++;
                         }
 
@@ -1229,7 +1229,8 @@ public static partial class Evaluator
                                 break;
                             }
 
-                            frames[top].ListItems!.AddRange(slotsR.Value);
+                            // Transient-bounded before it grows (SEC-01); mirrors the sync machine.
+                            AddSlotsBounded(frames[top].ListItems!, slotsR.Value, ctx.Budget, ref ((ListSlotAccumulator)frames[top].ListItems!).Supply, element is Expr.SequenceSpread);
                             frames[top].Phase++;
                         }
 
@@ -1245,7 +1246,7 @@ public static partial class Evaluator
                         // Cardinality is known once the written slots (including spread
                         // expansion) are evaluated, so the reservation happens before the
                         // persistent list is built.
-                        if (ReserveCollection(ctx, frames[top].ListItems!.Count, frames[top].Node.Span) is { } limitError)
+                        if (ReserveCollection(ctx, ((ListSlotAccumulator)frames[top].ListItems!).Supply.Total, frames[top].Node.Span) is { } limitError)
                         {
                             completed = limitError;
                             break;
@@ -1419,25 +1420,31 @@ public static partial class Evaluator
 
         var results = new List<Result>();
         var emittedCount = 0;
+        TransientSupply bound = default;
 
         foreach (var expr in rows)
         {
             var countedR = await EvalCountedAsync(expr, rowCtx, valEnv).ConfigureAwait(false);
             if (countedR.IsError) return countedR.Error;
 
+            // The row-slot accumulator is transient-bounded BEFORE it grows (SEC-01): once `(A*, A*)`
+            // passes the limit the remaining rows are formed count-only and the capture's own
+            // reservation below refuses the full size.
             if (expr is Expr.SequenceSpread)
             {
-                AddCountedTopLevelValues(results, countedR.Value);
+                AddCountedTopLevelValuesBounded(results, countedR.Value, reserveCtx.Budget, ref bound, expansion: true);
                 emittedCount += countedR.Value.EmittedCount;
                 continue;
             }
 
             // A non-spread output expression is always one visible output slot,
             // even when it evaluates to the empty sequence value `()`.
-            results.Add(countedR.Value.Value);
+            AddSlotBounded(results, countedR.Value.Value, reserveCtx.Budget, ref bound);
             emittedCount += countedR.Value.EmittedCount == 0 ? 1 : countedR.Value.EmittedCount;
         }
 
+        if (bound.Overflowed)
+            return RefuseOverflowedCaptureAtRows(reserveCtx.Budget, bound, rows);
         var capturedR = MakeCheckedSequenceCaptureAtRows(reserveCtx.Budget, results, rows);
         if (capturedR.IsError) return capturedR.Error;
 
@@ -1524,15 +1531,19 @@ public static partial class Evaluator
             return accessError;
 
         var slots = new List<Result>();
+        TransientSupply bound = default;
+        SourceSpan? overflowAt = null;
         var pushedCtx = EnterAlgorithmBody(alg, ctx, valEnv, parameterNames);
         foreach (var expr in alg.Output)
         {
             var countedR = await EvalCountedAsync(expr, pushedCtx, valEnv).ConfigureAwait(false);
             if (countedR.IsError) return countedR.Error;
-            AddOutputRowItems(slots, expr, countedR.Value);
+            AddOutputRowItems(slots, expr, countedR.Value, ctx.Budget, ref bound, ref overflowAt);
         }
 
-        return EvalResult<IReadOnlyList<Result>>.Ok(slots);
+        return bound.Overflowed
+            ? RefuseTransientSupply(ctx.Budget, bound, overflowAt)
+            : EvalResult<IReadOnlyList<Result>>.Ok(slots);
     }
 
     /// <summary>MIRROR OF <see cref="EvalWhileVerdictSlots"/> — keep in lock-step.</summary>
@@ -1556,11 +1567,16 @@ public static partial class Evaluator
         var pushedCtx = EnterAlgorithmBody(alg, ctx, valEnv, parameterNames);
         var flagRow = rows.Count - 1;
         CountedResult flagRowValue = default;
+        TransientSupply discovery = default;
+        SourceSpan? overflowAt = null;
         for (; flagRow >= 0; flagRow--)
         {
             var countedR = await EvalCountedAsync(rows[flagRow], pushedCtx, valEnv).ConfigureAwait(false);
             if (countedR.IsError) return countedR.Error;
-            AddOutputRowItems(slots, rows[flagRow], countedR.Value);
+            AddOutputRowItems(slots, rows[flagRow], countedR.Value, ctx.Budget, ref discovery, ref overflowAt);
+            // A flag row whose items alone pass the ceiling cannot be read (SEC-01).
+            if (discovery.Overflowed)
+                return RefuseTransientSupply(ctx.Budget, discovery, overflowAt);
             if (slots.Count != 0)
             {
                 flagRowValue = countedR.Value;
@@ -1577,13 +1593,16 @@ public static partial class Evaluator
         if (flagRow > 0)
         {
             slots.Clear();
+            TransientSupply bound = default;
             for (var i = 0; i < flagRow; i++)
             {
                 var countedR = await EvalCountedAsync(rows[i], pushedCtx, valEnv).ConfigureAwait(false);
                 if (countedR.IsError) return countedR.Error;
-                AddOutputRowItems(slots, rows[i], countedR.Value);
+                AddOutputRowItems(slots, rows[i], countedR.Value, ctx.Budget, ref bound, ref overflowAt);
             }
-            AddOutputRowItems(slots, rows[flagRow], flagRowValue);
+            AddOutputRowItems(slots, rows[flagRow], flagRowValue, ctx.Budget, ref bound, ref overflowAt);
+            if (bound.Overflowed)
+                return RefuseTransientSupply(ctx.Budget, bound, overflowAt);
         }
 
         return EvalResult<IReadOnlyList<Result>?>.Ok(WhileNextStateSlots(slots));
@@ -1633,14 +1652,18 @@ public static partial class Evaluator
             return new EvalError.EvaluationStackExhausted();
 
         var slots = new List<Result>();
+        // SEC-01: an overflowed group forms count-only; its owner's reservation refuses the full size.
+        TransientSupply bound = default;
         foreach (var expr in rows)
         {
             var exprSlotsR = await EvalExplicitSequenceValueExprSlotsAsync(expr, rowCtx, valEnv).ConfigureAwait(false);
             if (exprSlotsR.IsError) return exprSlotsR.Error;
-            slots.AddRange(exprSlotsR.Value);
+            AddSlotsBounded(slots, exprSlotsR.Value, rowCtx.Budget, ref bound, expr is Expr.SequenceSpread);
         }
 
-        return EvalResult<IReadOnlyList<Result>>.Ok(slots);
+        return bound.Overflowed
+            ? RefuseOverflowedCaptureAtRows(rowCtx.Budget, bound, rows)
+            : EvalResult<IReadOnlyList<Result>>.Ok(slots);
     }
 
     /// <summary>MIRROR OF <see cref="EvalExplicitSequenceValueExprSlots"/> — keep in lock-step.</summary>
@@ -2972,7 +2995,9 @@ public static partial class Evaluator
         ValEnv valEnv)
     {
         var leaves = SequenceConstructLeaves(expr);
-        var items = new List<Result>(leaves.Count);
+        var items = new List<Result>();
+        // MIRROR OF the sync join: stream shared-AST occurrences and bound plain leaves too.
+        TransientSupply bound = new() { HasExpansion = true };
 
         foreach (var leaf in leaves)
         {
@@ -2983,7 +3008,7 @@ public static partial class Evaluator
                 var spreadR = await EvalCountedAsync(leaf, ctx, valEnv).ConfigureAwait(false);
                 if (spreadR.IsError) return spreadR.Error;
 
-                AddCountedTopLevelValues(items, spreadR.Value);
+                AddCountedTopLevelValuesBounded(items, spreadR.Value, ctx.Budget, ref bound, expansion: true);
                 continue;
             }
 
@@ -2993,10 +3018,11 @@ public static partial class Evaluator
             if (valueR.IsError) return valueR.Error;
 
             if (valueR.Value.Value.ValueCount() != 0)
-                items.Add(valueR.Value.Value);
+                AddSlotBounded(items, valueR.Value.Value, ctx.Budget, ref bound);
         }
 
-        if (ReserveSequenceCapture(ctx, items.Count) is { } sequenceLimitError)
+        // SEC-01: an overflowed join was formed count-only; its reservation refuses the full size.
+        if ((bound.Overflowed ? ReserveCollection(ctx, bound.Total) : ReserveSequenceCapture(ctx, items.Count)) is { } sequenceLimitError)
             return sequenceLimitError;
 
         var value = CombineOutputSlots(items);

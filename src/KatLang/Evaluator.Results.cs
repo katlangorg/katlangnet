@@ -39,6 +39,14 @@ public static partial class Evaluator
         }
     }
 
+    /// <summary>How many items <see cref="ResultItems"/> appends for <paramref name="r"/>, without appending.</summary>
+    private static int ResultItemCount(Result r) => r switch
+    {
+        Result.Atom or Result.Str or Result.Bool or Result.ListValue => 1,
+        Result.SequenceValue(var items) => items.Count,
+        _ => 0,
+    };
+
     /// <summary>
     /// Builds the canonical empty sequence value for an <see cref="Expr.EmptySequence"/>.
     /// Repeated ordinary parentheses around <c>()</c> do not create higher-order

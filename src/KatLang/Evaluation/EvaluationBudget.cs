@@ -49,6 +49,7 @@ internal sealed class EvaluationBudget
     private int _depth;
     private long _steps;
     private long _materializedItems;
+    private int _peakTransientExpansion;
     private long _materializedStringChars;
 
     private EvalError? _terminalFailure;
@@ -497,6 +498,51 @@ internal sealed class EvaluationBudget
         _materializedItems = checked(_materializedItems + requestedCount);
         return null;
     }
+
+    /// <summary>
+    /// The largest admitted total count of an expanded supply (including an internal join)
+    /// (<see cref="AdmitsTransientExpansion"/>). Diagnostics and tests only (SEC-01 allocation
+    /// evidence): never above <see cref="MaxCollectionItems"/>.
+    /// </summary>
+    internal int PeakTransientExpansion => _peakTransientExpansion;
+
+    /// <summary>
+    /// Whether an expanded TRANSIENT item supply may retain <paramref name="expanded"/>
+    /// total items (SEC-01): a call's effective argument supply, a postfix selection's
+    /// selector supply, a loop step's row supply, and the slot accumulators of list literals,
+    /// output captures, written groups and sequence joins. Callers ask BEFORE appending, copying,
+    /// or creating the items. The whole destination counts, including written prefix and suffix
+    /// slots, so expansion cannot retain a supply larger than one collection may hold.
+    ///
+    /// <para>The bound is the SAME always-active per-collection ceiling
+    /// (<see cref="MaxCollectionItems"/>, configurable downward only). Without it, spreading
+    /// individually legal values (<c>F(A*, A*)</c>, recursive collector forwarding
+    /// <c>F(xs*, xs*)</c>) built supplies far beyond any collection a run could materialize.
+    /// A purely written supply with no spread stays bounded by the admitted source instead.
+    /// Internal joins stream AST occurrences and bound every leaf, since a shared DAG can unfold
+    /// to many more occurrences than its source nodes.
+    /// This is a pure bound, NOT a reservation: the cumulative materialization counter never moves
+    /// here (a forwarded cell is not a newly materialized value, and a persistent collection
+    /// still reserves its own slots once).</para>
+    /// </summary>
+    internal bool AdmitsTransientExpansion(long expanded)
+    {
+        if (expanded > _maxCollectionItems)
+            return false;
+        if (expanded > _peakTransientExpansion)
+            _peakTransientExpansion = (int)expanded;
+        return true;
+    }
+
+    /// <summary>
+    /// The refusal of a transient item supply whose spread expansions passed
+    /// <see cref="AdmitsTransientExpansion"/>: <see cref="EvalError.CollectionSizeLimitExceeded"/>
+    /// with the supply's full size as <c>Requested</c>, retained as terminal like every resource
+    /// limit.
+    /// </summary>
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    internal EvalError RefuseTransientSupply(long requested)
+        => RetainTerminal(new EvalError.CollectionSizeLimitExceeded(_maxCollectionItems, requested));
 
     /// <summary>The enforced single-string length limit, in UTF-16 code units.</summary>
     internal int MaxStringLength => _maxStringLength;

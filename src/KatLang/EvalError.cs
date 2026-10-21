@@ -386,6 +386,9 @@ public closed record EvalError
     /// (engine results, the flat entry points) exceeds the same limit; there
     /// <c>Requested</c> is the lower bound limit + 1 (the projection stops counting at
     /// the limit) and the error carries no source span.
+    /// Also reported, with the supply's full size as <c>Requested</c>, when a TRANSIENT item supply
+    /// (a call's arguments, a selection's selectors, a loop step's rows) would retain more
+    /// items after spread expansion than the same limit; the expansion is never built.
     /// </summary>
     public sealed record CollectionSizeLimitExceeded(int Limit, long Requested) : EvalError;
 

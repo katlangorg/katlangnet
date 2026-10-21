@@ -41,6 +41,18 @@ public static partial class Evaluator
     internal static bool IsExpressionSpineNode(Expr expr)
         => expr is Expr.Unary or Expr.Binary or Expr.Comparison or Expr.Index or Expr.ListLiteral or Expr.InterpolatedString;
 
+    /// <summary>
+    /// A ListLiteral frame's element accumulator together with its SEC-01 transient bound
+    /// (<see cref="TransientSupply"/>): once it overflows, the remaining elements are evaluated
+    /// count-only and the list's own reservation refuses its full size. The bound lives here, not
+    /// in <see cref="ExpressionSpineFrame"/>, so the frame — allocated sixteen at a time per spine
+    /// run — does not grow.
+    /// </summary>
+    private sealed class ListSlotAccumulator : List<Result>
+    {
+        public TransientSupply Supply;
+    }
+
     /// <summary>One in-progress spine node in <see cref="EvalExpressionSpineCounted"/>.</summary>
     private struct ExpressionSpineFrame(Expr node)
     {
@@ -315,13 +327,13 @@ public static partial class Evaluator
 
                 case Expr.ListLiteral(var elements):
                 {
-                    frame.ListItems ??= [];
+                    frame.ListItems ??= new ListSlotAccumulator();
                     if (hasPendingChild)
                     {
                         // WRITTEN-SLOT REIFICATION: a machine-kind element is never a
                         // spread, so its counted supply contributes exactly ONE value.
                         hasPendingChild = false;
-                        frame.ListItems.Add(pendingChild.Value);
+                        AddSlotBounded(frame.ListItems, pendingChild.Value, ctx.Budget, ref ((ListSlotAccumulator)frame.ListItems).Supply);
                         frame.Phase++;
                     }
 
@@ -338,7 +350,9 @@ public static partial class Evaluator
                             break;
                         }
 
-                        frame.ListItems.AddRange(slotsR.Value);
+                        // The written slots' accumulator is transient-bounded BEFORE it grows
+                        // (SEC-01): `[A*, A*]` never retains more spread items than the list may.
+                        AddSlotsBounded(frame.ListItems, slotsR.Value, ctx.Budget, ref ((ListSlotAccumulator)frame.ListItems).Supply, element is Expr.SequenceSpread);
                         frame.Phase++;
                     }
 
@@ -354,7 +368,8 @@ public static partial class Evaluator
                     // Cardinality is known once the written slots (including spread
                     // expansion) are evaluated, so the reservation happens before the
                     // persistent list is built.
-                    if (ReserveCollection(ctx, frame.ListItems.Count, frame.Node.Span) is { } limitError)
+                    // An overflowed accumulator (SEC-01) reserves its full counted size: the same refusal.
+                    if (ReserveCollection(ctx, ((ListSlotAccumulator)frame.ListItems).Supply.Total, frame.Node.Span) is { } limitError)
                     {
                         completed = limitError;
                         break;

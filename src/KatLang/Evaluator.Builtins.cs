@@ -28,6 +28,69 @@ public static partial class Evaluator
             : null;
 
     /// <summary>
+    /// The formation state of one TRANSIENT item supply under the SEC-01 bound
+    /// (<see cref="AdmitTransient"/>). Every item supply a written expression list or row loop
+    /// forms carries one: call and selection supplies (<see cref="FormNeedSupply"/>,
+    /// <see cref="FormSelectionSupply"/>), list literal slots, output-row and written-group slot
+    /// accumulators, loop step rows (generic and planned), and internal sequence joins.
+    ///
+    /// <para>Once a supply containing a spread passes the per-collection ceiling, the
+    /// supply OVERFLOWS: nothing more is retained, but formation continues COUNT-ONLY through
+    /// every remaining slot exactly as it would have run — later spreads are still evaluated in
+    /// written order, with their effects, failures, and reservations — so the bound changes no
+    /// outcome except the one that needed the oversized supply. At the end of formation an
+    /// overflowed supply is refused: a supply that becomes a persistent collection (list, capture,
+    /// join) by that collection's own reservation over <see cref="Total"/> — exactly the error the
+    /// unbounded supply reached — and a supply that is bound or selected from by
+    /// <see cref="RefuseTransientSupply"/>.</para>
+    /// </summary>
+    internal struct TransientSupply
+    {
+        /// <summary>Every item the supply holds or, once overflowed, would hold.</summary>
+        internal long Total;
+
+        /// <summary>The supply opens a spread, a multi-item row, or an internal join.</summary>
+        internal bool HasExpansion;
+
+        /// <summary>The expanded supply passed the ceiling: formation continues count-only.</summary>
+        internal bool Overflowed;
+    }
+
+    /// <summary>
+    /// Admits <paramref name="count"/> items of one slot into <paramref name="supply"/> BEFORE they
+    /// are appended, copied, or created, and returns whether to RETAIN them; <c>false</c> means the
+    /// supply overflowed (now or earlier) and the slot is only counted. Once an explicit spread
+    /// contributes (<paramref name="expansion"/>), the WHOLE destination, including written prefix
+    /// and suffix slots, is bounded by <see cref="EvaluationBudget.AdmitsTransientExpansion"/>.
+    /// A purely written supply remains source-bounded; internal joins opt in for every leaf
+    /// because a shared AST can unfold beyond its node count. Moves no materialization counter.
+    /// </summary>
+    internal static bool AdmitTransient(EvaluationBudget budget, ref TransientSupply supply, int count, bool expansion)
+    {
+        supply.Total = supply.Total > long.MaxValue - count ? long.MaxValue : supply.Total + count;
+        supply.HasExpansion |= expansion;
+        if (supply.Overflowed)
+            return false;
+        // A spread grows the WHOLE destination, including written prefix/suffix slots.
+        // Purely written supplies stay source-bounded (e.g. a fixed-arity call under a
+        // tiny collection limit), but once opened, every subsequent slot shares the bound.
+        if (supply.HasExpansion && !budget.AdmitsTransientExpansion(supply.Total))
+        {
+            supply.Overflowed = true;
+            return false;
+        }
+        return true;
+    }
+
+    /// <summary>
+    /// The end-of-formation refusal of an overflowed supply that is bound or selected from (calls,
+    /// selections, loop step rows): <see cref="EvalError.CollectionSizeLimitExceeded"/> with the
+    /// supply's full size, positioned at <paramref name="span"/> when the failure has none.
+    /// </summary>
+    internal static EvalError RefuseTransientSupply(EvaluationBudget budget, in TransientSupply supply, SourceSpan? span)
+        => AtSpanIfMissing(budget.RefuseTransientSupply(supply.Total), span);
+
+    /// <summary>
     /// Charged form of <see cref="MakeCollectionListResult(IEnumerable{Result})"/>: the
     /// item count is already known, so the reservation happens before the exact list is
     /// built. Collection-producing builtins charge their TRUE output count here rather
@@ -53,6 +116,18 @@ public static partial class Evaluator
         => slotCount >= 2 && budget.TryReserveCollection(slotCount) is { } error
             ? AtFirstSpanIfMissing(error, rows)
             : null;
+
+    /// <summary>
+    /// The capture refusal of a row-slot accumulator that OVERFLOWED its SEC-01 bound
+    /// (<see cref="TransientSupply"/>): the reservation <see cref="ReserveSequenceCaptureAtRows"/>
+    /// would have made over the full counted size — which exceeds the ceiling, so it always refuses
+    /// with the error the unbounded accumulator reached — without the accumulator ever holding it.
+    /// </summary>
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static EvalError RefuseOverflowedCaptureAtRows(EvaluationBudget budget, in TransientSupply supply, IReadOnlyList<Expr> rows)
+        => budget.TryReserveCollection(supply.Total) is { } error
+            ? AtFirstSpanIfMissing(error, rows)
+            : throw new InvalidOperationException("An overflowed transient supply exceeds the collection ceiling.");
 
     /// <summary>The attach-if-missing law positioned at the first positioned expression of <paramref name="exprs"/>, computed in this leaf frame.</summary>
     [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
@@ -485,9 +560,51 @@ public static partial class Evaluator
         ResultItems(into, output.Value);
     }
 
-    private static List<Expr> SequenceConstructLeaves(Expr expr)
+    /// <summary>
+    /// How many items <see cref="AddCountedTopLevelValues"/> appends for <paramref name="output"/>,
+    /// computed without appending, so a transient accumulator is admitted first (SEC-01).
+    /// </summary>
+    private static int CountedTopLevelValueCount(CountedResult output)
+        => output.EmittedCount switch
+        {
+            0 => 0,
+            1 => 1,
+            _ => ResultItemCount(output.Value),
+        };
+
+    /// <summary>
+    /// <see cref="AddCountedTopLevelValues"/> behind the transient-supply bound
+    /// (<see cref="AdmitTransient"/>): appended only when the supply retains them.
+    /// </summary>
+    private static void AddCountedTopLevelValuesBounded(
+        List<Result> into, CountedResult output, EvaluationBudget budget, ref TransientSupply supply, bool expansion)
     {
-        var leaves = new List<Expr>();
+        if (AdmitTransient(budget, ref supply, CountedTopLevelValueCount(output), expansion))
+            AddCountedTopLevelValues(into, output);
+    }
+
+    /// <summary>
+    /// <c>List.AddRange</c> behind the transient-supply bound (<see cref="AdmitTransient"/>):
+    /// appended only when the supply retains them.
+    /// </summary>
+    private static void AddSlotsBounded(
+        List<Result> into, IReadOnlyList<Result> slots, EvaluationBudget budget, ref TransientSupply supply, bool expansion)
+    {
+        if (AdmitTransient(budget, ref supply, slots.Count, expansion))
+            into.AddRange(slots);
+    }
+
+    /// <summary>One written slot behind the transient-supply bound (<see cref="AdmitTransient"/>).</summary>
+    private static void AddSlotBounded(List<Result> into, Result slot, EvaluationBudget budget, ref TransientSupply supply)
+    {
+        if (AdmitTransient(budget, ref supply, 1, expansion: false))
+            into.Add(slot);
+    }
+
+    // Stream occurrences: a shared host AST can have exponentially more leaves than nodes.
+    // The traversal stack holds only the pending right branches, never a flattened leaf list.
+    private static IEnumerable<Expr> SequenceConstructLeaves(Expr expr)
+    {
         var stack = new Stack<Expr>();
         stack.Push(expr);
 
@@ -501,10 +618,8 @@ public static partial class Evaluator
                 continue;
             }
 
-            leaves.Add(current);
+            yield return current;
         }
-
-        return leaves;
     }
 
     /// <summary>
@@ -530,7 +645,10 @@ public static partial class Evaluator
         ValEnv valEnv)
     {
         var leaves = SequenceConstructLeaves(expr);
-        var items = new List<Result>(leaves.Count);
+        var items = new List<Result>();
+        // Internal joins expand AST occurrences, including plain leaves of a shared DAG.
+        // They have no written-slot source bound, so every contributed item is admitted.
+        TransientSupply bound = new() { HasExpansion = true };
 
         foreach (var leaf in leaves)
         {
@@ -542,7 +660,7 @@ public static partial class Evaluator
                 var spreadR = EvalCounted(leaf, ctx, valEnv);
                 if (spreadR.IsError) return spreadR.Error;
 
-                AddCountedTopLevelValues(items, spreadR.Value);
+                AddCountedTopLevelValuesBounded(items, spreadR.Value, ctx.Budget, ref bound, expansion: true);
                 continue;
             }
 
@@ -550,10 +668,11 @@ public static partial class Evaluator
             if (valueR.IsError) return valueR.Error;
 
             if (valueR.Value.ValueCount() != 0)
-                items.Add(valueR.Value);
+                AddSlotBounded(items, valueR.Value, ctx.Budget, ref bound);
         }
 
-        if (ReserveSequenceCapture(ctx, items.Count) is { } sequenceLimitError)
+        // SEC-01: an overflowed join was formed count-only; its reservation refuses the full size.
+        if ((bound.Overflowed ? ReserveCollection(ctx, bound.Total) : ReserveSequenceCapture(ctx, items.Count)) is { } sequenceLimitError)
             return sequenceLimitError;
 
         var value = CombineOutputSlots(items);

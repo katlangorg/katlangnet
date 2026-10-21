@@ -84,15 +84,19 @@ public static partial class Evaluator
             return accessError;
 
         var slots = new List<Result>();
+        TransientSupply bound = default;
+        SourceSpan? overflowAt = null;
         var pushedCtx = EnterAlgorithmBody(alg, ctx, valEnv, parameterNames);
         foreach (var expr in alg.Output)
         {
             var countedR = EvalCounted(expr, pushedCtx, valEnv);
             if (countedR.IsError) return countedR.Error;
-            AddOutputRowItems(slots, expr, countedR.Value);
+            AddOutputRowItems(slots, expr, countedR.Value, ctx.Budget, ref bound, ref overflowAt);
         }
 
-        return EvalResult<IReadOnlyList<Result>>.Ok(slots);
+        return bound.Overflowed
+            ? RefuseTransientSupply(ctx.Budget, bound, overflowAt)
+            : EvalResult<IReadOnlyList<Result>>.Ok(slots);
     }
 
     /// <summary>
@@ -131,11 +135,16 @@ public static partial class Evaluator
         // the flag row's items once one is found.
         var flagRow = rows.Count - 1;
         CountedResult flagRowValue = default;
+        TransientSupply discovery = default;
+        SourceSpan? overflowAt = null;
         for (; flagRow >= 0; flagRow--)
         {
             var countedR = EvalCounted(rows[flagRow], pushedCtx, valEnv);
             if (countedR.IsError) return countedR.Error;
-            AddOutputRowItems(slots, rows[flagRow], countedR.Value);
+            AddOutputRowItems(slots, rows[flagRow], countedR.Value, ctx.Budget, ref discovery, ref overflowAt);
+            // A flag row whose items alone pass the ceiling cannot be read (SEC-01).
+            if (discovery.Overflowed)
+                return RefuseTransientSupply(ctx.Budget, discovery, overflowAt);
             if (slots.Count != 0)
             {
                 flagRowValue = countedR.Value;
@@ -152,14 +161,17 @@ public static partial class Evaluator
         if (flagRow > 0)
         {
             slots.Clear();
+            TransientSupply bound = default;
             for (var i = 0; i < flagRow; i++)
             {
                 var countedR = EvalCounted(rows[i], pushedCtx, valEnv);
                 if (countedR.IsError) return countedR.Error;
-                AddOutputRowItems(slots, rows[i], countedR.Value);
+                AddOutputRowItems(slots, rows[i], countedR.Value, ctx.Budget, ref bound, ref overflowAt);
             }
             // The flag row's already formed value, re-read (never re-formed) in written order.
-            AddOutputRowItems(slots, rows[flagRow], flagRowValue);
+            AddOutputRowItems(slots, rows[flagRow], flagRowValue, ctx.Budget, ref bound, ref overflowAt);
+            if (bound.Overflowed)
+                return RefuseTransientSupply(ctx.Budget, bound, overflowAt);
         }
 
         return EvalResult<IReadOnlyList<Result>?>.Ok(WhileNextStateSlots(slots));
@@ -185,13 +197,24 @@ public static partial class Evaluator
     /// (<c>()</c> included). The one row rule of both row readers
     /// (<see cref="EvalAlgOutputSlots"/>, <see cref="EvalWhileVerdictSlots"/> and their async
     /// mirrors). Lean: <c>OutputRows.items</c>.
+    /// <para>The row supply is transient-bounded (SEC-01, <see cref="TransientSupply"/>): the row's
+    /// items are admitted into <paramref name="supply"/> before they are appended — a spread or
+    /// multi-item row subjects the whole supply, including plain rows, to the ceiling — and the
+    /// row that overflows the supply is recorded in
+    /// <paramref name="overflowAt"/>; the readers refuse an overflowed supply once its rows are
+    /// formed (<see cref="RefuseTransientSupply"/>). The planned loop's handover applies the same
+    /// rule to the same rows (<c>LoopOptimizer.MaterializeGenericHandoverSlots</c>).</para>
     /// </summary>
-    private static void AddOutputRowItems(List<Result> into, Expr row, CountedResult formed)
+    private static void AddOutputRowItems(
+        List<Result> into, Expr row, CountedResult formed, EvaluationBudget budget, ref TransientSupply supply, ref SourceSpan? overflowAt)
     {
+        var overflowed = supply.Overflowed;
         if (row is Expr.SequenceSpread || formed.EmittedCount != 0)
-            AddCountedTopLevelValues(into, formed);
+            AddCountedTopLevelValuesBounded(into, formed, budget, ref supply, expansion: row is Expr.SequenceSpread || formed.EmittedCount > 1);
         else
-            into.Add(formed.Value);
+            AddSlotBounded(into, formed.Value, budget, ref supply);
+        if (supply.Overflowed && !overflowed)
+            overflowAt = row.Span;
     }
 
     private static EvalError LoopStateArityMismatch(

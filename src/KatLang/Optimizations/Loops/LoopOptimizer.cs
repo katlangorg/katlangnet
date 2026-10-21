@@ -66,6 +66,14 @@ internal static partial class LoopOptimizer
             }
 
             var continuation = continuationR.Value;
+            Evaluator.TransientSupply discovery = default;
+            SourceSpan? overflowAt = null;
+            AdmitLoopOutput(plan.ContinuationOutput!.Source, continuation, ctx.Budget, ref discovery, ref overflowAt);
+            if (discovery.Overflowed)
+            {
+                result = Evaluator.RefuseTransientSupply(ctx.Budget, discovery, overflowAt);
+                return true;
+            }
             frame.SetIterationOutput(plan.NextStateOutputs.Count, continuation);
             // One emitted value is the flag itself, read without allocation. A zero-emission row
             // is its one `()` slot; a multi-emission row supplies its items, the last being the
@@ -98,6 +106,7 @@ internal static partial class LoopOptimizer
             // (its items before the flag join it); generic semantics continue from the
             // already-evaluated outputs.
             var requiresGenericContinuation = continuation.EmittedCount > 1;
+            Evaluator.TransientSupply bound = default;
             if (requiresGenericContinuation)
                 ctx.LoopDiagnostics?.RecordOptimizedLoopFallback("loop continuation did not emit exactly one value");
 
@@ -114,7 +123,9 @@ internal static partial class LoopOptimizer
                 // frame's reusable buffer); the generic output-slot representation is
                 // deliberately NOT built here — it is materialized only inside an
                 // actual handover branch below (M16).
-                frame.SetIterationOutput(i, outputR.Value);
+                var retain = AdmitLoopOutput(plan.NextStateOutputs[i].Source, outputR.Value, ctx.Budget, ref bound, ref overflowAt);
+                if (retain)
+                    frame.SetIterationOutput(i, outputR.Value);
 
                 // The optimized frame packs one value per state slot, so it can
                 // only represent step expressions that emit EXACTLY one value.
@@ -136,17 +147,33 @@ internal static partial class LoopOptimizer
                     }
                     requiresGenericContinuation = true;
                 }
-                else if (!requiresGenericContinuation)
+                else if (!requiresGenericContinuation && retain)
                 {
                     frame.SetScratchSlot(i, outputR.Value.ToResult());
                 }
+            }
+
+            // The flag was evaluated first, but joins the supply last, just as in the generic
+            // reader. Even one-item spread rows must pass the bound on the normal fast path.
+            AdmitLoopOutput(plan.ContinuationOutput!.Source, continuation, ctx.Budget, ref bound, ref overflowAt);
+            if (bound.Overflowed)
+            {
+                result = Evaluator.RefuseTransientSupply(ctx.Budget, bound, overflowAt);
+                return true;
             }
 
             if (requiresGenericContinuation)
             {
                 // The verdict is already true: the round's complete supply in written order (the
                 // flag row's items last) splits into the next state, never re-evaluating a row.
-                var splitR = Evaluator.SplitContSlots(MaterializeGenericHandoverSlots(frame, includeContinuation: true));
+                var handoverR = MaterializeGenericHandoverSlots(frame, includeContinuation: true, ctx.Budget);
+                if (handoverR.IsError)
+                {
+                    result = handoverR.Error;
+                    return true;
+                }
+
+                var splitR = Evaluator.SplitContSlots(handoverR.Value);
                 if (splitR.IsError)
                 {
                     result = splitR.Error;
@@ -163,7 +190,8 @@ internal static partial class LoopOptimizer
                 // Every output emitted exactly one value on this branch, so the
                 // state-only materialization equals the historical full list minus its
                 // final continuation slot.
-                result = genericContinuation(plan.AdmittedHead, MaterializeGenericHandoverSlots(frame, includeContinuation: false));
+                var handoverR = MaterializeGenericHandoverSlots(frame, includeContinuation: false, ctx.Budget);
+                result = handoverR.IsError ? handoverR.Error : genericContinuation(plan.AdmittedHead, handoverR.Value);
                 return true;
             }
         }
@@ -175,11 +203,7 @@ internal static partial class LoopOptimizer
     /// supplied several items. Evaluates nothing.
     /// </summary>
     private static Result FlagRowLastItem(Expr source, PlannedLoopValue output)
-    {
-        var items = new List<Result>();
-        AppendGenericLoopOutputSlots(items, source, output);
-        return items[^1];
-    }
+        => output.ToResult().ToItems()[^1];
 
     internal static bool TryEvaluateRepeat(
         Algorithm step,
@@ -229,6 +253,8 @@ internal static partial class LoopOptimizer
             ctx.LoopDiagnostics?.RecordLoopIteration();
             frame.BeginIteration();
             var requiresGenericContinuation = false;
+            Evaluator.TransientSupply bound = default;
+            SourceSpan? overflowAt = null;
 
             for (var i = 0; i < plan.NextStateOutputs.Count; i++)
             {
@@ -239,8 +265,11 @@ internal static partial class LoopOptimizer
                     return true;
                 }
 
-                // Retained, not materialized — see the while path (M16).
-                frame.SetIterationOutput(i, outputR.Value);
+                // Retain only admitted rows; overflow continues count-only even in the
+                // reusable frame, so later multi-item results do not stay live there.
+                var retain = AdmitLoopOutput(plan.NextStateOutputs[i].Source, outputR.Value, ctx.Budget, ref bound, ref overflowAt);
+                if (retain)
+                    frame.SetIterationOutput(i, outputR.Value);
 
                 // Same exactly-one-value rule as the while path: the optimized
                 // frame cannot represent a changed state-slot vector. Complete
@@ -258,15 +287,28 @@ internal static partial class LoopOptimizer
                     }
                     requiresGenericContinuation = true;
                 }
-                else if (!requiresGenericContinuation)
+                else if (!requiresGenericContinuation && retain)
                 {
                     frame.SetScratchSlot(i, outputR.Value.ToResult());
                 }
             }
 
+            if (bound.Overflowed)
+            {
+                result = Evaluator.RefuseTransientSupply(ctx.Budget, bound, overflowAt);
+                return true;
+            }
+
             if (requiresGenericContinuation)
             {
-                var outputSlots = MaterializeGenericHandoverSlots(frame, includeContinuation: false);
+                var handoverR = MaterializeGenericHandoverSlots(frame, includeContinuation: false, ctx.Budget);
+                if (handoverR.IsError)
+                {
+                    result = handoverR.Error;
+                    return true;
+                }
+
+                var outputSlots = handoverR.Value;
                 var remainingCount = count - iteration - 1;
                 result = remainingCount == 0
                     ? Evaluator.MakeCheckedLoopStateResult(ctx, outputSlots)
@@ -283,7 +325,14 @@ internal static partial class LoopOptimizer
             if (!frame.TryCommitScratchFast())
             {
                 ctx.LoopDiagnostics?.RecordOptimizedLoopFallback("loop next-state arity changed");
-                var outputSlots = MaterializeGenericHandoverSlots(frame, includeContinuation: false);
+                var handoverR = MaterializeGenericHandoverSlots(frame, includeContinuation: false, ctx.Budget);
+                if (handoverR.IsError)
+                {
+                    result = handoverR.Error;
+                    return true;
+                }
+
+                var outputSlots = handoverR.Value;
                 var remainingCount = count - iteration - 1;
                 result = remainingCount == 0
                     ? Evaluator.MakeCheckedLoopStateResult(ctx, outputSlots)
@@ -306,26 +355,40 @@ internal static partial class LoopOptimizer
     /// evaluates nothing; every value was already evaluated exactly once by the
     /// iteration itself, so materializing here can neither replay a callback nor
     /// reorder an effect.
+    ///
+    /// <para>The slots form the SAME transient-bounded row supply the generic row readers form
+    /// (SEC-01, <c>Evaluator.AddOutputRowItems</c>): rows in written order (the continuation row
+    /// last, as the generic round re-reads its flag row), spread or multi-item rows counting
+    /// against the ceiling, and an overflowed supply refused at the row that overflowed it — the
+    /// generic reader's refusal for the same already-evaluated rows.</para>
     /// </summary>
-    private static List<Result> MaterializeGenericHandoverSlots(
+    private static EvalResult<List<Result>> MaterializeGenericHandoverSlots(
         LoopRunFrame frame,
-        bool includeContinuation)
+        bool includeContinuation,
+        EvaluationBudget budget)
     {
         frame.IterationCtx.Observations?.RecordOptimizedLoopHandoverMaterialization();
         var template = frame.Template;
         var outputSlots = new List<Result>();
+        Evaluator.TransientSupply bound = default;
+        SourceSpan? overflowAt = null;
         for (var i = 0; i < template.NextStateOutputs.Count; i++)
-            AppendGenericLoopOutputSlots(outputSlots, template.NextStateOutputs[i].Source, frame.GetIterationOutput(i));
+            AppendGenericLoopOutputSlots(outputSlots, template.NextStateOutputs[i].Source, frame.GetIterationOutput(i), budget, ref bound, ref overflowAt);
 
         if (includeContinuation)
         {
             AppendGenericLoopOutputSlots(
                 outputSlots,
                 template.ContinuationOutput!.Source,
-                frame.GetIterationOutput(template.NextStateOutputs.Count));
+                frame.GetIterationOutput(template.NextStateOutputs.Count),
+                budget,
+                ref bound,
+                ref overflowAt);
         }
 
-        return outputSlots;
+        return bound.Overflowed
+            ? Evaluator.RefuseTransientSupply(budget, bound, overflowAt)
+            : EvalResult<List<Result>>.Ok(outputSlots);
     }
 
     /// <summary>
@@ -338,22 +401,43 @@ internal static partial class LoopOptimizer
     private static void AppendGenericLoopOutputSlots(
         List<Result> slots,
         Expr source,
-        PlannedLoopValue output)
+        PlannedLoopValue output,
+        EvaluationBudget budget,
+        ref Evaluator.TransientSupply bound,
+        ref SourceSpan? overflowAt)
     {
+        if (!AdmitLoopOutput(source, output, budget, ref bound, ref overflowAt))
+            return;
         if (output.EmittedCount == 0)
         {
             if (source is not Expr.SequenceSpread)
                 slots.Add(output.ToResult());
-            return;
         }
-
-        if (output.EmittedCount == 1)
-        {
+        else if (output.EmittedCount == 1)
             slots.Add(output.ToResult());
-            return;
-        }
+        else
+            slots.AddRange(output.ToResult().ToItems());
+    }
 
-        slots.AddRange(output.ToResult().ToItems());
+    /// <summary>
+    /// The generic row's cardinality and SEC-01 admission, shared by normal planned iterations
+    /// and handovers. Single-item rows are counted without allocating a Result or a slot list.
+    /// </summary>
+    private static bool AdmitLoopOutput(
+        Expr source, PlannedLoopValue output, EvaluationBudget budget,
+        ref Evaluator.TransientSupply bound, ref SourceSpan? overflowAt)
+    {
+        var overflowed = bound.Overflowed;
+        var count = output.EmittedCount switch
+        {
+            0 => source is Expr.SequenceSpread ? 0 : 1,
+            1 => 1,
+            _ => output.ToResult().ToItems().Count,
+        };
+        var retain = Evaluator.AdmitTransient(budget, ref bound, count, source is Expr.SequenceSpread || output.EmittedCount > 1);
+        if (bound.Overflowed && !overflowed)
+            overflowAt = source.Span;
+        return retain;
     }
 
     private static LoopPlanTemplate? TryBuildLoopPlanTemplate(
