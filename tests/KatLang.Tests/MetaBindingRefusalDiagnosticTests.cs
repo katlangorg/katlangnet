@@ -147,13 +147,159 @@ public sealed class MetaBindingRefusalDiagnosticTests
     public async Task ForwardedMetaParameter_NamesTheFailingInnerBinding()
     {
         const string source = Step + "W(meta s) = while(s)\nW(Step(0))";
-        // The transported parameter read has no span of its own: the inner `while(s)` call positions
-        // the refusal, exactly as before the name was added.
-        var error = await AssertStructuredRefusal(source, "step", 2, 13);
+        // META-DIAG-2: the refusal is positioned at the argument as written at the refusing binding — the
+        // read `s` inside `while(s)` — never at the whole call, the declaration, or `Step(0)`.
+        var error = await AssertStructuredRefusal(source, "step", 2, 19);
+        Assert.Equal(new SourceSpan(new SourcePosition(2, 19), new SourcePosition(2, 20)), error.Span);
         Assert.Equal($"while evaluating call to W: while evaluating call to while: {Named("step")}", error.Message);
         Assert.DoesNotContain("parameter 's'", error.Message, StringComparison.Ordinal);
+        var routed = await AssertRefusedOnEveryRoute(source, "step");
+        Assert.EndsWith("@ [2:19, 2:20)", routed, StringComparison.Ordinal);
+    }
+
+    // ── META-DIAG-2: a forwarded parameter read is positioned at its own occurrence ─────────
+
+    private static async Task AssertRefusedAt(string source, string name, int line, int column)
+    {
+        var error = await AssertStructuredRefusal(source, name, line, column);
+        Assert.Equal(new SourceSpan(new SourcePosition(line, column), new SourcePosition(line, column + 1)), error.Span);
+        var routed = await AssertRefusedOnEveryRoute(source, name);
+        Assert.EndsWith($"@ [{line}:{column}, {line}:{column + 1})", routed, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData("F(x) = while(x)\nF(42)", "step", 1, 14)]
+    [InlineData("F(x) = repeat(x, 2)\nF(42)", "step", 1, 15)]
+    [InlineData("F(x) = x.while\nF(42)", "step", 1, 8)]
+    [InlineData("F(x) = x.repeat(2)\nF(42)", "step", 1, 8)]
+    [InlineData(Step + "F(x) = while(x)\nF(1 / 0)", "step", 2, 14)]
+    [InlineData("Capture(meta op) = op\nF(x) = Capture(x)\nF(42)", "op", 2, 16)]
+    [InlineData("Capture(meta op) = op\nF(x) = Capture((x))\nF(42)", "op", 2, 17)]
+    [InlineData("Capture(meta op) = op\nG(y) = F(y)\nF(x) = Capture(x)\nG(42)", "op", 3, 16)]
+    public async Task AForwardedOrdinaryParameter_IsPositionedAtItsRead(string source, string name, int line, int column)
+        // Not at the argument originally written for the transported cell (`42`, `1 / 0`).
+        => await AssertRefusedAt(source, name, line, column);
+
+    [Theory]
+    // One cell read twice in one call: the META slot's read, not the first (value) read.
+    [InlineData("Pick(a, meta op) = op\nF(x) = Pick(x, x)\nF(42)", "op", 2, 16)]
+    // The cell's VALUE was demanded at an earlier read; the refusal is still the later read's.
+    [InlineData("F(x) = x + while(x)\nF(1)", "step", 1, 18)]
+    // An earlier inspecting pattern binds a different argument; the META slot's read is blamed.
+    [InlineData("Mix([v], meta op) = v\nF(x) = Mix([1], x)\nF(7)", "op", 2, 17)]
+    public async Task OneCellReadAtSeveralOccurrences_BlamesTheRefusedRead(string source, string name, int line, int column)
+        => await AssertRefusedAt(source, name, line, column);
+
+    [Fact]
+    public async Task TheSameCell_RefusedAtTwoBindingSites_IsPositionedAtEachRead()
+    {
+        // One original cell (`42`) forwarded to two independent refusing sites: no position leaks between them.
+        const string head = "Capture(meta op) = op\nA(x) = Capture(x)\nB(x) = while(x)\n";
+        await AssertRefusedAt(head + "A(42)", "op", 2, 16);
+        await AssertRefusedAt(head + "B(42)", "step", 3, 14);
+        await AssertRefusedAt(head + "F(y) = A(y), B(y)\nF(42)", "op", 2, 16);
+        await AssertRefusedAt(head + "F(y) = B(y), A(y)\nF(42)", "step", 3, 14);
+    }
+
+    [Theory]
+    // A planned call (a supplied invocation demanded for its VALUE) and a captured call run by Invoke.
+    [InlineData("Capture(meta op) = op\nG(y) = y\nF(x) = G(Capture(x))\nF(42)")]
+    [InlineData("Capture(meta op) = op\nO(meta r) = r.Invoke()\nF(x) = O(Capture(x))\nF(42)")]
+    public async Task APlannedBinding_IsPositionedAtTheForwardedRead(string source)
+        => await AssertRefusedAt(source, "op", 3, 18);
+
+    [Theory]
+    [InlineData("Capture(meta op) = op\nF(x) = Capture([]*, x)\nF(42)", 2, 21)]
+    [InlineData("Capture(meta op) = op\nG(y) = y\nF(x) = G(Capture([]*, x))\nF(42)", 3, 23)]
+    [InlineData("Capture(meta op) = op\nO(meta r) = r.Invoke()\nF(x) = O(Capture([]*, x))\nF(42)", 3, 23)]
+    [InlineData("Capture(a, meta op) = op\nO(meta r) = r.Invoke()\nF(x) = O(Capture([1]*, x))\nF(42)", 3, 24)]
+    [InlineData("Capture(meta op, a) = op\nO(meta r) = r.Invoke()\nF(x) = O(Capture(x, [1]*))\nF(42)", 3, 18)]
+    [InlineData("Capture(meta op) = op\nO(meta r) = r.Arguments.count + r.Invoke()\nF(x) = O(Capture([]*, x))\nF(42)", 3, 23)]
+    public async Task ASpreadSibling_DoesNotEraseTheForwardedOccurrence(string source, int line, int column)
+        => await AssertRefusedAt(source, "op", line, column);
+
+    [Fact]
+    public async Task ASuspendingSpread_PreservesTheForwardedOccurrence()
+    {
+        const string source = "Capture(a, meta op) = op\nO(meta r) = r.Invoke()\nF(x) = O(Capture(trace([1])*, x))\nF(42)";
+        var error = await AssertRefusedOnEveryRoute(source, "op", "trace(L[1])");
+        Assert.EndsWith("@ [3:31, 3:32)", error, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task AnOpenedSpreadItem_KeepsItsCellsOwnSource()
+    {
+        // An opened spread's item has no written slot of its own: it keeps the argument written for it.
+        const string source = "F(*xs) = while(xs*)\nF(42)";
+        await AssertStructuredRefusal(source, "step", 2, 3);
         await AssertRefusedOnEveryRoute(source, "step");
     }
+
+    [Fact]
+    public async Task OtherFailuresOfAForwardedRead_KeepTheirPositions()
+    {
+        // Inspecting failures keep their binding position; a failure inside a transported computation
+        // keeps its inner origin instead of being repositioned at the forwarding read.
+        var inspected = await SixRouteAgreement.OnEveryRouteAsync("Mix([v], meta op) = v\nF(x) = Mix(x, 5)\nF(7)");
+        Assert.StartsWith($"{KatLangErrorCode.TypeMismatch}: ", Assert.Single(inspected.Errors), StringComparison.Ordinal);
+        Assert.Contains("@ [2:8,", inspected.Errors[0], StringComparison.Ordinal);
+        var computation = await SixRouteAgreement.OnEveryRouteAsync("Mix([v], meta op) = v\nBad = 1 / 0\nF(x) = Mix(x, 5)\nF(Bad)");
+        Assert.StartsWith($"{KatLangErrorCode.DivisionByZero}: ", Assert.Single(computation.Errors), StringComparison.Ordinal);
+        Assert.EndsWith("@ [2:7, 2:12)", computation.Errors[0], StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData("F(x) = map([1, 2], x)\nF(42)", 20)]
+    [InlineData("F(x) = filter([1], x)\nF(42)", 20)]
+    [InlineData("F(x) = reduce([1], x, 0)\nF(42)", 20)]
+    [InlineData("F(x) = count(filter(range(1, 3), x))\nF(42)", 34)]
+    [InlineData("F(x) = [1].map(x)\nF(42)", 16)]
+    [InlineData("F(x) = map([1], (x))\nF(42)", 18)]
+    [InlineData("F(x) = map([], x), map([1], x)\nF(42)", 29)]
+    public async Task ANonMetaCapabilityRefusal_BlamesTheCurrentOccurrence(string source, int column)
+    {
+        var result = await SixRouteAgreement.OnEveryRouteAsync(source);
+        var error = Assert.Single(result.Errors);
+        Assert.StartsWith($"{KatLangErrorCode.NotAnAlgorithm}: ", error, StringComparison.Ordinal);
+        Assert.DoesNotContain("meta parameter", error, StringComparison.Ordinal);
+        Assert.EndsWith($"@ [1:{column}, 1:{column + 1})", error, StringComparison.Ordinal);
+        Assert.Empty(result.HostCalls);
+    }
+
+    [Fact]
+    public async Task AForwardedProjectionFailure_KeepsItsInnerOrigin()
+    {
+        var result = await SixRouteAgreement.OnEveryRouteAsync("F(x) = map([1], x)\nF((1 / 0).Algorithm)");
+        var error = Assert.Single(result.Errors);
+        Assert.StartsWith($"{KatLangErrorCode.DivisionByZero}: ", error, StringComparison.Ordinal);
+        Assert.EndsWith("@ [2:3, 2:10)", error, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task AModuleWrittenRead_NeverExposesModuleCoordinates()
+    {
+        // A loaded module's import view is locationless: its `s` has no span in this document, so the
+        // refusal keeps the attach-if-missing law and is positioned at the local call `W(Step(0))`.
+        var options = new RunOptions
+        {
+            DownloadCode = static (_, _) => ValueTask.FromResult("public W(meta s) = while(s)"),
+        };
+        const string source = "open Lib\nLib = load('https://katlang.org/demo/meta-diag-2.kat')\n" + Step + "W(Step(0))";
+        var error = Assert.Single(Assert.IsType<RunResult.EvalFailure>(await KatLangEngine.RunAsync(source, options)).Errors);
+        Assert.Equal(KatLangErrorCode.NotAnAlgorithm, error.Code);
+        Assert.Contains(Named("step"), error.Message, StringComparison.Ordinal);
+        Assert.Equal(new SourcePosition(4, 1), error.Span?.Start);
+    }
+
+    [Theory]
+    [InlineData(Step + "F(x) = while(x)\nF(Step(0))", "3")]
+    [InlineData(Step + "F(x) = while(x)\nG(y) = F(y)\nG(Step(0))", "3")]
+    [InlineData(Step + "T = Step\nF(x) = while(x)\nF(T(0))", "3")]
+    [InlineData(Step + "F(x) = x.while\nF(Step(0))", "3")]
+    [InlineData("Capture(meta op) = op\nSquare(v) = v * v\nF(x) = Capture(x).Invoke()\nF(Square(5))", "25")]
+    [InlineData("Capture(meta op) = op\nSquare(v) = v * v\nF(x) = Capture(x)\nG(y) = F(y).Invoke()\nG(Square(4))", "16")]
+    public async Task SuccessfulForwarding_IsUnchanged(string source, string expected)
+        => Assert.Equal(expected, (await SixRouteAgreement.OnEveryRouteAsync(source)).Value);
 
     // ── F: a direct reification has no binding site ────────────────────────────────────────
 

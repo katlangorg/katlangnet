@@ -160,6 +160,24 @@ every other error, the incomplete outcome and `invocationRefusal` included, pass
 `sim_captureMeta`); guards `InvocationRouteGuards.lean` § META-DIAG-1; C#
 `MetaBindingRefusalDiagnosticTests`.
 
+META-DIAG-2 — a capability refusal is positioned at the argument as written at its current use
+(2026-10-22): C#-only source-location metadata; no Lean change, because Lean errors carry no spans
+(`metaBindingRefusal name` is unchanged, as are eligibility, binder order, identity and outcomes).
+C#: `BindAcceptedNeedPatterns` takes the supply's optional written slots (top-level items keep their
+slot), and `CaptureMeta` hands the slot's span to `AnnotateMetaBindingRefusal`, which repositions only
+the canonical refusal; the slots come from a builtin's `ResolvedArgumentAlgorithm.Source`, a user
+call's supply formation (`MetaOccurrenceSlots`, only for a callee declaring a META parameter in a run
+that retains plans) or a plan's sources / spread-free written arguments (`PlanMetaOccurrences`).
+Spread-free user calls reuse their argument bundle. Planned user calls with a META binder and explicit
+spreads select the existing sourced supply shape (`UserPlanSupplyShape`), retaining the effective slot
+map through VALUE, Invoke and argument-view preparation without forming or copying cells again.
+`ProjectInvokingSlot` likewise positions a fresh missing-CALLABLE refusal at its current written slot,
+falling back to the cell's span when unknown. An error originating inside the projection passes through
+unchanged; no projection or demand is added. This replaces the earlier original-span-first diagnostic
+priority, without changing Lean's `projectInvokingSlot` result or any evaluation semantics.
+Cells are never wrapped or rewritten. C# `MetaBindingRefusalDiagnosticTests` § META-DIAG-2 and
+`Q06Q27FinalHostileReviewTests`.
+
 S6a — R4 / Q-66 repeated-name laws for nested and mixed heads (2026-10-20): Lean proofs and one
 behaviour-preserving Lean wiring change; no language, C# or observable-outcome change. WIRING: the
 evaluator's five binder call sites (`evalNeedUserSupply`, `evalNeedFamilySupply`, `runNeedStepWith`

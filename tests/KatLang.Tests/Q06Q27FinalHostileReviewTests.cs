@@ -207,19 +207,20 @@ public class Q06Q27FinalHostileReviewTests
     }
 
     [Theory]
-    [InlineData("map([1], f)")]
-    [InlineData("filter([1], f)")]
-    [InlineData("reduce([1], f, 0)")]
-    [InlineData("repeat(f(0), 1)")]
-    [InlineData("count(filter(range(1, 3), f))")]
-    public async Task ThreeForwardingLevelsKeepTheOriginalArgumentSpanAndNoInvocationFrame(string use)
+    [InlineData("map([1], f)", 21)]
+    [InlineData("filter([1], f)", 24)]
+    [InlineData("reduce([1], f, 0)", 24)]
+    [InlineData("repeat(f(0), 1)", 19)]
+    [InlineData("count(filter(range(1, 3), f))", 38)]
+    public async Task ThreeForwardingLevelsBlameTheInvokingOccurrenceWithoutAnInvocationFrame(string use, int column)
     {
         var source = $"Inner(f) = {use}\nMiddle(g) = Inner(g)\nOuter(h) = Middle(h)\nOuter(1 / 0)";
         await SixRouteAgreement.OnEveryRouteAsync(source);
         var failure = Assert.IsType<RunResult.EvalFailure>(KatLangEngine.Run(source));
         var error = Assert.Single(failure.Errors).Source!;
         Assert.IsType<EvalError.NotAnAlgorithm>(Inner(error));
-        Assert.Equal(new SourceSpan(4, 7, 4, 12), error.Span);
+        // This is a fresh capability refusal at this use, not a VALUE failure of `1 / 0`.
+        Assert.Equal(new SourceSpan(1, column, 1, column + 1), error.Span);
         var frames = new List<string>();
         while (error is EvalError.WithContext context) { frames.Add(context.Context); error = context.Inner; }
         Assert.Equal(new[] { "while evaluating call to Outer", "while evaluating call to Middle", "while evaluating call to Inner" }, frames.Take(3));

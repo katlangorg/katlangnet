@@ -1518,8 +1518,9 @@ public static partial class Evaluator
     /// with no CALLABLE identity — a literal, a capture, a list, a selection, a call result,
     /// any computed value — is <c>NotAnAlgorithm</c> (Q-06) described by the slot's ROLE
     /// (<see cref="InvokingSlotRoles"/>), the verdict a user higher-order parameter reports,
-    /// positioned at the supplied argument (a cell keeps the original argument's span across
-    /// transport) and raised before any invocation is charged. A slot that HAS callable
+    /// positioned at the current written argument occurrence when known (META-DIAG-2), with
+    /// the cell's original span as fallback, and raised before any invocation is charged.
+    /// A failure originating inside the projection keeps its own provenance. A slot that HAS callable
     /// identity keeps every ordinary binder verdict when it is invoked (a zero-parameter
     /// callable given an item is <c>ArityMismatch</c>). Lean: <c>projectInvokingSlot</c>.
     /// </summary>
@@ -1529,7 +1530,7 @@ public static partial class Evaluator
         if (projected.IsError) return projected.Error;
         return projected.Value is { } callable
             ? EvalResult<Algorithm>.Ok(callable)
-            : new EvalError.NotAnAlgorithm(role) { Span = cell?.Span ?? span };
+            : new EvalError.NotAnAlgorithm(role) { Span = span ?? cell?.Span };
     }
 
     private static EvalResult<Algorithm> ExpectPreparedAlgorithmSuffixArg(

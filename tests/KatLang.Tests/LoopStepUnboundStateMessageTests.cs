@@ -44,25 +44,25 @@ public class LoopStepUnboundStateMessageTests
     };
 
     /// <summary>
-    /// Every step argument with no CALLABLE identity (NEED-06), the loop, the 1-based column of the
-    /// step argument on the last source line, and the evaluation frames that enclose the verdict.
+    /// Every step argument with no CALLABLE identity (NEED-06), the loop, the 1-based line and column
+    /// of the current callee read (META-DIAG-2), and the evaluation frames that enclose the verdict.
     /// </summary>
-    public static TheoryData<string, string, string, int, string[]> NoCallableIdentityStep() => new()
+    public static TheoryData<string, string, string, int, int, string[]> NoCallableIdentityStep() => new()
     {
         // META-S3-3: the step of `repeat(meta step, count)` is the captured call's callee, so a value
         // reaches the step slot as the callee of a call through a parameter (a value written as the
         // META argument itself is refused by META capture — MetaRefusalStep below).
-        { "number", "Run(s) = repeat(s(1), 1)\nRun(5)", "repeat", 5, ["while evaluating call to Run", "while evaluating call to repeat"] },
-        { "number, while", "Run(s) = while(s(1))\nRun(5)", "while", 5, ["while evaluating call to Run", "while evaluating call to while"] },
-        { "string", "Run(s) = repeat(s(1), 1)\nRun('a')", "repeat", 5, ["while evaluating call to Run", "while evaluating call to repeat"] },
-        { "Boolean", "Run(s) = repeat(s(1), 1)\nRun(true)", "repeat", 5, ["while evaluating call to Run", "while evaluating call to repeat"] },
-        { "list", "Run(s) = repeat(s(1), 1)\nRun([1, 2])", "repeat", 5, ["while evaluating call to Run", "while evaluating call to repeat"] },
-        { "sequence", "Run(s) = repeat(s(1), 1)\nRun((1, 2))", "repeat", 5, ["while evaluating call to Run", "while evaluating call to repeat"] },
-        { "empty sequence", "Run(s) = repeat(s(1), 1)\nRun(())", "repeat", 5, ["while evaluating call to Run", "while evaluating call to repeat"] },
-        { "operator result", "Run(s) = repeat(s(1), 1)\nRun(2 + 3)", "repeat", 5, ["while evaluating call to Run", "while evaluating call to repeat"] },
-        { "call result", "Inc(x) = x + 1\nRun(s) = repeat(s(1), 1)\nRun(Inc(1))", "repeat", 5, ["while evaluating call to Run", "while evaluating call to repeat"] },
-        { "selection", "A = 1, 2\nRun(s) = repeat(s(1), 1)\nRun(A[0])", "repeat", 5, ["while evaluating call to Run", "while evaluating call to repeat"] },
-        { "dot-call value", "A = 3\nRun(s) = repeat(s(1), 1)\nRun(A.abs)", "repeat", 5, ["while evaluating call to Run", "while evaluating call to repeat"] },
+        { "number", "Run(s) = repeat(s(1), 1)\nRun(5)", "repeat", 1, 17, ["while evaluating call to Run", "while evaluating call to repeat"] },
+        { "number, while", "Run(s) = while(s(1))\nRun(5)", "while", 1, 16, ["while evaluating call to Run", "while evaluating call to while"] },
+        { "string", "Run(s) = repeat(s(1), 1)\nRun('a')", "repeat", 1, 17, ["while evaluating call to Run", "while evaluating call to repeat"] },
+        { "Boolean", "Run(s) = repeat(s(1), 1)\nRun(true)", "repeat", 1, 17, ["while evaluating call to Run", "while evaluating call to repeat"] },
+        { "list", "Run(s) = repeat(s(1), 1)\nRun([1, 2])", "repeat", 1, 17, ["while evaluating call to Run", "while evaluating call to repeat"] },
+        { "sequence", "Run(s) = repeat(s(1), 1)\nRun((1, 2))", "repeat", 1, 17, ["while evaluating call to Run", "while evaluating call to repeat"] },
+        { "empty sequence", "Run(s) = repeat(s(1), 1)\nRun(())", "repeat", 1, 17, ["while evaluating call to Run", "while evaluating call to repeat"] },
+        { "operator result", "Run(s) = repeat(s(1), 1)\nRun(2 + 3)", "repeat", 1, 17, ["while evaluating call to Run", "while evaluating call to repeat"] },
+        { "call result", "Inc(x) = x + 1\nRun(s) = repeat(s(1), 1)\nRun(Inc(1))", "repeat", 2, 17, ["while evaluating call to Run", "while evaluating call to repeat"] },
+        { "selection", "A = 1, 2\nRun(s) = repeat(s(1), 1)\nRun(A[0])", "repeat", 2, 17, ["while evaluating call to Run", "while evaluating call to repeat"] },
+        { "dot-call value", "A = 3\nRun(s) = repeat(s(1), 1)\nRun(A.abs)", "repeat", 2, 17, ["while evaluating call to Run", "while evaluating call to repeat"] },
     };
 
     /// <summary>
@@ -119,9 +119,9 @@ public class LoopStepUnboundStateMessageTests
 
     [Theory]
     [MemberData(nameof(NoCallableIdentityStep))]
-    public async Task NoCallableIdentityStep_IsNotAnAlgorithm_OnEveryRoute(string category, string source, string loop, int column, string[] frames)
+    public async Task NoCallableIdentityStep_IsNotAnAlgorithm_OnEveryRoute(string category, string source, string loop, int line, int column, string[] frames)
     {
-        _ = column;
+        _ = (line, column);
         var observation = await SixRouteAgreement.OnEveryRouteAsync(source);
 
         Assert.Equal("err", observation.Kind);
@@ -137,10 +137,9 @@ public class LoopStepUnboundStateMessageTests
 
     [Theory]
     [MemberData(nameof(NoCallableIdentityStep))]
-    public async Task NoCallableIdentityStep_IsPositionedAtTheStepArgument(string category, string source, string loop, int column, string[] frames)
+    public async Task NoCallableIdentityStep_IsPositionedAtTheCalleeRead(string category, string source, string loop, int line, int column, string[] frames)
     {
         _ = (category, frames);
-        var lastLine = source.Split('\n').Length;
         foreach (var (route, error) in await ErrorsOnEveryRouteAsync(source))
         {
             Assert.Equal(KatLangErrorCode.NotAnAlgorithm, error.Code);
@@ -149,7 +148,7 @@ public class LoopStepUnboundStateMessageTests
                 inner = withContext.Inner;
             var notAnAlgorithm = Assert.IsType<EvalError.NotAnAlgorithm>(inner);
             Assert.Equal($"{loop} step", notAnAlgorithm.Description);
-            Assert.True(new SourcePosition(lastLine, column) == error.Span?.Start, $"{route}: {error.Span}");
+            Assert.True(new SourceSpan(line, column, line, column + 1) == error.Span, $"{route}: {error.Span}");
         }
     }
 
@@ -278,7 +277,7 @@ public class LoopStepUnboundStateMessageTests
         var failure = Assert.IsType<RunResult.EvalFailure>(KatLangEngine.Run("F(0) = 5\nF(n) = n * 10\nRun(s) = repeat(s(1), 2)\nRun(F(1))"));
         var error = Assert.Single(failure.Errors);
         Assert.Equal(KatLangErrorCode.NotAnAlgorithm, error.Code);
-        Assert.Equal(new SourceSpan(4, 5, 4, 9), error.Span);
+        Assert.Equal(new SourceSpan(3, 17, 3, 18), error.Span);
         Assert.Equal(
             "while evaluating call to Run: while evaluating call to repeat: The repeat step is not callable: the argument supplied for it is a value, "
             + "not an algorithm. Pass an algorithm: a named algorithm, a builtin, or a block { ... }.",

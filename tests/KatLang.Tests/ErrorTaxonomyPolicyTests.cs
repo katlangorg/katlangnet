@@ -97,11 +97,11 @@ public class ErrorTaxonomyPolicyTests
     [InlineData("filter([1], true)", "filter predicate", "[1:13, 1:17)")]
     [InlineData("reduce([1, 2], 5, 0)", "reduce reducer", "[1:16, 1:17)")]
     [InlineData("count(filter([1, 2], 5))", "filter predicate", "[1:22, 1:23)")]
-    [InlineData("Run(f) = repeat(f(0), 1)\nRun(5)", "repeat step", "[2:5, 2:6)")]
-    [InlineData("Run(f) = while(f(0))\nRun(true)", "while step", "[2:5, 2:9)")]
+    [InlineData("Run(f) = repeat(f(0), 1)\nRun(5)", "repeat step", "[1:17, 1:18)")]
+    [InlineData("Run(f) = while(f(0))\nRun(true)", "while step", "[1:16, 1:17)")]
     [InlineData("repeat(map([1, 2], 5), 1)", "map transform", "[1:20, 1:21)")]
-    // a cell keeps the ORIGINAL written argument's span across transport (argument blame)
-    [InlineData("Through(xs, f) = map(xs, f)\nThrough([1], 5)", "map transform", "[2:14, 2:15)")]
+    // META-DIAG-2: this fresh capability refusal blames the current forwarded occurrence.
+    [InlineData("Through(xs, f) = map(xs, f)\nThrough([1], 5)", "map transform", "[1:26, 1:27)")]
     public void TheRejection_NamesTheSlotRole_AtTheWrittenArgument(string source, string role, string span)
     {
         var failure = Assert.IsType<RunResult.EvalFailure>(KatLangEngine.Run(source));

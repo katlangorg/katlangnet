@@ -543,25 +543,38 @@ public static partial class Evaluator
     /// The binder's META capture of the parameter <paramref name="name"/> (META-DIAG-1):
     /// <see cref="ReferenceAdapterCell"/>, its canonical refusal (<see cref="MetaRefusalDescription"/>)
     /// framed with the parameter's name. Every other outcome — the adapter, a terminal resource failure,
-    /// a thrown cancellation or J7 invariant violation — is the capture's own, unchanged. Lean:
-    /// <c>NeedBinder.captureMeta</c>.
+    /// a thrown cancellation or J7 invariant violation — is the capture's own, unchanged. The refusal is
+    /// positioned at <paramref name="occurrence"/>, the argument as written at this binding call, when the
+    /// binder knows it (META-DIAG-2). Lean: <c>NeedBinder.captureMeta</c>.
     /// </summary>
-    private static EvalResult<NeedCell> CaptureMeta(string name, NeedCell cell, EvalCtx ctx)
+    private static EvalResult<NeedCell> CaptureMeta(string name, NeedCell cell, Expr? occurrence, EvalCtx ctx)
     {
         var adapter = ReferenceAdapterCell(cell, ctx);
-        return adapter.IsError ? AnnotateMetaBindingRefusal(name, adapter.Error) : adapter;
+        return adapter.IsError ? AnnotateMetaBindingRefusal(name, adapter.Error, occurrence?.Span) : adapter;
     }
+
+    // The written slot of supply position `slot` at this call, if the binder's caller recorded it.
+    private static Expr? Occurrence(IReadOnlyList<Expr?>? occurrences, int slot)
+        => occurrences is not null && (uint)slot < (uint)occurrences.Count ? occurrences[slot] : null;
 
     /// <summary>
     /// META-DIAG-1: the binder's report of a failed capture of the META parameter <paramref name="name"/>.
-    /// Only the canonical capture refusal gains the frame naming the parameter, positioned where the
-    /// refusal is (the supplied argument); any other error — the D-1A invocation refusal included —
-    /// passes unchanged. Lean: <c>NeedPlan.bindingRefusal</c>.
+    /// Only the canonical capture refusal gains the frame naming the parameter; any other error — the
+    /// D-1A invocation refusal included — passes unchanged. META-DIAG-2: the refusal is about the argument
+    /// supplied at THIS binding call, so it is positioned at <paramref name="occurrence"/> — the slot as
+    /// written there, which for a forwarded parameter read is the read itself, never the argument
+    /// originally written for the transported cell — and, when the slot is unknown, where
+    /// <see cref="ReifyMeta"/> placed it (the cell's own span). Diagnostic position only.
+    /// Lean: <c>NeedPlan.bindingRefusal</c> (spans are C#-only metadata).
     /// </summary>
-    internal static EvalError AnnotateMetaBindingRefusal(string name, EvalError error)
-        => error is EvalError.NotAnAlgorithm { Description: MetaRefusalDescription }
-            ? new EvalError.WithContext(MetaParameterContext(name), error) { Span = error.Span }
-            : error;
+    internal static EvalError AnnotateMetaBindingRefusal(string name, EvalError error, SourceSpan? occurrence = null)
+    {
+        if (error is not EvalError.NotAnAlgorithm { Description: MetaRefusalDescription } refusal)
+            return error;
+        if (occurrence is { } span && span != refusal.Span)
+            refusal = refusal with { Span = span };
+        return new EvalError.WithContext(MetaParameterContext(name), refusal) { Span = refusal.Span };
+    }
 
     /// <summary>The binder frame of a META parameter's refusal. Lean: <c>NeedPlan.metaParameterContext</c>.</summary>
     internal static string MetaParameterContext(string name) => $"while binding meta parameter '{name}'";
@@ -983,10 +996,31 @@ public static partial class Evaluator
             if (callee is Algorithm.User { AssignmentDeconstructionTarget: { } target } helper
                 && TryProjectSharedDeconstructionTarget(helper, target, args, ctx, plan.Values) is { } projected)
                 return projected.IsError ? projected.Error : EvalResult<CountedResult>.Ok(new(projected.Value, projected.Value.ValueCount()));
-            var supply = PreparePlanSupplyCounted(plan, PlanSupplyShape.Cells, byInvocation);
+            var supply = PreparePlanSupplyCounted(plan, UserPlanSupplyShape(plan, callee), byInvocation);
             if (supply.IsError) return supply.Error;
-            return EvalNeedUserSupplyCounted(callee, PlanCells(supply.Value), ctx, plan.Values, name, variadicArityStyle: true);
+            return EvalNeedUserSupplyCounted(callee, PlanCells(supply.Value), ctx, plan.Values, name, variadicArityStyle: true,
+                PlanMetaOccurrences(plan, callee, supply.Value));
         }
+    }
+
+    // A sibling spread changes the effective slot indexes, so retain the formation's sources when
+    // this binder can need them. The neutral sourced shape keeps the SAME cells and sticky supply;
+    // spread-free calls can read plan.Args directly without allocating diagnostic metadata.
+    private static PlanSupplyShape UserPlanSupplyShape(InvocationPlan plan, Algorithm callee)
+        => BindsMetaParameter(callee, plan.Caller) && HasExplicitSupplySpread(plan.Args)
+            ? PlanSupplyShape.Sourced : PlanSupplyShape.Cells;
+
+    /// <summary>
+    /// META-DIAG-2: the WRITTEN slots of a planned user call's prepared supply, for a callee that declares
+    /// a META parameter (<see cref="MetaOccurrenceSlots"/>): the sources a sourced preparation recorded, or
+    /// the plan's written arguments themselves when none is an explicit spread (then slot i IS argument i).
+    /// Otherwise unknown (<c>null</c>), and a refusal keeps its cell's span. Reads data only; allocates nothing.
+    /// </summary>
+    private static IReadOnlyList<Expr?>? PlanMetaOccurrences(InvocationPlan plan, Algorithm callee, object prepared)
+    {
+        if (!BindsMetaParameter(callee, plan.Caller)) return null;
+        if (prepared is SourcedPlanSupply sourced) return sourced.Sources;
+        return HasExplicitSupplySpread(plan.Args) ? null : plan.Args;
     }
 
     /// <summary>MIRROR OF <see cref="EvalPlannedCallCounted"/> — keep in lock-step (with <see cref="EvalCallCountedExprAsync"/>'s strategy pin).</summary>
@@ -1117,9 +1151,10 @@ public static partial class Evaluator
             if (callee is Algorithm.User { AssignmentDeconstructionTarget: { } target } helper
                 && await TryProjectSharedDeconstructionTargetAsync(helper, target, args, ctx, plan.Values).ConfigureAwait(false) is { } projected)
                 return projected.IsError ? projected.Error : EvalResult<CountedResult>.Ok(new(projected.Value, projected.Value.ValueCount()));
-            var supply = await PreparePlanSupplyAsync(plan, PlanSupplyShape.Cells, byInvocation).ConfigureAwait(false);
+            var supply = await PreparePlanSupplyAsync(plan, UserPlanSupplyShape(plan, callee), byInvocation).ConfigureAwait(false);
             if (supply.IsError) return supply.Error;
-            return await EvalNeedUserSupply(callee, PlanCells(supply.Value), ctx, plan.Values, name, asynchronous: true, variadicArityStyle: true).ConfigureAwait(false);
+            return await EvalNeedUserSupply(callee, PlanCells(supply.Value), ctx, plan.Values, name, asynchronous: true, variadicArityStyle: true,
+                PlanMetaOccurrences(plan, callee, supply.Value)).ConfigureAwait(false);
         }
     }
 

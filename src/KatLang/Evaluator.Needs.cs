@@ -551,10 +551,14 @@ public static partial class Evaluator
     /// own gate stays here, exactly once per level. Patterns traverse in written order, depth
     /// first: a unique plain name transports its cell, a repeated name, a literal or a structural
     /// pattern demands its cell when reached, and a collecting capture binds a lazy exact slice.
+    /// <paramref name="occurrences"/>, when the caller knows them, are the supply's WRITTEN slots at
+    /// this call (parallel to <paramref name="supply"/>; an opened spread's items keep their original
+    /// sources when known, otherwise <c>null</c>):
+    /// diagnostic identity only, read solely to position a META capture refusal (META-DIAG-2).
     /// </summary>
     private static async ValueTask<EvalResult<NeedEnv?>> BindAcceptedNeedPatterns(
         IReadOnlyList<NeedPattern> patterns, IReadOnlyList<NeedCell> supply,
-        EvalCtx ctx, bool asynchronous, bool family)
+        EvalCtx ctx, bool asynchronous, bool family, IReadOnlyList<Expr?>? occurrences = null)
     {
         // Empty and single-name heads need no traversal metadata. These are the same
         // non-inspecting binding rules as the general work-stack path.
@@ -563,7 +567,7 @@ public static partial class Evaluator
         {
             if (patterns[0].Meta)
             {
-                var adapter = CaptureMeta(onlyName, supply[0], ctx);
+                var adapter = CaptureMeta(onlyName, supply[0], Occurrence(occurrences, 0), ctx);
                 return adapter.IsError ? adapter.Error : EvalResult<NeedEnv?>.Ok([(onlyName, adapter.Value)]);
             }
             return EvalResult<NeedEnv?>.Ok([(onlyName, patterns[0].Collecting ? CollectorCell(supply.ToArray(), ctx) : supply[0])]);
@@ -584,7 +588,8 @@ public static partial class Evaluator
                 foreach (var child in children) counting.Push(child);
         }
         var bound = new Dictionary<string, NeedCell>(StringComparer.Ordinal);
-        var pending = new Stack<(NeedPattern Pattern, NeedCell Cell)>();
+        // A top-level item keeps its supply slot (only a top-level capture can be META); -1 otherwise.
+        var pending = new Stack<(NeedPattern Pattern, NeedCell Cell, int Slot)>();
         // ONE charged comparison session per binder activation, created by the first repeated-name
         // comparison with structural work (SEC-02-FU): this head's agreements share its verdicts.
         Result.ValueSemanticComparer? repeatedValues = null;
@@ -593,7 +598,7 @@ public static partial class Evaluator
 
         // Allocation of an ACCEPTED level (NeedSourceRange), pushed last-first so the pop
         // order is the written left-to-right order.
-        void PushLevel(IReadOnlyList<NeedPattern> level, IReadOnlyList<NeedCell> cells)
+        void PushLevel(IReadOnlyList<NeedPattern> level, IReadOnlyList<NeedCell> cells, bool topLevel = false)
         {
             var collector = -1;
             for (var i = 0; i < level.Count; i++) if (level[i].Collecting) { collector = i; break; }
@@ -601,28 +606,33 @@ public static partial class Evaluator
             {
                 var (start, length) = NeedSourceRange(level.Count, collector, cells.Count, i);
                 NeedCell cell;
+                var slot = -1;
                 if (i == collector)
                 {
                     var slice = new NeedCell[length];
                     for (var j = 0; j < length; j++) slice[j] = cells[start + j];
                     cell = CollectorCell(slice, ctx);
                 }
-                else cell = cells[start];
-                pending.Push((level[i], cell));
+                else
+                {
+                    cell = cells[start];
+                    if (topLevel) slot = start;
+                }
+                pending.Push((level[i], cell, slot));
             }
         }
 
-        PushLevel(patterns, supply);
+        PushLevel(patterns, supply, topLevel: true);
         while (pending.TryPop(out var item))
         {
-            var (pattern, cell) = item;
+            var (pattern, cell, slot) = item;
             // A META capture (CallReference S1) is reached in WRITTEN order like every pattern
             // (NEED-04): it reifies its supplied cell into a fresh Ready adapter — demanding
             // nothing, a non-plan cell refusing (named by the parameter, META-DIAG-1) — and binds
             // the name to that adapter.
             if (pattern.Meta)
             {
-                var adapter = CaptureMeta(pattern.Name!, cell, ctx);
+                var adapter = CaptureMeta(pattern.Name!, cell, Occurrence(occurrences, slot), ctx);
                 if (adapter.IsError) return adapter.Error;
                 cell = adapter.Value;
             }
@@ -888,9 +898,44 @@ public static partial class Evaluator
     private static EvalResult<CountedResult> EvalNeedUserBodyCounted(
         Algorithm callee, OutputBundle arguments, EvalCtx ctx, ValEnv values, CallDiagnosticName name)
     {
-        var supply = FormNeedSupply(arguments, ctx, values, asynchronous: false).GetAwaiter().GetResult();
+        var occurrences = MetaOccurrenceSlots(callee, arguments, ctx, out var sources);
+        var supply = FormNeedSupply(arguments, ctx, values, asynchronous: false, sources).GetAwaiter().GetResult();
         if (supply.IsError) return supply.Error;
-        return EvalNeedUserSupplyCounted(callee, supply.Value, ctx, values, name, variadicArityStyle: true);
+        return EvalNeedUserSupplyCounted(callee, supply.Value, ctx, values, name, variadicArityStyle: true, occurrences);
+    }
+
+    /// <summary>
+    /// META-DIAG-2: a call's WRITTEN slots, when, and only when, the binder can use them — the callee
+    /// declares a META parameter (always top-level, <see cref="ParameterPattern.FindMetaViolation"/>), which
+    /// only a run that retains invocation plans can bind (J7). A META capture refusal is then positioned at
+    /// the argument as written at this call (<see cref="AnnotateMetaBindingRefusal"/>); every other call
+    /// records nothing and allocates nothing. A spread-free call reuses its argument bundle; a call
+    /// with spreads records the effective slots through <see cref="FormNeedSupply"/>'s sources list.
+    /// </summary>
+    private static IReadOnlyList<Expr?>? MetaOccurrenceSlots(
+        Algorithm callee, OutputBundle arguments, EvalCtx ctx, out List<Expr?>? sources)
+    {
+        sources = null;
+        if (!BindsMetaParameter(callee, ctx)) return null;
+        if (HasExplicitSupplySpread(arguments)) return sources = new List<Expr?>(arguments.Count);
+        return arguments;
+    }
+
+    private static bool HasExplicitSupplySpread(OutputBundle arguments)
+    {
+        for (var i = 0; i < arguments.Count; i++)
+            if (arguments[i] is Expr.SequenceSpread) return true;
+        return false;
+    }
+
+    private static bool BindsMetaParameter(Algorithm callee, EvalCtx ctx)
+    {
+        if (!ctx.Budget.RetainsInvocationPlans) return false;
+        var patterns = callee.ParameterPatterns;
+        for (var i = 0; i < patterns.Count; i++)
+            if (patterns[i] is CaptureParameterPattern { Kind: ParameterKind.Meta })
+                return true;
+        return false;
     }
 
     private static EvalError NeedCallArityError(Algorithm callee, IReadOnlyList<NeedPattern> patterns, int supplied, CallDiagnosticName name, EvalCtx ctx, bool variadicStyle)
@@ -909,12 +954,13 @@ public static partial class Evaluator
     // invocation keeps the plain ArityMismatch shape named by its role. It never changes a result.
     [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
     private static EvalResult<CountedResult> EvalNeedUserSupplyCounted(
-        Algorithm callee, IReadOnlyList<NeedCell> supply, EvalCtx ctx, ValEnv values, CallDiagnosticName name, bool variadicArityStyle)
+        Algorithm callee, IReadOnlyList<NeedCell> supply, EvalCtx ctx, ValEnv values, CallDiagnosticName name, bool variadicArityStyle,
+        IReadOnlyList<Expr?>? occurrences = null)
     {
         // The call's ONE top-level cardinality decision, reported in the call's own shape.
         var patterns = NeedParameterPatterns(callee.ParameterPatterns);
         if (!NeedAcceptsCardinality(patterns, supply.Count)) return NeedCallArityError(callee, patterns, supply.Count, name, ctx, variadicArityStyle);
-        var bindings = BindAcceptedNeedPatterns(patterns, supply, ctx, asynchronous: false, family: false).GetAwaiter().GetResult();
+        var bindings = BindAcceptedNeedPatterns(patterns, supply, ctx, asynchronous: false, family: false, occurrences).GetAwaiter().GetResult();
         if (bindings.IsError) return bindings.Error;
         if (callee.Output.Count == 0) return new EvalError.MissingOutput();
         var names = callee.Params;
@@ -927,18 +973,19 @@ public static partial class Evaluator
         Algorithm callee, OutputBundle arguments, EvalCtx ctx, ValEnv values,
         CallDiagnosticName name, bool asynchronous)
     {
-        var supply = await FormNeedSupply(arguments, ctx, values, asynchronous).ConfigureAwait(false);
+        var occurrences = MetaOccurrenceSlots(callee, arguments, ctx, out var sources);
+        var supply = await FormNeedSupply(arguments, ctx, values, asynchronous, sources).ConfigureAwait(false);
         if (supply.IsError) return supply.Error;
-        return await EvalNeedUserSupply(callee, supply.Value, ctx, values, name, asynchronous, variadicArityStyle: true).ConfigureAwait(false);
+        return await EvalNeedUserSupply(callee, supply.Value, ctx, values, name, asynchronous, variadicArityStyle: true, occurrences).ConfigureAwait(false);
     }
 
     private static async ValueTask<EvalResult<CountedResult>> EvalNeedUserSupply(
         Algorithm callee, IReadOnlyList<NeedCell> supply, EvalCtx ctx, ValEnv values,
-        CallDiagnosticName name, bool asynchronous, bool variadicArityStyle)
+        CallDiagnosticName name, bool asynchronous, bool variadicArityStyle, IReadOnlyList<Expr?>? occurrences = null)
     {
         var patterns = NeedParameterPatterns(callee.ParameterPatterns);
         if (!NeedAcceptsCardinality(patterns, supply.Count)) return NeedCallArityError(callee, patterns, supply.Count, name, ctx, variadicArityStyle);
-        var bindings = await BindAcceptedNeedPatterns(patterns, supply, ctx, asynchronous, family: false).ConfigureAwait(false);
+        var bindings = await BindAcceptedNeedPatterns(patterns, supply, ctx, asynchronous, family: false, occurrences).ConfigureAwait(false);
         if (bindings.IsError) return bindings.Error;
         if (callee.Output.Count == 0) return new EvalError.MissingOutput();
         var names = callee.Params;

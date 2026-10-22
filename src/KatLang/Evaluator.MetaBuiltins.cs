@@ -42,9 +42,14 @@ public static partial class Evaluator
         if (!descriptor.AcceptsArity(arguments.Count))
             return WrongBuiltinArity(descriptor.Id, arguments.Count);
         var supplied = new NeedCell[arguments.Count];
+        // META-DIAG-2: each argument's slot as written at this call positions a META refusal.
+        var occurrences = new Expr?[arguments.Count];
         for (var i = 0; i < supplied.Length; i++)
+        {
             supplied[i] = ExistingArgumentCell(arguments[i], ctx, values);
-        var bound = await BindAcceptedNeedPatterns(MetaBuiltinPatterns[descriptor.Id], supplied, ctx, asynchronous, family: false).ConfigureAwait(false);
+            occurrences[i] = arguments[i].Source;
+        }
+        var bound = await BindAcceptedNeedPatterns(MetaBuiltinPatterns[descriptor.Id], supplied, ctx, asynchronous, family: false, occurrences).ConfigureAwait(false);
         if (bound.IsError) return bound.Error;
         var env = bound.Value!;
         return descriptor.Id switch
