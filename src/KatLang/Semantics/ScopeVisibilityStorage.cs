@@ -227,8 +227,14 @@ internal static class VisibilityTree
 /// <see cref="string.GetHashCode()"/>) predicts the heap order. Depth is therefore expected
 /// logarithmic for ANY name set, including one chosen with knowledge of the process string
 /// hashes — an expectation over the builder's private randomness, not a deterministic
-/// worst-case bound. <see cref="Set"/>, <see cref="Remove"/> and <see cref="Merge"/> remain
-/// recursive in the tree depth (stack safety under forced priorities is SCOPE-BAL-3).
+/// worst-case bound.
+/// </para>
+/// <para>
+/// STACK SAFETY (SCOPE-BAL-3, issue #169) does not rely on that expectation: <see cref="Set"/>,
+/// <see cref="Remove"/>, <see cref="Merge"/> and <see cref="Build"/> are iterative and keep their
+/// paths on the heap, so no update's CLR stack use grows with the tree depth — a degenerate chain
+/// (every priority equal) is updated at constant stack depth. Heap and time remain proportional
+/// to the traversed depth.
 /// </para>
 /// </summary>
 internal sealed class VisibilityTreeBuilder
@@ -245,6 +251,21 @@ internal sealed class VisibilityTreeBuilder
     private readonly Dictionary<string, int> _priorities = new(StringComparer.Ordinal);
     private int[]? _randomPriorities;
     private int _nextRandomPriority;
+
+    /// <summary>
+    /// The pending search path of the current <see cref="Set"/> / <see cref="Remove"/> (each
+    /// ancestor and the side the path took), with the <see cref="Merge"/> spine stacked above it.
+    /// Builder-private scratch: positions are owned by the running update only, nothing reads a
+    /// slot it did not write in the same update, and a builder is not used concurrently.
+    /// </summary>
+    private (VisibilityNode Node, bool WentLeft)[]? _path;
+
+    /// <summary>Initial <see cref="_path"/> capacity: above the expected depth of any ordinary tree.</summary>
+    private const int InitialPathCapacity = 32;
+
+    /// <summary>A <see cref="_path"/> grown beyond this is dropped after its update.</summary>
+    private const int RetainedPathCapacity = 1024;
+
     private readonly FrontEndTraversalObservations? _observations;
     private readonly bool _collideNodeHashes;
 
@@ -373,71 +394,166 @@ internal sealed class VisibilityTreeBuilder
         return node;
     }
 
-    /// <summary>Sets the entry for its name (insert or replace), returning the SAME root when nothing changes.</summary>
-    public VisibilityNode Set(VisibilityNode? node, in VisibilityEntry entry)
+    /// <summary>
+    /// Sets the entry for its name (insert or replace), returning the SAME root when nothing changes.
+    /// <para>
+    /// Iterative (SCOPE-BAL-3): the search path is recorded in <see cref="_path"/>, then rebuilt
+    /// bottom-up with exactly the recursive algorithm's per-level decisions and <see cref="Make"/>
+    /// sequence — at each ancestor, the rebuilt child either outranks it (one rotation) or becomes
+    /// its new child. Only the target can be a no-op: once a node on the path changes, every
+    /// rebuilt ancestor has a different child or entry, so no ancestor equals its original, and
+    /// the recursive form's per-level "child unchanged" check never fired above a real change.
+    /// </para>
+    /// </summary>
+    public VisibilityNode Set(VisibilityNode? root, in VisibilityEntry entry)
     {
-        if (node is null)
-            return Make(entry, null, null);
-
-        var comparison = string.CompareOrdinal(entry.Name, node.Name);
-        if (comparison == 0)
+        try
         {
-            return SameEntry(node, entry)
-                ? node
-                : Make(entry, node.Left, node.Right);
-        }
+            var depth = 0;
+            var node = root;
+            while (node is not null)
+            {
+                var comparison = string.CompareOrdinal(entry.Name, node.Name);
+                if (comparison == 0)
+                    break;
+                Push(ref depth, node, comparison < 0);
+                node = comparison < 0 ? node.Left : node.Right;
+            }
 
-        if (comparison < 0)
+            VisibilityNode current;
+            if (node is null)
+                current = Make(entry, null, null);
+            else if (SameEntry(node, entry))
+                return root!;
+            else
+                current = Make(entry, node.Left, node.Right);
+
+            var path = _path;
+            while (depth > 0)
+            {
+                var (ancestor, wentLeft) = path![--depth];
+
+                // Only the rebuilt child can outrank its parent: one rotation restores the heap order.
+                var rotate = VisibilityTree.HigherPriority(current.Priority, current.Name, ancestor.Priority, ancestor.Name);
+                current = wentLeft
+                    ? rotate
+                        ? Make(new VisibilityEntry(current), current.Left, Make(new VisibilityEntry(ancestor), current.Right, ancestor.Right))
+                        : Make(new VisibilityEntry(ancestor), current, ancestor.Right)
+                    : rotate
+                        ? Make(new VisibilityEntry(current), Make(new VisibilityEntry(ancestor), ancestor.Left, current.Left), current.Right)
+                        : Make(new VisibilityEntry(ancestor), ancestor.Left, current);
+            }
+
+            return current;
+        }
+        finally
         {
-            var left = Set(node.Left, entry);
-            if (ReferenceEquals(left, node.Left))
-                return node;
-
-            // Only the new left root can outrank this node: one rotation restores the heap order.
-            return VisibilityTree.HigherPriority(left.Priority, left.Name, node.Priority, node.Name)
-                ? Make(new VisibilityEntry(left), left.Left, Make(new VisibilityEntry(node), left.Right, node.Right))
-                : Make(new VisibilityEntry(node), left, node.Right);
+            ReleaseDeepPath();
         }
-
-        var right = Set(node.Right, entry);
-        if (ReferenceEquals(right, node.Right))
-            return node;
-
-        return VisibilityTree.HigherPriority(right.Priority, right.Name, node.Priority, node.Name)
-            ? Make(new VisibilityEntry(right), Make(new VisibilityEntry(node), node.Left, right.Left), right.Right)
-            : Make(new VisibilityEntry(node), node.Left, right);
     }
 
-    /// <summary>Removes <paramref name="name"/>, returning the SAME root when it is absent.</summary>
-    public VisibilityNode? Remove(VisibilityNode? node, string? name)
+    /// <summary>
+    /// Removes <paramref name="name"/>, returning the SAME root when it is absent (a search only,
+    /// no node built). Iterative like <see cref="Set"/>: the removed node's children are merged by
+    /// <see cref="Merge"/> above the recorded search path, then the path's ancestors are rebuilt.
+    /// </summary>
+    public VisibilityNode? Remove(VisibilityNode? root, string? name)
     {
-        if (node is null)
-            return null;
-
-        var comparison = string.CompareOrdinal(name, node.Name);
-        if (comparison == 0)
-            return Merge(node.Left, node.Right);
-
-        if (comparison < 0)
+        try
         {
-            var left = Remove(node.Left, name);
-            return ReferenceEquals(left, node.Left) ? node : Make(new VisibilityEntry(node), left, node.Right);
-        }
+            var depth = 0;
+            var node = root;
+            while (node is not null)
+            {
+                var comparison = string.CompareOrdinal(name, node.Name);
+                if (comparison == 0)
+                    break;
+                Push(ref depth, node, comparison < 0);
+                node = comparison < 0 ? node.Left : node.Right;
+            }
 
-        var right = Remove(node.Right, name);
-        return ReferenceEquals(right, node.Right) ? node : Make(new VisibilityEntry(node), node.Left, right);
+            if (node is null)
+                return root;
+
+            // The merged subtree has one node fewer than the removed one, so it is never that node
+            // and no rebuilt ancestor is its original: the recursive form rebuilt every ancestor too.
+            var current = Merge(node.Left, node.Right, depth);
+            var path = _path;
+            while (depth > 0)
+            {
+                var (ancestor, wentLeft) = path![--depth];
+                current = wentLeft
+                    ? Make(new VisibilityEntry(ancestor), current, ancestor.Right)
+                    : Make(new VisibilityEntry(ancestor), ancestor.Left, current);
+            }
+
+            return current;
+        }
+        finally
+        {
+            ReleaseDeepPath();
+        }
     }
 
-    private VisibilityNode? Merge(VisibilityNode? low, VisibilityNode? high)
+    /// <summary>
+    /// The treap join of two trees whose names are all ordinally ordered low before high: walks the
+    /// spine the recursive join descended — the higher-priority root wins and the join continues
+    /// in its inner child — recording it in <see cref="_path"/> from <paramref name="start"/> (the
+    /// caller's pending path below stays intact), then rebuilds the spine bottom-up.
+    /// </summary>
+    private VisibilityNode? Merge(VisibilityNode? low, VisibilityNode? high, int start)
     {
-        if (low is null)
-            return high;
-        if (high is null)
-            return low;
+        var depth = start;
+        while (low is not null && high is not null)
+        {
+            if (VisibilityTree.HigherPriority(low.Priority, low.Name, high.Priority, high.Name))
+            {
+                // low wins: its new right child is the join of low.Right and high.
+                Push(ref depth, low, wentLeft: false);
+                low = low.Right;
+            }
+            else
+            {
+                // high wins: its new left child is the join of low and high.Left.
+                Push(ref depth, high, wentLeft: true);
+                high = high.Left;
+            }
+        }
 
-        return VisibilityTree.HigherPriority(low.Priority, low.Name, high.Priority, high.Name)
-            ? Make(new VisibilityEntry(low), low.Left, Merge(low.Right, high))
-            : Make(new VisibilityEntry(high), Merge(low, high.Left), high.Right);
+        var current = low ?? high;
+        var path = _path;
+        while (depth > start)
+        {
+            var (winner, joinedLeft) = path![--depth];
+            current = joinedLeft
+                ? Make(new VisibilityEntry(winner), current, winner.Right)
+                : Make(new VisibilityEntry(winner), winner.Left, current);
+        }
+
+        return current;
+    }
+
+    private void Push(ref int depth, VisibilityNode node, bool wentLeft)
+    {
+        var path = _path ??= new (VisibilityNode, bool)[InitialPathCapacity];
+        if (depth == path.Length)
+        {
+            Array.Resize(ref path, depth * 2);
+            _path = path;
+        }
+
+        path[depth++] = (node, wentLeft);
+    }
+
+    /// <summary>
+    /// Drops a path buffer grown by a pathologically deep update (normal exit or exception), so a
+    /// deep tree costs its traversal's memory only for the duration of one update. A retained
+    /// buffer holds stale node references only, which <see cref="_nodes"/> keeps alive anyway.
+    /// </summary>
+    private void ReleaseDeepPath()
+    {
+        if (_path is { Length: > RetainedPathCapacity })
+            _path = null;
     }
 
     private VisibilityNode? Rebuild(VisibilityNode? root, List<VisibilityDelta> changes)
