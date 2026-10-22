@@ -319,9 +319,11 @@ internal static class MetamorphicSurfaces
             result.IsError ? null : result.Value.Output.Value,
             result.IsError ? null : result.Value.Output.EmittedCount);
 
+        // The property channel is compared as text, so it carries the injective, ValueComparer-
+        // canonical identity rather than the legacy neutral text (which can collide, SEM-2A).
         var property = result.IsError || result.Value.TopLevelProperty is not { } counted
             ? "absent"
-            : MetamorphicValue.Neutral(counted.Value) + "#" + counted.EmittedCount.ToString(CultureInfo.InvariantCulture);
+            : MetamorphicStructuralIdentity.Encode(counted.Value) + "#" + counted.EmittedCount.ToString(CultureInfo.InvariantCulture);
 
         observation = Bare(semantic, profile, definition) with
         {
@@ -416,8 +418,7 @@ internal static class MetamorphicSurfaces
         var success = run as RunResult.Success;
         var semantic = success is null
             ? MetamorphicSemanticObservation.OutcomeOnly(failed: true)
-            : new MetamorphicSemanticObservation(
-                "ok", MetamorphicValue.Neutral(success.Value), success.EmittedCount, null, null, false);
+            : MetamorphicSemanticObservation.OfValue(success.Value, success.EmittedCount);
 
         return Bare(semantic, profile, definition) with
         {
@@ -449,10 +450,10 @@ internal static class MetamorphicSurfaces
     private static MetamorphicSemanticObservation SemanticOf(
         bool isError, EvalError? error, Result? value, int? emittedCount)
         => isError
-            ? MetamorphicSemanticObservation.Failure(
-                MetamorphicValue.ErrorCategory(error!), MetamorphicValue.ErrorPayload(error!), error!.IsResourceLimit)
-            : new MetamorphicSemanticObservation(
-                "ok", value is null ? null : MetamorphicValue.Neutral(value), emittedCount, null, null, false);
+            ? MetamorphicSemanticObservation.OfError(error!)
+            : value is null
+                ? new MetamorphicSemanticObservation("ok", null, emittedCount, null, null, false)
+                : MetamorphicSemanticObservation.OfValue(value, emittedCount);
 
     /// <summary>An observation with no operational counters — every surface but the observed one.</summary>
     private static MetamorphicOperationalObservation Bare(

@@ -213,8 +213,8 @@ public class MetamorphicPhase4AuditTests
     // ── Relation audit ───────────────────────────────────────────────────────
 
     private static MetamorphicOperationalObservation Reference(
-        string structure = "3", int emitted = 1, long steps = 20, long items = 8, long chars = 0, int depth = 4)
-        => new(MetamorphicSemanticObservation.Success(structure, emitted), steps, items, chars, depth, "on");
+        int emitted = 1, long steps = 20, long items = 8, long chars = 0, int depth = 4)
+        => new(MetamorphicSemanticObservation.OfValue(new Result.Atom(3m), emitted), steps, items, chars, depth, "on");
 
     private static MetamorphicCase CaseWith(
         MetamorphicSemanticRelation semantic, MetamorphicOperationalRelation operational)
@@ -342,8 +342,8 @@ public class MetamorphicPhase4AuditTests
         // Semantic class.
         Record(equal, reference, new MetamorphicOperationalObservation(
             MetamorphicSemanticObservation.Failure("ArityMismatch", null, false), 20, 8, 0, 4, "on"));
-        Record(equal, reference, reference with { Semantic = MetamorphicSemanticObservation.Success("4", 1) });
-        Record(equal, reference, reference with { Semantic = MetamorphicSemanticObservation.Success("3", 2) });
+        Record(equal, reference, reference with { Semantic = MetamorphicSemanticObservation.OfValue(new Result.Atom(4m), 1) });
+        Record(equal, reference, reference with { Semantic = MetamorphicSemanticObservation.OfValue(new Result.Atom(3m), 2) });
 
         var failed = new MetamorphicOperationalObservation(
             MetamorphicSemanticObservation.Failure("ArityMismatch", "1", false), 20, 8, 0, 4, "on");

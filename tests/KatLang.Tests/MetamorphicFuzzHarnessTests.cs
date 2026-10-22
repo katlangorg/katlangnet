@@ -358,12 +358,13 @@ public class MetamorphicFuzzHarnessTests
 
     [Fact]
     public void Comparator_AcceptsAnIdenticalPair()
-        => Assert.Null(MetamorphicComparator.Compare(SampleCase(), Ok("5", 1, 5, 0), Ok("5", 1, 5, 0)));
+        => Assert.Null(MetamorphicComparator.Compare(SampleCase(), Ok(new Result.Atom(5m), 1, 5, 0), Ok(new Result.Atom(5m), 1, 5, 0)));
 
     [Fact]
     public void Comparator_ReportsASemanticStructureMismatch()
     {
-        var mismatch = MetamorphicComparator.Compare(SampleCase(), Ok("5", 1, 5, 0), Ok("L[1, 2]", 1, 5, 0));
+        var mismatch = MetamorphicComparator.Compare(SampleCase(), Ok(new Result.Atom(5m), 1, 5, 0),
+            Ok(new Result.ListValue([new Result.Atom(1m), new Result.Atom(2m)]), 1, 5, 0));
         Assert.Equal(MetamorphicMismatchKind.SemanticStructure, mismatch!.Kind);
         Assert.Equal(MetamorphicMismatchClass.Semantic, mismatch.Class);
         Assert.Contains("neutral structural value", mismatch.Headline, StringComparison.Ordinal);
@@ -372,7 +373,7 @@ public class MetamorphicFuzzHarnessTests
     [Fact]
     public void Comparator_ReportsAnEmittedCountMismatch()
     {
-        var mismatch = MetamorphicComparator.Compare(SampleCase(), Ok("5", 1, 5, 0), Ok("5", 2, 5, 0));
+        var mismatch = MetamorphicComparator.Compare(SampleCase(), Ok(new Result.Atom(5m), 1, 5, 0), Ok(new Result.Atom(5m), 2, 5, 0));
         Assert.Equal(MetamorphicMismatchKind.EmittedCount, mismatch!.Kind);
         Assert.Equal(MetamorphicMismatchClass.Semantic, mismatch.Class);
         Assert.Contains("emitted count", mismatch.Headline, StringComparison.Ordinal);
@@ -381,7 +382,7 @@ public class MetamorphicFuzzHarnessTests
     [Fact]
     public void Comparator_ReportsAnItemMaterializationMismatch()
     {
-        var mismatch = MetamorphicComparator.Compare(SampleCase(), Ok("5", 1, 5, 0), Ok("5", 1, 10, 0));
+        var mismatch = MetamorphicComparator.Compare(SampleCase(), Ok(new Result.Atom(5m), 1, 5, 0), Ok(new Result.Atom(5m), 1, 10, 0));
         Assert.Equal(MetamorphicMismatchKind.MaterializedItems, mismatch!.Kind);
         Assert.Equal(MetamorphicMismatchClass.Operational, mismatch.Class);
         Assert.Contains("materialized collection-item slots", mismatch.Headline, StringComparison.Ordinal);
@@ -390,7 +391,7 @@ public class MetamorphicFuzzHarnessTests
     [Fact]
     public void Comparator_ReportsAStringMaterializationMismatch()
     {
-        var mismatch = MetamorphicComparator.Compare(SampleCase(), Ok("5", 1, 5, 0), Ok("5", 1, 5, 3));
+        var mismatch = MetamorphicComparator.Compare(SampleCase(), Ok(new Result.Atom(5m), 1, 5, 0), Ok(new Result.Atom(5m), 1, 5, 3));
         Assert.Equal(MetamorphicMismatchKind.MaterializedStringChars, mismatch!.Kind);
         Assert.Equal(MetamorphicMismatchClass.Operational, mismatch.Class);
         Assert.Contains("materialized string UTF-16 units", mismatch.Headline, StringComparison.Ordinal);
@@ -412,7 +413,7 @@ public class MetamorphicFuzzHarnessTests
     public void Comparator_ReportsAnOutcomeMismatchBeforeAnythingElse()
     {
         var mismatch = MetamorphicComparator.Compare(
-            SampleCase(), Ok("5", 1, 5, 0), Err("MaterializationLimitExceeded", "limit=4", true));
+            SampleCase(), Ok(new Result.Atom(5m), 1, 5, 0), Err("MaterializationLimitExceeded", "limit=4", true));
         Assert.Equal(MetamorphicMismatchKind.SemanticOutcome, mismatch!.Kind);
         Assert.Equal(MetamorphicMismatchClass.Semantic, mismatch.Class);
     }
@@ -550,8 +551,8 @@ public class MetamorphicFuzzHarnessTests
             Assert.Equal(SemanticExplorerHarness.Neutral(value), MetamorphicValue.Neutral(value));
 
         Assert.NotNull(MetamorphicComparator.Compare(SampleCase(),
-            Ok(MetamorphicValue.Neutral(new Result.Bool(true)), 1, 5, 0),
-            Ok(MetamorphicValue.Neutral(new Result.Bool(false)), 1, 5, 0)));
+            Ok(new Result.Bool(true), 1, 5, 0),
+            Ok(new Result.Bool(false), 1, 5, 0)));
 
         // Order and nesting stay distinguishable.
         Assert.NotEqual(
@@ -767,8 +768,8 @@ public class MetamorphicFuzzHarnessTests
     private static MetamorphicCase SampleCase()
         => MetamorphicTemplates.Build(ParametersFor(5, MetamorphicLimitMode.CumulativeItems, 0, 0, optimize: true));
 
-    private static MetamorphicOperationalObservation Ok(string structure, int emitted, long items, long stringChars)
-        => new(MetamorphicSemanticObservation.Success(structure, emitted), 0, items, stringChars, 0, "on");
+    private static MetamorphicOperationalObservation Ok(Result value, int emitted, long items, long stringChars)
+        => new(MetamorphicSemanticObservation.OfValue(value, emitted), 0, items, stringChars, 0, "on");
 
     private static MetamorphicOperationalObservation Err(string category, string? payload, bool isResourceLimit)
         => new(MetamorphicSemanticObservation.Failure(category, payload, isResourceLimit), 0, 0, 0, 0, "on");

@@ -1734,12 +1734,16 @@ public class MetamorphicPhase3FamilyTests
         var left = Observe(optimizerCase.LeftSource, null, true);
         var right = Observe(optimizerCase.RightSource, null, false);
 
-        // 1. Optimizer semantic mismatch.
+        // 1. Optimizer semantic mismatch. The injected value is a whole observation of a different
+        //    value (legacy text, typed value and kl-struct-v1 identity together, SEM-2A): editing
+        //    only the legacy text would leave the authoritative typed value unchanged.
+        var injected = MetamorphicSemanticObservation.OfValue(
+            new Result.SequenceValue([new Result.Atom(9)]), left.Semantic.EmittedCount);
         Assert.Equal(
             MetamorphicMismatchKind.SemanticStructure,
             Require(MetamorphicComparator.Compare(
                 optimizerCase,
-                left with { Semantic = left.Semantic with { Structure = "S[9]" } },
+                left with { Semantic = injected },
                 right)).Kind);
 
         // 2. Optimizer accounting divergence in EITHER direction: every strategy charges every

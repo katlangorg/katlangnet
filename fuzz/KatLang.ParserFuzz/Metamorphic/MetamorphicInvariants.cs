@@ -103,6 +103,12 @@ internal static class MetamorphicInvariants
         text.Append("  failed comparison:      ").Append(mismatch.Kind).Append(" (").Append(mismatch.Class).AppendLine(")");
         text.Append("  declared semantic:      ").AppendLine(testCase.SemanticRelation.ToString());
         text.Append("  declared operational:   ").AppendLine(testCase.OperationalRelation.ToString());
+        text.Append("  declared error policy:  ").Append(testCase.ErrorPolicy).Append(" (strict fields ")
+            .Append(report.Execution is { Left: { } strictLeft, Right: { } strictRight }
+                    && MetamorphicComparator.StrictErrorComparisonApplies(testCase, strictLeft, strictRight)
+                ? "compared"
+                : "not exercised")
+            .AppendLine(")");
         text.Append("  precondition:           ")
             .Append(testCase.Precondition.Satisfied ? "satisfied" : "REJECTED")
             .Append(" (").Append(testCase.Precondition.Reason).AppendLine(")");

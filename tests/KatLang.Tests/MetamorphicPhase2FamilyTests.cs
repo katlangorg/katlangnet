@@ -1557,7 +1557,7 @@ public class MetamorphicPhase2FamilyTests
             MetamorphicComparator.Compare(testCase, Observation(items: 4, emitted: 1), Observation(items: 4, emitted: 2))!.Kind);
         Assert.Equal(
             MetamorphicMismatchKind.SemanticStructure,
-            MetamorphicComparator.Compare(testCase, Observation(items: 4, structure: "1"), Observation(items: 4, structure: "2"))!.Kind);
+            MetamorphicComparator.Compare(testCase, Observation(items: 4, atom: 1), Observation(items: 4, atom: 2))!.Kind);
     }
 
     // ── Fingerprints ─────────────────────────────────────────────────────────
@@ -1782,8 +1782,8 @@ public class MetamorphicPhase2FamilyTests
     }
 
     private static MetamorphicOperationalObservation Observation(
-        long items, long strings = 0, long steps = 0, int depth = 0, int emitted = 1, string structure = "1")
-        => new(MetamorphicSemanticObservation.Success(structure, emitted), steps, items, strings, depth, "on");
+        long items, long strings = 0, long steps = 0, int depth = 0, int emitted = 1, int atom = 1)
+        => new(MetamorphicSemanticObservation.OfValue(new Result.Atom(atom), emitted), steps, items, strings, depth, "on");
 
     private static MetamorphicOperationalObservation Failed(
         string category, bool isResourceLimit, long items, string? payload = null)

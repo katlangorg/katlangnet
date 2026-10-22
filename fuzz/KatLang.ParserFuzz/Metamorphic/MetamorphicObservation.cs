@@ -25,10 +25,10 @@ internal enum MetamorphicFacets
     /// <summary>Success or failure. Every surface projects this.</summary>
     Outcome = 1 << 0,
 
-    /// <summary>Innermost structured error kind, its stable payload, and the resource verdict.</summary>
+    /// <summary>Innermost structured error kind, its stable payload, its strict field detail, and the resource verdict.</summary>
     StructuredError = 1 << 1,
 
-    /// <summary>The neutral structural value.</summary>
+    /// <summary>The structural value: legacy neutral text, the value itself, and its kl-struct-v1 identity.</summary>
     Structure = 1 << 2,
 
     /// <summary>The root emitted count.</summary>
@@ -54,20 +54,88 @@ internal enum MetamorphicFacets
 /// LANGUAGE-SEMANTIC identity of one run: the class of observation the Lean differential
 /// corpus compares, plus the host-policy flag that keeps a resource-limit failure
 /// distinguishable from an ordinary language-semantic failure.
+///
+/// <para><b>Structural identity (SEM-2A).</b> <see cref="Structure"/> is the LEGACY neutral text,
+/// kept byte-for-byte because FORMAL-06 and the semantic explorer pin it, but it is not injective
+/// (strings are written between unescaped quotes). A surface that hands back a value therefore
+/// also records the value itself (<see cref="Value"/>, compared with
+/// <see cref="Result.ValueComparer"/> — the in-process authority) and its versioned durable
+/// identity (<see cref="StructuralIdentity"/>, <c>kl-struct-v1</c>). Only a completed run's
+/// ordinary value is retained: run results never contain a call reference, and no plan, cell,
+/// budget or cache is reachable from a <see cref="Result"/>.</para>
+///
+/// <para><b>Strict error detail (SEM-2A).</b> A surface that hands back the structured
+/// <c>EvalError</c> also records its innermost Q-67 fields (<see cref="ErrorDetail"/>), which a
+/// case declaring <see cref="MetamorphicErrorPolicy.StrictSameSource"/> compares. The legacy
+/// <see cref="ErrorPayload"/> keeps its cross-source meaning.</para>
+///
+/// <para>Equality is hand-written so that two observations of equal VALUES are equal records
+/// (<see cref="Result"/> record equality compares item lists by reference); every other member
+/// compares exactly as the generated equality did.</para>
 /// </summary>
 internal sealed record MetamorphicSemanticObservation(
     string Outcome,             // "ok" | "err"
-    string? Structure,          // neutral structural value (ok only)
+    string? Structure,          // legacy neutral structural value (ok only)
     int? EmittedCount,          // root emitted count (ok only)
     string? ErrorCategory,      // innermost structured error kind (err only)
     string? ErrorPayload,       // stable numeric payload where supported (err only)
     bool IsResourceLimit)       // host resource policy, never a language-semantic fact
 {
+    /// <summary>The completed value itself (ok only, when the surface hands one back).</summary>
+    public Result? Value { get; init; }
+
+    /// <summary>The value's <c>kl-struct-v1</c> durable identity (whenever <see cref="Value"/> is set).</summary>
+    public string? StructuralIdentity { get; init; }
+
+    /// <summary>Innermost structured error fields (err only, when the surface hands back an <c>EvalError</c>).</summary>
+    public MetamorphicErrorDetail? ErrorDetail { get; init; }
+
+    /// <summary>A legacy-only record, retained for compatibility; insufficient for structural comparison.</summary>
     public static MetamorphicSemanticObservation Success(string structure, int emittedCount)
         => new("ok", structure, emittedCount, null, null, false);
 
+    /// <summary>A legacy-only failure: category and payload, no structured detail.</summary>
     public static MetamorphicSemanticObservation Failure(string category, string? payload, bool isResourceLimit)
         => new("err", null, null, category, payload, isResourceLimit);
+
+    /// <summary>
+    /// A success observed from the value itself: typed value and durable identity together, plus
+    /// the legacy text unless it exceeds <see cref="MetamorphicValue.MaxObservedNeutralLength"/>
+    /// (a path-exponential shared value), in which case <see cref="Structure"/> is <c>null</c>.
+    /// </summary>
+    public static MetamorphicSemanticObservation OfValue(Result value, int? emittedCount)
+        => new("ok", MetamorphicValue.NeutralWithin(value, MetamorphicValue.MaxObservedNeutralLength), emittedCount, null, null, false)
+        {
+            Value = value,
+            StructuralIdentity = MetamorphicStructuralIdentity.Encode(value),
+        };
+
+    /// <summary>A failure observed from the structured error: legacy fields plus its strict detail.</summary>
+    public static MetamorphicSemanticObservation OfError(EvalError error)
+        => new("err", null, null,
+            MetamorphicValue.ErrorCategory(error), MetamorphicValue.ErrorPayload(error), error.IsResourceLimit)
+        {
+            ErrorDetail = MetamorphicErrorDetail.Observe(error),
+        };
+
+    public bool Equals(MetamorphicSemanticObservation? other)
+        => other is not null
+            && string.Equals(Outcome, other.Outcome, StringComparison.Ordinal)
+            && string.Equals(Structure, other.Structure, StringComparison.Ordinal)
+            && EmittedCount == other.EmittedCount
+            && string.Equals(ErrorCategory, other.ErrorCategory, StringComparison.Ordinal)
+            && string.Equals(ErrorPayload, other.ErrorPayload, StringComparison.Ordinal)
+            && IsResourceLimit == other.IsResourceLimit
+            && string.Equals(StructuralIdentity, other.StructuralIdentity, StringComparison.Ordinal)
+            && Equals(ErrorDetail, other.ErrorDetail)
+            && (Value is null
+                ? other.Value is null
+                : other.Value is not null && Result.ValueComparer.Equals(Value, other.Value));
+
+    public override int GetHashCode()
+        => HashCode.Combine(
+            HashCode.Combine(Outcome, Structure, EmittedCount, ErrorCategory, ErrorPayload, IsResourceLimit),
+            StructuralIdentity, ErrorDetail, Value is null);
 
     /// <summary>
     /// A surface that reports only WHETHER the run failed: the engine's public error type keeps
@@ -78,8 +146,10 @@ internal sealed record MetamorphicSemanticObservation(
         => new(failed ? "err" : "ok", null, null, null, null, false);
 
     public override string ToString() => Outcome == "ok"
-        ? $"ok value={Structure ?? "-"} emitted={EmittedCount?.ToString(CultureInfo.InvariantCulture) ?? "-"}"
-        : $"err kind={ErrorCategory ?? "-"} payload={ErrorPayload ?? "-"} resourceLimit={(IsResourceLimit ? "yes" : "no")}";
+        ? $"ok value={MetamorphicStructuralIdentity.PreviewText(Structure)} emitted={EmittedCount?.ToString(CultureInfo.InvariantCulture) ?? "-"}"
+            + (StructuralIdentity is null ? "" : " identity=" + MetamorphicStructuralIdentity.Preview(StructuralIdentity))
+        : $"err kind={ErrorCategory ?? "-"} payload={ErrorPayload ?? "-"} resourceLimit={(IsResourceLimit ? "yes" : "no")}"
+            + (ErrorDetail is null ? "" : " detail=" + ErrorDetail);
 }
 
 /// <summary>

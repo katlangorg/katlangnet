@@ -23,53 +23,81 @@ internal static class MetamorphicValue
     /// host stack inside the harness.</para>
     /// </summary>
     internal static string Neutral(Result result)
+        => NeutralWithin(result, int.MaxValue)
+            ?? throw new InvalidOperationException("The neutral text exceeded the maximum string length.");
+
+    /// <summary>
+    /// UTF-16 units of legacy neutral text an OBSERVATION will build (SEM-2A). The neutral text
+    /// spells every root-to-leaf PATH, so a legally built shared value (<c>W = [x, x]</c> applied
+    /// n times) has a 2^n-unit text; past this bound the observation records no legacy text
+    /// (<see cref="MetamorphicSemanticObservation.Structure"/> is <c>null</c>) rather than a
+    /// truncated one. Comparison never depends on it: the typed value and its linear
+    /// <c>kl-struct-v1</c> identity are always recorded.
+    /// </summary>
+    internal const int MaxObservedNeutralLength = 4_000_000;
+
+    /// <summary>
+    /// <see cref="Neutral"/>, or <c>null</c> as soon as the text would exceed
+    /// <paramref name="maxLength"/> units — never a truncated prefix.
+    /// </summary>
+    internal static string? NeutralWithin(Result result, int maxLength)
     {
+        ArgumentNullException.ThrowIfNull(result);
+        ArgumentOutOfRangeException.ThrowIfNegative(maxLength);
         var text = new StringBuilder(64);
-        var pending = new Stack<object>();
-        pending.Push(result);
+        // One continuation per open level, never one entry per pending sibling. A small text
+        // limit must also bound work on a wide value and refuse a large string BEFORE copying it.
+        var pending = new Stack<(IReadOnlyList<Result> Items, int Next)>();
+        Result? current = result;
 
-        while (pending.Count > 0)
+        while (true)
         {
-            var next = pending.Pop();
-            if (next is string literal)
-            {
-                text.Append(literal);
-                continue;
-            }
-
-            switch ((Result)next)
+            switch (current)
             {
                 case Result.Atom atom:
-                    text.Append(atom.Value.ToString(CultureInfo.InvariantCulture));
+                    if (!AppendWithin(atom.Value.ToString(CultureInfo.InvariantCulture))) return null;
                     break;
                 case Result.Str str:
+                    if (maxLength - text.Length < 2 || str.Value.Length > maxLength - text.Length - 2) return null;
                     text.Append('\'').Append(str.Value).Append('\'');
                     break;
                 case Result.Bool flag:
-                    text.Append(flag.Value ? "true" : "false");
+                    if (!AppendWithin(flag.Value ? "true" : "false")) return null;
                     break;
                 case Result.SequenceValue sequence:
-                    PushStructure("S[", sequence.Items);
+                    if (!AppendWithin("S[")) return null;
+                    pending.Push((sequence.Items, 0));
                     break;
                 case Result.ListValue list:
-                    PushStructure("L[", list.Items);
+                    if (!AppendWithin("L[")) return null;
+                    pending.Push((list.Items, 0));
+                    break;
+                case null:
                     break;
                 default:
-                    throw new InvalidOperationException($"Unhandled result variant {next.GetType().Name}.");
+                    throw new InvalidOperationException($"Unhandled result variant {current.GetType().Name}.");
+            }
+
+            if (pending.Count == 0) return text.ToString();
+            var (items, next) = pending.Pop();
+            if (next == items.Count)
+            {
+                if (!AppendWithin("]")) return null;
+                current = null;
+            }
+            else
+            {
+                if (next > 0 && !AppendWithin(", ")) return null;
+                pending.Push((items, next + 1));
+                current = items[next];
             }
         }
 
-        return text.ToString();
-
-        void PushStructure(string opening, IReadOnlyList<Result> items)
+        bool AppendWithin(string fragment)
         {
-            text.Append(opening);
-            pending.Push("]");
-            for (var i = items.Count - 1; i >= 0; i--)
-            {
-                pending.Push(items[i]);
-                if (i > 0) pending.Push(", ");
-            }
+            if (fragment.Length > maxLength - text.Length) return false;
+            text.Append(fragment);
+            return true;
         }
     }
 

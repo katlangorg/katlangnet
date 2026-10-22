@@ -220,6 +220,8 @@ internal static class MetamorphicEntryPointTemplate
             LeftProfile = new MetamorphicExecutionProfile(pair.Left, testCase.Limits, EnableOptimizations: true),
             RightProfile = new MetamorphicExecutionProfile(pair.Right, testCase.Limits, EnableOptimizations: true),
             ExecutionOrder = OrderOf(parameters),
+            // One source: strict wherever BOTH surfaces hand back the structured error.
+            ErrorPolicy = MetamorphicErrorPolicy.StrictSameSource,
         };
     }
 }

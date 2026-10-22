@@ -102,13 +102,23 @@ internal static class MetamorphicComparator
         if (RenderedLengthViolation(left, "left") is { } leftBound) return leftBound;
         if (RenderedLengthViolation(right, "right") is { } rightBound) return rightBound;
 
+        // A strict same-source policy is a claim about the CASE, so a template that declares it
+        // over two different sources is a harness defect, never a comparison.
+        if (testCase.ErrorPolicy == MetamorphicErrorPolicy.StrictSameSource
+            && !string.Equals(testCase.LeftSource, testCase.RightSource, StringComparison.Ordinal))
+        {
+            throw new MetamorphicHarnessException(
+                $"Case '{testCase.FamilyId}' declares the strict same-source error policy over two different sources.");
+        }
+
+        var strictErrors = StrictErrorComparisonApplies(testCase, left, right);
         var semantic = testCase.SemanticRelation switch
         {
-            MetamorphicSemanticRelation.SemanticEqual => CompareSemanticEqual(left.Semantic, right.Semantic),
-            MetamorphicSemanticRelation.SameStructuredOutcome => CompareSharedFacets(left, right),
+            MetamorphicSemanticRelation.SemanticEqual => CompareSemanticEqual(left.Semantic, right.Semantic, strictErrors),
+            MetamorphicSemanticRelation.SameStructuredOutcome => CompareSharedFacets(left, right, strictErrors),
             MetamorphicSemanticRelation.MonotonicSuccess => CompareMonotonicSuccess(left, right),
             MetamorphicSemanticRelation.SameResourceBoundary => CompareResourceBoundary(testCase, left, right),
-            MetamorphicSemanticRelation.IndependentRunStable => CompareIndependentRunStable(left, right),
+            MetamorphicSemanticRelation.IndependentRunStable => CompareIndependentRunStable(left, right, strictErrors),
             _ => throw new MetamorphicHarnessException(
                 $"No comparison is implemented for semantic relation {testCase.SemanticRelation}."),
         };
@@ -155,10 +165,76 @@ internal static class MetamorphicComparator
             && left.Facets.HasFlag(MetamorphicFacets.OperationalCounters)
             && right.Facets.HasFlag(MetamorphicFacets.OperationalCounters);
 
+    /// <summary>
+    /// True when this pair's structured errors are compared FIELD BY FIELD: the case declared
+    /// <see cref="MetamorphicErrorPolicy.StrictSameSource"/>, BOTH surfaces project
+    /// <see cref="MetamorphicFacets.StructuredError"/>, and both members failed. Otherwise the strict
+    /// comparison is NOT exercised for the pair — it is never treated as having passed.
+    /// </summary>
+    internal static bool StrictErrorComparisonApplies(
+        MetamorphicCase testCase, MetamorphicOperationalObservation left, MetamorphicOperationalObservation right)
+        => testCase.ErrorPolicy == MetamorphicErrorPolicy.StrictSameSource
+            && (left.Facets & right.Facets).HasFlag(MetamorphicFacets.StructuredError)
+            && left.Semantic.Outcome == "err"
+            && right.Semantic.Outcome == "err";
+
+    /// <summary>
+    /// The structural-value verdict for two observations (SEM-2A). The authority is the most
+    /// trustworthy evidence BOTH sides carry: the typed values under
+    /// <see cref="Result.ValueComparer"/>; else validated durable <c>kl-struct-v1</c> identities.
+    /// Legacy-only successes cannot establish structural equality and are refused as unavailable.
+    ///
+    /// <para>When both typed values and both identities are present they must agree; a
+    /// disagreement means the observer itself is wrong and is raised as a harness defect rather
+    /// than reported as either verdict.</para>
+    /// </summary>
+    internal static bool StructurallyEqual(MetamorphicSemanticObservation left, MetamorphicSemanticObservation right)
+    {
+        ArgumentNullException.ThrowIfNull(left);
+        ArgumentNullException.ThrowIfNull(right);
+
+        var identities = left.StructuralIdentity is not null && right.StructuralIdentity is not null;
+        var identityEqual = string.Equals(left.StructuralIdentity, right.StructuralIdentity, StringComparison.Ordinal);
+        if (left.Value is { } leftValue && right.Value is { } rightValue)
+        {
+            var typedEqual = Result.ValueComparer.Equals(leftValue, rightValue);
+            if (identities && typedEqual != identityEqual)
+            {
+                throw new MetamorphicHarnessException(
+                    $"The {MetamorphicStructuralIdentity.Version} identity disagrees with Result.ValueComparer " +
+                    $"(typed {(typedEqual ? "equal" : "different")}): " +
+                    $"{MetamorphicStructuralIdentity.Preview(left.StructuralIdentity)} vs " +
+                    $"{MetamorphicStructuralIdentity.Preview(right.StructuralIdentity)}");
+            }
+
+            return typedEqual;
+        }
+
+        if (identities)
+        {
+            // Durable-only observations cross a trust boundary. Identical arbitrary strings or
+            // unknown versions are not evidence: require the documented canonical encoding.
+            if (!MetamorphicStructuralIdentity.TryDecode(left.StructuralIdentity!, out _, out var leftProblem)
+                || (!identityEqual && !MetamorphicStructuralIdentity.TryDecode(right.StructuralIdentity!, out _, out leftProblem)))
+                throw new MetamorphicHarnessException("Invalid durable structural observation: " + leftProblem);
+            return identityEqual;
+        }
+
+        if (left.Outcome == "ok" || right.Outcome == "ok")
+        {
+            throw new MetamorphicHarnessException(
+                "A successful structural comparison has no shared value observation; " +
+                "typed values or validated versioned identities are required, never legacy neutral text.");
+        }
+
+        // Failed runs have no structural result to compare.
+        return true;
+    }
+
     // ── Semantic relations ───────────────────────────────────────────────────
 
     private static MetamorphicMismatch? CompareSemanticEqual(
-        MetamorphicSemanticObservation left, MetamorphicSemanticObservation right)
+        MetamorphicSemanticObservation left, MetamorphicSemanticObservation right, bool strictErrors)
     {
         if (!string.Equals(left.Outcome, right.Outcome, StringComparison.Ordinal))
         {
@@ -192,12 +268,9 @@ internal static class MetamorphicComparator
                 "structured error payload", Text(left.ErrorPayload), Text(right.ErrorPayload));
         }
 
-        if (!string.Equals(left.Structure, right.Structure, StringComparison.Ordinal))
-        {
-            return new MetamorphicMismatch(
-                MetamorphicMismatchKind.SemanticStructure, MetamorphicMismatchClass.Semantic,
-                "neutral structural value", Text(left.Structure), Text(right.Structure));
-        }
+        if (strictErrors && CompareStrictErrorDetail(left, right) is { } detail) return detail;
+
+        if (CompareStructure(left, right) is { } structure) return structure;
 
         if (left.EmittedCount != right.EmittedCount)
         {
@@ -218,7 +291,7 @@ internal static class MetamorphicComparator
     /// so this can never pass vacuously.</para>
     /// </summary>
     private static MetamorphicMismatch? CompareSharedFacets(
-        MetamorphicOperationalObservation left, MetamorphicOperationalObservation right)
+        MetamorphicOperationalObservation left, MetamorphicOperationalObservation right, bool strictErrors)
     {
         var shared = left.Facets & right.Facets;
 
@@ -230,17 +303,15 @@ internal static class MetamorphicComparator
         }
 
         if (shared.HasFlag(MetamorphicFacets.StructuredError)
-            && CompareStructuredError(left.Semantic, right.Semantic) is { } structuredError)
+            && CompareStructuredError(left.Semantic, right.Semantic, strictErrors) is { } structuredError)
         {
             return structuredError;
         }
 
         if (shared.HasFlag(MetamorphicFacets.Structure)
-            && !string.Equals(left.Semantic.Structure, right.Semantic.Structure, StringComparison.Ordinal))
+            && CompareStructure(left.Semantic, right.Semantic) is { } structure)
         {
-            return new MetamorphicMismatch(
-                MetamorphicMismatchKind.SemanticStructure, MetamorphicMismatchClass.Semantic,
-                "neutral structural value", Text(left.Semantic.Structure), Text(right.Semantic.Structure));
+            return structure;
         }
 
         if (shared.HasFlag(MetamorphicFacets.EmittedCount) && left.Semantic.EmittedCount != right.Semantic.EmittedCount)
@@ -271,7 +342,7 @@ internal static class MetamorphicComparator
     }
 
     private static MetamorphicMismatch? CompareStructuredError(
-        MetamorphicSemanticObservation left, MetamorphicSemanticObservation right)
+        MetamorphicSemanticObservation left, MetamorphicSemanticObservation right, bool strictErrors)
     {
         if (left.IsResourceLimit != right.IsResourceLimit)
         {
@@ -288,13 +359,75 @@ internal static class MetamorphicComparator
                 "innermost error kind", Text(left.ErrorCategory), Text(right.ErrorCategory));
         }
 
-        return string.Equals(left.ErrorPayload, right.ErrorPayload, StringComparison.Ordinal)
+        if (!string.Equals(left.ErrorPayload, right.ErrorPayload, StringComparison.Ordinal))
+        {
+            return new MetamorphicMismatch(
+                MetamorphicMismatchKind.SemanticErrorPayload,
+                left.IsResourceLimit ? MetamorphicMismatchClass.ResourceBoundary : MetamorphicMismatchClass.Semantic,
+                "structured error payload", Text(left.ErrorPayload), Text(right.ErrorPayload));
+        }
+
+        return strictErrors ? CompareStrictErrorDetail(left, right) : null;
+    }
+
+    /// <summary>
+    /// The strict same-source comparison: every Q-67 field of the innermost error. Called only
+    /// when <see cref="StrictErrorComparisonApplies"/> holds, i.e. both surfaces CLAIM the
+    /// structured-error facet — so a missing detail is an adapter that claimed a facet it did not
+    /// fill, which is raised rather than compared as two absences.
+    /// </summary>
+    private static MetamorphicMismatch? CompareStrictErrorDetail(
+        MetamorphicSemanticObservation left, MetamorphicSemanticObservation right)
+    {
+        if (left.Outcome != "err" || right.Outcome != "err") return null;
+
+        if (left.ErrorDetail is not { } leftDetail || right.ErrorDetail is not { } rightDetail)
+        {
+            throw new MetamorphicHarnessException(
+                "A strict same-source error comparison reached an observation without structured error detail; " +
+                "a surface claimed the structured-error facet without projecting it.");
+        }
+
+        return leftDetail.Equals(rightDetail)
             ? null
             : new MetamorphicMismatch(
                 MetamorphicMismatchKind.SemanticErrorPayload,
                 left.IsResourceLimit ? MetamorphicMismatchClass.ResourceBoundary : MetamorphicMismatchClass.Semantic,
-                "structured error payload", Text(left.ErrorPayload), Text(right.ErrorPayload));
+                "structured error fields (strict same-source)", leftDetail.ToString(), rightDetail.ToString());
     }
+
+    /// <summary>
+    /// The structural-value comparison of both relations that compare values. A difference the
+    /// legacy neutral text already shows is reported exactly as before; one it HIDES (a collision)
+    /// is reported on the injective identity, bounded for pathological values.
+    /// </summary>
+    private static MetamorphicMismatch? CompareStructure(
+        MetamorphicSemanticObservation left, MetamorphicSemanticObservation right)
+    {
+        if (StructurallyEqual(left, right)) return null;
+
+        // A value whose legacy text was beyond its observation bound has none to show.
+        var legacyUnavailable = (left.Value is not null && left.Structure is null)
+            || (right.Value is not null && right.Structure is null);
+        if (!legacyUnavailable && !string.Equals(left.Structure, right.Structure, StringComparison.Ordinal))
+        {
+            return new MetamorphicMismatch(
+                MetamorphicMismatchKind.SemanticStructure, MetamorphicMismatchClass.Semantic,
+                "neutral structural value", StructurePreview(left), StructurePreview(right));
+        }
+
+        return new MetamorphicMismatch(
+            MetamorphicMismatchKind.SemanticStructure, MetamorphicMismatchClass.Semantic,
+            $"structural value ({MetamorphicStructuralIdentity.Version}; the legacy neutral text is " +
+            (legacyUnavailable ? "unavailable beyond its observation bound)" : "identical)"),
+            MetamorphicStructuralIdentity.Preview(left.StructuralIdentity),
+            MetamorphicStructuralIdentity.Preview(right.StructuralIdentity));
+    }
+
+    private static string StructurePreview(MetamorphicSemanticObservation observation)
+        => observation.StructuralIdentity is { } identity
+            ? MetamorphicStructuralIdentity.Preview(identity)
+            : MetamorphicStructuralIdentity.PreviewText(observation.Structure);
 
     /// <summary>
     /// Rendered text is required to be EXACTLY equal only where the two surfaces produced the
@@ -354,7 +487,7 @@ internal static class MetamorphicComparator
                 "ok", "err:" + Text(right.Semantic.ErrorCategory));
         }
 
-        return CompareSharedFacets(left, right);
+        return CompareSharedFacets(left, right, strictErrors: false);
     }
 
     /// <summary>
@@ -432,12 +565,12 @@ internal static class MetamorphicComparator
     /// counter, a cache, an optimizer decision, a diagnostic — survived across a run boundary.
     /// </summary>
     private static MetamorphicMismatch? CompareIndependentRunStable(
-        MetamorphicOperationalObservation left, MetamorphicOperationalObservation right)
+        MetamorphicOperationalObservation left, MetamorphicOperationalObservation right, bool strictErrors)
     {
-        if (CompareSemanticEqual(left.Semantic, right.Semantic) is { } semantic)
+        if (CompareSemanticEqual(left.Semantic, right.Semantic, strictErrors) is { } semantic)
             return semantic with { Class = MetamorphicMismatchClass.StateIsolation };
 
-        if (CompareSharedFacets(left, right) is { } facets)
+        if (CompareSharedFacets(left, right, strictErrors) is { } facets)
             return facets with { Class = MetamorphicMismatchClass.StateIsolation };
 
         if (CompareExactMaterializationEqual(left, right) is { } materialization)

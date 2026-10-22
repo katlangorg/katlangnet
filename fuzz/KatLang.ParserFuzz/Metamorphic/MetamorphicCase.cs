@@ -206,6 +206,30 @@ internal sealed record MetamorphicPrecondition(bool Satisfied, string Reason)
     public static MetamorphicPrecondition Rejected(string reason) => new(false, reason);
 }
 
+/// <summary>
+/// How strictly a case compares two FAILURES' structured errors (SEM-2A). Declared by the
+/// template, never inferred from the generated text.
+/// </summary>
+internal enum MetamorphicErrorPolicy
+{
+    /// <summary>
+    /// The cross-source policy every Phase 1/2 relation was built on: innermost error kind plus
+    /// the resource payload only. Two legitimately different spellings of one program may name,
+    /// position and contextualize an ordinary error differently, so its fields are not compared.
+    /// </summary>
+    Normalized,
+
+    /// <summary>
+    /// Both members run the SAME source and the relation promises semantic parity (optimized
+    /// against generic, two entry points, budget laws over one program, independent runs): every
+    /// structured field of the innermost error that Q-67's policy covers
+    /// (<see cref="MetamorphicErrorDetail"/>) must also agree. Applied only where BOTH surfaces
+    /// project <see cref="MetamorphicFacets.StructuredError"/>; a surface without it is never
+    /// credited with a strict comparison.
+    /// </summary>
+    StrictSameSource,
+}
+
 /// <summary>How the executor should sequence the two observations of one case.</summary>
 internal enum MetamorphicRunPlan
 {
@@ -437,6 +461,13 @@ internal sealed record MetamorphicCase(
     /// requires, as the innermost <c>EvalError</c> type name.
     /// </summary>
     public string? ExpectedResourceKind { get; init; }
+
+    /// <summary>
+    /// How two failures' structured errors are compared. Defaults to the cross-source policy;
+    /// only templates whose two members run one and the same source declare the strict one.
+    /// Not part of the fingerprint: it is fixed by the family and its decoded law.
+    /// </summary>
+    public MetamorphicErrorPolicy ErrorPolicy { get; init; } = MetamorphicErrorPolicy.Normalized;
 
     /// <summary>Stable, machine-independent rendering of the effective limits.</summary>
     public string LimitsText => DescribeLimits(Limits);

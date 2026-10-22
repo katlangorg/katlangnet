@@ -307,7 +307,14 @@ internal static class MetamorphicBudgetLawTemplate
 
         var testCase = MetamorphicCaseFactory.Create(
             parameters, leftSource, rightSource, precondition,
-            $"budget law {law} on '{subject}' over {dimension.Id}");
+            $"budget law {law} on '{subject}' over {dimension.Id}") with
+        {
+            // Every law but equivalent-form parity runs ONE source on both sides; that one compares
+            // two trusted spellings and keeps the cross-source policy.
+            ErrorPolicy = law == MetamorphicBudgetLaw.EquivalentFormBoundaryParity
+                ? MetamorphicErrorPolicy.Normalized
+                : MetamorphicErrorPolicy.StrictSameSource,
+        };
 
         if (!precondition.Satisfied) return testCase;
 

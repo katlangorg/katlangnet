@@ -19,7 +19,9 @@ Finite generated corpora are bounded evidence, not an evaluator refinement proof
 | Effects | Independent C# exact event logs and Lean heap guards | Missing ordinary-failure root/callback/loop terminality witnesses added on six routes |
 | Resources | C# host policy, separate bounded-limit suites | Unchanged; no Lean budget or cross-strategy stack-depth requirement |
 
-`DifferentialErrors` owns the C# category and supplementary field policy.
+`MetamorphicErrorDetail`, shared as source between the tests and standalone fuzz
+target, owns the C# category and supplementary field policy. `DifferentialErrors`
+maps it to the existing Q-67 records without changing their contract.
 `LeanObsTemplate` owns both generated artifacts' Lean projections. `obs`
 retains its original contract; `errorObs` is separate. Failed supported cases
 need two extra Lean runs for the supplementary guard; successful cases do not.
@@ -27,6 +29,31 @@ The public engine adds one run only on failures and parse rejections where it
 was previously skipped. No production evaluator code or normal-run overhead changes.
 
 ## Complete constructor policy
+
+SEM-2A adds supplementary metamorphic observations without changing FORMAL-06's
+neutral text, Q-67's constructor policy, seed decoding or replay fingerprints.
+In-process structural comparisons use `Result.ValueComparer`. Durable comparisons
+require canonical `kl-struct-v1` identities: an ASCII, length-framed post-order
+table with distinct number/Boolean/string/sequence/list tags, child counts and
+references to earlier nodes. Definitions are interned by content so sharing does
+not affect identity. Numbers follow Decimal128.Equals equality classes (quantum
+and zero sign ignored, NaN reflexive); strings escape exact UTF-16 code units,
+including unpaired surrogates. Legacy-only successes cannot establish structural
+equality and raise a harness error. The decoder validates lengths before allocating.
+
+Real structure-projecting surfaces retain ordinary completed values and their
+versioned identities. Legacy neutral text is omitted, never truncated, beyond
+4,000,000 UTF-16 units; typed equality remains available. Structural diagnostics
+are bounded escaped previews and are never compared. Root emitted counts remain
+a separate facet. No run-local references or evaluator state are retained.
+
+The declared `StrictSameSource` error policy compares the supported Q-67 fields
+of innermost errors only when both failing surfaces expose `StructuredError`.
+Optimizer parity, entry-point parity and same-source budget laws declare it;
+cross-source transformations retain the normalized policy. A public surface
+without structured errors records that strict comparison was not exercised.
+Missing claimed structural/error data is a harness defect rather than equality
+of two absent fields. Lean-side export of `kl-struct-v1` is deferred.
 
 “Partial” means a Lean field or a public C# field (a rendered description or
 name) is deliberately excluded, so only the named fields are shared; C#-internal

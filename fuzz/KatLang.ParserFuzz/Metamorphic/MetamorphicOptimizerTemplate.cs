@@ -243,6 +243,8 @@ internal static class MetamorphicOptimizerTemplate
             LeftProfile = MetamorphicExecutionProfile.Observed(testCase.Limits, enableOptimizations: true),
             RightProfile = MetamorphicExecutionProfile.Observed(testCase.Limits, enableOptimizations: false),
             ExecutionOrder = OrderOf(parameters),
+            // One source, so a failure's structured fields must agree exactly, not just its kind.
+            ErrorPolicy = MetamorphicErrorPolicy.StrictSameSource,
             LeftEvidence = new MetamorphicSideEvidence(RequiredPaths: source.RequiredPaths),
             // The generic side must be genuinely generic: no plan selected, nothing fused.
             RightEvidence = new MetamorphicSideEvidence(
