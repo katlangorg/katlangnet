@@ -280,6 +280,34 @@ internal sealed class EvaluationBudget
     /// </summary>
     internal bool HasDeferredModuleRegions { get; private set; }
 
+    /// <summary>
+    /// [HOST] B2c: the run's structural admission of materialized deferred bodies
+    /// (<see cref="DeferredBodyAdmission"/>), recorded by run preparation only for a program whose
+    /// admitted graph holds a deferred region, so no other run carries any of its state.
+    /// </summary>
+    private DeferredBodyAdmission? _deferredBodyAdmission;
+
+    internal void RecordDeferredBodyAdmission(object admittedRoot, int effectiveMaxAstDepth)
+        => _deferredBodyAdmission = new DeferredBodyAdmission(admittedRoot, effectiveMaxAstDepth);
+
+    /// <summary>
+    /// Admits <paramref name="body"/>, the materialization of <paramref name="region"/>, for evaluation
+    /// in this run (see <see cref="DeferredBodyAdmission"/>). A rejection is the evaluator's structured
+    /// structural error and is TERMINAL for the run, like the run's own admission: nothing the evaluator
+    /// does afterwards may absorb it and continue.
+    /// </summary>
+    internal EvalError? AdmitDeferredBody(DeferredModuleRegion region, Algorithm body)
+    {
+        if (_deferredBodyAdmission is not { } admission)
+        {
+            throw new InvalidOperationException(
+                "Internal error: a materialized deferred module region was consumed by an evaluation that was not " +
+                "prepared through a run entry point, so no structural admission covers it.");
+        }
+
+        return admission.Admit(region, body) is { } rejection ? RetainTerminalCore(rejection) : null;
+    }
+
     internal void DecideRuntimeAliasReach(bool programMayReach, bool hasDeferredModuleRegions)
     {
         if (!programMayReach)

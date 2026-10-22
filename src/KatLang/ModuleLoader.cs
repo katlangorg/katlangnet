@@ -1079,6 +1079,9 @@ internal sealed partial class ModuleLoader
     /// then re-gated at both structural ceilings the eager pipeline applies (the raw-syntax
     /// cap after splicing and the elaboration ceiling), against the allowance left at the
     /// region's depth, and checked for unresolved loads outside nested deferred regions.
+    /// Those are FRONT-END gates (unweighted, global ceiling): the evaluator admits the body
+    /// separately, for each run that consumes it, under its own profile, effective limit, and
+    /// placeholder prefix (<see cref="Evaluation.DeferredBodyAdmission"/>).
     /// The walk memos and the load-bearing set are cleared afterwards, as at the
     /// elaboration boundary.
     ///

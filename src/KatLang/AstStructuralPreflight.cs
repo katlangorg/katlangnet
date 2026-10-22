@@ -261,7 +261,7 @@ internal static class AstStructuralPreflight
         int maxDepth,
         AstConsumerProfile profile,
         FrontEndTraversalObservations? observations = null)
-        => CheckCore(root, maxDepth, profile, observations, detectCallCapture: false, out _);
+        => CheckCore(root, maxDepth, profile, observations, detectCallCapture: false, deferredMemo: null, out _);
 
     /// <summary>
     /// The evaluator's admission walk: <see cref="Check"/>
@@ -276,7 +276,38 @@ internal static class AstStructuralPreflight
         int maxDepth,
         AstConsumerProfile profile,
         out AdmittedProgramFacts facts)
-        => CheckCore(root, maxDepth, profile, observations: null, detectCallCapture: true, out facts);
+        => CheckCore(root, maxDepth, profile, observations: null, detectCallCapture: true, deferredMemo: null, out facts);
+
+    /// <summary>
+    /// Completed, context-independent subtree facts for ONE run's deferred-body checks. Only
+    /// fully visited nodes enter the memo: an in-flight node cannot publish a height, even if
+    /// a later ancestor rejects. The admitted graph must remain stable for this memo's run.
+    /// </summary>
+    internal sealed class DeferredAdmissionMemo
+    {
+        internal readonly Dictionary<object, DeferredNodeFacts> Completed = new(ReferenceEqualityComparer.Instance);
+    }
+
+    internal readonly record struct DeferredNodeFacts(int Height, bool HasDeferredRegion);
+
+    /// <summary>
+    /// The ordinary evaluator-profile check with run-local reuse across materializations. A
+    /// previously completed subtree is skipped only if its height FITS at this occurrence;
+    /// otherwise the ordinary walk locates the rejection, preserving fresh-check error spans.
+    /// </summary>
+    internal static AstStructuralRejection? CheckDeferredBody(
+        object root, int maxDepth, DeferredAdmissionMemo memo, out bool hasDeferredRegions)
+    {
+        var rejection = CheckCore(root, maxDepth, AstConsumerProfile.EvaluatorIterativeJoinSpines,
+            observations: null, detectCallCapture: false, deferredMemo: memo, out _);
+        hasDeferredRegions = rejection is null && memo.Completed[root].HasDeferredRegion;
+        // Reuse can omit descendants from THIS walk's local height table. On rejection,
+        // replay the ordinary walk once: its first crossing/cycle and shared-grouping slot
+        // determine the established error location independently of earlier admissions.
+        return rejection is null ? null
+            : Check(root, maxDepth, AstConsumerProfile.EvaluatorIterativeJoinSpines)
+                ?? throw new InvalidOperationException("The deferred AST changed during structural admission.");
+    }
 
     /// <summary>The program facts the admission walk decides (<see cref="CheckAdmittedProgram"/>).</summary>
     internal readonly record struct AdmittedProgramFacts(bool MayCaptureCalls, bool MayReachRuntimeAlias, bool HasDeferredModuleRegion);
@@ -329,6 +360,7 @@ internal static class AstStructuralPreflight
         AstConsumerProfile profile,
         FrontEndTraversalObservations? observations,
         bool detectCallCapture,
+        DeferredAdmissionMemo? deferredMemo,
         out AdmittedProgramFacts facts)
     {
         var mayCaptureCalls = false;
@@ -349,6 +381,10 @@ internal static class AstStructuralPreflight
         if (maxDepth < 1)
             return new AstStructuralRejection(AstStructuralViolation.DepthExceeded, SpanOf(root));
 
+        if (deferredMemo is not null && deferredMemo.Completed.TryGetValue(root, out var knownRoot)
+            && knownRoot.Height <= maxDepth)
+            return null;
+
         // Frames: the explicit DFS path. frames[i].Node is the i-th node on the current
         // root-to-node path, so the frame count is the PATH LENGTH IN NODES (bounded by
         // the input size, since weight-0 join nodes stay on the path without consuming
@@ -356,6 +392,9 @@ internal static class AstStructuralPreflight
         // against the limit. The array starts small and doubles so ordinary shallow
         // programs do not pay for deep ones.
         var frames = new Frame[32];
+        // Deferred-only metadata has a parallel array so ordinary preflights keep their
+        // original frame layout and allocate no extra per-node state.
+        bool[]? deferredReach = deferredMemo is null ? null : new bool[frames.Length];
         var frameCount = 0;
         var pathWeight = 0;
 
@@ -372,6 +411,8 @@ internal static class AstStructuralPreflight
             return new AstStructuralRejection(AstStructuralViolation.DepthExceeded, SpanOf(root));
 
         frames[frameCount++] = new Frame(root, rootWeight, incomingTransitionWeight: 0);
+        if (deferredReach is not null)
+            deferredReach[0] = root is Algorithm { DeferredRegion: not null };
         pathWeight = rootWeight;
         heights[root] = OnStack;
         if (detectCallCapture)
@@ -391,6 +432,9 @@ internal static class AstStructuralPreflight
                 var height = frame.MaxChildHeight + frame.NodeWeight;
                 var heightAtParent = frame.IncomingTransitionWeight + height;
                 heights[frame.Node] = height;
+                var subtreeHasDeferredRegion = deferredReach is not null && deferredReach[frameCount - 1];
+                if (deferredMemo is not null)
+                    deferredMemo.Completed[frame.Node] = new(height, subtreeHasDeferredRegion);
                 pathWeight -= frame.NodeWeight + frame.IncomingTransitionWeight;
                 frameCount--;
                 if (frameCount > 0)
@@ -398,6 +442,8 @@ internal static class AstStructuralPreflight
                     ref var parent = ref frames[frameCount - 1];
                     if (heightAtParent > parent.MaxChildHeight)
                         parent.MaxChildHeight = heightAtParent;
+                    if (deferredReach is not null)
+                        deferredReach[frameCount - 1] |= subtreeHasDeferredRegion;
                 }
 
                 continue;
@@ -407,11 +453,21 @@ internal static class AstStructuralPreflight
             observations?.RecordStructuralPreflightEdge();
             var transitionWeight = TransitionWeight(frame.Node, child, profile);
 
-            if (heights.TryGetValue(child, out var childHeight))
+            var knownChild = heights.TryGetValue(child, out var childHeight);
+            if (!knownChild && deferredMemo is not null && deferredMemo.Completed.TryGetValue(child, out var previousChild)
+                && pathWeight + transitionWeight + previousChild.Height <= maxDepth)
+            {
+                // It fits here. Remember this occurrence locally too, so a later deeper
+                // occurrence retains the ordinary shared-node rejection and positioning.
+                heights[child] = childHeight = previousChild.Height;
+                knownChild = true;
+            }
+
+            if (knownChild)
             {
                 // A shared argument bundle is a grouping node of this walk only: a rejection met
                 // AT it is positioned at the slot the slot-by-slot walk reports.
-                if (child is OutputBundle or ImplicitSignatureTemplate
+                if (deferredMemo is null && (child is OutputBundle or ImplicitSignatureTemplate)
                     && (childHeight == OnStack || pathWeight + transitionWeight + childHeight > maxDepth))
                     return RejectWithinGroupingNode(child, heights, pathWeight + transitionWeight, maxDepth, frames, frameCount);
 
@@ -427,6 +483,8 @@ internal static class AstStructuralPreflight
                 var childHeightAtParent = transitionWeight + childHeight;
                 if (childHeightAtParent > frame.MaxChildHeight)
                     frame.MaxChildHeight = childHeightAtParent;
+                if (deferredMemo is not null)
+                    deferredReach![frameCount - 1] |= deferredMemo.Completed[child].HasDeferredRegion;
                 continue;
             }
 
@@ -445,13 +503,67 @@ internal static class AstStructuralPreflight
                     hasDeferredRegion = child is Algorithm { DeferredRegion: not null };
             }
             if (frameCount == frames.Length)
+            {
                 Array.Resize(ref frames, frames.Length * 2);
+                if (deferredReach is not null)
+                    Array.Resize(ref deferredReach, frames.Length);
+            }
+            if (deferredReach is not null)
+                deferredReach[frameCount] = child is Algorithm { DeferredRegion: not null };
             frames[frameCount++] = new Frame(child, childWeight, transitionWeight);
             pathWeight += transitionWeight + childWeight;
         }
 
         facts = new AdmittedProgramFacts(mayCaptureCalls, mayReachRuntimeAlias, hasDeferredRegion);
         return null;
+    }
+
+    /// <summary>
+    /// The evaluator-weighted PREFIX of every deferred module region reachable from an ADMITTED
+    /// <paramref name="root"/>: the heaviest weighted path from the root down to (but excluding)
+    /// a placeholder carrying the region, plus <paramref name="rootPrefix"/> — the prefix of the
+    /// position <paramref name="root"/> itself occupies. A materialized body replaces its
+    /// placeholder at exactly these positions, so the composed tree the evaluator consumes is
+    /// within <c>maxDepth</c> iff the body passes <see cref="Check"/> at <c>maxDepth - prefix</c>
+    /// (a placeholder and its materialization are both one-unit algorithm nodes reached over the
+    /// same zero-transition edge). The prefix is the MAXIMUM over every path — a placeholder in a
+    /// shared subtree is judged at its deepest occurrence, exactly as <see cref="Check"/> judges a
+    /// shared node. Incremental longest-path propagation retains the deepest <paramref name="arrivals"/>
+    /// across bodies: a node is expanded only when its arrival grows, and known region-free subgraphs
+    /// from <paramref name="memo"/> are skipped. Arrivals are non-negative integers bounded by the
+    /// admitted run's ceiling (at most 300), so total propagation is bounded by that constant times
+    /// the unique graph's nodes and edges, rather than the number of materializations times a shared
+    /// payload's size. No CLR recursion. Only meaningful for roots <see cref="Check"/> accepted
+    /// under <paramref name="profile"/> (acyclic graphs), at the supplied prefix.
+    /// </summary>
+    internal static void AccumulateDeferredRegionPrefixes(
+        object root,
+        int rootPrefix,
+        AstConsumerProfile profile,
+        Dictionary<DeferredModuleRegion, int> prefixes,
+        Dictionary<object, int> arrivals,
+        DeferredAdmissionMemo? memo = null)
+    {
+        var stack = new Stack<(object Node, int Depth)>();
+        stack.Push((root, rootPrefix + NodeWeight(root, profile)));
+        while (stack.TryPop(out var frame))
+        {
+            var (node, depth) = frame;
+            if (memo is not null && memo.Completed.TryGetValue(node, out var facts) && !facts.HasDeferredRegion)
+                continue;
+            if (arrivals.TryGetValue(node, out var current) && current >= depth)
+                continue;
+            arrivals[node] = depth;
+            if (node is Algorithm { DeferredRegion: { } region })
+            {
+                var prefix = depth - NodeWeight(node, profile);
+                if (!prefixes.TryGetValue(region, out var known) || prefix > known)
+                    prefixes[region] = prefix;
+            }
+
+            for (var index = 0; TryGetChild(node, index, out var child); index++)
+                stack.Push((child, depth + TransitionWeight(node, child, profile) + NodeWeight(child, profile)));
+        }
     }
 
     /// <summary>The height-table marker of a node still on the traversal path.</summary>

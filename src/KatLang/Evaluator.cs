@@ -2791,6 +2791,9 @@ public static partial class Evaluator
         budget.DecideInvocationPlanRetention(programFacts.MayCaptureCalls);
         // META-S3-2: a run that may reach a runtime-target alias is pre-marked before any resolver runs.
         budget.DecideRuntimeAliasReach(programFacts.MayReachRuntimeAlias, programFacts.HasDeferredModuleRegion);
+        // B2c: a deferred body is admitted by the run that consumes it, at its position in this root.
+        if (programFacts.HasDeferredModuleRegion)
+            budget.RecordDeferredBodyAdmission(expr, (limits ?? EvaluationLimits.Default).EffectiveMaxAstDepth);
 
         return PreparedRun.Ready(CreateRootCtx(
             zeroArgPropertyResultCache,

@@ -221,9 +221,10 @@ public static partial class Evaluator
     {
         if (alg.DeferredRegion is { } region)
         {
-            if (!region.TryGetMaterialized(out var materialized))
-                throw DeferredModuleRegion.SynchronousSelectionNotSupported();
-            alg = WithParent(materialized.WithParameterPatterns(alg.ParameterPatterns), alg.Parent);
+            var materialized = MaterializedRegionBody(region, ctx);
+            if (materialized.IsError)
+                return materialized.Error;
+            alg = WithParent(materialized.Value.WithParameterPatterns(alg.ParameterPatterns), alg.Parent);
         }
 
         if (alg is Algorithm.Builtin(var builtin))

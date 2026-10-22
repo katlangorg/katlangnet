@@ -1100,7 +1100,9 @@ public static partial class Evaluator
             ObserveClauseOutcome(bindings, ctx);
             if (bindings.IsError) return bindings.Error;
             if (bindings.Value is not { } matched) continue;
-            return EvalResult<NeedFamilyActivation>.Ok(ActivateNeedFamilyBranch(callee, SelectedBranchBody(callee.Branches[i]), matched, ctx, values));
+            var selected = SelectedBranchBody(callee.Branches[i], ctx);
+            if (selected.IsError) return selected.Error;
+            return EvalResult<NeedFamilyActivation>.Ok(ActivateNeedFamilyBranch(callee, selected.Value, matched, ctx, values));
         }
         ObserveFamilyUnmatched(ctx);
         return new EvalError.NoMatchingBranch(name.Render(ctx));
@@ -1125,7 +1127,7 @@ public static partial class Evaluator
             if (bindings.Value is not { } matched) continue;
             var selected = asynchronous
                 ? await SelectedBranchBodyAsync(callee.Branches[i], ctx).ConfigureAwait(false)
-                : EvalResult<Algorithm>.Ok(SelectedBranchBody(callee.Branches[i]));
+                : SelectedBranchBody(callee.Branches[i], ctx);
             if (selected.IsError) return selected.Error;
             return EvalResult<NeedFamilyActivation>.Ok(ActivateNeedFamilyBranch(callee, selected.Value, matched, ctx, values));
         }

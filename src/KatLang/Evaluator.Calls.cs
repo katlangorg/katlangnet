@@ -204,16 +204,10 @@ public static partial class Evaluator
     /// configuration error, reported fail-loud exactly like the async-only host-operation
     /// rejections, never as a KatLang diagnostic.
     /// </summary>
-    private static Algorithm SelectedBranchBody(CondBranch branch)
-    {
-        if (branch.Body.DeferredRegion is not { } region)
-            return branch.Body;
-
-        if (region.TryGetMaterialized(out var materialized))
-            return materialized;
-
-        throw DeferredModuleRegion.SynchronousSelectionNotSupported();
-    }
+    private static EvalResult<Algorithm> SelectedBranchBody(CondBranch branch, EvalCtx ctx)
+        => branch.Body.DeferredRegion is { } region
+            ? MaterializedRegionBody(region, ctx)
+            : EvalResult<Algorithm>.Ok(branch.Body);
 
     /// <summary>
     /// MIRROR OF <see cref="SelectedBranchBody"/> for the async twin family: materializes
@@ -228,21 +222,45 @@ public static partial class Evaluator
         if (branch.Body.DeferredRegion is not { } region)
             return EvalResult<Algorithm>.Ok(branch.Body);
 
-        if (region.TryGetMaterialized(out var materialized))
-            return EvalResult<Algorithm>.Ok(materialized);
-
         return await MaterializeRequiredRegionAsync(region, ctx).ConfigureAwait(false);
     }
+
+    /// <summary>
+    /// The synchronous family's ONE use of a deferred region: its EXISTING materialization (producing
+    /// one awaits the downloader — see <see cref="SelectedBranchBody"/>), admitted for this run.
+    /// </summary>
+    private static EvalResult<Algorithm> MaterializedRegionBody(DeferredModuleRegion region, EvalCtx ctx)
+    {
+        if (!region.TryGetMaterialized(out var materialized))
+            throw DeferredModuleRegion.SynchronousSelectionNotSupported();
+
+        return AdmitMaterializedBody(region, materialized, ctx);
+    }
+
+    // THE evaluator's structural admission boundary for a materialized body, shared by every
+    // consumer on both families, cached or freshly materialized alike: materialization proved the
+    // body safe for the FRONT END, not for this run's evaluator profile, effective limit, and the
+    // weighted position the placeholder occupies (DeferredBodyAdmission). A rejection is terminal.
+    private static EvalResult<Algorithm> AdmitMaterializedBody(DeferredModuleRegion region, Algorithm body, EvalCtx ctx)
+        => ctx.Budget.AdmitDeferredBody(region, body) is { } rejection
+            ? rejection
+            : EvalResult<Algorithm>.Ok(body);
 
     // Both evaluator materialization boundaries share source terminality. A required compilation
     // failure or source-token cancellation must stop the owning run even if an internal receiver
     // inspects it and returns a value. The region itself still permits retries in a fresh run.
+    // A materialized body — cached or fresh — then passes the run's structural admission.
     private static async ValueTask<EvalResult<Algorithm>> MaterializeRequiredRegionAsync(DeferredModuleRegion region, EvalCtx ctx)
     {
+        if (region.TryGetMaterialized(out var ready))
+            return AdmitMaterializedBody(region, ready, ctx);
+
         try
         {
             var result = await region.MaterializeAsync(ctx.Budget.CancellationToken).ConfigureAwait(false);
-            return result.IsError ? ctx.Budget.RetainRequiredSourceFailure(result.Error) : result;
+            if (result.IsError)
+                return ctx.Budget.RetainRequiredSourceFailure(result.Error);
+            return AdmitMaterializedBody(region, result.Value, ctx);
         }
         catch (OperationCanceledException error) when (region.Loader.SourceProcessingCancellationToken.IsCancellationRequested)
         {

@@ -450,6 +450,24 @@ continuation check prevents recovery. Failed materializations can still retry in
 materialization boundaries, source cancellation, concurrent failure publication and transitive
 reentry. This is the existing host source-admission law; Lean models no external module loading.
 
+SEC-F3 (2026-10-22): a materialized deferred body was consumed by the evaluator with only the
+loader's FRONT-END structural gates (`FullyRecursive`, global ceiling minus the loader's unweighted
+depth), so a dot-call chain a third of its evaluator weight, a lower configured `MaxAstDepth`, or a
+deep enclosing prefix bypassed the evaluator's preflight (witness: `EvaluationStackExhausted` where
+the eager equivalent is `AstDepthLimitExceeded`). `MaterializeRequiredRegionAsync` and its
+synchronous counterpart now pass every materialized body, cached or fresh, through the run's
+`Evaluation.DeferredBodyAdmission` — the one preflight at the run's effective limit minus the
+placeholder's deepest weighted prefix — with a terminal structural error and no effect on the shared
+materialization cache. Host-only; no language or Lean change. `DeferredBodyEvaluatorAdmissionTests`.
+
+SEC-F3 independent review: a reparented placeholder must not be rejected for the materialization's
+obsolete root parent (both consumers overwrite it); descendants' parent links and the attached
+placeholder parent stay covered. Admission now reuses completed subtree heights and deferred reach
+within the run, and prefix propagation retains deepest node arrivals, avoiding a scan of the same
+shared module payload per materialization. Rejections replay ordinary preflight for deterministic
+crossing/cycle spans. Regressions cover the reparented lower-limit boundary, counted shared-module
+reads with and without nested regions, shared argument-bundle rejection spans, and cycle terminality.
+
 CallReference M1.5 (2026-10-16): authoritative Lean invocation plans; no surface syntax, no
 change to any program's outcome, C# change limited to the experimental gate's comments and one
 parity test. A supplied cell whose suspension is a written call with a lexical-name or parameter
