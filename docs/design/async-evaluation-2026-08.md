@@ -237,6 +237,12 @@ beyond the available headroom still returns a structured resource error.
   evaluated), mid-run via the async seam, completion-edge, cancellation while genuinely
   suspended, never-a-retained-error, uncancelled-token inertness, depth-conservation
   after unwind.
+- `PreCancelledEntryTraversalTests` — SEC-F5: every public cancellation-capable
+  `RunAsync`/`RunFlatAsync` overload observes an already-cancelled token right after
+  argument validation, before the cache-pairing factory and route selection scan the
+  host-built tree (an instrumented member collection records zero reads); null
+  arguments keep precedence; uncancelled routing is unchanged. The internal twin
+  funnels keep their cache-pairing guard ahead of the token (`RunEntryPreparationTests`).
 - `AsyncStackDepthTests` — structured-outcome pins on 1 MiB / 384 KiB threads (the
   384 KiB flat-spine pin holds for the twin machine: it stays iterative, one async
   driver frame).

@@ -157,6 +157,9 @@ public static partial class Evaluator
         Expr expr, EvaluationLimits? limits, long? randomSeed, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(expr);
+        // SEC-F5: an already-cancelled token stops the run before the cache-pairing
+        // factory and the route selection each scan the host-built tree.
+        cancellationToken.ThrowIfCancellationRequested();
         return await RunAsync(
             expr,
             CreateRunScopedZeroArgPropertyResultCache(expr, hostOperations: null),
@@ -228,6 +231,8 @@ public static partial class Evaluator
     {
         ArgumentNullException.ThrowIfNull(expr);
         ArgumentNullException.ThrowIfNull(hostOperations);
+        // SEC-F5: as above — after argument validation, before any tree work.
+        cancellationToken.ThrowIfCancellationRequested();
         return await RunAsync(
             expr,
             CreateRunScopedZeroArgPropertyResultCache(expr, hostOperations),
