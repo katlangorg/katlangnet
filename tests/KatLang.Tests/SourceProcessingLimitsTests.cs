@@ -218,6 +218,91 @@ public class SourceProcessingLimitsTests
         Assert.Contains(syntax.Diagnostics, d => d.Message.Contains("UTF-16 code units"));
     }
 
+    // ── standalone lexer boundary (SEC-F1) ─────────────────────────────────────
+
+    [Fact]
+    public void StandaloneLexer_OverSupportedCeiling_IsRejectedBeforeTokenization()
+    {
+        // '@' is the amplifying shape: admitted, every code unit would be its own Bad token.
+        var source = new string('@', SourceProcessingLimits.MaxSupportedSourceLength + 1);
+
+        var exception = Assert.Throws<ArgumentOutOfRangeException>(() => Lexer.Tokenize(source));
+
+        Assert.Equal("source", exception.ParamName);
+        Assert.Equal(source.Length, exception.ActualValue);
+        Assert.Contains($"maximum of {SourceProcessingLimits.MaxSupportedSourceLength} UTF-16 code units", exception.Message);
+    }
+
+    [Fact]
+    public void StandaloneLexer_OversizedRejection_AllocatesNoTokenStream()
+    {
+        // The input string is built first; only the rejection itself is measured. Admitted, this
+        // source would materialize two million Bad tokens (tens of megabytes); the rejection
+        // allocates only the exception and its message. Warm-up keeps JIT and first-throw costs
+        // out of the measurement.
+        var source = new string('@', SourceProcessingLimits.MaxSupportedSourceLength + 1);
+        Assert.Throws<ArgumentOutOfRangeException>(() => Lexer.Tokenize(source));
+
+        var before = GC.GetAllocatedBytesForCurrentThread();
+        Assert.Throws<ArgumentOutOfRangeException>(() => Lexer.Tokenize(source));
+        var allocated = GC.GetAllocatedBytesForCurrentThread() - before;
+
+        Assert.True(allocated < 64 * 1024, $"Oversized rejection allocated {allocated} bytes.");
+    }
+
+    [Fact]
+    public void StandaloneLexer_AtAndBelowSupportedCeiling_IsAcceptedCompletely()
+    {
+        var max = SourceProcessingLimits.MaxSupportedSourceLength;
+
+        var (belowTokens, belowDiagnostics) = Lexer.Tokenize(new string(' ', max - 1));
+        Assert.Equal(TokenKind.EndOfFile, Assert.Single(belowTokens).Kind);
+        Assert.Empty(belowDiagnostics);
+
+        // Exactly at the ceiling: one comment spanning the whole source, then EOF.
+        var atMax = "#" + new string('x', max - 1);
+        var (atTokens, atDiagnostics) = Lexer.Tokenize(atMax);
+        Assert.Equal([TokenKind.Comment, TokenKind.EndOfFile], atTokens.Select(t => t.Kind));
+        Assert.Equal(0, atTokens[0].Position);
+        Assert.Equal(max, atTokens[0].Length);
+        Assert.Equal(max, atTokens[1].Position);
+        Assert.Empty(atDiagnostics);
+
+        Assert.Throws<ArgumentOutOfRangeException>(() => Lexer.Tokenize(new string(' ', max + 1)));
+    }
+
+    [Fact]
+    public void StandaloneLexer_AdmittedMalformedSource_KeepsEveryTokenAndBoundsDiagnostics()
+    {
+        const int limit = SourceProcessingLimits.MaxSupportedDiagnosticCount;
+        var (tokens, diagnostics) = Lexer.Tokenize(new string('@', limit + 500));
+
+        Assert.Equal(limit + 501, tokens.Count);
+        Assert.All(tokens.Take(limit + 500), token => Assert.Equal(TokenKind.Bad, token.Kind));
+        Assert.Equal(TokenKind.EndOfFile, tokens[^1].Kind);
+        Assert.Equal(limit + 1, diagnostics.Count);
+        Assert.Equal(Enumerable.Range(1, limit), diagnostics.Take(limit).Select(d => d.Span!.Value.Start.Column));
+        Assert.Equal(DiagnosticCode.DiagnosticCountExceeded, diagnostics[^1].Code);
+        Assert.Null(diagnostics[^1].Span);
+    }
+
+    [Fact]
+    public void OversizedSource_KeepsStructuredDiagnostics_OnParserAndEngineEntries()
+    {
+        // The standalone lexer guard must not turn these established structured failures into
+        // exceptions: the parser applies the ceiling itself before it reaches the lexer.
+        var source = new string('@', SourceProcessingLimits.MaxSupportedSourceLength + 1);
+
+        var syntax = Parser.ParseSyntax(source);
+        Assert.Equal(DiagnosticCode.SourceLengthExceeded, Assert.Single(syntax.Diagnostics).Code);
+
+        var parsed = Parser.Parse(source);
+        Assert.Equal(DiagnosticCode.SourceLengthExceeded, Assert.Single(parsed.Diagnostics).Code);
+
+        var failure = Assert.IsType<RunResult.ParseFailure>(KatLangEngine.Run(source));
+        Assert.Equal(KatLangErrorCode.SourceLengthExceeded, Assert.Single(failure.Errors).Code);
+    }
+
     // ── import depth (chain) ───────────────────────────────────────────────────
 
     [Fact]

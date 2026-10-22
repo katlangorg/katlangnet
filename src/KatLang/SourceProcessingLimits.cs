@@ -66,7 +66,8 @@ public sealed record SourceProcessingLimits
     /// <summary>
     /// Internal hard ceiling on the length of ONE source text (the main program or a single
     /// imported module), in UTF-16 code units, applied on every parser/front-end entry point
-    /// regardless of configuration. <see cref="MaxSourceLength"/> can only request a lower limit.
+    /// regardless of configuration, and by the standalone <see cref="Lexer.Tokenize(string)"/>,
+    /// which rejects a longer source with an <see cref="ArgumentOutOfRangeException"/>. <see cref="MaxSourceLength"/> can only request a lower limit.
     ///
     /// <para>Checked before tokenization, so an oversized submission never allocates tokens or
     /// nodes. Calibrated by the process-isolated source probes (<c>fuzz/KatLang.ParserFuzz</c>,

@@ -164,11 +164,28 @@ public static class Lexer
     /// errors it keeps the first ones and ends with one
     /// <see cref="DiagnosticCode.DiagnosticCountExceeded"/> diagnostic, while every unrecognized
     /// character is still its own <see cref="TokenKind.Bad"/> token.</para>
+    /// <para>The source length is bounded by the same always-active hard ceiling as every
+    /// parser entry point (<see cref="SourceProcessingLimits.MaxSupportedSourceLength"/> UTF-16
+    /// code units, inclusive). A longer source is rejected before any of it is scanned or any
+    /// token is allocated: this method never returns a partial token list.</para>
     /// </summary>
     /// <exception cref="ArgumentNullException"><paramref name="source"/> is null.</exception>
+    /// <exception cref="ArgumentOutOfRangeException">The length of <paramref name="source"/>
+    /// exceeds <see cref="SourceProcessingLimits.MaxSupportedSourceLength"/>.</exception>
     public static (IReadOnlyList<Token> Tokens, IReadOnlyList<Diagnostic> Diagnostics) Tokenize(string source)
     {
         ArgumentNullException.ThrowIfNull(source);
+        // The parser applies this ceiling before calling the internal overload (reporting a
+        // structured SourceLengthExceeded diagnostic); this standalone entry has no diagnostic
+        // context that could mark a refused result, so it refuses the input outright.
+        if (source.Length > SourceProcessingLimits.MaxSupportedSourceLength)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(source),
+                source.Length,
+                $"Source length {source.Length} UTF-16 code units exceeds the maximum of {SourceProcessingLimits.MaxSupportedSourceLength} UTF-16 code units.");
+        }
+
         var diagnostics = new DiagnosticBag();
         var tokens = Tokenize(source, diagnostics, lexicalErrorStarts: null);
         return (tokens, Array.AsReadOnly(diagnostics.ToArray()));
