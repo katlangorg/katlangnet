@@ -22,8 +22,12 @@ the property-access body is then proved by hand:
   incomplete inner run may leave its owner mark, so this uses `invariant_transfer_completed`.
 
 Q-37's local route laws (an inactive miss owns the evaluation; a reentrant miss evaluates but does
-not publish; only the owner's success publishes; explicit `P()` is a fresh ordinary invocation)
-are the body itself, now a kernel term of the total core. Not claimed: that a reentrant run can
+not publish; only the owner's success publishes; explicit `P()` is a fresh ordinary invocation —
+which, since CACHE-PUB-1, is the body's `invoke` request: never a cache hit, and the owner of an
+empty, inactive key) are the body itself, now a kernel term of the total core; their one-step
+statements over that body are `KatLangArityLaws/PropertyInvocationLaws.lean`. Both whole-run
+theorems below cover invocations unchanged in statement: the writer body is still the ONE
+`evalZeroArgPropertyAccessCounted`, now with a `read` / `invoke` request. Not claimed: that a reentrant run can
 never publish its own key (needs `LawfulBEq` of the cache key), property-cache key injectivity, or
 any C# cache/accounting behaviour.
 -/
@@ -802,8 +806,8 @@ theorem EvalBody.algorithmCalleeOf_pres (rec : EvalRec) (hrec : ∀ c, Preserves
     Preserves R (EvalBody.algorithmCalleeOf rec receiver ctx env) := by
   unfold EvalBody.algorithmCalleeOf; pres_tac
 
-theorem EvalBody.evalSuppliedCallCounted_pres (rec : EvalRec) (hrec : ∀ c, Preserves R (rec c)) (callee : Algorithm) (cells : List NeedSupply.Sourced) (ctx : EvalCtx) (env : ValEnv) (calleeName : String) :
-    Preserves R (EvalBody.evalSuppliedCallCounted rec callee cells ctx env calleeName) := by
+theorem EvalBody.evalSuppliedCallCounted_pres (rec : EvalRec) (hrec : ∀ c, Preserves R (rec c)) (origin : CalleeOrigin) (callee : Algorithm) (cells : List NeedSupply.Sourced) (ctx : EvalCtx) (env : ValEnv) (calleeName : String) :
+    Preserves R (EvalBody.evalSuppliedCallCounted rec origin callee cells ctx env calleeName) := by
   unfold EvalBody.evalSuppliedCallCounted; pres_tac
 
 theorem EvalBody.evalNeedUserSupply_pres (rec : EvalRec) (hrec : ∀ c, Preserves R (rec c)) (callee : Algorithm) (cells : List Nat) (ctx : EvalCtx) (env : ValEnv) :
@@ -906,6 +910,12 @@ theorem EvalBody.evalArgumentValue_pres (rec : EvalRec) (hrec : ∀ c, Preserves
     Preserves R (EvalBody.evalArgumentValue rec arg ctx env) := by
   unfold EvalBody.evalArgumentValue; pres_tac
 
+/-- CACHE-PUB-1: a property request's calculation — a read's demand or an invocation's fresh
+    zero-supply call — preserves every field-framed relation its recursive answer does. -/
+theorem EvalBody.zeroArgPropertyCalculation_pres (rec : EvalRec) (hrec : ∀ c, Preserves R (rec c)) (request : ZeroArgPropertyRequest) (resolvedAlgorithm : Algorithm) (ctx : EvalCtx) (env : ValEnv) :
+    Preserves R (EvalBody.zeroArgPropertyCalculation rec request resolvedAlgorithm ctx env) := by
+  unfold EvalBody.zeroArgPropertyCalculation; pres_tac
+
 theorem EvalBody.evalZeroArgPropertyAccess_pres (rec : EvalRec) (hrec : ∀ c, Preserves R (rec c)) (accessKind : ZeroArgPropertyAccessKind) (owner : Algorithm) (binding : PropDef) (resolvedAlgorithm : Algorithm) (ctx : EvalCtx) (env : ValEnv) :
     Preserves R (EvalBody.evalZeroArgPropertyAccess rec accessKind owner binding resolvedAlgorithm ctx env) := by
   unfold EvalBody.evalZeroArgPropertyAccess; pres_tac
@@ -992,8 +1002,8 @@ theorem EvalBody.evalResolvedCall_pres (rec : EvalRec) (hrec : ∀ c, Preserves 
     Preserves R (EvalBody.evalResolvedCall rec callee args ctx env calleeName) := by
   unfold EvalBody.evalResolvedCall; pres_tac
 
-theorem EvalBody.evalResolvedCallCounted_pres (rec : EvalRec) (hrec : ∀ c, Preserves R (rec c)) (callee : Algorithm) (args : OutputBundle) (ctx : EvalCtx) (env : ValEnv) (calleeName : String) :
-    Preserves R (EvalBody.evalResolvedCallCounted rec callee args ctx env calleeName) := by
+theorem EvalBody.evalResolvedCallCounted_pres (rec : EvalRec) (hrec : ∀ c, Preserves R (rec c)) (callee : Algorithm) (args : OutputBundle) (ctx : EvalCtx) (env : ValEnv) (calleeName : String) (origin : CalleeOrigin) :
+    Preserves R (EvalBody.evalResolvedCallCounted rec callee args ctx env calleeName origin) := by
   unfold EvalBody.evalResolvedCallCounted; pres_tac
 
 theorem EvalBody.evalCallCountedExpr_pres (rec : EvalRec) (hrec : ∀ c, Preserves R (rec c)) (f : Expr) (args : OutputBundle) (ctx : EvalCtx) (env : ValEnv) :
@@ -1096,8 +1106,8 @@ theorem EvalBody.eval_pres (rec : EvalRec) (hrec : ∀ c, Preserves R (rec c)) (
 /-- The per-body step of every field-framed whole-run invariant, given its step for the one
     body that writes the property cache and its owner set. -/
 theorem evalStep_preserves
-    (hprop : ∀ rec : EvalRec, (∀ c, Preserves R (rec c)) → ∀ accessKind owner binding resolvedAlgorithm ctx env,
-      Preserves R (EvalBody.evalZeroArgPropertyAccessCounted rec accessKind owner binding resolvedAlgorithm ctx env))
+    (hprop : ∀ rec : EvalRec, (∀ c, Preserves R (rec c)) → ∀ accessKind owner binding resolvedAlgorithm ctx env request,
+      Preserves R (EvalBody.evalZeroArgPropertyAccessCounted rec accessKind owner binding resolvedAlgorithm ctx env request))
     (rec : EvalRec) (hrec : ∀ c, Preserves R (rec c)) : ∀ c, Preserves R (evalStep rec c) := by
   intro c
   cases c with
@@ -1130,7 +1140,7 @@ theorem evalStep_preserves
   | capturedCallee callee => exact EvalBody.capturedCallee_pres rec hrec callee
   | referenceReceiverValue target targetAlg ctx env => exact EvalBody.referenceReceiverValue_pres rec hrec target targetAlg ctx env
   | algorithmCalleeOf receiver ctx env => exact EvalBody.algorithmCalleeOf_pres rec hrec receiver ctx env
-  | evalSuppliedCallCounted callee cells ctx env calleeName => exact EvalBody.evalSuppliedCallCounted_pres rec hrec callee cells ctx env calleeName
+  | evalSuppliedCallCounted origin callee cells ctx env calleeName => exact EvalBody.evalSuppliedCallCounted_pres rec hrec origin callee cells ctx env calleeName
   | evalNeedUserSupply callee cells ctx env => exact EvalBody.evalNeedUserSupply_pres rec hrec callee cells ctx env
   | evalNeedFamilySupply callee cells ctx env calleeName => exact EvalBody.evalNeedFamilySupply_pres rec hrec callee cells ctx env calleeName
   | invokeNeed arg => exact EvalBody.invokeNeed_pres rec hrec arg
@@ -1156,7 +1166,7 @@ theorem evalStep_preserves
   | evalZeroArgumentDemandOutput a ctx env => exact EvalBody.evalZeroArgumentDemandOutput_pres rec hrec a ctx env
   | evalArgumentValueCounted arg ctx env => exact EvalBody.evalArgumentValueCounted_pres rec hrec arg ctx env
   | evalArgumentValue arg ctx env => exact EvalBody.evalArgumentValue_pres rec hrec arg ctx env
-  | evalZeroArgPropertyAccessCounted accessKind owner binding resolvedAlgorithm ctx env => exact hprop rec hrec accessKind owner binding resolvedAlgorithm ctx env
+  | evalZeroArgPropertyAccessCounted accessKind owner binding resolvedAlgorithm ctx env request => exact hprop rec hrec accessKind owner binding resolvedAlgorithm ctx env request
   | evalZeroArgPropertyAccess accessKind owner binding resolvedAlgorithm ctx env => exact EvalBody.evalZeroArgPropertyAccess_pres rec hrec accessKind owner binding resolvedAlgorithm ctx env
   | evalConditionalCallbackCallCounted callee args ctx env calleeName => exact EvalBody.evalConditionalCallbackCallCounted_pres rec hrec callee args ctx env calleeName
   | evalUserCallbackCallCounted callee args ctx env => exact EvalBody.evalUserCallbackCallCounted_pres rec hrec callee args ctx env
@@ -1178,7 +1188,7 @@ theorem evalStep_preserves
   | evalUserCallCounted callee args ctx env => exact EvalBody.evalUserCallCounted_pres rec hrec callee args ctx env
   | evalConditionalCallCounted callee args ctx env calleeName => exact EvalBody.evalConditionalCallCounted_pres rec hrec callee args ctx env calleeName
   | evalResolvedCall callee args ctx env calleeName => exact EvalBody.evalResolvedCall_pres rec hrec callee args ctx env calleeName
-  | evalResolvedCallCounted callee args ctx env calleeName => exact EvalBody.evalResolvedCallCounted_pres rec hrec callee args ctx env calleeName
+  | evalResolvedCallCounted callee args ctx env calleeName origin => exact EvalBody.evalResolvedCallCounted_pres rec hrec callee args ctx env calleeName origin
   | evalCallCountedExpr f args ctx env => exact EvalBody.evalCallCountedExpr_pres rec hrec f args ctx env
   | callLexicalWithReceiverCounted name receiver fallback extraArgs ctx env => exact EvalBody.callLexicalWithReceiverCounted_pres rec hrec name receiver fallback extraArgs ctx env
   | rejectDotStringIntrinsicArguments argsOpt ctx env => exact EvalBody.rejectDotStringIntrinsicArguments_pres rec hrec argsOpt ctx env
@@ -1242,7 +1252,7 @@ theorem evalStep_preserves_other (rec : EvalRec) (hrec : ∀ c, Preserves R (rec
   | capturedCallee callee => exact EvalBody.capturedCallee_pres rec hrec callee
   | referenceReceiverValue target targetAlg ctx env => exact EvalBody.referenceReceiverValue_pres rec hrec target targetAlg ctx env
   | algorithmCalleeOf receiver ctx env => exact EvalBody.algorithmCalleeOf_pres rec hrec receiver ctx env
-  | evalSuppliedCallCounted callee cells ctx env calleeName => exact EvalBody.evalSuppliedCallCounted_pres rec hrec callee cells ctx env calleeName
+  | evalSuppliedCallCounted origin callee cells ctx env calleeName => exact EvalBody.evalSuppliedCallCounted_pres rec hrec origin callee cells ctx env calleeName
   | evalNeedUserSupply callee cells ctx env => exact EvalBody.evalNeedUserSupply_pres rec hrec callee cells ctx env
   | evalNeedFamilySupply callee cells ctx env calleeName => exact EvalBody.evalNeedFamilySupply_pres rec hrec callee cells ctx env calleeName
   | invokeNeed arg => exact EvalBody.invokeNeed_pres rec hrec arg
@@ -1268,7 +1278,7 @@ theorem evalStep_preserves_other (rec : EvalRec) (hrec : ∀ c, Preserves R (rec
   | evalZeroArgumentDemandOutput a ctx env => exact EvalBody.evalZeroArgumentDemandOutput_pres rec hrec a ctx env
   | evalArgumentValueCounted arg ctx env => exact EvalBody.evalArgumentValueCounted_pres rec hrec arg ctx env
   | evalArgumentValue arg ctx env => exact EvalBody.evalArgumentValue_pres rec hrec arg ctx env
-  | evalZeroArgPropertyAccessCounted accessKind owner binding resolvedAlgorithm ctx env => cases hc
+  | evalZeroArgPropertyAccessCounted accessKind owner binding resolvedAlgorithm ctx env request => cases hc
   | evalZeroArgPropertyAccess accessKind owner binding resolvedAlgorithm ctx env => exact EvalBody.evalZeroArgPropertyAccess_pres rec hrec accessKind owner binding resolvedAlgorithm ctx env
   | evalConditionalCallbackCallCounted callee args ctx env calleeName => exact EvalBody.evalConditionalCallbackCallCounted_pres rec hrec callee args ctx env calleeName
   | evalUserCallbackCallCounted callee args ctx env => exact EvalBody.evalUserCallbackCallCounted_pres rec hrec callee args ctx env
@@ -1290,7 +1300,7 @@ theorem evalStep_preserves_other (rec : EvalRec) (hrec : ∀ c, Preserves R (rec
   | evalUserCallCounted callee args ctx env => exact EvalBody.evalUserCallCounted_pres rec hrec callee args ctx env
   | evalConditionalCallCounted callee args ctx env calleeName => exact EvalBody.evalConditionalCallCounted_pres rec hrec callee args ctx env calleeName
   | evalResolvedCall callee args ctx env calleeName => exact EvalBody.evalResolvedCall_pres rec hrec callee args ctx env calleeName
-  | evalResolvedCallCounted callee args ctx env calleeName => exact EvalBody.evalResolvedCallCounted_pres rec hrec callee args ctx env calleeName
+  | evalResolvedCallCounted callee args ctx env calleeName origin => exact EvalBody.evalResolvedCallCounted_pres rec hrec callee args ctx env calleeName origin
   | evalCallCountedExpr f args ctx env => exact EvalBody.evalCallCountedExpr_pres rec hrec f args ctx env
   | callLexicalWithReceiverCounted name receiver fallback extraArgs ctx env => exact EvalBody.callLexicalWithReceiverCounted_pres rec hrec name receiver fallback extraArgs ctx env
   | rejectDotStringIntrinsicArguments argsOpt ctx env => exact EvalBody.rejectDotStringIntrinsicArguments_pres rec hrec argsOpt ctx env
@@ -1348,11 +1358,58 @@ theorem lookup_insert_keep (c : ZeroArgPropertyCache) (key : ZeroArgPropertyCach
 
 macro_rules | `(tactic| pres_rel_close) => `(tactic| (first | (exact fun _ _ h => h) | (exact fun _ _ h => lookup_insert_keep _ _ _ _ _ h)))
 
+theorem get_runState (s : EvalState) : (get : EvalM EvalState).runState s = (.ok s, s) := rfl
+theorem set_runState (t s : EvalState) : (set t : EvalM PUnit).runState s = (.ok (), t) := rfl
+theorem pure_runState {α : Type} (a : α) (s : EvalState) : (pure a : EvalM α).runState s = (.ok a, s) := rfl
+theorem throw_runState {α : Type} (e : Error) (s : EvalState) : (throw e : EvalM α).runState s = (.error e, s) := rfl
+
+/-- The two outcomes of a probe: the incomplete outcome propagates, every completed outcome is
+    captured; the state is the probe's own exit state either way. -/
+theorem evalAttempt_cases {α : Type} (m : EvalM α) (t : EvalState) :
+    ∃ o t', m.runState t = (o, t') ∧
+      (((evalAttempt m).runState t = (.error .fuelExhausted, t') ∧ o.isIncomplete = true) ∨
+       ((evalAttempt m).runState t = (.ok o, t') ∧ o.isIncomplete = false)) := by
+  rcases hm : m.runState t with ⟨o, t'⟩
+  refine ⟨o, t', rfl, ?_⟩
+  cases hi : o.isIncomplete
+  · exact .inr ⟨evalAttempt_runState_of_complete m t t' o hm hi, rfl⟩
+  · exact .inl ⟨by rw [Except.isIncomplete_eq_true hi] at hm; exact evalAttempt_runState_of_incomplete m t t' hm, rfl⟩
+
 theorem cache_property_step (rec : EvalRec) (hrec : ∀ c, Preserves CacheKept (rec c))
     (accessKind : ZeroArgPropertyAccessKind) (owner : Algorithm) (binding : PropDef)
-    (resolvedAlgorithm : Algorithm) (ctx : EvalCtx) (env : ValEnv) :
-    Preserves CacheKept (EvalBody.evalZeroArgPropertyAccessCounted rec accessKind owner binding resolvedAlgorithm ctx env) := by
-  unfold EvalBody.evalZeroArgPropertyAccessCounted; pres_tac
+    (resolvedAlgorithm : Algorithm) (ctx : EvalCtx) (env : ValEnv) (request : ZeroArgPropertyRequest) :
+    Preserves CacheKept (EvalBody.evalZeroArgPropertyAccessCounted rec accessKind owner binding resolvedAlgorithm ctx env request) := by
+  -- Both requests' calculations keep every entry (`zeroArgPropertyCalculation_pres`): a read
+  -- returns an established entry, an invocation executes freshly beside it, and the owner's
+  -- publication never replaces one (`lookup_insert_keep`).
+  have hcalc := EvalBody.zeroArgPropertyCalculation_pres (R := CacheKept) rec hrec request resolvedAlgorithm ctx env
+  intro s
+  unfold EvalBody.evalZeroArgPropertyAccessCounted
+  split
+  · simp only [EvalM.bind_runState, get_runState]
+    split
+    · cases request with
+      | read => exact StateRel.refl s
+      | invoke _ => exact hcalc s
+    · split
+      · exact hcalc s
+      · simp only [EvalM.bind_runState, set_runState]
+        obtain ⟨o, t2, hm, hc⟩ := evalAttempt_cases (EvalBody.zeroArgPropertyCalculation rec request resolvedAlgorithm ctx env)
+          { s with activeZeroArgProperties := (zeroArgPropertyCacheKey accessKind owner binding ctx env (propertyOwnerBindingContext resolvedAlgorithm.parent s)) :: s.activeZeroArgProperties }
+        have hk := hcalc { s with activeZeroArgProperties := (zeroArgPropertyCacheKey accessKind owner binding ctx env (propertyOwnerBindingContext resolvedAlgorithm.parent s)) :: s.activeZeroArgProperties }
+        rw [hm] at hk
+        rcases hc with ⟨hrun, _⟩ | ⟨hrun, _⟩
+        · rw [hrun]; exact fun k v h => hk k v h
+        · rw [hrun]
+          simp only [get_runState]
+          cases o with
+          | ok counted =>
+            simp only [EvalM.bind_runState, set_runState, pure_runState]
+            exact fun k v h => lookup_insert_keep _ _ _ _ _ (hk k v h)
+          | error err =>
+            simp only [EvalM.bind_runState, set_runState, throw_runState]
+            exact fun k v h => hk k v h
+  · exact hcalc s
 
 /-- **Q-37, whole run (core):** every completed run of the total core, at every fuel and from
     every state, keeps every property-cache entry it found, with its value — success and ordinary
@@ -1408,43 +1465,30 @@ instance : StateRel ActiveKept := ⟨fun _ => rfl, fun h1 h2 => h2.trans h1⟩
 instance : FieldFrame ActiveKept := ⟨fun _ _ _ ha => ha⟩
 
 
-theorem get_runState (s : EvalState) : (get : EvalM EvalState).runState s = (.ok s, s) := rfl
-theorem set_runState (t s : EvalState) : (set t : EvalM PUnit).runState s = (.ok (), t) := rfl
-theorem pure_runState {α : Type} (a : α) (s : EvalState) : (pure a : EvalM α).runState s = (.ok a, s) := rfl
-theorem throw_runState {α : Type} (e : Error) (s : EvalState) : (throw e : EvalM α).runState s = (.error e, s) := rfl
-
-/-- The two outcomes of a probe: the incomplete outcome propagates, every completed outcome is
-    captured; the state is the probe's own exit state either way. -/
-theorem evalAttempt_cases {α : Type} (m : EvalM α) (t : EvalState) :
-    ∃ o t', m.runState t = (o, t') ∧
-      (((evalAttempt m).runState t = (.error .fuelExhausted, t') ∧ o.isIncomplete = true) ∨
-       ((evalAttempt m).runState t = (.ok o, t') ∧ o.isIncomplete = false)) := by
-  rcases hm : m.runState t with ⟨o, t'⟩
-  refine ⟨o, t', rfl, ?_⟩
-  cases hi : o.isIncomplete
-  · exact .inr ⟨evalAttempt_runState_of_complete m t t' o hm hi, rfl⟩
-  · exact .inl ⟨by rw [Except.isIncomplete_eq_true hi] at hm; exact evalAttempt_runState_of_incomplete m t t' hm, rfl⟩
-
 theorem active_property_step (rec : EvalRec) (hrec : ∀ c, Preserves ActiveKept (rec c))
     (accessKind : ZeroArgPropertyAccessKind) (owner : Algorithm) (binding : PropDef)
-    (resolvedAlgorithm : Algorithm) (ctx : EvalCtx) (env : ValEnv) (s : EvalState)
-    (hne : ((EvalBody.evalZeroArgPropertyAccessCounted rec accessKind owner binding resolvedAlgorithm ctx env).runState s).1
+    (resolvedAlgorithm : Algorithm) (ctx : EvalCtx) (env : ValEnv) (request : ZeroArgPropertyRequest) (s : EvalState)
+    (hne : ((EvalBody.evalZeroArgPropertyAccessCounted rec accessKind owner binding resolvedAlgorithm ctx env request).runState s).1
       ≠ .error .fuelExhausted) :
-    ActiveKept s ((EvalBody.evalZeroArgPropertyAccessCounted rec accessKind owner binding resolvedAlgorithm ctx env).runState s).2 := by
+    ActiveKept s ((EvalBody.evalZeroArgPropertyAccessCounted rec accessKind owner binding resolvedAlgorithm ctx env request).runState s).2 := by
+  -- Both requests share the one owner discipline: their calculation (a read's demand or an
+  -- invocation's fresh call) keeps the owner set, and an owner restores the set it found.
+  have hcalc := EvalBody.zeroArgPropertyCalculation_pres (R := ActiveKept) rec hrec request resolvedAlgorithm ctx env
   revert hne
   unfold EvalBody.evalZeroArgPropertyAccessCounted
   split
   · simp only [EvalM.bind_runState, get_runState]
     split
-    · intro _; rfl
+    · cases request with
+      | read => intro _; rfl
+      | invoke _ => intro _; exact hcalc s
     · split
-      · intro _; exact hrec _ s
+      · intro _; exact hcalc s
       · simp only [EvalM.bind_runState, set_runState]
-        generalize hz : (evalAttempt (rec.evalZeroArgumentDemandOutputCounted resolvedAlgorithm ctx env)).runState _ = r
-        obtain ⟨o, t2, hm, hc⟩ := evalAttempt_cases (rec.evalZeroArgumentDemandOutputCounted resolvedAlgorithm ctx env)
+        generalize hz : (evalAttempt (EvalBody.zeroArgPropertyCalculation rec request resolvedAlgorithm ctx env)).runState _ = r
+        obtain ⟨o, t2, hm, hc⟩ := evalAttempt_cases (EvalBody.zeroArgPropertyCalculation rec request resolvedAlgorithm ctx env)
           { s with activeZeroArgProperties := (zeroArgPropertyCacheKey accessKind owner binding ctx env (propertyOwnerBindingContext resolvedAlgorithm.parent s)) :: s.activeZeroArgProperties }
-        have ha := hrec (.evalZeroArgumentDemandOutputCounted resolvedAlgorithm ctx env) { s with activeZeroArgProperties := (zeroArgPropertyCacheKey accessKind owner binding ctx env (propertyOwnerBindingContext resolvedAlgorithm.parent s)) :: s.activeZeroArgProperties }
-        unfold EvalRec.evalZeroArgumentDemandOutputCounted at hm
+        have ha := hcalc { s with activeZeroArgProperties := (zeroArgPropertyCacheKey accessKind owner binding ctx env (propertyOwnerBindingContext resolvedAlgorithm.parent s)) :: s.activeZeroArgProperties }
         rw [hm] at ha
         rcases hc with ⟨hrun, _⟩ | ⟨hrun, _⟩
         · rw [hrun] at hz; subst hz
@@ -1458,7 +1502,7 @@ theorem active_property_step (rec : EvalRec) (hrec : ∀ c, Preserves ActiveKept
           | error err =>
             simp only [EvalM.bind_runState, set_runState, throw_runState]
             intro _; rfl
-  · intro _; exact hrec _ s
+  · intro _; exact hcalc s
 
 
 theorem active_body_step (rec : EvalRec) (hrec : ∀ c, Preserves ActiveKept (rec c)) (c : EvalCall)
@@ -1467,7 +1511,7 @@ theorem active_body_step (rec : EvalRec) (hrec : ∀ c, Preserves ActiveKept (re
   cases h : isPropertyAccessCall c
   · exact evalStep_preserves_other rec hrec c h s
   · cases c <;> first
-      | (exact active_property_step rec hrec _ _ _ _ _ _ s hne)
+      | (exact active_property_step rec hrec _ _ _ _ _ _ _ s hne)
       | (simp [isPropertyAccessCall] at h)
 
 /-- **Q-37 owner discipline, whole run (core):** every completed run of the total core — success or

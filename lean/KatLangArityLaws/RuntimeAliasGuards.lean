@@ -132,7 +132,7 @@ def terminalDecls : List (Ident × Algorithm) :=
 #guard cellsOf (heapRA terminalDecls [callN "AT4" []]) terminalCapture == 1
 #guard cellsOf (heapRA terminalDecls [callN "AT4" [], callN "AT4" []]) terminalCapture == 2
 #guard cellsOf (heapRA terminalDecls [.resolve "AT4", callN "AT4" []]) terminalCapture == 2
-#guard cellsOf (heapRA terminalDecls [callN "AT4" [], .resolve "AT4"]) terminalCapture == 2
+#guard cellsOf (heapRA terminalDecls [callN "AT4" [], .resolve "AT4"]) terminalCapture == 1
 #guard cellsOf (heapRA terminalDecls [.resolve "AT4", .resolve "AT4"]) terminalCapture == 1
 #guard cellsOf (heapRA terminalDecls
   [callN "BT4" [], .resolve "AT4", callN "BT4" [], .resolve "AT4", callN "AT4" []]) terminalCapture == 4
@@ -179,7 +179,7 @@ def terminalEmptyDecls : List (Ident × Algorithm) := terminalDecls.map fun (nam
   (name, if name == "Z4" then alg [] [] [] [.emptySequence 0] else body)
 #guard valueIs (runRA terminalEmptyDecls [.listLiteral [callN "AT4" [], .resolve "AT4", callN "AT4" []]])
   (.listValue [.sequenceValue [], .sequenceValue [], .sequenceValue []])
-#guard cellsOf (heapRA terminalEmptyDecls [callN "AT4" [], .resolve "AT4", callN "AT4" []]) terminalCapture == 3
+#guard cellsOf (heapRA terminalEmptyDecls [callN "AT4" [], .resolve "AT4", callN "AT4" []]) terminalCapture == 2
 
 -- A CALLABLE-only navigation (`Nav4(AT4)` reads the alias's own member `K`) performs the eligibility
 -- projection and so the receiver work; the FIRST ordinary observation afterwards — a bare read or a
@@ -197,7 +197,7 @@ def terminalNavigationDecls : List (Ident × Algorithm) :=
 #guard cellsOf (heapRA terminalNavigationDecls [callN "Nav4" [.resolve "AT4"], callN "AT4" []]) terminalCapture == 1
 #guard cellsOf (heapRA terminalNavigationDecls [callN "Nav4" [.resolve "AT4"], .resolve "AT4"]) terminalCapture == 1
 #guard cellsOf (heapRA terminalNavigationDecls
-  [callN "Nav4" [.resolve "AT4"], callN "AT4" [], .resolve "AT4"]) terminalCapture == 2
+  [callN "Nav4" [.resolve "AT4"], callN "AT4" [], .resolve "AT4"]) terminalCapture == 1
 #guard cellsOf (heapRA terminalNavigationDecls
   [callN "Nav4" [.resolve "AT4"], .resolve "AT4", callN "AT4" []]) terminalCapture == 2
 #guard cellsOf (heapRA terminalNavigationDecls
@@ -207,7 +207,10 @@ def terminalNavigationDecls : List (Ident × Algorithm) :=
 
 `LocalUse(n) = { A = { R = KeepRef(n, Capture(Z4())); R.Algorithm }; A(), A, A(), A }`.
 KeepRef's first argument makes R local to n; each execution of R allocates exactly one
-terminalCapture cell. The ordinary +0 control must execute it THREE times (D4). -/
+terminalCapture cell. CACHE-PUB-1's D4 extension (owner decision October 22 2026) makes
+the terminal alias and ordinary +0 control each execute it TWICE: the first owning A4()
+establishes A4's own empty property entry, both bare reads reuse it, and the second A4()
+executes freshly without replacing it. The receiver-claim controls are unchanged. -/
 
 def localR4 : Algorithm := alg [] [] [] [callN "KeepRef4" [.param "n", terminalCapture]]
 def localCacheAlias4 : Algorithm := .alias none []
@@ -223,8 +226,34 @@ def localCacheDecls4 (body : Algorithm) : List (Ident × Algorithm) :=
       [callN "A4" [], .resolve "A4", callN "A4" [], .resolve "A4"])]
 def localCacheExecutions4 (body : Algorithm) : Nat :=
   cellsOf (heapRA (localCacheDecls4 body) [callN "LocalUse4" [.num 5]]) terminalCapture
-#guard localCacheExecutions4 localCacheControl4 == 3
--- This guard failed with two executions when the new bare cell copied the probe suspension.
-#guard localCacheExecutions4 localCacheAlias4 == 3
+#guard localCacheExecutions4 localCacheControl4 == 2
+-- CACHE-PUB-1 D4 extension: alias and ordinary control share the publication law.
+#guard localCacheExecutions4 localCacheAlias4 == 2
+
+/-! ## CACHE-PUB-1: terminal aliases use the existing property publication domain
+
+Inspect the cache after the invocation alone: a constant result without this state observation
+would not distinguish publication from a later independent bare evaluation. -/
+
+def publicationState4 (decls : List (Ident × Algorithm)) (rows : List Expr) : Except Error Result × EvalState :=
+  (runResultM (CallReferenceGuards.program (extraRA ++ decls) rows)).runState EvalState.empty
+
+def entries4 (state : EvalState) (name : Ident) : List CountedResult :=
+  (state.zeroArgPropertyCache.filter (fun entry => entry.fst.propertyName == name)).map (·.snd)
+
+#guard let (result, state) := publicationState4 terminalDecls [callN "AT4" []]
+  valueIs result (.atom 42) && entries4 state "AT4" == [(.atom 42, 1)]
+    && state.activeZeroArgProperties.isEmpty
+#guard let (result, state) := publicationState4 terminalDecls [callN "BT4" []]
+  valueIs result (.atom 42) && entries4 state "BT4" == [(.atom 42, 1)]
+    && (entries4 state "AT4").isEmpty && state.activeZeroArgProperties.isEmpty
+#guard cellsOf (heapRA terminalDecls
+  [callN "AT4" [], .resolve "AT4", callN "AT4" [], .resolve "AT4"]) terminalCapture == 2
+
+-- Coll declares a collecting parameter even though it accepts zero supplied slots. Its runtime
+-- alias is D3, so invoking AC establishes neither AC's entry nor Coll's entry.
+#guard let (result, state) := publicationState4 aliasMkC [callN "AC" []]
+  valueIs result (.listValue []) && (entries4 state "AC").isEmpty
+    && (entries4 state "Coll").isEmpty && state.activeZeroArgProperties.isEmpty
 
 end KatLang.RuntimeAliasGuards

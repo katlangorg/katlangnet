@@ -52,6 +52,16 @@ internal interface IAsyncZeroArgPropertyResultCache : IZeroArgPropertyResultCach
     ValueTask<EvalResult<ZeroArgPropertyResult>> GetOrEvaluateAsync(
         ZeroArgPropertyExecution execution,
         Func<ValueTask<EvalResult<ZeroArgPropertyResult>>> evaluateAsync);
+
+    /// <summary>
+    /// Async twin of <see cref="IZeroArgPropertyResultCache.Invoke"/> (CACHE-PUB-1): a qualifying
+    /// explicit zero-supply invocation always runs <paramref name="evaluateAsync"/> and, on an empty
+    /// entry, takes part in the same publication law across suspension and cancellation (no default,
+    /// as for the synchronous member).
+    /// </summary>
+    ValueTask<EvalResult<ZeroArgPropertyResult>> InvokeAsync(
+        ZeroArgPropertyExecution execution,
+        Func<ValueTask<EvalResult<ZeroArgPropertyResult>>> evaluateAsync);
 }
 
 /// <summary>
@@ -95,4 +105,14 @@ internal sealed class RunScopedAsyncZeroArgPropertyResultCache(RootPropertyObser
             ? new ValueTask<EvalResult<ZeroArgPropertyResult>>(EvalResult<ZeroArgPropertyResult>.Ok(cached))
             : _results.EvaluateMissAsync(key, evaluateAsync);
     }
+
+    public EvalResult<ZeroArgPropertyResult> Invoke(
+        ZeroArgPropertyExecution execution,
+        Func<EvalResult<ZeroArgPropertyResult>> evaluate)
+        => _results.Invoke(ZeroArgPropertyCacheKey.FromExecution(execution), evaluate, out _);
+
+    public ValueTask<EvalResult<ZeroArgPropertyResult>> InvokeAsync(
+        ZeroArgPropertyExecution execution,
+        Func<ValueTask<EvalResult<ZeroArgPropertyResult>>> evaluateAsync)
+        => _results.InvokeAsync(ZeroArgPropertyCacheKey.FromExecution(execution), evaluateAsync);
 }

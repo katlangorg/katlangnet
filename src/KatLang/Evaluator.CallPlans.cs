@@ -811,7 +811,7 @@ public static partial class Evaluator
         var callee = ResolveCallee(call.Function, ctx);
         if (callee.IsError)
             return WithSpanOf<CountedResult>(call, CalleeResolutionFailure(name, ctx, callee.Error));
-        return WithSpanOf(call, WithCallCtx(name, ctx, DispatchPlannedCounted(plan, callee.Value, name, byInvocation)));
+        return WithSpanOf(call, WithCallCtx(name, ctx, DispatchPlannedCounted(plan, callee.Value, name, byInvocation, CalleeOrigin.Written(call.Function))));
     }
 
     /// <summary>
@@ -828,7 +828,7 @@ public static partial class Evaluator
         var callee = ProjectPlannedAlgorithmCallee(plan, edge, spanDecodeFailure: true);
         if (callee.IsError)
             return WithSpanOf<CountedResult>(call, CalleeResolutionFailure(name, ctx, callee.Error));
-        return WithSpanOf(call, WithCallCtx(name, ctx, DispatchPlannedCounted(plan, callee.Value.Callee, callee.Value.Name, byInvocation)));
+        return WithSpanOf(call, WithCallCtx(name, ctx, DispatchPlannedCounted(plan, callee.Value.Callee, callee.Value.Name, byInvocation, CalleeOrigin.Cell(callee.Value.Cell))));
     }
 
     /// <summary>
@@ -857,7 +857,8 @@ public static partial class Evaluator
                     if (target.IsError) return target.Error;
                     wired = target.Value;
                 }
-                return DispatchPlannedCounted(plan, wired, CallDiagnosticName.FromKnown(dot.Name), byInvocation);
+                // CACHE-PUB-1: the member call's origin is its argumentless member path (Lean `effective`).
+                return DispatchPlannedCounted(plan, wired, CallDiagnosticName.FromKnown(dot.Name), byInvocation, CalleeOrigin.Written(dot));
             }
             case PlanRouteKind.Extension:
             {
@@ -867,13 +868,13 @@ public static partial class Evaluator
                     : ResolveAlg(dot.EffectiveLexicalFallback, ctx);
                 if (callee.IsError) return callee.Error;
                 var name = dot.EffectiveLexicalFallback is Expr.Resolve(var known) ? known : dot.Name;
-                return DispatchPlannedCounted(plan, callee.Value, CallDiagnosticName.FromKnown(name), byInvocation);
+                return DispatchPlannedCounted(plan, callee.Value, CallDiagnosticName.FromKnown(name), byInvocation, CalleeOrigin.None);
             }
             case PlanRouteKind.AlgorithmIntrinsic:
             {
                 var callee = ProjectPlannedAlgorithmCallee(plan, dot, spanDecodeFailure: false);
                 if (callee.IsError) return callee.Error;
-                return DispatchPlannedCounted(plan, callee.Value.Callee, callee.Value.Name, byInvocation);
+                return DispatchPlannedCounted(plan, callee.Value.Callee, callee.Value.Name, byInvocation, CalleeOrigin.Cell(callee.Value.Cell));
             }
             default:
                 return byInvocation ? InvocationRefusal(plan) : EvalDotCallCounted(dot, ctx, plan.Values);
@@ -891,7 +892,7 @@ public static partial class Evaluator
     /// receiver failure as it is, a decode failure positioned at the edge in callee position
     /// (<paramref name="spanDecodeFailure"/>), a missing identity as the captured callee's absence.
     /// </summary>
-    private static EvalResult<(Algorithm Callee, CallDiagnosticName Name)> ProjectPlannedAlgorithmCallee(
+    private static EvalResult<(Algorithm Callee, CallDiagnosticName Name, NeedCell Cell)> ProjectPlannedAlgorithmCallee(
         InvocationPlan plan, Expr.DotCall edge, bool spanDecodeFailure)
     {
         var link = plan.CalleeCell;
@@ -912,11 +913,11 @@ public static partial class Evaluator
         if (calleeCell.IsError) return calleeCell.Error;
         var callable = RequireCapturedCallee(calleeCell.Value.ProjectCallable(), edge.Span);
         if (callable.IsError) return callable.Error;
-        return EvalResult<(Algorithm, CallDiagnosticName)>.Ok((callable.Value, PlanCalleeName(captured.Value)));
+        return EvalResult<(Algorithm, CallDiagnosticName, NeedCell)>.Ok((callable.Value, PlanCalleeName(captured.Value), calleeCell.Value));
     }
 
     /// <summary>MIRROR OF <see cref="ProjectPlannedAlgorithmCallee"/> — keep in lock-step.</summary>
-    private static async ValueTask<EvalResult<(Algorithm Callee, CallDiagnosticName Name)>> ProjectPlannedAlgorithmCalleeAsync(
+    private static async ValueTask<EvalResult<(Algorithm Callee, CallDiagnosticName Name, NeedCell Cell)>> ProjectPlannedAlgorithmCalleeAsync(
         InvocationPlan plan, Expr.DotCall edge, bool spanDecodeFailure)
     {
         var link = plan.CalleeCell;
@@ -932,7 +933,7 @@ public static partial class Evaluator
         if (calleeCell.IsError) return calleeCell.Error;
         var callable = RequireCapturedCallee(await ProjectCellCallableAsync(calleeCell.Value, plan.Caller).ConfigureAwait(false), edge.Span);
         if (callable.IsError) return callable.Error;
-        return EvalResult<(Algorithm, CallDiagnosticName)>.Ok((callable.Value, PlanCalleeName(captured.Value)));
+        return EvalResult<(Algorithm, CallDiagnosticName, NeedCell)>.Ok((callable.Value, PlanCalleeName(captured.Value), calleeCell.Value));
     }
 
     /// <summary>
@@ -944,13 +945,13 @@ public static partial class Evaluator
     /// fused VALUE would leave the plan without the supply and cell outcomes a later observation needs.
     /// </summary>
     private static EvalResult<CountedResult> DispatchPlannedCounted(
-        InvocationPlan plan, Algorithm callee, CallDiagnosticName name, bool byInvocation)
+        InvocationPlan plan, Algorithm callee, CallDiagnosticName name, bool byInvocation, CalleeOrigin origin)
     {
         var ctx = plan.Caller;
         if (callee is Algorithm.Alias alias)
         {
             var target = ResolveAliasTarget(alias, ctx);
-            return target.IsError ? target.Error : DispatchPlannedCounted(plan, target.Value, name, byInvocation);
+            return target.IsError ? target.Error : DispatchPlannedCounted(plan, target.Value, name, byInvocation, origin);
         }
 
         if (callee is Algorithm.Builtin(var builtinId))
@@ -961,7 +962,7 @@ public static partial class Evaluator
         }
 
         if (TryGetFlatBinderUserEquivalent(callee) is { } simpleCallee)
-            return DispatchPlannedUserCounted(plan, simpleCallee, name, byInvocation);
+            return DispatchPlannedUserCounted(plan, callee, simpleCallee, name, byInvocation, origin);
 
         if (callee is Algorithm.Conditional)
         {
@@ -971,7 +972,12 @@ public static partial class Evaluator
             {
                 var supply = PreparePlanSupplyCounted(plan, PlanSupplyShape.Cells, byInvocation);
                 if (supply.IsError) return supply.Error;
-                return EvalNeedFamilySupplyCounted(callee, PlanCells(supply.Value), ctx, plan.Values, name);
+                var cells = PlanCells(supply.Value);
+                // CACHE-PUB-1: the plan's empty supply of a callee whose origin names a binding.
+                if (cells.Count == 0 && ZeroSupplyPublication(origin, callee, ctx) is { } binding)
+                    return EvalPublishedZeroSupplyInvocation(binding, callee, ctx, plan.Values,
+                        () => ToPropertyResult(EvalNeedFamilySupplyCounted(callee, cells, ctx, plan.Values, name)));
+                return EvalNeedFamilySupplyCounted(callee, cells, ctx, plan.Values, name);
             }
             finally
             {
@@ -979,13 +985,13 @@ public static partial class Evaluator
             }
         }
 
-        return DispatchPlannedUserCounted(plan, callee, name, byInvocation);
+        return DispatchPlannedUserCounted(plan, callee, callee, name, byInvocation, origin);
     }
 
     /// <summary>The user arm of <see cref="DispatchPlannedCounted"/>: <see cref="EvalUserCallCounted"/> over the plan's supply.</summary>
     [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
     private static EvalResult<CountedResult> DispatchPlannedUserCounted(
-        InvocationPlan plan, Algorithm callee, CallDiagnosticName name, bool byInvocation)
+        InvocationPlan plan, Algorithm property, Algorithm callee, CallDiagnosticName name, bool byInvocation, CalleeOrigin origin)
     {
         var ctx = plan.Caller;
         var args = plan.Args;
@@ -998,8 +1004,17 @@ public static partial class Evaluator
                 return projected.IsError ? projected.Error : EvalResult<CountedResult>.Ok(new(projected.Value, projected.Value.ValueCount()));
             var supply = PreparePlanSupplyCounted(plan, UserPlanSupplyShape(plan, callee), byInvocation);
             if (supply.IsError) return supply.Error;
-            return EvalNeedUserSupplyCounted(callee, PlanCells(supply.Value), ctx, plan.Values, name, variadicArityStyle: true,
-                PlanMetaOccurrences(plan, callee, supply.Value));
+            var cells = PlanCells(supply.Value);
+            var occurrences = PlanMetaOccurrences(plan, callee, supply.Value);
+            // CACHE-PUB-1: the plan's empty supply of a callee whose origin names a binding.
+            if (cells.Count == 0 && ZeroSupplyPublication(origin, property, ctx) is { } binding)
+            {
+                var familyBoundary = property is Algorithm.Conditional;
+                return EvalPublishedZeroSupplyInvocation(binding, property, ctx, plan.Values,
+                    () => ToPropertyResult(EvalNeedUserSupplyCounted(callee, cells, ctx, plan.Values, name, variadicArityStyle: true,
+                        occurrences, valueBoundary: familyBoundary)));
+            }
+            return EvalNeedUserSupplyCounted(callee, cells, ctx, plan.Values, name, variadicArityStyle: true, occurrences);
         }
     }
 
@@ -1045,7 +1060,7 @@ public static partial class Evaluator
                 if (projected.IsError)
                     return WithSpanOf<CountedResult>(call, CalleeResolutionFailure(name, ctx, projected.Error));
                 return WithSpanOf(call, WithCallCtx(name, ctx,
-                    await DispatchPlannedAsync(plan, projected.Value.Callee, projected.Value.Name, byInvocation).ConfigureAwait(false)));
+                    await DispatchPlannedAsync(plan, projected.Value.Callee, projected.Value.Name, byInvocation, CalleeOrigin.Cell(projected.Value.Cell)).ConfigureAwait(false)));
             }
         }
         // META-S3-0b: the ONE callee law through the async resolution adapter.
@@ -1053,7 +1068,7 @@ public static partial class Evaluator
         if (callee.IsError)
             return WithSpanOf<CountedResult>(call, CalleeResolutionFailure(name, ctx, callee.Error));
         return WithSpanOf(call, WithCallCtx(name, ctx,
-            await DispatchPlannedAsync(plan, callee.Value, name, byInvocation).ConfigureAwait(false)));
+            await DispatchPlannedAsync(plan, callee.Value, name, byInvocation, CalleeOrigin.Written(call.Function)).ConfigureAwait(false)));
     }
 
     /// <summary>MIRROR OF <see cref="DispatchPlannedDotCounted"/> — keep in lock-step.</summary>
@@ -1073,7 +1088,7 @@ public static partial class Evaluator
                     if (target.IsError) return target.Error;
                     wired = target.Value;
                 }
-                return await DispatchPlannedAsync(plan, wired, CallDiagnosticName.FromKnown(dot.Name), byInvocation).ConfigureAwait(false);
+                return await DispatchPlannedAsync(plan, wired, CallDiagnosticName.FromKnown(dot.Name), byInvocation, CalleeOrigin.Written(dot)).ConfigureAwait(false);
             }
             case PlanRouteKind.Extension:
             {
@@ -1083,13 +1098,13 @@ public static partial class Evaluator
                     : await ResolveAsync(ctx, (fallback, ctx), static state => ResolveAlg(state.fallback, state.ctx)).ConfigureAwait(false);
                 if (callee.IsError) return callee.Error;
                 var name = fallback is Expr.Resolve(var known) ? known : dot.Name;
-                return await DispatchPlannedAsync(plan, callee.Value, CallDiagnosticName.FromKnown(name), byInvocation).ConfigureAwait(false);
+                return await DispatchPlannedAsync(plan, callee.Value, CallDiagnosticName.FromKnown(name), byInvocation, CalleeOrigin.None).ConfigureAwait(false);
             }
             case PlanRouteKind.AlgorithmIntrinsic:
             {
                 var callee = await ProjectPlannedAlgorithmCalleeAsync(plan, dot, spanDecodeFailure: false).ConfigureAwait(false);
                 if (callee.IsError) return callee.Error;
-                return await DispatchPlannedAsync(plan, callee.Value.Callee, callee.Value.Name, byInvocation).ConfigureAwait(false);
+                return await DispatchPlannedAsync(plan, callee.Value.Callee, callee.Value.Name, byInvocation, CalleeOrigin.Cell(callee.Value.Cell)).ConfigureAwait(false);
             }
             default:
                 return byInvocation ? InvocationRefusal(plan) : await EvalDotCallCountedAsync(dot, ctx, plan.Values).ConfigureAwait(false);
@@ -1098,7 +1113,7 @@ public static partial class Evaluator
 
     /// <summary>MIRROR OF <see cref="DispatchPlannedCounted"/> — keep in lock-step.</summary>
     private static async ValueTask<EvalResult<CountedResult>> DispatchPlannedAsync(
-        InvocationPlan plan, Algorithm callee, CallDiagnosticName name, bool byInvocation)
+        InvocationPlan plan, Algorithm callee, CallDiagnosticName name, bool byInvocation, CalleeOrigin origin)
     {
         var ctx = plan.Caller;
         if (callee is Algorithm.Alias alias)
@@ -1106,7 +1121,7 @@ public static partial class Evaluator
             var target = await ResolveAliasTargetAsync(alias, ctx).ConfigureAwait(false);
             return target.IsError
                 ? target.Error
-                : await DispatchPlannedAsync(plan, target.Value, name, byInvocation).ConfigureAwait(false);
+                : await DispatchPlannedAsync(plan, target.Value, name, byInvocation, origin).ConfigureAwait(false);
         }
 
         if (callee is Algorithm.Builtin(var builtinId))
@@ -1117,7 +1132,7 @@ public static partial class Evaluator
         }
 
         if (TryGetFlatBinderUserEquivalent(callee) is { } simpleCallee)
-            return await DispatchPlannedUserAsync(plan, simpleCallee, name, byInvocation).ConfigureAwait(false);
+            return await DispatchPlannedUserAsync(plan, callee, simpleCallee, name, byInvocation, origin).ConfigureAwait(false);
 
         if (callee is Algorithm.Conditional)
         {
@@ -1127,7 +1142,12 @@ public static partial class Evaluator
             {
                 var supply = await PreparePlanSupplyAsync(plan, PlanSupplyShape.Cells, byInvocation).ConfigureAwait(false);
                 if (supply.IsError) return supply.Error;
-                return await EvalNeedFamilySupply(callee, PlanCells(supply.Value), ctx, plan.Values, name, asynchronous: true).ConfigureAwait(false);
+                var cells = PlanCells(supply.Value);
+                if (cells.Count == 0 && ZeroSupplyPublication(origin, callee, ctx) is { } binding)
+                    return await EvalPublishedZeroSupplyInvocationAsync(binding, callee, ctx, plan.Values,
+                        async () => ToPropertyResult(await EvalNeedFamilySupply(callee, cells, ctx, plan.Values, name, asynchronous: true)
+                            .ConfigureAwait(false))).ConfigureAwait(false);
+                return await EvalNeedFamilySupply(callee, cells, ctx, plan.Values, name, asynchronous: true).ConfigureAwait(false);
             }
             finally
             {
@@ -1135,12 +1155,12 @@ public static partial class Evaluator
             }
         }
 
-        return await DispatchPlannedUserAsync(plan, callee, name, byInvocation).ConfigureAwait(false);
+        return await DispatchPlannedUserAsync(plan, callee, callee, name, byInvocation, origin).ConfigureAwait(false);
     }
 
     /// <summary>MIRROR OF <see cref="DispatchPlannedUserCounted"/> — keep in lock-step.</summary>
     private static async ValueTask<EvalResult<CountedResult>> DispatchPlannedUserAsync(
-        InvocationPlan plan, Algorithm callee, CallDiagnosticName name, bool byInvocation)
+        InvocationPlan plan, Algorithm property, Algorithm callee, CallDiagnosticName name, bool byInvocation, CalleeOrigin origin)
     {
         var ctx = plan.Caller;
         var args = plan.Args;
@@ -1153,8 +1173,17 @@ public static partial class Evaluator
                 return projected.IsError ? projected.Error : EvalResult<CountedResult>.Ok(new(projected.Value, projected.Value.ValueCount()));
             var supply = await PreparePlanSupplyAsync(plan, UserPlanSupplyShape(plan, callee), byInvocation).ConfigureAwait(false);
             if (supply.IsError) return supply.Error;
-            return await EvalNeedUserSupply(callee, PlanCells(supply.Value), ctx, plan.Values, name, asynchronous: true, variadicArityStyle: true,
-                PlanMetaOccurrences(plan, callee, supply.Value)).ConfigureAwait(false);
+            var cells = PlanCells(supply.Value);
+            var occurrences = PlanMetaOccurrences(plan, callee, supply.Value);
+            if (cells.Count == 0 && ZeroSupplyPublication(origin, property, ctx) is { } binding)
+            {
+                var familyBoundary = property is Algorithm.Conditional;
+                return await EvalPublishedZeroSupplyInvocationAsync(binding, property, ctx, plan.Values,
+                    async () => ToPropertyResult(await EvalNeedUserSupply(callee, cells, ctx, plan.Values, name, asynchronous: true,
+                        variadicArityStyle: true, occurrences, valueBoundary: familyBoundary).ConfigureAwait(false))).ConfigureAwait(false);
+            }
+            return await EvalNeedUserSupply(callee, cells, ctx, plan.Values, name, asynchronous: true, variadicArityStyle: true,
+                occurrences).ConfigureAwait(false);
         }
     }
 

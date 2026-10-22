@@ -17,6 +17,12 @@ internal enum ZeroArgPropertyAccessKind
     Structural,
     CountedLexical,
     CountedStructural,
+
+    /// <summary>
+    /// A qualifying explicit zero-supply invocation (CACHE-PUB-1): never a request, hit or miss of
+    /// the property-style statistics; an owning publication is recorded as one of its stores.
+    /// </summary>
+    Invocation,
 }
 
 /// <summary>

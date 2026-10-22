@@ -31,8 +31,11 @@ public class PropertyCacheBindingIdentityReviewTests
             3, [1, 2, 2, 2, 1, 3, 3, 3, 1] },
         { "Outer(x) = { A = Tick() + x\n A, A(), A, Outer.A(), Outer.A }\nOuter(0)\nOuter(0)",
             6, [1, 2, 1, 3, 1, 4, 5, 4, 6, 4] },
+        // CACHE-PUB-1: the opened `A()` establishes the ONE entry of Lib's A for this Outer activation,
+        // which the structural `Lib.A` and the opened `A` reuse; `Lib.A()` stays fresh (formerly six
+        // ticks, [1, 2, 2, 3, 2, 4, 5, 5, 6, 5], when the opened call established nothing).
         { "Outer(x) = { open Lib\n Lib = { public A = Tick() + x }\n A(), Lib.A, A, Lib.A(), A }\nOuter(0)\nOuter(0)",
-            6, [1, 2, 2, 3, 2, 4, 5, 5, 6, 5] },
+            4, [1, 1, 1, 2, 1, 3, 3, 3, 4, 3] },
     };
 
     [Theory]

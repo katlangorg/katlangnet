@@ -152,6 +152,15 @@ public class Decimal128IntegerPowerReviewTests
             await Task.Yield();
             return GetOrEvaluate(execution, () => throw new InvalidOperationException("The seam supplies the cap verdict."));
         }
+
+        // CACHE-PUB-1: an invocation reaching this seam receives the same verdict.
+        public EvalResult<ZeroArgPropertyResult> Invoke(
+            ZeroArgPropertyExecution execution, Func<EvalResult<ZeroArgPropertyResult>> evaluate)
+            => GetOrEvaluate(execution, evaluate);
+
+        public ValueTask<EvalResult<ZeroArgPropertyResult>> InvokeAsync(
+            ZeroArgPropertyExecution execution, Func<ValueTask<EvalResult<ZeroArgPropertyResult>>> evaluateAsync)
+            => GetOrEvaluateAsync(execution, evaluateAsync);
     }
 
     [Fact]

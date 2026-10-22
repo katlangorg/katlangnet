@@ -768,8 +768,8 @@ theorem EvalBody.algorithmCalleeOf_disciplined (rec : EvalRec) (hrec : ∀ c, Di
     Disciplined (EvalBody.algorithmCalleeOf rec receiver ctx env) := by
   unfold EvalBody.algorithmCalleeOf; disc_tac
 
-theorem EvalBody.evalSuppliedCallCounted_disciplined (rec : EvalRec) (hrec : ∀ c, Disciplined (rec c)) (callee : Algorithm) (cells : List NeedSupply.Sourced) (ctx : EvalCtx) (env : ValEnv) (calleeName : String) :
-    Disciplined (EvalBody.evalSuppliedCallCounted rec callee cells ctx env calleeName) := by
+theorem EvalBody.evalSuppliedCallCounted_disciplined (rec : EvalRec) (hrec : ∀ c, Disciplined (rec c)) (origin : CalleeOrigin) (callee : Algorithm) (cells : List NeedSupply.Sourced) (ctx : EvalCtx) (env : ValEnv) (calleeName : String) :
+    Disciplined (EvalBody.evalSuppliedCallCounted rec origin callee cells ctx env calleeName) := by
   unfold EvalBody.evalSuppliedCallCounted; disc_tac
 
 theorem EvalBody.evalNeedUserSupply_disciplined (rec : EvalRec) (hrec : ∀ c, Disciplined (rec c)) (callee : Algorithm) (cells : List Nat) (ctx : EvalCtx) (env : ValEnv) :
@@ -872,8 +872,16 @@ theorem EvalBody.evalArgumentValue_disciplined (rec : EvalRec) (hrec : ∀ c, Di
     Disciplined (EvalBody.evalArgumentValue rec arg ctx env) := by
   unfold EvalBody.evalArgumentValue; disc_tac
 
-theorem EvalBody.evalZeroArgPropertyAccessCounted_disciplined (rec : EvalRec) (hrec : ∀ c, Disciplined (rec c)) (accessKind : ZeroArgPropertyAccessKind) (owner : Algorithm) (binding : PropDef) (resolvedAlgorithm : Algorithm) (ctx : EvalCtx) (env : ValEnv) :
-    Disciplined (EvalBody.evalZeroArgPropertyAccessCounted rec accessKind owner binding resolvedAlgorithm ctx env) := by
+/-- CACHE-PUB-1: a property request's calculation (a read's demand, an invocation's fresh call) is
+    disciplined whenever its recursive answer is. -/
+theorem EvalBody.zeroArgPropertyCalculation_disciplined (rec : EvalRec) (hrec : ∀ c, Disciplined (rec c)) (request : ZeroArgPropertyRequest) (resolvedAlgorithm : Algorithm) (ctx : EvalCtx) (env : ValEnv) :
+    Disciplined (EvalBody.zeroArgPropertyCalculation rec request resolvedAlgorithm ctx env) := by
+  unfold EvalBody.zeroArgPropertyCalculation; disc_tac
+
+theorem EvalBody.evalZeroArgPropertyAccessCounted_disciplined (rec : EvalRec) (hrec : ∀ c, Disciplined (rec c)) (accessKind : ZeroArgPropertyAccessKind) (owner : Algorithm) (binding : PropDef) (resolvedAlgorithm : Algorithm) (ctx : EvalCtx) (env : ValEnv) (request : ZeroArgPropertyRequest) :
+    Disciplined (EvalBody.evalZeroArgPropertyAccessCounted rec accessKind owner binding resolvedAlgorithm ctx env request) := by
+  have hcalc : ∀ q, Disciplined (EvalBody.zeroArgPropertyCalculation rec q resolvedAlgorithm ctx env) :=
+    fun q => EvalBody.zeroArgPropertyCalculation_disciplined rec hrec q resolvedAlgorithm ctx env
   unfold EvalBody.evalZeroArgPropertyAccessCounted; disc_tac
 
 theorem EvalBody.evalZeroArgPropertyAccess_disciplined (rec : EvalRec) (hrec : ∀ c, Disciplined (rec c)) (accessKind : ZeroArgPropertyAccessKind) (owner : Algorithm) (binding : PropDef) (resolvedAlgorithm : Algorithm) (ctx : EvalCtx) (env : ValEnv) :
@@ -962,8 +970,8 @@ theorem EvalBody.evalResolvedCall_disciplined (rec : EvalRec) (hrec : ∀ c, Dis
     Disciplined (EvalBody.evalResolvedCall rec callee args ctx env calleeName) := by
   unfold EvalBody.evalResolvedCall; disc_tac
 
-theorem EvalBody.evalResolvedCallCounted_disciplined (rec : EvalRec) (hrec : ∀ c, Disciplined (rec c)) (callee : Algorithm) (args : OutputBundle) (ctx : EvalCtx) (env : ValEnv) (calleeName : String) :
-    Disciplined (EvalBody.evalResolvedCallCounted rec callee args ctx env calleeName) := by
+theorem EvalBody.evalResolvedCallCounted_disciplined (rec : EvalRec) (hrec : ∀ c, Disciplined (rec c)) (callee : Algorithm) (args : OutputBundle) (ctx : EvalCtx) (env : ValEnv) (calleeName : String) (origin : CalleeOrigin) :
+    Disciplined (EvalBody.evalResolvedCallCounted rec callee args ctx env calleeName origin) := by
   unfold EvalBody.evalResolvedCallCounted; disc_tac
 
 theorem EvalBody.evalCallCountedExpr_disciplined (rec : EvalRec) (hrec : ∀ c, Disciplined (rec c)) (f : Expr) (args : OutputBundle) (ctx : EvalCtx) (env : ValEnv) :
@@ -1096,7 +1104,7 @@ theorem evalStep_disciplined (rec : EvalRec) (hrec : ∀ c, Disciplined (rec c))
   | capturedCallee callee => exact EvalBody.capturedCallee_disciplined rec hrec callee
   | referenceReceiverValue target targetAlg ctx env => exact EvalBody.referenceReceiverValue_disciplined rec hrec target targetAlg ctx env
   | algorithmCalleeOf receiver ctx env => exact EvalBody.algorithmCalleeOf_disciplined rec hrec receiver ctx env
-  | evalSuppliedCallCounted callee cells ctx env calleeName => exact EvalBody.evalSuppliedCallCounted_disciplined rec hrec callee cells ctx env calleeName
+  | evalSuppliedCallCounted origin callee cells ctx env calleeName => exact EvalBody.evalSuppliedCallCounted_disciplined rec hrec origin callee cells ctx env calleeName
   | evalNeedUserSupply callee cells ctx env => exact EvalBody.evalNeedUserSupply_disciplined rec hrec callee cells ctx env
   | evalNeedFamilySupply callee cells ctx env calleeName => exact EvalBody.evalNeedFamilySupply_disciplined rec hrec callee cells ctx env calleeName
   | invokeNeed arg => exact EvalBody.invokeNeed_disciplined rec hrec arg
@@ -1122,7 +1130,7 @@ theorem evalStep_disciplined (rec : EvalRec) (hrec : ∀ c, Disciplined (rec c))
   | evalZeroArgumentDemandOutput a ctx env => exact EvalBody.evalZeroArgumentDemandOutput_disciplined rec hrec a ctx env
   | evalArgumentValueCounted arg ctx env => exact EvalBody.evalArgumentValueCounted_disciplined rec hrec arg ctx env
   | evalArgumentValue arg ctx env => exact EvalBody.evalArgumentValue_disciplined rec hrec arg ctx env
-  | evalZeroArgPropertyAccessCounted accessKind owner binding resolvedAlgorithm ctx env => exact EvalBody.evalZeroArgPropertyAccessCounted_disciplined rec hrec accessKind owner binding resolvedAlgorithm ctx env
+  | evalZeroArgPropertyAccessCounted accessKind owner binding resolvedAlgorithm ctx env request => exact EvalBody.evalZeroArgPropertyAccessCounted_disciplined rec hrec accessKind owner binding resolvedAlgorithm ctx env request
   | evalZeroArgPropertyAccess accessKind owner binding resolvedAlgorithm ctx env => exact EvalBody.evalZeroArgPropertyAccess_disciplined rec hrec accessKind owner binding resolvedAlgorithm ctx env
   | evalConditionalCallbackCallCounted callee args ctx env calleeName => exact EvalBody.evalConditionalCallbackCallCounted_disciplined rec hrec callee args ctx env calleeName
   | evalUserCallbackCallCounted callee args ctx env => exact EvalBody.evalUserCallbackCallCounted_disciplined rec hrec callee args ctx env
@@ -1144,7 +1152,7 @@ theorem evalStep_disciplined (rec : EvalRec) (hrec : ∀ c, Disciplined (rec c))
   | evalUserCallCounted callee args ctx env => exact EvalBody.evalUserCallCounted_disciplined rec hrec callee args ctx env
   | evalConditionalCallCounted callee args ctx env calleeName => exact EvalBody.evalConditionalCallCounted_disciplined rec hrec callee args ctx env calleeName
   | evalResolvedCall callee args ctx env calleeName => exact EvalBody.evalResolvedCall_disciplined rec hrec callee args ctx env calleeName
-  | evalResolvedCallCounted callee args ctx env calleeName => exact EvalBody.evalResolvedCallCounted_disciplined rec hrec callee args ctx env calleeName
+  | evalResolvedCallCounted callee args ctx env calleeName origin => exact EvalBody.evalResolvedCallCounted_disciplined rec hrec callee args ctx env calleeName origin
   | evalCallCountedExpr f args ctx env => exact EvalBody.evalCallCountedExpr_disciplined rec hrec f args ctx env
   | callLexicalWithReceiverCounted name receiver fallback extraArgs ctx env => exact EvalBody.callLexicalWithReceiverCounted_disciplined rec hrec name receiver fallback extraArgs ctx env
   | rejectDotStringIntrinsicArguments argsOpt ctx env => exact EvalBody.rejectDotStringIntrinsicArguments_disciplined rec hrec argsOpt ctx env
@@ -1214,7 +1222,7 @@ theorem productionDiscipline_holds : ProductionDiscipline :=
   ⟨fun a e c v => evalUnbounded_disciplined (.evalSuppliedAt a e c v),
    fun f c => evalUnbounded_disciplined (.resolveCalleeAlg f c),
    fun g c => evalUnbounded_disciplined (.needPlanNormalizeCallee g c),
-   fun g cells c v n => evalUnbounded_disciplined (.evalSuppliedCallCounted g cells c v n),
+   fun o g cells c v n => evalUnbounded_disciplined (.evalSuppliedCallCounted o g cells c v n),
    fun b => evalUnbounded_disciplined (.demandNeedRecursive b),
    fun e c v => evalUnbounded_disciplined (.evalSupplySpread e c v),
    classify_disciplined,

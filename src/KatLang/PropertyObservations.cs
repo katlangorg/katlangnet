@@ -19,10 +19,13 @@ public enum PropertyValueStatus
 /// <summary>
 /// One root property value the run's ordinary evaluation PUBLISHED in its zero-argument property
 /// cache (<see cref="RunOptions.ObservePropertyValues"/>): the result of the property's outermost
-/// successful property-style read, which every later read of it reused. It is a snapshot of the
-/// completed run, not a live evaluator handle, and it is not a calculation history — explicit calls
-/// (<c>A()</c>), re-entrant reads under a running owner, and reads whose owner later failed publish
-/// nothing and so have no observation.
+/// successful qualifying evaluation — a property-style read, or an explicit zero-supply invocation
+/// (<c>A()</c>) that found the entry empty — which every later bare read of it reused. It is the
+/// property's ESTABLISHED value, not its latest calculation: a later explicit call is fresh, may
+/// return a different value, and never replaces it. It is a snapshot of the completed run, not a live
+/// evaluator handle, and it is not a calculation history — an explicit call of an already established
+/// property, re-entrant evaluations under a running owner, and evaluations whose owner later failed
+/// publish nothing and so have no observation.
 /// </summary>
 public sealed record PropertyValueObservation
 {
@@ -73,8 +76,9 @@ public sealed record PropertyValueObservation
 /// (<see cref="RunResult.PropertyObservations"/>). Order is the order in which the run published
 /// the values — dependencies before their dependants in an acyclic chain — not source order.
 /// <para>Absence proves nothing: a root property without an observation was not published in this
-/// run, which covers an unused property, one only called explicitly, and one whose calculation was
-/// never completed by an owning read. It must not be presented as "never calculated".</para>
+/// run, which covers an unused property, one only called with arguments or only through a callable
+/// that names no property binding, and one whose calculation was never completed by an owning
+/// evaluation. It must not be presented as "never calculated".</para>
 /// </summary>
 public sealed class PropertyObservations : IReadOnlyList<PropertyValueObservation>
 {

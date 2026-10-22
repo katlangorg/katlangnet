@@ -338,12 +338,17 @@ def afRejectedWith (rejection : BareForwardingRejection) : Except BareForwarding
 -- 7. THE CACHE KEY IS THE ALIAS BINDING'S (`zero_arg_cache_key_carries_the_binding_name`): a bare read of the
 --    alias `OnlyA` is Only's zero-supply demand stored under OnlyA's OWN entry, so `OnlyA, Only,
 --    OnlyA` evaluates Only's body twice (one evaluation per binding: Only binds its empty supply
---    and calls `Id`, two contexts each) and reuses OnlyA's entry; an explicit `OnlyA()` is fresh
---    and populates nothing.
+--    and calls `Id`, two contexts each) and reuses OnlyA's entry; an explicit `OnlyA()` is fresh.
+--    CACHE-PUB-1: `OnlyA()` invokes the target's callable through the ALIAS binding — the same
+--    calculation OnlyA's bare read requests (Only's zero-supply demand) — so on an empty entry it
+--    establishes OnlyA's OWN entry (never Only's): `OnlyA(), OnlyA` evaluates once (formerly
+--    twice), while `OnlyA, OnlyA()` still evaluates twice and `OnlyA(), Only` keeps one evaluation
+--    per binding.
 #guard afSucceedsWith [resolve "OnlyA", resolve "Only", resolve "OnlyA"] (.sequenceValue [.atom 0, .atom 0, .atom 0])
 #guard (afRun [resolve "OnlyA", resolve "Only", resolve "OnlyA"]).snd == 4
-#guard (afRun [afCall "OnlyA" [], resolve "OnlyA"]).snd == 4
+#guard (afRun [afCall "OnlyA" [], resolve "OnlyA"]).snd == 2
 #guard (afRun [resolve "OnlyA", afCall "OnlyA" []]).snd == 4
+#guard (afRun [afCall "OnlyA" [], resolve "Only"]).snd == 4
 -- A ZERO-PARAMETER target is READ, never aliased (`zero_parameter_user_algorithm_is_not_an_alias_target`):
 -- `ZA = Z` reads Z's own cached value, so `ZA, Z, ZA` evaluates Z's body once.
 #guard afSucceedsWith [resolve "ZA", resolve "Z", resolve "ZA"] (.sequenceValue [.atom 3, .atom 3, .atom 3])

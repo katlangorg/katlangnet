@@ -319,6 +319,15 @@ Roll == Roll
 
 `Roll() == Roll()`, by contrast, rolls twice and is `true` only when the two rolls happen to agree.
 
+An explicit call never reuses the stored value, but it can provide it: if nothing has read the property yet, the value of the first explicit call becomes the value that later reads reuse. A later explicit call still evaluates afresh and never changes that stored value:
+
+```
+Roll = randomInt(1, 7)
+Roll(), Roll, Roll(), Roll
+```
+
+Here `Roll()` rolls first, the bare `Roll` reuses that roll, the second `Roll()` rolls again, and the final `Roll` still shows the first roll: rows one, two and four always agree.
+
 A property may also read itself, directly or through other properties. Each such inner read is evaluated afresh while the outer read is still being computed and gives its own result, and the value the OUTERMOST read computes is the one later reads reuse. With `A = if(Roll() < 4, A + 1, 0)`, the first read of `A` counts how many rolls in a row were below 4, and every later read of `A` in the run gives that same count.
 
 The same rule covers an algorithm that has parameters but still works with no arguments: its name alone reads its cached value, and only `A()` evaluates it again (see [Using the Name Alone](#using-the-name-alone)).
@@ -1728,7 +1737,7 @@ The rebuilt call is a new call, but its arguments are the very arguments of the 
 
 Obtaining `R.Algorithm` does not run the captured call or compute its arguments. A clause family is chosen again by the new arguments, and the algorithm keeps the names it was written with. Written without arguments, `R.Algorithm` is the captured algorithm read as a value, so for `Square`, which needs an argument, `R.Algorithm` alone is an error; `R.Algorithm()` calls it with no arguments, which is an error too — it never repeats the captured `5` (that is `R.Invoke()`). A property such as `A = R.Algorithm` is a new name for the captured algorithm, as in [Naming a Received Algorithm](#naming-a-received-algorithm): `A(8)` calls it afresh, `[1, 2].map(A)` uses it, and `A` alone is its value. Like `Invoke` and `Arguments`, `x.Algorithm` means the call-reference operation unless `x` has its own member named `Algorithm`; a definition named `Algorithm` of your own is still called as `Algorithm(x)`.
 
-If a received target is an ordinary zero-parameter property, the alias keeps ordinary property behavior: repeated bare reads share its value, while each explicit `A()` evaluates the alias's expression once afresh. Checking whether the target is callable does not repeat that expression within the call. An earlier higher-order member lookup does not supply a later call or bare read's computation. A runtime alias also keeps its own declared members through alias chains; opening it imports those members, without importing the target's members. Static callable aliases still cannot be opened.
+If a received target is an ordinary zero-parameter property, the alias keeps ordinary property behavior: repeated bare reads share its value, while each explicit `A()` evaluates the alias's expression once afresh. The first successful owning `A()` may establish the alias's empty cached value; subsequent bare `A` reads reuse it, and later calls never replace it. This belongs to the alias's own binding and activation, and never populates its target's cache. Parameterized runtime-callable aliases keep their fresh-call behavior and do not publish this way. Checking whether the target is callable shares receiver work with the first ordinary read or terminal call, including work already performed by a higher-order member lookup. A runtime alias also keeps its own declared members through alias chains; opening it imports those members, without importing the target's members. Static callable aliases still cannot be opened.
 
 
 ---
@@ -2116,7 +2125,7 @@ Roll == Roll
 | You write | Meaning |
 |---|---|
 | `Roll` | The value: evaluated once, then reused |
-| `Roll()` | A fresh evaluation |
+| `Roll()` | A fresh evaluation (if `Roll` has no value yet, this one becomes it) |
 | `Roll(2)` | A fresh evaluation with the argument `2` |
 
 The name alone means the value wherever it appears in a formula or a list, so it never receives the arguments of the formula that uses it:

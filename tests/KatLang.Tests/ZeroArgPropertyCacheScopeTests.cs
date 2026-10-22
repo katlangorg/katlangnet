@@ -77,6 +77,18 @@ public class ZeroArgPropertyCacheScopeTests
 
         private static void Count(Dictionary<string, int> counts, string name)
             => counts[name] = counts.GetValueOrDefault(name) + 1;
+
+        // CACHE-PUB-1: an explicit zero-supply invocation keeps the inner cache's publication law; it is
+        // no read-seam access, so this cache's read bookkeeping is unchanged.
+        public EvalResult<ZeroArgPropertyResult> Invoke(
+            ZeroArgPropertyExecution execution,
+            Func<EvalResult<ZeroArgPropertyResult>> evaluate)
+            => _inner.Invoke(execution, evaluate);
+
+        public ValueTask<EvalResult<ZeroArgPropertyResult>> InvokeAsync(
+            ZeroArgPropertyExecution execution,
+            Func<ValueTask<EvalResult<ZeroArgPropertyResult>>> evaluateAsync)
+            => _inner.InvokeAsync(execution, evaluateAsync);
     }
 
     private static Expr Program(string source)
@@ -356,7 +368,10 @@ public class ZeroArgPropertyCacheScopeTests
     [Theory]
     [InlineData("A, A", "100,100", 1)]
     [InlineData("A(), A()", "100,200", 2)]
-    [InlineData("A(), A", "100,200", 2)]
+    // CACHE-PUB-1: an explicit A() that finds A's entry empty establishes it (formerly "100,200").
+    [InlineData("A(), A", "100,100", 1)]
+    [InlineData("A(), A, A(), A", "100,100,200,100", 2)]
+    [InlineData("A(), B", "100,100,100", 1)]
     [InlineData("A, A()", "100,200", 2)]
     [InlineData("A, A(), A", "100,200,100", 2)]
     [InlineData("B", "100,100", 1)]

@@ -196,9 +196,12 @@ def indexes (items : List Int) : Expr := list items
 #guard value [sel dataFresh [num 2, num 0, num 2]] == some (seqv (atoms [30, 10, 30]))
 #guard contexts [sel dataFresh []] == 2
 #guard value [sel dataFresh []] == some (seqv [])
--- `Data()` neither reads nor populates the ordinary entry: the later bare reads still evaluate
--- the body once (2 + 1 contexts).
-#guard contexts [sel dataFresh [num 0], sel data [num 0], sel data [num 1]] == 3
+-- `Data()` never reads the ordinary entry, but as the owning zero-supply invocation of an empty
+-- entry it ESTABLISHES it (CACHE-PUB-1, superseding "neither reads nor populates", which gave 2 + 1
+-- contexts): the later bare reads reuse its value and evaluate nothing (2 contexts) …
+#guard contexts [sel dataFresh [num 0], sel data [num 0], sel data [num 1]] == 2
+-- … while a bare read first still leaves every later explicit call fresh (1 + 2 contexts).
+#guard contexts [sel data [num 0], sel dataFresh [num 0], sel data [num 1]] == 3
 -- An otherwise unused selection stays undemanded.
 #guard value [.call (resolve "K") [sel (resolve "Bad") [num 0]]] == some (.atom 7)
 #guard contexts [.call (resolve "K") [sel (resolve "Bad") [num 0]]] == 1

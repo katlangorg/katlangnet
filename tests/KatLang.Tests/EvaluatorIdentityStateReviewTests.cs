@@ -174,5 +174,8 @@ public class EvaluatorIdentityStateReviewTests
             }
             return evaluate();
         }
+
+        // CACHE-PUB-1: this cache stores nothing, so an invocation simply executes.
+        public EvalResult<ZeroArgPropertyResult> Invoke(ZeroArgPropertyExecution execution, Func<EvalResult<ZeroArgPropertyResult>> evaluate) => evaluate();
     }
 }

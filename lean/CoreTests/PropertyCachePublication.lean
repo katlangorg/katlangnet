@@ -50,8 +50,24 @@ def pubRoot (out : List KatLang.Expr) : KatLang.Expr :=
   .algorithmExpr (algPrivate [] []
     [ -- Direct recursion: P = if(x == 0, 1, G(x - 1) + 100), G(x) = P.
       ("P", pubRecursive "G" (num 1) pubPlus100), ("G", pubReader "P")
-      -- H(x) = P(): an explicit call owns nothing.
+      -- H(x) = P(): an explicit zero-supply invocation of P (CACHE-PUB-1: it may own P's key).
     , ("H", alg ["x"] [] [] [.call (resolve "P") []])
+      -- CACHE-PUB-1 explicit-call recursion: PC = if(x == 0, 1, HC(x - 1) + 100), HC(x) = PC(),
+      -- GC(x) = PC.
+    , ("PC", pubRecursive "HC" (num 1) pubPlus100)
+    , ("HC", alg ["x"] [] [] [.call (resolve "PC") []]), ("GC", pubReader "PC")
+      -- A read owning an inner explicit call: PR = if(x == 0, 1, HR(x - 1) + 100), HR(x) = PR(),
+      -- GR(x) = PR.
+    , ("PR", pubRecursive "HR" (num 1) pubPlus100)
+    , ("HR", alg ["x"] [] [] [.call (resolve "PR") []]), ("GR", pubReader "PR")
+      -- A failing explicit owner after an inner success, and after another key published:
+      -- PFC = if(x == 0, 1, HFC(x - 1) + 1 / 0), HFC(x) = PFC();
+      -- PSC = if(x == 0, 1, Seven + HSC(x - 1) + 1 / 0), HSC(x) = PSC().
+    , ("PFC", pubRecursive "HFC" (num 1) (fun inner => .binary .add inner (.binary .div (num 1) (num 0))))
+    , ("HFC", alg ["x"] [] [] [.call (resolve "PFC") []])
+    , ("PSC", pubRecursive "HSC" (num 1)
+        (fun inner => .binary .add (.binary .add (resolve "Seven") inner) (.binary .div (num 1) (num 0))))
+    , ("HSC", alg ["x"] [] [] [.call (resolve "PSC") []])
       -- Re-entrance through an explicit-call frame:
       -- R = if(x == 0, 1, L(x - 1) + 100), L(x) = M(), M = R, LR(x) = R.
     , ("R", pubRecursive "L" (num 1) pubPlus100)
@@ -111,24 +127,78 @@ def pubDeeperRecursion : Bool :=
 
 #guard pubDeeperRecursion
 
-/-- An explicit call owns nothing: inside `P()` (x = 1) the first PROPERTY-STYLE read of P
-    (x = 0, through G) is P's owner and publishes 1; `P()` itself returns its fresh 101. -/
-def pubExplicitCallOwnsNothing : Bool :=
+/-- CACHE-PUB-1 (owner decision October 22 2026, superseding "an explicit call owns nothing"):
+    the explicit zero-supply invocation `P()` (x = 1) is P's OWNER — the key is empty and inactive
+    — so the property-style read of P inside it (x = 0, through G) is RE-ENTRANT: it returns 1 and
+    publishes nothing, and `P()`'s own success publishes 101, which G(5) reuses. Under the
+    superseded rule the inner read owned the key and published 1 (`S[101, 1]`). -/
+def pubExplicitCallOwnsTheEntry : Bool :=
   match pubRun [pubCall "H" 1, pubCall "G" 5] with
-  | (.ok result, cache, 0) => result == pubAtoms [101, 1] && cache == [("P", Result.atom 1)]
+  | (.ok result, cache, 0) => result == pubAtoms [101, 101] && cache == [("P", Result.atom 101)]
   | _ => false
 
-#guard pubExplicitCallOwnsNothing
+#guard pubExplicitCallOwnsTheEntry
 
 /-- Re-entrance is detected through an explicit-call frame: R's owner (x = 1) calls L(0),
     whose explicit `M()` reads R property-style while R is active — re-entrant, 1, not
-    published; R's owner publishes 101. The explicit `M()` publishes nothing for M. -/
+    published; R's owner publishes 101. The explicit `M()` is M's owning zero-supply invocation:
+    it establishes M's entry with the 1 it computed (CACHE-PUB-1; formerly M stayed empty). -/
 def pubReentranceThroughExplicitCall : Bool :=
   match pubRun [pubCall "LR" 1, pubCall "LR" 5] with
-  | (.ok result, cache, 0) => result == pubAtoms [101, 101] && cache == [("R", Result.atom 101)]
+  | (.ok result, cache, 0) =>
+      result == pubAtoms [101, 101] && cache == [("M", Result.atom 1), ("R", Result.atom 101)]
   | _ => false
 
 #guard pubReentranceThroughExplicitCall
+
+/-! ### CACHE-PUB-1: explicit zero-supply invocations share the ONE ownership domain -/
+
+/-- An explicit call owning another explicit call of the same key: HC(1)'s `PC()` owns PC's key;
+    HC(0)'s inner `PC()` is re-entrant (1, unpublished); the owner publishes 101, which a later
+    bare read (GC(5)) reuses. -/
+def pubExplicitOwnerInnerExplicitCall : Bool :=
+  match pubRun [pubCall "HC" 1, pubCall "GC" 5] with
+  | (.ok result, cache, 0) => result == pubAtoms [101, 101] && cache == [("PC", Result.atom 101)]
+  | _ => false
+
+#guard pubExplicitOwnerInnerExplicitCall
+
+/-- A property-style read owning an inner explicit call: GR(1)'s read of PR owns the key, HR(0)'s
+    `PR()` is re-entrant (1, unpublished) and the read publishes 101. A later explicit `PR()`
+    (HR(0)) is FRESH — it returns its own 1 — and leaves the established 101 unchanged. -/
+def pubReadOwnerInnerExplicitCall : Bool :=
+  match pubRun [pubCall "GR" 1, pubCall "HR" 0, pubCall "GR" 5] with
+  | (.ok result, cache, 0) => result == pubAtoms [101, 1, 101] && cache == [("PR", Result.atom 101)]
+  | _ => false
+
+#guard pubReadOwnerInnerExplicitCall
+
+/-- An established entry is never replaced by a fresh explicit invocation: G(1) publishes 101;
+    H(0)'s `P()` (x = 0) executes and returns 1 without reading or replacing it; G(5) still reads
+    101. -/
+def pubEstablishedEntryUnchangedByFreshCall : Bool :=
+  match pubRun [pubCall "G" 1, pubCall "H" 0, pubCall "G" 5] with
+  | (.ok result, cache, 0) => result == pubAtoms [101, 1, 101] && cache == [("P", Result.atom 101)]
+  | _ => false
+
+#guard pubEstablishedEntryUnchangedByFreshCall
+
+/-- A failed explicit owner publishes nothing for its key — the inner re-entrant `PFC()` completed
+    with 1, which never survives — and releases the key. -/
+def pubFailedExplicitOwnerPublishesNothing : Bool :=
+  match pubRun [pubCall "HFC" 1] with
+  | (.error err, cache, 0) => innermostIsDivByZero err && cache.isEmpty
+  | _ => false
+
+#guard pubFailedExplicitOwnerPublishesNothing
+
+/-- …while another key's owner that completed inside the failed explicit attempt keeps its entry. -/
+def pubFailedExplicitOwnerKeepsOtherEntries : Bool :=
+  match pubRun [pubCall "HSC" 1] with
+  | (.error err, cache, 0) => innermostIsDivByZero err && cache == [("Seven", Result.atom 7)]
+  | _ => false
+
+#guard pubFailedExplicitOwnerKeepsOtherEntries
 
 /-- Indirect recursion IA → IB → IA: IB's owner publishes the 1 it computed from IA's
     re-entrant read, then IA's owner publishes 101 (formerly IA held the re-entrant 1). -/

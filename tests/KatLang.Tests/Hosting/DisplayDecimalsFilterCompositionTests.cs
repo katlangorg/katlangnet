@@ -394,9 +394,11 @@ public sealed class DisplayDecimalsFilterCompositionTests
     }
 
     /// <summary>
-    /// An explicit <c>DisplayDecimals()</c> is a fresh call: it neither reads nor populates the
-    /// cached entry, so it never satisfies the engine's later cached read — which evaluates the
-    /// property again, and whose value (not the explicit call's) is the source filter.
+    /// An explicit <c>DisplayDecimals()</c> is a fresh call that never READS the cached entry. Since
+    /// CACHE-PUB-1 (owner decision October 22 2026) an explicit call that finds the entry EMPTY
+    /// establishes it, so the engine's later cached read reuses the explicit call's value as the
+    /// source filter instead of evaluating the property again (formerly two ticks and the second
+    /// value, 6). A cached read first is still reused, and a later explicit call stays fresh.
     /// </summary>
     [Theory]
     [InlineData(null)]
@@ -405,9 +407,9 @@ public sealed class DisplayDecimalsFilterCompositionTests
     public async Task ExplicitCall_IsFresh_AndNeverSatisfiesTheCachedEngineRead(int? hostFilter)
     {
         var explicitOnly = await OnEveryEngineRouteAsync("DisplayDecimals = tick() + 4\nDisplayDecimals(), 1 / 7", hostFilter);
-        Assert.Equal(["tick#1", "tick#2"], explicitOnly.HostCalls);
+        Assert.Equal(["tick#1"], explicitOnly.HostCalls);
         Assert.StartsWith("S[5, ", explicitOnly.Value, StringComparison.Ordinal);
-        Assert.Equal(hostFilter is { } h ? Math.Min(6, h) : 6, explicitOnly.Decimals);
+        Assert.Equal(hostFilter is { } h ? Math.Min(5, h) : 5, explicitOnly.Decimals);
 
         // A cached read in the output, then an explicit call: the engine reuses the cached 5.
         var cachedFirst = await OnEveryEngineRouteAsync("DisplayDecimals = tick() + 4\nDisplayDecimals, DisplayDecimals(), 1 / 7", hostFilter);

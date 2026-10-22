@@ -222,18 +222,20 @@ public class ZeroArgumentReferenceLiftingTests
 
     /// <summary>
     /// <c>A</c> versus <c>A()</c>: the bare reads share the entry, while an explicit call is a
-    /// fresh evaluation that neither reads, replaces nor populates it — with or without
-    /// arguments, and in a lifting position as much as anywhere else.
+    /// fresh evaluation that never reads or replaces it — with or without arguments, and in a
+    /// lifting position as much as anywhere else. CACHE-PUB-1: a ZERO-SUPPLY call that finds the
+    /// entry empty establishes it; a call with arguments never does.
     /// </summary>
     [Fact]
     public async Task ExplicitCalls_StayFresh_AndNeverTouchTheEntry()
     {
         AssertOk(await OnEveryRouteAsync($"{Only}\nOnly, Only(), Only"), "S[1, 2, 1]", "tick#1", "tick#2");
-        // The first explicit call does not populate the entry: the first bare read evaluates.
+        // The first explicit zero-supply call establishes the entry (CACHE-PUB-1; formerly the first
+        // bare read evaluated again: S[1, 2, 3, 2]); the second call is fresh and replaces nothing.
         AssertOk(
             await OnEveryRouteAsync($"{Only}\nOnly(), Only, Only(), Only"),
-            "S[1, 2, 3, 2]",
-            "tick#1", "tick#2", "tick#3");
+            "S[1, 1, 2, 1]",
+            "tick#1", "tick#2");
         // A call WITH arguments is equally fresh and equally separate from the entry.
         AssertOk(
             await OnEveryRouteAsync($"{Only}\nOnly(1, 2), Only, Only(3), Only"),
@@ -482,7 +484,8 @@ public class ZeroArgumentReferenceLiftingTests
             await OnEveryRouteAsync("A = tick()\nA, A(), A, A + A, [A]"),
             "S[1, 2, 1, 2, L[1]]",
             "tick#1", "tick#2");
-        AssertOk(await OnEveryRouteAsync("A = tick()\nA(), A"), "S[1, 2]", "tick#1", "tick#2");
+        // CACHE-PUB-1: the explicit call establishes the empty entry (formerly S[1, 2]).
+        AssertOk(await OnEveryRouteAsync("A = tick()\nA(), A"), "S[1, 1]", "tick#1");
     }
 
     // ── 6. Aliases ───────────────────────────────────────────────────────────────────

@@ -942,7 +942,10 @@ public class AliasAndBareForwardingTests
     [InlineData("A = Cnt\nA(1, 2, 3), A(), A", "ok S[3, 0, 0]")]
     [InlineData("A = Cnt\nmap([1, 2], A), map([(10, 7), 20], A)", "ok S[L[1, 1], L[1, 1]]")]
     [InlineData("A = Cnt\nA == A", "ok true")]
-    [InlineData("A = Only\nA(), A(), A", "ok S[1, 2, 3] [tick#1,tick#2,tick#3]")]
+    // CACHE-PUB-1: the first A() establishes the ALIAS binding's own entry; the second is fresh
+    // (formerly S[1, 2, 3]); the target keeps its own entry.
+    [InlineData("A = Only\nA(), A(), A", "ok S[1, 2, 1] [tick#1,tick#2]")]
+    [InlineData("A = Only\nA(), A, Only", "ok S[1, 1, 2] [tick#1,tick#2]")]
     [InlineData("A = Only\nOnly, Only, A, A", "ok S[1, 1, 2, 2] [tick#1,tick#2]")]
     [InlineData("W(p) = Only\nW(1), W(2), Only", "ok S[1, 1, 1] [tick#1]")]
     [InlineData("W(*xs) = Only\nW(1), W(2)", "ok S[1, 2] [tick#1,tick#2]")]

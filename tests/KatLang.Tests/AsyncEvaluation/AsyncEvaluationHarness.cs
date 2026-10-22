@@ -80,6 +80,24 @@ internal sealed class PassThroughAsyncZeroArgPropertyResultCache : IAsyncZeroArg
         ObservedBudget = (EvaluationBudget)execution.RunIdentity;
         return _inner.GetOrEvaluateAsync(execution, evaluateAsync);
     }
+
+    // CACHE-PUB-1: an explicit zero-supply invocation keeps the inner cache's publication law; it is
+    // no read-seam access, so the access counters above are unchanged.
+    public EvalResult<ZeroArgPropertyResult> Invoke(
+        ZeroArgPropertyExecution execution,
+        Func<EvalResult<ZeroArgPropertyResult>> evaluate)
+    {
+        ObservedBudget = (EvaluationBudget)execution.RunIdentity;
+        return _inner.Invoke(execution, evaluate);
+    }
+
+    public ValueTask<EvalResult<ZeroArgPropertyResult>> InvokeAsync(
+        ZeroArgPropertyExecution execution,
+        Func<ValueTask<EvalResult<ZeroArgPropertyResult>>> evaluateAsync)
+    {
+        ObservedBudget = (EvaluationBudget)execution.RunIdentity;
+        return _inner.InvokeAsync(execution, evaluateAsync);
+    }
 }
 
 /// <summary>
@@ -123,6 +141,31 @@ internal sealed class SuspendingAsyncZeroArgPropertyResultCache : IAsyncZeroArgP
         _threadHops.Add((before, Environment.CurrentManagedThreadId));
         return await _inner.GetOrEvaluateAsync(execution, evaluateAsync);
     }
+
+    /// <summary>CACHE-PUB-1: explicit zero-supply invocations reaching the synchronous member (never on the twin).</summary>
+    public int SyncInvocations { get; private set; }
+
+    /// <summary>CACHE-PUB-1: explicit zero-supply invocations, each genuinely suspending before the inner law.</summary>
+    public int AsyncInvocations { get; private set; }
+
+    public EvalResult<ZeroArgPropertyResult> Invoke(
+        ZeroArgPropertyExecution execution,
+        Func<EvalResult<ZeroArgPropertyResult>> evaluate)
+    {
+        SyncInvocations++;
+        return _inner.Invoke(execution, evaluate);
+    }
+
+    public async ValueTask<EvalResult<ZeroArgPropertyResult>> InvokeAsync(
+        ZeroArgPropertyExecution execution,
+        Func<ValueTask<EvalResult<ZeroArgPropertyResult>>> evaluateAsync)
+    {
+        AsyncInvocations++;
+        // Suspends like a read access; recorded apart from the read hops, which tests equate with
+        // AsyncAccesses.
+        await Task.Yield();
+        return await _inner.InvokeAsync(execution, evaluateAsync);
+    }
 }
 
 /// <summary>
@@ -162,6 +205,24 @@ internal sealed class CountingSuspendingAsyncZeroArgPropertyResultCache : IAsync
                 return await evaluateAsync();
             });
     }
+
+    // CACHE-PUB-1: an invocation suspends inside its (always-run) calculation too; it is no read
+    // access, so the read counters above are unchanged.
+    public EvalResult<ZeroArgPropertyResult> Invoke(
+        ZeroArgPropertyExecution execution,
+        Func<EvalResult<ZeroArgPropertyResult>> evaluate)
+        => _inner.Invoke(execution, evaluate);
+
+    public ValueTask<EvalResult<ZeroArgPropertyResult>> InvokeAsync(
+        ZeroArgPropertyExecution execution,
+        Func<ValueTask<EvalResult<ZeroArgPropertyResult>>> evaluateAsync)
+        => _inner.InvokeAsync(
+            execution,
+            async () =>
+            {
+                await Task.Yield();
+                return await evaluateAsync();
+            });
 }
 
 /// <summary>
@@ -189,6 +250,26 @@ internal sealed class ThrowingAsyncZeroArgPropertyResultCache(Exception exceptio
     }
 
     public async ValueTask<EvalResult<ZeroArgPropertyResult>> GetOrEvaluateAsync(
+        ZeroArgPropertyExecution execution,
+        Func<ValueTask<EvalResult<ZeroArgPropertyResult>>> evaluateAsync)
+    {
+        _ = evaluateAsync;
+        AsyncAccesses++;
+        ObservedBudget = (EvaluationBudget)execution.RunIdentity;
+        await Task.Yield();
+        throw exception;
+    }
+
+    // CACHE-PUB-1: an explicit zero-supply invocation is a seam use too, and fails the same way.
+    public EvalResult<ZeroArgPropertyResult> Invoke(
+        ZeroArgPropertyExecution execution,
+        Func<EvalResult<ZeroArgPropertyResult>> evaluate)
+    {
+        SyncAccesses++;
+        throw exception;
+    }
+
+    public async ValueTask<EvalResult<ZeroArgPropertyResult>> InvokeAsync(
         ZeroArgPropertyExecution execution,
         Func<ValueTask<EvalResult<ZeroArgPropertyResult>>> evaluateAsync)
     {
@@ -230,6 +311,18 @@ internal sealed class CancellingAsyncZeroArgPropertyResultCache(
 
         return _inner.GetOrEvaluateAsync(execution, evaluateAsync);
     }
+
+    // CACHE-PUB-1: an explicit zero-supply invocation keeps the inner cache's publication law; it is
+    // no read-seam access, so the access counters above are unchanged.
+    public EvalResult<ZeroArgPropertyResult> Invoke(
+        ZeroArgPropertyExecution execution,
+        Func<EvalResult<ZeroArgPropertyResult>> evaluate)
+        => _inner.Invoke(execution, evaluate);
+
+    public ValueTask<EvalResult<ZeroArgPropertyResult>> InvokeAsync(
+        ZeroArgPropertyExecution execution,
+        Func<ValueTask<EvalResult<ZeroArgPropertyResult>>> evaluateAsync)
+        => _inner.InvokeAsync(execution, evaluateAsync);
 }
 
 /// <summary>
@@ -263,6 +356,18 @@ internal sealed class CancellingAfterAsyncZeroArgPropertyResultCache(
 
         return result;
     }
+
+    // CACHE-PUB-1: an explicit zero-supply invocation keeps the inner cache's publication law; it is
+    // no read-seam access, so the access counters above are unchanged.
+    public EvalResult<ZeroArgPropertyResult> Invoke(
+        ZeroArgPropertyExecution execution,
+        Func<EvalResult<ZeroArgPropertyResult>> evaluate)
+        => _inner.Invoke(execution, evaluate);
+
+    public ValueTask<EvalResult<ZeroArgPropertyResult>> InvokeAsync(
+        ZeroArgPropertyExecution execution,
+        Func<ValueTask<EvalResult<ZeroArgPropertyResult>>> evaluateAsync)
+        => _inner.InvokeAsync(execution, evaluateAsync);
 }
 
 /// <summary>
@@ -303,4 +408,16 @@ internal sealed class HoldingAsyncZeroArgPropertyResultCache(int holdAtAccess) :
 
         return await _inner.GetOrEvaluateAsync(execution, evaluateAsync);
     }
+
+    // CACHE-PUB-1: an explicit zero-supply invocation keeps the inner cache's publication law; it is
+    // no read-seam access, so the access counters above are unchanged.
+    public EvalResult<ZeroArgPropertyResult> Invoke(
+        ZeroArgPropertyExecution execution,
+        Func<EvalResult<ZeroArgPropertyResult>> evaluate)
+        => _inner.Invoke(execution, evaluate);
+
+    public ValueTask<EvalResult<ZeroArgPropertyResult>> InvokeAsync(
+        ZeroArgPropertyExecution execution,
+        Func<ValueTask<EvalResult<ZeroArgPropertyResult>>> evaluateAsync)
+        => _inner.InvokeAsync(execution, evaluateAsync);
 }

@@ -337,7 +337,8 @@ public static partial class Evaluator
     /// ELIGIBILITY is what the September 2026 rule changed; the CACHE is untouched: a
     /// property-style demand still reaches this funnel through
     /// <see cref="GetOrEvaluateZeroArgPropertyResult"/> (the run cache), while
-    /// <c>Only()</c> stays an ordinary call that bypasses it.
+    /// <c>Only()</c> stays an ordinary call that never reads it (and, finding Only's entry empty,
+    /// establishes it through the same publication law — CACHE-PUB-1, <c>Evaluator.PropertyInvocations.cs</c>).
     ///
     /// <para>FRAME-SIZE DISCIPLINE: nested blocks and property reads recurse through this
     /// funnel inside the calibrated 1 MiB evaluator envelopes, so the overwhelmingly

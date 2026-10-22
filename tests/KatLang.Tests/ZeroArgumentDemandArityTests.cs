@@ -606,6 +606,18 @@ public class ZeroArgumentDemandArityTests
 
         private static void Count(Dictionary<string, int> counts, string name)
             => counts[name] = counts.GetValueOrDefault(name) + 1;
+
+        // CACHE-PUB-1: an explicit zero-supply invocation keeps the inner cache's publication law; it is
+        // no read-seam access, so this cache's read bookkeeping is unchanged.
+        public EvalResult<ZeroArgPropertyResult> Invoke(
+            ZeroArgPropertyExecution execution,
+            Func<EvalResult<ZeroArgPropertyResult>> evaluate)
+            => _inner.Invoke(execution, evaluate);
+
+        public ValueTask<EvalResult<ZeroArgPropertyResult>> InvokeAsync(
+            ZeroArgPropertyExecution execution,
+            Func<ValueTask<EvalResult<ZeroArgPropertyResult>>> evaluateAsync)
+            => _inner.InvokeAsync(execution, evaluateAsync);
     }
 
     /// <summary>

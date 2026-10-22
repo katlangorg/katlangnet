@@ -450,7 +450,9 @@ def blockSlotDemandAgrees (a : Algorithm) : Bool :=
 -- Cache insertion order exposes evaluation order without host operations. A
 -- newly eligible source is demanded BEFORE the control's ordinary eager attempt.
 -- The collection slot reads `Source` as the ordinary property read, so `Source`'s
--- own entry is stored once its body (which reads `A`) completes.
+-- own entry is stored once its body (which reads `A`) completes. The control's
+-- explicit `Next()` then reads `B` and, as Next's owning zero-supply invocation,
+-- establishes Next's entry last (CACHE-PUB-1).
 def collectingSourceBeforeControl : Bool :=
   let source := algWithParameters [{ name := "xs", kind := .collecting }] [] [] [resolve "A"]
   let next := alg [] [] [] [resolve "B"]
@@ -460,7 +462,7 @@ def collectingSourceBeforeControl : Bool :=
     [.call (resolve "take") [resolve "Source", .call (resolve "Next") []]]
   match (runResultM program).run EvalState.empty with
   | .ok (.listValue [.atom 7], state) =>
-      state.zeroArgPropertyCache.map (fun entry => entry.fst.propertyName) == ["A", "Source", "B"]
+      state.zeroArgPropertyCache.map (fun entry => entry.fst.propertyName) == ["A", "Source", "B", "Next"]
   | _ => false
 #guard collectingSourceBeforeControl
 

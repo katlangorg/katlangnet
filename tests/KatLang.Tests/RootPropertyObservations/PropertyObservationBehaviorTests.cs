@@ -164,26 +164,41 @@ public class PropertyObservationBehaviorTests
 
     // ── 3. Explicit calls ───────────────────────────────────────────────────────────────────
 
+    // CACHE-PUB-1 (owner decision 2026-10-22): an explicit zero-supply call that finds the entry empty
+    // ESTABLISHES it through the one publication hook, so it is observed exactly like a read's
+    // publication (formerly an explicit-call-only program had no observation).
     [Fact]
-    public void ExplicitCallOnly_IsNotObserved()
+    public void ExplicitCallOnly_IsObserved_AsTheEstablishedValue()
     {
         var log = new TickLog();
         var result = Run("A = tick()\nA()", log.Operations());
 
         Assert.Equal("0", result.ToDisplayString());
-        Assert.Empty(result.PropertyObservations!);
+        Assert.Equal("A=0#1", Describe(result));
         Assert.Equal(["tick:0"], log.Calls);
     }
 
     [Fact]
-    public void MixedExplicitAndPropertyReads_ObserveOnlyTheCachedPropertyValue()
+    public void MixedExplicitAndPropertyReads_ObserveTheEstablishedValue_NotTheLatestCall()
     {
         var log = new TickLog();
         var result = Run("A = tick()\nA() + A + A()", log.Operations());
 
-        // A() = 0, A = 1 (published), A() = 2.
-        Assert.Equal("3", result.ToDisplayString());
-        Assert.Equal("A=1#1", Describe(result));
+        // A() = 0 (establishes the entry), A = 0 (reused), A() = 1 (fresh; replaces nothing and adds
+        // no observation). Formerly A() = 0, A = 1 (published), A() = 2.
+        Assert.Equal("1", result.ToDisplayString());
+        Assert.Equal("A=0#1", Describe(result));
+        Assert.Equal(["tick:0", "tick:1"], log.Calls);
+    }
+
+    [Fact]
+    public void LaterExplicitCall_AddsNoObservation_AndNeverReplacesTheEstablishedValue()
+    {
+        var log = new TickLog();
+        var result = Run("A = tick()\nA, A(), A(), A", log.Operations());
+
+        Assert.Equal("0\n1\n2\n0", result.ToDisplayString().ReplaceLineEndings("\n"));
+        Assert.Equal("A=0#1", Describe(result));
         Assert.Equal(["tick:0", "tick:1", "tick:2"], log.Calls);
     }
 

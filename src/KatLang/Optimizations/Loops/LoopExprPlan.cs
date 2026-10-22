@@ -40,9 +40,11 @@ internal closed record LoopExprPlan(Expr Source)
     /// forwarding call <c>A(x)</c> the front end synthesizes for a reference to a
     /// parameterized local property (its arguments are exactly the property's own
     /// parameters, so the planned body reads the same slots). Mirrors the generic user
-    /// call — <c>A</c> versus <c>A()</c> is core KatLang semantics, a call bypasses the
+    /// call — <c>A</c> versus <c>A()</c> is core KatLang semantics, a call never READS the
     /// property cache — so the body is evaluated FRESH on every call under the user-call
-    /// chokepoint, keeping the declaring step's memo for sibling property reads,
+    /// chokepoint, keeping the declaring step's memo for sibling property reads (a zero-supply
+    /// call of a parameterless temp that finds its entry or memo empty establishes it,
+    /// CACHE-PUB-1),
     /// inside the generic call-expression
     /// diagnostic boundary. <paramref name="Callee"/> is the ORIGINAL callee expression
     /// and <paramref name="LimitSpan"/> the span a rejected enter is stamped with
@@ -572,12 +574,17 @@ internal static partial class LoopOptimizer
     /// A temp CALL. MIRROR of the generic user call (<c>Evaluator.EvalUserCallCounted</c>
     /// inside the call-expression boundary of <c>EvalCallCountedExpr</c>): the dynamic
     /// invocation is charged through the SAME helper with the same limit-span rule, the
-    /// body is evaluated FRESH on every call (a call bypasses the property cache — the
+    /// body is evaluated FRESH on every call (a call never READS the property cache — the
     /// <c>A</c> versus <c>A()</c> rule), and the caller's per-iteration temp memo is
     /// retained for sibling reads because they resolve to the same declaring step
-    /// activation, even though the called temp itself runs fresh; an EXPORTED temp
-    /// keeps hitting the run cache exactly like the generic callee's read. Only the
-    /// RETURNED result is decorated by the boundary, exactly like the planned <c>if</c>.
+    /// activation. A ZERO-SUPPLY call of a parameterless temp is that temp's qualifying
+    /// invocation (CACHE-PUB-1, the generic slow path's mirror): an EXPORTED temp
+    /// participates in the run cache's publication law, and a local-only temp establishes
+    /// its per-iteration memo when that is still empty (the counterpart of the generic
+    /// per-activation entry; temps read only EARLIER temps, so no temp call is ever
+    /// re-entrant). What either stores is the temp's own fresh value before the call
+    /// boundary. Only the RETURNED result is decorated by the boundary, exactly like the
+    /// planned <c>if</c>.
     /// </summary>
     private static EvalResult<PlannedLoopValue> EvalLoopTempCall(
         LoopExprPlan.TempCall tempCall,
@@ -597,8 +604,48 @@ internal static partial class LoopOptimizer
 
         using (level)
         {
-            return EvalFreshLoopTemp(frame, tempCall.Index);
+            var temp = frame.Template.TempPlans[tempCall.Index];
+            // A temp with parameters is called with its forwarded arguments: a nonempty supply.
+            if (temp.ParameterNames.Count != 0)
+                return EvalFreshLoopTemp(frame, tempCall.Index);
+            return temp.Binding.Exposure == PropertyExposure.Exported
+                ? EvalPublishedLoopTempCall(frame, temp)
+                : EvalMemoEstablishingLoopTempCall(frame, tempCall.Index);
         }
+    }
+
+    // CACHE-PUB-1: an exported temp's zero-supply call through the run cache's publication law, under
+    // the SAME execution EvalRunCachedLoopTemp presents (one key with the generic evaluator's).
+    private static EvalResult<PlannedLoopValue> EvalPublishedLoopTempCall(LoopRunFrame frame, LoopTempPlan temp)
+    {
+        var ctx = frame.IterationCtx;
+        var publishedR = ctx.ZeroArgPropertyResultCache.Invoke(
+            new ZeroArgPropertyExecution(
+                frame.Template.Step,
+                temp.Binding,
+                ZeroArgPropertyAccessKind.Invocation,
+                Evaluator.ValueEnvironmentCacheIdentity(frame.ValueEnvironment),
+                ctx.Budget),
+            () =>
+            {
+                var tempR = EvalFreshLoopTemp(frame, temp.Index);
+                if (tempR.IsError) return tempR.Error;
+                return EvalResult<ZeroArgPropertyResult>.Ok(
+                    new ZeroArgPropertyResult(tempR.Value.ToResult(), tempR.Value.EmittedCount));
+            });
+        if (publishedR.IsError) return publishedR.Error;
+
+        return EvalResult<PlannedLoopValue>.Ok(
+            PlannedLoopValue.FromResult(publishedR.Value.Value, publishedR.Value.EmittedCount));
+    }
+
+    // CACHE-PUB-1: a local-only temp's zero-supply call establishes the iteration's memo when empty.
+    private static EvalResult<PlannedLoopValue> EvalMemoEstablishingLoopTempCall(LoopRunFrame frame, int index)
+    {
+        var tempR = EvalFreshLoopTemp(frame, index);
+        if (!tempR.IsError && !frame.TryGetTempSlot(index, out _))
+            frame.SetTempSlot(index, tempR.Value);
+        return tempR;
     }
 
     private static EvalResult<PlannedLoopValue> EvalFreshLoopTemp(

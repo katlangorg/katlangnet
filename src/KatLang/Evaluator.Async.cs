@@ -1970,6 +1970,13 @@ public static partial class Evaluator
         if (calleeR.IsError)
             return CalleeResolutionFailure(diagnosticName, ctx, calleeR.Error);
 
+        // MIRROR — CACHE-PUB-1: the origin-carrying dispatch of a possibly zero-supply call.
+        if (MayFormZeroSupply(args) && IsPublishableCallee(calleeR.Value))
+            return WithCallCtx(
+                diagnosticName,
+                ctx,
+                await EvalOriginCallCountedAsync(CalleeOrigin.Written(func), calleeR.Value, args, ctx, valEnv, diagnosticName).ConfigureAwait(false));
+
         return WithCallCtx(
             diagnosticName,
             ctx,
@@ -2740,6 +2747,11 @@ public static partial class Evaluator
 
                 return ZeroArgumentDemandArityMismatch(wired);
             }
+
+            // MIRROR — CACHE-PUB-1: a possibly zero-supply member call names the selected member binding.
+            if (MayFormZeroSupply(argsOpt) && IsPublishableCallee(wired))
+                return await EvalOriginCallCountedAsync(CalleeOrigin.Bound(targetAlg!, prop), wired, argsOpt, ctx, valEnv,
+                    CallDiagnosticName.FromKnown(name)).ConfigureAwait(false);
 
             return await EvalResolvedCallCountedAsync(
                 wired,

@@ -173,7 +173,10 @@ def aliasDoesNotForce : EvalM Bool := do
   pure (identity.isSome && (<- isSuspended address) && (<- get).needs.size == 1)
 #guard (runEvalM aliasDoesNotForce).toOption == some true
 
--- Cell completion and property caching are independent heap domains.
+-- Cell completion and property caching are independent heap domains: supplying a cell
+-- caches nothing, and completing the cell of the explicit call `Z()` neither completes nor
+-- demands the bare cell. That owning zero-supply invocation establishes Z's entry
+-- (CACHE-PUB-1), which the later VALUE demand of the bare cell reuses without a second entry.
 def propertyCacheIsSeparate : EvalM Bool := do
   let root := algPrivate [] [] [("Z", alg [] [] [] [.num 7])] []
   let ctx := EvalCtx.empty.push root
@@ -181,11 +184,13 @@ def propertyCacheIsSeparate : EvalM Bool := do
   let emptyBefore := (<- get).zeroArgPropertyCache.isEmpty
   let fresh <- supplyNeed (.call (.resolve "Z") []) ctx []
   let _ <- demandNeed fresh
-  let emptyAfterCall := (<- get).zeroArgPropertyCache.isEmpty
+  let countAfterCall := (<- get).zeroArgPropertyCache.length
+  let bareStillSuspended <- isSuspended unused
   let _ <- demandNeed unused
   let count := (<- get).zeroArgPropertyCache.length
   let _ <- demandNeed unused
-  pure (emptyBefore && emptyAfterCall && count == 1 && (<- get).zeroArgPropertyCache.length == count)
+  pure (emptyBefore && countAfterCall == 1 && bareStillSuspended && count == 1
+    && (<- get).zeroArgPropertyCache.length == count)
 #guard (runEvalM propertyCacheIsSeparate).toOption == some true
 
 -- Ready data uses the same inspecting binder and never becomes a fake callable.

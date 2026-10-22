@@ -611,12 +611,21 @@ theorem disciplined_dispatchName (a : Nat) (eff : NeedPlan.CallShape) (r : PlanR
   unfold NeedPlan.dispatchName
   exact Disciplined.bind disciplined_get (fun _ => disciplined_pure _)
 
+/-- CACHE-PUB-1: the dispatch ORIGIN is a pure read of the heap — it changes nothing. -/
+theorem dispatchOrigin_run (a : Nat) (eff : NeedPlan.CallShape) (r : PlanRoute) (s : EvalState) :
+    (NeedPlan.dispatchOrigin a eff r).runState s = (.ok (NeedPlan.dispatchOriginIn s.needs a eff r), s) := rfl
+
+theorem disciplined_dispatchOrigin (a : Nat) (eff : NeedPlan.CallShape) (r : PlanRoute) :
+    Disciplined (NeedPlan.dispatchOrigin a eff r) := by
+  unfold NeedPlan.dispatchOrigin
+  exact Disciplined.bind disciplined_get (fun _ => disciplined_pure _)
+
 /-- **One plan execution along a route is disciplined** whenever its installed callbacks are. -/
 theorem disciplined_executeAlong (route : NeedPlan.Route)
     (hspread : ∀ e c v, Disciplined (route.spread e c v))
     (htarget : ∀ f c, Disciplined (route.target f c))
     (hnormal : ∀ g c, Disciplined (route.normalize g c))
-    (hdispatch : ∀ g cells c v n, Disciplined (route.dispatch g cells c v n))
+    (hdispatch : ∀ o g cells c v n, Disciplined (route.dispatch o g cells c v n))
     (hclassify : ∀ shape, Disciplined (route.classify shape))
     (hproject : ∀ c, Disciplined (route.project c))
     (a : Nat) (shape : NeedPlan.CallShape) (r : PlanRoute) :
@@ -625,16 +634,17 @@ theorem disciplined_executeAlong (route : NeedPlan.Route)
   exact Disciplined.bind (Disciplined.withCtx _
       (disciplined_calleeAlong route htarget hclassify hproject a _ r)) (fun callee =>
     Disciplined.bind (disciplined_dispatchName a _ r) (fun name =>
+    Disciplined.bind (disciplined_dispatchOrigin a _ r) (fun origin =>
     Disciplined.bind (Disciplined.withCtx _ (Disciplined.bind (hnormal _ _) (fun normal =>
-      Disciplined.bind (disciplined_prepare route.spread hspread a _) (fun cells => hdispatch _ _ _ _ _))))
-      (fun _ => disciplined_pure _)))
+      Disciplined.bind (disciplined_prepare route.spread hspread a _) (fun cells => hdispatch _ _ _ _ _ _))))
+      (fun _ => disciplined_pure _))))
 
 /-- **One plan execution is disciplined** whenever its installed callbacks are. -/
 theorem disciplined_execute (route : NeedPlan.Route)
     (hspread : ∀ e c v, Disciplined (route.spread e c v))
     (htarget : ∀ f c, Disciplined (route.target f c))
     (hnormal : ∀ g c, Disciplined (route.normalize g c))
-    (hdispatch : ∀ g cells c v n, Disciplined (route.dispatch g cells c v n))
+    (hdispatch : ∀ o g cells c v n, Disciplined (route.dispatch o g cells c v n))
     (hclassify : ∀ shape, Disciplined (route.classify shape))
     (hproject : ∀ c, Disciplined (route.project c))
     (a : Nat) (shape : NeedPlan.CallShape) :
@@ -651,7 +661,7 @@ theorem disciplined_suspendedValue (ev : Expr → EvalCtx → ValEnv → EvalM C
     (hspread : ∀ e c v, Disciplined (route.spread e c v))
     (htarget : ∀ f c, Disciplined (route.target f c))
     (hnormal : ∀ g c, Disciplined (route.normalize g c))
-    (hdispatch : ∀ g cells c v n, Disciplined (route.dispatch g cells c v n))
+    (hdispatch : ∀ o g cells c v n, Disciplined (route.dispatch o g cells c v n))
     (hclassify : ∀ shape, Disciplined (route.classify shape))
     (hproject : ∀ c, Disciplined (route.project c))
     (hdemand : ∀ b, Disciplined (demand b)) (a : Nat) (suspension : NeedSuspension) :
@@ -683,7 +693,7 @@ theorem disciplined_step (ev : Expr → EvalCtx → ValEnv → EvalM CountedResu
     (hspread : ∀ e c v, Disciplined (route.spread e c v))
     (htarget : ∀ f c, Disciplined (route.target f c))
     (hnormal : ∀ g c, Disciplined (route.normalize g c))
-    (hdispatch : ∀ g cells c v n, Disciplined (route.dispatch g cells c v n))
+    (hdispatch : ∀ o g cells c v n, Disciplined (route.dispatch o g cells c v n))
     (hclassify : ∀ shape, Disciplined (route.classify shape))
     (hproject : ∀ c, Disciplined (route.project c))
     (hdemand : ∀ b, Disciplined (demand b)) (a : Nat) :
@@ -819,7 +829,7 @@ theorem disciplined_invoke (route : NeedPlan.Route)
     (hspread : ∀ e c v, Disciplined (route.spread e c v))
     (htarget : ∀ f c, Disciplined (route.target f c))
     (hnormal : ∀ g c, Disciplined (route.normalize g c))
-    (hdispatch : ∀ g cells c v n, Disciplined (route.dispatch g cells c v n))
+    (hdispatch : ∀ o g cells c v n, Disciplined (route.dispatch o g cells c v n))
     (hclassify : ∀ shape, Disciplined (route.classify shape))
     (hproject : ∀ c, Disciplined (route.project c))
     (r : NeedPlan.CallReference) : Disciplined (NeedPlan.invoke route r) := by
@@ -884,9 +894,10 @@ def callOver (route : NeedPlan.Route) (a : Nat) (shape : NeedPlan.CallShape) (r 
   let eff := NeedPlan.effective shape r
   let callee ← withCtx shape.ctxMsg (NeedPlan.calleeAlong route a eff r)
   let name ← NeedPlan.dispatchName a eff r
+  let origin ← NeedPlan.dispatchOrigin a eff r
   let result ← withCtx shape.ctxMsg (do
     let normal ← route.normalize callee eff.caller
-    route.dispatch normal cells eff.caller eff.values name)
+    route.dispatch origin normal cells eff.caller eff.values name)
   pure (reCountValueBoundary result)
 
 theorem withCtx_run {α : Type} (c : String) (m : EvalM α) (st : EvalState) :
@@ -920,7 +931,7 @@ theorem executeAlong_prepared (route : NeedPlan.Route) (a : Nat) (shape : NeedPl
     (cells : List NeedSupply.Sourced)
     (hc : s.needs[a]? = some cell) (hp : cell.plan = .prepared (.ok cells)) :
     (NeedPlan.executeAlong route a shape r).runState s = (callOver route a shape r cells).runState s := by
-  simp only [NeedPlan.executeAlong, callOver, bind_run, withCtx_run, dispatchName_run]
+  simp only [NeedPlan.executeAlong, callOver, bind_run, withCtx_run, dispatchName_run, dispatchOrigin_run]
   have k1 := hcallee (NeedPlan.effective shape r) s
   generalize hr1 : (NeedPlan.calleeAlong route a (NeedPlan.effective shape r) r).runState s = r1 at k1
   rcases r1 with ⟨o1, t1⟩
@@ -1024,7 +1035,7 @@ theorem meta_value_orders (ev : Expr → EvalCtx → ValEnv → EvalM CountedRes
     (hspread : ∀ e c v, Disciplined (route.spread e c v))
     (htarget : ∀ f c, Disciplined (route.target f c))
     (hnormal : ∀ g c, Disciplined (route.normalize g c))
-    (hdispatch : ∀ g cells c v n, Disciplined (route.dispatch g cells c v n))
+    (hdispatch : ∀ o g cells c v n, Disciplined (route.dispatch o g cells c v n))
     (hclassify : ∀ shape, Disciplined (route.classify shape))
     (hproject : ∀ c, Disciplined (route.project c))
     (hdemand : ∀ b, Disciplined (demand b))
@@ -1177,7 +1188,7 @@ def ProductionDiscipline : Prop :=
   (∀ a e c v, Disciplined (evalSuppliedAt a e c v)) ∧
   (∀ f c, Disciplined (resolveCalleeAlg f c)) ∧
   (∀ g c, Disciplined (NeedPlan.normalizeCallee g c)) ∧
-  (∀ g cells c v n, Disciplined (evalSuppliedCallCounted g cells c v n)) ∧
+  (∀ o g cells c v n, Disciplined (evalSuppliedCallCounted o g cells c v n)) ∧
   (∀ b, Disciplined (demandNeedRecursive b)) ∧
   (∀ e c v, Disciplined (evalSupplySpread e c v)) ∧
   (∀ shape, Disciplined (classifyPlanRouteWith resolveDotReceiver? algorithmIntrinsicRoute shape)) ∧
@@ -1365,10 +1376,11 @@ def ordinaryCall (route : NeedPlan.Route) (a : Nat)
   let eff := NeedPlan.effective shape r
   let callee ← withCtx shape.ctxMsg (NeedPlan.calleeAlong route a eff r)
   let name ← NeedPlan.dispatchName a eff r
+  let origin ← NeedPlan.dispatchOrigin a eff r
   let result ← withCtx shape.ctxMsg (do
     let normal ← route.normalize callee eff.caller
     let cells ← NeedSupply.form route.spread eff.caller eff.values eff.args
-    route.dispatch normal cells eff.caller eff.values name)
+    route.dispatch origin normal cells eff.caller eff.values name)
   pure (reCountValueBoundary result)
 
 theorem valid_of_get {h : Array NeedCell} {a : Nat} {c : NeedCell} (hc : h[a]? = some c) :
@@ -1406,7 +1418,11 @@ theorem fresh_plan_is_ordinary_call
     (oform : Oblivious a (NeedSupply.form route.spread (NeedPlan.effective shape r).caller
       (NeedPlan.effective shape r).values (NeedPlan.effective shape r).args))
     (odispatch : ∀ g cells, Oblivious a
-      (route.dispatch g cells (NeedPlan.effective shape r).caller (NeedPlan.effective shape r).values
+      (route.dispatch
+        (NeedPlan.dispatchOriginIn
+          ((NeedPlan.calleeAlong route a (NeedPlan.effective shape r) r).runState s).2.needs
+          a (NeedPlan.effective shape r) r)
+        g cells (NeedPlan.effective shape r).caller (NeedPlan.effective shape r).values
         (NeedPlan.dispatchNameIn
           ((NeedPlan.calleeAlong route a (NeedPlan.effective shape r) r).runState s).2.needs
           a (NeedPlan.effective shape r) r))) :
@@ -1419,7 +1435,7 @@ theorem fresh_plan_is_ordinary_call
           withPlan a .preparing ((ordinaryCall route a shape r).runState s).2)) := by
   rw [execute_recorded route a shape s cell r hc hr hi]
   generalize heff : NeedPlan.effective shape r = eff at dcallee ocallee oform odispatch
-  simp only [NeedPlan.executeAlong, ordinaryCall, bind_run, withCtx_run, heff, dispatchName_run]
+  simp only [NeedPlan.executeAlong, ordinaryCall, bind_run, withCtx_run, heff, dispatchName_run, dispatchOrigin_run]
   have k1 := dcallee s
   have r1keep := oblivious_keeps_record ocallee .unprepared s cell hc hp
   generalize hr1 : (NeedPlan.calleeAlong route a eff r).runState s = r1 at k1 r1keep odispatch
@@ -1479,7 +1495,7 @@ theorem fresh_plan_is_ordinary_call
           rw [hr3] at hc3
           exact valid_of_get hc3
         rw [odispatch normal cells t3 (.prepared (.ok cells)) hv3]
-        generalize (route.dispatch normal cells eff.caller eff.values
+        generalize (route.dispatch (NeedPlan.dispatchOriginIn t1.needs a eff r) normal cells eff.caller eff.values
           (NeedPlan.dispatchNameIn t1.needs a eff r)).runState t3 = r4
         rcases r4 with ⟨o4, t4⟩
         cases o4 with
@@ -1526,7 +1542,7 @@ theorem oblivious_pure {α : Type} (a : Nat) (x : α) : Oblivious a (pure x : Ev
 theorem fresh_plan_contracts_satisfiable (a : Nat) (callee : Expr) (caller : EvalCtx) (values : ValEnv)
     (alg : Algorithm) (out : CountedResult) :
     let route : NeedPlan.Route :=
-      ⟨fun _ _ => pure alg, fun g _ => pure g, fun _ _ _ _ _ => pure out, fun _ _ _ => pure (.items []),
+      ⟨fun _ _ => pure alg, fun g _ => pure g, fun _ _ _ _ _ _ => pure out, fun _ _ _ => pure (.items []),
        fun _ => pure .call, fun _ => pure none⟩
     let shape : NeedPlan.CallShape := ⟨callee, [], caller, values, .call⟩
     let eff := NeedPlan.effective shape .call
@@ -1534,9 +1550,9 @@ theorem fresh_plan_contracts_satisfiable (a : Nat) (callee : Expr) (caller : Eva
     Disciplined (NeedPlan.calleeAlong route a eff .call) ∧ (∀ g c, Disciplined (route.normalize g c)) ∧
     Oblivious a (NeedPlan.calleeAlong route a eff .call) ∧ (∀ g c, Oblivious a (route.normalize g c)) ∧
     Oblivious a (NeedSupply.form route.spread eff.caller eff.values eff.args) ∧
-    (∀ g cells, Oblivious a (route.dispatch g cells eff.caller eff.values (openExprName eff.callee))) :=
+    (∀ o g cells, Oblivious a (route.dispatch o g cells eff.caller eff.values (openExprName eff.callee))) :=
   ⟨fun _ _ _ => disciplined_pure _, disciplined_pure _, fun _ _ => disciplined_pure _,
    oblivious_pure a _, fun _ _ => oblivious_pure a _, oblivious_pure a _,
-   fun _ _ => oblivious_pure a _⟩
+   fun _ _ _ => oblivious_pure a _⟩
 
 end KatLang.CallPlan

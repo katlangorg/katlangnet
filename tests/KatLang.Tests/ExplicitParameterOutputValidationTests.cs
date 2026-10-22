@@ -68,6 +68,12 @@ public class ExplicitParameterOutputValidationTests
             Requests++;
             return evaluate();
         }
+
+        // CACHE-PUB-1: this cache stores nothing, so an invocation simply executes.
+        public EvalResult<ZeroArgPropertyResult> Invoke(
+            ZeroArgPropertyExecution execution,
+            Func<EvalResult<ZeroArgPropertyResult>> evaluate)
+            => evaluate();
     }
 
     // ----- the canonical divergent shape ----------------------------------------

@@ -174,11 +174,13 @@ public static partial class Evaluator
     /// performed the eligibility projection: a call, a bare read, a navigation through a parameter, a
     /// callback — belongs to the FIRST ordinary observation of the property: the bare VALUE, or the first
     /// terminal invocation, whichever comes first. A later terminal invocation evaluates the original row
-    /// afresh; a bare read after a terminal invocation claimed the cell gets its own, lazily established VALUE
-    /// cell that every later bare read reuses. So eligibility checking never duplicates a receiver evaluation,
-    /// bare reads keep ordinary property caching, and explicit calls stay independent of one another and of
-    /// the bare cache: <c>A</c>, <c>A, A</c>, <c>A()</c>, <c>A(), A()</c>, <c>A, A()</c> and <c>A(), A</c>
-    /// evaluate an effectful terminal row 1, 1, 1, 2, 2 and 2 times. Lean: <c>aliasBareCell</c>,
+    /// afresh; a bare read whose property entry is still empty after another binding's terminal invocation
+    /// claimed the cell gets its own lazily established VALUE cell. So eligibility checking never duplicates
+    /// a receiver evaluation, bare reads keep ordinary property caching, and explicit calls stay fresh.
+    /// CACHE-PUB-1's D4 extension lets an owning terminal invocation establish the alias's
+    /// own empty property-cache entry; bare reads then reuse it without demanding another cell.
+    /// <c>A</c>, <c>A, A</c>, <c>A()</c>, <c>A(), A()</c>, <c>A, A()</c> and <c>A(), A</c>
+    /// evaluate an effectful terminal row 1, 1, 1, 2, 2 and 1 times. Lean: <c>aliasBareCell</c>,
     /// <c>claimTerminalAliasInitial</c>, <c>takeTerminalAliasInvocation</c>.
     /// </summary>
     internal sealed class RuntimeAliasBinding(NeedCell cell)
@@ -542,6 +544,11 @@ public static partial class Evaluator
         if (argsOpt is null)
             return EvalAliasMemberRead(targetAlg, prop, wired, name, ctx, valEnv);
 
+        // CACHE-PUB-1: the alias member's own binding names the invocation. Runtime-target aliases
+        // qualify only on their terminal ordinary-property route (PublicationBinding).
+        if (MayFormZeroSupply(argsOpt) && IsPublishableCallee(wired))
+            return EvalBoundMemberCallCounted(targetAlg, prop, wired, argsOpt, name, ctx, valEnv);
+
         return EvalResolvedCallCounted(wired, argsOpt, ctx, valEnv, CallDiagnosticName.FromKnown(name));
     }
 
@@ -725,6 +732,9 @@ public static partial class Evaluator
         var wiredR = await ResolveAliasTargetAsync((Algorithm.Alias)wiredAlias, ctx, prop).ConfigureAwait(false);
         if (wiredR.IsError)
             return wiredR.Error;
+        if (MayFormZeroSupply(argsOpt) && IsPublishableCallee(wiredR.Value))
+            return await EvalOriginCallCountedAsync(CalleeOrigin.Bound(targetAlg, prop), wiredR.Value, argsOpt, ctx, valEnv,
+                CallDiagnosticName.FromKnown(name)).ConfigureAwait(false);
         return await EvalResolvedCallCountedAsync(wiredR.Value, argsOpt, ctx, valEnv, CallDiagnosticName.FromKnown(name)).ConfigureAwait(false);
     }
 

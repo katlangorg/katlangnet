@@ -952,10 +952,13 @@ public static partial class Evaluator
     // October 2026). `variadicArityStyle` only shapes the CARDINALITY diagnostic: an ordinary call
     // reports a collecting callee's arity failure as VariadicArityMismatch, while a callback
     // invocation keeps the plain ArityMismatch shape named by its role. It never changes a result.
+    // `valueBoundary: false` returns the SAME execution's output before that boundary — the
+    // property-level counted result a qualifying zero-supply invocation publishes (CACHE-PUB-1;
+    // Lean `evalNeedUserSupplyOutput`), which its caller then re-counts.
     [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
     private static EvalResult<CountedResult> EvalNeedUserSupplyCounted(
         Algorithm callee, IReadOnlyList<NeedCell> supply, EvalCtx ctx, ValEnv values, CallDiagnosticName name, bool variadicArityStyle,
-        IReadOnlyList<Expr?>? occurrences = null)
+        IReadOnlyList<Expr?>? occurrences = null, bool valueBoundary = true)
     {
         // The call's ONE top-level cardinality decision, reported in the call's own shape.
         var patterns = NeedParameterPatterns(callee.ParameterPatterns);
@@ -964,9 +967,10 @@ public static partial class Evaluator
         if (bindings.IsError) return bindings.Error;
         if (callee.Output.Count == 0) return new EvalError.MissingOutput();
         var names = callee.Params;
-        if (ctx.Budget.MayReachRuntimeAliases && TakeTerminalAliasInvocation(callee, ctx) is { } terminalCell)
-            return ReCountValueBoundary(terminalCell.Demand());
-        return ReCountValueBoundary(EvalAlgOutputCounted(callee, WithNeedBindings(ctx, bindings.Value!, names), ShadowValEnv(values, names)));
+        var output = ctx.Budget.MayReachRuntimeAliases && TakeTerminalAliasInvocation(callee, ctx) is { } terminalCell
+            ? terminalCell.Demand()
+            : EvalAlgOutputCounted(callee, WithNeedBindings(ctx, bindings.Value!, names), ShadowValEnv(values, names));
+        return valueBoundary ? ReCountValueBoundary(output) : output;
     }
 
     private static async ValueTask<EvalResult<CountedResult>> EvalNeedUserBody(
@@ -981,7 +985,8 @@ public static partial class Evaluator
 
     private static async ValueTask<EvalResult<CountedResult>> EvalNeedUserSupply(
         Algorithm callee, IReadOnlyList<NeedCell> supply, EvalCtx ctx, ValEnv values,
-        CallDiagnosticName name, bool asynchronous, bool variadicArityStyle, IReadOnlyList<Expr?>? occurrences = null)
+        CallDiagnosticName name, bool asynchronous, bool variadicArityStyle, IReadOnlyList<Expr?>? occurrences = null,
+        bool valueBoundary = true)
     {
         var patterns = NeedParameterPatterns(callee.ParameterPatterns);
         if (!NeedAcceptsCardinality(patterns, supply.Count)) return NeedCallArityError(callee, patterns, supply.Count, name, ctx, variadicArityStyle);
@@ -991,11 +996,12 @@ public static partial class Evaluator
         var names = callee.Params;
         var boundCtx = WithNeedBindings(ctx, bindings.Value!, names);
         var boundValues = ShadowValEnv(values, names);
-        if (TakeTerminalAliasInvocation(callee, ctx) is { } terminalCell)
-            return ReCountValueBoundary(await DemandCell(terminalCell, asynchronous).ConfigureAwait(false));
-        return ReCountValueBoundary(asynchronous
-            ? await EvalAlgOutputCountedCoreAsync(callee, boundCtx, boundValues).ConfigureAwait(false)
-            : EvalAlgOutputCounted(callee, boundCtx, boundValues));
+        var output = TakeTerminalAliasInvocation(callee, ctx) is { } terminalCell
+            ? await DemandCell(terminalCell, asynchronous).ConfigureAwait(false)
+            : asynchronous
+                ? await EvalAlgOutputCountedCoreAsync(callee, boundCtx, boundValues).ConfigureAwait(false)
+                : EvalAlgOutputCounted(callee, boundCtx, boundValues);
+        return valueBoundary ? ReCountValueBoundary(output) : output;
     }
 
     /// <summary>

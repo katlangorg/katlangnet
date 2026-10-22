@@ -229,6 +229,18 @@ public class PropertyCacheConsumerTransparencyTests
 
         private static void Count(Dictionary<string, int> counts, string name)
             => counts[name] = counts.GetValueOrDefault(name) + 1;
+
+        // CACHE-PUB-1: an explicit zero-supply invocation keeps the inner cache's publication law; it is
+        // no read-seam access, so this cache's read bookkeeping is unchanged.
+        public EvalResult<ZeroArgPropertyResult> Invoke(
+            ZeroArgPropertyExecution execution,
+            Func<EvalResult<ZeroArgPropertyResult>> evaluate)
+            => _inner.Invoke(execution, evaluate);
+
+        public ValueTask<EvalResult<ZeroArgPropertyResult>> InvokeAsync(
+            ZeroArgPropertyExecution execution,
+            Func<ValueTask<EvalResult<ZeroArgPropertyResult>>> evaluateAsync)
+            => _inner.InvokeAsync(execution, evaluateAsync);
     }
 
     private static (CountingCache Cache, EvalResult<Result> Result) RunCounting(string source)
@@ -303,13 +315,13 @@ public class PropertyCacheConsumerTransparencyTests
         Assert.Equal(reference[1], rows[^1]);
     }
 
-    // ── 4. Explicit invocation bypasses, but never mutates, the entry ─────────
+    // ── 4. Explicit invocation never reads, and never replaces, the entry ─────
 
     /// <summary>
     /// <c>A</c> stores; <c>A()</c> evaluates afresh WITHOUT replacing the entry; a later
-    /// <c>A</c> reads the ORIGINAL value. And <c>A()</c> first populates nothing: the first
-    /// ordinary read stores and the next one reuses. Explicit calls inside a builtin slot
-    /// are still explicit calls.
+    /// <c>A</c> reads the ORIGINAL value. An <c>A()</c> that finds the entry EMPTY owns it and
+    /// establishes it (CACHE-PUB-1, superseding "populates nothing"): both later ordinary reads
+    /// reuse its draw. Explicit calls inside a builtin slot are still explicit calls.
     /// </summary>
     [Theory]
     [InlineData(0L)]
@@ -320,7 +332,7 @@ public class PropertyCacheConsumerTransparencyTests
         var r = RunRows(string.Join(", ", Enumerable.Repeat(Draw, 5)), seed);
 
         Assert.Equal([r[0], r[1], r[0], r[2]], RunRows($"D = {Draw}\nD\nD()\nD\n{Draw}", seed));
-        Assert.Equal([r[0], r[1], r[1], r[2]], RunRows($"D = {Draw}\nD()\nD\nD\n{Draw}", seed));
+        Assert.Equal([r[0], r[0], r[0], r[1]], RunRows($"D = {Draw}\nD()\nD\nD\n{Draw}", seed));
         Assert.Equal([r[0], r[1], r[2]], RunRows($"D = {Draw}\nD()\nD()\n{Draw}", seed));
         Assert.Equal([r[0], r[0], r[1]], RunRows($"D = {Draw}\nD\nD\n{Draw}", seed));
         // Builtin slots follow the same rule: `sum(D())` is a fresh explicit call; `D.max`
@@ -342,15 +354,18 @@ public class PropertyCacheConsumerTransparencyTests
         }
 
         Assert.Equal(2, Invocations("P\nP()\nP"));
-        Assert.Equal(2, Invocations("P()\nP\nP"));
+        // CACHE-PUB-1: the first `P()` establishes the entry the reads then reuse.
+        Assert.Equal(1, Invocations("P()\nP\nP"));
         Assert.Equal(2, Invocations("P()\nP()"));
         Assert.Equal(1, Invocations("P\nP\nsum(P)\nP.string"));
         Assert.Equal(3, Invocations("sum(P)\nsum(P())\nP().string\nP.string"));
 
         // A callable forwarded through a parameter and INVOKED explicitly is an explicit
         // call: `Call0(P)` supplies P unevaluated (no property access, Model C) and `f()` runs
-        // afresh; the rows `P` read the one cached entry.
+        // afresh; the rows `P` read the one cached entry. Invoked FIRST, `f()` is P's owning
+        // zero-supply invocation (its origin is the cell's written `P`) and establishes it.
         Assert.Equal(2, Invocations("Call0(f) = f()\nP\nCall0(P)\nP"));
+        Assert.Equal(1, Invocations("Call0(f) = f()\nCall0(P)\nP"));
     }
 
     // ── 5. Cache identity follows the resolved binding, not the spelling ─────

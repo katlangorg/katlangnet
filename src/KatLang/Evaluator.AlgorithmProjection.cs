@@ -54,6 +54,15 @@ public static partial class Evaluator
     internal sealed class LinkSuspension(EvalCtx caller, ValEnv values) : ExpressionSuspension(caller, values)
     {
         private NeedCell? _receiver;
+        private NeedCell? _projectedCallee;
+
+        // CACHE-PUB-1: preserve the canonical callee selected by the CALLABLE route. Publication
+        // eligibility reads this retained edge without repeating receiver work or demanding VALUE.
+        // Lean reads the same edge through NeedPlan.linkedPlanIn? and NeedCell.callee.
+        internal NeedCell? ProjectedCallee => Volatile.Read(ref _projectedCallee);
+
+        internal NeedCell RecordProjectedCallee(NeedCell callee)
+            => Interlocked.CompareExchange(ref _projectedCallee, callee, null) ?? callee;
 
         /// <summary>
         /// META-S3-4 (D-3): the link is a planned invocation's <c>.Algorithm</c> callee, whose receiver must keep
@@ -226,6 +235,9 @@ public static partial class Evaluator
             return CalleeValue(callee.Demand(), ctx);
         var callable = RequireCapturedCallee(callee.ProjectCallable(), edge.Span);
         if (callable.IsError) return callable.Error;
+        // CACHE-PUB-1: the fresh call's origin is the captured plan's canonical callee cell.
+        if (MayFormZeroSupply(args) && IsPublishableCallee(callable.Value))
+            return EvalOriginCallCounted(CalleeOrigin.Cell(callee), callable.Value, args, ctx, valEnv, PlanCalleeName(plan.Value));
         return EvalResolvedCallCounted(callable.Value, args, ctx, valEnv, PlanCalleeName(plan.Value));
     }
 
@@ -260,6 +272,8 @@ public static partial class Evaluator
             return CalleeValue(await callee.DemandAsync().ConfigureAwait(false), ctx);
         var callable = RequireCapturedCallee(await ProjectCellCallableAsync(callee, ctx).ConfigureAwait(false), edge.Span);
         if (callable.IsError) return callable.Error;
+        if (MayFormZeroSupply(args) && IsPublishableCallee(callable.Value))
+            return await EvalOriginCallCountedAsync(CalleeOrigin.Cell(callee), callable.Value, args, ctx, valEnv, PlanCalleeName(plan.Value)).ConfigureAwait(false);
         return await EvalResolvedCallCountedAsync(callable.Value, args, ctx, valEnv, PlanCalleeName(plan.Value)).ConfigureAwait(false);
     }
 
@@ -304,6 +318,10 @@ public static partial class Evaluator
         var callable = RequireCapturedCallee(calleeCell.Value.ProjectCallable(), edge.Span);
         if (callable.IsError)
             return CalleeResolutionFailure(diagnosticName, ctx, callable.Error);
+        // CACHE-PUB-1: the fresh call's origin is the captured plan's canonical callee cell.
+        if (MayFormZeroSupply(args) && IsPublishableCallee(callable.Value))
+            return WithCallCtx(diagnosticName, ctx,
+                EvalOriginCallCounted(CalleeOrigin.Cell(calleeCell.Value), callable.Value, args, ctx, valEnv, PlanCalleeName(plan.Value)));
         return WithCallCtx(diagnosticName, ctx,
             EvalResolvedCallCounted(callable.Value, args, ctx, valEnv, PlanCalleeName(plan.Value)));
     }
@@ -320,10 +338,13 @@ public static partial class Evaluator
         {
             // MIRROR OF the synchronous member arm (the async strategy pins fusion off).
             var member = await ResolveCalleeAsync(edge, ctx).ConfigureAwait(false);
-            return member.IsError
-                ? CalleeResolutionFailure(diagnosticName, ctx, member.Error)
-                : WithCallCtx(diagnosticName, ctx,
-                    await EvalResolvedCallCountedAsync(member.Value, args, ctx, valEnv, diagnosticName).ConfigureAwait(false));
+            if (member.IsError)
+                return CalleeResolutionFailure(diagnosticName, ctx, member.Error);
+            if (MayFormZeroSupply(args) && IsPublishableCallee(member.Value))
+                return WithCallCtx(diagnosticName, ctx,
+                    await EvalOriginCallCountedAsync(CalleeOrigin.Written(edge), member.Value, args, ctx, valEnv, diagnosticName).ConfigureAwait(false));
+            return WithCallCtx(diagnosticName, ctx,
+                await EvalResolvedCallCountedAsync(member.Value, args, ctx, valEnv, diagnosticName).ConfigureAwait(false));
         }
 
         var receiver = await EvalAlgorithmReceiverAsync(edge, ctx, valEnv).ConfigureAwait(false);
@@ -338,6 +359,9 @@ public static partial class Evaluator
         var callable = RequireCapturedCallee(await ProjectCellCallableAsync(calleeCell.Value, ctx).ConfigureAwait(false), edge.Span);
         if (callable.IsError)
             return CalleeResolutionFailure(diagnosticName, ctx, callable.Error);
+        if (MayFormZeroSupply(args) && IsPublishableCallee(callable.Value))
+            return WithCallCtx(diagnosticName, ctx,
+                await EvalOriginCallCountedAsync(CalleeOrigin.Cell(calleeCell.Value), callable.Value, args, ctx, valEnv, PlanCalleeName(plan.Value)).ConfigureAwait(false));
         return WithCallCtx(diagnosticName, ctx,
             await EvalResolvedCallCountedAsync(callable.Value, args, ctx, valEnv, PlanCalleeName(plan.Value)).ConfigureAwait(false));
     }
@@ -356,6 +380,8 @@ public static partial class Evaluator
         if (TryEvaluateSequencePipeline(
             SequencePipelineInvocation.PlainCall(edge, args, calleeR.Value), ctx, valEnv, out var sequencePipelineR))
             return WithCallCtx(diagnosticName, ctx, sequencePipelineR);
+        if (MayFormZeroSupply(args) && IsPublishableCallee(calleeR.Value))
+            return EvalWrittenCalleeCallCounted(edge, calleeR.Value, args, ctx, valEnv, diagnosticName);
         return WithCallCtx(diagnosticName, ctx, EvalResolvedCallCounted(calleeR.Value, args, ctx, valEnv, diagnosticName));
     }
 
@@ -447,7 +473,7 @@ public static partial class Evaluator
         var plan = DecodeAlgorithmReceiver(receiver.Value.Value, link.Caller);
         if (plan.IsError) return plan.Error;
         var calleeCell = PlanCalleeCell(plan.Value);
-        return calleeCell.IsError ? calleeCell.Error : calleeCell.Value.ProjectCallable();
+        return calleeCell.IsError ? calleeCell.Error : link.RecordProjectedCallee(calleeCell.Value).ProjectCallable();
     }
 
     /// <summary>

@@ -222,24 +222,24 @@ public class RuntimeCallableAliasCorpusTests
         new("X09b-dot-fallback-builtin", "Use(f) = {\n  A = f\n  [1, 2, 3].A\n}\nUse(count)", "ok 3", "", Was: "err ArityMismatch"),
         // A genuinely zero-parameter target remains an ordinary property (brief §3): deciding its
         // runtime eligibility must not execute the computed receiver twice for ONE call. The S3-1
-        // oracle runs Mk once; both proposed terminal-property policies require that same result here.
+        // oracle runs Mk once; D4's ordinary-property preservation requires that same result here.
         new("X10-terminal-call-receiver-once", "Z = tick()\nMk(n) = if(trace(n) == n, Capture(Z()), 0)\nA = Mk(5).Algorithm\nA()", "ok 1", "5", Ticks: 1),
         // Repeating the receiver can also change the calculation, not just its trace and charges.
         new("X10b-terminal-call-keeps-selected-value", "Ten = 10\nTwenty = 20\nMk(n) = if(tick() == 1, Capture(Ten()), Capture(Twenty()))\nA = Mk(5).Algorithm\nA()", "ok 10", "", Ticks: 1, Steps: 5),
         new("RF1-D4-single", "Ten = 10\nTwenty = 20\nMk(n) = if(tick() == 1, Capture(Ten()), Capture(Twenty()))\nA = Mk(5).Algorithm\nA()", "ok 10", "", Ticks: 1, Emitted: 1),
         new("RF1-D4-twice", "Ten = 10\nTwenty = 20\nMk(n) = if(tick() == 1, Capture(Ten()), Capture(Twenty()))\nA = Mk(5).Algorithm\nA(), A()", "ok (10, 20)", "", Ticks: 2, Emitted: 2),
         new("RF1-D4-bare-call", "Ten = 10\nTwenty = 20\nMk(n) = if(tick() == 1, Capture(Ten()), Capture(Twenty()))\nA = Mk(5).Algorithm\nA, A()", "ok (10, 20)", "", Ticks: 2, Emitted: 2),
-        new("RF1-D4-call-bare", "Ten = 10\nTwenty = 20\nMk(n) = if(tick() == 1, Capture(Ten()), Capture(Twenty()))\nA = Mk(5).Algorithm\nA(), A", "ok (10, 20)", "", Ticks: 2, Emitted: 2),
+        new("RF1-D4-call-bare", "Ten = 10\nTwenty = 20\nMk(n) = if(tick() == 1, Capture(Ten()), Capture(Twenty()))\nA = Mk(5).Algorithm\nA(), A", "ok (10, 10)", "", Ticks: 1, Emitted: 2),
         new("RF1-D4-bare-bare", "Ten = 10\nTwenty = 20\nMk(n) = if(tick() == 1, Capture(Ten()), Capture(Twenty()))\nA = Mk(5).Algorithm\nA, A", "ok (10, 10)", "", Ticks: 1, Emitted: 2),
-        new("RF1-D4-alternating", "Ten = 10\nTwenty = 20\nMk(n) = if(tick() == 1, Capture(Ten()), Capture(Twenty()))\nA = Mk(5).Algorithm\nA(), A, A(), A, A()", "ok (10, 20, 20, 20, 20)", "", Ticks: 4, Emitted: 5),
+        new("RF1-D4-alternating", "Ten = 10\nTwenty = 20\nMk(n) = if(tick() == 1, Capture(Ten()), Capture(Twenty()))\nA = Mk(5).Algorithm\nA(), A, A(), A, A()", "ok (10, 10, 20, 10, 20)", "", Ticks: 3, Emitted: 5),
         new("RF1-D4-chain-2", "Ten = 10\nTwenty = 20\nMk(n) = if(tick() == 1, Capture(Ten()), Capture(Twenty()))\nA = Mk(5).Algorithm\nS1 = A\nS2 = S1\nS2(), A, S2()", "ok (10, 20, 20)", "", Ticks: 3),
         new("RF1-D4-chain-10", "Ten = 10\nTwenty = 20\nMk(n) = if(tick() == 1, Capture(Ten()), Capture(Twenty()))\nA = Mk(5).Algorithm\nS1 = A\nS2 = S1\nS3 = S2\nS4 = S3\nS5 = S4\nS6 = S5\nS7 = S6\nS8 = S7\nS9 = S8\nS10 = S9\nS10(), A, S10()", "ok (10, 20, 20)", "", Ticks: 3),
         new("RF1-D4-inline", "Call0(f) = f()\nTen = 10\nTwenty = 20\nMk(n) = if(tick() == 1, Capture(Ten()), Capture(Twenty()))\nCall0({ Mk(5).Algorithm })", "ok 10", "", Ticks: 1),
-        new("RF1-D4-forward", "Call0(f) = f()\nTen = 10\nTwenty = 20\nMk(n) = if(tick() == 1, Capture(Ten()), Capture(Twenty()))\nA = Mk(5).Algorithm\nCall0(A), Call0(A), A", "ok (10, 20, 20)", "", Ticks: 3),
-        new("RF1-D4-nested", "Z = 7\nUse(n) = {\n Mk(t) = if(trace(t) == t, Capture(Z()), 0)\n A = Mk(n).Algorithm\n A(), A, A(), A\n}\nUse(3), Use(4)", "ok ((7, 7, 7, 7), (7, 7, 7, 7))", "3,3,3,4,4,4"),
-        new("RF1-D4-value-only", "G(o) = trace(o)\nUse(b) = {\n A = b.G\n A(), A, A(), A\n}\nUse(5)", "ok (5, 5, 5, 5)", "5,5,5"),
+        new("RF1-D4-forward", "Call0(f) = f()\nTen = 10\nTwenty = 20\nMk(n) = if(tick() == 1, Capture(Ten()), Capture(Twenty()))\nA = Mk(5).Algorithm\nCall0(A), Call0(A), A", "ok (10, 20, 10)", "", Ticks: 2),
+        new("RF1-D4-nested", "Z = 7\nUse(n) = {\n Mk(t) = if(trace(t) == t, Capture(Z()), 0)\n A = Mk(n).Algorithm\n A(), A, A(), A\n}\nUse(3), Use(4)", "ok ((7, 7, 7, 7), (7, 7, 7, 7))", "3,3,4,4"),
+        new("RF1-D4-value-only", "G(o) = trace(o)\nUse(b) = {\n A = b.G\n A(), A, A(), A\n}\nUse(5)", "ok (5, 5, 5, 5)", "5,5"),
         new("RF1-D4-zero-member", "G(o) = o\nBox = { G = tick() }\nUse(b) = {\n A = b.G\n A(), A, A(), A\n}\nUse(Box)", "ok (1, 1, 1, 1)", "", Ticks: 1),
-        new("RF1-D4-async", "Z = 7\nMk(n) = if(atrace(n) == n, Capture(Z()), 0)\nA = Mk(5).Algorithm\nA(), A, A(), A", "ok (7, 7, 7, 7)", "a5,a5,a5"),
+        new("RF1-D4-async", "Z = 7\nMk(n) = if(atrace(n) == n, Capture(Z()), 0)\nA = Mk(5).Algorithm\nA(), A, A(), A", "ok (7, 7, 7, 7)", "a5,a5"),
         new("RF1-D3-zero-accepting", "Only(*xs) = tick()\nMk(n) = if(trace(n) == n, Capture(Only()), 0)\nA = Mk(5).Algorithm\nA(), A, A(), A", "ok (1, 2, 3, 2)", "5", Ticks: 3),
         new("RF1-open-chain-1", "Outer(n) = {\n A = n\n B1 = { public K = 11\n A }\n P = { open B1\n K }\n P\n}\nOuter(1)", "ok 11", ""),
         new("RF1-open-chain-2", "Outer(n) = {\n A = n\n B1 = { public K = 11\n A }\n B2 = { public K = 12\n B1 }\n P = { open B2\n K }\n P\n}\nOuter(1)", "ok 12", ""),
@@ -251,8 +251,8 @@ public class RuntimeCallableAliasCorpusTests
         new("RF1-open-shadow", "Outer(n) = {\n A = n\n B = { public K = 10\n A }\n P = { open B\n K = 12\n K }\n P\n}\nOuter(1)", "ok 12", ""),
         new("RF1-open-through-opens", "Outer(n) = {\n A = n\n Lib = { public Ref = A }\n B = { open Lib, Lib\n public K = 10\n Ref }\n P = { open B\n K }\n P\n}\nOuter(1)", "ok 10", ""),
         new("RF1-D4-cancel-terminal", "Z = stop()\nMk(n) = if(trace(n) == n, Capture(Z()), 0)\nA = Mk(5).Algorithm\nA(), trace(99)", "cancelled", "5", WithCancel: true),
-        new("RF1-D4-structure-empty", "Z = ()\nMk(n) = if(trace(n) == n, Capture(Z()), 0)\nA = Mk(5).Algorithm\n[A(), A, A()]", "ok [(), (), ()]", "5,5,5", Emitted: 1),
-        new("RF1-D4-structure-sequence", "Z = (1, 2)\nMk(n) = if(trace(n) == n, Capture(Z()), 0)\nA = Mk(5).Algorithm\n[A(), A, A()]", "ok [(1, 2), (1, 2), (1, 2)]", "5,5,5", Emitted: 1),
+        new("RF1-D4-structure-empty", "Z = ()\nMk(n) = if(trace(n) == n, Capture(Z()), 0)\nA = Mk(5).Algorithm\n[A(), A, A()]", "ok [(), (), ()]", "5,5", Emitted: 1),
+        new("RF1-D4-structure-sequence", "Z = (1, 2)\nMk(n) = if(trace(n) == n, Capture(Z()), 0)\nA = Mk(5).Algorithm\n[A(), A, A()]", "ok [(1, 2), (1, 2), (1, 2)]", "5,5", Emitted: 1),
         // D4 (final review, 2026-10-19): a CALLABLE-only observation (`Navigate(A)` reads the alias's own
         // member K) performs the eligibility projection and so the receiver work; the FIRST ordinary
         // observation afterwards — a bare read or a terminal call — consumes it, exactly as the S3-1
@@ -260,10 +260,10 @@ public class RuntimeCallableAliasCorpusTests
         // two ticks), which made eligibility checking duplicate the receiver evaluation.
         new("RF1-prior-projection-call", "Ten = 10\nTwenty = 20\nMk(n) = if(tick() == 1, Capture(Ten()), Capture(Twenty()))\nA = { public K = 7\n Mk(5).Algorithm }\nNavigate(f) = f.K\nNavigate(A), A()", "ok (7, 10)", "", Ticks: 1),
         new("RF1-prior-projection-bare", "Ten = 10\nTwenty = 20\nMk(n) = if(tick() == 1, Capture(Ten()), Capture(Twenty()))\nA = { public K = 7\n Mk(5).Algorithm }\nNavigate(f) = f.K\nNavigate(A), A", "ok (7, 10)", "", Ticks: 1),
-        new("RF1-prior-projection-mixed", "Ten = 10\nTwenty = 20\nMk(n) = if(tick() == 1, Capture(Ten()), Capture(Twenty()))\nA = { public K = 7\n Mk(5).Algorithm }\nNavigate(f) = f.K\nNavigate(A), A(), A", "ok (7, 10, 20)", "", Ticks: 2),
-        new("RF1-prior-projection-planned-value", "Ten = 10\nTwenty = 20\nMk(n) = if(tick() == 1, Capture(Ten()), Capture(Twenty()))\nA = { public K = 7\n Mk(5).Algorithm }\nNavigate(f) = f.K\nId(x) = x\nNavigate(A), Id(A()), A", "ok (7, 10, 20)", "", Ticks: 2),
-        new("RF1-prior-projection-planned-invoke", "Ten = 10\nTwenty = 20\nMk(n) = if(tick() == 1, Capture(Ten()), Capture(Twenty()))\nA = { public K = 7\n Mk(5).Algorithm }\nNavigate(f) = f.K\nP = Capture(A())\nNavigate(A), P.Invoke(), P.Invoke(), A", "ok (7, 10, 20, 20)", "", Ticks: 3),
-        new("RF1-prior-projection-async", "Ten = 10\nTwenty = 20\nMk(n) = if(atrace(tick()) == 1, Capture(Ten()), Capture(Twenty()))\nA = { public K = 7\n Mk(5).Algorithm }\nNavigate(f) = f.K\nNavigate(A), A(), A", "ok (7, 10, 20)", "a1,a2", Ticks: 2),
+        new("RF1-prior-projection-mixed", "Ten = 10\nTwenty = 20\nMk(n) = if(tick() == 1, Capture(Ten()), Capture(Twenty()))\nA = { public K = 7\n Mk(5).Algorithm }\nNavigate(f) = f.K\nNavigate(A), A(), A", "ok (7, 10, 10)", "", Ticks: 1),
+        new("RF1-prior-projection-planned-value", "Ten = 10\nTwenty = 20\nMk(n) = if(tick() == 1, Capture(Ten()), Capture(Twenty()))\nA = { public K = 7\n Mk(5).Algorithm }\nNavigate(f) = f.K\nId(x) = x\nNavigate(A), Id(A()), A", "ok (7, 10, 10)", "", Ticks: 1),
+        new("RF1-prior-projection-planned-invoke", "Ten = 10\nTwenty = 20\nMk(n) = if(tick() == 1, Capture(Ten()), Capture(Twenty()))\nA = { public K = 7\n Mk(5).Algorithm }\nNavigate(f) = f.K\nP = Capture(A())\nNavigate(A), P.Invoke(), P.Invoke(), A", "ok (7, 10, 20, 10)", "", Ticks: 2),
+        new("RF1-prior-projection-async", "Ten = 10\nTwenty = 20\nMk(n) = if(atrace(tick()) == 1, Capture(Ten()), Capture(Twenty()))\nA = { public K = 7\n Mk(5).Algorithm }\nNavigate(f) = f.K\nNavigate(A), A(), A", "ok (7, 10, 10)", "a1", Ticks: 1),
         // The distinguishing pair of the final review: the same program with the parameter read directly
         // or through one nested call. Under RF1's invocation tokens the nested read fell outside the
         // token that performed the projection, so the bare read re-evaluated the receiver ((20, 20), two
@@ -273,15 +273,17 @@ public class RuntimeCallableAliasCorpusTests
         new("FR-nav-nested-call-read", "Ten = 10\nTwenty = 20\nMk(n) = if(tick() == 1, Capture(Ten()), Capture(Twenty()))\nA = Mk(5).Algorithm\nId(y) = y\nK(x) = Id(x)\nNavigate(f) = f.K\nNavigate(A), A", "ok (10, 10)", "", Ticks: 1),
         new("FR-nav-nested-call-then-call", "Ten = 10\nTwenty = 20\nMk(n) = if(tick() == 1, Capture(Ten()), Capture(Twenty()))\nA = Mk(5).Algorithm\nId(y) = y\nK(x) = Id(x)\nNavigate(f) = f.K\nNavigate(A), A()", "ok (10, 20)", "", Ticks: 2),
         new("FR-nav-twice-bare", "Ten = 10\nTwenty = 20\nMk(n) = if(tick() == 1, Capture(Ten()), Capture(Twenty()))\nA = { public K = 7\n Mk(5).Algorithm }\nNavigate(f) = f.K\nNavigate(A), Navigate(A), A", "ok (7, 7, 10)", "", Ticks: 1),
-        new("FR-call-then-nav-then-bare", "Ten = 10\nTwenty = 20\nMk(n) = if(tick() == 1, Capture(Ten()), Capture(Twenty()))\nA = { public K = 7\n Mk(5).Algorithm }\nNavigate(f) = f.K\nA(), Navigate(A), A", "ok (10, 7, 20)", "", Ticks: 2),
+        new("FR-call-then-nav-then-bare", "Ten = 10\nTwenty = 20\nMk(n) = if(tick() == 1, Capture(Ten()), Capture(Twenty()))\nA = { public K = 7\n Mk(5).Algorithm }\nNavigate(f) = f.K\nA(), Navigate(A), A", "ok (10, 7, 10)", "", Ticks: 1),
         new("FR-chain-nested-nav", "Ten = 10\nTwenty = 20\nMk(n) = if(tick() == 1, Capture(Ten()), Capture(Twenty()))\nA = Mk(5).Algorithm\nB = A\nId(y) = y\nKK(x) = Id(x)\nNav2(f) = f.KK\nNav2(B), A, B(), A", "ok (10, 10, 20, 10)", "", Ticks: 2),
-        new("FR-activation-nav-call-bare", "Ten = 10\nTwenty = 20\nMk(n) = if(tick() == 1, Capture(Ten()), Capture(Twenty()))\nUse(n) = {\n A = { public K = 7\n  Mk(n).Algorithm }\n Navigate(f) = f.K\n Navigate(A), A(), A\n}\nUse(5)", "ok (7, 10, 20)", "", Ticks: 2),
+        new("FR-activation-nav-call-bare", "Ten = 10\nTwenty = 20\nMk(n) = if(tick() == 1, Capture(Ten()), Capture(Twenty()))\nUse(n) = {\n A = { public K = 7\n  Mk(n).Algorithm }\n Navigate(f) = f.K\n Navigate(A), A(), A\n}\nUse(5)", "ok (7, 10, 10)", "", Ticks: 1),
         new("FR-string-then-call-then-bare", "Ten = 10\nTwenty = 20\nMk(n) = if(tick() == 1, Capture(Ten()), Capture(Twenty()))\nA = Mk(5).Algorithm\nS1 = A\nS2 = S1\nS2.string, S2(), A", "ok ('10', 20, 10)", "", Ticks: 2),
         new("RF1-prior-peek-empty-filter", "Ten = 10\nTwenty = 20\nMk(n) = if(tick() == 1, Capture(Ten()), Capture(Twenty()))\nA = Mk(5).Algorithm\ncount(filter([], A)), A()", "ok (0, 10)", "", Ticks: 1),
         new("RF1-D4-first-planned-invoke", "Run(meta p) = p.Invoke()\nTen = 10\nTwenty = 20\nMk(n) = if(tick() == 1, Capture(Ten()), Capture(Twenty()))\nA = Mk(5).Algorithm\nRun(A())", "ok 10", "", Ticks: 1),
         new("RF1-D4-first-planned-value", "Force(x) = x\nTen = 10\nTwenty = 20\nMk(n) = if(tick() == 1, Capture(Ten()), Capture(Twenty()))\nA = Mk(5).Algorithm\nForce(A())", "ok 10", "", Ticks: 1),
-        new("RF1-D4-local-cache-alias", "Ten = 10\nTwenty = 20\nUse(n) = {\n A = {\n R = if(tick() + n == n + 1, Capture(Ten()), Capture(Twenty()))\n R.Algorithm\n }\n A(), A, A(), A\n}\nUse(5)", "ok (10, 20, 20, 20)", "", Ticks: 3),
-        new("RF1-D4-local-cache-ordinary-control", "Ten = 10\nTwenty = 20\nUse(n) = {\n A = {\n R = if(tick() + n == n + 1, Capture(Ten()), Capture(Twenty()))\n R.Algorithm + 0\n }\n A(), A, A(), A\n}\nUse(5)", "ok (10, 20, 20, 20)", "", Ticks: 3),
+        new("RF1-D4-local-cache-alias", "Ten = 10\nTwenty = 20\nUse(n) = {\n A = {\n R = if(tick() + n == n + 1, Capture(Ten()), Capture(Twenty()))\n R.Algorithm\n }\n A(), A, A(), A\n}\nUse(5)", "ok (10, 10, 20, 10)", "", Ticks: 2),
+        // CACHE-PUB-1 D4 extension (owner decision 2026-10-22): both terminal alias and ordinary
+        // control establish A's empty entry on the first owning A(); later calls stay fresh.
+        new("RF1-D4-local-cache-ordinary-control", "Ten = 10\nTwenty = 20\nUse(n) = {\n A = {\n R = if(tick() + n == n + 1, Capture(Ten()), Capture(Twenty()))\n R.Algorithm + 0\n }\n A(), A, A(), A\n}\nUse(5)", "ok (10, 10, 20, 10)", "", Ticks: 2),
     ];
 
     [Theory]

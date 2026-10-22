@@ -173,8 +173,11 @@ public sealed class CollectingCallableForwardingLawTests
             "T(x) = trace(x) + 1\n" + Apply + "Twice(*fs) = Apply(fs*) + Apply(fs*)\nTwice(T)", "ok 20 n=1", ["trace(9)", "trace(9)"]
         },
         {
+            // The cell's VALUE is never completed by the invocation (no demand); CACHE-PUB-1: the
+            // invocation (origin: the cell's written `Z`) establishes Z's property entry, which the
+            // later VALUE demand's own read of `Z` reuses (formerly two traces).
             "VALUE and CALLABLE survive one transport independently",
-            "Z = trace(7)\nApply0(f) = f()\nUse(*ys) = ys\nBoth(*zs) = Apply0(zs*), Use(zs*)\nBoth(Z)", "ok S[7, L[7]] n=1", ["trace(7)", "trace(7)"]
+            "Z = trace(7)\nApply0(f) = f()\nUse(*ys) = ys\nBoth(*zs) = Apply0(zs*), Use(zs*)\nBoth(Z)", "ok S[7, L[7]] n=1", ["trace(7)"]
         },
         {
             "a later VALUE read observes the completed cell while an invocation is fresh",

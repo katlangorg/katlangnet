@@ -13,7 +13,10 @@ namespace KatLang.Tests;
 /// evaluates the body normally and returns its own (possibly intermediate) result, but publishes
 /// nothing. Only the owner's successful completion is published, and every later ordinary read
 /// reuses it. A failed owner publishes nothing for its key; other keys' owners that completed
-/// keep their entries. An explicit call <c>A()</c> never reads, owns, or publishes A's entry.
+/// keep their entries. An explicit call <c>A()</c> never reads A's entry; since CACHE-PUB-1 (owner
+/// decision, October 22 2026) a qualifying zero-supply <c>A()</c> takes part in the SAME ownership
+/// domain: on an empty, inactive key it is the owner, and its success publishes. Formerly
+/// (October 11–22 2026) an explicit call owned and published nothing.
 ///
 /// <para>This supersedes the first-successful-completion rule (PROP-09 until October 11 2026),
 /// under which the INNERMOST re-entrant read completed first, stored its result, and the
@@ -148,9 +151,22 @@ public class OutermostPropertyCachePublicationTests
         // A shadowing local A is a different binding with its own entry.
         { "A = if(tick() < 3, A + 1, 0)\nH = {\n    A = tick() * 100\n    A, A\n}\nA, H, A", "S[2, S[400, 400], 2]", Ticks(4) },
 
-        // Explicit calls own nothing: the first PROPERTY-STYLE read inside A() is A's owner and
-        // publishes 1, while A() itself returns its fresh 2.
-        { "A = if(tick() < 3, A + 1, 0)\nA(), A", "S[2, 1]", Ticks(3) },
+        // CACHE-PUB-1: the explicit A() is A's OWNER (empty, inactive key), so the property-style
+        // read inside it is re-entrant (returns 1, publishes nothing) and A()'s own 2 is published
+        // and reused. Formerly A() owned nothing, the inner read published 1, and this was S[2, 1].
+        { "A = if(tick() < 3, A + 1, 0)\nA(), A", "S[2, 2]", Ticks(3) },
+
+        // CACHE-PUB-1: an explicit call owning an inner explicit call of the same key — the inner
+        // A() is re-entrant; the owner's 2 is published (formerly nothing was, and the bare read
+        // evaluated a fourth time: S[2, 0]).
+        { "A = if(tick() < 3, A() + 1, 0)\nA(), A", "S[2, 2]", Ticks(3) },
+
+        // CACHE-PUB-1: a property read owning an inner explicit call: the inner A() is re-entrant.
+        { "A = if(tick() < 3, A() + 1, 0)\nA, A, A()", "S[2, 2, 0]", Ticks(4) },
+
+        // CACHE-PUB-1: indirect re-entry through another property's explicit call: A() owns A, B()
+        // owns B, and both inner requests are re-entrant; each owner publishes once.
+        { "A = if(tick() < 3, B() + 1, 0)\nB = A\nA(), A, B", "S[2, 2, 1]", Ticks(3) },
 
         // An explicit call after publication evaluates afresh (0) and replaces nothing.
         { "A = if(tick() < 3, A + 1, 0)\nA, A(), A", "S[2, 0, 2]", Ticks(4) },
@@ -321,8 +337,13 @@ public class OutermostPropertyCachePublicationTests
     {
         { "pubOutermostOwnsTheEntry", "S[101, 101]", ["P"] },
         { "pubDeeperRecursion", "S[301, 301, 301]", ["P"] },
-        { "pubExplicitCallOwnsNothing", "S[101, 1]", ["P"] },
-        { "pubReentranceThroughExplicitCall", "S[101, 101]", ["R"] },
+        { "pubExplicitCallOwnsTheEntry", "S[101, 101]", ["P"] },
+        { "pubReentranceThroughExplicitCall", "S[101, 101]", ["M", "R"] },
+        { "pubExplicitOwnerInnerExplicitCall", "S[101, 101]", ["PC"] },
+        { "pubReadOwnerInnerExplicitCall", "S[101, 1, 101]", ["PR"] },
+        { "pubEstablishedEntryUnchangedByFreshCall", "S[101, 1, 101]", ["P"] },
+        { "pubFailedExplicitOwnerPublishesNothing", "DivisionByZero", [] },
+        { "pubFailedExplicitOwnerKeepsOtherEntries", "DivisionByZero", ["Seven"] },
         { "pubIndirectRecursion", "S[101, 101, 1]", ["IB", "IA"] },
         { "pubSiblingReentrantReadsEachEvaluate", "S[29, 29]", ["PB"] },
         { "pubFailedOwnerPublishesNothing", "DivisionByZero", [] },
@@ -363,8 +384,10 @@ public class OutermostPropertyCachePublicationTests
     /// The tree of the named Lean guard (<c>pubRoot</c> with that guard's output rows):
     /// <c>P = if(x == 0, 1, G(x - 1) + 100)</c>, <c>G(x) = P</c>, <c>H(x) = P()</c>, the explicit-call
     /// relay <c>R</c>/<c>L</c>/<c>M</c>/<c>LR</c>, the indirect pair <c>IA</c>/<c>IB</c>/<c>IG</c>/<c>IGB</c>,
-    /// the failing <c>PF</c>/<c>GF</c> and <c>PS</c>/<c>GS</c> over <c>Seven = 3 + 4</c>, and the sibling shape
-    /// <c>PB = if(x &lt;= 0, x + 10, GB(x - 1) + GB(x - 2))</c>, <c>GB(x) = PB</c>.
+    /// the failing <c>PF</c>/<c>GF</c> and <c>PS</c>/<c>GS</c> over <c>Seven = 3 + 4</c>, the sibling shape
+    /// <c>PB = if(x &lt;= 0, x + 10, GB(x - 1) + GB(x - 2))</c>, <c>GB(x) = PB</c>, and the CACHE-PUB-1
+    /// explicit-call shapes <c>PC</c>/<c>HC</c>/<c>GC</c>, <c>PR</c>/<c>HR</c>/<c>GR</c>, <c>PFC</c>/<c>HFC</c> and
+    /// <c>PSC</c>/<c>HSC</c> (each <c>Hn(x) = Pn()</c>).
     /// </summary>
     private static Expr LeanGuardTree(string guard)
     {
@@ -374,6 +397,7 @@ public class OutermostPropertyCachePublicationTests
         static Expr Add(Expr left, Expr right) => new Expr.Binary(BinaryOp.Add, left, right);
         static Expr CallX(string name, int value) => new Expr.Call(new Expr.Resolve(name), [N(value)]);
         static Expr CallPrevious(string name) => new Expr.Call(new Expr.Resolve(name), [new Expr.Binary(BinaryOp.Sub, X(), N(1))]);
+        static Expr Invoke(string name) => new Expr.Call(new Expr.Resolve(name), OutputBundle.Empty);
         static Expr If(Expr whenZero, Expr otherwise) => new Expr.Call(new Expr.Resolve("if"),
             [new Expr.Comparison(X(), [new ComparisonLink(ComparisonOp.Eq, N(0))]), whenZero, otherwise]);
         static Algorithm.User Alg(bool takesX, params Expr[] output)
@@ -405,13 +429,28 @@ public class OutermostPropertyCachePublicationTests
                  Add(X(), N(10)),
                  Add(CallPrevious("GB"), new Expr.Call(new Expr.Resolve("GB"), [new Expr.Binary(BinaryOp.Sub, X(), N(2))]))]))),
             Prop("GB", Alg(true, Read("PB"))),
+            Prop("PC", Alg(false, If(N(1), Add(CallPrevious("HC"), N(100))))),
+            Prop("HC", Alg(true, Invoke("PC"))),
+            Prop("GC", Alg(true, Read("PC"))),
+            Prop("PR", Alg(false, If(N(1), Add(CallPrevious("HR"), N(100))))),
+            Prop("HR", Alg(true, Invoke("PR"))),
+            Prop("GR", Alg(true, Read("PR"))),
+            Prop("PFC", Alg(false, If(N(1), Add(CallPrevious("HFC"), oneOverZero)))),
+            Prop("HFC", Alg(true, Invoke("PFC"))),
+            Prop("PSC", Alg(false, If(N(1), Add(Add(Read("Seven"), CallPrevious("HSC")), oneOverZero)))),
+            Prop("HSC", Alg(true, Invoke("PSC"))),
         ];
 
         Expr[] output = guard switch
         {
             "pubOutermostOwnsTheEntry" => [CallX("G", 1), CallX("G", 5)],
             "pubDeeperRecursion" => [CallX("G", 3), CallX("G", 9), CallX("G", 0)],
-            "pubExplicitCallOwnsNothing" => [CallX("H", 1), CallX("G", 5)],
+            "pubExplicitCallOwnsTheEntry" => [CallX("H", 1), CallX("G", 5)],
+            "pubExplicitOwnerInnerExplicitCall" => [CallX("HC", 1), CallX("GC", 5)],
+            "pubReadOwnerInnerExplicitCall" => [CallX("GR", 1), CallX("HR", 0), CallX("GR", 5)],
+            "pubEstablishedEntryUnchangedByFreshCall" => [CallX("G", 1), CallX("H", 0), CallX("G", 5)],
+            "pubFailedExplicitOwnerPublishesNothing" => [CallX("HFC", 1)],
+            "pubFailedExplicitOwnerKeepsOtherEntries" => [CallX("HSC", 1)],
             "pubReentranceThroughExplicitCall" => [CallX("LR", 1), CallX("LR", 5)],
             "pubIndirectRecursion" => [CallX("IG", 1), CallX("IG", 5), CallX("IGB", 9)],
             "pubFailedOwnerPublishesNothing" => [CallX("GF", 1)],
@@ -558,6 +597,38 @@ public class OutermostPropertyCachePublicationTests
             Assert.InRange(own, 0, 1);
             if (own == 1)
                 Published.Add(execution.Binding.Name);
+        }
+
+        // CACHE-PUB-1: an owning explicit zero-supply invocation publishes under the same law, so it is
+        // attributed exactly like a read.
+        public EvalResult<ZeroArgPropertyResult> Invoke(
+            ZeroArgPropertyExecution execution,
+            Func<EvalResult<ZeroArgPropertyResult>> evaluate)
+        {
+            var (stores, recorded) = (Stores, Published.Count);
+            try
+            {
+                return _sync.Invoke(execution, evaluate);
+            }
+            finally
+            {
+                Attribute(execution, stores, recorded);
+            }
+        }
+
+        public async ValueTask<EvalResult<ZeroArgPropertyResult>> InvokeAsync(
+            ZeroArgPropertyExecution execution,
+            Func<ValueTask<EvalResult<ZeroArgPropertyResult>>> evaluateAsync)
+        {
+            var (stores, recorded) = (Stores, Published.Count);
+            try
+            {
+                return await _async.InvokeAsync(execution, evaluateAsync);
+            }
+            finally
+            {
+                Attribute(execution, stores, recorded);
+            }
         }
     }
 }

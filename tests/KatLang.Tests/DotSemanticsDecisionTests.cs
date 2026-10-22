@@ -302,14 +302,17 @@ public class DotSemanticsDecisionTests
     public async Task Q18_GroupedZeroParameterMemberCall_IsTheFreshCall()
     {
         // Box.V reads the per-run property cache; Box.V() and (Box.V)() are the explicit fresh call —
-        // the grouped spelling never reads, and never populates, the cache entry.
+        // the grouped spelling never reads the cache entry. CACHE-PUB-1: like the ungrouped call, a
+        // grouped call that finds the entry EMPTY establishes it (formerly it never populated it).
         var (read, _) = await AllRoutesAsync(Box + "Box.V, Box.V(), (Box.V)(), Box.V(), Box.V");
         Assert.Equal("ok S[1, 2, 3, 4, 1]", read.Semantic);
         Assert.Equal(["tick#1", "tick#2", "tick#3", "tick#4"], read.HostCalls);
 
         var (populate, _) = await AllRoutesAsync(Box + "(Box.V)(), Box.V, (Box.V)(), Box.V");
-        Assert.Equal("ok S[1, 2, 3, 2]", populate.Semantic);
-        Assert.Equal(["tick#1", "tick#2", "tick#3"], populate.HostCalls);
+        Assert.Equal("ok S[1, 1, 2, 1]", populate.Semantic);
+        Assert.Equal(["tick#1", "tick#2"], populate.HostCalls);
+        var (member, _) = await AllRoutesAsync(Box + "Box.V(), Box.V, (Box.V)(), Box.V");
+        Assert.Equal(populate.Semantic, member.Semantic);
 
         // The dotted spellings behave exactly as the opened ones (`(V)()` is `V()`).
         var (opened, _) = await AllRoutesAsync("open Box\n" + Box + "V, V(), (V)(), V(), V");
@@ -342,8 +345,10 @@ public class DotSemanticsDecisionTests
             + "Apply(Lib.F, 5), map([1, 2], Lib.Inc), repeat(LS(0), 3), LS(0).repeat(2), P(Lib.X, Lib.X), G(Lib.Sub)");
         Assert.Equal("ok S[10, L[2, 3], 6, 4, 7, 1]", observation.Semantic);
 
+        // CACHE-PUB-1: the first invocation of the supplied member establishes V's entry (the cell's
+        // written `Box.V` names the member binding); the bare read reuses it (formerly S[1, 2, 3]).
         var (calls, _) = await AllRoutesAsync(Box + "Call0(f) = f()\nCall0(Box.V), Call0(Box.V), Box.V");
-        Assert.Equal("ok S[1, 2, 3]", calls.Semantic);
+        Assert.Equal("ok S[1, 2, 1]", calls.Semantic);
 
         foreach (var computed in new[] { "Sub(a, b) = a - b\nTwice(f) = f(f(1))\nTwice(10.Sub(1))", "Inc(x) = x + 1\n" + Apply + "Apply(5.Inc, 1)", "Call0(f) = f()\nCall0(5.string)" })
         {

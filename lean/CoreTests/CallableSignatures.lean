@@ -239,12 +239,15 @@ def zeroArgOuterFreshNestedPropertyStyleRoot : Algorithm :=
     .call (.resolve "B") []
   ]
 
+-- `B()` keeps the nested property-style cache (A's one entry) and, as the owning zero-supply
+-- invocation of B's empty entry, ESTABLISHES B's entry with B's PROPERTY-LEVEL counted output — two
+-- emitted rows, never the call's re-counted one value (CACHE-PUB-1; formerly B() populated nothing).
 def zeroArgOuterFreshCallKeepsNestedPropertyStyleCache : Bool :=
   match KatLang.runResultWithState (.algorithmExpr zeroArgOuterFreshNestedPropertyStyleRoot) with
   | Except.ok (Result.sequenceValue [Result.atom 3, Result.atom 3], state) =>
       match state.zeroArgPropertyCache with
-      | [(key, (Result.atom 3, 1))] =>
-          key.propertyName == "A" && key.accessKind == .lexical
+      | [(keyA, (Result.atom 3, 1)), (keyB, (Result.sequenceValue [Result.atom 3, Result.atom 3], 2))] =>
+          keyA.propertyName == "A" && keyA.accessKind == .lexical && keyB.propertyName == "B"
       | _ => false
   | _ => false
 
@@ -296,10 +299,13 @@ def zeroArgExplicitNestedFreshCallsRoot : Algorithm :=
     .call (.resolve "C") []
   ]
 
+-- Explicit calls never READ an entry, but the first owning `A()` establishes A's entry and the
+-- second leaves it unchanged; `C()` establishes C's (CACHE-PUB-1; formerly the cache stayed empty).
 def zeroArgExplicitNestedCallsBypassDirectCache : Bool :=
   match KatLang.runResultWithState (.algorithmExpr zeroArgExplicitNestedFreshCallsRoot) with
   | Except.ok (Result.sequenceValue [Result.atom 3, Result.atom 3], state) =>
-      state.zeroArgPropertyCache.isEmpty
+      state.zeroArgPropertyCache.map (fun entry => (entry.fst.propertyName, entry.snd.snd))
+        == [("A", 1), ("C", 2)]
   | _ => false
 
 #guard zeroArgExplicitNestedCallsBypassDirectCache
@@ -452,8 +458,9 @@ def zeroArgRootAndNestedAccess : Bool :=
     ("A", alg [] [] [] [.num 7]),
     ("F", alg [] [] [] [.resolve "A"])
   ] [.resolve "A", .call (.resolve "F") [], .resolve "A"]
+  -- A keeps ONE entry; the owning `F()` establishes F's own (CACHE-PUB-1).
   match KatLang.runResultWithState (.algorithmExpr root) with
-  | .ok (_, state) => state.zeroArgPropertyCache.length == 1
+  | .ok (_, state) => state.zeroArgPropertyCache.map (·.fst.propertyName) == ["A", "F"]
   | _ => false
 
 #guard zeroArgRootAndNestedAccess
@@ -503,7 +510,8 @@ def zeroArgInlineDeclarationIdentity (shared : Bool) (shareOwner : Bool := true)
 #guard zeroArgInlineDeclarationIdentity true false
 
 -- An explicit outer call `B()` re-evaluates B on every call, and the property-style
--- `A` inside it keeps its one run-wide entry across both calls.
+-- `A` inside it keeps its one run-wide entry across both calls. The first `B()` owns B's
+-- empty entry and establishes it; the second is fresh and leaves it unchanged (CACHE-PUB-1).
 def zeroArgNestedPropertyAcrossExplicitOuterCallsRoot : Algorithm :=
   algPrivate [] [] [
     ("A", alg [] [] [] [.num 3]),
@@ -518,7 +526,7 @@ def zeroArgNestedPropertyKeepsOneEntryAcrossExplicitOuterCalls : Bool :=
   | Except.ok (Result.sequenceValue [
         Result.sequenceValue [Result.atom 3, Result.atom 3],
         Result.sequenceValue [Result.atom 3, Result.atom 3]], state) =>
-      state.zeroArgPropertyCache.length == 1
+      state.zeroArgPropertyCache.map (·.fst.propertyName) == ["A", "B"]
   | _ => false
 
 #guard zeroArgNestedPropertyKeepsOneEntryAcrossExplicitOuterCalls

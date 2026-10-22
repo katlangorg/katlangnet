@@ -159,6 +159,13 @@ public class BudgetConservationTests
                     ? throw fault()
                     : evaluate());
         }
+
+        // CACHE-PUB-1: an explicit zero-supply invocation keeps the inner cache's publication law; it is
+        // no read-seam access, so this cache's read bookkeeping is unchanged.
+        public EvalResult<ZeroArgPropertyResult> Invoke(
+            ZeroArgPropertyExecution execution,
+            Func<EvalResult<ZeroArgPropertyResult>> evaluate)
+            => inner.Invoke(execution, evaluate);
     }
 
     /// <summary>Counts zero-argument property accesses without changing any of them.</summary>
@@ -174,6 +181,13 @@ public class BudgetConservationTests
             Accesses++;
             return inner.GetOrEvaluate(execution, evaluate);
         }
+
+        // CACHE-PUB-1: an explicit zero-supply invocation keeps the inner cache's publication law; it is
+        // no read-seam access, so this cache's read bookkeeping is unchanged.
+        public EvalResult<ZeroArgPropertyResult> Invoke(
+            ZeroArgPropertyExecution execution,
+            Func<EvalResult<ZeroArgPropertyResult>> evaluate)
+            => inner.Invoke(execution, evaluate);
     }
 
     /// <summary>

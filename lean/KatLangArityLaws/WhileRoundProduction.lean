@@ -757,9 +757,9 @@ theorem property_cache_hit_production (k : ZeroArgPropertyAccessKind) (owner : A
     (hhit : ZeroArgPropertyCache.lookup s.zeroArgPropertyCache
       (zeroArgPropertyCacheKey k owner binding ctx env (propertyOwnerBindingContext resolved.parent s)) = some v) :
     (evalZeroArgPropertyAccessCounted k owner binding resolved ctx env).runState s = (.ok v, s) := by
-  refine production_of_answer_free (.evalZeroArgPropertyAccessCounted k owner binding resolved ctx env) s _
+  refine production_of_answer_free (.evalZeroArgPropertyAccessCounted k owner binding resolved ctx env .read) s _
     (fun rec => ?_) nofun
-  show (EvalBody.evalZeroArgPropertyAccessCounted rec k owner binding resolved ctx env).runState s = _
+  show (EvalBody.evalZeroArgPropertyAccessCounted rec k owner binding resolved ctx env .read).runState s = _
   simp only [EvalBody.evalZeroArgPropertyAccessCounted, hcache, if_true, EvalM.bind_runState]
   show (match ZeroArgPropertyCache.lookup s.zeroArgPropertyCache _ with
     | some cached => (pure cached : EvalM CountedResult)

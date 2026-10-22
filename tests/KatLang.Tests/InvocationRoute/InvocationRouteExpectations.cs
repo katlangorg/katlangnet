@@ -129,8 +129,10 @@ internal static class InvocationRouteExpectations
         ["EQ12m"] = "ok 4\tcount=1\ttrace=2,2\tsteps=4\tcheckpoints=13\titems=0\tchars=0",
         ["EQ13p"] = "err BadIndex | while evaluating call to Id: while evaluating dotCall .G of Box: Bad index @[23:14, 23:15)\tcount=-1\ttrace=\tsteps=2\tcheckpoints=11\titems=1\tchars=0",
         ["EQ13m"] = "err BadIndex | while evaluating call to Id: while evaluating dotCall .G of Box: Bad index @[23:14, 23:15)\tcount=-1\ttrace=\tsteps=2\tcheckpoints=11\titems=1\tchars=0",
-        ["EQ14p"] = "ok (1, 2, 3)\tcount=3\ttrace=\tsteps=8\tcheckpoints=13\titems=3\tchars=0",
-        ["EQ14m"] = "ok (1, 2, 3)\tcount=3\ttrace=\tsteps=8\tcheckpoints=13\titems=3\tchars=0",
+        // CACHE-PUB-1 (2026-10-22): the first `Box.V()` establishes V's entry, which the bare `Box.V` reuses
+        // (formerly `(1, 2, 3)` with steps=8, checkpoints=13: one more evaluation of V).
+        ["EQ14p"] = "ok (1, 2, 1)\tcount=3\ttrace=\tsteps=7\tcheckpoints=11\titems=3\tchars=0",
+        ["EQ14m"] = "ok (1, 2, 1)\tcount=3\ttrace=\tsteps=7\tcheckpoints=11\titems=3\tchars=0",
         ["EQ15p"] = "err TypeMismatch | while evaluating call to Id: while evaluating dotCall .G of Box: while evaluating `x * 10`: Type mismatch: operator `*` expects numeric scalar operands, but the left operand was a Boolean value: true @[10:10, 10:16)\tcount=-1\ttrace=\tsteps=2\tcheckpoints=10\titems=0\tchars=0",
         ["EQ15m"] = "err TypeMismatch | while evaluating call to Id: while evaluating dotCall .G of Box: while evaluating `x * 10`: Type mismatch: operator `*` expects numeric scalar operands, but the left operand was a Boolean value: true @[10:10, 10:16)\tcount=-1\ttrace=\tsteps=2\tcheckpoints=10\titems=0\tchars=0",
         ["EQ16p"] = "ok (1, true)\tcount=1\ttrace=\tsteps=2\tcheckpoints=16\titems=2\tchars=0",

@@ -250,11 +250,13 @@ def okValue (rows : List Expr) (expected : Result) : Bool :=
 #guard okValue [whileOf "Sq" [.num 4]] (.atom 2)
 -- One published entry per round (three distinct owner contexts) ...
 #guard entries [whileOf "Sq" [.num 4]] == 3
--- ... and the explicit fresh calls `Q()` never publish ...
+-- ... and the explicit fresh calls `Q()` never READ an entry: the first of each round is Q's
+-- owning zero-supply invocation in that round's owner context and establishes one entry per round
+-- (CACHE-PUB-1; formerly none) ...
 #guard okValue [whileOf "Sx" [.num 4]] (.atom 2)
-#guard entries [whileOf "Sx" [.num 4]] == 0
--- ... and evaluate `F(x + 0)` again in every accepted transition: exactly one more argument cell per
--- accepted round (two), which is what the shared bare read saves.
+#guard entries [whileOf "Sx" [.num 4]] == 3
+-- ... but each still evaluates `F(x + 0)` again in every accepted transition: exactly one more
+-- argument cell per accepted round (two), which is what the shared bare read saves.
 #guard cells [whileOf "Sx" [.num 4]] == cells [whileOf "Sq" [.num 4]] + 2
 
 -- A lazy supplied initial cell demanded during discovery is reused by the transition: `F(5)` is

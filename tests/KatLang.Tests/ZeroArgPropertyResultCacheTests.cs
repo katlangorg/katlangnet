@@ -38,6 +38,13 @@ public class ZeroArgPropertyResultCacheTests
             _requests.Add(execution);
             return _inner.GetOrEvaluate(execution, evaluate);
         }
+
+        // CACHE-PUB-1: an explicit zero-supply invocation keeps the inner cache's publication law; it is
+        // no read-seam access, so this cache's read bookkeeping is unchanged.
+        public EvalResult<ZeroArgPropertyResult> Invoke(
+            ZeroArgPropertyExecution execution,
+            Func<EvalResult<ZeroArgPropertyResult>> evaluate)
+            => _inner.Invoke(execution, evaluate);
     }
 
     [Fact]
@@ -453,7 +460,9 @@ public class ZeroArgPropertyResultCacheTests
         Assert.Equal(2, snapshot.TotalRequests);
         Assert.Equal(1, snapshot.Hits);
         Assert.Equal(1, snapshot.Misses);
-        Assert.Equal(1, snapshot.Stores);
+        // CACHE-PUB-1: A's read store plus the owning `B()` invocation's store of B (formerly 1).
+        Assert.Equal(2, snapshot.Stores);
+        Assert.Equal(1, snapshot.GetAccessKind(ZeroArgPropertyAccessKind.Invocation).Stores);
         Assert.Equal(2, countedLexical.Requests);
         Assert.Equal(1, countedLexical.Hits);
         Assert.Equal(1, countedLexical.Misses);
@@ -494,7 +503,9 @@ public class ZeroArgPropertyResultCacheTests
         Assert.Equal(4, snapshot.TotalRequests);
         Assert.Equal(3, snapshot.Hits);
         Assert.Equal(1, snapshot.Misses);
-        Assert.Equal(1, snapshot.Stores);
+        // CACHE-PUB-1: the first `B()` establishes B; the second is fresh and stores nothing (formerly 1).
+        Assert.Equal(2, snapshot.Stores);
+        Assert.Equal(1, snapshot.GetAccessKind(ZeroArgPropertyAccessKind.Invocation).Stores);
         Assert.Equal(4, countedLexical.Requests);
         Assert.Equal(3, countedLexical.Hits);
         Assert.Equal(1, countedLexical.Misses);

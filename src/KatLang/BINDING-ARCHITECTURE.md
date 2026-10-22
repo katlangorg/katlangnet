@@ -34,7 +34,7 @@ Callbacks pass produced items as Ready cells, with no invented callable identity
 
 `NeedEnv` and retained lexical activations preserve the caller's parameter addresses. Binding shadows inherited names on every channel. CALLABLE projection obtains identity and owner without VALUE evaluation; invocation is fresh and cannot replace a memoized VALUE outcome. Alias indirection allocates neither a wrapper invocation nor an extra cell. Bare forwarding transfers the source cells or collector slice selected by the existing static name/kind contract.
 
-Property caching is a separate per-run domain: demanded bare `Z` uses the resolved binding cache; demanded explicit `Z()` is fresh once within its cell. Dot fallback injects the original receiver expression as one ordinary leading argument; the receiver creates no new supply or binding policy. Capture, list, spread, selection and structural pattern opening keep their distinct value boundaries.
+Property caching is a separate per-run domain: demanded bare `Z` uses the resolved binding cache; demanded explicit `Z()` is fresh once within its cell — and, as a qualifying zero-supply invocation that finds `Z`'s entry empty, establishes it through the same publication law (CACHE-PUB-1; the binding comes from the callee's origin: its written name or path, a parameter cell's written argument, a captured callee cell). Dot fallback injects the original receiver expression as one ordinary leading argument; the receiver creates no new supply or binding policy. Capture, list, spread, selection and structural pattern opening keep their distinct value boundaries.
 
 ## Demand state and resources
 

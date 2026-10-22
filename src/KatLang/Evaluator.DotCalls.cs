@@ -604,6 +604,10 @@ public static partial class Evaluator
                 return ZeroArgumentDemandArityMismatch(wired);
             }
 
+            // CACHE-PUB-1: a possibly zero-supply member call names the selected member binding.
+            if (MayFormZeroSupply(argsOpt) && IsPublishableCallee(wired))
+                return EvalBoundMemberCallCounted(targetAlg!, prop, wired, argsOpt, name, ctx, valEnv);
+
             return EvalResolvedCallCounted(
                 wired,
                 argsOpt,

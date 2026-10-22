@@ -99,9 +99,11 @@ public class ModelCPropagationTests
     [InlineData("Through(xs, f) = map(xs, f)\nThrough([1], tick())", "err NotAnAlgorithm", "")]
     // The collection is demanded first; the callback is projected at its first invocation.
     [InlineData("map([trace(1), 2], 5)", "err NotAnAlgorithm", "trace(1)")]
-    // Invoking is fresh and passing reads nothing; A's first property read is Apply's demand.
-    [InlineData("A = tick()\nCall0(f) = f()\nApply(f) = f + 1\nCall0(A), Call0(A), Apply(A), A", "ok S[1, 2, 4, 3]",
-        "tick#1 | tick#2 | tick#3")]
+    // Invoking is fresh and passing reads nothing. CACHE-PUB-1: the first invocation establishes A's
+    // entry, which Apply's demand and the bare read reuse (formerly S[1, 2, 4, 3] over three ticks,
+    // when A's first property read was Apply's demand).
+    [InlineData("A = tick()\nCall0(f) = f()\nApply(f) = f + 1\nCall0(A), Call0(A), Apply(A), A", "ok S[1, 2, 2, 1]",
+        "tick#1 | tick#2")]
     public async Task CallbackAndInvokedArguments_AreProjectedOnlyWhenInvoked(string source, string outcome, string hostCalls)
         => AssertOutcome(await OnEveryRouteAsync(source), outcome, hostCalls);
 

@@ -829,8 +829,10 @@ public class ResourceLimitTerminalityTests
             KatLangErrorCode.DivisionByZero, "trace(1)");
         AssertOk(await OnEveryRouteAsync("A = trace(tick())\nPair(x) = x, x\nPair(A), A"),
             "S[S[1, 1], 1]", "tick#1", "trace(1)");
+        // CACHE-PUB-1: the first invocation establishes P's entry, which the cell's one VALUE
+        // demand reads (formerly S[1, 2, 3]); the cell itself is still demanded at most once.
         AssertOk(await OnEveryRouteAsync("P = tick()\nTwice0(f) = f(), f(), f\nTwice0(P)"),
-            "S[1, 2, 3]", "tick#1", "tick#2", "tick#3");
+            "S[1, 2, 1]", "tick#1", "tick#2");
         // An ordinary failure beside a demanded limit: G demands only y, so Bad is never
         // evaluated, and y's limit ends the run after trace(2). (Until Model C the first slot
         // was evaluated at assembly and its failure retained.)

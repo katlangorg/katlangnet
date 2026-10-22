@@ -36,7 +36,10 @@ public class ModelCA2IndependentReviewTests
     [InlineData("I27-one-item-reduce", "Through(f) = reduce([1], f, 7)\nThrough(tick())", "err NotAnAlgorithm", "")]
     // HO-03 (Q-25, Option B): the family callback's two rows are its ordinary call result, one sequence value.
     [InlineData("I28-family-callback-row-boundary", "F(0) = 1, 2\nF(x) = x, x\nmap([0], F)", "ok L[S[1, 2]]", "")]
-    [InlineData("I29-property-invoke-read", "A = tick()\nUse(f) = f() + f + f() + f\nUse(A), A", "ok S[8, 2]", "tick#1 | tick#2 | tick#3")]
+    // CACHE-PUB-1: the first `f()` (origin: the cell's written `A`) establishes A's entry; the cell's VALUE
+    // demand reads it (1), the second `f()` is fresh (2), the completed cell is reused: 1 + 1 + 2 + 1
+    // (formerly S[8, 2] over three ticks, when the first invocation established nothing).
+    [InlineData("I29-property-invoke-read", "A = tick()\nUse(f) = f() + f + f() + f\nUse(A), A", "ok S[5, 1]", "tick#1 | tick#2")]
     [InlineData("I30-deconstruction-unused", "p, q = tick(), 7\nUse(f) = map([], f)\nUse(p), q, p", "ok S[L[], 7, 1]", "tick#1")]
     [InlineData("I31-ordinary-value-failure", "pow('a', 1 / 0)", "err TypeMismatch", "")]
     [InlineData("I34-undemanded-native", "Through(f) = map([], f)\nThrough(pow('a', 1 / 0))", "ok L[]", "")]

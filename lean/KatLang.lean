@@ -1999,13 +1999,15 @@ inductive ZeroArgPropertyAccessKind where
     assigns declaration identities before wiring, so separate declarations with
     equal bodies never alias; explicit `shared` identities preserve host DAGs.
     The owner is its `asScopeCtx` (including parent chain), and exported
-    lexical/structural spellings have one key. Explicit calls neither read
-    nor replace their own cache entry. Only successful results are stored, and
-    an enclosing failure never rolls back another key's successful nested
-    store. WHICH completion is stored is the publication law of
-    `evalZeroArgPropertyAccessCounted` (Q-37): the OUTERMOST successful
-    property-style evaluation of the key; a re-entrant read of a key whose
-    owner is still active evaluates but never publishes. -/
+    lexical/structural spellings have one key. Explicit calls never read nor
+    replace their own cache entry; a qualifying zero-supply invocation computes
+    the SAME key and may establish an empty entry (CACHE-PUB-1, the `invoke`
+    request). Only successful results are stored, and an enclosing failure never
+    rolls back another key's successful nested store. WHICH completion is stored
+    is the publication law of `evalZeroArgPropertyAccessCounted` (Q-37, extended
+    by CACHE-PUB-1): the OUTERMOST successful qualifying evaluation of the key —
+    a property-style read or an explicit zero-supply invocation; a re-entrant
+    request of a key whose owner is still active evaluates but never publishes. -/
 structure ZeroArgPropertyCacheKey where
   accessKind : ZeroArgPropertyAccessKind
   owner      : String
@@ -2141,8 +2143,11 @@ structure ParameterActivation where
     Lean semantics because property-style `A` and explicit `A()` now have
     distinct observable call shapes. The state is created fresh for each
     top-level `runResult`; it is not general memoization and does not cache
-    arbitrary calls or expression results. `activeZeroArgProperties` holds the
-    cache keys whose OWNING property-style evaluation is still running (Q-37,
+    arbitrary calls or expression results (an explicit zero-supply invocation may
+    establish a property's empty entry — CACHE-PUB-1 — but never reads one).
+    `activeZeroArgProperties` holds the cache keys whose OWNING qualifying
+    evaluation — a property-style read or an explicit zero-supply invocation, in
+    ONE ownership domain — is still running (Q-37, CACHE-PUB-1,
     `evalZeroArgPropertyAccessCounted`); it is empty between accesses. -/
 structure EvalState where
   needs : Array NeedCell := #[]
@@ -4694,6 +4699,38 @@ structure ResolvedProperty where
   alg     : Algorithm
   deriving Repr
 
+/-- WHICH zero-argument property calculation a request of the property cache performs
+    (CACHE-PUB-1, owner decision October 22 2026). Both requests share ONE publication law
+    (`evalZeroArgPropertyAccessCounted`, Q-37):
+    * `read` — a property-style read `A`: an established entry is reused; on an empty entry the
+      read evaluates the property's zero-argument demand under publication ownership.
+    * `invoke calleeName` — a qualifying explicit zero-supply invocation `A()`: it ALWAYS performs
+      its own fresh invocation (it never obtains its result from an established entry), and on an
+      empty, inactive entry it owns publication, so its success establishes the entry a later bare
+      read reuses. An established entry is never replaced. -/
+inductive ZeroArgPropertyRequest where
+  | read
+  | invoke (calleeName : String)
+  deriving Repr
+
+/-- Where the callee of an ordinary call came from (CACHE-PUB-1): the authoritative provenance a
+    zero-supply invocation needs to name the property BINDING it invokes, decided only after the
+    supply is formed (`EvalBody.evalSuppliedCallCounted`) and read without evaluating anything
+    (`EvalBody.originBinding?`).
+    * `none` — no property binding (a computed callee, a callback, a host-built dispatch).
+    * `written callee caller` — the written callee expression and the context it is resolved in
+      (a lexical name, an argumentless structural path, a parameter).
+    * `cell address` — a supplied callee cell (a parameter's transported cell, a captured plan's
+      canonical callee cell): the binding its written source names in its own caller context.
+    * `bound owner binding` — an already selected member binding (a structural member call).
+    C#: `Evaluator.CalleeOrigin`. -/
+inductive CalleeOrigin where
+  | none
+  | written (callee : Expr) (caller : EvalCtx)
+  | cell (address : Nat)
+  | bound (owner : Algorithm) (binding : PropDef)
+  deriving Repr
+
 structure OpenPropertyHit where
   provider : String
   property : ResolvedProperty
@@ -5063,7 +5100,9 @@ def countedSequenceCallbackItem (item : CountedResult) : CountedResult :=
     collecting-only property (`Only(*xs) = xs`) takes the very same demand/cache
     path an ordinary zero-parameter property takes — eligibility is what the
     September 2026 rule widened, cache POLICY is unchanged, and `Only()` remains
-    an ordinary call that bypasses the entry. A builtin never accepts, so it
+    an ordinary call that never reads the entry (since CACHE-PUB-1 it may
+    establish an empty one, as the `invoke` request of
+    `evalZeroArgPropertyAccessCounted`). A builtin never accepts, so it
     keeps flowing to its own arity rejection uncached, exactly as before.
     Since Q-03 (2026-09-28) the surface pass reads the SAME rule when it decides
     whether to lift a bare reference (`liftsBareValueReference`): it never
@@ -5939,9 +5978,11 @@ def aliasBindingCell (wired : Algorithm) (target : Expr) (ctx : EvalCtx) : EvalM
     bare VALUE or a terminal invocation, whichever comes first — owns the canonical cell's
     already-performed receiver work, whichever operation performed the eligibility projection (a
     call, a bare read, a navigation through a parameter, a callback): eligibility checking never
-    duplicates a receiver evaluation. After a terminal invocation claimed the cell, a bare
-    observation gets a fresh suspension, retained for every later bare read. NEED channels remain
-    sticky. C#: `RuntimeAliasBinding.BareCell`. -/
+    duplicates a receiver evaluation. CACHE-PUB-1's D4 extension lets an owning terminal invocation
+    establish its alias's property entry, so later bare reads hit that entry without reaching this
+    helper. If the entry is still empty (a different alias binding's invocation claimed the cell),
+    this bare observation gets a fresh retained suspension. NEED channels remain sticky.
+    C#: `RuntimeAliasBinding.BareCell`. -/
 def aliasBareCell (wired : Algorithm) (target : Expr) (ctx : EvalCtx) : EvalM Nat := do
   let address ← aliasBindingCell wired target ctx
   let state ← get
@@ -5953,9 +5994,8 @@ def aliasBareCell (wired : Algorithm) (target : Expr) (ctx : EvalCtx) : EvalM Na
     match cell.aliasBare with
     | some bare => pure bare
     | none =>
-      -- A new bare observation has its own body binding context, just as an
-      -- ordinary property observation after an explicit call does. Reusing the
-      -- probe suspension would retain the call's captured local-property caches.
+      -- This cache-miss bare observation has its own body binding context. Reusing the
+      -- probe suspension would retain another binding's call-local property caches.
       let bindingCtx ← EvalCtx.bindParameters [] ctx
       let declaringCtx ← enterAlgorithmBody wired bindingCtx []
       let bare ← supplyNeed target declaringCtx []
@@ -6778,7 +6818,9 @@ namespace NeedPlan
 structure Route where
   target : Expr → EvalCtx → EvalM Algorithm
   normalize : Algorithm → EvalCtx → EvalM Algorithm
-  dispatch : Algorithm → List NeedSupply.Sourced → EvalCtx → ValEnv → String → EvalM CountedResult
+  /-- The ONE dispatch over the callee's ORIGIN (CACHE-PUB-1: the provenance a zero-supply invocation
+      publishes under, `CalleeOrigin`), the normalized callee and the formed supply. -/
+  dispatch : CalleeOrigin → Algorithm → List NeedSupply.Sourced → EvalCtx → ValEnv → String → EvalM CountedResult
   /-- The spread capability the plan's supply formation runs (production `evalSupplySpread`). -/
   spread : NeedSupply.SpreadEval
   /-- META-S3-4: the route classifier (production `classifyPlanRouteWith` over
@@ -6889,6 +6931,21 @@ def linkedPlanIn? (needs : Array NeedCell) (link : Nat) : Option Nat :=
     | _ => none
   | _ => none
 
+/-- CACHE-PUB-1: follow only the ALREADY RECORDED callee edges of supplied `.Algorithm` links.
+    CALLABLE resolution has completed before publication eligibility is read, so every traversed
+    receiver and callee is already retained. This heap read demands, projects and allocates nothing;
+    nested links preserve the ultimate binding. The heap size bounds even a malformed cyclic heap.
+    C#: `CellCalleeBinding` follows `LinkSuspension.ProjectedCallee`. -/
+def originCalleeIn (needs : Array NeedCell) (address : Nat) : Nat :=
+  go needs.size address
+where
+  go : Nat → Nat → Nat
+    | 0, a => a
+    | fuel + 1, a =>
+        match (linkedPlanIn? needs a).bind (fun p => (needs[p]?).bind NeedCell.callee) with
+        | some callee => go fuel callee
+        | none => a
+
 /-- META-S3-4-DIAG (October 20 2026): the callee name plan `a`'s execution along route `r` passes
     to its dispatch, read from heap `needs` alone (total; no demand, projection or preparation).
     Every route names its effective written callee (`openExprName eff.callee`) — the call's callee,
@@ -6910,6 +6967,24 @@ def dispatchNameIn (needs : Array NeedCell) (a : Nat) (eff : CallShape) : PlanRo
 def dispatchName (a : Nat) (eff : CallShape) (r : PlanRoute) : EvalM String := do
   pure (dispatchNameIn (← get).needs a eff r)
 
+/-- CACHE-PUB-1: the ORIGIN of the callee plan `a`'s execution along route `r` invokes, read from heap
+    `needs` alone (total; no demand, projection or preparation) — the provenance its dispatch names a
+    zero-supply invocation's property binding by. Every route's callee is its effective WRITTEN
+    callee in the plan's caller context, except the `.Algorithm` route, whose callee is the CAPTURED
+    plan's canonical callee cell (the one the link's CALLABLE projected, `linkedPlanIn?`); were it
+    unreadable, the dispatch has no origin. C#: `Evaluator.PlanCalleeOrigin`. -/
+def dispatchOriginIn (needs : Array NeedCell) (a : Nat) (eff : CallShape) : PlanRoute → CalleeOrigin
+  | .algorithm =>
+    match ((needs[a]?).bind NeedCell.callee).bind (linkedPlanIn? needs)
+        |>.bind (fun p => (needs[p]?).bind NeedCell.callee) with
+    | some c => .cell c
+    | none => .none
+  | _ => .written eff.callee eff.caller
+
+/-- `dispatchOriginIn` over the current heap: a pure state read. -/
+def dispatchOrigin (a : Nat) (eff : CallShape) (r : PlanRoute) : EvalM CalleeOrigin := do
+  pure (dispatchOriginIn (← get).needs a eff r)
+
 /-- One execution of plan `a` along its recorded route `r`: the ordinary call's phases (callee,
     normalization, the plan's ONE supply over the route's effective bundle, the one dispatch) under
     the written form's own error context. The dispatch is named by `dispatchName`, read right after
@@ -6918,10 +6993,11 @@ def executeAlong (route : Route) (a : Nat) (shape : CallShape) (r : PlanRoute) :
   let eff := effective shape r
   let callee ← withCtx shape.ctxMsg (calleeAlong route a eff r)
   let name ← dispatchName a eff r
+  let origin ← dispatchOrigin a eff r
   let result ← withCtx shape.ctxMsg (do
     let normal ← route.normalize callee eff.caller
     let cells ← prepare route.spread a eff
-    route.dispatch normal cells eff.caller eff.values name)
+    route.dispatch origin normal cells eff.caller eff.values name)
   pure (reCountValueBoundary result)
 
 /-- One execution of plan `a` (META-S3-4): its route — recorded, or established now — then
@@ -7382,7 +7458,7 @@ inductive EvalCall : Type where
   | capturedCallee (callee : Nat)
   | referenceReceiverValue (target : Expr) (targetAlg : Algorithm) (ctx : EvalCtx) (env : ValEnv)
   | algorithmCalleeOf (receiver : Expr) (ctx : EvalCtx) (env : ValEnv)
-  | evalSuppliedCallCounted (callee : Algorithm) (cells : List NeedSupply.Sourced) (ctx : EvalCtx) (env : ValEnv) (calleeName : String)
+  | evalSuppliedCallCounted (origin : CalleeOrigin) (callee : Algorithm) (cells : List NeedSupply.Sourced) (ctx : EvalCtx) (env : ValEnv) (calleeName : String)
   | evalNeedUserSupply (callee : Algorithm) (cells : List Nat) (ctx : EvalCtx) (env : ValEnv)
   | evalNeedFamilySupply (callee : Algorithm) (cells : List Nat) (ctx : EvalCtx) (env : ValEnv) (calleeName : String)
   | invokeNeed (arg : ResolvedArgumentAlgorithm)
@@ -7408,7 +7484,7 @@ inductive EvalCall : Type where
   | evalZeroArgumentDemandOutput (a : Algorithm) (ctx : EvalCtx) (env : ValEnv)
   | evalArgumentValueCounted (arg : ResolvedArgumentAlgorithm) (ctx : EvalCtx) (env : ValEnv)
   | evalArgumentValue (arg : ResolvedArgumentAlgorithm) (ctx : EvalCtx) (env : ValEnv)
-  | evalZeroArgPropertyAccessCounted (accessKind : ZeroArgPropertyAccessKind) (owner : Algorithm) (binding : PropDef) (resolvedAlgorithm : Algorithm) (ctx : EvalCtx) (env : ValEnv)
+  | evalZeroArgPropertyAccessCounted (accessKind : ZeroArgPropertyAccessKind) (owner : Algorithm) (binding : PropDef) (resolvedAlgorithm : Algorithm) (ctx : EvalCtx) (env : ValEnv) (request : ZeroArgPropertyRequest)
   | evalZeroArgPropertyAccess (accessKind : ZeroArgPropertyAccessKind) (owner : Algorithm) (binding : PropDef) (resolvedAlgorithm : Algorithm) (ctx : EvalCtx) (env : ValEnv)
   | evalConditionalCallbackCallCounted (callee : Algorithm) (args : List CountedResult) (ctx : EvalCtx) (env : ValEnv) (calleeName : String)
   | evalUserCallbackCallCounted (callee : Algorithm) (args : List CountedResult) (ctx : EvalCtx) (env : ValEnv)
@@ -7430,7 +7506,7 @@ inductive EvalCall : Type where
   | evalUserCallCounted (callee : Algorithm) (args : OutputBundle) (ctx : EvalCtx) (env : ValEnv)
   | evalConditionalCallCounted (callee : Algorithm) (args : OutputBundle) (ctx : EvalCtx) (env : ValEnv) (calleeName : String)
   | evalResolvedCall (callee : Algorithm) (args : OutputBundle) (ctx : EvalCtx) (env : ValEnv) (calleeName : String)
-  | evalResolvedCallCounted (callee : Algorithm) (args : OutputBundle) (ctx : EvalCtx) (env : ValEnv) (calleeName : String)
+  | evalResolvedCallCounted (callee : Algorithm) (args : OutputBundle) (ctx : EvalCtx) (env : ValEnv) (calleeName : String) (origin : CalleeOrigin)
   | evalCallCountedExpr (f : Expr) (args : OutputBundle) (ctx : EvalCtx) (env : ValEnv)
   | callLexicalWithReceiverCounted (name : Ident) (receiver : Expr) (fallback : Expr) (extraArgs : Option OutputBundle) (ctx : EvalCtx) (env : ValEnv)
   | rejectDotStringIntrinsicArguments (argsOpt : Option OutputBundle) (ctx : EvalCtx) (env : ValEnv)
@@ -7485,7 +7561,7 @@ inductive EvalCall : Type where
   | .algorithmOfValue .. => CountedResult
   | .capturedCallee .. => Algorithm
   | .referenceReceiverValue .. => Result
-  | .algorithmCalleeOf .. => (Algorithm × String)
+  | .algorithmCalleeOf .. => (Algorithm × String × Nat)
   | .evalSuppliedCallCounted .. => CountedResult
   | .evalNeedUserSupply .. => CountedResult
   | .evalNeedFamilySupply .. => CountedResult
@@ -7618,10 +7694,10 @@ abbrev EvalRec : Type := (c : EvalCall) → EvalM c.Ret
   rec (.capturedCallee callee)
 @[inline] def EvalRec.referenceReceiverValue (rec : EvalRec) (target : Expr) (targetAlg : Algorithm) (ctx : EvalCtx) (env : ValEnv) : EvalM Result :=
   rec (.referenceReceiverValue target targetAlg ctx env)
-@[inline] def EvalRec.algorithmCalleeOf (rec : EvalRec) (receiver : Expr) (ctx : EvalCtx) (env : ValEnv) : EvalM (Algorithm × String) :=
+@[inline] def EvalRec.algorithmCalleeOf (rec : EvalRec) (receiver : Expr) (ctx : EvalCtx) (env : ValEnv) : EvalM (Algorithm × String × Nat) :=
   rec (.algorithmCalleeOf receiver ctx env)
-@[inline] def EvalRec.evalSuppliedCallCounted (rec : EvalRec) (callee : Algorithm) (cells : List NeedSupply.Sourced) (ctx : EvalCtx) (env : ValEnv) (calleeName : String) : EvalM CountedResult :=
-  rec (.evalSuppliedCallCounted callee cells ctx env calleeName)
+@[inline] def EvalRec.evalSuppliedCallCounted (rec : EvalRec) (origin : CalleeOrigin) (callee : Algorithm) (cells : List NeedSupply.Sourced) (ctx : EvalCtx) (env : ValEnv) (calleeName : String) : EvalM CountedResult :=
+  rec (.evalSuppliedCallCounted origin callee cells ctx env calleeName)
 @[inline] def EvalRec.evalNeedUserSupply (rec : EvalRec) (callee : Algorithm) (cells : List Nat) (ctx : EvalCtx) (env : ValEnv) : EvalM CountedResult :=
   rec (.evalNeedUserSupply callee cells ctx env)
 @[inline] def EvalRec.evalNeedFamilySupply (rec : EvalRec) (callee : Algorithm) (cells : List Nat) (ctx : EvalCtx) (env : ValEnv) (calleeName : String) : EvalM CountedResult :=
@@ -7672,8 +7748,8 @@ abbrev EvalRec : Type := (c : EvalCall) → EvalM c.Ret
   rec (.evalArgumentValueCounted arg ctx env)
 @[inline] def EvalRec.evalArgumentValue (rec : EvalRec) (arg : ResolvedArgumentAlgorithm) (ctx : EvalCtx) (env : ValEnv) : EvalM Result :=
   rec (.evalArgumentValue arg ctx env)
-@[inline] def EvalRec.evalZeroArgPropertyAccessCounted (rec : EvalRec) (accessKind : ZeroArgPropertyAccessKind) (owner : Algorithm) (binding : PropDef) (resolvedAlgorithm : Algorithm) (ctx : EvalCtx) (env : ValEnv) : EvalM CountedResult :=
-  rec (.evalZeroArgPropertyAccessCounted accessKind owner binding resolvedAlgorithm ctx env)
+@[inline] def EvalRec.evalZeroArgPropertyAccessCounted (rec : EvalRec) (accessKind : ZeroArgPropertyAccessKind) (owner : Algorithm) (binding : PropDef) (resolvedAlgorithm : Algorithm) (ctx : EvalCtx) (env : ValEnv) (request : ZeroArgPropertyRequest := .read) : EvalM CountedResult :=
+  rec (.evalZeroArgPropertyAccessCounted accessKind owner binding resolvedAlgorithm ctx env request)
 @[inline] def EvalRec.evalZeroArgPropertyAccess (rec : EvalRec) (accessKind : ZeroArgPropertyAccessKind) (owner : Algorithm) (binding : PropDef) (resolvedAlgorithm : Algorithm) (ctx : EvalCtx) (env : ValEnv) : EvalM Result :=
   rec (.evalZeroArgPropertyAccess accessKind owner binding resolvedAlgorithm ctx env)
 @[inline] def EvalRec.evalConditionalCallbackCallCounted (rec : EvalRec) (callee : Algorithm) (args : List CountedResult) (ctx : EvalCtx) (env : ValEnv) (calleeName : String := "conditional") : EvalM CountedResult :=
@@ -7716,8 +7792,8 @@ abbrev EvalRec : Type := (c : EvalCall) → EvalM c.Ret
   rec (.evalConditionalCallCounted callee args ctx env calleeName)
 @[inline] def EvalRec.evalResolvedCall (rec : EvalRec) (callee : Algorithm) (args : OutputBundle) (ctx : EvalCtx) (env : ValEnv) (calleeName : String := "conditional") : EvalM Result :=
   rec (.evalResolvedCall callee args ctx env calleeName)
-@[inline] def EvalRec.evalResolvedCallCounted (rec : EvalRec) (callee : Algorithm) (args : OutputBundle) (ctx : EvalCtx) (env : ValEnv) (calleeName : String := "conditional") : EvalM CountedResult :=
-  rec (.evalResolvedCallCounted callee args ctx env calleeName)
+@[inline] def EvalRec.evalResolvedCallCounted (rec : EvalRec) (callee : Algorithm) (args : OutputBundle) (ctx : EvalCtx) (env : ValEnv) (calleeName : String := "conditional") (origin : CalleeOrigin := .none) : EvalM CountedResult :=
+  rec (.evalResolvedCallCounted callee args ctx env calleeName origin)
 @[inline] def EvalRec.evalCallCountedExpr (rec : EvalRec) (f : Expr) (args : OutputBundle) (ctx : EvalCtx) (env : ValEnv) : EvalM CountedResult :=
   rec (.evalCallCountedExpr f args ctx env)
 @[inline] def EvalRec.callLexicalWithReceiverCounted (rec : EvalRec) (name : Ident) (receiver : Expr) (fallback : Expr) (extraArgs : Option OutputBundle) (ctx : EvalCtx) (env : ValEnv) : EvalM CountedResult :=
@@ -7964,8 +8040,8 @@ def EvalRec.bindingChannels (rec : EvalRec) : NeedChannels :=
     Lean.Order.monotone (fun ρ => (recOf ρ).algorithmCalleeOf receiver ctx env) :=
   fun _ _ h => hrec _ _ h _
 @[partial_fixpoint_monotone] theorem EvalRec.evalSuppliedCallCounted_mono {γ : Type} [Lean.Order.PartialOrder γ]
-    (recOf : γ → EvalRec) (hrec : Lean.Order.monotone recOf) (callee : Algorithm) (cells : List NeedSupply.Sourced) (ctx : EvalCtx) (env : ValEnv) (calleeName : String) :
-    Lean.Order.monotone (fun ρ => (recOf ρ).evalSuppliedCallCounted callee cells ctx env calleeName) :=
+    (recOf : γ → EvalRec) (hrec : Lean.Order.monotone recOf) (origin : CalleeOrigin) (callee : Algorithm) (cells : List NeedSupply.Sourced) (ctx : EvalCtx) (env : ValEnv) (calleeName : String) :
+    Lean.Order.monotone (fun ρ => (recOf ρ).evalSuppliedCallCounted origin callee cells ctx env calleeName) :=
   fun _ _ h => hrec _ _ h _
 @[partial_fixpoint_monotone] theorem EvalRec.evalNeedUserSupply_mono {γ : Type} [Lean.Order.PartialOrder γ]
     (recOf : γ → EvalRec) (hrec : Lean.Order.monotone recOf) (callee : Algorithm) (cells : List Nat) (ctx : EvalCtx) (env : ValEnv) :
@@ -8068,8 +8144,8 @@ def EvalRec.bindingChannels (rec : EvalRec) : NeedChannels :=
     Lean.Order.monotone (fun ρ => (recOf ρ).evalArgumentValue arg ctx env) :=
   fun _ _ h => hrec _ _ h _
 @[partial_fixpoint_monotone] theorem EvalRec.evalZeroArgPropertyAccessCounted_mono {γ : Type} [Lean.Order.PartialOrder γ]
-    (recOf : γ → EvalRec) (hrec : Lean.Order.monotone recOf) (accessKind : ZeroArgPropertyAccessKind) (owner : Algorithm) (binding : PropDef) (resolvedAlgorithm : Algorithm) (ctx : EvalCtx) (env : ValEnv) :
-    Lean.Order.monotone (fun ρ => (recOf ρ).evalZeroArgPropertyAccessCounted accessKind owner binding resolvedAlgorithm ctx env) :=
+    (recOf : γ → EvalRec) (hrec : Lean.Order.monotone recOf) (accessKind : ZeroArgPropertyAccessKind) (owner : Algorithm) (binding : PropDef) (resolvedAlgorithm : Algorithm) (ctx : EvalCtx) (env : ValEnv) (request : ZeroArgPropertyRequest) :
+    Lean.Order.monotone (fun ρ => (recOf ρ).evalZeroArgPropertyAccessCounted accessKind owner binding resolvedAlgorithm ctx env request) :=
   fun _ _ h => hrec _ _ h _
 @[partial_fixpoint_monotone] theorem EvalRec.evalZeroArgPropertyAccess_mono {γ : Type} [Lean.Order.PartialOrder γ]
     (recOf : γ → EvalRec) (hrec : Lean.Order.monotone recOf) (accessKind : ZeroArgPropertyAccessKind) (owner : Algorithm) (binding : PropDef) (resolvedAlgorithm : Algorithm) (ctx : EvalCtx) (env : ValEnv) :
@@ -8156,8 +8232,8 @@ def EvalRec.bindingChannels (rec : EvalRec) : NeedChannels :=
     Lean.Order.monotone (fun ρ => (recOf ρ).evalResolvedCall callee args ctx env calleeName) :=
   fun _ _ h => hrec _ _ h _
 @[partial_fixpoint_monotone] theorem EvalRec.evalResolvedCallCounted_mono {γ : Type} [Lean.Order.PartialOrder γ]
-    (recOf : γ → EvalRec) (hrec : Lean.Order.monotone recOf) (callee : Algorithm) (args : OutputBundle) (ctx : EvalCtx) (env : ValEnv) (calleeName : String) :
-    Lean.Order.monotone (fun ρ => (recOf ρ).evalResolvedCallCounted callee args ctx env calleeName) :=
+    (recOf : γ → EvalRec) (hrec : Lean.Order.monotone recOf) (callee : Algorithm) (args : OutputBundle) (ctx : EvalCtx) (env : ValEnv) (calleeName : String) (origin : CalleeOrigin) :
+    Lean.Order.monotone (fun ρ => (recOf ρ).evalResolvedCallCounted callee args ctx env calleeName origin) :=
   fun _ _ h => hrec _ _ h _
 @[partial_fixpoint_monotone] theorem EvalRec.evalCallCountedExpr_mono {γ : Type} [Lean.Order.PartialOrder γ]
     (recOf : γ → EvalRec) (hrec : Lean.Order.monotone recOf) (f : Expr) (args : OutputBundle) (ctx : EvalCtx) (env : ValEnv) :
@@ -8695,7 +8771,7 @@ def EvalBody.algorithmIntrinsicRoute (rec : EvalRec) (receiver : Expr) (ctx : Ev
     | none => reCountValueBoundary <$> rec.demandNeedRecursive callee
     | some args =>
         let algorithm <- rec.capturedCallee callee
-        rec.evalResolvedCallCounted algorithm args ctx env (<- NeedPlan.calleeName plan)
+        rec.evalResolvedCallCounted algorithm args ctx env (<- NeedPlan.calleeName plan) (.cell callee)
 
   /-- The CALLABLE of a decoded callee cell, or the captured callee's absence report (NEED-06). -/
   def EvalBody.capturedCallee (rec : EvalRec) (callee : Nat) : EvalM Algorithm := do
@@ -8717,49 +8793,141 @@ def EvalBody.algorithmIntrinsicRoute (rec : EvalRec) (receiver : Expr) (ctx : Ev
   /-- A callee written `X.Algorithm` on the intrinsic route (META-S3-1, CR-14 a/c): `X`'s VALUE read as
       the dot route reads it, decoded, and the callee cell's CALLABLE, with the plan's callee name —
       so `(R.Algorithm)(args)` is the fresh call `R.Algorithm(args)`. C#:
-      `Evaluator.EvalAlgorithmCalleeCallCounted`. -/
-  def EvalBody.algorithmCalleeOf (rec : EvalRec) (receiver : Expr) (ctx : EvalCtx) (env : ValEnv) : EvalM (Algorithm × String) := do
+      `Evaluator.EvalAlgorithmCalleeCallCounted`. The third component is the decoded plan's canonical
+      callee cell, the ORIGIN of the fresh call (CACHE-PUB-1). -/
+  def EvalBody.algorithmCalleeOf (rec : EvalRec) (receiver : Expr) (ctx : EvalCtx) (env : ValEnv) : EvalM (Algorithm × String × Nat) := do
     let value <-
       match <- rec.resolveDotReceiver? receiver ctx with
       | none => rec.eval receiver ctx env
       | some targetAlg => rec.referenceReceiverValue receiver targetAlg ctx env
     let plan <- decodeCallRef value
-    let callee <- rec.capturedCallee (<- NeedPlan.calleeCell rec.planRoute.classify plan)
-    pure (callee, <- NeedPlan.calleeName plan)
+    let cell <- NeedPlan.calleeCell rec.planRoute.classify plan
+    let callee <- rec.capturedCallee cell
+    pure (callee, <- NeedPlan.calleeName plan, cell)
+
+  /-- CACHE-PUB-1: a selected binding as a publication identity. A runtime-target alias qualifies
+      only when the already normalized callee passed from dispatch is its D4 terminal property view.
+      Parameterized runtime targets, including collecting-only targets, remain excluded.
+      `wired` is the binding's algorithm wired to its owner; no new projection or demand occurs. -/
+  def EvalBody.publicationBinding? (rec : EvalRec) (owner : Algorithm) (binding : PropDef) (wired : Algorithm) (ctx : EvalCtx) (invoked : Algorithm) :
+      EvalM (Option (Algorithm × PropDef)) := do
+    match wired with
+    | .alias _ _ _ _ _ =>
+        match <- evalAttempt (rec.resolveAliasValueTarget wired ctx) with
+        | .ok (.alias _ _ _ _ _) =>
+            pure (if invoked.isEligibleRuntimeAliasTarget then none else some (owner, binding))
+        | .ok _ => pure (some (owner, binding))
+        | .error _ => pure none
+    | _ => pure (some (owner, binding))
+
+  /-- CACHE-PUB-1: the property binding a WRITTEN callee names in its caller context — the very
+      identity resolution the callee law performed (`lookupLexicalPropertyRaw` for a name, the
+      structural navigation of `projectNeedStructuralMember` for an argumentless member path), read
+      again without evaluating anything. Every other written form names no property binding. -/
+  def EvalBody.writtenCalleeBinding? (rec : EvalRec) (callee : Expr) (caller : EvalCtx) (invoked : Algorithm) :
+      EvalM (Option (Algorithm × PropDef)) := do
+    match callee with
+    | .resolve n =>
+        match caller.callStack with
+        | owner :: _ =>
+            match <- evalAttempt (lookupLexicalPropertyRaw owner n caller) with
+            | .ok resolved => EvalBody.publicationBinding? rec resolved.owner resolved.binding resolved.alg caller invoked
+            | .error _ => pure none
+        | [] => pure none
+    | .dotMember receiver name _ none =>
+        match <- evalAttempt (rec.projectNeedStructuralMember receiver caller) with
+        | .ok (some container) =>
+            match Algorithm.lookupPropDefAny? container name with
+            | some property =>
+                EvalBody.publicationBinding? rec container property (childOfInContext container property.alg caller) caller invoked
+            | none => pure none
+        | _ => pure none
+    | _ => pure none
+
+  /-- CACHE-PUB-1: the property binding a supplied callee CELL names: its written source in its own
+      caller context (a transported parameter cell keeps the argument originally written for it). -/
+  def EvalBody.cellCalleeBinding? (rec : EvalRec) (address : Nat) (invoked : Algorithm) : EvalM (Option (Algorithm × PropDef)) := do
+    let needs := (← get).needs
+    let callee := NeedPlan.originCalleeIn needs address
+    match (needs[callee]?).map NeedCell.suspension with
+    | some (.expression source caller _) => EvalBody.writtenCalleeBinding? rec source caller invoked
+    | _ => pure none
+
+  /-- CACHE-PUB-1: THE PROVENANCE of a zero-supply invocation — the property binding (owner and
+      binding) its callee ORIGIN names (`CalleeOrigin`), or `none`. A written parameter callee is its
+      supplied cell's binding; an argumentless member path is the declared member; a captured callee
+      is its canonical callee cell's binding; a selected member is itself. Nothing is evaluated,
+      invoked or demanded. A runtime-target alias qualifies only on its terminal property route
+      (`publicationBinding?`), never through a parameterized runtime-callable target.
+      C#: `Evaluator.OriginBinding`. -/
+  def EvalBody.originBinding? (rec : EvalRec) (origin : CalleeOrigin) (ctx : EvalCtx) (invoked : Algorithm) :
+      EvalM (Option (Algorithm × PropDef)) := do
+    match origin with
+    | .none => pure none
+    | .written (.param x) caller =>
+        let activation ← capturedParameterActivation? x caller
+        match lookupAssoc x (activation.map ParameterActivation.needs |>.getD caller.needEnv) with
+        | some address => EvalBody.cellCalleeBinding? rec address invoked
+        | none => pure none
+    | .written callee caller => EvalBody.writtenCalleeBinding? rec callee caller invoked
+    | .cell address => EvalBody.cellCalleeBinding? rec address invoked
+    | .bound owner binding => EvalBody.publicationBinding? rec owner binding (childOfInContext owner binding.alg ctx) ctx invoked
 
   /-- THE dispatch of a normalized callee over an already formed sourced supply: the
       builtin, flat-binder, clause-family and user arms of the ordinary call. The ordinary
       call (`evalResolvedCallCounted`) forms its supply and calls it; an invocation plan
       (`NeedPlan.execute`, at `productionPlanRoute`) calls it over the plan's one prepared
       supply. The alias arm is the dispatch safety net (a normalized callee is never an
-      alias). C#: the arms of `EvalResolvedCallCounted` / `DispatchPlanned`. -/
-  def EvalBody.evalSuppliedCallCounted (rec : EvalRec) (callee : Algorithm) (cells : List NeedSupply.Sourced) (ctx : EvalCtx) (env : ValEnv) (calleeName : String) : EvalM CountedResult := do
+      alias). A zero-supply invocation whose ORIGIN names a property binding is that
+      property's qualifying invocation (CACHE-PUB-1). C#: the arms of
+      `EvalResolvedCallCounted` / `DispatchPlanned` and `EvalPublishedZeroSupplyInvocation`. -/
+  def EvalBody.evalSuppliedCallCounted (rec : EvalRec) (origin : CalleeOrigin) (callee : Algorithm) (cells : List NeedSupply.Sourced) (ctx : EvalCtx) (env : ValEnv) (calleeName : String) : EvalM CountedResult := do
     match callee with
     | .builtin b =>
       let supplied := cells.map fun (address, source?) =>
         ({ algorithm := Algorithm.ofExpr (.emptySequence 0), need? := some address, source? := source? } : ResolvedArgumentAlgorithm)
       rec.applyBuiltinCountedResolved b supplied ctx env
-    | .conditional _ _ _ _ =>
-      match flatBinderUserEquivalent? callee with
-      | some simple => rec.evalNeedUserSupply simple (cells.map Prod.fst) ctx env
-      | none => rec.evalNeedFamilySupply callee (cells.map Prod.fst) ctx env calleeName
     | .alias _ _ _ _ _ => do
       let target <- rec.resolveAliasTarget callee ctx
-      rec.evalSuppliedCallCounted target cells ctx env calleeName
-    | _ => rec.evalNeedUserSupply callee (cells.map Prod.fst) ctx env
+      rec.evalSuppliedCallCounted origin target cells ctx env calleeName
+    | _ =>
+      -- CACHE-PUB-1: a ZERO-SUPPLY invocation of an identifiable property binding is the same
+      -- calculation a property-style read of that binding requests, so it participates in the ONE
+      -- publication law (`evalZeroArgPropertyAccessCounted` with an `invoke` request): it executes
+      -- freshly and, owning an empty entry, establishes it. Decided only now, after the supply is
+      -- formed (an explicit spread may contribute no slot), and the origin's binding is read
+      -- without evaluating anything. The result is the ordinary call's value boundary.
+      if cells.isEmpty then
+        if let some (owner, binding) <- EvalBody.originBinding? rec origin ctx callee then
+          return reCountValueBoundary
+            (<- rec.evalZeroArgPropertyAccessCounted .lexical owner binding callee ctx env (.invoke calleeName))
+      match callee with
+      | .conditional _ _ _ _ =>
+        match flatBinderUserEquivalent? callee with
+        | some simple => rec.evalNeedUserSupply simple (cells.map Prod.fst) ctx env
+        | none => rec.evalNeedFamilySupply callee (cells.map Prod.fst) ctx env calleeName
+      | _ => rec.evalNeedUserSupply callee (cells.map Prod.fst) ctx env
+
+  /-- The user invocation BEFORE its value boundary: the binder, the output check, the fresh binding
+      context and the body's own counted output (or a D4 terminal alias invocation's demand). The
+      ordinary call re-counts it (`evalNeedUserSupply`); a qualifying zero-supply invocation
+      publishes exactly this property-level counted result (CACHE-PUB-1, the `invoke` calculation
+      of `zeroArgPropertyCalculation`). C#: `EvalNeedUserSupplyOutputCounted`. -/
+  def EvalBody.evalNeedUserSupplyOutput (rec : EvalRec) (callee : Algorithm) (cells : List Nat) (ctx : EvalCtx) (env : ValEnv) : EvalM CountedResult := do
+    let patterns := (Algorithm.parameterPatterns callee).map NeedPattern.ofParameter
+    let some bindings <- bindNeedPatterns (rec.bindingChannels) patterns cells | throw Error.badArity
+    if (Algorithm.output callee).isEmpty then throw Error.missingOutput
+    let next <- needBindingContext ctx bindings
+    if let some address ← takeTerminalAliasInvocation callee then
+      return (← rec.demandNeedRecursive address)
+    rec.evalAlgOutputCounted callee next (ValEnv.shadow env (Algorithm.params callee))
 
   /-- A user algorithm invoked over an already formed cell supply. Its result is the
       call's value boundary (VAL-06): ONE value, re-counted — for an ordinary call and a
       `map`/`filter`/`reduce` callback invocation alike (HO-03, Q-25 resolved October
       2026: a callback invocation IS the ordinary call). C#: `EvalNeedUserSupply`. -/
   def EvalBody.evalNeedUserSupply (rec : EvalRec) (callee : Algorithm) (cells : List Nat) (ctx : EvalCtx) (env : ValEnv) : EvalM CountedResult := do
-    let patterns := (Algorithm.parameterPatterns callee).map NeedPattern.ofParameter
-    let some bindings <- bindNeedPatterns (rec.bindingChannels) patterns cells | throw Error.badArity
-    if (Algorithm.output callee).isEmpty then throw Error.missingOutput
-    let next <- needBindingContext ctx bindings
-    if let some address ← takeTerminalAliasInvocation callee then
-      return reCountValueBoundary (← rec.demandNeedRecursive address)
-    let result <- rec.evalAlgOutputCounted callee next (ValEnv.shadow env (Algorithm.params callee))
+    let result <- EvalBody.evalNeedUserSupplyOutput rec callee cells ctx env
     pure (reCountValueBoundary result)
 
   /-- A clause family invoked over an already formed cell supply: ordinary dispatch, then
@@ -9043,7 +9211,7 @@ def EvalBody.algorithmIntrinsicRoute (rec : EvalRec) (receiver : Expr) (ctx : Ev
       ELIGIBILITY is what this rule changes; the CACHE is untouched: a
       property-style demand still reaches this funnel through
       `evalZeroArgPropertyAccessCounted` (the run cache), while `Only()` stays an
-      ordinary call that bypasses it. C#:
+      ordinary call that never reads it (CACHE-PUB-1: it may establish an empty entry). C#:
       `EvalZeroArgumentDemandOutputCounted`. -/
   def EvalBody.evalZeroArgumentDemandOutputCounted (rec : EvalRec) (a : Algorithm) (ctx : EvalCtx) (env : ValEnv) : EvalM CountedResult := do
     match a with
@@ -9095,37 +9263,65 @@ def EvalBody.algorithmIntrinsicRoute (rec : EvalRec) (receiver : Expr) (ctx : Ev
     let counted <- rec.evalArgumentValueCounted arg ctx env
     pure counted.fst
 
-  /-- Property-style zero-parameter access may reuse the per-run cache.
-      Explicit calls do not use this helper, so `A()` bypasses only `A`'s
-      direct cache entry and does not change nested property references.
+  /-- The property-level calculation one request of the property cache performs (CACHE-PUB-1):
+      a READ is the property's zero-argument demand (`evalZeroArgumentDemandOutputCounted`); an
+      INVOCATION is the ordinary call's own FRESH zero-supply invocation of the normalized callee —
+      exactly the user / flat-binder / family arms of `evalSuppliedCallCounted` over the empty supply
+      (a fresh binding context, the binder, the output check) — taken BEFORE the user arm's value
+      boundary, so what an owning invocation publishes is the property-level counted result a read
+      would publish (a family's own dispatch result is already its value boundary, as its read's
+      is). C#: the `evaluate` callbacks of `EvalPublishedZeroSupplyInvocation`. -/
+  def EvalBody.zeroArgPropertyCalculation (rec : EvalRec) (request : ZeroArgPropertyRequest) (resolvedAlgorithm : Algorithm) (ctx : EvalCtx) (env : ValEnv) : EvalM CountedResult :=
+    match request with
+    | .read => rec.evalZeroArgumentDemandOutputCounted resolvedAlgorithm ctx env
+    | .invoke calleeName =>
+        match resolvedAlgorithm with
+        | .conditional _ _ _ _ =>
+            match flatBinderUserEquivalent? resolvedAlgorithm with
+            | some simple => rec.evalNeedUserSupply simple [] ctx env
+            | none => rec.evalNeedFamilySupply resolvedAlgorithm [] ctx env calleeName
+        | _ => EvalBody.evalNeedUserSupplyOutput rec resolvedAlgorithm [] ctx env
+
+  /-- Property-style zero-parameter access may reuse the per-run cache; a qualifying explicit
+      zero-supply invocation shares the same publication law (CACHE-PUB-1, owner decision
+      October 22 2026, superseding "an explicit call neither reads nor populates the entry").
 
       THE PUBLICATION LAW (Q-37, owner decision October 11 2026, superseding the
-      first-successful-completion rule): the OUTERMOST successful property-style
-      evaluation of a key owns its entry. A miss on a key that is not active makes
-      this access the key's OWNER: the key is active while the body runs and is
-      released on success and failure alike, and only a successful owner publishes.
-      A miss on an ACTIVE key — the same binding reached again, directly or through
-      other properties and calls, before its owner finished — is RE-ENTRANT: it
-      evaluates the body and returns its own (possibly intermediate) result but
-      publishes nothing. A failed owner publishes nothing for its key; entries other
-      keys' owners published meanwhile stay (`EvalM` retains state). `insert` never
-      replaces an entry, and under this law no completion can reach an active key's
-      entry. C#: `ZeroArgPropertyPublications`. -/
-  def EvalBody.evalZeroArgPropertyAccessCounted (rec : EvalRec) (accessKind : ZeroArgPropertyAccessKind) (owner : Algorithm) (binding : PropDef) (resolvedAlgorithm : Algorithm) (ctx : EvalCtx) (env : ValEnv) : EvalM CountedResult := do
+      first-successful-completion rule; extended to invocations by CACHE-PUB-1): the OUTERMOST
+      successful qualifying evaluation of a key owns its entry, whether it is a property-style
+      read or an explicit zero-supply invocation. A request on an empty key that is not active
+      makes it the key's OWNER: the key is active while its calculation runs and is released on
+      success and failure alike, and only a successful owner publishes. A request on an ACTIVE
+      key — the same binding reached again, directly or through other properties and calls,
+      before its owner finished — is RE-ENTRANT: it performs its calculation and returns its own
+      (possibly intermediate) result but publishes nothing. A failed owner publishes nothing for
+      its key; entries other keys' owners published meanwhile stay (`EvalM` retains state).
+      `insert` never replaces an entry, and under this law no completion can reach an active
+      key's entry. Reads and invocations differ only in their calculation
+      (`zeroArgPropertyCalculation`) and in what an ESTABLISHED entry means: a read returns it,
+      an invocation never does — it always executes freshly and leaves the entry unchanged. The
+      result is the property-level counted result; an invocation's caller applies the call's
+      value boundary. C#: `ZeroArgPropertyPublications` (`EvaluateMiss` / `Invoke`). -/
+  def EvalBody.evalZeroArgPropertyAccessCounted (rec : EvalRec) (accessKind : ZeroArgPropertyAccessKind) (owner : Algorithm) (binding : PropDef) (resolvedAlgorithm : Algorithm) (ctx : EvalCtx) (env : ValEnv) (request : ZeroArgPropertyRequest) : EvalM CountedResult := do
     if isCacheableZeroArgPropertyAlgorithm resolvedAlgorithm then
       let state <- get
       let key := zeroArgPropertyCacheKey accessKind owner binding ctx env
         (propertyOwnerBindingContext resolvedAlgorithm.parent state)
       match ZeroArgPropertyCache.lookup state.zeroArgPropertyCache key with
-      | some cached => pure cached
+      | some cached =>
+          match request with
+          | .read => pure cached
+          -- An explicit invocation is FRESH: it never obtains its result from the entry, and it
+          -- cannot replace it.
+          | .invoke _ => EvalBody.zeroArgPropertyCalculation rec request resolvedAlgorithm ctx env
       | none =>
           if state.activeZeroArgProperties.contains key then
             -- Re-entrant: an enclosing evaluation of this key owns publication.
-            rec.evalZeroArgumentDemandOutputCounted resolvedAlgorithm ctx env
+            EvalBody.zeroArgPropertyCalculation rec request resolvedAlgorithm ctx env
           else
             let active := state.activeZeroArgProperties
             set { state with activeZeroArgProperties := key :: active }
-            let outcome <- evalAttempt (rec.evalZeroArgumentDemandOutputCounted resolvedAlgorithm ctx env)
+            let outcome <- evalAttempt (EvalBody.zeroArgPropertyCalculation rec request resolvedAlgorithm ctx env)
             let nextState <- get
             match outcome with
             | .ok counted =>
@@ -9138,7 +9334,7 @@ def EvalBody.algorithmIntrinsicRoute (rec : EvalRec) (receiver : Expr) (ctx : Ev
                 set { nextState with activeZeroArgProperties := active }
                 throw err
     else
-      rec.evalZeroArgumentDemandOutputCounted resolvedAlgorithm ctx env
+      EvalBody.zeroArgPropertyCalculation rec request resolvedAlgorithm ctx env
 
   def EvalBody.evalZeroArgPropertyAccess (rec : EvalRec) (accessKind : ZeroArgPropertyAccessKind) (owner : Algorithm) (binding : PropDef) (resolvedAlgorithm : Algorithm) (ctx : EvalCtx) (env : ValEnv) : EvalM Result := do
     let counted <- rec.evalZeroArgPropertyAccessCounted accessKind owner binding resolvedAlgorithm ctx env
@@ -9762,21 +9958,21 @@ def EvalBody.algorithmIntrinsicRoute (rec : EvalRec) (receiver : Expr) (ctx : Ev
   /-- Dispatch an already-resolved callee in counted evaluation — the
       CANONICAL resolved-callee dispatch (`evalResolvedCall` is its value
       projection). -/
-  def EvalBody.evalResolvedCallCounted (rec : EvalRec) (callee : Algorithm) (args : OutputBundle) (ctx : EvalCtx) (env : ValEnv) (calleeName : String := "conditional") : EvalM CountedResult := do
+  def EvalBody.evalResolvedCallCounted (rec : EvalRec) (callee : Algorithm) (args : OutputBundle) (ctx : EvalCtx) (env : ValEnv) (calleeName : String := "conditional") (origin : CalleeOrigin := .none) : EvalM CountedResult := do
     match callee with
     -- The dispatch safety net: a callee that reached dispatch as an unnormalized alias (a
     -- host-built tree) calls its target with the same written arguments. Every binding lookup
     -- normalizes first. C#: `EvalAliasCallCounted`.
     | .alias _ _ _ _ _ => do
       let target <- rec.resolveAliasTarget callee ctx
-      rec.evalResolvedCallCounted target args ctx env calleeName
+      rec.evalResolvedCallCounted target args ctx env calleeName origin
     | _ => do
       -- Every callee receives the ordinary supply cells, each with its WRITTEN source (C#:
       -- `ResolveArgAlgsWithSequenceSpread` → `ResolveNeedSupply`), then the ONE dispatch.
       -- (The user and family arms formerly formed the address projection of the same supply
       -- inside `evalUserCallCounted` / `evalConditionalCallCounted`: the same operations.)
       let cells <- NeedSupply.form rec.evalSupplySpread ctx env args
-      rec.evalSuppliedCallCounted callee cells ctx env calleeName
+      rec.evalSuppliedCallCounted origin callee cells ctx env calleeName
 
   /-- Context-aware counted call evaluation for expression position — the
       CANONICAL expression-position call dispatch (`evalCallExpr` is its value
@@ -9787,10 +9983,10 @@ def EvalBody.algorithmIntrinsicRoute (rec : EvalRec) (receiver : Expr) (ctx : Ev
     -- (`algorithmCalleeOf`); a declared member `Algorithm` keeps the ONE callee law.
     if let some (receiver, _) := linkEdge? f then
       if <- withCtx (CtxMsg.call f) (rec.algorithmIntrinsicRoute receiver ctx) then
-        let (callee, calleeName) <- withCtx (CtxMsg.call f) (rec.algorithmCalleeOf receiver ctx env)
-        return <- withCtx (CtxMsg.call f) <| rec.evalResolvedCallCounted callee args ctx env calleeName
+        let (callee, calleeName, calleeCell) <- withCtx (CtxMsg.call f) (rec.algorithmCalleeOf receiver ctx env)
+        return <- withCtx (CtxMsg.call f) <| rec.evalResolvedCallCounted callee args ctx env calleeName (.cell calleeCell)
     let callee <- withCtx (CtxMsg.call f) <| rec.resolveCalleeAlg f ctx
-    withCtx (CtxMsg.call f) <| rec.evalResolvedCallCounted callee args ctx env (openExprName f)
+    withCtx (CtxMsg.call f) <| rec.evalResolvedCallCounted callee args ctx env (openExprName f) (.written f ctx)
 
   /-- Counted extension-call fallback: DOT-CALL PASSES A VALUE (September
       2026). `R.F(args)` resolves the callee and dispatches exactly
@@ -9971,7 +10167,7 @@ def EvalBody.algorithmIntrinsicRoute (rec : EvalRec) (receiver : Expr) (ctx : Ev
                       .error (Error.arityMismatch
                         (ParameterPattern.minimumSuppliedSlots (Algorithm.parameterPatterns wired)) 0)
         | some args =>
-            rec.evalResolvedCallCounted wired args ctx env name
+            rec.evalResolvedCallCounted wired args ctx env name (.bound targetAlg p)
     | .ok (.miss .string) =>
         -- `string` is the number-to-text intrinsic (DOT-08) — it takes the extension call's
         -- place, so a lexical `string` is never consulted.
@@ -10598,7 +10794,7 @@ def evalStep (rec : EvalRec) : EvalRec := fun c =>
   | .capturedCallee callee => EvalBody.capturedCallee rec callee
   | .referenceReceiverValue target targetAlg ctx env => EvalBody.referenceReceiverValue rec target targetAlg ctx env
   | .algorithmCalleeOf receiver ctx env => EvalBody.algorithmCalleeOf rec receiver ctx env
-  | .evalSuppliedCallCounted callee cells ctx env calleeName => EvalBody.evalSuppliedCallCounted rec callee cells ctx env calleeName
+  | .evalSuppliedCallCounted origin callee cells ctx env calleeName => EvalBody.evalSuppliedCallCounted rec origin callee cells ctx env calleeName
   | .evalNeedUserSupply callee cells ctx env => EvalBody.evalNeedUserSupply rec callee cells ctx env
   | .evalNeedFamilySupply callee cells ctx env calleeName => EvalBody.evalNeedFamilySupply rec callee cells ctx env calleeName
   | .invokeNeed arg => EvalBody.invokeNeed rec arg
@@ -10624,7 +10820,7 @@ def evalStep (rec : EvalRec) : EvalRec := fun c =>
   | .evalZeroArgumentDemandOutput a ctx env => EvalBody.evalZeroArgumentDemandOutput rec a ctx env
   | .evalArgumentValueCounted arg ctx env => EvalBody.evalArgumentValueCounted rec arg ctx env
   | .evalArgumentValue arg ctx env => EvalBody.evalArgumentValue rec arg ctx env
-  | .evalZeroArgPropertyAccessCounted accessKind owner binding resolvedAlgorithm ctx env => EvalBody.evalZeroArgPropertyAccessCounted rec accessKind owner binding resolvedAlgorithm ctx env
+  | .evalZeroArgPropertyAccessCounted accessKind owner binding resolvedAlgorithm ctx env request => EvalBody.evalZeroArgPropertyAccessCounted rec accessKind owner binding resolvedAlgorithm ctx env request
   | .evalZeroArgPropertyAccess accessKind owner binding resolvedAlgorithm ctx env => EvalBody.evalZeroArgPropertyAccess rec accessKind owner binding resolvedAlgorithm ctx env
   | .evalConditionalCallbackCallCounted callee args ctx env calleeName => EvalBody.evalConditionalCallbackCallCounted rec callee args ctx env calleeName
   | .evalUserCallbackCallCounted callee args ctx env => EvalBody.evalUserCallbackCallCounted rec callee args ctx env
@@ -10646,7 +10842,7 @@ def evalStep (rec : EvalRec) : EvalRec := fun c =>
   | .evalUserCallCounted callee args ctx env => EvalBody.evalUserCallCounted rec callee args ctx env
   | .evalConditionalCallCounted callee args ctx env calleeName => EvalBody.evalConditionalCallCounted rec callee args ctx env calleeName
   | .evalResolvedCall callee args ctx env calleeName => EvalBody.evalResolvedCall rec callee args ctx env calleeName
-  | .evalResolvedCallCounted callee args ctx env calleeName => EvalBody.evalResolvedCallCounted rec callee args ctx env calleeName
+  | .evalResolvedCallCounted callee args ctx env calleeName origin => EvalBody.evalResolvedCallCounted rec callee args ctx env calleeName origin
   | .evalCallCountedExpr f args ctx env => EvalBody.evalCallCountedExpr rec f args ctx env
   | .callLexicalWithReceiverCounted name receiver fallback extraArgs ctx env => EvalBody.callLexicalWithReceiverCounted rec name receiver fallback extraArgs ctx env
   | .rejectDotStringIntrinsicArguments argsOpt ctx env => EvalBody.rejectDotStringIntrinsicArguments rec argsOpt ctx env
@@ -10782,11 +10978,11 @@ def capturedCallee (callee : Nat) : EvalM Algorithm :=
 def referenceReceiverValue (target : Expr) (targetAlg : Algorithm) (ctx : EvalCtx) (env : ValEnv) : EvalM Result :=
   evalUnbounded (.referenceReceiverValue target targetAlg ctx env)
 
-def algorithmCalleeOf (receiver : Expr) (ctx : EvalCtx) (env : ValEnv) : EvalM (Algorithm × String) :=
+def algorithmCalleeOf (receiver : Expr) (ctx : EvalCtx) (env : ValEnv) : EvalM (Algorithm × String × Nat) :=
   evalUnbounded (.algorithmCalleeOf receiver ctx env)
 
-def evalSuppliedCallCounted (callee : Algorithm) (cells : List NeedSupply.Sourced) (ctx : EvalCtx) (env : ValEnv) (calleeName : String) : EvalM CountedResult :=
-  evalUnbounded (.evalSuppliedCallCounted callee cells ctx env calleeName)
+def evalSuppliedCallCounted (origin : CalleeOrigin) (callee : Algorithm) (cells : List NeedSupply.Sourced) (ctx : EvalCtx) (env : ValEnv) (calleeName : String) : EvalM CountedResult :=
+  evalUnbounded (.evalSuppliedCallCounted origin callee cells ctx env calleeName)
 
 def evalNeedUserSupply (callee : Algorithm) (cells : List Nat) (ctx : EvalCtx) (env : ValEnv) : EvalM CountedResult :=
   evalUnbounded (.evalNeedUserSupply callee cells ctx env)
@@ -10863,8 +11059,8 @@ def evalArgumentValueCounted (arg : ResolvedArgumentAlgorithm) (ctx : EvalCtx) (
 def evalArgumentValue (arg : ResolvedArgumentAlgorithm) (ctx : EvalCtx) (env : ValEnv) : EvalM Result :=
   evalUnbounded (.evalArgumentValue arg ctx env)
 
-def evalZeroArgPropertyAccessCounted (accessKind : ZeroArgPropertyAccessKind) (owner : Algorithm) (binding : PropDef) (resolvedAlgorithm : Algorithm) (ctx : EvalCtx) (env : ValEnv) : EvalM CountedResult :=
-  evalUnbounded (.evalZeroArgPropertyAccessCounted accessKind owner binding resolvedAlgorithm ctx env)
+def evalZeroArgPropertyAccessCounted (accessKind : ZeroArgPropertyAccessKind) (owner : Algorithm) (binding : PropDef) (resolvedAlgorithm : Algorithm) (ctx : EvalCtx) (env : ValEnv) (request : ZeroArgPropertyRequest := .read) : EvalM CountedResult :=
+  evalUnbounded (.evalZeroArgPropertyAccessCounted accessKind owner binding resolvedAlgorithm ctx env request)
 
 def evalZeroArgPropertyAccess (accessKind : ZeroArgPropertyAccessKind) (owner : Algorithm) (binding : PropDef) (resolvedAlgorithm : Algorithm) (ctx : EvalCtx) (env : ValEnv) : EvalM Result :=
   evalUnbounded (.evalZeroArgPropertyAccess accessKind owner binding resolvedAlgorithm ctx env)
@@ -10929,8 +11125,8 @@ def evalConditionalCallCounted (callee : Algorithm) (args : OutputBundle) (ctx :
 def evalResolvedCall (callee : Algorithm) (args : OutputBundle) (ctx : EvalCtx) (env : ValEnv) (calleeName : String := "conditional") : EvalM Result :=
   evalUnbounded (.evalResolvedCall callee args ctx env calleeName)
 
-def evalResolvedCallCounted (callee : Algorithm) (args : OutputBundle) (ctx : EvalCtx) (env : ValEnv) (calleeName : String := "conditional") : EvalM CountedResult :=
-  evalUnbounded (.evalResolvedCallCounted callee args ctx env calleeName)
+def evalResolvedCallCounted (callee : Algorithm) (args : OutputBundle) (ctx : EvalCtx) (env : ValEnv) (calleeName : String := "conditional") (origin : CalleeOrigin := .none) : EvalM CountedResult :=
+  evalUnbounded (.evalResolvedCallCounted callee args ctx env calleeName origin)
 
 def evalCallCountedExpr (f : Expr) (args : OutputBundle) (ctx : EvalCtx) (env : ValEnv) : EvalM CountedResult :=
   evalUnbounded (.evalCallCountedExpr f args ctx env)

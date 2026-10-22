@@ -25,6 +25,13 @@ public class Q09IndependentHostileReviewTests
             Budget = (EvaluationBudget)execution.RunIdentity;
             return _inner.GetOrEvaluate(execution, evaluate);
         }
+
+        public EvalResult<ZeroArgPropertyResult> Invoke(ZeroArgPropertyExecution execution,
+            Func<EvalResult<ZeroArgPropertyResult>> evaluate)
+        {
+            Budget = (EvaluationBudget)execution.RunIdentity;
+            return _inner.Invoke(execution, evaluate);
+        }
     }
 
     private static async Task<Seen> Run(string source, int route, EvaluationLimits? limits = null,

@@ -440,7 +440,7 @@ def dispatchIsNotGloballyOblivious : Bool :=
   match start (supplyNeed (callF (.num 41)) ctx []) with
   | some (a, s0) =>
     let id := alg ["x"] [] [] [.param "x"]
-    let m := evalSuppliedCallCounted id [(a, none)] ctx [] "Id"
+    let m := evalSuppliedCallCounted .none id [(a, none)] ctx [] "Id"
     let ordinary := run m s0
     let changed := run m (withPlan a .preparing s0)
     valueIs ordinary.1 42 &&

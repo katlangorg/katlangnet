@@ -196,8 +196,9 @@ public class CallableAliasBindingIndirectionTests
     [Theory]
     // A parameterized alias read bare is its target's zero-supply demand under its OWN cache entry.
     [InlineData("Only(*xs) = tick()\nA = Only\nA, Only, A", "ok S[1, 2, 1] [tick#1,tick#2]")]
-    // An explicit call is fresh and populates nothing.
-    [InlineData("Only(*xs) = tick()\nA = Only\nA(), A, A", "ok S[1, 2, 2] [tick#1,tick#2]")]
+    // An explicit call is fresh; CACHE-PUB-1: on an EMPTY entry it establishes the ALIAS binding's own
+    // entry, which the bare reads reuse (formerly it populated nothing: S[1, 2, 2]).
+    [InlineData("Only(*xs) = tick()\nA = Only\nA(), A, A", "ok S[1, 1, 1] [tick#1]")]
     [InlineData("Only(*xs) = tick()\nA = Only\nA, A(), A", "ok S[1, 2, 1] [tick#1,tick#2]")]
     // Each link of a chain is its own binding.
     [InlineData("Only(*xs) = tick()\nA = Only\nB = A\nB, A, B, Only", "ok S[1, 2, 1, 3] [tick#1,tick#2,tick#3]")]

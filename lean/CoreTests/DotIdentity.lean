@@ -200,14 +200,19 @@ def groupedZeroArgMemberCallIsFresh : Bool :=
 
 #guard groupedZeroArgMemberCallIsFresh
 
--- The grouped call neither reads nor populates the property cache: alone it stores no entry,
--- while the property read stores exactly one.
-def groupedZeroArgMemberCallNeverTouchesTheCache : Bool :=
-  dotIdCacheEntries [dotIdGroupedMemberCall] == some 0
-    && dotIdCacheEntries [dotIdMemberCall] == some 0
+-- The grouped call never READS the property cache, but as the member's owning zero-supply
+-- invocation it ESTABLISHES the very entry the structural read uses (CACHE-PUB-1, superseding
+-- "neither reads nor populates"): alone it stores one entry, the same ONE entry the member call
+-- and the read store, and a later read reuses it and runs nothing.
+def groupedZeroArgMemberCallEstablishesTheReadEntry : Bool :=
+  dotIdCacheEntries [dotIdGroupedMemberCall] == some 1
+    && dotIdCacheEntries [dotIdMemberCall] == some 1
     && dotIdCacheEntries [dotIdMemberRead] == some 1
+    && dotIdCacheEntries [dotIdGroupedMemberCall, dotIdMemberRead, dotIdMemberCall] == some 1
+    && dotIdContexts [dotIdGroupedMemberCall, dotIdMemberRead] == dotIdContexts [dotIdGroupedMemberCall]
+    && dotIdContexts [dotIdMemberCall, dotIdMemberRead] == dotIdContexts [dotIdMemberCall]
 
-#guard groupedZeroArgMemberCallNeverTouchesTheCache
+#guard groupedZeroArgMemberCallEstablishesTheReadEntry
 
 -- A computed dot value has NO callable identity: `(5.Inc)()` (an extension call's result)
 -- and `(5.string)()` (the intrinsic's text) are notAnAlgorithm, never a wrapper invocation.

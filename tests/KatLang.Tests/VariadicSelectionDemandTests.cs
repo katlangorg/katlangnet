@@ -163,11 +163,12 @@ public class VariadicSelectionDemandTests
             "S[1, 2, S[2, 1]]", "tick#1", "tick#2");
 
     [Fact]
-    public async Task AFreshInvocation_NeitherReadsNorPopulatesThePropertyCache()
-        // `Data()` runs afresh (tick 1); the bare reads that follow evaluate the ordinary entry
-        // once (tick 2); a later `Data()` runs afresh again (tick 3).
+    public async Task AFreshInvocation_NeverReadsThePropertyCache_ButEstablishesAnEmptyEntry()
+        // `Data()` runs afresh (tick 1) and, finding Data's entry empty, establishes it (CACHE-PUB-1);
+        // the bare reads that follow reuse it; a later `Data()` runs afresh again (tick 2) and replaces
+        // nothing. Formerly the first call populated nothing: S[1, 2, 2, 3] over three ticks.
         => AssertValue(await OnEveryRouteAsync("Data = [tick()]\nData()[0], Data[0], Data[0], Data()[0]"),
-            "S[1, 2, 2, 3]", "tick#1", "tick#2", "tick#3");
+            "S[1, 1, 1, 2]", "tick#1", "tick#2");
 
     [Fact]
     public async Task AnEmptySelection_StillDemandsItsReceiver()

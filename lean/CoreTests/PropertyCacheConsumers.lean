@@ -164,20 +164,23 @@ def consumerReusesTheRead (consumer : KatLang.Expr) (ownCalls : Nat) : Bool :=
                        .dotCall (resolve "Box") "V" none] == some 1
 
 --------------------------------------------------------------------------------
--- Explicit invocation bypasses, but never mutates, the entry
+-- Explicit invocation is fresh; it may establish, but never replaces, the entry
 --------------------------------------------------------------------------------
--- `A()` is one call context plus A's body's own `Id` call.
+-- `A()` is one call context plus A's body's own `Id` call. CACHE-PUB-1 (October 22
+-- 2026): an explicit zero-supply invocation never READS the entry, but the owning one
+-- of an EMPTY entry establishes it.
 
 -- `A, A(), A`: the ordinary read stores; the explicit call runs afresh; the last
 -- read reuses the FIRST entry.
 #guard contextsOpened [resolve "A", .call (resolve "A") [], resolve "A"] == some 3
 #guard entriesNamed "A" [resolve "A", .call (resolve "A") [], resolve "A"] == some 1
--- `A(), A, A`: the explicit call stores nothing; the first read stores; the second reuses.
-#guard contextsOpened [.call (resolve "A") [], resolve "A", resolve "A"] == some 3
+-- `A(), A, A`: the explicit call establishes the entry; both reads reuse it (formerly
+-- the call stored nothing and the first read evaluated again: 3 contexts).
+#guard contextsOpened [.call (resolve "A") [], resolve "A", resolve "A"] == some 2
 #guard entriesNamed "A" [.call (resolve "A") [], resolve "A", resolve "A"] == some 1
--- `A(), A()`: two fresh evaluations, no entry.
+-- `A(), A()`: two fresh evaluations; the first establishes the one entry (formerly none).
 #guard contextsOpened [.call (resolve "A") [], .call (resolve "A") []] == some 4
-#guard entriesNamed "A" [.call (resolve "A") [], .call (resolve "A") []] == some 0
+#guard entriesNamed "A" [.call (resolve "A") [], .call (resolve "A") []] == some 1
 -- An explicit call inside a builtin slot is still an explicit call.
 #guard contextsOpened [resolve "A", .call (resolve "sum") [.call (resolve "A") []]] == some 3
 -- Explicitly invoking a FORWARDED callable is an explicit call too: passing A to
@@ -347,11 +350,13 @@ def q03Run (out : List KatLang.Expr) : Option (Result × Nat × Nat) :=
 -- The Q-03 tree: 14 from ONE evaluation of Only (its binder and Id), one entry.
 #guard q03Run [resolve "Twice"] == some (.atom 14, 2, 1)
 -- The superseded tree: the same 14, but TwiceLifted's binder plus TWO fresh
--- evaluations of Only (binder and Id each), and no entry at all.
-#guard q03Run [resolve "TwiceLifted"] == some (.atom 14, 5, 0)
+-- evaluations of Only (binder and Id each). Each `Only(xs*)` spreads the EMPTY
+-- collected list, so its effective supply is zero: the first is Only's owning
+-- zero-supply invocation and establishes ONE entry (CACHE-PUB-1; formerly none).
+#guard q03Run [resolve "TwiceLifted"] == some (.atom 14, 5, 1)
 -- A bare read beside the formula shares that one evaluation.
 #guard q03Run [resolve "Only", resolve "Twice"] == some (.sequenceValue [.atom 7, .atom 14], 2, 1)
--- The explicit call stays fresh and never touches the entry: `Only, Only(), Only`.
+-- The explicit call stays fresh and leaves the established entry unchanged: `Only, Only(), Only`.
 #guard q03Run [resolve "Only", .call (resolve "Only") [], resolve "Only"]
   == some (.sequenceValue [.atom 7, .atom 7, .atom 7], 4, 1)
 

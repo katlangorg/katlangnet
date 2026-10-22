@@ -27,6 +27,22 @@ internal interface IZeroArgPropertyResultCache
     EvalResult<ZeroArgPropertyResult> GetOrEvaluate(
         ZeroArgPropertyExecution execution,
         Func<EvalResult<ZeroArgPropertyResult>> evaluate);
+
+    /// <summary>
+    /// A qualifying explicit zero-supply INVOCATION of the property (CACHE-PUB-1, owner decision
+    /// October 22 2026): <paramref name="evaluate"/> — the invocation's own fresh execution, whose
+    /// result is the PROPERTY-LEVEL counted output — ALWAYS runs (an established entry never
+    /// satisfies an invocation and is never replaced), and on an empty entry the invocation
+    /// participates in the ONE publication law (<see cref="ZeroArgPropertyPublications.Invoke"/>):
+    /// as the key's outermost owner its success establishes the entry a later property-style read
+    /// reuses. There is deliberately no default: the cache OWNS the publication law, so a cache that
+    /// stores reads must publish owning invocations exactly as <see cref="ZeroArgPropertyPublications"/>
+    /// does, and only a cache that stores nothing (<see cref="UncachedZeroArgPropertyResultCache"/>)
+    /// simply executes.
+    /// </summary>
+    EvalResult<ZeroArgPropertyResult> Invoke(
+        ZeroArgPropertyExecution execution,
+        Func<EvalResult<ZeroArgPropertyResult>> evaluate);
 }
 
 /// <summary>
@@ -55,10 +71,11 @@ internal interface IZeroArgPropertyResultCache
 ///   entry, and consumers within one owning activation reuse its entry even through nested calls.
 ///   Scopes without an activation retain the host environment fallback.</item>
 /// </list>
-/// Explicit calls (<c>A()</c>) never consult the cache on either side, and the run
-/// identity keeps entries from crossing runs even on a host-shared cache instance.
-/// WHICH completion creates the entry is <see cref="ZeroArgPropertyPublications"/>'s law
-/// (Q-37): the outermost successful property-style evaluation of the key.
+/// An explicit zero-supply invocation (<c>A()</c>) of the same binding computes the SAME key
+/// (CACHE-PUB-1): it never reads an entry, but its owning success may establish an empty one. The
+/// run identity keeps entries from crossing runs even on a host-shared cache instance. WHICH
+/// completion creates the entry is <see cref="ZeroArgPropertyPublications"/>'s law (Q-37, extended
+/// to invocations by CACHE-PUB-1): the outermost successful qualifying evaluation of the key.
 /// </summary>
 internal readonly record struct ZeroArgPropertyCacheKey(
     ZeroArgPropertyCacheAccessShape AccessShape,
@@ -145,15 +162,19 @@ internal sealed class StructuralOwnerIdentity
 
     public static StructuralOwnerIdentity FromOwner(Algorithm owner, bool includeDeclaration = false)
     {
-        var scopeChain = new List<ScopeComponent>
-        {
-            new(owner.Opens, owner.Properties),
-        };
-
+        // Every cache request computes its key (CACHE-PUB-1 added the explicit zero-supply
+        // invocations), so the chain is measured first and copied into ONE exact array.
+        var length = 1;
         for (var scope = owner.Parent; scope is not null; scope = scope.Parent)
-            scopeChain.Add(new ScopeComponent(scope.Opens, scope.Properties));
+            length++;
 
-        return new StructuralOwnerIdentity([.. scopeChain], includeDeclaration ? owner.Declaration : null);
+        var scopeChain = new ScopeComponent[length];
+        scopeChain[0] = new ScopeComponent(owner.Opens, owner.Properties);
+        var index = 1;
+        for (var scope = owner.Parent; scope is not null; scope = scope.Parent)
+            scopeChain[index++] = new ScopeComponent(scope.Opens, scope.Properties);
+
+        return new StructuralOwnerIdentity(scopeChain, includeDeclaration ? owner.Declaration : null);
     }
 
     internal static StructuralOwnerIdentity FromPropertyOwner(Algorithm owner)
@@ -281,9 +302,13 @@ internal sealed class ZeroArgPropertyCacheKeyComparer : IEqualityComparer<ZeroAr
 
 /// <summary>
 /// THE PUBLICATION LAW of the zero-argument property cache (Q-37, owner decision October 11
-/// 2026, superseding the first-successful-completion rule; Lean
-/// <c>evalZeroArgPropertyAccessCounted</c> over <c>EvalState.activeZeroArgProperties</c>):
-/// the OUTERMOST successful property-style evaluation of a key owns its entry.
+/// 2026, superseding the first-successful-completion rule; extended to qualifying explicit
+/// zero-supply invocations by CACHE-PUB-1, owner decision October 22 2026; Lean
+/// <c>evalZeroArgPropertyAccessCounted</c> over <c>EvalState.activeZeroArgProperties</c> with a
+/// <c>read</c> or <c>invoke</c> request): the OUTERMOST successful qualifying evaluation of a key
+/// owns its entry — a property-style read (<see cref="EvaluateMiss"/> after a miss) or an explicit
+/// zero-supply invocation (<see cref="Invoke"/>) alike, in ONE ownership domain (one active set).
+/// An invocation never obtains its result from an established entry and never replaces it.
 /// <list type="bullet">
 ///   <item>A miss on a key no evaluation is currently executing makes that access the key's
 ///   OWNER: the key is ACTIVE while the owner's body runs and stops being active on every exit
@@ -358,6 +383,35 @@ internal sealed class ZeroArgPropertyPublications(RootPropertyObservationSink? s
         return result;
     }
 
+    /// <summary>
+    /// A qualifying explicit zero-supply INVOCATION of <paramref name="key"/> (CACHE-PUB-1; Lean: the
+    /// <c>invoke</c> request of <c>evalZeroArgPropertyAccessCounted</c>). <paramref name="evaluate"/>
+    /// ALWAYS runs: an established entry never satisfies an invocation, and it is left unchanged
+    /// (the invocation neither marks the key nor publishes). On an EMPTY entry the invocation is a
+    /// request of the very law <see cref="EvaluateMiss"/> implements — the key's owner when no
+    /// evaluation of it is running, re-entrant otherwise — so its owning success establishes the
+    /// entry (and is observed exactly like a read's publication).
+    /// </summary>
+    internal EvalResult<ZeroArgPropertyResult> Invoke(
+        ZeroArgPropertyCacheKey key,
+        Func<EvalResult<ZeroArgPropertyResult>> evaluate,
+        out bool published)
+    {
+        if (_published.ContainsKey(key))
+        {
+            published = false;
+            return evaluate();
+        }
+
+        return EvaluateMiss(key, evaluate, out published);
+    }
+
+    /// <summary>MIRROR OF <see cref="Invoke"/> — keep in lock-step.</summary>
+    internal ValueTask<EvalResult<ZeroArgPropertyResult>> InvokeAsync(
+        ZeroArgPropertyCacheKey key,
+        Func<ValueTask<EvalResult<ZeroArgPropertyResult>>> evaluateAsync)
+        => _published.ContainsKey(key) ? evaluateAsync() : EvaluateMissAsync(key, evaluateAsync);
+
     /// <summary>MIRROR OF <see cref="EvaluateMiss"/> — keep in lock-step.</summary>
     internal async ValueTask<EvalResult<ZeroArgPropertyResult>> EvaluateMissAsync(
         ZeroArgPropertyCacheKey key,
@@ -428,6 +482,12 @@ internal sealed class UncachedZeroArgPropertyResultCache : IZeroArgPropertyResul
         return evaluate();
     }
 
+    /// <summary>A cache that stores nothing publishes nothing: an invocation simply executes.</summary>
+    public EvalResult<ZeroArgPropertyResult> Invoke(
+        ZeroArgPropertyExecution execution,
+        Func<EvalResult<ZeroArgPropertyResult>> evaluate)
+        => evaluate();
+
     public ZeroArgPropertyResultCacheSnapshot GetSnapshot()
         => (_stats ?? new ZeroArgPropertyResultCacheStatsCollector()).CreateSnapshot(
             distinctKeysCreated: _seenKeys?.Count ?? 0,
@@ -472,6 +532,28 @@ internal sealed class RunScopedZeroArgPropertyResultCache(RootPropertyObservatio
         if (published)
         {
             _stats.RecordStore(execution.AccessKind);
+            _missedKeysWithoutStore.Remove(key);
+            if (_results.Count > _maxCacheSize)
+                _maxCacheSize = _results.Count;
+        }
+
+        return result;
+    }
+
+    /// <summary>
+    /// A qualifying explicit zero-supply invocation (CACHE-PUB-1): never a request of the read
+    /// statistics (it is no property-style access and can never hit); an owning publication is
+    /// counted as a store of the <see cref="ZeroArgPropertyAccessKind.Invocation"/> kind.
+    /// </summary>
+    public EvalResult<ZeroArgPropertyResult> Invoke(
+        ZeroArgPropertyExecution execution,
+        Func<EvalResult<ZeroArgPropertyResult>> evaluate)
+    {
+        var key = ZeroArgPropertyCacheKey.FromExecution(execution);
+        var result = _results.Invoke(key, evaluate, out var published);
+        if (published)
+        {
+            _stats.RecordStore(ZeroArgPropertyAccessKind.Invocation);
             _missedKeysWithoutStore.Remove(key);
             if (_results.Count > _maxCacheSize)
                 _maxCacheSize = _results.Count;

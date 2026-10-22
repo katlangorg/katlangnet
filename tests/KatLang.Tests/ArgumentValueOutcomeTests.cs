@@ -401,7 +401,9 @@ public class ArgumentValueOutcomeTests
     /// <c>P</c> and <c>P()</c> keep their distinction: an explicit invocation of the
     /// forwarded callable runs the body afresh and never reads or replaces the entry, while a
     /// VALUE read of the parameter is P's ordinary cached property read (NEED-10) — passing P
-    /// itself performs no access.
+    /// itself performs no access. CACHE-PUB-1: the first invocation, finding P's entry empty,
+    /// establishes it (its origin is the cell's written <c>P</c>), so the later VALUE read of the
+    /// parameter reuses that first draw (formerly <c>S[1, 2, 3]</c>).
     /// </summary>
     [Fact]
     public async Task ExplicitInvocationOfTheParameter_StaysAFreshCall()
@@ -412,8 +414,8 @@ public class ArgumentValueOutcomeTests
             "tick#1", "tick#2");
         AssertOk(
             await OnEveryRouteAsync("P = tick()\nTwice0(f) = f(), f(), f\nTwice0(P)"),
-            "S[1, 2, 3]",
-            "tick#1", "tick#2", "tick#3");
+            "S[1, 2, 1]",
+            "tick#1", "tick#2");
     }
 
     /// <summary>

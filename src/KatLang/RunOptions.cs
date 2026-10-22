@@ -341,8 +341,10 @@ public sealed class RunOptions
     /// draws, resource accounting, cancellation points, and the evaluation strategy are exactly
     /// those of the same run without capture.</para>
     /// <para><b>Scope.</b> One observation per published root property — the outermost successful
-    /// property-style read, which every later read reuses. Explicit calls (<c>A()</c>), re-entrant
-    /// reads, nested and imported declarations, and synthetic source-less bindings are not
+    /// qualifying evaluation (a property-style read, or an explicit zero-supply call <c>A()</c> that
+    /// found the entry empty), which every later bare read reuses. It is the ESTABLISHED value: a
+    /// later explicit call is fresh and never replaces it, so it adds no observation. Re-entrant
+    /// evaluations, nested and imported declarations, and synthetic source-less bindings are not
     /// observed. This is not expression tracing or a calculation history: absence of an
     /// observation is not proof that a property was never calculated.</para>
     /// <para><b>Partial runs.</b> An <see cref="RunResult.EvalFailure"/> carries the values

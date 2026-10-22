@@ -277,6 +277,16 @@ public class RunEntryPreparationTests
             cts.Cancel();
             return result;
         }
+
+        // CACHE-PUB-1: an explicit zero-supply invocation is a seam access too: cancel after it.
+        public EvalResult<ZeroArgPropertyResult> Invoke(
+            ZeroArgPropertyExecution execution,
+            Func<EvalResult<ZeroArgPropertyResult>> evaluate)
+        {
+            var result = _inner.Invoke(execution, evaluate);
+            cts.Cancel();
+            return result;
+        }
     }
 
     [Fact]

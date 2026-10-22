@@ -191,7 +191,7 @@ theorem member_agrees (rec : EvalRec) (r : Expr) (n : Ident) (fb : Expr)
     (EvalBody.evalDotCallCounted rec r n fb (some args) ctx env).runState s =
       ((do
         let wired ← rec.resolveAliasTarget (childOfInContext targetAlg p.alg ctx) ctx
-        rec.evalResolvedCallCounted wired args ctx env n) : EvalM CountedResult).runState t ∧
+        rec.evalResolvedCallCounted wired args ctx env n (.bound targetAlg p)) : EvalM CountedResult).runState t ∧
     (classifyPlanRouteWith rec.resolveDotReceiver? rec.algorithmIntrinsicRoute
       ⟨callee, args, ctx, env, .dot r n fb⟩).runState s = (.ok .call, t) := by
   refine ⟨?_, ?_⟩
@@ -480,10 +480,11 @@ def executeAlongWritten (route : NeedPlan.Route) (a : Nat) (shape : NeedPlan.Cal
     EvalM CountedResult := do
   let eff := NeedPlan.effective shape r
   let callee ← withCtx shape.ctxMsg (NeedPlan.calleeAlong route a eff r)
+  let origin ← NeedPlan.dispatchOrigin a eff r
   let result ← withCtx shape.ctxMsg (do
     let normal ← route.normalize callee eff.caller
     let cells ← NeedPlan.prepare route.spread a eff
-    route.dispatch normal cells eff.caller eff.values (openExprName eff.callee))
+    route.dispatch origin normal cells eff.caller eff.values (openExprName eff.callee))
   pure (reCountValueBoundary result)
 
 /-- **The correction changes only the name.** For a dispatch whose behaviour does not depend on the
@@ -492,9 +493,9 @@ def executeAlongWritten (route : NeedPlan.Route) (a : Nat) (shape : NeedPlan.Cal
     and records; only the diagnostic string passed to dispatch changed. -/
 theorem executeAlong_changes_only_the_name (route : NeedPlan.Route) (a : Nat) (shape : NeedPlan.CallShape)
     (r : PlanRoute)
-    (d : Algorithm → List NeedSupply.Sourced → EvalCtx → ValEnv → EvalM CountedResult)
-    (hname : ∀ g cells c v n, route.dispatch g cells c v n = d g cells c v) (s : EvalState) :
+    (d : CalleeOrigin → Algorithm → List NeedSupply.Sourced → EvalCtx → ValEnv → EvalM CountedResult)
+    (hname : ∀ o g cells c v n, route.dispatch o g cells c v n = d o g cells c v) (s : EvalState) :
     (NeedPlan.executeAlong route a shape r).runState s = (executeAlongWritten route a shape r).runState s := by
-  simp only [NeedPlan.executeAlong, executeAlongWritten, bind_run, dispatchName_run, hname]
+  simp only [NeedPlan.executeAlong, executeAlongWritten, bind_run, dispatchName_run, dispatchOrigin_run, hname]
 
 end KatLang.InvocationRouteLaws
