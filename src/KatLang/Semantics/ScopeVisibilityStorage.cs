@@ -1,6 +1,9 @@
 using System.Collections;
 using System.Collections.Immutable;
+using System.Diagnostics;
 using System.Runtime.CompilerServices;
+using System.Runtime.InteropServices;
+using System.Security.Cryptography;
 
 namespace KatLang.Semantics;
 
@@ -68,11 +71,12 @@ internal readonly struct VisibilityDelta
 
 /// <summary>
 /// One immutable node of a scope visibility tree (FE-4b): a treap ordered by ORDINAL name — the
-/// public <see cref="ScopeVisibility.Symbols"/> order — and heap-ordered by a name-derived
-/// priority, with subtree sizes for positional reads. Nodes are hash-consed per build by
-/// (entry, left, right) REFERENCE identity (<see cref="VisibilityTreeBuilder"/>): a treap's shape
-/// is a function of its key set, so two scopes whose visible contents are identical — however
-/// they were derived — share one root object, and a scope that differs from its parent by a few
+/// public <see cref="ScopeVisibility.Symbols"/> order — and heap-ordered by the building
+/// <see cref="VisibilityTreeBuilder"/>'s private per-name priority, with subtree sizes for
+/// positional reads. Nodes are hash-consed per build by (entry, left, right) REFERENCE identity:
+/// under the builder's fixed name-to-priority mapping a treap's shape is a function of its key
+/// set, so two scopes whose visible contents are identical — however they were derived — share
+/// one root object, and a scope that differs from its parent by a few
 /// names shares every untouched subtree. A node references only its entry's public symbols and
 /// its children: no builder, frame, AST, or interner state.
 /// </summary>
@@ -108,14 +112,10 @@ internal sealed class VisibilityNode
 internal static class VisibilityTree
 {
     /// <summary>
-    /// The treap priority of a name: the runtime's per-process randomized string hash, so the
-    /// expected tree depth is logarithmic for inputs independent of the process's hash seed.
-    /// This is not a deterministic worst-case bound: a host observing hashes can select an
-    /// unbalanced key set. Tied priorities remain correct through the exact name discriminator.
-    /// Ties are broken by ordinal name, making the shape a function of the key set alone.
+    /// The heap order of two entries: the higher priority (<see cref="VisibilityTreeBuilder.PriorityOf"/>),
+    /// ties broken by ordinal name, so under a fixed name-to-priority mapping the shape is a
+    /// function of the key set alone and colliding priorities stay correct.
     /// </summary>
-    public static int PriorityOf(string? name) => name is null ? int.MinValue : name.GetHashCode();
-
     public static bool HigherPriority(int leftPriority, string? leftName, int rightPriority, string? rightName)
         => leftPriority != rightPriority
             ? leftPriority > rightPriority
@@ -210,11 +210,26 @@ internal static class VisibilityTree
 /// The per-build constructor of visibility trees (FE-4b). Every node is created through
 /// <see cref="Make"/>, which interns it by (symbol, deferred twin, meta, left, right) reference identity —
 /// equality compares every component, the hash only selects a bucket, so colliding hashes never
-/// merge distinct nodes. Because a treap's shape depends only on its keys, the incremental path
+/// merge distinct nodes. For the builder's fixed per-name priorities, the incremental path
 /// (<see cref="Set"/> / <see cref="Remove"/>, O(depth) nodes per change) and the bulk path
 /// (<see cref="Build"/> over the merged sorted entries, O(size) time) produce the SAME root object
 /// for the same content; <see cref="Apply"/> picks between them by size only. The intern table
-/// lives exactly as long as one semantic-model build and is never reachable from a node.
+/// and the priority mapping live exactly as long as one semantic-model build and are never
+/// reachable from a node.
+/// <para>
+/// PRIORITIES (SCOPE-BAL-2, issue #169) are private to the builder: each distinct ordinal name
+/// receives a cryptographically random priority (<see cref="RandomNumberGenerator"/>, OS-backed)
+/// when first seen and keeps it for the builder's lifetime, so every entry carrying a name —
+/// direct, open-provided, parameter, property, deferred twin, replaced, removed and reinserted —
+/// has the same priority, and canonicality holds relative to this one mapping. Independent
+/// builders draw independent mappings: their tree shapes may differ, only their
+/// contents agree, and nothing observable outside the builder (in particular not
+/// <see cref="string.GetHashCode()"/>) predicts the heap order. Depth is therefore expected
+/// logarithmic for ANY name set, including one chosen with knowledge of the process string
+/// hashes — an expectation over the builder's private randomness, not a deterministic
+/// worst-case bound. <see cref="Set"/>, <see cref="Remove"/> and <see cref="Merge"/> remain
+/// recursive in the tree depth (stack safety under forced priorities is SCOPE-BAL-3).
+/// </para>
 /// </summary>
 internal sealed class VisibilityTreeBuilder
 {
@@ -223,7 +238,13 @@ internal sealed class VisibilityTreeBuilder
 
     internal const int BulkDivisor = 8;
 
+    /// <summary>Random priorities drawn per refill of <see cref="_randomPriorities"/> (one OS call each).</summary>
+    private const int RandomPriorityBatch = 64;
+
     private readonly Dictionary<NodeKey, VisibilityNode> _nodes = new();
+    private readonly Dictionary<string, int> _priorities = new(StringComparer.Ordinal);
+    private int[]? _randomPriorities;
+    private int _nextRandomPriority;
     private readonly FrontEndTraversalObservations? _observations;
     private readonly bool _collideNodeHashes;
 
@@ -239,15 +260,64 @@ internal sealed class VisibilityTreeBuilder
     internal bool? ForceBulk { get; init; }
 
     /// <summary>
-    /// Test knob: the priority function (default <see cref="VisibilityTree.PriorityOf"/>). A constant
-    /// makes every comparison a name tie-break — a degenerate but valid treap — so content and
-    /// order never depend on the hash, only depth does.
+    /// Test knob: a deterministic priority function replacing the random draw (the generator is
+    /// then never used). A constant makes every comparison a name tie-break — a degenerate but
+    /// valid treap — so content and order never depend on priorities, only depth does. The
+    /// override must be a function of the name: its answer is memoized like a random draw, and
+    /// every later call for the same name must repeat it, or <see cref="PriorityOf"/> throws
+    /// instead of corrupting the heap order.
     /// </summary>
     internal Func<string?, int>? PriorityOverride { get; init; }
 
     /// <summary>An entry of this builder's trees, prioritized by its name.</summary>
     public VisibilityEntry Entry(VisibleSymbol symbol, int meta, VisibleSymbol? deferredTwin)
-        => new(symbol, meta, deferredTwin, PriorityOverride is { } priority ? priority(symbol.Name) : VisibilityTree.PriorityOf(symbol.Name));
+        => new(symbol, meta, deferredTwin, PriorityOf(symbol.Name));
+
+    /// <summary>
+    /// The treap priority of <paramref name="name"/> in this builder: assigned on first use (a
+    /// fresh cryptographically random value, or the test <see cref="PriorityOverride"/>) and
+    /// returned unchanged for the builder's lifetime. A failure to obtain OS randomness
+    /// propagates and records nothing; there is no predictable fallback.
+    /// </summary>
+    public int PriorityOf(string? name)
+    {
+        if (name is null)
+            return int.MinValue;
+
+        if (_priorities.TryGetValue(name, out var assigned))
+        {
+            if (PriorityOverride is { } check && check(name) is var forced && forced != assigned)
+                throw new InvalidOperationException($"The priority override gave '{name}' priority {forced} after {assigned}; a treap priority must be a function of the name.");
+            return assigned;
+        }
+
+        // Drawn before it is recorded, so a failed draw never leaves a placeholder priority.
+        var priority = PriorityOverride is { } priorityOverride ? priorityOverride(name) : NextRandomPriority();
+        _priorities.Add(name, priority);
+        return priority;
+    }
+
+    private int NextRandomPriority()
+    {
+        var batch = _randomPriorities ??= new int[RandomPriorityBatch];
+        if (_nextRandomPriority == 0)
+            RandomNumberGenerator.Fill(MemoryMarshal.AsBytes(batch.AsSpan()));
+        var priority = batch[_nextRandomPriority];
+        _nextRandomPriority = (_nextRandomPriority + 1) % RandomPriorityBatch;
+        return priority;
+    }
+
+    /// <summary>
+    /// Debug check of the interning invariant: <see cref="NodeKey"/> omits the priority, which is
+    /// sound only while every entry carries its name's ONE priority in this builder — an entry
+    /// minted by another builder, or with a hand-picked priority, is never interned here.
+    /// </summary>
+    [Conditional("DEBUG")]
+    private void AssertOwnPriority(in VisibilityEntry entry)
+    {
+        if (entry.Name is { } name && (!_priorities.TryGetValue(name, out var priority) || priority != entry.Priority))
+            throw new InvalidOperationException($"The visibility entry '{name}' carries priority {entry.Priority}, not this builder's priority for its name.");
+    }
 
     public static bool UsesBulkPath(int changes, int size)
         => changes >= BulkMinimumChanges && (long)changes * BulkDivisor >= size;
@@ -289,6 +359,7 @@ internal sealed class VisibilityTreeBuilder
 
     public VisibilityNode Make(in VisibilityEntry entry, VisibilityNode? left, VisibilityNode? right)
     {
+        AssertOwnPriority(entry);
         var key = new NodeKey(entry.Symbol, entry.Meta, entry.DeferredTwin, left, right, _collideNodeHashes);
         if (_nodes.TryGetValue(key, out var existing))
         {

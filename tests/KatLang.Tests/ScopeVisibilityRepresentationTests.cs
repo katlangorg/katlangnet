@@ -799,10 +799,11 @@ public class ScopeVisibilityRepresentationTests
             Assert.Same(defaultPath, observed.Build(baseEntries.Concat(extra).OrderBy(entry => entry.Name, StringComparer.Ordinal).ToList()));
             Assert.Same(defaultPath, observed.Apply(baseRoot, extra.Select(VisibilityDelta.Set).ToList()));
 
+            // Another builder has its own priorities (random ones differ), so it re-mints every entry.
             var viaBulk = new VisibilityTreeBuilder(null) { ForceBulk = true, PriorityOverride = priority };
             var viaIncremental = new VisibilityTreeBuilder(null) { ForceBulk = false, PriorityOverride = priority };
-            AssertSameContent(defaultPath, viaBulk.Apply(Rebuild(viaBulk, baseRoot), extra.Select(VisibilityDelta.Set).ToList()));
-            AssertSameContent(defaultPath, viaIncremental.Apply(Rebuild(viaIncremental, baseRoot), extra.Select(VisibilityDelta.Set).ToList()));
+            AssertSameContent(defaultPath, viaBulk.Apply(Rebuild(viaBulk, baseRoot), Remint(viaBulk, extra)));
+            AssertSameContent(defaultPath, viaIncremental.Apply(Rebuild(viaIncremental, baseRoot), Remint(viaIncremental, extra)));
         }
 
         var withExtra = trees.Set(forward, trees.Entry(Symbol("zz"), VisibilityEntry.DirectMeta, null));
@@ -812,7 +813,10 @@ public class ScopeVisibilityRepresentationTests
     }
 
     private static VisibilityNode? Rebuild(VisibilityTreeBuilder trees, VisibilityNode? root)
-        => trees.Build(VisibilityTree.InOrder(root).Select(node => new VisibilityEntry(node)).ToList());
+        => trees.Build(VisibilityTree.InOrder(root).Select(node => trees.Entry(node.Symbol, node.Meta, node.DeferredTwin)).ToList());
+
+    private static List<VisibilityDelta> Remint(VisibilityTreeBuilder trees, IEnumerable<VisibilityEntry> entries)
+        => entries.Select(entry => VisibilityDelta.Set(trees.Entry(entry.Symbol, entry.Meta, entry.DeferredTwin))).ToList();
 
     private static void AssertSameContent(VisibilityNode? expected, VisibilityNode? actual)
     {

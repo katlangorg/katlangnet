@@ -70,7 +70,8 @@ public static class SemanticModelBuilder
     /// Test-only construction knobs of scope visibility storage (FE-4b). None of them may change
     /// any model content: <see cref="ForceBulk"/> pins every layer to one application path,
     /// <see cref="CollideNodeHashes"/> makes every tree-node intern key hash alike, and
-    /// <see cref="PriorityOverride"/> replaces the name-derived treap priority.
+    /// <see cref="PriorityOverride"/> replaces the builder's private random per-name treap priority
+    /// with a deterministic function of the name (<see cref="VisibilityTreeBuilder.PriorityOverride"/>).
     /// </summary>
     internal sealed record VisibilityConstructionOptions(
         bool? ForceBulk = null,

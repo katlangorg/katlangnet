@@ -45,12 +45,14 @@ public class Fe4bHostileReviewTests
         Assert.True(ScopeVisibilityCensus.Measure(model.ScopeVisibilities).Memberships > 4L * width * width);
     }
 
-    [Fact]
-    public void HashAwareHost_CanSelectAnUnbalancedButCorrectTree()
+    /// <summary>
+    /// The hash-aware attack of issue #169: names ordered by THIS process's string hashes (the
+    /// longest monotone hash run among <paramref name="candidates"/> names), which built a chain
+    /// as deep as the selection while priorities were <see cref="string.GetHashCode()"/>.
+    /// </summary>
+    private static string[] HashMonotoneNames(int candidates)
     {
-        // Hash randomization protects against a fixed hostile source, not a host that
-        // observes this process's hashes and chooses its names adaptively.
-        var names = Enumerable.Range(0, 4096).Select(i => $"common_prefix_{i:D5}").ToArray();
+        var names = Enumerable.Range(0, candidates).Select(i => $"common_prefix_{i:D5}").ToArray();
         int[] Subsequence(bool increasing)
         {
             var tails = new List<int>();
@@ -77,19 +79,198 @@ public class Fe4bHostileReviewTests
         }
         var up = Subsequence(true);
         var down = Subsequence(false);
-        var selected = up.Length > down.Length ? up : down;
-        Assert.True(selected.Length >= 60);
+        return (up.Length > down.Length ? up : down).Select(i => names[i]).ToArray();
+    }
+
+    /// <summary>
+    /// Production priorities are private per-builder random draws (SCOPE-BAL-2), so knowing this
+    /// process's string hashes no longer selects the tree shape. The selection from 65,536
+    /// candidates is ~512 names long (a monotone run of n random values is ~2√n); the old
+    /// priorities made exactly that chain. The bound 64 is not a balance proof: a random treap of
+    /// n ≤ 600 nodes has expected depth ≈ 4.3 ln n ≈ 27, and the expected number of nodes at depth
+    /// 64 is at most (2 H_n)^64 / 64! &lt; 10⁻¹⁵ in the ideal random-priority model, leaving a
+    /// wide margin for height variation. Finite random samples are not a deterministic guarantee.
+    /// </summary>
+    [Fact]
+    public void HashAwareHost_NoLongerSelectsTheTreeShape()
+    {
+        var selected = HashMonotoneNames(65_536);
+        Assert.InRange(selected.Length, 400, 600);
         var trees = new VisibilityTreeBuilder(null);
-        var entries = selected.Select(i => trees.Entry(new VisibleSymbol(names[i], IdentifierClassification.PropertyReference, null, null), 0, null)).ToList();
+        var entries = selected.Select(name => trees.Entry(new VisibleSymbol(name, IdentifierClassification.PropertyReference, null, null), 0, null)).ToList();
         var root = trees.Build(entries)!;
         var scope = new ScopeVisibility(null, new ScopeSymbolView(root, 0, null), 0);
-        Assert.Equal(entries.Count, ScopeVisibilityCensus.Measure([scope]).MaxTreeDepth);
+        var depth = ScopeVisibilityCensus.Measure([scope]).MaxTreeDepth;
+        Assert.InRange(depth, 1, 64);
         Assert.Equal(entries.Select(e => e.Name), scope.Symbols.Select(s => s.Name));
-        Assert.Same(root, trees.Set(root, entries[entries.Count / 2]));
-        var removed = trees.Remove(root, entries[entries.Count / 2].Name);
+        for (var i = 0; i < entries.Count; i++)
+        {
+            Assert.Same(entries[i].Symbol, scope.View!.Find(entries[i].Name));
+            Assert.Equal(i, ((IList<VisibleSymbol>)scope.Symbols).IndexOf(entries[i].Symbol));
+            Assert.InRange(ScopeVisibilityCensus.LookupProbes(scope, entries[i].Name), 1, depth);
+        }
+
+        // Replacement, removal and reinsertion stay correct and canonical in the builder.
+        var middle = entries[entries.Count / 2];
+        Assert.Same(root, trees.Set(root, middle));
+        var replacement = trees.Entry(new VisibleSymbol(middle.Name, IdentifierClassification.PropertyReference, null, null), 0, null);
+        Assert.Equal(middle.Priority, replacement.Priority);
+        var replaced = trees.Set(root, replacement);
+        Assert.Same(replacement.Symbol, VisibilityTree.Find(replaced, middle.Name)!.Symbol);
+        Assert.Same(root, trees.Set(replaced, middle));
+        var removed = trees.Remove(root, middle.Name);
         Assert.Equal(entries.Count - 1, removed!.Count);
-        Assert.Same(root, trees.Set(removed, entries[entries.Count / 2]));
+        Assert.Null(VisibilityTree.Find(removed, middle.Name));
+        Assert.Same(root, trees.Set(removed, middle));
+        Assert.Same(root, trees.Build(entries));
     }
+
+    /// <summary>
+    /// The public path (Parser.Parse → SemanticModelBuilder.Build) uses the same private
+    /// priorities: a document declaring the hash-selected names in hash order — a ~512-deep chain
+    /// under the old priorities — has shallow scopes, matching the eager oracle. Sibling blocks
+    /// also exercise the incremental updates that amplified the old attack.
+    /// </summary>
+    [Theory]
+    [InlineData(0)]
+    [InlineData(24)]
+    public void HashAwareSource_BuildsAShallowModelThroughThePublicPath(int blocks)
+    {
+        var selected = HashMonotoneNames(65_536);
+        Assert.InRange(selected.Length, 400, 600);
+        var blockNames = Enumerable.Range(0, blocks).Select(i => $"Block{i:D2}").ToArray();
+        var source = string.Concat(selected.Select((name, i) => $"{name} = {i}\n"))
+            + string.Concat(blockNames.Select((name, i) => $"{name} = {{ zzlocal{i:D2} = 1\nzzlocal{i:D2} }}\n")) + "1";
+        var parsed = SourceProvenance.ParseValid(source).Parsed;
+        var (model, eager) = SemanticModelBuilder.BuildWithEagerVisibilityReference(parsed);
+        Assert.InRange(ScopeVisibilityCensus.Measure(model.ScopeVisibilities).MaxTreeDepth, 1, 64);
+        Assert.Equal(model.ScopeVisibilities.Count, eager.Count);
+        for (var i = 0; i < eager.Count; i++)
+            Assert.Equal(Content(eager[i]), Content(model.ScopeVisibilities[i].Symbols));
+        var publicModel = SemanticModelBuilder.Build(parsed);
+        Assert.InRange(ScopeVisibilityCensus.Measure(publicModel.ScopeVisibilities).MaxTreeDepth, 1, 64);
+        Assert.Equal(selected.Concat(blockNames).Order(StringComparer.Ordinal), publicModel.ScopeVisibilities[0].Symbols.Select(s => s.Name));
+    }
+
+    /// <summary>
+    /// A name's priority belongs to the name within ONE builder: every symbol, meta and twin of
+    /// it, before and after removal, gets the first draw. Builders draw independently — not one
+    /// shared mapping, and not the process string hash (individual collisions are possible, all
+    /// 256 agreeing is not).
+    /// </summary>
+    [Fact]
+    public void Priorities_AreStablePerNameAndPrivatePerBuilder()
+    {
+        var names = Enumerable.Range(0, 256).Select(i => $"n{i}").ToArray();
+        var first = new VisibilityTreeBuilder(null);
+        var second = new VisibilityTreeBuilder(null);
+        var firstPriorities = names.Select(first.PriorityOf).ToArray();
+        var secondPriorities = names.Reverse().Select(second.PriorityOf).Reverse().ToArray();
+        Assert.Equal(firstPriorities, names.Select(first.PriorityOf));
+        Assert.True(firstPriorities.Zip(secondPriorities).Count(pair => pair.First == pair.Second) < 8);
+        Assert.True(firstPriorities.Zip(names).Count(pair => pair.First == pair.Second.GetHashCode()) < 8);
+        Assert.True(firstPriorities.Distinct().Count() > 240);
+
+        var name = names[3];
+        var direct = new VisibleSymbol(name, IdentifierClassification.PropertyReference, null, null);
+        var parameter = new VisibleSymbol(name, IdentifierClassification.ExplicitParameterReference, null, null);
+        var twin = new VisibleSymbol(name, IdentifierClassification.DeferredModuleReference, null, null);
+        var entries = new[]
+        {
+            first.Entry(direct, VisibilityEntry.DirectMeta, null),
+            first.Entry(parameter, VisibilityEntry.DirectMeta, null),
+            first.Entry(direct, VisibilityEntry.OpenMeta(0), twin),
+            first.Entry(direct, VisibilityEntry.OpenMeta(3), null),
+        };
+        Assert.All(entries, entry => Assert.Equal(firstPriorities[3], entry.Priority));
+        var root = first.Set(null, entries[0]);
+        Assert.Null(first.Remove(root, name));
+        Assert.Equal(firstPriorities[3], first.Entry(direct, VisibilityEntry.DirectMeta, null).Priority);
+        Assert.Same(root, first.Set(null, entries[0]));
+    }
+
+    /// <summary>
+    /// Independently randomized builds of one document, run in parallel, agree on every scope's
+    /// visible content (names, classifications, declarations, properties) and each matches its own
+    /// eager oracle; their trees need not share a shape.
+    /// </summary>
+    [Fact]
+    public void IndependentBuilds_AgreeOnContentUnderDifferentPriorities()
+    {
+        var source = "Lib = { public A = 1\npublic B = 2\npublic C(x) = x\n1 }\nOther = { public B = 3\n1 }\n"
+            + "U(p, q) = { open Lib, Other\n" + string.Concat(Enumerable.Range(0, 40).Select(i => $"L{i} = {{ v{i} = p\nA = q\nv{i} }}\n")) + "A + C(p) }\nU(1, 2)";
+        var parsed = SourceProvenance.ParseValid(source).Parsed;
+        var builds = new (SemanticModel Model, IReadOnlyList<IReadOnlyList<VisibleSymbol>> Eager)[8];
+        Parallel.For(0, builds.Length, i => builds[i] = SemanticModelBuilder.BuildWithEagerVisibilityReference(parsed));
+        var reference = builds[0].Model.ScopeVisibilities;
+        foreach (var (model, eager) in builds)
+        {
+            Assert.Equal(reference.Count, model.ScopeVisibilities.Count);
+            for (var s = 0; s < reference.Count; s++)
+            {
+                var actual = model.ScopeVisibilities[s].Symbols;
+                Assert.Equal(Content(eager[s]), Content(actual));
+                Assert.Equal(
+                    reference[s].Symbols.Select(x => (x.Name, x.Classification, x.Declaration?.Span, x.Property?.Name)),
+                    actual.Select(x => (x.Name, x.Classification, x.Declaration?.Span, x.Property?.Name)));
+            }
+        }
+    }
+
+    /// <summary>A priority override must be a function of the name: a second, different answer fails loudly.</summary>
+    [Fact]
+    public void InconsistentPriorityOverride_FailsInsteadOfCorruptingTheHeapOrder()
+    {
+        var next = 0;
+        var trees = new VisibilityTreeBuilder(null) { PriorityOverride = _ => next++ };
+        var symbol = new VisibleSymbol("x", IdentifierClassification.PropertyReference, null, null);
+        _ = trees.Entry(symbol, 0, null);
+        Assert.Throws<InvalidOperationException>(() => trees.Entry(symbol, 0, null));
+
+        var constant = new VisibilityTreeBuilder(null) { PriorityOverride = _ => 5 };
+        Assert.Equal(5, constant.Entry(symbol, 0, null).Priority);
+        Assert.Equal(5, constant.Entry(symbol, 1, null).Priority);
+    }
+
+    [Fact]
+    public void FailedPriorityOverride_DoesNotRecordAPlaceholder()
+    {
+        var fail = true;
+        var trees = new VisibilityTreeBuilder(null)
+        {
+            PriorityOverride = _ => fail ? throw new InvalidOperationException("test draw failed") : 42,
+        };
+        var symbol = new VisibleSymbol("x", IdentifierClassification.PropertyReference, null, null);
+        Assert.Throws<InvalidOperationException>(() => trees.Entry(symbol, 0, null));
+        fail = false;
+        Assert.Equal(42, trees.Entry(symbol, 0, null).Priority);
+        Assert.Equal(42, trees.Entry(symbol, 1, null).Priority);
+    }
+
+#if DEBUG
+    /// <summary>
+    /// Interning keys omit the priority, so a node of one builder must never carry another
+    /// builder's priority: in Debug builds <see cref="VisibilityTreeBuilder.Make"/> rejects an
+    /// entry whose priority is not this builder's for its name.
+    /// </summary>
+    [Fact]
+    public void ForeignPriorityEntries_AreRejectedByTheDebugInternCheck()
+    {
+        var symbol = new VisibleSymbol("x", IdentifierClassification.PropertyReference, null, null);
+        var own = new VisibilityTreeBuilder(null) { PriorityOverride = _ => 1 };
+        var foreign = new VisibilityTreeBuilder(null) { PriorityOverride = _ => 2 };
+        var entry = foreign.Entry(symbol, 0, null);
+        Assert.Throws<InvalidOperationException>(() => own.Make(entry, null, null));
+        _ = own.Entry(symbol, 0, null);
+        Assert.Throws<InvalidOperationException>(() => own.Set(null, entry));
+        var node = own.Make(own.Entry(symbol, 0, null), null, null);
+        Assert.Equal(1, node.Priority);
+        // This foreign entry has the SAME NodeKey as the existing node. The guard must run
+        // before interning could silently return that node with the wrong requested priority.
+        Assert.Throws<InvalidOperationException>(() => own.Make(entry, null, null));
+        Assert.Same(node, own.Make(own.Entry(symbol, 0, null), null, null));
+    }
+#endif
 
     [Fact]
     public void CensusDepth_IncludesTheFullHeightOfAnAlreadyVisitedSharedSubtree()
@@ -188,6 +369,10 @@ public class Fe4bHostileReviewTests
         }
         foreach (var version in versions) Check(version.Root, version.Expected);
     }
+
+    /// <summary>A scope's visible content by name, classification, and declaration/property/member identity.</summary>
+    private static IEnumerable<(string, IdentifierClassification, object?, object?, int)> Content(IEnumerable<VisibleSymbol> symbols)
+        => symbols.Select(symbol => (symbol.Name, symbol.Classification, (object?)symbol.Declaration, (object?)symbol.Property, symbol.Members.Count)).ToList();
 
     private static void Check(VisibilityNode? root, Dictionary<string, VisibilityEntry> expected)
     {
