@@ -1,5 +1,14 @@
 # Semantic Alignment Manifest.
 
+META-LIFE-2 — completed VALUE flight release (2026-10-22): C#-only CLR representation change; no
+language, Lean or observable-outcome change, so no Lean edit. `NeedCell.Complete` /
+`CompleteException` now publish the memo (or store the exception through EDI), release `_flight` and
+then settle the captured completion in ONE `_gate` section — the runtime CALLABLE projection's
+existing cleanup. Lean's `NeedCell` state has no completion object: a completed cell is its sticky
+outcome, which C# keeps in `_completed` / `_exception`, read before any flight at every observation
+entry, so the release cannot restart a computation. Suspension, plan, projection and CALLABLE state
+are untouched. `NeedCellTests` § META-LIFE-2. Full V3.
+
 PERF-STATE-1 — evaluator storage (2026-10-21): C#-only, implementation-only representation and
 test-instrumentation change; no language, Lean or observable-outcome change, so no Lean edit. (1) The
 per-plan supply-formation witness left `InvocationPlan` (its `Formations` field and the atomic

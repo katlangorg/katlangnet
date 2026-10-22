@@ -402,6 +402,13 @@ internal sealed class NeedCell : NeedNode
         get { lock (_gate) return _completed is not null || _exception is not null; }
     }
 
+    // Test observation only: whether this cell's VALUE computation is in flight (its completion
+    // is released once the outcome is published).
+    internal bool HasValueInFlight
+    {
+        get { lock (_gate) return _flight is not null; }
+    }
+
     // Test observation only: whether this cell's CALLABLE outcome is memoized.
     internal bool HasCallableMemo
     {
@@ -770,10 +777,15 @@ internal sealed class NeedCell : NeedNode
         if (result.IsError && result.Error.IsResourceLimit) _budget?.RetainTerminal(result.Error);
         lock (_gate)
         {
+            // Published with the completion, as CompleteProjection does: every later observer
+            // reads the memo first, so the released completion and computation are never needed
+            // again; a joined observer awaits its own copy of the task.
             _completed = result;
             _evaluate = null;
             _evaluateAsync = null;
-            _flight!.TrySetResult(result);
+            var flight = _flight!;
+            _flight = null;
+            flight.TrySetResult(result);
         }
     }
 
@@ -781,13 +793,16 @@ internal sealed class NeedCell : NeedNode
     {
         lock (_gate)
         {
+            // Stored, never published: every later observer rethrows it before it could start.
             _exception = ExceptionDispatchInfo.Capture(error);
             _evaluate = null;
             _evaluateAsync = null;
+            var flight = _flight!;
+            _flight = null;
             if (error is OperationCanceledException cancelled)
-                _flight!.TrySetCanceled(cancelled.CancellationToken);
+                flight.TrySetCanceled(cancelled.CancellationToken);
             else
-                _flight!.TrySetException(error);
+                flight.TrySetException(error);
         }
     }
 

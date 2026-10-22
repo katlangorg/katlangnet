@@ -189,6 +189,25 @@ public class CallReferenceS3AlgorithmTests
         Assert.Equal(["5", "8"], effects.Traces);
     }
 
+    /// <summary>
+    /// META-LIFE-2 (the META-LIFE-1 VALUE-before-META witness): once the written call's VALUE has completed
+    /// (its flight released), capture, <c>Invoke()</c>, <c>Arguments</c> and <c>Algorithm</c> still run over the
+    /// ORIGINAL supplied argument cell — <c>trace(10)</c> runs once — and the original VALUE is replayed.
+    /// </summary>
+    [Fact]
+    public void ValueBeforeMeta_InvokeArgumentsAndAlgorithmReuseTheOriginalCells()
+    {
+        var (outcome, effects) = Watch("""
+            F(v) = v + tick()
+            Use(meta r) = (r.Invoke(), r.Algorithm(r.Arguments*), r.Arguments.count)
+            Probe(x) = (x, Use(x), x)
+            Probe(F(trace(10)))
+            """);
+        Assert.Equal("ok S[11, S[12, 13, 1], 11]", outcome);
+        Assert.Equal(["10"], effects.Traces);
+        Assert.Equal(3, effects.Ticks);
+    }
+
     [Fact]
     public void OriginalArgumentForwarding_TransportsTheOriginalCells_SharedWithInvoke()
     {

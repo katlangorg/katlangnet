@@ -155,6 +155,49 @@ public partial class InvocationPlanTests
     }
 
     /// <summary>
+    /// META-LIFE-2: a completed VALUE releases only its flight. After the call's VALUE (and its argument's)
+    /// completed, neither cell holds a flight, yet the plan keeps the SAME formed supply cells, a fresh
+    /// invocation runs over them without re-running the argument, and the original VALUE is still the memo:
+    /// the META-LIFE-1 witness <c>11, 12, 11</c>.
+    /// </summary>
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void MetaLife2_ReleasedValueFlights_KeepThePlanSupplyAndTheMemo(bool optimized)
+    {
+        var probe = new Probe();
+        Result.CallReference? reference = null;
+        IReadOnlyList<NeedCell>? prepared = null;
+        probe.OnMeta = cells =>
+        {
+            reference = Reify(cells[0]);
+            var owner = reference.Plan.Owner;
+            Assert.True(owner.HasCompletedValue);
+            Assert.False(owner.HasValueInFlight);
+            prepared = reference.Plan.PreparedCells;
+            var argument = Assert.Single(prepared!);
+            Assert.True(argument.HasCompletedValue);
+            Assert.False(argument.HasValueInFlight);
+            var fresh = reference.Invoke();
+            Assert.Same(prepared, reference.Plan.PreparedCells);
+            Assert.Same(argument, reference.Plan.PreparedCells![0]);
+            Assert.Equal(1, probe.Traces);
+            return new Result.SequenceValue([fresh.Value.Value, owner.Demand().Value.Value]);
+        };
+
+        Assert.Equal("S[11, S[12, 11]]", probe.Run("""
+            F(v) = v + tick()
+            Probe(x) = (x, Meta(x))
+            Probe(F(trace(10)))
+            """, optimized));
+        Assert.Equal(1, probe.Traces);
+        Assert.Equal(2, probe.Ticks);
+        Assert.Equal(1, reference!.Plan.SupplyFormations);
+        Assert.Same(prepared, reference.Plan.PreparedCells);
+        Assert.False(reference.Plan.Owner.HasValueInFlight);
+    }
+
+    /// <summary>
     /// The case that fails if a plan were reconstructed by running an arbitrary spread again: VALUE opened
     /// <c>pair()*</c> once; after completion META sees the two Ready cells VALUE formed, and two invocations
     /// reuse them with no further <c>pair</c> call.
