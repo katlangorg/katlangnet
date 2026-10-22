@@ -39,14 +39,44 @@ public sealed record Diagnostic(
     DiagnosticSeverity Severity,
     SourceSpan? Span)
 {
+    /// <summary>The diagnostic data; replacing it discards the previous formatter's layout.</summary>
+    public string Message
+    {
+        get;
+        init
+        {
+            field = value;
+            _lineBreakOffsets = default;
+        }
+    } = Message;
+
+    // Declare the positional properties in their original order to preserve record printing.
+    /// <summary>The severity that determines whether this diagnostic blocks execution.</summary>
+    public DiagnosticSeverity Severity { get; init; } = Severity;
+
+    /// <summary>The diagnostic's location, or null when it has no position.</summary>
+    public SourceSpan? Span { get; init; } = Span;
+
     // Presentation provenance is equality-transparent, like the runtime metadata on AST
-    // records. A `with` copy that bounds Message keeps the offsets; rendering checks that
-    // each complete structural separator still lies inside that bounded prefix.
+    // records. Only KatLang's prefix truncation keeps offsets when replacing Message;
+    // a host's `with { Message = ... }` must not transplant them onto unrelated text.
     private readonly RuntimeStateSlot<IReadOnlyList<int>?> _lineBreakOffsets;
 
     internal Diagnostic(DiagnosticMessage message, DiagnosticSeverity severity, SourceSpan? span)
         : this(message.Text, severity, span)
         => _lineBreakOffsets = new(message.LineBreakOffsets);
+
+    private Diagnostic(Diagnostic original, int prefixLength)
+        : this(original)
+    {
+        Message = string.Concat(original.Message.AsSpan(0, prefixLength), ExprNameRenderer.TruncationMarker);
+        _lineBreakOffsets = original._lineBreakOffsets;
+    }
+
+    /// <summary>Retains only the unchanged, surrogate-safe prefix and its original layout.</summary>
+    internal Diagnostic WithBoundedMessage(int maxLength)
+        => Message.Length <= maxLength ? this
+            : new(this, ExprNameRenderer.SafePrefixLength(Message, maxLength));
 
     internal string RenderMessage(Func<string, string> renderFragment)
     {

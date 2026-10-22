@@ -120,9 +120,7 @@ internal sealed class DiagnosticBag : IReadOnlyList<Diagnostic>
         if (!CountReport(diagnostic.Code, diagnostic.Severity))
             return;
 
-        _stored.Add(diagnostic.Message.Length <= MaxRetainedMessageLength
-            ? diagnostic
-            : diagnostic with { Message = BoundMessage(diagnostic.Message) });
+        _stored.Add(diagnostic.WithBoundedMessage(MaxRetainedMessageLength));
     }
 
     /// <summary>Reports an error; the diagnostic is constructed only when it is stored.</summary>
@@ -148,9 +146,7 @@ internal sealed class DiagnosticBag : IReadOnlyList<Diagnostic>
         if (!CountReport(code, DiagnosticSeverity.Error))
             return;
         var diagnostic = new Diagnostic(formatMessage(state), DiagnosticSeverity.Error, span) { Code = code };
-        _stored.Add(diagnostic.Message.Length <= MaxRetainedMessageLength
-            ? diagnostic
-            : diagnostic with { Message = BoundMessage(diagnostic.Message) });
+        _stored.Add(diagnostic.WithBoundedMessage(MaxRetainedMessageLength));
     }
 
     // Counts one report and says whether it is stored. A report past the capacity truncates the

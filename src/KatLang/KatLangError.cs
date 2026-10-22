@@ -11,7 +11,10 @@ public sealed class KatLangError
     /// <summary>
     /// The human-readable, English error text. Presentation only: its wording may improve
     /// between KatLang versions, so classify errors through <see cref="Code"/> and locate
-    /// them through <see cref="Span"/>, never by parsing this text.
+    /// them through <see cref="Span"/>, never by parsing this text. It is diagnostic data, not
+    /// terminal-safe text: it can quote source text and string values verbatim, control
+    /// characters and line breaks included, so write <see cref="ToTerminalSafeString"/> to a
+    /// terminal or plain-text log instead.
     /// </summary>
     public string Message { get; }
 
@@ -110,9 +113,10 @@ public sealed class KatLangError
     }
 
     /// <summary>
-    /// Presentation seam for the CLI: render untrusted single-line fragments before the
-    /// owning formatter inserts its structural line separators. The public message and
-    /// original error are unchanged. Never infer trusted newlines from already joined text.
+    /// Presentation seam behind <see cref="ToTerminalSafeString"/>: render untrusted single-line
+    /// fragments before the owning formatter inserts its structural line separators. The public
+    /// message and original error are unchanged. Never infer trusted newlines from already
+    /// joined text.
     /// </summary>
     internal string RenderDiagnostic(Func<string, string> renderFragment)
     {
@@ -1137,6 +1141,30 @@ public sealed class KatLangError
     /// </summary>
     public override string ToString()
         => Span is { } span ? $"[{span.Start.Line}:{span.Start.Column}] {Message}" : Message;
+
+    /// <summary>
+    /// Renders this error for a terminal or a plain-text log: the same <c>[line:column]</c>
+    /// prefix, wording and line structure as <see cref="ToString"/>, but every source-controlled
+    /// fragment — quoted source text, names, string values, host and downloader messages, and
+    /// all of the text of a diagnostic constructed outside KatLang — is escaped BEFORE KatLang
+    /// joins the fragments with its own explanatory line breaks. In those fragments every
+    /// control character (C0 such as ESC, BEL, CR and LF; DEL; C1 such as the 8-bit CSI and OSC
+    /// introducers), every format character (bidirectional embeddings, overrides and isolates,
+    /// zero-width characters, the byte-order mark, supplementary ones as both code units), the
+    /// line and paragraph separators U+2028 and U+2029, and every unpaired surrogate is shown as
+    /// a visible <c>\uXXXX</c> escape (uppercase hexadecimal); all other text — letters of any
+    /// script, valid supplementary characters, punctuation and the backslash — is kept as is.
+    /// A line break in the result is therefore always KatLang's own, so a program cannot forge
+    /// a further diagnostic line or send a terminal control sequence.
+    /// <para>This is presentation only and is stable: <see cref="Message"/>, <see cref="ToString"/>,
+    /// <see cref="Code"/>, <see cref="Span"/> and <see cref="Source"/> are unchanged and keep the
+    /// original text, and nothing is cached. Text that needs no escaping renders exactly like
+    /// <see cref="ToString"/>; an escape expands one UTF-16 code unit to six, so the result is
+    /// at most six times as long. It is not an escaping for HTML, JSON or other markup: a
+    /// graphical or structured host applies its own output context's escaping to
+    /// <see cref="Message"/>. KatLang's CLI writes its diagnostics with this rendering.</para>
+    /// </summary>
+    public string ToTerminalSafeString() => RenderDiagnostic(Rendering.TerminalSafeText.EscapeLine);
 }
 
 /// <summary>

@@ -1406,6 +1406,7 @@ public sealed class KatLang.KatLangError
   method   public static KatLang.KatLangError FromDiagnostic(KatLang.Diagnostic diag)
   method   public static KatLang.KatLangError FromEvalError(KatLang.EvalError error)
   method   public override string ToString()
+  method   public string ToTerminalSafeString()
 
 public enum KatLang.KatLangErrorCode : int
   Unspecified = 0

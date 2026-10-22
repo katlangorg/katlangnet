@@ -28,14 +28,18 @@ switch (await KatLangEngine.RunAsync(source, new RunOptions { DownloadCode = (ur
         Console.WriteLine(n.ToDisplayString());
         break;
 
+    // Diagnostics can quote source text and string values verbatim: write them terminal-safe,
+    // to stderr, and fail the process. Program output above is intentional and stays as is.
     case RunResult.ParseFailure p:
         foreach (var error in p.Errors)
-            Console.WriteLine(error);
+            Console.Error.WriteLine(error.ToTerminalSafeString());
+        Environment.ExitCode = 1;
         break;
 
     case RunResult.EvalFailure e:
         foreach (var error in e.Errors)
-            Console.WriteLine(error);
+            Console.Error.WriteLine(error.ToTerminalSafeString());
+        Environment.ExitCode = 1;
         break;
 }
 

@@ -436,6 +436,54 @@ public sealed class TerminalSafeDiagnosticsTests
         Assert.Equal("[1:1] Division by zero" + Environment.NewLine, result.Error);
     }
 
+    // ── SEC-S2: the CLI and the public library render diagnostics alike ────
+
+    public static TheoryData<string> PublicRenderingPrograms => new()
+    {
+        $"if('a{Esc}[2J{Csi8}31m{(char)0x202E}', 1, 2)",
+        "if(\"safe" + (char)0x5C + "n[1:1] FORGED\", 1, 2)",
+        $"1 +{Esc}[31m{(char)0x202E}",
+        "Value = 1\nValeu + 1",
+        "F(x) = x\nG(y) = F\nG(1)",
+        "1/0",
+    };
+
+    /// <summary>
+    /// For the same errors, the CLI's stderr is exactly the public
+    /// <see cref="KatLangError.ToTerminalSafeString"/> rendering, one per diagnostic in run
+    /// order, apart from the writer's final newline — for <c>eval</c> and for <c>check</c>.
+    /// </summary>
+    [Theory]
+    [MemberData(nameof(PublicRenderingPrograms))]
+    public async Task CliStderr_EqualsThePublicTerminalSafeRendering(string source)
+    {
+        var errors = KatLangEngine.Run(source) switch
+        {
+            RunResult.ParseFailure p => p.Errors,
+            RunResult.EvalFailure e => e.Errors,
+            var other => throw new Xunit.Sdk.XunitException($"expected a failure, got {other}"),
+        };
+        using var file = new TempSourceFile(source);
+
+        var evaluated = await Cli.InvokeAsync("eval", source);
+        var checkedFile = await Cli.InvokeAsync("check", file.Path);
+
+        Assert.Equal(Failure, evaluated.ExitCode);
+        Assert.Equal("", evaluated.Output);
+        Assert.Equal(string.Join(Environment.NewLine, errors.Select(error => error.ToTerminalSafeString())) + Environment.NewLine,
+            evaluated.Error);
+        AssertSafeStderr(evaluated);
+        var parsed = Parser.Parse(source);
+        var frontEnd = parsed.Diagnostics;
+        if (parsed.HasErrors)
+        {
+            Assert.Equal(Failure, checkedFile.ExitCode);
+            Assert.Equal(
+                string.Join(Environment.NewLine, frontEnd.Select(d => KatLangError.FromDiagnostic(d).ToTerminalSafeString())) + Environment.NewLine,
+                checkedFile.Error);
+        }
+    }
+
     // ── T12: KatLang's multiline diagnostics ────────────────────────────────
 
     [Fact]

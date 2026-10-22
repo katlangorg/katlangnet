@@ -35,6 +35,17 @@ internal static class ConsumerCompiler
     /// <c>CS8509</c>/<c>CS8655</c> are errors, as in the repository's projects.
     /// </summary>
     internal static CompilationResult Compile(string source, string probeName)
+        => Build(source, probeName, executable: false).Result;
+
+    /// <summary>
+    /// Compiles <paramref name="source"/> as a CONSUMER EXECUTABLE (top-level statements allowed)
+    /// exactly like <see cref="Compile"/>, and returns its image for loading into the test
+    /// process; the image is null when compilation failed.
+    /// </summary>
+    internal static (CompilationResult Result, byte[]? Image) CompileExecutable(string source, string probeName)
+        => Build(source, probeName, executable: true);
+
+    private static (CompilationResult Result, byte[]? Image) Build(string source, string probeName, bool executable)
     {
         var workDirectory = Path.Combine(Path.GetTempPath(), $"katlang-closed-{probeName}-{Guid.NewGuid():N}");
         Directory.CreateDirectory(workDirectory);
@@ -42,11 +53,11 @@ internal static class ConsumerCompiler
         {
             var sourcePath = Path.Combine(workDirectory, probeName + ".cs");
             var responsePath = Path.Combine(workDirectory, probeName + ".rsp");
-            var outputPath = Path.Combine(workDirectory, probeName + ".dll");
+            var outputPath = Path.Combine(workDirectory, probeName + (executable ? ".exe" : ".dll"));
             File.WriteAllText(sourcePath, source);
 
             var response = new StringBuilder();
-            response.Append("-noconfig\n-nostdlib\n-nologo\n-target:library\n-nullable:enable\n-warnaserror+:CS8509,CS8655\n");
+            response.Append("-noconfig\n-nostdlib\n-nologo\n-target:" + (executable ? "exe" : "library") + "\n-nullable:enable\n-warnaserror+:CS8509,CS8655\n");
             foreach (var reference in ReferenceAssemblies())
                 response.Append("-reference:\"").Append(reference).Append("\"\n");
             response.Append("-out:\"").Append(outputPath).Append("\"\n");
@@ -83,7 +94,8 @@ internal static class ConsumerCompiler
                     match.Groups["message"].Value.TrimEnd(),
                     match.Groups["line"].Success ? int.Parse(match.Groups["line"].Value, System.Globalization.CultureInfo.InvariantCulture) : null))
                 .ToList();
-            return new CompilationResult(process.ExitCode, output, diagnostics);
+            var result = new CompilationResult(process.ExitCode, output, diagnostics);
+            return (result, executable && process.ExitCode == 0 ? File.ReadAllBytes(outputPath) : null);
         }
         finally
         {

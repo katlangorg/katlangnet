@@ -33,17 +33,29 @@ var source = """
     NetSalary(1600, 2)
     """;
 
-var text = KatLangEngine.Run(source) switch
+var result = KatLangEngine.Run(source);
+IReadOnlyList<KatLangError>? errors = result switch
 {
-    RunResult.Success s => s.ToDisplayString(),
-    RunResult.NoProgramOutput n => n.ToDisplayString(),
-    RunResult.ParseFailure p => string.Join(Environment.NewLine, p.Errors),
-    RunResult.EvalFailure e => string.Join(Environment.NewLine, e.Errors),
+    RunResult.Success or RunResult.NoProgramOutput => null,
+    RunResult.ParseFailure p => p.Errors,
+    RunResult.EvalFailure e => e.Errors,
 };
-Console.WriteLine(text);
+
+if (errors is null)
+{
+    Console.WriteLine(result.ToDisplayString());   // program output: intentional, written as is
+}
+else
+{
+    foreach (var error in errors)
+        Console.Error.WriteLine(error.ToTerminalSafeString());
+    Environment.ExitCode = 1;
+}
 ```
 
 `RunResult` is a C# `closed` record hierarchy: those four variants are the only ones and no other assembly can add one, so a switch *expression* like the one above needs no catch-all arm — the compiler proves it exhaustive and reports a missing variant (warning `CS8509`, worth promoting to an error in your project). A switch *statement* over the same value compiles without that check, so use the expression form when you want the guarantee. `Result`, `Algorithm`, `Pattern`, `Expr`, `ErrorContext`, and the parameter-pattern hierarchy are closed the same way. One `Result` variant, `Result.CallReference` (the run-scoped value a `meta` parameter captures, and its argument view `R.Arguments`), never reaches a host — every run result, host-operation argument and display boundary refuses it — so a host switch names it only to stay exhaustive. `EvalError` is closed too but keeps one internal variant, so classify errors through `KatLangError.Code` rather than by enumerating its variants.
+
+Write diagnostics with `KatLangError.ToTerminalSafeString()`. A diagnostic can quote the program's source text and string values verbatim, so `Message`, `KatLangError.ToString()` and the text of a failed `RunResult.ToDisplayString()` are diagnostic data, not terminal-safe output: printed raw, a hostile program could send terminal control sequences or forge extra diagnostic lines. `ToTerminalSafeString()` keeps the familiar `[line:column] message` text and KatLang's own line breaks but shows every control, invisible format or bidirectional character, Unicode line separator and unpaired surrogate inside the quoted text as a visible `\uXXXX` escape — it is what the `katlang` CLI prints for each diagnostic. It is for terminals and plain-text logs; a graphical, HTML or JSON presentation applies its own escaping to `Message`, and code classifies errors by `Code`, never by message text. Successful program output is the program's intended data and is never sanitized.
 
 Everything a run can be configured with is one `RunOptions` object — resource limits, cancellation, host operations, module loading, a random seed, and a default display precision. Its configuration is fixed once initialized and safe to reuse across sequential and concurrent runs; the engine keeps no state between calls. Delegate closures and cancellation sources remain host-owned; shared delegates must tolerate concurrent calls. A program's own failures never throw: they are `RunResult` variants carrying structured `KatLangError`s (classify by `Code`, locate by `Span`; `Message` is presentation text). Only host misuse (`ArgumentException` and its subclasses, or `InvalidOperationException` for a configuration that needs `RunAsync`), cancellation (`OperationCanceledException`), and exceptions thrown by your own host operations escape, and `RunAsync` delivers each of them through its task.
 
@@ -64,9 +76,28 @@ var options = new RunOptions
 
 var result = await KatLangEngine.RunAsync("Net(gross) = gross * (1 - TaxRate)\nNet(1600)", options);
 if (result is RunResult.Success { Value: var value } && value.AsNum() is { } net)
+{
     Console.WriteLine(net);                       // the structured value
+}
 else
-    Console.WriteLine(result.ToDisplayString());  // the diagnostics as text
+{
+    IReadOnlyList<KatLangError>? errors = result switch
+    {
+        RunResult.Success or RunResult.NoProgramOutput => null,
+        RunResult.ParseFailure p => p.Errors,
+        RunResult.EvalFailure e => e.Errors,
+    };
+    if (errors is null)
+    {
+        Console.WriteLine(result.ToDisplayString());
+    }
+    else
+    {
+        foreach (var error in errors)
+            Console.Error.WriteLine(error.ToTerminalSafeString());
+        Environment.ExitCode = 1;
+    }
+}
 ```
 
 `Parser.Parse`/`ParseAsync` run the same complete front end without evaluating — for validation and for editor tooling through `Semantics.SemanticModelBuilder.Build(parseResult)`, which models every parse result: a program whose module is missing (no downloader, or a load that failed) keeps its `load` directives in a provisionally elaborated tree, and the names that module could supply are classified as indeterminate rather than as errors. `Evaluator.Run`/`RunAsync`/`RunFlat`/`RunFlatAsync` are a lower layer: they evaluate a host-built `Expr` exactly as given, without parsing, module loading, front-end elaboration, or the program's `DisplayDecimals` setting, so they are not source runners. The package ships its XML documentation and is marked trimmable and NativeAOT-compatible, with the trim and AOT analyzers run over it on every build.
@@ -134,7 +165,7 @@ When a rendering exceeds the effective display limit, the string surfaces return
 ```c#
 var rendering = OutputFormatters.Exact.RenderDisplay(result);
 if (rendering.LimitExceeded)
-    Console.Error.WriteLine(rendering.LimitError.Message);   // a diagnostic, never program output
+    Console.Error.WriteLine(rendering.LimitError.ToTerminalSafeString());   // a diagnostic, never program output
 else
     Console.WriteLine(rendering.Text);
 ```
