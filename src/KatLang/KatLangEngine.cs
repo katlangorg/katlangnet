@@ -48,13 +48,34 @@ internal readonly record struct DisplayOptions(int? SourceDecimals, int? HostDec
 /// when it fits; otherwise a complete one-character marker is returned when possible,
 /// and a zero-length limit returns the empty string.</para>
 /// </summary>
-internal sealed class BoundedDisplayWriter(int limit) : IDisplaySink
+internal sealed class BoundedDisplayWriter(int limit) : ICapacityDisplaySink
 {
     private readonly StringBuilder _builder = new();
     private long _charged;
 
     /// <summary>True once an append was refused; no further output is produced.</summary>
     public bool LimitExceeded { get; private set; }
+
+    /// <summary>The display limit this writer enforces, in UTF-16 code units.</summary>
+    public int Limit => limit;
+
+    public long RemainingCapacity => LimitExceeded ? 0 : limit - _charged;
+
+    /// <summary>The number of code units written so far; a <see cref="RewindTo"/> target.</summary>
+    public long Checkpoint => _charged;
+
+    /// <summary>
+    /// Discards everything written after <paramref name="checkpoint"/> and clears
+    /// a refusal recorded since then, so a formatter can re-render one row with a
+    /// different layout. Nothing has been returned to a caller yet, so the
+    /// all-or-nothing contract is unaffected.
+    /// </summary>
+    public void RewindTo(long checkpoint)
+    {
+        _builder.Length = (int)checkpoint;
+        _charged = checkpoint;
+        LimitExceeded = false;
+    }
 
     public bool Append(string text)
     {

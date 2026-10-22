@@ -1,4 +1,3 @@
-using System.Buffers;
 using KatLang.Rendering;
 
 namespace KatLang.Formatting;
@@ -34,6 +33,20 @@ namespace KatLang.Formatting;
 /// instead of re-walking whole subtrees. Every emitted code unit — indentation,
 /// separators, quotes, and newlines included — goes through the bounded
 /// writer, which preserves the all-or-nothing display-limit contract.</para>
+///
+/// <para>String classification (quoting, token safety, line breaks) goes
+/// through the session's <see cref="DelimitedStringTextPolicy"/>, whose work is
+/// bounded per rendering call independently of how often a string is
+/// referenced (security finding F4). Every predicate checks the cheap
+/// raw-length bound BEFORE asking for a classification, and treats "not
+/// classified within budget" as "not established": the layout then keeps
+/// delimiters (a paren-hidden block, space join, or pair line is never formed
+/// on an unproven token) and an unmeasured value does not fit inline. Because
+/// a lookahead decision (the zero-spacing root gate) must agree with the
+/// decision taken later in the same row, a row during which the budget first
+/// ran out is rewound and rendered again against the then-stable classifier
+/// (cached facts only), so every row is laid out by ONE consistent
+/// classification.</para>
 /// </summary>
 internal static class StructuredLayoutRenderer
 {
@@ -50,8 +63,56 @@ internal static class StructuredLayoutRenderer
         DisplayOptions displayOptions,
         OutputFormattingOptions options,
         bool concise,
-        BoundedDisplayWriter writer)
-        => new LayoutSession(displayOptions, options, concise, writer).WriteAllRows(rows);
+        BoundedDisplayWriter writer,
+        LayoutWorkStatistics? statistics = null,
+        long? classificationBudget = null)
+    {
+        var session = new LayoutSession(
+            displayOptions,
+            options,
+            concise,
+            writer,
+            classificationBudget ?? DelimitedStringTextPolicy.DefaultClassificationBudget(writer.Limit));
+        try
+        {
+            return session.WriteAllRows(rows);
+        }
+        finally
+        {
+            statistics?.Record(session);
+        }
+    }
+
+    /// <summary>
+    /// Internal observation of one rendering call's string-classification
+    /// work, for deterministic tests of the F4 bound (production passes none).
+    /// </summary>
+    internal sealed class LayoutWorkStatistics
+    {
+        public long ClassificationBudget { get; private set; }
+        public long ChargedCodeUnits { get; private set; }
+        public long ScanInputCodeUnits { get; private set; }
+        public long LongClassifications { get; private set; }
+        public long CacheHits { get; private set; }
+        public long UnclassifiedResults { get; private set; }
+        public long LengthRefusals { get; private set; }
+        public bool ClassificationExhausted { get; private set; }
+        public int RowRestarts { get; private set; }
+
+        internal void Record(LayoutSession session)
+        {
+            var strings = session.Strings;
+            ClassificationBudget = strings.ClassificationBudget;
+            ChargedCodeUnits = strings.ChargedCodeUnits;
+            ScanInputCodeUnits = strings.ScanInputCodeUnits;
+            LongClassifications = strings.LongClassifications;
+            CacheHits = strings.CacheHits;
+            UnclassifiedResults = strings.UnclassifiedResults;
+            LengthRefusals = strings.LengthRefusals;
+            ClassificationExhausted = strings.ClassificationExhausted;
+            RowRestarts = session.RowRestarts;
+        }
+    }
 
     private enum FrameKind
     {
@@ -77,7 +138,7 @@ internal static class StructuredLayoutRenderer
         public bool PrevItemWasLine;
     }
 
-    private sealed class LayoutSession
+    internal sealed class LayoutSession
     {
         private readonly BoundedDisplayWriter _writer;
         private readonly DisplayOptions _displayOptions;
@@ -97,18 +158,23 @@ internal static class StructuredLayoutRenderer
             new(ReferenceEqualityComparer.Instance);
         private bool _startedOutput;
 
+        internal DelimitedStringTextPolicy Strings => _strings;
+
+        internal int RowRestarts { get; private set; }
+
         public LayoutSession(
             DisplayOptions displayOptions,
             OutputFormattingOptions options,
             bool concise,
-            BoundedDisplayWriter writer)
+            BoundedDisplayWriter writer,
+            long classificationBudget)
         {
             _writer = writer;
             _displayOptions = displayOptions;
             // The delimiter mode influences layout only through the string
             // policy's per-value token decisions — the layout engine itself
             // never branches on it.
-            _strings = new DelimitedStringTextPolicy(options.StringDelimiters);
+            _strings = new DelimitedStringTextPolicy(options.StringDelimiters, classificationBudget);
             _width = options.PreferredLineWidth;
             _indentSize = options.IndentSize;
             _newLine = options.NewLine;
@@ -135,6 +201,30 @@ internal static class StructuredLayoutRenderer
         }
 
         private bool WriteRow(Result row)
+        {
+            var checkpoint = _writer.Checkpoint;
+            var startedOutput = _startedOutput;
+            var exhaustedBefore = _strings.ClassificationExhausted;
+            var written = WriteRowLayout(row);
+            if (exhaustedBefore || !_strings.ClassificationExhausted)
+                return written;
+
+            // The classification budget ran out part-way through this row, so
+            // decisions taken before and after that point may disagree (a
+            // string classified earlier can be unclassified later). Render the
+            // row again from scratch: from now on only cached facts answer, so
+            // every decision of the second pass sees the same classification.
+            // The second pass charges nothing, and nothing was returned yet.
+            _writer.RewindTo(checkpoint);
+            _startedOutput = startedOutput;
+            _structuredChildLayoutCache.Clear();
+            _structuralPairRunCache.Clear();
+            _concisePairRunCache.Clear();
+            RowRestarts++;
+            return WriteRowLayout(row);
+        }
+
+        private bool WriteRowLayout(Result row)
         {
             _frames.Clear();
 
@@ -462,7 +552,7 @@ internal static class StructuredLayoutRenderer
         /// Whether all tokens can form a whole-line space join. Returns false
         /// when any item lacks a safe single-token representation under the
         /// active string policy (see
-        /// <see cref="DelimitedStringTextPolicy.IsTokenSafe"/> — the decision
+        /// <see cref="DelimitedStringTextPolicy.StringFacts.IsTokenSafe"/> — the decision
         /// is per concrete value, never a global mode switch) or the joined
         /// line would exceed the preferred width. Atom tokens are always safe
         /// (canonical invariant number text contains no whitespace or commas);
@@ -492,9 +582,10 @@ internal static class StructuredLayoutRenderer
                         // whether quotes are needed/possible, because that
                         // classification may scan the string.
                         if (total + text.Length > _width) return false;
-                        tokenLength = _strings.TokenLength(text);
+                        if (!_strings.TryClassify(text, out var facts)) return false;
+                        tokenLength = facts.TokenLength;
                         if (total + tokenLength > _width) return false;
-                        if (!_strings.IsTokenSafe(text)) return false;
+                        if (!facts.IsTokenSafe) return false;
                         break;
                     default:
                         return false;
@@ -522,7 +613,9 @@ internal static class StructuredLayoutRenderer
         /// <summary>
         /// Immediate-item safety of a paren-hidden block: every string item
         /// must be a safe standalone token under the active policy
-        /// (<see cref="DelimitedStringTextPolicy.IsTokenSafe"/>). An unsafe
+        /// (<see cref="DelimitedStringTextPolicy.StringFacts.IsTokenSafe"/>);
+        /// a string not classified within the work budget is not proven safe
+        /// and keeps the parentheses exactly like an unsafe one. An unsafe
         /// string — a blank line, a line whose content mimics several items or
         /// a separator, or raw text indistinguishable from other syntax —
         /// keeps the parentheses instead. Non-string items are safe here:
@@ -535,7 +628,7 @@ internal static class StructuredLayoutRenderer
             foreach (var item in items)
             {
                 if (item is Result.Str(var text)
-                    && !_strings.IsTokenSafe(text))
+                    && !(_strings.TryClassify(text, out var facts) && facts.IsTokenSafe))
                 {
                     return false;
                 }
@@ -595,9 +688,8 @@ internal static class StructuredLayoutRenderer
                     return flagLength <= maxLength ? flagLength : null;
                 case Result.Str(var text):
                     if (text.Length > maxLength) return null;
-                    if (!_strings.IsTokenSafe(text)) return null;
-                    var tokenLength = _strings.TokenLength(text);
-                    return tokenLength <= maxLength ? tokenLength : null;
+                    if (!_strings.TryClassify(text, out var facts) || !facts.IsTokenSafe) return null;
+                    return facts.TokenLength <= maxLength ? facts.TokenLength : null;
                 default:
                     return null;
             }
@@ -668,7 +760,9 @@ internal static class StructuredLayoutRenderer
         /// escapes), and the Unicode layout separators NEL, LINE
         /// SEPARATOR, and PARAGRAPH SEPARATOR break the rendered line even
         /// inside quotes — either way the pair line would split into several
-        /// physical lines, breaking the one-line-per-pair shape.
+        /// physical lines, breaking the one-line-per-pair shape. Raw lengths
+        /// are checked before any classification, and a string not classified
+        /// within the work budget ends the pair run (one item per line).
         /// </summary>
         private bool IsCommaPairRun(IReadOnlyList<Result> items, int level)
         {
@@ -678,19 +772,17 @@ internal static class StructuredLayoutRenderer
             {
                 var separator = i + 2 >= items.Count ? 0 : 1;
                 var labelText = ((Result.Str)items[i]).Value;
-                if (ContainsLineBreak(labelText)) return false;
                 var fixedLength = (long)columns + 2 + separator;
                 if (fixedLength + labelText.Length > _width) return false;
-                var labelLength = _strings.TokenLength(labelText);
+                if (!_strings.TryClassify(labelText, out var label) || label.ContainsLineBreak) return false;
+                var labelLength = label.TokenLength;
                 if (fixedLength + labelLength > _width) return false;
 
                 var valueLength = items[i + 1] switch
                 {
                     Result.Atom(var number) => ValueTextRenderer.FormatAtom(number, _displayOptions).Length,
                     Result.Bool(var flag) => ValueTextRenderer.FormatBool(flag).Length,
-                    Result.Str(var text) when !ContainsLineBreak(text)
-                        && fixedLength + labelLength + text.Length <= _width
-                        => _strings.TokenLength(text),
+                    Result.Str(var text) => SingleLineTokenLength(text, _width - fixedLength - labelLength),
                     _ => long.MaxValue / 2,
                 };
                 if (fixedLength + labelLength + valueLength > _width) return false;
@@ -699,15 +791,19 @@ internal static class StructuredLayoutRenderer
             return true;
         }
 
-        // The five characters that terminate a visual line: CR, LF, and the
-        // Unicode layout separators NEL (U+0085), LINE SEPARATOR (U+2028),
-        // and PARAGRAPH SEPARATOR (U+2029). Deliberately NOT general Unicode
-        // whitespace — ordinary spaces and tabs stay on one visual line.
-        private static readonly SearchValues<char> LineBreakChars =
-            SearchValues.Create("\r\n\u0085\u2028\u2029");
-
-        private static bool ContainsLineBreak(string value)
-            => value.AsSpan().ContainsAny(LineBreakChars);
+        /// <summary>
+        /// A pair-value string's rendered length when it stays on one visual
+        /// line, or an oversized sentinel when its raw length cannot fit
+        /// <paramref name="available"/> columns, it breaks the line, or it was
+        /// not classified within the work budget.
+        /// </summary>
+        private long SingleLineTokenLength(string text, long available)
+        {
+            if (text.Length > available) return long.MaxValue / 2;
+            return _strings.TryClassify(text, out var facts) && !facts.ContainsLineBreak
+                ? facts.TokenLength
+                : long.MaxValue / 2;
+        }
 
         /// <summary>Opens a multiline delimited structure: the opening token on its own line, items one level deeper.</summary>
         private bool OpenDelimited(Result value, int atLevel, bool closeComma)
@@ -743,14 +839,16 @@ internal static class StructuredLayoutRenderer
 
         /// <summary>
         /// Width-capped inline-fit test: measures through the SAME renderer
-        /// that would emit the text, stopping at the remaining line width.
+        /// that would emit the text, stopping at the remaining line width. A
+        /// string leaf longer than the remaining width is refused on length
+        /// alone, and one not classified within the work budget does not fit.
         /// </summary>
         private bool FitsInline(Result value, int level, int reserve)
         {
             var budget = (long)_width - ColumnsOf(level) - reserve;
             if (budget < 0) return false;
             _measure.Reset((int)Math.Min(budget, int.MaxValue));
-            return ValueTextRenderer.AppendValue(value, _displayOptions, _strings, _measure);
+            return ValueTextRenderer.AppendValue(value, _displayOptions, _strings.Measurement, _measure);
         }
 
         private bool AppendInline(Result value)

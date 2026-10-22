@@ -6,9 +6,11 @@ namespace KatLang.Formatting;
 /// Width-capped measuring sink. It counts UTF-16 code units without building
 /// text and refuses the first append that would cross the cap.
 /// </summary>
-internal sealed class CappedWidthSink : IDisplaySink
+internal sealed class CappedWidthSink : ICapacityDisplaySink
 {
     private long _remaining;
+
+    public long RemainingCapacity => Math.Max(_remaining, 0);
 
     public void Reset(int cap) => _remaining = cap;
 
