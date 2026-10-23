@@ -74,8 +74,17 @@ public sealed record SourceProcessingLimits
     /// <c>source-probe</c>): measured token and ordinary node counts scale linearly once the
     /// frontend O(P^2) sibling-map passes and the wide-deconstruction elaboration were made linear
     /// and conditional clause-family duplicate checks bounded by ordered canonical keys and binder
-    /// maps, independently of any hash (SEC-03; see PatternMatchEquivalenceIndex). A maximal 2 MiB source of dense
-    /// declarations costs roughly 600-900 MB of peak working set. The value matches
+    /// maps, independently of any hash (SEC-03; see PatternMatchEquivalenceIndex). This is a
+    /// CHARACTER ceiling, not a memory bound: front-end memory grows with the accepted source and
+    /// depends on its shape. Measured (SEC-S1, October 2026, the isolated <c>fe-mem</c> probe: one
+    /// public <see cref="Parser.Parse(string)"/> per child, Windows x64, .NET 11 RC2 workstation GC,
+    /// peak process commit, medians of three): a ceiling-size source of dense declarations peaks at
+    /// about 417-443 MiB (about 539-653 MiB before SEC-S1 trimmed pass-local retention), retaining about
+    /// 64-80 MiB of result and allocating about 1.8-2.1 GiB; the densest measured shape, a ceiling-size wide
+    /// assignment deconstruction, peaks at about 1.11 GiB (1.82 GiB before). The earlier
+    /// "600-900 MB" figure was introduced alongside a probe that also kept a separate raw parse
+    /// alive; its original measurement invocation and inputs are not recorded. No default is universally safe: hosts that run concurrent
+    /// parses or have a smaller memory envelope configure a lower value. The value matches
     /// the pre-existing per-module download ceiling, so the main program and imported modules
     /// share one consistent bound. Ordinary programs are orders of magnitude smaller (the whole
     /// language-spec and tutorial corpus is a few KB each); WASM or multi-tenant embedders that

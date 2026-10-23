@@ -342,7 +342,10 @@ by URL.
 # post/raw, diag/src) for long/flat, wide, deep, many-declaration, and diagnostic-heavy sources
 dotnet run --project fuzz\KatLang.ParserFuzz -c Release -- source-probe --out fuzz\artifacts\perf\source.json
 # one big source in an isolated child (peak working set for calibration): SHAPE N
-dotnet run --project fuzz\KatLang.ParserFuzz -c Release -- source-probe-child many_funcs 130000
+# (N must keep the source within the 2 MiB ceiling: many_funcs 96332 is 2,097,089 code units,
+# while 130000 is 2,897,785 and measures only the length rejection.) Attribution only: the child
+# also keeps a separate raw parse alive — use the fe-mem probe below for faithful peak memory.
+dotnet run --project fuzz\KatLang.ParserFuzz -c Release -- source-probe-child many_funcs 96332
 # module-graph scenarios via a fake downloader: chain, wide, diamond, repeat, cycle,
 # many-tiny, one-large, aggregate, failed; with default ceilings active
 dotnet run --project fuzz\KatLang.ParserFuzz -c Release -- module-probe
@@ -372,6 +375,84 @@ The resource-error boundaries themselves are reproduced deterministically by
 `SourceProcessingLimitsTests`, not by byte-fuzz seeds: they require inputs (multi-MiB
 source, a fake module graph) outside the byte-fuzz input space, so no new libFuzzer mode
 was added.
+
+## Front-end memory probe (`FrontEndMemoryProbe.cs`, SEC-S1)
+
+Faithful process-memory measurement of the front end, kept apart from attribution. The parent
+launches ONE isolated child per (shape, size, route), serially, under `DOTNET_GCHeapHardLimit`
+(default 2 GiB), a Windows job-object commit limit (default 3 GiB; elsewhere the parent polls
+private bytes and kills over the envelope) and a wall-clock timeout; a timeout, cap hit, or OOM is
+reported as an incomplete measurement and makes the parent exit nonzero, even without an envelope.
+Empty campaigns and supposedly valid shapes with diagnostics also fail. The child waits for the parent's handshake
+before generating anything, warms the SAME route on a 1 KiB instance of the same shape, generates
+the source before its baseline, then runs exactly one public operation.
+
+```powershell
+dotnet build fuzz\KatLang.ParserFuzz -c Release
+$probe = "fuzz\KatLang.ParserFuzz\bin\Release\net11.0\KatLang.ParserFuzz.exe"
+# A — faithful: one public call per child (routes: lex, parse, parse-async, parse-async-dl, run, run-async)
+& $probe fe-mem --sizes 16k,64k,256k --routes parse --repeat 3 --out fuzz\artifacts\perf\fe-mem.txt
+& $probe fe-mem --shapes dense_props,dense_funcs,wide_decon --sizes 2m --routes parse --repeat 3 --timeout-ms 600000
+# opt-in regression envelope: fails on any child above it and on any incomplete measurement
+# (caps/envelopes use MiB despite the historical -mb spelling; SEC-S1 measures ~443 MiB here
+# and passes, baseline ~653 MiB fails — recalibrate on another host/runtime)
+& $probe fe-mem --shapes dense_props --sizes 2m --routes parse --max-peak-commit-mb 600 --timeout-ms 600000
+# B — attribution (explicit retention, NOT production peaks): per-stage retained bytes, distinct
+# objects, token kinds, per-pass allocation, sampled allocation-by-type
+& $probe fe-mem --mode census --shapes dense_props,wide_decon --sizes 64k
+# live set during the operation (forced full GCs every 5 ms: perturbs time on purpose)
+& $probe fe-mem --sizes 256k --env FE_MEM_LIVE_SAMPLE_MS=5
+# semantic differential of two builds: run with each build, then compare the two files
+& $probe fe-mem-diff hashes.txt fuzz\artifacts\corpus-frontend fuzz\artifacts\corpus
+```
+
+Reported per child: UTF-16 length, UTF-8 bytes and SHA-256, diagnostics, operation-attributed allocation
+(`GC.GetTotalAllocatedBytes(precise)` delta — process-wide, so valid across async transitions;
+the only other thread is an allocation-free sampler), sampled managed-heap peak, peak process
+commit (the job object's `PeakProcessMemoryUsed`) and peak working set, managed heap retained
+with the result alive and after release (separate forced collections after the peak
+measurement), gen-2 count, and time. `parse-async-dl` loads the shape as a module through an
+in-memory downloader that yields first, so acquisition genuinely suspends; the downloader-less
+async routes complete synchronously in the recorded runs (`syncCompleted=True`). The differential
+runs in its own supervised child (512 MiB managed heap, 1 GiB process commit, 10 minute timeout),
+includes metadata in output blocks, and compares tagged calculation values rather than display text.
+The census follows references stored inline in struct fields and collection entries, counts physical
+objects once, and reports array capacity separately; its reflection boxes are not graph objects.
+Every measured route's result was reclaimable
+after release.
+
+Measured October 23 2026 (Windows 11 x64, .NET 11.0.0-rc.2.26504.105, workstation GC, Release,
+16 logical processors / 32 GiB host; medians of three; baseline `211452a1`, candidate SEC-S1).
+Counters ending in `Kb` are KiB (bytes / 1024); the table converts them to GiB and MiB.
+Peak commit includes startup, warmup, source generation and post-operation collections; retained
+memory is a separate forced-GC experiment. Each route receives three small-input warmups; further
+JIT/tiering in the measured call remains included. These are not a fully warmed steady-state or
+cold-route claim. Peak commit MiB,
+`Parser.Parse`:
+
+| shape (about 2 Mi UTF-16 units) | allocated GiB | retained MiB | peak commit MiB | time s |
+| --- | --- | --- | --- | --- |
+| dense_props (2,097,075) | 1.94 → 1.77 | 64 → 64 | 653 → 443 (−32%) | 5.2 → 4.4 |
+| dense_funcs (2,097,089) | 2.23 → 2.06 | 80 → 80 | 539 → 417 (−23%) | 6.0 → 5.7 |
+| wide_decon (2,097,114) | 6.83 → 6.12 | 236 → 236 | 1,866 → 1,133 (−39%) | 18.6 → 15.7 |
+| implicit_lift (2,097,089) | 2.52 → 1.98 | 88 → 88 | 958 → 597 (−38%) | 7.9 → 6.6 |
+| ancestor_blocks (2,097,078) | 3.67 → 3.27 | 149 → 149 | 971 → 698 (−28%) | 9.8 → 9.3 |
+
+The sources above are ASCII, so encoded UTF-8 bytes equal code units. At about 256 Ki units the
+live set sampled during the operation fell from 47.6 → 28.5 MiB (dense_props),
+177.4 → 74.1 MiB (wide_decon), 95.5 → 41.1 MiB (implicit_lift) and 77.0 → 47.4 MiB (ancestor_blocks); the
+low-token controls (whitespace, comments, long literals) and malformed `diag_tokens` are unchanged
+(they never reach elaboration). Small timing samples vary: `wide_params` at 16 Ki units took
+20.6 → 23.2 ms (+13%) despite unchanged allocation; a universal 5% timing nonregression was not
+established. The larger representative inputs improved, and the measured routes show the same
+memory reduction (`run`, `run-async`, `parse-async`, and the suspending module route). The measured
+geometric series (16 Ki → 2 Mi UTF-16 units) does not establish universal linear complexity.
+
+The historical "600-900 MB" figure in `SourceProcessingLimits` was introduced alongside
+`source-probe-child` in `4c5bb6b5`; the original measurement invocation is unavailable, so its
+precise provenance remains unverified. That child keeps a separate raw parse alive; on the identical 2,097,089-unit source it reports
+~604 MiB peak working set and 2.61 GiB process allocation where the faithful probe measures
+~561 MiB and 2.23 GiB (about 8% and 17% inflation respectively). Its exact original inputs were not recorded.
 
 ## Operational-metamorphic fuzzing
 

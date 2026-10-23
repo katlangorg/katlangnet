@@ -53,6 +53,8 @@
     <Compile Include="..\..\fuzz\KatLang.ParserFuzz\FuzzInvariants.cs" Link="Utf16\FuzzInvariants.cs" />
     <Compile Include="..\..\fuzz\KatLang.ParserFuzz\FrontEndInvariants.cs" Link="Utf16\FrontEndInvariants.cs" />
     <Compile Include="..\..\fuzz\KatLang.ParserFuzz\FrontEndFingerprint.cs" Link="Utf16\FrontEndFingerprint.cs" />
+    <!-- SEC-S1: the census and parity oracle are tested as the exact probe source. -->
+    <Compile Include="..\..\fuzz\KatLang.ParserFuzz\FrontEndMemoryProbe.cs" Link="Probes\FrontEndMemoryProbe.cs" />
   </ItemGroup>
 
   <!--

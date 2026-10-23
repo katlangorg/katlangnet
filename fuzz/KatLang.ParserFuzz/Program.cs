@@ -76,6 +76,14 @@ internal static class Program
             return SourceModuleProbe.RunModuleDepthSearch(args); // isolated deep-chain no-crash validation
         if (args.Length > 0 && args[0] == "module-depth-child")
             return SourceModuleProbe.RunModuleDepthChild(args);  // one isolated deep import chain
+        if (args.Length > 0 && args[0] == "fe-mem")
+            return FrontEndMemoryProbe.RunParent(args);        // SEC-S1 isolated memory children
+        if (args.Length > 0 && args[0] == "fe-mem-diff")
+            return FrontEndMemoryProbe.RunDiff(args);          // baseline-vs-candidate semantic hashes
+        if (args.Length > 0 && args[0] == "fe-mem-diff-child")
+            return FrontEndMemoryProbe.RunDiffChild(args);     // supervised corpus worker
+        if (args.Length > 0 && args[0] == "fe-mem-child")
+            return FrontEndMemoryProbe.RunChild(args);         // one faithful op / one census
 
         if (args.Length > 0)
             return Replay.Run(args);            // raw-parser replay (Phase 1)

@@ -656,7 +656,7 @@ internal static class ImplicitArgumentResolver
             FrontEndTraversalObservations? observations)
         {
             _entries = entries;
-            Version = new(entries, null, []);
+            Version = new(Parent: null, Changes: []);
             Opens = opens;
             _pending = pending;
             _observations = observations;
@@ -708,14 +708,17 @@ internal static class ImplicitArgumentResolver
         public SignatureMap Extend(IReadOnlyDictionary<string, VisibleProperty> locals)
         {
             var extended = _entries.ToBuilder();
+            var changes = new SignatureChange[locals.Count];
+            var index = 0;
             foreach (var (name, entry) in locals)
             {
+                changes[index++] = new(name, _entries.TryGetValue(name, out var previous) ? previous : null, entry);
                 extended[name] = entry;
                 _observations?.RecordContextEntryWritten();
             }
 
             var result = new SignatureMap(extended.ToImmutable(), Opens, _pending, _observations);
-            result.Version = new(result._entries, Version, locals.Keys.ToArray());
+            result.Version = new(Version, changes);
             return result;
         }
 
@@ -731,8 +734,9 @@ internal static class ImplicitArgumentResolver
         /// <summary>Records a processed property's entry in THIS map (its creator's property loop only).</summary>
         public void Set(string name, VisibleProperty entry)
         {
+            var previous = _entries.TryGetValue(name, out var existing) ? existing : null;
             _entries = _entries.SetItem(name, entry);
-            Version = new(_entries, Version, [name]);
+            Version = new(Version, [new(name, previous, entry)]);
             _observations?.RecordContextEntryWritten();
         }
     }
@@ -971,13 +975,21 @@ internal static class ImplicitArgumentResolver
     }
 
     /// <summary>
-    /// One immutable map version and the names changed since its parent. Retained only by the
-    /// resolution run; deferred regions retain the immutable dictionary alone.
+    /// One map version: the entries changed since its parent, each with the entry it replaced
+    /// (null when the name was absent) and the entry it recorded. Retained only by the resolution
+    /// run, and deliberately WITHOUT the version's immutable dictionary (SEC-S1): a version chain
+    /// that kept every superseded dictionary alive retained each write's path copy — O(P log P)
+    /// nodes for a level of P properties, a third of the front end's live peak on dense source —
+    /// although only the CURRENT entries of a map are ever probed. The change records are exactly
+    /// what <see cref="SignatureFootprints.Capture"/> replays, and they recover any ancestor's
+    /// entry for a name from the current one. Deferred regions retain the immutable dictionary alone.
     /// </summary>
     internal sealed record SignatureVersion(
-        ImmutableDictionary<string, VisibleProperty> Entries,
         SignatureVersion? Parent,
-        IReadOnlyList<string> ChangedNames);
+        SignatureChange[] Changes);
+
+    /// <summary>One entry a <see cref="SignatureVersion"/> wrote: the name, the entry it replaced (null when absent), and the new entry.</summary>
+    internal readonly record struct SignatureChange(string Name, VisibleProperty? Previous, VisibleProperty Current);
 
     /// <summary>
     /// Exact canonical projections of visible signatures onto a body's free names. Version
@@ -987,7 +999,7 @@ internal static class ImplicitArgumentResolver
     /// A first query or a large delta probes the free names directly, never scans a wide map for
     /// a narrow query. Walking back at most that many changes also seeds shared ancestor caches.
     /// </summary>
-    private sealed class SignatureFootprints
+    internal sealed class SignatureFootprints
     {
         private readonly NameSetInterner _tokens = new();
         private readonly Dictionary<string, Dictionary<VisibleProperty, CanonicalNameSet>> _bindings = new(StringComparer.Ordinal);
@@ -1004,45 +1016,66 @@ internal static class ImplicitArgumentResolver
             return token;
         }
 
+        /// <summary>
+        /// The projection of <paramref name="map"/>'s CURRENT entries (its <see cref="SignatureMap.Version"/>)
+        /// onto <paramref name="freeNames"/>. A direct probe at an ANCESTOR version — the walk's
+        /// first version, or one whose delta exceeds the remaining budget — reads that ancestor's
+        /// entry for each free name from the current entries, undone by the oldest change the walked
+        /// versions made to it: the same entries the ancestor's dictionary held, without retaining it.
+        /// </summary>
         public CanonicalNameSet Capture(CanonicalNameSet freeNames, NameSetInterner names,
-            SignatureVersion version, FrontEndTraversalObservations? observations)
+            SignatureMap map, FrontEndTraversalObservations? observations)
         {
             if (freeNames.Count == 0)
                 return NameSetInterner.Empty;
             if (!_projections.TryGetValue(freeNames.Id, out var cache))
                 _projections.Add(freeNames.Id, cache = new(ReferenceEqualityComparer.Instance));
             var pending = new Stack<SignatureVersion>();
-            var current = version;
+            var current = map.Version;
             var work = 0;
             CanonicalNameSet result;
             while (!cache.TryGetValue(current, out result))
             {
-                if (current.Parent is null || current.ChangedNames.Count > freeNames.Count - work)
+                if (current.Parent is null || current.Changes.Length > freeNames.Count - work)
                 {
+                    // Entries the walked versions replaced, as the ancestor held them; the stack
+                    // enumerates oldest first, so the first change seen for a name is decisive.
+                    Dictionary<string, VisibleProperty?>? undone = null;
+                    foreach (var walked in pending)
+                    {
+                        foreach (var change in walked.Changes)
+                            (undone ??= new(StringComparer.Ordinal)).TryAdd(change.Name, change.Previous);
+                    }
+
                     result = NameSetInterner.Empty;
                     foreach (var name in freeNames.Names)
                     {
                         observations?.RecordResolverSnapshotBindingProbe();
-                        if (current.Entries.TryGetValue(name, out var signature))
+                        VisibleProperty? signature = null;
+                        if (undone is not null && undone.TryGetValue(name, out var replaced))
+                            signature = replaced;
+                        else if (map.TryGetValue(name, out var entry))
+                            signature = entry;
+                        if (signature is not null)
                             result = _tokens.Union(result, Binding(name, signature));
                     }
                     cache.Add(current, result);
                     break;
                 }
-                work += current.ChangedNames.Count;
+                work += current.Changes.Length;
                 pending.Push(current);
                 current = current.Parent;
             }
             while (pending.TryPop(out current))
             {
-                foreach (var name in current.ChangedNames)
+                foreach (var change in current.Changes)
                 {
                     observations?.RecordResolverSnapshotBindingProbe();
-                    if (!names.Contains(freeNames, name))
+                    if (!names.Contains(freeNames, change.Name))
                         continue;
-                    if (current.Parent!.Entries.TryGetValue(name, out var previous))
-                        result = _tokens.Except(result, Binding(name, previous));
-                    result = _tokens.Union(result, Binding(name, current.Entries[name]));
+                    if (change.Previous is { } previous)
+                        result = _tokens.Except(result, Binding(change.Name, previous));
+                    result = _tokens.Union(result, Binding(change.Name, change.Current));
                 }
                 cache.Add(current, result);
             }
@@ -1866,7 +1899,7 @@ internal static class ImplicitArgumentResolver
         var freeNames = FreeReferenceNames(alg, run);
         var regionKey = new AlgorithmRegionKey(
             alg,
-            run.Footprints.Capture(freeNames, run.ReferenceNameSets, parentParamMap.Version, observations),
+            run.Footprints.Capture(freeNames, run.ReferenceNameSets, parentParamMap, observations),
             forwardable.Names,
             forwardable.CollectingNames,
             branchContext is null ? null

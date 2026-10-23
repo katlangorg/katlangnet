@@ -36,8 +36,12 @@ internal sealed class ParameterPropertyCollisionValidator(
     // of every name in scope at each node made a P-parameter body O(P²) — and an extension
     // derives its id from the enclosing context's by the names it adds (FE-1), never re-sorting
     // every name in scope. Equal name sets share one id whatever bindings built them, so the
-    // memo's equivalence is exactly name-set content, as before.
-    private readonly Dictionary<object, HashSet<int>> _visited = new(ReferenceEqualityComparer.Instance);
+    // memo's equivalence is exactly name-set content, as before. Almost every node is reached in
+    // ONE context, so its first context id is stored inline and a set is created only for a node
+    // a second distinct context reaches (SEC-S1: a set per visited node was the validator's whole
+    // live cost on dense source).
+    private readonly Dictionary<object, int> _firstContexts = new(ReferenceEqualityComparer.Instance);
+    private Dictionary<object, HashSet<int>>? _visited;
     private readonly Dictionary<ParameterBindings, CanonicalNameSet> _contextNames = new(ReferenceEqualityComparer.Instance);
     private NameSetInterner? _nameSets;
     private readonly HashSet<Property> _reported = new(ReferenceEqualityComparer.Instance);
@@ -178,9 +182,19 @@ internal sealed class ParameterPropertyCollisionValidator(
 
     private bool FirstVisit(object node)
     {
-        if (!_visited.TryGetValue(node, out var contexts))
-            _visited.Add(node, contexts = []);
-        return contexts.Add(ContextId(_parameters));
+        var context = ContextId(_parameters);
+        if (!_firstContexts.TryGetValue(node, out var first))
+        {
+            _firstContexts.Add(node, context);
+            return true;
+        }
+
+        if (first == context)
+            return false;
+        var visited = _visited ??= new(ReferenceEqualityComparer.Instance);
+        if (!visited.TryGetValue(node, out var contexts))
+            visited.Add(node, contexts = [first]);
+        return contexts.Add(context);
     }
 
     // Equal name sets share one id, so the memo's equivalence is exactly name-set equality.

@@ -14,7 +14,7 @@ internal static class FrontEndPipeline
             return rejected;
 
         return ProcessWithoutModuleElaboration(
-            Parser.ParseSyntax(source, budget.CreateDiagnosticBag()), hostOperations: null, CancellationToken.None);
+            ElaborationInput.Parse(source, budget.CreateDiagnosticBag()), hostOperations: null, CancellationToken.None);
     }
 
     /// <summary>
@@ -55,16 +55,10 @@ internal static class FrontEndPipeline
         // The operation's ONE bounded diagnostic list: the parse opens it and every later
         // stage reports into it (see DiagnosticBag). The parse observes the configured token
         // inside clause-family duplicate detection (SEC-03).
-        var syntaxResult = Parser.ParseSyntax(
-            source,
-            initialNestingDebt: 0,
-            budget.CreateDiagnosticBag(),
-            comparisonObservations,
-            cancellationToken,
-            CancellationToken.None);
+        var input = ElaborationInput.Parse(source, budget.CreateDiagnosticBag(), comparisonObservations, cancellationToken);
         cancellationToken.ThrowIfCancellationRequested();
 
-        return ProcessWithoutModuleElaboration(syntaxResult, options?.HostOperations, cancellationToken);
+        return ProcessWithoutModuleElaboration(input, options?.HostOperations, cancellationToken);
     }
 
     /// <summary>
@@ -103,18 +97,12 @@ internal static class FrontEndPipeline
         // The operation's ONE bounded diagnostic list: the parse, the module loader (every
         // module and nested module), and every elaboration pass report into it. The parse
         // observes the configured token inside clause-family duplicate detection (SEC-03).
-        var syntaxResult = Parser.ParseSyntax(
-            source,
-            initialNestingDebt: 0,
-            budget.CreateDiagnosticBag(),
-            comparisonObservations,
-            cancellationToken,
-            CancellationToken.None);
+        var input = ElaborationInput.Parse(source, budget.CreateDiagnosticBag(), comparisonObservations, cancellationToken);
         cancellationToken.ThrowIfCancellationRequested();
 
         if (options?.DownloadCode is not null)
             return await ProcessWithModuleElaborationAsync(
-                syntaxResult,
+                input,
                 options.DownloadCode,
                 allowedHosts,
                 budget,
@@ -122,7 +110,7 @@ internal static class FrontEndPipeline
                 comparisonObservations,
                 cancellationToken).ConfigureAwait(false);
 
-        return ProcessWithoutModuleElaboration(syntaxResult, options?.HostOperations, cancellationToken);
+        return ProcessWithoutModuleElaboration(input, options?.HostOperations, cancellationToken);
     }
 
     /// <summary>
@@ -221,23 +209,24 @@ internal static class FrontEndPipeline
     /// elaborated tree whatever the configuration.
     /// </summary>
     private static FrontEndResult ProcessWithoutModuleElaboration(
-        SyntaxParseResult syntaxResult,
+        ElaborationInput input,
         HostOperations? hostOperations,
         CancellationToken cancellationToken)
     {
-        var diagnostics = syntaxResult.Diagnostics;
-        var modulesUnavailable = LoadElaborationGuard.ReportUnavailable(syntaxResult.SyntaxRoot, diagnostics);
+        var modulesUnavailable = ReportUnavailableLoads(input);
 
         return FinalizeElaboration(
-            syntaxResult.SyntaxRoot,
-            diagnostics,
+            input,
             hostOperations: hostOperations,
             provisional: modulesUnavailable,
             cancellationToken: cancellationToken);
     }
 
+    private static bool ReportUnavailableLoads(ElaborationInput input)
+        => LoadElaborationGuard.ReportUnavailable(input.Current, input.Diagnostics);
+
     private static async ValueTask<FrontEndResult> ProcessWithModuleElaborationAsync(
-        SyntaxParseResult syntaxResult,
+        ElaborationInput input,
         Func<string, CancellationToken, ValueTask<string>> downloadCode,
         IEnumerable<string>? allowedHosts,
         SourceProcessingBudget budget,
@@ -245,10 +234,8 @@ internal static class FrontEndPipeline
         PatternComparisonObservations? comparisonObservations,
         CancellationToken cancellationToken)
     {
-        var diagnostics = syntaxResult.Diagnostics;
-
         var loader = new ModuleLoader(
-            diagnostics,
+            input.Diagnostics,
             downloadCode,
             allowedHosts,
             budget,
@@ -256,45 +243,60 @@ internal static class FrontEndPipeline
         {
             ComparisonObservations = comparisonObservations,
         };
-        var loadElaboratedRoot = await loader.ElaborateAsync(syntaxResult.SyntaxRoot).ConfigureAwait(false);
+        input.Put(await loader.ElaborateAsync(input.Take()).ConfigureAwait(false));
         cancellationToken.ThrowIfCancellationRequested();
 
-        // Module elaboration splices independently parsed module trees (each already
-        // structurally checked by ParseSyntax) into the host tree, so the COMPOSED root
-        // can be deeper than any single parse. Re-check it at the raw-syntax cap before
-        // the recursive load-invariant walk below; a rejected composition returns the
-        // same placeholder-root convention ParseSyntax uses, so no downstream consumer
-        // ever walks the unsafe tree. (FinalizeElaboration then applies the lower
-        // elaboration gate shared with the non-module path.)
-        if (AstStructuralPreflight.Check(
-                loadElaboratedRoot,
-                AstStructuralPreflight.RawSyntaxMaxAstDepth,
-                AstConsumerProfile.FullyRecursive) is { } structuralRejection)
-        {
-            diagnostics.Add(AstStructuralPreflight.ToParseDiagnostic(
-                structuralRejection, AstStructuralPreflight.RawSyntaxMaxAstDepth));
-            return new FrontEndResult(new Algorithm.User(null, [], [], [], []), diagnostics);
-        }
+        if (RejectOverDeepComposition(input) is { } rejected)
+            return rejected;
 
-        // An unresolved load directive left outside deferred regions means a module is MISSING:
-        // either the loader REFUSED it — reported why at its site and kept the written directive
-        // in place, never a stand-in value (ModuleLoader.RefuseLoad) — or its traversal never
-        // reached it, an internal failure of module elaboration and the only kind this reports.
-        // Either way the tree is published as a PROVISIONAL elaboration (see FinalizeElaboration),
-        // exactly like a program parsed without a downloader, so no consumer of a parse result
-        // ever receives raw syntax or a tree that pretends a module was something it was not.
-        var modulesMissing = LoadElaborationGuard.TryFindFirstUnresolvedLoad(loadElaboratedRoot, out _);
-        if (modulesMissing && LoadElaborationGuard.TryFindFirstUnresolvedLoad(loadElaboratedRoot, loader.RefusedLoads, out _))
-            diagnostics.Add(LoadElaborationGuard.CreatePostElaborationInvariantDiagnostic(loadElaboratedRoot, loader.RefusedLoads));
+        var modulesMissing = ReportMissingModules(input, loader);
 
         return FinalizeElaboration(
-            loadElaboratedRoot,
-            diagnostics,
+            input,
             hostOperations: hostOperations,
             hasDeferredModuleRegions: loader.DeferredRegionCount > 0,
             provisional: modulesMissing,
             modules: loader.ModuleUnits.BeginOperation(),
             cancellationToken: cancellationToken);
+    }
+
+    /// <summary>
+    /// Module elaboration splices independently parsed module trees (each already structurally
+    /// checked by ParseSyntax) into the host tree, so the COMPOSED root can be deeper than any
+    /// single parse. Re-check it at the raw-syntax cap before the recursive load-invariant walk;
+    /// a rejected composition returns the same placeholder-root convention ParseSyntax uses, so
+    /// no downstream consumer ever walks the unsafe tree. (FinalizeElaboration then applies the
+    /// lower elaboration gate shared with the non-module path.)
+    /// </summary>
+    private static FrontEndResult? RejectOverDeepComposition(ElaborationInput input)
+    {
+        if (AstStructuralPreflight.Check(
+                input.Current,
+                AstStructuralPreflight.RawSyntaxMaxAstDepth,
+                AstConsumerProfile.FullyRecursive) is not { } structuralRejection)
+            return null;
+
+        input.Diagnostics.Add(AstStructuralPreflight.ToParseDiagnostic(
+            structuralRejection, AstStructuralPreflight.RawSyntaxMaxAstDepth));
+        return new FrontEndResult(new Algorithm.User(null, [], [], [], []), input.Diagnostics);
+    }
+
+    /// <summary>
+    /// An unresolved load directive left outside deferred regions means a module is MISSING:
+    /// either the loader REFUSED it — reported why at its site and kept the written directive
+    /// in place, never a stand-in value (ModuleLoader.RefuseLoad) — or its traversal never
+    /// reached it, an internal failure of module elaboration and the only kind this reports.
+    /// Either way the tree is published as a PROVISIONAL elaboration (see FinalizeElaboration),
+    /// exactly like a program parsed without a downloader, so no consumer of a parse result
+    /// ever receives raw syntax or a tree that pretends a module was something it was not.
+    /// </summary>
+    private static bool ReportMissingModules(ElaborationInput input, ModuleLoader loader)
+    {
+        var root = input.Current;
+        var modulesMissing = LoadElaborationGuard.TryFindFirstUnresolvedLoad(root, out _);
+        if (modulesMissing && LoadElaborationGuard.TryFindFirstUnresolvedLoad(root, loader.RefusedLoads, out _))
+            input.Diagnostics.Add(LoadElaborationGuard.CreatePostElaborationInvariantDiagnostic(root, loader.RefusedLoads));
+        return modulesMissing;
     }
 
     /// <summary>
@@ -324,8 +326,7 @@ internal static class FrontEndPipeline
     /// </para>
     /// </summary>
     private static FrontEndResult FinalizeElaboration(
-        Algorithm loadElaboratedRoot,
-        DiagnosticBag diagnostics,
+        ElaborationInput input,
         HostOperations? hostOperations = null,
         bool hasDeferredModuleRegions = false,
         bool provisional = false,
@@ -346,15 +347,10 @@ internal static class FrontEndPipeline
         // depth growth elaboration itself adds (parameter lifting wraps calls) is
         // absorbed by the ceiling's measured ≥2x margin rather than re-gated
         // mid-pipeline.
-        if (AstStructuralPreflight.Check(
-                loadElaboratedRoot,
-                EvaluationLimits.MaxSupportedAstDepth,
-                AstConsumerProfile.FullyRecursive) is { } elaborationRejection)
-        {
-            diagnostics.Add(AstStructuralPreflight.ToParseDiagnostic(
-                elaborationRejection, EvaluationLimits.MaxSupportedAstDepth));
-            return new FrontEndResult(new Algorithm.User(null, [], [], [], []), diagnostics);
-        }
+        if (RejectOverDeepElaboration(input) is { } rejected)
+            return rejected;
+
+        var diagnostics = input.Diagnostics;
 
         // Every pass below reports into `passDiagnostics`: the operation's bag, or — for a
         // provisional elaboration — a bag of the same capacity that nothing ever commits (see
@@ -377,8 +373,7 @@ internal static class FrontEndPipeline
         // Every loaded module is ONE unit of the program (Q-31 H-P + Q-32 I-U): each pass elaborates
         // it once, rooted at the prelude, wherever it is spliced (see ModuleUnitRegistry).
         modules ??= new ModuleUnits();
-        var (parameterizedRoot, _) = ParameterDetector.DetectPrevalidated(
-            loadElaboratedRoot, hostOperations, diagnostics: passDiagnostics, modules: modules);
+        DetectParameters(input, hostOperations, passDiagnostics, modules);
 
         cancellationToken.ThrowIfCancellationRequested();
 
@@ -388,19 +383,17 @@ internal static class FrontEndPipeline
         // by any call of that algorithm, so it is a static well-formedness failure of the
         // closed interface — the same rule parameter detection applies to a directly written
         // undeclared identifier, one indirection further out.
-        var implicitResolvedRoot = ImplicitArgumentResolver.ResolvePrevalidated(
-            parameterizedRoot, observations: null, passDiagnostics, hostOperations, modules);
+        ResolveImplicitArguments(input, passDiagnostics, hostOperations, modules);
 
-        new ParameterPropertyCollisionValidator(passDiagnostics, programRoot: implicitResolvedRoot).VisitAlgorithm(implicitResolvedRoot);
-        // The open PROVIDER rule and the output rule need completed signatures (an inferred
-        // parameter list is final only now) and nothing from exposure, so they run here: an
-        // algorithm with inferred parameters and no output is this front end's error, never the
-        // evaluator's (X-07; a written list was reported at parse time).
-        OpenProviderValidator.Validate(implicitResolvedRoot, passDiagnostics, hostOperations);
-        InferredParameterOutputValidator.ValidateProgram(implicitResolvedRoot, passDiagnostics);
+        // The parameter/property collision rule, the open PROVIDER rule, and the output rule
+        // need completed signatures (an inferred parameter list is final only now) and nothing
+        // from exposure, so they run here: an algorithm with inferred parameters and no output is
+        // this front end's error, never the evaluator's (X-07; a written list was reported at
+        // parse time).
+        ValidateCompletedSignatures(input, passDiagnostics, hostOperations);
 
         cancellationToken.ThrowIfCancellationRequested();
-        var propertyExposedRoot = PropertyExposureResolver.Resolve(implicitResolvedRoot, observations: null, hostOperations, modules);
+        ResolveExposure(input, hostOperations, modules);
         cancellationToken.ThrowIfCancellationRequested();
 
         // The program's later operations (deferred materializations) receive these module units —
@@ -413,7 +406,114 @@ internal static class FrontEndPipeline
         // placeholders the tree carries are what route it there and what make the synchronous
         // entry points reject it (DeferredModuleRegion.RequiresAsyncEvaluation walks the tree
         // itself), so no root has to be marked — and no copy of one can lose a mark.
-        return new FrontEndResult(ElaboratedUserRoot(propertyExposedRoot), diagnostics, hasDeferredModuleRegions);
+        return new FrontEndResult(ElaboratedUserRoot(input.Take()), diagnostics, hasDeferredModuleRegions);
+    }
+
+    // ── One frame per pass (SEC-S1) ────────────────────────────────────────────
+    // Each helper takes its pass's input out of the hand-off and puts the output back, so the
+    // input is referenced only from the helper's own frame and becomes unreachable when the pass
+    // returns (apart from what the output shares with it). The pipeline methods above never hold
+    // a tree in a local, a parameter, or an argument temporary: unoptimized (tier-0) code reports
+    // those live for the whole method, which kept the raw syntax tree, the detected tree, and a
+    // finished validator's memo alive through every later pass.
+
+    private static FrontEndResult? RejectOverDeepElaboration(ElaborationInput input)
+    {
+        if (AstStructuralPreflight.Check(
+                input.Current,
+                EvaluationLimits.MaxSupportedAstDepth,
+                AstConsumerProfile.FullyRecursive) is not { } elaborationRejection)
+            return null;
+
+        input.Diagnostics.Add(AstStructuralPreflight.ToParseDiagnostic(
+            elaborationRejection, EvaluationLimits.MaxSupportedAstDepth));
+        return new FrontEndResult(new Algorithm.User(null, [], [], [], []), input.Diagnostics);
+    }
+
+    private static void DetectParameters(
+        ElaborationInput input, HostOperations? hostOperations, DiagnosticBag passDiagnostics, ModuleUnits modules)
+    {
+        var (parameterizedRoot, _) = ParameterDetector.DetectPrevalidated(
+            input.Take(), hostOperations, diagnostics: passDiagnostics, modules: modules);
+        input.Put(parameterizedRoot);
+    }
+
+    private static void ResolveImplicitArguments(
+        ElaborationInput input, DiagnosticBag passDiagnostics, HostOperations? hostOperations, ModuleUnits modules)
+        => input.Put(ImplicitArgumentResolver.ResolvePrevalidated(
+            input.Take(), observations: null, passDiagnostics, hostOperations, modules));
+
+    // One frame per validator as well, so one validator's memo is gone before the next runs.
+    private static void ValidateCompletedSignatures(
+        ElaborationInput input, DiagnosticBag passDiagnostics, HostOperations? hostOperations)
+    {
+        ValidateParameterPropertyCollisions(input, passDiagnostics);
+        ValidateOpenProviders(input, passDiagnostics, hostOperations);
+        ValidateInferredParameterOutputs(input, passDiagnostics);
+    }
+
+    private static void ValidateParameterPropertyCollisions(ElaborationInput input, DiagnosticBag passDiagnostics)
+    {
+        var root = input.Current;
+        new ParameterPropertyCollisionValidator(passDiagnostics, programRoot: root).VisitAlgorithm(root);
+    }
+
+    private static void ValidateOpenProviders(ElaborationInput input, DiagnosticBag passDiagnostics, HostOperations? hostOperations)
+        => OpenProviderValidator.Validate(input.Current, passDiagnostics, hostOperations);
+
+    private static void ValidateInferredParameterOutputs(ElaborationInput input, DiagnosticBag passDiagnostics)
+        => InferredParameterOutputValidator.ValidateProgram(input.Current, passDiagnostics);
+
+    private static void ResolveExposure(ElaborationInput input, HostOperations? hostOperations, ModuleUnits modules)
+        => input.Put(PropertyExposureResolver.Resolve(input.Take(), observations: null, hostOperations, modules));
+
+    /// <summary>
+    /// The tree and diagnostic list of ONE elaboration, handed from pass to pass (see the pass
+    /// helpers above): the current tree is held here and nowhere else in the pipeline's frames.
+    /// Built from the raw parse inside <see cref="Parse(string, DiagnosticBag)"/>, so not even the
+    /// parse result record outlives the call that produced it.
+    /// </summary>
+    private sealed class ElaborationInput
+    {
+        private Algorithm? _current;
+
+        private ElaborationInput(SyntaxParseResult syntax)
+        {
+            _current = syntax.SyntaxRoot;
+            Diagnostics = syntax.Diagnostics;
+        }
+
+        public DiagnosticBag Diagnostics { get; }
+
+        /// <summary>The current tree, left in place (a read-only check or validation).</summary>
+        public Algorithm Current
+            => _current ?? throw new InvalidOperationException("Internal error: the elaboration tree was taken and not replaced.");
+
+        /// <summary>The current tree, removed: the caller's pass owns it until it <see cref="Put"/>s its output.</summary>
+        public Algorithm Take()
+        {
+            var current = Current;
+            _current = null;
+            return current;
+        }
+
+        public void Put(Algorithm next) => _current = next;
+
+        public static ElaborationInput Parse(string source, DiagnosticBag diagnostics)
+            => new(Parser.ParseSyntax(source, diagnostics));
+
+        public static ElaborationInput Parse(
+            string source,
+            DiagnosticBag diagnostics,
+            PatternComparisonObservations? comparisonObservations,
+            CancellationToken cancellationToken)
+            => new(Parser.ParseSyntax(
+                source,
+                initialNestingDebt: 0,
+                diagnostics,
+                comparisonObservations,
+                cancellationToken,
+                CancellationToken.None));
     }
 
     /// <summary>

@@ -796,10 +796,15 @@ internal static class PropertyDependencyGraphBuilder
         /// </summary>
         internal const int CopiedCompletedEntries = 8;
 
-        private readonly HashSet<string> _requiredAncestorOwnedParameterNames;
-        private readonly HashSet<string> _visiblePropertyDependencyNames;
-        private readonly PendingReferenceSet _pendingReferences;
-        private readonly HashSet<OwnerQualifiedParameter> _ownerQualifiedParameters;
+        // The four sets are created on first WRITE (SEC-S1): most seeds — a literal's, a resolved
+        // name's, every completed seed's pristine clone — stay empty, and four eagerly allocated
+        // empty collections per seed were the exposure pass's largest live cost on dense source.
+        // Null means empty: every internal read treats it so, and each public accessor
+        // materializes the real, mutable set callers may change in place, once.
+        private HashSet<string>? _requiredAncestorOwnedParameterNames;
+        private HashSet<string>? _visiblePropertyDependencyNames;
+        private PendingReferenceSet? _pendingReferences;
+        private HashSet<OwnerQualifiedParameter>? _ownerQualifiedParameters;
 
         // Completed seeds absorbed by reference, in absorption order, deduplicated by reference;
         // null once folded (or when nothing was absorbed). An absorbed seed is never mutated.
@@ -812,38 +817,43 @@ internal static class PropertyDependencyGraphBuilder
             IEnumerable<PendingReference>? pendingReferences = null,
             IEnumerable<OwnerQualifiedParameter>? ownerQualifiedParameters = null)
         {
-            _requiredAncestorOwnedParameterNames = CreateNameSet(requiredAncestorOwnedParameterNames);
-            _visiblePropertyDependencyNames = CreateNameSet(visiblePropertyDependencyNames);
-            _pendingReferences = pendingReferences is null ? new() : new(pendingReferences);
-            _ownerQualifiedParameters = ownerQualifiedParameters is null ? [] : new(ownerQualifiedParameters);
+            _requiredAncestorOwnedParameterNames = IsKnownEmpty(requiredAncestorOwnedParameterNames) ? null : NonEmptyOrNull(CreateNameSet(requiredAncestorOwnedParameterNames));
+            _visiblePropertyDependencyNames = IsKnownEmpty(visiblePropertyDependencyNames) ? null : NonEmptyOrNull(CreateNameSet(visiblePropertyDependencyNames));
+            _pendingReferences = IsKnownEmpty(pendingReferences) ? null : new PendingReferenceSet(pendingReferences!) is { Count: > 0 } references ? references : null;
+            _ownerQualifiedParameters = IsKnownEmpty(ownerQualifiedParameters) ? null : NonEmptyOrNull(new HashSet<OwnerQualifiedParameter>(ownerQualifiedParameters!));
         }
+
+        private static bool IsKnownEmpty<T>(IEnumerable<T>? items)
+            => items is null || (items is IReadOnlyCollection<T> collection && collection.Count == 0);
+
+        private static HashSet<T>? NonEmptyOrNull<T>(HashSet<T> set) => set.Count == 0 ? null : set;
 
         public HashSet<string> RequiredAncestorOwnedParameterNames
         {
-            get { Fold(); return _requiredAncestorOwnedParameterNames; }
+            get { Fold(); return _requiredAncestorOwnedParameterNames ??= CreateNameSet(); }
         }
 
         public HashSet<OwnerQualifiedParameter> OwnerQualifiedParameters
         {
-            get { Fold(); return _ownerQualifiedParameters; }
+            get { Fold(); return _ownerQualifiedParameters ??= []; }
         }
 
         /// <summary>Bare names no level between the reference and the consumer resolved, with no open providers on the way.</summary>
         public HashSet<string> VisiblePropertyDependencyNames
         {
-            get { Fold(); return _visiblePropertyDependencyNames; }
+            get { Fold(); return _visiblePropertyDependencyNames ??= CreateNameSet(); }
         }
 
         /// <summary>Member paths and open-shadowed names (see <see cref="PendingReference"/>).</summary>
         public PendingReferenceSet PendingReferences
         {
-            get { Fold(); return _pendingReferences; }
+            get { Fold(); return _pendingReferences ??= new(); }
         }
 
         // Entries a copy of this seed would transfer, without folding it.
         private int EntryCount
-            => _requiredAncestorOwnedParameterNames.Count + _visiblePropertyDependencyNames.Count
-                + _pendingReferences.Count + _ownerQualifiedParameters.Count + (_absorbed?.Count ?? 0);
+            => (_requiredAncestorOwnedParameterNames?.Count ?? 0) + (_visiblePropertyDependencyNames?.Count ?? 0)
+                + (_pendingReferences?.Count ?? 0) + (_ownerQualifiedParameters?.Count ?? 0) + (_absorbed?.Count ?? 0);
 
         public SummarySeed Clone()
         {
@@ -855,11 +865,22 @@ internal static class PropertyDependencyGraphBuilder
 
         public void UnionWith(SummarySeed other)
         {
-            _requiredAncestorOwnedParameterNames.UnionWith(other._requiredAncestorOwnedParameterNames);
-            _visiblePropertyDependencyNames.UnionWith(other._visiblePropertyDependencyNames);
-            _pendingReferences.UnionWith(other._pendingReferences);
-            _ownerQualifiedParameters.UnionWith(other._ownerQualifiedParameters);
+            UnionOwnSets(other);
             AbsorbAll(other._absorbed);
+        }
+
+        // Adds another seed's OWN sets (not its absorbed parts) to this seed's, creating a set
+        // only when the other one contributes an entry.
+        private void UnionOwnSets(SummarySeed other)
+        {
+            if (other._requiredAncestorOwnedParameterNames is { Count: > 0 } required)
+                (_requiredAncestorOwnedParameterNames ??= CreateNameSet()).UnionWith(required);
+            if (other._visiblePropertyDependencyNames is { Count: > 0 } visible)
+                (_visiblePropertyDependencyNames ??= CreateNameSet()).UnionWith(visible);
+            if (other._pendingReferences is { Count: > 0 } pending)
+                (_pendingReferences ??= new()).UnionWith(pending);
+            if (other._ownerQualifiedParameters is { Count: > 0 } qualified)
+                (_ownerQualifiedParameters ??= []).UnionWith(qualified);
         }
 
         /// <summary><see cref="UnionWith"/> returning this seed, for expression-shaped folds.</summary>
@@ -932,10 +953,40 @@ internal static class PropertyDependencyGraphBuilder
                 AbsorbReference(part);
         }
 
+        // A short absorbed list deduplicates by scanning it; the reference set exists only once
+        // the list outgrows this (SEC-S1: K seeds each absorbing ONE shared bundle seed kept K
+        // one-element hash sets alive). Membership is the same reference-identity test either way.
+        private const int AbsorbedScanLimit = 8;
+
         private void AbsorbReference(SummarySeed part)
         {
-            if ((_absorbedSet ??= new(ReferenceEqualityComparer.Instance)).Add(part))
-                (_absorbed ??= []).Add(part);
+            if (_absorbedSet is { } set)
+            {
+                if (set.Add(part))
+                    _absorbed!.Add(part);
+                return;
+            }
+
+            var absorbed = _absorbed ??= [];
+            if (AbsorbedListContains(absorbed, part))
+                return;
+            absorbed.Add(part);
+            if (absorbed.Count > AbsorbedScanLimit)
+                _absorbedSet = new(absorbed, ReferenceEqualityComparer.Instance);
+        }
+
+        private bool HasAbsorbed(SummarySeed part)
+            => _absorbedSet?.Contains(part) ?? (_absorbed is { } absorbed && AbsorbedListContains(absorbed, part));
+
+        private static bool AbsorbedListContains(List<SummarySeed> absorbed, SummarySeed part)
+        {
+            foreach (var existing in absorbed)
+            {
+                if (ReferenceEquals(existing, part))
+                    return true;
+            }
+
+            return false;
         }
 
         /// <summary>
@@ -968,7 +1019,7 @@ internal static class PropertyDependencyGraphBuilder
             if (kept is null)
                 return;
             _absorbed = kept.Count == 0 ? null : kept;
-            _absorbedSet = kept.Count == 0 ? null : new HashSet<SummarySeed>(kept, ReferenceEqualityComparer.Instance);
+            _absorbedSet = kept.Count > AbsorbedScanLimit ? new HashSet<SummarySeed>(kept, ReferenceEqualityComparer.Instance) : null;
         }
 
         /// <summary>
@@ -997,14 +1048,14 @@ internal static class PropertyDependencyGraphBuilder
             {
                 if (!visited.Add(part))
                     continue;
-                if (part._visiblePropertyDependencyNames.Count > 0
-                    || part._pendingReferences.Count > 0
-                    || part._ownerQualifiedParameters.Count > 0)
+                if (part._visiblePropertyDependencyNames is { Count: > 0 }
+                    || part._pendingReferences is { Count: > 0 }
+                    || part._ownerQualifiedParameters is { Count: > 0 })
                 {
                     return null;
                 }
 
-                foreach (var name in part._requiredAncestorOwnedParameterNames)
+                foreach (var name in part._requiredAncestorOwnedParameterNames ?? [])
                 {
                     observations?.RecordSummaryResidualNameProbe();
                     if (!covered.Contains(name) && (seenOutside ??= new(StringComparer.Ordinal)).Add(name))
@@ -1051,10 +1102,7 @@ internal static class PropertyDependencyGraphBuilder
                 if (!folded.Add(part))
                     continue;
 
-                _requiredAncestorOwnedParameterNames.UnionWith(part._requiredAncestorOwnedParameterNames);
-                _visiblePropertyDependencyNames.UnionWith(part._visiblePropertyDependencyNames);
-                _pendingReferences.UnionWith(part._pendingReferences);
-                _ownerQualifiedParameters.UnionWith(part._ownerQualifiedParameters);
+                UnionOwnSets(part);
                 if (part._absorbed is { } nested)
                 {
                     for (var i = nested.Count - 1; i >= 0; i--)
@@ -1076,16 +1124,24 @@ internal static class PropertyDependencyGraphBuilder
             IReadOnlySet<string> ownerParameterNames,
             FrontEndTraversalObservations? observations)
         {
-            foreach (var name in SharedNames(RequiredAncestorOwnedParameterNames, ownerParameterNames, observations))
+            // Reads the folded sets directly, so a seed with nothing to qualify materializes none.
+            Fold();
+            if (_requiredAncestorOwnedParameterNames is { Count: > 0 } required)
             {
-                RequiredAncestorOwnedParameterNames.Remove(name);
-                OwnerQualifiedParameters.Add(new(name, owner));
+                foreach (var name in SharedNames(required, ownerParameterNames, observations))
+                {
+                    required.Remove(name);
+                    (_ownerQualifiedParameters ??= []).Add(new(name, owner));
+                }
             }
 
-            var pending = PendingReferences.ToArray();
-            PendingReferences.Clear();
+            if (_pendingReferences is not { Count: > 0 } pendingReferences)
+                return;
+
+            var pending = pendingReferences.ToArray();
+            pendingReferences.Clear();
             foreach (var reference in pending)
-                PendingReferences.Add(reference.WithCandidates(reference.Candidates.Select(candidate =>
+                pendingReferences.Add(reference.WithCandidates(reference.Candidates.Select(candidate =>
                 {
                     if (candidate is not ResolvedOpenCandidate resolved) return candidate;
                     var seed = resolved.Seed.Clone();
@@ -1107,15 +1163,21 @@ internal static class PropertyDependencyGraphBuilder
             bool ownerHasParameters,
             FrontEndTraversalObservations? observations)
         {
-            foreach (var name in SharedNames(RequiredAncestorOwnedParameterNames, names, observations))
-                RequiredAncestorOwnedParameterNames.Remove(name);
-            OwnerQualifiedParameters.RemoveWhere(r => ReferenceEquals(r.Owner, owner) && names.Contains(r.Name));
-            if (PendingReferences.Count == 0)
+            // Reads the folded sets directly, so a seed with nothing to strip materializes none.
+            Fold();
+            if (_requiredAncestorOwnedParameterNames is { Count: > 0 } required)
+            {
+                foreach (var name in SharedNames(required, names, observations))
+                    required.Remove(name);
+            }
+
+            _ownerQualifiedParameters?.RemoveWhere(r => ReferenceEquals(r.Owner, owner) && names.Contains(r.Name));
+            if (_pendingReferences is not { Count: > 0 } pendingReferences)
                 return;
 
-            var rewritten = new List<PendingReference>(PendingReferences.Count);
+            var rewritten = new List<PendingReference>(pendingReferences.Count);
             var changed = ownerHasParameters;
-            foreach (var pending in PendingReferences)
+            foreach (var pending in pendingReferences)
             {
                 if (pending.Candidates.Count == 0)
                 {
@@ -1146,18 +1208,21 @@ internal static class PropertyDependencyGraphBuilder
             if (!changed)
                 return;
 
-            PendingReferences.Clear();
-            PendingReferences.UnionWith(rewritten);
+            pendingReferences.Clear();
+            pendingReferences.UnionWith(rewritten);
         }
 
         private bool RequiresAny(IReadOnlySet<string> names, Algorithm owner, FrontEndTraversalObservations? observations)
         {
-            if (OwnerQualifiedParameters.Any(r => ReferenceEquals(r.Owner, owner) && names.Contains(r.Name)))
+            Fold();
+            if (_ownerQualifiedParameters is { } qualified && qualified.Any(r => ReferenceEquals(r.Owner, owner) && names.Contains(r.Name)))
                 return true;
-            if (SharedNames(RequiredAncestorOwnedParameterNames, names, observations).Count > 0)
+            if (_requiredAncestorOwnedParameterNames is { Count: > 0 } required && SharedNames(required, names, observations).Count > 0)
                 return true;
+            if (_pendingReferences is null)
+                return false;
 
-            foreach (var pending in PendingReferences)
+            foreach (var pending in _pendingReferences)
             {
                 foreach (var candidate in pending.Candidates)
                 {
@@ -1238,10 +1303,10 @@ internal static class PropertyDependencyGraphBuilder
             return true;
 
             static bool OwnSetsEmpty(SummarySeed seed)
-                => seed._requiredAncestorOwnedParameterNames.Count == 0
-                    && seed._visiblePropertyDependencyNames.Count == 0
-                    && seed._pendingReferences.Count == 0
-                    && seed._ownerQualifiedParameters.Count == 0;
+                => (seed._requiredAncestorOwnedParameterNames?.Count ?? 0) == 0
+                    && (seed._visiblePropertyDependencyNames?.Count ?? 0) == 0
+                    && (seed._pendingReferences?.Count ?? 0) == 0
+                    && (seed._ownerQualifiedParameters?.Count ?? 0) == 0;
         }
 
         /// <summary>
@@ -1250,21 +1315,44 @@ internal static class PropertyDependencyGraphBuilder
         /// </summary>
         internal bool StructurallyEquals(SummarySeed other)
         {
-            if ((_absorbedSet?.Count ?? 0) != (other._absorbedSet?.Count ?? 0))
+            // The absorbed lists are deduplicated by reference, so equal counts plus containment
+            // is set equality.
+            if ((_absorbed?.Count ?? 0) != (other._absorbed?.Count ?? 0))
                 return false;
-            if (_absorbedSet is { } parts && !parts.SetEquals(other._absorbedSet!))
-                return false;
-            return _requiredAncestorOwnedParameterNames.SetEquals(other._requiredAncestorOwnedParameterNames)
-                && _visiblePropertyDependencyNames.SetEquals(other._visiblePropertyDependencyNames)
-                && _pendingReferences.SetEquals(other._pendingReferences)
-                && _ownerQualifiedParameters.SetEquals(other._ownerQualifiedParameters);
+            if (_absorbed is { } parts)
+            {
+                foreach (var part in parts)
+                {
+                    if (!other.HasAbsorbed(part))
+                        return false;
+                }
+            }
+
+            return SameNames(_requiredAncestorOwnedParameterNames, other._requiredAncestorOwnedParameterNames)
+                && SameNames(_visiblePropertyDependencyNames, other._visiblePropertyDependencyNames)
+                && ((_pendingReferences?.Count ?? 0) == 0
+                    ? (other._pendingReferences?.Count ?? 0) == 0
+                    : other._pendingReferences is { } otherPending && _pendingReferences!.SetEquals(otherPending))
+                && SameNames(_ownerQualifiedParameters, other._ownerQualifiedParameters);
+
+            // Set equality with a missing set read as the empty set.
+            static bool SameNames<T>(HashSet<T>? left, HashSet<T>? right)
+                => (left?.Count ?? 0) == 0
+                    ? (right?.Count ?? 0) == 0
+                    : right is not null && left!.SetEquals(right);
         }
 
         public bool IsEmpty
-            => RequiredAncestorOwnedParameterNames.Count == 0
-                && VisiblePropertyDependencyNames.Count == 0
-                && PendingReferences.Count == 0
-                && OwnerQualifiedParameters.Count == 0;
+        {
+            get
+            {
+                Fold();
+                return (_requiredAncestorOwnedParameterNames?.Count ?? 0) == 0
+                    && (_visiblePropertyDependencyNames?.Count ?? 0) == 0
+                    && (_pendingReferences?.Count ?? 0) == 0
+                    && (_ownerQualifiedParameters?.Count ?? 0) == 0;
+            }
+        }
 
         /// <summary>Content identity (sorted), for candidate equality within a fixed point.</summary>
         internal string ContentKey
@@ -1858,7 +1946,9 @@ internal static class PropertyDependencyGraphBuilder
         // level's final local summaries, which are relative to this level's PARENT: they keep
         // this level's own parameters as requirements (an `X = p` inside `Lib(p)` requires
         // `p` — that is exactly what makes it local-only), so only the output seed strips them.
-        return new AlgorithmSummary(seed, currentPropertySummaries);
+        // A level that declares no property has no member to navigate into: it shares the one empty
+        // member map instead of retaining its own empty dictionary in the completed-summary memo.
+        return new AlgorithmSummary(seed, currentPropertySummaries.Count == 0 ? AlgorithmSummary.NoMembers : currentPropertySummaries);
     }
 
     /// <summary>

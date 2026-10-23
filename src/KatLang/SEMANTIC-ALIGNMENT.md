@@ -1,5 +1,21 @@
 # Semantic Alignment Manifest.
 
+SEC-S1 — front-end memory amplification (2026-10-23): C#-only representation and object-LIFETIME
+change; no language, Lean, diagnostic, or observable-outcome change, so no Lean edit (Lean models
+neither elaboration pass memory nor source limits). The front end now keeps fewer transient objects
+reachable for the SAME programs: a signature-map version records its changes instead of retaining its
+whole persistent dictionary (`ImplicitArgumentResolver.SignatureVersion`; footprint projections read
+an ancestor's entries back through the walked changes), summary seeds create their four sets on first
+write (`PropertyDependencyGraphBuilder.SummarySeed`), short absorbed-part lists deduplicate by scan, a
+property-less algorithm shares the empty member map, the collision validator stores a node's first
+context inline, and `FrontEndPipeline` hands the tree from pass to pass through one holder so no
+pipeline frame keeps a finished pass's input alive. Every projection, seed content, equality,
+diagnostic, and elaborated tree is unchanged: `FrontEndMemoryRepresentationTests` (physical pins plus
+parity), the `fe-mem-diff` baseline/candidate corpus differential (6,221 inputs, identical), and the
+existing FE-1..FE-4b suites. `FrontEndMemoryProbeTests` additionally pins struct-backed census
+references, nested/alias metadata, typed value comparisons, valid-source diagnostics, and empty
+campaign rejection. Measurements: `fuzz/README.md` § Front-end memory probe. Full V3.
+
 META-LIFE-2 — completed VALUE flight release (2026-10-22): C#-only CLR representation change; no
 language, Lean or observable-outcome change, so no Lean edit. `NeedCell.Complete` /
 `CompleteException` now publish the memo (or store the exception through EDI), release `_flight` and
