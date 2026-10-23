@@ -1169,8 +1169,11 @@ public class ScopeVisibilityRepresentationTests
     /// a name set per call), and enumerating a scope allocates only its traversal stack.
     /// </summary>
     [Fact]
-    public void Queries_AllocateIndependentlyOfTheScopeWidth()
+    public void Queries_AllocateIndependentlyOfTheScopeWidth_GcIsolatedChild()
     {
+        if (!GcIsolatedAllocation.EnterChild())
+            return;
+
         var model = Model(Canonical(1000, 1000));
         var scope = model.ScopeVisibilities.First(candidate => candidate.Symbols.Count > 1000);
         var position = scope.Span!.Value.Start;
@@ -1188,6 +1191,7 @@ public class ScopeVisibilityRepresentationTests
         var enumerationAllocation = GC.GetAllocatedBytesForCurrentThread() - before;
         Assert.Equal(scope.Symbols.Count, count);
         Assert.InRange(enumerationAllocation, 0, 1024);
+        GcIsolatedAllocation.Complete();
     }
 
     /// <summary>

@@ -85,15 +85,24 @@ public class OrdinaryCallLookupTests
     }
 
     [Fact]
-    public void Lookups_AllocateNothing_AtAnyTier()
+    public void Lookups_AllocateNothing_AtAnyTier_GcIsolatedChild()
     {
-        // Measured from the very first calls, so the guard does not depend on tier-1 code, dynamic PGO
-        // or escape analysis: an interface `foreach` boxes an enumerator per lookup without them.
+        // Measured from the second call on, so the guard does not depend on tier-1 code, dynamic PGO
+        // or escape analysis: an interface `foreach` boxes an enumerator per lookup without them. The
+        // one warm-up call keeps first-call initialization (1,032 bytes in a fresh host) out of the
+        // window without promoting anything past tier 0.
+        if (!GcIsolatedAllocation.EnterChild())
+            return;
+
         IReadOnlyList<(string Name, NeedCell Cell)> needs = Evaluator.Concat<(string Name, NeedCell Cell)>([("a", Cell(1)), ("b", Cell(2))], [("c", Cell(3))]);
         IReadOnlyList<(string Name, Result Value)> values = Evaluator.Concat<(string Name, Result Value)>([("a", new Result.Atom(1))], [("b", new Result.Atom(2))]);
         IReadOnlyList<(string Name, NeedCell Cell)> single = [("a", Cell(1))];
         IReadOnlyList<Property> properties = [new("P", new Algorithm.User(null, [], [], [], new OutputBundle([new Expr.Num(1)])), false), new("Q", new Algorithm.User(null, [], [], [], new OutputBundle([new Expr.Num(2)])), false)];
         var cache = new PropertyBindingIndexCache();
+        _ = LookupNeed(needs, "c");
+        _ = LookupNeed(single, "missing");
+        _ = LookupVal(values, "b");
+        _ = cache.Lookup(properties, "Q");
         var before = GC.GetAllocatedBytesForCurrentThread();
         var hits = 0;
         for (var i = 0; i < 1_000; i++)
@@ -106,6 +115,7 @@ public class OrdinaryCallLookupTests
         var allocated = GC.GetAllocatedBytesForCurrentThread() - before;
         Assert.Equal(4_000, hits);
         Assert.Equal(0, allocated);
+        GcIsolatedAllocation.Complete();
     }
 
     // ── Source programs: ordinary semantics and resource parity on the three engines ──────────────────────

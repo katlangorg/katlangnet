@@ -1,5 +1,7 @@
 using System.Reflection;
+using System.Runtime.CompilerServices;
 using System.Text;
+using KatLang.TestInfrastructure;
 
 namespace KatLang.CLI.Tests;
 
@@ -731,11 +733,52 @@ public sealed class TerminalSafeDiagnosticsTests
         Assert.True(smallBytes <= 64L * small.Length, $"allocated {smallBytes} bytes for {small.Length} code units");
         Assert.True(largeBytes <= 64L * large.Length, $"allocated {largeBytes} bytes for {large.Length} code units");
 
+        // Text that needs no escaping comes back as the same instance; that it costs nothing is
+        // measured exactly in Escaping_SafeText_AllocatesNothing_GcIsolatedChild.
         var safe = new string('a', 40_000);
-        // Use the same warmed, operation-only window; assertions are not escaping work.
-        var safeBytes = Measure(safe, out var safeEscaped);
-        Assert.Same(safe, safeEscaped);
-        Assert.Equal(0, safeBytes);
+        Assert.Same(safe, TerminalSafeText.EscapeLine(safe));
+    }
+
+    /// <summary>
+    /// Warmed escaping of text that needs no escaping allocates nothing, on every sample. Runs in
+    /// the GC-isolated child (<see cref="GcIsolatedAllocation"/>): under a background collection
+    /// the thread counter can read a phantom allocation-context remainder (CI run 39916338803
+    /// read 7,096 bytes here).
+    /// </summary>
+    [Fact]
+    public void Escaping_SafeText_AllocatesNothing_GcIsolatedChild()
+    {
+        if (!GcIsolatedAllocation.EnterChild())
+            return;
+
+        var safe = new string('a', 40_000);
+        var unsafeText = new string(Esc, 1_000);
+        var safeBytes = new long[16];
+        var sameInstance = new bool[safeBytes.Length];
+        for (var i = 0; i < 4; i++)
+            TerminalSafeText.EscapeLine(safe);
+        for (var i = 0; i < safeBytes.Length; i++)
+        {
+            safeBytes[i] = MeasureEscape(safe, out var escaped);
+            sameInstance[i] = ReferenceEquals(safe, escaped);
+        }
+
+        // The same window does observe the allocating path, so a zero above is not a dead counter.
+        var unsafeBytes = MeasureEscape(unsafeText, out var unsafeEscaped);
+
+        Assert.All(sameInstance, Assert.True);
+        Assert.True(safeBytes.All(bytes => bytes == 0), "safe escaping allocated: " + string.Join(", ", safeBytes));
+        Assert.Equal(6 * unsafeText.Length, unsafeEscaped.Length);
+        Assert.True(unsafeBytes >= 2L * unsafeEscaped.Length, $"unsafe escaping allocated only {unsafeBytes} bytes");
+        GcIsolatedAllocation.Complete();
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static long MeasureEscape(string text, out string escaped)
+    {
+        var before = GC.GetAllocatedBytesForCurrentThread();
+        escaped = TerminalSafeText.EscapeLine(text);
+        return GC.GetAllocatedBytesForCurrentThread() - before;
     }
 
     private sealed class ThrowingTextWriter(Exception exception) : TextWriter

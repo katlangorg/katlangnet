@@ -22,8 +22,11 @@ namespace KatLang.Tests;
 public class WideDeconstructionScalabilityTests(ITestOutputHelper output)
 {
     [Fact]
-    public void TargetMetadata_DoesNotAllocateBeyondTheHelperRecord()
+    public void TargetMetadata_DoesNotAllocateBeyondTheHelperRecord_GcIsolatedChild()
     {
+        if (!GcIsolatedAllocation.EnterChild())
+            return;
+
         var original = new Algorithm.User(null, [], [], [], []);
         var group = new object();
         static long Measure(Algorithm.User original, object group, bool attach)
@@ -45,6 +48,7 @@ public class WideDeconstructionScalabilityTests(ITestOutputHelper output)
         var helpers = Measure(original, group, true);
         output.WriteLine($"1024 plain/helper copies: {plain}/{helpers} allocated bytes");
         Assert.Equal(plain, helpers);
+        GcIsolatedAllocation.Complete();
     }
 
     private static Decimal128[] Atoms(string source) => KatLangEngine.EvaluateToAtoms(source).ToArray();

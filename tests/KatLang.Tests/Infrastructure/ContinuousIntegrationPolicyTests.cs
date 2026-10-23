@@ -435,6 +435,56 @@ public class ContinuousIntegrationPolicyTests
     }
 
     [Fact]
+    public void ValidateScript_KeepsOneTrxPerTestProjectInAnIgnoredDirectory()
+    {
+        var source = Text("scripts/validate-all.ps1");
+        // The full test invocation is unchanged apart from its result output.
+        Assert.Single(Regex.Matches(source, Regex.Escape("\"test\", \"./KatLang.slnx\", \"-p:UseSharedCompilation=false\", \"--no-build\",")).Cast<Match>());
+        Assert.Single(Regex.Matches(source, Regex.Escape("\"build\", \"./KatLang.slnx\", \"-p:UseSharedCompilation=false\")")).Cast<Match>());
+        // A prefix gets a reserved, collision-free file per project; a fixed LogFileName would be overwritten.
+        Assert.Contains("\"--logger\", \"trx;LogFilePrefix=katlang\", \"--results-directory\", $testResults", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("LogFileName", source, StringComparison.Ordinal);
+        // Diagnostics are written under artifacts/validation only once git confirms it is ignored.
+        Assert.Contains("& git check-ignore -q -- \"$relative/validation-record.txt\"", source, StringComparison.Ordinal);
+        Assert.Contains("$relative = \"artifacts/validation/$name\"", source, StringComparison.Ordinal);
+        Assert.Contains("[System.IO.Path]::GetTempPath()", source, StringComparison.Ordinal);
+        Assert.Matches(@"(?m)^artifacts/$", Text(".gitignore"));
+        // The strict allocation probes leave their logs in the same directory.
+        Assert.Contains(
+            $"$testDiagnosticsVariable = \"{GcIsolatedAllocation.DiagnosticsDirectoryEnvironment}\"",
+            source,
+            StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ValidateScript_RecordsCommandsWithoutChangingTheirResult()
+    {
+        var source = Text("scripts/validate-all.ps1");
+        Assert.Contains("Write-ValidationRecord \"command: $FilePath", source, StringComparison.Ordinal);
+        // A nonzero exit still throws after it is recorded, and the summary runs in a finally.
+        Assert.Matches(@"finally \{\n\s+\$outcome = [^\n]+\n\s+Write-ValidationRecord [^\n]+\n\s+\}\n\n\s+if \(\$exitCode -ne 0\) \{\n\s+throw ", source);
+        Assert.Matches(@"finally \{\n\s+\[Environment\]::SetEnvironmentVariable\(\$testDiagnosticsVariable, \$inheritedTestDiagnostics\)\n\s+Write-TestResultSummary ", source);
+        Assert.Contains("exit 1", source, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ValidateWorkflow_UploadsDiagnosticsEvenAfterAFailure_WithoutMaskingIt()
+    {
+        var source = Text(ValidatePath);
+        Assert.DoesNotContain("continue-on-error", WorkflowText(), StringComparison.Ordinal);
+        foreach (var (phase, artifact) in new[] { ("DotNet", "dotnet-validation-diagnostics"), ("Lean", "lean-validation-diagnostics") })
+        {
+            var run = source.IndexOf($"validate-all.ps1 -Phase {phase}", StringComparison.Ordinal);
+            var upload = source.IndexOf($"name: {artifact}", StringComparison.Ordinal);
+            Assert.True(run > 0 && upload > run, $"the {artifact} upload must follow the {phase} validation step");
+            var step = source[source.LastIndexOf("- name:", upload, StringComparison.Ordinal)..upload];
+            Assert.Contains("if: ${{ always() }}", step, StringComparison.Ordinal);
+            Assert.Contains("uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1", step, StringComparison.Ordinal);
+        }
+        Assert.Equal(2, Regex.Matches(source, @"(?m)^          path: artifacts/validation/$").Count);
+    }
+
+    [Fact]
     public void CliProject_RenamesEveryReleaseOsButDoesNotPackage()
     {
         var source = Text("src/KatLang.CLI/KatLang.CLI.csproj");

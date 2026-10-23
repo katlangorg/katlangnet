@@ -753,7 +753,7 @@ public sealed class NeedCellProjectionFlightTests
     }
 
     [Fact]
-    public async Task IdentityOnlyProjection_HasNoNodeOrFlight_AndRereadsAllocateNothing()
+    public async Task IdentityOnlyProjection_HasNoNodeOrFlight()
     {
         var budget = EvaluationBudget.Create(null);
         var count = new Algorithm.Builtin(BuiltinId.@count);
@@ -762,19 +762,14 @@ public sealed class NeedCellProjectionFlightTests
         var written = Evaluator.SupplyCell(new Expr.Num(5), Evaluator.EvalCtx.Empty with { Budget = budget }, []);
         Assert.Same(count, hostBuilt.ProjectCallable().Value);
         Assert.True(written.ProjectCallable().IsOk);
-        // Warm the paths, then measure memo re-reads on this thread.
-        for (var i = 0; i < 16; i++) { hostBuilt.ProjectCallable(); written.ProjectCallable(); _ = hostBuilt.ProjectCallableAsync(); }
-        var before = GC.GetAllocatedBytesForCurrentThread();
-        for (var i = 0; i < 1_000; i++)
+        for (var i = 0; i < 16; i++)
         {
             hostBuilt.ProjectCallable();
             written.ProjectCallable();
-            // A memo re-read completes synchronously, so the await never leaves the measured thread.
             var reread = hostBuilt.ProjectCallableAsync();
             Assert.True(reread.IsCompletedSuccessfully);
-            _ = await reread;
+            Assert.Same(count, (await reread).Value);
         }
-        Assert.Equal(0, GC.GetAllocatedBytesForCurrentThread() - before);
         Assert.Equal(1, projections);
         Assert.All(new[] { hostBuilt, written }, cell =>
         {
@@ -783,6 +778,35 @@ public sealed class NeedCellProjectionFlightTests
             Assert.Equal(0, cell.ProjectionComputations);
             Assert.Equal(0, cell.ProjectionActiveDependencyCount);
         });
+    }
+
+    [Fact]
+    public async Task IdentityOnlyProjection_RereadsAllocateNothing_GcIsolatedChild()
+    {
+        if (!GcIsolatedAllocation.EnterChild())
+            return;
+
+        var budget = EvaluationBudget.Create(null);
+        var count = new Algorithm.Builtin(BuiltinId.@count);
+        var hostBuilt = new NeedCell(() => Value(), () => new(Value()), () => Identity(count), budget: budget);
+        var written = Evaluator.SupplyCell(new Expr.Num(5), Evaluator.EvalCtx.Empty with { Budget = budget }, []);
+        // Warm the paths, then measure memo re-reads on this thread. A memo re-read completes
+        // synchronously, so the await never leaves the measured thread (checked after the window).
+        for (var i = 0; i < 16; i++) { hostBuilt.ProjectCallable(); written.ProjectCallable(); _ = hostBuilt.ProjectCallableAsync(); }
+        var synchronous = true;
+        var before = GC.GetAllocatedBytesForCurrentThread();
+        for (var i = 0; i < 1_000; i++)
+        {
+            hostBuilt.ProjectCallable();
+            written.ProjectCallable();
+            var reread = hostBuilt.ProjectCallableAsync();
+            synchronous &= reread.IsCompletedSuccessfully;
+            _ = await reread;
+        }
+        var allocated = GC.GetAllocatedBytesForCurrentThread() - before;
+        Assert.True(synchronous);
+        Assert.Equal(0, allocated);
+        GcIsolatedAllocation.Complete();
     }
 
     [Fact]

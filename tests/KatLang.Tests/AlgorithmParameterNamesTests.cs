@@ -147,12 +147,16 @@ public class AlgorithmParameterNamesTests
     }
 
     [Fact]
-    public void Projections_OfAZeroParameterAlgorithm_AllocateNothing()
+    public void Projections_OfAZeroParameterAlgorithm_AllocateNothing_GcIsolatedChild()
     {
         // The dominant read: every evaluator-synthesized wrapper and most written properties
         // have no parameters, and the evaluator projects their names on every property read,
-        // scope wiring, and body entry. Thread-local allocation is exact, so the assertion is
-        // exactly zero bytes, on every variant, after the first read has JIT-compiled the path.
+        // scope wiring, and body entry. Thread-local allocation is exact in a host without
+        // background GC (GcIsolatedAllocation), so the assertion is exactly zero bytes, on every
+        // variant, after the first read has JIT-compiled the path.
+        if (!GcIsolatedAllocation.EnterChild())
+            return;
+
         var user = new Algorithm.User(null, [], [], [], [new Expr.Num(1)]);
         var family = new Algorithm.Conditional(null, [], [new CondBranch(new Pattern.Bind("x"), user)]);
         var builtin = new Algorithm.Builtin(BuiltinId.count);
@@ -170,25 +174,35 @@ public class AlgorithmParameterNamesTests
 
         Assert.Equal(0L, GC.GetAllocatedBytesForCurrentThread() - before);
         Assert.Equal(0, total);
+        GcIsolatedAllocation.Complete();
     }
 
     [Fact]
     public void Projections_OfAParameterizedAlgorithm_AreOneFreshArrayPerRead_AndTheCountIsFree()
     {
         // A parameterized projection is a fresh array per read — not a shared cached instance
-        // that one consumer could corrupt for another — and costs exactly one small object;
-        // the count-only accessor allocates nothing for this flat list.
-        var algorithm = new Algorithm.User(
-            null,
-            [new CaptureParameterPattern("a"), new CaptureParameterPattern("b"), new CaptureParameterPattern("c")],
-            [],
-            [],
-            [new Expr.Num(1)]);
+        // that one consumer could corrupt for another. Its cost is measured exactly in
+        // Projections_OfAParameterizedAlgorithm_CostOneSmallArray_AndTheCountIsFree_GcIsolatedChild.
+        var algorithm = ThreeParameterAlgorithm();
         var first = algorithm.Params;
         var second = algorithm.Params;
         Assert.NotSame(first, second);
         Assert.Equal(first, second);
         Assert.NotSame(algorithm.Parameters, algorithm.Parameters);
+        Assert.Equal(3, algorithm.ParameterCount);
+    }
+
+    [Fact]
+    public void Projections_OfAParameterizedAlgorithm_CostOneSmallArray_AndTheCountIsFree_GcIsolatedChild()
+    {
+        // A parameterized projection costs exactly one small object; the count-only accessor
+        // allocates nothing for this flat list.
+        if (!GcIsolatedAllocation.EnterChild())
+            return;
+
+        var algorithm = ThreeParameterAlgorithm();
+        _ = algorithm.Params;
+        _ = algorithm.Parameters;
         var count = algorithm.ParameterCount;
 
         var before = GC.GetAllocatedBytesForCurrentThread();
@@ -208,7 +222,16 @@ public class AlgorithmParameterNamesTests
             count += algorithm.ParameterCount;
         Assert.Equal(0L, GC.GetAllocatedBytesForCurrentThread() - before);
         Assert.Equal(3 * 1001, count);
+        GcIsolatedAllocation.Complete();
     }
+
+    private static Algorithm.User ThreeParameterAlgorithm()
+        => new(
+            null,
+            [new CaptureParameterPattern("a"), new CaptureParameterPattern("b"), new CaptureParameterPattern("c")],
+            [],
+            [],
+            [new Expr.Num(1)]);
 
     [Theory]
     [InlineData("Inc(v) = v + 1\nInc(0)")]

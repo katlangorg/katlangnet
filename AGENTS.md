@@ -162,6 +162,7 @@ FE-3 follow-up: snapshot nested pattern membership before caching template facts
 - Test design, adversarial coverage, failure analysis, and validation execution all belong to the primary agent; a subagent is for a bulky self-contained investigation only, never for running tests (see `Validation`).
 - If a change crosses parser, evaluator, semantics, or docs boundaries, cover the affected layers in the same task when feasible.
 - **A source-based evaluator test must PARSE CLEANLY, and must assert the error TYPE, not merely that something failed.** `Parser.Parse(source).Root` silently discards diagnostics, so a test whose source the parser rejects still evaluates the recovery tree and can pass for an unrelated reason — that is how a `NotPublicProperty` regression passed without ever reaching the branch, and how 41 `EvaluatorTests` came to run on illegal source. Use `SourceProvenance.ParseValid(...)` (or `EvaluatorTestSupport.ParseValidRoot`) for ordinary source semantics; `SourceProvenance.ExpectFrontEndError(...)` when the parser/elaborator is the subject; `SourceProvenance.ParseAllowingDiagnostics(...)` only where malformed source is the point (recovery, fuzz, editor tooling). Never assert an evaluator outcome on a source you have not shown to be legal.
+- **A strict allocation assertion (exactly zero bytes, an exact count, or two equal counts) is a `*_GcIsolatedChild` test** (`tests/KatLang.Tests/Infrastructure/GcIsolatedAllocation.cs`): during a background GC, `GC.GetAllocatedBytesForCurrentThread` can report up to one allocation quantum (~8 KB) for an allocation-free window (dotnet/runtime#134724). Such tests therefore run in one child test host per assembly with `DOTNET_gcConcurrent=0`, and the pinned `GcIsolatedAllocationTests` (core) and `CliGcIsolatedAllocationTests` inventories require each to complete there. Coarse bounds and ratios stay in-process; warm up before the window and keep assertions outside it.
 - **Before writing a source test for an evaluator branch, check the branch is surface-reachable at all.** Front-end elaboration can make it dead: clause-family elaboration turns every single-clause binder form into an `Algorithm.User`, so the flat-binder arm of `ConditionalValueAccessError` cannot be reached from any written program, and implicit-parameter promotion hides the dotted-`open` visibility checks. A source test for such a branch passes while the branch stays dead — pin these from a prebuilt AST instead (`EvaluatorDefensiveBranchTests`).
 
 ## Documentation Expectations
@@ -294,6 +295,11 @@ A V3 run is not release publishing, a benchmark campaign, or unbounded fuzzing; 
   such event regardless of which files changed — the full .NET + Lean backstop
   behind the risk-based local levels in `Validation` — and it never substitutes
   for a locally required V3.
+- `validate-all.ps1` writes a command/exit-code/environment record, one TRX per
+  test project, a failure summary and the GC-isolated allocation logs to a fresh
+  git-ignored `artifacts/validation/validate-all-*` directory (a temporary
+  directory if that path is not ignored). `validate.yml` uploads it with
+  `if: always()`; the job result remains the validation result.
 - `.github/workflows/release.yml` is manual-only. Dispatch it from `main` with
   the version already present in `KatLangVersion.props`. A push, merge, or tag
   never publishes a release automatically.

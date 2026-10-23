@@ -86,7 +86,7 @@ public class MetaCallBindingContextTests
     }
 
     [Fact]
-    public void AnEmptyMintedNeedTier_IsTheBindingIdentity_WithoutAnExtraAllocation()
+    public void AnEmptyMintedNeedTier_IsTheBindingIdentity()
     {
         ValEnv values = [("x", new Result.Atom(1))];
         NeedEnv none = [];
@@ -102,7 +102,15 @@ public class MetaCallBindingContextTests
         Assert.Empty(minted);
         Assert.NotSame(minted, Evaluator.Concat(none, none));
         Assert.Same(minted, Evaluator.BindingContextIdentity(root.WithNeedEnv(minted), values));
+    }
 
+    [Fact]
+    public void AnEmptyMintedNeedTier_CostsNoExtraAllocation_GcIsolatedChild()
+    {
+        if (!GcIsolatedAllocation.EnterChild())
+            return;
+
+        NeedEnv none = [];
         // The minted tier costs exactly the list the boundary allocated before (no extra object).
         static long Allocated(Action mint)
         {
@@ -115,6 +123,7 @@ public class MetaCallBindingContextTests
         var boundBytes = Allocated(() => Evaluator.Concat(none, none));
         var plainBytes = Allocated(() => Evaluator.Concat<(string Name, NeedCell Cell)>(none, none));
         Assert.Equal(plainBytes, boundBytes);
+        GcIsolatedAllocation.Complete();
     }
 
     // ── 2. Positive cases beyond the witnesses ───────────────────────────────────────────────

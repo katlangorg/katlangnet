@@ -305,8 +305,11 @@ public partial class SharedValueGraphComplexityTests
     }
 
     [Fact]
-    public void ScalarFastPath_AllocatesNothing()
+    public void ScalarFastPath_AllocatesNothing_GcIsolatedChild()
     {
+        if (!GcIsolatedAllocation.EnterChild())
+            return;
+
         var budget = EvaluationBudget.Create(limits: null);
         (Result Left, Result Right)[] pairs =
         [
@@ -328,5 +331,6 @@ public partial class SharedValueGraphComplexityTests
         }
 
         Assert.Equal(0, GC.GetAllocatedBytesForCurrentThread() - before);
+        GcIsolatedAllocation.Complete();
     }
 }

@@ -33,6 +33,11 @@
     <Using Include="Xunit" />
   </ItemGroup>
 
+  <!-- Strict allocation measurements share KatLang.Tests' GC-isolated child-host helper as source. -->
+  <ItemGroup>
+    <Compile Include="..\KatLang.Tests\Infrastructure\GcIsolatedAllocation.cs" Link="Infrastructure\GcIsolatedAllocation.cs" />
+  </ItemGroup>
+
   <!--
     Only the CLI is referenced. KatLang arrives transitively, which keeps the
     tests honest about the integration boundary: they exercise the CLI against

@@ -3,8 +3,11 @@ namespace KatLang.Tests;
 public class AlgorithmPayloadReviewTests
 {
     [Fact]
-    public void WithParameters_NonUserIdentity_DoesNotAllocateDiscardedPatterns()
+    public void WithParameters_NonUserIdentity_DoesNotAllocateDiscardedPatterns_GcIsolatedChild()
     {
+        if (!GcIsolatedAllocation.EnterChild())
+            return;
+
         Algorithm[] algorithms =
         [
             new Algorithm.Builtin(BuiltinId.count),
@@ -19,6 +22,7 @@ public class AlgorithmPayloadReviewTests
             foreach (var algorithm in algorithms)
                 _ = algorithm.WithParameters(parameters);
         Assert.Equal(0L, GC.GetAllocatedBytesForCurrentThread() - before);
+        GcIsolatedAllocation.Complete();
     }
 
     [Fact]
