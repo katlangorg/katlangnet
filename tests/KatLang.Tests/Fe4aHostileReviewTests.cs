@@ -31,7 +31,7 @@ public class Fe4aHostileReviewTests
         ResolvedOpenCandidate Settled(int level, Algorithm? by = null)
         {
             var identity = OpenProviderIdentity.DeclaredAtRoot(by ?? provider);
-            return new ResolvedOpenCandidate(captured, level, identity, memo.ProviderIdentityKey(identity));
+            return new ResolvedOpenCandidate(captured, level, identity, memo);
         }
 
         PendingReference Lookup(string head, OpenCandidate[] candidates, bool bound = false)
@@ -228,6 +228,36 @@ public class Fe4aHostileReviewTests
                         Assert.Equal(expected[i].Order(StringComparer.Ordinal).Select(name => new CapturedParameterRequirement(name, 0)), property.CaptureRequirements!);
                     }
                 }
+            }
+        }
+    }
+
+    /// <summary>
+    /// EXPOSURE-OPEN-1 strengthening of the cycle oracle above: libraries read through EVERY open form —
+    /// dotted, opened, an ambiguous open of two libraries (selects nothing), a duplicate open of one
+    /// (one provider), an inline provider beside a dotted read, a parameterized local reading through an
+    /// open (bound owner), a local shadowing the opened name, and an indirect local read — in a random
+    /// declaration order, with and without a root-level shadow. Every <c>P(i)</c> and every library member
+    /// matches the independent least fixed point (<see cref="OpenLibraryOracle"/>). Before the repair,
+    /// samples combining late-growing candidate seeds with a cycle never finished.
+    /// </summary>
+    [Fact]
+    public void GeneratedLibrariesWithEveryOpenForm_MatchIndependentOracleInAnyDeclarationOrder()
+    {
+        var random = new Random(23102026);
+        for (var sample = 0; sample < 120; sample++)
+        {
+            var size = random.Next(2, 8);
+            var libraries = OpenLibraryOracle.Random(random, size, maxReads: 4);
+            var order = Enumerable.Range(0, 2 * size).OrderBy(_ => random.Next()).ToArray();
+            foreach (var shadow in new[] { false, true })
+            {
+                var source = OpenLibraryOracle.Render(libraries, order, shadow, call: "O(1, 2, 3)");
+                var parsed = Parser.Parse(source);
+                Assert.All(parsed.Diagnostics, diagnostic => Assert.Equal(DiagnosticCode.AmbiguousOpen, diagnostic.Code));
+                Assert.Equal(OpenLibraryOracle.HasAmbiguity(libraries, shadow), parsed.HasErrors);
+                var owner = Assert.IsType<Algorithm.User>(parsed.Root.Properties.Single(p => p.Name == "O").Value);
+                OpenLibraryOracle.AssertMatches(libraries, shadow, owner, source);
             }
         }
     }

@@ -501,11 +501,12 @@ internal static class PropertyExposureResolver
     ///
     /// <para>Settlements of visible names and pending references are memoized per top-level key and
     /// validated against the level-local summaries they read, so K properties reading one opened or
-    /// navigated member settle it once. Only TOP-LEVEL settlements are cached: they start with no
-    /// reference in progress, so a cycle cut inside one (a re-entered reference contributes nothing
-    /// that the enclosing settlement does not already add) is complete for that settlement, while a
-    /// nested, possibly cycle-cut intermediate is never reused. A cached settlement is served only
-    /// while every level-local summary it read is still the same canonical set.</para>
+    /// navigated member settle it once. Across equation evaluations only TOP-LEVEL settlements are
+    /// cached, validated against every level-local summary they read. Inside ONE synchronous
+    /// settlement, complete nested results also share their exact (reference, level, site, bound)
+    /// key; the cache dies before any summary can grow. A nested result that encountered any cycle
+    /// cut is never cached. Every read from a reused computation remains in the enclosing top-level
+    /// recording, so dependency validation and reader notification remain complete.</para>
     /// </summary>
     private sealed class LevelSolver(
         PropertyDependencySummaryGraph graph,
@@ -677,7 +678,11 @@ internal static class PropertyExposureResolver
         RequirementSetInterner sets,
         SummaryScope levelInProgress)
     {
-        private readonly HashSet<(string Key, SummaryScope Level, SummaryScope Site, string Bound)> _inProgress = [];
+        private readonly record struct SettlementKey(string Key, SummaryScope Level, SummaryScope Site, string Bound);
+
+        private readonly HashSet<SettlementKey> _inProgress = [];
+        private readonly Dictionary<SettlementKey, RequirementSet> _completed = [];
+        private long _cycleCuts;
         private HashSet<string>? _levelReads;
 
         /// <summary>Starts recording the level-in-progress summaries a top-level settlement reads.</summary>
@@ -705,13 +710,16 @@ internal static class PropertyExposureResolver
         /// `open`s), so they never recurse on the host stack: each is a heap frame whose body yields the
         /// nested frame it needs next, and <see cref="Run"/> resumes it with that frame's
         /// <see cref="Result"/> exactly where the recursive form would have returned — the evaluation
-        /// order, every recorded read, every in-progress cut, and every observation are those of the
-        /// recursive form, whatever the chain's length.
+        /// order and every in-progress cut follow the recursive form. Completed nested settlements
+        /// may be reused during one run, with their reads already in its recording, so shared tails
+        /// cost their distinct keys and edges rather than their path count.
         /// </summary>
         private sealed class Frame
         {
             public IEnumerator<Frame> Body = null!;
             public RequirementSet Result;
+            public SettlementKey? CacheKey;
+            public long CycleCutsAtEntry;
         }
 
         /// <summary>
@@ -720,8 +728,11 @@ internal static class PropertyExposureResolver
         /// innermost first, so each one's in-progress key is released exactly as the recursion's
         /// <c>finally</c> blocks released it.
         /// </summary>
-        private static RequirementSet Run(Frame root)
+        private RequirementSet Run(Frame root)
         {
+            // One synchronous settlement: summaries cannot change while these frames run. All reads
+            // from the first computation remain in the top-level recording even on later cache hits.
+            _completed.Clear();
             var frames = new Stack<Frame>();
             frames.Push(root);
             try
@@ -731,13 +742,18 @@ internal static class PropertyExposureResolver
                     if (frame.Body.MoveNext())
                         frames.Push(frame.Body.Current);
                     else
+                    {
                         frames.Pop();
+                        if (frame.CacheKey is { } key && frame.CycleCutsAtEntry == _cycleCuts)
+                            _completed.TryAdd(key, frame.Result);
+                    }
                 }
             }
             finally
             {
                 while (frames.TryPop(out var suspended))
                     suspended.Body.Dispose();
+                _completed.Clear();
             }
 
             return root.Result;
@@ -745,6 +761,7 @@ internal static class PropertyExposureResolver
 
         private Frame ReferenceFrame(PendingReference pending, SummaryScope level, SummaryScope? site, IReadOnlySet<Algorithm>? boundOwners)
         {
+            memos.Observations?.RecordRequiredAncestorSettlementFrame();
             var frame = new Frame();
             frame.Body = ResolveReference(frame, pending, level, site, boundOwners);
             return frame;
@@ -752,6 +769,7 @@ internal static class PropertyExposureResolver
 
         private Frame SeedFrame(PropertyDependencyGraphBuilder.SummarySeed seed, SummaryScope level, SummaryScope site, IReadOnlySet<Algorithm>? boundOwners)
         {
+            memos.Observations?.RecordRequiredAncestorSettlementFrame();
             var frame = new Frame();
             frame.Body = ResolveSeed(frame, seed, level, site, boundOwners);
             return frame;
@@ -768,13 +786,22 @@ internal static class PropertyExposureResolver
                 combined.UnionWith(pending.BoundOwners);
                 boundOwners = combined;
             }
-            var key = (pending.ContentKey, level, site,
+            var key = new SettlementKey(pending.ContentKey, level, site,
                 boundOwners is null ? "" : string.Join(",", boundOwners.Select(OwnerQualifiedParameter.OwnerKey).Order()));
+            if (_completed.TryGetValue(key, out var completed))
+            {
+                self.Result = completed;
+                yield break;
+            }
             if (!_inProgress.Add(key))
             {
+                _cycleCuts++;
                 self.Result = default;
                 yield break;
             }
+
+            self.CacheKey = key;
+            self.CycleCutsAtEntry = _cycleCuts;
 
             try
             {

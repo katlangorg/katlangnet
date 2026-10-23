@@ -58,7 +58,9 @@ internal sealed class PendingReference : IEquatable<PendingReference>
         Candidates = candidates;
         BoundOwners = boundOwners ?? [];
         ResolutionKey = KeyParts([head, KeyParts(members), KeyParts(candidates.Select(static candidate => candidate.ContentKey))]);
-        ContentKey = KeyParts([ResolutionKey, string.Join(",", BoundOwners.Select(OwnerQualifiedParameter.OwnerKey).Order())]);
+        var boundKey = string.Join(",", BoundOwners.Select(OwnerQualifiedParameter.OwnerKey).Order());
+        ContentKey = KeyParts([ResolutionKey, boundKey]);
+        ShapeBoundKey = KeyParts([head, KeyParts(members), KeyParts(candidates.Select(static candidate => candidate.ShapeKey)), boundKey]);
     }
 
     public string Head { get; }
@@ -73,11 +75,39 @@ internal sealed class PendingReference : IEquatable<PendingReference>
     internal string ContentKey { get; }
     internal string ResolutionKey { get; }
 
+    /// <summary>
+    /// The reference without its candidates' charged seeds: head, members, candidate shapes
+    /// (<see cref="OpenCandidate.ShapeKey"/>), and bound owners. References that agree on it differ
+    /// only in what their resolved providers charge (see <see cref="PendingReferenceSet"/>).
+    /// </summary>
+    internal string ShapeBoundKey { get; }
+
     internal static string KeyParts(IEnumerable<string> parts)
         => string.Concat(parts.Select(static part => $"{part.Length}:{part}"));
 
     public PendingReference WithCandidates(IReadOnlyList<OpenCandidate> candidates)
         => new(Head, Members, candidates, BoundOwners);
+
+    /// <summary>
+    /// This reference with each resolved candidate's seed united with the matching candidate's seed of
+    /// <paramref name="other"/> (same <see cref="ShapeBoundKey"/>). Settling a reference charges at most
+    /// one candidate seed, chosen by the shape alone, and a seed's charge is the union of its entries'
+    /// charges — so this reference charges exactly what the two together charge.
+    /// </summary>
+    internal PendingReference WithSeedsUnitedWith(PendingReference other)
+    {
+        var candidates = new OpenCandidate[Candidates.Count];
+        for (var i = 0; i < candidates.Length; i++)
+        {
+            candidates[i] = Candidates[i] is ResolvedOpenCandidate resolved
+                && other.Candidates[i] is ResolvedOpenCandidate otherResolved
+                && resolved.ContentKey != otherResolved.ContentKey
+                ? resolved.UnitedWith(otherResolved)
+                : Candidates[i];
+        }
+
+        return new(Head, Members, candidates, BoundOwners);
+    }
 
     public PendingReference BoundBy(Algorithm owner, bool ownerHasParameters)
         => !ownerHasParameters || BoundOwners.Any(a => ReferenceEquals(a, owner))
@@ -91,29 +121,80 @@ internal sealed class PendingReference : IEquatable<PendingReference>
 }
 
 /// <summary>
-/// Union of pending requirements. Repeated references with the same resolution context
-/// discharge an owner only when EVERY occurrence binds it. Intersecting those bound sets
-/// implements (requirements - bound1) union (requirements - bound2), without enumerating
-/// the exponentially many call paths of a shared algorithm DAG.
+/// Union of pending requirements, kept in a form that only GROWS as the requirements it is built
+/// from grow. Repeated references with the same resolution context discharge an owner only when
+/// EVERY occurrence binds it. Intersecting those bound sets implements (requirements - bound1)
+/// union (requirements - bound2), without enumerating the exponentially many call paths of a
+/// shared algorithm DAG.
+///
+/// <para>EXPOSURE-OPEN-1: references that agree on everything but their resolved candidates' charged
+/// seeds (<see cref="PendingReference.ShapeBoundKey"/>) are ONE reference whose seeds are united
+/// (<see cref="PendingReference.WithSeedsUnitedWith"/>, exact: settlement picks a candidate by shape
+/// alone and charges a seed as the union of its entries). A candidate seed is derived from summaries
+/// that grow during a fixed point, so the same written reference is produced first with a smaller
+/// seed and later with a larger one. Kept apart, the two were different entries, a summary was no
+/// longer monotone in the summaries it read, and around a cycle of mutually opening libraries the
+/// stale entry circulated forever: the member fixed point never terminated. United, the stale seed
+/// is absorbed by the larger one.</para>
 /// </summary>
 internal sealed class PendingReferenceSet : IReadOnlyCollection<PendingReference>
 {
     private readonly Dictionary<string, PendingReference> _references = new(StringComparer.Ordinal);
+
+    // ShapeBoundKey -> the ResolutionKey of the one reference of that shape (created on first write).
+    private Dictionary<string, string>? _byShape;
+
     public PendingReferenceSet() { }
     public PendingReferenceSet(IEnumerable<PendingReference> references) => UnionWith(references);
     public int Count => _references.Count;
-    public void Clear() => _references.Clear();
+    public void Clear()
+    {
+        _references.Clear();
+        _byShape?.Clear();
+    }
+
     public void Add(PendingReference reference)
     {
-        if (!_references.TryGetValue(reference.ResolutionKey, out var existing))
+        // Each merge removes one entry and re-adds the combined reference, so this ends after at
+        // most Count merges.
+        while (true)
         {
+            if (_references.TryGetValue(reference.ResolutionKey, out var existing))
+            {
+                var common = existing.BoundOwners.Where(owner => reference.BoundOwners.Any(other => ReferenceEquals(owner, other))).ToArray();
+                if (common.Length == existing.BoundOwners.Count)
+                    return;
+                // A narrower bound set is another shape: it may meet a reference to unite with.
+                Remove(existing);
+                reference = new(existing.Head, existing.Members, existing.Candidates, common);
+                continue;
+            }
+
+            _byShape ??= new(StringComparer.Ordinal);
+            if (_byShape.TryGetValue(reference.ShapeBoundKey, out var sameShape))
+            {
+                var other = _references[sameShape];
+                Remove(other);
+                OwnerOf(reference, other)?.RecordPendingReferenceSeedMerge();
+                reference = other.WithSeedsUnitedWith(reference);
+                continue;
+            }
+
             _references.Add(reference.ResolutionKey, reference);
+            _byShape.Add(reference.ShapeBoundKey, reference.ResolutionKey);
             return;
         }
-        var common = existing.BoundOwners.Where(owner => reference.BoundOwners.Any(other => ReferenceEquals(owner, other))).ToArray();
-        if (common.Length != existing.BoundOwners.Count)
-            _references[reference.ResolutionKey] = new(existing.Head, existing.Members, existing.Candidates, common);
     }
+
+    private void Remove(PendingReference reference)
+    {
+        _references.Remove(reference.ResolutionKey);
+        _byShape?.Remove(reference.ShapeBoundKey);
+    }
+
+    // The observations of the analysis the united candidates belong to.
+    private static FrontEndTraversalObservations? OwnerOf(PendingReference first, PendingReference second)
+        => first.Candidates.Concat(second.Candidates).OfType<ResolvedOpenCandidate>().Select(static c => c.Observations).FirstOrDefault(static o => o is not null);
     public void UnionWith(IEnumerable<PendingReference> references)
     {
         foreach (var reference in references) Add(reference);
@@ -153,16 +234,61 @@ internal closed class OpenCandidate
     internal int ProviderLevel { get; }
 
     internal abstract string ContentKey { get; }
+
+    /// <summary>
+    /// The candidate WITHOUT its charged seed: kind, opener level, and provider (or carried target).
+    /// Two references whose candidates agree on it are settled by the same providers in the same
+    /// order, so their resolved seeds may be united (<see cref="PendingReferenceSet"/>).
+    /// </summary>
+    internal abstract string ShapeKey { get; }
 }
 
-internal sealed class ResolvedOpenCandidate(
-    PropertyDependencyGraphBuilder.SummarySeed seed,
-    int providerLevel,
-    OpenProviderIdentity identity,
-    int identityKey) : OpenCandidate(providerLevel)
+/// <summary>
+/// EXPOSURE-OPEN-1: a resolved candidate is an IMMUTABLE analysis node. Its seed can hold further
+/// resolved candidates — a chain of N members read through <c>open</c> and settled at one owner
+/// nests N deep — so every candidate is shared by reference wherever it is carried, and a
+/// transformation that cannot change it returns it unchanged. Two cached facts make that decision
+/// exact without walking the nesting: the candidate's DEEP FACTS (<see cref="Facts"/>: every pending
+/// head, required name, and owner-qualified input anywhere inside it, as one canonical set of the
+/// summary memo) and its content key, which names its seed by the memo's exact interned id
+/// (<see cref="PropertyDependencyGraphBuilder.SummaryMemo.SeedKeyId"/>) instead of re-serializing the
+/// nesting. Both are memo-relative, like <see cref="IdentityKey"/>: a candidate never meets another
+/// memo's candidates.
+/// </summary>
+internal sealed class ResolvedOpenCandidate : OpenCandidate
 {
+    private readonly PropertyDependencyGraphBuilder.SummaryMemo _memo;
+    private string? _contentKey;
+
+    public ResolvedOpenCandidate(
+        PropertyDependencyGraphBuilder.SummarySeed seed,
+        int providerLevel,
+        OpenProviderIdentity identity,
+        PropertyDependencyGraphBuilder.SummaryMemo memo)
+        : this(seed, providerLevel, identity, memo.ProviderIdentityKey(identity), memo, facts: null)
+    {
+    }
+
+    private ResolvedOpenCandidate(
+        PropertyDependencyGraphBuilder.SummarySeed seed,
+        int providerLevel,
+        OpenProviderIdentity identity,
+        int identityKey,
+        PropertyDependencyGraphBuilder.SummaryMemo memo,
+        SeedFacts? facts)
+        : base(providerLevel)
+    {
+        Seed = seed;
+        Identity = identity;
+        IdentityKey = identityKey;
+        _memo = memo;
+        // Built from the seed's own entries and the facts its nested candidates already carry: no
+        // walk of the nesting, and no recursion.
+        Facts = facts ?? seed.DeepFacts(memo.SeedFacts);
+    }
+
     /// <summary>Frozen: never mutated after construction; readers clone before accumulating.</summary>
-    public PropertyDependencyGraphBuilder.SummarySeed Seed { get; } = seed;
+    public PropertyDependencyGraphBuilder.SummarySeed Seed { get; }
 
     /// <summary>
     /// The SEMANTIC identity of the provider this candidate settled (Q-19 D-I): two candidates
@@ -170,22 +296,124 @@ internal sealed class ResolvedOpenCandidate(
     /// body that settled it and extended as the reference escapes (see
     /// <see cref="OpenProviderIdentity.IsComplete"/>).
     /// </summary>
-    public OpenProviderIdentity Identity { get; } = identity;
+    public OpenProviderIdentity Identity { get; }
 
     /// <summary>The summary analysis's key for <see cref="Identity"/> (part of the content key).</summary>
-    public int IdentityKey { get; } = identityKey;
+    public int IdentityKey { get; }
+
+    /// <summary>Every pending head, required name, and owner-qualified input in the seed, nested candidates included.</summary>
+    internal SeedFacts Facts { get; }
+
+    /// <summary>The observations of the analysis that built this candidate.</summary>
+    internal FrontEndTraversalObservations? Observations => _memo.Observations;
 
     /// <summary>The same candidate — same opener level and provider — carrying a re-derived seed.</summary>
-    public ResolvedOpenCandidate WithSeed(PropertyDependencyGraphBuilder.SummarySeed seed) => new(seed, ProviderLevel, Identity, IdentityKey);
-
-    /// <summary>The same candidate after its reference escaped the body <paramref name="level"/>.</summary>
-    public ResolvedOpenCandidate EscapedThrough(Algorithm level, PropertyDependencyGraphBuilder.SummaryMemo memo)
+    public ResolvedOpenCandidate WithSeed(PropertyDependencyGraphBuilder.SummarySeed seed)
     {
-        var identity = Identity.EscapedThrough(level);
-        return ReferenceEquals(identity, Identity) ? this : new(Seed, ProviderLevel, identity, memo.ProviderIdentityKey(identity));
+        _memo.Observations?.RecordOpenCandidateSeedRebuild();
+        return new(seed, ProviderLevel, Identity, IdentityKey, _memo, facts: null);
     }
 
-    internal override string ContentKey => $"resolved@{ProviderLevel}#{IdentityKey}({Seed.ContentKey})";
+    /// <summary>The same candidate after its reference escaped the body <paramref name="level"/>.</summary>
+    public ResolvedOpenCandidate EscapedThrough(Algorithm level)
+    {
+        var identity = Identity.EscapedThrough(level);
+        return ReferenceEquals(identity, Identity)
+            ? this
+            : new(Seed, ProviderLevel, identity, _memo.ProviderIdentityKey(identity), _memo, Facts) { _contentSeedKey = _contentSeedKey };
+    }
+
+    /// <summary>
+    /// <see cref="PropertyDependencyGraphBuilder.SummarySeed.UnderMissingLexicalHead(string)"/> of the seed: this
+    /// candidate itself when nothing inside it is a pending reference to <paramref name="head"/>, so
+    /// the reduction never rebuilds a nesting it cannot change.
+    /// </summary>
+    public ResolvedOpenCandidate UnderMissingLexicalHead(string head)
+        => UnderMissingLexicalHead(head, new(StringComparer.Ordinal));
+
+    internal ResolvedOpenCandidate UnderMissingLexicalHead(string head, Dictionary<string, ResolvedOpenCandidate> transformed)
+    {
+        if (!_memo.SeedFacts.HasHead(Facts, head))
+            return this;
+        if (!transformed.TryGetValue(ContentKey, out var result))
+            transformed.Add(ContentKey, result = WithSeed(Seed.UnderMissingLexicalHead(head, transformed)));
+        return result;
+    }
+
+    // Each transformation dictionary belongs to ONE operation with fixed head/owner/name-set
+    // inputs. Exact candidate keys share both equal nodes and repeated reaches of one node. It is
+    // discarded on return: no mutable name-set context or summary-map version needs retaining.
+
+    /// <summary>
+    /// The seed with every requirement <paramref name="owner"/> binds owner-qualified
+    /// (<see cref="PropertyDependencyGraphBuilder.SummarySeed.QualifyParameters(Algorithm, IReadOnlySet{string}, FrontEndTraversalObservations)"/>): this candidate
+    /// itself when nothing inside it requires one of <paramref name="ownerParameterNames"/>.
+    /// </summary>
+    public ResolvedOpenCandidate QualifiedBy(Algorithm owner, IReadOnlySet<string> ownerParameterNames)
+        => QualifiedBy(owner, ownerParameterNames, new(StringComparer.Ordinal));
+
+    internal ResolvedOpenCandidate QualifiedBy(Algorithm owner, IReadOnlySet<string> ownerParameterNames,
+        Dictionary<string, ResolvedOpenCandidate> transformed)
+    {
+        if (!_memo.SeedFacts.RequiresAnyName(Facts, ownerParameterNames, owner: null))
+            return this;
+        if (transformed.TryGetValue(ContentKey, out var result))
+            return result;
+        var seed = Seed.Clone();
+        seed.QualifyParameters(owner, ownerParameterNames, _memo.Observations, transformed);
+        transformed.Add(ContentKey, result = WithSeed(seed));
+        return result;
+    }
+
+    internal ResolvedOpenCandidate WithoutRequiredParameters(IReadOnlySet<string> names, Algorithm owner, bool ownerHasParameters,
+        Dictionary<string, ResolvedOpenCandidate> transformed)
+    {
+        if (!RequiresAny(names, owner))
+            return this;
+        if (transformed.TryGetValue(ContentKey, out var result))
+            return result;
+        var seed = Seed.Clone();
+        seed.RemoveRequiredAncestorOwnedParameterNames(names, owner, ownerHasParameters, _memo.Observations, transformed);
+        transformed.Add(ContentKey, result = WithSeed(seed));
+        return result;
+    }
+
+    /// <summary>Whether anything inside the seed requires one of <paramref name="names"/>, unqualified or owned by <paramref name="owner"/>.</summary>
+    public bool RequiresAny(IReadOnlySet<string> names, Algorithm owner)
+        => _memo.SeedFacts.RequiresAnyName(Facts, names, owner);
+
+    /// <summary>The same candidate whose seed is this seed united with <paramref name="other"/>'s (one provider, so one charge).</summary>
+    public ResolvedOpenCandidate UnitedWith(ResolvedOpenCandidate other)
+    {
+        // Exact immutable inputs: no mutable member-map context or partial cycle result is retained.
+        var left = ContentKey;
+        var right = other.ContentKey;
+        var key = string.CompareOrdinal(left, right) <= 0 ? (left, right) : (right, left);
+        var united = _memo.UnitedCandidates ??= new();
+        if (!united.TryGetValue(key, out var result))
+            united.Add(key, result = WithSeed(Seed.Clone().Absorb(other.Seed)));
+        return result;
+    }
+
+    // The interned id of the seed's content, kept by a re-identified copy of the same seed.
+    private int? _contentSeedKey;
+
+    internal override string ContentKey
+    {
+        get
+        {
+            if (_contentKey is null)
+            {
+                _contentSeedKey ??= _memo.SeedKeyId(Seed.ContentKeyFor(_memo.Observations));
+                _contentKey = $"resolved@{ProviderLevel}#{IdentityKey}({_contentSeedKey})";
+                _memo.Observations?.RecordOpenCandidateKeyCharacters(_contentKey.Length);
+            }
+
+            return _contentKey;
+        }
+    }
+
+    internal override string ShapeKey => $"resolved@{ProviderLevel}#{IdentityKey}";
 }
 
 internal sealed class UnresolvedOpenCandidate(string head, IReadOnlyList<string> publicSteps, int providerLevel) : OpenCandidate(providerLevel)
@@ -195,6 +423,86 @@ internal sealed class UnresolvedOpenCandidate(string head, IReadOnlyList<string>
     public IReadOnlyList<string> PublicSteps { get; } = publicSteps;
 
     internal override string ContentKey => $"open@{ProviderLevel}" + PendingReference.KeyParts([Head, PendingReference.KeyParts(PublicSteps)]);
+
+    internal override string ShapeKey => ContentKey;
+}
+
+/// <summary>
+/// One deep fact of a resolved open candidate's seed (<see cref="ResolvedOpenCandidate.Facts"/>): a
+/// pending reference's head, a required ancestor-owned name, or an owner-qualified input — each with
+/// the exact identity its kind compares by (names ordinally, owners by reference).
+/// </summary>
+internal readonly record struct SeedFact(SeedFactKind Kind, OwnerQualifiedParameter Parameter);
+
+internal enum SeedFactKind
+{
+    PendingHead,
+    Required,
+    Qualified,
+}
+
+/// <summary>A canonical set of <see cref="SeedFact"/>s: one hash-consed node per distinct content.</summary>
+internal readonly struct SeedFacts(CanonicalSetInterner<SeedFact>.Node? root)
+{
+    internal CanonicalSetInterner<SeedFact>.Node? Root { get; } = root;
+
+    public int Count => Root?.Count ?? 0;
+}
+
+/// <summary>
+/// The summary memo's run-local interner of deep candidate facts — the third instance of the one
+/// canonical-set engine (<see cref="CanonicalSetInterner{TElement}"/>). A candidate's facts are its
+/// seed's own entries united with its nested candidates' facts: shared structure, built once per
+/// candidate, so testing what a nesting contains costs a lookup, never a walk.
+/// </summary>
+internal sealed class SeedFactInterner(FrontEndTraversalObservations? observations)
+    : CanonicalSetInterner<SeedFact>(EqualityComparer<SeedFact>.Default)
+{
+    public SeedFacts With(SeedFacts set, IEnumerable<SeedFact> facts) => new(WithElements(set.Root, facts));
+
+    public SeedFacts Union(SeedFacts first, SeedFacts second) => new(UnionRoots(first.Root, second.Root));
+
+    public bool HasHead(SeedFacts facts, string head)
+    {
+        observations?.RecordOpenCandidateFactProbe();
+        return facts.Count > 0 && ContainsElement(facts.Root, new(SeedFactKind.PendingHead, new(head, null)));
+    }
+
+    /// <summary>
+    /// Whether <paramref name="facts"/> require one of <paramref name="names"/> — unqualified, or (when
+    /// <paramref name="owner"/> is given) qualified by that owner — scanning the SMALLER side.
+    /// </summary>
+    public bool RequiresAnyName(SeedFacts facts, IReadOnlySet<string> names, Algorithm? owner)
+    {
+        if (facts.Count == 0 || names.Count == 0)
+            return false;
+
+        if (facts.Count <= names.Count)
+        {
+            foreach (var fact in EnumerateElements(facts.Root))
+            {
+                observations?.RecordOpenCandidateFactProbe();
+                if (fact.Kind == SeedFactKind.Required && names.Contains(fact.Parameter.Name))
+                    return true;
+                if (owner is not null && fact.Kind == SeedFactKind.Qualified
+                    && ReferenceEquals(fact.Parameter.Owner, owner) && names.Contains(fact.Parameter.Name))
+                    return true;
+            }
+
+            return false;
+        }
+
+        foreach (var name in names)
+        {
+            observations?.RecordOpenCandidateFactProbe();
+            if (ContainsElement(facts.Root, new(SeedFactKind.Required, new(name, null))))
+                return true;
+            if (owner is not null && ContainsElement(facts.Root, new(SeedFactKind.Qualified, new(name, owner))))
+                return true;
+        }
+
+        return false;
+    }
 }
 
 /// <summary>
@@ -898,13 +1206,18 @@ internal static class PropertyDependencyGraphBuilder
         /// another identical condition and never reaches a finite fixed point.
         /// </summary>
         internal SummarySeed UnderMissingLexicalHead(string head)
+            => UnderMissingLexicalHead(head, new(StringComparer.Ordinal));
+
+        internal SummarySeed UnderMissingLexicalHead(string head, Dictionary<string, ResolvedOpenCandidate> transformed)
         {
             var result = new SummarySeed(RequiredAncestorOwnedParameterNames,
                 VisiblePropertyDependencyNames, ownerQualifiedParameters: OwnerQualifiedParameters);
             foreach (var pending in PendingReferences)
             {
+                // A nested candidate that holds no reference to the head is returned as it is
+                // (EXPOSURE-OPEN-1), so this never rebuilds a nesting it cannot change.
                 var candidates = pending.Candidates.Select(candidate => candidate is ResolvedOpenCandidate resolved
-                    ? resolved.WithSeed(resolved.Seed.UnderMissingLexicalHead(head)) : candidate).ToArray();
+                    ? resolved.UnderMissingLexicalHead(head, transformed) : candidate).ToArray();
                 var firstLevel = candidates.TakeWhile(c => c.ProviderLevel == candidates[0].ProviderLevel).ToArray();
                 if (pending.Head == head && firstLevel.Length > 0 && firstLevel.All(c => c is ResolvedOpenCandidate))
                 {
@@ -927,9 +1240,49 @@ internal static class PropertyDependencyGraphBuilder
                     }
                     continue;
                 }
-                result.PendingReferences.Add(pending.WithCandidates(candidates));
+                result.PendingReferences.Add(SameCandidates(pending.Candidates, candidates) ? pending : pending.WithCandidates(candidates));
             }
             return result;
+        }
+
+        private static bool SameCandidates(IReadOnlyList<OpenCandidate> before, IReadOnlyList<OpenCandidate> after)
+        {
+            for (var i = 0; i < before.Count; i++)
+            {
+                if (!ReferenceEquals(before[i], after[i]))
+                    return false;
+            }
+
+            return true;
+        }
+
+        /// <summary>
+        /// EXPOSURE-OPEN-1: the deep facts of a seed a resolved open candidate is built over — its own
+        /// required names, owner-qualified inputs, and pending heads, united with the facts its nested
+        /// candidates already carry (so building them never walks the nesting).
+        /// </summary>
+        internal SeedFacts DeepFacts(SeedFactInterner interner)
+        {
+            Fold();
+            var facts = default(SeedFacts);
+            if (_requiredAncestorOwnedParameterNames is { Count: > 0 } required)
+                facts = interner.With(facts, required.Select(static name => new SeedFact(SeedFactKind.Required, new(name, null))));
+            if (_ownerQualifiedParameters is { Count: > 0 } qualified)
+                facts = interner.With(facts, qualified.Select(static parameter => new SeedFact(SeedFactKind.Qualified, parameter)));
+            if (_pendingReferences is not { Count: > 0 } pendingReferences)
+                return facts;
+
+            facts = interner.With(facts, pendingReferences.Select(static pending => new SeedFact(SeedFactKind.PendingHead, new(pending.Head, null))));
+            foreach (var pending in pendingReferences)
+            {
+                foreach (var candidate in pending.Candidates)
+                {
+                    if (candidate is ResolvedOpenCandidate resolved)
+                        facts = interner.Union(facts, resolved.Facts);
+                }
+            }
+
+            return facts;
         }
 
         /// <summary>
@@ -1123,6 +1476,10 @@ internal static class PropertyDependencyGraphBuilder
             Algorithm owner,
             IReadOnlySet<string> ownerParameterNames,
             FrontEndTraversalObservations? observations)
+            => QualifyParameters(owner, ownerParameterNames, observations, new(StringComparer.Ordinal));
+
+        internal void QualifyParameters(Algorithm owner, IReadOnlySet<string> ownerParameterNames,
+            FrontEndTraversalObservations? observations, Dictionary<string, ResolvedOpenCandidate> transformed)
         {
             // Reads the folded sets directly, so a seed with nothing to qualify materializes none.
             Fold();
@@ -1138,16 +1495,23 @@ internal static class PropertyDependencyGraphBuilder
             if (_pendingReferences is not { Count: > 0 } pendingReferences)
                 return;
 
-            var pending = pendingReferences.ToArray();
+            // Only references whose carried candidates require one of the owner's names change; a
+            // candidate that requires none is kept as it is (EXPOSURE-OPEN-1: its deep facts decide).
+            List<PendingReference>? rewritten = null;
+            var changed = false;
+            foreach (var reference in pendingReferences)
+            {
+                var candidates = reference.Candidates.Select(candidate => candidate is ResolvedOpenCandidate resolved
+                    ? resolved.QualifiedBy(owner, ownerParameterNames, transformed) : candidate).ToArray();
+                var same = SameCandidates(reference.Candidates, candidates);
+                changed |= !same;
+                (rewritten ??= new(pendingReferences.Count)).Add(same ? reference : reference.WithCandidates(candidates));
+            }
+
+            if (!changed)
+                return;
             pendingReferences.Clear();
-            foreach (var reference in pending)
-                pendingReferences.Add(reference.WithCandidates(reference.Candidates.Select(candidate =>
-                {
-                    if (candidate is not ResolvedOpenCandidate resolved) return candidate;
-                    var seed = resolved.Seed.Clone();
-                    seed.QualifyParameters(owner, ownerParameterNames, observations);
-                    return (OpenCandidate)resolved.WithSeed(seed);
-                }).ToArray()));
+            pendingReferences.UnionWith(rewritten!);
         }
 
         /// <summary>
@@ -1162,6 +1526,10 @@ internal static class PropertyDependencyGraphBuilder
             Algorithm owner,
             bool ownerHasParameters,
             FrontEndTraversalObservations? observations)
+            => RemoveRequiredAncestorOwnedParameterNames(names, owner, ownerHasParameters, observations, new(StringComparer.Ordinal));
+
+        internal void RemoveRequiredAncestorOwnedParameterNames(IReadOnlySet<string> names, Algorithm owner,
+            bool ownerHasParameters, FrontEndTraversalObservations? observations, Dictionary<string, ResolvedOpenCandidate> transformed)
         {
             // Reads the folded sets directly, so a seed with nothing to strip materializes none.
             Fold();
@@ -1188,21 +1556,13 @@ internal static class PropertyDependencyGraphBuilder
                 var candidates = new List<OpenCandidate>(pending.Candidates.Count);
                 foreach (var candidate in pending.Candidates)
                 {
-                    if (candidate is ResolvedOpenCandidate resolved
-                        && resolved.Seed.RequiresAny(names, owner, observations))
-                    {
-                        var seed = resolved.Seed.Clone();
-                        seed.RemoveRequiredAncestorOwnedParameterNames(names, owner, ownerHasParameters, observations);
-                        candidates.Add(resolved.WithSeed(seed));
-                        changed = true;
-                    }
-                    else
-                    {
-                        candidates.Add(candidate);
-                    }
+                    var stripped = candidate is ResolvedOpenCandidate resolved
+                        ? resolved.WithoutRequiredParameters(names, owner, ownerHasParameters, transformed) : candidate;
+                    candidates.Add(stripped);
+                    changed |= !ReferenceEquals(stripped, candidate);
                 }
 
-                rewritten.Add(pending.WithCandidates(candidates).BoundBy(owner, ownerHasParameters));
+                rewritten.Add((SameCandidates(pending.Candidates, candidates) ? pending : pending.WithCandidates(candidates)).BoundBy(owner, ownerHasParameters));
             }
 
             if (!changed)
@@ -1210,28 +1570,6 @@ internal static class PropertyDependencyGraphBuilder
 
             pendingReferences.Clear();
             pendingReferences.UnionWith(rewritten);
-        }
-
-        private bool RequiresAny(IReadOnlySet<string> names, Algorithm owner, FrontEndTraversalObservations? observations)
-        {
-            Fold();
-            if (_ownerQualifiedParameters is { } qualified && qualified.Any(r => ReferenceEquals(r.Owner, owner) && names.Contains(r.Name)))
-                return true;
-            if (_requiredAncestorOwnedParameterNames is { Count: > 0 } required && SharedNames(required, names, observations).Count > 0)
-                return true;
-            if (_pendingReferences is null)
-                return false;
-
-            foreach (var pending in _pendingReferences)
-            {
-                foreach (var candidate in pending.Candidates)
-                {
-                    if (candidate is ResolvedOpenCandidate resolved && resolved.Seed.RequiresAny(names, owner, observations))
-                        return true;
-                }
-            }
-
-            return false;
         }
 
         // The names in both sets, found by scanning the SMALLER one (each examined name is one
@@ -1355,12 +1693,18 @@ internal static class PropertyDependencyGraphBuilder
         }
 
         /// <summary>Content identity (sorted), for candidate equality within a fixed point.</summary>
-        internal string ContentKey
-            => PendingReference.KeyParts([
+        internal string ContentKey => ContentKeyFor(observations: null);
+
+        internal string ContentKeyFor(FrontEndTraversalObservations? observations)
+        {
+            var key = PendingReference.KeyParts([
                 FrontEndRegionKeys.NameSet(RequiredAncestorOwnedParameterNames),
                 FrontEndRegionKeys.NameSet(VisiblePropertyDependencyNames),
                 FrontEndRegionKeys.NameSet(PendingReferences.Select(static pending => pending.ContentKey)),
                 FrontEndRegionKeys.NameSet(OwnerQualifiedParameters.Select(static r => r.ContentKey))]);
+            observations?.RecordSummaryKeyCharacters(key.Length);
+            return key;
+        }
     }
 
     /// <summary>
@@ -1424,8 +1768,58 @@ internal static class PropertyDependencyGraphBuilder
             public override int GetHashCode() => HashCode.Combine(RuntimeHelpers.GetHashCode(_owner),
                 RuntimeHelpers.GetHashCode(_summaries), StringComparer.Ordinal.GetHashCode(_path));
         }
+        // Active local-head candidate expansions (EXPOSURE-OPEN-1), likewise never cached results: an
+        // open target whose head this level declares, charged for one referenced member path.
+        internal HashSet<LocalHeadResolution>? ActiveLocalHeads;
+
+        internal long ExpansionCycleCuts;
+        internal Dictionary<(string Left, string Right), ResolvedOpenCandidate>? UnitedCandidates;
+
+        internal sealed class LocalHeadResolution(LevelContext level, string head, IReadOnlyList<string> steps, PendingReference pending)
+            : IEquatable<LocalHeadResolution>
+        {
+            private readonly Algorithm _owner = level.Algorithm;
+            private readonly IReadOnlyDictionary<string, SummarySeed> _summaries = level.LocalPropertySummaries;
+            // The target (head and public steps) and the member path it is charged for: all the
+            // expansion reads besides the level. Bound owners and carried candidates are not inputs.
+            private readonly string _target = PendingReference.KeyParts([
+                head, PendingReference.KeyParts(steps), pending.Head, PendingReference.KeyParts(pending.Members)]);
+
+            public bool Equals(LocalHeadResolution? other) => other is not null
+                && ReferenceEquals(_owner, other._owner)
+                && ReferenceEquals(_summaries, other._summaries) && _target == other._target;
+            public override bool Equals(object? other) => other is LocalHeadResolution key && Equals(key);
+            public override int GetHashCode() => HashCode.Combine(RuntimeHelpers.GetHashCode(_owner),
+                RuntimeHelpers.GetHashCode(_summaries), StringComparer.Ordinal.GetHashCode(_target));
+        }
+
         internal readonly BranchContextInterner BranchContexts = new();
         internal Dictionary<Algorithm, AlgorithmSummary>? CompletedAlgorithmSummaries;
+
+        internal FrontEndTraversalObservations? Observations => observations;
+
+        /// <summary>
+        /// EXPOSURE-OPEN-1: the interner of resolved open candidates' deep facts
+        /// (<see cref="ResolvedOpenCandidate.Facts"/>), one per memo lifetime like every key below.
+        /// </summary>
+        internal SeedFactInterner SeedFacts => _seedFacts ??= new(observations);
+
+        private SeedFactInterner? _seedFacts;
+
+        private Dictionary<string, int>? _seedKeyIds;
+
+        /// <summary>
+        /// EXPOSURE-OPEN-1: the analysis-local id of a candidate seed's EXACT content key (a dictionary
+        /// over the full string — never a hash of it). A candidate's own key names its seed by this id,
+        /// so a key enclosing a nested candidate costs that candidate's id, not its serialization.
+        /// </summary>
+        internal int SeedKeyId(string seedContentKey)
+        {
+            var ids = _seedKeyIds ??= new(StringComparer.Ordinal);
+            if (!ids.TryGetValue(seedContentKey, out var id))
+                ids.Add(seedContentKey, id = ids.Count);
+            return id;
+        }
 
         private Dictionary<OpenProviderIdentity, int>? _providerIdentityKeys;
 
@@ -1619,6 +2013,10 @@ internal static class PropertyDependencyGraphBuilder
         public IReadOnlyDictionary<string, SummarySeed> LocalPropertySummaries { get; } = localPropertySummaries;
 
         public SummaryWalkMemos Memos { get; } = memos;
+
+        // Only the dynamic extent of ONE ExpandAtLevel call at this exact level. The member map
+        // cannot grow during an equation's evaluation; the next evaluation starts with no cache.
+        internal Dictionary<string, SummarySeed>? ExpandedSeeds;
 
         public bool HasOpens => Algorithm.Opens.Count > 0;
 
@@ -1963,6 +2361,29 @@ internal static class PropertyDependencyGraphBuilder
     /// </summary>
     internal static SummarySeed ExpandAtLevel(SummarySeed baseSeed, LevelContext level)
     {
+        var outermost = level.ExpandedSeeds is null;
+        var completed = level.ExpandedSeeds ??= new(StringComparer.Ordinal);
+        try
+        {
+            var key = baseSeed.ContentKeyFor(level.Memos.Observations);
+            if (completed.TryGetValue(key, out var cached))
+                return cached.Clone();
+            var cuts = level.Memos.SharedMemo.ExpansionCycleCuts;
+            var result = ExpandAtLevelCore(baseSeed, level);
+            // A partial expansion depends on the active path. It must never be served elsewhere.
+            if (cuts == level.Memos.SharedMemo.ExpansionCycleCuts)
+                completed.TryAdd(key, result.Clone());
+            return result;
+        }
+        finally
+        {
+            if (outermost)
+                level.ExpandedSeeds = null;
+        }
+    }
+
+    private static SummarySeed ExpandAtLevelCore(SummarySeed baseSeed, LevelContext level)
+    {
         var expanded = new SummarySeed(
             requiredAncestorOwnedParameterNames: baseSeed.RequiredAncestorOwnedParameterNames,
             ownerQualifiedParameters: baseSeed.OwnerQualifiedParameters);
@@ -1992,7 +2413,10 @@ internal static class PropertyDependencyGraphBuilder
                 var active = level.Memos.SharedMemo.ActiveLocalPaths ??= [];
                 var key = new SummaryMemo.LocalPathExpansion(level, pending);
                 if (!active.Add(key))
+                {
+                    level.Memos.SharedMemo.ExpansionCycleCuts++;
                     continue;
+                }
                 try
                 {
                     var (charged, navigated) = ChargePath(headNode, StructuralSteps(pending.Members), level.Memos);
@@ -2031,8 +2455,7 @@ internal static class PropertyDependencyGraphBuilder
             {
                 case ResolvedOpenCandidate resolved:
                     // The reference escapes this body: its settled provider is declared within it too.
-                    candidates.Add(resolved.WithSeed(ExpandAtLevel(resolved.Seed, level))
-                        .EscapedThrough(level.Algorithm, level.Memos.SharedMemo));
+                    candidates.Add(resolved.WithSeed(ExpandAtLevel(resolved.Seed, level)).EscapedThrough(level.Algorithm));
                     break;
 
                 case UnresolvedOpenCandidate unresolved when level.LocalPropertySummaries.ContainsKey(unresolved.Head):
@@ -2079,8 +2502,7 @@ internal static class PropertyDependencyGraphBuilder
         }
 
         expanded.PendingReferences.Add(pending.WithCandidates(candidates.Select(candidate =>
-            candidate is ResolvedOpenCandidate resolved
-                ? resolved.WithSeed(resolved.Seed.UnderMissingLexicalHead(pending.Head)) : candidate).ToArray()));
+            candidate is ResolvedOpenCandidate resolved ? resolved.UnderMissingLexicalHead(pending.Head) : candidate).ToArray()));
     }
 
     /// <summary>
@@ -2114,8 +2536,7 @@ internal static class PropertyDependencyGraphBuilder
                     if (TryChargeInlineOpenProvider(block, steps, pending, level.Memos) is { } inlineSeed)
                     {
                         var identity = PathIdentity(OpenProviderIdentity.DeclaredAtRoot(block), block, steps);
-                        yield return new ResolvedOpenCandidate(inlineSeed, providerLevel, identity,
-                            level.Memos.SharedMemo.ProviderIdentityKey(identity));
+                        yield return new ResolvedOpenCandidate(inlineSeed, providerLevel, identity, level.Memos.SharedMemo);
                     }
 
                     break;
@@ -2211,11 +2632,31 @@ internal static class PropertyDependencyGraphBuilder
         // ChargePath's seed is already relative to the provider's parent. Expand only
         // its ancestors: expanding the provider again duplicates its owner/identity level.
         var headValue = LocalPropertyValue(level.Algorithm, head);
-        var seed = ExpandThroughNodes(memberSeed, NodePath(headValue, steps), level.Memos, skipLastNode: true);
-        seed.UnionWith(providerSeed);
         var identity = PathIdentity(OpenProviderIdentity.DeclaredWithin(headValue, level.Algorithm), headValue, steps);
-        return new ResolvedOpenCandidate(ExpandAtLevel(seed, level), providerLevel, identity,
-            level.Memos.SharedMemo.ProviderIdentityKey(identity));
+
+        // EXPOSURE-OPEN-1: expanding the charged seed at this level settles the targets IT opens here,
+        // which can lead back to this one (`P1 = { open P2 … }`, `P2 = { open P1 … }`, read through an
+        // open of P1). Whether the target provides the name is structural and was decided above; a
+        // re-entered expansion charges nothing beyond what the enclosing one is already collecting
+        // (the least fixed point, like an active local path), so it is cut instead of recursing
+        // forever. Nothing is memoized here, so a cut result is never reused out of its context.
+        var active = level.Memos.SharedMemo.ActiveLocalHeads ??= [];
+        var key = new SummaryMemo.LocalHeadResolution(level, head, steps, pending);
+        if (!active.Add(key))
+        {
+            level.Memos.SharedMemo.ExpansionCycleCuts++;
+            return new ResolvedOpenCandidate(new SummarySeed(), providerLevel, identity, level.Memos.SharedMemo);
+        }
+        try
+        {
+            var seed = ExpandThroughNodes(memberSeed, NodePath(headValue, steps), level.Memos, skipLastNode: true);
+            seed.UnionWith(providerSeed);
+            return new ResolvedOpenCandidate(ExpandAtLevel(seed, level), providerLevel, identity, level.Memos.SharedMemo);
+        }
+        finally
+        {
+            active.Remove(key);
+        }
     }
 
     /// <summary>
@@ -2891,7 +3332,7 @@ internal static class PropertyDependencyGraphBuilder
             if (TryShareMemberSeed(baseSeed, recorded, level) is { } shared)
                 return shared;
 
-            var key = contentKeys[index] ??= baseSeed.ContentKey;
+            var key = contentKeys[index] ??= baseSeed.ContentKeyFor(memos.Observations);
             expansions ??= new(StringComparer.Ordinal);
             if (expansions.TryGetValue(key, out var expansion)
                 && expansion.Reads.All(read => ReferenceEquals(seeds[read.Name], read.Read)))

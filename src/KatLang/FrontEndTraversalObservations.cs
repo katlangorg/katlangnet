@@ -462,6 +462,68 @@ internal sealed class FrontEndTraversalObservations
     internal void RecordSummaryMemberExpansion()
         => SummaryMemberExpansions = checked(SummaryMemberExpansions + 1);
 
+    // EXPOSURE-OPEN-1 (October 2026): the nested open-candidate representation. A resolved open
+    // candidate carries the seed its provider charges, which can itself hold candidates — as deep
+    // as a chain of opened members settled at one owner. These count the real work spent on that
+    // nesting: rebuilding a candidate's seed, serializing a candidate's content key, and settling
+    // nested references in the exposure pass.
+
+    /// <summary>
+    /// Resolved open-candidate seeds REBUILT by a transformation (an expansion as the reference
+    /// escapes a level, the lexical-absence reduction, parameter qualification, a bound-owner strip,
+    /// or a merge of two same-shape references). A transformation that cannot change a candidate —
+    /// its deep facts show nothing to reduce, qualify, or strip — returns it unchanged and is not
+    /// counted, so a candidate nested N deep is not rebuilt once per enclosing link.
+    /// </summary>
+    public long OpenCandidateSeedRebuilds { get; private set; }
+
+    internal void RecordOpenCandidateSeedRebuild()
+        => OpenCandidateSeedRebuilds = checked(OpenCandidateSeedRebuilds + 1);
+
+    /// <summary>
+    /// Characters serialized into resolved open-candidate content keys, each key once per candidate.
+    /// A candidate's key names its seed by the summary memo's exact interned id, never by the nested
+    /// seed's own serialization, so a key costs its seed's own entries.
+    /// </summary>
+    public long OpenCandidateKeyCharacters { get; private set; }
+
+    internal void RecordOpenCandidateKeyCharacters(int characters)
+        => OpenCandidateKeyCharacters = checked(OpenCandidateKeyCharacters + characters);
+
+    /// <summary>
+    /// Characters built by summary-seed key serialization, including the full inputs to seed-id
+    /// interning and operation-local expansion lookups, rather than only their compact candidate keys.
+    /// </summary>
+    public long SummaryKeyCharacters { get; private set; }
+
+    internal void RecordSummaryKeyCharacters(int characters)
+        => SummaryKeyCharacters = checked(SummaryKeyCharacters + characters);
+
+    /// <summary>
+    /// Lookups in resolved open candidates' deep facts that decide whether a transformation can
+    /// change a candidate: one per inspected fact or probed name, scanning the smaller side.
+    /// </summary>
+    public long OpenCandidateFactProbes { get; private set; }
+
+    internal void RecordOpenCandidateFactProbe()
+        => OpenCandidateFactProbes = checked(OpenCandidateFactProbes + 1);
+
+    /// <summary>Same-shape pending references whose candidate seeds were united into one reference.</summary>
+    public long PendingReferenceSeedMerges { get; private set; }
+
+    internal void RecordPendingReferenceSeedMerge()
+        => PendingReferenceSeedMerges = checked(PendingReferenceSeedMerges + 1);
+
+    /// <summary>
+    /// Settlement frames the exposure pass runs (<c>PropertyExposureResolver.PendingResolution</c>): one
+    /// per pending reference or seed it settles, nested settlements included — the work inside one
+    /// top-level settlement that <see cref="RequiredAncestorResolutionComputations"/> does not see.
+    /// </summary>
+    public long RequiredAncestorSettlementFrames { get; private set; }
+
+    internal void RecordRequiredAncestorSettlementFrame()
+        => RequiredAncestorSettlementFrames = checked(RequiredAncestorSettlementFrames + 1);
+
     /// <summary>Summary-seed expansions (<c>PropertyDependencyGraphBuilder.CollectSummarySeed</c>, expression level).</summary>
     public long DependencySeedExpansions { get; private set; }
 

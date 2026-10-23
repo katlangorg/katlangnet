@@ -346,3 +346,5 @@ A V3 run is not release publishing, a benchmark campaign, or unbounded fuzzing; 
 - Do not let a subagent edit code, tests, expectations, or tracked artifacts, run validation, or stage, commit, reset, or discard files.
 
 FE-4a review: immutable required-ancestor backing is shared behind distinct nonempty property wrappers, preserving generated record equality/hash behavior; raw LocalOnlyProperty text prints bounded contents. Repeated open-head conditions reduce only under established lexical absence, retaining ambiguity and bound-owner rules. Large-base unions preserve shared cores. See evaluator-and-hosting.md, FE-4a hostile-review compatibility and cycle repairs.
+
+EXPOSURE-OPEN-1: resolved open candidates use exact deep facts and interned seed keys; changed transforms share nodes per operation, same-shape references unite seeds, and completed expansions/settlements share only within fixed summary contexts. Never cache a partial cycle-cut expansion or settlement. See evaluator-and-hosting.md, EXPOSURE-OPEN-1.
