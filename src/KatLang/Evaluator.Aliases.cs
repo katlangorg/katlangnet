@@ -296,8 +296,10 @@ public static partial class Evaluator
     /// The memo key of an alias BINDING (a <see cref="Property"/>) or, for a runtime-alias binding cell,
     /// of an alias DECLARATION (a <see cref="DeclarationIdentity"/>, which covers inline aliases too),
     /// together with the resolving identity of the scope chain it is wired under (each level's opens and
-    /// properties, by reference) — everything its target's resolution reads besides the activation,
-    /// which selects the memo the key lives in. Compared by reference.
+    /// properties, by reference; an ownerless host-built declaring level is itself part of it, also by
+    /// reference: <see cref="Evaluation.Caching.StructuralOwnerIdentity.FromScope"/>) — everything its
+    /// target's resolution reads besides the activation, which selects the memo the key lives in.
+    /// Compared by reference.
     /// </summary>
     internal readonly struct AliasTargetKey(object binding, Evaluation.Caching.StructuralOwnerIdentity scope) : IEquatable<AliasTargetKey>
     {

@@ -203,6 +203,7 @@ internal readonly record struct ZeroArgPropertyCacheKey(
 internal sealed class StructuralOwnerIdentity
 {
     private readonly ScopeComponent[] _scopeChain;
+    // By reference: an owner's declaration token, or (FromScope) an ownerless host-built level.
     private readonly object? _declaration;
     private readonly int _hashCode;
 
@@ -250,13 +251,21 @@ internal sealed class StructuralOwnerIdentity
     /// The resolving identity of a SCOPE chain itself — each level's opens and properties, from
     /// <paramref name="scope"/> outward — with no owner declaration: what a name looked up from a
     /// body wired under <paramref name="scope"/> can select. A null scope is the empty chain.
+    /// <para>When <paramref name="scope"/> is itself an OWNERLESS host-built level, that level OBJECT
+    /// is part of the identity, by reference — the rule <see cref="PropertyDeclaringOwner"/> applies
+    /// to the properties declared there (CACHE-OWNER-D3): the evaluator never copies a host level, so
+    /// every use through it still names one identity, while two independently constructed host
+    /// levels that share a property list (or a record <c>with</c> copy) — whose property entries are
+    /// already separate — no longer share the run-wide alias memo either (HOST-ALIAS-R14).
+    /// Evaluator-created levels always have an owner, so rebuilt evaluator scopes keep comparing
+    /// structurally.</para>
     /// </summary>
     internal static StructuralOwnerIdentity FromScope(ScopeCtx? scope)
     {
         var scopeChain = new List<ScopeComponent>();
         for (var level = scope; level is not null; level = level.Parent)
             scopeChain.Add(new ScopeComponent(level.Opens, level.Properties));
-        return new StructuralOwnerIdentity([.. scopeChain]);
+        return new StructuralOwnerIdentity([.. scopeChain], scope is { Owner: null } hostLevel ? hostLevel : null);
     }
 
     public override bool Equals(object? obj)

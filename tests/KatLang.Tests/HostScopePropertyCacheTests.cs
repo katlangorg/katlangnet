@@ -84,12 +84,12 @@ public class HostScopePropertyCacheTests
                 [Prop("Run", Body(rows), isPublic: true), .. blockMembers], OutputBundle.Empty))],
             [], new OutputBundle([R("Run")])));
 
-    /// <summary>Two opened blocks with their own parents; output <c>RunA + RunB</c>.</summary>
-    private static Expr OpenedTwo(ScopeCtx a, Expr rowA, ScopeCtx b, Expr rowB)
+    /// <summary>Two opened blocks with their own parents; output <c>RunA + RunB</c> (or <c>RunA, RunB</c>).</summary>
+    private static Expr OpenedTwo(ScopeCtx a, Expr rowA, ScopeCtx b, Expr rowB, bool sequence = false)
         => new Expr.AlgorithmExpr(new Algorithm.User(null, [],
             [new Expr.AlgorithmExpr(new Algorithm.User(a, [], [], [Prop("RunA", Body(rowA), isPublic: true)], OutputBundle.Empty)),
              new Expr.AlgorithmExpr(new Algorithm.User(b, [], [], [Prop("RunB", Body(rowB), isPublic: true)], OutputBundle.Empty))],
-            [], new OutputBundle([Add(R("RunA"), R("RunB"))])));
+            [], new OutputBundle([sequence ? Seq(R("RunA"), R("RunB")) : Add(R("RunA"), R("RunB"))])));
 
     /// <summary>Records every cache request's key (sync seam) around the ordinary run-scoped law.</summary>
     private sealed class RecordingCache : IZeroArgPropertyResultCache
@@ -411,16 +411,7 @@ public class HostScopePropertyCacheTests
     {
         Expr Build(ScopeCtx pre, bool host)
         {
-            var target = collectingTarget
-                ? new Algorithm.User(null, [new CaptureParameterPattern("xs", Kind: ParameterKind.Collecting)], [], [], [Tick()])
-                : Body(Tick());
-            Property[] members =
-            [
-                Prop("F", target),
-                Prop("Capture", new Algorithm.User(null, [new CaptureParameterPattern("op", Kind: ParameterKind.Meta)], [], [], [X("op")])),
-                Prop("R", Body(Call("Capture", Call("F")))),
-                Prop("A", new Algorithm.Alias(null, [], [], new Expr.DotCall(R("R"), "Algorithm")) { HasRuntimeTarget = true }),
-            ];
+            var members = RuntimeAliasMembers(collectingTarget);
             return OpenedThrough(new ScopeCtx(pre, [], host ? members : []),
                 Seq(Call("A"), R("A"), Call("A"), R("A")), host ? [] : members);
         }
@@ -429,6 +420,198 @@ public class HostScopePropertyCacheTests
         var owned = await OnEveryRouteAsync(pre => Build(pre, host: false));
         Assert.Equal((value, effects), (host.Value, host.Effects));
         Assert.Equal(owned, host);
+    }
+
+    /// <summary><c>F</c> (zero-parameter, or collecting <c>F(xs*)</c>) ticks; <c>Capture(meta op) = op</c>; <c>R = Capture(F())</c>; the runtime-target alias <c>A = R.Algorithm</c>.</summary>
+    private static Property[] RuntimeAliasMembers(bool collectingTarget) =>
+    [
+        Prop("F", collectingTarget
+            ? new Algorithm.User(null, [new CaptureParameterPattern("xs", Kind: ParameterKind.Collecting)], [], [], [Tick()])
+            : Body(Tick())),
+        Prop("Capture", new Algorithm.User(null, [new CaptureParameterPattern("op", Kind: ParameterKind.Meta)], [], [], [X("op")])),
+        Prop("R", Body(Call("Capture", Call("F")))),
+        Prop("A", new Algorithm.Alias(null, [], [], new Expr.DotCall(R("R"), "Algorithm")) { HasRuntimeTarget = true }),
+    ];
+
+    /// <summary>
+    /// HOST-ALIAS-R14: a runtime-target alias declared directly in a host level keeps ONE binding cell
+    /// (and one target memo) per host scope OBJECT — the identity its property entries already have.
+    /// Two record-equal host scopes (one shared property list, or a <c>with</c> copy) formerly shared
+    /// the alias's run-wide cell, because the alias memo keyed the declaring chain structurally: the
+    /// second scope's <c>A</c> returned the first scope's value, and its <c>A()</c> read <c>R</c> under
+    /// the FIRST scope's property entry. Each scope now evaluates its own receiver exactly like two
+    /// separately listed scopes do, while one host object opened twice still shares its cell.
+    /// </summary>
+    [Theory]
+    [InlineData(false, "shared properties list", "((1, 1, 1, 1), (2, 2, 2, 2))", "tick1,tick2")]
+    [InlineData(false, "record with-copy", "((1, 1, 1, 1), (2, 2, 2, 2))", "tick1,tick2")]
+    [InlineData(false, "one host object opened twice", "((1, 1, 1, 1), (1, 1, 1, 1))", "tick1")]
+    [InlineData(true, "shared properties list", "((1, 2, 1, 3), (4, 5, 4, 6))", "tick1,tick2,tick3,tick4,tick5,tick6")]
+    [InlineData(true, "record with-copy", "((1, 2, 1, 3), (4, 5, 4, 6))", "tick1,tick2,tick3,tick4,tick5,tick6")]
+    [InlineData(true, "one host object opened twice", "((1, 2, 1, 3), (1, 4, 1, 5))", "tick1,tick2,tick3,tick4,tick5")]
+    public async Task RuntimeAliasInRecordEqualHostScopes_KeepsOneBindingCellPerHostScopeObject(
+        bool collectingTarget, string shape, string value, string effects)
+    {
+        // Terminal: A, A(), A, A(). Collecting (eligible): A, A(), A, A(5) — the calls stay fresh.
+        var row = Seq(R("A"), Call("A"), R("A"), collectingTarget ? Call("A", N(5)) : Call("A"));
+        ScopeCtx? first = null, second = null;
+        Expr Build(ScopeCtx pre)
+        {
+            IReadOnlyList<Property> list = RuntimeAliasMembers(collectingTarget);
+            first = new ScopeCtx(pre, [], list);
+            second = shape switch
+            {
+                "shared properties list" => new ScopeCtx(pre, [], list),
+                "record with-copy" => first with { },
+                _ => first,
+            };
+            return OpenedTwo(first, row, second, row, sequence: true);
+        }
+
+        var outcome = await OnEveryRouteAsync(Build);
+        Assert.Equal((value, effects), (outcome.Value, outcome.Effects));
+
+        // Every read of R — the receiver the alias's cell and its terminal row evaluate — is keyed
+        // under the host scope the alias was reached through, never the other scope's entry.
+        var log = new Log();
+        var ops = Ops(log);
+        var cache = new RecordingCache();
+        var (result, _) = Evaluator.RunCountedObserved(Build(Prelude(ops)), zeroArgPropertyResultCache: cache, hostOperations: ops);
+        Assert.Equal(value, Render(result.Value.Value));
+        Assert.Equal(first, second); // record-equal in every shape …
+        var owners = cache.Reads.Where(k => k.BindingIdentity is Property { Name: "R" })
+            .Select(k => k.OwnerIdentity).Distinct(ReferenceEqualityComparer.Instance).ToList();
+        if (ReferenceEquals(first, second))
+            Assert.Same(first, Assert.Single(owners));
+        else
+        {
+            // … yet two objects are two declaring namespaces.
+            Assert.Equal(2, owners.Count);
+            Assert.Contains(owners, owner => ReferenceEquals(first, owner));
+            Assert.Contains(owners, owner => ReferenceEquals(second, owner));
+        }
+    }
+
+    [Fact]
+    public async Task RuntimeAliasInAHostScope_WithoutTheFrontEndMarker_IsAdmittedByItsRuntimeRow()
+    {
+        Expr Build(ScopeCtx pre)
+        {
+            var members = RuntimeAliasMembers(collectingTarget: true).Select(p => p.Name == "A"
+                ? p with { Value = Assert.IsType<Algorithm.Alias>(p.Value) with { HasRuntimeTarget = false } }
+                : p).ToArray();
+            return OpenedThrough(new ScopeCtx(pre, [], members), Seq(Call("A", N(5)), R("A"), Call("A")));
+        }
+        var outcome = await OnEveryRouteAsync(Build);
+        Assert.Equal(("(1, 2, 3)", "tick1,tick2,tick3"), (outcome.Value, outcome.Effects));
+    }
+
+    [Fact]
+    public void RuntimeAliasHostCells_KeepDeclarationScopeAndRunIdentity_WithoutDemandingEitherChannel()
+    {
+        var ctx = Evaluator.EvalCtx.Empty;
+        IReadOnlyList<Property> members = RuntimeAliasMembers(collectingTarget: true);
+        var host = new ScopeCtx(null, [], members);
+        var copy = host with { };
+        var alias = Assert.IsType<Algorithm.Alias>(members.Single(p => p.Name == "A").Value);
+
+        var first = Evaluator.AliasBindingCell(alias with { Parent = host }, ctx);
+        Assert.Same(first, Evaluator.AliasBindingCell(alias with { Parent = host }, ctx));
+        var second = Evaluator.AliasBindingCell(alias with { Parent = copy }, ctx);
+        Assert.NotSame(first, second);
+        Assert.Same(second, Evaluator.AliasBindingCell(alias with { Parent = copy }, ctx));
+        Assert.Equal(2, ctx.Budget.AliasBindingCells.Count);
+        Assert.NotSame(first, Evaluator.AliasBindingCell(alias with { Parent = host }, Evaluator.EvalCtx.Empty));
+
+        // Reconstructing an evaluator-owned scope must still find the SAME retained cell.
+        var owner = new Algorithm.User(null, [], [], members, OutputBundle.Empty);
+        var owned = new ScopeCtx(null, [], members) { Owner = owner };
+        var ownedCell = Evaluator.AliasBindingCell(alias with { Parent = owned }, ctx);
+        Assert.Same(ownedCell, Evaluator.AliasBindingCell(alias with { Parent = owned with { } }, ctx));
+        Assert.NotSame(first, ownedCell);
+        Assert.All(new[] { first, second, ownedCell }, cell =>
+        {
+            Assert.False(cell.HasCompletedValue);
+            Assert.Equal(0, cell.ProjectionComputations);
+        });
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task RuntimeAliasHostCancellation_AfterReceiverOrTargetSuspension_ReleasesPublicationOwners(bool inReceiver)
+    {
+        using var cts = new CancellationTokenSource();
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var calls = 0;
+        var ticks = 0;
+        var ops = HostOperations.Create(
+            HostOperation.CreateAsync("pause", async (_, token) =>
+            {
+                calls++;
+                entered.TrySetResult();
+                await release.Task.WaitAsync(token);
+                return new Result.Atom(1);
+            }),
+            HostOperation.Create("tick", (_, _) => new Result.Atom(++ticks)));
+        var members = RuntimeAliasMembers(collectingTarget: true);
+        members = members.Select(p => p.Name switch
+        {
+            "R" when inReceiver => p with { Value = Body(Call("if",
+                new Expr.Comparison(Call("pause"), [new ComparisonLink(ComparisonOp.Gt, N(0))]),
+                Call("Capture", Call("F")), N(0))) },
+            "F" when !inReceiver => p with { Value = new Algorithm.User(null,
+                [new CaptureParameterPattern("xs", Kind: ParameterKind.Collecting)], [], [],
+                [Add(Call("pause"), Tick())]) },
+            _ => p,
+        }).ToArray();
+        var cache = new SuspendingRecordingCache();
+        var program = OpenedThrough(new ScopeCtx(Prelude(ops), [], members), Seq(Call("A"), Tick()));
+        var pending = Evaluator.RunCountedObservedAsync(program, zeroArgPropertyResultCache: cache,
+            hostOperations: ops, cancellationToken: cts.Token).AsTask();
+        try
+        {
+            await entered.Task.WaitAsync(TimeSpan.FromSeconds(10));
+            Assert.False(pending.IsCompleted); // The alias route is waiting inside the host callback.
+            cts.Cancel();
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(async () => await pending.WaitAsync(TimeSpan.FromSeconds(10)));
+        }
+        finally
+        {
+            cts.Cancel();
+            release.TrySetResult();
+        }
+        Assert.Equal(1, calls);
+        Assert.Equal(0, ticks);
+        Assert.Equal(0, cache.SyncAccesses);
+        Assert.Equal(0, cache.ActiveOwnerCount);
+        // A completed receiver survives a failed target; the alias/Run owners never publish.
+        Assert.Equal(inReceiver ? 0 : 1, cache.PublishedCount);
+    }
+
+    /// <summary>
+    /// The alias memo's scope identity (HOST-ALIAS-R14) distinguishes ONLY an ownerless host DECLARING
+    /// level by reference — exactly where <see cref="PropertyDeclaringOwner"/> does. Rebuilt
+    /// evaluator-owned levels over the same lists stay equal (normal memo hits survive), and so does a
+    /// chain that merely passes through a host level, as the property cache keys its owners structurally.
+    /// </summary>
+    [Fact]
+    public void TheAliasScopeIdentity_SeparatesOnlyHostDeclaringLevels_ByReference()
+    {
+        IReadOnlyList<Expr> noOpens = [];
+        IReadOnlyList<Property> list = [Prop("P", Body(N(1)))];
+        var host = new ScopeCtx(null, noOpens, list);
+        var copy = host with { };
+        Assert.Equal(host, copy);
+        Assert.Equal(StructuralOwnerIdentity.FromScope(host), StructuralOwnerIdentity.FromScope(host));
+        Assert.NotEqual(StructuralOwnerIdentity.FromScope(host), StructuralOwnerIdentity.FromScope(copy));
+
+        var owner = new Algorithm.User(null, [], noOpens, list, OutputBundle.Empty);
+        ScopeCtx Rebuilt(ScopeCtx? parent) => new(parent, noOpens, list) { Owner = owner };
+        Assert.Equal(StructuralOwnerIdentity.FromScope(Rebuilt(null)), StructuralOwnerIdentity.FromScope(Rebuilt(null)));
+        Assert.Equal(StructuralOwnerIdentity.FromScope(Rebuilt(host)), StructuralOwnerIdentity.FromScope(Rebuilt(copy)));
+        Assert.Equal(StructuralOwnerIdentity.FromScope(Rebuilt(host)).GetHashCode(), StructuralOwnerIdentity.FromScope(Rebuilt(copy)).GetHashCode());
     }
 
     // ── 2. Identity: the host scope OBJECT, by reference ─────────────────────────────────────

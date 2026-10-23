@@ -1,5 +1,21 @@
 # Semantic Alignment Manifest.
 
+HOST-ALIAS-R14 — host-declared alias memo identity (October 24 2026; C# host representation,
+CACHE-OWNER-D3's existing D3-B rule): a single ownerless host scope already handled `A = R.Algorithm`
+correctly. Distinct host scope OBJECTS sharing one properties list (including a record `with` copy)
+incorrectly shared the alias binding cell and target memo, so the second alias could read the first
+scope's `R` cache entry. `StructuralOwnerIdentity.FromScope` now includes the declaring level by
+reference when it has no evaluator `Owner`, using its existing reference-compared token. Its four
+alias memo/cycle callers share the correction in both execution engines. Evaluator-owned levels
+and chains merely passing through a host level keep their structural equivalence. No new cache,
+owner, cell per lookup, public API or D4/publication policy. `HostScopePropertyCacheTests` pins
+shared-list/with-copy isolation versus one-object reuse on generic, optimized and suspending async
+routes, actual canonical cell identity and inert formation, run isolation, rebuilt owned-scope
+reuse, and cancellation during a suspended receiver or target with publication-owner cleanup.
+Lean's host identity remains structural (O-6 deferred); no Lean production edit or host-DAG parity
+claim. Pre-wired parent encoding remains HOST-DIFF-1. Report:
+`experimental/features/host-alias-r14-research-and-fix.md`. Full V3 required.
+
 COLLECT-CACHE-1 — declaring-context inheritance for collecting-only property reads (2026-10-23; the
 residual listed by CACHE-OWNER-D1): a SHARED Lean and C# defect, corrected Lean-first. DEFECT:
 `Only(*xs)` accepts zero supplied arguments, so a bare `Only` is a property-style READ through the

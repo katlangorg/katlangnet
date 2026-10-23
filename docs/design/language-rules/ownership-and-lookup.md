@@ -227,6 +227,16 @@ Lean models the rules: the alias as the core construct `Algorithm.alias` with it
 
 ## Runtime-target callable aliases (FWD-02, META-S3-2, October 2026)
 
+For a C# alias declared directly in an ownerless host `ScopeCtx`, the declaring scope component of
+the binding-cell memo, target memo and cycle key includes that exact scope object by reference
+(HOST-ALIAS-R14, the existing CACHE-OWNER-D3/D3-B ownership rule). Reopening one object retains one
+cell; separate objects sharing a property list, alias declaration or a record `with` copy retain
+separate cells. Evaluator-owned declaring scopes keep structural identity so rebuilding a wrapper
+preserves memo hits; a host level elsewhere in that chain does not change this rule. The cell memo
+is distinct from the property-result cache and never makes an eligible explicit call reuse a call
+result. Lean's structural host-identity boundary remains O-6 (deferred), and pre-wired host parent
+encoding remains HOST-DIFF-1. `HostScopePropertyCacheTests` pins these C# host distinctions.
+
 THE RULE (owner decisions D1 = yes, D2 = Option A, D3 = fresh invocation). **A lone reference row of an open, parameterless declaration is a callable alias of whatever callable its row denotes; when that identity is known only at run time, it is decided at run time; a name that nothing declares is still a parameter.** It generalizes FWD-02's alias — it is the same `Algorithm.Alias` and the same normalization, not a second callable system.
 
 * **Classification (Option A; C# front end, FORMAL-02).** A non-root OPEN body — no written parameter list, not a clause branch — that is left with NO parameter of its own after the existing inference has completed (Q-75 / DOT-05's implicit parameters AND formula lifting), and whose ONE written row (`AstHelpers.WrittenRows`) is:
