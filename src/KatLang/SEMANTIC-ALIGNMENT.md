@@ -226,7 +226,8 @@ whole-run cache monotonicity and owner-set restoration on completed runs (since 
 `invoke` request; its one-step publication laws are `PropertyInvocationLaws.lean`); and plain = value of
 counted for every plain/counted pair (FORMAL-05) as production EQUATIONS. The heap theorem
 preserves suspensions, completed VALUEs and prepared supplies; it does not establish CALLABLE
-stability, canonical links or activation/address invariants. The original old/new evidence compares
+stability, canonical links or activation/address invariants (CALLABLE stability and recorded links:
+proved since FG-M1, 2026-10-23, below). The original old/new evidence compares
 full outcomes and lossy state summaries on 3,030 cases (cache/activation contents and successful
 callable identities were omitted), not equality of complete state. Reviewer migration observations
 and limits are recorded in `artifacts/validation/r7-review/`. Proved scope and outstanding
@@ -235,6 +236,28 @@ laws, the dot funnel, Q-25, plan conservativity and the admitted public-run brid
 `experimental/features/s6d-r7-whole-run-evaluator-refinement.md`. The `Error.fuelExhausted`
 constructor required one line in the shared generated-artifact template (`LeanObsTemplate`) and the
 regenerated `SemanticExplorerCases.lean` / `LanguageSpecCases.lean` headers.
+
+FG-M1 — completed CALLABLE / recorded-link preservation (2026-10-23; proof-only, no Lean definition
+or C# change). `CellKept` constrains neither `NeedCell.callable`, `callee` nor `receiver`, so the local
+reread laws (`projected_sticky`, `calleeCell_recorded`, `receiverCell_recorded`) did not survive an
+intervening operation. `KatLangArityLaws/EvaluatorMemoLinks.lean` adds the companion relation
+`LinkKept` / `LinkHeapKept` / `LinkDisc` (a completed CALLABLE outcome by Lean equality — identity,
+successful absence or failure — a recorded callee and a recorded receiver are kept) beside the
+unchanged `CellKept` (`MemoKept` packages both), proves it for every `EvalCall` body
+(`evalStep_linkDisc`, the `EvaluatorDiscipline` procedure over `LinkDisc`; hand proofs for the
+guarded writers `NeedProjection.step`, `NeedPlan.calleeCell`, `NeedLink.receiverCell` and the D4
+`aliasBareCell` write-back) and transfers it through `invariant_transfer` / `production_preserves`:
+`evalFuel_linkDisc` (completed runs), `evalUnbounded_linkDisc` and the principal
+`production_keeps_memo_links` (every production operation, every entry state, success or ordinary
+failure; the kernel-level noncompletion fallback keeps the entry state — no termination claim).
+Corollaries: `production_callable_reread` (the production `projectNeedCallable` returns the stored
+outcome with no effect), `production_callee_reread` / `production_receiver_reread`, `runOps_*` for
+finite sequences. Guards `EvaluatorMemoLinksGuards.lean` (actual production operations; the old
+`CellKept` admits changing each new field; raw `setCallee` / `setReceiver` / CALLABLE writes are
+rejected by `LinkDisc` — contract boundary, not a production defect). NOT claimed: validity of the
+recorded addresses (FG-H1), collector order, an in-flight first-writer law (a record first made inside
+an establishing writer's own callback may be overwritten by that writer's publication), projection
+refinement, anything about C#. Report `artifacts/validation/fg-m1/fg-m1-implementation-report.md`.
 
 META-S3-4 — generalized META capture of written invocations (2026-10-20; an INTENTIONAL language
 extension, owner decisions D-1A/D-2A/D-4, consequences D-3/D-5; Lean first, then C#). The capture domain

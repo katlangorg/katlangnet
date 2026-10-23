@@ -6,7 +6,17 @@ open KatLang KatLang.CallPlan
 The `partial`/source-only installation descriptions below record the original proof boundary;
 `EvaluatorCore.production_unfolds` connects completed operations to those bodies. This does not
 prove reachable link-address validity, completed CALLABLE stability or end-to-end projection
-refinement. The local theorems below retain their stated premises. -/
+refinement. The local theorems below retain their stated premises.
+
+FG-M1 (2026-10-23): completed CALLABLE stability and recorded-link preservation across intervening
+production evaluation are now proved in `EvaluatorMemoLinks.lean` (`production_keeps_memo_links`,
+`production_callable_reread`, `production_callee_reread`, `production_receiver_reread`): a
+completed CALLABLE outcome, a recorded `callee` and a recorded `receiver` present at an operation's
+ENTRY survive every production operation, so the local reread laws below (`calleeCell_recorded`,
+`receiverCell_recorded`, `NeedControl.Projection.projected_sticky`) apply after it. That is
+entry-state preservation of the stored numbers and outcomes only: it proves neither that a recorded
+address is valid (FG-H1), nor any in-flight first-writer law for a record first made inside an
+establishing operation's own callback, nor end-to-end projection refinement. -/
 
 /-!
 # META-S3-1: the callable projection of a call reference, `R.Algorithm` (October 2026)
