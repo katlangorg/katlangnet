@@ -1850,7 +1850,7 @@ public static partial class Evaluator
                 owner,
                 binding,
                 accessKind,
-                ctx.NeedEnv.Count == 0 ? ValueEnvironmentCacheIdentity(valEnv) : ctx.NeedEnv,
+                BindingContextIdentity(ctx, valEnv),
                 // The budget is the run identity, exactly as on the synchronous seam.
                 ctx.Budget)
             { DeclaringScope = resolvedAlgorithm.Parent },
@@ -2077,7 +2077,7 @@ public static partial class Evaluator
         ValEnv valEnv)
     {
         var execution = new DeconstructionBindingExecution(target.Group, DeconstructionOwnerIdentity(ctx),
-            ctx.NeedEnv.Count == 0 ? ValueEnvironmentCacheIdentity(valEnv) : ctx.NeedEnv);
+            BindingContextIdentity(ctx, valEnv));
         var sharedR = await ctx.DeconstructionBindingCache.GetOrBindAsync(execution,
             () => BindNeedDeconstruction(helper, args, ctx, valEnv, asynchronous: true)).ConfigureAwait(false);
         if (sharedR.IsError) return sharedR.Error;

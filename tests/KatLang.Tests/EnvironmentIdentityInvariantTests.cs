@@ -10,9 +10,10 @@ namespace KatLang.Tests;
 /// <summary>
 /// The evaluator's environment tiers are plain lists whose REFERENCE IDENTITY is the
 /// binding-context identity of the run-scoped caches: a LOCAL-ONLY zero-argument property
-/// entry is keyed by the value-environment identity at its declaring owner's entry — its
-/// need-cell list, or its value list when it bound no cell (<see cref="ZeroArgPropertyCacheKey"/>)
-/// — and a deconstruction group's shared bind by the caller's value-environment identity
+/// entry is keyed by the binding-context identity at its declaring owner's entry — the
+/// need-cell list its boundary minted, even an empty one, or its value list below every
+/// boundary (<see cref="ZeroArgPropertyCacheKey"/>, CACHE-OWNER-D2) — and a deconstruction
+/// group's shared bind by the caller's binding-context identity
 /// (<see cref="DeconstructionBindingExecution"/>).
 /// <c>Evaluator.Concat</c> — the ONE helper that builds a new binding context's tier by
 /// prepending the binding's own entries — must therefore return a FRESH list on every

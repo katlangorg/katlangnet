@@ -1,5 +1,33 @@
 # Semantic Alignment Manifest.
 
+CACHE-OWNER-D2 — fresh binding identity for zero-supply calls (2026-10-23): C#-only correction to
+the authoritative Lean semantics; no Lean production edit. DEFECT: a call binding boundary that binds
+no need cell and inherits none — a zero-supply call of a parameterless owner from the root, today
+reached through META `R.Algorithm()` / `(R.Algorithm)()` or a literal-only clause branch — got no
+binding identity of its own: `ParameterActivation.Capture` (and every key site) used `NeedEnv.Count
+== 0 ? ValueEnvironmentCacheIdentity(values) : NeedEnv`, so the boundary's freshly minted EMPTY need
+list was ignored and the caller's value environment (returned unchanged by `ShadowValEnv`) keyed both
+activations. Two different `F` activations then shared one local-only entry and one deconstruction
+group bind: `R1.Algorithm(), R2.Algorithm()` gave `(3, 3)`, Lean `(3, 4)`; `X = R1.Algorithm() * 100
++ R2.Algorithm()` `303`, Lean `304`; with `V = k + tick()`, `R1.Algorithm(), R2.Algorithm(),
+R1.Algorithm()` gave `(4, 4, 4)` after one tick, Lean-consistent `(4, 42, 6)` after three. RULE:
+every ordinary call binding boundary establishes a fresh binding context, however many parameters or
+cells it binds (Lean `EvalCtx.bindParameters`, reached through `needBindingContext` and the alias bare
+cell). C#: the need tier a boundary mints is typed `Evaluator.BoundNeedEnv` (the `Concat(NeedEnv,
+NeedEnv)` overload `WithNeedBindings` already called — the same one list, no extra allocation), and
+the ONE helper `Evaluator.BindingContextIdentity` returns that tier even when empty, else the value
+environment identity below every boundary (root, host entry, a planned loop's shadowed step context,
+whose per-iteration identity is unchanged). Its users: `ParameterActivation.Capture`, the sync and
+async property-cache executions (`GetOrEvaluateZeroArgPropertyResultCore`, its async twin,
+`ZeroSupplyInvocationExecution`) and both deconstruction-cache executions. Property-style reads
+mint nothing, so their sharing, exported run-wide entries, CACHE-PUB-1, Q-37, the runtime-alias D4
+sticky binding and planned-loop identities are unchanged, and D1/D3 are untouched. Lean needed no
+semantic change because `bindParameters` already allocates at every boundary; new `CoreTests/
+PropertyCacheConsumers.lean` § CACHE-OWNER-D2 guards pin PV1/PV4/PV3/PV6, explicit-call freshness,
+the `Invoke`/bare/alias controls, deconstruction and exported entries by entry counts. C#:
+`MetaCallBindingContextTests` (six routes incl. the genuinely suspending twin, step parity, cache-seam
+identities, allocation parity); before the fix 11 of its 19 original tests failed. Full V3.
+
 SEC-S1 — front-end memory amplification (2026-10-23): C#-only representation and object-LIFETIME
 change; no language, Lean, diagnostic, or observable-outcome change, so no Lean edit (Lean models
 neither elaboration pass memory nor source limits). The front end now keeps fewer transient objects

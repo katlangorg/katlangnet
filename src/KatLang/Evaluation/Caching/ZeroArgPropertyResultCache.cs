@@ -65,8 +65,9 @@ internal interface IZeroArgPropertyResultCache
 ///   <item>A local-only binding (<see cref="PropertyExposure.LocalOnlyCapturedAncestorParameters"/>)
 ///   reads an input an enclosing owner's call binds, through the dynamically
 ///   threaded environments; its value is a function of the binding context, so the
-///   key carries the value-environment identity at the DECLARING owner's entry (the
-///   activation's need-cell list, or its value environment when it bound no cell) and the
+///   key carries the binding-context identity at the DECLARING owner's entry (the need-cell
+///   list its call boundary minted, even an empty one, or the value environment below every
+///   boundary: <c>Evaluator.BindingContextIdentity</c>, CACHE-OWNER-D2) and the
 ///   declaring scope. Two distinct binding contexts never share an
 ///   entry, and consumers within one owning activation reuse its entry even through nested calls.
 ///   Scopes without an activation retain the host environment fallback.</item>

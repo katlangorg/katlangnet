@@ -360,4 +360,97 @@ def q03Run (out : List KatLang.Expr) : Option (Result × Nat × Nat) :=
 #guard q03Run [resolve "Only", .call (resolve "Only") [], resolve "Only"]
   == some (.sequenceValue [.atom 7, .atom 7, .atom 7], 4, 1)
 
+--------------------------------------------------------------------------------
+-- CACHE-OWNER-D2: every call boundary is a fresh binding context (October 2026)
+--------------------------------------------------------------------------------
+-- `EvalCtx.bindParameters` allocates a fresh `bindingContext` at EVERY binding
+-- boundary, also one that binds no parameter and inherits no cell: a zero-supply
+-- call of a parameterless owner made from the root (META `R.Algorithm()`) is its
+-- own activation, so the owner's local-only `V` gets one entry per call and two
+-- calls never share one. C# was corrected to this production behavior
+-- (`Evaluator.BindingContextIdentity`, `MetaCallBindingContextTests`); these
+-- guards pin it. The trees are `LeanAstEncoder` output of the C# elaboration of
+-- the research witnesses (`experimental/features/cache-owner-f1-research.md`
+-- § 2.3) with the effect-free `V = k * 1`, so ENTRY COUNTS witness the contexts.
+
+section CacheOwnerD2
+open KatLang
+
+/-- `Capture(meta op) = op`. -/
+def d2Capture : PropDef :=
+  privateProp "Capture" (algWithParameters [{ name := "op", kind := .metaRef }] [] [] [.param "op"])
+
+/-- `F(k) = { B = { V = k * 1 ⏎ V } ⏎ Capture(B()) }`: `B` is a parameterless owner whose
+    local-only `V` reads `F`'s parameter. -/
+def d2F : PropDef :=
+  privateProp "F" (alg ["k"] [] [{ (privateLocalProp "B" (.localCapturedAncestorParams ["k"]) (alg [] [] [{ (privateLocalProp "V" (.localCapturedAncestorParams ["k"]) (alg [] [] [] [(.binary .mul (.param "k") (.num 1))])) with requiredOwnerDepths := some [("k", some 1)] }] [.resolve "V"])) with requiredOwnerDepths := some [("k", some 0)] }] [(.call (.resolve "Capture") [(.call (.resolve "B") [])])])
+
+/-- `R1 = F(3)` / `R2 = F(4)` beside `extra`, `Capture` and `F`, with the root rows `rows`;
+    the run's value and how many cache entries `name` has. -/
+def d2Run (owner : PropDef) (extra : List PropDef) (rows : List Expr) (name : Ident) : Option (Result × Nat) :=
+  let root := alg [] []
+    ([privateProp "R1" (alg [] [] [] [(.call (.resolve owner.name) [.num 3])]),
+      privateProp "R2" (alg [] [] [] [(.call (.resolve owner.name) [.num 4])])] ++ extra ++ [d2Capture, owner])
+    rows
+  match runResultWithState (.algorithmExpr root) with
+  | .ok (value, state) =>
+      some (value, (state.zeroArgPropertyCache.filter (fun e => e.fst.propertyName == name)).length)
+  | .error _ => none
+
+def d2Call (receiver : Ident) : Expr := .dotCall (.resolve receiver) "Algorithm" (some [])
+
+-- D2-PV1: two projected zero-supply calls are two activations, two `V` entries.
+#guard d2Run d2F [] [d2Call "R1", d2Call "R2"] "V" == some (.sequenceValue [.atom 3, .atom 4], 2)
+-- D2-PV4: the order-reversed variant.
+#guard d2Run d2F [] [d2Call "R2", d2Call "R1"] "V" == some (.sequenceValue [.atom 4, .atom 3], 2)
+-- D2-PV3: combined in a root property, `304` (never `303`).
+#guard d2Run d2F
+    [privateProp "X" (alg [] [] [] [(.binary .add (.binary .mul (d2Call "R1") (.num 100)) (d2Call "R2"))])]
+    [.resolve "X"] "V" == some (.atom 304, 2)
+-- Explicit-call freshness: a second call of the SAME captured activation is a third
+-- context, and its parenthesized spelling is the same ordinary call.
+#guard d2Run d2F [] [d2Call "R1", d2Call "R2", d2Call "R1"] "V"
+  == some (.sequenceValue [.atom 3, .atom 4, .atom 3], 3)
+#guard d2Run d2F [] [.call (.dotCall (.resolve "R1") "Algorithm" none) [],
+    .call (.dotCall (.resolve "R2") "Algorithm" none) [], .call (.dotCall (.resolve "R1") "Algorithm" none) []] "V"
+  == some (.sequenceValue [.atom 3, .atom 4, .atom 3], 3)
+-- Controls: `R.Invoke()` replays each captured invocation; the bare projection demands
+-- the callable's value.
+#guard d2Run d2F [] [.dotCall (.resolve "R1") "Invoke" (some []), .dotCall (.resolve "R2") "Invoke" (some [])] "V"
+  == some (.sequenceValue [.atom 3, .atom 4], 2)
+#guard d2Run d2F [] [.dotCall (.resolve "R1") "Algorithm" none, .dotCall (.resolve "R2") "Algorithm" none] "V"
+  == some (.sequenceValue [.atom 3, .atom 4], 2)
+-- A runtime-target alias keeps its one sticky binding cell (META-S3-2 D4): `A1(), A2(), A1()`
+-- leaves TWO `V` entries for three calls, the two `A1()` calls sharing A1's.
+#guard d2Run d2F [privateProp "A1" (.alias none [] [] (.dotCall (.resolve "R1") "Algorithm" none)),
+    privateProp "A2" (.alias none [] [] (.dotCall (.resolve "R2") "Algorithm" none))]
+    [.call (.resolve "A1") [], .call (.resolve "A2") [], .call (.resolve "A1") []] "V"
+  == some (.sequenceValue [.atom 3, .atom 4, .atom 3], 2)
+
+/-- D2-PV6: `G(k) = { F(0) = { V = k * 1 ⏎ V } ⏎ F(x) = 0 ⏎ Capture(F(0)) }`, a literal-only clause
+    branch that binds nothing. -/
+def d2G : PropDef :=
+  privateProp "G" (alg ["k"] [] [{ (privateLocalProp "F" (.localCapturedAncestorParams ["k"]) (.conditional none [] [⟨.litInt 0, (alg [] [] [{ (privateLocalProp "V" (.localCapturedAncestorParams ["k"]) (alg [] [] [] [(.binary .mul (.param "k") (.num 1))])) with requiredOwnerDepths := some [("k", some 2)] }] [.resolve "V"])⟩, ⟨.bind "x", (alg [] [] [] [.num 0])⟩])) with requiredOwnerDepths := some [("k", some 0)] }] [(.call (.resolve "Capture") [(.call (.resolve "F") [.num 0])])])
+
+#guard d2Run d2G [] [.dotCall (.resolve "R1") "Algorithm" (some [.num 0]), .dotCall (.resolve "R2") "Algorithm" (some [.num 0])] "V"
+  == some (.sequenceValue [.atom 3, .atom 4], 2)
+
+/-- `F(k) = { B = { a, b = (k * 1, 1) ⏎ a + b + a } ⏎ Capture(B()) }`: one deconstruction source
+    per activation, shared by its targets. -/
+def d2Decon : PropDef :=
+  privateProp "F" (alg ["k"] [] [{ (privateLocalProp "B" (.localCapturedAncestorParams ["k"]) (alg [] [] [{ (privateLocalProp "$deconstruct$0" (.localCapturedAncestorParams ["k"]) (alg [] [] [] [(.capture [(.binary .mul (.param "k") (.num 1)), .num 1])])) with requiredOwnerDepths := some [("k", some 1)] }, { (privateLocalProp "a" (.localCapturedAncestorParams ["k"]) (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "a" }, .capture { name := "b" }]] [] [] [.param "a"])) [.resolve "$deconstruct$0"])])) with requiredOwnerDepths := some [("k", some 1)] }, { (privateLocalProp "b" (.localCapturedAncestorParams ["k"]) (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "a" }, .capture { name := "b" }]] [] [] [.param "b"])) [.resolve "$deconstruct$0"])])) with requiredOwnerDepths := some [("k", some 1)] }] [(.binary .add (.binary .add (.resolve "a") (.resolve "b")) (.resolve "a"))])) with requiredOwnerDepths := some [("k", some 0)] }] [(.call (.resolve "Capture") [(.call (.resolve "B") [])])])
+
+#guard d2Run d2Decon [] [d2Call "R1", d2Call "R2"] "$deconstruct$0"
+  == some (.sequenceValue [.atom 7, .atom 9], 2)
+
+/-- `F(k) = { B = { E = 100 ⏎ E + k } ⏎ Capture(B()) }`: `E` reads no captured parameter. -/
+def d2Exported : PropDef :=
+  privateProp "F" (alg ["k"] [] [{ (privateLocalProp "B" (.localCapturedAncestorParams ["k"]) (alg [] [] [privateProp "E" (alg [] [] [] [.num 100])] [(.binary .add (.resolve "E") (.param "k"))])) with requiredOwnerDepths := some [("k", some 0)] }] [(.call (.resolve "Capture") [(.call (.resolve "B") [])])])
+
+-- An exported property keeps ONE run-wide entry across the three activations.
+#guard d2Run d2Exported [] [d2Call "R1", d2Call "R2", d2Call "R1"] "E"
+  == some (.sequenceValue [.atom 103, .atom 104, .atom 103], 1)
+
+end CacheOwnerD2
+
 end KatLangTests

@@ -207,7 +207,7 @@ public static partial class Evaluator
             binding.Owner,
             binding.Binding,
             ZeroArgPropertyAccessKind.Invocation,
-            ctx.NeedEnv.Count == 0 ? ValueEnvironmentCacheIdentity(valEnv) : ctx.NeedEnv,
+            BindingContextIdentity(ctx, valEnv),
             ctx.Budget)
         { DeclaringScope = property.Parent };
 

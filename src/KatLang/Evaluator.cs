@@ -156,6 +156,22 @@ public static partial class Evaluator
             : valEnv;
 
     /// <summary>
+    /// The binding-context identity of <paramref name="ctx"/> (Lean: <c>EvalCtx.bindingContext</c>):
+    /// what a LOCAL-ONLY zero-argument property entry is keyed by — recorded at owner entry
+    /// (<see cref="ParameterActivation.Capture"/>), or taken at the access when no activation owns the
+    /// binding — and what a deconstruction group's shared bind is keyed by. The need tier a binding
+    /// boundary minted (<see cref="BoundNeedEnv"/>) IS that identity, EVEN WHEN IT IS EMPTY: a call that
+    /// binds no cell and inherits none is still a new activation (CACHE-OWNER-D2, October 2026; Lean
+    /// <c>EvalCtx.bindParameters</c> allocates a fresh context at every boundary). Only a context below
+    /// no boundary — the root, a host entry, a planned loop's shadowed step context — falls back to its
+    /// value environment's identity, which a planned loop advances per iteration.
+    /// </summary>
+    internal static object BindingContextIdentity(in EvalCtx ctx, ValEnv valEnv)
+        => ctx.NeedEnv.Count != 0 || ctx.NeedEnv is BoundNeedEnv
+            ? ctx.NeedEnv
+            : ValueEnvironmentCacheIdentity(valEnv);
+
+    /// <summary>
     /// Lexical-scope identity of the caller that resolves an assignment-deconstruction group's
     /// hoisted <c>$deconstruct$</c> source, used to key the shared-bind cache. Returns a
     /// never-matching token when the call stack is empty: no evaluator run reaches that state
@@ -3449,9 +3465,9 @@ public static partial class Evaluator
     /// <paramref name="a"/> or <paramref name="b"/> itself — even when the other operand
     /// is empty.</b> The reference identity of an environment tier is the binding-context
     /// identity of the zero-argument property cache (<see cref="ZeroArgPropertyCacheKey"/>:
-    /// a LOCAL-ONLY entry is keyed by the value-environment identity at the access — the
-    /// need-cell list, or <see cref="ValueEnvironmentCacheIdentity"/> when no cell is bound)
-    /// and of the deconstruction binding
+    /// a LOCAL-ONLY entry is keyed by <see cref="BindingContextIdentity"/> — the minted
+    /// need-cell list, empty or not, or <see cref="ValueEnvironmentCacheIdentity"/> below
+    /// every boundary) and of the deconstruction binding
     /// cache (<see cref="DeconstructionBindingExecution"/>). Two activations that bind
     /// NOTHING new — <c>Inner()</c> called twice from one caller, a zero-parameter
     /// callback, an iteration of a step with no state — must still be two binding
@@ -3472,5 +3488,33 @@ public static partial class Evaluator
         result.AddRange(a);
         result.AddRange(b);
         return result;
+    }
+
+    /// <summary>
+    /// The need tier's <see cref="Concat{T}"/>: the same fresh list, typed as a
+    /// <see cref="BoundNeedEnv"/> so that the binding context it mints stays recognizable when
+    /// it binds no cell and inherits none (<see cref="BindingContextIdentity"/>). No extra
+    /// allocation: the boundary already allocated this list.
+    /// </summary>
+    internal static NeedEnv Concat(NeedEnv a, NeedEnv b)
+        => new BoundNeedEnv(a, b);
+
+    /// <summary>
+    /// The need tier of a binding context that a binding boundary minted
+    /// (<see cref="Concat(NeedEnv, NeedEnv)"/>; Lean <c>needBindingContext</c> /
+    /// <c>EvalCtx.bindParameters</c>): an ordinary call, a conditional-family call, a callback
+    /// invocation, a loop iteration, a zero-argument demand that binds a pattern, a runtime alias's
+    /// bare cell. Its reference is the binding-context identity even when it is EMPTY — a call that
+    /// binds nothing is still a new activation (CACHE-OWNER-D2). Every other tier (the root's, a
+    /// shadowed view, an activation's captured cells) is no boundary when empty.
+    /// </summary>
+    internal sealed class BoundNeedEnv : List<(string Name, NeedCell Cell)>
+    {
+        internal BoundNeedEnv(NeedEnv own, NeedEnv inherited)
+            : base(own.Count + inherited.Count)
+        {
+            AddRange(own);
+            AddRange(inherited);
+        }
     }
 }

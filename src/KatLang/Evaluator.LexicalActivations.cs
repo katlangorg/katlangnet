@@ -71,13 +71,16 @@ internal sealed class ParameterActivation
     /// Captures the bindings of <paramref name="names"/> from the two tiers of a binding
     /// context: the value environment <paramref name="values"/> and the need-cell tier of
     /// <paramref name="ctx"/>, keeping the first binding of each owned name in environment
-    /// order (Lean: <c>recordParameterActivation</c>'s two <c>filter</c>s).
+    /// order (Lean: <c>recordParameterActivation</c>'s two <c>filter</c>s), together with the
+    /// entering context's binding identity (Lean: <c>bindingContext := ctx.bindingContext</c>):
+    /// the fresh tier of the call boundary that entered the body, even when that call bound
+    /// nothing (<see cref="Evaluator.BindingContextIdentity"/>).
     /// </summary>
     internal static ParameterActivation Capture(IReadOnlyList<string> names, Evaluator.EvalCtx ctx, ValEnv values)
         => new(
             FilterOwned(values, names, static binding => binding.Name),
             FilterOwned(ctx.NeedEnv, names, static binding => binding.Name),
-            ctx.NeedEnv.Count == 0 ? Evaluator.ValueEnvironmentCacheIdentity(values) : ctx.NeedEnv);
+            Evaluator.BindingContextIdentity(ctx, values));
 
     /// <summary>
     /// The bindings of <paramref name="env"/> whose names are owned, first binding per name.

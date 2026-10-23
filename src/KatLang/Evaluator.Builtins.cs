@@ -473,7 +473,7 @@ public static partial class Evaluator
                 owner,
                 binding,
                 accessKind,
-                ctx.NeedEnv.Count == 0 ? ValueEnvironmentCacheIdentity(valEnv) : ctx.NeedEnv,
+                BindingContextIdentity(ctx, valEnv),
                 // The budget is created fresh per run (CreateRootCtx) and threaded by
                 // reference through every derived ctx, so it is the run identity:
                 // entries can never be served across runs even when a host shares
