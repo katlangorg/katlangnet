@@ -453,4 +453,140 @@ def d2Exported : PropDef :=
 
 end CacheOwnerD2
 
+--------------------------------------------------------------------------------
+-- CACHE-OWNER-D1: a property read inherits the declaring context (October 2026)
+--------------------------------------------------------------------------------
+-- A parameterless owner `B` entered by a PROPERTY-STYLE read records the binding
+-- context of its declaring activation (`EvalBody.evalPropertyDemandCounted`,
+-- `enterPropertyOwnerBody`), never the consumer's: whichever consumer reads `B`
+-- first — a callback, a helper call, a loop step — its local-only `V` is keyed on
+-- `F`'s activation, the key a structural `B.V` and an opened `V` compute too. Before
+-- the correction `V` was published once per consumer context (the research
+-- witness R8 left two `V` entries with binding contexts 2 and 1). An explicit `B()`
+-- still binds a fresh context. The trees are `LeanAstEncoder` output of the C#
+-- elaboration of the research programs (`experimental/features/cache-owner-f1-research.md`
+-- § 2.2) with effect-free bodies, so ENTRY COUNTS witness the evaluations; the C#
+-- twins with effects are `ParameterlessOwnerEntryContextTests`.
+
+section CacheOwnerD1
+open KatLang
+
+/-- The run's value, the cache entries `name` has, and the binding contexts it opened. -/
+def d1Run (program : Expr) (name : Ident) : Option (Result × Nat × Nat) :=
+  match runResultWithState program with
+  | .ok (value, state) =>
+      some (value, (state.zeroArgPropertyCache.filter (fun e => e.fst.propertyName == name)).length,
+        state.nextBindingContext - 1)
+  | .error _ => none
+
+/-- MIN: `F(k) = { ⏎ B = { ⏎ V = k * 1 ⏎ V ⏎ } ⏎ [0].map{ n + B }[0] + B.V ⏎ } ⏎ F(3)` -/
+def d1MIN : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "F" (alg ["k"] [] [{ (privateLocalProp "B" (.localCapturedAncestorParams ["k"]) (alg [] [] [{ (privateLocalProp "V" (.localCapturedAncestorParams ["k"]) (alg [] [] [] [(.binary .mul (.param "k") (.num 1))])) with requiredOwnerDepths := some [("k", some 1)] }] [.resolve "V"])) with requiredOwnerDepths := some [("k", some 0)] }] [(.binary .add (.index (.dotCall (.listLiteral [.num 0]) "map" (some [(.algorithmExpr (alg ["n"] [] [] [(.binary .add (.param "n") (.resolve "B"))]))])) [.num 0]) (.dotCall (.resolve "B") "V" none))])] [(.call (.resolve "F") [.num 3])])
+
+/-- SWAP: `F(k) = { ⏎ B = { ⏎ V = k * 1 ⏎ V ⏎ } ⏎ B.V + [0].map{ n + B }[0] ⏎ } ⏎ F(3)` -/
+def d1SWAP : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "F" (alg ["k"] [] [{ (privateLocalProp "B" (.localCapturedAncestorParams ["k"]) (alg [] [] [{ (privateLocalProp "V" (.localCapturedAncestorParams ["k"]) (alg [] [] [] [(.binary .mul (.param "k") (.num 1))])) with requiredOwnerDepths := some [("k", some 1)] }] [.resolve "V"])) with requiredOwnerDepths := some [("k", some 0)] }] [(.binary .add (.dotCall (.resolve "B") "V" none) (.index (.dotCall (.listLiteral [.num 0]) "map" (some [(.algorithmExpr (alg ["n"] [] [] [(.binary .add (.param "n") (.resolve "B"))]))])) [.num 0]))])] [(.call (.resolve "F") [.num 3])])
+
+/-- PRE: `F(k) = { ⏎ B = { ⏎ V = k * 1 ⏎ V ⏎ } ⏎ B + [0].map{ n + B }[0] + B.V ⏎ } ⏎ F(3)` -/
+def d1PRE : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "F" (alg ["k"] [] [{ (privateLocalProp "B" (.localCapturedAncestorParams ["k"]) (alg [] [] [{ (privateLocalProp "V" (.localCapturedAncestorParams ["k"]) (alg [] [] [] [(.binary .mul (.param "k") (.num 1))])) with requiredOwnerDepths := some [("k", some 1)] }] [.resolve "V"])) with requiredOwnerDepths := some [("k", some 0)] }] [(.binary .add (.binary .add (.resolve "B") (.index (.dotCall (.listLiteral [.num 0]) "map" (some [(.algorithmExpr (alg ["n"] [] [] [(.binary .add (.param "n") (.resolve "B"))]))])) [.num 0])) (.dotCall (.resolve "B") "V" none))])] [(.call (.resolve "F") [.num 3])])
+
+/-- OPEN: `F(k) = { ⏎ open B ⏎ B = { ⏎ public V = k * k ⏎ V + 1 ⏎ } ⏎ [1, 2].map{ n + B }[0] + V ⏎ } ⏎ F(3)` -/
+def d1OPEN : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "F" (alg ["k"] [.resolve "B"] [{ (privateLocalProp "B" (.localCapturedAncestorParams ["k"]) (alg [] [] [{ (publicLocalProp "V" (.localCapturedAncestorParams ["k"]) (alg [] [] [] [(.binary .mul (.param "k") (.param "k"))])) with requiredOwnerDepths := some [("k", some 1)] }] [(.binary .add (.resolve "V") (.num 1))])) with requiredOwnerDepths := some [("k", some 0)] }] [(.binary .add (.index (.dotCall (.listLiteral [.num 1, .num 2]) "map" (some [(.algorithmExpr (alg ["n"] [] [] [(.binary .add (.param "n") (.resolve "B"))]))])) [.num 0]) (.resolve "V"))])] [(.call (.resolve "F") [.num 3])])
+
+/-- HELP: `F(k) = { ⏎ B = { ⏎ V = k * k ⏎ V + 1 ⏎ } ⏎ G(x) = x + B ⏎ G(1) + B.V ⏎ } ⏎ F(3)` -/
+def d1HELP : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "F" (alg ["k"] [] [{ (privateLocalProp "B" (.localCapturedAncestorParams ["k"]) (alg [] [] [{ (privateLocalProp "V" (.localCapturedAncestorParams ["k"]) (alg [] [] [] [(.binary .mul (.param "k") (.param "k"))])) with requiredOwnerDepths := some [("k", some 1)] }] [(.binary .add (.resolve "V") (.num 1))])) with requiredOwnerDepths := some [("k", some 0)] }, { (privateLocalProp "G" (.localCapturedAncestorParams ["k"]) (alg ["x"] [] [] [(.binary .add (.param "x") (.resolve "B"))])) with requiredOwnerDepths := some [("k", some 0)] }] [(.binary .add (.call (.resolve "G") [.num 1]) (.dotCall (.resolve "B") "V" none))])] [(.call (.resolve "F") [.num 3])])
+
+/-- DECON: `F(k) = { ⏎ B = { ⏎ a, b = k * 1, k + 1 ⏎ a + b ⏎ } ⏎ [1, 2].map{ n + B }[0] + B.a + B.b ⏎ } ⏎ F(3)` -/
+def d1DECON : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "F" (alg ["k"] [] [{ (privateLocalProp "B" (.localCapturedAncestorParams ["k"]) (alg [] [] [{ (privateLocalProp "$deconstruct$0" (.localCapturedAncestorParams ["k"]) (alg [] [] [] [(.binary .mul (.param "k") (.num 1)), (.binary .add (.param "k") (.num 1))])) with requiredOwnerDepths := some [("k", some 1)] }, { (privateLocalProp "a" (.localCapturedAncestorParams ["k"]) (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "a" }, .capture { name := "b" }]] [] [] [.param "a"])) [.resolve "$deconstruct$0"])])) with requiredOwnerDepths := some [("k", some 1)] }, { (privateLocalProp "b" (.localCapturedAncestorParams ["k"]) (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "a" }, .capture { name := "b" }]] [] [] [.param "b"])) [.resolve "$deconstruct$0"])])) with requiredOwnerDepths := some [("k", some 1)] }] [(.binary .add (.resolve "a") (.resolve "b"))])) with requiredOwnerDepths := some [("k", some 0)] }] [(.binary .add (.binary .add (.index (.dotCall (.listLiteral [.num 1, .num 2]) "map" (some [(.algorithmExpr (alg ["n"] [] [] [(.binary .add (.param "n") (.resolve "B"))]))])) [.num 0]) (.dotCall (.resolve "B") "a" none)) (.dotCall (.resolve "B") "b" none))])] [(.call (.resolve "F") [.num 3])])
+
+/-- LOOP: `F(k) = { ⏎ B = { ⏎ V = k * k ⏎ V + 1 ⏎ } ⏎ Step(s) = s + B, s < 5 ⏎ Step(0).while + B.V ⏎ } ⏎ F(3)` -/
+def d1LOOP : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "F" (alg ["k"] [] [{ (privateLocalProp "B" (.localCapturedAncestorParams ["k"]) (alg [] [] [{ (privateLocalProp "V" (.localCapturedAncestorParams ["k"]) (alg [] [] [] [(.binary .mul (.param "k") (.param "k"))])) with requiredOwnerDepths := some [("k", some 1)] }] [(.binary .add (.resolve "V") (.num 1))])) with requiredOwnerDepths := some [("k", some 0)] }, { (privateLocalProp "Step" (.localCapturedAncestorParams ["k"]) (alg ["s"] [] [] [(.binary .add (.param "s") (.resolve "B")), (.comparison (.param "s") [{ op := .lt, operand := (.num 5) }])])) with requiredOwnerDepths := some [("k", some 0)] }] [(.binary .add (.dotCall (.call (.resolve "Step") [.num 0]) "while" none) (.dotCall (.resolve "B") "V" none))])] [(.call (.resolve "F") [.num 3])])
+
+/-- ANON: `[3].map{ ⏎ B = { ⏎ V = n * n ⏎ V + 1 ⏎ } ⏎ n * 0 + [1, 2].map{ m + B }[0] + B.V ⏎ }` -/
+def d1ANON : Expr :=
+  .algorithmExpr (alg [] [] [] [(.dotCall (.listLiteral [.num 3]) "map" (some [(.algorithmExpr (alg ["n"] [] [{ (privateLocalProp "B" (.localCapturedAncestorParams ["n"]) (alg [] [] [{ (privateLocalProp "V" (.localCapturedAncestorParams ["n"]) (alg [] [] [] [(.binary .mul (.param "n") (.param "n"))])) with requiredOwnerDepths := some [("n", some 1)] }] [(.binary .add (.resolve "V") (.num 1))])) with requiredOwnerDepths := some [("n", some 0)] }] [(.binary .add (.binary .add (.binary .mul (.param "n") (.num 0)) (.index (.dotCall (.listLiteral [.num 1, .num 2]) "map" (some [(.algorithmExpr (alg ["m"] [] [] [(.binary .add (.param "m") (.resolve "B"))]))])) [.num 0])) (.dotCall (.resolve "B") "V" none))]))]))])
+
+/-- X3: `F(k) = { ⏎ B = { ⏎ C = { ⏎ V = k * 1 ⏎ V ⏎ } ⏎ C ⏎ } ⏎ [0].map{ n + B }[0] + [0].map{ n + B.C }[0] + B.C.V ⏎ } ⏎ F(3)` -/
+def d1X3 : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "F" (alg ["k"] [] [{ (privateLocalProp "B" (.localCapturedAncestorParams ["k"]) (alg [] [] [{ (privateLocalProp "C" (.localCapturedAncestorParams ["k"]) (alg [] [] [{ (privateLocalProp "V" (.localCapturedAncestorParams ["k"]) (alg [] [] [] [(.binary .mul (.param "k") (.num 1))])) with requiredOwnerDepths := some [("k", some 2)] }] [.resolve "V"])) with requiredOwnerDepths := some [("k", some 1)] }] [.resolve "C"])) with requiredOwnerDepths := some [("k", some 0)] }] [(.binary .add (.binary .add (.index (.dotCall (.listLiteral [.num 0]) "map" (some [(.algorithmExpr (alg ["n"] [] [] [(.binary .add (.param "n") (.resolve "B"))]))])) [.num 0]) (.index (.dotCall (.listLiteral [.num 0]) "map" (some [(.algorithmExpr (alg ["n"] [] [] [(.binary .add (.param "n") (.dotCall (.resolve "B") "C" none))]))])) [.num 0])) (.dotCall (.dotCall (.resolve "B") "C" none) "V" none))])] [(.call (.resolve "F") [.num 3])])
+
+/-- PUB: `F(k) = { ⏎ B = { ⏎ V = k * 1 ⏎ V + 1 ⏎ } ⏎ B.V() + [1].map{ n * 0 + B }[0] ⏎ } ⏎ F(3)` -/
+def d1PUB : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "F" (alg ["k"] [] [{ (privateLocalProp "B" (.localCapturedAncestorParams ["k"]) (alg [] [] [{ (privateLocalProp "V" (.localCapturedAncestorParams ["k"]) (alg [] [] [] [(.binary .mul (.param "k") (.num 1))])) with requiredOwnerDepths := some [("k", some 1)] }] [(.binary .add (.resolve "V") (.num 1))])) with requiredOwnerDepths := some [("k", some 0)] }] [(.binary .add (.dotCall (.resolve "B") "V" (some [])) (.index (.dotCall (.listLiteral [.num 1]) "map" (some [(.algorithmExpr (alg ["n"] [] [] [(.binary .add (.binary .mul (.param "n") (.num 0)) (.resolve "B"))]))])) [.num 0]))])] [(.call (.resolve "F") [.num 3])])
+
+/-- ROOT: `B = { ⏎ V = 7 * 1 ⏎ V + 1 ⏎ } ⏎ [1, 2].map{ n + B }[0] + B.V` -/
+def d1ROOT : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "B" (alg [] [] [privateProp "V" (alg [] [] [] [(.binary .mul (.num 7) (.num 1))])] [(.binary .add (.resolve "V") (.num 1))])] [(.binary .add (.index (.dotCall (.listLiteral [.num 1, .num 2]) "map" (some [(.algorithmExpr (alg ["n"] [] [] [(.binary .add (.param "n") (.resolve "B"))]))])) [.num 0]) (.dotCall (.resolve "B") "V" none))])
+
+/-- TWO: `F(k) = { ⏎ B = { ⏎ V = k * 1 ⏎ V ⏎ } ⏎ [0].map{ n + B }[0] + B.V ⏎ } ⏎ F(3), F(3)` -/
+def d1TWO : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "F" (alg ["k"] [] [{ (privateLocalProp "B" (.localCapturedAncestorParams ["k"]) (alg [] [] [{ (privateLocalProp "V" (.localCapturedAncestorParams ["k"]) (alg [] [] [] [(.binary .mul (.param "k") (.num 1))])) with requiredOwnerDepths := some [("k", some 1)] }] [.resolve "V"])) with requiredOwnerDepths := some [("k", some 0)] }] [(.binary .add (.index (.dotCall (.listLiteral [.num 0]) "map" (some [(.algorithmExpr (alg ["n"] [] [] [(.binary .add (.param "n") (.resolve "B"))]))])) [.num 0]) (.dotCall (.resolve "B") "V" none))])] [(.call (.resolve "F") [.num 3]), (.call (.resolve "F") [.num 3])])
+
+/-- CALLS: `F(k) = { ⏎ B = { ⏎ V = k * 1 ⏎ V ⏎ } ⏎ B() + B() + [0].map{ n + B }[0] + B.V ⏎ } ⏎ F(3)` -/
+def d1CALLS : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "F" (alg ["k"] [] [{ (privateLocalProp "B" (.localCapturedAncestorParams ["k"]) (alg [] [] [{ (privateLocalProp "V" (.localCapturedAncestorParams ["k"]) (alg [] [] [] [(.binary .mul (.param "k") (.num 1))])) with requiredOwnerDepths := some [("k", some 1)] }] [.resolve "V"])) with requiredOwnerDepths := some [("k", some 0)] }] [(.binary .add (.binary .add (.binary .add (.call (.resolve "B") []) (.call (.resolve "B") [])) (.index (.dotCall (.listLiteral [.num 0]) "map" (some [(.algorithmExpr (alg ["n"] [] [] [(.binary .add (.param "n") (.resolve "B"))]))])) [.num 0])) (.dotCall (.resolve "B") "V" none))])] [(.call (.resolve "F") [.num 3])])
+
+-- D1-MIN / D1-SWAP: B first read in a callback, then B.V (either order): ONE `V` entry.
+#guard d1Run d1MIN "V" == some (.atom 6, 1, 2)
+#guard d1Run d1SWAP "V" == some (.atom 6, 1, 2)
+-- D1-PRE (control): B first read from F's own body.
+#guard d1Run d1PRE "V" == some (.atom 9, 1, 2)
+-- D1-OPEN / D1-HELP / D1-LOOP: the opened spelling, a helper call and a `while` step share it.
+#guard d1Run d1OPEN "V" == some (.atom 20, 1, 3)
+#guard d1Run d1HELP "V" == some (.atom 20, 1, 2)
+#guard d1Run d1LOOP "V" == some (.atom 19, 1, 3)
+-- D1-DECON: one shared right-hand side for the callback's B and the structural B.a, B.b.
+#guard d1Run d1DECON "$deconstruct$0" == some (.atom 15, 1, 5)
+-- D1-ANON: the declaring owner is itself an anonymous callback.
+#guard d1Run d1ANON "V" == some (.listValue [.atom 20], 1, 3)
+-- D1-3X: B in callback 1, B.C in callback 2, B.C.V from F: one entry (formerly three).
+#guard d1Run d1X3 "V" == some (.atom 9, 1, 3)
+#guard d1Run d1X3 "C" == some (.atom 9, 1, 3)
+-- D1-PUB: `B.V()` establishes the entry (CACHE-PUB-1); the callback's B reuses it.
+#guard d1Run d1PUB "V" == some (.atom 7, 1, 3)
+-- D1-ROOT (control): no enclosing activation; V is exported.
+#guard d1Run d1ROOT "V" == some (.atom 16, 1, 2)
+-- Two activations of F with EQUAL arguments stay two entries.
+#guard d1Run d1TWO "V" == some (.sequenceValue [.atom 6, .atom 6], 2, 4)
+-- Explicit calls stay fresh: `B(), B()` are two contexts of their own, F's reads a third entry.
+#guard d1Run d1CALLS "V" == some (.atom 12, 3, 4)
+
+/-! The model has no host effects. Like `PropertyCachePublication`, the following VALUE witnesses
+    deliberately use a hand-built tree whose V reads an unowned `d` dynamically from its consumer.
+    F owns k, B and V capture k, but V does NOT own d: a split key observes the second consumer's
+    different d (or a missing binding). This is evaluator evidence, not a surface-language example. -/
+def d1DynamicValue (value : Expr) (rows : List Expr) : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "F" (alg ["k"] []
+    [privateLocalProp "B" (.localCapturedAncestorParams ["k"]) (alg [] []
+      [privateLocalProp "V" (.localCapturedAncestorParams ["k"]) (alg [] [] [] [value])]
+      [resolve "V"]),
+     privateLocalProp "G" (.localCapturedAncestorParams ["k"]) (alg ["d"] [] []
+       [.index (.dotCall (.listLiteral [num 0]) "map" (some
+         [.algorithmExpr (alg ["n"] [] [] [.binary .add (param "n") (resolve "B")])])) [num 0]]),
+     privateLocalProp "H" (.localCapturedAncestorParams ["k"]) (alg ["d"] [] []
+       [.dotCall (resolve "B") "V" none])]
+    rows)] [.call (resolve "F") [num 3]])
+
+-- D1-VAL: G(100) first reads B in a callback; H(1000) reads B.V. ONE numerical value (103),
+-- so equality is true. Before D1 the second read computed 1003 and equality was false.
+#guard (d1Run (d1DynamicValue (.binary .add (param "k") (param "d"))
+    [.compare .eq (.call (resolve "G") [num 100]) (.call (resolve "H") [num 1000])]) "V").map
+  (fun (value, entries, _) => (value, entries)) == some (.bool true, 1)
+
+-- Q-37 through the D1 routes: G(2)'s callback owns V; the two recursive H reads are re-entrant.
+-- Only the OUTER result 5 is published. H(99) must reuse 5, not an inner 3 or a new computation.
+def d1ReentrantValue : Expr :=
+  .call (resolve "if") [.compare .eq (param "d") (num 0), param "k",
+    .binary .add (.call (resolve "H") [.binary .sub (param "d") (num 1)]) (num 1)]
+#guard (d1Run (d1DynamicValue d1ReentrantValue
+    [.call (resolve "G") [num 2], .call (resolve "H") [num 99]]) "V").map
+  (fun (value, entries, _) => (value, entries)) == some (.sequenceValue [.atom 5, .atom 5], 1)
+
+end CacheOwnerD1
+
 end KatLangTests

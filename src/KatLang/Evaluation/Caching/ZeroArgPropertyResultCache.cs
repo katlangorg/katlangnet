@@ -69,7 +69,10 @@ internal interface IZeroArgPropertyResultCache
 ///   list its call boundary minted, even an empty one, or the value environment below every
 ///   boundary: <c>Evaluator.BindingContextIdentity</c>, CACHE-OWNER-D2) and the
 ///   declaring scope. Two distinct binding contexts never share an
-///   entry, and consumers within one owning activation reuse its entry even through nested calls.
+///   entry, and consumers within one owning activation reuse its entry even through nested calls:
+///   a parameterless owner entered by a property-style read inherits its declaring activation's
+///   identity (<c>Evaluator.DeclaringBindingIdentity</c>, CACHE-OWNER-D1), so a callback, helper or
+///   loop step that reads it first, a structural <c>B.V</c> and an opened <c>V</c> share one entry.
 ///   Scopes without an activation retain the host environment fallback.</item>
 /// </list>
 /// An explicit zero-supply invocation (<c>A()</c>) of the same binding computes the SAME key
@@ -94,17 +97,6 @@ internal readonly record struct ZeroArgPropertyCacheKey(
 
     public static ZeroArgPropertyCacheKey FromExecution(ZeroArgPropertyExecution execution)
     {
-        ParameterActivation? activation = null;
-        for (var scope = execution.Binding.Exposure == PropertyExposure.Exported ? null : execution.DeclaringScope;
-             scope is not null; scope = scope.Parent)
-        {
-            if (scope.Activation is { } found)
-            {
-                activation = found;
-                break;
-            }
-        }
-
         return execution.Binding.Exposure == PropertyExposure.Exported
             ? new(
                 // Both spellings select the same exported declaration. Keep the
@@ -118,7 +110,7 @@ internal readonly record struct ZeroArgPropertyCacheKey(
                 ZeroArgPropertyCacheAccessShape.Lexical,
                 StructuralOwnerIdentity.FromPropertyOwner(execution.Owner),
                 execution.Binding,
-                activation?.ValueEnvironmentIdentity ?? execution.ValueEnvironmentIdentity,
+                Evaluator.DeclaringBindingIdentity(execution.DeclaringScope) ?? execution.ValueEnvironmentIdentity,
                 execution.RunIdentity);
     }
 

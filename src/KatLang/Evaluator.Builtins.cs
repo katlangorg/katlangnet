@@ -421,13 +421,61 @@ public static partial class Evaluator
     {
         // The cached body evaluation goes through the ONE demand funnel, so a newly
         // eligible collecting-only property (`Only(*xs) = xs`) takes the very same
-        // demand/cache path an ordinary zero-parameter property takes.
-        var countedR = EvalZeroArgumentDemandOutputCounted(resolvedAlgorithm, ctx, valEnv);
+        // demand/cache path an ordinary zero-parameter property takes — except that a
+        // parameterless owner whose entry records an activation enters in its DECLARING
+        // context (CACHE-OWNER-D1).
+        var countedR = EntersInDeclaringContext(resolvedAlgorithm)
+            ? EvalPropertyOwnerBodyCounted(resolvedAlgorithm, ctx, valEnv)
+            : EvalZeroArgumentDemandOutputCounted(resolvedAlgorithm, ctx, valEnv);
         if (countedR.IsError)
             return countedR.Error;
 
         return EvalResult<ZeroArgPropertyResult>.Ok(
             new ZeroArgPropertyResult(countedR.Value.Value, countedR.Value.EmittedCount));
+    }
+
+    /// <summary>
+    /// Whether a property-style read of <paramref name="algorithm"/> enters a body that records an
+    /// activation for its local-only properties without binding a parameter: a parameterless user
+    /// owner (no pattern, no deferred region) declaring a property that is not exported. Exactly
+    /// these reads inherit the declaring context (<see cref="EvalPropertyOwnerBodyCounted"/>); every
+    /// other read keeps the demand funnel unchanged, since its entry records nothing (Lean: such an
+    /// entry is <c>enterAlgorithmBody</c> itself) or binds a fresh context.
+    /// </summary>
+    private static bool EntersInDeclaringContext(Algorithm algorithm)
+        => algorithm is Algorithm.User { ParameterPatterns.Count: 0, DeferredRegion: null }
+           && HasLocalOnlyProperty(algorithm);
+
+    /// <summary>
+    /// A property-style READ of a parameterless owner (CACHE-OWNER-D1, owner decision October 23
+    /// 2026): DECLARING-CONTEXT INHERITANCE. The body is checked and evaluated exactly as
+    /// <see cref="EvalAlgOutputPreparedCore"/> evaluates it — the same access errors
+    /// (<see cref="OutputRowsAccessError"/>), the same rows over one entered context — except that
+    /// its activation retains the binding identity of the nearest activation on its in-context
+    /// declaring chain (<see cref="DeclaringBindingIdentity"/>, the very identity its own cache key
+    /// carries), falling back to the reader's only when there is none. So its local-only properties
+    /// are keyed on the declaring activation whichever consumer (callback, helper, loop step,
+    /// branch, <c>R.Invoke()</c>) reads it first, and a lexical read inside the body, a structural
+    /// <c>B.V</c> and an opened <c>V</c> select one entry. Only the identity changes: the entered
+    /// context keeps the reader's need tier, values and call stack. An explicit <c>B()</c> never
+    /// comes here (it binds a fresh context). Kept out of the property seam's frame like the
+    /// demand funnel's binding arm. Lean: <c>EvalBody.evalPropertyDemandCounted</c>.
+    /// </summary>
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+    private static EvalResult<CountedResult> EvalPropertyOwnerBodyCounted(
+        Algorithm algorithm,
+        EvalCtx ctx,
+        ValEnv valEnv)
+    {
+        if (OutputRowsAccessError(algorithm) is { } accessError)
+            return accessError;
+
+        var bodyCtx = EnterAlgorithmBody(algorithm, ctx, valEnv,
+            inheritedBindingIdentity: DeclaringBindingIdentity(algorithm.Parent) ?? BindingContextIdentity(ctx, valEnv));
+        var preparedR = EvalOutputRowsPreparedCore(algorithm.Output, bodyCtx, ctx, valEnv);
+        return preparedR.IsError
+            ? preparedR.Error
+            : EvalResult<CountedResult>.Ok(preparedR.Value.Counted);
     }
 
     /// <summary>

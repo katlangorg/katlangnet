@@ -29,8 +29,9 @@ internal sealed class ParameterActivation
 
     internal NeedEnv Needs { get; }
 
-    // The binding context at OWNER entry, not the eventual consumer's context.
-    // Parameterless property reads retain it; explicit calls bind fresh environments.
+    // The binding context of this activation: the fresh one an explicit call minted, or —
+    // when a property-style read entered a parameterless owner — its DECLARING activation's,
+    // never the consumer's (CACHE-OWNER-D1, Evaluator.DeclaringBindingIdentity).
     internal object ValueEnvironmentIdentity { get; }
 
     /// <summary>
@@ -74,13 +75,20 @@ internal sealed class ParameterActivation
     /// order (Lean: <c>recordParameterActivation</c>'s two <c>filter</c>s), together with the
     /// entering context's binding identity (Lean: <c>bindingContext := ctx.bindingContext</c>):
     /// the fresh tier of the call boundary that entered the body, even when that call bound
-    /// nothing (<see cref="Evaluator.BindingContextIdentity"/>).
+    /// nothing (<see cref="Evaluator.BindingContextIdentity"/>) — unless a property-style read
+    /// supplies the identity its owner inherits from the declaring activation
+    /// (<paramref name="inheritedBindingIdentity"/>, CACHE-OWNER-D1; Lean
+    /// <c>enterPropertyOwnerBody</c>).
     /// </summary>
-    internal static ParameterActivation Capture(IReadOnlyList<string> names, Evaluator.EvalCtx ctx, ValEnv values)
+    internal static ParameterActivation Capture(
+        IReadOnlyList<string> names,
+        Evaluator.EvalCtx ctx,
+        ValEnv values,
+        object? inheritedBindingIdentity = null)
         => new(
             FilterOwned(values, names, static binding => binding.Name),
             FilterOwned(ctx.NeedEnv, names, static binding => binding.Name),
-            Evaluator.BindingContextIdentity(ctx, values));
+            inheritedBindingIdentity ?? Evaluator.BindingContextIdentity(ctx, values));
 
     /// <summary>
     /// The bindings of <paramref name="env"/> whose names are owned, first binding per name.
@@ -141,22 +149,67 @@ public static partial class Evaluator
     /// <see cref="ParameterActivation"/> and the entered context carries the activated head
     /// scope (<see cref="EvalCtx.HeadScope"/>): the scope the body's own declaring level
     /// resolves to, the level captured-parameter reads and the accessibility law find its
-    /// activation on, and the parent of every scope wired under the head. A parameterless owner with local properties also retains its entry context for
-    /// their cache identity. Other parameterless bodies need no activated head scope.
-    /// Lean: <c>enterAlgorithmBody</c> (<c>headScope := some (a.asScopeCtx.withActivation id)</c>).
+    /// activation on, and the parent of every scope wired under the head. A parameterless owner with
+    /// local-only properties also gets an activation, whose binding identity keys those properties:
+    /// the entering context's, or — for a property-style read — the
+    /// <paramref name="inheritedBindingIdentity"/> of its declaring activation (CACHE-OWNER-D1,
+    /// <see cref="EvalPropertyOwnerBodyCounted"/>). Other parameterless bodies need no activated head
+    /// scope. Lean: <c>enterAlgorithmBody</c> (<c>headScope := some (a.asScopeCtx.withActivation id)</c>)
+    /// and, with an inherited identity, <c>enterPropertyOwnerBody</c>.
     /// </summary>
-    internal static EvalCtx EnterAlgorithmBody(Algorithm algorithm, EvalCtx ctx, ValEnv values, IReadOnlyList<string>? parameterNames = null)
+    internal static EvalCtx EnterAlgorithmBody(
+        Algorithm algorithm,
+        EvalCtx ctx,
+        ValEnv values,
+        IReadOnlyList<string>? parameterNames = null,
+        object? inheritedBindingIdentity = null)
     {
         var names = parameterNames ?? algorithm.Params;
-        if (names.Count == 0 && !algorithm.Properties.Any(static property => property.Exposure != PropertyExposure.Exported))
+        if (names.Count == 0 && !HasLocalOnlyProperty(algorithm))
             return ctx.Push(algorithm);
 
         var headScope = new ScopeCtx(algorithm.Parent, algorithm.Opens, algorithm.Properties, names)
         {
             Owner = algorithm,
-            Activation = ParameterActivation.Capture(names, ctx, values),
+            Activation = ParameterActivation.Capture(names, ctx, values, inheritedBindingIdentity),
         };
         return ctx.Push(algorithm, headScope);
+    }
+
+    /// <summary>
+    /// Whether <paramref name="algorithm"/> declares a property that is not exported: the
+    /// properties whose cache identity a parameterless owner's activation retains
+    /// (<see cref="EnterAlgorithmBody"/>). Indexed, so no boxed enumerator per entry.
+    /// </summary>
+    private static bool HasLocalOnlyProperty(Algorithm algorithm)
+    {
+        var properties = algorithm.Properties;
+        for (var index = 0; index < properties.Count; index++)
+        {
+            if (properties[index].Exposure != PropertyExposure.Exported)
+                return true;
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    /// The binding identity of the nearest ACTIVATED level of <paramref name="declaringScope"/>'s
+    /// chain — the context that level's owner was entered in, independent of any consumer — or
+    /// null when no level is activated (the root, an unactivated host scope). It keys a local-only
+    /// property's cache entry (<c>ZeroArgPropertyCacheKey.FromExecution</c>) and is what a
+    /// parameterless owner entered by a property-style read inherits (CACHE-OWNER-D1). Lean:
+    /// <c>propertyOwnerBindingContext</c>.
+    /// </summary>
+    internal static object? DeclaringBindingIdentity(ScopeCtx? declaringScope)
+    {
+        for (var scope = declaringScope; scope is not null; scope = scope.Parent)
+        {
+            if (scope.Activation is { } activation)
+                return activation.ValueEnvironmentIdentity;
+        }
+
+        return null;
     }
 
     /// <summary>

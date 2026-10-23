@@ -846,9 +846,14 @@ theorem EvalBody.evalArgumentValue_mono (arg : ResolvedArgumentAlgorithm) (ctx :
     monotone (fun rec : EvalRec => EvalBody.evalArgumentValue rec arg ctx env) := by
   unfold EvalBody.evalArgumentValue; mono_tac
 
+theorem EvalBody.evalPropertyDemandCounted_mono (a : Algorithm) (ctx : EvalCtx) (env : ValEnv) :
+    monotone (fun rec : EvalRec => EvalBody.evalPropertyDemandCounted rec a ctx env) := by
+  unfold EvalBody.evalPropertyDemandCounted; mono_tac
+
 theorem EvalBody.zeroArgPropertyCalculation_mono (request : ZeroArgPropertyRequest) (resolvedAlgorithm : Algorithm) (ctx : EvalCtx) (env : ValEnv) :
     monotone (fun rec : EvalRec => EvalBody.zeroArgPropertyCalculation rec request resolvedAlgorithm ctx env) := by
   have := EvalBody.evalNeedUserSupplyOutput_mono resolvedAlgorithm [] ctx env
+  have := EvalBody.evalPropertyDemandCounted_mono resolvedAlgorithm ctx env
   unfold EvalBody.zeroArgPropertyCalculation; mono_tac
 
 theorem EvalBody.evalZeroArgPropertyAccessCounted_mono (accessKind : ZeroArgPropertyAccessKind) (owner : Algorithm) (binding : PropDef) (resolvedAlgorithm : Algorithm) (ctx : EvalCtx) (env : ValEnv) (request : ZeroArgPropertyRequest) :

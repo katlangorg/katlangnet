@@ -1,5 +1,50 @@
 # Semantic Alignment Manifest.
 
+CACHE-OWNER-D1 — declaring-context inheritance for property reads (2026-10-23, owner decision O-1
+of `experimental/features/cache-owner-f1-research.md`): a SHARED Lean and C# defect, corrected
+Lean-first. DEFECT: a parameterless owner `B` with local-only properties records an activation on
+body entry, and that activation took the binding context of whichever CONSUMER first read `B` (a
+callback, a helper call, a loop step, a branch, `R.Invoke()`), while a structural `B.V` or an opened
+`V` — which rebuild an unactivated `B` scope — keyed the same local-only `V` on the declaring
+activation of `F`. One activation of `F(k) = { B = { V = … ⏎ V } ⏎ … }` therefore evaluated `V` twice
+(`[0].map{ n + B }[0] + B.V`, either order), three times through three routes (D1-3X), and observed
+two values (`V = k + tick()`: `[1].map{ n * 0 + B }[0] == B.V` was `false`); Lean's research witness
+R8 published two `V` entries (binding contexts 2 and 1). RULE: a parameterless algorithm entered
+through a property-style READ inherits the binding-context identity of its declaring activation, as
+resolved in the current lexical context — the nearest activated level of its in-context declaring
+chain, the identity its own cache key already carries — and the reader's only when there is none;
+an explicit call establishes a fresh binding context. LEAN: `EvalBody.zeroArgPropertyCalculation`'s
+`.read` arm is `EvalBody.evalPropertyDemandCounted`, which for a parameterless user owner runs
+`ActivatedBody.check`, ONE entry through `enterPropertyOwnerBody` (exactly `enterAlgorithmBody`
+except the recorded `bindingContext`; the returned context keeps the reader's) with
+`(propertyOwnerBindingContext a.parent s).getD ctx.bindingContext`, then the rows; every other
+callable is the ordinary `evalZeroArgumentDemandOutputCounted`. `propertyOwnerBindingContext` is now
+TOTAL (same equations). `enterAlgorithmBody` itself, the `.invoke` calculation, aliases' binding
+cells and every other body entry are unchanged. C#: `EvaluateZeroArgPropertyResult` (and its async
+twin) route a read of a parameterless user owner whose entry records an activation
+(`EntersInDeclaringContext`) to `EvalPropertyOwnerBodyCounted` (async twin), which passes
+`DeclaringBindingIdentity(algorithm.Parent) ?? BindingContextIdentity(ctx, valEnv)` to
+`EnterAlgorithmBody`'s new `inheritedBindingIdentity` (→ `ParameterActivation.Capture`); the
+declaring walk is the ONE helper `Evaluator.DeclaringBindingIdentity`, which
+`ZeroArgPropertyCacheKey.FromExecution` now also uses. Other reads keep the unchanged demand funnel;
+no new cache, field or per-access allocation. Unchanged: D2's fresh call boundaries (an explicit
+`B()` still binds a fresh `BoundNeedEnv`), Q-37 and CACHE-PUB-1 publication (whole-run cache laws
+re-proved over the new body), exported run-wide entries, planned-loop temps, the runtime-alias D4
+binding cell, the host `owner is null` bypass (D3, separate) and the unactivated-scope fallback.
+PROOFS: `KatLangArityLaws/PropertyOwnerContext.lean` (owner-context equations, lexical/structural
+agreement, entry run and self-equivalence, the read route, consumer independence, fallback, other
+callables keep the ordinary demand) plus `EvalBody.evalPropertyDemandCounted_mono`; no existing
+theorem was weakened. GUARDS: `CoreTests/PropertyCacheConsumers.lean` § CacheOwnerD1 (encoder-derived
+MIN/SWAP/PRE/OPEN/HELP/DECON/LOOP/ANON/3X/PUB/ROOT, two equal-argument activations, explicit-call
+freshness; before the correction MIN…PUB had 2–3 `V` entries); the existing
+`parameterlessLocalOwnerCalls` guard is unchanged. C# TESTS: `ParameterlessOwnerEntryContextTests`
+(the research matrix, isolation, freshness, Q-37 re-entry yielding 24, failure, seeded random, consumer
+routes incl. filter→count fusion, reduce, repeat/while, branches, families, META `Invoke`/`Algorithm`,
+runtime aliases, PAR-03 E40/N1/A3/E40b; six routes incl. the genuinely suspending twin plus step
+parity; 38 of its 56 tests fail with the routing disabled). Docs: `evaluator-and-hosting.md`
+§ Zero-argument property cache (the former contradictory sentences replaced by one rule), AGENTS.md
+cache bullet, tutorial *Deconstruction* and the callback-ownership paragraph. Full V3.
+
 CACHE-OWNER-D2 — fresh binding identity for zero-supply calls (2026-10-23): C#-only correction to
 the authoritative Lean semantics; no Lean production edit. DEFECT: a call binding boundary that binds
 no need cell and inherits none — a zero-supply call of a parameterless owner from the root, today

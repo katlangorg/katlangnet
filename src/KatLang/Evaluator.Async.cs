@@ -1787,12 +1787,31 @@ public static partial class Evaluator
         EvalCtx ctx,
         ValEnv valEnv)
     {
-        var countedR = await EvalZeroArgumentDemandOutputCountedAsync(resolvedAlgorithm, ctx, valEnv).ConfigureAwait(false);
+        var countedR = EntersInDeclaringContext(resolvedAlgorithm)
+            ? await EvalPropertyOwnerBodyCountedAsync(resolvedAlgorithm, ctx, valEnv).ConfigureAwait(false)
+            : await EvalZeroArgumentDemandOutputCountedAsync(resolvedAlgorithm, ctx, valEnv).ConfigureAwait(false);
         if (countedR.IsError)
             return countedR.Error;
 
         return EvalResult<ZeroArgPropertyResult>.Ok(
             new ZeroArgPropertyResult(countedR.Value.Value, countedR.Value.EmittedCount));
+    }
+
+    /// <summary>MIRROR OF <see cref="EvalPropertyOwnerBodyCounted"/> — keep in lock-step.</summary>
+    private static async ValueTask<EvalResult<CountedResult>> EvalPropertyOwnerBodyCountedAsync(
+        Algorithm algorithm,
+        EvalCtx ctx,
+        ValEnv valEnv)
+    {
+        if (OutputRowsAccessError(algorithm) is { } accessError)
+            return accessError;
+
+        var bodyCtx = EnterAlgorithmBody(algorithm, ctx, valEnv,
+            inheritedBindingIdentity: DeclaringBindingIdentity(algorithm.Parent) ?? BindingContextIdentity(ctx, valEnv));
+        var preparedR = await EvalOutputRowsPreparedCoreAsync(algorithm.Output, bodyCtx, ctx, valEnv).ConfigureAwait(false);
+        return preparedR.IsError
+            ? preparedR.Error
+            : EvalResult<CountedResult>.Ok(preparedR.Value.Counted);
     }
 
     /// <summary>MIRROR OF <see cref="GetOrEvaluateZeroArgPropertyResult"/> — keep in lock-step.</summary>

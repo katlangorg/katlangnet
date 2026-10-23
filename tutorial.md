@@ -1925,6 +1925,8 @@ A brace callback's parameters are its undefined names, so choose names that are 
 
 Conversely, a name that appears only inside the braces is a parameter of the callback, not of the algorithm around it: in `Scale = values.map{n * factor}`, the callback has the parameters `n` and `factor`, `Scale` has only `values`, and calling the callback with one element fails. To make `factor` an input of `Scale`, declare it — `Scale(values, factor) = values.map{n * factor}` — and the `factor` in the braces is then the parameter of `Scale`.
 
+The same rule applies one level further in: a name used only inside a property declared in the callback belongs to that property. In `[1, 2].map{ Sq = n * n ⏎ Sq + Sq }` (two lines inside the braces), `n` appears only in `Sq`, so `Sq` is a function of `n` and the row `Sq + Sq` is the two calls `Sq(n) + Sq(n)`, each calculated afresh. When the callback's own rows use the name — `n * 0 + Sq + Sq` — `n` is the callback's parameter, `Sq` is an ordinary property that reads it, and `Sq` is calculated once per element. Naming the callback (`Cb = { … }`, then `map(Cb)`) changes nothing: what matters is who owns the name.
+
 A callback runs only when it is called. Passing it evaluates nothing, so a callback that is never called — here because the collection is empty — has no effect and cannot fail:
 
 ```
@@ -2299,6 +2301,21 @@ rest
 ```
 
 Without a collecting name, the number of names must match the number of items: `x, y = 1, 2, 3` is an error as soon as `x` or `y` is used.
+
+Inside an algorithm call the sharing holds once per call. A group declared in a nested block, such as `B` inside `F(k)` below, is calculated once for each call of `F`, whichever access comes first — `B` read inside a callback or a helper, the member `B.a`, or a name opened from `B` — so every access sees the same draw. An explicit call `B()` is a fresh calculation of its own, and two calls of `F` never share one:
+
+```
+F(k) = {
+    B = {
+        a, b = k + randomInt(1, 100), k
+        a - b
+    }
+    [1].map{ n * 0 + B }[0] == B.a - B.b
+}
+F(3)
+```
+
+**Result:** `true`
 
 ---
 

@@ -3381,6 +3381,18 @@ def enterAlgorithmBody (a : Algorithm) (ctx : EvalCtx) (env : ValEnv) : EvalM Ev
     let id <- recordParameterActivation a.params ctx env
     pure { ctx.push a with headScope := some (a.asScopeCtx.withActivation id) }
 
+/-- The body entry of a PROPERTY-STYLE demand (CACHE-OWNER-D1, owner decision October 23 2026):
+    exactly `enterAlgorithmBody`, except that an activation it records retains `bindingContext` —
+    the context of the declaring activation the read resolved (`EvalBody.evalPropertyDemandCounted`)
+    — instead of the consumer's. The returned context keeps the consumer's own binding context,
+    so nothing but the owner's recorded identity changes: its need tier, values, call stack and
+    head scope are `enterAlgorithmBody`'s (`enterPropertyOwnerBody_own_context`). An explicit call
+    never enters through here; it binds a fresh context (`EvalCtx.bindParameters`). C#:
+    `Evaluator.EnterAlgorithmBody` with an inherited binding identity. -/
+def enterPropertyOwnerBody (a : Algorithm) (ctx : EvalCtx) (env : ValEnv) (bindingContext : Nat) : EvalM EvalCtx := do
+  let entered <- enterAlgorithmBody a { ctx with bindingContext := bindingContext } env
+  pure { entered with bindingContext := ctx.bindingContext }
+
 def capturedParameterActivation? (name : Ident) (ctx : EvalCtx) : EvalM (Option ParameterActivation) := do
   match ctx.head?, siteScope? ctx with
   | some site, some scope =>
@@ -5134,15 +5146,17 @@ def zeroArgPropertyCacheKey (_accessKind : ZeroArgPropertyAccessKind)
     bindingContext := if bindingContextFree then none else some (ownerBindingContext.getD ctx.bindingContext)
   }
 
-/-- The context at the declaring owner's entry, independent of the consumer. A
-    parameterless property read preserves it; an explicit call binds a fresh one. -/
-partial def propertyOwnerBindingContext (scope : Option ScopeCtx) (state : EvalState) : Option Nat :=
-  match scope with
-  | none => none
-  | some level =>
-      match level.activation.bind (fun id => state.lexicalActivations[id]?) with
-      | some activation => some activation.bindingContext
-      | none => propertyOwnerBindingContext level.parent state
+/-- The binding context of the nearest ACTIVATED level of a declaring chain: the context its
+    owner was entered in, independent of the consumer. A property-style read of a parameterless
+    owner enters its body in this context (CACHE-OWNER-D1, `EvalBody.evalPropertyDemandCounted`);
+    an explicit call binds a fresh one. TOTAL (CACHE-OWNER-D1, October 2026; formerly `partial`):
+    structural over the finite parent chain, with the former body as its equation. -/
+def propertyOwnerBindingContext : Option ScopeCtx → EvalState → Option Nat
+  | none, _ => none
+  | some (.mk parent _ _ _ _ _ activation _), state =>
+      match activation.bind (fun id => state.lexicalActivations[id]?) with
+      | some found => some found.bindingContext
+      | none => propertyOwnerBindingContext parent state
 
 def applySequenceBuiltinEmptyPolicy (b : Builtin) (metadata : SequenceBuiltinMetadata)
     (collected : CollectedSequenceBuiltinInput) : EvalM CollectedSequenceBuiltinInput :=
@@ -9263,8 +9277,30 @@ def EvalBody.algorithmIntrinsicRoute (rec : EvalRec) (receiver : Expr) (ctx : Ev
     let counted <- rec.evalArgumentValueCounted arg ctx env
     pure counted.fst
 
+  /-- A property-style READ's zero-argument demand (CACHE-OWNER-D1, owner decision October 23
+      2026): DECLARING-CONTEXT INHERITANCE. A parameterless user owner is checked and entered
+      exactly as `evalAlgOutputPreparedCore` enters it (`ActivatedBody.check`, then its rows over
+      the one entered context), except that its body entry (`enterPropertyOwnerBody`) records the
+      binding context of the nearest activation on its IN-CONTEXT declaring chain
+      (`propertyOwnerBindingContext a.parent`) — the very context its own cache key carries —
+      and the consumer's only when there is none. So the owner's local-only properties are keyed
+      on its declaring activation whichever consumer (callback, helper, loop step, branch,
+      `R.Invoke()`) first reads it, and a lexical read inside the body, a structural `B.V` and an
+      opened `V` select ONE entry. Every other callable — a pattern list, a family, an alias, a
+      builtin — is the ordinary demand (`evalZeroArgumentDemandOutputCounted`), whose binding
+      boundaries mint fresh contexts as before. C#: `Evaluator.EvaluateZeroArgPropertyResult`. -/
+  def EvalBody.evalPropertyDemandCounted (rec : EvalRec) (a : Algorithm) (ctx : EvalCtx) (env : ValEnv) : EvalM CountedResult :=
+    match a with
+    | .mk _ [] _ _ _ _ => do
+        ActivatedBody.check a
+        let inherited := (propertyOwnerBindingContext a.parent (<- get)).getD ctx.bindingContext
+        let pushedCtx <- enterPropertyOwnerBody a ctx env inherited
+        let out <- rec.evalOutputRowsPreparedCore (Algorithm.output a) pushedCtx env
+        pure out.counted
+    | _ => rec.evalZeroArgumentDemandOutputCounted a ctx env
+
   /-- The property-level calculation one request of the property cache performs (CACHE-PUB-1):
-      a READ is the property's zero-argument demand (`evalZeroArgumentDemandOutputCounted`); an
+      a READ is the property's zero-argument demand (`evalPropertyDemandCounted`, CACHE-OWNER-D1); an
       INVOCATION is the ordinary call's own FRESH zero-supply invocation of the normalized callee —
       exactly the user / flat-binder / family arms of `evalSuppliedCallCounted` over the empty supply
       (a fresh binding context, the binder, the output check) — taken BEFORE the user arm's value
@@ -9273,7 +9309,7 @@ def EvalBody.algorithmIntrinsicRoute (rec : EvalRec) (receiver : Expr) (ctx : Ev
       is). C#: the `evaluate` callbacks of `EvalPublishedZeroSupplyInvocation`. -/
   def EvalBody.zeroArgPropertyCalculation (rec : EvalRec) (request : ZeroArgPropertyRequest) (resolvedAlgorithm : Algorithm) (ctx : EvalCtx) (env : ValEnv) : EvalM CountedResult :=
     match request with
-    | .read => rec.evalZeroArgumentDemandOutputCounted resolvedAlgorithm ctx env
+    | .read => EvalBody.evalPropertyDemandCounted rec resolvedAlgorithm ctx env
     | .invoke calleeName =>
         match resolvedAlgorithm with
         | .conditional _ _ _ _ =>
