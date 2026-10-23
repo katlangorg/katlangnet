@@ -112,15 +112,55 @@ internal static class MetamorphicComparator
         }
 
         var strictErrors = StrictErrorComparisonApplies(testCase, left, right);
-        var semantic = testCase.SemanticRelation switch
+        return CompareDeclared(
+            testCase.SemanticRelation, testCase.OperationalRelation, strictErrors, testCase, left, right);
+    }
+
+    /// <summary>
+    /// The same comparison for a relation declared OUTSIDE a template case (SEM-2B profile parity and
+    /// generated relations): one shared source compared under the given relations and error policy.
+    /// The resource-boundary law needs its case's declared stop, so it is only reachable through
+    /// <see cref="Compare(MetamorphicCase, MetamorphicOperationalObservation, MetamorphicOperationalObservation)"/>.
+    /// </summary>
+    internal static MetamorphicMismatch? Compare(
+        MetamorphicSemanticRelation semanticRelation,
+        MetamorphicOperationalRelation operationalRelation,
+        MetamorphicErrorPolicy errorPolicy,
+        MetamorphicOperationalObservation left,
+        MetamorphicOperationalObservation right)
+    {
+        ArgumentNullException.ThrowIfNull(left);
+        ArgumentNullException.ThrowIfNull(right);
+        if (semanticRelation == MetamorphicSemanticRelation.SameResourceBoundary)
+            throw new MetamorphicHarnessException("The resource-boundary relation needs its template case.");
+
+        if (RenderedLengthViolation(left, "left") is { } leftBound) return leftBound;
+        if (RenderedLengthViolation(right, "right") is { } rightBound) return rightBound;
+
+        var strictErrors = errorPolicy == MetamorphicErrorPolicy.StrictSameSource
+            && (left.Facets & right.Facets).HasFlag(MetamorphicFacets.StructuredError)
+            && left.Semantic.Outcome == "err"
+            && right.Semantic.Outcome == "err";
+        return CompareDeclared(semanticRelation, operationalRelation, strictErrors, boundaryCase: null, left, right);
+    }
+
+    private static MetamorphicMismatch? CompareDeclared(
+        MetamorphicSemanticRelation semanticRelation,
+        MetamorphicOperationalRelation operationalRelation,
+        bool strictErrors,
+        MetamorphicCase? boundaryCase,
+        MetamorphicOperationalObservation left,
+        MetamorphicOperationalObservation right)
+    {
+        var semantic = semanticRelation switch
         {
             MetamorphicSemanticRelation.SemanticEqual => CompareSemanticEqual(left.Semantic, right.Semantic, strictErrors),
             MetamorphicSemanticRelation.SameStructuredOutcome => CompareSharedFacets(left, right, strictErrors),
             MetamorphicSemanticRelation.MonotonicSuccess => CompareMonotonicSuccess(left, right),
-            MetamorphicSemanticRelation.SameResourceBoundary => CompareResourceBoundary(testCase, left, right),
+            MetamorphicSemanticRelation.SameResourceBoundary => CompareResourceBoundary(boundaryCase!, left, right),
             MetamorphicSemanticRelation.IndependentRunStable => CompareIndependentRunStable(left, right, strictErrors),
             _ => throw new MetamorphicHarnessException(
-                $"No comparison is implemented for semantic relation {testCase.SemanticRelation}."),
+                $"No comparison is implemented for semantic relation {semanticRelation}."),
         };
 
         if (semantic is not null) return semantic;
@@ -137,7 +177,7 @@ internal static class MetamorphicComparator
         // SUCCESSFUL runs ever differed on counters.
         if (!WorkIsComparable(left, right)) return null;
 
-        return testCase.OperationalRelation switch
+        return operationalRelation switch
         {
             MetamorphicOperationalRelation.NotCompared => null,
             MetamorphicOperationalRelation.ExactMaterializationEqual => CompareExactMaterializationEqual(left, right),
@@ -149,7 +189,7 @@ internal static class MetamorphicComparator
                 ?? CompareObservedWork(left, right)
                 ?? CompareEvidence(left, right),
             _ => throw new MetamorphicHarnessException(
-                $"No comparison is implemented for operational relation {testCase.OperationalRelation}."),
+                $"No comparison is implemented for operational relation {operationalRelation}."),
         };
     }
 

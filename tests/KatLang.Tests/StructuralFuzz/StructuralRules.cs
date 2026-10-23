@@ -191,7 +191,7 @@ internal static class ModelRewriter
             MDecl.Family fam => new MDecl.Family(
                 fam.Symbol,
                 fam.Clauses.Select(c => new MClause(c.Pattern, MapExpr(c.Body, exprMap, scopeMap))).ToList()),
-            MDecl.SeqPatternFunc sp => new MDecl.SeqPatternFunc(sp.Symbol, sp.Binders, MapExpr(sp.Body, exprMap, scopeMap)),
+            MDecl.SeqPatternFunc sp => sp with { Body = MapExpr(sp.Body, exprMap, scopeMap) },
             MDecl.Deconstruction d => new MDecl.Deconstruction(d.Binders, MapExpr(d.Rhs, exprMap, scopeMap)),
             _ => throw new InvalidOperationException($"Unhandled decl kind {decl.GetType().Name}"),
         };
@@ -213,6 +213,17 @@ internal static class ModelRewriter
                 MapExpr(i.Then, exprMap, scopeMap),
                 MapExpr(i.Else, exprMap, scopeMap)),
             MExpr.Brace b => new MExpr.Brace(scopeMap(b.Scope)),
+            MExpr.Dot d => new MExpr.Dot(
+                MapExpr(d.Receiver, exprMap, scopeMap),
+                d.Member,
+                d.Args?.Select(a => MapExpr(a, exprMap, scopeMap)).ToList()),
+            MExpr.Select s => new MExpr.Select(
+                MapExpr(s.Receiver, exprMap, scopeMap),
+                s.Selectors.Select(x => MapExpr(x, exprMap, scopeMap)).ToList()),
+            MExpr.ListLit l => new MExpr.ListLit(l.Items.Select(i => MapExpr(i, exprMap, scopeMap)).ToList()),
+            MExpr.Prim p => new MExpr.Prim(p.Name, p.Args.Select(a => MapExpr(a, exprMap, scopeMap)).ToList()),
+            MExpr.Binary bin => new MExpr.Binary(
+                bin.Operator, MapExpr(bin.Left, exprMap, scopeMap), MapExpr(bin.Right, exprMap, scopeMap)),
             _ => throw new InvalidOperationException($"Unhandled expr kind {expr.GetType().Name}"),
         };
     }
@@ -251,8 +262,26 @@ internal static class ModelRewriter
                     Visit(i.Then);
                     Visit(i.Else);
                     return;
+                case MExpr.Dot d:
+                    Visit(d.Receiver);
+                    foreach (var arg in d.Args ?? []) Visit(arg);
+                    return;
+                case MExpr.Select s:
+                    Visit(s.Receiver);
+                    foreach (var selector in s.Selectors) Visit(selector);
+                    return;
+                case MExpr.ListLit l:
+                    foreach (var item in l.Items) Visit(item);
+                    return;
+                case MExpr.Prim p:
+                    foreach (var arg in p.Args) Visit(arg);
+                    return;
+                case MExpr.Binary bin:
+                    Visit(bin.Left);
+                    Visit(bin.Right);
+                    return;
                 default:
-                    return; // Atom, IndexErr, Brace (deliberately not entered)
+                    return; // Atom, Bool, IndexErr, Brace (deliberately not entered)
             }
         }
     }
@@ -438,6 +467,9 @@ public static class StructuralTransforms
         foreach (var (_, decl) in CollectFamilyDecls(program.Root))
         {
             var family = (MDecl.Family)decl;
+            // These relations require literal/catch-all clause heads. A structural pattern
+            // function has its own kind/arity rejection, not a conditional non-match verdict.
+            if (family.Clauses.Any(c => c.Pattern is MPattern.Structure or MPattern.Collecting)) continue;
             var literalPrefix = family.Clauses.TakeWhile(c => c.Pattern is MPattern.Literal).Count();
 
             if (literalPrefix >= 2)

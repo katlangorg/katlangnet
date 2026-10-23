@@ -36,6 +36,18 @@ internal enum MetamorphicSurface
 
     /// <summary><c>OutputFormatters.Exact.Format(KatLangEngine.Run(...))</c> — the canonical rendered text.</summary>
     EngineExactFormatter,
+
+    /// <summary>
+    /// <c>Evaluator.RunCountedObservedAsync</c> with an async-capable property cache, so the run takes
+    /// the asynchronous twin family (SEM-2B). Hands back the run's budget like the synchronous
+    /// observed surface, but it has NO optimizer policy: the twin path pins both optimizers off.
+    /// Genuine suspension is evidence only when an asynchronous <see cref="MetamorphicHostFixture"/>
+    /// witnesses it; without one the twin runs but never suspends.
+    /// </summary>
+    EvaluatorRunCountedObservedAsync,
+
+    /// <summary><c>KatLangEngine.RunAsync</c> — the public asynchronous façade (SEM-2B).</summary>
+    EngineRunAsync,
 }
 
 /// <summary>Everything the harness knows about one entry point, declared rather than inferred.</summary>
@@ -55,7 +67,17 @@ internal sealed record MetamorphicSurfaceDefinition(
     MetamorphicFacets Facets,
     bool RequiresParsableSource,
     bool SupportsOptimizerPolicy,
-    bool UsesFrontEndPipeline);
+    bool UsesFrontEndPipeline)
+{
+    /// <summary>
+    /// True when the adapter can run a program against a <see cref="MetamorphicHostFixture"/>'s host
+    /// operations (SEM-2B). A surface without it refuses a fixture rather than silently dropping it.
+    /// </summary>
+    public bool SupportsHostFixture { get; init; }
+
+    /// <summary>True when the adapter is an ASYNCHRONOUS entry point that a gated fixture can suspend.</summary>
+    public bool IsAsynchronous { get; init; }
+}
 
 /// <summary>
 /// The registered runtime surfaces and the adapters that project each one onto ONE neutral
@@ -83,7 +105,10 @@ internal static class MetamorphicSurfaces
     [
         new(MetamorphicSurface.EvaluatorRunCountedObserved, DefaultSurfaceId,
             MetamorphicFacets.Observed,
-            RequiresParsableSource: true, SupportsOptimizerPolicy: true, UsesFrontEndPipeline: false),
+            RequiresParsableSource: true, SupportsOptimizerPolicy: true, UsesFrontEndPipeline: false)
+        {
+            SupportsHostFixture = true,
+        },
 
         new(MetamorphicSurface.EvaluatorRunCounted, "evaluator-run-counted",
             MetamorphicFacets.Outcome | MetamorphicFacets.StructuredError
@@ -106,7 +131,10 @@ internal static class MetamorphicSurfaces
         new(MetamorphicSurface.EngineRun, "engine-run",
             MetamorphicFacets.Outcome | MetamorphicFacets.Structure | MetamorphicFacets.EmittedCount
             | MetamorphicFacets.HostAtoms | MetamorphicFacets.RenderedText,
-            RequiresParsableSource: false, SupportsOptimizerPolicy: false, UsesFrontEndPipeline: true),
+            RequiresParsableSource: false, SupportsOptimizerPolicy: false, UsesFrontEndPipeline: true)
+        {
+            SupportsHostFixture = true,
+        },
 
         new(MetamorphicSurface.EngineEvaluateToAtoms, "engine-evaluate-to-atoms",
             MetamorphicFacets.Outcome | MetamorphicFacets.HostAtoms,
@@ -116,6 +144,23 @@ internal static class MetamorphicSurfaces
             MetamorphicFacets.Outcome | MetamorphicFacets.Structure | MetamorphicFacets.EmittedCount
             | MetamorphicFacets.HostAtoms | MetamorphicFacets.RenderedText,
             RequiresParsableSource: false, SupportsOptimizerPolicy: false, UsesFrontEndPipeline: true),
+
+        new(MetamorphicSurface.EvaluatorRunCountedObservedAsync, "evaluator-run-counted-observed-async",
+            MetamorphicFacets.Observed,
+            RequiresParsableSource: true, SupportsOptimizerPolicy: false, UsesFrontEndPipeline: false)
+        {
+            SupportsHostFixture = true,
+            IsAsynchronous = true,
+        },
+
+        new(MetamorphicSurface.EngineRunAsync, "engine-run-async",
+            MetamorphicFacets.Outcome | MetamorphicFacets.Structure | MetamorphicFacets.EmittedCount
+            | MetamorphicFacets.HostAtoms | MetamorphicFacets.RenderedText,
+            RequiresParsableSource: false, SupportsOptimizerPolicy: false, UsesFrontEndPipeline: true)
+        {
+            SupportsHostFixture = true,
+            IsAsynchronous = true,
+        },
     ];
 
     static MetamorphicSurfaces()
@@ -160,6 +205,23 @@ internal static class MetamorphicSurfaces
         bool collectEvidence,
         out MetamorphicOperationalObservation observation,
         out string reason)
+        => TryObserve(source, profile, options, collectEvidence, host: null, out observation, out reason);
+
+    /// <summary>
+    /// <see cref="TryObserve(string, MetamorphicExecutionProfile, RunOptions, bool, out MetamorphicOperationalObservation, out string)"/>
+    /// against one run's <see cref="MetamorphicHostFixture"/> (SEM-2B): the program is parsed and run
+    /// with the fixture's host operations, and an asynchronous surface is driven through the fixture's
+    /// suspension gate. The fixture belongs to this ONE observation. A surface that cannot carry host
+    /// operations refuses the fixture with a harness exception rather than silently running without it.
+    /// </summary>
+    internal static bool TryObserve(
+        string source,
+        MetamorphicExecutionProfile profile,
+        RunOptions options,
+        bool collectEvidence,
+        MetamorphicHostFixture? host,
+        out MetamorphicOperationalObservation observation,
+        out string reason)
     {
         ArgumentNullException.ThrowIfNull(source);
         ArgumentNullException.ThrowIfNull(profile);
@@ -169,10 +231,21 @@ internal static class MetamorphicSurfaces
         observation = null!;
         reason = "ok";
 
+        if (host is not null && !definition.SupportsHostFixture)
+            throw new MetamorphicHarnessException($"Surface '{definition.Id}' cannot run against a host fixture.");
+        if (host is { Asynchronous: true } && !definition.IsAsynchronous)
+            throw new MetamorphicHarnessException($"Surface '{definition.Id}' is synchronous; a gated host fixture needs an asynchronous surface.");
+        if (host is not null)
+            options = new RunOptions { EvaluationLimits = options.EvaluationLimits, HostOperations = host.Operations };
+
         return definition.Surface switch
         {
             MetamorphicSurface.EvaluatorRunCountedObserved =>
-                ObserveRunCountedObserved(source, profile, definition, collectEvidence, ref observation, ref reason),
+                ObserveRunCountedObserved(source, profile, definition, collectEvidence, host, ref observation, ref reason),
+            MetamorphicSurface.EvaluatorRunCountedObservedAsync =>
+                ObserveRunCountedObservedAsync(source, profile, definition, collectEvidence, host, ref observation, ref reason),
+            MetamorphicSurface.EngineRunAsync =>
+                ObserveEngineRunAsync(source, profile, definition, options, host, ref observation),
             MetamorphicSurface.EvaluatorRunCounted =>
                 ObserveRunCounted(source, profile, definition, ref observation, ref reason),
             MetamorphicSurface.EvaluatorRun =>
@@ -198,18 +271,71 @@ internal static class MetamorphicSurfaces
         MetamorphicExecutionProfile profile,
         MetamorphicSurfaceDefinition definition,
         bool collectEvidence,
+        MetamorphicHostFixture? host,
         ref MetamorphicOperationalObservation observation,
         ref string reason)
     {
-        if (!TryParse(source, ref reason, out var block)) return false;
+        if (!TryParse(source, host, ref reason, out var block)) return false;
 
         var cache = new RunScopedZeroArgPropertyResultCache();
         var loopDiagnostics = collectEvidence ? new LoopOptimizationDiagnostics() : null;
         var sequenceDiagnostics = collectEvidence ? new SequencePipelineDiagnostics() : null;
 
         var (result, budget) = Evaluator.RunCountedObserved(
-            block, profile.Limits, profile.EnableOptimizations, cache, loopDiagnostics, sequenceDiagnostics);
+            block, profile.Limits, profile.EnableOptimizations, cache, loopDiagnostics, sequenceDiagnostics,
+            hostOperations: host?.Operations);
 
+        observation = ObservedFrom(result, budget, profile, definition, loopDiagnostics, sequenceDiagnostics,
+            collectEvidence ? MetamorphicCacheEvidence.From(cache.GetSnapshot()) : null);
+        return true;
+    }
+
+    /// <summary>
+    /// The asynchronous twin of <see cref="ObserveRunCountedObserved"/> (SEM-2B). An async-capable
+    /// property cache routes the run through the twin family (whose preparation pins both
+    /// optimizers off, so the profile's optimizer flag is not a policy here); a gated host fixture
+    /// drives it through genuine suspensions. That cache keeps no statistics, so no cache evidence
+    /// is claimed.
+    /// </summary>
+    private static bool ObserveRunCountedObservedAsync(
+        string source,
+        MetamorphicExecutionProfile profile,
+        MetamorphicSurfaceDefinition definition,
+        bool collectEvidence,
+        MetamorphicHostFixture? host,
+        ref MetamorphicOperationalObservation observation,
+        ref string reason)
+    {
+        if (!TryParse(source, host, ref reason, out var block)) return false;
+
+        var cache = new RunScopedAsyncZeroArgPropertyResultCache();
+        var loopDiagnostics = collectEvidence ? new LoopOptimizationDiagnostics() : null;
+        var sequenceDiagnostics = collectEvidence ? new SequencePipelineDiagnostics() : null;
+
+        Task<(EvalResult<Evaluator.CountedResult> Result, KatLang.Evaluation.EvaluationBudget Budget)> Start(CancellationToken token)
+            => Evaluator.RunCountedObservedAsync(
+                block, profile.Limits, cache, loopDiagnostics, sequenceDiagnostics,
+                hostOperations: host?.Operations, cancellationToken: token).AsTask();
+
+        var (result, budget) = host is { Asynchronous: true }
+            ? host.Drive(Start, MetamorphicHostFixture.DefaultWatchdog)
+            : Start(CancellationToken.None).GetAwaiter().GetResult();
+
+        observation = ObservedFrom(result, budget, profile, definition, loopDiagnostics, sequenceDiagnostics, cacheEvidence: null)
+            with { OptimizerPolicy = "twin" };
+        return true;
+    }
+
+    /// <summary>The shared projection of one observed run (sync or async) onto its neutral observation.</summary>
+    private static MetamorphicOperationalObservation ObservedFrom(
+        EvalResult<Evaluator.CountedResult> result,
+        KatLang.Evaluation.EvaluationBudget budget,
+        MetamorphicExecutionProfile profile,
+        MetamorphicSurfaceDefinition definition,
+        LoopOptimizationDiagnostics? loopDiagnostics,
+        SequencePipelineDiagnostics? sequenceDiagnostics,
+        MetamorphicCacheEvidence? cacheEvidence)
+    {
         // Snapshot the run's own counters BEFORE encoding anything, so no later read can be
         // mistaken for work the run performed.
         var steps = budget.ConsumedSteps;
@@ -230,7 +356,7 @@ internal static class MetamorphicSurfaces
                 "Observing a completed run changed its budget counters; the operational observation is not a pure read.");
         }
 
-        observation = new MetamorphicOperationalObservation(
+        return new MetamorphicOperationalObservation(
             semantic, steps, materializedItems, materializedStringChars, peakDepth,
             profile.EnableOptimizations ? "on" : "off")
         {
@@ -240,9 +366,8 @@ internal static class MetamorphicSurfaces
             OptimizerEvidence = loopDiagnostics is not null && sequenceDiagnostics is not null
                 ? MetamorphicOptimizerEvidence.From(loopDiagnostics.GetSnapshot(), sequenceDiagnostics.GetSnapshot())
                 : null,
-            CacheEvidence = collectEvidence ? MetamorphicCacheEvidence.From(cache.GetSnapshot()) : null,
+            CacheEvidence = cacheEvidence,
         };
-        return true;
     }
 
     private static bool ObserveRunCounted(
@@ -405,6 +530,35 @@ internal static class MetamorphicSurfaces
         return true;
     }
 
+    /// <summary>
+    /// <c>KatLangEngine.RunAsync</c> (SEM-2B). With a gated fixture the run is driven through its
+    /// suspensions and the fixture's cancellation schedule reaches the run through
+    /// <see cref="RunOptions.EvaluationCancellationToken"/>; without one it is simply awaited.
+    /// </summary>
+    private static bool ObserveEngineRunAsync(
+        string source,
+        MetamorphicExecutionProfile profile,
+        MetamorphicSurfaceDefinition definition,
+        RunOptions options,
+        MetamorphicHostFixture? host,
+        ref MetamorphicOperationalObservation observation)
+    {
+        Task<RunResult> Start(CancellationToken token)
+            => KatLangEngine.RunAsync(source, new RunOptions
+            {
+                EvaluationLimits = options.EvaluationLimits,
+                HostOperations = options.HostOperations,
+                EvaluationCancellationToken = token,
+            });
+
+        var run = host is { Asynchronous: true }
+            ? host.Drive(Start, MetamorphicHostFixture.DefaultWatchdog)
+            : KatLangEngine.RunAsync(source, options).GetAwaiter().GetResult();
+
+        observation = FromEngineRun(run, run.ToDisplayString(), MetamorphicSurfaceProjection.StructuredDisplay, profile, definition);
+        return true;
+    }
+
     /// <summary>The engine's top-level property channel name, mirrored for the evaluator surface.</summary>
     private const string EngineTopLevelPropertyName = "DisplayDecimals";
 
@@ -428,14 +582,27 @@ internal static class MetamorphicSurfaces
                 renderedProjection,
                 (profile.Limits ?? EvaluationLimits.Default).EffectiveMaxDisplayLength,
                 TopLevelProperty: null),
+            FailureStage = run switch
+            {
+                RunResult.Success => null,
+                RunResult.ParseFailure => MetamorphicOperationalObservation.FrontEndFailureStage,
+                RunResult.EvalFailure => MetamorphicOperationalObservation.EvaluationFailureStage,
+                _ => "other:" + run.GetType().Name,
+            },
         };
     }
 
     // ── Shared helpers ──────────────────────────────────────────────────────
 
     private static bool TryParse(string source, ref string reason, out Expr.AlgorithmExpr block)
+        => TryParse(source, host: null, ref reason, out block);
+
+    /// <summary>Parses with the fixture's host operations in scope, exactly as the engine would.</summary>
+    private static bool TryParse(string source, MetamorphicHostFixture? host, ref string reason, out Expr.AlgorithmExpr block)
     {
-        var parsed = Parser.Parse(source);
+        var parsed = host is null
+            ? Parser.Parse(source)
+            : Parser.Parse(source, new RunOptions { HostOperations = host.Operations });
         if (parsed.HasErrors)
         {
             block = null!;

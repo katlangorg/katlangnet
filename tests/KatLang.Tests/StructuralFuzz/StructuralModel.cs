@@ -59,9 +59,40 @@ public abstract record MExpr
 
     /// <summary>Front-end-valid runtime tripwire: <c>(1, 2)[9]</c> (err index).</summary>
     public sealed record IndexErr : MExpr;
+
+    // ── SEM-2B grammar-aware extension ──────────────────────────────────────
+    // The original StructuralCorpus never builds these nodes, so its rendered
+    // sources (and therefore every existing case identity) are unchanged.
+
+    /// <summary>Dot edge <c>receiver.Member</c> or, with <paramref name="Args"/>,
+    /// <c>receiver.Member(args)</c>. <paramref name="Member"/> is a FIXED spelling
+    /// — a call-reference intrinsic (<c>Arguments</c>, <c>Algorithm</c>,
+    /// <c>Invoke</c>) or a builtin used through dot syntax (<c>count</c>,
+    /// <c>repeat</c>, <c>while</c>) — never a generated symbol, so renaming
+    /// can neither capture nor be captured by it.</summary>
+    public sealed record Dot(MExpr Receiver, string Member, IReadOnlyList<MExpr>? Args) : MExpr;
+
+    /// <summary>Variadic postfix selection <c>receiver[s1, …, sn]</c> (zero
+    /// selectors render <c>receiver[]</c>).</summary>
+    public sealed record Select(MExpr Receiver, IReadOnlyList<MExpr> Selectors) : MExpr;
+
+    /// <summary>Exact list literal <c>[items]</c>.</summary>
+    public sealed record ListLit(IReadOnlyList<MExpr> Items) : MExpr;
+
+    /// <summary>Call of a FIXED-name operation: a builtin (<c>count</c>) or a
+    /// deterministic host-fixture operation (<c>trace</c>, <c>wait</c>). The name
+    /// lies outside every generated name pool, so it is not a symbol.</summary>
+    public sealed record Prim(string Name, IReadOnlyList<MExpr> Args) : MExpr;
+
+    /// <summary>Binary operator other than <c>+</c> (<c>*</c>, <c>/</c>, <c>-</c>,
+    /// <c>&lt;</c>). Compound operands render inside redundant parentheses,
+    /// which the parser erases, so no precedence reasoning is needed.</summary>
+    public sealed record Binary(string Operator, MExpr Left, MExpr Right) : MExpr;
 }
 
-public sealed record MParam(Sym Symbol, bool Collecting);
+/// <summary>A flat parameter: fixed, collecting (<c>*name</c>), or META
+/// (<c>meta name</c>, SEM-2B; a META parameter is always fixed).</summary>
+public sealed record MParam(Sym Symbol, bool Collecting, bool Meta = false);
 
 /// <summary>Deconstruction/sequence-pattern binder (<c>name</c> or <c>*name</c>).</summary>
 public sealed record MBinder(Sym Symbol, bool Collecting);
@@ -74,6 +105,12 @@ public abstract record MPattern
 
     /// <summary>Catch-all binder clause pattern, e.g. <c>C(x)</c>.</summary>
     public sealed record Binder(Sym Symbol) : MPattern;
+
+    /// <summary>A collecting name inside a structural pattern.</summary>
+    public sealed record Collecting(Sym Symbol) : MPattern;
+
+    /// <summary>A sequence or exact-list pattern, preserving its nested delimiter structure.</summary>
+    public sealed record Structure(bool IsList, IReadOnlyList<MPattern> Items) : MPattern;
 
     /// <summary>Top-level arity-2 literal pattern, e.g. <c>C(0, 0)</c>. Used
     /// ONLY by the IntroduceInvalidFamilyShape transform to violate the
@@ -92,14 +129,16 @@ public abstract record MDecl
     /// <summary>Flat function <c>F(a, *b) = body</c>.</summary>
     public sealed record Func(Sym Symbol, IReadOnlyList<MParam> Params, MExpr Body) : MDecl;
 
-    /// <summary>Clause family (conditional algorithm), uniform top-level arity 1:
-    /// literal clauses first, then at most one trailing catch-all. Dispatch is
-    /// source-order first-match (Lean: Algorithm.conditional doc).</summary>
+    /// <summary>Named heads of top-level arity 1: literal/catch-all clause families,
+    /// or one structural head for an ordinary pattern function. Only literal/catch-all
+    /// heads admit the clause-family transformations.</summary>
     public sealed record Family(Sym Symbol, IReadOnlyList<MClause> Clauses) : MDecl;
 
     /// <summary>Single-clause sequence-value pattern function
-    /// <c>H((a, *b, c)) = body</c> — opens the one received structure.</summary>
-    public sealed record SeqPatternFunc(Sym Symbol, IReadOnlyList<MBinder> Binders, MExpr Body) : MDecl;
+    /// <c>H((a, *b, c)) = body</c> — opens the one received structure. With
+    /// <paramref name="ListPattern"/> (SEM-2B) it is the exact-list pattern
+    /// <c>H([a, *b, c]) = body</c>, which opens only a list.</summary>
+    public sealed record SeqPatternFunc(Sym Symbol, IReadOnlyList<MBinder> Binders, MExpr Body, bool ListPattern = false) : MDecl;
 
     /// <summary>Assignment deconstruction <c>x, *y, z = RHS</c>.</summary>
     public sealed record Deconstruction(IReadOnlyList<MBinder> Binders, MExpr Rhs) : MDecl;
@@ -248,7 +287,7 @@ public sealed class ScopeGraph
                 {
                     var body = NewScope(node, $"func {f.Symbol}");
                     foreach (var p in f.Params)
-                        Declare(body, p.Symbol, p.Collecting ? "collectingParam" : "param");
+                        Declare(body, p.Symbol, p.Meta ? "metaParam" : p.Collecting ? "collectingParam" : "param");
                     WalkExpr(f.Body, body);
                     break;
                 }
@@ -257,8 +296,7 @@ public sealed class ScopeGraph
                     foreach (var clause in fam.Clauses)
                     {
                         var body = NewScope(node, $"clause of {fam.Symbol}");
-                        if (clause.Pattern is MPattern.Binder b)
-                            Declare(body, b.Symbol, "clauseBinder");
+                        DeclarePattern(body, clause.Pattern);
                         WalkExpr(clause.Body, body);
                     }
 
@@ -280,6 +318,22 @@ public sealed class ScopeGraph
 
         foreach (var row in scope.Rows)
             WalkExpr(row, node);
+    }
+
+    private void DeclarePattern(ScopeNode scope, MPattern pattern)
+    {
+        switch (pattern)
+        {
+            case MPattern.Binder binder:
+                Declare(scope, binder.Symbol, "clauseBinder");
+                break;
+            case MPattern.Collecting collecting:
+                Declare(scope, collecting.Symbol, "clauseCollecting");
+                break;
+            case MPattern.Structure structure:
+                foreach (var item in structure.Items) DeclarePattern(scope, item);
+                break;
+        }
     }
 
     private void WalkExpr(MExpr expr, ScopeNode scope)
@@ -320,6 +374,29 @@ public sealed class ScopeGraph
                 WalkScope(b.Scope, inner);
                 return;
             }
+
+            case MExpr.Dot d:
+                WalkExpr(d.Receiver, scope);
+                foreach (var arg in d.Args ?? [])
+                    WalkExpr(arg, scope);
+                return;
+            case MExpr.Select s:
+                WalkExpr(s.Receiver, scope);
+                foreach (var selector in s.Selectors)
+                    WalkExpr(selector, scope);
+                return;
+            case MExpr.ListLit l:
+                foreach (var item in l.Items)
+                    WalkExpr(item, scope);
+                return;
+            case MExpr.Prim p:
+                foreach (var arg in p.Args)
+                    WalkExpr(arg, scope);
+                return;
+            case MExpr.Binary bin:
+                WalkExpr(bin.Left, scope);
+                WalkExpr(bin.Right, scope);
+                return;
 
             default:
                 throw new InvalidOperationException($"Unhandled expr kind {expr.GetType().Name}");
@@ -509,6 +586,7 @@ public static class StructuralRenderer
                 for (var i = 0; i < f.Params.Count; i++)
                 {
                     if (i > 0) sb.Append(", ");
+                    if (f.Params[i].Meta) sb.Append("meta ");
                     if (f.Params[i].Collecting) sb.Append('*');
                     sb.Append(names[f.Params[i].Symbol]);
                 }
@@ -529,20 +607,7 @@ public static class StructuralRenderer
 
                     firstClause = false;
                     sb.Append(names[fam.Symbol]).Append('(');
-                    switch (clause.Pattern)
-                    {
-                        case MPattern.Literal lit:
-                            sb.Append(FormatAtom(lit.Value));
-                            break;
-                        case MPattern.Binder b:
-                            sb.Append(names[b.Symbol]);
-                            break;
-                        case MPattern.LiteralPair pair:
-                            sb.Append(FormatAtom(pair.First)).Append(", ").Append(FormatAtom(pair.Second));
-                            break;
-                        default:
-                            throw new InvalidOperationException($"Unhandled pattern {clause.Pattern.GetType().Name}");
-                    }
+                    RenderPattern(clause.Pattern, names, sb);
 
                     sb.Append(") = ");
                     RenderBodyRows([clause.Body], names, sb, indent, closeTrailingSpread);
@@ -552,7 +617,7 @@ public static class StructuralRenderer
             }
 
             case MDecl.SeqPatternFunc sp:
-                sb.Append(names[sp.Symbol]).Append("((");
+                sb.Append(names[sp.Symbol]).Append(sp.ListPattern ? "([" : "((");
                 for (var i = 0; i < sp.Binders.Count; i++)
                 {
                     if (i > 0) sb.Append(", ");
@@ -560,7 +625,7 @@ public static class StructuralRenderer
                     sb.Append(names[sp.Binders[i].Symbol]);
                 }
 
-                sb.Append(")) = ");
+                sb.Append(sp.ListPattern ? "]) = " : ")) = ");
                 RenderBodyRows([sp.Body], names, sb, indent, closeTrailingSpread);
                 return;
             case MDecl.Deconstruction d:
@@ -585,6 +650,36 @@ public static class StructuralRenderer
         }
     }
 
+    private static void RenderPattern(MPattern pattern, IReadOnlyDictionary<Sym, string> names, StringBuilder sb)
+    {
+        switch (pattern)
+        {
+            case MPattern.Literal literal:
+                sb.Append(FormatAtom(literal.Value));
+                break;
+            case MPattern.Binder binder:
+                sb.Append(names[binder.Symbol]);
+                break;
+            case MPattern.Collecting collecting:
+                sb.Append('*').Append(names[collecting.Symbol]);
+                break;
+            case MPattern.LiteralPair pair:
+                sb.Append(FormatAtom(pair.First)).Append(", ").Append(FormatAtom(pair.Second));
+                break;
+            case MPattern.Structure structure:
+                sb.Append(structure.IsList ? '[' : '(');
+                for (var i = 0; i < structure.Items.Count; i++)
+                {
+                    if (i > 0) sb.Append(", ");
+                    RenderPattern(structure.Items[i], names, sb);
+                }
+                sb.Append(structure.IsList ? ']' : ')');
+                break;
+            default:
+                throw new InvalidOperationException($"Unhandled pattern {pattern.GetType().Name}");
+        }
+    }
+
     private static void RenderExpr(MExpr expr, IReadOnlyDictionary<Sym, string> names, StringBuilder sb, int indent)
     {
         switch (expr)
@@ -599,9 +694,47 @@ public static class StructuralRenderer
                 sb.Append(names[r.Target]);
                 return;
             case MExpr.Add add:
-                RenderExpr(add.Left, names, sb, indent);
+                // Only a SEM-2B Binary operand needs grouping; the original corpus never
+                // builds one, so its rendering is unchanged.
+                RenderOperand(add.Left, add.Left is MExpr.Binary, names, sb, indent);
                 sb.Append(" + ");
-                RenderExpr(add.Right, names, sb, indent);
+                RenderOperand(add.Right, add.Right is MExpr.Binary, names, sb, indent);
+                return;
+            case MExpr.Binary bin:
+                RenderOperand(bin.Left, bin.Left is MExpr.Add or MExpr.Binary, names, sb, indent);
+                sb.Append(' ').Append(bin.Operator).Append(' ');
+                RenderOperand(bin.Right, bin.Right is MExpr.Add or MExpr.Binary, names, sb, indent);
+                return;
+            case MExpr.Dot d:
+                RenderOperand(d.Receiver, d.Receiver is MExpr.Add or MExpr.Binary or MExpr.Spread, names, sb, indent);
+                sb.Append('.').Append(d.Member);
+                if (d.Args is { } dotArgs)
+                    RenderArgs(dotArgs, names, sb, indent);
+                return;
+            case MExpr.Select sel:
+                RenderOperand(sel.Receiver, sel.Receiver is MExpr.Add or MExpr.Binary or MExpr.Spread, names, sb, indent);
+                sb.Append('[');
+                for (var i = 0; i < sel.Selectors.Count; i++)
+                {
+                    if (i > 0) sb.Append(", ");
+                    RenderExpr(sel.Selectors[i], names, sb, indent);
+                }
+
+                sb.Append(']');
+                return;
+            case MExpr.ListLit list:
+                sb.Append('[');
+                for (var i = 0; i < list.Items.Count; i++)
+                {
+                    if (i > 0) sb.Append(", ");
+                    RenderExpr(list.Items[i], names, sb, indent);
+                }
+
+                sb.Append(']');
+                return;
+            case MExpr.Prim prim:
+                sb.Append(prim.Name);
+                RenderArgs(prim.Args, names, sb, indent);
                 return;
             case MExpr.Group g:
                 if (g.Items.Count == 1 && g.Items[0] is not MExpr.Spread)
@@ -620,7 +753,15 @@ public static class StructuralRenderer
                 sb.Append(')');
                 return;
             case MExpr.Spread s:
-                if (s.Operand is not (MExpr.Ref or MExpr.Group or MExpr.Call))
+                if (s.Operand is MExpr.Binary)
+                {
+                    // SEM-2B: `(1 / 0)*` — redundant grouping makes an operator operand attachable.
+                    RenderOperand(s.Operand, group: true, names, sb, indent);
+                    sb.Append('*');
+                    return;
+                }
+
+                if (s.Operand is not (MExpr.Ref or MExpr.Group or MExpr.Call or MExpr.Dot or MExpr.Select))
                 {
                     throw new InvalidOperationException(
                         $"Model invalid: spread operand {s.Operand.GetType().Name} is not a marker-attachable form.");
@@ -662,6 +803,29 @@ public static class StructuralRenderer
             default:
                 throw new InvalidOperationException($"Unhandled expr kind {expr.GetType().Name}");
         }
+    }
+
+    /// <summary>An operand, inside REDUNDANT parentheses when <paramref name="group"/> is set
+    /// (a one-expression group the parser erases, so the tree is the bare operand's).</summary>
+    private static void RenderOperand(
+        MExpr operand, bool group, IReadOnlyDictionary<Sym, string> names, StringBuilder sb, int indent)
+    {
+        if (group) sb.Append('(');
+        RenderExpr(operand, names, sb, indent);
+        if (group) sb.Append(')');
+    }
+
+    private static void RenderArgs(
+        IReadOnlyList<MExpr> args, IReadOnlyDictionary<Sym, string> names, StringBuilder sb, int indent)
+    {
+        sb.Append('(');
+        for (var i = 0; i < args.Count; i++)
+        {
+            if (i > 0) sb.Append(", ");
+            RenderExpr(args[i], names, sb, indent);
+        }
+
+        sb.Append(')');
     }
 
     private static string FormatAtom(Decimal128 value)

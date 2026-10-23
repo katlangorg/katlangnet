@@ -1,0 +1,231 @@
+{
+  "format": "kl-sem2b-case",
+  "formatVersion": 1,
+  "generator": "sem2b-grammar",
+  "recipeVersion": 1,
+  "caseId": "sem2b/v1/seed/5EED2B000003/3",
+  "tier": "seeded",
+  "seed": "0x5EED2B000003",
+  "index": 3,
+  "kind": "valid-success",
+  "families": [
+    "collect"
+  ],
+  "features": [
+    "collect",
+    "ctx-brace",
+    "ctx-property-double",
+    "forwarding",
+    "list"
+  ],
+  "members": [
+    {
+      "role": "base",
+      "sha256": "sha256:ae58df58c3c8b5bef4b15b5feef7942f84f243369ab8918276c2a6c11daf74c4",
+      "source": "v1(v2, *v3, v4) = v3\nv5(*v6) = v1(v6*)\nv8 = {\n  v7 = 0\n  v5(trace(1), trace(3), trace(4), trace(5), trace(2))\n}\n[v8, v8]\n997"
+    },
+    {
+      "role": "alpha-rename",
+      "sha256": "sha256:34977494fdd9826da3dd2bf03603377ec5918b4676221f29e4562e7b1f1c6338",
+      "source": "w1(w2, *w3, w4) = w3\nw5(*w6) = w1(w6*)\nw8 = {\n  w7 = 0\n  w5(trace(1), trace(3), trace(4), trace(5), trace(2))\n}\n[w8, w8]\n997"
+    },
+    {
+      "role": "declaration-reorder",
+      "sha256": "sha256:1c27b8d7ae482fc130cfb59239f794ccc5c4ee7f9b8883d512f9f2d07cd222be",
+      "source": "v8 = {\n  v7 = 0\n  v5(trace(1), trace(3), trace(4), trace(5), trace(2))\n}\nv5(*v6) = v1(v6*)\nv1(v2, *v3, v4) = v3\n[v8, v8]\n997"
+    }
+  ],
+  "profiles": [
+    {
+      "id": "sync-generic",
+      "surface": "evaluator-run-counted-observed",
+      "facets": "Observed",
+      "detail": "sync-generic: surface=evaluator-run-counted-observed optimizer=off limits=default effectiveLimits=depth:128,ast:300,steps:unlimited,collection:100000,items:unlimited,string:1000000,chars:unlimited,display:1000000 host=sem2b-host/1 schedule=synchronous order=fresh"
+    },
+    {
+      "id": "sync-optimized",
+      "surface": "evaluator-run-counted-observed",
+      "facets": "Observed",
+      "detail": "sync-optimized: surface=evaluator-run-counted-observed optimizer=on limits=default effectiveLimits=depth:128,ast:300,steps:unlimited,collection:100000,items:unlimited,string:1000000,chars:unlimited,display:1000000 host=sem2b-host/1 schedule=synchronous order=fresh"
+    },
+    {
+      "id": "async-twin",
+      "surface": "evaluator-run-counted-observed-async",
+      "facets": "Observed",
+      "detail": "async-twin: surface=evaluator-run-counted-observed-async optimizer=twin-pinned-off limits=default effectiveLimits=depth:128,ast:300,steps:unlimited,collection:100000,items:unlimited,string:1000000,chars:unlimited,display:1000000 host=sem2b-host/1 schedule=release-each-in-order order=fresh"
+    },
+    {
+      "id": "engine-run",
+      "surface": "engine-run",
+      "facets": "Outcome, Structure, EmittedCount, HostAtoms, RenderedText",
+      "detail": "engine-run: surface=engine-run optimizer=production-default limits=default effectiveLimits=depth:128,ast:300,steps:unlimited,collection:100000,items:unlimited,string:1000000,chars:unlimited,display:1000000 host=sem2b-host/1 schedule=synchronous order=fresh"
+    }
+  ],
+  "runtimeRandomSeed": null,
+  "hostFixture": "sem2b-host/1",
+  "comparison": {
+    "structure": "kl-struct-v1 + Result.ValueComparer",
+    "errors": "strict-same-source (profiles); normalized (transformations)",
+    "facets": "declared surface intersection; root emitted count separate; host events exact",
+    "relations": [
+      "parity:sync-generic~sync-optimized: semantic=SameStructuredOutcome; operational=ExactObservedWorkEqual; errors=StrictSameSource",
+      "parity:sync-optimized~async-twin: semantic=SameStructuredOutcome; operational=NotCompared; errors=StrictSameSource",
+      "parity:sync-optimized~engine-run: semantic=SameStructuredOutcome; operational=NotCompared; errors=StrictSameSource",
+      "relation:alpha-rename: profile=sync-optimized; semantic=SemanticEqual; operational=NotCompared; errors=Normalized",
+      "relation:declaration-reorder: profile=sync-optimized; semantic=SemanticEqual; operational=NotCompared; errors=Normalized"
+    ]
+  },
+  "expected": {
+    "kind": "valid-success",
+    "value": "kl-struct-v1:7:n3:3e0n3:4e0n3:5e0l3:0,1,2,;l2:3,3,;n5:997e0s2:4,5,;",
+    "emittedCount": 2,
+    "errorCategory": null,
+    "diagnostic": null,
+    "diagnosticPhase": null,
+    "events": [
+      "trace:3",
+      "trace:4",
+      "trace:5"
+    ],
+    "cancelledEventsPrefix": [],
+    "paths": "CacheHit",
+    "minimumCacheHits": 1
+  },
+  "provenance": "KatLang 0.8.254+afcdc715b1bfea74d209e56fcc8a282e0ca1a177; harness KatLang.ParserFuzz; host KatLang.ParserFuzz",
+  "result": {
+    "caseId": "sem2b/v1/seed/5EED2B000003/3",
+    "verdict": "Passed",
+    "findings": [],
+    "pathsExercised": "CacheHit",
+    "pathRejections": [],
+    "relations": [
+      "parity:sync-generic~sync-optimized",
+      "parity:sync-optimized~async-twin",
+      "parity:sync-optimized~engine-run",
+      "relation:alpha-rename",
+      "relation:declaration-reorder"
+    ],
+    "observations": [
+      {
+        "profile": "sync-generic",
+        "member": "base",
+        "outcome": "ok",
+        "valueIdentity": "kl-struct-v1:7:n3:3e0n3:4e0n3:5e0l3:0,1,2,;l2:3,3,;n5:997e0s2:4,5,;",
+        "emittedCount": 2,
+        "errorCategory": null,
+        "failureStage": null,
+        "events": [
+          "trace:3",
+          "trace:4",
+          "trace:5"
+        ],
+        "waitCalls": 0,
+        "suspensions": 0,
+        "cancelled": false,
+        "optimizerEvidence": "none loopHits=0 loopFallbacks=0 loops=0 plannedExpr=0 fusion=0/0",
+        "cacheEvidence": "requests=2 hits=1 misses=1 stores=1 keys=1",
+        "harness": null
+      },
+      {
+        "profile": "sync-optimized",
+        "member": "base",
+        "outcome": "ok",
+        "valueIdentity": "kl-struct-v1:7:n3:3e0n3:4e0n3:5e0l3:0,1,2,;l2:3,3,;n5:997e0s2:4,5,;",
+        "emittedCount": 2,
+        "errorCategory": null,
+        "failureStage": null,
+        "events": [
+          "trace:3",
+          "trace:4",
+          "trace:5"
+        ],
+        "waitCalls": 0,
+        "suspensions": 0,
+        "cancelled": false,
+        "optimizerEvidence": "none loopHits=0 loopFallbacks=0 loops=0 plannedExpr=0 fusion=0/0",
+        "cacheEvidence": "requests=2 hits=1 misses=1 stores=1 keys=1",
+        "harness": null
+      },
+      {
+        "profile": "async-twin",
+        "member": "base",
+        "outcome": "ok",
+        "valueIdentity": "kl-struct-v1:7:n3:3e0n3:4e0n3:5e0l3:0,1,2,;l2:3,3,;n5:997e0s2:4,5,;",
+        "emittedCount": 2,
+        "errorCategory": null,
+        "failureStage": null,
+        "events": [
+          "trace:3",
+          "trace:4",
+          "trace:5"
+        ],
+        "waitCalls": 0,
+        "suspensions": 0,
+        "cancelled": false,
+        "optimizerEvidence": "none loopHits=0 loopFallbacks=0 loops=0 plannedExpr=0 fusion=0/0",
+        "cacheEvidence": null,
+        "harness": null
+      },
+      {
+        "profile": "engine-run",
+        "member": "base",
+        "outcome": "ok",
+        "valueIdentity": "kl-struct-v1:7:n3:3e0n3:4e0n3:5e0l3:0,1,2,;l2:3,3,;n5:997e0s2:4,5,;",
+        "emittedCount": 2,
+        "errorCategory": null,
+        "failureStage": null,
+        "events": [
+          "trace:3",
+          "trace:4",
+          "trace:5"
+        ],
+        "waitCalls": 0,
+        "suspensions": 0,
+        "cancelled": false,
+        "optimizerEvidence": null,
+        "cacheEvidence": null,
+        "harness": null
+      },
+      {
+        "profile": "sync-optimized",
+        "member": "alpha-rename",
+        "outcome": "ok",
+        "valueIdentity": "kl-struct-v1:7:n3:3e0n3:4e0n3:5e0l3:0,1,2,;l2:3,3,;n5:997e0s2:4,5,;",
+        "emittedCount": 2,
+        "errorCategory": null,
+        "failureStage": null,
+        "events": [
+          "trace:3",
+          "trace:4",
+          "trace:5"
+        ],
+        "waitCalls": 0,
+        "suspensions": 0,
+        "cancelled": false,
+        "optimizerEvidence": "none loopHits=0 loopFallbacks=0 loops=0 plannedExpr=0 fusion=0/0",
+        "cacheEvidence": "requests=2 hits=1 misses=1 stores=1 keys=1",
+        "harness": null
+      },
+      {
+        "profile": "sync-optimized",
+        "member": "declaration-reorder",
+        "outcome": "ok",
+        "valueIdentity": "kl-struct-v1:7:n3:3e0n3:4e0n3:5e0l3:0,1,2,;l2:3,3,;n5:997e0s2:4,5,;",
+        "emittedCount": 2,
+        "errorCategory": null,
+        "failureStage": null,
+        "events": [
+          "trace:3",
+          "trace:4",
+          "trace:5"
+        ],
+        "waitCalls": 0,
+        "suspensions": 0,
+        "cancelled": false,
+        "optimizerEvidence": "none loopHits=0 loopFallbacks=0 loops=0 plannedExpr=0 fusion=0/0",
+        "cacheEvidence": "requests=2 hits=1 misses=1 stores=1 keys=1",
+        "harness": null
+      }
+    ]
+  }
+}

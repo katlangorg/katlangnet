@@ -215,6 +215,19 @@ internal sealed record MetamorphicOperationalObservation(
     /// <summary>The run's zero-argument property cache profile, when one was attached.</summary>
     public MetamorphicCacheEvidence? CacheEvidence { get; init; }
 
+    /// <summary>
+    /// Which stage stopped a FAILED engine run (SEM-2B): <see cref="FrontEndFailureStage"/> or
+    /// <see cref="EvaluationFailureStage"/>. Engine surfaces report a parse failure as an ordinary
+    /// outcome and keep no structured error, so this is the only way a valid-source case can tell
+    /// an unexpected front-end rejection from a runtime failure there. <c>null</c> on success and on
+    /// surfaces that consume an already-parsed root.
+    /// </summary>
+    public string? FailureStage { get; init; }
+
+    internal const string FrontEndFailureStage = "front-end";
+
+    internal const string EvaluationFailureStage = "evaluation";
+
     // NOTE: the effective LIMITS are deliberately NOT part of an observation. An observation
     // records what a run produced and charged; the policy it ran under belongs to the case's
     // execution profile, which is where the fingerprint and the diagnostics read it from. Keeping

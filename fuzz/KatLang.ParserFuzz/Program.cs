@@ -53,6 +53,16 @@ internal static class Program
         if (args.Length > 0 && args[0] == "metamorphic-seeds")
             return MetamorphicReplay.RunExportSeeds(args); // export seed payloads as a corpus
 
+        // SEM-2B grammar-aware semantic testing (fuzz/README.md § Grammar-aware semantic testing).
+        if (args.Length > 0 && args[0] == "semantic-replay")
+            return SemanticReplay.RunReplay(args);         // replay versioned case descriptors
+        if (args.Length > 0 && args[0] == "semantic-export")
+            return SemanticReplay.RunExport(args);         // write one case's descriptor
+        if (args.Length > 0 && args[0] == "semantic-corpus")
+            return SemanticReplay.RunCorpus(args);         // the fixed corpus, optionally supervised
+        if (args.Length > 0 && args[0] == "semantic-worker")
+            return SemanticReplay.RunWorker(args);         // one supervised child execution
+
         // Phase-6 UTF-16 lexer/parser/span subcommands.
         if (args.Length > 0 && args[0] == "utf16-replay")
             return Utf16Replay.RunReplay(args);            // exact code-unit replay

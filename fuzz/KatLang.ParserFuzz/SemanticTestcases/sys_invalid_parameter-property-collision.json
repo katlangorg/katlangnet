@@ -1,0 +1,131 @@
+{
+  "format": "kl-sem2b-case",
+  "formatVersion": 1,
+  "generator": "sem2b-grammar",
+  "recipeVersion": 1,
+  "caseId": "sem2b/v1/sys/invalid/parameter-property-collision",
+  "tier": "systematic",
+  "seed": null,
+  "index": 2,
+  "kind": "invalid-front-end",
+  "families": [
+    "alias"
+  ],
+  "features": [
+    "activation-state",
+    "alias",
+    "cache",
+    "invalid-parameter-property-collision"
+  ],
+  "members": [
+    {
+      "role": "base",
+      "sha256": "sha256:efa5b608fae52264819d80608d630f07ab2db78d04c45930ff09e43f4d7381a1",
+      "source": "v1(v2) = {\n  v3 = trace(v2)\n  v3 + v3\n}\nv4(v5) = {\n  v5 = 1\n  v5\n}\n[v1(1), v1(1)]\n997"
+    }
+  ],
+  "profiles": [
+    {
+      "id": "sync-optimized",
+      "surface": "evaluator-run-counted-observed",
+      "facets": "Observed",
+      "detail": "sync-optimized: surface=evaluator-run-counted-observed optimizer=on limits=default effectiveLimits=depth:128,ast:300,steps:unlimited,collection:100000,items:unlimited,string:1000000,chars:unlimited,display:1000000 host=sem2b-host/1 schedule=synchronous order=fresh"
+    },
+    {
+      "id": "engine-run",
+      "surface": "engine-run",
+      "facets": "Outcome, Structure, EmittedCount, HostAtoms, RenderedText",
+      "detail": "engine-run: surface=engine-run optimizer=production-default limits=default effectiveLimits=depth:128,ast:300,steps:unlimited,collection:100000,items:unlimited,string:1000000,chars:unlimited,display:1000000 host=sem2b-host/1 schedule=synchronous order=fresh"
+    },
+    {
+      "id": "engine-run-async",
+      "surface": "engine-run-async",
+      "facets": "Outcome, Structure, EmittedCount, HostAtoms, RenderedText",
+      "detail": "engine-run-async: surface=engine-run-async optimizer=production-default limits=default effectiveLimits=depth:128,ast:300,steps:unlimited,collection:100000,items:unlimited,string:1000000,chars:unlimited,display:1000000 host=sem2b-host/1 schedule=release-each-in-order order=fresh"
+    }
+  ],
+  "runtimeRandomSeed": null,
+  "hostFixture": "sem2b-host/1",
+  "comparison": {
+    "structure": "kl-struct-v1 + Result.ValueComparer",
+    "errors": "strict-same-source (profiles); normalized (transformations)",
+    "facets": "declared surface intersection; root emitted count separate; host events exact",
+    "relations": [
+      "parity:sync-optimized~engine-run: semantic=SameStructuredOutcome; operational=NotCompared; errors=StrictSameSource",
+      "parity:engine-run~engine-run-async: semantic=SameStructuredOutcome; operational=NotCompared; errors=StrictSameSource"
+    ]
+  },
+  "expected": {
+    "kind": "invalid-front-end",
+    "value": null,
+    "emittedCount": null,
+    "errorCategory": null,
+    "diagnostic": "ParameterPropertyCollision",
+    "diagnosticPhase": "elaboration",
+    "events": [],
+    "cancelledEventsPrefix": [],
+    "paths": "None",
+    "minimumCacheHits": 0
+  },
+  "provenance": "KatLang 0.8.254+afcdc715b1bfea74d209e56fcc8a282e0ca1a177; harness KatLang.ParserFuzz; host KatLang.ParserFuzz",
+  "result": {
+    "caseId": "sem2b/v1/sys/invalid/parameter-property-collision",
+    "verdict": "Passed",
+    "findings": [],
+    "pathsExercised": "None",
+    "pathRejections": [],
+    "relations": [
+      "parity:engine-run~engine-run-async"
+    ],
+    "observations": [
+      {
+        "profile": "sync-optimized",
+        "member": "base",
+        "outcome": "not-run:parse-error",
+        "valueIdentity": null,
+        "emittedCount": null,
+        "errorCategory": null,
+        "failureStage": null,
+        "events": [],
+        "waitCalls": 0,
+        "suspensions": 0,
+        "cancelled": false,
+        "optimizerEvidence": null,
+        "cacheEvidence": null,
+        "harness": null
+      },
+      {
+        "profile": "engine-run",
+        "member": "base",
+        "outcome": "err",
+        "valueIdentity": null,
+        "emittedCount": null,
+        "errorCategory": null,
+        "failureStage": "front-end",
+        "events": [],
+        "waitCalls": 0,
+        "suspensions": 0,
+        "cancelled": false,
+        "optimizerEvidence": null,
+        "cacheEvidence": null,
+        "harness": null
+      },
+      {
+        "profile": "engine-run-async",
+        "member": "base",
+        "outcome": "err",
+        "valueIdentity": null,
+        "emittedCount": null,
+        "errorCategory": null,
+        "failureStage": "front-end",
+        "events": [],
+        "waitCalls": 0,
+        "suspensions": 0,
+        "cancelled": false,
+        "optimizerEvidence": null,
+        "cacheEvidence": null,
+        "harness": null
+      }
+    ]
+  }
+}

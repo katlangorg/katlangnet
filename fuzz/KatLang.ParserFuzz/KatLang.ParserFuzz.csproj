@@ -32,6 +32,16 @@
     <ProjectReference Include="..\..\src\KatLang\KatLang.csproj" />
   </ItemGroup>
 
+  <!--
+    SEM-2B grammar-aware semantic testing: its generator builds on the symbol-addressed structural
+    model owned by the test project, linked here as source (the reverse of the Metamorphic sharing),
+    so semantic-replay/semantic-worker reconstruct a case with exactly the generator the tests run.
+  -->
+  <ItemGroup>
+    <Compile Include="..\..\tests\KatLang.Tests\StructuralFuzz\StructuralModel.cs" Link="StructuralFuzz\StructuralModel.cs" />
+    <Compile Include="..\..\tests\KatLang.Tests\StructuralFuzz\StructuralFuzzer.cs" Link="StructuralFuzz\StructuralFuzzer.cs" />
+  </ItemGroup>
+
   <!-- Seed corpus files are data, never compiled. -->
   <ItemGroup>
     <None Update="Testcases\**" CopyToOutputDirectory="Never" />

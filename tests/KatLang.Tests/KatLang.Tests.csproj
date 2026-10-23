@@ -41,6 +41,16 @@
   </ItemGroup>
 
   <!--
+    SEM-2B grammar-aware semantic testing is shared the same way: the generator, profile runner,
+    descriptors, replay and supervisor the fuzz consumer's semantic-* commands run are exactly the
+    ones these tests exercise. Its grammar model is this project's StructuralFuzz model, which the
+    fuzz project links back as source.
+  -->
+  <ItemGroup>
+    <Compile Include="..\..\fuzz\KatLang.ParserFuzz\Semantic\*.cs" Link="Semantic\%(Filename)%(Extension)" />
+  </ItemGroup>
+
+  <!--
     The UTF-16 target is shared the same way and for the same reason: its tests must exercise the
     exact decoder, builder, executor, relations and replay driver the campaign runs. It also needs
     the four harness files it reuses instead of reimplementing — the shared span validator (whose

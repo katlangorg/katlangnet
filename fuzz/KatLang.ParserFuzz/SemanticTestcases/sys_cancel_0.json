@@ -1,0 +1,340 @@
+{
+  "format": "kl-sem2b-case",
+  "formatVersion": 1,
+  "generator": "sem2b-grammar",
+  "recipeVersion": 1,
+  "caseId": "sem2b/v1/sys/cancel/0",
+  "tier": "systematic",
+  "seed": null,
+  "index": 0,
+  "kind": "valid-success",
+  "families": [
+    "async",
+    "cache"
+  ],
+  "features": [
+    "async",
+    "cache",
+    "cache-order-2",
+    "cancellation",
+    "compose:async+cache"
+  ],
+  "members": [
+    {
+      "role": "base",
+      "sha256": "sha256:068e97b8695e0862a2182c68a6eb846343b5dcedb3b20ebfc29bb08ee0d8c949",
+      "source": "v1 = wait(1)\nv2 = wait(2)\n[v1, v1]\n[v2, v2()]\n997"
+    },
+    {
+      "role": "alpha-rename",
+      "sha256": "sha256:0ee7659595bafaa58649e1bec509218aa02cdcb0a25a72ca2179a31b5d309dfa",
+      "source": "w1 = wait(1)\nw2 = wait(2)\n[w1, w1]\n[w2, w2()]\n997"
+    },
+    {
+      "role": "declaration-reorder",
+      "sha256": "sha256:bc5e163bc7f502403ef3cd5bc687ab3608dc7419fc020b241aa13250159fdca4",
+      "source": "v2 = wait(2)\nv1 = wait(1)\n[v1, v1]\n[v2, v2()]\n997"
+    }
+  ],
+  "profiles": [
+    {
+      "id": "sync-generic",
+      "surface": "evaluator-run-counted-observed",
+      "facets": "Observed",
+      "detail": "sync-generic: surface=evaluator-run-counted-observed optimizer=off limits=default effectiveLimits=depth:128,ast:300,steps:unlimited,collection:100000,items:unlimited,string:1000000,chars:unlimited,display:1000000 host=sem2b-host/1 schedule=synchronous order=fresh"
+    },
+    {
+      "id": "sync-optimized",
+      "surface": "evaluator-run-counted-observed",
+      "facets": "Observed",
+      "detail": "sync-optimized: surface=evaluator-run-counted-observed optimizer=on limits=default effectiveLimits=depth:128,ast:300,steps:unlimited,collection:100000,items:unlimited,string:1000000,chars:unlimited,display:1000000 host=sem2b-host/1 schedule=synchronous order=fresh"
+    },
+    {
+      "id": "async-twin",
+      "surface": "evaluator-run-counted-observed-async",
+      "facets": "Observed",
+      "detail": "async-twin: surface=evaluator-run-counted-observed-async optimizer=twin-pinned-off limits=default effectiveLimits=depth:128,ast:300,steps:unlimited,collection:100000,items:unlimited,string:1000000,chars:unlimited,display:1000000 host=sem2b-host/1 schedule=release-each-in-order order=fresh"
+    },
+    {
+      "id": "engine-run",
+      "surface": "engine-run",
+      "facets": "Outcome, Structure, EmittedCount, HostAtoms, RenderedText",
+      "detail": "engine-run: surface=engine-run optimizer=production-default limits=default effectiveLimits=depth:128,ast:300,steps:unlimited,collection:100000,items:unlimited,string:1000000,chars:unlimited,display:1000000 host=sem2b-host/1 schedule=synchronous order=fresh"
+    },
+    {
+      "id": "engine-run-async",
+      "surface": "engine-run-async",
+      "facets": "Outcome, Structure, EmittedCount, HostAtoms, RenderedText",
+      "detail": "engine-run-async: surface=engine-run-async optimizer=production-default limits=default effectiveLimits=depth:128,ast:300,steps:unlimited,collection:100000,items:unlimited,string:1000000,chars:unlimited,display:1000000 host=sem2b-host/1 schedule=release-each-in-order order=fresh"
+    },
+    {
+      "id": "sync-optimized-rerun",
+      "surface": "evaluator-run-counted-observed",
+      "facets": "Observed",
+      "detail": "sync-optimized-rerun: surface=evaluator-run-counted-observed optimizer=on limits=default effectiveLimits=depth:128,ast:300,steps:unlimited,collection:100000,items:unlimited,string:1000000,chars:unlimited,display:1000000 host=sem2b-host/1 schedule=synchronous order=after-interleaved-run"
+    },
+    {
+      "id": "async-twin-cancel-1",
+      "surface": "evaluator-run-counted-observed-async",
+      "facets": "Observed",
+      "detail": "async-twin-cancel-1: surface=evaluator-run-counted-observed-async optimizer=twin-pinned-off limits=default effectiveLimits=depth:128,ast:300,steps:unlimited,collection:100000,items:unlimited,string:1000000,chars:unlimited,display:1000000 host=sem2b-host/1 schedule=cancel-at-suspension-1 order=fresh"
+    },
+    {
+      "id": "engine-run-async-cancel-1",
+      "surface": "engine-run-async",
+      "facets": "Outcome, Structure, EmittedCount, HostAtoms, RenderedText",
+      "detail": "engine-run-async-cancel-1: surface=engine-run-async optimizer=production-default limits=default effectiveLimits=depth:128,ast:300,steps:unlimited,collection:100000,items:unlimited,string:1000000,chars:unlimited,display:1000000 host=sem2b-host/1 schedule=cancel-at-suspension-1 order=fresh"
+    }
+  ],
+  "runtimeRandomSeed": null,
+  "hostFixture": "sem2b-host/1",
+  "comparison": {
+    "structure": "kl-struct-v1 + Result.ValueComparer",
+    "errors": "strict-same-source (profiles); normalized (transformations)",
+    "facets": "declared surface intersection; root emitted count separate; host events exact",
+    "relations": [
+      "parity:sync-generic~sync-optimized: semantic=SameStructuredOutcome; operational=ExactObservedWorkEqual; errors=StrictSameSource",
+      "parity:sync-optimized~async-twin: semantic=SameStructuredOutcome; operational=NotCompared; errors=StrictSameSource",
+      "parity:sync-optimized~engine-run: semantic=SameStructuredOutcome; operational=NotCompared; errors=StrictSameSource",
+      "parity:engine-run~engine-run-async: semantic=SameStructuredOutcome; operational=NotCompared; errors=StrictSameSource",
+      "parity:sync-optimized~sync-optimized-rerun: semantic=IndependentRunStable; operational=IdenticalWork; errors=StrictSameSource",
+      "relation:alpha-rename: profile=sync-optimized; semantic=SemanticEqual; operational=NotCompared; errors=Normalized",
+      "relation:declaration-reorder: profile=sync-optimized; semantic=SemanticEqual; operational=NotCompared; errors=Normalized",
+      "parity:async-twin-cancel-1~engine-run-async-cancel-1: cancellation-and-exact-events"
+    ]
+  },
+  "expected": {
+    "kind": "valid-success",
+    "value": "kl-struct-v1:6:n3:1e0l2:0,0,;n3:2e0l2:2,2,;n5:997e0s3:1,3,4,;",
+    "emittedCount": 3,
+    "errorCategory": null,
+    "diagnostic": null,
+    "diagnosticPhase": null,
+    "events": [
+      "wait:1",
+      "wait:2",
+      "wait:2"
+    ],
+    "cancelledEventsPrefix": [
+      "wait:1"
+    ],
+    "paths": "CacheHit, AsyncSuspension, Cancellation, FreshInvocation",
+    "minimumCacheHits": 1
+  },
+  "provenance": "KatLang 0.8.254+afcdc715b1bfea74d209e56fcc8a282e0ca1a177; harness KatLang.ParserFuzz; host KatLang.ParserFuzz",
+  "result": {
+    "caseId": "sem2b/v1/sys/cancel/0",
+    "verdict": "Passed",
+    "findings": [],
+    "pathsExercised": "CacheHit, AsyncSuspension, Cancellation, FreshInvocation",
+    "pathRejections": [],
+    "relations": [
+      "parity:sync-generic~sync-optimized",
+      "parity:sync-optimized~async-twin",
+      "parity:sync-optimized~engine-run",
+      "parity:engine-run~engine-run-async",
+      "parity:sync-optimized~sync-optimized-rerun",
+      "parity:async-twin-cancel-1~engine-run-async-cancel-1",
+      "relation:alpha-rename",
+      "relation:declaration-reorder"
+    ],
+    "observations": [
+      {
+        "profile": "sync-generic",
+        "member": "base",
+        "outcome": "ok",
+        "valueIdentity": "kl-struct-v1:6:n3:1e0l2:0,0,;n3:2e0l2:2,2,;n5:997e0s3:1,3,4,;",
+        "emittedCount": 3,
+        "errorCategory": null,
+        "failureStage": null,
+        "events": [
+          "wait:1",
+          "wait:2",
+          "wait:2"
+        ],
+        "waitCalls": 0,
+        "suspensions": 0,
+        "cancelled": false,
+        "optimizerEvidence": "none loopHits=0 loopFallbacks=0 loops=0 plannedExpr=0 fusion=0/0",
+        "cacheEvidence": "requests=3 hits=1 misses=2 stores=2 keys=2",
+        "harness": null
+      },
+      {
+        "profile": "sync-optimized",
+        "member": "base",
+        "outcome": "ok",
+        "valueIdentity": "kl-struct-v1:6:n3:1e0l2:0,0,;n3:2e0l2:2,2,;n5:997e0s3:1,3,4,;",
+        "emittedCount": 3,
+        "errorCategory": null,
+        "failureStage": null,
+        "events": [
+          "wait:1",
+          "wait:2",
+          "wait:2"
+        ],
+        "waitCalls": 0,
+        "suspensions": 0,
+        "cancelled": false,
+        "optimizerEvidence": "none loopHits=0 loopFallbacks=0 loops=0 plannedExpr=0 fusion=0/0",
+        "cacheEvidence": "requests=3 hits=1 misses=2 stores=2 keys=2",
+        "harness": null
+      },
+      {
+        "profile": "async-twin",
+        "member": "base",
+        "outcome": "ok",
+        "valueIdentity": "kl-struct-v1:6:n3:1e0l2:0,0,;n3:2e0l2:2,2,;n5:997e0s3:1,3,4,;",
+        "emittedCount": 3,
+        "errorCategory": null,
+        "failureStage": null,
+        "events": [
+          "wait:1",
+          "wait:2",
+          "wait:2"
+        ],
+        "waitCalls": 3,
+        "suspensions": 3,
+        "cancelled": false,
+        "optimizerEvidence": "none loopHits=0 loopFallbacks=0 loops=0 plannedExpr=0 fusion=0/0",
+        "cacheEvidence": null,
+        "harness": null
+      },
+      {
+        "profile": "engine-run",
+        "member": "base",
+        "outcome": "ok",
+        "valueIdentity": "kl-struct-v1:6:n3:1e0l2:0,0,;n3:2e0l2:2,2,;n5:997e0s3:1,3,4,;",
+        "emittedCount": 3,
+        "errorCategory": null,
+        "failureStage": null,
+        "events": [
+          "wait:1",
+          "wait:2",
+          "wait:2"
+        ],
+        "waitCalls": 0,
+        "suspensions": 0,
+        "cancelled": false,
+        "optimizerEvidence": null,
+        "cacheEvidence": null,
+        "harness": null
+      },
+      {
+        "profile": "engine-run-async",
+        "member": "base",
+        "outcome": "ok",
+        "valueIdentity": "kl-struct-v1:6:n3:1e0l2:0,0,;n3:2e0l2:2,2,;n5:997e0s3:1,3,4,;",
+        "emittedCount": 3,
+        "errorCategory": null,
+        "failureStage": null,
+        "events": [
+          "wait:1",
+          "wait:2",
+          "wait:2"
+        ],
+        "waitCalls": 3,
+        "suspensions": 3,
+        "cancelled": false,
+        "optimizerEvidence": null,
+        "cacheEvidence": null,
+        "harness": null
+      },
+      {
+        "profile": "sync-optimized-rerun",
+        "member": "base",
+        "outcome": "ok",
+        "valueIdentity": "kl-struct-v1:6:n3:1e0l2:0,0,;n3:2e0l2:2,2,;n5:997e0s3:1,3,4,;",
+        "emittedCount": 3,
+        "errorCategory": null,
+        "failureStage": null,
+        "events": [
+          "wait:1",
+          "wait:2",
+          "wait:2"
+        ],
+        "waitCalls": 0,
+        "suspensions": 0,
+        "cancelled": false,
+        "optimizerEvidence": "none loopHits=0 loopFallbacks=0 loops=0 plannedExpr=0 fusion=0/0",
+        "cacheEvidence": "requests=3 hits=1 misses=2 stores=2 keys=2",
+        "harness": null
+      },
+      {
+        "profile": "async-twin-cancel-1",
+        "member": "base",
+        "outcome": "cancelled",
+        "valueIdentity": null,
+        "emittedCount": null,
+        "errorCategory": null,
+        "failureStage": null,
+        "events": [
+          "wait:1"
+        ],
+        "waitCalls": 1,
+        "suspensions": 1,
+        "cancelled": true,
+        "optimizerEvidence": null,
+        "cacheEvidence": null,
+        "harness": null
+      },
+      {
+        "profile": "engine-run-async-cancel-1",
+        "member": "base",
+        "outcome": "cancelled",
+        "valueIdentity": null,
+        "emittedCount": null,
+        "errorCategory": null,
+        "failureStage": null,
+        "events": [
+          "wait:1"
+        ],
+        "waitCalls": 1,
+        "suspensions": 1,
+        "cancelled": true,
+        "optimizerEvidence": null,
+        "cacheEvidence": null,
+        "harness": null
+      },
+      {
+        "profile": "sync-optimized",
+        "member": "alpha-rename",
+        "outcome": "ok",
+        "valueIdentity": "kl-struct-v1:6:n3:1e0l2:0,0,;n3:2e0l2:2,2,;n5:997e0s3:1,3,4,;",
+        "emittedCount": 3,
+        "errorCategory": null,
+        "failureStage": null,
+        "events": [
+          "wait:1",
+          "wait:2",
+          "wait:2"
+        ],
+        "waitCalls": 0,
+        "suspensions": 0,
+        "cancelled": false,
+        "optimizerEvidence": "none loopHits=0 loopFallbacks=0 loops=0 plannedExpr=0 fusion=0/0",
+        "cacheEvidence": "requests=3 hits=1 misses=2 stores=2 keys=2",
+        "harness": null
+      },
+      {
+        "profile": "sync-optimized",
+        "member": "declaration-reorder",
+        "outcome": "ok",
+        "valueIdentity": "kl-struct-v1:6:n3:1e0l2:0,0,;n3:2e0l2:2,2,;n5:997e0s3:1,3,4,;",
+        "emittedCount": 3,
+        "errorCategory": null,
+        "failureStage": null,
+        "events": [
+          "wait:1",
+          "wait:2",
+          "wait:2"
+        ],
+        "waitCalls": 0,
+        "suspensions": 0,
+        "cancelled": false,
+        "optimizerEvidence": "none loopHits=0 loopFallbacks=0 loops=0 plannedExpr=0 fusion=0/0",
+        "cacheEvidence": "requests=3 hits=1 misses=2 stores=2 keys=2",
+        "harness": null
+      }
+    ]
+  }
+}

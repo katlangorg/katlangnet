@@ -48,6 +48,9 @@ fuzz/
     Utf16/                      # UTF-16 target (tables, decoder, source builder, executor,
                                 #   relations, fingerprint, replay)
     Utf16Testcases/             # tracked UTF-16 seeds (payloads in hex, never source text)
+    Semantic/                   # SEM-2B grammar-aware semantic testing (generator, profiles,
+                                #   runner, descriptors, replay, supervisor, coverage)
+    SemanticTestcases/          # tracked kl-sem2b-case v1 descriptors (directly replayable)
   katlang.dict                  # libFuzzer dictionary of KatLang fragments
   run-campaign.sh               # WSL-side: get the verified driver + run libFuzzer
   libfuzzer-driver.sh           # WSL-side: pinned, digest-verified driver build + cache
@@ -63,8 +66,12 @@ self-contained `Metamorphic/` and `Utf16/` folders are compiled into `tests/KatL
 shared source, so `MetamorphicFuzzHarnessTests` and `Utf16FuzzHarnessTests` exercise exactly the
 decoder, template, executor and replay driver the campaign runs instead of a second copy. `Utf16/`
 also pulls in the four harness files it reuses rather than reimplements — `SourceSpanValidator.cs`,
-`FuzzInvariants.cs`, `FrontEndInvariants.cs`, `FrontEndFingerprint.cs`. Nothing else in `fuzz/` is
-part of normal validation, and none of the shared files may reference SharpFuzz.
+`FuzzInvariants.cs`, `FrontEndInvariants.cs`, `FrontEndFingerprint.cs`. The SEM-2B `Semantic/`
+folder is shared the same way, and in the other direction this project links the test project's
+symbol-addressed grammar model (`tests/KatLang.Tests/StructuralFuzz/StructuralModel.cs` and
+`StructuralFuzzer.cs`) so its `semantic-*` commands rebuild cases with exactly the generator the
+tests run. Nothing else in `fuzz/` is part of normal validation, and none of the shared files may
+reference SharpFuzz.
 
 ## Invariants
 
@@ -1497,3 +1504,232 @@ diagnostic-conversion defect; dotted-call disagreement; builtin-metadata drift; 
 documentation drift; UTF-16 coordinate defect; parser-recovery interaction; unexpected CLR exception.
 A structured "no result" is never a finding, and broadening a "no result" to silence a mismatch is
 never a legitimate fix.
+
+## Grammar-aware semantic testing (SEM-2B)
+
+### What it is
+
+A bounded, deterministic layer that GENERATES meaningful combinations of current KatLang features,
+runs each through a small matrix of shared execution profiles, and judges the results against
+expectations the generator CONSTRUCTED — never against a preliminary run of the implementation.
+It is not a libFuzzer target: there is no byte decoder and no campaign loop. It reuses SEM-2A's
+observer and comparator, the Phase 3 surface adapters and evidence, and the symbol-addressed
+structural model.
+
+### Where it lives
+
+| Piece | File |
+|---|---|
+| Grammar model (symbols, scopes, renderer; SEM-2B adds dot edges, postfix selection, list literals, fixed-name primitives, binary operators, META parameters and list patterns) | `tests/KatLang.Tests/StructuralFuzz/StructuralModel.cs` (linked into this project) |
+| Productions (8 families), contexts, invalid productions | `Semantic/SemanticGrammar.cs` |
+| Case model, kinds, intended paths, expectation | `Semantic/SemanticCase.cs` |
+| Fixed corpus: systematic + seeded tiers, composition, transformations, profile selection, durable ids | `Semantic/SemanticCorpus.cs` |
+| Profile matrix and declared comparisons | `Semantic/SemanticProfiles.cs` over `Metamorphic/MetamorphicSurfaces.cs` |
+| Deterministic host operations, suspension gate, cancellation schedule | `Metamorphic/MetamorphicHostFixture.cs` |
+| The ONE judging pipeline (front end, anchors, evidence, parity, relations) | `Semantic/SemanticRunner.cs` |
+| Coverage accounting and floors | `Semantic/SemanticCoverage.cs` |
+| `kl-sem2b-case` v1 descriptors and result documents | `Semantic/SemanticDescriptor.cs` |
+| Replay, export, corpus and worker commands | `Semantic/SemanticReplay.cs` |
+| Bounded child-process supervision | `Semantic/SemanticSupervisor.cs` |
+| Tests | `tests/KatLang.Tests/SemanticTesting/` |
+
+### Case kinds
+
+1. **Valid success** — must pass the real front end with NO diagnostic (`Parser.Parse` with the host
+   operations in scope) before any evaluator assertion, then produce the constructed value, root
+   emitted count and exact host-event sequence.
+2. **Valid runtime failure** — clean front end, then the constructed innermost error kind (where the
+   surface projects structured errors; the engine surfaces must report an EVALUATION-stage failure),
+   with exactly the effects that precede it.
+3. **Invalid front end** — one named production (`meta-on-collector` → `InvalidMetaParameter`,
+   `duplicate-property` → `DuplicateProperty` in the SYNTAX phase; `parameter-property-collision` →
+   `ParameterPropertyCollision`, `closed-parameter-list` → `UndeclaredIdentifier` in the ELABORATION
+   phase) added to an otherwise valid generated program. The phase is `syntax` when the raw parser
+   (`Parser.ParseSyntax`) already reports the code, `elaboration` when only `Parser.Parse` does. The
+   evaluator surfaces must refuse the source and no host effect may run.
+
+An unexpected front-end rejection or runtime outcome is never discarded: it is a failing verdict
+(`FrontEndUnexpected`, `Mismatch`, …) to classify as a generator, adapter or engine defect.
+
+### Families and interactions
+
+`meta` (META capture through direct, alias and ORDINARY-forwarding routes; `R.Arguments` count,
+selection, cell-preserving spread into a picker, `Invoke()`, fresh `R.Algorithm(...)`, rebuilt
+`R.Algorithm(R.Arguments*)`; collecting targets with spread supplies; the documented refusals),
+`collect` (prefix/suffix collectors; literal, spread, empty-spread and forwarded supplies; the
+collected list value; sequence and list patterns; cardinality before demand), `alias` (static alias
+chains, nested owners activated repeatedly, shadowing by name, runtime-target aliases, per-activation
+property state), `cache` (every CACHE-PUB-1 read/call order, one supplied cell reused or forwarded,
+separate activations), `select` (single, multiple, empty selection, list receivers, spread of selected
+values, demanded selectors, § (E) precedence), `loop` (planned `repeat`/`while`, zero iterations,
+steps the planner declines, a host call inside a planned loop, META loops over a rebuilt projection,
+the documented refusals and flag type), `failure` (operand order between two failures, dead failing
+arguments and branches, cardinality before demand, the first failing list element), `async` (waited
+cells, waited properties, ordered waits, a META view over waited arguments, a failure after a wait).
+The bounded nested-pattern production composes exact-list and sequence patterns in both orders,
+with a collecting inner binder, successful and wrong-inner-kind outcomes, host effects and nested
+consumer contexts. Its additional seeded identities are `sem2b/v1/seed-nested/<hex>/<index>`;
+existing `seed/<hex>/<index>` recipes retain their sources and expectations.
+
+Contexts wrap a row in a list, a live or dead `if` branch, a property, a cached double read, a wrapper
+call or a brace scope. `SemanticCorpus.RequiredInteractions` names the feature pairs that must have
+an accepted case; `SelectedPairs`/`SelectedTriples` add explicit cross-family compositions.
+
+### Profiles, facets and comparisons
+
+| Profile | Surface | Notes |
+|---|---|---|
+| `sync-generic` | `evaluator-run-counted-observed` | both optimizers off; counters, optimizer and cache evidence |
+| `sync-optimized` | `evaluator-run-counted-observed` | both optimizers on |
+| `async-twin` | `evaluator-run-counted-observed-async` | async-capable cache forces the twin; gated host witnesses every suspension |
+| `engine-run` | `engine-run` | public `KatLangEngine.Run` (production optimizer default) |
+| `engine-run-async` | `engine-run-async` | public `KatLangEngine.RunAsync`, gated host |
+| `sync-optimized-rerun` | `evaluator-run-counted-observed` | after an unrelated run through the same immutable limits instance |
+| `async-twin-cancel-1`, `engine-run-async-cancel-1` | async surfaces | cancelled at the first witnessed suspension (cancellation fixtures only) |
+
+Every valid case runs the first three; systematic cases and a deterministic subset of seeded cases
+add the engine and re-run profiles; every case with a `wait` adds `engine-run-async`. Declared
+comparisons (`SemanticProfiles.Pairs`): generic ~ optimized under `SameStructuredOutcome` +
+`ExactObservedWorkEqual` (strategy-neutral budgets, Q-09b); optimized ~ async twin, optimized ~
+engine and engine ~ engine-async under `SameStructuredOutcome` with no operational claim; optimized ~
+re-run under `IndependentRunStable` + `IdenticalWork`. All use the strict same-source error policy and
+compare only the facets BOTH surfaces declare; host events must be identical everywhere.
+
+**Unsupported combinations (never reported as covered):** the twin pins both optimizers off, so
+there is no asynchronous optimized profile and its optimizer flag is recorded as `twin`; the engine
+entry points take no optimizer switch, so they are never "optimizer disabled"; the async-capable
+cache keeps no statistics, so asynchronous profiles claim no cache evidence; the engine's public
+error keeps no structured `EvalError`, so engine profiles compare outcome, failure STAGE, value,
+count, atoms and rendering, never error kinds. A gated host on a synchronous surface is refused.
+
+Each execution gets a fresh parse, budget, property cache and host fixture; only the immutable
+limits instance (production defaults) is shared. Descriptors record every effective limit,
+including hard ceilings, so changing a default is detected as execution-contract drift.
+Generated programs draw no random numbers
+(`runtimeRandomSeed` is recorded as `null`).
+
+### Relations and anchors
+
+Same-source profile parity is the primary relation. Two transformations are generated for every
+valid case and run under `sync-optimized`: `alpha-rename` (every declaration renamed BY NAME, so
+deliberate shadow pairs keep sharing a name, with the binding graph re-validated) and
+`declaration-reorder` (root declarations reversed; declarations of one scope are order-independent).
+Both must satisfy the SAME constructed anchors and equal the base under `SemanticEqual` with the
+normalized error policy and no operational claim. No inlining, materialization or alias-expansion
+rewrite is assumed to preserve semantics.
+
+Anchors are independent of the implementation: constructed values (`kl-struct-v1` identity plus
+`Result.ValueComparer`), the root emitted count, the constructed error kind or diagnostic and phase,
+and EXACT host-event sequences — which is what distinguishes lazy transport from eager evaluation, a
+fresh invocation from a memoized VALUE, a dead failure from a demanded one, and "no later effect"
+after a terminal failure. A uniformly wrong implementation passes every parity and still fails the
+anchor on every structure-projecting run (pinned by `UniformlyWrongImplementation_IsCaughtByTheIndependentAnchor`).
+
+### Path evidence and coverage floors
+
+Evidence-backed paths participate in admission: `OptimizedLoop` (optimized: a plan selected AND
+planned expressions executed, no fallback; generic: the generic loop ran), `LoopShortCircuit`
+(zero iterations: returned before the optimizer was consulted), `LoopFallback` (consulted and
+declined), `GenericInsideOptimizedLoop`, `CacheHit` (actual hits ≥ the constructed minimum — not
+equal output), `AsyncSuspension` (every `wait` witnessed suspended, the first one after the run
+returned control), `Cancellation`. A claim whose evidence is missing or contradicted is a REJECTED
+claim with its reason and a `MissingObservation` case verdict. Direct replay cannot pass without
+its required paths. Anchor-backed paths (`LazyTransport`,
+`FreshInvocation`, `DeadComputationUntouched`, `FirstFailureStops`, `CardinalityBeforeDemand`) count
+when the case's exact anchors hold.
+
+`SemanticCoverage.Floors` fails the fixed corpus when any family has fewer than 8 accepted cases,
+any required interaction, profile, declared comparison, transformation, intended path, invalid
+production, case kind or context has zero accepted cases, or more than 10% of evidence-backed path
+claims are rejected. Counts: generated, parsed-clean, executed runs, accepted, rejected path claims,
+and one count per verdict. Both in-process and supervised full-corpus commands enforce these
+floors. Invalid programs and fragments after the first terminal failure do not satisfy semantic
+family/interaction floors. Named condition-first while guards additionally use a failing transition
+and exact waited transition events to distinguish flag evaluation from transition evaluation.
+
+### Recipe versioning and compatibility
+
+A descriptor records format `kl-sem2b-case` v1, generator `sem2b-grammar`, recipe version 1 and a
+durable case id (`sem2b/v1/sys/…` or `sem2b/v1/seed/<hex>/<index>`; each seeded case has its own
+SplitMix64 stream). Any generator change that would make an existing id mean a different program or
+expectation MUST bump `SemanticRecipe.RecipeVersion`. Unknown formats, versions, generators, kinds,
+profiles, paths and diagnostics are refused; empty/duplicate profiles and duplicate member roles are
+refused. Recorded profile surfaces, facets, effective settings, host fixture and comparison policy
+must match the available execution contract in both replay modes; incompatible settings are
+reported explicitly rather than silently replaced. Recorded sources are verified against their SHA-256;
+parsing is bounded (1 Mi characters, 64 Ki per source, 8 members, 512 list items, depth 16). Recipe
+replay reports DRIFT field by field instead of reinterpreting; `--exact-source` runs the recorded
+sources against the recorded expectation and says the recipe was not re-verified. The existing
+metamorphic, UTF-16 and editor seed formats are untouched, and the original structural corpus renders
+byte-identically (pinned by digest).
+
+### Commands
+
+Build the consumer once (it is outside `KatLang.slnx`), then:
+
+```powershell
+dotnet build fuzz/KatLang.ParserFuzz/KatLang.ParserFuzz.csproj
+$fuzz = "fuzz/KatLang.ParserFuzz/bin/Debug/net11.0/KatLang.ParserFuzz.exe"
+
+# the small fixed corpus, in process, with coverage floors (exit 0 = every case passed, floors met)
+& $fuzz semantic-corpus --out artifacts/sem2b
+# the same corpus with one bounded child process per case (descriptor written before dispatch)
+& $fuzz semantic-corpus --supervised --out artifacts/sem2b-supervised --deadline-seconds 60
+
+# one newly generated case: export its descriptor, then replay it directly
+& $fuzz semantic-export sem2b/v1/seed/5EED2B000003/3 artifacts/sem2b/one.json --run
+& $fuzz semantic-replay artifacts/sem2b/one.json                 # recipe mode (drift-checked)
+& $fuzz semantic-replay --exact-source artifacts/sem2b/one.json  # the recorded sources
+& $fuzz semantic-replay --supervised artifacts/sem2b/one.json    # in a supervised child
+
+# the checked-in v1 descriptors
+& $fuzz semantic-replay fuzz/KatLang.ParserFuzz/SemanticTestcases
+```
+
+Exit codes: 0 — every selected case passed; 1 — a failure (mismatch, drift, front end, harness,
+timeout, crash, malformed output, missing observation, floor violation); 2 — usage, an unreadable
+descriptor, or NOTHING selected (zero cases is never a successful replay or campaign). In the test
+suite the same pipeline runs as `KatLang.Tests.SemanticTesting.*`.
+
+### Supervision
+
+`SemanticSupervisor` runs one worker at a time (no fan-out): a repository-built executable with an
+argument LIST (`semantic-worker DESCRIPTOR RESULT`), redirected output capped at 16 Ki characters per
+stream, and an external wall-clock deadline (default 60 s) on top of the engine's own limits. A
+command may name a readiness file the worker writes just before its workload; the deadline then
+counts from readiness and a separate startup bound (default 5 min) limits the time before it, so a
+slow host start under load cannot consume the workload deadline. On either expiry it kills the whole
+process tree and awaits its exit. The supervisor also accepts an external cancellation token and
+terminates a running worker on cancellation, reporting `SupervisorCancellation` separately from
+language cancellation. Output is drained in fixed-size chunks, including unbroken lines.
+Classifications: `Timeout`, `Crash` (abnormal exit), `MalformedOutput` (including another case's
+result), `MissingObservation` (missing result, profile, transformation or required path), and
+otherwise the worker's own semantic verdict. A timeout or crash is never a semantic
+comparison and never a language-level cancellation. The in-process asynchronous driver has its own
+watchdog (30 s), a harness bound reported as `HarnessFailure`, never as a semantic outcome. The tests
+use deterministic worker fixtures (normal, exit, malformed, missing, unbroken output, cancellation,
+hang) launched through `dotnet vstest`. Every dispatched worker retains a `.supervision.txt` JSON
+sidecar with descriptor/profile identity, exit status, elapsed time and bounded stdout/stderr.
+Supervised replay prints its retained temporary evidence directory.
+
+### Extending it
+
+* **A production** — add a variant to a family in `SemanticGrammar.cs` (or a new family to
+  `Families` and `Build`), computing value, events and failure kind from the construction and citing
+  the rule it relies on; give every new dimension a name so both choosers cover it. Add model nodes
+  only with their renderer, `ScopeGraph` walk and `ModelRewriter` cases together. Bump the recipe
+  version if existing ids change meaning.
+* **A relation** — add a member role in `SemanticCorpus.Assemble` only with its preconditions proved
+  at generation time (binding re-validated), and judge it in `SemanticRunner`.
+* **A profile** — reuse a registered `MetamorphicSurface` (add one there with honest facets if the
+  entry point is new), add it to `SemanticProfiles.All`, decide its comparisons in `Pairs`, and
+  document what it cannot observe.
+* **A fixture** — `semantic-export CASE_ID fuzz/KatLang.ParserFuzz/SemanticTestcases/NAME.json --run`.
+
+### Remaining work (SEM-2C)
+
+Broader and longer campaigns, automatic reduction of generated failures (the existing structural
+shrinker is driven by the structural rules and is not wired to SEM-2B cases; failures are reduced by
+hand from the descriptor), fault injection beyond the apparatus checks here, and
+per-generated-case Lean evidence. Today the generated corpus has NO per-case Lean evidence: it rests
+on C# profile parity plus the independent constructed anchors.

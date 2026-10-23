@@ -137,10 +137,11 @@ public class MetamorphicPhase4AuditTests
             if (!facets.HasFlag(MetamorphicFacets.TopLevelProperty))
                 Assert.Null(observation.Projection?.TopLevelProperty);
 
-            // Only the observed evaluator entry point hands back a budget; every other surface
-            // must report structural zeroes AND must not claim the counters facet.
+            // Only the observed evaluator entry points (synchronous and, since SEM-2B, the async
+            // twin) hand back a budget; every other surface must report structural zeroes AND must
+            // not claim the counters facet.
             Assert.Equal(
-                definition.Surface == MetamorphicSurface.EvaluatorRunCountedObserved,
+                definition.Surface is MetamorphicSurface.EvaluatorRunCountedObserved or MetamorphicSurface.EvaluatorRunCountedObservedAsync,
                 facets.HasFlag(MetamorphicFacets.OperationalCounters));
 
             if (!facets.HasFlag(MetamorphicFacets.OperationalCounters))

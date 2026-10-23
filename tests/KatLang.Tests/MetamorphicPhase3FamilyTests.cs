@@ -258,12 +258,16 @@ public class MetamorphicPhase3FamilyTests
             Assert.False(string.IsNullOrWhiteSpace(definition.Id));
             Assert.True(definition.Facets.HasFlag(MetamorphicFacets.Outcome));
 
-            // Only the observed evaluator entry point hands back a budget, and only it accepts an
-            // optimizer policy. Any other surface claiming either would be claiming a capability
-            // the production signature does not have.
+            // Only the observed evaluator entry points hand back a budget (the synchronous one and,
+            // since SEM-2B, the async twin), and only the synchronous one accepts an optimizer
+            // policy — the twin pins both optimizers off. Any other surface claiming either would be
+            // claiming a capability the production signature does not have.
             var isObserved = surface == MetamorphicSurface.EvaluatorRunCountedObserved;
-            Assert.Equal(isObserved, definition.Facets.HasFlag(MetamorphicFacets.OperationalCounters));
+            var returnsBudget = isObserved || surface == MetamorphicSurface.EvaluatorRunCountedObservedAsync;
+            Assert.Equal(returnsBudget, definition.Facets.HasFlag(MetamorphicFacets.OperationalCounters));
             Assert.Equal(isObserved, definition.SupportsOptimizerPolicy);
+            Assert.Equal(definition.IsAsynchronous,
+                surface is MetamorphicSurface.EvaluatorRunCountedObservedAsync or MetamorphicSurface.EngineRunAsync);
 
             // Engine surfaces take source text and report a parse failure as an outcome; evaluator
             // surfaces consume an already-parsed root.

@@ -162,3 +162,17 @@ experimental generation/validity tool, not a result oracle.
 
 Final execution counts, runtime measurements, mutations and Constitution
 preservation are recorded in `artifacts/validation/q67-differential-observations/`.
+
+## Generated grammar-aware cases (SEM-2B)
+
+The SEM-2B generator (`fuzz/README.md` § Grammar-aware semantic testing) judges
+every generated case with these same observations — SEM-2A's typed structural
+value and `kl-struct-v1` identity, the root emitted count as its own facet, the
+`MetamorphicErrorDetail` strict policy between profiles of one source — plus an
+exact host-event log from a deterministic fixture. Its expectations are
+constructed by the generator, not observed from a run. Generated cases carry no
+per-case Lean evidence: their confidence comes from C# profile parity
+(generic, optimized, asynchronous twin, public sync and async engines, a fresh
+re-run) together with those independent constructed anchors. Lean-comparable
+evidence for the same language areas remains the existing spec, explorer and
+CoreTests corpora.
