@@ -1803,12 +1803,39 @@ public static partial class Evaluator
         EvalCtx ctx,
         ValEnv valEnv)
     {
+        if (algorithm.ParameterPatterns.Count != 0)
+            return await EvalCollectingPropertyOwnerBodyCountedAsync(algorithm, ctx, valEnv).ConfigureAwait(false);
+
         if (OutputRowsAccessError(algorithm) is { } accessError)
             return accessError;
 
         var bodyCtx = EnterAlgorithmBody(algorithm, ctx, valEnv,
-            inheritedBindingIdentity: DeclaringBindingIdentity(algorithm.Parent) ?? BindingContextIdentity(ctx, valEnv));
+            inheritedBindingIdentity: PropertyReadBindingIdentity(algorithm, ctx, valEnv));
         var preparedR = await EvalOutputRowsPreparedCoreAsync(algorithm.Output, bodyCtx, ctx, valEnv).ConfigureAwait(false);
+        return preparedR.IsError
+            ? preparedR.Error
+            : EvalResult<CountedResult>.Ok(preparedR.Value.Counted);
+    }
+
+    /// <summary>MIRROR OF <see cref="EvalCollectingPropertyOwnerBodyCounted"/> — keep in lock-step.</summary>
+    private static async ValueTask<EvalResult<CountedResult>> EvalCollectingPropertyOwnerBodyCountedAsync(
+        Algorithm algorithm,
+        EvalCtx ctx,
+        ValEnv valEnv)
+    {
+        // Binding the EMPTY supply cannot suspend — there are no arguments to evaluate — so the
+        // twins share the one synchronous binder, as the demand funnel's twins do.
+        var bindingsR = BindZeroArgumentSupply(algorithm, ctx);
+        if (bindingsR.IsError) return bindingsR.Error;
+
+        if (OutputRowsAccessError(algorithm) is { } accessError)
+            return accessError;
+
+        var boundCtx = WithNeedBindings(ctx, bindingsR.Value!, algorithm.Params);
+        var boundValues = ShadowValEnv(valEnv, algorithm.Params);
+        var bodyCtx = EnterAlgorithmBody(algorithm, boundCtx, boundValues,
+            inheritedBindingIdentity: PropertyReadBindingIdentity(algorithm, ctx, valEnv));
+        var preparedR = await EvalOutputRowsPreparedCoreAsync(algorithm.Output, bodyCtx, boundCtx, boundValues).ConfigureAwait(false);
         return preparedR.IsError
             ? preparedR.Error
             : EvalResult<CountedResult>.Ok(preparedR.Value.Counted);

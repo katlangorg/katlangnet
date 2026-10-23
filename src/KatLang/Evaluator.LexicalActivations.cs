@@ -30,8 +30,9 @@ internal sealed class ParameterActivation
     internal NeedEnv Needs { get; }
 
     // The binding context of this activation: the fresh one an explicit call minted, or —
-    // when a property-style read entered a parameterless owner — its DECLARING activation's,
-    // never the consumer's (CACHE-OWNER-D1, Evaluator.DeclaringBindingIdentity).
+    // when a property-style read entered a parameterless or collecting-only owner — its
+    // DECLARING activation's, never the consumer's nor the read's own empty-supply binding's
+    // (CACHE-OWNER-D1, COLLECT-CACHE-1, Evaluator.DeclaringBindingIdentity).
     internal object ValueEnvironmentIdentity { get; }
 
     /// <summary>
@@ -153,7 +154,8 @@ public static partial class Evaluator
     /// local-only properties also gets an activation, whose binding identity keys those properties:
     /// the entering context's, or — for a property-style read — the
     /// <paramref name="inheritedBindingIdentity"/> of its declaring activation (CACHE-OWNER-D1,
-    /// <see cref="EvalPropertyOwnerBodyCounted"/>). Other parameterless bodies need no activated head
+    /// <see cref="EvalPropertyOwnerBodyCounted"/>; a collecting-only owner's read passes the same
+    /// identity after binding its empty supply, COLLECT-CACHE-1). Other parameterless bodies need no activated head
     /// scope. Lean: <c>enterAlgorithmBody</c> (<c>headScope := some (a.asScopeCtx.withActivation id)</c>)
     /// and, with an inherited identity, <c>enterPropertyOwnerBody</c>.
     /// </summary>

@@ -5147,8 +5147,9 @@ def zeroArgPropertyCacheKey (_accessKind : ZeroArgPropertyAccessKind)
   }
 
 /-- The binding context of the nearest ACTIVATED level of a declaring chain: the context its
-    owner was entered in, independent of the consumer. A property-style read of a parameterless
-    owner enters its body in this context (CACHE-OWNER-D1, `EvalBody.evalPropertyDemandCounted`);
+    owner was entered in, independent of the consumer. A property-style read of a parameterless or
+    collecting-only owner enters its body in this context (CACHE-OWNER-D1, COLLECT-CACHE-1,
+    `EvalBody.evalPropertyDemandCounted`);
     an explicit call binds a fresh one. TOTAL (CACHE-OWNER-D1, October 2026; formerly `partial`):
     structural over the finite parent chain, with the former body as its equation. -/
 def propertyOwnerBindingContext : Option ScopeCtx → EvalState → Option Nat
@@ -9286,9 +9287,21 @@ def EvalBody.algorithmIntrinsicRoute (rec : EvalRec) (receiver : Expr) (ctx : Ev
       and the consumer's only when there is none. So the owner's local-only properties are keyed
       on its declaring activation whichever consumer (callback, helper, loop step, branch,
       `R.Invoke()`) first reads it, and a lexical read inside the body, a structural `B.V` and an
-      opened `V` select ONE entry. Every other callable — a pattern list, a family, an alias, a
-      builtin — is the ordinary demand (`evalZeroArgumentDemandOutputCounted`), whose binding
-      boundaries mint fresh contexts as before. C#: `Evaluator.EvaluateZeroArgPropertyResult`. -/
+      opened `V` select ONE entry.
+
+      A user owner whose pattern list accepts the EMPTY supply (a collecting-only signature such as
+      `Only(*xs)`; COLLECT-CACHE-1, October 23 2026) is READ the same way: the ordinary binder binds
+      the empty supply first, exactly as the demand funnel binds it (`bindNeedPatterns` over no
+      cells, `needBindingContext`, the shadowed values) — so `xs` is the exact empty list and the
+      callee's names shadow every inherited tier — and the body is then checked and entered over
+      the BOUND context with the same inherited declaring context. Only the recorded activation's
+      binding context changes; the bound need tier, values and fresh binding context of the entered
+      body are the binder's. A pattern list that rejects the empty supply fails as the funnel fails.
+
+      Every other callable — a family, an alias, a builtin — is the ordinary demand
+      (`evalZeroArgumentDemandOutputCounted`), whose binding boundaries mint fresh contexts as
+      before; an explicit `Only()` is the `.invoke` calculation and never comes here.
+      C#: `Evaluator.EvaluateZeroArgPropertyResult`. -/
   def EvalBody.evalPropertyDemandCounted (rec : EvalRec) (a : Algorithm) (ctx : EvalCtx) (env : ValEnv) : EvalM CountedResult :=
     match a with
     | .mk _ [] _ _ _ _ => do
@@ -9296,6 +9309,17 @@ def EvalBody.algorithmIntrinsicRoute (rec : EvalRec) (receiver : Expr) (ctx : Ev
         let inherited := (propertyOwnerBindingContext a.parent (<- get)).getD ctx.bindingContext
         let pushedCtx <- enterPropertyOwnerBody a ctx env inherited
         let out <- rec.evalOutputRowsPreparedCore (Algorithm.output a) pushedCtx env
+        pure out.counted
+    | .mk _ (_ :: _) _ _ _ _ => do
+        let some bindings <- bindNeedPatterns (rec.bindingChannels)
+            ((Algorithm.parameterPatterns a).map NeedPattern.ofParameter) []
+          | throw Error.badArity
+        let boundCtx <- needBindingContext ctx bindings
+        let boundEnv := ValEnv.shadow env (Algorithm.params a)
+        ActivatedBody.check a
+        let inherited := (propertyOwnerBindingContext a.parent (<- get)).getD ctx.bindingContext
+        let pushedCtx <- enterPropertyOwnerBody a boundCtx boundEnv inherited
+        let out <- rec.evalOutputRowsPreparedCore (Algorithm.output a) pushedCtx boundEnv
         pure out.counted
     | _ => rec.evalZeroArgumentDemandOutputCounted a ctx env
 

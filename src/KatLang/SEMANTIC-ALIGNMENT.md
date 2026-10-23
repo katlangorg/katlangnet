@@ -1,5 +1,59 @@
 # Semantic Alignment Manifest.
 
+COLLECT-CACHE-1 — declaring-context inheritance for collecting-only property reads (2026-10-23; the
+residual listed by CACHE-OWNER-D1): a SHARED Lean and C# defect, corrected Lean-first. DEFECT:
+`Only(*xs)` accepts zero supplied arguments, so a bare `Only` is a property-style READ through the
+zero-argument property cache, but its body was entered through the ordinary zero-supply demand
+(`evalZeroArgumentDemandOutputCounted` / `EvalBoundZeroArgumentDemandOutputCounted`), whose binder
+recorded the FRESH bound context on `Only`'s activation; D1's read route matched only an EMPTY pattern
+list (Lean `.mk _ []`, C# `ParameterPatterns.Count: 0`). A local-only `V` inside `Only` was therefore
+keyed on that fresh context, while a structural `Only.V` keyed it on `F`'s activation: in one
+activation of `F(k) = { Only(*xs) = { V = trace(k) ⏎ V } ⏎ … }` the rows `[0].map{ n + Only }[0] +
+Only.V`, `Only.V + …` and even `Only + Only.V` traced twice, `Only == Only.V` with `V = k + tick()`
+was `false` with two ticks, `F(3), F(3)` traced four times, and the Q-37 witness `V = if(tick() < 3,
+Only.V + 1, k)` returned 22 after four ticks (the split key let an inner result publish). Lean
+(encoder-derived trees) published `V@3, V@1` for MIN and four `V` entries for TWO. RULE: a READ of a
+user owner whose pattern list accepts the empty supply binds that supply through the ORDINARY binder
+(so the collector holds exactly `[]` and shadows every inherited name) and then enters the body with
+the declaring activation's binding context recorded — the D1 rule — falling back to the READER's
+context (never the binder's fresh one) when no declaring level is activated. Written calls (`Only()`,
+`Only(1, 2)`, alias and META calls) stay ordinary fresh calls; CACHE-PUB-1 and Q-37 are unchanged.
+LEAN: `EvalBody.evalPropertyDemandCounted` gains a `.mk _ (_ :: _)` arm: `bindNeedPatterns` over no
+cells (`| throw badArity` as in the funnel), `needBindingContext`, `ValEnv.shadow`,
+`ActivatedBody.check`, ONE `enterPropertyOwnerBody` over the BOUND context with
+`(propertyOwnerBindingContext a.parent s).getD ctx.bindingContext`, then the rows over the shadowed
+values. `enterAlgorithmBody`, the funnel, `.invoke`, families, aliases and builtins are unchanged. C#:
+`EntersInDeclaringContext` drops its zero-pattern condition (a `User` without deferred region that
+declares a non-exported property); `EvalPropertyOwnerBodyCounted` (async twin) dispatches a pattern
+list to the new NoInlining `EvalCollectingPropertyOwnerBodyCounted` (async twin), which runs
+`BindZeroArgumentSupply`, `OutputRowsAccessError`, `WithNeedBindings`, `ShadowValEnv` — the funnel's
+binding arm verbatim — and `EnterAlgorithmBody(..., inheritedBindingIdentity:
+PropertyReadBindingIdentity(algorithm, readerCtx, readerValues))`; the one non-evaluating identity
+selector `PropertyReadBindingIdentity` (`DeclaringBindingIdentity(parent) ?? BindingContextIdentity(reader)`)
+is shared by both READ entries and their twins. No new cache, field, flag, synthetic owner or
+per-access allocation beyond the binding the funnel already made; a parameterless read pays one
+pattern-count test. Out of scope by construction: a family cannot declare a collecting clause
+(front-end `InvalidCollectingBinding`; the host-built zero-arity family stays on the funnel, pinned by
+`ExplicitCallPublicationTests`), `open Only` is refused, `Fix(x, *xs)` and grouped `Grp((*xs))` keep
+their arity rejection, a structural `Only.V` whose `V` reads `xs` keeps its `LocalOnlyProperty`
+rejection. PROOFS: `KatLangArityLaws/PropertyOwnerContext.lean` § 4 (`collecting_read_rejects_like_the_demand`,
+`collecting_demand_run`, `collecting_read_run`, `collecting_read_record_keeps_the_binding`,
+`collecting_read_records_the_declaring_context`, `collecting_read_falls_back_to_the_reader`) — the
+former `property_demand_patterned_is_the_ordinary_demand` no longer holds and was replaced by these;
+no `sorry`, no axiom; `EvalBody.evalPropertyDemandCounted_mono` and the whole-run cache laws re-check
+unchanged. GUARDS: `CoreTests/PropertyCacheConsumers.lean` § CollectCache1 (16: encoder-derived
+CMIN/CSWAP/CDIRECT/CPRE/CHELP/CLOOP/CDECON/CXS/CSHADOW/CTWO/CCALLS/CPUB/CROOT plus the dynamic VALUE
+and Q-37 witnesses over a collecting owner). C# TESTS: `CollectingPropertyOwnerContextTests` (74:
+the brief's C1–C20 on six routes with step parity, cache-seam key identity, isolation, written-call
+freshness and CACHE-PUB-1, arity/accessibility/front-end controls, aliases, META, every consumer with
+planned-loop and filter→count fusion hits asserted, host `ScopeCtx` (D3), re-entrant, failing and
+cancelled reads, a collecting owner inside `repeat`/`while` steps). Independent review adds direct
+META collecting-owner calls with value-sensitive first-publication/runtime-alias controls and
+generic/optimized/suspending-twin comparisons of emitted count, steps, expression checkpoints,
+depth and materialization for both collecting and parameterless reads. Of the original 69 tests,
+49 fail against the pre-fix evaluator; the 20 that pass are the controls. Docs:
+`evaluator-and-hosting.md` § Zero-argument property cache, the AGENTS.md cache bullet. Full V3.
+
 CACHE-OWNER-D3 — ownerless host-scope property caching (2026-10-23, owner decisions O-2/O-3/O-4 of
 `experimental/features/cache-owner-f1-research.md`; O-6 deferred): a C#-only divergence from the
 authoritative Lean semantics, corrected in C#; no Lean production edit. DEFECT: a property declared in

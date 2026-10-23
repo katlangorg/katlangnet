@@ -589,4 +589,120 @@ def d1ReentrantValue : Expr :=
 
 end CacheOwnerD1
 
+--------------------------------------------------------------------------------
+-- COLLECT-CACHE-1: a READ of a collecting-only owner inherits the declaring context
+--------------------------------------------------------------------------------
+-- `Only(*xs)` accepts zero supplied arguments, so a bare `Only` is a PROPERTY-STYLE
+-- READ (it uses the zero-argument property cache). CACHE-OWNER-D1 covered owners with
+-- no pattern; a collecting-only owner fell through to the ordinary zero-supply demand,
+-- whose binder recorded the FRESH bound context on `Only`'s activation, so its
+-- local-only `V` was published once under that context and once under `F`'s (the key a
+-- structural `Only.V` computes): before the correction CMIN left `V@3, V@1`, CDIRECT
+-- `V@2, V@1`, CTWO four `V` entries. `EvalBody.evalPropertyDemandCounted` now binds the
+-- empty supply through the ordinary binder and enters the body with the declaring
+-- activation's context recorded (`enterPropertyOwnerBody`). The empty collector is still
+-- bound (`xs` is `[]`, shadowing an outer `xs`) and an explicit `Only()` is still a
+-- fresh context. Trees: `LeanAstEncoder` output of the C# elaboration (effect-free
+-- bodies, so ENTRY COUNTS witness evaluations); the C# twins with effects are
+-- `CollectingPropertyOwnerContextTests`. An opened collecting owner is not valid source
+-- (`open` refuses an algorithm that requires arguments), so there is no OPEN case.
+
+section CollectCache1
+open KatLang
+
+/-- CMIN: `F(k) = { ⏎ Only(*xs) = { ⏎ V = k * 1 ⏎ V ⏎ } ⏎ [0].map{ n + Only }[0] + Only.V ⏎ } ⏎ F(3)` -/
+def ccCMIN : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "F" (alg ["k"] [] [{ (privateLocalProp "Only" (.localCapturedAncestorParams ["k"]) (algWithParameters [{ name := "xs", kind := .collecting }] [] [{ (privateLocalProp "V" (.localCapturedAncestorParams ["k"]) (alg [] [] [] [(.binary .mul (.param "k") (.num 1))])) with requiredOwnerDepths := some [("k", some 1)] }] [.resolve "V"])) with requiredOwnerDepths := some [("k", some 0)] }] [(.binary .add (.index (.dotCall (.listLiteral [.num 0]) "map" (some [(.algorithmExpr (alg ["n"] [] [] [(.binary .add (.param "n") (.resolve "Only"))]))])) [.num 0]) (.dotCall (.resolve "Only") "V" none))])] [(.call (.resolve "F") [.num 3])])
+/-- CSWAP: `F(k) = { ⏎ Only(*xs) = { ⏎ V = k * 1 ⏎ V ⏎ } ⏎ Only.V + [0].map{ n + Only }[0] ⏎ } ⏎ F(3)` -/
+def ccCSWAP : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "F" (alg ["k"] [] [{ (privateLocalProp "Only" (.localCapturedAncestorParams ["k"]) (algWithParameters [{ name := "xs", kind := .collecting }] [] [{ (privateLocalProp "V" (.localCapturedAncestorParams ["k"]) (alg [] [] [] [(.binary .mul (.param "k") (.num 1))])) with requiredOwnerDepths := some [("k", some 1)] }] [.resolve "V"])) with requiredOwnerDepths := some [("k", some 0)] }] [(.binary .add (.dotCall (.resolve "Only") "V" none) (.index (.dotCall (.listLiteral [.num 0]) "map" (some [(.algorithmExpr (alg ["n"] [] [] [(.binary .add (.param "n") (.resolve "Only"))]))])) [.num 0]))])] [(.call (.resolve "F") [.num 3])])
+/-- CDIRECT: `F(k) = { ⏎ Only(*xs) = { ⏎ V = k * 1 ⏎ V ⏎ } ⏎ Only + Only.V ⏎ } ⏎ F(3)` -/
+def ccCDIRECT : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "F" (alg ["k"] [] [{ (privateLocalProp "Only" (.localCapturedAncestorParams ["k"]) (algWithParameters [{ name := "xs", kind := .collecting }] [] [{ (privateLocalProp "V" (.localCapturedAncestorParams ["k"]) (alg [] [] [] [(.binary .mul (.param "k") (.num 1))])) with requiredOwnerDepths := some [("k", some 1)] }] [.resolve "V"])) with requiredOwnerDepths := some [("k", some 0)] }] [(.binary .add (.resolve "Only") (.dotCall (.resolve "Only") "V" none))])] [(.call (.resolve "F") [.num 3])])
+/-- CPRE: `F(k) = { ⏎ Only(*xs) = { ⏎ V = k * 1 ⏎ V ⏎ } ⏎ Only + [0].map{ n + Only }[0] + Only.V ⏎ } ⏎ F(3)` -/
+def ccCPRE : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "F" (alg ["k"] [] [{ (privateLocalProp "Only" (.localCapturedAncestorParams ["k"]) (algWithParameters [{ name := "xs", kind := .collecting }] [] [{ (privateLocalProp "V" (.localCapturedAncestorParams ["k"]) (alg [] [] [] [(.binary .mul (.param "k") (.num 1))])) with requiredOwnerDepths := some [("k", some 1)] }] [.resolve "V"])) with requiredOwnerDepths := some [("k", some 0)] }] [(.binary .add (.binary .add (.resolve "Only") (.index (.dotCall (.listLiteral [.num 0]) "map" (some [(.algorithmExpr (alg ["n"] [] [] [(.binary .add (.param "n") (.resolve "Only"))]))])) [.num 0])) (.dotCall (.resolve "Only") "V" none))])] [(.call (.resolve "F") [.num 3])])
+/-- CTWO: `F(k) = { ⏎ Only(*xs) = { ⏎ V = k * 1 ⏎ V ⏎ } ⏎ [0].map{ n + Only }[0] + Only.V ⏎ } ⏎ F(3), F(3)` -/
+def ccCTWO : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "F" (alg ["k"] [] [{ (privateLocalProp "Only" (.localCapturedAncestorParams ["k"]) (algWithParameters [{ name := "xs", kind := .collecting }] [] [{ (privateLocalProp "V" (.localCapturedAncestorParams ["k"]) (alg [] [] [] [(.binary .mul (.param "k") (.num 1))])) with requiredOwnerDepths := some [("k", some 1)] }] [.resolve "V"])) with requiredOwnerDepths := some [("k", some 0)] }] [(.binary .add (.index (.dotCall (.listLiteral [.num 0]) "map" (some [(.algorithmExpr (alg ["n"] [] [] [(.binary .add (.param "n") (.resolve "Only"))]))])) [.num 0]) (.dotCall (.resolve "Only") "V" none))])] [(.call (.resolve "F") [.num 3]), (.call (.resolve "F") [.num 3])])
+/-- CCALLS: `F(k) = { ⏎ Only(*xs) = { ⏎ V = k * 1 ⏎ V ⏎ } ⏎ Only() + Only() + [0].map{ n + Only }[0] + Only.V ⏎ } ⏎ F(3)` -/
+def ccCCALLS : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "F" (alg ["k"] [] [{ (privateLocalProp "Only" (.localCapturedAncestorParams ["k"]) (algWithParameters [{ name := "xs", kind := .collecting }] [] [{ (privateLocalProp "V" (.localCapturedAncestorParams ["k"]) (alg [] [] [] [(.binary .mul (.param "k") (.num 1))])) with requiredOwnerDepths := some [("k", some 1)] }] [.resolve "V"])) with requiredOwnerDepths := some [("k", some 0)] }] [(.binary .add (.binary .add (.binary .add (.call (.resolve "Only") []) (.call (.resolve "Only") [])) (.index (.dotCall (.listLiteral [.num 0]) "map" (some [(.algorithmExpr (alg ["n"] [] [] [(.binary .add (.param "n") (.resolve "Only"))]))])) [.num 0])) (.dotCall (.resolve "Only") "V" none))])] [(.call (.resolve "F") [.num 3])])
+/-- CPUB: `F(k) = { ⏎ Only(*xs) = { ⏎ V = k * 1 ⏎ V ⏎ } ⏎ Only() + Only + Only() + Only + Only.V ⏎ } ⏎ F(3)` -/
+def ccCPUB : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "F" (alg ["k"] [] [{ (privateLocalProp "Only" (.localCapturedAncestorParams ["k"]) (algWithParameters [{ name := "xs", kind := .collecting }] [] [{ (privateLocalProp "V" (.localCapturedAncestorParams ["k"]) (alg [] [] [] [(.binary .mul (.param "k") (.num 1))])) with requiredOwnerDepths := some [("k", some 1)] }] [.resolve "V"])) with requiredOwnerDepths := some [("k", some 0)] }] [(.binary .add (.binary .add (.binary .add (.binary .add (.call (.resolve "Only") []) (.resolve "Only")) (.call (.resolve "Only") [])) (.resolve "Only")) (.dotCall (.resolve "Only") "V" none))])] [(.call (.resolve "F") [.num 3])])
+/-- CXS: `F(k) = { ⏎ Only(*xs) = { ⏎ V = k * 1 ⏎ V, xs ⏎ } ⏎ [0].map{ n * 0 + Only.V }[0], Only, Only.V ⏎ } ⏎ F(3)` -/
+def ccCXS : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "F" (alg ["k"] [] [{ (privateLocalProp "Only" (.localCapturedAncestorParams ["k"]) (algWithParameters [{ name := "xs", kind := .collecting }] [] [{ (privateLocalProp "V" (.localCapturedAncestorParams ["k"]) (alg [] [] [] [(.binary .mul (.param "k") (.num 1))])) with requiredOwnerDepths := some [("k", some 1)] }] [.resolve "V", .param "xs"])) with requiredOwnerDepths := some [("k", some 0)] }] [(.index (.dotCall (.listLiteral [.num 0]) "map" (some [(.algorithmExpr (alg ["n"] [] [] [(.binary .add (.binary .mul (.param "n") (.num 0)) (.dotCall (.resolve "Only") "V" none))]))])) [.num 0]), .resolve "Only", (.dotCall (.resolve "Only") "V" none)])] [(.call (.resolve "F") [.num 3])])
+/-- CSHADOW: `F(k, xs) = { ⏎ Only(*xs) = { ⏎ V = k * 1 ⏎ V, xs ⏎ } ⏎ Only, xs ⏎ } ⏎ F(3, 9)` -/
+def ccCSHADOW : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "F" (alg ["k", "xs"] [] [{ (privateLocalProp "Only" (.localCapturedAncestorParams ["k"]) (algWithParameters [{ name := "xs", kind := .collecting }] [] [{ (privateLocalProp "V" (.localCapturedAncestorParams ["k"]) (alg [] [] [] [(.binary .mul (.param "k") (.num 1))])) with requiredOwnerDepths := some [("k", some 1)] }] [.resolve "V", .param "xs"])) with requiredOwnerDepths := some [("k", some 0)] }] [.resolve "Only", .param "xs"])] [(.call (.resolve "F") [.num 3, .num 9])])
+/-- CHELP: `F(k) = { ⏎ Only(*xs) = { ⏎ V = k * k ⏎ V + 1 ⏎ } ⏎ G(x) = x + Only ⏎ G(1) + Only.V ⏎ } ⏎ F(3)` -/
+def ccCHELP : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "F" (alg ["k"] [] [{ (privateLocalProp "Only" (.localCapturedAncestorParams ["k"]) (algWithParameters [{ name := "xs", kind := .collecting }] [] [{ (privateLocalProp "V" (.localCapturedAncestorParams ["k"]) (alg [] [] [] [(.binary .mul (.param "k") (.param "k"))])) with requiredOwnerDepths := some [("k", some 1)] }] [(.binary .add (.resolve "V") (.num 1))])) with requiredOwnerDepths := some [("k", some 0)] }, { (privateLocalProp "G" (.localCapturedAncestorParams ["k"]) (alg ["x"] [] [] [(.binary .add (.param "x") (.resolve "Only"))])) with requiredOwnerDepths := some [("k", some 0)] }] [(.binary .add (.call (.resolve "G") [.num 1]) (.dotCall (.resolve "Only") "V" none))])] [(.call (.resolve "F") [.num 3])])
+/-- CLOOP: `F(k) = { ⏎ Only(*xs) = { ⏎ V = k * k ⏎ V + 1 ⏎ } ⏎ Step(s) = s + Only, s < 5 ⏎ Step(0).while + Only.V ⏎ } ⏎ F(3)` -/
+def ccCLOOP : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "F" (alg ["k"] [] [{ (privateLocalProp "Only" (.localCapturedAncestorParams ["k"]) (algWithParameters [{ name := "xs", kind := .collecting }] [] [{ (privateLocalProp "V" (.localCapturedAncestorParams ["k"]) (alg [] [] [] [(.binary .mul (.param "k") (.param "k"))])) with requiredOwnerDepths := some [("k", some 1)] }] [(.binary .add (.resolve "V") (.num 1))])) with requiredOwnerDepths := some [("k", some 0)] }, { (privateLocalProp "Step" (.localCapturedAncestorParams ["k"]) (alg ["s"] [] [] [(.binary .add (.param "s") (.resolve "Only")), (.comparison (.param "s") [{ op := .lt, operand := (.num 5) }])])) with requiredOwnerDepths := some [("k", some 0)] }] [(.binary .add (.dotCall (.call (.resolve "Step") [.num 0]) "while" none) (.dotCall (.resolve "Only") "V" none))])] [(.call (.resolve "F") [.num 3])])
+/-- CDECON: `F(k) = { ⏎ Only(*xs) = { ⏎ a, b = k * 1, k + 1 ⏎ a + b ⏎ } ⏎ [1, 2].map{ n + Only }[0] + Only.a + Only.b ⏎ } ⏎ F(3)` -/
+def ccCDECON : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "F" (alg ["k"] [] [{ (privateLocalProp "Only" (.localCapturedAncestorParams ["k"]) (algWithParameters [{ name := "xs", kind := .collecting }] [] [{ (privateLocalProp "$deconstruct$0" (.localCapturedAncestorParams ["k"]) (alg [] [] [] [(.binary .mul (.param "k") (.num 1)), (.binary .add (.param "k") (.num 1))])) with requiredOwnerDepths := some [("k", some 1)] }, { (privateLocalProp "a" (.localCapturedAncestorParams ["k"]) (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "a" }, .capture { name := "b" }]] [] [] [.param "a"])) [.resolve "$deconstruct$0"])])) with requiredOwnerDepths := some [("k", some 1)] }, { (privateLocalProp "b" (.localCapturedAncestorParams ["k"]) (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "a" }, .capture { name := "b" }]] [] [] [.param "b"])) [.resolve "$deconstruct$0"])])) with requiredOwnerDepths := some [("k", some 1)] }] [(.binary .add (.resolve "a") (.resolve "b"))])) with requiredOwnerDepths := some [("k", some 0)] }] [(.binary .add (.binary .add (.index (.dotCall (.listLiteral [.num 1, .num 2]) "map" (some [(.algorithmExpr (alg ["n"] [] [] [(.binary .add (.param "n") (.resolve "Only"))]))])) [.num 0]) (.dotCall (.resolve "Only") "a" none)) (.dotCall (.resolve "Only") "b" none))])] [(.call (.resolve "F") [.num 3])])
+/-- CROOT: `Only(*xs) = { ⏎ V = 7 * 1 ⏎ V + 1 ⏎ } ⏎ [1, 2].map{ n + Only }[0] + Only.V` -/
+def ccCROOT : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Only" (algWithParameters [{ name := "xs", kind := .collecting }] [] [privateProp "V" (alg [] [] [] [(.binary .mul (.num 7) (.num 1))])] [(.binary .add (.resolve "V") (.num 1))])] [(.binary .add (.index (.dotCall (.listLiteral [.num 1, .num 2]) "map" (some [(.algorithmExpr (alg ["n"] [] [] [(.binary .add (.param "n") (.resolve "Only"))]))])) [.num 0]) (.dotCall (.resolve "Only") "V" none))])
+def ccBCTRL : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "F" (alg ["k"] [] [{ (privateLocalProp "B" (.localCapturedAncestorParams ["k"]) (alg [] [] [{ (privateLocalProp "V" (.localCapturedAncestorParams ["k"]) (alg [] [] [] [(.binary .mul (.param "k") (.num 1))])) with requiredOwnerDepths := some [("k", some 1)] }] [.resolve "V"])) with requiredOwnerDepths := some [("k", some 0)] }] [(.binary .add (.index (.dotCall (.listLiteral [.num 0]) "map" (some [(.algorithmExpr (alg ["n"] [] [] [(.binary .add (.param "n") (.resolve "B"))]))])) [.num 0]) (.dotCall (.resolve "B") "V" none))])] [(.call (.resolve "F") [.num 3])])
+
+-- CMIN / CSWAP: Only first read in a callback, then Only.V (either order): ONE `V` entry.
+#guard d1Run ccCMIN "V" == some (.atom 6, 1, 3)
+#guard d1Run ccCSWAP "V" == some (.atom 6, 1, 3)
+-- CDIRECT / CPRE: a read from F's own body and the structural Only.V share it too.
+#guard d1Run ccCDIRECT "V" == some (.atom 6, 1, 2)
+#guard d1Run ccCPRE "V" == some (.atom 9, 1, 3)
+-- CHELP / CLOOP: a helper call and a `while` step share the declaring activation's entry.
+#guard d1Run ccCHELP "V" == some (.atom 20, 1, 3)
+#guard d1Run ccCLOOP "V" == some (.atom 19, 1, 4)
+-- CDECON: one shared right-hand side for the callback's Only and the structural Only.a, Only.b.
+#guard d1Run ccCDECON "$deconstruct$0" == some (.atom 15, 1, 6)
+-- CXS: the bare read still binds the EXACT empty list; V is shared by every route.
+#guard d1Run ccCXS "V" == some (.sequenceValue [.atom 3, .sequenceValue [.atom 3, .listValue []], .atom 3], 1, 3)
+-- CSHADOW: the collector shadows F's own `xs` (9) inside Only.
+#guard d1Run ccCSHADOW "V" == some (.sequenceValue [.sequenceValue [.atom 3, .listValue []], .atom 9], 1, 2)
+-- CTWO: two activations of F with EQUAL arguments stay two entries.
+#guard d1Run ccCTWO "V" == some (.sequenceValue [.atom 6, .atom 6], 2, 6)
+-- CCALLS: explicit `Only(), Only()` are two fresh contexts; the read and Only.V share a third.
+#guard d1Run ccCCALLS "V" == some (.atom 12, 3, 4)
+-- CPUB: the first `Only()` establishes Only's entry (CACHE-PUB-1) with its OWN locals; the bare
+-- reads reuse that entry, the second `Only()` is fresh, and Only.V is F's entry.
+#guard d1Run ccCPUB "V" == some (.atom 15, 3, 3)
+#guard d1Run ccCPUB "Only" == some (.atom 15, 1, 3)
+-- CROOT (control): no enclosing activation; V is exported.
+#guard d1Run ccCROOT "V" == some (.atom 16, 1, 3)
+
+/-! The VALUE witnesses of the D1 section, with the owner `Only(*xs)` collecting: V reads an unowned
+    `d` dynamically from its consumer (a hand-built evaluator witness, not a surface example). -/
+def ccDynamicValue (value : Expr) (rows : List Expr) : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "F" (alg ["k"] []
+    [privateLocalProp "Only" (.localCapturedAncestorParams ["k"])
+      (algWithParameters [{ name := "xs", kind := .collecting }] []
+        [privateLocalProp "V" (.localCapturedAncestorParams ["k"]) (alg [] [] [] [value])]
+        [resolve "V"]),
+     privateLocalProp "G" (.localCapturedAncestorParams ["k"]) (alg ["d"] [] []
+       [.index (.dotCall (.listLiteral [num 0]) "map" (some
+         [.algorithmExpr (alg ["n"] [] [] [.binary .add (param "n") (resolve "Only")])])) [num 0]]),
+     privateLocalProp "H" (.localCapturedAncestorParams ["k"]) (alg ["d"] [] []
+       [.dotCall (resolve "Only") "V" none])]
+    rows)] [.call (resolve "F") [num 3]])
+
+-- COLLECT-VAL: G(100) reads Only in a callback, H(1000) reads Only.V: ONE value (103), equality true.
+#guard (d1Run (ccDynamicValue (.binary .add (param "k") (param "d"))
+    [.compare .eq (.call (resolve "G") [num 100]) (.call (resolve "H") [num 1000])]) "V").map
+  (fun (value, entries, _) => (value, entries)) == some (.bool true, 1)
+
+-- Q-37 through the collecting READ: only the OUTER result 5 is published and H(99) reuses it.
+#guard (d1Run (ccDynamicValue d1ReentrantValue
+    [.call (resolve "G") [num 2], .call (resolve "H") [num 99]]) "V").map
+  (fun (value, entries, _) => (value, entries)) == some (.sequenceValue [.atom 5, .atom 5], 1)
+
+end CollectCache1
+
 end KatLangTests

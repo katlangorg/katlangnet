@@ -422,8 +422,8 @@ public static partial class Evaluator
         // The cached body evaluation goes through the ONE demand funnel, so a newly
         // eligible collecting-only property (`Only(*xs) = xs`) takes the very same
         // demand/cache path an ordinary zero-parameter property takes — except that a
-        // parameterless owner whose entry records an activation enters in its DECLARING
-        // context (CACHE-OWNER-D1).
+        // user owner whose entry records an activation for local-only properties enters in its
+        // DECLARING context (CACHE-OWNER-D1; COLLECT-CACHE-1 for a collecting-only signature).
         var countedR = EntersInDeclaringContext(resolvedAlgorithm)
             ? EvalPropertyOwnerBodyCounted(resolvedAlgorithm, ctx, valEnv)
             : EvalZeroArgumentDemandOutputCounted(resolvedAlgorithm, ctx, valEnv);
@@ -436,15 +436,30 @@ public static partial class Evaluator
 
     /// <summary>
     /// Whether a property-style read of <paramref name="algorithm"/> enters a body that records an
-    /// activation for its local-only properties without binding a parameter: a parameterless user
-    /// owner (no pattern, no deferred region) declaring a property that is not exported. Exactly
-    /// these reads inherit the declaring context (<see cref="EvalPropertyOwnerBodyCounted"/>); every
-    /// other read keeps the demand funnel unchanged, since its entry records nothing (Lean: such an
-    /// entry is <c>enterAlgorithmBody</c> itself) or binds a fresh context.
+    /// activation keying its local-only properties: a user owner (no deferred region) declaring a
+    /// property that is not exported — parameterless (CACHE-OWNER-D1), or with a pattern list the
+    /// read binds against the EMPTY supply (a collecting-only signature such as <c>Only(*xs)</c>,
+    /// COLLECT-CACHE-1). Exactly these reads inherit the declaring context
+    /// (<see cref="EvalPropertyOwnerBodyCounted"/>); every other read — a family, an alias, an owner
+    /// of exported members only — keeps the demand funnel unchanged, since its entry records nothing
+    /// that keys a local-only property. A pattern list that refuses the empty supply fails in the
+    /// shared binder exactly as the funnel fails. Lean: the <c>.mk</c> arms of
+    /// <c>EvalBody.evalPropertyDemandCounted</c>.
     /// </summary>
     private static bool EntersInDeclaringContext(Algorithm algorithm)
-        => algorithm is Algorithm.User { ParameterPatterns.Count: 0, DeferredRegion: null }
+        => algorithm is Algorithm.User { DeferredRegion: null }
            && HasLocalOnlyProperty(algorithm);
+
+    /// <summary>
+    /// The binding identity a property-style READ records on its owner's activation: the
+    /// declaring activation's (<see cref="DeclaringBindingIdentity"/>, the identity the owner's own
+    /// cache key carries), or the READER's when its declaring chain has no activated level — never
+    /// the fresh identity a collecting owner's binder mints. Non-evaluating; shared by the
+    /// parameterless and collecting READ entries and their async twins. Lean: <c>inherited</c> in
+    /// <c>EvalBody.evalPropertyDemandCounted</c>.
+    /// </summary>
+    private static object PropertyReadBindingIdentity(Algorithm algorithm, EvalCtx readerCtx, ValEnv readerValues)
+        => DeclaringBindingIdentity(algorithm.Parent) ?? BindingContextIdentity(readerCtx, readerValues);
 
     /// <summary>
     /// A property-style READ of a parameterless owner (CACHE-OWNER-D1, owner decision October 23
@@ -458,8 +473,9 @@ public static partial class Evaluator
     /// branch, <c>R.Invoke()</c>) reads it first, and a lexical read inside the body, a structural
     /// <c>B.V</c> and an opened <c>V</c> select one entry. Only the identity changes: the entered
     /// context keeps the reader's need tier, values and call stack. An explicit <c>B()</c> never
-    /// comes here (it binds a fresh context). Kept out of the property seam's frame like the
-    /// demand funnel's binding arm. Lean: <c>EvalBody.evalPropertyDemandCounted</c>.
+    /// comes here (it binds a fresh context). An owner with a pattern list is read through
+    /// <see cref="EvalCollectingPropertyOwnerBodyCounted"/>. Kept out of the property seam's frame
+    /// like the demand funnel's binding arm. Lean: <c>EvalBody.evalPropertyDemandCounted</c>.
     /// </summary>
     [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
     private static EvalResult<CountedResult> EvalPropertyOwnerBodyCounted(
@@ -467,12 +483,52 @@ public static partial class Evaluator
         EvalCtx ctx,
         ValEnv valEnv)
     {
+        if (algorithm.ParameterPatterns.Count != 0)
+            return EvalCollectingPropertyOwnerBodyCounted(algorithm, ctx, valEnv);
+
         if (OutputRowsAccessError(algorithm) is { } accessError)
             return accessError;
 
         var bodyCtx = EnterAlgorithmBody(algorithm, ctx, valEnv,
-            inheritedBindingIdentity: DeclaringBindingIdentity(algorithm.Parent) ?? BindingContextIdentity(ctx, valEnv));
+            inheritedBindingIdentity: PropertyReadBindingIdentity(algorithm, ctx, valEnv));
         var preparedR = EvalOutputRowsPreparedCore(algorithm.Output, bodyCtx, ctx, valEnv);
+        return preparedR.IsError
+            ? preparedR.Error
+            : EvalResult<CountedResult>.Ok(preparedR.Value.Counted);
+    }
+
+    /// <summary>
+    /// A property-style READ of an owner whose pattern list accepts the EMPTY supply — a
+    /// collecting-only signature such as <c>Only(*xs)</c> (COLLECT-CACHE-1, October 23 2026). The
+    /// empty supply is bound exactly as the demand funnel's binding arm binds it
+    /// (<see cref="EvalBoundZeroArgumentDemandOutputCounted"/>: <see cref="BindZeroArgumentSupply"/>,
+    /// <see cref="WithNeedBindings"/>, <see cref="ShadowValEnv"/>), so <c>xs</c> is the exact empty
+    /// list, the callee's names shadow every inherited tier, and a refused supply fails as there.
+    /// The body is then checked and entered over the BOUND context as
+    /// <see cref="EvalPropertyOwnerBodyCounted"/> enters a parameterless owner: its activation
+    /// records the declaring identity (<see cref="PropertyReadBindingIdentity"/>), never the fresh
+    /// identity of the bound tier, so <c>Only</c> read by a callback and a structural <c>Only.V</c>
+    /// key <c>V</c> on one activation. Only the recorded identity differs from the funnel; an
+    /// explicit <c>Only()</c> never comes here. Its locals live in this separate frame, which only
+    /// such a read enters. Lean: the pattern arm of <c>EvalBody.evalPropertyDemandCounted</c>.
+    /// </summary>
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+    private static EvalResult<CountedResult> EvalCollectingPropertyOwnerBodyCounted(
+        Algorithm algorithm,
+        EvalCtx ctx,
+        ValEnv valEnv)
+    {
+        var bindingsR = BindZeroArgumentSupply(algorithm, ctx);
+        if (bindingsR.IsError) return bindingsR.Error;
+
+        if (OutputRowsAccessError(algorithm) is { } accessError)
+            return accessError;
+
+        var boundCtx = WithNeedBindings(ctx, bindingsR.Value!, algorithm.Params);
+        var boundValues = ShadowValEnv(valEnv, algorithm.Params);
+        var bodyCtx = EnterAlgorithmBody(algorithm, boundCtx, boundValues,
+            inheritedBindingIdentity: PropertyReadBindingIdentity(algorithm, ctx, valEnv));
+        var preparedR = EvalOutputRowsPreparedCore(algorithm.Output, bodyCtx, boundCtx, boundValues);
         return preparedR.IsError
             ? preparedR.Error
             : EvalResult<CountedResult>.Ok(preparedR.Value.Counted);

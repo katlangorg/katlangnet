@@ -131,8 +131,9 @@ internal interface IZeroArgPropertyResultCache
 ///   boundary: <c>Evaluator.BindingContextIdentity</c>, CACHE-OWNER-D2) and the
 ///   declaring scope. Two distinct binding contexts never share an
 ///   entry, and consumers within one owning activation reuse its entry even through nested calls:
-///   a parameterless owner entered by a property-style read inherits its declaring activation's
-///   identity (<c>Evaluator.DeclaringBindingIdentity</c>, CACHE-OWNER-D1), so a callback, helper or
+///   a parameterless or collecting-only owner entered by a property-style read inherits its declaring
+///   activation's identity (<c>Evaluator.DeclaringBindingIdentity</c>, CACHE-OWNER-D1, COLLECT-CACHE-1),
+///   so a callback, helper or
 ///   loop step that reads it first, a structural <c>B.V</c> and an opened <c>V</c> share one entry.
 ///   Scopes without an activation retain the host environment fallback.</item>
 /// </list>

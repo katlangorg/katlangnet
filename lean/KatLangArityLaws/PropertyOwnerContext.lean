@@ -16,8 +16,10 @@ The production mechanism is ONE definition on the read route, `EvalBody.evalProp
 parameterless user owner is checked and entered exactly as an ordinary body, through
 `enterPropertyOwnerBody`, which is `enterAlgorithmBody` except that the activation it records
 carries the binding context `propertyOwnerBindingContext a.parent` finds — the context the owner's
-OWN cache key carries — and the reader's only when there is none. Every other callable, and the
-`.invoke` calculation of an explicit call, are untouched.
+OWN cache key carries — and the reader's only when there is none. A user owner whose pattern list
+accepts the empty supply is read the same way after the ordinary binder binds that supply
+(COLLECT-CACHE-1, October 23 2026). Every other callable, and the `.invoke` calculation of an
+explicit call, are untouched.
 
 What is proved here, over the production definitions:
 
@@ -33,10 +35,18 @@ What is proved here, over the production definitions:
 * **The read route** (`read_calculation_is_the_property_demand`, `property_demand_run`,
   `property_demand_*_is_the_ordinary_demand`): a read's calculation is the property demand; for a
   parameterless user owner it is the checks, ONE entry recording the declaring context, and the
-  rows over the entered context; every other callable is the ordinary zero-argument demand.
+  rows over the entered context; a family, an alias and a builtin are the ordinary zero-argument
+  demand.
 * **Consumer independence** (`property_demand_records_the_declaring_context`): whenever the
   declaring chain has an activated level, the recorded context is that level's, whatever the
   reader's binding context.
+* **Collecting-only owners (COLLECT-CACHE-1, §4)**: a READ of a user owner whose pattern list
+  accepts the empty supply (`Only(*xs)`) runs the SAME binder and bound context as the ordinary
+  demand (`collecting_read_rejects_like_the_demand`, `collecting_demand_run`, `collecting_read_run`),
+  then ONE entry over the bound context whose record keeps the binder's cells and shadowed values
+  and replaces only the binding context (`collecting_read_record_keeps_the_binding`) by the declaring
+  one (`collecting_read_records_the_declaring_context`), or the reader's — never the binder's fresh
+  one — when there is none (`collecting_read_falls_back_to_the_reader`).
 * **Explicit calls stay fresh**: the `.invoke` calculation is unchanged — still the ordinary user
   invocation (`PropertyInvocationLaws.invocation_calculation_is_the_call_before_its_boundary`,
   which binds a fresh context through `EvalCtx.bindParameters`).
@@ -159,15 +169,7 @@ theorem property_demand_falls_back_to_the_reader (a : Algorithm) (ctx : EvalCtx)
     inheritedContext a ctx s = ctx.bindingContext := by
   simp only [inheritedContext, h, Option.getD_none]
 
-/-- Every other callable keeps the ordinary zero-argument demand: a pattern list (whose binder
-    mints a fresh context), … -/
-theorem property_demand_patterned_is_the_ordinary_demand (rec : EvalRec) (p : Option ScopeCtx)
-    (pattern : ParameterPattern) (patterns : List ParameterPattern) (o : List Expr) (pr : List PropDef)
-    (out : List Expr) (d : Option PropertyIdentity) (ctx : EvalCtx) (env : ValEnv) :
-    EvalBody.evalPropertyDemandCounted rec (Algorithm.mk p (pattern :: patterns) o pr out d) ctx env =
-      rec.evalZeroArgumentDemandOutputCounted (Algorithm.mk p (pattern :: patterns) o pr out d) ctx env := rfl
-
-/-- … a clause family, … -/
+/-- Every other callable keeps the ordinary zero-argument demand: a clause family, … -/
 theorem property_demand_family_is_the_ordinary_demand (rec : EvalRec) (p : Option ScopeCtx)
     (os : List Expr) (branches : List CondBranch) (d : Option PropertyIdentity) (ctx : EvalCtx) (env : ValEnv) :
     EvalBody.evalPropertyDemandCounted rec (Algorithm.conditional p os branches d) ctx env =
@@ -183,5 +185,114 @@ theorem property_demand_alias_is_the_ordinary_demand (rec : EvalRec) (p : Option
 theorem property_demand_builtin_is_the_ordinary_demand (rec : EvalRec) (b : Builtin) (ctx : EvalCtx) (env : ValEnv) :
     EvalBody.evalPropertyDemandCounted rec (Algorithm.builtin b) ctx env =
       rec.evalZeroArgumentDemandOutputCounted (Algorithm.builtin b) ctx env := rfl
+
+/-! ## 4. COLLECT-CACHE-1: a READ of an owner whose pattern list accepts the empty supply
+
+A user owner with a pattern list (`Only(*xs)`) read as a property binds the EMPTY supply through the
+ordinary binder — the SAME `bindNeedPatterns` call and `needBindingContext` the zero-argument demand
+funnel makes, at the same state — and then enters its body over the bound context with the declaring
+activation's binding context recorded. The laws below are over the production definitions: the binder
+prefix is the funnel's (a rejection is the funnel's rejection), the run is the binder, the checks, ONE
+entry and the rows, the appended record holds the binder's cells and shadowed values with only its
+binding context replaced, and that context is the declaring one whatever the reader's. -/
+
+/-- The patterns a collecting READ binds the empty supply against. -/
+abbrev emptySupplyPatterns (pattern : ParameterPattern) (patterns : List ParameterPattern) : List NeedPattern :=
+  (pattern :: patterns).map NeedPattern.ofParameter
+
+/-- **A rejection is the demand's rejection**: when the binder refuses the empty supply, the READ and
+    the ordinary zero-argument demand fail alike, with `badArity` in the binder's exit state. -/
+theorem collecting_read_rejects_like_the_demand (rec : EvalRec) (p : Option ScopeCtx)
+    (pattern : ParameterPattern) (patterns : List ParameterPattern) (o : List Expr) (pr : List PropDef)
+    (out : List Expr) (d : Option PropertyIdentity) (ctx : EvalCtx) (env : ValEnv) (s s1 : EvalState)
+    (hbind : (bindNeedPatterns rec.bindingChannels (emptySupplyPatterns pattern patterns) []).runState s = (.ok none, s1)) :
+    (EvalBody.evalPropertyDemandCounted rec (Algorithm.mk p (pattern :: patterns) o pr out d) ctx env).runState s =
+        (.error Error.badArity, s1) ∧
+      (EvalBody.evalZeroArgumentDemandOutputCounted rec (Algorithm.mk p (pattern :: patterns) o pr out d) ctx env).runState s =
+        (.error Error.badArity, s1) := by
+  constructor
+  · simp only [emptySupplyPatterns] at hbind
+    simp only [EvalBody.evalPropertyDemandCounted, Algorithm.parameterPatterns]
+    rw [EvalM.bind_runState, hbind]
+    rfl
+  · simp only [emptySupplyPatterns] at hbind
+    simp only [EvalBody.evalZeroArgumentDemandOutputCounted, Algorithm.parameterPatterns, List.isEmpty_cons,
+      Bool.false_eq_true, ite_false]
+    rw [EvalM.bind_runState, hbind]
+    rfl
+
+/-- **The ordinary demand of the same owner** (for comparison): the binder, the bound context, then
+    the ordinary body evaluation over the bound context and the shadowed values. -/
+theorem collecting_demand_run (rec : EvalRec) (p : Option ScopeCtx)
+    (pattern : ParameterPattern) (patterns : List ParameterPattern) (o : List Expr) (pr : List PropDef)
+    (out : List Expr) (d : Option PropertyIdentity) (ctx boundCtx : EvalCtx) (env : ValEnv)
+    (bindings : NeedEnv) (s s1 s2 : EvalState)
+    (hbind : (bindNeedPatterns rec.bindingChannels (emptySupplyPatterns pattern patterns) []).runState s =
+      (.ok (some bindings), s1))
+    (hctx : (needBindingContext ctx bindings).runState s1 = (.ok boundCtx, s2)) :
+    (EvalBody.evalZeroArgumentDemandOutputCounted rec (Algorithm.mk p (pattern :: patterns) o pr out d) ctx env).runState s =
+      (rec.evalAlgOutputCounted (Algorithm.mk p (pattern :: patterns) o pr out d) boundCtx
+        (ValEnv.shadow env (Algorithm.params (Algorithm.mk p (pattern :: patterns) o pr out d)))).runState s2 := by
+  simp only [emptySupplyPatterns] at hbind
+  simp only [EvalBody.evalZeroArgumentDemandOutputCounted, Algorithm.parameterPatterns, List.isEmpty_cons,
+    Bool.false_eq_true, ite_false]
+  rw [EvalM.bind_runState, hbind]
+  simp only
+  rw [EvalM.bind_runState, hctx]
+
+/-- **The collecting READ**: after the SAME binder and bound context as the demand, and the checks
+    (state-free), it is ONE entry over the bound context recording the inherited declaring context, then
+    the rows over the entered context and the shadowed values. -/
+theorem collecting_read_run (rec : EvalRec) (p : Option ScopeCtx)
+    (pattern : ParameterPattern) (patterns : List ParameterPattern) (o : List Expr) (pr : List PropDef)
+    (out : List Expr) (d : Option PropertyIdentity) (ctx boundCtx : EvalCtx) (env : ValEnv)
+    (bindings : NeedEnv) (s s1 s2 : EvalState)
+    (hbind : (bindNeedPatterns rec.bindingChannels (emptySupplyPatterns pattern patterns) []).runState s =
+      (.ok (some bindings), s1))
+    (hctx : (needBindingContext ctx bindings).runState s1 = (.ok boundCtx, s2))
+    (hp : Passes (Algorithm.mk p (pattern :: patterns) o pr out d)) :
+    (EvalBody.evalPropertyDemandCounted rec (Algorithm.mk p (pattern :: patterns) o pr out d) ctx env).runState s =
+      (do let prepared ← rec.evalOutputRowsPreparedCore out
+            (enteredCtx (Algorithm.mk p (pattern :: patterns) o pr out d) boundCtx s2)
+            (ValEnv.shadow env (Algorithm.params (Algorithm.mk p (pattern :: patterns) o pr out d)))
+          pure prepared.counted).runState
+        (enteredState (Algorithm.mk p (pattern :: patterns) o pr out d)
+          { boundCtx with bindingContext := inheritedContext (Algorithm.mk p (pattern :: patterns) o pr out d) ctx s2 }
+          (ValEnv.shadow env (Algorithm.params (Algorithm.mk p (pattern :: patterns) o pr out d))) s2) := by
+  simp only [emptySupplyPatterns] at hbind
+  simp only [EvalBody.evalPropertyDemandCounted, Algorithm.parameterPatterns]
+  rw [EvalM.bind_runState, hbind]
+  simp only
+  rw [EvalM.bind_runState, hctx]
+  simp only
+  rw [EvalM.bind_runState, hp s2]
+  simp only
+  rw [EvalM.bind_runState, get_runState]
+  simp only
+  rw [EvalM.bind_runState, enterPropertyOwnerBody_run]
+  rfl
+
+/-- **The binding is the binder's**: the record a collecting READ appends holds exactly the cells and
+    values the ordinary entry over the bound context records — the collector's EMPTY binding and the
+    shadowed values — and differs ONLY in its binding context. -/
+theorem collecting_read_record_keeps_the_binding (a : Algorithm) (boundCtx ctx : EvalCtx) (env : ValEnv) (s : EvalState) :
+    enteredActivation a { boundCtx with bindingContext := inheritedContext a ctx s } env =
+      { enteredActivation a boundCtx env with bindingContext := inheritedContext a ctx s } := rfl
+
+/-- **Consumer independence for a collecting READ**: when the declaring chain has an activated level
+    with context `m`, the record carries `m` — whatever the reader's context and whatever fresh context
+    the binder minted for the bound tier. -/
+theorem collecting_read_records_the_declaring_context (a : Algorithm) (boundCtx ctx : EvalCtx) (env : ValEnv)
+    (s : EvalState) (m : Nat) (h : propertyOwnerBindingContext a.parent s = some m) :
+    (enteredActivation a { boundCtx with bindingContext := inheritedContext a ctx s } env).bindingContext = m := by
+  simp only [enteredActivation, inheritedContext, h, Option.getD_some]
+
+/-- …and with no activated level it is the READER's context (`ctx`), never the binder's fresh one —
+    the D1 fallback. -/
+theorem collecting_read_falls_back_to_the_reader (a : Algorithm) (boundCtx ctx : EvalCtx) (env : ValEnv)
+    (s : EvalState) (h : propertyOwnerBindingContext a.parent s = none) :
+    (enteredActivation a { boundCtx with bindingContext := inheritedContext a ctx s } env).bindingContext =
+      ctx.bindingContext := by
+  simp only [enteredActivation, inheritedContext, h, Option.getD_none]
 
 end KatLang.PropertyOwnerContext
