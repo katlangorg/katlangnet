@@ -227,7 +227,8 @@ whole-run cache monotonicity and owner-set restoration on completed runs (since 
 counted for every plain/counted pair (FORMAL-05) as production EQUATIONS. The heap theorem
 preserves suspensions, completed VALUEs and prepared supplies; it does not establish CALLABLE
 stability, canonical links or activation/address invariants (CALLABLE stability and recorded links:
-proved since FG-M1, 2026-10-23, below). The original old/new evidence compares
+proved since FG-M1, 2026-10-23, below; need-heap address validity of supplies, environments,
+activations and collector slices under named evaluator premises: FG-H1, below). The original old/new evidence compares
 full outcomes and lossy state summaries on 3,030 cases (cache/activation contents and successful
 callable identities were omitted), not equality of complete state. Reviewer migration observations
 and limits are recorded in `artifacts/validation/r7-review/`. Proved scope and outstanding
@@ -236,6 +237,34 @@ laws, the dot funnel, Q-25, plan conservativity and the admitted public-run brid
 `experimental/features/s6d-r7-whole-run-evaluator-refinement.md`. The `Error.fuelExhausted`
 constructor required one line in the shared generated-artifact template (`LeanObsTemplate`) and the
 regenerated `SemanticExplorerCases.lean` / `LanguageSpecCases.lean` headers.
+
+FG-H1 — need-heap address validity through allocation and supply formation (2026-10-23; proof-only,
+no Lean definition or C# change). Preserving old cells (`CellKept`) says nothing about the references
+a NEW cell or a returned supply carries. `KatLangArityLaws/HeapAddressValidity.lean` defines
+`StateValid` over exactly three fields — stored collector members precede their collector (the
+existing `ValidCollectorHeap`), every stored expression suspension's `caller.needEnv` and every saved
+`ParameterActivation.needs` entry is `< needs.size` — and a run contract `Sound pre m post` over
+`EvalM.runState` (every outcome, the retained state of an ordinary failure included: the invariant
+holds, the heap does not shrink, a successful result satisfies `post` in the final heap). Proved
+over the actual total helpers: `allocate_sound` / `ready_sound`, collector order on allocation
+(`allocate_collector_members_below`) and no self/forward collector edge; `supply_sound` (transport
+through the caller's tier AND a captured activation, or one fresh expression cell storing a valid
+caller tier); `collector_slice_sound` (a found slice is valid by `b < a < size`, no environment
+premise); `slot_sound` / `form_sound` / `addresses_sound` for every output bundle and every branch
+(ordinary, bound parameter, known slice, computed `.items`, computed `.cells`), with
+`form_failure_retains_prefix`; the activation helpers (`recordParameterActivation_sound`,
+`parameterContext_sound`, `bindParameters_sound`, `enterAlgorithmBody_sound`); and the whole binder
+(`binder_sound`, `bindNeedPatterns_sound`; META `reference_sound`). The production wrappers
+(`formNeedSupplySourced_runState_valid`, `formNeedSupply_runState_valid`) and the production binder
+are CONDITIONAL on the named premises `SpreadSound evalSupplySpread ctx env` (the computed spread
+keeps the invariant and returns post-state-valid `.cells`) and `ChannelsSound` (VALUE/CALLABLE
+channels keep it); discharging them needs a whole-evaluator `StateValid` preservation and validity
+of prepared plan supplies, both open. NOT covered: addresses inside results (`callRef`, `argView`,
+completed outcomes), Ready payloads, prepared plan supplies, `callee` / `receiver` / `aliasBare`,
+`aliasCells`, `ValEnv`, and any VALUE/CALLABLE acyclicity. Guards `HeapAddressValidityGuards.lean`
+(actual production runs; negative witnesses: each dropped premise makes the universal statement
+false, reversed collector order rejected). Report
+`artifacts/validation/fg-h1/fg-h1-implementation-report.md`.
 
 FG-M1 — completed CALLABLE / recorded-link preservation (2026-10-23; proof-only, no Lean definition
 or C# change). `CellKept` constrains neither `NeedCell.callable`, `callee` nor `receiver`, so the local

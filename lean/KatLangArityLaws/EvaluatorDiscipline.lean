@@ -28,8 +28,11 @@ cells). Head-unfolding never unfolds a recursive definition, and macro hygiene i
 reaches lemmas defined after it.
 
 Not claimed here: other heap invariants (address validity of environments, allocation order of
-collector slices, acyclicity), which remain open R7 work. `CellKept` does not constrain a cell's
-CALLABLE state, recorded callee or recorded receiver; their entry-state preservation is the
+collector slices, acyclicity). Address validity and collector order for allocation, parameter
+transport, supply formation and the binder are proved in `HeapAddressValidity.lean` (FG-H1) under
+named evaluator premises; their whole-run discharge and acyclicity remain open. `CellKept` does
+not constrain a cell's CALLABLE state, recorded callee or recorded receiver; their entry-state
+preservation is the
 companion relation `LinkKept` of `EvaluatorMemoLinks.lean` (FG-M1), proved by the same procedure
 over `LinkDisc`.
 -/
