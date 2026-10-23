@@ -116,12 +116,32 @@ internal sealed class ValueTraversalObservations
     internal void RecordRunExportScanSkipped() => RunExportScanSkippedCount = checked(RunExportScanSkippedCount + 1);
 
     /// <summary>
-    /// Slots the run-result export scans inspected, every level included; a memoized shared structure is
-    /// expanded once, so this stays bounded by the distinct reachable structures' slots, never by paths.
+    /// Slots the run-result export scans inspected, every level included, probed slots too. A memoized
+    /// shared structure is expanded once; a shallow structure (at most <c>ShallowProbeMaxItems</c> slots,
+    /// SEC-01-FU3) is probed in place at each reference, re-inspecting its leaf prefix. So this stays
+    /// bounded by the distinct reachable structures' slots plus that fixed number per edge, never by paths.
+    /// A probe's stopping structural slot counts too, as does its reread by the resumed frame.
     /// </summary>
     public long RunExportScanSlots { get; private set; }
 
     internal void RecordRunExportScanSlots(int slots) => RunExportScanSlots = checked(RunExportScanSlots + slots);
+
+    /// <summary>
+    /// Nested structures the run-result export scans completed by the bounded shallow probe (SEC-01-FU3):
+    /// leaf-only structures inspected in place, with no memo registration and no continuation frame.
+    /// A shared one counts once per reference.
+    /// </summary>
+    public long RunExportScanProbedStructures { get; private set; }
+
+    internal void RecordRunExportScanProbedStructure() => RunExportScanProbedStructures = checked(RunExportScanProbedStructures + 1);
+
+    /// <summary>
+    /// Nested structures the run-result export scans registered in their expanded-node memo and entered as a
+    /// frame: at most once each per scan, so this stays bounded by the distinct reachable structures.
+    /// </summary>
+    public long RunExportScanMemoRegistrations { get; private set; }
+
+    internal void RecordRunExportScanMemoRegistration() => RunExportScanMemoRegistrations = checked(RunExportScanMemoRegistrations + 1);
 
     /// <summary>Largest number of suspended continuation frames in a run-result export scan (nesting depth).</summary>
     public int RunExportScanPeakPendingFrames { get; private set; }
@@ -130,8 +150,9 @@ internal sealed class ValueTraversalObservations
         => RunExportScanPeakPendingFrames = Math.Max(RunExportScanPeakPendingFrames, count);
 
     /// <summary>
-    /// Cancellation checkpoints the run-result export scans reached (at segment boundaries after at least
-    /// <see cref="Result.ValueSemanticComparer.UnitsPerCharge"/> inspected slots), each just BEFORE it observes
+    /// Cancellation checkpoints the run-result export scans reached (once at least
+    /// <see cref="Result.ValueSemanticComparer.UnitsPerCharge"/> slots were inspected, at a segment boundary or
+    /// after any shallow probe, including one that falls back to a memo hit), each just BEFORE it observes
     /// the run token; <see cref="BeforeRunExportCancellationCheckpoint"/> runs at the same point.
     /// </summary>
     public long RunExportScanCancellationCheckpoints { get; private set; }

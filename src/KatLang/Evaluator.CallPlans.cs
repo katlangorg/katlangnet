@@ -1438,7 +1438,8 @@ public static partial class Evaluator
     /// <summary>
     /// Whether <paramref name="value"/> CONTAINS a call reference at any depth of its sequence and list
     /// structure. Iterative and DAG-safe: each shared structure node is expanded once (reference-identity
-    /// memo), and a call reference is a leaf — its plan, cells and context are never followed.
+    /// memo) except a shallow leaf-only one, probed in place at each reference (<see cref="ShallowProbeMaxItems"/>),
+    /// and a call reference is a leaf — its plan, cells and context are never followed.
     /// Lean: <c>Result.containsCallRef</c>.
     /// </summary>
     internal static bool ContainsCallReference(Result value)
@@ -1491,6 +1492,28 @@ public static partial class Evaluator
     }
 
     /// <summary>
+    /// THE BOUNDED SHALLOW PROBE (SEC-01-FU3, an implementation-only allocation refinement). In the
+    /// uncharged single-scan modes (<see cref="ScanBudgetUse.None"/> without a snapshot memo, and
+    /// <see cref="ScanBudgetUse.ObserveCancellation"/>), a nested structure of at most this many slots is
+    /// inspected in place, left to right, instead of being registered in the expanded-node memo and
+    /// suspended as a frame. A leaf-only one is completed there — never memoized, so each further
+    /// reference to it re-inspects at most this many slots. The probe stops at its first structural
+    /// item: the containing structure is then memoized and entered as a frame resuming at that item, so its leaf
+    /// prefix is not inspected twice in one visit, and the probe never recurses. The stopping structural
+    /// slot is inspected again by the resumed frame, and BOTH reads count as work. A memo hit after a probe
+    /// re-inspects at most this many slots. So every edge of the distinct value graph costs at
+    /// most a fixed number of inspections, shared structures that hold structures stay memoized, and
+    /// wider leaf-only structures stay memoized too: the walk stays linear in the distinct graph's
+    /// slots up to this fixed factor and never unfolds paths. Measured (Release, in-process A/B, 5,000
+    /// nested structures): distinct leaf-only structures of 2–8 slots no longer allocate the memo's
+    /// ~320 KB and scan 2.4–3.3× faster; the worst case, one 8-slot leaf-only structure referenced 5,000
+    /// times, costs about 30 ns more per reference than a memo hit (≈2.8× that walk; ≈1.6× for a pair),
+    /// still allocation-free. A wider limit would re-inspect more per reference for structures the memo
+    /// already serves well.
+    /// </summary>
+    internal const int ShallowProbeMaxItems = 8;
+
+    /// <summary>
     /// The one call-reference scan (<see cref="ContainsCallReference(Result)"/>). With
     /// <see cref="ScanBudgetUse.ChargeStructuralWork"/> it charges nested structure work to
     /// <paramref name="budget"/> (<see cref="HostArgumentBoundaryError"/>), and a refused charge stops the
@@ -1498,7 +1521,8 @@ public static partial class Evaluator
     /// nothing and observes the run's cancellation whenever at least
     /// <see cref="Result.ValueSemanticComparer.UnitsPerCharge"/> slots were inspected since the last
     /// checkpoint (<see cref="RunExportBoundaryError"/>). A non-null <paramref name="completed"/> is the
-    /// cross-scan memo of <see cref="ContainsCallReference(Result, Dictionary{Result, bool})"/>.
+    /// cross-scan memo of <see cref="ContainsCallReference(Result, Dictionary{Result, bool})"/>. The
+    /// uncharged single-scan modes probe shallow structures in place (<see cref="ShallowProbeMaxItems"/>).
     /// </summary>
     private static bool ScanForCallReference(
         Result value,
@@ -1517,6 +1541,11 @@ public static partial class Evaluator
         if (completed is not null && completed.TryGetValue(value, out var cached))
             return cached;
 
+        // The bounded shallow probe (SEC-01-FU3): only the uncharged, single-scan modes use it. The
+        // charged host-argument scan bills each memoized structure once, and the snapshot memo records
+        // verdicts per structure, so both keep the plain memoized walk.
+        var probeShallow = budgetUse != ScanBudgetUse.ChargeStructuralWork && completed is null;
+
         // Indexed continuations keep pending storage proportional to depth, never to the
         // number of sibling structures. Flat values need neither a memo nor a stack, and
         // indexing avoids a boxed enumerator.
@@ -1530,9 +1559,11 @@ public static partial class Evaluator
         while (true)
         {
             var segmentStart = next;
+            var probedSlots = 0;
             var found = false;
             IReadOnlyList<Result>? descend = null;
             Result? descendNode = null;
+            var descendFrom = 0;
             while (next < items.Count)
             {
                 var item = items[next++];
@@ -1553,17 +1584,57 @@ public static partial class Evaluator
                     break;
                 }
 
+                var leafPrefix = 0;
+                var nestedCount = 0;
+                if (probeShallow && (nestedCount = nestedItems.Count) <= ShallowProbeMaxItems)
+                {
+                    // Its leading leaves are inspected in place, in order; a structural item ends the
+                    // probe and the frame resumes there. Count that stopping read as well as its later
+                    // frame read, while the completed leaf prefix is never inspected twice in one visit.
+                    leafPrefix = LeafPrefixLength(nestedItems, nestedCount, out var nestedReference);
+                    probedSlots += leafPrefix + (!nestedReference && leafPrefix < nestedCount ? 1 : 0);
+                    if (exporting)
+                    {
+                        if (!nestedReference && leafPrefix == nestedCount)
+                            observations?.RecordRunExportScanProbedStructure();
+                        // EVERY probe adds work, including one that falls back to an already memoized
+                        // structure. Check progress before that memo hit can continue this wide frame.
+                        var inspected = next - segmentStart + probedSlots;
+                        if (uncheckedSlots + inspected >= Result.ValueSemanticComparer.UnitsPerCharge)
+                        {
+                            observations?.RecordRunExportScanSlots(inspected);
+                            segmentStart = next;
+                            probedSlots = 0;
+                            uncheckedSlots = 0;
+                            observations?.RecordRunExportScanCancellationCheckpoint();
+                            budget!.ObserveCancellation();
+                        }
+                    }
+
+                    if (nestedReference)
+                    {
+                        found = true;
+                        break;
+                    }
+
+                    if (leafPrefix == nestedCount)
+                        continue;
+                }
+
                 if ((expanded ??= new HashSet<Result>(ReferenceEqualityComparer.Instance)).Add(item))
                 {
+                    if (exporting)
+                        observations?.RecordRunExportScanMemoRegistration();
                     descend = nestedItems;
                     descendNode = item;
+                    descendFrom = leafPrefix;
                     break;
                 }
             }
 
             if (exporting)
             {
-                var inspected = next - segmentStart;
+                var inspected = next - segmentStart + probedSlots;
                 observations?.RecordRunExportScanSlots(inspected);
                 // A cancellation checkpoint per block of inspected slots, never a charge: the
                 // export scan runs once, after evaluation, over a value the run already paid for.
@@ -1625,7 +1696,7 @@ public static partial class Evaluator
                     observations?.RecordCallReferenceScanPendingFrames(pending.Count);
                 items = descend;
                 current = descendNode!;
-                next = 0;
+                next = descendFrom;
                 isRoot = false;
             }
             else
@@ -1642,6 +1713,27 @@ public static partial class Evaluator
             Result.ListValue(var listItems) => listItems,
             _ => null,
         };
+
+        // Length of the completed leaf prefix: up to the first structural item (exclusive), or through
+        // the first call reference (inclusive, setting found), or every slot of a leaf-only structure.
+        // On structural fallback the caller also counts the stopping slot that this probe inspected.
+        static int LeafPrefixLength(IReadOnlyList<Result> nestedItems, int count, out bool found)
+        {
+            found = false;
+            for (var i = 0; i < count; i++)
+            {
+                switch (nestedItems[i])
+                {
+                    case Result.CallReference:
+                        found = true;
+                        return i + 1;
+                    case Result.SequenceValue or Result.ListValue:
+                        return i;
+                }
+            }
+
+            return count;
+        }
     }
 
     /// <summary>
@@ -1669,12 +1761,15 @@ public static partial class Evaluator
     /// programs with a deferred module region, test seams — keeps the full scan.</para>
     ///
     /// <para><b>Charging and cancellation.</b> The export scan runs ONCE, after evaluation, over a value the
-    /// run already built and paid for (the memo bounds the walk by distinct nodes and their slots), so it
-    /// charges no step or structural work: a successful run never fails merely because its result was
-    /// inspected. Unlike the per-host-call argument scan (<see cref="HostArgumentBoundaryError"/>, charged),
-    /// it observes cancellation at segment boundaries after at least
-    /// <see cref="Result.ValueSemanticComparer.UnitsPerCharge"/> inspected slots. Each segment is bounded
-    /// by one admitted collection's slots (<see cref="EvaluationLimits.MaxCollectionItems"/>). It throws
+    /// run already built and paid for (the memo bounds the walk by distinct nodes and their slots, plus at
+    /// most <see cref="ShallowProbeMaxItems"/> re-inspected slots per reference to a probed shallow
+    /// structure), so it charges no step or structural work: a successful run never fails merely because
+    /// its result was inspected. Unlike the per-host-call argument scan (<see cref="HostArgumentBoundaryError"/>,
+    /// charged), it observes cancellation once at least <see cref="Result.ValueSemanticComparer.UnitsPerCharge"/>
+    /// slots were inspected, at segment boundaries and after EVERY shallow probe, including one that
+    /// falls back to a memo hit. A segment adds at most one admitted collection's slots
+    /// (<see cref="EvaluationLimits.MaxCollectionItems"/>) plus one probe to the previously unchecked
+    /// (fewer than <see cref="Result.ValueSemanticComparer.UnitsPerCharge"/>) slots. It throws
     /// the run token's <see cref="OperationCanceledException"/> — the outcome of the
     /// completion-boundary check that follows the export, only sooner.</para>
     /// </summary>

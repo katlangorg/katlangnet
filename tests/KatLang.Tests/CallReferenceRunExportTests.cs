@@ -11,7 +11,7 @@ namespace KatLang.Tests;
 /// step or structural work (it runs once, after evaluation) and observes cancellation every block of
 /// inspected slots. Pinned here: the skip and its conservative fallback, deep/view/property refusals, test
 /// seams, deferred regions, deterministic cancellation, shared DAGs, depth-sized continuation storage, the
-/// unchanged accounting, and sync/async/strategy/public-entry parity. The scan counters are passive
+/// unchanged accounting, sync/async/strategy/public-entry parity, and the bounded shallow probe (SEC-01-FU3). The scan counters are passive
 /// <see cref="ValueTraversalObservations"/>; production runs carry none.
 /// </summary>
 public class CallReferenceRunExportTests
@@ -78,6 +78,8 @@ public class CallReferenceRunExportTests
             Assert.Equal(optimized.Scan.RunExportScanSkippedCount, other.Scan.RunExportScanSkippedCount);
             Assert.Equal(optimized.Scan.RunExportScanSlots, other.Scan.RunExportScanSlots);
             Assert.Equal(optimized.Scan.RunExportScanPeakPendingFrames, other.Scan.RunExportScanPeakPendingFrames);
+            Assert.Equal(optimized.Scan.RunExportScanMemoRegistrations, other.Scan.RunExportScanMemoRegistrations);
+            Assert.Equal(optimized.Scan.RunExportScanProbedStructures, other.Scan.RunExportScanProbedStructures);
         }
 
         return optimized;
@@ -167,7 +169,8 @@ public class CallReferenceRunExportTests
         Assert.True(observed.Budget.RetainsInvocationPlans);
         Assert.Equal(1, observed.Scan.RunExportScanCount);
         Assert.Equal(0, observed.Scan.RunExportScanSkippedCount);
-        Assert.Equal(6, observed.Scan.RunExportScanSlots); // 2 root rows, 2 list slots, 2 nested slots
+        // 2 root rows, 2 list slots, 2 nested slots, and the probe's stopping structural read.
+        Assert.Equal(7, observed.Scan.RunExportScanSlots);
     }
 
     [Fact]
@@ -197,8 +200,9 @@ public class CallReferenceRunExportTests
         var observed = Observe(Prelude + "\nR = Capture(Square(5))\nWrap(R).repeat(300)");
 
         Assert.Equal(Escapes, observed.Outcome);
-        Assert.Equal(299, observed.Scan.RunExportScanPeakPendingFrames);
-        Assert.Equal(300, observed.Scan.RunExportScanSlots);
+        // The innermost [R] is probed in place (SEC-01-FU3), so 298 enclosing lists stay suspended.
+        Assert.Equal(298, observed.Scan.RunExportScanPeakPendingFrames);
+        Assert.Equal(300 + 298, observed.Scan.RunExportScanSlots); // plus each failed probe's structural read
     }
 
     [Fact]
@@ -207,7 +211,7 @@ public class CallReferenceRunExportTests
         var observed = Observe(Prelude + "\nWrap(7).repeat(300)");
 
         Assert.StartsWith("ok L[L[L[", observed.Outcome, StringComparison.Ordinal);
-        Assert.Equal(299, observed.Scan.RunExportScanPeakPendingFrames);
+        Assert.Equal(298, observed.Scan.RunExportScanPeakPendingFrames); // the innermost [7] is probed
     }
 
     [Theory]
@@ -419,19 +423,26 @@ public class CallReferenceRunExportTests
         var scan = new ValueTraversalObservations();
 
         Assert.True(Evaluator.ExportRunValue(EvalResult<Result>.Ok(node), ExportCtx(scan)).IsOk);
-        Assert.Equal(2 * 41, scan.RunExportScanSlots);
-        Assert.Equal(40, scan.RunExportScanPeakPendingFrames);
+        // 40 memoized nodes of 2 slots each; the shallow leaf-only base [1, 1] is probed in place
+        // (SEC-01-FU3) at each of its 2 references. Every incoming edge to the other 39 nested nodes
+        // also probes their first structural slot before either a frame resumes there or the memo hits.
+        Assert.Equal(2 * 40 + 2 * 2 + 2 * 39, scan.RunExportScanSlots);
+        Assert.Equal(39, scan.RunExportScanMemoRegistrations);
+        Assert.Equal(2, scan.RunExportScanProbedStructures);
+        Assert.Equal(39, scan.RunExportScanPeakPendingFrames);
     }
 
     [Fact]
     public void AWideStructure_KeepsOneContinuationFrame()
     {
-        var value = new Result.ListValue(Enumerable.Range(0, 10_000).Select(i => (Result)new Result.ListValue([Num(i)])));
+        // Each child holds a structure, so it is memoized and entered as a frame (its inner [i] is probed).
+        var value = new Result.ListValue(Enumerable.Range(0, 10_000).Select(i => (Result)new Result.ListValue([Num(i), new Result.ListValue([Num(i)])])));
         var scan = new ValueTraversalObservations();
 
         Assert.True(Evaluator.ExportRunValue(EvalResult<Result>.Ok(value), ExportCtx(scan)).IsOk);
         Assert.Equal(1, scan.RunExportScanPeakPendingFrames);
-        Assert.Equal(20_000, scan.RunExportScanSlots);
+        Assert.Equal(50_000, scan.RunExportScanSlots); // includes the 10,000 stopping structural reads
+        Assert.Equal(10_000, scan.RunExportScanMemoRegistrations);
     }
 
     [Fact]
@@ -447,7 +458,8 @@ public class CallReferenceRunExportTests
         var exported = Evaluator.ExportRunValue(EvalResult<Result>.Ok(value), ExportCtx(scan));
 
         Assert.Equal(Evaluator.CallReferenceLeavesRunMessage, Assert.IsType<EvalError.TypeMismatch>(exported.Error).Message);
-        Assert.Equal(depth - 1, scan.RunExportScanPeakPendingFrames);
+        // The innermost (i, R) is probed in place (SEC-01-FU3); every enclosing level is a frame.
+        Assert.Equal(depth - 2, scan.RunExportScanPeakPendingFrames);
     }
 
     [Fact]
@@ -506,6 +518,8 @@ public class CallReferenceRunExportTests
     [Theory]
     [InlineData("[Later(1), R]", false)]
     [InlineData("[Later(1), [R.Arguments]]", false)]
+    [InlineData("[Later(1), [2, R]]", false)]
+    [InlineData("[Later(1), (2, R.Arguments)]", false)]
     [InlineData("[Later(1), R.Invoke()]", true)]
     public async Task AGenuinelySuspendingRun_KeepsTheBoundary(string rows, bool succeeds)
     {
@@ -551,5 +565,286 @@ public class CallReferenceRunExportTests
         Assert.IsType<EvalError.TypeMismatch>(Evaluator.RunFlat(escaping, operations, null, null, CancellationToken.None).Error);
         Assert.IsType<EvalError.TypeMismatch>((await Evaluator.RunAsync(escaping, operations, null, null, CancellationToken.None)).Error);
         Assert.IsType<RunResult.Success>(KatLangEngine.Run("F(x) = [x, x]\nF(2)"));
+    }
+
+    // ── T13: the bounded shallow probe (SEC-01-FU3) ─────────────────────────
+
+    private const int K = Evaluator.ShallowProbeMaxItems;
+
+    private static Result.ListValue Pairs(int count, int offset = 0)
+        => new(Enumerable.Range(offset, count).Select(i => (Result)new Result.ListValue([Num(i), Num(i + 1)])));
+
+    private static Result Leaves(int width, int start = 0)
+        => new Result.ListValue(Enumerable.Range(start, width).Select(Num));
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void DistinctShallowPairs_AreProbedInPlace_WithNoMemoOrFrames(bool sequences)
+    {
+        var value = new Result.ListValue(Enumerable.Range(0, 5000).Select(i => sequences
+            ? (Result)new Result.SequenceValue([Num(i), Num(i + 1)])
+            : new Result.ListValue([Num(i), Num(i + 1)])));
+        var scan = new ValueTraversalObservations();
+
+        Assert.True(Evaluator.ExportRunValue(EvalResult<Result>.Ok(value), ExportCtx(scan)).IsOk);
+        Assert.Equal(5000 * 3, scan.RunExportScanSlots);
+        Assert.Equal(5000, scan.RunExportScanProbedStructures);
+        Assert.Equal(0, scan.RunExportScanMemoRegistrations);
+        Assert.Equal(0, scan.RunExportScanPeakPendingFrames);
+        Assert.False(Evaluator.ContainsCallReference(value));
+    }
+
+    [Theory]
+    [InlineData(2)]
+    [InlineData(K - 1)]
+    [InlineData(K)]
+    [InlineData(K + 1)]
+    [InlineData(100)]
+    public void RepeatedLeafOnlyStructures_CostAFixedBoundPerReference_OrStayMemoized(int width)
+    {
+        const int references = 1000;
+        var shared = Leaves(width);
+        var value = new Result.ListValue(Enumerable.Repeat(shared, references));
+        var scan = new ValueTraversalObservations();
+
+        Assert.True(Evaluator.ExportRunValue(EvalResult<Result>.Ok(value), ExportCtx(scan)).IsOk);
+        if (width <= K)
+        {
+            // Never memoized: each reference re-inspects at most K slots.
+            Assert.Equal(references + references * width, scan.RunExportScanSlots);
+            Assert.Equal(references, scan.RunExportScanProbedStructures);
+            Assert.Equal(0, scan.RunExportScanMemoRegistrations);
+        }
+        else
+        {
+            // A wider leaf-only structure is expanded once and memoized for every later reference.
+            Assert.Equal(references + width, scan.RunExportScanSlots);
+            Assert.Equal(0, scan.RunExportScanProbedStructures);
+            Assert.Equal(1, scan.RunExportScanMemoRegistrations);
+        }
+    }
+
+    public static TheoryData<int, int, string> BoundaryCases()
+    {
+        var cases = new TheoryData<int, int, string>();
+        foreach (var width in new[] { K - 1, K, K + 1 })
+        {
+            foreach (var position in new[] { 0, width / 2, width - 1 })
+            {
+                foreach (var kind in new[] { "reference", "view", "nested", "clean-nested" })
+                    cases.Add(width, position, kind);
+            }
+        }
+
+        return cases;
+    }
+
+    [Theory]
+    [MemberData(nameof(BoundaryCases))]
+    public void TheProbeBoundary_KeepsDepthFirstOrder_AndStopsBeforeTheSuffix(int width, int position, string kind)
+    {
+        var reference = CaptureFromRun();
+        var items = Enumerable.Range(0, width).Select(Num).ToArray();
+        items[position] = kind switch
+        {
+            "reference" => reference,
+            "view" => reference.ArgumentView,
+            "nested" => new Result.SequenceValue([Num(-1), reference]),
+            _ => new Result.SequenceValue([Num(-1)]),
+        };
+        Result nested = width % 2 == 0 ? new Result.ListValue(items) : new Result.SequenceValue(items);
+        var value = new Result.ListValue(new[] { nested }.Concat(Pairs(1000).Items));
+        var scan = new ValueTraversalObservations();
+
+        var exported = Evaluator.ExportRunValue(EvalResult<Result>.Ok(value), ExportCtx(scan));
+
+        var clean = kind == "clean-nested";
+        Assert.Equal(clean, exported.IsOk);
+        Assert.Equal(!clean, Evaluator.ContainsCallReference(value));
+        switch (kind)
+        {
+            case "reference" or "view":
+                // The root slot, then the nested prefix through the leaf reference; never the suffix.
+                Assert.Equal(1 + position + 1, scan.RunExportScanSlots);
+                Assert.Equal(width <= K ? 0 : 1, scan.RunExportScanMemoRegistrations);
+                Assert.Equal(width <= K ? 0 : 1, scan.RunExportScanPeakPendingFrames);
+                break;
+            case "nested":
+                // The probe stops at the structural item; the frame resumes THERE (the leaf prefix is
+                // inspected once), then the inner (-1, R) is probed: -1 and R. A shallow outer probe
+                // also inspected the structural slot before the resumed frame reads it again.
+                Assert.Equal(1 + position + 1 + 2 + (width <= K ? 1 : 0), scan.RunExportScanSlots);
+                Assert.Equal(1, scan.RunExportScanMemoRegistrations);
+                Assert.Equal(1, scan.RunExportScanPeakPendingFrames);
+                break;
+            default:
+                // The nested slots, its inner (-1), every pair, and the shallow outer probe's stopping read.
+                Assert.Equal(1 + width + 1 + 1000 * 3 + (width <= K ? 1 : 0), scan.RunExportScanSlots);
+                Assert.Equal(1, scan.RunExportScanMemoRegistrations);
+                Assert.Equal(1000 + 1, scan.RunExportScanProbedStructures);
+                break;
+        }
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void AMixedSharedDag_StaysMemoized_WithDepthFrames(bool referenceAtTheBase)
+    {
+        const int depth = 20; // 2^20 paths: an unmemoized walk would be observed, not hang
+        Result node = new Result.ListValue([Num(1), referenceAtTheBase ? CaptureFromRun() : Num(2)]);
+        for (var i = 0; i < depth; i++)
+            node = i % 2 == 0 ? new Result.SequenceValue([node, node]) : new Result.ListValue([node, node]);
+        var scan = new ValueTraversalObservations();
+
+        var exported = Evaluator.ExportRunValue(EvalResult<Result>.Ok(node), ExportCtx(scan));
+
+        Assert.Equal(!referenceAtTheBase, exported.IsOk);
+        Assert.Equal(depth - 1, scan.RunExportScanMemoRegistrations);
+        Assert.Equal(depth - 1, scan.RunExportScanPeakPendingFrames);
+        // Clean: every memoized node's 2 slots, plus the base probed at both of its references.
+        // Found: the first slot of each memoized level, the root's, and the base probe through R.
+        // Include each failed probe's structural read, once per incoming edge actually visited.
+        Assert.Equal(referenceAtTheBase ? depth + 2 + depth - 1 : 2 * depth + 2 * 2 + 2 * (depth - 1), scan.RunExportScanSlots);
+    }
+
+    [Fact]
+    public void ProbedShallowChildren_ReachCancellationCheckpoints_InsideTheirFrame()
+    {
+        var scan = new ValueTraversalObservations();
+
+        Assert.True(Evaluator.ExportRunValue(EvalResult<Result>.Ok(Pairs(1000)), ExportCtx(scan)).IsOk);
+        // One frame of 1000 probed pairs, 3 slots each: a checkpoint after every 86 pairs (258 slots),
+        // not one unchecked 3000-slot segment.
+        Assert.Equal(3000, scan.RunExportScanSlots);
+        Assert.Equal(1000 / 86, scan.RunExportScanCancellationCheckpoints);
+        Assert.Equal(0, scan.RunExportScanPeakPendingFrames);
+    }
+
+    [Fact]
+    public void AProbe_CountsTheStructuralSlotItReadsBeforeResumingTheFrame()
+    {
+        var child = new Result.SequenceValue([Num(3)]);
+        var value = new Result.ListValue([new Result.ListValue([Num(1), Num(2), child])]);
+        var scan = new ValueTraversalObservations();
+
+        Assert.True(Evaluator.ExportRunValue(EvalResult<Result>.Ok(value), ExportCtx(scan)).IsOk);
+
+        // Root slot; three probe reads through child; child read again by the resumed frame;
+        // then its one leaf. The stopping structural inspection is real work too.
+        Assert.Equal(6, scan.RunExportScanSlots);
+        Assert.Equal(1, scan.RunExportScanMemoRegistrations);
+        Assert.Equal(1, scan.RunExportScanProbedStructures);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void RepeatedProbesThatFallBackToMemoHits_CheckCancellationInsideTheFrame(bool sequences)
+    {
+        var child = new Result.ListValue([Num(1)]);
+        var slots = Enumerable.Range(0, K - 1).Select(Num).Append(child);
+        Result shared = sequences ? new Result.SequenceValue(slots) : new Result.ListValue(slots);
+        var repeated = Enumerable.Repeat(shared, 1000);
+        Result value = sequences ? new Result.ListValue(repeated) : new Result.SequenceValue(repeated);
+        using var cts = new CancellationTokenSource();
+        var scan = new ValueTraversalObservations
+        {
+            BeforeRunExportCancellationCheckpoint = _ => cts.Cancel(),
+        };
+        var ctx = ExportCtx(scan, cts.Token);
+
+        var thrown = Assert.ThrowsAny<OperationCanceledException>(
+            () => Evaluator.ExportRunValue(EvalResult<Result>.Ok(value), ctx));
+
+        Assert.Equal(cts.Token, thrown.CancellationToken);
+        // A failed shallow probe still inspects its whole K-slot prefix before the memo hit.
+        // Cancellation must be observed after a block, not after all 1000 repeated probes.
+        Assert.InRange(scan.RunExportScanSlots,
+            Result.ValueSemanticComparer.UnitsPerCharge,
+            Result.ValueSemanticComparer.UnitsPerCharge + K);
+        Assert.Equal(1, scan.RunExportScanCancellationCheckpoints);
+        Assert.Equal(1, scan.RunExportScanMemoRegistrations);
+        Assert.Equal(0, ctx.Budget.ConsumedSteps);
+        Assert.Equal(0, ctx.Budget.ConsumedStructuralWorkUnits);
+    }
+
+    [Fact]
+    public void Cancellation_AmongProbedShallowChildren_ThrowsTheRunToken()
+    {
+        using var cts = new CancellationTokenSource();
+        var scan = new ValueTraversalObservations
+        {
+            BeforeRunExportCancellationCheckpoint = ordinal => { if (ordinal == 2) cts.Cancel(); },
+        };
+        var ctx = ExportCtx(scan, cts.Token);
+
+        var thrown = Assert.ThrowsAny<OperationCanceledException>(
+            () => Evaluator.ExportRunValue(EvalResult<Result>.Ok(Pairs(1000)), ctx));
+
+        Assert.Equal(cts.Token, thrown.CancellationToken);
+        Assert.Equal(2 * 258, scan.RunExportScanSlots);
+        Assert.Equal(0, ctx.Budget.ConsumedStructuralWorkUnits);
+    }
+
+    [Fact]
+    public void TheChargedHostArgumentScan_KeepsItsMemo_AndItsUnits()
+    {
+        var pair = new Result.ListValue([Num(1), Num(2)]);
+        var shared = new Result.ListValue(Enumerable.Repeat<Result>(pair, 5000));
+        var sharedBudget = EvaluationBudget.Create(null);
+        var sharedScan = new ValueTraversalObservations();
+        var distinctBudget = EvaluationBudget.Create(null);
+
+        Assert.Null(Evaluator.HostArgumentBoundaryError(shared, sharedBudget, sharedScan));
+        Assert.Null(Evaluator.HostArgumentBoundaryError(Pairs(5000), distinctBudget, observations: null));
+
+        // The shared pair is charged once (2 slots + its completion); every later reference is free.
+        Assert.Equal(3, sharedBudget.ConsumedStructuralWorkUnits);
+        Assert.Equal(1, sharedScan.CallReferenceScanPeakPendingFrames);
+        Assert.Equal(5000 * 3, distinctBudget.ConsumedStructuralWorkUnits);
+        Assert.Equal(0, sharedScan.RunExportScanProbedStructures);
+    }
+
+    [Fact]
+    public void ARetainingRun_ProbesItsShallowRows_OnEveryRoute()
+    {
+        const string pair = "\nPair(x) = [x, x + 1]\n";
+        var observed = Observe(Prelude + pair + "R = Capture(Square(5))\nR.Invoke(), range(1, 300).map(Pair)");
+
+        Assert.StartsWith("ok S[25, L[L[1, 2], L[2, 3], ", observed.Outcome, StringComparison.Ordinal);
+        Assert.Equal(2 + 300 + 300 * 2, observed.Scan.RunExportScanSlots);
+        Assert.Equal(1, observed.Scan.RunExportScanMemoRegistrations);
+        Assert.Equal(300, observed.Scan.RunExportScanProbedStructures);
+        Assert.Equal(1, observed.Scan.RunExportScanPeakPendingFrames);
+
+        Assert.Equal(Escapes, Observe(Prelude + pair + "R = Capture(Square(5))\nrange(1, 300).map(Pair), [1, [2, R]]").Outcome);
+        Assert.Equal(Escapes, Observe(Prelude + pair + "R = Capture(Add(1, 2))\nrange(1, 300).map(Pair), (1, R.Arguments)").Outcome);
+    }
+
+    [Fact]
+    public void ExportingDistinctShallowPairs_AllocatesNoMemo()
+    {
+        // Allocation only (the counts above pin the mechanism): unobserved production path, warmed.
+        var budget = EvaluationBudget.Create(null);
+        budget.DecideInvocationPlanRetention(programMayCapture: true);
+        var ctx = Evaluator.EvalCtx.Empty with { Budget = budget };
+        var pairs = EvalResult<Result>.Ok(Pairs(5000));
+        var flat = EvalResult<Result>.Ok(Leaves(15_000));
+
+        long Allocated(EvalResult<Result> value)
+        {
+            for (var i = 0; i < 3; i++)
+                Assert.True(Evaluator.ExportRunValue(value, ctx).IsOk);
+            var before = GC.GetAllocatedBytesForCurrentThread();
+            var exported = Evaluator.ExportRunValue(value, ctx);
+            var allocated = GC.GetAllocatedBytesForCurrentThread() - before;
+            Assert.True(exported.IsOk);
+            return allocated;
+        }
+
+        // The memoized walk allocated ~320 KB here; a generous margin over a flat walk of as many slots.
+        Assert.InRange(Allocated(pairs), 0, Allocated(flat) + 16 * 1024);
     }
 }
