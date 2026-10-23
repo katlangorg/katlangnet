@@ -44,13 +44,22 @@ namespace KatLang;
 /// evaluator trusts this for open/structural visibility and for reuse of the first
 /// successful zero-argument property result across the run. A falsely exported
 /// capture can therefore expose an inaccessible member or reuse another call's
-/// value. Use <see cref="Parser.Parse(string)"/> or <see cref="KatLangEngine"/> for
+/// value. This holds for properties declared in a host-built <see cref="ScopeCtx"/>
+/// too: such a scope (kept as the parent of an opened inline block) is the declaring
+/// owner of its properties for caching, identified by the scope OBJECT — two
+/// independently constructed scopes never share cached values, even when they are
+/// structurally equal. Use <see cref="Parser.Parse(string)"/> or <see cref="KatLangEngine"/> for
 /// source programs and the complete front-end invariants.
 /// </remarks>
 public static partial class Evaluator
 {
+    /// <summary>
+    /// A selected lexical binding: its declaring owner (an evaluator-owned declaration, or the
+    /// ownerless host-built level that declares it — CACHE-OWNER-D3), the binding, and the binding's
+    /// value wired in context.
+    /// </summary>
     private readonly record struct ResolvedLexicalProperty(
-        Algorithm? Owner,
+        PropertyDeclaringOwner Owner,
         Property Binding,
         Algorithm ResolvedAlgorithm);
 
@@ -1522,8 +1531,10 @@ public static partial class Evaluator
         {
             if (budget.PropertyBindings.Lookup(current.Properties, name) is { } prop)
             {
+                // A host-built level has no evaluator owner: the level object itself is the
+                // declaring owner (CACHE-OWNER-D3), the very object the value is wired under.
                 return new ResolvedLexicalProperty(
-                    current.Owner,
+                    PropertyDeclaringOwner.OfLevel(current),
                     prop,
                     WithParent(prop.Value, current));
             }

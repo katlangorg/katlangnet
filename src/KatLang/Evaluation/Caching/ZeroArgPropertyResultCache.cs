@@ -2,8 +2,67 @@ using System.Runtime.CompilerServices;
 
 namespace KatLang.Evaluation.Caching;
 
+/// <summary>
+/// The DECLARING OWNER of a zero-argument property binding, from which its cache key's owner
+/// identity is computed (CACHE-OWNER-D3, owner decisions O-2/O-3, October 23 2026). Exactly one of:
+/// <list type="bullet">
+///   <item>an evaluator-owned declaration (<see cref="Algorithm"/>) — identified structurally by
+///   <see cref="StructuralOwnerIdentity.FromPropertyOwner"/>, so rebuilt owners over one resolving
+///   scope keep sharing an entry;</item>
+///   <item>an OWNERLESS host-built <see cref="ScopeCtx"/> level (its internal <c>Owner</c> is null:
+///   a host scope kept as the parent of an opened inline block) — identified by the REFERENCE of
+///   that very scope object. The evaluator never copies a host level during a run, so every read
+///   through it names the same object, while two independently constructed host scopes — even
+///   structurally equal ones, or ones sharing a property or a property list, or a record
+///   <c>with</c> copy — stay two owners. <see cref="ScopeCtx"/>'s record (structural) equality is
+///   never consulted: the key comparer compares every non-<see cref="StructuralOwnerIdentity"/>
+///   owner identity with <see cref="object.ReferenceEquals"/> and hashes it with
+///   <see cref="RuntimeHelpers.GetHashCode"/>.</item>
+/// </list>
+/// One reference wide, so carrying it costs no more than the former nullable owner. Its own
+/// equality is likewise by reference (never a structural record comparison).
+/// </summary>
+internal readonly struct PropertyDeclaringOwner : IEquatable<PropertyDeclaringOwner>
+{
+    // An Algorithm (evaluator-owned declaration) or a ScopeCtx (ownerless host level); never null
+    // for a constructed value.
+    private readonly object _owner;
+
+    private PropertyDeclaringOwner(object owner) => _owner = owner;
+
+    public static implicit operator PropertyDeclaringOwner(Algorithm owner)
+        => new(owner ?? throw new ArgumentNullException(nameof(owner)));
+
+    /// <summary>
+    /// The declaring owner of a property found in the scope level <paramref name="level"/>: the
+    /// level's evaluator owner when it has one, otherwise the ownerless host level itself.
+    /// </summary>
+    internal static PropertyDeclaringOwner OfLevel(ScopeCtx level)
+        => level.Owner is { } owner ? new(owner) : new(level);
+
+    /// <summary>The evaluator-owned declaration, or <c>null</c> for an ownerless host level.</summary>
+    internal Algorithm? Algorithm => _owner as Algorithm;
+
+    /// <summary>The ownerless host-built declaring level, or <c>null</c> for an evaluator-owned declaration.</summary>
+    internal ScopeCtx? HostScope => _owner as ScopeCtx;
+
+    /// <summary>The owner component of the cache key: structural for an evaluator owner, the host level by reference.</summary>
+    internal object CacheIdentity => _owner switch
+    {
+        Algorithm owner => StructuralOwnerIdentity.FromPropertyOwner(owner),
+        ScopeCtx hostScope => hostScope,
+        _ => throw new InvalidOperationException("A zero-argument property execution must name its declaring owner."),
+    };
+
+    public bool Equals(PropertyDeclaringOwner other) => ReferenceEquals(_owner, other._owner);
+
+    public override bool Equals(object? obj) => obj is PropertyDeclaringOwner other && Equals(other);
+
+    public override int GetHashCode() => RuntimeHelpers.GetHashCode(_owner);
+}
+
 internal readonly record struct ZeroArgPropertyExecution(
-    Algorithm Owner,
+    PropertyDeclaringOwner Owner,
     Property Binding,
     ZeroArgPropertyAccessKind AccessKind,
     object ValueEnvironmentIdentity,
@@ -56,7 +115,9 @@ internal interface IZeroArgPropertyResultCache
 ///   <c>open</c> and structural access). The binding context at the access is
 ///   therefore not a determinant of the value, and ONE entry per run per declaring
 ///   scope (<see cref="StructuralOwnerIdentity"/> — the same identity for every
-///   activation, open-provided wiring, or rebuilt structural receiver of that scope)
+///   activation, open-provided wiring, or rebuilt structural receiver of that scope; for an
+///   ownerless host-built declaring level, the level object by reference:
+///   <see cref="PropertyDeclaringOwner"/>)
 ///   serves every property-style access: <c>Big</c> read from two thousand calls of
 ///   <c>F(x) = Big + x</c>, from each callback of a <c>map</c>, from every
 ///   iteration of a loop step, or inside an explicit <c>B()</c> call is evaluated
@@ -102,13 +163,13 @@ internal readonly record struct ZeroArgPropertyCacheKey(
                 // Both spellings select the same exported declaration. Keep the
                 // original access kind on the execution for instrumentation only.
                 ZeroArgPropertyCacheAccessShape.Lexical,
-                StructuralOwnerIdentity.FromPropertyOwner(execution.Owner),
+                execution.Owner.CacheIdentity,
                 execution.Binding,
                 RunWideEnvironmentIdentity,
                 execution.RunIdentity)
             : new(
                 ZeroArgPropertyCacheAccessShape.Lexical,
-                StructuralOwnerIdentity.FromPropertyOwner(execution.Owner),
+                execution.Owner.CacheIdentity,
                 execution.Binding,
                 Evaluator.DeclaringBindingIdentity(execution.DeclaringScope) ?? execution.ValueEnvironmentIdentity,
                 execution.RunIdentity);
@@ -272,7 +333,10 @@ internal sealed class ZeroArgPropertyCacheKeyComparer : IEqualityComparer<ZeroAr
     /// <summary>
     /// Declaring-scope identity is a computed <see cref="StructuralOwnerIdentity"/>
     /// whose equality treats empty scope components as resolution-equivalent and
-    /// compares non-empty components by reference.
+    /// compares non-empty components by reference — or, for a property declared in an
+    /// ownerless host-built level (<see cref="PropertyDeclaringOwner"/>, CACHE-OWNER-D3), that
+    /// <see cref="ScopeCtx"/> object itself, compared by REFERENCE (never its record equality).
+    /// The two kinds never collide: a structural identity equals only a structural identity.
     /// </summary>
     internal static bool OwnerIdentityEquals(object x, object y)
         => x is StructuralOwnerIdentity structural

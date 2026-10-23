@@ -489,7 +489,7 @@ public static partial class Evaluator
     /// cannot drift (see <c>Evaluator.BudgetScopes.cs</c>).
     /// </summary>
     private static EvalResult<ZeroArgPropertyResult> GetOrEvaluateZeroArgPropertyResult(
-        Algorithm? owner,
+        PropertyDeclaringOwner owner,
         Property binding,
         ZeroArgPropertyAccessKind accessKind,
         Algorithm resolvedAlgorithm,
@@ -505,17 +505,19 @@ public static partial class Evaluator
         }
     }
 
+    /// <summary>
+    /// Every zero-argument property read consults the cache, whoever declares the binding: an
+    /// ownerless host-built level is its own declaring owner (CACHE-OWNER-D3; formerly such reads
+    /// bypassed the cache and re-evaluated on every read, a C#-only divergence from Lean).
+    /// </summary>
     private static EvalResult<ZeroArgPropertyResult> GetOrEvaluateZeroArgPropertyResultCore(
-        Algorithm? owner,
+        PropertyDeclaringOwner owner,
         Property binding,
         ZeroArgPropertyAccessKind accessKind,
         Algorithm resolvedAlgorithm,
         EvalCtx ctx,
         ValEnv valEnv)
     {
-        if (owner is null)
-            return EvaluateZeroArgPropertyResult(resolvedAlgorithm, ctx, valEnv);
-
         return ctx.ZeroArgPropertyResultCache.GetOrEvaluate(
             new ZeroArgPropertyExecution(
                 owner,
@@ -532,7 +534,7 @@ public static partial class Evaluator
     }
 
     private static EvalResult<CountedResult> EvalZeroArgPropertyAccessCounted(
-        Algorithm? owner,
+        PropertyDeclaringOwner owner,
         Property binding,
         ZeroArgPropertyAccessKind accessKind,
         Algorithm resolvedAlgorithm,

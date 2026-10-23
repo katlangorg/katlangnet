@@ -159,8 +159,10 @@ public class EvaluatorIdentityStateReviewTests
         internal List<(string Kind, WeakReference Reference)> References { get; } = [];
         public EvalResult<ZeroArgPropertyResult> GetOrEvaluate(ZeroArgPropertyExecution execution, Func<EvalResult<ZeroArgPropertyResult>> evaluate)
         {
-            References.Add(("owner", new WeakReference(execution.Owner)));
-            for (var scope = execution.Owner.Parent; scope is not null; scope = scope.Parent)
+            // Source programs only: every declaring owner is an evaluator-owned algorithm.
+            var owner = execution.Owner.Algorithm ?? throw new InvalidOperationException("Expected an evaluator-owned declaration.");
+            References.Add(("owner", new WeakReference(owner)));
+            for (var scope = owner.Parent; scope is not null; scope = scope.Parent)
             {
                 if (scope.Activation is not { } activation) continue;
                 References.Add(("scope", new WeakReference(scope)));

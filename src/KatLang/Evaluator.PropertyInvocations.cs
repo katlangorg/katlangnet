@@ -79,8 +79,12 @@ public static partial class Evaluator
         };
     }
 
-    /// <summary>The property binding a qualifying invocation publishes under: its declaring owner and binding.</summary>
-    internal readonly record struct PropertyCallBinding(Algorithm Owner, Property Binding);
+    /// <summary>
+    /// The property binding a qualifying invocation publishes under: its declaring owner and binding.
+    /// The owner is the same <see cref="PropertyDeclaringOwner"/> a property-style read of the binding
+    /// carries — an ownerless host-built level included (CACHE-OWNER-D3) — so both reach one key.
+    /// </summary>
+    internal readonly record struct PropertyCallBinding(PropertyDeclaringOwner Owner, Property Binding);
 
     /// <summary>
     /// Whether a written argument list CAN form an empty supply: it holds no ordinary slot, only
@@ -119,7 +123,7 @@ public static partial class Evaluator
     /// (including collecting-only targets) remain excluded. This reads identity without another
     /// CALLABLE projection or VALUE demand. Lean: <c>publicationBinding?</c>.
     /// </summary>
-    private static PropertyCallBinding? PublicationBinding(Algorithm owner, Property binding, Algorithm wired, EvalCtx ctx, Algorithm callee)
+    private static PropertyCallBinding? PublicationBinding(PropertyDeclaringOwner owner, Property binding, Algorithm wired, EvalCtx ctx, Algorithm callee)
     {
         if (wired is Algorithm.Alias alias)
         {
@@ -146,9 +150,11 @@ public static partial class Evaluator
             {
                 if (caller.CallStack.Count == 0) return null;
                 var resolved = LookupLexicalRaw(caller.CallStack[0], name, caller);
-                return resolved.IsError || resolved.Value.Owner is not { } owner
+                // The lexical read's own declaring owner — an ownerless host level included
+                // (CACHE-OWNER-D3) — so the invocation publishes under the read's key.
+                return resolved.IsError
                     ? null
-                    : PublicationBinding(owner, resolved.Value.Binding, resolved.Value.ResolvedAlgorithm, caller, callee);
+                    : PublicationBinding(resolved.Value.Owner, resolved.Value.Binding, resolved.Value.ResolvedAlgorithm, caller, callee);
             }
             case Expr.DotCall edge:
             {

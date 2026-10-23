@@ -162,7 +162,7 @@ public class ZeroArgPropertyResultCacheTests
 
         Assert.Equal(1m, Assert.IsType<Result.Atom>(firstResult.Value.Value).Value);
         Assert.Equal(1m, Assert.IsType<Result.Atom>(secondResult.Value.Value).Value);
-        Assert.False(ReferenceEquals(first.Owner, second.Owner));
+        Assert.False(ReferenceEquals(first.Owner.Algorithm, second.Owner.Algorithm));
         Assert.True(comparison.AllComponentsMatch);
         Assert.True(comparison.OwnerIdentityMatches);
         Assert.True(comparison.BindingIdentityMatches);
@@ -224,8 +224,8 @@ public class ZeroArgPropertyResultCacheTests
             second,
             () => EvalResult<ZeroArgPropertyResult>.Ok(new ZeroArgPropertyResult(new Result.Atom(2m), 1)));
 
-        Assert.False(ReferenceEquals(first.Owner.Parent, second.Owner.Parent));
-        Assert.False(ReferenceEquals(first.Owner.Parent?.Parent, second.Owner.Parent?.Parent));
+        Assert.False(ReferenceEquals(first.Owner.Algorithm!.Parent, second.Owner.Algorithm!.Parent));
+        Assert.False(ReferenceEquals(first.Owner.Algorithm!.Parent?.Parent, second.Owner.Algorithm!.Parent?.Parent));
         Assert.True(CompareKeyComponents(first, second).AllComponentsMatch);
         Assert.Equal(1m, Assert.IsType<Result.Atom>(firstResult.Value.Value).Value);
         Assert.Equal(1m, Assert.IsType<Result.Atom>(secondResult.Value.Value).Value);
@@ -635,7 +635,7 @@ public class ZeroArgPropertyResultCacheTests
         // The evaluator still rebuilds distinct structural owners here, but the
         // effective Stage 1 key no longer splits the cache on that difference.
         Assert.Equal(2, structuralRequests.Count);
-        Assert.False(ReferenceEquals(structuralRequests[0].Owner, structuralRequests[1].Owner));
+        Assert.False(ReferenceEquals(structuralRequests[0].Owner.Algorithm, structuralRequests[1].Owner.Algorithm));
         Assert.True(comparison.AllComponentsMatch);
         Assert.True(comparison.OwnerIdentityMatches);
         Assert.True(comparison.BindingIdentityMatches);

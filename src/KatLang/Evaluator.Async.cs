@@ -1816,7 +1816,7 @@ public static partial class Evaluator
 
     /// <summary>MIRROR OF <see cref="GetOrEvaluateZeroArgPropertyResult"/> — keep in lock-step.</summary>
     private static async ValueTask<EvalResult<ZeroArgPropertyResult>> GetOrEvaluateZeroArgPropertyResultAsync(
-        Algorithm? owner,
+        PropertyDeclaringOwner owner,
         Property binding,
         ZeroArgPropertyAccessKind accessKind,
         Algorithm resolvedAlgorithm,
@@ -1844,16 +1844,13 @@ public static partial class Evaluator
     /// <see cref="EvalAsynchronousHostOperationCountedAsync"/>.
     /// </summary>
     private static async ValueTask<EvalResult<ZeroArgPropertyResult>> GetOrEvaluateZeroArgPropertyResultCoreAsync(
-        Algorithm? owner,
+        PropertyDeclaringOwner owner,
         Property binding,
         ZeroArgPropertyAccessKind accessKind,
         Algorithm resolvedAlgorithm,
         EvalCtx ctx,
         ValEnv valEnv)
     {
-        if (owner is null)
-            return await EvaluateZeroArgPropertyResultAsync(resolvedAlgorithm, ctx, valEnv).ConfigureAwait(false);
-
         // The async twin family is entered only when the run's cache is async-capable,
         // and the cache reference is never replaced during a run, so a non-async cache
         // here is an evaluator ownership bug — fail loud rather than silently blocking
@@ -1876,9 +1873,9 @@ public static partial class Evaluator
             () => EvaluateZeroArgPropertyResultAsync(resolvedAlgorithm, ctx, valEnv)).ConfigureAwait(false);
     }
 
-    /// <summary>MIRROR OF <see cref="EvalZeroArgPropertyAccessCounted(Algorithm?, Property, ZeroArgPropertyAccessKind, Algorithm, EvalCtx, IReadOnlyList{ValueTuple{string, Result}})"/> — keep in lock-step.</summary>
+    /// <summary>MIRROR OF <see cref="EvalZeroArgPropertyAccessCounted(PropertyDeclaringOwner, Property, ZeroArgPropertyAccessKind, Algorithm, EvalCtx, IReadOnlyList{ValueTuple{string, Result}})"/> — keep in lock-step.</summary>
     private static async ValueTask<EvalResult<CountedResult>> EvalZeroArgPropertyAccessCountedAsync(
-        Algorithm? owner,
+        PropertyDeclaringOwner owner,
         Property binding,
         ZeroArgPropertyAccessKind accessKind,
         Algorithm resolvedAlgorithm,

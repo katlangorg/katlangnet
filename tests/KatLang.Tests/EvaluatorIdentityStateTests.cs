@@ -21,8 +21,9 @@ namespace KatLang.Tests;
 ///   head scope (<see cref="Evaluator.EvalCtx.HeadScope"/>) or the family scope a branch body
 ///   is wired under.</item>
 ///   <item><b>Scope ownership</b> is <see cref="ScopeCtx.Owner"/>, set by the two evaluator
-///   scope construction paths; a host-built scope has none and identifies only itself;
-///   parent-chain lookup through it has no cache owner, exactly as before.</item>
+///   scope construction paths; a host-built scope has none and identifies only itself:
+///   for property caching an ownerless host scope is its own declaring owner, by reference
+///   (CACHE-OWNER-D3, <c>PropertyDeclaringOwner</c>; <see cref="HostScopePropertyCacheTests"/>).</item>
 /// </list>
 /// The behavioural tests run the sync generic, sync optimized, and genuinely suspending
 /// async paths, and each is sensitive to a specific wrong representation named in its

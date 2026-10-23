@@ -58,6 +58,7 @@ public class LeanCoreTestsCompositionTests
         "VariadicSelection",
         "ParentScopeValidation",
         "RepeatedSpread",
+        "HostScopePropertyCache",
     ];
 
     [Fact]
