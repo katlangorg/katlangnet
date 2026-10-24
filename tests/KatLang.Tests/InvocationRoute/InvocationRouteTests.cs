@@ -456,10 +456,16 @@ public class InvocationRouteTests
             Assert.Equal(1, receivers);
             Assert.Equal(0, traces);
             Assert.Equal(0, bodies);
-            // Concurrent VALUE and Invoke(): two target executions over ONE argument demand and ONE supply.
-            var demands = await Task.WhenAll(
-                Task.Run(async () => await reference.Plan.Owner.DemandAsync()),
-                Task.Run(async () => await reference.InvokeAsync())).WaitAsync(Wait);
+            // VALUE and Invoke(): two target executions over ONE argument demand and ONE supply. They run one
+            // after the other: a target execution is evaluator work charged to the run's budget, and a run's
+            // evaluation is one logical flow (EvaluationBudget, NeedCell concurrency contract) — two at once
+            // race the budget's unsynchronized depth counter (~4% of runs underflowed it). Overlapping
+            // observers of ONE flight stay covered above.
+            var demands = new[]
+            {
+                await Task.Run(async () => await reference.Plan.Owner.DemandAsync()).WaitAsync(Wait),
+                await Task.Run(async () => await reference.InvokeAsync()).WaitAsync(Wait),
+            };
             Assert.All(demands, d => { Assert.True(d.IsOk); Assert.Equal("2", InvocationRouteCorpus.Value(d.Value.Value)); });
             Assert.Equal(1, receivers);
             Assert.Equal(1, traces);
@@ -538,19 +544,22 @@ public class InvocationRouteTests
     // ── Receiver-checkpoint parity (research review § O.1) ───────────────────────────────────────────────
 
     [Theory]
-    [InlineData("Use(p) = Id(p.Algorithm(trace(1)))\nUse(5)", "err TypeMismatch", 6)]
-    [InlineData("Use(p) = Id((p.Algorithm)(trace(1)))\nUse(5)", "err TypeMismatch", 6)]
-    [InlineData("Use(p) = Id(p.Algorithm(trace(1)))\nUse(min([]))", "err IllegalInEval", 8)]
-    [InlineData("Use(p) = Id(p.Algorithm(trace(1)))\nUse({ min([]) })", "err IllegalInEval", 8)]
-    [InlineData("Use(p) = Id(p.Algorithm(trace(1)))\nUse(if(aflag(), 5, 0))", "err TypeMismatch", 0)]
-    public async Task AParameterReceiver_KeepsItsOrdinaryRead_ThroughAPlannedInvocation(string source, string outcome, long checkpoints)
+    [InlineData("Use(p) = Id(p.Algorithm(trace(1)))\nUse(5)", "err TypeMismatch", 6, 1)]
+    [InlineData("Use(p) = Id((p.Algorithm)(trace(1)))\nUse(5)", "err TypeMismatch", 6, 1)]
+    [InlineData("Use(p) = Id(p.Algorithm(trace(1)))\nUse(min([]))", "err IllegalInEval", 8, 2)]
+    [InlineData("Use(p) = Id(p.Algorithm(trace(1)))\nUse({ min([]) })", "err IllegalInEval", 8, 1)]
+    [InlineData("Use(p) = Id(p.Algorithm(trace(1)))\nUse(if(aflag(), 5, 0))", "err TypeMismatch", 0, 3)]
+    public async Task AParameterReceiver_KeepsItsOrdinaryRead_ThroughAPlannedInvocation(string source, string outcome, long checkpoints, long plannedPlans)
     {
+        // Id's supplied p.Algorithm(...) forms one plan; the receiver fails before trace(1) is supplied.
+        // Use(min([])) adds the supplied min call, while a brace argument adds none.
+        // Use(if(...)) adds the supplied if call and its supplied aflag() call.
         foreach (var mode in new[] { 0, 1, 2 })
         {
             var ordinary = await InvocationRouteCorpus.Observe(new("parameter-receiver-ordinary", source, Plain: true), mode);
             var planned = await InvocationRouteCorpus.Observe(new("parameter-receiver-planned", source), mode);
-            Assert.Equal(0, ordinary.Plans);
-            Assert.True(planned.Plans > 0);
+            Assert.Equal(InvocationRouteExpectations.PlainVariantPlans(plannedPlans), ordinary.Plans);
+            Assert.Equal(plannedPlans, planned.Plans);
             Assert.StartsWith(outcome, ordinary.Outcome, StringComparison.Ordinal);
             Assert.Equal("", ordinary.Trace);
             if (checkpoints > 0) Assert.Equal(checkpoints, ordinary.Checkpoints);
@@ -572,8 +581,8 @@ public class InvocationRouteTests
         {
             var ordinary = await InvocationRouteCorpus.Observe(InvocationRouteCorpus.ById(pair + "p"), mode);
             var planned = await InvocationRouteCorpus.Observe(InvocationRouteCorpus.ById(pair + "m"), mode);
-            Assert.Equal(0, ordinary.Plans);
-            Assert.True(planned.Plans > 0);
+            Assert.Equal(InvocationRouteExpectations.RetentionOf(InvocationRouteCorpus.ById(pair + "p")).Plans, ordinary.Plans);
+            Assert.Equal(InvocationRouteExpectations.Retention[pair + "m"].Plans, planned.Plans);
             Assert.Equal(checkpoints, ordinary.Checkpoints);
             Assert.Equal(ordinary.Semantic, planned.Semantic);
         }

@@ -45,13 +45,27 @@ public class InvocationRouteCorpusTests
         Assert.Equal(ids.Order(StringComparer.Ordinal), InvocationRouteExpectations.Semantics.Keys.Order(StringComparer.Ordinal));
     }
 
+    /// <summary>
+    /// The process plan mode is exactly its switch, and it is effective: in the forced whole-suite plan run a
+    /// META-free program routes its supplied invocations through plans (its META twin's, see
+    /// <see cref="InvocationRouteExpectations.RetentionOf"/>) with unchanged semantics; otherwise it forms none.
+    /// </summary>
+    [Fact]
+    public async Task TheProcessPlanMode_FollowsItsSwitch_AndIsEffective()
+    {
+        Assert.Equal(Environment.GetEnvironmentVariable(ForcedInvocationPlansHook.Variable) == "1", ForcedInvocationPlansHook.Forced);
+        var plain = await InvocationRouteCorpus.Observe(InvocationRouteCorpus.ById("EQ1p"), 0);
+        Assert.Equal(InvocationRouteExpectations.Semantics["EQ1p"], plain.Semantic);
+        Assert.Equal(ForcedInvocationPlansHook.Forced ? (2L, 2L) : (0L, 0L), (plain.Plans, plain.Formations));
+    }
+
     [Theory]
     [MemberData(nameof(CaseIds))]
     public async Task EveryCase_HasItsSemantics_OnEveryEngine(string id)
     {
         var c = InvocationRouteCorpus.ById(id);
         var expected = InvocationRouteExpectations.Semantics[id];
-        var (plans, formations) = InvocationRouteExpectations.Retention[id];
+        var (plans, formations) = InvocationRouteExpectations.RetentionOf(c);
         foreach (var mode in InvocationRouteCorpus.ModesOf(c))
         {
             var observed = await InvocationRouteCorpus.Observe(c, mode);

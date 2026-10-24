@@ -349,4 +349,23 @@ internal static class InvocationRouteExpectations
         ["EQ110p"] = (0, 0),
         ["EQ110m"] = (1, 1),
     };
+
+    /// <summary>
+    /// The <see cref="Retention"/> row <paramref name="c"/> must show in THIS test process. <see cref="Retention"/>
+    /// records the production J7 route: a <see cref="InvocationRouteCorpus.Case.Plain"/> variant spells no
+    /// <c>meta</c>, so its run retains no plan beyond what its own program forms. In the forced whole-suite plan
+    /// run (<see cref="ForcedInvocationPlansHook"/>) every run retains plans, and a Plain variant differs from its
+    /// META twin only in the three never-read prelude lines (<see cref="InvocationRouteCorpus.Plain"/> versus
+    /// <see cref="InvocationRouteCorpus.Meta"/>), so it forms exactly its twin's plans and supplies. Every other
+    /// case already spells <c>meta</c>, so forcing changes nothing for it.
+    /// </summary>
+    internal static (long Plans, long Formations) RetentionOf(InvocationRouteCorpus.Case c)
+        => Retention[ForcedInvocationPlansHook.Forced && c.Plain ? c.Id[..^1] + "m" : c.Id];
+
+    /// <summary>
+    /// The plans a Plain variant retains: none on the production J7 route, or the independently specified
+    /// <paramref name="forcedPlans"/> in the forced plan run. Callers supply a source-derived constant or a
+    /// frozen <see cref="Retention"/> row, never an observed count (see <see cref="RetentionOf"/>).
+    /// </summary>
+    internal static long PlainVariantPlans(long forcedPlans) => ForcedInvocationPlansHook.Forced ? forcedPlans : 0;
 }

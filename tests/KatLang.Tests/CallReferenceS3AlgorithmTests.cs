@@ -596,10 +596,13 @@ public class CallReferenceS3AlgorithmTests
     {
         const string source = "Box = { G(x) = x * 10 }\nUse(p) = Apply(p.G, 3)\nApply(f, x) = f(x)\nUse(Box), [1, 2].map(Box.G)";
         var operations = Operations(new Effects());
-        var (result, budget) = Evaluator.RunCountedObserved(Program(source, operations), hostOperations: operations);
+        var program = Program(source, operations);
+        var (result, budget) = Evaluator.RunCountedObserved(program, hostOperations: operations);
         Assert.Equal("S[30, L[10, 20]]", SemanticExplorerHarness.Neutral(result.Value.Value));
         Assert.False(budget.HasRuntimeProjections);
-        Assert.False(budget.RetainsInvocationPlans);
+        // The J7 gate keeps the ordinary route; only the forced whole-suite plan run retains plans anyway.
+        Assert.False(Evaluator.ProgramMayCaptureCalls(program));
+        Assert.Equal(ForcedInvocationPlansHook.Forced, budget.RetainsInvocationPlans);
     }
 
     [Fact]
@@ -607,10 +610,13 @@ public class CallReferenceS3AlgorithmTests
     {
         const string source = "Box = { Algorithm(x) = x * 10 }\nApply(f, x) = f(x)\nApply(Box.Algorithm, 3), [1, 2].map(Box.Algorithm)";
         var operations = Operations(new Effects());
-        var (result, budget) = Evaluator.RunCountedObserved(Program(source, operations), hostOperations: operations);
+        var program = Program(source, operations);
+        var (result, budget) = Evaluator.RunCountedObserved(program, hostOperations: operations);
         Assert.Equal("S[30, L[10, 20]]", SemanticExplorerHarness.Neutral(result.Value.Value));
         Assert.False(budget.HasRuntimeProjections);
-        Assert.False(budget.RetainsInvocationPlans);
+        // The J7 gate keeps the ordinary route; only the forced whole-suite plan run retains plans anyway.
+        Assert.False(Evaluator.ProgramMayCaptureCalls(program));
+        Assert.Equal(ForcedInvocationPlansHook.Forced, budget.RetainsInvocationPlans);
     }
 
     [Fact]

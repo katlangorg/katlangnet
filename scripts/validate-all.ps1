@@ -1,11 +1,18 @@
 [CmdletBinding()]
 param(
     [ValidateSet("All", "DotNet", "Lean")]
-    [string]$Phase = "All"
+    [string]$Phase = "All",
+    # The forced invocation-plan run: the .NET phase with KATLANG_FORCE_INVOCATION_PLANS=1, so every
+    # evaluator run of the test hosts routes its call-shaped supplied arguments through retained plans.
+    [switch]$ForceInvocationPlans
 )
 
 $ErrorActionPreference = "Stop"
 Set-StrictMode -Version Latest
+
+if ($ForceInvocationPlans -and $Phase -ne "DotNet") {
+    throw "-ForceInvocationPlans selects the forced .NET run; use it with -Phase DotNet."
+}
 
 function Write-Section {
     param([Parameter(Mandatory = $true)][string]$Title)
@@ -314,6 +321,28 @@ $leanTargets = @(
 $regenerationFlagPrefix = "KATLANG_REGENERATE_"
 $neutralizedRegenerationFlags = [System.Collections.Generic.List[object]]::new()
 
+# The invocation-plan mode is process-wide test-host configuration read once at test-assembly load
+# (ForcedInvocationPlansHook), so it is fixed here, before any test host starts, and inherited by
+# every test host and child host: set for -ForceInvocationPlans, otherwise REMOVED so an inherited
+# flag can never turn the ordinary run into the forced one. Restored exactly on exit.
+$planModeVariable = "KATLANG_FORCE_INVOCATION_PLANS"
+$inheritedPlanMode = [Environment]::GetEnvironmentVariable($planModeVariable)
+
+function Set-PlanModeVariable {
+    param([AllowNull()][object]$Value)
+
+    # Through the Env: drive, never [Environment]::SetEnvironmentVariable: PowerShell passes $null
+    # to a .NET string parameter as "", which leaves an EMPTY variable instead of removing it.
+    if ($null -eq $Value) {
+        if (Test-Path -LiteralPath "Env:$planModeVariable") {
+            Remove-Item -LiteralPath "Env:$planModeVariable"
+        }
+    }
+    else {
+        Set-Item -LiteralPath "Env:$planModeVariable" -Value $Value
+    }
+}
+
 try {
     # Keep one entry per environment entry rather than a PowerShell hashtable:
     # case-sensitive hosts can contain names that differ only by case, whereas
@@ -324,6 +353,8 @@ try {
             Remove-Item -LiteralPath "Env:$($entry.Name)"
         }
     }
+
+    Set-PlanModeVariable -Value $(if ($ForceInvocationPlans) { "1" } else { $null })
 
     Push-Location $repoRoot
     $enteredRepo = $true
@@ -342,6 +373,15 @@ try {
         Write-Host "Neutralized inherited regeneration flags for this run (restored on exit): $(($neutralizedRegenerationFlags.Name | Sort-Object) -join ', ')"
         Write-Host "Verification never regenerates tracked artifacts; regenerate with a targeted 'dotnet test' run instead."
     }
+
+    Write-Section "Invocation-plan mode"
+    if ($ForceInvocationPlans) {
+        Write-Host "FORCED: $planModeVariable=1 for every test host (the forced invocation-plan run)."
+    }
+    else {
+        Write-Host "Ordinary: $planModeVariable is unset for every test host$(if ($null -ne $inheritedPlanMode) { ' (inherited value removed, restored on exit)' })."
+    }
+    Write-ValidationRecord "invocation-plan mode: $(if ($ForceInvocationPlans) { 'forced' } else { 'ordinary' })"
 
     if ($Phase -in @("All", "DotNet")) {
         Invoke-ValidationPhase -Name ".NET" -Body {
@@ -407,6 +447,13 @@ finally {
         Pop-Location
     }
 
+    try {
+        Set-PlanModeVariable -Value $inheritedPlanMode
+    }
+    catch {
+        $restorationFailures.Add("${planModeVariable}: $($_.Exception.Message)")
+    }
+
     foreach ($entry in $neutralizedRegenerationFlags) {
         try {
             Set-Item -LiteralPath "Env:$($entry.Name)" -Value $entry.Value
@@ -433,5 +480,5 @@ if ($null -ne $validationFailure) {
 }
 
 if ($restorationFailures.Count -gt 0) {
-    throw "Validation passed, but inherited regeneration flags could not be restored: $($restorationFailures -join '; ')"
+    throw "Validation passed, but inherited environment variables could not be restored: $($restorationFailures -join '; ')"
 }

@@ -414,6 +414,23 @@ public class ContinuousIntegrationPolicyTests
     }
 
     [Fact]
+    public void ValidateScript_FixesTheInvocationPlanMode_BeforeAnyTestHostStarts()
+    {
+        var source = Text("scripts/validate-all.ps1");
+        Assert.Contains("[switch]$ForceInvocationPlans", source, StringComparison.Ordinal);
+        Assert.Contains($"$planModeVariable = \"{ForcedInvocationPlansHook.Variable}\"", source, StringComparison.Ordinal);
+        // Forced sets the flag; the ordinary run REMOVES an inherited one. Both precede every build/test command.
+        const string fix = "Set-PlanModeVariable -Value $(if ($ForceInvocationPlans) { \"1\" } else { $null })";
+        Assert.Single(Regex.Matches(source, Regex.Escape(fix)).Cast<Match>());
+        Assert.True(source.IndexOf(fix, StringComparison.Ordinal) < source.IndexOf("\"build\", \"./KatLang.slnx\"", StringComparison.Ordinal));
+        Assert.Contains("Set-PlanModeVariable -Value $inheritedPlanMode", source, StringComparison.Ordinal);
+        // Removal goes through the Env: drive: PowerShell would pass $null to SetEnvironmentVariable as "".
+        Assert.Contains("Remove-Item -LiteralPath \"Env:$planModeVariable\"", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("SetEnvironmentVariable($planModeVariable", source, StringComparison.Ordinal);
+        Assert.Contains("if ($ForceInvocationPlans -and $Phase -ne \"DotNet\")", source, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void ValidateScript_OwnsEachLeanTargetExactlyOnce()
     {
         var source = Text("scripts/validate-all.ps1");
