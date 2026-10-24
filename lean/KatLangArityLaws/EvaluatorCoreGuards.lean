@@ -1,4 +1,4 @@
-import KatLangArityLaws.EvaluatorCore
+import KatLangArityLaws.PublicRunBridge
 
 open KatLang KatLang.EvaluatorCore
 
@@ -16,19 +16,11 @@ theorems of `KatLangArityLaws/EvaluatorCore.lean`.
 
 namespace KatLang.EvaluatorCoreGuards
 
-/-- The root run of `runResultM`, with the evaluator core at fuel `n` in place of production. -/
+/-- The root run of `runResultM`, with the evaluator core at fuel `n` in place of production:
+    the SAME public composition (`PublicRunBridge.runResultWith`, pinned to `runResultM` by
+    `rfl`), so this guard copy cannot drift. -/
 def runAtFuel (n : Nat) (e : Expr) : Except Error Result × EvalState :=
-  let e := (identifyPropertyExpr e).run' 0
-  let ctx : EvalCtx := { callStack := [preludeAlg] }
-  (do
-    validateExplicitParamOutputInvariantExpr e
-    match e with
-    | .algorithmExpr a =>
-        let wired := wireToCaller ctx a
-        if Algorithm.acceptsZeroSuppliedArguments wired then
-          exportRunValue (<- evalFuel n (.evalProgramOutput wired ctx []))
-        else .error (Error.unresolvedImplicitParams (Algorithm.params wired))
-    | _ => exportRunValue (<- evalFuel n (.eval e ctx [])) : EvalM Result).runState EvalState.empty
+  (PublicRunBridge.runResultWith (evalFuel n) e).runState EvalState.empty
 
 /-- The production root run with its final state. -/
 def runProduction (e : Expr) : Except Error Result × EvalState :=

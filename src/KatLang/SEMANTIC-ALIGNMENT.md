@@ -608,6 +608,41 @@ whatever they return), VALUE/CALLABLE acyclicity, termination, a first-writer la
 FG-H1 premises (FALSE, kept as stated), anything about C#. Report
 `artifacts/validation/fg-h1-fu-01/fg-h1-fu-01-implementation-report.md`.
 
+R7-FU-01 — public-entry bridge for `runResultM` (2026-10-24; proof-only, no `KatLang.lean` definition or C#
+change; it narrows, does not close, R7). `KatLangArityLaws/PublicRunBridge.lean` defines
+`runResultWith rec e`, `runResultM`'s body with the evaluator answer `rec` at its two root calls,
+pinned by `rfl` (`runResultM_is_production`: `runResultM e = runResultWith evalUnbounded e`), and
+proves, from EVERY entry state and with standard axioms only: `public_bridge` (the public run
+completes with `r` — outcome AND final state — exactly when the same composition over the total
+core completes with `r` at some fuel `evalFuel n`), `public_incomplete_iff` (the public outcome is
+incomplete exactly when it is incomplete at every fuel), `public_of_fuel`, `public_fuel_stable`
+(a completed result is identical at every larger fuel), `public_deterministic`, and the four-way
+case statement `public_fuel_cases` over the fuel family (completed value; completed ordinary
+failure; incomplete at `n` but completed later; incomplete at every fuel). Every statement reads
+the incomplete representation through ONE predicate `Incomplete` (Q-82, open), and none claims that
+the public run cannot return `Error.fuelExhausted`. The proofs case-split the validator's
+`(outcome, state)`, the identified tree and the zero-supply gate (`runResultWith_oneCall`) and use
+`production_completes_iff` once (`bind_bridge`); they are PARAMETRIC in the opaque prefix
+(identification, validation, root wiring — `partial`, so kernel-opaque) and assume no
+reachable-state, address or admission premise. `EvaluatorCoreGuards.runAtFuel` is now
+`runResultWith (evalFuel n)`, so the guard copy cannot drift. A reproducible meta-level walk (local
+`artifacts/validation/r7-fu-01/scripts/OpacityFrontier.lean`) gives the kernel-opaque frontier of
+`runResultM`: 18 KatLang constants (`identifyPropertyExpr`, `validateExprTree`, `Expr.aliasCount`,
+`activeDeclaration?`, the body leaves and three derived `Repr` instances) and 7 core string/format
+primitives; of the 28 `partial def` sites, 27 are kernel-opaque (`lookupLexicalDirect` compiles as an
+ordinary definition) and 24 run under `runResultM`. NOT proved (opacity): what identification,
+validation and wiring do (the validator's post-state, whether it yields `fuelExhausted`, the
+identified root's shape, the admitted set); any entry-state invariant at the public root call
+(`StateValid`, `Inv`, no stored incomplete outcome); that a public `fuelExhausted` is divergence (in
+the kernel: the validator yields it, or the root call is incomplete at every fuel from the
+post-validation state; a crafted entry state can re-raise a stored one); transitive
+opacity-freedom. Also not proved: the S6d/R7 report's § 7 obligations, Q-66 (each item relates two
+routes; this relates one composition to the core), Q-82, anything about C#. Incomplete runs are
+related by outcome only (production keeps its entry state, the core forgets it). Tier 2
+(totalizing the prefix, V3, not authorized) and its corollaries — validator frame, identification
+shape, public incompletion from `EvalState.empty`, the public `Inv` entry — are planned in the
+report `artifacts/validation/r7-fu-01/REPORT.md`.
+
 META-S3-4 — generalized META capture of written invocations (2026-10-20; an INTENTIONAL language
 extension, owner decisions D-1A/D-2A/D-4, consequences D-3/D-5; Lean first, then C#). The capture domain
 is syntactic in both engines (Lean `NeedPlan.callShape?` with `CallForm`, C# `IsPlannableCall`): a call
