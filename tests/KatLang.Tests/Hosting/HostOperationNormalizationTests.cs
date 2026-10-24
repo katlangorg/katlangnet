@@ -104,6 +104,9 @@ public class HostOperationNormalizationTests
     {
         private readonly RunScopedZeroArgPropertyResultCache _inner = new();
 
+        // DECON-CACHE-2: the inner cache publishes every read, so its publication provenance is this cache's.
+        public bool ReadObtainsPublishedValue(ZeroArgPropertyCacheKey key) => _inner.ReadObtainsPublishedValue(key);
+
         public List<ZeroArgPropertyResult> StoredValues { get; } = [];
 
         public EvalResult<ZeroArgPropertyResult> GetOrEvaluate(
@@ -129,6 +132,9 @@ public class HostOperationNormalizationTests
     private sealed class RecordingAsyncZeroArgPropertyResultCache : IAsyncZeroArgPropertyResultCache
     {
         private readonly RunScopedAsyncZeroArgPropertyResultCache _inner = new();
+
+        // DECON-CACHE-2: the inner cache publishes every read, so its publication provenance is this cache's.
+        public bool ReadObtainsPublishedValue(ZeroArgPropertyCacheKey key) => _inner.ReadObtainsPublishedValue(key);
 
         public List<ZeroArgPropertyResult> StoredValues { get; } = [];
 

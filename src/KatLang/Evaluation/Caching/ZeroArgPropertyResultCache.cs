@@ -102,6 +102,18 @@ internal interface IZeroArgPropertyResultCache
     EvalResult<ZeroArgPropertyResult> Invoke(
         ZeroArgPropertyExecution execution,
         Func<EvalResult<ZeroArgPropertyResult>> evaluate);
+
+    /// <summary>
+    /// PUBLICATION PROVENANCE of a read (DECON-CACHE-2, October 2026): whether a property-style read of
+    /// <paramref name="key"/> issued NOW is guaranteed to obtain the value this cache has published or
+    /// will publish for the key — never a re-entrant intermediate (Q-37) and never a value the cache does
+    /// not retain. Non-evaluating, charge-free and side-effect-free. The deconstruction shared bind
+    /// (<see cref="RunScopedDeconstructionBindingCache"/>) stores a bind only when the source read that
+    /// supplies it qualifies. The default is the conservative <c>false</c>: a cache that does not state
+    /// its publication law (or stores nothing, <see cref="UncachedZeroArgPropertyResultCache"/>) never
+    /// lets a group's targets share a bind, so each target executes its ordinary bind.
+    /// </summary>
+    bool ReadObtainsPublishedValue(ZeroArgPropertyCacheKey key) => false;
 }
 
 /// <summary>
@@ -419,6 +431,17 @@ internal sealed class ZeroArgPropertyPublications(RootPropertyObservationSink? s
         => _published.TryGetValue(key, out result);
 
     /// <summary>
+    /// Whether a property-style read of <paramref name="key"/> issued NOW obtains the value this law
+    /// publishes for the key: a published entry is served as is, and a miss on a key no evaluation is
+    /// running makes the read the key's OWNER, whose success is exactly the entry it publishes (no other
+    /// completion can publish an active key). Only a read of an ACTIVE key is re-entrant and returns an
+    /// intermediate value that is never published. Non-evaluating and charge-free; see
+    /// <see cref="IZeroArgPropertyResultCache.ReadObtainsPublishedValue"/>.
+    /// </summary>
+    internal bool ReadObtainsPublishedValue(ZeroArgPropertyCacheKey key)
+        => _published.ContainsKey(key) || !_active.Contains(key);
+
+    /// <summary>
     /// Evaluates a MISS of <paramref name="key"/> under the publication law;
     /// <paramref name="published"/> reports whether this access published its result.
     /// </summary>
@@ -631,6 +654,8 @@ internal sealed class RunScopedZeroArgPropertyResultCache(RootPropertyObservatio
 
     /// <summary>Keys whose owning evaluation is still running (zero between accesses).</summary>
     internal int ActiveOwnerCount => _results.ActiveOwnerCount;
+
+    public bool ReadObtainsPublishedValue(ZeroArgPropertyCacheKey key) => _results.ReadObtainsPublishedValue(key);
 
     public ZeroArgPropertyResultCacheSnapshot GetSnapshot()
         => _stats.CreateSnapshot(

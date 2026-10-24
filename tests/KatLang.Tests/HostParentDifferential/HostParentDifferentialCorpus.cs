@@ -37,7 +37,7 @@ public sealed record HostParentCase(
 public sealed record HostParentDivergence(string Reason, string CSharpNeutral, string LeanNeutral);
 
 /// <summary>
-/// The host-parent differential corpus: the HP-01..HP-14 matrix of HOST-DIFF-1 plus the discovered
+/// The host-parent differential corpus: the HP-01..HP-14 matrix of HOST-DIFF-1 (and DECON-CACHE-2's HP-15) plus the discovered
 /// shapes (record-equal / shared / reused host objects, parent-replacing wiring routes, alias and
 /// family variants). Pure, Lean-representable ASTs only: no host operations, integer numbers.
 /// A raw host chain has no implicit prelude level; the module controls pin this boundary too.
@@ -451,6 +451,22 @@ public static class HostParentDifferentialCorpus
                     LeanNeutral: "ok raw=S[S[1, 1], S[2, 2]] n=2"),
                 "S", "Q");
         }
+
+        // HP-15: DECON-CACHE-2 — parsed assignment deconstructions transformed with public record copies
+        // (no pre-wired parents). The C# routes run the shared-bind memo, which Lean does not have, so
+        // agreement pins that the memo serves exactly the ordinary helper's value: a target helper copied
+        // over ANOTHER argument (H04/H05), a copy whose unpacking pattern CHANGED under its retained group
+        // token (V05/V06), and a copy reading a LOCALLY shadowing source (V07). Both read orders.
+        Case("HP-15a", "a deconstruction helper copied over another argument, copy read first (H04)",
+            DeconstructionMemoEligibilityTests.HostWitness("H04"), "a", "c");
+        Case("HP-15b", "a deconstruction helper copied over another argument, original read first (H05)",
+            DeconstructionMemoEligibilityTests.HostWitness("H05"), "a", "c");
+        Case("HP-15c", "a deconstruction helper copy with a changed unpacking pattern, copy read first (V05)",
+            DeconstructionMemoEligibilityTests.HostWitness("V05"), "a", "c");
+        Case("HP-15d", "a deconstruction helper copy with a changed unpacking pattern, original read first (V06)",
+            DeconstructionMemoEligibilityTests.HostWitness("V06"), "a", "c");
+        Case("HP-15e", "a deconstruction target body copied with a local shadowing source (V07)",
+            DeconstructionMemoEligibilityTests.HostWitness("V07"), "a", "c");
 
         return cases.AsReadOnly();
     }

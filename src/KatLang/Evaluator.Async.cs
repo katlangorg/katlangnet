@@ -1889,14 +1889,7 @@ public static partial class Evaluator
         }
 
         return await asyncCache.GetOrEvaluateAsync(
-            new ZeroArgPropertyExecution(
-                owner,
-                binding,
-                accessKind,
-                BindingContextIdentity(ctx, valEnv),
-                // The budget is the run identity, exactly as on the synchronous seam.
-                ctx.Budget)
-            { DeclaringScope = resolvedAlgorithm.Parent },
+            ZeroArgPropertyReadExecution(owner, binding, accessKind, resolvedAlgorithm, ctx, valEnv),
             () => EvaluateZeroArgPropertyResultAsync(resolvedAlgorithm, ctx, valEnv)).ConfigureAwait(false);
     }
 
@@ -2119,13 +2112,14 @@ public static partial class Evaluator
         EvalCtx ctx,
         ValEnv valEnv)
     {
-        var execution = new DeconstructionBindingExecution(target.Group, DeconstructionOwnerIdentity(ctx),
-            BindingContextIdentity(ctx, valEnv));
-        var sharedR = await ctx.DeconstructionBindingCache.GetOrBindAsync(execution,
-            () => BindNeedDeconstruction(helper, args, ctx, valEnv, asynchronous: true)).ConfigureAwait(false);
-        if (sharedR.IsError) return sharedR.Error;
-        if ((uint)target.Index >= (uint)sharedR.Value.Count) return null;
-        return ProjectCountedValue(await sharedR.Value[target.Index].DemandAsync().ConfigureAwait(false));
+        if (DeconstructionProjectionName(helper, target) is not { } name)
+            return null;
+        var boundR = SharedDeconstructionBind(helper, target, args, ctx, valEnv) is { } shared
+            ? await ctx.DeconstructionBindingCache.GetOrBindAsync(shared,
+                () => BindNeedDeconstruction(helper, args, ctx, valEnv, asynchronous: true)).ConfigureAwait(false)
+            : await BindNeedDeconstruction(helper, args, ctx, valEnv, asynchronous: true).ConfigureAwait(false);
+        if (boundR.IsError) return boundR.Error;
+        return ProjectCountedValue(await boundR.Value[name].DemandAsync().ConfigureAwait(false));
     }
 
     /// <summary>MIRROR OF <see cref="EvalConditionalCallCounted"/> — keep in lock-step.</summary>

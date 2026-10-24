@@ -73,6 +73,9 @@ public class EnvironmentIdentityInvariantTests
     {
         private readonly RunScopedZeroArgPropertyResultCache _inner = new();
 
+        // DECON-CACHE-2: the inner cache publishes every read, so its publication provenance is this cache's.
+        public bool ReadObtainsPublishedValue(ZeroArgPropertyCacheKey key) => _inner.ReadObtainsPublishedValue(key);
+
         public Dictionary<string, int> Requests { get; } = new(StringComparer.Ordinal);
 
         public Dictionary<string, int> Evaluations { get; } = new(StringComparer.Ordinal);

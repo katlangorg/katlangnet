@@ -3,54 +3,66 @@ using System.Runtime.CompilerServices;
 namespace KatLang.Evaluation.Caching;
 
 /// <summary>
-/// Identifies one shared bind of an assignment-deconstruction group in one binding context.
-/// A deconstruction <c>x0, ..., x{N-1} = RHS</c> elaborates to N target properties that each
-/// apply the SAME shared N-capture pattern to the SAME hoisted <c>$deconstruct$</c> source, so
-/// demanding every target formerly rebound the whole pattern N times (O(N^2)). Binding the
-/// pattern is a pure function of the shared pattern and the source value. The group identity is
-/// a stable per-deconstruction token shared by its N target helpers.
-///
-/// <para>The source value is NOT a function of the environments alone: the helper's argument is
-/// <c>Resolve("$deconstruct$N")</c>, evaluated in the CALLER's lexical context, so it depends on
-/// the owning scope as well. The public AST is host-constructible with shared (acyclic) subtrees,
-/// so one parser-elaborated group can be placed under two different owners that resolve that
-/// hoisted source differently; keying without the owner returned the first owner's bound values
-/// for the second. <see cref="OwnerIdentity"/> closes that, exactly as
-/// <see cref="ZeroArgPropertyCacheKey"/> does for structural property access — and for the same
-/// reason it is a <see cref="StructuralOwnerIdentity"/> (empty scope components compare as
-/// resolution-equivalent; non-empty components compare by reference) rather than the owner
-/// reference: the evaluator rebuilds the caller record for every demanded target, so keying on
-/// the reference would restore the O(N^2) rebind this cache exists to prevent.</para>
-///
-/// <para>No run identity is carried, unlike the zero-argument property cache: a
+/// Identifies one shared bind of an assignment-deconstruction group. A deconstruction
+/// <c>x0, ..., x{N-1} = RHS</c> elaborates to N target properties that each apply the SAME shared
+/// N-capture pattern to the SAME hoisted <c>$deconstruct$</c> source, so demanding every target
+/// formerly rebound the whole pattern N times (O(N^2)). Binding the pattern is a pure function of
+/// the pattern and the source value, so a bind may be shared by exactly the helpers whose ORDINARY
+/// bind would bind the same pattern to the same source value (DECON-CACHE-2, October 2026; the
+/// DECON-CACHE-1 research's host witnesses showed that the former group/owner/reader key alone
+/// served wrong values after public record transformations):
+/// <list type="bullet">
+///   <item><see cref="GroupIdentity"/> — the per-deconstruction token the parser mints and every
+///   target helper carries (it also scopes the group-wide re-entry guard below);</item>
+///   <item><see cref="PatternIdentity"/> — the helper's ACTUAL parameter-pattern list, by reference.
+///   The group token survives a host <c>with</c> copy that replaces the unpacking pattern, so the token
+///   alone no longer names one pattern; the parser's helpers of one group share one list (an import
+///   view rewrites that list once, preserving the sharing);</item>
+///   <item><see cref="OwnerIdentity"/> and <see cref="ValueEnvironmentIdentity"/> — the caller's
+///   structural scope identity (<see cref="StructuralOwnerIdentity"/>: rebuilt caller records keep
+///   sharing) and the READER's binding context (<c>Evaluator.BindingContextIdentity</c>), the
+///   conservative per-consumer dimensions the memo has always had, kept unchanged;</item>
+///   <item><see cref="SourceKey"/> — the COMPLETE property-cache key of the source entry the helper's
+///   one argument actually reads (<see cref="ZeroArgPropertyCacheKey"/>: declaring owner — an ownerless
+///   host <see cref="ScopeCtx"/> by reference —, declaration, binding, declaring activation of a
+///   local-only source, run), found by the evaluator's own lexical lookup from the caller, so a
+///   locally shadowed source, a different argument, ownerless host scopes over one property list and
+///   two declarations sharing a list never merge.</item>
+/// </list>
+/// Every component compares by identity (references, or the structural identities' own equality),
+/// never by a diagnostic hash. No run identity is needed beyond the source key's: a
 /// <see cref="RunScopedDeconstructionBindingCache"/> is constructed inside the evaluator's root
-/// context and is never host-supplied, so one instance can never span two runs.</para>
+/// context and is never host-supplied, so one instance can never span two runs.
 /// </summary>
 internal readonly record struct DeconstructionBindingExecution(
     object GroupIdentity,
+    object PatternIdentity,
     object OwnerIdentity,
-    object ValueEnvironmentIdentity);
+    object ValueEnvironmentIdentity,
+    ZeroArgPropertyCacheKey SourceKey);
 
 /// <summary>
 /// Run-scoped memoization of assignment-deconstruction binds. The first demanded target of a
-/// group performs the full N-capture bind once and stores the ordered per-target demand cells;
-/// every later target of the same group in the same binding context projects its own slot in
-/// O(1). The stored list is the shared bind's demand cells in target order (capture order); the
-/// counted and non-counted helper results are both a value boundary over the same value, so the
-/// per-target value is all that must be retained.
+/// group performs the full bind once and stores its bound cells by binding name; every later
+/// target with the same <see cref="DeconstructionBindingExecution"/> projects the cell its own
+/// output names in O(1). The counted and non-counted helper results are both a value boundary over
+/// the same value, so the bound cell is all that must be retained.
 /// </summary>
 internal interface IDeconstructionBindingCache
 {
     /// <summary>
-    /// Returns the ordered per-target demand cells for this deconstruction group and binding
+    /// Returns the bound cells (by binding name) for this deconstruction group and binding
     /// context, computing them via <paramref name="bind"/> only on a miss. Errors are NEVER
     /// stored (consistent with <see cref="IZeroArgPropertyResultCache"/>): a deterministic
     /// binding failure recurs identically, and a reached resource limit is already terminal for
-    /// the run (`EvaluationBudget.RetainTerminal`), so nothing could read a stored one.
+    /// the run (`EvaluationBudget.RetainTerminal`), so nothing could read a stored one. The
+    /// evaluator passes only executions whose source read obtains the source's PUBLISHED value
+    /// (<see cref="IZeroArgPropertyResultCache.ReadObtainsPublishedValue"/>); every other helper
+    /// binds without consulting the memo.
     /// </summary>
-    EvalResult<IReadOnlyList<NeedCell>> GetOrBind(
+    EvalResult<IReadOnlyDictionary<string, NeedCell>> GetOrBind(
         DeconstructionBindingExecution execution,
-        Func<EvalResult<IReadOnlyList<NeedCell>>> bind);
+        Func<EvalResult<IReadOnlyDictionary<string, NeedCell>>> bind);
 
     /// <summary>
     /// Async twin of <see cref="GetOrBind"/>, used only by the evaluator's async twin
@@ -60,17 +72,12 @@ internal interface IDeconstructionBindingCache
     /// semantics are unchanged. This interface is internal and never host-supplied, so
     /// the member carries no public-surface cost.
     /// </summary>
-    ValueTask<EvalResult<IReadOnlyList<NeedCell>>> GetOrBindAsync(
+    ValueTask<EvalResult<IReadOnlyDictionary<string, NeedCell>>> GetOrBindAsync(
         DeconstructionBindingExecution execution,
-        Func<ValueTask<EvalResult<IReadOnlyList<NeedCell>>>> bind);
+        Func<ValueTask<EvalResult<IReadOnlyDictionary<string, NeedCell>>>> bind);
 }
 
-internal readonly record struct DeconstructionBindingCacheKey(
-    object GroupIdentity,
-    object OwnerIdentity,
-    object ValueEnvironmentIdentity);
-
-internal sealed class DeconstructionBindingCacheKeyComparer : IEqualityComparer<DeconstructionBindingCacheKey>
+internal sealed class DeconstructionBindingCacheKeyComparer : IEqualityComparer<DeconstructionBindingExecution>
 {
     public static DeconstructionBindingCacheKeyComparer Instance { get; } = new();
 
@@ -78,19 +85,23 @@ internal sealed class DeconstructionBindingCacheKeyComparer : IEqualityComparer<
     {
     }
 
-    public bool Equals(DeconstructionBindingCacheKey x, DeconstructionBindingCacheKey y)
+    public bool Equals(DeconstructionBindingExecution x, DeconstructionBindingExecution y)
         => ReferenceEquals(x.GroupIdentity, y.GroupIdentity)
+            && ReferenceEquals(x.PatternIdentity, y.PatternIdentity)
             && ZeroArgPropertyCacheKeyComparer.OwnerIdentityEquals(x.OwnerIdentity, y.OwnerIdentity)
-            && ReferenceEquals(x.ValueEnvironmentIdentity, y.ValueEnvironmentIdentity);
+            && ReferenceEquals(x.ValueEnvironmentIdentity, y.ValueEnvironmentIdentity)
+            && ZeroArgPropertyCacheKeyComparer.Instance.Equals(x.SourceKey, y.SourceKey);
 
-    public int GetHashCode(DeconstructionBindingCacheKey obj)
+    public int GetHashCode(DeconstructionBindingExecution obj)
     {
         var hash = new HashCode();
         hash.Add(RuntimeHelpers.GetHashCode(obj.GroupIdentity));
+        hash.Add(RuntimeHelpers.GetHashCode(obj.PatternIdentity));
         hash.Add(obj.OwnerIdentity is StructuralOwnerIdentity owner
             ? owner.GetHashCode()
             : RuntimeHelpers.GetHashCode(obj.OwnerIdentity));
         hash.Add(RuntimeHelpers.GetHashCode(obj.ValueEnvironmentIdentity));
+        hash.Add(ZeroArgPropertyCacheKeyComparer.Instance.GetHashCode(obj.SourceKey));
         return hash.ToHashCode();
     }
 }
@@ -108,36 +119,47 @@ internal sealed class UncachedDeconstructionBindingCache : IDeconstructionBindin
     {
     }
 
-    public EvalResult<IReadOnlyList<NeedCell>> GetOrBind(
+    public EvalResult<IReadOnlyDictionary<string, NeedCell>> GetOrBind(
         DeconstructionBindingExecution execution,
-        Func<EvalResult<IReadOnlyList<NeedCell>>> bind)
+        Func<EvalResult<IReadOnlyDictionary<string, NeedCell>>> bind)
         => bind();
 
-    public ValueTask<EvalResult<IReadOnlyList<NeedCell>>> GetOrBindAsync(
+    public ValueTask<EvalResult<IReadOnlyDictionary<string, NeedCell>>> GetOrBindAsync(
         DeconstructionBindingExecution execution,
-        Func<ValueTask<EvalResult<IReadOnlyList<NeedCell>>>> bind)
+        Func<ValueTask<EvalResult<IReadOnlyDictionary<string, NeedCell>>>> bind)
         => bind();
 }
 
 /// <summary>
 /// The run-scoped shared-bind memo. It adds no semantics only while every bind it serves was computed
-/// from the hoisted source's PUBLISHED value. Since Q-37 (the outermost property-style evaluation owns
-/// the cache entry, <see cref="ZeroArgPropertyPublications"/>) a re-entrant read of the source — a
-/// target of the group read again while the source's owning evaluation is still running — evaluates
-/// an INTERMEDIATE source value that is never published, and such a read always happens inside
-/// another, still-running bind of the SAME group (only the group's target helpers read its source).
-/// So a bind that starts while another bind of its group is running is not stored, and a stored bind
-/// is never replaced: a re-entrant target read gets its own bind, exactly as the reference semantics
-/// (one bind per target read; Lean has no such memo) requires. Programs that never re-enter a
-/// deconstruction keep every hit they had before.
+/// from the hoisted source's PUBLISHED value by the very pattern the reading helper binds. THE STORE
+/// INVARIANT (DECON-CACHE-2): a completed bind is stored only when (1) the evaluator admitted its
+/// execution — the source read that supplies it obtains the published value of exactly
+/// <see cref="DeconstructionBindingExecution.SourceKey"/>, decided before the bind starts from the lookup
+/// that read itself performs, with no extra read (<c>Evaluator.SharedDeconstructionBind</c>); (2) it
+/// succeeded; and (3) no other bind of its GROUP was running when it started. A stored bind is never
+/// replaced. (3) is the group-wide re-entry guard kept from Q-37: a target read again while its group
+/// is still binding gets its own, unstored bind. With (1) in force it is no longer what keeps an
+/// intermediate source value out of the memo — a re-entrant source read fails (1) — but it still keeps
+/// every bind started inside a running bind of its group (recursive owners, re-entrant targets) out of
+/// the memo, which is the established bind and step accounting of such programs (R12's seven binds,
+/// pinned by <c>DeconstructionMemoEligibilityTests</c>); narrowing it to the full key is an accounting
+/// change that needs its own decision. Programs that never re-enter a deconstruction keep every hit
+/// they had before.
 /// </summary>
 internal sealed class RunScopedDeconstructionBindingCache : IDeconstructionBindingCache
 {
-    private readonly Dictionary<DeconstructionBindingCacheKey, IReadOnlyList<NeedCell>> _results =
+    private readonly Dictionary<DeconstructionBindingExecution, IReadOnlyDictionary<string, NeedCell>> _results =
         new(DeconstructionBindingCacheKeyComparer.Instance);
 
     // Group identity -> number of its binds currently running (absent when none).
     private readonly Dictionary<object, int> _runningBinds = new(ReferenceEqualityComparer.Instance);
+
+    /// <summary>Number of stored binds.</summary>
+    internal int Count => _results.Count;
+
+    /// <summary>Number of groups with a bind still running (zero between accesses).</summary>
+    internal int RunningGroupCount => _runningBinds.Count;
 
     private bool EnterBind(object group)
     {
@@ -155,20 +177,15 @@ internal sealed class RunScopedDeconstructionBindingCache : IDeconstructionBindi
             _runningBinds[group] = running;
     }
 
-    public EvalResult<IReadOnlyList<NeedCell>> GetOrBind(
+    public EvalResult<IReadOnlyDictionary<string, NeedCell>> GetOrBind(
         DeconstructionBindingExecution execution,
-        Func<EvalResult<IReadOnlyList<NeedCell>>> bind)
+        Func<EvalResult<IReadOnlyDictionary<string, NeedCell>>> bind)
     {
-        var key = new DeconstructionBindingCacheKey(
-            execution.GroupIdentity,
-            execution.OwnerIdentity,
-            execution.ValueEnvironmentIdentity);
-
-        if (_results.TryGetValue(key, out var cached))
-            return EvalResult<IReadOnlyList<NeedCell>>.Ok(cached);
+        if (_results.TryGetValue(execution, out var cached))
+            return EvalResult<IReadOnlyDictionary<string, NeedCell>>.Ok(cached);
 
         var nested = EnterBind(execution.GroupIdentity);
-        EvalResult<IReadOnlyList<NeedCell>> result;
+        EvalResult<IReadOnlyDictionary<string, NeedCell>> result;
         try
         {
             result = bind();
@@ -181,32 +198,27 @@ internal sealed class RunScopedDeconstructionBindingCache : IDeconstructionBindi
         if (result.IsError)
             return result.Error;
 
-        // A bind nested in a running bind of its group may have read an intermediate source (Q-37).
+        // A bind nested in a running bind of its group is never stored (the group-wide guard).
         if (!nested)
-            _results.TryAdd(key, result.Value);
+            _results.TryAdd(execution, result.Value);
         return result;
     }
 
     /// <summary>
-    /// MIRROR OF <see cref="GetOrBind"/> — keep in lock-step: same key derivation, same store,
+    /// MIRROR OF <see cref="GetOrBind"/> — keep in lock-step: same key, same store,
     /// same nested-bind rule, same never-store-errors rule. One run drives evaluation through exactly one of the
     /// sync/async evaluator families, and within the async family each bind is awaited
     /// before evaluation continues, so the dictionary is never touched concurrently.
     /// </summary>
-    public async ValueTask<EvalResult<IReadOnlyList<NeedCell>>> GetOrBindAsync(
+    public async ValueTask<EvalResult<IReadOnlyDictionary<string, NeedCell>>> GetOrBindAsync(
         DeconstructionBindingExecution execution,
-        Func<ValueTask<EvalResult<IReadOnlyList<NeedCell>>>> bind)
+        Func<ValueTask<EvalResult<IReadOnlyDictionary<string, NeedCell>>>> bind)
     {
-        var key = new DeconstructionBindingCacheKey(
-            execution.GroupIdentity,
-            execution.OwnerIdentity,
-            execution.ValueEnvironmentIdentity);
-
-        if (_results.TryGetValue(key, out var cached))
-            return EvalResult<IReadOnlyList<NeedCell>>.Ok(cached);
+        if (_results.TryGetValue(execution, out var cached))
+            return EvalResult<IReadOnlyDictionary<string, NeedCell>>.Ok(cached);
 
         var nested = EnterBind(execution.GroupIdentity);
-        EvalResult<IReadOnlyList<NeedCell>> result;
+        EvalResult<IReadOnlyDictionary<string, NeedCell>> result;
         try
         {
             result = await bind().ConfigureAwait(false);
@@ -220,7 +232,7 @@ internal sealed class RunScopedDeconstructionBindingCache : IDeconstructionBindi
             return result.Error;
 
         if (!nested)
-            _results.TryAdd(key, result.Value);
+            _results.TryAdd(execution, result.Value);
         return result;
     }
 }

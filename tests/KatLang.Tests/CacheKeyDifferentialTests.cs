@@ -215,20 +215,31 @@ public class CacheKeyDifferentialTests
     public void DeconstructionKey_ChangingExactlyOneDimension_MissesForEveryKeyDimension()
     {
         var comparer = DeconstructionBindingCacheKeyComparer.Instance;
-        var baseline = new DeconstructionBindingCacheKey(
+        var sourceKey = new ZeroArgPropertyCacheKey(
+            ZeroArgPropertyCacheAccessShape.Lexical, new object(), new object(), new object(), new object());
+        var baseline = new DeconstructionBindingExecution(
             new object(),
             new object(),
-            new object());
+            new object(),
+            new object(),
+            sourceKey);
 
-        var same = baseline with { };
+        var same = baseline with { SourceKey = sourceKey with { } };
         Assert.True(comparer.Equals(baseline, same));
         Assert.Equal(comparer.GetHashCode(baseline), comparer.GetHashCode(same));
 
+        // DECON-CACHE-2: the actual pattern list and every dimension of the source entry's key are
+        // dimensions of the shared bind.
         var changed = new[]
         {
             ("group", baseline with { GroupIdentity = new object() }),
+            ("pattern", baseline with { PatternIdentity = new object() }),
             ("owner", baseline with { OwnerIdentity = new object() }),
             ("value environment", baseline with { ValueEnvironmentIdentity = new object() }),
+            ("source owner", baseline with { SourceKey = sourceKey with { OwnerIdentity = new object() } }),
+            ("source binding", baseline with { SourceKey = sourceKey with { BindingIdentity = new object() } }),
+            ("source binding context", baseline with { SourceKey = sourceKey with { ValueEnvironmentIdentity = new object() } }),
+            ("source run", baseline with { SourceKey = sourceKey with { RunIdentity = new object() } }),
         };
 
         foreach (var (dimension, key) in changed)

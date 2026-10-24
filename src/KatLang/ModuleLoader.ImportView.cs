@@ -85,7 +85,27 @@ internal sealed partial class ModuleLoader
                 Opens = opens,
                 Properties = properties,
                 Output = output,
+                AssignmentDeconstructionTarget = RewriteDeconstructionTarget(user, patterns),
             };
+        }
+
+        // Import views erase pattern locations without changing binding. Rebase the origin once
+        // per shared list so imported parser helpers retain O(1) eligibility and one shared bind.
+        // A host-replaced signature was never certified by the old origin and stays uncertified.
+        private AssignmentDeconstructionTarget? RewriteDeconstructionTarget(
+            Algorithm.User user, IReadOnlyList<ParameterPattern> patterns)
+        {
+            var target = user.AssignmentDeconstructionTarget;
+            if (target is not { Group: AssignmentDeconstructionGroup group } origin
+                || !ReferenceEquals(user.ParameterPatterns, group.Patterns)
+                || ReferenceEquals(patterns, user.ParameterPatterns))
+                return target;
+            if (!_lists.TryGetValue(group, out var rewritten))
+            {
+                rewritten = new AssignmentDeconstructionGroup(patterns);
+                _lists.Add(group, rewritten);
+            }
+            return origin with { Group = rewritten };
         }
 
         // A fetched module is spliced as raw syntax, so an alias reaches this rewriter only through

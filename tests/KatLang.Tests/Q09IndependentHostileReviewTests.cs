@@ -18,6 +18,10 @@ public class Q09IndependentHostileReviewTests
     private sealed class WatchingCache : IZeroArgPropertyResultCache
     {
         private readonly RunScopedZeroArgPropertyResultCache _inner = new();
+
+        // DECON-CACHE-2: the inner cache publishes every read, so its publication provenance is this cache's.
+        public bool ReadObtainsPublishedValue(ZeroArgPropertyCacheKey key) => _inner.ReadObtainsPublishedValue(key);
+
         public EvaluationBudget? Budget { get; private set; }
         public EvalResult<ZeroArgPropertyResult> GetOrEvaluate(ZeroArgPropertyExecution execution,
             Func<EvalResult<ZeroArgPropertyResult>> evaluate)

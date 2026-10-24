@@ -269,6 +269,9 @@ public class RunEntryPreparationTests
     {
         private readonly RunScopedZeroArgPropertyResultCache _inner = new();
 
+        // DECON-CACHE-2: the inner cache publishes every read, so its publication provenance is this cache's.
+        public bool ReadObtainsPublishedValue(ZeroArgPropertyCacheKey key) => _inner.ReadObtainsPublishedValue(key);
+
         public EvalResult<ZeroArgPropertyResult> GetOrEvaluate(
             ZeroArgPropertyExecution execution,
             Func<EvalResult<ZeroArgPropertyResult>> evaluate)

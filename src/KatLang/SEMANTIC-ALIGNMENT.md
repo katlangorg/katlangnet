@@ -1,5 +1,48 @@
 # Semantic Alignment Manifest.
 
+DECON-CACHE-2 — deconstruction shared-bind eligibility for host-transformed ASTs (October 24 2026;
+C#-only memo correctness, classified by the "Zero-argument property cache semantics" row and the caching V3
+trigger: no Lean edit — Lean has no group-bind memo, budgets or bind counter — and no change to any
+parser-produced program's value, effects, error or accounting). DEFECT (DECON-CACHE-1 research): the
+run-scoped memo keyed one group's bind by (group token, structural caller owner, reader binding
+context), which public record transformations of a parsed AST defeat: a direct read of the hoisted
+source let a bind of a Q-37 re-entrant INTERMEDIATE source value be stored (H01/H03), a helper copy
+over another argument reused the original's cells (H04/H05: `S[7, 7]`/`S[1, 1]`, Lean and ordinary
+C# `S[7, 1]`/`S[1, 7]`), ownerless host scopes over one property list and two declarations sharing a
+list merged distinct source entries (D3-FRESH/D3-COPY/D3-FRESH-BB/L01), and a copy whose unpacking
+pattern changed under its retained token reused the original pattern's binds (V05/V06). RULE
+(`Evaluator.SharedDeconstructionBind`, sync and async; store invariant on
+`RunScopedDeconstructionBindingCache`): a target helper is a projection only when its one output row
+reads the recorded target of its original parser signature and its body has no properties or opens
+(`DeconstructionProjectionName`; `AssignmentDeconstructionGroup` retains that signature, and a copied
+pattern list, changed output mapping or body scope takes an ordinary call). Eligibility is O(1);
+the import-view rewriter rebases the descriptor once per shared pattern list when erasing locations.
+Its bind is shared only when its one argument is a written
+name that resolves STRUCTURALLY from the caller by the read's own lookup (`LookupLexicalStructural` +
+`NormalizeValueBinding`, the halves of `LookupLexicalForValue`, so target-local shadowing — V07 —
+selects what the read selects), and the read of that entry's cache key
+(`ZeroArgPropertyReadExecution`, the key the read requests) obtains the PUBLISHED value
+(`IZeroArgPropertyResultCache.ReadObtainsPublishedValue`: a published entry or an owning first read;
+default `false`, so a cache that does not state its publication law — or publishes nothing — never
+shares a bind). The memo key adds the ACTUAL pattern list (by reference; one import-view rewrite per
+group keeps the sharing) and the source's complete `ZeroArgPropertyCacheKey` to the unchanged group,
+owner and reader dimensions; the group-wide re-entry guard, failed-bind non-publication and
+non-overwriting `TryAdd` are kept — the guard is no longer what excludes intermediates, but it keeps
+R12's seven-bind accounting (mutation: removing it changes only that pin). Every other helper shape
+binds on its own (ordinary cardinality, order, errors and charges). No pre-read, extra charge or
+evaluation: the eligibility check is non-evaluating. Surface accounting is pinned on HEAD's values for
+the R01–R29/X/V corpus on generic, optimized and suspending async routes (R02 at `MaxSteps = 10` and
+V02 at `MaxMaterializedItems = 11` still refuse; OD-1 broader sharing stays deferred). Allocation: +0.2%
+to +2.9% for wide all-from-body groups (N = 1024: 6,667,024 → 6,846,720 B), −1% to −4.4% for fan-out
+shapes. Pins: `DeconstructionMemoEligibilityTests` (host witnesses vs ordinary helper execution,
+sharing controls, store/guard/cancellation cleanup, concurrency, import view), `CacheKeyDifferentialTests`,
+the HP-15a–e cases of `HostParentDifferentialCorpus` (H04/H05/V05/V06/V07 guarded against Lean in
+`lean/CoreTests/HostParentDifferential.lean`; the corpus is now 88 cases, 86 comparable).
+`DeconstructionMemoFallbackTests` pins ordinary laziness, duplicate-declaration errors, captured-plan
+dispatch and a genuinely suspended deferred-module import. `BinderCardinalityGateTests`' copied
+signature takes the ordinary cardinality gate before demand. Report:
+`experimental/features/decon-cache-2-implementation.md`.
+
 HOST-DIFF-1 — Lean/C# differential coverage of host-built ASTs with pre-wired parent scopes
 (October 24 2026; test/formal-correspondence infrastructure, no production C# or Lean semantic
 edit, classified by the "Lean/C# correspondence" trigger: full V3). `LeanAstEncoder` (tests) no

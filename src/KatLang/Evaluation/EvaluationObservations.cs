@@ -34,12 +34,15 @@ internal sealed class EvaluationObservations
 
     /// <summary>
     /// Number of COMPLETE assignment-deconstruction binding computations begun during this run. A
-    /// deconstruction group binds its shared N-capture pattern once per (group, binding context): the
-    /// first demanded target of a group performs the full bind and increments this once (whether the
-    /// bind then succeeds OR fails); later targets of the same group reuse the shared bind and each
-    /// target's slot projection does not increment. Demanding no target performs no bind (zero); two
-    /// independent groups, or one group in two distinct call contexts, perform two. A fresh run starts
-    /// at zero, so demanding every target of one group any number of times observes exactly one.
+    /// deconstruction group binds its shared N-capture pattern once per shared-bind execution (group,
+    /// actual pattern list, caller scope, reader binding context and source entry — DECON-CACHE-2's
+    /// <c>DeconstructionBindingExecution</c>): the first demanded target performs the full bind and
+    /// increments this once (whether the bind then succeeds OR fails); later targets with the same
+    /// execution reuse the shared bind and each target's projection does not increment. A target whose
+    /// bind may not be shared (its source read would be a re-entrant intermediate, or the run's property
+    /// cache publishes nothing) increments it on every read. Demanding no target performs no bind (zero);
+    /// two independent groups, or one group in two distinct call contexts, perform two. A fresh run starts
+    /// at zero, so demanding every target of one group any number of times from one context observes exactly one.
     /// </summary>
     public long DeconstructionFullBindCount { get; private set; }
 

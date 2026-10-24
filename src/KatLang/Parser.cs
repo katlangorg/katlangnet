@@ -2582,7 +2582,7 @@ public sealed class Parser
         // One identity token shared by every target helper of this deconstruction. The evaluator
         // keys its run-scoped shared-bind cache on it so the N helpers bind the shared N-capture
         // pattern once per binding context instead of once per demanded target (O(N) not O(N^2)).
-        var deconstructionGroup = new object();
+        var deconstructionGroup = new AssignmentDeconstructionGroup(helperPatterns);
 
         for (var targetIndex = 0; targetIndex < targets.Count; targetIndex++)
         {

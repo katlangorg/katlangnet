@@ -115,4 +115,6 @@ internal sealed class RunScopedAsyncZeroArgPropertyResultCache(RootPropertyObser
         ZeroArgPropertyExecution execution,
         Func<ValueTask<EvalResult<ZeroArgPropertyResult>>> evaluateAsync)
         => _results.InvokeAsync(ZeroArgPropertyCacheKey.FromExecution(execution), evaluateAsync);
+
+    public bool ReadObtainsPublishedValue(ZeroArgPropertyCacheKey key) => _results.ReadObtainsPublishedValue(key);
 }

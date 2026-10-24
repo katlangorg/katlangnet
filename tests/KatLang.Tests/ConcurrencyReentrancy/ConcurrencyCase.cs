@@ -340,6 +340,10 @@ internal sealed class GatedZeroArgPropertyResultCache(EvaluationGate gate, int g
     : IZeroArgPropertyResultCache
 {
     private readonly RunScopedZeroArgPropertyResultCache _inner = new();
+
+    // DECON-CACHE-2: the inner cache publishes every read, so its publication provenance is this cache's.
+    public bool ReadObtainsPublishedValue(ZeroArgPropertyCacheKey key) => _inner.ReadObtainsPublishedValue(key);
+
     private int _accesses;
 
     public int Accesses => _accesses;

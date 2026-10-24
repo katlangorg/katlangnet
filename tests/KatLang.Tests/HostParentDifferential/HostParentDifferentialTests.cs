@@ -56,7 +56,7 @@ public class HostParentDifferentialTests
         Assert.Contains("\nimport CoreTests.HostParentDifferential\n", root, StringComparison.Ordinal);
     }
 
-    /// <summary>Stable, unique ids; every HP-01..HP-14 family of the HOST-DIFF-1 matrix is present.</summary>
+    /// <summary>Stable, unique ids; every HP-01..HP-14 family of the HOST-DIFF-1 matrix is present, plus DECON-CACHE-2's HP-15.</summary>
     [Fact]
     public void CorpusIds_AreStableUnique_AndCoverTheWholeMatrix()
     {
@@ -65,7 +65,7 @@ public class HostParentDifferentialTests
         Assert.Equal(cases.Count, cases.Select(c => c.Id).Distinct(StringComparer.Ordinal).Count());
         Assert.Equal(cases.Count, cases.Select(c => c.LeanName).Distinct(StringComparer.Ordinal).Count());
         var families = cases.Select(c => c.Id[..5]).Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal).ToList();
-        Assert.Equal(Enumerable.Range(1, 14).Select(n => $"HP-{n:00}"), families);
+        Assert.Equal(Enumerable.Range(1, 15).Select(n => $"HP-{n:00}"), families);
         Assert.All(cases, c => Assert.False(string.IsNullOrWhiteSpace(c.Description), c.Id));
     }
 
@@ -96,7 +96,7 @@ public class HostParentDifferentialTests
     [Fact]
     public void FidelityRatchet_ComparableHostParentCoverageCannotSilentlyShrink()
     {
-        const int MinimumComparableCases = 81;
+        const int MinimumComparableCases = 86;
         const int MinimumComparableCasesWithPreWiredParents = 81;
         const int MinimumCacheGuards = 150;
 

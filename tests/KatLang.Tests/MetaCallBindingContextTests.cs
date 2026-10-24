@@ -378,6 +378,9 @@ public class MetaCallBindingContextTests
     {
         private readonly RunScopedZeroArgPropertyResultCache _inner = new();
 
+        // DECON-CACHE-2: the inner cache publishes every read, so its publication provenance is this cache's.
+        public bool ReadObtainsPublishedValue(ZeroArgPropertyCacheKey key) => _inner.ReadObtainsPublishedValue(key);
+
         public List<ZeroArgPropertyExecution> Requests { get; } = [];
 
         public Dictionary<string, int> Evaluations { get; } = new(StringComparer.Ordinal);

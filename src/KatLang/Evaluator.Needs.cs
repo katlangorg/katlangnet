@@ -701,7 +701,7 @@ public static partial class Evaluator
         return EvalResult<NeedEnv?>.Ok(env);
     }
 
-    private static async ValueTask<EvalResult<IReadOnlyList<NeedCell>>> BindNeedDeconstruction(
+    private static async ValueTask<EvalResult<IReadOnlyDictionary<string, NeedCell>>> BindNeedDeconstruction(
         Algorithm.User helper, OutputBundle arguments, EvalCtx ctx, ValEnv values, bool asynchronous)
     {
         ctx.Observations?.RecordDeconstructionFullBind();
@@ -726,8 +726,12 @@ public static partial class Evaluator
         var bindings = await BindAcceptedNeedPatterns(patterns, supply.Value, ctx, asynchronous, family: false).ConfigureAwait(false);
         if (bindings.IsError)
             return bindings.Error is EvalError.ArityMismatch shape ? DeconstructionArityMismatch(helper, shape) : bindings.Error;
-        var index = bindings.Value!.ToDictionary(binding => binding.Name, binding => binding.Cell, StringComparer.Ordinal);
-        return EvalResult<IReadOnlyList<NeedCell>>.Ok(helper.Parameters.Select(parameter => index[parameter.Name]).ToArray());
+        // The bound cells by binding name: each target projects the binding its own output reads.
+        var bound = bindings.Value!;
+        var byName = new Dictionary<string, NeedCell>(bound.Count, StringComparer.Ordinal);
+        for (var i = 0; i < bound.Count; i++)
+            byName.Add(bound[i].Name, bound[i].Cell);
+        return EvalResult<IReadOnlyDictionary<string, NeedCell>>.Ok(byName);
     }
 
     // A deconstruction's OWN cardinality failure, named by its assignment pattern.

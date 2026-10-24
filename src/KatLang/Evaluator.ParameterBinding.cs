@@ -482,11 +482,14 @@ public static partial class Evaluator
     }
 
     /// <summary>
-    /// One target of an assignment deconstruction, read from the SHARED binding of its right-hand
-    /// side. The helper binds once per execution (<see cref="BindNeedDeconstruction"/>, through the
-    /// run's deconstruction binding cache), and each target projects its own bound cell.
-    /// <c>null</c> when the binding has no such target, which only a host-modified helper can
-    /// produce; the caller then evaluates the helper call as an ordinary call.
+    /// One target of an assignment deconstruction, read from the binding of its right-hand side
+    /// (<see cref="BindNeedDeconstruction"/>): the helper's one output row reads one of its own
+    /// bindings, so the target is that bound cell's value — exactly what the helper's ordinary body
+    /// computes. The bind is SHARED through the run's deconstruction binding cache only when
+    /// <see cref="SharedDeconstructionBind"/> admits it; otherwise this helper binds on its own.
+    /// <c>null</c> when the helper no longer has its parser signature and body (<see cref="DeconstructionProjectionName"/>),
+    /// which only a host-modified helper can produce; the caller then evaluates the helper call as
+    /// the ordinary call it is.
     /// </summary>
     private static EvalResult<Result>? TryProjectSharedDeconstructionTarget(
         Algorithm.User helper,
@@ -495,13 +498,86 @@ public static partial class Evaluator
         EvalCtx ctx,
         ValEnv valEnv)
     {
-        var execution = new DeconstructionBindingExecution(target.Group, DeconstructionOwnerIdentity(ctx),
-            BindingContextIdentity(ctx, valEnv));
-        var sharedR = ctx.DeconstructionBindingCache.GetOrBind(execution,
-            () => BindNeedDeconstruction(helper, args, ctx, valEnv, asynchronous: false).GetAwaiter().GetResult());
-        if (sharedR.IsError) return sharedR.Error;
-        if ((uint)target.Index >= (uint)sharedR.Value.Count) return null;
-        return ProjectCountedValue(sharedR.Value[target.Index].Demand());
+        if (DeconstructionProjectionName(helper, target) is not { } name)
+            return null;
+        var boundR = SharedDeconstructionBind(helper, target, args, ctx, valEnv) is { } shared
+            ? ctx.DeconstructionBindingCache.GetOrBind(shared,
+                () => BindNeedDeconstruction(helper, args, ctx, valEnv, asynchronous: false).GetAwaiter().GetResult())
+            : BindNeedDeconstruction(helper, args, ctx, valEnv, asynchronous: false).GetAwaiter().GetResult();
+        if (boundR.IsError) return boundR.Error;
+        return ProjectCountedValue(boundR.Value[name].Demand());
+    }
+
+    /// <summary>
+    /// The binding a deconstruction target helper's ordinary body reads: its ONE output row is a
+    /// parameter read of the parser-origin signature, at the recorded target index. Verify the
+    /// signature by reference against the group's origin descriptor, plus the actual output and
+    /// empty body scope, in O(1). A copied signature or body runs through the ordinary call: the
+    /// specialized bind's mandatory source demand and skipped body entry are justified only for
+    /// the original unpacking helper, not an arbitrary callable that returns one of its parameters.
+    /// </summary>
+    private static string? DeconstructionProjectionName(Algorithm.User helper, AssignmentDeconstructionTarget target)
+    {
+        if (target.Group is not AssignmentDeconstructionGroup group
+            || !ReferenceEquals(helper.ParameterPatterns, group.Patterns)
+            || helper.Opens.Count != 0 || helper.Properties.Count != 0
+            || helper.Output.Count != 1 || helper.Output[0] is not Expr.Param(var name))
+            return null;
+        if (helper.ParameterPatterns is [UnpackingParameterPattern { Items: var items }]
+            && (uint)target.Index < (uint)items.Count
+            && items[target.Index] is CaptureParameterPattern capture
+            && capture.Name == name)
+            return name;
+        return null;
+    }
+
+    /// <summary>
+    /// THE MEMO ELIGIBILITY RULE of the deconstruction shared bind (DECON-CACHE-2, October 2026): the
+    /// execution under which this helper's bind may be shared and stored, or <c>null</c> when the helper
+    /// must bind on its own (its ordinary, uncached bind). A bind is a pure function of the ACTUAL
+    /// pattern list and the source VALUE its one argument supplies, so the helper qualifies only when
+    /// <list type="number">
+    ///   <item>its argument is ONE written name (<see cref="Expr.Resolve"/>) — the parser's
+    ///   <c>$deconstruct$N</c>, or any name a host wrote there;</item>
+    ///   <item>that name resolves STRUCTURALLY from the caller — the very lookup, from the very context,
+    ///   the bind's own read performs (<see cref="LookupLexicalStructural"/> and
+    ///   <see cref="NormalizeValueBinding"/>, the halves of <see cref="LookupLexicalForValue"/>), so a
+    ///   target-local shadow, a host parent or an ownerless scope selects what the read will select; a
+    ///   name only an <c>open</c> could provide is left to the ordinary bind, so nothing here resolves
+    ///   an open; and</item>
+    ///   <item>the read of that entry's cache key (<see cref="ZeroArgPropertyReadExecution"/>, the key
+    ///   the read itself requests) obtains the source's PUBLISHED value
+    ///   (<see cref="IZeroArgPropertyResultCache.ReadObtainsPublishedValue"/>): a published entry, or
+    ///   an owning first read whose success is the entry. A re-entrant read of a source whose owning
+    ///   evaluation is still running (Q-37) — say, the source read directly by the host — returns an
+    ///   intermediate value that is never published, so its bind is never stored.</item>
+    /// </list>
+    /// The execution then keys the memo by the group, the actual pattern list, the caller's structural
+    /// scope, the reader's binding context and the source's complete cache key
+    /// (<see cref="DeconstructionBindingExecution"/>). Non-evaluating and charge-free: the source is
+    /// read only by the bind, exactly as before. Shared by the synchronous and async projections.
+    /// </summary>
+    private static DeconstructionBindingExecution? SharedDeconstructionBind(
+        Algorithm.User helper,
+        AssignmentDeconstructionTarget target,
+        OutputBundle args,
+        EvalCtx ctx,
+        ValEnv valEnv)
+    {
+        if (args.Count != 1 || args[0] is not Expr.Resolve(var sourceName) || ctx.CallStack.Count == 0)
+            return null;
+        if (LookupLexicalStructural(ctx.CallStack[0], sourceName, ctx) is not { } structural)
+            return null;
+        var sourceR = NormalizeValueBinding(EvalResult<ResolvedLexicalProperty>.Ok(structural), ctx);
+        if (sourceR.IsError)
+            return null;
+        var source = sourceR.Value;
+        var sourceKey = ZeroArgPropertyCacheKey.FromExecution(ZeroArgPropertyReadExecution(
+            source.Owner, source.Binding, ZeroArgPropertyAccessKind.CountedLexical, source.ResolvedAlgorithm, ctx, valEnv));
+        if (!ctx.ZeroArgPropertyResultCache.ReadObtainsPublishedValue(sourceKey))
+            return null;
+        return new DeconstructionBindingExecution(target.Group, helper.ParameterPatterns, DeconstructionOwnerIdentity(ctx),
+            BindingContextIdentity(ctx, valEnv), sourceKey);
     }
 
     /// <summary>

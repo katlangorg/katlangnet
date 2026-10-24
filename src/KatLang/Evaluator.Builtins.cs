@@ -575,19 +575,36 @@ public static partial class Evaluator
         ValEnv valEnv)
     {
         return ctx.ZeroArgPropertyResultCache.GetOrEvaluate(
-            new ZeroArgPropertyExecution(
-                owner,
-                binding,
-                accessKind,
-                BindingContextIdentity(ctx, valEnv),
-                // The budget is created fresh per run (CreateRootCtx) and threaded by
-                // reference through every derived ctx, so it is the run identity:
-                // entries can never be served across runs even when a host shares
-                // one cache instance between runs.
-                ctx.Budget)
-            { DeclaringScope = resolvedAlgorithm.Parent },
+            ZeroArgPropertyReadExecution(owner, binding, accessKind, resolvedAlgorithm, ctx, valEnv),
             () => EvaluateZeroArgPropertyResult(resolvedAlgorithm, ctx, valEnv));
     }
+
+    /// <summary>
+    /// The cache request of a property-style read of <paramref name="binding"/> in <paramref name="ctx"/>:
+    /// the ONE construction shared by the synchronous and async property seams and by the deconstruction
+    /// source lookup (<see cref="SharedDeconstructionBind"/>), so a key computed ahead of a read is the
+    /// key that read uses. Inlined, so the seams' frames are the ones they had with the construction
+    /// written in place.
+    /// </summary>
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]
+    private static ZeroArgPropertyExecution ZeroArgPropertyReadExecution(
+        PropertyDeclaringOwner owner,
+        Property binding,
+        ZeroArgPropertyAccessKind accessKind,
+        Algorithm resolvedAlgorithm,
+        EvalCtx ctx,
+        ValEnv valEnv)
+        => new(
+            owner,
+            binding,
+            accessKind,
+            BindingContextIdentity(ctx, valEnv),
+            // The budget is created fresh per run (CreateRootCtx) and threaded by
+            // reference through every derived ctx, so it is the run identity:
+            // entries can never be served across runs even when a host shares
+            // one cache instance between runs.
+            ctx.Budget)
+        { DeclaringScope = resolvedAlgorithm.Parent };
 
     private static EvalResult<CountedResult> EvalZeroArgPropertyAccessCounted(
         PropertyDeclaringOwner owner,

@@ -36,6 +36,9 @@ public class LoopStrategyPreparationTests
     {
         private readonly RunScopedZeroArgPropertyResultCache inner = new();
 
+        // DECON-CACHE-2: the inner cache publishes every read, so its publication provenance is this cache's.
+        public bool ReadObtainsPublishedValue(ZeroArgPropertyCacheKey key) => inner.ReadObtainsPublishedValue(key);
+
         public List<ZeroArgPropertyExecution> Requests { get; } = [];
 
         public EvalResult<ZeroArgPropertyResult> GetOrEvaluate(

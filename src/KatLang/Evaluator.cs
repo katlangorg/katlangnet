@@ -1659,12 +1659,18 @@ public static partial class Evaluator
     [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
     private static EvalResult<ResolvedLexicalProperty> LookupLexicalForValue(
         Algorithm alg, string name, EvalCtx ctx)
-    {
-        var resolved = LookupLexicalRaw(alg, name, ctx);
-        return resolved.IsOk && resolved.Value.ResolvedAlgorithm is Algorithm.Alias
+        => NormalizeValueBinding(LookupLexicalRaw(alg, name, ctx), ctx);
+
+    /// <summary>
+    /// The alias normalization of a VALUE read (<see cref="LookupLexicalForValue"/>): an alias binding
+    /// keeps its own property and resolves by the VALUE chase; every other binding is returned as is.
+    /// Shared with the deconstruction source lookup (<see cref="SharedDeconstructionBind"/>), so both
+    /// select the same entry.
+    /// </summary>
+    private static EvalResult<ResolvedLexicalProperty> NormalizeValueBinding(EvalResult<ResolvedLexicalProperty> resolved, EvalCtx ctx)
+        => resolved.IsOk && resolved.Value.ResolvedAlgorithm is Algorithm.Alias
             ? NormalizeAliasBinding(resolved.Value, ctx, callable: false)
             : resolved;
-    }
 
     /// <summary>
     /// Full lexical lookup with ownership-first model:
@@ -1679,22 +1685,9 @@ public static partial class Evaluator
     private static EvalResult<ResolvedLexicalProperty> LookupLexicalRaw(
         Algorithm alg, string name, EvalCtx ctx)
     {
-        // 1. Local properties (any visibility)
-        var local = LookupPropBinding(alg, name, ctx.Budget);
-        if (local is not null)
-            return EvalResult<ResolvedLexicalProperty>.Ok(
-                new ResolvedLexicalProperty(
-                    alg,
-                    local,
-                    ChildOfInContext(alg, local.Value, ctx)));
-
-        // 2. Parent chain structural only (any visibility, no opens)
-        if (alg.Parent is { } sc)
-        {
-            var structural = LookupInParentsDirectBinding(sc, name, ctx.Budget);
-            if (structural is not null)
-                return EvalResult<ResolvedLexicalProperty>.Ok(structural.Value);
-        }
+        // 1.-2. The structural owner walk (local properties, then the parent chain).
+        if (LookupLexicalStructural(alg, name, ctx) is { } structural)
+            return EvalResult<ResolvedLexicalProperty>.Ok(structural);
 
         // 3. Opens fallback across the entire chain (public only)
         var opensResult = LookupOpensInChain(alg, name, ctx);
@@ -1703,6 +1696,22 @@ public static partial class Evaluator
             return EvalResult<ResolvedLexicalProperty>.Ok(openBinding);
 
         return new EvalError.UnknownName(name);
+    }
+
+    /// <summary>
+    /// The STRUCTURAL half of <see cref="LookupLexicalRaw"/>, before any open is consulted:
+    /// 1. local properties (owned by this algorithm — any visibility), then 2. the parent chain's
+    /// structural properties (owned by ancestors — any visibility). <c>null</c> when neither declares
+    /// the name, i.e. when only the opens fallback could select it. Evaluates nothing and charges
+    /// nothing.
+    /// </summary>
+    private static ResolvedLexicalProperty? LookupLexicalStructural(Algorithm alg, string name, EvalCtx ctx)
+    {
+        var local = LookupPropBinding(alg, name, ctx.Budget);
+        if (local is not null)
+            return new ResolvedLexicalProperty(alg, local, ChildOfInContext(alg, local.Value, ctx));
+
+        return alg.Parent is { } sc ? LookupInParentsDirectBinding(sc, name, ctx.Budget) : null;
     }
 
     // ── Wire parent ─────────────────────────────────────────────────────────

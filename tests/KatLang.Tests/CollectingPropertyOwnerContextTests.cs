@@ -583,6 +583,9 @@ public class CollectingPropertyOwnerContextTests
     {
         private readonly RunScopedAsyncZeroArgPropertyResultCache _inner = new();
 
+        // DECON-CACHE-2: the inner cache publishes every read, so its publication provenance is this cache's.
+        public bool ReadObtainsPublishedValue(ZeroArgPropertyCacheKey key) => _inner.ReadObtainsPublishedValue(key);
+
         public int PublishedCount => _inner.PublishedCount;
 
         public int ActiveOwnerCount => _inner.ActiveOwnerCount;

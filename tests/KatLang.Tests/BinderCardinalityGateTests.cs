@@ -342,7 +342,7 @@ public sealed class BinderCardinalityGateTests
             Assert.True(result.IsError);
             Assert.Empty(log);
             Assert.Equal((2, 1), Payload(Innermost(result.Error)));
-            Assert.Contains(Contexts(result.Error), context => context is DeconstructionBindingContext);
+            Assert.DoesNotContain(Contexts(result.Error), context => context is DeconstructionBindingContext);
         }
     }
 
@@ -399,9 +399,11 @@ public sealed class BinderCardinalityGateTests
         var helper = Assert.IsType<Algorithm.User>(Assert.IsType<Expr.AlgorithmExpr>(call.Function).Algorithm);
         Assert.NotNull(helper.AssignmentDeconstructionTarget);
 
+        // The copied signature is an ordinary callable even though the synthetic metadata survives.
+        // Its ordinary cardinality gate still precedes every argument demand (DECON-CACHE-2).
         var rewritten = helper with
         {
-            ParameterPatterns = [new CaptureParameterPattern(new ParameterDeclaration("a")), new CaptureParameterPattern(new ParameterDeclaration("b"))],
+            ParameterPatterns = [new CaptureParameterPattern(new ParameterDeclaration(target)), new CaptureParameterPattern(new ParameterDeclaration("b"))],
         };
         Assert.NotNull(rewritten.AssignmentDeconstructionTarget);
         properties[index] = properties[index] with { Value = body with { Output = [call with { Function = new Expr.AlgorithmExpr(rewritten) }] } };

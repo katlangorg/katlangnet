@@ -98,6 +98,9 @@ public static class HostParentDifferentialHarness
         internal int Total { get; private set; }
         internal int ActiveOwners => _publications.ActiveOwnerCount;
 
+        // DECON-CACHE-2: this is the publication law itself, so its read provenance is the law's.
+        public bool ReadObtainsPublishedValue(ZeroArgPropertyCacheKey key) => _publications.ReadObtainsPublishedValue(key);
+
         public EvalResult<ZeroArgPropertyResult> GetOrEvaluate(ZeroArgPropertyExecution execution, Func<EvalResult<ZeroArgPropertyResult>> evaluate)
         {
             var key = ZeroArgPropertyCacheKey.FromExecution(execution);
@@ -132,6 +135,10 @@ public static class HostParentDifferentialHarness
     private sealed class SuspendingCache : IAsyncZeroArgPropertyResultCache
     {
         private readonly RunScopedAsyncZeroArgPropertyResultCache _inner = new();
+
+        // DECON-CACHE-2: the inner cache publishes every read, so its publication provenance is this cache's.
+        public bool ReadObtainsPublishedValue(ZeroArgPropertyCacheKey key) => _inner.ReadObtainsPublishedValue(key);
+
         internal int SyncAccesses { get; private set; }
         internal int PublishedCount => _inner.PublishedCount;
         internal int ActiveOwners => _inner.ActiveOwnerCount;

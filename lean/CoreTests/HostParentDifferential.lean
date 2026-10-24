@@ -11,8 +11,8 @@ evaluator ran on every route (plain, counted, generic, optimized, suspending asy
 (per property name, and in total). A failing guard is a Lean/C# divergence on that case.
 
 Partition (machine-checked by the `*CaseIds.length` guards below):
-- corpus cases: 83
-- comparable cases: 81
+- corpus cases: 88
+- comparable cases: 86
 - known HOST-LEAN-O6 divergences, pinned on both sides and excluded from comparison: 2
 
 Regenerate from the repo root with:
@@ -816,6 +816,53 @@ def hp_14d : Expr :=
 #guard obs hp_14d == "ok raw=S[S[1, 1], S[2, 2]] n=2"
 #guard obs hp_14d != "ok raw=S[S[1, 1], S[2, 1]] n=2"
 
+-- HP-15a: a deconstruction helper copied over another argument, copy read first (H04)
+def hp_15a : Expr :=
+  (.algorithmExpr (alg [] [] [privateProp "$deconstruct$0" (alg [] [] [] [(.capture [.num 1, .num 2])]), privateProp "a" (Algorithm.withDeclarationId (some (.shared 1)) (alg [] [] [] [(.call (.algorithmExpr (Algorithm.withDeclarationId (some (.shared 0)) (algWithParameterPatterns [.unpacking [.capture { name := "a" }, .capture { name := "b" }]] [] [] [.param "a"]))) [.resolve "$deconstruct$0"])])), privateProp "b" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "a" }, .capture { name := "b" }]] [] [] [.param "b"])) [.resolve "$deconstruct$0"])]), privateProp "q" (alg [] [] [] [(.capture [.num 7, .num 8])]), privateProp "c" (Algorithm.withDeclarationId (some (.shared 1)) (alg [] [] [] [(.call (.algorithmExpr (Algorithm.withDeclarationId (some (.shared 0)) (algWithParameterPatterns [.unpacking [.capture { name := "a" }, .capture { name := "b" }]] [] [] [.param "a"]))) [.resolve "q"])]))] [.resolve "c", .resolve "a"]))
+#guard obs hp_15a == "ok raw=S[7, 1] n=2"
+#guard cacheEntries hp_15a "$deconstruct$0" == 1
+#guard cacheEntries hp_15a "a" == 1
+#guard cacheEntries hp_15a "c" == 1
+#guard cacheEntries hp_15a "q" == 1
+#guard cacheTotal hp_15a == 4
+
+-- HP-15b: a deconstruction helper copied over another argument, original read first (H05)
+def hp_15b : Expr :=
+  (.algorithmExpr (alg [] [] [privateProp "$deconstruct$0" (alg [] [] [] [(.capture [.num 1, .num 2])]), privateProp "a" (Algorithm.withDeclarationId (some (.shared 1)) (alg [] [] [] [(.call (.algorithmExpr (Algorithm.withDeclarationId (some (.shared 0)) (algWithParameterPatterns [.unpacking [.capture { name := "a" }, .capture { name := "b" }]] [] [] [.param "a"]))) [.resolve "$deconstruct$0"])])), privateProp "b" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "a" }, .capture { name := "b" }]] [] [] [.param "b"])) [.resolve "$deconstruct$0"])]), privateProp "q" (alg [] [] [] [(.capture [.num 7, .num 8])]), privateProp "c" (Algorithm.withDeclarationId (some (.shared 1)) (alg [] [] [] [(.call (.algorithmExpr (Algorithm.withDeclarationId (some (.shared 0)) (algWithParameterPatterns [.unpacking [.capture { name := "a" }, .capture { name := "b" }]] [] [] [.param "a"]))) [.resolve "q"])]))] [.resolve "a", .resolve "c"]))
+#guard obs hp_15b == "ok raw=S[1, 7] n=2"
+#guard cacheEntries hp_15b "$deconstruct$0" == 1
+#guard cacheEntries hp_15b "a" == 1
+#guard cacheEntries hp_15b "c" == 1
+#guard cacheEntries hp_15b "q" == 1
+#guard cacheTotal hp_15b == 4
+
+-- HP-15c: a deconstruction helper copy with a changed unpacking pattern, copy read first (V05)
+def hp_15c : Expr :=
+  (.algorithmExpr (alg [] [] [privateProp "$deconstruct$0" (alg [] [] [] [(.capture [(.listLiteral [.num 1]), .num 2])]), privateProp "a" (Algorithm.withDeclarationId (some (.shared 1)) (alg [] [] [] [(.call (.algorithmExpr (Algorithm.withDeclarationId (some (.shared 0)) (algWithParameterPatterns [.unpacking [.capture { name := "a" }, .capture { name := "b" }]] [] [] [.param "a"]))) [.resolve "$deconstruct$0"])])), privateProp "b" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "a" }, .capture { name := "b" }]] [] [] [.param "b"])) [.resolve "$deconstruct$0"])]), privateProp "c" (Algorithm.withDeclarationId (some (.shared 1)) (alg [] [] [] [(.call (.algorithmExpr (Algorithm.withDeclarationId (some (.shared 0)) (algWithParameterPatterns [.unpacking [.listValue [.capture { name := "a" }], .capture { name := "b" }]] [] [] [.param "a"]))) [.resolve "$deconstruct$0"])]))] [.resolve "c", .resolve "a"]))
+#guard obs hp_15c == "ok raw=S[1, L[1]] n=2"
+#guard cacheEntries hp_15c "$deconstruct$0" == 1
+#guard cacheEntries hp_15c "a" == 1
+#guard cacheEntries hp_15c "c" == 1
+#guard cacheTotal hp_15c == 3
+
+-- HP-15d: a deconstruction helper copy with a changed unpacking pattern, original read first (V06)
+def hp_15d : Expr :=
+  (.algorithmExpr (alg [] [] [privateProp "$deconstruct$0" (alg [] [] [] [(.capture [(.listLiteral [.num 1]), .num 2])]), privateProp "a" (Algorithm.withDeclarationId (some (.shared 1)) (alg [] [] [] [(.call (.algorithmExpr (Algorithm.withDeclarationId (some (.shared 0)) (algWithParameterPatterns [.unpacking [.capture { name := "a" }, .capture { name := "b" }]] [] [] [.param "a"]))) [.resolve "$deconstruct$0"])])), privateProp "b" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "a" }, .capture { name := "b" }]] [] [] [.param "b"])) [.resolve "$deconstruct$0"])]), privateProp "c" (Algorithm.withDeclarationId (some (.shared 1)) (alg [] [] [] [(.call (.algorithmExpr (Algorithm.withDeclarationId (some (.shared 0)) (algWithParameterPatterns [.unpacking [.listValue [.capture { name := "a" }], .capture { name := "b" }]] [] [] [.param "a"]))) [.resolve "$deconstruct$0"])]))] [.resolve "a", .resolve "c"]))
+#guard obs hp_15d == "ok raw=S[L[1], 1] n=2"
+#guard cacheEntries hp_15d "$deconstruct$0" == 1
+#guard cacheEntries hp_15d "a" == 1
+#guard cacheEntries hp_15d "c" == 1
+#guard cacheTotal hp_15d == 3
+
+-- HP-15e: a deconstruction target body copied with a local shadowing source (V07)
+def hp_15e : Expr :=
+  (.algorithmExpr (alg [] [] [privateProp "$deconstruct$0" (Algorithm.withDeclarationId (some (.shared 0)) (alg [] [] [] [(.capture [.num 1, .num 2])])), privateProp "a" (Algorithm.withDeclarationId (some (.shared 2)) (alg [] [] [] [(.call (.algorithmExpr (Algorithm.withDeclarationId (some (.shared 1)) (algWithParameterPatterns [.unpacking [.capture { name := "a" }, .capture { name := "b" }]] [] [] [.param "a"]))) [.resolve "$deconstruct$0"])])), privateProp "b" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "a" }, .capture { name := "b" }]] [] [] [.param "b"])) [.resolve "$deconstruct$0"])]), privateProp "c" (Algorithm.withDeclarationId (some (.shared 2)) (alg [] [] [privateProp "$deconstruct$0" (Algorithm.withDeclarationId (some (.shared 0)) (alg [] [] [] [.num 7, .num 8]))] [(.call (.algorithmExpr (Algorithm.withDeclarationId (some (.shared 1)) (algWithParameterPatterns [.unpacking [.capture { name := "a" }, .capture { name := "b" }]] [] [] [.param "a"]))) [.resolve "$deconstruct$0"])]))] [.resolve "a", .resolve "c"]))
+#guard obs hp_15e == "ok raw=S[1, 7] n=2"
+#guard cacheEntries hp_15e "$deconstruct$0" == 2
+#guard cacheEntries hp_15e "a" == 1
+#guard cacheEntries hp_15e "c" == 1
+#guard cacheTotal hp_15e == 4
+
 /--
 Machine-checked comparable partition count: the id list is built by the loop that emits the guards
 above, while the expected total is computed independently from the corpus partition.
@@ -901,9 +948,14 @@ def comparableCaseIds : List String := [
   "HP-13l",
   "HP-13m",
   "HP-14a",
-  "HP-14c"
+  "HP-14c",
+  "HP-15a",
+  "HP-15b",
+  "HP-15c",
+  "HP-15d",
+  "HP-15e"
 ]
-#guard comparableCaseIds.length == 81
+#guard comparableCaseIds.length == 86
 
 /--
 Machine-checked known-divergence partition count (HOST-LEAN-O6 shapes pinned on both sides).
@@ -914,5 +966,5 @@ def divergentCaseIds : List String := [
 ]
 #guard divergentCaseIds.length == 2
 
--- 81 comparable cases, 2 known divergences.
+-- 86 comparable cases, 2 known divergences.
 end HostParentDifferential

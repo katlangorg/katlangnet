@@ -121,6 +121,10 @@ public class HostScopePropertyCacheTests
     private sealed class SuspendingRecordingCache : IAsyncZeroArgPropertyResultCache
     {
         private readonly RunScopedAsyncZeroArgPropertyResultCache _inner = new();
+
+        // DECON-CACHE-2: the inner cache publishes every read, so its publication provenance is this cache's.
+        public bool ReadObtainsPublishedValue(ZeroArgPropertyCacheKey key) => _inner.ReadObtainsPublishedValue(key);
+
         internal List<ZeroArgPropertyCacheKey> Keys { get; } = [];
         internal int SyncAccesses { get; private set; }
         internal int Suspensions { get; private set; }

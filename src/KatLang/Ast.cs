@@ -2950,6 +2950,16 @@ internal static class AliasTargetRows
 internal readonly record struct AssignmentDeconstructionTarget(object Group, int Index);
 
 /// <summary>
+/// Parser-origin signature of a deconstruction group. A record copy retains the group token,
+/// but replacing its pattern list cannot thereby certify the replacement as parser lowering.
+/// AST lists must remain unchanged during evaluation, like every other evaluator input.
+/// </summary>
+internal sealed class AssignmentDeconstructionGroup(IReadOnlyList<ParameterPattern> patterns)
+{
+    internal IReadOnlyList<ParameterPattern> Patterns { get; } = patterns;
+}
+
+/// <summary>
 /// The identity of ONE written declaration (<see cref="Algorithm.Declaration"/>): minted by
 /// the constructor of every <see cref="Algorithm.User"/> and <see cref="Algorithm.Conditional"/>
 /// and carried unchanged by every record copy. Ordinary equality and hashing are REFERENCE

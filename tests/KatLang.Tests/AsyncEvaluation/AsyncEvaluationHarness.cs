@@ -57,6 +57,9 @@ internal sealed class PassThroughAsyncZeroArgPropertyResultCache : IAsyncZeroArg
 {
     private readonly RunScopedAsyncZeroArgPropertyResultCache _inner = new();
 
+    // DECON-CACHE-2: the inner cache publishes every read, so its publication provenance is this cache's.
+    public bool ReadObtainsPublishedValue(ZeroArgPropertyCacheKey key) => _inner.ReadObtainsPublishedValue(key);
+
     public int SyncAccesses { get; private set; }
 
     public int AsyncAccesses { get; private set; }
@@ -110,6 +113,10 @@ internal sealed class PassThroughAsyncZeroArgPropertyResultCache : IAsyncZeroArg
 internal sealed class SuspendingAsyncZeroArgPropertyResultCache : IAsyncZeroArgPropertyResultCache
 {
     private readonly RunScopedAsyncZeroArgPropertyResultCache _inner = new();
+
+    // DECON-CACHE-2: the inner cache publishes every read, so its publication provenance is this cache's.
+    public bool ReadObtainsPublishedValue(ZeroArgPropertyCacheKey key) => _inner.ReadObtainsPublishedValue(key);
+
     private readonly List<(int Before, int After)> _threadHops = [];
 
     public int SyncAccesses { get; private set; }
@@ -176,6 +183,9 @@ internal sealed class SuspendingAsyncZeroArgPropertyResultCache : IAsyncZeroArgP
 internal sealed class CountingSuspendingAsyncZeroArgPropertyResultCache : IAsyncZeroArgPropertyResultCache
 {
     private readonly RunScopedAsyncZeroArgPropertyResultCache _inner = new();
+
+    // DECON-CACHE-2: the inner cache publishes every read, so its publication provenance is this cache's.
+    public bool ReadObtainsPublishedValue(ZeroArgPropertyCacheKey key) => _inner.ReadObtainsPublishedValue(key);
 
     public int SyncAccesses { get; private set; }
 
@@ -292,6 +302,9 @@ internal sealed class CancellingAsyncZeroArgPropertyResultCache(
 {
     private readonly RunScopedAsyncZeroArgPropertyResultCache _inner = new();
 
+    // DECON-CACHE-2: the inner cache publishes every read, so its publication provenance is this cache's.
+    public bool ReadObtainsPublishedValue(ZeroArgPropertyCacheKey key) => _inner.ReadObtainsPublishedValue(key);
+
     public int AsyncAccesses { get; private set; }
 
     public EvaluationBudget? ObservedBudget { get; private set; }
@@ -336,6 +349,9 @@ internal sealed class CancellingAfterAsyncZeroArgPropertyResultCache(
 {
     private readonly RunScopedAsyncZeroArgPropertyResultCache _inner = new();
 
+    // DECON-CACHE-2: the inner cache publishes every read, so its publication provenance is this cache's.
+    public bool ReadObtainsPublishedValue(ZeroArgPropertyCacheKey key) => _inner.ReadObtainsPublishedValue(key);
+
     public int AsyncAccesses { get; private set; }
 
     public EvaluationBudget? ObservedBudget { get; private set; }
@@ -378,6 +394,10 @@ internal sealed class CancellingAfterAsyncZeroArgPropertyResultCache(
 internal sealed class HoldingAsyncZeroArgPropertyResultCache(int holdAtAccess) : IAsyncZeroArgPropertyResultCache
 {
     private readonly RunScopedAsyncZeroArgPropertyResultCache _inner = new();
+
+    // DECON-CACHE-2: the inner cache publishes every read, so its publication provenance is this cache's.
+    public bool ReadObtainsPublishedValue(ZeroArgPropertyCacheKey key) => _inner.ReadObtainsPublishedValue(key);
+
     private readonly TaskCompletionSource _reached = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private readonly TaskCompletionSource _gate = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
