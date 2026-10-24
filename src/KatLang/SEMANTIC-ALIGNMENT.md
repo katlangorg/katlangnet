@@ -499,7 +499,9 @@ counted for every plain/counted pair (FORMAL-05) as production EQUATIONS. The he
 preserves suspensions, completed VALUEs and prepared supplies; it does not establish CALLABLE
 stability, canonical links or activation/address invariants (CALLABLE stability and recorded links:
 proved since FG-M1, 2026-10-23, below; need-heap address validity of supplies, environments,
-activations and collector slices under named evaluator premises: FG-H1, below). The original old/new evidence compares
+activations and collector slices under named evaluator premises: FG-H1, below; the whole-evaluator
+address invariant `Inv`, with no callback premise, for every production operation: FG-H1-FU-01,
+below). The original old/new evidence compares
 full outcomes and lossy state summaries on 3,030 cases (cache/activation contents and successful
 callable identities were omitted), not equality of complete state. Reviewer migration observations
 and limits are recorded in `artifacts/validation/r7-review/`. Proved scope and outstanding
@@ -529,10 +531,13 @@ premise); `slot_sound` / `form_sound` / `addresses_sound` for every output bundl
 (`formNeedSupplySourced_runState_valid`, `formNeedSupply_runState_valid`) and the production binder
 are CONDITIONAL on the named premises `SpreadSound evalSupplySpread ctx env` (the computed spread
 keeps the invariant and returns post-state-valid `.cells`) and `ChannelsSound` (VALUE/CALLABLE
-channels keep it); discharging them needs a whole-evaluator `StateValid` preservation and validity
-of prepared plan supplies, both open. NOT covered: addresses inside results (`callRef`, `argView`,
-completed outcomes), Ready payloads, prepared plan supplies, `callee` / `receiver` / `aliasBare`,
-`aliasCells`, `ValEnv`, and any VALUE/CALLABLE acyclicity. Guards `HeapAddressValidityGuards.lean`
+channels keep it). Both premises are FALSE for the compiled evaluator over `StateValid` (a
+`StateValid` state may hold a prepared plan supply naming a cell outside the heap; FG-H1-FU-01
+executes both counterexamples) and stay as stated; FG-H1-FU-01, below, replaces their production
+uses by premise-free theorems over the stronger invariant `Inv`. NOT covered HERE (covered by
+FG-H1-FU-01's `Inv`): addresses inside results (`callRef`, `argView`, completed outcomes), Ready
+payloads, prepared plan supplies, `callee` / `receiver` / `aliasBare`, `aliasCells`, `ValEnv`;
+covered nowhere: any VALUE/CALLABLE acyclicity. Guards `HeapAddressValidityGuards.lean`
 (actual production runs; negative witnesses: each dropped premise makes the universal statement
 false, reversed collector order rejected). Report
 `artifacts/validation/fg-h1/fg-h1-implementation-report.md`.
@@ -554,10 +559,54 @@ Corollaries: `production_callable_reread` (the production `projectNeedCallable` 
 outcome with no effect), `production_callee_reread` / `production_receiver_reread`, `runOps_*` for
 finite sequences. Guards `EvaluatorMemoLinksGuards.lean` (actual production operations; the old
 `CellKept` admits changing each new field; raw `setCallee` / `setReceiver` / CALLABLE writes are
-rejected by `LinkDisc` — contract boundary, not a production defect). NOT claimed: validity of the
-recorded addresses (FG-H1), collector order, an in-flight first-writer law (a record first made inside
+rejected by `LinkDisc` — contract boundary, not a production defect). NOT claimed here: validity of the
+recorded addresses (proved since FG-H1-FU-01 as the `Inv` clauses `CellV.callee` / `receiver` /
+`aliasBare`, below), collector order, an in-flight first-writer law (a record first made inside
 an establishing writer's own callback may be overwritten by that writer's publication), projection
 refinement, anything about C#. Report `artifacts/validation/fg-m1/fg-m1-implementation-report.md`.
+
+FG-H1-FU-01 — whole-evaluator need-address invariant (2026-10-24; proof-only, no Lean definition or
+C# change; it narrows, does not close, R7). FG-H1's production supply and binder theorems are
+conditional on `SpreadSound evalSupplySpread` / `ChannelsSound`, which are FALSE over `StateValid`.
+`KatLangArityLaws/AddressInvariant.lean` defines the stronger structural invariant `Inv` —
+`ValidCollectorHeap`; every cell's suspension (expression tier and value environment, collector
+slice, Ready payload), completed VALUE, prepared plan supply and `callee` / `receiver` /
+`aliasBare` record; every saved activation's needs and values; every zero-argument cache value;
+every `aliasCells` entry — with result validity `RV` (every `callRef` / `argView` inside a result,
+at any depth, is `< needs.size`), `Inv → StateValid`, `empty_inv`, and per-call contracts
+`CallPre` / `CallPost` by cases on `EvalCall` (input tiers, value environments and supplied cells
+valid; results valid; defensive readers have no precondition). The run contract
+`SoundOver Inv pre m post` claims every outcome (ordinary failures included); `sound_transfer`
+lifts a per-body obligation through `completedPart` to the production fixpoint without any
+callback premise. Write-point lemmas (`AddressInvariantWrites.lean`), callback and helper
+contracts (`AddressInvariantSpecs.lean`, `AddressInvariantBinder.lean`,
+`AddressInvariantHelpers.lean`) and a symbolic-execution tactic (`AddressInvariantTactic.lean`)
+discharge `evalStep_sound : BodySound` for all 102 bodies (`AddressInvariantBodies.lean`).
+Corollaries (`AddressInvariantProduction.lean`): `production_sound_all` (every production
+operation `evalUnbounded c`, every `Inv` entry state with `CallPre`: `Inv` kept, heap never
+shrinks, `CallPost` on success; a non-completing search returns its entry state; the incomplete
+fuel core returns `EvalState.empty`, which satisfies `Inv`); spreads (`production_evalSupplySpread`,
+`production_spread_cells` / `_items`, `production_spread_sound_inv`); supply formation
+(`production_formNeedSupplySourced`, `production_formNeedSupply`,
+`production_form_failure_retains_prefix`, `formNeedSupplySourced_inv`); plan supplies
+(`production_prepared_reread`, `production_prepare`, `production_viewCells` / `viewSupply` /
+`argumentViewCells`, `production_metaLoopCapture`, `production_executeAlong`, `production_invoke`);
+the binder (`production_channels_value` / `_callable`, `production_bindNeedPatterns` and its
+user-call, loop-step and META-builtin instances, `production_selectNeedFamilyBranch`,
+`production_needActivateBranch`, `bindNeedPatterns_inv`); and the entries
+`production_entry_program` / `production_entry_eval` / `production_entry_from_empty`
+(`evalProgramOutput wired` and `eval e` from `{callStack := [preludeAlg]}` and `[]`, for EVERY
+`wired` / `e`, from every `Inv` state). Guards `AddressInvariantGuards.lean`: kernel
+counterexamples on a malformed `StateValid` state (`prepare` / `viewCells` / `viewSupply` return
+the dangling cell; `.collector [5]` breaks `StateValid`), labelled call-contract counterexamples,
+and executed production guards (both legacy-premise counterexamples; whole programs over spreads,
+argument views, plan rereads, cached call references, `.Algorithm`, runtime aliases, captured
+tiers, deconstruction, clause families, META capture and loops keep an executable reading of
+`Inv`; an ordinary error retains a valid prefix). NOT claimed: the `runResultM` bridge (its
+`identifyPropertyExpr` / `validateExprTree` passes are kernel-opaque — the entry theorems hold for
+whatever they return), VALUE/CALLABLE acyclicity, termination, a first-writer law, the legacy
+FG-H1 premises (FALSE, kept as stated), anything about C#. Report
+`artifacts/validation/fg-h1-fu-01/fg-h1-fu-01-implementation-report.md`.
 
 META-S3-4 — generalized META capture of written invocations (2026-10-20; an INTENTIONAL language
 extension, owner decisions D-1A/D-2A/D-4, consequences D-3/D-5; Lean first, then C#). The capture domain

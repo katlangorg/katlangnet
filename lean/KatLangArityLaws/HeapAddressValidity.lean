@@ -27,14 +27,18 @@ This module proves, over the actual total production helpers of `KatLang.lean`, 
   explicit callback contract `SpreadSound` for the computed-spread evaluator;
 * the production wrappers `formNeedSupplySourced` / `formNeedSupply` inherit it under exactly
   the named premise `SpreadSound evalSupplySpread ctx env` (`formNeedSupplySourced_runState_valid`,
-  `formNeedSupply_runState_valid`), which remains an open evaluator obligation;
+  `formNeedSupply_runState_valid`). That premise is FALSE for the compiled evaluator over
+  `StateValid` (`AddressInvariantGuards`); FG-H1-FU-01 replaces its production uses by the
+  premise-free `formNeedSupplySourced_inv` / `production_formNeedSupplySourced` over `Inv`;
 * the activation facts actual parameter lookup uses (`recordParameterActivation_sound`,
   `parameterContext_sound`, `bindParameters_sound`, `enterAlgorithmBody_sound`) and the binder's
   collector allocation boundary (`needSourceAddress_sound`, `needLevelSources_valid`);
 * the whole Model-C binder returns a valid callee need environment from valid supplied cells
   (`binder_sound`, production `bindNeedPatterns_sound`), its allocation and META adapter
   discharged (`reference_sound`), under exactly the named channel premise `ChannelsSound`
-  (VALUE / CALLABLE demand keep the invariant), which remains an open evaluator obligation.
+  (VALUE / CALLABLE demand keep the invariant). That premise is FALSE for `bindingChannels`
+  over `StateValid` (`AddressInvariantGuards`); FG-H1-FU-01 replaces its production uses by the
+  premise-free `bindNeedPatterns_inv` / `production_bindNeedPatterns` over `Inv`.
 
 Every address here is a NEED-HEAP address (an index of `EvalState.needs`), never a binding
 context, a lexical-activation index, a declaration identity or a source position.
@@ -45,7 +49,8 @@ Coverage of the invariant `StateValid` (precisely these fields, nothing else):
 * `NeedSuspension.expression _ caller _`: every entry of `caller.needEnv` is `< needs.size`;
 * `EvalState.lexicalActivations`: every entry of every `ParameterActivation.needs` is `< needs.size`.
 
-NOT covered (they can hold addresses even in a Ready cell): addresses inside a `Result`
+NOT covered HERE (they can hold addresses even in a Ready cell; all but the `headScope` indices
+are clauses of FG-H1-FU-01's stronger invariant `Inv`, `AddressInvariant.lean`): addresses inside a `Result`
 (`callRef`, `argView`, completed VALUE outcomes), the `.ready` payload, prepared plan supplies,
 `NeedCell.callee` / `receiver` / `aliasBare`, `EvalState.aliasCells`, the value environment
 `ValEnv`, and `EvalCtx.headScope` activation indices. No acyclicity of VALUE/CALLABLE

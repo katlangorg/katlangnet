@@ -30,7 +30,9 @@ reaches lemmas defined after it.
 Not claimed here: other heap invariants (address validity of environments, allocation order of
 collector slices, acyclicity). Address validity and collector order for allocation, parameter
 transport, supply formation and the binder are proved in `HeapAddressValidity.lean` (FG-H1) under
-named evaluator premises; their whole-run discharge and acyclicity remain open. `CellKept` does
+named evaluator premises (false over `StateValid`); their whole-run replacement is FG-H1-FU-01's
+invariant `Inv` (`AddressInvariant*.lean`: every production operation keeps it, by the same
+transfer shape over a per-body obligation `evalStep_sound`); acyclicity remains open. `CellKept` does
 not constrain a cell's CALLABLE state, recorded callee or recorded receiver; their entry-state
 preservation is the
 companion relation `LinkKept` of `EvaluatorMemoLinks.lean` (FG-M1), proved by the same procedure
