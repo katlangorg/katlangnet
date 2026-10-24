@@ -142,13 +142,16 @@ public class MetaCallBindingContextTests
     }
 
     [Fact]
-    public async Task RuntimeTargetAliasesOfTheProjection_KeepTheirStickyBinding_FromTheRoot()
+    public async Task RuntimeTargetAliasesOfTheProjection_ReadTheirPlansRetainedCalleeValue_FromTheRoot()
     {
-        // FWD-02 / META-S3-2: each alias retains ONE sticky binding cell (D4), so its callable's body keeps
-        // that cell's declaring context. Different aliases (different F activations) stay isolated; the two
-        // A1() calls share A1's local V. Unchanged by CACHE-OWNER-D2, and Lean agrees: the same program
-        // without the effect leaves exactly two V entries for the three calls (three for the direct
-        // R1.Algorithm(), R2.Algorithm(), R1.Algorithm()).
+        // FWD-02 / META-S3-2 D4: B declares no parameter pattern, so A1 = R1.Algorithm is A1's ordinary
+        // zero-parameter property, not a D3 callable forward. Each A1() evaluates that terminal row afresh,
+        // and the row's bare R1.Algorithm is the VALUE of R1's captured plan callee cell (CR-13/CR-14b),
+        // computed once per plan: the second A1() reads that completed VALUE and requests neither B nor V
+        // again (§ 5 pins this at the cache seam). It is NOT A1's binding cell caching V. Different plans
+        // (different F activations) stay isolated. Unchanged by CACHE-OWNER-D2, and Lean agrees: the same
+        // program without the effect leaves exactly two V entries for the three calls (three for the
+        // direct R1.Algorithm(), R2.Algorithm(), R1.Algorithm(), which are fresh calls of B).
         const string rows = "R1 = F(3)\nR2 = F(40)\nA1 = R1.Algorithm\nA2 = R2.Algorithm\nA1(), A2(), A1()";
         var oracle = await ObserveAsync(Capture + FWithTickingB + rows);
         Assert.True(oracle.Kind == "ok", oracle.ToString());
@@ -324,6 +327,126 @@ public class MetaCallBindingContextTests
         Assert.Equal(Ticks(ticks), oracle.HostCalls);
     }
 
+    // ── 5. ALIAS-D4: a zero-parameter runtime alias row versus a fresh projected call ──────────
+    //
+    // experimental/features/alias-d4-1-research.md (ignored). B declares no parameter pattern, so an alias
+    // of R.Algorithm is D4's terminal ordinary property: A() evaluates the alias ROW afresh, and that row's
+    // bare R.Algorithm reads the captured plan's callee VALUE (CR-14b), computed once per PLAN. A direct
+    // R.Algorithm() is a fresh call of B (CR-14c). trace(V) counts runs of B's body, tick() runs of V's.
+
+    private const string FWithTracedB = "F(k) = {\n    B = {\n        V = k + tick()\n        trace(V)\n    }\n    Capture(B())\n}\n";
+
+    private const string TwoPlans = "R1 = F(3)\nR2 = F(40)\n";
+
+    public static TheoryData<string, string, string, string[]> ZeroParameterAliasWitnesses => new()
+    {
+        // M06: a new alias binding cell in every H activation, yet both H(R1) share R1's plan callee VALUE.
+        {
+            "M06", Capture + FWithTracedB + TwoPlans + "H(r) = {\n    A = r.Algorithm\n    A() * 100 + A()\n}\nH(R1), H(R1), H(R2)",
+            "S[404, 404, 4242]", ["tick#1", "trace(4)", "tick#2", "trace(42)"]
+        },
+        // M27: a COMPUTED receiver. The second AM() re-evaluates the row, F(3) forms a new plan, and its callee
+        // VALUE runs B again; the bare AM reads AM's entry published by the first call (CACHE-PUB-1).
+        {
+            "M27", Capture + FWithTracedB + "AM = F(3).Algorithm\nAM(), AM(), AM",
+            "S[4, 5, 4]", ["tick#1", "trace(4)", "tick#2", "trace(5)"]
+        },
+        // M16: Call(A1) forwards A1's property (the retained VALUE); Call(R1.Algorithm) forwards B, called afresh.
+        {
+            "M16", Capture + FWithTracedB + TwoPlans + "A1 = R1.Algorithm\nCall(f) = f()\nCall(A1), Call(A1), Call(R1.Algorithm), Call(R1.Algorithm)",
+            "S[4, 4, 5, 6]", ["tick#1", "trace(4)", "tick#2", "trace(5)", "tick#3", "trace(6)"]
+        },
+        // C04: the static zero-parameter control S = B shows the same split (S forwards B's property read).
+        {
+            "C04", "F(k) = {\n    B = {\n        V = k + tick()\n        trace(V)\n    }\n    S = B\n    Call(f) = f()\n    Call(S), Call(S), Call(B), Call(B)\n}\nF(3)",
+            "S[4, 4, 5, 6]", ["tick#1", "trace(4)", "tick#2", "trace(5)", "tick#3", "trace(6)"]
+        },
+        // M04f: a direct call first publishes B's read entry in F(3)'s declaring activation (CACHE-PUB-1), and
+        // the alias rows' callee VALUE then reads that entry: one run of B in all.
+        {
+            "M04f", Capture + FWithTracedB + TwoPlans + "A1 = R1.Algorithm\nR1.Algorithm(), A1(), A1()",
+            "S[4, 4, 4]", ["tick#1", "trace(4)"]
+        },
+        // M07: D3 control. A parameterized projected callee is forwarded as a CALLABLE: every A(x) is a fresh
+        // call. (Collecting-only D3 controls: RuntimeCallableAliasCorpusTests RF1-D3-zero-accepting and
+        // RuntimeAliasPublicationTests.ParameterizedRuntimeTargets_PublishNeitherAliasNorTarget.)
+        {
+            "M07", Capture + "G(k) = {\n    Sq(x) = x * x + k + tick()\n    Capture(Sq(2))\n}\nR = G(10)\nA = R.Algorithm\nA(3), A(3), A(4), R.Algorithm(3)",
+            "S[20, 21, 29, 23]", Ticks(4)
+        },
+    };
+
+    [Theory]
+    [MemberData(nameof(ZeroParameterAliasWitnesses))]
+    public async Task ZeroParameterAliasRows_ShareThePlansCalleeValue_WhileDirectAndParameterizedCallsStayFresh(
+        string id, string source, string expected, string[] hostCalls)
+    {
+        var oracle = await ObserveAsync(source);
+        Assert.True(oracle.Kind == "ok", $"{id}: {oracle}");
+        Assert.Equal(expected, oracle.Value);
+        Assert.Equal(hostCalls, oracle.HostCalls);
+    }
+
+    [Fact]
+    public async Task ARepeatedTerminalAliasCall_ReevaluatesItsRow_ButNeverDemandsTheCalleeAgain()
+    {
+        // At the property-cache seam, on the generic, optimized and genuinely suspending async routes. Each
+        // further A1() re-runs the alias row: one more A1 invocation and one more read of the receiver R1 (a
+        // hit). It makes NO B or V request — it stops at the completed callee VALUE of R1's plan — so B and V
+        // still evaluated once. The direct R1.Algorithm() control invokes B again and reads V afresh.
+        const string declarations = Capture + FWithTracedB + TwoPlans + "A1 = R1.Algorithm\n";
+        foreach (var path in new[] { 0, 1, 2 })
+        {
+            var once = await RecordAsync(declarations + "A1()", path);
+            var twice = await RecordAsync(declarations + "A1(), A1()", path);
+            var thrice = await RecordAsync(declarations + "A1(), A1(), A1()", path);
+
+            Assert.Equal(["tick#1", "trace(4)"], once.Log);
+            Assert.Equal(once.Log, twice.Log);
+            Assert.Equal(once.Log, thrice.Log);
+            Assert.Equal(1, once.Cache.Evaluations["B"]);
+            Assert.Equal(1, once.Cache.Evaluations["V"]);
+            foreach (var (later, calls) in new[] { (twice, 2), (thrice, 3) })
+            {
+                // What WAS re-evaluated: the terminal row.
+                Assert.Equal(calls, later.Cache.Count("A1", invoked: true));
+                Assert.Equal(calls, later.Cache.Count("R1", invoked: false));
+                // What was NOT: the projected callee and its local V.
+                foreach (var name in new[] { "B", "V" })
+                {
+                    Assert.Equal(once.Cache.Count(name, invoked: false), later.Cache.Count(name, invoked: false));
+                    Assert.Equal(once.Cache.Count(name, invoked: true), later.Cache.Count(name, invoked: true));
+                    Assert.Equal(1, later.Cache.Evaluations[name]);
+                }
+            }
+
+            Assert.Equal(1, once.Cache.Count("A1", invoked: true));
+            Assert.Equal(1, once.Cache.Count("R1", invoked: false));
+            Assert.Equal(1, once.Cache.Count("B", invoked: false));
+            Assert.Equal(1, once.Cache.Count("V", invoked: false));
+            Assert.Equal(0, once.Cache.Count("B", invoked: true));
+
+            var direct = await RecordAsync(declarations + "R1.Algorithm(), R1.Algorithm()", path);
+            Assert.Equal(["tick#1", "trace(4)", "tick#2", "trace(5)"], direct.Log);
+            Assert.Equal(2, direct.Cache.Count("B", invoked: true));
+            Assert.Equal(2, direct.Cache.Count("V", invoked: false));
+            Assert.Equal(2, direct.Cache.Evaluations["V"]);
+        }
+    }
+
+    private static async Task<(List<string> Log, RecordingCache Cache)> RecordAsync(string source, int path)
+    {
+        var cache = new RecordingCache();
+        var log = new List<string>();
+        var (result, _) = path == 2
+            ? await AsyncEvaluationHarness.Complete(Evaluator.RunCountedObservedAsync(Program(source),
+                zeroArgPropertyResultCache: cache, hostOperations: Operations(log, suspending: true)))
+            : Evaluator.RunCountedObserved(Program(source), enableOptimizations: path == 1, zeroArgPropertyResultCache: cache,
+                hostOperations: Operations(log, suspending: false));
+        Assert.True(result.IsOk, result.IsOk ? null : result.Error.ToString());
+        return (log, cache);
+    }
+
     // ── harness ──────────────────────────────────────────────────────────────────────────────
 
     /// <summary>
@@ -362,9 +485,19 @@ public class MetaCallBindingContextTests
             return new Result.Atom(ticks);
         }
 
+        Result Trace(Result value)
+        {
+            log.Add($"trace({SixRouteAgreement.Neutral(value)})");
+            return value;
+        }
+
         return suspending
-            ? HostOperations.Create(HostOperation.CreateAsync("tick", async (_, _) => { await Task.Yield(); return Tick(); }))
-            : HostOperations.Create(HostOperation.Create("tick", (_, _) => Tick()));
+            ? HostOperations.Create(
+                HostOperation.CreateAsync("tick", async (_, _) => { await Task.Yield(); return Tick(); }),
+                HostOperation.CreateAsync("trace", async (args, _) => { await Task.Yield(); return Trace(args[0]); }, "x"))
+            : HostOperations.Create(
+                HostOperation.Create("tick", (_, _) => Tick()),
+                HostOperation.Create("trace", (args, _) => Trace(args[0]), "x"));
     }
 
     private static Expr Program(string source)
@@ -374,26 +507,48 @@ public class MetaCallBindingContextTests
         return new Expr.AlgorithmExpr(parsed.Root);
     }
 
-    private sealed class RecordingCache : IZeroArgPropertyResultCache
+    private sealed class RecordingCache : IAsyncZeroArgPropertyResultCache
     {
-        private readonly RunScopedZeroArgPropertyResultCache _inner = new();
+        private readonly RunScopedAsyncZeroArgPropertyResultCache _inner = new();
 
         // DECON-CACHE-2: the inner cache publishes every read, so its publication provenance is this cache's.
         public bool ReadObtainsPublishedValue(ZeroArgPropertyCacheKey key) => _inner.ReadObtainsPublishedValue(key);
 
+        /// <summary>The VALUE reads (<c>GetOrEvaluate</c>), in request order.</summary>
         public List<ZeroArgPropertyExecution> Requests { get; } = [];
 
+        /// <summary>The explicit zero-supply invocations (CACHE-PUB-1 <c>Invoke</c>), in request order.</summary>
+        public List<ZeroArgPropertyExecution> Invocations { get; } = [];
+
         public Dictionary<string, int> Evaluations { get; } = new(StringComparer.Ordinal);
+
+        public int Count(string name, bool invoked)
+        {
+            var requests = invoked ? Invocations : Requests;
+            lock (requests) return requests.Count(request => request.Binding.Name == name);
+        }
 
         public EvalResult<ZeroArgPropertyResult> GetOrEvaluate(
             ZeroArgPropertyExecution execution,
             Func<EvalResult<ZeroArgPropertyResult>> evaluate)
         {
-            Requests.Add(execution);
+            Record(Requests, execution);
             return _inner.GetOrEvaluate(execution, () =>
             {
-                Evaluations[execution.Binding.Name] = Evaluations.GetValueOrDefault(execution.Binding.Name) + 1;
+                Evaluated(execution);
                 return evaluate();
+            });
+        }
+
+        public ValueTask<EvalResult<ZeroArgPropertyResult>> GetOrEvaluateAsync(
+            ZeroArgPropertyExecution execution,
+            Func<ValueTask<EvalResult<ZeroArgPropertyResult>>> evaluateAsync)
+        {
+            Record(Requests, execution);
+            return _inner.GetOrEvaluateAsync(execution, () =>
+            {
+                Evaluated(execution);
+                return evaluateAsync();
             });
         }
 
@@ -401,6 +556,27 @@ public class MetaCallBindingContextTests
         public EvalResult<ZeroArgPropertyResult> Invoke(
             ZeroArgPropertyExecution execution,
             Func<EvalResult<ZeroArgPropertyResult>> evaluate)
-            => _inner.Invoke(execution, evaluate);
+        {
+            Record(Invocations, execution);
+            return _inner.Invoke(execution, evaluate);
+        }
+
+        public ValueTask<EvalResult<ZeroArgPropertyResult>> InvokeAsync(
+            ZeroArgPropertyExecution execution,
+            Func<ValueTask<EvalResult<ZeroArgPropertyResult>>> evaluateAsync)
+        {
+            Record(Invocations, execution);
+            return _inner.InvokeAsync(execution, evaluateAsync);
+        }
+
+        private static void Record(List<ZeroArgPropertyExecution> requests, ZeroArgPropertyExecution execution)
+        {
+            lock (requests) requests.Add(execution);
+        }
+
+        private void Evaluated(ZeroArgPropertyExecution execution)
+        {
+            lock (Evaluations) Evaluations[execution.Binding.Name] = Evaluations.GetValueOrDefault(execution.Binding.Name) + 1;
+        }
     }
 }
