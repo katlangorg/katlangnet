@@ -1,5 +1,24 @@
 # Semantic Alignment Manifest.
 
+OOS-24 — consumer-order independence of the deconstruction group-bind memo (October 24 2026; evidence
+only, no production, Lean or rule change). The Constitution audit (snapshot `e62e3ac6`) recorded that the
+memo was keyed by the reader's binding context. Measured at `e62e3ac6` and `852d0b3c` on the generic,
+optimized and suspending-async routes: the audit's own D1-DECON shape (`[0].map{ n + B }[0] + B.a + B.b`)
+already bound once (the callback reads the owner, whose body binds in its declaring context), but a callback
+that first read a TARGET (`[0].map{ n + B.a }[0] + B.b + B`) bound twice — 12 steps / 43 checkpoints against
+11 / 42 for the direct-first order, so `MaxSteps = 11` refused only in the callback-first order — and a
+collector shape re-materialized its list (9 vs 7 items). The RHS ran once, and unlimited-budget values,
+effects and non-resource errors agreed across the matched consumer orders. Peak depth differs with demand
+nesting (D1 callback-first 7 vs direct-first 5; target callback-first 6 vs direct-first 5). OD-1 (`2144d597`,
+below) removed the consumer from the key; the stable same-source orders now bind once with identical steps,
+checkpoints and materialized items. Each eliminated bind saves one step and one checkpoint; the collector
+case eliminates two binds but only one demanded two-item list reservation (9 to 7 items). Local activations
+(equal, distinct and empty supplies) still bind once each, the exported source once per run, and the Q-37
+`S[3, 3]` witness keeps all five full binds while intermediate binds remain unpublished.
+Pins: `DeconstructionConsumerOrderTests` (current table beside the measured audit-snapshot baseline,
+executed consumer-order equality, memo-vs-unshared differential, near-limit verdicts, retained successful
+source after a bind mismatch, re-entrant witness, reused parsed tree).
+
 OD-1 — deconstruction shared bind across consumer contexts (October 24 2026; C#-only memo and
 resource-accounting change, classified by the "Zero-argument property cache semantics" row (C# cache
 instrumentation: no) and the caching V3 trigger: no Lean edit — Lean has no group-bind memo, budgets or
