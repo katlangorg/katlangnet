@@ -7757,16 +7757,16 @@ public static class LanguageSpecCorpus
             ExpectedDisplay = "0.00000000000000000000999999999999999999995",
             ExpectedRaw = "0.00000000000000000000999999999999999999995",
             ExpectedEmittedCount = 1,
-            LeanExclusionReason = "Transcendental Math functions and fractional Decimal128 values are outside the Lean Int numeric model; the accuracy class of `Ln`/`Lg`/`Log` and near-1 powers is a runtime (Decimal128Numerics) contract.",
+            LeanExclusionReason = "Transcendental Math functions and fractional Decimal128 values are outside the Lean Int numeric model; the accuracy class of `Ln`/`Lg`/`Log` (the platform Decimal128 logarithms) and of near-1 powers (Decimal128Numerics.NearOnePower) is a runtime contract.",
             Probes =
             [
                 // ln(1 − ε) = −ε − ε²/2 − …
                 new SpecProbe("Math.Ln(1 - 1e-20)", "ok raw=-0.00000000000000000001000000000000000000005 n=1"),
-                // A near-1 base with a fractional exponent takes the same reformulation:
+                // A near-1 base with a fractional exponent keeps its exponent product exact:
                 // (1 + 1e-20) ^ 0.5 = 1 + 5e-21 − 1.25e-41 + …, which rounds to 34 significant digits as 1 + 5e-21
                 new SpecProbe("(1 + 1e-20) ^ 0.5", "ok raw=1.000000000000000000005 n=1"),
             ],
-            Explanation = "Logarithms of arguments near 1 lose digits to cancellation in a naive ln(1 + ε), so the runtime evaluates them through the log1p reformulation: `Math.Ln(1 + 1e-20)` is `1e-20 − 5e-41 + …`, correct to the last digit of its 34 significant digits. `Lg` and `Log` share the reformulation, and a near-1 base raised to a fractional exponent is computed as `exp(y · ln x)` over it.",
+            Explanation = "Logarithms of arguments near 1 do not lose digits to cancellation in ln(1 + ε): `Math.Ln(1 + 1e-20)` is `1e-20 − 5e-41 + …`, correct to the last digit of its 34 significant digits. `Lg` and `Log` are as accurate near 1, and a near-1 base raised to a fractional exponent is computed as `exp(y · ln x)` with the product `y · ln x` carried exactly.",
         },
         new()
         {

@@ -1187,8 +1187,10 @@ public static partial class Evaluator
 
         // Every math member computes Decimal128 end-to-end — no double round-trip
         // in KatLang. Results use Decimal128's 34-digit format; this is not a
-        // correct-rounding guarantee. Asin/Acos use Decimal128Numerics to avoid
-        // the tested runtime's loss of accuracy near ±1. Domain violations
+        // correct-rounding guarantee. The transcendental members call the
+        // platform Decimal128 functions directly (DEC-RC2-1: the .NET 11 RC2
+        // accuracy correction superseded KatLang's endpoint and near-1
+        // reformulations; see SEMANTIC-ALIGNMENT.md K6-R3). Domain violations
         // follow IEEE: Sqrt(-1) and Ln(-1) are NaN, Ln(0) is -Infinity, and
         // non-finite inputs propagate. Transcendental results are
         // quantum-canonicalized (see CanonicalizeMathResult); the
@@ -1219,14 +1221,12 @@ public static partial class Evaluator
                 break;
             case "Sqrt": result = CanonicalizeMathResult(Decimal128.Sqrt(args[0])); break;
             case "Exp": result = CanonicalizeMathResult(Decimal128.Exp(args[0])); break;
-            // The logarithm family takes the near-1 reformulation (Decimal128Numerics):
-            // the platform Log loses a digit per decade of closeness to 1.
-            case "Ln": result = CanonicalizeMathResult(Decimal128Numerics.NaturalLog(args[0])); break;
-            case "Lg": result = CanonicalizeMathResult(Decimal128Numerics.Log10(args[0])); break;
+            case "Ln": result = CanonicalizeMathResult(Decimal128.Log(args[0])); break;
+            case "Lg": result = CanonicalizeMathResult(Decimal128.Log10(args[0])); break;
             case "Sin": result = CanonicalizeMathResult(Decimal128.Sin(args[0])); break;
-            case "Asin": result = CanonicalizeMathResult(Decimal128Numerics.Asin(args[0])); break;
+            case "Asin": result = CanonicalizeMathResult(Decimal128.Asin(args[0])); break;
             case "Cos": result = CanonicalizeMathResult(Decimal128.Cos(args[0])); break;
-            case "Acos": result = CanonicalizeMathResult(Decimal128Numerics.Acos(args[0])); break;
+            case "Acos": result = CanonicalizeMathResult(Decimal128.Acos(args[0])); break;
             case "Tan": result = CanonicalizeMathResult(Decimal128.Tan(args[0])); break;
             case "Atan": result = CanonicalizeMathResult(Decimal128.Atan(args[0])); break;
             case "Atan2": result = CanonicalizeMathResult(Decimal128.Atan2(args[0], args[1])); break;
@@ -1234,7 +1234,7 @@ public static partial class Evaluator
                 // Math.Pow and the `^` operator share one implementation, so the
                 // exact integer-exponent path and the zero-base rule cannot drift.
                 return EvalPow(span: null, args[0], args[1]);
-            case "Log": result = CanonicalizeMathResult(Decimal128Numerics.Log(args[0], args[1])); break;
+            case "Log": result = CanonicalizeMathResult(Decimal128.Log(args[0], args[1])); break;
             case "Random":
                 // Validation precedes every draw: an invalid call consumes no word of
                 // the run's stream, so the next valid draw is exactly what it would

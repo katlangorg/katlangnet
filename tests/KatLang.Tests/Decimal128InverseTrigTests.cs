@@ -1,19 +1,30 @@
 using System.Globalization;
 using System.Numerics;
 using System.Runtime.InteropServices;
+using KatLang.Evaluation;
+using KatLang.Evaluation.Caching;
+using KatLang.Optimizations.Loops;
 using KatLang.Tests.AsyncEvaluation;
 
 namespace KatLang.Tests;
 
 /// <summary>
-/// K6-R3 endpoint accuracy and routing. The original known answers were derived with
-/// Perl Math::BigFloat 1.999837 at 90 digits; the review rechecked them with mpmath 1.3.0.
-/// DeepEndpointCases uses exact decimal input strings and mpmath acos/asin at 200 digits,
-/// cross-checked by a 220-digit decimal Taylor series with Chudnovsky π.
-/// These external references do not use Decimal128 inverse trig or repeat its FMA formula.
+/// Inverse-trigonometric accuracy near the endpoints ±1 (K6-R3, September 2026) and the
+/// direct platform delegation that replaced KatLang's endpoint reformulation (DEC-RC2-1,
+/// October 2026: <c>Math.Acos</c>/<c>Math.Asin</c> and their aliases are
+/// <see cref="Decimal128.Acos"/>/<see cref="Decimal128.Asin"/> under the shared Math-result
+/// canonicalization, since the .NET 11 RC2 accuracy correction fixed the endpoint loss).
+/// Two kinds of evidence are kept apart: delegation tests compare KatLang with the
+/// platform call it names; accuracy tests compare it with independent references only.
+/// The original known answers were derived with Perl Math::BigFloat 1.999837 at 90 digits;
+/// the review rechecked them with mpmath 1.3.0. DeepEndpointCases uses exact decimal input
+/// strings and mpmath acos/asin at 200 digits, cross-checked by a 220-digit decimal Taylor
+/// series with Chudnovsky π. These external references do not use Decimal128 inverse trig.
 /// The assertions compare exact integer-scaled reference intervals, not a parsed
 /// 34-digit reference: ulp = 10^(floor(log10(abs(reference))) - 33).
-/// No tolerance here is a universal accuracy or correct-rounding claim.
+/// The tolerances are per-case sample checks (the DEC-RC2-1 sweep of the pinned runtime
+/// measured at most 0.5000032 ulp on its 6,280 inverse-trigonometric inputs), not a
+/// universal accuracy or correct-rounding claim.
 /// </summary>
 public class Decimal128InverseTrigTests
 {
@@ -71,30 +82,41 @@ public class Decimal128InverseTrigTests
             $"{actual} exceeds {maxUlps} numerical ulp from {reference}.");
     }
 
+    private static readonly RandomSource UnusedRandomness = RandomSourceFactory.Create(0, () => 0);
+
+    /// <summary>The ONE Math-native dispatch both engines share, on an exact Decimal128 input.</summary>
+    private static Decimal128 ApplyMath(string member, Decimal128 x)
+    {
+        var result = Evaluator.ApplyMathNative(member, [x], UnusedRandomness);
+        Assert.True(result.IsOk, result.IsError ? result.Error.ToString() : null);
+        return Assert.IsType<Result.Atom>(result.Value).Value;
+    }
+
     private static void AssertSameBits(Decimal128 expected, Decimal128 actual)
         => Assert.True(
             MemoryMarshal.AsBytes(MemoryMarshal.CreateReadOnlySpan(ref expected, 1))
                 .SequenceEqual(MemoryMarshal.AsBytes(MemoryMarshal.CreateReadOnlySpan(ref actual, 1))),
             $"Representation differs: expected {expected}, got {actual}.");
 
-    // ── Endpoint band: known answers ─────────────────────────────────────────
+    // ── Endpoint neighborhoods: known answers ────────────────────────────────
 
-    // Both spellings appear because the endpoint routing lives behind the one
-    // shared native wrapper; the catastrophic rows fail at 17da00a by 1e11..1e28 ulp.
+    // Both spellings appear because both reach the one shared native dispatch; the
+    // catastrophic rows failed at 17da00a (direct platform call on .NET 11 preview 7)
+    // by 1e11..1e28 ulp. The RC2 platform functions meet every row within one ulp.
     [Theory]
     // +1 side of acos (results are tiny: relative accuracy is what the platform lost)
-    [InlineData("acos(1 - 1e-12)", "1.4142135623732128999318865086469358471334467e-6", 2)]
-    [InlineData("acos(1 - 1e-20)", "1.4142135623730950488028672355116756577770093e-10", 2)]
-    [InlineData("acos(1 - 1e-30)", "1.4142135623730950488016887242098159296998696e-15", 2)]
-    [InlineData("Math.Acos(1 - 1e-30)", "1.4142135623730950488016887242098159296998696e-15", 2)]
-    [InlineData("acos(1 - 1e-33)", "4.4721359549995793928183473374625528435592330e-17", 2)]
-    // The first decade of the band, where the direct path begins losing accuracy.
-    [InlineData("acos(0.99999)", "4.4721396817879271723396663048526822600177185e-3", 2)]
-    [InlineData("acos(0.9999512345678901234567890123456789)", "9.8758117093829013029879032726239405441636291e-3", 2)]
-    [InlineData("acos(0.9999991234567890123456789012345678)", "1.3240417962000678785959668004308952180934445e-3", 2)]
-    [InlineData("acos(0.9999999999999999999987654321098765)", "4.9690399276389397915776534339960219802221331e-11", 2)]
-    [InlineData("acos(0.9999999999999999999999999999999998)", "2.0000000000000000000000000000000000333333333e-17", 2)]
-    [InlineData("acos(0.9999999999999999999999999999999999)", "1.4142135623730950488016887242096980903547849e-17", 2)]
+    [InlineData("acos(1 - 1e-12)", "1.4142135623732128999318865086469358471334467e-6", 1)]
+    [InlineData("acos(1 - 1e-20)", "1.4142135623730950488028672355116756577770093e-10", 1)]
+    [InlineData("acos(1 - 1e-30)", "1.4142135623730950488016887242098159296998696e-15", 1)]
+    [InlineData("Math.Acos(1 - 1e-30)", "1.4142135623730950488016887242098159296998696e-15", 1)]
+    [InlineData("acos(1 - 1e-33)", "4.4721359549995793928183473374625528435592330e-17", 1)]
+    // The first decade of the former band, where the preview-7 platform began losing accuracy.
+    [InlineData("acos(0.99999)", "4.4721396817879271723396663048526822600177185e-3", 1)]
+    [InlineData("acos(0.9999512345678901234567890123456789)", "9.8758117093829013029879032726239405441636291e-3", 1)]
+    [InlineData("acos(0.9999991234567890123456789012345678)", "1.3240417962000678785959668004308952180934445e-3", 1)]
+    [InlineData("acos(0.9999999999999999999987654321098765)", "4.9690399276389397915776534339960219802221331e-11", 1)]
+    [InlineData("acos(0.9999999999999999999999999999999998)", "2.0000000000000000000000000000000000333333333e-17", 1)]
+    [InlineData("acos(0.9999999999999999999999999999999999)", "1.4142135623730950488016887242096980903547849e-17", 1)]
     // -1 side of acos (results near π: the platform's absolute error showed as 22..29 digits)
     [InlineData("acos(-1 + 1e-12)", "3.1415912393762308652497434513929942372613223", 1)]
     [InlineData("acos(-1 + 1e-20)", "3.1415926534483718822253338783992161606460018", 1)]
@@ -125,15 +147,16 @@ public class Decimal128InverseTrigTests
     [InlineData("asin(-0.9999999999999999999987654321098765)", "-1.5707963267452062199549322937239749077586245", 1)]
     [InlineData("asin(-0.9999999999999999999999999999999998)", "-1.5707963267948965992313216916397514420985847", 1)]
     [InlineData("asin(-0.9999999999999999999999999999999999)", "-1.5707963267948966050891860679088009540816975", 1)]
-    public void EndpointBand_MatchesIndependentReference(string source, string reference, int maxUlps)
+    public void EndpointNeighborhood_MatchesIndependentReference(string source, string reference, int maxUlps)
         => AssertWithinUlps(reference, EvalSingle(source), maxUlps);
 
     [Fact]
     public void Acos_OneMinus1e30_RecoversTheLostDigits()
     {
-        // The audit's headline case: 17da00a returned 1.414213564615384992009383671093284e-15,
-        // about 2.24e24 result ulp from the reference.
-        AssertWithinUlps("1.4142135623730950488016887242098159296998696e-15", EvalSingle("acos(1 - 1e-30)"), maxUlps: 2);
+        // The audit's headline case: 17da00a (.NET 11 preview 7, direct platform call)
+        // returned 1.414213564615384992009383671093284e-15, about 2.24e24 result ulp from
+        // the reference. The corrected platform function must keep every digit.
+        AssertWithinUlps("1.4142135623730950488016887242098159296998696e-15", EvalSingle("acos(1 - 1e-30)"), maxUlps: 1);
         // And the mirrored -1 side / asin cases that carried the same 2.2e-24 absolute error.
         AssertWithinUlps("1.5707963267948952050177593185447026404098605", EvalSingle("asin(1 - 1e-30)"), maxUlps: 1);
         AssertWithinUlps("3.1415926535897918242490810101844540825084452", EvalSingle("acos(-1 + 1e-30)"), maxUlps: 1);
@@ -158,7 +181,10 @@ public class Decimal128InverseTrigTests
     public void DeepEndpointCases_MatchIndependentReferences(
         string input, string acosPositive, string acosNegative, string asinPositive)
     {
-        AssertWithinUlps(acosPositive, EvalSingle($"acos({input})"), "1.6");
+        // The removed FMA/Atan2 composition needed 1.6 ulp on the +1 side; the platform
+        // function stays within 0.51 on all four (largest sampled: 0.5000032 ulp for
+        // acos(-0.9999999999999999999999999999999078), 200-digit reference).
+        AssertWithinUlps(acosPositive, EvalSingle($"acos({input})"), "0.51");
         AssertWithinUlps(acosNegative, EvalSingle($"Math.Acos(-{input})"), "0.51");
         AssertWithinUlps(asinPositive, EvalSingle($"Math.Asin({input})"), "0.51");
         AssertWithinUlps("-" + asinPositive, EvalSingle($"asin(-{input})"), "0.51");
@@ -177,44 +203,52 @@ public class Decimal128InverseTrigTests
         Assert.Equal(Decimal128.One, EvalSingle("1 - 1e-35"));
         Assert.Equal(-Decimal128.One, EvalSingle("-1 + 1e-35"));
         Assert.Equal(-34, Decimal128.ILogB(Decimal128.GetQuantum(positive)));
-        // FMA rounds the exact complement once. Multiplying first discards x²'s
-        // low digits: at a gap of 1e-20 it leaves 2e-20 instead of the exact complement.
-        var x = N("0.99999999999999999999");
-        var complement = Decimal128.FusedMultiplyAdd(-x, x, Decimal128.One);
-        Assert.Equal(N("1.99999999999999999999e-20"), complement);
-        Assert.NotEqual(Decimal128.One - x * x, complement);
     }
 
+    // ── Delegation: KatLang's member IS the platform call ────────────────────
+
+    /// <summary>
+    /// Delegation/parity, not accuracy: over every input class — endpoints, the nearest
+    /// interior inputs, the former 0.9999 routing threshold and its neighbors, signed
+    /// zeros, alternate quanta, subnormals, out-of-domain values, infinities and NaN
+    /// payloads — the shared dispatch returns exactly the platform function's result
+    /// after the ONE Math-result canonicalization, bit for bit.
+    /// </summary>
     [Fact]
-    public void OutsideBand_AndEndpoints_PreserveRawRepresentations()
+    public void Members_AreThePlatformFunctionsOverEveryInputClass()
     {
         var boundary = N("0.9999");
         var nanBytes = MemoryMarshal.AsBytes(
             new[] { Decimal128.NaN }.AsSpan()).ToArray();
-        nanBytes[0] = 37; // Nonzero payload, retained as an input to the direct path.
+        nanBytes[0] = 37; // Nonzero payload.
         var payloadNaN = MemoryMarshal.Read<Decimal128>(nanBytes);
         foreach (var x in new[] {
-            N("0"), N("-0"), N("0e-100"), N("-0e+100"), N("0.50"), N("-0.500"),
+            N("0"), N("-0"), N("0e-100"), N("-0e+100"), N("0.50"), N("-0.500"), N("0.5"), N("0.9"), N("0.99"), N("0.999"),
             boundary, -boundary, Decimal128.BitDecrement(boundary), -Decimal128.BitDecrement(boundary),
-            Decimal128.Epsilon, -Decimal128.Epsilon,
-            Decimal128.One, -Decimal128.One, N("1.00"), N("-1.00"),
+            Decimal128.BitIncrement(boundary), -Decimal128.BitIncrement(boundary),
+            N("1e-30"), N("-1e-30"), Decimal128.Epsilon, -Decimal128.Epsilon,
+            N("0.99999"), N("1") - N("1e-30"), N("-1") + N("1e-33"), N("0.9999999999999999999999999999999078"),
+            Decimal128.BitDecrement(Decimal128.One), Decimal128.BitIncrement(-Decimal128.One),
+            Decimal128.One, -Decimal128.One, N("1.00"), N("-1.00"), N("1.0000000000000000000000000000000"),
             Decimal128.BitIncrement(Decimal128.One), Decimal128.BitDecrement(-Decimal128.One),
+            N("2"), Decimal128.MaxValue, Decimal128.MinValue,
             Decimal128.PositiveInfinity, Decimal128.NegativeInfinity,
             Decimal128.NaN, -Decimal128.NaN, payloadNaN, -payloadNaN })
         {
-            AssertSameBits(Decimal128.Acos(x), Decimal128Numerics.Acos(x));
-            AssertSameBits(Decimal128.Asin(x), Decimal128Numerics.Asin(x));
+            AssertSameBits(Evaluator.CanonicalizeMathResult(Decimal128.Acos(x)), ApplyMath("Acos", x));
+            AssertSameBits(Evaluator.CanonicalizeMathResult(Decimal128.Asin(x)), ApplyMath("Asin", x));
         }
     }
 
     [Theory]
-    [InlineData("acos(0.9999000000000000000000000000000317)", "0.0141422534775128775962402258154145211877277810138768746193618123633544801175", "1.2")]
+    // The removed composition's largest sampled in-band loss (1.1188 ulp, K6-R3 review).
+    [InlineData("acos(0.9999000000000000000000000000000317)", "0.0141422534775128775962402258154145211877277810138768746193618123633544801175", "0.51")]
     [InlineData("acos(-0.9999201049463989999669472383812971)", "3.12895175825017441975460503782486149632945736451374747327237135722814282267", "0.51")]
     [InlineData("asin(0.9999000000000000000000000000000676)", "1.55665407331738374163508146582687549772053019120436234894648325528525877823", "0.51")]
-    public void InBandRoundingTradeoffs_RemainSmall(string source, string reference, string maxUlps)
+    public void FormerBandRoundingTradeoffs_AreGone(string source, string reference, string maxUlps)
         => AssertWithinUlps(reference, EvalSingle(source), maxUlps);
 
-    // ── Mid-domain controls: the platform path is preserved bit-for-bit ─────
+    // ── Mid-domain controls: delegation plus independent accuracy ────────────
 
     [Theory]
     [InlineData("acos(0.5)", "0.5", true, "1.0471975511965977461542144610931676280657231")]
@@ -229,11 +263,11 @@ public class Decimal128InverseTrigTests
     [InlineData("asin(0.1234567890123456789012345678901234)", "0.1234567890123456789012345678901234", false, "0.12377257243915793136626255402941413340175449")]
     [InlineData("acos(0.99)", "0.99", true, "0.14153947332442721874578935697502701499398293")]
     [InlineData("acos(0)", "0", true, "1.5707963267948966192313216916397514420985847")]
-    // The last inputs on the platform side of the band (|x| = 0.9999 is NOT in the band).
+    // The former routing threshold |x| = 0.9999 (historical; no threshold remains).
     [InlineData("acos(0.9999)", "0.9999", true, "1.4142253477512877596240225817656105724403066e-2")]
     [InlineData("asin(-0.9999)", "-0.9999", false, "-1.5566540733173837416350814658220953363741816")]
     [InlineData("acos(-0.9999)", "-0.9999", true, "3.1274504001122803608664031574618467784727663")]
-    public void OutsideTheBand_PreservesThePlatformResultAndMatchesSelectedReferences(string source, string input, bool isAcos, string reference)
+    public void MidDomain_IsThePlatformResultAndMatchesSelectedReferences(string source, string input, bool isAcos, string reference)
     {
         var value = EvalSingle(source);
         var x = N(input);
@@ -241,20 +275,6 @@ public class Decimal128InverseTrigTests
             isAcos ? Decimal128.Acos(x) : Decimal128.Asin(x)), value);
         // A one-ulp check is an accuracy check, not evidence of correct rounding.
         AssertWithinUlps(reference, value, maxUlps: 1);
-    }
-
-    [Fact]
-    public void BandStart_IsOneMinusTenToTheMinusFour_AndBelowItTheHelperDelegates()
-    {
-        Assert.Equal(N("0.9999"), Decimal128Numerics.InverseTrigEndpointBandStart);
-        Assert.Equal(Decimal128.One - N("1e-4"), Decimal128Numerics.InverseTrigEndpointBandStart);
-
-        foreach (var text in new[] { "0", "-0", "0.5", "-0.5", "0.9", "-0.9", "0.99", "0.999", "0.9999", "-0.9999", "1e-30", "-1e-30" })
-        {
-            var x = N(text);
-            AssertSameBits(Decimal128.Acos(x), Decimal128Numerics.Acos(x));
-            AssertSameBits(Decimal128.Asin(x), Decimal128Numerics.Asin(x));
-        }
     }
 
     // ── Exact endpoints, signed zero, quanta ──────────────────────────────────
@@ -290,7 +310,7 @@ public class Decimal128InverseTrigTests
     [Theory]
     [InlineData("acos(2)")]
     [InlineData("asin(-2)")]
-    [InlineData("acos(1.000000000000000000000000000000001)")] // the first value above the band
+    [InlineData("acos(1.000000000000000000000000000000001)")] // the first value above 1
     [InlineData("asin(-1.000000000000000000000000000000001)")]
     [InlineData("Math.Acos(-1.000000000000000000000000000000001)")]
     [InlineData("acos(sqrt(-1))")]   // NaN
@@ -301,17 +321,17 @@ public class Decimal128InverseTrigTests
     public void OutsideTheDomain_StaysNaN(string source)
         => Assert.True(Decimal128.IsNaN(EvalSingle(source)), $"{source} must be NaN");
 
-    // ── Branch boundary: no cliff, no non-monotonic step ─────────────────────
+    // ── Former routing threshold 0.9999: no cliff, no non-monotonic step ─────
 
     [Fact]
-    public void BranchBoundary_IsMonotoneAndSmoothOnBothSidesForBothFunctions()
+    public void FormerThreshold_IsMonotoneAndSmoothOnBothSidesForBothFunctions()
     {
         // The derivative 1 / sqrt(1 - x²) is 70.7124… at |x| = 0.9999, so consecutive
         // Decimal128 inputs (1e-34 apart) map to outputs 7.07124e-33 apart: 7 ulp for
         // results near π/2 or π and about 707 ulp for acos near +1.
         // This local sampled walk checks direction and step size; it does not
         // establish an error or monotonicity bound for unsampled inputs.
-        // Walk 40 inputs on each side of the band start.
+        // Walk 40 inputs on each side of the former band start, through the shared dispatch.
         var expectedStep = N("7.0712445951902e-33");
         var start = N("0.9998999999999999999999999999999960");
 
@@ -324,7 +344,7 @@ public class Decimal128InverseTrigTests
                 for (var i = 0; i <= 80; i++)
                 {
                     var input = sign < 0 ? -magnitude : magnitude;
-                    var value = isAcos ? Decimal128Numerics.Acos(input) : Decimal128Numerics.Asin(input);
+                    var value = ApplyMath(isAcos ? "Acos" : "Asin", input);
                     if (previous is { } previousValue)
                     {
                         var step = value - previousValue;
@@ -347,7 +367,7 @@ public class Decimal128InverseTrigTests
     }
 
     [Theory]
-    // At the band start (platform path) and one Decimal128 step on either side of it.
+    // At the former band start and one Decimal128 step on either side of it.
     [InlineData("acos(0.9999)", "1.4142253477512877596240225817656105724403066e-2")]
     [InlineData("acos(0.9999000000000000000000000000000001)", "1.4142253477512877596240225817649034479807876e-2")]
     [InlineData("acos(0.9998999999999999999999999999999999)", "1.4142253477512877596240225817663176968998256e-2")]
@@ -358,13 +378,13 @@ public class Decimal128InverseTrigTests
     [InlineData("acos(-0.9999000000000000000000000000000001)", "3.1274504001122803608664031574618538497173615")]
     [InlineData("acos(-0.9998999999999999999999999999999999)", "3.1274504001122803608664031574618397072281711")]
     [InlineData("asin(-0.9999000000000000000000000000000001)", "-1.5566540733173837416350814658221024076187768")]
-    public void BranchBoundary_MatchesTheReferenceOnBothSides(string source, string reference)
-        => AssertWithinUlps(reference, EvalSingle(source), maxUlps: 2);
+    public void FormerThreshold_MatchesTheReferenceOnBothSides(string source, string reference)
+        => AssertWithinUlps(reference, EvalSingle(source), maxUlps: 1);
 
     // ── Dispatch parity ──────────────────────────────────────────────────────
 
     [Fact]
-    public async Task EndpointBand_AgreesAcrossFlatCountedAndAsyncDispatch()
+    public async Task EndpointNeighborhood_AgreesAcrossFlatCountedAndAsyncDispatch()
     {
         // The receiver properties read the input lists in VALUE position, so the async
         // zero-argument property cache seam is exercised (a builtin's collection slot
@@ -373,12 +393,14 @@ public class Decimal128InverseTrigTests
             "CosInputs = [1 - 1e-30, -1 + 1e-33, 0.9999000000000000000000000000000001, 0.9999, 0.5]\n"
             + "SinInputs = [1 - 1e-30, -1 + 1e-33, -0.9999000000000000000000000000000001, 0.9999, -0.5]\n"
             + "Cos = CosInputs\nSin = SinInputs\n"
-            + "Cos.map(acos)\nSin.map(Math.Asin)";
+            + "Cos.map(acos)\nSin.map(Math.Asin)\n"
+            + "Step(x, a, b) = x + 0, acos(x), Math.Asin(-x)\n"
+            + "Step(0.99999, 0, 0).repeat(2)";
         var program = Program(source);
 
         var flat = Evaluator.RunFlat(program);
         Assert.True(flat.IsOk, flat.IsError ? flat.Error.ToString() : null);
-        Assert.Equal(10, flat.Value.Count);
+        Assert.Equal(13, flat.Value.Count);
 
         var counted = Evaluator.RunCounted(program);
         Assert.True(counted.IsOk);
@@ -397,15 +419,32 @@ public class Decimal128InverseTrigTests
             AssertSameBits(flat.Value[i], twinAtoms[i]);
         }
 
-        var generic = EvaluatorTestSupport.Eval(source, enableLoopOptimization: false);
-        var optimized = EvaluatorTestSupport.Eval(source, enableLoopOptimization: true);
+        var generic = EvaluatorTestSupport.EvalFull(source,
+            enableLoopOptimization: false, enableSequencePipelineOptimization: false);
+        var diagnostics = new LoopOptimizationDiagnostics();
+        var optimized = Evaluator.Run(program, new RunScopedZeroArgPropertyResultCache(),
+            enableLoopOptimization: true, loopDiagnostics: diagnostics,
+            enableSequencePipelineOptimization: false, sequenceDiagnostics: null);
         Assert.True(generic.IsOk);
         Assert.True(optimized.IsOk);
-        Assert.Equal(flat.Value, generic.Value);
-        Assert.Equal(flat.Value, optimized.Value);
+        // Native calls use the shared fallback inside the optimized loop; the state
+        // arithmetic is planned. Merely enabling optimization on map proves neither.
+        Assert.Equal(1, diagnostics.OptimizedLoopHits);
+        Assert.Equal(2, diagnostics.LoopIterations);
+        Assert.True(diagnostics.PlannedExpressionHits > 0);
+        Assert.True(diagnostics.PlannedExpressionFallbacks > 0);
+        var genericAtoms = generic.Value.ToHostAtoms();
+        var optimizedAtoms = optimized.Value.ToHostAtoms();
+        Assert.Equal(flat.Value.Count, genericAtoms.Count);
+        Assert.Equal(flat.Value.Count, optimizedAtoms.Count);
+        for (var i = 0; i < flat.Value.Count; i++)
+        {
+            AssertSameBits(flat.Value[i], genericAtoms[i]);
+            AssertSameBits(flat.Value[i], optimizedAtoms[i]);
+        }
 
-        // The band results really are the reformulated ones (not the platform's).
-        AssertWithinUlps("1.4142135623730950488016887242098159296998696e-15", flat.Value[0], maxUlps: 2);
+        // Every route reaches the accurate endpoint result.
+        AssertWithinUlps("1.4142135623730950488016887242098159296998696e-15", flat.Value[0], maxUlps: 1);
         AssertWithinUlps("-1.5707963267948965745099621416439575139151113", flat.Value[6], maxUlps: 1);
     }
 }

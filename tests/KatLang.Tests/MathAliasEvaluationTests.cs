@@ -1,4 +1,5 @@
 using System.Numerics;
+using System.Runtime.InteropServices;
 using KatLang.Evaluation.Caching;
 
 namespace KatLang.Tests;
@@ -32,9 +33,16 @@ public class MathAliasEvaluationTests
         if (alias.IsError)
             Assert.Fail($"Alias `{aliasSource}` unexpectedly failed: {alias.Error}");
 
-        // Decimal128.Equals semantics (NaN is one value), matching the
-        // language's own structural equality.
-        Assert.Equal(canonical.Value, alias.Value);
+        Assert.Equal(canonical.Value.Count, alias.Value.Count);
+        for (var i = 0; i < canonical.Value.Count; i++)
+        {
+            var expected = canonical.Value[i];
+            var actual = alias.Value[i];
+            Assert.True(
+                MemoryMarshal.AsBytes(MemoryMarshal.CreateReadOnlySpan(ref expected, 1))
+                    .SequenceEqual(MemoryMarshal.AsBytes(MemoryMarshal.CreateReadOnlySpan(ref actual, 1))),
+                $"{aliasSource} differs in representation from {canonicalSource} at {i}.");
+        }
     }
 
     // Deterministic function members: one representative call per member,
@@ -55,9 +63,12 @@ public class MathAliasEvaluationTests
     [InlineData("asin(0.5)", "Math.Asin(0.5)")]
     [InlineData("cos(0.123)", "Math.Cos(0.123)")]
     [InlineData("acos(0.5)", "Math.Acos(0.5)")]
-    // Inverse-trig endpoint band (Decimal128Numerics.Acos/Asin) — shared as well.
+    // Inverse-trig endpoints and logarithms near 1 (one shared platform call) — shared as well.
     [InlineData("asin(1 - 1e-30)", "Math.Asin(1 - 1e-30)")]
     [InlineData("acos(-1 + 1e-33)", "Math.Acos(-1 + 1e-33)")]
+    [InlineData("ln(1 - 1e-34)", "Math.Ln(1 - 1e-34)")]
+    [InlineData("lg(0.99999999999265614061247)", "Math.Lg(0.99999999999265614061247)")]
+    [InlineData("log(1 + 1e-33, 1 - 1e-33)", "Math.Log(1 + 1e-33, 1 - 1e-33)")]
     [InlineData("tan(1)", "Math.Tan(1)")]
     [InlineData("atan(1)", "Math.Atan(1)")]
     [InlineData("atan2(1, 2)", "Math.Atan2(1, 2)")]

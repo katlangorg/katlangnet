@@ -9,9 +9,8 @@ namespace KatLang;
 /// <see cref="TryExactDecimal128"/>) and the integer-exponent power (both correctly
 /// rounded) and the truncating integer division <c>div</c>
 /// (<see cref="IntegerDivide"/>, exact wherever the truncated quotient is representable).
-/// It also hosts the inverse-trigonometric endpoint reformulation
-/// (<see cref="Acos"/>/<see cref="Asin"/>), an approximate composition of Decimal128
-/// primitives rather than a certified rounding.
+/// It also hosts the delegated power of a near-one base (<see cref="NearOnePower"/>), an
+/// exact-product fixed-point approximation rather than a certified rounding.
 /// Every finite Decimal128 is an integer coefficient times a power-of-ten quantum,
 /// so an exact rational value can be rounded ONCE, under IEEE round-to-nearest with
 /// ties-to-even, into a Decimal128 through <see cref="RoundRational"/>.
@@ -721,150 +720,7 @@ internal static class Decimal128Numerics
         return rest.IsOne;
     }
 
-    // ── Inverse trigonometric endpoints ──────────────────────────────────────
-
-    /// <summary>
-    /// The magnitude above which <see cref="Acos"/> and <see cref="Asin"/> stop
-    /// delegating to the platform functions: <c>1 - 1e-4</c>, i.e. <c>0.9999</c> exactly.
-    /// This empirically chosen band limits the endpoint reformulation to inputs where
-    /// the direct path starts losing accuracy. It is not an exact crossover for every
-    /// function or input: some correctly rounded direct results change by one last-place
-    /// digit inside the band. See the K6-R3 review in SEMANTIC-ALIGNMENT.md.
-    /// </summary>
-    internal static readonly Decimal128 InverseTrigEndpointBandStart =
-        Decimal128.One - Decimal128.ScaleB(Decimal128.One, -4);
-
-    /// <summary>
-    /// Arc cosine: the platform <see cref="Decimal128.Acos"/> for <c>|x| &lt;= 0.9999</c> and
-    /// for every non-finite or out-of-domain input, and <c>atan2(sqrt(1 - x²), x)</c> inside
-    /// the endpoint band <c>0.9999 &lt; |x| &lt;= 1</c> (see <see cref="EndpointComplement"/>
-    /// for the tested runtime). At the endpoints the numerical values agree with
-    /// the platform: <c>Acos(1)</c> is <c>0</c> and <c>Acos(-1)</c> is <see cref="Decimal128.Pi"/>.
-    /// </summary>
-    internal static Decimal128 Acos(Decimal128 x)
-        => IsInEndpointBand(x)
-            ? Decimal128.Atan2(EndpointComplement(x), x)
-            : Decimal128.Acos(x);
-
-    /// <summary>
-    /// Arc sine: the platform <see cref="Decimal128.Asin"/> outside the endpoint band and
-    /// <c>atan2(x, sqrt(1 - x²))</c> inside it, with the same complement as <see cref="Acos"/>.
-    /// <c>Asin(±1)</c> agrees with the existing Decimal128 ±π/2 value (a rounded
-    /// constant, not mathematically exact π/2 or necessarily <c>Decimal128.Pi / 2</c>).
-    /// </summary>
-    internal static Decimal128 Asin(Decimal128 x)
-        => IsInEndpointBand(x)
-            ? Decimal128.Atan2(x, EndpointComplement(x))
-            : Decimal128.Asin(x);
-
-    /// <summary>
-    /// <c>0.9999 &lt; |x| &lt;= 1</c>. NaN compares false on both sides and an infinity
-    /// exceeds one, so every non-finite or out-of-domain input keeps the platform
-    /// function's verdict (NaN) bit-for-bit.
-    /// </summary>
-    private static bool IsInEndpointBand(Decimal128 x)
-    {
-        var magnitude = Decimal128.Abs(x);
-        return magnitude > InverseTrigEndpointBandStart && magnitude <= Decimal128.One;
-    }
-
-    /// <summary>
-    /// <c>sqrt(1 - x²)</c> for <c>|x| &lt;= 1</c>, the quantity the inverse trigonometric
-    /// functions are ill-conditioned in near ±1 (their derivative magnitude is <c>1 / sqrt(1 - x²)</c>).
-    ///
-    /// <para>The tested runtime is .NET 11.0.0-preview.7.26381.103. Its assembly
-    /// metadata identifies dotnet/dotnet e2c1e00b3d0f96afb892fb261d5921565b400246,
-    /// whose source manifest maps runtime to 253bde0a42aff6d8e99e039db1e710c5e1f5436a.
-    /// In that pinned source, DecimalToDiyFp128 converts the input to a 128-bit binary
-    /// significand before DiyFp128AsinAcos computes sqrt((1 - |x|) / 2).
-    /// Conversion error is amplified relative to the small endpoint gap; the direct
-    /// Acos(1 - 1e-30) result had about nine correct digits in the review.</para>
-    ///
-    /// <para>Decimal FusedMultiplyAdd retains the exact product and rounds 1 - x*x
-    /// once, avoiding cancellation after a rounded product or binary input conversion.
-    /// Sqrt and Atan2 still round separately: this is not a correctly rounded
-    /// transcendental implementation. The deterministic review sweep (23,080 distinct
-    /// signed inputs, including all gaps n*1e-34 for n=1..999) observed maxima of
-    /// 1.52542 ulp for acos near +1, 0.50368 near -1, and 0.50228 for asin on either
-    /// side. References used mpmath 1.3.0 at 100 digits, with selected results checked
-    /// at 200 digits and by an independent 220-digit decimal series. These are sample
-    /// measurements, not whole-domain bounds or a guarantee of preserving every
-    /// previously correctly rounded result.</para>
-    ///
-    /// <para>At |x| = 1 the fused product is positive zero. Atan2(y, x) therefore
-    /// selects the intended quadrants: acos(1) is +0, acos(-1) agrees with Decimal128.Pi,
-    /// and asin(±1) agrees with the platform's existing rounded ±π/2 value.</para>
-    /// </summary>
-    private static Decimal128 EndpointComplement(Decimal128 x)
-        => Decimal128.Sqrt(Decimal128.FusedMultiplyAdd(-x, x, Decimal128.One));
-
-    // ── Logarithms and powers near 1 ─────────────────────────────────────────
-
-    /// <summary>
-    /// Natural logarithm with the accuracy of <c>ln(1 + ε)</c> near 1. The platform
-    /// <see cref="Decimal128.Log(Decimal128)"/> loses roughly one significant digit per decade of
-    /// closeness to 1 (cancellation: <c>Log(1 + 1e-33)</c> kept five correct digits of
-    /// 34 in the tested runtime), which the tutorial's stated accuracy of the logarithm
-    /// family does not allow. For <c>0.5 &lt;= x &lt;= 1.5</c> the difference <c>x - 1</c>
-    /// is EXACT in Decimal128 (the two operands are within a factor of two of each other),
-    /// so <see cref="Decimal128.LogP1"/> of that exact difference is the logarithm without
-    /// the cancellation; it agrees with <see cref="Decimal128.Log(Decimal128)"/> to the last digit
-    /// away from 1 and at the window's edges. Outside the window, and for every
-    /// non-finite, zero, or negative input, the platform function's verdict is kept
-    /// bit-for-bit. Like the inverse-trigonometric reformulation this is an accurate
-    /// composition of platform primitives, not a certified rounding.
-    /// </summary>
-    internal static Decimal128 NaturalLog(Decimal128 x)
-        => IsInLogOnePlusWindow(x)
-            ? Decimal128.LogP1(x - Decimal128.One)
-            : Decimal128.Log(x);
-
-    /// <summary>
-    /// Base-10 logarithm: <see cref="NaturalLog"/> over <c>ln 10</c> inside the near-1
-    /// window (where <see cref="Decimal128.Log10"/> loses the same digits), the platform
-    /// function elsewhere — so exact results away from 1, such as <c>Lg(1000) = 3</c>,
-    /// keep their existing platform value.
-    /// </summary>
-    internal static Decimal128 Log10(Decimal128 x)
-        => IsInLogOnePlusWindow(x)
-            ? NaturalLog(x) / NaturalLogOfTen
-            : Decimal128.Log10(x);
-
-    /// <summary>
-    /// Logarithm of <paramref name="value"/> in the given <paramref name="newBase"/>:
-    /// the ratio of the two natural logarithms whenever either argument lies in the
-    /// near-1 window, the platform <see cref="Decimal128.Log(Decimal128, Decimal128)"/>
-    /// otherwise (its exact results such as <c>Log(100, 10) = 2</c> are unchanged). A
-    /// DEGENERATE base or value — zero, negative, non-finite, or a base of exactly 1 —
-    /// always keeps the platform verdict (NaN, an infinity, or zero by its rules), so that
-    /// verdict never depends on whether the OTHER argument happens to lie in the window.
-    /// </summary>
-    internal static Decimal128 Log(Decimal128 value, Decimal128 newBase)
-        => IsOrdinaryLogArgument(value) && IsOrdinaryLogArgument(newBase) && newBase != Decimal128.One
-            && (IsInLogOnePlusWindow(value) || IsInLogOnePlusWindow(newBase))
-            ? NaturalLog(value) / NaturalLog(newBase)
-            : Decimal128.Log(value, newBase);
-
-    /// <summary>Finite and strictly positive: an argument the reformulation may take.</summary>
-    private static bool IsOrdinaryLogArgument(Decimal128 x)
-        => Decimal128.IsFinite(x) && x > Decimal128.Zero;
-
-    /// <summary>
-    /// <see cref="Decimal128.Log(Decimal128)"/> of 10, computed once from the platform function
-    /// (10 is far from 1, where that function is accurate to the last digit).
-    /// </summary>
-    private static readonly Decimal128 NaturalLogOfTen = Decimal128.Log((Decimal128)10);
-
-    /// <summary>
-    /// <c>0.5 &lt;= x &lt;= 1.5</c>: the window in which <c>x - 1</c> is an exact
-    /// Decimal128 subtraction. NaN compares false on both sides, so non-finite inputs
-    /// keep the platform verdict.
-    /// </summary>
-    private static bool IsInLogOnePlusWindow(Decimal128 x)
-        => x >= LogOnePlusWindowLow && x <= LogOnePlusWindowHigh;
-
-    private static readonly Decimal128 LogOnePlusWindowLow = Decimal128.Parse("0.5", System.Globalization.CultureInfo.InvariantCulture);
-    private static readonly Decimal128 LogOnePlusWindowHigh = Decimal128.Parse("1.5", System.Globalization.CultureInfo.InvariantCulture);
+    // ── Powers near 1 ───────────────────────────────────────────────────────
 
     /// <summary>
     /// The band of base MAGNITUDES around 1 (<c>0.99 &lt;= |b| &lt;= 1.01</c>; the caller
@@ -878,7 +734,10 @@ internal static class Decimal128Numerics
     /// <c>9223372036854775807</c> (the certified integer path), and its negative twin
     /// <c>(-0.9999999999999999999999999999999999) ^ 1e34</c> kept four digits until the band
     /// was applied to the magnitude (numeric audit #6, September 2026); away from 1 the
-    /// platform power is at least as accurate and is kept unchanged.
+    /// platform power is at least as accurate and is kept unchanged. The .NET 11 RC2
+    /// accuracy correction does not retire the band: on the D4 RC2 audit's sampled near-1
+    /// corpus the platform power still reached about 1.9 ulp where this path stayed
+    /// within 0.5 ulp.
     /// </summary>
     internal static bool IsInNearOnePowerBand(Decimal128 b)
         => b >= NearOnePowerBandLow && b <= NearOnePowerBandHigh;
@@ -952,7 +811,8 @@ internal static class Decimal128Numerics
 
         // Past the exponential's range the true value overflows or underflows: let the
         // platform exponential produce the IEEE limit from a rounded product (its sign and
-        // magnitude are all that matter there).
+        // magnitude are all that matter there). b != 1 lies in the band, so the platform
+        // logarithm has the sign of ε and the rounded product stays far past ±20,000.
         var integerPart = BigInteger.DivRem(productScaled, scale, out var fractionScaled);
         if (fractionScaled.Sign < 0)
         {
@@ -960,7 +820,7 @@ internal static class Decimal128Numerics
             fractionScaled += scale;
         }
         if (BigInteger.Abs(integerPart) > 20_000)
-            return Decimal128.Exp(exponent * NaturalLog(b));
+            return Decimal128.Exp(exponent * Decimal128.Log(b));
 
         // exp(t) = exp(n) · exp(f) in exact fixed-point arithmetic, rounded ONCE into
         // Decimal128 terms. RoundRational rounds this approximation; it does not certify
