@@ -197,14 +197,18 @@ public class ZeroArgPropertyResultCacheTests
         // Rebuilding a runtime view preserves its declaration token. A freshly
         // constructed algorithm is a distinct declaration even with shared lists.
         var owner = NewAlgorithm();
+        // The rebuilt intermediate levels are evaluator-OWNED (an ownerless level is a host object,
+        // compared by reference: HOST-NESTED-1).
+        var grandparentOwner = NewAlgorithm() with { Opens = grandparentOpens, Properties = grandparentProperties };
+        var parentOwner = NewAlgorithm() with { Opens = parentOpens, Properties = parentProperties };
 
         Algorithm.User RebuildOwner()
             => owner with
             {
                 Parent = new ScopeCtx(
-                    new ScopeCtx(null, grandparentOpens, grandparentProperties),
+                    new ScopeCtx(null, grandparentOpens, grandparentProperties) { Owner = grandparentOwner },
                     parentOpens,
-                    parentProperties),
+                    parentProperties) { Owner = parentOwner },
                 Opens = ownerOpens,
                 Properties = ownerProperties,
             };

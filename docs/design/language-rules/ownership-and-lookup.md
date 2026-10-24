@@ -232,9 +232,14 @@ the binding-cell memo, target memo and cycle key includes that exact scope objec
 (HOST-ALIAS-R14, the existing CACHE-OWNER-D3/D3-B ownership rule). Reopening one object retains one
 cell; separate objects sharing a property list, alias declaration or a record `with` copy retain
 separate cells. Evaluator-owned declaring scopes keep structural identity so rebuilding a wrapper
-preserves memo hits; a host level elsewhere in that chain does not change this rule. The cell memo
+preserves memo hits, but every ownerless host level ELSEWHERE in that chain also counts by object
+reference (HOST-NESTED-1, October 24 2026, superseding R14's structural pass-through): an alias
+declared in an evaluator-owned level beneath two distinct host objects (a shared property list or a
+`with` copy) keeps one cell and target memo per host object, while rebuilt owned levels over the SAME
+host ancestry still share one. The cell memo
 is distinct from the property-result cache and never makes an eligible explicit call reuse a call
-result. Lean's structural host-identity boundary remains O-6 (deferred). Since HOST-DIFF-1 the
+result. Lean's structural host-identity boundary remains O-6 (deferred; its full scope is under
+[`evaluator-and-hosting.md` § Zero-argument property cache](evaluator-and-hosting.md#zero-argument-property-cache)). Since HOST-DIFF-1 the
 differential corpus `lean/CoreTests/HostParentDifferential.lean` compares these shapes with Lean
 (HP-12c/HP-12d: one object vs record-equal objects sharing the member list), with per-object
 property identities supplied by `LeanAstEncoder`. `HostScopePropertyCacheTests` pins these C# host

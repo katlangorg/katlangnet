@@ -91,6 +91,9 @@ public static class LeanAstEncoder
 internal sealed class LeanAstEncoding
 {
     private readonly SharedDeclarations _sharing = new();
+    // Keyed by the C# owner identity, so an ownerless host ANCESTOR of the owner counts by object
+    // reference (HOST-NESTED-1): owned declarations under two distinct host objects get distinct ids.
+    // Empty or opens-only host levels still carry no Lean token of their own (O6-18, HP-14b).
     private readonly Dictionary<StructuralOwnerIdentity, Dictionary<Property, int>> _identities = new();
     // HOST-DIFF-1: a property declared directly in a host-built (ownerless) ScopeCtx level is one
     // C# binding PER SCOPE OBJECT (CACHE-OWNER-D3 / HOST-ALIAS-R14 key that level by reference), so
@@ -478,7 +481,13 @@ internal sealed class LeanAstEncoding
         // A PRE-WIRED parent (a host-built `Algorithm.Parent`, HOST-DIFF-1) is the algorithm's own
         // lexical parent and is encoded with it; only an unwired algorithm takes the encoder's
         // enclosing scope, which both evaluators wire it under.
-        _scope = new ScopeCtx(algorithm.Parent ?? (isModule ? null : parent), algorithm.Opens, algorithm.Properties);
+        // The scope stands for the EVALUATOR-OWNED level of `algorithm`, so it carries that owner:
+        // an ownerless level would count as a host object by reference (HOST-NESTED-1), and this
+        // per-traversal record would split one declaration reached twice.
+        _scope = new ScopeCtx(algorithm.Parent ?? (isModule ? null : parent), algorithm.Opens, algorithm.Properties)
+        {
+            Owner = algorithm,
+        };
         try
         {
             var encoded = EncodeAlgorithmCore(algorithm);

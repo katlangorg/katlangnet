@@ -12,8 +12,8 @@ evaluator ran on every route (plain, counted, generic, optimized, suspending asy
 
 Partition (machine-checked by the `*CaseIds.length` guards below):
 - corpus cases: 88
-- comparable cases: 86
-- known HOST-LEAN-O6 divergences, pinned on both sides and excluded from comparison: 2
+- comparable cases: 87
+- known HOST-LEAN-O6 divergences, pinned on both sides and excluded from comparison: 1
 
 Regenerate from the repo root with:
   $env:KATLANG_REGENERATE_HOST_PARENT_DIFFERENTIAL = "1"
@@ -791,10 +791,10 @@ def hp_14a : Expr :=
 #guard cacheTotal hp_14a == 1
 
 -- HP-14b [KNOWN DIVERGENCE - excluded from the comparable partition]: one declaration opened twice under two DISTINCT empty host level objects
--- Reason: HOST-LEAN-O6 O6-18 (Q-19 open-provider identity over EMPTY host levels): C# compares host levels by object reference, Lean by content, and an empty level has no PropDef to carry a per-object identity; a faithful encoding needs a Lean host-level token (deferred design E, owner decision OD-1).
+-- Reason: HOST-LEAN-O6 O6-18 (Q-19 open-provider identity over EMPTY host levels): C# compares host levels by object reference, Lean by content, and an empty level has no PropDef to carry a per-object identity; a faithful encoding needs a Lean host-level token (deferred HOST-LEAN-O6 alignment; candidate design E, unimplemented).
 -- C# observes err ambiguousOpen (pinned by HostParentDifferentialTests).
 def hp_14b : Expr :=
-  (.algorithmExpr (alg [] [(.algorithmExpr (Algorithm.withDeclarationId (some (.shared 1)) (Algorithm.withParent (some (ScopeCtx.mk none [] [] [] [] [] none none)) (alg [] [] [{ (publicProp "F" (Algorithm.withDeclarationId (some (.shared 0)) (alg [] [] [] [.num 7]))) with identity := some (.shared 0) }] [])))), (.algorithmExpr (Algorithm.withDeclarationId (some (.shared 1)) (Algorithm.withParent (some (ScopeCtx.mk none [] [] [] [] [] none none)) (alg [] [] [{ (publicProp "F" (Algorithm.withDeclarationId (some (.shared 0)) (alg [] [] [] [.num 7]))) with identity := some (.shared 0) }] []))))] [] [.resolve "F"]))
+  (.algorithmExpr (alg [] [(.algorithmExpr (Algorithm.withDeclarationId (some (.shared 1)) (Algorithm.withParent (some (ScopeCtx.mk none [] [] [] [] [] none none)) (alg [] [] [{ (publicProp "F" (Algorithm.withDeclarationId (some (.shared 0)) (alg [] [] [] [.num 7]))) with identity := some (.shared 0) }] [])))), (.algorithmExpr (Algorithm.withDeclarationId (some (.shared 1)) (Algorithm.withParent (some (ScopeCtx.mk none [] [] [] [] [] none none)) (alg [] [] [{ (publicProp "F" (Algorithm.withDeclarationId (some (.shared 0)) (alg [] [] [] [.num 7]))) with identity := some (.shared 1) }] []))))] [] [.resolve "F"]))
 #guard obs hp_14b == "ok raw=7 n=1"
 #guard obs hp_14b != "err ambiguousOpen"
 
@@ -808,13 +808,15 @@ def hp_14c : Expr :=
 #guard cacheEntries hp_14c "S" == 2
 #guard cacheTotal hp_14c == 6
 
--- HP-14d [KNOWN DIVERGENCE - excluded from the comparable partition]: an owned Q nested under two record-equal host levels that share ONE property list
--- Reason: HOST-LEAN-O6 O6-11x (C# pass-through policy): C# keys the host DECLARING level by reference but a host level PASSED THROUGH by structure, so the second level's P.Q reuses the first level's entry; the per-object encoding keeps Lean's two levels distinct. Which policy is the contract awaits owner decision OD-1.
--- C# observes ok raw=S[S[1, 1], S[2, 1]] n=2 (pinned by HostParentDifferentialTests).
+-- HP-14d: an owned Q nested under two record-equal host levels that share ONE property list keeps (S, P.Q) per level
 def hp_14d : Expr :=
-  (.algorithmExpr (alg [] [(.algorithmExpr (Algorithm.withParent (some (ScopeCtx.mk none [] [] [{ (privateProp "S" (Algorithm.withDeclarationId (some (.shared 0)) (alg [] [] [] [.param "x"]))) with identity := some (.shared 0) }, { (privateProp "P" (Algorithm.withDeclarationId (some (.shared 2)) (alg [] [] [{ (publicProp "Q" (Algorithm.withDeclarationId (some (.shared 1)) (alg [] [] [] [.resolve "S"]))) with identity := some (.shared 2) }] []))) with identity := some (.shared 1) }] [] [] none none)) (alg [] [] [publicProp "RunA" (alg [] [] [] [(.call (.resolve "G") [.num 1])]), publicProp "G" (alg ["x"] [] [] [.resolve "S", (.dotCall (.resolve "P") "Q" none)])] []))), (.algorithmExpr (Algorithm.withParent (some (ScopeCtx.mk none [] [] [{ (privateProp "S" (Algorithm.withDeclarationId (some (.shared 0)) (alg [] [] [] [.param "x"]))) with identity := some (.shared 3) }, { (privateProp "P" (Algorithm.withDeclarationId (some (.shared 2)) (alg [] [] [{ (publicProp "Q" (Algorithm.withDeclarationId (some (.shared 1)) (alg [] [] [] [.resolve "S"]))) with identity := some (.shared 2) }] []))) with identity := some (.shared 4) }] [] [] none none)) (alg [] [] [publicProp "RunB" (alg [] [] [] [(.call (.resolve "G") [.num 2])]), publicProp "G" (alg ["x"] [] [] [.resolve "S", (.dotCall (.resolve "P") "Q" none)])] [])))] [] [.resolve "RunA", .resolve "RunB"]))
+  (.algorithmExpr (alg [] [(.algorithmExpr (Algorithm.withParent (some (ScopeCtx.mk none [] [] [{ (privateProp "S" (Algorithm.withDeclarationId (some (.shared 0)) (alg [] [] [] [.param "x"]))) with identity := some (.shared 0) }, { (privateProp "P" (Algorithm.withDeclarationId (some (.shared 2)) (alg [] [] [{ (publicProp "Q" (Algorithm.withDeclarationId (some (.shared 1)) (alg [] [] [] [.resolve "S"]))) with identity := some (.shared 2) }] []))) with identity := some (.shared 1) }] [] [] none none)) (alg [] [] [publicProp "RunA" (alg [] [] [] [(.call (.resolve "G") [.num 1])]), publicProp "G" (alg ["x"] [] [] [.resolve "S", (.dotCall (.resolve "P") "Q" none)])] []))), (.algorithmExpr (Algorithm.withParent (some (ScopeCtx.mk none [] [] [{ (privateProp "S" (Algorithm.withDeclarationId (some (.shared 0)) (alg [] [] [] [.param "x"]))) with identity := some (.shared 3) }, { (privateProp "P" (Algorithm.withDeclarationId (some (.shared 2)) (alg [] [] [{ (publicProp "Q" (Algorithm.withDeclarationId (some (.shared 1)) (alg [] [] [] [.resolve "S"]))) with identity := some (.shared 5) }] []))) with identity := some (.shared 4) }] [] [] none none)) (alg [] [] [publicProp "RunB" (alg [] [] [] [(.call (.resolve "G") [.num 2])]), publicProp "G" (alg ["x"] [] [] [.resolve "S", (.dotCall (.resolve "P") "Q" none)])] [])))] [] [.resolve "RunA", .resolve "RunB"]))
 #guard obs hp_14d == "ok raw=S[S[1, 1], S[2, 2]] n=2"
-#guard obs hp_14d != "ok raw=S[S[1, 1], S[2, 1]] n=2"
+#guard cacheEntries hp_14d "Q" == 2
+#guard cacheEntries hp_14d "RunA" == 1
+#guard cacheEntries hp_14d "RunB" == 1
+#guard cacheEntries hp_14d "S" == 2
+#guard cacheTotal hp_14d == 6
 
 -- HP-15a: a deconstruction helper copied over another argument, copy read first (H04)
 def hp_15a : Expr :=
@@ -949,22 +951,22 @@ def comparableCaseIds : List String := [
   "HP-13m",
   "HP-14a",
   "HP-14c",
+  "HP-14d",
   "HP-15a",
   "HP-15b",
   "HP-15c",
   "HP-15d",
   "HP-15e"
 ]
-#guard comparableCaseIds.length == 86
+#guard comparableCaseIds.length == 87
 
 /--
 Machine-checked known-divergence partition count (HOST-LEAN-O6 shapes pinned on both sides).
 -/
 def divergentCaseIds : List String := [
-  "HP-14b",
-  "HP-14d"
+  "HP-14b"
 ]
-#guard divergentCaseIds.length == 2
+#guard divergentCaseIds.length == 1
 
--- 86 comparable cases, 2 known divergences.
+-- 87 comparable cases, 1 known divergences.
 end HostParentDifferential

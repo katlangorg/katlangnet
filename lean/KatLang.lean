@@ -1139,8 +1139,16 @@ end Pattern
 
 /-- Declaration identity is independent of executable body equality. Ordinary
     tree declarations receive a fresh `syntax` identity once at run preparation.
-    `shared` represents a host AST declaration reused at several syntax sites
-    (C# binding plus declaring-scope identity); encoders preserve that sharing explicitly.
+    `shared` represents a host AST declaration reused at several syntax sites; encoders
+    preserve that DECLARATION sharing explicitly. It does not by itself encode C#'s
+    binding-plus-host-scope identity: C# also keys every ownerless host `ScopeCtx` level (the
+    declaring level and every host ancestor, HOST-NESTED-1) by OBJECT reference, and Lean has
+    no host-object token, so one `shared` id placed under two distinct C# host objects MERGES
+    them here (guard 5b of `CoreTests/HostScopePropertyCache.lean`), while default `syntax`
+    ids SPLIT one C# host object reached through several edges. A shared declaration is not
+    a shared host owner; empty or opens-only host levels carry no declaration to hold an id
+    at all. This deferred O-6 boundary also covers alias memos, NEED-04 callable identity and
+    Q-19 open providers (SEMANTIC-ALIGNMENT.md, O6-DOCS).
     `module` marks the ONE declaration of a loaded module (Q-31 H-P + Q-32 I-U, decided
     2026-10-06): a hygienic source unit rooted at the prelude, so wherever it is reached it is
     wired under the chain's root level (`Algorithm.withParent`), never under its holder, and
@@ -1997,7 +2005,9 @@ inductive ZeroArgPropertyAccessKind where
     Lean keys use structural representations (`reprStr`) because the model has
     immutable AST values rather than C# object identities. Run preparation
     assigns declaration identities before wiring, so separate declarations with
-    equal bodies never alias; explicit `shared` identities preserve host DAGs.
+    equal bodies never alias; explicit `shared` identities preserve declaration
+    sharing in host ASTs, but they do not represent C#'s by-reference host-scope
+    identity for arbitrary host DAGs (O-6, deferred: see `PropertyIdentity`).
     The owner is its `asScopeCtx` (including parent chain), and exported
     lexical/structural spellings have one key. Explicit calls never read nor
     replace their own cache entry; a qualifying zero-supply invocation computes

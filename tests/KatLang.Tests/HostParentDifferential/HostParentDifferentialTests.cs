@@ -11,8 +11,9 @@ namespace KatLang.Tests;
 /// evaluated by C# on every route (<see cref="HostParentDifferentialHarness"/>) and encoded for Lean
 /// by <see cref="LeanAstEncoder"/>; the artifact guards Lean's neutral observation and published
 /// zero-argument cache entries against the recorded C# ones, and <c>lake build CoreTests</c>
-/// compiles it (it is imported by <c>lean/CoreTests.lean</c>). The two known HOST-LEAN-O6 model
-/// divergences are excluded from the comparable partition and pinned on both sides instead.
+/// compiles it (it is imported by <c>lean/CoreTests.lean</c>). The known HOST-LEAN-O6 model
+/// divergences (HP-14b since HOST-NESTED-1) are excluded from the comparable partition and pinned on
+/// both sides instead.
 ///
 /// Regenerate with:
 ///   $env:KATLANG_REGENERATE_HOST_PARENT_DIFFERENTIAL = "1"
@@ -78,7 +79,7 @@ public class HostParentDifferentialTests
     {
         var divergent = HostParentDifferentialCorpus.AllCases().Where(c => c.Divergence is not null)
             .Select(c => c.Id).ToList();
-        Assert.Equal(["HP-14b", "HP-14d"], divergent);
+        Assert.Equal(["HP-14b"], divergent);
         Assert.All(HostParentDifferentialCorpus.AllCases().Where(c => c.Divergence is not null), c =>
         {
             Assert.False(string.IsNullOrWhiteSpace(c.Divergence!.Reason), c.Id);
@@ -96,8 +97,8 @@ public class HostParentDifferentialTests
     [Fact]
     public void FidelityRatchet_ComparableHostParentCoverageCannotSilentlyShrink()
     {
-        const int MinimumComparableCases = 86;
-        const int MinimumComparableCasesWithPreWiredParents = 81;
+        const int MinimumComparableCases = 87;
+        const int MinimumComparableCasesWithPreWiredParents = 82;
         const int MinimumCacheGuards = 150;
 
         var cases = HostParentDifferentialCorpus.AllCases();

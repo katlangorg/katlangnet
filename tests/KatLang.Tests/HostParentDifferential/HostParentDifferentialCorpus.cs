@@ -418,8 +418,9 @@ public static class HostParentDifferentialCorpus
                 OpenedThrough(Scope(null, Prop("M", preludeModule)), [R("M")]), "M");
         }
 
-        // HP-14: the residual HOST-LEAN-O6 shapes. Comparable controls first, then the two known
-        // divergences, which are excluded from the comparable partition and pinned on BOTH sides.
+        // HP-14: the residual HOST-LEAN-O6 shapes. Comparable controls, and the one known divergence
+        // (HP-14b), which is excluded from the comparable partition and pinned on BOTH sides. HP-14d was a
+        // known divergence until HOST-NESTED-1 (OD-1(a)) made C# key host ANCESTORS by reference too.
         {
             var member = Public("F", Body(N(7)));
             var provider = new Algorithm.User(Scope(null), L<ParameterPattern>(), L<Expr>(), L(member), OutputBundle.Empty);
@@ -431,7 +432,7 @@ public static class HostParentDifferentialCorpus
                 new HostParentDivergence(
                     "HOST-LEAN-O6 O6-18 (Q-19 open-provider identity over EMPTY host levels): C# compares host levels by object " +
                     "reference, Lean by content, and an empty level has no PropDef to carry a per-object identity; a faithful " +
-                    "encoding needs a Lean host-level token (deferred design E, owner decision OD-1).",
+                    "encoding needs a Lean host-level token (deferred HOST-LEAN-O6 alignment; candidate design E, unimplemented).",
                     CSharpNeutral: "err ambiguousOpen",
                     LeanNeutral: "ok raw=7 n=1"));
 
@@ -440,15 +441,12 @@ public static class HostParentDifferentialCorpus
             static Property[] Reader() => [Public("G", Fn(["x"], R("S"), Dot(R("P"), "Q")))];
             Case("HP-14c", "control: fresh host levels with their own nested declarations keep (S, P.Q) per level",
                 OpenedTwo(Scope(null, Nested()), Call("G", N(1)), Scope(null, Nested()), Call("G", N(2)), Reader), "S", "Q");
+            // HOST-NESTED-1: C# formerly keyed this passed-through host level structurally and observed
+            // S[S[1, 1], S[2, 1]]; with every host ancestor keyed by reference it agrees with the
+            // per-object encoding.
             var sharedList = L(Nested());
-            Divergent("HP-14d", "an owned Q nested under two record-equal host levels that share ONE property list",
+            Case("HP-14d", "an owned Q nested under two record-equal host levels that share ONE property list keeps (S, P.Q) per level",
                 OpenedTwo(new ScopeCtx(null, L<Expr>(), sharedList), Call("G", N(1)), new ScopeCtx(null, L<Expr>(), sharedList), Call("G", N(2)), Reader),
-                new HostParentDivergence(
-                    "HOST-LEAN-O6 O6-11x (C# pass-through policy): C# keys the host DECLARING level by reference but a host level " +
-                    "PASSED THROUGH by structure, so the second level's P.Q reuses the first level's entry; the per-object encoding " +
-                    "keeps Lean's two levels distinct. Which policy is the contract awaits owner decision OD-1.",
-                    CSharpNeutral: "ok raw=S[S[1, 1], S[2, 1]] n=2",
-                    LeanNeutral: "ok raw=S[S[1, 1], S[2, 2]] n=2"),
                 "S", "Q");
         }
 

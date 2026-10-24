@@ -8,7 +8,8 @@ namespace KatLang.Evaluation.Caching;
 /// <list type="bullet">
 ///   <item>an evaluator-owned declaration (<see cref="Algorithm"/>) — identified structurally by
 ///   <see cref="StructuralOwnerIdentity.FromPropertyOwner"/>, so rebuilt owners over one resolving
-///   scope keep sharing an entry;</item>
+///   scope keep sharing an entry, while every ownerless host ANCESTOR on its chain still counts as
+///   that host object by reference (HOST-NESTED-1);</item>
 ///   <item>an OWNERLESS host-built <see cref="ScopeCtx"/> level (its internal <c>Owner</c> is null:
 ///   a host scope kept as the parent of an opened inline block) — identified by the REFERENCE of
 ///   that very scope object. The evaluator never copies a host level during a run, so every read
@@ -129,7 +130,7 @@ internal interface IZeroArgPropertyResultCache
 ///   scope (<see cref="StructuralOwnerIdentity"/> — the same identity for every
 ///   activation, open-provided wiring, or rebuilt structural receiver of that scope; for an
 ///   ownerless host-built declaring level, the level object by reference:
-///   <see cref="PropertyDeclaringOwner"/>)
+///   <see cref="PropertyDeclaringOwner"/>; an ownerless host ancestor counts by reference too)
 ///   serves every property-style access: <c>Big</c> read from two thousand calls of
 ///   <c>F(x) = Big + x</c>, from each callback of a <c>map</c>, from every
 ///   iteration of a loop step, or inside an explicit <c>B()</c> call is evaluated
@@ -206,26 +207,44 @@ internal readonly record struct ZeroArgPropertyCacheKey(
 /// identity captures that scope and its complete parent chain. Non-empty
 /// opens/property-list components compare BY REFERENCE; separately allocated
 /// empty components compare as resolution-equivalent because they contribute
-/// nothing to lookup. Each intermediate <see cref="ScopeCtx"/> can be minted
-/// afresh along a nested structural path, so comparing any scope record itself
-/// would split equivalent rebuilt paths. Rebuilt owners over the same resolving
+/// nothing to lookup. Each intermediate EVALUATOR-OWNED <see cref="ScopeCtx"/> can be
+/// minted afresh along a nested structural path, so comparing such a scope record
+/// itself would split equivalent rebuilt paths. Rebuilt owners over the same resolving
 /// scope therefore keep hitting at every nesting depth, while owners with
 /// resolution-distinct components never collide.
+/// <para>An OWNERLESS host-built level anywhere on the chain — the declaring level or any
+/// ancestor of it — additionally contributes that level OBJECT, by reference (HOST-NESTED-1,
+/// owner decision OD-1(a), October 24 2026, extending CACHE-OWNER-D3 and HOST-ALIAS-R14 from the
+/// declaring level to the whole ancestry). The evaluator never copies or mints a host level, so
+/// one host object reached any number of times is one identity, while two distinct host objects
+/// — record-equal, sharing a property list, or a <c>with</c> copy — never are, even when empty
+/// (list sharing cannot establish host identity). A host level never equals an
+/// evaluator-owned level. Formerly a host ANCESTOR compared structurally, so a declaration nested
+/// under two such objects shared one entry: host <c>{ S = tick(); P = { public Q = S } }</c> read as
+/// <c>(S, P.Q)</c> through two of them gave <c>((1, 1), (2, 1))</c>; it is now
+/// <c>((1, 1), (2, 2))</c>. This is the rule the declaring-scope relation
+/// (<c>Evaluator.IsSameDeclaringScope</c>) already applied.</para>
 /// </summary>
 internal sealed class StructuralOwnerIdentity
 {
     private readonly ScopeComponent[] _scopeChain;
-    // By reference: an owner's declaration token, or (FromScope) an ownerless host-built level.
+    // HOST-NESTED-1: the OWNERLESS host-built level object at each chain position (null for an
+    // evaluator-owned level), compared by reference. Allocated only when the chain has a host level
+    // at all — evaluator-created scopes always have an owner, so ordinary source runs need no extra
+    // chain array (the identity object itself gains this one reference field).
+    private readonly ScopeCtx?[]? _hostLevels;
+    // By reference: the owner's declaration token (FromPropertyOwner); null otherwise.
     private readonly object? _declaration;
     private readonly int _hashCode;
 
-    private StructuralOwnerIdentity(ScopeComponent[] scopeChain, object? declaration = null)
+    private StructuralOwnerIdentity(ScopeComponent[] scopeChain, ScopeCtx?[]? hostLevels, object? declaration = null)
     {
         _scopeChain = scopeChain;
+        _hostLevels = hostLevels;
         _declaration = declaration;
         // Immutable, and hashed on every cache operation of a key (lookup, the Q-37 active-owner
         // set, publication, statistics): compute the chain walk once.
-        _hashCode = ComputeHashCode(scopeChain, declaration);
+        _hashCode = ComputeHashCode(scopeChain, hostLevels, declaration);
     }
 
     public static StructuralOwnerIdentity FromOwner(Algorithm owner, bool includeDeclaration = false)
@@ -233,16 +252,26 @@ internal sealed class StructuralOwnerIdentity
         // Every cache request computes its key (CACHE-PUB-1 added the explicit zero-supply
         // invocations), so the chain is measured first and copied into ONE exact array.
         var length = 1;
+        var hasHostLevel = false;
         for (var scope = owner.Parent; scope is not null; scope = scope.Parent)
+        {
             length++;
+            hasHostLevel |= scope.Owner is null;
+        }
 
         var scopeChain = new ScopeComponent[length];
+        var hostLevels = hasHostLevel ? new ScopeCtx?[length] : null;
+        // The owner itself is an evaluator-owned level, never a host one (hostLevels[0] stays null).
         scopeChain[0] = new ScopeComponent(owner.Opens, owner.Properties);
         var index = 1;
-        for (var scope = owner.Parent; scope is not null; scope = scope.Parent)
-            scopeChain[index++] = new ScopeComponent(scope.Opens, scope.Properties);
+        for (var scope = owner.Parent; scope is not null; scope = scope.Parent, index++)
+        {
+            scopeChain[index] = new ScopeComponent(scope.Opens, scope.Properties);
+            if (hostLevels is not null && scope.Owner is null)
+                hostLevels[index] = scope;
+        }
 
-        return new StructuralOwnerIdentity(scopeChain, includeDeclaration ? owner.Declaration : null);
+        return new StructuralOwnerIdentity(scopeChain, hostLevels, includeDeclaration ? owner.Declaration : null);
     }
 
     internal static StructuralOwnerIdentity FromPropertyOwner(Algorithm owner)
@@ -263,21 +292,35 @@ internal sealed class StructuralOwnerIdentity
     /// The resolving identity of a SCOPE chain itself — each level's opens and properties, from
     /// <paramref name="scope"/> outward — with no owner declaration: what a name looked up from a
     /// body wired under <paramref name="scope"/> can select. A null scope is the empty chain.
-    /// <para>When <paramref name="scope"/> is itself an OWNERLESS host-built level, that level OBJECT
-    /// is part of the identity, by reference — the rule <see cref="PropertyDeclaringOwner"/> applies
-    /// to the properties declared there (CACHE-OWNER-D3): the evaluator never copies a host level, so
-    /// every use through it still names one identity, while two independently constructed host
-    /// levels that share a property list (or a record <c>with</c> copy) — whose property entries are
-    /// already separate — no longer share the run-wide alias memo either (HOST-ALIAS-R14).
+    /// <para>Every OWNERLESS host-built level of the chain — <paramref name="scope"/> itself or any
+    /// ancestor — is part of the identity as that level OBJECT, by reference: the rule
+    /// <see cref="PropertyDeclaringOwner"/> applies to the properties declared there (CACHE-OWNER-D3)
+    /// and the owner identity applies to its ancestors (HOST-NESTED-1). The evaluator never copies a
+    /// host level, so every use through it still names one identity, while two independently
+    /// constructed host levels that share a property list (or a record <c>with</c> copy) — whose
+    /// property entries are already separate — share no alias memo either, whether the alias is
+    /// declared in the host level itself (HOST-ALIAS-R14) or in an evaluator-owned level beneath it.
     /// Evaluator-created levels always have an owner, so rebuilt evaluator scopes keep comparing
     /// structurally.</para>
     /// </summary>
     internal static StructuralOwnerIdentity FromScope(ScopeCtx? scope)
     {
         var scopeChain = new List<ScopeComponent>();
+        List<ScopeCtx?>? hostLevels = null;
         for (var level = scope; level is not null; level = level.Parent)
+        {
+            if (level.Owner is null && hostLevels is null)
+            {
+                hostLevels = [];
+                for (var i = 0; i < scopeChain.Count; i++)
+                    hostLevels.Add(null);
+            }
+
             scopeChain.Add(new ScopeComponent(level.Opens, level.Properties));
-        return new StructuralOwnerIdentity([.. scopeChain], scope is { Owner: null } hostLevel ? hostLevel : null);
+            hostLevels?.Add(level.Owner is null ? level : null);
+        }
+
+        return new StructuralOwnerIdentity([.. scopeChain], hostLevels is null ? null : [.. hostLevels]);
     }
 
     public override bool Equals(object? obj)
@@ -291,7 +334,8 @@ internal sealed class StructuralOwnerIdentity
 
         for (var i = 0; i < _scopeChain.Length; i++)
         {
-            if (!ComponentEquals(_scopeChain[i].Opens, other._scopeChain[i].Opens)
+            if (!ReferenceEquals(HostLevelAt(i), other.HostLevelAt(i))
+                || !ComponentEquals(_scopeChain[i].Opens, other._scopeChain[i].Opens)
                 || !ComponentEquals(_scopeChain[i].Properties, other._scopeChain[i].Properties))
             {
                 return false;
@@ -313,20 +357,25 @@ internal sealed class StructuralOwnerIdentity
     private static bool ComponentEquals<T>(IReadOnlyList<T> x, IReadOnlyList<T> y)
         => ReferenceEquals(x, y) || (x.Count == 0 && y.Count == 0);
 
+    private ScopeCtx? HostLevelAt(int index) => _hostLevels?[index];
+
     private static int ComponentHash<T>(IReadOnlyList<T> component)
         => component.Count == 0 ? 0 : RuntimeHelpers.GetHashCode(component);
 
     public override int GetHashCode() => _hashCode;
 
-    private static int ComputeHashCode(ScopeComponent[] scopeChain, object? declaration)
+    private static int ComputeHashCode(ScopeComponent[] scopeChain, ScopeCtx?[]? hostLevels, object? declaration)
     {
         var hash = new HashCode();
         hash.Add(declaration is null ? 0 : RuntimeHelpers.GetHashCode(declaration));
         hash.Add(scopeChain.Length);
-        foreach (var component in scopeChain)
+        for (var i = 0; i < scopeChain.Length; i++)
         {
-            hash.Add(ComponentHash(component.Opens));
-            hash.Add(ComponentHash(component.Properties));
+            // An all-null host array never exists (it is allocated only for a host level), so equal
+            // identities hash equally whether or not the array is present.
+            hash.Add(hostLevels?[i] is { } hostLevel ? RuntimeHelpers.GetHashCode(hostLevel) : 0);
+            hash.Add(ComponentHash(scopeChain[i].Opens));
+            hash.Add(ComponentHash(scopeChain[i].Properties));
         }
 
         return hash.ToHashCode();

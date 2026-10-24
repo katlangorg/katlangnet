@@ -263,7 +263,8 @@ public class CacheKeyDifferentialTests
     /// same resolving scope are equivalent (including separately allocated EMPTY components); a
     /// changed chain length, or a reference-distinct non-empty component at any level, is a
     /// different owner even when its contents look alike (the live declaration lists ARE the
-    /// scope).
+    /// scope). The parent levels are evaluator-OWNED, as every rebuilt evaluator scope is: an
+    /// ownerless level would be a host object, compared by reference (HOST-NESTED-1).
     /// </summary>
     [Fact]
     public void StructuralOwnerIdentity_DistinguishesResolutionRelevantChains()
@@ -279,7 +280,8 @@ public class CacheKeyDifferentialTests
             ScopeCtx? parent)
             => NewAlgorithm() with { Opens = opens, Properties = properties, Parent = parent };
 
-        ScopeCtx ParentScope() => new(null, parentOpens, parentProperties);
+        var parentOwner = NewAlgorithm() with { Opens = parentOpens, Properties = parentProperties };
+        ScopeCtx ParentScope() => new(null, parentOpens, parentProperties) { Owner = parentOwner };
 
         var baseline = StructuralOwnerIdentity.FromOwner(BuildOwner(ownerOpens, ownerProperties, ParentScope()));
 
@@ -306,8 +308,13 @@ public class CacheKeyDifferentialTests
         // Reference-distinct non-empty component at the PARENT level only: different owner.
         var otherParentProperties = new List<Property> { NewProperty("Parent") };
         var otherParent = StructuralOwnerIdentity.FromOwner(
-            BuildOwner(ownerOpens, ownerProperties, new ScopeCtx(null, parentOpens, otherParentProperties)));
+            BuildOwner(ownerOpens, ownerProperties, new ScopeCtx(null, parentOpens, otherParentProperties) { Owner = parentOwner }));
         Assert.False(baseline.Equals(otherParent));
+
+        // An ownerless (host-built) parent over the SAME lists is a different owner kind.
+        var hostParent = StructuralOwnerIdentity.FromOwner(
+            BuildOwner(ownerOpens, ownerProperties, new ScopeCtx(null, parentOpens, parentProperties)));
+        Assert.False(baseline.Equals(hostParent));
     }
 
     // ── optimized-loop mutable environment differentials ────────────────────

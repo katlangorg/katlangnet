@@ -21,7 +21,7 @@ namespace KatLang.Tests;
 /// (<c>experimental/features/cache-owner-f1-research.md</c> §2.4, §13); each host case agrees with its
 /// evaluator-owned control on value, effects, steps and publications.</para>
 /// </summary>
-public class HostScopePropertyCacheTests
+public partial class HostScopePropertyCacheTests
 {
     // ── Fixtures ─────────────────────────────────────────────────────────────────────────────
 
@@ -595,13 +595,15 @@ public class HostScopePropertyCacheTests
     }
 
     /// <summary>
-    /// The alias memo's scope identity (HOST-ALIAS-R14) distinguishes ONLY an ownerless host DECLARING
-    /// level by reference — exactly where <see cref="PropertyDeclaringOwner"/> does. Rebuilt
-    /// evaluator-owned levels over the same lists stay equal (normal memo hits survive), and so does a
-    /// chain that merely passes through a host level, as the property cache keys its owners structurally.
+    /// The alias memo's scope identity (HOST-ALIAS-R14) distinguishes an ownerless host DECLARING level
+    /// by reference — exactly where <see cref="PropertyDeclaringOwner"/> does — and, since HOST-NESTED-1,
+    /// every ownerless host ANCESTOR too, as the property cache's owner identity does. Rebuilt
+    /// evaluator-owned levels over the same lists and the same host ancestry stay equal (normal memo
+    /// hits survive); over two distinct host objects they no longer do (R14 had kept that
+    /// pass-through case structural).
     /// </summary>
     [Fact]
-    public void TheAliasScopeIdentity_SeparatesOnlyHostDeclaringLevels_ByReference()
+    public void TheAliasScopeIdentity_SeparatesHostLevels_ByReference()
     {
         IReadOnlyList<Expr> noOpens = [];
         IReadOnlyList<Property> list = [Prop("P", Body(N(1)))];
@@ -614,8 +616,9 @@ public class HostScopePropertyCacheTests
         var owner = new Algorithm.User(null, [], noOpens, list, OutputBundle.Empty);
         ScopeCtx Rebuilt(ScopeCtx? parent) => new(parent, noOpens, list) { Owner = owner };
         Assert.Equal(StructuralOwnerIdentity.FromScope(Rebuilt(null)), StructuralOwnerIdentity.FromScope(Rebuilt(null)));
-        Assert.Equal(StructuralOwnerIdentity.FromScope(Rebuilt(host)), StructuralOwnerIdentity.FromScope(Rebuilt(copy)));
-        Assert.Equal(StructuralOwnerIdentity.FromScope(Rebuilt(host)).GetHashCode(), StructuralOwnerIdentity.FromScope(Rebuilt(copy)).GetHashCode());
+        Assert.Equal(StructuralOwnerIdentity.FromScope(Rebuilt(host)), StructuralOwnerIdentity.FromScope(Rebuilt(host)));
+        Assert.Equal(StructuralOwnerIdentity.FromScope(Rebuilt(host)).GetHashCode(), StructuralOwnerIdentity.FromScope(Rebuilt(host)).GetHashCode());
+        Assert.NotEqual(StructuralOwnerIdentity.FromScope(Rebuilt(host)), StructuralOwnerIdentity.FromScope(Rebuilt(copy)));
     }
 
     // ── 2. Identity: the host scope OBJECT, by reference ─────────────────────────────────────
