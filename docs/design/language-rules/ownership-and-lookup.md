@@ -234,8 +234,11 @@ cell; separate objects sharing a property list, alias declaration or a record `w
 separate cells. Evaluator-owned declaring scopes keep structural identity so rebuilding a wrapper
 preserves memo hits; a host level elsewhere in that chain does not change this rule. The cell memo
 is distinct from the property-result cache and never makes an eligible explicit call reuse a call
-result. Lean's structural host-identity boundary remains O-6 (deferred), and pre-wired host parent
-encoding remains HOST-DIFF-1. `HostScopePropertyCacheTests` pins these C# host distinctions.
+result. Lean's structural host-identity boundary remains O-6 (deferred). Since HOST-DIFF-1 the
+differential corpus `lean/CoreTests/HostParentDifferential.lean` compares these shapes with Lean
+(HP-12c/HP-12d: one object vs record-equal objects sharing the member list), with per-object
+property identities supplied by `LeanAstEncoder`. `HostScopePropertyCacheTests` pins these C# host
+distinctions.
 
 THE RULE (owner decisions D1 = yes, D2 = Option A, D3 = fresh invocation). **A lone reference row of an open, parameterless declaration is a callable alias of whatever callable its row denotes; when that identity is known only at run time, it is decided at run time; a name that nothing declares is still a parameter.** It generalizes FWD-02's alias — it is the same `Algorithm.Alias` and the same normalization, not a second callable system.
 

@@ -41,7 +41,11 @@ internal static class RegenerationFlags
         Prefix + "PUBLIC_API",
         "tests/KatLang.Formatting.PublicApi.Tests/PublicApiBaseline.txt");
 
-    public static readonly IReadOnlyList<RegenerationFlag> All = [LanguageSpec, SemanticExplorer, PublicApi];
+    public static readonly RegenerationFlag HostParentDifferential = new(
+        Prefix + "HOST_PARENT_DIFFERENTIAL",
+        "lean/CoreTests/HostParentDifferential.lean");
+
+    public static readonly IReadOnlyList<RegenerationFlag> All = [LanguageSpec, SemanticExplorer, PublicApi, HostParentDifferential];
 }
 
 /// <summary>

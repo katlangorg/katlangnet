@@ -38,13 +38,46 @@ namespace KatLang.Tests;
 /// <c>1.0</c> is refused) and strings must be control-character-free; both are
 /// validated fail-loud.
 /// </para>
+///
+/// <para>
+/// HOST-DIFF-1: a host-built AST may carry PRE-WIRED parent scopes
+/// (<see cref="Algorithm.User.Parent"/>, <see cref="Algorithm.Conditional.Parent"/>,
+/// <see cref="Algorithm.Alias.Parent"/>, each a finite <see cref="ScopeCtx"/> chain). Such an
+/// algorithm encodes as <c>Algorithm.withParent (some scope) …</c> over its ordinary encoding, the
+/// scope as the ownerless <c>ScopeCtx.mk</c> level it is (see <c>EncodeScope</c>), inner to outer;
+/// an unwired algorithm keeps its exact former text. The sharing pre-pass walks parent scopes too,
+/// and a property declared in a host level gets its shared identity per SCOPE OBJECT, so one
+/// object reached twice is one Lean declaring scope and two record-equal objects are two. The
+/// deliberate boundaries: evaluator-created scopes (internal owner/activation state) are refused,
+/// a cyclic or over-deep graph is refused by the evaluator's own structural preflight, and the
+/// residual HOST-LEAN-O6 shapes Lean cannot represent with per-object property identities alone
+/// (empty host levels as open-provider identity, O6-18; the C# pass-through inconsistency
+/// O6-11x awaiting owner decision OD-1) are pinned as machine-checked divergence fixtures in
+/// <c>HostParentDifferentialCorpus</c>, never as green comparisons.
+/// </para>
 /// </summary>
 public static class LeanAstEncoder
 {
-    public static string EncodeProgram(Algorithm root) => new LeanAstEncoding(root).EncodeProgram(root);
-    public static string EncodeAlgorithm(Algorithm algorithm) => new LeanAstEncoding(algorithm).EncodeAlgorithm(algorithm);
-    public static string EncodeExpr(Expr expression) => new LeanAstEncoding(expression).EncodeExpr(expression);
-    public static string EncodeProperty(Property property) => new LeanAstEncoding(property.Value).EncodeProperty(property);
+    public static string EncodeProgram(Algorithm root)
+    {
+        var encoding = new LeanAstEncoding(root);
+        return encoding.Complete(encoding.EncodeProgram(root));
+    }
+    public static string EncodeAlgorithm(Algorithm algorithm)
+    {
+        var encoding = new LeanAstEncoding(algorithm);
+        return encoding.Complete(encoding.EncodeAlgorithm(algorithm));
+    }
+    public static string EncodeExpr(Expr expression)
+    {
+        var encoding = new LeanAstEncoding(expression);
+        return encoding.Complete(encoding.EncodeExpr(expression));
+    }
+    public static string EncodeProperty(Property property)
+    {
+        var encoding = new LeanAstEncoding(property.Value);
+        return encoding.Complete(encoding.EncodeProperty(property));
+    }
     public static string EncodePattern(Pattern pattern) => LeanAstEncoding.EncodePattern(pattern);
 
     /// <summary>
@@ -59,12 +92,116 @@ internal sealed class LeanAstEncoding
 {
     private readonly SharedDeclarations _sharing = new();
     private readonly Dictionary<StructuralOwnerIdentity, Dictionary<Property, int>> _identities = new();
+    // HOST-DIFF-1: a property declared directly in a host-built (ownerless) ScopeCtx level is one
+    // C# binding PER SCOPE OBJECT (CACHE-OWNER-D3 / HOST-ALIAS-R14 key that level by reference), so
+    // its shared Lean identity is allocated per (scope object, property object), never per
+    // record-equal scope content.
+    private readonly Dictionary<ScopeCtx, Dictionary<Property, int>> _hostScopeIdentities =
+        new(ReferenceEqualityComparer.Instance);
     private readonly Dictionary<DeclarationIdentity, int> _algorithmIdentities = new();
     private int _nextIdentity;
     private ScopeCtx? _scope;
+    private readonly bool _compact;
+    private readonly object _globalContext = new();
+    private readonly Dictionary<object, Dictionary<object, string>> _terms = new(ReferenceEqualityComparer.Instance);
+    private readonly List<string> _definitions = [];
 
-    public LeanAstEncoding(Algorithm root) => _sharing.VisitAlgorithm(root);
-    public LeanAstEncoding(Expr root) => _sharing.VisitExpr(root);
+    public LeanAstEncoding(Algorithm root)
+    {
+        RequireAdmissibleGraph(root);
+        _compact = NeedsCompactTerms(root);
+        _sharing.VisitAlgorithm(root);
+    }
+
+    public LeanAstEncoding(Expr root)
+    {
+        RequireAdmissibleGraph(root);
+        _compact = NeedsCompactTerms(root);
+        _sharing.VisitExpr(root);
+    }
+
+    // Keep existing small and source-derived goldens byte-identical. Large host graphs use Lean
+    // let terms: expanding a diamond into a tree costs exponentially more than its input graph.
+    // This bottom-up estimate saturates, visits each graph node once, and never prints the tree.
+    private static bool NeedsCompactTerms(object root)
+    {
+        const int InlineWorkLimit = 4096;
+        var sizes = new Dictionary<object, int>(ReferenceEqualityComparer.Instance);
+        var frames = new Stack<(object Node, int Next, int Size)>();
+        frames.Push((root, 0, 1));
+        var hasHost = false;
+        var joins = 0;
+        while (frames.TryPop(out var frame))
+        {
+            if (!AstStructuralPreflight.TryGetChild(frame.Node, frame.Next, out var child))
+            {
+                sizes[frame.Node] = frame.Size;
+                hasHost |= frame.Node is ScopeCtx;
+                if (frame.Node is Expr.SequenceConstruct or Expr.SequenceSpread) joins++;
+                continue;
+            }
+            if (!sizes.TryGetValue(child, out var size))
+            {
+                frames.Push(frame);
+                frames.Push((child, 0, 1));
+            }
+            else frames.Push((frame.Node, frame.Next + 1, Math.Min(InlineWorkLimit + 1, frame.Size + size)));
+        }
+        // Join spines have zero evaluator depth and may be arbitrarily long, even without hosts.
+        return (hasHost && sizes[root] > InlineWorkLimit) || joins > EvaluationLimits.MaxSupportedAstDepth;
+    }
+
+    public string Complete(string body) => _definitions.Count == 0 ? body : $"({string.Concat(_definitions)}{body})";
+
+    private object CurrentContext => (object?)_scope ?? _globalContext;
+
+    private string Term(object node, object context, string type, Func<string> encode)
+    {
+        if (!_compact) return encode();
+        if (!_terms.TryGetValue(node, out var contexts))
+            _terms[node] = contexts = new(ReferenceEqualityComparer.Instance);
+        if (contexts.TryGetValue(context, out var known)) return known;
+        var value = encode();
+        var name = $"hd{_definitions.Count}";
+        _definitions.Add($"let {name} : {type} := {value}; ");
+        contexts[context] = name;
+        return name;
+    }
+
+    // AstWalker is recursive through internal join nodes. Match the evaluator's accepted domain
+    // with an explicit stack here too; every non-join subtree still uses the ordinary visitor.
+    private static void WalkJoinSpine(Expr root, HashSet<Expr> visited, Action<Expr> visitLeaf, Action<Expr> visitRepeated)
+    {
+        var pending = new Stack<Expr>();
+        pending.Push(root);
+        while (pending.TryPop(out var node))
+        {
+            if (node is not (Expr.SequenceConstruct or Expr.SequenceSpread)) { visitLeaf(node); continue; }
+            if (!visited.Add(node)) { visitRepeated(node); continue; }
+            if (node is Expr.SequenceConstruct join) { pending.Push(join.Right); pending.Push(join.Left); }
+            else pending.Push(((Expr.SequenceSpread)node).Operand);
+        }
+    }
+
+    /// <summary>
+    /// The encoder walks the graph recursively (the sharing pre-pass, then the printer), parent
+    /// scopes included, so it first runs the evaluator's own iterative structural preflight over
+    /// the same graph: a reference cycle (possible through caller-owned collections, for instance
+    /// a host scope whose property is pre-wired back to that scope) or an over-deep graph is
+    /// refused with a bounded, precise error instead of overflowing the stack. Zero-weight join
+    /// spines use explicit stacks in both sharing walks and the printer; large host DAGs use
+    /// context-qualified Lean let terms. Unsupported semantic payloads are still refused below.
+    /// </summary>
+    private static void RequireAdmissibleGraph(object root)
+    {
+        if (AstStructuralPreflight.Check(root, EvaluationLimits.MaxSupportedAstDepth,
+                AstConsumerProfile.EvaluatorIterativeJoinSpines) is { } rejection)
+        {
+            throw new NotSupportedException(
+                $"{nameof(LeanAstEncoder)} cannot encode a graph the evaluator's structural preflight refuses " +
+                $"({rejection.Kind}); a cyclic or over-deep host graph has no finite Lean term.");
+        }
+    }
 
     private int DeclarationIdentity(Property property, Algorithm owner)
     {
@@ -85,8 +222,30 @@ internal sealed class LeanAstEncoding
         return identity;
     }
 
+    /// <summary>
+    /// The shared Lean identity of <paramref name="property"/> as declared in the host-built level
+    /// <paramref name="scope"/>: one per (scope OBJECT, property OBJECT). The same scope reached
+    /// twice gives its properties equal ids (C#: one host object is one declaring owner), while two
+    /// distinct scope objects that share a property, a property list, or are record <c>with</c>
+    /// copies get distinct ids (C#: two objects are two owners), so Lean's structural owner key
+    /// separates exactly what C# separates (HOST-LEAN-O6 option C: O6-02..O6-09, O6-16, O6-17).
+    /// </summary>
+    private int HostDeclarationIdentity(Property property, ScopeCtx scope)
+    {
+        if (!_hostScopeIdentities.TryGetValue(scope, out var byProperty))
+            _hostScopeIdentities[scope] = byProperty = new(ReferenceEqualityComparer.Instance);
+        if (!byProperty.TryGetValue(property, out var identity))
+            byProperty[property] = identity = _nextIdentity++;
+        return identity;
+    }
+
     // Two graph-bounded walks preserve host sharing without confusing equal
     // bodies with one declaration. A repeated subtree marks all its properties.
+    // The base AstWalker visits an algorithm's executable children only, never its
+    // pre-wired Parent scope chain, so both walks visit parent scopes explicitly
+    // (HOST-DIFF-1): a scope's open targets, its properties and its own parent, each
+    // scope OBJECT once (reference identity, never record equality: two equal scope
+    // objects are two scopes); a scope reached again marks everything under it.
     private sealed class SharedDeclarations : AstWalker
     {
         private readonly HashSet<Algorithm> _algorithms = new(ReferenceEqualityComparer.Instance);
@@ -94,6 +253,7 @@ internal sealed class LeanAstEncoding
         private readonly HashSet<DeclarationIdentity> _sharedDeclarations = new();
         private readonly HashSet<Expr> _expressions = new(ReferenceEqualityComparer.Instance);
         private readonly HashSet<Property> _properties = new(ReferenceEqualityComparer.Instance);
+        private readonly HashSet<ScopeCtx> _scopes = new(ReferenceEqualityComparer.Instance);
         private readonly SharedMarker _marker = new();
         public bool Contains(Property property) => _marker.Properties.Contains(property);
         public bool Contains(Algorithm algorithm) => _marker.Algorithms.Contains(algorithm)
@@ -106,11 +266,20 @@ internal sealed class LeanAstEncoding
             // but give every view of a repeated declaration the same Lean shared id.
             if (algorithm.Declaration is { } declaration && !_declarations.Add(declaration))
                 _sharedDeclarations.Add(declaration);
-            if (_algorithms.Add(algorithm)) base.VisitAlgorithm(algorithm);
+            if (_algorithms.Add(algorithm))
+            {
+                base.VisitAlgorithm(algorithm);
+                VisitScope(algorithm.Parent);
+            }
             else _marker.VisitAlgorithm(algorithm);
         }
         public override void VisitExpr(Expr expression)
         {
+            if (expression is Expr.SequenceConstruct or Expr.SequenceSpread)
+            {
+                WalkJoinSpine(expression, _expressions, VisitExpr, _marker.VisitExpr);
+                return;
+            }
             if (_expressions.Add(expression)) base.VisitExpr(expression);
             else _marker.VisitExpr(expression);
         }
@@ -119,26 +288,60 @@ internal sealed class LeanAstEncoding
             if (!_properties.Add(property)) _marker.Properties.Add(property);
             base.VisitProperty(property);
         }
+        private void VisitScope(ScopeCtx? scope)
+        {
+            if (scope is null) return;
+            if (!_scopes.Add(scope))
+            {
+                _marker.VisitScope(scope);
+                return;
+            }
+
+            foreach (var open in scope.Opens)
+                VisitOpenExpression(open);
+            foreach (var property in scope.Properties)
+                VisitProperty(property);
+            VisitScope(scope.Parent);
+        }
     }
 
     private sealed class SharedMarker : AstWalker
     {
         public readonly HashSet<Algorithm> Algorithms = new(ReferenceEqualityComparer.Instance);
         private readonly HashSet<Expr> _expressions = new(ReferenceEqualityComparer.Instance);
+        private readonly HashSet<ScopeCtx> _scopes = new(ReferenceEqualityComparer.Instance);
         public readonly HashSet<Property> Properties = new(ReferenceEqualityComparer.Instance);
         protected override bool VisitsExplicitParameterDeclarations => false;
         public override void VisitAlgorithm(Algorithm algorithm)
         {
-            if (Algorithms.Add(algorithm)) base.VisitAlgorithm(algorithm);
+            if (Algorithms.Add(algorithm))
+            {
+                base.VisitAlgorithm(algorithm);
+                VisitScope(algorithm.Parent);
+            }
         }
         public override void VisitExpr(Expr expression)
         {
+            if (expression is Expr.SequenceConstruct or Expr.SequenceSpread)
+            {
+                WalkJoinSpine(expression, _expressions, VisitExpr, static _ => { });
+                return;
+            }
             if (_expressions.Add(expression)) base.VisitExpr(expression);
         }
         protected override void VisitProperty(Property property)
         {
             Properties.Add(property);
             base.VisitProperty(property);
+        }
+        public void VisitScope(ScopeCtx? scope)
+        {
+            if (scope is null || !_scopes.Add(scope)) return;
+            foreach (var open in scope.Opens)
+                VisitOpenExpression(open);
+            foreach (var property in scope.Properties)
+                VisitProperty(property);
+            VisitScope(scope.Parent);
         }
     }
 
@@ -150,7 +353,47 @@ internal sealed class LeanAstEncoding
     /// elements). Use <see cref="Arg"/> for anything in Lean application
     /// position, which needs parentheses around multi-token terms.
     /// </summary>
-    public string EncodeExpr(Expr expr) => expr switch
+    public string EncodeExpr(Expr expr)
+        => expr is Expr.SequenceConstruct or Expr.SequenceSpread
+            ? EncodeJoinSpine(expr)
+            : Term(expr, CurrentContext, "Expr", () => EncodeExprCore(expr));
+
+    private string EncodeJoinSpine(Expr root)
+    {
+        var context = CurrentContext;
+        var encoded = new Dictionary<Expr, string>(ReferenceEqualityComparer.Instance);
+        var pending = new Stack<(Expr Node, bool Complete)>();
+        pending.Push((root, false));
+        while (pending.TryPop(out var frame))
+        {
+            if (encoded.ContainsKey(frame.Node)) continue;
+            if (_compact && _terms.TryGetValue(frame.Node, out var contexts) && contexts.TryGetValue(context, out var known))
+            {
+                encoded[frame.Node] = known;
+                continue;
+            }
+            if (frame.Node is not (Expr.SequenceConstruct or Expr.SequenceSpread))
+            {
+                encoded[frame.Node] = EncodeExpr(frame.Node);
+                continue;
+            }
+            if (!frame.Complete)
+            {
+                pending.Push((frame.Node, true));
+                if (frame.Node is Expr.SequenceConstruct join) { pending.Push((join.Right, false)); pending.Push((join.Left, false)); }
+                else pending.Push((((Expr.SequenceSpread)frame.Node).Operand, false));
+                continue;
+            }
+            static string Argument(string value) => value.StartsWith('(') ? value : $"({value})";
+            var body = frame.Node is Expr.SequenceConstruct construct
+                ? $"(.sequenceConstruct {Argument(encoded[construct.Left])} {Argument(encoded[construct.Right])})"
+                : $"(.sequenceSpread {Argument(encoded[((Expr.SequenceSpread)frame.Node).Operand])})";
+            encoded[frame.Node] = Term(frame.Node, context, "Expr", () => body);
+        }
+        return encoded[root];
+    }
+
+    private string EncodeExprCore(Expr expr) => expr switch
     {
         Expr.Num(var value) => $".num {EncodeNumber(value)}",
         Expr.StringLiteral(var value) => $".stringLiteral {Quote(value)}",
@@ -223,16 +466,24 @@ internal sealed class LeanAstEncoding
     private string EncodeBundle(OutputBundle args) => $"[{EncodeList(args, EncodeExpr)}]";
 
     public string EncodeAlgorithm(Algorithm algorithm)
+        => Term(algorithm, CurrentContext, "Algorithm", () => EncodeAlgorithmInContext(algorithm));
+
+    private string EncodeAlgorithmInContext(Algorithm algorithm)
     {
         var parent = _scope;
         // A loaded module is a source unit rooted at the prelude (Q-31 H-P): it has no enclosing
         // scope wherever it is held, and its ONE declaration (Q-32 I-U) is marked so Lean wires it
         // at the chain's root level (`PropertyIdentity.module`, `Algorithm.withParent`).
         var isModule = algorithm.IsModuleRoot;
-        _scope = new ScopeCtx(isModule ? null : parent, algorithm.Opens, algorithm.Properties);
+        // A PRE-WIRED parent (a host-built `Algorithm.Parent`, HOST-DIFF-1) is the algorithm's own
+        // lexical parent and is encoded with it; only an unwired algorithm takes the encoder's
+        // enclosing scope, which both evaluators wire it under.
+        _scope = new ScopeCtx(algorithm.Parent ?? (isModule ? null : parent), algorithm.Opens, algorithm.Properties);
         try
         {
             var encoded = EncodeAlgorithmCore(algorithm);
+            if (algorithm.Parent is { } wired)
+                encoded = $"(Algorithm.withParent (some {EncodeScope(wired)}) {encoded})";
             if (isModule)
             {
                 var module = algorithm.Declaration
@@ -262,15 +513,50 @@ internal sealed class LeanAstEncoding
         finally { _scope = opener; }
     }
 
-    private string EncodeAlgorithmCore(Algorithm algorithm)
+    /// <summary>
+    /// A host-built <see cref="ScopeCtx"/> level as the Lean <c>ScopeCtx.mk</c> it is, with its own
+    /// parent chain inner to outer: <c>ScopeCtx.mk parent params opens props output branches
+    /// activation declarationId</c>. A host level is OWNERLESS — no owner body (its Lean
+    /// <c>output</c>/<c>branches</c>, which retain an owner's body for scope reconstruction, are
+    /// empty: Lean reconstructs only evaluator-owned scopes, and the host level reaches lookup only
+    /// through its opens and properties), no activation and no declaration identity, exactly
+    /// <c>CoreTests/HostScopePropertyCache.lean</c>'s <c>hostLevel</c>. Its properties are declared
+    /// IN this level (their values resolve names under it, Lean <c>lookupInParentsStructuralProperty</c>),
+    /// and a property shared across encodings carries its per-scope-object identity
+    /// (<see cref="HostDeclarationIdentity"/>). An evaluator-created scope (internal
+    /// <see cref="ScopeCtx.Owner"/> / <see cref="ScopeCtx.Activation"/>) is runtime state no input AST
+    /// carries, so it is refused rather than encoded as an ownerless level.
+    /// </summary>
+    private string EncodeScope(ScopeCtx scope)
+        => Term(scope, _globalContext, "ScopeCtx", () => EncodeScopeCore(scope));
+
+    private string EncodeScopeCore(ScopeCtx scope)
     {
-        if (algorithm.Parent is not null)
+        if (scope.Owner is not null || scope.Activation is not null)
         {
             throw new NotSupportedException(
-                $"{nameof(LeanAstEncoder)} cannot encode an algorithm with a pre-wired Parent scope; " +
-                "corpus/source algorithms must be unwired (Parent = null) so both evaluators wire them to their caller.");
+                $"{nameof(LeanAstEncoder)} cannot encode an evaluator-created ScopeCtx (owner " +
+                $"{(scope.Owner is null ? "none" : scope.Owner.GetType().Name)}, activation " +
+                $"{(scope.Activation is null ? "none" : "present")}); owner bodies and activations are runtime state " +
+                "with no stable input-AST encoding, and dropping them would encode a different (ownerless) level.");
         }
 
+        var outer = scope.Parent is { } parent ? $"(some {EncodeScope(parent)})" : "none";
+        var enclosing = _scope;
+        _scope = scope;
+        try
+        {
+            var parameters = EncodeList(scope.Parameters, Quote);
+            var opens = EncodeOpens(scope.Opens);
+            var properties = EncodeList(scope.Properties, property => EncodePropertyCore(property,
+                _sharing.Contains(property) ? HostDeclarationIdentity(property, scope) : null));
+            return $"(ScopeCtx.mk {outer} [{parameters}] [{opens}] [{properties}] [] [] none none)";
+        }
+        finally { _scope = enclosing; }
+    }
+
+    private string EncodeAlgorithmCore(Algorithm algorithm)
+    {
         if (algorithm is Algorithm.Conditional conditional)
         {
             var conditionalOpens = EncodeOpens(conditional.Opens);
@@ -367,6 +653,10 @@ internal sealed class LeanAstEncoding
     /// either channel may use it (Lean <c>memberAccessible?</c>).
     /// </summary>
     public string EncodeProperty(Property property, Algorithm? owner = null)
+        => EncodePropertyCore(property,
+            owner is not null && _sharing.Contains(property) ? DeclarationIdentity(property, owner) : null);
+
+    private string EncodePropertyCore(Property property, int? sharedIdentity)
     {
         var value = EncodeAlgorithm(property.Value);
         var encoded = (property.IsPublic, property.Exposure) switch
@@ -382,8 +672,8 @@ internal sealed class LeanAstEncoding
                 $"({Quote(r.Name)}, {(r.OwnerDepth < 0 ? "none" : $"some {r.OwnerDepth}")})"));
             encoded = $"{{ ({encoded}) with requiredOwnerDepths := some [{owners}] }}";
         }
-        return owner is not null && _sharing.Contains(property)
-            ? $"{{ ({encoded}) with identity := some (.shared {DeclarationIdentity(property, owner)}) }}"
+        return sharedIdentity is { } identity
+            ? $"{{ ({encoded}) with identity := some (.shared {identity}) }}"
             : encoded;
     }
 

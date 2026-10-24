@@ -665,17 +665,233 @@ public class LeanAstEncoderTests
         Assert.Contains("(alg [\"π\"]", LeanAstEncoder.EncodeAlgorithm(callable), StringComparison.Ordinal);
     }
 
+    /// <summary>
+    /// Host-only state with no faithful Lean value is refused, each with its own precise reason. A
+    /// representable pre-wired parent scope is NOT such state (HOST-DIFF-1; the goldens below).
+    /// </summary>
     [Fact]
     public void HostOnlyFieldsWithoutAFaithfulLeanValue_AreRefused()
     {
-        Assert.Throws<NotSupportedException>(() =>
-            LeanAstEncoder.EncodeExpr(new Expr.EmptySequence(-1)));
+        Assert.Contains("Nat", Assert.Throws<NotSupportedException>(() =>
+            LeanAstEncoder.EncodeExpr(new Expr.EmptySequence(-1))).Message);
 
-        var parent = new ScopeCtx(Parent: null, Opens: [], Properties: []);
-        var wired = new Algorithm.User(
-            Parent: parent, ParameterPatterns: [], Opens: [], Properties: [], Output: [new Expr.Num(1)]);
-        var ex = Assert.Throws<NotSupportedException>(() => LeanAstEncoder.EncodeAlgorithm(wired));
-        Assert.Contains("Parent", ex.Message);
+        static Algorithm.User WiredTo(ScopeCtx scope) => new(scope, [], [], [], [new Expr.Num(1)]);
+
+        // An evaluator-created scope (internal owner, or an activation) is runtime state.
+        var owner = new Algorithm.User(null, [], [], [], []);
+        var owned = new ScopeCtx(null, [], []) { Owner = owner };
+        Assert.Contains("evaluator-created ScopeCtx (owner User, activation none)",
+            Assert.Throws<NotSupportedException>(() => LeanAstEncoder.EncodeAlgorithm(WiredTo(owned))).Message);
+        var activated = new ScopeCtx(null, [], [])
+        {
+            Activation = ParameterActivation.Capture(["n"], Evaluator.EvalCtx.Empty, [("n", new Result.Atom(1))]),
+        };
+        Assert.Contains("evaluator-created ScopeCtx (owner none, activation present)",
+            Assert.Throws<NotSupportedException>(() => LeanAstEncoder.EncodeAlgorithm(WiredTo(activated))).Message);
+        // … at any depth of the chain, never encoded as an ownerless level.
+        Assert.Contains("evaluator-created",
+            Assert.Throws<NotSupportedException>(() => LeanAstEncoder.EncodeAlgorithm(WiredTo(new ScopeCtx(owned, [], [])))).Message);
+
+        // Native nodes and builtins stay outside the Lean model inside a host scope too.
+        var native = new ScopeCtx(null, [], [new Property("N", new Algorithm.User(null, [], [], [], [new Expr.NativeCall("host:x", [])]))]);
+        Assert.Contains("NativeCall", Assert.Throws<NotSupportedException>(() => LeanAstEncoder.EncodeAlgorithm(WiredTo(native))).Message);
+        var builtin = new ScopeCtx(null, [], [new Property("B", new Algorithm.Builtin(BuiltinId.@count))]);
+        Assert.Contains("not Builtin", Assert.Throws<NotSupportedException>(() => LeanAstEncoder.EncodeAlgorithm(WiredTo(builtin))).Message);
+    }
+
+    /// <summary>
+    /// A cyclic host parent graph (through a caller-owned property list: the scope's property is
+    /// pre-wired back to the scope) and an over-deep parent chain are refused by the evaluator's own
+    /// structural preflight with a bounded error, before any recursive walk could overflow.
+    /// </summary>
+    [Fact]
+    public void CyclicAndOverDeepHostParentGraphs_AreRefusedBoundedly()
+    {
+        var properties = new List<Property>();
+        var scope = new ScopeCtx(null, [], properties);
+        properties.Add(new Property("P", new Algorithm.User(scope, [], [], [], [new Expr.Num(1)])));
+        var cyclic = new Algorithm.User(scope, [], [], [], [new Expr.Resolve("P")]);
+        Assert.Contains("CycleDetected", Assert.Throws<NotSupportedException>(() => LeanAstEncoder.EncodeAlgorithm(cyclic)).Message);
+
+        ScopeCtx? chain = null;
+        for (var i = 0; i < EvaluationLimits.MaxSupportedAstDepth + 10; i++)
+            chain = new ScopeCtx(chain, [], []);
+        var deep = new Algorithm.User(chain, [], [], [], [new Expr.Num(1)]);
+        Assert.Contains("DepthExceeded", Assert.Throws<NotSupportedException>(() => LeanAstEncoder.EncodeAlgorithm(deep)).Message);
+
+        // The evaluator refuses both graphs too: the encoder admits exactly what it admits.
+        Assert.True(Evaluator.Run(new Expr.AlgorithmExpr(cyclic)).IsError);
+        Assert.True(Evaluator.Run(new Expr.AlgorithmExpr(deep)).IsError);
+    }
+
+    // ── HOST-DIFF-1: pre-wired parent scopes (manually reviewed goldens) ─────────────────────────
+
+    private const string EmptyHostLevel = "(ScopeCtx.mk none [] [] [] [] [] none none)";
+
+    private static Algorithm.User Body(params Expr[] rows) => new(null, [], [], [], new OutputBundle(rows));
+
+    [Fact]
+    public void PreWiredParent_EmptyHostLevel_EncodesThroughWithParent()
+    {
+        var wired = new Algorithm.User(new ScopeCtx(null, [], []), [], [], [], [new Expr.Num(1)]);
+        Assert.Equal(
+            $"(Algorithm.withParent (some {EmptyHostLevel}) (alg [] [] [] [.num 1]))",
+            LeanAstEncoder.EncodeAlgorithm(wired));
+        // The unwired twin keeps its exact former text.
+        Assert.Equal("(alg [] [] [] [.num 1])", LeanAstEncoder.EncodeAlgorithm(wired with { Parent = null }));
+    }
+
+    [Fact]
+    public void PreWiredParent_TwoLevelChain_KeepsOrderParametersOpensPropertiesAndExposure()
+    {
+        var outer = new ScopeCtx(null, [], [new Property("M", new Algorithm.User(null, [], [], [new Property("K", Body(new Expr.Num(3)), IsPublic: true)], []), IsPublic: true)]);
+        var inner = new ScopeCtx(outer, [new Expr.Resolve("M")],
+            [
+                new Property("V", Body(new Expr.Num(2))),
+                new Property("L", Body(new Expr.Param("x")), IsPublic: false, PropertyExposure.LocalOnlyCapturedAncestorParameters)
+                    { RequiredAncestorParameters = ["x"], CaptureRequirements = [new CapturedParameterRequirement("x", 0)] },
+                new Property("C", Body(new Expr.Num(4)), IsPublic: true, PropertyExposure.LocalOnlyConditionalAlgorithm),
+            ],
+            ["x"]);
+        var wired = new Algorithm.User(inner, [], [], [], [new Expr.Resolve("V")]);
+        Assert.Equal(
+            "(Algorithm.withParent (some (ScopeCtx.mk (some (ScopeCtx.mk none [] [] " +
+            "[publicProp \"M\" (alg [] [] [publicProp \"K\" (alg [] [] [] [.num 3])] [])] [] [] none none)) " +
+            "[\"x\"] [.resolve \"M\"] " +
+            "[privateProp \"V\" (alg [] [] [] [.num 2]), " +
+            "{ (privateLocalProp \"L\" (.localCapturedAncestorParams [\"x\"]) (alg [] [] [] [.param \"x\"])) with requiredOwnerDepths := some [(\"x\", some 0)] }, " +
+            "publicLocalProp \"C\" .localConditional (alg [] [] [] [.num 4])] " +
+            "[] [] none none)) (alg [] [] [] [.resolve \"V\"]))",
+            LeanAstEncoder.EncodeAlgorithm(wired));
+    }
+
+    [Fact]
+    public void PreWiredParent_ConditionalAndAliasVariants_EncodeTheirOwnContent()
+    {
+        var scope = new ScopeCtx(null, [], []);
+        var family = new Algorithm.Conditional(scope, [new Expr.Resolve("M")],
+            [new CondBranch(new Pattern.LitInt(0), Body(new Expr.Num(1))), new CondBranch(new Pattern.Bind("n"), Body(new Expr.Param("n")))]);
+        Assert.Equal(
+            $"(Algorithm.withParent (some {EmptyHostLevel}) (.conditional none [.resolve \"M\"] " +
+            "[⟨.litInt 0, (alg [] [] [] [.num 1])⟩, ⟨.bind \"n\", (alg [] [] [] [.param \"n\"])⟩]))",
+            LeanAstEncoder.EncodeAlgorithm(family));
+
+        var alias = new Algorithm.Alias(scope, [], [new Property("Own", Body(new Expr.Num(5)))], new Expr.Resolve("F"));
+        Assert.Equal(
+            $"(Algorithm.withParent (some {EmptyHostLevel}) (.alias none [] [privateProp \"Own\" (alg [] [] [] [.num 5])] (.resolve \"F\")))",
+            LeanAstEncoder.EncodeAlgorithm(alias));
+    }
+
+    /// <summary>
+    /// A pre-wired child keeps ITS parent; an unwired child inside it stays unwired (the evaluators
+    /// wire it), and a host level's property may itself carry a pre-wired parent.
+    /// </summary>
+    [Fact]
+    public void PreWiredParent_NestedWiredAndUnwiredChildren_AreEncodedIndependently()
+    {
+        var decoy = new ScopeCtx(null, [], [new Property("D", Body(new Expr.Num(9)))]);
+        var host = new ScopeCtx(null, [], [new Property("Q", new Algorithm.User(decoy, [], [], [], [new Expr.Resolve("D")]))]);
+        var wired = new Algorithm.User(host, [], [], [new Property("U", Body(new Expr.Num(1)))], []);
+        Assert.Equal(
+            "(Algorithm.withParent (some (ScopeCtx.mk none [] [] [privateProp \"Q\" " +
+            "(Algorithm.withParent (some (ScopeCtx.mk none [] [] [privateProp \"D\" (alg [] [] [] [.num 9])] [] [] none none)) (alg [] [] [] [.resolve \"D\"]))" +
+            "] [] [] none none)) (alg [] [] [privateProp \"U\" (alg [] [] [] [.num 1])] []))",
+            LeanAstEncoder.EncodeAlgorithm(wired));
+    }
+
+    private static Expr TwoOpenedBlocks(ScopeCtx first, ScopeCtx second)
+        => new Expr.AlgorithmExpr(new Algorithm.User(null, [],
+            [new Expr.AlgorithmExpr(new Algorithm.User(first, [], [], [], [])),
+             new Expr.AlgorithmExpr(new Algorithm.User(second, [], [], [], []))],
+            [], [new Expr.Num(0)]));
+
+    private static string HostLevelWith(string property) => $"(ScopeCtx.mk none [] [] [{property}] [] [] none none)";
+
+    /// <summary>
+    /// Sharing is decided by OBJECT identity in parent scopes too: one host level object reached twice
+    /// declares its property under ONE shared identity (and its value under one shared declaration);
+    /// two distinct objects sharing one property object, or one property list, or a record
+    /// <c>with</c> copy, declare it under DISTINCT identities; two equal objects with their own
+    /// properties declare nothing shared.
+    /// </summary>
+    [Theory]
+    [InlineData("same object", 0, 0)]
+    [InlineData("shared property", 0, 1)]
+    [InlineData("shared list", 0, 1)]
+    [InlineData("with copy", 0, 1)]
+    public void HostScopeSharing_FollowsScopeAndPropertyObjectIdentity(string shape, int firstId, int secondId)
+    {
+        var p = new Property("P", Body(new Expr.Num(7)));
+        IReadOnlyList<Property> list = [p];
+        var first = new ScopeCtx(null, [], list);
+        var second = shape switch
+        {
+            "same object" => first,
+            "shared property" => new ScopeCtx(null, [], [p]),
+            "shared list" => new ScopeCtx(null, [], list),
+            "with copy" => first with { },
+            _ => throw new ArgumentOutOfRangeException(nameof(shape)),
+        };
+        Assert.Equal(shape == "same object", ReferenceEquals(first, second));
+        // Record-equal unless the lists are distinct objects (record equality compares lists by reference).
+        Assert.Equal(shape != "shared property", first.Equals(second));
+
+        static string Shared(int id) =>
+            $"{{ (privateProp \"P\" (Algorithm.withDeclarationId (some (.shared 0)) (alg [] [] [] [.num 7]))) with identity := some (.shared {id}) }}";
+        Assert.Equal(
+            "(.algorithmExpr (alg [] " +
+            $"[(.algorithmExpr (Algorithm.withParent (some {HostLevelWith(Shared(firstId))}) (alg [] [] [] []))), " +
+            $"(.algorithmExpr (Algorithm.withParent (some {HostLevelWith(Shared(secondId))}) (alg [] [] [] [])))] " +
+            "[] [.num 0]))",
+            LeanAstEncoder.EncodeExpr(TwoOpenedBlocks(first, second)));
+    }
+
+    [Fact]
+    public void HostScopeSharing_EqualButSeparateScopesAndProperties_ShareNothing()
+    {
+        ScopeCtx Fresh() => new(null, [], [new Property("P", Body(new Expr.Num(7)))]);
+        var plain = HostLevelWith("privateProp \"P\" (alg [] [] [] [.num 7])");
+        Assert.Equal(
+            "(.algorithmExpr (alg [] " +
+            $"[(.algorithmExpr (Algorithm.withParent (some {plain}) (alg [] [] [] []))), " +
+            $"(.algorithmExpr (Algorithm.withParent (some {plain}) (alg [] [] [] [])))] " +
+            "[] [.num 0]))",
+            LeanAstEncoder.EncodeExpr(TwoOpenedBlocks(Fresh(), Fresh())));
+    }
+
+    /// <summary>
+    /// The sharing pre-pass reaches declarations that exist ONLY in parent scopes: a grandparent
+    /// object reached through two distinct children is one shared declaring level, although no
+    /// executable child of either block mentions it.
+    /// </summary>
+    [Fact]
+    public void HostScopeSharing_IsDiscoveredInGrandparentLevels()
+    {
+        var grand = new ScopeCtx(null, [], [new Property("G", Body(new Expr.Num(1)))]);
+        var encoded = LeanAstEncoder.EncodeExpr(TwoOpenedBlocks(new ScopeCtx(grand, [], []), new ScopeCtx(grand, [], [])));
+        var grandLevel = HostLevelWith(
+            "{ (privateProp \"G\" (Algorithm.withDeclarationId (some (.shared 0)) (alg [] [] [] [.num 1]))) with identity := some (.shared 0) }");
+        Assert.Equal(
+            "(.algorithmExpr (alg [] " +
+            $"[(.algorithmExpr (Algorithm.withParent (some (ScopeCtx.mk (some {grandLevel}) [] [] [] [] [] none none)) (alg [] [] [] []))), " +
+            $"(.algorithmExpr (Algorithm.withParent (some (ScopeCtx.mk (some {grandLevel}) [] [] [] [] [] none none)) (alg [] [] [] [])))] " +
+            "[] [.num 0]))",
+            encoded);
+    }
+
+    /// <summary>
+    /// A host level's own open targets are encoded like every open target (inline providers rooted at
+    /// the prelude), and a property declared in a host level is never given the encoder's synthetic
+    /// owner identity: two host levels with one shared property differ only in the per-object ids.
+    /// </summary>
+    [Fact]
+    public void HostLevelOpens_AreEncodedInDeclaredOrder()
+    {
+        var provider = new Expr.AlgorithmExpr(new Algorithm.User(null, [], [], [new Property("Q", Body(new Expr.Num(8)), IsPublic: true)], []));
+        var wired = new Algorithm.User(new ScopeCtx(null, [new Expr.Resolve("A"), provider], []), [], [], [], []);
+        Assert.Equal(
+            "(Algorithm.withParent (some (ScopeCtx.mk none [] [.resolve \"A\", (.algorithmExpr (alg [] [] [publicProp \"Q\" (alg [] [] [] [.num 8])] []))] [] [] [] none none)) (alg [] [] [] []))",
+            LeanAstEncoder.EncodeAlgorithm(wired));
     }
 
     /// <summary>

@@ -1,5 +1,28 @@
 # Semantic Alignment Manifest.
 
+HOST-DIFF-1 — Lean/C# differential coverage of host-built ASTs with pre-wired parent scopes
+(October 24 2026; test/formal-correspondence infrastructure, no production C# or Lean semantic
+edit, classified by the "Lean/C# correspondence" trigger: full V3). `LeanAstEncoder` (tests) no
+longer refuses a pre-wired `Algorithm.Parent`: it emits `Algorithm.withParent (some (ScopeCtx.mk …))`
+over the unchanged text of the algorithm, each host level an ownerless `ScopeCtx.mk parent params
+opens props [] [] none none` (no owner body, activation or declaration id: `hostLevel` of
+`CoreTests/HostScopePropertyCache.lean`). Its sharing pre-pass now walks parent scopes (the base
+`AstWalker` never did), by object identity, and a property shared across encodings is identified per
+(host scope OBJECT, property OBJECT) — HOST-LEAN-O6 option C — so one object reached twice is one
+Lean declaring scope and record-equal objects are two, matching CACHE-OWNER-D3 / HOST-ALIAS-R14 /
+NEED-04 by construction. Existing source encodings are byte-identical. Evaluator-created scopes and
+graphs refused by the evaluator's structural preflight stay refused. Both sharing walks and printing
+handle zero-weight join spines iteratively; large host DAGs use context-qualified Lean `let` terms
+to avoid expanding every shared path. The generated module sets a local elaboration-depth allowance
+for its sequential lets; no evaluator limit changes. The corpus
+`HostParentDifferentialCorpus` (HP-01..HP-14, 83 cases: 81 comparable + 2 pinned divergences) is evaluated by C# on plain, counted, generic,
+optimized and suspending async routes and guarded in `lean/CoreTests/HostParentDifferential.lean`
+(value, error category/payload, published cache entries per name and in total). Two residual O-6
+shapes are NOT comparable and are pinned on both sides as known divergences: HP-14b (O6-18, open
+provider identity over two EMPTY host levels: C# `AmbiguousOpen`, Lean 7 — needs a Lean host-level
+token, design E) and HP-14d (O6-11x, the C# pass-through inconsistency awaiting OD-1). Guard 5b is
+unchanged. Report: `experimental/features/host-diff-1-implementation.md`.
+
 HOST-ALIAS-R14 — host-declared alias memo identity (October 24 2026; C# host representation,
 CACHE-OWNER-D3's existing D3-B rule): a single ownerless host scope already handled `A = R.Algorithm`
 correctly. Distinct host scope OBJECTS sharing one properties list (including a record `with` copy)
@@ -13,7 +36,7 @@ shared-list/with-copy isolation versus one-object reuse on generic, optimized an
 routes, actual canonical cell identity and inert formation, run isolation, rebuilt owned-scope
 reuse, and cancellation during a suspended receiver or target with publication-owner cleanup.
 Lean's host identity remains structural (O-6 deferred); no Lean production edit or host-DAG parity
-claim. Pre-wired parent encoding remains HOST-DIFF-1. Report:
+claim. Pre-wired parent encoding is HOST-DIFF-1 (above). Report:
 `experimental/features/host-alias-r14-research-and-fix.md`. Full V3 required.
 
 COLLECT-CACHE-1 — declaring-context inheritance for collecting-only property reads (2026-10-23; the
