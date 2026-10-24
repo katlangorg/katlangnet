@@ -329,15 +329,36 @@ internal sealed class ResolvedOpenCandidate : OpenCandidate
     /// the reduction never rebuilds a nesting it cannot change.
     /// </summary>
     public ResolvedOpenCandidate UnderMissingLexicalHead(string head)
-        => UnderMissingLexicalHead(head, new(StringComparer.Ordinal));
+        => CandidateRewriteFrame.Run(UnderMissingLexicalHead(head, new(StringComparer.Ordinal), out var unchanged)) ?? unchanged;
 
-    internal ResolvedOpenCandidate UnderMissingLexicalHead(string head, Dictionary<string, ResolvedOpenCandidate> transformed)
+    /// <summary>
+    /// The rewrite's own test and memo for this reach of the candidate: null with
+    /// <paramref name="result"/> when nothing is rebuilt, otherwise the frame that rebuilds it
+    /// (its <see cref="CandidateRewriteFrame.Candidate"/> is the result).
+    /// </summary>
+    internal CandidateRewriteFrame? UnderMissingLexicalHead(string head, Dictionary<string, ResolvedOpenCandidate> transformed,
+        out ResolvedOpenCandidate result)
     {
+        result = this;
         if (!_memo.SeedFacts.HasHead(Facts, head))
-            return this;
-        if (!transformed.TryGetValue(ContentKey, out var result))
-            transformed.Add(ContentKey, result = WithSeed(Seed.UnderMissingLexicalHead(head, transformed)));
-        return result;
+            return null;
+        if (transformed.TryGetValue(ContentKey, out var memoized))
+        {
+            result = memoized;
+            return null;
+        }
+        var frame = new CandidateRewriteFrame();
+        frame.Body = RebuildUnderMissingLexicalHead(frame, head, transformed);
+        return frame;
+    }
+
+    private IEnumerator<CandidateRewriteFrame> RebuildUnderMissingLexicalHead(CandidateRewriteFrame self, string head,
+        Dictionary<string, ResolvedOpenCandidate> transformed)
+    {
+        var seed = new CandidateRewriteFrame();
+        seed.Body = Seed.UnderMissingLexicalHead(seed, head, transformed);
+        yield return seed;
+        transformed.Add(ContentKey, self.Candidate = WithSeed(seed.Seed!));
     }
 
     // Each transformation dictionary belongs to ONE operation with fixed head/owner/name-set
@@ -350,32 +371,58 @@ internal sealed class ResolvedOpenCandidate : OpenCandidate
     /// itself when nothing inside it requires one of <paramref name="ownerParameterNames"/>.
     /// </summary>
     public ResolvedOpenCandidate QualifiedBy(Algorithm owner, IReadOnlySet<string> ownerParameterNames)
-        => QualifiedBy(owner, ownerParameterNames, new(StringComparer.Ordinal));
+        => CandidateRewriteFrame.Run(QualifiedBy(owner, ownerParameterNames, new(StringComparer.Ordinal), out var unchanged)) ?? unchanged;
 
-    internal ResolvedOpenCandidate QualifiedBy(Algorithm owner, IReadOnlySet<string> ownerParameterNames,
-        Dictionary<string, ResolvedOpenCandidate> transformed)
+    /// <summary>The frame form of <see cref="QualifiedBy(Algorithm, IReadOnlySet{string})"/> (see <see cref="UnderMissingLexicalHead(string, Dictionary{string, ResolvedOpenCandidate}, out ResolvedOpenCandidate)"/>).</summary>
+    internal CandidateRewriteFrame? QualifiedBy(Algorithm owner, IReadOnlySet<string> ownerParameterNames,
+        Dictionary<string, ResolvedOpenCandidate> transformed, out ResolvedOpenCandidate result)
     {
+        result = this;
         if (!_memo.SeedFacts.RequiresAnyName(Facts, ownerParameterNames, owner: null))
-            return this;
-        if (transformed.TryGetValue(ContentKey, out var result))
-            return result;
-        var seed = Seed.Clone();
-        seed.QualifyParameters(owner, ownerParameterNames, _memo.Observations, transformed);
-        transformed.Add(ContentKey, result = WithSeed(seed));
-        return result;
+            return null;
+        if (transformed.TryGetValue(ContentKey, out var memoized))
+        {
+            result = memoized;
+            return null;
+        }
+        var frame = new CandidateRewriteFrame();
+        frame.Body = RebuildQualifiedBy(frame, owner, ownerParameterNames, transformed);
+        return frame;
     }
 
-    internal ResolvedOpenCandidate WithoutRequiredParameters(IReadOnlySet<string> names, Algorithm owner, bool ownerHasParameters,
-        Dictionary<string, ResolvedOpenCandidate> transformed)
+    private IEnumerator<CandidateRewriteFrame> RebuildQualifiedBy(CandidateRewriteFrame self, Algorithm owner,
+        IReadOnlySet<string> ownerParameterNames, Dictionary<string, ResolvedOpenCandidate> transformed)
     {
-        if (!RequiresAny(names, owner))
-            return this;
-        if (transformed.TryGetValue(ContentKey, out var result))
-            return result;
         var seed = Seed.Clone();
-        seed.RemoveRequiredAncestorOwnedParameterNames(names, owner, ownerHasParameters, _memo.Observations, transformed);
-        transformed.Add(ContentKey, result = WithSeed(seed));
-        return result;
+        if (seed.QualifyParameters(owner, ownerParameterNames, _memo.Observations, transformed) is { } nested)
+            yield return new CandidateRewriteFrame { Body = nested };
+        transformed.Add(ContentKey, self.Candidate = WithSeed(seed));
+    }
+
+    /// <summary>The frame form of the requirement strip of the seed (see <see cref="UnderMissingLexicalHead(string, Dictionary{string, ResolvedOpenCandidate}, out ResolvedOpenCandidate)"/>).</summary>
+    internal CandidateRewriteFrame? WithoutRequiredParameters(IReadOnlySet<string> names, Algorithm owner, bool ownerHasParameters,
+        Dictionary<string, ResolvedOpenCandidate> transformed, out ResolvedOpenCandidate result)
+    {
+        result = this;
+        if (!RequiresAny(names, owner))
+            return null;
+        if (transformed.TryGetValue(ContentKey, out var memoized))
+        {
+            result = memoized;
+            return null;
+        }
+        var frame = new CandidateRewriteFrame();
+        frame.Body = RebuildWithoutRequiredParameters(frame, names, owner, ownerHasParameters, transformed);
+        return frame;
+    }
+
+    private IEnumerator<CandidateRewriteFrame> RebuildWithoutRequiredParameters(CandidateRewriteFrame self, IReadOnlySet<string> names,
+        Algorithm owner, bool ownerHasParameters, Dictionary<string, ResolvedOpenCandidate> transformed)
+    {
+        var seed = Seed.Clone();
+        if (seed.RemoveRequiredAncestorOwnedParameterNames(names, owner, ownerHasParameters, _memo.Observations, transformed) is { } nested)
+            yield return new CandidateRewriteFrame { Body = nested };
+        transformed.Add(ContentKey, self.Candidate = WithSeed(seed));
     }
 
     /// <summary>Whether anything inside the seed requires one of <paramref name="names"/>, unqualified or owned by <paramref name="owner"/>.</summary>
@@ -414,6 +461,61 @@ internal sealed class ResolvedOpenCandidate : OpenCandidate
     }
 
     internal override string ShapeKey => $"resolved@{ProviderLevel}#{IdentityKey}";
+}
+
+/// <summary>
+/// OOS-22: ONE suspended step of a rewrite of a resolved candidate's nesting — a seed's own rewrite
+/// (<see cref="PropertyDependencyGraphBuilder.SummarySeed.QualifyParameters(Algorithm, IReadOnlySet{string}, FrontEndTraversalObservations)"/>,
+/// <see cref="PropertyDependencyGraphBuilder.SummarySeed.RemoveRequiredAncestorOwnedParameterNames(IReadOnlySet{string}, Algorithm, bool, FrontEndTraversalObservations)"/>,
+/// <see cref="PropertyDependencyGraphBuilder.SummarySeed.UnderMissingLexicalHead(string)"/>) or one nested
+/// candidate's rebuild. A candidate's seed holds the candidates it settled through, so an opened
+/// chain nests candidates as deep as it is long, and these rewrites reach every changed level of
+/// that nesting: they never recurse on the host stack. A body yields the frame of a nested
+/// candidate it must rebuild and resumes with its <see cref="Candidate"/>; the order of every
+/// deep-fact test, memo lookup and rebuild is the recursive form's. A rewrite has no active state of
+/// its own (its memo admits a candidate only after its rebuild completes), so an exception simply
+/// abandons the operation's memo.
+/// </summary>
+internal sealed class CandidateRewriteFrame
+{
+    public IEnumerator<CandidateRewriteFrame> Body = null!;
+    public ResolvedOpenCandidate? Candidate;
+    public PropertyDependencyGraphBuilder.SummarySeed? Seed;
+
+    /// <summary>Runs <paramref name="root"/> (if any) to completion; its <see cref="Candidate"/>, or null without a frame.</summary>
+    internal static ResolvedOpenCandidate? Run(CandidateRewriteFrame? root)
+    {
+        if (root is null)
+            return null;
+        Run(root.Body);
+        return root.Candidate;
+    }
+
+    /// <summary>Runs one rewrite body to completion over an explicit stack (no stack when it rebuilds nothing).</summary>
+    internal static void Run(IEnumerator<CandidateRewriteFrame> body)
+    {
+        if (!body.MoveNext())
+            return;
+
+        var frames = new Stack<IEnumerator<CandidateRewriteFrame>>();
+        frames.Push(body);
+        frames.Push(body.Current.Body);
+        try
+        {
+            while (frames.TryPeek(out var frame))
+            {
+                if (frame.MoveNext())
+                    frames.Push(frame.Current.Body);
+                else
+                    frames.Pop();
+            }
+        }
+        finally
+        {
+            while (frames.TryPop(out var suspended))
+                suspended.Dispose();
+        }
+    }
 }
 
 internal sealed class UnresolvedOpenCandidate(string head, IReadOnlyList<string> publicSteps, int providerLevel) : OpenCandidate(providerLevel)
@@ -1206,9 +1308,16 @@ internal static class PropertyDependencyGraphBuilder
         /// another identical condition and never reaches a finite fixed point.
         /// </summary>
         internal SummarySeed UnderMissingLexicalHead(string head)
-            => UnderMissingLexicalHead(head, new(StringComparer.Ordinal));
+        {
+            var frame = new CandidateRewriteFrame();
+            frame.Body = UnderMissingLexicalHead(frame, head, new(StringComparer.Ordinal));
+            CandidateRewriteFrame.Run(frame.Body);
+            return frame.Seed!;
+        }
 
-        internal SummarySeed UnderMissingLexicalHead(string head, Dictionary<string, ResolvedOpenCandidate> transformed)
+        /// <summary>The frame body of <see cref="UnderMissingLexicalHead(string)"/>; its result is <paramref name="self"/>'s seed.</summary>
+        internal IEnumerator<CandidateRewriteFrame> UnderMissingLexicalHead(CandidateRewriteFrame self, string head,
+            Dictionary<string, ResolvedOpenCandidate> transformed)
         {
             var result = new SummarySeed(RequiredAncestorOwnedParameterNames,
                 VisiblePropertyDependencyNames, ownerQualifiedParameters: OwnerQualifiedParameters);
@@ -1216,8 +1325,20 @@ internal static class PropertyDependencyGraphBuilder
             {
                 // A nested candidate that holds no reference to the head is returned as it is
                 // (EXPOSURE-OPEN-1), so this never rebuilds a nesting it cannot change.
-                var candidates = pending.Candidates.Select(candidate => candidate is ResolvedOpenCandidate resolved
-                    ? resolved.UnderMissingLexicalHead(head, transformed) : candidate).ToArray();
+                var candidates = new OpenCandidate[pending.Candidates.Count];
+                for (var i = 0; i < candidates.Length; i++)
+                {
+                    candidates[i] = pending.Candidates[i];
+                    if (candidates[i] is not ResolvedOpenCandidate resolved)
+                        continue;
+                    if (resolved.UnderMissingLexicalHead(head, transformed, out var rewritten) is { } rebuild)
+                    {
+                        yield return rebuild;
+                        rewritten = rebuild.Candidate!;
+                    }
+
+                    candidates[i] = rewritten;
+                }
                 var firstLevel = candidates.TakeWhile(c => c.ProviderLevel == candidates[0].ProviderLevel).ToArray();
                 if (pending.Head == head && firstLevel.Length > 0 && firstLevel.All(c => c is ResolvedOpenCandidate))
                 {
@@ -1242,7 +1363,7 @@ internal static class PropertyDependencyGraphBuilder
                 }
                 result.PendingReferences.Add(SameCandidates(pending.Candidates, candidates) ? pending : pending.WithCandidates(candidates));
             }
-            return result;
+            self.Seed = result;
         }
 
         private static bool SameCandidates(IReadOnlyList<OpenCandidate> before, IReadOnlyList<OpenCandidate> after)
@@ -1476,9 +1597,17 @@ internal static class PropertyDependencyGraphBuilder
             Algorithm owner,
             IReadOnlySet<string> ownerParameterNames,
             FrontEndTraversalObservations? observations)
-            => QualifyParameters(owner, ownerParameterNames, observations, new(StringComparer.Ordinal));
+        {
+            if (QualifyParameters(owner, ownerParameterNames, observations, new(StringComparer.Ordinal)) is { } candidates)
+                CandidateRewriteFrame.Run(candidates);
+        }
 
-        internal void QualifyParameters(Algorithm owner, IReadOnlySet<string> ownerParameterNames,
+        /// <summary>
+        /// The frame form of <see cref="QualifyParameters(Algorithm, IReadOnlySet{string}, FrontEndTraversalObservations)"/>:
+        /// qualifies this seed's own requirements now and returns the body that rewrites its carried
+        /// candidates (null when it carries no pending reference), for <see cref="CandidateRewriteFrame"/>.
+        /// </summary>
+        internal IEnumerator<CandidateRewriteFrame>? QualifyParameters(Algorithm owner, IReadOnlySet<string> ownerParameterNames,
             FrontEndTraversalObservations? observations, Dictionary<string, ResolvedOpenCandidate> transformed)
         {
             // Reads the folded sets directly, so a seed with nothing to qualify materializes none.
@@ -1492,24 +1621,42 @@ internal static class PropertyDependencyGraphBuilder
                 }
             }
 
-            if (_pendingReferences is not { Count: > 0 } pendingReferences)
-                return;
+            return _pendingReferences is { Count: > 0 } pendingReferences
+                ? QualifyCandidates(pendingReferences, owner, ownerParameterNames, transformed)
+                : null;
+        }
 
+        private static IEnumerator<CandidateRewriteFrame> QualifyCandidates(PendingReferenceSet pendingReferences, Algorithm owner,
+            IReadOnlySet<string> ownerParameterNames, Dictionary<string, ResolvedOpenCandidate> transformed)
+        {
             // Only references whose carried candidates require one of the owner's names change; a
             // candidate that requires none is kept as it is (EXPOSURE-OPEN-1: its deep facts decide).
             List<PendingReference>? rewritten = null;
             var changed = false;
             foreach (var reference in pendingReferences)
             {
-                var candidates = reference.Candidates.Select(candidate => candidate is ResolvedOpenCandidate resolved
-                    ? resolved.QualifiedBy(owner, ownerParameterNames, transformed) : candidate).ToArray();
+                var candidates = new OpenCandidate[reference.Candidates.Count];
+                for (var i = 0; i < candidates.Length; i++)
+                {
+                    candidates[i] = reference.Candidates[i];
+                    if (candidates[i] is not ResolvedOpenCandidate resolved)
+                        continue;
+                    if (resolved.QualifiedBy(owner, ownerParameterNames, transformed, out var qualified) is { } rebuild)
+                    {
+                        yield return rebuild;
+                        qualified = rebuild.Candidate!;
+                    }
+
+                    candidates[i] = qualified;
+                }
+
                 var same = SameCandidates(reference.Candidates, candidates);
                 changed |= !same;
                 (rewritten ??= new(pendingReferences.Count)).Add(same ? reference : reference.WithCandidates(candidates));
             }
 
             if (!changed)
-                return;
+                yield break;
             pendingReferences.Clear();
             pendingReferences.UnionWith(rewritten!);
         }
@@ -1526,9 +1673,17 @@ internal static class PropertyDependencyGraphBuilder
             Algorithm owner,
             bool ownerHasParameters,
             FrontEndTraversalObservations? observations)
-            => RemoveRequiredAncestorOwnedParameterNames(names, owner, ownerHasParameters, observations, new(StringComparer.Ordinal));
+        {
+            if (RemoveRequiredAncestorOwnedParameterNames(names, owner, ownerHasParameters, observations, new(StringComparer.Ordinal)) is { } candidates)
+                CandidateRewriteFrame.Run(candidates);
+        }
 
-        internal void RemoveRequiredAncestorOwnedParameterNames(IReadOnlySet<string> names, Algorithm owner,
+        /// <summary>
+        /// The frame form of <see cref="RemoveRequiredAncestorOwnedParameterNames(IReadOnlySet{string}, Algorithm, bool, FrontEndTraversalObservations)"/>:
+        /// strips this seed's own requirements now and returns the body that rewrites its pending
+        /// references (null when it carries none), for <see cref="CandidateRewriteFrame"/>.
+        /// </summary>
+        internal IEnumerator<CandidateRewriteFrame>? RemoveRequiredAncestorOwnedParameterNames(IReadOnlySet<string> names, Algorithm owner,
             bool ownerHasParameters, FrontEndTraversalObservations? observations, Dictionary<string, ResolvedOpenCandidate> transformed)
         {
             // Reads the folded sets directly, so a seed with nothing to strip materializes none.
@@ -1540,9 +1695,14 @@ internal static class PropertyDependencyGraphBuilder
             }
 
             _ownerQualifiedParameters?.RemoveWhere(r => ReferenceEquals(r.Owner, owner) && names.Contains(r.Name));
-            if (_pendingReferences is not { Count: > 0 } pendingReferences)
-                return;
+            return _pendingReferences is { Count: > 0 } pendingReferences
+                ? StripCandidates(pendingReferences, names, owner, ownerHasParameters, transformed)
+                : null;
+        }
 
+        private static IEnumerator<CandidateRewriteFrame> StripCandidates(PendingReferenceSet pendingReferences, IReadOnlySet<string> names,
+            Algorithm owner, bool ownerHasParameters, Dictionary<string, ResolvedOpenCandidate> transformed)
+        {
             var rewritten = new List<PendingReference>(pendingReferences.Count);
             var changed = ownerHasParameters;
             foreach (var pending in pendingReferences)
@@ -1556,8 +1716,18 @@ internal static class PropertyDependencyGraphBuilder
                 var candidates = new List<OpenCandidate>(pending.Candidates.Count);
                 foreach (var candidate in pending.Candidates)
                 {
-                    var stripped = candidate is ResolvedOpenCandidate resolved
-                        ? resolved.WithoutRequiredParameters(names, owner, ownerHasParameters, transformed) : candidate;
+                    var stripped = candidate;
+                    if (candidate is ResolvedOpenCandidate resolved)
+                    {
+                        if (resolved.WithoutRequiredParameters(names, owner, ownerHasParameters, transformed, out var kept) is { } rebuild)
+                        {
+                            yield return rebuild;
+                            kept = rebuild.Candidate!;
+                        }
+
+                        stripped = kept;
+                    }
+
                     candidates.Add(stripped);
                     changed |= !ReferenceEquals(stripped, candidate);
                 }
@@ -1566,7 +1736,7 @@ internal static class PropertyDependencyGraphBuilder
             }
 
             if (!changed)
-                return;
+                yield break;
 
             pendingReferences.Clear();
             pendingReferences.UnionWith(rewritten);
@@ -2360,20 +2530,151 @@ internal static class PropertyDependencyGraphBuilder
     /// relative to this level and are expanded like everything else.
     /// </summary>
     internal static SummarySeed ExpandAtLevel(SummarySeed baseSeed, LevelContext level)
+        => RunExpansion(ExpandFrame(baseSeed, level)).Seed!;
+
+    /// <summary>
+    /// OOS-22: ONE suspended step of the level expansion — an expansion at a level
+    /// (<see cref="ExpandAtLevelCore"/>), one escaping reference's candidates
+    /// (<see cref="AddEscaping"/>, <see cref="MakeOpenCandidates"/>), or one local-head settlement
+    /// (<see cref="TryResolveLocalHeadCandidate"/>). These steps re-enter one another once per link of
+    /// an opened chain (settling <c>P1</c>'s charge at the owner expands it there, which settles
+    /// <c>P2</c>'s, …), so they never recurse on the host stack: each is a heap frame whose body
+    /// yields the nested frame it needs next, and <see cref="RunExpansion"/> resumes it with that
+    /// frame's result exactly where the recursive form would have returned. The evaluation order, the
+    /// active-path and active-head cuts, and the per-level expansion cache are the recursive form's.
+    /// Host calls that remain inside a body (navigation charges, expansions through nested nodes,
+    /// nested-region summaries) descend into strictly nested levels, so their depth is bounded by the
+    /// source's nesting, never by the chain's length.
+    /// </summary>
+    private sealed class ExpansionFrame
+    {
+        public IEnumerator<ExpansionFrame> Body = null!;
+        public SummarySeed? Seed;
+        public ResolvedOpenCandidate? Candidate;
+    }
+
+    /// <summary>
+    /// Runs <paramref name="root"/> to completion over an explicit stack: a frame yielding a nested
+    /// frame is suspended until that frame completes. An exception unwinds every suspended frame
+    /// innermost first, so each one's active key and level cache are released exactly as the
+    /// recursion's <c>finally</c> blocks released them; no partial result is stored on that path.
+    /// </summary>
+    private static ExpansionFrame RunExpansion(ExpansionFrame root)
+    {
+        var frames = new Stack<ExpansionFrame>();
+        frames.Push(root);
+        try
+        {
+            while (frames.TryPeek(out var frame))
+            {
+                if (frame.Body.MoveNext())
+                    frames.Push(frame.Body.Current);
+                else
+                    frames.Pop();
+            }
+        }
+        finally
+        {
+            while (frames.TryPop(out var suspended))
+                suspended.Body.Dispose();
+        }
+
+        return root;
+    }
+
+    private static ExpansionFrame ExpandFrame(SummarySeed baseSeed, LevelContext level)
+    {
+        var frame = new ExpansionFrame();
+        frame.Body = ExpandAtLevelCore(frame, baseSeed, level);
+        return frame;
+    }
+
+    private static ExpansionFrame EscapingFrame(SummarySeed expanded, PendingReference pending, LevelContext level)
+    {
+        var frame = new ExpansionFrame();
+        frame.Body = AddEscaping(expanded, pending, level);
+        return frame;
+    }
+
+    /// <summary>One expansion at <paramref name="level"/>; its result is <paramref name="self"/>'s <see cref="ExpansionFrame.Seed"/>.</summary>
+    private static IEnumerator<ExpansionFrame> ExpandAtLevelCore(ExpansionFrame self, SummarySeed baseSeed, LevelContext level)
     {
         var outermost = level.ExpandedSeeds is null;
         var completed = level.ExpandedSeeds ??= new(StringComparer.Ordinal);
         try
         {
-            var key = baseSeed.ContentKeyFor(level.Memos.Observations);
-            if (completed.TryGetValue(key, out var cached))
-                return cached.Clone();
+            var cacheKey = baseSeed.ContentKeyFor(level.Memos.Observations);
+            if (completed.TryGetValue(cacheKey, out var cached))
+            {
+                self.Seed = cached.Clone();
+                yield break;
+            }
+
             var cuts = level.Memos.SharedMemo.ExpansionCycleCuts;
-            var result = ExpandAtLevelCore(baseSeed, level);
+            var expanded = new SummarySeed(
+                requiredAncestorOwnedParameterNames: baseSeed.RequiredAncestorOwnedParameterNames,
+                ownerQualifiedParameters: baseSeed.OwnerQualifiedParameters);
+
+            foreach (var dependencyName in baseSeed.VisiblePropertyDependencyNames)
+            {
+                if (level.LocalPropertySummaries.TryGetValue(dependencyName, out var localSummary))
+                {
+                    expanded.UnionWith(localSummary);
+                    continue;
+                }
+
+                yield return EscapingFrame(expanded, new PendingReference(dependencyName, [], []), level);
+            }
+
+            foreach (var pending in baseSeed.PendingReferences)
+            {
+                if (level.LocalPropertySummaries.TryGetValue(pending.Head, out var localSummary))
+                {
+                    if (pending.Members.Count == 0)
+                    {
+                        expanded.UnionWith(localSummary);
+                        continue;
+                    }
+
+                    var headNode = LocalPropertyValue(level.Algorithm, pending.Head);
+                    var active = level.Memos.SharedMemo.ActiveLocalPaths ??= [];
+                    var key = new SummaryMemo.LocalPathExpansion(level, pending);
+                    if (!active.Add(key))
+                    {
+                        level.Memos.SharedMemo.ExpansionCycleCuts++;
+                        continue;
+                    }
+                    try
+                    {
+                        var (charged, navigated) = ChargePath(headNode, StructuralSteps(pending.Members), level.Memos);
+                        // This locally declared provider is outside the escaped reference's
+                        // lexical chain unless its own call boundary accompanied that reference.
+                        charged.OwnerQualifiedParameters.RemoveWhere(r => r.Owner is not null
+                            && pending.BoundOwners.Any(a => ReferenceEquals(a, r.Owner)));
+                        var unavailable = charged.OwnerQualifiedParameters.Select(r => new OwnerQualifiedParameter(r.Name, null)).ToArray();
+                        charged.OwnerQualifiedParameters.Clear();
+                        charged.OwnerQualifiedParameters.UnionWith(unavailable);
+                        if (navigated == 0)
+                            expanded.UnionWith(localSummary);
+                        var path = ExpandFrame(charged, level);
+                        yield return path;
+                        expanded.UnionWith(path.Seed!);
+                    }
+                    finally
+                    {
+                        active.Remove(key);
+                    }
+                    continue;
+                }
+
+                yield return EscapingFrame(expanded, pending, level);
+            }
+
+            expanded.QualifyParameters(level.Algorithm, level.ParameterNames, level.Memos.Observations);
             // A partial expansion depends on the active path. It must never be served elsewhere.
             if (cuts == level.Memos.SharedMemo.ExpansionCycleCuts)
-                completed.TryAdd(key, result.Clone());
-            return result;
+                completed.TryAdd(cacheKey, expanded.Clone());
+            self.Seed = expanded;
         }
         finally
         {
@@ -2382,70 +2683,11 @@ internal static class PropertyDependencyGraphBuilder
         }
     }
 
-    private static SummarySeed ExpandAtLevelCore(SummarySeed baseSeed, LevelContext level)
-    {
-        var expanded = new SummarySeed(
-            requiredAncestorOwnedParameterNames: baseSeed.RequiredAncestorOwnedParameterNames,
-            ownerQualifiedParameters: baseSeed.OwnerQualifiedParameters);
-
-        foreach (var dependencyName in baseSeed.VisiblePropertyDependencyNames)
-        {
-            if (level.LocalPropertySummaries.TryGetValue(dependencyName, out var localSummary))
-            {
-                expanded.UnionWith(localSummary);
-                continue;
-            }
-
-            AddEscaping(expanded, new PendingReference(dependencyName, [], []), level);
-        }
-
-        foreach (var pending in baseSeed.PendingReferences)
-        {
-            if (level.LocalPropertySummaries.TryGetValue(pending.Head, out var localSummary))
-            {
-                if (pending.Members.Count == 0)
-                {
-                    expanded.UnionWith(localSummary);
-                    continue;
-                }
-
-                var headNode = LocalPropertyValue(level.Algorithm, pending.Head);
-                var active = level.Memos.SharedMemo.ActiveLocalPaths ??= [];
-                var key = new SummaryMemo.LocalPathExpansion(level, pending);
-                if (!active.Add(key))
-                {
-                    level.Memos.SharedMemo.ExpansionCycleCuts++;
-                    continue;
-                }
-                try
-                {
-                    var (charged, navigated) = ChargePath(headNode, StructuralSteps(pending.Members), level.Memos);
-                    // This locally declared provider is outside the escaped reference's
-                    // lexical chain unless its own call boundary accompanied that reference.
-                    charged.OwnerQualifiedParameters.RemoveWhere(r => r.Owner is not null
-                        && pending.BoundOwners.Any(a => ReferenceEquals(a, r.Owner)));
-                    var unavailable = charged.OwnerQualifiedParameters.Select(r => new OwnerQualifiedParameter(r.Name, null)).ToArray();
-                    charged.OwnerQualifiedParameters.Clear();
-                    charged.OwnerQualifiedParameters.UnionWith(unavailable);
-                    if (navigated == 0)
-                        expanded.UnionWith(localSummary);
-                    expanded.UnionWith(ExpandAtLevel(charged, level));
-                }
-                finally
-                {
-                    active.Remove(key);
-                }
-                continue;
-            }
-
-            AddEscaping(expanded, pending, level);
-        }
-
-        expanded.QualifyParameters(level.Algorithm, level.ParameterNames, level.Memos.Observations);
-        return expanded;
-    }
-
-    private static void AddEscaping(SummarySeed expanded, PendingReference pending, LevelContext level)
+    /// <summary>
+    /// <paramref name="pending"/> escaping <paramref name="level"/>, added to <paramref name="expanded"/>
+    /// with its candidates (a frame body, see <see cref="ExpansionFrame"/>).
+    /// </summary>
+    private static IEnumerator<ExpansionFrame> AddEscaping(SummarySeed expanded, PendingReference pending, LevelContext level)
     {
         List<OpenCandidate>? candidates = null;
         foreach (var candidate in pending.Candidates)
@@ -2454,11 +2696,16 @@ internal static class PropertyDependencyGraphBuilder
             switch (candidate)
             {
                 case ResolvedOpenCandidate resolved:
+                {
                     // The reference escapes this body: its settled provider is declared within it too.
-                    candidates.Add(resolved.WithSeed(ExpandAtLevel(resolved.Seed, level)).EscapedThrough(level.Algorithm));
+                    var reseeded = ExpandFrame(resolved.Seed, level);
+                    yield return reseeded;
+                    candidates.Add(resolved.WithSeed(reseeded.Seed!).EscapedThrough(level.Algorithm));
                     break;
+                }
 
                 case UnresolvedOpenCandidate unresolved when level.LocalPropertySummaries.ContainsKey(unresolved.Head):
+                {
                     // THIS level declares the carried target's head (the opener's direct
                     // chain reaches it here, before any farther level): settle the candidate
                     // in place exactly as the opener would have settled its own head — the
@@ -2468,9 +2715,12 @@ internal static class PropertyDependencyGraphBuilder
                     // settling level used to be carried past its declaration, so a property
                     // reading `p` through it was classified exported and the run cache
                     // served the first activation's value to every later call).
-                    if (TryResolveLocalHeadCandidate(unresolved.Head, unresolved.PublicSteps, pending, level, unresolved.ProviderLevel) is { } settled)
+                    var settlement = LocalHeadFrame(unresolved.Head, unresolved.PublicSteps, pending, level, unresolved.ProviderLevel);
+                    yield return settlement;
+                    if (settlement.Candidate is { } settled)
                         candidates.Add(settled);
                     break;
+                }
 
                 default:
                     candidates.Add(candidate);
@@ -2483,8 +2733,9 @@ internal static class PropertyDependencyGraphBuilder
             // This level's providers form the next lookup level of the escape path — ordinals
             // ascend innermost-first, so the last carried candidate holds the largest one.
             var providerLevel = pending.Candidates.Count == 0 ? 0 : pending.Candidates[^1].ProviderLevel + 1;
-            foreach (var candidate in MakeOpenCandidates(pending, level, providerLevel))
-                (candidates ??= []).Add(candidate);
+            var opened = new ExpansionFrame();
+            opened.Body = MakeOpenCandidates(candidates ??= [], pending, level, providerLevel);
+            yield return opened;
         }
 
         // Q-19 D-I: within one opener level, candidates settled to ONE provider count once —
@@ -2498,7 +2749,7 @@ internal static class PropertyDependencyGraphBuilder
                 expanded.VisiblePropertyDependencyNames.Add(pending.Head);
             else
                 expanded.PendingReferences.Add(pending.WithCandidates([]));
-            return;
+            yield break;
         }
 
         expanded.PendingReferences.Add(pending.WithCandidates(candidates.Select(candidate =>
@@ -2513,9 +2764,11 @@ internal static class PropertyDependencyGraphBuilder
     /// inline block, bare or as the head of a dotted path) is settled in place: it is a candidate
     /// exactly when it publicly provides the reference's head, and then carries the charged
     /// member seed, relative to this level's parent, and its provider's identity. A target whose
-    /// head is declared farther out is carried unresolved.
+    /// head is declared farther out is carried unresolved. A frame body (see <see cref="ExpansionFrame"/>)
+    /// appending to <paramref name="candidates"/>.
     /// </summary>
-    private static IEnumerable<OpenCandidate> MakeOpenCandidates(PendingReference pending, LevelContext level, int providerLevel)
+    private static IEnumerator<ExpansionFrame> MakeOpenCandidates(List<OpenCandidate> candidates, PendingReference pending,
+        LevelContext level, int providerLevel)
     {
         var opens = level.Algorithm.Opens;
         HashSet<string>? seen = null;
@@ -2536,19 +2789,23 @@ internal static class PropertyDependencyGraphBuilder
                     if (TryChargeInlineOpenProvider(block, steps, pending, level.Memos) is { } inlineSeed)
                     {
                         var identity = PathIdentity(OpenProviderIdentity.DeclaredAtRoot(block), block, steps);
-                        yield return new ResolvedOpenCandidate(inlineSeed, providerLevel, identity, level.Memos.SharedMemo);
+                        candidates.Add(new ResolvedOpenCandidate(inlineSeed, providerLevel, identity, level.Memos.SharedMemo));
                     }
 
                     break;
 
                 case Expr.Resolve(var head) when !level.LocalPropertySummaries.ContainsKey(head):
-                    yield return new UnresolvedOpenCandidate(head, steps, providerLevel);
+                    candidates.Add(new UnresolvedOpenCandidate(head, steps, providerLevel));
                     break;
 
                 case Expr.Resolve(var head):
-                    if (TryResolveLocalHeadCandidate(head, steps, pending, level, providerLevel) is { } candidate)
-                        yield return candidate;
+                {
+                    var settlement = LocalHeadFrame(head, steps, pending, level, providerLevel);
+                    yield return settlement;
+                    if (settlement.Candidate is { } candidate)
+                        candidates.Add(candidate);
                     break;
+                }
             }
         }
     }
@@ -2612,9 +2869,11 @@ internal static class PropertyDependencyGraphBuilder
     /// outward (<see cref="AddEscaping"/>): the dotted steps must be public members, the
     /// provider must publicly declare the referenced head, and the charged seed (the
     /// navigated steps' and the provided member's requirements) is relative to this level's
-    /// parent. Null when the target provides nothing.
+    /// parent. A frame body (see <see cref="ExpansionFrame"/>): its <see cref="ExpansionFrame.Candidate"/>
+    /// is null when the target provides nothing.
     /// </summary>
-    private static ResolvedOpenCandidate? TryResolveLocalHeadCandidate(
+    private static IEnumerator<ExpansionFrame> TryResolveLocalHeadCandidate(
+        ExpansionFrame self,
         string head,
         IReadOnlyList<string> steps,
         PendingReference pending,
@@ -2623,11 +2882,11 @@ internal static class PropertyDependencyGraphBuilder
     {
         var (providerSeed, providerNavigated) = ChargePath(LocalPropertyValue(level.Algorithm, head), PublicSteps(steps), level.Memos);
         if (providerNavigated < steps.Count)
-            return null;
+            yield break;
 
         var provider = NavigateNode(LocalPropertyValue(level.Algorithm, head), steps);
         if (provider is null || TryChargeProvidedMember(provider, pending, level.Memos) is not { } memberSeed)
-            return null;
+            yield break;
 
         // ChargePath's seed is already relative to the provider's parent. Expand only
         // its ancestors: expanding the provider again duplicates its owner/identity level.
@@ -2645,18 +2904,29 @@ internal static class PropertyDependencyGraphBuilder
         if (!active.Add(key))
         {
             level.Memos.SharedMemo.ExpansionCycleCuts++;
-            return new ResolvedOpenCandidate(new SummarySeed(), providerLevel, identity, level.Memos.SharedMemo);
+            self.Candidate = new ResolvedOpenCandidate(new SummarySeed(), providerLevel, identity, level.Memos.SharedMemo);
+            yield break;
         }
         try
         {
             var seed = ExpandThroughNodes(memberSeed, NodePath(headValue, steps), level.Memos, skipLastNode: true);
             seed.UnionWith(providerSeed);
-            return new ResolvedOpenCandidate(ExpandAtLevel(seed, level), providerLevel, identity, level.Memos.SharedMemo);
+            var expansion = ExpandFrame(seed, level);
+            yield return expansion;
+            self.Candidate = new ResolvedOpenCandidate(expansion.Seed!, providerLevel, identity, level.Memos.SharedMemo);
         }
         finally
         {
             active.Remove(key);
         }
+    }
+
+    private static ExpansionFrame LocalHeadFrame(string head, IReadOnlyList<string> steps, PendingReference pending,
+        LevelContext level, int providerLevel)
+    {
+        var frame = new ExpansionFrame();
+        frame.Body = TryResolveLocalHeadCandidate(frame, head, steps, pending, level, providerLevel);
+        return frame;
     }
 
     /// <summary>

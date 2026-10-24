@@ -52,7 +52,7 @@ public sealed class ExposureOpenChainComplexityTests
         return source.ToString();
     }
 
-    private static string Reader(string mode, string indent, string name = "R")
+    internal static string Reader(string mode, string indent, string name = "R")
         => mode == "dotted"
             ? $"{indent}{name} = P1.A1\n"
             : $"{indent}{name} = {{\n{indent}    open P1\n{indent}    A1\n{indent}}}\n";
@@ -64,7 +64,7 @@ public sealed class ExposureOpenChainComplexityTests
     private static string RootChain(int length)
         => Chain("open", length, "5", "") + Reader("open", "") + "R";
 
-    private static Algorithm.User Exposed(string source, FrontEndTraversalObservations observations)
+    internal static Algorithm.User Exposed(string source, FrontEndTraversalObservations observations)
     {
         var syntax = SourceProvenance.ParseSyntaxValidRoot(source);
         var (detected, detectionDiagnostics) = ParameterDetector.DetectPrevalidated(syntax);
@@ -75,7 +75,7 @@ public sealed class ExposureOpenChainComplexityTests
         return (Algorithm.User)PropertyExposureResolver.Resolve(resolved, observations);
     }
 
-    private static Property Member(Algorithm owner, params string[] path)
+    internal static Property Member(Algorithm owner, params string[] path)
     {
         var current = owner;
         Property? property = null;
@@ -88,7 +88,7 @@ public sealed class ExposureOpenChainComplexityTests
         return property!;
     }
 
-    private static void AssertRequires(Property property, params (string Name, int Depth)[] requirements)
+    internal static void AssertRequires(Property property, params (string Name, int Depth)[] requirements)
     {
         Assert.Equal(
             requirements.Length == 0 ? PropertyExposure.Exported : PropertyExposure.LocalOnlyCapturedAncestorParameters,
@@ -491,11 +491,13 @@ public sealed class ExposureOpenChainComplexityTests
     }
 
     /// <summary>
-    /// A long opened chain with a reader at the owner, on a 1 MiB thread. The summary channel still
-    /// settles a local open target's charge by expanding it at the owner, one host frame group per link
-    /// (a pre-existing limit: between 500 and 700 links on a 1 MiB Release thread, unchanged by this
-    /// repair); 400 links pin that the repair neither lowers that limit nor brings back the cubic cost
-    /// (the former implementation took 9 s at 300 links and 58 s at 500).
+    /// A long opened chain with a reader at the owner, on a 1 MiB thread, in process: 400 links pin
+    /// that the cubic cost does not come back (the implementation before EXPOSURE-OPEN-1 took 9 s at
+    /// 300 links and 58 s at 500) — exactly two candidate rebuilds per link. Settling each link's charge
+    /// at the owner formerly also took one group of host frames per link (OOS-22: the process died
+    /// between 500 and 700 links on a 1 MiB Release thread); that expansion now runs on an explicit
+    /// stack, and the deep chains are pinned in a child process
+    /// (<see cref="ExposureOpenChainDepthProcessTests"/>), where an overflow cannot kill the test host.
     /// </summary>
     [Fact]
     public void LongNestedOwnerOpenedChain_SettlesOnASmallStack()
@@ -508,6 +510,72 @@ public sealed class ExposureOpenChainComplexityTests
         AssertRequires(Member(owner, "R"), ("p", 0));
         AssertRequires(Member(owner, $"P{Length}", $"A{Length}"), ("p", 1));
         Assert.Equal(2L * Length, observations.OpenCandidateSeedRebuilds);
+    }
+
+    /// <summary>
+    /// OOS-22: the explicit-stack expansion holds the chain's active local-head keys and the level's
+    /// expansion cache in suspended frames. An expansion interrupted deep inside the chain (here a
+    /// member map that fails at link 20) must release every one of them, exactly as the recursion's
+    /// <c>finally</c> blocks did: the retry on the SAME memo cuts no cycle and settles the same
+    /// candidate a fresh analysis settles, instead of serving an unfinished link as an empty charge.
+    /// </summary>
+    [Fact]
+    public void InterruptedChainExpansion_ReleasesItsActiveState_AndTheRetryMatchesAFreshAnalysis()
+    {
+        const int Length = 40;
+        var owner = Member(SourceProvenance.ParseValid(NestedOwnerChain(Length, last: "p")).Root, "O").Value;
+        var seed = new PropertyDependencyGraphBuilder.SummarySeed(
+            pendingReferences: [new PendingReference("A1", [], [new UnresolvedOpenCandidate("P1", [], 0)])]);
+
+        PropertyDependencyGraphBuilder.LevelContext? lastLevel = null;
+        (ResolvedOpenCandidate Candidate, long Cuts) Settle(PropertyDependencyGraphBuilder.SummaryMemo memo, string? failAt)
+        {
+            var memos = PropertyDependencyGraphBuilder.CreateWalkMemos(memo, observations: null);
+            var members = new FailingMemberMap(PropertyDependencyGraphBuilder.GetAlgorithmSummary(owner, memos).MemberSeeds, failAt);
+            var level = lastLevel = new PropertyDependencyGraphBuilder.LevelContext(owner, members, memos);
+            var cuts = memo.ExpansionCycleCuts;
+            var expanded = PropertyDependencyGraphBuilder.ExpandAtLevel(seed, level);
+            Assert.Null(level.ExpandedSeeds);
+            var reference = Assert.Single(expanded.PendingReferences);
+            return (Assert.IsType<ResolvedOpenCandidate>(Assert.Single(reference.Candidates)), memo.ExpansionCycleCuts - cuts);
+        }
+
+        var shared = new PropertyDependencyGraphBuilder.SummaryMemo();
+        var failure = Assert.Throws<InvalidOperationException>(() => Settle(shared, failAt: "P20"));
+        Assert.Equal(FailingMemberMap.Message, failure.Message);
+        Assert.Empty(shared.ActiveLocalHeads ?? []);
+        Assert.Empty(shared.ActiveLocalPaths ?? []);
+        Assert.Null(lastLevel!.ExpandedSeeds);
+
+        var (retried, retryCuts) = Settle(shared, failAt: null);
+        var (fresh, freshCuts) = Settle(new PropertyDependencyGraphBuilder.SummaryMemo(), failAt: null);
+        Assert.Equal(0, freshCuts);
+        Assert.Equal(0, retryCuts);
+        Assert.Empty(shared.ActiveLocalHeads ?? []);
+        // Every link settled: the outermost candidate's deep facts reach the terminal's `p` and every
+        // nested link's pending head, exactly as a fresh analysis's do.
+        Assert.Equal(fresh.Facts.Count, retried.Facts.Count);
+        Assert.True(retried.RequiresAny(new HashSet<string>(["p"], StringComparer.Ordinal), owner));
+        Assert.True(shared.SeedFacts.HasHead(retried.Facts, $"A{Length}"));
+    }
+
+    // A level's member map whose presence test fails for one member (the escaping-candidate settlement
+    // asks it whether the level declares a carried open target's head).
+    private sealed class FailingMemberMap(IReadOnlyDictionary<string, PropertyDependencyGraphBuilder.SummarySeed> inner, string? failAt)
+        : IReadOnlyDictionary<string, PropertyDependencyGraphBuilder.SummarySeed>
+    {
+        public const string Message = "member map failure";
+
+        public PropertyDependencyGraphBuilder.SummarySeed this[string key] => inner[key];
+        public IEnumerable<string> Keys => inner.Keys;
+        public IEnumerable<PropertyDependencyGraphBuilder.SummarySeed> Values => inner.Values;
+        public int Count => inner.Count;
+        public bool ContainsKey(string key)
+            => key == failAt ? throw new InvalidOperationException(Message) : inner.ContainsKey(key);
+        public bool TryGetValue(string key, [System.Diagnostics.CodeAnalysis.MaybeNullWhen(false)] out PropertyDependencyGraphBuilder.SummarySeed value)
+            => inner.TryGetValue(key, out value);
+        public IEnumerator<KeyValuePair<string, PropertyDependencyGraphBuilder.SummarySeed>> GetEnumerator() => inner.GetEnumerator();
+        System.Collections.IEnumerator System.Collections.IEnumerable.GetEnumerator() => GetEnumerator();
     }
 
     // ── The merge rule itself ────────────────────────────────────────────────
