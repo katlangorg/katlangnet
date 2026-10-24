@@ -168,7 +168,8 @@ public static partial class Evaluator
     /// The binding-context identity of <paramref name="ctx"/> (Lean: <c>EvalCtx.bindingContext</c>):
     /// what a LOCAL-ONLY zero-argument property entry is keyed by — recorded at owner entry
     /// (<see cref="ParameterActivation.Capture"/>), or taken at the access when no activation owns the
-    /// binding — and what a deconstruction group's shared bind is keyed by. The need tier a binding
+    /// binding — and so, through its hoisted source's cache key, what separates a deconstruction
+    /// group's shared binds of distinct activations. The need tier a binding
     /// boundary minted (<see cref="BoundNeedEnv"/>) IS that identity, EVEN WHEN IT IS EMPTY: a call that
     /// binds no cell and inherits none is still a new activation (CACHE-OWNER-D2, October 2026; Lean
     /// <c>EvalCtx.bindParameters</c> allocates a fresh context at every boundary). Only a context below
@@ -179,18 +180,6 @@ public static partial class Evaluator
         => ctx.NeedEnv.Count != 0 || ctx.NeedEnv is BoundNeedEnv
             ? ctx.NeedEnv
             : ValueEnvironmentCacheIdentity(valEnv);
-
-    /// <summary>
-    /// Lexical-scope identity of the caller that resolves an assignment-deconstruction group's
-    /// hoisted <c>$deconstruct$</c> source, used to key the shared-bind cache. Returns a
-    /// never-matching token when the call stack is empty: no evaluator run reaches that state
-    /// (the root context always carries the prelude), so the defensive path gives up reuse
-    /// rather than risking an alias.
-    /// </summary>
-    private static object DeconstructionOwnerIdentity(EvalCtx ctx)
-        => ctx.Head is { } caller
-            ? StructuralOwnerIdentity.FromOwner(caller)
-            : new object();
 
     /// <summary>Value environment: maps parameter names to results. Lean: ValEnv.lookup (Option).</summary>
     private static Result? LookupVal(ValEnv env, string name)

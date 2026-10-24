@@ -18,10 +18,6 @@ namespace KatLang.Evaluation.Caching;
 ///   The group token survives a host <c>with</c> copy that replaces the unpacking pattern, so the token
 ///   alone no longer names one pattern; the parser's helpers of one group share one list (an import
 ///   view rewrites that list once, preserving the sharing);</item>
-///   <item><see cref="OwnerIdentity"/> and <see cref="ValueEnvironmentIdentity"/> — the caller's
-///   structural scope identity (<see cref="StructuralOwnerIdentity"/>: rebuilt caller records keep
-///   sharing) and the READER's binding context (<c>Evaluator.BindingContextIdentity</c>), the
-///   conservative per-consumer dimensions the memo has always had, kept unchanged;</item>
 ///   <item><see cref="SourceKey"/> — the COMPLETE property-cache key of the source entry the helper's
 ///   one argument actually reads (<see cref="ZeroArgPropertyCacheKey"/>: declaring owner — an ownerless
 ///   host <see cref="ScopeCtx"/> by reference —, declaration, binding, declaring activation of a
@@ -29,7 +25,18 @@ namespace KatLang.Evaluation.Caching;
 ///   locally shadowed source, a different argument, ownerless host scopes over one property list and
 ///   two declarations sharing a list never merge.</item>
 /// </list>
-/// Every component compares by identity (references, or the structural identities' own equality),
+/// THE KEY NAMES NO CONSUMER (OD-1, October 2026). Until then it also carried the caller's structural
+/// scope and the READER's binding context, so a group whose targets were first read from different
+/// callbacks, helpers or <c>a()</c> calls of ONE declaring activation bound again per consumer. Those
+/// dimensions add nothing an admitted execution depends on: the evaluator admits only a source read that
+/// obtains the entry's PUBLISHED value (<see cref="IZeroArgPropertyResultCache.ReadObtainsPublishedValue"/>),
+/// which is unique per <see cref="SourceKey"/> in a run and never replaced; the source key already
+/// carries every activation, owner and run distinction the read itself makes (two activations of one
+/// owner, two loop rounds and a planned loop's iterations read different local-only entries); and the
+/// bind over that value creates Ready cells of its items plus, for a collector, a lazy cell that needs
+/// only the run budget (<c>Evaluator.CollectorCell</c>). So every reader of one published source entry
+/// through one actual pattern list shares one completed bind.
+/// Every component compares by identity (references, or the source key's own equality),
 /// never by a diagnostic hash. No run identity is needed beyond the source key's: a
 /// <see cref="RunScopedDeconstructionBindingCache"/> is constructed inside the evaluator's root
 /// context and is never host-supplied, so one instance can never span two runs.
@@ -37,8 +44,6 @@ namespace KatLang.Evaluation.Caching;
 internal readonly record struct DeconstructionBindingExecution(
     object GroupIdentity,
     object PatternIdentity,
-    object OwnerIdentity,
-    object ValueEnvironmentIdentity,
     ZeroArgPropertyCacheKey SourceKey);
 
 /// <summary>
@@ -88,22 +93,13 @@ internal sealed class DeconstructionBindingCacheKeyComparer : IEqualityComparer<
     public bool Equals(DeconstructionBindingExecution x, DeconstructionBindingExecution y)
         => ReferenceEquals(x.GroupIdentity, y.GroupIdentity)
             && ReferenceEquals(x.PatternIdentity, y.PatternIdentity)
-            && ZeroArgPropertyCacheKeyComparer.OwnerIdentityEquals(x.OwnerIdentity, y.OwnerIdentity)
-            && ReferenceEquals(x.ValueEnvironmentIdentity, y.ValueEnvironmentIdentity)
             && ZeroArgPropertyCacheKeyComparer.Instance.Equals(x.SourceKey, y.SourceKey);
 
     public int GetHashCode(DeconstructionBindingExecution obj)
-    {
-        var hash = new HashCode();
-        hash.Add(RuntimeHelpers.GetHashCode(obj.GroupIdentity));
-        hash.Add(RuntimeHelpers.GetHashCode(obj.PatternIdentity));
-        hash.Add(obj.OwnerIdentity is StructuralOwnerIdentity owner
-            ? owner.GetHashCode()
-            : RuntimeHelpers.GetHashCode(obj.OwnerIdentity));
-        hash.Add(RuntimeHelpers.GetHashCode(obj.ValueEnvironmentIdentity));
-        hash.Add(ZeroArgPropertyCacheKeyComparer.Instance.GetHashCode(obj.SourceKey));
-        return hash.ToHashCode();
-    }
+        => HashCode.Combine(
+            RuntimeHelpers.GetHashCode(obj.GroupIdentity),
+            RuntimeHelpers.GetHashCode(obj.PatternIdentity),
+            ZeroArgPropertyCacheKeyComparer.Instance.GetHashCode(obj.SourceKey));
 }
 
 /// <summary>
@@ -144,8 +140,20 @@ internal sealed class UncachedDeconstructionBindingCache : IDeconstructionBindin
 /// every bind started inside a running bind of its group (recursive owners, re-entrant targets) out of
 /// the memo, which is the established bind and step accounting of such programs (R12's seven binds,
 /// pinned by <c>DeconstructionMemoEligibilityTests</c>); narrowing it to the full key is an accounting
-/// change that needs its own decision. Programs that never re-enter a deconstruction keep every hit
-/// they had before.
+/// change that needs its own decision.
+/// <para><b>Work done once, work done per consumer (OD-1).</b> A stored bind is the ONE full bind of its
+/// execution: one <c>DeconstructionFullBindCount</c>, the one charged read of the source (one step and
+/// its expression checkpoints, the RHS evaluation itself on the owning read), the cardinality gate, the
+/// binder, and — on its first VALUE demand, by whichever consumer — a collector's ONE materialization and
+/// collection reservation (a completed cell is never materialized again). Every consumer still pays its
+/// own work: its target property read (its step, depth level and property-cache lookup), its helper
+/// invocation, its projection's demand of the completed cell, and everything it does with the value.
+/// Because the key names no consumer, a program whose targets are first read from different consumers of
+/// one source entry binds, reads the source and materializes collectors fewer times than under the former
+/// per-reader key, so it consumes fewer steps, checkpoints and materialized items and may now complete
+/// under a limit it formerly reached. Skipping the source read also skips its invocation depth level,
+/// so a deeper later consumer may lower peak depth and avoid a depth refusal. Values, effects, effect
+/// order and non-resource errors are unchanged.</para>
 /// </summary>
 internal sealed class RunScopedDeconstructionBindingCache : IDeconstructionBindingCache
 {

@@ -35,14 +35,17 @@ internal sealed class EvaluationObservations
     /// <summary>
     /// Number of COMPLETE assignment-deconstruction binding computations begun during this run. A
     /// deconstruction group binds its shared N-capture pattern once per shared-bind execution (group,
-    /// actual pattern list, caller scope, reader binding context and source entry — DECON-CACHE-2's
-    /// <c>DeconstructionBindingExecution</c>): the first demanded target performs the full bind and
-    /// increments this once (whether the bind then succeeds OR fails); later targets with the same
-    /// execution reuse the shared bind and each target's projection does not increment. A target whose
-    /// bind may not be shared (its source read would be a re-entrant intermediate, or the run's property
-    /// cache publishes nothing) increments it on every read. Demanding no target performs no bind (zero);
-    /// two independent groups, or one group in two distinct call contexts, perform two. A fresh run starts
-    /// at zero, so demanding every target of one group any number of times from one context observes exactly one.
+    /// actual pattern list and source entry — <c>DeconstructionBindingExecution</c>; since OD-1 no reader
+    /// or caller scope): the first demanded target performs the full bind and increments this once
+    /// (whether the bind then succeeds OR fails); later targets with the same execution — from any
+    /// consumer: a callback, a helper, an explicit <c>a()</c>, the owner body — reuse the shared bind and
+    /// each target's projection does not increment. A target whose bind may not be shared (its source
+    /// read would be a re-entrant intermediate, the run's property cache publishes nothing, or a bind of
+    /// its group is already running) increments it on every such read. Demanding no target performs no
+    /// bind (zero); two independent groups, or one local-only source in two distinct declaring activations
+    /// (two calls, two loop rounds), perform two. An exported source keeps one entry across activations.
+    /// A fresh run starts at zero, so demanding every target of one group any number
+    /// of times within one activation observes exactly one.
     /// </summary>
     public long DeconstructionFullBindCount { get; private set; }
 

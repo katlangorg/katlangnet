@@ -552,10 +552,11 @@ public static partial class Evaluator
     ///   evaluation is still running (Q-37) — say, the source read directly by the host — returns an
     ///   intermediate value that is never published, so its bind is never stored.</item>
     /// </list>
-    /// The execution then keys the memo by the group, the actual pattern list, the caller's structural
-    /// scope, the reader's binding context and the source's complete cache key
-    /// (<see cref="DeconstructionBindingExecution"/>). Non-evaluating and charge-free: the source is
-    /// read only by the bind, exactly as before. Shared by the synchronous and async projections.
+    /// The execution then keys the memo by the group, the actual pattern list and the source's complete
+    /// cache key (<see cref="DeconstructionBindingExecution"/>) — never by the reader: every consumer of
+    /// one published source entry through one pattern list shares the bind (OD-1). Non-evaluating and
+    /// charge-free: the source is read only by the bind, exactly as before. Shared by the synchronous and
+    /// async projections.
     /// </summary>
     private static DeconstructionBindingExecution? SharedDeconstructionBind(
         Algorithm.User helper,
@@ -576,8 +577,7 @@ public static partial class Evaluator
             source.Owner, source.Binding, ZeroArgPropertyAccessKind.CountedLexical, source.ResolvedAlgorithm, ctx, valEnv));
         if (!ctx.ZeroArgPropertyResultCache.ReadObtainsPublishedValue(sourceKey))
             return null;
-        return new DeconstructionBindingExecution(target.Group, helper.ParameterPatterns, DeconstructionOwnerIdentity(ctx),
-            BindingContextIdentity(ctx, valEnv), sourceKey);
+        return new DeconstructionBindingExecution(target.Group, helper.ParameterPatterns, sourceKey);
     }
 
     /// <summary>

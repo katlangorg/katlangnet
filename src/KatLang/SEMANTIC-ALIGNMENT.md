@@ -1,5 +1,42 @@
 # Semantic Alignment Manifest.
 
+OD-1 — deconstruction shared bind across consumer contexts (October 24 2026; C#-only memo and
+resource-accounting change, classified by the "Zero-argument property cache semantics" row (C# cache
+instrumentation: no) and the caching V3 trigger: no Lean edit — Lean has no group-bind memo, budgets or
+bind counter, and the unlimited-budget values, effects, effect order and errors of every program are
+unchanged). Supersedes the "reader dimensions kept" and "OD-1 deferred" clauses of DECON-CACHE-2 below.
+RULE: `DeconstructionBindingExecution` is now (group token, ACTUAL pattern list, the source entry's
+complete `ZeroArgPropertyCacheKey`) — the caller's structural scope and the reader's binding context are
+gone (`Evaluator.DeconstructionOwnerIdentity` deleted). Proof obligation: an admitted execution reads the
+source's PUBLISHED value (`ReadObtainsPublishedValue`, unchanged), which is unique per source key in a
+run and never replaced; the source key already carries every activation/owner/declaration/run
+distinction the read makes (local-only sources per declaring activation, D1/D2/D3, planned-loop
+iterations); the bind over that value makes Ready item cells plus, for a collector, a lazy cell whose
+closure now captures only the run budget (`Evaluator.CollectorCell`, no `EvalCtx`). So every consumer of
+one published entry through one pattern list — callbacks, helpers, `a()`, structural/opened reads —
+shares ONE bind. Local-only sources separate declaring activations and loop rounds; exported sources keep their one entry per declaring scope/run, so different activations may also share that bind. Distinct source owners and host scopes stay apart. Eligibility
+(`DeconstructionProjectionName`, `SharedDeconstructionBind`), the group-wide re-entry guard, failed-bind
+non-publication and `TryAdd` are unchanged; there is no separate per-consumer memo tier (no shape is safe
+for a reader-keyed memo yet unsafe for the source key). ACCOUNTING (intentional, documented in
+`evaluator-and-hosting.md` / `sequences-lists-and-calls.md` § deconstruction): each eliminated bind saves
+exactly its charged source read — one step and one expression checkpoint — and a collector materializes
+once on its first VALUE demand by any consumer. The eliminated source read also avoids its invocation
+depth level: a deeper later consumer can lower peak depth and change a depth-limit verdict
+(`DeeperConsumer_SkipsTheRepeatedSourceReadDepth`: peak 6 → 5, completes at `MaxDepth = 5`, still
+refuses at 4). Effects and charges for work still performed are unchanged.
+R02 now completes at `MaxSteps = 10` (refuses at 9); V02 completes at `MaxMaterializedItems = 11`
+(refuses at 10, now at the `map` result's reservation instead of the second `t()` collector). Mutation
+kills: reader in key → 34 surface pins (R02/R06/R07…); source key dropped or reduced to the declaration →
+activation/owner pins and a non-terminating `while` (hang); publication check dropped → H01/H03; guard
+dropped → R12. Dropping the group or the pattern list alone is an equivalent mutant (each implies the
+other for an eligible helper). Allocation (Release, two rounds, 21 samples): no-benefit controls −0.0% to
+−2.2% (worst +0.5%, noise); N = 1024 × fan-out 128 117.3 MB → 3.8 MB; two activations stay two binds.
+Pins: `DeconstructionMemoEligibilityTests` (OD-1 table beside the DECON-CACHE-2 baseline,
+`Od1AccountingChange_IsExactlyTheEliminatedBinds`, memo-vs-unshared differential on three routes,
+planned-loop route, cancellation, concurrent runs, COPY/IDX host witnesses), `DeconstructionSharedBindingTests`
+(`SameGroupReadByDifferentConsumersOfOneActivation_BindsOnce`), `CacheKeyDifferentialTests`. Report:
+`experimental/features/od-1-broader-deconstruction-sharing-implementation.md`.
+
 DECON-CACHE-2 — deconstruction shared-bind eligibility for host-transformed ASTs (October 24 2026;
 C#-only memo correctness, classified by the "Zero-argument property cache semantics" row and the caching V3
 trigger: no Lean edit — Lean has no group-bind memo, budgets or bind counter — and no change to any

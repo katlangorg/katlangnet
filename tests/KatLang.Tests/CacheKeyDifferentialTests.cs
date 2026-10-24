@@ -210,7 +210,13 @@ public class CacheKeyDifferentialTests
             Assert.False(comparer.Equals(baselineKey, ZeroArgPropertyCacheKey.FromExecution(execution)), $"changed {dimension} must miss");
     }
 
-    /// <summary>Deconstruction-cache twin of the one-dimension key matrix.</summary>
+    /// <summary>
+    /// Deconstruction-cache twin of the one-dimension key matrix. Since OD-1 the key is the group, the
+    /// actual pattern list and the source entry's complete key: every dimension of the source key still
+    /// separates binds (activation, owner, declaration, run), while the consumer that reads it does not
+    /// appear in the key at all — two readers of one published source entry through one pattern list
+    /// build EQUAL executions.
+    /// </summary>
     [Fact]
     public void DeconstructionKey_ChangingExactlyOneDimension_MissesForEveryKeyDimension()
     {
@@ -218,8 +224,6 @@ public class CacheKeyDifferentialTests
         var sourceKey = new ZeroArgPropertyCacheKey(
             ZeroArgPropertyCacheAccessShape.Lexical, new object(), new object(), new object(), new object());
         var baseline = new DeconstructionBindingExecution(
-            new object(),
-            new object(),
             new object(),
             new object(),
             sourceKey);
@@ -234,8 +238,6 @@ public class CacheKeyDifferentialTests
         {
             ("group", baseline with { GroupIdentity = new object() }),
             ("pattern", baseline with { PatternIdentity = new object() }),
-            ("owner", baseline with { OwnerIdentity = new object() }),
-            ("value environment", baseline with { ValueEnvironmentIdentity = new object() }),
             ("source owner", baseline with { SourceKey = sourceKey with { OwnerIdentity = new object() } }),
             ("source binding", baseline with { SourceKey = sourceKey with { BindingIdentity = new object() } }),
             ("source binding context", baseline with { SourceKey = sourceKey with { ValueEnvironmentIdentity = new object() } }),
@@ -245,13 +247,13 @@ public class CacheKeyDifferentialTests
         foreach (var (dimension, key) in changed)
             Assert.False(comparer.Equals(baseline, key), $"changed {dimension} must miss");
 
-        // A rebuilt-but-resolution-equivalent structural owner still HITS: the deconstruction
-        // owner rule is shared with the zero-arg property cache's structural owner identity.
+        // A source key built over a rebuilt-but-resolution-equivalent structural owner still HITS: the
+        // source key's owner rule is the zero-arg property cache's structural owner identity.
         var opens = new List<Expr> { new Expr.Num(1m) };
         var properties = new List<Property> { NewProperty("P") };
         Algorithm.User RebuildOwner() => NewAlgorithm() with { Opens = opens, Properties = properties };
-        var structural = baseline with { OwnerIdentity = StructuralOwnerIdentity.FromOwner(RebuildOwner()) };
-        var rebuiltStructural = baseline with { OwnerIdentity = StructuralOwnerIdentity.FromOwner(RebuildOwner()) };
+        var structural = baseline with { SourceKey = sourceKey with { OwnerIdentity = StructuralOwnerIdentity.FromOwner(RebuildOwner()) } };
+        var rebuiltStructural = baseline with { SourceKey = sourceKey with { OwnerIdentity = StructuralOwnerIdentity.FromOwner(RebuildOwner()) } };
         Assert.True(comparer.Equals(structural, rebuiltStructural));
         Assert.Equal(comparer.GetHashCode(structural), comparer.GetHashCode(rebuiltStructural));
     }

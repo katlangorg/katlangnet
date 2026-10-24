@@ -400,8 +400,12 @@ public static partial class Evaluator
             formed.Value.Select((cell, index) => new ResolvedArgumentAlgorithm(null) { Cell = cell, Source = sources[index] }).ToArray());
     }
 
+    // A collector's materialization needs only the RUN: its slice's cells and the run budget that
+    // reserves the list. The closure therefore captures the budget, never the binding site's EvalCtx,
+    // so a collector a deconstruction memo shares across consumers (OD-1) retains no consumer's context.
     private static NeedCell CollectorCell(IReadOnlyList<NeedCell> slice, EvalCtx ctx)
     {
+        var budget = ctx.Budget;
         async ValueTask<EvalResult<CountedResult>> Materialize(bool asynchronous)
         {
             var items = new List<Result>(slice.Count);
@@ -411,10 +415,12 @@ public static partial class Evaluator
                 if (value.IsError) return value.Error;
                 items.Add(value.Value.Value);
             }
-            return MakeCollectionListResult(ctx, items);
+            return budget.TryReserveCollection(items.Count) is { } error
+                ? error
+                : EvalResult<CountedResult>.Ok(MakeCollectionListResult(items));
         }
         return new NeedCell(() => Materialize(false).GetAwaiter().GetResult(), () => Materialize(true),
-            token: ctx.Budget.CancellationToken, slice: slice, budget: ctx.Budget);
+            token: budget.CancellationToken, slice: slice, budget: budget);
     }
 
     // `Meta` (CallReference S1) marks a META capture: its name binds a Ready adapter holding the

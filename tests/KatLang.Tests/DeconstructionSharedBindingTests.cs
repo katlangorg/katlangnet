@@ -9,7 +9,8 @@ namespace KatLang.Tests;
 /// pattern <c>x0, ..., x{N-1} = RHS</c> elaborates to N target properties that each apply the SAME
 /// shared N-capture pattern to the SAME hoisted <c>$deconstruct$</c> source. Demanding every target
 /// formerly rebound the whole N-capture pattern once per target — O(N^2) (and, because one bind was
-/// itself O(N), effectively O(N^3)). The correction binds the group once per binding context in a
+/// itself O(N), effectively O(N^3)). The correction binds the group once per published source entry
+/// (OD-1, October 2026: one per declaring activation, whichever consumers read its targets) in a
 /// run-scoped cache and projects each target's slot in O(1), and makes the single bind itself linear.
 ///
 /// <para>These tests pin the preserved semantics (deferred binding, per-position values across every
@@ -237,8 +238,9 @@ public class DeconstructionSharedBindingTests
     public void SameGroupInDifferentCallContexts_BindsPerContext()
     {
         // One deconstruction whose RHS depends on the enclosing parameter, demanded from two calls.
-        // Each call is a distinct binding context (a=1 vs a=2), so the shared-bind cache must NOT
-        // collapse them: two binds, correct per-call values.
+        // Each call is a distinct activation (a=1 vs a=2) whose local-only source is a distinct entry,
+        // so the shared-bind cache must NOT collapse them: two binds, correct per-call values. (Since
+        // OD-1 the separation comes from the source entry's key, not from the reader.)
         const string source =
             """
             F(a) = {
@@ -250,6 +252,24 @@ public class DeconstructionSharedBindingTests
         var (atoms, binds) = RunCountingBinds(source);
         Assert.Equal([11m, 22m], atoms); // 1+10, 2+20
         Assert.Equal(2, binds);
+    }
+
+    /// <summary>
+    /// OD-1 (October 2026), the replacement contract for the former per-reader count: within ONE
+    /// activation, targets first read from different consumers — callbacks, a helper call, an explicit
+    /// <c>a()</c>, the owner body — read one published source entry through one pattern list and share
+    /// ONE bind; two activations (even with numerically equal arguments) still bind twice.
+    /// </summary>
+    [Theory]
+    [InlineData("F(k) = {\n  a, b = (k, k + 1)\n  [1].map{ n + a }[0] + b\n}\nF(3)", 8, 1)]
+    [InlineData("F(k) = {\n  a, b, c = (k, k + 1, k + 2)\n  [0].map{ n + a }[0] + [0].map{ n + b }[0] + [0].map{ n + c }[0]\n}\nF(3)", 12, 1)]
+    [InlineData("F(k) = {\n  a, b = (k, k + 1)\n  G(x) = x + a\n  G(1) + [1, 2].map{ n * 0 + a() }.sum + b\n}\nF(3)", 14, 1)]
+    [InlineData("F(k) = {\n  a, b = (k, k + 1)\n  [1].map{ n + a }[0] + b\n}\nF(3) + F(3)", 16, 2)]
+    public void SameGroupReadByDifferentConsumersOfOneActivation_BindsOnce(string source, int value, long binds)
+    {
+        var (atoms, observed) = RunCountingBinds(source);
+        Assert.Equal([(Decimal128)value], atoms);
+        Assert.Equal(binds, observed);
     }
 
     // ───────────────────────── run isolation ─────────────────────────
@@ -388,9 +408,11 @@ public class DeconstructionSharedBindingTests
     }
 
     /// <summary>
-    /// The shared-bind cache key carries the CALLER's lexical scope identity. Without it, one
-    /// group placed under two owners aliased to a single entry and every owner saw the first
-    /// owner's bound values (<c>[1, 1]</c>).
+    /// The shared-bind cache key separates owners. Without that, one group placed under two owners
+    /// aliased to a single entry and every owner saw the first owner's bound values (<c>[1, 1]</c>).
+    /// Formerly the key carried the CALLER's lexical scope identity; since OD-1 it carries only the
+    /// group, the actual pattern list and the source entry's complete key, whose declaring owner is
+    /// <c>Lib1</c>'s or <c>Lib2</c>'s own scope — so the two owners still bind separately.
     /// </summary>
     [Fact]
     public void SharedBind_DoesNotAliasOneGroupAcrossDifferentOwners()
@@ -405,7 +427,7 @@ public class DeconstructionSharedBindingTests
         Assert.False(counted.IsError);
         Assert.Equal([1m, 2m], counted.Value.Value.ToAtoms());
 
-        // Two owners are two binding contexts: the group binds once per owner, never once total.
+        // Two owners declare two source entries: the group binds once per owner, never once total.
         var observations = new EvaluationObservations();
         _ = Evaluator.RunCountedObserved(expr, observations: observations);
         Assert.Equal(2, observations.DeconstructionFullBindCount);
@@ -434,7 +456,8 @@ public class DeconstructionSharedBindingTests
     /// The owner identity must be a STRUCTURAL scope identity, not the caller reference: the
     /// evaluator rebuilds the caller record for every demanded target, so a reference-keyed
     /// owner would give every target its own entry and restore the O(N^2) rebind this cache
-    /// exists to prevent. Pins that one group in one scope still binds exactly once no matter
+    /// exists to prevent. (Since OD-1 that owner identity is the one inside the source entry's
+    /// property-cache key, the zero-argument cache's own structural declaring-scope identity.) Pins that one group in one scope still binds exactly once no matter
     /// how many targets are demanded, at several nesting depths.
     /// </summary>
     [Theory]
