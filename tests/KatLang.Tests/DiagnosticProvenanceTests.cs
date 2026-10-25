@@ -112,19 +112,19 @@ public class DiagnosticProvenanceTests
         Assert.Contains(parsed.Diagnostics, d => d.Code == DiagnosticCode.InvalidCollectMarker);
         var diagnostic = Assert.Single(parsed.Diagnostics, d => d.Code == DiagnosticCode.IllegalInOpen);
         Assert.DoesNotContain("_error_", diagnostic.Message, StringComparison.Ordinal);
-        Assert.DoesNotContain("arguments ()", diagnostic.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain("(found: )", diagnostic.Message, StringComparison.Ordinal);
     }
 
     [Fact]
     public void OpenProviderDiagnostic_PreservesRealNamesEvenWhenTheyMatchTheRecoverySpelling()
     {
         var parsed = SourceProvenance.ParseAllowingDiagnostics("open F\nF(_error_) = _error_\n1");
-        Assert.Contains("(_error_)", Assert.Single(parsed.Diagnostics).Message, StringComparison.Ordinal);
+        Assert.Contains("(found: _error_)", Assert.Single(parsed.Diagnostics).Message, StringComparison.Ordinal);
         var provider = new Algorithm.User(null, [new CaptureParameterPattern("_error_")], [], [], [new Expr.Num(0)])
         {
             HasExplicitParameterList = true,
         };
-        Assert.Contains("(_error_)", Evaluator.FormatOpenTargetRequiresArguments("F", provider), StringComparison.Ordinal);
+        Assert.Contains("(found: _error_)", Evaluator.FormatOpenTargetRequiresArguments("F", provider), StringComparison.Ordinal);
     }
 
     [Fact]
@@ -139,7 +139,7 @@ public class DiagnosticProvenanceTests
         {
             HasExplicitParameterList = true,
         };
-        Assert.Contains("(located, unlocated)",
+        Assert.Contains("(found: located, unlocated)",
             Evaluator.FormatOpenTargetRequiresArguments("F", provider), StringComparison.Ordinal);
     }
 

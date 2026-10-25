@@ -3576,7 +3576,7 @@ public static class LanguageSpecCorpus
             Category = "name-resolution",
             Source = "Lib(p) = {\n    public X = p + 101\n    X\n}\nA = {\n    open Lib\n    X\n}\nA",
             Outcome = SpecOutcome.ParseError,
-            ExpectedParseDiagnosticFragment = "'Lib' cannot be opened because it requires arguments",
+            ExpectedParseDiagnosticFragment = "'Lib' cannot be opened because open providers must have an empty effective parameter list",
             ExpectedDiagnosticCode = DiagnosticCode.IllegalInOpen,
             IncludeInGeneratorPrompt = true,
             Notes = "Front-end rejection decided after signature completion (K1-08, September 2026); no elaborated Lean program exists for a rejected parse. Both evaluators refuse the same target at open resolution with `illegalInOpen` (Lean `resolveOpen`, C# `Evaluator.ResolveOpen`), and a clause family or an implicitly parameterized provider (`Lib = { public X = 1  p + 1 }`) is refused identically.",

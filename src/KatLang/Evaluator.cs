@@ -551,16 +551,19 @@ public static partial class Evaluator
     }
 
     /// <summary>
-    /// Whether an algorithm needs a call to have members: an explicitly or implicitly
-    /// parameterized algorithm, a clause family (whose branches always take arguments), or a
+    /// Whether an algorithm is ineligible as an open provider: an explicitly or implicitly
+    /// parameterized algorithm, a clause family (even with a zero-arity branch), or a
     /// callable alias (it denotes a callable whose target declares parameterized structure, never
     /// a namespace: an alias declares no members of its target). Such an algorithm is not an
-    /// <c>open</c> provider — <c>open</c> imports a namespace and never creates an activation, so
-    /// there is no value its members could read their inputs from. A RUNTIME-TARGET alias (FWD-02,
+    /// <c>open</c> provider under MOD-04 — <c>open</c> imports a namespace and never creates an
+    /// activation. A RUNTIME-TARGET alias (FWD-02,
     /// META-S3-2; its target a runtime row) is a namespace of its own declarations exactly as its
     /// ordinary zero-parameter property is: whether a callable identity is supplied is known only at
     /// run time, and <c>open</c> imports declarations, never a callable (Lean:
-    /// <c>Algorithm.requiresArguments</c>).
+    /// <c>Algorithm.requiresArguments</c>). Despite the name, the parameter test is MOD-04's
+    /// nonempty EFFECTIVE parameter list, not a minimum supplied arity: a collector-only
+    /// <c>Only(*xs)</c> accepts an empty supply yet is refused here (X-27; Q-58 asks whether
+    /// that strictness is intended).
     /// </summary>
     internal static bool RequiresArguments(Algorithm algorithm)
         => algorithm is Algorithm.Conditional
@@ -583,7 +586,7 @@ public static partial class Evaluator
     internal static string FormatOpenTargetRequiresArguments(string targetDescription, Algorithm provider, bool sourceBacked = false)
     {
         if (provider is Algorithm.Conditional)
-            return $"'{targetDescription}' cannot be opened because it is a clause family that requires arguments; open imports only an algorithm that needs no call.";
+            return $"'{targetDescription}' cannot be opened because it is a clause family, not a namespace.";
 
         if (provider is Algorithm.Alias)
             return $"'{targetDescription}' cannot be opened because it is a callable alias, not a namespace; open imports only an algorithm that needs no call.";
@@ -591,8 +594,11 @@ public static partial class Evaluator
         // The front end reports this once per written target, so the provider's parameter list
         // is echoed bounded, reading only the names it shows (see ExprNameRenderer.BoundedJoin).
         var names = ExprNameRenderer.BoundedJoin(NamedParameters(provider, sourceBacked), ", ");
-        var parameterList = names.Length == 0 ? "" : $" ({names})";
-        return $"'{targetDescription}' cannot be opened because it requires arguments{parameterList}; open imports only an algorithm that needs no call.";
+        // The rule that failed is MOD-04's EMPTY EFFECTIVE PARAMETER LIST (written, inferred and
+        // lifted parameters all count), not a need for supplied arguments: a collector-only
+        // `Only(*xs)` binds an empty supply and reads as a value, yet is still no provider (X-27).
+        var parameterList = names.Length == 0 ? "" : $" (found: {names})";
+        return $"'{targetDescription}' cannot be opened because open providers must have an empty effective parameter list{parameterList}.";
     }
 
     /// <summary>

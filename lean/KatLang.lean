@@ -3209,12 +3209,12 @@ namespace Algorithm
         | none => target.isRuntimeAliasRow
     | _, _, _ => false
 
-  /-- Whether an algorithm needs a call to have members: a parameterized algorithm
-      (explicit or inferred parameters), a clause family (whose branches always take
-      arguments), or a callable alias (it denotes its target's CALLABLE, never a
+  /-- Whether an algorithm is ineligible as an open provider: a parameterized algorithm
+      (explicit or inferred parameters), a clause family (even with a zero-arity
+      branch), or a callable alias (it denotes its target's CALLABLE, never a
       namespace: an alias declares none of its target's members). Such an algorithm is
-      not an `open` provider — `open` imports a namespace and never creates an
-      activation, so there is no value its members could read their inputs from
+      not an `open` provider under MOD-04 — `open` imports a namespace and never creates an
+      activation
       (C#: `Evaluator.RequiresArguments`). -/
   def requiresArguments : Algorithm -> Bool
     | .conditional _ _ _ _ => true
@@ -5686,15 +5686,15 @@ def resolveAlgForOpen (e : Expr) (ctx : EvalCtx) : EvalM Algorithm := do
     refused at the access by `memberAccessible?`. C#: `Evaluator.ResolveOpen`. -/
 def openTargetRequiresArgumentsMessage (target : String) : Algorithm -> String
   | .conditional _ _ _ _ =>
-      s!"'{target}' cannot be opened because it is a clause family that requires arguments; " ++
-        "open imports only an algorithm that needs no call."
+      s!"'{target}' cannot be opened because it is a clause family, not a namespace."
   | .alias _ _ _ _ _ =>
       s!"'{target}' cannot be opened because it is a callable alias, not a namespace; " ++
         "open imports only an algorithm that needs no call."
+  -- The failed rule is MOD-04's EMPTY EFFECTIVE PARAMETER LIST, not a need for supplied
+  -- arguments: a collector-only `Only(*xs)` binds an empty supply, yet is no provider (X-27).
   | a =>
-      s!"'{target}' cannot be opened because it requires arguments " ++
-        s!"({String.intercalate ", " (Algorithm.params a)}); " ++
-        "open imports only an algorithm that needs no call."
+      s!"'{target}' cannot be opened because open providers must have an empty effective " ++
+        s!"parameter list (found: {String.intercalate ", " (Algorithm.params a)})."
 
 def resolveOpen (e : Expr) (ctx : EvalCtx) : EvalM Algorithm := do
   let provider <- resolveAlgForOpen e ctx

@@ -694,7 +694,7 @@ public class DiagnosticBudgetTests
     {
         var small = Assert.Single(Parse("open F\nF(a, b, c) = a\n1").Diagnostics);
         Assert.Equal(
-            "'F' cannot be opened because it requires arguments (a, b, c); open imports only an algorithm that needs no call.",
+            "'F' cannot be opened because open providers must have an empty effective parameter list (found: a, b, c).",
             small.Message);
 
         var parameters = string.Join(", ", Enumerable.Range(0, 2000).Select(i => $"p{i}"));
@@ -703,8 +703,8 @@ public class DiagnosticBudgetTests
         Assert.All(large, d =>
         {
             Assert.Equal(DiagnosticCode.IllegalInOpen, d.Code);
-            Assert.StartsWith("'F' cannot be opened because it requires arguments (p0, p1, p2, ", d.Message);
-            Assert.Contains(ExprNameRenderer.TruncationMarker + ");", d.Message);
+            Assert.StartsWith("'F' cannot be opened because open providers must have an empty effective parameter list (found: p0, p1, p2, ", d.Message);
+            Assert.Contains(ExprNameRenderer.TruncationMarker + ").", d.Message);
             Assert.True(d.Message.Length < 700, $"{d.Message.Length} code units");
         });
     }

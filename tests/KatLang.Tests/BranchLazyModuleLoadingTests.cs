@@ -1136,6 +1136,29 @@ public class BranchLazyModuleLoadingTests
     }
 
     [Fact]
+    public async Task CollectorOnlyOpenProviderInsideADeferredBranch_KeepsTheTruthfulReason()
+    {
+        // X-27's refusal on the deferred route: a dead branch reports nothing, a selected branch
+        // reports IllegalInOpen at its open target with the empty-effective-parameter-list reason
+        // (the collector-only `Only` accepts an empty supply, so it does not "require arguments").
+        var modules = Modules();
+        var branch = $"Only(*xs) = {{\n    public V = 3\n    xs.count\n}}\nF(0) = 42\nF(1) = {{\n    open '{ModuleB}', Only\n    V + B\n}}\n";
+
+        Assert.Equal("42", Display(Assert.IsType<RunResult.Success>(await KatLangEngine.RunAsync(branch + "F(0)", modules.Options))));
+        Assert.Equal(0, modules[ModuleB]);
+
+        var selected = await KatLangEngine.RunAsync(branch + "F(1)", modules.Options);
+
+        var error = Assert.Single(Assert.IsType<RunResult.EvalFailure>(selected).Errors);
+        Assert.Equal(KatLangErrorCode.IllegalInOpen, error.Code);
+        Assert.Contains(
+            "'Only' cannot be opened because open providers must have an empty effective parameter list (found: xs).",
+            error.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain("requires arguments", error.Message, StringComparison.Ordinal);
+        Assert.Equal(LineOf(branch, "open '"), Assert.NotNull(error.Span).Start.Line);
+    }
+
+    [Fact]
     public async Task RuntimePositionLoadInsideABranch_IsReportedWhenTheBranchIsSelected()
     {
         var modules = Modules();

@@ -488,13 +488,12 @@ def openParameterizedProviderRejected : Bool :=
   let program := algPrivate [] [] [("Lib", lib), ("A", a)] [.resolve "A"]
   match runResult (.algorithmExpr program) with
   | .error err =>
-      innermostIsIllegalInOpen "'Lib' cannot be opened because it requires arguments (p); open imports only an algorithm that needs no call." err
+      innermostIsIllegalInOpen "'Lib' cannot be opened because open providers must have an empty effective parameter list (found: p)." err
   | _ => false
 
 #guard openParameterizedProviderRejected
 
-/-- A clause family is refused for the same reason: every alternative takes
-    arguments, so there is nothing to import without calling it. -/
+/-- A clause family is refused by kind, independently of its call arity. -/
 def openClauseFamilyProviderRejected : Bool :=
   let family : Algorithm := .conditional none [] [
     ⟨ .sequenceValue [.litInt 0], alg [] [] [] [.num 0] ⟩,
@@ -504,10 +503,25 @@ def openClauseFamilyProviderRejected : Bool :=
   let program := algPrivate [] [] [("F", family), ("A", a)] [.resolve "A"]
   match runResult (.algorithmExpr program) with
   | .error err =>
-      innermostIsIllegalInOpen "'F' cannot be opened because it is a clause family that requires arguments; open imports only an algorithm that needs no call." err
+      innermostIsIllegalInOpen "'F' cannot be opened because it is a clause family, not a namespace." err
   | _ => false
 
 #guard openClauseFamilyProviderRejected
+
+/-- Even a host-built family accepting an empty supply is not an open provider. -/
+def openZeroArityClauseFamilyProviderRejected : Bool :=
+  let family : Algorithm := .conditional none []
+    [⟨ .sequenceValue [], alg [] [] [] [.num 7] ⟩]
+  let call := algPrivate [] [] [("F", family)] [.call (.resolve "F") []]
+  let demand := algPrivate [] [] [("F", family)] [.resolve "F"]
+  let opened := alg [] [.resolve "F"] [privateProp "F" family] [.resolve "X"]
+  match runResult (.algorithmExpr call), runResult (.algorithmExpr demand),
+      runResult (.algorithmExpr opened) with
+  | .ok (.atom 7), .ok (.atom 7), .error err =>
+      innermostIsIllegalInOpen "'F' cannot be opened because it is a clause family, not a namespace." err
+  | _, _, _ => false
+
+#guard openZeroArityClauseFamilyProviderRejected
 
 /-- Only the RESOLVED provider is judged: `open Lib.Sub` travels through the
     parameterized `Lib` to the self-contained `Sub`, which needs no call, so the

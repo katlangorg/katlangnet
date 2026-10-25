@@ -12,8 +12,8 @@ namespace KatLang.Tests;
 /// SELECT by declaration/visibility alone and apply the law afterwards, so the front end, the
 /// editor, the sync evaluator, and the async twin all agree on what a name selects.
 ///
-/// <para>The open PROVIDER rule is separate: an algorithm that requires arguments (explicit or
-/// inferred parameters, or a clause family) cannot be opened at all — a front-end
+    /// <para>The open PROVIDER rule is separate: an algorithm with a nonempty effective parameter
+    /// list, or a clause family, cannot be opened at all — a front-end
 /// <see cref="DiagnosticCode.IllegalInOpen"/> at the open target, and <c>illegalInOpen</c> at
 /// open resolution in both engines.</para>
 /// </summary>
@@ -223,21 +223,21 @@ public class LocalMemberAccessTests
     public void OrdinaryExportedProvider_IsUnchanged()
         => Assert.Equal("10", Display("Lib = {\n    public X = 10\n}\n\nA = {\n    open Lib\n    X\n}\n\nA"));
 
-    // ── D/E/F: a provider that requires arguments cannot be opened ───────────
+    // ── D/E/F: provider eligibility is distinct from minimum call arity ──────
 
     [Theory]
-    [InlineData("Lib(p) = {\n    public X = p + 101\n    X\n}\n\nA = {\n    open Lib\n    X\n}\n\nA", "'Lib' cannot be opened because it requires arguments (p)")]
-    [InlineData("Lib(p, q) = {\n    public X = p + q\n    X\n}\n\nA = {\n    open Lib\n    X\n}\n\nA", "'Lib' cannot be opened because it requires arguments (p, q)")]
+    [InlineData("Lib(p) = {\n    public X = p + 101\n    X\n}\n\nA = {\n    open Lib\n    X\n}\n\nA", "'Lib' cannot be opened because open providers must have an empty effective parameter list (found: p)")]
+    [InlineData("Lib(p, q) = {\n    public X = p + q\n    X\n}\n\nA = {\n    open Lib\n    X\n}\n\nA", "'Lib' cannot be opened because open providers must have an empty effective parameter list (found: p, q)")]
     // A callable alias names a callable, never a namespace (binding indirection).
     [InlineData("Lib(p) = p\nAlias = Lib\nA = { open Alias\n 1 }\nA", "'Alias' cannot be opened because it is a callable alias, not a namespace")]
-    [InlineData("Lib(p) = p\nA(p) = { open Lib\n p }\nA(1)", "'Lib' cannot be opened because it requires arguments (p)")]
-    [InlineData("Lib = { public Sub(p) = p }\nA = { open Lib.Sub\n 1 }\nA", "'Lib.Sub' cannot be opened because it requires arguments (p)")]
+    [InlineData("Lib(p) = p\nA(p) = { open Lib\n p }\nA(1)", "'Lib' cannot be opened because open providers must have an empty effective parameter list (found: p)")]
+    [InlineData("Lib = { public Sub(p) = p }\nA = { open Lib.Sub\n 1 }\nA", "'Lib.Sub' cannot be opened because open providers must have an empty effective parameter list (found: p)")]
     // Inferred: Lib's output row makes `p` Lib's own parameter.
-    [InlineData("Lib = {\n    public X = 1\n    p + 1\n}\n\nA = {\n    open Lib\n    X\n}\n\nA", "'Lib' cannot be opened because it requires arguments (p)")]
-    // A clause family always takes arguments.
-    [InlineData("F(0) = 1\nF(n) = 2\nA = {\n    open F\n    7\n}\nA", "'F' cannot be opened because it is a clause family that requires arguments")]
+    [InlineData("Lib = {\n    public X = 1\n    p + 1\n}\n\nA = {\n    open Lib\n    X\n}\n\nA", "'Lib' cannot be opened because open providers must have an empty effective parameter list (found: p)")]
+    // A clause family is ineligible by kind, independently of its call arity.
+    [InlineData("F(0) = 1\nF(n) = 2\nA = {\n    open F\n    7\n}\nA", "'F' cannot be opened because it is a clause family, not a namespace.")]
     // The rule holds without any member being referenced.
-    [InlineData("Lib(p) = {\n    public X = p + 101\n    X\n}\n\nA = {\n    open Lib\n    7\n}\n\nA", "'Lib' cannot be opened because it requires arguments (p)")]
+    [InlineData("Lib(p) = {\n    public X = p + 101\n    X\n}\n\nA = {\n    open Lib\n    7\n}\n\nA", "'Lib' cannot be opened because open providers must have an empty effective parameter list (found: p)")]
     public void ParameterizedProvider_IsRefusedAtTheOpenTarget(string source, string fragment)
     {
         var diagnostic = FrontEndRejection(source, DiagnosticCode.IllegalInOpen);
@@ -255,7 +255,75 @@ public class LocalMemberAccessTests
         Assert.True(result.IsError);
         var error = result.Error;
         while (error is EvalError.WithContext context) error = context.Inner;
-        Assert.Contains("cannot be opened because it requires arguments", Assert.IsType<EvalError.IllegalInOpen>(error).Reason, StringComparison.Ordinal);
+        Assert.Contains("cannot be opened because open providers must have an empty effective parameter list", Assert.IsType<EvalError.IllegalInOpen>(error).Reason, StringComparison.Ordinal);
+    }
+
+    private const string CollectorOnly = "Only(*xs) = {\n    public V = 3\n    xs.count\n}";
+
+    [Fact]
+    public void ZeroArityClauseFamily_IsRefusedAsAnOpenProviderByKind()
+    {
+        var family = new Algorithm.Conditional(null, [],
+            [new CondBranch(new Pattern.SequenceValue([]), new Algorithm.User(null, [], [], [], [new Expr.Num(7)]))]);
+        var root = new Algorithm.User(null, [], [], [new Property("F", family)],
+            [new Expr.Call(new Expr.Resolve("F"), OutputBundle.Empty)]);
+
+        var call = Evaluator.Run(new Expr.AlgorithmExpr(root));
+        Assert.False(call.IsError);
+        Assert.Equal(new Result.Atom(7), call.Value);
+        var demand = Evaluator.Run(new Expr.AlgorithmExpr(root with { Output = [new Expr.Resolve("F")] }));
+        Assert.False(demand.IsError);
+        Assert.Equal(new Result.Atom(7), demand.Value);
+
+        var result = Evaluator.Run(new Expr.AlgorithmExpr(root with
+        {
+            Opens = [new Expr.Resolve("F")],
+            // Raw evaluator trees resolve opens when a lookup consults them.
+            Output = [new Expr.Resolve("X")],
+        }));
+        Assert.True(result.IsError);
+        var innermost = result.Error;
+        while (innermost is EvalError.WithContext context) innermost = context.Inner;
+        Assert.Equal("'F' cannot be opened because it is a clause family, not a namespace.",
+            Assert.IsType<EvalError.IllegalInOpen>(innermost).Reason);
+    }
+
+    /// <summary>
+    /// X-27 (wording only; Q-58's eligibility questions stay open): a collector-only provider is
+    /// still refused — MOD-04 asks for an EMPTY EFFECTIVE parameter list, and `*xs` is a
+    /// parameter — but it does not "require arguments": without the open it reads as a value,
+    /// binds an empty supply and exposes its member. The message states the rule that failed.
+    /// </summary>
+    [Fact]
+    public void CollectorOnlyProvider_IsRefused_ForItsNonemptyParameterList_NotForArguments()
+    {
+        // The controls that made the old reason false.
+        Assert.Equal("0", Display(CollectorOnly + "\nOnly"));
+        Assert.Equal("0", Display(CollectorOnly + "\nOnly()"));
+        Assert.Equal("3", Display(CollectorOnly + "\nOnly.V"));
+
+        var source = "open Only\n\n" + CollectorOnly + "\n1";
+        var diagnostic = FrontEndRejection(source, DiagnosticCode.IllegalInOpen);
+        Assert.Equal(
+            "'Only' cannot be opened because open providers must have an empty effective parameter list (found: xs).",
+            diagnostic.Message);
+        Assert.DoesNotContain("requires arguments", diagnostic.Message, StringComparison.Ordinal);
+        Assert.Equal(new SourceSpan(1, 6, 1, 10), diagnostic.Span);
+
+        var failure = Assert.IsType<RunResult.ParseFailure>(KatLangEngine.Run(source));
+        var error = Assert.Single(failure.Errors);
+        Assert.Equal(KatLangErrorCode.IllegalInOpen, error.Code);
+        Assert.Equal(diagnostic.Span, error.Span);
+
+        // The evaluator's own open resolution (unelaborated tree) gives the same reason.
+        var raw = SourceProvenance.ParseSyntaxValidRoot("open Only\n" + CollectorOnly + "\nV");
+        var result = Evaluator.Run(new Expr.AlgorithmExpr(raw));
+        Assert.True(result.IsError);
+        var innermost = result.Error;
+        while (innermost is EvalError.WithContext context) innermost = context.Inner;
+        Assert.Equal(
+            "'Only' cannot be opened because open providers must have an empty effective parameter list (found: xs).",
+            Assert.IsType<EvalError.IllegalInOpen>(innermost).Reason);
     }
 
     [Fact]

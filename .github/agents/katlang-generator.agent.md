@@ -2686,7 +2686,7 @@ Regenerate this block from the repo root with:
     }
     A
 
-  Rejected by the parser: "'Lib' cannot be opened because it requires arguments ..."
+  Rejected by the parser: "'Lib' cannot be opened because open providers must have an empty effective parameter list ..."
 
 [open-local-only-member-inside-owner] A `public` member that captures an enclosing parameter is local-only, and local-only means local-context-dependent, not universally hidden: `Inner` is a zero-parameter provider whose `X` reads the active `Outer.n`, so inside `Outer` — the owner of that parameter — `open Inner` provides `X` and `Inner.X` reaches it, from Outer's own body and from any sibling or nested scope under the same activation. Both channels apply the ONE accessibility rule: a local-only member may be used from every lexical context inside the owner of each parameter it captures.
 

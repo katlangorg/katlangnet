@@ -313,7 +313,7 @@ public class RuntimeCallableAliasCorpusTests
 
     [Theory]
     [InlineData("F(x) = x\nA = F\nP = { open A\n 1 }\nP", "callable alias")]
-    [InlineData("F(x) = x + 1\nP = { open F\n 1 }\nP", "requires arguments")]
+    [InlineData("F(x) = x + 1\nP = { open F\n 1 }\nP", "empty effective parameter list (found: x)")]
     [InlineData("Outer(n) = {\n A = n\n B = { private K = 10\n A }\n P = { open B\n K }\n P\n}\nOuter(1)", "forwarded by name")]
     [InlineData("Box = { Algorithm(x) = x }\nA = Box.Algorithm\nP = { open A\n 1 }\nP", "callable alias")]
     public void RF1_NamespaceRestrictions_RemainStatic(string source, string reason)
