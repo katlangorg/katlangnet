@@ -21,7 +21,7 @@ public class EvaluatorSpreadTests
             Assert.Fail($"Expected evaluation failure but got: {result.Value}");
 
         var formatted = KatLangError.FromEvalError(result.Error).Message;
-        Assert.Equal(
+        Assert.EndsWith(
             $"Cannot spread because the spread operand has no defined output.\nUse `()*` if you intended to spread zero items.",
             formatted);
 

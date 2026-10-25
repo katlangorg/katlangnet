@@ -119,7 +119,9 @@ public class SequenceConstructSpreadReviewTests
         foreach (var outcome in new[] { written, sync, asyncResult })
         {
             Assert.True(outcome.IsError);
-            Assert.IsType<EvalError.SpreadMissingOutput>(outcome.Error);
+            var error = outcome.Error;
+            while (error is EvalError.WithContext context) error = context.Inner;
+            Assert.IsType<EvalError.SpreadMissingOutput>(error);
             Assert.Equal(operandSpan, outcome.Error.Span);
         }
         Assert.Equal(1, cache.AsyncAccesses);

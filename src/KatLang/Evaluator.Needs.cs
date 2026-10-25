@@ -412,7 +412,9 @@ public static partial class Evaluator
             foreach (var cell in slice)
             {
                 var value = await DemandCell(cell, asynchronous).ConfigureAwait(false);
-                if (value.IsError) return value.Error;
+                // This cell constructs a list from subordinate computations. Keep their failures
+                // nested in its completed outcome, leaving the element cells' outcomes unchanged.
+                if (value.IsError) return NestMissingOutput(value.Error);
                 items.Add(value.Value.Value);
             }
             return budget.TryReserveCollection(items.Count) is { } error
@@ -727,11 +729,13 @@ public static partial class Evaluator
         if (supply.Value.Count == 1)
         {
             var inspected = await DemandCell(supply.Value[0], asynchronous).ConfigureAwait(false);
-            if (inspected.IsError) return inspected.Error;
+            // The right-hand side is a SUBORDINATE computation of every target it unpacks into
+            // (Q-36; Lean: the helper call's binder).
+            if (inspected.IsError) return NestMissingOutput(inspected.Error);
         }
         var bindings = await BindAcceptedNeedPatterns(patterns, supply.Value, ctx, asynchronous, family: false).ConfigureAwait(false);
         if (bindings.IsError)
-            return bindings.Error is EvalError.ArityMismatch shape ? DeconstructionArityMismatch(helper, shape) : bindings.Error;
+            return bindings.Error is EvalError.ArityMismatch shape ? DeconstructionArityMismatch(helper, shape) : NestMissingOutput(bindings.Error);
         // The bound cells by binding name: each target projects the binding its own output reads.
         var bound = bindings.Value!;
         var byName = new Dictionary<string, NeedCell>(bound.Count, StringComparer.Ordinal);
@@ -825,9 +829,9 @@ public static partial class Evaluator
             case Algorithm.Builtin(var builtin):
             {
                 var supplied = state.Select(static cell => new ResolvedArgumentAlgorithm(null) { Cell = cell }).ToArray();
-                var result = asynchronous
+                var result = NestMissingOutput(asynchronous
                     ? await ApplyBuiltinCountedResolvedAsync(builtin, supplied, ctx, values).ConfigureAwait(false)
-                    : ApplyBuiltinCountedResolved(builtin, supplied, ctx, values);
+                    : ApplyBuiltinCountedResolved(builtin, supplied, ctx, values));
                 if (result.IsError) return WithCallCtx<IReadOnlyList<Result>?>(stepName, ctx, result.Error);
                 return conditionFirst
                     ? WhileVerdictOfSupply([result.Value.Value])
@@ -974,7 +978,8 @@ public static partial class Evaluator
         var patterns = NeedParameterPatterns(callee.ParameterPatterns);
         if (!NeedAcceptsCardinality(patterns, supply.Count)) return NeedCallArityError(callee, patterns, supply.Count, name, ctx, variadicArityStyle);
         var bindings = BindAcceptedNeedPatterns(patterns, supply, ctx, asynchronous: false, family: false, occurrences).GetAwaiter().GetResult();
-        if (bindings.IsError) return bindings.Error;
+        // An argument the binder inspects is a SUBORDINATE computation of the call (Q-36).
+        if (bindings.IsError) return NestMissingOutput(bindings.Error);
         if (callee.Output.Count == 0) return new EvalError.MissingOutput();
         var names = callee.Params;
         var output = ctx.Budget.MayReachRuntimeAliases && TakeTerminalAliasInvocation(callee, ctx) is { } terminalCell
@@ -1001,7 +1006,8 @@ public static partial class Evaluator
         var patterns = NeedParameterPatterns(callee.ParameterPatterns);
         if (!NeedAcceptsCardinality(patterns, supply.Count)) return NeedCallArityError(callee, patterns, supply.Count, name, ctx, variadicArityStyle);
         var bindings = await BindAcceptedNeedPatterns(patterns, supply, ctx, asynchronous, family: false, occurrences).ConfigureAwait(false);
-        if (bindings.IsError) return bindings.Error;
+        // An argument the binder inspects is a SUBORDINATE computation of the call (Q-36).
+        if (bindings.IsError) return NestMissingOutput(bindings.Error);
         if (callee.Output.Count == 0) return new EvalError.MissingOutput();
         var names = callee.Params;
         var boundCtx = WithNeedBindings(ctx, bindings.Value!, names);
@@ -1034,8 +1040,8 @@ public static partial class Evaluator
         if (callee is Algorithm.Builtin builtin)
         {
             var resolved = supply.Select(cell => new ResolvedArgumentAlgorithm(null) { Cell = cell }).ToArray();
-            return asynchronous ? await ApplyBuiltinCountedResolvedAsync(builtin.Id, resolved, ctx, values).ConfigureAwait(false)
-                : ApplyBuiltinCountedResolved(builtin.Id, resolved, ctx, values);
+            return NestMissingOutput(asynchronous ? await ApplyBuiltinCountedResolvedAsync(builtin.Id, resolved, ctx, values).ConfigureAwait(false)
+                : ApplyBuiltinCountedResolved(builtin.Id, resolved, ctx, values));
         }
         return callee is Algorithm.Conditional
             ? await EvalNeedFamilySupply(callee, supply, ctx, values, CallDiagnosticName.FromKnown(name), asynchronous).ConfigureAwait(false)
@@ -1161,7 +1167,8 @@ public static partial class Evaluator
             ObserveClauseAttempt(i, ctx);
             var bindings = BindAcceptedNeedPatterns(heads[i], supply, ctx, asynchronous: false, family: true).GetAwaiter().GetResult();
             ObserveClauseOutcome(bindings, ctx);
-            if (bindings.IsError) return bindings.Error;
+            // An argument a clause pattern inspects is a SUBORDINATE computation of the call (Q-36).
+            if (bindings.IsError) return NestMissingOutput(bindings.Error);
             if (bindings.Value is not { } matched) continue;
             var selected = SelectedBranchBody(callee.Branches[i], ctx);
             if (selected.IsError) return selected.Error;
@@ -1186,7 +1193,8 @@ public static partial class Evaluator
             ObserveClauseAttempt(i, ctx);
             var bindings = await BindAcceptedNeedPatterns(heads[i], supply, ctx, asynchronous, family: true).ConfigureAwait(false);
             ObserveClauseOutcome(bindings, ctx);
-            if (bindings.IsError) return bindings.Error;
+            // An argument a clause pattern inspects is a SUBORDINATE computation of the call (Q-36).
+            if (bindings.IsError) return NestMissingOutput(bindings.Error);
             if (bindings.Value is not { } matched) continue;
             var selected = asynchronous
                 ? await SelectedBranchBodyAsync(callee.Branches[i], ctx).ConfigureAwait(false)

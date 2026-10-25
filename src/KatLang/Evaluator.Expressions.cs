@@ -513,7 +513,9 @@ public static partial class Evaluator
                     frameCount--;
                 }
 
-                return error;
+                // The spine forms a value from SUBORDINATE computations: a missing output escaping
+                // it is nested (Q-36; Lean: the operator, selection, list and interpolation arms).
+                return NestMissingOutput(error);
             }
 
             frameCount--;

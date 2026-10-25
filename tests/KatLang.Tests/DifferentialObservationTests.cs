@@ -147,8 +147,9 @@ public class DifferentialObservationTests
             "(?m)^#guard errorObs .*kind := \"([^\"]+)\"")
             .GroupBy(m => m.Groups[1].Value).ToDictionary(g => g.Key, g => g.Count());
         var minimums = new Dictionary<string, int> {
-            ["arity"] = 180, ["index"] = 90, ["div0"] = 12, ["spreadMissingOutput"] = 5,
-            ["ambiguousOpen"] = 3, ["badArity"] = 3, ["missingOutput"] = 2,
+            // X-29 / Q-36: the own/nested spread specials pin both categories at a spread operand.
+            ["arity"] = 180, ["index"] = 90, ["div0"] = 12, ["spreadMissingOutput"] = 8,
+            ["ambiguousOpen"] = 3, ["badArity"] = 3, ["missingOutput"] = 17,
             ["localOnlyProperty"] = 1, ["unresolvedImplicitParams"] = 1 };
         foreach (var (kind, minimum) in minimums)
             Assert.True(kinds.GetValueOrDefault(kind) >= minimum, $"Supplementary {kind} guards shrank below {minimum}.");

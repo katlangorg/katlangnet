@@ -60,6 +60,7 @@ public class LeanCoreTestsCompositionTests
         "RepeatedSpread",
         "HostScopePropertyCache",
         "HostParentDifferential",
+        "SpreadFailureOrigin",
     ];
 
     [Fact]

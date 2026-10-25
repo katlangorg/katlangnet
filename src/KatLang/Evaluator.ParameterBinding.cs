@@ -324,7 +324,8 @@ public static partial class Evaluator
         foreach (var expr in rows)
         {
             var exprSlotsR = EvalExplicitSequenceValueExprSlots(expr, rowCtx, valEnv);
-            if (exprSlotsR.IsError) return exprSlotsR.Error;
+            // A row is a SUBORDINATE computation of the body or capture (Q-36).
+            if (exprSlotsR.IsError) return NestMissingOutput(exprSlotsR.Error);
             AddSlotsBounded(slots, exprSlotsR.Value, rowCtx.Budget, ref bound, expr is Expr.SequenceSpread);
         }
 

@@ -1352,7 +1352,8 @@ public static partial class Evaluator
                     frameCount--;
                 }
 
-                return error;
+                // MIRROR: a missing output escaping the spine is nested (Q-36).
+                return NestMissingOutput(error);
             }
 
             frameCount--;
@@ -1433,7 +1434,8 @@ public static partial class Evaluator
         foreach (var expr in rows)
         {
             var countedR = await EvalCountedAsync(expr, rowCtx, valEnv).ConfigureAwait(false);
-            if (countedR.IsError) return countedR.Error;
+            // A row is a SUBORDINATE computation of the body or capture (Q-36).
+            if (countedR.IsError) return NestMissingOutput(countedR.Error);
 
             // The row-slot accumulator is transient-bounded BEFORE it grows (SEC-01): once `(A*, A*)`
             // passes the limit the remaining rows are formed count-only and the capture's own
@@ -1665,7 +1667,8 @@ public static partial class Evaluator
         foreach (var expr in rows)
         {
             var exprSlotsR = await EvalExplicitSequenceValueExprSlotsAsync(expr, rowCtx, valEnv).ConfigureAwait(false);
-            if (exprSlotsR.IsError) return exprSlotsR.Error;
+            // A row is a SUBORDINATE computation of the body or capture (Q-36).
+            if (exprSlotsR.IsError) return NestMissingOutput(exprSlotsR.Error);
             AddSlotsBounded(slots, exprSlotsR.Value, rowCtx.Budget, ref bound, expr is Expr.SequenceSpread);
         }
 
@@ -2051,7 +2054,7 @@ public static partial class Evaluator
         {
             var argAlgsR = await ResolveNeedSupply(args, ctx, valEnv, asynchronous: true).ConfigureAwait(false);
             if (argAlgsR.IsError) return argAlgsR.Error;
-            return await ApplyBuiltinCountedResolvedAsync(builtinId, argAlgsR.Value, ctx, valEnv).ConfigureAwait(false);
+            return NestMissingOutput(await ApplyBuiltinCountedResolvedAsync(builtinId, argAlgsR.Value, ctx, valEnv).ConfigureAwait(false));
         }
 
         if (TryGetFlatBinderUserEquivalent(callee) is { } simpleCallee)
@@ -2811,7 +2814,7 @@ public static partial class Evaluator
                     // The synchronous twin evaluates the value-only target with plain
                     // Eval; the counted twin's value projection is the same value.
                     var valCountedR = await EvalCountedAsync(target, ctx, valEnv).ConfigureAwait(false);
-                    if (valCountedR.IsError) return valCountedR.Error;
+                    if (valCountedR.IsError) return NestMissingOutput(valCountedR.Error);
                     value = valCountedR.Value.Value;
                 }
                 else if (targetAlg is Algorithm.Alias)
@@ -2821,7 +2824,7 @@ public static partial class Evaluator
                 }
                 else
                 {
-                    var val = await EvalDotStringReceiverAlgOutputAsync(target, targetAlg, receiverIsStructuralMember, ctx, valEnv).ConfigureAwait(false);
+                    var val = NestMissingOutput(await EvalDotStringReceiverAlgOutputAsync(target, targetAlg, receiverIsStructuralMember, ctx, valEnv).ConfigureAwait(false));
                     if (val.IsError) return val.Error;
                     value = val.Value;
                 }
@@ -2856,7 +2859,7 @@ public static partial class Evaluator
             if (aliasTarget.IsError) return aliasTarget.Error;
             targetAlg = aliasTarget.Value;
         }
-        return await EvalDotStringReceiverAlgOutputAsync(dotCall.Target, targetAlg, receiverIsStructuralMember, ctx, valEnv).ConfigureAwait(false);
+        return NestMissingOutput(await EvalDotStringReceiverAlgOutputAsync(dotCall.Target, targetAlg, receiverIsStructuralMember, ctx, valEnv).ConfigureAwait(false));
     }
 
     /// <summary>MIRROR OF <see cref="EvalDotArgumentsIntrinsicCounted"/> — keep in lock-step.</summary>
@@ -2876,7 +2879,7 @@ public static partial class Evaluator
             return rejection;
         // The synchronous twin evaluates the value-only target with plain Eval; the counted twin's
         // value projection is the same value.
-        var receiver = await EvalCountedAsync(dotCall.Target, ctx, valEnv).ConfigureAwait(false);
+        var receiver = NestMissingOutput(await EvalCountedAsync(dotCall.Target, ctx, valEnv).ConfigureAwait(false));
         return receiver.IsError ? receiver.Error : ArgumentsOfCallReferenceValue(receiver.Value.Value, ctx);
     }
 
@@ -2903,7 +2906,7 @@ public static partial class Evaluator
             return rejection;
         // The synchronous twin evaluates the value-only target with plain Eval; the counted twin's
         // value projection is the same value.
-        var receiver = await EvalCountedAsync(dotCall.Target, ctx, valEnv).ConfigureAwait(false);
+        var receiver = NestMissingOutput(await EvalCountedAsync(dotCall.Target, ctx, valEnv).ConfigureAwait(false));
         return receiver.IsError ? receiver.Error : await InvokeCallReferenceValueAsync(receiver.Value.Value, ctx).ConfigureAwait(false);
     }
 
@@ -3066,7 +3069,8 @@ public static partial class Evaluator
                 // A spread leaf supplies exactly the spread EXPRESSION's items, read
                 // back like a spread output row (see the synchronous twin).
                 var spreadR = await EvalCountedAsync(leaf, ctx, valEnv).ConfigureAwait(false);
-                if (spreadR.IsError) return spreadR.Error;
+                // MIRROR: a leaf is a SUBORDINATE computation of the join (Q-36).
+                if (spreadR.IsError) return NestMissingOutput(spreadR.Error);
 
                 AddCountedTopLevelValuesBounded(items, spreadR.Value, ctx.Budget, ref bound, expansion: true);
                 continue;
@@ -3075,7 +3079,7 @@ public static partial class Evaluator
             // The synchronous twin evaluates the leaf with plain Eval; the counted
             // twin's value projection is the same value.
             var valueR = await EvalCountedAsync(leaf, ctx, valEnv).ConfigureAwait(false);
-            if (valueR.IsError) return valueR.Error;
+            if (valueR.IsError) return NestMissingOutput(valueR.Error);
 
             if (valueR.Value.Value.ValueCount() != 0)
                 AddSlotBounded(items, valueR.Value.Value, ctx.Budget, ref bound);
@@ -3102,9 +3106,7 @@ public static partial class Evaluator
             var captureSpan = PreferExpressionSpan(expr.Span, captureBody);
             var captureR = WithSpan(captureSpan, await EvalCaptureValueAsync(captureBody, ctx, valEnv).ConfigureAwait(false));
             if (captureR.IsError)
-                return IsMissingOutputError(captureR.Error)
-                    ? SpreadMissingOutput(captureSpan)
-                    : captureR.Error;
+                return SpreadOperandFailure(expr, captureSpan, captureR.Error);
 
             return captureR;
         }
@@ -3122,9 +3124,7 @@ public static partial class Evaluator
 
             var blockR = await EvalZeroArgumentDemandOutputAsync(wired, ctx, valEnv).ConfigureAwait(false);
             if (blockR.IsError)
-                return IsMissingOutputError(blockR.Error)
-                    ? SpreadMissingOutput(blockSpan)
-                    : blockR.Error;
+                return SpreadOperandFailure(expr, blockSpan, blockR.Error);
 
             return blockR;
         }
@@ -3133,9 +3133,7 @@ public static partial class Evaluator
         // twin's value projection is the same value.
         var outputR = await EvalCountedAsync(expr, ctx, valEnv).ConfigureAwait(false);
         if (outputR.IsError)
-            return IsMissingOutputError(outputR.Error)
-                ? SpreadMissingOutput(expr.Span)
-                : outputR.Error;
+            return SpreadOperandFailure(expr, expr.Span, outputR.Error);
 
         return EvalResult<Result>.Ok(outputR.Value.Value);
     }

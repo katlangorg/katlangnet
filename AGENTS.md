@@ -115,6 +115,8 @@ FE-3 follow-up: snapshot nested pattern membership before caching template facts
 
 ## Builtins And Spread Conventions
 
+- Spread preserves failures from its operand's dependencies, arguments and constructed elements, including their category, cause and blame. Only the directly demanded computation's own missing output becomes `SpreadMissingOutput`, retaining its useful demand context (X-29 / Q-36, owner decision 2026-10-24). [`sequences-lists-and-calls.md` § Spread semantics]
+
 - Q-25's map/reduce unfolding equations compare RESULT VALUES for pure, deterministic, total computations. `reduce` demands its initial value and every step in sequence, preserving each complete ordinary call result as the next accumulator; `map` demands its collection. Expanded Model-C calls follow ordinary demand order and can skip unused computations. Effects, random draws, failures and resource budgets keep those established rules. [`sequences-lists-and-calls.md` § Callback results]
 
 - `arity` means the structural count of top-level output slots. The `ArityMismatch` error family reports a supply/output CARDINALITY failure (and NEED-04's unequal repeated value), never a value of the wrong kind, a missing callable, or an empty selection (Q-27).

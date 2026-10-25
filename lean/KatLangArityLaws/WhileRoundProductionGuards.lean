@@ -120,13 +120,13 @@ def failsWith (check : Error → Bool) : Except Error (Option (List Result)) →
   | _ => false
 
 -- The check's error, no body entry (no activation) and no row (only the bound Ready cell).
-#guard failsWith (· matches .missingOutput) (roundOf whileVerdictSlots noOutputStep 4).1
+#guard failsWith (· matches .missingOutput _) (roundOf whileVerdictSlots noOutputStep 4).1
 #guard (roundOf whileVerdictSlots noOutputStep 4).2.lexicalActivations.size == 0
 #guard failsWith (· matches .duplicateProperty "P") (roundOf whileVerdictSlots duplicateStep 4).1
 #guard (roundOf whileVerdictSlots duplicateStep 4).2.lexicalActivations.size == 0
 #guard (roundOf whileVerdictSlots duplicateStep 4).2.needs.size == 1
 -- The supply reader (`repeat`) shares the same checks.
-#guard (roundOf (fun a c v => (some <$> evalAlgOutputSlots a c v : EvalM _)) noOutputStep 4).1 matches .error .missingOutput
+#guard (roundOf (fun a c v => (some <$> evalAlgOutputSlots a c v : EvalM _)) noOutputStep 4).1 matches .error (.missingOutput _)
 
 /-! ## Setup once versus re-dispatch (a selected family body) -/
 

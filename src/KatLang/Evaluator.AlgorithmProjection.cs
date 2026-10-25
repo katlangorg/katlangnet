@@ -213,7 +213,7 @@ public static partial class Evaluator
     [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
     private static EvalResult<CountedResult> EvalDotAlgorithmValueReceiverCounted(Expr.DotCall dotCall, EvalCtx ctx, ValEnv valEnv)
     {
-        var receiver = Eval(dotCall.Target, ctx, valEnv);
+        var receiver = NestMissingOutput(Eval(dotCall.Target, ctx, valEnv));
         return receiver.IsError ? receiver.Error : ApplyAlgorithmIntrinsic(dotCall, dotCall.Args, receiver.Value, ctx, valEnv);
     }
 
@@ -254,7 +254,7 @@ public static partial class Evaluator
     {
         // The synchronous twin evaluates the value-only target with plain Eval; the counted twin's value
         // projection is the same value.
-        var receiver = await EvalCountedAsync(dotCall.Target, ctx, valEnv).ConfigureAwait(false);
+        var receiver = NestMissingOutput(await EvalCountedAsync(dotCall.Target, ctx, valEnv).ConfigureAwait(false));
         return receiver.IsError ? receiver.Error : await ApplyAlgorithmIntrinsicAsync(dotCall, dotCall.Args, receiver.Value.Value, ctx, valEnv).ConfigureAwait(false);
     }
 
@@ -394,7 +394,7 @@ public static partial class Evaluator
     {
         var target = ResolveDotReceiver(edge.Target, ctx, out var structural);
         return target.IsError
-            ? IsAbsentIdentity(target.Error) ? Eval(edge.Target, ctx, valEnv) : target.Error
+            ? IsAbsentIdentity(target.Error) ? NestMissingOutput(Eval(edge.Target, ctx, valEnv)) : target.Error
             : EvalDotReferenceIntrinsicReceiver(edge, target.Value, structural, ctx, valEnv);
     }
 
@@ -407,7 +407,7 @@ public static partial class Evaluator
         {
             if (IsAbsentIdentity(target.Error))
             {
-                var counted = await EvalCountedAsync(edge.Target, ctx, valEnv).ConfigureAwait(false);
+                var counted = NestMissingOutput(await EvalCountedAsync(edge.Target, ctx, valEnv).ConfigureAwait(false));
                 receiver = counted.IsError ? counted.Error : EvalResult<Result>.Ok(counted.Value.Value);
             }
             else receiver = target.Error;

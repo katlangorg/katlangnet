@@ -137,14 +137,20 @@ public static partial class Evaluator
                 ?? new EvalError.NotAnAlgorithm(RecognitionNeedsRuntimeStepDescription),
             EvaluateRangeCallArguments: (function, args, callSpan) => EvaluateRangeCallArgumentsForSequenceOptimizer(function, args, callSpan, ctx, valEnv));
 
-        return SequencePipelineOptimizer.TryExecuteRecognized(
+        if (!SequencePipelineOptimizer.TryExecuteRecognized(
             syntax,
             invocation,
             services,
             ctx,
             valEnv,
             diagnostics,
-            out result);
+            out result))
+            return false;
+
+        // A fused pipeline is a builtin application: a missing output escaping it is an
+        // argument's or a callback's, NESTED exactly as at the generic builtin dispatch (Q-36).
+        result = NestMissingOutput(result);
+        return true;
     }
 
     /// <summary>
@@ -629,11 +635,11 @@ public static partial class Evaluator
                     return arityRejection;
                 EvalResult<Result> val;
                 if (targetAlg is null)
-                    val = Eval(target, ctx, valEnv);
+                    val = NestMissingOutput(Eval(target, ctx, valEnv));
                 else if (targetAlg is Algorithm.Alias)
                     return EvalAliasDotStringCounted(target, targetAlg, receiverIsStructuralMember, ctx, valEnv);
                 else
-                    val = EvalDotStringReceiverAlgOutput(target, targetAlg, receiverIsStructuralMember, ctx, valEnv);
+                    val = NestMissingOutput(EvalDotStringReceiverAlgOutput(target, targetAlg, receiverIsStructuralMember, ctx, valEnv));
                 if (val.IsError) return val.Error;
                 var outR = ResultToString(ctx, val.Value);
                 if (outR.IsError) return outR.Error;
@@ -681,7 +687,7 @@ public static partial class Evaluator
             if (aliasTarget.IsError) return aliasTarget.Error;
             targetAlg = aliasTarget.Value;
         }
-        return EvalDotStringReceiverAlgOutput(dotCall.Target, targetAlg, receiverIsStructuralMember, ctx, valEnv);
+        return NestMissingOutput(EvalDotStringReceiverAlgOutput(dotCall.Target, targetAlg, receiverIsStructuralMember, ctx, valEnv));
     }
 
     /// <summary>
@@ -710,7 +716,7 @@ public static partial class Evaluator
     {
         if (RejectDotArgumentsIntrinsicArguments(dotCall.Args) is { } rejection)
             return rejection;
-        var receiver = Eval(dotCall.Target, ctx, valEnv);
+        var receiver = NestMissingOutput(Eval(dotCall.Target, ctx, valEnv));
         return receiver.IsError ? receiver.Error : ArgumentsOfCallReferenceValue(receiver.Value, ctx);
     }
 
@@ -752,7 +758,7 @@ public static partial class Evaluator
     {
         if (RejectDotInvokeIntrinsicArguments(dotCall.Args, ctx, valEnv) is { } rejection)
             return rejection;
-        var receiver = Eval(dotCall.Target, ctx, valEnv);
+        var receiver = NestMissingOutput(Eval(dotCall.Target, ctx, valEnv));
         return receiver.IsError ? receiver.Error : InvokeCallReferenceValue(receiver.Value, ctx);
     }
 

@@ -782,14 +782,15 @@ public static partial class Evaluator
                 // back like a spread output row: one boundary per written star, never
                 // reopened. Lean: the `.sequenceSpread` arm of evalSequenceConstructCounted.
                 var spreadR = EvalCounted(leaf, ctx, valEnv);
-                if (spreadR.IsError) return spreadR.Error;
+                // A leaf is a SUBORDINATE computation of the join (Q-36).
+                if (spreadR.IsError) return NestMissingOutput(spreadR.Error);
 
                 AddCountedTopLevelValuesBounded(items, spreadR.Value, ctx.Budget, ref bound, expansion: true);
                 continue;
             }
 
             var valueR = Eval(leaf, ctx, valEnv);
-            if (valueR.IsError) return valueR.Error;
+            if (valueR.IsError) return NestMissingOutput(valueR.Error);
 
             if (valueR.Value.ValueCount() != 0)
                 AddSlotBounded(items, valueR.Value, ctx.Budget, ref bound);
@@ -808,6 +809,7 @@ public static partial class Evaluator
     private static EvalError SpreadMissingOutput(SourceSpan? span)
         => new EvalError.SpreadMissingOutput() { Span = span };
 
+    /// <summary>Any missing output, whatever its origin and context frames (the category test).</summary>
     private static bool IsMissingOutputError(EvalError error) => error switch
     {
         EvalError.MissingOutput => true,
@@ -815,11 +817,71 @@ public static partial class Evaluator
         _ => false,
     };
 
+    /// <summary>
+    /// The failure is the OWN missing output of the computation whose outcome it is (Q-36): raised
+    /// by that computation's output check and carried through its context frames only.
+    /// Lean: <c>isOwnMissingOutputError</c>.
+    /// </summary>
+    internal static bool IsOwnMissingOutputError(EvalError error) => error switch
+    {
+        EvalError.MissingOutput missing => !missing.IsNested,
+        EvalError.WithContext(_, var inner) => IsOwnMissingOutputError(inner),
+        _ => false,
+    };
+
+    /// <summary>
+    /// The same failure as part of a CONSUMING computation's outcome (Q-36): a missing output in
+    /// it is nested; its context frames, spans and every other error are unchanged. Never mutates
+    /// <paramref name="error"/> (a memoized failure is shared by every consumer): an own missing
+    /// output is copied. Lean: <c>Error.nestMissingOutput</c> / <c>withNestedMissingOutput</c>.
+    /// </summary>
+    internal static EvalError NestMissingOutput(EvalError error) => error switch
+    {
+        EvalError.MissingOutput { IsNested: false } missing => missing with { IsNested = true },
+        EvalError.WithContext context when IsOwnMissingOutputError(context.Inner)
+            => context.WithInner(NestMissingOutput(context.Inner)),
+        _ => error,
+    };
+
+    /// <inheritdoc cref="NestMissingOutput(EvalError)"/>
+    private static EvalResult<T> NestMissingOutput<T>(EvalResult<T> result)
+        => result.IsError ? NestMissingOutput(result.Error) : result;
+
+    // Keep the demand's property/call/argument frames when changing its own missing-output kind.
+    private static EvalError ConvertOwnSpreadMissingOutput(EvalError error, SourceSpan? span)
+        => error is EvalError.WithContext context
+            ? context.WithInner(ConvertOwnSpreadMissingOutput(context.Inner, span))
+            : SpreadMissingOutput(span);
+
+    /// <summary>
+    /// What a spread reports when evaluating its (peeled) operand failed (X-29 / Q-36, decided
+    /// 2026-10-24): the operand's OWN missing output — the computation it directly denotes has no
+    /// written output — is <see cref="EvalError.SpreadMissingOutput"/> at the operand; a NESTED
+    /// missing output — one originating in a dependency, argument, output row or other subordinate
+    /// computation of the operand — keeps its category, cause and blame (span included), with the
+    /// spread operand as added context; every other failure is the operand's own, unchanged. Reads
+    /// the completed failure only: nothing is evaluated. Lean: <c>spreadOperandFailure</c>.
+    /// </summary>
+    internal static EvalError SpreadOperandFailure(Expr operand, SourceSpan? span, EvalError error)
+    {
+        if (IsOwnMissingOutputError(error)) return ConvertOwnSpreadMissingOutput(error, span);
+        if (IsMissingOutputError(error))
+        {
+            // A transported frame can have no span while its cause has one. Prefer the existing
+            // blame anywhere in that chain to the consumer's spread fallback.
+            var cause = error;
+            while (cause.Span is null && cause is EvalError.WithContext context) cause = context.Inner;
+            return new EvalError.WithContext(new SpreadOperandContext(OpenExprName(operand)), error) { Span = cause.Span ?? span };
+        }
+        return error;
+    }
+
     // Supplies a spread's PEELED operand's VALUE (the written stars then open it, OpenSpreadLayers);
     // EvalSequenceSpreadCounted and the supply's spread slot (FormSpreadSupplySlot) are its callers.
     // A consumer holding a whole spread EXPRESSION reads its items through EvalCounted +
     // AddCountedTopLevelValues instead — handing this the spread node itself would spread the
-    // spread's captured value again (one boundary too many).
+    // spread's captured value again (one boundary too many). A failed operand is reported by
+    // SpreadOperandFailure on every arm (X-29 / Q-36): only its OWN missing output is the spread's.
     // Lean: evalSequenceSpreadOperandValue.
     private static EvalResult<Result> EvalSequenceSpreadOperandValue(
         Expr expr,
@@ -831,9 +893,7 @@ public static partial class Evaluator
             var captureSpan = PreferExpressionSpan(expr.Span, captureBody);
             var captureR = WithSpan(captureSpan, EvalCaptureValue(captureBody, ctx, valEnv));
             if (captureR.IsError)
-                return IsMissingOutputError(captureR.Error)
-                    ? SpreadMissingOutput(captureSpan)
-                    : captureR.Error;
+                return SpreadOperandFailure(expr, captureSpan, captureR.Error);
 
             return captureR;
         }
@@ -853,18 +913,14 @@ public static partial class Evaluator
 
             var blockR = EvalZeroArgumentDemandOutput(wired, ctx, valEnv);
             if (blockR.IsError)
-                return IsMissingOutputError(blockR.Error)
-                    ? SpreadMissingOutput(blockSpan)
-                    : blockR.Error;
+                return SpreadOperandFailure(expr, blockSpan, blockR.Error);
 
             return blockR;
         }
 
         var outputR = Eval(expr, ctx, valEnv);
         if (outputR.IsError)
-            return IsMissingOutputError(outputR.Error)
-                ? SpreadMissingOutput(expr.Span)
-                : outputR.Error;
+            return SpreadOperandFailure(expr, expr.Span, outputR.Error);
 
         return outputR;
     }
@@ -2620,6 +2676,9 @@ public static partial class Evaluator
         ValEnv valEnv)
         => ProjectCountedValue(EvalResolvedArgumentCounted(arg, ctx, valEnv));
 
+    // A builtin always has output, so a missing output escaping an application is an argument's, a
+    // callback's or a step's: EVERY caller nests it (`NestMissingOutput`, Q-36; Lean: inside
+    // `applyBuiltinCounted`), keeping this recursive frame unchanged.
     private static EvalResult<CountedResult> ApplyBuiltinCountedResolved(
         BuiltinId builtin,
         IReadOnlyList<ResolvedArgumentAlgorithm> resolvedArgs,

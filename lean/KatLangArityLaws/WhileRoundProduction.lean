@@ -92,7 +92,7 @@ theorem check_missing_output (p : Option ScopeCtx) (pp : List ParameterPattern) 
     (pr : List PropDef) (d : Option PropertyIdentity)
     (hd : (Algorithm.mk p pp o pr [] d).findDuplicatePropName = none)
     (hc : conditionalValueAccessError? "conditional" (Algorithm.mk p pp o pr [] d) = none) :
-    Fails (Algorithm.mk p pp o pr [] d) Error.missingOutput := by
+    Fails (Algorithm.mk p pp o pr [] d) (Error.missingOutput .own) := by
   intro s; simp only [ActivatedBody.check, hd, hc]; rfl
 
 /-- A user body with written output and no duplicate property passes the checks. -/

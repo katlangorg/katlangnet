@@ -556,6 +556,21 @@ end PropExposure
 -- Errors / Monad
 --------------------------------------------------------------------------------
 
+/-- WHOSE missing output a `missingOutput` failure is (Q-36, decided 2026-10-24). It is raised
+    `own` by the output check of the computation being demanded — the body without written
+    output; once that failure leaves a SUBORDINATE computation of another one (an output row of a
+    body or capture, an operand of an operator or constructor, a builtin's argument or callback,
+    an argument inspected while binding, a `.string` receiver) it is `nested`
+    (`Error.nestMissingOutput`, `withNestedMissingOutput`). It is part of the COMPLETED outcome,
+    so it survives every memo — a property's cached outcome, a need cell's completed outcome — and
+    is consumer-independent. Only the spread reads it: the spread operand's `own` missing output
+    is `spreadMissingOutput`, a `nested` one is preserved (`spreadOperandFailure`). The public
+    category of both is `missingOutput`. C#: `EvalError.MissingOutput.IsNested`. -/
+inductive MissingOutputOrigin where
+  | own
+  | nested
+  deriving Repr, DecidableEq
+
 inductive Error where
   | unknownName      : Ident -> Error
   | unknownProperty  : String -> Ident -> Error        -- object desc, property name
@@ -578,8 +593,8 @@ inductive Error where
   | duplicateProperty : Ident -> Error         -- algorithm defines the same property name more than once
   | duplicateBranchPattern : Error             -- conditional algorithm has match-equivalent branch patterns
   | explicitParamsRequireOutput : Error        -- explicit algorithm params require an algorithm output
-  | missingOutput    : Error                   -- forced user-defined algorithm does not define output
-  | spreadMissingOutput : Error          -- spread operand produced no output
+  | missingOutput    : MissingOutputOrigin -> Error  -- forced user-defined algorithm does not define output (origin: Q-36)
+  | spreadMissingOutput : Error          -- the spread operand's OWN output is missing (Q-36)
   | unresolvedImplicitParams : List Ident -> Error  -- top-level block has unresolved implicit parameters
   | withContext      : String -> Error -> Error -- contextual wrapper
   /-- R7: the INCOMPLETE outcome of the fuel-indexed evaluator core (`evalFuel`) — the formal
@@ -3851,13 +3866,42 @@ def withCtx (ctx : String) (m : EvalM A) : EvalM A := do
 def withMissingOutputCtx (ctx : String) (m : EvalM A) : EvalM A := do
     match <- evalAttempt m with
     | .ok result => pure result
-    | .error .missingOutput => .error (.withContext ctx .missingOutput)
+    | .error (.missingOutput origin) => .error (.withContext ctx (.missingOutput origin))
     | .error err => .error err
 
+/-- Any missing output, whatever its origin and context frames (the category test). -/
 def isMissingOutputError : Error -> Bool
-  | .missingOutput => true
+  | .missingOutput _ => true
   | .withContext _ inner => isMissingOutputError inner
   | _ => false
+
+/-- The failure is the OWN missing output of the computation whose outcome it is (Q-36): raised
+    by that computation's output check and carried through its context frames only. -/
+def isOwnMissingOutputError : Error -> Bool
+  | .missingOutput .own => true
+  | .withContext _ inner => isOwnMissingOutputError inner
+  | _ => false
+
+/-- Convert an own missing output without discarding the demand's named context (Q-36). -/
+def Error.asSpreadMissingOutput : Error -> Error
+  | .missingOutput .own => .spreadMissingOutput
+  | .withContext ctx inner => .withContext ctx inner.asSpreadMissingOutput
+  | err => err
+
+/-- The same failure as part of a CONSUMING computation's outcome (Q-36): a missing output in it
+    is `nested`; its context frames, and every other error, are unchanged. -/
+def Error.nestMissingOutput : Error -> Error
+  | .missingOutput _ => .missingOutput .nested
+  | .withContext ctx inner => .withContext ctx inner.nestMissingOutput
+  | err => err
+
+/-- Run `m` as a SUBORDINATE computation (Q-36): a missing output it fails with is `nested` in
+    the outcome of the computation that ran it (`Error.nestMissingOutput`). Every other outcome,
+    an incomplete one included, is unchanged. C#: `Evaluator.NestMissingOutput`. -/
+def withNestedMissingOutput (m : EvalM A) : EvalM A := do
+    match <- evalAttempt m with
+    | .ok result => pure result
+    | .error err => .error err.nestMissingOutput
 
 /-- The empty sequence value expression `()`. -/
 def emptyResultExpr : Expr :=
@@ -4609,7 +4653,19 @@ namespace CtxMsg
   def call   (f : Expr)               := s!"while evaluating call to {openExprName f}"
   def property (n : Ident)            := s!"while evaluating property {n}"
   def dotCall (obj : Expr) (n : Ident) := s!"while evaluating dotCall .{n} of {openExprName obj}"
+  def spread (operand : Expr)         := s!"while evaluating spread operand {openExprName operand}"
 end CtxMsg
+
+/-- What a spread reports when evaluating its (peeled) operand failed (Q-36, decided
+    2026-10-24): the operand's OWN missing output — the computation it directly denotes has no
+    written output — is `spreadMissingOutput`; a NESTED missing output — one originating in a
+    dependency, argument, output row or other subordinate computation of the operand — keeps its
+    category, cause and blame, with the spread operand as added context; every other failure is
+    the operand's own, unchanged. C#: `Evaluator.SpreadOperandFailure`. -/
+def spreadOperandFailure (operand : Expr) (err : Error) : Error :=
+  if isOwnMissingOutputError err then err.asSpreadMissingOutput
+  else if isMissingOutputError err then .withContext (CtxMsg.spread operand) err
+  else err
 
 /-- The ONE zero-argument value-demand law (its rejection half), keyed by the
     written shape that names the demanded algorithm. It is consulted BEFORE an
@@ -5083,7 +5139,7 @@ def check (a : Algorithm) : EvalM Unit := do
     | some err => .error err
     | none => pure ()
     match a with
-    | .mk _ _ _ _ [] _ => .error Error.missingOutput
+    | .mk _ _ _ _ [] _ => .error (Error.missingOutput .own)
     | _ => pure ()
 
 /-- Read a body's rows in ONE activation: a builtin body is one atomic counted value (`atomic`);
@@ -7270,7 +7326,9 @@ def suspendedValue (ev : Expr → EvalCtx → ValEnv → EvalM CountedResult)
       | .intrinsic => reCountValueBoundary <$> ev e ctx env
       | r => NeedPlan.executeAlong route a shape r
     | none => reCountValueBoundary <$> ev e ctx env
-  | .collector slice => materialize demand slice
+  -- Materializing a collector constructs a list; its elements are subordinate computations.
+  -- Store their failures as nested in this cell, without changing the original element cells.
+  | .collector slice => withNestedMissingOutput (materialize demand slice)
 
 def step (ev : Expr → EvalCtx → ValEnv → EvalM CountedResult) (route : NeedPlan.Route)
     (demand : Nat → EvalM CountedResult) (a : Nat) : EvalM CountedResult := do
@@ -8823,7 +8881,7 @@ def EvalBody.algorithmIntrinsicRoute (rec : EvalRec) (receiver : Expr) (ctx : Ev
   def EvalBody.algorithmCalleeOf (rec : EvalRec) (receiver : Expr) (ctx : EvalCtx) (env : ValEnv) : EvalM (Algorithm × String × Nat) := do
     let value <-
       match <- rec.resolveDotReceiver? receiver ctx with
-      | none => rec.eval receiver ctx env
+      | none => withNestedMissingOutput (rec.eval receiver ctx env)
       | some targetAlg => rec.referenceReceiverValue receiver targetAlg ctx env
     let plan <- decodeCallRef value
     let cell <- NeedPlan.calleeCell rec.planRoute.classify plan
@@ -8940,8 +8998,9 @@ def EvalBody.algorithmIntrinsicRoute (rec : EvalRec) (receiver : Expr) (ctx : Ev
       of `zeroArgPropertyCalculation`). C#: `EvalNeedUserSupplyOutputCounted`. -/
   def EvalBody.evalNeedUserSupplyOutput (rec : EvalRec) (callee : Algorithm) (cells : List Nat) (ctx : EvalCtx) (env : ValEnv) : EvalM CountedResult := do
     let patterns := (Algorithm.parameterPatterns callee).map NeedPattern.ofParameter
-    let some bindings <- bindNeedPatterns (rec.bindingChannels) patterns cells | throw Error.badArity
-    if (Algorithm.output callee).isEmpty then throw Error.missingOutput
+    -- An argument the binder inspects is a SUBORDINATE computation of the call (Q-36).
+    let some bindings <- withNestedMissingOutput (bindNeedPatterns (rec.bindingChannels) patterns cells) | throw Error.badArity
+    if (Algorithm.output callee).isEmpty then throw (Error.missingOutput .own)
     let next <- needBindingContext ctx bindings
     if let some address ← takeTerminalAliasInvocation callee then
       return (← rec.demandNeedRecursive address)
@@ -8959,7 +9018,8 @@ def EvalBody.algorithmIntrinsicRoute (rec : EvalRec) (receiver : Expr) (ctx : Ev
       the selected body's output at the call's value boundary — for an ordinary call and a
       callback invocation alike (HO-03, PAT-11). C#: `EvalNeedFamilySupply`. -/
   def EvalBody.evalNeedFamilySupply (rec : EvalRec) (callee : Algorithm) (cells : List Nat) (ctx : EvalCtx) (env : ValEnv) (calleeName : String) : EvalM CountedResult := do
-    let (body, next, values) <- selectNeedFamilyBranch (rec.bindingChannels) callee cells ctx env calleeName
+    -- An argument a clause pattern inspects is a SUBORDINATE computation of the call (Q-36).
+    let (body, next, values) <- withNestedMissingOutput (selectNeedFamilyBranch (rec.bindingChannels) callee cells ctx env calleeName)
     let result <- rec.evalAlgOutputCounted body next values
     pure (reCountValueBoundary result)
 
@@ -9152,7 +9212,7 @@ def EvalBody.algorithmIntrinsicRoute (rec : EvalRec) (receiver : Expr) (ctx : Ev
         | some err => .error err
         | none => pure ()
         match a with
-        | .mk _ _ _ _ [] _ => .error Error.missingOutput
+        | .mk _ _ _ _ [] _ => .error (Error.missingOutput .own)
         | _ => pure ()
         let pushedCtx <- enterAlgorithmBody a ctx env
         rec.evalOutputRowsPreparedCore (Algorithm.output a) pushedCtx env
@@ -9175,7 +9235,8 @@ def EvalBody.algorithmIntrinsicRoute (rec : EvalRec) (receiver : Expr) (ctx : Ev
             outputSlots := outputSlots
           }
       | expr :: rest, acc, emitted => do
-          let out <- rec.evalCounted expr rowCtx env
+          -- A row is a SUBORDINATE computation of the body or capture (Q-36).
+          let out <- withNestedMissingOutput (rec.evalCounted expr rowCtx env)
           match expr with
           | .sequenceSpread _ =>
               collect rest ((countedTopLevelValues out).reverse ++ acc) (emitted + out.snd)
@@ -9782,9 +9843,11 @@ def EvalBody.algorithmIntrinsicRoute (rec : EvalRec) (receiver : Expr) (ctx : Ev
       (`invokeNeed`), so a step forwarded through a parameter is the callable
       itself, never its demanded value. A builtin declaring a META parameter (the
       loops) binds through the ONE binder first (META-S3-3); a loop's initial state is
-      its captured call's supply, demanded by the step and the final materialization. -/
+      its captured call's supply, demanded by the step and the final materialization. A missing
+      output escaping the application is NESTED (Q-36): a builtin always has output, so it is an
+      argument's, a callback's or a step's. -/
   def EvalBody.applyBuiltinCounted (rec : EvalRec) (b : Builtin) (args : List ResolvedArgumentAlgorithm) (ctx : EvalCtx) (env : ValEnv) : EvalM CountedResult :=
-    match sequenceBuiltinMetadata? b with
+    withNestedMissingOutput <| match sequenceBuiltinMetadata? b with
     | some metadata =>
       rec.applyBuiltinCountedSequence b metadata args ctx env
     | none =>
@@ -9924,7 +9987,7 @@ def EvalBody.algorithmIntrinsicRoute (rec : EvalRec) (receiver : Expr) (ctx : Ev
         | some err => .error err
         | none => pure ()
         match a with
-        | .mk _ _ _ _ [] _ => .error Error.missingOutput
+        | .mk _ _ _ _ [] _ => .error (Error.missingOutput .own)
         | _ => pure ()
         let pushedCtx <- enterAlgorithmBody a ctx env
         rec.evalExplicitSequenceValueRowSlots (Algorithm.output a) pushedCtx env
@@ -9938,7 +10001,8 @@ def EvalBody.algorithmIntrinsicRoute (rec : EvalRec) (receiver : Expr) (ctx : Ev
     let rec collect : List Expr -> List Result -> EvalM (List Result)
       | [], acc => pure acc.reverse
       | e :: rest, acc => do
-          let values <- rec.evalExplicitSequenceValueExprSlots e rowCtx env
+          -- A row is a SUBORDINATE computation of the body or capture (Q-36).
+          let values <- withNestedMissingOutput (rec.evalExplicitSequenceValueExprSlots e rowCtx env)
           collect rest (values.reverse ++ acc)
     collect rows []
 
@@ -10128,32 +10192,35 @@ def EvalBody.algorithmIntrinsicRoute (rec : EvalRec) (receiver : Expr) (ctx : Ev
         (`F(v) = v.string` converts the value `F(A)` passed);
       * every other receiver shape (a written block, a capture, a dot result) is
         its resolved algorithm's zero-argument demand, as before.
+      The receiver is a SUBORDINATE computation of the intrinsic, so a missing output it fails
+      with is nested (Q-36); every intrinsic's value-receiver read (`eval target`) is too.
       C#: `EvalDotStringReceiverAlgOutput`. -/
-  def EvalBody.evalDotStringReceiverValue (rec : EvalRec) (target : Expr) (targetAlg : Algorithm) (ctx : EvalCtx) (env : ValEnv) : EvalM Result := do
-    match target with
-    | .resolve n =>
-        match ctx.callStack with
-        | owner :: _ =>
-            let resolved <- rec.lookupLexicalValueProperty owner n ctx
-            let counted <- rec.evalZeroArgPropertyAccessCounted .lexical resolved.owner resolved.binding resolved.alg ctx env
-            pure counted.fst
-        | [] => rec.evalZeroArgumentDemandOutput targetAlg ctx env
-    | .param _ => rec.eval target ctx env
-    | .dotMember receiver member _ none =>
-        -- The same navigation `resolveDotReceiver` just performed (a `string` step
-        -- included, Q-17 S-C): a member the container DECLARES is the selected
-        -- structural binding (its accessibility was already enforced there);
-        -- anything else is a dot result.
-        match <- evalAttempt (rec.resolveDotReceiver receiver ctx) with
-        | .ok container =>
-            match Algorithm.lookupPropDefAny? container member with
-            | some p =>
-                let accessed := (flatBinderUserEquivalent? targetAlg).getD targetAlg
-                let counted <- rec.evalZeroArgPropertyAccessCounted .structural container p accessed ctx env
-                pure counted.fst
-            | none => rec.evalZeroArgumentDemandOutput targetAlg ctx env
-        | .error _ => rec.evalZeroArgumentDemandOutput targetAlg ctx env
-    | _ => rec.evalZeroArgumentDemandOutput targetAlg ctx env
+  def EvalBody.evalDotStringReceiverValue (rec : EvalRec) (target : Expr) (targetAlg : Algorithm) (ctx : EvalCtx) (env : ValEnv) : EvalM Result :=
+    withNestedMissingOutput do
+      match target with
+      | .resolve n =>
+          match ctx.callStack with
+          | owner :: _ =>
+              let resolved <- rec.lookupLexicalValueProperty owner n ctx
+              let counted <- rec.evalZeroArgPropertyAccessCounted .lexical resolved.owner resolved.binding resolved.alg ctx env
+              pure counted.fst
+          | [] => rec.evalZeroArgumentDemandOutput targetAlg ctx env
+      | .param _ => rec.eval target ctx env
+      | .dotMember receiver member _ none =>
+          -- The same navigation `resolveDotReceiver` just performed (a `string` step
+          -- included, Q-17 S-C): a member the container DECLARES is the selected
+          -- structural binding (its accessibility was already enforced there);
+          -- anything else is a dot result.
+          match <- evalAttempt (rec.resolveDotReceiver receiver ctx) with
+          | .ok container =>
+              match Algorithm.lookupPropDefAny? container member with
+              | some p =>
+                  let accessed := (flatBinderUserEquivalent? targetAlg).getD targetAlg
+                  let counted <- rec.evalZeroArgPropertyAccessCounted .structural container p accessed ctx env
+                  pure counted.fst
+              | none => rec.evalZeroArgumentDemandOutput targetAlg ctx env
+          | .error _ => rec.evalZeroArgumentDemandOutput targetAlg ctx env
+      | _ => rec.evalZeroArgumentDemandOutput targetAlg ctx env
 
   /-- Evaluate dotCall: a.f or a.f(args). The member result is a value boundary:
       structural zero-arg property access and collection builtins re-count to
@@ -10279,7 +10346,7 @@ def EvalBody.algorithmIntrinsicRoute (rec : EvalRec) (receiver : Expr) (ctx : Ev
           pure (out, Result.valueCount out)
         | none => do
           rec.rejectDotStringIntrinsicArguments argsOpt ctx env
-          let val <- rec.eval target ctx env
+          let val <- withNestedMissingOutput (rec.eval target ctx env)
           let out <- resultToString val
           pure (out, Result.valueCount out)
     | .ok (.miss .invoke) =>
@@ -10301,7 +10368,7 @@ def EvalBody.algorithmIntrinsicRoute (rec : EvalRec) (receiver : Expr) (ctx : Ev
           rec.invokeCallReferenceValue val
         | none => do
           rec.rejectInvokeIntrinsicArguments argsOpt ctx env
-          let val <- rec.eval target ctx env
+          let val <- withNestedMissingOutput (rec.eval target ctx env)
           rec.invokeCallReferenceValue val
     | .ok (.miss .arguments) =>
         -- `Arguments` is the call-reference ARGUMENT VIEW intrinsic (CallReference S2) — it
@@ -10321,7 +10388,7 @@ def EvalBody.algorithmIntrinsicRoute (rec : EvalRec) (receiver : Expr) (ctx : Ev
           argumentsOfValue val
         | none => do
           rejectArgumentsIntrinsicArguments argsOpt
-          let val <- rec.eval target ctx env
+          let val <- withNestedMissingOutput (rec.eval target ctx env)
           argumentsOfValue val
     | .ok (.miss .algorithm) =>
         -- `Algorithm` is the callable-projection intrinsic (META-S3-1, CR-14) — it takes the
@@ -10333,7 +10400,7 @@ def EvalBody.algorithmIntrinsicRoute (rec : EvalRec) (receiver : Expr) (ctx : Ev
           let val <- rec.referenceReceiverValue target targetAlg ctx env
           rec.algorithmOfValue val argsOpt ctx env
         | none => do
-          let val <- rec.eval target ctx env
+          let val <- withNestedMissingOutput (rec.eval target ctx env)
           rec.algorithmOfValue val argsOpt ctx env
     | .ok (.miss .extension) =>
         rec.callLexicalWithReceiverCounted name target fallback argsOpt ctx env
@@ -10371,18 +10438,21 @@ def EvalBody.algorithmIntrinsicRoute (rec : EvalRec) (receiver : Expr) (ctx : Ev
   def EvalBody.evalArgumentViewBuiltin (rec : EvalRec) (b : Builtin) (a : Nat) : EvalM CountedResult :=
     argumentViewBuiltin (rec.argumentViewCells a) (fun cell => Prod.fst <$> rec.demandNeedRecursive cell) b
 
-  /-- Evaluate a spread operand and supply its immediate items. Spreading an
-      operand that has no defined output is the spread-specific
-      `spreadMissingOutput` error on EVERY operand shape — the direct
-      `.algorithmExpr`/`.capture` specializations translate a missing-output
-      failure exactly like the generic arm, so `{A = 1}*` and
-      `X = {A = 1}` / `X*` agree. Its argument is the spread's PEELED operand
+  /-- Evaluate a spread operand and supply its immediate items. A failed operand
+      is reported by `spreadOperandFailure` (Q-36, decided 2026-10-24) on EVERY
+      operand shape — the direct `.algorithmExpr`/`.capture` specializations
+      decide exactly like the generic arm: the operand's OWN missing output is
+      `spreadMissingOutput`, so `{A = 1}*` and `X = {A = 1}` / `X*` agree, while a
+      missing output NESTED in the operand's evaluation (`H = G + 1` / `H*`,
+      `F({})*`, `{ G }*`, `[G]*`) keeps its category, cause and blame. The
+      decision reads the completed failure's origin only: it evaluates nothing.
+      Its argument is the spread's PEELED operand
       (`evalSequenceSpreadCounted` is its one caller): a consumer holding a whole
       spread EXPRESSION reads its items through `evalCounted` +
       `countedTopLevelValues` (the output-row loop, written-slot reification, supply
       formation, the internal join), since handing it the spread node itself would
       spread the spread's captured value again — one boundary too many.
-      C#: `EvalSequenceSpreadOperandItems`. -/
+      C#: `EvalSequenceSpreadOperandValue`. -/
   def EvalBody.evalSequenceSpreadOperandValue (rec : EvalRec) (e : Expr) (ctx : EvalCtx) (env : ValEnv) : EvalM Result := do
     match e with
     | .capture rows =>
@@ -10390,13 +10460,10 @@ def EvalBody.algorithmIntrinsicRoute (rec : EvalRec) (receiver : Expr) (ctx : Ev
         | .ok value =>
             pure value
         | .error err =>
-            if isMissingOutputError err then
-              .error Error.spreadMissingOutput
-            else
-              .error err
+            .error (spreadOperandFailure e err)
     | .algorithmExpr a => do
         -- An inline alias block is demanded as its target, a rejection reported as its written
-        -- target reference (FA-OQ-1; C#: `EvalAliasSpreadOperandItems`); a chain reaching a
+        -- target reference (FA-OQ-1; C#: `EvalAliasSpreadOperandValue`); a chain reaching a
         -- runtime-target alias reads that alias's binding cell (META-S3-2).
         let wired <- rec.resolveAliasValueTarget (wireToCaller ctx a) ctx
         -- A spread operand is demanded for its VALUE with zero arguments, so the
@@ -10409,19 +10476,13 @@ def EvalBody.algorithmIntrinsicRoute (rec : EvalRec) (receiver : Expr) (ctx : Ev
           | .ok value =>
               pure value
           | .error err =>
-              if isMissingOutputError err then
-                .error Error.spreadMissingOutput
-              else
-                .error err
+              .error (spreadOperandFailure e err)
     | _ =>
         match <- evalAttempt (rec.eval e ctx env) with
         | .ok value =>
             pure value
         | .error err =>
-            if isMissingOutputError err then
-              .error Error.spreadMissingOutput
-            else
-              .error err
+            .error (spreadOperandFailure e err)
 
     /-- Evaluate a unary `sequenceSpread` node by evaluating its single operand
       once and spreading immediate top-level items. Nested sequence-value
@@ -10663,7 +10724,11 @@ def EvalBody.algorithmIntrinsicRoute (rec : EvalRec) (receiver : Expr) (ctx : Ev
       Block expressions count as one sequence value when non-empty. `sequenceConstruct`
       emits one constructed sequence value. `sequenceSpread`
       emits the immediate spread items of its operand. All other value expressions emit either zero values (empty
-      result) or one value. -/
+      result) or one value.
+
+      A constructor, selection, interpolation or operator expression demands no computation's
+      output of its own: it forms a value from SUBORDINATE computations, so a missing output
+      escaping it is NESTED (`withNestedMissingOutput`, Q-36). -/
   def EvalBody.evalCounted (rec : EvalRec) (e : Expr) (ctx : EvalCtx) (env : ValEnv) : EvalM CountedResult :=
     match e with
     | .param x => do
@@ -10677,14 +10742,14 @@ def EvalBody.algorithmIntrinsicRoute (rec : EvalRec) (receiver : Expr) (ctx : Ev
         | some v => pure (v, Result.valueCount v)
         | none => .error (Error.unknownName x)
     | .sequenceConstruct _ _ =>
-      rec.evalSequenceConstructCounted e ctx env
+      withNestedMissingOutput (rec.evalSequenceConstructCounted e ctx env)
     | .emptySequence depth =>
         let value := buildEmptySequenceValue depth
         pure (value, Result.valueCount value)
     | .sequenceSpread _ =>
         rec.evalSequenceSpreadCounted e ctx env
     | .listLiteral elements =>
-        rec.evalListLiteralCounted elements ctx env
+        withNestedMissingOutput (rec.evalListLiteralCounted elements ctx env)
     | .algorithmExpr a => do
         -- An inline alias block (`{ F }`) is demanded as its TARGET, and a rejected demand is
         -- reported as its written target reference `F` reports it (`zeroArgumentDemandError?`,
@@ -10718,7 +10783,7 @@ def EvalBody.algorithmIntrinsicRoute (rec : EvalRec) (receiver : Expr) (ctx : Ev
                   let counted <- rec.evalZeroArgPropertyAccessCounted .lexical resolved.owner resolved.binding resolved.alg ctx env
                   pure (counted.fst, Result.valueCount counted.fst)
         | [] => .error (Error.unknownName n)
-    | .index receiver selectors => do
+    | .index receiver selectors => withNestedMissingOutput do
         -- VARIADIC POSTFIX SELECTION (October 2026). (1) The receiver is demanded
         -- ONCE through its ordinary value path (`Data` is the cached property
         -- read, `Data()` one fresh call), even when no selector is supplied.
@@ -10747,7 +10812,7 @@ def EvalBody.algorithmIntrinsicRoute (rec : EvalRec) (receiver : Expr) (ctx : Ev
         rec.evalCallCountedExpr f args ctx env
     | .num n => pure (Result.atom n, 1)
     | .stringLiteral s => pure (Result.str s, 1)
-    | .interpolatedString head links => do
+    | .interpolatedString head links => withNestedMissingOutput do
         -- VAL-12: the holes left to right, each once through the ordinary value read
         -- (the read a comparison operand uses), each converted at once; the first failure
         -- ends the node; ONE string value.
@@ -10761,11 +10826,11 @@ def EvalBody.algorithmIntrinsicRoute (rec : EvalRec) (receiver : Expr) (ctx : Ev
         pure (Result.str text, 1)
     | .boolLiteral b => pure (Result.bool b, 1)
     | .unary op operand =>
-        rec.evalUnaryCounted op operand ctx env
+        withNestedMissingOutput (rec.evalUnaryCounted op operand ctx env)
     | .binary op a b =>
-        rec.evalBinaryCounted op a b ctx env
+        withNestedMissingOutput (rec.evalBinaryCounted op a b ctx env)
     | .comparison first links =>
-        rec.evalComparisonCounted first links ctx env
+        withNestedMissingOutput (rec.evalComparisonCounted first links ctx env)
 
   /-- User-defined call evaluation with plain Result output.
       This is the Result projection of `evalUserCallCounted`: the counted twin

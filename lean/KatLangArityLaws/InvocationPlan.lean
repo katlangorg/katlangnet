@@ -223,6 +223,14 @@ theorem Disciplined.withCtx {α : Type} {m : EvalM α} (c : String) (hm : Discip
   | ok x => exact disciplined_pure x
   | error e => exact disciplined_evalError _
 
+theorem Disciplined.withNestedMissingOutput {α : Type} {m : EvalM α} (hm : Disciplined m) :
+    Disciplined (withNestedMissingOutput m) := by
+  unfold KatLang.withNestedMissingOutput
+  refine Disciplined.bind hm.attempt (fun r => ?_)
+  cases r with
+  | ok x => exact disciplined_pure x
+  | error e => exact disciplined_evalError _
+
 /-- META-DIAG-1: a META capture keeps the heap discipline of its capture. -/
 theorem Disciplined.captureMeta (name : Ident) {m : EvalM Nat} (hm : Disciplined m) :
     Disciplined (NeedBinder.captureMeta name m) := by
@@ -677,8 +685,9 @@ theorem disciplined_suspendedValue (ev : Expr → EvalCtx → ValEnv → EvalM C
       | _ => exact disciplined_executeAlong route hspread htarget hnormal hdispatch hclassify hproject a _ _
     · exact Disciplined.map _ (hev e c v)
   | collector slice =>
-    exact Disciplined.bind (disciplined_mapM _ (fun b => Disciplined.map _ (hdemand b)) slice)
-      (fun _ => disciplined_pure _)
+    exact Disciplined.withNestedMissingOutput
+      (Disciplined.bind (disciplined_mapM _ (fun b => Disciplined.map _ (hdemand b)) slice)
+        (fun _ => disciplined_pure _))
 
 /-- The completion-shell state write, as a state function. -/
 def withState (a : Nat) (st : NeedState) (s : EvalState) : EvalState :=

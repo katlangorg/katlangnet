@@ -958,7 +958,7 @@ public static partial class Evaluator
         {
             var supply = PreparePlanSupplyCounted(plan, PlanSupplyShape.BuiltinArguments, byInvocation);
             if (supply.IsError) return supply.Error;
-            return ApplyBuiltinCountedResolved(builtinId, PlanBuiltinArguments(supply.Value), ctx, plan.Values);
+            return NestMissingOutput(ApplyBuiltinCountedResolved(builtinId, PlanBuiltinArguments(supply.Value), ctx, plan.Values));
         }
 
         if (TryGetFlatBinderUserEquivalent(callee) is { } simpleCallee)
@@ -1128,7 +1128,7 @@ public static partial class Evaluator
         {
             var supply = await PreparePlanSupplyAsync(plan, PlanSupplyShape.BuiltinArguments, byInvocation).ConfigureAwait(false);
             if (supply.IsError) return supply.Error;
-            return await ApplyBuiltinCountedResolvedAsync(builtinId, PlanBuiltinArguments(supply.Value), ctx, plan.Values).ConfigureAwait(false);
+            return NestMissingOutput(await ApplyBuiltinCountedResolvedAsync(builtinId, PlanBuiltinArguments(supply.Value), ctx, plan.Values).ConfigureAwait(false));
         }
 
         if (TryGetFlatBinderUserEquivalent(callee) is { } simpleCallee)

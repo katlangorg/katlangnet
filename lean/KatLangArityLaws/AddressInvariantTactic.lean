@@ -235,10 +235,15 @@ theorem SoundI.withCtx_true {α : Type} {P : Array NeedCell → Prop} {m : EvalM
 theorem SoundI.withMissingOutputCtx_true {α : Type} {P : Array NeedCell → Prop} {m : EvalM α} (c : String)
     (hm : SoundI P m (fun _ _ => True)) : SoundI P (KatLang.withMissingOutputCtx c m) (fun _ _ => True) :=
   SoundI.withMissingOutputCtx c hm PMono.true
+theorem SoundI.withNestedMissingOutput_true {α : Type} {P : Array NeedCell → Prop} {m : EvalM α}
+    (hm : SoundI P m (fun _ _ => True)) : SoundI P (KatLang.withNestedMissingOutput m) (fun _ _ => True) :=
+  SoundI.withNestedMissingOutput hm PMono.true
 
 attribute [ht_spec] SoundI.rec_call get_spec SoundI.lift SoundI.liftM SoundI.attempt SoundI.withCtx
-  SoundI.withMissingOutputCtx SoundI.modify_cell SoundI.mapM_nat SoundI.mapM_sourced SoundI.mapM_result
+  SoundI.withMissingOutputCtx SoundI.withNestedMissingOutput SoundI.modify_cell SoundI.mapM_nat SoundI.mapM_sourced
+  SoundI.mapM_result
 attribute [ht_spec] SoundI.attempt_true SoundI.withCtx_true SoundI.withMissingOutputCtx_true
+  SoundI.withNestedMissingOutput_true
 
 /-! ## The procedure -/
 
@@ -800,7 +805,8 @@ elab "ht_step" : tactic => do
       | .const c =>
         -- a wrapper binding an address-free value: atomize it with the trivial postcondition
         let α ← whnfR (← instantiateMVars (m.getArg! 2))
-        if (c == ``KatLang.withCtx || c == ``KatLang.withMissingOutputCtx || c == ``KatLang.evalAttempt) &&
+        if (c == ``KatLang.withCtx || c == ``KatLang.withMissingOutputCtx ||
+            c == ``KatLang.withNestedMissingOutput || c == ``KatLang.evalAttempt) &&
             htAddressFree α then
           evalTactic (← `(tactic| refine SoundI.bind (Q := fun _ _ => True) ?_ PMono.true ?_))
           return

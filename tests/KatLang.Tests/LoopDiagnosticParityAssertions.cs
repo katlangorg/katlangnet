@@ -151,6 +151,7 @@ internal static class LoopDiagnosticParityAssertions
             ProgramEvaluationContext => "Program[]",
             DotCallContext(var receiver, var propertyName) => $"DotCall[{Text(receiver)}|{Text(propertyName)}]",
             CallContext(var callee) => $"Call[{Text(callee)}]",
+            SpreadOperandContext(var operand) => $"SpreadOperand[{Text(operand)}]",
             ReduceInitialAccumulatorContext(var requiredNames) =>
                 $"ReduceInitialAccumulator[{TextList(requiredNames)}]",
             LoopStateBindingContext(var loopName, var stepParams, var actualCount) =>

@@ -774,6 +774,27 @@ theorem materialize_sim (recur : Nat → EvalM CountedResult)
     subst hvw
     exact sim_pure HeapCorr _ t1 _ _ rfl
 
+theorem nested_run {α : Type} (m : EvalM α) (s : EvalState) :
+    runEval (withNestedMissingOutput m) s =
+      let r := runEval m s
+      (r.1.mapError Error.nestMissingOutput, r.2) := by
+  simp only [runEval, withNestedMissingOutput, KatLang.CallPlan.bind_run, KatLang.CallPlan.evalAttempt_run]
+  rcases m.runState s with ⟨out, t⟩
+  cases out with
+  | ok _ => rfl
+  | error err => cases err <;> rfl
+
+/-- Equal completed outcomes stay equal when collector materialization marks element failures nested. -/
+theorem sim_nested {α : Type} {R : StateRel} {t : Table} {x y : EvalM α}
+    (h : Sim R (fun _ v w => v = w) t x y) :
+    Sim R (fun _ v w => v = w) t (withNestedMissingOutput x) (withNestedMissingOutput y) := by
+  intro s1 s2 hR
+  rcases sim_eq_cases h hR with ⟨u, e, t1, t2, hu, hr, hx, hy⟩ | ⟨u, v, t1, t2, hu, hr, hx, hy⟩
+  all_goals
+    refine ⟨u, hu, ?_⟩
+    simp only [nested_run, hx, hy]
+    exact ⟨hr, rfl⟩
+
 theorem suspended_value_sim (ev1 ev2 : Expr → EvalCtx → ValEnv → EvalM CountedResult) (route : NeedPlan.Route)
     (recur : Nat → EvalM CountedResult)
     (hrec : ∀ t b1 b2, Addr t b1 b2 → Sim HeapCorr (fun _ v w => v = w) t (recur b1) (recur b2))
@@ -784,7 +805,7 @@ theorem suspended_value_sim (ev1 ev2 : Expr → EvalCtx → ValEnv → EvalM Cou
   | .ready v, .ready w, h => by
       simp only [SuspCorr] at h; subst h
       exact sim_pure HeapCorr _ t _ _ rfl
-  | .collector sl1, .collector sl2, h => materialize_sim recur hrec t sl1 sl2 h
+  | .collector sl1, .collector sl2, h => sim_nested (materialize_sim recur hrec t sl1 sl2 h)
   | .expression _ _ _, _, h => by cases h
   | .ready _, .expression _ _ _, h => by cases h
   | .ready _, .collector _, h => by cases h

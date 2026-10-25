@@ -14,11 +14,11 @@ This is bounded differential validation over the Lean-guarded partition,
 not a formal verification of the evaluators.
 
 Partition (machine-checked by the `specCaseIds.length` guard below):
-- specification surface cases: 481
+- specification surface cases: 482
 - excluded parse-level cases (Lean has no surface parser): 71
 - excluded C#-only cases (each carries an explicit reason in the corpus): 22
-- Lean-guarded cases: 388
-- probe observations (C#-only by design): 1415
+- Lean-guarded cases: 389
+- probe observations (C#-only by design): 1432
 - internal-node cases live in the semantic-explorer corpus, not here: see
   lean/SemanticExplorerCases.lean
 
@@ -53,7 +53,7 @@ partial def errCategory : Error -> String
   | .branchOutputArityMismatch _ _ _ => "arity"
   | .badIndex => "index"
   | .typeMismatch _ => "type"
-  | .missingOutput => "missingOutput"
+  | .missingOutput _ => "missingOutput"
   | .spreadMissingOutput => "spreadMissingOutput"
   | .unknownName _ => "unknownName"
   | .divByZero => "div0"
@@ -110,7 +110,7 @@ partial def sharedError : Error -> Option SharedErrorPayload
   | .demandCycle => some { kind := "demandCycle" }
   | .duplicateBranchPattern => some { kind := "duplicateBranchPattern" }
   | .explicitParamsRequireOutput => some { kind := "explicitParamsRequireOutput" }
-  | .missingOutput => some { kind := "missingOutput" }
+  | .missingOutput _ => some { kind := "missingOutput" }
   | .spreadMissingOutput => some { kind := "spreadMissingOutput" }
   | .typeMismatch _ | .noMatchingBranch _ | .notAnAlgorithm _
     | .illegalInOpen _ | .badOpenForm _ | .illegalInEval _ | .fuelExhausted => none
@@ -180,7 +180,7 @@ def errorObs (e : Expr) : SharedErrorObservation :=
 #guard sharedError .demandCycle == (some { kind := "demandCycle", names := [], counts := [] })
 #guard sharedError .duplicateBranchPattern == (some { kind := "duplicateBranchPattern", names := [], counts := [] })
 #guard sharedError .explicitParamsRequireOutput == (some { kind := "explicitParamsRequireOutput", names := [], counts := [] })
-#guard sharedError .missingOutput == (some { kind := "missingOutput", names := [], counts := [] })
+#guard sharedError (.missingOutput .own) == (some { kind := "missingOutput", names := [], counts := [] })
 #guard sharedError .spreadMissingOutput == (some { kind := "spreadMissingOutput", names := [], counts := [] })
 #guard sharedError (.typeMismatch "message") == none
 #guard sharedError (.noMatchingBranch "F") == none
@@ -1615,6 +1615,11 @@ def case_missing_output_not_a_value : Expr :=
   .algorithmExpr (alg [] [] [privateProp "A" (alg [] [] [] [])] [.resolve "A"])
 #guard obs case_missing_output_not_a_value == "err missingOutput"
 
+-- spread-preserves-nested-missing-output [errors]: G = { \n     public X = 1 \n } \n H = G + 1 \n H*
+def case_spread_preserves_nested_missing_output : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "G" (alg [] [] [publicProp "X" (alg [] [] [] [.num 1])] []), privateProp "H" (alg [] [] [] [(.binary .add (.resolve "G") (.num 1))])] [(.sequenceSpread (.resolve "H"))])
+#guard obs case_spread_preserves_nested_missing_output == "err missingOutput"
+
 -- missing-output-as-builtin-arg [errors]: count({})
 def case_missing_output_as_builtin_arg : Expr :=
   .algorithmExpr (alg [] [] [] [(.call (.resolve "count") [(.algorithmExpr (alg [] [] [] []))])])
@@ -2140,7 +2145,7 @@ def case_runtime_alias_cycle : Expr :=
   .algorithmExpr (alg [] [] [privateProp "A" (.alias none [] [] ((.dotCall (.resolve "R") "Algorithm" none))), privateProp "R" (alg [] [] [] [(.call (.resolve "Capture") [(.call (.resolve "A") [.num 1])])]), privateProp "Capture" (algWithParameters [{ name := "op", kind := .metaRef }] [] [] [.param "op"])] [(.call (.resolve "A") [.num 2])])
 #guard obs case_runtime_alias_cycle == "err demandCycle"
 
--- 388 canonical Lean-guarded specification cases.
+-- 389 canonical Lean-guarded specification cases.
 
 /--
 Machine-checked Lean-guarded partition count: the id list is built by the
@@ -2431,6 +2436,7 @@ def specCaseIds : List String := [
   "dot-chain-continuation",
   "arity-too-many-arguments",
   "missing-output-not-a-value",
+  "spread-preserves-nested-missing-output",
   "missing-output-as-builtin-arg",
   "output-less-argument-is-not-an-omitted-argument",
   "argument-value-outcome-is-final",
@@ -2537,6 +2543,6 @@ def specCaseIds : List String := [
   "runtime-alias-failure-is-not-absence",
   "runtime-alias-cycle"
 ]
-#guard specCaseIds.length == 388
+#guard specCaseIds.length == 389
 
 end LanguageSpecCases

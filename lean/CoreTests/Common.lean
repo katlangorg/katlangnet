@@ -40,7 +40,7 @@ def innermostIsTypeMismatch (expected : String) : Error -> Bool
 
 def innermostIsMissingOutput : Error -> Bool
   | .withContext _ inner => innermostIsMissingOutput inner
-  | .missingOutput => true
+  | .missingOutput _ => true
   | _ => false
 
 def innermostIsDivByZero : Error -> Bool

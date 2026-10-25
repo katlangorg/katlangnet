@@ -10,11 +10,11 @@ the neutral observation recorded from the C# evaluator. A failing guard is a
 Lean/C# divergence on that case.
 
 Partition (machine-checked by the `*CaseIds.length` guards below):
-- surface corpus cases: 2652
+- surface corpus cases: 2671
 - excluded parse-level cases (Lean has no surface parser): 11
-- Lean-representable surface cases: 2641
+- Lean-representable surface cases: 2660
 - internal-node cases: 19
-- neutral guards: 2660 case guards + 2 count guards
+- neutral guards: 2679 case guards + 2 count guards
 - supplementary errorObs guards compare supported shared payloads independently
 
 Regenerate from the repo root with:
@@ -48,7 +48,7 @@ partial def errCategory : Error -> String
   | .branchOutputArityMismatch _ _ _ => "arity"
   | .badIndex => "index"
   | .typeMismatch _ => "type"
-  | .missingOutput => "missingOutput"
+  | .missingOutput _ => "missingOutput"
   | .spreadMissingOutput => "spreadMissingOutput"
   | .unknownName _ => "unknownName"
   | .divByZero => "div0"
@@ -105,7 +105,7 @@ partial def sharedError : Error -> Option SharedErrorPayload
   | .demandCycle => some { kind := "demandCycle" }
   | .duplicateBranchPattern => some { kind := "duplicateBranchPattern" }
   | .explicitParamsRequireOutput => some { kind := "explicitParamsRequireOutput" }
-  | .missingOutput => some { kind := "missingOutput" }
+  | .missingOutput _ => some { kind := "missingOutput" }
   | .spreadMissingOutput => some { kind := "spreadMissingOutput" }
   | .typeMismatch _ | .noMatchingBranch _ | .notAnAlgorithm _
     | .illegalInOpen _ | .badOpenForm _ | .illegalInEval _ | .fuelExhausted => none
@@ -175,7 +175,7 @@ def errorObs (e : Expr) : SharedErrorObservation :=
 #guard sharedError .demandCycle == (some { kind := "demandCycle", names := [], counts := [] })
 #guard sharedError .duplicateBranchPattern == (some { kind := "duplicateBranchPattern", names := [], counts := [] })
 #guard sharedError .explicitParamsRequireOutput == (some { kind := "explicitParamsRequireOutput", names := [], counts := [] })
-#guard sharedError .missingOutput == (some { kind := "missingOutput", names := [], counts := [] })
+#guard sharedError (.missingOutput .own) == (some { kind := "missingOutput", names := [], counts := [] })
 #guard sharedError .spreadMissingOutput == (some { kind := "spreadMissingOutput", names := [], counts := [] })
 #guard sharedError (.typeMismatch "message") == none
 #guard sharedError (.noMatchingBranch "F") == none
@@ -12708,6 +12708,120 @@ def case_special__spreadNoOutputResolved : Expr :=
 #guard obs case_special__spreadNoOutputResolved == "err spreadMissingOutput"
 
 #guard errorObs case_special__spreadNoOutputResolved == .matched (some { kind := "spreadMissingOutput", names := [], counts := [] })
+-- special__spreadNestedDependency: G = {A = 1} \n H = G + 1 \n H*, 997
+def case_special__spreadNestedDependency : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "G" (alg [] [] [privateProp "A" (alg [] [] [] [.num 1])] []), privateProp "H" (alg [] [] [] [(.binary .add (.resolve "G") (.num 1))])] [(.sequenceSpread (.resolve "H")), .num 997])
+#guard obs case_special__spreadNestedDependency == "err missingOutput"
+
+#guard errorObs case_special__spreadNestedDependency == .matched (some { kind := "missingOutput", names := [], counts := [] })
+-- special__spreadNestedDependencyCall: G = {A = 1} \n H = G + 1 \n H()*, 997
+def case_special__spreadNestedDependencyCall : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "G" (alg [] [] [privateProp "A" (alg [] [] [] [.num 1])] []), privateProp "H" (alg [] [] [] [(.binary .add (.resolve "G") (.num 1))])] [(.sequenceSpread (.call (.resolve "H") [])), .num 997])
+#guard obs case_special__spreadNestedDependencyCall == "err missingOutput"
+
+#guard errorObs case_special__spreadNestedDependencyCall == .matched (some { kind := "missingOutput", names := [], counts := [] })
+-- special__spreadOwnInvoked: G = {A = 1} \n G()*, 997
+def case_special__spreadOwnInvoked : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "G" (alg [] [] [privateProp "A" (alg [] [] [] [.num 1])] [])] [(.sequenceSpread (.call (.resolve "G") [])), .num 997])
+#guard obs case_special__spreadOwnInvoked == "err spreadMissingOutput"
+
+#guard errorObs case_special__spreadOwnInvoked == .matched (some { kind := "spreadMissingOutput", names := [], counts := [] })
+-- special__spreadNestedArgument: F(x) = x \n F({A = 1})*, 997
+def case_special__spreadNestedArgument : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "F" (alg ["x"] [] [] [.param "x"])] [(.sequenceSpread (.call (.resolve "F") [(.algorithmExpr (alg [] [] [privateProp "A" (alg [] [] [] [.num 1])] []))])), .num 997])
+#guard obs case_special__spreadNestedArgument == "err missingOutput"
+
+#guard errorObs case_special__spreadNestedArgument == .matched (some { kind := "missingOutput", names := [], counts := [] })
+-- special__spreadNestedRow: G = {A = 1} \n { G }*, 997
+def case_special__spreadNestedRow : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "G" (alg [] [] [privateProp "A" (alg [] [] [] [.num 1])] [])] [(.sequenceSpread (.algorithmExpr (alg [] [] [] [.resolve "G"]))), .num 997])
+#guard obs case_special__spreadNestedRow == "err missingOutput"
+
+#guard errorObs case_special__spreadNestedRow == .matched (some { kind := "missingOutput", names := [], counts := [] })
+-- special__spreadNestedCapture: G = {A = 1} \n (G, 1)*, 997
+def case_special__spreadNestedCapture : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "G" (alg [] [] [privateProp "A" (alg [] [] [] [.num 1])] [])] [(.sequenceSpread (.capture [.resolve "G", .num 1])), .num 997])
+#guard obs case_special__spreadNestedCapture == "err missingOutput"
+
+#guard errorObs case_special__spreadNestedCapture == .matched (some { kind := "missingOutput", names := [], counts := [] })
+-- special__spreadNestedList: G = {A = 1} \n [G]*, 997
+def case_special__spreadNestedList : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "G" (alg [] [] [privateProp "A" (alg [] [] [] [.num 1])] [])] [(.sequenceSpread (.listLiteral [.resolve "G"])), .num 997])
+#guard obs case_special__spreadNestedList == "err missingOutput"
+
+#guard errorObs case_special__spreadNestedList == .matched (some { kind := "missingOutput", names := [], counts := [] })
+-- special__spreadNestedBuiltinArgument: G = {A = 1} \n count(G)*, 997
+def case_special__spreadNestedBuiltinArgument : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "G" (alg [] [] [privateProp "A" (alg [] [] [] [.num 1])] [])] [(.sequenceSpread (.call (.resolve "count") [.resolve "G"])), .num 997])
+#guard obs case_special__spreadNestedBuiltinArgument == "err missingOutput"
+
+#guard errorObs case_special__spreadNestedBuiltinArgument == .matched (some { kind := "missingOutput", names := [], counts := [] })
+-- special__spreadNestedFamilyMatch: G = {A = 1} \n K(0) = 1 \n K(n) = 2 \n K(G)*, 997
+def case_special__spreadNestedFamilyMatch : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "G" (alg [] [] [privateProp "A" (alg [] [] [] [.num 1])] []), privateProp "K" (.conditional none [] [⟨.litInt 0, (alg [] [] [] [.num 1])⟩, ⟨.bind "n", (alg [] [] [] [.num 2])⟩])] [(.sequenceSpread (.call (.resolve "K") [.resolve "G"])), .num 997])
+#guard obs case_special__spreadNestedFamilyMatch == "err missingOutput"
+
+#guard errorObs case_special__spreadNestedFamilyMatch == .matched (some { kind := "missingOutput", names := [], counts := [] })
+-- special__spreadNestedPatternBinding: G = {A = 1} \n Q((a, b)) = a \n Q(G)*, 997
+def case_special__spreadNestedPatternBinding : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "G" (alg [] [] [privateProp "A" (alg [] [] [] [.num 1])] []), privateProp "Q" (algWithParameterPatterns [.sequenceValue [.capture { name := "a" }, .capture { name := "b" }]] [] [] [.param "a"])] [(.sequenceSpread (.call (.resolve "Q") [.resolve "G"])), .num 997])
+#guard obs case_special__spreadNestedPatternBinding == "err missingOutput"
+
+#guard errorObs case_special__spreadNestedPatternBinding == .matched (some { kind := "missingOutput", names := [], counts := [] })
+-- special__spreadNestedStringReceiver: G = {A = 1} \n G.string*, 997
+def case_special__spreadNestedStringReceiver : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "G" (alg [] [] [privateProp "A" (alg [] [] [] [.num 1])] [])] [(.sequenceSpread (.dotCall (.resolve "G") "string" none)), .num 997])
+#guard obs case_special__spreadNestedStringReceiver == "err missingOutput"
+
+#guard errorObs case_special__spreadNestedStringReceiver == .matched (some { kind := "missingOutput", names := [], counts := [] })
+-- special__spreadInnerOwnKept: ({A = 1}*)*, 997
+def case_special__spreadInnerOwnKept : Expr :=
+  .algorithmExpr (alg [] [] [] [(.sequenceSpread (.capture [(.sequenceSpread (.algorithmExpr (alg [] [] [privateProp "A" (alg [] [] [] [.num 1])] [])))])), .num 997])
+#guard obs case_special__spreadInnerOwnKept == "err spreadMissingOutput"
+
+#guard errorObs case_special__spreadInnerOwnKept == .matched (some { kind := "spreadMissingOutput", names := [], counts := [] })
+-- special__spreadOrdinaryFailureKept: (1 / 0)*, 997
+def case_special__spreadOrdinaryFailureKept : Expr :=
+  .algorithmExpr (alg [] [] [] [(.sequenceSpread (.binary .div (.num 1) (.num 0))), .num 997])
+#guard obs case_special__spreadOrdinaryFailureKept == "err div0"
+
+#guard errorObs case_special__spreadOrdinaryFailureKept == .matched (some { kind := "div0", names := [], counts := [] })
+-- special__spreadNestedSupplySlot: G = {A = 1} \n H = G + 1 \n count(1, H*)
+def case_special__spreadNestedSupplySlot : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "G" (alg [] [] [privateProp "A" (alg [] [] [] [.num 1])] []), privateProp "H" (alg [] [] [] [(.binary .add (.resolve "G") (.num 1))])] [(.call (.resolve "count") [.num 1, (.sequenceSpread (.resolve "H"))])])
+#guard obs case_special__spreadNestedSupplySlot == "err missingOutput"
+
+#guard errorObs case_special__spreadNestedSupplySlot == .matched (some { kind := "missingOutput", names := [], counts := [] })
+-- special__spreadNestedCallbackSlot: G = {A = 1} \n H = G + 1 \n map([], H*)
+def case_special__spreadNestedCallbackSlot : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "G" (alg [] [] [privateProp "A" (alg [] [] [] [.num 1])] []), privateProp "H" (alg [] [] [] [(.binary .add (.resolve "G") (.num 1))])] [(.call (.resolve "map") [(.listLiteral []), (.sequenceSpread (.resolve "H"))])])
+#guard obs case_special__spreadNestedCallbackSlot == "err missingOutput"
+
+#guard errorObs case_special__spreadNestedCallbackSlot == .matched (some { kind := "missingOutput", names := [], counts := [] })
+-- special__spreadForwardedOwn: P(x) = x* \n P({A = 1})
+def case_special__spreadForwardedOwn : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "P" (alg ["x"] [] [] [(.sequenceSpread (.param "x"))])] [(.call (.resolve "P") [(.algorithmExpr (alg [] [] [privateProp "A" (alg [] [] [] [.num 1])] []))])])
+#guard obs case_special__spreadForwardedOwn == "err spreadMissingOutput"
+
+#guard errorObs case_special__spreadForwardedOwn == .matched (some { kind := "spreadMissingOutput", names := [], counts := [] })
+-- special__spreadForwardedNested: G = {A = 1} \n H = G + 1 \n P(x) = x* \n P(H)
+def case_special__spreadForwardedNested : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "G" (alg [] [] [privateProp "A" (alg [] [] [] [.num 1])] []), privateProp "H" (alg [] [] [] [(.binary .add (.resolve "G") (.num 1))]), privateProp "P" (alg ["x"] [] [] [(.sequenceSpread (.param "x"))])] [(.call (.resolve "P") [.resolve "H"])])
+#guard obs case_special__spreadForwardedNested == "err missingOutput"
+
+#guard errorObs case_special__spreadForwardedNested == .matched (some { kind := "missingOutput", names := [], counts := [] })
+-- special__spreadCollectorElement: G = {} \n C(*xs) = xs* \n C(G)
+def case_special__spreadCollectorElement : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "G" (alg [] [] [] []), privateProp "C" (algWithParameters [{ name := "xs", kind := .collecting }] [] [] [(.sequenceSpread (.param "xs"))])] [(.call (.resolve "C") [.resolve "G"])])
+#guard obs case_special__spreadCollectorElement == "err missingOutput"
+
+#guard errorObs case_special__spreadCollectorElement == .matched (some { kind := "missingOutput", names := [], counts := [] })
+-- special__spreadForwardedCollectorElement: G = {} \n P(x) = x* \n C(*xs) = P(xs) \n C(G)
+def case_special__spreadForwardedCollectorElement : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "G" (alg [] [] [] []), privateProp "P" (alg ["x"] [] [] [(.sequenceSpread (.param "x"))]), privateProp "C" (algWithParameters [{ name := "xs", kind := .collecting }] [] [] [(.call (.resolve "P") [.param "xs"])])] [(.call (.resolve "C") [.resolve "G"])])
+#guard obs case_special__spreadForwardedCollectorElement == "err missingOutput"
+
+#guard errorObs case_special__spreadForwardedCollectorElement == .matched (some { kind := "missingOutput", names := [], counts := [] })
 -- special__listLoneCollectingAssignment: *items = [1, 2, 3]
 def case_special__listLoneCollectingAssignment : Expr :=
   .algorithmExpr (alg [] [] [privateProp "$deconstruct$0" (alg [] [] [] [(.listLiteral [.num 1, .num 2, .num 3])]), privateProp "items" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "items", kind := .collecting }]] [] [] [.param "items"])) [.resolve "$deconstruct$0"])])] [])
@@ -13689,7 +13803,7 @@ def case_special__writtenCallIgnoresCalleeBinderNames : Expr :=
   .algorithmExpr (alg [] [] [privateProp "G" (alg ["x", "y"] [] [] [(.call (.resolve "Add") [(.capture [.param "x", .param "y"])])]), privateProp "Add" (algWithParameterPatterns [.sequenceValue [.capture { name := "left" }, .capture { name := "right" }]] [] [] [(.binary .add (.param "left") (.param "right"))])] [(.call (.resolve "G") [.num 2, .num 3])])
 #guard obs case_special__writtenCallIgnoresCalleeBinderNames == "ok raw=5 n=1"
 
--- 2641 differential cases.
+-- 2660 differential cases.
 
 /--
 Machine-checked surface partition count: the id list is built by the same
@@ -16151,6 +16265,25 @@ def surfaceCaseIds : List String := [
   "special__spreadNoOutputBlockList",
   "special__spreadNoOutputBlockCallArg",
   "special__spreadNoOutputResolved",
+  "special__spreadNestedDependency",
+  "special__spreadNestedDependencyCall",
+  "special__spreadOwnInvoked",
+  "special__spreadNestedArgument",
+  "special__spreadNestedRow",
+  "special__spreadNestedCapture",
+  "special__spreadNestedList",
+  "special__spreadNestedBuiltinArgument",
+  "special__spreadNestedFamilyMatch",
+  "special__spreadNestedPatternBinding",
+  "special__spreadNestedStringReceiver",
+  "special__spreadInnerOwnKept",
+  "special__spreadOrdinaryFailureKept",
+  "special__spreadNestedSupplySlot",
+  "special__spreadNestedCallbackSlot",
+  "special__spreadForwardedOwn",
+  "special__spreadForwardedNested",
+  "special__spreadCollectorElement",
+  "special__spreadForwardedCollectorElement",
   "special__listLoneCollectingAssignment",
   "special__minSeq",
   "special__minList",
@@ -16339,7 +16472,7 @@ def surfaceCaseIds : List String := [
   "special__writtenCallInfersWrittenNames",
   "special__writtenCallIgnoresCalleeBinderNames"
 ]
-#guard surfaceCaseIds.length == 2641
+#guard surfaceCaseIds.length == 2660
 
 /-!
 Direct internal-node cases: `Expr.sequenceConstruct` is an INTERNAL node —
@@ -16472,5 +16605,5 @@ def internalNodeCaseIds : List String := [
 #guard internalNodeCaseIds.length == 19
 
 -- 19 internal-node cases.
--- Total: 2660 case guards (2641 surface + 19 internal-node).
+-- Total: 2679 case guards (2660 surface + 19 internal-node).
 end SemanticExplorerCases

@@ -85,6 +85,20 @@ public sealed record CallContext(string CalleeDescription) : ErrorContext
     internal override string FormatMessage() => $"while evaluating call to {CalleeDescription}";
 }
 
+/// <summary>
+/// A SPREAD OPERAND whose evaluation met a missing output that is NOT the operand's own
+/// (X-29 / Q-36, decided 2026-10-24): the inner failure originates in a dependency, argument,
+/// output row or other subordinate computation of the operand, so it keeps its own category,
+/// cause and source location, and this frame only records that the spread was evaluating the
+/// operand it describes. The operand's OWN missing output is instead
+/// <see cref="EvalError.SpreadMissingOutput"/>, never this frame. A reviewed public-surface
+/// addition, like <see cref="ArgumentEvaluationContext"/>.
+/// </summary>
+public sealed record SpreadOperandContext(string OperandDescription) : ErrorContext
+{
+    internal override string FormatMessage() => $"while evaluating spread operand {OperandDescription}";
+}
+
 public sealed record ReduceInitialAccumulatorContext(IReadOnlyList<string> RequiredParameterNames) : ErrorContext
 {
     internal override string FormatMessage() => "while preparing reduce initial accumulator";

@@ -27,7 +27,7 @@ internal static class DifferentialErrorContracts
         new(new EvalError.DemandCycle(), ".demandCycle", ErrorComparison.Comparable, new("demandCycle", [], [])),
         new(new EvalError.DuplicateBranchPattern(), ".duplicateBranchPattern", ErrorComparison.Comparable, new("duplicateBranchPattern", [], [])),
         new(new EvalError.ExplicitParametersRequireOutput(), ".explicitParamsRequireOutput", ErrorComparison.Comparable, new("explicitParamsRequireOutput", [], [])),
-        new(new EvalError.MissingOutput(), ".missingOutput", ErrorComparison.Comparable, new("missingOutput", [], [])),
+        new(new EvalError.MissingOutput(), "(.missingOutput .own)", ErrorComparison.Comparable, new("missingOutput", [], [])),
         new(new EvalError.SpreadMissingOutput(), ".spreadMissingOutput", ErrorComparison.Comparable, new("spreadMissingOutput", [], [])),
         new(new EvalError.TypeMismatch("message"), "(.typeMismatch \"message\")", ErrorComparison.CategoryOnly, null),
         new(new EvalError.NoMatchingBranch("F"), "(.noMatchingBranch \"F\")", ErrorComparison.CategoryOnly, null),

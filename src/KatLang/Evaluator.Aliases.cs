@@ -440,8 +440,8 @@ public static partial class Evaluator
     /// <summary>
     /// An inline block alias as a SPREAD operand (<c>{ F }*</c>): the same value demand as
     /// <see cref="EvalInlineAliasValue"/> — the ONE zero-argument law judged on the TARGET and
-    /// reported as its written target reference reports it — whose items are spread; an operand
-    /// without output is the spread-specific <see cref="EvalError.SpreadMissingOutput"/>. The
+    /// reported as its written target reference reports it — whose items are spread; a failed
+    /// operand is reported by <see cref="SpreadOperandFailure"/> (Q-36). The
     /// counterpart of the block arm of <see cref="EvalSequenceSpreadOperandValue"/>.
     /// </summary>
     [MethodImpl(MethodImplOptions.NoInlining)]
@@ -463,7 +463,7 @@ public static partial class Evaluator
         }
 
         if (blockR.IsError)
-            return IsMissingOutputError(blockR.Error) ? SpreadMissingOutput(expr.Span) : blockR.Error;
+            return SpreadOperandFailure(expr, expr.Span, blockR.Error);
         return blockR;
     }
 
@@ -593,7 +593,7 @@ public static partial class Evaluator
         var receiverR = ResolveAliasTarget((Algorithm.Alias)aliasAlg, ctx, callable: false);
         if (receiverR.IsError)
             return receiverR.Error;
-        var val = EvalDotStringReceiverAlgOutput(target, receiverR.Value, receiverIsStructuralMember, ctx, valEnv);
+        var val = NestMissingOutput(EvalDotStringReceiverAlgOutput(target, receiverR.Value, receiverIsStructuralMember, ctx, valEnv));
         if (val.IsError) return val.Error;
         var outR = ResultToString(ctx, val.Value);
         if (outR.IsError) return outR.Error;
@@ -672,7 +672,7 @@ public static partial class Evaluator
         }
 
         if (blockR.IsError)
-            return IsMissingOutputError(blockR.Error) ? SpreadMissingOutput(expr.Span) : blockR.Error;
+            return SpreadOperandFailure(expr, expr.Span, blockR.Error);
         return blockR;
     }
 
@@ -777,7 +777,7 @@ public static partial class Evaluator
         var receiverR = ResolveAliasTarget((Algorithm.Alias)aliasAlg, ctx, callable: false);
         if (receiverR.IsError)
             return receiverR.Error;
-        var val = await EvalDotStringReceiverAlgOutputAsync(target, receiverR.Value, receiverIsStructuralMember, ctx, valEnv).ConfigureAwait(false);
+        var val = NestMissingOutput(await EvalDotStringReceiverAlgOutputAsync(target, receiverR.Value, receiverIsStructuralMember, ctx, valEnv).ConfigureAwait(false));
         if (val.IsError) return val.Error;
         var outR = ResultToString(ctx, val.Value);
         if (outR.IsError) return outR.Error;

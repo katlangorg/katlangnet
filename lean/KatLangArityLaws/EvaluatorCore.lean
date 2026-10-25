@@ -117,6 +117,10 @@ variable {γ : Type} [PartialOrder γ]
     (m : γ → EvalM α) (h : monotone m) : monotone (fun x => withMissingOutputCtx c (m x)) := by
   unfold withMissingOutputCtx; mono_cb_tac
 
+@[partial_fixpoint_monotone] theorem monotone_withNestedMissingOutput {α : Type}
+    (m : γ → EvalM α) (h : monotone m) : monotone (fun x => withNestedMissingOutput (m x)) := by
+  unfold withNestedMissingOutput; mono_cb_tac
+
 @[partial_fixpoint_monotone] theorem monotone_formLeftToRight
     (form : γ → Expr → EvalM (List Result)) (h : monotone form) (rows : List Expr) :
     monotone (fun x => OutputRows.formLeftToRight (form x) rows) := by
@@ -327,7 +331,8 @@ theorem monotone_suspendedValue
     monotone (fun x => NeedDemand.suspendedValue (ev x) (route x) (demand x) a sus) := by
   cases sus with
   | ready v => exact monotone_const _
-  | collector slice => exact monotone_demandMaterialize demand hd slice
+  | collector slice =>
+    exact monotone_withNestedMissingOutput _ (monotone_demandMaterialize demand hd slice)
   | expression e c v =>
     simp only [NeedDemand.suspendedValue]
     cases NeedPlan.callShape? e c v with

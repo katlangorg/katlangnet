@@ -336,6 +336,28 @@ public closed record EvalError
             get => _isSelectedMemberOutput.Value;
             init => _isSelectedMemberOutput = new(value);
         }
+
+        private readonly RuntimeStateSlot<bool> _isNested;
+
+        /// <summary>
+        /// WHOSE missing output this is (X-29 / Q-36, decided 2026-10-24) — Lean
+        /// <c>MissingOutputOrigin</c>: <c>false</c> (<c>own</c>) when it was raised by the output
+        /// check of the computation being demanded, <c>true</c> (<c>nested</c>) once it has left a
+        /// SUBORDINATE computation of another one (an output row, an operator or constructor
+        /// operand, a builtin's argument or callback, an argument the binder inspects, a dot
+        /// intrinsic's receiver; <c>Evaluator.NestMissingOutput</c>). It belongs to the completed
+        /// failure, so every memo (a property's cached outcome, a need cell's completed outcome)
+        /// keeps it for every consumer. Only the spread reads it: an operand's own missing output
+        /// is <see cref="SpreadMissingOutput"/>, a nested one is preserved. The public category is
+        /// <see cref="KatLangErrorCode.MissingOutput"/> either way; carried in an
+        /// equality-transparent slot, so the span-attaching and context-wrapping copies keep it
+        /// while record equality ignores it.
+        /// </summary>
+        internal bool IsNested
+        {
+            get => _isNested.Value;
+            init => _isNested = new(value);
+        }
     }
 
     /// <summary>Spread operand did not produce output.</summary>
@@ -532,9 +554,12 @@ public closed record EvalError
     {
         public ErrorContext ErrorContext { get; }
 
-        public EvalError Inner { get; }
+        public EvalError Inner { get; private init; }
 
         public string Context => ErrorContext.ToString();
+
+        /// <summary>The same frame (its span and every runtime slot) around <paramref name="inner"/>.</summary>
+        internal WithContext WithInner(EvalError inner) => this with { Inner = inner };
 
         public WithContext(ErrorContext errorContext, EvalError inner)
         {

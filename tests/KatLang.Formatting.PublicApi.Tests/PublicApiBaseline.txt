@@ -2364,6 +2364,20 @@ public readonly record struct KatLang.SourceSpan : System.IEquatable<KatLang.Sou
   operator public static bool op_Equality(KatLang.SourceSpan left, KatLang.SourceSpan right)
   operator public static bool op_Inequality(KatLang.SourceSpan left, KatLang.SourceSpan right)
 
+public sealed record KatLang.SpreadOperandContext : KatLang.ErrorContext, System.IEquatable<KatLang.SpreadOperandContext>
+  ctor     public SpreadOperandContext(string OperandDescription)
+  property protected override System.Type EqualityContract { get; }
+  property public string OperandDescription { get; init; }
+  method   public virtual KatLang.SpreadOperandContext <Clone>$()
+  method   public void Deconstruct(out string OperandDescription)
+  method   public bool Equals(KatLang.SpreadOperandContext? other)
+  method   public override bool Equals(object? obj)
+  method   public sealed override bool Equals(KatLang.ErrorContext? other)
+  method   public override int GetHashCode()
+  method   protected override bool PrintMembers(System.Text.StringBuilder builder)
+  operator public static bool op_Equality(KatLang.SpreadOperandContext? left, KatLang.SpreadOperandContext? right)
+  operator public static bool op_Inequality(KatLang.SpreadOperandContext? left, KatLang.SpreadOperandContext? right)
+
 public sealed record KatLang.TextErrorContext : KatLang.ErrorContext, System.IEquatable<KatLang.TextErrorContext>
   ctor     public TextErrorContext(string Message)
   property protected override System.Type EqualityContract { get; }

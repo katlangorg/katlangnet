@@ -638,7 +638,7 @@ theorem demand_specialization (a : Nat) :
 /-- This is the actual collector arm the production shell executes. -/
 theorem collector_specialization (ev) (route : NeedPlan.Route) (recur : Nat → EvalM CountedResult) (a : Nat) (slice : List Nat) :
     NeedDemand.suspendedValue ev route recur a (.collector slice) =
-      NeedDemand.materialize recur slice := rfl
+      withNestedMissingOutput (NeedDemand.materialize recur slice) := rfl
 
 /-- The R3 interface consumes the total formation's projection with no new adapter,
     reallocation, capability, pattern or second binder. -/

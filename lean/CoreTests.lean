@@ -50,3 +50,4 @@ import CoreTests.ParentScopeValidation
 import CoreTests.RepeatedSpread
 import CoreTests.HostScopePropertyCache
 import CoreTests.HostParentDifferential
+import CoreTests.SpreadFailureOrigin

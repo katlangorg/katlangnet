@@ -50,7 +50,7 @@ partial def errCategory : Error -> String
   | .branchOutputArityMismatch _ _ _ => "arity"
   | .badIndex => "index"
   | .typeMismatch _ => "type"
-  | .missingOutput => "missingOutput"
+  | .missingOutput _ => "missingOutput"
   | .spreadMissingOutput => "spreadMissingOutput"
   | .unknownName _ => "unknownName"
   | .divByZero => "div0"
@@ -107,7 +107,7 @@ partial def sharedError : Error -> Option SharedErrorPayload
   | .demandCycle => some { kind := "demandCycle" }
   | .duplicateBranchPattern => some { kind := "duplicateBranchPattern" }
   | .explicitParamsRequireOutput => some { kind := "explicitParamsRequireOutput" }
-  | .missingOutput => some { kind := "missingOutput" }
+  | .missingOutput _ => some { kind := "missingOutput" }
   | .spreadMissingOutput => some { kind := "spreadMissingOutput" }
   | .typeMismatch _ | .noMatchingBranch _ | .notAnAlgorithm _
     | .illegalInOpen _ | .badOpenForm _ | .illegalInEval _ | .fuelExhausted => none

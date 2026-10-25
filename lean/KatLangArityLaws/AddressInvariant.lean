@@ -633,6 +633,16 @@ theorem SoundI.withMissingOutputCtx {α : Type} {P : Array NeedCell → Prop} {m
     cases e
     all_goals first | exact SoundI.error _ | exact SoundI.throw _
 
+theorem SoundI.withNestedMissingOutput {α : Type} {P : Array NeedCell → Prop} {m : EvalM α}
+    {Q : α → Array NeedCell → Prop} (hm : SoundI P m Q) (hq : PMono Q) :
+    SoundI P (withNestedMissingOutput m) Q := by
+  unfold KatLang.withNestedMissingOutput
+  refine SoundI.bind (SoundI.attempt hm) (fun r _ _ g v x e => hq x _ _ g (v x e)) ?_
+  intro r
+  cases r with
+  | ok x => exact SoundI.pure _ (fun _ h => h.2 x rfl)
+  | error e => exact SoundI.error _
+
 theorem SoundI.map {α β : Type} {P : Array NeedCell → Prop} {m : EvalM α} (f : α → β)
     {Q : α → Array NeedCell → Prop} {R : β → Array NeedCell → Prop} (hm : SoundI P m Q)
     (hq : ∀ x h, Q x h → R (f x) h) : SoundI P (f <$> m) R := by

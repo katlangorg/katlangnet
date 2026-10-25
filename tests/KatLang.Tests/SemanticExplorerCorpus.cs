@@ -528,6 +528,28 @@ public static class SemanticExplorerCorpus
         Special("spreadNoOutputBlockList", "[{A = 1}*]"),
         Special("spreadNoOutputBlockCallArg", "F(a) = a\nF({A = 1}*)"),
         Special("spreadNoOutputResolved", "X = {A = 1}\nX*, 997"),
+        // X-29 / Q-36 (decided 2026-10-24): only the operand's OWN missing output is the spread's
+        // report; a missing output nested in the operand's dependencies, arguments, rows or
+        // construction keeps its category. Lean `spreadOperandFailure`; C# `SpreadOperandFailure`.
+        Special("spreadNestedDependency", "G = {A = 1}\nH = G + 1\nH*, 997"),
+        Special("spreadNestedDependencyCall", "G = {A = 1}\nH = G + 1\nH()*, 997"),
+        Special("spreadOwnInvoked", "G = {A = 1}\nG()*, 997"),
+        Special("spreadNestedArgument", "F(x) = x\nF({A = 1})*, 997"),
+        Special("spreadNestedRow", "G = {A = 1}\n{ G }*, 997"),
+        Special("spreadNestedCapture", "G = {A = 1}\n(G, 1)*, 997"),
+        Special("spreadNestedList", "G = {A = 1}\n[G]*, 997"),
+        Special("spreadNestedBuiltinArgument", "G = {A = 1}\ncount(G)*, 997"),
+        Special("spreadNestedFamilyMatch", "G = {A = 1}\nK(0) = 1\nK(n) = 2\nK(G)*, 997"),
+        Special("spreadNestedPatternBinding", "G = {A = 1}\nQ((a, b)) = a\nQ(G)*, 997"),
+        Special("spreadNestedStringReceiver", "G = {A = 1}\nG.string*, 997"),
+        Special("spreadInnerOwnKept", "({A = 1}*)*, 997"),
+        Special("spreadOrdinaryFailureKept", "(1 / 0)*, 997"),
+        Special("spreadNestedSupplySlot", "G = {A = 1}\nH = G + 1\ncount(1, H*)"),
+        Special("spreadNestedCallbackSlot", "G = {A = 1}\nH = G + 1\nmap([], H*)"),
+        Special("spreadForwardedOwn", "P(x) = x*\nP({A = 1})"),
+        Special("spreadForwardedNested", "G = {A = 1}\nH = G + 1\nP(x) = x*\nP(H)"),
+        Special("spreadCollectorElement", "G = {}\nC(*xs) = xs*\nC(G)"),
+        Special("spreadForwardedCollectorElement", "G = {}\nP(x) = x*\nC(*xs) = P(xs)\nC(G)"),
         // C#-only parse-level cases (no comparable Lean program).
         Special("trailingComma", "(3,)",
             "A trailing comma is a KatLang surface-parser diagnostic; Lean models only the elaborated AST."),

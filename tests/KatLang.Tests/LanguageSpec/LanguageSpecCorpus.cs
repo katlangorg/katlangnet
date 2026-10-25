@@ -5682,6 +5682,35 @@ public static class LanguageSpecCorpus
         },
         new()
         {
+            Id = "spread-preserves-nested-missing-output",
+            Category = "errors",
+            Source = "G = {\n    public X = 1\n}\nH = G + 1\nH*",
+            Outcome = SpecOutcome.EvalError,
+            ExpectedErrorCategory = "missingOutput",
+            Probes =
+            [
+                new SpecProbe("G = {\n    public X = 1\n}\nG*", "err spreadMissingOutput"),
+                new SpecProbe("G = {\n    public X = 1\n}\nG()*", "err spreadMissingOutput"),
+                new SpecProbe("{\n    X = 1\n}*", "err spreadMissingOutput"),
+                new SpecProbe("G = {\n    public X = 1\n}\nH = G + 1\nH()*", "err missingOutput"),
+                new SpecProbe("F(x) = x\nF({})*", "err missingOutput"),
+                new SpecProbe("G = {\n    public X = 1\n}\n{ G }*", "err missingOutput"),
+                new SpecProbe("G = {\n    public X = 1\n}\n(G, 1)*", "err missingOutput"),
+                new SpecProbe("G = {\n    public X = 1\n}\n[G]*", "err missingOutput"),
+                new SpecProbe("(1 / 0)*", "err div0"),
+                new SpecProbe("({}*)*", "err spreadMissingOutput"),
+                new SpecProbe("G = {\n    public X = 1\n}\nH = G + 1\ncount(1, H*)", "err missingOutput"),
+                new SpecProbe("count(1, {}*)", "err spreadMissingOutput"),
+                new SpecProbe("G = {\n    public X = 1\n}\nH = G + 1\nmap([], H*)", "err missingOutput"),
+                new SpecProbe("P(x) = x*\nP({})", "err spreadMissingOutput"),
+                new SpecProbe("G = {\n    public X = 1\n}\nH = G + 1\nP(x) = x*\nP(H)", "err missingOutput"),
+                  new SpecProbe("G = {}\nC(*xs) = xs*\nC(G)", "err missingOutput"),
+                  new SpecProbe("G = {}\nP(x) = x*\nC(*xs) = P(xs)\nC(G)", "err missingOutput"),
+            ],
+            Explanation = "Spreading an operand whose OWN output is missing — the computation it directly denotes or invokes has no written output — is the spread-specific error (`{}*`, `G*`, `G()*`). A missing output met INSIDE the operand's evaluation — a dependency (`H = G + 1`), an argument (`F({})`), an output row (`{ G }`), or a constructed value (`(G, 1)`, `[G]`) — keeps its own category, cause and location, with the spread operand as added context; every other failure is unchanged. A parameter denotes the computation supplied for it, so `P({})` with `P(x) = x*` is the spread's own report while `P(H)` is `G`'s (X-29 / Q-36, decided 2026-10-24).",
+        },
+        new()
+        {
             Id = "missing-output-as-builtin-arg",
             Category = "errors",
             Source = "count({})",

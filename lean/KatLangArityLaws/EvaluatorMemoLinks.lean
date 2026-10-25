@@ -190,6 +190,14 @@ theorem LinkDisc.withCtx {α : Type} {m : EvalM α} (c : String) (hm : LinkDisc 
   | ok x => exact linkDisc_pure x
   | error e => exact linkDisc_evalError _
 
+theorem LinkDisc.withNestedMissingOutput {α : Type} {m : EvalM α} (hm : LinkDisc m) :
+    LinkDisc (withNestedMissingOutput m) := by
+  unfold KatLang.withNestedMissingOutput
+  refine LinkDisc.bind hm.attempt (fun r => ?_)
+  cases r with
+  | ok x => exact linkDisc_pure x
+  | error e => exact linkDisc_evalError _
+
 theorem LinkDisc.captureMeta (name : Ident) {m : EvalM Nat} (hm : LinkDisc m) :
     LinkDisc (NeedBinder.captureMeta name m) := by
   intro s
@@ -569,8 +577,9 @@ theorem linkDisc_suspendedValue (ev : Expr → EvalCtx → ValEnv → EvalM Coun
       | _ => exact linkDisc_executeAlong route hspread htarget hnormal hdispatch hclassify hproject a _ _
     · exact LinkDisc.map _ (hev e c v)
   | collector slice =>
-    exact LinkDisc.bind (linkDisc_mapM _ (fun b => LinkDisc.map _ (hdemand b)) slice)
-      (fun _ => linkDisc_pure _)
+    exact LinkDisc.withNestedMissingOutput
+      (LinkDisc.bind (linkDisc_mapM _ (fun b => LinkDisc.map _ (hdemand b)) slice)
+        (fun _ => linkDisc_pure _))
 
 /-- The VALUE completion shell writes only the VALUE state: a frame over its computation. -/
 theorem linkDisc_step (ev : Expr → EvalCtx → ValEnv → EvalM CountedResult)

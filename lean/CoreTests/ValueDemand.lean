@@ -769,7 +769,7 @@ def rirNeutralLeaf : Error -> String
   | .unresolvedImplicitParams names => "unresolvedImplicitParams [" ++ String.intercalate ", " names ++ "]"
   | .notAnAlgorithm description => s!"notAnAlgorithm {description}"
   | .divByZero => "divByZero"
-  | .missingOutput => "missingOutput"
+  | .missingOutput _ => "missingOutput"
   | other => s!"other {reprStr other}"
 
 /-- The neutral error tree: the kept frames outermost first, then the leaf. -/

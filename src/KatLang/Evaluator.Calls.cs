@@ -400,7 +400,7 @@ public static partial class Evaluator
         {
             var argAlgsR = ResolveArgAlgsWithSequenceSpread(args, ctx, valEnv);
             if (argAlgsR.IsError) return argAlgsR.Error;
-            return ApplyBuiltinCountedResolved(builtinId, argAlgsR.Value, ctx, valEnv);
+            return NestMissingOutput(ApplyBuiltinCountedResolved(builtinId, argAlgsR.Value, ctx, valEnv));
         }
 
         if (TryGetFlatBinderUserEquivalent(callee) is { } simpleCallee)

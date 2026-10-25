@@ -464,9 +464,15 @@ public class BuiltinArgumentRoleTests
     [InlineData("Bad*.take(1)", KatLangErrorCode.DivisionByZero)]
     [InlineData("take(BadT*)", KatLangErrorCode.TypeMismatch)]
     [InlineData("map([], BadI*)", KatLangErrorCode.BadIndex)]
+    // The spread operand's OWN missing output is the spread's report; a missing output NESTED in
+    // the operand (`H = G + 1` fails in `G`) keeps its category and cause (X-29 / Q-36, decided
+    // 2026-10-24). Either way the failed slot supplies nothing: no arity, no unused callback.
     [InlineData("count(1, {}*)", KatLangErrorCode.SpreadMissingOutput)]
     [InlineData("map([], {}*)", KatLangErrorCode.SpreadMissingOutput)]
-    [InlineData("map([], H*)", KatLangErrorCode.SpreadMissingOutput)]
+    [InlineData("map([], G*)", KatLangErrorCode.SpreadMissingOutput)]
+    [InlineData("count(1, G*)", KatLangErrorCode.SpreadMissingOutput)]
+    [InlineData("map([], H*)", KatLangErrorCode.MissingOutput)]
+    [InlineData("count(1, H*)", KatLangErrorCode.MissingOutput)]
     public async Task FailedSpread_PropagatesItsOwnFailure(string row, KatLangErrorCode code)
     {
         var observation = await OnEveryRouteAsync(
