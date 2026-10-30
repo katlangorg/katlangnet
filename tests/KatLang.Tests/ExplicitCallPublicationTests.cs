@@ -78,8 +78,9 @@ public class ExplicitCallPublicationTests
         { "A = if(tick() < 3, A() + 1, 0)\nA(), A", "S[2, 2]", 3 },
         // A property read owning an inner explicit call; a later explicit call is fresh.
         { "A = if(tick() < 3, A() + 1, 0)\nA, A, A()", "S[2, 2, 0]", 4 },
-        // Indirect re-entry through another property's explicit call: each owner publishes once.
-        { "A = if(tick() < 3, B() + 1, 0)\nB = A\nA(), A, B", "S[2, 2, 1]", 3 },
+        // Indirect re-entry through a reference: `B = A` owns no entry (OD-E, M4★), so B() re-enters
+        // A's own key and a bare B reads A's entry (formerly B published its own: S[2, 2, 1]).
+        { "A = if(tick() < 3, B() + 1, 0)\nB = A\nA(), A, B", "S[2, 2, 2]", 3 },
         // A fresh explicit call while the entry is established: executes, replaces nothing.
         { "A = if(tick() < 3, A + 1, 0)\nA, A(), A", "S[2, 0, 2]", 4 },
     };
@@ -293,10 +294,12 @@ public class ExplicitCallPublicationTests
         { "A = tick()\nCall0(f) = f()\nFwd(g) = Call0(g)\nFwd(A), A", "S[1, 1]", 1 },
         // Repeated invocation stays fresh.
         { "A = tick()\nTwice0(f) = f(), f()\nTwice0(A), A", "S[S[1, 2], 1]", 2 },
-        // A STATIC alias: its own binding's entry — the target keeps its own (one evaluation each).
-        { "Only(*xs) = tick()\nOA = Only\nOA(), OA, Only", "S[1, 1, 2]", 2 },
-        // A PARAMETERIZED runtime-callable alias never publishes, even when it accepts zero supply.
-        { "Only(*xs) = tick()\nUse(f) = {\n    A = f\n    A(), A\n}\nUse(Only)", "S[1, 2]", 2 },
+        // A STATIC reference owns no entry (OD-E, M4★): OA() publishes under its target Only, which OA
+        // and Only then read (formerly the alias had an entry of its own: S[1, 1, 2]).
+        { "Only(*xs) = tick()\nOA = Only\nOA(), OA, Only", "S[1, 1, 1]", 1 },
+        // A RUNTIME reference publishes under its binding cell's origin — the supplied `Only` — whatever
+        // its target's arity (formerly a parameterized runtime-callable alias never published: S[1, 2]).
+        { "Only(*xs) = tick()\nUse(f) = {\n    A = f\n    A(), A\n}\nUse(Only)", "S[1, 1]", 1 },
         // A shared argument cell is demanded once: one invocation, which establishes A.
         { "A = tick()\nTwice(v) = v, v\nTwice(A()), A", "S[S[1, 1], 1]", 1 },
         // An UNDEMANDED supplied invocation stays undemanded (Model-C laziness is unchanged).

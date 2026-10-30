@@ -20,7 +20,10 @@ public class ChainedDotExecutionPathTests
     [InlineData("F(a, b, c) = a * 100 + b * 10 + c\n(3, 4).count.F(2, 3)", "223")]
     [InlineData("Call0(f) = f()\nCall0(Lib.Sub.Q)", "7")]
     [InlineData("Call0(f) = f()\nForward(f) = Call0(f)\nForward(Lib.Sub.Q)", "7")]
-    [InlineData("Alias = Lib.Sub\nQ(x) = x + 1\nAlias.Q", "4")]
+    // M4★: `Alias = Lib.Sub` is a transparent reference, so its members are Sub's (formerly the alias had
+    // none and `.Q` fell back lexically: 4); a calculation over Sub's value keeps the fallback.
+    [InlineData("Alias = Lib.Sub\nQ(x) = x + 1\nAlias.Q", "7")]
+    [InlineData("Value = Lib.Sub + 0\nQ(x) = x + 1\nValue.Q", "4")]
     [InlineData("if(false, Lib.Sub.F(0), Lib.Sub.Q)", "7")]
     [InlineData("Step(x) = x + Lib.Sub.Q\nrepeat(Step(0), 3)", "21")]
     [InlineData("[1, 2].map({x + Lib.Sub.Q})", "[8, 9]")]

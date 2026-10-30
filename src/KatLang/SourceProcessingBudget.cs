@@ -34,6 +34,7 @@ internal sealed class SourceProcessingBudget
     internal long MaxAggregateSourceLength => _limits.EffectiveMaxAggregateSourceLength;
     internal int MaxModuleCount => _limits.EffectiveMaxModuleCount;
     internal int MaxDiagnosticCount => _limits.EffectiveMaxDiagnosticCount;
+    internal SourceProcessingLimits Limits => _limits;
 
     /// <summary>
     /// A fresh diagnostic list for one operation of this run — the parse, or one demand-time

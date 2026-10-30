@@ -33,6 +33,9 @@ internal sealed class OpenProviderValidator : AstWalker
     private readonly HashSet<Expr> _reported = new(ReferenceEqualityComparer.Instance);
     private readonly OpenPresence _openPresence;
     private ElaboratedPropertyScope _scope;
+    private Pattern? _branchPattern;
+    private CompletedStructureContext? _enteringCompleted;
+    private readonly Dictionary<StaticScopeKey, HashSet<object>> _completedVisited = new(ReferenceEqualityComparer.Instance);
     // The import site of the module content the walk is inside (see ImportSite): where a
     // refused imported open target — which has no span of its own — is reported. Starts at
     // the site a deferred region recorded for its body.
@@ -42,12 +45,13 @@ internal sealed class OpenProviderValidator : AstWalker
         DiagnosticBag diagnostics,
         ElaboratedPropertyScope parentScope,
         SourceSpan? importSite,
-        FrontEndTraversalObservations? observations)
+        FrontEndTraversalObservations? observations,
+        OpenPresence? presence = null)
     {
         _diagnostics = diagnostics;
         _scope = parentScope;
         _importSite = importSite;
-        _openPresence = new() { TraversalObservations = observations };
+        _openPresence = presence ?? new() { TraversalObservations = observations };
         TraversalObservations = observations;
     }
 
@@ -67,13 +71,21 @@ internal sealed class OpenProviderValidator : AstWalker
         HostOperations? hostOperations,
         FrontEndTraversalObservations? observations = null)
     {
-        var prelude = hostOperations?.SemanticPreludeAlgorithm ?? BuiltinRegistry.CreateSemanticPreludeAlgorithm();
-        Validate(
-            root,
+        // No structural question exists when the DAG contains no opens. Preserve the existing
+        // distinct-node presence gate before admitting any contextual lookup graph.
+        var presence = new OpenPresence { TraversalObservations = observations };
+        if (!presence.Contains(root)) return;
+        var context = AnalyzedStaticStructures.ForBoundAst(root, hostOperations);
+        var completed = context.Facts;
+        var prelude = completed?.Prelude ?? hostOperations?.SemanticPreludeAlgorithm ?? BuiltinRegistry.CreateSemanticPreludeAlgorithm();
+        // The syntax-only presence memo is independent of lookup context. Reuse the scan above
+        // rather than silently scanning the same shared bundles again in the validation visitor.
+        new OpenProviderValidator(
             diagnostics,
-            ElaboratedScopeLookup.CreateScope(prelude, memberIndexes: new OpenMemberIndexCache(observations)),
+            ElaboratedScopeLookup.CreateScope(prelude, memberIndexes: new OpenMemberIndexCache(observations),
+                completedContext: completed?.Context(completed.PreludeKey)),
             importSite: null,
-            observations);
+            observations, presence).VisitAlgorithm(root);
     }
 
     /// <summary>
@@ -106,16 +118,34 @@ internal sealed class OpenProviderValidator : AstWalker
             return;
         }
 
-        if (!FirstVisit(algorithm))
-            return;
+        var pattern = _branchPattern;
+        _branchPattern = null;
+        var completed = CompletedStructureContext.For(algorithm, _scope, pattern);
+        if (completed is not null)
+        {
+            if (!_completedVisited.TryGetValue(completed.Key, out var nodes))
+                _completedVisited[completed.Key] = nodes = new(ReferenceEqualityComparer.Instance);
+            if (!nodes.Add(algorithm)) return;
+        }
+        else if (!FirstVisit(algorithm)) return;
+        var savedCompleted = _enteringCompleted;
+        _enteringCompleted = completed;
+        try { base.VisitAlgorithm(algorithm); }
+        finally { _enteringCompleted = savedCompleted; }
+    }
 
-        base.VisitAlgorithm(algorithm);
+    protected override void VisitConditionalBranch(CondBranch branch)
+    {
+        var saved = _branchPattern;
+        _branchPattern = branch.Pattern;
+        try { base.VisitConditionalBranch(branch); }
+        finally { _branchPattern = saved; }
     }
 
     protected override void VisitUserAlgorithm(Algorithm.User algorithm)
     {
         var saved = _scope;
-        _scope = ElaboratedScopeLookup.CreateScope(algorithm, saved);
+        _scope = ElaboratedScopeLookup.CreateScope(algorithm, saved, completedContext: _enteringCompleted);
         try
         {
             ValidateOpens(algorithm.Opens);
@@ -132,7 +162,7 @@ internal sealed class OpenProviderValidator : AstWalker
     protected override void VisitAliasAlgorithm(Algorithm.Alias algorithm)
     {
         var saved = _scope;
-        _scope = ElaboratedScopeLookup.CreateScope(algorithm, saved);
+        _scope = ElaboratedScopeLookup.CreateScope(algorithm, saved, completedContext: _enteringCompleted);
         try
         {
             ValidateOpens(algorithm.Opens);
@@ -149,7 +179,7 @@ internal sealed class OpenProviderValidator : AstWalker
         var saved = _scope;
         if (algorithm.Opens.Count > 0)
         {
-            _scope = ElaboratedScopeLookup.CreateScope(algorithm, saved);
+            _scope = ElaboratedScopeLookup.CreateScope(algorithm, saved, completedContext: _enteringCompleted);
             ValidateOpens(algorithm.Opens);
         }
 
@@ -168,7 +198,14 @@ internal sealed class OpenProviderValidator : AstWalker
         var saved = _importSite;
         if (ImportSite.OfProperty(property) is { } site)
             _importSite = site;
-        try { VisitAlgorithm(property.Value); }
+        try
+        {
+            // The hoisted RHS is evaluated and elaborated as rows of its written owner.
+            // Its storage helper is not a lexical scope or an admitted body context.
+            if (property.Value is Algorithm.User { IsAssignmentDeconstructionSource: true } source)
+                foreach (var row in source.Output) VisitExpr(row);
+            else VisitAlgorithm(property.Value);
+        }
         finally { _importSite = saved; }
     }
 
@@ -334,52 +371,7 @@ internal sealed class OpenProviderValidator : AstWalker
     /// provider), and the shapes the parser rejects as <see cref="DiagnosticCode.BadOpenForm"/>.
     /// </summary>
     private string? DescribeUnresolvedTarget(Expr target)
-    {
-        var headExpr = target.OpenTargetHead(out var steps);
-        var description = Evaluator.OpenExprName(target);
-        Algorithm receiver;
-        string receiverDescription;
-        switch (headExpr)
-        {
-            case Expr.Resolve(var head):
-                if (ElaboratedScopeLookup.TryLookupDirectLexicalProperty(_scope, head) is not { } headHit)
-                {
-                    return $"'{description}' cannot be opened because no property named '{head}' is visible here; " +
-                        "the first name of an open target resolves through the enclosing declarations and the prelude, never through another open.";
-                }
-
-                receiver = headHit.Property.Value;
-                receiverDescription = head;
-                break;
-
-            case Expr.AlgorithmExpr(var block):
-                receiver = block;
-                receiverDescription = Evaluator.OpenExprName(headExpr);
-                break;
-
-            default:
-                return null;
-        }
-
-        foreach (var step in steps)
-        {
-            if (ElaboratedScopeLookup.TryLookupPublicProperty(receiver, step) is { } member)
-            {
-                receiver = member.Property.Value;
-                receiverDescription += "." + step;
-                continue;
-            }
-
-            if (ElaboratedScopeLookup.TryLookupProperty(receiver, step) is not null)
-                return $"'{description}' cannot be opened because property '{step}' of '{receiverDescription}' is not public; an open path selects public members only.";
-
-            return receiver.DefinesConditionalBranchProperty(step)
-                ? $"'{description}' cannot be opened because '{step}' is declared only inside a conditional branch of '{receiverDescription}', and a clause family exposes no members."
-                : $"'{description}' cannot be opened because '{receiverDescription}' has no property named '{step}'.";
-        }
-
-        return null;
-    }
+        => ElaboratedScopeLookup.DescribeUnresolvedOpenTarget(_scope, target);
 
     /// <summary>The bare name head of a dotted core open form (`open A.B.C` → `A`), or null for any other target.</summary>
     private static Expr? DottedHead(Expr target)

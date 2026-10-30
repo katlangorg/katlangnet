@@ -62,11 +62,12 @@ public class ConditionalBranchElaborationTests
                 new Property("Branch", new Algorithm.Conditional(null, [], [new CondBranch(branchPattern, body)])),
             ],
         };
-        var (detected, detectorDiagnostics) = ParameterDetector.Detect(root);
+        var detectedInput = ParameterDetector.Detect(root);
+        var (detected, detectorDiagnostics) = detectedInput;
         Assert.Empty(detectorDiagnostics);
         var diagnostics = new DiagnosticBag();
 
-        var resolved = ImplicitArgumentResolver.ResolvePrevalidated(detected, diagnostics: diagnostics);
+        var resolved = ImplicitArgumentResolver.ResolvePrevalidated(detectedInput, diagnostics: diagnostics);
 
         var ordinary = resolved.Properties.Single(property => property.Name == "Ordinary").Value;
         var branch = Assert.Single(resolved.Properties.Single(property => property.Name == "Branch").Value.Branches).Body;
@@ -115,11 +116,12 @@ public class ConditionalBranchElaborationTests
         {
             Properties = [.. root.Properties, new Property("Branch", new Algorithm.Conditional(null, [], [new CondBranch(head, body)]))],
         };
-        var (detected, detectorDiagnostics) = ParameterDetector.Detect(root);
+        var detectedInput = ParameterDetector.Detect(root);
+        var (detected, detectorDiagnostics) = detectedInput;
         Assert.Empty(detectorDiagnostics);
         var diagnostics = new DiagnosticBag();
 
-        var resolved = ImplicitArgumentResolver.ResolvePrevalidated(detected, diagnostics: diagnostics);
+        var resolved = ImplicitArgumentResolver.ResolvePrevalidated(detectedInput, diagnostics: diagnostics);
 
         var branch = Assert.Single(resolved.Properties.Single(property => property.Name == "Branch").Value.Branches).Body;
         var call = Assert.IsType<Expr.Call>(Assert.Single(branch.Output));
@@ -324,9 +326,10 @@ public class ConditionalBranchElaborationTests
         var call = new Expr.Call(new Expr.Resolve("F"), new OutputBundle([new Expr.Num(0)]));
         var root = Body(call) with { Properties = [new Property("F", conditional)] };
 
-        var (detected, diagnostics) = ParameterDetector.Detect(root);
+        var detectedInput = ParameterDetector.Detect(root);
+        var (detected, diagnostics) = detectedInput;
         Assert.Empty(diagnostics);
-        var exposed = PropertyExposureResolver.Resolve(ImplicitArgumentResolver.Resolve(detected));
+        var exposed = PropertyExposureResolver.Resolve(ImplicitArgumentResolver.Resolve(detectedInput));
 
         var family = Assert.IsType<Algorithm.Conditional>(Assert.Single(exposed.Properties).Value);
         var opens = familyOwned ? family.Opens : family.Branches[0].Body.Opens;
@@ -418,7 +421,8 @@ public class ConditionalBranchElaborationTests
             }
             : conditional;
 
-        var (detected, diagnostics) = ParameterDetector.Detect(root);
+        var detectedInput = ParameterDetector.Detect(root);
+        var (detected, diagnostics) = detectedInput;
 
         Assert.Empty(diagnostics);
         var family = expressionPosition
@@ -435,7 +439,7 @@ public class ConditionalBranchElaborationTests
             [new CondBranch(new Pattern.Bind("n"), Body(new Expr.Resolve("A")))]);
         root = root with { Output = new OutputBundle([new Expr.AlgorithmExpr(conditional)]) };
 
-        var resolved = ImplicitArgumentResolver.Resolve(root);
+        var resolved = ImplicitArgumentResolver.ResolveNameResolved(root);
 
         var family = Assert.IsType<Expr.AlgorithmExpr>(Assert.Single(resolved.Output)).Algorithm;
         var branch = Assert.Single(family.Branches).Body;
@@ -529,7 +533,8 @@ public class ConditionalBranchElaborationTests
             };
         var observations = new FrontEndTraversalObservations();
 
-        var (detected, diagnostics) = ParameterDetector.DetectPrevalidated(root, observations: observations);
+        var detectedInput = ParameterDetector.DetectPrevalidated(root, observations: observations);
+        var (detected, diagnostics) = detectedInput;
 
         var diagnostic = Assert.Single(diagnostics);
         Assert.Equal(DiagnosticCode.UndeclaredIdentifier, diagnostic.Code);
@@ -581,7 +586,8 @@ public class ConditionalBranchElaborationTests
         if (reverse)
             Array.Reverse(properties);
 
-        var (detected, diagnostics) = ParameterDetector.Detect(Body() with { Properties = properties });
+        var detectedInput = ParameterDetector.Detect(Body() with { Properties = properties });
+        var (detected, diagnostics) = detectedInput;
 
         Assert.Equal(bothInvalid ? 2 : 1, diagnostics.Count);
         Assert.All(diagnostics, diagnostic => Assert.Equal(DiagnosticCode.UndeclaredIdentifier, diagnostic.Code));
@@ -626,11 +632,12 @@ public class ConditionalBranchElaborationTests
         {
             Properties = [.. root.Properties, new Property("Ordinary", ordinary), new Property("Branch", conditional)],
         };
-        var (detected, detectorDiagnostics) = ParameterDetector.Detect(root);
+        var detectedInput = ParameterDetector.Detect(root);
+        var (detected, detectorDiagnostics) = detectedInput;
         Assert.Empty(detectorDiagnostics);
         var diagnostics = new DiagnosticBag();
 
-        var resolved = ImplicitArgumentResolver.ResolvePrevalidated(detected, diagnostics: diagnostics);
+        var resolved = ImplicitArgumentResolver.ResolvePrevalidated(detectedInput, diagnostics: diagnostics);
 
         var ordinaryOutput = resolved.Properties.Single(property => property.Name == "Ordinary").Value.Output;
         var branch = Assert.IsType<Algorithm.Conditional>(
@@ -667,7 +674,8 @@ public class ConditionalBranchElaborationTests
                 new Expr.Call(new Expr.Resolve("Forward"), new OutputBundle([new Expr.Num(5)]))))]);
         var root = Body() with { Properties = [new Property("Branch", conditional)] };
 
-        var (detected, diagnostics) = ParameterDetector.Detect(root);
+        var detectedInput = ParameterDetector.Detect(root);
+        var (detected, diagnostics) = detectedInput;
 
         Assert.Empty(diagnostics);
         var family = Assert.IsType<Algorithm.Conditional>(Assert.Single(detected.Properties).Value);
@@ -676,7 +684,7 @@ public class ConditionalBranchElaborationTests
         Assert.Equal(["q"], helper.Params);
         Assert.IsType<Expr.Param>(Assert.Single(helper.Output));
 
-        var resolved = ImplicitArgumentResolver.Resolve(detected);
+        var resolved = ImplicitArgumentResolver.Resolve(detectedInput);
         family = Assert.IsType<Algorithm.Conditional>(Assert.Single(resolved.Properties).Value);
         opened = Assert.IsType<Expr.AlgorithmExpr>(Assert.Single(family.Opens)).Algorithm;
         // `Forward`'s one row names Helper(q): a callable alias of Helper (binding indirection), whose
@@ -845,9 +853,10 @@ public class ConditionalBranchElaborationTests
         var call = new Expr.Call(new Expr.Resolve("F"), new OutputBundle([new Expr.Num(0)]));
         var root = Body(call) with { Properties = [new Property("F", conditional)] };
 
-        var (detected, diagnostics) = ParameterDetector.Detect(root);
+        var detectedInput = ParameterDetector.Detect(root);
+        var (detected, diagnostics) = detectedInput;
         Assert.Empty(diagnostics);
-        var exposed = PropertyExposureResolver.Resolve(ImplicitArgumentResolver.Resolve(detected));
+        var exposed = PropertyExposureResolver.Resolve(ImplicitArgumentResolver.Resolve(detectedInput));
 
         var family = Assert.IsType<Algorithm.Conditional>(Assert.Single(exposed.Properties).Value);
         var declared = family.Branches[0].Body.Properties.Single(property => property.Name == "Lib");

@@ -24,7 +24,7 @@ public class Fe3HostileReviewTests
         Algorithm Resolve(IReadOnlyList<ParameterPattern> patterns)
         {
             var owner = Body(new Expr.Param("v")) with { ParameterPatterns = patterns };
-            return ImplicitArgumentResolver.ResolvePrevalidated(Body(new Expr.Num(1)) with
+            return ImplicitArgumentResolver.ResolveNameResolvedPrevalidated(Body(new Expr.Num(1)) with
             {
                 Properties = [new Property("A", owner), new Property("B", Body(new Expr.Resolve("A")))],
             });
@@ -48,10 +48,11 @@ public class Fe3HostileReviewTests
     {
         var source = $"G = {string.Join(", ", Enumerable.Range(0, width).Select(i => $"v{i}"))}\n"
             + string.Concat(Enumerable.Range(0, owners).Select(i => $"A{i} = abs(G) + w{i}\nB{i} = abs(A{i})\n")) + "1";
-        var (detected, diagnostics) = ParameterDetector.DetectPrevalidated(SourceProvenance.ParseSyntaxValidRoot(source));
+        var detectedInput = ParameterDetector.DetectPrevalidated(SourceProvenance.ParseSyntaxValidRoot(source));
+        var (detected, diagnostics) = detectedInput;
         Assert.Empty(diagnostics);
         var observed = new FrontEndTraversalObservations();
-        var resolved = ImplicitArgumentResolver.ResolvePrevalidated(detected, observed);
+        var resolved = ImplicitArgumentResolver.ResolvePrevalidated(detectedInput, observed);
         for (var i = 0; i < owners; i++)
             Assert.Same(resolved.Properties.Single(p => p.Name == $"A{i}").Value.ParameterPatterns,
                 resolved.Properties.Single(p => p.Name == $"B{i}").Value.ParameterPatterns);

@@ -26,6 +26,15 @@ internal static class AlgorithmAccessors
 {
     extension(Algorithm algorithm)
     {
+        /// <summary>Completed front-end metadata; builtins never carry a program graph.</summary>
+        internal CompletedStructurePublication? CompletedStructure => algorithm switch
+        {
+            Algorithm.User user => user.CompletedStructure,
+            Algorithm.Conditional family => family.CompletedStructure,
+            Algorithm.Alias alias => alias.CompletedStructure,
+            Algorithm.Builtin => null,
+        };
+
         /// <summary>Lean: <c>Algorithm.parent</c>; <c>none</c> for a builtin.</summary>
         internal ScopeCtx? Parent => algorithm switch
         {
@@ -80,7 +89,8 @@ internal static class AlgorithmAccessors
 
         /// <summary>
         /// Lean: <c>Algorithm.props</c>; <c>[]</c> for a builtin or a family. An alias's are what its own
-        /// body declares — never its target's members.
+        /// body declares — a carrier's own members, never its target's; a transparent reference declares none
+        /// (M4★: its members are its target's, read through its structure).
         /// </summary>
         internal IReadOnlyList<Property> Properties => algorithm switch
         {

@@ -117,16 +117,29 @@ public class EvaluatorConditionalTests
     }
 
     [Fact]
-    public void Eval_RepeatedBinder_CallableOnlyArgumentsReportTheirOwnValueDemand()
+    public void Eval_RepeatedBinder_ReferencesToOneCallableMatchByIdentity()
     {
-        // A repeated name compares VALUES (Q-05): each occurrence must supply its own, and a
-        // callable-only argument has none — its value demand is its own arity rejection, the
-        // failure reported here (formerly an "algorithm-only arguments" type mismatch).
-        var error = GetEvalError(
+        // NEED-04 (group-aware, ALIAS-UNIFY-1): two references to ONE callable match by identity
+        // without demanding a value, so `ApplySame(Inc, Inc)` binds f to Inc and invokes it. (Until
+        // October 2026 each occurrence's value was demanded first — Inc's own arity rejection.)
+        AssertEval(
             """
             Inc(x) = x + 1
             ApplySame(f, f) = f(1)
             ApplySame(Inc, Inc)
+            """,
+            2);
+    }
+
+    [Fact]
+    public void Eval_RepeatedBinder_ACallableOnlyReferenceBesideAValueReportsItsOwnValueDemand()
+    {
+        // Beside a value-only occurrence a reference's OWN value is demanded: Inc's arity rejection.
+        var error = GetEvalError(
+            """
+            Inc(x) = x + 1
+            ApplySame(f, f) = f(1)
+            ApplySame(Inc, 2)
             """);
 
         var arity = Assert.IsType<EvalError.ArityMismatch>(Innermost(error!));

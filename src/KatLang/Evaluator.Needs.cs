@@ -101,12 +101,14 @@ public static partial class Evaluator
         => expression is Expr.Resolve or Expr.DotCall { Args: null } or Expr.AlgorithmExpr { Algorithm: Algorithm.Alias };
 
     /// <summary>
-    /// Whether the identity resolution of a written REFERENCE reaches a runtime-target alias (META-S3-2):
-    /// its binding — a name by the ownership-first lookup, a dot path by structural navigation, an inline
-    /// alias block itself — is an alias whose STATIC chain (the VALUE chase, <see cref="ResolveAliasTarget"/>)
-    /// ends at a runtime-target alias. Static identity work only, exactly the steps the reference's own
-    /// projection takes first. A static resolution failure is no reach: the reference keeps the static
-    /// rule (absence lifted, any other failure propagated), as Lean's <c>projectNeedWritten</c>.
+    /// Whether the identity resolution of a written REFERENCE reaches a runtime-target alias (META-S3-2;
+    /// M4★): its binding — a name by the ownership-first lookup, an inline alias block itself — is an
+    /// alias whose STATIC structure chase (references followed statically, a carrier the end, nothing
+    /// projected: <see cref="StructureReachesRuntimeAlias"/>) ends at a runtime-target alias, or a dot
+    /// path some receiver or member of which does (<see cref="DotPathReachesRuntimeAlias"/>). Static
+    /// identity work only, exactly the steps the reference's own projection takes first, so it never
+    /// resolves a carrier's target. A static resolution failure is no reach: the reference keeps the
+    /// static rule (absence lifted, any other failure propagated), as Lean's <c>projectNeedWritten</c>.
     /// A parameter-rooted path and an <c>.Algorithm</c> link are classified by <see cref="IsRuntimeProjectionSource"/> before this.
     /// </summary>
     private static bool ReferenceReachesRuntimeAlias(Expr expression, EvalCtx caller)
@@ -120,28 +122,80 @@ public static partial class Evaluator
                 var binding = LookupLexicalRaw(caller.CallStack[0], name, caller);
                 return binding.IsOk
                     && binding.Value.ResolvedAlgorithm is Algorithm.Alias alias
-                    && ChainReachesRuntimeAlias(alias, caller, binding.Value.Binding);
+                    && StructureReachesRuntimeAlias(alias, caller, binding.Value.Binding);
             }
 
             case Expr.DotCall edge:
-            {
-                var member = ResolveDotReceiver(edge, caller, out var isStructuralMember);
-                return member.IsOk
-                    && isStructuralMember && member.Value is Algorithm.Alias alias && ChainReachesRuntimeAlias(alias, caller, null);
-            }
+                return DotPathReachesRuntimeAlias(edge, caller);
 
             case Expr.AlgorithmExpr { Algorithm: Algorithm.Alias inline }:
-                return ChainReachesRuntimeAlias((Algorithm.Alias)WireToCaller(caller, inline), caller, null);
+                return StructureReachesRuntimeAlias((Algorithm.Alias)WireToCaller(caller, inline), caller, null);
+
+            default:
+                return false;
+        }
+    }
+
+    /// <summary>
+    /// Whether the static navigation of the argumentless dot path <paramref name="edge"/> — its head by the
+    /// ownership-first lookup, each receiver read through its STATIC structure, each DECLARED member wired
+    /// to it — meets a runtime-target alias: a receiver whose static structure ends at one, or a final
+    /// member whose static structure chase reaches one. The projection of such a path performs runtime
+    /// work, so its cell is a runtime projection from formation. Static work only; a failure is no reach.
+    /// </summary>
+    private static bool DotPathReachesRuntimeAlias(Expr.DotCall edge, EvalCtx caller)
+    {
+        if (edge.Args is not null)
+            return false;
+        var edges = new List<Expr.DotCall>();
+        Expr head = edge;
+        while (head is Expr.DotCall { Args: null } step)
+        {
+            edges.Add(step);
+            head = step.Target;
+        }
+        edges.Reverse();
+
+        Algorithm value;
+        switch (head)
+        {
+            case Expr.Resolve(var name):
+            {
+                if (caller.CallStack.Count == 0)
+                    return false;
+                var binding = LookupLexicalRaw(caller.CallStack[0], name, caller);
+                if (binding.IsError)
+                    return false;
+                value = binding.Value.ResolvedAlgorithm;
+                break;
+            }
+
+            case Expr.AlgorithmExpr(var block):
+                value = WireToCaller(caller, block);
+                break;
 
             default:
                 return false;
         }
 
-        static bool ChainReachesRuntimeAlias(Algorithm.Alias alias, EvalCtx ctx, Property? binding)
+        foreach (var step in edges)
         {
-            var end = ResolveAliasTarget(alias, ctx, binding, callable: false);
-            return end.IsOk && end.Value is Algorithm.Alias;
+            if (value is Algorithm.Alias receiver)
+            {
+                var end = ChaseAlias(receiver, caller, AliasChase.StaticStructure);
+                if (end.IsError)
+                    return false;
+                if (end.Value.Kind == AliasChaseEndKind.Runtime)
+                    return true;
+                value = end.Value.Algorithm;
+            }
+
+            if (LookupPropBinding(value, step.Name, caller.Budget) is not { } member)
+                return false;
+            value = ChildOfInContext(value, member.Value, caller);
         }
+
+        return value is Algorithm.Alias final && StructureReachesRuntimeAlias(final, caller, null);
     }
 
     /// <summary>
@@ -214,9 +268,50 @@ public static partial class Evaluator
         if (expression is Expr.DotCall edge)
             return suspension is LinkSuspension link ? ProjectLinkCallable(edge, link) : ProjectDotPathCallable(edge, caller);
         if (ShouldWrapArgExprAsValue(expression)) return EvalResult<Algorithm?>.Ok(null);
+        // M4★ whole-algorithm transport (Lean `projectNeedWritten`): a name's or an inline block's
+        // algorithm is read through its STRUCTURE — a transparent reference is its target, a structural
+        // carrier itself, never its forwarding target.
+        switch (expression)
+        {
+            case Expr.Resolve(var name):
+            {
+                if (caller.CallStack.Count == 0)
+                    return new EvalError.UnknownName(name) { Span = expression.Span };
+                var raw = LookupLexicalRaw(caller.CallStack[0], name, caller);
+                if (raw.IsError)
+                    return IsLiftableError(raw.Error) ? EvalResult<Algorithm?>.Ok(null) : AtSpanIfMissing(raw.Error, expression.Span);
+                return raw.Value.ResolvedAlgorithm is Algorithm.Alias alias
+                    ? ProjectThroughAlias(alias, caller, raw.Value.Binding)
+                    : EvalResult<Algorithm?>.Ok(raw.Value.ResolvedAlgorithm);
+            }
+
+            case Expr.AlgorithmExpr(var block):
+            {
+                var wired = WireToCaller(caller, block);
+                return wired is Algorithm.Alias inline
+                    ? ProjectThroughAlias(inline, caller, null)
+                    : EvalResult<Algorithm?>.Ok(wired);
+            }
+        }
+
         var resolved = ResolveAlg(expression, caller);
         return resolved.IsOk ? EvalResult<Algorithm?>.Ok(resolved.Value)
             : IsLiftableError(resolved.Error) ? EvalResult<Algorithm?>.Ok(null) : resolved.Error;
+    }
+
+    /// <summary>
+    /// The CALLABLE of a written reference that selected an alias (Lean: <c>throughAlias</c> in
+    /// <c>projectNeedWritten</c>): its STRUCTURE. A reference whose static structure chase reaches a
+    /// runtime-target alias is a RUNTIME projection — every failure of its structure propagates
+    /// (NEED-06); any other keeps the static rule that a resolution reporting only absence is "no
+    /// identity".
+    /// </summary>
+    private static EvalResult<Algorithm?> ProjectThroughAlias(Algorithm.Alias alias, EvalCtx caller, Property? binding)
+    {
+        if (StructureReachesRuntimeAlias(alias, caller, binding))
+            return ResolveAliasStructure(alias, caller, binding);
+        var structure = ResolveAliasStructure(alias, caller, binding);
+        return structure.IsOk || !IsLiftableError(structure.Error) ? structure : EvalResult<Algorithm?>.Ok(null);
     }
 
     // Sync formation has no suspending operation. Both engines execute this one ordered
@@ -557,8 +652,11 @@ public static partial class Evaluator
     /// cardinality gate has already decided that count, either <see cref="BindNeedPatterns"/> or a
     /// caller's own shaped report, so allocation here never re-checks it. Each structural level's
     /// own gate stays here, exactly once per level. Patterns traverse in written order, depth
-    /// first: a unique plain name transports its cell, a repeated name, a literal or a structural
-    /// pattern demands its cell when reached, and a collecting capture binds a lazy exact slice.
+    /// first: a unique plain name transports its cell; every occurrence of a repeated name projects
+    /// its cell's CALLABLE when reached and demands VALUE only as NEED-04's group-aware rule requires
+    /// (a value-only contribution, or a callable one once its group has a data anchor; Lean
+    /// <c>NeedBinder.bindName</c>); a literal or a structural pattern demands its cell when reached;
+    /// and a collecting capture binds a lazy exact slice.
     /// <paramref name="occurrences"/>, when the caller knows them, are the supply's WRITTEN slots at
     /// this call (parallel to <paramref name="supply"/>; an opened spread's items keep their original
     /// sources when known, otherwise <c>null</c>):
@@ -596,6 +694,10 @@ public static partial class Evaluator
                 foreach (var child in children) counting.Push(child);
         }
         var bound = new Dictionary<string, NeedCell>(StringComparer.Ordinal);
+        // NEED-04 (group-aware): the binder-local agreement state of each REPEATED name, created at
+        // its first occurrence and discarded with this activation (never a binding, a value or a
+        // cell). Lean: `RepeatedGroup` / `NeedBindState.groups`.
+        Dictionary<string, RepeatedGroup>? groups = null;
         // A top-level item keeps its supply slot (only a top-level capture can be META); -1 otherwise.
         var pending = new Stack<(NeedPattern Pattern, NeedCell Cell, int Slot)>();
         // ONE charged comparison session per binder activation, created by the first repeated-name
@@ -648,31 +750,79 @@ public static partial class Evaluator
             {
                 if (names[name] > 1)
                 {
+                    // NEED-04 (group-aware, ALIAS-UNIFY-1): at EVERY occurrence of a repeated name,
+                    // the first included, the cell's CALLABLE is projected first — a projection
+                    // failure is its own error, never absence (META-S3-0b: the async binder awaits
+                    // the projection's outcome directly).
+                    groups ??= new Dictionary<string, RepeatedGroup>(StringComparer.Ordinal);
+                    if (!groups.TryGetValue(name, out var group))
+                        groups.Add(name, group = new RepeatedGroup());
+                    var projected = asynchronous ? await cell.ProjectCallableAsync().ConfigureAwait(false) : cell.ProjectCallable();
+                    if (projected.IsError) return projected.Error;
+                    if (projected.Value is { } identity)
+                    {
+                        // A callable-bearing contribution: its STRUCTURAL identity against the group's
+                        // first one, before any VALUE demand.
+                        if (group.Identity is { } earlier && !SameRepeatedCallableIdentity(earlier, identity))
+                            return Mismatch(new EvalError.TypeMismatch("Repeated bind equality requires the same callable identity"));
+                        if (group.HasAnchor)
+                        {
+                            // Once the group has a data anchor, its own counted VALUE must agree.
+                            var own = asynchronous ? await cell.DemandAsync().ConfigureAwait(false) : cell.Demand();
+                            if (own.IsError) return own.Error;
+                            var agreed = RepeatedCountedValueAgrees(ref repeatedValues, group.Anchor, own.Value, ctx);
+                            if (agreed.IsError) return agreed.Error;
+                            if (!agreed.Value)
+                                return Mismatch(new EvalError.WithContext(RepeatedParameterContext(name), new EvalError.BadArity()));
+                        }
+                        else
+                        {
+                            // Without an anchor its VALUE is NOT demanded: it waits as an obligation.
+                            (group.Pending ??= []).Add(cell);
+                        }
+                        // The group's FIRST callable contribution is the representative.
+                        if (group.Identity is null)
+                        {
+                            group.Identity = identity;
+                            bound[name] = cell;
+                        }
+                        continue;
+                    }
+
+                    // A value-only contribution demands its own counted VALUE.
                     var value = asynchronous ? await cell.DemandAsync().ConfigureAwait(false) : cell.Demand();
                     if (value.IsError) return value.Error;
-                    if (bound.TryGetValue(name, out var previous))
+                    if (group.HasAnchor)
                     {
-                        var before = asynchronous ? await previous.DemandAsync().ConfigureAwait(false) : previous.Demand();
-                        if (before.IsError) return before.Error;
-                        // NEED-04 (frozen): unequal VALUE contributions are the binder's BadArity;
-                        // the context names the violated agreement. The comparison is charged
-                        // (SEC-02-FU): its refusal is the run's terminal error, returned as is —
-                        // never routed through Mismatch, so no later clause is ever tried.
-                        if (before.Value.EmittedCount != value.Value.EmittedCount)
-                            return Mismatch(new EvalError.WithContext(RepeatedParameterContext(name), new EvalError.BadArity()));
-                        var agreed = RepeatedValueEquals(ref repeatedValues, before.Value.Value, value.Value.Value, ctx);
+                        var agreed = RepeatedCountedValueAgrees(ref repeatedValues, group.Anchor, value.Value, ctx);
                         if (agreed.IsError) return agreed.Error;
                         if (!agreed.Value)
                             return Mismatch(new EvalError.WithContext(RepeatedParameterContext(name), new EvalError.BadArity()));
-                        // META-S3-0b: the async binder awaits and consumes both outcomes directly.
-                        var first = asynchronous ? await previous.ProjectCallableAsync().ConfigureAwait(false) : previous.ProjectCallable();
-                        if (first.IsError) return first.Error;
-                        var second = asynchronous ? await cell.ProjectCallableAsync().ConfigureAwait(false) : cell.ProjectCallable();
-                        if (second.IsError) return second.Error;
-                        if (first.Value is { } a && second.Value is { } b && !SameRepeatedCallableIdentity(a, b))
-                            return Mismatch(new EvalError.TypeMismatch("Repeated bind equality requires the same callable identity"));
-                        if (first.Value is not null || second.Value is null) continue;
+                        continue;
                     }
+
+                    // The group's first value-only contribution is its ANCHOR: every pending callable
+                    // contribution's own counted VALUE is checked against it, in occurrence order,
+                    // and the first failure or disagreement ends the binding.
+                    group.Anchor = value.Value;
+                    group.HasAnchor = true;
+                    if (group.Pending is { } waiting)
+                    {
+                        group.Pending = null;
+                        foreach (var earlier in waiting)
+                        {
+                            var own = asynchronous ? await earlier.DemandAsync().ConfigureAwait(false) : earlier.Demand();
+                            if (own.IsError) return own.Error;
+                            var agreed = RepeatedCountedValueAgrees(ref repeatedValues, value.Value, own.Value, ctx);
+                            if (agreed.IsError) return agreed.Error;
+                            if (!agreed.Value)
+                                return Mismatch(new EvalError.WithContext(RepeatedParameterContext(name), new EvalError.BadArity()));
+                        }
+                    }
+                    // The first value-only contribution is the representative only when no callable
+                    // contribution came first.
+                    bound.TryAdd(name, cell);
+                    continue;
                 }
                 bound[name] = cell;
                 continue;
@@ -839,9 +989,12 @@ public static partial class Evaluator
             }
             case Algorithm.Alias alias:
             {
-                // A safety net out of line, as in every ordinary dispatcher: projection already normalizes
-                // an alias to its target, which is invoked exactly as when written directly (FWD-02).
-                var target = ResolveAliasTarget(alias, ctx);
+                // A safety net out of line, as in every ordinary dispatcher: the loop normalizes a
+                // projected alias step to its target once, which is invoked exactly as when written
+                // directly (FWD-02, M4★).
+                var target = asynchronous
+                    ? await ResolveAliasTargetAsync(alias, ctx).ConfigureAwait(false)
+                    : ResolveAliasTarget(alias, ctx);
                 if (target.IsError) return target.Error;
                 return await InvokeLoopStepSupply(target.Value, PrepareUserLoopStep(target.Value, ctx), state, ctx, values,
                     loopName, stepName, conditionFirst, asynchronous).ConfigureAwait(false);
@@ -982,8 +1135,9 @@ public static partial class Evaluator
         if (bindings.IsError) return NestMissingOutput(bindings.Error);
         if (callee.Output.Count == 0) return new EvalError.MissingOutput();
         var names = callee.Params;
-        var output = ctx.Budget.MayReachRuntimeAliases && TakeTerminalAliasInvocation(callee, ctx) is { } terminalCell
-            ? terminalCell.Demand()
+        // A value view's zero-supply invocation reads its binding cell (L-RUN, M4★): never a rerun of the row.
+        var output = ValueViewCell(callee, ctx) is { } viewCell
+            ? viewCell.Demand()
             : EvalAlgOutputCounted(callee, WithNeedBindings(ctx, bindings.Value!, names), ShadowValEnv(values, names));
         return valueBoundary ? ReCountValueBoundary(output) : output;
     }
@@ -1012,8 +1166,8 @@ public static partial class Evaluator
         var names = callee.Params;
         var boundCtx = WithNeedBindings(ctx, bindings.Value!, names);
         var boundValues = ShadowValEnv(values, names);
-        var output = TakeTerminalAliasInvocation(callee, ctx) is { } terminalCell
-            ? await DemandCell(terminalCell, asynchronous).ConfigureAwait(false)
+        var output = ValueViewCell(callee, ctx) is { } viewCell
+            ? await DemandCell(viewCell, asynchronous).ConfigureAwait(false)
             : asynchronous
                 ? await EvalAlgOutputCountedCoreAsync(callee, boundCtx, boundValues).ConfigureAwait(false)
                 : EvalAlgOutputCounted(callee, boundCtx, boundValues);
@@ -1249,6 +1403,17 @@ public static partial class Evaluator
                     : ProjectLoopStep(stepArgument, builtin);
                 if (projection.IsError) return projection.Error;
                 step = projection.Value;
+                // A step projected as a STRUCTURE (M4★: a supplied or captured carrier) invokes its
+                // INVOCATION target: the forwarding hop adds no step, depth or activation, so the loop
+                // runs — and the optimizer plans — the target itself, normalized once here.
+                if (step is Algorithm.Alias aliasStep)
+                {
+                    var target = asynchronous
+                        ? await ResolveAliasTargetAsync(aliasStep, ctx).ConfigureAwait(false)
+                        : ResolveAliasTarget(aliasStep, ctx);
+                    if (target.IsError) return target.Error;
+                    step = target.Value;
+                }
                 var eligible = IsOptimizedLoopShapeEligible(step, out var shapeFallback);
                 if (!asynchronous && ctx.EnableLoopOptimization && eligible)
                 {

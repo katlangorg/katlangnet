@@ -17,9 +17,10 @@ namespace KatLang;
 /// invocation is an ordinary call whose callee came from an identifiable property BINDING (its
 /// <see cref="CalleeOrigin"/>), whose EFFECTIVE supply — after the ordinary supply formation, so an
 /// explicit spread contributing no slot counts — is empty, and whose callee accepts zero supplied
-/// arguments. Builtins, host operations, anonymous blocks and computed callees name no binding; a
-/// parameterized runtime-callable alias names none either. A D4 terminal alias's ordinary
-/// zero-parameter property view qualifies under the alias's own binding.</para>
+/// arguments. Builtins, host operations, anonymous blocks and computed callees name no binding. An
+/// ALIAS owns no zero-argument entry (OD-E, M4★): an invocation through one names its TARGET's
+/// binding (<see cref="AliasOriginBinding"/>: a static chain's terminal binding, a runtime reference's
+/// binding-cell origin), never its own.</para>
 ///
 /// <para><b>One mechanism.</b> Publication is the existing <see cref="ZeroArgPropertyPublications"/> law
 /// (<see cref="IZeroArgPropertyResultCache.Invoke"/>): the same key a read of that binding computes,
@@ -110,6 +111,14 @@ public static partial class Evaluator
         => callee is Algorithm.Conditional || (callee is Algorithm.User user && !IsNativeOperationWrapper(user));
 
     /// <summary>
+    /// Whether a possibly zero-supply call takes the origin-carrying dispatch (<see cref="EvalOriginCallCounted"/>):
+    /// a publishable callee, or an ALIAS — a callee projected as a STRUCTURE (a supplied or captured
+    /// carrier, M4★) — which that dispatch normalizes to its invocation target under the same origin first.
+    /// </summary>
+    private static bool TakesOriginDispatch(Algorithm callee)
+        => callee is Algorithm.Alias || IsPublishableCallee(callee);
+
+    /// <summary>
     /// The prelude wrapper of a host operation or a built-in Math member: a user algorithm whose ONLY
     /// output row is its <see cref="Expr.NativeCall"/> (<c>HostOperations.CreateExtendedPrelude</c>,
     /// <c>BuiltinRegistry</c>'s Math module). No written declaration has that shape.
@@ -118,29 +127,23 @@ public static partial class Evaluator
         => callee.Output.Count == 1 && callee.Output[0] is Expr.NativeCall;
 
     /// <summary>
-    /// A selected binding as a publication identity. A runtime-target alias qualifies only when the
-    /// already normalized callee is its D4 terminal property view; parameterized runtime targets
-    /// (including collecting-only targets) remain excluded. This reads identity without another
-    /// CALLABLE projection or VALUE demand. Lean: <c>publicationBinding?</c>.
+    /// A selected binding as a publication identity (CACHE-PUB-1; OD-E / R-6, M4★): an ALIAS owns no
+    /// zero-argument entry, so its publication origin is its TARGET's (<see cref="AliasOriginBinding"/>:
+    /// a static chain's terminal binding, a runtime reference's binding-cell origin); every other binding
+    /// is its own. This reads identity without another CALLABLE projection or VALUE demand. Lean:
+    /// <c>publicationBinding?</c>.
     /// </summary>
     private static PropertyCallBinding? PublicationBinding(PropertyDeclaringOwner owner, Property binding, Algorithm wired, EvalCtx ctx, Algorithm callee)
-    {
-        if (wired is Algorithm.Alias alias)
-        {
-            var target = ResolveBindingAliasTarget(binding, alias, ctx, callable: false);
-            if (target.IsError || (target.Value is Algorithm.Alias && DeclaresParameterizedStructure(callee))) return null;
-        }
-
-        return new PropertyCallBinding(owner, binding);
-    }
+        => wired is Algorithm.Alias alias ? AliasOriginBinding(alias, ctx, callee) : new PropertyCallBinding(owner, binding);
 
     /// <summary>
     /// The property binding a WRITTEN callee names in <paramref name="caller"/> — the very identity
     /// resolution the callee law performed (the lexical lookup for a name, the structural navigation of
-    /// <see cref="ResolveDotReceiver"/> for a member path; an argument-bearing member call names its
-    /// argumentless path), read again without evaluating anything. A parameter names its supplied
-    /// cell's binding (one hop: a transported cell keeps the argument originally written for it).
-    /// Lean: <c>writtenCalleeBinding?</c> and the parameter arm of <c>originBinding?</c>.
+    /// <see cref="ResolveDotReceiver"/> for a member path — its receiver read through its STRUCTURE, M4★;
+    /// an argument-bearing member call names its argumentless path), read again without evaluating
+    /// anything; an alias binding names its target's (<see cref="PublicationBinding"/>). A parameter
+    /// names its supplied cell's binding (one hop: a transported cell keeps the argument originally
+    /// written for it). Lean: <c>writtenCalleeBinding?</c> and the parameter arm of <c>originBinding?</c>.
     /// </summary>
     private static PropertyCallBinding? WrittenCalleeBinding(Expr written, EvalCtx caller, bool throughParameter, Algorithm callee)
     {
@@ -285,6 +288,20 @@ public static partial class Evaluator
     private static EvalResult<CountedResult> EvalOriginCallCounted(
         CalleeOrigin origin, Algorithm callee, OutputBundle args, EvalCtx ctx, ValEnv valEnv, CallDiagnosticName name)
     {
+        // A callee projected as a STRUCTURE (a supplied carrier, a plan's carrier callee; M4★) reaches
+        // dispatch as an alias: it calls its INVOCATION target under the SAME origin, so a qualifying
+        // zero-supply call publishes under that target (OD-E). Lean: the alias arm of
+        // `evalResolvedCallCounted`; as `DispatchPlannedCounted` does.
+        if (callee is Algorithm.Alias alias)
+        {
+            var target = ResolveAliasTarget(alias, ctx);
+            if (target.IsError)
+                return target.Error;
+            callee = target.Value;
+            if (!IsPublishableCallee(callee))
+                return EvalResolvedCallCounted(callee, args, ctx, valEnv, name);
+        }
+
         if (TryGetFlatBinderUserEquivalent(callee) is { } simpleCallee)
             return EvalOriginUserCallCounted(origin, callee, simpleCallee, args, ctx, valEnv, name);
         return callee is Algorithm.Conditional
@@ -362,14 +379,24 @@ public static partial class Evaluator
     // ── Async twins ──
 
     /// <summary>MIRROR OF <see cref="EvalOriginCallCounted"/> — keep in lock-step.</summary>
-    private static ValueTask<EvalResult<CountedResult>> EvalOriginCallCountedAsync(
+    private static async ValueTask<EvalResult<CountedResult>> EvalOriginCallCountedAsync(
         CalleeOrigin origin, Algorithm callee, OutputBundle args, EvalCtx ctx, ValEnv valEnv, CallDiagnosticName name)
     {
+        if (callee is Algorithm.Alias alias)
+        {
+            var target = await ResolveAliasTargetAsync(alias, ctx).ConfigureAwait(false);
+            if (target.IsError)
+                return target.Error;
+            callee = target.Value;
+            if (!IsPublishableCallee(callee))
+                return await EvalResolvedCallCountedAsync(callee, args, ctx, valEnv, name).ConfigureAwait(false);
+        }
+
         if (TryGetFlatBinderUserEquivalent(callee) is { } simpleCallee)
-            return EvalOriginUserCallCountedAsync(origin, callee, simpleCallee, args, ctx, valEnv, name);
+            return await EvalOriginUserCallCountedAsync(origin, callee, simpleCallee, args, ctx, valEnv, name).ConfigureAwait(false);
         return callee is Algorithm.Conditional
-            ? EvalOriginFamilyCallCountedAsync(origin, callee, args, ctx, valEnv, name)
-            : EvalOriginUserCallCountedAsync(origin, callee, callee, args, ctx, valEnv, name);
+            ? await EvalOriginFamilyCallCountedAsync(origin, callee, args, ctx, valEnv, name).ConfigureAwait(false)
+            : await EvalOriginUserCallCountedAsync(origin, callee, callee, args, ctx, valEnv, name).ConfigureAwait(false);
     }
 
     /// <summary>MIRROR OF <see cref="EvalOriginUserCallCounted"/> — keep in lock-step.</summary>

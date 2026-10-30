@@ -31,6 +31,9 @@ internal enum ModuleUnitPass
 /// </summary>
 internal sealed class ModuleUnitRegistry
 {
+    // Materializations are serialized by the loader. Publish only after the entire unit succeeds, alongside its
+    // module declarations, so another deferred occurrence sees newly completed modules with their exact identities.
+    internal StaticStructureOperation.Continuation? StructuralContinuation { get; private set; }
     private readonly Dictionary<Algorithm, Algorithm>[] _published =
     [
         new(ReferenceEqualityComparer.Instance),
@@ -44,13 +47,14 @@ internal sealed class ModuleUnitRegistry
     internal bool TryGet(ModuleUnitPass pass, Algorithm module, [NotNullWhen(true)] out Algorithm? elaborated)
         => _published[(int)pass].TryGetValue(module, out elaborated);
 
-    internal void Publish(Dictionary<Algorithm, Algorithm>[] units)
+    internal void Publish(Dictionary<Algorithm, Algorithm>[] units, StaticStructureOperation.Continuation? continuation)
     {
         for (var pass = 0; pass < units.Length; pass++)
         {
             foreach (var (module, elaborated) in units[pass])
                 _published[pass].TryAdd(module, elaborated);
         }
+        if (continuation is not null) StructuralContinuation = continuation;
     }
 }
 
@@ -61,6 +65,14 @@ internal sealed class ModuleUnitRegistry
 /// </summary>
 internal sealed class ModuleUnits(ModuleUnitRegistry? registry = null)
 {
+    private ModuleUnitRegistry? _registry = registry;
+    internal ModuleUnitRegistry? Registry => _registry;
+    internal void AttachRegistry(ModuleUnitRegistry shared)
+    {
+        if (_registry is not null && !ReferenceEquals(_registry, shared))
+            throw new ArgumentException("One compilation cannot combine deferred regions from different module loaders.", nameof(shared));
+        _registry = shared;
+    }
     private readonly Dictionary<Algorithm, Algorithm>[] _units =
     [
         new(ReferenceEqualityComparer.Instance),
@@ -71,11 +83,11 @@ internal sealed class ModuleUnits(ModuleUnitRegistry? registry = null)
     /// <summary>The declaration <paramref name="pass"/> already elaborated <paramref name="module"/> to, in this operation or an earlier published one.</summary>
     internal bool TryGet(ModuleUnitPass pass, Algorithm module, [NotNullWhen(true)] out Algorithm? elaborated)
         => _units[(int)pass].TryGetValue(module, out elaborated)
-            || (registry is not null && registry.TryGet(pass, module, out elaborated));
+            || (_registry is not null && _registry.TryGet(pass, module, out elaborated));
 
     internal void Add(ModuleUnitPass pass, Algorithm module, Algorithm elaborated)
         => _units[(int)pass].Add(module, elaborated);
 
     /// <summary>Publishes this operation's units to the program's registry: call only when the operation reported no error.</summary>
-    internal void Publish() => registry?.Publish(_units);
+    internal void Publish(StaticStructureOperation.Continuation? continuation = null) => _registry?.Publish(_units, continuation);
 }

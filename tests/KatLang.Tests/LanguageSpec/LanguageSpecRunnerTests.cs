@@ -350,6 +350,14 @@ public class LanguageSpecRunnerTests
             "string-lone-closing-brace-is-an-error",
             "string-interpolation-not-a-pattern",
             "string-interpolation-hole-closes-on-its-line",
+            // M4★ (ALIAS-UNIFY-1 second review): OD-D's target chase and a member miss decide what a
+            // closed body's certain fallback name is checked against — front-end rejections,
+            // parse-level by construction.
+            "reference-to-a-carrier-that-leads-back-is-no-alias",
+            "member-miss-makes-the-body-its-own-structure",
+            // M4★ (ALIAS-UNIFY-1 third review): an open path into a parameterized body opens the runtime
+            // reference's own namespace — a front-end rejection, parse-level by construction.
+            "open-path-into-a-parameterized-body-is-its-own-namespace",
         ];
         string[] expectedModelDivergences =
         [

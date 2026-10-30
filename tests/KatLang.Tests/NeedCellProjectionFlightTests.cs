@@ -350,7 +350,7 @@ public sealed class NeedCellProjectionFlightTests
         {
             shallow = shallowCells[0].ProjectCallable();
             deep = deepCells[0].ProjectCallable();
-        }, WaitLimit);
+        });
         Assert.Same(count, shallow.Value);
         Assert.All(shallowCells, cell => Assert.Equal(1, cell.ProjectionComputations));
         Assert.Null(shallowBudget.CheckContinuation());

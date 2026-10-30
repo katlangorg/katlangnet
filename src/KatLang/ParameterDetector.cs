@@ -51,7 +51,7 @@ internal static class ParameterDetector
     /// per-visit weight effects. The one deliberate per-NODE (rather than per-path) behavior is diagnostic
     /// multiplicity: an erroneous shared node is diagnosed once, not once per path.</para>
     /// </summary>
-    public static (Algorithm Root, DiagnosticBag Diagnostics) Detect(Algorithm root)
+    public static DetectedProgram Detect(Algorithm root)
     {
         if (AstStructuralPreflight.Check(
                 root,
@@ -61,7 +61,7 @@ internal static class ParameterDetector
             var rejection = new DiagnosticBag();
             rejection.Add(AstStructuralPreflight.ToParseDiagnostic(
                 structuralRejection, EvaluationLimits.MaxSupportedAstDepth));
-            return (new Algorithm.User(null, [], [], [], []), rejection);
+            return new(new Algorithm.User(null, [], [], [], []), rejection, null, new(), null);
         }
 
         var detected = DetectPrevalidated(root);
@@ -89,26 +89,29 @@ internal static class ParameterDetector
     /// forwarding (<see cref="ImplicitArgumentResolver"/>) runs afterwards and never re-selects a
     /// binding (Q-04, decided September 28 2026), so nothing replaces these reports.</para>
     /// </summary>
-    internal static (Algorithm Root, DiagnosticBag Diagnostics) DetectPrevalidated(
+    internal static DetectedProgram DetectPrevalidated(
         Algorithm root,
         HostOperations? hostOperations = null,
         FrontEndTraversalObservations? observations = null,
         DiagnosticBag? diagnostics = null,
-        ModuleUnits? modules = null)
+        ModuleUnits? modules = null,
+        StaticStructureOperation? structuralOperation = null)
     {
         diagnostics ??= new DiagnosticBag();
-        var preludeAlgorithm = hostOperations?.SemanticPreludeAlgorithm
-            ?? BuiltinRegistry.CreateSemanticPreludeAlgorithm();
-        var preludeScope = ElaboratedScopeLookup.CreateScope(
-            preludeAlgorithm, observations: observations, memberIndexes: new OpenMemberIndexCache(observations));
+        structuralOperation ??= StaticStructureAdmission.Create(root, hostOperations).Operation;
+        modules ??= new();
+        var preludeScope = structuralOperation.CreatePreludeScope(observations);
         var processed = ProcessAlgorithm(
             root,
             preludeScope,
             capturedParameters: ParameterOwnership.Empty,
             diagnostics,
             observations,
-            new DetectionRun { ProgramRoot = root, Diagnostics = diagnostics, Modules = modules ?? new() });
-        return (processed, diagnostics);
+            new DetectionRun { ProgramRoot = root, Diagnostics = diagnostics, Modules = modules });
+        // Leaf roots (notably builtins) have no recursive body publication, but still complete this stage.
+        if (structuralOperation.Published(structuralOperation.Root, StaticPublicationStage.Detected) is null)
+            structuralOperation.Publish(structuralOperation.Root, StaticPublicationStage.Detected, processed);
+        return new(processed, diagnostics, structuralOperation, modules, hostOperations);
     }
 
     private static Algorithm ProcessAlgorithm(
@@ -144,6 +147,46 @@ internal static class ParameterDetector
             Algorithm.Alias => throw new InvalidOperationException(
                 "Parameter detection received a callable alias: aliases are elaborated after name resolution, never before it."),
         };
+
+    private static ElaboratedPropertyScope CreateStructuralScope(Algorithm source, Algorithm view,
+        ElaboratedPropertyScope parent, Pattern? pattern = null)
+    {
+        var context = parent.StaticContext ?? throw new InvalidOperationException("Detection requires an admitted structural operation.");
+        var key = context.Operation.ContextOf(context.Key, source, pattern);
+        context.Operation.RegisterView(key, view);
+        var level = ElaboratedScopeLookup.CreateScope(view, parent, staticContext: context.Operation.Context(key));
+        context.Operation.RegisterLevel(level);
+        return level;
+    }
+
+    private static bool CollectsStructuralName(string name, ElaboratedPropertyScope scope, ParameterOwnership parameters, FreeNameCollection mode)
+        => scope.StaticContext is { } context && mode == FreeNameCollection.ImplicitSignature
+            ? context.Operation.Read(StaticQueryKey.IsInput(context.Key, name)).Kind == StaticFactKind.Yes
+            : !IsBoundName(name, scope, parameters);
+
+    private static ImplicitParameterOccurrenceRecorder CollectStructuralInputs(IReadOnlyList<Expr> rows, ElaboratedPropertyScope scope,
+        ParameterOwnership bindings, IReadOnlyList<string> written, HashSet<string> names, List<string> order,
+        Dictionary<string, BigInteger> weights, DetectionRun run, FrontEndTraversalObservations? observations, StaticStructureContext context, DiagnosticBag? diagnosticSink)
+    {
+        var inputs = context.Operation.Read(StaticQueryKey.Inputs(context.Key));
+        var recorder = CollectInputPass(rows, scope, bindings, names, order, weights, run, observations);
+        weights.Clear(); // Q7 has already applied Grace with shared-DAG occurrence multiplicity.
+        if (inputs.IsUnknown)
+        {
+            var undecided = context.Operation.UndecidedInputs(context.Key);
+            if (undecided.Length == 0)
+                throw new InvalidOperationException("Q7 has unresolved occurrence ordering without an unresolved input classification.");
+            var definition = context.Operation.DefinitionOf(context.Key);
+            diagnosticSink?.Add(new Diagnostic(
+                $"Cannot infer parameters for '{definition.Name}' because their classification is circular ({ExprNameRenderer.BoundedJoin(undecided, ", ")}). Declare the parameters explicitly or remove the circular dependency.",
+                DiagnosticSeverity.Error, definition.Span ?? run.ImportSite) { Code = DiagnosticCode.SelfDependentInferredParameters });
+            return recorder;
+        }
+        var inferred = (string[])inputs.Data!;
+        names.Clear(); names.UnionWith(written); names.UnionWith(inferred);
+        order.Clear(); order.AddRange(written); order.AddRange(inferred.Where(name => !written.Contains(name)));
+        return recorder;
+    }
 
     /// <summary>
     /// A loaded module (Q-31 H-P, decided 2026-10-06) is a hygienic source unit rooted at the
@@ -186,7 +229,7 @@ internal static class ParameterDetector
     {
         var newOpens = ProcessOpenExprs(alg.Opens, parentScope, diagnostics, observations, run);
         var algWithProcessedOpens = alg with { Opens = newOpens };
-        var scope = ElaboratedScopeLookup.CreateScope(algWithProcessedOpens, parentScope);
+        var scope = CreateStructuralScope(alg, algWithProcessedOpens, parentScope);
 
         // ONE projection of the written/inferred signature serves every read below. Detection is
         // NAME RESOLUTION and runs before automatic parameter forwarding (Q-04), so every
@@ -223,9 +266,13 @@ internal static class ParameterDetector
         {
             newOpens = ownedOpens;
             algWithProcessedOpens = alg with { Opens = newOpens };
-            scope = ElaboratedScopeLookup.CreateScope(algWithProcessedOpens, parentScope);
+            scope = CreateStructuralScope(alg, algWithProcessedOpens, parentScope);
             boundParameters = capturedParameters.Extend(scope, parameterNames, isProgramRoot, observations);
         }
+
+        // The static structure chase reads this level's bindings for a body that is still a written name
+        // (M4★): a parameter-headed reference row, and whether a name nothing declares is an inferred input.
+        scope.ParameterBindings = boundParameters;
 
         // Every row this body WRITES: its output rows plus each hoisted assignment-
         // deconstruction right-hand side (see WrittenRows) — the right-hand side obeys this
@@ -239,12 +286,8 @@ internal static class ParameterDetector
         }
         else
         {
-            provenanceRecorder = new ImplicitParameterOccurrenceRecorder(scope, boundParameters, run.SuggestionContexts(observations));
-            CollectFreeParams(
-                writtenRows, scope, boundParameters, paramNames, paramOrder, graceWeights,
-                FreeNameCollection.ImplicitSignature,
-                provenanceRecorder,
-                new FreeNameWalkMemo(observations));
+            provenanceRecorder = CollectOwnInputs(
+                writtenRows, scope, boundParameters, parameterNames, paramNames, paramOrder, graceWeights, run, observations, diagnostics);
 
             if (graceWeights.Count > 0)
                 GraceMovement.Apply(paramOrder, graceWeights);
@@ -259,6 +302,8 @@ internal static class ParameterDetector
         var bodyParameters = paramOrder.Count == parameterNames.Count
             ? boundParameters
             : capturedParameters.Extend(scope, paramOrder, isProgramRoot, observations);
+
+        scope.ParameterBindings = bodyParameters;
 
         // Static-open ownership (F2), inferred bindings: a head this body's own rows just
         // promoted to an implicit parameter (`open Lib` beside `Lib.X` with no visible `Lib`)
@@ -351,16 +396,21 @@ internal static class ParameterDetector
         foreach (var expr in alg.Output)
             rewrittenOutput.Add(RewriteParams(expr, scope, bodyParameters, rewriteMemo));
         AstHelpers.RewriteDeconstructionSourceRows(
-            alg, newProperties, expr => RewriteParams(expr, scope, bodyParameters, rewriteMemo));
+            alg, newProperties, expr => RewriteParams(expr, scope, bodyParameters, rewriteMemo),
+            (source, view) => scope.StaticContext!.Operation.Publish(
+                scope.StaticContext.Operation.ContextOf(scope.StaticContext.Key, source), StaticPublicationStage.Detected, view));
 
         // Lean: withParams on the processed body — the merged pattern list keeps every written
         // or earlier-inferred pattern and appends a fresh capture per newly inferred name.
-        return algWithProcessedOpens with
+        var detected = algWithProcessedOpens with
         {
             ParameterPatterns = Algorithm.MergeParameterPatterns(alg.ParameterPatterns, paramOrder, provenanceRecorder?.Provenance),
             Properties = newProperties,
             Output = rewrittenOutput,
         };
+        if (scope.StaticContext is { } completedContext)
+            completedContext.Operation.Publish(completedContext.Key, StaticPublicationStage.Detected, detected);
+        return detected;
     }
 
     /// <summary>
@@ -386,16 +436,20 @@ internal static class ParameterDetector
         FrontEndTraversalObservations? observations,
         DetectionRun run)
     {
-        var newOpens = ProcessOpenExprs(condAlg.Opens, scope, diagnostics, observations, run);
-        var processedConditional = condAlg with { Opens = newOpens };
+        var familyContext = scope.StaticContext!;
+        var publicationKey = familyContext.Operation.ContextOf(familyContext.Key, condAlg);
+        var canonical = familyContext.Operation.Published(publicationKey, StaticPublicationStage.Detected) as Algorithm.Conditional;
+        var newOpens = canonical?.Opens ?? ProcessOpenExprs(condAlg.Opens, scope, diagnostics, observations, run);
+        var processedConditional = canonical ?? condAlg with { Opens = newOpens };
         var branchParentScope = newOpens.Count == 0
             ? scope
-            : ElaboratedScopeLookup.CreateScope(processedConditional, scope);
+            : canonical is not null ? run.FamilyScopes[publicationKey]
+            : CreateStructuralScope(condAlg, processedConditional, scope);
 
         // Static-open ownership (F2) for a host-built family's own open list (parsed families
         // own no opens): the family binds nothing itself, so its heads are classified against
         // the captured bindings from the family's level outward.
-        if (newOpens.Count > 0)
+        if (newOpens.Count > 0 && canonical is null)
         {
             var ownedOpens = ClassifyOpenTargetHeads(
                 newOpens, branchParentScope, capturedParameters, diagnostics, run, reclassifyParameterHeads: true);
@@ -403,7 +457,7 @@ internal static class ParameterDetector
             {
                 newOpens = ownedOpens;
                 processedConditional = condAlg with { Opens = newOpens };
-                branchParentScope = ElaboratedScopeLookup.CreateScope(processedConditional, scope);
+                branchParentScope = CreateStructuralScope(condAlg, processedConditional, scope);
             }
         }
 
@@ -411,12 +465,14 @@ internal static class ParameterDetector
         // - Pattern binder names are rewritten to Expr.Param (resolved via valEnv at runtime)
         // - NO other free identifiers become implicit parameters
         // - The branch body's Params list is empty (bindings come from pattern matching)
-        var processedBranches = new List<CondBranch>(condAlg.Branches.Count);
-        foreach (var branch in condAlg.Branches)
+        var processedBranches = canonical is null ? new List<CondBranch>(condAlg.Branches.Count) : null;
+        for (var index = 0; index < condAlg.Branches.Count; index++)
         {
+            var branch = condAlg.Branches[index];
             var binderNames = run.BranchContexts.NamesOf(branch.Pattern).Names;
             if (branch.Body.DeferredRegion is { } region)
             {
+                if (canonical is not null) continue;
                 // B2c: a deferred module region. The body's modules — and with them its full
                 // elaboration and every diagnostic that could depend on their members — wait
                 // for the branch to be selected. Eagerly the body is elaborated PROVISIONALLY:
@@ -435,16 +491,17 @@ internal static class ParameterDetector
                     capturedParameters,
                     diagnostics: null,
                     observations,
-                    run);
-                processedBranches.Add(branch with
+                    run, branch.Pattern);
+                var structural = branchParentScope.StaticContext
+                    ?? throw new InvalidOperationException("Deferred detection requires the admitted structural operation.");
+                run.Modules.AttachRegistry(region.Loader.ModuleUnits);
+                var detectedRegion = region.WithStructure(new StaticStructureDeferredContext(
+                    run.Modules.Registry!, structural.Key, branch.Pattern, propertyName, capturedParameters));
+                processedBranches!.Add(branch with
                 {
                     Body = provisionalBody with
                     {
-                        DeferredRegion = region.WithDetection(new DeferredBranchContext(
-                            branchParentScope,
-                            binderNames,
-                            propertyName,
-                            capturedParameters)),
+                        DeferredRegion = detectedRegion,
                     },
                 });
                 continue;
@@ -458,11 +515,24 @@ internal static class ParameterDetector
                 capturedParameters,
                 diagnostics,
                 observations,
-                run);
-            processedBranches.Add(branch with { Body = processedBody });
+                run, branch.Pattern);
+            if (canonical is not null)
+            {
+                if (!ReferenceEquals(canonical.Branches[index].Body, processedBody))
+                    throw new InvalidOperationException("A detected family's branch view cannot change.");
+            }
+            else processedBranches!.Add(branch with { Body = processedBody });
         }
 
-        return processedConditional with { Branches = processedBranches };
+        if (canonical is not null) return canonical;
+        var detectedFamily = processedConditional with { Branches = processedBranches! };
+        familyContext.Operation.Publish(publicationKey, StaticPublicationStage.Detected, detectedFamily);
+        if (newOpens.Count > 0)
+        {
+            familyContext.Operation.Queries.Resources.Metadata(2);
+            run.FamilyScopes.Add(publicationKey, branchParentScope);
+        }
+        return detectedFamily;
     }
 
     /// <summary>
@@ -490,7 +560,8 @@ internal static class ParameterDetector
         DiagnosticBag diagnostics,
         FrontEndTraversalObservations? observations = null,
         SourceSpan? importSite = null,
-        ModuleUnits? modules = null)
+        ModuleUnits? modules = null,
+        Pattern? branchPattern = null)
         => ProcessConditionalBranchBody(
             loadedBody,
             context.ParentScope,
@@ -499,7 +570,7 @@ internal static class ParameterDetector
             context.CapturedParameters,
             diagnostics,
             observations,
-            new DetectionRun { ImportSite = importSite, Diagnostics = diagnostics, Modules = modules ?? new() });
+            new DetectionRun { ImportSite = importSite, Diagnostics = diagnostics, Modules = modules ?? new() }, branchPattern);
 
     /// <summary>
     /// Records the diagnostic-only origin of each implicit parameter at the
@@ -529,8 +600,11 @@ internal static class ParameterDetector
         /// The dot edge whose member/fallback occurrence is being collected,
         /// when its receiver is a statically known algorithm that provably
         /// lacks the member (the edge's fallback is then the selected
-        /// resolution); null for bare-name occurrences and for receivers with
-        /// no statically known algorithm. Save/restore via
+        /// resolution), or — M4★ — the receiver of a MAY edge claimed as
+        /// WRITTEN (<see cref="WrittenReceiverProvider"/>), which the
+        /// post-exposure finalizer keeps exactly when the elaborated receiver
+        /// certainly lacks the member; null for bare-name occurrences and for
+        /// receivers no claim names (a parameter, an ambiguous open). Save/restore via
         /// <see cref="EnterDotMemberContext"/> so nested (host-built) fallback
         /// shapes cannot leak the context.
         /// </summary>
@@ -631,7 +705,8 @@ internal static class ParameterDetector
 
     /// <summary>
     /// A dot edge whose receiver is a statically known algorithm that lacks the
-    /// member: the receiver's algorithm (its structural members are the member
+    /// member — or, M4★, a MAY edge's receiver claimed as written, which only
+    /// resolution decides: the receiver's algorithm (its structural members are the member
     /// suggestion surface), the written receiver expression (rendered for the
     /// diagnostic only when a provenance note is actually recorded), and the
     /// member name the fallback occurrence must carry to count as this edge's.
@@ -666,6 +741,39 @@ internal static class ParameterDetector
         /// every other shared node within one diagnostic context.
         /// </summary>
         public Dictionary<BranchBodyRegionKey, BranchBodyRegion>? BranchBodyRegions;
+        public readonly Dictionary<StaticScopeKey, ElaboratedPropertyScope> FamilyScopes = new(ReferenceEqualityComparer.Instance);
+
+        // The provisional misses of this run (Expr.DotCall.ProvisionalMiss), by the INPUT edge and the scope that reads it
+        // (a host tree may share one body under two scopes): the checks that wait on an edge attach to its one cell, which
+        // the rewrite attaches to the edge it produces from it in that scope.
+        private Dictionary<(Expr.DotCall Edge, ElaboratedPropertyScope Scope), ProvisionalMiss>? _provisionalMisses;
+
+        /// <summary>The provisional miss of the input edge <paramref name="edge"/> read in <paramref name="scope"/> (created on first use).</summary>
+        public ProvisionalMiss ProvisionalMissOf(Expr.DotCall edge, ElaboratedPropertyScope scope)
+        {
+            _provisionalMisses ??= new(EdgeInScopeComparer.Instance);
+            if (!_provisionalMisses.TryGetValue((edge, scope), out var miss))
+                _provisionalMisses.Add((edge, scope), miss = new ProvisionalMiss());
+            return miss;
+        }
+
+        /// <summary>The provisional miss of the input edge <paramref name="edge"/> read in <paramref name="scope"/>, when a check waits on it.</summary>
+        public ProvisionalMiss? ExistingProvisionalMissOf(Expr.DotCall edge, ElaboratedPropertyScope scope)
+            => _provisionalMisses?.GetValueOrDefault((edge, scope));
+
+        /// <summary>Keys an edge read in a scope by both OBJECTS.</summary>
+        private sealed class EdgeInScopeComparer : IEqualityComparer<(Expr.DotCall Edge, ElaboratedPropertyScope Scope)>
+        {
+            public static readonly EdgeInScopeComparer Instance = new();
+
+            public bool Equals((Expr.DotCall Edge, ElaboratedPropertyScope Scope) x, (Expr.DotCall Edge, ElaboratedPropertyScope Scope) y)
+                => ReferenceEquals(x.Edge, y.Edge) && ReferenceEquals(x.Scope, y.Scope);
+
+            public int GetHashCode((Expr.DotCall Edge, ElaboratedPropertyScope Scope) key)
+                => HashCode.Combine(
+                    System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(key.Edge),
+                    System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(key.Scope));
+        }
 
         private NameSetInterner? _capturedNameSets;
         private Dictionary<ParameterOwnership, CanonicalNameSet>? _canonicalCapturedNames;
@@ -793,7 +901,11 @@ internal static class ParameterDetector
     /// edge) — the one diagnostic whose wording names the family, re-issued for every further
     /// family that shares the body.
     /// </summary>
-    private sealed record BranchBodyRegion(Algorithm Rewritten, IReadOnlyList<UndeclaredName>? UndeclaredNames);
+    private sealed record BranchBodyRegion(Algorithm Rewritten, IReadOnlyList<UndeclaredName>? UndeclaredNames)
+    {
+        /// <summary>The region's check when it waits for implicit-argument resolution (<see cref="DeferredUndeclaredNames"/>).</summary>
+        public DeferredUndeclaredNames? DeferredNames { get; init; }
+    }
 
     /// <summary>
     /// Reference-identity memo state for ONE <see cref="CollectFreeParams(IReadOnlyList{Expr}, ElaboratedPropertyScope, ParameterOwnership, HashSet{string}, List{string}, Dictionary{string, BigInteger}, FreeNameCollection, ImplicitParameterOccurrenceRecorder?, FreeNameWalkMemo)"/>
@@ -837,6 +949,21 @@ internal static class ParameterDetector
 
         public void RecordCheckedFallback(Expr.DotCall edge, StaticStructuralMemberProvider receiver)
             => (CheckedFallbacks ??= new(ReferenceEqualityComparer.Instance)).TryAdd(edge, receiver);
+
+        /// <summary>
+        /// DeclaredNameCheck only: the dot edges whose fallback name this walk did NOT check because the runtime receiver
+        /// decides whether the edge misses (MAY). Implicit-argument resolution may find the miss certain from the processed
+        /// receiver (M4★: a body whose parameters inference and lifting decide), and then the check is made again with that
+        /// verdict (<see cref="DeferredUndeclaredNames"/>). Each edge once (the walk memoizes shared nodes).
+        /// </summary>
+        public List<Expr.DotCall>? ProvisionalFallbacks;
+
+        /// <summary>
+        /// DeclaredNameCheck, made again once implicit-argument resolution decided the provisional misses
+        /// (<see cref="DeferredUndeclaredNames"/>): the MAY edges whose miss it found certain, checked exactly as
+        /// MUST-selected ones; every other MAY edge stays unchecked. Null on detection's own walk.
+        /// </summary>
+        public IReadOnlySet<Expr.DotCall>? CertainMisses;
     }
 
     /// <summary>
@@ -1353,7 +1480,8 @@ internal static class ParameterDetector
         ParameterOwnership capturedParameters,
         DiagnosticBag? diagnostics,
         FrontEndTraversalObservations? observations,
-        DetectionRun run)
+        DetectionRun run,
+        Pattern? branchPattern = null)
     {
         // Builtins own no body payload. A host-built Conditional has no user rows, but
         // DOES own opens: elaborate those under this branch's binder ownership as usual.
@@ -1381,6 +1509,11 @@ internal static class ParameterDetector
         if (regions.TryGetValue(regionKey, out var completedRegion))
         {
             ReplayUndeclaredNames(completedRegion, branchName, diagnostics);
+            if (parentScope.StaticContext is { } shared)
+            {
+                var key = shared.Operation.ContextOf(shared.Key, branchBody, branchPattern);
+                shared.Operation.Publish(key, StaticPublicationStage.Detected, completedRegion.Rewritten);
+            }
             return completedRegion.Rewritten;
         }
 
@@ -1398,7 +1531,7 @@ internal static class ParameterDetector
             Algorithm.Alias alias => alias with { Opens = newOpens },
             Algorithm.Builtin => branchBody,
         };
-        var bodyScope = ElaboratedScopeLookup.CreateScope(bodyWithProcessedOpens, parentScope);
+        var bodyScope = CreateStructuralScope(branchBody, bodyWithProcessedOpens, parentScope, branchPattern);
 
         // The branch's pattern binders are owned by the branch BODY level, exactly like an
         // ordinary algorithm's parameters are owned by its own level. In invalid same-owner
@@ -1421,9 +1554,12 @@ internal static class ParameterDetector
                 Algorithm.Alias alias => alias with { Opens = newOpens },
                 Algorithm.Builtin => bodyWithProcessedOpens,
             };
-            bodyScope = ElaboratedScopeLookup.CreateScope(bodyWithProcessedOpens, parentScope);
+            bodyScope = CreateStructuralScope(branchBody, bodyWithProcessedOpens, parentScope, branchPattern);
             bodyParameters = capturedParameters.Extend(bodyScope, binderNames, observations: observations);
         }
+
+        // A branch body's bindings, for the static structure chase (see ProcessUserAlgorithm).
+        bodyScope.ParameterBindings = bodyParameters;
 
         // A Conditional used as the body is still a family value, not a user body.
         // Preserve its branches; only its legitimately owned opens required processing.
@@ -1438,11 +1574,19 @@ internal static class ParameterDetector
         var writtenRows = AstHelpers.WrittenRows(body);
 
         // Detect free identifiers that would be implicit parameters — these are
-        // forbidden in conditional branch bodies (full-input-specification rule).
+        // forbidden in conditional branch bodies (full-input-specification rule). A check that
+        // waits for implicit-argument resolution (DeferredUndeclaredNames) keeps its place here.
         List<UndeclaredName>? undeclaredNames = null;
+        DeferredUndeclaredNames? deferredNames = null;
         if (diagnostics is not null)
         {
-            undeclaredNames = CollectUndeclaredNames(writtenRows, bodyScope, bodyParameters, run, observations);
+            undeclaredNames = CollectUndeclaredNames(writtenRows, bodyScope, bodyParameters, run, observations, out var provisional);
+            if (provisional is not null)
+            {
+                deferredNames = new DeferredUndeclaredNames(writtenRows, bodyScope, bodyParameters, run, observations, provisional);
+                deferredNames.AddTarget(diagnostics, branchName);
+            }
+
             foreach (var undeclared in undeclaredNames)
                 ReportUndeclaredName(diagnostics, undeclared, branchName);
         }
@@ -1511,7 +1655,9 @@ internal static class ParameterDetector
         foreach (var expr in body.Output)
             rewrittenOutput.Add(RewriteParams(expr, bodyScope, bodyParameters, rewriteMemo));
         AstHelpers.RewriteDeconstructionSourceRows(
-            body, newProperties, expr => RewriteParams(expr, bodyScope, bodyParameters, rewriteMemo));
+            body, newProperties, expr => RewriteParams(expr, bodyScope, bodyParameters, rewriteMemo),
+            (source, view) => bodyScope.StaticContext!.Operation.Publish(
+                bodyScope.StaticContext.Operation.ContextOf(bodyScope.StaticContext.Key, source), StaticPublicationStage.Detected, view));
 
         var rewritten = body with
         {
@@ -1519,9 +1665,11 @@ internal static class ParameterDetector
             Properties = newProperties,
             Output = rewrittenOutput,
         };
+        if (bodyScope.StaticContext is { } context)
+            context.Operation.Publish(context.Key, StaticPublicationStage.Detected, rewritten);
         // Admitted only after the whole body completed (the structural preflight guarantees
         // acyclic inputs, so the body can never be reached again while in flight).
-        regions[regionKey] = new BranchBodyRegion(rewritten, undeclaredNames);
+        regions[regionKey] = new BranchBodyRegion(rewritten, undeclaredNames) { DeferredNames = deferredNames };
         return rewritten;
     }
 
@@ -1529,13 +1677,15 @@ internal static class ParameterDetector
     /// Re-issues a completed region's closed-branch diagnostics for a further family that
     /// shares the body: same identifiers, same spans, worded with THIS family's name — so
     /// diagnostic multiplicity per family is exactly what elaborating the body again would
-    /// produce, without re-walking it, and independent of which family was reached first.
+    /// produce, without re-walking it, and independent of which family was reached first. A
+    /// check that waits for implicit-argument resolution keeps a place here for this family too.
     /// </summary>
     private static void ReplayUndeclaredNames(BranchBodyRegion region, string branchName, DiagnosticBag? diagnostics)
     {
         if (diagnostics is null || region.UndeclaredNames is null)
             return;
 
+        region.DeferredNames?.AddTarget(diagnostics, branchName);
         foreach (var undeclared in region.UndeclaredNames)
             ReportUndeclaredName(diagnostics, undeclared, branchName);
     }
@@ -1558,23 +1708,35 @@ internal static class ParameterDetector
     /// The free names a closed body uses (DeclaredNameCheck: every written name nothing binds, and
     /// every MUST-selected dot fallback name — Q-75 F-A), each with its first occurrence found in
     /// ONE walk; an occurrence inside imported content has none and is reported at the import site.
+    /// A body with a fallback the runtime receiver decides (MAY) whose name the check could charge is
+    /// checked only once implicit-argument resolution decided that miss: <paramref name="deferred"/> is
+    /// then set, with no names (<see cref="DeferredUndeclaredNames"/>), unless
+    /// <paramref name="certainMisses"/> gives the decided verdicts — the check made again with them.
     /// </summary>
     private static List<UndeclaredName> CollectUndeclaredNames(
         IReadOnlyList<Expr> rows,
         ElaboratedPropertyScope scope,
         ParameterOwnership boundParameters,
         DetectionRun run,
-        FrontEndTraversalObservations? observations)
+        FrontEndTraversalObservations? observations,
+        out List<Expr.DotCall>? deferred,
+        IReadOnlySet<Expr.DotCall>? certainMisses = null)
     {
+        deferred = null;
         var freeNames = new HashSet<string>();
         var freeOrder = new List<string>();
         var dummyWeights = new Dictionary<string, BigInteger>();
-        var memo = new FreeNameWalkMemo(observations);
+        var memo = new FreeNameWalkMemo(observations) { CertainMisses = certainMisses };
         CollectFreeParams(
             rows, scope, boundParameters, freeNames, freeOrder, dummyWeights,
             FreeNameCollection.DeclaredNameCheck,
             recorder: null,
             memo);
+        if (memo.ProvisionalFallbacks is { } provisional && HasCheckableFallbackName(provisional, scope, boundParameters, observations))
+        {
+            deferred = provisional;
+            return [];
+        }
 
         var undeclared = new List<UndeclaredName>(freeOrder.Count);
         if (freeOrder.Count == 0)
@@ -1617,6 +1779,108 @@ internal static class ParameterDetector
     /// body with more undeclared member names than this offers no further suggestion.
     /// </summary>
     private const int MaxClosedBodySuggestionAttempts = 64;
+
+    /// <summary>
+    /// Whether one of the fallbacks a closed body's check left to the runtime receiver (MAY) names something the check
+    /// would charge were its miss certain — a fallback name nothing binds here: the body's check must then wait for
+    /// implicit-argument resolution to decide those misses (<see cref="DeferredUndeclaredNames"/>), because where and in
+    /// which order its names are reported depends on which of them it finds certain.
+    /// </summary>
+    private static bool HasCheckableFallbackName(
+        List<Expr.DotCall> edges,
+        ElaboratedPropertyScope scope,
+        ParameterOwnership boundParameters,
+        FrontEndTraversalObservations? observations)
+    {
+        foreach (var edge in edges)
+        {
+            if (edge.EffectiveLexicalFallback.UnwrapGraceOperand() is not Expr.Resolve)
+                continue;
+            var probeOrder = new List<string>();
+            CollectFreeParams(
+                edge.EffectiveLexicalFallback, scope, boundParameters, new HashSet<string>(), probeOrder,
+                new Dictionary<string, BigInteger>(), FreeNameCollection.DeclaredNameCheck, recorder: null, new FreeNameWalkMemo(observations));
+            if (probeOrder.Count > 0)
+                return true;
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    /// The closed-body check (Q-75 F-A) of a body whose names depend on misses only implicit-argument resolution decides
+    /// (M4★: a fallback on a receiver whose structure the parameters inference and lifting leave it decide —
+    /// <see cref="ProvisionalMiss"/>). The whole check waits: once resolution has processed every body, it is made again
+    /// — the very <see cref="CollectUndeclaredNames"/> walk, with each such miss checked as a MUST-selected one when the
+    /// processed receiver certainly lacks the member, and not at all otherwise — and reported where detection would have
+    /// reported it (one place per family that shares a clause-branch body, <see cref="AddTarget"/>), so its names, their
+    /// order, positions and wording are what a certain miss gives whatever order resolution processed the bodies in.
+    /// </summary>
+    private sealed class DeferredUndeclaredNames
+    {
+        private readonly IReadOnlyList<Expr> _rows;
+        private readonly ElaboratedPropertyScope _scope;
+        private readonly ParameterOwnership _boundParameters;
+        private readonly DetectionRun _run;
+        private readonly FrontEndTraversalObservations? _observations;
+        private readonly SourceSpan? _importSite;
+        private readonly List<Expr.DotCall> _provisional;
+        private readonly List<(DiagnosticBag Diagnostics, DiagnosticAnchor Anchor, string? BranchName)> _targets = [];
+
+        public DeferredUndeclaredNames(
+            IReadOnlyList<Expr> rows,
+            ElaboratedPropertyScope scope,
+            ParameterOwnership boundParameters,
+            DetectionRun run,
+            FrontEndTraversalObservations? observations,
+            List<Expr.DotCall> provisional)
+        {
+            _rows = rows;
+            _scope = scope;
+            _boundParameters = boundParameters;
+            _run = run;
+            _observations = observations;
+            _importSite = run.ImportSite;
+            _provisional = provisional;
+            Check = new DeferredFallbackCheck(Commit);
+            foreach (var edge in provisional)
+                run.ProvisionalMissOf(edge, scope).Depend(Check);
+        }
+
+        public DeferredFallbackCheck Check { get; }
+
+        /// <summary>Reports the check at the place reserved now in <paramref name="diagnostics"/>, worded for the family named <paramref name="branchName"/> (null for an explicit list).</summary>
+        public void AddTarget(DiagnosticBag diagnostics, string? branchName) => _targets.Add((diagnostics, diagnostics.ReserveAnchor(), branchName));
+
+        private void Commit()
+        {
+            var certain = new HashSet<Expr.DotCall>(ReferenceEqualityComparer.Instance);
+            foreach (var edge in _provisional)
+            {
+                if (_run.ProvisionalMissOf(edge, _scope).IsCertain)
+                    certain.Add(edge);
+            }
+
+            var saved = _run.ImportSite;
+            _run.ImportSite = _importSite;
+            List<UndeclaredName> names;
+            try
+            {
+                names = CollectUndeclaredNames(_rows, _scope, _boundParameters, _run, _observations, out _, certain);
+            }
+            finally
+            {
+                _run.ImportSite = saved;
+            }
+
+            foreach (var (diagnostics, anchor, branchName) in _targets)
+            {
+                using var place = diagnostics.InsertingAt(anchor);
+                foreach (var undeclared in names)
+                    ReportUndeclaredName(diagnostics, undeclared, branchName);
+            }
+        }
+    }
 
     /// <summary>
     /// Reports one undeclared name of a closed explicit list (<paramref name="branchName"/> null) or
@@ -1679,8 +1943,12 @@ internal static class ParameterDetector
             return;
 
         // An occurrence the document wrote is reported at its span (every name's first one found
-        // in one walk); one inside imported content at the import site.
-        foreach (var undeclared in CollectUndeclaredNames(output, scope, boundParameters, run, observations))
+        // in one walk); one inside imported content at the import site. A check that waits for
+        // implicit-argument resolution (DeferredUndeclaredNames) keeps its place here.
+        var undeclaredNames = CollectUndeclaredNames(output, scope, boundParameters, run, observations, out var provisional);
+        if (provisional is not null)
+            new DeferredUndeclaredNames(output, scope, boundParameters, run, observations, provisional).AddTarget(diagnostics, branchName: null);
+        foreach (var undeclared in undeclaredNames)
             ReportUndeclaredName(diagnostics, undeclared, branchName: null);
     }
 
@@ -1725,6 +1993,36 @@ internal static class ParameterDetector
         => mode == FreeNameCollection.ImplicitSignature
             ? selection != LexicalFallbackSelection.Never
             : selection == LexicalFallbackSelection.Always;
+
+    /// <summary>Reads the operation's Q7 signature, retaining occurrence provenance in written order.</summary>
+    private static ImplicitParameterOccurrenceRecorder CollectOwnInputs(
+        IReadOnlyList<Expr> writtenRows, ElaboratedPropertyScope scope, ParameterOwnership boundParameters,
+        IReadOnlyList<string> writtenParameters, HashSet<string> paramNames, List<string> paramOrder,
+        Dictionary<string, BigInteger> graceWeights, DetectionRun run, FrontEndTraversalObservations? observations,
+        DiagnosticBag? diagnosticSink)
+        => CollectStructuralInputs(writtenRows, scope, boundParameters, writtenParameters, paramNames, paramOrder,
+            graceWeights, run, observations, scope.StaticContext
+                ?? throw new InvalidOperationException("Inference requires the shared structural operation."), diagnosticSink);
+
+    /// <summary>One collection pass of an inferring body's own inputs (<see cref="CollectOwnInputs"/>).</summary>
+    private static ImplicitParameterOccurrenceRecorder CollectInputPass(
+        IReadOnlyList<Expr> writtenRows,
+        ElaboratedPropertyScope scope,
+        ParameterOwnership boundParameters,
+        HashSet<string> paramNames,
+        List<string> paramOrder,
+        Dictionary<string, BigInteger> graceWeights,
+        DetectionRun run,
+        FrontEndTraversalObservations? observations)
+    {
+        var recorder = new ImplicitParameterOccurrenceRecorder(scope, boundParameters, run.SuggestionContexts(observations));
+        CollectFreeParams(
+            writtenRows, scope, boundParameters, paramNames, paramOrder, graceWeights,
+            FreeNameCollection.ImplicitSignature,
+            recorder,
+            new FreeNameWalkMemo(observations));
+        return recorder;
+    }
 
     /// <summary>
     /// Collects identifiers that are free (not defined as properties in any visible scope).
@@ -1820,7 +2118,7 @@ internal static class ParameterDetector
 
                 if (gracedCore is Expr.Resolve(var gracedName))
                 {
-                    if (!IsBoundName(gracedName, scope, boundParameters) && gracedName.Length > 0)
+                    if (CollectsStructuralName(gracedName, scope, boundParameters, mode) && gracedName.Length > 0)
                     {
                         if (paramNames.Add(gracedName))
                         {
@@ -1841,7 +2139,7 @@ internal static class ParameterDetector
             }
 
             case Expr.Resolve(var name):
-                if (!IsBoundName(name, scope, boundParameters) && name.Length > 0)
+                if (CollectsStructuralName(name, scope, boundParameters, mode) && name.Length > 0)
                 {
                     if (paramNames.Add(name))
                     {
@@ -1917,7 +2215,19 @@ internal static class ParameterDetector
                 // FreeNameCollection).
                 {
                     var receiverProvider = ResolveDotCallReceiverProvider(dotCall, scope, boundParameters);
-                    if (CollectsFallbackName(mode, dotCall.GetLexicalFallbackSelection(receiverProvider)))
+                    var fallbackSelection = scope.StaticContext is { } context
+                        ? dotCall.LexicalFallbackSelectionOf(context.Operation.Miss(context.Key, dotCall))
+                        : dotCall.GetLexicalFallbackSelection(receiverProvider);
+                    if (mode == FreeNameCollection.DeclaredNameCheck && fallbackSelection == LexicalFallbackSelection.Conditional)
+                    {
+                        // A MAY fallback is checked once resolution decided its miss (DeferredUndeclaredNames): as a MUST
+                        // one when the processed receiver certainly lacks the member, otherwise not at all.
+                        if (memo.CertainMisses is not { } certainMisses)
+                            (memo.ProvisionalFallbacks ??= []).Add(dotCall);
+                        else if (certainMisses.Contains(dotCall))
+                            fallbackSelection = LexicalFallbackSelection.Always;
+                    }
+                    if (CollectsFallbackName(mode, fallbackSelection))
                     {
                         // A checked fallback occurrence is reported at its member token and
                         // worded receiver-aware (CollectUndeclaredNames).
@@ -1926,17 +2236,26 @@ internal static class ParameterDetector
 
                         // While collecting the member/fallback occurrence, the
                         // recorder knows the receiver's statically known
-                        // algorithm (when there is one — a KnownAlgorithm
-                        // receiver reaching this branch provably LACKS the
-                        // member, so the fallback is its selected resolution)
-                        // so a provenance note recorded here can name the
-                        // receiver and rank its structural members as
-                        // suggestion candidates. Diagnostic-only: the
-                        // collection itself is unchanged.
+                        // algorithm — a KnownAlgorithm receiver reaching this
+                        // branch provably LACKS the member, so the fallback is
+                        // its selected resolution; a MAY receiver (M4★: a body
+                        // whose structure only implicit-argument resolution
+                        // decides) is claimed as WRITTEN, and the post-exposure
+                        // finalizer keeps the claim exactly when the elaborated
+                        // receiver certainly lacks the member
+                        // (DotMemberProvenanceFinalizer) — so a provenance note
+                        // recorded here can name the receiver and rank its
+                        // structural members as suggestion candidates.
+                        // Diagnostic-only: the collection itself is unchanged.
+                        var claimedReceiver = receiverProvider.Kind == StaticStructuralMemberProviderKind.KnownAlgorithm
+                            ? receiverProvider
+                            : fallbackSelection == LexicalFallbackSelection.Conditional && recorder is not null
+                                ? WrittenReceiverProvider(dotCall, scope, boundParameters)
+                                : receiverProvider;
                         var previousReceiver = recorder?.EnterDotMemberContext(
-                            receiverProvider.Kind == StaticStructuralMemberProviderKind.KnownAlgorithm
+                            claimedReceiver.Kind == StaticStructuralMemberProviderKind.KnownAlgorithm
                                 ? new KnownReceiverMember(
-                                    receiverProvider.Algorithm!,
+                                    claimedReceiver.Algorithm!,
                                     dotCall.Target.UnwrapGraceOperand(),
                                     dotCall.Name,
                                     dotCall)
@@ -2025,32 +2344,30 @@ internal static class ParameterDetector
         Expr.DotCall dotCall,
         ElaboratedPropertyScope scope,
         ParameterOwnership boundParameters)
-        => dotCall.Target.UnwrapGraceOperand().ResolveStaticStructuralMemberProvider(
-            name => ResolveReceiverNameProvider(name, scope, boundParameters));
+        => (scope.StaticContext ?? throw new InvalidOperationException("Receiver selection requires the admitted operation."))
+            .Operation.Receiver(scope.StaticContext.Key, dotCall.Target);
 
-    private static StaticStructuralMemberProvider ResolveReceiverNameProvider(
-        string name,
+    /// <summary>
+    /// A dot edge's receiver read as WRITTEN — every property its written body, a path through its written members, no
+    /// reference followed: the receiver a provenance claim names for an edge whose miss only implicit-argument resolution
+    /// decides (M4★), whose elaborated receiver the post-exposure finalizer then judges (<see cref="DotMemberProvenanceFinalizer"/>).
+    /// </summary>
+    private static StaticStructuralMemberProvider WrittenReceiverProvider(
+        Expr.DotCall dotCall,
         ElaboratedPropertyScope scope,
         ParameterOwnership boundParameters)
-    {
-        var owned = ElaboratedScopeLookup.SelectOwnedDeclaration(scope, name, boundParameters);
-        if (owned.TryGetParameter(out _))
-            return new(StaticStructuralMemberProviderKind.RuntimeParameter);
-
-        if (owned.TryGetProperty(out _, out var hit))
-            return new(StaticStructuralMemberProviderKind.KnownAlgorithm, hit.Property.Value);
-
-        // Undecided by ownership: the ordinary open fallback, and — when
-        // that provides nothing either — the name this collection is
-        // about to promote to an implicit parameter.
-        var openHits = ElaboratedScopeLookup.LookupOpenPropertyMatches(scope, name);
-        return openHits.Count switch
+        => dotCall.Target.UnwrapGraceOperand().ResolveStaticStructuralMemberProvider(name =>
         {
-            0 => new(StaticStructuralMemberProviderKind.RuntimeParameter),
-            1 => new(StaticStructuralMemberProviderKind.KnownAlgorithm, openHits[0].Property.Value),
-            _ => new(StaticStructuralMemberProviderKind.LexicalReference),
-        };
-    }
+            var owned = ElaboratedScopeLookup.SelectOwnedDeclaration(scope, name, boundParameters);
+            if (owned.TryGetParameter(out _))
+                return new(StaticStructuralMemberProviderKind.RuntimeParameter);
+            if (owned.TryGetProperty(out _, out var hit))
+                return new(StaticStructuralMemberProviderKind.KnownAlgorithm, hit.Property.Value);
+            return ElaboratedScopeLookup.LookupSingleOpenMember(scope, name) is { } opened
+                ? new(StaticStructuralMemberProviderKind.KnownAlgorithm, opened.Hit.Property.Value)
+                : new(StaticStructuralMemberProviderKind.LexicalReference);
+        });
+
 
     // ── F10 / Q-16 G-O: a Grace marker with no own inferred parameter to weight ──
 
@@ -2091,11 +2408,35 @@ internal static class ParameterDetector
             // is a declared member of that name like any member, and on a structural miss the
             // intrinsic (Q-17 S-C; CallReference S1/S2; META-S3-1).
             var intrinsic = edge.Edge.Name;
+            var certainReason = $"'.{intrinsic}' is the dot-only intrinsic on this receiver, so this occurrence never joins the implicit parameters";
+            var conditionalReason = $"'.{intrinsic}' is the dot-only intrinsic unless its receiver declares a member named '{intrinsic}', and never a lexical callable, so this occurrence never joins the implicit parameters";
+            if (edge.Edge.UsesDotMissIntrinsic() && edge.MissSelection == LexicalFallbackSelection.Conditional)
+            {
+                // A receiver whose structure only implicit-argument resolution decides (M4★): which reason holds waits for
+                // that decision (ProvisionalMiss), and the report keeps its place here.
+                if (!memo.ReportedGrace.Add(graceNode))
+                    return;
+                var diagnostics = memo.Diagnostics;
+                var anchor = diagnostics.ReserveAnchor();
+                var miss = memo.Run.ProvisionalMissOf(edge.Edge, scope);
+                var span = graceNode.Span ?? gracedCore.Span ?? memo.Run.ImportSite;
+                miss.Depend(new DeferredFallbackCheck(() =>
+                {
+                    using var place = diagnostics.InsertingAt(anchor);
+                    diagnostics.Add(new Diagnostic(
+                        FormatIneffectiveGrace(name, miss.IsCertain ? certainReason : conditionalReason, guidance),
+                        DiagnosticSeverity.Error,
+                        span)
+                    {
+                        Code = DiagnosticCode.InvalidGraceMarker,
+                    });
+                }));
+                return;
+            }
+
             reason = !edge.Edge.UsesDotMissIntrinsic() || edge.MissSelection == LexicalFallbackSelection.Never
                 ? $"the member '{name}' always resolves structurally on its receiver, so this occurrence never joins the implicit parameters"
-                : edge.MissSelection == LexicalFallbackSelection.Always
-                    ? $"'.{intrinsic}' is the dot-only intrinsic on this receiver, so this occurrence never joins the implicit parameters"
-                    : $"'.{intrinsic}' is the dot-only intrinsic unless its receiver declares a member named '{intrinsic}', and never a lexical callable, so this occurrence never joins the implicit parameters";
+                : edge.MissSelection == LexicalFallbackSelection.Always ? certainReason : conditionalReason;
         }
         else if (memo.GracePolicy == GraceEffectPolicy.ImplicitSignature
             && memo.OwnParameterNames?.Contains(name) == true)
@@ -2215,9 +2556,7 @@ internal static class ParameterDetector
         string name,
         ElaboratedPropertyScope scope,
         ParameterOwnership parameters)
-        => parameters.Contains(name)
-            && ElaboratedScopeLookup.SelectOwnedDeclaration(scope, name, parameters).Kind
-                == OwnedDeclarationKind.Parameter;
+        => scope.StaticContext!.Operation.Binding(scope.StaticContext.Key, name).Kind == StaticFactKind.Parameter;
 
     /// <summary>
     /// Rewrites owned parameter references in ordinary and conditional bodies using the
@@ -2243,6 +2582,7 @@ internal static class ParameterDetector
             memo.Observations?.RecordDetectorRewriteExpansion();
         rewritten = RewriteParamsCore(expr, scope, parameters, memo);
         memo.Rewrites[expr] = rewritten;
+        if (scope.StaticContext is { } context) context.Operation.RegisterExpression(context.Key, expr, rewritten);
         return rewritten;
     }
 
@@ -2453,8 +2793,9 @@ internal static class ParameterDetector
         // (AstHelpers.LexicalFallbackMayBeSelected), and the formula-lifting roles
         // and the sibling order classify a `.string` edge as the declared member or
         // the intrinsic by its receiver (FormulaLiftingRoles.EdgeKind).
-        var missSelection = dotCall.GetStructuralMissSelection(
-            ResolveDotCallReceiverProvider(dotCall, scope, parameters));
+        var missSelection = scope.StaticContext is { } structuralContext
+            ? structuralContext.Operation.Miss(structuralContext.Key, dotCall)
+            : dotCall.GetStructuralMissSelection(ResolveDotCallReceiverProvider(dotCall, scope, parameters));
 
         // Prefix member Grace (`recv.~t`) decorates the fallback occurrence. It
         // is eligible only when that occurrence joined this level's inferred
@@ -2476,8 +2817,9 @@ internal static class ParameterDetector
         // edge certainly selects it (LexicalFallbackSelection.Always — `5.X` is `X(5)`); a
         // structural hit is no lookup of the name at all, and a fallback the runtime receiver
         // decides stays a run-time question (its ambiguity is the evaluator's AmbiguousOpen).
+        var fallbackSelection = dotCall.LexicalFallbackSelectionOf(missSelection);
         var suppressed = memo.AmbiguousOpenUseSuppressed;
-        memo.AmbiguousOpenUseSuppressed = dotCall.LexicalFallbackSelectionOf(missSelection) != LexicalFallbackSelection.Always;
+        memo.AmbiguousOpenUseSuppressed = fallbackSelection != LexicalFallbackSelection.Always;
         Expr rewrittenFallback;
         try
         {
@@ -2486,6 +2828,30 @@ internal static class ParameterDetector
         finally
         {
             memo.AmbiguousOpenUseSuppressed = suppressed;
+        }
+
+        // A fallback the runtime receiver decides (MAY) may be certain after all once implicit-argument resolution knows
+        // the receiver (M4★): Q-29's ambiguity of its name, which only a certain one is a written use of, waits for that
+        // decision (ProvisionalMiss) and keeps its place here — as do the closed-body check (CollectUndeclaredNames) and
+        // a Grace marker on an intrinsic member (ReportIneffectiveGrace) that wait on the edge.
+        if (fallbackSelection == LexicalFallbackSelection.Conditional
+            && memo.Diagnostics is { } diagnostics
+            && rewrittenFallback.UnwrapGraceOperand() is Expr.Resolve fallbackName
+            && ElaboratedScopeLookup.FindAmbiguousOpenProviders(scope, fallbackName.Name) is { } providers)
+        {
+            var span = fallbackName.Span ?? memo.Run.ImportSite;
+            var anchor = diagnostics.ReserveAnchor();
+            var miss = memo.Run.ProvisionalMissOf(dotCall, scope);
+            miss.Depend(new DeferredFallbackCheck(() =>
+            {
+                if (!miss.IsCertain)
+                    return;
+                using var place = diagnostics.InsertingAt(anchor);
+                diagnostics.Add(new Diagnostic(FormatAmbiguousOpenUse(fallbackName.Name, providers), DiagnosticSeverity.Error, span)
+                {
+                    Code = DiagnosticCode.AmbiguousOpen,
+                });
+            }));
         }
 
         // The promotion note this collection recorded for the edge's fallback
@@ -2501,6 +2867,7 @@ internal static class ParameterDetector
             InferredFallbackProvenance = memo.DotMembers is { } dotMembers && dotMembers.TryGetValue(dotCall, out var provenance)
                 ? provenance
                 : dotCall.InferredFallbackProvenance,
+            ProvisionalMiss = memo.Run.ExistingProvisionalMissOf(dotCall, scope) ?? dotCall.ProvisionalMiss,
         };
     }
 
@@ -2656,7 +3023,7 @@ internal static class ParameterDetector
         string name,
         ElaboratedPropertyScope scope,
         ParameterOwnership boundParameters)
-        => boundParameters.Contains(name) || HasVisiblePropertyName(scope, name);
+        => scope.StaticContext!.Operation.Binding(scope.StaticContext.Key, name).Kind != StaticFactKind.Missing;
 
     private static bool HasVisiblePropertyName(ElaboratedPropertyScope scope, string name)
         => ElaboratedScopeLookup.LookupLexicalPropertyMatches(scope, name).Count > 0;

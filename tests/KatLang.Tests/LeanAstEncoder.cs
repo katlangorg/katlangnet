@@ -577,11 +577,15 @@ internal sealed class LeanAstEncoding
 
         if (algorithm is Algorithm.Alias alias)
         {
-            // Lean `Algorithm.alias parent opens properties target`: the binding's own scope and
-            // its written target, resolved by the Lean evaluator in the alias's own scope.
+            // Lean `Algorithm.alias parent opens properties target declarationId reference`: the
+            // binding's own scope and its written target, resolved by the Lean evaluator in the
+            // alias's own scope; a structural forwarding carrier (M4★, `IsReference` false) spells
+            // `reference := false`, a transparent reference keeps the default.
             var aliasOpens = EncodeOpens(alias.Opens);
             var aliasProperties = EncodeList(alias.Properties, property => EncodeProperty(property, alias));
-            return $"(.alias none [{aliasOpens}] [{aliasProperties}] ({EncodeExpr(alias.Target)}))";
+            return alias.IsReference
+                ? $"(.alias none [{aliasOpens}] [{aliasProperties}] ({EncodeExpr(alias.Target)}))"
+                : $"(.alias none [{aliasOpens}] [{aliasProperties}] ({EncodeExpr(alias.Target)}) none false)";
         }
 
         if (algorithm is not Algorithm.User user)

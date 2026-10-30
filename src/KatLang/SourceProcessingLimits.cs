@@ -64,6 +64,18 @@ namespace KatLang;
 public sealed record SourceProcessingLimits
 {
     /// <summary>
+    /// Supported maximum structural-analysis accounting envelope per compilation or standalone
+    /// host-analysis operation: 1 GiB. This deterministic ceiling does not depend on machine or
+    /// GC memory. <see cref="MaxStaticStructureBytes"/> may request a lower envelope.
+    /// It caps query entries at one per KiB and the shared engine/metadata ledger at one slot
+    /// per 64 bytes; source admission also bounds distinct nodes and enumerated edges.
+    /// Operation-scaled work/read limits remain independently active. These conservative
+    /// accounting units do not measure total process memory; source, runtime and editor state
+    /// need separate headroom. Hosts with tighter memory requirements configure smaller limits.
+    /// </summary>
+    public const long MaxSupportedStaticStructureBytes = 1024L * 1024 * 1024;
+
+    /// <summary>
     /// Internal hard ceiling on the length of ONE source text (the main program or a single
     /// imported module), in UTF-16 code units, applied on every parser/front-end entry point
     /// regardless of configuration, and by the standalone <see cref="Lexer.Tokenize(string)"/>,
@@ -187,6 +199,32 @@ public sealed record SourceProcessingLimits
     private readonly long? _maxAggregateSourceLength;
     private readonly int? _maxModuleCount;
     private readonly int? _maxDiagnosticCount;
+    private readonly long? _maxStaticStructureBytes;
+
+    /// <summary>
+    /// Maximum structural-analysis accounting bytes per operation, or <c>null</c> to use
+    /// <see cref="MaxSupportedStaticStructureBytes"/>. Larger values are clamped to that
+    /// ceiling. Applies to source compilation, including deferred module compilation, and
+    /// explicitly configured standalone semantic-model admission. Resource refusal produces
+    /// <see cref="DiagnosticCode.StaticStructureLimitExceeded"/> during compilation;
+    /// standalone semantic-model construction throws <see cref="InvalidOperationException"/>.
+    /// This is host resource policy, not a source-language inference rule.
+    /// </summary>
+    /// <exception cref="ArgumentOutOfRangeException">The value is zero or negative.</exception>
+    public long? MaxStaticStructureBytes
+    {
+        get => _maxStaticStructureBytes;
+        init
+        {
+            if (value is <= 0)
+                throw new ArgumentOutOfRangeException(nameof(MaxStaticStructureBytes), value,
+                    "Static structure limit must be at least 1 byte.");
+            _maxStaticStructureBytes = value;
+        }
+    }
+
+    internal long EffectiveMaxStaticStructureBytes
+        => Math.Min(_maxStaticStructureBytes ?? MaxSupportedStaticStructureBytes, MaxSupportedStaticStructureBytes);
 
     /// <summary>
     /// Maximum UTF-16 code units in one source text, or <c>null</c> to use

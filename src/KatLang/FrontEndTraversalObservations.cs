@@ -38,6 +38,52 @@ namespace KatLang;
 /// </summary>
 internal sealed class FrontEndTraversalObservations
 {
+    // Diagnostic-only phase boundaries; absent on production invocations.
+    internal Action<string, bool>? StageObserver { get; set; }
+    // Diagnostic-only: keys retain the actual contextual equation, including its branch/owner identity.
+    // A repeated evaluation is work even when it returns the same answer; a read is not an evaluation.
+    internal Dictionary<StaticQueryKey, long> StaticQueryEvaluations { get; } = [];
+    internal Dictionary<StaticQueryKey, StaticFactKind> StaticQueryAnswers { get; } = [];
+    public long StaticQueryEvaluationCount { get; private set; }
+    public long StaticQueryReads { get; private set; }
+    public long StaticQueryUnknownReads { get; private set; }
+    public long StaticImportedFactReads { get; private set; }
+    public long StaticSyntaxIndexBuilds { get; private set; }
+    public long StaticSyntaxPropertyEntries { get; private set; }
+
+    internal void RecordStaticQueryRead(StaticQueryKey key, StaticFact fact)
+    {
+        StaticQueryReads++;
+        if (fact.IsUnknown) StaticQueryUnknownReads++;
+        StaticQueryAnswers[key] = fact.Kind;
+    }
+
+    internal void RecordStaticImportedFactRead() => StaticImportedFactReads++;
+
+    internal void RecordStaticSyntaxIndexBuild(int properties)
+    {
+        StaticSyntaxIndexBuilds++;
+        StaticSyntaxPropertyEntries += properties;
+    }
+
+    /// <summary>Actual Q2 target equation evaluations, including fixed-point re-evaluations; cached reads add none.</summary>
+    public long StaticOpenTargetEvaluations { get; private set; }
+    /// <summary>Distinct contextual Q2 target equations computed. Completed-publication reads add none.</summary>
+    public int StaticOpenTargetComputations => _staticOpenTargets?.Count ?? 0;
+    private HashSet<StaticQueryKey>? _staticOpenTargets;
+    public long StaticOpenIndexBuilds { get; private set; }
+    public long StaticOpenIndexMemberVisits { get; private set; }
+    internal void RecordStaticOpenIndexBuild() => StaticOpenIndexBuilds++;
+    internal void RecordStaticOpenIndexMemberVisit() => StaticOpenIndexMemberVisits++;
+    internal void RecordStaticQueryEvaluation(StaticQueryKey key)
+    {
+        StaticQueryEvaluationCount++;
+        StaticQueryEvaluations[key] = StaticQueryEvaluations.GetValueOrDefault(key) + 1;
+        if (key.Kind != StaticQueryKind.OpenProviders || key.Projection != StaticQueryProjection.OpenTarget) return;
+        StaticOpenTargetEvaluations = checked(StaticOpenTargetEvaluations + 1);
+        (_staticOpenTargets ??= []).Add(key);
+    }
+
     /// <summary>Visible bindings probed while building or updating resolver region footprints.</summary>
     public long ResolverSnapshotBindingProbes { get; private set; }
 
@@ -212,6 +258,9 @@ internal sealed class FrontEndTraversalObservations
 
     internal void RecordResolverAlgorithmRegionExpansion()
         => ResolverAlgorithmRegionExpansions = checked(ResolverAlgorithmRegionExpansions + 1);
+
+    internal long CompletedStaticStructureReads { get; private set; }
+    internal void RecordCompletedStaticStructureRead() => CompletedStaticStructureReads++;
 
     /// <summary>
     /// Visible-parameter contexts the collision validator interned by their name-set CONTENT key
@@ -495,6 +544,13 @@ internal sealed class FrontEndTraversalObservations
     /// interning and operation-local expansion lookups, rather than only their compact candidate keys.
     /// </summary>
     public long SummaryKeyCharacters { get; private set; }
+    internal Action<string>? SummaryKeyObserver { get; set; }
+
+    internal void RecordSummaryKey(string key)
+    {
+        RecordSummaryKeyCharacters(key.Length);
+        SummaryKeyObserver?.Invoke(key);
+    }
 
     internal void RecordSummaryKeyCharacters(int characters)
         => SummaryKeyCharacters = checked(SummaryKeyCharacters + characters);
@@ -520,9 +576,13 @@ internal sealed class FrontEndTraversalObservations
     /// top-level settlement that <see cref="RequiredAncestorResolutionComputations"/> does not see.
     /// </summary>
     public long RequiredAncestorSettlementFrames { get; private set; }
+    internal Action<object>? RequiredAncestorSettlementObserver { get; set; }
 
-    internal void RecordRequiredAncestorSettlementFrame()
-        => RequiredAncestorSettlementFrames = checked(RequiredAncestorSettlementFrames + 1);
+    internal void RecordRequiredAncestorSettlementFrame(object subject)
+    {
+        RequiredAncestorSettlementFrames = checked(RequiredAncestorSettlementFrames + 1);
+        RequiredAncestorSettlementObserver?.Invoke(subject);
+    }
 
     /// <summary>Summary-seed expansions (<c>PropertyDependencyGraphBuilder.CollectSummarySeed</c>, expression level).</summary>
     public long DependencySeedExpansions { get; private set; }
@@ -800,16 +860,6 @@ internal sealed class FrontEndTraversalObservations
 
     internal void RecordLookupNameIndexBuild()
         => LookupNameIndexBuilds = checked(LookupNameIndexBuilds + 1);
-
-    /// <summary>
-    /// Open-target resolutions performed for opened-name matching (one per written
-    /// open target examined for providers; dotted targets resolve through their own
-    /// nested steps without extra counts here).
-    /// </summary>
-    public long LookupOpenTargetResolutions { get; private set; }
-
-    internal void RecordLookupOpenTargetResolution()
-        => LookupOpenTargetResolutions = checked(LookupOpenTargetResolutions + 1);
 
     /// <summary>Public-member index constructions: one per exact target in an operation's shared cache;
     /// providers without an operation cache build their own index.</summary>

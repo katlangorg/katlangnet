@@ -259,8 +259,10 @@ public class RepeatedNameConstraintTests
         // Formerly `ok 0` and `ok 2`: the binding itself succeeded.
         { "callable-body-ignores-x", Inc + "P(x, x) = 0\nP(Inc, 1)", IncValueDemand(Call("P")) },
         { "value-then-callable-invoked", Inc + "P(x, x) = x(1)\nP(1, Inc)", IncValueDemand(Call("P")) },
-        // Formerly the "algorithm-only arguments" type mismatch, which named no argument.
-        { "callable-twice", Inc + "P(x, x) = 0\nP(Inc, Inc)", IncValueDemand(Call("P")) },
+        // NEED-04 (group-aware, ALIAS-UNIFY-1): two references to ONE callable match by identity and
+        // no value is demanded (formerly Inc's own value demand, and before that the
+        // "algorithm-only arguments" type mismatch).
+        { "callable-twice", Inc + "P(x, x) = 0\nP(Inc, Inc)", "ok 0" },
 
         // 4. A failed value beside a successful one: the failure propagates, in evaluation order,
         // after exactly ONE evaluation of the failed argument. Formerly `ok 7`.
@@ -270,10 +272,14 @@ public class RepeatedNameConstraintTests
         { "failed-block-then-value", "Q(x, x) = x\nQ({trace(1) / 0}, 7)", DivisionByZero(Call("Q")) + BadTraced },
         { "value-then-failed-block", "Q(x, x) = x\nQ(7, {trace(1) / 0})", DivisionByZero(Call("Q")) + BadTraced },
 
-        // 5. The first failed inspecting demand stops traversal; later cells stay suspended.
-        { "two-failures", Bad + "Missing = [trace(2)][5]\nQ(x, x) = x\nQ(Bad, Missing)", DivisionByZero(Call("Q")) + " [trace(1)]" },
-        { "two-failures-reversed", Bad + "Missing = [trace(2)][5]\nQ(x, x) = x\nQ(Missing, Bad)", $"err BadIndex: {Call("Q")}Bad index [trace(2)]" },
-        { "same-failure-twice", Bad + "Q(x, x) = 0\nQ(Bad, Bad)", DivisionByZero(Call("Q")) + " [trace(1)]" },
+        // 5. Two REFERENCES are compared by identity before any value (NEED-04, group-aware): two
+        // different properties are the identity mismatch and neither body runs; one property twice
+        // matches without its value (formerly the first failed demand, and Bad's failure).
+        { "two-failures", Bad + "Missing = [trace(2)][5]\nQ(x, x) = x\nQ(Bad, Missing)", Identity(Call("Q")) },
+        { "two-failures-reversed", Bad + "Missing = [trace(2)][5]\nQ(x, x) = x\nQ(Missing, Bad)", Identity(Call("Q")) },
+        { "same-failure-twice", Bad + "Q(x, x) = 0\nQ(Bad, Bad)", "ok 0" },
+        // …and the body's own read then demands the matched reference.
+        { "same-failure-twice-read", Bad + "Q(x, x) = x\nQ(Bad, Bad)", DivisionByZero(Call("Q")) + BadTraced },
 
         // 6. Arguments that each carry BOTH channels: equal values and one callable identity bind
         // (and invoke that callable); equal values with two identities reject. One algorithm
@@ -321,9 +327,10 @@ public class RepeatedNameConstraintTests
         { "collector-callable", Inc + "C(x, *r, x) = x\nC(Inc, 9, 1)", IncValueDemand(Call("C")) },
         { "collector-failed", Bad + "C(x, *r, x) = x\nC(1, 9, Bad)", DivisionByZero(Call("C")) + BadTraced },
 
-        // 11. Three occurrences: every one needs its own value, wherever the callable stands.
-        { "three-callable-last", "A = 5\n" + Inc + "T(x, x, x) = x\nT(A, 5, Inc)", IncValueDemand(Call("T")) },
-        { "three-callable-first", "A = 5\n" + Inc + "T(x, x, x) = x\nT(Inc, A, 5)", IncValueDemand(Call("T")) },
+        // 11. Three occurrences: two different callables conflict by identity wherever they stand,
+        // before Inc's value is ever demanded (formerly Inc's own value demand).
+        { "three-callable-last", "A = 5\n" + Inc + "T(x, x, x) = x\nT(A, 5, Inc)", Identity(Call("T")) },
+        { "three-callable-first", "A = 5\n" + Inc + "T(x, x, x) = x\nT(Inc, A, 5)", Identity(Call("T")) },
         { "three-compatible", "A = 5\nT(x, x, x) = x\nT(5, A, A)", "ok 5" },
 
         // 12. Inspection settles immediately in written order; an earlier conflict stops later demands.
@@ -476,16 +483,18 @@ public class RepeatedNameConstraintTests
     }
 
     /// <summary>
-    /// THE LAW as a metamorphic relation. For every ordered pair (a, b), every read R of the
-    /// repeated name, and three spellings (the direct call, the dot-call, and forwarding through
-    /// a flat helper), <c>P(a, b)</c> with <c>P(f, f) = R</c>:
+    /// THE LAW as a metamorphic relation (NEED-04, group-aware, ALIAS-UNIFY-1). For every ordered
+    /// pair (a, b), every read R of the repeated name, and three spellings (the direct call, the
+    /// dot-call, and forwarding through a flat helper), <c>P(a, b)</c> with <c>P(f, f) = R</c>:
     /// <list type="bullet">
-    /// <item>fails with a's own value failure when a supplies no value, else with b's;</item>
-    /// <item>else fails with the ordinary unequal-values error when their values differ;</item>
-    /// <item>else fails with the callable-identity error when both carry DIFFERENT callables;</item>
-    /// <item>else reads exactly what ONE individual argument supplies — <c>S(x)</c> with
-    /// <c>S(f) = R</c>, for the argument x that carries an algorithm channel (either, when both
-    /// carry the same one; a, when neither does).</item>
+    /// <item>two REFERENCES: the callable-identity error when they are DIFFERENT callables (a
+    /// written block is a fresh one at every occurrence), else they match by identity WITHOUT any
+    /// value demand and the binding is a's;</item>
+    /// <item>a reference beside a value: the reference's OWN value is demanded — its failure is the
+    /// binding's — and must equal the value, the reference being the binding;</item>
+    /// <item>two values: the ordinary unequal-values error when they differ, else a's binding;</item>
+    /// <item>a successful binding reads exactly what ONE individual argument supplies — <c>S(x)</c>
+    /// with <c>S(f) = R</c> for the bound argument x.</item>
     /// </list>
     /// So a successful binding is always one some argument supplied: never one argument's value
     /// with another's algorithm, and never a failure repaired by another occurrence.
@@ -496,20 +505,21 @@ public class RepeatedNameConstraintTests
     {
         var valueOfA = await ValueFailureOf(a);
         var valueOfB = await ValueFailureOf(b);
+        async Task<bool> EqualValues() =>
+            (await OnEveryRouteAsync($"{Vocabulary}Eq(x, y) = x == y\nEq({a}, {b})")).Outcome == "ok true";
         foreach (var read in Reads)
         {
+            async Task<string> ReadOf(string argument) => Innermost((await OnEveryRouteAsync(
+                $"{Vocabulary}S(f) = {read}\nS({argument})")).Outcome);
             string expected;
-            if (valueOfA is not null)
-                expected = valueOfA;
-            else if (valueOfB is not null)
-                expected = valueOfB;
-            else if ((await OnEveryRouteAsync($"{Vocabulary}Eq(x, y) = x == y\nEq({a}, {b})")).Outcome != "ok true")
-                expected = Unequal("f");
-            else if (CarriesCallable(a) && CarriesCallable(b) && !(a == b && a != "{5}"))
-                expected = Identity();
+            if (CarriesCallable(a) && CarriesCallable(b))
+                expected = a == b && a != "{5}" ? await ReadOf(a) : Identity();
+            else if (CarriesCallable(a))
+                expected = valueOfA ?? (await EqualValues() ? await ReadOf(a) : Unequal("f"));
+            else if (CarriesCallable(b))
+                expected = valueOfB ?? (await EqualValues() ? await ReadOf(b) : Unequal("f"));
             else
-                expected = Innermost((await OnEveryRouteAsync(
-                    $"{Vocabulary}S(f) = {read}\nS({(CarriesCallable(a) || !CarriesCallable(b) ? a : b)})")).Outcome);
+                expected = await EqualValues() ? await ReadOf(a) : Unequal("f");
 
             var spellings = new[]
             {

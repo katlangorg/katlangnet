@@ -1286,24 +1286,23 @@ def repeatedNameConstraintsRunLeftToRight : Bool :=
   -- ...and P(f, f, x, x) with P(A, B, 1, 2) reports the unequal x first.
   (match precedenceRun ffxx (.num 0) (callP [.resolve "A", .resolve "B", .num 1, .num 2]) with
    | .error err => innermostIsTypeMismatch "Repeated bind equality requires the same callable identity" err | _ => false) &&
-  -- A repeated name's VALUELESS contribution is not a verdict but a binding failure
-  -- (Q-05): `Inc` passed bare fails with its own arity rejection when its pattern binds,
-  -- before any merge, wherever the unequal x stands.
+  -- Two references to ONE callable match by identity without any VALUE demand (NEED-04,
+  -- group-aware): `Inc` twice binds f, so the unequal x is the failure in either position.
   (match precedenceRun xxff (.num 0) (callP [.num 1, .num 2, .resolve "Inc", .resolve "Inc"]) with
    | .error err => innermostIsBadArity err | _ => false) &&
   (match precedenceRun ffxx (.num 0) (callP [.resolve "Inc", .resolve "Inc", .num 1, .num 2]) with
-   | .error err => innermostIsArityMismatch 1 0 err | _ => false)
+   | .error err => innermostIsBadArity err | _ => false)
 
 #guard repeatedNameConstraintsRunLeftToRight
 
--- Model-C repeated-name compatibility constrains every pair; NEED-04 inspects and
--- compares each occurrence immediately in written order. Satisfiability is invariant,
--- while the first violated contract determines the reported failure (owner follow-up,
--- 2026-10-07). Every contribution supplies its OWN value (Q-05); no failure is repaired.
--- For P(f, f, f) = f, (Inc, 5, A) fails in every permutation with Inc's value-demand
--- rejection, and (A, A, 5) succeeds in every permutation. (A, B, 5) has unequal values
--- and fails with badArity; Inc beside unequal values may instead be reached first and
--- report its own failure. Distinct available callable identities also conflict.
+-- Model-C repeated-name compatibility constrains the whole group; NEED-04 (group-aware,
+-- ALIAS-UNIFY-1) projects every occurrence's CALLABLE first, compares identities with the
+-- first one, and checks every occurrence's OWN value against the first value-only one.
+-- Satisfiability is invariant, while the first violated contract determines the reported
+-- failure (owner follow-up, 2026-10-07): for P(f, f, f) = f, (Inc, 5, A) fails in every
+-- permutation — with Inc's value-demand rejection where the anchor meets Inc before A, and
+-- with the identity mismatch where Inc and A meet first — and (A, A, 5) succeeds in every
+-- permutation. No failure is repaired; distinct callable identities always conflict.
 def repeatedRun (patterns : List KatLang.ParameterPattern) (output : KatLang.Expr) (args : List KatLang.Expr)
     : Except Error Result :=
   runResult (.algorithmExpr (algPrivate [] [] [
@@ -1326,35 +1325,53 @@ def isCallableOnlyContribution (result : Except Error Result) : Bool :=
   | .error err => innermostIsArityMismatch 1 0 err
   | _ => false
 
+/-- The identity mismatch of two different callables in one repeated name. -/
+def isIdentityConflict (result : Except Error Result) : Bool :=
+  match result with
+  | .error err => innermostIsTypeMismatch "Repeated bind equality requires the same callable identity" err
+  | _ => false
+
+/-- The value disagreement of a repeated name. -/
+def isValueConflict (result : Except Error Result) : Bool :=
+  match result with
+  | .error err => innermostIsBadArity err
+  | _ => false
+
 def repeatedNameCompatibilityAndFirstFailure : Bool :=
   let three (args : List KatLang.Expr) := repeatedRun repeatedThreeCaptures (.param "f") args
-  -- (Inc, 5, A): Inc supplies no value, in every permutation.
-  (repeatedPermutations (.resolve "Inc") (.num 5) (.resolve "A")).all (fun args => isCallableOnlyContribution (three args)) &&
-  -- (A, A, 5): every pair is compatible in every permutation.
-  (repeatedPermutations (.resolve "A") (.resolve "A") (.num 5)).all (fun args =>
+  let inc : KatLang.Expr := .resolve "Inc"
+  let a : KatLang.Expr := .resolve "A"
+  let b : KatLang.Expr := .resolve "B"
+  let five : KatLang.Expr := .num 5
+  -- (Inc, 5, A): every permutation fails. Where the value anchor meets Inc before A, Inc's own
+  -- VALUE is demanded (its arity rejection); wherever Inc and A meet first, their identities
+  -- conflict before any VALUE.
+  isCallableOnlyContribution (three [inc, five, a]) && isIdentityConflict (three [inc, a, five]) &&
+  isCallableOnlyContribution (three [five, inc, a]) && isIdentityConflict (three [five, a, inc]) &&
+  isIdentityConflict (three [a, inc, five]) && isIdentityConflict (three [a, five, inc]) &&
+  -- (A, A, 5): the group is compatible in every permutation.
+  (repeatedPermutations a a five).all (fun args =>
     match three args with | .ok (.atom 5) => true | _ => false) &&
-  -- (A, B, 5): unequal values in every permutation.
-  (repeatedPermutations (.resolve "A") (.resolve "B") (.num 5)).all (fun args =>
-    match three args with | .error err => innermostIsBadArity err | _ => false) &&
-  -- (A, B, Inc): unequal values AND a valueless Inc. Every permutation fails;
-  -- written inspection order decides which failure is reached first.
-  (repeatedPermutations (.resolve "A") (.resolve "B") (.resolve "Inc")).all (fun args =>
-    match args with
-    | [first, second, _] =>
-      if (match first with | .resolve "Inc" => true | _ => false) || (match second with | .resolve "Inc" => true | _ => false) then isCallableOnlyContribution (three args)
-      else match three args with | .error err => innermostIsBadArity err | _ => false
-    | _ => false) &&
+  -- (A, B, 5) with A = 5 and B = 6: every permutation fails — by identity where A and B meet
+  -- (before B's value is checked), by value where B meets the anchor 5 first.
+  isIdentityConflict (three [a, b, five]) && isIdentityConflict (three [a, five, b]) &&
+  isIdentityConflict (three [b, a, five]) && isValueConflict (three [b, five, a]) &&
+  isIdentityConflict (three [five, a, b]) && isValueConflict (three [five, b, a]) &&
+  -- (A, B, Inc): three different identities — the identity mismatch in every permutation.
+  (repeatedPermutations a b inc).all (fun args => isIdentityConflict (three args)) &&
   -- Four occurrences: (A, 5, 5, Inc) fails wherever Inc stands.
-  ([[.resolve "Inc", .resolve "A", .num 5, .num 5], [.resolve "A", .num 5, .num 5, .resolve "Inc"],
-    [.num 5, .resolve "Inc", .num 5, .resolve "A"], [.resolve "A", .resolve "Inc", .num 5, .num 5]].all (fun args =>
-      isCallableOnlyContribution (repeatedRun [precedenceCap "f", precedenceCap "f", precedenceCap "f", precedenceCap "f"]
-        (.param "f") args))) &&
-  -- Across a collector: P(f, *r, f, f) with (Inc, 5, A) around the collected 9.
-  ((repeatedPermutations (.resolve "Inc") (.num 5) (.resolve "A")).all (fun args =>
-    match args with
-    | [a, b, c] => isCallableOnlyContribution (repeatedRun
-        [precedenceCap "f", precedenceColl "r", precedenceCap "f", precedenceCap "f"] (.param "f") [a, .num 9, b, c])
-    | _ => false))
+  (let four (args : List KatLang.Expr) :=
+    repeatedRun [precedenceCap "f", precedenceCap "f", precedenceCap "f", precedenceCap "f"] (.param "f") args
+   isIdentityConflict (four [inc, a, five, five]) && isIdentityConflict (four [a, five, five, inc]) &&
+   isCallableOnlyContribution (four [five, inc, five, a]) && isIdentityConflict (four [a, inc, five, five])) &&
+  -- Across a collector: P(f, *r, f, f) with (Inc, 5, A) around the collected 9 — the same
+  -- verdicts as without it (the collector's cell is never inspected).
+  (let across (x y z : KatLang.Expr) :=
+    repeatedRun [precedenceCap "f", precedenceColl "r", precedenceCap "f", precedenceCap "f"] (.param "f")
+      [x, .num 9, y, z]
+   isCallableOnlyContribution (across inc five a) && isIdentityConflict (across inc a five) &&
+   isCallableOnlyContribution (across five inc a) && isIdentityConflict (across five a inc) &&
+   isIdentityConflict (across a inc five) && isIdentityConflict (across a five inc))
 
 #guard repeatedNameCompatibilityAndFirstFailure
 
@@ -1377,13 +1394,13 @@ def repeatedNameConflictStopsAtFirstIncompatibleContribution : Bool :=
 
 #guard repeatedNameConflictStopsAtFirstIncompatibleContribution
 
--- The two-occurrence cases: (A, A) and (A, 5) bind; Inc beside A or beside a plain value
--- is Inc's own failure in both orders — (5, Inc) formerly bound the value 5 with Inc's
--- algorithm, a binding neither argument supplied (Q-05).
+-- The two-occurrence cases: (A, A) and (A, 5) bind; Inc beside A is the identity mismatch in
+-- both orders, and Inc beside a plain value is Inc's own value failure in both orders — (5, Inc)
+-- formerly bound the value 5 with Inc's algorithm, a binding neither argument supplied (Q-05).
 def twoOccurrenceRepeatsKeepThePairwiseRule : Bool :=
   let two (args : List KatLang.Expr) := repeatedRun [precedenceCap "f", precedenceCap "f"] (.param "f") args
-  isCallableOnlyContribution (two [.resolve "Inc", .resolve "A"]) &&
-  isCallableOnlyContribution (two [.resolve "A", .resolve "Inc"]) &&
+  isIdentityConflict (two [.resolve "Inc", .resolve "A"]) &&
+  isIdentityConflict (two [.resolve "A", .resolve "Inc"]) &&
   (match two [.resolve "A", .resolve "A"] with | .ok (.atom 5) => true | _ => false) &&
   (match two [.resolve "A", .num 5] with | .ok (.atom 5) => true | _ => false) &&
   (match two [.num 5, .resolve "A"] with | .ok (.atom 5) => true | _ => false) &&
@@ -1521,11 +1538,11 @@ def repeatedPatternProducesOneBinding : Bool :=
 
 #guard repeatedPatternProducesOneBinding
 
--- A repeated name compares VALUES (Q-05): two callable-only arguments supply none, so the
--- first one's own value demand — `Inc`'s arity rejection — fails the binding (formerly the
--- "algorithm-only arguments" type mismatch, which reported a pattern error instead of the
--- argument's own failure).
-def repeatedCallableOnlyArgumentsFailWithTheirOwnDemand : Bool :=
+-- Two references to ONE callable match by identity alone (NEED-04, group-aware, ALIAS-UNIFY-1):
+-- `ApplySame(Inc, Inc)` binds f to Inc without demanding its value, and the body's `f(1)` is 2.
+-- (Until October 2026 the binder demanded each occurrence's VALUE first, so this was Inc's own
+-- arity rejection.)
+def repeatedCallableOnlyArgumentsMatchByIdentity : Bool :=
   let applySame := Algorithm.elaborateClauseGroup [{
     pattern := KatLang.Pattern.sequenceValue [
       KatLang.Pattern.bind "f",
@@ -1541,10 +1558,10 @@ def repeatedCallableOnlyArgumentsFailWithTheirOwnDemand : Bool :=
   ] [
     .call (resolve "ApplySame") [resolve "Inc", resolve "Inc"]
   ])) with
-  | Except.error err => innermostIsArityMismatch 1 0 err
+  | Except.ok (.atom 2) => true
   | _ => false
 
-#guard repeatedCallableOnlyArgumentsFailWithTheirOwnDemand
+#guard repeatedCallableOnlyArgumentsMatchByIdentity
 
 def repeatedConditionalFallbackAlg : Algorithm :=
   Algorithm.elaborateClauseGroup [
@@ -2239,7 +2256,7 @@ def pcnBranchOnlyMemberOfParameterReceiver : Expr :=
 
 /-- `G(x) = { public Sub = { public Q = 1 ⏎ x } ⏎ 0 }` / `Get(obj) = obj.Sub` / `Get(G)` -/
 def pcnLocalOnlyMemberOfParameterReceiver : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "G" (alg ["x"] [] [{ (publicLocalProp "Sub" (.localCapturedAncestorParams ["x"]) (.alias none [] [publicProp "Q" (alg [] [] [] [.num 1])] (.param "x"))) with requiredOwnerDepths := some [("x", some 0)] }] [.num 0]), privateProp "Get" (alg ["obj"] [] [] [(.dotCall (.param "obj") "Sub" none)])] [(.call (.resolve "Get") [.resolve "G"])])
+  .algorithmExpr (alg [] [] [privateProp "G" (alg ["x"] [] [{ (publicLocalProp "Sub" (.localCapturedAncestorParams ["x"]) (.alias none [] [publicProp "Q" (alg [] [] [] [.num 1])] (.param "x") none false)) with requiredOwnerDepths := some [("x", some 0)] }] [.num 0]), privateProp "Get" (alg ["obj"] [] [] [(.dotCall (.param "obj") "Sub" none)])] [(.call (.resolve "Get") [.resolve "G"])])
 #guard pcnObserve pcnLocalOnlyMemberOfParameterReceiver == "call Get > dotCall .Sub of obj > localOnlyProperty obj Sub captured [x]"
 
 /-- `C(0) = { public Q = 1 ⏎ 0 }` / `C(1) = 2` / `Apply(g) = g(1)` / `Get(obj) = Apply(obj.Q)` / `Get(C)` -/
@@ -2256,6 +2273,33 @@ def pcnMemberReadThroughParameterReceiver : Expr :=
 def pcnDotFallbackThroughParameter : Expr :=
   .algorithmExpr (alg [] [] [privateProp "F" (.conditional none [] [⟨.litInt 0, (alg [] [] [] [.num 1])⟩, ⟨.litInt 1, (alg [] [] [] [.num 2])⟩]), privateProp "Apply" (alg ["f", "x"] [] [] [(.dotMember (.param "x") "f" (.param "f") none)])] [(.call (.resolve "Apply") [.resolve "F", .num 5])])
 #guard pcnObserve pcnDotFallbackThroughParameter == "call Apply > dotCall .f of x > noMatchingBranch f"
+
+/-- `G(x) = { public Sub = { public Q = 1 ⏎ x } ⏎ 0 }` / `A = G.Sub` / `P = { open A ⏎ Q }` / `P` — OD-C: the
+    open navigates A's target path, and the inaccessible Sub names its receiver `G`, as `open G.Sub` does. -/
+def pcnOpenReferenceLocalOnlyMember : Expr :=
+  .algorithmExpr (alg [] [] [{ (privateLocalProp "A" (.localCapturedAncestorParams ["x"]) (.alias none [] [] ((.dotCall (.resolve "G") "Sub" none)))) with requiredOwnerDepths := some [("x", none)] }, privateProp "P" (.alias none [.resolve "A"] [] (.resolve "Q") none false), privateProp "G" (alg ["x"] [] [{ (publicLocalProp "Sub" (.localCapturedAncestorParams ["x"]) (.alias none [] [publicProp "Q" (alg [] [] [] [.num 1])] (.param "x") none false)) with requiredOwnerDepths := some [("x", some 0)] }] [.num 0])] [.resolve "P"])
+#guard pcnObserve pcnOpenReferenceLocalOnlyMember == "while resolving open: A > localOnlyProperty G Sub captured [x]"
+
+/-- `G(x) = { public Sub = { public Q = 1 ⏎ x + 0 } ⏎ 0 }` / `A = G.Sub` / `P = { open A ⏎ Q }` / `P` -/
+def pcnOpenStaticReferenceLocalOnlyMember : Expr :=
+  .algorithmExpr (alg [] [] [{ (privateLocalProp "A" (.localCapturedAncestorParams ["x"]) (.alias none [] [] ((.dotCall (.resolve "G") "Sub" none)))) with requiredOwnerDepths := some [("x", none)] }, privateProp "P" (.alias none [.resolve "A"] [] (.resolve "Q") none false), privateProp "G" (alg ["x"] [] [{ (publicLocalProp "Sub" (.localCapturedAncestorParams ["x"]) (alg [] [] [publicProp "Q" (alg [] [] [] [.num 1])] [(.binary .add (.param "x") (.num 0))])) with requiredOwnerDepths := some [("x", some 0)] }] [.num 0])] [.resolve "P"])
+#guard pcnObserve pcnOpenStaticReferenceLocalOnlyMember == "while resolving open: A > localOnlyProperty G Sub captured [x]"
+
+/-- `G(x) = { public Sub = { public Q = 1 ⏎ x + 0 } ⏎ 0 }` / `P = { open G.Sub ⏎ Q }` / `P` -/
+def pcnOpenDirectLocalOnlyMember : Expr :=
+  .algorithmExpr (alg [] [] [{ (privateLocalProp "P" (.localCapturedAncestorParams ["x"]) (.alias none [(.dotCall (.resolve "G") "Sub" none)] [] (.resolve "Q") none false)) with requiredOwnerDepths := some [("x", none)] }, privateProp "G" (alg ["x"] [] [{ (publicLocalProp "Sub" (.localCapturedAncestorParams ["x"]) (alg [] [] [publicProp "Q" (alg [] [] [] [.num 1])] [(.binary .add (.param "x") (.num 0))])) with requiredOwnerDepths := some [("x", some 0)] }] [.num 0])] [.resolve "P"])
+#guard pcnObserve pcnOpenDirectLocalOnlyMember == "while resolving open: G.Sub > localOnlyProperty G Sub captured [x]"
+
+/-- `G(x) = { public Sub = { public Inner = { public Q = 1 ⏎ x } ⏎ 0 } ⏎ 0 }` / `A = G.Sub.Inner` / `P = { open A ⏎ Q }` /
+    `P` — a later step names its receiver path so far, `G.Sub`, as `open G.Sub.Inner` does. -/
+def pcnOpenReferenceSecondStepLocalOnlyMember : Expr :=
+  .algorithmExpr (alg [] [] [{ (privateLocalProp "A" (.localCapturedAncestorParams ["x"]) (.alias none [] [] ((.dotCall (.dotCall (.resolve "G") "Sub" none) "Inner" none)))) with requiredOwnerDepths := some [("x", none)] }, privateProp "P" (.alias none [.resolve "A"] [] (.resolve "Q") none false), privateProp "G" (alg ["x"] [] [publicProp "Sub" (alg [] [] [{ (publicLocalProp "Inner" (.localCapturedAncestorParams ["x"]) (.alias none [] [publicProp "Q" (alg [] [] [] [.num 1])] (.param "x") none false)) with requiredOwnerDepths := some [("x", some 1)] }] [.num 0])] [.num 0])] [.resolve "P"])
+#guard pcnObserve pcnOpenReferenceSecondStepLocalOnlyMember == "while resolving open: A > localOnlyProperty G.Sub Inner captured [x]"
+
+/-- `G(x) = { public Sub = { public Inner = { public Q = 1 ⏎ x } ⏎ 0 } ⏎ 0 }` / `P = { open G.Sub.Inner ⏎ Q }` / `P` -/
+def pcnOpenDirectSecondStepLocalOnlyMember : Expr :=
+  .algorithmExpr (alg [] [] [{ (privateLocalProp "P" (.localCapturedAncestorParams ["x"]) (.alias none [(.dotCall (.dotCall (.resolve "G") "Sub" none) "Inner" none)] [] (.resolve "Q") none false)) with requiredOwnerDepths := some [("x", none)] }, privateProp "G" (alg ["x"] [] [publicProp "Sub" (alg [] [] [{ (publicLocalProp "Inner" (.localCapturedAncestorParams ["x"]) (.alias none [] [publicProp "Q" (alg [] [] [] [.num 1])] (.param "x") none false)) with requiredOwnerDepths := some [("x", some 1)] }] [.num 0])] [.num 0])] [.resolve "P"])
+#guard pcnObserve pcnOpenDirectSecondStepLocalOnlyMember == "while resolving open: G.Sub.Inner > localOnlyProperty G.Sub Inner captured [x]"
 
 /-- `F(0) = 1` / `Run(step) = repeat(step, 1, 5)` / `Run(F)` (the step cell keeps its written source `F`) -/
 def pcnLoopStepThroughParameter : Expr :=

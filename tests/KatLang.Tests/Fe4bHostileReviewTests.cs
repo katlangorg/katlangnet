@@ -292,14 +292,18 @@ public class Fe4bHostileReviewTests
         var source = $"U = {{ {(opens ? "open Lib" : "")}\n A = count([1])\n B = {{ D = {{ E = 2\nE }}\n D }}\n1 }}\nLib = {{ public Z = 1\n1 }}\n1";
         var parsed = SourceProvenance.ParseValid(source).Parsed;
         var span = new SourceSpan(new SourcePosition(100, 1), new SourcePosition(100, 2));
-        Algorithm.User Tie(Algorithm.User algorithm) => algorithm with
+        Property[] TieAll(IReadOnlyList<Property> properties) => properties.Select(p => p with
         {
-            Properties = algorithm.Properties.Select(p => p with
+            DeclarationSpans = p.Name is "Z" or "E" ? [span] : p.DeclarationSpans,
+            Value = p.Value switch
             {
-                DeclarationSpans = p.Name is "Z" or "E" ? [span] : p.DeclarationSpans,
-                Value = p.Value is Algorithm.User user ? Tie(user) : p.Value,
-            }).ToArray(),
-        };
+                Algorithm.User user => Tie(user),
+                // M4★: B and D are forwarding carriers, which keep their own declarations.
+                Algorithm.Alias alias => alias with { Properties = TieAll(alias.Properties) },
+                _ => p.Value,
+            },
+        }).ToArray();
+        Algorithm.User Tie(Algorithm.User algorithm) => algorithm with { Properties = TieAll(algorithm.Properties) };
         var model = SemanticModelBuilder.Build(Tie(parsed.Root));
         Assert.Equal(["Z", "E"], model.Declarations.Where(d => d.Span == span).Select(d => d.Name));
         Assert.Equal("Z", model.FindResolutionAt(span.Start)!.Occurrence.Name);

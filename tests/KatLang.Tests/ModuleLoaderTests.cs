@@ -1062,11 +1062,14 @@ public class ModuleLoaderTests
         Assert.Same(sharedBody.Declaration, family.Branches[1].Body.Declaration);
         Assert.Null(family.Branches[2].Body.DeferredRegion);
 
-        var (detected, detectorDiagnostics) = ParameterDetector.Detect(elaborated);
+        var detectedInput = ParameterDetector.Detect(elaborated);
+        var (detected, detectorDiagnostics) = detectedInput;
         Assert.Empty(detectorDiagnostics);
-        var resolved = ImplicitArgumentResolver.Resolve(detected);
+        var resolved = ImplicitArgumentResolver.Resolve(detectedInput);
         new ParameterPropertyCollisionValidator(diagnostics).VisitAlgorithm(resolved);
-        var exposed = PropertyExposureResolver.Resolve(resolved);
+        var exposed = PropertyExposureResolver.Resolve(resolved, observations: null, modules: detectedInput.Modules);
+        Assert.Empty(diagnostics);
+        detectedInput.Modules.Publish(detectedInput.Operation!.Freeze());
         family = Assert.IsType<Algorithm.Conditional>(Assert.Single(exposed.Properties).Value);
         var region0 = family.Branches[0].Body.DeferredRegion;
         var region1 = family.Branches[1].Body.DeferredRegion;

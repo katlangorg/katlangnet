@@ -66,12 +66,15 @@ public class OpenMemberIndexHostileReviewTests
         var y = Owner([Member("y", 4)]);
         var direct = Member("x", 5);
         var cache = new OpenMemberIndexCache();
+        // These are complete host namespaces containing literal members, not raw source
+        // whose free names should infer parameters. Admit their supplied Resolved graph.
         ElaboratedPropertyScope Scope(Algorithm a, Algorithm b, ElaboratedPropertyScope? parent = null)
-            => new(parent, [new Expr.AlgorithmExpr(a), new Expr.AlgorithmExpr(b)], [], memberIndexes: cache);
+            => ElaboratedScopeLookup.CreateScope(Owner([]) with { Opens = [new Expr.AlgorithmExpr(a), new Expr.AlgorithmExpr(b)] },
+                parent, memberIndexes: cache, sourcePhase: StaticAstPhase.Resolved);
         var a = Scope(lib, x);
         var b = Scope(lib, y);
         var reversed = Scope(y, lib);
-        var outer = ElaboratedScopeLookup.CreateScope(Owner([direct]), memberIndexes: cache);
+        var outer = ElaboratedScopeLookup.CreateScope(Owner([direct]), memberIndexes: cache, sourcePhase: StaticAstPhase.Resolved);
         var shadowed = Scope(lib, x, outer);
         Assert.Equal(new[] { lib.Properties[0], x.Properties[0] }, ElaboratedScopeLookup.LookupOpenPropertyMatches(a, "x").Select(hit => hit.Property));
         Assert.Same(lib.Properties[0], Assert.Single(ElaboratedScopeLookup.LookupOpenPropertyMatches(b, "x")).Property);
@@ -96,10 +99,10 @@ public class OpenMemberIndexHostileReviewTests
         var lib = Owner([Member("x", 1)]);
         var cache = new OpenMemberIndexCache();
         var parent = ElaboratedScopeLookup.CreateScope(Owner([
-            new Property("A", lib), new Property("B", lib)]), memberIndexes: cache);
+            new Property("A", lib), new Property("B", lib)]), memberIndexes: cache, sourcePhase: StaticAstPhase.Resolved);
         Expr[] opens = namedAliases ? [new Expr.Resolve("A"), new Expr.Resolve("B")]
             : [new Expr.AlgorithmExpr(lib), new Expr.AlgorithmExpr(lib)];
-        var scope = new ElaboratedPropertyScope(parent, opens, []);
+        var scope = ElaboratedScopeLookup.CreateScope(Owner([]) with { Opens = opens }, parent, memberIndexes: cache);
         var hit = Assert.Single(ElaboratedScopeLookup.LookupOpenPropertyMatches(scope, "x"));
         Assert.Same(lib, hit.Owner);
         Assert.Equal(1, cache.Count);
@@ -201,12 +204,14 @@ public class OpenMemberIndexHostileReviewTests
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
-    private static (ParseResult Parse, SemanticModel Model, WeakReference Cache, WeakReference Index) FinishedModelBuild()
+    private static (ParseResult Parse, SemanticModel Model, WeakReference Cache, WeakReference Index) FinishedModelBuild(bool completed)
     {
-        var parsed = SourceProvenance.ParseValid(Siblings(24)).Parsed;
+        var parsed = completed ? FrontEndPipeline.Process(Siblings(24)).ToParseResult(null)
+            : SourceProvenance.ParseValid(Siblings(24)).Parsed;
+        Assert.False(parsed.HasErrors, string.Join("\n", parsed.Diagnostics.Select(d => d.Message)));
         var type = typeof(SemanticModelBuilder).GetNestedType("Builder", BindingFlags.NonPublic)!;
         var builder = Activator.CreateInstance(type, BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance,
-            binder: null, args: [null, null, null], culture: null)!;
+            binder: null, args: [null, null, null, parsed.Root.CompletedStructure?.Facts], culture: null)!;
         var model = (SemanticModel)type.GetMethod("Build", [typeof(Algorithm)])!.Invoke(builder, [parsed.Root])!;
         var cache = (OpenMemberIndexCache)type.GetField("_openMemberIndexes", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(builder)!;
         Assert.Equal(1, cache.Count);
@@ -215,10 +220,12 @@ public class OpenMemberIndexHostileReviewTests
         return (parsed, model, new WeakReference(cache), new WeakReference(index));
     }
 
-    [Fact]
-    public void LiveParseAndModel_DoNotKeepBuildCacheAlive()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void LiveParseAndModel_DoNotKeepBuildCacheAlive(bool completed)
     {
-        var finished = FinishedModelBuild();
+        var finished = FinishedModelBuild(completed);
         GC.Collect();
         GC.WaitForPendingFinalizers();
         GC.Collect();

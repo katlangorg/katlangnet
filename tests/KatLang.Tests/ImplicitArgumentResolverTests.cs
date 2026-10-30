@@ -374,7 +374,7 @@ public class ImplicitArgumentResolverTests
     }
 
     [Fact]
-    public void Resolve_BareBuiltinCallableAlias_DoesNotResolveThroughArbitraryOwnerExpression()
+    public void Resolve_MemberPathThroughAReferenceToMath_IsAReferenceToTheMember()
     {
         var source = """
             GetMath = Math
@@ -382,18 +382,18 @@ public class ImplicitArgumentResolverTests
             """;
         var root = Resolve(source);
 
-        var roundB = root.Properties.Single(p => p.Name == "RoundB").Value;
-
-        // GetMath is an ordinary value property with no members, not a namespace alias, so the edge cannot
-        // resolve `Round` through Math's native signature: it is an ordinary
-        // dot edge whose lexical fallback is the only possible resolution, and
-        // its callable becomes the property's own inferred parameter.
-        Assert.Equal(["Round"], roundB.Params);
-
-        var dotCall = Assert.IsType<Expr.DotCall>(Assert.Single(roundB.Output));
+        // M4★: `GetMath = Math` is a transparent REFERENCE to the prelude Math namespace, so `GetMath.Round`
+        // is a genuine structural member path and RoundB is a reference to Math's own Round — never an
+        // inferred parameter `Round` (formerly GetMath was an ordinary value property without members and
+        // the edge's lexical fallback became RoundB's parameter).
+        Assert.True(Assert.IsType<Algorithm.Alias>(root.Properties.Single(p => p.Name == "GetMath").Value).IsReference);
+        var roundB = Assert.IsType<Algorithm.Alias>(root.Properties.Single(p => p.Name == "RoundB").Value);
+        Assert.True(roundB.IsReference);
+        Assert.Empty(roundB.Properties);
+        var dotCall = Assert.IsType<Expr.DotCall>(roundB.Target);
         Assert.Null(dotCall.Args);
         Assert.Equal("Round", dotCall.Name);
-        Assert.Equal("Round", Assert.IsType<Expr.Param>(dotCall.EffectiveLexicalFallback).Name);
+        AssertEval(source + "\nRoundB(2.4, 0)", 2);
     }
 
     // â”€â”€ End-to-end evaluation tests â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
@@ -1465,9 +1465,10 @@ public class ImplicitArgumentResolverTests
                 .ToList(),
         };
 
-        var (detected, detectorDiagnostics) = ParameterDetector.DetectPrevalidated(root);
+        var detectedInput = ParameterDetector.DetectPrevalidated(root);
+        var (detected, detectorDiagnostics) = detectedInput;
         Assert.Empty(detectorDiagnostics);
-        var resolved = ImplicitArgumentResolver.ResolvePrevalidated(detected);
+        var resolved = ImplicitArgumentResolver.ResolvePrevalidated(detectedInput);
 
         var resolvedUse = resolved.Properties.Single(p => p.Name == "Use").Value;
         var valueRow = resolvedUse.Output[0];
@@ -1511,9 +1512,10 @@ public class ImplicitArgumentResolverTests
                 .ToList(),
         };
 
-        var (detected, detectorDiagnostics) = ParameterDetector.DetectPrevalidated(root);
+        var detectedInput = ParameterDetector.DetectPrevalidated(root);
+        var (detected, detectorDiagnostics) = detectedInput;
         Assert.Empty(detectorDiagnostics);
-        var resolved = ImplicitArgumentResolver.ResolvePrevalidated(detected);
+        var resolved = ImplicitArgumentResolver.ResolvePrevalidated(detectedInput);
 
         var fixedCall = Assert.IsType<Expr.Call>(MathArgument(PropertyOutputRow(resolved, "FixedCaller")));
         Assert.Equal(2, fixedCall.Args.Count);
@@ -1645,7 +1647,7 @@ public class ImplicitArgumentResolverTests
                 .ToList(),
         };
 
-        var resolved = ImplicitArgumentResolver.ResolvePrevalidated(root);
+        var resolved = ImplicitArgumentResolver.ResolveNameResolvedPrevalidated(root);
         var use = resolved.Properties.Single(property => property.Name == "Use").Value;
         var canonicalArgument = MathArgument(use.Output[0]);
         var aliasArgument = Assert.Single(Assert.IsType<Expr.Call>(use.Output[1]).Args);

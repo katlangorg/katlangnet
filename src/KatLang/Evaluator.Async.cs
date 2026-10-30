@@ -730,27 +730,26 @@ public static partial class Evaluator
         if (binding is null)
             return EvalResult<CountedResult?>.Ok(null);
 
-        // An alias binding is read as its target, keyed by its own binding.
-        var resolvedR = NormalizeTopLevelBinding(binding, ChildOf(alg, binding.Value), ctx);
+        // An alias binding reads its VALUE terminal (OD-E, M4★): the terminal binding's own entry, or a
+        // runtime-target alias's binding cell — never an entry of its own.
+        var resolvedR = await NormalizeTopLevelBindingAsync(alg, binding, ChildOf(alg, binding.Value), ctx).ConfigureAwait(false);
         if (resolvedR.IsError)
             return resolvedR.Error;
-        var resolvedAlgorithm = resolvedR.Value;
+        var resolvedAlgorithm = resolvedR.Value.ResolvedAlgorithm;
         var span = binding.FirstDeclarationSpan;
         // A named top-level property read is an ordinary zero-argument value demand, so
         // the ONE law decides and shapes its report: a callable that cannot accept zero
         // supplied arguments is the property-context mismatch naming its true minimum
         // supply, and a clause family keeps its ordinary dispatch failure.
-        if (ZeroArgumentValueDemandRejection(ZeroArgumentDemandShape.Property, name, span, resolvedAlgorithm) is { } rejection)
+        if (resolvedAlgorithm is not Algorithm.Alias
+            && ZeroArgumentValueDemandRejection(ZeroArgumentDemandShape.Property, name, span, resolvedAlgorithm) is { } rejection)
             return rejection;
 
         var propertyR = WithPropertyContextOnMissingOutput(
-            name,
+            resolvedR.Value.Binding.Name,
             span,
             resolvedAlgorithm,
-            await EvalZeroArgPropertyAccessCountedAsync(
-                new ResolvedLexicalProperty(alg, binding, resolvedAlgorithm),
-                ctx,
-                valEnv).ConfigureAwait(false));
+            await ReadValueBindingCountedAsync(resolvedR.Value, ctx, valEnv).ConfigureAwait(false));
 
         return propertyR.IsError
             ? propertyR.Error
@@ -1006,15 +1005,16 @@ public static partial class Evaluator
         if (ctx.CallStack.Count == 0)
             return new EvalError.UnknownName(name) { Span = span };
 
-        var resolvedR = LookupLexicalForValue(ctx.CallStack[0], name, ctx);
+        var resolvedR = await LookupLexicalForValueAsync(ctx.CallStack[0], name, ctx).ConfigureAwait(false);
         if (resolvedR.IsError)
             return AtSpanIfMissing(resolvedR.Error, span);
 
-        if (ZeroArgumentValueDemandRejection(ZeroArgumentDemandShape.Property, name, span, resolvedR.Value.ResolvedAlgorithm) is { } rejection)
+        if (resolvedR.Value.ResolvedAlgorithm is not Algorithm.Alias
+            && ZeroArgumentValueDemandRejection(ZeroArgumentDemandShape.Property, name, span, resolvedR.Value.ResolvedAlgorithm) is { } rejection)
             return rejection;
 
-        var propertyR = WithPropertyContextOnMissingOutput(name, span, resolvedR.Value.ResolvedAlgorithm,
-            await EvalZeroArgPropertyAccessCountedAsync(resolvedR.Value, ctx, valEnv).ConfigureAwait(false));
+        var propertyR = WithPropertyContextOnMissingOutput(resolvedR.Value.Binding.Name, span, resolvedR.Value.ResolvedAlgorithm,
+            await ReadValueBindingCountedAsync(resolvedR.Value, ctx, valEnv).ConfigureAwait(false));
         return propertyR.IsError
             ? propertyR.Error
             : CountValue(propertyR.Value.Value);
@@ -2010,7 +2010,7 @@ public static partial class Evaluator
             return CalleeResolutionFailure(diagnosticName, ctx, calleeR.Error);
 
         // MIRROR — CACHE-PUB-1: the origin-carrying dispatch of a possibly zero-supply call.
-        if (MayFormZeroSupply(args) && IsPublishableCallee(calleeR.Value))
+        if (MayFormZeroSupply(args) && TakesOriginDispatch(calleeR.Value))
             return WithCallCtx(
                 diagnosticName,
                 ctx,
@@ -2337,7 +2337,7 @@ public static partial class Evaluator
         if (item.Cell is { } cell && item.Value is null && item.ValueError is null)
         {
             var result = await cell.DemandAsync().ConfigureAwait(false);
-            return FinishNeedCallItemDemand(item, cell, result);
+            return FinishNeedCallItemDemand(item, cell, result, ctx);
         }
 
         if (item.Value is not null
@@ -2789,7 +2789,7 @@ public static partial class Evaluator
             }
 
             // MIRROR — CACHE-PUB-1: a possibly zero-supply member call names the selected member binding.
-            if (MayFormZeroSupply(argsOpt) && IsPublishableCallee(wired))
+            if (MayFormZeroSupply(argsOpt) && TakesOriginDispatch(wired))
                 return await EvalOriginCallCountedAsync(CalleeOrigin.Bound(targetAlg!, prop), wired, argsOpt, ctx, valEnv,
                     CallDiagnosticName.FromKnown(name)).ConfigureAwait(false);
 
@@ -2853,13 +2853,14 @@ public static partial class Evaluator
     private static async ValueTask<EvalResult<Result>> EvalDotReferenceIntrinsicReceiverAsync(
         Expr.DotCall dotCall, Algorithm targetAlg, bool receiverIsStructuralMember, EvalCtx ctx, ValEnv valEnv)
     {
+        Algorithm? demandAlg = null;
         if (targetAlg is Algorithm.Alias alias)
         {
-            var aliasTarget = ResolveAliasTarget(alias, ctx, callable: false);
-            if (aliasTarget.IsError) return aliasTarget.Error;
-            targetAlg = aliasTarget.Value;
+            var terminal = await ResolveAliasValueTerminalAsync(alias, ctx).ConfigureAwait(false);
+            if (terminal.IsError) return terminal.Error;
+            demandAlg = terminal.Value.Algorithm;
         }
-        return NestMissingOutput(await EvalDotStringReceiverAlgOutputAsync(dotCall.Target, targetAlg, receiverIsStructuralMember, ctx, valEnv).ConfigureAwait(false));
+        return NestMissingOutput(await EvalDotStringReceiverAlgOutputAsync(dotCall.Target, targetAlg, receiverIsStructuralMember, ctx, valEnv, demandAlg).ConfigureAwait(false));
     }
 
     /// <summary>MIRROR OF <see cref="EvalDotArgumentsIntrinsicCounted"/> — keep in lock-step.</summary>
@@ -2961,7 +2962,8 @@ public static partial class Evaluator
         Algorithm targetAlg,
         bool receiverIsStructuralMember,
         EvalCtx ctx,
-        ValEnv valEnv)
+        ValEnv valEnv,
+        Algorithm? demandAlg = null)
     {
         // A parameter bound to a supplied cell is a VALUE demand of that cell, reported as the
         // written argument reports it, before (and instead of) the zero-argument law — see the
@@ -2970,8 +2972,8 @@ public static partial class Evaluator
             return ProjectCountedValue(await EvalParamCountedAsync(needName, target.Span, ctx, valEnv).ConfigureAwait(false));
 
         // Every other receiver is demanded for its VALUE with zero arguments through the ONE
-        // law — see the synchronous twin.
-        if (ZeroArgumentValueDemandError(target, targetAlg) is { } rejection)
+        // law — see the synchronous twin (an alias receiver is judged on its VALUE terminal's algorithm).
+        if (ZeroArgumentValueDemandError(target, demandAlg ?? targetAlg) is { } rejection)
             return rejection;
 
         // The accepted receiver is READ exactly as a value position reads it — see the
@@ -3005,9 +3007,13 @@ public static partial class Evaluator
         if (ctx.CallStack.Count == 0)
             return new EvalError.UnknownName(name) { Span = target.Span };
 
-        var resolvedR = LookupLexicalForValue(ctx.CallStack[0], name, ctx);
+        var resolvedR = await ResolveAsync(ctx, (owner: ctx.CallStack[0], name, ctx), static state => LookupLexicalRaw(state.owner, state.name, state.ctx)).ConfigureAwait(false);
         if (resolvedR.IsError)
             return AtSpanIfMissing(resolvedR.Error, target.Span);
+
+        // MIRROR — a receiver reached THROUGH an alias reads its VALUE terminal.
+        if (resolvedR.Value.ResolvedAlgorithm is Algorithm.Alias)
+            return await EvalAliasDotStringLexicalReceiverAsync(target, resolvedR.Value, ctx, valEnv).ConfigureAwait(false);
 
         if (TryEnterArgumentEvaluationLevel(ctx, out var level) is { } limitError)
             return limitError;
@@ -3036,6 +3042,14 @@ public static partial class Evaluator
 
             using (level)
             {
+                if (ChildOfInContext(navigated.Value.Receiver, member.Value, ctx) is Algorithm.Alias memberAlias)
+                {
+                    var terminal = await ResolveAliasValueTerminalAsync(memberAlias, ctx, member).ConfigureAwait(false);
+                    return terminal.IsError
+                        ? terminal.Error
+                        : ProjectCountedValue(await ReadAliasTerminalCountedAsync(terminal.Value, ctx, valEnv).ConfigureAwait(false));
+                }
+
                 return ProjectCountedValue(await EvalZeroArgPropertyAccessCountedAsync(
                     navigated.Value.Receiver,
                     member,

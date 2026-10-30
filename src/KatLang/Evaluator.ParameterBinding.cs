@@ -465,6 +465,36 @@ public static partial class Evaluator
     }
 
     /// <summary>
+    /// NEED-04's COUNTED agreement of one contribution with its group's data anchor: the emitted
+    /// counts first, then the charged VALUE comparison (<see cref="RepeatedValueEquals"/>, whose
+    /// refusal is returned as the terminal error it is — never as disagreement). Lean: the
+    /// <c>CountedResult</c> comparison of <c>NeedBinder.checkAnchor</c> / <c>bindName</c>.
+    /// </summary>
+    private static EvalResult<bool> RepeatedCountedValueAgrees(
+        ref Result.ValueSemanticComparer? session, CountedResult anchor, CountedResult own, EvalCtx ctx)
+        => anchor.EmittedCount != own.EmittedCount
+            ? EvalResult<bool>.Ok(false)
+            : RepeatedValueEquals(ref session, anchor.Value, own.Value, ctx);
+
+    /// <summary>
+    /// NEED-04 (group-aware, ALIAS-UNIFY-1, October 2026): the binder-local agreement state of ONE
+    /// repeated name during one binding of a head (<see cref="BindAcceptedNeedPatterns"/>) — never a
+    /// parameter, a value or a cell. <see cref="Identity"/> is the structural identity of the
+    /// group's FIRST callable-bearing contribution; <see cref="Anchor"/> the counted VALUE of its
+    /// FIRST value-only contribution, once one occurred (<see cref="HasAnchor"/>); and
+    /// <see cref="Pending"/> the earlier callable-bearing contributions whose own counted VALUE no
+    /// anchor has checked yet, in occurrence order (always empty once the group is anchored).
+    /// Lean: <c>RepeatedGroup</c>.
+    /// </summary>
+    private sealed class RepeatedGroup
+    {
+        internal Algorithm? Identity;
+        internal CountedResult Anchor;
+        internal bool HasAnchor;
+        internal List<NeedCell>? Pending;
+    }
+
+    /// <summary>
     /// NEED-04's callable-identity agreement between two contributions of one repeated name that
     /// both carry CALLABLE identity. They must be the same builtin, or the same declaration in the
     /// same declaring scope with compatible captured activations. Comparing identities evaluates

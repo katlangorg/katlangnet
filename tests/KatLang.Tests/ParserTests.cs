@@ -5025,7 +5025,10 @@ public class ParserTests
                 Assert.Equal(PropertyExposure.LocalOnlyCapturedAncestorParameters, captured.Exposure);
                 Assert.Equal(PropertyExposure.LocalOnlyCapturedAncestorParameters, wrapper.Exposure);
 
-                var wrapperBody = Assert.IsType<Algorithm.User>(wrapper.Value);
+                // Wrapper is written in braces with its own Inner and one reference row: a structural
+                // forwarding carrier (M4★), which keeps its own declarations and their exposure.
+                var wrapperBody = Assert.IsType<Algorithm.Alias>(wrapper.Value);
+                Assert.False(wrapperBody.IsReference);
                 var inner = Assert.Single(wrapperBody.Properties);
                 Assert.Equal("Inner", inner.Name);
                 Assert.Equal(PropertyExposure.LocalOnlyCapturedAncestorParameters, inner.Exposure);

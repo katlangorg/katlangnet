@@ -415,8 +415,10 @@ internal sealed class ReceiverMemberSuggestionQuery(
 /// <item>provided and uniquely provided names per provider-target list, and public members per
 /// target algorithm.</item>
 /// </list>
-/// <para>Scope levels, parameter maps, and algorithms are immutable, so each memo is a cache of a
-/// pure function (reference-keyed only as a cache, never as semantic identity), and the interner's
+/// <para>Parameter maps and algorithms are immutable, so those memos are caches of pure functions
+/// (reference-keyed only as a cache, never as semantic identity). A level's names also read its
+/// resolved open providers from the operation's quiescent Q2 facts. Scope names are derived once
+/// per diagnostic context. The interner's
 /// memoized union/difference makes a level that adds a few names cost those names. The derivation
 /// mirrors the per-name lookup exactly — owner walk first and direct-anywhere before any open,
 /// then opens level by level with same-level ambiguity — and the set is only ever read through
@@ -536,7 +538,10 @@ internal sealed class SuggestionContexts(FrontEndTraversalObservations? observat
         for (var current = scope; current is not null; current = current.Parent)
         {
             if (_scopeNames.TryGetValue(current, out names))
+            {
                 break;
+            }
+
             pending.Push(current);
         }
 

@@ -762,9 +762,10 @@ public class AliasAndBareForwardingTests
             new CondBranch(new Pattern.SequenceValue([new Pattern.Bind("k"), new Pattern.Bind("n")]), body),
         ]);
         root = root with { Properties = [.. root.Properties, new Property("G", family)] };
-        var (detected, diagnostics) = ParameterDetector.DetectPrevalidated(root);
+        var detectedInput = ParameterDetector.DetectPrevalidated(root);
+        var (detected, diagnostics) = detectedInput;
         Assert.Empty(diagnostics);
-        var resolved = Assert.IsType<Algorithm.User>(ImplicitArgumentResolver.ResolvePrevalidated(detected));
+        var resolved = Assert.IsType<Algorithm.User>(ImplicitArgumentResolver.ResolvePrevalidated(detectedInput));
         var branches = Assert.IsType<Algorithm.Conditional>(resolved.Properties.Single(property => property.Name == "G").Value).Branches;
         Assert.All(branches, branch => Assert.Equal("n", Arguments(LoneCall(Assert.IsType<Algorithm.User>(branch.Body), "F").Args)));
         Assert.Same(branches[0].Body, branches[1].Body);
@@ -933,20 +934,20 @@ public class AliasAndBareForwardingTests
     /// <summary>
     /// A callable that also works with no arguments, but DECLARES a (collecting) parameter: its lone
     /// row is a CALLABLE ALIAS whose callable is the callee (FWD-02 supersedes Q-03's alias clause),
-    /// and its BARE name is still a cached zero-argument read (Q-03) of the alias's own binding — one
-    /// evaluation for the alias, one for the callee — while <c>A()</c> is fresh. Under a closed list,
-    /// bare forwarding that supplies nothing reads the CALLEE's cached value; one that supplies a
-    /// binding is a call.
+    /// and its BARE name is the callee's cached zero-argument read (Q-03) — an alias owns no entry of
+    /// its own (OD-E, M4★) — while <c>A()</c> is fresh. Under a closed list, bare forwarding that
+    /// supplies nothing reads the CALLEE's cached value; one that supplies a binding is a call.
     /// </summary>
     [Theory]
     [InlineData("A = Cnt\nA(1, 2, 3), A(), A", "ok S[3, 0, 0]")]
     [InlineData("A = Cnt\nmap([1, 2], A), map([(10, 7), 20], A)", "ok S[L[1, 1], L[1, 1]]")]
     [InlineData("A = Cnt\nA == A", "ok true")]
-    // CACHE-PUB-1: the first A() establishes the ALIAS binding's own entry; the second is fresh
-    // (formerly S[1, 2, 3]); the target keeps its own entry.
+    // CACHE-PUB-1 under OD-E: the first A() establishes the TARGET's empty entry, which the bare reads
+    // of A and Only share; a second call is fresh (formerly the alias binding had its own entry:
+    // S[1, 1, 2] and S[1, 1, 2, 2] over two ticks).
     [InlineData("A = Only\nA(), A(), A", "ok S[1, 2, 1] [tick#1,tick#2]")]
-    [InlineData("A = Only\nA(), A, Only", "ok S[1, 1, 2] [tick#1,tick#2]")]
-    [InlineData("A = Only\nOnly, Only, A, A", "ok S[1, 1, 2, 2] [tick#1,tick#2]")]
+    [InlineData("A = Only\nA(), A, Only", "ok S[1, 1, 1] [tick#1]")]
+    [InlineData("A = Only\nOnly, Only, A, A", "ok S[1, 1, 1, 1] [tick#1]")]
     [InlineData("W(p) = Only\nW(1), W(2), Only", "ok S[1, 1, 1] [tick#1]")]
     [InlineData("W(*xs) = Only\nW(1), W(2)", "ok S[1, 2] [tick#1,tick#2]")]
     [InlineData("G(*xs) = Cnt\nG(), G(1), G(1, 2)", "ok S[0, 1, 2]")]

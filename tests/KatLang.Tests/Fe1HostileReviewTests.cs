@@ -19,6 +19,8 @@ public class Fe1HostileReviewTests
     [Theory]
     [InlineData(100, 150)]
     [InlineData(300, 300)]
+    [InlineData(32, 512)]
+    [InlineData(128, 1024)]
     public void PendingReferences_ReuseTheOwnersKnownParameterSet(int width, int references)
     {
         var patterns = new ReadCountingList<ParameterPattern>(
@@ -29,6 +31,48 @@ public class Fe1HostileReviewTests
         Assert.Equal(width, patterns.Reads);
         Assert.Equal(references, graph[0].PendingReferences.Count);
         Assert.All(graph[0].PendingReferences, reference => Assert.Same(owner, Assert.Single(reference.BoundOwners)));
+    }
+
+    [Fact]
+    public void PendingReferences_ShareOneOwnerSetAcrossMemoHitsWithoutMergingDifferentOwners()
+    {
+        var patterns = new ReadCountingList<ParameterPattern>(Algorithm.NormalParameters(["p", "q"]));
+        var left = new Algorithm.User(null, patterns, [], [], [new Expr.DotCall(new Expr.Resolve("Lib"), "M", null)]);
+        var right = left with { };
+        var root = User([new Property("Left", left), new Property("Right", right)]);
+        var memo = new PropertyDependencyGraphBuilder.SummaryMemo();
+        var observations = new FrontEndTraversalObservations();
+        for (var repeat = 0; repeat < 3; repeat++)
+        {
+            var graph = PropertyDependencyGraphBuilder.BuildSummaries(root, memo, observations);
+            Assert.Same(left, Assert.Single(Assert.Single(graph[0].PendingReferences).BoundOwners));
+            Assert.Same(right, Assert.Single(Assert.Single(graph[1].PendingReferences).BoundOwners));
+        }
+        Assert.Equal(4, patterns.Reads);
+        Assert.Equal(4, observations.OwnerParameterNamesMaterialized);
+    }
+
+    [Fact]
+    public void PendingReferenceOwnerSet_AllocationScalesWithWidthAndReferences()
+    {
+        static long Measure(int width)
+        {
+            var patterns = new ReadCountingList<ParameterPattern>(Algorithm.NormalParameters(
+                Enumerable.Range(0, width).Select(i => "p" + i)));
+            var owner = new Algorithm.User(null, patterns, [], [], new OutputBundle(
+                Enumerable.Range(0, 2 * width).Select(i => (Expr)new Expr.DotCall(new Expr.Resolve("Lib"), "M" + i, null)).ToArray()));
+            var root = User([new Property("F", owner)]);
+            var before = GC.GetAllocatedBytesForCurrentThread();
+            var graph = PropertyDependencyGraphBuilder.BuildSummaries(root);
+            var bytes = GC.GetAllocatedBytesForCurrentThread() - before;
+            Assert.Equal(width, patterns.Reads);
+            Assert.Equal(2 * width, graph[0].PendingReferences.Count);
+            return bytes;
+        }
+        Measure(16);
+        var small = Measure(64);
+        var large = Measure(256);
+        Assert.True(large < small * 6 + 128_000, $"Owner-set allocation: {small} -> {large}");
     }
 
     [Fact]
@@ -231,7 +275,7 @@ public class Fe1HostileReviewTests
                 var (_, diagnostics) = ParameterDetector.DetectPrevalidated(root);
                 Assert.Empty(diagnostics);
                 break;
-            case "resolver": _ = ImplicitArgumentResolver.ResolvePrevalidated(root); break;
+            case "resolver": _ = ImplicitArgumentResolver.ResolveNameResolvedPrevalidated(root); break;
             case "summary": _ = PropertyDependencyGraphBuilder.BuildSummaries(root); break;
             case "exposure": _ = PropertyExposureResolver.Resolve(root); break;
             default: throw new ArgumentException(pass);
@@ -290,7 +334,16 @@ public class Fe1HostileReviewTests
         var observations = new FrontEndTraversalObservations();
         var contexts = new SuggestionContexts(observations);
         var library = User([.. Enumerable.Range(0, width).Select(i => Member($"Member{i}"))]);
-        var parent = ElaboratedScopeLookup.CreateScope(User([new Property("Lib", library)]));
+        // A final host namespace: literal members, fixed empty signatures, and direct
+        // reference open heads. Admission must preserve it without source inference.
+        var parentBody = User([new Property("Lib", library)]);
+        var analysis = StandaloneScopeAnalysis.Start(parentBody, StaticAstPhase.Resolved);
+        // This candidate-set fixture deliberately has no physical prelude level. Keep
+        // that original chain while sharing the explicit admission with every child.
+        var parent = new ElaboratedPropertyScope(null, parentBody.Opens,
+            parentBody.Properties.Select(property => new PropertyLookupHit(parentBody, property)).ToArray(),
+            owner: parentBody, completedContext: analysis.Context, sourcePhase: StaticAstPhase.Resolved,
+            standaloneAnalysis: analysis);
         for (var i = 0; i < children; i++)
         {
             var local = User([Member($"Local{i}")]);
@@ -331,7 +384,7 @@ public class Fe1HostileReviewTests
     {
         var observations = new FrontEndTraversalObservations();
         var diagnostics = new DiagnosticBag();
-        _ = ImplicitArgumentResolver.ResolvePrevalidated(SharedReferenceFamily(300, 200), observations, diagnostics);
+        _ = ImplicitArgumentResolver.ResolveNameResolvedPrevalidated(SharedReferenceFamily(300, 200), observations, diagnostics);
         Assert.Empty(diagnostics);
         Assert.Equal(1, observations.ResolverBranchBodyRegionExpansions);
         Assert.InRange(observations.ResolverSnapshotBindingProbes, 300, 900);

@@ -363,8 +363,9 @@ public class AstGraphFuzzTests
     private static FrontEndOutcome ElaborateAndEvaluate(Expr wrappedProgram)
     {
         var root = ((Expr.AlgorithmExpr)wrappedProgram).Algorithm;
-        var (detected, diagnostics) = ParameterDetector.Detect(root);
-        var resolved = ImplicitArgumentResolver.Resolve(detected);
+        var detectedInput = ParameterDetector.Detect(root);
+        var (detected, diagnostics) = detectedInput;
+        var resolved = ImplicitArgumentResolver.Resolve(detectedInput);
         var exposed = PropertyExposureResolver.Resolve(resolved);
 
         var result = Evaluator.Run(new Expr.AlgorithmExpr(exposed));

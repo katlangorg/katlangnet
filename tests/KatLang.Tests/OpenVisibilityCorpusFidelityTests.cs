@@ -17,7 +17,9 @@ namespace KatLang.Tests;
 /// construction — which makes the meaningful check the ENCODING itself. This
 /// family is where the encoding carries the semantics under test (visibility,
 /// exposure, open ordering and dedup, implicit-parameter promotion), so every
-/// derived program here is pinned against manually reviewed golden Lean text.
+/// derived program here is pinned against manually reviewed golden Lean text. Since M4★
+/// (ALIAS-UNIFY-1) a braced body whose one row is a reference is a structural forwarding CARRIER that
+/// keeps its own opens and declarations, encoded <c>(.alias none opens props target none false)</c>.
 /// The goldens are hand-maintained constants, never produced by the encoder at
 /// assertion time; an encoder change that altered exposure metadata, open
 /// encoding, or parameter promotion fails these pins by name.
@@ -54,7 +56,7 @@ public class OpenVisibilityCorpusFidelityTests
         new Dictionary<string, string>(StringComparer.Ordinal)
         {
             ["openPublicMember"] = Golden(
-                LibPublicX + ", privateProp \"A\" (alg [] [.resolve \"Lib\"] [] [.resolve \"X\"])",
+                LibPublicX + ", privateProp \"A\" (.alias none [.resolve \"Lib\"] [] (.resolve \"X\") none false)",
                 ResolveA),
 
             // `open` never exposes a private member, so `X` is unresolvable and
@@ -75,7 +77,7 @@ public class OpenVisibilityCorpusFidelityTests
             // requirement too: a container that reads a captured member is local-only in turn.
             ["openLocalOnlyCapturedParamsOutsideOwner"] = Golden(
                 "{ (privateLocalProp \"A\" (.localCapturedAncestorParams [\"p\"]) "
-                    + "(alg [] [(.dotCall (.resolve \"Outer\") \"Lib\" none)] [] [.resolve \"X\"])) with requiredOwnerDepths := some [(\"p\", none)] }, "
+                    + "(.alias none [(.dotCall (.resolve \"Outer\") \"Lib\" none)] [] (.resolve \"X\") none false)) with requiredOwnerDepths := some [(\"p\", none)] }, "
                     + "privateProp \"Outer\" (alg [\"p\"] [] [publicProp \"Lib\" (alg [] [] "
                     + "[{ (publicLocalProp \"X\" (.localCapturedAncestorParams [\"p\"]) "
                     + "(alg [] [] [] [(.binary .add (.param \"p\") (.num 101))])) with requiredOwnerDepths := some [(\"p\", some 1)] }] [])] [.num 0])",
@@ -94,18 +96,18 @@ public class OpenVisibilityCorpusFidelityTests
             // Duplicate NAMED targets deduplicate first-occurrence-wins, so they
             // are one provider and never a spurious ambiguity (Lean: resolveAllOpens).
             ["openDuplicateTargetDedup"] = Golden(
-                LibPublicX + ", privateProp \"A\" (alg [] [.resolve \"Lib\", .resolve \"Lib\"] [] [.resolve \"X\"])",
+                LibPublicX + ", privateProp \"A\" (.alias none [.resolve \"Lib\", .resolve \"Lib\"] [] (.resolve \"X\") none false)",
                 ResolveA),
 
             ["openDuplicateDottedTargetDedup"] = Golden(
-                LibPublicSX + ", privateProp \"A\" (alg [] [(.dotCall (.resolve \"Lib\") \"S\" none), "
-                    + "(.dotCall (.resolve \"Lib\") \"S\" none)] [] [.resolve \"X\"])",
+                LibPublicSX + ", privateProp \"A\" (.alias none [(.dotCall (.resolve \"Lib\") \"S\" none), "
+                    + "(.dotCall (.resolve \"Lib\") \"S\" none)] [] (.resolve \"X\") none false)",
                 ResolveA),
 
             // Q-19 D-I: two spellings of ONE declaration are one provider.
             ["openTwoSpellingsOneProvider"] = Golden(
                 "privateProp \"Lib\" (alg [] [] [publicProp \"Sub\" (alg [] [] [publicProp \"X\" (alg [] [] [] [.num 101])] []), "
-                    + "publicProp \"R\" (alg [] [.resolve \"Sub\", (.dotCall (.resolve \"Lib\") \"Sub\" none)] [] [.resolve \"X\"])] [])",
+                    + "publicProp \"R\" (.alias none [.resolve \"Sub\", (.dotCall (.resolve \"Lib\") \"Sub\" none)] [] (.resolve \"X\") none false)] [])",
                 "(.dotCall (.resolve \"Lib\") \"R\" none)"),
 
             // Two written blocks are two declarations — two providers however identical. A
@@ -118,8 +120,8 @@ public class OpenVisibilityCorpusFidelityTests
                 "(.call (.resolve \"K\") [.num 10])"),
 
             ["openInlineBlock"] = Golden(
-                "privateProp \"A\" (alg [] [(.algorithmExpr (alg [] [] [publicProp \"X\" (alg [] [] [] [.num 101])] []))] "
-                    + "[] [.resolve \"X\"])",
+                "privateProp \"A\" (.alias none [(.algorithmExpr (alg [] [] [publicProp \"X\" (alg [] [] [] [.num 101])] []))] "
+                    + "[] (.resolve \"X\") none false)",
                 ResolveA),
 
             ["openInlineBlockPrivateHidden"] = Golden(
@@ -128,7 +130,7 @@ public class OpenVisibilityCorpusFidelityTests
                 CallA707),
 
             ["openDottedPath"] = Golden(
-                LibPublicSX + ", privateProp \"A\" (alg [] [(.dotCall (.resolve \"Lib\") \"S\" none)] [] [.resolve \"X\"])",
+                LibPublicSX + ", privateProp \"A\" (.alias none [(.dotCall (.resolve \"Lib\") \"S\" none)] [] (.resolve \"X\") none false)",
                 ResolveA),
 
             // `openDottedPathPrivateIntermediate` has no golden: since the name-resolution
@@ -139,39 +141,39 @@ public class OpenVisibilityCorpusFidelityTests
             // Ownership-first: an owned property always beats an opened one.
             ["openLocalShadowsOpenedName"] = Golden(
                 LibPublicX
-                    + ", privateProp \"A\" (alg [] [.resolve \"Lib\"] [privateProp \"X\" (alg [] [] [] [.num 202])] [.resolve \"X\"])",
+                    + ", privateProp \"A\" (.alias none [.resolve \"Lib\"] [privateProp \"X\" (alg [] [] [] [.num 202])] (.resolve \"X\") none false)",
                 ResolveA),
 
             ["openAncestorPropertyWins"] = Golden(
                 LibPublicX
-                    + ", privateProp \"A\" (alg [] [] [privateProp \"X\" (alg [] [] [] [.num 202]), "
-                    + "privateProp \"Inner\" (alg [] [.resolve \"Lib\"] [] [.resolve \"X\"])] [.resolve \"Inner\"])",
+                    + ", privateProp \"A\" (.alias none [] [privateProp \"X\" (alg [] [] [] [.num 202]), "
+                    + "privateProp \"Inner\" (.alias none [.resolve \"Lib\"] [] (.resolve \"X\") none false)] (.resolve \"Inner\") none false)",
                 ResolveA),
 
             // A nested `open` is visible to descendants but never leaks outward.
             ["openParentScopeReachesChild"] = Golden(
                 LibPublicX
-                    + ", privateProp \"A\" (alg [] [.resolve \"Lib\"] [privateProp \"Inner\" (alg [] [] [] [.resolve \"X\"])] "
-                    + "[.resolve \"Inner\"])",
+                    + ", privateProp \"A\" (.alias none [.resolve \"Lib\"] [privateProp \"Inner\" (.alias none [] [] (.resolve \"X\") none false)] "
+                    + "(.resolve \"Inner\") none false)",
                 ResolveA),
 
             // `A`'s own `X` is unresolvable there, so it becomes A's implicit parameter — the
             // nested open never leaks outward. That parameter is an owned declaration of a
             // scope enclosing `Inner`, and the owner walk reaches it before any open is
             // consulted, so `Inner`'s `X` reads it too (and `Inner` is therefore local-only). Its one
-            // row is then that parameter, so `Inner` is a runtime-target alias of it (FWD-02,
-            // META-S3-2) that keeps its own `open`.
+            // row is then that parameter, so `Inner`, written in braces, is a structural forwarding
+            // carrier of that runtime row (M4★) that keeps its own `open`.
             ["openNestedDoesNotLeakOutward"] = Golden(
                 LibPublicX
                     + ", privateProp \"A\" (alg [\"X\"] [] [{ (privateLocalProp \"Inner\" (.localCapturedAncestorParams [\"X\"]) "
-                    + "(.alias none [.resolve \"Lib\"] [] (.param \"X\"))) with requiredOwnerDepths := some [(\"X\", some 0)] }] "
+                    + "(.alias none [.resolve \"Lib\"] [] (.param \"X\") none false)) with requiredOwnerDepths := some [(\"X\", some 0)] }] "
                     + "[.param \"X\"])",
                 CallA707),
 
             // The open head resolves by direct lexical lookup, which sees a
             // private sibling defined later in the same body.
             ["openHeadDefinedLater"] = Golden(
-                "privateProp \"A\" (alg [] [.resolve \"Lib\"] [] [.resolve \"X\"]), " + LibPublicX,
+                "privateProp \"A\" (.alias none [.resolve \"Lib\"] [] (.resolve \"X\") none false), " + LibPublicX,
                 ResolveA),
 
             // The prelude is the outermost lexical scope, so ownership-first
@@ -196,7 +198,7 @@ public class OpenVisibilityCorpusFidelityTests
             ["openPrivateMemberIsNotASecondProvider"] = Golden(
                 "privateProp \"Pub\" (alg [] [] [publicProp \"X\" (alg [] [] [] [.num 101])] []), "
                     + "privateProp \"Lib\" (alg [] [] [privateProp \"X\" (alg [] [] [] [.num 202])] []), "
-                    + "privateProp \"A\" (alg [] [.resolve \"Pub\", .resolve \"Lib\"] [] [.resolve \"X\"])",
+                    + "privateProp \"A\" (.alias none [.resolve \"Pub\", .resolve \"Lib\"] [] (.resolve \"X\") none false)",
                 ResolveA),
 
 // `openLocalOnlyMemberIsASecondProvider` has no golden: its written X is invalid source

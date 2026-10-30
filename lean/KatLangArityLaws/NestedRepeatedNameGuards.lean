@@ -121,14 +121,15 @@ def viewOf (s : EvalState) (a : Nat) : Option Obs :=
 def modelOf (s : EvalState) : Model :=
   ⟨viewOf s, fun a => (NeedPlan.shapeAt? s.needs a).isSome, s.needs.size⟩
 
-/-- The production run and the walk return the same outcome and the same heap size. -/
+/-- The production run and the walk return the same outcome (the walk's final binder state
+    projected to its representatives) and the same heap size. -/
 def agrees (ps : List NeedPattern) (cells : List NeedCell) (family : Bool := false) : Bool :=
   let r := run ps cells family
   match walkHead (modelOf (heap cells)) ps (List.range cells.length) family with
   | none => false
   | some w =>
     w.2.1.size == r.2.needs.size &&
-    match r.1, w.1 with
+    match r.1, w.1.map (Option.map NeedBindState.bound) with
     | .ok (some e1), .ok (some e2) => e1 == e2
     | .ok none, .ok none => true
     | .error e1, .error e2 => reprStr e1 == reprStr e2
@@ -234,6 +235,20 @@ def seven := NeedPattern.literal (.litInt 7)
 #guard bound (run [x, x, .list [x]] [done (n 1) none, done (n 1) (some mapA), ready (li [1])]) "x" == some 1
 -- A name contributed only by fresh children retains no identity (they are Ready data).
 #guard bound (run [.list [x], .list [x]] [ready (li [1]), ready (li [1])]) "x" == some 2
+
+-- NEED-04 GROUP ACROSS DEPTHS: a supplied reference and an opened Ready child form a MIXED group.
+-- The reference waits (its VALUE is not demanded at its occurrence); the child is the data anchor
+-- and then checks the reference's own VALUE; the reference stays the representative.
+#guard bound (run [x, .sequence [x, y]] [done (n 7) (some mapA), ready (sq [7, 9])]) "x" == some 0
+#guard agrees [x, .sequence [x, y]] [done (n 7) (some mapA), ready (sq [7, 9])]
+#guard valueConflict (run [x, .sequence [x, y]] [done (n 7) (some mapA), ready (sq [8, 9])])
+#guard agrees [x, .sequence [x, y]] [done (n 7) (some mapA), ready (sq [8, 9])]
+-- Two references of one identity bind by identity alone, whatever their completed VALUEs.
+#guard bound (run [x, x] [done (n 1) (some mapA), done (n 2) (some mapA)]) "x" == some 0
+#guard agrees [x, x] [done (n 1) (some mapA), done (n 2) (some mapA)]
+-- …but a value-only contribution then checks EVERY reference's own VALUE.
+#guard valueConflict (run [x, x, x] [done (n 1) (some mapA), done (n 2) (some mapA), ready (n 1)])
+#guard agrees [x, x, x] [done (n 1) (some mapA), done (n 2) (some mapA), ready (n 1)]
 
 /-! ### Provenance, publication and repeated observation -/
 

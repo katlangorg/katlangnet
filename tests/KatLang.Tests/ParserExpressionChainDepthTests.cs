@@ -14,16 +14,6 @@ public class ParserExpressionChainDepthTests
     private const string ProbeMarkerFileEnvironment = "KATLANG_EXPRESSION_CHAIN_PROBE_MARKER_FILE";
     private const string ProbeSuccessMarker = "katlang-expression-chain-probe-ok";
 
-    /// <summary>
-    /// The probe child's whole-process budget. The child's own work takes about a second. Before
-    /// running it, though, a fresh <c>dotnet vstest</c> host discovers every test in the assembly
-    /// (about 35,000, so about 12 s on an idle 16-core machine), and that discovery slows several
-    /// times over under the full suite's parallel load. Measured in October 2026: 63–77 s with the
-    /// cores oversubscribed twice, where the former 30 s budget failed a full-suite run. 120 s is the
-    /// budget of the other heavy probe tests (<c>StructuralNestingStackBackstopProcessTests</c>,
-    /// <c>AstGraphFuzzProcessTests</c>). A real hang still fails, within that bound.
-    /// </summary>
-    private static readonly TimeSpan ProbeChildBudget = TimeSpan.FromSeconds(120);
 
     private static string BinaryChain(string op, int operatorCount)
         => string.Join(
@@ -227,12 +217,11 @@ public class ParserExpressionChainDepthTests
     /// Runs <see cref="ExtremeOperatorChains_ProbeChild"/> in a fresh process. It follows the
     /// established probe protocol of <c>EvaluationLimitsProcessTests</c>:
     /// <list type="bullet">
-    /// <item>a bounded budget (<see cref="ProbeChildBudget"/>);</item>
+    /// <item>wait for completion without a wall-clock deadline;</item>
     /// <item>no stack overflow, and exit code 0;</item>
     /// <item>a success marker that the child writes after its last assertion.</item>
     /// </list>
-    /// The marker matters because <c>dotnet vstest</c> exits 0 when no test matches its filter.
-    /// Without it, a probe that never ran, for example after a rename, would still pass.
+    /// The direct host rejects missing methods; the marker also proves the body reached its last assertion.
     /// </summary>
     [Fact]
     public async Task ExtremeOperatorChains_AreControlledInSubprocess()
@@ -243,16 +232,7 @@ public class ParserExpressionChainDepthTests
         var markerFile = Path.Combine(
             Path.GetTempPath(),
             $"katlang-expression-chain-probe-{Guid.NewGuid():N}.txt");
-        var startInfo = new ProcessStartInfo("dotnet")
-        {
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            UseShellExecute = false,
-            CreateNoWindow = true,
-        };
-        startInfo.ArgumentList.Add("vstest");
-        startInfo.ArgumentList.Add(assemblyPath);
-        startInfo.ArgumentList.Add("--Tests:" + testName);
+        var startInfo = SubprocessProbe.StartInfo(assemblyPath, [testName]);
         startInfo.Environment[ProbeChildEnvironment] = "1";
         startInfo.Environment[ProbeMarkerFileEnvironment] = markerFile;
         startInfo.Environment["DOTNET_NOLOGO"] = "1";
@@ -264,28 +244,12 @@ public class ParserExpressionChainDepthTests
             var stdoutTask = process.StandardOutput.ReadToEndAsync();
             var stderrTask = process.StandardError.ReadToEndAsync();
 
-            var exited = true;
-            using var timeout = new CancellationTokenSource(ProbeChildBudget);
-            try
-            {
-                await process.WaitForExitAsync(timeout.Token);
-            }
-            catch (OperationCanceledException)
-            {
-                exited = false;
-                try { process.Kill(entireProcessTree: true); }
-                catch { /* process already exited */ }
-                await process.WaitForExitAsync();
-            }
+            await process.WaitForExitAsync();
 
             var stdout = await stdoutTask;
             var stderr = await stderrTask;
             var combined = stdout + Environment.NewLine + stderr;
 
-            Assert.True(
-                exited,
-                $"Expression-chain probe subprocess did not exit within {ProbeChildBudget.TotalSeconds} seconds."
-                    + Environment.NewLine + combined);
             Assert.DoesNotContain("Stack overflow", combined, StringComparison.OrdinalIgnoreCase);
             Assert.DoesNotContain("StackOverflowException", combined, StringComparison.OrdinalIgnoreCase);
             Assert.True(

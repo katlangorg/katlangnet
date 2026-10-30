@@ -213,7 +213,7 @@ internal static class FrontEndElaborationScenarios
 			throw new InvalidOperationException("Lookup benchmark parameter detection unexpectedly failed.");
 		if (observations.LookupNameIndexBuilds != expectedIndexBuilds
 			|| observations.LookupPropertyComparisons != 0
-			|| observations.LookupOpenTargetResolutions != 0
+			|| observations.StaticOpenTargetComputations != 0
 			|| observations.LookupOpenMemberIndexBuilds != 0
 			|| observations.LookupRootDiscoveryWalks != 0
 			|| (expectedLevelVisits is { } visits
@@ -223,7 +223,7 @@ internal static class FrontEndElaborationScenarios
 			throw new InvalidOperationException(
 				"Lookup benchmark no longer exercises the intended indexed substrate: "
 				+ $"indexes={observations.LookupNameIndexBuilds}, linearComparisons={observations.LookupPropertyComparisons}, "
-				+ $"openResolutions={observations.LookupOpenTargetResolutions}, openMemberIndexes={observations.LookupOpenMemberIndexBuilds}, "
+				+ $"openTargets={observations.StaticOpenTargetComputations}, openMemberIndexes={observations.LookupOpenMemberIndexBuilds}, "
 				+ $"rootWalks={observations.LookupRootDiscoveryWalks}, levelVisits={observations.LookupLevelVisits}.");
 		}
 	}

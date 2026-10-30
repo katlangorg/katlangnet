@@ -33,11 +33,24 @@ internal enum StaticStructuralMemberProviderKind
 /// <summary>
 /// Static structural-member capability for one expression. This is deliberately
 /// more basic than DotCall dispatch: editor and dependency consumers derive
-/// their dot-edge decisions from the same algorithm-position fact.
+/// their dot-edge decisions from the same algorithm-position fact. A
+/// <see cref="StaticStructuralMemberProviderKind.KnownAlgorithm"/> provider that carries a
+/// <see cref="Scope"/> (parameter detection's receivers, M4★) holds the receiver's STRUCTURE itself,
+/// declared at that scope, so each member is followed in its own scope. An <see cref="Elaborated"/> one (the editor's,
+/// over the resolved tree) holds the receiver's elaborated structure (<see cref="ElaboratedScopeLookup.ElaboratedStructure"/>:
+/// after resolution only an elaborated reference is one), and so does every member provider derived from it. Any other
+/// is read through <see cref="ElaboratedScopeLookup.StaticReceiverStructure"/> (the scope-free view before resolution).
 /// </summary>
 internal readonly record struct StaticStructuralMemberProvider(
     StaticStructuralMemberProviderKind Kind,
-    Algorithm? Algorithm = null);
+    Algorithm? Algorithm = null,
+    ElaboratedScopeLookup.StaticStructureScope? Scope = null,
+    bool Elaborated = false)
+{
+    /// <summary>The receiver STRUCTURE a known provider's members are read on.</summary>
+    internal Algorithm? Structure
+        => Scope is not null || Elaborated ? Algorithm : ElaboratedScopeLookup.StaticReceiverStructure(Algorithm!);
+}
 
 /// <summary>
 /// The ONE static NEVER / MAY / MUST lattice of a dot edge's route. A dot edge
@@ -196,7 +209,8 @@ internal static class AstHelpers
 
     /// <summary>Rewrites each shared hoisted source once in its enclosing row context.</summary>
     internal static void RewriteDeconstructionSourceRows(
-        Algorithm algorithm, List<Property> processedProperties, Func<Expr, Expr> rewriteRow)
+        Algorithm algorithm, List<Property> processedProperties, Func<Expr, Expr> rewriteRow,
+        Action<Algorithm.User, Algorithm.User>? publishSource = null)
     {
         Dictionary<Algorithm.User, Algorithm.User>? rewrittenSources = null;
         for (var index = 0; index < algorithm.Properties.Count; index++)
@@ -208,6 +222,7 @@ internal static class AstHelpers
             if (!rewrittenSources.TryGetValue(source, out var rewritten))
             {
                 rewritten = source with { Output = source.Output.Select(rewriteRow).ToList() };
+                publishSource?.Invoke(source, rewritten);
                 rewrittenSources[source] = rewritten;
             }
             processedProperties[index] = algorithm.Properties[index].WithValue(rewritten);
@@ -579,18 +594,21 @@ internal static class AstHelpers
     /// </summary>
     internal static StaticStructuralMemberProvider ResolveStaticStructuralMemberProvider(
         this Expr expr,
-        Func<string, StaticStructuralMemberProvider>? resolveLexicalReference)
+        Func<string, StaticStructuralMemberProvider>? resolveLexicalReference,
+        Func<Algorithm, StaticStructuralMemberProvider>? resolveBlock = null)
         => expr switch
         {
             Expr.Resolve(var name) => resolveLexicalReference?.Invoke(name)
                 ?? new(StaticStructuralMemberProviderKind.LexicalReference),
             Expr.Param => new(StaticStructuralMemberProviderKind.RuntimeParameter),
-            Expr.AlgorithmExpr(var algorithm) => new(
+            // A written block is its own structure; the caller's resolution power may give it the scope it is
+            // declared at, so a member that is a reference is followed in the block's own scope (M4★).
+            Expr.AlgorithmExpr(var algorithm) => resolveBlock?.Invoke(algorithm) ?? new(
                 StaticStructuralMemberProviderKind.KnownAlgorithm,
                 algorithm),
 
             Expr.DotCall { Args: null } edge
-                => ResolveDotEdgeStructuralMemberProvider(edge, resolveLexicalReference),
+                => ResolveDotEdgeStructuralMemberProvider(edge, resolveLexicalReference, resolveBlock),
 
             // Capture and an argument-bearing dot result are values (the
             // evaluator carries them through memberless algorithm wrappers).
@@ -633,17 +651,40 @@ internal static class AstHelpers
     /// </summary>
     private static StaticStructuralMemberProvider ResolveDotEdgeStructuralMemberProvider(
         Expr.DotCall edge,
-        Func<string, StaticStructuralMemberProvider>? resolveLexicalReference)
+        Func<string, StaticStructuralMemberProvider>? resolveLexicalReference,
+        Func<Algorithm, StaticStructuralMemberProvider>? resolveBlock)
     {
         var receiver = edge.Target.UnwrapGraceOperand()
-            .ResolveStaticStructuralMemberProvider(resolveLexicalReference);
+            .ResolveStaticStructuralMemberProvider(resolveLexicalReference, resolveBlock);
         switch (receiver.Kind)
         {
             case StaticStructuralMemberProviderKind.KnownAlgorithm:
             {
-                var algorithm = receiver.Algorithm!;
+                // M4★ whole-algorithm transport: a receiver's members are its STRUCTURE's — an elaborated
+                // transparent reference navigates its recorded structure, and a reference whose structure is
+                // not statically known (a runtime target, an unelaborated body that becomes one) is a
+                // receiver this view cannot decide. A receiver whose scope is known is its structure already,
+                // and its member is followed in the member's own scope (a member that is still a lone
+                // reference row navigates its target, as the evaluator's receiver resolution does).
+                if (receiver.Structure is not { } algorithm)
+                    return new(StaticStructuralMemberProviderKind.LexicalReference);
                 if (ElaboratedScopeLookup.TryLookupProperty(algorithm, edge.Name) is { } hit)
-                    return new(StaticStructuralMemberProviderKind.KnownAlgorithm, hit.Property.Value);
+                {
+                    // Over the resolved tree a member is read as its elaborated structure: a transparent reference member
+                    // shows its target's members, one with no recorded structure (a runtime target) none known.
+                    if (receiver.Elaborated)
+                    {
+                        return ElaboratedScopeLookup.ElaboratedStructure(hit.Property.Value) is { } memberStructure
+                            ? new(StaticStructuralMemberProviderKind.KnownAlgorithm, memberStructure, Elaborated: true)
+                            : new(StaticStructuralMemberProviderKind.LexicalReference);
+                    }
+
+                    if (receiver.Scope is not { } scope)
+                        return new(StaticStructuralMemberProviderKind.KnownAlgorithm, hit.Property.Value);
+                    return ElaboratedScopeLookup.StaticMemberStructure(algorithm, scope, edge.Name, hit.Property.Value) is { } member
+                        ? new(StaticStructuralMemberProviderKind.KnownAlgorithm, member.Structure, member.Scope)
+                        : new(StaticStructuralMemberProviderKind.LexicalReference);
+                }
 
                 return algorithm.DefinesConditionalBranchProperty(edge.Name)
                     ? new(StaticStructuralMemberProviderKind.KnownFailure)
@@ -724,10 +765,14 @@ internal static class AstHelpers
                 => LexicalFallbackSelection.Conditional,
             StaticStructuralMemberProviderKind.DefinitelyAbsent
                 => LexicalFallbackSelection.Always,
+            // M4★: the receiver's members are its STRUCTURE's; a reference whose structure is not
+            // statically known leaves the route to the runtime receiver.
             StaticStructuralMemberProviderKind.KnownAlgorithm =>
-                HasStructuralMemberOrConditionalBranchMember(receiverProvider.Algorithm!, dotCall.Name)
-                    ? LexicalFallbackSelection.Never
-                    : LexicalFallbackSelection.Always,
+                receiverProvider.Structure is not { } structure
+                    ? LexicalFallbackSelection.Conditional
+                    : HasStructuralMemberOrConditionalBranchMember(structure, dotCall.Name)
+                        ? LexicalFallbackSelection.Never
+                        : LexicalFallbackSelection.Always,
             StaticStructuralMemberProviderKind.KnownFailure
                 => LexicalFallbackSelection.Never,
             _ => throw new InvalidOperationException(
@@ -761,8 +806,9 @@ internal static class AstHelpers
     /// <summary>
     /// The edge's structural-miss verdict as later passes read it: the ELABORATED scope-aware
     /// verdict parameter detection stamped (<see cref="Expr.DotCall.ElaboratedMissSelection"/>;
-    /// final, never rechecked), or — on an unstamped edge (a raw parser or host-built tree) —
-    /// the receiver expression's raw shape classification.
+    /// refined by implicit-argument resolution, then final, never rechecked), or — on an
+    /// unstamped edge (a raw parser or host-built tree) — the receiver expression's raw shape
+    /// classification.
     /// </summary>
     internal static LexicalFallbackSelection EffectiveMissSelection(this Expr.DotCall dotCall)
         => dotCall.ElaboratedMissSelection
@@ -774,8 +820,8 @@ internal static class AstHelpers
     /// for the scope-free dependency/exposure walk: true when the edge's stored
     /// lexical fallback can be the selected resolution at runtime. The
     /// ELABORATED scope-aware verdict decides when present
-    /// (<see cref="EffectiveMissSelection"/>; the verdict is final, never rechecked by
-    /// exposure): a receiver that declares the member never selects the fallback, so a
+    /// (<see cref="EffectiveMissSelection"/>; the verdict as resolution leaves it is final, never
+    /// rechecked by exposure): a receiver that declares the member never selects the fallback, so a
     /// Param fallback hidden behind a structural winner charges nothing; a receiver
     /// known to lack it — a sibling property whose value is a list, a literal,
     /// a call result — always does; a runtime-valued receiver may; and a <c>.string</c>

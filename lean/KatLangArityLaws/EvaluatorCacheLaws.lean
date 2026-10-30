@@ -370,8 +370,8 @@ theorem pres_recordActivation (names : List Ident) (ctx : EvalCtx) (env : ValEnv
   unfold recordParameterActivation; pres_tac_base
 theorem pres_identifyRuntime (a : Algorithm) : Preserves R (identifyRuntimeAlgorithm a) := by
   unfold identifyRuntimeAlgorithm; pres_tac_base
-theorem pres_takeTerminal (a : Algorithm) : Preserves R (takeTerminalAliasInvocation a) := by
-  unfold takeTerminalAliasInvocation; pres_tac_base
+theorem pres_valueViewCell (a : Algorithm) : Preserves R (valueViewCell? a) := by
+  unfold valueViewCell?; pres_tac_base
 end Helpers
 
 set_option hygiene false in
@@ -399,7 +399,7 @@ macro "pres_tac_mid" : tactic => `(tactic| ((try pres_unfold_rec) <;> repeat' (f
   | (with_reducible apply pres_bindParameters)
   | (with_reducible apply pres_recordActivation)
   | (with_reducible apply pres_identifyRuntime)
-  | (with_reducible apply pres_takeTerminal)
+  | (with_reducible apply pres_valueViewCell)
   | (with_reducible apply pres_evalError)
   | (with_reducible apply pres_lift)
   | (with_reducible apply pres_mapM)
@@ -418,9 +418,21 @@ macro "pres_tac_mid" : tactic => `(tactic| ((try pres_unfold_rec) <;> repeat' (f
 section Helpers2
 variable {R : EvalState → EvalState → Prop} [StateRel R] [FieldFrame R]
 
-theorem pres_aliasBare (wired : Algorithm) (target : Expr) (ctx : EvalCtx) :
-    Preserves R (aliasBareCell wired target ctx) := by
-  unfold aliasBareCell; pres_tac_mid
+theorem pres_openNavigateWith (structureOf : Algorithm → EvalM Algorithm)
+    (h : ∀ a, Preserves R (structureOf a)) (ctx : EvalCtx) (notStatic : Error)
+    (value : Algorithm) (receiverName : String) (steps : List Ident) :
+    Preserves R (openNavigateWith structureOf ctx notStatic value receiverName steps) := by
+  induction steps generalizing value receiverName with
+  | nil => unfold openNavigateWith; pres_tac_mid
+  | cons member rest ih => unfold openNavigateWith; pres_tac_mid
+
+theorem pres_openStructure (fuel : Nat) (ctx : EvalCtx) (a : Algorithm) :
+    Preserves R (openStructure fuel ctx a) := by
+  induction fuel generalizing a with
+  | zero => simp only [openStructure]; pres_tac_mid
+  | succ n ih =>
+    have := pres_openNavigateWith (R := R) (fun value => openStructure n ctx value) ih
+    simp only [openStructure]; pres_tac_mid
 
 theorem pres_form (spread : NeedSupply.SpreadEval) (h : ∀ e c v, Preserves R (spread e c v))
     (ctx : EvalCtx) (env : ValEnv) (args : OutputBundle) :
@@ -471,6 +483,15 @@ structure CapsPres (R : EvalState → EvalState → Prop) (caps : NeedCapabiliti
   allocate : ∀ s, Preserves R (caps.allocate s)
   reference : ∀ a, Preserves R (caps.reference a)
 
+/-- NEED-04's data-anchor check demands only through the VALUE capability. -/
+theorem pres_checkAnchor (caps : NeedCapabilities EvalM) (hc : CapsPres R caps) (name : Ident)
+    (anchor : CountedResult) (family : Bool) (cells : List Nat) :
+    Preserves R (NeedBinder.checkAnchor caps name anchor family cells) := by
+  have hv := hc.value
+  induction cells with
+  | nil => unfold NeedBinder.checkAnchor; pres_tac_mid
+  | cons c rest ih => unfold NeedBinder.checkAnchor; pres_tac_mid
+
 theorem pres_binder (caps : NeedCapabilities EvalM) (hc : CapsPres R caps) (repeated : List Ident)
     (family : Bool) :
     (∀ pattern address bound,
@@ -478,6 +499,7 @@ theorem pres_binder (caps : NeedCapabilities EvalM) (hc : CapsPres R caps) (repe
     (∀ patterns sources current,
       Preserves R (NeedBinder.bindSources caps patterns sources repeated current family)) := by
   have hv := hc.value; have hcl := hc.callable; have hal := hc.allocate; have hre := hc.reference
+  have hck := pres_checkAnchor caps hc
   refine NeedBinder.bindOne.mutual_induct
     (motive_1 := fun pattern address bound =>
       Preserves R (NeedBinder.bindOne caps pattern address repeated bound family))
@@ -535,6 +557,7 @@ theorem pres_maxLoop (numbers : List Int) (current : Int) :
   | cons n rest ih => unfold evalMaxCounted.maxLoop; pres_tac_mid
 
 theorem pres_resolveAlgForOpen (ctx : EvalCtx) (e : Expr) : Preserves R (resolveAlgForOpen e ctx) := by
+  have := pres_openStructure (R := R)
   induction e using resolveAlgForOpen.induct ctx with
   | case7 o n a ih => unfold resolveAlgForOpen; pres_tac_mid
   | _ => unfold resolveAlgForOpen; pres_tac_mid
@@ -542,6 +565,7 @@ theorem pres_resolveAlgForOpen (ctx : EvalCtx) (e : Expr) : Preserves R (resolve
 theorem pres_lookupOpenProperties (a : Algorithm) (name : Ident) (ctx : EvalCtx) :
     Preserves R (lookupOpenProperties a name ctx) := by
   have := pres_resolveAlgForOpen (R := R)
+  have := pres_openStructure (R := R)
   unfold lookupOpenProperties; pres_tac_mid
 
 theorem pres_lookupOpenPropertiesInParentChain (name : Ident) (ctx : EvalCtx) (sc : ScopeCtx) :
@@ -552,6 +576,30 @@ theorem pres_lookupOpenPropertiesInParentChain (name : Ident) (ctx : EvalCtx) (s
     unfold lookupOpenPropertiesInParentChain
     cases t with
     | mk parent _ _ _ _ _ _ _ => cases parent <;> pres_tac_mid
+
+theorem pres_aliasStepNavigateWith (structureOf : Algorithm → EvalCtx → EvalM (Option Algorithm))
+    (h : ∀ a c, Preserves R (structureOf a c)) (stepCtx : EvalCtx) (notStatic : Error)
+    (value : Algorithm) (last : Option ResolvedProperty) (receiverName : String) (steps : List Ident) :
+    Preserves R (aliasStepNavigateWith structureOf stepCtx notStatic value last receiverName steps) := by
+  induction steps generalizing value last receiverName with
+  | nil => unfold aliasStepNavigateWith; pres_tac_mid
+  | cons member rest ih => unfold aliasStepNavigateWith; pres_tac_mid
+
+theorem pres_resolveAliasStepWith (structureOf : Algorithm → EvalCtx → EvalM (Option Algorithm))
+    (h : ∀ a c, Preserves R (structureOf a c)) (step : Algorithm) (target : Expr) (ctx : EvalCtx) :
+    Preserves R (resolveAliasStepWith structureOf step target ctx) := by
+  have := pres_aliasStepNavigateWith (R := R) structureOf h
+  have := pres_lookupOpenProperties (R := R)
+  have := pres_lookupOpenPropertiesInParentChain (R := R)
+  unfold resolveAliasStepWith; pres_tac_mid
+
+theorem pres_aliasRouteIsIntrinsicWith (structureOf : Algorithm → EvalCtx → EvalM (Option Algorithm))
+    (h : ∀ a c, Preserves R (structureOf a c)) (receiver : Expr) (ctx : EvalCtx) :
+    Preserves R (aliasRouteIsIntrinsicWith structureOf receiver ctx) := by
+  have := pres_aliasStepNavigateWith (R := R) structureOf h
+  have := pres_lookupOpenProperties (R := R)
+  have := pres_lookupOpenPropertiesInParentChain (R := R)
+  unfold aliasRouteIsIntrinsicWith; pres_tac_mid
 
 section LocalLoops
 variable (rec : EvalRec) (hrec : ∀ c, Preserves R (rec c))
@@ -646,8 +694,7 @@ macro "pres_tac" : tactic => `(tactic| ((try pres_unfold_rec) <;> repeat' (first
   | (with_reducible apply pres_bindParameters)
   | (with_reducible apply pres_recordActivation)
   | (with_reducible apply pres_identifyRuntime)
-  | (with_reducible apply pres_takeTerminal)
-  | (with_reducible apply pres_aliasBare)
+  | (with_reducible apply pres_valueViewCell)
   | (with_reducible apply pres_evalError)
   | (with_reducible apply pres_lift)
   | (with_reducible apply pres_mapM)
@@ -667,8 +714,12 @@ macro "pres_tac" : tactic => `(tactic| ((try pres_unfold_rec) <;> repeat' (first
   | (with_reducible apply pres_minLoop)
   | (with_reducible apply pres_maxLoop)
   | (with_reducible apply pres_resolveAlgForOpen)
+  | (with_reducible apply pres_openStructure)
+  | (with_reducible apply pres_resolveAliasStepWith)
+  | (with_reducible apply pres_aliasRouteIsIntrinsicWith)
   | (with_reducible apply pres_lookupOpenProperties)
   | (with_reducible apply pres_lookupOpenPropertiesInParentChain)
+  | (with_reducible apply EvalBody.terminalAccess_pres rec hrec)
   | (with_reducible apply pres_outputRowsCollect rec hrec)
   | (with_reducible apply pres_explicitRowsCollect rec hrec)
   | (with_reducible apply pres_listLiteralCollect rec hrec)
@@ -694,21 +745,29 @@ theorem EvalBody.whileLoop_pres (rec : EvalRec) (hrec : ∀ c, Preserves R (rec 
     Preserves R (EvalBody.whileLoop rec step ctx env stepName cells) := by
   unfold EvalBody.whileLoop; pres_tac
 
-theorem EvalBody.aliasStepIsRuntime_pres (rec : EvalRec) (hrec : ∀ c, Preserves R (rec c)) (step : Algorithm) (target : Expr) (ctx : EvalCtx) :
-    Preserves R (EvalBody.aliasStepIsRuntime rec step target ctx) := by
+theorem EvalBody.aliasStepIsRuntime_pres (rec : EvalRec) (hrec : ∀ c, Preserves R (rec c)) (step : Algorithm) (target : Expr) (ctx : EvalCtx) (visited : List String) :
+    Preserves R (EvalBody.aliasStepIsRuntime rec step target ctx visited) := by
   unfold EvalBody.aliasStepIsRuntime; pres_tac
 
 theorem EvalBody.aliasValue_pres (rec : EvalRec) (hrec : ∀ c, Preserves R (rec c)) (wired : Algorithm) (ctx : EvalCtx) (env : ValEnv) :
     Preserves R (EvalBody.aliasValue rec wired ctx env) := by
   unfold EvalBody.aliasValue; pres_tac
 
-theorem EvalBody.resolveAliasChase_pres (rec : EvalRec) (hrec : ∀ c, Preserves R (rec c)) (callable : Bool) (a : Algorithm) (ctx : EvalCtx) (visited : List String) (projectedFrom : Option Algorithm) :
-    Preserves R (EvalBody.resolveAliasChase rec callable a ctx visited projectedFrom) := by
+theorem EvalBody.resolveAliasChase_pres (rec : EvalRec) (hrec : ∀ c, Preserves R (rec c)) (followCarriers projectRuntime : Bool) (a : Algorithm) (ctx : EvalCtx) (visited : List String) (last : Option (Algorithm × PropDef)) :
+    Preserves R (EvalBody.resolveAliasChase rec followCarriers projectRuntime a ctx visited last) := by
   unfold EvalBody.resolveAliasChase; pres_tac
 
 theorem EvalBody.resolveAliasTarget_pres (rec : EvalRec) (hrec : ∀ c, Preserves R (rec c)) (a : Algorithm) (ctx : EvalCtx) :
     Preserves R (EvalBody.resolveAliasTarget rec a ctx) := by
   unfold EvalBody.resolveAliasTarget; pres_tac
+
+theorem EvalBody.resolveAliasStructure_pres (rec : EvalRec) (hrec : ∀ c, Preserves R (rec c)) (a : Algorithm) (ctx : EvalCtx) :
+    Preserves R (EvalBody.resolveAliasStructure rec a ctx) := by
+  unfold EvalBody.resolveAliasStructure; pres_tac
+
+theorem EvalBody.aliasOriginBinding?_pres (rec : EvalRec) (hrec : ∀ c, Preserves R (rec c)) (a : Algorithm) (ctx : EvalCtx) :
+    Preserves R (EvalBody.aliasOriginBinding? rec a ctx) := by
+  unfold EvalBody.aliasOriginBinding?; pres_tac
 
 theorem EvalBody.resolveAliasValueTarget_pres (rec : EvalRec) (hrec : ∀ c, Preserves R (rec c)) (a : Algorithm) (ctx : EvalCtx) :
     Preserves R (EvalBody.resolveAliasValueTarget rec a ctx) := by
@@ -893,6 +952,12 @@ theorem EvalBody.evalAlgOutputCountedCore_pres (rec : EvalRec) (hrec : ∀ c, Pr
 theorem EvalBody.evalAlgOutputCounted_pres (rec : EvalRec) (hrec : ∀ c, Preserves R (rec c)) (a : Algorithm) (ctx : EvalCtx) (env : ValEnv) :
     Preserves R (EvalBody.evalAlgOutputCounted rec a ctx env) := by
   unfold EvalBody.evalAlgOutputCounted; pres_tac
+
+/-- A VALUE terminal's read (`EvalBody.terminalAccess`), proved once and used by every body that
+    reads one, so those bodies never unfold it inline (M4★). -/
+theorem EvalBody.terminalAccess_pres (rec : EvalRec) (hrec : ∀ c, Preserves R (rec c)) (t : AliasTerminal) (ctx : EvalCtx) (env : ValEnv) :
+    Preserves R (EvalBody.terminalAccess rec t ctx env) := by
+  unfold EvalBody.terminalAccess; pres_tac
 
 theorem EvalBody.evalZeroArgumentDemandOutputCounted_pres (rec : EvalRec) (hrec : ∀ c, Preserves R (rec c)) (a : Algorithm) (ctx : EvalCtx) (env : ValEnv) :
     Preserves R (EvalBody.evalZeroArgumentDemandOutputCounted rec a ctx env) := by
@@ -1112,11 +1177,13 @@ theorem evalStep_preserves
   intro c
   cases c with
   | whileLoop step ctx env stepName cells => exact EvalBody.whileLoop_pres rec hrec step ctx env stepName cells
-  | aliasStepIsRuntime step target ctx => exact EvalBody.aliasStepIsRuntime_pres rec hrec step target ctx
+  | aliasStepIsRuntime step target ctx visited => exact EvalBody.aliasStepIsRuntime_pres rec hrec step target ctx visited
   | aliasValue wired ctx env => exact EvalBody.aliasValue_pres rec hrec wired ctx env
-  | resolveAliasChase callable a ctx visited projectedFrom => exact EvalBody.resolveAliasChase_pres rec hrec callable a ctx visited projectedFrom
+  | resolveAliasChase followCarriers projectRuntime a ctx visited last => exact EvalBody.resolveAliasChase_pres rec hrec followCarriers projectRuntime a ctx visited last
   | resolveAliasTarget a ctx => exact EvalBody.resolveAliasTarget_pres rec hrec a ctx
+  | resolveAliasStructure a ctx => exact EvalBody.resolveAliasStructure_pres rec hrec a ctx
   | resolveAliasValueTarget a ctx => exact EvalBody.resolveAliasValueTarget_pres rec hrec a ctx
+  | aliasOriginBinding? a ctx => exact EvalBody.aliasOriginBinding?_pres rec hrec a ctx
   | lookupLexicalProperty a name ctx => exact EvalBody.lookupLexicalProperty_pres rec hrec a name ctx
   | lookupLexicalValueProperty a name ctx => exact EvalBody.lookupLexicalValueProperty_pres rec hrec a name ctx
   | lookupLexical a name ctx => exact EvalBody.lookupLexical_pres rec hrec a name ctx
@@ -1224,11 +1291,13 @@ theorem evalStep_preserves_other (rec : EvalRec) (hrec : ∀ c, Preserves R (rec
     (hc : isPropertyAccessCall c = false) : Preserves R (evalStep rec c) := by
   cases c with
   | whileLoop step ctx env stepName cells => exact EvalBody.whileLoop_pres rec hrec step ctx env stepName cells
-  | aliasStepIsRuntime step target ctx => exact EvalBody.aliasStepIsRuntime_pres rec hrec step target ctx
+  | aliasStepIsRuntime step target ctx visited => exact EvalBody.aliasStepIsRuntime_pres rec hrec step target ctx visited
   | aliasValue wired ctx env => exact EvalBody.aliasValue_pres rec hrec wired ctx env
-  | resolveAliasChase callable a ctx visited projectedFrom => exact EvalBody.resolveAliasChase_pres rec hrec callable a ctx visited projectedFrom
+  | resolveAliasChase followCarriers projectRuntime a ctx visited last => exact EvalBody.resolveAliasChase_pres rec hrec followCarriers projectRuntime a ctx visited last
   | resolveAliasTarget a ctx => exact EvalBody.resolveAliasTarget_pres rec hrec a ctx
+  | resolveAliasStructure a ctx => exact EvalBody.resolveAliasStructure_pres rec hrec a ctx
   | resolveAliasValueTarget a ctx => exact EvalBody.resolveAliasValueTarget_pres rec hrec a ctx
+  | aliasOriginBinding? a ctx => exact EvalBody.aliasOriginBinding?_pres rec hrec a ctx
   | lookupLexicalProperty a name ctx => exact EvalBody.lookupLexicalProperty_pres rec hrec a name ctx
   | lookupLexicalValueProperty a name ctx => exact EvalBody.lookupLexicalValueProperty_pres rec hrec a name ctx
   | lookupLexical a name ctx => exact EvalBody.lookupLexical_pres rec hrec a name ctx

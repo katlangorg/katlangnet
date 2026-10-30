@@ -227,10 +227,18 @@ public class ModuleCoordinateSpaceTests
     [Fact]
     public async Task SameModuleDemandedFromTwoLocalSites_ReportsWhicheverSiteFailsFirst()
     {
-        const string source = "open '" + Lib + "'\nA = Fine\n\n\n      B = Boom\nA + B";
+        // A and B compute with the imported members: the failing local site is B's own `Boom`.
+        const string source = "open '" + Lib + "'\nA = Fine + 0\n\n\n      B = Boom + 0\nA + B";
         var error = SingleEvalError(await KatLangEngine.RunAsync(source, Options((Lib, BoomModule))));
         AssertSpan(error, 5, 11, 5, 15);
         AssertNotTheModuleSpan(error);
+
+        // M4★: lone `Fine` / `Boom` rows make A and B transparent aliases, whose reads ARE the imported
+        // members' reads, so the failing local demand is the `B` of `A + B` (formerly B's `Boom`).
+        const string aliases = "open '" + Lib + "'\nA = Fine\n\n\n      B = Boom\nA + B";
+        var aliasError = SingleEvalError(await KatLangEngine.RunAsync(aliases, Options((Lib, BoomModule))));
+        AssertSpan(aliasError, 6, 5, 6, 6);
+        AssertNotTheModuleSpan(aliasError);
     }
 
     // ── 6. Provenance notes ─────────────────────────────────────────────────

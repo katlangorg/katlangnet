@@ -187,7 +187,8 @@ public class GraceDotCompositionTests
         Assert.Equal("a", Assert.IsType<Expr.Resolve>(rawEdge.Target).Name);
         Assert.Equal("t", Assert.IsType<Expr.Resolve>(rawEdge.LexicalFallback).Name);
 
-        var (detected, diagnostics) = ParameterDetector.Detect(syntax.Root);
+        var detectedInput = ParameterDetector.Detect(syntax.Root);
+        var (detected, diagnostics) = detectedInput;
         Assert.Empty(diagnostics);
         var detectedK = Assert.Single(detected.Properties).Value;
         Assert.Equal(["a", "t"], detectedK.Params);
@@ -221,8 +222,10 @@ public class GraceDotCompositionTests
         Assert.Equal(-1, memberGrace.Weight);
         Assert.Equal("t", Assert.IsType<Expr.Resolve>(memberGrace.Inner).Name);
 
-        var (postfixDetected, postfixDiagnostics) = ParameterDetector.Detect(postfixSyntax.Root);
-        var (prefixDetected, prefixDiagnostics) = ParameterDetector.Detect(prefixSyntax.Root);
+        var postfixDetectedInput = ParameterDetector.Detect(postfixSyntax.Root);
+        var (postfixDetected, postfixDiagnostics) = postfixDetectedInput;
+        var prefixDetectedInput = ParameterDetector.Detect(prefixSyntax.Root);
+        var (prefixDetected, prefixDiagnostics) = prefixDetectedInput;
         Assert.Empty(postfixDiagnostics);
         Assert.Empty(prefixDiagnostics);
         Assert.Equal(["t", "a"], Assert.Single(postfixDetected.Properties).Value.Params);

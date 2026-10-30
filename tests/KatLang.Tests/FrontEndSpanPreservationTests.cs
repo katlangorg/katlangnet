@@ -14,7 +14,8 @@ public class FrontEndSpanPreservationTests
         var syntax = Parser.ParseSyntax(source);
         Assert.False(syntax.HasErrors);
 
-        var (detected, diagnostics) = ParameterDetector.Detect(syntax.Root);
+        var detectedInput = ParameterDetector.Detect(syntax.Root);
+        var (detected, diagnostics) = detectedInput;
         Assert.Empty(diagnostics);
 
         AssertCompositeSpansEqual(syntax.Root, detected);
@@ -27,7 +28,8 @@ public class FrontEndSpanPreservationTests
         var syntax = Parser.ParseSyntax(source);
         Assert.False(syntax.HasErrors);
 
-        var (detected, diagnostics) = ParameterDetector.Detect(syntax.Root);
+        var detectedInput = ParameterDetector.Detect(syntax.Root);
+        var (detected, diagnostics) = detectedInput;
         Assert.Empty(diagnostics);
 
         AssertCompositeSpansEqual(syntax.Root, detected);
@@ -45,7 +47,8 @@ public class FrontEndSpanPreservationTests
         };
         var root = User(output: OutputBundle.From([join]));
 
-        var (detected, diagnostics) = ParameterDetector.Detect(root);
+        var detectedInput = ParameterDetector.Detect(root);
+        var (detected, diagnostics) = detectedInput;
 
         Assert.Empty(diagnostics);
         Assert.Equal(joinSpan, Assert.IsType<Expr.SequenceConstruct>(Assert.Single(detected.Output)).Span);
@@ -58,7 +61,8 @@ public class FrontEndSpanPreservationTests
             opens: [HostCompositeTree()],
             output: OutputBundle.From([new Expr.Num(0)]));
 
-        var (detected, diagnostics) = ParameterDetector.Detect(root);
+        var detectedInput = ParameterDetector.Detect(root);
+        var (detected, diagnostics) = detectedInput;
 
         Assert.Empty(diagnostics);
         AssertCompositeSpansEqual(root.Opens, detected.Opens);
@@ -75,7 +79,7 @@ public class FrontEndSpanPreservationTests
         };
         var root = User(output: OutputBundle.From([call]));
 
-        var resolved = ImplicitArgumentResolver.Resolve(root);
+        var resolved = ImplicitArgumentResolver.ResolveNameResolved(root);
 
         AssertCompositeSpansEqual(root, resolved);
     }
@@ -87,7 +91,7 @@ public class FrontEndSpanPreservationTests
             opens: [HostCompositeTree()],
             output: OutputBundle.From([new Expr.Num(0)]));
 
-        var resolved = ImplicitArgumentResolver.Resolve(root);
+        var resolved = ImplicitArgumentResolver.ResolveNameResolved(root);
 
         AssertCompositeSpansEqual(root.Opens, resolved.Opens);
     }
@@ -98,14 +102,15 @@ public class FrontEndSpanPreservationTests
         const string source = "F = a\nG = -F";
         var syntax = Parser.ParseSyntax(source);
         Assert.False(syntax.HasErrors);
-        var (detected, diagnostics) = ParameterDetector.Detect(syntax.Root);
+        var detectedInput = ParameterDetector.Detect(syntax.Root);
+        var (detected, diagnostics) = detectedInput;
         Assert.Empty(diagnostics);
 
         var beforeG = detected.Properties.Single(property => property.Name == "G").Value;
         var beforeUnary = Assert.IsType<Expr.Unary>(Assert.Single(beforeG.Output));
         var beforeReference = Assert.IsType<Expr.Resolve>(beforeUnary.Operand);
 
-        var resolved = ImplicitArgumentResolver.ResolvePrevalidated(detected);
+        var resolved = ImplicitArgumentResolver.ResolvePrevalidated(detectedInput);
         var afterG = resolved.Properties.Single(property => property.Name == "G").Value;
         var afterUnary = Assert.IsType<Expr.Unary>(Assert.Single(afterG.Output));
         var call = Assert.IsType<Expr.Call>(afterUnary.Operand);

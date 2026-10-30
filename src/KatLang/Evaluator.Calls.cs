@@ -185,7 +185,7 @@ public static partial class Evaluator
 
         // CACHE-PUB-1: a call that may form an EMPTY supply of a publishable callee takes the
         // origin-carrying dispatch (its written callee names the property binding), decided out of line.
-        if (MayFormZeroSupply(args) && IsPublishableCallee(calleeR.Value))
+        if (MayFormZeroSupply(args) && TakesOriginDispatch(calleeR.Value))
             return EvalWrittenCalleeCallCounted(func, calleeR.Value, args, ctx, valEnv, diagnosticName);
 
         return WithCallCtx(

@@ -203,11 +203,12 @@ public class ImplicitArgumentSharingTests
     private static PassObservations ObservePasses(string source)
     {
         var syntax = SourceProvenance.ParseSyntaxValidRoot(source);
-        var (detected, detectorDiagnostics) = ParameterDetector.DetectPrevalidated(syntax);
+        var detectedInput = ParameterDetector.DetectPrevalidated(syntax);
+        var (detected, detectorDiagnostics) = detectedInput;
         Assert.Empty(detectorDiagnostics);
         var observed = new PassObservations(new(), new(), new(), new(), new(), new(), new(), new());
         var diagnostics = new DiagnosticBag();
-        var resolved = ImplicitArgumentResolver.ResolvePrevalidated(detected, observed.Resolve, diagnostics);
+        var resolved = ImplicitArgumentResolver.ResolvePrevalidated(detectedInput, observed.Resolve, diagnostics);
         new ParameterPropertyCollisionValidator(diagnostics, programRoot: resolved) { TraversalObservations = observed.Collision }
             .VisitAlgorithm(resolved);
         OpenProviderValidator.Validate(resolved, diagnostics, (HostOperations?)null, observed.OpenProviders);
@@ -247,7 +248,10 @@ public class ImplicitArgumentSharingTests
 
         var slots = references + parameters;
         Assert.Equal(0, observed.Collision.WalkerCallArgumentSlots);
+        // One actual, DAG-memoized presence scan visits K written slots and the shared L once.
+        // No structural validation or lookup graph is needed after the no-open verdict.
         Assert.Equal(slots, observed.OpenProviders.WalkerCallArgumentSlots);
+        Assert.Equal(0, observed.OpenProviders.CompletedStaticStructureReads);
         Assert.Equal(slots, observed.Validation.WalkerCallArgumentSlots);
         Assert.Equal(slots, observed.LoadGuard.WalkerCallArgumentSlots);
         Assert.Equal(references, observed.Semantic.SemanticModelCallArgumentSlots);
@@ -256,6 +260,8 @@ public class ImplicitArgumentSharingTests
         Assert.Equal(0, observed.Exposure.ExposureArgumentBundleRewrites);
         Assert.Equal(references + 1, observed.Exposure.DependencyArgumentBundleSummaries);
         Assert.Equal(6L * references + 4L * parameters + 5, observed.Preflight.StructuralPreflightEdges);
+        HistoricalContractAssertions.CompletedProviders($"G = {Names("v", parameters)}\n"
+            + string.Join(", ", Enumerable.Repeat("abs(G)", references)));
     }
 
     /// <summary>
@@ -346,12 +352,13 @@ public class ImplicitArgumentSharingTests
     public void SameCallee_InTwoOwnersWithIdenticalForwarding_SharesOneBundle()
     {
         const string source = "G = a + b\nA = G + G\nB = G * G\nA(1, 2) + B(1, 2)";
-        var (detected, detectorDiagnostics) = ParameterDetector.DetectPrevalidated(SourceProvenance.ParseSyntaxValidRoot(source));
+        var detectedInput = ParameterDetector.DetectPrevalidated(SourceProvenance.ParseSyntaxValidRoot(source));
+        var (detected, detectorDiagnostics) = detectedInput;
         Assert.Empty(detectorDiagnostics);
         var observations = new FrontEndTraversalObservations();
         var diagnostics = new DiagnosticBag();
 
-        var resolved = ImplicitArgumentResolver.ResolvePrevalidated(detected, observations, diagnostics);
+        var resolved = ImplicitArgumentResolver.ResolvePrevalidated(detectedInput, observations, diagnostics);
 
         Assert.Empty(diagnostics);
         Assert.Equal(4, observations.ImplicitCallsSynthesized);

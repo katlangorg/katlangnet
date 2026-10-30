@@ -95,10 +95,12 @@ public class AsyncSuspensionTests
         else if (caseId is "forwarded-parameter-leaves-opened-reference")
         {
             // Outer(7) is an explicit call and Need(v) synthesized forwarding (a call), so
-            // exactly two property reads suspend: Inner, and the opened Lib.v that Inner's
-            // written v still denotes (99 + 7). Before Q-04 the forwarded parameter rebound
-            // that v, which then never reached this seam (one access, 14).
-            Assert.Equal(2, cache.AsyncAccesses);
+            // exactly one property read suspends: the opened Lib.v that Inner's written v still
+            // denotes (99 + 7) — Inner, whose lone row v beside its own open makes it a forwarding
+            // carrier, owns no entry and its bare read IS Lib.v's (M4★ OD-E; formerly two accesses,
+            // Inner's own and Lib.v). Before Q-04 the forwarded parameter rebound that v, which then
+            // never reached this seam (14).
+            Assert.Equal(1, cache.AsyncAccesses);
             Assert.Equal("ok raw=106 n=1", AsyncEvaluationHarness.NeutralOf(async));
         }
     }

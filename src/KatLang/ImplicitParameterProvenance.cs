@@ -229,6 +229,8 @@ internal sealed class NameSuggestion
 internal sealed class DotMemberProvenanceFinalizer(ElaboratedPropertyScope parentScope) : AstWalker
 {
     private ElaboratedPropertyScope _scope = parentScope;
+    private Pattern? _branchPattern;
+    private readonly Dictionary<StaticScopeKey, HashSet<object>> _completedVisited = new(ReferenceEqualityComparer.Instance);
     private readonly Dictionary<ElaboratedPropertyScope, HashSet<object>> _visited = new(ReferenceEqualityComparer.Instance);
     // A note outlives this walk. Keep only immutable member spellings, never a receiver AST or
     // its caller-owned lists; share the snapshot across all confirmations of one receiver.
@@ -256,26 +258,50 @@ internal sealed class DotMemberProvenanceFinalizer(ElaboratedPropertyScope paren
     public override void VisitAlgorithm(Algorithm algorithm)
     {
         var previousScope = _scope;
+        var pattern = _branchPattern;
+        _branchPattern = null;
+        var completed = CompletedStructureContext.For(algorithm, _scope, pattern);
         // A loaded module (Q-31 H-P) is rooted at the prelude: its receivers resolve under the
         // prelude level whatever holds it, so it is walked in that region once.
         if (algorithm.IsModuleRoot)
             _scope = _scope.Root;
-        if (algorithm.DeferredRegion is not null || !Enter(algorithm))
+        var visited = false;
+        if (completed is not null)
+        {
+            if (!_completedVisited.TryGetValue(completed.Key, out var nodes))
+                _completedVisited[completed.Key] = nodes = new(ReferenceEqualityComparer.Instance);
+            visited = !nodes.Add(algorithm);
+        }
+        else visited = !Enter(algorithm);
+        if (algorithm.DeferredRegion is not null || visited)
         {
             _scope = previousScope;
             return;
         }
         // Parameters already have Param identity. A level with no declarations
         // cannot change receiver lookup and need not split the diagnostic region.
-        if (algorithm.Properties.Count != 0 || algorithm.Opens.Count != 0)
-            _scope = ElaboratedScopeLookup.CreateScope(algorithm, _scope);
+        if (completed is not null || algorithm.Properties.Count != 0 || algorithm.Opens.Count != 0)
+            _scope = ElaboratedScopeLookup.CreateScope(algorithm, _scope, completedContext: completed);
         base.VisitAlgorithm(algorithm);
         _scope = previousScope;
     }
 
     public override void VisitPattern(Pattern pattern) { }
 
-    protected override void VisitProperty(Property property) => VisitAlgorithm(property.Value);
+    protected override void VisitConditionalBranch(CondBranch branch)
+    {
+        var saved = _branchPattern;
+        _branchPattern = branch.Pattern;
+        try { base.VisitConditionalBranch(branch); }
+        finally { _branchPattern = saved; }
+    }
+
+    protected override void VisitProperty(Property property)
+    {
+        if (property.Value is Algorithm.User { IsAssignmentDeconstructionSource: true } source)
+            foreach (var row in source.Output) VisitExpr(row);
+        else VisitAlgorithm(property.Value);
+    }
 
     protected override void VisitOpenExpression(Expr expression)
     {
@@ -305,13 +331,7 @@ internal sealed class DotMemberProvenanceFinalizer(ElaboratedPropertyScope paren
             return;
         if (expr is Expr.DotCall { InferredFallbackProvenance: { DotMemberOrigin: not null } note } edge)
         {
-            var receiver = edge.Target.UnwrapGraceOperand().ResolveStaticStructuralMemberProvider(name =>
-            {
-                var hits = ElaboratedScopeLookup.LookupLexicalPropertyMatches(_scope, name);
-                return hits.Count == 1
-                    ? new(StaticStructuralMemberProviderKind.KnownAlgorithm, hits[0].Property.Value)
-                    : new StaticStructuralMemberProvider(StaticStructuralMemberProviderKind.LexicalReference);
-            });
+            var receiver = ElaboratedScopeLookup.CompletedReceiver(edge.Target.UnwrapGraceOperand(), _scope);
             if (receiver.Kind != StaticStructuralMemberProviderKind.KnownAlgorithm
                 || edge.GetLexicalFallbackSelection(receiver) != LexicalFallbackSelection.Always)
                 note.ForgetDotMemberOrigin();

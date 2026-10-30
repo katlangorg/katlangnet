@@ -341,13 +341,14 @@ public partial class HostScopePropertyCacheTests
     /// cached). With the property cache DISABLED only the alias binding cell can carry a value from one
     /// block to the other — a user-visible alias observation, not only a key-level one: two distinct
     /// host objects (sharing a list, or a <c>with</c> copy) behave exactly like two independently built
-    /// ones (the control), while one object reached twice reuses its cell and eligible calls stay fresh.
-    /// With the ordinary cache, every route agrees as well.
+    /// ones (the control), while one object reached twice reuses its cell and every call stays fresh
+    /// (M4★: whatever the target's arity, so the cached value equals the uncached one). With the
+    /// ordinary cache, every route agrees as well.
     /// </summary>
     [Theory]
-    [InlineData(false, "same object", "((1, 2, 1, 3), (1, 4, 1, 5))", "((1, 1, 1, 1), (1, 1, 1, 1))")]
-    [InlineData(false, "shared properties list", "((1, 2, 1, 3), (4, 5, 4, 6))", "((1, 1, 1, 1), (2, 2, 2, 2))")]
-    [InlineData(false, "record with-copy", "((1, 2, 1, 3), (4, 5, 4, 6))", "((1, 1, 1, 1), (2, 2, 2, 2))")]
+    [InlineData(false, "same object", "((1, 2, 1, 3), (1, 4, 1, 5))", "((1, 2, 1, 3), (1, 4, 1, 5))")]
+    [InlineData(false, "shared properties list", "((1, 2, 1, 3), (4, 5, 4, 6))", "((1, 2, 1, 3), (4, 5, 4, 6))")]
+    [InlineData(false, "record with-copy", "((1, 2, 1, 3), (4, 5, 4, 6))", "((1, 2, 1, 3), (4, 5, 4, 6))")]
     [InlineData(true, "same object", "((1, 2, 1, 3), (1, 4, 1, 5))", "((1, 2, 1, 3), (1, 4, 1, 5))")]
     [InlineData(true, "shared properties list", "((1, 2, 1, 3), (4, 5, 4, 6))", "((1, 2, 1, 3), (4, 5, 4, 6))")]
     [InlineData(true, "record with-copy", "((1, 2, 1, 3), (4, 5, 4, 6))", "((1, 2, 1, 3), (4, 5, 4, 6))")]

@@ -129,7 +129,8 @@ public class SequenceConstructContainmentTests
             Properties: [],
             Output: [Sc(N(1), N(2))]);
 
-        var (detected, diagnostics) = ParameterDetector.Detect(root);
+        var detectedInput = ParameterDetector.Detect(root);
+        var (detected, diagnostics) = detectedInput;
         Assert.DoesNotContain(diagnostics, d => d.Severity == DiagnosticSeverity.Error);
 
         var scanner = new SequenceConstructScanner();

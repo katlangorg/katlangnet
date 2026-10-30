@@ -5,7 +5,8 @@ public class ParameterDetectorTests
     private static Algorithm ParseAndDetect(string source)
     {
         var root = SourceProvenance.ParseSyntaxValidRoot(source);
-        var (detected, _) = ParameterDetector.Detect(root);
+        var detectedInput = ParameterDetector.Detect(root);
+        var (detected, _) = detectedInput;
         return detected;
     }
 
@@ -515,7 +516,8 @@ public class ParameterDetectorTests
         var syntax = Parser.ParseSyntax(source);
         var diagnostic = Assert.Single(syntax.Diagnostics);
         Assert.Equal(DiagnosticCode.BadOpenForm, diagnostic.Code);
-        var (ast, _) = ParameterDetector.Detect(syntax.Root);
+        var astInput = ParameterDetector.Detect(syntax.Root);
+        var (ast, _) = astInput;
 
         Assert.Equal(["foo", "bar", "z"], ast.Params);
     }
@@ -809,7 +811,8 @@ public class ParameterDetectorTests
     public void Detect_ExplicitParameterList_FreeIdentifier_ReportsDiagnosticAndDoesNotBecomeParam()
     {
         var root = SourceProvenance.ParseSyntaxValidRoot("F((x, y)) = x + y + z");
-        var (detected, diagnostics) = ParameterDetector.Detect(root);
+        var detectedInput = ParameterDetector.Detect(root);
+        var (detected, diagnostics) = detectedInput;
 
         var error = Assert.Single(diagnostics);
         Assert.Equal(DiagnosticSeverity.Error, error.Severity);
@@ -1002,7 +1005,8 @@ public class ParameterDetectorTests
             Outer(2)
             """;
         var root = SourceProvenance.ParseSyntaxValidRoot(source);
-        var (detected, diagnostics) = ParameterDetector.Detect(root);
+        var detectedInput = ParameterDetector.Detect(root);
+        var (detected, diagnostics) = detectedInput;
 
         Assert.DoesNotContain(diagnostics, d => d.Code == DiagnosticCode.UndeclaredIdentifier);
         Assert.Equal(["y"], detected.Properties.Single(p => p.Name == "Outer").Value.Params);

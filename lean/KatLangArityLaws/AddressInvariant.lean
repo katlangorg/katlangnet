@@ -20,7 +20,7 @@ invariant-indexed Hoare triple `SoundI`:
   value environments and every address-bearing auxiliary type of the evaluator.
 * `Inv s`: the collector order; for every stored cell its suspension's references (an expression's
   caller need tier and values, a collector's slice, a Ready payload), a completed VALUE, a prepared
-  plan supply and the recorded `callee` / `receiver` / `aliasBare` addresses; every saved
+  plan supply and the recorded `callee` / `receiver` addresses; every saved
   activation's needs and values; every stored property-cache value; every recorded alias cell.
   `Inv.toStateValid`, `empty_inv`.
 * `SoundI P m Q`: from every `Inv` state satisfying the (monotone) heap predicate `P`, every
@@ -33,7 +33,7 @@ invariant-indexed Hoare triple `SoundI`:
   every completed `evalFuel` run, and (`production_sound`) for every production operation.
 
 Every address here is a NEED-HEAP address. Out of domain (never bounded by the heap size):
-`PlanRoute`, the `aliasUse` claim flag, CALLABLE outcomes, every `Algorithm` / `ScopeCtx` / `Expr`
+`PlanRoute`, CALLABLE outcomes, every `Algorithm` / `ScopeCtx` / `Expr`
 / `PropDef` / `Error` (none carries a `Result`), `ScopeCtx.activation` (a lexical-activation
 index), binding contexts, declaration identities, cache keys and their `reprStr` text,
 `Expr.emptySequence` depth and arity counts. No acyclicity, termination or first-writer law is
@@ -144,14 +144,13 @@ def PlanV (h : Array NeedCell) : NeedPlanSupply → Prop
   | _ => True
 
 /-- Every address a stored cell holds. Not constrained (out of domain): `callable` (no
-    `Result`), `route` (no payload), `aliasUse` (a claim flag). -/
+    `Result`), `route` (no payload). -/
 structure CellV (h : Array NeedCell) (c : NeedCell) : Prop where
   susp : SuspV h c.suspension
   state : StateV h c.state
   plan : PlanV h c.plan
   callee : OptAddr h c.callee
   receiver : OptAddr h c.receiver
-  aliasBare : OptAddr h c.aliasBare
 
 /-- A saved parameter activation: its need tier and its values. -/
 def ActV (h : Array NeedCell) (act : ParameterActivation) : Prop :=
@@ -161,8 +160,7 @@ def ActV (h : Array NeedCell) (act : ParameterActivation) : Prop :=
     * `collectors` — collector allocation (`allocateNeed`, the binder's collecting source);
     * `cells` — every push (`allocateNeed`, every Ready site), `NeedDemand.step` (`.completed`),
       `NeedPlan.prepare` (`setSupply`), `calleeCell` (`setCallee`), `NeedLink.receiverCell`
-      (`setReceiver`), `aliasBareCell` (`aliasBare`), and the field-preserving writers
-      (`NeedProjection.step`, `routeOf`, `takeTerminalAliasInvocation`, `aliasBareCell`'s claim);
+      (`setReceiver`), and the field-preserving writers (`NeedProjection.step`, `routeOf`);
     * `activations` — `recordParameterActivation` (and `wireSelectedBranchBody` through it);
     * `cache` — property-cache publication (`evalZeroArgPropertyAccessCounted`);
     * `aliasCells` — `aliasBindingCellRecorded`. -/
@@ -245,7 +243,7 @@ theorem PlanV.mono {s : NeedPlanSupply} (v : PlanV h s) : PlanV h' s := by
   | preparing => trivial
 theorem CellV.mono {c : NeedCell} (v : CellV h c) : CellV h' c :=
   ⟨SuspV.mono g v.susp, StateV.mono g v.state, PlanV.mono g v.plan, OptAddr.mono g v.callee,
-   OptAddr.mono g v.receiver, OptAddr.mono g v.aliasBare⟩
+   OptAddr.mono g v.receiver⟩
 theorem ActV.mono {act : ParameterActivation} (v : ActV h act) : ActV h' act :=
   ⟨ValidNeedEnv.mono g v.1, VEV.mono g v.2⟩
 end Mono
@@ -643,6 +641,16 @@ theorem SoundI.withNestedMissingOutput {α : Type} {P : Array NeedCell → Prop}
   | ok x => exact SoundI.pure _ (fun _ h => h.2 x rfl)
   | error e => exact SoundI.error _
 
+theorem SoundI.withMissingOutputNesting {α : Type} {P : Array NeedCell → Prop} {m : EvalM α}
+    {Q : α → Array NeedCell → Prop} (nested : Bool) (hm : SoundI P m Q) (hq : PMono Q) :
+    SoundI P (withMissingOutputNesting nested m) Q := by
+  unfold KatLang.withMissingOutputNesting
+  refine SoundI.bind (SoundI.attempt hm) (fun r _ _ g v x e => hq x _ _ g (v x e)) ?_
+  intro r
+  cases r with
+  | ok x => exact SoundI.pure _ (fun _ h => h.2 x rfl)
+  | error e => exact SoundI.error _
+
 theorem SoundI.map {α β : Type} {P : Array NeedCell → Prop} {m : EvalM α} (f : α → β)
     {Q : α → Array NeedCell → Prop} {R : β → Array NeedCell → Prop} (hm : SoundI P m Q)
     (hq : ∀ x h, Q x h → R (f x) h) : SoundI P (f <$> m) R := by
@@ -708,11 +716,13 @@ conclusion. -/
     out-of-range address itself, so its contract places no bound on that address. -/
 def CallPre : EvalCall → Array NeedCell → Prop
   | .whileLoop step ctx env _ cells => fun h => RAV h step ∧ ValidCtx h ctx ∧ VEV h env ∧ ValidAddresses h cells
-  | .aliasStepIsRuntime _ _ ctx => fun h => ValidCtx h ctx
+  | .aliasStepIsRuntime _ _ ctx _ => fun h => ValidCtx h ctx
   | .aliasValue _ ctx env => fun h => ValidCtx h ctx ∧ VEV h env
-  | .resolveAliasChase _ _ ctx _ _ => fun h => ValidCtx h ctx
+  | .resolveAliasChase _ _ _ ctx _ _ => fun h => ValidCtx h ctx
   | .resolveAliasTarget _ ctx => fun h => ValidCtx h ctx
+  | .resolveAliasStructure _ ctx => fun h => ValidCtx h ctx
   | .resolveAliasValueTarget _ ctx => fun h => ValidCtx h ctx
+  | .aliasOriginBinding? _ ctx => fun h => ValidCtx h ctx
   | .lookupLexicalProperty _ _ ctx => fun h => ValidCtx h ctx
   | .lookupLexicalValueProperty _ _ ctx => fun h => ValidCtx h ctx
   | .lookupLexical _ _ ctx => fun h => ValidCtx h ctx
@@ -820,7 +830,9 @@ def CallPost : (c : EvalCall) → c.Ret → Array NeedCell → Prop
   | .aliasValue .., r, h => CRV h r
   | .resolveAliasChase .., _, _ => True
   | .resolveAliasTarget .., _, _ => True
+  | .resolveAliasStructure .., _, _ => True
   | .resolveAliasValueTarget .., _, _ => True
+  | .aliasOriginBinding? .., _, _ => True
   | .lookupLexicalProperty .., _, _ => True
   | .lookupLexicalValueProperty .., _, _ => True
   | .lookupLexical .., _, _ => True

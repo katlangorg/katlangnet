@@ -741,7 +741,7 @@ def inlineAliasFailsWith (check : Error -> Bool) (row : KatLang.Expr) : Bool :=
 -- presentation); then the leaf with its payload, or `ok` and the value.
 
 section BuiltinValueSlotRejectionReports
-open KatLang (Expr privateProp publicProp)
+open KatLang (Expr privateProp publicProp privateLocalProp)
 
 /-- One frame of the neutral tree, or `none` for a frame the tree omits. -/
 def rirNeutralFrame (message : String) : Option String :=
@@ -812,10 +812,37 @@ def rirReduceInitialBlock : Expr :=
   .algorithmExpr (alg [] [] [privateProp "Add" (alg ["e", "a"] [] [] [(.binary .add (.param "e") (.param "a"))]), privateProp "Probe" (alg ["unused"] [] [] [(.call (.resolve "reduce") [(.listLiteral [.num 1, .num 2]), .resolve "Add", (.algorithmExpr (alg ["x"] [] [] [(.binary .add (.param "x") (.num 1))]))])])] [(.call (.resolve "Probe") [.num 0])])
 #guard rirObserve rirReduceInitialBlock == "call Probe > call reduce > reduceInitial > badArity"
 
-/-- `Inc(x) = x + 1` / `Add(e, a) = e + a` / `Probe(unused) = reduce([1, 2], Add, { Inc })` / `Probe(0)` -/
+/-- `Inc(x) = x + 1` / `Add(e, a) = e + a` / `Probe(unused) = reduce([1, 2], Add, { Inc })` / `Probe(0)` —
+    the written `{ Inc }` is a structural forwarding carrier (M4★); its failed slot names the carrier's
+    VALUE terminal, Inc, so it reports exactly as the written `Inc` does: reduce's hint (FA-OQ-1). -/
 def rirReduceInitialInlineAlias : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "Inc" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 1))]), privateProp "Add" (alg ["e", "a"] [] [] [(.binary .add (.param "e") (.param "a"))]), privateProp "Probe" (alg ["unused"] [] [] [(.call (.resolve "reduce") [(.listLiteral [.num 1, .num 2]), .resolve "Add", (.algorithmExpr (.alias none [] [] (.resolve "Inc")))])])] [(.call (.resolve "Probe") [.num 0])])
+  .algorithmExpr (alg [] [] [privateProp "Inc" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 1))]), privateProp "Add" (alg ["e", "a"] [] [] [(.binary .add (.param "e") (.param "a"))]), privateProp "Probe" (alg ["unused"] [] [] [(.call (.resolve "reduce") [(.listLiteral [.num 1, .num 2]), .resolve "Add", (.algorithmExpr (.alias none [] [] (.resolve "Inc") none false))])])] [(.call (.resolve "Probe") [.num 0])])
 #guard rirObserve rirReduceInitialInlineAlias == "call Probe > call reduce > reduceInitial > badArity"
+
+/-- `Inc(x) = x + 1` / `C = { Inc }` / `Add(e, a) = e + a` / `Probe(unused) = reduce([1, 2], Add, C)` / `Probe(0)` —
+    a NAMED carrier is judged on its VALUE terminal too (FA-OQ-1 under M4★), while every other value slot keeps
+    the law's report keyed by the written `C` (`count(C)`). -/
+def rirReduceInitialNamedCarrier : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "C" (.alias none [] [] (.resolve "Inc") none false), privateProp "Inc" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 1))]), privateProp "Add" (alg ["e", "a"] [] [] [(.binary .add (.param "e") (.param "a"))]), privateProp "Probe" (alg ["unused"] [] [] [(.call (.resolve "reduce") [(.listLiteral [.num 1, .num 2]), .resolve "Add", .resolve "C"])])] [(.call (.resolve "Probe") [.num 0])])
+#guard rirObserve rirReduceInitialNamedCarrier == "call Probe > call reduce > reduceInitial > badArity"
+
+/-- `Inc(x) = x + 1` / `C = { Inc }` / `Probe(unused) = count(C)` / `Probe(0)` -/
+def rirCountNamedCarrier : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "C" (.alias none [] [] (.resolve "Inc") none false), privateProp "Inc" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 1))]), privateProp "Probe" (alg ["unused"] [] [] [(.call (.resolve "count") [.resolve "C"])])] [(.call (.resolve "Probe") [.num 0])])
+#guard rirObserve rirCountNamedCarrier == "call Probe > call count > property C > arityMismatch 1 0"
+
+/-- `C = { Inc }` / `Inc(x) = x + 1` / `Add(e, a) = e + a` / `Unused(q) = { W = q ⏎ W }` /
+    `Probe(unused) = reduce([1, 2], Add, C)` / `Probe(0)` — the same named carrier in a program with a runtime-row
+    alias (`W = q`), which C# pre-marks: its failed slot still names the carrier's VALUE terminal (FA-OQ-1). -/
+def rirReduceInitialNamedCarrierPremarked : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "C" (.alias none [] [] (.resolve "Inc") none false), privateProp "Inc" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 1))]), privateProp "Add" (alg ["e", "a"] [] [] [(.binary .add (.param "e") (.param "a"))]), privateProp "Unused" (alg ["q"] [] [{ (privateLocalProp "W" (.localCapturedAncestorParams ["q"]) (.alias none [] [] (.param "q"))) with requiredOwnerDepths := some [("q", some 0)] }] [.resolve "W"]), privateProp "Probe" (alg ["unused"] [] [] [(.call (.resolve "reduce") [(.listLiteral [.num 1, .num 2]), .resolve "Add", .resolve "C"])])] [(.call (.resolve "Probe") [.num 0])])
+#guard rirObserve rirReduceInitialNamedCarrierPremarked == "call Probe > call reduce > reduceInitial > badArity"
+
+/-- `Inc(x) = x + 1` / `Add(e, a) = e + a` / `Unused(q) = { W = q ⏎ W }` /
+    `Probe(unused) = reduce([1, 2], Add, { Inc })` / `Probe(0)` — the inline carrier in the same pre-marked program. -/
+def rirReduceInitialInlineAliasPremarked : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Inc" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 1))]), privateProp "Add" (alg ["e", "a"] [] [] [(.binary .add (.param "e") (.param "a"))]), privateProp "Unused" (alg ["q"] [] [{ (privateLocalProp "W" (.localCapturedAncestorParams ["q"]) (.alias none [] [] (.param "q"))) with requiredOwnerDepths := some [("q", some 0)] }] [.resolve "W"]), privateProp "Probe" (alg ["unused"] [] [] [(.call (.resolve "reduce") [(.listLiteral [.num 1, .num 2]), .resolve "Add", (.algorithmExpr (.alias none [] [] (.resolve "Inc") none false))])])] [(.call (.resolve "Probe") [.num 0])])
+#guard rirObserve rirReduceInitialInlineAliasPremarked == "call Probe > call reduce > reduceInitial > badArity"
 
 /-- `Inc(x) = x + 1` / `A = Inc` / `Add(e, a) = e + a` / `Probe(unused) = reduce([1, 2], Add, A)` / `Probe(0)` -/
 def rirReduceInitialAlias : Expr :=

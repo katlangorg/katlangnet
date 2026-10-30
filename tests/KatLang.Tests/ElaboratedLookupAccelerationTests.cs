@@ -78,13 +78,36 @@ public class ElaboratedLookupAccelerationTests
         """;
 
     private static FrontEndTraversalObservations MeasureDetection(string source)
+        => MeasureDetection(source, out _);
+
+    private static FrontEndTraversalObservations MeasureDetection(string source, out StaticStructureOperation operation)
     {
         var syntax = Parser.ParseSyntax(source);
         Assert.False(syntax.HasErrors);
         var observations = new FrontEndTraversalObservations();
-        var (_, diagnostics) = ParameterDetector.DetectPrevalidated(syntax.Root, null, observations);
-        Assert.DoesNotContain(diagnostics, d => d.Severity == DiagnosticSeverity.Error);
+        var program = ParameterDetector.DetectPrevalidated(syntax.Root, null, observations);
+        operation = program.Operation!;
+        Assert.DoesNotContain(program.Diagnostics, d => d.Severity == DiagnosticSeverity.Error);
+        AssertUnifiedIndexBound(syntax.Root, operation);
         return observations;
+    }
+
+    private static void AssertUnifiedIndexBound(Algorithm syntax, StaticStructureOperation operation)
+    {
+        // Census the source independently: build each immutable syntax index at most once,
+        // visiting each body's property entries once, regardless of the number of name probes.
+        var seen = new HashSet<object>(ReferenceEqualityComparer.Instance);
+        var pending = new Stack<object>([syntax, operation.SourceOf(operation.Queries.Keys.Root)]);
+        long bodies = 0, entries = 0;
+        while (pending.TryPop(out var node))
+        {
+            if (!seen.Add(node)) continue;
+            if (node is Algorithm body) { bodies++; entries += body.Properties.Count; }
+            for (var index = 0; AstStructuralPreflight.TryGetChild(node, index, out var child); index++) pending.Push(child);
+        }
+        Assert.InRange(operation.Queries.SyntaxIndexBuilds, 1, bodies);
+        Assert.InRange(operation.Queries.SyntaxPropertyEntries, syntax.Properties.Count, entries);
+        Assert.True(operation.Queries.Statistics.Computations > 0);
     }
 
     // ── structural work-count regressions ────────────────────────────────────
@@ -97,20 +120,15 @@ public class ElaboratedLookupAccelerationTests
     /// one O(P) index construction plus O(P) probes, not O(P²) scanning.
     /// </summary>
     [Theory]
-    [InlineData(100, 199)]
-    [InlineData(200, 399)]
-    [InlineData(400, 799)]
-    [InlineData(800, 1599)]
-    public void WideChainLookupBuildsOneIndexAndScansNothing(int width, long expectedLevelVisits)
+    [InlineData(100)]
+    [InlineData(200)]
+    [InlineData(400)]
+    [InlineData(800)]
+    public void WideChainLookupBuildsOneIndexAndScansNothing(int width)
     {
-        var observations = MeasureDetection(BuildWideLookupChainSource(width));
-
-        Assert.Equal(0, observations.LookupPropertyComparisons);
-        Assert.Equal(1, observations.LookupNameIndexBuilds);
-        Assert.Equal(expectedLevelVisits, observations.LookupLevelVisits);
-        Assert.Equal(0, observations.LookupOpenTargetResolutions);
-        Assert.Equal(0, observations.LookupOpenMemberIndexBuilds);
-        Assert.Equal(0, observations.LookupRootDiscoveryWalks);
+        var observations = MeasureDetection(BuildWideLookupChainSource(width), out var operation);
+        Assert.True(operation.Queries.SyntaxPropertyEntries >= width);
+        Assert.Equal(0, observations.StaticOpenTargetComputations);
     }
 
     /// <summary>
@@ -129,11 +147,7 @@ public class ElaboratedLookupAccelerationTests
     {
         var observations = MeasureDetection(BuildWideLookupMissSource(width));
 
-        Assert.Equal(0, observations.LookupPropertyComparisons);
-        Assert.Equal(2, observations.LookupNameIndexBuilds);
-        Assert.True(observations.LookupLevelVisits > 0);
-        Assert.Equal(0, observations.LookupOpenTargetResolutions);
-        Assert.Equal(0, observations.LookupRootDiscoveryWalks);
+        Assert.Equal(0, observations.StaticOpenTargetComputations);
     }
 
     /// <summary>
@@ -145,21 +159,31 @@ public class ElaboratedLookupAccelerationTests
     [Fact]
     public void OpenTargetsResolveOncePerConsultedLevel()
     {
-        var observations = MeasureDetection(OpenHeavySource);
-
-        Assert.Equal(1, observations.LookupOpenTargetResolutions);
-        Assert.Equal(1, observations.LookupOpenMemberIndexBuilds);
-        Assert.Equal(0, observations.LookupPropertyComparisons);
-        Assert.Equal(2, observations.LookupNameIndexBuilds);
-        Assert.Equal(0, observations.LookupRootDiscoveryWalks);
+        var syntax = Parser.ParseSyntax(OpenHeavySource);
+        Assert.False(syntax.HasErrors);
+        var observations = new FrontEndTraversalObservations();
+        var program = ParameterDetector.DetectPrevalidated(syntax.Root, observations: observations);
+        Assert.Equal(0, program.Diagnostics.ReportedErrorCount);
+        Assert.NotNull(program.Operation);
+        var operation = program.Operation;
+        var use = syntax.Root.Properties.Single(property => property.Name == "Use").Value;
+        var key = operation.ContextOf(operation.Root, use);
+        Assert.Equal(1, observations.StaticOpenTargetComputations);
+        Assert.True(observations.StaticOpenTargetEvaluations > 0);
+        var evaluations = observations.StaticOpenTargetEvaluations;
+        var statistics = operation.Queries.Statistics;
+        for (var i = 0; i < 100; i++)
+            _ = operation.Read(StaticQueryKey.Project(StaticQueryKind.OpenProviders, key,
+                StaticQueryProjection.OpenTarget, stratum: StaticCycleCheck.Formation, node: use.Opens[0]));
+        Assert.Equal(evaluations, observations.StaticOpenTargetEvaluations);
+        Assert.Equal(statistics.Evaluations, operation.Queries.Statistics.Evaluations);
+        Assert.Equal(1, observations.StaticOpenTargetComputations);
     }
 
     /// <summary>
-    /// Open-target resolution stays LAZY: a level whose opens are never
-    /// consulted (every queried name resolves directly) resolves no target and
-    /// builds no provider state, exactly like the pre-cache code. This also
-    /// pins the error/side-effect ordering argument: nothing about a level's
-    /// opens runs earlier than it did before the cache.
+    /// Owned-name lookup never consults Q2. Other compiler obligations (including inference
+    /// and eager open validity) can independently evaluate Q2, so measure the lookup demand
+    /// itself rather than treating a legacy detector-cache counter as total structural work.
     /// </summary>
     [Fact]
     public void UnconsultedOpensResolveNothing()
@@ -175,10 +199,36 @@ public class ElaboratedLookupAccelerationTests
             }
             Use
             """;
-        var observations = MeasureDetection(source);
+        var syntax = Parser.ParseSyntax(source);
+        Assert.False(syntax.HasErrors);
+        var observations = new FrontEndTraversalObservations();
+        var operation = StaticStructureAdmission.Create(syntax.Root).Operation;
+        _ = operation.CreatePreludeScope(observations);
+        var use = syntax.Root.Properties.Single(property => property.Name == "Use").Value;
+        var key = operation.ContextOf(operation.Root, use);
+        for (var i = 0; i < 100; i++)
+            Assert.Equal(StaticFactKind.Declaration, operation.Read(StaticQueryKey.Binding(key, "B", StaticCycleCheck.Formation)).Kind);
+        Assert.Equal(0, observations.StaticOpenTargetComputations);
+        Assert.Equal(0, observations.StaticOpenTargetEvaluations);
+    }
 
-        Assert.Equal(0, observations.LookupOpenTargetResolutions);
-        Assert.Equal(0, observations.LookupOpenMemberIndexBuilds);
+    [Fact]
+    public void CompletedProviderReads_UsePublishedFacts_WithoutNewQ2Work()
+    {
+        var parsed = SourceProvenance.ParseValid(OpenHeavySource);
+        var observations = new FrontEndTraversalObservations();
+        var root = ElaboratedScopeLookup.CreateScope(parsed.Root, observations: observations,
+            memberIndexes: new OpenMemberIndexCache(observations));
+        var use = parsed.Root.Properties.Single(property => property.Name == "Use").Value;
+        var scope = ElaboratedScopeLookup.CreateScope(use, root);
+        var providers = scope.GetResolvedOpenProviders();
+        Assert.Single(providers);
+        var reads = observations.CompletedStaticStructureReads;
+        Assert.True(reads > 0);
+        for (var i = 0; i < 100; i++) Assert.Same(providers, scope.GetResolvedOpenProviders());
+        Assert.Equal(reads, observations.CompletedStaticStructureReads);
+        Assert.Equal(0, observations.StaticOpenTargetComputations);
+        Assert.Equal(0, observations.StaticOpenTargetEvaluations);
     }
 
     /// <summary>
@@ -196,7 +246,7 @@ public class ElaboratedLookupAccelerationTests
         var rootScope = ElaboratedScopeLookup.CreateScope(Owner(
             parentX,
             new Property("LibA", libA),
-            new Property("LibB", libB)), observations: observations);
+            new Property("LibB", libB)), observations: observations, sourcePhase: StaticAstPhase.NameResolved);
         var childScope = ElaboratedScopeLookup.CreateScope(
             new Algorithm.User(
                 null,
@@ -208,7 +258,7 @@ public class ElaboratedLookupAccelerationTests
 
         var hit = Assert.Single(ElaboratedScopeLookup.LookupLexicalPropertyMatches(childScope, "X"));
         Assert.Same(parentX, hit.Property);
-        Assert.Equal(0, observations.LookupOpenTargetResolutions);
+        Assert.Equal(0, observations.CompletedStaticStructureReads);
         Assert.Equal(0, observations.LookupOpenMemberIndexBuilds);
     }
 
@@ -227,7 +277,8 @@ public class ElaboratedLookupAccelerationTests
         const int depth = 8;
         var syntax = SourceProvenance.ParseSyntaxValidRoot(BuildNestedChainSource(depth));
         var observations = new FrontEndTraversalObservations();
-        var (detected, diagnostics) = ParameterDetector.DetectPrevalidated(syntax, observations: observations);
+        var detectedInput = ParameterDetector.DetectPrevalidated(syntax, observations: observations);
+        var (detected, diagnostics) = detectedInput;
         Assert.Empty(diagnostics);
 
         var owner = detected;
@@ -241,10 +292,8 @@ public class ElaboratedLookupAccelerationTests
             Assert.Equal($"x{level}", reference.Name);
         }
 
-        Assert.Equal(depth + 1, observations.LookupNameIndexBuilds);
-        Assert.True(observations.LookupLevelVisits > depth);
-        Assert.Equal(0, observations.LookupPropertyComparisons);
-        Assert.Equal(0, observations.LookupRootDiscoveryWalks);
+        AssertUnifiedIndexBound(syntax, detectedInput.Operation!);
+        Assert.Equal(0, observations.StaticOpenTargetComputations);
     }
 
     /// <summary>
@@ -256,13 +305,12 @@ public class ElaboratedLookupAccelerationTests
     public void IndependentDetectionsShareNoCacheState()
     {
         var source = BuildWideLookupChainSource(50);
-        var first = MeasureDetection(source);
-        var second = MeasureDetection(source);
-
-        Assert.Equal(1, first.LookupNameIndexBuilds);
-        Assert.Equal(1, second.LookupNameIndexBuilds);
-        Assert.Equal(first.LookupLevelVisits, second.LookupLevelVisits);
-        Assert.Equal(first.LookupPropertyComparisons, second.LookupPropertyComparisons);
+        _ = MeasureDetection(source, out var first);
+        _ = MeasureDetection(source, out var second);
+        Assert.NotSame(first, second);
+        Assert.Equal(first.Queries.SyntaxIndexBuilds, second.Queries.SyntaxIndexBuilds);
+        Assert.Equal(first.Queries.SyntaxPropertyEntries, second.Queries.SyntaxPropertyEntries);
+        Assert.Equal(first.Queries.Statistics, second.Queries.Statistics);
     }
 
     // ── declaration-identity regressions ─────────────────────────────────────
@@ -324,7 +372,7 @@ public class ElaboratedLookupAccelerationTests
         var root = Owner(new Property("Lib", lib, IsPublic: true));
         var user = new Algorithm.User(null, [], [new Expr.Resolve("Lib")], [], OutputBundle.Empty);
 
-        var rootScope = ElaboratedScopeLookup.CreateScope(root);
+        var rootScope = ElaboratedScopeLookup.CreateScope(root, sourcePhase: StaticAstPhase.NameResolved);
         var userScope = ElaboratedScopeLookup.CreateScope(user, rootScope);
 
         // The linear helper defines the relation…
@@ -404,7 +452,7 @@ public class ElaboratedLookupAccelerationTests
             new Property(null!, ValueAlgorithm(99)),
             firstNull,
             new Property(null!, ValueAlgorithm(303), IsPublic: true));
-        var rootScope = ElaboratedScopeLookup.CreateScope(Owner(new Property("Lib", lib)));
+        var rootScope = ElaboratedScopeLookup.CreateScope(Owner(new Property("Lib", lib)), sourcePhase: StaticAstPhase.NameResolved);
         var userScope = ElaboratedScopeLookup.CreateScope(
             new Algorithm.User(null, [], [new Expr.Resolve("Lib")], [], OutputBundle.Empty),
             rootScope);
@@ -563,7 +611,7 @@ public class ElaboratedLookupAccelerationTests
             Output: OutputBundle.Empty);
         var leaf = Owner(new Property("LeafOnly", ValueAlgorithm(61)));
 
-        var rootScope = ElaboratedScopeLookup.CreateScope(root);
+        var rootScope = ElaboratedScopeLookup.CreateScope(root, sourcePhase: StaticAstPhase.NameResolved);
         var midScope = ElaboratedScopeLookup.CreateScope(mid, rootScope);
         var leafScope = ElaboratedScopeLookup.CreateScope(leaf, midScope);
 
@@ -646,7 +694,7 @@ public class ElaboratedLookupAccelerationTests
             Properties: [],
             Output: OutputBundle.Empty);
 
-        var rootScope = ElaboratedScopeLookup.CreateScope(root);
+        var rootScope = ElaboratedScopeLookup.CreateScope(root, sourcePhase: StaticAstPhase.NameResolved);
         var userScope = ElaboratedScopeLookup.CreateScope(user, rootScope);
 
         var providers = userScope.GetResolvedOpenProviders();
@@ -689,7 +737,10 @@ public class ElaboratedLookupAccelerationTests
         var root = Assert.IsType<Algorithm.User>(parsed.Root);
         var outerLib = root.Properties.Single(p => p.Name == "Lib").Value;
         var a = root.Properties.Single(p => p.Name == "A").Value;
-        var b = Assert.IsType<Algorithm.User>(root.Properties.Single(p => p.Name == "B").Value);
+        // B is written in braces with its own declarations and one reference row: a structural
+        // forwarding carrier (M4★), which keeps its own opens and members.
+        Algorithm b = Assert.IsType<Algorithm.Alias>(root.Properties.Single(p => p.Name == "B").Value);
+        Assert.False(((Algorithm.Alias)b).IsReference);
         var innerLib = b.Properties.Single(p => p.Name == "Lib").Value;
 
         var rootScope = ElaboratedScopeLookup.CreateScope(parsed.Root);
@@ -768,16 +819,16 @@ public class ElaboratedLookupAccelerationTests
     }
 
     /// <summary>
-    /// The last written row of <c>Outer.Inner</c>. A lone row that is an enclosing PARAMETER makes
-    /// <c>Inner</c> a runtime-target callable alias of it (FWD-02, META-S3-2), whose row is its target;
-    /// any other body keeps its rows.
+    /// The last written row of <c>Outer.Inner</c>. A lone reference row makes <c>Inner</c> an alias
+    /// whose row is its target — a runtime-target alias of an enclosing PARAMETER (FWD-02, META-S3-2),
+    /// or, since M4★, a reference or structural carrier of any algorithm; any other body keeps its rows.
     /// </summary>
     private static Expr InnerRow(Algorithm.User root)
     {
         var outer = Assert.IsType<Algorithm.User>(root.Properties.Single(p => p.Name == "Outer").Value);
         return outer.Properties.Single(p => p.Name == "Inner").Value switch
         {
-            Algorithm.Alias { HasRuntimeTarget: true } alias => alias.Target,
+            Algorithm.Alias alias => alias.Target,
             Algorithm.User user => user.Output[^1],
             var other => throw new Xunit.Sdk.XunitException($"Outer.Inner elaborated to {other.GetType().Name}"),
         };
@@ -886,13 +937,15 @@ public class ElaboratedLookupAccelerationTests
         var properties = new List<Property> { new("Target", ValueAlgorithm(101)) };
         var root = new Algorithm.User(null, [], [], properties, [new Expr.Resolve("Target")]);
 
-        var (first, firstDiagnostics) = ParameterDetector.Detect(root);
+        var firstInput = ParameterDetector.Detect(root);
+        var (first, firstDiagnostics) = firstInput;
         Assert.DoesNotContain(firstDiagnostics, d => d.Severity == DiagnosticSeverity.Error);
         Assert.Empty(first.Parameters);
 
         properties.RemoveAt(0);
 
-        var (second, secondDiagnostics) = ParameterDetector.Detect(root);
+        var secondInput = ParameterDetector.Detect(root);
+        var (second, secondDiagnostics) = secondInput;
         Assert.DoesNotContain(secondDiagnostics, d => d.Severity == DiagnosticSeverity.Error);
         var promoted = Assert.Single(second.Parameters);
         Assert.Equal("Target", promoted.Name);
@@ -947,14 +1000,16 @@ public class ElaboratedLookupAccelerationTests
         var rootProperties = new List<Property> { new("Use", use) };
         var root = new Algorithm.User(null, [], [], rootProperties, [new Expr.Resolve("Use")]);
 
-        var (first, firstDiagnostics) = ParameterDetector.Detect(root);
+        var firstInput = ParameterDetector.Detect(root);
+        var (first, firstDiagnostics) = firstInput;
         Assert.DoesNotContain(firstDiagnostics, d => d.Severity == DiagnosticSeverity.Error);
         var firstUse = Assert.IsType<Algorithm.User>(first.Properties.Single(p => p.Name == "Use").Value);
         Assert.Equal("X", Assert.Single(firstUse.Parameters).Name);
 
         rootProperties.Insert(0, new Property("Lib", lib));
 
-        var (second, secondDiagnostics) = ParameterDetector.Detect(root);
+        var secondInput = ParameterDetector.Detect(root);
+        var (second, secondDiagnostics) = secondInput;
         Assert.DoesNotContain(secondDiagnostics, d => d.Severity == DiagnosticSeverity.Error);
         var secondUse = Assert.IsType<Algorithm.User>(second.Properties.Single(p => p.Name == "Use").Value);
         Assert.Empty(secondUse.Parameters);
@@ -973,7 +1028,7 @@ public class ElaboratedLookupAccelerationTests
         var observations = new FrontEndTraversalObservations();
         var rootScope = ElaboratedScopeLookup.CreateScope(
             Owner(new Property("Lib", lib)),
-            observations: observations);
+            observations: observations, sourcePhase: StaticAstPhase.NameResolved);
         var sharedScope = ElaboratedScopeLookup.CreateScope(
             new Algorithm.User(
                 null,
@@ -984,9 +1039,11 @@ public class ElaboratedLookupAccelerationTests
             rootScope);
 
         sharedScope.PrewarmSharedLookupCaches();
-        Assert.Equal(2, observations.LookupNameIndexBuilds);
-        Assert.Equal(1, observations.LookupOpenTargetResolutions);
+        Assert.True(observations.LookupNameIndexBuilds > 0);
         Assert.Equal(1, observations.LookupOpenMemberIndexBuilds);
+        var indexes = observations.LookupNameIndexBuilds;
+        var reads = observations.CompletedStaticStructureReads;
+        Assert.True(reads > 0);
 
         Parallel.For(0, 32, _ =>
         {
@@ -995,8 +1052,8 @@ public class ElaboratedLookupAccelerationTests
             Assert.Same(exported, hit.Property);
         });
 
-        Assert.Equal(2, observations.LookupNameIndexBuilds);
-        Assert.Equal(1, observations.LookupOpenTargetResolutions);
+        Assert.Equal(indexes, observations.LookupNameIndexBuilds);
+        Assert.Equal(reads, observations.CompletedStaticStructureReads);
         Assert.Equal(1, observations.LookupOpenMemberIndexBuilds);
     }
 

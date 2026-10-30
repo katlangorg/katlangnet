@@ -1,18 +1,11 @@
 [CmdletBinding()]
 param(
     [ValidateSet("All", "DotNet", "Lean")]
-    [string]$Phase = "All",
-    # The forced invocation-plan run: the .NET phase with KATLANG_FORCE_INVOCATION_PLANS=1, so every
-    # evaluator run of the test hosts routes its call-shaped supplied arguments through retained plans.
-    [switch]$ForceInvocationPlans
+    [string]$Phase = "All"
 )
 
 $ErrorActionPreference = "Stop"
 Set-StrictMode -Version Latest
-
-if ($ForceInvocationPlans -and $Phase -ne "DotNet") {
-    throw "-ForceInvocationPlans selects the forced .NET run; use it with -Phase DotNet."
-}
 
 function Write-Section {
     param([Parameter(Mandatory = $true)][string]$Title)
@@ -323,8 +316,9 @@ $neutralizedRegenerationFlags = [System.Collections.Generic.List[object]]::new()
 
 # The invocation-plan mode is process-wide test-host configuration read once at test-assembly load
 # (ForcedInvocationPlansHook), so it is fixed here, before any test host starts, and inherited by
-# every test host and child host: set for -ForceInvocationPlans, otherwise REMOVED so an inherited
-# flag can never turn the ordinary run into the forced one. Restored exactly on exit.
+# every test host and child host. Always REMOVE the inherited diagnostic flag: normal validation
+# runs the suite once on the production gate, with route comparisons inside dedicated tests.
+# Restore the caller's environment exactly on exit.
 $planModeVariable = "KATLANG_FORCE_INVOCATION_PLANS"
 $inheritedPlanMode = [Environment]::GetEnvironmentVariable($planModeVariable)
 
@@ -354,7 +348,7 @@ try {
         }
     }
 
-    Set-PlanModeVariable -Value $(if ($ForceInvocationPlans) { "1" } else { $null })
+    Set-PlanModeVariable -Value $null
 
     Push-Location $repoRoot
     $enteredRepo = $true
@@ -375,13 +369,8 @@ try {
     }
 
     Write-Section "Invocation-plan mode"
-    if ($ForceInvocationPlans) {
-        Write-Host "FORCED: $planModeVariable=1 for every test host (the forced invocation-plan run)."
-    }
-    else {
-        Write-Host "Ordinary: $planModeVariable is unset for every test host$(if ($null -ne $inheritedPlanMode) { ' (inherited value removed, restored on exit)' })."
-    }
-    Write-ValidationRecord "invocation-plan mode: $(if ($ForceInvocationPlans) { 'forced' } else { 'ordinary' })"
+    Write-Host "Ordinary: $planModeVariable is unset for every test host$(if ($null -ne $inheritedPlanMode) { ' (inherited value removed, restored on exit)' })."
+    Write-ValidationRecord "invocation-plan mode: ordinary"
 
     if ($Phase -in @("All", "DotNet")) {
         Invoke-ValidationPhase -Name ".NET" -Body {

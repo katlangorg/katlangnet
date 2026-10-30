@@ -360,4 +360,10 @@ public enum KatLangErrorCode
 
     /// <summary>Front-end <see cref="DiagnosticCode.InvalidMetaParameter"/>.</summary>
     InvalidMetaParameter = 81,
+
+    /// <summary>Front-end <see cref="DiagnosticCode.SelfDependentInferredParameters"/>.</summary>
+    SelfDependentInferredParameters = 82,
+
+    /// <summary>Front-end <see cref="DiagnosticCode.StaticStructureLimitExceeded"/>.</summary>
+    StaticStructureLimitExceeded = 83,
 }

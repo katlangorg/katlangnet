@@ -853,7 +853,7 @@ public static partial class Evaluator
                 var wired = route.Value.Wired!;
                 if (wired is Algorithm.Alias alias)
                 {
-                    var target = ResolveBindingAliasTarget(route.Value.Member!, alias, ctx, callable: true);
+                    var target = ResolveAliasTarget(alias, ctx, route.Value.Member!);
                     if (target.IsError) return target.Error;
                     wired = target.Value;
                 }

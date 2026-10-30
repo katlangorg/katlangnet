@@ -24,10 +24,31 @@ public static class SemanticModelBuilder
     /// </summary>
     /// <exception cref="ArgumentNullException"><paramref name="root"/> is null.</exception>
     /// <exception cref="ArgumentException">The root is structurally unsafe.</exception>
+    /// <exception cref="InvalidOperationException">Static analysis exhausted its finite resource budget.</exception>
     public static SemanticModel Build(Algorithm root)
     {
         ArgumentNullException.ThrowIfNull(root);
         return BuildElaborated(root, argumentName: nameof(root));
+    }
+
+    /// <summary>
+    /// Builds a semantic model of an elaborated host root with explicit immutable resource
+    /// policy. The structural-analysis ceiling in <paramref name="sourceProcessingLimits"/>
+    /// governs newly admitted facts; an exact completed publication is reused without a new
+    /// admission. Other source-processing limits concern parsing and module loading, which
+    /// this method does not perform. No model is returned after resource refusal or cancellation.
+    /// </summary>
+    /// <exception cref="ArgumentNullException">The root or limits are null.</exception>
+    /// <exception cref="ArgumentException">The root is structurally unsafe.</exception>
+    /// <exception cref="InvalidOperationException">Static analysis exhausted its finite resource budget.</exception>
+    /// <exception cref="OperationCanceledException">The cancellation token was canceled.</exception>
+    public static SemanticModel Build(Algorithm root, SourceProcessingLimits sourceProcessingLimits,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(root);
+        ArgumentNullException.ThrowIfNull(sourceProcessingLimits);
+        return BuildElaborated(root, argumentName: nameof(root), sourceProcessingLimits: sourceProcessingLimits,
+            cancellationToken: cancellationToken);
     }
 
     /// <summary>
@@ -56,6 +77,7 @@ public static class SemanticModelBuilder
     /// <exception cref="ArgumentNullException"><paramref name="parseResult"/> is null.</exception>
     /// <exception cref="ArgumentException">The elaborated root is structurally unsafe
     /// (see <see cref="Build(Algorithm)"/>); never the case for a parser-produced result.</exception>
+    /// <exception cref="InvalidOperationException">Static analysis exhausted its finite resource budget.</exception>
     /// <remarks>A result parsed with <see cref="RunOptions.HostOperations"/> is modeled against
     /// the same host-extended prelude its elaboration resolved names against, so an operation's
     /// references classify as prelude members (and complete as visible names) exactly where
@@ -119,8 +141,11 @@ public static class SemanticModelBuilder
         HostOperations? hostOperations = null,
         string argumentName = "elaboratedRoot",
         Dictionary<ScopeVisibility, IReadOnlyList<VisibleSymbol>>? eagerReference = null,
-        VisibilityConstructionOptions? visibilityOptions = null)
+        VisibilityConstructionOptions? visibilityOptions = null,
+        SourceProcessingLimits? sourceProcessingLimits = null,
+        CancellationToken cancellationToken = default)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         // Semantic modeling walks the tree recursively, and the public Build overloads
         // accept preconstructed (host-built) roots, so the same non-recursive structural
         // preflight that protects the evaluator entry points must run before any
@@ -149,7 +174,18 @@ public static class SemanticModelBuilder
         // — unavailable or refused (FrontEndPipeline.FinalizeElaboration) — and the builder
         // models it like a deferred module region's unmaterialized load
         // (OwnsDeferredModuleOpen, IsDeferredModulePlaceholder).
-        return new Builder(observations, hostOperations, visibilityOptions).Build(elaboratedRoot, eagerReference);
+        try
+        {
+            var context = AnalyzedStaticStructures.ForBoundAst(elaboratedRoot, hostOperations,
+                sourceProcessingLimits: sourceProcessingLimits, cancellationToken: cancellationToken);
+            var model = new Builder(observations, hostOperations, visibilityOptions, context.Facts).Build(elaboratedRoot, eagerReference);
+            cancellationToken.ThrowIfCancellationRequested();
+            return model;
+        }
+        catch (StaticQueryLimitExceededException error)
+        {
+            throw new InvalidOperationException("Semantic model building exhausted the static-analysis resource budget.", error);
+        }
     }
 
     /// <summary>
@@ -271,11 +307,15 @@ public static class SemanticModelBuilder
         // parameter detection resolved the program against. The builtin, Math, and alias
         // property objects are the shared ones either way, so their classification is unchanged.
         private readonly Algorithm.User _preludeAlgorithm;
+        private readonly Algorithm? _mathAlgorithm = MathAlgorithm;
         private readonly ScopeFrame _preludeScope;
         private readonly IReadOnlyList<VisibleSymbol> _preludeSymbols;
         private readonly IReadOnlySet<string>? _hostOperationNames;
 
-        public Builder(FrontEndTraversalObservations? observations, HostOperations? hostOperations = null, VisibilityConstructionOptions? visibilityOptions = null)
+        private readonly StaticLookupFacts? _lookupFacts;
+
+        public Builder(FrontEndTraversalObservations? observations, HostOperations? hostOperations = null,
+            VisibilityConstructionOptions? visibilityOptions = null, StaticLookupFacts? completed = null)
         {
             _observations = observations;
             _openMemberIndexes = new OpenMemberIndexCache(observations);
@@ -284,6 +324,19 @@ public static class SemanticModelBuilder
                 ForceBulk = visibilityOptions?.ForceBulk,
                 PriorityOverride = visibilityOptions?.PriorityOverride,
             };
+            _lookupFacts = completed;
+            if (completed is not null)
+            {
+                _hostOperationNames = hostOperations?.Operations.Select(static operation => operation.Name).ToHashSet(StringComparer.Ordinal);
+                _preludeAlgorithm = (Algorithm.User)completed.Prelude;
+                _mathAlgorithm = completed.Member(completed.PreludeKey, BuiltinRegistry.MathModuleName) is { } mathKey
+                    ? completed.Facts(mathKey)?.Body : null;
+                _preludeScope = new ScopeFrame(null, new Dictionary<string, SymbolDefinition>(StringComparer.Ordinal),
+                    ElaboratedScopeLookup.CreateScope(_preludeAlgorithm, memberIndexes: _openMemberIndexes,
+                        completedContext: completed.Context(completed.PreludeKey)));
+                _preludeSymbols = CreatePreludeCatalog(_preludeAlgorithm, _hostOperationNames, _mathAlgorithm);
+                return;
+            }
             if (hostOperations is null || hostOperations.Operations.Count == 0)
             {
                 _preludeAlgorithm = PreludeAlgorithm;
@@ -300,7 +353,7 @@ public static class SemanticModelBuilder
                 parent: null,
                 parameters: new Dictionary<string, SymbolDefinition>(StringComparer.Ordinal),
                 ElaboratedScopeLookup.CreateScope(_preludeAlgorithm, memberIndexes: _openMemberIndexes));
-            _preludeSymbols = CreatePreludeCatalog(_preludeAlgorithm, _hostOperationNames);
+            _preludeSymbols = CreatePreludeCatalog(_preludeAlgorithm, _hostOperationNames, _mathAlgorithm);
         }
 
         // This build's shared open-target member indexes: every level this build derives — from the
@@ -416,27 +469,35 @@ public static class SemanticModelBuilder
             Algorithm algorithm,
             ScopeFrame parentScope,
             IReadOnlyDictionary<string, SymbolDefinition>? extraParameters,
-            SourceSpan? regionSeedSpan = null)
+            SourceSpan? regionSeedSpan = null,
+            Pattern? branchPattern = null)
         {
             // Same algorithm, same parent frame, same (or no) extra-parameter table: the same
             // occurrence, analyzed once. An empty binder table is no table at all, so two
             // literal-pattern families sharing a body share its analysis.
             var visits = VisitsOf(parentScope);
             visits.Algorithms ??= [];
-            if (!visits.Algorithms.Add(new AlgorithmVisitKey(algorithm, extraParameters is { Count: > 0 } ? extraParameters : null)))
+            if (!visits.Algorithms.Add(new AlgorithmVisitKey(algorithm,
+                parentScope.PropertyScope.CompletedContext is not null && branchPattern is not null ? branchPattern
+                    : extraParameters is { Count: > 0 } ? extraParameters : null)))
                 return;
 
             _observations?.RecordSemanticModelAlgorithmVisit();
             switch (algorithm)
             {
+                // A hoisted deconstruction RHS keeps its written owner's lookup context.
+                // The synthetic storage property creates no editor scope or structural region.
+                case Algorithm.User { IsAssignmentDeconstructionSource: true } source:
+                    foreach (var row in source.Output) VisitExpr(row, parentScope);
+                    break;
                 // A callable alias is a scope body like a user algorithm's: its own opens and
                 // declarations, and its one written row — the target reference, an ordinary
                 // reference site (go-to-definition from the row reaches the target).
                 case Algorithm.User or Algorithm.Alias:
-                    VisitScopeBody(algorithm, parentScope, extraParameters, regionSeedSpan);
+                    VisitScopeBody(algorithm, parentScope, extraParameters, regionSeedSpan, branchPattern);
                     break;
                 case Algorithm.Conditional conditional:
-                    VisitConditionalAlgorithm(conditional, parentScope, regionSeedSpan);
+                    VisitConditionalAlgorithm(conditional, parentScope, regionSeedSpan, branchPattern);
                     break;
                 case Algorithm.Builtin:
                     break;
@@ -450,13 +511,14 @@ public static class SemanticModelBuilder
             Algorithm algorithm,
             ScopeFrame parentScope,
             IReadOnlyDictionary<string, SymbolDefinition>? extraParameters,
-            SourceSpan? regionSeedSpan = null)
+            SourceSpan? regionSeedSpan = null,
+            Pattern? branchPattern = null)
         {
             // The region — and with it the module-provenance suppression state — is
             // established BEFORE the scope is created: CreateScope registers the
             // algorithm's own declaration sites, which must already be gated.
             var region = OpenScopeRegion(algorithm, regionSeedSpan);
-            var scope = CreateScope(algorithm, parentScope, extraParameters);
+            var scope = CreateScope(algorithm, parentScope, extraParameters, branchPattern);
             ExtendRegionWithDeclarationAnchors(algorithm, extraParameters);
 
             foreach (var open in algorithm.Opens)
@@ -474,10 +536,11 @@ public static class SemanticModelBuilder
         private void VisitConditionalAlgorithm(
             Algorithm.Conditional algorithm,
             ScopeFrame parentScope,
-            SourceSpan? regionSeedSpan = null)
+            SourceSpan? regionSeedSpan = null,
+            Pattern? branchPattern = null)
         {
             var region = OpenScopeRegion(algorithm, regionSeedSpan);
-            var scope = CreateScope(algorithm, parentScope, extraParameters: null);
+            var scope = CreateScope(algorithm, parentScope, extraParameters: null, branchPattern);
             ExtendRegionWithDeclarationAnchors(algorithm, extraParameters: null);
 
             foreach (var open in algorithm.Opens)
@@ -492,13 +555,14 @@ public static class SemanticModelBuilder
         private void VisitConditionalBranch(CondBranch branch, ScopeFrame parentScope)
         {
             var binderSymbols = CreateBinderSymbols(branch.Pattern);
-            VisitAlgorithm(branch.Body, parentScope, binderSymbols);
+            VisitAlgorithm(branch.Body, parentScope, binderSymbols, branchPattern: branch.Pattern);
         }
 
         private ScopeFrame CreateScope(
             Algorithm algorithm,
             ScopeFrame parentScope,
-            IReadOnlyDictionary<string, SymbolDefinition>? extraParameters)
+            IReadOnlyDictionary<string, SymbolDefinition>? extraParameters,
+            Pattern? branchPattern = null)
         {
             // Every own property's symbol is built eagerly here — in declaration order,
             // before the body walk — for its SIDE EFFECTS: for a document-owned
@@ -512,7 +576,8 @@ public static class SemanticModelBuilder
             foreach (var property in algorithm.Properties)
                 CreatePropertySymbol(algorithm, property);
 
-            var propertyScope = ElaboratedScopeLookup.CreateScope(algorithm, parentScope.PropertyScope, memberIndexes: _openMemberIndexes);
+            var propertyScope = ElaboratedScopeLookup.CreateScope(algorithm, parentScope.PropertyScope,
+                memberIndexes: _openMemberIndexes, branchPattern: branchPattern);
             var ownsDeferredModuleOpen = OwnsDeferredModuleOpen(propertyScope);
             _documentOwnsDeferredModuleOpen |= ownsDeferredModuleOpen;
 
@@ -705,6 +770,13 @@ public static class SemanticModelBuilder
             if (expression.TryGetUnresolvedLoadArguments(out _))
                 return true;
 
+            // Loader provenance is a syntax fact, not a completed provider selection. A deferred
+            // placeholder has no published namespace; inspect only the owner-selected written head.
+            if (expression.OpenTargetHead(out _) is Expr.Resolve head
+                && ElaboratedScopeLookup.SelectOwnedDeclaration(propertyScope, head.Name, ElaboratedScopeLookup.OwnParameterBindings.Instance)
+                    .TryGetProperty(out _, out var declared)
+                && IsDeferredModulePlaceholder(declared.Property.Value)) return true;
+
             while (true)
             {
                 if (ElaboratedScopeLookup.ResolveOpenTarget(propertyScope, expression) is { } target
@@ -747,6 +819,8 @@ public static class SemanticModelBuilder
 
             for (var current = scope.PropertyScope; current is not null; current = current.Parent)
             {
+                if (current.CompletedContext is { } completed
+                    && completed.Facts.Facts(completed.Key)?.AmbiguousOpenNames?.Contains(name) == true) return false;
                 var matches = current.GetResolvedOpenProviders()
                     .Count(provider => provider.TryLookupPublicMember(name) is not null);
                 if (matches > 1)
@@ -889,7 +963,7 @@ public static class SemanticModelBuilder
             if (_propertySymbolCache.TryGetValue(property, out var cached))
                 return cached;
 
-            if (!ReferenceEquals(owner, MathAlgorithm) && !ReferenceEquals(owner, _preludeAlgorithm))
+            if (!ReferenceEquals(owner, _mathAlgorithm) && !ReferenceEquals(owner, _preludeAlgorithm))
                 return CreatePropertySymbol(owner, property);
 
             var symbol = CreateBuiltinSymbol(
@@ -1582,12 +1656,7 @@ public static class SemanticModelBuilder
         /// resolution power for every bare name it meets.
         /// </summary>
         private StaticStructuralMemberProvider ResolveStructuralMemberProvider(Expr expr, ScopeFrame scope)
-            => expr.ResolveStaticStructuralMemberProvider(
-                name => ResolveLexicalProperty(scope, name)?.AlgorithmValue is { } algorithm
-                    ? new StaticStructuralMemberProvider(
-                        StaticStructuralMemberProviderKind.KnownAlgorithm,
-                        algorithm)
-                    : new StaticStructuralMemberProvider(StaticStructuralMemberProviderKind.LexicalReference));
+            => ElaboratedScopeLookup.CompletedReceiver(expr, scope.PropertyScope);
 
         private SymbolDefinition? TryResolveDeclaredProperty(Algorithm algorithm, string name)
         {
@@ -2459,7 +2528,7 @@ public static class SemanticModelBuilder
 
         private bool MembersRegistered(Algorithm algorithm)
         {
-            if (algorithm is not Algorithm.User user || _registeredMemberSurfaces.Contains(user) || _memberSymbolCache.ContainsKey(user))
+            if (MemberSurface(algorithm) is not { } user || _registeredMemberSurfaces.Contains(user) || _memberSymbolCache.ContainsKey(user))
                 return true;
             foreach (var property in user.Properties)
             {
@@ -2808,6 +2877,21 @@ public static class SemanticModelBuilder
         /// </summary>
         private VisibilityNode? ApplyOpenLayer(ElaboratedPropertyScope level, VisibilityNode? root, int outerDeferredLevels)
         {
+            var facts = level.CompletedContext is { } context ? context.Facts.Facts(context.Key) : null;
+            if (level.CompletedContext is { } known
+                && known.Facts.Facts(known.Key)?.AmbiguousOpenNames is { Count: > 0 } ambiguous)
+                root = _visibilityTrees.Apply(root, ambiguous.Where(name => !IsDirectlyDecided(root, name))
+                    .Select(VisibilityDelta.Remove).ToList());
+            if (level.CompletedContext is { } completed
+                && completed.Facts.Facts(completed.Key)?.UnavailableOpenNames is { Count: > 0 } names)
+            {
+                var meta = VisibilityEntry.OpenMeta(outerDeferredLevels);
+                var changes = new List<VisibilityDelta>();
+                foreach (var name in names)
+                    if (!IsDirectlyDecided(root, name))
+                        changes.Add(VisibilityDelta.Set(_visibilityTrees.Entry(DeferredTwin(name), meta, null)));
+                root = _visibilityTrees.Apply(root, changes);
+            }
             var providers = level.GetResolvedOpenProviders();
             if (providers.Count == 0)
                 return root;
@@ -2829,7 +2913,12 @@ public static class SemanticModelBuilder
                     if (!property.IsPublic)
                         continue;
 
-                    if (IsDirectlyDecided(root, property.Name) || !providedNames.Add(property.Name))
+                    // Name presence in an unpublished frame does not supply a completed
+                    // declaration. Its deferred/ambiguous entry above must survive even
+                    // when a subset of the frame's providers is already available.
+                    if (facts?.UnavailableOpenNames?.Contains(property.Name) == true
+                        || facts?.AmbiguousOpenNames?.Contains(property.Name) == true
+                        || IsDirectlyDecided(root, property.Name) || !providedNames.Add(property.Name))
                         continue;
 
                     levelProviders ??= new(StringComparer.Ordinal);
@@ -3133,6 +3222,13 @@ public static class SemanticModelBuilder
             HashSet<string> decided,
             List<VisibleSymbol> symbols)
         {
+            if (propertyScope.CompletedContext is { } known
+                && known.Facts.Facts(known.Key)?.AmbiguousOpenNames is { } ambiguous)
+                decided.UnionWith(ambiguous);
+            if (propertyScope.CompletedContext is { } completed
+                && completed.Facts.Facts(completed.Key)?.UnavailableOpenNames is { } names)
+                foreach (var name in names)
+                    if (decided.Add(name)) symbols.Add(DeferredTwin(name));
             // The level's resolved providers come from the scope's own cache
             // (declaration order, first-occurrence open dedup, unresolved
             // targets omitted) — the same providers per-name lookup consults.
@@ -3203,9 +3299,21 @@ public static class SemanticModelBuilder
         private static bool IsSyntheticProperty(Property property)
             => property.Value is Algorithm.User { IsAssignmentDeconstructionSource: true };
 
+        /// <summary>
+        /// The algorithm whose DECLARED members are a symbol's dot surface (M4★): a transparent reference's
+        /// recorded structure (its target's members), a structural carrier's own declarations, a user
+        /// algorithm's own; nothing for any other value or a structure with no members.
+        /// </summary>
+        private Algorithm? MemberSurface(Algorithm? algorithmValue)
+            => algorithmValue is not null && _lookupFacts?.AgreedReceiver(algorithmValue) is { } structure
+                && structure is Algorithm.User or Algorithm.Alias
+                && structure.Properties.Count > 0
+                ? structure
+                : null;
+
         private IReadOnlyList<VisibleSymbol> CreateMemberSymbols(Algorithm? algorithmValue)
         {
-            if (algorithmValue is not Algorithm.User user || user.Properties.Count == 0)
+            if (MemberSurface(algorithmValue) is not { } user)
                 return [];
 
             if (_memberSymbolCache.TryGetValue(user, out var cached))
@@ -3242,11 +3350,12 @@ public static class SemanticModelBuilder
         }
 
         public static IReadOnlyList<VisibleSymbol> CreatePreludeCatalog()
-            => CreatePreludeCatalog(PreludeAlgorithm, hostOperationNames: null);
+            => CreatePreludeCatalog(PreludeAlgorithm, hostOperationNames: null, MathAlgorithm);
 
         private static IReadOnlyList<VisibleSymbol> CreatePreludeCatalog(
             Algorithm.User prelude,
-            IReadOnlySet<string>? hostOperationNames)
+            IReadOnlySet<string>? hostOperationNames,
+            Algorithm? mathAlgorithm)
         {
             var symbols = new List<VisibleSymbol>(prelude.Properties.Count);
             foreach (var property in prelude.Properties)
@@ -3261,20 +3370,20 @@ public static class SemanticModelBuilder
                     IdentifierClassification.Builtin,
                     Declaration: null,
                     symbol.PropertyInfo,
-                    CreateMathMemberCatalog(property.Value)));
+                    CreateMathMemberCatalog(property.Value, mathAlgorithm)));
             }
 
             symbols.Sort(static (left, right) => string.CompareOrdinal(left.Name, right.Name));
             return Array.AsReadOnly(symbols.ToArray());
         }
 
-        private static IReadOnlyList<VisibleSymbol> CreateMathMemberCatalog(Algorithm? algorithmValue)
+        private static IReadOnlyList<VisibleSymbol> CreateMathMemberCatalog(Algorithm? algorithmValue, Algorithm? mathAlgorithm)
         {
-            if (!ReferenceEquals(algorithmValue, MathAlgorithm))
+            if (mathAlgorithm is null || !ReferenceEquals(algorithmValue, mathAlgorithm))
                 return [];
 
-            var members = new List<VisibleSymbol>(MathAlgorithm.Properties.Count);
-            foreach (var property in MathAlgorithm.Properties)
+            var members = new List<VisibleSymbol>(mathAlgorithm.Properties.Count);
+            foreach (var property in mathAlgorithm.Properties)
             {
                 var symbol = CreateBuiltinSymbol(property.Name, property.Value, property.IsPublic);
                 members.Add(new VisibleSymbol(

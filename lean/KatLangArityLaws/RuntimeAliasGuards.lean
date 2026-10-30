@@ -7,10 +7,10 @@ open KatLang KatLang.CallReferenceGuards KatLang.AlgorithmProjectionGuards
 # META-S3-2 guards: runtime-target callable aliases on whole programs
 
 Every guard runs a whole program through the authoritative `runResult`: the alias chase
-(`resolveAliasChase`, `runtimeAliasStepWith`, `runtimeAliasFinish`), the binding cell
-(`aliasBindingCell`), the VALUE chase and the bare read (`resolveAliasValueTarget`, `aliasValue`). They
-are executable evidence for the source facts `KatLangArityLaws/RuntimeAlias.lean` cannot reach (the
-`partial` evaluator installs the total definitions). Heap observations follow `CallReferenceGuards` /
+(`resolveAliasChase`, `runtimeAliasStepWith`), the binding cell (`aliasBindingCell`), the VALUE chase and
+the bare read (`resolveAliasValueTarget`, `aliasValue`), and since M4★ (ALIAS-UNIFY-1) the value view
+(`valueViewCell?`) and the target publication origin (`aliasOriginBinding?`). They are executable
+evidence for what `KatLangArityLaws/RuntimeAlias.lean` states over the total definitions. Heap observations follow `CallReferenceGuards` /
 `AlgorithmProjectionGuards`: every execution of `Sq(x) = Id(x * x)` allocates ONE `x * x` cell, the
 captured `5` is one cell, and every execution of `MkC(t) = Id(Capture(Coll(t)))` allocates ONE
 `Capture(Coll(t))` cell, so those counts are execution counts.
@@ -66,11 +66,11 @@ def aliasR : List (Ident × Algorithm) := refR ++ [("A", alias (algorithm R)), (
 #guard cellsOf (heapRA aliasR [callN "A" [.num 8]]) xx == 1
 #guard cellsOf (heapRA aliasR [callN "A" [.num 8]]) (.num 5) == 0
 
-/-! ## Absence is the ordinary property; failure is never absence -/
+/-! ## Absence is the value view; failure is never absence -/
 
--- A parameter bound to a value supplies no identity: `A(9)` is the property's own arity rejection.
+-- A parameter bound to a value supplies no identity: `A(9)` is the value view's own arity rejection.
 #guard isArity (runRA [] [callN "UseA" [.num 5]]) 0 1
--- On a structural miss `b.G` is a computed value: the alias is its ordinary property.
+-- On a structural miss `b.G` is a computed value: the alias is its value view.
 #guard isArity (runRA [] [callN "UseB" [.num 5]]) 0 1
 -- A non-reference receiver is the projection's FAILURE, with its kind.
 #guard isTypeMismatchAny (runRA [("R5", alg [] [] [] [.num 5]), ("A5", alias (algorithm (.resolve "R5")))]
@@ -92,7 +92,7 @@ def captureCell : Expr := callN "Capture" [callN "Coll" [.param "t"]]
 -- The other channel order, and a chain link's bare read through the same cell.
 #guard cellsOf (heapRA aliasMkC [.listLiteral [callN "AC" [.num 7], .resolve "AC", .resolve "BC"]]) captureCell == 1
 
-/-! ## Transport reads the target's members; written access reads the alias's own -/
+/-! ## Transport reads the target's members -/
 
 #guard valueIs (runRA [] [callN "UseN" [.resolve "LibK"]]) (.atom 99)
 
@@ -118,7 +118,14 @@ def runtimeAliasHolder (callee : Ident) : Algorithm := alg [] []
    .call (.dotCall (.resolve "Box2") "A" none) [.num 3]])
   (.sequenceValue [.atom 9, .atom 4])
 
-/-! ## D4: ordinary property observations of a terminal alias -/
+/-! ## L-RUN (M4★): a computed target is established ONCE per declaring activation; calls are fresh
+
+`AT4 = Mk4(5).Algorithm` captures `Z4()` (a ZERO-parameter callee: since M4★ a callable target forwards
+at every arity, so `AT4()` is a fresh `Z4()`, never D4's terminal property). Every execution of Mk4's
+body allocates ONE `terminalCapture` cell, so its count is the number of receiver executions: the
+binding cell (and with it the link's one receiver) is established once for the run whatever observes
+it first — a call, a bare read, a chain link — and never again (formerly D4 re-evaluated the row for
+every later terminal call). -/
 
 def terminalCapture : Expr := callN "Capture" [callN "Z4" []]
 def terminalDecls : List (Ident × Algorithm) :=
@@ -127,42 +134,53 @@ def terminalDecls : List (Ident × Algorithm) :=
    ("AT4", alias (algorithm (callN "Mk4" [.num 5]))),
    ("BT4", alias (.resolve "AT4"))]
 
--- The original double-evaluation defect gives TWO receiver executions for this single call.
 #guard valueIs (runRA terminalDecls [callN "AT4" []]) (.atom 42)
 #guard cellsOf (heapRA terminalDecls [callN "AT4" []]) terminalCapture == 1
-#guard cellsOf (heapRA terminalDecls [callN "AT4" [], callN "AT4" []]) terminalCapture == 2
-#guard cellsOf (heapRA terminalDecls [.resolve "AT4", callN "AT4" []]) terminalCapture == 2
+#guard cellsOf (heapRA terminalDecls [callN "AT4" [], callN "AT4" []]) terminalCapture == 1
+#guard cellsOf (heapRA terminalDecls [.resolve "AT4", callN "AT4" []]) terminalCapture == 1
 #guard cellsOf (heapRA terminalDecls [callN "AT4" [], .resolve "AT4"]) terminalCapture == 1
 #guard cellsOf (heapRA terminalDecls [.resolve "AT4", .resolve "AT4"]) terminalCapture == 1
 #guard cellsOf (heapRA terminalDecls
-  [callN "BT4" [], .resolve "AT4", callN "BT4" [], .resolve "AT4", callN "AT4" []]) terminalCapture == 4
+  [callN "BT4" [], .resolve "AT4", callN "BT4" [], .resolve "AT4", callN "AT4" []]) terminalCapture == 1
 #guard valueIs (runRA terminalDecls [.listLiteral [callN "BT4" [], .resolve "AT4", callN "BT4" []]])
   (.listValue [.atom 42, .atom 42, .atom 42])
 -- Arity rejects a structural miss without evaluating its fallback VALUE.
 #guard isArity (runRA [] [callN "UseB" [.num 5]]) 0 1
 
-/-! ## RF1 R2: a static chain retains its own runtime namespace -/
+/-! ## RF1 R2 (M4★): a braced carrier is its own namespace; references open their target -/
 
+-- `B = { public K = 10 ⏎ A }` is a CARRIER (written braces): `open B` imports its own public K.
 def namespaceOuter : Algorithm := algPrivate ["n"] []
   [("A", alias (.param "n")),
-   ("B", .alias none [] [publicProp "K" (alg [] [] [] [.num 10])] (.resolve "A")),
+   ("B", .alias none [] [publicProp "K" (alg [] [] [] [.num 10])] (.resolve "A") none false),
    ("P", alg [] [.resolve "B"] [] [.resolve "K"])] [.resolve "P"]
 #guard valueIs (run [("RFOuter", namespaceOuter)] [callN "RFOuter" [.num 1]]) (.atom 10)
 
 -- B precedes A as in the forward-reference source control; only B's own public K is imported.
 def namespaceForward : Algorithm := algPrivate ["n"] []
-  [("B", .alias none [] [publicProp "K" (alg [] [] [] [.num 10])] (.resolve "A")),
+  [("B", .alias none [] [publicProp "K" (alg [] [] [] [.num 10])] (.resolve "A") none false),
    ("A", alias (.param "n")),
    ("P", alg [] [.resolve "B"] [] [.resolve "K"])] [.resolve "P"]
 #guard valueIs (run [("RFOuter", namespaceForward)] [callN "RFOuter" [.num 1]]) (.atom 10)
--- A static callable alias remains non-openable.
-#guard (alias (.resolve "Sq")).requiresArguments
+-- Every alias that reaches the provider rule is its own namespace (carriers and runtime references);
+-- a static reference is normalized to its target first (`openStructure`).
+#guard !(alias (.resolve "Sq")).requiresArguments
+-- So `open A` with `A = Sq` refuses Sq itself (a parameterized provider) once a name lookup
+-- reaches the open...
+#guard match run [("A", alias (.resolve "Sq")), ("P", alg [] [.resolve "A"] [] [.resolve "MissingOpened"])]
+    [.resolve "P"] with
+  | .error e => match innermost e with | .illegalInOpen _ => true | _ => false
+  | .ok _ => false
+-- ...while `open A` with `A = LibQ` opens LibQ's own public members (OD-C).
+#guard valueIs (run [("LibQ", alg [] [] [publicProp "KQ" (alg [] [] [] [.num 99])] []),
+    ("A", alias (.resolve "LibQ")), ("P", alg [] [.resolve "A"] [] [.resolve "KQ"])] [.resolve "P"])
+  (.atom 99)
 
 def namespaceOpened : Algorithm := algPrivate ["n"] []
   [("A", alias (.param "n")),
    ("Lib", alg [] [] [publicProp "Ref" (alias (.resolve "A"))] []),
    ("B", .alias none [.resolve "Lib", .resolve "Lib"]
-      [publicProp "K" (alg [] [] [] [.num 10])] (.resolve "Ref")),
+      [publicProp "K" (alg [] [] [] [.num 10])] (.resolve "Ref") none false),
    ("P", alg [] [.resolve "B"] [] [.resolve "K"])] [.resolve "P"]
 #guard valueIs (run [("RFOuter", namespaceOpened)] [callN "RFOuter" [.num 1]]) (.atom 10)
 
@@ -179,42 +197,44 @@ def terminalEmptyDecls : List (Ident × Algorithm) := terminalDecls.map fun (nam
   (name, if name == "Z4" then alg [] [] [] [.emptySequence 0] else body)
 #guard valueIs (runRA terminalEmptyDecls [.listLiteral [callN "AT4" [], .resolve "AT4", callN "AT4" []]])
   (.listValue [.sequenceValue [], .sequenceValue [], .sequenceValue []])
-#guard cellsOf (heapRA terminalEmptyDecls [callN "AT4" [], .resolve "AT4", callN "AT4" []]) terminalCapture == 2
+#guard cellsOf (heapRA terminalEmptyDecls [callN "AT4" [], .resolve "AT4", callN "AT4" []]) terminalCapture == 1
 
--- A CALLABLE-only navigation (`Nav4(AT4)` reads the alias's own member `K`) performs the eligibility
--- projection and so the receiver work; the FIRST ordinary observation afterwards — a bare read or a
--- terminal call — consumes it (D4: eligibility checking never duplicates a receiver evaluation), and
--- every later terminal call evaluates the row afresh.
+/-! ## Structure first (M4★): a carrier's own member never resolves its forwarding target
+
+`AT4 = { public K = 7 ⏎ Mk4(5).Algorithm }` is a CARRIER: `Nav4(AT4)` transports the carrier itself
+(its STRUCTURE) and reads its own `K` WITHOUT establishing the binding cell — no receiver work at all;
+the first observation that needs the target (a call or a bare read) establishes it once. -/
 def terminalNavigationDecls : List (Ident × Algorithm) :=
   (terminalDecls.map fun (name, body) => (name,
     if name == "AT4" then
       match body with
-      | .alias p op _ target id => .alias p op [publicProp "K" (alg [] [] [] [.num 7])] target id
+      | .alias p op _ target id _ => .alias p op [publicProp "K" (alg [] [] [] [.num 7])] target id false
       | _ => body
     else body)) ++ [("Nav4", alg ["f"] [] [] [.dotCall (.param "f") "K" none])]
 #guard valueIs (runRA terminalNavigationDecls [callN "Nav4" [.resolve "AT4"], callN "AT4" []])
   (.sequenceValue [.atom 7, .atom 42])
+#guard cellsOf (heapRA terminalNavigationDecls [callN "Nav4" [.resolve "AT4"]]) terminalCapture == 0
+#guard cellsOf (heapRA terminalNavigationDecls
+  [callN "Nav4" [.resolve "AT4"], callN "Nav4" [.resolve "AT4"]]) terminalCapture == 0
 #guard cellsOf (heapRA terminalNavigationDecls [callN "Nav4" [.resolve "AT4"], callN "AT4" []]) terminalCapture == 1
 #guard cellsOf (heapRA terminalNavigationDecls [callN "Nav4" [.resolve "AT4"], .resolve "AT4"]) terminalCapture == 1
 #guard cellsOf (heapRA terminalNavigationDecls
   [callN "Nav4" [.resolve "AT4"], callN "AT4" [], .resolve "AT4"]) terminalCapture == 1
 #guard cellsOf (heapRA terminalNavigationDecls
-  [callN "Nav4" [.resolve "AT4"], .resolve "AT4", callN "AT4" []]) terminalCapture == 2
-#guard cellsOf (heapRA terminalNavigationDecls
-  [callN "Nav4" [.resolve "AT4"], callN "Nav4" [.resolve "AT4"], .resolve "AT4"]) terminalCapture == 1
+  [callN "Nav4" [.resolve "AT4"], .resolve "AT4", callN "AT4" []]) terminalCapture == 1
 
-/-! ## RF1: alias-local captured property cache ownership
+/-! ## RF1 (M4★): a carrier's target is resolved at its DECLARING activation
 
-`LocalUse(n) = { A = { R = KeepRef(n, Capture(Z4())); R.Algorithm }; A(), A, A(), A }`.
-KeepRef's first argument makes R local to n; each execution of R allocates exactly one
-terminalCapture cell. CACHE-PUB-1's D4 extension (owner decision October 22 2026) makes
-the terminal alias and ordinary +0 control each execute it TWICE: the first owning A4()
-establishes A4's own empty property entry, both bare reads reuse it, and the second A4()
-executes freshly without replacing it. The receiver-claim controls are unchanged. -/
+`LocalUse(n) = { A = { R = KeepRef(n, Capture(Z4())) ⏎ R.Algorithm }; A(), A, A(), A }`. KeepRef's first
+argument makes R local to n; each execution of R allocates exactly one terminalCapture cell. The carrier
+A's forwarding target is established ONCE in A's declaring activation (one LocalUse activation): every
+`A()` is a fresh `Z4()` and every bare `A` reads the same binding cell, so R executes ONCE. The ordinary
+`+ 0` control is a property: each explicit `A()` enters A's body freshly (CACHE-OWNER-D1) and so reads
+R in a fresh activation — TWICE. -/
 
 def localR4 : Algorithm := alg [] [] [] [callN "KeepRef4" [.param "n", terminalCapture]]
 def localCacheAlias4 : Algorithm := .alias none []
-  [privateLocalProp "R4" (.localCapturedAncestorParams ["n"]) localR4] (algorithm (.resolve "R4"))
+  [privateLocalProp "R4" (.localCapturedAncestorParams ["n"]) localR4] (algorithm (.resolve "R4")) none false
 def localCacheControl4 : Algorithm := alg [] []
   [privateLocalProp "R4" (.localCapturedAncestorParams ["n"]) localR4]
   [add (algorithm (.resolve "R4")) (.num 0)]
@@ -227,10 +247,9 @@ def localCacheDecls4 (body : Algorithm) : List (Ident × Algorithm) :=
 def localCacheExecutions4 (body : Algorithm) : Nat :=
   cellsOf (heapRA (localCacheDecls4 body) [callN "LocalUse4" [.num 5]]) terminalCapture
 #guard localCacheExecutions4 localCacheControl4 == 2
--- CACHE-PUB-1 D4 extension: alias and ordinary control share the publication law.
-#guard localCacheExecutions4 localCacheAlias4 == 2
+#guard localCacheExecutions4 localCacheAlias4 == 1
 
-/-! ## CACHE-PUB-1: terminal aliases use the existing property publication domain
+/-! ## OD-E / R-6 (M4★): an alias owns no entry; an explicit call publishes under its TARGET
 
 Inspect the cache after the invocation alone: a constant result without this state observation
 would not distinguish publication from a later independent bare evaluation. -/
@@ -241,19 +260,22 @@ def publicationState4 (decls : List (Ident × Algorithm)) (rows : List Expr) : E
 def entries4 (state : EvalState) (name : Ident) : List CountedResult :=
   (state.zeroArgPropertyCache.filter (fun entry => entry.fst.propertyName == name)).map (·.snd)
 
+-- `AT4()` is the fresh `Z4()` whose origin is the captured callee `Z4` (R-6): Z4's empty entry is
+-- established, the alias owns none.
 #guard let (result, state) := publicationState4 terminalDecls [callN "AT4" []]
-  valueIs result (.atom 42) && entries4 state "AT4" == [(.atom 42, 1)]
+  valueIs result (.atom 42) && (entries4 state "AT4").isEmpty && entries4 state "Z4" == [(.atom 42, 1)]
     && state.activeZeroArgProperties.isEmpty
+-- A chain link publishes under the same target.
 #guard let (result, state) := publicationState4 terminalDecls [callN "BT4" []]
-  valueIs result (.atom 42) && entries4 state "BT4" == [(.atom 42, 1)]
-    && (entries4 state "AT4").isEmpty && state.activeZeroArgProperties.isEmpty
+  valueIs result (.atom 42) && (entries4 state "BT4").isEmpty && (entries4 state "AT4").isEmpty
+    && entries4 state "Z4" == [(.atom 42, 1)] && state.activeZeroArgProperties.isEmpty
 #guard cellsOf (heapRA terminalDecls
-  [callN "AT4" [], .resolve "AT4", callN "AT4" [], .resolve "AT4"]) terminalCapture == 2
+  [callN "AT4" [], .resolve "AT4", callN "AT4" [], .resolve "AT4"]) terminalCapture == 1
 
--- Coll declares a collecting parameter even though it accepts zero supplied slots. Its runtime
--- alias is D3, so invoking AC establishes neither AC's entry nor Coll's entry.
+-- Coll declares a collecting parameter and accepts zero supplied slots: the fresh `Coll()` through the
+-- runtime alias AC publishes under Coll (its target), never under AC.
 #guard let (result, state) := publicationState4 aliasMkC [callN "AC" []]
   valueIs result (.listValue []) && (entries4 state "AC").isEmpty
-    && (entries4 state "Coll").isEmpty && state.activeZeroArgProperties.isEmpty
+    && entries4 state "Coll" == [(.listValue [], 1)] && state.activeZeroArgProperties.isEmpty
 
 end KatLang.RuntimeAliasGuards

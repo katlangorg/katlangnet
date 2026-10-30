@@ -333,17 +333,19 @@ public class ZeroArgPropertyResultCacheTests
         Assert.False(result.IsError);
         Assert.NotNull(result.Value.TopLevelProperty);
         Assert.Equal(result.Value.Output.Value, result.Value.TopLevelProperty.Value.Value);
-        Assert.Equal(["DisplayDecimals", "Source", "DisplayDecimals"], cache.Requests.Select(request => request.Binding.Name));
+        // `DisplayDecimals = Source` is a reference (M4★), which owns no entry: both reads — the
+        // output row and the engine's top-level property read — are Source's ONE entry.
+        Assert.Equal(["Source", "Source"], cache.Requests.Select(request => request.Binding.Name));
         Assert.All(cache.Requests, request =>
             Assert.Equal(ZeroArgPropertyAccessKind.CountedLexical, request.AccessKind));
-        Assert.Equal(3, snapshot.TotalRequests);
+        Assert.Equal(2, snapshot.TotalRequests);
         Assert.Equal(1, snapshot.Hits);
-        Assert.Equal(2, snapshot.Misses);
-        Assert.Equal(2, snapshot.Stores);
-        Assert.Equal(3, countedLexical.Requests);
+        Assert.Equal(1, snapshot.Misses);
+        Assert.Equal(1, snapshot.Stores);
+        Assert.Equal(2, countedLexical.Requests);
         Assert.Equal(1, countedLexical.Hits);
-        Assert.Equal(2, countedLexical.Misses);
-        Assert.Equal(2, countedLexical.Stores);
+        Assert.Equal(1, countedLexical.Misses);
+        Assert.Equal(1, countedLexical.Stores);
     }
 
     [Fact]
@@ -573,22 +575,23 @@ public class ZeroArgPropertyResultCacheTests
         // resolution, never through structural owner keying — in the bare spelling exactly
         // as in the redundantly grouped `(V).count` (parentheses group syntax). Plain Run
         // reaches the cache through the counted lexical wiring point (plain = value
-        // projection of counted, M8): the first `V.count` misses `V` and then `Values`, the
-        // second is served from `V`'s entry, and the structural kinds stay quiet.
+        // projection of counted, M8). `V = Values` is a reference (M4★) owning no entry, so the
+        // first `V.count` misses `Values`, the second is served from `Values`'s entry, and the
+        // structural kinds stay quiet.
         var countedLexical = snapshot.GetAccessKind(ZeroArgPropertyAccessKind.CountedLexical);
         var structural = snapshot.GetAccessKind(ZeroArgPropertyAccessKind.Structural);
         var countedStructural = snapshot.GetAccessKind(ZeroArgPropertyAccessKind.CountedStructural);
 
         Assert.False(result.IsError);
         Assert.Equal([10m], result.Value.ToAtoms());
-        Assert.Equal(3, snapshot.TotalRequests);
+        Assert.Equal(2, snapshot.TotalRequests);
         Assert.Equal(1, snapshot.Hits);
-        Assert.Equal(2, snapshot.Misses);
-        Assert.Equal(2, snapshot.Stores);
-        Assert.Equal(3, countedLexical.Requests);
+        Assert.Equal(1, snapshot.Misses);
+        Assert.Equal(1, snapshot.Stores);
+        Assert.Equal(2, countedLexical.Requests);
         Assert.Equal(1, countedLexical.Hits);
-        Assert.Equal(2, countedLexical.Misses);
-        Assert.Equal(2, countedLexical.Stores);
+        Assert.Equal(1, countedLexical.Misses);
+        Assert.Equal(1, countedLexical.Stores);
         Assert.Equal(0, structural.Requests);
         Assert.Equal(0, countedStructural.Requests);
         AssertLiveEvaluationUsesOnlyCountedAccessKinds(snapshot);

@@ -16,8 +16,9 @@ public class FuzzCampaignHostileReviewTests
             expression = new Expr.Binary(BinaryOp.Add, expression, expression);
         var root = new Algorithm.User(null, [], [expression], [], []);
         var observations = new FrontEndTraversalObservations();
-        var (detected, _) = ParameterDetector.DetectPrevalidated(root, null, observations);
-        var resolved = ImplicitArgumentResolver.ResolvePrevalidated(detected, observations: observations);
+        var detectedInput = ParameterDetector.DetectPrevalidated(root, null, observations);
+        var (detected, _) = detectedInput;
+        var resolved = ImplicitArgumentResolver.ResolvePrevalidated(detectedInput, observations: observations);
         foreach (var stage in new[] { detected, resolved })
         {
             var cursor = Assert.Single(stage.Opens);

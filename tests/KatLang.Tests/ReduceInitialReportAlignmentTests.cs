@@ -53,8 +53,26 @@ public class ReduceInitialReportAlignmentTests
         FromSource("reduce-initial-block",
             "Add(e, a) = e + a\nProbe(unused) = reduce([1, 2], Add, { x + 1 })\nProbe(0)",
             "call Probe > call reduce > reduceInitial > badArity"),
+        // M4★: a written `{ Inc }` is a structural forwarding carrier; its failed slot names the
+        // carrier's VALUE terminal, Inc, so it reports exactly as the written `Inc` does (FA-OQ-1) —
+        // and so does a named carrier, while `count(C)` keeps the law's report keyed by the written `C`.
         FromSource("reduce-initial-inline-alias",
             "Inc(x) = x + 1\nAdd(e, a) = e + a\nProbe(unused) = reduce([1, 2], Add, { Inc })\nProbe(0)",
+            "call Probe > call reduce > reduceInitial > badArity"),
+        FromSource("reduce-initial-named-carrier",
+            "C = { Inc }\nInc(x) = x + 1\nAdd(e, a) = e + a\nProbe(unused) = reduce([1, 2], Add, C)\nProbe(0)",
+            "call Probe > call reduce > reduceInitial > badArity"),
+        FromSource("count-named-carrier",
+            "C = { Inc }\nInc(x) = x + 1\nProbe(unused) = count(C)\nProbe(0)",
+            "call Probe > call count > property C > arityMismatch 1 0"),
+        // The same carriers in a run with runtime projections (Unused's `W = q` is a runtime-row alias, so the run
+        // is pre-marked): the carrier cell stays an identity-only cell, and its failed slot still names the carrier's
+        // VALUE terminal, by observing the chase the failed demand already ran (C#'s non-initiating PeekResolve).
+        FromSource("reduce-initial-named-carrier-premarked",
+            "C = { Inc }\nInc(x) = x + 1\nAdd(e, a) = e + a\nUnused(q) = {\n    W = q\n    W\n}\nProbe(unused) = reduce([1, 2], Add, C)\nProbe(0)",
+            "call Probe > call reduce > reduceInitial > badArity"),
+        FromSource("reduce-initial-inline-alias-premarked",
+            "Inc(x) = x + 1\nAdd(e, a) = e + a\nUnused(q) = {\n    W = q\n    W\n}\nProbe(unused) = reduce([1, 2], Add, { Inc })\nProbe(0)",
             "call Probe > call reduce > reduceInitial > badArity"),
         FromSource("reduce-initial-alias",
             "Inc(x) = x + 1\nA = Inc\nAdd(e, a) = e + a\nProbe(unused) = reduce([1, 2], Add, A)\nProbe(0)",
@@ -130,7 +148,10 @@ public class ReduceInitialReportAlignmentTests
         var ast = Program(tableCase.Source);
 
         var sync = Evaluator.Run(ast);
-        var (generic, _) = Evaluator.RunCountedObserved(ast, enableOptimizations: false);
+        var (generic, genericBudget) = Evaluator.RunCountedObserved(ast, enableOptimizations: false);
+
+        // A pre-marked row reaches the observation branch only while its run is pre-marked for runtime projections.
+        Assert.Equal(id.EndsWith("-premarked", StringComparison.Ordinal), genericBudget.HasRuntimeProjections);
         var passThrough = new PassThroughAsyncZeroArgPropertyResultCache();
         var (twin, _) = await AsyncEvaluationHarness.Complete(
             Evaluator.RunCountedObservedAsync(ast, zeroArgPropertyResultCache: passThrough));
@@ -188,20 +209,22 @@ public class ReduceInitialReportAlignmentTests
     /// <summary>
     /// The public report of reduce's initial accumulator is the dedicated hint for every written
     /// spelling of a callable that cannot supply a zero-argument value — a property, a written
-    /// block, an inline alias, a callable alias, a navigated member, a structural pattern — on the
-    /// written and the dotted call alike.
+    /// block, a callable reference, an inline or named carrier (judged on its VALUE terminal,
+    /// FA-OQ-1), a navigated member, a structural pattern — on the written and the dotted call alike.
     /// </summary>
     [Theory]
     [InlineData("Inc")]
     [InlineData("{ x + 1 }")]
     [InlineData("{ Inc }")]
     [InlineData("A")]
+    [InlineData("C")]
+    [InlineData("{ C }")]
     [InlineData("Lib.M")]
     [InlineData("P")]
     public void PublicReport_IsTheDedicatedInitialAccumulatorHint(string initial)
     {
         const string definitions =
-            "Inc(x) = x + 1\nA = Inc\nLib = { public M(a) = a }\nP((p, q)) = p\nAdd(e, a) = e + a\n";
+            "Inc(x) = x + 1\nA = Inc\nC = { Inc }\nLib = { public M(a) = a }\nP((p, q)) = p\nAdd(e, a) = e + a\n";
 
         foreach (var call in new[] { $"reduce([1, 2], Add, {initial})", $"[1, 2].reduce(Add, {initial})" })
         {

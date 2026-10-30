@@ -52,6 +52,8 @@ public class OpenTargetResolverValidationTests
         new("builtin", "public P(x) = count\npublic X = 1", DiagnosticCode.UnforwardableParameter, "public P(x) = count", "count"),
         new("math", "public P(q) = abs\npublic X = 1", DiagnosticCode.UnforwardableParameter, "public P(q) = abs", "abs"),
         new("host", "public P(y) = trace\npublic X = 1", DiagnosticCode.UnforwardableParameter, "public P(y) = trace", "trace"),
+        new("host-alias", "A = trace\npublic P(y) = A\npublic X = 1", DiagnosticCode.UnforwardableParameter, "public P(y) = A", "A"),
+        new("host-opened", "open Lib\nLib = { public A = trace }\npublic P(y) = A\npublic X = 1", DiagnosticCode.UnforwardableParameter, "public P(y) = A", "A"),
         new("unnameable-family-forwarded", "G(0) = 0\nG(1) = 1\npublic P(n) = G\npublic X = 1", DiagnosticCode.UnforwardableCallable, "public P(n) = G", "G"),
         new("unnameable-family-lifted", "G(0) = 0\nG(1) = 1\npublic K = G + 1\npublic X = 1", DiagnosticCode.UnliftableClauseFamily, "public K = G + 1", "G"),
         new("two-inferred-collectors", "C1(a, *p) = a\nC2(b, *q) = b\npublic K = C1 + C2\npublic X = 1", DiagnosticCode.InvalidCollectingBinding, "public K = C1 + C2", "C2"),
@@ -505,6 +507,25 @@ public class OpenTargetResolverValidationTests
         Assert.Equal(["trace(3)"], observation.HostCalls);
     }
 
+    [Theory]
+    [InlineData("public P(x) = trace", true)]
+    [InlineData("A = trace\npublic P(x) = A", true)]
+    [InlineData("open Lib\nLib = { public A = trace }\npublic P(x) = A", true)]
+    [InlineData("trace(y) = y + 1\npublic P(y) = trace", false)]
+    public async Task AdmittedHostSignatures_AgreeInEagerAndDeferredUnits(string module, bool host)
+    {
+        foreach (var deferred in new[] { false, true })
+        {
+            var source = deferred
+                ? $"F(0)=0\nF(n)={{open '{Url}'\nP(5)}}\nF(1)"
+                : $"open '{Url}'\nP(5)";
+            var observed = await OnModuleRoutesAsync(deferred ? DeferredModuleRoutes : EagerModuleRoutes,
+                source, (Url, module));
+            Assert.Equal(("ok", host ? "5" : "6", 1), (observed.Kind, observed.Value, observed.Fetches));
+            Assert.Equal(host ? ["trace(5)"] : Array.Empty<string>(), observed.HostCalls);
+        }
+    }
+
     // ── E. Q-04 ancestor reuse is unchanged; nothing is renamed ───────────────────────────────
 
     [Theory]
@@ -717,11 +738,12 @@ public class OpenTargetResolverValidationTests
             ? new Algorithm.Conditional(null, [target], [branch])
             : new Algorithm.User(null, [], [target], [], [new Expr.Num(1)]);
         var root = new Algorithm.User(null, [], [], [new Property("F", owner)], [new Expr.Num(0)]);
-        var (detected, detectionDiagnostics) = ParameterDetector.Detect(root);
+        var detectedInput = ParameterDetector.Detect(root);
+        var (detected, detectionDiagnostics) = detectedInput;
         Assert.Empty(detectionDiagnostics);
 
         var diagnostics = new DiagnosticBag();
-        ImplicitArgumentResolver.ResolvePrevalidated(detected, diagnostics: diagnostics);
+        ImplicitArgumentResolver.ResolvePrevalidated(detectedInput, diagnostics: diagnostics);
 
         var error = Assert.Single(diagnostics);
         Assert.Equal(DiagnosticCode.UnforwardableParameter, error.Code);
@@ -745,7 +767,7 @@ public class OpenTargetResolverValidationTests
         Assert.Null(AstStructuralPreflight.Check(root, EvaluationLimits.MaxSupportedAstDepth, AstConsumerProfile.FullyRecursive));
 
         var diagnostics = new DiagnosticBag();
-        ImplicitArgumentResolver.ResolvePrevalidated(root, diagnostics: diagnostics);
+        ImplicitArgumentResolver.ResolveNameResolvedPrevalidated(root, diagnostics: diagnostics);
 
         var error = Assert.Single(diagnostics);
         Assert.Equal(DiagnosticCode.SingletonSequencePattern, error.Code);
@@ -766,10 +788,11 @@ public class OpenTargetResolverValidationTests
                 openPosition ? [new Expr.AlgorithmExpr(target), new Expr.AlgorithmExpr(target)] : [],
                 openPosition ? [] : [new Property("A", target), new Property("B", target)],
                 [new Expr.Num(0)]);
-            var (detected, detectionDiagnostics) = ParameterDetector.Detect(root);
+            var detectedInput = ParameterDetector.Detect(root);
+            var (detected, detectionDiagnostics) = detectedInput;
             Assert.Empty(detectionDiagnostics);
             var diagnostics = new DiagnosticBag();
-            ImplicitArgumentResolver.ResolvePrevalidated(detected, diagnostics: diagnostics);
+            ImplicitArgumentResolver.ResolvePrevalidated(detectedInput, diagnostics: diagnostics);
             Assert.Equal(DiagnosticCode.UnforwardableParameter, Assert.Single(diagnostics).Code);
         }
     }

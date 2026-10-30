@@ -451,7 +451,11 @@ public class CompletionIdentityDifferentialTests
         var x = Assert.Single(completion.Symbols, static symbol => symbol.Name == "X");
         Assert.Equal(new SourceSpan(2, 1, 2, 2), x.Declaration?.Span);
 
-        var rootScope = ElaboratedScopeLookup.CreateScope(root, ElaboratedScopeLookup.CreateScope(SemanticPrelude));
+        // This host fixture supplies final empty signatures and explicit exposure, with
+        // deliberate duplicate declarations. Match the builder's bound-AST admission;
+        // no source detection or inference may rewrite these identities.
+        var rootScope = ElaboratedScopeLookup.CreateScope(root,
+            ElaboratedScopeLookup.CreateScope(SemanticPrelude, sourcePhase: StaticAstPhase.Resolved));
         var useScope = ElaboratedScopeLookup.CreateScope(use, rootScope);
         var hit = Assert.Single(ElaboratedScopeLookup.LookupLexicalPropertyMatches(useScope, "X"));
         Assert.Same(localOnlyX, hit.Property);

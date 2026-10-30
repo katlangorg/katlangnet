@@ -279,7 +279,8 @@ public class ImplicitParameterProvenanceAttachmentTests
             [lib, new Property("P", shared), new Property("P2", shared), new Property("Outer", nested)],
             [new Expr.Resolve("P")]);
 
-        var (detected, diagnostics) = ParameterDetector.Detect(host);
+        var detectedInput = ParameterDetector.Detect(host);
+        var (detected, diagnostics) = detectedInput;
         Assert.Empty(diagnostics);
         var noteP = Parameter(PropertyValue(detected, "P"), "Dubel").InferredProvenance;
         var noteP2 = Parameter(PropertyValue(detected, "P2"), "Dubel").InferredProvenance;

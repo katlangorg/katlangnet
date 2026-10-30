@@ -78,7 +78,9 @@ public class PropertyObservationSourceMappingTests
     [Fact]
     public void ShadowingNestedDeclaration_IsNotObserved_TheRootNameMapsToTheRootDeclaration()
     {
-        var result = Run("A = 1\nF = {\n    A = 2\n    A\n}\nF + A");
+        // F's row is a calculation: a lone `A` row would make F a forwarding carrier of its own A, which
+        // owns no entry (M4★ OD-E).
+        var result = Run("A = 1\nF = {\n    A = 2\n    A + 0\n}\nF + A");
 
         Assert.Equal("F=2#1; A=1#1", Describe(result));
         Assert.Equal(new SourceSpan(1, 1, 1, 2), Single(result, "A").DeclarationSpan);
@@ -102,26 +104,29 @@ public class PropertyObservationSourceMappingTests
     }
 
     [Fact]
-    public void StaticAlias_MapsToTheAliasDeclaration_NotItsTarget()
+    public void StaticAlias_IsNotObserved_ItsTargetMapsToItsOwnDeclaration()
     {
+        // M4★ OD-E: the alias owns no entry, so only the target is observed, at its own declaration.
         var result = Run("Target = 5\nAlias = Target\nAlias");
-        Assert.Equal(new SourceSpan(2, 1, 2, 6), Single(result, "Alias").DeclarationSpan);
+        Assert.DoesNotContain(result.PropertyObservations!, static observation => observation.Name == "Alias");
         Assert.Equal(new SourceSpan(1, 1, 1, 7), Single(result, "Target").DeclarationSpan);
     }
 
     [Fact]
-    public void RuntimeTargetAlias_ReadAsAProperty_MapsToItsOwnDeclaration()
+    public void RuntimeTargetAlias_ReadAsAProperty_IsNotObserved_ItsTargetIs()
     {
-        // A = R.Algorithm is a runtime alias of the captured callee Z; reading it property-style
-        // publishes A under A's own declaration. R holds a call reference and is withheld.
+        // M4★ OD-E: A = R.Algorithm is a runtime reference to the captured callee Z, which owns no entry:
+        // reading it is Z's own bare read, so Z is observed at its own declaration and A is not (formerly
+        // A was published under its own declaration). R holds a call reference and is withheld.
         var result = Run("Capture(meta operation) = operation\nZ = 7\nR = Capture(Z())\nA = R.Algorithm\nA + 1");
 
         Assert.Equal("8", result.ToDisplayString());
         Assert.Equal(PropertyValueStatus.Withheld, Single(result, "R").Status);
-        var alias = Single(result, "A");
-        Assert.Equal(PropertyValueStatus.Available, alias.Status);
-        Assert.Equal("7", result.RenderPropertyValue(alias).Text);
-        Assert.Equal(new SourceSpan(4, 1, 4, 2), alias.DeclarationSpan);
+        Assert.DoesNotContain(result.PropertyObservations!, static observation => observation.Name == "A");
+        var target = Single(result, "Z");
+        Assert.Equal(PropertyValueStatus.Available, target.Status);
+        Assert.Equal("7", result.RenderPropertyValue(target).Text);
+        Assert.Equal(new SourceSpan(2, 1, 2, 2), target.DeclarationSpan);
     }
 
     [Fact]
@@ -157,10 +162,12 @@ public class PropertyObservationSourceMappingTests
             DownloadCode = (_, _) => ValueTask.FromResult("public X = 5\npublic Y = X + 1"),
         };
 
-        var loaded = await KatLangEngine.RunAsync("M = load('https://mods.test/x.kat')\nK = M.Y\nK", options);
+        // K computes with the member (a lone `M.Y` row would make K a member reference, which owns no
+        // entry, M4★ OD-E).
+        var loaded = await KatLangEngine.RunAsync("M = load('https://mods.test/x.kat')\nK = M.Y + 0\nK", options);
         Assert.Equal("K=6#1", Describe(loaded));
 
-        var opened = await KatLangEngine.RunAsync("open 'https://mods.test/x.kat'\nK = Y\nK + X", options);
+        var opened = await KatLangEngine.RunAsync("open 'https://mods.test/x.kat'\nK = Y + 0\nK + X", options);
         Assert.Equal("11", opened.ToDisplayString());
         Assert.Equal("K=6#1", Describe(opened));
     }

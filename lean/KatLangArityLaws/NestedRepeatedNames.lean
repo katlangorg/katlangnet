@@ -6,8 +6,9 @@ open KatLang KatLang.BinderTrace KatLang.RepeatedNameLaws
 /-!
 # Repeated names in nested and mixed heads (R4 / Q-66, S6a, October 2026)
 
-S5 (`RepeatedNameLaws.lean`) proved Q-28's representative fold `retain` and connected it to the
-production binder on FLAT levels of name patterns over supplied cells with a fixed observation.
+`RepeatedNameLaws.lean` proves NEED-04's group-aware agreement fold `gfold` (ALIAS-UNIFY-1,
+superseding S5's `retain`) and connects it to the production binder on FLAT levels of name
+patterns over supplied cells with a fixed observation.
 This module lifts the connection to EVERY head the binder accepts — sequence, list and unpack
 patterns at any depth, literals, fixed and collecting names, META captures — and supplies the
 production instance of its stability premise.
@@ -21,7 +22,7 @@ never change (`one_shape`, `sources_shape`): the observation domain GROWS with t
 
 THE WALK (`walkOne` / `walkSources`, `walkHead`). The observation-level reading of one binder run,
 pattern by pattern in written order, with the binder's own pure pieces (`nameStep` — proved to be
-`NeedBinder.bindName` in S5 —, `matchPattern`, the kind views, `needLevelSources`, the cardinality
+`NeedBinder.bindName` in `RepeatedNameLaws` —, `matchPattern`, the kind views, `needLevelSources`, the cardinality
 gate) and an occurrence LOG: every name occurrence `(name, address)` the run visits, in written
 traversal order and at its depth, nested ones carrying their freshly allocated addresses. It is
 `none` exactly when the run would demand an unobserved cell. It is not a second binder: its
@@ -41,8 +42,9 @@ exactly `NeedChannels.shell evalSuppliedAt ⟨…⟩ demandNeedRecursive project
 behaviour on this domain is a kernel theorem.
 
 THE LAWS (per repeated name `X`, its contributions = its logged occurrences, `occ X log`):
-* `one_tracks`, `sources_tracks`: on success, `X` is bound to the representative `retain` keeps over its own
-  contributions in written order (from its binding before the walk);
+* `one_tracks`, `sources_tracks`: on success, `X`'s VIEW — its representative and agreement state
+  (`RepeatedNameLaws.view`) — is its own `gfold` over its contributions in written order (from its
+  view before the walk);
 * `one_conflict`, `sources_conflict`: if `X`'s fold over its logged contributions fails, the run stopped AT that
   contribution (the last logged occurrence is `X`'s) with exactly the binder's verdict for that
   conflict — so the prefix includes the very contribution that fails, and at most one name fails;
@@ -52,8 +54,9 @@ THE LAWS (per repeated name `X`, its contributions = its logged occurrences, `oc
 * `head_defined`: the walk is defined on every head whose repeated names occur only as
   non-collecting names, over observed supplied cells — the validated-signature domain;
 * consequences on that domain: representative provenance, callable retention, first-richest
-  selection and observation-preserving permutation of a name's COMPLETED contributions
-  (`head_*` theorems below), with `CallableTransOn` explicit in the generic permutation law.
+  selection and permutation of a name's COMPLETED contributions preserving callable identity and
+  availability, and the counted VALUE of MIXED groups (`head_*` theorems below), with
+  `CallableTransOn` explicit in the generic permutation law.
   `production_head_walk_no_cross` discharges it from the initial observed identity domain
   `ModelNoCross`: no allocation adds a callable identity. This does not assert that every
   source-reachable supplied identity belongs to that domain.
@@ -139,17 +142,15 @@ end Model
 /-! ## The walk -/
 
 /-- One binder run's observation: its outcome, the model after it, and its occurrence log. -/
-abbrev Outcome := Except Error (Option NeedEnv)
+abbrev Outcome := Except Error (Option NeedBindState)
 abbrev Log := List (Ident × Nat)
 abbrev Walk := Outcome × Model × Log
 
-/-- The demands one name occurrence makes are all observed: its own cell when the name is
-    repeated, and the retained representative's when it is already bound. -/
-def nameDefined (M : Model) (name : Ident) (address : Nat) (repeated : List Ident) (bound : NeedEnv) : Bool :=
-  !repeated.contains name || (M.observed address &&
-    match lookupAssoc name bound with
-    | none => true
-    | some p => M.observed p)
+/-- The demands one name occurrence makes are all observed (NEED-04, group-aware): its own cell
+    when the name is repeated, and the name's PENDING callable contributions, which a data anchor
+    demands; the representative is never re-demanded. -/
+def nameDefined (M : Model) (name : Ident) (address : Nat) (repeated : List Ident) (bound : NeedBindState) : Bool :=
+  !repeated.contains name || (M.observed address && (bound.groupOf name).pending.all M.observed)
 
 /-- The fresh Ready children of the opened items, in item order (`allocateNeed (.ready …)`). -/
 def allocReady : Model → List Result → List Nat × Model
@@ -160,7 +161,7 @@ def allocReady : Model → List Result → List Nat × Model
 
 /-- Continue after one pattern: a binding continues with the rest (logs concatenated), a
     non-match or an error stops with its own log. -/
-def andThen (w : Option Walk) (k : Model → NeedEnv → Option Walk) : Option Walk :=
+def andThen (w : Option Walk) (k : Model → NeedBindState → Option Walk) : Option Walk :=
   match w with
   | none => none
   | some (.ok (some next), M, log) => (k M next).map (fun r => (r.1, r.2.1, log ++ r.2.2))
@@ -175,7 +176,7 @@ def gateWalk (ps : List NeedPattern) (cells : List Nat) (family : Bool) (M : Mod
 
 mutual
   /-- The walk of one pattern against the cell at `address`. -/
-  def walkOne (M : Model) : NeedPattern → Nat → List Ident → NeedEnv → Bool → Option Walk
+  def walkOne (M : Model) : NeedPattern → Nat → List Ident → NeedBindState → Bool → Option Walk
     | .bind name _, address, repeated, bound, family =>
       if nameDefined M name address repeated bound then
         some (nameStep M.obs repeated family bound name address, M, [(name, address)])
@@ -218,7 +219,7 @@ mutual
       else none
 
   /-- The walk of one level's patterns over their sources, in written order. -/
-  def walkSources (M : Model) : List NeedPattern → List (NeedSource Nat) → List Ident → NeedEnv → Bool →
+  def walkSources (M : Model) : List NeedPattern → List (NeedSource Nat) → List Ident → NeedBindState → Bool →
       Option Walk
     | [], _, _, current, _ => some (.ok (some current), M, [])
     | pattern :: rest, sources, repeated, current, family =>
@@ -232,9 +233,10 @@ mutual
           (fun M2 next => walkSources M2 rest sources.tail repeated next family)
 end
 
-/-- The walk of a whole head (`NeedBinder.bindPatterns`). -/
+/-- The walk of a whole head's level (`NeedBinder.bindLevel` from the empty binder state; the head's
+    result is its representatives, `head_model`). -/
 def walkHead (M : Model) (ps : List NeedPattern) (cells : List Nat) (family : Bool) : Option Walk :=
-  gateWalk ps cells family M (walkSources M ps (needLevelSources ps cells) (needRepeatedNames ps) [] family)
+  gateWalk ps cells family M (walkSources M ps (needLevelSources ps cells) (needRepeatedNames ps) {} family)
 
 /-! ## The capabilities a model describes -/
 
@@ -260,34 +262,64 @@ section Correspondence
 
 variable {k : NeedCapabilities EvalM} {Rel : Model → EvalState → Prop}
 
+/-- NEED-04's data-anchor check on observed cells: the production run is `checkAnchorPure`. -/
+theorem checkAnchor_model (hk : ModelCaps k Rel) (M : Model) (name : Ident) (anchor : CountedResult)
+    (family : Bool) : ∀ (cs : List Nat) (s : EvalState), Rel M s → (∀ a ∈ cs, M.observed a = true) →
+      ∃ t, runEval (NeedBinder.checkAnchor k name anchor family cs) s
+        = (checkAnchorPure M.obs name anchor family cs, t) ∧ Rel M t
+  | [], s, hs, _ => ⟨s, rfl, hs⟩
+  | cell :: rest, s, hs, hc => by
+    rw [checkAnchor_run k name anchor family cell rest s]
+    obtain ⟨t1, h1, i1⟩ := hk.value M s cell hs (hc cell List.mem_cons_self)
+    simp only [h1]
+    by_cases h : ((M.obs cell).1 == anchor) = true
+    · simp only [h, ↓reduceIte, checkAnchorPure]
+      exact checkAnchor_model hk M name anchor family rest t1 i1 (fun a ha => hc a (List.mem_cons_of_mem _ ha))
+    · exact ⟨t1, by simp only [h, checkAnchorPure, Bool.false_eq_true, ↓reduceIte], i1⟩
+
 /-- ONE NAME OCCURRENCE: on observed demands, the production `bindName` is `nameStep` over the
-    model's observations (S5's per-occurrence law, now over a growing model). -/
+    model's observations (`RepeatedNameLaws`' per-occurrence law, now over a growing model). -/
 theorem name_model (hk : ModelCaps k Rel) (M : Model) (s : EvalState) (name : Ident) (address : Nat)
-    (repeated : List Ident) (bound : NeedEnv) (family : Bool) (hs : Rel M s)
+    (repeated : List Ident) (bound : NeedBindState) (family : Bool) (hs : Rel M s)
     (hd : nameDefined M name address repeated bound = true) :
     ∃ t, runEval (NeedBinder.bindName k name address repeated bound family) s
       = (nameStep M.obs repeated family bound name address, t) ∧ Rel M t := by
   by_cases hr : repeated.contains name = true
-  · simp only [nameDefined, hr, Bool.not_true, Bool.false_or, Bool.and_eq_true] at hd
+  · simp only [nameDefined, hr, Bool.not_true, Bool.false_or, Bool.and_eq_true, List.all_eq_true] at hd
     obtain ⟨ha, hp⟩ := hd
     rw [repeated_name_binding k name address repeated bound family s hr]
-    obtain ⟨t1, h1, i1⟩ := hk.value M s address hs ha
-    simp only [h1]
-    cases hl : lookupAssoc name bound with
-    | none => exact ⟨t1, by simp only [nameStep, hr, hl, rebind, ↓reduceIte], i1⟩
-    | some previous =>
-      rw [hl] at hp
-      obtain ⟨t2, h2, i2⟩ := hk.value M t1 previous i1 hp
-      simp only [h2]
-      by_cases hbv : (!((M.obs previous).1 == (M.obs address).1)) = true
-      · exact ⟨t2, by simp only [nameStep, hr, hl, hbv, ↓reduceIte], i2⟩
-      · obtain ⟨t3, h3, i3⟩ := hk.callable M t2 previous i2 hp
-        obtain ⟨t4, h4, i4⟩ := hk.callable M t3 address i3 ha
-        refine ⟨t4, ?_, i4⟩
-        simp only [nameStep, hr, hl, hbv, h3, h4, ↓reduceIte, Bool.false_eq_true]
+    obtain ⟨t1, h1, i1⟩ := hk.callable M s address hs ha
+    rw [h1]
+    cases hc : (M.obs address).2 with
+    | some identity =>
+      simp only
+      by_cases hcf : (bound.groupOf name).conflictsWith identity = true
+      · exact ⟨t1, by simp only [hcf, ↓reduceIte, nameStep, hr, hc], i1⟩
+      · cases hanc : (bound.groupOf name).anchor with
+        | none => exact ⟨t1, by simp only [hcf, Bool.false_eq_true, ↓reduceIte, hanc, nameStep, hr, hc], i1⟩
+        | some anchor =>
+          obtain ⟨t2, h2, i2⟩ := checkAnchor_model hk M name anchor family [address] t1 i1 (by simpa using ha)
+          refine ⟨t2, ?_, i2⟩
+          simp only [hcf, Bool.false_eq_true, ↓reduceIte, hanc, h2, nameStep, hr, hc]
+          cases checkAnchorPure M.obs name anchor family [address] <;> rfl
+    | none =>
+      simp only
+      obtain ⟨t2, h2, i2⟩ := hk.value M t1 address i1 ha
+      rw [h2]
+      simp only
+      cases hanc : (bound.groupOf name).anchor with
+      | some anchor =>
+        refine ⟨t2, ?_, i2⟩
+        simp only [hanc, nameStep, hr, hc, ↓reduceIte]
+        by_cases hv : ((M.obs address).fst == anchor) = true <;> simp [hv]
+      | none =>
+        obtain ⟨t3, h3, i3⟩ := checkAnchor_model hk M name (M.obs address).1 family _ t2 i2 hp
+        refine ⟨t3, ?_, i3⟩
+        simp only [hanc, h3, nameStep, hr, hc, ↓reduceIte]
+        cases checkAnchorPure M.obs name (M.obs address).1 family (bound.groupOf name).pending <;> rfl
   · have hr' : repeated.contains name = false := by simpa using hr
     rw [BinderCore.core_plain_name_is_pure k name address repeated bound family hr']
-    exact ⟨s, by simp only [runEval_pure, nameStep, hr', rebind, Bool.false_eq_true, ↓reduceIte], hs⟩
+    exact ⟨s, by simp only [runEval_pure, nameStep, hr', Bool.false_eq_true, ↓reduceIte], hs⟩
 
 theorem ready_loop_model (hk : ModelCaps k Rel) : ∀ (items : List Result) (acc : List Nat) (M : Model) (s : EvalState),
     Rel M s → ∃ t,
@@ -314,7 +346,7 @@ theorem ready_model (hk : ModelCaps k Rel) (items : List Result) (M : Model) (s 
 
 theorem gate_model (ps : List NeedPattern) (cells : List Nat) (family : Bool) (M : Model)
     (accepted : Option Walk) (w : Walk) (hw : gateWalk ps cells family M accepted = some w)
-    (rest : EvalM (Option NeedEnv)) (s : EvalState) (hs : Rel M s)
+    (rest : EvalM (Option NeedBindState)) (s : EvalState) (hs : Rel M s)
     (hrest : needAcceptsCardinality ps cells.length = true → accepted = some w →
       ∃ t, runEval rest s = (w.1, t) ∧ Rel w.2.1 t) :
     ∃ t, runEval (NeedBinder.cardinalityGate ps cells.length family rest) s = (w.1, t) ∧ Rel w.2.1 t := by
@@ -330,7 +362,7 @@ theorem gate_model (ps : List NeedPattern) (cells : List Nat) (family : Bool) (M
 /-- One pattern of a level, then the rest: wherever the walk continues, the production `bindSources`
     over `p :: rest` follows it (its source already resolved to `address`). -/
 theorem cons_model (p : NeedPattern) (rest : List NeedPattern) (sources : List (NeedSource Nat))
-    (repeated : List Ident) (bound : NeedEnv) (family : Bool) (s t0 : EvalState) (address : Nat)
+    (repeated : List Ident) (bound : NeedBindState) (family : Bool) (s t0 : EvalState) (address : Nat)
     (hsa : runEval (NeedBinder.sourceAddress k.allocate (sources.headD .missing)) s = (.ok address, t0))
     (w0 : Option Walk) (w : Walk)
     (hw : andThen w0 (fun M2 next => walkSources M2 rest sources.tail repeated next family) = some w)
@@ -356,7 +388,7 @@ mutual
   /-- THE CORRESPONDENCE, one pattern: wherever the walk is defined, the production core's
       `bindOne` at `k` returns the walk's outcome, in a state related to the walk's model. -/
   theorem one_model (hk : ModelCaps k Rel) (p : NeedPattern) (address : Nat) (repeated : List Ident)
-      (bound : NeedEnv) (family : Bool) (M : Model) (s : EvalState) (w : Walk) (hs : Rel M s)
+      (bound : NeedBindState) (family : Bool) (M : Model) (s : EvalState) (w : Walk) (hs : Rel M s)
       (hw : walkOne M p address repeated bound family = some w) :
       ∃ t, runEval (NeedBinder.bindOne k p address repeated bound family) s = (w.1, t) ∧ Rel w.2.1 t := by
     cases p with
@@ -444,7 +476,7 @@ mutual
 
   /-- THE CORRESPONDENCE, one level's patterns over their sources. -/
   theorem sources_model (hk : ModelCaps k Rel) (ps : List NeedPattern) (sources : List (NeedSource Nat))
-      (repeated : List Ident) (bound : NeedEnv) (family : Bool) (M : Model) (s : EvalState) (w : Walk)
+      (repeated : List Ident) (bound : NeedBindState) (family : Bool) (M : Model) (s : EvalState) (w : Walk)
       (hs : Rel M s) (hw : walkSources M ps sources repeated bound family = some w) :
       ∃ t, runEval (NeedBinder.bindSources k ps sources repeated bound family) s = (w.1, t) ∧ Rel w.2.1 t := by
     cases ps with
@@ -479,11 +511,16 @@ end
     walk's outcome. -/
 theorem head_model (hk : ModelCaps k Rel) (ps : List NeedPattern) (cells : List Nat) (family : Bool)
     (M : Model) (s : EvalState) (w : Walk) (hs : Rel M s) (hw : walkHead M ps cells family = some w) :
-    ∃ t, runEval (NeedBinder.bindPatterns k ps cells family) s = (w.1, t) ∧ Rel w.2.1 t := by
+    ∃ t, runEval (NeedBinder.bindPatterns k ps cells family) s = (w.1.map (Option.map NeedBindState.bound), t)
+      ∧ Rel w.2.1 t := by
   unfold walkHead at hw
-  simp only [NeedBinder.bindPatterns, NeedBinder.bindLevel]
-  exact gate_model ps cells family M _ w hw _ s hs (fun _ hacc =>
-    sources_model hk ps _ (needRepeatedNames ps) [] family M s w hs hacc)
+  obtain ⟨t, ht, hr⟩ := gate_model ps cells family M _ w hw _ s hs (fun _ hacc =>
+    sources_model hk ps _ (needRepeatedNames ps) {} family M s w hs hacc)
+  refine ⟨t, ?_, hr⟩
+  simp only [NeedBinder.bindPatterns, NeedBinder.bindLevel, runEval_bind]
+  rw [ht]
+  rcases w with ⟨r, N, log⟩
+  cases r <;> rfl
 
 end Correspondence
 
@@ -601,7 +638,7 @@ theorem shape_after {M M1 : Model} {repeated : List Ident} {own : Nat → Prop} 
 
 /-- The inversion of `andThen`: the first walk bound and the rest continued (logs concatenated),
     or the first walk is the whole result and did not bind. -/
-theorem andThen_eq_some {w0 : Option Walk} {k : Model → NeedEnv → Option Walk} {r : Walk}
+theorem andThen_eq_some {w0 : Option Walk} {k : Model → NeedBindState → Option Walk} {r : Walk}
     (h : andThen w0 k = some r) :
     (∃ M2 next log1 r2, w0 = some (.ok (some next), M2, log1) ∧ k M2 next = some r2 ∧
       r = (r2.1, r2.2.1, log1 ++ r2.2.2)) ∨
@@ -619,7 +656,7 @@ theorem andThen_eq_some {w0 : Option Walk} {k : Model → NeedEnv → Option Wal
 mutual
   /-- GROWTH AND PROVENANCE, one pattern: every logged occurrence is the pattern's own cell or a
       fresh address of this walk. -/
-  theorem one_shape (p : NeedPattern) (address : Nat) (repeated : List Ident) (bound : NeedEnv)
+  theorem one_shape (p : NeedPattern) (address : Nat) (repeated : List Ident) (bound : NeedBindState)
       (family : Bool) (M : Model) (w : Walk) (hw : M.WF)
       (h : walkOne M p address repeated bound family = some w) :
       Shape M repeated (· = address) w := by
@@ -714,7 +751,7 @@ mutual
   /-- GROWTH AND PROVENANCE, one level: every logged occurrence is a supplied `.cell` source of
       the level or a fresh address of this walk. -/
   theorem sources_shape (ps : List NeedPattern) (sources : List (NeedSource Nat)) (repeated : List Ident)
-      (bound : NeedEnv) (family : Bool) (M : Model) (w : Walk) (hw : M.WF)
+      (bound : NeedBindState) (family : Bool) (M : Model) (w : Walk) (hw : M.WF)
       (h : walkSources M ps sources repeated bound family = some w) :
       Shape M repeated (fun a => NeedSource.cell a ∈ sources) w := by
     cases ps with
@@ -782,14 +819,12 @@ end
 
 /-! ## The walk's laws: each repeated name's fold -/
 
-/-- What a walk did to one repeated name: from its binding `start` before the walk, over its
-    logged contributions `as` in written order, it ended bound as `final` — the representative
-    `retain` keeps (S5's `perName`); a refused fold is impossible on a successful walk. -/
-def Tracks (O : Nat → Obs) (start : Option Nat) (as : List Nat) (final : Option Nat) : Prop :=
-  match perName O start as with
-  | none => final = none
-  | some (.ok r) => final = some r.address
-  | some (.error _) => False
+/-- What a walk did to one repeated name: from its VIEW before the walk (`RepeatedNameLaws.view`:
+    its representative's contribution and its agreement state), over its logged contributions
+    `as` in written order, its view after — exactly `gfold` over its own contributions; a refused
+    fold is impossible on a binding walk. -/
+def Tracks (O : Nat → Obs) (start : GState) (as : List Nat) (final : GState) : Prop :=
+  gfold start (as.map (contrib O)) = .ok final
 
 /-- `O` agrees with every observation of `M`. -/
 def Agrees (O : Nat → Obs) (M : Model) : Prop := ∀ a, M.observed a = true → O a = M.obs a
@@ -800,60 +835,27 @@ theorem agrees_of_extends {O : Nat → Obs} {M N : Model} (h : Agrees O N) (he :
   obtain ⟨h1, h2⟩ := Model.observed_of_extends he hw a ha
   rw [h a h1, h2]
 
-theorem retain_append : ∀ (rep : Contribution) (xs ys : List Contribution),
-    retain rep (xs ++ ys) = match retain rep xs with
-      | .ok r => retain r ys
+theorem gfold_append : ∀ (g : GState) (xs ys : List Contribution),
+    gfold g (xs ++ ys) = match gfold g xs with
+      | .ok r => gfold r ys
       | .error e => .error e
-  | rep, [], ys => by simp [retain]
-  | rep, x :: xs, ys => by
-    simp only [List.cons_append, retain]
-    cases retainStep rep x with
+  | g, [], ys => by simp [gfold]
+  | g, x :: xs, ys => by
+    simp only [List.cons_append, gfold]
+    cases gstep g x with
     | error e => rfl
-    | ok next => exact retain_append next xs ys
-
-theorem retain_contrib (O : Nat → Obs) (a : Nat) (as : List Nat) (r : Contribution)
-    (h : retain (contrib O a) (as.map (contrib O)) = .ok r) : r = contrib O r.address := by
-  have hm := retain_mem _ _ r h
-  rw [← List.map_cons] at hm
-  obtain ⟨x, -, rfl⟩ := List.mem_map.mp hm
-  rfl
+    | ok next => exact gfold_append next xs ys
 
 /-- A fold that tracked to `mid` continues from `mid`. -/
-theorem perName_append (O : Nat → Obs) (start mid : Option Nat) (as bs : List Nat)
-    (h : Tracks O start as mid) : perName O start (as ++ bs) = perName O mid bs := by
+theorem gfold_tracks_append (O : Nat → Obs) (start mid : GState) (as bs : List Nat)
+    (h : Tracks O start as mid) : gfold start ((as ++ bs).map (contrib O)) = gfold mid (bs.map (contrib O)) := by
   unfold Tracks at h
-  cases hp : perName O start as with
-  | none =>
-    rw [hp] at h; subst h
-    cases start with
-    | none => cases as with
-      | nil => rfl
-      | cons _ _ => simp [perName] at hp
-    | some _ => simp [perName] at hp
-  | some res =>
-    rw [hp] at h
-    rcases res with c | r
-    · exact h.elim
-    · subst h
-      cases start with
-      | none =>
-        cases as with
-        | nil => simp [perName] at hp
-        | cons a as' =>
-          simp only [perName, Option.some.injEq] at hp
-          simp only [perName, List.cons_append, List.map_append, retain_append, hp]
-          rw [← retain_contrib O a as' r hp]
-      | some p =>
-        simp only [perName, Option.some.injEq] at hp
-        have hp' : retain (contrib O p) (as.map (contrib O)) = .ok r := hp
-        simp only [perName, List.map_append, retain_append, hp']
-        have := retain_contrib O p as r (by simpa using hp')
-        rw [← this]
+  rw [List.map_append, gfold_append, h]
 
-theorem tracks_append {O : Nat → Obs} {start mid final : Option Nat} {as bs : List Nat}
+theorem tracks_append {O : Nat → Obs} {start mid final : GState} {as bs : List Nat}
     (h1 : Tracks O start as mid) (h2 : Tracks O mid bs final) : Tracks O start (as ++ bs) final := by
   unfold Tracks at h2 ⊢
-  rw [perName_append O start mid as bs h1]
+  rw [gfold_tracks_append O start mid as bs h1]
   exact h2
 
 theorem occ_append (X : Ident) (l1 l2 : Log) : occ X (l1 ++ l2) = occ X l1 ++ occ X l2 := by
@@ -864,111 +866,114 @@ theorem occ_single_self (X : Ident) (a : Nat) : occ X [(X, a)] = [a] := by simp 
 theorem occ_single_other (X n : Ident) (a : Nat) (h : n ≠ X) : occ X [(n, a)] = [] := by
   simp [occ, h]
 
-theorem tracks_nil (O : Nat → Obs) (start : Option Nat) : Tracks O start [] start := by
-  cases start <;> simp [Tracks, perName, retain, contrib]
+theorem tracks_nil (O : Nat → Obs) (start : GState) : Tracks O start [] start := rfl
 
-/-- The binding of every other name is unchanged by an occurrence. -/
-theorem nameStep_other (O : Nat → Obs) (repeated : List Ident) (family : Bool) (bound next : NeedEnv)
-    (n X : Ident) (a : Nat) (h : nameStep O repeated family bound n a = .ok (some next)) (hX : n ≠ X) :
-    lookupAssoc X next = lookupAssoc X bound := by
-  rcases nameStep_ok_cases O repeated family bound next n a h with rfl | rfl
-  · rfl
-  · simp [rebind, BinderCorrespondence.lookupAssoc_rebind, Ne.symm hX]
+theorem gfold_occ_nil_not_error (O : Nat → Obs) (X : Ident) (g : GState) (c : Conflict) :
+    gfold g ((occ X ([] : Log)).map (contrib O)) ≠ .error c := by
+  simp [occ, gfold]
 
-/-- ONE OCCURRENCE TRACKS: a binding occurrence advances its own name's fold by exactly its own
-    contribution and leaves every other name's fold where it was. -/
-theorem nameStep_tracks (O : Nat → Obs) (repeated : List Ident) (family : Bool) (bound next : NeedEnv)
+/-- ONE OCCURRENCE TRACKS: a binding occurrence advances its own name's view by exactly `gstep` of
+    its own contribution and leaves every other name's view where it was. -/
+theorem nameStep_tracks (O : Nat → Obs) (repeated : List Ident) (family : Bool) (bound next : NeedBindState)
     (n : Ident) (a : Nat) (h : nameStep O repeated family bound n a = .ok (some next))
     (X : Ident) (hX : repeated.contains X = true) :
-    Tracks O (lookupAssoc X bound) (occ X [(n, a)]) (lookupAssoc X next) := by
-  by_cases hnX : n = X
-  · subst hnX
-    rw [occ_single_self]
-    cases hl : lookupAssoc n bound with
-    | none =>
-      rw [nameStep_rebinds O repeated family bound n a (Or.inr hl)] at h
-      cases h
-      simp [Tracks, perName, retain, contrib, rebind, BinderCorrespondence.lookupAssoc_rebind]
-    | some p =>
-      obtain ⟨r, hst, hln, -⟩ := nameStep_repeated_ok O repeated family bound next n a p hX hl h
-      simp only [Tracks, perName, List.map_cons, List.map_nil, retain, hst, hln]
-  · rw [occ_single_other X n a hnX, nameStep_other O repeated family bound next n X a h hnX]
+    Tracks O (view O bound X) (occ X [(n, a)]) (view O next X) := by
+  by_cases hrn : repeated.contains n = true
+  · obtain ⟨hok, herr⟩ := nameStep_view O repeated family bound n a hrn
+    cases hg : gstep (view O bound n) (contrib O a) with
+    | error c =>
+      rw [herr c hg] at h
+      exact absurd h (conflictOutcome_stops n c family next)
+    | ok g' =>
+      obtain ⟨next', hns, hv, hother⟩ := hok g' hg
+      rw [hns] at h
+      simp only [Except.ok.injEq, Option.some.injEq] at h
+      subst h
+      by_cases hnX : n = X
+      · subst hnX
+        rw [occ_single_self]
+        unfold Tracks
+        simp only [List.map_cons, List.map_nil, gfold, hg, hv]
+      · rw [occ_single_other X n a hnX, hother X (Ne.symm hnX)]
+        exact tracks_nil O _
+  · have hrn' : repeated.contains n = false := by simpa using hrn
+    rw [nameStep_plain_view O repeated family bound n a hrn'] at h
+    simp only [Except.ok.injEq, Option.some.injEq] at h
+    subst h
+    have hnX : n ≠ X := by intro he; subst he; rw [hrn'] at hX; cases hX
+    rw [occ_single_other X n a hnX, view_withPlain_other O bound n X a (Ne.symm hnX)]
     exact tracks_nil O _
-
-/-- The binder's ordinary verdict for a refused repeated contribution of `name`: the family
-    non-match, otherwise `badArity` under the repeated-parameter context (counted VALUE) or the
-    callable-identity `typeMismatch` (NEED-04, Q-27). -/
-def conflictOutcome (name : Ident) (c : Conflict) (family : Bool) : Outcome :=
-  if family then .ok none
-  else match c with
-    | .value => .error (Error.withContext (repeatedParameterContext name) Error.badArity)
-    | .callable => .error (Error.typeMismatch "Repeated bind equality requires the same callable identity")
 
 /-- ONE OCCURRENCE CONFLICTS: if its own contribution refuses its name's fold, the occurrence is
     that name's, and the binder's verdict is exactly the conflict's. -/
-theorem nameStep_conflict (O : Nat → Obs) (repeated : List Ident) (family : Bool) (bound : NeedEnv)
+theorem nameStep_conflict (O : Nat → Obs) (repeated : List Ident) (family : Bool) (bound : NeedBindState)
     (n : Ident) (a : Nat) (X : Ident) (hX : repeated.contains X = true) (c : Conflict)
-    (h : perName O (lookupAssoc X bound) (occ X [(n, a)]) = some (.error c)) :
+    (h : gfold (view O bound X) ((occ X [(n, a)]).map (contrib O)) = .error c) :
     n = X ∧ nameStep O repeated family bound n a = conflictOutcome X c family := by
   by_cases hnX : n = X
   · subst hnX
     refine ⟨rfl, ?_⟩
     rw [occ_single_self] at h
-    cases hl : lookupAssoc n bound with
-    | none => rw [hl] at h; simp [perName, retain] at h
-    | some p =>
-      rw [hl] at h
-      simp only [perName, List.map_cons, List.map_nil, retain, Option.some.injEq] at h
-      rcases nameStep_repeated_spec O repeated family bound n a p hX hl with
-        ⟨hs, -⟩ | ⟨hs, -⟩ | ⟨hs, he⟩ | ⟨hs, he⟩ <;> rw [hs] at h
-      · cases h
-      · cases h
-      · cases h; rw [he]; cases family <;> rfl
-      · cases h; rw [he]; cases family <;> rfl
+    simp only [List.map_cons, List.map_nil, gfold] at h
+    cases hg : gstep (view O bound n) (contrib O a) with
+    | error c' =>
+      rw [hg] at h
+      simp only [Except.error.injEq] at h
+      subst h
+      exact (nameStep_view O repeated family bound n a hX).2 c' hg
+    | ok g' => rw [hg] at h; simp at h
   · rw [occ_single_other X n a hnX] at h
-    cases hl : lookupAssoc X bound <;> rw [hl] at h <;> simp [perName, retain] at h
+    simp [gfold] at h
 
-theorem nameStep_congr (O1 O2 : Nat → Obs) (repeated : List Ident) (family : Bool) (bound : NeedEnv)
+theorem checkAnchorPure_congr (O1 O2 : Nat → Obs) (name : Ident) (anchor : CountedResult) (family : Bool) :
+    ∀ (cs : List Nat), (∀ p ∈ cs, O1 p = O2 p) →
+      checkAnchorPure O1 name anchor family cs = checkAnchorPure O2 name anchor family cs
+  | [], _ => rfl
+  | p :: rest, h => by
+    simp only [checkAnchorPure, h p List.mem_cons_self,
+      checkAnchorPure_congr O1 O2 name anchor family rest (fun q hq => h q (List.mem_cons_of_mem _ hq))]
+
+/-- An occurrence's verdict reads the observations only at its own cell and its name's pending
+    cells — never at the representative, which NEED-04 never re-demands. -/
+theorem nameStep_congr (O1 O2 : Nat → Obs) (repeated : List Ident) (family : Bool) (bound : NeedBindState)
     (name : Ident) (address : Nat)
-    (h : repeated.contains name = true → O1 address = O2 address ∧ ∀ p, lookupAssoc name bound = some p → O1 p = O2 p) :
+    (h : repeated.contains name = true →
+      O1 address = O2 address ∧ ∀ p ∈ (bound.groupOf name).pending, O1 p = O2 p) :
     nameStep O1 repeated family bound name address = nameStep O2 repeated family bound name address := by
   by_cases hr : repeated.contains name = true
   · obtain ⟨h1, h2⟩ := h hr
+    have hc1 : ∀ anchor, checkAnchorPure O1 name anchor family [address]
+        = checkAnchorPure O2 name anchor family [address] :=
+      fun anchor => checkAnchorPure_congr O1 O2 name anchor family [address] (by simp [h1])
+    have hc2 : ∀ anchor, checkAnchorPure O1 name anchor family (bound.groupOf name).pending
+        = checkAnchorPure O2 name anchor family (bound.groupOf name).pending :=
+      fun anchor => checkAnchorPure_congr O1 O2 name anchor family _ h2
     unfold nameStep
-    simp only [hr, ↓reduceIte]
-    cases hl : lookupAssoc name bound with
-    | none => rfl
-    | some p => simp only [h1, h2 p hl]
+    simp only [hr, ↓reduceIte, h1, hc1, hc2]
   · have hr' : repeated.contains name = false := by simpa using hr
     simp only [nameStep, hr', Bool.false_eq_true, ↓reduceIte]
 
 /-- On defined demands, the walk's `nameStep` over the model is `nameStep` over any agreeing `O`. -/
 theorem nameStep_model_eq (O : Nat → Obs) (M : Model) (hO : Agrees O M) (repeated : List Ident)
-    (family : Bool) (bound : NeedEnv) (name : Ident) (address : Nat)
+    (family : Bool) (bound : NeedBindState) (name : Ident) (address : Nat)
     (hd : nameDefined M name address repeated bound = true) :
     nameStep M.obs repeated family bound name address = nameStep O repeated family bound name address := by
   apply nameStep_congr
   intro hr
-  simp only [nameDefined, hr, Bool.not_true, Bool.false_or, Bool.and_eq_true] at hd
-  refine ⟨(hO address hd.1).symm, fun p hp => ?_⟩
-  rw [hp] at hd
-  exact (hO p hd.2).symm
-
-theorem perName_nil_not_error (O : Nat → Obs) (start : Option Nat) (c : Conflict) :
-    perName O start [] ≠ some (.error c) := by
-  cases start <;> simp [perName, retain]
+  simp only [nameDefined, hr, Bool.not_true, Bool.false_or, Bool.and_eq_true, List.all_eq_true] at hd
+  exact ⟨(hO address hd.1).symm, fun p hp => (hO p (hd.2 p hp)).symm⟩
 
 theorem walk_single_last (X : Ident) (a : Nat) : [(X, a)].getLast? = some (X, a) := rfl
 
 mutual
-  /-- TRAVERSAL CORRESPONDENCE PER NAME, one pattern: on a binding walk every repeated name ends
-      bound to the representative its fold keeps over the occurrences the walk logged for it, in
-      written order, from its binding before the pattern; every other occurrence leaves it alone. -/
+  /-- TRAVERSAL CORRESPONDENCE PER NAME, one pattern: on a binding walk every repeated name's
+      view is its own `gfold` over the occurrences the walk logged for it, in written order, from
+      its view before the pattern; every other occurrence leaves it alone. -/
   theorem one_tracks (O : Nat → Obs) (p : NeedPattern) (address : Nat) (repeated : List Ident)
-      (bound env : NeedEnv) (family : Bool) (M M' : Model) (log : Log) (hw : M.WF)
+      (bound env : NeedBindState) (family : Bool) (M M' : Model) (log : Log) (hw : M.WF)
       (h : walkOne M p address repeated bound family = some (.ok (some env), M', log)) (hO : Agrees O M')
       (X : Ident) (hX : repeated.contains X = true) :
-      Tracks O (lookupAssoc X bound) (occ X log) (lookupAssoc X env) := by
+      Tracks O (view O bound X) (occ X log) (view O env X) := by
     cases p with
     | bind name collecting =>
       simp only [walkOne] at h
@@ -997,7 +1002,7 @@ mutual
       · simp only [Option.some.injEq, Prod.mk.injEq] at h
         obtain ⟨hr, rfl, rfl⟩ := h
         split at hr
-        · cases hr; simpa [occ] using tracks_nil O (lookupAssoc X bound)
+        · cases hr; exact tracks_nil O _
         · cases hr
       · cases h
     | sequence ps =>
@@ -1034,16 +1039,16 @@ mutual
 
   /-- TRAVERSAL CORRESPONDENCE PER NAME, one level (see `one_tracks`). -/
   theorem sources_tracks (O : Nat → Obs) (ps : List NeedPattern) (sources : List (NeedSource Nat))
-      (repeated : List Ident) (bound env : NeedEnv) (family : Bool) (M M' : Model) (log : Log) (hw : M.WF)
+      (repeated : List Ident) (bound env : NeedBindState) (family : Bool) (M M' : Model) (log : Log) (hw : M.WF)
       (h : walkSources M ps sources repeated bound family = some (.ok (some env), M', log)) (hO : Agrees O M')
       (X : Ident) (hX : repeated.contains X = true) :
-      Tracks O (lookupAssoc X bound) (occ X log) (lookupAssoc X env) := by
+      Tracks O (view O bound X) (occ X log) (view O env X) := by
     cases ps with
     | nil =>
       simp only [walkSources, Option.some.injEq, Prod.mk.injEq] at h
       obtain ⟨h1, rfl, rfl⟩ := h
       cases h1
-      simpa [occ] using tracks_nil O (lookupAssoc X bound)
+      exact tracks_nil O _
     | cons p rest =>
       simp only [walkSources] at h
       cases hsrc : sources.headD .missing with
@@ -1081,10 +1086,10 @@ mutual
       occurrence is that name's — with exactly the binder's verdict for that conflict. The prefix
       therefore contains the very contribution that fails, and no later inspection ran. -/
   theorem one_conflict (O : Nat → Obs) (p : NeedPattern) (address : Nat) (repeated : List Ident)
-      (bound : NeedEnv) (family : Bool) (M : Model) (w : Walk) (hw : M.WF)
+      (bound : NeedBindState) (family : Bool) (M : Model) (w : Walk) (hw : M.WF)
       (h : walkOne M p address repeated bound family = some w) (hO : Agrees O w.2.1)
       (X : Ident) (hX : repeated.contains X = true) (c : Conflict)
-      (hc : perName O (lookupAssoc X bound) (occ X w.2.2) = some (.error c)) :
+      (hc : gfold (view O bound X) ((occ X w.2.2).map (contrib O)) = .error c) :
       w.1 = conflictOutcome X c family ∧ ∃ a, w.2.2.getLast? = some (X, a) := by
     cases p with
     | bind name collecting =>
@@ -1099,7 +1104,7 @@ mutual
       simp only [walkOne] at h
       cases hp : M.plan address
       · simp only [hp, Bool.false_eq_true, ↓reduceIte, Option.some.injEq] at h
-        subst h; exact absurd hc (perName_nil_not_error O _ c)
+        subst h; exact absurd hc (gfold_occ_nil_not_error O X _ c)
       · simp only [hp, ↓reduceIte] at h
         split at h
         · rename_i hd
@@ -1110,28 +1115,28 @@ mutual
     | literal literal =>
       simp only [walkOne] at h
       split at h
-      · cases h; exact absurd hc (perName_nil_not_error O _ c)
+      · cases h; exact absurd hc (gfold_occ_nil_not_error O X _ c)
       · cases h
     | sequence ps =>
       simp only [walkOne] at h
       split at h
       · split at h
-        · simp only [Option.some.injEq] at h; subst h; exact absurd hc (perName_nil_not_error O _ c)
+        · simp only [Option.some.injEq] at h; subst h; exact absurd hc (gfold_occ_nil_not_error O X _ c)
         · rename_i items _
           unfold gateWalk at h
           split at h
-          · simp only [Option.some.injEq] at h; subst h; exact absurd hc (perName_nil_not_error O _ c)
+          · simp only [Option.some.injEq] at h; subst h; exact absurd hc (gfold_occ_nil_not_error O X _ c)
           · exact sources_conflict O ps _ repeated bound family _ w (allocReady_shape items M hw).2.1 h hO X hX c hc
       · cases h
     | list ps =>
       simp only [walkOne] at h
       split at h
       · split at h
-        · simp only [Option.some.injEq] at h; subst h; exact absurd hc (perName_nil_not_error O _ c)
+        · simp only [Option.some.injEq] at h; subst h; exact absurd hc (gfold_occ_nil_not_error O X _ c)
         · rename_i items _
           unfold gateWalk at h
           split at h
-          · simp only [Option.some.injEq] at h; subst h; exact absurd hc (perName_nil_not_error O _ c)
+          · simp only [Option.some.injEq] at h; subst h; exact absurd hc (gfold_occ_nil_not_error O X _ c)
           · exact sources_conflict O ps _ repeated bound family _ w (allocReady_shape items M hw).2.1 h hO X hX c hc
       · cases h
     | unpack ps =>
@@ -1139,27 +1144,27 @@ mutual
       split at h
       · unfold gateWalk at h
         split at h
-        · simp only [Option.some.injEq] at h; subst h; exact absurd hc (perName_nil_not_error O _ c)
+        · simp only [Option.some.injEq] at h; subst h; exact absurd hc (gfold_occ_nil_not_error O X _ c)
         · exact sources_conflict O ps _ repeated bound family _ w (allocReady_shape _ M hw).2.1 h hO X hX c hc
       · cases h
 
   /-- THE FIRST CONFLICT, one level (see `one_conflict`). -/
   theorem sources_conflict (O : Nat → Obs) (ps : List NeedPattern) (sources : List (NeedSource Nat))
-      (repeated : List Ident) (bound : NeedEnv) (family : Bool) (M : Model) (w : Walk) (hw : M.WF)
+      (repeated : List Ident) (bound : NeedBindState) (family : Bool) (M : Model) (w : Walk) (hw : M.WF)
       (h : walkSources M ps sources repeated bound family = some w) (hO : Agrees O w.2.1)
       (X : Ident) (hX : repeated.contains X = true) (c : Conflict)
-      (hc : perName O (lookupAssoc X bound) (occ X w.2.2) = some (.error c)) :
+      (hc : gfold (view O bound X) ((occ X w.2.2).map (contrib O)) = .error c) :
       w.1 = conflictOutcome X c family ∧ ∃ a, w.2.2.getLast? = some (X, a) := by
     cases ps with
     | nil =>
       simp only [walkSources, Option.some.injEq] at h
-      subst h; exact absurd hc (perName_nil_not_error O _ c)
+      subst h; exact absurd hc (gfold_occ_nil_not_error O X _ c)
     | cons p rest =>
       simp only [walkSources] at h
       cases hsrc : sources.headD .missing with
       | missing =>
         simp only [hsrc, Option.some.injEq] at h
-        subst h; exact absurd hc (perName_nil_not_error O _ c)
+        subst h; exact absurd hc (gfold_occ_nil_not_error O X _ c)
       | cell a =>
         simp only [hsrc] at h
         rcases andThen_eq_some h with ⟨M2, next, log1, r2, h1, h2, rfl⟩ | ⟨h1, -⟩
@@ -1167,7 +1172,7 @@ mutual
           have s2 := sources_shape rest sources.tail repeated next family M2 r2 s1.2.1 h2
           have t1 := one_tracks O p a repeated bound next family M M2 log1 hw h1
             (agrees_of_extends hO s2.1 s1.2.1) X hX
-          simp only [occ_append, perName_append O _ _ _ _ t1] at hc
+          rw [occ_append, gfold_tracks_append O _ _ _ _ t1] at hc
           obtain ⟨hr, b, hb⟩ := sources_conflict O rest sources.tail repeated next family M2 r2 s1.2.1 h2 hO X hX c hc
           exact ⟨hr, b, by simp [List.getLast?_append, hb]⟩
         · exact one_conflict O p a repeated bound family M w hw h1 hO X hX c hc
@@ -1179,7 +1184,7 @@ mutual
           have s2 := sources_shape rest sources.tail repeated next family M2 r2 s1.2.1 h2
           have t1 := one_tracks O p M.size repeated bound next family _ M2 log1 hw0 h1
             (agrees_of_extends hO s2.1 s1.2.1) X hX
-          simp only [occ_append, perName_append O _ _ _ _ t1] at hc
+          rw [occ_append, gfold_tracks_append O _ _ _ _ t1] at hc
           obtain ⟨hr, b, hb⟩ := sources_conflict O rest sources.tail repeated next family M2 r2 s1.2.1 h2 hO X hX c hc
           exact ⟨hr, b, by simp [List.getLast?_append, hb]⟩
         · exact one_conflict O p M.size repeated bound family _ w hw0 h1 hO X hX c hc
@@ -1222,9 +1227,11 @@ def Fits (M : Model) (repeated : List Ident) (ps : List NeedPattern) (sources : 
     | some (NeedSource.collector _) => p.isCollecting = true
     | _ => True
 
-/-- The repeated names' current bindings are observed. -/
-def BoundObs (M : Model) (repeated : List Ident) (bound : NeedEnv) : Prop :=
-  ∀ X q, repeated.contains X = true → lookupAssoc X bound = some q → M.observed q = true
+/-- The repeated names' current representatives and pending obligations are observed. -/
+def BoundObs (M : Model) (repeated : List Ident) (bound : NeedBindState) : Prop :=
+  ∀ X, repeated.contains X = true →
+    (∀ q, lookupAssoc X bound.bound = some q → M.observed q = true) ∧
+    ∀ q ∈ (bound.groupOf X).pending, M.observed q = true
 
 theorem fits_tail {M : Model} {repeated : List Ident} {p : NeedPattern} {rest : List NeedPattern}
     {sources : List (NeedSource Nat)} (h : Fits M repeated (p :: rest) sources) : Fits M repeated rest sources.tail := by
@@ -1255,9 +1262,10 @@ theorem fits_mono {M N : Model} {repeated : List Ident} {ps : List NeedPattern} 
   · rename_i sl hs; rw [hs] at this; exact this
   · trivial
 
-theorem bound_obs_mono {M N : Model} {repeated : List Ident} {bound : NeedEnv}
+theorem bound_obs_mono {M N : Model} {repeated : List Ident} {bound : NeedBindState}
     (h : BoundObs M repeated bound) (he : Model.Extends M N) (hw : M.WF) : BoundObs N repeated bound :=
-  fun X q hX hq => (Model.observed_of_extends he hw q (h X q hX hq)).1
+  fun X hX => ⟨fun q hq => (Model.observed_of_extends he hw q ((h X hX).1 q hq)).1,
+    fun q hq => (Model.observed_of_extends he hw q ((h X hX).2 q hq)).1⟩
 
 /-- An opened level whose cells are all observed fits any patterns. -/
 theorem level_sources_fit (M : Model) (repeated : List Ident) (ps : List NeedPattern) (cells : List Nat)
@@ -1280,36 +1288,118 @@ theorem level_sources_fit (M : Model) (repeated : List Ident) (ps : List NeedPat
     · split at hs <;> cases hs
   · trivial
 
-/-- A name bound after a successful walk is bound to its earlier cell or to a logged occurrence. -/
-theorem retain_address_mem (O : Nat → Obs) (a : Nat) (as : List Nat) (r : Contribution)
-    (h : retain (contrib O a) (as.map (contrib O)) = .ok r) : r.address ∈ a :: as := by
-  have hm := retain_mem _ _ r h
-  rw [← List.map_cons] at hm
-  obtain ⟨x, hx, hxr⟩ := List.mem_map.mp hm
-  rw [← hxr]
-  exact hx
-
-theorem tracks_final_mem (O : Nat → Obs) (start : Option Nat) (as : List Nat) (q : Nat)
-    (h : Tracks O start as (some q)) : start = some q ∨ q ∈ as := by
-  unfold Tracks at h
-  cases start with
+/-- One accepted contribution: the representative and the pending obligations come from the state
+    before or are the contribution itself. -/
+theorem gstep_mem (g : GState) (c : Contribution) (next : GState) (h : gstep g c = .ok next) :
+    (∀ x, next.rep = some x → g.rep = some x ∨ x = c) ∧ (∀ x ∈ next.pending, x ∈ g.pending ∨ x = c) := by
+  unfold gstep at h
+  cases hc : c.callable with
+  | some a =>
+    rw [hc] at h
+    simp only at h
+    by_cases hcf : g.conflictsWith a = true
+    · simp [hcf] at h
+    · simp only [hcf, Bool.false_eq_true, ↓reduceIte] at h
+      have common : ∀ next', next' = g.withCallable c a →
+          (∀ x, next'.rep = some x → g.rep = some x ∨ x = c) ∧ (∀ x ∈ next'.pending, x ∈ g.pending ∨ x = c) := by
+        intro next' hn
+        subst hn
+        refine ⟨fun x hx => ?_, fun x hx => ?_⟩
+        · simp only [GState.withCallable] at hx
+          split at hx
+          · exact Or.inl hx
+          · simp only [Option.some.injEq] at hx; exact Or.inr hx.symm
+        · simp only [GState.withCallable] at hx
+          split at hx
+          · exact Or.inl hx
+          · rcases List.mem_append.mp hx with hx | hx
+            · exact Or.inl hx
+            · exact Or.inr (List.mem_singleton.mp hx)
+      cases han : g.anchor with
+      | some v =>
+        rw [han] at h
+        simp only at h
+        split at h
+        · simp only [Except.ok.injEq] at h; exact common next h.symm
+        · cases h
+      | none =>
+        rw [han] at h
+        simp only [Except.ok.injEq] at h
+        exact common next h.symm
   | none =>
-    cases as with
-    | nil => simp [perName] at h
-    | cons a as' =>
-      cases hr : retain (contrib O a) (as'.map (contrib O)) with
-      | error e => simp [perName, hr] at h
-      | ok r =>
-        simp only [perName, hr, Option.some.injEq] at h
-        exact Or.inr (by rw [h]; exact retain_address_mem O a as' r hr)
-  | some p =>
-    cases hr : retain (contrib O p) (as.map (contrib O)) with
-    | error e => simp [perName, hr] at h
-    | ok r =>
-      simp only [perName, hr, Option.some.injEq] at h
-      rcases List.mem_cons.mp (retain_address_mem O p as r hr) with h1 | h1
-      · exact Or.inl (by rw [h, h1])
-      · exact Or.inr (by rw [h]; exact h1)
+    rw [hc] at h
+    simp only at h
+    cases han : g.anchor with
+    | some v =>
+      rw [han] at h
+      simp only at h
+      split at h
+      · simp only [Except.ok.injEq] at h; subst h
+        exact ⟨fun x hx => Or.inl hx, fun x hx => Or.inl hx⟩
+      · cases h
+    | none =>
+      rw [han] at h
+      simp only at h
+      split at h
+      · simp only [Except.ok.injEq] at h; subst h
+        refine ⟨fun x hx => ?_, fun x hx => by simp [GState.withAnchor] at hx⟩
+        simp only [GState.withAnchor] at hx
+        split at hx
+        · exact Or.inl hx
+        · simp only [Option.some.injEq] at hx; exact Or.inr hx.symm
+      · cases h
+
+/-- The fold's representative and pending obligations come from the start or the contributions. -/
+theorem gfold_mem : ∀ (g : GState) (cs : List Contribution) (r : GState), gfold g cs = .ok r →
+    (∀ x, r.rep = some x → g.rep = some x ∨ x ∈ cs) ∧ (∀ x ∈ r.pending, x ∈ g.pending ∨ x ∈ cs)
+  | g, [], r, h => by
+    simp only [gfold, Except.ok.injEq] at h; subst h
+    exact ⟨fun x hx => Or.inl hx, fun x hx => Or.inl hx⟩
+  | g, c :: cs, r, h => by
+    simp only [gfold] at h
+    split at h
+    · cases h
+    · rename_i next hstep
+      obtain ⟨h1, h2⟩ := gfold_mem next cs r h
+      obtain ⟨s1, s2⟩ := gstep_mem g c next hstep
+      refine ⟨fun x hx => ?_, fun x hx => ?_⟩
+      · rcases h1 x hx with hn | hm
+        · rcases s1 x hn with hg | rfl
+          · exact Or.inl hg
+          · exact Or.inr List.mem_cons_self
+        · exact Or.inr (List.mem_cons_of_mem _ hm)
+      · rcases h2 x hx with hn | hm
+        · rcases s2 x hn with hg | rfl
+          · exact Or.inl hg
+          · exact Or.inr List.mem_cons_self
+        · exact Or.inr (List.mem_cons_of_mem _ hm)
+
+/-- After a tracked walk, a repeated name's representative and pending cells were its cells before
+    the walk or logged occurrences. -/
+theorem tracks_final_mem (O : Nat → Obs) (bound env : NeedBindState) (X : Ident) (as : List Nat)
+    (h : Tracks O (view O bound X) as (view O env X)) :
+    (∀ q, lookupAssoc X env.bound = some q → lookupAssoc X bound.bound = some q ∨ q ∈ as) ∧
+    (∀ q ∈ (env.groupOf X).pending, q ∈ (bound.groupOf X).pending ∨ q ∈ as) := by
+  obtain ⟨h1, h2⟩ := gfold_mem _ _ _ h
+  constructor
+  · intro q hq
+    rcases h1 (contrib O q) (by simp [view, hq]) with h | h
+    · have h' : (lookupAssoc X bound.bound).map (contrib O) = some (contrib O q) := h
+      obtain ⟨q', hq', hc⟩ := Option.map_eq_some_iff.mp h'
+      have : q' = q := congrArg Contribution.address hc
+      subst this; exact Or.inl hq'
+    · obtain ⟨q', hq', hc⟩ := List.mem_map.mp h
+      have : q' = q := congrArg Contribution.address hc
+      subst this; exact Or.inr hq'
+  · intro q hq
+    have hm : contrib O q ∈ (view O env X).pending := List.mem_map_of_mem hq
+    rcases h2 (contrib O q) hm with h | h
+    · obtain ⟨q', hq', hc⟩ := List.mem_map.mp h
+      have : q' = q := congrArg Contribution.address hc
+      subst this; exact Or.inl hq'
+    · obtain ⟨q', hq', hc⟩ := List.mem_map.mp h
+      have : q' = q := congrArg Contribution.address hc
+      subst this; exact Or.inr hq'
 
 theorem occ_mem (X : Ident) (log : Log) (q : Nat) (h : q ∈ occ X log) : (X, q) ∈ log := by
   simp only [occ, List.mem_map, List.mem_filter, beq_iff_eq] at h
@@ -1317,43 +1407,52 @@ theorem occ_mem (X : Ident) (log : Log) (q : Nat) (h : q ∈ occ X log) : (X, q)
   simp only at hn; subst hn; exact hm
 
 /-- After a successful walk the repeated names' bindings are observed. -/
-theorem one_bound_obs (p : NeedPattern) (address : Nat) (repeated : List Ident) (bound env : NeedEnv)
+theorem one_bound_obs (p : NeedPattern) (address : Nat) (repeated : List Ident) (bound env : NeedBindState)
     (family : Bool) (M M' : Model) (log : Log) (hw : M.WF)
     (h : walkOne M p address repeated bound family = some (.ok (some env), M', log))
     (hb : BoundObs M repeated bound) : BoundObs M' repeated env := by
   have s := one_shape p address repeated bound family M _ hw h
-  intro X q hX hq
+  intro X hX
   have t := one_tracks M'.obs p address repeated bound env family M M' log hw h (fun _ _ => rfl) X hX
-  rw [hq] at t
-  rcases tracks_final_mem _ _ _ q t with h1 | h1
-  · exact (Model.observed_of_extends s.1 hw q (hb X q hX h1)).1
-  · exact s.2.2.2.2 (X, q) (occ_mem X log q h1) hX
+  obtain ⟨t1, t2⟩ := tracks_final_mem _ _ _ _ _ t
+  constructor
+  · intro q hq
+    rcases t1 q hq with h1 | h1
+    · exact (Model.observed_of_extends s.1 hw q ((hb X hX).1 q h1)).1
+    · exact s.2.2.2.2 (X, q) (occ_mem X log q h1) hX
+  · intro q hq
+    rcases t2 q hq with h1 | h1
+    · exact (Model.observed_of_extends s.1 hw q ((hb X hX).2 q h1)).1
+    · exact s.2.2.2.2 (X, q) (occ_mem X log q h1) hX
 
 theorem sources_bound_obs (ps : List NeedPattern) (sources : List (NeedSource Nat)) (repeated : List Ident)
-    (bound env : NeedEnv) (family : Bool) (M M' : Model) (log : Log) (hw : M.WF)
+    (bound env : NeedBindState) (family : Bool) (M M' : Model) (log : Log) (hw : M.WF)
     (h : walkSources M ps sources repeated bound family = some (.ok (some env), M', log))
     (hb : BoundObs M repeated bound) : BoundObs M' repeated env := by
   have s := sources_shape ps sources repeated bound family M _ hw h
-  intro X q hX hq
+  intro X hX
   have t := sources_tracks M'.obs ps sources repeated bound env family M M' log hw h (fun _ _ => rfl) X hX
-  rw [hq] at t
-  rcases tracks_final_mem _ _ _ q t with h1 | h1
-  · exact (Model.observed_of_extends s.1 hw q (hb X q hX h1)).1
-  · exact s.2.2.2.2 (X, q) (occ_mem X log q h1) hX
+  obtain ⟨t1, t2⟩ := tracks_final_mem _ _ _ _ _ t
+  constructor
+  · intro q hq
+    rcases t1 q hq with h1 | h1
+    · exact (Model.observed_of_extends s.1 hw q ((hb X hX).1 q h1)).1
+    · exact s.2.2.2.2 (X, q) (occ_mem X log q h1) hX
+  · intro q hq
+    rcases t2 q hq with h1 | h1
+    · exact (Model.observed_of_extends s.1 hw q ((hb X hX).2 q h1)).1
+    · exact s.2.2.2.2 (X, q) (occ_mem X log q h1) hX
 
-theorem name_defined_of (M : Model) (name : Ident) (address : Nat) (repeated : List Ident) (bound : NeedEnv)
+theorem name_defined_of (M : Model) (name : Ident) (address : Nat) (repeated : List Ident) (bound : NeedBindState)
     (ha : repeated.contains name = true → M.observed address = true) (hb : BoundObs M repeated bound) :
     nameDefined M name address repeated bound = true := by
   unfold nameDefined
   cases hr : repeated.contains name
   · rfl
-  · simp only [Bool.not_true, Bool.false_or, Bool.and_eq_true]
-    refine ⟨ha hr, ?_⟩
-    cases hl : lookupAssoc name bound with
-    | none => rfl
-    | some q => exact hb name q hr hl
+  · simp only [Bool.not_true, Bool.false_or, Bool.and_eq_true, List.all_eq_true]
+    exact ⟨ha hr, (hb name hr).2⟩
 
-theorem andThen_defined {w0 : Option Walk} {k : Model → NeedEnv → Option Walk} (h0 : ∃ w, w0 = some w)
+theorem andThen_defined {w0 : Option Walk} {k : Model → NeedBindState → Option Walk} (h0 : ∃ w, w0 = some w)
     (hk : ∀ M2 next log1, w0 = some (.ok (some next), M2, log1) → ∃ w, k M2 next = some w) :
     ∃ w, andThen w0 k = some w := by
   obtain ⟨⟨r, M2, log1⟩, rfl⟩ := h0
@@ -1367,7 +1466,7 @@ theorem andThen_defined {w0 : Option Walk} {k : Model → NeedEnv → Option Wal
 mutual
   /-- DEFINEDNESS, one pattern: on the validated domain, with its own cell observed when it is
       demanded and the repeated names' bindings observed, the walk is defined. -/
-  theorem one_defined (p : NeedPattern) (address : Nat) (repeated : List Ident) (bound : NeedEnv)
+  theorem one_defined (p : NeedPattern) (address : Nat) (repeated : List Ident) (bound : NeedBindState)
       (family : Bool) (M : Model) (hw : M.WF) (hp : RepeatedPlain repeated p)
       (ha : needsCell repeated p = true → M.observed address = true) (hb : BoundObs M repeated bound) :
       ∃ w, walkOne M p address repeated bound family = some w := by
@@ -1419,7 +1518,7 @@ mutual
 
   /-- DEFINEDNESS, one level. -/
   theorem sources_defined (ps : List NeedPattern) (sources : List (NeedSource Nat)) (repeated : List Ident)
-      (bound : NeedEnv) (family : Bool) (M : Model) (hw : M.WF) (hp : RepeatedPlainList repeated ps)
+      (bound : NeedBindState) (family : Bool) (M : Model) (hw : M.WF) (hp : RepeatedPlainList repeated ps)
       (hf : Fits M repeated ps sources) (hb : BoundObs M repeated bound) :
       ∃ w, walkSources M ps sources repeated bound family = some w := by
     cases ps with
@@ -1469,7 +1568,8 @@ theorem head_defined (M : Model) (ps : List NeedPattern) (cells : List Nat) (fam
   unfold walkHead gateWalk
   split
   · exact ⟨_, rfl⟩
-  · exact sources_defined ps _ _ [] family M hw hp hf (by intro X q _ h; cases h)
+  · exact sources_defined ps _ _ {} family M hw hp hf (fun X _ =>
+      ⟨fun q h => by simp [lookupAssoc] at h, fun q h => by simp [NeedBindState.groupOf, lookupAssoc] at h⟩)
 
 /-! ## The production instance (Obligation B) -/
 
@@ -1665,7 +1765,8 @@ theorem production_head_walk (ev : Nat → Expr → EvalCtx → ValEnv → EvalM
     (hp : RepeatedPlainList (needRepeatedNames ps) ps)
     (hf : Fits M (needRepeatedNames ps) ps (needLevelSources ps cells)) :
     ∃ w t, walkHead M ps cells family = some w ∧
-      runEval (bindNeedPatterns (NeedChannels.shell ev route demand written) ps cells family) s = (w.1, t) ∧
+      runEval (bindNeedPatterns (NeedChannels.shell ev route demand written) ps cells family) s
+        = (w.1.map (Option.map NeedBindState.bound), t) ∧
       ProdRel w.2.1 t := by
   obtain ⟨w, hw⟩ := head_defined M ps cells family (prodRel_wf hs) hp hf
   obtain ⟨t, ht, hr⟩ := head_model (shell_model_caps ev route demand written) ps cells family M s w hs hw
@@ -1689,7 +1790,7 @@ theorem head_provenance (M : Model) (ps : List NeedPattern) (cells : List Nat) (
   split at h
   · simp only [Option.some.injEq] at h; subst h
     exact ⟨Model.extends_refl M, by simp⟩
-  · have s := sources_shape ps _ _ [] family M w hw h
+  · have s := sources_shape ps _ _ {} family M w hw h
     refine ⟨s.1, fun e he => ⟨?_, fun hr hfresh => ?_⟩⟩
     · rcases s.2.2.2.1 e he with h1 | h1
       · exact Or.inl (cell_mem_level_sources ps cells _ h1)
@@ -1698,83 +1799,81 @@ theorem head_provenance (M : Model) (ps : List NeedPattern) (cells : List Nat) (
       obtain ⟨v, rfl⟩ := s.2.2.1 e.2 o ho hfresh
       exact ⟨v, obs_of_view ho⟩
 
-/-- REPRESENTATIVE (success): each repeated name of a head is bound to the representative `retain`
-    keeps over the contributions the run logged for it, in written traversal order, at every depth;
-    a name with no logged contribution is unbound. -/
-theorem head_binding_is_retain (M : Model) (ps : List NeedPattern) (cells : List Nat) (family : Bool)
-    (env : NeedEnv) (N : Model) (log : Log) (hw : M.WF)
+/-- THE GROUP FOLD OF EVERY REPEATED NAME (success): each repeated name's final view — its
+    representative and agreement state — is its own `gfold` over the contributions the run logged
+    for it, in written traversal order, at every depth (`RepeatedNameLaws` results 1–4 apply). -/
+theorem head_binding_is_gfold (M : Model) (ps : List NeedPattern) (cells : List Nat) (family : Bool)
+    (env : NeedBindState) (N : Model) (log : Log) (hw : M.WF)
     (h : walkHead M ps cells family = some (.ok (some env), N, log))
     (X : Ident) (hX : (needRepeatedNames ps).contains X = true) :
-    match occ X log with
-    | [] => lookupAssoc X env = none
-    | a :: as => ∃ r, retain (contrib N.obs a) (as.map (contrib N.obs)) = .ok r ∧
-        lookupAssoc X env = some r.address := by
+    gfold {} ((occ X log).map (contrib N.obs)) = .ok (view N.obs env X) := by
   unfold walkHead gateWalk at h
   split at h
   · cases family <;> simp at h
-  · have t := sources_tracks N.obs ps _ _ [] env family M N log hw h (fun _ _ => rfl) X hX
-    simp only [lookupAssoc] at t
-    unfold Tracks at t
-    cases ho : occ X log with
-    | nil => rw [ho] at t; simpa [perName] using t
-    | cons a as =>
-      rw [ho] at t
-      simp only [perName] at t
-      cases hr : retain (contrib N.obs a) (as.map (contrib N.obs)) with
-      | error e => rw [hr] at t; exact t.elim
-      | ok r => rw [hr] at t; exact ⟨r, hr, t⟩
+  · exact sources_tracks N.obs ps _ _ {} env family M N log hw h (fun _ _ => rfl) X hX
 
 /-- FIRST CONFLICT (failure or non-match): if a repeated name's fold over its logged
     contributions is refused, the run ended at exactly that contribution — the log's last
     occurrence is that name's — with the binder's verdict for that conflict. -/
 theorem head_conflict (M : Model) (ps : List NeedPattern) (cells : List Nat) (family : Bool) (w : Walk)
     (hw : M.WF) (h : walkHead M ps cells family = some w)
-    (X : Ident) (hX : (needRepeatedNames ps).contains X = true) (a : Nat) (as : List Nat)
-    (ho : occ X w.2.2 = a :: as) (c : Conflict)
-    (hc : retain (contrib w.2.1.obs a) (as.map (contrib w.2.1.obs)) = .error c) :
+    (X : Ident) (hX : (needRepeatedNames ps).contains X = true) (c : Conflict)
+    (hc : gfold {} ((occ X w.2.2).map (contrib w.2.1.obs)) = .error c) :
     w.1 = conflictOutcome X c family ∧ ∃ b, w.2.2.getLast? = some (X, b) := by
   unfold walkHead gateWalk at h
   split at h
-  · simp only [Option.some.injEq] at h; subst h; simp [occ] at ho
-  · exact sources_conflict w.2.1.obs ps _ _ [] family M w hw h (fun _ _ => rfl) X hX c
-      (by simp only [lookupAssoc, ho, perName, hc])
+  · simp only [Option.some.injEq] at h; subst h; simp [occ, gfold] at hc
+  · exact sources_conflict w.2.1.obs ps _ _ {} family M w hw h (fun _ _ => rfl) X hX c hc
 
-/-- Results 3–5 of `RepeatedNameLaws` on the production head (success): the representative is an
-    actual contributed cell, it carries a callable identity iff some contribution does, and it is
-    the FIRST richest contribution in written traversal order. -/
+/-- THE ORIGINAL REPRESENTATIVE on the production head (success, §6 statement 8): each repeated
+    name with logged contributions is bound to one of THEM — a supplied or allocated original cell
+    whose own observation is the representative — it carries a callable identity iff some
+    contribution does, and it is the FIRST richest contribution in written traversal order. -/
 theorem head_representative (M : Model) (ps : List NeedPattern) (cells : List Nat) (family : Bool)
-    (env : NeedEnv) (N : Model) (log : Log) (hw : M.WF)
+    (env : NeedBindState) (N : Model) (log : Log) (hw : M.WF)
     (h : walkHead M ps cells family = some (.ok (some env), N, log))
     (X : Ident) (hX : (needRepeatedNames ps).contains X = true) (a : Nat) (as : List Nat)
     (ho : occ X log = a :: as) :
-    ∃ r, lookupAssoc X env = some r.address ∧ r.address ∈ a :: as ∧ r = contrib N.obs r.address ∧
-      (r.callable.isSome = true ↔ ∃ x ∈ a :: as, (N.obs x).2.isSome = true) ∧
-      r = (((a :: as).map (contrib N.obs)).find? (fun x => x.callable.isSome)).getD (contrib N.obs a) := by
-  have hb := head_binding_is_retain M ps cells family env N log hw h X hX
-  rw [ho] at hb
-  obtain ⟨r, hr, hl⟩ := hb
-  refine ⟨r, hl, retain_address_mem N.obs a as r hr, retain_contrib N.obs a as r hr, ?_, ?_⟩
-  · rw [retain_callable_isSome_iff _ _ r hr]
+    ∃ q, lookupAssoc X env.bound = some q ∧ q ∈ a :: as ∧
+      ((N.obs q).2.isSome = true ↔ ∃ x ∈ a :: as, (N.obs x).2.isSome = true) ∧
+      contrib N.obs q =
+        (((a :: as).map (contrib N.obs)).find? (fun x => x.callable.isSome)).getD (contrib N.obs a) := by
+  have hb := head_binding_is_gfold M ps cells family env N log hw h X hX
+  rw [ho, List.map_cons] at hb
+  have hrep := gfold_rep_first_richest _ _ _ hb
+  obtain ⟨x, hx, hxr⟩ := gfold_rep_mem _ _ _ hb
+  have hxr' : (lookupAssoc X env.bound).map (contrib N.obs) = some x := hxr
+  obtain ⟨q, hq, rfl⟩ := Option.map_eq_some_iff.mp hxr'
+  refine ⟨q, hq, ?_, ?_, ?_⟩
+  · rw [← List.map_cons] at hx
+    obtain ⟨y, hy, hyq⟩ := List.mem_map.mp hx
+    have : y = q := congrArg Contribution.address hyq
+    subst this; exact hy
+  · have hiff := gfold_rep_callable_isSome_iff _ _ _ hb (contrib N.obs q) hxr
+    show (contrib N.obs q).callable.isSome = true ↔ ∃ x ∈ a :: as, (contrib N.obs x).callable.isSome = true
+    rw [hiff, ← List.map_cons]
     constructor
     · rintro ⟨x, hx, hs⟩
-      rw [← List.map_cons] at hx
       obtain ⟨y, hy, rfl⟩ := List.mem_map.mp hx
       exact ⟨y, hy, hs⟩
     · rintro ⟨y, hy, hs⟩
-      exact ⟨contrib N.obs y, by rw [← List.map_cons]; exact List.mem_map_of_mem hy, hs⟩
-  · rw [retain_first_richest _ _ r hr]; rfl
+      exact ⟨contrib N.obs y, List.mem_map_of_mem hy, hs⟩
+  · have hrep' : (lookupAssoc X env.bound).map (contrib N.obs) = _ := hrep
+    rw [hq] at hrep'
+    simp only [Option.map_some, Option.some.injEq] at hrep'
+    rw [hrep', List.map_cons]
 
 /-- A name contributed only by FRESH cells (opened structure items or META adapters) retains no
     callable identity: allocated Ready data carries none. -/
 theorem head_fresh_contributions_identityless (M : Model) (ps : List NeedPattern) (cells : List Nat)
-    (family : Bool) (env : NeedEnv) (N : Model) (log : Log) (hw : M.WF)
+    (family : Bool) (env : NeedBindState) (N : Model) (log : Log) (hw : M.WF)
     (h : walkHead M ps cells family = some (.ok (some env), N, log))
     (X : Ident) (hX : (needRepeatedNames ps).contains X = true) (a : Nat) (as : List Nat)
     (ho : occ X log = a :: as) (hfresh : ∀ x ∈ a :: as, M.size ≤ x) :
-    ∃ q, lookupAssoc X env = some q ∧ (N.obs q).2 = none := by
-  obtain ⟨r, hl, hm, hrc, -, -⟩ := head_representative M ps cells family env N log hw h X hX a as ho
-  refine ⟨r.address, hl, ?_⟩
-  have hp := (head_provenance M ps cells family _ hw h).2 (X, r.address)
+    ∃ q, lookupAssoc X env.bound = some q ∧ (N.obs q).2 = none := by
+  obtain ⟨q, hl, hm, -, -⟩ := head_representative M ps cells family env N log hw h X hX a as ho
+  refine ⟨q, hl, ?_⟩
+  have hp := (head_provenance M ps cells family _ hw h).2 (X, q)
     (occ_mem X log _ (by rw [ho]; exact hm))
   obtain ⟨v, hv⟩ := hp.2 hX (hfresh _ hm)
   rw [hv]
@@ -1839,7 +1938,7 @@ theorem head_callable_trans_on_of_no_cross (M : Model) (ps : List NeedPattern) (
     · simp only [Option.some.injEq] at h
       subst h
       exact hd
-    · have shape := sources_shape ps _ _ [] family M w hw h
+    · have shape := sources_shape ps _ _ {} family M w hw h
       exact model_no_cross_after_growth shape.1 shape.2.2.1 hd
   apply CallableIdentityDomain.callable_trans_on_of_no_cross
   intro a b ha hb
@@ -1859,7 +1958,8 @@ theorem production_head_walk_no_cross (ev : Nat → Expr → EvalCtx → ValEnv 
     (hp : RepeatedPlainList (needRepeatedNames ps) ps)
     (hf : Fits M (needRepeatedNames ps) ps (needLevelSources ps cells)) (hd : ModelNoCross M) :
     ∃ w t, walkHead M ps cells family = some w ∧
-      runEval (bindNeedPatterns (NeedChannels.shell ev route demand written) ps cells family) s = (w.1, t) ∧
+      runEval (bindNeedPatterns (NeedChannels.shell ev route demand written) ps cells family) s
+        = (w.1.map (Option.map NeedBindState.bound), t) ∧
       ProdRel w.2.1 t ∧ ∀ addresses : List Nat, CallableTransOn (addresses.map (contrib w.2.1.obs)) := by
   obtain ⟨w, t, hw, ht, hr⟩ := production_head_walk ev route demand written M s ps cells family hs hp hf
   exact ⟨w, t, hw, ht, hr, fun addresses =>
@@ -1868,28 +1968,54 @@ theorem production_head_walk_no_cross (ev : Nat → Expr → EvalCtx → ValEnv 
 /-- A contribution's observation without its address. -/
 def strip (c : Contribution) : Contribution := { c with address := 0 }
 
-theorem retainStep_strip (rep c : Contribution) :
-    retainStep (strip rep) (strip c) = (retainStep rep c).map strip := by
-  obtain ⟨ra, rv, rc⟩ := rep
-  obtain ⟨ca, cv, cc⟩ := c
-  simp only [retainStep, strip]
-  by_cases hv : (rv == cv) = true
-  · simp only [hv, Bool.not_true, Bool.false_eq_true, ↓reduceIte]
-    rcases rc with _ | a <;> rcases cc with _ | b
-    · simp [Except.map, strip]
-    · simp [Except.map, strip]
-    · simp [Except.map, strip]
-    · by_cases hs : sameRepeatedCallableIdentity a b = true <;> simp [hs, Except.map, strip]
-  · simp [hv, Except.map]
+/-- An agreement state's observations without addresses. -/
+def _root_.KatLang.RepeatedNameLaws.GState.strip (g : GState) : GState :=
+  { rep := g.rep.map KatLang.NestedRepeatedNames.strip, identity := g.identity, anchor := g.anchor,
+    pending := g.pending.map KatLang.NestedRepeatedNames.strip }
 
-theorem retain_strip : ∀ (rep : Contribution) (cs : List Contribution),
-    retain (strip rep) (cs.map strip) = (retain rep cs).map strip
-  | rep, [] => rfl
-  | rep, c :: cs => by
-    simp only [List.map_cons, retain, retainStep_strip]
-    cases retainStep rep c with
+theorem gstep_strip (g : GState) (c : Contribution) :
+    gstep g.strip (strip c) = (gstep g c).map GState.strip := by
+  obtain ⟨rep, identity, anchor, pending⟩ := g
+  obtain ⟨ca, cv, cc⟩ := c
+  have hall : ∀ v, (pending.map strip).all (fun p => p.value == v) = pending.all (fun p => p.value == v) := by
+    intro v; simp [List.all_map, strip, Function.comp_def]
+  cases cc with
+  | some a =>
+    cases identity with
+    | none =>
+      cases anchor with
+      | none =>
+        simp [gstep, GState.strip, strip, GState.conflictsWith, GState.withCallable, Except.map]
+      | some v =>
+        by_cases hv : (cv == v) = true <;>
+          simp [gstep, GState.strip, strip, GState.conflictsWith, GState.withCallable, Except.map, hv]
+    | some i =>
+      by_cases hs : sameRepeatedCallableIdentity i a = true
+      · cases anchor with
+        | none =>
+          simp [gstep, GState.strip, strip, GState.conflictsWith, GState.withCallable, Except.map, hs]
+        | some v =>
+          by_cases hv : (cv == v) = true <;>
+            simp [gstep, GState.strip, strip, GState.conflictsWith, GState.withCallable, Except.map, hs, hv]
+      · simp [gstep, GState.strip, strip, GState.conflictsWith, Except.map, hs]
+  | none =>
+    cases anchor with
+    | some v =>
+      by_cases hv : (cv == v) = true <;> simp [gstep, GState.strip, strip, Except.map, hv]
+    | none =>
+      by_cases ha : pending.all (fun p => p.value == cv) = true
+      · cases identity <;> simp [gstep, GState.strip, strip, GState.withAnchor, Except.map, ha, hall]
+      · have ha' : pending.all (fun p => p.value == cv) = false := by simpa using ha
+        simp [gstep, GState.strip, strip, Except.map, ha', hall]
+
+theorem gfold_strip : ∀ (g : GState) (cs : List Contribution),
+    gfold g.strip (cs.map strip) = (gfold g cs).map GState.strip
+  | g, [] => rfl
+  | g, c :: cs => by
+    simp only [List.map_cons, gfold, gstep_strip]
+    cases gstep g c with
     | error e => rfl
-    | ok next => exact retain_strip next cs
+    | ok next => exact gfold_strip next cs
 
 theorem callable_trans_on_strip (l : List Contribution) (h : CallableTransOn l) :
     CallableTransOn (l.map strip) := by
@@ -1902,43 +2028,68 @@ theorem callable_trans_on_strip (l : List Contribution) (h : CallableTransOn l) 
 
 /-- SATISFIABILITY under permutation of completed contributions whose OBSERVATIONS are permuted —
     the two lists may come from different runs with different (fresh) addresses. -/
-theorem retain_satisfiable_perm_up_to_address (c d : Contribution) (cs ds : List Contribution)
-    (hp : ((c :: cs).map strip).Perm ((d :: ds).map strip)) (hT : CallableTransOn (c :: cs)) :
-    (∃ r, retain c cs = .ok r) ↔ (∃ r, retain d ds = .ok r) := by
-  have key := retain_satisfiable_perm (strip c) (strip d) (cs.map strip) (ds.map strip) hp
-    (callable_trans_on_strip _ hT)
-  rw [retain_strip, retain_strip] at key
+theorem gfold_satisfiable_perm_up_to_address (L L' : List Contribution)
+    (hp : (L.map strip).Perm (L'.map strip)) (hT : CallableTransOn L) :
+    (∃ r, gfold {} L = .ok r) ↔ (∃ r, gfold {} L' = .ok r) := by
+  have key := gfold_satisfiable_perm (L.map strip) (L'.map strip) hp (callable_trans_on_strip _ hT)
+  have e1 : gfold {} (L.map strip) = (gfold {} L).map GState.strip := gfold_strip {} L
+  have e2 : gfold {} (L'.map strip) = (gfold {} L').map GState.strip := gfold_strip {} L'
+  rw [e1, e2] at key
   constructor
   · rintro ⟨r, hr⟩
-    obtain ⟨r', hr'⟩ := key.mp ⟨strip r, by rw [hr]; rfl⟩
-    cases h : retain d ds with
+    obtain ⟨r', hr'⟩ := key.mp ⟨r.strip, by rw [hr]; rfl⟩
+    cases h : gfold {} L' with
     | error e => rw [h] at hr'; cases hr'
     | ok x => exact ⟨x, rfl⟩
   · rintro ⟨r, hr⟩
-    obtain ⟨r', hr'⟩ := key.mpr ⟨strip r, by rw [hr]; rfl⟩
-    cases h : retain c cs with
+    obtain ⟨r', hr'⟩ := key.mpr ⟨r.strip, by rw [hr]; rfl⟩
+    cases h : gfold {} L with
     | error e => rw [h] at hr'; cases hr'
     | ok x => exact ⟨x, rfl⟩
 
-/-- OBSERVATION under permutation, up to addresses: the retained counted VALUE (with its count),
-    callable availability and callable identity agree; the retained ADDRESS need not. -/
-theorem retain_perm_up_to_address (c d : Contribution) (cs ds : List Contribution)
+/-- OBSERVATION under permutation, up to addresses: callable availability and callable identity
+    agree; the counted VALUE (with its count) agrees when the group is MIXED (a value-only
+    contribution exists); the ADDRESS need not agree. -/
+theorem gfold_perm_up_to_address (c d : Contribution) (cs ds : List Contribution)
     (hp : ((c :: cs).map strip).Perm ((d :: ds).map strip)) (hT : CallableTransOn (c :: cs))
-    (r r' : Contribution) (hr : retain c cs = .ok r) (hr' : retain d ds = .ok r') :
-    r.value = r'.value ∧ r.callable.isSome = r'.callable.isSome ∧
-      (∀ a b, r.callable = some a → r'.callable = some b → sameRepeatedCallableIdentity a b = true) := by
-  have h1 : retain (strip c) (cs.map strip) = .ok (strip r) := by rw [retain_strip, hr]; rfl
-  have h2 : retain (strip d) (ds.map strip) = .ok (strip r') := by rw [retain_strip, hr']; rfl
-  exact retain_perm_preserves_observation (strip c) (strip d) (cs.map strip) (ds.map strip) hp
-    (callable_trans_on_strip _ hT) (strip r) (strip r') h1 h2
+    (r r' : GState) (hr : gfold {} (c :: cs) = .ok r) (hr' : gfold {} (d :: ds) = .ok r') :
+    ∃ x y, r.rep = some x ∧ r'.rep = some y ∧ x.callable.isSome = y.callable.isSome ∧
+      (∀ a b, x.callable = some a → y.callable = some b → sameRepeatedCallableIdentity a b = true) ∧
+      ((∃ z ∈ c :: cs, z.callable = none) → x.value = y.value) := by
+  have h1 : gfold {} (strip c :: cs.map strip) = .ok r.strip := by
+    have := gfold_strip {} (c :: cs); rw [hr] at this; exact this
+  have h2 : gfold {} (strip d :: ds.map strip) = .ok r'.strip := by
+    have := gfold_strip {} (d :: ds); rw [hr'] at this; exact this
+  have hT' := callable_trans_on_strip _ hT
+  obtain ⟨x, y, hx, hy, havail, hid⟩ :=
+    gfold_perm_preserves_identity (strip c) (strip d) (cs.map strip) (ds.map strip) hp hT' _ _ h1 h2
+  obtain ⟨x0, hx0, rfl⟩ : ∃ x0, r.rep = some x0 ∧ strip x0 = x := by
+    cases hrep : r.rep with
+    | none => simp [GState.strip, hrep] at hx
+    | some x0 => simp only [GState.strip, hrep, Option.map_some, Option.some.injEq] at hx; exact ⟨x0, rfl, hx⟩
+  obtain ⟨y0, hy0, rfl⟩ : ∃ y0, r'.rep = some y0 ∧ strip y0 = y := by
+    cases hrep : r'.rep with
+    | none => simp [GState.strip, hrep] at hy
+    | some y0 => simp only [GState.strip, hrep, Option.map_some, Option.some.injEq] at hy; exact ⟨y0, rfl, hy⟩
+  refine ⟨x0, y0, hx0, hy0, havail, hid, fun hmix => ?_⟩
+  obtain ⟨z, hz, hzn⟩ := hmix
+  obtain ⟨x1, y1, hx1, hy1, hv⟩ := gfold_perm_preserves_value_mixed (strip c) (strip d) (cs.map strip)
+    (ds.map strip) hp hT' ⟨strip z, by
+      rcases List.mem_cons.mp hz with rfl | hz
+      · exact List.mem_cons_self
+      · exact List.mem_cons_of_mem _ (List.mem_map_of_mem hz), hzn⟩ _ _ h1 h2
+  simp only [GState.strip, hx0, hy0, Option.map_some, Option.some.injEq] at hx1 hy1
+  subst hx1; subst hy1
+  exact hv
 
 /-- PRODUCTION PERMUTATION COROLLARY: two successful head runs — possibly different heads, models,
     states and fresh addresses — in which one repeated name's completed contributions carry the
-    same OBSERVATIONS in permuted order bind that name to representatives with the same counted
-    VALUE, callable availability and callable identity (on the identity domain `CallableTransOn`).
-    Addresses, heaps and every other check of the two runs are NOT related. -/
+    same OBSERVATIONS in permuted order bind that name to representatives with the same callable
+    availability and callable identity (on the identity domain `CallableTransOn`), and with the
+    same counted VALUE when the group is MIXED. A reference-only group's representative VALUE is
+    not related (`RepeatedNameGuards`). Addresses, heaps and every other check are NOT related. -/
 theorem head_perm_preserves_observation (M1 M2 : Model) (ps1 ps2 : List NeedPattern)
-    (cells1 cells2 : List Nat) (family1 family2 : Bool) (env1 env2 : NeedEnv) (N1 N2 : Model)
+    (cells1 cells2 : List Nat) (family1 family2 : Bool) (env1 env2 : NeedBindState) (N1 N2 : Model)
     (log1 log2 : Log) (hw1 : M1.WF) (hw2 : M2.WF)
     (h1 : walkHead M1 ps1 cells1 family1 = some (.ok (some env1), N1, log1))
     (h2 : walkHead M2 ps2 cells2 family2 = some (.ok (some env2), N2, log2))
@@ -1948,27 +2099,26 @@ theorem head_perm_preserves_observation (M1 M2 : Model) (ps1 ps2 : List NeedPatt
     (hp : ((a1 :: as1).map (fun a => strip (contrib N1.obs a))).Perm
       ((a2 :: as2).map (fun a => strip (contrib N2.obs a))))
     (hT : CallableTransOn ((a1 :: as1).map (contrib N1.obs))) :
-    ∃ q1 q2, lookupAssoc X env1 = some q1 ∧ lookupAssoc X env2 = some q2 ∧
-      (N1.obs q1).1 = (N2.obs q2).1 ∧ (N1.obs q1).2.isSome = (N2.obs q2).2.isSome ∧
-      (∀ a b, (N1.obs q1).2 = some a → (N2.obs q2).2 = some b → sameRepeatedCallableIdentity a b = true) := by
-  have b1 := head_binding_is_retain M1 ps1 cells1 family1 env1 N1 log1 hw1 h1 X hX1
-  have b2 := head_binding_is_retain M2 ps2 cells2 family2 env2 N2 log2 hw2 h2 X hX2
-  rw [ho1] at b1; rw [ho2] at b2
-  obtain ⟨r1, hr1, hl1⟩ := b1
-  obtain ⟨r2, hr2, hl2⟩ := b2
+    ∃ q1 q2, lookupAssoc X env1.bound = some q1 ∧ lookupAssoc X env2.bound = some q2 ∧
+      (N1.obs q1).2.isSome = (N2.obs q2).2.isSome ∧
+      (∀ a b, (N1.obs q1).2 = some a → (N2.obs q2).2 = some b → sameRepeatedCallableIdentity a b = true) ∧
+      ((∃ x ∈ a1 :: as1, (N1.obs x).2 = none) → (N1.obs q1).1 = (N2.obs q2).1) := by
+  have b1 := head_binding_is_gfold M1 ps1 cells1 family1 env1 N1 log1 hw1 h1 X hX1
+  have b2 := head_binding_is_gfold M2 ps2 cells2 family2 env2 N2 log2 hw2 h2 X hX2
+  rw [ho1, List.map_cons] at b1
+  rw [ho2, List.map_cons] at b2
   have hp' : ((contrib N1.obs a1 :: as1.map (contrib N1.obs)).map strip).Perm
       ((contrib N2.obs a2 :: as2.map (contrib N2.obs)).map strip) := by
     simpa [List.map_map, Function.comp_def] using hp
-  obtain ⟨v, c, i⟩ := retain_perm_up_to_address _ _ _ _ hp' (by simpa using hT) r1 r2 hr1 hr2
-  have e1 := retain_contrib N1.obs a1 as1 r1 hr1
-  have e2 := retain_contrib N2.obs a2 as2 r2 hr2
-  refine ⟨r1.address, r2.address, hl1, hl2, ?_, ?_, ?_⟩
-  · have := v; rw [e1, e2] at this; exact this
-  · have := c; rw [e1, e2] at this; exact this
-  · intro a b ha hb
-    apply i a b
-    · rw [e1]; exact ha
-    · rw [e2]; exact hb
+  obtain ⟨x, y, hx, hy, havail, hid, hval⟩ :=
+    gfold_perm_up_to_address _ _ _ _ hp' (by simpa using hT) _ _ b1 b2
+  have hx' : (lookupAssoc X env1.bound).map (contrib N1.obs) = some x := hx
+  have hy' : (lookupAssoc X env2.bound).map (contrib N2.obs) = some y := hy
+  obtain ⟨q1, hq1, rfl⟩ := Option.map_eq_some_iff.mp hx'
+  obtain ⟨q2, hq2, rfl⟩ := Option.map_eq_some_iff.mp hy'
+  refine ⟨q1, q2, hq1, hq2, havail, hid, fun ⟨z, hz, hzn⟩ => hval ⟨contrib N1.obs z, ?_, hzn⟩⟩
+  rw [← List.map_cons]
+  exact List.mem_map_of_mem hz
 
 /-! ## Whole-head success is not repeated-name compatibility -/
 
@@ -1986,9 +2136,9 @@ def witnessModel : Model :=
     head-level run is the executable guard `compatible_head_does_not_match`
     (`NestedRepeatedNameGuards.lean`). -/
 theorem compatible_is_not_success :
-    (∃ r, retain (contrib witnessModel.obs 0) [contrib witnessModel.obs 1] = .ok r) ∧
+    (∃ r, gfold {} [contrib witnessModel.obs 0, contrib witnessModel.obs 1] = .ok r) ∧
     walkSources witnessModel [.bind "x", .bind "x", .sequence [.bind "y", .bind "z"]]
-      (needLevelSources [.bind "x", .bind "x", .sequence [.bind "y", .bind "z"]] [0, 1, 2]) ["x"] [] true =
+      (needLevelSources [.bind "x", .bind "x", .sequence [.bind "y", .bind "z"]] [0, 1, 2]) ["x"] {} true =
       some (.ok none, witnessModel, [("x", 0), ("x", 1)]) :=
   ⟨⟨_, rfl⟩, rfl⟩
 

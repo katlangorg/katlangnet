@@ -110,21 +110,17 @@ section CellUpd
 variable {h : Array NeedCell} {c : NeedCell} (v : CellV h c)
 include v
 theorem CellV.with_state {st : NeedState} (hs : StateV h st) : CellV h { c with state := st } :=
-  ⟨v.susp, hs, v.plan, v.callee, v.receiver, v.aliasBare⟩
+  ⟨v.susp, hs, v.plan, v.callee, v.receiver⟩
 theorem CellV.with_callable (x : NeedCallableState) : CellV h { c with callable := x } :=
-  ⟨v.susp, v.state, v.plan, v.callee, v.receiver, v.aliasBare⟩
+  ⟨v.susp, v.state, v.plan, v.callee, v.receiver⟩
 theorem CellV.with_plan {p : NeedPlanSupply} (hp : PlanV h p) : CellV h { c with plan := p } :=
-  ⟨v.susp, v.state, hp, v.callee, v.receiver, v.aliasBare⟩
+  ⟨v.susp, v.state, hp, v.callee, v.receiver⟩
 theorem CellV.with_route (r : Option PlanRoute) : CellV h { c with route := r } :=
-  ⟨v.susp, v.state, v.plan, v.callee, v.receiver, v.aliasBare⟩
+  ⟨v.susp, v.state, v.plan, v.callee, v.receiver⟩
 theorem CellV.with_callee {o : Option Nat} (ho : OptAddr h o) : CellV h { c with callee := o } :=
-  ⟨v.susp, v.state, v.plan, ho, v.receiver, v.aliasBare⟩
+  ⟨v.susp, v.state, v.plan, ho, v.receiver⟩
 theorem CellV.with_receiver {o : Option Nat} (ho : OptAddr h o) : CellV h { c with receiver := o } :=
-  ⟨v.susp, v.state, v.plan, v.callee, ho, v.aliasBare⟩
-theorem CellV.with_aliasUse (n : Nat) : CellV h { c with aliasUse := n } :=
-  ⟨v.susp, v.state, v.plan, v.callee, v.receiver, v.aliasBare⟩
-theorem CellV.with_aliasBare {o : Option Nat} (ho : OptAddr h o) : CellV h { c with aliasBare := o } :=
-  ⟨v.susp, v.state, v.plan, v.callee, v.receiver, ho⟩
+  ⟨v.susp, v.state, v.plan, v.callee, ho⟩
 end CellUpd
 
 theorem ExcV.of_eq {α : Type} {Q : α → Array NeedCell → Prop} {r : Except Error α} {x : α}
@@ -238,12 +234,15 @@ theorem SoundI.withMissingOutputCtx_true {α : Type} {P : Array NeedCell → Pro
 theorem SoundI.withNestedMissingOutput_true {α : Type} {P : Array NeedCell → Prop} {m : EvalM α}
     (hm : SoundI P m (fun _ _ => True)) : SoundI P (KatLang.withNestedMissingOutput m) (fun _ _ => True) :=
   SoundI.withNestedMissingOutput hm PMono.true
+theorem SoundI.withMissingOutputNesting_true {α : Type} {P : Array NeedCell → Prop} {m : EvalM α} (nested : Bool)
+    (hm : SoundI P m (fun _ _ => True)) : SoundI P (KatLang.withMissingOutputNesting nested m) (fun _ _ => True) :=
+  SoundI.withMissingOutputNesting nested hm PMono.true
 
 attribute [ht_spec] SoundI.rec_call get_spec SoundI.lift SoundI.liftM SoundI.attempt SoundI.withCtx
-  SoundI.withMissingOutputCtx SoundI.withNestedMissingOutput SoundI.modify_cell SoundI.mapM_nat SoundI.mapM_sourced
+  SoundI.withMissingOutputCtx SoundI.withNestedMissingOutput SoundI.withMissingOutputNesting SoundI.modify_cell SoundI.mapM_nat SoundI.mapM_sourced
   SoundI.mapM_result
 attribute [ht_spec] SoundI.attempt_true SoundI.withCtx_true SoundI.withMissingOutputCtx_true
-  SoundI.withNestedMissingOutput_true
+  SoundI.withNestedMissingOutput_true SoundI.withMissingOutputNesting_true
 
 /-! ## The procedure -/
 
@@ -284,7 +283,6 @@ theorem CellV.prepared {o : Except Error (List NeedSupply.Sourced)} {xs : List N
   have := v.plan; rw [hs, ho] at this; exact this
 theorem CellV.callee_lt {x : Nat} (hs : c.callee = some x) : x < h.size := v.callee x hs
 theorem CellV.receiver_lt {x : Nat} (hs : c.receiver = some x) : x < h.size := v.receiver x hs
-theorem CellV.aliasBare_lt {x : Nat} (hs : c.aliasBare = some x) : x < h.size := v.aliasBare x hs
 end CellRead
 
 theorem GotV.cell' {st : EvalState} {h : Array NeedCell} (v : GotV st h) {a : Nat} {c : NeedCell}
@@ -300,13 +298,12 @@ attribute [ht_lemmas] RV.atom RV.str RV.bool RV.seq RV.list RV.callRef RV.argVie
   GotV.cell GotV.lt GotV.activation tier_valid StateV.of_outcome PlanV.of_outcome
   CellV.expr_ctx CellV.expr_values
   CellV.ready CellV.collector CellV.completed CellV.prepared CellV.callee_lt CellV.receiver_lt
-  CellV.aliasBare_lt ExcV.ok OptSliceV.get OptSliceV.some OptActV.some
+  ExcV.ok OptSliceV.get OptSliceV.some OptActV.some
 
 attribute [ht_fwd] GotV.cell ExcV.ok OptSliceV.some OptActV.some CellV.expr_ctx CellV.expr_values
   GotV.lt CellV.susp
 attribute [ht_lemmas] CellV.susp
   CellV.ready CellV.collector CellV.completed CellV.prepared CellV.callee_lt CellV.receiver_lt
-  CellV.aliasBare_lt
 
 theorem RV.callRef_lt {h : Array NeedCell} {a : Nat} (v : RV h (.callRef a)) : a < h.size := RV.callRef_iff.1 v
 theorem RV.argView_lt {h : Array NeedCell} {a : Nat} (v : RV h (.argView a)) : a < h.size := RV.argView_iff.1 v
@@ -370,10 +367,8 @@ macro "ht_cell_upd" : tactic => `(tactic| first
   | (apply CellV.with_plan)
   | (apply CellV.with_callee)
   | (apply CellV.with_receiver)
-  | (apply CellV.with_aliasBare)
   | (apply CellV.with_callable)
-  | (apply CellV.with_route)
-  | (apply CellV.with_aliasUse))
+  | (apply CellV.with_route))
 
 /-- The conclusion of a goal after all its binders. -/
 def htConclusion (ty : Lean.Expr) : Lean.Expr :=
@@ -806,7 +801,8 @@ elab "ht_step" : tactic => do
         -- a wrapper binding an address-free value: atomize it with the trivial postcondition
         let α ← whnfR (← instantiateMVars (m.getArg! 2))
         if (c == ``KatLang.withCtx || c == ``KatLang.withMissingOutputCtx ||
-            c == ``KatLang.withNestedMissingOutput || c == ``KatLang.evalAttempt) &&
+            c == ``KatLang.withNestedMissingOutput || c == ``KatLang.withMissingOutputNesting ||
+            c == ``KatLang.evalAttempt) &&
             htAddressFree α then
           evalTactic (← `(tactic| refine SoundI.bind (Q := fun _ _ => True) ?_ PMono.true ?_))
           return

@@ -14,7 +14,7 @@ internal static class FrontEndPipeline
             return rejected;
 
         return ProcessWithoutModuleElaboration(
-            ElaborationInput.Parse(source, budget.CreateDiagnosticBag()), hostOperations: null, CancellationToken.None);
+            ElaborationInput.Parse(source, budget.CreateDiagnosticBag()), hostOperations: null, budget.Limits, CancellationToken.None);
     }
 
     /// <summary>
@@ -58,7 +58,7 @@ internal static class FrontEndPipeline
         var input = ElaborationInput.Parse(source, budget.CreateDiagnosticBag(), comparisonObservations, cancellationToken);
         cancellationToken.ThrowIfCancellationRequested();
 
-        return ProcessWithoutModuleElaboration(input, options?.HostOperations, cancellationToken);
+        return ProcessWithoutModuleElaboration(input, options?.HostOperations, budget.Limits, cancellationToken);
     }
 
     /// <summary>
@@ -110,7 +110,7 @@ internal static class FrontEndPipeline
                 comparisonObservations,
                 cancellationToken).ConfigureAwait(false);
 
-        return ProcessWithoutModuleElaboration(input, options?.HostOperations, cancellationToken);
+        return ProcessWithoutModuleElaboration(input, options?.HostOperations, budget.Limits, cancellationToken);
     }
 
     /// <summary>
@@ -211,6 +211,7 @@ internal static class FrontEndPipeline
     private static FrontEndResult ProcessWithoutModuleElaboration(
         ElaborationInput input,
         HostOperations? hostOperations,
+        SourceProcessingLimits sourceProcessingLimits,
         CancellationToken cancellationToken)
     {
         var modulesUnavailable = ReportUnavailableLoads(input);
@@ -219,6 +220,7 @@ internal static class FrontEndPipeline
             input,
             hostOperations: hostOperations,
             provisional: modulesUnavailable,
+            sourceProcessingLimits: sourceProcessingLimits,
             cancellationToken: cancellationToken);
     }
 
@@ -257,6 +259,7 @@ internal static class FrontEndPipeline
             hasDeferredModuleRegions: loader.DeferredRegionCount > 0,
             provisional: modulesMissing,
             modules: loader.ModuleUnits.BeginOperation(),
+            sourceProcessingLimits: budget.Limits,
             cancellationToken: cancellationToken);
     }
 
@@ -331,6 +334,7 @@ internal static class FrontEndPipeline
         bool hasDeferredModuleRegions = false,
         bool provisional = false,
         ModuleUnits? modules = null,
+        SourceProcessingLimits? sourceProcessingLimits = null,
         CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
@@ -373,7 +377,23 @@ internal static class FrontEndPipeline
         // Every loaded module is ONE unit of the program (Q-31 H-P + Q-32 I-U): each pass elaborates
         // it once, rooted at the prelude, wherever it is spliced (see ModuleUnitRegistry).
         modules ??= new ModuleUnits();
-        DetectParameters(input, hostOperations, passDiagnostics, modules);
+        StaticStructureOperation? operation = null;
+        try
+        {
+            operation = StaticStructureAdmission.Create(input.Current, hostOperations, sourceProcessingLimits, cancellationToken: cancellationToken).Operation;
+            DetectParameters(input, hostOperations, passDiagnostics, modules, operation);
+            if (operation is not null && passDiagnostics.HasReported(DiagnosticCode.SelfDependentInferredParameters))
+            {
+                operation.CompleteLookups(input.Current);
+                input.Current.CompletedStructure!.Facts.Seal(cancellationToken);
+                return new(ElaboratedUserRoot(input.Take()), diagnostics, hasDeferredModuleRegions);
+            }
+        }
+        catch (StaticQueryLimitExceededException error)
+        {
+            diagnostics.Add(StaticStructureAdmission.Rejection(error));
+            return new(new Algorithm.User(null, [], [], [], []), diagnostics);
+        }
 
         cancellationToken.ThrowIfCancellationRequested();
 
@@ -383,7 +403,12 @@ internal static class FrontEndPipeline
         // by any call of that algorithm, so it is a static well-formedness failure of the
         // closed interface — the same rule parameter detection applies to a directly written
         // undeclared identifier, one indirection further out.
-        ResolveImplicitArguments(input, passDiagnostics, hostOperations, modules);
+        try { ResolveImplicitArguments(input, passDiagnostics, hostOperations, modules, operation); }
+        catch (StaticQueryLimitExceededException error)
+        {
+            diagnostics.Add(StaticStructureAdmission.Rejection(error));
+            return new(new Algorithm.User(null, [], [], [], []), diagnostics);
+        }
 
         // The parameter/property collision rule, the open PROVIDER rule, and the output rule
         // need completed signatures (an inferred parameter list is final only now) and nothing
@@ -392,14 +417,22 @@ internal static class FrontEndPipeline
         // parse time).
         ValidateCompletedSignatures(input, passDiagnostics, hostOperations);
 
-        cancellationToken.ThrowIfCancellationRequested();
-        ResolveExposure(input, hostOperations, modules);
-        cancellationToken.ThrowIfCancellationRequested();
+        try
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            ResolveExposure(input, hostOperations, modules, cancellationToken);
+            cancellationToken.ThrowIfCancellationRequested();
 
-        // The program's later operations (deferred materializations) receive these module units —
-        // the very declarations this tree holds — when this elaboration is the evaluable one.
-        if (!provisional && !diagnostics.HasReportedErrors)
-            modules.Publish();
+            // The program's later operations (deferred materializations) receive these module units —
+            // the very declarations this tree holds — when this elaboration is the evaluable one.
+            if (!provisional && !diagnostics.HasReportedErrors)
+                modules.Publish(operation is not null && hasDeferredModuleRegions ? operation.Freeze(cancellationToken) : null);
+        }
+        catch (StaticQueryLimitExceededException error)
+        {
+            diagnostics.Add(StaticStructureAdmission.Rejection(error));
+            return new(new Algorithm.User(null, [], [], [], []), diagnostics);
+        }
 
         // B2c: a tree with deferred module regions is evaluated by the async evaluation
         // family only (materializing a selected branch awaits the module downloader). The
@@ -431,17 +464,17 @@ internal static class FrontEndPipeline
     }
 
     private static void DetectParameters(
-        ElaborationInput input, HostOperations? hostOperations, DiagnosticBag passDiagnostics, ModuleUnits modules)
+        ElaborationInput input, HostOperations? hostOperations, DiagnosticBag passDiagnostics, ModuleUnits modules, StaticStructureOperation? operation)
     {
         var (parameterizedRoot, _) = ParameterDetector.DetectPrevalidated(
-            input.Take(), hostOperations, diagnostics: passDiagnostics, modules: modules);
+            input.Take(), hostOperations, diagnostics: passDiagnostics, modules: modules, structuralOperation: operation);
         input.Put(parameterizedRoot);
     }
 
     private static void ResolveImplicitArguments(
-        ElaborationInput input, DiagnosticBag passDiagnostics, HostOperations? hostOperations, ModuleUnits modules)
+        ElaborationInput input, DiagnosticBag passDiagnostics, HostOperations? hostOperations, ModuleUnits modules, StaticStructureOperation? operation)
         => input.Put(ImplicitArgumentResolver.ResolvePrevalidated(
-            input.Take(), observations: null, passDiagnostics, hostOperations, modules));
+            input.Take(), observations: null, passDiagnostics, hostOperations, modules, operation));
 
     // One frame per validator as well, so one validator's memo is gone before the next runs.
     private static void ValidateCompletedSignatures(
@@ -464,8 +497,8 @@ internal static class FrontEndPipeline
     private static void ValidateInferredParameterOutputs(ElaborationInput input, DiagnosticBag passDiagnostics)
         => InferredParameterOutputValidator.ValidateProgram(input.Current, passDiagnostics);
 
-    private static void ResolveExposure(ElaborationInput input, HostOperations? hostOperations, ModuleUnits modules)
-        => input.Put(PropertyExposureResolver.Resolve(input.Take(), observations: null, hostOperations, modules));
+    private static void ResolveExposure(ElaborationInput input, HostOperations? hostOperations, ModuleUnits modules, CancellationToken cancellationToken)
+        => input.Put(PropertyExposureResolver.Resolve(input.Take(), observations: null, hostOperations, modules, cancellationToken));
 
     /// <summary>
     /// The tree and diagnostic list of ONE elaboration, handed from pass to pass (see the pass

@@ -60,7 +60,7 @@ def cellOk (n a : Nat) (c : NeedCell) : Bool :=
   (match c.plan with
     | .prepared (.ok cells) => cells.all (fun p => decide (p.1 < n))
     | _ => true) &&
-  optOk n c.callee && optOk n c.receiver && optOk n c.aliasBare
+  optOk n c.callee && optOk n c.receiver
 
 /-- Every clause of `Inv`. -/
 def invOk (s : EvalState) : Bool :=

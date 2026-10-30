@@ -70,7 +70,8 @@ public class PropertyExposureResolverTests
         Assert.Equal(PropertyExposure.LocalOnlyCapturedAncestorParameters, left.Exposure);
         Assert.Equal(PropertyExposure.LocalOnlyCapturedAncestorParameters, right.Exposure);
 
-        var leftBody = Assert.IsType<Algorithm.User>(left.Value);
+        // Left's lone row InnerLeft makes it a forwarding carrier (M4★) that keeps its own declaration.
+        var leftBody = Assert.IsType<Algorithm.Alias>(left.Value);
         var rightBody = Assert.IsType<Algorithm.User>(right.Value);
         Assert.Equal(
             PropertyExposure.LocalOnlyCapturedAncestorParameters,
@@ -554,10 +555,11 @@ public class PropertyExposureResolverTests
         var syntaxResult = Parser.ParseSyntax(source);
         Assert.False(syntaxResult.HasErrors, string.Join(Environment.NewLine, syntaxResult.Diagnostics.Select(d => d.Message)));
 
-        var (parameterizedRoot, parameterDiagnostics) = ParameterDetector.Detect(syntaxResult.Root);
+        var parameterizedRootInput = ParameterDetector.Detect(syntaxResult.Root);
+        var (parameterizedRoot, parameterDiagnostics) = parameterizedRootInput;
         Assert.DoesNotContain(parameterDiagnostics, diagnostic => diagnostic.Severity == DiagnosticSeverity.Error);
 
-        var implicitResolvedRoot = ImplicitArgumentResolver.Resolve(parameterizedRoot);
+        var implicitResolvedRoot = ImplicitArgumentResolver.Resolve(parameterizedRootInput);
         var property = Assert.Single(implicitResolvedRoot.Properties, candidate => candidate.Name == propertyName);
         return Assert.IsType<Algorithm.User>(property.Value);
     }

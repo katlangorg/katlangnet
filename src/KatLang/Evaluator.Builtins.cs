@@ -1102,33 +1102,60 @@ public static partial class Evaluator
             : rejection;
 
     /// <summary>
-    /// Demand ONE collection-builtin call item that binding has placed in a VALUE
-    /// position (<see cref="DemandSequenceBuiltinCallItemValue"/>): the demand happens
-    /// HERE, once the descriptor has decided the slot is a value — a CALLBACK item is
-    /// never demanded (a CALLBACK slot receives the callable, never a value; eagerly
-    /// evaluating a collecting-only callback such as <c>map(xs, Only)</c> would run its
-    /// body an extra time). An item that was already evaluated, or whose evaluation
-    /// already failed, is never re-entered. A supplied cell — every item the evaluator
-    /// builds — is demanded once; on an ordinary failure this records the cell's CALLABLE
-    /// projection as the callable the slot NAMES (<see cref="VariadicCallItem.NamedAlgorithm"/>),
-    /// unless the written slot is a parameter, so the slot's rejection report judges it
-    /// (<see cref="SequenceBuiltinValueDemandError"/>). An item WITHOUT a cell (a hand-built
-    /// plan) is evaluated through the shared demand funnel only when the ONE law accepts its
-    /// callable (<see cref="AcceptsZeroArgumentValueDemand"/> — a collecting-only signature
-    /// alongside every zero-parameter property); every other such item is returned
-    /// untouched for <see cref="SequenceBuiltinValueDemandError"/> to report.
-    /// Lean: <c>demandSequenceBuiltinCallItemValue</c>.
+    /// FA-OQ-1 under M4★: when a failed slot's cell projects a structural CARRIER (an inline <c>{ F }</c>, a named
+    /// <c>C = { F }</c>), the callable the slot NAMES is the carrier's VALUE terminal — the callable whose bare view
+    /// the carrier's VALUE read delegated to — so the slot's rejection report, reduce's accumulator hint included
+    /// (<see cref="SequenceBuiltinValueDemandError"/>), is the one its written target reference reports. The chase is
+    /// the static VALUE chase (<see cref="ResolveAliasValueTerminal"/>) observed WITHOUT initiating anything
+    /// (<see cref="PeekResolve{TState,T}"/>, META-S3-0b: this is diagnostic enrichment): a terminal that would need a
+    /// runtime step not yet taken, a runtime terminal or a failed chase keeps the carrier. Lean: the carrier arm of
+    /// <c>EvalBody.demandSequenceBuiltinCallItemValue</c>.
     /// </summary>
-    private static VariadicCallItem FinishNeedCallItemDemand(VariadicCallItem item, NeedCell cell, EvalResult<CountedResult> result)
+    private static VariadicCallItem NameCarrierValueTerminal(VariadicCallItem item, Algorithm.Alias carrier, EvalCtx ctx)
+        => PeekResolve(ctx, (carrier, ctx), static state => ResolveAliasValueTerminal(state.carrier, state.ctx)) is { IsOk: true } terminal
+            && !terminal.Value.IsRuntime
+            ? item with { Callable = terminal.Value.Algorithm }
+            : item;
+
+    /// <summary>
+    /// The outcome of demanding a slot's supplied <paramref name="cell"/>: its value, or — on an ordinary failure —
+    /// the failure with the callable the slot NAMES (<see cref="VariadicCallItem.NamedAlgorithm"/>), read from the
+    /// cell's CALLABLE projection WITHOUT initiating it (META-S3-0b: a runtime projection not yet completed names
+    /// nothing), a carrier naming its VALUE terminal (<see cref="NameCarrierValueTerminal"/>). A parameter slot reports
+    /// its parameter's own failure, and a resource limit names nothing. Never inlined: the demand that precedes it is
+    /// the recursion of every nested builtin argument, so its temporaries stay out of that frame (FRAME-SIZE
+    /// DISCIPLINE).
+    /// </summary>
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+    private static VariadicCallItem FinishNeedCallItemDemand(VariadicCallItem item, NeedCell cell, EvalResult<CountedResult> result, EvalCtx ctx)
     {
         if (!result.IsError) return item with { Value = result.Value.Value };
         if (item.Source is Expr.Param(var name))
             return item with { ValueError = DemandParameter(cell, result, name, item.Source.Span).Error };
         if (result.Error.IsResourceLimit) return item with { ValueError = result.Error };
         // Diagnostic enrichment only (the message choice): a NON-INITIATING read (META-S3-0b).
-        return item with { ValueError = result.Error, Callable = cell.PeekCallable() };
+        var named = item with { ValueError = result.Error, Callable = cell.PeekCallable() };
+        return named.Callable is Algorithm.Alias { IsReference: false } carrier ? NameCarrierValueTerminal(named, carrier, ctx) : named;
     }
 
+    /// <summary>
+    /// Demand ONE collection-builtin call item that binding has placed in a VALUE
+    /// position: the demand happens HERE, once the descriptor has decided the slot is a
+    /// value — a CALLBACK item is never demanded (a CALLBACK slot receives the callable,
+    /// never a value; eagerly evaluating a collecting-only callback such as
+    /// <c>map(xs, Only)</c> would run its body an extra time). An item that was already
+    /// evaluated, or whose evaluation already failed, is never re-entered. A supplied cell
+    /// — every item the evaluator builds — is demanded once; on an ordinary failure this
+    /// records the cell's CALLABLE projection as the callable the slot NAMES
+    /// (<see cref="VariadicCallItem.NamedAlgorithm"/>; a carrier names its VALUE terminal,
+    /// <see cref="NameCarrierValueTerminal"/>), unless the written slot is a parameter, so the
+    /// slot's rejection report judges it (<see cref="SequenceBuiltinValueDemandError"/>). An
+    /// item WITHOUT a cell (a hand-built plan) is evaluated through the shared demand funnel
+    /// only when the ONE law accepts its callable (<see cref="AcceptsZeroArgumentValueDemand"/>
+    /// — a collecting-only signature alongside every zero-parameter property); every other
+    /// such item is returned untouched for <see cref="SequenceBuiltinValueDemandError"/> to
+    /// report. Lean: <c>demandSequenceBuiltinCallItemValue</c>.
+    /// </summary>
     private static VariadicCallItem DemandSequenceBuiltinCallItemValue(
         VariadicCallItem item,
         EvalCtx ctx,
@@ -1137,7 +1164,7 @@ public static partial class Evaluator
         if (item.Cell is { } cell && item.Value is null && item.ValueError is null)
         {
             var result = cell.Demand();
-            return FinishNeedCallItemDemand(item, cell, result);
+            return FinishNeedCallItemDemand(item, cell, result, ctx);
         }
 
         if (item.Value is not null
@@ -2470,8 +2497,11 @@ public static partial class Evaluator
     /// arity error, a navigated parameterized member the bare one, a written parameterized
     /// block <see cref="EvalError.UnresolvedImplicitParams"/>, and an inline callable alias
     /// <c>{ Inc }.string</c> its written target reference's report (the property arity
-    /// error, FA-OQ-1) — never <c>Unknown name: x</c> from inside the receiver. Lean: the
-    /// <c>string</c> arm of <c>evalDotCallCounted</c> (<c>hasSuppliedParameterCell</c>) and
+    /// error, FA-OQ-1) — never <c>Unknown name: x</c> from inside the receiver. An ALIAS receiver
+    /// (OD-E, M4★) is judged on its VALUE terminal's algorithm (<paramref name="demandAlg"/>) while it is
+    /// READ as the alias, so every shape reaches the TERMINAL binding's cached entry — an inline carrier
+    /// <c>{ F }</c> through the demand funnel's alias arm — exactly as the value position reads it. Lean:
+    /// the <c>string</c> arm of <c>evalDotCallCounted</c> (<c>hasSuppliedParameterCell</c>) and
     /// <c>evalDotStringReceiverValue</c>.
     /// </summary>
     private static EvalResult<Result> EvalDotStringReceiverAlgOutput(
@@ -2479,7 +2509,8 @@ public static partial class Evaluator
         Algorithm targetAlg,
         bool receiverIsStructuralMember,
         EvalCtx ctx,
-        ValEnv valEnv)
+        ValEnv valEnv,
+        Algorithm? demandAlg = null)
     {
         // A parameter bound to a supplied cell is a VALUE demand of that cell, reported as the
         // written argument reports it, before (and instead of) the zero-argument law (CALL-06).
@@ -2487,7 +2518,7 @@ public static partial class Evaluator
         if (target is Expr.Param(var needName) && LookupNeed(ParameterContext(needName, ctx, ref valEnv).NeedEnv, needName) is not null)
             return ProjectCountedValue(EvalParamCounted(needName, target.Span, ctx, valEnv));
 
-        if (ZeroArgumentValueDemandError(target, targetAlg) is { } rejection)
+        if (ZeroArgumentValueDemandError(target, demandAlg ?? targetAlg) is { } rejection)
             return rejection;
 
         // The accepted receiver is READ exactly as a value position reads it: HOW A
@@ -2536,9 +2567,14 @@ public static partial class Evaluator
         if (ctx.CallStack.Count == 0)
             return new EvalError.UnknownName(name) { Span = target.Span };
 
-        var resolvedR = LookupLexicalForValue(ctx.CallStack[0], name, ctx);
+        var resolvedR = LookupLexicalRaw(ctx.CallStack[0], name, ctx);
         if (resolvedR.IsError)
             return AtSpanIfMissing(resolvedR.Error, target.Span);
+
+        // OD-E (M4★): a receiver reached THROUGH an alias reads its VALUE terminal — the terminal binding's
+        // entry, or a runtime-target alias's binding cell — out of this frame.
+        if (resolvedR.Value.ResolvedAlgorithm is Algorithm.Alias)
+            return EvalAliasDotStringLexicalReceiver(target, resolvedR.Value, ctx, valEnv);
 
         if (TryEnterArgumentEvaluationLevel(ctx, out var level) is { } limitError)
             return limitError;
@@ -2573,6 +2609,13 @@ public static partial class Evaluator
 
             using (level)
             {
+                // A member that is an alias reads its VALUE terminal (OD-E, M4★): never an entry of its own.
+                if (ChildOfInContext(containerR.Value, member.Value, ctx) is Algorithm.Alias memberAlias)
+                {
+                    var terminal = ResolveAliasValueTerminal(memberAlias, ctx, member);
+                    return terminal.IsError ? terminal.Error : ProjectCountedValue(ReadAliasTerminalCounted(terminal.Value, ctx, valEnv));
+                }
+
                 return ProjectCountedValue(EvalZeroArgPropertyAccessCounted(
                     containerR.Value,
                     member,

@@ -130,7 +130,9 @@ public class CallReferenceS3CorpusTests
         new("RA8", "R = Capture(Square(5))\nA = R.Algorithm\nB = A\nB(9)", "ok 81", "9", "0/0", "0/0"),
         new("RA10", "Use(f) = {\n  A = f\n  9.A\n}\nUse(Square)", "ok 81", "9", "0/0", "0/0"),
         new("RA11", "Use(f) = {\n  A = f\n  A(9)\n}\nUse(Square)", "ok 81", "9", "0/0", "0/0"),
-        new("RA12", "Box = { G(x) = x * 10 }\nUse(b) = {\n  A = b.G\n  A(3), 3.A\n}\nUse(Box)", "err ArityMismatch", "", "0/0", "0/0"),
+        // M4★ OD-B: `A = b.G` is a parameter-rooted MEMBER alias (formerly A inferred the fallback name G
+        // as its parameter, and A(3) read the member G as a value: ArityMismatch).
+        new("RA12", "Box = { G(x) = x * 10 }\nUse(b) = {\n  A = b.G\n  A(3), 3.A\n}\nUse(Box)", "ok (30, 30)", "", "0/0", "0/0"),
         new("RA13", "R = Capture(Square(5))\nA = R.Algorithm\nBox = { B = A }\nBox.B(9)", "ok 81", "9", "0/0", "0/0"),
         new("RA14", "Only(*xs) = tick()\nUse(f) = {\n  A = f\n  A, A(), A()\n}\nUse(Only)", "ok (1, 2, 3)", "", "0/0", "0/0"),
         new("RA15", "Sq = Square\n9.Sq, Apply(Sq, 9), Sq(9)", "ok (81, 81, 81)", "9,9,9", "0/0", "0/0"),
@@ -189,7 +191,9 @@ public class CallReferenceS3CorpusTests
         new("E4b", "Q5(f) = f(1)\nBad = Q5(5)\nUse(f) = Apply(f, 0)\nUse(Bad.Algorithm)", "err NotAnAlgorithm", "", "0/0", "0/0"),  // control
         new("E5", "Mk(k) = Capture(k(1))\nR0 = Mk(Bad.Algorithm)\nBad = min([])\nUse(p) = Apply(p.G, 0)\nUse(R0.Algorithm)", "err IllegalInEval", "", "0/0", "0/0"),  // transitive callee route
         new("E6", "Bad = min([])\nUse(p) = [1].map(p.G)\nUse(Bad.Algorithm)", "err IllegalInEval", "", "0/0", "0/0"),  // callback
-        new("E7", "Bad = min([])\nUse(p) = {\n  A = p.G\n  A(0).while\n}\nUse(Bad.Algorithm)", "err IllegalInEval", "", "0/1", "0/0"),  // loop step: the planner's one fallback record (OPT-FB-1)
+        // loop step: M4★ normalizes the runtime-reference step to its target before planning, so the failing
+        // projection precedes any plan build (formerly the planner refused the alias's own body: 0/1, OPT-FB-1).
+        new("E7", "Bad = min([])\nUse(p) = {\n  A = p.G\n  A(0).while\n}\nUse(Bad.Algorithm)", "err IllegalInEval", "", "0/0", "0/0"),
         new("E8", "Bad = if(aflag(), min([]), 0)\nUse(p) = Apply(p.G, 0)\nUse(Bad.Algorithm)", "err IllegalInEval", "", "0/0", "0/0"),  // async receiver
         new("E9", "Bad = if(stop(), Capture(Square(5)), 0)\nUse(p) = Apply(p.G, 0)\nUse(Bad.Algorithm), trace(1)", "cancelled", "", "0/0", "0/0", WithCancel: true),
         new("E10", $"F(0) = Capture(Inc(0))\nF(n) = {{ open '{ModuleUrl}'\n Capture(Inc2(n)) }}\nR = F(1)\nUse(p) = Apply(p.G, 5)\nUse(R.Algorithm), trace(99)", "err LoadFetchFailed", "", "", "", AsyncOnly: true, Module: "<fail>"),

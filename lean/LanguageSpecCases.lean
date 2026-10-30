@@ -14,11 +14,11 @@ This is bounded differential validation over the Lean-guarded partition,
 not a formal verification of the evaluators.
 
 Partition (machine-checked by the `specCaseIds.length` guard below):
-- specification surface cases: 482
-- excluded parse-level cases (Lean has no surface parser): 71
+- specification surface cases: 504
+- excluded parse-level cases (Lean has no surface parser): 74
 - excluded C#-only cases (each carries an explicit reason in the corpus): 22
-- Lean-guarded cases: 389
-- probe observations (C#-only by design): 1432
+- Lean-guarded cases: 408
+- probe observations (C#-only by design): 1459
 - internal-node cases live in the semantic-explorer corpus, not here: see
   lean/SemanticExplorerCases.lean
 
@@ -872,7 +872,7 @@ def case_alias_preserves_the_callee_signature : Expr :=
 
 -- inline-alias-value-demand-is-the-target-contract [errors]: Inc(x) = x + 1 \n K(z) = count({ Inc }) \n K(1)
 def case_inline_alias_value_demand_is_the_target_contract : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "Inc" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 1))]), privateProp "K" (alg ["z"] [] [] [(.call (.resolve "count") [(.algorithmExpr (.alias none [] [] (.resolve "Inc")))])])] [(.call (.resolve "K") [.num 1])])
+  .algorithmExpr (alg [] [] [privateProp "Inc" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 1))]), privateProp "K" (alg ["z"] [] [] [(.call (.resolve "count") [(.algorithmExpr (.alias none [] [] (.resolve "Inc") none false))])])] [(.call (.resolve "K") [.num 1])])
 #guard obs case_inline_alias_value_demand_is_the_target_contract == "err arity"
 
 -- inline-formula-block-keeps-unresolved-implicit-params [errors]: Inc(x) = x + 1 \n K(z) = count({ Inc + 0 }) \n K(1)
@@ -900,10 +900,30 @@ def case_alias_is_the_targets_callable : Expr :=
   .algorithmExpr (alg [] [] [privateProp "A" (.alias none [] [] (.resolve "Only")), privateProp "P" (alg ["f", "f"] [] [] [(.call (.param "f") [.num 7])]), privateProp "Only" (algWithParameters [{ name := "xs", kind := .collecting }] [] [] [.num 0])] [(.call (.resolve "P") [.resolve "A", .resolve "Only"])])
 #guard obs case_alias_is_the_targets_callable == "ok raw=0 n=1"
 
--- alias-declares-only-its-own-members [name-resolution]: Lib(x) = { \n   K = 5 \n   x \n } \n A = Lib \n Navigate(f) = f.K \n  \n Lib.K \n Navigate(A)
-def case_alias_declares_only_its_own_members : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "A" (.alias none [] [] (.resolve "Lib")), privateProp "Lib" (alg ["x"] [] [privateProp "K" (alg [] [] [] [.num 5])] [.param "x"]), privateProp "Navigate" (alg ["f"] [] [] [(.dotCall (.param "f") "K" none)])] [(.dotCall (.resolve "Lib") "K" none), (.call (.resolve "Navigate") [.resolve "A"])])
-#guard obs case_alias_declares_only_its_own_members == "ok raw=S[5, 5] n=2"
+-- reference-members-are-the-targets-carrier-members-its-own [name-resolution]: Lib(x) = { \n   K = 5 \n   x \n } \n A = Lib \n Navigate(f) = f.K \n  \n Lib.K \n A.K \n Navigate(A)
+def case_reference_members_are_the_targets_carrier_members_its_own : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "A" (.alias none [] [] (.resolve "Lib")), privateProp "Lib" (alg ["x"] [] [privateProp "K" (alg [] [] [] [.num 5])] [.param "x"]), privateProp "Navigate" (alg ["f"] [] [] [(.dotCall (.param "f") "K" none)])] [(.dotCall (.resolve "Lib") "K" none), (.dotCall (.resolve "A") "K" none), (.call (.resolve "Navigate") [.resolve "A"])])
+#guard obs case_reference_members_are_the_targets_carrier_members_its_own == "ok raw=S[5, 5, 5] n=3"
+
+-- reference-and-carrier-transport-the-whole-definition [name-resolution]: Box = { \n     public Q = 99 \n     F(x) = x * x \n     F \n } \n A = Box \n B = { Box } \n GetQ(f) = f.Q \n  \n A.Q \n GetQ(A) \n A(3) \n B(3)
+def case_reference_and_carrier_transport_the_whole_definition : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Box" (.alias none [] [publicProp "Q" (alg [] [] [] [.num 99]), privateProp "F" (alg ["x"] [] [] [(.binary .mul (.param "x") (.param "x"))])] (.resolve "F") none false), privateProp "A" (.alias none [] [] (.resolve "Box")), privateProp "B" (.alias none [] [] (.resolve "Box") none false), privateProp "GetQ" (alg ["f"] [] [] [(.dotCall (.param "f") "Q" none)])] [(.dotCall (.resolve "A") "Q" none), (.call (.resolve "GetQ") [.resolve "A"]), (.call (.resolve "A") [.num 3]), (.call (.resolve "B") [.num 3])])
+#guard obs case_reference_and_carrier_transport_the_whole_definition == "ok raw=S[99, 99, 9, 9] n=4"
+
+-- repeated-name-matches-definitions-by-identity [name-resolution]: A = 7 \n D = 7 \n Same(x, x) = true \n Same(x, y) = false \n  \n Same(A, A) \n Same(A, D) \n Same(A, 7)
+def case_repeated_name_matches_definitions_by_identity : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "A" (alg [] [] [] [.num 7]), privateProp "D" (alg [] [] [] [.num 7]), privateProp "Same" (.conditional none [] [⟨.sequenceValue [.bind "x", .bind "x"], (alg [] [] [] [.boolLiteral true])⟩, ⟨.sequenceValue [.bind "x", .bind "y"], (alg [] [] [] [.boolLiteral false])⟩])] [(.call (.resolve "Same") [.resolve "A", .resolve "A"]), (.call (.resolve "Same") [.resolve "A", .resolve "D"]), (.call (.resolve "Same") [.resolve "A", .num 7])])
+#guard obs case_repeated_name_matches_definitions_by_identity == "ok raw=S[true, false, true] n=3"
+
+-- open-through-a-reference-opens-the-target [name-resolution]: Lib = { \n     public K = 7 \n     0 \n } \n Alias = Lib \n P = { \n     open Alias, Lib \n     K \n } \n  \n P
+def case_open_through_a_reference_opens_the_target : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Lib" (alg [] [] [publicProp "K" (alg [] [] [] [.num 7])] [.num 0]), privateProp "Alias" (.alias none [] [] (.resolve "Lib")), privateProp "P" (.alias none [.resolve "Alias", .resolve "Lib"] [] (.resolve "K") none false)] [.resolve "P"])
+#guard obs case_open_through_a_reference_opens_the_target == "ok raw=7 n=1"
+
+-- member-path-alias-is-a-member-reference [name-resolution]: Box = { G(x) = x * 10 } \n Use(b) = { \n     A = b.G \n     A(3), 3.A \n } \n  \n Use(Box)
+def case_member_path_alias_is_a_member_reference : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Box" (alg [] [] [privateProp "G" (alg ["x"] [] [] [(.binary .mul (.param "x") (.num 10))])] []), privateProp "Use" (alg ["b"] [] [{ (privateLocalProp "A" (.localCapturedAncestorParams ["b"]) (.alias none [] [] ((.dotCall (.param "b") "G" none)))) with requiredOwnerDepths := some [("b", some 0)] }] [(.call (.resolve "A") [.num 3]), (.dotCall (.num 3) "A" none)])] [(.call (.resolve "Use") [.resolve "Box"])])
+#guard obs case_member_path_alias_is_a_member_reference == "ok raw=S[30, 30] n=1"
 
 -- bare-forwarding-keeps-each-parameter-kind [name-resolution]: Add((a, b)) = a + b \n Coll(*vs) = vs \n Mid([first, *middle, last]) = [first, middle, last] \n Pair((a, b)) = Add \n Many(*vs) = Coll \n Same([first, *middle, last]) = Mid \n  \n Pair((2, 3)) \n Many(1, 2) \n Same([1, 2, 3, 4])
 def case_bare_forwarding_keeps_each_parameter_kind : Expr :=
@@ -1042,12 +1062,12 @@ def case_dot_access_value_boundary : Expr :=
 
 -- open-local-only-through-capture-row [access-boundaries]: Outer(p) = { \n     open Lib \n     Lib = { public G = { Q = p + 1 \n     (Q) } } \n     G \n } \n Outer(1)
 def case_open_local_only_through_capture_row : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "Outer" (alg ["p"] [.resolve "Lib"] [privateProp "Lib" (alg [] [] [{ (publicLocalProp "G" (.localCapturedAncestorParams ["p"]) (alg [] [] [{ (privateLocalProp "Q" (.localCapturedAncestorParams ["p"]) (alg [] [] [] [(.binary .add (.param "p") (.num 1))])) with requiredOwnerDepths := some [("p", some 2)] }] [.resolve "Q"])) with requiredOwnerDepths := some [("p", some 1)] }] [])] [.resolve "G"])] [(.call (.resolve "Outer") [.num 1])])
+  .algorithmExpr (alg [] [] [privateProp "Outer" (alg ["p"] [.resolve "Lib"] [privateProp "Lib" (alg [] [] [{ (publicLocalProp "G" (.localCapturedAncestorParams ["p"]) (.alias none [] [{ (privateLocalProp "Q" (.localCapturedAncestorParams ["p"]) (alg [] [] [] [(.binary .add (.param "p") (.num 1))])) with requiredOwnerDepths := some [("p", some 2)] }] (.resolve "Q") none false)) with requiredOwnerDepths := some [("p", some 1)] }] [])] [.resolve "G"])] [(.call (.resolve "Outer") [.num 1])])
 #guard obs case_open_local_only_through_capture_row == "ok raw=2 n=1"
 
 -- open-self-contained-beside-same-named-sibling [access-boundaries]: Outer(p) = { \n     open Lib \n     Lib = { \n         public G = { Q = 7 \n         (Q) } \n         Q = p + 1 \n     } \n     G \n } \n Outer(1)
 def case_open_self_contained_beside_same_named_sibling : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "Outer" (alg ["p"] [.resolve "Lib"] [privateProp "Lib" (alg [] [] [publicProp "G" (alg [] [] [privateProp "Q" (alg [] [] [] [.num 7])] [.resolve "Q"]), { (privateLocalProp "Q" (.localCapturedAncestorParams ["p"]) (alg [] [] [] [(.binary .add (.param "p") (.num 1))])) with requiredOwnerDepths := some [("p", some 1)] }] [])] [.resolve "G"])] [(.call (.resolve "Outer") [.num 1])])
+  .algorithmExpr (alg [] [] [privateProp "Outer" (alg ["p"] [.resolve "Lib"] [privateProp "Lib" (alg [] [] [publicProp "G" (.alias none [] [privateProp "Q" (alg [] [] [] [.num 7])] (.resolve "Q") none false), { (privateLocalProp "Q" (.localCapturedAncestorParams ["p"]) (alg [] [] [] [(.binary .add (.param "p") (.num 1))])) with requiredOwnerDepths := some [("p", some 1)] }] [])] [.resolve "G"])] [(.call (.resolve "Outer") [.num 1])])
 #guard obs case_open_self_contained_beside_same_named_sibling == "ok raw=7 n=1"
 
 -- zero-param-block-higher-order [access-boundaries]: Call0 = f() \n Call0({42})
@@ -1127,7 +1147,7 @@ def case_dot_local_only_member_outside_owner : Expr :=
 
 -- open-two-spellings-one-provider [name-resolution]: Lib = { \n     public Sub = { \n         public X = 1 \n     } \n     public R = { \n         open Sub, Lib.Sub \n         X \n     } \n } \n Lib.R
 def case_open_two_spellings_one_provider : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "Lib" (alg [] [] [publicProp "Sub" (alg [] [] [publicProp "X" (alg [] [] [] [.num 1])] []), publicProp "R" (alg [] [.resolve "Sub", (.dotCall (.resolve "Lib") "Sub" none)] [] [.resolve "X"])] [])] [(.dotCall (.resolve "Lib") "R" none)])
+  .algorithmExpr (alg [] [] [privateProp "Lib" (alg [] [] [publicProp "Sub" (alg [] [] [publicProp "X" (alg [] [] [] [.num 1])] []), publicProp "R" (.alias none [.resolve "Sub", (.dotCall (.resolve "Lib") "Sub" none)] [] (.resolve "X") none false)] [])] [(.dotCall (.resolve "Lib") "R" none)])
 #guard obs case_open_two_spellings_one_provider == "ok raw=1 n=1"
 
 -- ambiguous-open-unused-overlap-is-valid [name-resolution]: open A, B \n A = { \n     public X = 1 \n     public P = 10 \n } \n B = { \n     public X = 2 \n     public Q = 20 \n } \n P + Q
@@ -1152,7 +1172,7 @@ def case_dot_chain_nested_structural_members : Expr :=
 
 -- dot-chain-local-only-member-is-not-a-fallback [access-boundaries]: G(x) = { \n     public Sub = { \n         public Q = 1 \n         x \n     } \n     0 \n } \n Q(v) = 99 \n  \n G.Sub.Q
 def case_dot_chain_local_only_member_is_not_a_fallback : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "G" (alg ["x"] [] [{ (publicLocalProp "Sub" (.localCapturedAncestorParams ["x"]) (.alias none [] [publicProp "Q" (alg [] [] [] [.num 1])] (.param "x"))) with requiredOwnerDepths := some [("x", some 0)] }] [.num 0]), privateProp "Q" (alg ["v"] [] [] [.num 99])] [(.dotCall (.dotCall (.resolve "G") "Sub" none) "Q" none)])
+  .algorithmExpr (alg [] [] [privateProp "G" (alg ["x"] [] [{ (publicLocalProp "Sub" (.localCapturedAncestorParams ["x"]) (.alias none [] [publicProp "Q" (alg [] [] [] [.num 1])] (.param "x") none false)) with requiredOwnerDepths := some [("x", some 0)] }] [.num 0]), privateProp "Q" (alg ["v"] [] [] [.num 99])] [(.dotCall (.dotCall (.resolve "G") "Sub" none) "Q" none)])
 #guard obs case_dot_chain_local_only_member_is_not_a_fallback == "err localOnlyProperty"
 
 -- capture-suppresses-higher-order-identity [access-boundaries]: Apply = f(9) \n Increment(x) = x + 1 \n Probe(u) = Apply((Increment, Increment)) \n Probe(0)
@@ -1742,7 +1762,7 @@ def case_list_redundant_parens_canonicalize : Expr :=
 
 -- list-spread-capture [lists]: A = [1, 2, 3] \n  \n x = A \n y = (A*) \n  \n x \n y
 def case_list_spread_capture : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "A" (alg [] [] [] [(.listLiteral [.num 1, .num 2, .num 3])]), privateProp "x" (alg [] [] [] [.resolve "A"]), privateProp "y" (alg [] [] [] [(.capture [(.sequenceSpread (.resolve "A"))])])] [.resolve "x", .resolve "y"])
+  .algorithmExpr (alg [] [] [privateProp "A" (alg [] [] [] [(.listLiteral [.num 1, .num 2, .num 3])]), privateProp "x" (.alias none [] [] (.resolve "A")), privateProp "y" (alg [] [] [] [(.capture [(.sequenceSpread (.resolve "A"))])])] [.resolve "x", .resolve "y"])
 #guard obs case_list_spread_capture == "ok raw=S[L[1, 2, 3], S[1, 2, 3]] n=2"
 
 -- list-spread-edges [lists]: A = [] \n B = [7] \n C = [[7]] \n  \n A*, \n B*, \n C*, 997
@@ -1827,7 +1847,7 @@ def case_ancestor_callable_visible_without_same_named_parameter : Expr :=
 
 -- forwarded-parameter-leaves-an-opened-reference [name-resolution]: Lib = { public v = 99 } \n Outer = { \n     Inner = { open Lib \n         v \n     } \n     Need = v \n     Inner + Need \n } \n Outer(7)
 def case_forwarded_parameter_leaves_an_opened_reference : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "Lib" (alg [] [] [publicProp "v" (alg [] [] [] [.num 99])] []), privateProp "Outer" (alg ["v"] [] [privateProp "Inner" (alg [] [.resolve "Lib"] [] [.resolve "v"]), privateProp "Need" (alg ["v"] [] [] [.param "v"])] [(.binary .add (.resolve "Inner") (.call (.resolve "Need") [.param "v"]))])] [(.call (.resolve "Outer") [.num 7])])
+  .algorithmExpr (alg [] [] [privateProp "Lib" (alg [] [] [publicProp "v" (alg [] [] [] [.num 99])] []), privateProp "Outer" (alg ["v"] [] [privateProp "Inner" (.alias none [.resolve "Lib"] [] (.resolve "v") none false), privateProp "Need" (alg ["v"] [] [] [.param "v"])] [(.binary .add (.resolve "Inner") (.call (.resolve "Need") [.param "v"]))])] [(.call (.resolve "Outer") [.num 7])])
 #guard obs case_forwarded_parameter_leaves_an_opened_reference == "ok raw=106 n=1"
 
 -- forwarding-reuses-a-captured-ancestor-parameter [name-resolution]: A = y + 1 \n F(y) = { \n     G = y * 1000 + A \n     H(y) = G \n     H(100) \n } \n F(3)
@@ -1887,7 +1907,7 @@ def case_conditional_branch_inline_open_does_not_shadow_an_enclosing_open_in_sib
 
 -- conditional-branch-local-library-is-openable-within-the-branch [conditionals]: F(0) = { \n   Lib = { \n     public X = 1 \n   } \n   G = { \n     open Lib \n     X \n   } \n   G \n } \n F(n) = n \n  \n F(0)
 def case_conditional_branch_local_library_is_openable_within_the_branch : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "F" (.conditional none [] [⟨.litInt 0, (alg [] [] [privateProp "Lib" (alg [] [] [publicProp "X" (alg [] [] [] [.num 1])] []), privateProp "G" (alg [] [.resolve "Lib"] [] [.resolve "X"])] [.resolve "G"])⟩, ⟨.bind "n", (alg [] [] [] [.param "n"])⟩])] [(.call (.resolve "F") [.num 0])])
+  .algorithmExpr (alg [] [] [privateProp "F" (.conditional none [] [⟨.litInt 0, (alg [] [] [privateProp "Lib" (alg [] [] [publicProp "X" (alg [] [] [] [.num 1])] []), privateProp "G" (.alias none [.resolve "Lib"] [] (.resolve "X") none false)] [.resolve "G"])⟩, ⟨.bind "n", (alg [] [] [] [.param "n"])⟩])] [(.call (.resolve "F") [.num 0])])
 #guard obs case_conditional_branch_local_library_is_openable_within_the_branch == "ok raw=1 n=1"
 
 -- builtin-callable-is-an-ordinary-prelude-binding [name-resolution]: if(x) = x + 1 \n  \n if(7) \n 7.if \n if((7)*)
@@ -1972,7 +1992,7 @@ def case_ownership_open_provided_captured_member_read_by_sibling_is_local_only :
 
 -- ownership-open-head-between-opener-and-settling-level-charges-the-capture [access-boundaries]: Outer(p) = { \n     Mid = { \n         Lib = { public X = p } \n         Inner = { \n             open Lib \n             X \n         } \n         Inner \n     } \n     Mid \n } \n Outer.Mid
 def case_ownership_open_head_between_opener_and_settling_level_charges_the_capture : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "Outer" (alg ["p"] [] [{ (privateLocalProp "Mid" (.localCapturedAncestorParams ["p"]) (.alias none [] [privateProp "Lib" (alg [] [] [{ (publicLocalProp "X" (.localCapturedAncestorParams ["p"]) (.alias none [] [] (.param "p"))) with requiredOwnerDepths := some [("p", some 2)] }] []), { (privateLocalProp "Inner" (.localCapturedAncestorParams ["p"]) (.alias none [.resolve "Lib"] [] (.resolve "X"))) with requiredOwnerDepths := some [("p", some 1)] }] (.resolve "Inner"))) with requiredOwnerDepths := some [("p", some 0)] }] [.resolve "Mid"])] [(.dotCall (.resolve "Outer") "Mid" none)])
+  .algorithmExpr (alg [] [] [privateProp "Outer" (alg ["p"] [] [{ (privateLocalProp "Mid" (.localCapturedAncestorParams ["p"]) (.alias none [] [privateProp "Lib" (alg [] [] [{ (publicLocalProp "X" (.localCapturedAncestorParams ["p"]) (.alias none [] [] (.param "p"))) with requiredOwnerDepths := some [("p", some 2)] }] []), { (privateLocalProp "Inner" (.localCapturedAncestorParams ["p"]) (.alias none [.resolve "Lib"] [] (.resolve "X") none false)) with requiredOwnerDepths := some [("p", some 1)] }] (.resolve "Inner") none false)) with requiredOwnerDepths := some [("p", some 0)] }] [.resolve "Mid"])] [(.dotCall (.resolve "Outer") "Mid" none)])
 #guard obs case_ownership_open_head_between_opener_and_settling_level_charges_the_capture == "err localOnlyProperty"
 
 -- grace-in-redundant-group-is-grace-on-the-name [name-resolution]: V(x) = x * 2 \n F = b + (~a).V \n F(5, 1)
@@ -2120,19 +2140,14 @@ def case_runtime_alias_of_a_parameter_member : Expr :=
   .algorithmExpr (alg [] [] [privateProp "Box" (alg [] [] [privateProp "G" (alg ["x"] [] [] [(.binary .mul (.param "x") (.num 10))])] []), privateProp "G" (alg ["o"] [] [] [(.binary .add (.param "o") (.num 100))]), privateProp "Use" (alg ["b"] [] [{ (privateLocalProp "A" (.localCapturedAncestorParams ["b"]) (.alias none [] [] ((.dotCall (.param "b") "G" none)))) with requiredOwnerDepths := some [("b", some 0)] }] [(.call (.resolve "A") [.num 3])])] [(.call (.resolve "Use") [.resolve "Box"])])
 #guard obs case_runtime_alias_of_a_parameter_member == "ok raw=30 n=1"
 
--- runtime-alias-unresolved-fallback-stays-a-parameter [name-resolution]: Thousand(v) = v * 1000 \n Use(b) = { \n     A = b.G \n     A(Thousand) \n } \n  \n Use(5)
-def case_runtime_alias_unresolved_fallback_stays_a_parameter : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "Thousand" (alg ["v"] [] [] [(.binary .mul (.param "v") (.num 1000))]), privateProp "Use" (alg ["b"] [] [{ (privateLocalProp "A" (.localCapturedAncestorParams ["b"]) (alg ["G"] [] [] [(.dotMember (.param "b") "G" (.param "G") none)])) with requiredOwnerDepths := some [("b", some 0)] }] [(.call (.resolve "A") [.resolve "Thousand"])])] [(.call (.resolve "Use") [.num 5])])
-#guard obs case_runtime_alias_unresolved_fallback_stays_a_parameter == "ok raw=5000 n=1"
-
 -- runtime-alias-transport-reads-the-target-members [access-boundaries]: Lib(*xs) = { \n     public K = 99 \n     0 \n } \n K(v) = 7 \n Navigate(f) = f.K \n Use(f) = { \n     A = f \n     Navigate(A), A.K \n } \n  \n Use(Lib)
 def case_runtime_alias_transport_reads_the_target_members : Expr :=
   .algorithmExpr (alg [] [] [privateProp "Lib" (algWithParameters [{ name := "xs", kind := .collecting }] [] [publicProp "K" (alg [] [] [] [.num 99])] [.num 0]), privateProp "K" (alg ["v"] [] [] [.num 7]), privateProp "Navigate" (alg ["f"] [] [] [(.dotCall (.param "f") "K" none)]), privateProp "Use" (alg ["f"] [] [{ (privateLocalProp "A" (.localCapturedAncestorParams ["f"]) (.alias none [] [] (.param "f"))) with requiredOwnerDepths := some [("f", some 0)] }] [(.call (.resolve "Navigate") [.resolve "A"]), (.dotCall (.resolve "A") "K" none)])] [(.call (.resolve "Use") [.resolve "Lib"])])
-#guard obs case_runtime_alias_transport_reads_the_target_members == "ok raw=S[99, 7] n=1"
+#guard obs case_runtime_alias_transport_reads_the_target_members == "ok raw=S[99, 99] n=1"
 
 -- runtime-alias-namespace-of-its-own-declarations [access-boundaries]: Outer(n) = { \n     Lib = { public X = 10 \n     n } \n     P = { open Lib \n     X } \n     P + Lib \n } \n  \n Outer(1)
 def case_runtime_alias_namespace_of_its_own_declarations : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "Outer" (alg ["n"] [] [{ (privateLocalProp "Lib" (.localCapturedAncestorParams ["n"]) (.alias none [] [publicProp "X" (alg [] [] [] [.num 10])] (.param "n"))) with requiredOwnerDepths := some [("n", some 0)] }, privateProp "P" (alg [] [.resolve "Lib"] [] [.resolve "X"])] [(.binary .add (.resolve "P") (.resolve "Lib"))])] [(.call (.resolve "Outer") [.num 1])])
+  .algorithmExpr (alg [] [] [privateProp "Outer" (alg ["n"] [] [{ (privateLocalProp "Lib" (.localCapturedAncestorParams ["n"]) (.alias none [] [publicProp "X" (alg [] [] [] [.num 10])] (.param "n") none false)) with requiredOwnerDepths := some [("n", some 0)] }, privateProp "P" (.alias none [.resolve "Lib"] [] (.resolve "X") none false)] [(.binary .add (.resolve "P") (.resolve "Lib"))])] [(.call (.resolve "Outer") [.num 1])])
 #guard obs case_runtime_alias_namespace_of_its_own_declarations == "ok raw=11 n=1"
 
 -- runtime-alias-failure-is-not-absence [errors]: R = 5 \n A = R.Algorithm \n  \n A(9)
@@ -2145,7 +2160,87 @@ def case_runtime_alias_cycle : Expr :=
   .algorithmExpr (alg [] [] [privateProp "A" (.alias none [] [] ((.dotCall (.resolve "R") "Algorithm" none))), privateProp "R" (alg [] [] [] [(.call (.resolve "Capture") [(.call (.resolve "A") [.num 1])])]), privateProp "Capture" (algWithParameters [{ name := "op", kind := .metaRef }] [] [] [.param "op"])] [(.call (.resolve "A") [.num 2])])
 #guard obs case_runtime_alias_cycle == "err demandCycle"
 
--- 389 canonical Lean-guarded specification cases.
+-- runtime-alias-self-link-is-a-demand-cycle [errors]: A = A.Algorithm \n  \n A
+def case_runtime_alias_self_link_is_a_demand_cycle : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "A" (.alias none [] [] ((.dotCall (.resolve "A") "Algorithm" none)))] [.resolve "A"])
+#guard obs case_runtime_alias_self_link_is_a_demand_cycle == "err demandCycle"
+
+-- reference-head-resolves-in-its-own-scope [name-resolution]: Lib = { public Inc(x) = x + 1 } \n A = Lib \n F = { \n     open A \n     Lib = { public Dec(x) = x - 1 } \n     G = Inc \n     G(5) \n } \n  \n F
+def case_reference_head_resolves_in_its_own_scope : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Lib" (alg [] [] [publicProp "Inc" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 1))])] []), privateProp "A" (.alias none [] [] (.resolve "Lib")), privateProp "F" (alg [] [.resolve "A"] [privateProp "Lib" (alg [] [] [publicProp "Dec" (alg ["x"] [] [] [(.binary .sub (.param "x") (.num 1))])] []), privateProp "G" (.alias none [] [] (.resolve "Inc"))] [(.call (.resolve "G") [.num 5])])] [.resolve "F"])
+#guard obs case_reference_head_resolves_in_its_own_scope == "ok raw=6 n=1"
+
+-- reference-receiver-is-its-target-structure [name-resolution]: Lib = { \n     Defaults = { public Rate = 2 } \n     public Cfg = Defaults \n } \n Tax = Lib.Cfg.Rate * 100 \n  \n Tax
+def case_reference_receiver_is_its_target_structure : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Lib" (alg [] [] [privateProp "Defaults" (alg [] [] [publicProp "Rate" (alg [] [] [] [.num 2])] []), publicProp "Cfg" (.alias none [] [] (.resolve "Defaults"))] []), privateProp "Tax" (alg [] [] [] [(.binary .mul (.dotCall (.dotCall (.resolve "Lib") "Cfg" none) "Rate" none) (.num 100))])] [.resolve "Tax"])
+#guard obs case_reference_receiver_is_its_target_structure == "ok raw=200 n=1"
+
+-- block-headed-reference-navigates-its-block [name-resolution]: A = { \n     V = { public W = 7 } \n     K = V \n }.K \n  \n A.W
+def case_block_headed_reference_navigates_its_block : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "A" (.alias none [] [] ((.dotCall (.algorithmExpr (alg [] [] [privateProp "V" (alg [] [] [publicProp "W" (alg [] [] [] [.num 7])] []), privateProp "K" (.alias none [] [] (.resolve "V"))] [])) "K" none)))] [(.dotCall (.resolve "A") "W" none)])
+#guard obs case_block_headed_reference_navigates_its_block == "ok raw=7 n=1"
+
+-- reference-behind-a-carrier-that-reads-it-back [name-resolution]: A = B \n B = { \n     public F(x) = x * x \n     A.F \n } \n  \n A(3)
+def case_reference_behind_a_carrier_that_reads_it_back : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "A" (.alias none [] [] (.resolve "B")), privateProp "B" (.alias none [] [publicProp "F" (alg ["x"] [] [] [(.binary .mul (.param "x") (.param "x"))])] ((.dotCall (.resolve "A") "F" none)) none false)] [(.call (.resolve "A") [.num 3])])
+#guard obs case_reference_behind_a_carrier_that_reads_it_back == "ok raw=9 n=1"
+
+-- reference-through-a-carrier-reads-the-carriers-member [name-resolution]: Settings = Config \n Config = { \n     public Rate = 2 \n     Default \n } \n Default = Settings.Rate \n  \n Settings
+def case_reference_through_a_carrier_reads_the_carriers_member : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Settings" (.alias none [] [] (.resolve "Config")), privateProp "Config" (.alias none [] [publicProp "Rate" (alg [] [] [] [.num 2])] (.resolve "Default") none false), privateProp "Default" (.alias none [] [] ((.dotCall (.resolve "Settings") "Rate" none)))] [.resolve "Settings"])
+#guard obs case_reference_through_a_carrier_reads_the_carriers_member == "ok raw=2 n=1"
+
+-- same-shape-references-are-distinct-bindings [name-resolution]: Primary = Config \n Backup = Config \n Config = { \n     public Rate = 2 \n     Backup.Rate \n } \n  \n Primary
+def case_same_shape_references_are_distinct_bindings : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Primary" (.alias none [] [] (.resolve "Config")), privateProp "Backup" (.alias none [] [] (.resolve "Config")), privateProp "Config" (.alias none [] [publicProp "Rate" (alg [] [] [] [.num 2])] ((.dotCall (.resolve "Backup") "Rate" none)) none false)] [.resolve "Primary"])
+#guard obs case_same_shape_references_are_distinct_bindings == "ok raw=2 n=1"
+
+-- algorithm-member-of-a-reference-behind-a-carrier [name-resolution]: P = C \n C = { \n     public Algorithm = 5 \n     A \n } \n A = P.Algorithm \n  \n P
+def case_algorithm_member_of_a_reference_behind_a_carrier : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "P" (.alias none [] [] (.resolve "C")), privateProp "C" (.alias none [] [publicProp "Algorithm" (alg [] [] [] [.num 5])] (.resolve "A") none false), privateProp "A" (.alias none [] [] ((.dotCall (.resolve "P") "Algorithm" none)))] [.resolve "P"])
+#guard obs case_algorithm_member_of_a_reference_behind_a_carrier == "ok raw=5 n=1"
+
+-- carrier-of-a-parameter-in-every-activation [name-resolution]: Inc(x) = x + 1 \n F(f, n) = { \n     A = { f } \n     if(n == 0, A(5), F(A, n - 1)) \n } \n  \n F(Inc, 1)
+def case_carrier_of_a_parameter_in_every_activation : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Inc" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 1))]), privateProp "F" (alg ["f", "n"] [] [{ (privateLocalProp "A" (.localCapturedAncestorParams ["f"]) (.alias none [] [] (.param "f") none false)) with requiredOwnerDepths := some [("f", some 0)] }] [(.call (.resolve "if") [(.comparison (.param "n") [{ op := .eq, operand := (.num 0) }]), (.call (.resolve "A") [.num 5]), (.call (.resolve "F") [.resolve "A", (.binary .sub (.param "n") (.num 1))])])])] [(.call (.resolve "F") [.resolve "Inc", .num 1])])
+#guard obs case_carrier_of_a_parameter_in_every_activation == "ok raw=6 n=1"
+
+-- reference-cycle-through-an-open-is-no-alias [name-resolution]: open Lib \n Lib = { public B = A } \n A = B \n Same(x, x) = 0 \n  \n Same(A, A)
+def case_reference_cycle_through_an_open_is_no_alias : Expr :=
+  .algorithmExpr (alg [] [.resolve "Lib"] [privateProp "Lib" (alg [] [] [publicProp "B" (alg [] [] [] [.resolve "A"])] []), privateProp "A" (alg [] [] [] [.resolve "B"]), privateProp "Same" (alg ["x", "x"] [] [] [.num 0])] [(.call (.resolve "Same") [.resolve "A", .resolve "A"])])
+#guard obs case_reference_cycle_through_an_open_is_no_alias == "ok raw=0 n=1"
+
+-- sibling-cycle-member-path-is-read-statically [name-resolution]: A = B.C \n B = Lib \n Lib = { \n     public C = { public X = 1 } \n     public D = A \n } \n  \n A.X
+def case_sibling_cycle_member_path_is_read_statically : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "A" (.alias none [] [] ((.dotCall (.resolve "B") "C" none))), privateProp "B" (.alias none [] [] (.resolve "Lib")), privateProp "Lib" (alg [] [] [publicProp "C" (alg [] [] [publicProp "X" (alg [] [] [] [.num 1])] []), publicProp "D" (.alias none [] [] (.resolve "A"))] [])] [(.dotCall (.resolve "A") "X" none)])
+#guard obs case_sibling_cycle_member_path_is_read_statically == "ok raw=1 n=1"
+
+-- open-block-member-reference-opens-its-target [name-resolution]: open { \n     public Lib = { public K = 7 } \n     public A = Lib \n }.A \n  \n K
+def case_open_block_member_reference_opens_its_target : Expr :=
+  .algorithmExpr (alg [] [(.dotCall (.algorithmExpr (alg [] [] [publicProp "Lib" (alg [] [] [publicProp "K" (alg [] [] [] [.num 7])] []), publicProp "A" (.alias none [] [] (.resolve "Lib"))] [])) "A" none)] [] [.resolve "K"])
+#guard obs case_open_block_member_reference_opens_its_target == "ok raw=7 n=1"
+
+-- block-receiver-reference-member [name-resolution]: V = { public W = 7 } \n Y = { K = V }.K.W + 0 \n  \n Y
+def case_block_receiver_reference_member : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "V" (alg [] [] [publicProp "W" (alg [] [] [] [.num 7])] []), privateProp "Y" (alg [] [] [] [(.binary .add (.dotCall (.dotCall (.algorithmExpr (alg [] [] [privateProp "K" (.alias none [] [] (.resolve "V"))] [])) "K" none) "W" none) (.num 0))])] [.resolve "Y"])
+#guard obs case_block_receiver_reference_member == "ok raw=7 n=1"
+
+-- reference-cycle-only-the-final-providers-close-is-no-alias [name-resolution]: open Back \n A = B \n B = { \n     public N = 5 \n     A \n } \n Back = { public N = G.Z } \n G = { \n     open A \n     public Z = N \n     0 \n } \n Same(x, x) = 0 \n  \n Same(G.Z, G.Z)
+def case_reference_cycle_only_the_final_providers_close_is_no_alias : Expr :=
+  .algorithmExpr (alg [] [.resolve "Back"] [privateProp "A" (alg [] [] [] [.resolve "B"]), privateProp "B" (alg [] [] [publicProp "N" (alg [] [] [] [.num 5])] [.resolve "A"]), privateProp "Back" (alg [] [] [publicProp "N" (alg [] [] [] [(.dotCall (.resolve "G") "Z" none)])] []), privateProp "G" (alg [] [.resolve "A"] [publicProp "Z" (alg [] [] [] [.resolve "N"])] [.num 0]), privateProp "Same" (alg ["x", "x"] [] [] [.num 0])] [(.call (.resolve "Same") [(.dotCall (.resolve "G") "Z" none), (.dotCall (.resolve "G") "Z" none)])])
+#guard obs case_reference_cycle_only_the_final_providers_close_is_no_alias == "ok raw=0 n=1"
+
+-- member-path-through-a-lower-cyclic-receiver-is-no-alias [name-resolution]: X(v) = 0 \n A = B \n B = { \n     public X = D \n     A \n } \n D = { \n     public Q = 7 \n     A.X \n } \n E = D \n Same(x, x) = 0 \n  \n Same(E, D)
+def case_member_path_through_a_lower_cyclic_receiver_is_no_alias : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "A" (alg [] [] [] [.resolve "B"]), privateProp "B" (alg [] [] [publicProp "X" (alg [] [] [] [.resolve "D"])] [.resolve "A"]), privateProp "D" (alg [] [] [publicProp "Q" (alg [] [] [] [.num 7])] [(.dotCall (.resolve "A") "X" none)]), privateProp "E" (alg [] [] [] [.resolve "D"]), privateProp "X" (alg ["v"] [] [] [.num 0]), privateProp "Same" (alg ["x", "x"] [] [] [.num 0])] [(.call (.resolve "Same") [.resolve "E", .resolve "D"])])
+#guard obs case_member_path_through_a_lower_cyclic_receiver_is_no_alias == "err type"
+
+-- reference-head-is-the-parameter-its-own-scope-binds [name-resolution]: F(x) = { \n     A = x \n     G(x) = A.W + 0 \n     G(5) \n } \n  \n F({ public W = 9 })
+def case_reference_head_is_the_parameter_its_own_scope_binds : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "F" (alg ["x"] [] [{ (privateLocalProp "A" (.localCapturedAncestorParams ["x"]) (.alias none [] [] (.param "x"))) with requiredOwnerDepths := some [("x", some 0)] }, { (privateLocalProp "G" (.localCapturedAncestorParams ["x"]) (alg ["x"] [] [] [(.binary .add (.dotCall (.resolve "A") "W" none) (.num 0))])) with requiredOwnerDepths := some [("x", some 0)] }] [(.call (.resolve "G") [.num 5])])] [(.call (.resolve "F") [(.algorithmExpr (alg [] [] [publicProp "W" (alg [] [] [] [.num 9])] []))])])
+#guard obs case_reference_head_is_the_parameter_its_own_scope_binds == "ok raw=9 n=1"
+
+-- 408 canonical Lean-guarded specification cases.
 
 /--
 Machine-checked Lean-guarded partition count: the id list is built by the
@@ -2293,7 +2388,11 @@ def specCaseIds : List String := [
   "alias-of-a-clause-family-dispatches-as-the-family",
   "alias-arguments-take-the-targets-roles",
   "alias-is-the-targets-callable",
-  "alias-declares-only-its-own-members",
+  "reference-members-are-the-targets-carrier-members-its-own",
+  "reference-and-carrier-transport-the-whole-definition",
+  "repeated-name-matches-definitions-by-identity",
+  "open-through-a-reference-opens-the-target",
+  "member-path-alias-is-a-member-reference",
   "bare-forwarding-keeps-each-parameter-kind",
   "written-call-infers-its-written-names",
   "repeated-callable-success-preserves-both-channels",
@@ -2537,12 +2636,27 @@ def specCaseIds : List String := [
   "runtime-alias-of-a-parameter",
   "runtime-alias-of-a-projection",
   "runtime-alias-of-a-parameter-member",
-  "runtime-alias-unresolved-fallback-stays-a-parameter",
   "runtime-alias-transport-reads-the-target-members",
   "runtime-alias-namespace-of-its-own-declarations",
   "runtime-alias-failure-is-not-absence",
-  "runtime-alias-cycle"
+  "runtime-alias-cycle",
+  "runtime-alias-self-link-is-a-demand-cycle",
+  "reference-head-resolves-in-its-own-scope",
+  "reference-receiver-is-its-target-structure",
+  "block-headed-reference-navigates-its-block",
+  "reference-behind-a-carrier-that-reads-it-back",
+  "reference-through-a-carrier-reads-the-carriers-member",
+  "same-shape-references-are-distinct-bindings",
+  "algorithm-member-of-a-reference-behind-a-carrier",
+  "carrier-of-a-parameter-in-every-activation",
+  "reference-cycle-through-an-open-is-no-alias",
+  "sibling-cycle-member-path-is-read-statically",
+  "open-block-member-reference-opens-its-target",
+  "block-receiver-reference-member",
+  "reference-cycle-only-the-final-providers-close-is-no-alias",
+  "member-path-through-a-lower-cyclic-receiver-is-no-alias",
+  "reference-head-is-the-parameter-its-own-scope-binds"
 ]
-#guard specCaseIds.length == 389
+#guard specCaseIds.length == 408
 
 end LanguageSpecCases

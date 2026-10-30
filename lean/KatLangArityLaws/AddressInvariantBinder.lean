@@ -107,11 +107,101 @@ theorem ValidNeedEnv.singleton {h : Array NeedCell} {name : Ident} {a : Nat} (v 
 theorem ValidNeedEnv.nil {h : Array NeedCell} : ValidNeedEnv h [] := fun _ m => by cases m
 attribute [ht_lemmas] ValidNeedEnv.singleton ValidNeedEnv.nil
 
+/-! ### NEED-04's binder state (group-aware, ALIAS-UNIFY-1) -/
+
+theorem OptStateValid.mono {h h' : Array NeedCell} (g : h.size ≤ h'.size) {r : Option NeedBindState}
+    (v : OptStateValid r h) : OptStateValid r h' := fun st e => ValidBindState.mono g (v st e)
+theorem OptStateValid.get_some {h : Array NeedCell} {st : NeedBindState}
+    (v : OptStateValid (Option.some st) h) : ValidBindState h st := v st rfl
+theorem OptStateValid.nothing {h : Array NeedCell} : OptStateValid Option.none h := fun _ e => by cases e
+theorem OptStateValid.of_valid {h : Array NeedCell} {st : NeedBindState} (v : ValidBindState h st) :
+    OptStateValid (Option.some st) h := fun _ e => by cases e; exact v
+/-- A head's binding is its state's representatives. -/
+theorem OptStateValid.map_bound {h : Array NeedCell} {r : Option NeedBindState} (v : OptStateValid r h) :
+    OptEnvValid (r.map NeedBindState.bound) h := by
+  intro env he
+  cases r with
+  | none => cases he
+  | some st => cases he; exact (v st rfl).1
+attribute [ht_lemmas] OptStateValid.get_some OptStateValid.nothing OptStateValid.of_valid OptStateValid.map_bound
+  ValidBindState.empty
+attribute [ht_fwd] OptStateValid.get_some
+
+set_option hygiene false in
+macro_rules | `(tactic| ht_pmono) => `(tactic| (intro _ _ _ g v; exact OptStateValid.mono g v))
+
+/-- NEED-04's data-anchor check demands only the cells it is given. -/
+theorem checkAnchor_spec {P : Array NeedCell → Prop} {caps : NeedCapabilities EvalM} (hc : CapsSpec caps)
+    {name : Ident} {anchor : CountedResult} {family : Bool} {cells : List Nat}
+    (hreq : ∀ h, P h → ValidAddresses h cells) :
+    SoundI P (NeedBinder.checkAnchor caps name anchor family cells) (fun _ _ => True) := by
+  induction cells generalizing P with
+  | nil => exact SoundI.pure _ (fun _ _ => trivial)
+  | cons c rest ih =>
+    unfold NeedBinder.checkAnchor
+    refine SoundI.bind (hc.value_app (fun h ph => (hreq h ph) c List.mem_cons_self)) (fun _ _ _ g v => CRV.mono g v) ?_
+    intro own
+    split
+    · exact ih (fun h ph b m => (hreq h ph.1) b (List.mem_cons_of_mem _ m))
+    · split
+      · exact SoundI.pure _ (fun _ _ => trivial)
+      · exact SoundI.throw _
+
+attribute [ht_spec] checkAnchor_spec
+
+/-- One name occurrence (NEED-04, group-aware): the state gains a representative and pending
+    obligations from `address` only; the channels touch only `address` and the name's valid
+    pending cells. -/
 theorem bindName_spec {P : Array NeedCell → Prop} {caps : NeedCapabilities EvalM} (hc : CapsSpec caps)
-    {name : Ident} {address : Nat} {repeated : List Ident} {bound : NeedEnv} {family : Bool}
-    (hreq : ∀ h, P h → address < h.size ∧ ValidNeedEnv h bound) :
-    SoundI P (NeedBinder.bindName caps name address repeated bound family) (fun r h => OptEnvValid r h) := by
-  unfold NeedBinder.bindName; ht_tac
+    {name : Ident} {address : Nat} {repeated : List Ident} {bound : NeedBindState} {family : Bool}
+    (hreq : ∀ h, P h → address < h.size ∧ ValidBindState h bound) :
+    SoundI P (NeedBinder.bindName caps name address repeated bound family) (fun r h => OptStateValid r h) := by
+  have mismatch : ∀ {P' : Array NeedCell → Prop} (e : Error),
+      SoundI P' (NeedBinder.repeatedMismatch family e : EvalM (Option NeedBindState))
+        (fun r h => OptStateValid r h) := by
+    intro P' e
+    unfold NeedBinder.repeatedMismatch
+    split
+    · exact SoundI.pure _ (fun _ _ => OptStateValid.nothing)
+    · exact SoundI.throw _
+  unfold NeedBinder.bindName
+  split
+  · dsimp only
+    refine SoundI.bind (hc.callable_app (fun h ph => (hreq h ph).1)) (fun _ _ _ _ _ => trivial) ?_
+    intro identity?
+    cases identity? with
+    | some identity =>
+      dsimp only
+      split
+      · exact mismatch _
+      · have tail : ∀ agreed : Bool, SoundI (fun h => (P h ∧ True) ∧ True)
+            (if agreed = true then pure (some (bound.withCallable name address identity))
+              else (pure none : EvalM (Option NeedBindState))) (fun r h => OptStateValid r h) := by
+          intro agreed
+          split
+          · exact SoundI.pure _ (fun h ph st he => by
+              cases he; exact (hreq h ph.1.1).2.withCallable name (hreq h ph.1.1).1 identity)
+          · exact SoundI.pure _ (fun _ _ => OptStateValid.nothing)
+        split
+        · exact SoundI.bind (checkAnchor_spec hc (fun h ph a m => by
+            simp only [List.mem_singleton] at m; subst m; exact (hreq h ph.1).1)) PMono.true tail
+        · exact SoundI.bind (SoundI.pure _ (fun _ _ => trivial)) PMono.true tail
+    | none =>
+      dsimp only
+      refine SoundI.bind (hc.value_app (fun h ph => (hreq h ph.1).1)) (fun _ _ _ g v => CRV.mono g v) ?_
+      intro own
+      split
+      · split
+        · exact SoundI.pure _ (fun h ph st he => by cases he; exact (hreq h ph.1.1).2)
+        · exact mismatch _
+      · refine SoundI.bind (checkAnchor_spec hc (fun h ph => (hreq h ph.1.1).2.groupOf_pending name))
+          PMono.true ?_
+        intro agreed
+        split
+        · exact SoundI.pure _ (fun h ph st he => by
+            cases he; exact (hreq h ph.1.1.1).2.withAnchor name (hreq h ph.1.1.1).1 own)
+        · exact SoundI.pure _ (fun _ _ => OptStateValid.nothing)
+  · exact SoundI.pure _ (fun h ph st he => by cases he; exact (hreq h ph).2.withPlain name (hreq h ph).1)
 
 attribute [ht_spec] bindName_spec
 
@@ -123,13 +213,13 @@ theorem sourceAddress_spec {P : Array NeedCell → Prop} {caps : NeedCapabilitie
 attribute [ht_spec] sourceAddress_spec
 
 theorem cardinalityGate_spec {P : Array NeedCell → Prop} {patterns : List NeedPattern} {count : Nat}
-    {family : Bool} {accepted : EvalM (Option NeedEnv)}
-    (ha : SoundI P accepted (fun r h => OptEnvValid r h)) :
-    SoundI P (NeedBinder.cardinalityGate patterns count family accepted) (fun r h => OptEnvValid r h) := by
+    {family : Bool} {accepted : EvalM (Option NeedBindState)}
+    (ha : SoundI P accepted (fun r h => OptStateValid r h)) :
+    SoundI P (NeedBinder.cardinalityGate patterns count family accepted) (fun r h => OptStateValid r h) := by
   unfold NeedBinder.cardinalityGate
   split
   · split
-    · exact SoundI.pure _ (fun _ _ => OptEnvValid.nothing)
+    · exact SoundI.pure _ (fun _ _ => OptStateValid.nothing)
     · exact SoundI.throw _
   · exact ha
 
@@ -160,23 +250,27 @@ attribute [ht_lemmas] SourcesV.headD SourcesV.tail SourcesV.level
 set_option hygiene false in
 macro_rules | `(tactic| ht_hmono) => `(tactic| (intro _ _ g v; split_ands; exact ⟨SourcesV.mono g ‹_›, ValidNeedEnv.mono g ‹_›⟩))
 set_option hygiene false in
+macro_rules | `(tactic| ht_hmono) => `(tactic| (intro _ _ g v; split_ands; exact ⟨SourcesV.mono g ‹_›, ValidBindState.mono g ‹_›⟩))
+set_option hygiene false in
+macro_rules | `(tactic| mono_atom $g) => `(tactic| exact ValidBindState.mono $g ‹_›)
+set_option hygiene false in
 macro_rules | `(tactic| mono_atom $g) => `(tactic| exact SourcesV.mono $g ‹_›)
 
 /-- **The binder.** -/
 theorem binder_spec (caps : NeedCapabilities EvalM) (hc : CapsSpec caps) (repeated : List Ident)
     (family : Bool) :
-    (∀ pattern address bound, SoundI (fun h => address < h.size ∧ ValidNeedEnv h bound)
-        (NeedBinder.bindOne caps pattern address repeated bound family) (fun r h => OptEnvValid r h)) ∧
+    (∀ pattern address bound, SoundI (fun h => address < h.size ∧ ValidBindState h bound)
+        (NeedBinder.bindOne caps pattern address repeated bound family) (fun r h => OptStateValid r h)) ∧
     (∀ patterns sources current,
-      SoundI (fun h => SourcesV h sources ∧ ValidNeedEnv h current)
-        (NeedBinder.bindSources caps patterns sources repeated current family) (fun r h => OptEnvValid r h)) := by
+      SoundI (fun h => SourcesV h sources ∧ ValidBindState h current)
+        (NeedBinder.bindSources caps patterns sources repeated current family) (fun r h => OptStateValid r h)) := by
   refine NeedBinder.bindOne.mutual_induct
     (motive_1 := fun pattern address bound =>
-      SoundI (fun h => address < h.size ∧ ValidNeedEnv h bound)
-        (NeedBinder.bindOne caps pattern address repeated bound family) (fun r h => OptEnvValid r h))
+      SoundI (fun h => address < h.size ∧ ValidBindState h bound)
+        (NeedBinder.bindOne caps pattern address repeated bound family) (fun r h => OptStateValid r h))
     (motive_2 := fun patterns sources current =>
-      SoundI (fun h => SourcesV h sources ∧ ValidNeedEnv h current)
-        (NeedBinder.bindSources caps patterns sources repeated current family) (fun r h => OptEnvValid r h))
+      SoundI (fun h => SourcesV h sources ∧ ValidBindState h current)
+        (NeedBinder.bindSources caps patterns sources repeated current family) (fun r h => OptStateValid r h))
     ?_ ?_ ?_ ?_ ?_ ?_ ?_ ?_
   · intro address bound name collecting
     simp only [NeedBinder.bindOne]
@@ -213,11 +307,11 @@ theorem binder_spec (caps : NeedCapabilities EvalM) (hc : CapsSpec caps) (repeat
 
 theorem bindSources_spec {P : Array NeedCell → Prop} {caps : NeedCapabilities EvalM} (hc : CapsSpec caps)
     {patterns : List NeedPattern} {sources : List (NeedSource Nat)} {repeated : List Ident}
-    {current : NeedEnv} {family : Bool} (hreq : ∀ h, P h → SourcesV h sources ∧ ValidNeedEnv h current) :
+    {current : NeedBindState} {family : Bool} (hreq : ∀ h, P h → SourcesV h sources ∧ ValidBindState h current) :
     SoundI P (NeedBinder.bindSources caps patterns sources repeated current family)
-      (fun r h => OptEnvValid r h) :=
+      (fun r h => OptStateValid r h) :=
   SoundI.weaken ((binder_spec caps hc repeated family).2 patterns sources current) hreq
-    (fun _ _ g v => ⟨SourcesV.mono g v.1, ValidNeedEnv.mono g v.2⟩) (fun _ _ h => h)
+    (fun _ _ g v => ⟨SourcesV.mono g v.1, ValidBindState.mono g v.2⟩) (fun _ _ h => h)
 
 attribute [ht_spec] bindSources_spec
 
@@ -226,7 +320,12 @@ theorem bindPatterns_spec {P : Array NeedCell → Prop} {caps : NeedCapabilities
     {patterns : List NeedPattern} {cells : List Nat} {family : Bool}
     (hreq : ∀ h, P h → ValidAddresses h cells) :
     SoundI P (NeedBinder.bindPatterns caps patterns cells family) (fun r h => OptEnvValid r h) := by
-  unfold NeedBinder.bindPatterns NeedBinder.bindLevel; ht_tac
+  unfold NeedBinder.bindPatterns NeedBinder.bindLevel
+  refine SoundI.bind (cardinalityGate_spec (bindSources_spec hc
+      (fun h ph => ⟨SourcesV.level (hreq h ph) patterns, ValidBindState.empty⟩)))
+    (fun _ _ _ g v => OptStateValid.mono g v) ?_
+  intro r
+  exact SoundI.pure _ (fun h ph => OptStateValid.map_bound ph.2)
 
 attribute [ht_spec] bindPatterns_spec
 

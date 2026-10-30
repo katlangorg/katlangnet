@@ -802,7 +802,7 @@ The step outputs `(new_a, new_b, new_total, limit, continue_flag)`. The init pro
 - Free identifiers in property bodies become implicit parameters unless they resolve to properties, built-ins, or opened names, but only for algorithms without an explicit parameter list.
 - If an algorithm has an explicit parameter list, that list is closed. Names not declared in the parameter pattern must resolve from the surrounding scope; otherwise they are reported as unresolved. That includes the member name of a dot call whose receiver certainly lacks the member — a number, a value, or an algorithm that declares no such member — because the dot call IS the call `name(receiver, ...)`: `Get(x) = 5.size` needs a visible `size` exactly like `Get(x) = size(5)`, while `Get(obj) = obj.size` (a parameter receiver may declare `size`) is resolved at run time. Implicit parameters are inferred only for algorithms without an explicit parameter list.
 - Parameter order follows first appearance (left-to-right, depth-first), unless adjusted with grace `~`.
-- For implicit-parameter algorithms, parameters are handed on transitively through the formulas a property USES inside an expression (automatic parameter forwarding). Only a used callable that REQUIRES supplied arguments is forwarded to: one that works with no arguments — no parameters, or only a collecting parameter such as `Count(*items)` — is read as its cached value wherever its bare name appears in an expression (an operand, a list element, a Math argument), so hand arguments on to it with an explicit call (`Count(items*)`). A definition whose WHOLE body is the bare name of a formula with parameters is not a formula: `Alias = F` is a callable ALIAS: another name for F itself, so a call through it IS the call of F, with F's own parameters (repeated names, structural `(...)`/`[...]` parameters and collectors included — `Alias = Count` takes arguments like `Count`; read bare, it is Count's no-argument value, remembered under its own name). Every callable that takes parameters can be aliased this way — your formulas, builtins (`C = count`, `I = if`, `M = map`), Math functions, host operations, members reached with a dot or through `open`, and conditional algorithms — while a name for a VALUE (`A = Z` with `Z = 2 + 3`) is an ordinary definition. An alias is not a namespace: `A.K` does not reach F's member, and `open A` is an error. A definition whose whole body is a PARAMETER (`A = f` inside `Use(f)`, then `A(9)`), a parameter's member whose name is known (`A = b.G` with a visible `G`) or `R.Algorithm` is an alias of whatever algorithm that names when the program runs: each `A(args)` is a fresh call of it with exactly `args`, and bare `A` reads the value; if no algorithm is supplied (a plain value, or a receiver without that member), `A` is an ordinary value property and `A(9)` is an arity error. Such a definition stays a namespace of its own declarations (`open` works on it). An unknown member name keeps its ordinary meaning: inside `Use(b)`, `A = b.G` with no `G` anywhere is `A(G) = b.G`, whose argument supplies `G`. `Forward(x) = F`, with an explicit parameter list, forwards BY NAME: each of F's parameters must be an existing parameter of the SAME name and the SAME pattern — one of Forward's own, or an enclosing algorithm's — and nothing is renamed, matched by position, or added to the list. So with `Sub(y, x) = y - x`, `G(x, y) = Sub` is `Sub(y, x)` (`G(10, 3)` is -7), while `Other(y)` / `Bad(x) = Other`, `F(p, q)` / `A(p) = F`, `Single([x])` / `Bad(x) = Single` and `Add((a, b))` / `Pair(a, b) = Add` are errors, and so is forwarding a conditional algorithm whose clauses name no input (`S(1) = 1` / `S(-1) = -1` / `W(x) = S`). An explicit call is different — its arguments are exactly what is written, whatever the callee calls its parameters: write `Bad(x) = Other(x)`, `Bad(x) = Single(x)` or `Pair(a, b) = Add((a, b))`, and PREFER the explicit call whenever the parameter names or shapes differ. A written call `G = Add((x, y))` takes the names written in it: `G(x, y)`.
+- For implicit-parameter algorithms, parameters are handed on transitively through the formulas a property USES inside an expression (automatic parameter forwarding). Only a used callable that REQUIRES supplied arguments is forwarded to: one that works with no arguments — no parameters, or only a collecting parameter such as `Count(*items)` — is read as its cached value wherever its bare name appears in an expression (an operand, a list element, a Math argument), so hand arguments on to it with an explicit call (`Count(items*)`). A definition whose WHOLE body is the bare name of another definition is not a formula: `Alias = F` is a callable ALIAS — another name for F itself, whatever F's arity, so a call through it IS the call of F, with F's own parameters (repeated names, structural `(...)`/`[...]` parameters and collectors included — `Alias = Count` takes arguments like `Count`; read bare, it is the very value `Count` itself remembers, never a second one). Every definition can be aliased this way — your formulas and values (`A = Z` with `Z = 2 + 3`: bare `A` is Z's one cached value, `A()` a fresh `Z()`), builtins (`C = count`, `I = if`, `M = map`), Math functions, host operations, members reached with a dot or through `open`, and conditional algorithms. An unbraced alias is the same definition under another name: `A.K` reaches F's member `K`, and `open A` opens F's public members (see NAMES FOR DEFINITIONS). A definition whose whole body is a PARAMETER (`A = f` inside `Use(f)`, then `A(9)`), a parameter's member path (`A = b.G`) or `R.Algorithm` is an alias of whatever algorithm that names when the program runs: each `A(args)` is a fresh call of it with exactly `args`, and bare `A` reads the value; if no algorithm is supplied (a plain value, or a receiver without that member), `A` is just that value — `A(9)` is an arity error, `A()` reads the same value again without rerunning anything, and passing `A` passes no callable. Such a definition stays a namespace of its own declarations (`open` works on it). A parameter's member path never infers its member name: inside `Use(b)`, `A = b.G` always names the member `G` of whatever `b` is (so `Use(5)` with `A(Thousand)` is an arity error), never an input `G`. `Forward(x) = F`, with an explicit parameter list, forwards BY NAME: each of F's parameters must be an existing parameter of the SAME name and the SAME pattern — one of Forward's own, or an enclosing algorithm's — and nothing is renamed, matched by position, or added to the list. So with `Sub(y, x) = y - x`, `G(x, y) = Sub` is `Sub(y, x)` (`G(10, 3)` is -7), while `Other(y)` / `Bad(x) = Other`, `F(p, q)` / `A(p) = F`, `Single([x])` / `Bad(x) = Single` and `Add((a, b))` / `Pair(a, b) = Add` are errors, and so is forwarding a conditional algorithm whose clauses name no input (`S(1) = 1` / `S(-1) = -1` / `W(x) = S`). An explicit call is different — its arguments are exactly what is written, whatever the callee calls its parameters: write `Bad(x) = Other(x)`, `Bad(x) = Single(x)` or `Pair(a, b) = Add((a, b))`, and PREFER the explicit call whenever the parameter names or shapes differ. A written call `G = Add((x, y))` takes the names written in it: `G(x, y)`.
 - Automatic parameter forwarding hands on PARAMETERS only and never changes what a written name refers to. Inside an algorithm that already has a parameter of the needed name — its own, or an enclosing algorithm's, a branch binder included — that parameter is handed on and nothing is added: with `Area = width * height`, the helper in `Report(width, height) = { Doubled = Area * 2 ... }` is an ordinary property that reads Report's `width` and `height`. A new parameter is added only when no parameter of that name is available, and never to an explicit parameter list. A property, opened name, or builtin with a matching name is never handed on (`v = 99` does not supply `Need(v)`, so `Outer = Need + 1` still takes its own `v`); pass such a value explicitly when the formula should use it.
 - Automatic parameter forwarding in a formula is by binding name: one name is one input, however many times a callee's parameter list uses it. `Common(x, x) = x` / `Twice = Common * 2` means `Twice(x) = Common(x, x) * 2` and takes ONE argument, exactly as `H = F + G` with `F(x)` and `G(x)` means `H(x) = F(x) + G(x)`. The bare alias `Same = Common` instead IS Common, with its two arguments. To pass two separate values that must be equal, write the call with two parameters: `Both(a, b) = Common(a, b)` (`Both(7, 8)` fails like `Common(7, 8)`).
 - Automatic parameter forwarding applies to EVERY kind of callable a formula uses as a VALUE: your own formulas, builtins (`Total = count + 0` means `Total(collection) = count(collection) + 0`, with the builtin's own parameter names), Math functions in any spelling, host operations, members reached with a dot (`Lib.Inc + 0`) or through `open`, and conditional algorithms whose clauses name their inputs (`E(0) = 100` / `E(n) = n` / `Fam = E + 1` means `Fam(n) = E(n) + 1`). A conditional algorithm whose clauses name no input (`S(1) = 1` / `S(-1) = -1`) cannot be used as a value in a formula — call it explicitly: `G(v) = S(v) + 0`. A name is handed the inputs where its VALUE is needed — an operand, a comparison, a list or tuple element, an `if` argument (the branch not taken too; evaluation stays lazy), a builtin's collection or value argument, a Math argument, `.string`, the receiver of a builtin dot call (`Inc.count` is `count(Inc)`) — and is passed as it is where it is itself a function: a callee, an argument of your own algorithm (`Apply(Inc)`), a `map`/`filter`/`reduce` function, or a loop step. A name inside a larger argument is judged by that expression (`Apply(Inc + 0)` hands `x` to `Inc`). A bare name alone on a top-level line is not a formula (`count` alone is an arity error), and `C = count` is not a formula but an alias of `count` (`C([1, 2])` is 2) — write `C = count + 0` for the formula `C(collection) = count(collection) + 0`.
@@ -1172,7 +1172,7 @@ True conditional algorithms are literal/mixed matching or multi-clause families 
     Else(1, (a, b)) = a
     Else(c, (a, b)) = b
 
-- Matching inspects the call's arguments from left to right against each clause's patterns: a literal, structural or repeated-name position evaluates its argument, while a plain binder binds its argument without evaluating it, so an argument the selected clause never inspects or uses is never evaluated (with `G(0, y) = 0` and `G(x, y) = x`, `G(0, 1 / 0)` is `0`).
+- Matching inspects the call's arguments from left to right against each clause's patterns: a literal or structural position evaluates its argument, a repeated-name position first compares the definitions its arguments name and evaluates them only once a plain value takes part, while a plain binder binds its argument without evaluating it, so an argument the selected clause never inspects or uses is never evaluated (with `G(0, y) = 0` and `G(x, y) = x`, `G(0, 1 / 0)` is `0`).
 - A branch pattern must match both the structure (arity, nesting) and any literal positions.
 - Binder patterns match any subvalue at their position and bind it locally for that branch body.
 - Every branch is self-contained: names used from the pattern must come from that branch's own pattern. A branch body must not rely on binders introduced by a different branch.
@@ -1186,7 +1186,7 @@ True conditional algorithms are literal/mixed matching or multi-clause families 
 
 ### Supported pattern forms
 
-- Repeated binder names impose structural equality constraints: in `Equal(x, x)` or `SamePair((x, x))`, the first occurrence binds and later occurrences compare without overwriting it. Every occurrence must supply its own value (a bare callable such as `Inc` passed to `Equal(Inc, 1)` is an error, not a match). Do not repeat a name when any occurrence is a collecting binding.
+- Repeated binder names impose structural equality constraints: in `Equal(x, x)` or `SamePair((x, x))`, every occurrence must agree, and the name binds to the first occurrence that names a definition, else to the first plain value (with `A = 1.50`, `Equal(1.5, A)` binds `A`, so `x.string` is `'1.50'`). Arguments that name the same definition match without being computed (with `Bad = 1 / 0`, `Equal(Bad, Bad)` matches without evaluating `Bad`), and arguments naming two different definitions never match, even with equal values (with `A = 7` and `D = 7`, `Equal(A, D)` falls through to the next clause); once a plain value takes part, every occurrence must supply its own value (a bare callable such as `Inc` passed to `Equal(Inc, 1)` is an error, not a match). Do not repeat a name when any occurrence is a collecting binding.
 - Binder / variable pattern: `a` — matches any value at that position and binds it for that branch body. A binder may be unused in the body; this is the preferred way to intentionally ignore parameters.
 - Integer literal pattern: `0`, `1`, `-1` — matches only that exact integer at that position.
 - String literal pattern: `'apples'`, `'LV'` — matches only that exact string (case-sensitive) at that position. A double-quoted literal without holes is the same pattern (`"apples"`); an interpolated string is never a pattern.
@@ -1397,7 +1397,9 @@ BETTER — specific branch first:
 
 - A property that accepts zero supplied arguments, read without parentheses as `Fun`, reuses its cached result within the applicable cache scope. Use this form when a cached property-style value is desired. A self-contained property (one that does not read a parameter of an enclosing algorithm) shares one cached result throughout the evaluation wherever it is read from — repeated calls, `map` callbacks, loop iterations, `open` — so an expensive constant such as `Big = range(1, 100000).sum` referenced inside `F(x) = Big + x` is computed once; a property that captures an enclosing parameter caches within the current binding context (each call, callback, or loop iteration creates a fresh context, even for equal arguments). Structural and opened reads of the same exported declaration share an entry. Independent runs have fresh caches; failed evaluations are never stored. A recursive property that reads itself (directly or through other properties) caches the value its OUTERMOST successful qualifying evaluation computes (a read or explicit zero-supply invocation): the inner reads evaluate afresh and return their own results, and every later read reuses the outermost result. The cached value belongs to the resolved property, never to its name: a property that shadows another one with the same name is a different property with its own cached value. How the value is consumed does not matter: a builtin operation in either spelling (`sum(A)`, `A.sum`, `count(A)`, `if(c, A, B)`, `A.string`, a loop's starting state, `reduce`'s starting accumulator), a user algorithm's argument (and the parameter it binds, however far it is forwarded), a selection, a list element, and a callback body that reads `A` all receive the ONE cached value, so a random- or host-backed `A` is drawn once per run no matter how many consumers read it. Only an explicit invocation evaluates the body again: `A()`, calling an algorithm that was passed along (`f()`), or a builtin that calls its argument as a callback or loop step.
 - ZERO-ARGUMENT VALUE DEMAND FOLLOWS ACTUAL CALL ARITY: a callable may be read as a zero-argument VALUE exactly when an ordinary call with no arguments can bind it, never merely because it declares no parameter. A collecting parameter requires no supplied argument, so `Only(*xs) = xs` makes `Only` and `Only()` both the empty list `[]`, and the bare name works in every zero-argument value position — an output row, an `if` branch, a collection builtin argument in either spelling (`count(Only)` and `Only.count` are both `0`), an ordinary parameter that reads its argument, a member read such as `Obj.M`, and inside redundant parentheses (`Only`, `(Only)`, `((Only))` agree). A required parameter is still required: `Head(first, *rest)`, `Tail(*rest, last)`, `Pair(x, y)` and a grouped parameter such as `P((x, y))` each need at least one supplied value, so both `Head()` and a bare `Head` are the same arity error, and a group binds ONE value of its own kind rather than accepting none. Where a callable is consumed as an ALGORITHM — a `map`/`filter` callback, a loop step, a higher-order argument — it is still the callable (`map((1, 2), Only)` is `[[1], [2]]`), also when it is passed on through a parameter: with `Apply(f, xs) = xs.map(f)`, `Apply(Only, [1, 2])` is `[[1], [2]]` (filter, reduce, and while/repeat steps alike), while a value position that reads the parameter, such as `count(f)`, reads the zero-argument value `[]`. The two value spellings keep their established operational difference: bare `Only` is a property-style read that reuses its cached value, while `Only()` is an explicit call that runs the body each time.
-- If a callable works with no arguments, using its name alone reads its cached value, even if it declares optional or collecting parameters; use `Fun()` to evaluate it again and get a fresh value. This holds in EVERY expression position — an operator or comparison operand, a list element, a selection (`Pair[0]` and `first(Pair)` read the same value), a spread, a Math argument, a formula — so with `Roll(*bonus) = randomInt(1, 7) + bonus.sum`, `Roll == Roll` is `true`. A definition whose whole body is the name, `Alias = Count`, is a callable alias of such a callable: `Alias` alone is its value (remembered under the alias's own name), and `Alias(7, 8)` counts like `Count(7, 8)`. Only a callable that REQUIRES an argument (`Inc(x)`, `Head(first, *rest)`) is turned into an implicit call where its bare name appears.
+- If a callable works with no arguments, using its name alone reads its cached value, even if it declares optional or collecting parameters; use `Fun()` to evaluate it again and get a fresh value. This holds in EVERY expression position — an operator or comparison operand, a list element, a selection (`Pair[0]` and `first(Pair)` read the same value), a spread, a Math argument, a formula — so with `Roll(*bonus) = randomInt(1, 7) + bonus.sum`, `Roll == Roll` is `true`. A definition whose whole body is the name, `Alias = Count`, is another name for that callable: `Alias` alone is its value — the very value `Count` itself remembers, never a second one — and `Alias(7, 8)` counts like `Count(7, 8)`. Only a callable that REQUIRES an argument (`Inc(x)`, `Head(first, *rest)`) is turned into an implicit call where its bare name appears.
+- NAMES FOR DEFINITIONS (M4★): `A = P` (also `A = Lib.Sub`, `A = (P)`) makes `A` ANOTHER NAME for the whole definition `P` — its members (`A.Q` is `P.Q`), `open A` (P's public members), calls (`A(3)` is `P(3)`, `A()` a fresh `P()`) and its ONE cached value (`A` and `P` are computed once together; an alias never keeps a value of its own). Writing braces, `A = { P }`, or adding helpers beside the name makes a SEPARATE definition that hands its calls on to `P` but has only its own members (`{ P }.Q` never reaches `P.Q`). Generate `A = P` for a plain second name; generate braces only when a separate definition is intended. A parameter-rooted path `A = b.G` names the member `G` of whatever `b` is at run time, never an inferred input `G`.
+- A REPEATED parameter name (`Same(x, x)`) matches two arguments that name the same definition without computing them, rejects two different definitions even with equal values (`A = 7`, `D = 7`: `Same(A, D)` does not match), and compares values once a plain value takes part (`Same(A, 7)` matches). Do not use a repeated name to compare two separately named constants by value; compare them with `==`.
 - `Fun()` always invokes freshly, without using an established property-cache entry. Its owning success may establish an empty entry; later calls never replace it (CACHE-PUB-1). It does not recursively force nested property references to bypass their caches. To request fresh nested values, write the nested calls explicitly with `()`: `B = A, A` keeps cached/property-style `A` inside `B()`, while `C = A(), A()` asks for fresh `A` values inside `C()`.
 
 ## Math Usage
@@ -1658,7 +1660,7 @@ Without trailing output, `Order` has no direct result — use `Order.Total(25, 4
     Abs = if(x >= 0, x, -x)
     Abs(-5)
 
-Repeated parameter names use one order-independent compatibility rule over independently supplied arguments: every occurrence must supply its own value, all values must agree, and multiple callable contributions must identify the same callable (including captured activations). A bare callable that needs arguments, or an argument whose evaluation fails, supplies no value: the call reports that argument's own error, and another occurrence never stands in for it or pairs its value with that callable. Distinct callables with equal zero-argument values reject even with two occurrences; repeated references to one callable remain valid. Traverse inspecting patterns left to right. Each repeated occurrence demands its own cell and immediately checks full counted values and callable identities against previous occurrences; conflict precedes later patterns. A collector binds a lazy slice and its whole VALUE demand materializes every item left to right. Direct and forwarded invoking slots select the same callable. Forwarding transfers cells or collector slices without forcing; selecting CALLABLE identity adds no VALUE demand. Value slots, including reduce.initial, read the bound value.
+Repeated parameter names use one group-aware compatibility rule over independently supplied arguments: at every occurrence the binder first asks the argument for the definition it names; arguments naming definitions must name the SAME definition (including captured activations) and are matched without computing them; once a plain value takes part, every occurrence must supply its own value and all values must agree. A bare callable that needs arguments, or an argument whose evaluation fails, then supplies no value: the call reports that argument's own error, and another occurrence never stands in for it or pairs its value with that callable. Distinct definitions with equal values reject even with two occurrences; repeated references to one definition remain valid without being demanded. Traverse inspecting patterns left to right; an identity conflict precedes later patterns and every value demand. A collector binds a lazy slice and its whole VALUE demand materializes every item left to right. Direct and forwarded invoking slots select the same callable. Forwarding transfers cells or collector slices without forcing; selecting CALLABLE identity adds no VALUE demand. Value slots, including reduce.initial, read the bound value.
 
 Model-C execution: ordinary arguments are suspended computations in the caller environment. Plain parameter binding, aliases and forwarding do not evaluate VALUE. First VALUE demand evaluates once; later reads share success or failure. CALLABLE projection does not force VALUE, and each actual invocation is fresh. Wrong arity precedes ordinary demand; arbitrary explicit spread may evaluate during supply formation. Collectors are lazy slices, but any collection VALUE demand materializes the complete exact eager list. Conditional clauses share one supply and inspect patterns in written order. `if` uses the same cells as an ordinary selector. Closed-list blocked lifting, including Math, remains runtime zero-argument demand (Q-15); directly written undeclared names and incompatible bare forwarding remain static errors. Effects and random draws follow first-demand order. Never generate a lazy-list or scalar-to-callable fallback.
 
@@ -1680,7 +1682,7 @@ Many(), Many(()), Many((), 3), Many([(1, 2)]*)
 
 === BEGIN GENERATED: katlang-spec-examples (DO NOT EDIT BY HAND) ===
 
-Verified reference examples (174 of the 482-case canonical language specification,
+Verified reference examples (177 of the 504-case canonical language specification,
 tests/KatLang.Tests/LanguageSpec/LanguageSpecCorpus.cs). Every program and expected
 output below is executed against the KatLang engine and (where representable)
 guarded against the Lean model on every build. Treat these as ground truth for the
@@ -2238,7 +2240,7 @@ Regenerate this block from the repo root with:
     5
     5
 
-[repeated-name-is-a-constraint-not-a-merge] A repeated parameter name is a constraint over arguments that are each supplied independently, never a way to combine them. Every occurrence must supply its own value, and the values must be equal. `Inc` passed without arguments has no value (reading it as one is an arity error), so `P(Inc, 1)` and `P(1, Inc)` both fail with that error: the value 1 is never paired with Inc's callable. An argument whose evaluation fails reports its own error, and another occurrence's value never stands in for it. When equal values arrive together with a callable, the callable accompanies its own argument's value.
+[repeated-name-is-a-constraint-not-a-merge] A repeated parameter name is a constraint over arguments that are each supplied independently, never a way to combine them. Arguments that name an algorithm must name the same one; as soon as one occurrence is a plain value, every occurrence must supply its own value, and the values must be equal. `Inc` passed without arguments has no value (reading it as one is an arity error), so `P(Inc, 1)` and `P(1, Inc)` both fail with that error: the value 1 is never paired with Inc's callable. An argument whose evaluation fails reports its own error, and another occurrence's value never stands in for it. When equal values arrive together with a callable, the callable accompanies its own argument's value.
 
     Inc(y) = y + 1
     P(x, x) = x, x(5)
@@ -2247,7 +2249,7 @@ Regenerate this block from the repo root with:
 
   Fails with an evaluation error (arity).
 
-[repeated-equal-values-require-one-callable-identity] Repeated values must be equal, and repeated callable contributions must carry values and the same callable identity (declaration and captured lexical activations). Equal zero-argument values do not make A and B interchangeable: A(1) is 5 while B(1) is 6. Both argument orders therefore reject, including with just two occurrences. One callable plus an equal value remains valid.
+[repeated-equal-values-require-one-callable-identity] Repeated callable contributions must have the same callable identity (declaration and captured lexical activations), and as soon as a plain value takes part, every contribution's own value must be equal to it. Equal zero-argument values do not make A and B interchangeable: A(1) is 5 while B(1) is 6. Both argument orders therefore reject, including with just two occurrences. One callable plus an equal value remains valid.
 
     A(*xs) = 5
     B(*xs) = 5 + xs.count
@@ -2427,7 +2429,7 @@ Regenerate this block from the repo root with:
 
   Rejected by the parser: "does not declare its parameter '[x]' in that form ..."
 
-[alias-preserves-the-callee-signature] A definition whose whole body is a bare reference to a callable that declares parameters is a CALLABLE ALIAS: `A = Single` makes A another name for Single's callable — no wrapper and no copied signature — so `A(S)` IS `Single(S)` for every argument supply: the same results, the same failures, the same effects. Nothing is derived from the callee's binder names: repeated names (`AP = P` takes `P(x, x)`'s two arguments, which must be equal), binderless groups (`AE = E` takes `E((), [])`'s two structural parameters), collectors and structural kinds are the callee's own, through every level of a chain (`C = B`, `B = A`). The alias is still its own definition: its name, its declaration and its cached bare value belong to it.
+[alias-preserves-the-callee-signature] A definition whose whole body is a bare reference to an existing definition is a TRANSPARENT REFERENCE (M4★): `A = Single` makes A another name for Single itself — no wrapper and no copied signature — so `A(S)` IS `Single(S)` for every argument supply: the same results, the same failures, the same effects. Nothing is derived from the callee's binder names: repeated names (`AP = P` takes `P(x, x)`'s two arguments, which must be equal), binderless groups (`AE = E` takes `E((), [])`'s two structural parameters), collectors and structural kinds are the callee's own, through every level of a chain (`C = B`, `B = A`). The alias keeps its own name and declaration, but no cached value of its own: read without arguments it is the target's value.
 
     Single([x]) = x
     P(x, x) = x
@@ -2487,6 +2489,74 @@ Regenerate this block from the repo root with:
 
   Rejected by the parser: "has no parameter names to forward by ..."
 
+[reference-and-carrier-transport-the-whole-definition] `Box` declares its own members and its one row names `F`, so `Box(3)` is handed on to `F`. `A = Box` is a TRANSPARENT REFERENCE: every observation of `A` is Box's — its members (`A.Q`, and `GetQ(A)` through a parameter), its calls (`A(3)` is `Box(3)`) and its identity. `B = { Box }` is written in braces, so it is a FORWARDING CARRIER: a structure of its own whose calls are handed on to Box (`B(3)` is 9), with only the members it declares itself — none, so `B.Q` never reaches Box's `Q` — and a different identity from Box.
+
+    Box = {
+        public Q = 99
+        F(x) = x * x
+        F
+    }
+    A = Box
+    B = { Box }
+    GetQ(f) = f.Q
+
+    A.Q
+    GetQ(A)
+    A(3)
+    B(3)
+
+  Displays:
+    99
+    99
+    9
+    9
+
+[repeated-name-matches-definitions-by-identity] A repeated parameter name first asks each argument for the definition it names. Two arguments naming the SAME definition match by identity, without computing it (`Same(A, A)`, and even `Same(Bad, Bad)` with `Bad = 1 / 0`). Two DIFFERENT definitions never match, even when their values are equal (`Same(A, D)` is not the first clause, so the family takes the second). Once a plain value takes part, every argument's own value must equal it: `Same(A, 7)` computes `A` and compares, and `Same(Bad, 7)` fails with Bad's own division by zero.
+
+    A = 7
+    D = 7
+    Same(x, x) = true
+    Same(x, y) = false
+
+    Same(A, A)
+    Same(A, D)
+    Same(A, 7)
+
+  Displays:
+    true
+    false
+    true
+
+[open-through-a-reference-opens-the-target] `open Alias` opens the public members of what `Alias` names — `Lib` itself — so `open Alias, Lib` is one provider written twice and `K` is Lib's 7. A braced carrier is different: `C = { public Own = 5 ⏎ Lib }` opens only its own public member `Own`, so `K` stays an input of `P`.
+
+    Lib = {
+        public K = 7
+        0
+    }
+    Alias = Lib
+    P = {
+        open Alias, Lib
+        K
+    }
+
+    P
+
+  Displays:
+    7
+
+[member-path-alias-is-a-member-reference] In a body whose only row is a member path rooted at a parameter, `A = b.G`, the member name `G` names a MEMBER of whatever `b` is — never a new input of `A`. With `Use(Box)`, `A` is Box's own `G`, so `A(3)` and `3.A` both call it. A receiver without that member gives no definition to call: `A` is then a plain value, and calling it with arguments is an arity error.
+
+    Box = { G(x) = x * 10 }
+    Use(b) = {
+        A = b.G
+        A(3), 3.A
+    }
+
+    Use(Box)
+
+  Displays:
+    (30, 30)
+
 [bare-forwarding-keeps-each-parameter-kind] Bare forwarding supplies each parameter of the callee from the binding of the same name, keeping the binding as it is: a structural parameter declared with the same pattern is rebuilt as its own list or sequence (`Pair((a, b)) = Add` is `Add((a, b))`, `Same([first, *middle, last]) = Mid` is `Mid([first, middle*, last])`), and a collecting parameter re-spreads what it collected into a collecting parameter of the same name (`Many(*vs) = Coll` is `Coll(vs*)`). Only the source binding's kind decides a spread, so a fixed binding reaches a collector as one item and a collected list reaches a fixed parameter whole. A name the explicit list does not declare may still be an enclosing parameter binding — the one a written name would denote there — and is reused as it is; nothing is ever added to the list or renamed.
 
     Add((a, b)) = a + b
@@ -2519,7 +2589,7 @@ Regenerate this block from the repo root with:
     5
     7
 
-[repeated-genuine-aliases-preserve-complete-binding] The parameters left and right are genuine aliases of the one callable A. Both argument orders bind successfully and preserve all channels: f reads 5, its count is 1, and both direct invocation and the callback invoke A. Successful permutations preserve channel availability, values, counts and callable identity. Forwarding transports the same demandable cells and performs no VALUE evaluation.
+[repeated-genuine-aliases-preserve-complete-binding] The parameters left and right are genuine aliases of the one callable A, so the repeated f matches them by that identity without computing either. Both argument orders bind successfully and preserve all channels: f reads 5, its count is 1, and both direct invocation and the callback invoke A. When every argument names one definition, permuting them keeps that identity and its channels, and f is the first argument's own cell — here both orders read the same A. Forwarding transports the same demandable cells and performs no VALUE evaluation.
 
     A(*xs) = 5 + xs.count
     P(f, f) = [f, f.count, f(1), map([7], f)]
@@ -3492,7 +3562,7 @@ Regenerate this block from the repo root with:
   Displays:
     []
 
-[zero-argument-callable-name-is-read-not-lifted] If a callable works with no arguments, using its name alone reads its (cached) value, even if it declares optional or collecting parameters; `A()` evaluates it again. So `Cnt(*xs)` referenced by name inside an expression — as an operand or comparison operand, a list element, a Math argument, an index target, or anywhere in a formula — is never rewritten into a forwarding call: `Twice(*items) = Cnt + Cnt` reads that value twice and ignores its own arguments. A definition whose whole body is the name is a callable alias instead: `Alias = Cnt` names Cnt's callable, so `Alias(1, 2)` is Cnt's call, 2, while `Alias` alone is its own cached value, `0`. Forwarding inside a formula is written explicitly (`Cnt(items*)`). Implicit lifting and forwarding still apply to a callable that requires supplied arguments (`Head(x, *rest)`, `Inc(x)`).
+[zero-argument-callable-name-is-read-not-lifted] If a callable works with no arguments, using its name alone reads its (cached) value, even if it declares optional or collecting parameters; `A()` evaluates it again. So `Cnt(*xs)` referenced by name inside an expression — as an operand or comparison operand, a list element, a Math argument, an index target, or anywhere in a formula — is never rewritten into a forwarding call: `Twice(*items) = Cnt + Cnt` reads that value twice and ignores its own arguments. A definition whose whole body is the name is a callable alias instead: `Alias = Cnt` names Cnt's callable, so `Alias(1, 2)` is Cnt's call, 2, while `Alias` alone is Cnt's own cached value, `0` (an alias keeps no value of its own). Forwarding inside a formula is written explicitly (`Cnt(items*)`). Implicit lifting and forwarding still apply to a callable that requires supplied arguments (`Head(x, *rest)`, `Inc(x)`).
 
     Cnt(*xs) = xs.count
     Pair(*xs) = 10, 20
@@ -3615,7 +3685,7 @@ Regenerate this block from the repo root with:
   Displays:
     3
 
-[runtime-alias-of-a-parameter] A body whose one row names a parameter is a callable alias of whatever callable the parameter receives: inside `Use(f)`, `A = f` makes `A(9)`, `2.A` and `Apply(A, 4)` call the supplied `Square` with exactly those new arguments. When the parameter receives a plain value, `A` is an ordinary property that reads it, so `A(1)` is an arity error.
+[runtime-alias-of-a-parameter] A body whose one row names a parameter is a callable alias of whatever callable the parameter receives: inside `Use(f)`, `A = f` makes `A(9)`, `2.A` and `Apply(A, 4)` call the supplied `Square` with exactly those new arguments. When the parameter receives a plain value, `A` is just that value — bare `A` and `A()` read it without rerunning anything — so `A(1)` is an arity error, and a passed `A` is no callable.
 
     Square(x) = x * x
     Apply(f, x) = f(x)
@@ -3646,7 +3716,7 @@ Regenerate this block from the repo root with:
     9
     [1, 4]
 
-[runtime-alias-of-a-parameter-member] When the fallback name `G` resolves, `A = b.G` has no parameter of its own and is an alias of the member `b` actually declares: `Use(Box)` calls `Box.G(3)`, never the lexical `G`. On a receiver that lacks `G`, `b.G` is the computed value `G(b)`, so `A` is an ordinary property and calling it is an arity error.
+[runtime-alias-of-a-parameter-member] `A = b.G` is a member reference: its head `b` is a parameter, so `G` is a member name, never an input of `A`. `Use(Box)` calls `Box.G(3)`, the `G` that `b` declares, never the lexical `G`. On a receiver that lacks `G`, `b.G` is the computed value `G(b)`: `A` then names that value, so calling it with an argument is an arity error.
 
     G(o) = o + 100
     Box = { G(x) = x * 10 }
@@ -3660,21 +3730,6 @@ Regenerate this block from the repo root with:
   Displays:
     30
 
-[runtime-alias-unresolved-fallback-stays-a-parameter] A fallback name that nothing declares is still the body's own parameter (Q-75 is unchanged): `A = b.G` is `A(G) = b.G`, so `A(Thousand)` supplies `G` and, on the receiver `5` that lacks a member `G`, computes `Thousand(5)`.
-
-    Thousand(v) = v * 1000
-    Use(b) = {
-        A = b.G
-        A(Thousand)
-    }
-
-    Use(5)
-
-  Displays:
-    5000
-
 === END GENERATED: katlang-spec-examples ===
 
-Runtime alias fallback (META-S3-2 D4): an ineligible or genuinely zero-parameter target keeps ordinary property caching for bare reads; each explicit zero-supply call independently evaluates the alias expression once. Eligibility checking never repeats the receiver: the receiver work it performs, whichever operation performed it, is consumed by the first bare read or terminal call. Eligible parameterized targets keep fresh invocation with the new supply (D3) and a shared receiver. Runtime alias chains keep their own openable namespace; opening never imports target members, and static callable aliases remain non-openable.
-
-For D4 terminal properties, `A`, `A, A`, `A()`, `A(), A()`, `A, A()` and `A(), A` evaluate an effectful alias expression 1, 1, 1, 2, 2 and 1 times, matching ordinary-property behavior under CACHE-PUB-1. An outermost owning successful terminal call may establish the alias's own empty property-cache entry; later bare reads reuse it, and further calls remain fresh without replacing it. A parameterized runtime-callable alias never publishes through the alias or its target. The RF1-D4 local-cache alias and ordinary-property control both return `(10, 10, 20, 10)` with two ticks.
+Runtime alias lifetime (M4★, superseding META-S3-2 D4): an alias never remembers a value of its own. A runtime reference such as `A = R.Algorithm` names the algorithm it projects, whatever that algorithm's parameters: `A()` and `A(args)` call it afresh with exactly the written arguments (D3), and a zero-argument call may store the TARGET's remembered value exactly as the target's own `P()` would. When the projection yields no algorithm (`A = b.G` on a value without a member `G`), `A` names that computed value, worked out once: `A` and `A()` both return it without recomputing. Working out the target never repeats the receiver: that work is shared with the first read or call. A runtime alias chain keeps its own openable namespace, while a static reference `A = Lib` opens `Lib` itself and a braced `A = { Lib }` opens only its own public members. The RF1-D4 local-cache alias returns `(10, 10, 10, 10)` with one tick.

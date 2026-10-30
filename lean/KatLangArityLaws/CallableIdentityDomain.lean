@@ -39,8 +39,10 @@ RESULTS.
    makes repeated-name SATISFIABILITY order dependent (result 2 of `RepeatedNameLaws`): one order
    fails with a callable conflict, a permutation of the same contributions succeeds.
 
-No identity semantics changed. The optional-callable trap (`retain_value_only_cannot_hide_a_conflict`)
-is independent of all of this and stays as proved.
+No identity semantics changed. The optional-callable trap is independent of all of this: under the
+group-aware NEED-04 fold it follows from `gfold_ok_iff_compatible` (`RepeatedNameLaws`) and is guarded in
+`RepeatedNameGuards` § The optional-callable trap (the former `retain` fold and its
+`retain_value_only_cannot_hide_a_conflict` were superseded, ALIAS-UNIFY-1).
 -/
 
 namespace KatLang.CallableIdentityDomain
@@ -246,18 +248,20 @@ theorem intransitivity_needs_a_cross_fallback (a b c : Algorithm)
   · exact Or.inl h1
 
 /-- RESULT 5: an intransitive triple would make repeated-name SATISFIABILITY ORDER DEPENDENT —
-    three contributions with one counted value and the identities `a`, `b`, `c`: written `a, b, c`
-    the fold keeps `a` and then refuses `c` (a callable conflict); written `b, a, c` it keeps `b`
-    throughout and succeeds. So result 2 of `RepeatedNameLaws` (`retain_satisfiable_perm`) needs
-    `CallableTransOn`, and on such a triple it is false. -/
+    three callable-bearing contributions with the identities `a`, `b`, `c`: NEED-04 compares every
+    later identity with the group's FIRST one, so written `a, b, c` it refuses `c` (a callable
+    conflict) and written `b, a, c` it accepts all three. So result 2 of `RepeatedNameLaws`
+    (`gfold_satisfiable_perm`) needs `CallableTransOn`, and on such a triple it is false. -/
 theorem intransitive_identity_breaks_permutation (v : CountedResult) (x y z : Nat) (a b c : Algorithm)
     (hab : sameRepeatedCallableIdentity a b = true) (hbc : sameRepeatedCallableIdentity b c = true)
     (hac : sameRepeatedCallableIdentity a c = false) :
-    retain ⟨x, v, some a⟩ [⟨y, v, some b⟩, ⟨z, v, some c⟩] = .error .callable ∧
-    retain ⟨y, v, some b⟩ [⟨x, v, some a⟩, ⟨z, v, some c⟩] = .ok ⟨y, v, some b⟩ := by
+    gfold {} [⟨x, v, some a⟩, ⟨y, v, some b⟩, ⟨z, v, some c⟩] = .error .callable ∧
+    gfold {} [⟨y, v, some b⟩, ⟨x, v, some a⟩, ⟨z, v, some c⟩] =
+      .ok { rep := some ⟨y, v, some b⟩, identity := some b, anchor := none,
+            pending := [⟨y, v, some b⟩, ⟨x, v, some a⟩, ⟨z, v, some c⟩] } := by
   have hba : sameRepeatedCallableIdentity b a = true := by rw [same_identity_symm]; exact hab
   constructor
-  · simp [retain, retainStep, hab, hac]
-  · simp [retain, retainStep, hba, hbc]
+  · simp [gfold, gstep, GState.conflictsWith, GState.withCallable, hab, hac]
+  · simp [gfold, gstep, GState.conflictsWith, GState.withCallable, hba, hbc]
 
 end KatLang.CallableIdentityDomain

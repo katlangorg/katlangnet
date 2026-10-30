@@ -98,7 +98,8 @@ public class FrontEndDagComplexityTests
             ],
         };
 
-        var (detected, diagnostics) = ParameterDetector.Detect(root);
+        var detectedInput = ParameterDetector.Detect(root);
+        var (detected, diagnostics) = detectedInput;
 
         Assert.IsType<Expr.Param>(detected.Properties[0].Value.Branches[0].Body.Output[0]);
         Assert.IsType<Expr.Resolve>(detected.Properties[1].Value.Branches[0].Body.Output[0]);
@@ -123,7 +124,7 @@ public class FrontEndDagComplexityTests
         };
         Algorithm rewritten;
         if (resolve)
-            rewritten = ImplicitArgumentResolver.Resolve(root);
+            rewritten = ImplicitArgumentResolver.ResolveNameResolved(root);
         else
             (rewritten, _) = ParameterDetector.Detect(root);
 
@@ -213,7 +214,8 @@ public class FrontEndDagComplexityTests
             var observations = new FrontEndTraversalObservations();
             var root = EmptyAlgorithm(BinaryDiamond(depth, new Expr.Resolve("q")));
 
-            var (detected, diagnostics) = ParameterDetector.DetectPrevalidated(root, null, observations);
+            var detectedInput = ParameterDetector.DetectPrevalidated(root, null, observations);
+            var (detected, diagnostics) = detectedInput;
 
             Assert.Empty(diagnostics);
             // Free-name discovery is unchanged: the one distinct free leaf infers ONE parameter.
@@ -273,7 +275,8 @@ public class FrontEndDagComplexityTests
         {
             var root = EmptyAlgorithm(BinaryDiamond(250, new Expr.Resolve("q")));
 
-            var (detected, diagnostics) = ParameterDetector.Detect(root);
+            var detectedInput = ParameterDetector.Detect(root);
+            var (detected, diagnostics) = detectedInput;
 
             Assert.Empty(diagnostics);
             Assert.Equal(["q"], detected.Params);
@@ -284,10 +287,12 @@ public class FrontEndDagComplexityTests
     public void Detector_DiamondAndDuplicatedTree_InferTheSameSignature()
     {
         const int depth = 6;
-        var (dagDetected, dagDiagnostics) = ParameterDetector.Detect(
+        var dagDetectedInput = ParameterDetector.Detect(
             EmptyAlgorithm(BinaryDiamond(depth, new Expr.Resolve("q"))));
-        var (treeDetected, treeDiagnostics) = ParameterDetector.Detect(
+        var (dagDetected, dagDiagnostics) = dagDetectedInput;
+        var treeDetectedInput = ParameterDetector.Detect(
             EmptyAlgorithm(BinaryTree(depth, () => new Expr.Resolve("q"))));
+        var (treeDetected, treeDiagnostics) = treeDetectedInput;
 
         Assert.Empty(dagDiagnostics);
         Assert.Empty(treeDiagnostics);
@@ -298,7 +303,8 @@ public class FrontEndDagComplexityTests
 
     private static IReadOnlyList<string> DetectParams(params Expr[] output)
     {
-        var (detected, diagnostics) = ParameterDetector.Detect(EmptyAlgorithm(output));
+        var detectedInput = ParameterDetector.Detect(EmptyAlgorithm(output));
+        var (detected, diagnostics) = detectedInput;
         Assert.Empty(diagnostics);
         return detected.Params;
     }
@@ -437,7 +443,8 @@ public class FrontEndDagComplexityTests
         var root = new Algorithm.User(
             null, [], [], [new Property("Cond", conditional)], OutputBundle.Empty);
 
-        var (detected, diagnostics) = ParameterDetector.Detect(root);
+        var detectedInput = ParameterDetector.Detect(root);
+        var (detected, diagnostics) = detectedInput;
 
         Assert.Empty(diagnostics);
         var detectedConditional = Assert.IsType<Algorithm.Conditional>(detected.Properties[0].Value);
@@ -477,8 +484,9 @@ public class FrontEndDagComplexityTests
             var root = new Algorithm.User(
                 null, [], [], [new Property("Cond", conditional)], OutputBundle.Empty);
 
-            var (detected, diagnostics) = ParameterDetector.DetectPrevalidated(
+            var detectedInput = ParameterDetector.DetectPrevalidated(
                 root, null, observations);
+            var (detected, diagnostics) = detectedInput;
 
             Assert.Empty(diagnostics);
             Assert.Equal(depth, observations.DetectorCollectExpansions);
@@ -570,12 +578,13 @@ public class FrontEndDagComplexityTests
             "H(q) = " + string.Join(", ", Enumerable.Repeat("abs(G)", references)) + "\n1";
         var syntax = Parser.ParseSyntax(source);
         Assert.False(syntax.HasErrors);
-        var (detected, detectorDiagnostics) = ParameterDetector.DetectPrevalidated(syntax.Root);
+        var detectedInput = ParameterDetector.DetectPrevalidated(syntax.Root);
+        var (detected, detectorDiagnostics) = detectedInput;
         Assert.Empty(detectorDiagnostics);
         var observations = new FrontEndTraversalObservations();
         var diagnostics = new DiagnosticBag();
 
-        _ = ImplicitArgumentResolver.ResolvePrevalidated(detected, observations, diagnostics);
+        _ = ImplicitArgumentResolver.ResolvePrevalidated(detectedInput, observations, diagnostics);
 
         // Every closed reference remains a runtime zero-supply demand. Computing
         // its lifting gate is shared; diagnostic observation no longer walks it.
@@ -594,13 +603,14 @@ public class FrontEndDagComplexityTests
             var root = new Algorithm.User(null, [], [open], [], OutputBundle.Empty);
 
             var detectorObservations = new FrontEndTraversalObservations();
-            var (detected, diagnostics) = ParameterDetector.DetectPrevalidated(
+            var detectedInput = ParameterDetector.DetectPrevalidated(
                 root, null, detectorObservations);
+            var (detected, diagnostics) = detectedInput;
             Assert.Empty(diagnostics);
             Assert.Equal(depth, detectorObservations.DetectorRewriteExpansions);
 
             var resolverObservations = new FrontEndTraversalObservations();
-            var resolved = ImplicitArgumentResolver.ResolvePrevalidated(detected, resolverObservations);
+            var resolved = ImplicitArgumentResolver.ResolvePrevalidated(detectedInput, resolverObservations);
             Assert.Equal(depth, resolverObservations.ResolverRewriteExpansions);
 
             var current = Assert.Single(resolved.Opens);
@@ -628,11 +638,12 @@ public class FrontEndDagComplexityTests
             {
                 Output = new OutputBundle([BinaryDiamond(depth, new Expr.Resolve("F"))]),
             };
-            var (detected, detectorDiagnostics) = ParameterDetector.DetectPrevalidated(root);
+            var detectedInput = ParameterDetector.DetectPrevalidated(root);
+            var (detected, detectorDiagnostics) = detectedInput;
             Assert.Empty(detectorDiagnostics);
 
             var observations = new FrontEndTraversalObservations();
-            var resolved = ImplicitArgumentResolver.ResolvePrevalidated(detected, observations);
+            var resolved = ImplicitArgumentResolver.ResolvePrevalidated(detectedInput, observations);
 
             // Lifting semantics are unchanged: the bare reference became an explicit F(x) call
             // and x was lifted into the root signature.
@@ -659,9 +670,10 @@ public class FrontEndDagComplexityTests
                 {
                     Output = new OutputBundle([BinaryDiamond(depth, new Expr.Resolve("F"))]),
                 };
-                var (detected, _) = ParameterDetector.DetectPrevalidated(root);
+                var detectedInput = ParameterDetector.DetectPrevalidated(root);
+                var (detected, _) = detectedInput;
                 var observations = new FrontEndTraversalObservations();
-                ImplicitArgumentResolver.ResolvePrevalidated(detected, observations);
+                ImplicitArgumentResolver.ResolvePrevalidated(detectedInput, observations);
                 return observations;
             }
 
@@ -680,9 +692,10 @@ public class FrontEndDagComplexityTests
             {
                 Output = new OutputBundle([BinaryDiamond(248, new Expr.Resolve("F"))]),
             };
-            var (detected, _) = ParameterDetector.DetectPrevalidated(root);
+            var detectedInput = ParameterDetector.DetectPrevalidated(root);
+            var (detected, _) = detectedInput;
 
-            var resolved = ImplicitArgumentResolver.ResolvePrevalidated(detected);
+            var resolved = ImplicitArgumentResolver.ResolvePrevalidated(detectedInput);
 
             Assert.Contains("x", resolved.Params);
             var leaf = AssertDiamondSharingPreserved(resolved.Output[0], 248);
@@ -705,10 +718,11 @@ public class FrontEndDagComplexityTests
                 new Expr.Call(sharedF, new OutputBundle([new Expr.Num(3)])),
             ]),
         };
-        var (detected, diagnostics) = ParameterDetector.DetectPrevalidated(root);
+        var detectedInput = ParameterDetector.DetectPrevalidated(root);
+        var (detected, diagnostics) = detectedInput;
         Assert.Empty(diagnostics);
 
-        var resolved = ImplicitArgumentResolver.ResolvePrevalidated(detected);
+        var resolved = ImplicitArgumentResolver.ResolvePrevalidated(detectedInput);
 
         Assert.Contains("x", resolved.Params);
         var liftedValue = Assert.IsType<Expr.Call>(
@@ -736,9 +750,10 @@ public class FrontEndDagComplexityTests
             : BinaryTree(depth, LiftedLeaf);
         var root = LiftingHelpers() with { Output = new OutputBundle([payload]) };
 
-        var (detected, diagnostics) = ParameterDetector.DetectPrevalidated(root);
+        var detectedInput = ParameterDetector.DetectPrevalidated(root);
+        var (detected, diagnostics) = detectedInput;
         Assert.Empty(diagnostics);
-        var resolved = ImplicitArgumentResolver.ResolvePrevalidated(detected);
+        var resolved = ImplicitArgumentResolver.ResolvePrevalidated(detectedInput);
         var exposed = PropertyExposureResolver.Resolve(resolved);
 
         var result = Evaluator.RunFlat(new Expr.AlgorithmExpr(exposed));
@@ -1004,7 +1019,7 @@ public class FrontEndDagComplexityTests
             ],
             Output: new OutputBundle([new Expr.Resolve("B")]));
 
-        ImplicitArgumentResolver.ResolvePrevalidated(root, observations);
+        ImplicitArgumentResolver.ResolveNameResolvedPrevalidated(root, observations);
 
         Assert.Equal(1, observations.DependencySiblingExpansions);
         // The summary channel never ran: no expression seed expanded, no algorithm summary
@@ -1410,16 +1425,21 @@ public class FrontEndDagComplexityTests
 
             var elaborated = await loader.ElaborateAsync(ClauseFamilyDiamond(depth, load: true));
             Assert.Empty(diagnostics);
+            // This fixture composes the internal passes rather than FrontEndPipeline. Preserve
+            // its one module registry and publish the completed eager handoff before demand.
+            var modules = new ModuleUnits(loader.ModuleUnits);
             var detectorObservations = new FrontEndTraversalObservations();
-            var (detected, detectorDiagnostics) = ParameterDetector.DetectPrevalidated(elaborated, null, detectorObservations);
+            var detectedInput = ParameterDetector.DetectPrevalidated(elaborated, null, detectorObservations, modules: modules);
+            var (detected, detectorDiagnostics) = detectedInput;
             Assert.Empty(detectorDiagnostics);
             // Left's and Right's placeholders are distinct clones of the shared body, so each
             // is its own provisional region over the same nested chain: two chains of `depth`
             // regions, not 2^depth.
             Assert.Equal(2 * depth, detectorObservations.DetectorBranchBodyRegionExpansions);
-            var resolved = ImplicitArgumentResolver.Resolve(detected);
+            var resolved = ImplicitArgumentResolver.Resolve(detectedInput);
             new ParameterPropertyCollisionValidator(diagnostics).VisitAlgorithm(resolved);
-            var exposed = PropertyExposureResolver.Resolve(resolved);
+            var exposed = PropertyExposureResolver.Resolve(resolved, observations: null, modules: modules);
+            modules.Publish(detectedInput.Operation!.Freeze());
             var demandObservations = new FrontEndTraversalObservations();
             loader.TraversalObservations = demandObservations;
 
@@ -1520,7 +1540,8 @@ public class FrontEndDagComplexityTests
             var root = ClauseFamilyDiamond(depth, load: false);
 
             var detectorObservations = new FrontEndTraversalObservations();
-            var (detected, detectorDiagnostics) = ParameterDetector.DetectPrevalidated(root, null, detectorObservations);
+            var detectedInput = ParameterDetector.DetectPrevalidated(root, null, detectorObservations);
+            var (detected, detectorDiagnostics) = detectedInput;
             Assert.Empty(detectorDiagnostics);
             Assert.Equal(depth, detectorObservations.DetectorBranchBodyRegionExpansions);
             Assert.Equal(depth + 1, detectorObservations.DetectorRewriteExpansions);
@@ -1529,7 +1550,7 @@ public class FrontEndDagComplexityTests
 
             var resolverObservations = new FrontEndTraversalObservations();
             var resolverDiagnostics = new DiagnosticBag();
-            var resolved = ImplicitArgumentResolver.ResolvePrevalidated(detected, resolverObservations, resolverDiagnostics);
+            var resolved = ImplicitArgumentResolver.ResolvePrevalidated(detectedInput, resolverObservations, resolverDiagnostics);
             Assert.Empty(resolverDiagnostics);
             Assert.Equal(depth, resolverObservations.ResolverBranchBodyRegionExpansions);
             Assert.Equal(depth + 1, resolverObservations.ResolverRewriteExpansions);
@@ -1576,7 +1597,8 @@ public class FrontEndDagComplexityTests
         var root = new Algorithm.User(null, [], [], reversed ? [right, left] : [left, right], OutputBundle.Empty);
         var observations = new FrontEndTraversalObservations();
 
-        var (detected, diagnostics) = ParameterDetector.DetectPrevalidated(root, null, observations);
+        var detectedInput = ParameterDetector.DetectPrevalidated(root, null, observations);
+        var (detected, diagnostics) = detectedInput;
 
         Assert.Equal(1, observations.DetectorBranchBodyRegionExpansions);
         var leftBody = Assert.IsType<Algorithm.Conditional>(Assert.Single(detected.Properties, p => p.Name == "Left").Value).Branches[0].Body;
@@ -1616,7 +1638,8 @@ public class FrontEndDagComplexityTests
             OutputBundle.Empty);
         var observations = new FrontEndTraversalObservations();
 
-        var (detected, diagnostics) = ParameterDetector.DetectPrevalidated(root, null, observations);
+        var detectedInput = ParameterDetector.DetectPrevalidated(root, null, observations);
+        var (detected, diagnostics) = detectedInput;
 
         // Three regions: (root scope, binder x), (root scope, no binders), (block scope, no binders).
         Assert.Equal(3, observations.DetectorBranchBodyRegionExpansions);
@@ -1666,12 +1689,13 @@ public class FrontEndDagComplexityTests
             null, [], [],
             [new Property("Before", Family()), new Property("Early", Family()), p, r, new Property("Late", Family())],
             OutputBundle.Empty);
-        var (detected, detectorDiagnostics) = ParameterDetector.DetectPrevalidated(root);
+        var detectedInput = ParameterDetector.DetectPrevalidated(root);
+        var (detected, detectorDiagnostics) = detectedInput;
         Assert.Empty(detectorDiagnostics);
         var observations = new FrontEndTraversalObservations();
         var diagnostics = new DiagnosticBag();
 
-        var resolved = ImplicitArgumentResolver.ResolvePrevalidated(detected, observations, diagnostics);
+        var resolved = ImplicitArgumentResolver.ResolvePrevalidated(detectedInput, observations, diagnostics);
 
         Assert.Equal(2, observations.ResolverBranchBodyRegionExpansions);
         Algorithm BodyOf(string family)
@@ -1701,11 +1725,12 @@ public class FrontEndDagComplexityTests
         var left = new Property("Left", Family());
         var right = new Property("Right", Family());
         var root = new Algorithm.User(null, [], [], reversed ? [p, right, left] : [p, left, right], OutputBundle.Empty);
-        var (detected, _) = ParameterDetector.DetectPrevalidated(root);
+        var detectedInput = ParameterDetector.DetectPrevalidated(root);
+        var (detected, _) = detectedInput;
         var observations = new FrontEndTraversalObservations();
         var diagnostics = new DiagnosticBag();
 
-        var resolved = ImplicitArgumentResolver.ResolvePrevalidated(detected, observations, diagnostics);
+        var resolved = ImplicitArgumentResolver.ResolvePrevalidated(detectedInput, observations, diagnostics);
 
         Assert.Equal(1, observations.ResolverBranchBodyRegionExpansions);
         Assert.Same(
@@ -1787,11 +1812,12 @@ public class FrontEndDagComplexityTests
                 null, [], [],
                 [new Property("Leaf", EmptyAlgorithm(new Expr.Num(1))), new Property("Mod", PropertyValueDiamond(depth, "Leaf"))],
                 new OutputBundle([new Expr.Resolve("Mod")]));
-            var (detected, detectorDiagnostics) = ParameterDetector.DetectPrevalidated(root);
+            var detectedInput = ParameterDetector.DetectPrevalidated(root);
+            var (detected, detectorDiagnostics) = detectedInput;
             Assert.Empty(detectorDiagnostics);
             var observations = new FrontEndTraversalObservations();
 
-            var resolved = ImplicitArgumentResolver.ResolvePrevalidated(detected, observations, new DiagnosticBag());
+            var resolved = ImplicitArgumentResolver.ResolvePrevalidated(detectedInput, observations, new DiagnosticBag());
 
             // Leaf's value and the depth + 1 diamond values, each once.
             Assert.Equal(depth + 2, observations.ResolverAlgorithmRegionExpansions);
@@ -1827,16 +1853,19 @@ public class FrontEndDagComplexityTests
                     new Property("Lifting", Block(EmptyAlgorithm(new Expr.Binary(BinaryOp.Add, new Expr.Resolve("y"), new Expr.Num(1))))),
                 ],
                 OutputBundle.Empty);
-            var (detected, _) = ParameterDetector.DetectPrevalidated(root);
+            var detectedInput = ParameterDetector.DetectPrevalidated(root);
+            var (detected, _) = detectedInput;
             var observations = new FrontEndTraversalObservations();
 
-            var resolved = ImplicitArgumentResolver.ResolvePrevalidated(detected, observations, new DiagnosticBag());
+            var resolved = ImplicitArgumentResolver.ResolvePrevalidated(detectedInput, observations, new DiagnosticBag());
 
             // Two blocks, two leaf values, and the depth + 1 diamond values once per observation.
             Assert.Equal(2 * (depth + 1) + 4, observations.ResolverAlgorithmRegionExpansions);
-            var plain = Assert.IsType<Algorithm.User>(Assert.Single(Assert.IsType<Algorithm.User>(resolved.Properties[0].Value).Properties, p => p.Name == "Mod").Value);
-            // The lifting block's lone row names its parameterized member Mod: a callable alias of
-            // it (the plain block's Mod declares nothing, so its row stays an ordinary read).
+            // Each block's lone row names its own member Mod, so both are structural forwarding
+            // carriers of it whatever Mod's arity (M4★; formerly the plain block, whose Mod declares
+            // nothing, stayed an ordinary read).
+            var plainBlock = Assert.IsType<Algorithm.Alias>(resolved.Properties[0].Value);
+            var plain = Assert.IsType<Algorithm.User>(Assert.Single(plainBlock.Properties, p => p.Name == "Mod").Value);
             var liftingBlock = Assert.IsType<Algorithm.Alias>(resolved.Properties[1].Value);
             var lifting = Assert.IsType<Algorithm.User>(Assert.Single(liftingBlock.Properties, p => p.Name == "Mod").Value);
             Assert.NotSame(plain, lifting);
@@ -1945,7 +1974,8 @@ public class FrontEndDagComplexityTests
                 null, [], [],
                 [new Property("Leaf", EmptyAlgorithm(new Expr.Num(1)))],
                 new OutputBundle([BinaryDiamond(depth, leaf)]));
-            var (detected, _) = ParameterDetector.Detect(root);
+            var detectedInput = ParameterDetector.Detect(root);
+            var (detected, _) = detectedInput;
             var observations = new FrontEndTraversalObservations();
 
             var model = SemanticModelBuilder.Build(detected, observations);
@@ -1975,7 +2005,8 @@ public class FrontEndDagComplexityTests
                 null, [], [],
                 [new Property("Leaf", EmptyAlgorithm(new Expr.Num(1))), new Property("Mod", PropertyValueDiamond(depth, "Leaf"))],
                 new OutputBundle([new Expr.Resolve("Mod")]));
-            var (detected, _) = ParameterDetector.Detect(root);
+            var detectedInput = ParameterDetector.Detect(root);
+            var (detected, _) = detectedInput;
             var observations = new FrontEndTraversalObservations();
 
             SemanticModelBuilder.Build(detected, observations);

@@ -42,6 +42,25 @@ internal static partial class LoopOptimizer
 
         foreach (var property in userStep.Properties)
         {
+            // OD-E (M4★): an alias temp — a reference `T = U` or a carrier `T = { U }` of an earlier
+            // planned temp — owns no slot and no cache entry: every read and call of it is its target's,
+            // so it is planned as its target's own plan (the same slot, binding and declaration span),
+            // exactly as the generic evaluator reads its VALUE terminal and invokes its target. Only an
+            // alias that declares and opens nothing of its own: its target name then resolves exactly as
+            // at the step level, while a carrier's own declarations or opens decide its name first
+            // (`T = { U = 99 ⏎ U }` is its own U) — such a temp keeps the generic path.
+            if (property.Value is Algorithm.Alias { Target: Expr.Resolve(var targetName), Properties.Count: 0, Opens.Count: 0 }
+                && TryFindLoopTempPlan(plans, targetName, out var targetPlan))
+            {
+                plans.Add(targetPlan with { Name = property.Name });
+                diagnostics?.Add(new LoopTempDiagnosticSnapshot(
+                    property.Name,
+                    Planned: true,
+                    PlanSummary: $"Alias({targetPlan.Name})",
+                    FallbackReason: null));
+                continue;
+            }
+
             var tempIndex = plans.Count;
             var tempR = TryBuildLoopTempPlan(property, plans, stateNames, ctx, parentValEnv, argumentMemo);
             if (tempR.Plan is not null)

@@ -884,15 +884,24 @@ public static partial class Evaluator
         if (ctx.CallStack.Count == 0)
             return new EvalError.UnknownName(name) { Span = span };
 
+        // OD-E (M4★): an alias binding reads its VALUE terminal — the terminal binding's own entry, or a
+        // runtime-target alias's binding cell — never an entry of its own.
         var resolvedR = LookupLexicalForValue(ctx.CallStack[0], name, ctx);
         if (resolvedR.IsError)
             return AtSpanIfMissing(resolvedR.Error, span);
 
-        if (ZeroArgumentValueDemandRejection(ZeroArgumentDemandShape.Property, name, span, resolvedR.Value.ResolvedAlgorithm) is { } rejection)
+        if (resolvedR.Value.ResolvedAlgorithm is not Algorithm.Alias
+            && ZeroArgumentValueDemandRejection(ZeroArgumentDemandShape.Property, name, span, resolvedR.Value.ResolvedAlgorithm) is { } rejection)
             return rejection;
 
-        var propertyR = WithPropertyContextOnMissingOutput(name, span, resolvedR.Value.ResolvedAlgorithm,
-            EvalZeroArgPropertyAccessCounted(resolvedR.Value, ctx, valEnv));
+        // The property that lacks output is the TERMINAL binding a reference reads (M4★: a transparent
+        // reference is its target), so the report names it — the written name for any other binding.
+        // An ordinary binding keeps its direct frame chain on this recursive path (FRAME-SIZE DISCIPLINE: an
+        // alias read takes the out-of-line helper, which adds a frame per level).
+        var propertyR = WithPropertyContextOnMissingOutput(resolvedR.Value.Binding.Name, span, resolvedR.Value.ResolvedAlgorithm,
+            resolvedR.Value is { ResolvedAlgorithm: not Algorithm.Alias, CrossesCarrier: false }
+                ? EvalZeroArgPropertyAccessCounted(resolvedR.Value, ctx, valEnv)
+                : ReadValueBindingCounted(resolvedR.Value, ctx, valEnv));
         return propertyR.IsError
             ? propertyR.Error
             : EvalResult<CountedResult>.Ok(new CountedResult(

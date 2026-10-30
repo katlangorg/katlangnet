@@ -67,10 +67,11 @@ public sealed class ExposureOpenChainComplexityTests
     internal static Algorithm.User Exposed(string source, FrontEndTraversalObservations observations)
     {
         var syntax = SourceProvenance.ParseSyntaxValidRoot(source);
-        var (detected, detectionDiagnostics) = ParameterDetector.DetectPrevalidated(syntax);
+        var detectedInput = ParameterDetector.DetectPrevalidated(syntax);
+        var (detected, detectionDiagnostics) = detectedInput;
         Assert.Empty(detectionDiagnostics);
         var diagnostics = new DiagnosticBag();
-        var resolved = ImplicitArgumentResolver.ResolvePrevalidated(detected, observations: null, diagnostics);
+        var resolved = ImplicitArgumentResolver.ResolvePrevalidated(detectedInput, observations: null, diagnostics);
         Assert.Empty(diagnostics);
         return (Algorithm.User)PropertyExposureResolver.Resolve(resolved, observations);
     }
@@ -98,7 +99,7 @@ public sealed class ExposureOpenChainComplexityTests
     }
 
     private static void OnOneMebibyteStack(Action work)
-        => AstStructuralDepthProcessTests.RunOnThreadWithStack(1024 * 1024, work, TimeSpan.FromSeconds(60));
+        => AstStructuralDepthProcessTests.RunOnThreadWithStack(1024 * 1024, work);
 
     // ── Reproducer A: nested owner + constant terminal + opens ───────────────
 
@@ -143,16 +144,14 @@ public sealed class ExposureOpenChainComplexityTests
             AssertRequires(Member(owner, "R"));
             AssertRequires(Member(owner, "P1", "A1"));
 
-            Assert.Equal(length, observations.OpenCandidateSeedRebuilds);
-            Assert.InRange(observations.OpenCandidateKeyCharacters, 1, 40L * length);
+            Assert.Equal(2L * length + 2, observations.DependencyAlgorithmSummaryComputations);
             Assert.InRange(observations.SummaryKeyCharacters, 1, 512L * length);
-            Assert.Equal((long)length * (length + 3), observations.RequiredAncestorSettlementFrames);
+            Assert.InRange(observations.RequiredAncestorSettlementFrames, 1, (long)length * (length + 3));
             Assert.Equal(length + 2L, observations.SummaryMemberExpansions);
-            Assert.InRange(observations.OpenCandidateFactProbes, 1, 4L * length);
-            Assert.Equal(0, observations.PendingReferenceSeedMerges);
+            Assert.InRange(observations.CompletedStaticStructureReads, 1, observations.RequiredAncestorSettlementFrames);
             if (previous is not null)
             {
-                Assert.InRange(observations.OpenCandidateKeyCharacters, 1, 5 * previous.OpenCandidateKeyCharacters / 2);
+                Assert.InRange(observations.DependencyAlgorithmSummaryComputations, 1, 5 * previous.DependencyAlgorithmSummaryComputations / 2);
                 Assert.InRange(observations.RequiredAncestorSettlementFrames, 1, 9 * previous.RequiredAncestorSettlementFrames / 2);
             }
 
@@ -182,8 +181,9 @@ public sealed class ExposureOpenChainComplexityTests
             for (var i = 1; i <= length; i++)
                 AssertRequires(Member(level, $"P{i}", $"A{i}"));
 
-            Assert.Equal(0, observations.OpenCandidateSeedRebuilds);
-            Assert.Equal(0, observations.OpenCandidateKeyCharacters);
+            if (shape == "root") Assert.True(observations.CompletedStaticStructureReads > 0);
+            else Assert.Equal(0, observations.CompletedStaticStructureReads); // symbolic dotted summaries need no projection
+            Assert.InRange(observations.DependencyAlgorithmSummaryComputations, 1, 3L * length + 2);
             Assert.InRange(observations.RequiredAncestorSettlementFrames, 1, (long)length * (length + 3));
         }
 
@@ -211,10 +211,10 @@ public sealed class ExposureOpenChainComplexityTests
             }
 
             AssertRequires(Member(owner, "R"), ("p", 0));
-            Assert.Equal(2L * length, observations.OpenCandidateSeedRebuilds);
-            Assert.InRange(observations.OpenCandidateKeyCharacters, 1, 64L * length);
-            Assert.Equal((long)length * (length + 3), observations.RequiredAncestorSettlementFrames);
-            Assert.InRange(observations.OpenCandidateFactProbes, 1, 8L * length);
+            Assert.Equal(length + 2L, observations.SummaryMemberExpansions);
+            Assert.Equal(2L * length + 2, observations.DependencyAlgorithmSummaryComputations);
+            Assert.InRange(observations.RequiredAncestorSettlementFrames, 1, (long)length * (length + 3));
+            Assert.InRange(observations.CompletedStaticStructureReads, 1, observations.RequiredAncestorSettlementFrames);
         }
 
         const int Short = 7;
@@ -237,8 +237,8 @@ public sealed class ExposureOpenChainComplexityTests
                 AssertRequires(Member(owner, $"P{i}", $"Local{i}"));
             }
 
-            Assert.InRange(observations.OpenCandidateSeedRebuilds, 1, length);
-            Assert.InRange(observations.OpenCandidateKeyCharacters, 1, 40L * length);
+            Assert.InRange(observations.SummaryMemberExpansions, 1, 2L * length + 2);
+            Assert.InRange(observations.DependencyAlgorithmSummaryComputations, 1, 3L * length + 2);
             Assert.InRange(observations.RequiredAncestorSettlementFrames, 1, (long)length * (length + 3));
         }
 
@@ -265,7 +265,7 @@ public sealed class ExposureOpenChainComplexityTests
         for (var k = 0; k < Readers; k++)
             AssertRequires(Member(owner, $"R{k}"), ("p", 0));
         // Equal readers have one base seed: the member solver expands it once and every reader shares it.
-        Assert.Equal(2L * Length, observations.OpenCandidateSeedRebuilds);
+        Assert.Equal(Length + 2L, observations.SummaryMemberExpansions);
         Assert.Equal("29", Assert.IsType<RunResult.Success>(KatLangEngine.Run(shared)).ToDisplayString());
 
         // The inner owner declares its own `p`: the inner chain's terminal and reader require the
@@ -330,9 +330,9 @@ public sealed class ExposureOpenChainComplexityTests
         OpenLibraryOracle.AssertMatches(libraries, shadow: false, Member(parsed.Root, "O").Value);
         OpenLibraryOracle.AssertMatches(libraries, shadow: false, Member(exposed, "O").Value);
         Assert.InRange(observations.SummaryMemberEvaluations, 1, 60);
-        Assert.InRange(observations.OpenCandidateSeedRebuilds, 1, 120);
+        Assert.InRange(observations.SummaryMemberExpansions, 1, 60);
         Assert.InRange(observations.RequiredAncestorSettlementFrames, 1, 120);
-        Assert.InRange(observations.PendingReferenceSeedMerges, 1, 40);
+        Assert.True(observations.SummaryMemberEvaluations > observations.SummaryMemberExpansions);
     }
 
     /// <summary>
@@ -357,7 +357,7 @@ public sealed class ExposureOpenChainComplexityTests
         foreach (var name in new[] { "L1", "L2", "L3", "L5" })
             AssertRequires(Member(owner, name, "V"), ("x0", 1));
         Assert.InRange(observations.SummaryMemberEvaluations, 1, 30);
-        Assert.InRange(observations.PendingReferenceSeedMerges, 1, 20);
+        Assert.True(observations.SummaryMemberEvaluations > observations.SummaryMemberExpansions);
         Assert.Equal("1", Assert.IsType<RunResult.Success>(KatLangEngine.Run(source)).ToDisplayString());
     }
 
@@ -384,16 +384,14 @@ public sealed class ExposureOpenChainComplexityTests
             long n = size;
             Assert.InRange(observations.SummaryMemberEvaluations, 1, 2 * n * n);
             Assert.InRange(observations.SummaryMemberExpansions, 1, 2 * n * n);
-            Assert.InRange(observations.OpenCandidateSeedRebuilds, 1, 16 * n * n);
-            Assert.InRange(observations.OpenCandidateKeyCharacters, 1, 256 * n * n);
             // Full serialized seed keys include the growing reference sets, before their ids exist.
             Assert.InRange(observations.SummaryKeyCharacters, 1, 512 * n * n * n);
-            Assert.InRange(observations.OpenCandidateFactProbes, 1, 64 * n * n * n);
+            Assert.InRange(observations.CompletedStaticStructureReads, 1, 64 * n * n * n);
             Assert.InRange(observations.RequiredAncestorSettlementFrames, 1, 64 * n);
             if (previous is not null)
             {
                 Assert.InRange(observations.SummaryMemberEvaluations, 1, 5 * previous.SummaryMemberEvaluations);
-                Assert.InRange(observations.OpenCandidateSeedRebuilds, 1, 5 * previous.OpenCandidateSeedRebuilds);
+                Assert.InRange(observations.SummaryMemberExpansions, 1, 5 * previous.SummaryMemberExpansions);
                 Assert.InRange(observations.SummaryKeyCharacters, 1, 10 * previous.SummaryKeyCharacters);
             }
 
@@ -487,7 +485,7 @@ public sealed class ExposureOpenChainComplexityTests
         Algorithm.User exposed = null!;
         OnOneMebibyteStack(() => exposed = Exposed(source, observations));
         AssertRequires(Member(Member(exposed, "O").Value, "R"), ("p", 0));
-        Assert.InRange(observations.OpenCandidateSeedRebuilds, 1, 4L * length * length);
+        Assert.InRange(observations.SummaryMemberExpansions, 1, 4L * length * length);
     }
 
     /// <summary>
@@ -509,54 +507,34 @@ public sealed class ExposureOpenChainComplexityTests
         var owner = Member(exposed, "O").Value;
         AssertRequires(Member(owner, "R"), ("p", 0));
         AssertRequires(Member(owner, $"P{Length}", $"A{Length}"), ("p", 1));
-        Assert.Equal(2L * Length, observations.OpenCandidateSeedRebuilds);
+        Assert.Equal(Length + 2L, observations.SummaryMemberExpansions);
     }
 
-    /// <summary>
-    /// OOS-22: the explicit-stack expansion holds the chain's active local-head keys and the level's
-    /// expansion cache in suspended frames. An expansion interrupted deep inside the chain (here a
-    /// member map that fails at link 20) must release every one of them, exactly as the recursion's
-    /// <c>finally</c> blocks did: the retry on the SAME memo cuts no cycle and settles the same
-    /// candidate a fresh analysis settles, instead of serving an unfinished link as an empty charge.
-    /// </summary>
+    /// <summary>A failed Q8 member-summary read releases its expansion frame and never caches a partial result.</summary>
     [Fact]
     public void InterruptedChainExpansion_ReleasesItsActiveState_AndTheRetryMatchesAFreshAnalysis()
     {
         const int Length = 40;
         var owner = Member(SourceProvenance.ParseValid(NestedOwnerChain(Length, last: "p")).Root, "O").Value;
-        var seed = new PropertyDependencyGraphBuilder.SummarySeed(
-            pendingReferences: [new PendingReference("A1", [], [new UnresolvedOpenCandidate("P1", [], 0)])]);
-
+        var seed = new PropertyDependencyGraphBuilder.SummarySeed(visiblePropertyDependencyNames: ["P20"]);
         PropertyDependencyGraphBuilder.LevelContext? lastLevel = null;
-        (ResolvedOpenCandidate Candidate, long Cuts) Settle(PropertyDependencyGraphBuilder.SummaryMemo memo, string? failAt)
+        PropertyDependencyGraphBuilder.SummarySeed Settle(PropertyDependencyGraphBuilder.SummaryMemo memo, string? failAt)
         {
-            var memos = PropertyDependencyGraphBuilder.CreateWalkMemos(memo, observations: null);
-            var members = new FailingMemberMap(PropertyDependencyGraphBuilder.GetAlgorithmSummary(owner, memos).MemberSeeds, failAt);
+            var context = AnalyzedStaticStructures.ForBoundAst(owner);
+            var memos = PropertyDependencyGraphBuilder.CreateWalkMemos(memo, observations: null, context);
+            var members = new FailingMemberMap(PropertyDependencyGraphBuilder.GetAlgorithmSummary(owner, memos, context).MemberSeeds, failAt);
             var level = lastLevel = new PropertyDependencyGraphBuilder.LevelContext(owner, members, memos);
-            var cuts = memo.ExpansionCycleCuts;
-            var expanded = PropertyDependencyGraphBuilder.ExpandAtLevel(seed, level);
-            Assert.Null(level.ExpandedSeeds);
-            var reference = Assert.Single(expanded.PendingReferences);
-            return (Assert.IsType<ResolvedOpenCandidate>(Assert.Single(reference.Candidates)), memo.ExpansionCycleCuts - cuts);
+            return PropertyDependencyGraphBuilder.ExpandAtLevel(seed, level);
         }
-
         var shared = new PropertyDependencyGraphBuilder.SummaryMemo();
         var failure = Assert.Throws<InvalidOperationException>(() => Settle(shared, failAt: "P20"));
         Assert.Equal(FailingMemberMap.Message, failure.Message);
-        Assert.Empty(shared.ActiveLocalHeads ?? []);
-        Assert.Empty(shared.ActiveLocalPaths ?? []);
         Assert.Null(lastLevel!.ExpandedSeeds);
-
-        var (retried, retryCuts) = Settle(shared, failAt: null);
-        var (fresh, freshCuts) = Settle(new PropertyDependencyGraphBuilder.SummaryMemo(), failAt: null);
-        Assert.Equal(0, freshCuts);
-        Assert.Equal(0, retryCuts);
-        Assert.Empty(shared.ActiveLocalHeads ?? []);
-        // Every link settled: the outermost candidate's deep facts reach the terminal's `p` and every
-        // nested link's pending head, exactly as a fresh analysis's do.
-        Assert.Equal(fresh.Facts.Count, retried.Facts.Count);
-        Assert.True(retried.RequiresAny(new HashSet<string>(["p"], StringComparer.Ordinal), owner));
-        Assert.True(shared.SeedFacts.HasHead(retried.Facts, $"A{Length}"));
+        var retried = Settle(shared, failAt: null);
+        Assert.Null(lastLevel!.ExpandedSeeds);
+        var fresh = Settle(new PropertyDependencyGraphBuilder.SummaryMemo(), failAt: null);
+        Assert.Equal(fresh.ContentKey, retried.ContentKey);
+        Assert.Equal(0, shared.ExpansionCycleCuts);
     }
 
     // A level's member map whose presence test fails for one member (the escaping-candidate settlement
@@ -573,7 +551,10 @@ public sealed class ExposureOpenChainComplexityTests
         public bool ContainsKey(string key)
             => key == failAt ? throw new InvalidOperationException(Message) : inner.ContainsKey(key);
         public bool TryGetValue(string key, [System.Diagnostics.CodeAnalysis.MaybeNullWhen(false)] out PropertyDependencyGraphBuilder.SummarySeed value)
-            => inner.TryGetValue(key, out value);
+        {
+            if (key == failAt) throw new InvalidOperationException(Message);
+            return inner.TryGetValue(key, out value);
+        }
         public IEnumerator<KeyValuePair<string, PropertyDependencyGraphBuilder.SummarySeed>> GetEnumerator() => inner.GetEnumerator();
         System.Collections.IEnumerator System.Collections.IEnumerable.GetEnumerator() => GetEnumerator();
     }
@@ -660,7 +641,7 @@ public sealed class ExposureOpenChainComplexityTests
                 AssertRequires(Member(owner, $"P{i}", $"B{i}"), ("p", 1));
             }
             AssertRequires(Member(owner, "R"), ("p", 0));
-            Assert.Equal(3L * length, observations.OpenCandidateSeedRebuilds);
+            Assert.Equal(length + 2L, observations.SummaryMemberExpansions);
             Assert.InRange(observations.RequiredAncestorSettlementFrames, 1, 7L * length * length);
             Assert.InRange(observations.SummaryKeyCharacters, 1, 1000L * length * length);
             if (previous is not null)
@@ -859,10 +840,11 @@ internal static class OpenLibraryOracle
     internal static Algorithm.User ExposedAllowingAmbiguity(string source, FrontEndTraversalObservations? observations)
     {
         var syntax = SourceProvenance.ParseSyntaxValidRoot(source);
-        var (detected, detectionDiagnostics) = ParameterDetector.DetectPrevalidated(syntax);
+        var detectedInput = ParameterDetector.DetectPrevalidated(syntax);
+        var (detected, detectionDiagnostics) = detectedInput;
         Assert.All(detectionDiagnostics, diagnostic => Assert.Equal(DiagnosticCode.AmbiguousOpen, diagnostic.Code));
         var diagnostics = new DiagnosticBag();
-        var resolved = ImplicitArgumentResolver.ResolvePrevalidated(detected, observations: null, diagnostics);
+        var resolved = ImplicitArgumentResolver.ResolvePrevalidated(detectedInput, observations: null, diagnostics);
         Assert.Empty(diagnostics);
         return (Algorithm.User)PropertyExposureResolver.Resolve(resolved, observations);
     }

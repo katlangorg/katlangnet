@@ -200,7 +200,8 @@ public class ParameterOwnershipTests
                     new Expr.Resolve("Other"),
                 ]),
             };
-            var (detected, diagnostics) = ParameterDetector.Detect(root);
+            var detectedInput = ParameterDetector.Detect(root);
+            var (detected, diagnostics) = detectedInput;
             Assert.Empty(diagnostics);
             var detectedOuter = detected.Properties.Single(p => p.Name == "Outer").Value;
             var left = detectedOuter.Properties.Single(p => p.Name == "Left").Value;

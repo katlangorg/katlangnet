@@ -292,7 +292,8 @@ public class InlineAliasValueDemandLawTests
     public async Task ReduceInitialAccumulator_KeepsReducesDedicatedHint()
     {
         // `reduce`'s initial slot reports a rejected callable with reduce's own accumulator hint
-        // (HO-04), whatever shape named it — unchanged by FA-OQ-1.
+        // (HO-04), whatever shape named it — unchanged by FA-OQ-1, and by M4★: a written `{ Inc }`
+        // is a structural carrier, judged on its VALUE terminal, Inc.
         var oracle = await OnEveryRouteAsync(Inc + "Add(a, b) = a + b\nK(z) = reduce([1, 2], Add, { Inc })\nK(1)");
         var error = Assert.Single(oracle.Errors);
         Assert.StartsWith("ArityMismatch: `reduce` is `reduce(collection, reducer, initial)`", error);
@@ -454,7 +455,9 @@ public class InlineAliasValueDemandLawTests
     [InlineData("Inc(x) = trace(x) + 1\nK(z) = count({ Inc })\nK(1)", "err", null, new string[0])]
     [InlineData(Inc + "Pair(a, b) = b + a\nK(z) = Pair(trace(5), { Inc })\nK(1)", "err", null, new string[0])]
     [InlineData("Inc(x) = trace(x) + 1\nIgnore(f) = 0\nIgnore({ Inc }), tick()", "ok", "S[0, 1]", new[] { "tick#1" })]
-    [InlineData("Only(*xs) = tick()\nK(z) = { Only }, { Only }, Only, Only\nK(1)", "ok", "S[1, 2, 3, 3]", new[] { "tick#1", "tick#2", "tick#3" })]
+    // A carrier's bare VALUE is its target's bare view (OD-E, M4★): every `{ Only }` and `Only` read is
+    // Only's ONE cached read (formerly each inline alias read was a fresh zero-supply demand).
+    [InlineData("Only(*xs) = tick()\nK(z) = { Only }, { Only }, Only, Only\nK(1)", "ok", "S[1, 1, 1, 1]", new[] { "tick#1" })]
     public async Task HostEffects_KeepTheirOrderAndCount(string source, string kind, string? value, string[] hostCalls)
     {
         // A rejected demand enters no body (Inc's `trace` never runs) and evaluates no other

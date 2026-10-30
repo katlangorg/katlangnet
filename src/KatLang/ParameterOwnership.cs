@@ -59,18 +59,18 @@ internal sealed class ParameterOwnership : IOwnedParameterBindings
 {
     /// <summary>No parameter binding is in scope (the root body and open-target regions).</summary>
     public static readonly ParameterOwnership Empty = new(
-        ImmutableDictionary.Create<string, ElaboratedPropertyScope>(StringComparer.Ordinal),
+        ImmutableDictionary.Create<string, object>(StringComparer.Ordinal),
         neverCalledOwner: null,
         parent: null,
         addedNames: []);
 
     // Every binding in scope, innermost owner per name (a persistent dictionary, FE-1).
-    private readonly ImmutableDictionary<string, ElaboratedPropertyScope> _owners;
-    private readonly ElaboratedPropertyScope? _neverCalledOwner;
+    private readonly ImmutableDictionary<string, object> _owners;
+    private readonly object? _neverCalledOwner;
 
     private ParameterOwnership(
-        ImmutableDictionary<string, ElaboratedPropertyScope> owners,
-        ElaboratedPropertyScope? neverCalledOwner,
+        ImmutableDictionary<string, object> owners,
+        object? neverCalledOwner,
         ParameterOwnership? parent,
         IReadOnlyList<string> addedNames)
     {
@@ -96,8 +96,12 @@ internal sealed class ParameterOwnership : IOwnedParameterBindings
 
     public bool Contains(string name) => _owners.ContainsKey(name);
 
+    // Attached scopes use the interned key: rebuilt levels and deferred forks preserve the owner without retaining
+    // the eager scope/operation. A level with no static context is its own identity.
+    private static object OwnerIdentity(ElaboratedPropertyScope level) => (object?)level.StaticContext?.Key ?? level;
+
     public bool DeclaresParameter(ElaboratedPropertyScope level, string name)
-        => _owners.TryGetValue(name, out var owner) && ReferenceEquals(owner, level);
+        => _owners.TryGetValue(name, out var owner) && ReferenceEquals(owner, OwnerIdentity(level));
 
     /// <summary>
     /// The bindings a CALL establishes: this map without the never-called
@@ -127,12 +131,12 @@ internal sealed class ParameterOwnership : IOwnedParameterBindings
         bool ownerIsNeverCalled = false,
         FrontEndTraversalObservations? observations = null)
     {
-        ImmutableDictionary<string, ElaboratedPropertyScope>.Builder? extended = null;
+        ImmutableDictionary<string, object>.Builder? extended = null;
         List<string>? added = null;
         foreach (var name in names)
         {
             extended ??= _owners.ToBuilder();
-            extended[name] = owner;
+            extended[name] = OwnerIdentity(owner);
             (added ??= []).Add(name);
             observations?.RecordContextEntryWritten();
         }
@@ -142,7 +146,7 @@ internal sealed class ParameterOwnership : IOwnedParameterBindings
 
         return new ParameterOwnership(
             extended.ToImmutable(),
-            ownerIsNeverCalled ? owner : _neverCalledOwner,
+            ownerIsNeverCalled ? OwnerIdentity(owner) : _neverCalledOwner,
             this,
             added!);
     }
@@ -155,8 +159,9 @@ internal sealed class ParameterOwnership : IOwnedParameterBindings
     /// </summary>
     private sealed class CallableParameterBindings(ParameterOwnership inner) : IOwnedParameterBindings
     {
+        public bool ExcludesNeverCalledOwner => true;
         public bool DeclaresParameter(ElaboratedPropertyScope level, string name)
-            => !ReferenceEquals(level, inner._neverCalledOwner)
+            => !ReferenceEquals(OwnerIdentity(level), inner._neverCalledOwner)
                 && inner.DeclaresParameter(level, name);
     }
 }

@@ -36,10 +36,11 @@ public class AliasAndBareForwardingHostileReviewTests
         var callee = new Algorithm.User(null, [target], [], [], [new Expr.Num(1)]) { HasExplicitParameterList = true };
         var caller = new Algorithm.User(null, [source], [], [], [new Expr.Resolve("F")]) { HasExplicitParameterList = true };
         var root = new Algorithm.User(null, [], [], [new Property("F", callee), new Property("G", caller)], [new Expr.Num(0)]);
-        var (detected, detectionDiagnostics) = ParameterDetector.Detect(root);
+        var detectedInput = ParameterDetector.Detect(root);
+        var (detected, detectionDiagnostics) = detectedInput;
         Assert.Empty(detectionDiagnostics);
         var diagnostics = new DiagnosticBag();
-        var resolved = Assert.IsType<Algorithm.User>(ImplicitArgumentResolver.ResolvePrevalidated(detected, diagnostics: diagnostics));
+        var resolved = Assert.IsType<Algorithm.User>(ImplicitArgumentResolver.ResolvePrevalidated(detectedInput, diagnostics: diagnostics));
         Assert.Equal(DiagnosticCode.UnforwardableParameter, Assert.Single(diagnostics).Code);
         var body = Assert.IsType<Algorithm.User>(resolved.Properties.Single(property => property.Name == "G").Value);
         Assert.IsType<Expr.Resolve>(Assert.Single(body.Output));
@@ -53,10 +54,11 @@ public class AliasAndBareForwardingHostileReviewTests
         var callee = new Algorithm.User(null, [flat, nested, flat], [], [], [new Expr.Num(1)]) { HasExplicitParameterList = true };
         var caller = new Algorithm.User(null, [new CaptureParameterPattern("unused")], [], [], [new Expr.Resolve("F")]) { HasExplicitParameterList = true };
         var root = new Algorithm.User(null, [], [], [new Property("F", callee), new Property("G", caller)], [new Expr.Num(0)]);
-        var (detected, detectionDiagnostics) = ParameterDetector.Detect(root);
+        var detectedInput = ParameterDetector.Detect(root);
+        var (detected, detectionDiagnostics) = detectedInput;
         Assert.Empty(detectionDiagnostics);
         var diagnostics = new DiagnosticBag();
-        ImplicitArgumentResolver.ResolvePrevalidated(detected, diagnostics: diagnostics);
+        ImplicitArgumentResolver.ResolvePrevalidated(detectedInput, diagnostics: diagnostics);
         // Repeated occurrences of one contract report once; a different contract reports too,
         // even when its display is identical. Presentation cannot decide diagnostic identity.
         Assert.Equal(2, diagnostics.Count);
@@ -98,10 +100,11 @@ public class AliasAndBareForwardingHostileReviewTests
         // ── Effects and the zero-argument cache ──────────────────────────────────────────
         { "chain-evaluates-each-argument-once", "R(x) = x\nA = R\nB = A\nB(trace(1)), B(trace(2))", "ok S[1, 2] [trace(1),trace(2)]" },
         { "forwarding-evaluates-each-argument-once", "F(x, y) = x + y\nG(x, y) = F\nG(trace(1), trace(2))", "ok 3 [trace(1),trace(2)]" },
-        // Read bare, an alias is its OWN zero-argument binding, read once however often it is used
-        // (the two-binding and fresh-call rows are in AliasAndBareForwardingTests).
+        // Read bare, an alias is its TARGET's zero-argument binding (OD-E, M4★), read once however often
+        // and through however many links it is used (formerly each link had an entry of its own:
+        // S[2, 4] over two ticks; the fresh-call rows are in AliasAndBareForwardingTests).
         { "bare-alias-is-read-once", "Only(*xs) = tick()\nA = Only\nA + A + A", "ok 3 [tick#1]" },
-        { "bare-alias-chain-is-read-once-per-binding", "Only(*xs) = tick()\nA = Only\nB = A\nB + B, A + A", "ok S[2, 4] [tick#1,tick#2]" },
+        { "bare-alias-chain-is-read-once", "Only(*xs) = tick()\nA = Only\nB = A\nB + B, A + A", "ok S[2, 2] [tick#1]" },
 
         // ── Bare forwarding is by name ────────────────────────────────────────────────────
         { "forwarding-with-a-repeated-list", "F(x, y) = x * 10 + y\nG(x, x, y) = F\nG(3, 3, 4)", "ok 34" },

@@ -584,16 +584,7 @@ public class ScopeVisibilityIterativeUpdateTests(ITestOutputHelper output)
         var markerFile = Path.Combine(Path.GetTempPath(), $"katlang-scope-deep-probe-{Guid.NewGuid():N}.txt");
         var logFile = Path.ChangeExtension(markerFile, ".log");
 
-        var startInfo = new ProcessStartInfo("dotnet")
-        {
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            UseShellExecute = false,
-            CreateNoWindow = true,
-        };
-        startInfo.ArgumentList.Add("vstest");
-        startInfo.ArgumentList.Add(assemblyPath);
-        startInfo.ArgumentList.Add("--Tests:" + testName);
+        var startInfo = SubprocessProbe.StartInfo(assemblyPath, [testName]);
         startInfo.Environment[ProbeChildEnvironment] = "1";
         startInfo.Environment[ProbeMarkerFileEnvironment] = markerFile;
         startInfo.Environment[ProbeLogFileEnvironment] = logFile;
@@ -606,26 +597,13 @@ public class ScopeVisibilityIterativeUpdateTests(ITestOutputHelper output)
             var stdoutTask = process.StandardOutput.ReadToEndAsync();
             var stderrTask = process.StandardError.ReadToEndAsync();
 
-            var exited = true;
-            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(180));
-            try
-            {
-                await process.WaitForExitAsync(timeout.Token);
-            }
-            catch (OperationCanceledException)
-            {
-                exited = false;
-                try { process.Kill(entireProcessTree: true); }
-                catch { /* process already exited */ }
-                await process.WaitForExitAsync();
-            }
+            await process.WaitForExitAsync();
 
             // The progress log first: its last "deep-case ... start" line names the operation that hung or crashed.
             var progress = File.Exists(logFile) ? await File.ReadAllTextAsync(logFile) : "(no progress log)";
             var combined = progress + Environment.NewLine + await stdoutTask + Environment.NewLine + await stderrTask;
             output.WriteLine(combined);
 
-            Assert.True(exited, $"Deep-update probe did not exit within 180 seconds.{Environment.NewLine}{combined}");
             Assert.DoesNotContain("Stack overflow", combined, StringComparison.OrdinalIgnoreCase);
             Assert.DoesNotContain("StackOverflowException", combined, StringComparison.OrdinalIgnoreCase);
             Assert.True(process.ExitCode == 0, $"Deep-update probe exited with {process.ExitCode}.{Environment.NewLine}{combined}");

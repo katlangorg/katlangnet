@@ -306,6 +306,115 @@ theorem env_rebind (n : Ident) {t : Table} {e1 e2 : NeedEnv} {a1 a2 : Nat} (he :
       (e2.filter (fun entry => entry.fst != n) ++ [(n, a2)]) :=
   Rel2.append (env_filter n he) (Rel2.cons ⟨rfl, ha⟩ Rel2.nil)
 
+/-- Corresponding agreement states of one repeated name (NEED-04, group-aware): the same first
+    identity and data anchor, the pending obligations at corresponding cells. -/
+def GroupCorr (t : Table) (g1 g2 : RepeatedGroup) : Prop :=
+  g1.identity = g2.identity ∧ g1.anchor = g2.anchor ∧ Cells t g1.pending g2.pending
+
+theorem group_mono {t t' : Table} (h : Extends t t') {g1 g2 : RepeatedGroup} (hg : GroupCorr t g1 g2) :
+    GroupCorr t' g1 g2 :=
+  ⟨hg.1, hg.2.1, cells_mono h hg.2.2⟩
+
+/-- Corresponding binder states: corresponding representatives and, name for name in the same
+    order, corresponding agreement states. -/
+def StateCorr (t : Table) (s1 s2 : NeedBindState) : Prop :=
+  EnvCorr t s1.bound s2.bound ∧ Rel2 (fun x y => x.1 = y.1 ∧ GroupCorr t x.2 y.2) s1.groups s2.groups
+
+theorem state_mono {t t' : Table} (h : Extends t t') {s1 s2 : NeedBindState} (hs : StateCorr t s1 s2) :
+    StateCorr t' s1 s2 :=
+  ⟨env_mono h hs.1, Rel2.imp (fun _ _ hab => ⟨hab.1, group_mono h hab.2⟩) hs.2⟩
+
+theorem state_empty (t : Table) : StateCorr t {} {} := ⟨Rel2.nil, Rel2.nil⟩
+
+/-- Corresponding binder-state outcomes: both non-matches, or corresponding states. -/
+def OptStateCorr (t : Table) : Option NeedBindState → Option NeedBindState → Prop
+  | none, none => True
+  | some e1, some e2 => StateCorr t e1 e2
+  | _, _ => False
+
+theorem groups_lookup (n : Ident) {t : Table} : ∀ {g1 g2 : Assoc Ident RepeatedGroup},
+    Rel2 (fun x y => x.1 = y.1 ∧ GroupCorr t x.2 y.2) g1 g2 →
+    (lookupAssoc n g1 = none ∧ lookupAssoc n g2 = none) ∨
+      ∃ a b, lookupAssoc n g1 = some a ∧ lookupAssoc n g2 = some b ∧ GroupCorr t a b
+  | [], [], Rel2.nil => Or.inl ⟨rfl, rfl⟩
+  | (k1, a1) :: r1, (k2, a2) :: r2, Rel2.cons ⟨hk, ha⟩ hr => by
+      simp only at hk ha
+      subst hk
+      simp only [lookupAssoc]
+      by_cases hn : n = k1
+      · simp only [hn, ↓reduceIte]; exact Or.inr ⟨a1, a2, rfl, rfl, ha⟩
+      · simp only [hn, ↓reduceIte]; exact groups_lookup n hr
+
+theorem state_groupOf (n : Ident) {t : Table} {s1 s2 : NeedBindState} (hs : StateCorr t s1 s2) :
+    GroupCorr t (s1.groupOf n) (s2.groupOf n) := by
+  unfold NeedBindState.groupOf
+  rcases groups_lookup n hs.2 with ⟨l1, l2⟩ | ⟨a, b, l1, l2, hab⟩
+  · rw [l1, l2]; exact ⟨rfl, rfl, Rel2.nil⟩
+  · rw [l1, l2]; exact hab
+
+theorem groups_filter (n : Ident) {t : Table} : ∀ {g1 g2 : Assoc Ident RepeatedGroup},
+    Rel2 (fun x y => x.1 = y.1 ∧ GroupCorr t x.2 y.2) g1 g2 →
+    Rel2 (fun x y => x.1 = y.1 ∧ GroupCorr t x.2 y.2)
+      (g1.filter (fun entry => entry.fst != n)) (g2.filter (fun entry => entry.fst != n))
+  | [], [], Rel2.nil => Rel2.nil
+  | (k1, a1) :: r1, (k2, a2) :: r2, Rel2.cons ⟨hk, ha⟩ hr => by
+      simp only at hk ha
+      subst hk
+      by_cases hn : k1 = n
+      · simp only [List.filter_cons, hn, bne_self_eq_false, Bool.false_eq_true, ↓reduceIte]
+        exact groups_filter n hr
+      · have hb : (k1 != n) = true := by simpa using hn
+        simp only [List.filter_cons, hb, ↓reduceIte]
+        exact Rel2.cons ⟨rfl, ha⟩ (groups_filter n hr)
+
+theorem state_setGroup (n : Ident) {t : Table} {s1 s2 : NeedBindState} {g1 g2 : RepeatedGroup}
+    (hs : StateCorr t s1 s2) (hg : GroupCorr t g1 g2) : StateCorr t (s1.setGroup n g1) (s2.setGroup n g2) :=
+  ⟨hs.1, Rel2.append (groups_filter n hs.2) (Rel2.cons ⟨rfl, hg⟩ Rel2.nil)⟩
+
+theorem state_withPlain (n : Ident) {t : Table} {s1 s2 : NeedBindState} {a1 a2 : Nat}
+    (hs : StateCorr t s1 s2) (ha : Addr t a1 a2) : StateCorr t (s1.withPlain n a1) (s2.withPlain n a2) :=
+  ⟨env_rebind n hs.1 ha, hs.2⟩
+
+theorem state_withCallable (n : Ident) {t : Table} {s1 s2 : NeedBindState} {a1 a2 : Nat}
+    (hs : StateCorr t s1 s2) (ha : Addr t a1 a2) (i : Algorithm) :
+    StateCorr t (s1.withCallable n a1 i) (s2.withCallable n a2 i) := by
+  obtain ⟨hid, han, hpend⟩ := state_groupOf n hs
+  unfold NeedBindState.withCallable
+  dsimp only
+  apply state_setGroup
+  · refine ⟨?_, hs.2⟩
+    show EnvCorr t (if (s1.groupOf n).identity.isSome then s1.bound else s1.bound.rebind n a1)
+      (if (s2.groupOf n).identity.isSome then s2.bound else s2.bound.rebind n a2)
+    rw [hid]
+    split
+    · exact hs.1
+    · exact env_rebind n hs.1 ha
+  · refine ⟨?_, han, ?_⟩
+    · show ((s1.groupOf n).identity <|> some i) = ((s2.groupOf n).identity <|> some i)
+      rw [hid]
+    · show Cells t (if (s1.groupOf n).anchor.isSome then (s1.groupOf n).pending else (s1.groupOf n).pending ++ [a1])
+        (if (s2.groupOf n).anchor.isSome then (s2.groupOf n).pending else (s2.groupOf n).pending ++ [a2])
+      rw [han]
+      split
+      · exact hpend
+      · exact Rel2.append hpend (Rel2.cons ha Rel2.nil)
+
+theorem state_withAnchor (n : Ident) {t : Table} {s1 s2 : NeedBindState} {a1 a2 : Nat}
+    (hs : StateCorr t s1 s2) (ha : Addr t a1 a2) (v : CountedResult) :
+    StateCorr t (s1.withAnchor n a1 v) (s2.withAnchor n a2 v) := by
+  obtain ⟨hid, -, -⟩ := state_groupOf n hs
+  unfold NeedBindState.withAnchor
+  dsimp only
+  apply state_setGroup
+  · refine ⟨?_, hs.2⟩
+    show EnvCorr t (if (s1.groupOf n).identity.isSome then s1.bound else s1.bound.rebind n a1)
+      (if (s2.groupOf n).identity.isSome then s2.bound else s2.bound.rebind n a2)
+    rw [hid]
+    split
+    · exact hs.1
+    · exact env_rebind n hs.1 ha
+  · exact ⟨hid, rfl, Rel2.nil⟩
+
 /-! ## Corresponding capability records -/
 
 /-- TWO CAPABILITY RECORDS CORRESPOND under the state relation `R`: on corresponding cells their
@@ -320,63 +429,108 @@ structure CapCorr (R : StateRel) (k1 k2 : NeedCapabilities EvalM) : Prop where
 
 /-! ## The simulation of the binder core -/
 
-theorem verdict_corr (n : Ident) {t : Table} {b1 b2 : NeedEnv} {a1 a2 : Nat} (hb : EnvCorr t b1 b2)
-    (ha : Addr t a1 a2) (family : Bool) (first second : Option Algorithm) :
-    ResCorr (OptEnvCorr t) (repeatedVerdict n a1 b1 family first second)
-      (repeatedVerdict n a2 b2 family first second) := by
-  have hr := env_rebind n hb ha
-  unfold repeatedVerdict
-  rcases first with _ | x <;> rcases second with _ | y <;> simp [ResCorr, OptEnvCorr, hb, hr]
-  · by_cases hs : sameRepeatedCallableIdentity x y = true
-    · simp [hs, hb]
-    · cases family <;> simp [hs]
+/-- NEED-04's data-anchor check, simulated: corresponding cells give equal outcomes. -/
+theorem checkAnchor_sim (R : StateRel) (k1 k2 : NeedCapabilities EvalM) (hk : CapCorr R k1 k2)
+    (name : Ident) (anchor : CountedResult) (family : Bool) :
+    ∀ (t : Table) (c1 c2 : List Nat), Cells t c1 c2 →
+      Sim R (fun _ v w => v = w) t (NeedBinder.checkAnchor k1 name anchor family c1)
+        (NeedBinder.checkAnchor k2 name anchor family c2)
+  | t, [], [], Rel2.nil => sim_pure R _ t true true rfl
+  | t, a :: as, b :: bs, Rel2.cons hab hr => by
+    simp only [NeedBinder.checkAnchor]
+    refine sim_bind R (fun _ v w => v = w) (fun _ v w => v = w) t _ _ _ _ (hk.value t a b hab) ?_
+    intro t1 v w x1 hvw
+    subst hvw
+    by_cases hag : (v == anchor) = true
+    · simp only [hag, ↓reduceIte]
+      exact checkAnchor_sim R k1 k2 hk name anchor family t1 as bs (cells_mono x1 hr)
+    · simp only [hag, Bool.false_eq_true, ↓reduceIte]
+      cases family
+      · exact sim_throw R _ t1 _
+      · exact sim_pure R _ t1 false false rfl
 
-/-- ONE NAME OCCURRENCE, simulated: corresponding cells and environments give corresponding runs,
+/-- ONE NAME OCCURRENCE, simulated: corresponding cells and binder states give corresponding runs,
     repeated or not, in either mode. -/
 theorem name_sim (R : StateRel) (k1 k2 : NeedCapabilities EvalM) (hk : CapCorr R k1 k2)
-    (name : Ident) (a1 a2 : Nat) (repeated : List Ident) (b1 b2 : NeedEnv) (family : Bool) (t : Table)
-    (ha : Addr t a1 a2) (hb : EnvCorr t b1 b2) :
-    Sim R OptEnvCorr t (NeedBinder.bindName k1 name a1 repeated b1 family)
+    (name : Ident) (a1 a2 : Nat) (repeated : List Ident) (b1 b2 : NeedBindState) (family : Bool) (t : Table)
+    (ha : Addr t a1 a2) (hb : StateCorr t b1 b2) :
+    Sim R OptStateCorr t (NeedBinder.bindName k1 name a1 repeated b1 family)
       (NeedBinder.bindName k2 name a2 repeated b2 family) := by
   by_cases hr : repeated.contains name = true
-  · intro s1 s2 hR
-    rw [repeated_name_binding k1 name a1 repeated b1 family s1 hr,
-      repeated_name_binding k2 name a2 repeated b2 family s2 hr]
-    rcases sim_eq_cases (hk.value t a1 a2 ha) hR with
-      ⟨t1, e, u1, u2, x1, r1, h1, h2⟩ | ⟨t1, v, u1, u2, x1, r1, h1, h2⟩
-    · simp only [h1, h2]; exact ⟨t1, x1, r1, by simp [ResCorr]⟩
-    · simp only [h1, h2]
-      have hb1 := env_mono x1 hb
-      rcases env_lookup name hb1 with ⟨l1, l2⟩ | ⟨p1, p2, l1, l2, hp⟩
-      · simp only [l1, l2]
-        exact ⟨t1, x1, r1, by simpa [ResCorr, OptEnvCorr] using env_rebind name hb1 (x1 _ ha)⟩
-      · simp only [l1, l2]
-        rcases sim_eq_cases (hk.value t1 p1 p2 hp) r1 with
-          ⟨t2, e, w1, w2, x2, r2, h3, h4⟩ | ⟨t2, before, w1, w2, x2, r2, h3, h4⟩
-        · simp only [h3, h4]; exact ⟨t2, extends_trans x1 x2, r2, by simp [ResCorr]⟩
-        · simp only [h3, h4]
-          by_cases hbv : (!(before == v)) = true
-          · simp only [hbv, ↓reduceIte]
-            cases family <;> exact ⟨t2, extends_trans x1 x2, r2, by simp [ResCorr, OptEnvCorr]⟩
-          · simp only [hbv, ↓reduceIte, Bool.false_eq_true]
-            rcases sim_eq_cases (hk.callable t2 p1 p2 (x2 _ hp)) r2 with
-              ⟨t3, e, z1, z2, x3, r3, h5, h6⟩ | ⟨t3, first, z1, z2, x3, r3, h5, h6⟩
-            · simp only [h5, h6]
-              exact ⟨t3, extends_trans x1 (extends_trans x2 x3), r3, by simp [ResCorr]⟩
-            · simp only [h5, h6]
-              have ha3 : Addr t3 a1 a2 := x3 _ (x2 _ (x1 _ ha))
-              rcases sim_eq_cases (hk.callable t3 a1 a2 ha3) r3 with
-                ⟨t4, e, q1, q2, x4, r4, h7, h8⟩ | ⟨t4, second, q1, q2, x4, r4, h7, h8⟩
-              · simp only [h7, h8]
-                exact ⟨t4, extends_trans x1 (extends_trans x2 (extends_trans x3 x4)), r4, by simp [ResCorr]⟩
-              · simp only [h7, h8]
-                refine ⟨t4, extends_trans x1 (extends_trans x2 (extends_trans x3 x4)), r4, ?_⟩
-                exact verdict_corr name (env_mono (extends_trans x2 (extends_trans x3 x4)) hb1)
-                  (x4 _ ha3) family first second
+  · obtain ⟨hid, han, hpend⟩ := state_groupOf name hb
+    have hconf : ∀ i, (b1.groupOf name).conflictsWith i = (b2.groupOf name).conflictsWith i := by
+      intro i; simp only [RepeatedGroup.conflictsWith, hid]
+    have mismatch : ∀ (t' : Table) (e : Error),
+        Sim R OptStateCorr t' (NeedBinder.repeatedMismatch family e : EvalM (Option NeedBindState))
+          (NeedBinder.repeatedMismatch family e) := by
+      intro t' e
+      unfold NeedBinder.repeatedMismatch
+      cases family
+      · exact sim_throw R OptStateCorr t' _
+      · exact sim_pure R OptStateCorr t' none none trivial
+    unfold NeedBinder.bindName
+    simp only [hr, ↓reduceIte]
+    refine sim_bind R (fun _ v w => v = w) OptStateCorr t _ _ _ _ (hk.callable t a1 a2 ha) ?_
+    intro t1 c c' x1 hcc
+    subst hcc
+    have hb1 := state_mono x1 hb
+    have ha1 : Addr t1 a1 a2 := x1 _ ha
+    cases c with
+    | some identity =>
+      simp only
+      rw [hconf identity]
+      by_cases hcf : (b2.groupOf name).conflictsWith identity = true
+      · simp only [hcf, ↓reduceIte]
+        exact mismatch t1 _
+      · simp only [hcf, Bool.false_eq_true, ↓reduceIte]
+        rw [han]
+        cases hanc : (b2.groupOf name).anchor with
+        | some anchor =>
+          simp only
+          refine sim_bind R (fun _ v w => v = w) OptStateCorr t1 _ _ _ _
+            (checkAnchor_sim R k1 k2 hk name anchor family t1 [a1] [a2] (Rel2.cons ha1 Rel2.nil)) ?_
+          intro t2 g g' x2 hgg
+          subst hgg
+          cases g
+          · exact sim_pure R OptStateCorr t2 none none trivial
+          · exact sim_pure R OptStateCorr t2 _ _ (state_withCallable name (state_mono x2 hb1) (x2 _ ha1) identity)
+        | none =>
+          simp only
+          refine sim_bind R (fun _ v w => v = w) OptStateCorr t1 _ _ _ _ (sim_pure R _ t1 true true rfl) ?_
+          intro t2 g g' x2 hgg
+          subst hgg
+          cases g
+          · exact sim_pure R OptStateCorr t2 none none trivial
+          · exact sim_pure R OptStateCorr t2 _ _ (state_withCallable name (state_mono x2 hb1) (x2 _ ha1) identity)
+    | none =>
+      simp only
+      refine sim_bind R (fun _ v w => v = w) OptStateCorr t1 _ _ _ _ (hk.value t1 a1 a2 ha1) ?_
+      intro t2 own own' x2 ho
+      subst ho
+      have hb2 := state_mono x2 hb1
+      have ha2 : Addr t2 a1 a2 := x2 _ ha1
+      rw [han]
+      cases hanc : (b2.groupOf name).anchor with
+      | some anchor =>
+        simp only
+        by_cases hag : (own == anchor) = true
+        · simp only [hag, ↓reduceIte]
+          exact sim_pure R OptStateCorr t2 _ _ hb2
+        · simp only [hag, Bool.false_eq_true, ↓reduceIte]
+          exact mismatch t2 _
+      | none =>
+        simp only
+        refine sim_bind R (fun _ v w => v = w) OptStateCorr t2 _ _ _ _
+          (checkAnchor_sim R k1 k2 hk name own family t2 _ _ (cells_mono (extends_trans x1 x2) hpend)) ?_
+        intro t3 g g' x3 hgg
+        subst hgg
+        cases g
+        · exact sim_pure R OptStateCorr t3 none none trivial
+        · exact sim_pure R OptStateCorr t3 _ _ (state_withAnchor name (state_mono x3 hb2) (x3 _ ha2) own)
   · have hr' : repeated.contains name = false := by simpa using hr
     rw [BinderCore.core_plain_name_is_pure k1 name a1 repeated b1 family hr',
       BinderCore.core_plain_name_is_pure k2 name a2 repeated b2 family hr']
-    exact sim_pure R OptEnvCorr t _ _ (env_rebind name hb ha)
+    exact sim_pure R OptStateCorr t _ _ (state_withPlain name hb ha)
 
 theorem ready_loop_sim (R : StateRel) (k1 k2 : NeedCapabilities EvalM) (hk : CapCorr R k1 k2) :
     ∀ (items : List Result) (acc1 acc2 : List Nat) (t : Table), Cells t acc1 acc2 →
@@ -398,14 +552,14 @@ theorem ready_cells_sim (R : StateRel) (k1 k2 : NeedCapabilities EvalM) (hk : Ca
   exact ready_loop_sim R k1 k2 hk items [] [] t Rel2.nil
 
 theorem gate_sim (R : StateRel) (ps : List NeedPattern) (n : Nat) (family : Bool) (t : Table)
-    (x y : EvalM (Option NeedEnv)) (h : Sim R OptEnvCorr t x y) :
-    Sim R OptEnvCorr t (NeedBinder.cardinalityGate ps n family x)
+    (x y : EvalM (Option NeedBindState)) (h : Sim R OptStateCorr t x y) :
+    Sim R OptStateCorr t (NeedBinder.cardinalityGate ps n family x)
       (NeedBinder.cardinalityGate ps n family y) := by
   unfold NeedBinder.cardinalityGate
   split
   · cases family
-    · exact sim_throw R OptEnvCorr t _
-    · exact sim_pure R OptEnvCorr t none none trivial
+    · exact sim_throw R OptStateCorr t _
+    · exact sim_pure R OptStateCorr t none none trivial
   · exact h
 
 theorem source_items_mem {α : Type} (ps : List NeedPattern) (cells : List α) (src : NeedSource α)
@@ -473,15 +627,15 @@ theorem head_src_corr {t : Table} {x y : List (NeedSource Nat)} (h : Rel2 (SrcCo
 
 theorem structural_sim (R : StateRel) (k1 k2 : NeedCapabilities EvalM) (hk : CapCorr R k1 k2)
     (p : NeedPattern) (ps : List NeedPattern) (hp : p = .sequence ps ∨ p = .list ps ∨ p = .unpack ps)
-    (a1 a2 : Nat) (repeated : List Ident) (b1 b2 : NeedEnv) (family : Bool) (t : Table)
-    (ha : Addr t a1 a2) (hb : EnvCorr t b1 b2)
-    (ih : ∀ (t' : Table) (c1 c2 : List Nat) (e1 e2 : NeedEnv), Extends t t' → Cells t' c1 c2 → EnvCorr t' e1 e2 →
-      Sim R OptEnvCorr t' (NeedBinder.bindSources k1 ps (needLevelSources ps c1) repeated e1 family)
+    (a1 a2 : Nat) (repeated : List Ident) (b1 b2 : NeedBindState) (family : Bool) (t : Table)
+    (ha : Addr t a1 a2) (hb : StateCorr t b1 b2)
+    (ih : ∀ (t' : Table) (c1 c2 : List Nat) (e1 e2 : NeedBindState), Extends t t' → Cells t' c1 c2 → StateCorr t' e1 e2 →
+      Sim R OptStateCorr t' (NeedBinder.bindSources k1 ps (needLevelSources ps c1) repeated e1 family)
         (NeedBinder.bindSources k2 ps (needLevelSources ps c2) repeated e2 family)) :
-    Sim R OptEnvCorr t (NeedBinder.bindOne k1 p a1 repeated b1 family)
+    Sim R OptStateCorr t (NeedBinder.bindOne k1 p a1 repeated b1 family)
       (NeedBinder.bindOne k2 p a2 repeated b2 family) := by
   rw [bindOne_structural_shape k1 p ps hp, bindOne_structural_shape k2 p ps hp]
-  refine sim_bind R (fun _ v w => v = w) OptEnvCorr t _ _ _ _ (hk.value t a1 a2 ha) ?_
+  refine sim_bind R (fun _ v w => v = w) OptStateCorr t _ _ _ _ (hk.value t a1 a2 ha) ?_
   intro t1 v w x1 hvw
   subst hvw
   obtain ⟨value, count⟩ := v
@@ -489,40 +643,40 @@ theorem structural_sim (R : StateRel) (k1 k2 : NeedCapabilities EvalM) (hk : Cap
   cases structuralItems p value with
   | none =>
     cases family
-    · exact sim_throw R OptEnvCorr t1 _
-    · exact sim_pure R OptEnvCorr t1 none none trivial
+    · exact sim_throw R OptStateCorr t1 _
+    · exact sim_pure R OptStateCorr t1 none none trivial
   | some items =>
     simp only
-    refine sim_bind R Cells OptEnvCorr t1 _ _ _ _ (ready_cells_sim R k1 k2 hk items t1) ?_
+    refine sim_bind R Cells OptStateCorr t1 _ _ _ _ (ready_cells_sim R k1 k2 hk items t1) ?_
     intro t2 c1 c2 x2 hc
     rw [cells_length hc]
     exact gate_sim R ps c2.length family t2 _ _
-      (ih t2 c1 c2 b1 b2 (extends_trans x1 x2) hc (env_mono (extends_trans x1 x2) hb))
+      (ih t2 c1 c2 b1 b2 (extends_trans x1 x2) hc (state_mono (extends_trans x1 x2) hb))
 
 mutual
   /-- ONE PATTERN, simulated. -/
   theorem one_sim (R : StateRel) (k1 k2 : NeedCapabilities EvalM) (hk : CapCorr R k1 k2)
-      (p : NeedPattern) (a1 a2 : Nat) (repeated : List Ident) (b1 b2 : NeedEnv) (family : Bool)
-      (t : Table) (ha : Addr t a1 a2) (hb : EnvCorr t b1 b2) :
-      Sim R OptEnvCorr t (NeedBinder.bindOne k1 p a1 repeated b1 family)
+      (p : NeedPattern) (a1 a2 : Nat) (repeated : List Ident) (b1 b2 : NeedBindState) (family : Bool)
+      (t : Table) (ha : Addr t a1 a2) (hb : StateCorr t b1 b2) :
+      Sim R OptStateCorr t (NeedBinder.bindOne k1 p a1 repeated b1 family)
         (NeedBinder.bindOne k2 p a2 repeated b2 family) := by
     cases p with
     | bind name collecting => exact name_sim R k1 k2 hk name a1 a2 repeated b1 b2 family t ha hb
     | metaRef name =>
       simp only [NeedBinder.bindOne]
-      refine sim_bind R Addr OptEnvCorr t _ _ _ _ (sim_captureMeta R t name _ _ (hk.reference t a1 a2 ha)) ?_
+      refine sim_bind R Addr OptStateCorr t _ _ _ _ (sim_captureMeta R t name _ _ (hk.reference t a1 a2 ha)) ?_
       intro t1 d1 d2 x1 hd
-      exact name_sim R k1 k2 hk name d1 d2 repeated b1 b2 family t1 hd (env_mono x1 hb)
+      exact name_sim R k1 k2 hk name d1 d2 repeated b1 b2 family t1 hd (state_mono x1 hb)
     | literal literal =>
       simp only [NeedBinder.bindOne]
-      refine sim_bind R (fun _ v w => v = w) OptEnvCorr t _ _ _ _ (hk.value t a1 a2 ha) ?_
+      refine sim_bind R (fun _ v w => v = w) OptStateCorr t _ _ _ _ (hk.value t a1 a2 ha) ?_
       intro t1 v w x1 hvw
       subst hvw
       obtain ⟨value, count⟩ := v
       simp only
       split
-      · exact sim_pure R OptEnvCorr t1 _ _ (env_mono x1 hb)
-      · exact sim_pure R OptEnvCorr t1 none none trivial
+      · exact sim_pure R OptStateCorr t1 _ _ (state_mono x1 hb)
+      · exact sim_pure R OptStateCorr t1 none none trivial
     | sequence ps =>
       exact structural_sim R k1 k2 hk _ ps (Or.inl rfl) a1 a2 repeated b1 b2 family t ha hb
         (fun t' c1 c2 e1 e2 _ hc he => sources_sim R k1 k2 hk ps _ _ repeated e1 e2 family t'
@@ -539,23 +693,23 @@ mutual
   /-- ONE LEVEL'S PATTERNS, simulated. -/
   theorem sources_sim (R : StateRel) (k1 k2 : NeedCapabilities EvalM) (hk : CapCorr R k1 k2)
       (ps : List NeedPattern) (x y : List (NeedSource Nat)) (repeated : List Ident)
-      (b1 b2 : NeedEnv) (family : Bool) (t : Table) (hs : Rel2 (SrcCorr t) x y)
-      (hb : EnvCorr t b1 b2) :
-      Sim R OptEnvCorr t (NeedBinder.bindSources k1 ps x repeated b1 family)
+      (b1 b2 : NeedBindState) (family : Bool) (t : Table) (hs : Rel2 (SrcCorr t) x y)
+      (hb : StateCorr t b1 b2) :
+      Sim R OptStateCorr t (NeedBinder.bindSources k1 ps x repeated b1 family)
         (NeedBinder.bindSources k2 ps y repeated b2 family) := by
     cases ps with
-    | nil => exact sim_pure R OptEnvCorr t (some b1) (some b2) hb
+    | nil => exact sim_pure R OptStateCorr t (some b1) (some b2) hb
     | cons p rest =>
       simp only [NeedBinder.bindSources]
       obtain ⟨hhead, htail⟩ := head_src_corr hs
-      refine sim_bind R Addr OptEnvCorr t _ _ _ _ (source_address_sim R k1 k2 hk t _ _ hhead) ?_
+      refine sim_bind R Addr OptStateCorr t _ _ _ _ (source_address_sim R k1 k2 hk t _ _ hhead) ?_
       intro t1 d1 d2 x1 hd
-      refine sim_bind R OptEnvCorr OptEnvCorr t1 _ _ _ _
-        (one_sim R k1 k2 hk p d1 d2 repeated b1 b2 family t1 hd (env_mono x1 hb)) ?_
+      refine sim_bind R OptStateCorr OptStateCorr t1 _ _ _ _
+        (one_sim R k1 k2 hk p d1 d2 repeated b1 b2 family t1 hd (state_mono x1 hb)) ?_
       intro t2 o1 o2 x2 ho
       cases o1 with
       | none => cases o2 with
-        | none => exact sim_pure R OptEnvCorr t2 none none trivial
+        | none => exact sim_pure R OptStateCorr t2 none none trivial
         | some _ => exact ho.elim
       | some n1 => cases o2 with
         | none => exact ho.elim
@@ -569,10 +723,21 @@ end
 theorem patterns_sim (R : StateRel) (k1 k2 : NeedCapabilities EvalM) (hk : CapCorr R k1 k2)
     (ps : List NeedPattern) (c1 c2 : List Nat) (family : Bool) (t : Table) (hc : Cells t c1 c2) :
     Sim R OptEnvCorr t (NeedBinder.bindPatterns k1 ps c1 family) (NeedBinder.bindPatterns k2 ps c2 family) := by
-  simp only [NeedBinder.bindPatterns, NeedBinder.bindLevel]
-  rw [cells_length hc]
-  exact gate_sim R ps c2.length family t _ _
-    (sources_sim R k1 k2 hk ps _ _ (needRepeatedNames ps) [] [] family t (level_sources_corr ps hc) Rel2.nil)
+  simp only [NeedBinder.bindPatterns]
+  refine sim_bind R OptStateCorr OptEnvCorr t _ _ _ _ ?_ ?_
+  · simp only [NeedBinder.bindLevel]
+    rw [cells_length hc]
+    exact gate_sim R ps c2.length family t _ _
+      (sources_sim R k1 k2 hk ps _ _ (needRepeatedNames ps) {} {} family t (level_sources_corr ps hc)
+        (state_empty t))
+  · intro t1 o1 o2 x1 ho
+    cases o1 with
+    | none => cases o2 with
+      | none => exact sim_pure R OptEnvCorr t1 none none trivial
+      | some _ => exact ho.elim
+    | some n1 => cases o2 with
+      | none => exact ho.elim
+      | some n2 => exact sim_pure R OptEnvCorr t1 _ _ ho.1
 
 /-! ## The clause search, with the activated body as an explicit continuation -/
 

@@ -1381,7 +1381,7 @@ public sealed class Parser
     /// expected closer or reports a mismatch without consuming it.
     /// </summary>
     private Algorithm.User ParseScopedAlgorithm()
-        => CreateAlgorithm(ParseAlgorithmBodyParts(declarationsAllowed: true, atRoot: false));
+        => CreateAlgorithm(ParseAlgorithmBodyParts(declarationsAllowed: true, atRoot: false), writtenBlock: true);
 
     /// <summary>
     /// Parses one root scope through end of input. Any ')' or '}' left by
@@ -1429,13 +1429,18 @@ public sealed class Parser
     /// retained declarations, which is the shape the diagnostic tells the
     /// user to write (<c>{ ... }</c>).
     /// </summary>
-    private static Algorithm.User CreateAlgorithm(ParsedAlgorithmBody body)
+    private static Algorithm.User CreateAlgorithm(ParsedAlgorithmBody body, bool writtenBlock = false)
         => new(
             Parent: null,
             ParameterPatterns: [],
             Opens: body.Opens,
             Properties: body.Properties,
-            Output: body.Output);
+            Output: body.Output)
+        {
+            // M4★: a written brace block (`ParseScopedAlgorithm`) is the one source of the
+            // written-brace fact; the root and the recovery blocks are no written braces.
+            IsWrittenBlock = writtenBlock,
+        };
 
     private ParsedAlgorithmBody ParseAlgorithmBodyParts(bool declarationsAllowed, bool atRoot)
     {

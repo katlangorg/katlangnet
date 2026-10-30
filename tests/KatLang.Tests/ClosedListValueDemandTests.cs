@@ -89,7 +89,7 @@ public class ClosedListValueDemandTests
             []);
 
         var diagnostics = new DiagnosticBag();
-        var resolved = ImplicitArgumentResolver.ResolvePrevalidated(root, observations: null, diagnostics);
+        var resolved = ImplicitArgumentResolver.ResolveNameResolvedPrevalidated(root, observations: null, diagnostics);
 
         Assert.Empty(diagnostics);
 
@@ -136,7 +136,7 @@ public class ClosedListValueDemandTests
             []);
 
         var diagnostics = new DiagnosticBag();
-        var resolved = ImplicitArgumentResolver.ResolvePrevalidated(root, observations: null, diagnostics);
+        var resolved = ImplicitArgumentResolver.ResolveNameResolvedPrevalidated(root, observations: null, diagnostics);
 
         Assert.Empty(diagnostics);
         var f = resolved.Properties.Single(p => p.Name == "F").Value;

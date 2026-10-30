@@ -238,7 +238,7 @@ public class UnifiedFormulaLiftingTests
                 [new Property("First", family), new Property("Second", family)],
                 names.Select(name => (Expr)new Expr.Binary(BinaryOp.Add, new Expr.Resolve(name), new Expr.Num(0))).ToArray());
             var diagnostics = new DiagnosticBag();
-            _ = ImplicitArgumentResolver.ResolvePrevalidated(root, diagnostics: diagnostics);
+            _ = ImplicitArgumentResolver.ResolveNameResolvedPrevalidated(root, diagnostics: diagnostics);
             var errors = diagnostics.Where(diagnostic => diagnostic.Code == DiagnosticCode.UnliftableClauseFamily).ToArray();
             Assert.Equal(names.Length, errors.Length);
             for (var index = 0; index < names.Length; index++)
@@ -261,7 +261,7 @@ public class UnifiedFormulaLiftingTests
         {
             var root = new Algorithm.User(null, [], [], [new Property("Family", family)], rows);
             var diagnostics = new DiagnosticBag();
-            _ = ImplicitArgumentResolver.ResolvePrevalidated(root, diagnostics: diagnostics);
+            _ = ImplicitArgumentResolver.ResolveNameResolvedPrevalidated(root, diagnostics: diagnostics);
             Assert.Single(diagnostics, diagnostic => diagnostic.Code == DiagnosticCode.UnliftableClauseFamily);
         }
     }
@@ -480,11 +480,18 @@ public class UnifiedFormulaLiftingTests
             Assert.Equal("ok 8", await Outcome(source + "R = P2.Z2 + 0\nR(7)"));
 
         // A provider that needs a parameter is no open target (IllegalInOpen, as in HEAD) — the stale
-        // read had hidden the parameter P2 lifts from P1.
+        // read had hidden the parameter P2 lifts from P1. P2's output is a calculation, so P2 lifts it.
         const string P1Lifting = "P1 = {\n    open P2\n    public A1 = A2 + 1\n    Inc + 0\n}\n";
+        const string P2Lifting = "P2 = {\n    public A2 = 5\n    Z2 = P1 + 0\n    Z2 + 0\n}\n";
+        foreach (var source in new[] { Inc + P1Lifting + P2Lifting, Inc + P2Lifting + P1Lifting })
+            Assert.Contains(Parser.Parse(source + "R = P2 + 0\nR(7)").Diagnostics, static diagnostic => diagnostic.Code == DiagnosticCode.IllegalInOpen);
+
+        // M4★ OD-C: a lone `Z2` row makes P2 a structural forwarding CARRIER, an open provider of its OWN
+        // public members whose output the open never evaluates (formerly a callable alias of Z2, refused
+        // as IllegalInOpen); the forwarding signature P2 takes from Z2 still reaches R in either order.
         const string P2Reading = "P2 = {\n    public A2 = 5\n    Z2 = P1 + 0\n    Z2\n}\n";
         foreach (var source in new[] { Inc + P1Lifting + P2Reading, Inc + P2Reading + P1Lifting })
-            Assert.Contains(Parser.Parse(source + "R = P2 + 0\nR(7)").Diagnostics, static diagnostic => diagnostic.Code == DiagnosticCode.IllegalInOpen);
+            Assert.Equal("ok 8", await Outcome(source + "R = P2 + 0\nR(7)"));
     }
 
     /// <summary>

@@ -668,9 +668,35 @@ M([], Bad)
 
 `C([1, 2, 3])` is exactly `count([1, 2, 3])`. `I` keeps the rule of `if` that only the chosen branch is computed, so the division by zero never runs, and `M` keeps the rule of `map` that the function is called once per element, so `M([], Bad)` never calls `Bad`. In the same way, with `Fact(0) = 1` and `Fact(n) = n * Fact(n - 1)`, `F = Fact` makes `F(4)` choose a clause exactly as `Fact(4)` does, and an alias of an alias is the same function again. The arguments of a call through an alias are treated exactly as in a call of the original: with `Inc(x) = x + 1`, `A = abs` and `K = A(Inc)`, `K(-5)` is `4`, just like `abs(Inc(-5))`.
 
-An alias is still its own definition. Used alone, without arguments, it gives the value its function gives with no arguments, and it remembers that value under its own name, separately from the original. Only a function that takes parameters can be aliased: with `Z = 2 + 3`, `A = Z` is an ordinary definition that reads `Z`'s value.
+An alias is the very definition it names. Used alone, without arguments, it gives the value its definition gives with no arguments — the same value, worked out once: the alias and the original share it. Any definition can be aliased, also one without parameters: with `Z = 2 + 3`, `A = Z` is `Z` under another name, so `A()` is a fresh call of `Z`, exactly like `Z()`.
 
-An alias names a function, not a group of definitions. If `Lib(x)` declares a member `K` and `A = Lib`, writing `A.K` does not look inside `Lib`, and `open A` is an error. A function handed on through the alias is `Lib` itself, though, so a formula that receives `A` as a parameter can use `.K` on it exactly as on `Lib`.
+An alias names the WHOLE definition, its members included, while writing the name in braces makes a new definition that hands its calls on:
+
+```
+Box = {
+    public Q = 99
+    F(x) = x * x
+    F
+}
+A = Box
+B = { Box }
+GetQ(f) = f.Q
+
+A.Q
+GetQ(A)
+A(3)
+B(3)
+```
+
+**Results:**
+```
+99
+99
+9
+9
+```
+
+`Box` declares its own members and its only row is the name `F`, so a call `Box(3)` is handed on to `F`. `A = Box` is `Box` itself: `A.Q` and `GetQ(A)` read Box's `Q`, `A(3)` is `Box(3)`, and `open A` opens Box's public members. `B = { Box }` is a definition of its own, written in braces: `B(3)` is handed on to `Box` as well, but `B` has only the members it declares itself — none — so `B.Q` does not reach Box's `Q`, and `open B` opens nothing of Box. The same holds for a definition that declares helpers of its own beside the name, such as a `Helper = 0` line written above `Box`: it has its own member `Helper` and hands its calls on to `Box`. Calling such a definition with no arguments is the call of what it names: `Box()` is an error, because `F` needs an argument — it never gives `F` back as a value.
 
 Forwarding by name needs parameter names. A function defined by clauses that bind no parameter name, such as `S(1) = 1` and `S(-1) = -1`, can be aliased, but `W(x) = S` is an error: there is no parameter name to hand `x` on by. Write the call instead: `W(x) = S(x)`.
 
@@ -1566,7 +1592,7 @@ Use(Square)
 
 **Result:** `(81, 4, 16)`
 
-Each call of `A` is a fresh call with exactly the arguments written there. That holds because `Square` has a parameter; when `f` receives an algorithm with no parameters, `A` is an ordinary property that reads it, and `A()` evaluates that property's expression again rather than being a second name for the algorithm (see [Calling a Captured Call's Algorithm](#calling-a-captured-calls-algorithm) for what that means for `A = R.Algorithm`). If `f` receives a plain value instead of an algorithm, `A` is an ordinary property holding that value: `A` reads it, and `A(9)` is an argument-count error. The same works for a member of a parameter — inside `Use(b)`, `A = b.G` calls the `G` that `b` itself declares — as long as `G` is a name KatLang already knows; an unknown `G` in `A = b.G` is still an input of `A` (see [Formulas That Use Formulas](#formulas-that-use-formulas)). Written `A.K` always means `A`'s own member `K`; an algorithm passed on through `A` keeps its own members.
+Each call of `A` is a fresh call of the algorithm `f` received, with exactly the arguments written there — whatever that algorithm's parameters: when `f` receives an algorithm with no parameters, `A()` calls it afresh just as `f()` would, and `A` alone reads its value (see [Calling a Captured Call's Algorithm](#calling-a-captured-calls-algorithm) for `A = R.Algorithm`). If `f` receives a plain value instead of an algorithm, `A` names that value: `A` reads it, and `A(9)` is an argument-count error. The same works for a member of a parameter — inside `Use(b)`, `A = b.G` calls the `G` that `b` itself declares. There `G` is a member name, never an input of `A`: when `b` has no member `G`, `A` names the computed value `G(b)`, so `A(9)` is an argument-count error. `A` stands for what `f` received in every way, so `A.K` is that algorithm's member `K`, exactly like `f.K`.
 
 ### Brace Algorithms
 
@@ -1735,11 +1761,11 @@ Step(0).Loop
 
 The rebuilt call is a new call, but its arguments are the very arguments of the captured one: each is computed at most once, whichever call needs it first.
 
-Obtaining `R.Algorithm` does not run the captured call or compute its arguments. A clause family is chosen again by the new arguments, and the algorithm keeps the names it was written with. Written without arguments, `R.Algorithm` is the captured algorithm read as a value, so for `Square`, which needs an argument, `R.Algorithm` alone is an error; `R.Algorithm()` calls it with no arguments, which is an error too — it never repeats the captured `5` (that is `R.Invoke()`). A property such as `A = R.Algorithm` is a new name for the captured algorithm when that algorithm has parameters, as in [Naming a Received Algorithm](#naming-a-received-algorithm): `A(8)` calls it afresh, `[1, 2].map(A)` uses it, and `A` alone is its value. Like `Invoke` and `Arguments`, `x.Algorithm` means the call-reference operation unless `x` has its own member named `Algorithm`; a definition named `Algorithm` of your own is still called as `Algorithm(x)`.
+Obtaining `R.Algorithm` does not run the captured call or compute its arguments. A clause family is chosen again by the new arguments, and the algorithm keeps the names it was written with. Written without arguments, `R.Algorithm` is the captured algorithm read as a value, so for `Square`, which needs an argument, `R.Algorithm` alone is an error; `R.Algorithm()` calls it with no arguments, which is an error too — it never repeats the captured `5` (that is `R.Invoke()`). A property such as `A = R.Algorithm` is a new name for the captured algorithm, whatever its parameters, as in [Naming a Received Algorithm](#naming-a-received-algorithm): `A(8)` calls it afresh, `[1, 2].map(A)` uses it, and `A` alone is its value. Like `Invoke` and `Arguments`, `x.Algorithm` means the call-reference operation unless `x` has its own member named `Algorithm`; a definition named `Algorithm` of your own is still called as `Algorithm(x)`.
 
-If the captured algorithm is an ordinary user algorithm with no parameters at all — say `R = F(3)` where `F` captures a call `B()` of its own parameterless `B` — `A = R.Algorithm` is not a new name for `B` but an ordinary property whose expression is `R.Algorithm`. Calling `A()` evaluates that expression again, and the expression reads the captured algorithm's value, which a call reference works out once and then keeps. So `A()` gives that kept value again without running `B` a second time, and passing `A` to `Call(f) = f()` passes the property, not `B`. To run the captured algorithm afresh, write `R.Algorithm()`; to repeat the captured call itself, write `R.Invoke()`. The difference shows only when `B` does something observable, such as a host operation that counts its calls; for a calculation like `B = 7` both spellings give the same value. What decides this is whether the algorithm declares parameters, not whether it can be called with no arguments: for `Only(*xs)` the property is a new name for `Only`, and every `A()` calls it afresh. If the receiver is itself a calculation, as in `A = F(3).Algorithm`, each `A()` evaluates `F(3)` again and so captures a new call, whose algorithm runs again.
+The same holds when the captured algorithm has no parameters at all — say `R = F(3)` where `F` captures a call `B()` of its own parameterless `B`: `A = R.Algorithm` is a new name for `B`, so `A()` calls `B` afresh, `A` alone is `B`'s own value, and passing `A` to `Call(f) = f()` passes `B`. To repeat the captured call itself, with its original arguments, write `R.Invoke()`. If the receiver is itself a calculation, as in `A = F(3).Algorithm`, `F(3)` is worked out once, when `A` is first needed, and every `A()` then calls the algorithm it captured afresh.
 
-If a received target is an ordinary zero-parameter property, the alias keeps ordinary property behavior: repeated bare reads share its value, while each explicit `A()` evaluates the alias's expression once afresh. The first successful owning `A()` may establish the alias's empty cached value; subsequent bare `A` reads reuse it, and later calls never replace it. This belongs to the alias's own binding and activation, and never populates its target's cache. Parameterized runtime-callable aliases keep their fresh-call behavior and do not publish this way. Checking whether the target is callable shares receiver work with the first ordinary read or terminal call, including work already performed by a higher-order member lookup. A runtime alias also keeps its own declared members through alias chains; opening it imports those members, without importing the target's members. Static callable aliases still cannot be opened.
+An alias never keeps a value of its own. Whatever it receives — a function with parameters or a property without any — `A()` calls the received target afresh, and `A` alone is the target's own value: the first `A()` may store that value for the target, exactly as the target's own first call would, and later calls never replace it. When what it receives is a plain value with no definition behind it — `b.G` where `b` has no member `G` but a function `G` takes it — `A` is that value, and `A()` gives the same value again without working anything out a second time; such an `A` cannot be handed on as a function. A runtime alias keeps its own declared members through alias chains; opening it imports those members, without importing the target's members. An alias of a definition that is known in advance, such as `A = Lib`, opens the members of `Lib` itself.
 
 
 ---
@@ -2568,7 +2594,27 @@ true
 false
 ```
 
-Each argument must bring its own value to compare. A function that requires arguments cannot supply a value just by being named, and an argument whose calculation fails reports its own error — the other argument never stands in for it:
+Two arguments that name the same definition are the same argument: they agree without being calculated. Arguments that name different definitions differ, even when their values are equal, while a plain value is compared by its value:
+
+```
+A = 7
+D = 7
+Same(x, x) = true
+Same(x, y) = false
+
+Same(A, A)
+Same(A, D)
+Same(A, 7)
+```
+
+**Results:**
+```
+true
+false
+true
+```
+
+When a plain value takes part, every argument must bring its own value to compare with it. A function that requires arguments cannot supply a value just by being named, and an argument whose calculation fails reports its own error — the other argument never stands in for it:
 
 ```
 Inc(y) = y + 1
@@ -2602,7 +2648,7 @@ Show(1.50, 1.5)
 
 A named property passed as one of the arguments is kept in preference to a plain number, on whichever side it stands: with `A = 1.50`, both `Show(1.5, A)` and `Show(A, 1.5)` give `1.50`.
 
-Repeated names preserve satisfiability when their contributions are permuted. Successful binding preserves VALUE up to `==`, callable identity and channel availability; equally rich compatible inputs retain the first written representation. When different incompatibilities coexist, ordinary binding order may report different categories: with `A = 1.0`, `B = 1.00`, `P(x,x,x) = x`, `P(A,B,2)` is `TypeMismatch` and `P(A,2,B)` is `ArityMismatch`. Both fail; family incompatibilities are clause non-match.
+Repeated names preserve satisfiability when their contributions are permuted. When a plain value takes part, successful binding also preserves the value up to `==`; when every argument names the same definition, the binding keeps that definition and its first argument, whose value is that argument's own. Equally rich compatible inputs retain the first written representation. When different incompatibilities coexist, ordinary binding order may report different categories: with `A = 1.0`, `B = 1.00`, `P(x,x,x) = x`, `P(A,B,2)` is `TypeMismatch` and `P(A,2,B)` is `ArityMismatch`. Both fail; family incompatibilities are clause non-match.
 
 ### Rules for Clauses
 

@@ -1298,14 +1298,18 @@ public closed record Expr
         /// MUST — a certain miss; MAY — the runtime receiver decides), stamped by
         /// parameter detection from the receiver's elaborated static structural-member
         /// provider (<see cref="AstHelpers.GetStructuralMissSelection"/>) — the same
-        /// classification implicit-signature inference acts on. On a miss the edge takes
+        /// classification implicit-signature inference acts on — and refined from MAY to
+        /// MUST by implicit-argument resolution where that decides a lift and the receiver
+        /// as it PROCESSED it certainly lacks the member (M4★: a link body that keeps an
+        /// input, a navigated body whose head is its own input; never to NEVER). On a miss the edge takes
         /// its miss route: the lexical fallback, or for an edge spelled <c>string</c> the
         /// intrinsic, so for every other edge this IS the fallback's selection, and every
-        /// pass reads the edge's route from it (the formula-lifting roles, the sibling
-        /// order, exposure through <see cref="AstHelpers.LexicalFallbackMayBeSelected"/>,
+        /// pass reads the edge's route from it (the formula-lifting roles; the sibling
+        /// order, which for a MAY resolution may refine also records what a certain miss
+        /// reads; exposure through <see cref="AstHelpers.LexicalFallbackMayBeSelected"/>,
         /// which charges a fallback that names an enclosing owner's parameter exactly when
-        /// the runtime may take it). The verdict is final: selection never depends on
-        /// exposure (K1-08), so later passes never recheck it. <c>null</c> on an
+        /// the runtime may take it). After resolution the verdict is final: selection never
+        /// depends on exposure (K1-08), so later passes never recheck it. <c>null</c> on an
         /// unelaborated tree (a raw parser tree or a host-built one), where consumers fall
         /// back to the receiver expression's raw shape classification
         /// (<see cref="AstHelpers.EffectiveMissSelection"/>).
@@ -1317,12 +1321,15 @@ public closed record Expr
         /// THIS edge's lexical-fallback occurrence promoted — the same note
         /// object the owner's inferred capture carries — stamped by parameter
         /// detection when the receiver is a statically known algorithm that
-        /// provably lacks the member (<see cref="ImplicitParameterProvenance.DotMemberOrigin"/>);
-        /// <c>null</c> for a bare or opaque receiver, a fallback that resolved,
-        /// a raw parser tree, and a host-built one. It exists so the
-        /// post-exposure provenance walk (<see cref="DotMemberProvenanceFinalizer"/>)
-        /// can re-examine the edge against the completed tree and update the
-        /// shared note in place; it never takes part in resolution. Carried in an
+        /// provably lacks the member, or (M4★) a receiver of a MAY edge claimed as
+        /// WRITTEN, which only resolution decides
+        /// (<see cref="ImplicitParameterProvenance.DotMemberOrigin"/>); <c>null</c> for
+        /// a parameter or ambiguous receiver, a fallback that resolved, a raw parser
+        /// tree, and a host-built one. It exists so the post-exposure provenance walk
+        /// (<see cref="DotMemberProvenanceFinalizer"/>) can re-examine the edge against
+        /// the completed tree and update the shared note in place — a claim is kept
+        /// exactly when the elaborated receiver certainly lacks the member — and it
+        /// never takes part in resolution. Carried in an
         /// equality-transparent slot, so every <c>with</c> copy of the edge — the
         /// resolver's, completion's, and exposure's rewrites — keeps it while
         /// record equality, hashing, and printing ignore it.
@@ -1331,6 +1338,23 @@ public closed record Expr
         {
             get => _inferredFallbackProvenance.Value;
             init => _inferredFallbackProvenance = new(value);
+        }
+
+        private readonly RuntimeStateSlot<ProvisionalMiss?> _provisionalMiss;
+
+        /// <summary>
+        /// Diagnostic-only: for an edge parameter detection stamped as a miss the runtime receiver decides
+        /// (<see cref="ElaboratedMissSelection"/> <see cref="LexicalFallbackSelection.Conditional"/>) while it made a
+        /// report that holds only if the miss is CERTAIN — a closed body's undeclared fallback name (Q-75 F-A), an
+        /// ambiguously opened one (Q-29 A-U), a Grace marker on a dot-only intrinsic — the edge's
+        /// <see cref="KatLang.ProvisionalMiss"/>: the checks that wait on it, and the decision implicit-argument
+        /// resolution registers where it rewrites the edge (M4★: the receiver's PROCESSED structure decides).
+        /// Equality-transparent, like <see cref="InferredFallbackProvenance"/>.
+        /// </summary>
+        internal ProvisionalMiss? ProvisionalMiss
+        {
+            get => _provisionalMiss.Value;
+            init => _provisionalMiss = new(value);
         }
 
         // META-S3-4: the argumentless edge of this argument-bearing edge, derived once by an invocation
@@ -2072,7 +2096,6 @@ public closed record Algorithm
 {
     private readonly RuntimeStateSlot<DeclarationIdentity?> _declaration;
     private readonly RuntimeStateSlot<DeferredModuleRegion?> _deferredRegion;
-
     private Algorithm(DeclarationIdentity? declaration)
     {
         _declaration = new(declaration);
@@ -2093,7 +2116,7 @@ public closed record Algorithm
     /// its input model has no external modules and no demand timing). Set by the module
     /// loader when it defers a load-bearing branch body, and REPLACED — never registered
     /// anywhere — by each front-end pass on the output view it produces for that placeholder
-    /// (<see cref="DeferredModuleRegion.WithDetection"/> and its siblings fork the region
+    /// (<see cref="DeferredModuleRegion.WithStructure"/> and its siblings fork the region
     /// with the pass's own context). Every <c>with</c> copy of a placeholder carries the same
     /// region object through the record copy constructor: the evaluator's parent wiring and
     /// the flat-binder equivalent of a one-clause family read the very state machine the
@@ -2376,6 +2399,15 @@ public closed record Algorithm
     /// </summary>
     public sealed record User : Algorithm
     {
+        private RuntimeStateSlot<CompletedStructurePublication?> _completedStructure;
+
+        /// <summary>Completed lookup metadata; equality-transparent and never an AST child.</summary>
+        internal CompletedStructurePublication? CompletedStructure
+        {
+            get => _completedStructure.Value;
+            set => _completedStructure = new(value);
+        }
+
         public User(
             ScopeCtx? Parent,
             IReadOnlyList<ParameterPattern> ParameterPatterns,
@@ -2392,13 +2424,13 @@ public closed record Algorithm
         }
 
         /// <summary>
-        /// The ORDINARY ZERO-PARAMETER PROPERTY of a runtime-target alias (FWD-02, META-S3-2): the same
-        /// written declaration (<see cref="Algorithm.Declaration"/>), wired where the alias is, with the
-        /// alias's own opens and declarations and its one row as its output — exactly the open body the
-        /// alias was elaborated from. A runtime alias whose projected identity declares no parameterized
-        /// callable structure (absence, a value, a zero-parameter property) normalizes to it, so every
-        /// callable consumer receives an ordinary property and never the unresolved alias again. Lean:
-        /// <c>Algorithm.aliasPropertyView</c>.
+        /// The VALUE VIEW of a runtime-target alias (META-S3-2, M4★): the same written declaration
+        /// (<see cref="Algorithm.Declaration"/>), wired where the alias is, with the alias's own opens and
+        /// declarations and its one row as its output — exactly the open body the alias was elaborated from.
+        /// A runtime alias whose binding cell projects NO callable identity (a value-only row: a value
+        /// parameter, a member path's miss) normalizes to it — an identity of any arity is followed instead
+        /// (L-RUN) — so no consumer receives the unresolved alias again; its zero-supply invocation answers
+        /// the cell's VALUE, never a rerun of the row. Lean: <c>Algorithm.aliasPropertyView</c>.
         /// </summary>
         internal User(Alias alias)
             : base(alias.Declaration)
@@ -2662,6 +2694,18 @@ public closed record Algorithm
         /// Not part of the Lean model — no observable evaluation semantics depend on it.
         /// </summary>
         internal bool IsModuleElaborated { get; init; }
+
+        /// <summary>
+        /// THE WRITTEN-BRACE FACT (M4★, ALIAS-UNIFY-1, October 2026): <c>true</c> for a body the parser
+        /// read from a written brace block <c>{ … }</c> — a definition <c>A = { … }</c> adopts it, an
+        /// inline <c>{ … }</c> keeps it — and never for an unbraced body (<c>A = R</c>, <c>A = (R)</c>),
+        /// the root, a recovery block or a synthesized one. It decides whether an open body whose one
+        /// row is an algorithm reference elaborates to a TRANSPARENT REFERENCE or a STRUCTURAL
+        /// FORWARDING CARRIER (<see cref="Alias.IsReference"/>). A front-end fact carried by every
+        /// <c>with</c> copy and compared by record equality — two bodies that differ only in their
+        /// braces are different algorithms; Lean receives only the resulting alias kind.
+        /// </summary>
+        internal bool IsWrittenBlock { get; init; }
     }
 
     /// <summary>
@@ -2717,6 +2761,15 @@ public closed record Algorithm
     /// </summary>
     public sealed record Conditional : Algorithm
     {
+        private RuntimeStateSlot<CompletedStructurePublication?> _completedStructure;
+
+        /// <summary>Completed lookup metadata; equality-transparent and never an AST child.</summary>
+        internal CompletedStructurePublication? CompletedStructure
+        {
+            get => _completedStructure.Value;
+            set => _completedStructure = new(value);
+        }
+
         public Conditional(
             ScopeCtx? Parent,
             IReadOnlyList<Expr> Opens,
@@ -2766,46 +2819,54 @@ public closed record Algorithm
     }
 
     /// <summary>
-    /// A CALLABLE ALIAS (FWD-02, binding indirection; decided October 1 2026). Corresponds to
-    /// <c>Algorithm.alias</c> in the Lean specification and owns exactly its fields:
-    /// <see cref="Parent"/>, <see cref="Opens"/>, <see cref="Properties"/>, and the written
-    /// <see cref="Target"/> reference.
+    /// AN ALIAS (FWD-02 binding indirection, October 1 2026; M4★ whole-algorithm transport, ALIAS-UNIFY-1,
+    /// October 2026). Corresponds to <c>Algorithm.alias</c> in the Lean specification and owns exactly its
+    /// fields: <see cref="Parent"/>, <see cref="Opens"/>, <see cref="Properties"/>, the written
+    /// <see cref="Target"/> reference and <see cref="IsReference"/>.
     ///
-    /// <para>A non-root OPEN body — a named definition or an inline block with no written
-    /// parameter list and no parameter of its own — whose ONE written row is a bare reference
-    /// <c>F</c> is an alias when name resolution selects ONE callable identity that declares
-    /// parameterized callable structure: a builtin, a clause family (nameable or not), or a user
-    /// algorithm with at least one completed parameter pattern — or another alias, so a chain
-    /// normalizes to one target. The front end (<see cref="ImplicitArgumentResolver"/>) produces
-    /// this node; nothing is synthesized: an alias has no parameter list, no inherited signature
-    /// and no wrapper call.</para>
+    /// <para>A non-root OPEN body — a named definition or an inline block with no written parameter list
+    /// and no parameter of its own after inference — whose ONE written row is a bare reference <c>F</c> is
+    /// an alias when name resolution selects ONE algorithm identity, OF ANY ARITY (a parameterized user
+    /// algorithm, a zero-parameter property, a builtin, a clause family, a Math member, a host operation,
+    /// or another alias, so a chain normalizes to one target). The front end
+    /// (<see cref="ImplicitArgumentResolver"/>) produces this node; nothing is synthesized: an alias has no
+    /// parameter list, no inherited signature and no wrapper call. An unbraced row with nothing declared
+    /// or opened beside it is a TRANSPARENT REFERENCE (<see cref="IsReference"/>): every observation —
+    /// structural identity, members, open provider, invocation, bare VALUE, publication origin — is the
+    /// target's. Written braces, the body's own declarations or opens, or a loaded module's root make a
+    /// STRUCTURAL FORWARDING CARRIER: its structure — its declaration, its activation and its members, its
+    /// own <see cref="Properties"/> only, never its target's — is its own, while every explicit invocation
+    /// forwards its exact supplied computations freshly to the target, resolved in the carrier's scope at
+    /// its declaring activation.</para>
     ///
-    /// <para><b>Two identities.</b> The BINDING is the alias's own: the property that holds this
-    /// algorithm keeps its declaration, exposure, zero-argument cache entry and editor symbol, and
-    /// the alias declares only what its own body declares (<see cref="Properties"/>, normally none)
-    /// — never its target's members, so written member access <c>A.K</c> takes the ordinary
-    /// fallback; a runtime-row alias can provide its own namespace to <c>open</c>, while a static
-    /// alias cannot. The CALLABLE is the target's: every callable use
-    /// of the alias — a call, a callback or loop step, the callable channel of an argument, a
-    /// invocation through a parameter — is the use of the callable its <see cref="Target"/> resolves
-    /// to IN THE ALIAS'S OWN SCOPE (never re-resolved at a use site), through that callable's own
-    /// invocation (user binder, builtin adapter, clause dispatch, Math or host wrapper). The
-    /// evaluator normalizes an alias to its target where it resolves a binding; the alias is not
-    /// an invocation and charges no step or depth.</para>
+    /// <para><b>No entry of its own.</b> Neither kind owns a zero-argument cache entry (OD-E): a bare read
+    /// is the target's bare read under the target's own owner and activation, and a call publishes under
+    /// the target's origin. The evaluator normalizes an alias where it resolves a binding (one chase per
+    /// purpose: INVOCATION, STRUCTURE, VALUE); an alias is not an invocation and charges no step or
+    /// depth.</para>
     ///
     /// <para><see cref="Target"/> is a STATIC PATH — a name (<see cref="Expr.Resolve"/>) or an
     /// argumentless structural dot path whose head is a name or a block — or a RUNTIME ROW
     /// (<see cref="AliasTargetRows.IsRuntimeRow"/>, META-S3-2): a parameter reference, an argumentless
     /// <c>.Algorithm</c> link, or an argumentless parameter-rooted member path, whose callable identity
     /// is known only at run time. A RUNTIME-TARGET ALIAS is an alias whose own target is a runtime row;
-    /// its callable is the identity its ONE binding cell projects per declaring activation when that
-    /// identity declares parameterized callable structure, and otherwise the alias is exactly its
-    /// ordinary zero-parameter property (<see cref="User(Alias)"/>). A host-built alias whose target is
+    /// its callable is the identity its ONE binding cell projects per declaring activation, OF ANY ARITY
+    /// (M4★), and when the cell projects none the alias is its VALUE VIEW (<see cref="User(Alias)"/>),
+    /// whose zero-supply invocation returns that cell's VALUE, never a rerun of the row. A host-built alias whose target is
     /// anything else, or whose static targets form a cycle, is rejected before evaluation
     /// (<see cref="EvalError.IllegalInEval"/>).</para>
     /// </summary>
     public sealed record Alias : Algorithm
     {
+        private RuntimeStateSlot<CompletedStructurePublication?> _completedStructure;
+
+        /// <summary>Completed lookup metadata; equality-transparent and never an AST child.</summary>
+        internal CompletedStructurePublication? CompletedStructure
+        {
+            get => _completedStructure.Value;
+            set => _completedStructure = new(value);
+        }
+
         public Alias(
             ScopeCtx? Parent,
             IReadOnlyList<Expr> Opens,
@@ -2832,7 +2893,25 @@ public closed record Algorithm
             Properties = body.Properties;
             Target = target;
             IsModuleElaborated = body.IsModuleElaborated;
+            // Only a bare written reference is transparent: a body that owns a namespace of its own —
+            // written braces, its own declarations or opens, or a loaded module's root (a source unit,
+            // Q-31) — keeps its structure as a forwarding carrier.
+            IsReference = !body.IsWrittenBlock && !body.IsModuleElaborated && body.Properties.Count == 0 && body.Opens.Count == 0;
         }
+
+        /// <summary>
+        /// THE ALIAS KIND (M4★, ALIAS-UNIFY-1, October 2026). <c>true</c> — a TRANSPARENT REFERENCE, the
+        /// unbraced <c>A = R</c>: every observation of the alias is <c>R</c>'s — its structural identity,
+        /// members, open providers, invocation, bare VALUE and publication origin. <c>false</c> — a
+        /// STRUCTURAL FORWARDING CARRIER, the written braces <c>A = { R }</c> (own declarations allowed,
+        /// an inline <c>{ R }</c> too): its STRUCTURE is its own (its declaration and activation, its own
+        /// <see cref="Properties"/> only — no inheritance — and its own public declarations for
+        /// <c>open</c>) while every explicit invocation forwards its exact supplied computations FRESHLY
+        /// to <c>R</c>'s target and its bare VALUE delegates to the target's bare view. Neither kind owns a
+        /// zero-argument cache entry. A host-built alias is a reference unless the host sets this to
+        /// <c>false</c>. Lean: the <c>reference</c> field of <c>Algorithm.alias</c>.
+        /// </summary>
+        public bool IsReference { get; init; } = true;
 
         /// <summary>Lean: the <c>parent</c> field of <c>Algorithm.alias</c>.</summary>
         public ScopeCtx? Parent { get; init; }
@@ -2842,8 +2921,9 @@ public closed record Algorithm
 
         /// <summary>
         /// Lean: the <c>properties</c> field of <c>Algorithm.alias</c>: what the alias body itself
-        /// declares (normally nothing; <c>A = { F(x) = x * 100 ⏎ F }</c> declares <c>F</c>). These are
-        /// the alias's only members — never its target's.
+        /// declares (normally nothing; <c>A = { F(x) = x * 100 ⏎ F }</c> declares <c>F</c>). These are a
+        /// carrier's only members — never its target's; a transparent reference declares none, and its
+        /// members are its target's (M4★).
         /// </summary>
         public IReadOnlyList<Property> Properties { get; init; }
 
@@ -2859,7 +2939,7 @@ public closed record Algorithm
         /// </summary>
         internal bool IsModuleElaborated { get; init; }
 
-        private readonly RuntimeStateSlot<ImplicitArgumentResolver.AliasTarget?> _resolvedTarget;
+        private readonly RuntimeStateSlot<AliasTargetCell?> _resolvedTarget;
 
         /// <summary>
         /// The FRONT END's facts about the callable <see cref="Target"/> resolved to when the alias
@@ -2867,13 +2947,43 @@ public closed record Algorithm
         /// later front-end question asked of the alias (argument roles, formula lifting, bare
         /// forwarding, another alias) and the editor read instead of the alias's own (empty)
         /// signature. Null for a host-built alias (the evaluator resolves <see cref="Target"/>
-        /// itself and never reads this). A front-end fact with no Lean counterpart, carried in an
-        /// equality-transparent slot so every <c>with</c> copy keeps it.
+        /// itself and never reads this). A front-end fact with no Lean counterpart. Read from
+        /// <see cref="ResolvedTargetCell"/>, so it is the processed target's once that target is processed.
         /// </summary>
-        internal ImplicitArgumentResolver.AliasTarget? ResolvedTarget
+        internal ImplicitArgumentResolver.AliasTarget? ResolvedTarget => _resolvedTarget.Value?.Target;
+
+        /// <summary>
+        /// The cell <see cref="ResolvedTarget"/> is read from (<see cref="AliasTargetCell"/>), shared by an alias whose target
+        /// is this alias's and by every <c>with</c> copy. Equality-transparent.
+        /// </summary>
+        internal AliasTargetCell? ResolvedTargetCell
         {
             get => _resolvedTarget.Value;
             init => _resolvedTarget = new(value);
+        }
+
+        private readonly RuntimeStateSlot<AliasStructureCell?> _resolvedStructure;
+
+        /// <summary>
+        /// The FRONT END's static STRUCTURE of a transparent reference (M4★, ALIAS-UNIFY-1): the algorithm
+        /// its structure chase reaches when it was elaborated — references followed through their own
+        /// recorded structures, a structural carrier the end (its own members, never its target's) — so
+        /// static member navigation (<c>A.K</c> with <c>A = Lib</c> is <c>Lib.K</c>) agrees with the
+        /// evaluator's <c>ResolveAliasStructure</c>. Null for a carrier (its structure is itself), a
+        /// runtime-target alias (no static structure) and a host-built alias. Read from
+        /// <see cref="ResolvedStructureCell"/>, so it is the processed body once the body it reaches is processed.
+        /// </summary>
+        internal Algorithm? ResolvedStructure => _resolvedStructure.Value?.Structure;
+
+        /// <summary>
+        /// The cell <see cref="ResolvedStructure"/> is read from, shared by every reference whose structure is
+        /// this one's (<see cref="AliasStructureCell"/>) and by every <c>with</c> copy. Equality-transparent, like
+        /// <see cref="ResolvedTarget"/>.
+        /// </summary>
+        internal AliasStructureCell? ResolvedStructureCell
+        {
+            get => _resolvedStructure.Value;
+            init => _resolvedStructure = new(value);
         }
 
         private readonly RuntimeStateSlot<bool> _hasRuntimeTarget;
@@ -2934,6 +3044,147 @@ internal static class AliasTargetRows
     /// </summary>
     internal static bool IsAdmitted(Expr target)
         => StaticAliasTargets.IsStaticPath(target) || IsRuntimeRow(target);
+}
+
+/// <summary>
+/// The recorded TARGET of a callable alias (<see cref="Algorithm.Alias.ResolvedTarget"/>), shared by an alias whose target is
+/// another alias's (<c>C = A</c>) — a front-end fact with no Lean counterpart. An alias elaborated while its target is a
+/// written body not yet processed — the body enclosing it (<c>R = { public a = R ⏎ … }</c>) or an unsettled sibling — records
+/// the target as that body reads, PENDING until implicit-argument resolution completes it with the target as the processed
+/// body reads (its lifted parameters included), so lifting, forwarding, roles and the editor read the processed target.
+/// </summary>
+internal sealed class AliasTargetCell
+{
+    private AliasTargetCell(ImplicitArgumentResolver.AliasTarget? target, bool pending)
+    {
+        Target = target;
+        IsPending = pending;
+    }
+
+    /// <summary>A target known when it is recorded.</summary>
+    internal static AliasTargetCell Of(ImplicitArgumentResolver.AliasTarget? target) => new(target, pending: false);
+
+    /// <summary>A target that is a written body not yet processed, as it reads now.</summary>
+    internal static AliasTargetCell PendingOn(ImplicitArgumentResolver.AliasTarget target) => new(target, pending: true);
+
+    /// <summary>The target: as the written body reads while pending, then as the processed one reads.</summary>
+    internal ImplicitArgumentResolver.AliasTarget? Target { get; private set; }
+
+    internal bool IsPending { get; private set; }
+
+    /// <summary>Records the target as the processed body reads (once; a completed cell is final).</summary>
+    internal void Complete(ImplicitArgumentResolver.AliasTarget? processed)
+    {
+        if (!IsPending)
+            return;
+        Target = processed;
+        IsPending = false;
+    }
+}
+
+/// <summary>
+/// One dot edge parameter detection stamped as a miss the runtime receiver decides (MAY) while a report it makes holds
+/// only for a CERTAIN miss (<see cref="Expr.DotCall.ProvisionalMiss"/>, M4★): the receiver may be a body whose structure
+/// only implicit-argument resolution decides (a link-row body, a navigated body whose head an enclosing body may infer),
+/// whose miss it then decides; any other MAY receiver (a parameter's) stays the runtime's. Detection attaches the checks
+/// that wait on the edge (<see cref="Depend"/>); resolution registers, where it rewrites the edge, how the miss is
+/// decided from the PROCESSED receiver (<see cref="Register"/>), and decides it — once, after it processed every body
+/// (<see cref="IsCertain"/>), so the decision never depends on the processing order — and then lets go of both
+/// (<see cref="Release"/>), so the published tree that keeps the cell reaches no pass state (SEC-S1). One per detection
+/// input edge and the scope that reads it (a host tree may share one body under two scopes, whose receivers may
+/// differ): every rewrite of the edge in that scope shares it. A front-end fact with no Lean counterpart.
+/// </summary>
+internal sealed class ProvisionalMiss
+{
+    private Func<bool>? _decider;
+    private bool? _certain;
+    private List<DeferredFallbackCheck>? _checks;
+
+    /// <summary>The checks that wait on this edge, in the order detection made them.</summary>
+    internal IReadOnlyList<DeferredFallbackCheck> Checks => _checks is null ? [] : _checks;
+
+    /// <summary>Whether the cell still holds a decider or checks — the passes' state (tests: released after resolution).</summary>
+    internal bool HoldsPassState => _decider is not null || _checks is not null;
+
+    /// <summary>Detection: <paramref name="check"/> waits on this edge.</summary>
+    internal void Depend(DeferredFallbackCheck check) => (_checks ??= []).Add(check);
+
+    /// <summary>Resolution, where it rewrites the edge: how the miss is decided (the first registration stands).</summary>
+    internal void Register(Func<bool> decider) => _decider ??= decider;
+
+    /// <summary>
+    /// Whether the miss is certain — decided once, when first asked, which is after resolution processed every body; an
+    /// edge resolution never rewrote stays one the runtime receiver decides.
+    /// </summary>
+    internal bool IsCertain => _certain ??= _decider?.Invoke() ?? false;
+
+    /// <summary>
+    /// Resolution, once every check waiting on the edge is made: drops the decider and the checks — the closures over
+    /// both passes' state — keeping only a decision already taken.
+    /// </summary>
+    internal void Release()
+    {
+        _decider = null;
+        _checks = null;
+    }
+}
+
+/// <summary>
+/// A check parameter detection defers until implicit-argument resolution has decided the provisional misses it waits
+/// on (<see cref="ProvisionalMiss"/>): made once, when resolution has processed every body, into the place in its
+/// diagnostic list detection reserved for it (<see cref="DiagnosticBag.ReserveAnchor"/>). A front-end fact with no Lean
+/// counterpart.
+/// </summary>
+internal sealed class DeferredFallbackCheck(Action commit)
+{
+    private bool _committed;
+
+    /// <summary>Makes the check (once).</summary>
+    internal void Commit()
+    {
+        if (_committed)
+            return;
+        _committed = true;
+        commit();
+    }
+}
+
+/// <summary>
+/// The recorded static STRUCTURE of a transparent reference (<see cref="Algorithm.Alias.ResolvedStructure"/>, M4★),
+/// shared by every reference whose structure is the same reference's (<c>C = A</c> reads A's cell) — a front-end fact
+/// with no Lean counterpart. A reference elaborated while the body its structure chase reaches is still unprocessed —
+/// the body enclosing it (<c>R = { public a = R ⏎ … }</c>) or a member of a sibling cycle — records that WRITTEN body,
+/// PENDING until implicit-argument resolution completes it (<see cref="Complete"/>); the processed body then replaces
+/// it, so a structure read after resolution is never an input body. A pending structure is read statically, never
+/// navigated as if processed (its members are written bodies too).
+/// </summary>
+internal sealed class AliasStructureCell
+{
+    private AliasStructureCell(Algorithm? structure, bool pending)
+    {
+        Structure = structure;
+        IsPending = pending;
+    }
+
+    /// <summary>A structure known when it is recorded (null: none statically known).</summary>
+    internal static AliasStructureCell Of(Algorithm? structure) => new(structure, pending: false);
+
+    /// <summary>A structure that is the processed form of the written body <paramref name="written"/>, not yet processed.</summary>
+    internal static AliasStructureCell PendingOn(Algorithm written) => new(written, pending: true);
+
+    /// <summary>The structure: the written body while pending, then the processed one.</summary>
+    internal Algorithm? Structure { get; private set; }
+
+    internal bool IsPending { get; private set; }
+
+    /// <summary>Records the processed form of the pending written body (once; a completed cell is final).</summary>
+    internal void Complete(Algorithm? processed)
+    {
+        if (!IsPending)
+            return;
+        Structure = processed;
+        IsPending = false;
+    }
 }
 
 /// <summary>

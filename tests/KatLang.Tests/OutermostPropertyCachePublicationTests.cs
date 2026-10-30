@@ -166,7 +166,12 @@ public class OutermostPropertyCachePublicationTests
 
         // CACHE-PUB-1: indirect re-entry through another property's explicit call: A() owns A, B()
         // owns B, and both inner requests are re-entrant; each owner publishes once.
-        { "A = if(tick() < 3, B() + 1, 0)\nB = A\nA(), A, B", "S[2, 2, 1]", Ticks(3) },
+        { "A = if(tick() < 3, B() + 1, 0)\nB = A + 0\nA(), A, B", "S[2, 2, 1]", Ticks(3) },
+
+        // M4★ (OD-E): `B = A` is a transparent alias owning no entry, so B() is the fresh A() — re-entrant
+        // under A()'s ownership, never an owner of its own — and the bare B reads A's one entry (formerly
+        // B's own entry held 1: S[2, 2, 1]).
+        { "A = if(tick() < 3, B() + 1, 0)\nB = A\nA(), A, B", "S[2, 2, 2]", Ticks(3) },
 
         // An explicit call after publication evaluates afresh (0) and replaces nothing.
         { "A = if(tick() < 3, A + 1, 0)\nA, A(), A", "S[2, 0, 2]", Ticks(4) },

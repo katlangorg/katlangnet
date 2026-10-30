@@ -829,9 +829,10 @@ public class ImplicitForwardingByBindingNameTests
                 [shared, shared, new Expr.Call(shared, new OutputBundle([new Expr.Num(7), new Expr.Num(7)]))]))]),
         };
         root = root with { Properties = root.Properties.Select(p => p.Name == "Some" ? p with { Value = some } : p).ToArray() };
-        var (detected, diagnostics) = ParameterDetector.DetectPrevalidated(root);
+        var detectedInput = ParameterDetector.DetectPrevalidated(root);
+        var (detected, diagnostics) = detectedInput;
         Assert.Empty(diagnostics);
-        var resolved = ImplicitArgumentResolver.ResolvePrevalidated(detected);
+        var resolved = ImplicitArgumentResolver.ResolvePrevalidated(detectedInput);
         var alias = Property(Assert.IsType<Algorithm.User>(resolved), "Some");
         Assert.Equal(["x"], alias.Params);
         var list = Assert.IsType<Expr.ListLiteral>(Assert.Single(alias.Output));

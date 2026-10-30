@@ -86,7 +86,8 @@ public class LoopTempMemoSuspensionTests
     [Fact]
     public void NestedTempCalls_KeepTheDeclaringStepMemo()
     {
-        // B() and C() read the same sibling A; only their own bodies run fresh.
+        // B() reads the sibling A's memo; only its own body runs fresh. C = A is a transparent alias of A
+        // (M4★), so C() is the fresh A(): it evaluates A's body again without touching A's memo.
         const string source = "Step(n) = {\n    A = n * 10\n    C = A\n    B = A + C() + A\n    A + B() + A\n}\nStep(1).repeat(2)";
 
         var generic = Observe(source, optimized: false);
@@ -97,6 +98,7 @@ public class LoopTempMemoSuspensionTests
         // One A evaluation in each of the two Step activations.
         Assert.Equal(2, generic.Cache.Evaluations["A"]);
         Assert.Equal("Add(Add(TempSlot(A), TempCall(B)), TempSlot(A))", OutputSummary(planned.Loop));
-        Assert.Equal(10, planned.Loop.PlannedBuiltinOperations);
+        // The fresh A() adds its multiplication once per round (formerly 10, when C() only read A's memo).
+        Assert.Equal(12, planned.Loop.PlannedBuiltinOperations);
     }
 }

@@ -193,7 +193,9 @@ public class BudgetConservationTests
     /// <summary>
     /// Runs <paramref name="source"/> with a fault injected at the k-th property access and
     /// returns the escaped exception together with the run's budget. Fails the test if the
-    /// fault never fired or never escaped.
+    /// fault never fired or never escaped. The nested fixtures write every body as a
+    /// calculation (<c>A = B + 0</c>): a lone reference row is an alias (M4★), which owns no
+    /// property access of its own.
     /// </summary>
     private static (TException Thrown, EvaluationBudget Budget) RunFaulting<TException>(
         string source,
@@ -441,7 +443,7 @@ public class BudgetConservationTests
     [Fact]
     public void RejectedArgumentDepthEnter_DoesNotEvaluateTheArgumentBody()
     {
-        var ast = Ast("A = B\nB = 7\ncount(A)");
+        var ast = Ast("A = B + 0\nB = 7\ncount(A)");
 
         var admitted = new CountingZeroArgPropertyResultCache(new RunScopedZeroArgPropertyResultCache());
         var (okResult, okBudget) = Evaluator.RunCountedObserved(
@@ -588,7 +590,7 @@ public class BudgetConservationTests
         // Fault at the third nested property access: three charged invocation regions are
         // live when the CLR exception is thrown.
         var (thrown, budget) = RunFaulting<InvalidOperationException>(
-            "A = B\nB = C\nC = 1\nA",
+            "A = B + 0\nB = C + 0\nC = 1\nA",
             faultAtAccess: 3,
             () => new InvalidOperationException("fault-injection"),
             limits: new EvaluationLimits { MaxDepth = 12 });
@@ -622,7 +624,7 @@ public class BudgetConservationTests
     public void InvocationDepth_IsReleasedOnExceptionBeforeCacheLookup()
     {
         var (_, budget) = RunFaulting<InvalidOperationException>(
-            "A = B\nB = C\nC = 1\nA",
+            "A = B + 0\nB = C + 0\nC = 1\nA",
             faultAtAccess: 3,
             () => new InvalidOperationException("fault-injection"),
             FaultSite.BeforeCacheLookup,
@@ -639,7 +641,7 @@ public class BudgetConservationTests
     public void ScopedDepth_IsReleasedOnExceptionAtEveryNestingLevel(int faultAtAccess)
     {
         var (_, budget) = RunFaulting<InvalidOperationException>(
-            "A = B\nB = C\nC = D\nD = 1\nA",
+            "A = B + 0\nB = C + 0\nC = D + 0\nD = 1\nA",
             faultAtAccess,
             () => new InvalidOperationException("fault-injection"),
             limits: new EvaluationLimits { MaxDepth = 12 });
@@ -662,7 +664,7 @@ public class BudgetConservationTests
         cts.Cancel();
 
         var (thrown, budget) = RunFaulting<OperationCanceledException>(
-            "A = B\nB = C\nC = 1\nA",
+            "A = B + 0\nB = C + 0\nC = 1\nA",
             faultAtAccess: 3,
             () => new OperationCanceledException(cts.Token),
             limits: new EvaluationLimits { MaxDepth = 12 });
@@ -1040,7 +1042,7 @@ public class BudgetConservationTests
         // Now fault a run at that exact ceiling and re-probe its budget: the fault consumed
         // levels while unwinding, and every one of them must be back.
         var (_, faultedBudget) = RunFaulting<InvalidOperationException>(
-            "A = B\nB = C\nC = 1\nA",
+            "A = B + 0\nB = C + 0\nC = 1\nA",
             faultAtAccess: 3,
             () => new InvalidOperationException("fault-injection"),
             limits: new EvaluationLimits { MaxDepth = boundary });
@@ -1091,10 +1093,10 @@ public class BudgetConservationTests
         cts.Cancel();
 
         RunFaulting<InvalidOperationException>(
-            "A = B\nB = C\nC = 1\nA", 3,
+            "A = B + 0\nB = C + 0\nC = 1\nA", 3,
             () => new InvalidOperationException("fault-injection"), limits: atBoundary);
         RunFaulting<OperationCanceledException>(
-            "A = B\nB = C\nC = 1\nA", 3,
+            "A = B + 0\nB = C + 0\nC = 1\nA", 3,
             () => new OperationCanceledException(cts.Token), limits: atBoundary);
 
         var after = Evaluator.Run(Ast(boundaryProgram), atBoundary);
@@ -1191,7 +1193,7 @@ public class BudgetConservationTests
             ? () => new OperationCanceledException(cts.Token)
             : () => new InvalidOperationException("fault-injection");
 
-        const string Probe = "A = B\nB = C\nC = 41\nA + 1";
+        const string Probe = "A = B + 0\nB = C + 0\nC = 41\nA + 1";
         var limits = new EvaluationLimits { MaxDepth = 16 };
 
         var (freshResult, freshBudget) = Evaluator.RunCountedObserved(
@@ -1223,7 +1225,7 @@ public class BudgetConservationTests
     [Fact]
     public void SuccessThenFaultThenSuccess_AgreesWithAFreshCache()
     {
-        const string Probe = "A = B\nB = C\nC = 41\nA + 1";
+        const string Probe = "A = B + 0\nB = C + 0\nC = 41\nA + 1";
         var limits = new EvaluationLimits { MaxDepth = 16 };
         var shared = new RunScopedZeroArgPropertyResultCache();
 

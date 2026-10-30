@@ -56,12 +56,14 @@ public static partial class Evaluator
     /// <summary>
     /// A selected lexical binding: its declaring owner (an evaluator-owned declaration, or the
     /// ownerless host-built level that declares it — CACHE-OWNER-D3), the binding, and the binding's
-    /// value wired in context.
+    /// value wired in context. <see cref="CrossesCarrier"/> marks a VALUE read that reached this binding
+    /// through a structural carrier (Q-36 with M4★, <see cref="AliasTerminal.CrossesCarrier"/>).
     /// </summary>
     private readonly record struct ResolvedLexicalProperty(
         PropertyDeclaringOwner Owner,
         Property Binding,
-        Algorithm ResolvedAlgorithm);
+        Algorithm ResolvedAlgorithm,
+        bool CrossesCarrier = false);
 
     // ── EvalCtx (Lean: EvalCtx) ─────────────────────────────────────────────
 
@@ -552,14 +554,12 @@ public static partial class Evaluator
 
     /// <summary>
     /// Whether an algorithm is ineligible as an open provider: an explicitly or implicitly
-    /// parameterized algorithm, a clause family (even with a zero-arity branch), or a
-    /// callable alias (it denotes a callable whose target declares parameterized structure, never
-    /// a namespace: an alias declares no members of its target). Such an algorithm is not an
-    /// <c>open</c> provider under MOD-04 — <c>open</c> imports a namespace and never creates an
-    /// activation. A RUNTIME-TARGET alias (FWD-02,
-    /// META-S3-2; its target a runtime row) is a namespace of its own declarations exactly as its
-    /// ordinary zero-parameter property is: whether a callable identity is supplied is known only at
-    /// run time, and <c>open</c> imports declarations, never a callable (Lean:
+    /// parameterized algorithm or a clause family (even with a zero-arity branch). Such an algorithm
+    /// is not an <c>open</c> provider under MOD-04 — <c>open</c> imports a namespace and never creates an
+    /// activation. Every ALIAS that reaches the provider rule is a namespace (OD-C, M4★): a static
+    /// transparent reference was normalized to its target's stratified structure first
+    /// (<see cref="OpenStructure"/>), and a structural carrier or a runtime reference is its own
+    /// namespace — <c>open</c> imports declarations, never a callable (Lean:
     /// <c>Algorithm.requiresArguments</c>). Despite the name, the parameter test is MOD-04's
     /// nonempty EFFECTIVE parameter list, not a minimum supplied arity: a collector-only
     /// <c>Only(*xs)</c> accepts an empty supply yet is refused here (X-27; Q-58 asks whether
@@ -567,18 +567,7 @@ public static partial class Evaluator
     /// </summary>
     internal static bool RequiresArguments(Algorithm algorithm)
         => algorithm is Algorithm.Conditional
-            || (algorithm is Algorithm.Alias alias && !HasRuntimeAliasNamespace(alias))
-            || algorithm.ParameterCount > 0;
-
-    private static bool HasRuntimeAliasNamespace(Algorithm.Alias alias)
-    {
-        if (alias.HasRuntimeTarget) return true;
-        var chain = new List<Algorithm>();
-        for (var scope = alias.Parent; scope is not null; scope = scope.Parent)
-            chain.Add(new Algorithm.User(null, [], scope.Opens, scope.Properties, []));
-        chain.Reverse();
-        return new StaticAliasTargets().ReachesRuntimeRow(alias, chain);
-    }
+            || (algorithm is not Algorithm.Alias && algorithm.ParameterCount > 0);
 
     private static EvalError OpenTargetRequiresArguments(string targetDescription, Algorithm provider)
         => new EvalError.IllegalInOpen(FormatOpenTargetRequiresArguments(targetDescription, provider));
@@ -587,9 +576,6 @@ public static partial class Evaluator
     {
         if (provider is Algorithm.Conditional)
             return $"'{targetDescription}' cannot be opened because it is a clause family, not a namespace.";
-
-        if (provider is Algorithm.Alias)
-            return $"'{targetDescription}' cannot be opened because it is a callable alias, not a namespace; open imports only an algorithm that needs no call.";
 
         // The front end reports this once per written target, so the provider's parameter list
         // is echoed bounded, reading only the names it shows (see ExprNameRenderer.BoundedJoin).
@@ -1373,9 +1359,98 @@ public static partial class Evaluator
         if (resolved.IsError)
             return resolved;
 
-        return (resolved.Value is Algorithm.Alias ? AliasOpenRequiresArguments(resolved.Value, in ctx) : RequiresArguments(resolved.Value))
-            ? OpenTargetRequiresArguments(OpenExprName(openExpr), resolved.Value) with { Span = openExpr.Span }
-            : resolved;
+        // OD-C (M4★): a transparent reference opens its TARGET's namespace, under the target's own
+        // provider identity (so `open A, Lib` with `A = Lib` is ONE provider).
+        var provider = OpenStructure(resolved.Value, ctx);
+        if (provider.IsError)
+            return AtSpanIfMissing(provider.Error, openExpr.Span);
+        if (provider.Value is Algorithm.Builtin)
+            return new EvalError.IllegalInOpen($"builtin '{OpenExprName(openExpr)}'") { Span = openExpr.Span };
+        return RequiresArguments(provider.Value)
+            ? OpenTargetRequiresArguments(OpenExprName(openExpr), provider.Value) with { Span = openExpr.Span }
+            : provider;
+    }
+
+    /// <summary>The bound of <see cref="OpenStructure"/>'s reference hops (Lean <c>openStructureFuel</c>).</summary>
+    private const int OpenStructureFuel = 4096;
+
+    /// <summary>
+    /// THE STRATIFIED STRUCTURE OF AN OPEN TARGET (OD-C, M4★; Lean <c>openStructure</c>): a TRANSPARENT
+    /// REFERENCE opens its target's namespace, resolved WITHOUT any <c>open</c> — the reference's static
+    /// target is looked up DIRECTLY in the reference's own declarations and its declaring chain
+    /// (<see cref="LookupLexicalDirect"/>, never an open, never the evaluation of anything), and its member
+    /// steps navigate DECLARED members, each receiver read through this same structure — so resolving an
+    /// open target never depends on an open: a target only an open provides is unresolved
+    /// (<see cref="EvalError.UnknownName"/>). A structural CARRIER is its own namespace (its own public
+    /// declarations; its output is never evaluated), and so is a RUNTIME reference — a parameter row, a
+    /// parameter-rooted path, an <c>.Algorithm</c> link on a structural miss: its own namespace, so nothing
+    /// is opened dynamically. Every non-alias is itself. A chain longer than <see cref="OpenStructureFuel"/>
+    /// is the alias cycle it is (only a host-built tree can form one). Lean's tail recursion is a loop here
+    /// (each hop one unit of the same fuel); only a member step's receiver recurses, under the host-stack
+    /// backstop.
+    /// </summary>
+    private static EvalResult<Algorithm> OpenStructure(Algorithm algorithm, EvalCtx ctx, int fuel = OpenStructureFuel)
+    {
+        if (!System.Runtime.CompilerServices.RuntimeHelpers.TryEnsureSufficientExecutionStack())
+            return new EvalError.EvaluationStackExhausted();
+
+        for (var current = algorithm; ; fuel--)
+        {
+            if (current is not Algorithm.Alias { IsReference: true } reference)
+                return EvalResult<Algorithm>.Ok(current);
+            if (fuel == 0)
+                return new EvalError.IllegalInEval(AliasCycleMessage);
+            if (!StaticAliasTargets.IsStaticPath(reference.Target))
+                return EvalResult<Algorithm>.Ok(current);
+
+            var edges = new List<Expr.DotCall>();
+            Expr head = reference.Target;
+            while (head is Expr.DotCall { Args: null } edge)
+            {
+                edges.Add(edge);
+                head = edge.Target;
+            }
+            edges.Reverse();
+
+            Algorithm value;
+            switch (head)
+            {
+                case Expr.Resolve(var name):
+                    if (LookupLexicalDirect(reference, name, ctx.Budget) is not { } found)
+                        return new EvalError.UnknownName(name) { Span = head.Span };
+                    value = found;
+                    break;
+                case Expr.AlgorithmExpr(var block):
+                    value = ChildOfInContext(reference, block, ctx);
+                    break;
+                default:
+                    return new EvalError.IllegalInEval(AliasTargetNotStaticPathMessage(reference.Target)) { Span = reference.Target.Span };
+            }
+
+            foreach (var edge in edges)
+            {
+                var receiverR = OpenStructure(value, ctx, fuel - 1);
+                if (receiverR.IsError)
+                    return receiverR.Error;
+                var receiver = receiverR.Value;
+                var member = LookupPropBinding(receiver, edge.Name, ctx.Budget);
+                if (member is null)
+                {
+                    // `X.Algorithm` on a structural miss is the intrinsic: a runtime link, its own namespace.
+                    if (edge.Name == "Algorithm")
+                        return EvalResult<Algorithm>.Ok(current);
+                    return receiver.DefinesConditionalBranchProperty(edge.Name)
+                        ? new EvalError.LocalOnlyProperty(OpenExprName(edge.Target), edge.Name, PropertyExposure.LocalOnlyConditionalAlgorithm) { Span = edge.Span }
+                        : new EvalError.IllegalInEval(AliasTargetNotStaticPathMessage(reference.Target)) { Span = reference.Target.Span };
+                }
+
+                if (!IsAccessibleFrom(member, receiver, ctx))
+                    return LocalOnlyPropertyError(OpenExprName(edge.Target), member) with { Span = edge.Span };
+                value = ChildOfInContext(receiver, member.Value, ctx);
+            }
+
+            current = value;
+        }
     }
 
     /// <summary>
@@ -1645,10 +1720,11 @@ public static partial class Evaluator
     }
 
     /// <summary>
-    /// The lexical lookup of a VALUE read (a property read <c>A</c>, a <c>.string</c> receiver): exactly
-    /// <see cref="LookupLexical"/>, except that an alias binding is normalized by the VALUE chase, which
-    /// stops at a runtime-target alias (FWD-02, META-S3-2) — its bare read is its binding cell's VALUE,
-    /// and a VALUE read never initiates a CALLABLE projection. For a static alias the two lookups agree.
+    /// The lexical lookup of a VALUE read (a property read <c>A</c>, a <c>.string</c> receiver; OD-E, M4★):
+    /// the selected binding's VALUE terminal — the binding itself when it is no alias, else the TERMINAL
+    /// binding of its static chain (whose key, owner and activation the read uses: an alias owns no entry)
+    /// or the first runtime-target alias as the resolved algorithm, whose bare read is its binding cell's
+    /// VALUE (<see cref="ReadValueBindingCounted"/>); a VALUE read never initiates a CALLABLE projection.
     /// Lean: <c>lookupLexicalValueProperty</c>.
     /// </summary>
     [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
@@ -1658,13 +1734,13 @@ public static partial class Evaluator
 
     /// <summary>
     /// The alias normalization of a VALUE read (<see cref="LookupLexicalForValue"/>): an alias binding
-    /// keeps its own property and resolves by the VALUE chase; every other binding is returned as is.
-    /// Shared with the deconstruction source lookup (<see cref="SharedDeconstructionBind"/>), so both
-    /// select the same entry.
+    /// reads its VALUE terminal (<see cref="NormalizeAliasValueBinding"/>); every other binding is returned
+    /// as is. Shared with the deconstruction source lookup (<see cref="SharedDeconstructionBind"/>), so
+    /// both select the same entry.
     /// </summary>
     private static EvalResult<ResolvedLexicalProperty> NormalizeValueBinding(EvalResult<ResolvedLexicalProperty> resolved, EvalCtx ctx)
         => resolved.IsOk && resolved.Value.ResolvedAlgorithm is Algorithm.Alias
-            ? NormalizeAliasBinding(resolved.Value, ctx, callable: false)
+            ? NormalizeAliasValueBinding(resolved.Value, ctx)
             : resolved;
 
     /// <summary>
@@ -1673,8 +1749,10 @@ public static partial class Evaluator
     /// 2. Parent chain structural properties (owned by ancestors — any visibility, no opens)
     /// 3. Opens as fallback across the entire chain (public only)
     /// Structural ownership always takes precedence over opens. The selected binding is returned
-    /// RAW — an alias as the alias — for the consumers that navigate a binding's own declarations
-    /// (a written receiver) and for alias resolution itself.
+    /// RAW — an alias as the alias — for the consumers that normalize it themselves: a written
+    /// receiver's head, which is then read through its STRUCTURE (<c>ReceiverStructure</c>: a
+    /// transparent reference navigates its target's declarations, M4★), the supplied-cell projection,
+    /// and alias resolution itself.
     /// Lean: lookupLexical → EvalM Algorithm.
     /// </summary>
     private static EvalResult<ResolvedLexicalProperty> LookupLexicalRaw(
@@ -2195,6 +2273,10 @@ public static partial class Evaluator
     {
         var targetResult = ResolveAlgForOpen(target, ctx);
         if (targetResult.IsError) return targetResult.Error;
+
+        // A transparent reference receiver is navigated as its target (OD-C), resolved without opens.
+        targetResult = OpenStructure(targetResult.Value, ctx);
+        if (targetResult.IsError) return AtSpanIfMissing(targetResult.Error, target.Span);
 
         // First check if property exists at all so ownership still wins over opens.
         var prop = LookupPropBinding(targetResult.Value, propName, ctx.Budget);
@@ -3129,27 +3211,30 @@ public static partial class Evaluator
         if (binding is null)
             return EvalResult<CountedResult?>.Ok(null);
 
-        // An alias binding is read as its target, keyed by its own binding.
-        var resolvedR = NormalizeTopLevelBinding(binding, ChildOf(alg, binding.Value), ctx);
+        // An alias binding reads its VALUE terminal (OD-E, M4★): the terminal binding's own entry, or a
+        // runtime-target alias's binding cell — never an entry of its own.
+        var resolvedR = NormalizeTopLevelBinding(alg, binding, ChildOf(alg, binding.Value), ctx);
         if (resolvedR.IsError)
             return resolvedR.Error;
-        var resolvedAlgorithm = resolvedR.Value;
+        var resolvedAlgorithm = resolvedR.Value.ResolvedAlgorithm;
         var span = binding.FirstDeclarationSpan;
         // A named top-level property read is an ordinary zero-argument value demand, so
         // the ONE law decides and shapes its report: a callable that cannot accept zero
         // supplied arguments is the property-context mismatch naming its true minimum
         // supply, and a clause family keeps its ordinary dispatch failure.
-        if (ZeroArgumentValueDemandRejection(ZeroArgumentDemandShape.Property, name, span, resolvedAlgorithm) is { } rejection)
+        if (resolvedAlgorithm is not Algorithm.Alias
+            && ZeroArgumentValueDemandRejection(ZeroArgumentDemandShape.Property, name, span, resolvedAlgorithm) is { } rejection)
             return rejection;
 
+        // A reference's missing output is its TERMINAL binding's (M4★), which the report names.
         var propertyR = WithPropertyContextOnMissingOutput(
-            name,
+            resolvedR.Value.Binding.Name,
             span,
             resolvedAlgorithm,
-            EvalZeroArgPropertyAccessCounted(
-                new ResolvedLexicalProperty(alg, binding, resolvedAlgorithm),
-                ctx,
-                valEnv));
+            // An ordinary binding keeps its direct frame chain (FRAME-SIZE DISCIPLINE; an alias read is out of line).
+            resolvedR.Value is { ResolvedAlgorithm: not Algorithm.Alias, CrossesCarrier: false }
+                ? EvalZeroArgPropertyAccessCounted(resolvedR.Value, ctx, valEnv)
+                : ReadValueBindingCounted(resolvedR.Value, ctx, valEnv));
 
         return propertyR.IsError
             ? propertyR.Error

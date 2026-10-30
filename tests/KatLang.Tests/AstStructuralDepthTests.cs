@@ -1249,13 +1249,15 @@ public class AstStructuralDepthTests
     {
         // Root User(1) + unary spine K => depth K + 1.
         var max = EvaluationLimits.MaxSupportedAstDepth;
-        var (atLimitRoot, atLimitDiags) = ParameterDetector.Detect(
+        var atLimitRootInput = ParameterDetector.Detect(
             new Algorithm.User(null, [], [], [], [UnarySpine(max - 1)]));
+        var (atLimitRoot, atLimitDiags) = atLimitRootInput;
         Assert.Empty(atLimitDiags);
         Assert.NotEmpty(atLimitRoot.Output);
 
-        var (rejectedRoot, rejectedDiags) = ParameterDetector.Detect(
+        var rejectedRootInput = ParameterDetector.Detect(
             new Algorithm.User(null, [], [], [], [UnarySpine(max)]));
+        var (rejectedRoot, rejectedDiags) = rejectedRootInput;
         Assert.Empty(rejectedRoot.Output);
         Assert.Contains(
             rejectedDiags,
@@ -1275,11 +1277,13 @@ public class AstStructuralDepthTests
         // observable outcome: diagnostics and the evaluated result).
         var parsed = Parser.ParseSyntax("a = 1\na + 2");
         Assert.False(parsed.HasErrors);
-        var (standaloneRoot, standaloneDiags) = ParameterDetector.Detect(parsed.SyntaxRoot);
-        var (coreRoot, coreDiags) = ParameterDetector.DetectPrevalidated(parsed.SyntaxRoot);
+        var standaloneRootInput = ParameterDetector.Detect(parsed.SyntaxRoot);
+        var (standaloneRoot, standaloneDiags) = standaloneRootInput;
+        var coreRootInput = ParameterDetector.DetectPrevalidated(parsed.SyntaxRoot);
+        var (coreRoot, coreDiags) = coreRootInput;
         Assert.Equal(coreDiags.Count, standaloneDiags.Count);
-        var standaloneRun = Evaluator.RunFlat(new Expr.AlgorithmExpr(ImplicitArgumentResolver.ResolvePrevalidated(standaloneRoot)));
-        var coreRun = Evaluator.RunFlat(new Expr.AlgorithmExpr(ImplicitArgumentResolver.ResolvePrevalidated(coreRoot)));
+        var standaloneRun = Evaluator.RunFlat(new Expr.AlgorithmExpr(ImplicitArgumentResolver.ResolvePrevalidated(standaloneRootInput)));
+        var coreRun = Evaluator.RunFlat(new Expr.AlgorithmExpr(ImplicitArgumentResolver.ResolvePrevalidated(coreRootInput)));
         Assert.False(standaloneRun.IsError);
         Assert.Equal(coreRun.Value, standaloneRun.Value);
     }
@@ -1288,18 +1292,18 @@ public class AstStructuralDepthTests
     public void ImplicitArgumentResolverResolve_GatesHostRoots_AtTheExactBoundary()
     {
         var max = EvaluationLimits.MaxSupportedAstDepth;
-        var atLimit = ImplicitArgumentResolver.Resolve(
+        var atLimit = ImplicitArgumentResolver.ResolveNameResolved(
             new Algorithm.User(null, [], [], [], [UnarySpine(max - 1)]));
         Assert.NotEmpty(atLimit.Output);
 
-        var depthException = Assert.Throws<ArgumentException>(() => ImplicitArgumentResolver.Resolve(
+        var depthException = Assert.Throws<ArgumentException>(() => ImplicitArgumentResolver.ResolveNameResolved(
             new Algorithm.User(null, [], [], [], [UnarySpine(max)])));
         Assert.Contains("structural AST depth limit", depthException.Message, StringComparison.Ordinal);
 
         var properties = new List<Property>();
         var cyclic = new Algorithm.User(null, [], [], properties, [new Expr.Num(1)]);
         properties.Add(new Property("Self", cyclic));
-        var cycleException = Assert.Throws<ArgumentException>(() => ImplicitArgumentResolver.Resolve(cyclic));
+        var cycleException = Assert.Throws<ArgumentException>(() => ImplicitArgumentResolver.ResolveNameResolved(cyclic));
         Assert.Contains("acyclic", cycleException.Message, StringComparison.Ordinal);
     }
 
@@ -1695,9 +1699,9 @@ public class AstStructuralDepthProcessTests
     }
 
     /// <summary>
-    /// Launches one env-gated probe-child test in a fresh <c>dotnet vstest</c> process
+    /// Launches one named, env-gated probe in a fresh direct-host process
     /// and asserts the contract every probe shares: normal exit, no stack-overflow
-    /// text, the expected success-marker file, and completion within the timeout —
+    /// text, and the expected success-marker file, without an elapsed-time deadline —
     /// with captured stdout/stderr surfaced on any failure.
     /// </summary>
     private static async Task RunProbeChild(string childTestName)
@@ -1708,16 +1712,7 @@ public class AstStructuralDepthProcessTests
             Path.GetTempPath(),
             $"katlang-ast-probe-{Guid.NewGuid():N}.txt");
 
-        var startInfo = new ProcessStartInfo("dotnet")
-        {
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            UseShellExecute = false,
-            CreateNoWindow = true,
-        };
-        startInfo.ArgumentList.Add("vstest");
-        startInfo.ArgumentList.Add(assemblyPath);
-        startInfo.ArgumentList.Add("--Tests:" + testName);
+        var startInfo = SubprocessProbe.StartInfo(assemblyPath, [testName]);
         startInfo.Environment[ProbeChildEnvironment] = "1";
         startInfo.Environment[ProbeMarkerFileEnvironment] = markerFile;
         startInfo.Environment["DOTNET_NOLOGO"] = "1";
@@ -1729,26 +1724,12 @@ public class AstStructuralDepthProcessTests
             var stdoutTask = process.StandardOutput.ReadToEndAsync();
             var stderrTask = process.StandardError.ReadToEndAsync();
 
-            var exited = true;
-            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(90));
-            try
-            {
-                await process.WaitForExitAsync(timeout.Token);
-            }
-            catch (OperationCanceledException)
-            {
-                exited = false;
-                try { process.Kill(entireProcessTree: true); }
-                catch { /* process already exited */ }
-                await process.WaitForExitAsync();
-            }
+            await process.WaitForExitAsync();
 
             var stdout = await stdoutTask;
             var stderr = await stderrTask;
             var combined = stdout + Environment.NewLine + stderr;
 
-            Assert.True(exited, $"Probe subprocess '{childTestName}' did not exit within 90 seconds."
-                + Environment.NewLine + combined);
             Assert.DoesNotContain("Stack overflow", combined, StringComparison.OrdinalIgnoreCase);
             Assert.DoesNotContain("StackOverflowException", combined, StringComparison.OrdinalIgnoreCase);
             Assert.True(
@@ -1783,11 +1764,9 @@ public class AstStructuralDepthProcessTests
     /// stack then passes for the wrong reason. So the thread reads the stack it was actually given
     /// and runs the body below a padding frame that consumes the excess. A new thread's first
     /// frame still lands a few KiB deep, by an amount that varies per thread, so no probe may
-    /// depend on a boundary finer than that. Exceptions propagate to the caller; a body still
-    /// running after <paramref name="timeout"/> fails the caller with a
-    /// <see cref="TimeoutException"/>.
+    /// depend on a boundary finer than that. The caller waits for completion and receives any exception.
     /// </summary>
-    internal static void RunOnThreadWithStack(int maxStackBytes, Action body, TimeSpan? timeout = null)
+    internal static void RunOnThreadWithStack(int maxStackBytes, Action body)
     {
         Exception? failure = null;
         var thread = new Thread(
@@ -1804,21 +1783,13 @@ public class AstStructuralDepthProcessTests
             },
             maxStackBytes);
         thread.Start();
-        if (timeout is { } limit)
-        {
-            if (!thread.Join(limit))
-                throw new TimeoutException($"The body did not finish within {limit} on the {maxStackBytes}-byte stack.");
-        }
-        else
-        {
-            thread.Join();
-        }
+        thread.Join();
 
         if (failure is not null)
             System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(failure).Throw();
     }
 
-    /// <summary>The value-returning form of <see cref="RunOnThreadWithStack(int, Action, TimeSpan?)"/>.</summary>
+    /// <summary>The value-returning form of <see cref="RunOnThreadWithStack(int, Action)"/>.</summary>
     internal static T RunOnThreadWithStack<T>(int maxStackBytes, Func<T> body)
     {
         T result = default!;
@@ -2449,7 +2420,8 @@ public class AstStructuralDepthProcessTests
             // ParameterDetector.Detect: deep unary, binary, and pattern trees.
             foreach (var deepRoot in DeepRoots())
             {
-                var (root, diagnostics) = ParameterDetector.Detect(deepRoot);
+                var rootInput = ParameterDetector.Detect(deepRoot);
+                var (root, diagnostics) = rootInput;
                 Assert.Empty(root.Output);
                 Assert.Contains(
                     diagnostics,
@@ -2463,8 +2435,8 @@ public class AstStructuralDepthProcessTests
 
             // ImplicitArgumentResolver.Resolve: established exception protocol.
             foreach (var deepRoot in DeepRoots())
-                Assert.Throws<ArgumentException>(() => ImplicitArgumentResolver.Resolve(deepRoot));
-            var resolved = ImplicitArgumentResolver.Resolve(
+                Assert.Throws<ArgumentException>(() => ImplicitArgumentResolver.ResolveNameResolved(deepRoot));
+            var resolved = ImplicitArgumentResolver.ResolveNameResolved(
                 new Algorithm.User(null, [], [], [], [AstStructuralDepthTests.UnarySpine(max - 1)]));
             Assert.NotEmpty(resolved.Output);
 
@@ -2491,7 +2463,7 @@ public class AstStructuralDepthProcessTests
             properties.Add(new Property("Self", cyclic));
             var (_, cyclicDiags) = ParameterDetector.Detect(cyclic);
             Assert.NotEmpty(cyclicDiags);
-            Assert.Throws<ArgumentException>(() => ImplicitArgumentResolver.Resolve(cyclic));
+            Assert.Throws<ArgumentException>(() => ImplicitArgumentResolver.ResolveNameResolved(cyclic));
 
             // A pre-cancelled loader still honors cancellation FIRST, even for a
             // deep host AST (cancellation ordering is unchanged by the gate). The

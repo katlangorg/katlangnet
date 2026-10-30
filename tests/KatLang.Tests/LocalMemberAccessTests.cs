@@ -228,8 +228,8 @@ public class LocalMemberAccessTests
     [Theory]
     [InlineData("Lib(p) = {\n    public X = p + 101\n    X\n}\n\nA = {\n    open Lib\n    X\n}\n\nA", "'Lib' cannot be opened because open providers must have an empty effective parameter list (found: p)")]
     [InlineData("Lib(p, q) = {\n    public X = p + q\n    X\n}\n\nA = {\n    open Lib\n    X\n}\n\nA", "'Lib' cannot be opened because open providers must have an empty effective parameter list (found: p, q)")]
-    // A callable alias names a callable, never a namespace (binding indirection).
-    [InlineData("Lib(p) = p\nAlias = Lib\nA = { open Alias\n 1 }\nA", "'Alias' cannot be opened because it is a callable alias, not a namespace")]
+    // An open through a reference opens its TARGET (M4★ OD-C), refused by the target's own rule.
+    [InlineData("Lib(p) = p\nAlias = Lib\nA = { open Alias\n 1 }\nA", "'Alias' cannot be opened because open providers must have an empty effective parameter list (found: p)")]
     [InlineData("Lib(p) = p\nA(p) = { open Lib\n p }\nA(1)", "'Lib' cannot be opened because open providers must have an empty effective parameter list (found: p)")]
     [InlineData("Lib = { public Sub(p) = p }\nA = { open Lib.Sub\n 1 }\nA", "'Lib.Sub' cannot be opened because open providers must have an empty effective parameter list (found: p)")]
     // Inferred: Lib's output row makes `p` Lib's own parameter.
@@ -550,10 +550,30 @@ public class LocalMemberAccessTests
         await AssertCaptureRepairThroughSuspendingTwin(source);
     }
 
-    private static async Task AssertCaptureRepairThroughSuspendingTwin(string source)
+    /// <summary>
+    /// The capture repairs above with CALCULATION readers. Since M4★ the bare-name readers there are
+    /// references whose reads make no cache request (OD-E), so only a cache-bearing reader keeps the
+    /// end-to-end check — a run-wide entry would display the first activation's value — and exercises the
+    /// suspending async seam.
+    /// </summary>
+    [Theory]
+    [InlineData("Outer(p) = {\n    open Lib\n    Lib = { public X = p + 0 }\n    Y = X + 0\n    Y + 0\n}\nOuter(4), Outer(5)", "Y", "4\n5")]
+    [InlineData("Outer(p) = {\n    Mid = {\n        Lib = { public X = p + 0 }\n        Inner = {\n            open Lib\n            X + 0\n        }\n        Inner + 0\n    }\n    Mid + 0\n}\nOuter(1), Outer(2)", "Mid", "1\n2")]
+    public async Task CapturedCalculationReaders_KeepOneEntryPerActivation_ThroughTheSuspendingTwin(string source, string reader, string display)
+    {
+        var property = NestedProperty(SourceProvenance.ParseValid(source).Root, "Outer", reader);
+        Assert.Equal(PropertyExposure.LocalOnlyCapturedAncestorParameters, property.Exposure);
+        Assert.Equal(["p"], property.RequiredAncestorParameters);
+        Assert.Equal(display, Display(source));
+        await AssertSyncAndAsyncAgree(source);
+        await AssertCaptureRepairThroughSuspendingTwin(source, requireCacheRequests: true);
+    }
+
+    private static async Task AssertCaptureRepairThroughSuspendingTwin(string source, bool requireCacheRequests = false)
     {
         var program = new Expr.AlgorithmExpr(SourceProvenance.ParseValid(source).Root);
-        var sync = Evaluator.RunCountedObserved(program, enableOptimizations: false);
+        var syncCache = new KatLang.Evaluation.Caching.RunScopedZeroArgPropertyResultCache();
+        var sync = Evaluator.RunCountedObserved(program, enableOptimizations: false, zeroArgPropertyResultCache: syncCache);
         var cache = new AsyncEvaluation.SuspendingAsyncZeroArgPropertyResultCache();
         var twin = await AsyncEvaluation.AsyncEvaluationHarness.Complete(
             Evaluator.RunCountedObservedAsync(program, zeroArgPropertyResultCache: cache));
@@ -561,7 +581,11 @@ public class LocalMemberAccessTests
         Assert.False(twin.Result.IsError);
         Assert.True(Result.ValueComparer.Equals(sync.Result.Value.Value, twin.Result.Value.Value));
         Assert.Equal(sync.Result.Value.EmittedCount, twin.Result.Value.EmittedCount);
-        Assert.True(cache.AsyncAccesses > 0);
+        // Every read the sync run makes through the cache the twin makes through the suspending ASYNC
+        // seam — none when the reader is a reference whose terminal read is direct (M4★).
+        Assert.Equal(syncCache.GetSnapshot().TotalRequests, cache.AsyncAccesses);
+        if (requireCacheRequests)
+            Assert.True(cache.AsyncAccesses > 0, "a calculation reader must read through the cache");
         Assert.Equal(0, cache.SyncAccesses);
         Assert.Equal(sync.Budget.ConsumedSteps, twin.Budget.ConsumedSteps);
         Assert.Equal(sync.Budget.PeakDepth, twin.Budget.PeakDepth);

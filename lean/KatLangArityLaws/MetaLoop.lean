@@ -107,10 +107,10 @@ theorem loop_lifting_roles :
     reference and changes nothing else: no VALUE demand, no target, no supply preparation. -/
 theorem step_capture_inert (channels : NeedChannels) (address : Nat) (s : EvalState)
     (shape : NeedPlan.CallShape) (h : NeedPlan.shapeAt? s.needs address = some shape) :
-    (bindNeedOne channels (.metaRef "step") address [] [] false).runState s =
-      (.ok (some [("step", s.needs.size)]),
+    (bindNeedOne channels (.metaRef "step") address [] {} false).runState s =
+      (.ok (some { bound := [("step", s.needs.size)] }),
         { s with needs := s.needs.push (CallReferenceLaws.adapterCell address) }) := by
-  rw [CallReferenceLaws.production_meta_binding channels "step" address [] [] false s shape h rfl]
+  rw [CallReferenceLaws.production_meta_binding channels "step" address [] {} false s shape h rfl]
   rfl
 
 /-! ## The captured step's setup -/

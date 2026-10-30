@@ -4,11 +4,15 @@ using KatLang.Semantics;
 namespace KatLang.Tests;
 
 /// <summary>
-/// CALLABLE ALIASES ARE BINDING INDIRECTION (FWD-02; decided October 1 2026). A body whose ONE written
-/// row is a bare reference to a callable that declares parameterized callable structure is a callable
-/// ALIAS (<see cref="Algorithm.Alias"/>) in an open body: the alias keeps its own BINDING — declaration,
-/// exposure, zero-argument cache key, editor symbol — while every CALLABLE use of it is the target's own,
-/// resolved once in the alias's declaration scope. No wrapper, no copied signature, no invocation.
+/// CALLABLE ALIASES ARE BINDING INDIRECTION (FWD-02; decided October 1 2026; M4★ whole-algorithm
+/// transport, ALIAS-UNIFY-1, October 2026). A non-root open body whose ONE written row is a reference to
+/// an algorithm — at ANY arity since M4★ — is an ALIAS (<see cref="Algorithm.Alias"/>): unbraced, a
+/// TRANSPARENT REFERENCE whose structure, members, open provider, invocation and bare VALUE are its
+/// target's; braced, a STRUCTURAL FORWARDING CARRIER that keeps its own members and forwards explicit
+/// invocation. The alias keeps its own BINDING — declaration, exposure, editor symbol — but owns NO
+/// zero-argument cache entry (OD-E): a bare read is the terminal binding's read. Every CALLABLE use is the
+/// target's own, resolved once in the alias's declaration scope. No wrapper, no copied signature, no
+/// invocation.
 ///
 /// <para>THE DIRECT-CALL ORACLE: for <c>A = F</c>, every invocation through <c>A</c> (and through
 /// <c>B = A</c>, <c>C = B</c>) is the direct invocation of <c>F</c> with the same supply — the same value
@@ -110,15 +114,19 @@ public class CallableAliasBindingIndirectionTests
         => Assert.Equal(expected, await Outcome(source));
 
     [Theory]
+    // OD-E (M4★): every link of the chain reads the ONE entry of the opened member it denotes.
     [InlineData("open Lib\nLib = {\n    public Only(*xs) = tick()\n}\nA = Only\nB = A\nC = B\nC, Lib.Only, A, B, C",
-        "ok S[1, 2, 3, 4, 1] [tick#1,tick#2,tick#3,tick#4]")]
+        "ok S[1, 1, 1, 1, 1] [tick#1]")]
     [InlineData("F = y + 1\nLib = {\n    public A = F\n}\nG = {\n    W(x) = Lib.A\n    W(1) + y\n}\nG(10)", "ok 21")]
     [InlineData("I = if\nB = I\nApply(f) = f(true, trace(1), trace(2) / 0)\nApply(B)", "ok 1 [trace(1)]")]
     [InlineData("Inc(x) = trace(x) + 1\nR = repeat\nB = R\nApply(f) = f(Inc(0), 3)\nApply(B)", "ok 3 [trace(0),trace(1),trace(2)]")]
     [InlineData("U((0, x)) = x\nU([x, 0]) = x\nA = U\nB = A\nmap([(0, 4), [5, 0]], B)", "ok L[4, 5]")]
-    [InlineData("Only(*xs) = tick()\nA = Only\nP(f, f) = f()\nP(A, Only)",
-        "err ArityMismatch: while evaluating call to P: repeated parameter 'f' requires equal arguments: Bad arity [tick#1,tick#2]")]
-    [InlineData("F(x) = {\n    M = 2\n    x\n}\nA = {\n    M = 1\n    F\n}\nB = A\nM(v) = 9\nNavigate(f) = f.M\nA.M, F.M, B.M, Navigate(A)", "ok S[1, 2, 9, 2]")]
+    // NEED-04 (group-aware): the alias and its target are ONE callable identity, so they match by
+    // identity without reading either value, and `f()` runs Only once (formerly both bare values
+    // were demanded and disagreed: `[tick#1,tick#2]`).
+    [InlineData("Only(*xs) = tick()\nA = Only\nP(f, f) = f()\nP(A, Only)", "ok 1 [tick#1]")]
+    // M4★: the carrier A keeps its own M; the reference B and the passed A are the carrier's structure.
+    [InlineData("F(x) = {\n    M = 2\n    x\n}\nA = {\n    M = 1\n    F\n}\nB = A\nM(v) = 9\nNavigate(f) = f.M\nA.M, F.M, B.M, Navigate(A)", "ok S[1, 2, 1, 1]")]
     [InlineData("K = C + 1\nC = B\nB = A\nA = F\nF = Inc + 1\nInc(x) = x + 1\nK(3)", "ok 6")]
     [InlineData("C = count\nC(trace(1) / 0, trace(2))",
         "err ArityMismatch: Callable `count(collection)` expects 1 argument, but was called with 2 arguments.")]
@@ -180,40 +188,44 @@ public class CallableAliasBindingIndirectionTests
     [Theory]
     [InlineData("P(f, f) = f(7)\nOnly(*xs) = 0\nA = Only\nP(A, Only)", "ok 0")]
     [InlineData("P(f, f) = f(7)\nOnly(*xs) = 0\nA = Only\nB = A\nP(B, Only), P(Only, B), P(A, B)", "ok S[0, 0, 0]")]
-    [InlineData("P(f, f) = f(1)\nP(count, C)\nC = count", "err TypeMismatch: Type mismatch: Repeated bind equality requires the same callable identity")]
+    [InlineData("P(f, f) = f(1)\nP(count, C)\nC = count", "ok 1")]
     public async Task CallableIdentity_IsTheTargets(string source, string expected)
     {
-        // The last row is the control: a bare `count` passed as an ARGUMENT is a value demand of the
-        // builtin, so its algorithm channel is count's own; `C`, an alias, is count's callable too —
-        // and still the two VALUE outcomes differ (a value-less builtin), which Q-05 rejects.
-        var outcome = await Outcome(source);
-        if (expected.StartsWith("err TypeMismatch", StringComparison.Ordinal))
-            Assert.StartsWith("err ", outcome, StringComparison.Ordinal);
-        else
-            Assert.Equal(expected, outcome);
+        // The last row: a bare `count` passed as an argument and `C`, an alias, are both count's
+        // callable — ONE identity, so they match by identity without demanding count's value (a
+        // value-less builtin) and `f(1)` is count(1). (Until NEED-04's group-aware rule the two
+        // value demands were made first and the binding failed.)
+        Assert.Equal(expected, await Outcome(source));
     }
 
     [Theory]
-    // A parameterized alias read bare is its target's zero-supply demand under its OWN cache entry.
-    [InlineData("Only(*xs) = tick()\nA = Only\nA, Only, A", "ok S[1, 2, 1] [tick#1,tick#2]")]
-    // An explicit call is fresh; CACHE-PUB-1: on an EMPTY entry it establishes the ALIAS binding's own
-    // entry, which the bare reads reuse (formerly it populated nothing: S[1, 2, 2]).
+    // OD-E (M4★): an alias owns no entry — a bare read of it is its TARGET's bare read (formerly each
+    // alias binding had its own entry: S[1, 2, 1] and S[1, 2, 1, 3]).
+    [InlineData("Only(*xs) = tick()\nA = Only\nA, Only, A", "ok S[1, 1, 1] [tick#1]")]
+    // An explicit call is fresh; CACHE-PUB-1: on an EMPTY entry it establishes the TARGET's entry, which
+    // the bare reads reuse.
     [InlineData("Only(*xs) = tick()\nA = Only\nA(), A, A", "ok S[1, 1, 1] [tick#1]")]
     [InlineData("Only(*xs) = tick()\nA = Only\nA, A(), A", "ok S[1, 2, 1] [tick#1,tick#2]")]
-    // Each link of a chain is its own binding.
-    [InlineData("Only(*xs) = tick()\nA = Only\nB = A\nB, A, B, Only", "ok S[1, 2, 1, 3] [tick#1,tick#2,tick#3]")]
-    // A ZERO-PARAMETER target is READ, never aliased: ordinary property composition and caching.
+    // Every link of a chain reads the terminal binding.
+    [InlineData("Only(*xs) = tick()\nA = Only\nB = A\nB, A, B, Only", "ok S[1, 1, 1, 1] [tick#1]")]
+    // A ZERO-PARAMETER target is aliased the same way (M4★): one entry, Z's.
     [InlineData("Z = tick()\nA = Z\nA, Z, A", "ok S[1, 1, 1] [tick#1]")]
     [InlineData("Z = tick()\nA = Z\nB = A\nB, A, Z", "ok S[1, 1, 1] [tick#1]")]
-    public async Task Caching_FollowsTheBinding_NeverTheTarget(string source, string expected)
+    [InlineData("Z = tick()\nA = Z\nA(), A, Z(), Z", "ok S[1, 1, 2, 1] [tick#1,tick#2]")]
+    public async Task Caching_FollowsTheTerminalBinding_NeverTheAlias(string source, string expected)
         => Assert.Equal(expected, await Outcome(source));
 
     [Fact]
-    public void ZeroParameterTarget_IsNoAlias_WhileACollectorOnlyTargetIs()
+    public void ZeroParameterAndCollectorOnlyTargets_AreBothTransparentReferences()
     {
-        var root = SourceProvenance.ParseValid("Z = 3\nOnly(*xs) = 0\nA = Z\nB = Only\n0").Root;
-        Assert.IsType<Algorithm.User>(root.Properties.Single(p => p.Name == "A").Value);
-        Assert.Equal("Only", Assert.IsType<Expr.Resolve>(Assert.IsType<Algorithm.Alias>(root.Properties.Single(p => p.Name == "B").Value).Target).Name);
+        var root = SourceProvenance.ParseValid("Z = 3\nOnly(*xs) = 0\nA = Z\nB = Only\nC = { Z }\n0").Root;
+        Algorithm.Alias Alias(string name) => Assert.IsType<Algorithm.Alias>(root.Properties.Single(p => p.Name == name).Value);
+        Assert.Equal("Z", Assert.IsType<Expr.Resolve>(Alias("A").Target).Name);
+        Assert.True(Alias("A").IsReference);
+        Assert.Equal("Only", Assert.IsType<Expr.Resolve>(Alias("B").Target).Name);
+        Assert.True(Alias("B").IsReference);
+        // The written braces make a structural forwarding carrier.
+        Assert.False(Alias("C").IsReference);
     }
 
     [Fact]
@@ -222,9 +234,9 @@ public class CallableAliasBindingIndirectionTests
         // `random(start, end)` is a parameterized Math member: `R = random` is an alias, and every CALL
         // through it draws afresh, exactly as a direct call does.
         Assert.Equal("ok S[false, false]", await Outcome("R = random\nR(0, 1) == R(0, 1), random(0, 1) == random(0, 1)", seed: 7));
-        // A collector-only random wrapper behind an alias: its BARE reads are cached per binding — one
-        // draw for B, another for A.
-        Assert.Equal("ok S[true, false, true]", await Outcome("A(*xs) = random(0, 1)\nB = A\n(B == B), (B == A), (A == A)", seed: 7));
+        // A collector-only random wrapper behind an alias: its BARE reads are the target's one cached
+        // read (OD-E, M4★; formerly one draw for B and another for A: S[true, false, true]).
+        Assert.Equal("ok S[true, true, true]", await Outcome("A(*xs) = random(0, 1)\nB = A\n(B == B), (B == A), (A == A)", seed: 7));
     }
 
     // ── 4. Roles, lifting and forwarding read the normalized target ──────────────────────────
@@ -343,25 +355,27 @@ public class CallableAliasBindingIndirectionTests
     private const string LibWithMember = "Lib(x) = {\n    K = 5\n    x\n}\nA = Lib\nNavigate(f) = f.K\n";
 
     [Fact]
-    public async Task WrittenMemberAccess_NeverFollowsAnAlias_ButACallablePassedThroughOneIsTheTarget()
+    public async Task WrittenMemberAccess_ThroughAReference_IsTheTargets_AndSoIsACallablePassedThroughOne()
     {
         Assert.Equal("ok 5", await Outcome(LibWithMember + "Lib.K"));
         Assert.Equal("ok 5", await Outcome(LibWithMember + "Navigate(Lib)"));
         Assert.Equal("ok 5", await Outcome(LibWithMember + "Navigate(A)"));
-        // `A.K`: A declares no K, so the dot falls back to a lexical K, which nothing declares.
-        var failure = Assert.IsType<RunResult.EvalFailure>(KatLangEngine.Run(LibWithMember + "A.K"));
-        Assert.Equal(KatLangErrorCode.UnresolvedImplicitParams, Assert.Single(failure.Errors).Code);
+        // M4★ whole-algorithm transport: A's members are Lib's (formerly A declared no K, so the dot fell
+        // back to a lexical K that nothing declares: UnresolvedImplicitParams).
+        Assert.Equal("ok 5", await Outcome(LibWithMember + "A.K"));
     }
 
     [Theory]
-    [InlineData("Lib(x) = x\nA = Lib\nB = {\n    open A\n    1\n}\nB")]
-    [InlineData("Lib = {\n    public F(x) = x\n}\nA = Lib.F\nB = {\n    open A\n    1\n}\nB")]
-    [InlineData("Only(*xs) = 0\nA = Only\nB = {\n    open A\n    1\n}\nB")]
-    [InlineData("C = count\nB = {\n    open C\n    1\n}\nB")]
-    public void OpenOfACallableAlias_IsRefused(string source)
+    // M4★ OD-C: an open through a reference opens its TARGET, so it is refused by the target's own
+    // provider rule (formerly every alias was refused as "a callable alias, not a namespace").
+    [InlineData("Lib(x) = x\nA = Lib\nB = {\n    open A\n    1\n}\nB", "open providers must have an empty effective parameter list")]
+    [InlineData("Lib = {\n    public F(x) = x\n}\nA = Lib.F\nB = {\n    open A\n    1\n}\nB", "open providers must have an empty effective parameter list")]
+    [InlineData("Only(*xs) = 0\nA = Only\nB = {\n    open A\n    1\n}\nB", "open providers must have an empty effective parameter list")]
+    [InlineData("C = count\nB = {\n    open C\n    1\n}\nB", "it is a builtin callable")]
+    public void OpenThroughAReference_IsRefusedByTheTargetsProviderRule(string source, string reason)
     {
         var rejection = Assert.Single(SourceProvenance.ExpectFrontEndError(source), d => d.Code == DiagnosticCode.IllegalInOpen);
-        Assert.Contains("is a callable alias, not a namespace", rejection.Message, StringComparison.Ordinal);
+        Assert.Contains(reason, rejection.Message, StringComparison.Ordinal);
     }
 
     [Theory]
@@ -446,7 +460,7 @@ public class CallableAliasBindingIndirectionTests
     }
 
     [Fact]
-    public async Task DeferredModuleAliasChain_KeepsPerBindingCaches_AcrossBranchActivations()
+    public async Task DeferredModuleAliasChain_ReadsItsTargetsEntry_AcrossBranchActivations()
     {
         var ticks = 0;
         var downloads = 0;
@@ -467,8 +481,10 @@ public class CallableAliasBindingIndirectionTests
         };
         const string source = "Pick(0) = 0\nPick(n) = {\n    M = load('https://katlang.org/aliases/deferred.kat')\n    A = M.Only\n    B = A\n    (B, M.Only, B)\n}\nPick(0), Pick(1), Pick(2)";
         var result = Assert.IsType<RunResult.Success>(await KatLangEngine.RunAsync(source, options));
-        Assert.Equal([0m, 1m, 2m, 1m, 1m, 2m, 1m], result.Atoms);
-        Assert.Equal(2, ticks);
+        // OD-E (M4★): B and A are references to the module member Only, so all three reads are Only's
+        // one run-wide entry (formerly B kept a binding entry of its own: [0, 1, 2, 1, 1, 2, 1], 2 ticks).
+        Assert.Equal([0m, 1m, 1m, 1m, 1m, 1m, 1m], result.Atoms);
+        Assert.Equal(1, ticks);
         Assert.Equal(1, downloads);
     }
 
@@ -496,11 +512,13 @@ public class CallableAliasBindingIndirectionTests
         var a = Assert.IsType<Algorithm.User>(unresolved.Properties.Single(p => p.Name == "A").Value);
         Assert.Equal(["Q"], a.Params);
 
-        // A member only a runtime receiver could provide (the lone row `A` then bare-forwards A's own
-        // inferred `F`, which the closed list does not bind: an ordinary FWD-02 rejection).
-        var runtimeMember = SourceProvenance.ParseAllowingDiagnostics("G(r) = {\n    A = r.F\n    A\n}\nG(5)").Root;
+        // A member only a runtime receiver can provide is a RUNTIME member reference (OD-B, M4★): a
+        // runtime-target alias, never a static one.
+        var runtimeMember = SourceProvenance.ParseValid("G(r) = {\n    A = r.F\n    A\n}\nG(5)").Root;
         var g = Assert.IsType<Algorithm.User>(runtimeMember.Properties.Single(p => p.Name == "G").Value);
-        Assert.IsNotType<Algorithm.Alias>(g.Properties.Single(p => p.Name == "A").Value);
+        var member = Assert.IsType<Algorithm.Alias>(g.Properties.Single(p => p.Name == "A").Value);
+        Assert.True(member.HasRuntimeTarget);
+        Assert.Null(member.ResolvedTarget);
     }
 
     // ── 8. Recursion ─────────────────────────────────────────────────────────────────────

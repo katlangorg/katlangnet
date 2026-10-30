@@ -85,6 +85,22 @@ public class ContinuousIntegrationPolicyTests
     }
 
     [Fact]
+    public void ValidationJobs_UseTheAgreedCiTimeouts()
+    {
+        foreach (var workflow in new[] { ValidatePath, ReleasePath })
+        {
+            var source = Text(workflow);
+            foreach (var (job, minutes) in new[] { ("dotnet-validation", 60), ("lean-validation", 30) })
+            {
+                var section = Regex.Match(source, $@"(?ms)^  {job}:\n.*?(?=^  [a-z][a-z-]*:|\z)");
+                Assert.True(section.Success, $"Missing validation job in {workflow}: {job}");
+                Assert.Single(Regex.Matches(section.Value, @"(?m)^    timeout-minutes:").Cast<Match>());
+                Assert.Matches($@"(?m)^    timeout-minutes: {minutes}$", section.Value);
+            }
+        }
+    }
+
+    [Fact]
     public void Workflows_DoNotDuplicateCanonicalValidationCommands()
     {
         var source = WorkflowText();
@@ -379,7 +395,7 @@ public class ContinuousIntegrationPolicyTests
 
         using var document = JsonDocument.Parse(Text("global.json"));
         var sdk = document.RootElement.GetProperty("sdk");
-        Assert.Equal("11.0.100-rc.2.26504.105", sdk.GetProperty("version").GetString());
+        Assert.Equal("11.0.100-rc.3.26522.148", sdk.GetProperty("version").GetString());
         Assert.Equal("disable", sdk.GetProperty("rollForward").GetString());
         Assert.True(sdk.GetProperty("allowPrerelease").GetBoolean());
     }
@@ -414,20 +430,19 @@ public class ContinuousIntegrationPolicyTests
     }
 
     [Fact]
-    public void ValidateScript_FixesTheInvocationPlanMode_BeforeAnyTestHostStarts()
+    public void ValidateScript_RunsOneOrdinaryMode_BeforeAnyTestHostStarts()
     {
         var source = Text("scripts/validate-all.ps1");
-        Assert.Contains("[switch]$ForceInvocationPlans", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("ForceInvocationPlans", source, StringComparison.Ordinal);
         Assert.Contains($"$planModeVariable = \"{ForcedInvocationPlansHook.Variable}\"", source, StringComparison.Ordinal);
-        // Forced sets the flag; the ordinary run REMOVES an inherited one. Both precede every build/test command.
-        const string fix = "Set-PlanModeVariable -Value $(if ($ForceInvocationPlans) { \"1\" } else { $null })";
+        // An inherited diagnostic flag must not silently change normal validation.
+        const string fix = "Set-PlanModeVariable -Value $null";
         Assert.Single(Regex.Matches(source, Regex.Escape(fix)).Cast<Match>());
         Assert.True(source.IndexOf(fix, StringComparison.Ordinal) < source.IndexOf("\"build\", \"./KatLang.slnx\"", StringComparison.Ordinal));
         Assert.Contains("Set-PlanModeVariable -Value $inheritedPlanMode", source, StringComparison.Ordinal);
         // Removal goes through the Env: drive: PowerShell would pass $null to SetEnvironmentVariable as "".
         Assert.Contains("Remove-Item -LiteralPath \"Env:$planModeVariable\"", source, StringComparison.Ordinal);
         Assert.DoesNotContain("SetEnvironmentVariable($planModeVariable", source, StringComparison.Ordinal);
-        Assert.Contains("if ($ForceInvocationPlans -and $Phase -ne \"DotNet\")", source, StringComparison.Ordinal);
     }
 
     [Fact]

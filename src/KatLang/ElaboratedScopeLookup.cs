@@ -42,7 +42,12 @@ internal sealed class ElaboratedPropertyScope
 {
     private Dictionary<string, int>? _nameIndex;
     private int _firstNullNameIndex = -1;
-    private IReadOnlyList<ResolvedOpenProvider>? _openProviders;
+    private HashSet<string>? _ownParameterNames;
+    private readonly IReadOnlyList<PropertyLookupHit> _properties;
+    private Algorithm? _completedPropertyView;
+    private IReadOnlyList<PropertyLookupHit>? _completedProperties;
+    private IReadOnlyList<ResolvedOpenProvider>? _completedProviders;
+    private int _completedProviderVersion = -1;
 
     public ElaboratedPropertyScope(
         ElaboratedPropertyScope? parent,
@@ -50,24 +55,45 @@ internal sealed class ElaboratedPropertyScope
         IReadOnlyList<PropertyLookupHit> properties,
         FrontEndTraversalObservations? observations = null,
         OpenMemberIndexCache? memberIndexes = null,
-        Algorithm? owner = null)
+        Algorithm? owner = null,
+        StaticStructureContext? staticContext = null,
+        CompletedStructureContext? completedContext = null,
+        Pattern? branchPattern = null,
+        StaticAstPhase? sourcePhase = null,
+        Algorithm? sourceBody = null,
+        object? ownerIdentity = null,
+        StandaloneScopeAnalysis? standaloneAnalysis = null)
     {
         // A loaded module is a source unit rooted at the prelude (Q-31 H-P): its level's enclosing
         // level is the chain's root level wherever it is held, so no lookup from inside it — by any
         // pass, the editor included — ever reaches the holder's names.
+        CompletedContext = completedContext ?? (staticContext is null && parent?.StaticContext is null
+            ? CompletedStructureContext.For(owner, parent, branchPattern) : null);
         if (owner?.IsModuleRoot == true && parent is not null)
             parent = parent.Root;
 
+        BranchPattern = branchPattern;
         Parent = parent;
         Opens = opens;
-        Properties = properties;
+        _properties = properties;
         Observations = parent?.Observations ?? observations;
         Root = parent is null ? this : parent.Root;
         MemberIndexes = memberIndexes ?? parent?.MemberIndexes;
-        OwnerDeclaration = owner?.Declaration ?? (object?)owner ?? this;
+        OwnerAlgorithm = owner;
+        OwnerDeclaration = ownerIdentity ?? owner?.Declaration ?? (object?)owner ?? new object();
+        SourceBody = sourceBody ?? owner ?? new Algorithm.User(null, [], opens, properties.Select(hit => hit.Property).ToArray(), []);
+        SourcePhase = sourcePhase ?? (owner?.CompletedStructure is not null ? StaticAstPhase.Resolved : parent?.SourcePhase);
+        _standaloneAnalysis = standaloneAnalysis;
         IsModuleLevel = owner?.IsModuleRoot == true;
         HasOpensInChain = opens.Count > 0 || parent?.HasOpensInChain == true;
+        StaticContext = staticContext ?? (owner is null ? null : parent?.StaticContext?.Inside(owner));
+        if (CompletedContext is { } completed) MemberIndexes?.CompletedLevels.TryAdd((completed.Facts, completed.Key), this);
     }
+
+    /// <summary>The admitting operation shared by the compiler passes.</summary>
+    internal StaticStructureContext? StaticContext { get; }
+    internal Pattern? BranchPattern { get; }
+    internal CompletedStructureContext? CompletedContext { get; }
 
     /// <summary>
     /// Whether this level is a loaded module's own body (Q-31 H-P): a declaration at the root level
@@ -90,6 +116,9 @@ internal sealed class ElaboratedPropertyScope
     /// </summary>
     internal object OwnerDeclaration { get; }
 
+    /// <summary>The algorithm this level was created from, or null for a level built without one.</summary>
+    internal Algorithm? OwnerAlgorithm { get; }
+
     /// <summary>
     /// The owning operation's shared open-target member indexes (see the class remarks):
     /// supplied where the operation creates a level, otherwise inherited from the parent.
@@ -102,7 +131,20 @@ internal sealed class ElaboratedPropertyScope
 
     public IReadOnlyList<Expr> Opens { get; }
 
-    public IReadOnlyList<PropertyLookupHit> Properties { get; }
+    public IReadOnlyList<PropertyLookupHit> Properties
+    {
+        get
+        {
+            var view = CompletedContext?.Facts.Facts(CompletedContext.Key)?.Body;
+            if (view is null || ReferenceEquals(view, OwnerAlgorithm)) return _properties;
+            if (!ReferenceEquals(view, _completedPropertyView))
+            {
+                _completedPropertyView = view;
+                _completedProperties = view.Properties.Select(property => new PropertyLookupHit(view, property)).ToArray();
+            }
+            return _completedProperties!;
+        }
+    }
 
     /// <summary>
     /// The chain's outermost level, captured at construction (parent links are
@@ -154,42 +196,29 @@ internal sealed class ElaboratedPropertyScope
         return index.TryGetValue(name, out var propertyIndex) ? properties[propertyIndex] : null;
     }
 
-    /// <summary>
-    /// This level's resolved <c>open</c> PROVIDERS in declaration order, each counted once
-    /// (Q-19 D-I, decided 2026-10-06): targets that resolve to the same semantic provider
-    /// (<see cref="OpenProviderIdentity"/> — the evaluator's <c>ResolveAllOpens</c> rule) are one
-    /// provider whatever their spelling or position, the first occurrence representing it;
-    /// unresolvable targets are omitted. A repeated written-target key
-    /// (<see cref="Evaluator.OpenTargetDedupKey"/>) is skipped before resolution as a pure
-    /// optimization. Resolution is pure and diagnostic-free, and it is performed LAZILY — only
-    /// when a lookup actually consults this level's opens — so owned-name precedence and the
-    /// no-consultation case cost exactly what they did before the cache.
-    /// </summary>
-    public IReadOnlyList<ResolvedOpenProvider> GetResolvedOpenProviders()
+    /// <summary>Reads the operation's Q2 providers or its completed immutable projection.</summary>
+    public IReadOnlyList<ResolvedOpenProvider> GetResolvedOpenProviders(StaticCycleCheck stratum = StaticCycleCheck.Formation)
     {
-        if (_openProviders is { } cached)
-            return cached;
-
-        if (Opens.Count == 0)
-            return _openProviders = [];
-
-        List<ResolvedOpenProvider>? providers = null;
-        HashSet<string>? seenKeys = null;
-        HashSet<OpenProviderIdentity>? seenProviders = null;
-        for (var i = 0; i < Opens.Count; i++)
+        if (StaticContext is { } context) return context.Operation.Providers(context.Key, stratum);
+        if (CompletedContext is { } completed)
         {
-            var openExpr = Opens[i];
-            seenKeys ??= [];
-            if (!seenKeys.Add(Evaluator.OpenTargetDedupKey(openExpr, i)))
-                continue;
-
-            Observations?.RecordLookupOpenTargetResolution();
-            if (ElaboratedScopeLookup.ResolveOpenProvider(this, openExpr) is { } resolved
-                && (seenProviders ??= []).Add(resolved.Identity))
-                (providers ??= []).Add(new ResolvedOpenProvider(resolved.Target, Observations, MemberIndexes, resolved.Identity) { Written = openExpr });
+            completed.Facts.EnsureUsable();
+            if (_completedProviders is null || _completedProviderVersion != completed.Facts.ViewVersion)
+            {
+                _completedProviders = completed.Providers(this);
+                _completedProviderVersion = completed.Facts.ViewVersion;
+            }
+            return _completedProviders;
         }
-
-        return _openProviders = providers is not null ? providers : [];
+        if (Opens.Count == 0) return [];
+        var analyzed = BoundLookupContext();
+        analyzed.Facts.EnsureUsable();
+        if (_completedProviders is null || _completedProviderVersion != analyzed.Facts.ViewVersion)
+        {
+            _completedProviders = analyzed.Providers(this);
+            _completedProviderVersion = analyzed.Facts.ViewVersion;
+        }
+        return _completedProviders;
     }
 
     /// <summary>
@@ -207,6 +236,55 @@ internal sealed class ElaboratedPropertyScope
         foreach (var provider in GetResolvedOpenProviders())
             provider.PrewarmSharedLookupCaches();
     }
+
+    /// <summary>
+    /// The parameter bindings in force INSIDE this level as parameter detection established them —
+    /// attached by the detector when it enters the body (its written inputs) and again once inference
+    /// knows the rest; null on every other pass's levels, whose trees already carry each parameter-owned
+    /// name as <see cref="Expr.Param"/>. The static structure chase reads THIS level's own answer
+    /// (<see cref="BindsParameter"/>) for a body that is still a written name (M4★): a parameter binding
+    /// nearer than a same-named property makes it a runtime reference, and a level whose bindings are
+    /// established is one where a name nothing declares is certainly an inferred input.
+    /// </summary>
+    internal IOwnedParameterBindings? ParameterBindings { get; set; }
+
+    /// <summary>
+    /// Whether THIS level itself binds <paramref name="name"/> as a parameter (M4★): by the bindings
+    /// parameter detection established for it — its written and inferred inputs, a branch's binders —
+    /// otherwise by the written parameters of the algorithm the level was created from (a body a static
+    /// chase navigated into). A level's own answer, never a site's: the static structure chase walks from a
+    /// reference's OWN scope outward, so a parameter a site shadows, or a body the chase reached by another
+    /// route, answers alike wherever the chase started (<see cref="ElaboratedScopeLookup.StaticStructureWithScopeAt"/>).
+    /// </summary>
+    internal bool BindsParameter(string name)
+    {
+        if (ParameterBindings is { } bindings)
+            return bindings.DeclaresParameter(this, name);
+        if (CompletedContext is { } completed && completed.Facts.Facts(completed.Key) is { } facts)
+            return facts.Parameters.Contains(name);
+        if (BranchPattern is { } pattern && pattern.BoundNames().Contains(name, StringComparer.Ordinal)) return true;
+        if (SourceBody is not Algorithm.User { ParameterPatterns.Count: > 0 } user)
+            return false;
+        _ownParameterNames ??= new HashSet<string>(user.Params, StringComparer.Ordinal);
+        return _ownParameterNames.Contains(name);
+    }
+
+    private StandaloneScopeAnalysis? _standaloneAnalysis;
+    internal Algorithm SourceBody { get; }
+    internal StaticAstPhase? SourcePhase { get; }
+    internal StandaloneScopeAnalysis StandaloneAnalysis(CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        if (_standaloneAnalysis is not null) return _standaloneAnalysis;
+        if (SourcePhase is not { } phase || Parent is null)
+            throw new InvalidOperationException("Standalone structural lookup requires explicit source phase/admission provenance.");
+        // Parent facts are immutable. The new unit admits only this supplied body and its local descendants.
+        return _standaloneAnalysis = Parent.StandaloneAnalysis(cancellationToken).Inside(
+            SourceBody, BranchPattern, phase, OwnerAlgorithm is null ? OwnerDeclaration : null, cancellationToken);
+    }
+    internal CompletedStructureContext BoundLookupContext()
+        => CompletedContext ?? StandaloneAnalysis().Context;
+
 }
 
 /// <summary>
@@ -253,6 +331,13 @@ internal sealed class ResolvedOpenProvider
 
     /// <summary>The first written open target of the level that resolved to this provider (diagnostics only).</summary>
     public Expr? Written { get; init; }
+
+    /// <summary>
+    /// The level that DECLARES the provider (M4★): a member it provides is declared in the provider's own
+    /// body inside this level, which is where a member that is a reference is followed. Null for a
+    /// host-built provider.
+    /// </summary>
+    public ElaboratedPropertyScope? Level { get; init; }
 
     public PropertyLookupHit? TryLookupPublicMember(string name)
     {
@@ -347,20 +432,26 @@ internal sealed class OpenTargetMemberIndex
 /// </summary>
 internal sealed class OpenMemberIndexCache(FrontEndTraversalObservations? observations = null)
 {
+    private Dictionary<(StaticLookupFacts Facts, StaticScopeKey Key), ElaboratedPropertyScope>? _completedLevels;
+    internal Dictionary<(StaticLookupFacts Facts, StaticScopeKey Key), ElaboratedPropertyScope> CompletedLevels => _completedLevels ??= new();
+    internal void RecordCompletedRead() => observations?.RecordCompletedStaticStructureRead();
     private readonly Dictionary<Algorithm, OpenTargetMemberIndex> _indexes = new(ReferenceEqualityComparer.Instance);
-
-    /// <summary>Distinct targets indexed so far (tests).</summary>
+    private readonly Dictionary<ElaboratedPropertyScope, Dictionary<Algorithm, ElaboratedPropertyScope>> _bodyLevels = new();
+    public ElaboratedPropertyScope BodyLevel(Algorithm body, ElaboratedPropertyScope parent)
+    {
+        if (!_bodyLevels.TryGetValue(parent, out var levels))
+            _bodyLevels.Add(parent, levels = new(ReferenceEqualityComparer.Instance));
+        if (!levels.TryGetValue(body, out var level)) levels.Add(body, level = ElaboratedScopeLookup.CreateScope(body, parent));
+        return level;
+    }
     internal int Count => _indexes.Count;
-
     public OpenTargetMemberIndex IndexOf(Algorithm target)
     {
         if (!_indexes.TryGetValue(target, out var index))
         {
             observations?.RecordLookupOpenMemberIndexBuild();
-            index = OpenTargetMemberIndex.Build(target);
-            _indexes.Add(target, index);
+            _indexes.Add(target, index = OpenTargetMemberIndex.Build(target));
         }
-
         return index;
     }
 }
@@ -519,8 +610,8 @@ internal sealed class OpenProviderIdentity : IEquatable<OpenProviderIdentity>
     public override int GetHashCode() => _hash;
 }
 
-/// <summary>One resolved open target: the provider algorithm and its semantic identity.</summary>
-internal readonly record struct ResolvedOpenTarget(Algorithm Target, OpenProviderIdentity Identity);
+/// <summary>One resolved open target: the provider algorithm, its semantic identity and (when known) the level that declares it.</summary>
+internal readonly record struct ResolvedOpenTarget(Algorithm Target, OpenProviderIdentity Identity, ElaboratedPropertyScope? Level = null);
 
 /// <summary>
 /// The declaring owners of one level, innermost first, ending at the root level — the chain an
@@ -550,6 +641,7 @@ internal sealed class DeclaringOwners
     /// the chain of a body declared at the root level wherever it is held (Q-31 H-P).
     /// </summary>
     public DeclaringOwners Inside(Algorithm owner) => new(owner.IsModuleRoot ? Root : this, OpenProviderIdentity.DeclarationOf(owner));
+    internal DeclaringOwners InsideIdentity(object declaration) => new(this, declaration);
 }
 
 /// <summary>
@@ -645,15 +737,47 @@ internal readonly record struct OwnedDeclaration
 /// </summary>
 internal interface IOwnedParameterBindings
 {
+    bool ExcludesNeverCalledOwner => false;
     /// <summary>
     /// Whether <paramref name="level"/> ITSELF binds <paramref name="name"/> as
     /// a parameter: an explicit or inferred parameter of the algorithm that owns
-    /// the level, or a conditional branch body's pattern binder. Only the
-    /// NEAREST enclosing binding of a name answers true — an outer parameter of
-    /// the same name is already shadowed by the inner one and must never decide
-    /// a level the walk reaches first.
+    /// the level, or a conditional branch body's pattern binder. A SITE's map
+    /// (<see cref="ParameterOwnership"/>) answers true only for the NEAREST
+    /// enclosing binding of a name — an outer parameter of the same name is
+    /// already shadowed by the inner one and must never decide a level the walk
+    /// reaches first — so it serves walks that start at that site; a walk that
+    /// starts at another scope (a static chase from a reference's own scope) asks
+    /// each level its own bindings instead (<see cref="ElaboratedPropertyScope.BindsParameter"/>).
     /// </summary>
     bool DeclaresParameter(ElaboratedPropertyScope level, string name);
+}
+
+/// <summary>
+/// Which OD-D verdict (M4★) a static chase applies to a written reference before it follows the reference to its
+/// target — and so which STRATUM of open providers it reads (<see cref="ElaboratedPropertyScope.GetResolvedOpenProviders"/>:
+/// a provider that is a written reference is followed under the same check). OD-D has two READINGS of a lone-row body's
+/// target chase: the LOWER one resolves an opened name through the providers of <see cref="None"/>, which follow every
+/// reference, the FINAL one through those of <see cref="Lower"/>, whose references are followed when the lower reading
+/// finds no cycle. The operation solves the mutually dependent input/binding questions through
+/// monotone Q1–Q7 equations, with no collection-time decider or chase suspension.
+/// </summary>
+internal enum StaticCycleCheck
+{
+    /// <summary>OD-D's lower reading itself: every reference is followed (a chain that comes back still stops).</summary>
+    None,
+
+    /// <summary>The lower verdict: OD-D's final reading — the providers it reads, and every receiver it reads.</summary>
+    Lower,
+
+    /// <summary>
+    /// Alias formation: a body whose target chase returns in EITHER reading is no alias (implicit-argument resolution
+    /// forms the aliases so, and a dot receiver's static structure predicts them so). Its providers are the ones every
+    /// name lookup reads: a reference written as an open target is followed exactly where it becomes an alias, so the
+    /// front end selects what the evaluator, which opens only formed aliases, selects — up to the navigated-body defect
+    /// (SEMANTIC-ALIGNMENT.md (12), not repaired), where the detector's readings judge a navigated body through their own
+    /// strata and refuse an alias the resolver forms.
+    /// </summary>
+    Formation,
 }
 
 internal static class ElaboratedScopeLookup
@@ -663,18 +787,48 @@ internal static class ElaboratedScopeLookup
     /// <param name="observations">Passive lookup observer for a new chain root (a level inherits its parent's).</param>
     /// <param name="memberIndexes">The creating operation's shared open-target member indexes; when null,
     /// the level inherits its parent's (see <see cref="ElaboratedPropertyScope"/>'s remarks).</param>
+    /// <param name="staticContext">The level's context in the admitted static-structure operation; when null, derived from the parent's.</param>
+    /// <param name="completedContext">The completed publication context, with no query operation.</param>
+    /// <param name="branchPattern">The immediate branch body's binding region, when applicable.</param>
+    /// <param name="sourcePhase">Explicit standalone input phase when no admitting or completed context is supplied.</param>
     public static ElaboratedPropertyScope CreateScope(
         Algorithm algorithm,
         ElaboratedPropertyScope? parentOverride = null,
         FrontEndTraversalObservations? observations = null,
-        OpenMemberIndexCache? memberIndexes = null)
-        => new(
-            parentOverride ?? CreateParentScope(algorithm.Parent, memberIndexes),
-            algorithm.Opens,
-            CreatePropertyHits(algorithm, algorithm.Properties),
-            observations,
-            memberIndexes,
-            algorithm);
+        OpenMemberIndexCache? memberIndexes = null,
+        StaticStructureContext? staticContext = null,
+        CompletedStructureContext? completedContext = null,
+        Pattern? branchPattern = null,
+        StaticAstPhase? sourcePhase = null)
+    {
+        if (sourcePhase is { } phase && phase != StaticAstPhase.Resolved && algorithm.CompletedStructure is not null)
+            throw new ArgumentException("A resolved publication cannot be reinterpreted as raw/name-resolved source.", nameof(sourcePhase));
+        var parent = parentOverride ?? CreateParentScope(algorithm.Parent, memberIndexes, sourcePhase);
+        return CreatePhysicalScope(algorithm, algorithm, parent, observations, memberIndexes, staticContext,
+            completedContext, branchPattern, sourcePhase, ownerIdentity: null);
+    }
+
+    private static ElaboratedPropertyScope CreatePhysicalScope(Algorithm source, Algorithm? owner,
+        ElaboratedPropertyScope? parent, FrontEndTraversalObservations? observations, OpenMemberIndexCache? indexes,
+        StaticStructureContext? active, CompletedStructureContext? completed, Pattern? pattern,
+        StaticAstPhase? phase, object? ownerIdentity)
+    {
+        completed ??= active is null && parent?.StaticContext is null ? CompletedStructureContext.For(owner, parent, pattern) : null;
+        phase ??= owner?.CompletedStructure is not null ? StaticAstPhase.Resolved : parent?.SourcePhase;
+        StandaloneScopeAnalysis? analysis = null;
+        if (active is null && completed is null && parent is null && phase is { } input)
+        {
+            analysis = StandaloneScopeAnalysis.Start(source, input, ownerIdentity);
+            var facts = analysis.Context.Facts;
+            var prelude = facts.Prelude;
+            parent = new(null, prelude.Opens, CreatePropertyHits(prelude, prelude.Properties), observations, indexes,
+                prelude, completedContext: facts.Context(facts.PreludeKey), sourcePhase: input,
+                standaloneAnalysis: analysis.AtPrelude());
+            completed = analysis.Context;
+        }
+        return new(parent, source.Opens, CreatePropertyHits(owner ?? source, source.Properties), observations, indexes,
+            owner, active, completed, pattern, phase, source, ownerIdentity, analysis);
+    }
 
     public static PropertyLookupHit? TryLookupProperty(Algorithm owner, string name)
     {
@@ -763,6 +917,7 @@ internal static class ElaboratedScopeLookup
         string name,
         IOwnedParameterBindings parameters)
     {
+        if (scope.StaticContext is { } context) return context.Operation.Owned(context.Key, name, parameters.ExcludesNeverCalledOwner);
         var observations = scope.Observations;
         for (var current = scope; current is not null; current = current.Parent)
         {
@@ -793,38 +948,337 @@ internal static class ElaboratedScopeLookup
     public static Algorithm? ResolveOpenTarget(ElaboratedPropertyScope scope, Expr openExpr)
         => ResolveOpenProvider(scope, openExpr)?.Target;
 
-    /// <summary>
-    /// The static target of one open expression together with its semantic provider identity
-    /// (<see cref="OpenProviderIdentity"/>), or null when it provides nothing: the ONE resolution
-    /// every front-end consumer that counts providers reads. A name head is declared at the level
-    /// the direct chain finds it on; a block head is declared at the chain's root (it is wired to
-    /// the prelude); each dotted step is a PUBLIC member of the previous provider, declared there.
-    /// </summary>
-    public static ResolvedOpenTarget? ResolveOpenProvider(ElaboratedPropertyScope scope, Expr openExpr)
+    /// <summary>Reads the selected Q2 endpoint or its completed provider publication.</summary>
+    public static ResolvedOpenTarget? ResolveOpenProvider(ElaboratedPropertyScope scope, Expr openExpr, StaticCycleCheck stratum = StaticCycleCheck.Formation)
     {
-        var head = openExpr.OpenTargetHead(out var steps);
-        if (ResolveOpenProviderHead(scope, head) is not { } resolved)
-            return null;
-
-        var (receiver, identity) = resolved;
-        for (var i = 0; i < steps.Count; i++)
+        if (scope.StaticContext is not { } context)
         {
-            if (TryLookupPublicProperty(receiver, steps[i], scope.Observations) is not { } step)
+            var completed = scope.BoundLookupContext();
+            for (var index = 0; index < scope.Opens.Count; index++)
+                if (ReferenceEquals(scope.Opens[index], openExpr)) return completed.ProviderAt(index, scope);
+            return ResolvePublishedOpenExpression(scope, openExpr);
+        }
+        var written = context.Operation.WrittenExpression(context.Key, openExpr);
+        for (var index = 0; index < scope.Opens.Count; index++)
+            if (ReferenceEquals(scope.Opens[index], openExpr)) { written = context.Operation.SourceOf(context.Key).Opens[index]; break; }
+        var fact = context.Operation.Read(StaticQueryKey.Project(StaticQueryKind.OpenProviders, context.Key,
+            StaticQueryProjection.OpenTarget, stratum: stratum, node: written));
+        if (fact.Data is not StaticScopeKey[] { Length: 1 } keys) return null;
+        var body = context.Operation.SourceOf(keys[0]);
+        var declaring = context.Operation.LookupLevel(keys[0].Parent ?? context.Operation.Queries.Keys.Root);
+        return new(body, OpenProviderIdentity.DeclaredAt(body, declaring), declaring);
+    }
+
+    /// <summary>An ad hoc written path projects existing Q1/Q4/OD-C facts; it has no raw-reference fallback.</summary>
+    private static ResolvedOpenTarget? ResolvePublishedOpenExpression(ElaboratedPropertyScope scope, Expr expression)
+    {
+        var head = expression.OpenTargetHead(out var members);
+        ResolvedOpenTarget? selected;
+        if (head is Expr.AlgorithmExpr block)
+        {
+            var context = scope.BoundLookupContext();
+            selected = context.Facts.Context(context.Facts.PreludeKey).Open(block.Algorithm, scope.Root);
+            if (selected is null && context.Facts.Child(context.Facts.PreludeKey, block.Algorithm) is null)
+            {
+                // A host can ask about a new inline, already bound structure after compilation.
+                // Admit that graph explicitly at the open-head prelude boundary; never chase a raw row.
+                var body = block.Algorithm;
+                var analyzed = AnalyzedStaticStructures.ForBoundAst(body, declaringScopes: []);
+                selected = analyzed.Facts.Context(analyzed.Facts.PreludeKey).Open(body, scope.Root);
+            }
+        }
+        else if (head is Expr.Resolve name)
+        {
+            var owned = SelectOwnedDeclaration(scope, name.Name, OwnParameterBindings.Instance);
+            if (!owned.TryGetProperty(out var declaring, out var hit)) return null;
+            selected = declaring.BoundLookupContext().Open(hit.Property.Value, declaring);
+        }
+        else return null;
+        foreach (var member in members)
+        {
+            if (selected is not { Level: { } declaring } provider
+                || TryLookupPublicProperty(provider.Target, member) is not { } hit) return null;
+            var bodyLevel = CreateScope(provider.Target, declaring, memberIndexes: scope.MemberIndexes);
+            selected = bodyLevel.BoundLookupContext().Open(hit.Property.Value, bodyLevel);
+        }
+        return selected;
+    }
+
+    /// <summary>
+    /// Why a written open target provides no algorithm — the step at which <see cref="ResolveOpenProvider"/>
+    /// fails, walked over the SAME decomposition and the same stratified structure, named the way the
+    /// evaluator's open resolution fails there: a name head no enclosing declaration or prelude member
+    /// provides (an open head never resolves through another open), a dotted step — from a name head or
+    /// an inline block head alike — that names a member its receiver's structure lacks, declares
+    /// privately (open paths select public members), or declares only inside a conditional branch (a
+    /// family exposes no members), or a transparent reference whose target no direct lookup provides
+    /// (OD-C, M4★). Null for every target this rule does not own: a parameter-owned head, a bare inline
+    /// block, and the shapes the parser rejects as <see cref="DiagnosticCode.BadOpenForm"/>.
+    /// </summary>
+    internal static string? DescribeUnresolvedOpenTarget(ElaboratedPropertyScope scope, Expr target)
+    {
+        var headExpr = target.OpenTargetHead(out var steps);
+        var description = Evaluator.OpenExprName(target);
+        OpenStructureStep provider;
+        string receiverDescription;
+        switch (headExpr)
+        {
+            case Expr.Resolve(var head):
+                if (ResolveOpenProviderHead(scope, headExpr, out var level) is not { } resolved)
+                {
+                    return $"'{description}' cannot be opened because no property named '{head}' is visible here; " +
+                        "the first name of an open target resolves through the enclosing declarations and the prelude, never through another open.";
+                }
+
+                provider = new OpenStructureStep(resolved.Target, resolved.Identity, level);
+                receiverDescription = head;
+                break;
+
+            case Expr.AlgorithmExpr(var block):
+                provider = new OpenStructureStep(block, OpenProviderIdentity.DeclaredAtRoot(block), scope.Root);
+                receiverDescription = Evaluator.OpenExprName(headExpr);
+                break;
+
+            default:
                 return null;
-            receiver = step.Property.Value;
-            identity = identity.Member(receiver);
         }
 
-        return new ResolvedOpenTarget(receiver, identity);
+        foreach (var step in steps)
+        {
+            if (provider.Level.CompletedContext?.OpenIsUnavailable(provider.Target, provider.Level) == true) return null;
+            if (OpenStructureOf(provider, scope.Observations) is not { } receiver)
+                return UnresolvedReference(description, receiverDescription);
+
+            if (TryLookupPublicProperty(receiver.Target, step) is { } member)
+            {
+                var selected = member.Property.Value;
+                provider = new OpenStructureStep(selected, receiver.Identity.Member(selected), BodyLevelOf(receiver.Target, receiver.Level));
+                receiverDescription += "." + step;
+                continue;
+            }
+
+            if (TryLookupProperty(receiver.Target, step) is not null)
+                return $"'{description}' cannot be opened because property '{step}' of '{receiverDescription}' is not public; an open path selects public members only.";
+
+            return receiver.Target.DefinesConditionalBranchProperty(step)
+                ? $"'{description}' cannot be opened because '{step}' is declared only inside a conditional branch of '{receiverDescription}', and a clause family exposes no members."
+                : $"'{description}' cannot be opened because '{receiverDescription}' has no property named '{step}'.";
+        }
+
+        return provider.Level.CompletedContext?.OpenIsUnavailable(provider.Target, provider.Level) == true ? null
+            : OpenStructureOf(provider, scope.Observations) is null ? UnresolvedReference(description, receiverDescription) : null;
+
+        static string UnresolvedReference(string description, string reference)
+            => $"'{description}' cannot be opened because '{reference}' refers to an algorithm that no enclosing declaration or prelude member provides; " +
+                "the reference of an open target resolves through the enclosing declarations and the prelude, never through another open.";
     }
+
+    /// <summary>One provider during open resolution: the algorithm, its identity, and the level that declares it.</summary>
+    private readonly record struct OpenStructureStep(Algorithm Target, OpenProviderIdentity Identity, ElaboratedPropertyScope Level);
+
+    /// <summary>
+    /// The level of <paramref name="body"/>'s own declarations inside <paramref name="parent"/>: the operation's shared
+    /// one (<see cref="OpenMemberIndexCache.BodyLevel"/>), or a private one on a chain built without a cache.
+    /// </summary>
+    private static ElaboratedPropertyScope BodyLevelOf(Algorithm body, ElaboratedPropertyScope parent)
+        => parent.MemberIndexes is { } cache ? cache.BodyLevel(body, parent) : CreateScope(body, parent);
+
+    /// <summary>Diagnostic path adapter over Q3's OD-C projection.</summary>
+    private static OpenStructureStep? OpenStructureOf(
+        OpenStructureStep provider, FrontEndTraversalObservations? observations, StaticCycleCheck stratum = StaticCycleCheck.Formation)
+    {
+        if (provider.Level.StaticContext is { } context)
+        {
+            var key = context.Operation.ContextOf(context.Key, provider.Target);
+            var fact = context.Operation.Read(StaticQueryKey.Project(StaticQueryKind.TargetWalk, key, StaticQueryProjection.OpenStructure, stratum: stratum));
+            if (fact.Kind != StaticFactKind.Structure || fact.Scope?.Parent is not { } parent) return null;
+            var body = context.Operation.SourceOf(fact.Scope);
+            var level = context.Operation.LookupLevel(parent);
+            return new(body, OpenProviderIdentity.DeclaredAt(body, level), level);
+        }
+        var completed = provider.Level.BoundLookupContext();
+        return completed.Open(provider.Target, provider.Level) is { } published
+            ? new(published.Target, published.Identity, published.Level!) : null;
+    }
+
+    /// <summary>
+    /// The STRUCTURE of an ELABORATED algorithm (M4★, once implicit-argument resolution has formed every
+    /// alias): a transparent reference's recorded structure (<see cref="Algorithm.Alias.ResolvedStructure"/>;
+    /// none when its target is a runtime one), every other algorithm — a structural carrier included —
+    /// itself. The views that run after resolution (the editor, the provenance finalizer, the resolver's
+    /// own reads of processed bodies) read this; the detector, which runs before the aliases exist, reads
+    /// <see cref="StaticReceiverStructure"/> or <see cref="StaticStructureWithScopeAt"/>.
+    /// </summary>
+    internal static Algorithm? ElaboratedStructure(Algorithm? algorithm)
+        => algorithm is Algorithm.Alias { IsReference: true } reference ? reference.ResolvedStructure : algorithm;
+
+    /// <summary>
+    /// The STRUCTURE a static view may navigate for the receiver <paramref name="algorithm"/> (M4★): an
+    /// elaborated transparent reference's recorded structure (<see cref="Algorithm.Alias.ResolvedStructure"/>;
+    /// null when it has none — a runtime target), null for an unelaborated body that becomes a reference
+    /// (its target is decided where its declaring scope is known: <see cref="StaticStructureWithScopeAt"/>) or whose row
+    /// is an argumentless <c>.Algorithm</c> link (a runtime reference unless the body has an input of its own, which this
+    /// scope-free view cannot see), and every other algorithm — a structural carrier and a calculation written as a
+    /// member path from a head that is no name or block (<c>A = 6.abs</c>) included — itself. After implicit-argument
+    /// resolution the views read <see cref="ElaboratedStructure"/> instead.
+    /// </summary>
+    internal static Algorithm? StaticReceiverStructure(Algorithm algorithm)
+        => algorithm switch
+        {
+            Algorithm.Alias { IsReference: true } reference => reference.ResolvedStructure,
+            Algorithm.User user when WillBeReference(user)
+                && (StaticAliasTargets.IsStaticPath(user.Output[0]) || user.Output[0] is Expr.DotCall { Args: null } link && link.UsesDotAlgorithmIntrinsic()) => null,
+            _ => algorithm,
+        };
+
+    /// <summary>
+    /// The static STRUCTURE (M4★) of <paramref name="value"/>, a property declared at
+    /// <paramref name="level"/>, together with the SCOPE that structure is declared at: an elaborated
+    /// transparent reference's recorded structure; an unelaborated body that becomes a reference
+    /// (<see cref="WillBeReference"/>) followed in ITS OWN scope — its head by the owner walk over each
+    /// level's OWN parameter bindings (<see cref="ElaboratedPropertyScope.BindsParameter"/>: a parameter is a
+    /// runtime reference, no static structure), then a single open provider, each member step a declared member
+    /// of the previous receiver's structure — until a non-reference (a carrier included) is reached. Null when
+    /// the structure is not statically known. A body whose target chase returns is no alias (OD-D, as alias
+    /// formation decides it: <see cref="StaticCycleCheck.Formation"/>): the chain's first body is its own
+    /// structure. The scope is what lets a member of the structure be followed in its own scope
+    /// (<see cref="StaticMemberStructure"/>). The endpoint comes from Q3.
+    /// </summary>
+    internal static (Algorithm Structure, StaticStructureScope Scope)? StaticStructureWithScopeAt(Algorithm value, ElaboratedPropertyScope level)
+    {
+        if (level.StaticContext is { } context) return context.Operation.StructureAt(context.Key, value);
+        return level.BoundLookupContext().Receiver(value, level);
+    }
+
+    /// <summary>
+    /// The static STRUCTURE (M4★) of <paramref name="member"/>, a declared member of the statically known
+    /// structure <paramref name="receiver"/> declared at <paramref name="receiverScope"/>: the member is
+    /// declared in the receiver's own body — whose parameters its level answers — and followed there, so
+    /// a member that is a transparent reference (written or still a lone reference row) navigates its
+    /// target exactly as the evaluator's receiver resolution does. Null when it is not statically known.
+    /// </summary>
+    internal static (Algorithm Structure, StaticStructureScope Scope)? StaticMemberStructure(
+        Algorithm receiver, StaticStructureScope receiverScope, string name, Algorithm member)
+    {
+        if (receiverScope.Level.StaticContext is { } context)
+            return context.Operation.StructureAt(receiverScope.BodyKey ?? context.Operation.ContextOf(context.Key, receiver), member);
+        if ((receiverScope.CompletedFacts ?? receiverScope.Level.CompletedContext?.Facts) is { } completedFacts)
+        {
+            var completed = completedFacts.Context(receiverScope.Level.CompletedContext?.Key ?? completedFacts.PreludeKey);
+            var owner = receiverScope.BodyKey ?? completed.BodyKey(receiver);
+            return owner is not null && completed.Facts.Member(owner, name) is { } selected
+                    ? completed.ReceiverAt(selected, receiverScope.Level) : null;
+        }
+        var admitted = receiverScope.Level.BoundLookupContext();
+        var ownerKey = receiverScope.BodyKey ?? admitted.BodyKey(receiver);
+        return ownerKey is not null && admitted.Facts.Member(ownerKey, name) is { } selectedKey
+            ? admitted.ReceiverAt(selectedKey, receiverScope.Level) : null;
+    }
+
+    /// <summary>Compositional receiver inspection over completed Q3/Q4 facts, without a raw-reference fallback.</summary>
+    internal static StaticStructuralMemberProvider CompletedReceiver(Expr expression, ElaboratedPropertyScope scope)
+        => expression.ResolveStaticStructuralMemberProvider(name =>
+        {
+            var selected = SelectOwnedDeclaration(scope, name, OwnParameterBindings.Instance);
+            if (selected.Kind == OwnedDeclarationKind.Parameter) return new(StaticStructuralMemberProviderKind.RuntimeParameter);
+            if (selected.TryGetProperty(out var owner, out var hit)) return ReadCompletedReceiver(hit.Property.Value, owner);
+            return LookupSingleOpenMember(scope, name) is { } opened ? ReadCompletedReceiver(opened.Hit.Property.Value, opened.MemberLevel)
+                : new(StaticStructuralMemberProviderKind.LexicalReference);
+        }, block => ReadCompletedReceiver(block, scope));
+
+    private static StaticStructuralMemberProvider ReadCompletedReceiver(Algorithm body, ElaboratedPropertyScope declaring)
+        => StaticStructureWithScopeAt(body, declaring) is { } selected
+            ? new(StaticStructuralMemberProviderKind.KnownAlgorithm, selected.Structure, selected.Scope)
+            : new(StaticStructuralMemberProviderKind.LexicalReference);
+
+    /// <summary>
+    /// The one member an open level provides for <paramref name="name"/> — at the first open level that
+    /// provides it at all — with the level that member is DECLARED at (its provider's own body inside the
+    /// provider's declaring level), or null when no open provides it or the deciding level provides it
+    /// more than once (the ambiguity the evaluator reports).
+    /// </summary>
+    internal static (PropertyLookupHit Hit, ElaboratedPropertyScope MemberLevel)? LookupSingleOpenMember(
+        ElaboratedPropertyScope scope, string name, StaticCycleCheck stratum = StaticCycleCheck.Formation)
+    {
+        for (var current = scope; current is not null; current = current.Parent)
+        {
+            var providers = current.GetResolvedOpenProviders(stratum);
+            PropertyLookupHit? found = null;
+            ResolvedOpenProvider? owner = null;
+            var count = 0;
+            foreach (var provider in providers)
+            {
+                if (provider.TryLookupPublicMember(name) is { } hit)
+                {
+                    count++;
+                    found = hit;
+                    owner = provider;
+                }
+            }
+
+            if (count == 1)
+                return (found!.Value, BodyLevelOf(owner!.Target, owner.Level ?? scope.Root));
+            if (count > 1)
+                return null;
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// The scope a statically known receiver STRUCTURE is declared at (M4★): what lets a member of that structure be
+    /// followed in its own scope (<see cref="StaticMemberStructure"/>), whose levels answer their own parameters.
+    /// </summary>
+    internal sealed class StaticStructureScope
+    {
+        internal StaticStructureScope(ElaboratedPropertyScope level, StaticScopeKey? bodyKey = null,
+            StaticLookupFacts? completedFacts = null) => (Level, BodyKey, CompletedFacts) = (level, bodyKey, completedFacts);
+
+        public ElaboratedPropertyScope Level { get; }
+        internal StaticScopeKey? BodyKey { get; }
+        internal StaticLookupFacts? CompletedFacts { get; }
+    }
+
+    /// <summary>
+    /// The owner walk's parameter bindings during a static chase: each level's OWN
+    /// (<see cref="ElaboratedPropertyScope.BindsParameter"/>). The walk starts at a reference's own scope, so the
+    /// nearest level binding a name is reached first whatever site asked — never a site's map, which a parameter of
+    /// the site could shadow.
+    /// </summary>
+    internal sealed class OwnParameterBindings : IOwnedParameterBindings
+    {
+        public static readonly OwnParameterBindings Instance = new();
+
+        public bool DeclaresParameter(ElaboratedPropertyScope level, string name) => level.BindsParameter(name);
+    }
+
+    /// <summary>
+    /// Whether the unelaborated body <paramref name="user"/> has the shape implicit-argument resolution
+    /// makes a transparent reference (M4★, <c>ImplicitArgumentResolver.TryCompleteLoneCalleeRow</c>): an
+    /// unbraced open body — no written braces, no parameter list or pattern, no declarations or opens of
+    /// its own — whose one written row is a name or an argumentless member path. Whether its row names an
+    /// algorithm is decided by the chase that reads it (an unresolved head is no provider).
+    /// </summary>
+    private static bool WillBeReference(Algorithm.User user)
+        => !user.IsWrittenBlock
+            && !user.HasExplicitParameterList
+            && user.ParameterPatterns.Count == 0
+            && user.Properties.Count == 0
+            && user.Opens.Count == 0
+            && !user.IsSyntheticDeconstructionPlumbing
+            && !user.IsModuleRoot
+            && user.Output.Count == 1
+            && user.Output[0] is Expr.Resolve or Expr.DotCall { Args: null }
+            && AstHelpers.WrittenRows(user).Count == 1;
 
     /// <summary>
     /// The provider an open target's HEAD denotes with its identity (see
     /// <see cref="ResolveOpenTargetHead"/>, whose resolution this is): a name head through the
     /// direct chain, declared at the level that holds it; a block head declared at the root level.
     /// </summary>
-    private static ResolvedOpenTarget? ResolveOpenProviderHead(ElaboratedPropertyScope scope, Expr head)
+    internal static ResolvedOpenTarget? ResolveOpenProviderHead(ElaboratedPropertyScope scope, Expr head, out ElaboratedPropertyScope level)
     {
+        level = scope.Root;
         switch (head)
         {
             case Expr.Resolve(var name):
@@ -836,6 +1290,7 @@ internal static class ElaboratedScopeLookup
                     if (current.TryLookupOwnProperty(name) is { } hit)
                     {
                         var provider = hit.Property.Value;
+                        level = current;
                         return new ResolvedOpenTarget(provider, OpenProviderIdentity.DeclaredAt(provider, current));
                     }
                 }
@@ -900,11 +1355,16 @@ internal static class ElaboratedScopeLookup
         }
     }
 
-    public static IReadOnlyList<PropertyLookupHit> LookupOpenPropertyMatches(ElaboratedPropertyScope scope, string name)
+    /// <summary>
+    /// The open matches of <paramref name="name"/>: at the first level whose providers publicly declare it, every such
+    /// member. <paramref name="stratum"/> selects the provider stratum (<see cref="ElaboratedPropertyScope.GetResolvedOpenProviders"/>).
+    /// </summary>
+    public static IReadOnlyList<PropertyLookupHit> LookupOpenPropertyMatches(
+        ElaboratedPropertyScope scope, string name, StaticCycleCheck stratum = StaticCycleCheck.Formation)
     {
         for (var current = scope; current is not null; current = current.Parent)
         {
-            var providers = current.GetResolvedOpenProviders();
+            var providers = current.GetResolvedOpenProviders(stratum);
             if (providers.Count == 0)
                 continue;
 
@@ -963,16 +1423,19 @@ internal static class ElaboratedScopeLookup
         return null;
     }
 
-    private static ElaboratedPropertyScope? CreateParentScope(ScopeCtx? parent, OpenMemberIndexCache? memberIndexes)
-        => parent is null ? null : CreateScope(parent, memberIndexes);
+    private static ElaboratedPropertyScope? CreateParentScope(ScopeCtx? parent, OpenMemberIndexCache? memberIndexes,
+        StaticAstPhase? sourcePhase = null)
+        => parent is null ? null : CreateScope(parent, memberIndexes, sourcePhase);
 
-    private static ElaboratedPropertyScope CreateScope(ScopeCtx scope, OpenMemberIndexCache? memberIndexes)
-        => new(
-            CreateParentScope(scope.Parent, memberIndexes),
-            scope.Opens,
-            CreatePropertyHits(CreateSyntheticOwner(scope), scope.Properties),
-            memberIndexes: memberIndexes,
-            owner: scope.Owner);
+    private static ElaboratedPropertyScope CreateScope(ScopeCtx scope, OpenMemberIndexCache? memberIndexes, StaticAstPhase? phase)
+    {
+        var source = scope.Owner is Algorithm.User user
+            ? user with { Parent = null, Opens = scope.Opens, Properties = scope.Properties, Output = [],
+                ParameterPatterns = scope.Parameters.Select(name => (ParameterPattern)new CaptureParameterPattern(name)).ToArray() }
+            : CreateSyntheticOwner(scope);
+        return CreatePhysicalScope(source, scope.Owner, CreateParentScope(scope.Parent, memberIndexes, phase), null,
+            memberIndexes, null, null, null, phase, scope.Owner?.Declaration ?? (object?)scope.Owner ?? scope);
+    }
 
     private static IReadOnlyList<PropertyLookupHit> CreatePropertyHits(Algorithm owner, IReadOnlyList<Property> properties)
     {
@@ -985,7 +1448,7 @@ internal static class ElaboratedScopeLookup
     private static Algorithm CreateSyntheticOwner(ScopeCtx scope)
         => new Algorithm.User(
             Parent: null,
-            ParameterPatterns: [],
+            ParameterPatterns: scope.Parameters.Select(name => (ParameterPattern)new CaptureParameterPattern(name)).ToArray(),
             Opens: scope.Opens,
             Properties: scope.Properties,
             Output: []);

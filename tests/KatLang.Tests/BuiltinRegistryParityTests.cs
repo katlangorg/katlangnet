@@ -497,7 +497,8 @@ public class BuiltinRegistryParityTests
             Properties: [],
             Output: [new Expr.Resolve(name)]);
 
-        var (processed, diagnostics) = ParameterDetector.Detect(root);
+        var processedInput = ParameterDetector.Detect(root);
+        var (processed, diagnostics) = processedInput;
         return (Assert.IsType<Algorithm.User>(processed), diagnostics);
     }
 

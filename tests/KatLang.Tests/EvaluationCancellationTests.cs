@@ -137,7 +137,9 @@ public class EvaluationCancellationTests
 
     /// <summary>
     /// Runs <paramref name="source"/> with the budget carrying <paramref name="cts"/>'s
-    /// token and the cache cancelling that source at the k-th property access. Asserts
+    /// token and the cache cancelling that source at the k-th property access (nested fixtures
+    /// write every body as a calculation, <c>A = B + 0</c>: a lone reference row is an alias,
+    /// M4★, which owns no property access). Asserts
     /// the run escapes with an <see cref="OperationCanceledException"/> carrying exactly
     /// the supplied token, and returns the run's live budget for conservation asserts.
     /// </summary>
@@ -322,7 +324,7 @@ public class EvaluationCancellationTests
         using var cts = new CancellationTokenSource();
 
         var budget = RunCancelling(
-            "A = B\nB = C\nC = 1\nA",
+            "A = B + 0\nB = C + 0\nC = 1\nA",
             cancelAtAccess,
             cts,
             new EvaluationLimits { MaxDepth = 12 });
@@ -647,7 +649,7 @@ public class EvaluationCancellationTests
     [Fact]
     public void OverlappingCancelledAndUncancelledRuns_StayIsolated()
     {
-        const string Program = "A = B\nB = C\nC = 41\nA + 1";
+        const string Program = "A = B + 0\nB = C + 0\nC = 41\nA + 1";
         var sharedAst = Ast(Program);
         var sharedLimits = new EvaluationLimits { MaxDepth = 16 };
 

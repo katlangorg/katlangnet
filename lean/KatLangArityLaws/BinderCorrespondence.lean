@@ -120,7 +120,7 @@ theorem addressEvents_allocator {k₁ k₂ : NeedCapabilities EvalM} (h : k₁.a
 /-- The structural arms of the core (sequence, list, unpacking receiver) in one shape. -/
 theorem bindOne_structural_shape (k : NeedCapabilities EvalM) (p : NeedPattern) (ps : List NeedPattern)
     (hp : p = .sequence ps ∨ p = .list ps ∨ p = .unpack ps) (address : Nat) (repeated : List Ident)
-    (bound : NeedEnv) (family : Bool) :
+    (bound : NeedBindState) (family : Bool) :
     NeedBinder.bindOne k p address repeated bound family = (do
       let (value, _) <- k.value address
       match structuralItems p value with
@@ -134,7 +134,7 @@ theorem bindOne_structural_shape (k : NeedCapabilities EvalM) (p : NeedPattern) 
 /-- The structural arms of the schedule in one shape. -/
 theorem oneEvents_structural_shape (k : NeedCapabilities EvalM) (p : NeedPattern) (ps : List NeedPattern)
     (hp : p = .sequence ps ∨ p = .list ps ∨ p = .unpack ps) (address : Nat) (repeated : List Ident)
-    (bound : NeedEnv) (family : Bool) (s : EvalState) :
+    (bound : NeedBindState) (family : Bool) (s : EvalState) :
     oneEvents k p address repeated bound family s =
       .value address ::
         match runEval (k.value address) s with
@@ -155,14 +155,41 @@ theorem oneEvents_structural_shape (k : NeedCapabilities EvalM) (p : NeedPattern
 /-- The literal arm of the core: it demands its cell's VALUE and decides by the matcher, in
     either mode. -/
 theorem bindOne_literal_shape (k : NeedCapabilities EvalM) (literal : Pattern) (address : Nat)
-    (repeated : List Ident) (bound : NeedEnv) (family : Bool) :
+    (repeated : List Ident) (bound : NeedBindState) (family : Bool) :
     NeedBinder.bindOne k (.literal literal) address repeated bound family = (do
       let (value, _) <- k.value address
       pure (if (matchPattern literal value).isSome then some bound else none)) := rfl
 
+/-- CHANNEL SUBSTITUTION, NEED-04's data-anchor check. -/
+theorem checkAnchor_substitution (V C : Nat → Prop) (k₁ k₂ : NeedCapabilities EvalM)
+    (hk : AgreeOutside V C k₁ k₂) (name : Ident) (anchor : CountedResult) (family : Bool) :
+    ∀ (cells : List Nat) (s : EvalState), Avoids V C (anchorEvents k₁ anchor cells s) →
+      runEval (NeedBinder.checkAnchor k₁ name anchor family cells) s
+        = runEval (NeedBinder.checkAnchor k₂ name anchor family cells) s
+      ∧ anchorEvents k₁ anchor cells s = anchorEvents k₂ anchor cells s
+  | [], _, _ => ⟨rfl, rfl⟩
+  | cell :: rest, s, havoid => by
+    rw [checkAnchor_run k₁ name anchor family cell rest s, checkAnchor_run k₂ name anchor family cell rest s]
+    simp only [anchorEvents] at havoid ⊢
+    have hva := hk.value cell (avoids_cons havoid).1
+    rcases h1 : runEval (k₁.value cell) s with ⟨e | own, s1⟩
+    · have h1' : runEval (k₂.value cell) s = (.error e, s1) := by rw [← hva, h1]
+      simp only [h1']
+      exact ⟨by trivial, by trivial⟩
+    · have h1' : runEval (k₂.value cell) s = (.ok own, s1) := by rw [← hva, h1]
+      simp only [h1] at havoid
+      simp only [h1']
+      by_cases hag : (own == anchor) = true
+      · simp only [hag, ↓reduceIte] at havoid ⊢
+        obtain ⟨hrun, hev⟩ :=
+          checkAnchor_substitution V C k₁ k₂ hk name anchor family rest s1 (avoids_cons havoid).2
+        exact ⟨hrun, by rw [hev]⟩
+      · simp only [hag, Bool.false_eq_true, ↓reduceIte]
+        exact ⟨by trivial, by trivial⟩
+
 /-- CHANNEL SUBSTITUTION, one name occurrence. -/
 theorem name_substitution (V C : Nat → Prop) (k₁ k₂ : NeedCapabilities EvalM) (hk : AgreeOutside V C k₁ k₂)
-    (name : Ident) (address : Nat) (repeated : List Ident) (bound : NeedEnv) (family : Bool) (s : EvalState)
+    (name : Ident) (address : Nat) (repeated : List Ident) (bound : NeedBindState) (family : Bool) (s : EvalState)
     (havoid : Avoids V C (nameEvents k₁ name address repeated bound s)) :
     runEval (NeedBinder.bindName k₁ name address repeated bound family) s
       = runEval (NeedBinder.bindName k₂ name address repeated bound family) s
@@ -172,37 +199,46 @@ theorem name_substitution (V C : Nat → Prop) (k₁ k₂ : NeedCapabilities Eva
       repeated_name_binding k₂ name address repeated bound family s hr]
     simp only [nameEvents, hr, ↓reduceIte] at havoid ⊢
     simp only [repeatedNameEvents] at havoid ⊢
-    have hva := hk.value address (avoids_cons havoid).1
-    rcases h1 : runEval (k₁.value address) s with ⟨e | value, s1⟩
-    · have h1' : runEval (k₂.value address) s = (.error e, s1) := by rw [← hva, h1]
-      simp [h1']
-    · have h1' : runEval (k₂.value address) s = (.ok value, s1) := by rw [← hva, h1]
+    have hca := hk.callable address (avoids_cons havoid).1
+    rcases h1 : runEval (k₁.callable address) s with ⟨e | (_ | identity), s1⟩
+    · have h1' : runEval (k₂.callable address) s = (.error e, s1) := by rw [← hca, h1]
+      simp only [h1']
+      exact ⟨by trivial, by trivial⟩
+    · have h1' : runEval (k₂.callable address) s = (.ok none, s1) := by rw [← hca, h1]
       simp only [h1] at havoid
-      cases hl : lookupAssoc name bound with
-      | none => simp [h1']
-      | some previous =>
-        simp only [hl] at havoid
-        have hvp := hk.value previous (avoids_cons (avoids_cons havoid).2).1
-        rcases h2 : runEval (k₁.value previous) s1 with ⟨e | before, s2⟩
-        · have h2' : runEval (k₂.value previous) s1 = (.error e, s2) := by rw [← hvp, h2]
-          simp [h1', h2, h2']
-        · have h2' : runEval (k₂.value previous) s1 = (.ok before, s2) := by rw [← hvp, h2]
-          cases hbv : (before == value)
-          · simp [h1', h2, h2', hbv]
-          · simp only [h2, hbv, Bool.not_true, Bool.false_eq_true, ↓reduceIte] at havoid
-            have hcp := hk.callable previous (avoids_cons (avoids_cons (avoids_cons havoid).2).2).1
-            rcases h3 : runEval (k₁.callable previous) s2 with ⟨e | first, s3⟩
-            · have h3' : runEval (k₂.callable previous) s2 = (.error e, s3) := by rw [← hcp, h3]
-              simp [h1', h2, h2', hbv, h3, h3']
-            · have h3' : runEval (k₂.callable previous) s2 = (.ok first, s3) := by rw [← hcp, h3]
-              simp only [h3] at havoid
-              have hca := hk.callable address
-                (avoids_cons (avoids_cons (avoids_cons (avoids_cons havoid).2).2).2).1
-              rcases h4 : runEval (k₁.callable address) s3 with ⟨e | second, s4⟩
-              · have h4' : runEval (k₂.callable address) s3 = (.error e, s4) := by rw [← hca, h4]
-                simp [h1', h2, h2', hbv, h3, h3', h4, h4']
-              · have h4' : runEval (k₂.callable address) s3 = (.ok second, s4) := by rw [← hca, h4]
-                simp [h1', h2, h2', hbv, h3, h3', h4, h4']
+      simp only [h1']
+      have hva := hk.value address (avoids_cons (avoids_cons havoid).2).1
+      rcases h2 : runEval (k₁.value address) s1 with ⟨e | own, s2⟩
+      · have h2' : runEval (k₂.value address) s1 = (.error e, s2) := by rw [← hva, h2]
+        simp only [h2']
+        exact ⟨by trivial, by trivial⟩
+      · have h2' : runEval (k₂.value address) s1 = (.ok own, s2) := by rw [← hva, h2]
+        simp only [h2] at havoid
+        simp only [h2']
+        cases ha : (bound.groupOf name).anchor with
+        | some anchor => exact ⟨by trivial, by trivial⟩
+        | none =>
+          simp only [ha] at havoid
+          obtain ⟨hrun, hev⟩ := checkAnchor_substitution V C k₁ k₂ hk name own family _ s2
+            (avoids_cons (avoids_cons havoid).2).2
+          rw [hrun, hev]
+          exact ⟨by trivial, by trivial⟩
+    · have h1' : runEval (k₂.callable address) s = (.ok (some identity), s1) := by rw [← hca, h1]
+      simp only [h1] at havoid
+      simp only [h1']
+      by_cases hc : (bound.groupOf name).conflictsWith identity = true
+      · simp only [hc, ↓reduceIte]
+        exact ⟨by trivial, by trivial⟩
+      · simp only [hc, Bool.false_eq_true, ↓reduceIte] at havoid ⊢
+        cases ha : (bound.groupOf name).anchor with
+        | none => exact ⟨by trivial, by trivial⟩
+        | some anchor =>
+          simp only [ha] at havoid
+          simp only
+          obtain ⟨hrun, hev⟩ := checkAnchor_substitution V C k₁ k₂ hk name anchor family [address] s1
+            (avoids_cons havoid).2
+          rw [hrun, hev]
+          exact ⟨by trivial, by trivial⟩
   · have hr' : repeated.contains name = false := by simpa using hr
     constructor
     · rw [BinderCore.core_plain_name_is_pure k₁ name address repeated bound family hr',
@@ -213,7 +249,7 @@ theorem name_substitution (V C : Nat → Prop) (k₁ k₂ : NeedCapabilities Eva
     level. -/
 theorem structural_substitution (V C : Nat → Prop) (k₁ k₂ : NeedCapabilities EvalM) (hk : AgreeOutside V C k₁ k₂)
     (p : NeedPattern) (ps : List NeedPattern) (hp : p = .sequence ps ∨ p = .list ps ∨ p = .unpack ps)
-    (address : Nat) (repeated : List Ident) (bound : NeedEnv) (family : Bool) (s : EvalState)
+    (address : Nat) (repeated : List Ident) (bound : NeedBindState) (family : Bool) (s : EvalState)
     (ih : ∀ (cells : List Nat) (s2 : EvalState),
       Avoids V C (sourcesEvents k₁ ps (needLevelSources ps cells) repeated bound family s2) →
         runEval (NeedBinder.bindSources k₁ ps (needLevelSources ps cells) repeated bound family) s2
@@ -253,7 +289,7 @@ mutual
   /-- CHANNEL SUBSTITUTION, one pattern: agreement outside `V`/`C` and a schedule that avoids
       them give the same run and the same schedule. -/
   theorem one_substitution (V C : Nat → Prop) (k₁ k₂ : NeedCapabilities EvalM) (hk : AgreeOutside V C k₁ k₂)
-      (p : NeedPattern) (address : Nat) (repeated : List Ident) (bound : NeedEnv) (family : Bool)
+      (p : NeedPattern) (address : Nat) (repeated : List Ident) (bound : NeedBindState) (family : Bool)
       (s : EvalState) (havoid : Avoids V C (oneEvents k₁ p address repeated bound family s)) :
       runEval (NeedBinder.bindOne k₁ p address repeated bound family) s
         = runEval (NeedBinder.bindOne k₂ p address repeated bound family) s
@@ -290,7 +326,7 @@ mutual
 
   /-- CHANNEL SUBSTITUTION, one level's patterns. -/
   theorem sources_substitution (V C : Nat → Prop) (k₁ k₂ : NeedCapabilities EvalM) (hk : AgreeOutside V C k₁ k₂)
-      (ps : List NeedPattern) (sources : List (NeedSource Nat)) (repeated : List Ident) (bound : NeedEnv)
+      (ps : List NeedPattern) (sources : List (NeedSource Nat)) (repeated : List Ident) (bound : NeedBindState)
       (family : Bool) (s : EvalState) (havoid : Avoids V C (sourcesEvents k₁ ps sources repeated bound family s)) :
       runEval (NeedBinder.bindSources k₁ ps sources repeated bound family) s
         = runEval (NeedBinder.bindSources k₂ ps sources repeated bound family) s
@@ -335,14 +371,21 @@ theorem results_depend_only_on_invoked_cells (V C : Nat → Prop) (k₁ k₂ : N
     (havoid : Avoids V C (patternsEvents k₁ ps cells family s)) :
     runEval (NeedBinder.bindPatterns k₁ ps cells family) s = runEval (NeedBinder.bindPatterns k₂ ps cells family) s
     ∧ patternsEvents k₁ ps cells family s = patternsEvents k₂ ps cells family s := by
-  simp only [NeedBinder.bindPatterns, NeedBinder.bindLevel, NeedBinder.cardinalityGate, patternsEvents,
-    levelEvents] at havoid ⊢
-  cases hacc : needAcceptsCardinality ps cells.length
-  · exact ⟨rfl, rfl⟩
-  · rw [hacc] at havoid
-    simp only [↓reduceIte] at havoid
-    simp only [Bool.not_true, Bool.false_eq_true, ↓reduceIte]
-    exact sources_substitution V C k₁ k₂ hk ps (needLevelSources ps cells) (needRepeatedNames ps) [] family s havoid
+  have level : runEval (NeedBinder.bindLevel k₁ ps cells (needRepeatedNames ps) {} family) s
+      = runEval (NeedBinder.bindLevel k₂ ps cells (needRepeatedNames ps) {} family) s
+      ∧ levelEvents k₁ ps cells (needRepeatedNames ps) {} family s
+        = levelEvents k₂ ps cells (needRepeatedNames ps) {} family s := by
+    simp only [patternsEvents] at havoid
+    simp only [NeedBinder.bindLevel, NeedBinder.cardinalityGate, levelEvents] at havoid ⊢
+    cases hacc : needAcceptsCardinality ps cells.length
+    · exact ⟨rfl, rfl⟩
+    · rw [hacc] at havoid
+      simp only [↓reduceIte] at havoid
+      simp only [Bool.not_true, Bool.false_eq_true, ↓reduceIte]
+      exact sources_substitution V C k₁ k₂ hk ps (needLevelSources ps cells) (needRepeatedNames ps) {} family s havoid
+  simp only [NeedBinder.bindPatterns, runEval_bind, patternsEvents]
+  rw [level.1]
+  exact ⟨rfl, level.2⟩
 
 /-- The production instance: two pairs of production channels over the one allocator
     `allocateNeed` — the evaluator's `bindingChannels` against any other pair —
@@ -410,9 +453,10 @@ def _root_.KatLang.BinderTrace.NeedEvent.allocated? : NeedEvent → Option Nat
 def Allocated (events : List NeedEvent) (a : Nat) : Prop :=
   ∃ ev ∈ events, ev.allocated? = some a
 
-/-- The binding so far holds cell `a` for one of the head's repeated names. -/
-def RepeatedAt (repeated : List Ident) (bound : NeedEnv) (a : Nat) : Prop :=
-  ∃ name, repeated.contains name = true ∧ lookupAssoc name bound = some a
+/-- A PENDING repeated-name obligation of the binding so far holds cell `a` (NEED-04, group-aware:
+    the earlier callable-bearing contributions whose own VALUE a later data anchor demands). -/
+def RepeatedAt (repeated : List Ident) (bound : NeedBindState) (a : Nat) : Prop :=
+  ∃ name, repeated.contains name = true ∧ a ∈ (bound.groupOf name).pending
 
 theorem allocated_append_left {l₁ l₂ : List NeedEvent} {a : Nat} (h : Allocated l₁ a) :
     Allocated (l₁ ++ l₂) a := by
@@ -430,7 +474,7 @@ theorem allocated_cons {ev : NeedEvent} {l : List NeedEvent} {a : Nat} (h : Allo
   exact ⟨ev', List.mem_cons_of_mem _ hev, ha⟩
 
 /-- Re-binding a name: the name reads its new cell, every other name its old one. -/
-theorem lookupAssoc_rebind (n name : Ident) (address : Nat) (bound : NeedEnv) :
+theorem lookupAssoc_rebind {α : Type} (n name : Ident) (address : α) (bound : Assoc Ident α) :
     lookupAssoc n (bound.filter (fun entry => entry.fst != name) ++ [(name, address)])
       = if n = name then some address else lookupAssoc n bound := by
   induction bound with
@@ -447,97 +491,147 @@ theorem lookupAssoc_rebind (n name : Ident) (address : Nat) (bound : NeedEnv) :
       · subst hn; simp [hk]
       · simp [hn]
 
-/-- The repeated cells after a re-binding: the re-bound name's new cell, or an old one. -/
-theorem repeatedAt_rebind {repeated : List Ident} {name : Ident} {address a : Nat} {bound : NeedEnv}
-    (h : RepeatedAt repeated (bound.filter (fun entry => entry.fst != name) ++ [(name, address)]) a) :
-    RepeatedAt repeated bound a ∨ (repeated.contains name = true ∧ a = address) := by
-  obtain ⟨n, hn, hl⟩ := h
-  rw [lookupAssoc_rebind] at hl
+/-- The agreement state of `n` after `name`'s group is replaced. -/
+theorem groupOf_setGroup (state : NeedBindState) (name n : Ident) (group : RepeatedGroup) :
+    (state.setGroup name group).groupOf n = if n = name then group else state.groupOf n := by
+  unfold NeedBindState.setGroup NeedBindState.groupOf
+  rw [lookupAssoc_rebind]
+  split <;> rfl
+
+theorem groupOf_withCallable (state : NeedBindState) (name n : Ident) (address : Nat) (identity : Algorithm) :
+    (state.withCallable name address identity).groupOf n
+      = if n = name then
+          { state.groupOf name with
+            identity := (state.groupOf name).identity <|> some identity,
+            pending := if (state.groupOf name).anchor.isSome then (state.groupOf name).pending
+              else (state.groupOf name).pending ++ [address] }
+        else state.groupOf n := by
+  unfold NeedBindState.withCallable
+  rw [groupOf_setGroup]
+  rfl
+
+theorem groupOf_withAnchor (state : NeedBindState) (name n : Ident) (address : Nat) (anchor : CountedResult) :
+    (state.withAnchor name address anchor).groupOf n
+      = if n = name then { state.groupOf name with anchor := some anchor, pending := [] }
+        else state.groupOf n := by
+  unfold NeedBindState.withAnchor
+  rw [groupOf_setGroup]
+  rfl
+
+theorem repeatedAt_withPlain {repeated : List Ident} {state : NeedBindState} {name : Ident} {address a : Nat}
+    (h : RepeatedAt repeated (state.withPlain name address) a) : RepeatedAt repeated state a := h
+
+/-- A callable-bearing contribution adds at most its own cell to its name's pending obligations. -/
+theorem repeatedAt_withCallable {repeated : List Ident} {state : NeedBindState} {name : Ident}
+    {address : Nat} {identity : Algorithm} {a : Nat}
+    (h : RepeatedAt repeated (state.withCallable name address identity) a) :
+    RepeatedAt repeated state a ∨ (repeated.contains name = true ∧ a = address) := by
+  obtain ⟨n, hn, ha⟩ := h
+  rw [groupOf_withCallable] at ha
   by_cases he : n = name
   · subst he
-    simp only [↓reduceIte, Option.some.injEq] at hl
-    exact Or.inr ⟨hn, hl.symm⟩
-  · simp only [he, ↓reduceIte] at hl
-    exact Or.inl ⟨n, hn, hl⟩
+    rw [if_pos rfl] at ha
+    dsimp only at ha
+    split at ha
+    · exact Or.inl ⟨n, hn, ha⟩
+    · rcases List.mem_append.mp ha with ha | ha
+      · exact Or.inl ⟨n, hn, ha⟩
+      · exact Or.inr ⟨hn, List.mem_singleton.mp ha⟩
+  · rw [if_neg he] at ha
+    exact Or.inl ⟨n, hn, ha⟩
 
-theorem repeatedAt_nil {repeated : List Ident} {a : Nat} : ¬ RepeatedAt repeated [] a := by
-  rintro ⟨n, -, hl⟩
-  simp [lookupAssoc] at hl
+/-- A data anchor releases its name's pending obligations. -/
+theorem repeatedAt_withAnchor {repeated : List Ident} {state : NeedBindState} {name : Ident}
+    {address : Nat} {anchor : CountedResult} {a : Nat}
+    (h : RepeatedAt repeated (state.withAnchor name address anchor) a) : RepeatedAt repeated state a := by
+  obtain ⟨n, hn, ha⟩ := h
+  rw [groupOf_withAnchor] at ha
+  by_cases he : n = name
+  · subst he
+    rw [if_pos rfl] at ha
+    exact absurd ha List.not_mem_nil
+  · rw [if_neg he] at ha
+    exact ⟨n, hn, ha⟩
 
-/-- Every event of a repeated occurrence is on the occurrence's own cell or on its
-    representative's. -/
-theorem repeatedNameEvents_addresses (k : NeedCapabilities EvalM) (address : Nat) (previous? : Option Nat)
-    (s : EvalState) : ∀ ev ∈ repeatedNameEvents k address previous? s,
-      ev.address = address ∨ previous? = some ev.address := by
+theorem repeatedAt_nil {repeated : List Ident} {a : Nat} : ¬ RepeatedAt repeated {} a := by
+  rintro ⟨n, -, ha⟩
+  simp [NeedBindState.groupOf, lookupAssoc] at ha
+
+/-- Every event of a repeated occurrence is on the occurrence's own cell or on one of its name's
+    pending cells (NEED-04, group-aware: `repeated_events_are_a_prefix_of_the_canonical_order`). -/
+theorem repeatedNameEvents_addresses (k : NeedCapabilities EvalM) (address : Nat) (group : RepeatedGroup)
+    (s : EvalState) : ∀ ev ∈ repeatedNameEvents k address group s,
+      ev.address = address ∨ ev.address ∈ group.pending := by
   intro ev hev
-  simp only [repeatedNameEvents] at hev
-  rcases List.mem_cons.mp hev with rfl | hev
+  obtain ⟨tail, htail⟩ := repeated_events_are_a_prefix_of_the_canonical_order k address group s
+  have hm : ev ∈ NeedEvent.callable address :: NeedEvent.value address :: group.pending.map NeedEvent.value := by
+    rw [← htail]
+    exact List.mem_append_left _ hev
+  rcases List.mem_cons.mp hm with rfl | hm
   · exact Or.inl rfl
-  · rcases h1 : runEval (k.value address) s with ⟨_ | value, s1⟩
-    · simp [h1] at hev
-    · simp only [h1] at hev
-      cases previous? with
-      | none => simp at hev
-      | some previous =>
-        simp only at hev
-        rcases List.mem_cons.mp hev with rfl | hev
-        · exact Or.inr rfl
-        · rcases h2 : runEval (k.value previous) s1 with ⟨_ | before, s2⟩
-          · simp [h2] at hev
-          · simp only [h2] at hev
-            split at hev
-            · simp at hev
-            · rcases List.mem_cons.mp hev with rfl | hev
-              · exact Or.inr rfl
-              · rcases h3 : runEval (k.callable previous) s2 with ⟨_ | _, s3⟩
-                · simp [h3] at hev
-                · simp only [h3, List.mem_singleton] at hev
-                  subst hev
-                  exact Or.inl rfl
+  rcases List.mem_cons.mp hm with rfl | hm
+  · exact Or.inl rfl
+  obtain ⟨c, hc, rfl⟩ := List.mem_map.mp hm
+  exact Or.inr hc
 
-/-- A name occurrence's result: the binding so far, or that binding with the name re-bound to the
-    occurrence's cell. -/
-theorem bindName_result (k : NeedCapabilities EvalM) (name : Ident) (address : Nat) (repeated : List Ident)
-    (bound : NeedEnv) (family : Bool) (s : EvalState) (next : NeedEnv) (s' : EvalState)
+/-- A name occurrence's result leaves every pending cell pending, releases them, or adds the
+    occurrence's own cell to its repeated name's pending obligations. -/
+theorem bindName_pending (k : NeedCapabilities EvalM) (name : Ident) (address : Nat) (repeated : List Ident)
+    (bound : NeedBindState) (family : Bool) (s : EvalState) (next : NeedBindState) (s' : EvalState)
     (h : runEval (NeedBinder.bindName k name address repeated bound family) s = (.ok (some next), s')) :
-    next = bound ∨ next = bound.filter (fun entry => entry.fst != name) ++ [(name, address)] := by
+    ∀ a, RepeatedAt repeated next a → RepeatedAt repeated bound a ∨ (repeated.contains name = true ∧ a = address) := by
+  intro a ha
   by_cases hr : repeated.contains name = true
   · rw [repeated_name_binding k name address repeated bound family s hr] at h
-    rcases h1 : runEval (k.value address) s with ⟨e | value, s1⟩
+    rcases h1 : runEval (k.callable address) s with ⟨e | (_ | identity), s1⟩
     · simp [h1] at h
-    · cases hl : lookupAssoc name bound with
-      | none =>
-        simp only [h1, hl, Prod.mk.injEq, Except.ok.injEq, Option.some.injEq] at h
-        exact Or.inr h.1.symm
-      | some previous =>
-        rcases h2 : runEval (k.value previous) s1 with ⟨e | before, s2⟩
-        · simp [h1, hl, h2] at h
-        · cases hbv : (before == value)
-          · cases family <;> simp [h1, hl, h2, hbv] at h
-          · rcases h3 : runEval (k.callable previous) s2 with ⟨e | first, s3⟩
-            · simp [h1, hl, h2, hbv, h3] at h
-            · rcases h4 : runEval (k.callable address) s3 with ⟨e | second, s4⟩
-              · simp [h1, hl, h2, hbv, h3, h4] at h
-              · simp only [h1, hl, h2, hbv, h3, h4, Bool.not_true, Bool.false_eq_true, ↓reduceIte,
-                  Prod.mk.injEq] at h
-                obtain ⟨hv, -⟩ := h
-                unfold repeatedVerdict at hv
-                cases first with
-                | none =>
-                  cases second <;> simp at hv
-                  · exact Or.inl hv.symm
-                  · exact Or.inr hv.symm
-                | some a =>
-                  cases second with
-                  | none => simp at hv; exact Or.inl hv.symm
-                  | some b =>
-                    cases hid : sameRepeatedCallableIdentity a b
-                    · cases family <;> simp [hid] at hv
-                    · simp [hid] at hv; exact Or.inl hv.symm
+    · simp only [h1] at h
+      rcases h2 : runEval (k.value address) s1 with ⟨e | own, s2⟩
+      · simp [h2] at h
+      · simp only [h2] at h
+        cases hanc : (bound.groupOf name).anchor with
+        | some anchor =>
+          simp only [hanc] at h
+          split at h
+          · simp only [Prod.mk.injEq, Except.ok.injEq, Option.some.injEq] at h
+            rw [← h.1] at ha
+            exact Or.inl ha
+          · cases family <;> simp at h
+        | none =>
+          simp only [hanc] at h
+          rcases h3 : runEval (NeedBinder.checkAnchor k name own family (bound.groupOf name).pending) s2
+            with ⟨e | agreed, s3⟩
+          · simp [h3] at h
+          · simp only [h3] at h
+            cases agreed
+            · simp at h
+            · simp at h
+              rw [← h.1] at ha
+              exact Or.inl (repeatedAt_withAnchor ha)
+    · simp only [h1] at h
+      split at h
+      · cases family <;> simp at h
+      · cases hanc : (bound.groupOf name).anchor with
+        | some anchor =>
+          simp only [hanc] at h
+          rcases h3 : runEval (NeedBinder.checkAnchor k name anchor family [address]) s1
+            with ⟨e | agreed, s3⟩
+          · simp [h3] at h
+          · simp only [h3] at h
+            cases agreed
+            · simp at h
+            · simp at h
+              rw [← h.1] at ha
+              exact repeatedAt_withCallable ha
+        | none =>
+          simp only [hanc, Prod.mk.injEq, Except.ok.injEq, Option.some.injEq] at h
+          rw [← h.1] at ha
+          exact repeatedAt_withCallable ha
   · have hr' : repeated.contains name = false := by simpa using hr
     rw [BinderCore.core_plain_name_is_pure k name address repeated bound family hr'] at h
     simp only [runEval_pure, Prod.mk.injEq, Except.ok.injEq, Option.some.injEq] at h
-    exact Or.inr h.1.symm
+    rw [← h.1] at ha
+    exact Or.inl (repeatedAt_withPlain ha)
 
 /-- A ready allocation event exists for every cell a structural pattern's items received. -/
 theorem ready_loop_cells (k : NeedCapabilities EvalM) (items : List Result) (acc : List Nat)
@@ -651,13 +745,13 @@ theorem nested_inspected_cells_are_allocated (k : NeedCapabilities EvalM) (repea
 
 /-- The name arm of the core is `bindName`. -/
 theorem bindOne_bind_shape (k : NeedCapabilities EvalM) (name : Ident) (collecting : Bool) (address : Nat)
-    (repeated : List Ident) (bound : NeedEnv) (family : Bool) :
+    (repeated : List Ident) (bound : NeedBindState) (family : Bool) :
     NeedBinder.bindOne k (.bind name collecting) address repeated bound family
       = NeedBinder.bindName k name address repeated bound family := rfl
 
 /-- The literal arm's result is the binding so far, unchanged. -/
 theorem bindOne_literal_result (k : NeedCapabilities EvalM) (literal : Pattern) (address : Nat)
-    (repeated : List Ident) (bound : NeedEnv) (family : Bool) (s : EvalState) (next : NeedEnv) (s' : EvalState)
+    (repeated : List Ident) (bound : NeedBindState) (family : Bool) (s : EvalState) (next : NeedBindState) (s' : EvalState)
     (h : runEval (NeedBinder.bindOne k (.literal literal) address repeated bound family) s = (.ok (some next), s')) :
     next = bound := by
   rw [bindOne_literal_shape] at h
@@ -679,7 +773,7 @@ theorem mem_inspected_tail {repeated : List Ident} {p : NeedPattern} {rest : Lis
 /-- THE ORIGIN OF AN INVOCATION, one structural pattern, given the law for its nested level. -/
 theorem structural_origin (k : NeedCapabilities EvalM) (p : NeedPattern) (ps : List NeedPattern)
     (hp : p = .sequence ps ∨ p = .list ps ∨ p = .unpack ps) (address : Nat) (repeated : List Ident)
-    (bound : NeedEnv) (family : Bool) (s : EvalState)
+    (bound : NeedBindState) (family : Bool) (s : EvalState)
     (ih : ∀ (cells : List Nat) (s2 : EvalState),
       (∀ ev ∈ sourcesEvents k ps (needLevelSources ps cells) repeated bound family s2, ev.isInvocation = true →
           ev.address ∈ inspectedCells repeated ps (needLevelSources ps cells)
@@ -754,7 +848,7 @@ mutual
       binding so far holds for a repeated name; and its result binds a repeated name only to such
       a cell. -/
   theorem one_origin (k : NeedCapabilities EvalM) (p : NeedPattern) (address : Nat) (repeated : List Ident)
-      (bound : NeedEnv) (family : Bool) (s : EvalState) :
+      (bound : NeedBindState) (family : Bool) (s : EvalState) :
       (∀ ev ∈ oneEvents k p address repeated bound family s, ev.isInvocation = true →
           (p.inspects repeated = true ∧ ev.address = address)
           ∨ Allocated (oneEvents k p address repeated bound family s) ev.address
@@ -776,11 +870,9 @@ mutual
         · simp at hev
       · intro next s' h a ha
         rw [bindOne_bind_shape] at h
-        rcases bindName_result k name address repeated bound family s next s' h with rfl | rfl
+        rcases bindName_pending k name address repeated bound family s next s' h a ha with ha | ⟨hr, rfl⟩
         · exact Or.inl ha
-        · rcases repeatedAt_rebind ha with ha | ⟨hr, rfl⟩
-          · exact Or.inl ha
-          · exact Or.inr (Or.inl ⟨hr, rfl⟩)
+        · exact Or.inr (Or.inl ⟨hr, rfl⟩)
     | literal literal =>
       constructor
       · intro ev hev _
@@ -813,11 +905,9 @@ mutual
         rcases h1 : runEval (k.reference address) s with ⟨e | adapter, s1⟩
         · simp [h1] at h
         · simp only [h1, thenRun_ok] at h ⊢
-          rcases bindName_result k name adapter repeated bound family s1 next s' h with rfl | rfl
+          rcases bindName_pending k name adapter repeated bound family s1 next s' h a ha with ha | ⟨hr, rfl⟩
           · exact Or.inl ha
-          · rcases repeatedAt_rebind ha with ha | ⟨hr, rfl⟩
-            · exact Or.inl ha
-            · exact Or.inr (Or.inr ⟨.reference address a, List.mem_cons_self, rfl⟩)
+          · exact Or.inr (Or.inr ⟨.reference address a, List.mem_cons_self, rfl⟩)
     | sequence ps =>
       exact structural_origin k _ ps (Or.inl rfl) address repeated bound family s
         (fun cells s2 => sources_origin k ps (needLevelSources ps cells) repeated bound family s2)
@@ -830,7 +920,7 @@ mutual
 
   /-- THE ORIGIN OF AN INVOCATION, one level's patterns over their sources. -/
   theorem sources_origin (k : NeedCapabilities EvalM) (ps : List NeedPattern) (sources : List (NeedSource Nat))
-      (repeated : List Ident) (bound : NeedEnv) (family : Bool) (s : EvalState) :
+      (repeated : List Ident) (bound : NeedBindState) (family : Bool) (s : EvalState) :
       (∀ ev ∈ sourcesEvents k ps sources repeated bound family s, ev.isInvocation = true →
           ev.address ∈ inspectedCells repeated ps sources
           ∨ Allocated (sourcesEvents k ps sources repeated bound family s) ev.address
@@ -943,7 +1033,7 @@ theorem invoked_cells_are_inspected_or_allocated (k : NeedCapabilities EvalM) (p
   simp only [patternsEvents, levelEvents] at hev ⊢
   by_cases hacc : needAcceptsCardinality ps cells.length = true
   · simp only [hacc, ↓reduceIte] at hev ⊢
-    rcases (sources_origin k ps (needLevelSources ps cells) (needRepeatedNames ps) [] family s).1 ev hev hinv
+    rcases (sources_origin k ps (needLevelSources ps cells) (needRepeatedNames ps) {} family s).1 ev hev hinv
       with hc | hc | hc
     · exact Or.inl hc
     · exact Or.inr hc
@@ -1017,76 +1107,111 @@ inductive Incompatibility : Error → Prop
 /-- How a clause attempt's outcome relates to the ordinary binding's: the same binding, the same
     raised error, the same non-match (a literal mismatch), or a non-match where the ordinary
     binding raises an incompatibility. -/
-inductive ModeAgree : Except Error (Option NeedEnv) → Except Error (Option NeedEnv) → Prop
-  | bound (env : NeedEnv) : ModeAgree (.ok (some env)) (.ok (some env))
+inductive ModeAgree {β : Type} : Except Error (Option β) → Except Error (Option β) → Prop
+  | bound (env : β) : ModeAgree (.ok (some env)) (.ok (some env))
   | raised (e : Error) : ModeAgree (.error e) (.error e)
   | incompatible (e : Error) (h : Incompatibility e) : ModeAgree (.ok none) (.error e)
   | nonMatch : ModeAgree (.ok none) (.ok none)
 
 /-- Equal outcomes always agree. -/
-theorem ModeAgree.refl : ∀ r : Except Error (Option NeedEnv), ModeAgree r r
+theorem ModeAgree.refl {β : Type} : ∀ r : Except Error (Option β), ModeAgree r r
   | .ok (some env) => .bound env
   | .ok none => .nonMatch
   | .error e => .raised e
 
-/-- The repeated-name verdict in the two modes. -/
-theorem verdict_modes (name : Ident) (address : Nat) (bound : NeedEnv) (first second : Option Algorithm) :
-    ModeAgree (repeatedVerdict name address bound true first second)
-      (repeatedVerdict name address bound false first second) := by
-  unfold repeatedVerdict
-  cases first with
-  | none => cases second <;> exact .bound _
-  | some a =>
-    cases second with
-    | none => exact .bound _
-    | some b =>
-      cases hid : sameRepeatedCallableIdentity a b
-      · simp only [hid, Bool.not_false, Bool.false_eq_true, ↓reduceIte]
-        exact .incompatible _ .repeatedIdentity
-      · simp only [hid, Bool.not_true, Bool.false_eq_true, ↓reduceIte, Option.isSome_some, Bool.true_or]
-        exact .bound _
+/-- The two modes of NEED-04's data-anchor check: the same invocations and final state; `true` in
+    both, or the attempt's `false` against the ordinary repeated-parameter `badArity`, or the same
+    raised error. -/
+theorem checkAnchor_modes (k : NeedCapabilities EvalM) (name : Ident) (anchor : CountedResult) :
+    ∀ (cells : List Nat) (s : EvalState),
+      (runEval (NeedBinder.checkAnchor k name anchor true cells) s).2
+        = (runEval (NeedBinder.checkAnchor k name anchor false cells) s).2
+      ∧ (((runEval (NeedBinder.checkAnchor k name anchor true cells) s).1 = .ok true
+            ∧ (runEval (NeedBinder.checkAnchor k name anchor false cells) s).1 = .ok true)
+        ∨ ((runEval (NeedBinder.checkAnchor k name anchor true cells) s).1 = .ok false
+            ∧ (runEval (NeedBinder.checkAnchor k name anchor false cells) s).1
+              = .error (Error.withContext (repeatedParameterContext name) Error.badArity))
+        ∨ ∃ e, (runEval (NeedBinder.checkAnchor k name anchor true cells) s).1 = .error e
+            ∧ (runEval (NeedBinder.checkAnchor k name anchor false cells) s).1 = .error e)
+  | [], s => ⟨rfl, Or.inl ⟨rfl, rfl⟩⟩
+  | cell :: rest, s => by
+    rw [checkAnchor_run k name anchor true cell rest s, checkAnchor_run k name anchor false cell rest s]
+    rcases h1 : runEval (k.value cell) s with ⟨e | own, s1⟩
+    · exact ⟨rfl, Or.inr (Or.inr ⟨e, rfl, rfl⟩)⟩
+    · simp only
+      by_cases hag : (own == anchor) = true
+      · simp only [hag, ↓reduceIte]
+        exact checkAnchor_modes k name anchor rest s1
+      · simp only [hag, Bool.false_eq_true, ↓reduceIte]
+        simp
 
 /-- The two modes of one name occurrence. -/
 theorem name_modes (k : NeedCapabilities EvalM) (name : Ident) (address : Nat) (repeated : List Ident)
-    (bound : NeedEnv) (s : EvalState) :
+    (bound : NeedBindState) (s : EvalState) :
     (runEval (NeedBinder.bindName k name address repeated bound true) s).2
       = (runEval (NeedBinder.bindName k name address repeated bound false) s).2
     ∧ ModeAgree (runEval (NeedBinder.bindName k name address repeated bound true) s).1
         (runEval (NeedBinder.bindName k name address repeated bound false) s).1 := by
+  have anchorCase : ∀ (anchor : CountedResult) (cells : List Nat) (t : EvalState) (next : NeedBindState),
+      (match runEval (NeedBinder.checkAnchor k name anchor true cells) t with
+        | (.error e, t') => ((.error e : Except Error (Option NeedBindState)), t')
+        | (.ok agreed, t') => (.ok (if agreed then some next else none), t')).2
+      = (match runEval (NeedBinder.checkAnchor k name anchor false cells) t with
+        | (.error e, t') => ((.error e : Except Error (Option NeedBindState)), t')
+        | (.ok agreed, t') => (.ok (if agreed then some next else none), t')).2
+      ∧ ModeAgree
+        (match runEval (NeedBinder.checkAnchor k name anchor true cells) t with
+          | (.error e, t') => ((.error e : Except Error (Option NeedBindState)), t')
+          | (.ok agreed, t') => (.ok (if agreed then some next else none), t')).1
+        (match runEval (NeedBinder.checkAnchor k name anchor false cells) t with
+          | (.error e, t') => ((.error e : Except Error (Option NeedBindState)), t')
+          | (.ok agreed, t') => (.ok (if agreed then some next else none), t')).1 := by
+    intro anchor cells t next
+    obtain ⟨hs, hc⟩ := checkAnchor_modes k name anchor cells t
+    rcases hT : runEval (NeedBinder.checkAnchor k name anchor true cells) t with ⟨rT, sT⟩
+    rcases hF : runEval (NeedBinder.checkAnchor k name anchor false cells) t with ⟨rF, sF⟩
+    rw [hT, hF] at hs hc
+    simp only at hs hc
+    subst hs
+    rcases hc with ⟨rfl, rfl⟩ | ⟨rfl, rfl⟩ | ⟨e, rfl, rfl⟩
+    · exact ⟨by trivial, ModeAgree.refl _⟩
+    · exact ⟨by trivial, .incompatible _ (.repeatedValue name)⟩
+    · exact ⟨by trivial, .raised e⟩
   by_cases hr : repeated.contains name = true
   · rw [repeated_name_binding k name address repeated bound true s hr,
       repeated_name_binding k name address repeated bound false s hr]
-    rcases h1 : runEval (k.value address) s with ⟨e | value, s1⟩
+    rcases h1 : runEval (k.callable address) s with ⟨e | (_ | identity), s1⟩
+    · exact ⟨by trivial, .raised e⟩
     · simp only
-      exact ⟨by trivial, .raised e⟩
-    · cases hl : lookupAssoc name bound with
-      | none =>
-        simp only
-        exact ⟨by trivial, .bound _⟩
-      | some previous =>
-        rcases h2 : runEval (k.value previous) s1 with ⟨e | before, s2⟩
-        · simp only [h2]
-          exact ⟨by trivial, .raised e⟩
-        · cases hbv : (before == value)
-          · simp only [h2, hbv, Bool.not_false, Bool.false_eq_true, ↓reduceIte]
+      rcases h2 : runEval (k.value address) s1 with ⟨e | own, s2⟩
+      · exact ⟨by trivial, .raised e⟩
+      · simp only
+        cases ha : (bound.groupOf name).anchor with
+        | some anchor =>
+          simp only
+          by_cases hag : (own == anchor) = true
+          · simp only [hag, ↓reduceIte]
+            exact ⟨by trivial, .bound _⟩
+          · simp only [hag, Bool.false_eq_true, ↓reduceIte]
             exact ⟨by trivial, .incompatible _ (.repeatedValue name)⟩
-          · rcases h3 : runEval (k.callable previous) s2 with ⟨e | first, s3⟩
-            · simp only [h2, hbv, h3, Bool.not_true, Bool.false_eq_true, ↓reduceIte]
-              exact ⟨by trivial, .raised e⟩
-            · rcases h4 : runEval (k.callable address) s3 with ⟨e | second, s4⟩
-              · simp only [h2, hbv, h3, h4, Bool.not_true, Bool.false_eq_true, ↓reduceIte]
-                exact ⟨by trivial, .raised e⟩
-              · simp only [h2, hbv, h3, h4, Bool.not_true, Bool.false_eq_true, ↓reduceIte]
-                exact ⟨by trivial, verdict_modes name address bound first second⟩
+        | none => exact anchorCase own _ s2 _
+    · simp only
+      by_cases hc : (bound.groupOf name).conflictsWith identity = true
+      · simp only [hc, ↓reduceIte, Bool.false_eq_true]
+        exact ⟨by trivial, .incompatible _ .repeatedIdentity⟩
+      · simp only [hc, Bool.false_eq_true, ↓reduceIte]
+        cases ha : (bound.groupOf name).anchor with
+        | none => exact ⟨by trivial, .bound _⟩
+        | some anchor => exact anchorCase anchor [address] s1 _
   · have hr' : repeated.contains name = false := by simpa using hr
     rw [BinderCore.core_plain_name_is_pure k name address repeated bound true hr',
       BinderCore.core_plain_name_is_pure k name address repeated bound false hr']
-    exact ⟨rfl, .bound _⟩
+    exact ⟨by trivial, .bound _⟩
 
 /-- The two modes of one structural pattern, given the law for its nested level. -/
 theorem structural_modes (k : NeedCapabilities EvalM) (p : NeedPattern) (ps : List NeedPattern)
     (hp : p = .sequence ps ∨ p = .list ps ∨ p = .unpack ps) (address : Nat) (repeated : List Ident)
-    (bound : NeedEnv) (s : EvalState)
+    (bound : NeedBindState) (s : EvalState)
     (ih : ∀ (cells : List Nat) (s2 : EvalState),
       (runEval (NeedBinder.bindSources k ps (needLevelSources ps cells) repeated bound true) s2).2
         = (runEval (NeedBinder.bindSources k ps (needLevelSources ps cells) repeated bound false) s2).2
@@ -1127,7 +1252,7 @@ theorem structural_modes (k : NeedCapabilities EvalM) (p : NeedPattern) (ps : Li
 mutual
   /-- The two modes of one pattern: same final state, related outcomes, same schedule. -/
   theorem one_modes (k : NeedCapabilities EvalM) (p : NeedPattern) (address : Nat)
-      (repeated : List Ident) (bound : NeedEnv) (s : EvalState) :
+      (repeated : List Ident) (bound : NeedBindState) (s : EvalState) :
       (runEval (NeedBinder.bindOne k p address repeated bound true) s).2
         = (runEval (NeedBinder.bindOne k p address repeated bound false) s).2
       ∧ ModeAgree (runEval (NeedBinder.bindOne k p address repeated bound true) s).1
@@ -1161,7 +1286,7 @@ mutual
 
   /-- The two modes of one level's patterns. -/
   theorem sources_modes (k : NeedCapabilities EvalM) (ps : List NeedPattern) (sources : List (NeedSource Nat))
-      (repeated : List Ident) (bound : NeedEnv) (s : EvalState) :
+      (repeated : List Ident) (bound : NeedBindState) (s : EvalState) :
       (runEval (NeedBinder.bindSources k ps sources repeated bound true) s).2
         = (runEval (NeedBinder.bindSources k ps sources repeated bound false) s).2
       ∧ ModeAgree (runEval (NeedBinder.bindSources k ps sources repeated bound true) s).1
@@ -1200,7 +1325,7 @@ end
 
 /-- A non-match on the attempt side is an incompatibility error or the same non-match (a literal
     mismatch) on the ordinary side. -/
-theorem ModeAgree.of_non_match {a b : Except Error (Option NeedEnv)} (h : ModeAgree a b)
+theorem ModeAgree.of_non_match {β : Type} {a b : Except Error (Option β)} (h : ModeAgree a b)
     (ha : a = .ok none) : (∃ e, Incompatibility e ∧ b = .error e) ∨ b = .ok none := by
   cases h with
   | bound env => cases ha
@@ -1209,7 +1334,7 @@ theorem ModeAgree.of_non_match {a b : Except Error (Option NeedEnv)} (h : ModeAg
   | nonMatch => exact Or.inr rfl
 
 /-- WHERE THE MODES DIFFER: differing outcomes are a non-match against an incompatibility error. -/
-theorem ModeAgree.of_differing {a b : Except Error (Option NeedEnv)} (h : ModeAgree a b) (hne : a ≠ b) :
+theorem ModeAgree.of_differing {β : Type} {a b : Except Error (Option β)} (h : ModeAgree a b) (hne : a ≠ b) :
     a = .ok none ∧ ∃ e, Incompatibility e ∧ b = .error e := by
   cases h with
   | bound env => exact absurd rfl hne
@@ -1224,19 +1349,40 @@ theorem ModeAgree.of_differing {a b : Except Error (Option NeedEnv)} (h : ModeAg
     literal mismatch), or a non-match where the ordinary binding raises one of the four
     incompatibility errors. The outcomes differ ONLY in that last case
     (`production_modes_differ_only_at_an_incompatibility`). -/
+theorem level_modes (k : NeedCapabilities EvalM) (ps : List NeedPattern) (cells : List Nat) (s : EvalState) :
+    (runEval (NeedBinder.bindLevel k ps cells (needRepeatedNames ps) {} true) s).2
+      = (runEval (NeedBinder.bindLevel k ps cells (needRepeatedNames ps) {} false) s).2
+    ∧ ModeAgree (runEval (NeedBinder.bindLevel k ps cells (needRepeatedNames ps) {} true) s).1
+        (runEval (NeedBinder.bindLevel k ps cells (needRepeatedNames ps) {} false) s).1
+    ∧ levelEvents k ps cells (needRepeatedNames ps) {} true s
+      = levelEvents k ps cells (needRepeatedNames ps) {} false s := by
+  simp only [NeedBinder.bindLevel, NeedBinder.cardinalityGate, levelEvents]
+  cases hacc : needAcceptsCardinality ps cells.length
+  · simp only [Bool.not_false, ↓reduceIte, runEval_pure, runEval_throw, Bool.false_eq_true]
+    exact ⟨by trivial, .incompatible _ (.count _ _), by trivial⟩
+  · simp only [Bool.not_true, Bool.false_eq_true, ↓reduceIte]
+    exact sources_modes k ps (needLevelSources ps cells) (needRepeatedNames ps) {} s
+
 theorem family_attempt_is_the_ordinary_binding (k : NeedCapabilities EvalM) (ps : List NeedPattern)
     (cells : List Nat) (s : EvalState) :
     (runEval (NeedBinder.bindPatterns k ps cells true) s).2 = (runEval (NeedBinder.bindPatterns k ps cells false) s).2
     ∧ ModeAgree (runEval (NeedBinder.bindPatterns k ps cells true) s).1
         (runEval (NeedBinder.bindPatterns k ps cells false) s).1
     ∧ patternsEvents k ps cells true s = patternsEvents k ps cells false s := by
-  simp only [NeedBinder.bindPatterns, NeedBinder.bindLevel, NeedBinder.cardinalityGate, patternsEvents,
-    levelEvents]
-  cases hacc : needAcceptsCardinality ps cells.length
-  · simp only [Bool.not_false, ↓reduceIte, runEval_pure, runEval_throw, Bool.false_eq_true]
-    exact ⟨by trivial, .incompatible _ (.count _ _), by trivial⟩
-  · simp only [Bool.not_true, Bool.false_eq_true, ↓reduceIte]
-    exact sources_modes k ps (needLevelSources ps cells) (needRepeatedNames ps) [] s
+  obtain ⟨hs, hm, he⟩ := level_modes k ps cells s
+  simp only [NeedBinder.bindPatterns, runEval_bind, patternsEvents]
+  rcases hT : runEval (NeedBinder.bindLevel k ps cells (needRepeatedNames ps) {} true) s with ⟨rT, sT⟩
+  rcases hF : runEval (NeedBinder.bindLevel k ps cells (needRepeatedNames ps) {} false) s with ⟨rF, sF⟩
+  rw [hT, hF] at hs hm
+  simp only at hs hm
+  subst hs
+  refine ⟨?_, ?_, he⟩
+  · cases hm <;> rfl
+  · cases hm with
+    | bound env => simp only [thenRun_ok, runEval_pure]; exact .bound _
+    | raised e => exact .raised e
+    | incompatible e h => simp only [thenRun_ok, thenRun_error, runEval_pure]; exact .incompatible e h
+    | nonMatch => simp only [thenRun_ok, runEval_pure]; exact .nonMatch
 
 /-- At the production binder, for EVERY head: when a clause attempt and the ordinary binding
     disagree, the attempt is a non-match and the ordinary binding raised one of the four
@@ -1253,43 +1399,44 @@ theorem production_modes_differ_only_at_an_incompatibility (c : NeedChannels) (p
 
 /-! ### Literal-free heads: the ordinary binding is never a non-match -/
 
-theorem verdict_ordinary_is_never_a_non_match (name : Ident) (address : Nat) (bound : NeedEnv)
-    (first second : Option Algorithm) : repeatedVerdict name address bound false first second ≠ .ok none := by
-  unfold repeatedVerdict
-  cases first with
-  | none => cases second <;> simp
-  | some a =>
-    cases second with
-    | none => simp
-    | some b => cases hid : sameRepeatedCallableIdentity a b <;> simp [hid]
-
 theorem name_ordinary_is_never_a_non_match (k : NeedCapabilities EvalM) (name : Ident) (address : Nat)
-    (repeated : List Ident) (bound : NeedEnv) (s : EvalState) :
+    (repeated : List Ident) (bound : NeedBindState) (s : EvalState) :
     (runEval (NeedBinder.bindName k name address repeated bound false) s).1 ≠ .ok none := by
+  have anchorCase : ∀ (anchor : CountedResult) (cells : List Nat) (t : EvalState) (next : NeedBindState),
+      (match runEval (NeedBinder.checkAnchor k name anchor false cells) t with
+        | (.error e, t') => ((.error e : Except Error (Option NeedBindState)), t')
+        | (.ok agreed, t') => (.ok (if agreed then some next else none), t')).1 ≠ .ok none := by
+    intro anchor cells t next
+    have hc := (checkAnchor_modes k name anchor cells t).2
+    rcases hF : runEval (NeedBinder.checkAnchor k name anchor false cells) t with ⟨rF, sF⟩
+    rw [hF] at hc
+    simp only at hc
+    rcases hc with ⟨-, rfl⟩ | ⟨-, rfl⟩ | ⟨e, -, rfl⟩ <;> simp
   by_cases hr : repeated.contains name = true
   · rw [repeated_name_binding k name address repeated bound false s hr]
-    rcases h1 : runEval (k.value address) s with ⟨e | value, s1⟩
+    rcases h1 : runEval (k.callable address) s with ⟨e | (_ | identity), s1⟩
     · simp
-    · cases hl : lookupAssoc name bound with
-      | none => simp
-      | some previous =>
-        rcases h2 : runEval (k.value previous) s1 with ⟨e | before, s2⟩
-        · simp [h2]
-        · cases hbv : (before == value)
-          · simp [h2, hbv]
-          · rcases h3 : runEval (k.callable previous) s2 with ⟨e | first, s3⟩
-            · simp [h2, hbv, h3]
-            · rcases h4 : runEval (k.callable address) s3 with ⟨e | second, s4⟩
-              · simp [h2, hbv, h3, h4]
-              · simp only [h2, hbv, h3, h4, Bool.not_true, Bool.false_eq_true, ↓reduceIte]
-                exact verdict_ordinary_is_never_a_non_match name address bound first second
+    · simp only
+      rcases h2 : runEval (k.value address) s1 with ⟨e | own, s2⟩
+      · simp
+      · simp only
+        cases ha : (bound.groupOf name).anchor with
+        | some anchor => by_cases hag : (own == anchor) = true <;> simp [hag]
+        | none => exact anchorCase own _ s2 _
+    · simp only
+      by_cases hc : (bound.groupOf name).conflictsWith identity = true
+      · simp [hc]
+      · simp only [hc, Bool.false_eq_true, ↓reduceIte]
+        cases ha : (bound.groupOf name).anchor with
+        | none => simp
+        | some anchor => exact anchorCase anchor [address] s1 _
   · have hr' : repeated.contains name = false := by simpa using hr
     rw [BinderCore.core_plain_name_is_pure k name address repeated bound false hr']
     simp
 
 theorem structural_ordinary_is_never_a_non_match (k : NeedCapabilities EvalM) (p : NeedPattern)
     (ps : List NeedPattern) (hp : p = .sequence ps ∨ p = .list ps ∨ p = .unpack ps) (address : Nat)
-    (repeated : List Ident) (bound : NeedEnv) (s : EvalState)
+    (repeated : List Ident) (bound : NeedBindState) (s : EvalState)
     (ih : ∀ (cells : List Nat) (s2 : EvalState),
       (runEval (NeedBinder.bindSources k ps (needLevelSources ps cells) repeated bound false) s2).1 ≠ .ok none) :
     (runEval (NeedBinder.bindOne k p address repeated bound false) s).1 ≠ .ok none := by
@@ -1312,7 +1459,7 @@ theorem structural_ordinary_is_never_a_non_match (k : NeedCapabilities EvalM) (p
 
 mutual
   theorem one_ordinary_is_never_a_non_match (k : NeedCapabilities EvalM) (p : NeedPattern) (address : Nat)
-      (repeated : List Ident) (bound : NeedEnv) (s : EvalState) (hlf : p.literalFree = true) :
+      (repeated : List Ident) (bound : NeedBindState) (s : EvalState) (hlf : p.literalFree = true) :
       (runEval (NeedBinder.bindOne k p address repeated bound false) s).1 ≠ .ok none := by
     cases p with
     | bind name collecting =>
@@ -1339,7 +1486,7 @@ mutual
         (fun cells s2 => sources_ordinary_is_never_a_non_match k ps (needLevelSources ps cells) repeated bound s2 hlf)
 
   theorem sources_ordinary_is_never_a_non_match (k : NeedCapabilities EvalM) (ps : List NeedPattern)
-      (sources : List (NeedSource Nat)) (repeated : List Ident) (bound : NeedEnv) (s : EvalState)
+      (sources : List (NeedSource Nat)) (repeated : List Ident) (bound : NeedBindState) (s : EvalState)
       (hlf : literalFreeList ps = true) :
       (runEval (NeedBinder.bindSources k ps sources repeated bound false) s).1 ≠ .ok none := by
     cases ps with
@@ -1363,11 +1510,18 @@ end
 theorem ordinary_binding_is_never_a_non_match (k : NeedCapabilities EvalM) (ps : List NeedPattern)
     (cells : List Nat) (s : EvalState) (hlf : literalFreeList ps = true) :
     (runEval (NeedBinder.bindPatterns k ps cells false) s).1 ≠ .ok none := by
-  simp only [NeedBinder.bindPatterns, NeedBinder.bindLevel, NeedBinder.cardinalityGate]
-  cases hacc : needAcceptsCardinality ps cells.length
+  have hlevel : (runEval (NeedBinder.bindLevel k ps cells (needRepeatedNames ps) {} false) s).1 ≠ .ok none := by
+    simp only [NeedBinder.bindLevel, NeedBinder.cardinalityGate]
+    cases hacc : needAcceptsCardinality ps cells.length
+    · simp
+    · simp only [Bool.not_true, Bool.false_eq_true, ↓reduceIte]
+      exact sources_ordinary_is_never_a_non_match k ps _ _ {} s hlf
+  simp only [NeedBinder.bindPatterns, runEval_bind]
+  rcases h : runEval (NeedBinder.bindLevel k ps cells (needRepeatedNames ps) {} false) s with ⟨_ | (_ | st), t⟩
   · simp
-  · simp only [Bool.not_true, Bool.false_eq_true, ↓reduceIte]
-    exact sources_ordinary_is_never_a_non_match k ps _ _ [] s hlf
+  · rw [h] at hlevel
+    exact absurd rfl hlevel
+  · simp
 
 mutual
   theorem ofParameter_literalFree : (p : ParameterPattern) → (NeedPattern.ofParameter p).literalFree = true

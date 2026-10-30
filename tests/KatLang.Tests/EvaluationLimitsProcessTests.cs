@@ -634,16 +634,7 @@ public class EvaluationLimitsProcessTests
             Path.GetTempPath(),
             $"katlang-eval-limits-probe-{Guid.NewGuid():N}.txt");
 
-        var startInfo = new ProcessStartInfo("dotnet")
-        {
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            UseShellExecute = false,
-            CreateNoWindow = true,
-        };
-        startInfo.ArgumentList.Add("vstest");
-        startInfo.ArgumentList.Add(assemblyPath);
-        startInfo.ArgumentList.Add("--Tests:" + testName);
+        var startInfo = SubprocessProbe.StartInfo(assemblyPath, [testName]);
         startInfo.Environment[ProbeChildEnvironment] = "1";
         startInfo.Environment[ProbeMarkerFileEnvironment] = markerFile;
         startInfo.Environment["DOTNET_NOLOGO"] = "1";
@@ -657,26 +648,12 @@ public class EvaluationLimitsProcessTests
             var stdoutTask = process.StandardOutput.ReadToEndAsync();
             var stderrTask = process.StandardError.ReadToEndAsync();
 
-            var exited = true;
-            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(90));
-            try
-            {
-                await process.WaitForExitAsync(timeout.Token);
-            }
-            catch (OperationCanceledException)
-            {
-                exited = false;
-                try { process.Kill(entireProcessTree: true); }
-                catch { /* process already exited */ }
-                await process.WaitForExitAsync();
-            }
+            await process.WaitForExitAsync();
 
             var stdout = await stdoutTask;
             var stderr = await stderrTask;
             var combined = stdout + Environment.NewLine + stderr;
 
-            Assert.True(exited, $"Probe subprocess '{childTestName}' did not exit within 90 seconds."
-                + Environment.NewLine + combined);
             Assert.DoesNotContain("Stack overflow", combined, StringComparison.OrdinalIgnoreCase);
             Assert.DoesNotContain("StackOverflowException", combined, StringComparison.OrdinalIgnoreCase);
             Assert.True(

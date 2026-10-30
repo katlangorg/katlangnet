@@ -501,4 +501,10 @@ public enum DiagnosticCode
     /// clauses). Lean: <c>ParameterPattern.metaViolation?</c>, <c>invalidMetaParameterMessage</c>.
     /// </summary>
     InvalidMetaParameter = 59,
+
+    /// <summary>Implicit input classification remains self-dependent at the structural least information fixed point.</summary>
+    SelfDependentInferredParameters = 60,
+
+    /// <summary>Static structure analysis exceeded its operation work or memory admission bound.</summary>
+    StaticStructureLimitExceeded = 61,
 }

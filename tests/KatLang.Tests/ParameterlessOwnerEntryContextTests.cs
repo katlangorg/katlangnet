@@ -34,7 +34,16 @@ public class ParameterlessOwnerEntryContextTests
     private static string Indent(string rows)
         => string.Concat(rows.Split('\n').Select(static row => "    " + row + "\n"));
 
+    // M4★: a body whose ONE row is the bare reference V is a structural forwarding CARRIER of V (it
+    // declares V, so it is no transparent reference): it owns no zero-argument entry (OD-E), a bare read
+    // is V's own read and an explicit B() is the fresh V() resolved at B's DECLARING activation — the
+    // forwarding hop adds no activation. OwnerB keeps CACHE-OWNER-D1's subject, a parameterless OWNER
+    // with an entry of its own (its row is a calculation), with the same values.
     private const string TracedB = "B = {\n    V = trace(k)\n    V\n}";
+
+    private const string OwnerB = "B = {\n    V = trace(k)\n    V + 0\n}";
+
+    private static readonly string[] BothOwnerForms = [TracedB, OwnerB];
 
     private static string[] Traces(params int[] values) => [.. values.Select(static value => $"trace({value})")];
 
@@ -165,7 +174,7 @@ public class ParameterlessOwnerEntryContextTests
         // B's own key and V's key (through B's inherited activation) carry F's binding identity, never the
         // callback's: the callback reader's binding identity differs from both.
         var cache = new RecordingCache();
-        var (result, _) = Evaluator.RunCountedObserved(Program(F(TracedB, "[0].map{ n + B }[0] + B.V")),
+        var (result, _) = Evaluator.RunCountedObserved(Program(F(OwnerB, "[0].map{ n + B }[0] + B.V")),
             zeroArgPropertyResultCache: cache, hostOperations: Operations([], suspending: false));
         Assert.True(result.IsOk, result.IsOk ? null : result.Error.ToString());
 
@@ -174,6 +183,29 @@ public class ParameterlessOwnerEntryContextTests
         var bRead = Assert.Single(cache.Requests, static request => request.Binding.Name == "B");
         Assert.Same(bKey.ValueEnvironmentIdentity, Assert.Single(vKeys).ValueEnvironmentIdentity);
         Assert.NotSame(bRead.ValueEnvironmentIdentity, bKey.ValueEnvironmentIdentity);
+    }
+
+    [Fact]
+    public async Task ACarrierOwner_RequestsNoEntryOfItsOwn_AndItsTargetKeepsOneKey()
+    {
+        // M4★ OD-E: the carrier's bare read in the callback IS V's read under V's declaring activation, so
+        // the run requests no entry for B at all and V's two reads (through B and B.V) are one key.
+        foreach (var asynchronous in new[] { false, true })
+        {
+            var cache = new RecordingCache();
+            var log = new List<string>();
+            var program = Program(F(TracedB, "[0].map{ n + B }[0] + B.V"));
+            var (result, _) = asynchronous
+                ? await AsyncEvaluationHarness.Complete(Evaluator.RunCountedObservedAsync(program, zeroArgPropertyResultCache: cache,
+                    hostOperations: Operations(log, suspending: true)))
+                : Evaluator.RunCountedObserved(program, zeroArgPropertyResultCache: cache, hostOperations: Operations(log, suspending: false));
+
+            Assert.True(result.IsOk, result.IsOk ? null : result.Error.ToString());
+            Assert.DoesNotContain(cache.Requests, static request => request.Binding.Name == "B");
+            Assert.Single(cache.Requests.Where(static request => request.Binding.Name == "V").Select(ZeroArgPropertyCacheKey.FromExecution).Distinct());
+            Assert.Equal(1, cache.Evaluations["V"]);
+            Assert.Equal(Traces(3), log);
+        }
     }
 
     // ── 3. Activation isolation ─────────────────────────────────────────────────────────────
@@ -189,10 +221,13 @@ public class ParameterlessOwnerEntryContextTests
     [InlineData("G(x) = [0].map{ n + x + B }[0]\n[0].map{ n + G(1) }[0] + B.V + G(2)", "F(3), F(5)", "S[12, 18]", new[] { 3, 5 })]
     public async Task DistinctDeclaringActivations_NeverShareAnEntry(string fRows, string calls, string expected, int[] traces)
     {
-        var oracle = await ObserveAsync(F(TracedB, fRows, calls));
-        Assert.Equal("ok", oracle.Kind);
-        Assert.Equal(expected, oracle.Value);
-        Assert.Equal(Traces(traces), oracle.HostCalls);
+        foreach (var bRows in BothOwnerForms)
+        {
+            var oracle = await ObserveAsync(F(bRows, fRows, calls));
+            Assert.True(oracle.Kind == "ok", $"{bRows}: {oracle}");
+            Assert.Equal(expected, oracle.Value);
+            Assert.Equal(Traces(traces), oracle.HostCalls);
+        }
     }
 
     [Fact]
@@ -240,22 +275,28 @@ public class ParameterlessOwnerEntryContextTests
     [Fact]
     public async Task RecursiveOwnerCalls_RestoreTheirOwnDeclaringActivation()
     {
-        var source = F(TracedB, "[0].map{ n + B }[0] + if(k > 0, F(k - 1), 0) + B.V");
-        var oracle = await ObserveAsync(source);
-        Assert.Equal("ok", oracle.Kind);
-        Assert.Equal("12", oracle.Value);
-        Assert.Equal(Traces(3, 2, 1, 0), oracle.HostCalls);
+        foreach (var bRows in BothOwnerForms)
+        {
+            var source = F(bRows, "[0].map{ n + B }[0] + if(k > 0, F(k - 1), 0) + B.V");
+            var oracle = await ObserveAsync(source);
+            Assert.True(oracle.Kind == "ok", $"{bRows}: {oracle}");
+            Assert.Equal("12", oracle.Value);
+            Assert.Equal(Traces(3, 2, 1, 0), oracle.HostCalls);
+        }
     }
 
     [Fact]
     public async Task InheritingAnIdentity_DoesNotDemandUnusedAncestorParameters()
     {
-        var source = F(TracedB, "[0].map{ n + B }[0] + B.V", "F(3, 1 / 0)")
-            .Replace("F(k)", "F(k, unused)", StringComparison.Ordinal);
-        var oracle = await ObserveAsync(source);
-        Assert.Equal("ok", oracle.Kind);
-        Assert.Equal("6", oracle.Value);
-        Assert.Equal(Traces(3), oracle.HostCalls);
+        foreach (var bRows in BothOwnerForms)
+        {
+            var source = F(bRows, "[0].map{ n + B }[0] + B.V", "F(3, 1 / 0)")
+                .Replace("F(k)", "F(k, unused)", StringComparison.Ordinal);
+            var oracle = await ObserveAsync(source);
+            Assert.True(oracle.Kind == "ok", $"{bRows}: {oracle}");
+            Assert.Equal("6", oracle.Value);
+            Assert.Equal(Traces(3), oracle.HostCalls);
+        }
     }
 
     [Fact]
@@ -272,23 +313,29 @@ public class ParameterlessOwnerEntryContextTests
     // ── 4. Explicit calls stay fresh; publication is unchanged ──────────────────────────────
 
     [Theory]
-    // B(), B(): two explicit calls, two fresh contexts.
-    [InlineData("B() + B()", 2, "6")]
-    [InlineData("[0].map{ n + B() }[0] + B()", 2, "6")]
-    // B() establishes B's entry (CACHE-PUB-1) and the bare read reuses it.
-    [InlineData("B() + B", 1, "6")]
+    // B(), B(): two explicit calls, two fresh evaluations (an owner's two contexts; a carrier's two V()).
+    [InlineData("B() + B()", 2, 2, "6")]
+    [InlineData("[0].map{ n + B() }[0] + B()", 2, 2, "6")]
+    // B() establishes the entry (CACHE-PUB-1: the owner's own; the carrier's TARGET V's) and the bare
+    // read reuses it.
+    [InlineData("B() + B", 1, 1, "6")]
     // B then B(): the call is fresh and never replaces the entry.
-    [InlineData("B + B()", 2, "6")]
-    // An explicit call's locals belong to the call's own context: B.V reads F's, a second evaluation.
-    [InlineData("B() + B.V", 2, "6")]
+    [InlineData("B + B()", 2, 2, "6")]
+    // An owner's explicit call is a fresh binding context whose locals are its own: B.V reads F's, a
+    // second evaluation. A carrier's B() is V() at B's DECLARING activation (the hop adds none), so it
+    // establishes the very entry B.V reads (M4★; formerly 2 for this lone-row form too).
+    [InlineData("B() + B.V", 2, 1, "6")]
     // A bare read in a callback and the structural read share F's context; the call stays fresh.
-    [InlineData("[0].map{ n + B }[0] + B() + B.V", 2, "9")]
-    public async Task ExplicitCalls_RemainFreshBindingContexts(string fRows, int evaluations, string expected)
+    [InlineData("[0].map{ n + B }[0] + B() + B.V", 2, 2, "9")]
+    public async Task ExplicitCalls_RemainFreshBindingContexts(string fRows, int ownerEvaluations, int carrierEvaluations, string expected)
     {
-        var oracle = await ObserveAsync(F(TracedB, fRows));
-        Assert.Equal("ok", oracle.Kind);
-        Assert.Equal(expected, oracle.Value);
-        Assert.Equal(Traces([.. Enumerable.Repeat(3, evaluations)]), oracle.HostCalls);
+        foreach (var (bRows, evaluations) in new[] { (OwnerB, ownerEvaluations), (TracedB, carrierEvaluations) })
+        {
+            var oracle = await ObserveAsync(F(bRows, fRows));
+            Assert.True(oracle.Kind == "ok", $"{bRows}: {oracle}");
+            Assert.Equal(expected, oracle.Value);
+            Assert.Equal(Traces([.. Enumerable.Repeat(3, evaluations)]), oracle.HostCalls);
+        }
     }
 
     [Fact]
@@ -366,10 +413,13 @@ public class ParameterlessOwnerEntryContextTests
     [InlineData("[0, 1].map{ n * 0 + [0].map{ m + n + B }[0] }[1] + B.V", "7")]
     public async Task EveryConsumerRoute_SharesTheDeclaringActivationsEntry(string fRows, string expected)
     {
-        var oracle = await ObserveAsync(F(TracedB, fRows));
-        Assert.True(oracle.Kind == "ok", oracle.ToString());
-        Assert.Equal(expected, oracle.Value);
-        Assert.Equal(Traces(3), oracle.HostCalls);
+        foreach (var bRows in BothOwnerForms)
+        {
+            var oracle = await ObserveAsync(F(bRows, fRows));
+            Assert.True(oracle.Kind == "ok", $"{bRows}: {oracle}");
+            Assert.Equal(expected, oracle.Value);
+            Assert.Equal(Traces(3), oracle.HostCalls);
+        }
     }
 
     [Theory]

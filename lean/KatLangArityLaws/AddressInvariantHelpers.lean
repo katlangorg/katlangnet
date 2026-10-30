@@ -13,10 +13,9 @@ open KatLang.CallPlan (bind_run get_run pure_run modify_run throw_run lift_run e
   `OutputRows.formLeftToRight`, `WhileRound.discover`) keep `Inv` whenever their callbacks keep
   it under the caller's own precondition (a callback contract `∀ x, SoundI (P ∧ …) (cb x) Q`,
   which `ht_tac` proves inline at the call site).
-* The alias write points: `aliasBindingCellRecorded` records a valid address in `aliasCells`;
-  `aliasBareCell` writes back the cell it read BEFORE three intermediate operations — valid in
-  the earlier heap, hence in the current one — with a fresh valid `aliasBare`;
-  `takeTerminalAliasInvocation` claims a cell (`aliasUse` only) and returns a recorded address.
+* The alias write point: `aliasBindingCellRecorded` records a valid address in `aliasCells`, and
+  `valueViewCell?` only reads a recorded one (the D4 bare-cell and terminal-claim writes were
+  retired by M4★, ALIAS-UNIFY-1).
 -/
 
 namespace KatLang.AddressInvariant
@@ -235,6 +234,27 @@ attribute [ht_spec] SoundI.forIn_true SoundI.forM_true SoundI.foldlM_true SoundI
 
 /-! ## Recursive helpers with address-free results -/
 
+theorem openNavigateWith_aux {P : Array NeedCell → Prop} (hP : HMono P)
+    {structureOf : Algorithm → EvalM Algorithm} (hs : ∀ a, SoundI P (structureOf a) (fun _ _ => True))
+    (ctx : EvalCtx) (notStatic : Error) (value : Algorithm) (receiverName : String) (steps : List Ident) :
+    SoundI P (openNavigateWith structureOf ctx notStatic value receiverName steps) (fun _ _ => True) := by
+  induction steps generalizing value receiverName with
+  | nil => unfold openNavigateWith; ht_tac
+  | cons member rest ih => unfold openNavigateWith; ht_tac
+
+theorem openStructure_aux {P : Array NeedCell → Prop} (hP : HMono P) (fuel : Nat) (ctx : EvalCtx)
+    (a : Algorithm) : SoundI P (openStructure fuel ctx a) (fun _ _ => True) := by
+  induction fuel generalizing a with
+  | zero => simp only [openStructure]; ht_tac
+  | succ n ih =>
+    have := openNavigateWith_aux hP (structureOf := fun value => openStructure n ctx value) ih
+    simp only [openStructure]; ht_tac
+
+theorem openStructure_spec {P : Array NeedCell → Prop} {fuel : Nat} {ctx : EvalCtx} {a : Algorithm} :
+    SoundI P (openStructure fuel ctx a) (fun _ _ => True) := fun hP => openStructure_aux hP fuel ctx a hP
+
+attribute [ht_spec] openStructure_spec
+
 theorem resolveAlgForOpen_aux {P : Array NeedCell → Prop} (hP : HMono P) (e : Expr) (ctx : EvalCtx) :
     SoundI P (resolveAlgForOpen e ctx) (fun _ _ => True) := by
   induction e using resolveAlgForOpen.induct ctx with
@@ -270,11 +290,55 @@ theorem lookupLexicalPropertyRaw_spec {P : Array NeedCell → Prop} {a : Algorit
     SoundI P (lookupLexicalPropertyRaw a name ctx) (fun _ _ => True) := by
   unfold lookupLexicalPropertyRaw lookupOpenPropertiesInChain; ht_tac
 
-theorem resolveAliasStep_spec {P : Array NeedCell → Prop} {step : Algorithm} {target : Expr} {ctx : EvalCtx} :
-    SoundI P (resolveAliasStep step target ctx) (fun _ _ => True) := by
-  unfold resolveAliasStep; ht_tac
+attribute [ht_spec] lookupLexicalPropertyRaw_spec
 
-attribute [ht_spec] lookupLexicalPropertyRaw_spec resolveAliasStep_spec
+theorem aliasStepNavigateWith_aux {P : Array NeedCell → Prop} (hP : HMono P)
+    {structureOf : Algorithm → EvalCtx → EvalM (Option Algorithm)} {stepCtx : EvalCtx}
+    (hs : ∀ a, SoundI P (structureOf a stepCtx) (fun _ _ => True)) (notStatic : Error)
+    (value : Algorithm) (last : Option ResolvedProperty) (receiverName : String) (steps : List Ident) :
+    SoundI P (aliasStepNavigateWith structureOf stepCtx notStatic value last receiverName steps)
+      (fun _ _ => True) := by
+  induction steps generalizing value last receiverName with
+  | nil => unfold aliasStepNavigateWith; ht_tac
+  | cons member rest ih => unfold aliasStepNavigateWith; ht_tac
+
+theorem aliasStepNavigateWith_spec {P : Array NeedCell → Prop}
+    {structureOf : Algorithm → EvalCtx → EvalM (Option Algorithm)} {stepCtx : EvalCtx} {notStatic : Error}
+    {value : Algorithm} {last : Option ResolvedProperty} {receiverName : String} {steps : List Ident}
+    (hs : ∀ a, SoundI P (structureOf a stepCtx) (fun _ _ => True)) :
+    SoundI P (aliasStepNavigateWith structureOf stepCtx notStatic value last receiverName steps)
+      (fun _ _ => True) :=
+  fun hP => aliasStepNavigateWith_aux hP hs notStatic value last receiverName steps hP
+
+attribute [ht_spec] aliasStepNavigateWith_spec
+
+theorem resolveAliasStepWith_aux {P : Array NeedCell → Prop} (hP : HMono P)
+    {structureOf : Algorithm → EvalCtx → EvalM (Option Algorithm)} {step : Algorithm} {target : Expr}
+    {ctx : EvalCtx} (hs : ∀ a, SoundI P (structureOf a (ctx.push step)) (fun _ _ => True)) :
+    SoundI P (resolveAliasStepWith structureOf step target ctx) (fun _ _ => True) := by
+  unfold resolveAliasStepWith; ht_tac
+
+theorem resolveAliasStepWith_spec {P : Array NeedCell → Prop}
+    {structureOf : Algorithm → EvalCtx → EvalM (Option Algorithm)} {step : Algorithm} {target : Expr}
+    {ctx : EvalCtx} (hs : ∀ a, SoundI P (structureOf a (ctx.push step)) (fun _ _ => True)) :
+    SoundI P (resolveAliasStepWith structureOf step target ctx) (fun _ _ => True) :=
+  fun hP => resolveAliasStepWith_aux hP hs hP
+
+attribute [ht_spec] resolveAliasStepWith_spec
+
+theorem aliasRouteIsIntrinsicWith_aux {P : Array NeedCell → Prop} (hP : HMono P)
+    {structureOf : Algorithm → EvalCtx → EvalM (Option Algorithm)} {receiver : Expr} {ctx : EvalCtx}
+    (hs : ∀ a, SoundI P (structureOf a ctx) (fun _ _ => True)) :
+    SoundI P (aliasRouteIsIntrinsicWith structureOf receiver ctx) (fun _ _ => True) := by
+  unfold aliasRouteIsIntrinsicWith; ht_tac
+
+theorem aliasRouteIsIntrinsicWith_spec {P : Array NeedCell → Prop}
+    {structureOf : Algorithm → EvalCtx → EvalM (Option Algorithm)} {receiver : Expr} {ctx : EvalCtx}
+    (hs : ∀ a, SoundI P (structureOf a ctx) (fun _ _ => True)) :
+    SoundI P (aliasRouteIsIntrinsicWith structureOf receiver ctx) (fun _ _ => True) :=
+  fun hP => aliasRouteIsIntrinsicWith_aux hP hs hP
+
+attribute [ht_spec] aliasRouteIsIntrinsicWith_spec
 
 theorem collectSingleAtomicNumbers_aux {P : Array NeedCell → Prop} (hP : HMono P) (b : Builtin) (index : Nat)
     (items : List Result) : SoundI P (collectSingleAtomicNumbers b index items) (fun _ _ => True) := by
@@ -460,113 +524,22 @@ theorem Inv.collector_below {s : EvalState} (vs : Inv s) {a : Nat} {c : NeedCell
     (hc : s.needs[a]? = some c) : ∀ slice, c.suspension = .collector slice → ∀ b ∈ slice, b < a :=
   fun slice hs b hb => vs.collectors a c hc slice hs b hb
 
-/-- **The stale-snapshot write point** (`aliasBareCell`): the cell read before
-    `bindParameters` / `enterAlgorithmBody` / `supplyNeed` is written back with its new
-    `aliasBare`; the snapshot was valid in the earlier heap, hence in the current one. -/
-theorem aliasBareCell_spec {P : Array NeedCell → Prop} {wired : Algorithm} {target : Expr}
-    {ctx : EvalCtx} (hreq : ∀ h, P h → ValidCtx h ctx) :
-    SoundI P (aliasBareCell wired target ctx) (fun a h => a < h.size) := by
-  intro hp s vs ps
-  unfold aliasBareCell
-  rw [EvalM.bind_runState]
-  obtain ⟨v1, g1, r1⟩ := aliasBindingCell_spec hreq hp s vs ps
-  rcases h1 : (aliasBindingCell wired target ctx).runState s with ⟨o1, t⟩
-  rw [h1] at v1 g1 r1
-  cases o1 with
-  | error e => exact ⟨v1, g1, fun _ hx => by cases hx⟩
-  | ok address =>
-    have ha : address < t.needs.size := r1 address rfl
-    have pt : P t.needs := hp _ _ g1 ps
-    dsimp only
-    rw [EvalM.bind_runState, get_run]
-    dsimp only
-    cases hc : t.needs[address]? with
-    | none =>
-      simp only [hc]
-      exact ⟨v1, g1, fun x hx => by cases hx; exact ha⟩
-    | some cell =>
-      simp only [hc]
-      have vc : CellV t.needs cell := v1.cells address cell hc
-      have hcol := Inv.collector_below v1 hc
-      split
-      · -- claim: `aliasUse := 1`
-        rw [EvalM.bind_runState]
-        simp only [set, StateT.set, ExceptT.lift]
-        refine ⟨inv_set v1 address _ hcol (vc.with_aliasUse 1), ?_, ?_⟩
-        · show s.needs.size ≤ (t.needs.set! address _).size
-          simp [Array.set!]; exact g1
-        · intro x hx; cases hx; show address < (t.needs.set! address _).size
-          simp [Array.set!]; exact ha
-      · split
-        · rename_i bare hbare
-          exact ⟨v1, g1, fun x hx => by cases hx; exact vc.aliasBare_lt hbare⟩
-        · -- a fresh bare cell over the stale snapshot
-          have hQ : HMono (fun h => P h ∧ t.needs.size ≤ h.size) :=
-            fun _ _ g v => ⟨hp _ _ g v.1, Nat.le_trans v.2 g⟩
-          have body : SoundI (fun h => P h ∧ t.needs.size ≤ h.size)
-              (do
-                let bindingCtx ← EvalCtx.bindParameters [] ctx
-                let declaringCtx ← enterAlgorithmBody wired bindingCtx []
-                let bare ← supplyNeed target declaringCtx []
-                modify fun s => { s with needs := s.needs.set! address { cell with aliasBare := some bare } }
-                pure bare : EvalM Nat) (fun a h => a < h.size) := by
-            refine SoundI.bind (bindParameters_spec (fun h ph => hreq h ph.1))
-              (fun _ _ _ g v => ValidCtx.mono g v) ?_
-            intro bindingCtx
-            refine SoundI.bind (enterAlgorithmBody_spec (fun h ph => ⟨ph.2, VEV.nil⟩))
-              (fun _ _ _ g v => ValidCtx.mono g v) ?_
-            intro declaringCtx
-            refine SoundI.bind (supply_spec (fun h ph => ⟨ph.2, VEV.nil⟩))
-              (fun _ _ _ g v => Nat.lt_of_lt_of_le v g) ?_
-            intro bare
-            intro _ u vu pu
-            rw [EvalM.bind_runState, modify_run]
-            have g0 : t.needs.size ≤ u.needs.size := pu.1.1.1.2
-            refine ⟨inv_set vu address _ hcol ((CellV.mono g0 vc).with_aliasBare (OptAddr.mk pu.2)), ?_, ?_⟩
-            · show u.needs.size ≤ (u.needs.set! address _).size
-              simp [Array.set!]
-            · intro x hx; cases hx; show bare < (u.needs.set! address _).size
-              simp [Array.set!]; exact pu.2
-          obtain ⟨v2, g2, r2⟩ := body hQ t v1 ⟨pt, Nat.le_refl _⟩
-          exact ⟨v2, Nat.le_trans g1 g2, r2⟩
-
-/-- **The terminal-claim write point** (`takeTerminalAliasInvocation`): `aliasUse` only, and the
-    returned address is a recorded alias cell. -/
-theorem takeTerminal_spec {P : Array NeedCell → Prop} {a : Algorithm} :
-    SoundI P (takeTerminalAliasInvocation a) (fun o h => OptAddr h o) := by
-  intro hp s vs ps
-  unfold takeTerminalAliasInvocation
+/-- **The value view's cell** (`valueViewCell?`): a READ of a recorded alias binding cell, which is
+    a valid address (`Inv.aliasCells`). -/
+theorem valueViewCell_spec {P : Array NeedCell → Prop} {a : Algorithm} :
+    SoundI P (valueViewCell? a) (fun o h => OptAddr h o) := by
+  intro _ s vs _
+  unfold valueViewCell?
   split
   · rw [EvalM.bind_runState, get_run]
     dsimp only
     cases hl : lookupAssoc (aliasCellKey _) s.aliasCells with
-    | none => simp only [hl]; exact ⟨vs, Nat.le_refl _, fun x hx => by cases hx; exact OptAddr.nil⟩
+    | none => exact ⟨vs, Nat.le_refl _, fun x hx => by cases hx; exact OptAddr.nil⟩
     | some address =>
-      simp only [hl]
       have ha : address < s.needs.size := GotV.aliasCell ⟨vs, Nat.le_refl _⟩ hl
-      cases hc : s.needs[address]? with
-      | none => simp only [hc]; exact ⟨vs, Nat.le_refl _, fun x hx => by cases hx; exact OptAddr.nil⟩
-      | some cell =>
-        simp only [hc]
-        have vc : CellV s.needs cell := vs.cells address cell hc
-        cases hcl : claimTerminalAliasInitial cell with
-        | none => simp only [hcl]; exact ⟨vs, Nat.le_refl _, fun x hx => by cases hx; exact OptAddr.nil⟩
-        | some claimed =>
-          simp only [hcl]
-          have hcl' : claimed = { cell with aliasUse := 2 } := by
-            unfold claimTerminalAliasInitial at hcl
-            split at hcl
-            · cases hcl; rfl
-            · cases hcl
-          subst hcl'
-          rw [EvalM.bind_runState]
-          refine ⟨inv_set vs address _ (fun sl hs => Inv.collector_below vs hc sl hs) (vc.with_aliasUse 2), ?_, ?_⟩
-          · show s.needs.size ≤ (s.needs.set! address _).size
-            simp [Array.set!]
-          · intro x hx; cases hx
-            exact OptAddr.mk (by show address < (s.needs.set! address _).size; simp [Array.set!]; exact ha)
+      exact ⟨vs, Nat.le_refl _, fun x hx => by cases hx; exact OptAddr.mk ha⟩
   · exact ⟨vs, Nat.le_refl _, fun x hx => by cases hx; exact OptAddr.nil⟩
 
-attribute [ht_spec] aliasBareCell_spec takeTerminal_spec
+attribute [ht_spec] valueViewCell_spec
 
 end KatLang.AddressInvariant

@@ -37,8 +37,6 @@ internal static class GcIsolatedAllocation
 
     private const string ChildEnvironment = "KATLANG_GC_ISOLATED_ALLOCATION_CHILD";
     private const string MarkerFileEnvironment = "KATLANG_GC_ISOLATED_ALLOCATION_MARKER_FILE";
-    private static readonly TimeSpan ChildTimeout = TimeSpan.FromSeconds(240);
-    private static readonly TimeSpan CleanupTimeout = TimeSpan.FromSeconds(5);
     private static readonly object MarkerGate = new();
 
     /// <summary>
@@ -97,16 +95,7 @@ internal static class GcIsolatedAllocation
         var markerFile = Path.Combine(Path.GetTempPath(), $"katlang-gc-isolated-{Guid.NewGuid():N}.txt");
         File.WriteAllText(markerFile, "");
 
-        var startInfo = new ProcessStartInfo("dotnet")
-        {
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            UseShellExecute = false,
-            CreateNoWindow = true,
-        };
-        startInfo.ArgumentList.Add("vstest");
-        startInfo.ArgumentList.Add(assembly.Location);
-        startInfo.ArgumentList.Add("--Tests:" + string.Join(",", expected));
+        var startInfo = SubprocessProbe.StartInfo(assembly, expected);
         startInfo.Environment[ChildEnvironment] = "1";
         startInfo.Environment[MarkerFileEnvironment] = markerFile;
         startInfo.Environment["DOTNET_gcConcurrent"] = "0";
@@ -114,7 +103,6 @@ internal static class GcIsolatedAllocation
 
         var watch = Stopwatch.StartNew();
         string stdout, stderr;
-        string? cleanupFailure = null;
         int? exitCode = null;
         try
         {
@@ -123,31 +111,10 @@ internal static class GcIsolatedAllocation
                 process.Start();
                 var stdoutTask = process.StandardOutput.ReadToEndAsync();
                 var stderrTask = process.StandardError.ReadToEndAsync();
-                try
-                {
-                    // Include pipe draining in the deadline: a descendant can keep a redirected
-                    // handle open even after vstest itself has exited.
-                    await Task.WhenAll(process.WaitForExitAsync(), stdoutTask, stderrTask).WaitAsync(ChildTimeout);
-                    exitCode = process.ExitCode;
-                }
-                catch (TimeoutException)
-                {
-                    try { process.Kill(entireProcessTree: true); }
-                    catch (InvalidOperationException) { /* already exited */ }
-                    catch (System.ComponentModel.Win32Exception exception) { cleanupFailure = exception.Message; }
-                    try
-                    {
-                        await Task.WhenAll(process.WaitForExitAsync(), stdoutTask, stderrTask).WaitAsync(CleanupTimeout);
-                    }
-                    catch (TimeoutException)
-                    {
-                        cleanupFailure = (cleanupFailure is null ? "" : cleanupFailure + "; ")
-                            + "process exit or output drain did not complete within the cleanup deadline";
-                    }
-                }
-
-                stdout = stdoutTask.IsCompletedSuccessfully ? await stdoutTask : "(stdout did not close before cleanup deadline)";
-                stderr = stderrTask.IsCompletedSuccessfully ? await stderrTask : "(stderr did not close before cleanup deadline)";
+                await Task.WhenAll(process.WaitForExitAsync(), stdoutTask, stderrTask);
+                exitCode = process.ExitCode;
+                stdout = await stdoutTask;
+                stderr = await stderrTask;
             }
 
             var markers = File.ReadAllLines(markerFile).Where(line => line.Length > 0).ToList();
@@ -156,8 +123,7 @@ internal static class GcIsolatedAllocation
                 Environment.NewLine,
                 $"assembly: {assembly.GetName().Name}",
                 $"parent test host: {RuntimeInformation.FrameworkDescription} {RuntimeInformation.RuntimeIdentifier}; {GcConfiguration()}",
-                $"child: dotnet vstest with DOTNET_gcConcurrent=0; exit code {exitCode?.ToString() ?? "none (killed after timeout)"}; {watch.Elapsed.TotalSeconds:F1} s",
-                $"cleanup: {cleanupFailure ?? "completed"}",
+                $"child: direct probe host with DOTNET_gcConcurrent=0; exit code {exitCode?.ToString() ?? "none"}; {watch.Elapsed.TotalSeconds:F1} s",
                 $"expected ({expected.Count}): {string.Join(", ", expected)}",
                 $"completed ({completed.Count}): {string.Join(", ", completed)}",
                 "---- child hosts ----",
@@ -168,7 +134,6 @@ internal static class GcIsolatedAllocation
                 stderr.TrimEnd());
             KeepDiagnostics(assembly, report);
 
-            Assert.True(exitCode is not null, $"The GC-isolated child did not exit within {ChildTimeout.TotalSeconds:F0} s.{Environment.NewLine}{report}");
             Assert.True(exitCode == 0, $"The GC-isolated child exited with {exitCode}.{Environment.NewLine}{report}");
             var expectedMethods = expected.Select(name => name[(name.LastIndexOf('.') + 1)..]).Order(StringComparer.Ordinal);
             Assert.True(

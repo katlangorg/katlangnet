@@ -5,31 +5,33 @@ open KatLang KatLang.CallPlan KatLang.AlgorithmProjectionLaws
 /-! R7 checkpoint: alias recursion now goes through the total `EvalBody`/`evalFuel` core and its
 production fuel search. The source-only descriptions below are historical limitations of these
 local theorems. `EvaluatorCore.production_unfolds` covers completed operations; reachable alias
-bindings, declaring activations, D4 ownership and end-to-end alias refinement remain open. -/
+bindings, declaring activations and end-to-end alias refinement remain open. (M4★, ALIAS-UNIFY-1,
+October 2026, retired D4's first-observation claims and FWD-02's runtime eligibility gate; the
+whole-algorithm transport laws are `WholeAlgorithmTransport.lean`.) -/
 
 /-!
 # META-S3-2: runtime-target callable aliases (October 2026)
 
-A RUNTIME-TARGET ALIAS (FWD-02; owner decisions D1 = yes, D2 = Option A, D3 = fresh invocation) is an
-`Algorithm.alias` whose row is a RUNTIME ROW (`Expr.isRuntimeAliasRow`): a parameter reference, an
-argumentless `.Algorithm` link, or an argumentless parameter-rooted member path. Its callable is the
-identity its ONE binding cell projects in its declaring activation when that identity declares
-parameterized callable structure; otherwise the alias is exactly its ordinary zero-parameter property.
-The authoritative definitions are in `lean/KatLang.lean`:
+A RUNTIME-TARGET ALIAS (FWD-02; owner decisions D1 = yes, D2 = Option A, D3 = fresh invocation; L-RUN,
+M4★) is an `Algorithm.alias` whose row is a RUNTIME ROW (`Expr.isRuntimeAliasRow`): a parameter
+reference, an argumentless `.Algorithm` link, or an argumentless parameter-rooted member path. Its
+STRUCTURE and its INVOCATION target are the identity its ONE binding cell projects in its declaring
+activation, at ANY arity (no eligibility gate); a cell that projects NO identity makes it a VALUE VIEW
+(`Algorithm.aliasPropertyView`): no members, no CALLABLE, a zero-supply invocation returns the binding
+cell's VALUE (`valueViewCell?`) and a non-empty supply is the binder's cardinality failure. Its bare
+read is the binding cell's VALUE (`aliasValue`). The authoritative definitions are in `lean/KatLang.lean`:
 
 * `aliasBindingCell` — the binding cell, supplied in the alias's own declaring context through the one
   supplier (`supplyNeed`) and recorded in `EvalState.aliasCells` under `aliasCellKey` (the alias's
   declaration and its declaring activations);
 * `runtimeAliasStepWith` — one runtime step of the chase over a CALLABLE capability;
-* `runtimeAliasFinish` — FWD-02 eligibility applied to the identity the run supplied;
-* `Algorithm.aliasPropertyView` — the alias's ordinary zero-parameter property.
+* `Algorithm.aliasPropertyView` and `valueViewCell?` — the value view and the cell its invocation reads.
 
-The `partial` evaluator installs them: `resolveAliasChase` takes the runtime step as
-`runtimeAliasStepWith projectNeedCallable` when `aliasStepIsRuntime` holds and ends a projected chase
-with `runtimeAliasFinish`; the VALUE chase (`resolveAliasValueTarget`) stops at the runtime alias, whose
-bare read `aliasValue` demands the SAME binding cell. That installation is a SOURCE FACT of the
-`partial` definitions (Lean keeps them opaque), pinned by executable guards
-(`RuntimeAliasGuards.lean`, the `runtime-alias-*` LanguageSpec cases, and `CoreTests/AliasForwarding`).
+The evaluator core installs them: `resolveAliasChase` takes the runtime step as
+`runtimeAliasStepWith projectNeedCallable` when `aliasStepIsRuntime` holds; the VALUE chase stops at the
+runtime alias, whose bare read `aliasValue` demands the SAME binding cell. That installation is pinned by
+executable guards (`RuntimeAliasGuards.lean`, the `runtime-alias-*` LanguageSpec cases, and
+`CoreTests/AliasForwarding`).
 
 Proved here, over the total definitions:
 
@@ -41,14 +43,15 @@ Proved here, over the total definitions:
   nothing (`aliasBindingCell_parameter_transport`, NEED-01);
 * one runtime step keeps FAILURE apart from ABSENCE: a projection failure propagates with its error
   (`runtimeAliasStep_failure_propagates`), as does a failure to establish the cell
-  (`runtimeAliasStep_cell_failure_propagates`), absence is the alias's ordinary property
-  (`runtimeAliasStep_absence_is_property`) and a supplied identity is passed on unchanged
-  (`runtimeAliasStep_identity`);
-* the terminal outcome is never the unresolved alias again — no alias-to-self redispatch
-  (`aliasPropertyView_is_the_open_body`, `aliasPropertyView_is_no_alias`), it is an ordinary
-  zero-parameter property (`aliasPropertyView_declares_no_parameters`), and FWD-02's eligibility keeps an
-  identity that declares parameterized structure and turns every other one into that property
-  (`runtimeAliasFinish_eligible`, `runtimeAliasFinish_ineligible`);
+  (`runtimeAliasStep_cell_failure_propagates`), absence ends the chase as the value view
+  (`runtimeAliasStep_absence_is_terminal`) and a supplied identity is passed on unchanged, whatever its
+  arity (`runtimeAliasStep_identity`);
+* the value view is never the unresolved alias again — no alias-to-self redispatch
+  (`aliasPropertyView_is_the_open_body`, `aliasPropertyView_is_no_alias`), it takes no supply
+  (`aliasPropertyView_takes_no_supply`), and its zero-supply invocation reads EXACTLY the alias's binding
+  cell (`valueView_reads_the_binding_cell`, `valueViewCell_reads_only`): the supplied computation never
+  reruns;
+* a runtime reference is its own (empty) open namespace (`runtime_reference_opens_itself`);
 * the row classification (`runtime_rows`, `static_name_is_no_runtime_row`).
 
 NOT claimed here (source facts with executable guards, or C#-only): that the `partial` evaluator calls
@@ -192,13 +195,13 @@ theorem runtimeAliasStep_failure_propagates (project : Nat → EvalM (Option Alg
     (runtimeAliasStepWith project owner target ctx).runState s = (.error e, t) := by
   simp only [runtimeAliasStepWith, bind_run, hcell, hfail]
 
-/-- **Absence is the ordinary property.** A binding cell that projects NO callable identity leaves the
-    alias its ordinary zero-parameter property. -/
-theorem runtimeAliasStep_absence_is_property (project : Nat → EvalM (Option Algorithm)) (owner : Algorithm)
+/-- **Absence ends the chase.** A binding cell that projects NO callable identity makes the alias a
+    VALUE VIEW (`terminal`), never a failure and never another chase step. -/
+theorem runtimeAliasStep_absence_is_terminal (project : Nat → EvalM (Option Algorithm)) (owner : Algorithm)
     (target : Expr) (ctx : EvalCtx) (s u t : EvalState) (a : Nat)
     (hcell : (aliasBindingCell owner target ctx).runState s = (.ok a, u))
     (hnone : (project a).runState u = (.ok none, t)) :
-    (runtimeAliasStepWith project owner target ctx).runState s = (.ok (.terminal owner.aliasPropertyView), t) := by
+    (runtimeAliasStepWith project owner target ctx).runState s = (.ok .terminal, t) := by
   simp only [runtimeAliasStepWith, bind_run, hcell, hnone]
   rfl
 
@@ -211,87 +214,52 @@ theorem runtimeAliasStep_identity (project : Nat → EvalM (Option Algorithm)) (
   simp only [runtimeAliasStepWith, bind_run, hcell, hsome]
   rfl
 
-/-! ## The terminal ordinary property and FWD-02 eligibility -/
+/-! ## The value view (L-RUN, M4★) -/
 
-/-- The property view is exactly the open body the alias was elaborated from: the same declaration,
+/-- The value view is exactly the open body the alias was elaborated from: the same declaration,
     scope, opens and declarations, no parameter, the alias's row as its one output. -/
 theorem aliasPropertyView_is_the_open_body (p : Option ScopeCtx) (op : List Expr) (pr : List PropDef)
-    (target : Expr) (id : Option PropertyIdentity) :
-    (Algorithm.alias p op pr target id).aliasPropertyView = .mk p [] op pr [target] id := rfl
+    (target : Expr) (id : Option PropertyIdentity) (reference : Bool) :
+    (Algorithm.alias p op pr target id reference).aliasPropertyView = .mk p [] op pr [target] id := rfl
 
-/-- **No alias-to-self redispatch.** The terminal outcome is never an alias, so no consumer can
-    normalize the same unresolved alias again. -/
+/-- **No alias-to-self redispatch.** The value view is never an alias, so no consumer can normalize the
+    same unresolved alias again. -/
 theorem aliasPropertyView_is_no_alias (p : Option ScopeCtx) (op : List Expr) (pr : List PropDef)
-    (target : Expr) (id : Option PropertyIdentity) (q : Option ScopeCtx) (op' : List Expr)
-    (pr' : List PropDef) (target' : Expr) (id' : Option PropertyIdentity) :
-    (Algorithm.alias p op pr target id).aliasPropertyView ≠ .alias q op' pr' target' id' := by
+    (target : Expr) (id : Option PropertyIdentity) (reference : Bool) (q : Option ScopeCtx)
+    (op' : List Expr) (pr' : List PropDef) (target' : Expr) (id' : Option PropertyIdentity) (r' : Bool) :
+    (Algorithm.alias p op pr target id reference).aliasPropertyView ≠ .alias q op' pr' target' id' r' := by
   simp [Algorithm.aliasPropertyView]
 
-/-- The property view declares no parameterized structure: it is an ordinary zero-parameter property,
-    so a call with arguments is its own arity rejection and an explicit `()` its fresh body. -/
-theorem aliasPropertyView_declares_no_parameters (p : Option ScopeCtx) (op : List Expr) (pr : List PropDef)
-    (target : Expr) (id : Option PropertyIdentity) :
-    (Algorithm.alias p op pr target id).aliasPropertyView.isEligibleRuntimeAliasTarget = false := rfl
+/-- The value view takes no supply: a non-empty supply is the binder's own cardinality failure, and a
+    zero-supply invocation binds nothing. -/
+theorem aliasPropertyView_takes_no_supply (p : Option ScopeCtx) (op : List Expr) (pr : List PropDef)
+    (target : Expr) (id : Option PropertyIdentity) (reference : Bool) :
+    (Algorithm.alias p op pr target id reference).aliasPropertyView.parameterPatterns = [] := rfl
 
-theorem runtimeAliasFinish_eligible (owner final : Algorithm) (h : final.isEligibleRuntimeAliasTarget = true) :
-    runtimeAliasFinish owner final = final := by
-  simp [runtimeAliasFinish, h]
+/-- **The value view reads the binding cell.** The value view keeps the alias's declaration and scope, so
+    its cell key IS the alias's (`aliasCellKey`): a zero-supply invocation of the view demands exactly the
+    binding cell the chase projected, never a rerun of the row. -/
+theorem valueView_reads_the_binding_cell (p : Option ScopeCtx) (op : List Expr) (pr : List PropDef)
+    (target : Expr) (id : Option PropertyIdentity) (reference : Bool) :
+    aliasCellKey (Algorithm.alias p op pr target id reference).aliasPropertyView
+      = aliasCellKey (Algorithm.alias p op pr target id reference) := rfl
 
-theorem runtimeAliasFinish_ineligible (owner final : Algorithm) (h : final.isEligibleRuntimeAliasTarget = false) :
-    runtimeAliasFinish owner final = owner.aliasPropertyView := by
-  simp [runtimeAliasFinish, h]
+/-- The value view's cell is a READ: it changes no state, and returns the recorded binding cell. -/
+theorem valueViewCell_reads_only (p : Option ScopeCtx) (op : List Expr) (pr : List PropDef)
+    (target : Expr) (id : Option PropertyIdentity) (reference : Bool) (s : EvalState) :
+    (valueViewCell? (Algorithm.alias p op pr target id reference).aliasPropertyView).runState s
+      = (.ok (lookupAssoc (aliasCellKey (Algorithm.alias p op pr target id reference)) s.aliasCells), s) := by
+  simp only [Algorithm.aliasPropertyView, valueViewCell?, bind_run, get_run]
+  rfl
 
-/-- FWD-02's eligibility over the identities a run supplies: every builtin and clause family, a user
-    algorithm exactly when it declares a parameter pattern, never an alias. -/
-theorem eligibility (b : Builtin) (p : Option ScopeCtx) (ps : List ParameterPattern) (op : List Expr)
-    (pr : List PropDef) (out : List Expr) (id : Option PropertyIdentity) (bs : List CondBranch) :
-    (Algorithm.builtin b).isEligibleRuntimeAliasTarget = true
-      ∧ (Algorithm.conditional p op bs id).isEligibleRuntimeAliasTarget = true
-      ∧ (Algorithm.mk p ps op pr out id).isEligibleRuntimeAliasTarget = !ps.isEmpty := ⟨rfl, rfl, rfl⟩
-
-/-- D4: claiming eligibility work is one-shot and preserves the Need channels. -/
-theorem terminal_initial_claim_once (cell claimed : NeedCell)
-    (h : claimTerminalAliasInitial cell = some claimed) :
-    claimTerminalAliasInitial claimed = none ∧ claimed.suspension = cell.suspension
-      ∧ claimed.state = cell.state ∧ claimed.callable = cell.callable ∧ claimed.plan = cell.plan := by
-  unfold claimTerminalAliasInitial at h
-  split at h
-  · cases h
-    simp [claimTerminalAliasInitial]
-  · contradiction
-
-/-- A preceding bare observation excludes reusing that computation for a terminal call. -/
-theorem bare_value_excludes_terminal_reuse (cell : NeedCell) :
-    claimTerminalAliasInitial { cell with aliasUse := 1 } = none := by
-  simp [claimTerminalAliasInitial]
-
-/-- A terminal invocation that claimed first excludes every later terminal invocation (D4: explicit
-    calls never share a completed terminal invocation). -/
-theorem terminal_claim_excludes_later_terminal_reuse (cell : NeedCell) :
-    claimTerminalAliasInitial { cell with aliasUse := 2 } = none := by
-  simp [claimTerminalAliasInitial]
-
-/-- An unclaimed cell is claimed by the first terminal invocation whatever operation performed its
-    projection: the claim reads only the cell's own observation state (D4: eligibility checking never
-    duplicates a receiver evaluation). -/
-theorem unclaimed_cell_is_claimed_once (cell : NeedCell) (h : cell.aliasUse = 0) :
-    claimTerminalAliasInitial cell = some { cell with aliasUse := 2 } := by
-  simp [claimTerminalAliasInitial, h]
-
-/-- An eligible target still bypasses the terminal property view (D3). -/
-theorem eligible_target_keeps_declared_parameters (owner : Algorithm) (p : Option ScopeCtx)
-    (ps : List ParameterPattern) (op : List Expr) (pr : List PropDef) (out : OutputBundle)
-    (id : Option PropertyIdentity) (h : ps.isEmpty = false) :
-    runtimeAliasFinish owner (.mk p ps op pr out id) = .mk p ps op pr out id := by
-  simp [runtimeAliasFinish, Algorithm.isEligibleRuntimeAliasTarget, h]
-
-/-- Namespace classification admits a runtime row without any target projection. -/
-theorem runtime_namespace_direct (fuel : Nat) (chain : List Algorithm) (p : Option ScopeCtx)
-    (op : List Expr) (pr : List PropDef) (target : Expr) (id : Option PropertyIdentity)
-    (h : target.isRuntimeAliasRow = true)
-    (hs : namespaceStaticPath? ((reprStr chain).length + (reprStr (Algorithm.alias p op pr target id)).length + 1)
-      (chain ++ [.alias p op pr target id]) target = none) :
-    Algorithm.runtimeAliasNamespace (fuel + 1) chain (.alias p op pr target id) = true := by
-  simp [Algorithm.runtimeAliasNamespace, hs, h]
+/-- **A runtime reference is its own open namespace (OD-C).** A transparent reference whose row is a
+    parameter has no static path: `openStructure` returns it unchanged — its own, empty, namespace; nothing
+    is opened dynamically. -/
+theorem runtime_reference_opens_itself (fuel : Nat) (ctx : EvalCtx) (p : Option ScopeCtx) (op : List Expr)
+    (pr : List PropDef) (x : Ident) (id : Option PropertyIdentity) (s : EvalState) :
+    (openStructure (fuel + 1) ctx (.alias p op pr (.param x) id true)).runState s
+      = (.ok (.alias p op pr (.param x) id true), s) := by
+  simp only [openStructure, Expr.staticAliasPath?]
+  rfl
 
 end KatLang.RuntimeAliasLaws

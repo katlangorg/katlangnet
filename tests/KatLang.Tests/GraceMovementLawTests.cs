@@ -599,7 +599,8 @@ public class GraceMovementLawTests
 
     private static IReadOnlyList<string> DetectedParams(params Expr[] output)
     {
-        var (detected, diagnostics) = ParameterDetector.Detect(EmptyAlgorithm(output));
+        var detectedInput = ParameterDetector.Detect(EmptyAlgorithm(output));
+        var (detected, diagnostics) = detectedInput;
         Assert.Empty(diagnostics);
         return detected.Params;
     }

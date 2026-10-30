@@ -192,7 +192,7 @@ theorem repeated_capture_same_plan (a : Nat) (s : EvalState) (shape : NeedPlan.C
 /-- The META arm of the generic core: the `reference` capability (its refusal framed with the
     parameter's name, `NeedBinder.captureMeta`), then the ordinary name transport of the adapter. -/
 theorem bindOne_metaRef_shape {m : Type → Type} [Monad m] [MonadExceptOf Error m]
-    (k : NeedCapabilities m) (name : Ident) (address : Nat) (repeated : List Ident) (bound : NeedEnv)
+    (k : NeedCapabilities m) (name : Ident) (address : Nat) (repeated : List Ident) (bound : NeedBindState)
     (family : Bool) :
     NeedBinder.bindOne k (.metaRef name) address repeated bound family = (do
       let adapter ← NeedBinder.captureMeta name (k.reference address)
@@ -202,7 +202,7 @@ theorem bindOne_metaRef_shape {m : Type → Type} [Monad m] [MonadExceptOf Error
     (none if it refused) — never a VALUE or CALLABLE invocation of the supplied cell — for a
     name the head does not repeat (every valid META head, `ParameterPattern.metaViolation?`). -/
 theorem meta_occurrence_events (k : NeedCapabilities EvalM) (name : Ident) (address : Nat)
-    (repeated : List Ident) (bound : NeedEnv) (family : Bool) (s : EvalState)
+    (repeated : List Ident) (bound : NeedBindState) (family : Bool) (s : EvalState)
     (hr : repeated.contains name = false) :
     oneEvents k (.metaRef name) address repeated bound family s =
       match runEval (k.reference address) s with
@@ -214,11 +214,11 @@ theorem meta_occurrence_events (k : NeedCapabilities EvalM) (name : Ident) (addr
 
 /-- The production META occurrence binds the name to the fresh adapter (no repeated name). -/
 theorem production_meta_binding (channels : NeedChannels) (name : Ident) (address : Nat)
-    (repeated : List Ident) (bound : NeedEnv) (family : Bool) (s : EvalState)
+    (repeated : List Ident) (bound : NeedBindState) (family : Bool) (s : EvalState)
     (shape : NeedPlan.CallShape) (h : NeedPlan.shapeAt? s.needs address = some shape)
     (hr : repeated.contains name = false) :
     (bindNeedOne channels (.metaRef name) address repeated bound family).runState s =
-      (.ok (some (bound.filter (fun entry => entry.fst != name) ++ [(name, s.needs.size)])),
+      (.ok (some (bound.withPlain name s.needs.size)),
         { s with needs := s.needs.push (adapterCell address) }) := by
   have hr' : name ∉ repeated := by simpa using hr
   simp only [bindNeedOne, NeedChannels.capabilities, NeedBinder.bindOne, bind_run,
@@ -260,7 +260,7 @@ theorem bindingRefusal_not_notAnAlgorithm (name : Ident) (e : Error)
     VALUE or CALLABLE demand). A direct `NeedPlan.reference` keeps the unframed refusal
     (`capture_refuses`). -/
 theorem production_meta_refusal (channels : NeedChannels) (name : Ident) (address : Nat)
-    (repeated : List Ident) (bound : NeedEnv) (family : Bool) (s : EvalState)
+    (repeated : List Ident) (bound : NeedBindState) (family : Bool) (s : EvalState)
     (h : NeedPlan.shapeAt? s.needs address = none) :
     (bindNeedOne channels (.metaRef name) address repeated bound family).runState s =
       (.error (NeedPlan.metaBindingRefusal name), s) := by
@@ -285,13 +285,29 @@ mutual
     | p :: ps => p.metaFree && metaFreeList ps
 end
 
+/-- NEED-04's data-anchor check reads only the VALUE capability. -/
+theorem checkAnchor_ignores_reference (k : NeedCapabilities EvalM) (r : Nat → EvalM Nat) (name : Ident)
+    (anchor : CountedResult) (family : Bool) :
+    ∀ cells, NeedBinder.checkAnchor { k with reference := r } name anchor family cells
+      = NeedBinder.checkAnchor k name anchor family cells
+  | [] => rfl
+  | cell :: rest => by
+    simp only [NeedBinder.checkAnchor, checkAnchor_ignores_reference k r name anchor family rest]
+
+/-- A name occurrence reads only the VALUE and CALLABLE capabilities. -/
+theorem name_ignores_reference (k : NeedCapabilities EvalM) (r : Nat → EvalM Nat) (name : Ident)
+    (address : Nat) (repeated : List Ident) (bound : NeedBindState) (family : Bool) :
+    NeedBinder.bindName { k with reference := r } name address repeated bound family
+      = NeedBinder.bindName k name address repeated bound family := by
+  simp only [NeedBinder.bindName, checkAnchor_ignores_reference]
+
 mutual
   theorem one_ignores_reference (k : NeedCapabilities EvalM) (r : Nat → EvalM Nat) (p : NeedPattern)
-      (hp : p.metaFree = true) (address : Nat) (repeated : List Ident) (bound : NeedEnv) (family : Bool) :
+      (hp : p.metaFree = true) (address : Nat) (repeated : List Ident) (bound : NeedBindState) (family : Bool) :
       NeedBinder.bindOne { k with reference := r } p address repeated bound family
         = NeedBinder.bindOne k p address repeated bound family := by
     cases p with
-    | bind name collecting => rfl
+    | bind name collecting => exact name_ignores_reference k r name address repeated bound family
     | literal literal => rfl
     | metaRef name => simp [NeedPattern.metaFree] at hp
     | sequence ps =>
@@ -309,7 +325,7 @@ mutual
 
   theorem sources_ignore_reference (k : NeedCapabilities EvalM) (r : Nat → EvalM Nat)
       (ps : List NeedPattern) (hps : metaFreeList ps = true) :
-      ∀ (sources : List (NeedSource Nat)) (repeated : List Ident) (bound : NeedEnv) (family : Bool),
+      ∀ (sources : List (NeedSource Nat)) (repeated : List Ident) (bound : NeedBindState) (family : Bool),
       NeedBinder.bindSources { k with reference := r } ps sources repeated bound family
         = NeedBinder.bindSources k ps sources repeated bound family := by
     intro sources repeated bound family

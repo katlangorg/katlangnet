@@ -435,6 +435,7 @@ internal sealed partial class ModuleLoader
     /// own operation with its own list (see <see cref="SourceProcessingBudget.CreateDiagnosticBag"/>).
     /// </summary>
     internal DiagnosticBag CreateDiagnosticBag() => _budget.CreateDiagnosticBag();
+    internal SourceProcessingLimits ProcessingLimits => _budget.Limits;
 
     /// <summary>
     /// Creates a new ModuleLoader.

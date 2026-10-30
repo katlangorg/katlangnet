@@ -26,6 +26,7 @@ public closed record KatLang.Algorithm : System.IEquatable<KatLang.Algorithm>
 public sealed record KatLang.Algorithm.Alias : KatLang.Algorithm, System.IEquatable<KatLang.Algorithm.Alias>
   ctor     public Alias(KatLang.ScopeCtx? Parent, System.Collections.Generic.IReadOnlyList<KatLang.Expr> Opens, System.Collections.Generic.IReadOnlyList<KatLang.Property> Properties, KatLang.Expr Target)
   property protected override System.Type EqualityContract { get; }
+  property public bool IsReference { get; init; }
   property public System.Collections.Generic.IReadOnlyList<KatLang.Expr> Opens { get; init; }
   property public KatLang.ScopeCtx? Parent { get; init; }
   property public System.Collections.Generic.IReadOnlyList<KatLang.Property> Properties { get; init; }
@@ -327,6 +328,8 @@ public enum KatLang.DiagnosticCode : int
   InterpolationNotAllowedHere = 57
   RetiredColonSelection = 58
   InvalidMetaParameter = 59
+  SelfDependentInferredParameters = 60
+  StaticStructureLimitExceeded = 61
 
 public enum KatLang.DiagnosticSeverity : int
   Hint = 1
@@ -1490,6 +1493,8 @@ public enum KatLang.KatLangErrorCode : int
   InterpolationNotAllowedHere = 79
   RetiredColonSelection = 80
   InvalidMetaParameter = 81
+  SelfDependentInferredParameters = 82
+  StaticStructureLimitExceeded = 83
 
 public sealed class KatLang.KatLangException : System.Exception
   ctor     public KatLangException(System.Collections.Generic.IReadOnlyList<KatLang.KatLangError> errors)
@@ -2259,6 +2264,7 @@ public sealed class KatLang.Semantics.SemanticModel
 
 public static class KatLang.Semantics.SemanticModelBuilder
   method   public static KatLang.Semantics.SemanticModel Build(KatLang.Algorithm root)
+  method   public static KatLang.Semantics.SemanticModel Build(KatLang.Algorithm root, KatLang.SourceProcessingLimits sourceProcessingLimits, System.Threading.CancellationToken cancellationToken = default)
   method   public static KatLang.Semantics.SemanticModel Build(KatLang.ParseResult parseResult)
 
 public sealed record KatLang.Semantics.VisibleSymbol : System.IEquatable<KatLang.Semantics.VisibleSymbol>
@@ -2333,6 +2339,7 @@ public sealed record KatLang.SourceProcessingLimits : System.IEquatable<KatLang.
   const    public const int MaxSupportedModuleCount = 256
   const    public const int MaxSupportedModuleDepth = 64
   const    public const int MaxSupportedSourceLength = 2097152
+  const    public const long MaxSupportedStaticStructureBytes = 1073741824
   ctor     public SourceProcessingLimits()
   property public static KatLang.SourceProcessingLimits Default { get; }
   property public long? MaxAggregateSourceLength { get; init; }
@@ -2340,6 +2347,7 @@ public sealed record KatLang.SourceProcessingLimits : System.IEquatable<KatLang.
   property public int? MaxModuleCount { get; init; }
   property public int? MaxModuleDepth { get; init; }
   property public int? MaxSourceLength { get; init; }
+  property public long? MaxStaticStructureBytes { get; init; }
   method   public KatLang.SourceProcessingLimits <Clone>$()
   method   public bool Equals(KatLang.SourceProcessingLimits? other)
   method   public override bool Equals(object? obj)

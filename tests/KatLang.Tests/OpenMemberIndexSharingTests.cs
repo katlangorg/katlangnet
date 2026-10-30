@@ -30,7 +30,8 @@ public class OpenMemberIndexSharingTests
         => new(null, [], [], [.. properties], OutputBundle.Empty);
 
     private static ElaboratedPropertyScope Opening(Algorithm target, ElaboratedPropertyScope? parent, OpenMemberIndexCache? cache)
-        => new(parent, [new Expr.AlgorithmExpr(target)], [], observations: null, memberIndexes: cache);
+        => ElaboratedScopeLookup.CreateScope(new Algorithm.User(null, [], [new Expr.AlgorithmExpr(target)], [], []),
+            parent, memberIndexes: cache, sourcePhase: StaticAstPhase.NameResolved);
 
     /// <summary>K sibling blocks each opening one W-member library and reading one member.</summary>
     private static string SiblingOpens(int blocks, int width)
@@ -224,7 +225,9 @@ public class OpenMemberIndexSharingTests
         var other = Owner(new Property("x", ValueAlgorithm(3), IsPublic: true));
         var cache = new OpenMemberIndexCache();
         var alone = Opening(lib, null, cache);
-        var beside = new ElaboratedPropertyScope(null, [new Expr.AlgorithmExpr(lib), new Expr.AlgorithmExpr(other)], [], memberIndexes: cache);
+        var beside = ElaboratedScopeLookup.CreateScope(new Algorithm.User(null, [],
+            [new Expr.AlgorithmExpr(lib), new Expr.AlgorithmExpr(other)], [], []),
+            memberIndexes: cache, sourcePhase: StaticAstPhase.NameResolved);
         Assert.Single(ElaboratedScopeLookup.LookupOpenPropertyMatches(alone, "x"));
         Assert.Equal(2, ElaboratedScopeLookup.LookupOpenPropertyMatches(beside, "x").Count);
         Assert.Equal(2, cache.Count);

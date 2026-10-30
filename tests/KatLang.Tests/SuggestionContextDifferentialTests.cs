@@ -162,8 +162,14 @@ public class SuggestionContextDifferentialTests
 
     // ── Scope trees ────────────────────────────────────────────────────────────
 
-    private static ElaboratedPropertyScope PreludeScope()
-        => ElaboratedScopeLookup.CreateScope(BuiltinRegistry.CreateSemanticPreludeAlgorithm());
+    private static ElaboratedPropertyScope PreludeScope(CompletedStructureContext? admitted = null)
+    {
+        var prelude = admitted?.Facts.Prelude ?? BuiltinRegistry.CreateSemanticPreludeAlgorithm();
+        var context = admitted is null ? AnalyzedStaticStructures.ForBoundAst(prelude)
+            : admitted.Facts.Context(admitted.Facts.PreludeKey);
+        return ElaboratedScopeLookup.CreateScope(prelude, completedContext: context,
+            memberIndexes: new OpenMemberIndexCache());
+    }
 
     /// <summary>Every algorithm reachable through property values and written blocks, with its scope.</summary>
     private static List<(Algorithm Algorithm, ElaboratedPropertyScope Scope)> Scopes(Algorithm root, ElaboratedPropertyScope parent)
@@ -198,7 +204,12 @@ public class SuggestionContextDifferentialTests
         // One capture instance per program, visited in a shuffled order, so each derivation is
         // exercised both from memoized ancestors and ahead of them.
         var contexts = new SuggestionContexts();
-        var scopes = Scopes(root, PreludeScope());
+        // Written programs reuse their exact completed publication. Generated programs
+        // supply final User namespaces: all signatures are fixed, references occur only
+        // as open heads, and no output encodes a raw alias or a name awaiting inference.
+        // Admit that actual graph once; every physical child reads its contextual facts.
+        var admitted = AnalyzedStaticStructures.ForBoundAst(root);
+        var scopes = Scopes(root, PreludeScope(admitted));
         random.Shuffle(System.Runtime.InteropServices.CollectionsMarshal.AsSpan(scopes));
         var maps = new List<ParameterOwnership> { ParameterOwnership.Empty };
         foreach (var (algorithm, scope) in scopes)
@@ -322,8 +333,17 @@ public class SuggestionContextDifferentialTests
         var inner = new Algorithm.User(null, [], opened > 0 ? [new Expr.Resolve("Lib")] : [], [.. Enumerable.Range(0, own).Select(i => Leaf($"p{i}"))], OutputBundle.Empty);
 
         // An empty outermost level in place of the prelude keeps the arithmetic exact.
-        var outerScope = ElaboratedScopeLookup.CreateScope(outer, ElaboratedScopeLookup.CreateScope(new Algorithm.User(null, [], [], [], OutputBundle.Empty)));
-        var innerScope = ElaboratedScopeLookup.CreateScope(inner, outerScope);
+        var empty = new Algorithm.User(null, [], [], [], OutputBundle.Empty);
+        // These supplied final namespaces are separate source definitions, not a new
+        // property hierarchy. Admit their actual declaring chain without adding the
+        // normal physical prelude to this exact candidate-bound fixture.
+        var admitted = AnalyzedStaticStructures.ForBoundAst(inner,
+            declaringScopes: [(empty, null), (outer, null)]);
+        var outerContext = admitted.Facts.Context(admitted.Key.Parent!);
+        var emptyContext = admitted.Facts.Context(outerContext.Key.Parent!);
+        var outerScope = ElaboratedScopeLookup.CreateScope(outer,
+            ElaboratedScopeLookup.CreateScope(empty, completedContext: emptyContext), completedContext: outerContext);
+        var innerScope = ElaboratedScopeLookup.CreateScope(inner, outerScope, completedContext: admitted);
         var parameters = ParameterOwnership.Empty.Extend(innerScope, Enumerable.Range(0, bound).Select(i => $"b{i}"));
 
         // `Lib`, the opened library's holder, is one more enclosing name.

@@ -202,7 +202,8 @@ public class OutputBundleOwnershipTests
         };
         var hostRoot = new Algorithm.User(null, [], [], [], callerOwnedOutput);
 
-        var (detected, diagnostics) = ParameterDetector.Detect(hostRoot);
+        var detectedInput = ParameterDetector.Detect(hostRoot);
+        var (detected, diagnostics) = detectedInput;
         Assert.Empty(diagnostics);
         Assert.Equal(["x"], detected.Params);
         var analyzedRowCount = detected.Output.Count;
@@ -218,7 +219,7 @@ public class OutputBundleOwnershipTests
         // ...the established analysis stays consistent with what evaluation
         // sees: calling the detected root with x = 41 evaluates the analyzed
         // row and nothing else.
-        var resolved = ImplicitArgumentResolver.Resolve(detected);
+        var resolved = ImplicitArgumentResolver.Resolve(detectedInput);
         var program = new Algorithm.User(
             null,
             [],

@@ -7,8 +7,8 @@ open KatLang KatLang.CallPlan KatLang.MemoLinks KatLang.CallReferenceGuards KatL
 # FG-M1 guards: completed CALLABLE outcomes and recorded links across intervening evaluation
 
 Executable witnesses over the ACTUAL production operations (`demandNeed`, `projectNeedCallable`,
-`NeedPlan.calleeCell productionPlanRoute.classify`, `NeedLink.receiverCell`, `aliasBareCell`,
-`takeTerminalAliasInvocation`) beside the kernel theorems of `EvaluatorMemoLinks.lean`, and kernel
+`NeedPlan.calleeCell productionPlanRoute.classify`, `NeedLink.receiverCell`, `valueViewCell?`)
+beside the kernel theorems of `EvaluatorMemoLinks.lean`, and kernel
 witnesses of the relation's boundary: the old `CellKept` alone admits changing each newly
 protected field, and the RAW setters (`NeedPlan.setCallee`, `NeedLink.setReceiver`, a raw CALLABLE
 write) are rejected by `LinkDisc` — CONTRACT-BOUNDARY witnesses, not production defects: production
@@ -102,8 +102,8 @@ def after : EvalState := (intervene.runState base).2
 -- The work was real: the heap grew and the crafted unprojected cell was published (a legitimate
 -- unprojected → projected transition), the suspended crafted cell's VALUE completed.
 #guard after.needs.size > base.needs.size
-#guard after.needs[n3]? matches some (NeedCell.mk _ _ (.projected (.ok none)) _ _ _ _ _ _)
-#guard after.needs[n4]? matches some (NeedCell.mk _ (.completed (.ok (.atom 15, 1))) _ _ _ _ _ _ _)
+#guard after.needs[n3]? matches some (NeedCell.mk _ _ (.projected (.ok none)) _ _ _ _)
+#guard after.needs[n4]? matches some (NeedCell.mk _ (.completed (.ok (.atom 15, 1))) _ _ _ _ _)
 -- The exact stored outcomes are reread by the production projection: identity `idA` (not `idB`),
 -- successful absence, the stored failure (not absence) — and the reread changes nothing.
 #guard match (projectNeedCallable n0).runState after with
@@ -129,7 +129,7 @@ def failing : EvalM Unit := do
 #guard match failing.runState base with
   | (.error (.withContext _ (.arityMismatch 1 0)), t) =>
     heapLinkKeptB base.needs t.needs && t.needs.size == base.needs.size + 1 &&
-    (t.needs[base.needs.size]? matches some (NeedCell.mk _ _ (.projected (.ok none)) _ _ _ _ _ _))
+    (t.needs[base.needs.size]? matches some (NeedCell.mk _ _ (.projected (.ok none)) _ _ _ _))
   | _ => false
 
 /-! ## 4 — established callee and receiver survive and are reused without establishment -/
@@ -152,49 +152,34 @@ def fresh : EvalState := stateOf [algorithmCall R [.num 8], callN "Ap" [algorith
 #guard match protectedCounts fresh.needs with | (_, e, r) => e ≥ 1 && r ≥ 1
 #guard heapLinkKeptB fresh.needs (intervene.runState fresh).2.needs
 
-/-! ## 6 — the D4 alias whole-cell writes keep completed CALLABLE and links -/
+/-! ## 6 — the value view's binding cell is a READ (M4★ retired D4's whole-cell writes) -/
 
-/-- An alias binding cell (reached by parameter transport) with a completed CALLABLE identity and
-    both links recorded. -/
-def aliasCell (use : Nat) : NeedCell :=
+/-- An alias binding cell with a completed CALLABLE identity and both links recorded. -/
+def aliasCell : NeedCell :=
   { suspension := .expression (.num 31) EvalCtx.empty [], callable := .projected (.ok (some idA)),
-    callee := some 7, receiver := some 8, aliasUse := use }
-def aliasState (use : Nat) : EvalState := { needs := #[aliasCell use] }
-def aliasCtx : EvalCtx := { callStack := [], needEnv := [("x", 0)] }
+    callee := some 7, receiver := some 8 }
 
--- `aliasUse = 2`, no bare cell yet: the tail path writes back the saved cell with `aliasBare`.
-#guard match (aliasBareCell idB (.param "x") aliasCtx).runState (aliasState 2) with
-  | (.ok _, t) =>
-    heapLinkKeptB (aliasState 2).needs t.needs &&
-    (t.needs[0]? matches some (NeedCell.mk _ _ _ _ _ _ _ 2 (some _)))
-  | _ => false
--- `aliasUse = 0`: the bare read claims the cell (`aliasUse := 1`).
-#guard match (aliasBareCell idB (.param "x") aliasCtx).runState (aliasState 0) with
-  | (.ok 0, t) =>
-    heapLinkKeptB (aliasState 0).needs t.needs && (t.needs[0]? matches some (NeedCell.mk _ _ _ _ _ _ _ 1 _))
-  | _ => false
--- A terminal invocation's claim (`claimTerminalAliasInitial`) keeps the three fields too.
-#guard match claimTerminalAliasInitial (aliasCell 0) with
-  | some claimed => linkKeptB (aliasCell 0) claimed && claimed.aliasUse == 2
-  | none => false
+/-- A value view (the zero-parameter view of a runtime alias, `Algorithm.aliasPropertyView`) whose
+    binding cell is recorded at address 0. -/
+def valueView : Algorithm := alg [] [] [] [.num 0]
+def valueViewState : EvalState :=
+  { needs := #[aliasCell], aliasCells := [(aliasCellKey valueView, 0)] }
 
-/-- Exercise the terminal invocation's actual whole-cell write, with all three protected
-    facts already present in its entry heap. -/
-def terminalAlias : Algorithm := alg [] [] [] [.num 0]
-def terminalAliasState : EvalState :=
-  { aliasState 0 with aliasCells := [(aliasCellKey terminalAlias, 0)] }
-
-#guard match (takeTerminalAliasInvocation terminalAlias).runState terminalAliasState with
-  | (.ok (some 0), t) => heapLinkKeptB terminalAliasState.needs t.needs &&
-    t.needs.size == terminalAliasState.needs.size &&
-    (t.needs[0]? matches some (NeedCell.mk _ _ _ _ _ _ _ 2 _))
+-- Every zero-supply invocation of the value view reads the SAME recorded cell and writes nothing:
+-- the supplied computation never reruns, and no first-observation claim exists any more.
+#guard match (valueViewCell? valueView).runState valueViewState with
+  | (.ok (some 0), t) => heapLinkKeptB valueViewState.needs t.needs &&
+    t.needs.size == valueViewState.needs.size
   | _ => false
--- A second invocation cannot claim the already-consumed initial work again.
 #guard match (do
-    let _ ← takeTerminalAliasInvocation terminalAlias
-    takeTerminalAliasInvocation terminalAlias).runState terminalAliasState with
-  | (.ok none, t) => heapLinkKeptB terminalAliasState.needs t.needs &&
-    t.needs.size == terminalAliasState.needs.size
+    let _ ← valueViewCell? valueView
+    valueViewCell? valueView).runState valueViewState with
+  | (.ok (some 0), t) => heapLinkKeptB valueViewState.needs t.needs &&
+    t.needs.size == valueViewState.needs.size
+  | _ => false
+-- An ordinary algorithm has no recorded value-view cell.
+#guard match (valueViewCell? (alg ["x"] [] [] [.param "x"])).runState valueViewState with
+  | (.ok none, _) => true
   | _ => false
 
 /-! ## 7 — the old `CellKept` alone permits changing each newly protected field -/
@@ -267,7 +252,7 @@ theorem raw_callable_write_rejected : ¬ LinkDisc (rawPublish 0 (.ok none)) := b
 -- returns the stored failure (never absence) without running its callback, the accessors return
 -- the recorded addresses.
 #guard match (NeedProjection.step (fun _ => pure (some idB)) 0).runState recordedState with
-  | (.error .divByZero, t) => (t.needs[0]? matches some (NeedCell.mk _ _ (.projected (.error .divByZero)) _ _ (some 3) (some 4) _ _))
+  | (.error .divByZero, t) => (t.needs[0]? matches some (NeedCell.mk _ _ (.projected (.error .divByZero)) _ _ (some 3) (some 4)))
   | _ => false
 #guard match (NeedPlan.calleeCell (fun _ => throw .badArity) 0).runState recordedState with
   | (.ok 3, t) => t.needs.size == 1

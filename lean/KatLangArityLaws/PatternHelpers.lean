@@ -1386,7 +1386,7 @@ end Renaming
 
 section Production
 
-variable (k : NeedCapabilities EvalM) (address : Nat) (repeated : List Ident) (bound : NeedEnv)
+variable (k : NeedCapabilities EvalM) (address : Nat) (repeated : List Ident) (bound : NeedBindState)
   (family : Bool) (s t : EvalState) (value : Result) (count : Nat)
 
 /-- THE LITERAL ARM, decided: after its cell's VALUE demand returned `value`, a literal pattern
@@ -1463,7 +1463,7 @@ end Production
 /-- The production binder's literal arm (`bindNeedOne`, the core at `c.capabilities`), for an
     integer literal of a clause head. -/
 theorem production_literal_int (c : NeedChannels) (n : Int) (address : Nat) (repeated : List Ident)
-    (bound : NeedEnv) (family : Bool) (s t : EvalState) (value : Result) (count : Nat)
+    (bound : NeedBindState) (family : Bool) (s t : EvalState) (value : Result) (count : Nat)
     (hv : runEval (c.capabilities.value address) s = (.ok (value, count), t)) :
     (bindNeedOne c (NeedPattern.ofClause (.litInt n)) address repeated bound family).runState s
       = (.ok (if value == .atom n then some bound else none), t) := by
@@ -1472,7 +1472,7 @@ theorem production_literal_int (c : NeedChannels) (n : Int) (address : Nat) (rep
 
 /-- The production binder's kind-mismatch error for an ordinary sequence pattern. -/
 theorem production_sequence_kind_mismatch (c : NeedChannels) (ps : List NeedPattern) (address : Nat)
-    (repeated : List Ident) (bound : NeedEnv) (s t : EvalState) (value : Result) (count : Nat)
+    (repeated : List Ident) (bound : NeedBindState) (s t : EvalState) (value : Result) (count : Nat)
     (hv : runEval (c.capabilities.value address) s = (.ok (value, count), t))
     (hk : Result.sequencePatternItems? value = none) :
     (bindNeedOne c (.sequence ps) address repeated bound false).runState s

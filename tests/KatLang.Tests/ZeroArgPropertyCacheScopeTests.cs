@@ -488,7 +488,68 @@ public class ZeroArgPropertyCacheScopeTests
             hostOperations: options.HostOperations);
         Assert.Equal([0m, 105m, 105m, 0m, 250m, 250m], Atoms(result));
         Assert.Equal(2, counter.Count);
-        Assert.Equal(2, cache.EvaluationsOf("P"));
+        // P is a member reference (M4★), which owns no entry: its reads are g's, once per activation.
+        Assert.Equal(0, cache.EvaluationsOf("P"));
+        Assert.Equal(2, cache.EvaluationsOf("g"));
+        Assert.Equal(1, downloads);
+    }
+
+    [Theory]
+    [InlineData(0, false)]
+    [InlineData(1, false)]
+    [InlineData(2, false)]
+    [InlineData(3, false)]
+    [InlineData(0, true)]
+    [InlineData(1, true)]
+    [InlineData(2, true)]
+    [InlineData(3, true)]
+    public async Task DeferredCaptureRecipes_PreserveEachActivationAndWithinActivationCaching(int form, bool reverse)
+    {
+        var counter = new Counter();
+        var downloads = 0;
+        var options = new RunOptions
+        {
+            HostOperations = HostData(counter, asynchronous: true).HostOperations,
+            AllowedHosts = ["cache.test"],
+            DownloadCode = async (_, _) =>
+            {
+                downloads++;
+                await Task.Yield();
+                return "public Unused = 0";
+            },
+        };
+        var provider = "Make = { public Box = { g = f(5) } }\n";
+        var local = form switch
+        {
+            0 => "open Make, 'https://cache.test/lib'\n",
+            1 => "open 'https://cache.test/lib', Lib\nLib = { public Box = { g = f(5) } }\n",
+            2 => "open 'https://cache.test/lib', Alias\nAlias = Lib\nLib = { public Box = { g = f(5) } }\n",
+            _ => "open 'https://cache.test/lib', Carrier\nCarrier = { public Box = { g = f(5) }\n Make }\n",
+        };
+        var read = "Read(0) = 0\nRead(n) = {\n" + local + "P = Box.g\n(P, P)\n}\n";
+        var body = reverse ? "Cached = Read(1)\n" + read + provider : provider + read + "Cached = Read(1)\n";
+        var source = "Inc(x) = Data() + x\nTimes(x) = Data() + x * 10\nOuter(f) = {\n"
+            + body + "Read(0), Cached, Cached(), Cached\n}\nOuter(Inc), Outer(Times), Outer(Inc)";
+        var parsed = await SourceProvenance.ParseValidAsync(source, options);
+        Assert.Equal(0, downloads);
+        var outer = parsed.Root.Properties.Single(p => p.Name == "Outer").Value;
+        Assert.Equal(PropertyExposure.LocalOnlyCapturedAncestorParameters,
+            outer.Properties.Single(p => p.Name == "Cached").Exposure);
+        var cache = new CountingCache(suspendAsyncAccesses: true);
+        var result = await Evaluator.RunAsync(new Expr.AlgorithmExpr(parsed.Root), cache,
+            hostOperations: options.HostOperations);
+        Decimal128[] expected = form == 0 ? [0m, 105m, 105m, 105m, 105m, 105m, 105m,
+            0m, 250m, 250m, 250m, 250m, 250m, 250m,
+            0m, 305m, 305m, 305m, 305m, 305m, 305m]
+            : [0m, 105m, 105m, 205m, 205m, 105m, 105m,
+                0m, 350m, 350m, 450m, 450m, 350m, 350m,
+                0m, 505m, 505m, 605m, 605m, 505m, 505m];
+        Assert.Equal(expected, Atoms(result));
+        // Cached() is fresh: a provider declared inside Read belongs to that new
+        // Read activation; the provider in Outer remains the same binding.
+        Assert.Equal(form == 0 ? 3 : 6, counter.Count);
+        Assert.Equal(0, cache.EvaluationsOf("P"));
+        Assert.Equal(form == 0 ? 3 : 6, cache.EvaluationsOf("g"));
         Assert.Equal(1, downloads);
     }
 
@@ -586,12 +647,14 @@ public class ZeroArgPropertyCacheScopeTests
 
     // ── 8. Execution parity ─────────────────────────────────────────────────
 
+    // The local-only members are calculations (`n + 0`): a lone parameter row is a runtime reference
+    // (M4★), which owns no entry — those shapes are RuntimeReferenceReads_* below.
     public static TheoryData<string> ParityPrograms => new()
     {
-        "Outer(n) = {\n Inner = { public X = n }\n Read(n) = Inner.X\n Read(7)\n}\nOuter(5), Outer(9)",
-        "Outer(n) = {\n Inner = { public X = n }\n Read(n) = { open Inner\n X }\n Read(7)\n}\nOuter(5), Outer(9)",
-        "Outer(n) = {\n Q = n\n Mid(n) = { public X = Q\n X }\n Mid.X\n}\nOuter(5), Outer(9)",
-        "Outer(n) = {\n Lib = { public X = n }\n Step(n) = Lib.X + n\n repeat(Step(0), 2)\n}\nOuter(5), Outer(7)",
+        "Outer(n) = {\n Inner = { public X = n + 0 }\n Read(n) = Inner.X\n Read(7)\n}\nOuter(5), Outer(9)",
+        "Outer(n) = {\n Inner = { public X = n + 0 }\n Read(n) = { open Inner\n X }\n Read(7)\n}\nOuter(5), Outer(9)",
+        "Outer(n) = {\n Q = n + 0\n Mid(n) = { public X = Q\n X }\n Mid.X\n}\nOuter(5), Outer(9)",
+        "Outer(n) = {\n Lib = { public X = n + 0 }\n Step(n) = Lib.X + n\n repeat(Step(0), 2)\n}\nOuter(5), Outer(7)",
         "Big = range(1, 100).sum\nF(x) = Big + x\nF(1), F(2), F(3)",
         "Big = range(1, 100).sum\nF(x) = Big + x\nrange(1, 5).map(F)",
         "Outer(x) = {\n    P = x * 10\n    P + P\n}\nOuter(2), Outer(10)",
@@ -641,6 +704,31 @@ public class ZeroArgPropertyCacheScopeTests
         // synchronous pipeline.
         Assert.Equal(asyncCache.Requests.Values.Sum(), asyncCache.AsyncRequests);
         Assert.Equal(suspendingCache.Requests.Values.Sum(), suspendingCache.AsyncRequests);
+    }
+
+    /// <summary>
+    /// OD-E (M4★): a member whose one row is an enclosing parameter is a RUNTIME REFERENCE, and every
+    /// alias of it reads that reference's binding cell — no property entry anywhere, on any route, and the
+    /// owner's own parameter still wins over the reading body's same-named one.
+    /// </summary>
+    [Theory]
+    [InlineData("Outer(n) = {\n Inner = { public X = n }\n Read(n) = Inner.X\n Read(7)\n}\nOuter(5), Outer(9)")]
+    [InlineData("Outer(n) = {\n Inner = { public X = n }\n Read(n) = { open Inner\n X }\n Read(7)\n}\nOuter(5), Outer(9)")]
+    [InlineData("Outer(n) = {\n Q = n\n Mid(n) = { public X = Q\n X }\n Mid.X\n}\nOuter(5), Outer(9)")]
+    public async Task RuntimeReferenceReads_AgreeOnEveryRoute_WithoutAnyPropertyEntry(string source)
+    {
+        var expr = Program(source);
+        var plainCache = new CountingCache();
+        var plain = Evaluator.Run(expr, plainCache, enableLoopOptimization: false);
+        var suspendingCache = new CountingCache(suspendAsyncAccesses: true);
+        var suspending = await Evaluator.RunAsync(expr, suspendingCache);
+        var optimizedCache = new CountingCache();
+        var optimized = Evaluator.Run(expr, optimizedCache, enableLoopOptimization: true);
+
+        Assert.Equal([5m, 9m], Atoms(plain));
+        Assert.Equal(Atoms(plain), Atoms(suspending));
+        Assert.Equal(Atoms(plain), Atoms(optimized));
+        Assert.All(new[] { plainCache, suspendingCache, optimizedCache }, static cache => Assert.Empty(cache.Requests));
     }
 
     [Fact]
@@ -715,13 +803,14 @@ public class ZeroArgPropertyCacheScopeTests
     [Fact]
     public void StructuralWinner_HidingAParameterName_StaysExportedAndPerRun()
     {
-        // The receiver DECLARES `m`, so the Param fallback is never selected: P is
-        // exported and one entry serves both activations, correctly.
+        // The receiver DECLARES `m`, so the Param fallback is never selected: P is a reference to
+        // M's member (M4★, owning no entry), and m's one exported entry serves both activations.
         var (cache, result) = Run(
             "M = { public m = 1 + 2 }\nApply(m) = {\n    P = M.m\n    P\n}\nApply(7), Apply(8)");
 
         Assert.Equal([3m, 3m], Atoms(result));
-        Assert.Equal(1, cache.EvaluationsOf("P"));
+        Assert.Equal(0, cache.EvaluationsOf("P"));
+        Assert.Equal(1, cache.EvaluationsOf("m"));
     }
 
     // ── Safety ──────────────────────────────────────────────────────────────

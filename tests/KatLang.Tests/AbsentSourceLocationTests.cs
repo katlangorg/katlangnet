@@ -315,8 +315,9 @@ public class AbsentSourceLocationTests
     public void WrittenPropertyDeclaration_StampsTheRefusedInvocationWithItsOwnSpan()
     {
         // Reading `A` (depth 1) reads `B`, whose entry is refused and stamped with B's own
-        // declaration span — the specific location, not the outer row's.
-        const string source = "A = B\nB = 1\nA";
+        // declaration span — the specific location, not the outer row's. A's row is a calculation:
+        // a lone `B` row would make A a transparent alias of B (M4★), whose read IS B's read at depth 1.
+        const string source = "A = B + 0\nB = 1\nA";
         var error = SingleError(KatLangEngine.Run(
             source,
             new RunOptions { EvaluationLimits = new EvaluationLimits { MaxDepth = 1 } }));
@@ -363,12 +364,14 @@ public class AbsentSourceLocationTests
         // Deconstruction feeding a loop step, and a plannable loop temporary beside it.
         "Step(a) = {\n  p, q = a, a\n  p + q\n}\nrepeat(Step(1), 3)",
         "Step(a) = {\n  t = a + 1\n  if(t > 0, t, 0)\n}\nrepeat(Step(1), 3)",
-        // Prelude and Math bindings declare no source name either.
-        "A = Math.Pi\nA",
-        "A = Math.Pi\nB = A\nB",
+        // Prelude and Math bindings declare no source name either. (The rows are calculations: a lone
+        // reference row is a transparent alias under M4★, which charges nothing of its own — see
+        // TransparentAliasReads_ChargeExactlyWhatTheirTargetsReadCharges.)
+        "A = Math.Pi + 0\nA",
+        "A = Math.Pi + 0\nB = A + 0\nB",
         "F(xs) = sum(xs)\nA = F((1, 2, 3))\nA",
         // Ordinary written properties and recursion: the control group.
-        "A = B\nB = 1\nA",
+        "A = B + 0\nB = 1\nA",
         "A = A\nA",
         "F(n) = if(n > 0, F(n - 1), 0)\nF(20)",
     ];
@@ -405,13 +408,42 @@ public class AbsentSourceLocationTests
         Assert.True(observedFailure, "no limit in the sweep made this program fail, so nothing was checked");
     }
 
+    /// <summary>
+    /// M4★ (OD-E): a transparent alias owns no entry and its read is the target's own read, so the hop
+    /// charges no step and no depth — under every limit of the sweep the alias program and the direct
+    /// read of its target succeed alike or fail alike, with the same error code and a legitimate span.
+    /// </summary>
+    [Theory]
+    [InlineData("A = Math.Pi\nA", "Math.Pi")]
+    [InlineData("A = Math.Pi\nB = A\nB", "Math.Pi")]
+    [InlineData("A = B\nB = 1\nA", "B = 1\nB")]
+    [InlineData("B = 1\nA = B + 0\nC = A\nC", "B = 1\nA = B + 0\nA")]
+    public void TransparentAliasReads_ChargeExactlyWhatTheirTargetsReadCharges(string aliasSource, string directSource)
+    {
+        foreach (var limits in SweepLimits())
+        {
+            var alias = KatLangEngine.Run(aliasSource, new RunOptions { EvaluationLimits = limits });
+            var direct = KatLangEngine.Run(directSource, new RunOptions { EvaluationLimits = limits });
+            Assert.Equal(direct.GetType(), alias.GetType());
+            if (alias is RunResult.EvalFailure aliasFailure)
+            {
+                var directFailure = Assert.IsType<RunResult.EvalFailure>(direct);
+                Assert.Equal(directFailure.Errors.Select(static error => error.Code), aliasFailure.Errors.Select(static error => error.Code));
+                foreach (var error in aliasFailure.Errors)
+                    AssertLegitimateOrAbsent(error, aliasSource);
+            }
+        }
+    }
+
     [Fact]
     public async Task ImportedContent_KeepsTheLoadingDocumentsCoordinates_UnderAResourceLimit()
     {
         // The import view is locationless at every depth. A refusal inside it must be
         // positioned by the CURRENT document (or stay absent) — never at a module-relative
         // coordinate and never at the fabricated default.
-        const string module = "public Deep = Deeper\npublic Deeper = 1";
+        // Deep's row is a calculation: a lone `Deeper` row would make Deep a transparent alias whose read
+        // IS Deeper's read at depth 1 (M4★), and nothing would be refused.
+        const string module = "public Deep = Deeper + 0\npublic Deeper = 1";
         const string document = "open '" + Lib + "'\nDeep";
         var options = ModuleOptions(new EvaluationLimits { MaxDepth = 1 }, (Lib, module));
 

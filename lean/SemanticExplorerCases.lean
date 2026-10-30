@@ -7363,172 +7363,172 @@ def case_identityTwice__pl1 : Expr :=
 
 -- propChain__e: P = () \n Q = P \n Q
 def case_propChain__e : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "P" (alg [] [] [] [(.emptySequence 0)]), privateProp "Q" (alg [] [] [] [.resolve "P"])] [.resolve "Q"])
+  .algorithmExpr (alg [] [] [privateProp "P" (alg [] [] [] [(.emptySequence 0)]), privateProp "Q" (.alias none [] [] (.resolve "P"))] [.resolve "Q"])
 #guard obs case_propChain__e == "ok raw=S[] n=1"
 
 -- propChain__n0: P = 0 \n Q = P \n Q
 def case_propChain__n0 : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "P" (alg [] [] [] [.num 0]), privateProp "Q" (alg [] [] [] [.resolve "P"])] [.resolve "Q"])
+  .algorithmExpr (alg [] [] [privateProp "P" (alg [] [] [] [.num 0]), privateProp "Q" (.alias none [] [] (.resolve "P"))] [.resolve "Q"])
 #guard obs case_propChain__n0 == "ok raw=0 n=1"
 
 -- propChain__n1: P = 1 \n Q = P \n Q
 def case_propChain__n1 : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "P" (alg [] [] [] [.num 1]), privateProp "Q" (alg [] [] [] [.resolve "P"])] [.resolve "Q"])
+  .algorithmExpr (alg [] [] [privateProp "P" (alg [] [] [] [.num 1]), privateProp "Q" (.alias none [] [] (.resolve "P"))] [.resolve "Q"])
 #guard obs case_propChain__n1 == "ok raw=1 n=1"
 
 -- propChain__bt: P = true \n Q = P \n Q
 def case_propChain__bt : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "P" (alg [] [] [] [.boolLiteral true]), privateProp "Q" (alg [] [] [] [.resolve "P"])] [.resolve "Q"])
+  .algorithmExpr (alg [] [] [privateProp "P" (alg [] [] [] [.boolLiteral true]), privateProp "Q" (.alias none [] [] (.resolve "P"))] [.resolve "Q"])
 #guard obs case_propChain__bt == "ok raw=true n=1"
 
 -- propChain__bf: P = false \n Q = P \n Q
 def case_propChain__bf : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "P" (alg [] [] [] [.boolLiteral false]), privateProp "Q" (alg [] [] [] [.resolve "P"])] [.resolve "Q"])
+  .algorithmExpr (alg [] [] [privateProp "P" (alg [] [] [] [.boolLiteral false]), privateProp "Q" (.alias none [] [] (.resolve "P"))] [.resolve "Q"])
 #guard obs case_propChain__bf == "ok raw=false n=1"
 
 -- propChain__pbt: P = (true) \n Q = P \n Q
 def case_propChain__pbt : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "P" (alg [] [] [] [.boolLiteral true]), privateProp "Q" (alg [] [] [] [.resolve "P"])] [.resolve "Q"])
+  .algorithmExpr (alg [] [] [privateProp "P" (alg [] [] [] [.boolLiteral true]), privateProp "Q" (.alias none [] [] (.resolve "P"))] [.resolve "Q"])
 #guard obs case_propChain__pbt == "ok raw=true n=1"
 
 -- propChain__pbt_e: P = (true, ()) \n Q = P \n Q
 def case_propChain__pbt_e : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "P" (alg [] [] [] [(.capture [.boolLiteral true, (.emptySequence 0)])]), privateProp "Q" (alg [] [] [] [.resolve "P"])] [.resolve "Q"])
+  .algorithmExpr (alg [] [] [privateProp "P" (alg [] [] [] [(.capture [.boolLiteral true, (.emptySequence 0)])]), privateProp "Q" (.alias none [] [] (.resolve "P"))] [.resolve "Q"])
 #guard obs case_propChain__pbt_e == "ok raw=S[true, S[]] n=1"
 
 -- propChain__pbt_1: P = (true, 1) \n Q = P \n Q
 def case_propChain__pbt_1 : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "P" (alg [] [] [] [(.capture [.boolLiteral true, .num 1])]), privateProp "Q" (alg [] [] [] [.resolve "P"])] [.resolve "Q"])
+  .algorithmExpr (alg [] [] [privateProp "P" (alg [] [] [] [(.capture [.boolLiteral true, .num 1])]), privateProp "Q" (.alias none [] [] (.resolve "P"))] [.resolve "Q"])
 #guard obs case_propChain__pbt_1 == "ok raw=S[true, 1] n=1"
 
 -- propChain__lbt: P = [true] \n Q = P \n Q
 def case_propChain__lbt : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "P" (alg [] [] [] [(.listLiteral [.boolLiteral true])]), privateProp "Q" (alg [] [] [] [.resolve "P"])] [.resolve "Q"])
+  .algorithmExpr (alg [] [] [privateProp "P" (alg [] [] [] [(.listLiteral [.boolLiteral true])]), privateProp "Q" (.alias none [] [] (.resolve "P"))] [.resolve "Q"])
 #guard obs case_propChain__lbt == "ok raw=L[true] n=1"
 
 -- propChain__lbt_bf: P = [true, false] \n Q = P \n Q
 def case_propChain__lbt_bf : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "P" (alg [] [] [] [(.listLiteral [.boolLiteral true, .boolLiteral false])]), privateProp "Q" (alg [] [] [] [.resolve "P"])] [.resolve "Q"])
+  .algorithmExpr (alg [] [] [privateProp "P" (alg [] [] [] [(.listLiteral [.boolLiteral true, .boolLiteral false])]), privateProp "Q" (.alias none [] [] (.resolve "P"))] [.resolve "Q"])
 #guard obs case_propChain__lbt_bf == "ok raw=L[true, false] n=1"
 
 -- propChain__lpbt_1: P = [(true, 1)] \n Q = P \n Q
 def case_propChain__lpbt_1 : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "P" (alg [] [] [] [(.listLiteral [(.capture [.boolLiteral true, .num 1])])]), privateProp "Q" (alg [] [] [] [.resolve "P"])] [.resolve "Q"])
+  .algorithmExpr (alg [] [] [privateProp "P" (alg [] [] [] [(.listLiteral [(.capture [.boolLiteral true, .num 1])])]), privateProp "Q" (.alias none [] [] (.resolve "P"))] [.resolve "Q"])
 #guard obs case_propChain__lpbt_1 == "ok raw=L[S[true, 1]] n=1"
 
 -- propChain__p1: P = (1) \n Q = P \n Q
 def case_propChain__p1 : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "P" (alg [] [] [] [.num 1]), privateProp "Q" (alg [] [] [] [.resolve "P"])] [.resolve "Q"])
+  .algorithmExpr (alg [] [] [privateProp "P" (alg [] [] [] [.num 1]), privateProp "Q" (.alias none [] [] (.resolve "P"))] [.resolve "Q"])
 #guard obs case_propChain__p1 == "ok raw=1 n=1"
 
 -- propChain__p12: P = (1, 2) \n Q = P \n Q
 def case_propChain__p12 : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "P" (alg [] [] [] [(.capture [.num 1, .num 2])]), privateProp "Q" (alg [] [] [] [.resolve "P"])] [.resolve "Q"])
+  .algorithmExpr (alg [] [] [privateProp "P" (alg [] [] [] [(.capture [.num 1, .num 2])]), privateProp "Q" (.alias none [] [] (.resolve "P"))] [.resolve "Q"])
 #guard obs case_propChain__p12 == "ok raw=S[1, 2] n=1"
 
 -- propChain__p123: P = (1, 2, 3) \n Q = P \n Q
 def case_propChain__p123 : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "P" (alg [] [] [] [(.capture [.num 1, .num 2, .num 3])]), privateProp "Q" (alg [] [] [] [.resolve "P"])] [.resolve "Q"])
+  .algorithmExpr (alg [] [] [privateProp "P" (alg [] [] [] [(.capture [.num 1, .num 2, .num 3])]), privateProp "Q" (.alias none [] [] (.resolve "P"))] [.resolve "Q"])
 #guard obs case_propChain__p123 == "ok raw=S[1, 2, 3] n=1"
 
 -- propChain__pee: P = ((), ()) \n Q = P \n Q
 def case_propChain__pee : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "P" (alg [] [] [] [(.capture [(.emptySequence 0), (.emptySequence 0)])]), privateProp "Q" (alg [] [] [] [.resolve "P"])] [.resolve "Q"])
+  .algorithmExpr (alg [] [] [privateProp "P" (alg [] [] [] [(.capture [(.emptySequence 0), (.emptySequence 0)])]), privateProp "Q" (.alias none [] [] (.resolve "P"))] [.resolve "Q"])
 #guard obs case_propChain__pee == "ok raw=S[S[], S[]] n=1"
 
 -- propChain__pe1: P = ((), 1) \n Q = P \n Q
 def case_propChain__pe1 : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "P" (alg [] [] [] [(.capture [(.emptySequence 0), .num 1])]), privateProp "Q" (alg [] [] [] [.resolve "P"])] [.resolve "Q"])
+  .algorithmExpr (alg [] [] [privateProp "P" (alg [] [] [] [(.capture [(.emptySequence 0), .num 1])]), privateProp "Q" (.alias none [] [] (.resolve "P"))] [.resolve "Q"])
 #guard obs case_propChain__pe1 == "ok raw=S[S[], 1] n=1"
 
 -- propChain__p1e: P = (1, ()) \n Q = P \n Q
 def case_propChain__p1e : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "P" (alg [] [] [] [(.capture [.num 1, (.emptySequence 0)])]), privateProp "Q" (alg [] [] [] [.resolve "P"])] [.resolve "Q"])
+  .algorithmExpr (alg [] [] [privateProp "P" (alg [] [] [] [(.capture [.num 1, (.emptySequence 0)])]), privateProp "Q" (.alias none [] [] (.resolve "P"))] [.resolve "Q"])
 #guard obs case_propChain__p1e == "ok raw=S[1, S[]] n=1"
 
 -- propChain__p12_3: P = ((1, 2), 3) \n Q = P \n Q
 def case_propChain__p12_3 : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "P" (alg [] [] [] [(.capture [(.capture [.num 1, .num 2]), .num 3])]), privateProp "Q" (alg [] [] [] [.resolve "P"])] [.resolve "Q"])
+  .algorithmExpr (alg [] [] [privateProp "P" (alg [] [] [] [(.capture [(.capture [.num 1, .num 2]), .num 3])]), privateProp "Q" (.alias none [] [] (.resolve "P"))] [.resolve "Q"])
 #guard obs case_propChain__p12_3 == "ok raw=S[S[1, 2], 3] n=1"
 
 -- propChain__p12_34: P = ((1, 2), (3, 4)) \n Q = P \n Q
 def case_propChain__p12_34 : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "P" (alg [] [] [] [(.capture [(.capture [.num 1, .num 2]), (.capture [.num 3, .num 4])])]), privateProp "Q" (alg [] [] [] [.resolve "P"])] [.resolve "Q"])
+  .algorithmExpr (alg [] [] [privateProp "P" (alg [] [] [] [(.capture [(.capture [.num 1, .num 2]), (.capture [.num 3, .num 4])])]), privateProp "Q" (.alias none [] [] (.resolve "P"))] [.resolve "Q"])
 #guard obs case_propChain__p12_34 == "ok raw=S[S[1, 2], S[3, 4]] n=1"
 
 -- propChain__pe_12: P = ((), (1, 2)) \n Q = P \n Q
 def case_propChain__pe_12 : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "P" (alg [] [] [] [(.capture [(.emptySequence 0), (.capture [.num 1, .num 2])])]), privateProp "Q" (alg [] [] [] [.resolve "P"])] [.resolve "Q"])
+  .algorithmExpr (alg [] [] [privateProp "P" (alg [] [] [] [(.capture [(.emptySequence 0), (.capture [.num 1, .num 2])])]), privateProp "Q" (.alias none [] [] (.resolve "P"))] [.resolve "Q"])
 #guard obs case_propChain__pe_12 == "ok raw=S[S[], S[1, 2]] n=1"
 
 -- propChain__ppe1_2: P = (((), 1), 2) \n Q = P \n Q
 def case_propChain__ppe1_2 : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "P" (alg [] [] [] [(.capture [(.capture [(.emptySequence 0), .num 1]), .num 2])]), privateProp "Q" (alg [] [] [] [.resolve "P"])] [.resolve "Q"])
+  .algorithmExpr (alg [] [] [privateProp "P" (alg [] [] [] [(.capture [(.capture [(.emptySequence 0), .num 1]), .num 2])]), privateProp "Q" (.alias none [] [] (.resolve "P"))] [.resolve "Q"])
 #guard obs case_propChain__ppe1_2 == "ok raw=S[S[S[], 1], 2] n=1"
 
 -- propChain__p12_e: P = ((1, 2), ()) \n Q = P \n Q
 def case_propChain__p12_e : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "P" (alg [] [] [] [(.capture [(.capture [.num 1, .num 2]), (.emptySequence 0)])]), privateProp "Q" (alg [] [] [] [.resolve "P"])] [.resolve "Q"])
+  .algorithmExpr (alg [] [] [privateProp "P" (alg [] [] [] [(.capture [(.capture [.num 1, .num 2]), (.emptySequence 0)])]), privateProp "Q" (.alias none [] [] (.resolve "P"))] [.resolve "Q"])
 #guard obs case_propChain__p12_e == "ok raw=S[S[1, 2], S[]] n=1"
 
 -- propChain__ppe: P = (()) \n Q = P \n Q
 def case_propChain__ppe : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "P" (alg [] [] [] [(.emptySequence 0)]), privateProp "Q" (alg [] [] [] [.resolve "P"])] [.resolve "Q"])
+  .algorithmExpr (alg [] [] [privateProp "P" (alg [] [] [] [(.emptySequence 0)]), privateProp "Q" (.alias none [] [] (.resolve "P"))] [.resolve "Q"])
 #guard obs case_propChain__ppe == "ok raw=S[] n=1"
 
 -- propChain__pp1: P = ((1)) \n Q = P \n Q
 def case_propChain__pp1 : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "P" (alg [] [] [] [.num 1]), privateProp "Q" (alg [] [] [] [.resolve "P"])] [.resolve "Q"])
+  .algorithmExpr (alg [] [] [privateProp "P" (alg [] [] [] [.num 1]), privateProp "Q" (.alias none [] [] (.resolve "P"))] [.resolve "Q"])
 #guard obs case_propChain__pp1 == "ok raw=1 n=1"
 
 -- propChain__ppp12: P = (((1, 2))) \n Q = P \n Q
 def case_propChain__ppp12 : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "P" (alg [] [] [] [(.capture [.num 1, .num 2])]), privateProp "Q" (alg [] [] [] [.resolve "P"])] [.resolve "Q"])
+  .algorithmExpr (alg [] [] [privateProp "P" (alg [] [] [] [(.capture [.num 1, .num 2])]), privateProp "Q" (.alias none [] [] (.resolve "P"))] [.resolve "Q"])
 #guard obs case_propChain__ppp12 == "ok raw=S[1, 2] n=1"
 
 -- propChain__le: P = [] \n Q = P \n Q
 def case_propChain__le : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "P" (alg [] [] [] [(.listLiteral [])]), privateProp "Q" (alg [] [] [] [.resolve "P"])] [.resolve "Q"])
+  .algorithmExpr (alg [] [] [privateProp "P" (alg [] [] [] [(.listLiteral [])]), privateProp "Q" (.alias none [] [] (.resolve "P"))] [.resolve "Q"])
 #guard obs case_propChain__le == "ok raw=L[] n=1"
 
 -- propChain__l7: P = [7] \n Q = P \n Q
 def case_propChain__l7 : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "P" (alg [] [] [] [(.listLiteral [.num 7])]), privateProp "Q" (alg [] [] [] [.resolve "P"])] [.resolve "Q"])
+  .algorithmExpr (alg [] [] [privateProp "P" (alg [] [] [] [(.listLiteral [.num 7])]), privateProp "Q" (.alias none [] [] (.resolve "P"))] [.resolve "Q"])
 #guard obs case_propChain__l7 == "ok raw=L[7] n=1"
 
 -- propChain__l12: P = [1, 2] \n Q = P \n Q
 def case_propChain__l12 : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "P" (alg [] [] [] [(.listLiteral [.num 1, .num 2])]), privateProp "Q" (alg [] [] [] [.resolve "P"])] [.resolve "Q"])
+  .algorithmExpr (alg [] [] [privateProp "P" (alg [] [] [] [(.listLiteral [.num 1, .num 2])]), privateProp "Q" (.alias none [] [] (.resolve "P"))] [.resolve "Q"])
 #guard obs case_propChain__l12 == "ok raw=L[1, 2] n=1"
 
 -- propChain__l12_3: P = [[1, 2], 3] \n Q = P \n Q
 def case_propChain__l12_3 : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "P" (alg [] [] [] [(.listLiteral [(.listLiteral [.num 1, .num 2]), .num 3])]), privateProp "Q" (alg [] [] [] [.resolve "P"])] [.resolve "Q"])
+  .algorithmExpr (alg [] [] [privateProp "P" (alg [] [] [] [(.listLiteral [(.listLiteral [.num 1, .num 2]), .num 3])]), privateProp "Q" (.alias none [] [] (.resolve "P"))] [.resolve "Q"])
 #guard obs case_propChain__l12_3 == "ok raw=L[L[1, 2], 3] n=1"
 
 -- propChain__lle: P = [[]] \n Q = P \n Q
 def case_propChain__lle : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "P" (alg [] [] [] [(.listLiteral [(.listLiteral [])])]), privateProp "Q" (alg [] [] [] [.resolve "P"])] [.resolve "Q"])
+  .algorithmExpr (alg [] [] [privateProp "P" (alg [] [] [] [(.listLiteral [(.listLiteral [])])]), privateProp "Q" (.alias none [] [] (.resolve "P"))] [.resolve "Q"])
 #guard obs case_propChain__lle == "ok raw=L[L[]] n=1"
 
 -- propChain__l_e: P = [()] \n Q = P \n Q
 def case_propChain__l_e : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "P" (alg [] [] [] [(.listLiteral [(.emptySequence 0)])]), privateProp "Q" (alg [] [] [] [.resolve "P"])] [.resolve "Q"])
+  .algorithmExpr (alg [] [] [privateProp "P" (alg [] [] [] [(.listLiteral [(.emptySequence 0)])]), privateProp "Q" (.alias none [] [] (.resolve "P"))] [.resolve "Q"])
 #guard obs case_propChain__l_e == "ok raw=L[S[]] n=1"
 
 -- propChain__l_p12: P = [(1, 2)] \n Q = P \n Q
 def case_propChain__l_p12 : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "P" (alg [] [] [] [(.listLiteral [(.capture [.num 1, .num 2])])]), privateProp "Q" (alg [] [] [] [.resolve "P"])] [.resolve "Q"])
+  .algorithmExpr (alg [] [] [privateProp "P" (alg [] [] [] [(.listLiteral [(.capture [.num 1, .num 2])])]), privateProp "Q" (.alias none [] [] (.resolve "P"))] [.resolve "Q"])
 #guard obs case_propChain__l_p12 == "ok raw=L[S[1, 2]] n=1"
 
 -- propChain__p_l12: P = ([1, 2], 3) \n Q = P \n Q
 def case_propChain__p_l12 : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "P" (alg [] [] [] [(.capture [(.listLiteral [.num 1, .num 2]), .num 3])]), privateProp "Q" (alg [] [] [] [.resolve "P"])] [.resolve "Q"])
+  .algorithmExpr (alg [] [] [privateProp "P" (alg [] [] [] [(.capture [(.listLiteral [.num 1, .num 2]), .num 3])]), privateProp "Q" (.alias none [] [] (.resolve "P"))] [.resolve "Q"])
 #guard obs case_propChain__p_l12 == "ok raw=S[L[1, 2], 3] n=1"
 
 -- propChain__pl1: P = ([1]) \n Q = P \n Q
 def case_propChain__pl1 : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "P" (alg [] [] [] [(.listLiteral [.num 1])]), privateProp "Q" (alg [] [] [] [.resolve "P"])] [.resolve "Q"])
+  .algorithmExpr (alg [] [] [privateProp "P" (alg [] [] [] [(.listLiteral [.num 1])]), privateProp "Q" (.alias none [] [] (.resolve "P"))] [.resolve "Q"])
 #guard obs case_propChain__pl1 == "ok raw=L[1] n=1"
 
 -- take1__e: take((), 1)
@@ -12734,7 +12734,7 @@ def case_special__spreadNestedArgument : Expr :=
 #guard errorObs case_special__spreadNestedArgument == .matched (some { kind := "missingOutput", names := [], counts := [] })
 -- special__spreadNestedRow: G = {A = 1} \n { G }*, 997
 def case_special__spreadNestedRow : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "G" (alg [] [] [privateProp "A" (alg [] [] [] [.num 1])] [])] [(.sequenceSpread (.algorithmExpr (alg [] [] [] [.resolve "G"]))), .num 997])
+  .algorithmExpr (alg [] [] [privateProp "G" (alg [] [] [privateProp "A" (alg [] [] [] [.num 1])] [])] [(.sequenceSpread (.algorithmExpr (.alias none [] [] (.resolve "G") none false))), .num 997])
 #guard obs case_special__spreadNestedRow == "err missingOutput"
 
 #guard errorObs case_special__spreadNestedRow == .matched (some { kind := "missingOutput", names := [], counts := [] })
@@ -13224,7 +13224,7 @@ def case_special__containsAcrossKinds : Expr :=
 
 -- special__openPublicMember: Lib = { \n     public X = 101 \n } \n A = { \n     open Lib \n     X \n } \n A
 def case_special__openPublicMember : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "Lib" (alg [] [] [publicProp "X" (alg [] [] [] [.num 101])] []), privateProp "A" (alg [] [.resolve "Lib"] [] [.resolve "X"])] [.resolve "A"])
+  .algorithmExpr (alg [] [] [privateProp "Lib" (alg [] [] [publicProp "X" (alg [] [] [] [.num 101])] []), privateProp "A" (.alias none [.resolve "Lib"] [] (.resolve "X") none false)] [.resolve "A"])
 #guard obs case_special__openPublicMember == "ok raw=101 n=1"
 
 -- special__openPrivateMemberHidden: Lib = { \n     X = 101 \n } \n A = { \n     open Lib \n     X \n } \n A(707)
@@ -13239,7 +13239,7 @@ def case_special__openLocalOnlyCapturedParamsInsideOwner : Expr :=
 
 -- special__openLocalOnlyCapturedParamsOutsideOwner: Outer(p) = { \n     public Lib = { \n         public X = p + 101 \n     } \n     0 \n } \n A = { \n     open Outer.Lib \n     X \n } \n A
 def case_special__openLocalOnlyCapturedParamsOutsideOwner : Expr :=
-  .algorithmExpr (alg [] [] [{ (privateLocalProp "A" (.localCapturedAncestorParams ["p"]) (alg [] [(.dotCall (.resolve "Outer") "Lib" none)] [] [.resolve "X"])) with requiredOwnerDepths := some [("p", none)] }, privateProp "Outer" (alg ["p"] [] [publicProp "Lib" (alg [] [] [{ (publicLocalProp "X" (.localCapturedAncestorParams ["p"]) (alg [] [] [] [(.binary .add (.param "p") (.num 101))])) with requiredOwnerDepths := some [("p", some 1)] }] [])] [.num 0])] [.resolve "A"])
+  .algorithmExpr (alg [] [] [{ (privateLocalProp "A" (.localCapturedAncestorParams ["p"]) (.alias none [(.dotCall (.resolve "Outer") "Lib" none)] [] (.resolve "X") none false)) with requiredOwnerDepths := some [("p", none)] }, privateProp "Outer" (alg ["p"] [] [publicProp "Lib" (alg [] [] [{ (publicLocalProp "X" (.localCapturedAncestorParams ["p"]) (alg [] [] [] [(.binary .add (.param "p") (.num 101))])) with requiredOwnerDepths := some [("p", some 1)] }] [])] [.num 0])] [.resolve "A"])
 #guard obs case_special__openLocalOnlyCapturedParamsOutsideOwner == "err localOnlyProperty"
 
 #guard errorObs case_special__openLocalOnlyCapturedParamsOutsideOwner == .matched (some { kind := "localOnlyProperty", names := ["X", "captured"], counts := [] })
@@ -13251,17 +13251,17 @@ def case_special__openTwoProvidersAmbiguousAtRuntime : Expr :=
 #guard errorObs case_special__openTwoProvidersAmbiguousAtRuntime == .matched (some { kind := "ambiguousOpen", names := ["X"], counts := [] })
 -- special__openDuplicateTargetDedup: Lib = { \n     public X = 101 \n } \n A = { \n     open Lib, Lib \n     X \n } \n A
 def case_special__openDuplicateTargetDedup : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "Lib" (alg [] [] [publicProp "X" (alg [] [] [] [.num 101])] []), privateProp "A" (alg [] [.resolve "Lib", .resolve "Lib"] [] [.resolve "X"])] [.resolve "A"])
+  .algorithmExpr (alg [] [] [privateProp "Lib" (alg [] [] [publicProp "X" (alg [] [] [] [.num 101])] []), privateProp "A" (.alias none [.resolve "Lib", .resolve "Lib"] [] (.resolve "X") none false)] [.resolve "A"])
 #guard obs case_special__openDuplicateTargetDedup == "ok raw=101 n=1"
 
 -- special__openDuplicateDottedTargetDedup: Lib = { \n     public S = { \n         public X = 101 \n     } \n } \n A = { \n     open Lib.S, Lib.S \n     X \n } \n A
 def case_special__openDuplicateDottedTargetDedup : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "Lib" (alg [] [] [publicProp "S" (alg [] [] [publicProp "X" (alg [] [] [] [.num 101])] [])] []), privateProp "A" (alg [] [(.dotCall (.resolve "Lib") "S" none), (.dotCall (.resolve "Lib") "S" none)] [] [.resolve "X"])] [.resolve "A"])
+  .algorithmExpr (alg [] [] [privateProp "Lib" (alg [] [] [publicProp "S" (alg [] [] [publicProp "X" (alg [] [] [] [.num 101])] [])] []), privateProp "A" (.alias none [(.dotCall (.resolve "Lib") "S" none), (.dotCall (.resolve "Lib") "S" none)] [] (.resolve "X") none false)] [.resolve "A"])
 #guard obs case_special__openDuplicateDottedTargetDedup == "ok raw=101 n=1"
 
 -- special__openTwoSpellingsOneProvider: Lib = { \n     public Sub = { \n         public X = 101 \n     } \n     public R = { \n         open Sub, Lib.Sub \n         X \n     } \n } \n Lib.R
 def case_special__openTwoSpellingsOneProvider : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "Lib" (alg [] [] [publicProp "Sub" (alg [] [] [publicProp "X" (alg [] [] [] [.num 101])] []), publicProp "R" (alg [] [.resolve "Sub", (.dotCall (.resolve "Lib") "Sub" none)] [] [.resolve "X"])] [])] [(.dotCall (.resolve "Lib") "R" none)])
+  .algorithmExpr (alg [] [] [privateProp "Lib" (alg [] [] [publicProp "Sub" (alg [] [] [publicProp "X" (alg [] [] [] [.num 101])] []), publicProp "R" (.alias none [.resolve "Sub", (.dotCall (.resolve "Lib") "Sub" none)] [] (.resolve "X") none false)] [])] [(.dotCall (.resolve "Lib") "R" none)])
 #guard obs case_special__openTwoSpellingsOneProvider == "ok raw=101 n=1"
 
 -- special__openDuplicateInlineBlocksAmbiguousAtRuntime: K(p) = { \n     open { public X(v) = v + 101 }, { public X(v) = v + 101 } \n     p.X \n } \n K(10)
@@ -13272,7 +13272,7 @@ def case_special__openDuplicateInlineBlocksAmbiguousAtRuntime : Expr :=
 #guard errorObs case_special__openDuplicateInlineBlocksAmbiguousAtRuntime == .matched (some { kind := "ambiguousOpen", names := ["X"], counts := [] })
 -- special__openInlineBlock: A = { \n     open { public X = 101 } \n     X \n } \n A
 def case_special__openInlineBlock : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "A" (alg [] [(.algorithmExpr (alg [] [] [publicProp "X" (alg [] [] [] [.num 101])] []))] [] [.resolve "X"])] [.resolve "A"])
+  .algorithmExpr (alg [] [] [privateProp "A" (.alias none [(.algorithmExpr (alg [] [] [publicProp "X" (alg [] [] [] [.num 101])] []))] [] (.resolve "X") none false)] [.resolve "A"])
 #guard obs case_special__openInlineBlock == "ok raw=101 n=1"
 
 -- special__openInlineBlockPrivateHidden: A = { \n     open { X = 101 } \n     X \n } \n A(707)
@@ -13282,32 +13282,32 @@ def case_special__openInlineBlockPrivateHidden : Expr :=
 
 -- special__openDottedPath: Lib = { \n     public S = { \n         public X = 101 \n     } \n } \n A = { \n     open Lib.S \n     X \n } \n A
 def case_special__openDottedPath : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "Lib" (alg [] [] [publicProp "S" (alg [] [] [publicProp "X" (alg [] [] [] [.num 101])] [])] []), privateProp "A" (alg [] [(.dotCall (.resolve "Lib") "S" none)] [] [.resolve "X"])] [.resolve "A"])
+  .algorithmExpr (alg [] [] [privateProp "Lib" (alg [] [] [publicProp "S" (alg [] [] [publicProp "X" (alg [] [] [] [.num 101])] [])] []), privateProp "A" (.alias none [(.dotCall (.resolve "Lib") "S" none)] [] (.resolve "X") none false)] [.resolve "A"])
 #guard obs case_special__openDottedPath == "ok raw=101 n=1"
 
 -- special__openLocalShadowsOpenedName: Lib = { \n     public X = 101 \n } \n A = { \n     open Lib \n     X = 202 \n     X \n } \n A
 def case_special__openLocalShadowsOpenedName : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "Lib" (alg [] [] [publicProp "X" (alg [] [] [] [.num 101])] []), privateProp "A" (alg [] [.resolve "Lib"] [privateProp "X" (alg [] [] [] [.num 202])] [.resolve "X"])] [.resolve "A"])
+  .algorithmExpr (alg [] [] [privateProp "Lib" (alg [] [] [publicProp "X" (alg [] [] [] [.num 101])] []), privateProp "A" (.alias none [.resolve "Lib"] [privateProp "X" (alg [] [] [] [.num 202])] (.resolve "X") none false)] [.resolve "A"])
 #guard obs case_special__openLocalShadowsOpenedName == "ok raw=202 n=1"
 
 -- special__openAncestorPropertyWins: Lib = { \n     public X = 101 \n } \n A = { \n     X = 202 \n     Inner = { \n         open Lib \n         X \n     } \n     Inner \n } \n A
 def case_special__openAncestorPropertyWins : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "Lib" (alg [] [] [publicProp "X" (alg [] [] [] [.num 101])] []), privateProp "A" (alg [] [] [privateProp "X" (alg [] [] [] [.num 202]), privateProp "Inner" (alg [] [.resolve "Lib"] [] [.resolve "X"])] [.resolve "Inner"])] [.resolve "A"])
+  .algorithmExpr (alg [] [] [privateProp "Lib" (alg [] [] [publicProp "X" (alg [] [] [] [.num 101])] []), privateProp "A" (.alias none [] [privateProp "X" (alg [] [] [] [.num 202]), privateProp "Inner" (.alias none [.resolve "Lib"] [] (.resolve "X") none false)] (.resolve "Inner") none false)] [.resolve "A"])
 #guard obs case_special__openAncestorPropertyWins == "ok raw=202 n=1"
 
 -- special__openParentScopeReachesChild: Lib = { \n     public X = 101 \n } \n A = { \n     open Lib \n     Inner = { \n         X \n     } \n     Inner \n } \n A
 def case_special__openParentScopeReachesChild : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "Lib" (alg [] [] [publicProp "X" (alg [] [] [] [.num 101])] []), privateProp "A" (alg [] [.resolve "Lib"] [privateProp "Inner" (alg [] [] [] [.resolve "X"])] [.resolve "Inner"])] [.resolve "A"])
+  .algorithmExpr (alg [] [] [privateProp "Lib" (alg [] [] [publicProp "X" (alg [] [] [] [.num 101])] []), privateProp "A" (.alias none [.resolve "Lib"] [privateProp "Inner" (.alias none [] [] (.resolve "X") none false)] (.resolve "Inner") none false)] [.resolve "A"])
 #guard obs case_special__openParentScopeReachesChild == "ok raw=101 n=1"
 
 -- special__openNestedDoesNotLeakOutward: Lib = { \n     public X = 101 \n } \n A = { \n     Inner = { \n         open Lib \n         X \n     } \n     X \n } \n A(707)
 def case_special__openNestedDoesNotLeakOutward : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "Lib" (alg [] [] [publicProp "X" (alg [] [] [] [.num 101])] []), privateProp "A" (alg ["X"] [] [{ (privateLocalProp "Inner" (.localCapturedAncestorParams ["X"]) (.alias none [.resolve "Lib"] [] (.param "X"))) with requiredOwnerDepths := some [("X", some 0)] }] [.param "X"])] [(.call (.resolve "A") [.num 707])])
+  .algorithmExpr (alg [] [] [privateProp "Lib" (alg [] [] [publicProp "X" (alg [] [] [] [.num 101])] []), privateProp "A" (alg ["X"] [] [{ (privateLocalProp "Inner" (.localCapturedAncestorParams ["X"]) (.alias none [.resolve "Lib"] [] (.param "X") none false)) with requiredOwnerDepths := some [("X", some 0)] }] [.param "X"])] [(.call (.resolve "A") [.num 707])])
 #guard obs case_special__openNestedDoesNotLeakOutward == "ok raw=707 n=1"
 
 -- special__openHeadDefinedLater: A = { \n     open Lib \n     X \n } \n Lib = { \n     public X = 101 \n } \n A
 def case_special__openHeadDefinedLater : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "A" (alg [] [.resolve "Lib"] [] [.resolve "X"]), privateProp "Lib" (alg [] [] [publicProp "X" (alg [] [] [] [.num 101])] [])] [.resolve "A"])
+  .algorithmExpr (alg [] [] [privateProp "A" (.alias none [.resolve "Lib"] [] (.resolve "X") none false), privateProp "Lib" (alg [] [] [publicProp "X" (alg [] [] [] [.num 101])] [])] [.resolve "A"])
 #guard obs case_special__openHeadDefinedLater == "ok raw=101 n=1"
 
 -- special__openBuiltinNameCollision: Lib = { \n     public count = 101 \n } \n A = { \n     open Lib \n     count([1, 2, 3]) \n } \n A
@@ -13322,7 +13322,7 @@ def case_special__structuralDotSeesPrivateMember : Expr :=
 
 -- special__openPrivateMemberIsNotASecondProvider: Pub = { \n     public X = 101 \n } \n Lib = { \n     X = 202 \n } \n A = { \n     open Pub, Lib \n     X \n } \n A
 def case_special__openPrivateMemberIsNotASecondProvider : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "Pub" (alg [] [] [publicProp "X" (alg [] [] [] [.num 101])] []), privateProp "Lib" (alg [] [] [privateProp "X" (alg [] [] [] [.num 202])] []), privateProp "A" (alg [] [.resolve "Pub", .resolve "Lib"] [] [.resolve "X"])] [.resolve "A"])
+  .algorithmExpr (alg [] [] [privateProp "Pub" (alg [] [] [publicProp "X" (alg [] [] [] [.num 101])] []), privateProp "Lib" (alg [] [] [privateProp "X" (alg [] [] [] [.num 202])] []), privateProp "A" (.alias none [.resolve "Pub", .resolve "Lib"] [] (.resolve "X") none false)] [.resolve "A"])
 #guard obs case_special__openPrivateMemberIsNotASecondProvider == "ok raw=101 n=1"
 
 -- special__openLocalOnlyMemberIsASecondProviderAtRuntime: Pub = { \n     public X(v) = v + 101 \n } \n Outer(p) = { \n     public Lib = { \n         public X(v) = v + p \n     } \n     0 \n } \n A(q) = { \n     open Pub, Outer.Lib \n     q.X \n } \n A(5)

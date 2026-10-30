@@ -19,17 +19,13 @@ writes is valid in the CURRENT heap (heap growth makes every earlier address val
 | `NeedPlan.routeOf`'s `setRoute` | `inv_modify`, `routeOf_spec` |
 | `NeedPlan.calleeCell`'s `setCallee` | `inv_modify`, `calleeCell_spec` |
 | `NeedLink.receiverCell`'s `setReceiver` | `inv_modify`, `receiverCell_spec` |
-| `aliasBareCell` (whole-cell `set!` of a STALE snapshot) | `inv_set`, `aliasBareCell_spec` |
-| `takeTerminalAliasInvocation` (whole-cell `set!`) | `inv_set`, `takeTerminal_spec` |
 | `aliasBindingCellRecorded` (`aliasCells`) | `aliasBindingCellRecorded_spec` |
 | `recordParameterActivation` | `inv_activation`, `record_spec` |
 | property-cache publication | `inv_cache_insert`, used by `AddressInvariantBodies` |
 
-`aliasBareCell` writes back the cell it read BEFORE `bindParameters`, `enterAlgorithmBody` and
-`supplyNeed`: the snapshot was valid in the earlier heap, hence in the current one, and its new
-`aliasBare` is the address `supplyNeed` just returned. FG-M1's in-flight callee overwrite
-(`calleeCell` recording `c` after a re-entrant route classification recorded another) keeps `Inv`
-for the same reason: `c` is valid now. Neither argument appeals to FG-M1.
+FG-M1's in-flight callee overwrite (`calleeCell` recording `c` after a re-entrant route
+classification recorded another) keeps `Inv` because `c` is valid now; the argument does not appeal
+to FG-M1. (The D4 bare-cell and terminal-claim writes were retired by M4★, ALIAS-UNIFY-1.)
 
 The callback-parameterized helpers (supply formation, plan preparation / viewing / execution,
 callee and receiver cells, the binder and the family dispatcher, the demand and projection
@@ -64,7 +60,7 @@ theorem inv_push {s : EvalState} (vs : Inv s) (susp : NeedSuspension) (hs : Susp
     simp only [Array.getElem?_push] at hcell
     split at hcell
     · cases hcell
-      exact ⟨SuspV.mono g hs, trivial, trivial, OptAddr.nil, OptAddr.nil, OptAddr.nil⟩
+      exact ⟨SuspV.mono g hs, trivial, trivial, OptAddr.nil, OptAddr.nil⟩
     · exact CellV.mono g (vs.cells a cell hcell)
 
 /-- A same-size cell write at `a` keeping the suspension, whose result is valid in the heap. -/
@@ -99,8 +95,7 @@ theorem inv_modify {s : EvalState} (vs : Inv s) (a : Nat) (f : NeedCell → Need
     · exact CellV.mono g (vs.cells b cell hcell)
 
 /-- A whole-cell `set!` at an in-heap address whose new cell is valid in the heap and whose
-    collector slice (if any) lies below `a` — the snapshot write of `aliasBareCell` and
-    `takeTerminalAliasInvocation`. -/
+    collector slice (if any) lies below `a`. -/
 theorem inv_set {s : EvalState} (vs : Inv s) (a : Nat) (c' : NeedCell)
     (hcol : ∀ slice, c'.suspension = .collector slice → ∀ b ∈ slice, b < a)
     (hv : CellV s.needs c') : Inv { s with needs := s.needs.set! a c' } := by

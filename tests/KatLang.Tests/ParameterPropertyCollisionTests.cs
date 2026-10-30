@@ -217,9 +217,10 @@ public class ParameterPropertyCollisionTests
         var source = "G = " + string.Join(", ", Enumerable.Range(0, parameters).Select(i => $"v{i} + {{ 1 }}")) + "\n1";
         var syntax = Parser.ParseSyntax(source);
         Assert.False(syntax.HasErrors);
-        var (detected, detectorDiagnostics) = ParameterDetector.DetectPrevalidated(syntax.Root);
+        var detectedInput = ParameterDetector.DetectPrevalidated(syntax.Root);
+        var (detected, detectorDiagnostics) = detectedInput;
         Assert.Empty(detectorDiagnostics);
-        var resolved = ImplicitArgumentResolver.ResolvePrevalidated(detected);
+        var resolved = ImplicitArgumentResolver.ResolvePrevalidated(detectedInput);
         var g = Assert.IsType<Algorithm.User>(Assert.Single(Assert.IsType<Algorithm.User>(resolved).Properties, p => p.Name == "G").Value);
         Assert.Equal(parameters, g.Params.Count);
         var observations = new FrontEndTraversalObservations();

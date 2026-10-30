@@ -346,15 +346,18 @@ public static partial class Evaluator
     /// than a written value shape (the <c>.string</c> intrinsic uses it to
     /// select the depth-charged value-demand funnel exactly as for a bare
     /// <see cref="Expr.Resolve"/> receiver).</para>
-    /// Lean: <c>resolveDotReceiver</c>.
+    /// <paramref name="routeVisited"/>, an alias step's route decision's chase set (<see cref="IsRuntimeAliasStep"/>),
+    /// is the visited set every alias STRUCTURE read on the path starts from. Lean: <c>resolveDotReceiver</c>
+    /// (and <c>aliasRouteIsIntrinsicWith</c> for a route decision).
     /// </summary>
-    private static EvalResult<Algorithm> ResolveDotReceiver(Expr target, EvalCtx ctx, out bool isStructuralMember)
+    private static EvalResult<Algorithm> ResolveDotReceiver(
+        Expr target, EvalCtx ctx, out bool isStructuralMember, HashSet<AliasChaseVisit>? routeVisited = null)
     {
         isStructuralMember = false;
         if (target is not Expr.DotCall { Args: null } edge)
-            return ResolveReceiverHead(target, ctx);
+            return ResolveReceiverHead(target, ctx, routeVisited);
 
-        var receiverResult = ResolveDotReceiver(edge.Target, ctx, out _);
+        var receiverResult = ResolveDotReceiver(edge.Target, ctx, out _, routeVisited);
         if (receiverResult.IsError)
         {
             return IsAbsentIdentity(receiverResult.Error)
@@ -369,8 +372,11 @@ public static partial class Evaluator
             if (!IsAccessibleFrom(member, receiver, ctx))
                 return LocalOnlyPropertyError(OpenExprName(edge.Target), member) with { Span = edge.Span };
 
+            var wired = ChildOfInContext(receiver, member.Value, ctx);
+            if (wired is Algorithm.Alias)
+                return NavigatedAliasMemberStructure(target, wired, ctx, out isStructuralMember, routeVisited);
             isStructuralMember = true;
-            return EvalResult<Algorithm>.Ok(ChildOfInContext(receiver, member.Value, ctx));
+            return EvalResult<Algorithm>.Ok(wired);
         }
 
         if (receiver.DefinesConditionalBranchProperty(edge.Name))
@@ -381,20 +387,41 @@ public static partial class Evaluator
     }
 
     /// <summary>
+    /// A navigated member that is an ALIAS, read through its STRUCTURE (M4★ whole-algorithm transport;
+    /// Lean: the member arm of <c>resolveDotReceiver?</c>): a transparent reference navigates its target,
+    /// a structural carrier is itself (its own members only), and a value-only runtime reference has no
+    /// structure — the edge is an ordinary dot result (<see cref="ResolveAlg"/>'s carrier of its VALUE),
+    /// no structural member. Out of line, so the receiver recursion keeps its frame.
+    /// </summary>
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+    private static EvalResult<Algorithm> NavigatedAliasMemberStructure(
+        Expr target, Algorithm wired, EvalCtx ctx, out bool isStructuralMember, HashSet<AliasChaseVisit>? routeVisited)
+    {
+        isStructuralMember = false;
+        var structure = ResolveAliasStructure((Algorithm.Alias)wired, ctx, binding: null, routeVisited);
+        if (structure.IsError)
+            return AtSpanIfMissing(structure.Error, target.Span);
+        if (structure.Value is not { } member)
+            return ResolveAlg(target, ctx);
+        isStructuralMember = true;
+        return EvalResult<Algorithm>.Ok(member);
+    }
+
+    /// <summary>
     /// THE ONE CALLABLE PROJECTION of a dot expression (DOT-09; NEED-06 for a supplied
     /// argument, Q-18 C-B3 for a callee): a dot expression carries ONE callable identity in
     /// every algorithm-capable position — supplied, forwarded, callback, loop step and
     /// callee alike. An ARGUMENTLESS path whose every edge selects a DECLARED structural
     /// member (<see cref="ResolveDotReceiver"/>'s navigation, accessibility checked after
-    /// selection) is its member's own callable, an alias member normalized to its target
-    /// (FWD-02); every other dot expression — an argument-bearing edge (a call), an edge
-    /// whose receiver lacks the member (the extension call's or the <c>.string</c>
-    /// intrinsic's VALUE), a value receiver — is a calculation value with NO callable
-    /// identity (<c>null</c>; the result-value boundary). Identity only: nothing is
-    /// evaluated and no VALUE is demanded. A structural failure on the path
-    /// (<c>LocalOnlyProperty</c>) is the projection's own error; a receiver that is simply
-    /// not an algorithm is no identity. Lean: <c>projectNeedStructuralMember</c> followed by
-    /// <c>resolveAliasTarget</c>.
+    /// selection) is its member's own algorithm read through its STRUCTURE (M4★: a member that is
+    /// a transparent reference is its target, a carrier itself — whole-algorithm transport); every
+    /// other dot expression — an argument-bearing edge (a call), an edge whose receiver lacks the
+    /// member (the extension call's or the <c>.string</c> intrinsic's VALUE), a value-only runtime
+    /// member, a value receiver — is a calculation value with NO callable identity (<c>null</c>; the
+    /// result-value boundary). Identity only: nothing is evaluated and no VALUE is demanded. A
+    /// structural failure on the path (<c>LocalOnlyProperty</c>) is the projection's own error; a
+    /// receiver that is simply not an algorithm is no identity. Lean: <c>projectNeedStructuralMember</c>
+    /// followed by <c>resolveAliasStructure</c>.
     /// </summary>
     private static EvalResult<Algorithm?> ProjectDotPathCallable(Expr.DotCall edge, EvalCtx ctx)
     {
@@ -404,13 +431,7 @@ public static partial class Evaluator
         var member = ResolveDotReceiver(edge, ctx, out var isStructuralMember);
         if (member.IsError)
             return IsLiftableError(member.Error) ? EvalResult<Algorithm?>.Ok(null) : member.Error;
-        if (!isStructuralMember)
-            return EvalResult<Algorithm?>.Ok(null);
-
-        var target = member.Value is Algorithm.Alias alias
-            ? ResolveAliasTarget(alias, ctx)
-            : EvalResult<Algorithm>.Ok(member.Value);
-        return target.IsError ? target.Error : EvalResult<Algorithm?>.Ok(target.Value);
+        return isStructuralMember ? EvalResult<Algorithm?>.Ok(member.Value) : EvalResult<Algorithm?>.Ok(null);
     }
 
     /// <summary>
@@ -611,7 +632,7 @@ public static partial class Evaluator
             }
 
             // CACHE-PUB-1: a possibly zero-supply member call names the selected member binding.
-            if (MayFormZeroSupply(argsOpt) && IsPublishableCallee(wired))
+            if (MayFormZeroSupply(argsOpt) && TakesOriginDispatch(wired))
                 return EvalBoundMemberCallCounted(targetAlg!, prop, wired, argsOpt, name, ctx, valEnv);
 
             return EvalResolvedCallCounted(
@@ -681,13 +702,16 @@ public static partial class Evaluator
     private static EvalResult<Result> EvalDotReferenceIntrinsicReceiver(
         Expr.DotCall dotCall, Algorithm targetAlg, bool receiverIsStructuralMember, EvalCtx ctx, ValEnv valEnv)
     {
+        // A receiver that is an alias (a structural carrier) is demanded as its VALUE terminal (OD-E, M4★):
+        // judged on the terminal's algorithm, read as the alias (the terminal binding's cached entry).
+        Algorithm? demandAlg = null;
         if (targetAlg is Algorithm.Alias alias)
         {
-            var aliasTarget = ResolveAliasTarget(alias, ctx, callable: false);
-            if (aliasTarget.IsError) return aliasTarget.Error;
-            targetAlg = aliasTarget.Value;
+            var terminal = ResolveAliasValueTerminal(alias, ctx);
+            if (terminal.IsError) return terminal.Error;
+            demandAlg = terminal.Value.Algorithm;
         }
-        return NestMissingOutput(EvalDotStringReceiverAlgOutput(dotCall.Target, targetAlg, receiverIsStructuralMember, ctx, valEnv));
+        return NestMissingOutput(EvalDotStringReceiverAlgOutput(dotCall.Target, targetAlg, receiverIsStructuralMember, ctx, valEnv, demandAlg));
     }
 
     /// <summary>

@@ -758,10 +758,12 @@ public class ModuleCapabilityTransparencyTests
     [InlineData("P = $LOAD, 9", "P = $MODULE, 9", false)]
     [InlineData("P = ($LOAD*)", "P = ($MODULE*)", false)]
     [InlineData("P = [$LOAD]", "P = [$MODULE]", false)]
-    [InlineData("P = $LOAD.X", "P = $MODULE.X", false)]
-    [InlineData("P = { X = $LOAD\nX }", "P = { X = $MODULE\nX }", false)]
+    // M4★: a member path through the module is a transparent member ALIAS, and a body whose lone row
+    // names its own declaration is a forwarding CARRIER — both an Algorithm.Alias, never the module.
+    [InlineData("P = $LOAD.X", "P = $MODULE.X", false, true)]
+    [InlineData("P = { X = $LOAD\nX }", "P = { X = $MODULE\nX }", false, true)]
     public async Task DirectiveBodyRecognition_PreservesEveryOtherOwner(
-        string sourceTemplate, string inlineTemplate, bool isModule)
+        string sourceTemplate, string inlineTemplate, bool isModule, bool isAlias = false)
     {
         var source = sourceTemplate.Replace("$LOAD", $"load('{BlockModule}')");
         var inline = inlineTemplate.Replace("$MODULE", $"{{ {BlockModuleText} }}");
@@ -771,8 +773,17 @@ public class ModuleCapabilityTransparencyTests
             var modules = Modules();
             var parsed = await ParseCleanAsync(source,
                 ParseOptions(suspending ? modules.DownloadSuspending : modules.Download));
-            var p = Assert.IsType<Algorithm.User>(Assert.Single(parsed.Root.Properties, p => p.Name == "P").Value);
-            Assert.Equal(isModule, p.IsModuleElaborated);
+            var value = Assert.Single(parsed.Root.Properties, p => p.Name == "P").Value;
+            if (isAlias)
+            {
+                Assert.False(Assert.IsType<Algorithm.Alias>(value).IsModuleElaborated);
+                Assert.False(isModule);
+            }
+            else
+            {
+                Assert.Equal(isModule, Assert.IsType<Algorithm.User>(value).IsModuleElaborated);
+            }
+
             // The loaded module is the inline text's tree exactly, marked as the one module
             // declaration it is (Q-31 H-P / Q-32 I-U: `PropertyIdentity.module`, wired at the
             // prelude): the mark is the only difference.
@@ -780,7 +791,7 @@ public class ModuleCapabilityTransparencyTests
             Assert.Equal(LeanAstEncoder.EncodeProgram(oracle.Root), WithoutModuleMarks(LeanAstEncoder.EncodeProgram(parsed.Root)));
             Assert.Equal(1, Assert.Single(modules.Fetches).Value);
             if (source.StartsWith("P(", StringComparison.Ordinal))
-                Assert.True(p.HasExplicitParameterList);
+                Assert.True(Assert.IsType<Algorithm.User>(value).HasExplicitParameterList);
         }
     }
 

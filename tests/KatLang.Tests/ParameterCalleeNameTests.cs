@@ -69,6 +69,25 @@ public class ParameterCalleeNameTests
         FromSource("dot-fallback-through-parameter",
             "F(0) = 1\nF(1) = 2\nApply(f, x) = x.f\nApply(F, 5)",
             "call Apply > dotCall .f of x > noMatchingBranch f"),
+        // OD-C (M4★): an open through a transparent reference navigates its target's path, and an
+        // inaccessible member names that step's RECEIVER as written — `open A` with `A = G.Sub` reports
+        // what `open G.Sub` reports, whether Sub is a runtime-target carrier or a static one.
+        FromSource("open-reference-local-only-member",
+            "G(x) = {\n    public Sub = {\n        public Q = 1\n        x\n    }\n    0\n}\nA = G.Sub\nP = {\n    open A\n    Q\n}\nP",
+            "while resolving open: A > localOnlyProperty G Sub captured [x]"),
+        FromSource("open-static-reference-local-only-member",
+            "G(x) = {\n    public Sub = {\n        public Q = 1\n        x + 0\n    }\n    0\n}\nA = G.Sub\nP = {\n    open A\n    Q\n}\nP",
+            "while resolving open: A > localOnlyProperty G Sub captured [x]"),
+        FromSource("open-direct-local-only-member",
+            "G(x) = {\n    public Sub = {\n        public Q = 1\n        x + 0\n    }\n    0\n}\nP = {\n    open G.Sub\n    Q\n}\nP",
+            "while resolving open: G.Sub > localOnlyProperty G Sub captured [x]"),
+        // A later step names its receiver path so far: Sub is accessible, its Inner is not.
+        FromSource("open-reference-second-step-local-only-member",
+            "G(x) = {\n    public Sub = {\n        public Inner = {\n            public Q = 1\n            x\n        }\n        0\n    }\n    0\n}\nA = G.Sub.Inner\nP = {\n    open A\n    Q\n}\nP",
+            "while resolving open: A > localOnlyProperty G.Sub Inner captured [x]"),
+        FromSource("open-direct-second-step-local-only-member",
+            "G(x) = {\n    public Sub = {\n        public Inner = {\n            public Q = 1\n            x\n        }\n        0\n    }\n    0\n}\nP = {\n    open G.Sub.Inner\n    Q\n}\nP",
+            "while resolving open: G.Sub.Inner > localOnlyProperty G.Sub Inner captured [x]"),
         // A loop step's cell keeps its WRITTEN source through parameter transport (LOOP-08), so
         // the step is named by the argument written for it, F — never by the parameter step.
         FromSource("loop-step-through-parameter",

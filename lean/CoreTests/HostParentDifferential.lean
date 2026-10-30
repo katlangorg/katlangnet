@@ -531,9 +531,7 @@ def hp_09c : Expr :=
 def hp_09d : Expr :=
   (.algorithmExpr (alg [] [(.algorithmExpr (Algorithm.withParent (some (ScopeCtx.mk none [] [] [{ (privateProp "F" (Algorithm.withDeclarationId (some (.shared 0)) (algWithParameters [{ name := "xs", kind := .collecting }] [] [] [.num 7]))) with identity := some (.shared 0) }] [] [] none none)) (alg [] [] [publicProp "FA" (.alias none [] [] (.resolve "F"))] []))), (.algorithmExpr (Algorithm.withParent (some (ScopeCtx.mk none [] [] [{ (privateProp "F" (Algorithm.withDeclarationId (some (.shared 0)) (algWithParameters [{ name := "xs", kind := .collecting }] [] [] [.num 7]))) with identity := some (.shared 0) }] [] [] none none)) (alg [] [] [publicProp "FB" (.alias none [] [] (.resolve "F"))] [])))] [privateProp "P" (alg ["f", "f"] [] [] [.num 0])] [(.call (.resolve "P") [.resolve "FA", .resolve "FB"])]))
 #guard obs hp_09d == "ok raw=0 n=1"
-#guard cacheEntries hp_09d "FA" == 1
-#guard cacheEntries hp_09d "FB" == 1
-#guard cacheTotal hp_09d == 2
+#guard cacheTotal hp_09d == 0
 
 -- HP-10a: a block opens a dotted path into a host-declared namespace
 def hp_10a : Expr :=
@@ -652,11 +650,11 @@ def hp_11e : Expr :=
 def hp_12a : Expr :=
   (.algorithmExpr (alg [] [(.algorithmExpr (Algorithm.withParent (some (ScopeCtx.mk none [] [] [privateProp "F" (alg [] [] [] [.num 7]), privateProp "Capture" (algWithParameters [{ name := "op", kind := .metaRef }] [] [] [.param "op"]), privateProp "R" (alg [] [] [] [(.call (.resolve "Capture") [(.call (.resolve "F") [])])]), privateProp "A" (.alias none [] [] ((.dotCall (.resolve "R") "Algorithm" none)))] [] [] none none)) (alg [] [] [publicProp "Run" (alg [] [] [] [.resolve "A", (.call (.resolve "A") []), .resolve "A", (.call (.resolve "A") [])])] [])))] [] [.resolve "Run"]))
 #guard obs hp_12a == "ok raw=S[7, 7, 7, 7] n=1"
-#guard cacheEntries hp_12a "A" == 1
+#guard cacheEntries hp_12a "A" == 0
 #guard cacheEntries hp_12a "F" == 1
 #guard cacheEntries hp_12a "R" == 1
 #guard cacheEntries hp_12a "Run" == 1
-#guard cacheTotal hp_12a == 4
+#guard cacheTotal hp_12a == 3
 
 -- HP-12b: D3 parameterized forwarding: A(args) is a fresh call of the projected F
 def hp_12b : Expr :=
@@ -671,23 +669,23 @@ def hp_12b : Expr :=
 def hp_12c : Expr :=
   (.algorithmExpr (alg [] [(.algorithmExpr (Algorithm.withParent (some (ScopeCtx.mk none [] [] [{ (privateProp "F" (Algorithm.withDeclarationId (some (.shared 0)) (alg [] [] [] [.num 7]))) with identity := some (.shared 0) }, { (privateProp "Capture" (Algorithm.withDeclarationId (some (.shared 1)) (algWithParameters [{ name := "op", kind := .metaRef }] [] [] [.param "op"]))) with identity := some (.shared 1) }, { (privateProp "R" (Algorithm.withDeclarationId (some (.shared 2)) (alg [] [] [] [(.call (.resolve "Capture") [(.call (.resolve "F") [])])]))) with identity := some (.shared 2) }, { (privateProp "A" (Algorithm.withDeclarationId (some (.shared 3)) (.alias none [] [] ((.dotCall (.resolve "R") "Algorithm" none))))) with identity := some (.shared 3) }] [] [] none none)) (alg [] [] [publicProp "RunA" (alg [] [] [] [.resolve "A"])] []))), (.algorithmExpr (Algorithm.withParent (some (ScopeCtx.mk none [] [] [{ (privateProp "F" (Algorithm.withDeclarationId (some (.shared 0)) (alg [] [] [] [.num 7]))) with identity := some (.shared 0) }, { (privateProp "Capture" (Algorithm.withDeclarationId (some (.shared 1)) (algWithParameters [{ name := "op", kind := .metaRef }] [] [] [.param "op"]))) with identity := some (.shared 1) }, { (privateProp "R" (Algorithm.withDeclarationId (some (.shared 2)) (alg [] [] [] [(.call (.resolve "Capture") [(.call (.resolve "F") [])])]))) with identity := some (.shared 2) }, { (privateProp "A" (Algorithm.withDeclarationId (some (.shared 3)) (.alias none [] [] ((.dotCall (.resolve "R") "Algorithm" none))))) with identity := some (.shared 3) }] [] [] none none)) (alg [] [] [publicProp "RunB" (alg [] [] [] [(.call (.resolve "A") [])])] [])))] [] [.resolve "RunA", .resolve "RunB"]))
 #guard obs hp_12c == "ok raw=S[7, 7] n=2"
-#guard cacheEntries hp_12c "A" == 1
+#guard cacheEntries hp_12c "A" == 0
 #guard cacheEntries hp_12c "F" == 1
 #guard cacheEntries hp_12c "R" == 1
 #guard cacheEntries hp_12c "RunA" == 1
 #guard cacheEntries hp_12c "RunB" == 1
-#guard cacheTotal hp_12c == 5
+#guard cacheTotal hp_12c == 4
 
 -- HP-12d: record-equal host objects sharing the member list keep one namespace each (HOST-ALIAS-R14)
 def hp_12d : Expr :=
   (.algorithmExpr (alg [] [(.algorithmExpr (Algorithm.withParent (some (ScopeCtx.mk none [] [] [{ (privateProp "F" (Algorithm.withDeclarationId (some (.shared 0)) (alg [] [] [] [.num 7]))) with identity := some (.shared 0) }, { (privateProp "Capture" (Algorithm.withDeclarationId (some (.shared 1)) (algWithParameters [{ name := "op", kind := .metaRef }] [] [] [.param "op"]))) with identity := some (.shared 1) }, { (privateProp "R" (Algorithm.withDeclarationId (some (.shared 2)) (alg [] [] [] [(.call (.resolve "Capture") [(.call (.resolve "F") [])])]))) with identity := some (.shared 2) }, { (privateProp "A" (Algorithm.withDeclarationId (some (.shared 3)) (.alias none [] [] ((.dotCall (.resolve "R") "Algorithm" none))))) with identity := some (.shared 3) }] [] [] none none)) (alg [] [] [publicProp "RunA" (alg [] [] [] [.resolve "A"])] []))), (.algorithmExpr (Algorithm.withParent (some (ScopeCtx.mk none [] [] [{ (privateProp "F" (Algorithm.withDeclarationId (some (.shared 0)) (alg [] [] [] [.num 7]))) with identity := some (.shared 4) }, { (privateProp "Capture" (Algorithm.withDeclarationId (some (.shared 1)) (algWithParameters [{ name := "op", kind := .metaRef }] [] [] [.param "op"]))) with identity := some (.shared 5) }, { (privateProp "R" (Algorithm.withDeclarationId (some (.shared 2)) (alg [] [] [] [(.call (.resolve "Capture") [(.call (.resolve "F") [])])]))) with identity := some (.shared 6) }, { (privateProp "A" (Algorithm.withDeclarationId (some (.shared 3)) (.alias none [] [] ((.dotCall (.resolve "R") "Algorithm" none))))) with identity := some (.shared 7) }] [] [] none none)) (alg [] [] [publicProp "RunB" (alg [] [] [] [(.call (.resolve "A") [])])] [])))] [] [.resolve "RunA", .resolve "RunB"]))
 #guard obs hp_12d == "ok raw=S[7, 7] n=2"
-#guard cacheEntries hp_12d "A" == 2
+#guard cacheEntries hp_12d "A" == 0
 #guard cacheEntries hp_12d "F" == 2
 #guard cacheEntries hp_12d "R" == 2
 #guard cacheEntries hp_12d "RunA" == 1
 #guard cacheEntries hp_12d "RunB" == 1
-#guard cacheTotal hp_12d == 8
+#guard cacheTotal hp_12d == 6
 
 -- HP-13a: a host property whose CONDITIONAL value carries its own parent: lookup wiring replaces it
 def hp_13a : Expr :=

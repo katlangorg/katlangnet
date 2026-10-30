@@ -233,7 +233,8 @@ public partial class HostScopePropertyCacheTests
         { "H8i Q-37 through P(): P(), P", "(2, 2)", "tick1,tick2,tick3" },
         { "H11 Q = P + P; Q + Q", "4", "tick1" },
         { "H12 map callback reads P", "[2, 3, 4]", "tick1" },
-        { "alias A = P: A(), A, P", "(1, 1, 2)", "tick1,tick2" },
+        // OD-E (M4★): the alias owns no entry; A() publishes under its target P, which A and P then read.
+        { "alias A = P: A(), A, P", "(1, 1, 1)", "tick1" },
         { "forwarded P: Apply(P), P", "(1, 1)", "tick1" },
         { "META Invoke: Apply(P()), P", "(1, 1)", "tick1" },
         { "META Algorithm: Apply(P()), P", "(1, 1)", "tick1" },
@@ -407,10 +408,13 @@ public partial class HostScopePropertyCacheTests
         Assert.Equal(("2", "tick1"), (outcome.Value, outcome.Effects));
     }
 
+    // M4★ (L-RUN, OD-E): a call through the established target is fresh and publishes under the
+    // TARGET F, whose entry the bare reads then share (formerly D4 kept a zero-parameter target an
+    // ordinary property of the alias, and a collecting one published nothing).
     [Theory]
-    [InlineData(false, "(1, 1, 1, 1)", "tick1")]
-    [InlineData(true, "(1, 2, 3, 2)", "tick1,tick2,tick3")]
-    public async Task RuntimeAliasInAHostScope_PreservesTerminalPublication_AndParameterizedFreshness(
+    [InlineData(false, "(1, 1, 2, 1)", "tick1,tick2")]
+    [InlineData(true, "(1, 1, 2, 1)", "tick1,tick2")]
+    public async Task RuntimeAliasInAHostScope_PublishesUnderItsTarget_AndCallsFreshly(
         bool collectingTarget, string value, string effects)
     {
         Expr Build(ScopeCtx pre, bool host)
@@ -444,19 +448,20 @@ public partial class HostScopePropertyCacheTests
     /// the alias's run-wide cell, because the alias memo keyed the declaring chain structurally: the
     /// second scope's <c>A</c> returned the first scope's value, and its <c>A()</c> read <c>R</c> under
     /// the FIRST scope's property entry. Each scope now evaluates its own receiver exactly like two
-    /// separately listed scopes do, while one host object opened twice still shares its cell.
+    /// separately listed scopes do, while one host object opened twice still shares its cell. Since
+    /// M4★ every call through the established target is fresh, whatever the target's arity.
     /// </summary>
     [Theory]
-    [InlineData(false, "shared properties list", "((1, 1, 1, 1), (2, 2, 2, 2))", "tick1,tick2")]
-    [InlineData(false, "record with-copy", "((1, 1, 1, 1), (2, 2, 2, 2))", "tick1,tick2")]
-    [InlineData(false, "one host object opened twice", "((1, 1, 1, 1), (1, 1, 1, 1))", "tick1")]
+    [InlineData(false, "shared properties list", "((1, 2, 1, 3), (4, 5, 4, 6))", "tick1,tick2,tick3,tick4,tick5,tick6")]
+    [InlineData(false, "record with-copy", "((1, 2, 1, 3), (4, 5, 4, 6))", "tick1,tick2,tick3,tick4,tick5,tick6")]
+    [InlineData(false, "one host object opened twice", "((1, 2, 1, 3), (1, 4, 1, 5))", "tick1,tick2,tick3,tick4,tick5")]
     [InlineData(true, "shared properties list", "((1, 2, 1, 3), (4, 5, 4, 6))", "tick1,tick2,tick3,tick4,tick5,tick6")]
     [InlineData(true, "record with-copy", "((1, 2, 1, 3), (4, 5, 4, 6))", "tick1,tick2,tick3,tick4,tick5,tick6")]
     [InlineData(true, "one host object opened twice", "((1, 2, 1, 3), (1, 4, 1, 5))", "tick1,tick2,tick3,tick4,tick5")]
     public async Task RuntimeAliasInRecordEqualHostScopes_KeepsOneBindingCellPerHostScopeObject(
         bool collectingTarget, string shape, string value, string effects)
     {
-        // Terminal: A, A(), A, A(). Collecting (eligible): A, A(), A, A(5) — the calls stay fresh.
+        // Zero-parameter target: A, A(), A, A(). Collecting target: A, A(), A, A(5) — every call is fresh.
         var row = Seq(R("A"), Call("A"), R("A"), collectingTarget ? Call("A", N(5)) : Call("A"));
         ScopeCtx? first = null, second = null;
         Expr Build(ScopeCtx pre)

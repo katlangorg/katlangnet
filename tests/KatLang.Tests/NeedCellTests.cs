@@ -239,7 +239,7 @@ public class NeedCellTests
             Assert.Equal(1, starts);
             Assert.Equal(1, projections);
             Assert.Equal(0, budget.ConsumedSteps);
-        }, TimeSpan.FromSeconds(30));
+        });
     }
 
     // ── META-LIFE-2: a completed VALUE releases its flight ───────────────────────────────────

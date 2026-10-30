@@ -80,14 +80,15 @@ public class DeferredRegionAttachmentTests
     }
 
     /// <summary>The internal stages in the pipeline's order, each returning its output tree.</summary>
-    private static Algorithm.User Detect(Algorithm tree)
+    private static DetectedProgram Detect(Algorithm tree)
     {
-        var (detected, diagnostics) = ParameterDetector.Detect(tree);
+        var detectedInput = ParameterDetector.Detect(tree);
+        var (detected, diagnostics) = detectedInput;
         Assert.Empty(diagnostics);
-        return Assert.IsType<Algorithm.User>(detected);
+        return detectedInput;
     }
 
-    private static Algorithm.User Resolve(Algorithm tree)
+    private static Algorithm.User Resolve(DetectedProgram tree)
     {
         var diagnostics = new DiagnosticBag();
         var resolved = ImplicitArgumentResolver.ResolvePrevalidated(tree, diagnostics: diagnostics);
@@ -105,6 +106,15 @@ public class DeferredRegionAttachmentTests
 
     private static Algorithm.User Expose(Algorithm tree) => Assert.IsType<Algorithm.User>(PropertyExposureResolver.Resolve(tree));
 
+    private static Algorithm.User CompleteLoaded(Algorithm tree)
+    {
+        var detected = Detect(tree);
+        var resolved = Validate(Resolve(detected));
+        var exposed = Assert.IsType<Algorithm.User>(PropertyExposureResolver.Resolve(resolved, observations: null, modules: detected.Modules));
+        detected.Modules.Publish(detected.Operation!.Freeze());
+        return exposed;
+    }
+
     private static async Task<Algorithm.User> LoadAsync(Algorithm root, CountingModules modules)
     {
         var diagnostics = new DiagnosticBag();
@@ -114,7 +124,7 @@ public class DeferredRegionAttachmentTests
     }
 
     private static async Task<Algorithm.User> ElaborateAsync(Algorithm root, CountingModules modules)
-        => Expose(Validate(Resolve(Detect(await LoadAsync(root, modules)))));
+        => CompleteLoaded(await LoadAsync(root, modules));
 
     // ── A. Attachment: ordinary copies are views of the same region ─────────
 
@@ -205,7 +215,7 @@ public class DeferredRegionAttachmentTests
         Assert.Same(shared.Declaration, loaderFamily.Branches[1].Body.Declaration);
         Assert.NotSame(RegionOf(loaderFamily.Branches[0].Body), RegionOf(loaderFamily.Branches[1].Body));
 
-        var exposed = Expose(Validate(Resolve(Detect(loaded))));
+        var exposed = CompleteLoaded(loaded);
         var exposedFamily = FamilyOf(exposed);
         var region0 = RegionOf(exposedFamily.Branches[0].Body);
         var region1 = RegionOf(exposedFamily.Branches[1].Body);
@@ -259,8 +269,7 @@ public class DeferredRegionAttachmentTests
         var secondPlaceholder = PlaceholderUnder(Assert.Single(parsed.Root.Properties, p => p.Name == "Second").Value);
         Assert.Same(firstPlaceholder, secondPlaceholder);
         var region = RegionOf(firstPlaceholder);
-        Assert.NotNull(region.Detection);
-        Assert.NotNull(region.Resolution);
+        Assert.NotNull(region.Structure?.Forwardable);
         Assert.NotNull(region.Validation);
         Assert.NotNull(region.Exposure);
 
@@ -287,30 +296,30 @@ public class DeferredRegionAttachmentTests
     {
         var loaded = await LoadAsync(Root(Family(LoadBearingBody()), 0), Modules());
         var created = RegionOf(Placeholder(loaded));
-        Assert.Null(created.Detection);
-        Assert.Null(created.Resolution);
+        Assert.Null(created.Structure);
         Assert.Null(created.Validation);
         Assert.Null(created.Exposure);
 
         // Detection: a fork on the detector's output view, the loader facts intact.
         var detected = Detect(loaded);
-        var afterDetection = RegionOf(Placeholder(detected));
+        var afterDetection = RegionOf(Placeholder(detected.Root));
         Assert.NotSame(created, afterDetection);
         Assert.Same(created.RawBody, afterDetection.RawBody);
         Assert.Same(created.Loader, afterDetection.Loader);
         Assert.Equal(created.Depth, afterDetection.Depth);
-        Assert.NotNull(afterDetection.Detection);
-        Assert.Null(afterDetection.Resolution);
+        Assert.NotNull(afterDetection.Structure);
+        Assert.Null(afterDetection.Structure.Forwardable);
         Assert.Null(afterDetection.Validation);
         Assert.Null(afterDetection.Exposure);
-        Assert.Null(created.Detection);
+        Assert.Null(created.Structure);
 
         // Resolution: added without losing detection.
         var resolved = Resolve(detected);
         var afterResolution = RegionOf(Placeholder(resolved));
         Assert.NotSame(afterDetection, afterResolution);
-        Assert.Same(afterDetection.Detection, afterResolution.Detection);
-        Assert.NotNull(afterResolution.Resolution);
+        Assert.Same(afterDetection.Structure.Registry, afterResolution.Structure!.Registry);
+        Assert.Same(afterDetection.Structure.Declaring, afterResolution.Structure.Declaring);
+        Assert.NotNull(afterResolution.Structure.Forwardable);
         Assert.Null(afterResolution.Validation);
         Assert.Null(afterResolution.Exposure);
 
@@ -319,15 +328,15 @@ public class DeferredRegionAttachmentTests
         Validate(resolved);
         Assert.Same(afterResolution, RegionOf(Placeholder(resolved)));
         Assert.NotNull(afterResolution.Validation);
-        Assert.Same(afterDetection.Detection, afterResolution.Detection);
+        Assert.Same(afterDetection.Structure.Declaring, afterResolution.Structure!.Declaring);
         Assert.Null(afterResolution.Exposure);
 
         // Exposure: the final fork carries every earlier context and the recorded bindings.
         var exposed = Expose(resolved);
         var final = RegionOf(Placeholder(exposed));
         Assert.NotSame(afterResolution, final);
-        Assert.Same(afterDetection.Detection, final.Detection);
-        Assert.Same(afterResolution.Resolution, final.Resolution);
+        Assert.Same(afterResolution.Structure, final.Structure);
+        detected.Modules.Publish(detected.Operation!.Freeze());
         Assert.Same(afterResolution.Validation, final.Validation);
         Assert.NotNull(final.Exposure);
         Assert.Same(created.RawBody, final.RawBody);
@@ -356,7 +365,7 @@ public class DeferredRegionAttachmentTests
 
         // A fork carries the incompleteness too, and the loader's placeholder has nothing.
         var forked = incomplete.WithExposure(new PropertyExposureResolver.DeferredBranchContext(
-            RegionOf(Placeholder(Expose(Validate(Resolve(Detect(loaded)))))).Exposure!.Scope));
+            RegionOf(Placeholder(CompleteLoaded(loaded))).Exposure!.Scope));
         Assert.Null(forked.Validation);
         await Assert.ThrowsAsync<InvalidOperationException>(async () => await forked.MaterializeAsync(CancellationToken.None));
         await Assert.ThrowsAsync<InvalidOperationException>(
@@ -380,10 +389,12 @@ public class DeferredRegionAttachmentTests
         var loaded = await LoadAsync(Root(Family(LoadBearingBody()), 0), modules);
         var loaderRegion = RegionOf(Placeholder(loaded));
         var stages = new List<(string Name, Algorithm.User Tree)> { ("loader", loaded) };
-        stages.Add(("detector", Detect(stages[^1].Tree)));
-        stages.Add(("resolver", Resolve(stages[^1].Tree)));
+        var detected = Detect(stages[^1].Tree);
+        stages.Add(("detector", Assert.IsType<Algorithm.User>(detected.Root)));
+        stages.Add(("resolver", Resolve(detected)));
         stages.Add(("validator", Validate(stages[^1].Tree)));
         stages.Add(("exposure", Expose(stages[^1].Tree)));
+        detected.Modules.Publish(detected.Operation!.Freeze());
         foreach (var (name, tree) in stages)
         {
             var region = Placeholder(tree).DeferredRegion;
@@ -469,7 +480,7 @@ public class DeferredRegionAttachmentTests
         Assert.Single(new HashSet<Algorithm> { body, placeholder, placeholder with { }, placeholder with { DeferredRegion = null } });
 
         // Forks with different contexts do not distinguish their carriers either.
-        var exposed = Expose(Validate(Resolve(Detect(loaded))));
+        var exposed = CompleteLoaded(loaded);
         var final = Placeholder(exposed);
         Assert.NotSame(placeholder.DeferredRegion, final.DeferredRegion);
         Assert.Equal(final with { DeferredRegion = null }, final);

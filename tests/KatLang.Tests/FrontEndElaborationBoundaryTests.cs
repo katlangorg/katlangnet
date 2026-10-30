@@ -62,9 +62,10 @@ public class FrontEndElaborationBoundaryTests
     private static Algorithm ElaborateWithoutExposureFinalization(string source)
     {
         var root = SourceProvenance.ParseSyntaxValidRoot(source);
-        var (detected, diagnostics) = ParameterDetector.Detect(root);
+        var detectedInput = ParameterDetector.Detect(root);
+        var (detected, diagnostics) = detectedInput;
         Assert.DoesNotContain(diagnostics, d => d.Severity == DiagnosticSeverity.Error);
-        return ImplicitArgumentResolver.Resolve(detected);
+        return ImplicitArgumentResolver.Resolve(detectedInput);
     }
 
     private static Property NestedProperty(Algorithm root, params string[] path)

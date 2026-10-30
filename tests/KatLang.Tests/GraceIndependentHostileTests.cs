@@ -169,7 +169,8 @@ public class GraceIndependentHostileTests
 
         // The same AST node is a capture under A and an own inferred name under B.
         // A cache shared across these rewrite regions incorrectly gives both the (y) signature.
-        var (detected, diagnostics) = ParameterDetector.Detect(root);
+        var detectedInput = ParameterDetector.Detect(root);
+        var (detected, diagnostics) = detectedInput;
         var report = Assert.Single(diagnostics.ToArray());
         Assert.Equal(DiagnosticCode.InvalidGraceMarker, report.Code);
         Assert.Contains("parameter of an enclosing algorithm", report.Message);

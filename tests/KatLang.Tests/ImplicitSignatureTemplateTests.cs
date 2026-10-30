@@ -92,11 +92,12 @@ public class ImplicitSignatureTemplateTests
     private static PassObservations ObservePasses(string source)
     {
         var syntax = SourceProvenance.ParseSyntaxValidRoot(source);
-        var (detected, detectorDiagnostics) = ParameterDetector.DetectPrevalidated(syntax);
+        var detectedInput = ParameterDetector.DetectPrevalidated(syntax);
+        var (detected, detectorDiagnostics) = detectedInput;
         Assert.Empty(detectorDiagnostics);
         var observed = new PassObservations(new(), new(), new(), new(), new(), new());
         var diagnostics = new DiagnosticBag();
-        var resolved = ImplicitArgumentResolver.ResolvePrevalidated(detected, observed.Resolve, diagnostics);
+        var resolved = ImplicitArgumentResolver.ResolvePrevalidated(detectedInput, observed.Resolve, diagnostics);
         new ParameterPropertyCollisionValidator(diagnostics, programRoot: resolved) { TraversalObservations = observed.Collision }
             .VisitAlgorithm(resolved);
         OpenProviderValidator.Validate(resolved, diagnostics, (HostOperations?)null, observed.OpenProviders);
@@ -443,9 +444,10 @@ public class ImplicitSignatureTemplateTests
     {
         const string source = "G = a + b\nA = G + a\nB = G * b\nA(1, 2), B(3, 4)";
         var syntaxRoot = SourceProvenance.ParseSyntaxValidRoot(source);
-        var (detected, _) = ParameterDetector.DetectPrevalidated(syntaxRoot);
+        var detectedInput = ParameterDetector.DetectPrevalidated(syntaxRoot);
+        var (detected, _) = detectedInput;
         var observations = new FrontEndTraversalObservations();
-        var resolved = ImplicitArgumentResolver.ResolvePrevalidated(detected, observations);
+        var resolved = ImplicitArgumentResolver.ResolvePrevalidated(detectedInput, observations);
         Assert.Equal(2, observations.OwnerSignaturesMaterialized);
         Assert.Equal(["a", "b"], Assert.Single(resolved.Properties, p => p.Name == "A").Value.Params);
         Assert.Equal(["b", "a"], Assert.Single(resolved.Properties, p => p.Name == "B").Value.Params);

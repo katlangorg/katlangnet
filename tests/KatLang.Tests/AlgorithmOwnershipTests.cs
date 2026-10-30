@@ -350,9 +350,10 @@ public class AlgorithmOwnershipTests
 
         foreach (var root in roots)
         {
-            var (detected, _) = ParameterDetector.Detect(root);
+            var detectedInput = ParameterDetector.Detect(root);
+            var (detected, _) = detectedInput;
             Assert.IsType(root.GetType(), detected);
-            var resolved = ImplicitArgumentResolver.Resolve(detected);
+            var resolved = ImplicitArgumentResolver.Resolve(detectedInput);
             Assert.IsType(root.GetType(), resolved);
             var exposed = PropertyExposureResolver.Resolve(resolved);
             Assert.IsType(root.GetType(), exposed);

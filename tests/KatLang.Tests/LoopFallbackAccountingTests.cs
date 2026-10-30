@@ -86,8 +86,12 @@ public class LoopFallbackAccountingTests
     }
 
     [Fact]
-    public void HistoricalE7_KeepsTheSpecificRefusal_AndTheCompleteFailure()
+    public void HistoricalE7_TheFailingStepProjection_PrecedesAnyPlan_AndIsTheCompleteFailure()
     {
+        // M4★: the loop normalizes its runtime-reference step `A = p.G` to the projected target BEFORE
+        // planning, so the failing projection (Bad's VALUE) ends the run before any plan is built — the
+        // planner is no longer asked to plan the alias's own property body, which it refused
+        // (formerly one OutputArityMismatch fallback record, OPT-FB-1). Generic and planned runs agree.
         const string source = "Bad = min([])\nUse(p) = { A = p.G\n A(0).while }\nUse(Bad.Algorithm)";
         var generic = RunSource(source, optimize: false);
         var optimizing = RunSource(source, optimize: true);
@@ -95,16 +99,13 @@ public class LoopFallbackAccountingTests
         Assert.Equal("err IllegalInEval", optimizing.Outcome);
         AssertParity(generic, optimizing);
         Assert.Equal(0, optimizing.Loops.OptimizedLoopHits);
-        Assert.Equal(1, optimizing.Loops.OptimizedLoopFallbacks);
-        Assert.Equal(1, optimizing.Loops.LoopPlanBuilds);
+        Assert.Equal(0, optimizing.Loops.OptimizedLoopFallbacks);
+        Assert.Equal(0, optimizing.Loops.LoopPlanBuilds);
+        // The loop was entered (one execution) and failed while normalizing its step, before any
+        // generic preparation.
         Assert.Equal(1, optimizing.Loops.LoopExecutions);
-        AssertReasons(optimizing.Loops, (OutputArityMismatch, 1));
-        Assert.Equal(1, optimizing.GenericPreparations);
-        var plan = Assert.Single(optimizing.Loops.LoopPlans);
-        Assert.False(plan.Optimized);
-        Assert.Equal(OutputArityMismatch, plan.FallbackReason);
-        Assert.Equal(1, plan.BuildCount);
-        Assert.Equal(1, plan.ExecutionCount);
+        Assert.Equal(0, optimizing.GenericPreparations);
+        Assert.Empty(optimizing.Loops.LoopPlans);
     }
 
     [Theory]

@@ -204,29 +204,32 @@ public class OpenTargetDedupKeyTests
     [Fact]
     public void ProductionSource_SpellsTheDedupKeyExactlyOnce()
     {
-        var sources = ReadProductionSources();
-
-        // The positional inline key literal exists in exactly one production file.
-        var filesWithInlineKey = sources
-            .Where(static file => file.Text.Contains("inline#", StringComparison.Ordinal))
-            .Select(static file => file.Name)
-            .ToList();
-        Assert.Equal(["Evaluator.cs"], filesWithInlineKey);
-
-        var evaluator = sources.Single(static file => file.Name == "Evaluator.cs").Text;
-        Assert.Equal(1, CountOccurrences(evaluator, "inline#"));
-        Assert.Equal(1, CountOccurrences(evaluator, "internal static string OpenTargetDedupKey("));
-
-        // Runtime open resolution consumes the helper rather than respelling it.
-        var resolveStart = evaluator.IndexOf("ResolveAllOpens(", StringComparison.Ordinal);
-        var resolveEnd = evaluator.IndexOf("LookupOpens(", resolveStart, StringComparison.Ordinal);
-        Assert.True(resolveStart >= 0 && resolveEnd > resolveStart, "Expected the ResolveAllOpens .. LookupOpens region in Evaluator.cs.");
-        Assert.Contains("OpenTargetDedupKey(openExpr, i)", evaluator[resolveStart..resolveEnd], StringComparison.Ordinal);
-
-        // Elaborated lookup consumes the same helper and defines none of its own.
-        var lookup = sources.Single(static file => file.Name == "ElaboratedScopeLookup.cs").Text;
-        Assert.Contains("Evaluator.OpenTargetDedupKey(", lookup, StringComparison.Ordinal);
-        Assert.DoesNotContain("static string OpenTargetDedupKey", lookup, StringComparison.Ordinal);
+        // Keep the historical acceptance identity while replacing its retired source-text pin.
+        // Q2 must deduplicate language providers and repeated reads must reuse solved work.
+        const string source = "Lib={public X=7\n0}\nAlias=Lib\nF={open Lib,Lib,Alias\nX}\n0";
+        var raw = SourceProvenance.ParseSyntaxValidRoot(source);
+        var operation = StaticStructureAdmission.Create(raw).Operation;
+        var observations = new FrontEndTraversalObservations();
+        operation.Queries.Observations = observations;
+        var f = operation.ContextOf(operation.Root, PropertyAlgorithm(raw, "F"));
+        var query = StaticQueryKey.OpenProviders(f, StaticCycleCheck.Formation);
+        var providers = Assert.IsType<StaticScopeKey[]>(operation.Read(query).Data);
+        var provider = Assert.Single(providers);
+        Assert.Same(PropertyAlgorithm(raw, "Lib"), operation.SourceOf(provider));
+        Assert.Equal(StaticFactKind.Declaration, operation.Binding(f, "X").Kind);
+        Assert.Equal(1, observations.StaticOpenIndexBuilds);
+        Assert.Equal(1, observations.StaticOpenIndexMemberVisits);
+        var evaluations = operation.Queries.Statistics.Evaluations;
+        var targets = observations.StaticOpenTargetComputations;
+        for (var repeat = 0; repeat < 100; repeat++)
+        {
+            Assert.Same(providers, operation.Read(query).Data);
+            Assert.Equal(StaticFactKind.Declaration, operation.Binding(f, "X").Kind);
+        }
+        Assert.Equal(evaluations, operation.Queries.Statistics.Evaluations);
+        Assert.Equal(targets, observations.StaticOpenTargetComputations);
+        Assert.Equal(1, observations.StaticOpenIndexBuilds);
+        Assert.Equal(1, observations.StaticOpenIndexMemberVisits);
     }
 
     // ── helpers ────────────────────────────────────────────────────────────────
@@ -246,35 +249,4 @@ public class OpenTargetDedupKeyTests
         return bodyScope.GetResolvedOpenProviders();
     }
 
-    private static int CountOccurrences(string text, string needle)
-    {
-        var count = 0;
-        for (var index = text.IndexOf(needle, StringComparison.Ordinal);
-            index >= 0;
-            index = text.IndexOf(needle, index + needle.Length, StringComparison.Ordinal))
-        {
-            count++;
-        }
-
-        return count;
-    }
-
-    private static IReadOnlyList<(string Name, string Text)> ReadProductionSources()
-    {
-        for (var current = new DirectoryInfo(AppContext.BaseDirectory); current is not null; current = current.Parent)
-        {
-            var candidate = Path.Combine(current.FullName, "src", "KatLang");
-            if (!File.Exists(Path.Combine(candidate, "Evaluator.cs")))
-                continue;
-
-            return Directory
-                .EnumerateFiles(candidate, "*.cs", SearchOption.AllDirectories)
-                .Where(static path => !path.Contains($"{Path.DirectorySeparatorChar}obj{Path.DirectorySeparatorChar}", StringComparison.Ordinal)
-                    && !path.Contains($"{Path.DirectorySeparatorChar}bin{Path.DirectorySeparatorChar}", StringComparison.Ordinal))
-                .Select(static path => (Path.GetFileName(path), File.ReadAllText(path)))
-                .ToList();
-        }
-
-        throw new InvalidOperationException("src/KatLang was not found above the test output directory.");
-    }
 }

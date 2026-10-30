@@ -36,6 +36,7 @@
   <!-- Strict allocation measurements share KatLang.Tests' GC-isolated child-host helper as source. -->
   <ItemGroup>
     <Compile Include="..\KatLang.Tests\Infrastructure\GcIsolatedAllocation.cs" Link="Infrastructure\GcIsolatedAllocation.cs" />
+    <Compile Include="..\KatLang.Tests\Infrastructure\SubprocessProbe.cs" Link="Infrastructure\SubprocessProbe.cs" />
   </ItemGroup>
 
   <!--
@@ -46,6 +47,7 @@
   -->
   <ItemGroup>
     <ProjectReference Include="..\..\src\KatLang.CLI\KatLang.CLI.csproj" />
+    <ProjectReference Include="..\..\tools\KatLang.TestProbeHost\KatLang.TestProbeHost.csproj" />
   </ItemGroup>
 
 </Project>

@@ -228,12 +228,13 @@ public class CollectingPropertyOwnerContextTests
     [Theory]
     [InlineData("R.Invoke(), R.Invoke(), Only, Only.V", "S[4, 5, 4, 6]")]
     [InlineData("R.Algorithm(), R.Algorithm(), Only, Only.V", "S[4, 5, 4, 6]")]
-    [InlineData("A = R.Algorithm\nA(), A(), Only, Only.V", "S[4, 5, 6, 6]")]
+    [InlineData("A = R.Algorithm\nA(), A(), Only, Only.V", "S[4, 5, 4, 6]")]
     public async Task C16_MetaCallsOfTheCollectingOwner_KeepFreshLocalsAndFirstPublication(string rows, string expected)
     {
-        // Direct META calls publish Only on the first invocation; the second is fresh. A parameterized
-        // runtime alias names no publication binding, so Only's bare read computes its own value instead.
-        // Only.V belongs to F and never reuses either call's local V.
+        // META calls publish Only on the first invocation; the second is fresh. A runtime reference of the
+        // projection publishes under its target's origin too (OD-E, M4★; formerly a parameterized runtime
+        // alias named no publication binding: S[4, 5, 6, 6]). Only.V belongs to F and never reuses either
+        // call's local V.
         var owner = "Only(*xs) = {\n    V = k + tick()\n    V\n}\nCapture(meta op) = op\nR = Capture(Only())";
         var oracle = await ObserveAsync(F(owner, rows));
         Assert.Equal("ok", oracle.Kind);

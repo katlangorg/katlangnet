@@ -19,6 +19,17 @@ namespace KatLang;
 /// message is never formatted. The marker carries the most severe dropped severity, so
 /// truncation never changes whether a list blocks evaluation.</para>
 ///
+/// <para><b>Anchored reports.</b> A report a pass decides only later — parameter detection's check of
+/// a dot fallback that implicit-argument resolution finds certain (M4★) — takes the place in the
+/// list where the deciding pass would have made it: the deferring pass reserves an ANCHOR at that
+/// point (<see cref="ReserveAnchor"/>), and the report made later under it
+/// (<see cref="InsertingAt"/>) stands after every report made before the anchor was reserved and
+/// before every report made after — anchors reserved at one point in their reservation order, the
+/// reports of one anchor in their own order. The list is the list the operation would have produced
+/// had each anchored report been made at its anchor, and the prefix law holds for it: a report an
+/// anchored one moves past the capacity is dropped (the marker takes its severity). Counters count a
+/// report when it is made.</para>
+///
 /// <para><b>Decisions read counters, never the stored list.</b> Recovery and loading decisions
 /// that ask whether something was reported — the parser's clause-head recovery, whether a loaded
 /// module elaborated cleanly enough to cache, whether a materialization succeeded, how a failed
@@ -49,12 +60,22 @@ internal sealed class DiagnosticBag : IReadOnlyList<Diagnostic>
     /// </summary>
     internal const int MaxRetainedMessageLength = 4096;
 
+    // The stored diagnostics (the marker excluded) and, in parallel, each one's place in the list.
     private readonly List<Diagnostic> _stored = [];
+    private readonly List<ListPlace> _places = [];
+    private Diagnostic? _marker;
     private long _reported;
     private long _reportedErrors;
     private ulong _reportedCodes;
     private HashSet<DiagnosticCode>? _reportedOtherCodes;
-    private bool _truncated;
+
+    // Reports made in place (never under an anchor), and anchors reserved so far.
+    private long _inPlace;
+    private long _anchors;
+
+    // While an anchored scope is open (InsertingAt): its anchor and the reports made under it.
+    private DiagnosticAnchor? _inserting;
+    private int _insertedUnderAnchor;
 
     /// <summary>A bag with the supported maximum capacity.</summary>
     internal DiagnosticBag()
@@ -82,7 +103,7 @@ internal sealed class DiagnosticBag : IReadOnlyList<Diagnostic>
     internal bool HasReportedErrors => _reportedErrors > 0;
 
     /// <summary>True once a report was dropped, so the stored list ends with the marker.</summary>
-    internal bool IsTruncated => _truncated;
+    internal bool IsTruncated => _marker is not null;
 
     /// <summary>
     /// True while the next report would be stored. A caller may test it before formatting an
@@ -90,14 +111,20 @@ internal sealed class DiagnosticBag : IReadOnlyList<Diagnostic>
     /// <see cref="Report{TState}(DiagnosticCode, SourceSpan?, TState, Func{TState, string})"/>
     /// does both.
     /// </summary>
-    internal bool StoresNext => _reported < Capacity;
+    internal bool StoresNext => _inserting is { } anchor ? StoresAt(PlaceUnder(anchor)) : _marker is null && _stored.Count < Capacity;
 
     /// <summary>The stored diagnostics, including the trailing marker when truncated.</summary>
-    public int Count => _stored.Count;
+    public int Count => _stored.Count + (_marker is null ? 0 : 1);
 
-    public Diagnostic this[int index] => _stored[index];
+    public Diagnostic this[int index] => index == _stored.Count && _marker is not null ? _marker : _stored[index];
 
-    public IEnumerator<Diagnostic> GetEnumerator() => _stored.GetEnumerator();
+    public IEnumerator<Diagnostic> GetEnumerator()
+    {
+        foreach (var diagnostic in _stored)
+            yield return diagnostic;
+        if (_marker is not null)
+            yield return _marker;
+    }
 
     IEnumerator IEnumerable.GetEnumerator() => GetEnumerator();
 
@@ -113,21 +140,40 @@ internal sealed class DiagnosticBag : IReadOnlyList<Diagnostic>
             : _reportedOtherCodes?.Contains(code) == true;
     }
 
+    /// <summary>
+    /// Reserves the place a report decided later takes in the list: after every report made so far, before every
+    /// report made from now on (see the class documentation). A reservation is no report: nothing is counted.
+    /// </summary>
+    internal DiagnosticAnchor ReserveAnchor() => new(_inPlace, ++_anchors);
+
+    /// <summary>
+    /// Makes every report until the returned scope is disposed at <paramref name="anchor"/>'s place, in report order
+    /// (see the class documentation). Anchored scopes do not nest.
+    /// </summary>
+    internal AnchoredScope InsertingAt(DiagnosticAnchor anchor)
+    {
+        if (_inserting is not null)
+            throw new InvalidOperationException("Anchored diagnostic scopes do not nest.");
+        _inserting = anchor;
+        _insertedUnderAnchor = 0;
+        return new AnchoredScope(this);
+    }
+
     /// <summary>Reports an already constructed diagnostic.</summary>
     internal void Add(Diagnostic diagnostic)
     {
         ArgumentNullException.ThrowIfNull(diagnostic);
-        if (!CountReport(diagnostic.Code, diagnostic.Severity))
+        if (CountReport(diagnostic.Code, diagnostic.Severity) is not { } place)
             return;
 
-        _stored.Add(diagnostic.WithBoundedMessage(MaxRetainedMessageLength));
+        Store(place, diagnostic.WithBoundedMessage(MaxRetainedMessageLength));
     }
 
     /// <summary>Reports an error; the diagnostic is constructed only when it is stored.</summary>
     internal void Report(DiagnosticCode code, string message, SourceSpan? span)
     {
-        if (CountReport(code, DiagnosticSeverity.Error))
-            _stored.Add(new Diagnostic(BoundMessage(message), DiagnosticSeverity.Error, span) { Code = code });
+        if (CountReport(code, DiagnosticSeverity.Error) is { } place)
+            Store(place, new Diagnostic(BoundMessage(message), DiagnosticSeverity.Error, span) { Code = code });
     }
 
     /// <summary>
@@ -136,22 +182,24 @@ internal sealed class DiagnosticBag : IReadOnlyList<Diagnostic>
     /// </summary>
     internal void Report<TState>(DiagnosticCode code, SourceSpan? span, TState state, Func<TState, string> formatMessage)
     {
-        if (CountReport(code, DiagnosticSeverity.Error))
-            _stored.Add(new Diagnostic(BoundMessage(formatMessage(state)), DiagnosticSeverity.Error, span) { Code = code });
+        if (CountReport(code, DiagnosticSeverity.Error) is { } place)
+            Store(place, new Diagnostic(BoundMessage(formatMessage(state)), DiagnosticSeverity.Error, span) { Code = code });
     }
 
     /// <summary>The same lazy report, retaining the formatter's structural separators.</summary>
     internal void Report<TState>(DiagnosticCode code, SourceSpan? span, TState state, Func<TState, DiagnosticMessage> formatMessage)
     {
-        if (!CountReport(code, DiagnosticSeverity.Error))
+        if (CountReport(code, DiagnosticSeverity.Error) is not { } place)
             return;
         var diagnostic = new Diagnostic(formatMessage(state), DiagnosticSeverity.Error, span) { Code = code };
-        _stored.Add(diagnostic.WithBoundedMessage(MaxRetainedMessageLength));
+        Store(place, diagnostic.WithBoundedMessage(MaxRetainedMessageLength));
     }
 
-    // Counts one report and says whether it is stored. A report past the capacity truncates the
-    // list: the first one appends the marker, and a later, more severe one raises its severity.
-    private bool CountReport(DiagnosticCode code, DiagnosticSeverity severity)
+    // Counts one report and says where it is stored (its place in the list), or null when it is dropped: a report whose
+    // place is past the capacity truncates the list, and a more severe dropped one raises the marker's severity. A report
+    // made at an anchor may move the last stored one past the capacity (Store drops it then). Nothing is stored here, so
+    // a message formatter that throws leaves the stored list as it was.
+    private ListPlace? CountReport(DiagnosticCode code, DiagnosticSeverity severity)
     {
         _reported++;
         if (severity == DiagnosticSeverity.Error)
@@ -163,25 +211,55 @@ internal sealed class DiagnosticBag : IReadOnlyList<Diagnostic>
         else
             (_reportedOtherCodes ??= []).Add(code);
 
-        if (_reported <= Capacity)
-            return true;
+        var place = _inserting is { } anchor ? PlaceUnder(anchor) : new ListPlace(++_inPlace, 0, 0);
+        if (_inserting is not null)
+            _insertedUnderAnchor++;
+        if (!StoresAt(place))
+        {
+            MarkTruncated(severity);
+            return null;
+        }
 
-        MarkTruncated(severity);
-        return false;
+        return place;
+    }
+
+    // Whether a report at `place` is among the first Capacity reports of the list: every stored report before it
+    // counts, and once a report was dropped every later place is past the capacity too.
+    private bool StoresAt(ListPlace place)
+        => _stored.Count < Capacity && _marker is null
+            || IndexOf(place) < Capacity && (_marker is null || place.CompareTo(_places[^1]) < 0);
+
+    private ListPlace PlaceUnder(DiagnosticAnchor anchor) => new(anchor.Base, anchor.Sequence, _insertedUnderAnchor + 1);
+
+    // The index a report at `place` takes among the stored reports (places are unique).
+    private int IndexOf(ListPlace place)
+    {
+        var index = _places.BinarySearch(place);
+        return index < 0 ? ~index : index;
+    }
+
+    // Stores a counted report at its place; a report beyond the capacity it moves out of the list is dropped.
+    private void Store(ListPlace place, Diagnostic diagnostic)
+    {
+        var index = IndexOf(place);
+        _places.Insert(index, place);
+        _stored.Insert(index, diagnostic);
+        if (_stored.Count <= Capacity)
+            return;
+
+        var moved = _stored[^1];
+        _stored.RemoveAt(_stored.Count - 1);
+        _places.RemoveAt(_places.Count - 1);
+        MarkTruncated(moved.Severity);
     }
 
     private void MarkTruncated(DiagnosticSeverity severity)
     {
-        if (!_truncated)
-        {
-            _truncated = true;
-            _stored.Add(SourceProcessingDiagnostics.DiagnosticCountExceeded(Capacity, severity));
-            return;
-        }
-
-        if (severity > _stored[^1].Severity)
-            _stored[^1] = SourceProcessingDiagnostics.DiagnosticCountExceeded(Capacity, severity);
+        if (_marker is null || severity > _marker.Severity)
+            _marker = SourceProcessingDiagnostics.DiagnosticCountExceeded(Capacity, severity);
     }
+
+    private void EndInsertion() => _inserting = null;
 
     private static string BoundMessage(string message)
     {
@@ -192,4 +270,33 @@ internal sealed class DiagnosticBag : IReadOnlyList<Diagnostic>
             message.AsSpan(0, ExprNameRenderer.SafePrefixLength(message, MaxRetainedMessageLength)),
             ExprNameRenderer.TruncationMarker);
     }
+
+    /// <summary>
+    /// A report's place in the list: after the first <see cref="InPlace"/> reports made in place, then — for a report
+    /// made at an anchor — after the anchors reserved before its own (<see cref="Anchor"/>, 0 for an in-place report),
+    /// then in report order under its anchor (<see cref="Order"/>).
+    /// </summary>
+    private readonly record struct ListPlace(long InPlace, long Anchor, int Order) : IComparable<ListPlace>
+    {
+        public int CompareTo(ListPlace other)
+        {
+            var inPlace = InPlace.CompareTo(other.InPlace);
+            if (inPlace != 0)
+                return inPlace;
+            var anchor = Anchor.CompareTo(other.Anchor);
+            return anchor != 0 ? anchor : Order.CompareTo(other.Order);
+        }
+    }
+
+    /// <summary>An open anchored scope (<see cref="InsertingAt"/>): disposing it ends the anchored reports.</summary>
+    internal readonly struct AnchoredScope(DiagnosticBag bag) : IDisposable
+    {
+        public void Dispose() => bag?.EndInsertion();
+    }
 }
+
+/// <summary>
+/// The reserved place of a diagnostic a pass decides later (<see cref="DiagnosticBag.ReserveAnchor"/>): after the
+/// <see cref="Base"/> reports made in place before it, in reservation order (<see cref="Sequence"/>).
+/// </summary>
+internal readonly record struct DiagnosticAnchor(long Base, long Sequence);

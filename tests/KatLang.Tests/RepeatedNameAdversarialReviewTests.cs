@@ -83,11 +83,30 @@ public class RepeatedNameAdversarialReviewTests(ITestOutputHelper output)
     public async Task RetainedFailures_FromStatefulBodiesAndCallbacks_AreNotRetried(
         string call, string prefix, string[] effects)
     {
+        // P reads x, so a failure is reached whether the binder demands it (beside the value 7) or
+        // the body does (`Same(a)`: one reference twice matches by identity — NEED-04, group-aware).
         const string source = "Bad = if(tick() == 1, 1 / 0, 7)\n"
-            + "Each = map([1, 2], {trace(x) / 0})\nP(x, x) = 0\nSame(a) = P(a, a)\nAlias = P\nLifted = [P][0]\n";
+            + "Each = map([1, 2], {trace(x) / 0})\nP(x, x) = x\nSame(a) = P(a, a)\nAlias = P\nLifted = [P][0]\n";
         var result = await RepeatedNameConstraintTests.OnEveryRouteAsync(source + call);
         Assert.StartsWith(prefix, result.Outcome);
         Assert.Equal(effects, result.HostCalls);
+    }
+
+    [Theory]
+    [InlineData("Same(Bad)")]
+    [InlineData("Same(Each)")]
+    [InlineData("Lifted(Bad)")]
+    [InlineData("Lifted(Each)")]
+    [InlineData("P(Bad, Bad)")]
+    public async Task OneReferenceTwice_MatchesWithoutRunningIt(string call)
+    {
+        // NEED-04 (group-aware): the same reference twice matches by identity, so a body that ignores
+        // the name runs nothing at all — no tick, no trace (formerly the binder demanded the value).
+        const string source = "Bad = if(tick() == 1, 1 / 0, 7)\n"
+            + "Each = map([1, 2], {trace(x) / 0})\nP(x, x) = 0\nSame(a) = P(a, a)\nLifted = [P][0]\n";
+        var result = await RepeatedNameConstraintTests.OnEveryRouteAsync(source + call);
+        Assert.Equal("ok 0", result.Outcome);
+        Assert.Empty(result.HostCalls);
     }
 
     [Fact]
@@ -103,10 +122,12 @@ public class RepeatedNameAdversarialReviewTests(ITestOutputHelper output)
         Assert.Equal("ok S[2, 0]", cached.Outcome);
         Assert.Equal(["trace(2)"], cached.HostCalls);
 
+        // Two different identities conflict before any VALUE is demanded (NEED-04, group-aware):
+        // neither trace runs (formerly both values were demanded first).
         var different = await RepeatedNameConstraintTests.OnEveryRouteAsync(
             "A = trace(5)\nB = trace(5)\nP(x, x) = x\nP(A, B)");
         Assert.StartsWith("err TypeMismatch:", different.Outcome);
-        Assert.Equal(["trace(5)", "trace(5)"], different.HostCalls);
+        Assert.Empty(different.HostCalls);
     }
 
     // Formula lifting is by binding name: each further nested repetition lifts ONE caller

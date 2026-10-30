@@ -480,7 +480,8 @@ public class OutputBundleSplitTests
             var source = Library + "R = { " + spelling + "\n  X }\nR";
             var parsed = SourceProvenance.ParseValid(source);
 
-            var body = Assert.IsType<Algorithm.User>(Assert.Single(parsed.Root.Properties, p => p.Name == "R").Value);
+            // R's lone row X makes it a forwarding carrier (M4★) that owns its open.
+            var body = Assert.IsType<Algorithm.Alias>(Assert.Single(parsed.Root.Properties, p => p.Name == "R").Value);
             var open = Assert.IsType<Expr.DotCall>(Assert.Single(body.Opens));
             Assert.Equal("M", Assert.IsType<Expr.Resolve>(open.Target).Name);
             Assert.Equal("N", open.Name);

@@ -26,14 +26,15 @@ public class WideSemanticContextComplexityTests
 
     private static Algorithm.User Syntax(string source) => SourceProvenance.ParseSyntaxValidRoot(source);
 
-    private static Algorithm Detect(Algorithm root)
+    private static DetectedProgram Detect(Algorithm root)
     {
-        var (detected, diagnostics) = ParameterDetector.DetectPrevalidated(root);
+        var detectedInput = ParameterDetector.DetectPrevalidated(root);
+        var (detected, diagnostics) = detectedInput;
         Assert.Empty(diagnostics);
-        return detected;
+        return detectedInput;
     }
 
-    private static Algorithm Resolve(Algorithm detected)
+    private static Algorithm Resolve(DetectedProgram detected)
     {
         var diagnostics = new DiagnosticBag();
         var resolved = ImplicitArgumentResolver.ResolvePrevalidated(detected, observations: null, diagnostics);
@@ -151,7 +152,8 @@ public class WideSemanticContextComplexityTests
     private static (FrontEndTraversalObservations Observations, Algorithm Detected) DetectObserved(string source)
     {
         var observations = new FrontEndTraversalObservations();
-        var (detected, diagnostics) = ParameterDetector.DetectPrevalidated(Syntax(source), null, observations);
+        var detectedInput = ParameterDetector.DetectPrevalidated(Syntax(source), null, observations);
+        var (detected, diagnostics) = detectedInput;
         Assert.Empty(diagnostics);
         return (observations, detected);
     }
@@ -355,7 +357,7 @@ public class WideSemanticContextComplexityTests
             + string.Concat(Enumerable.Range(0, width).Select(i => $"p{i} = 1\n"))
             + string.Concat(Enumerable.Repeat("{x = 1\nx}\n", blocks))
             + "p0\n}\n1";
-        var detected = Assert.IsType<Algorithm.User>(Detect(Syntax(source)));
+        var detected = Assert.IsType<Algorithm.User>(Detect(Syntax(source)).Root);
         var observations = new FrontEndTraversalObservations();
 
         _ = PropertyDependencyGraphBuilder.BuildDependencyOrder(detected, observations: observations);
@@ -425,14 +427,15 @@ public class WideSemanticContextComplexityTests
             new Expr.Num(1));
 
         var detectorObservations = new FrontEndTraversalObservations();
-        var (detected, detectorDiagnostics) = ParameterDetector.DetectPrevalidated(root, null, detectorObservations);
+        var detectedInput = ParameterDetector.DetectPrevalidated(root, null, detectorObservations);
+        var (detected, detectorDiagnostics) = detectedInput;
         Assert.Empty(detectorDiagnostics);
         Assert.Equal(depth, detectorObservations.DetectorBranchBodyRegionExpansions);
         Assert.Equal(width, detectorObservations.ContextNamesCanonicalized);
         AssertSharedAtEveryLevel(detected, depth);
 
         var resolverObservations = new FrontEndTraversalObservations();
-        var resolved = ImplicitArgumentResolver.ResolvePrevalidated(detected, resolverObservations, new DiagnosticBag());
+        var resolved = ImplicitArgumentResolver.ResolvePrevalidated(detectedInput, resolverObservations, new DiagnosticBag());
         Assert.Equal(depth, resolverObservations.ResolverBranchBodyRegionExpansions);
         Assert.Equal(2 * width + 2 * depth + 2, resolverObservations.ContextEntriesWritten);
         AssertSharedAtEveryLevel(resolved, depth);
@@ -480,7 +483,9 @@ public class WideSemanticContextComplexityTests
                     string.Concat(Enumerable.Range(0, width).Select(i => $"Q{i} = 1\n"))
                     + string.Concat(Enumerable.Range(0, children).Select(i => $"P{i} = {{a = 1\n1}}\n"))
                     + "1"));
-                return () => ImplicitArgumentResolver.ResolvePrevalidated(detected);
+                // This allocation workload deliberately reruns a supplied name-resolved fixture.
+                // Each repetition owns a fresh phase admission; a raw compilation's handoff is single-use.
+                return () => ImplicitArgumentResolver.ResolveNameResolvedPrevalidated(detected.Root);
             }
 
             case "detector-blocks":
@@ -516,7 +521,7 @@ public class WideSemanticContextComplexityTests
                 var detected = Assert.IsType<Algorithm.User>(Detect(Syntax("V = {\n"
                     + string.Concat(Enumerable.Range(0, width).Select(i => $"p{i} = 1\n"))
                     + string.Concat(Enumerable.Repeat("{x = 1\nx}\n", children))
-                    + "p0\n}\n1")));
+                    + "p0\n}\n1")).Root);
                 return () => PropertyDependencyGraphBuilder.BuildDependencyOrder(detected);
             }
 

@@ -430,8 +430,8 @@ theorem dispatchName_algorithm (needs : Array NeedCell) (a l rc p k : Nat) (eff 
     NeedPlan.dispatchNameIn needs a eff .algorithm = n := by
   have hlink : NeedPlan.linkedPlanIn? needs l = some p := by
     unfold NeedPlan.linkedPlanIn?
-    rcases cl with ⟨_, _, _, _, _, _, receiver, _, _⟩
-    rcases cr with ⟨_, state, _, _, _, _, _, _, _⟩
+    rcases cl with ⟨_, _, _, _, _, _, receiver⟩
+    rcases cr with ⟨_, state, _, _, _, _, _⟩
     simp only at hrc hst
     subst hrc hst
     simp [hcl, hcr]

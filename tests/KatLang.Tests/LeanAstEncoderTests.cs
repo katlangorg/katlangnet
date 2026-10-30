@@ -398,11 +398,20 @@ public class LeanAstEncoderTests
     {
         // Dedup is an EVALUATION rule (Lean resolveAllOpens), not an encoding
         // rule: the written duplicate target must survive encoding so both
-        // sides decide dedup themselves.
+        // sides decide dedup themselves — in an ordinary body ...
         Assert.Equal(
             ".algorithmExpr (alg [] [] ["
             + "privateProp \"Lib\" (alg [] [] [publicProp \"X\" (alg [] [] [] [.num 1])] []), "
-            + "privateProp \"A\" (alg [] [.resolve \"Lib\", .resolve \"Lib\"] [] [.resolve \"X\"])"
+            + "privateProp \"A\" (alg [] [.resolve \"Lib\", .resolve \"Lib\"] [] [(.binary .add (.resolve \"X\") (.num 0))])"
+            + "] [.resolve \"A\"])",
+            EncodeSource("Lib = {\n    public X = 1\n}\nA = {\n    open Lib, Lib\n    X + 0\n}\nA"));
+
+        // ... and in a structural forwarding carrier (M4★: a lone reference row beside the body's own
+        // open), which keeps its opens as written.
+        Assert.Equal(
+            ".algorithmExpr (alg [] [] ["
+            + "privateProp \"Lib\" (alg [] [] [publicProp \"X\" (alg [] [] [] [.num 1])] []), "
+            + "privateProp \"A\" (.alias none [.resolve \"Lib\", .resolve \"Lib\"] [] (.resolve \"X\") none false)"
             + "] [.resolve \"A\"])",
             EncodeSource("Lib = {\n    public X = 1\n}\nA = {\n    open Lib, Lib\n    X\n}\nA"));
     }

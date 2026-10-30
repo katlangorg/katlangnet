@@ -58,7 +58,8 @@ public class AlgorithmPayloadReviewTests
         var outer = new Algorithm.Conditional(null, [],
             [new CondBranch(new Pattern.Bind("x"), nested)]);
 
-        var (detected, diagnostics) = ParameterDetector.Detect(outer);
+        var detectedInput = ParameterDetector.Detect(outer);
+        var (detected, diagnostics) = detectedInput;
         var body = Assert.IsType<Algorithm.Conditional>(
             Assert.Single(Assert.IsType<Algorithm.Conditional>(detected).Branches).Body);
         Assert.Same(nested.Declaration, body.Declaration);
@@ -82,10 +83,12 @@ public class AlgorithmPayloadReviewTests
         Assert.False(body.HasExplicitParameterList);
         Assert.NotEqual(body, written);
 
-        var (closed, diagnostics) = ParameterDetector.Detect(written);
+        var closedInput = ParameterDetector.Detect(written);
+        var (closed, diagnostics) = closedInput;
         Assert.Empty(Assert.IsType<Algorithm.User>(closed).Parameters);
         Assert.Contains(diagnostics, d => d.Code == DiagnosticCode.UndeclaredIdentifier);
-        var (inferred, _) = ParameterDetector.Detect(body);
+        var inferredInput = ParameterDetector.Detect(body);
+        var (inferred, _) = inferredInput;
         Assert.Equal(["missing"], Assert.IsType<Algorithm.User>(inferred).Params);
         Assert.True(CallableSignature.FromUserAlgorithm("F", written).HasExplicitParameterList);
         Assert.False(CallableSignature.FromUserAlgorithm("F", body).HasExplicitParameterList);

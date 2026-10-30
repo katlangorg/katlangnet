@@ -442,7 +442,8 @@ public class DotCallFallbackInvariantTests
             Properties: [],
             Output: [new Expr.Num(0m)]);
 
-        var (detected, _) = ParameterDetector.Detect(hostRoot);
+        var detectedInput = ParameterDetector.Detect(hostRoot);
+        var (detected, _) = detectedInput;
 
         Assert.Equal("Lib", Assert.IsType<Expr.Resolve>(Assert.Single(detected.Opens)).Name);
         Assert.Null(DotCallElaborationInvariant.CheckElaborated(detected));
@@ -462,7 +463,8 @@ public class DotCallFallbackInvariantTests
                 Output: [new Expr.DotCall(new Expr.Resolve("Data"), "count")])),
         ], [new Expr.Num(0m)]);
 
-        var (detected, diagnostics) = ParameterDetector.Detect(hostRoot);
+        var detectedInput = ParameterDetector.Detect(hostRoot);
+        var (detected, diagnostics) = detectedInput;
         Assert.Empty(diagnostics);
         var use = Assert.IsType<Algorithm.User>(
             Assert.Single(detected.Properties, property => property.Name == "Use").Value);

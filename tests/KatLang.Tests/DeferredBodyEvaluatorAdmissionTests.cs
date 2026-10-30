@@ -86,6 +86,12 @@ public class DeferredBodyEvaluatorAdmissionTests
                 Opens = user.Opens.Select(ComposedOpen).ToList(),
                 Properties = user.Properties.Select(p => p with { Value = Composed(p.Value) }).ToList(),
             },
+            // A forwarding carrier (M4★) keeps its own opens and declarations, which may hold regions.
+            Algorithm.Alias alias => alias with
+            {
+                Opens = alias.Opens.Select(ComposedOpen).ToList(),
+                Properties = alias.Properties.Select(p => p with { Value = Composed(p.Value) }).ToList(),
+            },
             _ => algorithm,
         };
     }
@@ -406,11 +412,14 @@ public class DeferredBodyEvaluatorAdmissionTests
         var diagnostics = new DiagnosticBag();
         var loaded = await new ModuleLoader(diagnostics, modules.Options().DownloadCode!).ElaborateAsync(
             syntax.Root with { Properties = [new Property("F", family)] });
-        var (detected, detectionDiagnostics) = ParameterDetector.Detect(loaded);
+        var detectedInput = ParameterDetector.Detect(loaded);
+        var (detected, detectionDiagnostics) = detectedInput;
         Assert.Empty(detectionDiagnostics);
-        var resolved = ImplicitArgumentResolver.ResolvePrevalidated(detected, diagnostics: diagnostics);
+        var resolved = ImplicitArgumentResolver.ResolvePrevalidated(detectedInput, diagnostics: diagnostics);
         new ParameterPropertyCollisionValidator(diagnostics).VisitAlgorithm(resolved);
-        var exposed = Assert.IsType<Algorithm.User>(PropertyExposureResolver.Resolve(resolved));
+        var exposed = Assert.IsType<Algorithm.User>(PropertyExposureResolver.Resolve(resolved, observations: null, modules: detectedInput.Modules));
+        Assert.Empty(diagnostics);
+        detectedInput.Modules.Publish(detectedInput.Operation!.Freeze());
         Assert.Empty(diagnostics);
 
         // Ordinary placeholder views preserve the region while replacing its parent. Both
@@ -595,10 +604,13 @@ public class DeferredBodyEvaluatorAdmissionTests
         var root = syntax.Root with { Properties = [new Property("F", family)] };
         var diagnostics = new DiagnosticBag();
         var loaded = await new ModuleLoader(diagnostics, modules.Options().DownloadCode!).ElaborateAsync(root);
-        var (detected, _) = ParameterDetector.Detect(loaded);
-        var resolved = ImplicitArgumentResolver.ResolvePrevalidated(detected, diagnostics: diagnostics);
+        var detectedInput = ParameterDetector.Detect(loaded);
+        var (detected, _) = detectedInput;
+        var resolved = ImplicitArgumentResolver.ResolvePrevalidated(detectedInput, diagnostics: diagnostics);
         new ParameterPropertyCollisionValidator(diagnostics).VisitAlgorithm(resolved);
-        var exposed = PropertyExposureResolver.Resolve(resolved);
+        var exposed = PropertyExposureResolver.Resolve(resolved, observations: null, modules: detectedInput.Modules);
+        Assert.Empty(diagnostics);
+        detectedInput.Modules.Publish(detectedInput.Operation!.Freeze());
         Assert.Empty(diagnostics);
         Assert.Equal(0, modules.Fetches);
 

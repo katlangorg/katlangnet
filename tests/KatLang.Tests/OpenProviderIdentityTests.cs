@@ -37,8 +37,15 @@ public class OpenProviderIdentityTests
             "11"
         },
         {
-            "a property reading a namespace provides nothing",
+            // M4★ OD-C: the unbraced reference opens its target under the TARGET's provider identity.
+            "a reference to a namespace is that namespace's provider",
             "open Lib.Sub, Sub\nLib = {\n    public Sub = {\n        public X = 1\n    }\n}\nSub = Lib.Sub\nX",
+            "1"
+        },
+        {
+            // A braced carrier is a provider of its OWN public declarations only (none here).
+            "a carrier of a namespace provides only its own declarations",
+            "open Lib.Sub, Sub\nLib = {\n    public Sub = {\n        public X = 1\n    }\n}\nSub = { Lib.Sub }\nX",
             "1"
         },
         {
@@ -55,6 +62,21 @@ public class OpenProviderIdentityTests
         var observation = await SixRouteAgreement.OnEveryRouteAsync(source);
         Assert.True(observation.Kind == "ok", $"{name}: {observation}");
         Assert.Equal(expected, observation.Value);
+    }
+
+    [Fact]
+    public async Task AReferenceAndACarrierOfOneNamespace_DifferAsProviders_WhenOpenedAlone()
+    {
+        const string Lib = "Lib = {\n    public Sub = {\n        public X = 1\n    }\n}\n";
+        // The unbraced reference provides its target's names (M4★ OD-C) ...
+        var reference = await SixRouteAgreement.OnEveryRouteAsync("open Sub\n" + Lib + "Sub = Lib.Sub\nX");
+        Assert.Equal("ok", reference.Kind);
+        Assert.Equal("1", reference.Value);
+        // ... while the braced carrier provides only its own public declarations, so X stays an
+        // implicit parameter of the root.
+        var carrier = await SixRouteAgreement.OnEveryRouteAsync("open Sub\n" + Lib + "Sub = { Lib.Sub }\nX");
+        Assert.Equal("err", carrier.Kind);
+        Assert.Contains("UnresolvedImplicitParams", carrier.Errors[0], StringComparison.Ordinal);
     }
 
     /// <summary>name, source: distinct providers whose members, text or values coincide.</summary>
@@ -170,7 +192,8 @@ public class OpenProviderIdentityTests
     {
         var root = SourceProvenance.ParseValid(SubInside("Sub, Lib.Sub, (Sub)")).Root;
         var lib = Assert.IsType<Algorithm.User>(root.Properties.Single(static p => p.Name == "Lib").Value);
-        var r = Assert.IsType<Algorithm.User>(lib.Properties.Single(static p => p.Name == "R").Value);
+        // R's lone row X makes it a forwarding carrier of X (M4★): it owns its opens, so its scope is its own.
+        var r = Assert.IsType<Algorithm.Alias>(lib.Properties.Single(static p => p.Name == "R").Value);
         var libScope = ElaboratedScopeLookup.CreateScope(lib, ElaboratedScopeLookup.CreateScope(root));
         var rScope = ElaboratedScopeLookup.CreateScope(r, libScope);
 

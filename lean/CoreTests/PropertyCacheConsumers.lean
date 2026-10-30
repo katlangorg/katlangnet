@@ -67,7 +67,8 @@ def cacheRoot (out : List KatLang.Expr) : KatLang.Expr :=
   .algorithmExpr (algPrivate [] []
     [ ("Id", cacheIdAlg), ("A", cacheCountedAlg), ("N", cacheNumericAlg), ("Stats", cacheStatsAlg)
     , ("Show", cacheShowAlg), ("Keep", cacheKeepAlg), ("Big", cacheBigAlg)
-    , ("Add", cacheAddAlg), ("Call0", cacheCall0Alg), ("Box", cacheBoxAlg) ]
+    , ("Add", cacheAddAlg), ("Call0", cacheCall0Alg), ("Box", cacheBoxAlg)
+    , ("RN", .alias none [] [] (resolve "N")), ("CN", .alias none [] [] (resolve "N") none false) ]
     out)
 
 /-- The binding contexts a SUCCESSFUL run opened. -/
@@ -97,6 +98,13 @@ def consumerReusesTheRead (consumer : KatLang.Expr) (ownCalls : Nat) : Bool :=
 #guard entriesNamed "A" [resolve "A"] == some 1
 -- Repeated value access: still once.
 #guard contextsOpened [resolve "A", resolve "A", resolve "A"] == some 1
+
+-- An ALIAS receiver of the `.string` intrinsic reads its VALUE terminal's cached entry (OD-E, M4★):
+-- a reference `RN = N`, a carrier `CN = { N }` and an inline carrier `{ N }` alike reuse N's one read,
+-- under N's one entry, and never re-run N's body (ALIAS-UNIFY-1 review).
+#guard consumerReusesTheReadOf "N" (.dotCall (resolve "RN") "string" none) 0
+#guard consumerReusesTheReadOf "N" (.dotCall (resolve "CN") "string" none) 0
+#guard consumerReusesTheReadOf "N" (.dotCall (.algorithmExpr (.alias none [] [] (resolve "N") none false)) "string" none) 0
 
 -- Builtin VALUE slots, written and dotted: the collection argument.
 #guard consumerReusesTheRead (.call (resolve "sum") [resolve "A"]) 0
@@ -420,23 +428,33 @@ def d2Call (receiver : Ident) : Expr := .dotCall (.resolve receiver) "Algorithm"
   == some (.sequenceValue [.atom 3, .atom 4], 2)
 #guard d2Run d2F [] [.dotCall (.resolve "R1") "Algorithm" none, .dotCall (.resolve "R2") "Algorithm" none] "V"
   == some (.sequenceValue [.atom 3, .atom 4], 2)
--- A runtime-target alias of a ZERO-PARAMETER callee is its ordinary property (META-S3-2 D4,
--- FWD-02): `A1(), A2(), A1()` leaves TWO `V` entries for three calls. Each `A1()` evaluates
--- the terminal row afresh; the row's bare `R1.Algorithm` is the VALUE of R1's plan callee
--- cell (CR-13/CR-14b), completed once per plan, so the second `A1()` reads that completed
--- VALUE — not a `V` held by A1's binding cell (`AliasD4` below pins the state).
+-- A runtime-target alias of a ZERO-PARAMETER callee forwards that callee like any other
+-- (M4★ L-RUN, ALIAS-UNIFY-1; META-S3-2's D4 property view is retired): `A1()` IS the fresh
+-- call `R1.Algorithm()`, so `A1(), A2(), A1()` leaves THREE `V` entries exactly like the
+-- direct spelling above, while the bare `A1` is its binding cell's VALUE — the VALUE of R1's
+-- plan callee cell (CR-13/CR-14b), completed once per plan — and leaves one per plan
+-- (`AliasD4` below pins the state).
 #guard d2Run d2F [privateProp "A1" (.alias none [] [] (.dotCall (.resolve "R1") "Algorithm" none)),
     privateProp "A2" (.alias none [] [] (.dotCall (.resolve "R2") "Algorithm" none))]
     [.call (.resolve "A1") [], .call (.resolve "A2") [], .call (.resolve "A1") []] "V"
+  == some (.sequenceValue [.atom 3, .atom 4, .atom 3], 3)
+#guard d2Run d2F [privateProp "A1" (.alias none [] [] (.dotCall (.resolve "R1") "Algorithm" none)),
+    privateProp "A2" (.alias none [] [] (.dotCall (.resolve "R2") "Algorithm" none))]
+    [.resolve "A1", .resolve "A2", .resolve "A1"] "V"
   == some (.sequenceValue [.atom 3, .atom 4, .atom 3], 2)
 
-/-! ALIAS-D4 (`experimental/features/alias-d4-1-research.md`): the run state behind a
-    zero-parameter runtime alias. `d4Observe` reports the value, the `V`/`B`/alias entry
-    counts, the need-cell and alias-cell counts, the binding contexts opened, and whether
-    every recorded CR-13 callee cell completed with a VALUE. The trees are the D2 ones; `H`
-    and `AM` are hand-encoded like the front end classifies them (`r` is a captured
-    ancestor parameter of `A`). Entry counts alone cannot tell a cache HIT from no request;
-    the request-level evidence is the C# `MetaCallBindingContextTests` § 5 cache-seam guard. -/
+/-! ALIAS-D4 (`experimental/features/alias-d4-1-research.md`), revised by M4★ (ALIAS-UNIFY-1,
+    October 2026): the run state behind a zero-parameter runtime alias. `d4Observe` reports the
+    value, the `V`/`B`/alias entry counts, the need-cell and alias-cell counts, the binding
+    contexts opened, and whether every recorded CR-13 callee cell completed with a VALUE. The
+    trees are the D2 ones; `H` and `AM` are hand-encoded like the front end classifies them
+    (`r` is a captured ancestor parameter of `A`). Under M4★ an alias owns no cache entry
+    (OD-E: `aliasEntries` is always 0), its binding cell is established once per declaring
+    activation (L-RUN: one alias cell per activation, the receiver evaluated once there), and a
+    call through it is its target's ordinary fresh call (any-arity callable forwarding: CALLABLE
+    projection never completes the callee cell's VALUE, CR-16). Entry counts alone cannot tell a
+    cache HIT from no request; the request-level evidence is the C# `MetaCallBindingContextTests`
+    § 5 cache-seam guard. -/
 
 /-- `A1 = R1.Algorithm`. -/
 def d4A1 : PropDef := privateProp "A1" (.alias none [] [] (.dotCall (.resolve "R1") "Algorithm" none))
@@ -481,25 +499,55 @@ def d4Observe (extra : List PropDef) (aliasName : Ident) (rows : List Expr) : Op
 
 def d4Calls (name : Ident) (n : Nat) : List Expr := List.replicate n (.call (.resolve name) [])
 
--- After the first `A1()` completes R1's plan callee VALUE, every later `A1()` adds NO `V`,
--- `B` or alias entry, no need cell and no alias cell, and leaves the one callee cell
--- completed; it opens exactly one binding context, the terminal row's own (a fresh
--- `R1.Algorithm()` would also give `V` a new entry, as the D2 guards above show).
+/-- The observation fields a transparent alias shares with its direct spelling: everything but
+    the alias's own binding cell (one alias cell and its need cells). -/
+def d4Visible (observation : Option D4Observation) : Option (Result × Nat × Nat × Nat × List Bool) :=
+  observation.map fun o => (o.value, o.v, o.b, o.contexts, o.calleesCompleted)
+
+-- Every `A1()` is the fresh zero-supply call `B()` of R1's plan callee: one new binding
+-- context and one new local-only `V` entry per call; `B`'s own entry is established by the
+-- first call (CACHE-PUB-1) and never replaced; the callee cell's VALUE is never demanded, and
+-- the alias owns no entry.
 #guard d4Observe [d4A1] "A1" (d4Calls "A1" 1)
-  == some { value := .atom 3, v := 1, b := 1, aliasEntries := 1, needs := 6, aliasCells := 1, contexts := 4, calleesCompleted := [true] }
+  == some { value := .atom 3, v := 1, b := 1, aliasEntries := 0, needs := 6, aliasCells := 1, contexts := 4, calleesCompleted := [false] }
 #guard d4Observe [d4A1] "A1" (d4Calls "A1" 2)
-  == some { value := .sequenceValue [.atom 3, .atom 3], v := 1, b := 1, aliasEntries := 1, needs := 6, aliasCells := 1, contexts := 5, calleesCompleted := [true] }
+  == some { value := .sequenceValue [.atom 3, .atom 3], v := 2, b := 1, aliasEntries := 0, needs := 6, aliasCells := 1, contexts := 5, calleesCompleted := [false] }
 #guard d4Observe [d4A1] "A1" (d4Calls "A1" 3)
-  == some { value := .sequenceValue [.atom 3, .atom 3, .atom 3], v := 1, b := 1, aliasEntries := 1, needs := 6, aliasCells := 1, contexts := 6, calleesCompleted := [true] }
--- M06: three `H` activations make three alias cells and three `A` entries, but sharing
--- follows the PLAN: two callee cells (R1's, R2's), two `V`/`B` entries.
+  == some { value := .sequenceValue [.atom 3, .atom 3, .atom 3], v := 3, b := 1, aliasEntries := 0, needs := 6, aliasCells := 1, contexts := 6, calleesCompleted := [false] }
+-- ... exactly the visible state of the direct spelling `R1.Algorithm()`, call for call.
+#guard d4Visible (d4Observe [d4A1] "A1" (d4Calls "A1" 1)) == d4Visible (d4Observe [] "A1" [d2Call "R1"])
+#guard d4Visible (d4Observe [d4A1] "A1" (d4Calls "A1" 2)) == d4Visible (d4Observe [] "A1" [d2Call "R1", d2Call "R1"])
+#guard d4Visible (d4Observe [d4A1] "A1" (d4Calls "A1" 3))
+  == d4Visible (d4Observe [] "A1" [d2Call "R1", d2Call "R1", d2Call "R1"])
+-- The bare `A1` is the binding cell's VALUE, read once: it completes the callee cell and
+-- reads `B` through its property entry, like the bare `R1.Algorithm`.
+#guard d4Observe [d4A1] "A1" [.resolve "A1", .resolve "A1"]
+  == some { value := .sequenceValue [.atom 3, .atom 3], v := 1, b := 1, aliasEntries := 0, needs := 6, aliasCells := 1, contexts := 3, calleesCompleted := [true] }
+#guard d4Visible (d4Observe [d4A1] "A1" [.resolve "A1", .resolve "A1"])
+  == d4Visible (d4Observe [] "A1" [.dotCall (.resolve "R1") "Algorithm" none, .dotCall (.resolve "R1") "Algorithm" none])
+-- M06: three `H` activations make three alias cells (one per declaring activation, L-RUN) and
+-- no `A` entry; the six `A()` calls are six fresh `B()` calls (six `V` entries), and sharing
+-- follows the PLAN: two callee cells (R1's, R2's), two `B` entries — the visible state of
+-- `H(r) = r.Algorithm() * 100 + r.Algorithm()`.
 #guard d4Observe [d4H] "A" [.call (.resolve "H") [.resolve "R1"], .call (.resolve "H") [.resolve "R1"], .call (.resolve "H") [.resolve "R2"]]
-  == some { value := .sequenceValue [.atom 303, .atom 303, .atom 404], v := 2, b := 2, aliasEntries := 3, needs := 14, aliasCells := 3, contexts := 14, calleesCompleted := [true, true] }
--- M27: a computed receiver re-runs `F(3)` in the second `AM()`'s fresh row: a second plan
--- with its own completed callee cell and its own `V`/`B` entries; the bare `AM` reads AM's
--- one published entry.
+  == some { value := .sequenceValue [.atom 303, .atom 303, .atom 404], v := 6, b := 2, aliasEntries := 0, needs := 14, aliasCells := 3, contexts := 14, calleesCompleted := [false, false] }
+/-- `H(r) = r.Algorithm() * 100 + r.Algorithm()`: `d4H` with its alias written out. -/
+def d4HDirect : PropDef := privateProp "H" (alg ["r"] [] []
+  [.binary .add (.binary .mul (.dotCall (.param "r") "Algorithm" (some [])) (.num 100)) (.dotCall (.param "r") "Algorithm" (some []))])
+#guard d4Visible (d4Observe [d4H] "A" [.call (.resolve "H") [.resolve "R1"], .call (.resolve "H") [.resolve "R1"], .call (.resolve "H") [.resolve "R2"]])
+  == d4Visible (d4Observe [d4HDirect] "A" [.call (.resolve "H") [.resolve "R1"], .call (.resolve "H") [.resolve "R1"], .call (.resolve "H") [.resolve "R2"]])
+-- M27: a COMPUTED receiver is evaluated ONCE per declaring activation (L-RUN): `F(3)` runs once
+-- for the alias's binding cell, so both `AM()` calls are fresh `B()` calls of the ONE plan (two
+-- `V` entries, one `B` entry, one callee cell), and the bare `AM` completes that callee cell,
+-- reading `B`'s established entry — the visible state of the property-held receiver
+-- `R1 = F(3)` / `R1.Algorithm(), R1.Algorithm(), R1.Algorithm`, never that of re-running `F(3)`.
 #guard d4Observe [d4AM] "AM" [.call (.resolve "AM") [], .call (.resolve "AM") [], .resolve "AM"]
-  == some { value := .sequenceValue [.atom 3, .atom 3, .atom 3], v := 2, b := 2, aliasEntries := 1, needs := 10, aliasCells := 1, contexts := 7, calleesCompleted := [true, true] }
+  == some { value := .sequenceValue [.atom 3, .atom 3, .atom 3], v := 2, b := 1, aliasEntries := 0, needs := 6, aliasCells := 1, contexts := 5, calleesCompleted := [true] }
+#guard d4Visible (d4Observe [d4AM] "AM" [.call (.resolve "AM") [], .call (.resolve "AM") [], .resolve "AM"])
+  == d4Visible (d4Observe [] "AM" [d2Call "R1", d2Call "R1", .dotCall (.resolve "R1") "Algorithm" none])
+#guard d4Visible (d4Observe [d4AM] "AM" [.call (.resolve "AM") [], .call (.resolve "AM") [], .resolve "AM"])
+  != d4Visible (d4Observe [] "AM" [.dotCall (.call (.resolve "F") [.num 3]) "Algorithm" (some []),
+      .dotCall (.call (.resolve "F") [.num 3]) "Algorithm" (some []), .dotCall (.call (.resolve "F") [.num 3]) "Algorithm" none])
 
 /-- D2-PV6: `G(k) = { F(0) = { V = k * 1 ⏎ V } ⏎ F(x) = 0 ⏎ Capture(F(0)) }`, a literal-only clause
     branch that binds nothing. -/

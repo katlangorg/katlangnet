@@ -33,7 +33,9 @@ work inside a channel (nested demands, cache publication, host effects) is not o
 Nothing here touches production: `EvalState` has no trace field, the evaluator never runs
 `TraceM`, and C# is unaffected.
 
-THE ORDERING BEHAVIOURS the schedule establishes (the numbers cited by the laws below):
+THE ORDERING BEHAVIOURS the schedule establishes (the numbers cited by the laws below; NEED-04
+is GROUP-AWARE since ALIAS-UNIFY-1, October 2026: a repeated occurrence projects CALLABLE first and
+demands VALUE only as its group requires, § Repeated names):
 (1) a level's cardinality is checked before any of its patterns is inspected;
 (2) a level's sources are visited in written order;
 (3) a collector source is allocated before its pattern is bound;
@@ -233,37 +235,51 @@ state alone, never on the prefix. -/
 def TracesAs {α : Type} (x : TraceM α) (y : EvalM α) (events : EvalState → List NeedEvent) : Prop :=
   ∀ s tr, runTrace x ⟨s, tr⟩ = ((runEval y s).1, ⟨(runEval y s).2, tr ++ events s⟩)
 
-/-- THE SCHEDULE OF ONE REPEATED-NAME OCCURRENCE (NEED-04, Q-28), in the order the binder
-    invokes the capabilities: VALUE of the current cell; then, only if it succeeded and the
-    name is already bound, VALUE of the retained representative; then, only if that succeeded
-    and the two counted values are equal, CALLABLE of the representative; then, only if that
-    succeeded, CALLABLE of the current cell. Every later event is conditional on the earlier
-    outcomes — a failure or an unequal value ends the occurrence's events. -/
-def repeatedNameEvents (k : NeedCapabilities EvalM) (address : Nat) (previous? : Option Nat)
+/-- THE EVENTS OF NEED-04's DATA-ANCHOR CHECK (`NeedBinder.checkAnchor`) over `cells`: the VALUE
+    demand of each cell in order, ended by a failed demand or the first disagreement with
+    `anchor`. -/
+def anchorEvents (k : NeedCapabilities EvalM) (anchor : CountedResult) : List Nat → EvalState → List NeedEvent
+  | [], _ => []
+  | cell :: rest, s =>
+    .value cell ::
+      match runEval (k.value cell) s with
+      | (.error _, _) => []
+      | (.ok own, s1) => if own == anchor then anchorEvents k anchor rest s1 else []
+
+/-- THE SCHEDULE OF ONE REPEATED-NAME OCCURRENCE (NEED-04, group-aware), in the order the binder
+    invokes the capabilities, against the group's agreement state `group`: CALLABLE of the current
+    cell first; then
+    * for a callable-bearing contribution: nothing more on an identity conflict or without a data
+      anchor (the contribution waits), otherwise the anchor check of its own VALUE;
+    * for a value-only contribution: its own VALUE; then, only without an anchor, the anchor check
+      of every pending callable contribution, in occurrence order.
+    Every later event is conditional on the earlier outcomes — a failure or a disagreement ends the
+    occurrence's events. -/
+def repeatedNameEvents (k : NeedCapabilities EvalM) (address : Nat) (group : RepeatedGroup)
     (s : EvalState) : List NeedEvent :=
-  .value address ::
-    match runEval (k.value address) s with
+  .callable address ::
+    match runEval (k.callable address) s with
     | (.error _, _) => []
-    | (.ok value, s1) =>
-      match previous? with
-      | none => []
-      | some previous =>
-        .value previous ::
-          match runEval (k.value previous) s1 with
-          | (.error _, _) => []
-          | (.ok before, s2) =>
-            if (!(before == value)) = true then []
-            else
-              .callable previous ::
-                match runEval (k.callable previous) s2 with
-                | (.error _, _) => []
-                | (.ok _, _) => [.callable address]
+    | (.ok (some identity), s1) =>
+      if group.conflictsWith identity then []
+      else
+        match group.anchor with
+        | some anchor => anchorEvents k anchor [address] s1
+        | none => []
+    | (.ok none, s1) =>
+      .value address ::
+        match runEval (k.value address) s1 with
+        | (.error _, _) => []
+        | (.ok own, s2) =>
+          match group.anchor with
+          | some _ => []
+          | none => anchorEvents k own group.pending s2
 
 /-- One name occurrence: a non-repeated name emits NOTHING; a repeated one follows
-    `repeatedNameEvents` against its representative in the binding so far. -/
+    `repeatedNameEvents` against its group's agreement state in the binding so far. -/
 def nameEvents (k : NeedCapabilities EvalM) (name : Ident) (address : Nat) (repeated : List Ident)
-    (bound : NeedEnv) (s : EvalState) : List NeedEvent :=
-  if repeated.contains name = true then repeatedNameEvents k address (lookupAssoc name bound) s else []
+    (bound : NeedBindState) (s : EvalState) : List NeedEvent :=
+  if repeated.contains name = true then repeatedNameEvents k address (bound.groupOf name) s else []
 
 /-- The ready-cell allocations of a structural pattern's opened items, in item order: one
     `ready(a)` per successful allocation, stopping at a failed one. -/
@@ -301,7 +317,7 @@ mutual
         only if all of them succeeded and the nested level's cardinality gate accepts, the
         nested patterns' schedule — depth first. A failed demand, the wrong kind, a failed
         allocation or a rejected nested count ends the pattern's events. -/
-  def oneEvents (k : NeedCapabilities EvalM) : NeedPattern → Nat → List Ident → NeedEnv → Bool →
+  def oneEvents (k : NeedCapabilities EvalM) : NeedPattern → Nat → List Ident → NeedBindState → Bool →
       EvalState → List NeedEvent
     | .bind name _, address, repeated, bound, _, s => nameEvents k name address repeated bound s
     | .literal _, address, _, _, _, _ => [.value address]
@@ -357,7 +373,7 @@ mutual
       schedule, then — only if the pattern bound (neither failed nor mismatched) — the
       remaining patterns from the state it left. -/
   def sourcesEvents (k : NeedCapabilities EvalM) : List NeedPattern → List (NeedSource Nat) →
-      List Ident → NeedEnv → Bool → EvalState → List NeedEvent
+      List Ident → NeedBindState → Bool → EvalState → List NeedEvent
     | [], _, _, _, _, _ => []
     | pattern :: rest, sources, repeated, bound, family, s =>
       addressEvents k (sources.headD .missing) s ++
@@ -372,7 +388,7 @@ end
 
 /-- One level: nothing if the cardinality gate rejects, otherwise its patterns' schedule. -/
 def levelEvents (k : NeedCapabilities EvalM) (ps : List NeedPattern) (cells : List Nat)
-    (repeated : List Ident) (bound : NeedEnv) (family : Bool) (s : EvalState) : List NeedEvent :=
+    (repeated : List Ident) (bound : NeedBindState) (family : Bool) (s : EvalState) : List NeedEvent :=
   if needAcceptsCardinality ps cells.length = true then
     sourcesEvents k ps (needLevelSources ps cells) repeated bound family s
   else []
@@ -380,7 +396,7 @@ def levelEvents (k : NeedCapabilities EvalM) (ps : List NeedPattern) (cells : Li
 /-- A whole head. -/
 def patternsEvents (k : NeedCapabilities EvalM) (ps : List NeedPattern) (cells : List Nat)
     (family : Bool) (s : EvalState) : List NeedEvent :=
-  levelEvents k ps cells (needRepeatedNames ps) [] family s
+  levelEvents k ps cells (needRepeatedNames ps) {} family s
 
 /-! ### The trace theorem: the traced core is the production core plus exactly the schedule -/
 
@@ -406,36 +422,65 @@ theorem traced_ready (k : NeedCapabilities EvalM) (items : List Result) :
       (readyCells k items) (readyEvents k items) :=
   traced_ready_loop k items []
 
+/-- The data-anchor check traced: exactly `anchorEvents`. -/
+theorem traced_checkAnchor (k : NeedCapabilities EvalM) (name : Ident) (anchor : CountedResult)
+    (family : Bool) (cells : List Nat) :
+    TracesAs (NeedBinder.checkAnchor (traced k) name anchor family cells)
+      (NeedBinder.checkAnchor k name anchor family cells) (anchorEvents k anchor cells) := by
+  induction cells with
+  | nil => intro s tr; simp [NeedBinder.checkAnchor, anchorEvents]
+  | cons cell rest ih =>
+    intro s tr
+    simp only [NeedBinder.checkAnchor, anchorEvents, runTrace_bind, runEval_bind, runTrace_value]
+    rcases h1 : runEval (k.value cell) s with ⟨_ | own, s1⟩
+    · simp
+    · simp only [thenRun_ok]
+      by_cases hagree : (own == anchor) = true
+      · simp only [hagree, ↓reduceIte]
+        rw [ih s1 (tr ++ [NeedEvent.value cell])]
+        simp
+      · simp only [hagree, Bool.false_eq_true, ↓reduceIte]
+        cases family <;> simp
+
 theorem traced_name (k : NeedCapabilities EvalM) (name : Ident) (address : Nat) (repeated : List Ident)
-    (bound : NeedEnv) (family : Bool) :
+    (bound : NeedBindState) (family : Bool) :
     TracesAs (NeedBinder.bindName (traced k) name address repeated bound family)
       (NeedBinder.bindName k name address repeated bound family)
       (nameEvents k name address repeated bound) := by
   intro s tr
   by_cases hr : repeated.contains name = true
-  · simp only [NeedBinder.bindName, hr, ↓reduceIte, nameEvents, repeatedNameEvents]
-    rcases h1 : runEval (k.value address) s with ⟨_ | value, s1⟩
-    · simp [h1]
-    · cases hl : lookupAssoc name bound with
-      | none => simp [h1]
-      | some previous =>
-        rcases h2 : runEval (k.value previous) s1 with ⟨_ | before, s2⟩
-        · simp [h1, h2]
-        · cases hbv : (before == value)
-          · cases family <;> simp [h1, h2, hbv]
-          · rcases h3 : runEval (k.callable previous) s2 with ⟨_ | first, s3⟩
-            · simp [h1, h2, hbv, h3]
-            · rcases h4 : runEval (k.callable address) s3 with ⟨_ | second, s4⟩
-              · simp [h1, h2, hbv, h3, h4]
-              · cases first with
-                | none => cases second <;> simp [h1, h2, hbv, h3, h4]
-                | some a =>
-                  cases second with
-                  | none => simp [h1, h2, hbv, h3, h4]
-                  | some b =>
-                    cases hid : sameRepeatedCallableIdentity a b
-                    · cases family <;> simp [h1, h2, hbv, h3, h4, hid]
-                    · simp [h1, h2, hbv, h3, h4, hid]
+  · simp only [NeedBinder.bindName, hr, ↓reduceIte, nameEvents, repeatedNameEvents, runTrace_bind,
+      runEval_bind, runTrace_callable]
+    rcases h1 : runEval (k.callable address) s with ⟨_ | (_ | identity), s1⟩
+    · simp
+    · simp only [thenRun_ok, runTrace_bind, runEval_bind, runTrace_value]
+      rcases h2 : runEval (k.value address) s1 with ⟨_ | own, s2⟩
+      · simp
+      · simp only [thenRun_ok]
+        cases ha : (bound.groupOf name).anchor with
+        | some anchor =>
+          by_cases hagree : (own == anchor) = true
+          · simp [hagree]
+          · simp only [hagree, Bool.false_eq_true, ↓reduceIte]
+            cases family <;> simp [NeedBinder.repeatedMismatch]
+        | none =>
+          simp only [runTrace_bind, runEval_bind]
+          rw [traced_checkAnchor k name own family (bound.groupOf name).pending s2
+            (tr ++ [NeedEvent.callable address] ++ [NeedEvent.value address])]
+          rcases h3 : runEval (NeedBinder.checkAnchor k name own family (bound.groupOf name).pending) s2
+            with ⟨_ | (_ | _), s3⟩ <;> simp
+    · simp only [thenRun_ok]
+      by_cases hc : (bound.groupOf name).conflictsWith identity = true
+      · simp only [hc, ↓reduceIte]
+        cases family <;> simp [NeedBinder.repeatedMismatch]
+      · simp only [hc, Bool.false_eq_true, ↓reduceIte]
+        cases ha : (bound.groupOf name).anchor with
+        | some anchor =>
+          simp only [runTrace_bind, runEval_bind]
+          rw [traced_checkAnchor k name anchor family [address] s1 (tr ++ [NeedEvent.callable address])]
+          rcases h3 : runEval (NeedBinder.checkAnchor k name anchor family [address]) s1
+            with ⟨_ | (_ | _), s3⟩ <;> simp
+        | none => simp
   · have hr' : repeated.contains name = false := by simpa using hr
     simp only [NeedBinder.bindName, hr', Bool.false_eq_true, ↓reduceIte, nameEvents]
     simp
@@ -458,7 +503,7 @@ mutual
       production core's outcome and final semantic state, keeps the prefix, and appends exactly
       `oneEvents k …` — on success, non-match and every error alike. -/
   theorem traced_one (k : NeedCapabilities EvalM) (p : NeedPattern) (address : Nat)
-      (repeated : List Ident) (bound : NeedEnv) (family : Bool) :
+      (repeated : List Ident) (bound : NeedBindState) (family : Bool) :
       TracesAs (NeedBinder.bindOne (traced k) p address repeated bound family)
         (NeedBinder.bindOne k p address repeated bound family)
         (oneEvents k p address repeated bound family) := by
@@ -538,7 +583,7 @@ mutual
 
   /-- THE TRACE THEOREM, one level's patterns over their sources (see `traced_one`). -/
   theorem traced_sources (k : NeedCapabilities EvalM) (ps : List NeedPattern)
-      (sources : List (NeedSource Nat)) (repeated : List Ident) (bound : NeedEnv) (family : Bool) :
+      (sources : List (NeedSource Nat)) (repeated : List Ident) (bound : NeedBindState) (family : Bool) :
       TracesAs (NeedBinder.bindSources (traced k) ps sources repeated bound family)
         (NeedBinder.bindSources k ps sources repeated bound family)
         (sourcesEvents k ps sources repeated bound family) := by
@@ -564,7 +609,7 @@ end
 
 /-- THE TRACE THEOREM, one level: the cardinality gate, then the level's patterns. -/
 theorem traced_level (k : NeedCapabilities EvalM) (ps : List NeedPattern) (cells : List Nat)
-    (repeated : List Ident) (bound : NeedEnv) (family : Bool) :
+    (repeated : List Ident) (bound : NeedBindState) (family : Bool) :
     TracesAs (NeedBinder.bindLevel (traced k) ps cells repeated bound family)
       (NeedBinder.bindLevel k ps cells repeated bound family)
       (levelEvents k ps cells repeated bound family) := by
@@ -579,8 +624,13 @@ theorem traced_level (k : NeedCapabilities EvalM) (ps : List NeedPattern) (cells
 theorem traced_patterns (k : NeedCapabilities EvalM) (ps : List NeedPattern) (cells : List Nat)
     (family : Bool) :
     TracesAs (NeedBinder.bindPatterns (traced k) ps cells family)
-      (NeedBinder.bindPatterns k ps cells family) (patternsEvents k ps cells family) :=
-  traced_level k ps cells (needRepeatedNames ps) [] family
+      (NeedBinder.bindPatterns k ps cells family) (patternsEvents k ps cells family) := by
+  intro s tr
+  simp only [NeedBinder.bindPatterns, runTrace_bind, runEval_bind, patternsEvents]
+  rw [traced_level k ps cells (needRepeatedNames ps) {} family s tr]
+  rcases runEval (NeedBinder.bindLevel k ps cells (needRepeatedNames ps) {} family) s with ⟨_ | state, t⟩
+  · simp
+  · simp
 
 /-! ## Trace erasure
 
@@ -624,7 +674,7 @@ theorem trace_extends_its_prefix (k : NeedCapabilities EvalM) (ps : List NeedPat
 /-! ## Sequential composition of a level: written order and truncation -/
 
 /-- Whether a binding outcome lets the next pattern run. -/
-def continues : Except Error (Option NeedEnv) → Bool
+def continues : Except Error (Option NeedBindState) → Bool
   | .ok (some _) => true
   | _ => false
 
@@ -633,7 +683,7 @@ def continues : Except Error (Option NeedEnv) → Bool
     environment and state `ps` left. If `ps` raised an error or did not match, that outcome
     and state are final. -/
 theorem sources_append (k : NeedCapabilities EvalM) (ps qs : List NeedPattern)
-    (sources : List (NeedSource Nat)) (repeated : List Ident) (bound : NeedEnv) (family : Bool)
+    (sources : List (NeedSource Nat)) (repeated : List Ident) (bound : NeedBindState) (family : Bool)
     (s : EvalState) :
     runEval (NeedBinder.bindSources k (ps ++ qs) sources repeated bound family) s
       = match runEval (NeedBinder.bindSources k ps sources repeated bound family) s with
@@ -660,7 +710,7 @@ theorem sources_append (k : NeedCapabilities EvalM) (ps qs : List NeedPattern)
     only if `ps` bound — by the events of `qs` from where `ps` left off. Written order at
     every position, with nothing after a failure or a non-match. -/
 theorem sources_events_append (k : NeedCapabilities EvalM) (ps qs : List NeedPattern)
-    (sources : List (NeedSource Nat)) (repeated : List Ident) (bound : NeedEnv) (family : Bool)
+    (sources : List (NeedSource Nat)) (repeated : List Ident) (bound : NeedBindState) (family : Bool)
     (s : EvalState) :
     sourcesEvents k (ps ++ qs) sources repeated bound family s
       = sourcesEvents k ps sources repeated bound family s ++
@@ -687,7 +737,7 @@ theorem sources_events_append (k : NeedCapabilities EvalM) (ps qs : List NeedPat
     match, appending further patterns `qs` changes NOTHING observable — not the outcome, not the
     final semantic state, not one event: no later sibling begins, and nothing is rolled back. -/
 theorem traced_sources_truncate (k : NeedCapabilities EvalM) (ps qs : List NeedPattern)
-    (sources : List (NeedSource Nat)) (repeated : List Ident) (bound : NeedEnv) (family : Bool)
+    (sources : List (NeedSource Nat)) (repeated : List Ident) (bound : NeedBindState) (family : Bool)
     (s : EvalState) (tr : List NeedEvent)
     (hstop : continues (runEval (NeedBinder.bindSources k ps sources repeated bound family) s).1 = false) :
     runTrace (NeedBinder.bindSources (traced k) (ps ++ qs) sources repeated bound family) ⟨s, tr⟩
@@ -724,10 +774,10 @@ theorem traced_rejected_count_is_silent (k : NeedCapabilities EvalM) (ps : List 
     environment. (A collecting occurrence's address is a collector cell the SOURCE resolution
     allocated first — `production_collector_occurrence_in_a_mixed_head`.) -/
 theorem traced_plain_occurrence_is_silent (k : NeedCapabilities EvalM) (name : Ident) (collecting : Bool)
-    (address : Nat) (repeated : List Ident) (bound : NeedEnv) (family : Bool) (s : EvalState)
+    (address : Nat) (repeated : List Ident) (bound : NeedBindState) (family : Bool) (s : EvalState)
     (tr : List NeedEvent) (h : repeated.contains name = false) :
     runTrace (NeedBinder.bindOne (traced k) (.bind name collecting) address repeated bound family) ⟨s, tr⟩
-      = (.ok (some (bound.filter (fun entry => entry.fst != name) ++ [(name, address)])), ⟨s, tr⟩) := by
+      = (.ok (some (bound.withPlain name address)), ⟨s, tr⟩) := by
   simp only [NeedBinder.bindOne, BinderCore.core_plain_name_is_pure _ _ _ _ _ _ h, runTrace_pure]
 
 /-- MIXED-HEAD PLAIN STEP (NEED-04, per occurrence): in ANY head — around inspecting, repeated, structural
@@ -737,17 +787,16 @@ theorem traced_plain_occurrence_is_silent (k : NeedCapabilities EvalM) (name : I
     of its own. Later patterns may still demand the same address. -/
 theorem traced_plain_occurrence_in_a_mixed_head (k : NeedCapabilities EvalM) (name : Ident)
     (collecting : Bool) (address : Nat) (rest : List NeedPattern) (sources : List (NeedSource Nat))
-    (repeated : List Ident) (bound : NeedEnv) (family : Bool) (h : repeated.contains name = false) :
+    (repeated : List Ident) (bound : NeedBindState) (family : Bool) (h : repeated.contains name = false) :
     NeedBinder.bindSources (traced k) (.bind name collecting :: rest) (.cell address :: sources) repeated
         bound family
-      = NeedBinder.bindSources (traced k) rest sources repeated
-          (bound.filter (fun entry => entry.fst != name) ++ [(name, address)]) family :=
+      = NeedBinder.bindSources (traced k) rest sources repeated (bound.withPlain name address) family :=
   BinderCore.core_plain_step (traced k) name collecting address rest sources repeated bound family h
 
 /-- The same, at any position of a level: a plain non-repeated occurrence's OWN schedule is
     empty, so by `sources_events_append` the events around it are exactly its neighbours'. -/
 theorem plain_occurrence_schedule_is_empty (k : NeedCapabilities EvalM) (name : Ident) (collecting : Bool)
-    (address : Nat) (repeated : List Ident) (bound : NeedEnv) (family : Bool) (s : EvalState)
+    (address : Nat) (repeated : List Ident) (bound : NeedBindState) (family : Bool) (s : EvalState)
     (h : repeated.contains name = false) :
     oneEvents k (.bind name collecting) address repeated bound family s = [] := by
   simp only [oneEvents, nameEvents, h, Bool.false_eq_true, ↓reduceIte]
@@ -768,13 +817,13 @@ theorem plain_then_literal_on_one_cell (k : NeedCapabilities EvalM) (name : Iden
   simp only [patternsEvents, levelEvents, hrep, List.length_cons, List.length_nil, hacc, ↓reduceIte,
     hsrc, sourcesEvents, addressEvents, List.headD_cons, NeedBinder.sourceAddress, runEval_pure,
     oneEvents, nameEvents, List.contains_nil, Bool.false_eq_true, List.nil_append, List.tail_cons,
-    NeedBinder.bindOne, BinderCore.core_plain_name_is_pure (k := k) name address [] [] family rfl]
+    NeedBinder.bindOne, BinderCore.core_plain_name_is_pure (k := k) name address [] {} family rfl]
   split <;> simp
 
 /-- (5) A LITERAL demands its cell's VALUE — exactly one event — and only then decides by the
     matcher; a demand failure is final. -/
 theorem traced_literal (k : NeedCapabilities EvalM) (literal : Pattern) (address : Nat)
-    (repeated : List Ident) (bound : NeedEnv) (family : Bool) (s : EvalState) (tr : List NeedEvent) :
+    (repeated : List Ident) (bound : NeedBindState) (family : Bool) (s : EvalState) (tr : List NeedEvent) :
     runTrace (NeedBinder.bindOne (traced k) (.literal literal) address repeated bound family) ⟨s, tr⟩
       = match runEval (k.value address) s with
         | (.error e, t) => (.error e, ⟨t, tr ++ [.value address]⟩)
@@ -794,17 +843,19 @@ theorem traced_literal (k : NeedCapabilities EvalM) (literal : Pattern) (address
     (`family_attempt_is_the_ordinary_binding`, `ordinary_binding_is_never_a_non_match`,
     `KatLangArityLaws/BinderCorrespondence.lean`). -/
 theorem literal_mismatch_is_none_in_both_modes (k : NeedCapabilities EvalM) (literal : Pattern)
-    (address : Nat) (repeated : List Ident) (bound : NeedEnv) (family : Bool) (s t : EvalState)
+    (address : Nat) (repeated : List Ident) (bound : NeedBindState) (family : Bool) (s t : EvalState)
     (value : Result) (count : Nat) (hv : runEval (k.value address) s = (.ok (value, count), t))
     (hm : (matchPattern literal value).isSome = false) :
     runEval (NeedBinder.bindOne k (.literal literal) address repeated bound family) s = (.ok none, t) := by
   simp [NeedBinder.bindOne, hv, hm]
 
-/-- Whether an occurrence INSPECTS its cell: every literal and structural pattern, and every
-    occurrence of a repeated name. A META capture (CallReference S1) reifies its cell without
-    demanding it, so it is not an inspection. -/
-def inspectsAt (repeated : List Ident) : NeedPattern → Bool
-  | .bind name _ => repeated.contains name
+/-- Whether an occurrence INSPECTS its cell by demanding its VALUE FIRST: every literal and
+    structural pattern. A repeated name's occurrence projects its CALLABLE first (NEED-04,
+    group-aware; § Repeated names), and a META capture (CallReference S1) reifies its cell without
+    demanding it, so neither is an inspection in this sense. `repeated` is kept for the callers'
+    uniform shape. -/
+def inspectsAt (_repeated : List Ident) : NeedPattern → Bool
+  | .bind _ _ => false
   | .metaRef _ => false
   | _ => true
 
@@ -813,16 +864,13 @@ def inspectsAt (repeated : List Ident) : NeedPattern → Bool
     VALUE event — nothing was projected, allocated or bound. (That the demand comes FIRST in every
     outcome is `inspecting_occurrence_demands_its_cell_first`.) -/
 theorem traced_inspection_failure (k : NeedCapabilities EvalM) (p : NeedPattern) (address : Nat)
-    (repeated : List Ident) (bound : NeedEnv) (family : Bool) (s t : EvalState) (tr : List NeedEvent)
+    (repeated : List Ident) (bound : NeedBindState) (family : Bool) (s t : EvalState) (tr : List NeedEvent)
     (e : Error) (hi : inspectsAt repeated p = true) (h : runEval (k.value address) s = (.error e, t)) :
     runTrace (NeedBinder.bindOne (traced k) p address repeated bound family) ⟨s, tr⟩
       = (.error e, ⟨t, tr ++ [.value address]⟩) := by
   rw [traced_one k p address repeated bound family s tr]
   cases p with
-  | bind name collecting =>
-    simp only [inspectsAt] at hi
-    simp only [NeedBinder.bindOne, NeedBinder.bindName, oneEvents, nameEvents, hi, ↓reduceIte]
-    simp [repeatedNameEvents, h]
+  | bind name collecting => simp [inspectsAt] at hi
   | literal literal => simp [NeedBinder.bindOne, oneEvents, h]
   | sequence ps => simp [NeedBinder.bindOne, oneEvents, h]
   | list ps => simp [NeedBinder.bindOne, oneEvents, h]
@@ -832,7 +880,7 @@ theorem traced_inspection_failure (k : NeedCapabilities EvalM) (p : NeedPattern)
 /-- The production face of `traced_inspection_failure`: the occurrence's schedule is exactly its one
     VALUE event and the production run is that error in that state. -/
 theorem inspection_failure_schedule (k : NeedCapabilities EvalM) (p : NeedPattern) (address : Nat)
-    (repeated : List Ident) (bound : NeedEnv) (family : Bool) (s t : EvalState) (e : Error)
+    (repeated : List Ident) (bound : NeedBindState) (family : Bool) (s t : EvalState) (e : Error)
     (hi : inspectsAt repeated p = true) (h : runEval (k.value address) s = (.error e, t)) :
     oneEvents k p address repeated bound family s = [.value address]
     ∧ runEval (NeedBinder.bindOne k p address repeated bound family) s = (.error e, t) := by
@@ -853,7 +901,7 @@ theorem inspection_failure_schedule (k : NeedCapabilities EvalM) (p : NeedPatter
     demand left, and its trace is the prefix's events followed by that one VALUE event: no later
     sibling (`after`) and no later event, nothing rolled back. -/
 theorem traced_failure_at_any_position (k : NeedCapabilities EvalM) (before after : List NeedPattern)
-    (p : NeedPattern) (sources : List (NeedSource Nat)) (repeated : List Ident) (bound bound' : NeedEnv)
+    (p : NeedPattern) (sources : List (NeedSource Nat)) (repeated : List Ident) (bound bound' : NeedBindState)
     (family : Bool) (s s1 t : EvalState) (tr : List NeedEvent) (address : Nat) (e : Error)
     (hbefore : runEval (NeedBinder.bindSources k before sources repeated bound family) s
       = (.ok (some bound'), s1))
@@ -871,7 +919,7 @@ theorem traced_failure_at_any_position (k : NeedCapabilities EvalM) (before afte
 /-- (6, 7) A STRUCTURAL PATTERN OF THE WRONG KIND: after its one VALUE event, the family
     non-match, otherwise the kind error — no allocation, no nested event. -/
 theorem traced_wrong_kind (k : NeedCapabilities EvalM) (ps : List NeedPattern) (asList : Bool)
-    (address : Nat) (repeated : List Ident) (bound : NeedEnv) (family : Bool) (s t : EvalState)
+    (address : Nat) (repeated : List Ident) (bound : NeedBindState) (family : Bool) (s t : EvalState)
     (tr : List NeedEvent) (value : Result) (count : Nat)
     (hv : runEval (k.value address) s = (.ok (value, count), t))
     (hk : (if asList then Result.listPatternItems? value else Result.sequencePatternItems? value) = none) :
@@ -895,14 +943,11 @@ def structuralItems : NeedPattern → Result → Option (List Result)
 
 /-- (6) EVERY INSPECTING OCCURRENCE'S EVENTS BEGIN WITH THE VALUE DEMAND OF ITS OWN CELL. -/
 theorem inspecting_occurrence_demands_its_cell_first (k : NeedCapabilities EvalM) (p : NeedPattern)
-    (address : Nat) (repeated : List Ident) (bound : NeedEnv) (family : Bool) (s : EvalState)
+    (address : Nat) (repeated : List Ident) (bound : NeedBindState) (family : Bool) (s : EvalState)
     (hi : inspectsAt repeated p = true) :
     ∃ rest, oneEvents k p address repeated bound family s = .value address :: rest := by
   cases p with
-  | bind name collecting =>
-    simp only [inspectsAt] at hi
-    simp only [oneEvents, nameEvents, hi, ↓reduceIte, repeatedNameEvents]
-    exact ⟨_, rfl⟩
+  | bind name collecting => simp [inspectsAt] at hi
   | literal literal => exact ⟨[], rfl⟩
   | sequence ps => exact ⟨_, rfl⟩
   | list ps => exact ⟨_, rfl⟩
@@ -915,7 +960,7 @@ theorem inspecting_occurrence_demands_its_cell_first (k : NeedCapabilities EvalM
     and nothing else: no nested pattern is inspected. -/
 theorem traced_nested_count_rejected_after_ready_allocation (k : NeedCapabilities EvalM)
     (p : NeedPattern) (ps : List NeedPattern) (hp : p = .sequence ps ∨ p = .list ps ∨ p = .unpack ps)
-    (address : Nat) (repeated : List Ident) (bound : NeedEnv) (family : Bool)
+    (address : Nat) (repeated : List Ident) (bound : NeedBindState) (family : Bool)
     (s t t' : EvalState) (tr : List NeedEvent) (value : Result) (count : Nat) (items : List Result)
     (cells : List Nat) (hv : runEval (k.value address) s = (.ok (value, count), t))
     (hk : structuralItems p value = some items)
@@ -934,168 +979,195 @@ theorem traced_nested_count_rejected_after_ready_allocation (k : NeedCapabilitie
     | (subst hk; cases family <;>
         simp [NeedBinder.bindOne, oneEvents, readyCells, hv, ha, NeedBinder.cardinalityGate, hrej])
 
-/-! ### Repeated names: the order, the representative, the verdict -/
+/-! ### Repeated names: the order, the representative, the verdict (NEED-04, group-aware) -/
 
-/-- The first occurrence of a repeated name demands only its own cell. -/
-theorem repeated_first_occurrence_demands_only_its_cell (k : NeedCapabilities EvalM) (address : Nat)
-    (s : EvalState) :
-    repeatedNameEvents k address none s = [.value address] := by
-  simp only [repeatedNameEvents]
-  rcases runEval (k.value address) s with ⟨_ | value, s1⟩ <;> rfl
+/-- EVERY REPEATED OCCURRENCE PROJECTS ITS CELL'S CALLABLE FIRST: its events begin with that one
+    CALLABLE event, before any VALUE demand of any cell. -/
+theorem repeated_occurrence_projects_its_cell_first (k : NeedCapabilities EvalM) (address : Nat)
+    (group : RepeatedGroup) (s : EvalState) :
+    ∃ rest, repeatedNameEvents k address group s = .callable address :: rest :=
+  ⟨_, rfl⟩
 
-/-- A later occurrence's events are always a PREFIX of the one canonical order
-    VALUE(current), VALUE(representative), CALLABLE(representative), CALLABLE(current):
-    never reordered, never repeated, cut short only by an earlier outcome. -/
-theorem repeated_events_are_a_prefix_of_the_canonical_order (k : NeedCapabilities EvalM)
-    (address previous : Nat) (s : EvalState) :
-    repeatedNameEvents k address (some previous) s <+:
-      [.value address, .value previous, .callable previous, .callable address] := by
-  unfold repeatedNameEvents
-  rcases runEval (k.value address) s with ⟨_ | value, s1⟩
-  · exact ⟨[.value previous, .callable previous, .callable address], rfl⟩
-  · dsimp only
-    rcases runEval (k.value previous) s1 with ⟨_ | before, s2⟩
-    · exact ⟨[.callable previous, .callable address], rfl⟩
+/-- REFERENCE-GROUP INERTNESS (NEED-04): a callable-bearing contribution to a group without a data
+    anchor is ONE CALLABLE event — no VALUE capability is invoked on any cell. -/
+theorem reference_contribution_without_anchor_demands_nothing (k : NeedCapabilities EvalM)
+    (address : Nat) (group : RepeatedGroup) (s s1 : EvalState) (identity : Algorithm)
+    (hp : runEval (k.callable address) s = (.ok (some identity), s1)) (ha : group.anchor = none) :
+    repeatedNameEvents k address group s = [.callable address] := by
+  simp only [repeatedNameEvents, hp, ha]
+  split <;> rfl
+
+/-- An anchor check's events are a PREFIX of the cells' VALUE events in order. -/
+theorem anchorEvents_prefix (k : NeedCapabilities EvalM) (anchor : CountedResult) (cells : List Nat)
+    (s : EvalState) : anchorEvents k anchor cells s <+: cells.map NeedEvent.value := by
+  induction cells generalizing s with
+  | nil => exact List.prefix_refl _
+  | cons cell rest ih =>
+    simp only [anchorEvents, List.map_cons]
+    rcases runEval (k.value cell) s with ⟨_ | own, s1⟩
+    · exact ⟨rest.map NeedEvent.value, rfl⟩
     · dsimp only
-      by_cases hbv : (!(before == value)) = true
-      · rw [if_pos hbv]
-        exact ⟨[.callable previous, .callable address], rfl⟩
-      · rw [if_neg hbv]
-        rcases runEval (k.callable previous) s2 with ⟨_ | first, s3⟩
-        · exact ⟨[.callable address], rfl⟩
-        · exact ⟨[], rfl⟩
+      by_cases h : (own == anchor) = true
+      · rw [if_pos h]
+        exact (List.prefix_cons_inj _).mpr (ih s1)
+      · rw [if_neg h]
+        exact ⟨rest.map NeedEvent.value, rfl⟩
 
-/-- NO CALLABLE PROJECTION BEFORE EQUAL VALUES (NEED-04): a repeated occurrence projects any
-    CALLABLE only after BOTH VALUE demands succeeded and the two counted values are equal. -/
-theorem repeated_callable_only_after_equal_values (k : NeedCapabilities EvalM) (address previous : Nat)
-    (s : EvalState) (x : Nat) (h : NeedEvent.callable x ∈ repeatedNameEvents k address (some previous) s) :
-    ∃ value s1 before s2, runEval (k.value address) s = (.ok value, s1)
-      ∧ runEval (k.value previous) s1 = (.ok before, s2) ∧ (before == value) = true := by
-  unfold repeatedNameEvents at h
-  rcases h1 : runEval (k.value address) s with ⟨_ | value, s1⟩ <;> rw [h1] at h <;> dsimp only at h
-  · simp at h
-  · rcases h2 : runEval (k.value previous) s1 with ⟨_ | before, s2⟩ <;> rw [h2] at h <;> dsimp only at h
-    · simp at h
-    · by_cases hbv : (!(before == value)) = true
-      · rw [if_pos hbv] at h
-        simp at h
-      · exact ⟨value, s1, before, s2, rfl, h2, by simpa using hbv⟩
+/-- A repeated occurrence's events are always a PREFIX of the one canonical order
+    CALLABLE(current), VALUE(current), then the VALUE of each pending callable contribution in
+    occurrence order: never reordered, never repeated, cut short only by an earlier outcome. -/
+theorem repeated_events_are_a_prefix_of_the_canonical_order (k : NeedCapabilities EvalM)
+    (address : Nat) (group : RepeatedGroup) (s : EvalState) :
+    repeatedNameEvents k address group s <+:
+      .callable address :: .value address :: group.pending.map NeedEvent.value := by
+  unfold repeatedNameEvents
+  refine (List.prefix_cons_inj _).mpr ?_
+  rcases runEval (k.callable address) s with ⟨_ | (_ | identity), s1⟩
+  · exact List.nil_prefix
+  · dsimp only
+    refine (List.prefix_cons_inj _).mpr ?_
+    rcases runEval (k.value address) s1 with ⟨_ | own, s2⟩
+    · exact List.nil_prefix
+    · dsimp only
+      cases group.anchor with
+      | some _ => exact List.nil_prefix
+      | none => exact anchorEvents_prefix k own group.pending s2
+  · dsimp only
+    split
+    · exact List.nil_prefix
+    · cases hanc : group.anchor with
+      | none => exact List.nil_prefix
+      | some anchor =>
+        have hp := anchorEvents_prefix k anchor [address] s1
+        simp only [List.map_cons, List.map_nil] at hp
+        exact hp.trans (List.prefix_cons_inj _ |>.mpr List.nil_prefix)
 
-/-- THE VERDICT of a repeated occurrence once both projections succeeded: incompatible callable
-    identities are the family non-match or the type error; otherwise the binding KEEPS its
-    retained representative unless the current contribution is strictly richer (the retained
-    one has no callable identity and the current one has), in which case the current address
-    replaces it (NEED-04, Q-28). -/
-def repeatedVerdict (name : Ident) (address : Nat) (bound : NeedEnv) (family : Bool)
-    (first second : Option Algorithm) : Except Error (Option NeedEnv) :=
-  let keep : Except Error (Option NeedEnv) :=
-    if (first.isSome || second.isNone) = true then .ok (some bound)
-    else .ok (some (bound.filter (fun entry => entry.fst != name) ++ [(name, address)]))
-  match first, second with
-  | some a, some b =>
-    if (!sameRepeatedCallableIdentity a b) = true then
-      (if family then .ok none
-        else .error (Error.typeMismatch "Repeated bind equality requires the same callable identity"))
-    else keep
-  | _, _ => keep
-
-/-- THE REPEATED-NAME BINDING LAW (NEED-04, Q-28), production: an occurrence of a repeated name
-    demands its own VALUE; the first occurrence then binds; a later one demands the retained
-    representative's VALUE, compares the COMPLETE counted values (unequal: the family non-match
-    or `badArity` under the repeated-parameter context, with no projection), then projects the
-    representative's CALLABLE and its own, and decides by `repeatedVerdict`. Every failure is
-    final, in the state it left. `sameRepeatedCallableIdentity` stays symbolic (it calls
-    `partial` definitions). -/
+/-- THE REPEATED-NAME BINDING LAW (NEED-04, group-aware), production: an occurrence of a repeated
+    name projects its own CALLABLE; a callable-bearing contribution is compared with the group's
+    identity (a conflict: the family non-match or the type error, with no VALUE demand) and, only
+    once the group has a data anchor, its own VALUE is checked against the anchor; a value-only
+    contribution demands its own VALUE, compares it with the anchor or, as the group's first one,
+    checks every pending callable contribution's own VALUE against it in occurrence order. Every
+    failure is final, in the state it left. `sameRepeatedCallableIdentity` stays symbolic. -/
 theorem repeated_name_binding (k : NeedCapabilities EvalM) (name : Ident) (address : Nat)
-    (repeated : List Ident) (bound : NeedEnv) (family : Bool) (s : EvalState)
+    (repeated : List Ident) (bound : NeedBindState) (family : Bool) (s : EvalState)
     (hr : repeated.contains name = true) :
     runEval (NeedBinder.bindName k name address repeated bound family) s
-      = match runEval (k.value address) s with
+      = match runEval (k.callable address) s with
         | (.error e, t) => (.error e, t)
-        | (.ok value, s1) =>
-          match lookupAssoc name bound with
-          | none => (.ok (some (bound.filter (fun entry => entry.fst != name) ++ [(name, address)])), s1)
-          | some previous =>
-            match runEval (k.value previous) s1 with
-            | (.error e, t) => (.error e, t)
-            | (.ok before, s2) =>
-              if (!(before == value)) = true then
-                (if family then .ok none
-                  else .error (Error.withContext (repeatedParameterContext name) Error.badArity), s2)
-              else
-                match runEval (k.callable previous) s2 with
-                | (.error e, t) => (.error e, t)
-                | (.ok first, s3) =>
-                  match runEval (k.callable address) s3 with
-                  | (.error e, t) => (.error e, t)
-                  | (.ok second, s4) => (repeatedVerdict name address bound family first second, s4) := by
-  simp only [NeedBinder.bindName, hr, ↓reduceIte]
-  rcases h1 : runEval (k.value address) s with ⟨_ | value, s1⟩
-  · simp [h1]
-  · cases hl : lookupAssoc name bound with
-    | none => simp [h1]
-    | some previous =>
-      rcases h2 : runEval (k.value previous) s1 with ⟨_ | before, s2⟩
-      · simp [h1, h2]
-      · cases hbv : (before == value)
-        · cases family <;> simp [h1, h2, hbv]
-        · rcases h3 : runEval (k.callable previous) s2 with ⟨_ | first, s3⟩
-          · simp [h1, h2, hbv, h3]
-          · rcases h4 : runEval (k.callable address) s3 with ⟨_ | second, s4⟩
-            · simp [h1, h2, hbv, h3, h4]
-            · cases first with
-              | none => cases second <;> simp [h1, h2, hbv, h3, h4, repeatedVerdict]
-              | some a =>
-                cases second with
-                | none => simp [h1, h2, hbv, h3, h4, repeatedVerdict]
-                | some b =>
-                  cases hid : sameRepeatedCallableIdentity a b
-                  · cases family <;> simp [h1, h2, hbv, h3, h4, hid, repeatedVerdict]
-                  · simp [h1, h2, hbv, h3, h4, hid, repeatedVerdict]
+        | (.ok (some identity), s1) =>
+          if (bound.groupOf name).conflictsWith identity = true then
+            (if family then .ok none
+              else .error (Error.typeMismatch "Repeated bind equality requires the same callable identity"), s1)
+          else
+            match (bound.groupOf name).anchor with
+            | some anchor =>
+              match runEval (NeedBinder.checkAnchor k name anchor family [address]) s1 with
+              | (.error e, t) => (.error e, t)
+              | (.ok agreed, t) =>
+                (.ok (if agreed then some (bound.withCallable name address identity) else none), t)
+            | none => (.ok (some (bound.withCallable name address identity)), s1)
+        | (.ok none, s1) =>
+          match runEval (k.value address) s1 with
+          | (.error e, t) => (.error e, t)
+          | (.ok own, s2) =>
+            match (bound.groupOf name).anchor with
+            | some anchor =>
+              if (own == anchor) = true then (.ok (some bound), s2)
+              else (if family then .ok none
+                else .error (Error.withContext (repeatedParameterContext name) Error.badArity), s2)
+            | none =>
+              match runEval (NeedBinder.checkAnchor k name own family (bound.groupOf name).pending) s2 with
+              | (.error e, t) => (.error e, t)
+              | (.ok agreed, t) =>
+                (.ok (if agreed then some (bound.withAnchor name address own) else none), t) := by
+  simp only [NeedBinder.bindName, hr, ↓reduceIte, runEval_bind]
+  rcases h1 : runEval (k.callable address) s with ⟨_ | (_ | identity), s1⟩
+  · simp
+  · simp only [thenRun_ok, runEval_bind]
+    rcases h2 : runEval (k.value address) s1 with ⟨_ | own, s2⟩
+    · simp
+    · simp only [thenRun_ok]
+      cases ha : (bound.groupOf name).anchor with
+      | some anchor =>
+        by_cases hagree : (own == anchor) = true
+        · simp [hagree]
+        · simp only [hagree, Bool.false_eq_true, ↓reduceIte]
+          cases family <;> simp [NeedBinder.repeatedMismatch]
+      | none =>
+        simp only [runEval_bind]
+        rcases h3 : runEval (NeedBinder.checkAnchor k name own family (bound.groupOf name).pending) s2
+          with ⟨_ | (_ | _), s3⟩ <;> simp
+  · simp only [thenRun_ok]
+    by_cases hc : (bound.groupOf name).conflictsWith identity = true
+    · simp only [hc, ↓reduceIte]
+      cases family <;> simp [NeedBinder.repeatedMismatch]
+    · simp only [hc, Bool.false_eq_true, ↓reduceIte]
+      cases ha : (bound.groupOf name).anchor with
+      | some anchor =>
+        simp only [runEval_bind]
+        rcases h3 : runEval (NeedBinder.checkAnchor k name anchor family [address]) s1
+          with ⟨_ | (_ | _), s3⟩ <;> simp
+      | none => simp
 
-/-- THE FAILURE POINTS OF A LATER REPEATED OCCURRENCE: each capability failure is final with
-    exactly the events up to and including the failing invocation, in exactly the state it
-    left; an unequal value ends the occurrence after the two VALUE events — before any
-    CALLABLE projection — as the family non-match or the repeated-parameter `badArity`. -/
+/-- THE DATA-ANCHOR CHECK, production: over cells whose VALUE demands succeed, `true` exactly when
+    every one agrees with the anchor; otherwise the first disagreement is the family's `false` or
+    the repeated-parameter `badArity`; the first failed demand is final. -/
+theorem checkAnchor_run (k : NeedCapabilities EvalM) (name : Ident) (anchor : CountedResult)
+    (family : Bool) (cell : Nat) (rest : List Nat) (s : EvalState) :
+    runEval (NeedBinder.checkAnchor k name anchor family (cell :: rest)) s
+      = match runEval (k.value cell) s with
+        | (.error e, t) => (.error e, t)
+        | (.ok own, t) =>
+          if (own == anchor) = true then runEval (NeedBinder.checkAnchor k name anchor family rest) t
+          else (if family then .ok false
+            else .error (Error.withContext (repeatedParameterContext name) Error.badArity), t) := by
+  simp only [NeedBinder.checkAnchor, runEval_bind]
+  rcases runEval (k.value cell) s with ⟨_ | own, t⟩
+  · simp
+  · simp only [thenRun_ok]
+    by_cases h : (own == anchor) = true
+    · simp [h]
+    · simp only [h, Bool.false_eq_true, ↓reduceIte]
+      cases family <;> simp
+
+/-- THE FAILURE POINTS OF A REPEATED OCCURRENCE: a failed CALLABLE projection is final after its one
+    CALLABLE event (never absence); an identity conflict ends the occurrence after that event,
+    before any VALUE demand, as the family non-match or the type error; a value-only contribution's
+    failed VALUE demand is final after its CALLABLE and VALUE events. -/
 theorem traced_repeated_failure_points (k : NeedCapabilities EvalM) (name : Ident) (address : Nat)
-    (repeated : List Ident) (bound : NeedEnv) (family : Bool) (s s1 : EvalState) (tr : List NeedEvent)
-    (value : CountedResult) (previous : Nat) (hr : repeated.contains name = true)
-    (h1 : runEval (k.value address) s = (.ok value, s1)) (hl : lookupAssoc name bound = some previous) :
-    (∀ e t, runEval (k.value previous) s1 = (.error e, t) →
+    (repeated : List Ident) (bound : NeedBindState) (family : Bool) (s : EvalState) (tr : List NeedEvent)
+    (hr : repeated.contains name = true) :
+    (∀ e t, runEval (k.callable address) s = (.error e, t) →
       runTrace (NeedBinder.bindName (traced k) name address repeated bound family) ⟨s, tr⟩
-        = (.error e, ⟨t, tr ++ [.value address, .value previous]⟩))
-    ∧ (∀ before s2, runEval (k.value previous) s1 = (.ok before, s2) → (before == value) = false →
+        = (.error e, ⟨t, tr ++ [.callable address]⟩))
+    ∧ (∀ identity s1, runEval (k.callable address) s = (.ok (some identity), s1) →
+      (bound.groupOf name).conflictsWith identity = true →
       runTrace (NeedBinder.bindName (traced k) name address repeated bound family) ⟨s, tr⟩
         = (if family then .ok none
-            else .error (Error.withContext (repeatedParameterContext name) Error.badArity),
-          ⟨s2, tr ++ [.value address, .value previous]⟩))
-    ∧ (∀ before s2 e t, runEval (k.value previous) s1 = (.ok before, s2) → (before == value) = true →
-      runEval (k.callable previous) s2 = (.error e, t) →
+            else .error (Error.typeMismatch "Repeated bind equality requires the same callable identity"),
+          ⟨s1, tr ++ [.callable address]⟩))
+    ∧ (∀ s1 e t, runEval (k.callable address) s = (.ok none, s1) →
+      runEval (k.value address) s1 = (.error e, t) →
       runTrace (NeedBinder.bindName (traced k) name address repeated bound family) ⟨s, tr⟩
-        = (.error e, ⟨t, tr ++ [.value address, .value previous, .callable previous]⟩))
-    ∧ (∀ before s2 first s3 e t, runEval (k.value previous) s1 = (.ok before, s2) →
-      (before == value) = true → runEval (k.callable previous) s2 = (.ok first, s3) →
-      runEval (k.callable address) s3 = (.error e, t) →
-      runTrace (NeedBinder.bindName (traced k) name address repeated bound family) ⟨s, tr⟩
-        = (.error e, ⟨t, tr ++ [.value address, .value previous, .callable previous, .callable address]⟩)) := by
+        = (.error e, ⟨t, tr ++ [.callable address, .value address]⟩)) := by
   have base := traced_name k name address repeated bound family s tr
-  have hn : nameEvents k name address repeated bound s = repeatedNameEvents k address (some previous) s := by
-    simp only [nameEvents, hr, ↓reduceIte, hl]
+  have hn : nameEvents k name address repeated bound s
+      = repeatedNameEvents k address (bound.groupOf name) s := by
+    simp only [nameEvents, hr, ↓reduceIte]
   rw [hn, repeated_name_binding k name address repeated bound family s hr] at base
-  refine ⟨?_, ?_, ?_, ?_⟩
-  · intro e t h2
-    rw [base]; simp [repeatedNameEvents, h1, hl, h2]
-  · intro before s2 h2 hbv
-    rw [base]; cases family <;> simp [repeatedNameEvents, h1, hl, h2, hbv]
-  · intro before s2 e t h2 hbv h3
-    rw [base]; simp [repeatedNameEvents, h1, hl, h2, hbv, h3]
-  · intro before s2 first s3 e t h2 hbv h3 h4
-    rw [base]; simp [repeatedNameEvents, h1, hl, h2, hbv, h3, h4]
+  refine ⟨?_, ?_, ?_⟩
+  · intro e t h1
+    rw [base]; simp [repeatedNameEvents, h1]
+  · intro identity s1 h1 hc
+    rw [base]; cases family <;> simp [repeatedNameEvents, h1, hc]
+  · intro s1 e t h1 h2
+    rw [base]; simp [repeatedNameEvents, h1, h2]
 
 /-- A MISSING SOURCE is the binder's own `badArity`, before any event and with no state change
     (unreachable on validated signatures: the cardinality gate excludes it). -/
 theorem traced_missing_source (k : NeedCapabilities EvalM) (p : NeedPattern) (rest : List NeedPattern)
-    (sources : List (NeedSource Nat)) (repeated : List Ident) (bound : NeedEnv) (family : Bool)
+    (sources : List (NeedSource Nat)) (repeated : List Ident) (bound : NeedBindState) (family : Bool)
     (s : EvalState) (tr : List NeedEvent) (hm : sources.headD .missing = .missing) :
     runTrace (NeedBinder.bindSources (traced k) (p :: rest) sources repeated bound family) ⟨s, tr⟩
       = (.error Error.badArity, ⟨s, tr⟩) := by
@@ -1111,7 +1183,7 @@ theorem traced_missing_source (k : NeedCapabilities EvalM) (p : NeedPattern) (re
     parent follows it. -/
 theorem traced_nested_level_is_the_parents_run (k : NeedCapabilities EvalM) (p : NeedPattern)
     (ps : List NeedPattern) (hp : p = .sequence ps ∨ p = .list ps ∨ p = .unpack ps)
-    (address : Nat) (repeated : List Ident) (bound : NeedEnv) (family : Bool) (s t t' : EvalState)
+    (address : Nat) (repeated : List Ident) (bound : NeedBindState) (family : Bool) (s t t' : EvalState)
     (tr : List NeedEvent) (value : Result) (count : Nat) (items : List Result) (cells : List Nat)
     (hv : runEval (k.value address) s = (.ok (value, count), t))
     (hk : structuralItems p value = some items)
@@ -1134,7 +1206,7 @@ theorem traced_nested_level_is_the_parents_run (k : NeedCapabilities EvalM) (p :
     pattern — and the state is the one the failing allocation left. -/
 theorem traced_ready_allocation_failure (k : NeedCapabilities EvalM) (p : NeedPattern)
     (ps : List NeedPattern) (hp : p = .sequence ps ∨ p = .list ps ∨ p = .unpack ps)
-    (address : Nat) (repeated : List Ident) (bound : NeedEnv) (family : Bool) (s t t' : EvalState)
+    (address : Nat) (repeated : List Ident) (bound : NeedBindState) (family : Bool) (s t t' : EvalState)
     (tr : List NeedEvent) (value : Result) (count : Nat) (items : List Result) (e : Error)
     (hv : runEval (k.value address) s = (.ok (value, count), t))
     (hk : structuralItems p value = some items)
@@ -1153,33 +1225,13 @@ theorem traced_ready_allocation_failure (k : NeedCapabilities EvalM) (p : NeedPa
     allocator `allocateNeed` never fails; this covers every other allocator.) -/
 theorem traced_collector_allocation_failure (k : NeedCapabilities EvalM) (p : NeedPattern)
     (rest : List NeedPattern) (slice : List Nat) (sources : List (NeedSource Nat))
-    (repeated : List Ident) (bound : NeedEnv) (family : Bool) (s t : EvalState) (tr : List NeedEvent)
+    (repeated : List Ident) (bound : NeedBindState) (family : Bool) (s t : EvalState) (tr : List NeedEvent)
     (e : Error) (h : runEval (k.allocate (.collector slice)) s = (.error e, t)) :
     runTrace (NeedBinder.bindSources (traced k) (p :: rest) (.collector slice :: sources) repeated
         bound family) ⟨s, tr⟩
       = (.error e, ⟨t, tr⟩) := by
   rw [traced_sources k _ _ repeated bound family s tr]
   simp [NeedBinder.bindSources, sourcesEvents, addressEvents, NeedBinder.sourceAddress, h]
-
-/-- A COMPLETE LATER REPEATED OCCURRENCE: when all four invocations succeed and the values are
-    equal, the events are exactly VALUE(current), VALUE(representative), CALLABLE(representative),
-    CALLABLE(current), and the outcome is `repeatedVerdict` — the identity incompatibility
-    (type error, or the family non-match), the retained representative, or its replacement by a
-    strictly richer current contribution — in the state the last projection left. -/
-theorem traced_repeated_occurrence_complete (k : NeedCapabilities EvalM) (name : Ident) (address : Nat)
-    (repeated : List Ident) (bound : NeedEnv) (family : Bool) (s s1 s2 s3 s4 : EvalState)
-    (tr : List NeedEvent) (value before : CountedResult) (previous : Nat) (first second : Option Algorithm)
-    (hr : repeated.contains name = true) (h1 : runEval (k.value address) s = (.ok value, s1))
-    (hl : lookupAssoc name bound = some previous) (h2 : runEval (k.value previous) s1 = (.ok before, s2))
-    (hbv : (before == value) = true) (h3 : runEval (k.callable previous) s2 = (.ok first, s3))
-    (h4 : runEval (k.callable address) s3 = (.ok second, s4)) :
-    runTrace (NeedBinder.bindName (traced k) name address repeated bound family) ⟨s, tr⟩
-      = (repeatedVerdict name address bound family first second,
-          ⟨s4, tr ++ [.value address, .value previous, .callable previous, .callable address]⟩) := by
-  rw [traced_name k name address repeated bound family s tr,
-    repeated_name_binding k name address repeated bound family s hr]
-  simp only [nameEvents, hr, ↓reduceIte]
-  simp [hl, repeatedNameEvents, h1, h2, hbv, h3, h4]
 
 /-! ### No CALLABLE event without a repeated name -/
 
@@ -1212,7 +1264,7 @@ theorem addressEvents_no_callable (k : NeedCapabilities EvalM) (source : NeedSou
 
 mutual
   theorem oneEvents_no_callable_without_repeats (k : NeedCapabilities EvalM) (p : NeedPattern)
-      (address : Nat) (bound : NeedEnv) (family : Bool) (s : EvalState) :
+      (address : Nat) (bound : NeedBindState) (family : Bool) (s : EvalState) :
       ∀ ev ∈ oneEvents k p address [] bound family s, ev.isCallable = false := by
     cases p with
     | bind name collecting => simp [oneEvents, nameEvents]
@@ -1272,7 +1324,7 @@ mutual
               · simp at hev
 
   theorem sourcesEvents_no_callable_without_repeats (k : NeedCapabilities EvalM) (ps : List NeedPattern)
-      (sources : List (NeedSource Nat)) (bound : NeedEnv) (family : Bool) (s : EvalState) :
+      (sources : List (NeedSource Nat)) (bound : NeedBindState) (family : Bool) (s : EvalState) :
       ∀ ev ∈ sourcesEvents k ps sources [] bound family s, ev.isCallable = false := by
     cases ps with
     | nil => simp [sourcesEvents]
@@ -1293,8 +1345,8 @@ end
 
 /-- A HEAD THAT REPEATS NO NAME NEVER PROJECTS A CALLABLE (stated over the schedule; with
     `traced_patterns` it is the traced binder's events, `traced_head_without_repeated_names_projects_no_callable`).
-    Within a repeated occurrence, a CALLABLE event follows two successful, equal VALUE demands
-    (`repeated_callable_only_after_equal_values`). -/
+    Within a repeated occurrence, the CALLABLE event of the occurrence's own cell comes first
+    (`repeated_occurrence_projects_its_cell_first`). -/
 theorem head_without_repeated_names_projects_no_callable (k : NeedCapabilities EvalM)
     (ps : List NeedPattern) (cells : List Nat) (family : Bool) (s : EvalState)
     (h : needRepeatedNames ps = []) :
@@ -1302,7 +1354,7 @@ theorem head_without_repeated_names_projects_no_callable (k : NeedCapabilities E
   intro ev hev
   simp only [patternsEvents, levelEvents, h] at hev
   split at hev
-  · exact sourcesEvents_no_callable_without_repeats k ps _ [] family s ev hev
+  · exact sourcesEvents_no_callable_without_repeats k ps _ {} family s ev hev
   · simp at hev
 
 /-! ### The production allocator: fresh addresses, in order, and nothing rolled back -/
@@ -1381,7 +1433,7 @@ theorem production_ready_events (k : NeedCapabilities EvalM) (hk : k.allocate = 
 theorem production_nested_rejection_keeps_its_ready_cells (k : NeedCapabilities EvalM)
     (hk : k.allocate = allocateNeed) (p : NeedPattern) (ps : List NeedPattern)
     (hp : p = .sequence ps ∨ p = .list ps ∨ p = .unpack ps) (address : Nat) (repeated : List Ident)
-    (bound : NeedEnv) (family : Bool) (s t : EvalState) (tr : List NeedEvent) (value : Result)
+    (bound : NeedBindState) (family : Bool) (s t : EvalState) (tr : List NeedEvent) (value : Result)
     (count : Nat) (items : List Result) (hv : runEval (k.value address) s = (.ok (value, count), t))
     (hk' : structuralItems p value = some items)
     (hrej : needAcceptsCardinality ps items.length = false) :
@@ -1402,7 +1454,7 @@ theorem production_nested_rejection_keeps_its_ready_cells (k : NeedCapabilities 
     event comes first, then the pattern's own events at that address, then the rest. -/
 theorem production_collector_source_events (k : NeedCapabilities EvalM) (hk : k.allocate = allocateNeed)
     (p : NeedPattern) (rest : List NeedPattern) (slice : List Nat) (sources : List (NeedSource Nat))
-    (repeated : List Ident) (bound : NeedEnv) (family : Bool) (s : EvalState) :
+    (repeated : List Ident) (bound : NeedBindState) (family : Bool) (s : EvalState) :
     sourcesEvents k (p :: rest) (.collector slice :: sources) repeated bound family s
       = .collector s.needs.size slice ::
           (oneEvents k p s.needs.size repeated bound family
@@ -1429,17 +1481,15 @@ theorem traced_head_without_repeated_names_projects_no_callable (k : NeedCapabil
     the extended heap and environment. -/
 theorem production_collector_occurrence_in_a_mixed_head (k : NeedCapabilities EvalM)
     (hk : k.allocate = allocateNeed) (name : Ident) (rest : List NeedPattern) (slice : List Nat)
-    (sources : List (NeedSource Nat)) (repeated : List Ident) (bound : NeedEnv) (family : Bool)
+    (sources : List (NeedSource Nat)) (repeated : List Ident) (bound : NeedBindState) (family : Bool)
     (s : EvalState) (h : repeated.contains name = false) :
     sourcesEvents k (.bind name true :: rest) (.collector slice :: sources) repeated bound family s
       = .collector s.needs.size slice ::
-          sourcesEvents k rest sources repeated
-            (bound.filter (fun entry => entry.fst != name) ++ [(name, s.needs.size)]) family
+          sourcesEvents k rest sources repeated (bound.withPlain name s.needs.size) family
             { s with needs := s.needs.push { suspension := .collector slice } }
     ∧ runEval (NeedBinder.bindSources k (.bind name true :: rest) (.collector slice :: sources) repeated
         bound family) s
-      = runEval (NeedBinder.bindSources k rest sources repeated
-          (bound.filter (fun entry => entry.fst != name) ++ [(name, s.needs.size)]) family)
+      = runEval (NeedBinder.bindSources k rest sources repeated (bound.withPlain name s.needs.size) family)
           { s with needs := s.needs.push { suspension := .collector slice } } := by
   have hplain := BinderCore.core_plain_name_is_pure k name s.needs.size repeated bound family h
   constructor
@@ -1464,7 +1514,7 @@ theorem traced_lone_collector (k : NeedCapabilities EvalM) (hk : k.allocate = al
   simp [NeedBinder.bindPatterns, NeedBinder.bindLevel, NeedBinder.cardinalityGate, patternsEvents,
     levelEvents, hr, hacc, lone_collector_collects_every_supplied_cell, NeedBinder.bindSources,
     sourcesEvents, addressEvents, NeedBinder.sourceAddress, hk, allocateNeed_run, NeedBinder.bindOne,
-    NeedBinder.bindName, oneEvents, nameEvents]
+    NeedBinder.bindName, oneEvents, nameEvents, NeedBindState.withPlain, NeedEnv.rebind]
 
 /-! ## The protection hypothesis is necessary
 
@@ -1484,15 +1534,15 @@ def forgingValue (k : NeedCapabilities EvalM) : NeedCapabilities TraceM :=
     protected tracing the same binding keeps it and appends its one VALUE event. -/
 theorem forging_value_loses_the_prefix (k : NeedCapabilities EvalM) (literal : Pattern) (address : Nat)
     (family : Bool) (s : EvalState) (event : NeedEvent) :
-    (runTrace (NeedBinder.bindOne (forgingValue k) (.literal literal) address [] [] family) ⟨s, [event]⟩).2.events
+    (runTrace (NeedBinder.bindOne (forgingValue k) (.literal literal) address [] {} family) ⟨s, [event]⟩).2.events
       = []
-    ∧ (runTrace (NeedBinder.bindOne (traced k) (.literal literal) address [] [] family) ⟨s, [event]⟩).2.events
+    ∧ (runTrace (NeedBinder.bindOne (traced k) (.literal literal) address [] {} family) ⟨s, [event]⟩).2.events
       = [event, .value address] := by
   constructor
   · simp only [NeedBinder.bindOne, runTrace_bind, forgingValue]
     simp only [runTrace]
     rcases runEval (k.value address) s with ⟨_ | ⟨value, count⟩, t⟩ <;> rfl
-  · rw [traced_literal k literal address [] [] family s [event]]
+  · rw [traced_literal k literal address [] {} family s [event]]
     rcases runEval (k.value address) s with ⟨_ | ⟨value, count⟩, t⟩ <;> rfl
 
 /-- A hostile, trace-READING VALUE operation: while nothing has been recorded it is the protected
@@ -1510,12 +1560,12 @@ def emptyValues : NeedCapabilities EvalM :=
     nested gate, while the production run binds `()` and succeeds. -/
 theorem trace_reading_value_breaks_erasure (s : EvalState) :
     eraseTrace (NeedBinder.bindOne (traceReadingValue emptyValues (.sequenceValue [.atom 1], 1))
-        (.unpack []) 0 [] [] false) s [.ready 0]
-      ≠ runEval (NeedBinder.bindOne emptyValues (.unpack []) 0 [] [] false) s := by
+        (.unpack []) 0 [] {} false) s [.ready 0]
+      ≠ runEval (NeedBinder.bindOne emptyValues (.unpack []) 0 [] {} false) s := by
   have traced : (eraseTrace (NeedBinder.bindOne (traceReadingValue emptyValues (.sequenceValue [.atom 1], 1))
-      (.unpack []) 0 [] [] false) s [.ready 0]).1 = .error (Error.arityMismatch 0 1) := rfl
-  have production : (runEval (NeedBinder.bindOne emptyValues (.unpack []) 0 [] [] false) s).1
-      = .ok (some []) := rfl
+      (.unpack []) 0 [] {} false) s [.ready 0]).1 = .error (Error.arityMismatch 0 1) := rfl
+  have production : (runEval (NeedBinder.bindOne emptyValues (.unpack []) 0 [] {} false) s).1
+      = .ok (some {}) := rfl
   intro h
   have h1 := congrArg Prod.fst h
   rw [traced, production] at h1

@@ -63,6 +63,12 @@ internal static class PropertyExposureResolver
                 var owner = this;
                 while (owner is not null && !ReferenceEquals(owner.Algorithm, requirement.Owner))
                     owner = owner.Parent;
+                // The completed key names the branch binding region by its body. Runtime capture
+                // positions retain the existing separate family-binding frame above that body.
+                if (owner?.PropertyScope.CompletedContext?.Key.BindingRegion is not null
+                    && !owner.Parameters.Contains(requirement.Name)
+                    && owner.Parent?.Parameters.Contains(requirement.Name) == true)
+                    owner = owner.Parent;
                 yield return new Requirement(requirement.Name, owner?.PropertyScope);
             }
         }
@@ -148,17 +154,31 @@ internal static class PropertyExposureResolver
         Algorithm root,
         FrontEndTraversalObservations? observations,
         HostOperations? hostOperations = null,
-        ModuleUnits? modules = null)
-        => ResolveInScope(
-            root,
-            new SummaryScope(
-                null,
-                ElaboratedScopeLookup.CreateScope(
-                    hostOperations?.SemanticPreludeAlgorithm ?? BuiltinRegistry.CreateSemanticPreludeAlgorithm(),
-                    memberIndexes: new OpenMemberIndexCache(observations)),
-                NoSummaries),
-            observations,
-            modules);
+        ModuleUnits? modules = null,
+        CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            var context = AnalyzedStaticStructures.ForBoundAst(root, hostOperations, cancellationToken: cancellationToken);
+            var prelude = ElaboratedScopeLookup.CreateScope(context.Facts.Prelude,
+                memberIndexes: new OpenMemberIndexCache(observations), completedContext: context.Facts.Context(context.Facts.PreludeKey));
+            var physical = context.Key.Parent is { } declaring ? context.Level(declaring, prelude) : prelude;
+            var chain = new Stack<ElaboratedPropertyScope>();
+            for (var at = physical; at is not null; at = at.Parent) chain.Push(at);
+            SummaryScope? parent = null;
+            while (chain.TryPop(out var level))
+                parent = new(parent, level, NoSummaries,
+                    level.CompletedContext?.Facts.Facts(level.CompletedContext.Key)?.Parameters, level.OwnerAlgorithm);
+            return ResolveInScope(root, parent!, observations, modules, context, cancellationToken);
+        }
+        catch
+        {
+            // Even cancellation before the first rewrite aborts this unfinished unit. Successful sealed foreign
+            // publications are independent of a later caller's token and remain immutable.
+            if (root.CompletedStructure is { Entry: not null } publication) publication.Facts.RejectUnsealed();
+            throw;
+        }
+    }
 
     private static readonly IReadOnlyDictionary<string, RequirementSet> NoSummaries =
         new Dictionary<string, RequirementSet>(StringComparer.Ordinal);
@@ -167,10 +187,20 @@ internal static class PropertyExposureResolver
         Algorithm root,
         SummaryScope parent,
         FrontEndTraversalObservations? observations,
-        ModuleUnits? modules = null)
+        ModuleUnits? modules = null,
+        CompletedStructureContext? structuralContext = null,
+        CancellationToken cancellationToken = default)
     {
         var run = new ExposureRun(observations) { Modules = modules ?? new() };
-        root = ProcessAlgorithm(root, parent, new PropertyDependencyGraphBuilder.SummaryMemo(observations), observations, run);
+        root = ProcessAlgorithm(root, parent, new PropertyDependencyGraphBuilder.SummaryMemo(observations), observations, run, structuralContext);
+        if (root.CompletedStructure is { Entry: { } entry } completed && !completed.Facts.IsSealed
+            && (structuralContext is null || ReferenceEquals(structuralContext.Facts, completed.Facts)))
+        {
+            observations?.StageObserver?.Invoke("retarget-and-seal", true);
+            completed.Facts.RetargetTree(entry, root, cancellationToken);
+            completed.Facts.Seal(cancellationToken);
+            observations?.StageObserver?.Invoke("retarget-and-seal", false);
+        }
         if (run.HasDotMemberOrigins)
             new DotMemberProvenanceFinalizer(parent.PropertyScope) { TraversalObservations = observations }.VisitAlgorithm(root);
         return root;
@@ -347,7 +377,8 @@ internal static class PropertyExposureResolver
         SummaryScope parent,
         PropertyDependencyGraphBuilder.SummaryMemo summaryMemo,
         FrontEndTraversalObservations? observations,
-        ExposureRun run)
+        ExposureRun run,
+        CompletedStructureContext? completedContext = null)
         => algorithm switch
         {
             // A loaded module (Q-31 H-P) is a source unit rooted at the prelude: its exposure is
@@ -358,12 +389,12 @@ internal static class PropertyExposureResolver
             // A callable alias is a scope body like a user algorithm's — its own opens and
             // declarations, and its one row, the target reference it reads — so its exposure is
             // computed from that read exactly as a body whose one row names its target.
-            Algorithm.User or Algorithm.Alias => ProcessScopeBody(algorithm, parent, summaryMemo, observations, run),
+            Algorithm.User or Algorithm.Alias => ProcessScopeBody(algorithm, parent, summaryMemo, observations, run, completedContext),
             // A family reached outside any region (a host root, or a deferred branch's own
             // demand-time elaboration) opens a region of its own.
             Algorithm.Conditional conditional => ProcessConditionalAlgorithm(
                 conditional,
-                new ExposureWalkMemos(summaryMemo, observations, parent, run)),
+                new ExposureWalkMemos(summaryMemo, observations, parent, run), completedContext),
             Algorithm.Builtin => algorithm,
         };
 
@@ -388,7 +419,8 @@ internal static class PropertyExposureResolver
         SummaryScope parent,
         PropertyDependencyGraphBuilder.SummaryMemo summaryMemo,
         FrontEndTraversalObservations? observations,
-        ExposureRun run)
+        ExposureRun run,
+        CompletedStructureContext? completedContext = null)
     {
         // A synthetic assignment-deconstruction helper (`x, *y, z = RHS`) is a fully-elaborated
         // leaf: no properties, no opens, and an output that is exactly its own bound Param. It
@@ -402,16 +434,16 @@ internal static class PropertyExposureResolver
         // The summary channel is the ONLY builder data this pass consumes: what ancestors own
         // is not an input to it (a captured parameter is reported by name regardless), so no
         // ancestor-owned or locally-owned name context is threaded here (M17).
+        var levelScope = ElaboratedScopeLookup.CreateScope(algorithm, parent.PropertyScope, completedContext: completedContext);
         var summaryGraph = PropertyDependencyGraphBuilder.BuildSummaries(
             algorithm,
             summaryMemo,
-            observations);
+            observations, levelScope.CompletedContext);
 
-        var levelScope = ElaboratedScopeLookup.CreateScope(algorithm, parent.PropertyScope);
         // This level's parameter names, materialized once per resolution and shared by every
         // fixed-point iteration's scope and the final one (FE-1).
         var parameterNames = summaryMemo.ParameterNamesOf(algorithm, observations);
-        var walkMemos = PropertyDependencyGraphBuilder.CreateWalkMemos(summaryMemo, observations);
+        var walkMemos = PropertyDependencyGraphBuilder.CreateWalkMemos(summaryMemo, observations, levelScope.CompletedContext);
         var summaries = new Dictionary<string, RequirementSet>(StringComparer.Ordinal);
         foreach (var property in algorithm.Properties)
             summaries[property.Name] = default;
@@ -436,7 +468,9 @@ internal static class PropertyExposureResolver
         for (var propertyIndex = 0; propertyIndex < algorithm.Properties.Count; propertyIndex++)
         {
             var property = algorithm.Properties[propertyIndex];
-            var rewrittenPropertyValue = ProcessSharedNestedAlgorithm(property.Value, memos);
+            var rewrittenPropertyValue = property.Value is Algorithm.User { IsAssignmentDeconstructionSource: true } source
+                ? source with { Output = RewriteExprList(source.Output, memos) }
+                : ProcessSharedNestedAlgorithm(property.Value, memos);
 
             // Equal final summaries are one canonical set, and the run materializes each distinct
             // backing once. Distinct wrappers preserve Property's list-reference equality (FE-4a).
@@ -466,19 +500,19 @@ internal static class PropertyExposureResolver
     /// algorithm opens its own region below; a nested FAMILY uses branch regions that retain
     /// the family's open surface and the matched binder view.
     /// </summary>
-    private static Algorithm ProcessSharedNestedAlgorithm(Algorithm algorithm, ExposureWalkMemos memos)
+    private static Algorithm ProcessSharedNestedAlgorithm(Algorithm algorithm, ExposureWalkMemos memos, CompletedStructureContext? completedContext = null)
     {
         memos.Algorithms ??= new(ReferenceEqualityComparer.Instance);
         if (!memos.Algorithms.TryGetValue(algorithm, out var rewritten))
         {
             rewritten = algorithm is Algorithm.Conditional conditional
-                ? ProcessConditionalAlgorithm(conditional, memos)
+                ? ProcessConditionalAlgorithm(conditional, memos, completedContext)
                 : ProcessAlgorithm(
                     algorithm,
                     memos.Scope,
                     memos.SummaryMemo,
                     memos.Observations,
-                    memos.Run);
+                    memos.Run, completedContext);
             memos.Algorithms[algorithm] = rewritten;
         }
 
@@ -679,9 +713,14 @@ internal static class PropertyExposureResolver
         SummaryScope levelInProgress)
     {
         private readonly record struct SettlementKey(string Key, SummaryScope Level, SummaryScope Site, string Bound);
+        private readonly record struct AnchoredSeed(PropertyDependencyGraphBuilder.SummarySeed Seed, SummaryScope Level);
+        private readonly record struct SeedSettlementKey(PropertyDependencyGraphBuilder.SummarySeed Seed,
+            SummaryScope Level, SummaryScope Site, string Bound);
 
         private readonly HashSet<SettlementKey> _inProgress = [];
         private readonly Dictionary<SettlementKey, RequirementSet> _completed = [];
+        // Unlike anchoring, settlement reads live equations. Reuse it only inside ONE synchronous Run.
+        private readonly Dictionary<SeedSettlementKey, RequirementSet> _completedSeeds = [];
         private long _cycleCuts;
         private HashSet<string>? _levelReads;
 
@@ -719,6 +758,7 @@ internal static class PropertyExposureResolver
             public IEnumerator<Frame> Body = null!;
             public RequirementSet Result;
             public SettlementKey? CacheKey;
+            public SeedSettlementKey? SeedCacheKey;
             public long CycleCutsAtEntry;
         }
 
@@ -733,6 +773,7 @@ internal static class PropertyExposureResolver
             // One synchronous settlement: summaries cannot change while these frames run. All reads
             // from the first computation remain in the top-level recording even on later cache hits.
             _completed.Clear();
+            _completedSeeds.Clear();
             var frames = new Stack<Frame>();
             frames.Push(root);
             try
@@ -746,6 +787,8 @@ internal static class PropertyExposureResolver
                         frames.Pop();
                         if (frame.CacheKey is { } key && frame.CycleCutsAtEntry == _cycleCuts)
                             _completed.TryAdd(key, frame.Result);
+                        if (frame.SeedCacheKey is { } seedKey && frame.CycleCutsAtEntry == _cycleCuts)
+                            _completedSeeds.TryAdd(seedKey, frame.Result);
                     }
                 }
             }
@@ -754,6 +797,7 @@ internal static class PropertyExposureResolver
                 while (frames.TryPop(out var suspended))
                     suspended.Body.Dispose();
                 _completed.Clear();
+                _completedSeeds.Clear();
             }
 
             return root.Result;
@@ -761,7 +805,9 @@ internal static class PropertyExposureResolver
 
         private Frame ReferenceFrame(PendingReference pending, SummaryScope level, SummaryScope? site, IReadOnlySet<Algorithm>? boundOwners)
         {
-            memos.Observations?.RecordRequiredAncestorSettlementFrame();
+            if (pending.Origin is null && level.PropertyScope.CompletedContext is { } completed)
+                pending = pending.At(completed);
+            memos.Observations?.RecordRequiredAncestorSettlementFrame(pending);
             var frame = new Frame();
             frame.Body = ResolveReference(frame, pending, level, site, boundOwners);
             return frame;
@@ -769,11 +815,21 @@ internal static class PropertyExposureResolver
 
         private Frame SeedFrame(PropertyDependencyGraphBuilder.SummarySeed seed, SummaryScope level, SummaryScope site, IReadOnlySet<Algorithm>? boundOwners)
         {
-            memos.Observations?.RecordRequiredAncestorSettlementFrame();
-            var frame = new Frame();
+            memos.Observations?.RecordRequiredAncestorSettlementFrame(seed);
+            var key = new SeedSettlementKey(seed, level, site,
+                boundOwners is null ? "" : string.Join(",", boundOwners.Select(OwnerQualifiedParameter.OwnerKey).Order()));
+            var frame = new Frame { SeedCacheKey = key, CycleCutsAtEntry = _cycleCuts };
+            if (_completedSeeds.TryGetValue(key, out var completed))
+            {
+                frame.Result = completed;
+                frame.Body = NoFrames();
+                return frame;
+            }
             frame.Body = ResolveSeed(frame, seed, level, site, boundOwners);
             return frame;
         }
+
+        private static IEnumerator<Frame> NoFrames() { yield break; }
 
         /// <summary>The settlement of one pending reference (see the class summary); its result is <paramref name="self"/>'s.</summary>
         private IEnumerator<Frame> ResolveReference(Frame self, PendingReference pending, SummaryScope level, SummaryScope? site,
@@ -805,145 +861,12 @@ internal static class PropertyExposureResolver
 
             try
             {
-                if (TryLookupSummary(level, pending.Head, out var found, out var hit, out var summary))
-                {
-                    if (pending.Members.Count == 0)
-                    {
-                        self.Result = sets.Adopt(summary);
-                        yield break;
-                    }
-
-                    var (charged, navigated) = PropertyDependencyGraphBuilder.ChargePath(
-                        hit.Property.Value,
-                        PropertyDependencyGraphBuilder.StructuralSteps(pending.Members),
-                        memos);
-                    var names = SeedFrame(charged, found, site, boundOwners);
-                    yield return names;
-                    self.Result = navigated == 0 ? sets.Union(names.Result, summary) : names.Result;
-                    yield break;
-                }
-
-                var result = default(RequirementSet);
-
-                // The escaped levels' providers, innermost level first. Each level is ONE open
-                // lookup: the first level at which any target provides the head decides, and
-                // two providers there are the evaluator's ambiguousOpen — the reference then
-                // selects NO declaration and charges nothing. Taking the first-listed provider
-                // made the classification depend on target order (`open A, B` beside a
-                // capturing `A.X` refused `Outer.Y` as local-only while `open B, A` reached the
-                // real ambiguity).
-                var candidates = pending.Candidates;
-                for (var start = 0; start < candidates.Count;)
-                {
-                    var end = start;
-                    while (end < candidates.Count && candidates[end].ProviderLevel == candidates[start].ProviderLevel)
-                        end++;
-
-                    var group = new OpenLevelSettlement();
-                    for (var i = start; i < end; i++)
-                    {
-                        // Whether the carried candidate provides the pending head, and its charge: a
-                        // resolved candidate exists only because its target provides the head, while
-                        // an unresolved one is settled here, from the owning level outward (no level
-                        // it escaped declared the head). Q-19 D-I: each settled PROVIDER is offered
-                        // once, by its identity — the carried identity completed at this level.
-                        switch (candidates[i])
-                        {
-                            case ResolvedOpenCandidate resolved:
-                            {
-                                var identity = resolved.Identity.CompletedAt(level.PropertyScope);
-                                if (group.HasProvider(identity))
-                                    break;
-                                var charge = SeedFrame(resolved.Seed, level, site, boundOwners);
-                                yield return charge;
-                                group.Offer(identity, charge.Result);
-                                break;
-                            }
-
-                            case UnresolvedOpenCandidate unresolved:
-                            {
-                                if (TryProvide(level, unresolved.Head, unresolved.PublicSteps, pending, out var provided, out var providerLevel, out var identity)
-                                    && !group.HasProvider(identity))
-                                {
-                                    var charge = SeedFrame(provided, providerLevel, site, boundOwners);
-                                    yield return charge;
-                                    group.Offer(identity, charge.Result);
-                                }
-
-                                break;
-                            }
-                        }
-                    }
-
-                    if (group.Decides(sets, ref result))
-                    {
-                        self.Result = result;
-                        yield break;
-                    }
-
-                    start = end;
-                }
-
-                for (var current = level; current is not null; current = current.Parent)
-                {
-                    var opens = current.PropertyScope.Opens;
-                    HashSet<string>? seen = null;
-                    var group = new OpenLevelSettlement();
-                    for (var i = 0; i < opens.Count; i++)
-                    {
-                        var target = opens[i];
-                        seen ??= new HashSet<string>(StringComparer.Ordinal);
-                        if (!seen.Add(Evaluator.OpenTargetDedupKey(target, i)))
-                            continue;
-
-                        // The ONE open-target decomposition (AstHelpers.OpenTargetHead). Q-19 D-I:
-                        // targets that resolve to one semantic provider are offered once, exactly
-                        // as the evaluator's ResolveAllOpens counts them.
-                        switch (target.OpenTargetHead(out var steps))
-                        {
-                            case Expr.AlgorithmExpr(var block):
-                            {
-                                // An inline target — a block, bare or as the head of a dotted path —
-                                // is wired to the prelude: nothing outside it can be referenced, so
-                                // only its own requirement names survive.
-                                var inlineSeed = PropertyDependencyGraphBuilder.TryChargeInlineOpenProvider(block, steps, pending, memos);
-                                if (inlineSeed is not null
-                                    && ElaboratedScopeLookup.ResolveOpenProvider(current.PropertyScope, target) is { } inline
-                                    && !group.HasProvider(inline.Identity))
-                                {
-                                    group.Offer(inline.Identity, sets.From(level.Root.ResolveRequirements(inlineSeed.RequiredAncestorOwnedParameterNames)
-                                        .Concat(site.ResolveRequirements(inlineSeed.OwnerQualifiedParameters, boundOwners))));
-                                }
-
-                                break;
-                            }
-
-                            case Expr.Resolve(var head):
-                            {
-                                if (TryProvide(current, head, steps, pending, out var provided, out var providerLevel, out var identity)
-                                    && !group.HasProvider(identity))
-                                {
-                                    var charge = SeedFrame(provided, providerLevel, site, boundOwners);
-                                    yield return charge;
-                                    group.Offer(identity, charge.Result);
-                                }
-
-                                break;
-                            }
-
-                            default:
-                                break;
-                        }
-                    }
-
-                    if (group.Decides(sets, ref result))
-                    {
-                        self.Result = result;
-                        yield break;
-                    }
-                }
-
-                self.Result = result;
+                if (pending.Origin is null)
+                    throw new InvalidOperationException("Requirement settlement requires an explicit structural context.");
+                var published = new Frame();
+                published.Body = ResolvePublishedReference(published, pending, level, site, boundOwners);
+                yield return published;
+                self.Result = published.Result;
             }
             finally
             {
@@ -981,49 +904,201 @@ internal static class PropertyExposureResolver
             }
         }
 
-        /// <summary>
-        /// Whether the named <c>open</c> target declared at <paramref name="openingLevel"/>
-        /// publicly provides the pending head: its head resolves through the direct chain from
-        /// the opening level outward (the evaluator's <c>lookupLexicalDirect</c>), its dotted
-        /// steps are public members, and the provider publicly declares the head. The charged
-        /// <paramref name="seed"/> — the navigated steps' and the provided member's requirements —
-        /// is relative to <paramref name="providerLevel"/>, the level that declares the target's head,
-        /// and the caller resolves it from there.
-        /// </summary>
-        private bool TryProvide(SummaryScope openingLevel, string head, IReadOnlyList<string> steps, PendingReference pending,
-            [System.Diagnostics.CodeAnalysis.NotNullWhen(true)] out PropertyDependencyGraphBuilder.SummarySeed? seed,
-            [System.Diagnostics.CodeAnalysis.NotNullWhen(true)] out SummaryScope? providerLevel,
-            [System.Diagnostics.CodeAnalysis.NotNullWhen(true)] out OpenProviderIdentity? identity)
+        private IEnumerator<Frame> ResolvePublishedReference(Frame self, PendingReference pending, SummaryScope level,
+            SummaryScope site, IReadOnlySet<Algorithm>? boundOwners)
         {
-            seed = null;
-            providerLevel = null;
-            identity = null;
+            var origin = memos.SharedMemo.RequirementContext(pending.Origin)!;
+            var facts = origin.Facts;
+            if (facts.Facts(origin.Key) is not { } originFacts || originFacts.Body is null && !originFacts.IsProvisional) yield break;
+            var scope = memos.SharedMemo.RequirementLevel(origin);
+            var parts = new List<AnchoredSeed>();
+            if (pending.OpenPath)
+            {
+                Expr target = new Expr.Resolve(pending.Head);
+                foreach (var member in pending.Members) target = new Expr.DotCall(target, member, null);
+                ChargePublishedOpenPath(level, scope, target, parts);
+            }
+            else
+            {
+                var owned = ElaboratedScopeLookup.SelectOwnedDeclaration(scope, pending.Head, ElaboratedScopeLookup.OwnParameterBindings.Instance);
+                if (owned.TryGetParameter(out var parameterOwner))
+                {
+                    if (parameterOwner.OwnerAlgorithm is not { } owner || boundOwners?.Contains(owner) != true)
+                        self.Result = sets.From(site.ResolveRequirements([new OwnerQualifiedParameter(pending.Head, parameterOwner.OwnerAlgorithm)], boundOwners));
+                    yield break;
+                }
+                if (owned.TryGetProperty(out var declaring, out var hit))
+                {
+                    // Q1 has selected this declaration. Read its published member key directly:
+                    // an earlier resolved module view need not be the final exposed body object.
+                    var declaringKey = declaring.CompletedContext?.Key
+                        ?? throw new InvalidOperationException("A published selection requires its declaring context.");
+                    var key = facts.Member(declaringKey, hit.Property.Name)
+                        ?? throw new InvalidOperationException("A published declaration requires its authoritative member key.");
+                    var navigated = ChargePublishedPath(facts, key, pending.Members, level, parts);
+                    if (navigated == 0)
+                    {
+                        // A direct summary of this live equation must remain a recorded read.
+                        SummaryScope? found = level;
+                        while (found is not null && !ReferenceEquals(found.PropertyScope.CompletedContext?.Key, declaring.CompletedContext?.Key))
+                            found = found.Parent;
+                        if (found is not null && TryLookupSummary(found, pending.Head, out _, out _, out var summary))
+                            self.Result = sets.Adopt(summary);
+                        else parts.Add(AnchorPublishedSeed(facts,
+                            PropertyDependencyGraphBuilder.GetAlgorithmSummary(hit.Property.Value, memos, facts.Context(key)).OutputSeed,
+                            key.Parent, level));
+                    }
+                }
+                else for (var current = scope; current is not null; current = current.Parent)
+                {
+                    var group = new OpenLevelSettlement();
+                    foreach (var target in current.Opens)
+                        if (TryProvideCompleted(level, target, pending, out var offered, out var identity, current)
+                            && !group.HasProvider(identity))
+                        {
+                            var names = default(RequirementSet);
+                            foreach (var part in offered)
+                            {
+                                if (part.Seed.IsEmptyWithoutFolding()) continue;
+                                var charge = SeedFrame(part.Seed, part.Level, site, boundOwners);
+                                yield return charge;
+                                names = sets.Union(names, charge.Result);
+                            }
+                            group.Offer(identity, names);
+                        }
+                    var result = default(RequirementSet);
+                    if (group.Decides(sets, ref result)) { self.Result = result; yield break; }
+                }
+            }
+            foreach (var part in parts)
+            {
+                if (part.Seed.IsEmptyWithoutFolding()) continue;
+                var charge = SeedFrame(part.Seed, part.Level, site, boundOwners);
+                yield return charge;
+                self.Result = sets.Union(self.Result, charge.Result);
+            }
+        }
 
-            // The head's DECLARATION is what matters here, never its summary.
-            if (!openingLevel.TryLookup(head, out var found, out var hit, out _))
+        private void ChargePublishedOpenPath(SummaryScope opening, ElaboratedPropertyScope scope, Expr target,
+            List<AnchoredSeed> parts)
+        {
+            var facts = scope.CompletedContext!.Facts;
+            var head = target.OpenTargetHead(out var steps);
+            if (ElaboratedScopeLookup.ResolveOpenProviderHead(scope, head, out var declaring) is not { } resolved
+                || CompletedStructureContext.For(resolved.Target, declaring) is not { } context) return;
+            var current = context.Key;
+            foreach (var step in steps)
+            {
+                if (facts.Facts(current)?.Open.Target is not { } owner
+                    || facts.Facts(owner)?.Body is not { } body
+                    || ElaboratedScopeLookup.TryLookupPublicProperty(body, step) is null
+                    || facts.Member(owner, step) is not { } member) return;
+                AddPublishedCharge(facts, owner, step, opening, parts);
+                current = member;
+            }
+        }
+
+        // Select only through completed Q2/Q3/Q4 facts. Requirement seeds, expansion and settlement
+        // still belong to Q8; each seed is anchored at the selected namespace's actual declaring owner.
+        private bool TryProvideCompleted(SummaryScope opening, Expr target, PendingReference pending,
+            out List<AnchoredSeed> parts, out OpenProviderIdentity identity, ElaboratedPropertyScope? lookupScope = null)
+        {
+            parts = [];
+            identity = null!;
+            var scope = lookupScope ?? opening.PropertyScope;
+            var facts = scope.CompletedContext!.Facts;
+            if (ElaboratedScopeLookup.ResolveOpenProvider(scope, target) is not { } selected)
                 return false;
-
-            var headNode = hit.Property.Value;
-            var (providerSeed, providerNavigated) = PropertyDependencyGraphBuilder.ChargePath(
-                headNode,
-                PropertyDependencyGraphBuilder.PublicSteps(steps),
-                memos);
-            if (providerNavigated < steps.Count)
+            var head = target.OpenTargetHead(out var steps);
+            if (ElaboratedScopeLookup.ResolveOpenProviderHead(scope, head, out var declaring) is not { } resolved
+                || CompletedStructureContext.For(resolved.Target, declaring) is not { } context)
                 return false;
-
-            var provider = PropertyDependencyGraphBuilder.NavigateNode(headNode, steps);
-            if (provider is null
-                || PropertyDependencyGraphBuilder.TryChargeProvidedMember(provider, pending, memos) is not { } memberSeed)
-                return false;
-
-            seed = PropertyDependencyGraphBuilder.ExpandThroughNodes(
-                memberSeed,
-                PropertyDependencyGraphBuilder.NodePath(headNode, steps),
-                memos, skipLastNode: true);
-            seed.UnionWith(providerSeed);
-            providerLevel = found;
-            identity = PropertyDependencyGraphBuilder.ProviderIdentity(headNode, found.PropertyScope, steps);
+            var current = context.Key;
+            foreach (var step in steps)
+            {
+                if (facts.Facts(current)?.Open.Target is not { } owner
+                    || facts.Facts(owner)?.Body is not { } body
+                    || ElaboratedScopeLookup.TryLookupPublicProperty(body, step) is null
+                    || facts.Member(owner, step) is not { } member)
+                    return false;
+                AddPublishedCharge(facts, owner, step, opening, parts);
+                current = member;
+            }
+            if (facts.Facts(current)?.Open.Target is not { } provider
+                || facts.Facts(provider)?.Body is not { } providerBody
+                || ElaboratedScopeLookup.TryLookupPublicProperty(providerBody, pending.Head) is null
+                || facts.Member(provider, pending.Head) is not { }) return false;
+            var members = new List<string>(pending.Members.Count + 1) { pending.Head };
+            members.AddRange(pending.Members);
+            ChargePublishedPath(facts, provider, members, opening, parts, firstIsNamespace: true);
+            identity = selected.Identity;
             return true;
+        }
+
+        private int ChargePublishedPath(StaticLookupFacts facts, StaticScopeKey declaration,
+            IReadOnlyList<string> members, SummaryScope opening, List<AnchoredSeed> parts,
+            bool firstIsNamespace = false)
+        {
+            var current = declaration;
+            for (var i = 0; i < members.Count; i++)
+            {
+                var owner = i == 0 && firstIsNamespace ? current : facts.Facts(current)?.Receiver.Target;
+                if (owner is null || facts.Facts(owner)?.Body is not { } body
+                    || facts.Member(owner, members[i]) is not { } next)
+                {
+                    // Preserve the existing later-member miss law: the lexical fallback demands
+                    // the reached receiver's VALUE, so its output requirement seed is charged.
+                    if (i > 0 && facts.Facts(current)?.Body is { } reached)
+                        parts.Add(AnchorPublishedSeed(facts,
+                            PropertyDependencyGraphBuilder.GetAlgorithmSummary(reached, memos, facts.Context(current)).OutputSeed,
+                            current.Parent, opening));
+                    return i;
+                }
+                AddPublishedCharge(facts, owner, members[i], opening, parts);
+                current = next;
+            }
+            return members.Count;
+        }
+
+        private void AddPublishedCharge(StaticLookupFacts facts, StaticScopeKey owner, string name,
+            SummaryScope opening, List<AnchoredSeed> parts)
+        {
+            if (facts.Facts(owner)?.Body is { } body
+                && PropertyDependencyGraphBuilder.GetAlgorithmSummary(body, memos, facts.Context(owner)).MemberSeeds.TryGetValue(name, out var seed))
+                parts.Add(AnchorPublishedSeed(facts, seed, owner.Parent, opening));
+        }
+
+        private AnchoredSeed AnchorPublishedSeed(StaticLookupFacts facts,
+            PropertyDependencyGraphBuilder.SummarySeed seed, StaticScopeKey? declaring, SummaryScope opening)
+        {
+            var intervening = new List<StaticScopeKey>();
+            for (var at = declaring; at is not null; at = at.Parent)
+            {
+                for (var level = opening; level is not null; level = level.Parent)
+                    if (ReferenceEquals(level.PropertyScope.CompletedContext?.Key, at)
+                        || at.Parent is null && level.Parent is null)
+                    {
+                        var anchors = memos.SharedMemo.AnchoredRequirements ??= [];
+                        var cacheKey = (facts, facts.ViewVersion, seed, declaring, at);
+                        if (anchors.TryGetValue(cacheKey, out var cached)) return new(cached, level);
+                        foreach (var ownerKey in intervening)
+                        {
+                            var ownerBody = facts.Facts(ownerKey)!.Body!;
+                            var ownerContext = facts.Context(ownerKey);
+                            var ownerMemos = PropertyDependencyGraphBuilder.CreateWalkMemos(memos.SharedMemo, memos.Observations, ownerContext);
+                            seed = PropertyDependencyGraphBuilder.ExpandAtLevel(seed,
+                                new PropertyDependencyGraphBuilder.LevelContext(ownerBody,
+                                    PropertyDependencyGraphBuilder.GetAlgorithmSummary(ownerBody, ownerMemos, ownerContext).MemberSeeds, ownerMemos));
+                            if (ownerBody.IsModuleRoot) seed = PropertyDependencyGraphBuilder.SettledAtPrelude(seed);
+                        }
+                        anchors.Add(cacheKey, seed);
+                        return new(seed, level);
+                    }
+                if (facts.Facts(at)?.Body is not { } owner)
+                    throw new InvalidOperationException("A completed requirement owner is unavailable.");
+                intervening.Add(at);
+            }
+            throw new InvalidOperationException("A completed requirement has no shared lexical ancestor.");
         }
 
         /// <summary>
@@ -1078,7 +1153,8 @@ internal static class PropertyExposureResolver
 
     private static Algorithm ProcessConditionalAlgorithm(
         Algorithm.Conditional algorithm,
-        ExposureWalkMemos memos)
+        ExposureWalkMemos memos,
+        CompletedStructureContext? completedContext = null)
     {
         // Family-owned opens exist in host trees only (parsed families own none; the branch
         // bodies own theirs). They are a lookup level of their own for the branch bodies, and
@@ -1089,6 +1165,7 @@ internal static class PropertyExposureResolver
             new ExposureWalkMemos(memos.SummaryMemo, memos.Observations, memos.Scope.Root, memos.Run));
 
         var rewrittenBranches = new List<CondBranch>(algorithm.Branches.Count);
+        var lookupFamily = ElaboratedScopeLookup.CreateScope(algorithm, memos.Scope.PropertyScope, completedContext: completedContext);
         foreach (var branch in algorithm.Branches)
         {
             var branchMemos = memos.ForBranch(algorithm, branch.Pattern);
@@ -1121,7 +1198,8 @@ internal static class PropertyExposureResolver
             // Bodies are reference-deduplicated within equivalent branch regions (M4).
             // An ordinary property body or a different binder/open context has different
             // owner positions and is classified separately.
-            var rewrittenBody = ProcessSharedNestedAlgorithm(branch.Body, branchMemos);
+            var rewrittenBody = ProcessSharedNestedAlgorithm(branch.Body, branchMemos,
+                CompletedStructureContext.For(branch.Body, lookupFamily, branch.Pattern));
 
             rewrittenBranches.Add(branch with { Body = rewrittenBody });
         }
@@ -1148,8 +1226,9 @@ internal static class PropertyExposureResolver
         Algorithm resolvedBody,
         DeferredBranchContext context,
         FrontEndTraversalObservations? observations = null,
-        ModuleUnits? modules = null)
-        => ResolveInScope(resolvedBody, context.Scope, observations, modules);
+        ModuleUnits? modules = null,
+        CancellationToken cancellationToken = default)
+        => ResolveInScope(resolvedBody, context.Scope, observations, modules, cancellationToken: cancellationToken);
 
     /// <summary>
     /// A call's argument bundle may be shared by several call edges — implicit lifting gives every

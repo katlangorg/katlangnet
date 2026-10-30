@@ -26,6 +26,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\KatLang\KatLang.csproj" />
+    <ProjectReference Include="..\..\tools\KatLang.TestProbeHost\KatLang.TestProbeHost.csproj" />
   </ItemGroup>
 
   <!--

@@ -91,7 +91,35 @@ internal readonly record struct LiftingCallee(LiftingCalleeKind Kind, BuiltinId 
 /// </summary>
 internal sealed record SiblingOrderLookup(
     Func<string, LiftingCallee> CalleeKindOf,
-    Func<string, int?> OpenedSiblingProvider);
+    Func<string, int?> OpenedSiblingProvider)
+{
+    /// <summary>
+    /// The sibling whose processing an argumentless structural member path reads through the level's own owner (M4★:
+    /// <c>Lib.A</c> read inside <c>Lib</c> is the member <c>A</c>, identity never spelling): the path read statically, as
+    /// implicit-argument resolution reads it, reaching a member of the owner — the member itself when the path ends there,
+    /// the sibling it passes on the way otherwise (<c>Lib.Y.W</c>: Y). Null when the path never passes through the owner (a
+    /// sibling's member, an outer declaration) or selects nothing, and when its head only an <c>open</c> provides (a
+    /// nested body's open may provide it first; the rewrite processes what it reads on demand).
+    /// </summary>
+    public Func<Expr.DotCall, int?>? OwnedMemberSibling { get; init; }
+
+    /// <summary>
+    /// What implicit-argument resolution reads to refine a MAY edge (M4★): its receiver read from resolution's input with
+    /// nothing processed, as resolution reads it. The flag says whether a body between the level and the edge has opens of
+    /// its own (a head only an open provides may then be that body's provider's: nothing is read for it here). Null when
+    /// the refinement reads nothing (a parameter's member, a runtime reference's, an unresolved name's, a receiver that
+    /// has the member).
+    /// </summary>
+    public Func<Expr.DotCall, bool, RefinedMiss?>? RefinedMiss { get; init; }
+}
+
+/// <summary>
+/// A MAY edge's refinement as the sibling-order channel orders it (<see cref="SiblingOrderLookup.RefinedMiss"/>): a certain
+/// miss (<paramref name="CertainMiss"/>), whose reads are a certain miss's; or an <c>.Algorithm</c> link receiver, which
+/// resolution processes exactly where a certain miss would give a slot a VALUE role, with the sibling it is or is held by
+/// (<paramref name="Link"/>; null when it lies outside the level).
+/// </summary>
+internal readonly record struct RefinedMiss(bool CertainMiss, int? Link);
 
 /// <summary>How a dot edge dispatches, as far as the roles of its receiver and arguments need it.</summary>
 internal enum DotEdgeKind
@@ -132,7 +160,12 @@ internal enum DotEdgeKind
 /// VALUE slots (operators, comparisons, index parts, spread operands, list and capture elements,
 /// rows), a block is its own inferring level, and a call's callee is CALLABLE. Implicit-argument
 /// resolution's dependency collection and rewrite and the sibling-order channel all read THIS, so
-/// what a formula lifts, how it is rewritten, and which sibling it must see processed cannot drift.
+/// what a formula lifts, how it is rewritten, and which sibling it must see processed cannot drift: the dependency
+/// collection and the rewrite read ONE verdict per dot edge (a miss implicit-argument resolution refines is decided once
+/// per region from resolution's input, an <c>.Algorithm</c> link receiver processed only where a certain miss would give a
+/// slot a VALUE role), and the sibling-order channel orders what that verdict reads, as resolution reads it: a certain
+/// miss's reads, and a link receiver read where the channel's own classification gives a slot a VALUE role (what it
+/// cannot classify the rewrite processes on demand).
 /// </summary>
 internal static class FormulaLiftingRoles
 {

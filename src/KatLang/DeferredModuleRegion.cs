@@ -26,8 +26,7 @@ namespace KatLang;
 /// when host branches share one raw body object, so region identity is NOT declaration
 /// identity — every clone of one raw body keeps that body's <see cref="Algorithm.Declaration"/>),
 /// and each rewriting front-end pass installs a FORK of the region it found — the same loader
-/// facts plus the pass's own context, see <see cref="WithDetection"/>,
-/// <see cref="WithResolution"/>, and <see cref="WithExposure"/> — on the output view it
+/// facts plus the pass's own context, see <see cref="WithStructure"/> and <see cref="WithExposure"/> — on the output view it
 /// produces for the placeholder, so a placeholder reached under two front-end contexts (a
 /// shared host subtree, one module spliced at two sites) yields two independent regions, and
 /// a branch body can never inherit the materialization of whichever context ran first. The
@@ -81,10 +80,9 @@ internal sealed class DeferredModuleRegion
         Depth = source.Depth;
         NestedTraversalBase = source.NestedTraversalBase;
         ImportSite = source.ImportSite;
-        Detection = source.Detection;
-        Resolution = source.Resolution;
         _validation = source._validation;
         Exposure = source.Exposure;
+        Structure = source.Structure;
     }
 
     /// <summary>The loader that deferred the region: its cache, budget, policy, and downloader.</summary>
@@ -123,23 +121,16 @@ internal sealed class DeferredModuleRegion
     /// </summary>
     internal SourceSpan? ImportSite { get; }
 
-    /// <summary>Installed by parameter detection on its output view of the placeholder.</summary>
-    internal ParameterDetector.DeferredBranchContext? Detection { get; private init; }
-
-    /// <summary>Installed by implicit-argument resolution on its output view.</summary>
-    internal ImplicitArgumentResolver.DeferredBranchContext? Resolution { get; private init; }
-
     /// <summary>Installed by property-exposure resolution on its output view — the last eager pass, so the tree's final region carries every context.</summary>
     internal PropertyExposureResolver.DeferredBranchContext? Exposure { get; private init; }
 
     /// <summary>Recorded by declaration validation (see <see cref="RecordValidation"/>); carried by every later fork.</summary>
     internal ParameterPropertyCollisionValidator.ParameterBindings? Validation => _validation;
 
-    internal DeferredModuleRegion WithDetection(ParameterDetector.DeferredBranchContext detection)
-        => new(this) { Detection = detection };
+    internal StaticStructureDeferredContext? Structure { get; private init; }
 
-    internal DeferredModuleRegion WithResolution(ImplicitArgumentResolver.DeferredBranchContext resolution)
-        => new(this) { Resolution = resolution };
+    internal DeferredModuleRegion WithStructure(StaticStructureDeferredContext context)
+        => new(this) { Structure = context };
 
     internal DeferredModuleRegion WithExposure(PropertyExposureResolver.DeferredBranchContext exposure)
         => new(this) { Exposure = exposure };
@@ -192,7 +183,7 @@ internal sealed class DeferredModuleRegion
         if (TryGetMaterialized(out var ready))
             return EvalResult<Algorithm>.Ok(ready);
 
-        if (Detection is null || Resolution is null || Validation is null || Exposure is null)
+        if (Structure is not { Forwardable: not null } || Validation is null || Exposure is null)
         {
             throw new InvalidOperationException(
                 "Internal error: a deferred module region reached evaluation without its complete elaboration context. " +
@@ -333,21 +324,9 @@ internal sealed class DeferredModuleRegion
                     // demand-time pass starts from the import site the region recorded: a
                     // diagnostic raised against module content — which carries no source
                     // location — is positioned at the site the current document wrote.
-                    var detected = ParameterDetector.ElaborateDeferredBranch(
-                        loaded, Detection!, diagnostics, observations, ImportSite, modules);
-                    cancellationToken.ThrowIfCancellationRequested();
-                    var resolved = ImplicitArgumentResolver.ElaborateDeferredBranch(
-                        detected, Resolution!, diagnostics, observations, importSite: ImportSite, modules: modules);
-                    cancellationToken.ThrowIfCancellationRequested();
-                    if (!diagnostics.HasReportedErrors)
+                    var exposed = CompileLoadedBody(loaded, diagnostics, observations, modules, out var continuation, cancellationToken);
+                    if (exposed is not null)
                     {
-                        new ParameterPropertyCollisionValidator(diagnostics, Validation, importSite: ImportSite).VisitAlgorithm(resolved);
-                        OpenProviderValidator.Validate(resolved, diagnostics, Exposure!.Scope.PropertyScope, ImportSite);
-                        InferredParameterOutputValidator.ValidateDeferredBody(resolved, diagnostics, ImportSite);
-                    }
-                    if (!diagnostics.HasReportedErrors)
-                    {
-                        var exposed = PropertyExposureResolver.ElaborateDeferredBranch(resolved, Exposure!, observations, modules);
                         lock (_runLock)
                         {
                             cancellationToken.ThrowIfCancellationRequested();
@@ -356,7 +335,7 @@ internal sealed class DeferredModuleRegion
 
                             Volatile.Write(ref _materialized, exposed);
                             run.IsFinished = true;
-                            modules.Publish();
+                            modules.Publish(continuation);
                         }
                         return EvalResult<Algorithm>.Ok(exposed);
                     }
@@ -380,6 +359,42 @@ internal sealed class DeferredModuleRegion
                 if (!run.CancellationInProgress)
                     run.Cancellation.Dispose();
             }
+        }
+    }
+
+    private Algorithm? CompileLoadedBody(Algorithm loaded, DiagnosticBag diagnostics, FrontEndTraversalObservations? observations,
+        ModuleUnits modules, out StaticStructureOperation.Continuation? continuation, CancellationToken cancellationToken)
+    {
+        continuation = null;
+        try
+        {
+            var structural = Structure ?? throw new InvalidOperationException("Deferred compilation requires a shared structural context.");
+            var completed = structural.Registry.StructuralContinuation
+                ?? throw new InvalidOperationException("A deferred structural unit requires completed eager publications.");
+            var limits = StaticStructureAdmission.Measure(loaded, completed.Prelude, Loader.ProcessingLimits, cancellationToken: cancellationToken).Limits;
+            var operation = completed.Materialize(structural.Declaring, loaded, structural.Pattern, limits, cancellationToken);
+            var detection = new ParameterDetector.DeferredBranchContext(operation.LookupLevel(structural.Declaring),
+                new HashSet<string>(structural.Pattern.BoundNames(), StringComparer.Ordinal), structural.BranchName, structural.CapturedParameters);
+            var detected = ParameterDetector.ElaborateDeferredBranch(loaded, detection, diagnostics, observations, ImportSite, modules, structural.Pattern);
+            cancellationToken.ThrowIfCancellationRequested();
+            if (diagnostics.HasReported(DiagnosticCode.SelfDependentInferredParameters)) return null;
+            var resolved = ImplicitArgumentResolver.ElaborateStructuralDeferredBranch(detected, structural, operation,
+                diagnostics, observations, ImportSite, modules);
+            cancellationToken.ThrowIfCancellationRequested();
+            if (diagnostics.HasReportedErrors) return null;
+            new ParameterPropertyCollisionValidator(diagnostics, Validation, importSite: ImportSite).VisitAlgorithm(resolved);
+            OpenProviderValidator.Validate(resolved, diagnostics, Exposure!.Scope.PropertyScope, ImportSite);
+            InferredParameterOutputValidator.ValidateDeferredBody(resolved, diagnostics, ImportSite);
+            if (diagnostics.HasReportedErrors) return null;
+            var exposed = PropertyExposureResolver.ElaborateDeferredBranch(resolved, Exposure!, observations, modules, cancellationToken);
+            cancellationToken.ThrowIfCancellationRequested();
+            continuation = operation.Freeze(cancellationToken);
+            return exposed;
+        }
+        catch (StaticQueryLimitExceededException error)
+        {
+            diagnostics.Add(StaticStructureAdmission.Rejection(error));
+            return null;
         }
     }
 

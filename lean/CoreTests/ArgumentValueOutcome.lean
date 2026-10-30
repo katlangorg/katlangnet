@@ -342,7 +342,7 @@ def dsrWrittenBlockValueRead : Expr :=
 
 /-- `Inc(z) = z + 1` / `Show(v) = v.string` / `Show({ Inc })` -/
 def dsrInlineAlias : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "Inc" (alg ["z"] [] [] [(.binary .add (.param "z") (.num 1))]), privateProp "Show" (alg ["v"] [] [] [(.dotCall (.param "v") "string" none)])] [(.call (.resolve "Show") [(.algorithmExpr (.alias none [] [] (.resolve "Inc")))])])
+  .algorithmExpr (alg [] [] [privateProp "Inc" (alg ["z"] [] [] [(.binary .add (.param "z") (.num 1))]), privateProp "Show" (alg ["v"] [] [] [(.dotCall (.param "v") "string" none)])] [(.call (.resolve "Show") [(.algorithmExpr (.alias none [] [] (.resolve "Inc") none false))])])
 #guard dsrObserve dsrInlineAlias == "call Show > dotCall .string of v > property Inc > arityMismatch 1 0"
 
 /-- `F(0) = 1` / `F(n) = n` / `Show(v) = v.string` / `Show(F)` -/

@@ -627,7 +627,8 @@ public class AutomaticForwardingBindingTests
         // node is rewritten once per distinct context and each owner gets its own rewrite.
         var syntax = SourceProvenance.ParseSyntaxValidRoot(
             "A = y + 1\nF(y) = {\n    G = A * 10\n    G\n}\nK = {\n    G = A * 10\n    G + z\n}\nF(3), K(1, 5)");
-        var (detected, diagnostics) = ParameterDetector.DetectPrevalidated(syntax);
+        var detectedInput = ParameterDetector.DetectPrevalidated(syntax);
+        var (detected, diagnostics) = detectedInput;
         Assert.Empty(diagnostics);
 
         // Share ONE detected G (the same elaborated node under both owners) before resolution.
@@ -641,7 +642,7 @@ public class AutomaticForwardingBindingTests
             Properties = [.. detectedRoot.Properties.Select(p => p.Name == "K" ? p.WithValue(hostK) : p)],
         };
 
-        var resolved = ImplicitArgumentResolver.ResolvePrevalidated(root);
+        var resolved = ImplicitArgumentResolver.ResolveNameResolvedPrevalidated(root);
         var exposed = PropertyExposureResolver.Resolve(resolved);
 
         var gUnderF = Property(exposed, "F", "G");
@@ -661,7 +662,8 @@ public class AutomaticForwardingBindingTests
     public void SharedBody_UnderTheSameParameterNamesWithDifferentKinds_KeepsItsSupply(bool collectingFirst)
     {
         const string source = "Target(tag, *items) = items\nF(tag, *items) = { G = [Target][0]\n G }\nK(tag, items) = { G = [Target][0]\n G }\n[F(0, (1, 2), [3], ()), K(0, [(1, 2), [3], ()])]";
-        var (detected, diagnostics) = ParameterDetector.DetectPrevalidated(SourceProvenance.ParseSyntaxValidRoot(source));
+        var detectedInput = ParameterDetector.DetectPrevalidated(SourceProvenance.ParseSyntaxValidRoot(source));
+        var (detected, diagnostics) = detectedInput;
         Assert.Empty(diagnostics);
         var root = Assert.IsType<Algorithm.User>(detected);
         var f = Assert.IsType<Algorithm.User>(Property(root, "F"));
@@ -676,7 +678,7 @@ public class AutomaticForwardingBindingTests
                 collectingFirst ? fProperty : kProperty, collectingFirst ? kProperty : fProperty],
         };
 
-        var resolved = ImplicitArgumentResolver.ResolvePrevalidated(root);
+        var resolved = ImplicitArgumentResolver.ResolveNameResolvedPrevalidated(root);
         var collected = Property(resolved, "F", "G");
         var fixedValue = Property(resolved, "K", "G");
         Assert.NotSame(collected, fixedValue);

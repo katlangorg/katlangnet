@@ -54,19 +54,32 @@ public class PatternBindingErrorPrecedenceTests
         { Distinct + "P(x, f, *r, f, x) = 0\nP(1, A, B, 2)", Identity },
         // ...and a callable-identity conflict across the collector is the type mismatch.
         { Distinct + "P(f, *r, f) = 0\nP(A, 9, B)", Identity },
-        // A repeated name's VALUELESS contribution is a binding failure of its own pattern
-        // (Q-05): its own demanded outcome, reported when that occurrence is visited — unless an
-        // earlier occurrence already conflicted in written order (NEED-04).
+        // NEED-04 (group-aware, ALIAS-UNIFY-1): a repeated name's REFERENCE contributions are
+        // matched by identity without any VALUE demand, so two references to Inc bind f and the
+        // unequal x is the failure wherever it stands; a reference's own VALUE is demanded only
+        // against a value-only anchor, and then its failure is the binding's.
         { "P(x, x, f, f) = 0\nP(1, 2, Inc, Inc)", "BadArity in []" },
-        { "P(f, f, x, x) = 0\nP(Inc, Inc, 1, 2)", IncValueDemand },
+        { "P(f, f, x, x) = 0\nP(Inc, Inc, 1, 2)", "BadArity in []" },
         { "P(x, x, (a, b), f, f) = 0\nP(1, 2, (3, 4), Inc, Inc)", "BadArity in []" },
         { "P(x, x, f, f) = 0\nP(1, 2, Bad, 7)", "BadArity in []" },
         { "P(f, f, (a, b)) = a\nP(7, Bad, 5)", "DivByZero in []" },
-        { "P(x, f, *r, f, x) = 0\nP(1, Inc, Inc, 2)", IncValueDemand },
-        { "P(f, *r, f) = 0\nP(Inc, 9, Inc)", IncValueDemand },
+        { "P(x, f, *r, f, x) = 0\nP(1, Inc, Inc, 2)", "BadArity in []" },
         { "P(f, *r, f) = 0\nP(7, 9, Bad)", "DivByZero in []" },
-        { "P(*r, f, f) = 0\nP(Bad, Inc, Inc)", IncValueDemand },
+        { "P(f, *r, f) = 0\nP(Inc, 9, 7)", IncValueDemand },
     };
+
+    /// <summary>
+    /// NEED-04 (group-aware): a group of references to ONE callable matches by identity alone —
+    /// no VALUE is demanded, so a body that ignores the name succeeds whatever the target's value
+    /// would be (formerly each reference's own value demand failed the binding).
+    /// </summary>
+    [Theory]
+    [InlineData("P(f, *r, f) = 0\nP(Inc, 9, Inc)")]
+    [InlineData("P(*r, f, f) = 0\nP(Bad, Inc, Inc)")]
+    [InlineData("P(f, f) = 0\nP(Bad, Bad)")]
+    [InlineData("P(f, f, f) = 0\nP(Inc, Inc, Inc)")]
+    public void ReferenceOnlyGroups_BindWithoutValueDemand(string program)
+        => AssertDisplay(Definitions + program, "0");
 
     /// <summary>Two callables with the equal zero-argument value 5.</summary>
     private const string Distinct = "A = 5\nB = 5 + 0\n";
@@ -228,30 +241,30 @@ public class PatternBindingErrorPrecedenceTests
 
     /// <summary>
     /// Argument multisets for one repeated name, with the ordered outcome of the listed spelling.
-    /// Compatibility requires every pair to agree; NEED-04 inspects in written order and Q-05
-    /// requires each contribution's own value. <c>Inc</c> is a callable only, <c>Bad</c> a failed
-    /// argument, <c>5</c>/<c>6</c> are values only, <c>A = 5</c>/<c>B = 6</c> carry both.
+    /// NEED-04 (group-aware, ALIAS-UNIFY-1): every occurrence projects its CALLABLE first;
+    /// identities must agree with the first one (before any VALUE), and every contribution's own
+    /// value must agree with the first value-only one (the anchor), references included; a group of
+    /// references alone demands no value. <c>Inc</c>, <c>Bad</c>, <c>A = 5</c> and <c>B = 6</c> are
+    /// references (four different identities), <c>5</c>/<c>6</c> values only.
     /// </summary>
     public static TheoryData<string[], string> RepeatedNameMultisets => new()
     {
-        // Inc supplies no value: its own value demand fails, in every order.
+        // Inc beside a value: its own value demand fails where the anchor meets it; beside A the
+        // two identities conflict first.
         { ["Inc", "5", "A"], IncValueDemand },
-        { ["Inc", "A", "A"], IncValueDemand },
+        { ["Inc", "A", "A"], Identity },
         { ["Inc", "5", "5", "A"], IncValueDemand },
-        // A required value failure propagates when reached. These mixed sets are unsatisfiable
-        // in every order, but the ordered oracle below may select different failures.
-        { ["A", "B", "Inc"], "BadArity in []" },
+        // Unsatisfiable mixed sets: the ordered oracle below selects the first violated contract.
+        { ["A", "B", "Inc"], Identity },
         { ["5", "6", "Inc"], "BadArity in []" },
         { ["5", "6", "Bad"], "BadArity in []" },
-        // Formerly `ok 5`: the value 5 was paired with Inc's algorithm, and Bad's failure was
-        // repaired by the other occurrences' value.
+        // Never repaired: a reference's failing value is demanded against the anchor.
         { ["5", "Inc", "5"], IncValueDemand },
         { ["5", "Bad", "5"], "DivByZero in []" },
-        { ["A", "Bad", "A"], "DivByZero in []" },
-        // Unequal values, in every order.
-        { ["A", "B", "5"], "BadArity in []" },
-        // Every pair compatible: binds, in every order (the value is 5 whichever occurrence
-        // supplies it).
+        { ["A", "Bad", "A"], Identity },
+        // Different identities, or values disagreeing with the anchor.
+        { ["A", "B", "5"], Identity },
+        // Every contribution compatible: binds, in every order, to A (the first reference).
         { ["A", "A", "5"], "ok 5" },
         { ["5", "5", "A"], "ok 5" },
     };
@@ -279,18 +292,56 @@ public class PatternBindingErrorPrecedenceTests
         }
     }
 
+    /// <summary>
+    /// The ordered oracle: NEED-04's group-aware transitions over the written occurrences, then the
+    /// body's read of the representative (the first reference, else the first value).
+    /// </summary>
     private static string FirstConstraintOutcome(string[] supplied)
     {
-        int? first = null;
+        static (string? Error, int Value) Demand(string item) => item switch
+        {
+            "Inc" => (IncValueDemand, 0),
+            "Bad" => ("DivByZero in []", 0),
+            "A" or "5" => (null, 5),
+            _ => (null, 6),
+        };
+        static bool IsReference(string item) => item is "Inc" or "Bad" or "A" or "B";
+        string? identity = null;
+        int? anchor = null;
+        var pending = new List<string>();
         foreach (var item in supplied)
         {
-            if (item == "Inc") return IncValueDemand;
-            if (item == "Bad") return "DivByZero in []";
-            var value = item == "B" || item == "6" ? 6 : 5;
-            if (first is { } previous && previous != value) return "BadArity in []";
-            first ??= value;
+            if (IsReference(item))
+            {
+                if (identity is { } earlier && earlier != item) return Identity;
+                identity ??= item;
+                if (anchor is { } v)
+                {
+                    var own = Demand(item);
+                    if (own.Error is { } error) return error;
+                    if (own.Value != v) return "BadArity in []";
+                }
+                else pending.Add(item);
+                continue;
+            }
+            var value = Demand(item).Value;
+            if (anchor is { } established)
+            {
+                if (value != established) return "BadArity in []";
+                continue;
+            }
+            anchor = value;
+            foreach (var waiting in pending)
+            {
+                var own = Demand(waiting);
+                if (own.Error is { } error) return error;
+                if (own.Value != value) return "BadArity in []";
+            }
+            pending.Clear();
         }
-        return "ok 5";
+        var representative = supplied.FirstOrDefault(IsReference) ?? supplied[0];
+        var read = Demand(representative);
+        return read.Error ?? $"ok {read.Value}";
     }
 
     [Theory]
@@ -309,8 +360,9 @@ public class PatternBindingErrorPrecedenceTests
     }
 
     [Theory]
-    [InlineData("P(f, f) = f\nP(Inc, A)", IncValueDemand)]
-    [InlineData("P(f, f) = f\nP(A, Inc)", IncValueDemand)]
+    [InlineData("P(f, f) = f\nP(Inc, A)", Identity)]
+    [InlineData("P(f, f) = f\nP(A, Inc)", Identity)]
+    // Two references to Inc match by identity; the BODY's read of f then demands Inc's value.
     [InlineData("P(f, f) = f\nP(Inc, Inc)", IncValueDemand)]
     [InlineData("P(f, f) = f\nP(A, A)", "ok 5")]
     [InlineData("P(f, f) = f\nP(A, 5)", "ok 5")]
@@ -325,9 +377,9 @@ public class PatternBindingErrorPrecedenceTests
     public void TwoOccurrenceNames_RequireEachArgumentsOwnValue(string program, string expected)
     {
         // One algorithm channel may ACCOMPANY an equal value its own argument supplied
-        // (`P(A, 5)`, `P(5, A)`), but a callable-only argument supplies no value, and the other
-        // occurrence's value never completes it (Q-05). Distinct callable identities are the
-        // deliberate two-occurrence compatibility rule tested below.
+        // (`P(A, 5)`, `P(5, A)`): beside a value-only occurrence, a reference's OWN value is
+        // demanded and the other occurrence's value never completes it (Q-05). Distinct callable
+        // identities conflict before any value (NEED-04, group-aware).
         Assert.Equal(expected, Outcome(Run("A = 5\nInc(y) = y + 1\n" + program)));
     }
 

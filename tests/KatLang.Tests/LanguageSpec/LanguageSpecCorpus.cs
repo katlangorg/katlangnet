@@ -2267,7 +2267,7 @@ public static class LanguageSpecCorpus
                 // Equal repeated values still bind.
                 new SpecProbe("P(x, x, (a, b)) = b\nP(1, 1, (2, 3))", "ok raw=3 n=1"),
             ],
-            Explanation = "Repeated names demand each occurrence in written pattern order and check compatibility immediately. The second unequal `x` is an arity conflict, so the later structural argument `Bad` is never demanded. A demanded failure still aborts binding, and equal values with distinct callable identities conflict at the occurrence that reveals the difference. Nested patterns follow the same order. Callbacks and loop state use this binder too.",
+            Explanation = "Repeated names are checked occurrence by occurrence in written pattern order. The second unequal `x` is an arity conflict, so the later structural argument `Bad` is never demanded. A demanded failure still aborts binding, and two distinct callable identities conflict at the occurrence that reveals the difference, before either value is needed. Nested patterns follow the same order. Callbacks and loop state use this binder too.",
         },
         new()
         {
@@ -2293,7 +2293,7 @@ public static class LanguageSpecCorpus
                 new SpecProbe("Bad = 1 / 0\nP(f, f, f) = f\nP(5, 5, Bad)", "err div0"),
                 new SpecProbe("Inc(y) = y + 1\nP(f, f) = f\nP(5, Inc)", "err arity"),
             ],
-            Explanation = "Each repeated occurrence is demanded and compared immediately with the established complete binding. Compatible values and callable identities succeed regardless of order; conflicts or demand failures stop at their first occurrence. Equal values from distinct named callables conflict, while a ready scalar has no callable channel. A failing value is never replaced by another occurrence's value or callable.",
+            Explanation = "Each repeated occurrence is inspected when it is reached: a callable contribution's identity is compared with the group's at once, and values are compared as soon as a plain value takes part — the first plain value is checked against every earlier callable contribution's own value, in written order. Compatible values and callable identities succeed regardless of order; conflicts or demand failures stop at their first occurrence. Equal values from distinct named callables conflict, while a ready scalar has no callable channel. A failing value is never replaced by another occurrence's value or callable.",
         },
         new()
         {
@@ -2307,10 +2307,13 @@ public static class LanguageSpecCorpus
                 // Both orders: the value 1 never borrows Inc's algorithm (formerly `(1, 6)`).
                 new SpecProbe("Inc(y) = y + 1\nP(x, x) = x, x(5)\nP(1, Inc)", "err arity"),
                 // A failing argument's own error propagates; the other value never stands in
-                // (formerly `7`), and two failures report the first (formerly a type error).
+                // (formerly `7`).
                 new SpecProbe("Bad = 1 / 0\nQ(x, x) = x\nQ(Bad, 7)", "err div0"),
                 new SpecProbe("Bad = 1 / 0\nQ(x, x) = x\nQ(7, Bad)", "err div0"),
-                new SpecProbe("Bad = 1 / 0\nMissing = [1][5]\nQ(x, x) = x\nQ(Missing, Bad)", "err index"),
+                // Two references are compared by identity before either value is needed (NEED-04,
+                // group-aware): different properties conflict and neither failure is reached
+                // (formerly the first demanded failure, `index`).
+                new SpecProbe("Bad = 1 / 0\nMissing = [1][5]\nQ(x, x) = x\nQ(Missing, Bad)", "err type"),
                 // Values that each arrive on their own bind; a callable accompanies its own value.
                 new SpecProbe("P(x, x) = x\nP(7, 7)", "ok raw=7 n=1"),
                 new SpecProbe("A = 5\nP(f, f) = f, f()\nP(5, A)", "ok raw=S[5, 5] n=1"),
@@ -2318,7 +2321,7 @@ public static class LanguageSpecCorpus
                 new SpecProbe("Bad = 1 / 0\nE(x, x) = true\nE(x, y) = false\nE(Bad, 7)", "err div0"),
             ],
             IncludeInGeneratorPrompt = true,
-            Explanation = "A repeated parameter name is a constraint over arguments that are each supplied independently, never a way to combine them. Every occurrence must supply its own value, and the values must be equal. `Inc` passed without arguments has no value (reading it as one is an arity error), so `P(Inc, 1)` and `P(1, Inc)` both fail with that error: the value 1 is never paired with Inc's callable. An argument whose evaluation fails reports its own error, and another occurrence's value never stands in for it. When equal values arrive together with a callable, the callable accompanies its own argument's value.",
+            Explanation = "A repeated parameter name is a constraint over arguments that are each supplied independently, never a way to combine them. Arguments that name an algorithm must name the same one; as soon as one occurrence is a plain value, every occurrence must supply its own value, and the values must be equal. `Inc` passed without arguments has no value (reading it as one is an arity error), so `P(Inc, 1)` and `P(1, Inc)` both fail with that error: the value 1 is never paired with Inc's callable. An argument whose evaluation fails reports its own error, and another occurrence's value never stands in for it. When equal values arrive together with a callable, the callable accompanies its own argument's value.",
         },
         new()
         {
@@ -2334,7 +2337,7 @@ public static class LanguageSpecCorpus
                 new SpecProbe("A = 5\nB = 5\nP(f, f) = f\nP(A, B)", "err type"),
             ],
             IncludeInGeneratorPrompt = true,
-            Explanation = "Repeated values must be equal, and repeated callable contributions must carry values and the same callable identity (declaration and captured lexical activations). Equal zero-argument values do not make A and B interchangeable: A(1) is 5 while B(1) is 6. Both argument orders therefore reject, including with just two occurrences. One callable plus an equal value remains valid.",
+            Explanation = "Repeated callable contributions must have the same callable identity (declaration and captured lexical activations), and as soon as a plain value takes part, every contribution's own value must be equal to it. Equal zero-argument values do not make A and B interchangeable: A(1) is 5 while B(1) is 6. Both argument orders therefore reject, including with just two occurrences. One callable plus an equal value remains valid.",
         },
         new()
         {
@@ -2637,7 +2640,7 @@ public static class LanguageSpecCorpus
                 new SpecProbe("C([*xs]) = xs\nA = C\nA((1, 2))", "err type"),
             ],
             IncludeInGeneratorPrompt = true,
-            Explanation = "A definition whose whole body is a bare reference to a callable that declares parameters is a CALLABLE ALIAS: `A = Single` makes A another name for Single's callable — no wrapper and no copied signature — so `A(S)` IS `Single(S)` for every argument supply: the same results, the same failures, the same effects. Nothing is derived from the callee's binder names: repeated names (`AP = P` takes `P(x, x)`'s two arguments, which must be equal), binderless groups (`AE = E` takes `E((), [])`'s two structural parameters), collectors and structural kinds are the callee's own, through every level of a chain (`C = B`, `B = A`). The alias is still its own definition: its name, its declaration and its cached bare value belong to it.",
+            Explanation = "A definition whose whole body is a bare reference to an existing definition is a TRANSPARENT REFERENCE (M4★): `A = Single` makes A another name for Single itself — no wrapper and no copied signature — so `A(S)` IS `Single(S)` for every argument supply: the same results, the same failures, the same effects. Nothing is derived from the callee's binder names: repeated names (`AP = P` takes `P(x, x)`'s two arguments, which must be equal), binderless groups (`AE = E` takes `E((), [])`'s two structural parameters), collectors and structural kinds are the callee's own, through every level of a chain (`C = B`, `B = A`). The alias keeps its own name and declaration, but no cached value of its own: read without arguments it is the target's value.",
         },
         new()
         {
@@ -2668,7 +2671,7 @@ public static class LanguageSpecCorpus
                 new SpecProbe("Inc(x) = x + 1\nK(z) = map([1, 2], { Inc })\nK(1)", "ok raw=L[2, 3] n=1"),
             ],
             Notes = "FA-OQ-1, owner decision Option B (2026-10-10). Before it the demand reported the written block's unresolvedImplicitParams over the TARGET's parameters.",
-            Explanation = "An inline block whose one row names a callable that needs arguments — `{ Inc }` — is a callable ALIAS of Inc: it has no parameters of its own. Demanding its value with no arguments therefore fails exactly as demanding `Inc` itself does — Inc needs one argument, so the error is Inc's `ArityMismatch` (\"Property 'Inc' expects 1 parameter\"), reported at the `Inc` inside the block. A clause family reports its `NoMatchingBranch` and a builtin its own arity error; an alias whose target accepts no arguments (`{ Only }` with `Only(*xs)`) simply evaluates, and passing `{ Inc }` where a callable is expected (`map`) calls Inc.",
+            Explanation = "An inline block whose one row names a callable that needs arguments — `{ Inc }` — is a forwarding carrier of Inc (braces make a structure of its own whose calls go to Inc, M4★): it has no parameters of its own. Demanding its value with no arguments therefore fails exactly as demanding `Inc` itself does — Inc needs one argument, so the error is Inc's `ArityMismatch` (\"Property 'Inc' expects 1 parameter\"), reported at the `Inc` inside the block. A clause family reports its `NoMatchingBranch` and a builtin its own arity error; an alias whose target accepts no arguments (`{ Only }` with `Only(*xs)`) simply evaluates, and passing `{ Inc }` where a callable is expected (`map`) calls Inc.",
         },
         new()
         {
@@ -2772,25 +2775,25 @@ public static class LanguageSpecCorpus
             ExpectedRaw = "0",
             ExpectedEmittedCount = 1,
             Notes = "Callable aliases as binding indirection (decided October 1 2026): formerly the alias was a wrapper callable of its own, so the repeated `f` saw two different callables and the call failed.",
-            Explanation = "An alias and its target are one callable. `P(f, f)` requires its two arguments to be the same callable, and `A = Only` makes `A` another name for `Only`'s callable, so `P(A, Only)` binds `f` once and gives `Only(7)`, which is 0. The two names are still separate definitions: each keeps its own cached value when it is read without arguments.",
+            Explanation = "An alias and its target are one definition. `P(f, f)` requires its two arguments to be the same definition, and `A = Only` makes `A` another name for `Only`, so `P(A, Only)` binds `f` once and gives `Only(7)`, which is 0. Read without arguments, the two names share one value too: an alias keeps no cached value of its own (M4★).",
         },
         new()
         {
-            Id = "alias-declares-only-its-own-members",
+            Id = "reference-members-are-the-targets-carrier-members-its-own",
             Category = "name-resolution",
-            Source = "Lib(x) = {\n  K = 5\n  x\n}\nA = Lib\nNavigate(f) = f.K\n\nLib.K\nNavigate(A)",
+            Source = "Lib(x) = {\n  K = 5\n  x\n}\nA = Lib\nNavigate(f) = f.K\n\nLib.K\nA.K\nNavigate(A)",
             Outcome = SpecOutcome.Evaluates,
-            ExpectedDisplay = "5\n5",
-            ExpectedRaw = "S[5, 5]",
-            ExpectedEmittedCount = 2,
+            ExpectedDisplay = "5\n5\n5",
+            ExpectedRaw = "S[5, 5, 5]",
+            ExpectedEmittedCount = 3,
             Probes =
             [
-                // Written member access on the alias does not reach Lib's member K: `A.K` falls back to
-                // a lexical `K`, which nothing declares, so the program has an unresolved input.
-                new SpecProbe("Lib(x) = {\n  K = 5\n  x\n}\nA = Lib\nA.K", "err unresolvedImplicitParams"),
+                // A braced carrier declares only its own members: `C.K` falls back to a lexical `K`, which
+                // nothing declares, so the program has an unresolved input.
+                new SpecProbe("Lib(x) = {\n  K = 5\n  x\n}\nC = { Lib }\nC.K", "err unresolvedImplicitParams"),
             ],
-            Notes = "Callable aliases as binding indirection (decided October 1 2026): an alias is not a namespace alias.",
-            Explanation = "An alias names a CALLABLE, not a namespace. `A = Lib` declares no members of its own, so writing `A.K` does not look inside `Lib` — the dot falls back to an ordinary function named `K`. But the callable you pass through the alias IS `Lib`: `Navigate(A)` gives `Navigate` the callable `Lib`, whose member `K` it reads exactly as `Navigate(Lib)` would.",
+            Notes = "M4★ (ALIAS-UNIFY-1, October 2026): formerly `A.K` on the alias fell back to a lexical `K` (an alias was no namespace); the braced carrier keeps that behavior.",
+            Explanation = "A transparent reference names the WHOLE definition: `A = Lib` makes `A.K` Lib's own member `K`, exactly as passing `A` to `Navigate` reads it. Only a definition written in braces is a structure of its own: `C = { Lib }` hands its calls on to Lib but declares no members, so `C.K` takes the ordinary fallback to a function named `K` — which nothing declares here.",
         },
         new()
         {
@@ -2798,10 +2801,94 @@ public static class LanguageSpecCorpus
             Category = "errors",
             Source = "Lib(x) = x\nA = Lib\nB = {\n  open A\n  1\n}\n\nB",
             Outcome = SpecOutcome.ParseError,
-            ExpectedParseDiagnosticFragment = "is a callable alias, not a namespace",
+            ExpectedParseDiagnosticFragment = "cannot be opened because open providers must have an empty effective parameter list",
             ExpectedDiagnosticCode = DiagnosticCode.IllegalInOpen,
-            Notes = "Callable aliases as binding indirection (decided October 1 2026): a front-end rejection, so no elaborated Lean program exists; Lean refuses the same open with `Algorithm.requiresArguments`.",
-            Explanation = "`open` imports the members of an algorithm that needs no call. An alias is a name for a callable, never a namespace, so `open A` is rejected whatever its target is.",
+            Notes = "M4★ OD-C (ALIAS-UNIFY-1, October 2026): `open` of a reference opens its target, so it is refused exactly when the target is (formerly every alias was refused as \"a callable alias, not a namespace\"). A front-end rejection, so no elaborated Lean program exists; Lean refuses the same open with `Algorithm.requiresArguments`.",
+            Explanation = "`open` imports the members of an algorithm that needs no call. `A = Lib` names Lib itself, so `open A` opens Lib — and Lib takes a parameter `x`, so it is no open provider and the open is rejected, exactly as `open Lib` would be. Compare `open-through-a-reference-opens-the-target`, whose target needs no call.",
+        },
+        new()
+        {
+            Id = "reference-and-carrier-transport-the-whole-definition",
+            Category = "name-resolution",
+            Source = "Box = {\n    public Q = 99\n    F(x) = x * x\n    F\n}\nA = Box\nB = { Box }\nGetQ(f) = f.Q\n\nA.Q\nGetQ(A)\nA(3)\nB(3)",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "99\n99\n9\n9",
+            ExpectedRaw = "S[99, 99, 9, 9]",
+            ExpectedEmittedCount = 4,
+            Probes =
+            [
+                // Calling the holder with no arguments is the forwarded F's own arity rejection.
+                new SpecProbe("Box = {\n    public Q = 99\n    F(x) = x * x\n    F\n}\nBox()", "err arity"),
+                // The braced carrier has only its own members: B.Q never reaches Box.Q.
+                new SpecProbe("Box = {\n    public Q = 99\n    F(x) = x * x\n    F\n}\nB = { Box }\nB.Q", "err unresolvedImplicitParams"),
+                // A reference IS its target's identity; a carrier is a structure of its own.
+                new SpecProbe("Box = {\n    public Q = 99\n    F(x) = x * x\n    F\n}\nA = Box\nSame(x, x) = 0\nSame(A, Box)", "ok raw=0 n=1"),
+                new SpecProbe("Box = {\n    public Q = 99\n    F(x) = x * x\n    F\n}\nB = { Box }\nSame(x, x) = 0\nSame(B, Box)", "err type"),
+            ],
+            IncludeInGeneratorPrompt = true,
+            Notes = "M4★ whole-algorithm transport (ALIAS-UNIFY-1, October 2026).",
+            Explanation = "`Box` declares its own members and its one row names `F`, so `Box(3)` is handed on to `F`. `A = Box` is a TRANSPARENT REFERENCE: every observation of `A` is Box's — its members (`A.Q`, and `GetQ(A)` through a parameter), its calls (`A(3)` is `Box(3)`) and its identity. `B = { Box }` is written in braces, so it is a FORWARDING CARRIER: a structure of its own whose calls are handed on to Box (`B(3)` is 9), with only the members it declares itself — none, so `B.Q` never reaches Box's `Q` — and a different identity from Box.",
+        },
+        new()
+        {
+            Id = "repeated-name-matches-definitions-by-identity",
+            Category = "name-resolution",
+            Source = "A = 7\nD = 7\nSame(x, x) = true\nSame(x, y) = false\n\nSame(A, A)\nSame(A, D)\nSame(A, 7)",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "true\nfalse\ntrue",
+            ExpectedRaw = "S[true, false, true]",
+            ExpectedEmittedCount = 3,
+            Probes =
+            [
+                // Repeated references match without their outputs being computed …
+                new SpecProbe("Bad = 1 / 0\nSame(x, x) = 0\nSame(Bad, Bad)", "ok raw=0 n=1"),
+                // … while ordinary call results are values that must be computed.
+                new SpecProbe("Bad = 1 / 0\nSame(x, x) = 0\nSame(Bad(), Bad())", "err div0"),
+                // A value-only contribution requires every contribution's own value.
+                new SpecProbe("Bad = 1 / 0\nSame(x, x) = 0\nSame(Bad, 7)", "err div0"),
+                new SpecProbe("Bad = 1 / 0\nSame(x, x) = 0\nSame(7, Bad)", "err div0"),
+                // Two definitions of equal value are two identities in an ordinary call.
+                new SpecProbe("A = 7\nD = 7\nP(x, x) = x\nP(A, D)", "err type"),
+            ],
+            IncludeInGeneratorPrompt = true,
+            Notes = "Group-aware NEED-04 (ALIAS-UNIFY-1, October 2026), superseding the VALUE-first repeated-name rule.",
+            Explanation = "A repeated parameter name first asks each argument for the definition it names. Two arguments naming the SAME definition match by identity, without computing it (`Same(A, A)`, and even `Same(Bad, Bad)` with `Bad = 1 / 0`). Two DIFFERENT definitions never match, even when their values are equal (`Same(A, D)` is not the first clause, so the family takes the second). Once a plain value takes part, every argument's own value must equal it: `Same(A, 7)` computes `A` and compares, and `Same(Bad, 7)` fails with Bad's own division by zero.",
+        },
+        new()
+        {
+            Id = "open-through-a-reference-opens-the-target",
+            Category = "name-resolution",
+            Source = "Lib = {\n    public K = 7\n    0\n}\nAlias = Lib\nP = {\n    open Alias, Lib\n    K\n}\n\nP",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "7",
+            ExpectedRaw = "7",
+            ExpectedEmittedCount = 1,
+            Probes =
+            [
+                // A carrier opens only its OWN public members: K stays P's own input.
+                new SpecProbe("Lib = {\n    public K = 7\n    0\n}\nC = {\n    public Own = 5\n    Lib\n}\nP = {\n    open C\n    K + Own\n}\nP(1)", "ok raw=6 n=1"),
+            ],
+            IncludeInGeneratorPrompt = true,
+            Notes = "M4★ OD-C (ALIAS-UNIFY-1, October 2026): formerly `open` of an alias was refused.",
+            Explanation = "`open Alias` opens the public members of what `Alias` names — `Lib` itself — so `open Alias, Lib` is one provider written twice and `K` is Lib's 7. A braced carrier is different: `C = { public Own = 5 ⏎ Lib }` opens only its own public member `Own`, so `K` stays an input of `P`.",
+        },
+        new()
+        {
+            Id = "member-path-alias-is-a-member-reference",
+            Category = "name-resolution",
+            Source = "Box = { G(x) = x * 10 }\nUse(b) = {\n    A = b.G\n    A(3), 3.A\n}\n\nUse(Box)",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "(30, 30)",
+            ExpectedRaw = "S[30, 30]",
+            ExpectedEmittedCount = 1,
+            Probes =
+            [
+                // On a receiver without the member, the path is a plain value: a call with arguments is its arity rejection.
+                new SpecProbe("Thousand(v) = v * 1000\nUse(b) = {\n    A = b.G\n    A(Thousand)\n}\nUse(5)", "err arity"),
+            ],
+            IncludeInGeneratorPrompt = true,
+            Notes = "M4★ OD-B (ALIAS-UNIFY-1, October 2026): formerly the unresolved member name `G` became an inferred parameter of `A` (Q-75).",
+            Explanation = "In a body whose only row is a member path rooted at a parameter, `A = b.G`, the member name `G` names a MEMBER of whatever `b` is — never a new input of `A`. With `Use(Box)`, `A` is Box's own `G`, so `A(3)` and `3.A` both call it. A receiver without that member gives no definition to call: `A` is then a plain value, and calling it with arguments is an arity error.",
         },
         new()
         {
@@ -2876,7 +2963,7 @@ public static class LanguageSpecCorpus
             ExpectedRaw = "L[L[5, 1, 6, L[6]], L[5, 1, 6, L[6]]]",
             ExpectedEmittedCount = 1,
             IncludeInGeneratorPrompt = true,
-            Explanation = "The parameters left and right are genuine aliases of the one callable A. Both argument orders bind successfully and preserve all channels: f reads 5, its count is 1, and both direct invocation and the callback invoke A. Successful permutations preserve channel availability, values, counts and callable identity. Forwarding transports the same demandable cells and performs no VALUE evaluation.",
+            Explanation = "The parameters left and right are genuine aliases of the one callable A, so the repeated f matches them by that identity without computing either. Both argument orders bind successfully and preserve all channels: f reads 5, its count is 1, and both direct invocation and the callback invoke A. When every argument names one definition, permuting them keeps that identity and its channels, and f is the first argument's own cell — here both orders read the same A. Forwarding transports the same demandable cells and performs no VALUE evaluation.",
         },
         new()
         {
@@ -2896,7 +2983,7 @@ public static class LanguageSpecCorpus
             ExpectedDisplay = "5",
             ExpectedRaw = "5",
             ExpectedEmittedCount = 1,
-            Explanation = "A declared structural member supplies that member's stable callable identity without a value demand. Both `Obj.V` occurrences name the same member, so their equal values and identical callable channels satisfy the repeated-name constraint. Computed values do not acquire wrapper callable identities.",
+            Explanation = "A declared structural member supplies that member's stable callable identity without a value demand. Both `Obj.V` occurrences name the same member, so they satisfy the repeated-name constraint by identity, without either value being demanded; the body's `f` then reads the member's value. Computed values do not acquire wrapper callable identities.",
         },
         new()
         {
@@ -7538,7 +7625,7 @@ public static class LanguageSpecCorpus
                 new SpecProbe("Pair(*xs) = 10, 20\nfirst(Pair) == Pair[0], last(Pair) == Pair[1]", "ok raw=S[true, true] n=2"),
             ],
             IncludeInGeneratorPrompt = true,
-            Explanation = "If a callable works with no arguments, using its name alone reads its (cached) value, even if it declares optional or collecting parameters; `A()` evaluates it again. So `Cnt(*xs)` referenced by name inside an expression — as an operand or comparison operand, a list element, a Math argument, an index target, or anywhere in a formula — is never rewritten into a forwarding call: `Twice(*items) = Cnt + Cnt` reads that value twice and ignores its own arguments. A definition whose whole body is the name is a callable alias instead: `Alias = Cnt` names Cnt's callable, so `Alias(1, 2)` is Cnt's call, 2, while `Alias` alone is its own cached value, `0`. Forwarding inside a formula is written explicitly (`Cnt(items*)`). Implicit lifting and forwarding still apply to a callable that requires supplied arguments (`Head(x, *rest)`, `Inc(x)`).",
+            Explanation = "If a callable works with no arguments, using its name alone reads its (cached) value, even if it declares optional or collecting parameters; `A()` evaluates it again. So `Cnt(*xs)` referenced by name inside an expression — as an operand or comparison operand, a list element, a Math argument, an index target, or anywhere in a formula — is never rewritten into a forwarding call: `Twice(*items) = Cnt + Cnt` reads that value twice and ignores its own arguments. A definition whose whole body is the name is a callable alias instead: `Alias = Cnt` names Cnt's callable, so `Alias(1, 2)` is Cnt's call, 2, while `Alias` alone is Cnt's own cached value, `0` (an alias keeps no value of its own). Forwarding inside a formula is written explicitly (`Cnt(items*)`). Implicit lifting and forwarding still apply to a callable that requires supplied arguments (`Head(x, *rest)`, `Inc(x)`).",
         },
         new()
         {
@@ -7735,7 +7822,7 @@ public static class LanguageSpecCorpus
                 new SpecProbe("P(x, x) = x\nP(1.5, 1.6)", "err arity"),
             ],
             Notes = "C#-only Decimal128 rule decided by Q-28 (N-F, 2026-10-07): `==` (Decimal128.Equals at numeric leaves) decides compatibility; the retained contribution is NEED-04's richest, the first in written pattern order among equally rich ones — `Evaluator.BindNeedPatterns` in C#, `bindNeedName` in Lean. `NumericRepresentativeSelectionTests` holds the six-route representation-exact matrix (22 representation pairs, four shapes, five origins, families and callbacks).",
-            Explanation = "A repeated name binds ONE complete contribution. `==` decides compatibility — Decimal128 equality ignores the quantum and the zero sign, so `1.5` and `1.50`, `0` and `-0`, bind. NEED-04 keeps the richest compatible contribution (a named property, which carries a callable, outranks a plain value in either order), and among equally rich contributions the FIRST in written pattern order supplies the retained value with its exact representation. `.string` shows that representation, so `P(1.5, 1.50)` is `'1.5'` and `P(1.50, 1.5)` is `'1.50'`; the verdict, the error kind and the value up to `==` never depend on the argument order.",
+            Explanation = "A repeated name binds ONE complete contribution. `==` decides compatibility — Decimal128 equality ignores the quantum and the zero sign, so `1.5` and `1.50`, `0` and `-0`, bind. NEED-04 keeps the richest compatible contribution (a named property, which carries a callable, outranks a plain value in either order), and among equally rich contributions the FIRST in written pattern order supplies the retained value with its exact representation. `.string` shows that representation, so `P(1.5, 1.50)` is `'1.5'` and `P(1.50, 1.5)` is `'1.50'`; for these arguments the verdict and the value up to `==` never depend on the argument order.",
         },
         new()
         {
@@ -8339,7 +8426,7 @@ public static class LanguageSpecCorpus
                 new SpecProbe("Describe(0) = 'zero'\nDescribe(n) = 'other'\nUse(f) = {\n    A = f\n    A(0), A(5)\n}\nUse(Describe)", "ok raw=S['zero', 'other'] n=1"),
             ],
             IncludeInGeneratorPrompt = true,
-            Explanation = "A body whose one row names a parameter is a callable alias of whatever callable the parameter receives: inside `Use(f)`, `A = f` makes `A(9)`, `2.A` and `Apply(A, 4)` call the supplied `Square` with exactly those new arguments. When the parameter receives a plain value, `A` is an ordinary property that reads it, so `A(1)` is an arity error.",
+            Explanation = "A body whose one row names a parameter is a callable alias of whatever callable the parameter receives: inside `Use(f)`, `A = f` makes `A(9)`, `2.A` and `Apply(A, 4)` call the supplied `Square` with exactly those new arguments. When the parameter receives a plain value, `A` is just that value — bare `A` and `A()` read it without rerunning anything — so `A(1)` is an arity error, and a passed `A` is no callable.",
         },
         new()
         {
@@ -8375,19 +8462,7 @@ public static class LanguageSpecCorpus
                 new SpecProbe("G(o) = o + 100\nUse(b) = {\n    A = b.G\n    A, A(3)\n}\nUse(5)", "err arity"),
             ],
             IncludeInGeneratorPrompt = true,
-            Explanation = "When the fallback name `G` resolves, `A = b.G` has no parameter of its own and is an alias of the member `b` actually declares: `Use(Box)` calls `Box.G(3)`, never the lexical `G`. On a receiver that lacks `G`, `b.G` is the computed value `G(b)`, so `A` is an ordinary property and calling it is an arity error.",
-        },
-        new()
-        {
-            Id = "runtime-alias-unresolved-fallback-stays-a-parameter",
-            Category = "name-resolution",
-            Source = "Thousand(v) = v * 1000\nUse(b) = {\n    A = b.G\n    A(Thousand)\n}\n\nUse(5)",
-            Outcome = SpecOutcome.Evaluates,
-            ExpectedDisplay = "5000",
-            ExpectedRaw = "5000",
-            ExpectedEmittedCount = 1,
-            IncludeInGeneratorPrompt = true,
-            Explanation = "A fallback name that nothing declares is still the body's own parameter (Q-75 is unchanged): `A = b.G` is `A(G) = b.G`, so `A(Thousand)` supplies `G` and, on the receiver `5` that lacks a member `G`, computes `Thousand(5)`.",
+            Explanation = "`A = b.G` is a member reference: its head `b` is a parameter, so `G` is a member name, never an input of `A`. `Use(Box)` calls `Box.G(3)`, the `G` that `b` declares, never the lexical `G`. On a receiver that lacks `G`, `b.G` is the computed value `G(b)`: `A` then names that value, so calling it with an argument is an arity error.",
         },
         new()
         {
@@ -8395,15 +8470,16 @@ public static class LanguageSpecCorpus
             Category = "access-boundaries",
             Source = "Lib(*xs) = {\n    public K = 99\n    0\n}\nK(v) = 7\nNavigate(f) = f.K\nUse(f) = {\n    A = f\n    Navigate(A), A.K\n}\n\nUse(Lib)",
             Outcome = SpecOutcome.Evaluates,
-            ExpectedDisplay = "(99, 7)",
-            ExpectedRaw = "S[99, 7]",
+            ExpectedDisplay = "(99, 99)",
+            ExpectedRaw = "S[99, 99]",
             ExpectedEmittedCount = 1,
             Probes =
             [
-                // Written member access selects the alias's OWN declarations.
+                // A braced carrier with its own `K` reads its OWN declaration.
                 new SpecProbe("Lib(*xs) = {\n    public K = 99\n    0\n}\nUse(f) = {\n    A = { public K = 5\n    f }\n    A.K\n}\nUse(Lib)", "ok raw=5 n=1"),
             ],
-            Explanation = "Passing a runtime alias to a callable passes its target: `Navigate(A)` reads `Lib`'s own member `K` (99). Written member access on the alias itself never follows it: `A.K` takes the ordinary fallback `K(A)` (7), and an alias that declares its own `K` reads that one.",
+            Notes = "M4★ (ALIAS-UNIFY-1, October 2026): formerly written `A.K` on the alias took the fallback `K(A)` (7).",
+            Explanation = "`A = f` is a runtime REFERENCE to whatever `f` receives, so every observation of `A` is that target's: passing it (`Navigate(A)`) and writing `A.K` both read `Lib`'s own member `K` (99). A definition written in braces is a structure of its own instead: `{ public K = 5 ⏎ f }` reads its own `K`.",
         },
         new()
         {
@@ -8433,6 +8509,269 @@ public static class LanguageSpecCorpus
             Outcome = SpecOutcome.EvalError,
             ExpectedErrorCategory = "demandCycle",
             Explanation = "`A` needs `R`'s callee, and `R` captures a call of `A` itself, so resolving `A` re-enters its own resolution: a demand cycle, never a loop.",
+        },
+
+        // ==================== ALIAS-UNIFY-1 review regressions (M4★) ====================
+        new()
+        {
+            Id = "runtime-alias-self-link-is-a-demand-cycle",
+            Category = "errors",
+            Source = "A = A.Algorithm\n\nA",
+            Outcome = SpecOutcome.EvalError,
+            ExpectedErrorCategory = "demandCycle",
+            Probes =
+            [
+                new SpecProbe("A = B.Algorithm\nB = A\nB(1)", "err demandCycle"),
+                new SpecProbe("A = B.Algorithm\nB = A\nA", "err demandCycle"),
+            ],
+            Notes = "ALIAS-UNIFY-1 review: the route decision of an alias step reads its receiver's structure through the asking chase's own visited keys; formerly it re-entered itself without bound.",
+            Explanation = "`A`'s callable is the callee of the call reference its receiver `A` holds, so working it out needs `A` itself: deciding the `.Algorithm` edge leads straight back into `A`, and reading `A` re-enters its own value. That is a demand cycle, reported as one, never an endless loop; `A = B.Algorithm` with `B = A` is the same cycle through one more name.",
+        },
+        new()
+        {
+            Id = "reference-head-resolves-in-its-own-scope",
+            Category = "name-resolution",
+            Source = "Lib = { public Inc(x) = x + 1 }\nA = Lib\nF = {\n    open A\n    Lib = { public Dec(x) = x - 1 }\n    G = Inc\n    G(5)\n}\n\nF",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "6",
+            ExpectedRaw = "6",
+            ExpectedEmittedCount = 1,
+            Probes =
+            [
+                new SpecProbe("Box = {\n    Lib2 = { public Inc(x) = x + 1 }\n    public A = Lib2\n}\nF = {\n    open Box.A\n    G = Inc\n    G(5)\n}\nF", "ok raw=6 n=1"),
+                new SpecProbe("Lib2 = { public Inc = 100 }\nBox = {\n    Lib2 = { public Inc(x) = x + 1 }\n    public A = Lib2\n}\nF = {\n    open Box.A\n    G = Inc\n    G(5)\n}\nF", "ok raw=6 n=1"),
+            ],
+            Notes = "ALIAS-UNIFY-1 review: formerly the resolver looked the reference's head up in the opener's map.",
+            Explanation = "`A = Lib` names the `Lib` visible where `A` is written, so `open A` inside `F` opens that root `Lib` even though `F` declares a `Lib` of its own: `G = Inc` is the root `Lib`'s `Inc`, and `G(5)` is 6. A reference reached through a member, like `Box.A`, likewise names what its own scope sees.",
+        },
+        new()
+        {
+            Id = "reference-receiver-is-its-target-structure",
+            Category = "name-resolution",
+            Source = "Lib = {\n    Defaults = { public Rate = 2 }\n    public Cfg = Defaults\n}\nTax = Lib.Cfg.Rate * 100\n\nTax",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "200",
+            ExpectedRaw = "200",
+            ExpectedEmittedCount = 1,
+            Probes =
+            [
+                new SpecProbe("open Lib\nLib = {\n    Defaults = { public Rate = 2 }\n    public Cfg = Defaults\n}\nTax = Cfg.Rate * 100\nTax", "ok raw=200 n=1"),
+                new SpecProbe("Outer = {\n    Lib = {\n        Defaults = { public Rate = 2 }\n        public Cfg = Defaults\n    }\n    T = {\n        open Lib\n        Cfg.Rate * 100\n    }\n    T\n}\nOuter", "ok raw=200 n=1"),
+            ],
+            Notes = "ALIAS-UNIFY-1 review: formerly a receiver that was a reference reached through a member or an open made `Rate` an inferred input.",
+            Explanation = "`Cfg = Defaults` is a reference, so `Cfg` has `Defaults`' members: `Lib.Cfg.Rate` is `Defaults.Rate`, 2, and `Tax` needs no input. The same holds when `Cfg` comes from `open Lib`, and when `Lib` is declared inside another body.",
+        },
+        new()
+        {
+            Id = "block-headed-reference-navigates-its-block",
+            Category = "name-resolution",
+            Source = "A = {\n    V = { public W = 7 }\n    K = V\n}.K\n\nA.W",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "7",
+            ExpectedRaw = "7",
+            ExpectedEmittedCount = 1,
+            Probes =
+            [
+                new SpecProbe("V = A\nA = {\n    V = { public W = 7 }\n    K = V\n}.K\nA.W", "ok raw=7 n=1"),
+                new SpecProbe("A = B.K\nB = {\n    V = { public W = 7 }\n    K = V\n    U = A\n}\nV = A\nA.W", "ok raw=7 n=1"),
+                new SpecProbe("B = {\n    V = { public W = 7 }\n    K = V\n    U = A\n}\nA = B.K\nV = A\nA.W", "ok raw=7 n=1"),
+            ],
+            Notes = "ALIAS-UNIFY-1 review: formerly the alias kept the unelaborated block and the reference chase looked rows up in the wrong scope.",
+            Explanation = "`A` names the block's member `K`, and `K = V` names the block's own `V`, so `A` has `V`'s member `W`: 7. A root `V`, or a body declared before or after `A`, never changes what the block's `K` names.",
+        },
+        new()
+        {
+            Id = "reference-behind-a-carrier-that-reads-it-back",
+            Category = "name-resolution",
+            Source = "A = B\nB = {\n    public F(x) = x * x\n    A.F\n}\n\nA(3)",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "9",
+            ExpectedRaw = "9",
+            ExpectedEmittedCount = 1,
+            Probes =
+            [
+                new SpecProbe("A = B\nB = {\n    public F(x) = x * x\n    A.F\n}\nB(3), A(3)", "ok raw=S[9, 9] n=2"),
+                new SpecProbe("B = {\n    public F(x) = x * x\n    A.F\n}\nA = B\nB(3)", "ok raw=9 n=1"),
+            ],
+            Notes = "ALIAS-UNIFY-1 second review: formerly the alias chase keyed what it passed by the alias's shape and lent its own visited set to the structure a step's route decision needs, so the receiver `A` of B's row met the outer chase's carrier and failed as an alias cycle (Lean and C#).",
+            Explanation = "`A = B` names the carrier `B`, whose row `A.F` reads `F` through `A`. A reference has its target's members, so `A.F` is `B`'s own `F`: `A(3)` and `B(3)` both call `F(3)`, 9.",
+        },
+        new()
+        {
+            Id = "reference-through-a-carrier-reads-the-carriers-member",
+            Category = "name-resolution",
+            Source = "Settings = Config\nConfig = {\n    public Rate = 2\n    Default\n}\nDefault = Settings.Rate\n\nSettings",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "2",
+            ExpectedRaw = "2",
+            ExpectedEmittedCount = 1,
+            Notes = "ALIAS-UNIFY-1 second review: formerly an IllegalInEval alias cycle (the VALUE chase lent its visited set to the receiver's structure chase).",
+            Explanation = "`Settings` names the carrier `Config`, whose row `Default` names `Settings.Rate` — `Config`'s own `Rate` — so reading `Settings` reads `Config`'s value, 2.",
+        },
+        new()
+        {
+            Id = "same-shape-references-are-distinct-bindings",
+            Category = "name-resolution",
+            Source = "Primary = Config\nBackup = Config\nConfig = {\n    public Rate = 2\n    Backup.Rate\n}\n\nPrimary",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "2",
+            ExpectedRaw = "2",
+            ExpectedEmittedCount = 1,
+            Notes = "ALIAS-UNIFY-1 second review: Lean keyed a chase's visited set by algorithm shape, so two references with the same written row looked like one alias met twice.",
+            Explanation = "`Primary` and `Backup` are written alike but are two declarations: reading `Primary` reads `Config`, whose row `Backup.Rate` is `Config`'s own `Rate`, 2.",
+        },
+        new()
+        {
+            Id = "algorithm-member-of-a-reference-behind-a-carrier",
+            Category = "name-resolution",
+            Source = "P = C\nC = {\n    public Algorithm = 5\n    A\n}\nA = P.Algorithm\n\nP",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "5",
+            ExpectedRaw = "5",
+            ExpectedEmittedCount = 1,
+            Notes = "ALIAS-UNIFY-1 second review: formerly an IllegalInEval alias cycle while deciding whether `.Algorithm` was the member or the intrinsic.",
+            Explanation = "A declared member wins over the `.Algorithm` intrinsic, so `A = P.Algorithm` names `C`'s member `Algorithm`; reading `P` reads `C`'s row `A`, which is that member, 5.",
+        },
+        new()
+        {
+            Id = "carrier-of-a-parameter-in-every-activation",
+            Category = "name-resolution",
+            Source = "Inc(x) = x + 1\nF(f, n) = {\n    A = { f }\n    if(n == 0, A(5), F(A, n - 1))\n}\n\nF(Inc, 1)",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "6",
+            ExpectedRaw = "6",
+            ExpectedEmittedCount = 1,
+            Probes =
+            [
+                new SpecProbe("Inc(x) = x + 1\nF(f, n) = {\n    A = f\n    if(n == 0, A(5), F(A, n - 1))\n}\nF(Inc, 1)", "ok raw=6 n=1"),
+            ],
+            Notes = "ALIAS-UNIFY-1 second review: formerly the inner activation's `A`, whose `f` is the outer `A`, was mistaken for the outer `A` met again (an alias cycle).",
+            Explanation = "Each call of `F` has its own `A`: the outer `A` forwards to `Inc`, and the inner `A` forwards to the outer one, so `A(5)` in the inner call is `Inc(5)`, 6.",
+        },
+        new()
+        {
+            Id = "reference-cycle-through-an-open-is-no-alias",
+            Category = "name-resolution",
+            Source = "open Lib\nLib = { public B = A }\nA = B\nSame(x, x) = 0\n\nSame(A, A)",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "0",
+            ExpectedRaw = "0",
+            ExpectedEmittedCount = 1,
+            Notes = "ALIAS-UNIFY-1 second review: formerly the OD-D check stopped at opened names, so `A` and `B` formed aliases that failed as an alias cycle.",
+            Explanation = "`A = B` names the `B` that `open Lib` provides, and `B = A` leads back to `A`: a reference whose target never ends is no alias. `A` stays an ordinary definition, so `Same(A, A)` binds the same `A` twice without reading it: 0.",
+        },
+        new()
+        {
+            Id = "reference-to-a-carrier-that-leads-back-is-no-alias",
+            Category = "name-resolution",
+            Source = "A = B\nB = {\n    public X = 1\n    A\n}\nG(p) = A.X\n\nG(1)",
+            Outcome = SpecOutcome.ParseError,
+            ExpectedParseDiagnosticFragment = "Property 'X' was not found on `A`",
+            ExpectedDiagnosticCode = DiagnosticCode.UndeclaredIdentifier,
+            Notes = "ALIAS-UNIFY-1 second review (OD-D read on the TARGET chase): formerly the detector stopped at the carrier and made `A` a reference with member X while the resolver classified the cycle, so the layers disagreed. No elaborated Lean program exists.",
+            Explanation = "Calling `A` would call `B`, whose row calls `A` again: the target never ends, so neither `A` nor `B` is an alias (OD-D). `A` is an ordinary definition without a member `X`, so `A.X` is the call `X(A)`, and `X` is not declared in `G`'s closed parameter list.",
+        },
+        new()
+        {
+            Id = "sibling-cycle-member-path-is-read-statically",
+            Category = "name-resolution",
+            Source = "A = B.C\nB = Lib\nLib = {\n    public C = { public X = 1 }\n    public D = A\n}\n\nA.X",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "1",
+            ExpectedRaw = "1",
+            ExpectedEmittedCount = 1,
+            Probes =
+            [
+                new SpecProbe("Lib = {\n    public C = { public X = 1 }\n    public D = A\n}\nB = Lib\nA = B.C\nA.X", "ok raw=1 n=1"),
+                new SpecProbe("A = B.K\nB = {\n    V(x) = x * 10\n    K = V\n    U = A\n}\nZ = A + 1\nZ(4)", "ok raw=41 n=1"),
+                new SpecProbe("B = {\n    V(x) = x * 10\n    K = V\n    U = A\n}\nA = B.K\nZ = A + 1\nZ(4)", "ok raw=41 n=1"),
+            ],
+            Notes = "ALIAS-UNIFY-1 second review: formerly, inside a sibling cycle, the resolver read an unprocessed reference receiver without following it, so alias formation depended on the declaration order.",
+            Explanation = "`A = B.C` names the member `C` of whatever `B` names, and `B = Lib`; `Lib`'s `D` refers back to `A`, but that cycle runs through a member, not through `A`'s target, so `A` is `Lib.C` and `A.X` is 1 in every declaration order.",
+        },
+        new()
+        {
+            Id = "open-block-member-reference-opens-its-target",
+            Category = "name-resolution",
+            Source = "open {\n    public Lib = { public K = 7 }\n    public A = Lib\n}.A\n\nK",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "7",
+            ExpectedRaw = "7",
+            ExpectedEmittedCount = 1,
+            Notes = "ALIAS-UNIFY-1 second review: formerly parameter detection read a lone row inside an open block as its own namespace, so `K` became an inferred input.",
+            Explanation = "The block's `A = Lib` names `Lib`, so opening `{ … }.A` opens `Lib`'s public members: `K` is 7.",
+        },
+        new()
+        {
+            Id = "block-receiver-reference-member",
+            Category = "name-resolution",
+            Source = "V = { public W = 7 }\nY = { K = V }.K.W + 0\n\nY",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "7",
+            ExpectedRaw = "7",
+            ExpectedEmittedCount = 1,
+            Notes = "ALIAS-UNIFY-1 second review: formerly the block receiver lost its scope in parameter detection, so `W` became an inferred input.",
+            Explanation = "The block's `K = V` names the root `V`, so `{ K = V }.K` is `V` and `.W` is its member `W`: `Y` is 7.",
+        },
+        new()
+        {
+            Id = "member-miss-makes-the-body-its-own-structure",
+            Category = "name-resolution",
+            Source = "B = { Q = 1 }\nA = B.foo\nG(p) = A.bar\n\nG(1)",
+            Outcome = SpecOutcome.ParseError,
+            ExpectedParseDiagnosticFragment = "Property 'bar' was not found on `A`",
+            ExpectedDiagnosticCode = DiagnosticCode.UndeclaredIdentifier,
+            Notes = "ALIAS-UNIFY-1 second review: formerly a member step that missed left the receiver unknown, so the closed body's certain fallback name was never checked. No elaborated Lean program exists.",
+            Explanation = "`B` has no member `foo`, so `A = B.foo` is the call `foo(B)`, not a reference: `A` is its own definition without a member `bar`, so `A.bar` is the call `bar(A)`, and `bar` is not declared in `G`'s closed parameter list.",
+        },
+        new()
+        {
+            Id = "reference-cycle-only-the-final-providers-close-is-no-alias",
+            Category = "name-resolution",
+            Source = "open Back\nA = B\nB = {\n    public N = 5\n    A\n}\nBack = { public N = G.Z }\nG = {\n    open A\n    public Z = N\n    0\n}\nSame(x, x) = 0\n\nSame(G.Z, G.Z)",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "0",
+            ExpectedRaw = "0",
+            ExpectedEmittedCount = 1,
+            Probes =
+            [
+                new SpecProbe("open Back\nG = {\n    open A\n    public Z = N\n    0\n}\nBack = { public N = G.Z }\nB = {\n    public N = 5\n    A\n}\nA = B\nSame(x, x) = 0\nSame(G.Z, G.Z)", "ok raw=0 n=1"),
+            ],
+            Notes = "ALIAS-UNIFY-1 third review: formerly OD-D was read only through the open providers that follow every reference, where `open A` provides `B.N`, while the alias formed through the final providers, where `N` is `Back.N` — so `Z` and `Back.N` became aliases of each other and evaluation failed with IllegalInEval (a callable alias cycle).",
+            Explanation = "`A = B` and `B`'s row `A` lead back to each other, so `A` is no alias and `open A` opens `A`'s own, empty namespace. `Z = N` then names `Back.N`, whose `G.Z` leads back to `Z`: neither is an alias, so `Same(G.Z, G.Z)` binds the same `Z` twice without reading it: 0.",
+        },
+        new()
+        {
+            Id = "member-path-through-a-lower-cyclic-receiver-is-no-alias",
+            Category = "name-resolution",
+            Source = "X(v) = 0\nA = B\nB = {\n    public X = D\n    A\n}\nD = {\n    public Q = 7\n    A.X\n}\nE = D\nSame(x, x) = 0\n\nSame(E, D)",
+            Outcome = SpecOutcome.EvalError,
+            ExpectedErrorCategory = "type",
+            Notes = "ALIAS-UNIFY-1 third review: formerly implicit-argument resolution followed `A.X` only when parameter detection's final dot verdict called it a member, while detection followed it through `A`'s target, so the two layers disagreed: `E` became an alias of `D` and `Same(E, D)` matched.",
+            Explanation = "Following `A` to the carrier `B` finds its member `X`, which names `D`, so `E`'s target leads `E` -> `D` -> `A.X` -> `D` again: `E` is no alias. `E` and `D` are two definitions, so binding both to the repeated `x` is a type mismatch.",
+        },
+        new()
+        {
+            Id = "reference-head-is-the-parameter-its-own-scope-binds",
+            Category = "name-resolution",
+            Source = "F(x) = {\n    A = x\n    G(x) = A.W + 0\n    G(5)\n}\n\nF({ public W = 9 })",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "9",
+            ExpectedRaw = "9",
+            ExpectedEmittedCount = 1,
+            Notes = "ALIAS-UNIFY-1 third review: formerly the reference's head was looked up with the parameter bindings of the site that asked, where G's own `x` hid F's, so `A` looked like a memberless definition and `G` reported `W` as undeclared.",
+            Explanation = "`A = x` names `F`'s parameter `x` — the one `A`'s own scope sees, whatever `G`'s own `x` is — so `A` is a reference to `F`'s argument, and `A.W` reads its member `W`: 9.",
+        },
+        new()
+        {
+            Id = "open-path-into-a-parameterized-body-is-its-own-namespace",
+            Category = "name-resolution",
+            Source = "p = { public K = 1 }\nQ(p) = {\n    public M = p\n    0\n}\nF(z) = {\n    open Q.M\n    K\n}\n\nF(1)",
+            Outcome = SpecOutcome.ParseError,
+            ExpectedParseDiagnosticFragment = "Identifier 'K' is used in an explicitly parameterized algorithm",
+            ExpectedDiagnosticCode = DiagnosticCode.UndeclaredIdentifier,
+            Notes = "ALIAS-UNIFY-1 third review: formerly the open target's chase did not see `Q`'s parameter `p`, so it opened the root `p` and `K` failed only at run time as a local-only property. No elaborated Lean program exists.",
+            Explanation = "`M = p` names `Q`'s parameter, so `M` is a reference to a run-time value: opening it opens `M`'s own, empty namespace. `K` is therefore not declared in `F`'s closed parameter list.",
         },
     ];
 }

@@ -1,3 +1,5 @@
+using KatLang.Evaluation;
+
 namespace KatLang;
 
 /// <summary>
@@ -36,18 +38,18 @@ internal sealed class ParameterActivation
     internal object ValueEnvironmentIdentity { get; }
 
     /// <summary>
-    /// The normalized callable-alias targets of alias bindings declared under this activation
+    /// The memoized static ends of alias bindings declared under this activation
     /// (<see cref="Evaluator.AliasTargetKey"/>): an alias declared inside a call's body is resolved
     /// once per activation and forgotten with it. Runtime-only memoization, like the activation.
     /// </summary>
-    internal Dictionary<Evaluator.AliasTargetKey, Algorithm> AliasTargets => AliasMemos;
+    internal Dictionary<Evaluator.AliasTargetKey, Evaluator.AliasStaticEnd> AliasTargets => AliasMemos;
 
     /// <summary>
     /// The runtime-alias BINDING CELLS of runtime-target aliases declared under this activation (FWD-02,
     /// META-S3-2; <see cref="Evaluation.EvaluationBudget.AliasBindingCells"/>): one retained cell per alias
     /// declaration and declaring scope, established on first use and forgotten with the activation.
     /// </summary>
-    internal Dictionary<Evaluator.AliasTargetKey, Evaluator.RuntimeAliasBinding> AliasBindingCells => AliasMemos.BindingCells;
+    internal Dictionary<Evaluator.AliasTargetKey, NeedCell> AliasBindingCells => AliasMemos.BindingCells;
 
     // Both alias memos hang off ONE lazily created holder (published first-wins, so racing binding-cell
     // establishments meet in one dictionary): an activation that never meets an alias pays one null field.
@@ -59,11 +61,11 @@ internal sealed class ParameterActivation
     private AliasMemo? _aliasMemos;
 
     // The alias-target memo itself, carrying the binding-cell memo created on first use.
-    private sealed class AliasMemo : Dictionary<Evaluator.AliasTargetKey, Algorithm>
+    private sealed class AliasMemo : Dictionary<Evaluator.AliasTargetKey, Evaluator.AliasStaticEnd>
     {
-        private Dictionary<Evaluator.AliasTargetKey, Evaluator.RuntimeAliasBinding>? _bindingCells;
+        private Dictionary<Evaluator.AliasTargetKey, NeedCell>? _bindingCells;
 
-        public Dictionary<Evaluator.AliasTargetKey, Evaluator.RuntimeAliasBinding> BindingCells
+        public Dictionary<Evaluator.AliasTargetKey, NeedCell> BindingCells
             => Volatile.Read(ref _bindingCells)
                ?? Interlocked.CompareExchange(ref _bindingCells, [], null)
                ?? _bindingCells!;

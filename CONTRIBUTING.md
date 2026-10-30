@@ -6,6 +6,13 @@ The KatLang project is released under the MIT License with an
 additional patent grant. By contributing, you help improve the
 project for everyone.
 
+## Build Prerequisites
+
+Install the .NET 11 RC3 SDK version pinned in [global.json](global.json).
+SDK roll-forward is disabled, so local builds require that exact version;
+CI and release workflows install it from the same file. Projects continue
+to target `net11.0`.
+
 ## License of Contributions
 
 By submitting a contribution (including but not limited to code,

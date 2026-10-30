@@ -41,14 +41,15 @@ public class FrontEndTraversalTests
 
     private static Task RunParameterDetectorCollectFreeParams(Expr sample)
     {
-        var (detected, _) = ParameterDetector.Detect(EmptyAlgorithm(sample));
+        var detectedInput = ParameterDetector.Detect(EmptyAlgorithm(sample));
+        var (detected, _) = detectedInput;
         Assert.NotNull(detected);
         return Task.CompletedTask;
     }
 
     private static Task RunImplicitCollectImplicitDeps(Expr sample)
     {
-        Assert.NotNull(ImplicitArgumentResolver.Resolve(EmptyAlgorithm(sample)));
+        Assert.NotNull(ImplicitArgumentResolver.ResolveNameResolved(EmptyAlgorithm(sample)));
         return Task.CompletedTask;
     }
 
@@ -62,7 +63,7 @@ public class FrontEndTraversalTests
             Opens: [],
             Properties: [new Property("Nested", EmptyAlgorithm(sample))],
             Output: OutputBundle.Empty);
-        Assert.NotNull(ImplicitArgumentResolver.Resolve(root));
+        Assert.NotNull(ImplicitArgumentResolver.ResolveNameResolved(root));
         return Task.CompletedTask;
     }
 
@@ -161,7 +162,8 @@ public class FrontEndTraversalTests
     public void ParameterDetector_PreservesLeafOutputRowsByReference(string variant)
     {
         var sample = VariantSamples[variant];
-        var (detected, diagnostics) = ParameterDetector.Detect(EmptyAlgorithm(sample));
+        var detectedInput = ParameterDetector.Detect(EmptyAlgorithm(sample));
+        var (detected, diagnostics) = detectedInput;
 
         Assert.Empty(diagnostics);
         Assert.Same(sample, detected.Output[0]);
@@ -172,7 +174,7 @@ public class FrontEndTraversalTests
     public void ImplicitArgumentResolver_PreservesLeafOutputRowsByReference(string variant)
     {
         var sample = VariantSamples[variant];
-        var resolved = ImplicitArgumentResolver.Resolve(EmptyAlgorithm(sample));
+        var resolved = ImplicitArgumentResolver.ResolveNameResolved(EmptyAlgorithm(sample));
 
         Assert.Same(sample, resolved.Output[0]);
     }
@@ -218,7 +220,8 @@ public class FrontEndTraversalTests
             Properties: [new Property("R", EmptyAlgorithm(new Expr.Num(7)))],
             Output: new OutputBundle([boundReference]));
 
-        var (detected, diagnostics) = ParameterDetector.Detect(root);
+        var detectedInput = ParameterDetector.Detect(root);
+        var (detected, diagnostics) = detectedInput;
 
         Assert.Empty(diagnostics);
         Assert.Empty(detected.Params);
@@ -323,7 +326,8 @@ public class FrontEndTraversalTests
     public void ParameterDetector_DetectsFreeNamesInsideRecursiveChildren(string position)
     {
         var embedded = RecursiveEmbeddings[position](new Expr.Resolve("q"));
-        var (detected, _) = ParameterDetector.Detect(EmptyAlgorithm(embedded));
+        var detectedInput = ParameterDetector.Detect(EmptyAlgorithm(embedded));
+        var (detected, _) = detectedInput;
 
         Assert.Contains("q", detected.Params);
 
@@ -341,7 +345,8 @@ public class FrontEndTraversalTests
     public void ParameterDetector_LeavesAlgorithmExprNamesToTheNestedScope()
     {
         var embedded = new Expr.AlgorithmExpr(EmptyAlgorithm(new Expr.Resolve("q")));
-        var (detected, _) = ParameterDetector.Detect(EmptyAlgorithm(embedded));
+        var detectedInput = ParameterDetector.Detect(EmptyAlgorithm(embedded));
+        var (detected, _) = detectedInput;
 
         Assert.Empty(detected.Params);
         var nested = Assert.IsType<Expr.AlgorithmExpr>(detected.Output[0]);

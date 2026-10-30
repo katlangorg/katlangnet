@@ -230,19 +230,20 @@ internal sealed class EvaluationBudget
     }
 
     /// <summary>
-    /// The run's normalized CALLABLE-ALIAS targets (FWD-02, binding indirection) for alias bindings
-    /// declared OUTSIDE every activation (<see cref="Evaluator.AliasTargetKey"/>: the binding and the
-    /// resolving identity of its declaring scope chain), so a binding read again — a recursive call's
-    /// lookup of a root-level alias, every iteration of a loop body, every callback — does not chase
-    /// its alias chain again. A binding declared under an activation keeps its entry on that
-    /// activation instead (<see cref="ParameterActivation.AliasTargets"/>), so the entry lives exactly
-    /// as long as the activation. A pure function of the key (an alias's target is resolved in its
-    /// own scope, never at the use site), holding resolved ALGORITHMS only — never a value, a
-    /// property-cache entry or a failure — and run-scoped like every other mutable state here.
+    /// The run's memoized STATIC ENDS of alias chains (FWD-02 binding indirection; M4★) for alias bindings
+    /// declared OUTSIDE every activation (<see cref="Evaluator.AliasTargetKey"/>: the binding, the
+    /// resolving identity of its declaring scope chain, and whether the chase follows carriers), so a
+    /// binding read again — a recursive call's lookup of a root-level alias, every iteration of a loop
+    /// body, every callback — does not chase its alias chain again. A binding declared under an
+    /// activation keeps its entry on that activation instead (<see cref="ParameterActivation.AliasTargets"/>),
+    /// so the entry lives exactly as long as the activation. A pure function of the key (an alias's
+    /// target is resolved in its own scope, never at the use site), holding resolved ALGORITHMS and the
+    /// binding of the final static hop only — never a value, a property-cache entry or a failure — and
+    /// run-scoped like every other mutable state here.
     /// </summary>
-    internal Dictionary<Evaluator.AliasTargetKey, Algorithm> AliasTargets => _aliasTargets ??= [];
+    internal Dictionary<Evaluator.AliasTargetKey, Evaluator.AliasStaticEnd> AliasTargets => _aliasTargets ??= [];
 
-    private Dictionary<Evaluator.AliasTargetKey, Algorithm>? _aliasTargets;
+    private Dictionary<Evaluator.AliasTargetKey, Evaluator.AliasStaticEnd>? _aliasTargets;
 
     /// <summary>
     /// The run's runtime-alias BINDING CELLS (FWD-02, META-S3-2) for runtime-target aliases declared
@@ -253,12 +254,12 @@ internal sealed class EvaluationBudget
     /// (<see cref="ParameterActivation.AliasBindingCells"/>). First-wins under the dictionary's own
     /// lock, so racing establishments agree on one cell.
     /// </summary>
-    internal Dictionary<Evaluator.AliasTargetKey, Evaluator.RuntimeAliasBinding> AliasBindingCells
+    internal Dictionary<Evaluator.AliasTargetKey, NeedCell> AliasBindingCells
         => Volatile.Read(ref _aliasBindingCells)
            ?? Interlocked.CompareExchange(ref _aliasBindingCells, [], null)
            ?? _aliasBindingCells!;
 
-    private Dictionary<Evaluator.AliasTargetKey, Evaluator.RuntimeAliasBinding>? _aliasBindingCells;
+    private Dictionary<Evaluator.AliasTargetKey, NeedCell>? _aliasBindingCells;
 
     /// <summary>
     /// <b>Whether this run may reach a runtime-target alias</b> (FWD-02, META-S3-2): decided ONCE before

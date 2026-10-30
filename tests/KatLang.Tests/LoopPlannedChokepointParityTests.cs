@@ -125,8 +125,10 @@ public class LoopPlannedChokepointParityTests
     [InlineData("if(C == 1, 1, 2)", 1, 0, 1)]
     [InlineData("if(C + 0 == 1, 1, 2)", 1, 0, 1)]
     [InlineData("if(C() == 1, 1, 2)", 1, 0, 1)]
-    [InlineData("if(D == 1, 1, 2)", 1, 0, 2)]
-    [InlineData("if(D() == 1, 1, 2)", 1, 0, 2)]
+    // `D = C` is a reference (M4★): reading or calling it IS C's read or call — the forwarding hop adds
+    // no invocation level (formerly D's own read sat one level above C's: peak 2).
+    [InlineData("if(D == 1, 1, 2)", 1, 0, 1)]
+    [InlineData("if(D() == 1, 1, 2)", 1, 0, 1)]
     [InlineData("if(A == 1, 1, 2)", 1, 4, 2)]
     [InlineData("if(A() == 1, 1, 2)", 1, 4, 2)]
     [InlineData("if(true, A, A())", 1, 4, 2)]

@@ -207,12 +207,22 @@ public class ModuleIdentityTests
     }
 
     [Fact]
-    public async Task APropertyReadingAHolder_IsNoProviderOfTheModule()
+    public async Task AReferenceToAHolder_OpensTheModule()
     {
-        // `B = A` reads A's value — the module's output — and declares nothing, so it is no alias of
-        // the module and `open B` provides nothing: the written X is an implicit parameter of the
-        // never-called root, reported at its row.
+        // `B = A` is a transparent reference to the holder's module (M4★), so `open B` opens THAT module
+        // under its own provider identity (OD-C): the written X is the module's (formerly B read A's
+        // value, declared nothing and provided nothing, so X was the root's unresolved implicit parameter).
         var observed = await OnEveryRouteAsync($"open B\nA = load('{Five}')\nB = A\nX", Server);
+        Assert.Equal("ok", observed.Kind);
+        Assert.Equal("5", observed.Value);
+    }
+
+    [Fact]
+    public async Task ACalculationReadingAHolder_IsNoProviderOfTheModule()
+    {
+        // A calculation over the holder's value declares nothing and is no reference, so `open B` provides
+        // nothing: the written X is an implicit parameter of the never-called root, reported at its row.
+        var observed = await OnEveryRouteAsync($"open B\nA = load('{Five}')\nB = A + 0\nX", Server);
         Assert.Equal("err", observed.Kind);
         Assert.StartsWith("UnresolvedImplicitParams", Assert.Single(observed.Errors), StringComparison.Ordinal);
         Assert.EndsWith("@ [4:1, 4:2)", observed.Errors[0], StringComparison.Ordinal);

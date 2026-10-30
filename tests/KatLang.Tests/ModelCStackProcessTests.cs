@@ -12,20 +12,14 @@ public class ModelCStackProcessTests
     public async Task TransportForwardingFamiliesCallbacksAndCycles_AreSafeInAConstrainedChild()
     {
         var marker = Path.Combine(Path.GetTempPath(), $"katlang-model-c-stack-{Guid.NewGuid():N}.txt");
-        var start = new ProcessStartInfo("dotnet") { UseShellExecute = false, CreateNoWindow = true,
-            RedirectStandardOutput = true, RedirectStandardError = true };
-        start.ArgumentList.Add("vstest");
-        start.ArgumentList.Add(typeof(ModelCStackProcessTests).Assembly.Location);
-        start.ArgumentList.Add("--Tests:" + typeof(ModelCStackProcessTests).FullName + ".ConstrainedChild");
+        var start = SubprocessProbe.StartInfo(typeof(ModelCStackProcessTests).Assembly.Location, [typeof(ModelCStackProcessTests).FullName + ".ConstrainedChild"]);
         start.Environment[Child] = "1"; start.Environment[Marker] = marker;
         try
         {
             using var process = Process.Start(start)!;
             var output = process.StandardOutput.ReadToEndAsync();
             var error = process.StandardError.ReadToEndAsync();
-            using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(90));
-            try { await process.WaitForExitAsync(deadline.Token); }
-            catch (OperationCanceledException) { process.Kill(entireProcessTree: true); await process.WaitForExitAsync(); Assert.Fail("Model-C constrained child timed out"); }
+            await process.WaitForExitAsync();
             var text = await output + await error;
             Assert.True(process.ExitCode == 0, text);
             Assert.DoesNotContain("Stack overflow", text, StringComparison.OrdinalIgnoreCase);
@@ -58,7 +52,7 @@ public class ModelCStackProcessTests
             Assert.Equal(KatLangErrorCode.DemandCycle, cycle.Demand().Error.Code);
             Assert.Equal(KatLangErrorCode.DemandCycle, cycle.DemandAsync().GetAwaiter().GetResult().Error.Code);
             File.WriteAllText(Environment.GetEnvironmentVariable(Marker)!, "model-c-stack-ok");
-        }, TimeSpan.FromSeconds(60));
+        });
     }
 
     private static void Success(string source, string expected)

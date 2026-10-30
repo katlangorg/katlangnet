@@ -1254,10 +1254,13 @@ public class BranchLazyModuleLoadingTests
         };
         var diagnostics = new DiagnosticBag();
         var loaded = await new ModuleLoader(diagnostics, modules.Download).ElaborateAsync(root);
-        var (detected, detectionDiagnostics) = ParameterDetector.Detect(loaded);
-        var resolved = ImplicitArgumentResolver.ResolvePrevalidated(detected, diagnostics: diagnostics);
+        var detectedInput = ParameterDetector.Detect(loaded);
+        var (detected, detectionDiagnostics) = detectedInput;
+        var resolved = ImplicitArgumentResolver.ResolvePrevalidated(detectedInput, diagnostics: diagnostics);
         new ParameterPropertyCollisionValidator(diagnostics).VisitAlgorithm(resolved);
-        var exposed = PropertyExposureResolver.Resolve(resolved);
+        var exposed = PropertyExposureResolver.Resolve(resolved, observations: null, modules: detectedInput.Modules);
+        Assert.Empty(diagnostics);
+        detectedInput.Modules.Publish(detectedInput.Operation!.Freeze());
         Assert.Empty(diagnostics);
         Assert.Empty(detectionDiagnostics);
         Assert.Empty(modules.Fetches);

@@ -11,17 +11,21 @@ open KatLang (resolve param num)
 -- Callable aliases, bare forwarding and written calls (FWD-02; binding
 -- indirection decided 2026-10-01)
 --------------------------------------------------------------------------------
--- A body whose ONE written row is a bare reference to a callable that declares
--- parameterized callable structure (`Algorithm.declaresParameterizedStructure`) is
--- not a formula:
---   * `A = F` is a CALLABLE ALIAS (`Algorithm.alias`): BINDING INDIRECTION. `A` keeps
---     its own binding — declaration, zero-argument cache key — while every callable
---     use of `A` is `F`'s, resolved in `A`'s own scope (`resolveAliasTarget`): a call
---     through `A` IS `F`'s call, for every builtin (the adapters, `if`'s laziness, a
---     callback slot's non-demand, a loop's minimum arity), every user shape and every
---     clause family — nameable or not. No wrapper is invoked: an alias opens no
---     binding context and evaluates nothing;
---   * `G(params) = F` is BARE FORWARDING: each of `F`'s parameters is supplied from an
+-- A body whose ONE written row is a bare reference is not a formula:
+--   * an OPEN `A = F` naming any resolved algorithm (since M4★, ALIAS-UNIFY-1, whatever
+--     its arity) is an ALIAS (`Algorithm.alias`): BINDING INDIRECTION. `A` keeps its own
+--     declaration, while every use of `A` is `F`'s, resolved in `A`'s own scope
+--     (`resolveAliasTarget`): a call through `A` IS `F`'s call, for every builtin (the
+--     adapters, `if`'s laziness, a callback slot's non-demand, a loop's minimum arity),
+--     every user shape and every clause family — nameable or not — and a bare read of
+--     `A` IS `F`'s read, under `F`'s entry (OD-E: an alias owns no cache entry). An
+--     unbraced row is a transparent REFERENCE (written members navigate the target); a
+--     braced `A = { F }` is a structural forwarding CARRIER (`reference = false`: it
+--     declares only its own members). No wrapper is invoked: an alias opens no binding
+--     context and evaluates nothing;
+--   * a CLOSED `G(params) = F`, `F` declaring parameterized callable structure
+--     (`Algorithm.declaresParameterizedStructure`), is BARE FORWARDING: each of `F`'s
+--     parameters is supplied from an
 --     EXISTING compatible binding of the SAME NAME (`bareForwardingRow`) — never
 --     renamed, never matched by position, never added to G's closed list, never
 --     reshaped from same-named leaves — and a target with NO forwarding contract (an
@@ -166,13 +170,15 @@ def afRoot (out : List KatLang.Expr) : KatLang.Expr :=
     , ("PF", alg ["f", "f"] [] [] [.call (param "f") [num 7]])
     , ("Only", algWithParameterPatterns [afColl "xs"] [] [] [.call (resolve "Id") [num 0]])
     , ("OnlyA", afAlias "Only")
-    -- A zero-parameter target is READ, never aliased: `ZA = Z` is an ordinary property.
+    -- A zero-parameter target is aliased too since M4★: `ZA = Z` is a transparent reference.
     , ("Z", alg [] [] [] [.call (resolve "Id") [num 3]])
-    , ("ZA", alg [] [] [] [resolve "Z"])
-    -- Navigation: `Lib(x) = { K = 5 ⏎ x }` declares K; its alias `LibA = Lib` declares nothing,
-    -- while a callable passed through the alias IS Lib (`Navigate(f) = f.K`).
+    , ("ZA", afAlias "Z")
+    -- Navigation: `Lib(x) = { K = 5 ⏎ x }` declares K; its reference alias `LibA = Lib` navigates
+    -- Lib's members, its braced carrier `LibC = { Lib }` declares nothing of its own, and a
+    -- callable passed through either IS Lib (`Navigate(f) = f.K`).
     , ("Lib", algPrivate ["x"] [] [("K", alg [] [] [] [num 5])] [param "x"])
     , ("LibA", afAlias "Lib")
+    , ("LibC", .alias none [] [] (resolve "Lib") none false)
     , ("Navigate", alg ["f"] [] [] [.dotMember (param "f") "K" (resolve "K") none])
     -- Bare forwarding by name.
     , ("Forward", afBare "Double" [afCap "x"] [afCap "x"])
@@ -335,32 +341,51 @@ def afRejectedWith (rejection : BareForwardingRejection) : Except BareForwarding
 #guard afSucceedsWith [afCall "PF" [resolve "Only", resolve "OnlyA"]] (.atom 0)
 #guard afFailsWith (fun _ => true) [afCall "PF" [resolve "OnlyA", resolve "Inc"]]
 
--- 7. THE CACHE KEY IS THE ALIAS BINDING'S (`zero_arg_cache_key_carries_the_binding_name`): a bare read of the
---    alias `OnlyA` is Only's zero-supply demand stored under OnlyA's OWN entry, so `OnlyA, Only,
---    OnlyA` evaluates Only's body twice (one evaluation per binding: Only binds its empty supply
---    and calls `Id`, two contexts each) and reuses OnlyA's entry; an explicit `OnlyA()` is fresh.
---    CACHE-PUB-1: `OnlyA()` invokes the target's callable through the ALIAS binding — the same
---    calculation OnlyA's bare read requests (Only's zero-supply demand) — so on an empty entry it
---    establishes OnlyA's OWN entry (never Only's): `OnlyA(), OnlyA` evaluates once (formerly
---    twice), while `OnlyA, OnlyA()` still evaluates twice and `OnlyA(), Only` keeps one evaluation
---    per binding.
+-- 7. AN ALIAS OWNS NO CACHE ENTRY (OD-E, M4★; the KEY still names its binding,
+--    `zero_arg_cache_key_carries_the_binding_name` — the binding is the TARGET's): a bare read of
+--    the alias `OnlyA` IS Only's read — Only's zero-supply demand under Only's ONE entry — so
+--    `OnlyA, Only, OnlyA` evaluates Only's body ONCE (Only binds its empty supply and calls `Id`:
+--    two contexts; formerly twice, one entry per binding). An explicit `OnlyA()` is Only's fresh
+--    call; under CACHE-PUB-1 a qualifying zero-supply call that finds the TARGET's entry empty
+--    establishes it (the publication origin is the target, never the alias): `OnlyA(), OnlyA` and
+--    `OnlyA(), Only` each evaluate once, while `OnlyA, OnlyA()` still evaluates twice.
 #guard afSucceedsWith [resolve "OnlyA", resolve "Only", resolve "OnlyA"] (.sequenceValue [.atom 0, .atom 0, .atom 0])
-#guard (afRun [resolve "OnlyA", resolve "Only", resolve "OnlyA"]).snd == 4
+#guard (afRun [resolve "OnlyA", resolve "Only", resolve "OnlyA"]).snd == 2
+#guard (afRun [resolve "OnlyA", resolve "Only", resolve "OnlyA"]).snd == (afRun [resolve "Only"]).snd
 #guard (afRun [afCall "OnlyA" [], resolve "OnlyA"]).snd == 2
 #guard (afRun [resolve "OnlyA", afCall "OnlyA" []]).snd == 4
-#guard (afRun [afCall "OnlyA" [], resolve "Only"]).snd == 4
--- A ZERO-PARAMETER target is READ, never aliased (`zero_parameter_user_algorithm_is_not_an_alias_target`):
--- `ZA = Z` reads Z's own cached value, so `ZA, Z, ZA` evaluates Z's body once.
+#guard (afRun [afCall "OnlyA" [], resolve "Only"]).snd == 2
+-- A ZERO-PARAMETER target is aliased too since M4★ (`ZA = Z` is a transparent reference; only a
+-- CLOSED body still reads `declaresParameterizedStructure`,
+-- `zero_parameter_user_algorithm_is_not_an_alias_target`): `ZA, Z, ZA` reads Z's ONE entry and
+-- evaluates Z's body once.
 #guard afSucceedsWith [resolve "ZA", resolve "Z", resolve "ZA"] (.sequenceValue [.atom 3, .atom 3, .atom 3])
 #guard (afRun [resolve "ZA", resolve "Z", resolve "ZA"]).snd == 1
+#guard (afRun [resolve "ZA", resolve "ZA"]).snd == (afRun [resolve "Z"]).snd
+-- A call through it is Z's own fresh call (its own binding context plus `Id`'s), which on an
+-- empty entry establishes Z's entry (CACHE-PUB-1, target origin): the later bare `Z` reads it,
+-- exactly as after the direct `Z()`; the target's arity contract stands (`ZA(1)` is Z's rejection).
+#guard (afRun [afCall "ZA" [], resolve "Z"]).snd == 2
+#guard (afRun [afCall "ZA" [], resolve "Z"]).snd == (afRun [afCall "ZA" []]).snd
+#guard (afRun [afCall "ZA" [], resolve "Z"]).snd == (afRun [afCall "Z" [], resolve "Z"]).snd
+#guard afFailsWith (innermostIsArityMismatch 0 1) [afCall "ZA" [num 1]]
 
--- 8. NAVIGATION: written `LibA.K` does NOT navigate the target's members (an alias declares only its
---    own), while `Lib.K` does, and a callable passed THROUGH the alias is the target, so
---    `Navigate(LibA)` navigates Lib's K exactly like `Navigate(Lib)`.
+-- 8. NAVIGATION (M4★): the STRUCTURE chase follows a REFERENCE and stops at a CARRIER. Written
+--    `LibA.K` navigates the target's members exactly like `Lib.K` (formerly a fallback failure),
+--    while the carrier `LibC` declares only its own members and inherits none from its forwarding
+--    target, so `LibC.K` falls back lexically and fails. Passing is WHOLE-ALGORITHM TRANSPORT: a
+--    reference passed as an argument is its target (`Navigate(LibA)` navigates Lib's K exactly like
+--    `Navigate(Lib)`), while a passed carrier stays the carrier, so `Navigate(LibC)` misses K
+--    exactly like the written `LibC.K`.
 #guard afSucceedsWith [.dotMember (resolve "Lib") "K" (resolve "K") none] (.atom 5)
-#guard afFailsWith (fun _ => true) [.dotMember (resolve "LibA") "K" (resolve "K") none]
+#guard afSucceedsWith [.dotMember (resolve "LibA") "K" (resolve "K") none] (.atom 5)
+#guard afFailsWith (fun _ => true) [.dotMember (resolve "LibC") "K" (resolve "K") none]
 #guard afSucceedsWith [afCall "Navigate" [resolve "Lib"]] (.atom 5)
 #guard afSucceedsWith [afCall "Navigate" [resolve "LibA"]] (.atom 5)
+#guard afFailsWith (fun _ => true) [afCall "Navigate" [resolve "LibC"]]
+-- ... while a CALL through the carrier forwards to Lib with exactly its supply.
+#guard afSucceedsWith [afCall "LibC" [num 8]] (.atom 8)
+#guard afSucceedsWith [afCall "LibA" [num 8]] (.atom 8)
 
 -- 9. HOST-BUILT ALIAS TREES the surface pass never forms are rejected before evaluation: a cycle
 --    (`staticAliasCycle`) and a target that is not a static path.
@@ -495,12 +520,13 @@ def afHostScopeRevisit : KatLang.Expr :=
   (bareForwardingRow "F" [flat] (afNames [flat]) [] [nested]).isNone &&
   (bareForwardingRow "F" [nested] (afNames [nested]) [] [flat]).isNone
 
--- 16. RUNTIME-TARGET ALIASES (META-S3-2; FWD-02 D1/D2/D3): an alias whose row is a RUNTIME ROW
---    (`Expr.isRuntimeAliasRow`: a parameter, an `.Algorithm` link, a parameter-rooted member path)
---    calls the identity its binding cell projects when that identity declares parameterized
---    structure, with exactly the written new supply, and is otherwise its ordinary zero-parameter
---    property (`Algorithm.aliasPropertyView`). Its bare read is the binding cell's VALUE. The C# front
---    end classifies such a body only after Q-75 inference and formula lifting left it parameterless
+-- 16. RUNTIME-TARGET ALIASES (META-S3-2; FWD-02 D1/D2/D3; M4★ L-RUN): an alias whose row is a
+--    RUNTIME ROW (`Expr.isRuntimeAliasRow`: a parameter, an `.Algorithm` link, a parameter-rooted
+--    member path) calls the identity its binding cell projects WHATEVER its arity, with exactly the
+--    written new supply; when the projection supplies no identity (a value) it is the alias's VALUE
+--    VIEW (`Algorithm.aliasPropertyView`), whose zero-supply call reads the binding cell and whose
+--    nonempty call is the arity rejection. Its bare read is the binding cell's VALUE. The C# front end
+--    classifies such a body only after Q-75 inference and formula lifting left it parameterless
 --    (Option A; FORMAL-02: a front-end fact). Laws: `KatLangArityLaws/RuntimeAlias.lean`; whole-program
 --    guards with heap evidence: `KatLangArityLaws/RuntimeAliasGuards.lean`.
 
@@ -544,5 +570,53 @@ def afFailsWithArity (r : Except Error Result) (expected actual : Nat) : Bool :=
 -- An alias is no invocation: through the runtime alias, `Use(Sq)` opens Use's context and Sq's two,
 -- exactly as `Ap(f, x) = f(x)` would — nothing for the alias itself.
 #guard (afRuntimeRun [afCall "Use" [resolve "Sq"]]).snd == 3
+
+--------------------------------------------------------------------------------
+-- ALIAS-UNIFY-1 review: an alias step's route decision, and an alias receiver's frames
+--------------------------------------------------------------------------------
+-- `A = A.Algorithm`: an alias step's `.Algorithm` route reads its receiver's STRUCTURE in the asking
+-- chase's STRUCTURE context (`aliasStepIsRuntime`, `aliasStructureContext`; none for an invocation or
+-- VALUE chase), so a receiver whose structure computation leads back into itself — here one level down,
+-- in the receiver's own structure chase — is a cycle INSIDE the decision — a runtime step — and the
+-- projection then re-enters its own flight:
+-- the ordinary demand cycle (NEED-09), never an unbounded re-entry of the decision. The two-alias form
+-- `A = B.Algorithm`, `B = A` is the same cycle through a static link.
+def afIsDemandCycle : Error → Bool
+  | .withContext _ inner => afIsDemandCycle inner
+  | .demandCycle => true
+  | _ => false
+
+def afLink (receiver : String) : Algorithm :=
+  .alias none [] [] (.dotMember (resolve receiver) "Algorithm" (resolve "Algorithm") none)
+
+#guard match KatLang.runResult (.algorithmExpr (algPrivate [] [] [("A", afLink "A")] [resolve "A"])) with
+  | .error err => afIsDemandCycle err
+  | .ok _ => false
+#guard match KatLang.runResult (.algorithmExpr (algPrivate [] [] [("A", afLink "B"), ("B", afAlias "A")] [afCall "B" [num 1]])) with
+  | .error err => afIsDemandCycle err
+  | .ok _ => false
+
+-- The `.string` receiver of a binding P with no output: a DIRECT receiver is framed by the dot edge alone
+-- (exactly as before M4★), while a receiver reached THROUGH an alias — a reference `RP = P` or a carrier
+-- `CP = { P }` — names the TERMINAL binding P, exactly what the alias's former row read reported. C#:
+-- `EvalDotStringLexicalPropertyReceiver` / `EvalAliasDotStringLexicalReceiver`.
+def afFrameError (row : KatLang.Expr) : Option Error :=
+  match KatLang.runResult (.algorithmExpr (algPrivate [] []
+      [ ("P", alg [] [] [KatLang.privateProp "Q" (alg [] [] [] [num 1])] [])
+      , ("RP", afAlias "P")
+      , ("CP", .alias none [] [] (resolve "P") none false) ]
+      [row])) with
+  | .error err => some err
+  | .ok _ => none
+
+#guard match afFrameError (.dotCall (resolve "P") "string" none) with
+  | some err => innermostIsMissingOutput err && !hasContext "while evaluating property P" err
+  | none => false
+#guard match afFrameError (.dotCall (resolve "RP") "string" none) with
+  | some err => innermostIsMissingOutput err && hasContext "while evaluating property P" err
+  | none => false
+#guard match afFrameError (.dotCall (resolve "CP") "string" none) with
+  | some err => innermostIsMissingOutput err && hasContext "while evaluating property P" err
+  | none => false
 
 end KatLangTests

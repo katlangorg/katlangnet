@@ -164,11 +164,14 @@ public static partial class Evaluator
     /// <see cref="EvalDotCallCounted"/> decides it: <c>true</c> on a structural miss (a value receiver
     /// included) — the intrinsic — and <c>false</c> when the receiver declares <c>Algorithm</c> (a member,
     /// or a branch-only member whose error the ordinary route reports). Identity navigation only; a
-    /// receiver navigation failure is the route's error. Lean: <c>algorithmIntrinsicRoute</c>.
+    /// receiver navigation failure is the route's error. <paramref name="routeVisited"/> is an alias step's
+    /// STRUCTURE context — a structure chase's own steps, empty for an invocation or VALUE chase
+    /// (<see cref="IsRuntimeAliasStep"/>; Lean <c>aliasRouteIsIntrinsicWith</c>, <c>aliasStructureContext</c>). Lean:
+    /// <c>algorithmIntrinsicRoute</c>.
     /// </summary>
-    private static EvalResult<bool> IsAlgorithmIntrinsicRoute(Expr.DotCall edge, EvalCtx ctx)
+    private static EvalResult<bool> IsAlgorithmIntrinsicRoute(Expr.DotCall edge, EvalCtx ctx, HashSet<AliasChaseVisit>? routeVisited = null)
     {
-        var receiver = ResolveDotReceiver(edge.Target, ctx, out _);
+        var receiver = ResolveDotReceiver(edge.Target, ctx, out _, routeVisited);
         if (receiver.IsError && !IsAbsentIdentity(receiver.Error))
             return receiver.Error;
         // The ONE dot-edge decision (META-S3-4): the intrinsic exactly on its miss; a declared member,
@@ -236,7 +239,7 @@ public static partial class Evaluator
         var callable = RequireCapturedCallee(callee.ProjectCallable(), edge.Span);
         if (callable.IsError) return callable.Error;
         // CACHE-PUB-1: the fresh call's origin is the captured plan's canonical callee cell.
-        if (MayFormZeroSupply(args) && IsPublishableCallee(callable.Value))
+        if (MayFormZeroSupply(args) && TakesOriginDispatch(callable.Value))
             return EvalOriginCallCounted(CalleeOrigin.Cell(callee), callable.Value, args, ctx, valEnv, PlanCalleeName(plan.Value));
         return EvalResolvedCallCounted(callable.Value, args, ctx, valEnv, PlanCalleeName(plan.Value));
     }
@@ -272,7 +275,7 @@ public static partial class Evaluator
             return CalleeValue(await callee.DemandAsync().ConfigureAwait(false), ctx);
         var callable = RequireCapturedCallee(await ProjectCellCallableAsync(callee, ctx).ConfigureAwait(false), edge.Span);
         if (callable.IsError) return callable.Error;
-        if (MayFormZeroSupply(args) && IsPublishableCallee(callable.Value))
+        if (MayFormZeroSupply(args) && TakesOriginDispatch(callable.Value))
             return await EvalOriginCallCountedAsync(CalleeOrigin.Cell(callee), callable.Value, args, ctx, valEnv, PlanCalleeName(plan.Value)).ConfigureAwait(false);
         return await EvalResolvedCallCountedAsync(callable.Value, args, ctx, valEnv, PlanCalleeName(plan.Value)).ConfigureAwait(false);
     }
@@ -319,7 +322,7 @@ public static partial class Evaluator
         if (callable.IsError)
             return CalleeResolutionFailure(diagnosticName, ctx, callable.Error);
         // CACHE-PUB-1: the fresh call's origin is the captured plan's canonical callee cell.
-        if (MayFormZeroSupply(args) && IsPublishableCallee(callable.Value))
+        if (MayFormZeroSupply(args) && TakesOriginDispatch(callable.Value))
             return WithCallCtx(diagnosticName, ctx,
                 EvalOriginCallCounted(CalleeOrigin.Cell(calleeCell.Value), callable.Value, args, ctx, valEnv, PlanCalleeName(plan.Value)));
         return WithCallCtx(diagnosticName, ctx,
@@ -340,7 +343,7 @@ public static partial class Evaluator
             var member = await ResolveCalleeAsync(edge, ctx).ConfigureAwait(false);
             if (member.IsError)
                 return CalleeResolutionFailure(diagnosticName, ctx, member.Error);
-            if (MayFormZeroSupply(args) && IsPublishableCallee(member.Value))
+            if (MayFormZeroSupply(args) && TakesOriginDispatch(member.Value))
                 return WithCallCtx(diagnosticName, ctx,
                     await EvalOriginCallCountedAsync(CalleeOrigin.Written(edge), member.Value, args, ctx, valEnv, diagnosticName).ConfigureAwait(false));
             return WithCallCtx(diagnosticName, ctx,
@@ -359,7 +362,7 @@ public static partial class Evaluator
         var callable = RequireCapturedCallee(await ProjectCellCallableAsync(calleeCell.Value, ctx).ConfigureAwait(false), edge.Span);
         if (callable.IsError)
             return CalleeResolutionFailure(diagnosticName, ctx, callable.Error);
-        if (MayFormZeroSupply(args) && IsPublishableCallee(callable.Value))
+        if (MayFormZeroSupply(args) && TakesOriginDispatch(callable.Value))
             return WithCallCtx(diagnosticName, ctx,
                 await EvalOriginCallCountedAsync(CalleeOrigin.Cell(calleeCell.Value), callable.Value, args, ctx, valEnv, PlanCalleeName(plan.Value)).ConfigureAwait(false));
         return WithCallCtx(diagnosticName, ctx,
@@ -380,7 +383,7 @@ public static partial class Evaluator
         if (TryEvaluateSequencePipeline(
             SequencePipelineInvocation.PlainCall(edge, args, calleeR.Value), ctx, valEnv, out var sequencePipelineR))
             return WithCallCtx(diagnosticName, ctx, sequencePipelineR);
-        if (MayFormZeroSupply(args) && IsPublishableCallee(calleeR.Value))
+        if (MayFormZeroSupply(args) && TakesOriginDispatch(calleeR.Value))
             return EvalWrittenCalleeCallCounted(edge, calleeR.Value, args, ctx, valEnv, diagnosticName);
         return WithCallCtx(diagnosticName, ctx, EvalResolvedCallCounted(calleeR.Value, args, ctx, valEnv, diagnosticName));
     }

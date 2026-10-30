@@ -1,5 +1,637 @@
 # Semantic Alignment Manifest.
 
+Current isolated candidate (2026-10-30): Q1–Q7 are the consolidated production structural
+authority for detection, resolution, editor analysis and exposure. The independent acceptance
+review accepted the architecture and the earlier exhaustive V3 evidence, with three integration
+blockers F1–F3. Their corrections pass fresh validation on the final frozen executable source.
+V3 passes under the explicitly approved exhaustive 44-batch procedure in both modes; the canonical
+core attempts timed out and remain INCOMPLETE. The final Gate D/B3-2★ verdict, including the
+independent read-only delta review, is recorded in
+`experimental/features/alias-unify-1-b32-final-corrections-2026-10-30.md`.
+
+The approved V3 procedure first attempts canonical ordinary and forced full-host validation.
+After a 900-second timeout without unresolved correctness failures, the owner-approved 44-batch
+fallback preserves all original 42,325 core cases, 542 whole collections and deferred theory rows
+in both modes, plus added regressions, solution builds, CLI/API, all seven Lean targets and
+generated/specification checks. Each host retains 900-second/6-GiB bounds and exact identity and
+fingerprint verification. Cross-class co-residency, process-state lifetime and contention differ
+between batches; that residual limitation remains explicit. This approval is scoped to this
+candidate, not a general validation-policy change.
+
+Q8 requirement equations, processing order and MAY→MUST refinement, and Q9 pending/completed
+publication remain in place. B3-5★ is separate future work, including the inherited Round-14
+items; B2 is not adopted and X-04 remains an owner decision.
+
+F1–F3 are FORMAL-02 C# resource/API-boundary/documentation corrections. No Lean semantic rule,
+AST variant, evaluator law, Q1–Q7 equation, Q8 requirement or Q9 publication rule changes.
+The additive public surface is MaxSupportedStaticStructureBytes/MaxStaticStructureBytes and
+the configured host SemanticModelBuilder.Build overload; the public baseline is regenerated
+and reviewed deliberately. All earlier checkpoint status paragraphs below are historical.
+
+Suggestion-scope admission recovery (2026-10-30): all 12 original cases, the complete 32-case suggestion class, nine controls and 610 related cases pass in both modes. Actual final graphs now share explicit admission; the original prelude-free 512/513 work law and independent oracle remain unchanged. Four compiling mutants are caught by assertions. The 37-file audit and all required deconstruction, contextual, historical, performance, source, resource and corpus/witness selections pass. Canonical ordinary/forced core phases remain INCOMPLETE at 900 seconds, without final core TRXs or observed failures; both solution builds, CLI/API and all seven Lean targets pass. The explicitly approved 44 batches complete 42,325 core + 502 CLI + 149 public API cases per mode, with exact ID/theory coverage and unchanged 900-second/6-GiB bounds. Approved ordinary.NET / full V3 / Gate D / B3-2★ status: PASS / PASS / PASS / PASS. The scoped approval accepts differing cross-class process state/contention and changes no general V3 policy. This fixture correction changes no production, Lean, evaluator, AST, public API or Q1-Q7/Q8/Q9 rule (FORMAL-02); no B2/X-04/B3-5★ decision. See `experimental/features/alias-unify-1-b32-suggestion-admission-2026-10-30.md`. Earlier checkpoint status paragraphs are historical.
+
+Contextual integration recovery (2026-10-30): all seven requested capture/editor/provenance failures are repaired; completed classes pass 161/161 in ordinary and forced modes. All 1300 original deconstruction identities, 19 controls in both modes, 51 historical contracts including 44 original identities, 18 performance identities per mode, all ten mandatory selections and 122 prior rows pass. Nine compiling mutants are assertion-killed; corpus 579/1697, all 23 round14 observations and four public witnesses are preserved. Fresh ordinary V3 builds the full solution and passes CLI 502/public API 149, but reaches the unchanged 900-second bound without a core TRX, observing 12 additional SuggestionContextDifferentialTests fixture-provenance failures. All 12 reproduce in the exact predecessor (18 cases: 6 pass/12 fail). The requested new-family stop applies: broader standalone admission, ordinary.NET, full V3, Gate D and B3-2★ remain INCOMPLETE; Lean/full forced phases are unexecuted. Only the original two standalone fixtures are accepted here. Existing capture/cache/accessibility laws, Q1-Q7 authority, Q8 equations/sharing, budgets and wide-deconstruction optimization are preserved; no Lean/evaluator/AST/public API rule change (FORMAL-02), no B2/X-04/B3-5★ decision. See `experimental/features/alias-unify-1-b32-context-integration-2026-10-30.md`. Earlier checkpoint status paragraphs are historical.
+
+Wide-deconstruction repair (2026-10-29): both original allocation guards PASS unchanged (parse 2000→4000:1.9133x; public evaluate-all 1000→2000:2.0182x, original limit<3.0x). The cause was N+1 complete body-catalog rebuilds during declaration-preserving retargeting, not shared-pattern indexing or runtime rebinding. Completed child absence now avoids that fallback; genuine ambiguities and alternate owner identities retain body-specific lookup and existing finite metadata charging. Runtime cache/evaluator, AST/parser and Lean rules are unchanged (FORMAL-02). All original 1300 deconstruction identities, 19 new controls in both modes, 44 historical contracts, 18 repaired performance cases, all ten required selections and 122 previously unexecuted cases pass. Five compiling mutants are assertion-killed; corpus 579 outcomes, all 23 round14 witnesses and four public witnesses are preserved. Fresh ordinary V3 builds the full solution and passes CLI 502/public API 149, but its core suite reaches the unchanged 15-minute bound with seven observed failures and no final core TRX; core aggregate counts are unknown. All seven reproduce against the verified predecessor (16 cases: 9 pass/7 fail): captured exposure 2, deferred editor-kind 3 and standalone provenance 2. Lean and full forced V3 were not executed after this incomplete phase. Full solution validation, Gate D and B3-2★ remain INCOMPLETE; do not rerun full V3 until those groups are repaired/classified. No B2/X-04/B3-5★ decision. See `experimental/features/alias-unify-1-b32-wide-deconstruction-2026-10-29.md`. Earlier checkpoint statuses below are historical.
+
+Historical contract migration (2026-10-29): all 44 original identities PASS against actual unified query/index/publication/Q8 work, with original meaningful growth, key, frame, stack and allocation guards retained. All ten required focused selections pass on frozen executable source: performance 391/source 514/focused 179/affected 395 in both modes, historical 2511 and resource 821. The original 18 performance identities remain passing in both modes. Eleven final-source compiling mutants are caught by assertions; corpus 579 outcomes, all 23 round14 observations and four public witnesses are preserved. The expanded prior-failure audit passes 122/122 after explicit recovery provenance and deconstruction storage-view publication repairs. A wider deconstruction audit completes 1298/1300 with two unchanged allocation-growth guards failing (3.93x and 3.10x, limit<3.0x); both reproduce in the verified exposure-sharing predecessor. These known failures gate off fresh full V3. Historical migration is COMPLETE/PASS; broader validation, Gate D and B3-2★ remain INCOMPLETE. FORMAL-02 implementation/tooling corrections; no Lean rule, evaluator rule, AST variant or public API change. No B2/X-04/B3-5★ decision. See `experimental/features/alias-unify-1-b32-contract-migration-2026-10-29.md`. Earlier checkpoint statuses below are historical.
+
+Exposure-summary sharing (2026-10-29): all 18 substantive performance cases PASS with original time/work/2.6x allocation guards. Shared branch construction is depth-scaled; deferred demand preserves d*(d-1) work. Q8 uses effect-certified immutable summaries and a memo-local representative only for identical binding-free source subtrees under the exact parent with matching authoritative availability. Structural keys, declaring/captured owners and nonempty binding regions remain distinct. Shared transparent bundle seeds restore width-scaled residual work. Current performance 391/source 514/focused 179/affected 395 pass ordinary and forced; all historical 2511/resource 821 pass. Eight compiling mutants are caught by assertions. Corpus 579 outcomes, all 23 round14 observations and four public witnesses are preserved. The 44 historical instrumentation/pre-A1 contracts remain unmigrated, so full V3, Gate D and B3-2★ remain INCOMPLETE. FORMAL-02 implementation/tooling corrections; no Lean rule, AST variant, evaluator or public API change. See `experimental/features/alias-unify-1-b32-exposure-sharing-2026-10-29.md`. Earlier checkpoint paragraphs are historical.
+
+Integration recovery (2026-10-29): historical eight-case and raw-host three-case acceptance PASS. Completed editor metadata uses the admitted prelude/Math identities; Q9 publishes final registry targets without awaiting a document property loop. Immutable source definitions, registered pass views and unavailable recovery-entry eligibility remain distinct. Pending-reference summary gates no longer scan parameter patterns before the shared owner-set memo. Fresh original 2507, resource 821 and targeted 169 pass; source 514/focused 179/affected 395 pass in ordinary and forced modes. The wider historical inventory audit completed 12/74 pass, 62 fail. Stage probes reproduce exponential exposure summaries and the public allocation-ratio failure against the preserved source-recovery binary. Broader suite, full V3, Gate D and B3-2★ remain INCOMPLETE under the requested major-family stop condition. FORMAL-02 implementation/tooling corrections; no Lean rule, public API or AST variant change. See `experimental/features/alias-unify-1-b32-integration-recovery-2026-10-29.md`. Earlier checkpoint paragraphs are historical.
+
+Source recovery (2026-10-29): the five reported source/diagnostic/provenance defects and four public witnesses PASS. Deferred Q8 capture recipes preserve activation ownership without publishing provisional bodies as completed targets. Deferred forwarding uses the admitted host signature prelude. Hoisted deconstruction rows keep their written owner through exposure, retargeting, validators and editor traversal. Q3 applies OD-B only to written parameter-rooted paths and OD-C reference paths select declared members, as Lean `openNavigateWith` requires. Source checks pass 514/514 in both modes; original focused 179 and affected 395 remain green in both modes. All original 2507 historical rows ran: 2499 pass and eight earlier editor/contract/work/instrumentation failures remain (2501/2509 including two new host rows). Additional resource selection passes 818/821; three raw host-fixture phase omissions reproduce against the preserved publication binary. Gate D/B3-2★ and full V3 remain INCOMPLETE. FORMAL-02 implementation/tooling corrections; no Lean rule, AST variant or public API change. See `experimental/features/alias-unify-1-b32-source-recovery-2026-10-29.md`. Earlier checkpoint paragraphs are historical.
+
+Publication/work-sharing recovery (2026-10-29): the four confirmed representatives pass. Final focused checks pass 179/179 and affected checks 395/395 in both ordinary and forced modes. Canonical family views, deferred name presence/ambiguity, selected Q8 dependency sharing and Q2 provider-index sharing are repaired. A completed broader ordinary selection still fails 13/2507 cases, including a reproduced deferred-capture cache error and validation/provenance defects inherited from the previous candidate. Gate D remains INCOMPLETE; full V3 is gated off. FORMAL-02 implementation/tooling changes, with no Lean rule, AST variant or public API change. See `experimental/features/alias-unify-1-b32-publication-recovery-2026-10-29.md`. Earlier checkpoint paragraphs are historical.
+
+Gate D recovery (2026-10-29): standalone explicit phase correctness and measured shared admission PASS; Gate D remains INCOMPLETE. The physical adapter no longer reinterprets raw scopes as Resolved or repeats ancestor projection. Q7 publication no longer has a redundant detector OD-B veto. Final targeted ordinary/forced checks pass 99/99 each, corpus outcomes and 23 witnesses are preserved, but shared-family publication, deferred editor name presence and Q8/observation work contracts remain unresolved. Full V3 is gated off until those groups pass. FORMAL-02; no Lean semantic rule, AST or public API change. See `experimental/features/alias-unify-1-b32-recovery-2026-10-29.md`. Earlier records are historical.
+
+Standalone/exposure development (2026-10-29): **INCOMPLETE**. Typed detected-operation handoffs and explicit
+host-phase entries are implemented; the identified raw exposure authorities are physically removed. Symbolic Q8
+sharing and distinct host definition views are repaired, but standalone physical-scope phase/provenance and repeated
+ancestor-admission costs fail measured acceptance. Final source passes 20 standalone regressions, three targeted
+mutation controls, the 579-case outcome replay, 23 exact round-14 witnesses and all seven Lean targets. Ordinary and
+forced .NET attempts remain failed/incomplete after recorded process time limits (72/110 reported failure lines).
+These are FORMAL-02 C# compilation/tooling changes; no new Lean rule, public API or AST variant. See
+`experimental/features/alias-unify-1-b32-standalone-2026-10-29.md` for exact evidence and the verified final recovery
+snapshot. No Gate D/B3-2★ PASS, B2 or X-04 decision is claimed. Earlier paragraphs are historical.
+
+Gate D development checkpoint (2026-10-29): **INCOMPLETE**. The isolated default pipeline now uses the
+Gate C Q1–Q7/A1 operation, including existing completed eager/deferred/editor publication. The old detector
+inference decider and detector/resolver reference/cycle/invocation chase stores have been physically removed.
+Standalone resolver callers still need an explicit handoff of the admitting operation; missing handoffs fail
+instead of reinterpreting intermediate trees as raw syntax. Raw exposure summary normalization/settlement
+remains, and its standalone callers still need migration. No Gate D or B3-2★ PASS is claimed. Q8/Q9,
+B3-5★ and X-04 remain separate. This is a C# implementation checkpoint (FORMAL-02), with no new Lean rule,
+AST variant or public API change. Fresh full V3 and remaining acceptance are unfinished. See
+`experimental/features/alias-unify-1-b32-gate-d-2026-10-29.md` for current evidence and exact continuation work.
+Earlier status paragraphs below are historical checkpoint records.
+
+
+Latest private B3-2★ completed publication (2026-10-28): separate completed receiver/member selections and OD-C
+open/provider identities now serve editor, exposure, provenance and open validation, including erroneous/recovery
+trees. Exposure endpoints are retargeted before sealing. Contextual pending exposure requirements read these facts
+and retain the existing Q8 requirement fixed point, owner exclusions, module hygiene and runtime capture positions.
+This is a C# implementation/tooling correction under existing M4★/OD-C/OD-D/A1 (FORMAL-02); no Lean rule,
+evaluator behavior, AST variant or public API changed. Internal equality-transparent metadata is not a source AST
+constructor. Gate B's private integration is complete; production resource acceptance, default activation and
+obsolete-authority deletion remain open. The latest report supersedes earlier unfinished publication statements:
+`experimental/features/alias-unify-1-b32-publication-2026-10-28.md`.
+
+Latest private B3-2★ structural consolidation (2026-10-28): invocation terminals and recorded member selection now
+read Q3. Invocation projection follows carrier rows while namespace projection keeps the carrier; last-hop diagnostic
+spelling remains written identity. Q8 still processes the selected endpoint and owners, and Q9 still supplies target
+and pending-publication cells. This implements existing M4★/OD-C/OD-D rules, with no Lean/evaluator/AST/public API
+change (FORMAL-02). Completed-tree open publication and default cutover remain unfinished. See
+`experimental/features/alias-unify-1-b32-consolidation-2026-10-28.md` for validation and continuation status.
+
+Latest private B3-2★ precision implementation (2026-10-28): closed conservative observer certificates resolve the
+twenty audited avoidable A1 rejections and p0030's a/d/C2.a collateral classifications, while retaining the eight
+genuinely self-dependent cases. The observer domain preserves public-name absence and fallback participation, not
+selected target/provider identities. It uses no Follow edges or Boolean assignment search. NamespaceCoverage is
+partial cover information, not occupancy; empty open levels share one cover across names. Auxiliary graph work and
+live storage are charged to the existing operation limits with sticky resource/cancellation failure. These are C#
+Q1–Q7 implementation/resource-accounting corrections under existing A1/B3/M4★/OD-D (FORMAL-02), with no Lean rule,
+AST, evaluator or public API change. Default cutover and residual authority consolidation remain separate. See
+`experimental/features/alias-unify-1-b32-precision-fix-2026-10-28.md` for final validation status and limitations.
+
+Latest B3-2★ precision audit (2026-10-28): all 29 saved A1 graphs now have source-equation and finite
+counterfactual classifications. Twenty still contain avoidable rejection, eight retain genuine self-dependence
+(p0030 also has three collateral Unknown inputs), and p0199 is repaired by ordinary target-cycle branch agreement
+without a speculative Follow. The eager module reader-first regression is repaired by the existing Q8 holder-demand
+protocol before projecting the query-selected callee. These are C# elaboration/publication implementation corrections
+under existing M4★/OD-D/A1, not new rules, AST shapes or Lean semantics (FORMAL-02). Defaults remain on the old
+authority; structural consolidation, precision/resource acceptance and final ordinary/Lean/forced-plan V3 remain
+unfinished. See `experimental/features/alias-unify-1-b32-precision-2026-10-28.md`. No B3-2★ completion is claimed.
+
+Latest isolated B3-2★ checkpoint (2026-10-28): the nested-open ordering regression is corrected, Q8 input reads stay
+on detected publications, and actual private deferred compilation uses shared Q1–Q7 with fresh regions and error-free
+registry continuations. Completed clause families publish their resolved views; compiled deferred trees release eager
+query operations/tokens. These are C# elaboration/ownership implementation corrections (FORMAL-02), with no new
+language decision, evaluator change, AST shape or Lean semantic edit. Diagnostic/public API values are unchanged.
+Default structural authority and its obsolete mechanisms remain pending cutover; the 87 broader A1 observations and
+resource/consumer audit are not approved merely because replay succeeds. Full V3 is still required at cutover. See
+`experimental/features/alias-unify-1-b32-deferred-2026-10-28.md`. Earlier checkpoint paragraphs below are historical.
+
+Private B3-2★ consumer checkpoint (2026-10-28): the actual detector and resolver can share Q1–Q7 through private eager
+pipeline entries, including common validators and eager module loading. A1 is emitted on that path; public diagnostic
+codes are appended (DiagnosticCode 60/61, KatLangErrorCode 82/83) and the API baseline is deliberately regenerated.
+Default entries remain on the previous system. Deferred consumers, complete publication/retention/resource audits,
+obsolete-authority removal and full V3 are unfinished; a fresh previous-candidate differential finds the unresolved
+`c2-nested-open-link-head` signature regression. This checkpoint is NOT B3-2★ completion. Runtime-recipe identity,
+raw member selection, shared prelude identity and the existing root-open exemption are elaboration implementation
+contracts; no approved language decision, evaluator rule, AST shape or Lean semantics was changed. See
+`experimental/features/alias-unify-1-b32-consumers-2026-10-28.md` for exact scope, failures and resume instructions.
+
+Private B3-2★ context checkpoint (2026-10-28, isolated cutover worktree): an operation facade now separates raw query
+definitions from detected/resolved publications, preserves branch-region keys in opt-in pass adapters and ownership
+maps, and forks deferred query engines from shared immutable snapshots without retaining the eager engine/token.
+No production entry point creates this facade: both passes retain the previous authority, and A1/public API activation
+remains unfinished. This is C# elaboration infrastructure, with no Lean semantic edit or approved-rule change. Resource
+evidence covers the private boundary, not the completed production front end; full V3 remains pending. See
+`experimental/features/alias-unify-1-b32-context-2026-10-28.md` for evidence, limitations and exact continuation steps.
+
+Private B3-2★ query checkpoint (2026-10-28): Q1–Q7 definitions and their implementation projections now exist in
+`StaticStructureQueries.cs`, `StaticStructureInputs.cs` and `StaticStructureOpens.cs`, with real-structure tests.
+They are UNCONNECTED to production. A1's public diagnostic is not activated, and neither production consumer has
+migrated. The definitions distinguish receiver-expansion returns, target cycles and ordinary dependencies; partial
+binding presence prevents false circular-inference conclusions while provider identity is still unresolved. Branch
+binding regions extend the key model; the production adapters remain a cutover obligation. These are C# elaboration
+implementation changes with no Lean semantic edit. Contracts, validation limits and exact resume steps are in
+`docs/design/static-structure-query-contracts-2026-10.md` and
+`experimental/features/alias-unify-1-b32-private-2026-10-28.md`. The full production V3 gate remains pending.
+
+Current ALIAS-UNIFY-1 checkpoint (IR-04 correction, 2026-10-28): A1 and B3 are selected owner decisions;
+the historical "owner question (b)" below is no longer undecided. A1's production diagnostic and the coherent
+B3-2★ migration are still unfinished. B3-0/B3-1 have no production consumers. X-04 sibling lifting cycles
+remain undecided. IR-04 replaces the unconsumed engine's context-dependent path-return/provisional-cache protocol
+with monotone ordinary dependencies and a separate graph of conclusive, stable reference equations. Confirmed
+reference cycles receive OD-D refusal; mixed dependency cycles retain the least information fixed point. Graph
+representatives never replace algorithm/provider identities. This preserves selected OD-D, A1 and M4★; it does not
+change Lean semantics or migrate production consumers. Real Q1–Q7 monotonicity, stable-successor and resource proofs
+remain B3-2★ obligations. See `docs/design/static-structure-resolver-2026-10.md` § 3 and
+`experimental/features/alias-unify-1-ir04-2026-10-28.md` for protocol, independent oracles and validation. The earlier
+processed inline-block callee correction is also a C# front-end change. Lean models no elaboration, so neither
+requires a Lean semantic edit; the complete candidate requires full V3 and forced invocation-plan validation.
+The previous independent-review report and failed repair probes remain historical evidence.
+
+ALIAS-UNIFY-1-IMPL — M4★ whole-algorithm transport and group-aware NEED-04 (October 2026; owner
+decisions M4★, OD-B, OD-C, OD-D, OD-E, the runtime target lifetime and the group-aware NEED-04 policy;
+observable semantics, so "Lean update required? Yes": Lean first, C# aligned, full V3 plus the forced
+invocation-plan run). RULES (`ownership-and-lookup.md` § Whole-algorithm transport, `call-by-need.md`
+§ NEED-04): an OPEN non-root body whose one written row is a bare reference to an existing algorithm
+of ANY arity is an alias; unbraced it is a TRANSPARENT REFERENCE (every observation is the target's),
+braced or beside its own declarations/opens (or a loaded module's root) a STRUCTURAL FORWARDING
+CARRIER (own structure and members, no inheritance, fresh forwarding of the exact supply at the
+declaring activation); no alias owns a zero-argument entry (OD-E: bare reads are the target's, calls
+publish under the target's origin); a parameter-rooted member path infers no member names (OD-B); a
+static reference opens its target's public namespace, stratified, while a carrier opens its own (OD-C);
+a cyclic static reference chase is no alias (OD-D); runtime targets are established once per declaring
+activation, a value-only runtime row answering zero-supply calls with its cell's VALUE. NEED-04 projects
+CALLABLE first at every repeated occurrence, matches callable-bearing contributions by structural
+identity with their VALUE pending until a value-only contribution anchors the group, then checks the
+pending VALUEs in occurrence order, and binds the first richest ORIGINAL contribution; Q-28 is narrowed
+to stable-domain acceptance invariance plus counted-VALUE preservation for MIXED groups only.
+LEAN: `Algorithm.alias … reference`, `resolveAliasChase` (INVOCATION / STRUCTURE / VALUE),
+`resolveAliasValueTarget` / `AliasTerminal` (with the carrier-crossing `nested` flag read through ONE
+combinator, `withMissingOutputNesting`), `openStructure`, `NeedBinder.bindName` / `RepeatedGroup` /
+`checkAnchor`; laws `KatLangArityLaws/WholeAlgorithmTransport.lean` (+ guards) and the restated
+repeated-name, binder-trace, nested-name, binder-correspondence, supply-correspondence, address,
+memo-link, discipline and cache-law modules. C#: `Algorithm.Alias.IsReference` /
+`Algorithm.User.IsWrittenBlock`, `ImplicitArgumentResolver.TryCompleteLoneCalleeRow` /
+`RuntimeAliasRow`, `ParameterDetector.IsParameterRootedMemberReference`, `Evaluator.ChaseAlias` /
+`ResolveAliasValueTerminal` / `OpenStructure` / `TakesOriginDispatch`, `ElaboratedScopeLookup.
+ChaseStaticStructure` / `ElaboratedStructure`, `Evaluator.RepeatedGroup` in
+`BindAcceptedNeedPatterns`, `SemanticModelBuilder.MemberSurface`, the loop step normalization in
+`EvalNeedLoop`. Q-36 RECONCILIATION (X-29, landed in eb0ca2dd): a transparent reference's read IS its
+target's read (an own missing output at a spread is `SpreadMissingOutput`), a VALUE read that crosses a
+carrier is NESTED, and a missing output through an alias names the TERMINAL binding. Tests:
+`WholeAlgorithmTransportTests`, `GroupAwareRepeatedNameTests`, `RuntimeAliasPublicationTests` and the
+migrated expectations of the alias, publication, cache, open, loop and editor suites (ledger:
+`experimental/features/alias-unify-1-implementation.md`). Full V3 and the forced invocation-plan run
+required. INDEPENDENT-REVIEW CORRECTIONS (same task): (1) Lean + C# — *(the visited-key lending below is
+superseded by correction (4): only a structure chase lends its own keys)* an alias step's `.Algorithm` route
+decision reads its receiver's structure through the asking chase's own visited keys (Lean the `visited`
+field of the `aliasStepIsRuntime` request and the total `aliasRouteIsIntrinsicWith`, with its
+discipline/preservation/link/monotonicity/address lemmas; C# the `routeVisited` set threaded from
+`IsRuntimeAliasStep` through `IsAlgorithmIntrinsicRoute` / `ResolveDotReceiver`), so `A = A.Algorithm`
+is an ordinary `demandCycle`, never an unbounded re-entry (formerly a host stack overflow in C# and a
+divergent chase in Lean); an alias receiver of `.string` / `Invoke` / `Arguments` / `Algorithm` is
+judged on its VALUE terminal but READ as the alias, so an inline carrier reads the terminal binding's
+cached entry (`{ F }.string`), and a receiver reached through an alias names the terminal binding on a
+missing output while a direct receiver keeps the dot frame alone (Lean `evalDotStringReceiverValue`, C#
+`EvalAliasDotStringLexicalReceiver`); guards `CoreTests/AliasForwarding.lean` and
+`PropertyCacheConsumers.lean`. (2) C#-only front end (Lean models no elaboration) — every static
+reference chase resolves a followed row in its OWN scope: the detector's levels carry their parameter
+bindings (`ElaboratedPropertyScope.ParameterBindings`), a statically known receiver carries the scope its
+structure is declared at (`StaticStructuralMemberProvider.Scope`, `StaticMemberStructure`), open
+providers record their declaring level; the resolver resolves over its direct declaration chain
+(`ResolverLevel`) with ONE iterative chase (`StaticReferenceStructure`) shared by open providers and
+OD-D's receivers; a block-headed reference targets the PROCESSED block; after resolution only an
+elaborated reference is one. (3) Optimization-only — the loop planner maps an alias temp to its
+target's plan only when the alias declares and opens nothing of its own. Pinned by
+`AliasUnifyReviewRegressionTests` and the `runtime-alias-self-link-is-a-demand-cycle`,
+`reference-head-resolves-in-its-own-scope`, `reference-receiver-is-its-target-structure` and
+`block-headed-reference-navigates-its-block` spec cases.
+SECOND INDEPENDENT-REVIEW CORRECTIONS (same task): (4) Lean + C# — an alias chase records what it passed by
+BINDING (declaration, declaring scope, activation: C# `AliasChaseVisit`, Lean `aliasChaseKey`), and a structure
+it computes for a step's route decision reads with the structure chase's own context only (an invocation or
+VALUE chase lends it none: `aliasStructureContext`), so a reference behind a carrier whose row reads it back
+(`A = B` / `B = { public F(x) = x * x ⏎ A.F }` / `A(3)` is 9), a carrier of a parameter across activations and
+two same-shape references resolve. (5) Lean + C# — FA-OQ-1 under M4★: a failed builtin VALUE slot whose cell
+projects a structural CARRIER names the carrier's static VALUE terminal (Lean the carrier arm of
+`EvalBody.demandSequenceBuiltinCallItemValue`, C# `NameCarrierValueTerminal`, which observes that chase without
+initiating anything — `PeekResolve`, the failed demand having already taken every decision it reads — *(see
+correction (11))*), so `reduce(xs, Add, { Inc })` and
+`reduce(xs, Add, C)` with `C = { Inc }` keep reduce's accumulator hint exactly as `reduce(xs, Add, Inc)` does,
+and every other slot's report is unchanged (guards `rirReduceInitialInlineAlias`,
+`rirReduceInitialNamedCarrier`, `rirCountNamedCarrier` in `CoreTests/ValueDemand.lean`). The two engines name the
+carrier alike only where C# reads the slot's CALLABLE at all: C# names a slot's callable WITHOUT initiating its
+projection (META-S3-0b, `NeedCell.PeekCallable`), so a RUNTIME-projection cell whose CALLABLE no one has projected
+yet names nothing in C#, while Lean projects it — a pre-existing divergence (direct members too, since before
+this task: `K(b) = reduce([1, 2], Add, b.M)` beside any runtime-row alias reports the hint in Lean and the
+VALUE read's `ArityMismatch` in C#), recorded for an owner decision in the third-review entry below. (6) C#-only front end —
+OD-D is decided on the TARGET chase (references and carriers alike, through opens: `A = B` /
+`B = { public X = 1 ⏎ A }` makes neither an alias, in every declaration order and in both twins) and read in the
+LOWER stratum *(extended by correction (8): alias formation reads both the lower and the final reading, and every name lookup a third stratum)*: OD-D's own receivers and open providers are chased without the check, each level keeping that
+stratum's providers apart (`ElaboratedPropertyScope.GetResolvedOpenProviders(stratum)`), so the check and
+the structure it guards never recurse into each other; verdicts are memoized per declaration and declaring level.
+A sibling-cycle member the resolver has not processed is normalized statically, a member-step miss makes the
+body its own structure, a block receiver is chased in its own scope, and the detector follows lone rows inside
+prelude-rooted open blocks and modules (`OpenMemberIndexCache.BeforeAliasResolution`). FE-1: every
+declaration-determined stretch of a static structure chase is recorded once per operation, path-compressed
+(`OpenMemberIndexCache.StaticStructureMemo`, `ImplicitArgumentResolver.StaticChaseMemos.Structures`), so K reads
+or opens through an L-long reference chain cost O(K + L)
+(`AliasUnifySecondReviewRegressionTests.StaticChases_AllocationGrowsLinearly`, whose three chain rows fail at
+3.2x-3.9x per doubling with the memos removed); K receivers through a W-member provider are O(K + W) through the
+operation's one body level per navigated body and its shared member index (`OpenMemberIndexCache.BodyLevel`),
+which the guard's wide row exercises. Pinned by `AliasUnifySecondReviewRegressionTests`.
+THIRD INDEPENDENT-REVIEW CORRECTIONS (same task): (7) C#-only front end — every parameter answer a static chase
+reads is the answering LEVEL's own (`ElaboratedPropertyScope.BindsParameter`: the bindings detection established
+for that level, else the written parameters of a body a chase navigated into), never the asking site's map, so a
+parameter the site shadows and a body reached through an `open` or a member path answer alike from every site and
+route (`NavigatedParameterBindings` is gone); when inference adds a body's own inputs, every chase result recorded
+through its level is forgotten (`ElaboratedPropertyScope.ForgetStaticChases`, `OpenMemberIndexCache.ForgetChasesAt`),
+so no memo outlives what it read. (8) C#-only front end — OD-D has a LOWER and a FINAL reading and alias formation
+refuses a body whose target chase returns in either (`StaticCycleCheck`: `None` inside the lower reading, `Lower` for
+the open providers and receivers the final reading reads, `Formation` for alias formation, the detector's dot
+receivers and every name lookup), in both twins, so a cycle only the final providers close forms no alias and no
+source program reaches evaluation with a static alias cycle; a member path is followed whenever the reading's receiver
+structure declares the member (the resolver no longer gates it on the detector's final dot stamp). Open providers come
+in the same three strata, each following a written reference under its own check, and every NAME LOOKUP — the
+detector's, the resolver's and the editor's — reads the `Formation` stratum, whose verdict reads only the two below it
+— outside the collecting body's decider, whose protocol ends that re-entrance, (12) —
+(`ElaboratedPropertyScope.GetResolvedOpenProviders(stratum)`,
+`ImplicitArgumentResolver.StaticChaseMemos.OpenProviderOf`): a reference written as an `open` target is followed
+exactly where it becomes an alias, so every layer's name lookup selects what the evaluator, which opens only formed
+aliases, selects — up to the navigated-body defect of (12), unrepaired: an OD-D reading still judges a body it passes
+through its own strata. The seventh review repaired the residual the sixth recorded here as owner question (c) (acceptance[3]: its
+outcome is determined, and a well-founded stratum computes it): name lookups had read the providers OD-D's final
+reading reads, which apply the lower verdict only, so a reference only the final reading finds cyclic was followed
+when written as an `open` target, and the detector bound a name through it that the evaluator, opening the reference's
+own namespace, does not see — with `open Back` / `A = B` / `B = { public N = 5 ⏎ A }` / `Back = { public N = G.R }` /
+`G = { open A ⏎ public R = C ⏎ C = { public X = 2 ⏎ N } ⏎ 0 }` / `F = { open G.R ⏎ X + 0 }`, F inferred no `X` and
+`F(7)` was `ArityMismatch` (expected 0, actual 1); F is now `F(X)` and `F(7)` is 7, as the selected rules and the
+pre-task tree, where `R = C` was no alias, give (`AliasUnifySeventhReviewRegressionTests`, both twins). (9) C#-only
+front end, FE-1 — the resolver's static chases share ONE level per navigated body, enclosing level and reading, each
+answering its declarations from one index per body (`StaticChaseMemos.LevelOf`), and resolve each written `open` target to its static provider once per stratum, its members from the run's shared
+first-PUBLIC member index (`StaticChaseMemos.OpenProviderOf`); observable through
+`FrontEndTraversalObservations.ResolverNavigatedLevelBuilds` / `ResolverStaticOpenProviderResolutions`. (10) Docs
+only — the route-decision wording of AGENTS.md, the Lean `aliasRouteIsIntrinsicWith` doc and the C#
+`IsAlgorithmIntrinsicRoute` doc now state correction (4)'s structure-context rule. (11) C#-only, host-stack frame
+size (found by this task's V3 run, where four `DeferredBodyEvaluatorAdmissionTests` boundary programs reached
+`EvaluationStackExhausted`) — correction (5)'s carrier naming awaited the VALUE chase inside the async
+builtin-argument demand, which is the recursion of every nested builtin argument, and so grew that frame past the
+envelope those programs pin in the Debug build (the per-link growth was measured in the session but not recorded;
+`review3/frame-size-r3j.txt` records the figures below); the naming now runs inside the never-inlined
+`FinishNeedCallItemDemand` as a non-initiating observation (`PeekResolve`) in both twins, so both demand methods
+keep their pre-task shape and the measured envelope is restored (each further `.count` link costs 33,792 bytes,
+against 33,744 before this task, and a thread-pool thread again admits 41 links, inline and deferred alike;
+Q-09a: host-stack headroom is not semantic, but those tests pin the envelope). (12) C#-only front end, found after the
+third review and revised after the fourth to twelfth — a static chase that runs during parameter detection also sees
+the inputs an enclosing body INFERS before detection records them (`ElaboratedPropertyScope.MayInferParameter`,
+`ElaboratedScopeLookup.IsInferredByAnEnclosingBody`), so a head naming one is a runtime reference whatever a nearer
+open provides (the owner walk precedes opens). Without that mechanism, M4★'s static navigation read such a reference as the
+open's name during the collection pass, so `P = { N = { open X ⏎ public A = h ⏎ 0 } ⏎ 5.h + N.A.Z }` lost the input `Z`
+that it had before this task, and the detector's verdict disagreed with the resolver's; it also lifts a static
+diagnostic that predates this task (`F(z) = Lib.N.R.W` with `Lib = { public N = { open X ⏎ public R = h ⏎ 0 } ⏎ h + 0 }`
+reported `W`). The body being collected answers by its own collection rule
+(`ElaboratedPropertyScope.InputDecider`, `ParameterDetector.InferredInputDecisions`): a name its pass already
+collected is an input; any other name its rows use is decided when a chase asks — unbound (`IsBoundName`, through the
+open providers every name lookup reads, correction (8)) and used bare or as the fallback name of a dot edge that may
+select it — each input that decision reads decided first, on an explicit stack; an abandoned decision resumes after
+the fallback edges it already found never selected, over the open providers its level already committed
+(`GetResolvedOpenProviders` keeps one progress per stratum), inside every OD-D walk it abandoned, where that walk
+stopped (`OpenMemberIndexCache.SuspendWalk` / `TakeSuspendedWalk`), and inside every structure chase it abandoned,
+where that chase stopped, with the member paths waiting on it (`SuspendChase` / `TakeSuspendedChase`); only the edge or
+target in progress, and the hop in progress, start again. A decision that reads itself, and a name the host stack has no room to decide, is answered no; a pass
+that does not agree with the answers it gave (`AgreesWith`: a self-read answered wrongly, a refusal, a decision that
+disagrees with the pass, or a seed it was asked about and did not collect again) is REPEATED, seeded with exactly the
+inputs it collected and deciding every other name on demand again, until a pass agrees
+(`DetectorInputRepeatedPasses`). A chase result whose own computation read one of the collection's answers is
+TENTATIVE — an OD-D verdict (a walk judges each body it passed by what was read from that body's hop on, or from the
+first hop of the cycle the walk closed), a recorded stretch, a level's resolved providers — and reading one counts as
+reading an answer (`OpenMemberIndexCache.TentativeReads`; `DetectorTentativeAnswers` counts the decider's own
+answers); a question about a name the rows never use is no answer (`InferredInputDecisions.MayInfer`: it is no in
+every pass). Before each repetition, and when a collection that never agreed returns, detection forgets every
+tentative chase result wherever it was recorded (`ElaboratedPropertyScope.ForgetTentativeStaticChases`,
+`DetectorTentativeChaseForgets`); a collection that agrees SETTLES them — the answers they read are the inputs it
+keeps — so they stand (`SettleTentativeStaticChases`, `DetectorTentativeChasesSettled`); a result read from
+declarations alone is never tentative. A level's diagnostic suggestion names derived while a tentative result was read
+are tentative too: forgotten at the next repetition or unsettled return of ANY collection
+(`SuggestionContexts.ForgetScopeNames`) — so a level is derived at most once more after its own collection ends —
+never settled, and reading them counts nothing. A pass that agrees is consistent, and a body whose decisions never
+read themselves gets its one consistent answer in every row order. The round-3 form instead repeated whole passes over
+a growing union of provisional inputs; the fourth review showed it could end on a stale input (`5.h + R.W + N.Z.V`,
+where `h` breaks the OD-D cycle that made `W` an input, inferred `P(h, V)` — an arity error — for the one agreeing
+signature `P(h)`), judged the collecting body's input through the lower open providers in OD-D's lower reading (`S(h,
+g)`, a parameter-property collision, for `S(h)`), and spent one whole pass per input of a chain each revealing the
+next; the fifth review showed that its first replacement kept OD-D verdicts recorded outside the body under a
+tentative answer (`X = { public h = P.N.A }` with `P = { open N.A ⏎ … ⏎ h + 0 }` made a closed `G(z) = X.h.W + 0`
+report `W` in one declaration order only), answered a checking pass by its assumption alone (one more link per pass
+after a wrong self-read), and redid an abandoned decision's edges and opens; the sixth showed that the fifth's repair
+forgot EVERY chase result of the operation, so K bodies whose collections repeat re-chased one L-long reference chain
+K times (now O(K + L):
+`AliasUnifyThirdReviewRegressionTests.BodiesThatRepeatTheirCollection_KeepTheChaseResultsReadFromDeclarationsAlone`
+doubles its lookup work 2.0x per doubling, 3.79x when every result is forgotten), that the suggestion scopes kept a
+refuted pass's providers (the root `h + Tally` beside an `open R2` of a carrier declaring `tally` lost "Did you mean
+'tally' instead of 'Tally'?"), and — once results were forgotten selectively — a result read FROM a tentative one must
+be tentative too (`Y = X.h` chased while P collects: a closed `G(z) = Y.W + 0` reported `W`); the seventh showed that
+the sixth's repair still flagged and forgot too much — an OD-D walk gave every body it passed one flag, so a
+declaration-only chain entered after any answer was read (`A = Z`, `Z` provided by `open Lib` with `Lib = { public Z =
+X1 }` and `X1 = X2` …) was walked again by every repeating body; a question about a name the rows never use counted as
+an answer; a settled body's results were dropped at another body's repeat; and the suggestion reset re-derived every
+enclosing scope (K repeating bodies under a W-name root cost Θ(K·W)) — that a verdict read from a tentative stretch
+had no test, and that an abandoned decision's chase restarted from its start (Θ(K²) hops, for bodies whose decisions
+never read themselves too); `AliasUnifySeventhReviewRegressionTests.DetectionWork_GrowsLinearly` now doubles each
+shape's work 2.0x per doubling (the root's suggestion names grow 1.2x when only K doubles: 1,344 to 1,644
+canonicalized names at W = 1,000). The eighth showed that the receiver chase read two kinds of bodies as structure it
+could not know that HEAD read as their own — a calculation written as a member path from a head that is no name or
+block (`A = 5.size` / `F = A.abs + 0` / `F(count)` was `ArityMismatch` for HEAD's 1, and `A = 6.abs` / `G(p) = A.bar +
+p` checked no `bar`) and a body reached through a member path or an open whose head names nothing (`Lib = { public A =
+x ⏎ 0 }` / `F = Lib.A.abs + 0` / `F(-3)` was `ArityMismatch` for 3) — both now read as at HEAD, while an argumentless
+`.Algorithm` link, and a body an enclosing navigated body may infer as a fallback name, stayed unknown
+(`AliasUnifyEighthReviewRegressionTests`); that a hop's receiver chase abandoned on an undecided input restarted from
+its first link, Θ(K²) hops for a body whose decisions never read themselves — it then recorded the stretch it passed
+(`AnAbandonedReceiverChase_ResumesWhereItStopped`: 6,145, 12,245 and 24,445 lookup visits at K = 100, 200, 400); and
+that the tentative suggestion set was cleared at its peak capacity on every forget (now dropped). The ninth showed that
+those exceptions were still too wide and the repair incomplete. Four receiver shapes read as unknown where HEAD read the
+body's own structure: a member path through a receiver that is not statically known, or through an `.Algorithm` step
+before its last (`A = X.Algorithm.abs` / `G(p) = A.bar + p` checked no `bar`, and with `x = p`, `A = x.y` / `H = A.abs +
+0` / `H(Pick)` was `ArityMismatch` for HEAD's 7); an `.Algorithm` link from a body with an input of its own — inferred,
+graced or lifted (`A = Mk(x).Algorithm`, `A = 5.size.Algorithm` and, with `Mk(t)`, `A = Mk.Algorithm` checked no `bar`;
+`A = Cap(Only(x)).Algorithm` / `H = A.abs + 0` / `H(3)` was `ArityMismatch` for 5); and a navigated body whose head a
+dot edge of an enclosing body spells only as a certain structural hit, which infers nothing (`Lib = { Cfg = { public x
+= 1 } ⏎ public A = x ⏎ Cfg.x + 0 }` / `F = Lib.A.abs + 0` / `F(-3)` was `ArityMismatch` for 3, and the verdict depended
+on the route: `P.N.A.W` from the root checked nothing where `N.A.W` inside P reported `W`). The editor and the provenance
+finalizer read a resolved receiver through the scope-free view, so a body alias formation left a lone row — a member
+miss, an OD-D cycle — was unknown (`A.Inc.Dbl` with `A = B.Wrap` left `Dbl` unresolved, and the root `A.X` of a
+reference to a carrier whose row leads back lost HEAD's receiver-aware wording), and a transparent reference reached as
+a member showed its own empty declarations (`Lib.A.Q` with `A = B` left `Q` unresolved; `B.A.C` with `A = Lib` bound
+the root `C`). And an abandoned chase re-walked every member path waiting on it — Θ(K²) for owners whose heads read
+undecided inputs in turn (`Oi = hi.a`, `U.hi = O(i+1)`) — while only the current chain's half of the recorded stretches
+was pinned. The receiver shapes now read as at HEAD, and the editor and the finalizer as the evaluator does — a transparent
+reference reached as a member showing its target's members is M4★'s intended reading, which HEAD, having no such
+references, cannot show (`AliasUnifyNinthReviewRegressionTests`): a path that names no static algorithm makes its body
+its own structure; a link row is a runtime reference only when its body has no input of its own (decided by
+implicit-argument resolution since the tenth review, below); since the tenth review the guard counts every member
+name an enclosing navigated body's dot edges give and leaves such a body to resolution (below); the editor and the
+finalizer read every receiver after
+resolution as its ELABORATED structure; and an abandoned chase is suspended and resumes where it stopped, with its
+chains, waiting member paths and active bodies (`OpenMemberIndexCache.SuspendChase`;
+`AnAbandonedChase_ResumesWhereItStopped` doubles its lookup work about 2x per doubling for nested owners, waiting paths
+and owners over an inner chain) — which subsumes the eighth round's stretch recording at abandonment (both of its
+mutants survive once chases resume), so that recording is removed. The ninth round's own tests found a defect older than these reviews: a reference
+elaborated while the body its structure chase reaches is still in progress — the body enclosing it (`R = { public a = R
+⏎ … }`) or a member of a sibling cycle — recorded that WRITTEN body as its structure, so a reference navigated through it
+read written members, and a lone-row member there as a structure of its own. With `R = { public a = R ⏎ public w = {
+public z = 1 } ⏎ 0 }` / `O2 = R.a` / `O1 = O2.a` / `X = O1.w`, X formed no alias and `X.z` failed with `UnknownName`
+at run time where the selected rules give 1. A recorded structure is now a cell (`AliasStructureCell`) that
+implicit-argument resolution completes with the processed body once it processes it, shared by every reference whose
+structure is that reference's, and the resolver reads a still-pending one statically. IN-SCOPE DEFECT, NOT REPAIRED — with
+owner question (b) below, a reason this task closes PARTIAL (its outcome is determined, so it is no owner question): a
+body a chase navigates into is read from its written declaration, whether or not detection has processed it, so it
+counts bare-name inputs only, judged through the open providers of the reading that asks — OD-D's lower and final
+readings read the lower strata, while inference itself reads alias formation's (correction (8)) — and a reference
+inside it whose head names nothing is its own input unless a navigated body enclosing it gives that name to a dot edge
+(it may infer it as a fallback name; detection counts a certain structural hit too and leaves the reference to
+implicit-argument resolution, which decides it from the processed body). A chase
+through a body that infers a name only as a fallback name, or
+whose `open` of a reference alias formation refuses provides that name in a lower stratum, reads the open's name: a
+name lookup through it reads the nearer open's name, as before this task (`R = B ⏎ B = { public h = X ⏎ R } ⏎ S = {
+open R ⏎ public A = h ⏎ h + 0 } ⏎ X = S.A ⏎ G(z) = X.W + 0` still reports `W`), and when the body is a hop of another
+reference's OD-D walk the twins disagree on that reference (eighth review, strata[0]; since the seventh review moved
+inference to alias formation's stratum, also for an open of a reference only the final reading finds cyclic): with
+`open Back` / `A = B` / `B = { public N = 5 ⏎ A }` / `Back = { public N = G.R }` / `G = { open A ⏎ public R = C ⏎ C = {
+public X = Ref ⏎ N } ⏎ 0 }` — (8)'s cycle program with C's `X` reading `Ref` — and `F = { open G.R ⏎ X }` / `P = {
+public Q = 42 ⏎ F }` / `Ref = P`, F is `F(X)`, so the resolver's walk stops at F and forms P and `Ref` as aliases,
+while the detector's lower reading follows `X` through `open G.R` to `C.X = Ref` and calls `Ref` no alias — `Other =
+{ public Q = 1 } ⏎ H = { open Ref, Other ⏎ Q + 0 } ⏎ H` reports no static `AmbiguousOpen` and fails with `AmbiguousOpen`
+at run time, and `Get(z) = Ref.Q + 0 ⏎ Get(1)` is a static `UndeclaredIdentifier` where the selected rules give 42
+(reproduced in round 9; with C's `X = 2` the program has no divergence). Deciding it exactly needs the navigated
+body's own collection — on-demand detection of the bodies a chase reaches, whose re-entrance into alias formation's
+stratum needs the decider's abandon-and-resume protocol for every body a chase reaches, not only the one being
+collected. The bounded alternatives examined each fail: judging the hop by the navigated body's established
+signature makes the verdict depend on whether detection has processed that body yet, so on declaration order; judging
+it through alias formation's providers directly re-enters that stratum without bound, and a re-entrance guard makes
+the verdict depend on which chase entered first and loses the self-read answers the decider defines; and judging it in
+another stratum either is the residual itself (a lower one) or reads the verdict it decides (a higher one).
+The tenth showed that the ninth round's exact decisions overreached what detection can know, and that its records
+overclaimed. Whether a body whose row ends in an argumentless `.Algorithm` link keeps an input of its own depends on
+what inference AND formula lifting leave it (META-S3-2) — a fallback name its receiver gives a dot edge (`A =
+Mk(X.foo).Algorithm` with a block `X`; `A = 5.abs.size.Algorithm`), a lifted callee inside the receiver (`A = Mk(F +
+0).Algorithm` with `F(x)`, the round's own second in-scope defect), a receiver whose parameters are inferred or
+forwarded by a carrier (`Mk = t + 1` / `A = Mk.Algorithm`; `C = { F }` / `A = C.Algorithm`), or nothing at all because
+Q-04 reuses an enclosing binding (`F(t) = { A = Mk.Algorithm ⏎ … }`) — which only implicit-argument resolution computes,
+after the stamps it reads; the fallback-name guard missed certain hits through a member path, an open, a reference or a
+block, and re-scanned a body's whole row per read, as `HasOwnInput` did per resumed hop (Θ(K²) for K inputs decided in
+turn); a pending receiver read an opened provider's member as written (`R = { open U ⏎ public a = R ⏎ public b = h ⏎
+a.b.k + 0 }` lifted nothing that `V.k` lifts); a deferred unit never completed a structure pending on a body its eager
+run processed (MOD-10); an alias elaborated while its target was in progress recorded the target's INPUT signature (`R.a
++ 0` lifted nothing where `R + 0` lifts); nested member-path owners over a parameter receiver or a declared miss were
+re-walked by every owner (Θ(K²) detection: 41,501 / 163,001 / 646,001 lookup visits at K = 100 / 200 / 400); and this
+record miscounted a mutation run, cited probe outcomes it never saved, and claimed HEAD's reading where M4★ intends its
+own. Repairs (`AliasUnifyTenthReviewRegressionTests`): detection reads a link body, and a navigated body whose head an
+enclosing body may infer as a fallback name — the guard now counts the member names of its dot edges, once per body
+(`OpenMemberIndexCache.RowMemberNamesOf`) — as a structure the runtime decides: a dot edge that reads it MAY take its
+fallback; implicit-argument resolution refines that edge to MUST from the body as it PROCESSED it (never to NEVER:
+inference reads MAY and MUST alike) and makes the reports detection deferred on the edge
+(`Expr.DotCall.CertainFallbackReports`: Q-75's closed-list check, Q-29's ambiguity check) — a member read through a body still in progress (`Lib.A.bar` inside Lib) as its processed form when resolution processed it, else, when detection already gave it an input of its own, as written, processing only adding lifted parameters (found by this round's mutation run: without it `Mk(x).Algorithm` read through Lib in progress checked no `bar`); a recorded alias TARGET is a
+cell too (`AliasTargetCell`), completed with the target as its processed body reads, lifted parameters included; the
+resolver records the written bodies it processed (`ProcessedBodies`), chained from a deferred unit's run to its eager
+run (`DeferredBranchContext.EagerBodies`); and the detector records every STABLE chase result — a parameter head, an
+inferred input, a member path through an unknown receiver or over a declared miss, the body then its own structure — so
+K nested owners cost O(K) (2,105 / 4,205 / 8,405). Measuring the whole pipeline then showed the resolver's twin
+quadratic on the ninth review's shapes (548–1,151 ms at K = 400 where HEAD resolves in 32–44 ms): a recorded stretch was
+reusable only at the exact fuel it was recorded with, so a chase reaching it one level deeper re-walked it; its static
+reads of unsettled siblings read the CURRENT entries, which it never records; and its static invocation walk re-walked
+each chain. A stretch now records the fuel it NEEDS — the fewest it checked, its receiver chains' included (shifting a
+chase's fuel shifts every check alike, so a chase with that much checks exactly what the recording one did) — in both
+twins; the resolver reads an unsettled sibling as WRITTEN, as OD-D's walks do, and records where its invocation walk
+ends, naming the target as a processed alias does, by the hop that reached it — which also fixes an order-dependent
+wording: with an unnameable family `U`, `X = UA + 0` / `UA = U` said `clause family 'UA'` when X was processed first; it
+is now `'UA', an alias of clause family 'U',` in every order. `ResolverStaticChaseSteps` grows about 2x per doubling,
+and resolution at K = 400 takes 46–78 ms. A differential over the 418 probe programs of all ten review rounds against
+scratch variants of the round's sources before its last repair (the in-progress receiver) — the former current-entry
+reading and no chase memo (`review10/differential/`), and the pre-round-10 detector recording, whose 49 outputs were
+compared by hand with no saved comparison — found no outcome that the stable recording or the written reading changes. Memoization itself
+changes one, inside owner question (b)'s class: `tests-docs-lean[0]`'s witness keeps an input `p` with any chase memo
+(the pre-round-10 recording included) and `p, q` with none — a parameter-property collision either way, for a body whose
+one consistent answer is `P(e)` — so for a self-dependent body the bounded search's answer depends on which chases run,
+as it depends on row order. The same measurement showed property exposure quadratic on two of those shapes (3.7–6.6 s at
+K = 400; HEAD 3.3–5.2 s): a cost that predates this task, recorded in the closeout report.
+The eleventh showed that the tenth round's refinement was itself order-dependent and leaked detection's MAY.
+Resolution decided an edge from the receiver as it stood when the edge's body was processed, and the sibling-order
+channel, reading detection's MAY, ordered nothing: a lifted-only link body read before it was processed stayed MAY
+and its closed-list check was lost (`Lib = { public H = { G(p) = Lib.A.bar + p ⏎ 0 } ⏎ public A = Mk(F +
+0).Algorithm ⏎ 0 }` was 5 in one member order and `UndeclaredIdentifier` in the other); a forward chain of K link
+aliases nested one on-demand processing per link and was refused with `AstDepthLimitExceeded` at about K = 27; the
+dependency walk and the rewrite of one body could read two verdicts (a synthesized `Lib.B(x)` with no `x` bound); and a
+member path through the level's own owner (`Lib.G` inside `Lib`) read G's processed or written form by declaration
+order (`ArityMismatch` or 6; for an alias `C = R.E` of a runtime member, a static alias of E's written body in one
+order). The deferred reports came after all of detection's, at the first edge resolution refined — the outer of two
+nested edges, or none for a later written occurrence — and the receiver-aware provenance and a Grace marker's wording
+on an intrinsic stayed MAY's, also in programs with no alias, through the guard; the sibling channel lost a HEAD cycle
+(`Lib(-3)` was 4 where HEAD's `ArityMismatch` stands); nested runtime-link owners were re-walked in detection, and
+member paths over a miss or an unknown receiver in the resolver (Θ(K²)), whose twin also gave no structure to a member
+path that misses (losing HEAD's receiver-aware root wording); and this record overclaimed (the guard, the mutation
+runs, the saved evidence). Repairs (`AliasUnifyEleventhReviewRegressionTests`): the sibling-order channel classifies
+a MAY dot edge with the edges a certain miss gives too, and a member path that selects a property of the level through
+the level's own owner as a read of that sibling, so what a refined edge reads is processed first in every order the channel can classify, and
+a self path lifts exactly as the bare name — `H(z) = z` / `Lib = { public F = Lib.G + 0 ⏎ public G = H + 1 ⏎ 0 }` /
+`Lib.F(5)` is 6 in either order, where HEAD read G's written body through the in-progress `Lib`, an arity error in
+both orders, while the bare `G + 0` gave 6: a HEAD inconsistency (identity never spelling) that M4★'s alias formation
+through such paths made order-dependent, now read as lifting reads every sibling, PROCESSED; resolution reads ONE
+verdict per edge and region (since the twelfth review only where it decides a lift, read as a lift reads a name); the checks a certain miss makes are decided once
+resolution has processed every body (`Expr.DotCall.ProvisionalMiss`) and reported where detection would have made
+them (`DiagnosticBag.ReserveAnchor`: a closed body's whole check is made again with the decided verdicts, so its names
+keep their first-occurrence order, positions and wording); an inferred fallback name's provenance claims the receiver
+as written, and the post-exposure finalizer keeps the claim exactly when the elaborated receiver certainly lacks the
+member; and both chases record every stable answer, unknown ones included, the resolver's twin reading a member path
+that misses or reads an unknown receiver as its owner's own structure, as the detector does. Detection's MAY for such
+a receiver is now unobservable, so the guard's precision is (`guard-always-true` is an equivalent mutant, below).
+Every witness of the review reads as at HEAD except where M4★ intends otherwise (a runtime link's `.bar` is the
+runtime's) and the self-path lifting above; the 452 probe programs of rounds 1 to 10 keep their outcomes
+(`review11/differential/`, run before the round's two last edits; on the final sources `review12/differential/`). The self-path chain (`Ai = Lib.A(i+1).abs + 0`) resolves in linear work, while property
+exposure is quadratic on it at HEAD as now (92 / 446 / 1,251 ms at K = 100 / 200 / 400 at HEAD), a pre-existing cost
+recorded with the other in the closeout report.
+The twelfth showed that the eleventh round's ordering rested on a channel that cannot classify every read it relied
+on, and that a read it kept initiating still nested. The MAY union also ordered a parameter's member, whose miss
+resolution never refines: it closed sibling cycles and changed signatures and report order in programs without
+aliases or link rows (`K(k) = k` / `G = H + 0` / `H = if(true, K, p.abs(G))` lost `k` when G came first). A path
+receiver whose fallback callee the channel cannot classify (a family a nested body declares or only an open
+provides, a lone-path alias of one) was neither ordered nor processed on demand, so `H = { f(0) = 0 ⏎ f(n) = n ⏎
+Lib.A.f + 0 }` lifted by declaration order, and so did a refined `.repeat` miss (its receiver a META step, its count a
+value). A static path read of a merely pending head read the written member (`open M` / `Q = fam(Lib.A) + 0` with
+`A = F + 0`: HEAD's 3, here an arity error in one order, with no alias or link row). An owner reference only a nested
+body's open provides got no edge, and a self path in a callee position read the in-progress owner's written member
+(`Lib.A(G)` with `A = abs`, at HEAD as here). The refinement still processed an opened receiver on demand, so a chain
+of opened link providers nested until the depth budget refused a valid program; open-target chases recorded nothing
+past a missed member step (Θ(K·L)); and a provisional miss kept both passes' state alive in the published tree
+(SEC-S1). Repairs (`AliasUnifyTwelfthReviewRegressionTests`): the channel's own contract is restored — it orders only
+reads the rewrite makes, and the rewrite processes on demand what it leaves unordered. Resolution refines a MAY edge
+only where its verdict decides a lift (a certain miss would give a slot a VALUE role), reading the receiver as a lift
+reads a name — processed on demand outside a sibling cycle — and reads nothing elsewhere; the channel adds a certain
+miss's reads only for a receiver resolution may refine (never a parameter's member), its receiver included wherever
+the verdict decides a lift; a merely pending path head is processed on demand before a signature read, and a static
+read that ends at a written member of an owner in progress processes that member on demand
+(`ResolutionRun.ProcessedOrDemand`), so a self path has its member's processed signature and roles in a callee
+position too — a HEAD divergence of the eleventh's class (identity never spelling); the owner-path edge reads its head
+by the owner walk only; open-target chases record an unresolved target for every owner waiting on it, in both twins;
+and a provisional miss releases its decider and checks once they are made. Every reviewer witness reads as the
+selected rules require in both orders, and the 523 probe programs of rounds 1 to 11 keep their round-11 outcomes
+(`review12/differential/`). Recorded limit, at HEAD as here: a chain of about twenty reads through callees the channel
+cannot classify stacks on-demand processing until the depth budget refuses (`B_i = { f(0) = 0 ⏎ f(n) = n ⏎ public A =
+f(B_(i+1).A) + 0 ⏎ 0 }` at K = 40).
+Recorded limit of the work: a
+body's decisions cost work linear in its edges and opens (`DetectorInputDecisions`, `DetectorInputEdgeSelections`,
+`LookupOpenTargetResolutions`) — since the seventh review also where one decision's chase reads undecided inputs one
+after another (the sixth review's acceptance[2]: a decision asked through `M.B.w` whose edge `N1.A.z` reads n1 … nK
+through `Ni = { open Xi ⏎ public A = ni ⏎ 0 }` and `Xi = { public ni = N(i+1).A }` restarted its chase at each read,
+Θ(K²) hops; each abandoned walk now resumes, and since the ninth review so does an abandoned structure chase, with
+the member paths waiting on it) — except
+where a body's passes repeat, which takes a decision that reads itself, the class of owner question (b) below (or,
+Q-09a, one the host stack has no room for): each pass walks its rows again, and a chain the first pass decided wrongly
+is corrected one link per pass — collected wrongly under a wrong self-read, it loses one link per pass whatever its
+links read, because seeds are never decided again (K passes for K links: the sixth review's repeats-forget[1]); lost
+under one, it is regained one link per pass where its links read their successors before their predecessors (K − 2
+passes: the sixth review's acceptance[1]); Θ(K²) work in all — and, in the same class, self-reads reached through NEW
+walk starts each re-walk the walks' shared prefix, all suspended at once: Θ(K²) work and suspended-walk state with no
+repeated pass (eighth review, resumable-walks[1]; one start keeps it linear). OPEN FOR OWNER DECISION: (a) FA-OQ-1
+naming of a runtime-projection cell (C# non-initiating per META-S3-0b vs Lean initiating; see (5)) — the outcome in C#
+depends on whether the run is pre-marked for runtime projections, which an unused runtime-row alias decides; (b) the
+inputs of a body whose inferred inputs depend on THEMSELVES — through the static chases its own inputs decide (OD-D
+verdicts, open providers, receiver structures). The contract defines them as a consistent answer, but such a body may
+have none — `L = { public m = P.R } ⏎ L2 = { public n = { public m = 1 } } ⏎ P = { public R = C ⏎ C = { open L ⏎
+public n = 1 ⏎ m } ⏎ N = { open L2 ⏎ public S = n ⏎ 0 } ⏎ R.n + N.S.m }`, where `m` is an input exactly when `n` is
+and `n` exactly when `m` is not (C# repeats until a seed set repeats, at most once per name its rows use, and keeps
+the last pass) — or several: `T(v) = 0 ⏎ U(v) = 0 ⏎ Lib2 = { public y = 1 } ⏎ Lib3 = { public x = 10 } ⏎ L = { public
+x = P.R } ⏎ L3 = { public y = P.R2 } ⏎ P = { public R = C ⏎ C = { open L ⏎ public T = Lib2 ⏎ x } ⏎ public R2 = C2 ⏎ C2
+= { open L3 ⏎ public U = Lib3 ⏎ y } ⏎ R.T.y + R2.U.x }`, where `x` is an input exactly when `y` is not: C# infers the
+name that the first-asked name's decision reads, `P(y)` (with `K(v) = 1000`, `P(K)` is 1010), and `P(x)` (1001) with
+the summands swapped — and even a body with exactly ONE consistent answer can lose it to the bounded search, depending
+on row order: `Lib = { public a = 1 } ⏎ LA = { public a = P.R3 } ⏎ LB = { public a = P.R } ⏎ P = { open T ⏎ T = Cx ⏎
+Cx = { open L7 ⏎ public y = Lib ⏎ b } ⏎ L7 = { public b = T } ⏎ R2 = y ⏎ public R = C1 ⏎ C1 = { public b = 1 ⏎ Cb } ⏎
+Cb = { open L2 ⏎ b } ⏎ L2 = { public b = CaR } ⏎ CaR = { open LB ⏎ a } ⏎ public R3 = Cc ⏎ Cc = { public c = 1 ⏎ Ca3 }
+⏎ Ca3 = { open LA ⏎ a } ⏎ R3.c + R.b + R2.a }` has the one consistent answer `P(a)`, which the order `R2.a + R.b +
+R3.c` reaches, while this order keeps `P(b, a)` (a parameter-property collision; sixth review repeats-forget[0]; in
+tests-docs-lean[0]'s second witness the only consistent answer `P(e)` makes `P(K)` 1002, while C# keeps an input `p`
+and rejects the program (a collision); and the host-stack refusal's repetition rests on the same search, so for such a
+body headroom can change which pass is kept, against Q-09a). The reviews' gadgets express negation and disjunction
+through OD-D verdicts, so deciding whether such a body has a consistent answer, and finding the one it has, appears to
+encode satisfiability: no rule is known that computes these bodies exactly within the front end's linear-work
+guarantee (FE-1). The decision has two parts (seventh review, acceptance[4]): for a body with none or several
+consistent answers the selected contract determines no signature, and choosing one is a new user-visible outcome it
+does not determine (this task's stop condition); for a body with exactly one, the contract determines the signature,
+and the stop is the conflict between that exact answer and FE-1 — exactness at a cost that may be exponential, or an
+interim rule. Every interim rule — refusing a self-dependent body with a new diagnostic, deciding a self-dependent
+read as a runtime reference, the least answer of a monotone reading, or another — overrides some determined signatures
+(refusal would reject the one-answer witness above in the order `R2.a + R.b + R3.c`, which C# detects as `P(a)`).
+Pinned by `AliasUnifyThirdReviewRegressionTests`, `AliasUnifySeventhReviewRegressionTests`,
+`AliasUnifyEighthReviewRegressionTests`, `AliasUnifyNinthReviewRegressionTests` and
+`AliasUnifyTenthReviewRegressionTests` (every round-3 repair killed by its
+mutation in `artifacts/validation/alias-unify-1-impl/review3/mutation/`, the decider's in
+`review5/mutation/summary.txt`, the sixth review's repairs — the tentative-result forget, its propagation, the
+unsettled return and the suggestion scopes — in `review6/mutation/summary.txt`, the seventh's — per-body verdict
+windows, the name-use filter, settling, the selective suggestion reset, resumable walks, the name-lookup stratum in
+both twins and the stretch, provider and verdict propagation — in `review7/mutation/summary.txt`, the eighth's —
+the calculation and navigated-body receivers, the scope-free view, the runtime and graced links, the fallback-name
+guard and the abandoned-chase stretches, the last since replaced by resumable chases — in
+`review8/mutation/summary.txt`, and the ninth's — the paths through unknown receivers and non-final links, link rows
+with an input of their own, the guard's certain hits, the elaborated post-resolution providers of the editor and the
+finalizer, resumable chases and their active-set undo, and the structure cells' completion, processed-body lookup,
+sharing, pending reads and raw records — in `review9/mutation/summary.txt`, run on the ninth round's sources before a
+last edit of `ElaboratedScopeLookup.cs` no record shows to be comment-only, after `summary-run1.txt` showed nine
+survivors: five got witness tests, the two of the eighth round's stretch
+recording were removed, and two are recorded below; and the tenth's — the link rows resolution decides, the
+deferred reports, the guard's member names, the target cells, a deferred unit's eager bodies, the stable recording,
+the fuel a stretch needs in both twins, the written reading of unsettled siblings, and the invocation walk's record
+and last-hop name — in `review10/mutation/summary-run1.txt` and three rerun summaries, run before the round's
+last edit of `ImplicitArgumentResolver.cs` — and the eleventh's — the MAY
+union edges and the owner-path edge, the one verdict per edge and its non-initiating reads, the checks decided at the
+end and their anchors, the provenance claim, both twins' stable unknown answers and the resolver's receiver-mode
+owner, and the guard's walk memo, with the tenth's 19 re-anchored: 37 mutants in `review11/mutation/summary.txt`, after
+which six survived; four got witness tests that kill them (`summary-guard-row-memo-off-peek-initiates-resolver-unknown-result-off-resolver-unknown-receiver-owner-off-anchor-off.txt`:
+the guard's fixture now asks each reference a name of its own, which no recorded chase answers for another; a neutral
+link chain; nested owners over a head no declaration provides), a 38th — a provisional miss keyed by its edge alone —
+is killed by a body shared by two scopes (`summary-provisional-edge-only-key.txt`), and two are recorded below — and the
+twelfth's — the lift gate, the on-demand refinement, member and static-end reads, the settled head, the body registry,
+the union's parameter exclusion and receiver read, the owner walk's head, open-target recording in both twins, the
+release, a second family's replay and the import site of deferred checks, with the eleventh's mutants its code changed
+re-anchored: 24 mutants in `review12/mutation/summary-run1.txt` (rebuilt from the per-mutant logs) and its rerun, all
+killed but two recorded below, `static-end-demand-off` once its witness was added).
+Two single-site mutants of the sixth review's repairs survive (`review7/mutation/unsettled-scope-forget-off-test.log`,
+`published-provider-propagation-off-test.log`): the unsettled return's suggestion-name forget is unpinned (a witness
+needs a body with no consistent answer, owner question (b), whose nested body suggests through its level), and the
+read counted for a provider list completed after an abandoned resolution is equivalent (completing it resolves the
+abandoned target again, which asks the question that abandoned it — a counted read — inside the completing call). So
+do three more: the eighth round's `tentative-set-clear` (the tentative suggestion set is dropped instead of cleared, a
+constant-time-per-entry fix that no counter observes), and the ninth's `suspended-drop-off` — dropping the suspended
+chases at a repeat or settle is defensive: in every program the tests and probes reach, a chase a pass suspends is
+taken again within that pass, and one left suspended would otherwise resume into the next pass's answers — and
+`family-completion-off`, an equivalent mutant (a clause family exposes no members, so its written and processed bodies
+navigate alike). So are two of the eleventh's: `guard-always-true`, equivalent in outcomes — detection's MAY for a
+receiver resolution refines is unobservable since that round, so the guard only keeps detection's own stamps precise
+and the work it defers small — and `miss-selection-memo-off`, whose round-11 record (equivalent under the sibling
+order) the twelfth review refuted: a later operand could process the receiver on demand between the dependency walk and
+the rewrite. Since the twelfth round the refinement processes what it reads, so within one body's processing its reads
+are stable — a refused demand (a cycle member, a dependent of a body in progress) stays refused while the reader runs —
+and the memo is a cache, save at the depth budget's edge (the walk and the rewrite reach an edge at about the same live
+depth, not provably the same), where it keeps one verdict. And one of the twelfth's: `refinement-non-initiating` (the
+refinement's name read as recorded) is equivalent in source programs — the receiver it then reads unprocessed is
+demanded by its body (`ResolutionRun.ProcessedFormOrDemand`), which processes the same property; only a body two
+properties share (a host DAG) leaves that registry silent.
+(13) Lean + C# OD-C payload, found by the fourth review — Lean's `openNavigateWith`
+named an inaccessible or branch-only step of an open-target reference by the reference's WHOLE target
+(`localOnlyProperty "G.Sub" …` for `open A` with `A = G.Sub`), while C#'s `Evaluator.OpenStructure`, Lean's direct open
+arm and `aliasStepNavigateWith` name the step's RECEIVER; it now accumulates the receiver path from the head, so `open
+A` reports what `open G.Sub` reports (`localOnlyProperty G Sub`, a second step `G.Sub Inner`). Pinned by the
+`open-*-local-only-member` rows of `ParameterCalleeNameTests` with the `pcnOpen*` guards in
+`CoreTests/HigherOrderCalls.lean`. A block head is spelled by each engine's renderer — Lean `(inline library)`, C#
+`{...}` — at this and the two older navigation sites alike, the object description being a rendered description
+(Q-67, `docs/design/differential-observations.md`). The exact FU2 witnesses of OD-E over braced carriers (C-RC-F5,
+C-RC-F5b, C-RC-F7, I8, J8, J5) are pinned by `AliasUnifyFourthReviewRegressionTests`.
+
 X-29 / Q-36 — spread failure origin (owner decision October 24 2026; observable error CATEGORY, so
 "Lean update required? Yes": Lean and C# changed together, full V3 plus the forced invocation-plan
 run). RULE: spread preserves failures originating within its operand's dependencies or arguments,
@@ -816,9 +1448,9 @@ remains open. Singleton sequence patterns in the new guards were replaced with v
 two-item sequence patterns; conflict checks inspect Error constructors. Q-66 stays OPEN. Report
 `experimental/features/s6a-r4-repeated-name-laws.md` (local). Full V3.
 
-META-S3-2 final review status (2026-10-19): the D4 ordinary-property fallback is implemented as the owner decided it — the binding cell's already-performed receiver work is consumed by the FIRST ordinary observation (a bare read or a terminal call), whichever operation performed the eligibility projection — so eligibility checking never duplicates a receiver evaluation. RF1's flow-local invocation token (C# `AliasInvocation`, Lean `withAliasInvocation` / `aliasProbeScope` / `aliasTerminal`) was removed: it refused to lend a CALLABLE-only observation's work, which made `Navigate(f) = f.K` / `Navigate(A), A` evaluate the receiver twice and made the bare read's value depend on incidental call nesting (`K(x) = x` against `K(x) = Id(x)`). Final evidence: `experimental/features/meta-s3-2-final-review-and-closeout.md`.
+*(Superseded by ALIAS-UNIFY-1 M4★, October 2026: a runtime alias owns no entry and calls an identity of any arity freshly; the D4 fallback below is history.)* META-S3-2 final review status (2026-10-19): the D4 ordinary-property fallback is implemented as the owner decided it — the binding cell's already-performed receiver work is consumed by the FIRST ordinary observation (a bare read or a terminal call), whichever operation performed the eligibility projection — so eligibility checking never duplicates a receiver evaluation. RF1's flow-local invocation token (C# `AliasInvocation`, Lean `withAliasInvocation` / `aliasProbeScope` / `aliasTerminal`) was removed: it refused to lend a CALLABLE-only observation's work, which made `Navigate(f) = f.K` / `Navigate(A), A` evaluate the receiver twice and made the bare read's value depend on incidental call nesting (`K(x) = x` against `K(x) = Id(x)`). Final evidence: `experimental/features/meta-s3-2-final-review-and-closeout.md`.
 
-RF1 (2026-10-19, as corrected by the final review): D4 separates ordinary terminal-property observations from the retained CALLABLE identity. C# `RuntimeAliasBinding` and Lean NeedCell `aliasUse` / `aliasBare` assign the initial eligibility computation once, to the first ordinary observation; `takeTerminalAliasInvocation` is consumed by the ordinary need binders after cardinality. CACHE-PUB-1 extension (owner decision 2026-10-22): a qualifying terminal invocation now uses the ONE property publication owner under the alias's own binding, scope and activation. Its outermost owning success may establish the alias's empty entry; bare reads reuse that entry; later terminal calls run the original row afresh and never replace it. Parameterized runtime-callable aliases do not publish, and neither alias route publishes into its target's cache. The RF1-D4 local-cache alias and ordinary control both produce `(10, 10, 20, 10)` with two ticks. Before this extension a first bare observation after a terminal call entered a fresh binding context and cached independently; that earlier call/bare split is superseded. D3 eligible targets still share their receiver. R2 classification follows static chains, forward references and opens while preserving alias-owned members and static alias restrictions. Total helper laws: `terminal_initial_claim_once`, `bare_value_excludes_terminal_reuse`, `terminal_claim_excludes_later_terminal_reuse`, `unclaimed_cell_is_claimed_once`, `eligible_target_keeps_declared_parameters` and `runtime_namespace_direct`; production installation and whole-program lifetimes are executable guard evidence, not whole-run heap refinement or C# async/concurrency proofs. `NeedPlan.execute`, `evalCallCountedExpr` and `evalDotCallCounted` are again the plain phase compositions (no invocation wrapper), and `InvocationPlan.lean`'s `execute_prepared` / `fresh_plan_is_ordinary_call` are stated over them directly.
+*(Superseded by ALIAS-UNIFY-1 M4★, October 2026: the alias-owned entry, the terminal-row re-evaluation, the NeedCell `aliasUse` / `aliasBare` fields and the six helper laws named below were removed; history.)* RF1 (2026-10-19, as corrected by the final review): D4 separates ordinary terminal-property observations from the retained CALLABLE identity. C# `RuntimeAliasBinding` and Lean NeedCell `aliasUse` / `aliasBare` assign the initial eligibility computation once, to the first ordinary observation; `takeTerminalAliasInvocation` is consumed by the ordinary need binders after cardinality. CACHE-PUB-1 extension (owner decision 2026-10-22): a qualifying terminal invocation now uses the ONE property publication owner under the alias's own binding, scope and activation. Its outermost owning success may establish the alias's empty entry; bare reads reuse that entry; later terminal calls run the original row afresh and never replace it. Parameterized runtime-callable aliases do not publish, and neither alias route publishes into its target's cache. The RF1-D4 local-cache alias and ordinary control both produce `(10, 10, 20, 10)` with two ticks. Before this extension a first bare observation after a terminal call entered a fresh binding context and cached independently; that earlier call/bare split is superseded. D3 eligible targets still share their receiver. R2 classification follows static chains, forward references and opens while preserving alias-owned members and static alias restrictions. Total helper laws: `terminal_initial_claim_once`, `bare_value_excludes_terminal_reuse`, `terminal_claim_excludes_later_terminal_reuse`, `unclaimed_cell_is_claimed_once`, `eligible_target_keeps_declared_parameters` and `runtime_namespace_direct`; production installation and whole-program lifetimes are executable guard evidence, not whole-run heap refinement or C# async/concurrency proofs. `NeedPlan.execute`, `evalCallCountedExpr` and `evalDotCallCounted` are again the plain phase compositions (no invocation wrapper), and `InvocationPlan.lean`'s `execute_prepared` / `fresh_plan_is_ordinary_call` are stated over them directly.
 
 META-S3-2 — runtime-target callable aliases (2026-10-19; FWD-02, owner decisions D1 = yes, D2 = Option
 A with Q-75 unchanged, D3 = fresh invocation): language change, Lean and C# together. LEAN: the alias
@@ -2554,3 +3186,23 @@ Owner decision LOOP-CF1 (OD-1 adopt condition-first "flag-row first" reading; OD
 - **Observable changes.** Flag-row effects, host calls, seeded draws and lazy initial-cell demands precede the transition rows'; the stopping round forms no transition; flag errors precede earlier-row errors; an unread failing initial component now fails at the final materialization (argument blame) instead of inside the step row; budgets follow the new demand order (strategy parity unchanged); spread-tailed steps are no longer planned. Twenty-two existing tests were migrated (placeholder flags → `true`, stopping-round counters, handover instrumentation, one blame context, the spread-tailed `while` handoff twin).
 - **Pins.** `LoopConditionFirstTests` (six routes), the spec cases `loop-while-condition-first-skips-transition`, `-trailing-empty-spread`, `-row-granular`, the Lean files above.
 - **CF-4 production connection (S6c, October 20 2026; Lean-only, behavior-preserving, no C# change).** The two row readers' shared body setup is extracted into the ONE total activated-body boundary `ActivatedBody.readRows` (`ActivatedBody.check`: duplicate property, conditional read as a value, missing output, in that order; one `enterAlgorithmBody`; the builtin body's atomic route), mirroring C#'s shared prelude `OutputRowsAccessError` in `EvalAlgOutputSlots` / `EvalWhileVerdictSlots` and their async twins; `EvalBody.evalAlgOutputSlots` / `EvalBody.whileVerdictSlots` are now that boundary with their distinct readers (kernel-checked equal, for every evaluator answer, to the former inline bodies). `KatLangArityLaws/WhileRoundProduction.lean` proves one body entry and one context for every row (`readRows_entered`, `readRows_uses_one_context`), that entry allocates no cell and keeps the parameter cells, binding context and caches (`enter_run`, `entered_*`), the production `formOutputRow` = production `evalCounted` + `OutputRows.items` (exact), a finite-use converse of R7's `production_unfolds` (`production_eq_of_finite`) giving `whileVerdictSlots_production` / `evalAlgOutputSlots_production` (production EQUALS the activated-body run wherever it completes), the `production_cf*` laws about the production `whileVerdictSlots`, the round's dispatch for completed runs (`runNeedWhileRound_user/_family/_builtin/_alias`), shared cells (`round_parameter_cell`, `completed_cell_reused_after`) and, separately, cache reuse (`property_cache_hit_production`; `exported_publication_reused`; `local_publication_reused` keeps its key-stability premise). Open: local-only key stability across rows, evaluator-internal routing of property reads, `Finite` binder channels, whole-run refinement. Witnesses `WhileRoundProductionGuards.lean`. Report: `experimental/features/s6c-cf4-production-shared-activation.md`.
+
+
+### ALIAS-UNIFY-1 B3-2★ Gate C resource acceptance (2026-10-29)
+
+FORMAL-02 implementation/resource corrections on the private candidate: prioritize ordinary query work before
+closed observers; account engine subscriptions, simultaneous certificate temporaries, contextual adapters,
+completed publication and frozen metadata under one finite numeric ledger; cancel and fault active publication
+atomically while preserving sealed-fact independence and independent-export cancellation; complete shared syntax before freezing and export retained counts rather than discarded wrapper
+allocation. Source-admission scaling clamps before Int64 multiplication. No new language fact, target equation,
+lookup rule, A1 verdict, Q8/Q9 signature behavior or evaluator charge is selected by these changes. Lean semantics
+need no edit. Host-stack crossings and their actual blame are assessed under the existing Q-09 contract, with
+small deterministic-depth controls, dedicated synchronous stacks, equivalent baseline harnesses and a disposable
+OpenStructure refusal marker; no common route cutoff or artificial source span is introduced.
+
+Validation is V3 because the shared front end and publication/lifecycle machinery change: serialized ordinary
+.NET, all seven Lean targets, then forced-invocation-plan .NET on frozen sources. `StaticStructureResourceAcceptanceTests`
+adds the small valid-work regression, fixed-point scheduling control, preallocation/sticky storage and overflow
+checks, failed cached-provider reads and cancelled-freeze guards. Resource/scaling, phase cancellation, retention,
+mutations, 579-case differentials and round-14 evidence are recorded in the Gate C report. Public defaults and
+legacy authorities remain unchanged; this entry does not declare overall B3-2★ complete.

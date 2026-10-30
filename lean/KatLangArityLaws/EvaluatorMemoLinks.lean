@@ -35,8 +35,6 @@ link may be established; the guarded writers write only from those entry states:
 | `NeedProjection.step` | `callable` (`projecting`, then `projected o`) | entry `callable = .unprojected` |
 | `NeedPlan.calleeCell` → `setCallee` | `callee` | entry `callee = none` (route/supply run in between) |
 | `NeedLink.receiverCell` → `setReceiver` | `receiver` | entry `receiver = none` (only `supplyNeed` in between) |
-| `aliasBareCell` | whole cell `{cell with aliasUse/aliasBare}` | snapshot `cell`; intermediate effects keep cells EXACTLY |
-| `takeTerminalAliasInvocation` | whole cell `claimTerminalAliasInitial cell` | immediately after the read |
 | VALUE / plan / route / allocation | other fields, or a push | frame |
 
 A value first written INSIDE a re-entrant callback of such a writer (e.g. a callee recorded by
@@ -641,80 +639,6 @@ theorem linkDisc_viewCells (sp : NeedSupply.SpreadEval) (hsp : ∀ e c v, LinkDi
     · exact linkDisc_prepare sp hsp a _
   · exact linkDisc_throw _
 
-/-! ## The D4 alias writes -/
-
-theorem linkKept_of_claim (cell claimed : NeedCell) (h : claimTerminalAliasInitial cell = some claimed) :
-    LinkKept cell claimed := by
-  unfold claimTerminalAliasInitial at h
-  split at h
-  · cases h; exact linkKept_of_same _ _ rfl rfl rfl
-  · cases h
-
-open KatLang.EvaluatorDiscipline in
-/-- The bare-cell write stores back a cell read BEFORE three intermediate operations; it keeps the
-    three fields because those operations keep every existing cell EXACTLY (they only push). -/
-theorem link_aliasBareTail (wired : Algorithm) (target : Expr) (ctx : EvalCtx) (address : Nat)
-    (cell : NeedCell) (t : EvalState) (hc : t.needs[address]? = some cell) :
-    LinkAt t (do
-      let bindingCtx ← EvalCtx.bindParameters [] ctx
-      let declaringCtx ← enterAlgorithmBody wired bindingCtx []
-      let bare ← supplyNeed target declaringCtx []
-      modify fun s => { s with needs := s.needs.set! address { cell with aliasBare := some bare } }
-      pure bare : EvalM Nat) := by
-  unfold LinkAt
-  rw [bind_run]
-  generalize hb : (EvalCtx.bindParameters [] ctx).runState t = rb
-  have hb1 : rb.2.needs = t.needs := by rw [← hb]; exact needs_bindParameters [] ctx t
-  rcases rb with ⟨ob, t1⟩
-  cases ob with
-  | error e => simp only at hb1 ⊢; rw [hb1]; exact LinkHeapKept.refl _
-  | ok bindingCtx =>
-    simp only at hb1 ⊢
-    rw [bind_run]
-    generalize he : (enterAlgorithmBody wired bindingCtx []).runState t1 = re
-    have he1 : re.2.needs = t1.needs := by rw [← he]; exact needs_enterAlgorithmBody wired bindingCtx [] t1
-    rcases re with ⟨oe, t2⟩
-    cases oe with
-    | error e => simp only at he1 ⊢; rw [he1, hb1]; exact LinkHeapKept.refl _
-    | ok declaringCtx =>
-      simp only at he1 ⊢
-      rw [bind_run]
-      have hc2 : t2.needs[address]? = some cell := by rw [he1, hb1]; exact hc
-      have kp : LinkHeapKept t.needs ((supplyNeed target declaringCtx []).runState t2).2.needs := by
-        intro b d hd
-        refine ⟨d, ?_, LinkKept.refl d⟩
-        apply supply_keeps_cells
-        rw [he1, hb1]; exact hd
-      have hc3 := supply_keeps_cells target declaringCtx [] t2 address cell hc2
-      generalize hs : (supplyNeed target declaringCtx []).runState t2 = rs at kp hc3
-      rcases rs with ⟨os, t3⟩
-      cases os with
-      | error e => exact kp
-      | ok bare =>
-        simp only at kp hc3 ⊢
-        rw [bind_run, modify_run]
-        exact kp.trans (LinkHeapKept.set_bang _ _ _ _ hc3 (linkKept_of_same _ _ rfl rfl rfl))
-
-theorem link_aliasBareCell (wired : Algorithm) (target : Expr) (ctx : EvalCtx)
-    (hbind : LinkDisc (aliasBindingCell wired target ctx)) :
-    LinkDisc (aliasBareCell wired target ctx) := by
-  unfold aliasBareCell
-  apply LinkDisc.bind hbind
-  intro address
-  apply link_get_bind
-  intro st
-  split
-  · rename_i cell hcell
-    split
-    · apply LinkAt.bind
-      · exact LinkAt.set (LinkHeapKept.set_bang _ _ _ _ hcell (linkKept_of_same _ _ rfl rfl rfl))
-      · intro _; exact linkDisc_pure _
-    · split
-      · exact LinkAt.of_disc (linkDisc_pure _)
-      · exact link_aliasBareTail wired target ctx address cell st hcell
-  · exact LinkAt.of_disc (linkDisc_pure _)
-
-
 /-! ## The syntax-directed per-body procedure (the `EvaluatorDiscipline` procedure over `LinkDisc`) -/
 
 open Lean Meta Elab Tactic in
@@ -855,7 +779,7 @@ macro "link_tac_base" : tactic => `(tactic| ((try link_unfold_rec) <;> repeat' (
   | (with_reducible apply LinkAt.bind)
   | (with_reducible apply LinkAt.set; first
       | exact LinkHeapKept.refl _
-      | (apply LinkHeapKept.set_bang <;> first | link_hyp | (exact linkKept_of_same _ _ rfl rfl rfl) | (apply linkKept_of_claim; link_hyp)))
+      | (apply LinkHeapKept.set_bang <;> first | link_hyp | (exact linkKept_of_same _ _ rfl rfl rfl)))
   | (with_reducible apply LinkDisc.withCtx)
   | (with_reducible apply LinkDisc.captureMeta)
   | (with_reducible apply LinkDisc.attempt)
@@ -942,6 +866,15 @@ structure CapsLink (caps : NeedCapabilities EvalM) : Prop where
   allocate : ∀ s, LinkDisc (caps.allocate s)
   reference : ∀ a, LinkDisc (caps.reference a)
 
+/-- NEED-04's data-anchor check demands only through the VALUE capability. -/
+theorem link_checkAnchor (caps : NeedCapabilities EvalM) (hc : CapsLink caps) (name : Ident)
+    (anchor : CountedResult) (family : Bool) (cells : List Nat) :
+    LinkDisc (NeedBinder.checkAnchor caps name anchor family cells) := by
+  have hv := hc.value
+  induction cells with
+  | nil => unfold NeedBinder.checkAnchor; link_tac_base
+  | cons c rest ih => unfold NeedBinder.checkAnchor; link_tac_base
+
 theorem link_binder (caps : NeedCapabilities EvalM) (hc : CapsLink caps) (repeated : List Ident)
     (family : Bool) :
     (∀ pattern address bound,
@@ -949,6 +882,7 @@ theorem link_binder (caps : NeedCapabilities EvalM) (hc : CapsLink caps) (repeat
     (∀ patterns sources current,
       LinkDisc (NeedBinder.bindSources caps patterns sources repeated current family)) := by
   have hv := hc.value; have hcl := hc.callable; have hal := hc.allocate; have hre := hc.reference
+  have hck := link_checkAnchor caps hc
   refine NeedBinder.bindOne.mutual_induct
     (motive_1 := fun pattern address bound =>
       LinkDisc (NeedBinder.bindOne caps pattern address repeated bound family))
@@ -1005,7 +939,24 @@ theorem link_maxLoop (numbers : List Int) (current : Int) :
   | nil => unfold evalMaxCounted.maxLoop; link_tac_base
   | cons n rest ih => unfold evalMaxCounted.maxLoop; link_tac_base
 
+theorem link_openNavigateWith (structureOf : Algorithm → EvalM Algorithm)
+    (h : ∀ a, LinkDisc (structureOf a)) (ctx : EvalCtx) (notStatic : Error)
+    (value : Algorithm) (receiverName : String) (steps : List Ident) :
+    LinkDisc (openNavigateWith structureOf ctx notStatic value receiverName steps) := by
+  induction steps generalizing value receiverName with
+  | nil => unfold openNavigateWith; link_tac_base
+  | cons member rest ih => unfold openNavigateWith; link_tac_base
+
+theorem link_openStructure (fuel : Nat) (ctx : EvalCtx) (a : Algorithm) :
+    LinkDisc (openStructure fuel ctx a) := by
+  induction fuel generalizing a with
+  | zero => simp only [openStructure]; link_tac_base
+  | succ n ih =>
+    have := link_openNavigateWith (fun value => openStructure n ctx value) ih
+    simp only [openStructure]; link_tac_base
+
 theorem link_resolveAlgForOpen (ctx : EvalCtx) (e : Expr) : LinkDisc (resolveAlgForOpen e ctx) := by
+  have := link_openStructure
   induction e using resolveAlgForOpen.induct ctx with
   | case7 o n a ih => unfold resolveAlgForOpen; link_tac_base
   | _ => unfold resolveAlgForOpen; link_tac_base
@@ -1013,6 +964,7 @@ theorem link_resolveAlgForOpen (ctx : EvalCtx) (e : Expr) : LinkDisc (resolveAlg
 theorem link_lookupOpenProperties (a : Algorithm) (name : Ident) (ctx : EvalCtx) :
     LinkDisc (lookupOpenProperties a name ctx) := by
   have := link_resolveAlgForOpen
+  have := link_openStructure
   unfold lookupOpenProperties; link_tac_base
 
 theorem link_lookupOpenPropertiesInParentChain (name : Ident) (ctx : EvalCtx) (sc : ScopeCtx) :
@@ -1023,6 +975,30 @@ theorem link_lookupOpenPropertiesInParentChain (name : Ident) (ctx : EvalCtx) (s
     unfold lookupOpenPropertiesInParentChain
     cases t with
     | mk parent _ _ _ _ _ _ _ => cases parent <;> link_tac_base
+
+theorem link_aliasStepNavigateWith (structureOf : Algorithm → EvalCtx → EvalM (Option Algorithm))
+    (h : ∀ a c, LinkDisc (structureOf a c)) (stepCtx : EvalCtx) (notStatic : Error)
+    (value : Algorithm) (last : Option ResolvedProperty) (receiverName : String) (steps : List Ident) :
+    LinkDisc (aliasStepNavigateWith structureOf stepCtx notStatic value last receiverName steps) := by
+  induction steps generalizing value last receiverName with
+  | nil => unfold aliasStepNavigateWith; link_tac_base
+  | cons member rest ih => unfold aliasStepNavigateWith; link_tac_base
+
+theorem link_resolveAliasStepWith (structureOf : Algorithm → EvalCtx → EvalM (Option Algorithm))
+    (h : ∀ a c, LinkDisc (structureOf a c)) (step : Algorithm) (target : Expr) (ctx : EvalCtx) :
+    LinkDisc (resolveAliasStepWith structureOf step target ctx) := by
+  have := link_aliasStepNavigateWith structureOf h
+  have := link_lookupOpenProperties
+  have := link_lookupOpenPropertiesInParentChain
+  unfold resolveAliasStepWith; link_tac_base
+
+theorem link_aliasRouteIsIntrinsicWith (structureOf : Algorithm → EvalCtx → EvalM (Option Algorithm))
+    (h : ∀ a c, LinkDisc (structureOf a c)) (receiver : Expr) (ctx : EvalCtx) :
+    LinkDisc (aliasRouteIsIntrinsicWith structureOf receiver ctx) := by
+  have := link_aliasStepNavigateWith structureOf h
+  have := link_lookupOpenProperties
+  have := link_lookupOpenPropertiesInParentChain
+  unfold aliasRouteIsIntrinsicWith; link_tac_base
 
 section LocalLoops
 variable (rec : EvalRec) (hrec : ∀ c, LinkDisc (rec c))
@@ -1100,7 +1076,7 @@ macro "link_tac" : tactic => `(tactic| ((try link_unfold_rec) <;> repeat' (first
   | (with_reducible apply LinkAt.bind)
   | (with_reducible apply LinkAt.set; first
       | exact LinkHeapKept.refl _
-      | (apply LinkHeapKept.set_bang <;> first | link_hyp | (exact linkKept_of_same _ _ rfl rfl rfl) | (apply linkKept_of_claim; link_hyp)))
+      | (apply LinkHeapKept.set_bang <;> first | link_hyp | (exact linkKept_of_same _ _ rfl rfl rfl)))
   | (with_reducible apply LinkDisc.withCtx)
   | (with_reducible apply LinkDisc.captureMeta)
   | (with_reducible apply LinkDisc.attempt)
@@ -1147,8 +1123,12 @@ macro "link_tac" : tactic => `(tactic| ((try link_unfold_rec) <;> repeat' (first
   | (with_reducible apply link_minLoop)
   | (with_reducible apply link_maxLoop)
   | (with_reducible apply link_resolveAlgForOpen)
+  | (with_reducible apply link_openStructure)
+  | (with_reducible apply link_resolveAliasStepWith)
+  | (with_reducible apply link_aliasRouteIsIntrinsicWith)
   | (with_reducible apply link_lookupOpenProperties)
   | (with_reducible apply link_lookupOpenPropertiesInParentChain)
+  | (with_reducible apply EvalBody.terminalAccess_linkDisc rec hrec)
   | (with_reducible apply link_outputRowsCollect rec hrec)
   | (with_reducible apply link_explicitRowsCollect rec hrec)
   | (with_reducible apply link_listLiteralCollect rec hrec)
@@ -1158,7 +1138,6 @@ macro "link_tac" : tactic => `(tactic| ((try link_unfold_rec) <;> repeat' (first
   | (with_reducible apply link_filterLoop rec hrec)
   | (with_reducible apply link_mapLoop rec hrec)
   | (with_reducible apply link_repeatLoop rec hrec)
-  | (with_reducible apply link_aliasBareCell)
   | (with_reducible apply CapsLink.mk)
 
   | split
@@ -1172,17 +1151,25 @@ theorem EvalBody.whileLoop_linkDisc (rec : EvalRec) (hrec : ∀ c, LinkDisc (rec
     LinkDisc (EvalBody.whileLoop rec step ctx env stepName cells) := by
   unfold EvalBody.whileLoop; link_tac
 
-theorem EvalBody.aliasStepIsRuntime_linkDisc (rec : EvalRec) (hrec : ∀ c, LinkDisc (rec c)) (step : Algorithm) (target : Expr) (ctx : EvalCtx) :
-    LinkDisc (EvalBody.aliasStepIsRuntime rec step target ctx) := by
+theorem EvalBody.aliasStepIsRuntime_linkDisc (rec : EvalRec) (hrec : ∀ c, LinkDisc (rec c)) (step : Algorithm) (target : Expr) (ctx : EvalCtx) (visited : List String) :
+    LinkDisc (EvalBody.aliasStepIsRuntime rec step target ctx visited) := by
   unfold EvalBody.aliasStepIsRuntime; link_tac
 
 theorem EvalBody.aliasValue_linkDisc (rec : EvalRec) (hrec : ∀ c, LinkDisc (rec c)) (wired : Algorithm) (ctx : EvalCtx) (env : ValEnv) :
     LinkDisc (EvalBody.aliasValue rec wired ctx env) := by
   unfold EvalBody.aliasValue; link_tac
 
-theorem EvalBody.resolveAliasChase_linkDisc (rec : EvalRec) (hrec : ∀ c, LinkDisc (rec c)) (callable : Bool) (a : Algorithm) (ctx : EvalCtx) (visited : List String) (projectedFrom : Option Algorithm) :
-    LinkDisc (EvalBody.resolveAliasChase rec callable a ctx visited projectedFrom) := by
+theorem EvalBody.resolveAliasChase_linkDisc (rec : EvalRec) (hrec : ∀ c, LinkDisc (rec c)) (followCarriers projectRuntime : Bool) (a : Algorithm) (ctx : EvalCtx) (visited : List String) (last : Option (Algorithm × PropDef)) :
+    LinkDisc (EvalBody.resolveAliasChase rec followCarriers projectRuntime a ctx visited last) := by
   unfold EvalBody.resolveAliasChase; link_tac
+
+theorem EvalBody.resolveAliasStructure_linkDisc (rec : EvalRec) (hrec : ∀ c, LinkDisc (rec c)) (a : Algorithm) (ctx : EvalCtx) :
+    LinkDisc (EvalBody.resolveAliasStructure rec a ctx) := by
+  unfold EvalBody.resolveAliasStructure; link_tac
+
+theorem EvalBody.aliasOriginBinding?_linkDisc (rec : EvalRec) (hrec : ∀ c, LinkDisc (rec c)) (a : Algorithm) (ctx : EvalCtx) :
+    LinkDisc (EvalBody.aliasOriginBinding? rec a ctx) := by
+  unfold EvalBody.aliasOriginBinding?; link_tac
 
 theorem EvalBody.resolveAliasTarget_linkDisc (rec : EvalRec) (hrec : ∀ c, LinkDisc (rec c)) (a : Algorithm) (ctx : EvalCtx) :
     LinkDisc (EvalBody.resolveAliasTarget rec a ctx) := by
@@ -1371,6 +1358,12 @@ theorem EvalBody.evalAlgOutputCountedCore_linkDisc (rec : EvalRec) (hrec : ∀ c
 theorem EvalBody.evalAlgOutputCounted_linkDisc (rec : EvalRec) (hrec : ∀ c, LinkDisc (rec c)) (a : Algorithm) (ctx : EvalCtx) (env : ValEnv) :
     LinkDisc (EvalBody.evalAlgOutputCounted rec a ctx env) := by
   unfold EvalBody.evalAlgOutputCounted; link_tac
+
+/-- A VALUE terminal's read (`EvalBody.terminalAccess`), proved once and used by every body that
+    reads one, so those bodies never unfold it inline (M4★). -/
+theorem EvalBody.terminalAccess_linkDisc (rec : EvalRec) (hrec : ∀ c, LinkDisc (rec c)) (t : AliasTerminal) (ctx : EvalCtx) (env : ValEnv) :
+    LinkDisc (EvalBody.terminalAccess rec t ctx env) := by
+  unfold EvalBody.terminalAccess; link_tac
 
 theorem EvalBody.evalZeroArgumentDemandOutputCounted_linkDisc (rec : EvalRec) (hrec : ∀ c, LinkDisc (rec c)) (a : Algorithm) (ctx : EvalCtx) (env : ValEnv) :
     LinkDisc (EvalBody.evalZeroArgumentDemandOutputCounted rec a ctx env) := by
@@ -1592,9 +1585,11 @@ theorem evalStep_linkDisc (rec : EvalRec) (hrec : ∀ c, LinkDisc (rec c)) :
   intro c
   cases c with
   | whileLoop step ctx env stepName cells => exact EvalBody.whileLoop_linkDisc rec hrec step ctx env stepName cells
-  | aliasStepIsRuntime step target ctx => exact EvalBody.aliasStepIsRuntime_linkDisc rec hrec step target ctx
+  | aliasStepIsRuntime step target ctx visited => exact EvalBody.aliasStepIsRuntime_linkDisc rec hrec step target ctx visited
   | aliasValue wired ctx env => exact EvalBody.aliasValue_linkDisc rec hrec wired ctx env
-  | resolveAliasChase callable a ctx visited projectedFrom => exact EvalBody.resolveAliasChase_linkDisc rec hrec callable a ctx visited projectedFrom
+  | resolveAliasChase followCarriers projectRuntime a ctx visited last => exact EvalBody.resolveAliasChase_linkDisc rec hrec followCarriers projectRuntime a ctx visited last
+  | resolveAliasStructure a ctx => exact EvalBody.resolveAliasStructure_linkDisc rec hrec a ctx
+  | aliasOriginBinding? a ctx => exact EvalBody.aliasOriginBinding?_linkDisc rec hrec a ctx
   | resolveAliasTarget a ctx => exact EvalBody.resolveAliasTarget_linkDisc rec hrec a ctx
   | resolveAliasValueTarget a ctx => exact EvalBody.resolveAliasValueTarget_linkDisc rec hrec a ctx
   | lookupLexicalProperty a name ctx => exact EvalBody.lookupLexicalProperty_linkDisc rec hrec a name ctx

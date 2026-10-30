@@ -161,7 +161,7 @@ theorem user_call_is_its_output_recounted (rec : EvalRec) (callee : Algorithm) (
 theorem nonzero_supply_never_requests_the_cache (rec : EvalRec) (origin : CalleeOrigin)
     (callee : Algorithm) (cell : NeedSupply.Sourced) (rest : List NeedSupply.Sourced)
     (ctx : EvalCtx) (env : ValEnv) (calleeName : String)
-    (hb : ∀ b, callee ≠ .builtin b) (ha : ∀ p o ps t d, callee ≠ .alias p o ps t d) :
+    (hb : ∀ b, callee ≠ .builtin b) (ha : ∀ p o ps t d r, callee ≠ .alias p o ps t d r) :
     EvalBody.evalSuppliedCallCounted rec origin callee (cell :: rest) ctx env calleeName =
       (match callee with
        | .conditional _ _ _ _ =>
@@ -171,7 +171,7 @@ theorem nonzero_supply_never_requests_the_cache (rec : EvalRec) (origin : Callee
        | _ => rec.evalNeedUserSupply callee ((cell :: rest).map Prod.fst) ctx env) := by
   cases callee with
   | builtin b => exact absurd rfl (hb b)
-  | alias p o ps t d => exact absurd rfl (ha p o ps t d)
+  | alias p o ps t d r => exact absurd rfl (ha p o ps t d r)
   | mk => simp [EvalBody.evalSuppliedCallCounted]
   | conditional => simp only [EvalBody.evalSuppliedCallCounted, List.isEmpty_cons, Bool.false_eq_true, if_false]; rfl
 
@@ -182,15 +182,15 @@ theorem nonzero_supply_never_requests_the_cache (rec : EvalRec) (origin : Callee
 theorem zero_supply_bound_invocation_requests_the_cache (rec : EvalRec) (origin : CalleeOrigin)
     (callee : Algorithm) (ctx : EvalCtx) (env : ValEnv) (calleeName : String)
     (owner : Algorithm) (binding : PropDef) (s s' : EvalState)
-    (hb : ∀ b, callee ≠ .builtin b) (ha : ∀ p o ps t d, callee ≠ .alias p o ps t d)
-    (horigin : (EvalBody.originBinding? rec origin ctx callee).runState s = (.ok (some (owner, binding)), s')) :
+    (hb : ∀ b, callee ≠ .builtin b) (ha : ∀ p o ps t d r, callee ≠ .alias p o ps t d r)
+    (horigin : (EvalBody.originBinding? rec origin ctx).runState s = (.ok (some (owner, binding)), s')) :
     (EvalBody.evalSuppliedCallCounted rec origin callee [] ctx env calleeName).runState s =
       ((do
         let counted ← rec.evalZeroArgPropertyAccessCounted .lexical owner binding callee ctx env (.invoke calleeName)
         pure (reCountValueBoundary counted)) : EvalM CountedResult).runState s' := by
   cases callee with
   | builtin b => exact absurd rfl (hb b)
-  | alias p o ps t d => exact absurd rfl (ha p o ps t d)
+  | alias p o ps t d r => exact absurd rfl (ha p o ps t d r)
   | mk =>
     simp only [EvalBody.evalSuppliedCallCounted, List.isEmpty_nil, if_true, EvalM.bind_runState, horigin]
   | conditional =>

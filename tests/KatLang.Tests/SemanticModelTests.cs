@@ -1541,21 +1541,20 @@ public class SemanticModelTests
             {
                 ["https://katlang.org/algorithm.kat"] = "\n\npublic X = 1"
             }) });
-        // The root's inferred `X` is a phantom parameter, not a conflict with the
-        // module's own `X`.
         Assert.Empty(parsed.Diagnostics);
         var model = SemanticModelBuilder.Build(parsed);
 
         var aliasReference = ResolutionAt(model, 3, 1);
         Assert.Equal(IdentifierClassification.PropertyReference, aliasReference.Classification);
 
-        // The alias is a wrapper without members, so `X` never navigates into
-        // the loaded module — it is the edge's own inferred fallback
-        // parameter, matching the evaluator's lexical-fallback dispatch.
+        // M4★ whole-algorithm transport: `Alias` is a transparent reference to the loaded module, so
+        // `Alias.X` navigates into it — `X` is the module's own member (a locationless target), never an
+        // inferred fallback parameter (formerly the alias was a wrapper without members). The evaluator
+        // agrees: the program is 1.
         var xReference = ResolutionAt(model, 3, 7);
         Assert.Equal(OccurrenceKind.DotMemberReference, xReference.Occurrence.Kind);
-        Assert.Equal(IdentifierClassification.ImplicitParameterReference, xReference.Classification);
-        Assert.Null(xReference.ResolvedDeclaration);
+        Assert.Equal(IdentifierClassification.PropertyReference, xReference.Classification);
+        AssertModuleProvidedTarget(xReference, "X");
     }
 
     [Fact]
@@ -2994,7 +2993,10 @@ public class SemanticModelTests
     [Fact]
     public async Task ModuleProvenance_AModuleIsPositionedOnlyWhenParsedAsTheCurrentDocument()
     {
-        const string moduleSource = "open 'https://katlang.org/base.kat'\npublic Total = Base + 1\nTotal";
+        // The module's row is a calculation, so its spliced root stays an ordinary module body (a module
+        // whose one row is a bare reference is a structural forwarding carrier, M4★ — pinned by
+        // ModuleProvenance_EqualCoordinatesDoNotConflateDistinctSourceAnchors).
+        const string moduleSource = "open 'https://katlang.org/base.kat'\npublic Total = Base + 1\nTotal + 0";
         var options = new RunOptions
         {
             DownloadCode = (url, _) => ValueTask.FromResult(url.EndsWith("/lib.kat", StringComparison.Ordinal)

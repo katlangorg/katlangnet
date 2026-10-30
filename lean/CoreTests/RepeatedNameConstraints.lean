@@ -10,16 +10,16 @@ open KatLang (resolve param num)
 -- Repeated names are constraints, not merges (Q-05, September 2026)
 --------------------------------------------------------------------------------
 -- THE RULE: a repeated parameter name is a compatibility constraint over
--- INDEPENDENTLY supplied arguments. Every occurrence must supply its OWN value
--- (the Model-C binder demands each occurrence's own cell when it visits it,
--- `bindNeedName`);
--- the values must be equal; a failed required value propagates as the slot's own
--- completed outcome;
--- a callable-only argument cannot satisfy the constraint (its value demand is its
--- own arity rejection); several callable channels must share one identity; and
--- channels from different occurrences are never spliced together. Repeated-name
--- matching may RESTRICT a binding; it never manufactures one no individual
--- argument supplied.
+-- INDEPENDENTLY supplied arguments (NEED-04, group-aware since ALIAS-UNIFY-1,
+-- October 2026). At every occurrence the binder projects that cell's CALLABLE
+-- first (`bindNeedName`): every two callable identities must be the same identity
+-- (a conflict is rejected before any VALUE demand); a value-only argument demands
+-- its own value, the first one being the group's DATA ANCHOR, against which every
+-- other occurrence's OWN value — references included — is then checked. A group
+-- of references alone matches by identity and demands no VALUE. A failed required
+-- value propagates as the slot's own completed outcome; channels from different
+-- occurrences are never spliced together. Repeated-name matching may RESTRICT a
+-- binding; it never manufactures one no individual argument supplied.
 --
 -- Before Q-05 the verdict ignored valueless contributions unless TWO of them met:
 -- `PC(x, x) = [x, x(5)]` with `PC(Inc, 1)` bound x to the value 1 AND the
@@ -213,14 +213,14 @@ def rnIdentityFailure : Error -> Bool :=
 #guard rnContexts [rnCall "P" [resolve "Bad", num 7]] == 1
 #guard rnContexts [rnCall "P" [num 7, resolve "Bad"]] == 1
 
--- 4. Two failed arguments: the FIRST failure in evaluation order is reported, never an
---    unrelated repeated-name error (formerly the algorithm-only type mismatch). Only the
---    first failing occurrence is demanded: the binder visits `x` left to right, so the
---    second argument is never evaluated (one context: Bad's own `Id` call; Model C).
-#guard rnFailsWith innermostIsDivByZero [rnCall "P" [resolve "Bad", resolve "Missing"]]
-#guard rnFailsWith innermostIsBadIndex [rnCall "P" [resolve "Missing", resolve "Bad"]]
+-- 4. Two REFERENCES: their identities are compared before any VALUE (NEED-04, group-aware):
+--    two different properties are the identity mismatch and neither body runs (no context);
+--    one property twice matches by identity, and P's body then demands its value — Bad's
+--    own failure, raised by the body, not by the binder.
+#guard rnFailsWith rnIdentityFailure [rnCall "P" [resolve "Bad", resolve "Missing"]]
+#guard rnFailsWith rnIdentityFailure [rnCall "P" [resolve "Missing", resolve "Bad"]]
+#guard rnContexts [rnCall "P" [resolve "Bad", resolve "Missing"]] == 0
 #guard rnFailsWith innermostIsDivByZero [rnCall "P" [resolve "Bad", resolve "Bad"]]
-#guard rnContexts [rnCall "P" [resolve "Bad", resolve "Missing"]] == 1
 
 -- 5. Arguments that each carry BOTH channels: equal values and one callable identity
 --    bind (and invoke that callable); equal values with two identities reject. One
@@ -292,9 +292,10 @@ def rnIdentityFailure : Error -> Bool :=
 #guard rnFailsWith rnIncFailure [.dotCall (num 1) "PC" (some [resolve "Inc"])]
 #guard rnFailsWith innermostIsDivByZero [.dotCall (num 7) "P" (some [resolve "Bad"])]
 
--- 12. Three occurrences: every one needs its own value, wherever the callable stands.
-#guard rnFailsWith rnIncFailure [rnCall "T" [resolve "A", num 5, resolve "Inc"]]
-#guard rnFailsWith rnIncFailure [rnCall "T" [resolve "Inc", resolve "A", num 5]]
+-- 12. Three occurrences: two different callables conflict by identity wherever they stand,
+--     before Inc's value is ever demanded; equal identities agreeing with the value bind.
+#guard rnFailsWith rnIdentityFailure [rnCall "T" [resolve "A", num 5, resolve "Inc"]]
+#guard rnFailsWith rnIdentityFailure [rnCall "T" [resolve "Inc", resolve "A", num 5]]
 #guard rnSucceedsWith [rnCall "T" [num 5, resolve "A", resolve "A"]] (.atom 5)
 
 -- 13. Inspection order decides between a valueless occurrence and an unequal repeated

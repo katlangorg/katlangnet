@@ -52,7 +52,7 @@ Coverage of the invariant `StateValid` (precisely these fields, nothing else):
 NOT covered HERE (they can hold addresses even in a Ready cell; all but the `headScope` indices
 are clauses of FG-H1-FU-01's stronger invariant `Inv`, `AddressInvariant.lean`): addresses inside a `Result`
 (`callRef`, `argView`, completed VALUE outcomes), the `.ready` payload, prepared plan supplies,
-`NeedCell.callee` / `receiver` / `aliasBare`, `EvalState.aliasCells`, the value environment
+`NeedCell.callee` / `receiver`, `EvalState.aliasCells`, the value environment
 `ValEnv`, and `EvalCtx.headScope` activation indices. No acyclicity of VALUE/CALLABLE
 dependencies is claimed: backward collector edges are one edge kind only. `Error.fuelExhausted`
 (the R7 incomplete outcome) is treated like every other outcome by the STATE guarantees (they hold
@@ -783,6 +783,91 @@ structure CapsSound (caps : NeedCapabilities EvalM) : Prop where
 def OptEnvValid (r : Option NeedEnv) (h : Array NeedCell) : Prop :=
   ∀ env, r = some env → ValidNeedEnv h env
 
+/-- NEED-04's binder state (ALIAS-UNIFY-1): its representatives AND every pending repeated-name
+    obligation — the cells an anchor will demand — are valid addresses. -/
+def ValidBindState (h : Array NeedCell) (state : NeedBindState) : Prop :=
+  ValidNeedEnv h state.bound ∧ ∀ entry ∈ state.groups, ValidAddresses h entry.2.pending
+
+/-- An optional binder state, valid when present. -/
+def OptStateValid (r : Option NeedBindState) (h : Array NeedCell) : Prop :=
+  ∀ state, r = some state → ValidBindState h state
+
+section BindState
+variable {h h' : Array NeedCell}
+
+theorem ValidBindState.mono (g : h.size ≤ h'.size) {state : NeedBindState}
+    (v : ValidBindState h state) : ValidBindState h' state :=
+  ⟨ValidNeedEnv.mono g v.1, fun entry m => ValidAddresses.mono g (v.2 entry m)⟩
+
+theorem ValidBindState.empty : ValidBindState h {} :=
+  ⟨fun _ m => (by cases m), fun _ m => (by cases m)⟩
+
+theorem ValidNeedEnv.rebind {env : NeedEnv} (v : ValidNeedEnv h env) {name : Ident} {address : Nat}
+    (ha : address < h.size) : ValidNeedEnv h (env.rebind name address) := by
+  unfold NeedEnv.rebind
+  refine ValidNeedEnv.append (v.filter _) ?_
+  intro p m
+  simp only [List.mem_singleton] at m
+  subst m
+  exact ha
+
+/-- A name's pending obligations are valid addresses. -/
+theorem ValidBindState.groupOf_pending {state : NeedBindState} (v : ValidBindState h state)
+    (name : Ident) : ValidAddresses h (state.groupOf name).pending := by
+  unfold NeedBindState.groupOf
+  cases hl : lookupAssoc name state.groups with
+  | none => intro a m; simp at m
+  | some g =>
+    obtain ⟨k, m⟩ := lookup_mem name state.groups g hl
+    exact v.2 (k, g) m
+
+theorem ValidBindState.setGroup {state : NeedBindState} (v : ValidBindState h state) (name : Ident)
+    {group : RepeatedGroup} (hg : ValidAddresses h group.pending) :
+    ValidBindState h (state.setGroup name group) := by
+  refine ⟨v.1, fun entry m => ?_⟩
+  simp only [NeedBindState.setGroup, List.mem_append, List.mem_filter, List.mem_singleton] at m
+  rcases m with ⟨m, _⟩ | rfl
+  · exact v.2 entry m
+  · exact hg
+
+theorem ValidBindState.withPlain {state : NeedBindState} (v : ValidBindState h state) (name : Ident)
+    {address : Nat} (ha : address < h.size) : ValidBindState h (state.withPlain name address) :=
+  ⟨v.1.rebind ha, v.2⟩
+
+theorem ValidBindState.withCallable {state : NeedBindState} (v : ValidBindState h state)
+    (name : Ident) {address : Nat} (ha : address < h.size) (identity : Algorithm) :
+    ValidBindState h (state.withCallable name address identity) := by
+  unfold NeedBindState.withCallable
+  dsimp only
+  have vb : ValidBindState h { state with bound :=
+      if (state.groupOf name).identity.isSome then state.bound else state.bound.rebind name address } := by
+    refine ⟨?_, v.2⟩
+    split
+    · exact v.1
+    · exact v.1.rebind ha
+  refine vb.setGroup name ?_
+  dsimp only
+  split
+  · exact v.groupOf_pending name
+  · exact ValidAddresses.append (v.groupOf_pending name) (fun a m => by
+      simp only [List.mem_singleton] at m
+      subst m
+      exact ha)
+
+theorem ValidBindState.withAnchor {state : NeedBindState} (v : ValidBindState h state)
+    (name : Ident) {address : Nat} (ha : address < h.size) (anchor : CountedResult) :
+    ValidBindState h (state.withAnchor name address anchor) := by
+  unfold NeedBindState.withAnchor
+  dsimp only
+  have vb : ValidBindState h { state with bound :=
+      if (state.groupOf name).identity.isSome then state.bound else state.bound.rebind name address } := by
+    refine ⟨?_, v.2⟩
+    split
+    · exact v.1
+    · exact v.1.rebind ha
+  exact vb.setGroup name (fun _ m => by cases m)
+end BindState
+
 theorem Sound.throw_ {α : Type} {pre : Array NeedCell → Prop} {post : α → Array NeedCell → Prop}
     (e : Error) : Sound pre (throw e : EvalM α) post :=
   fun _ vs _ => ⟨vs, Nat.le_refl _, fun _ h => by cases h⟩
@@ -846,67 +931,90 @@ theorem capabilities_sound (channels : NeedChannels) (hc : ChannelsSound channel
     CapsSound (NeedChannels.capabilities channels) :=
   ⟨hc.value, hc.callable, allocate_sound, reference_sound⟩
 
-private theorem pre_mono (address : Nat) (bound : NeedEnv) :
-    Mono (fun (_ : Unit) h => address < h.size ∧ ValidNeedEnv h bound) :=
-  fun _ _ _ g v => ⟨Nat.lt_of_lt_of_le v.1 g, ValidNeedEnv.mono g v.2⟩
+private theorem pre_mono (address : Nat) (state : NeedBindState) :
+    Mono (fun (_ : Unit) h => address < h.size ∧ ValidBindState h state) :=
+  fun _ _ _ g v => ⟨Nat.lt_of_lt_of_le v.1 g, ValidBindState.mono g v.2⟩
 
 private theorem none_leaf {pre : Array NeedCell → Prop} :
     Sound pre (pure none : EvalM (Option NeedEnv)) OptEnvValid :=
   Sound.pure _ (fun _ _ _ h => by cases h)
 
-/-- One name occurrence: the binding becomes `bound`, or `bound` without `name` plus
-    `(name, address)` — valid from a valid `bound` and `address`; the channels touch only `address`
-    and an earlier binding of the same name. -/
-theorem bindName_sound (caps : NeedCapabilities EvalM) (hc : CapsSound caps) (name : Ident)
-    (address : Nat) (repeated : List Ident) (bound : NeedEnv) (family : Bool) :
-    Sound (fun h => address < h.size ∧ ValidNeedEnv h bound)
-      (NeedBinder.bindName caps name address repeated bound family) OptEnvValid := by
-  have hP := pre_mono address bound
-  have leaf : Sound (fun h => address < h.size ∧ ValidNeedEnv h bound)
-      (pure (some (bound.filter (fun entry => entry.fst != name) ++ [(name, address)])) :
-        EvalM (Option NeedEnv)) OptEnvValid :=
-    Sound.pure _ (fun _ hp env he => by
-      cases he
-      refine ValidNeedEnv.append (hp.2.filter _) ?_
-      intro p m
-      simp only [List.mem_singleton] at m
-      subst m
-      exact hp.1)
-  have same : Sound (fun h => address < h.size ∧ ValidNeedEnv h bound)
-      (pure (some bound) : EvalM (Option NeedEnv)) OptEnvValid :=
-    Sound.pure _ (fun _ hp env he => by cases he; exact hp.2)
-  unfold NeedBinder.bindName
-  dsimp only
+private theorem none_state {pre : Array NeedCell → Prop} :
+    Sound pre (pure none : EvalM (Option NeedBindState)) OptStateValid :=
+  Sound.pure _ (fun _ _ _ h => by cases h)
+
+/-- A repeated-name incompatibility: a family's non-match or the agreement's own error. -/
+private theorem mismatch_sound {pre : Array NeedCell → Prop} (family : Bool) (error : Error) :
+    Sound pre (NeedBinder.repeatedMismatch family error : EvalM (Option NeedBindState)) OptStateValid := by
+  unfold NeedBinder.repeatedMismatch
   split
-  · refine Sound.bind_t hP (hc.value address) (fun _ h => h.1) (fun value => ?_)
+  · exact none_state
+  · exact Sound.throw_ _
+
+/-- NEED-04's data-anchor check demands only the cells it is given. -/
+theorem checkAnchor_sound (caps : NeedCapabilities EvalM) (hc : CapsSound caps) (name : Ident)
+    (anchor : CountedResult) (family : Bool) (cells : List Nat) :
+    Sound (fun h => ValidAddresses h cells) (NeedBinder.checkAnchor caps name anchor family cells)
+      (fun _ _ => True) := by
+  induction cells with
+  | nil => exact Sound.pure _ (fun _ _ => trivial)
+  | cons cell rest ih =>
+    unfold NeedBinder.checkAnchor
+    refine Sound.bind_t (fun _ _ _ g v => ValidAddresses.mono g v) (hc.value cell)
+      (fun _ h => h cell List.mem_cons_self) (fun own => ?_)
     split
-    · rename_i previous hprev
-      refine Sound.bind_t hP (hc.value previous) (fun _ h => h.2.lookup hprev) (fun before => ?_)
-      try dsimp only
+    · exact ih.weaken (fun _ h a m => h a (List.mem_cons_of_mem _ m)) (fun _ _ h => h)
+    · split
+      · exact Sound.pure _ (fun _ _ => trivial)
+      · exact Sound.throw_ _
+
+/-- One name occurrence (NEED-04, group-aware): the state gains a representative and pending
+    obligations from `address` only, so it stays valid from a valid `state` and `address`; the
+    channels touch only `address` and the name's valid pending cells. -/
+theorem bindName_sound (caps : NeedCapabilities EvalM) (hc : CapsSound caps) (name : Ident)
+    (address : Nat) (repeated : List Ident) (state : NeedBindState) (family : Bool) :
+    Sound (fun h => address < h.size ∧ ValidBindState h state)
+      (NeedBinder.bindName caps name address repeated state family) OptStateValid := by
+  have hP := pre_mono address state
+  unfold NeedBinder.bindName
+  split
+  · dsimp only
+    refine Sound.bind_t hP (hc.callable address) (fun _ h => h.1) (fun identity? => ?_)
+    cases identity? with
+    | some identity =>
+      dsimp only
+      split
+      · exact mismatch_sound family _
+      · have tail : ∀ agreed : Bool, Sound
+            (fun h => (address < h.size ∧ ValidBindState h state) ∧ True)
+            (if agreed = true then pure (some (state.withCallable name address identity))
+              else (pure none : EvalM (Option NeedBindState))) OptStateValid := by
+          intro agreed
+          split
+          · exact Sound.pure _ (fun _ hp st he => by
+              cases he; exact hp.1.2.withCallable name hp.1.1 identity)
+          · exact none_state
+        split
+        · exact Sound.bind (mid := fun _ _ => True) hP
+            ((checkAnchor_sound caps hc name _ family [address]).weaken
+              (fun _ h a m => by simp only [List.mem_singleton] at m; subst m; exact h.1)
+              (fun _ _ h => h)) tail
+        · exact Sound.bind (mid := fun _ _ => True) hP (Sound.pure _ (fun _ _ => trivial)) tail
+    | none =>
+      dsimp only
+      refine Sound.bind_t hP (hc.value address) (fun _ h => h.1) (fun own => ?_)
       split
       · split
-        · exact none_leaf
-        · exact Sound.throw_bind _ _
-      · refine Sound.bind_t hP (hc.callable previous) (fun _ h => h.2.lookup hprev) (fun first => ?_)
-        refine Sound.bind_t hP (hc.callable address) (fun _ h => h.1) (fun second => ?_)
-        try dsimp only
+        · exact Sound.pure _ (fun _ hp st he => by cases he; exact hp.2)
+        · exact mismatch_sound family _
+      · refine Sound.bind (mid := fun _ _ => True) hP
+          ((checkAnchor_sound caps hc name own family _).weaken
+            (fun _ h => h.2.groupOf_pending name) (fun _ _ h => h)) (fun agreed => ?_)
         split
-        · split
-          · split
-            · split
-              · exact none_leaf
-              · exact Sound.throw_bind _ _
-            · split
-              · exact same
-              · exact leaf
-          · split
-            · exact same
-            · exact leaf
-        · split
-          · exact same
-          · exact leaf
-    · exact leaf
-  · exact leaf
+        · exact Sound.pure _ (fun _ hp st he => by
+            cases he; exact hp.1.2.withAnchor name hp.1.1 own)
+        · exact none_state
+  · exact Sound.pure _ (fun _ hp st he => by cases he; exact hp.2.withPlain name hp.1)
 
 /-- The generic source allocation at sound capabilities. -/
 theorem sourceAddress_sound (caps : NeedCapabilities EvalM) (hc : CapsSound caps)
@@ -918,10 +1026,10 @@ theorem sourceAddress_sound (caps : NeedCapabilities EvalM) (hc : CapsSound caps
   | collector slice => exact hc.allocate (.collector slice)
   | missing => exact Sound.throw_ _
 
-private theorem sources_mono (sources : List (NeedSource Nat)) (current : NeedEnv) :
-    Mono (fun (_ : Unit) h => (∀ source ∈ sources, ValidSource h source) ∧ ValidNeedEnv h current) := by
+private theorem sources_mono (sources : List (NeedSource Nat)) (current : NeedBindState) :
+    Mono (fun (_ : Unit) h => (∀ source ∈ sources, ValidSource h source) ∧ ValidBindState h current) := by
   intro _ _ _ g v
-  refine ⟨fun source m => ?_, ValidNeedEnv.mono g v.2⟩
+  refine ⟨fun source m => ?_, ValidBindState.mono g v.2⟩
   have hs := v.1 source m
   cases source with
   | cell a => exact Nat.lt_of_lt_of_le hs g
@@ -929,32 +1037,32 @@ private theorem sources_mono (sources : List (NeedSource Nat)) (current : NeedEn
   | missing => trivial
 
 /-- **The binder.** At sound capabilities every pattern and every pattern level returns, when
-    it binds, a need environment whose every entry is a valid address in the FINAL heap, from a
-    valid supplied address / valid sources and a valid binding so far; every run (failures and
-    non-matches included) keeps the invariant. -/
+    it binds, a binder state whose every representative and pending obligation is a valid address
+    in the FINAL heap, from a valid supplied address / valid sources and a valid state so far;
+    every run (failures and non-matches included) keeps the invariant. -/
 theorem binder_sound (caps : NeedCapabilities EvalM) (hc : CapsSound caps) (repeated : List Ident)
     (family : Bool) :
     (∀ pattern address bound,
-      Sound (fun h => address < h.size ∧ ValidNeedEnv h bound)
-        (NeedBinder.bindOne caps pattern address repeated bound family) OptEnvValid) ∧
+      Sound (fun h => address < h.size ∧ ValidBindState h bound)
+        (NeedBinder.bindOne caps pattern address repeated bound family) OptStateValid) ∧
     (∀ patterns sources current,
-      Sound (fun h => (∀ source ∈ sources, ValidSource h source) ∧ ValidNeedEnv h current)
-        (NeedBinder.bindSources caps patterns sources repeated current family) OptEnvValid) := by
-  have structural : ∀ (pattern : NeedPattern) (ps : List NeedPattern) (address : Nat) (bound : NeedEnv),
+      Sound (fun h => (∀ source ∈ sources, ValidSource h source) ∧ ValidBindState h current)
+        (NeedBinder.bindSources caps patterns sources repeated current family) OptStateValid) := by
+  have structural : ∀ (pattern : NeedPattern) (ps : List NeedPattern) (address : Nat) (bound : NeedBindState),
       (pattern = .sequence ps ∨ pattern = .list ps ∨ pattern = .unpack ps) →
       (∀ cells, Sound (fun h => (∀ source ∈ needLevelSources ps cells, ValidSource h source) ∧
-          ValidNeedEnv h bound)
-        (NeedBinder.bindSources caps ps (needLevelSources ps cells) repeated bound family) OptEnvValid) →
-      Sound (fun h => address < h.size ∧ ValidNeedEnv h bound)
-        (NeedBinder.bindOne caps pattern address repeated bound family) OptEnvValid := by
+          ValidBindState h bound)
+        (NeedBinder.bindSources caps ps (needLevelSources ps cells) repeated bound family) OptStateValid) →
+      Sound (fun h => address < h.size ∧ ValidBindState h bound)
+        (NeedBinder.bindOne caps pattern address repeated bound family) OptStateValid := by
     intro pattern ps address bound hshape ih
     have hP := pre_mono address bound
-    have body : ∀ items : List Result, Sound (fun h => address < h.size ∧ ValidNeedEnv h bound)
+    have body : ∀ items : List Result, Sound (fun h => address < h.size ∧ ValidBindState h bound)
         (do
           let cells ← items.mapM (fun item => caps.allocate (.ready (item, Result.valueCount item)))
           NeedBinder.cardinalityGate ps cells.length family
             (NeedBinder.bindSources caps ps (needLevelSources ps cells) repeated bound family))
-        OptEnvValid := by
+        OptStateValid := by
       intro items
       refine Sound.bind (mid := fun cells h => ∀ c ∈ cells, c < h.size) hP
         ((Sound.mapM (q := fun c h => c < h.size) (fun _ _ _ _ _ => trivial)
@@ -964,7 +1072,7 @@ theorem binder_sound (caps : NeedCapabilities EvalM) (hc : CapsSound caps) (repe
       unfold NeedBinder.cardinalityGate
       split
       · split
-        · exact none_leaf
+        · exact none_state
         · exact Sound.throw_ _
       · exact (ih cells).weaken
           (fun _ h => ⟨needLevelSources_valid h.2 ps, h.1.2⟩) (fun _ _ h => h)
@@ -977,16 +1085,16 @@ theorem binder_sound (caps : NeedCapabilities EvalM) (hc : CapsSound caps) (repe
         | exact body _
         | (split
            · split
-             · exact none_leaf
+             · exact none_state
              · exact Sound.throw_ _
            · exact body _)
   refine NeedBinder.bindOne.mutual_induct
     (motive_1 := fun pattern address bound =>
-      Sound (fun h => address < h.size ∧ ValidNeedEnv h bound)
-        (NeedBinder.bindOne caps pattern address repeated bound family) OptEnvValid)
+      Sound (fun h => address < h.size ∧ ValidBindState h bound)
+        (NeedBinder.bindOne caps pattern address repeated bound family) OptStateValid)
     (motive_2 := fun patterns sources current =>
-      Sound (fun h => (∀ source ∈ sources, ValidSource h source) ∧ ValidNeedEnv h current)
-        (NeedBinder.bindSources caps patterns sources repeated current family) OptEnvValid)
+      Sound (fun h => (∀ source ∈ sources, ValidSource h source) ∧ ValidBindState h current)
+        (NeedBinder.bindSources caps patterns sources repeated current family) OptStateValid)
     ?_ ?_ ?_ ?_ ?_ ?_ ?_ ?_
   · intro address bound name collecting
     simp only [NeedBinder.bindOne]
@@ -1022,11 +1130,11 @@ theorem binder_sound (caps : NeedCapabilities EvalM) (hc : CapsSound caps) (repe
     refine Sound.bind (mid := fun a h => a < h.size) hP
       ((sourceAddress_sound caps hc _).weaken (fun _ h => headD_valid h.1) (fun _ _ h => h)) ?_
     intro address
-    refine Sound.bind (mid := fun r h => OptEnvValid r h) (fun _ _ _ g v => ⟨hP () _ _ g v.1, Nat.lt_of_lt_of_le v.2 g⟩)
+    refine Sound.bind (mid := fun r h => OptStateValid r h) (fun _ _ _ g v => ⟨hP () _ _ g v.1, Nat.lt_of_lt_of_le v.2 g⟩)
       ((ih1 address).weaken (fun _ h => ⟨h.2, h.1.2⟩) (fun _ _ h => h)) ?_
     intro r
     cases r with
-    | none => exact none_leaf
+    | none => exact none_state
     | some next =>
       exact (ih2 next).weaken
         (fun _ h => ⟨fun source m => h.1.1.1 source (List.mem_of_mem_tail m), h.2 next rfl⟩)
@@ -1039,12 +1147,20 @@ theorem bindNeedPatterns_sound (channels : NeedChannels) (hc : ChannelsSound cha
     (patterns : List NeedPattern) (cells : List Nat) (family : Bool) :
     Sound (fun h => ValidAddresses h cells) (bindNeedPatterns channels patterns cells family)
       OptEnvValid := by
-  unfold bindNeedPatterns NeedBinder.bindPatterns NeedBinder.bindLevel NeedBinder.cardinalityGate
-  split
-  · split
-    · exact none_leaf
-    · exact Sound.throw_ _
-  · exact ((binder_sound _ (capabilities_sound channels hc) _ family).2 _ _ _).weaken
-      (fun _ h => ⟨needLevelSources_valid h patterns, fun _ m => by cases m⟩) (fun _ _ h => h)
+  unfold bindNeedPatterns NeedBinder.bindPatterns
+  refine Sound.bind (mid := fun r h => OptStateValid r h)
+    (fun _ _ _ g v => ValidAddresses.mono g v) ?_ ?_
+  · unfold NeedBinder.bindLevel NeedBinder.cardinalityGate
+    split
+    · split
+      · exact none_state
+      · exact Sound.throw_ _
+    · exact ((binder_sound _ (capabilities_sound channels hc) _ family).2 _ _ _).weaken
+        (fun _ h => ⟨needLevelSources_valid h patterns, ValidBindState.empty⟩) (fun _ _ h => h)
+  · intro r
+    exact Sound.pure _ (fun _ hp env he => by
+      cases r with
+      | none => cases he
+      | some st => cases he; exact (hp.2 st rfl).1)
 
 end KatLang.HeapAddressValidity

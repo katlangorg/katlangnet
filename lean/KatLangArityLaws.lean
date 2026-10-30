@@ -538,9 +538,9 @@ theorem zero_argument_value_demand_accepts_exactly_zero_supply_callables
   | conditional p op bs id =>
       unfold acceptsZeroArgumentValueDemand zeroArgumentDemandError?
       cases Algorithm.acceptsZeroSuppliedArguments (Algorithm.conditional p op bs id) <;> simp
-  | alias p op pr target id =>
+  | alias p op pr target id r =>
       unfold acceptsZeroArgumentValueDemand zeroArgumentDemandError?
-      cases Algorithm.acceptsZeroSuppliedArguments (Algorithm.alias p op pr target id) <;> simp
+      cases Algorithm.acceptsZeroSuppliedArguments (Algorithm.alias p op pr target id r) <;> simp
 
 /-- The demand law accepts a collecting-only callable at a named demand site. -/
 theorem zero_argument_demand_accepts_collecting_only
@@ -580,12 +580,17 @@ block that is NOT an alias keeps the block's own `unresolvedImplicitParams`.
 -/
 
 /-- For the same demanded algorithm, the zero-argument demand law gives an inline alias of a
-NAME the same verdict and report as the name itself. (That the alias's demanded algorithm is
-the name's target is `resolveAliasTarget`'s, a `partial` source fact pinned by guards.) -/
+NAME the same verdict and report as the name itself. (The alias's demanded algorithm is what the VALUE
+chase `resolveAliasValueTarget` reaches — the `.algorithmExpr` arm of `evalCounted` judges it with
+`AliasTerminal.demandError?`. A static terminal it reaches is no alias binding
+(`WholeAlgorithmTransport.production_value_terminal_is_no_alias`); the chase stops AT a runtime-target alias
+(`WholeAlgorithmTransport.nonprojecting_chase_stops_at_runtime`), whose terminal `demandError?` judges by no law — the arm reads that
+alias's binding cell instead. That the demanded algorithm is the name's target for a given name is pinned by
+guards.) -/
 theorem inline_alias_demand_reports_as_its_name_reference
     (p : Option ScopeCtx) (op : List Expr) (props : List PropDef) (name : Ident)
-    (id : Option PropertyIdentity) (a : Algorithm) :
-    zeroArgumentDemandError? (some (.algorithmExpr (.alias p op props (.resolve name) id))) a
+    (id : Option PropertyIdentity) (reference : Bool) (a : Algorithm) :
+    zeroArgumentDemandError? (some (.algorithmExpr (.alias p op props (.resolve name) id reference))) a
       = zeroArgumentDemandError? (some (.resolve name)) a := by
   cases a <;> rfl
 
@@ -593,9 +598,9 @@ theorem inline_alias_demand_reports_as_its_name_reference
 declared MEMBER PATH the same verdict and report as the path itself. -/
 theorem inline_alias_demand_reports_as_its_member_reference
     (p : Option ScopeCtx) (op : List Expr) (props : List PropDef) (receiver fallback : Expr)
-    (member : Ident) (id : Option PropertyIdentity) (a : Algorithm) :
+    (member : Ident) (id : Option PropertyIdentity) (reference : Bool) (a : Algorithm) :
     zeroArgumentDemandError?
-        (some (.algorithmExpr (.alias p op props (.dotMember receiver member fallback none) id))) a
+        (some (.algorithmExpr (.alias p op props (.dotMember receiver member fallback none) id reference))) a
       = zeroArgumentDemandError? (some (.dotMember receiver member fallback none)) a := by
   cases a <;> rfl
 
@@ -603,8 +608,8 @@ theorem inline_alias_demand_reports_as_its_member_reference
 cardinality `arityMismatch 1 0` — never the written block's `unresolvedImplicitParams`. -/
 theorem inline_alias_of_a_required_argument_callable_is_its_arity
     (p : Option ScopeCtx) (op : List Expr) (props : List PropDef) (name x : Ident)
-    (id : Option PropertyIdentity) (op' : List Expr) (props' : List PropDef) (out : List Expr) :
-    zeroArgumentDemandError? (some (.algorithmExpr (.alias p op props (.resolve name) id)))
+    (id : Option PropertyIdentity) (reference : Bool) (op' : List Expr) (props' : List PropDef) (out : List Expr) :
+    zeroArgumentDemandError? (some (.algorithmExpr (.alias p op props (.resolve name) id reference)))
       (Algorithm.mk none [.capture { name := x }] op' props' out)
       = some (Error.withContext (CtxMsg.property name) (Error.arityMismatch 1 0)) := rfl
 
@@ -794,13 +799,13 @@ theorem forwarded_parameter_still_conflicts_with_a_same_named_property (name : I
 /-
 ## Callable aliases and bare forwarding (FWD-02; binding indirection decided 2026-10-01)
 
-A body whose ONE written row is a bare reference to a callable that declares
-parameterized callable structure (`Algorithm.declaresParameterizedStructure`) is not a
-formula. An OPEN body is a CALLABLE ALIAS (`Algorithm.alias`), BINDING INDIRECTION: the
-alias keeps its own binding — declaration, exposure, zero-argument cache key — while every
-callable use resolves to the NORMALIZED TARGET in the alias's own scope
-(`resolveAliasTarget`); no wrapper and no inherited signature exist. A CLOSED body — a
-written parameter list or a clause branch — is bare forwarding: each of the target's
+A body whose ONE written row is a bare reference is not a formula. Since M4★ an OPEN body is an
+alias (`Algorithm.alias`) whatever its target's arity — a transparent reference unbraced, a structural
+forwarding carrier braced (`WholeAlgorithmTransport.lean`) — and keeps its own binding (declaration,
+exposure) but, under OD-E, no zero-argument cache entry of its own; every callable use resolves to the
+NORMALIZED TARGET in the alias's own scope (`resolveAliasTarget`); no wrapper and no inherited signature
+exist. `Algorithm.declaresParameterizedStructure` decides only a CLOSED body's eligibility. A CLOSED
+body — a written parameter list or a clause branch — is bare forwarding: each of the target's
 parameters is supplied from an EXISTING compatible binding of the same name
 (`bareForwardingArgument`, `bareForwardingRow`), and a target with no forwarding contract
 at all is the front-end error (`bareForwardingRowOf`, narrowed Q-77).
@@ -810,14 +815,15 @@ EVIDENCE. Except for the `requiresArguments` / `resolveOpen`, `zeroArgPropertyCa
 specification functions (`sourceArgument`, `bareForwarding*`, `forwardingSource`,
 `declaresParameterizedStructure`, `liftsBareValueReference`, `liftingSignature?`,
 `liftingCalleeKind?`, `liftingSlotRole`) and the static chase `staticAliasTarget?`, none of which
-the evaluator calls. The evaluator's alias chase `resolveAliasTarget` is `partial`; no theorem
-covers it, and `CoreTests/AliasForwarding.lean` checks it executably. The C# reconstruction
+the evaluator calls. The evaluator's alias chase `resolveAliasTarget` is a total definition over the
+unbounded evaluator whose result is never an alias (`WholeAlgorithmTransport.production_invocation_target_is_no_alias`),
+and `CoreTests/AliasForwarding.lean` checks the targets it reaches executably. The C# reconstruction
 (`BuildPatternArgument`) is shared with formula lifting; in Lean `sourceArgument` is called only by
 `bareForwardingArgument`. The laws pin the reconstruction (one argument per top-level
 pattern, each capture as its own binding, a collector re-spread, each structural pattern
 as its own kind), the bare-forwarding decision (by name, never renamed, never positional,
 never added to a closed list, never reshaped from same-named leaves), its distinction from
-formula lifting, the alias eligibility (declared structure, never zero-argument
+formula lifting, the closed-body eligibility (declared structure, never zero-argument
 acceptance), and the split between the alias's BINDING and its CALLABLE.
 `CoreTests/AliasForwarding.lean` evaluates the trees: every builtin, the user shapes,
 families and alias chains through an alias against the direct call.
@@ -1114,32 +1120,36 @@ theorem formula_lifting_infers_what_bare_forwarding_rejects (p q : Ident) (disti
   · simp [forwardingSource, selectOwnedDeclaration, selectOwnedDeclarationFrom]
   · simp [forwardingSource, selectOwnedDeclaration, selectOwnedDeclarationFrom, Ne.symm distinct]
 
-/-! ### Callable aliases: binding indirection (decided 2026-10-01) -/
+/-! ### Callable aliases: binding indirection (decided 2026-10-01)
 
-/-- ELIGIBILITY IS DECLARED STRUCTURE: a user callable is an alias target exactly when it
+Since M4★ (ALIAS-UNIFY-1, October 2026) `declaresParameterizedStructure` decides only CLOSED bodies
+(bare forwarding): an OPEN body whose one row is a resolved algorithm reference is an alias whatever
+the target's arity (the surface pass's classification; `WholeAlgorithmTransport.lean`). -/
+
+/-- ELIGIBILITY IS DECLARED STRUCTURE: a user callable is a bare-forwarding target exactly when it
 declares a parameter pattern — never decided by zero-argument acceptance. -/
 theorem user_alias_target_iff_declares_parameters (p : Option ScopeCtx) (ps : List ParameterPattern)
     (op : List Expr) (pr : List PropDef) (out : List Expr) (id : Option PropertyIdentity) :
     (Algorithm.mk p ps op pr out id).declaresParameterizedStructure = true ↔ ps ≠ [] := by
   cases ps <;> simp [Algorithm.declaresParameterizedStructure]
 
-/-- A ZERO-PARAMETER user algorithm is not an alias target (the `ps = []` corollary of
-`user_alias_target_iff_declares_parameters`): `A = Z` stays an ordinary property whose body
-reads `Z`. (That it is then cached like any property is evaluator behaviour, guard-checked in
-`CoreTests/AliasForwarding.lean`.) -/
+/-- A ZERO-PARAMETER user algorithm declares no parameterized structure (the `ps = []` corollary of
+`user_alias_target_iff_declares_parameters`): a CLOSED body naming it forwards nothing (`F = 10` /
+`A(p) = F` is simply 10). An OPEN `A = Z` is nevertheless a transparent reference since M4★ — its bare
+read is `Z`'s own (OD-E), guard-checked in `CoreTests/AliasForwarding.lean`. -/
 theorem zero_parameter_user_algorithm_is_not_an_alias_target (p : Option ScopeCtx) (op : List Expr) (pr : List PropDef)
     (out : List Expr) (id : Option PropertyIdentity) :
     (Algorithm.mk p [] op pr out id).declaresParameterizedStructure = false := rfl
 
 /-- `Only(*xs)` works with no arguments, so the specification never LIFTS a bare reference to
-it (Q-03) — but it IS an alias target: the alias rule reads declared structure. -/
+it (Q-03) — but it IS a bare-forwarding target: the forwarding rule reads declared structure. -/
 theorem collecting_only_callee_is_aliased_not_lifted (xs : Ident) (p : Option ScopeCtx) (op : List Expr)
     (pr : List PropDef) (out : List Expr) (id : Option PropertyIdentity) :
     (Algorithm.mk p [.capture { name := xs, kind := .collecting }] op pr out id).declaresParameterizedStructure = true
       ∧ liftsBareValueReference [.capture { name := xs, kind := .collecting }] = false :=
   ⟨rfl, rfl⟩
 
-/-- Every user signature that lifts is one that aliases: requiring a supplied argument means
+/-- Every user signature that lifts is one that forwards: requiring a supplied argument means
 declaring a parameter. -/
 theorem lifting_signature_is_an_alias_signature (p : Option ScopeCtx) (ps : List ParameterPattern)
     (op : List Expr) (pr : List PropDef) (out : List Expr) (id : Option PropertyIdentity)
@@ -1149,17 +1159,18 @@ theorem lifting_signature_is_an_alias_signature (p : Option ScopeCtx) (ps : List
   | nil => exact absurd lifts (by decide)
   | cons pattern rest => rfl
 
-/-- EVERY BUILTIN is an alias target — `if`, the callback builtins and the loops included.
+/-- EVERY BUILTIN is a bare-forwarding target — `if`, the callback builtins and the loops included.
 (Design consequence, guard-checked in `CoreTests/AliasForwarding.lean`: the builtin's callable is
 used directly, so `I = if` keeps `if`'s laziness and `R = repeat` its minimum arity.) -/
 theorem every_builtin_is_an_alias_target (b : Builtin) :
     (Algorithm.builtin b).declaresParameterizedStructure = true := rfl
 
-/-- EVERY CLAUSE FAMILY is an alias target, and so is every alias (a chain normalizes). -/
+/-- EVERY CLAUSE FAMILY is a bare-forwarding target, and so is every alias (a chain normalizes). -/
 theorem every_family_and_alias_is_an_alias_target (p : Option ScopeCtx) (op : List Expr)
-    (bs : List CondBranch) (pr : List PropDef) (target : Expr) (id : Option PropertyIdentity) :
+    (bs : List CondBranch) (pr : List PropDef) (target : Expr) (id : Option PropertyIdentity)
+    (reference : Bool) :
     (Algorithm.conditional p op bs id).declaresParameterizedStructure = true
-      ∧ (Algorithm.alias p op pr target id).declaresParameterizedStructure = true :=
+      ∧ (Algorithm.alias p op pr target id reference).declaresParameterizedStructure = true :=
   ⟨rfl, rfl⟩
 
 private def aliasLawBranch (pattern : Pattern) : CondBranch := { pattern := pattern, body := alg [] [] [] [num 0] }
@@ -1202,56 +1213,51 @@ theorem count_target_bare_forwards_by_its_collection_name (callee : Ident) :
 /-- An alias has NO lifting signature, NO callee kind and NO parameter patterns of its OWN, so in
 these specification functions every callable question — lifting, forwarding, the roles of a
 call's arguments — must be asked of its normalized target (that callers do so is the source of
-the surface pass and of the `partial` `resolveAliasTarget`). -/
+the surface pass and of `resolveAliasTarget`, the evaluator's normalization). -/
 theorem alias_has_no_callable_surface_of_its_own (p : Option ScopeCtx) (op : List Expr)
-    (pr : List PropDef) (target : Expr) (id : Option PropertyIdentity) :
-    (Algorithm.alias p op pr target id).liftingSignature? = none
-      ∧ (Algorithm.alias p op pr target id).liftingCalleeKind? = none
-      ∧ (Algorithm.alias p op pr target id).parameterPatterns = [] :=
+    (pr : List PropDef) (target : Expr) (id : Option PropertyIdentity) (reference : Bool) :
+    (Algorithm.alias p op pr target id reference).liftingSignature? = none
+      ∧ (Algorithm.alias p op pr target id reference).liftingCalleeKind? = none
+      ∧ (Algorithm.alias p op pr target id reference).parameterPatterns = [] :=
   ⟨rfl, rfl, rfl⟩
 
-/-- WRITTEN `open A` NEVER TURNS A STATIC CALLABLE ALIAS INTO A NAMESPACE: whatever its target,
-when the open target resolves to an alias whose static chain reaches no runtime row, the production
-`resolveOpen` refuses it with `illegalInOpen` (its gate reads `Algorithm.requiresArguments`, `true`
-for every static alias), leaving the state the resolution reached. (Strengthened from the
-`requiresArguments` fact alone, R8/X-13; the resolution `resolveAlgForOpen` itself is `partial`.) -/
-theorem alias_is_never_an_open_provider (e : Expr) (ctx : EvalCtx) (p : Option ScopeCtx)
-    (op : List Expr) (pr : List PropDef) (target : Expr) (id : Option PropertyIdentity)
-    (state state' : EvalState)
-    (hstatic : Algorithm.runtimeAliasNamespace ((Algorithm.alias p op pr target id).aliasCount + 1)
-      ((p.map ScopeCtx.staticChain).getD []) (.alias p op pr target id) = false)
-    (h : (resolveAlgForOpen e ctx).runState state = (.ok (.alias p op pr target id), state')) :
-    (resolveOpen e ctx).runState state
-      = (.error (Error.illegalInOpen
-          (openTargetRequiresArgumentsMessage (openExprName e) (.alias p op pr target id))), state') := by
+/-- STATIC OPEN THROUGH REFERENCES (OD-C, M4★, ALIAS-UNIFY-1; superseding "open of an alias is
+refused"): the production `resolveOpen` resolves its written target and then that target's STRATIFIED
+STRUCTURE (`openStructure`, which follows a static transparent reference through direct lookup only —
+never an open), and applies the provider rule to THAT structure — so `open A` with `A = Lib` opens
+`Lib`'s own provider, and `open A, Lib` is one provider. (The resolution `resolveAlgForOpen` is a
+plain total definition; this theorem is its composition with the provider rule.) -/
+theorem resolveOpen_opens_the_target_structure (e : Expr) (ctx : EvalCtx) (a provider : Algorithm)
+    (state state' state'' : EvalState)
+    (h : (resolveAlgForOpen e ctx).runState state = (.ok a, state'))
+    (hs : (openStructure openStructureFuel ctx a).runState state' = (.ok provider, state''))
+    (hb : provider.isBuiltin = false) (hr : provider.requiresArguments = false) :
+    (resolveOpen e ctx).runState state = (.ok provider, state'') := by
   show ((resolveAlgForOpen e ctx).runState >>= fun a => _) state = _
   simp only [bind, ExceptT.bind, ExceptT.mk, ExceptT.bindCont, StateT.bind]
   rw [h]
-  simp [Algorithm.requiresArguments, Algorithm.parent, hstatic]
+  show ((openStructure openStructureFuel ctx a).runState >>= fun p => _) state' = _
+  simp only [bind, ExceptT.bind, ExceptT.mk, ExceptT.bindCont, StateT.bind]
+  rw [hs]
+  simp [hb, hr]
   rfl
 
-/-- A RUNTIME-TARGET ALIAS IS A NAMESPACE OF ITS OWN DECLARATIONS (FWD-02, META-S3-2): when the open
-target resolves to an alias whose chain reaches a runtime row, the production
-`resolveOpen` accepts it unchanged — exactly as it accepts that alias's ordinary zero-parameter
-property — because whether a callable identity is supplied is known only at run time and `open`
-imports declarations, never a callable. -/
-theorem runtime_alias_is_its_own_open_namespace (e : Expr) (ctx : EvalCtx) (p : Option ScopeCtx)
-    (op : List Expr) (pr : List PropDef) (target : Expr) (id : Option PropertyIdentity)
-    (state state' : EvalState)
-    (hruntime : Algorithm.runtimeAliasNamespace ((Algorithm.alias p op pr target id).aliasCount + 1)
-      ((p.map ScopeCtx.staticChain).getD []) (.alias p op pr target id) = true)
-    (h : (resolveAlgForOpen e ctx).runState state = (.ok (.alias p op pr target id), state')) :
-    (resolveOpen e ctx).runState state = (.ok (.alias p op pr target id), state') := by
-  show ((resolveAlgForOpen e ctx).runState >>= fun a => _) state = _
-  simp only [bind, ExceptT.bind, ExceptT.mk, ExceptT.bindCont, StateT.bind]
-  rw [h]
-  simp [Algorithm.requiresArguments, Algorithm.parent, hruntime]
-  rfl
+/-- A STRUCTURAL CARRIER IS ITS OWN OPEN NAMESPACE (OD-C, M4★): `openStructure` never follows a
+carrier's forwarding row — its output is never evaluated, its target never resolved — and `open` admits
+it as a provider of its own public declarations (`requiresArguments` is false for every alias that
+reaches the provider rule). -/
+theorem carrier_is_its_own_open_namespace (fuel : Nat) (ctx : EvalCtx) (p : Option ScopeCtx) (op : List Expr)
+    (pr : List PropDef) (target : Expr) (id : Option PropertyIdentity) (s : EvalState) :
+    (openStructure fuel ctx (.alias p op pr target id false)).runState s = (.ok (.alias p op pr target id false), s)
+      ∧ (Algorithm.alias p op pr target id false).requiresArguments = false := by
+  refine ⟨?_, rfl⟩
+  cases fuel <;> rfl
 
 /-- THE CACHE KEY CARRIES THE BINDING'S NAME: `zeroArgPropertyCacheKey` reads the BINDING —
-never the callable it resolves to — so two differently named bindings (an alias `A` and its
-target) get different keys. (That a bare read of an alias then evaluates its target's zero-supply
-demand under `A`'s entry is evaluator behaviour, guard-checked.) -/
+never the callable it resolves to — so two differently named bindings get different keys. (Since OD-E,
+M4★, an alias's bare read is keyed by its TARGET's binding — the terminal binding of its VALUE chase —
+so an alias owns no entry of its own; that routing is evaluator behaviour, `WholeAlgorithmTransport.lean`
+and guard-checked.) -/
 theorem zero_arg_cache_key_carries_the_binding_name (k : ZeroArgPropertyAccessKind) (owner : Algorithm)
     (alias target : PropDef) (ctx : EvalCtx) (env : ValEnv) (distinct : alias.name ≠ target.name) :
     (zeroArgPropertyCacheKey k owner alias ctx env).propertyName = alias.name
@@ -1269,7 +1275,7 @@ private def aliasLawRoot : Algorithm :=
     , ("AF", .alias none [] [] (.resolve "Fam")) ]
     []
 
-/-- EXAMPLE over the STATIC chase `staticAliasTarget?` (not the evaluator's `partial`
+/-- EXAMPLE over the STATIC chase `staticAliasTarget?` (not the evaluator's
 `resolveAliasTarget`): the chain `C -> B -> A -> F` reaches the one callable `F` — its single
 parameter `x` — without copying a signature into any link. -/
 theorem static_alias_chain_example_reaches_its_target :
@@ -2225,23 +2231,30 @@ theorem valid_signature_has_at_most_one_top_level_collector (ps : List Parameter
 /-
 ## Collection views and list normalization
 
-Repeated-name binding (Q-05, NEED-04, Q-28): the production binder compares each repeated
-occurrence with the retained earlier one as it inspects it (`bindNeedName`, `KatLang.lean`), and
-since R3 `KatLangArityLaws/BinderTrace.lean` proves that per-occurrence order and verdict
+Repeated-name binding (Q-05, NEED-04, Q-28): since ALIAS-UNIFY-1 (October 2026) the production
+binder is GROUP-AWARE (`bindNeedName` over one `RepeatedGroup` per name, `checkAnchor`,
+`KatLang.lean`): every occurrence projects its own cell's CALLABLE first; a callable-bearing
+contribution is compared by identity and its VALUE waits for the group's first value-only
+contribution, which anchors the group and then checks every pending contribution's own VALUE in
+occurrence order. `KatLangArityLaws/BinderTrace.lean` proves that per-occurrence order and verdict
 (`repeated_name_binding`, `repeated_events_are_a_prefix_of_the_canonical_order`,
-`repeated_callable_only_after_equal_values`, `traced_repeated_failure_points`) with
-`sameRepeatedCallableIdentity` symbolic. Q-28's PERMUTATION laws (satisfiability, value up to
-`==`, identity and channel availability unchanged when the repeated arguments are permuted) are
-proved since S5 (October 2026) over stable completed contributions
-(`KatLangArityLaws/RepeatedNameLaws.lean`: `retain_ok_iff_compatible`, `retain_satisfiable_perm`,
-`retain_first_richest`, `retain_perm_preserves_observation`, and `production_flat_binding_is_retain`
-for the production traversal of flat levels), with `==` equality (`Result.beq` is structural) and
-callable identity transitive on its stated domain. Since S6a (October 2026) the same laws hold of
-validated nested and mixed heads (`KatLangArityLaws/NestedRepeatedNames.lean`:
-`production_head_walk`, `head_binding_is_retain`, `head_conflict`, `head_representative`,
-`head_perm_preserves_observation`), over the production binder channels' completed and Ready
-cells (`shell_model_caps`), and callable identity is transitive whenever no compared level is
-decided by an identified/anonymous printed-declaration fallback
+`repeated_occurrence_projects_its_cell_first`, `reference_contribution_without_anchor_demands_nothing`,
+`anchorEvents_prefix`, `traced_repeated_failure_points`) with `sameRepeatedCallableIdentity`
+symbolic. The NARROWED Q-28 PERMUTATION laws are proved over stable completed contributions
+(`KatLangArityLaws/RepeatedNameLaws.lean`, the group fold `gfold`): satisfiability is
+permutation-invariant (`gfold_ok_iff_compatible`, `gfold_satisfiable_perm`), the representative is
+the first richest contribution (`gfold_rep_first_richest`), callable availability and identity
+are preserved (`gfold_perm_preserves_identity`), and the counted VALUE is preserved only for a
+MIXED group (`gfold_perm_preserves_value_mixed`) or under the explicit coherence premise
+(`gfold_perm_preserves_value_of_coherent`) — a reference-only group may bind representatives of
+different VALUEs (`RepeatedNameGuards`); `production_flat_binding_is_gfold` relates the
+production traversal of flat levels to the fold, with `==` equality (`Result.beq` is structural)
+and callable identity transitive on its stated domain. The same laws hold of validated nested and
+mixed heads (`KatLangArityLaws/NestedRepeatedNames.lean`: `production_head_walk`,
+`head_binding_is_gfold`, `head_conflict`, `head_representative`, `head_perm_preserves_observation`,
+whose VALUE clause is likewise conditional on a mixed group), over the production binder
+channels' completed and Ready cells (`shell_model_caps`), and callable identity is transitive
+whenever no compared level is decided by an identified/anonymous printed-declaration fallback
 (`KatLangArityLaws/CallableIdentityDomain.lean`); arbitrary suspended or failing contributions and
 full transitivity (one residual about the opaque printer, `ReprSeparatesPresence`) remain open
 (roadmap R4). Concrete outcomes are executed by guards — CoreTests `HigherOrderCalls`
@@ -2250,7 +2263,7 @@ full transitivity (one residual about the opaque printer, `ReprSeparatesPresence
 `repeatedCountedBindingChecksTheCompletePair`), `ModelC` (`mixedRepeatedConflicts`,
 `repeatedBindingKeepsTheCallableContribution`) and `RepeatedNameConstraints`, and on the C#
 Decimal128 tier (Q-28, N-F: the first written among equally rich contributions supplies the
-retained representation) `NumericRepresentativeSelectionTests`. The laws of this section are the
+retained representation) `NumericRepresentativeSelectionTests` and `GroupAwareRepeatedNameTests`. The laws of this section are the
 post-binding builtin collection view, the exact lists collection-producing builtins return, and
 the normalization of list values.
 -/
@@ -3999,27 +4012,27 @@ namespace KatLang.BinderCore
 theorem production_source_address_is_the_core (source : NeedSource Nat) :
     needSourceAddress source = NeedBinder.sourceAddress allocateNeed source := rfl
 
-theorem production_gate_is_the_core (ps : List NeedPattern) (count : Nat) (family : Bool)
-    (accepted : EvalM (Option NeedEnv)) :
+theorem production_gate_is_the_core {β : Type} (ps : List NeedPattern) (count : Nat) (family : Bool)
+    (accepted : EvalM (Option β)) :
     needCardinalityGate ps count family accepted = NeedBinder.cardinalityGate ps count family accepted := rfl
 
 theorem production_name_is_the_core (c : NeedChannels) (name : Ident) (address : Nat)
-    (repeated : List Ident) (bound : NeedEnv) (family : Bool) :
+    (repeated : List Ident) (bound : NeedBindState) (family : Bool) :
     bindNeedName c name address repeated bound family
       = NeedBinder.bindName c.capabilities name address repeated bound family := rfl
 
 theorem production_one_is_the_core (c : NeedChannels) (p : NeedPattern) (address : Nat)
-    (repeated : List Ident) (bound : NeedEnv) (family : Bool) :
+    (repeated : List Ident) (bound : NeedBindState) (family : Bool) :
     bindNeedOne c p address repeated bound family
       = NeedBinder.bindOne c.capabilities p address repeated bound family := rfl
 
 theorem production_sources_is_the_core (c : NeedChannels) (ps : List NeedPattern)
-    (sources : List (NeedSource Nat)) (repeated : List Ident) (bound : NeedEnv) (family : Bool) :
+    (sources : List (NeedSource Nat)) (repeated : List Ident) (bound : NeedBindState) (family : Bool) :
     bindNeedSources c ps sources repeated bound family
       = NeedBinder.bindSources c.capabilities ps sources repeated bound family := rfl
 
 theorem production_level_is_the_core (c : NeedChannels) (ps : List NeedPattern) (cells : List Nat)
-    (repeated : List Ident) (bound : NeedEnv) (family : Bool) :
+    (repeated : List Ident) (bound : NeedBindState) (family : Bool) :
     bindNeedLevel c ps cells repeated bound family
       = NeedBinder.bindLevel c.capabilities ps cells repeated bound family := rfl
 
@@ -4047,8 +4060,8 @@ theorem needSourceAddress_collector (slice : List Nat) :
 theorem needSourceAddress_missing :
     needSourceAddress .missing = (throw Error.badArity : EvalM Nat) := rfl
 
-theorem needCardinalityGate_eq (ps : List NeedPattern) (count : Nat) (family : Bool)
-    (accepted : EvalM (Option NeedEnv)) :
+theorem needCardinalityGate_eq {β : Type} (ps : List NeedPattern) (count : Nat) (family : Bool)
+    (accepted : EvalM (Option β)) :
     needCardinalityGate ps count family accepted =
       if !needAcceptsCardinality ps count then
         if family then pure none
@@ -4056,32 +4069,37 @@ theorem needCardinalityGate_eq (ps : List NeedPattern) (count : Nat) (family : B
       else accepted := rfl
 
 theorem bindNeedName_eq (c : NeedChannels) (name : Ident) (address : Nat) (repeated : List Ident)
-    (bound : NeedEnv) (family : Bool) :
-    bindNeedName c name address repeated bound family = (do
-      if repeated.contains name then
-        let value <- c.value address
-        if let some previous := lookupAssoc name bound then
-          let before <- c.value previous
-          if !(before == value) then
-            if family then return none
-            else throw (Error.withContext (repeatedParameterContext name) Error.badArity)
-          let first <- c.callable previous
-          let second <- c.callable address
-          if let some a := first then
-            if let some b := second then
-              if !sameRepeatedCallableIdentity a b then
-                if family then return none
-                else throw (Error.typeMismatch "Repeated bind equality requires the same callable identity")
-          if first.isSome || second.isNone then return some bound
-      pure (some (bound.filter (fun entry => entry.fst != name) ++ [(name, address)])) : EvalM (Option NeedEnv)) := rfl
+    (bound : NeedBindState) (family : Bool) :
+    bindNeedName c name address repeated bound family = (
+      if repeated.contains name then do
+        let group := bound.groupOf name
+        match <- c.callable address with
+        | some identity =>
+            if group.conflictsWith identity then
+              NeedBinder.repeatedMismatch family (Error.typeMismatch "Repeated bind equality requires the same callable identity")
+            else do
+              let agreed <- match group.anchor with
+                | some anchor => NeedBinder.checkAnchor c.capabilities name anchor family [address]
+                | none => pure true
+              if agreed then pure (some (bound.withCallable name address identity)) else pure none
+        | none => do
+            let own <- c.value address
+            match group.anchor with
+            | some anchor =>
+                if own == anchor then pure (some bound)
+                else NeedBinder.repeatedMismatch family (Error.withContext (repeatedParameterContext name) Error.badArity)
+            | none => do
+                let agreed <- NeedBinder.checkAnchor c.capabilities name own family group.pending
+                if agreed then pure (some (bound.withAnchor name address own)) else pure none
+      else pure (some (bound.withPlain name address)) : EvalM (Option NeedBindState)) := rfl
 
 theorem bindNeedOne_bind (c : NeedChannels) (name : Ident) (collecting : Bool) (address : Nat)
-    (repeated : List Ident) (bound : NeedEnv) (family : Bool) :
+    (repeated : List Ident) (bound : NeedBindState) (family : Bool) :
     bindNeedOne c (.bind name collecting) address repeated bound family
       = bindNeedName c name address repeated bound family := rfl
 
 theorem bindNeedOne_literal (c : NeedChannels) (literal : Pattern) (address : Nat)
-    (repeated : List Ident) (bound : NeedEnv) (family : Bool) :
+    (repeated : List Ident) (bound : NeedBindState) (family : Bool) :
     bindNeedOne c (.literal literal) address repeated bound family = (do
       let (value, _) <- c.value address
       pure (if (matchPattern literal value).isSome then some bound else none)) := rfl
@@ -4089,7 +4107,7 @@ theorem bindNeedOne_literal (c : NeedChannels) (literal : Pattern) (address : Na
 /-- The structural arms (sequence, list, unpacking receiver) in their pre-R3 form. -/
 theorem bindNeedOne_structural (c : NeedChannels) (pattern : NeedPattern) (ps : List NeedPattern)
     (hp : pattern = .sequence ps ∨ pattern = .list ps ∨ pattern = .unpack ps)
-    (address : Nat) (repeated : List Ident) (bound : NeedEnv) (family : Bool) :
+    (address : Nat) (repeated : List Ident) (bound : NeedBindState) (family : Bool) :
     bindNeedOne c pattern address repeated bound family = (do
       let (value, _) <- c.value address
       let items? := match pattern with
@@ -4105,11 +4123,11 @@ theorem bindNeedOne_structural (c : NeedChannels) (pattern : NeedPattern) (ps : 
   rcases hp with rfl | rfl | rfl <;> rfl
 
 theorem bindNeedSources_nil (c : NeedChannels) (sources : List (NeedSource Nat))
-    (repeated : List Ident) (current : NeedEnv) (family : Bool) :
+    (repeated : List Ident) (current : NeedBindState) (family : Bool) :
     bindNeedSources c [] sources repeated current family = pure (some current) := rfl
 
 theorem bindNeedSources_cons (c : NeedChannels) (p : NeedPattern) (rest : List NeedPattern)
-    (sources : List (NeedSource Nat)) (repeated : List Ident) (current : NeedEnv) (family : Bool) :
+    (sources : List (NeedSource Nat)) (repeated : List Ident) (current : NeedBindState) (family : Bool) :
     bindNeedSources c (p :: rest) sources repeated current family = (do
       let address <- needSourceAddress (sources.headD .missing)
       match <- bindNeedOne c p address repeated current family with
@@ -4117,13 +4135,15 @@ theorem bindNeedSources_cons (c : NeedChannels) (p : NeedPattern) (rest : List N
       | some next => bindNeedSources c rest sources.tail repeated next family) := rfl
 
 theorem bindNeedLevel_eq (c : NeedChannels) (ps : List NeedPattern) (cells : List Nat)
-    (repeated : List Ident) (bound : NeedEnv) (family : Bool) :
+    (repeated : List Ident) (bound : NeedBindState) (family : Bool) :
     bindNeedLevel c ps cells repeated bound family
       = needCardinalityGate ps cells.length family
           (bindNeedSources c ps (needLevelSources ps cells) repeated bound family) := rfl
 
 theorem bindNeedPatterns_eq (c : NeedChannels) (ps : List NeedPattern) (cells : List Nat) (family : Bool) :
-    bindNeedPatterns c ps cells family = bindNeedLevel c ps cells (needRepeatedNames ps) [] family := rfl
+    bindNeedPatterns c ps cells family = (do
+      let state <- bindNeedLevel c ps cells (needRepeatedNames ps) {} family
+      pure (state.map NeedBindState.bound)) := rfl
 
 /-- The production clause search: `NeedBinder.chooseBranch` over the production binder and
     activation. -/
@@ -4159,16 +4179,16 @@ variable {m : Type → Type} [Monad m] [MonadExceptOf Error m]
 /-- A non-repeated name TRANSPORTS its cell: no VALUE demand, no CALLABLE projection, no
     allocation — the pure environment update, in every interpretation and either mode. -/
 theorem core_plain_name_is_pure (k : NeedCapabilities m) (name : Ident) (address : Nat)
-    (repeated : List Ident) (bound : NeedEnv) (family : Bool) (h : repeated.contains name = false) :
+    (repeated : List Ident) (bound : NeedBindState) (family : Bool) (h : repeated.contains name = false) :
     NeedBinder.bindName k name address repeated bound family
-      = pure (some (bound.filter (fun entry => entry.fst != name) ++ [(name, address)])) := by
+      = pure (some (bound.withPlain name address)) := by
   simp only [NeedBinder.bindName, h, Bool.false_eq_true, ↓reduceIte]
 
 /-- An unaccepted count at a level is rejected by the gate alone, in every interpretation:
     the family non-match `pure none`, otherwise the arity error with the level's minimum and
     the complete supply count. The level's patterns never run. -/
 theorem core_level_rejects_unaccepted_count (k : NeedCapabilities m) (ps : List NeedPattern)
-    (cells : List Nat) (repeated : List Ident) (bound : NeedEnv) (family : Bool)
+    (cells : List Nat) (repeated : List Ident) (bound : NeedBindState) (family : Bool)
     (h : needAcceptsCardinality ps cells.length = false) :
     NeedBinder.bindLevel k ps cells repeated bound family
       = if family then pure none
@@ -4182,10 +4202,9 @@ theorem core_level_rejects_unaccepted_count (k : NeedCapabilities m) (ps : List 
     address. -/
 theorem core_plain_step [LawfulMonad m] (k : NeedCapabilities m) (name : Ident) (collecting : Bool)
     (address : Nat) (rest : List NeedPattern) (sources : List (NeedSource Nat)) (repeated : List Ident)
-    (bound : NeedEnv) (family : Bool) (h : repeated.contains name = false) :
+    (bound : NeedBindState) (family : Bool) (h : repeated.contains name = false) :
     NeedBinder.bindSources k (.bind name collecting :: rest) (.cell address :: sources) repeated bound family
-      = NeedBinder.bindSources k rest sources repeated
-          (bound.filter (fun entry => entry.fst != name) ++ [(name, address)]) family := by
+      = NeedBinder.bindSources k rest sources repeated (bound.withPlain name address) family := by
   simp only [NeedBinder.bindSources, NeedBinder.sourceAddress, NeedBinder.bindOne, NeedBinder.bindName,
     h, Bool.false_eq_true, ↓reduceIte, pure_bind, List.headD_cons, List.tail_cons]
 
@@ -4195,11 +4214,10 @@ end Generic
     own `EvalM.pure_bind` suffices): a non-repeated name bound from a supplied cell is exactly its
     environment update, for every channel pair, any remaining patterns and either mode. -/
 theorem production_plain_step (c : NeedChannels) (name : Ident) (collecting : Bool) (address : Nat)
-    (rest : List NeedPattern) (sources : List (NeedSource Nat)) (repeated : List Ident) (bound : NeedEnv)
+    (rest : List NeedPattern) (sources : List (NeedSource Nat)) (repeated : List Ident) (bound : NeedBindState)
     (family : Bool) (h : repeated.contains name = false) :
     bindNeedSources c (.bind name collecting :: rest) (.cell address :: sources) repeated bound family
-      = bindNeedSources c rest sources repeated
-          (bound.filter (fun entry => entry.fst != name) ++ [(name, address)]) family := by
+      = bindNeedSources c rest sources repeated (bound.withPlain name address) family := by
   rw [bindNeedSources_cons, List.headD_cons, needSourceAddress_cell, EvalM.pure_bind, bindNeedOne_bind,
     production_name_is_the_core, core_plain_name_is_pure _ _ _ _ _ _ h, EvalM.pure_bind]
   rfl
@@ -4443,7 +4461,7 @@ theorem family_zero_argument_acceptance_is_the_dispatch_gate (parent : Option Sc
     (`nested_sequence_level_is_bind_need_level`), reached after the container's VALUE demand
     and the allocation of its item cells. -/
 theorem binder_rejects_unaccepted_supply_before_any_effect (channels : NeedChannels)
-    (ps : List NeedPattern) (cells : List Nat) (repeated : List Ident) (bound : NeedEnv)
+    (ps : List NeedPattern) (cells : List Nat) (repeated : List Ident) (bound : NeedBindState)
     (h : needAcceptsCardinality ps cells.length = false) (state : EvalState) :
     (bindNeedLevel channels ps cells repeated bound false).runState state
       = (.error (Error.arityMismatch (needMinimumSuppliedSlots ps) cells.length), state) := by
@@ -4452,7 +4470,7 @@ theorem binder_rejects_unaccepted_supply_before_any_effect (channels : NeedChann
 
 /-- In a clause attempt the same unaccepted count is a NON-MATCH, again before any effect. -/
 theorem family_binder_treats_unaccepted_supply_as_a_non_match (channels : NeedChannels)
-    (ps : List NeedPattern) (cells : List Nat) (repeated : List Ident) (bound : NeedEnv)
+    (ps : List NeedPattern) (cells : List Nat) (repeated : List Ident) (bound : NeedBindState)
     (h : needAcceptsCardinality ps cells.length = false) :
     bindNeedLevel channels ps cells repeated bound true = pure none := by
   simp [BinderCore.bindNeedLevel_eq, BinderCore.needCardinalityGate_eq, h]
@@ -4462,8 +4480,10 @@ theorem call_binder_rejects_unaccepted_supply_before_any_effect (channels : Need
     (ps : List NeedPattern) (cells : List Nat) (h : needAcceptsCardinality ps cells.length = false)
     (state : EvalState) :
     (bindNeedPatterns channels ps cells).runState state
-      = (.error (Error.arityMismatch (needMinimumSuppliedSlots ps) cells.length), state) :=
-  binder_rejects_unaccepted_supply_before_any_effect channels ps cells _ [] h state
+      = (.error (Error.arityMismatch (needMinimumSuppliedSlots ps) cells.length), state) := by
+  rw [BinderCore.bindNeedPatterns_eq, BinderCore.bindNeedLevel_eq, BinderCore.needCardinalityGate_eq]
+  simp only [h, Bool.not_false, ↓reduceIte, Bool.false_eq_true]
+  rfl
 
 /-- A FAMILY REPORTS `NoMatchingBranch` ONLY FOR AN ACCEPTED COUNT (NEED-05, CALL-04): when
     no clause head accepts the supply count, production dispatch fails before any clause is
@@ -4490,7 +4510,7 @@ theorem family_dispatch_rejects_unaccepted_supply_before_any_effect (channels : 
     allocation and patterns — after its container's VALUE demand and kind check, over fresh
     ready cells holding the opened items. -/
 theorem nested_sequence_level_is_bind_need_level (channels : NeedChannels) (ps : List NeedPattern)
-    (address : Nat) (repeated : List Ident) (bound : NeedEnv) (family : Bool) :
+    (address : Nat) (repeated : List Ident) (bound : NeedBindState) (family : Bool) :
     bindNeedOne channels (.sequence ps) address repeated bound family = (do
       let (value, _) <- channels.value address
       match Result.sequencePatternItems? value with
@@ -4503,7 +4523,7 @@ theorem nested_sequence_level_is_bind_need_level (channels : NeedChannels) (ps :
 
 /-- The LIST pattern's twin of `nested_sequence_level_is_bind_need_level`. -/
 theorem nested_list_level_is_bind_need_level (channels : NeedChannels) (ps : List NeedPattern)
-    (address : Nat) (repeated : List Ident) (bound : NeedEnv) (family : Bool) :
+    (address : Nat) (repeated : List Ident) (bound : NeedBindState) (family : Bool) :
     bindNeedOne channels (.list ps) address repeated bound family = (do
       let (value, _) <- channels.value address
       match Result.listPatternItems? value with
@@ -4517,7 +4537,7 @@ theorem nested_list_level_is_bind_need_level (channels : NeedChannels) (ps : Lis
 /-- The deconstruction UNPACKING receiver's level: the demanded value's one-level items
     (`Result.spreadItems`, never a kind mismatch) bound by `bindNeedLevel`. -/
 theorem nested_unpack_level_is_bind_need_level (channels : NeedChannels) (ps : List NeedPattern)
-    (address : Nat) (repeated : List Ident) (bound : NeedEnv) (family : Bool) :
+    (address : Nat) (repeated : List Ident) (bound : NeedBindState) (family : Bool) :
     bindNeedOne channels (.unpack ps) address repeated bound family = (do
       let (value, _) <- channels.value address
       let cells <- (Result.spreadItems value).mapM (fun item => readyNeed (item, Result.valueCount item))
@@ -4678,10 +4698,10 @@ theorem two_collectors_misallocate :
 /-- A non-repeated name TRANSPORTS its cell: no VALUE demand, no CALLABLE projection,
     whatever the channels and in either mode (NEED-01, NEED-03). -/
 theorem binder_name_transports_a_non_repeated_cell (channels : NeedChannels) (name : Ident)
-    (address : Nat) (repeated : List Ident) (bound : NeedEnv) (family : Bool)
+    (address : Nat) (repeated : List Ident) (bound : NeedBindState) (family : Bool)
     (h : repeated.contains name = false) :
     bindNeedName channels name address repeated bound family
-      = pure (some (bound.filter (fun entry => entry.fst != name) ++ [(name, address)])) := by
+      = pure (some (bound.withPlain name address)) := by
   rw [BinderCore.production_name_is_the_core]
   exact BinderCore.core_plain_name_is_pure _ _ _ _ _ _ h
 
@@ -4693,12 +4713,11 @@ def KatLang.NeedPattern.plainName? : NeedPattern -> Option Ident
 /-- The program a level of plain binders runs: each name receives the address of its source
     (`needSourceAddress`: a supplied cell is transported, a collector slice gets one fresh
     suspended collector cell). Neither channel appears. -/
-def plainNeedBinding : List Ident -> List (NeedSource Nat) -> NeedEnv -> EvalM (Option NeedEnv)
+def plainNeedBinding : List Ident -> List (NeedSource Nat) -> NeedBindState -> EvalM (Option NeedBindState)
   | [], _, current => pure (some current)
   | name :: rest, sources, current => do
       let address <- needSourceAddress (sources.headD .missing)
-      plainNeedBinding rest sources.tail
-        (current.filter (fun entry => entry.fst != name) ++ [(name, address)])
+      plainNeedBinding rest sources.tail (current.withPlain name address)
 
 /-- PLAIN BINDING DEMANDS NOTHING (NEED-01, NEED-03, CALL-06, VAR-03), production binder: a
     level of plain, non-repeated binders — fixed or collecting — runs `plainNeedBinding`,
@@ -4706,7 +4725,7 @@ def plainNeedBinding : List Ident -> List (NeedSource Nat) -> NeedEnv -> EvalM (
 theorem plain_patterns_bind_without_any_channel (channels : NeedChannels) (ps : List NeedPattern)
     (names : List Ident) (hnames : ps.map NeedPattern.plainName? = names.map some)
     (repeated : List Ident) (hrepeated : ∀ name ∈ names, repeated.contains name = false)
-    (sources : List (NeedSource Nat)) (current : NeedEnv) (family : Bool) :
+    (sources : List (NeedSource Nat)) (current : NeedBindState) (family : Bool) :
     bindNeedSources channels ps sources repeated current family
       = plainNeedBinding names sources current := by
   induction ps generalizing names sources current with
@@ -4937,12 +4956,14 @@ theorem lone_collecting_head_allocates_one_collector_over_its_supply (channels :
   have hacc : needAcceptsCardinality [.bind name true] cells.length = true := by
     simp [needAcceptsCardinality, needMinimumSuppliedSlots, NeedPattern.isCollecting, List.filter_cons]
   have hplain := plain_patterns_bind_without_any_channel channels [.bind name true] [name] rfl []
-    (by simp) [.collector cells] [] family
+    (by simp) [.collector cells] {} family
   rw [BinderCore.bindNeedPatterns_eq, BinderCore.bindNeedLevel_eq, BinderCore.needCardinalityGate_eq]
   rw [hr, hacc, lone_collector_collects_every_supplied_cell]
   simp only [Bool.not_true, Bool.false_eq_true, if_false]
   rw [hplain]
-  simp [plainNeedBinding, BinderCore.needSourceAddress_collector]
+  simp only [plainNeedBinding, BinderCore.needSourceAddress_collector, List.headD_cons]
+  rw [EvalM.bind_assoc]
+  simp [NeedBindState.withPlain, NeedEnv.rebind]
 
 /-- ONE CELL NEVER SATISFIES TWO FIXED PATTERNS: a one-cell supply against `[a, *r, z]` fails with
 `arityMismatch 2 1` and leaves the run state unchanged, for every channel pair — so the cell (a dot

@@ -461,7 +461,10 @@ public class DottedReceiverEvaluationTests
     [InlineData("V = range(1, 10)\nV.count", "V = range(1, 10)\ncount(V)", 1, 10, "ok:10")]
     [InlineData("V = range(1, 10)\n(V).count", "V = range(1, 10)\ncount((V))", 1, 10, "ok:10")]
     [InlineData("V = range(1, 10)\n((V)).count", "V = range(1, 10)\ncount(V)", 1, 10, "ok:10")]
-    [InlineData("V = range(1, 10)\nW = V\nW.count", "V = range(1, 10)\nW = V\ncount(W)", 2, 10, "ok:10")]
+    // M4★: `W = V` is a transparent alias, whose read IS V's one read (formerly 2); a calculation that
+    // reads V still charges both reads.
+    [InlineData("V = range(1, 10)\nW = V\nW.count", "V = range(1, 10)\nW = V\ncount(W)", 1, 10, "ok:10")]
+    [InlineData("V = range(1, 10)\nW = first([V])\nW.count", "V = range(1, 10)\nW = first([V])\ncount(W)", 2, 11, "ok:10")]
     [InlineData("V = range(1, 10)\nV().count", "V = range(1, 10)\ncount(V())", 1, 10, "ok:10")]
     [InlineData("V = range(1, 10)\nV.take(3)", "V = range(1, 10)\ntake(V, 3)", 1, 13, "ok:L[1, 2, 3]")]
     [InlineData("D(x) = x * 2\nV = range(1, 3)\nV.map(D)", "D(x) = x * 2\nV = range(1, 3)\nmap(V, D)", 4, 6, "ok:L[2, 4, 6]")]
@@ -472,8 +475,9 @@ public class DottedReceiverEvaluationTests
         // zero-argument property access and charges exactly that access's one step (like the
         // written argument, and like a value-position read — how a property value is
         // consumed does not affect caching) — grouped or not, because parentheses group
-        // syntax — a property whose body READS the collection property (`W = V`) charges both
-        // reads, an explicit-call receiver charges its one invocation, a suffix argument and a
+        // syntax — a property whose body READS the collection property (`W = first([V])`) charges
+        // both reads while a transparent alias (`W = V`, M4★) charges only its target's, an
+        // explicit-call receiver charges its one invocation, a suffix argument and a
         // higher-order builtin evaluate their receiver exactly once — and the dotted spelling
         // charges precisely what its rewrite charges.
         var run = Observe(dotted);

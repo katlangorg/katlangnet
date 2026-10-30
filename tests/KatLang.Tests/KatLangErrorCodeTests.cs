@@ -425,6 +425,8 @@ public class KatLangErrorCodeTests
             ["InterpolationNotAllowedHere"] = 57,
             ["RetiredColonSelection"] = 58,
             ["InvalidMetaParameter"] = 59,
+            ["SelfDependentInferredParameters"] = 60,
+            ["StaticStructureLimitExceeded"] = 61,
         };
 
         var actual = Enum.GetValues<DiagnosticCode>().ToDictionary(v => v.ToString(), v => (int)v);
@@ -518,6 +520,8 @@ public class KatLangErrorCodeTests
             ["InterpolationNotAllowedHere"] = 79,
             ["RetiredColonSelection"] = 80,
             ["InvalidMetaParameter"] = 81,
+            ["SelfDependentInferredParameters"] = 82,
+            ["StaticStructureLimitExceeded"] = 83,
         };
 
         var actual = Enum.GetValues<KatLangErrorCode>().ToDictionary(v => v.ToString(), v => (int)v);

@@ -470,7 +470,9 @@ public class DeconstructionMemoEligibilityTests
         ["X04"] = "ok 16 n=1 | t(3),t(3) | steps=18 chk=72 depth=7 items=8 binds=2",
         ["V01"] = "ok 9 n=1 | t(3) | steps=14 chk=66 depth=6 items=11 binds=1",
         ["V02-MaxItems11"] = "ok 9 n=1 | t(3) | steps=14 chk=66 depth=6 items=11 binds=1",
-        ["V03"] = "ok 8 n=1 | t(3) | steps=10 chk=34 depth=7 items=4 binds=1",
+        // M4★: `public A = a` and `public Z = b` are transparent aliases, so their two property reads are
+        // gone (formerly steps=10 chk=34 depth=7; Od1AccountingChange_IsExactlyTheEliminatedBinds).
+        ["V03"] = "ok 8 n=1 | t(3) | steps=8 chk=32 depth=6 items=4 binds=1",
         ["V04"] = "ok 0 n=1 |  | steps=0 chk=3 depth=0 items=0 binds=0",
         ["V08-MaxDepth5"] = "err EvaluationDepthExceeded: Evaluation recursion limit of 5 was exceeded @ [2:18, 2:19) |  | steps=5 chk=16 depth=5 items=1 binds=1",
         ["V09"] = "ok 16 n=1 | t(3),t(3) | steps=18 chk=76 depth=7 items=8 binds=2",
@@ -545,6 +547,11 @@ public class DeconstructionMemoEligibilityTests
         var changedVerdicts = new HashSet<string>(StringComparer.Ordinal) { "R02-MaxSteps10", "V02-MaxItems11" };
         var movedRefusals = new HashSet<string>(StringComparer.Ordinal) { "V02-MaxItems10" };
         var collectorSavings = new HashSet<string>(StringComparer.Ordinal) { "V01", "LATE-COLLECTOR" };
+        // M4★: V03's `public A = a` and `public Z = b` became transparent aliases, so beside the bind OD-1
+        // eliminated their two property READS are gone as well — one step and one checkpoint each, and the
+        // alias hop's depth level (an alias charges nothing of its own). Decon2Baseline stays the measured
+        // pre-M4★ record.
+        var aliasReclassified = new Dictionary<string, (long Reads, long Depth)>(StringComparer.Ordinal) { ["V03"] = (2, 1) };
         var reduced = new List<string>();
         foreach (var id in SurfaceExpectations.Keys)
         {
@@ -573,9 +580,10 @@ public class DeconstructionMemoEligibilityTests
             }
 
             Assert.Equal(before.Groups["outcome"].Value, after.Groups["outcome"].Value);
-            Assert.Equal(Field(before, "depth"), Field(after, "depth"));
-            Assert.Equal(eliminated, Field(before, "steps") - Field(after, "steps"));
-            Assert.Equal(eliminated, Field(before, "chk") - Field(after, "chk"));
+            var (aliasReads, aliasDepth) = aliasReclassified.GetValueOrDefault(id);
+            Assert.Equal(Field(before, "depth") - aliasDepth, Field(after, "depth"));
+            Assert.Equal(eliminated + aliasReads, Field(before, "steps") - Field(after, "steps"));
+            Assert.Equal(eliminated + aliasReads, Field(before, "chk") - Field(after, "chk"));
             if (collectorSavings.Contains(id))
                 Assert.True(Field(after, "items") < Field(before, "items"), id);
             else

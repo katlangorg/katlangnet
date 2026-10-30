@@ -48,7 +48,8 @@ public class Phase6PerformanceRegressionTests
         var parsed = Parser.Parse(source);
         Assert.False(parsed.HasErrors, string.Join(Environment.NewLine, parsed.Diagnostics.Select(d => d.Message)));
         // Middle and Top are callable aliases whose chain normalizes to the root Leaf(x); the
-        // shadowing block's own zero-parameter Leaf is read as a value, never aliased.
+        // shadowing block is a structural forwarding carrier of its own zero-parameter Leaf (M4★),
+        // keeping its own declaration — its bare read is that Leaf's value.
         foreach (var name in new[] { "Middle", "Top" })
         {
             var alias = Assert.IsType<Algorithm.Alias>(parsed.Root.Properties.Single(property => property.Name == name).Value);
@@ -56,7 +57,9 @@ public class Phase6PerformanceRegressionTests
             Assert.Equal(["x"], alias.ResolvedTarget!.Signature.Signature!.ParameterNames);
         }
 
-        var shadow = Assert.IsType<Algorithm.User>(parsed.Root.Properties.Single(property => property.Name == "Shadow").Value);
+        var shadow = Assert.IsType<Algorithm.Alias>(parsed.Root.Properties.Single(property => property.Name == "Shadow").Value);
+        Assert.False(shadow.IsReference);
+        Assert.Equal("Leaf", Assert.Single(shadow.Properties).Name);
         Assert.Empty(shadow.Params);
 
         var success = Assert.IsType<RunResult.Success>(KatLangEngine.Run(source));
@@ -90,7 +93,9 @@ public class Phase6PerformanceRegressionTests
 
         var container = outer.Properties.Single(property => property.Name == "PublicContainer");
         Assert.Equal(PropertyExposure.Exported, container.Exposure);
-        var containerBody = Assert.IsType<Algorithm.User>(container.Value);
+        // A structural forwarding carrier of its own Value (M4★): its declarations keep their exposure.
+        var containerBody = Assert.IsType<Algorithm.Alias>(container.Value);
+        Assert.False(containerBody.IsReference);
         Assert.Equal(PropertyExposure.Exported, Assert.Single(containerBody.Properties).Exposure);
     }
 }

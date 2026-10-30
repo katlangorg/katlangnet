@@ -923,10 +923,12 @@ public class DotCallFallbackExposureTests
             Outer = {
                 t(x) = x + 10
                 P = 5.t
-                P
+                P + 0
             }
             Outer
             """);
+        // Outer's row is a calculation, so Outer stays an ordinary algorithm (a lone `P` row would make
+        // it a forwarding carrier of P, M4★); the graph is about its properties only.
         var outer = Assert.IsType<Algorithm.User>(
             Assert.Single(root.Properties, property => property.Name == "Outer").Value);
         var graph = PropertyDependencyGraphBuilder.BuildSummaries(outer);

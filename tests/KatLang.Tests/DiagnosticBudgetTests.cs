@@ -178,6 +178,101 @@ public class DiagnosticBudgetTests
     }
 
     [Fact]
+    public void Bag_AnchoredReports_TakeThePlaceTheirAnchorReserved()
+    {
+        // A report decided later (M4★: a check implicit-argument resolution decides) stands where its anchor was
+        // reserved: after every report made before, before every report made after; anchors reserved at one point keep
+        // their reservation order, and the reports of one anchor their own.
+        var bag = new DiagnosticBag(10);
+        bag.Report(DiagnosticCode.UnexpectedToken, "a", null);
+        var first = bag.ReserveAnchor();
+        var second = bag.ReserveAnchor();
+        bag.Report(DiagnosticCode.UnexpectedToken, "b", null);
+        var third = bag.ReserveAnchor();
+        bag.Report(DiagnosticCode.UnexpectedToken, "c", null);
+        Assert.Equal(3, bag.ReportedCount);
+
+        using (bag.InsertingAt(third))
+            bag.Report(DiagnosticCode.UndeclaredIdentifier, "t", null);
+        using (bag.InsertingAt(second))
+        {
+            bag.Report(DiagnosticCode.UndeclaredIdentifier, "s1", null);
+            bag.Report(DiagnosticCode.UndeclaredIdentifier, "s2", null);
+        }
+
+        using (bag.InsertingAt(first))
+            bag.Report(DiagnosticCode.AmbiguousOpen, "f", null);
+        bag.Report(DiagnosticCode.UnexpectedToken, "d", null);
+
+        Assert.Equal(["a", "f", "s1", "s2", "b", "t", "c", "d"], bag.Select(d => d.Message));
+        Assert.Equal(8, bag.ReportedCount);
+        Assert.True(bag.HasReported(DiagnosticCode.AmbiguousOpen));
+        Assert.False(bag.IsTruncated);
+        // An unused anchor reserves nothing.
+        _ = bag.ReserveAnchor();
+        Assert.Equal(8, bag.Count);
+    }
+
+    [Fact]
+    public void Bag_AnchoredReports_KeepThePrefixLaw()
+    {
+        // The stored list is the first N of the list the anchored reports would have made at their anchors: an anchored
+        // report moves the last stored one past the capacity (the marker takes its severity), and one whose place is past
+        // the capacity is dropped and never formatted.
+        var bag = new DiagnosticBag(3);
+        var early = bag.ReserveAnchor();
+        bag.Add(new Diagnostic("w0", DiagnosticSeverity.Warning, null));
+        bag.Add(new Diagnostic("w1", DiagnosticSeverity.Warning, null));
+        bag.Add(new Diagnostic("w2", DiagnosticSeverity.Warning, null));
+        var late = bag.ReserveAnchor();
+        Assert.False(bag.IsTruncated);
+
+        using (bag.InsertingAt(early))
+            bag.Report(DiagnosticCode.UndeclaredIdentifier, "e", null);
+        Assert.Equal(["e", "w0", "w1"], bag.Take(3).Select(d => d.Message));
+        Assert.Equal(4, bag.Count);
+        Assert.Equal(DiagnosticCode.DiagnosticCountExceeded, bag[3].Code);
+        Assert.Null(bag[3].Span);
+        // The moved report was a warning: the marker carries its severity.
+        Assert.Equal(DiagnosticSeverity.Warning, bag[3].Severity);
+
+        var formatted = 0;
+        using (bag.InsertingAt(late))
+        {
+            Assert.False(bag.StoresNext);
+            bag.Report(DiagnosticCode.UndeclaredIdentifier, null, 0, _ =>
+            {
+                formatted++;
+                return "never";
+            });
+        }
+
+        Assert.Equal(0, formatted);
+        Assert.Equal(["e", "w0", "w1"], bag.Take(3).Select(d => d.Message));
+        Assert.Equal(4, bag.Count);
+        // The dropped anchored error raises the marker to an error: truncation never hides a blocking list.
+        Assert.Equal(DiagnosticSeverity.Error, bag[3].Severity);
+        Assert.Equal(5, bag.ReportedCount);
+        Assert.Equal(2, bag.ReportedErrorCount);
+
+        // A later in-place report is past the capacity too.
+        bag.Report(DiagnosticCode.UnexpectedToken, "x", null);
+        Assert.Equal(["e", "w0", "w1"], bag.Take(3).Select(d => d.Message));
+        Assert.Equal(4, bag.Count);
+    }
+
+    [Fact]
+    public void Bag_AnchoredScopes_DoNotNest()
+    {
+        var bag = new DiagnosticBag(4);
+        var anchor = bag.ReserveAnchor();
+        using (bag.InsertingAt(anchor))
+            Assert.Throws<InvalidOperationException>(() => bag.InsertingAt(anchor));
+        bag.Report(DiagnosticCode.UnexpectedToken, "after", null);
+        Assert.Equal(["after"], bag.Select(d => d.Message));
+    }
+
+    [Fact]
     public void Bag_BoundsEveryStoredMessage_WithoutSplittingASurrogatePair()
     {
         const int max = DiagnosticBag.MaxRetainedMessageLength;

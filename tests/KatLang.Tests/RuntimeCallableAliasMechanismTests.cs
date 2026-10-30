@@ -8,7 +8,7 @@ namespace KatLang.Tests;
 /// distinguish on their own (the source-level corpus is <see cref="RuntimeCallableAliasCorpusTests"/>):
 /// <list type="bullet">
 ///   <item>Option A classification by the front end (FWD-02 after Q-75 / DOT-05 inference and formula
-///   lifting, never instead of them);</item>
+///   lifting, never instead of them — except OD-B's parameter-rooted member path, M4★);</item>
 ///   <item>the ONE binding cell per declaration and declaring activation (<see cref="Evaluator.AliasBindingCell"/>):
 ///   canonical, retained, established without evaluating anything, a parameter row's own cell, first-wins
 ///   under concurrency and retry-stable inside a non-initiating observation (Guard B);</item>
@@ -30,6 +30,11 @@ public class RuntimeCallableAliasMechanismTests
     [InlineData("Sq(x) = x * x\nCapture(meta op) = op\nR = Capture(Sq(5))\nA = R.Algorithm\nA(9)", null, "A")]
     // A parameter-rooted member path whose fallback name RESOLVES (no inferred parameter).
     [InlineData("G(o) = o + 100\nUse(b) = {\n    A = b.G\n    A(3)\n}\nBox = { G(x) = x * 10 }\nUse(Box)", "Use", "A")]
+    // OD-B (M4★): a parameter-rooted member path is a MEMBER REFERENCE whatever its names resolve to; its
+    // member names are never inferred parameters (formerly F01 = Q02, F04 and F06 = Q10 stayed formulas).
+    [InlineData("Thousand(v) = v * 1000\nUse(b) = {\n    A = b.G\n    A(Thousand)\n}\nUse(5)", "Use", "A")]
+    [InlineData("Use(obj) = {\n    Get = obj.size\n    Get(count)\n}\nUse([1, 2, 3])", "Use", "Get")]
+    [InlineData("Thousand(v) = v * 1000\nUse(b) = {\n    A = b.H.G\n    A(Thousand, Thousand)\n}\nUse(5)", "Use", "A")]
     // A static name naming a runtime alias: a chain, declared before its target (a forward reference).
     [InlineData("Use(f) = {\n    B = A\n    A = f\n    B(9)\n}\nSq(x) = x * x\nUse(Sq)", "Use", "B")]
     // A structure whose one row is a parameter (it keeps its own members).
@@ -45,12 +50,9 @@ public class RuntimeCallableAliasMechanismTests
     }
 
     [Theory]
-    // Q-75 / DOT-05 unchanged (F01 = Q02): an unresolved fallback name stays A's inferred parameter.
-    [InlineData("Thousand(v) = v * 1000\nUse(b) = {\n    A = b.G\n    A(Thousand)\n}\nUse(5)", "Use", "A", "G")]
-    // F04: `Get = obj.size` keeps its inferred `size`.
-    [InlineData("Use(obj) = {\n    Get = obj.size\n    Get(count)\n}\nUse([1, 2, 3])", "Use", "Get", "size")]
-    // F06 = Q10: both edges of `b.H.G` stay inferred.
-    [InlineData("Thousand(v) = v * 1000\nUse(b) = {\n    A = b.H.G\n    A(Thousand, Thousand)\n}\nUse(5)", "Use", "A", "H,G")]
+    // Q-75 / DOT-05 still apply to every row that is no parameter-rooted path: an unresolved fallback
+    // name of a property-rooted path stays the body's inferred parameter.
+    [InlineData("Thousand(v) = v * 1000\nV = 5\nA = V.G\nA(Thousand)", null, "A", "G")]
     // Formula lifting runs first: `A = Mk.Algorithm` with `Mk(t)` is lifted to `A(t)`.
     [InlineData("Capture(meta op) = op\nSq(x) = x * x\nMk(t) = Capture(Sq(t))\nA = Mk.Algorithm\nA(9)", null, "A", "t")]
     public void AnInferredOrLiftedParameter_KeepsTheBodyAFormula(string source, string? owner, string name, string parameters)

@@ -205,6 +205,8 @@ public sealed class KatLangError
             DiagnosticCode.InterpolationNotAllowedHere => KatLangErrorCode.InterpolationNotAllowedHere,
             DiagnosticCode.RetiredColonSelection => KatLangErrorCode.RetiredColonSelection,
             DiagnosticCode.InvalidMetaParameter => KatLangErrorCode.InvalidMetaParameter,
+            DiagnosticCode.SelfDependentInferredParameters => KatLangErrorCode.SelfDependentInferredParameters,
+            DiagnosticCode.StaticStructureLimitExceeded => KatLangErrorCode.StaticStructureLimitExceeded,
             _ when !Enum.IsDefined(code) => KatLangErrorCode.Unspecified,
             _ => throw new InvalidOperationException(
                 $"Unhandled declared {nameof(DiagnosticCode)} family in {nameof(KatLangError)}: {code}. "

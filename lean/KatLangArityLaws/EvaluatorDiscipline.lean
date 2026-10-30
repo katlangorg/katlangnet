@@ -22,10 +22,9 @@ that EVERY evaluator body is disciplined whenever its recursive answer is
 The per-body proofs are syntax-directed (`disc_tac`): the existing compositional lemmas of
 `InvocationPlan` (shells, preparation, execution, invocation, reification, formation), framework
 lemmas for reads followed by writes (`DiscAt`, `disc_get_bind`), loops (`forIn`/`forM`/`foldlM`),
-the recursive total helpers (by their own induction), and a hand proof for the one write that
-stores back a cell read before intermediate effects (`disc_aliasBareCell`: those effects only push
-cells). Head-unfolding never unfolds a recursive definition, and macro hygiene is off so the tactic
-reaches lemmas defined after it.
+and the recursive total helpers (by their own induction). Head-unfolding never unfolds a recursive
+definition, and macro hygiene is off so the tactic reaches lemmas defined after it. (The D4 bare-cell
+write and its hand proof were retired with D4 by M4★, ALIAS-UNIFY-1.)
 
 Not claimed here: other heap invariants (address validity of environments, allocation order of
 collector slices, acyclicity). Address validity and collector order for allocation, parameter
@@ -244,13 +243,6 @@ theorem disc_foldlM {α β : Type} (f : β → α → EvalM β) (h : ∀ b a, Di
   | cons x xs ih => unfold List.foldlM; exact Disciplined.bind (h _ _) (fun b => ih b)
 
 
-theorem cellKept_of_claim (cell claimed : NeedCell) (h : claimTerminalAliasInitial cell = some claimed) :
-    CellKept cell claimed := by
-  unfold claimTerminalAliasInitial at h
-  split at h
-  · cases h; exact cellKept_of_same _ _ rfl rfl rfl rfl
-  · cases h
-
 
 set_option hygiene false in
 /-- Syntax-directed heap discipline of an evaluator body, given that its recursive answer `hrec`
@@ -263,7 +255,7 @@ macro "disc_tac_base" : tactic => `(tactic| ((try disc_unfold_rec) <;> repeat' (
   | (with_reducible apply DiscAt.bind)
   | (with_reducible apply DiscAt.set; first
       | exact HeapKept.refl _
-      | (apply HeapKept.set_bang <;> first | disc_hyp | (exact cellKept_of_same _ _ rfl rfl rfl rfl) | (apply cellKept_of_claim; disc_hyp)))
+      | (apply HeapKept.set_bang <;> first | disc_hyp | (exact cellKept_of_same _ _ rfl rfl rfl rfl)))
   | (with_reducible apply Disciplined.withCtx)
   | (with_reducible apply Disciplined.captureMeta)
   | (with_reducible apply Disciplined.attempt)
@@ -345,6 +337,15 @@ structure CapsDisc (caps : NeedCapabilities EvalM) : Prop where
   allocate : ∀ s, Disciplined (caps.allocate s)
   reference : ∀ a, Disciplined (caps.reference a)
 
+/-- NEED-04's data-anchor check demands only through the VALUE capability. -/
+theorem disc_checkAnchor (caps : NeedCapabilities EvalM) (hc : CapsDisc caps) (name : Ident)
+    (anchor : CountedResult) (family : Bool) (cells : List Nat) :
+    Disciplined (NeedBinder.checkAnchor caps name anchor family cells) := by
+  have hv := hc.value
+  induction cells with
+  | nil => unfold NeedBinder.checkAnchor; disc_tac_base
+  | cons c rest ih => unfold NeedBinder.checkAnchor; disc_tac_base
+
 theorem disc_binder (caps : NeedCapabilities EvalM) (hc : CapsDisc caps) (repeated : List Ident)
     (family : Bool) :
     (∀ pattern address bound,
@@ -352,6 +353,7 @@ theorem disc_binder (caps : NeedCapabilities EvalM) (hc : CapsDisc caps) (repeat
     (∀ patterns sources current,
       Disciplined (NeedBinder.bindSources caps patterns sources repeated current family)) := by
   have hv := hc.value; have hcl := hc.callable; have hal := hc.allocate; have hre := hc.reference
+  have hck := disc_checkAnchor caps hc
   refine NeedBinder.bindOne.mutual_induct
     (motive_1 := fun pattern address bound =>
       Disciplined (NeedBinder.bindOne caps pattern address repeated bound family))
@@ -408,7 +410,24 @@ theorem disc_maxLoop (numbers : List Int) (current : Int) :
   | nil => unfold evalMaxCounted.maxLoop; disc_tac_base
   | cons n rest ih => unfold evalMaxCounted.maxLoop; disc_tac_base
 
+theorem disc_openNavigateWith (structureOf : Algorithm → EvalM Algorithm)
+    (h : ∀ a, Disciplined (structureOf a)) (ctx : EvalCtx) (notStatic : Error)
+    (value : Algorithm) (receiverName : String) (steps : List Ident) :
+    Disciplined (openNavigateWith structureOf ctx notStatic value receiverName steps) := by
+  induction steps generalizing value receiverName with
+  | nil => unfold openNavigateWith; disc_tac_base
+  | cons member rest ih => unfold openNavigateWith; disc_tac_base
+
+theorem disc_openStructure (fuel : Nat) (ctx : EvalCtx) (a : Algorithm) :
+    Disciplined (openStructure fuel ctx a) := by
+  induction fuel generalizing a with
+  | zero => simp only [openStructure]; disc_tac_base
+  | succ n ih =>
+    have := disc_openNavigateWith (fun value => openStructure n ctx value) ih
+    simp only [openStructure]; disc_tac_base
+
 theorem disc_resolveAlgForOpen (ctx : EvalCtx) (e : Expr) : Disciplined (resolveAlgForOpen e ctx) := by
+  have := disc_openStructure
   induction e using resolveAlgForOpen.induct ctx with
   | case7 o n a ih => unfold resolveAlgForOpen; disc_tac_base
   | _ => unfold resolveAlgForOpen; disc_tac_base
@@ -416,6 +435,7 @@ theorem disc_resolveAlgForOpen (ctx : EvalCtx) (e : Expr) : Disciplined (resolve
 theorem disc_lookupOpenProperties (a : Algorithm) (name : Ident) (ctx : EvalCtx) :
     Disciplined (lookupOpenProperties a name ctx) := by
   have := disc_resolveAlgForOpen
+  have := disc_openStructure
   unfold lookupOpenProperties; disc_tac_base
 
 theorem disc_lookupOpenPropertiesInParentChain (name : Ident) (ctx : EvalCtx) (sc : ScopeCtx) :
@@ -426,6 +446,30 @@ theorem disc_lookupOpenPropertiesInParentChain (name : Ident) (ctx : EvalCtx) (s
     unfold lookupOpenPropertiesInParentChain
     cases t with
     | mk parent _ _ _ _ _ _ _ => cases parent <;> disc_tac_base
+
+theorem disc_aliasStepNavigateWith (structureOf : Algorithm → EvalCtx → EvalM (Option Algorithm))
+    (h : ∀ a c, Disciplined (structureOf a c)) (stepCtx : EvalCtx) (notStatic : Error)
+    (value : Algorithm) (last : Option ResolvedProperty) (receiverName : String) (steps : List Ident) :
+    Disciplined (aliasStepNavigateWith structureOf stepCtx notStatic value last receiverName steps) := by
+  induction steps generalizing value last receiverName with
+  | nil => unfold aliasStepNavigateWith; disc_tac_base
+  | cons member rest ih => unfold aliasStepNavigateWith; disc_tac_base
+
+theorem disc_resolveAliasStepWith (structureOf : Algorithm → EvalCtx → EvalM (Option Algorithm))
+    (h : ∀ a c, Disciplined (structureOf a c)) (step : Algorithm) (target : Expr) (ctx : EvalCtx) :
+    Disciplined (resolveAliasStepWith structureOf step target ctx) := by
+  have := disc_aliasStepNavigateWith structureOf h
+  have := disc_lookupOpenProperties
+  have := disc_lookupOpenPropertiesInParentChain
+  unfold resolveAliasStepWith; disc_tac_base
+
+theorem disc_aliasRouteIsIntrinsicWith (structureOf : Algorithm → EvalCtx → EvalM (Option Algorithm))
+    (h : ∀ a c, Disciplined (structureOf a c)) (receiver : Expr) (ctx : EvalCtx) :
+    Disciplined (aliasRouteIsIntrinsicWith structureOf receiver ctx) := by
+  have := disc_aliasStepNavigateWith structureOf h
+  have := disc_lookupOpenProperties
+  have := disc_lookupOpenPropertiesInParentChain
+  unfold aliasRouteIsIntrinsicWith; disc_tac_base
 
 section LocalLoops
 variable (rec : EvalRec) (hrec : ∀ c, Disciplined (rec c))
@@ -493,10 +537,10 @@ theorem disc_repeatLoop (ctx : EvalCtx) (env : ValEnv) (step : ResolvedArgumentA
 end LocalLoops
 
 
-/-! ### The D4 bare-cell write (`aliasBareCell`)
+/-! ### Pushing writers keep every existing cell
 
-Its second write stores back the cell value read BEFORE three intermediate operations; it keeps the
-heap because those operations never change an existing cell (they only push one). -/
+`bindParameters`, `recordParameterActivation`, `enterAlgorithmBody` and the supplier never change an
+existing cell (they only push one). -/
 
 theorem needs_bindParameters (names : List Ident) (ctx : EvalCtx) (s : EvalState) :
     ((EvalCtx.bindParameters names ctx).runState s).2.needs = s.needs := rfl
@@ -525,67 +569,6 @@ theorem supply_keeps_cells (source : Expr) (caller : EvalCtx) (values : ValEnv) 
     show (s.needs.push _)[a]? = some c
     rw [Array.getElem?_push]; simp [Nat.ne_of_lt ha, h]
 
-theorem disc_aliasBareTail (wired : Algorithm) (target : Expr) (ctx : EvalCtx) (address : Nat)
-    (cell : NeedCell) (t : EvalState) (hc : t.needs[address]? = some cell) :
-    DiscAt t (do
-      let bindingCtx ← EvalCtx.bindParameters [] ctx
-      let declaringCtx ← enterAlgorithmBody wired bindingCtx []
-      let bare ← supplyNeed target declaringCtx []
-      modify fun s => { s with needs := s.needs.set! address { cell with aliasBare := some bare } }
-      pure bare : EvalM Nat) := by
-  unfold DiscAt
-  rw [bind_run]
-  generalize hb : (EvalCtx.bindParameters [] ctx).runState t = rb
-  have hb1 : rb.2.needs = t.needs := by rw [← hb]; exact needs_bindParameters [] ctx t
-  rcases rb with ⟨ob, t1⟩
-  cases ob with
-  | error e => simp only at hb1 ⊢; rw [hb1]; exact HeapKept.refl _
-  | ok bindingCtx =>
-    simp only at hb1 ⊢
-    rw [bind_run]
-    generalize he : (enterAlgorithmBody wired bindingCtx []).runState t1 = re
-    have he1 : re.2.needs = t1.needs := by rw [← he]; exact needs_enterAlgorithmBody wired bindingCtx [] t1
-    rcases re with ⟨oe, t2⟩
-    cases oe with
-    | error e => simp only at he1 ⊢; rw [he1, hb1]; exact HeapKept.refl _
-    | ok declaringCtx =>
-      simp only at he1 ⊢
-      rw [bind_run]
-      have hc2 : t2.needs[address]? = some cell := by rw [he1, hb1]; exact hc
-      have kp : HeapKept t.needs ((supplyNeed target declaringCtx []).runState t2).2.needs := by
-        intro b d hd
-        refine ⟨d, ?_, CellKept.refl d⟩
-        apply supply_keeps_cells
-        rw [he1, hb1]; exact hd
-      have hc3 := supply_keeps_cells target declaringCtx [] t2 address cell hc2
-      generalize hs : (supplyNeed target declaringCtx []).runState t2 = rs at kp hc3
-      rcases rs with ⟨os, t3⟩
-      cases os with
-      | error e => exact kp
-      | ok bare =>
-        simp only at kp hc3 ⊢
-        rw [bind_run, modify_run]
-        exact kp.trans (HeapKept.set_bang _ _ _ _ hc3 (cellKept_of_same _ _ rfl rfl rfl rfl))
-
-theorem disc_aliasBareCell (wired : Algorithm) (target : Expr) (ctx : EvalCtx)
-    (hbind : Disciplined (aliasBindingCell wired target ctx)) :
-    Disciplined (aliasBareCell wired target ctx) := by
-  unfold aliasBareCell
-  apply Disciplined.bind hbind
-  intro address
-  apply disc_get_bind
-  intro st
-  split
-  · rename_i cell hcell
-    split
-    · apply DiscAt.bind
-      · exact DiscAt.set (HeapKept.set_bang _ _ _ _ hcell (cellKept_of_same _ _ rfl rfl rfl rfl))
-      · intro _; exact disciplined_pure _
-    · split
-      · exact DiscAt.of_disc (disciplined_pure _)
-      · exact disc_aliasBareTail wired target ctx address cell st hcell
-  · exact DiscAt.of_disc (disciplined_pure _)
-
 set_option hygiene false in
 /-- Syntax-directed heap discipline of an evaluator body, given that its recursive answer `hrec`
     is disciplined. -/
@@ -597,7 +580,7 @@ macro "disc_tac" : tactic => `(tactic| ((try disc_unfold_rec) <;> repeat' (first
   | (with_reducible apply DiscAt.bind)
   | (with_reducible apply DiscAt.set; first
       | exact HeapKept.refl _
-      | (apply HeapKept.set_bang <;> first | disc_hyp | (exact cellKept_of_same _ _ rfl rfl rfl rfl) | (apply cellKept_of_claim; disc_hyp)))
+      | (apply HeapKept.set_bang <;> first | disc_hyp | (exact cellKept_of_same _ _ rfl rfl rfl rfl)))
   | (with_reducible apply Disciplined.withCtx)
   | (with_reducible apply Disciplined.captureMeta)
   | (with_reducible apply Disciplined.attempt)
@@ -639,8 +622,12 @@ macro "disc_tac" : tactic => `(tactic| ((try disc_unfold_rec) <;> repeat' (first
   | (with_reducible apply disc_minLoop)
   | (with_reducible apply disc_maxLoop)
   | (with_reducible apply disc_resolveAlgForOpen)
+  | (with_reducible apply disc_openStructure)
+  | (with_reducible apply disc_resolveAliasStepWith)
+  | (with_reducible apply disc_aliasRouteIsIntrinsicWith)
   | (with_reducible apply disc_lookupOpenProperties)
   | (with_reducible apply disc_lookupOpenPropertiesInParentChain)
+  | (with_reducible apply EvalBody.terminalAccess_disciplined rec hrec)
   | (with_reducible apply disc_outputRowsCollect rec hrec)
   | (with_reducible apply disc_explicitRowsCollect rec hrec)
   | (with_reducible apply disc_listLiteralCollect rec hrec)
@@ -650,7 +637,6 @@ macro "disc_tac" : tactic => `(tactic| ((try disc_unfold_rec) <;> repeat' (first
   | (with_reducible apply disc_filterLoop rec hrec)
   | (with_reducible apply disc_mapLoop rec hrec)
   | (with_reducible apply disc_repeatLoop rec hrec)
-  | (with_reducible apply disc_aliasBareCell)
   | (with_reducible apply CapsDisc.mk)
 
   | split
@@ -664,21 +650,29 @@ theorem EvalBody.whileLoop_disciplined (rec : EvalRec) (hrec : ∀ c, Discipline
     Disciplined (EvalBody.whileLoop rec step ctx env stepName cells) := by
   unfold EvalBody.whileLoop; disc_tac
 
-theorem EvalBody.aliasStepIsRuntime_disciplined (rec : EvalRec) (hrec : ∀ c, Disciplined (rec c)) (step : Algorithm) (target : Expr) (ctx : EvalCtx) :
-    Disciplined (EvalBody.aliasStepIsRuntime rec step target ctx) := by
+theorem EvalBody.aliasStepIsRuntime_disciplined (rec : EvalRec) (hrec : ∀ c, Disciplined (rec c)) (step : Algorithm) (target : Expr) (ctx : EvalCtx) (visited : List String) :
+    Disciplined (EvalBody.aliasStepIsRuntime rec step target ctx visited) := by
   unfold EvalBody.aliasStepIsRuntime; disc_tac
 
 theorem EvalBody.aliasValue_disciplined (rec : EvalRec) (hrec : ∀ c, Disciplined (rec c)) (wired : Algorithm) (ctx : EvalCtx) (env : ValEnv) :
     Disciplined (EvalBody.aliasValue rec wired ctx env) := by
   unfold EvalBody.aliasValue; disc_tac
 
-theorem EvalBody.resolveAliasChase_disciplined (rec : EvalRec) (hrec : ∀ c, Disciplined (rec c)) (callable : Bool) (a : Algorithm) (ctx : EvalCtx) (visited : List String) (projectedFrom : Option Algorithm) :
-    Disciplined (EvalBody.resolveAliasChase rec callable a ctx visited projectedFrom) := by
+theorem EvalBody.resolveAliasChase_disciplined (rec : EvalRec) (hrec : ∀ c, Disciplined (rec c)) (followCarriers projectRuntime : Bool) (a : Algorithm) (ctx : EvalCtx) (visited : List String) (last : Option (Algorithm × PropDef)) :
+    Disciplined (EvalBody.resolveAliasChase rec followCarriers projectRuntime a ctx visited last) := by
   unfold EvalBody.resolveAliasChase; disc_tac
 
 theorem EvalBody.resolveAliasTarget_disciplined (rec : EvalRec) (hrec : ∀ c, Disciplined (rec c)) (a : Algorithm) (ctx : EvalCtx) :
     Disciplined (EvalBody.resolveAliasTarget rec a ctx) := by
   unfold EvalBody.resolveAliasTarget; disc_tac
+
+theorem EvalBody.resolveAliasStructure_disciplined (rec : EvalRec) (hrec : ∀ c, Disciplined (rec c)) (a : Algorithm) (ctx : EvalCtx) :
+    Disciplined (EvalBody.resolveAliasStructure rec a ctx) := by
+  unfold EvalBody.resolveAliasStructure; disc_tac
+
+theorem EvalBody.aliasOriginBinding?_disciplined (rec : EvalRec) (hrec : ∀ c, Disciplined (rec c)) (a : Algorithm) (ctx : EvalCtx) :
+    Disciplined (EvalBody.aliasOriginBinding? rec a ctx) := by
+  unfold EvalBody.aliasOriginBinding?; disc_tac
 
 theorem EvalBody.resolveAliasValueTarget_disciplined (rec : EvalRec) (hrec : ∀ c, Disciplined (rec c)) (a : Algorithm) (ctx : EvalCtx) :
     Disciplined (EvalBody.resolveAliasValueTarget rec a ctx) := by
@@ -863,6 +857,12 @@ theorem EvalBody.evalAlgOutputCountedCore_disciplined (rec : EvalRec) (hrec : �
 theorem EvalBody.evalAlgOutputCounted_disciplined (rec : EvalRec) (hrec : ∀ c, Disciplined (rec c)) (a : Algorithm) (ctx : EvalCtx) (env : ValEnv) :
     Disciplined (EvalBody.evalAlgOutputCounted rec a ctx env) := by
   unfold EvalBody.evalAlgOutputCounted; disc_tac
+
+/-- A VALUE terminal's read (`EvalBody.terminalAccess`), proved once and used by every body that
+    reads one, so those bodies never unfold it inline (M4★). -/
+theorem EvalBody.terminalAccess_disciplined (rec : EvalRec) (hrec : ∀ c, Disciplined (rec c)) (t : AliasTerminal) (ctx : EvalCtx) (env : ValEnv) :
+    Disciplined (EvalBody.terminalAccess rec t ctx env) := by
+  unfold EvalBody.terminalAccess; disc_tac
 
 theorem EvalBody.evalZeroArgumentDemandOutputCounted_disciplined (rec : EvalRec) (hrec : ∀ c, Disciplined (rec c)) (a : Algorithm) (ctx : EvalCtx) (env : ValEnv) :
     Disciplined (EvalBody.evalZeroArgumentDemandOutputCounted rec a ctx env) := by
@@ -1084,9 +1084,11 @@ theorem evalStep_disciplined (rec : EvalRec) (hrec : ∀ c, Disciplined (rec c))
   intro c
   cases c with
   | whileLoop step ctx env stepName cells => exact EvalBody.whileLoop_disciplined rec hrec step ctx env stepName cells
-  | aliasStepIsRuntime step target ctx => exact EvalBody.aliasStepIsRuntime_disciplined rec hrec step target ctx
+  | aliasStepIsRuntime step target ctx visited => exact EvalBody.aliasStepIsRuntime_disciplined rec hrec step target ctx visited
   | aliasValue wired ctx env => exact EvalBody.aliasValue_disciplined rec hrec wired ctx env
-  | resolveAliasChase callable a ctx visited projectedFrom => exact EvalBody.resolveAliasChase_disciplined rec hrec callable a ctx visited projectedFrom
+  | resolveAliasChase followCarriers projectRuntime a ctx visited last => exact EvalBody.resolveAliasChase_disciplined rec hrec followCarriers projectRuntime a ctx visited last
+  | resolveAliasStructure a ctx => exact EvalBody.resolveAliasStructure_disciplined rec hrec a ctx
+  | aliasOriginBinding? a ctx => exact EvalBody.aliasOriginBinding?_disciplined rec hrec a ctx
   | resolveAliasTarget a ctx => exact EvalBody.resolveAliasTarget_disciplined rec hrec a ctx
   | resolveAliasValueTarget a ctx => exact EvalBody.resolveAliasValueTarget_disciplined rec hrec a ctx
   | lookupLexicalProperty a name ctx => exact EvalBody.lookupLexicalProperty_disciplined rec hrec a name ctx

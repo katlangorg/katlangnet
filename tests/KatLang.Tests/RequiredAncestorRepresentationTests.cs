@@ -46,10 +46,11 @@ public class RequiredAncestorRepresentationTests
     private static Algorithm.User Exposed(string source, FrontEndTraversalObservations observations)
     {
         var syntax = SourceProvenance.ParseSyntaxValidRoot(source);
-        var (detected, detectionDiagnostics) = ParameterDetector.DetectPrevalidated(syntax);
+        var detectedInput = ParameterDetector.DetectPrevalidated(syntax);
+        var (detected, detectionDiagnostics) = detectedInput;
         Assert.Empty(detectionDiagnostics);
         var diagnostics = new DiagnosticBag();
-        var resolved = ImplicitArgumentResolver.ResolvePrevalidated(detected, observations: null, diagnostics);
+        var resolved = ImplicitArgumentResolver.ResolvePrevalidated(detectedInput, observations: null, diagnostics);
         Assert.Empty(diagnostics);
         return (Algorithm.User)PropertyExposureResolver.Resolve(resolved, observations);
     }

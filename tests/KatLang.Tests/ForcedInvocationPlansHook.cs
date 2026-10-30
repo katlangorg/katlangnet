@@ -8,8 +8,8 @@ namespace KatLang.Tests;
 /// evaluator run of this test process captures an <see cref="InvocationPlanTestSeam"/>
 /// (<see cref="InvocationPlanTestSeam.ProcessDefault"/>), so the entire suite executes with every call-shaped
 /// supplied argument routed through its retained plan — the agreement check between the J7 gate's ordinary
-/// route and the plan route. It is an explicit, separately launched validation run
-/// (<c>validate-all.ps1 -Phase DotNet -ForceInvocationPlans</c>; the ordinary run removes the variable):
+/// route and the plan route. This is a legacy, explicitly requested diagnostic mode, never a second
+/// normal validation pass. The validation script removes the variable:
 /// without the variable nothing changes. The variable is read once, when the test assembly loads, so it
 /// is set or removed in the test host's environment before the host starts — never toggled by a test.
 /// A test whose expectation legitimately depends on the route — plan and supply-formation counts,

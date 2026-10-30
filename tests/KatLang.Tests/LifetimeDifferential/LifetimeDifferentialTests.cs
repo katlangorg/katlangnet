@@ -241,9 +241,10 @@ public class LifetimeDifferentialTests
     /// </summary>
     private static string FinishPipelineNeutral(Algorithm loadElaborated)
     {
-        var (detected, detectionDiagnostics) = ParameterDetector.Detect(loadElaborated);
+        var detectedInput = ParameterDetector.Detect(loadElaborated);
+        var (detected, detectionDiagnostics) = detectedInput;
         Assert.DoesNotContain(detectionDiagnostics, d => d.Severity == DiagnosticSeverity.Error);
-        var resolved = ImplicitArgumentResolver.Resolve(detected);
+        var resolved = ImplicitArgumentResolver.Resolve(detectedInput);
         var exposed = PropertyExposureResolver.Resolve(resolved);
         var counted = Evaluator.RunCounted(new Expr.AlgorithmExpr(exposed));
         return counted.IsOk

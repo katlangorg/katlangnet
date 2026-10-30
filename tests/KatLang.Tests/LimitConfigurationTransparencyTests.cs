@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using KatLang.Evaluation;
 using KatLang.Evaluation.Caching;
 using KatLang.Optimizations.Loops;
@@ -384,26 +385,31 @@ public class LimitConfigurationTransparencyTests
     }
 
     /// <summary>
-    /// Q-09a and Q-09b together, on a run that GENUINELY suspends before every recursive descent
-    /// (an asynchronous host operation that yields). The suspending twin resumes on fresh stacks,
-    /// so it may complete a recursion the synchronous evaluator stops on the same thread size with
+    /// Q-09a and Q-09b together, on a run with a forced initial suspension and a yielding host
+    /// operation before every recursive descent. It may complete a recursion the synchronous
+    /// evaluator stops on the minimum supported stack with
     /// <see cref="EvalError.EvaluationStackExhausted"/> — route and host variability, which the
     /// language permits and never calls a mismatch. What the configuration may NOT do is change
     /// anything: every non-binding limit configuration leaves the suspending run's outcome and host
     /// trace exactly as the unconfigured run has them.
-    /// <para>So every run starts from the same host conditions — on a fresh thread-pool work item,
-    /// hence a fresh stack — and only the configuration differs. A run's completion unwinds one
-    /// nested continuation per recursion level (measured on 2026-10-13: about 1,700 to 3,900
-    /// frames here, varying with the JIT state). A run awaited plainly after its predecessor
-    /// starts at the bottom of that unwind, where its first invocations can meet the host-stack
-    /// backstop: the same run started with 1,150 of about 1,230 KiB of headroom already used
-    /// stops with <see cref="EvalError.EvaluationStackExhausted"/> before its first pause.
-    /// That is host variability (Q-09a), never a configuration's effect (Q-09b). It made this
-    /// test fail once in a full suite run, as "steps-max changed the suspending run".</para>
+    /// <para>A yielded callback may finish on another pool thread before its caller observes
+    /// the pending awaitable; Task.Run alone therefore does not give every descent a fresh
+    /// stack. The isolated child gives all default runtime threads the same 8-MiB stack envelope,
+    /// enough for this unchanged 100-level case even when yields finish early. An initial gate
+    /// separately proves actual API suspension. Every configuration must still succeed with all
+    /// 100 pauses; no stack-error alternative is accepted for the async comparison. The sync
+    /// control below retains its explicit 1-MiB stack. This changes test host conditions only,
+    /// never evaluator policy or the enclosing validation's time/process-memory limits.</para>
     /// </summary>
     [Fact]
     public async Task GenuinelySuspendingRun_IsUnchangedByNonBindingLimits_AndMayOutrunTheSynchronousRoute()
     {
+        if (Environment.GetEnvironmentVariable(SuspensionProbeChildEnvironment) != "1")
+        {
+            await RunSuspensionProbeChildAsync();
+            return;
+        }
+        Assert.Equal("800000", Environment.GetEnvironmentVariable("DOTNET_Thread_DefaultStackSize"));
         const string source = "F(x) = if(x < 100, pause() + F(x + 1), x)\nF(0)";
 
         // A fresh stack per run (see the summary). The observation names a failure's codes, so a
@@ -411,13 +417,18 @@ public class LimitConfigurationTransparencyTests
         Task<string> RunSuspending(EvaluationLimits? limits) => Task.Run(async () =>
         {
             var log = new List<string>();
+            var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
             var operations = HostOperations.Create(HostOperation.CreateAsync("pause", async (_, _) =>
             {
+                await release.Task.ConfigureAwait(false);
                 await Task.Yield();
                 lock (log) log.Add("pause");
                 return new Result.Atom(0);
             }));
-            var result = await KatLangEngine.RunAsync(source, new RunOptions { HostOperations = operations, EvaluationLimits = limits });
+            var pending = KatLangEngine.RunAsync(source, new RunOptions { HostOperations = operations, EvaluationLimits = limits });
+            Assert.False(pending.IsCompleted);
+            release.SetResult();
+            var result = await pending;
             var codes = result is RunResult.EvalFailure failure
                 ? " codes=" + string.Join(",", failure.Errors.Select(static error => error.Code))
                 : "";
@@ -446,6 +457,34 @@ public class LimitConfigurationTransparencyTests
                 : result.ToDisplayString();
         });
         Assert.Contains(synchronous, new[] { "100", "err EvaluationStackExhausted" });
+        var marker = Environment.GetEnvironmentVariable(SuspensionProbeMarkerEnvironment);
+        Assert.False(string.IsNullOrEmpty(marker));
+        await File.WriteAllTextAsync(marker!, "all-16-configurations-100-pauses-and-minimum-stack-control-passed");
+    }
+
+    private const string SuspensionProbeChildEnvironment = "KATLANG_LIMIT_TRANSPARENCY_SUSPENSION_CHILD";
+    private const string SuspensionProbeMarkerEnvironment = "KATLANG_LIMIT_TRANSPARENCY_SUSPENSION_MARKER";
+
+    private static async Task RunSuspensionProbeChildAsync()
+    {
+        var marker = Path.Combine(Path.GetTempPath(), $"katlang-limit-transparency-{Guid.NewGuid():N}.txt");
+        var start = SubprocessProbe.StartInfo(typeof(LimitConfigurationTransparencyTests).Assembly.Location, [typeof(LimitConfigurationTransparencyTests).FullName + "."
+            + nameof(GenuinelySuspendingRun_IsUnchangedByNonBindingLimits_AndMayOutrunTheSynchronousRoute)]);
+        start.Environment["DOTNET_Thread_DefaultStackSize"] = "800000";
+        start.Environment[SuspensionProbeChildEnvironment] = "1";
+        start.Environment[SuspensionProbeMarkerEnvironment] = marker;
+        try
+        {
+            using var process = Process.Start(start)!;
+            var output = process.StandardOutput.ReadToEndAsync();
+            var errors = process.StandardError.ReadToEndAsync();
+            await process.WaitForExitAsync();
+            var text = await output + Environment.NewLine + await errors;
+            Assert.True(process.ExitCode == 0, text);
+            Assert.True(File.Exists(marker), "The child did not execute its assertions.\n" + text);
+            Assert.Equal("all-16-configurations-100-pauses-and-minimum-stack-control-passed", await File.ReadAllTextAsync(marker));
+        }
+        finally { File.Delete(marker); }
     }
 
     /// <summary>

@@ -121,6 +121,10 @@ variable {γ : Type} [PartialOrder γ]
     (m : γ → EvalM α) (h : monotone m) : monotone (fun x => withNestedMissingOutput (m x)) := by
   unfold withNestedMissingOutput; mono_cb_tac
 
+@[partial_fixpoint_monotone] theorem monotone_withMissingOutputNesting {α : Type} (nested : Bool)
+    (m : γ → EvalM α) (h : monotone m) : monotone (fun x => withMissingOutputNesting nested (m x)) := by
+  unfold withMissingOutputNesting; mono_cb_tac
+
 @[partial_fixpoint_monotone] theorem monotone_formLeftToRight
     (form : γ → Expr → EvalM (List Result)) (h : monotone form) (rows : List Expr) :
     monotone (fun x => OutputRows.formLeftToRight (form x) rows) := by
@@ -173,6 +177,27 @@ variable {γ : Type} [PartialOrder γ]
     (owner : Algorithm) (target : Expr) (ctx : EvalCtx) :
     monotone (fun x => runtimeAliasStepWith (project x) owner target ctx) := by
   unfold runtimeAliasStepWith; mono_cb_tac
+
+@[partial_fixpoint_monotone] theorem monotone_aliasStepNavigateWith
+    (structureOf : γ → Algorithm → EvalCtx → EvalM (Option Algorithm)) (h : monotone structureOf)
+    (stepCtx : EvalCtx) (notStatic : Error) (value : Algorithm) (last : Option ResolvedProperty)
+    (receiverName : String) (steps : List Ident) :
+    monotone (fun x => aliasStepNavigateWith (structureOf x) stepCtx notStatic value last receiverName steps) := by
+  induction steps generalizing value last receiverName with
+  | nil => unfold aliasStepNavigateWith; mono_cb_tac
+  | cons member rest ih => unfold aliasStepNavigateWith; mono_cb_tac
+
+@[partial_fixpoint_monotone] theorem monotone_resolveAliasStepWith
+    (structureOf : γ → Algorithm → EvalCtx → EvalM (Option Algorithm)) (h : monotone structureOf)
+    (step : Algorithm) (target : Expr) (ctx : EvalCtx) :
+    monotone (fun x => resolveAliasStepWith (structureOf x) step target ctx) := by
+  unfold resolveAliasStepWith; mono_cb_tac
+
+@[partial_fixpoint_monotone] theorem monotone_aliasRouteIsIntrinsicWith
+    (structureOf : γ → Algorithm → EvalCtx → EvalM (Option Algorithm)) (h : monotone structureOf)
+    (receiver : Expr) (ctx : EvalCtx) :
+    monotone (fun x => aliasRouteIsIntrinsicWith (structureOf x) receiver ctx) := by
+  unfold aliasRouteIsIntrinsicWith; mono_cb_tac
 
 @[partial_fixpoint_monotone] theorem monotone_projectParameterWith
     (project : γ → Nat → EvalM (Option Algorithm)) (h : monotone project) (name : Ident) (ctx : EvalCtx) :
@@ -387,8 +412,8 @@ structure CapsMono (caps : γ → NeedCapabilities EvalM) : Prop where
   allocate : monotone (fun x => (caps x).allocate)
   reference : monotone (fun x => (caps x).reference)
 
-@[partial_fixpoint_monotone] theorem monotone_cardinalityGate (patterns : List NeedPattern) (count : Nat) (family : Bool)
-    (accepted : γ → EvalM (Option NeedEnv)) (h : monotone accepted) :
+@[partial_fixpoint_monotone] theorem monotone_cardinalityGate {β : Type} (patterns : List NeedPattern) (count : Nat) (family : Bool)
+    (accepted : γ → EvalM (Option β)) (h : monotone accepted) :
     monotone (fun x => NeedBinder.cardinalityGate patterns count family (accepted x)) := by
   unfold NeedBinder.cardinalityGate; mono_cb_tac
 
@@ -408,10 +433,20 @@ structure CapsMono (caps : γ → NeedCapabilities EvalM) : Prop where
   · left; unfold EvalM.IsIncompleteAt at hs; rw [hs]; rfl
   · right; rw [hs]
 
+/-- NEED-04's data-anchor check is monotone in the VALUE capability it demands through. -/
+@[partial_fixpoint_monotone] theorem monotone_checkAnchor (caps : γ → NeedCapabilities EvalM)
+    (hv : monotone (fun x => (caps x).value)) (name : Ident) (anchor : CountedResult) (family : Bool)
+    (cells : List Nat) :
+    monotone (fun x => NeedBinder.checkAnchor (caps x) name anchor family cells) := by
+  induction cells with
+  | nil => unfold NeedBinder.checkAnchor; mono_cb_tac
+  | cons cell rest ih => unfold NeedBinder.checkAnchor; mono_tac
+
 theorem monotone_bindName (caps : γ → NeedCapabilities EvalM) (hc : CapsMono caps)
-    (name : Ident) (address : Nat) (repeated : List Ident) (bound : NeedEnv) (family : Bool) :
+    (name : Ident) (address : Nat) (repeated : List Ident) (bound : NeedBindState) (family : Bool) :
     monotone (fun x => NeedBinder.bindName (caps x) name address repeated bound family) := by
   have hv := hc.value; have hcl := hc.callable
+  have hck := fun anchor cells => monotone_checkAnchor caps hv name anchor family cells
   unfold NeedBinder.bindName; mono_tac
 
 theorem monotone_binder (caps : γ → NeedCapabilities EvalM) (hc : CapsMono caps)
@@ -440,15 +475,15 @@ theorem monotone_binder (caps : γ → NeedCapabilities EvalM) (hc : CapsMono ca
     mono_tac
   · intro address bound ps ih
     simp only [NeedBinder.bindOne]
-    have hg := monotone_cardinalityGate (γ := γ) ps
+    have hg := monotone_cardinalityGate (γ := γ) (β := NeedBindState) ps
     mono_tac
   · intro address bound ps ih
     simp only [NeedBinder.bindOne]
-    have hg := monotone_cardinalityGate (γ := γ) ps
+    have hg := monotone_cardinalityGate (γ := γ) (β := NeedBindState) ps
     mono_tac
   · intro address bound ps ih
     simp only [NeedBinder.bindOne]
-    have hg := monotone_cardinalityGate (γ := γ) ps
+    have hg := monotone_cardinalityGate (γ := γ) (β := NeedBindState) ps
     mono_tac
   · intro sources current
     simp only [NeedBinder.bindSources]
@@ -461,8 +496,11 @@ theorem monotone_bindPatterns (caps : γ → NeedCapabilities EvalM) (hc : CapsM
     (patterns : List NeedPattern) (cells : List Nat) (family : Bool) :
     monotone (fun x => NeedBinder.bindPatterns (caps x) patterns cells family) := by
   unfold NeedBinder.bindPatterns NeedBinder.bindLevel
-  exact monotone_cardinalityGate _ _ _ _
+  have hl := monotone_cardinalityGate (γ := γ) (β := NeedBindState) patterns cells.length family
+    (fun x => NeedBinder.bindSources (caps x) patterns (needLevelSources patterns cells)
+      (needRepeatedNames patterns) {} family)
     ((monotone_binder caps hc (needRepeatedNames patterns) family).2 _ _ _)
+  mono_tac
 
 theorem monotone_chooseBranch {β : Type} (caps : γ → NeedCapabilities EvalM) (hc : CapsMono caps)
     (cells : List Nat) (calleeName : String) (activate : CondBranch → NeedEnv → EvalM β)
@@ -607,21 +645,25 @@ theorem EvalBody.whileLoop_mono (step : ResolvedArgumentAlgorithm) (ctx : EvalCt
     monotone (fun rec : EvalRec => EvalBody.whileLoop rec step ctx env stepName cells) := by
   unfold EvalBody.whileLoop; mono_tac
 
-theorem EvalBody.aliasStepIsRuntime_mono (step : Algorithm) (target : Expr) (ctx : EvalCtx) :
-    monotone (fun rec : EvalRec => EvalBody.aliasStepIsRuntime rec step target ctx) := by
+theorem EvalBody.aliasStepIsRuntime_mono (step : Algorithm) (target : Expr) (ctx : EvalCtx) (visited : List String) :
+    monotone (fun rec : EvalRec => EvalBody.aliasStepIsRuntime rec step target ctx visited) := by
   unfold EvalBody.aliasStepIsRuntime; mono_tac
 
 theorem EvalBody.aliasValue_mono (wired : Algorithm) (ctx : EvalCtx) (env : ValEnv) :
     monotone (fun rec : EvalRec => EvalBody.aliasValue rec wired ctx env) := by
   unfold EvalBody.aliasValue; mono_tac
 
-theorem EvalBody.resolveAliasChase_mono (callable : Bool) (a : Algorithm) (ctx : EvalCtx) (visited : List String) (projectedFrom : Option Algorithm) :
-    monotone (fun rec : EvalRec => EvalBody.resolveAliasChase rec callable a ctx visited projectedFrom) := by
+theorem EvalBody.resolveAliasChase_mono (followCarriers projectRuntime : Bool) (a : Algorithm) (ctx : EvalCtx) (visited : List String) (last : Option (Algorithm × PropDef)) :
+    monotone (fun rec : EvalRec => EvalBody.resolveAliasChase rec followCarriers projectRuntime a ctx visited last) := by
   unfold EvalBody.resolveAliasChase; mono_tac
 
 theorem EvalBody.resolveAliasTarget_mono (a : Algorithm) (ctx : EvalCtx) :
     monotone (fun rec : EvalRec => EvalBody.resolveAliasTarget rec a ctx) := by
   unfold EvalBody.resolveAliasTarget; mono_tac
+
+theorem EvalBody.resolveAliasStructure_mono (a : Algorithm) (ctx : EvalCtx) :
+    monotone (fun rec : EvalRec => EvalBody.resolveAliasStructure rec a ctx) := by
+  unfold EvalBody.resolveAliasStructure; mono_tac
 
 theorem EvalBody.resolveAliasValueTarget_mono (a : Algorithm) (ctx : EvalCtx) :
     monotone (fun rec : EvalRec => EvalBody.resolveAliasValueTarget rec a ctx) := by
@@ -720,22 +762,28 @@ theorem EvalBody.algorithmCalleeOf_mono (receiver : Expr) (ctx : EvalCtx) (env :
   have := planRoute_classify_mono; unfold EvalBody.algorithmCalleeOf; mono_tac
 
 -- CACHE-PUB-1: the origin-binding helpers the dispatch calls with the evaluator answer.
-theorem EvalBody.publicationBinding?_mono (owner : Algorithm) (binding : PropDef) (wired : Algorithm) (ctx : EvalCtx) (invoked : Algorithm) :
-    monotone (fun rec : EvalRec => EvalBody.publicationBinding? rec owner binding wired ctx invoked) := by
+theorem EvalBody.publicationBinding?_mono (owner : Algorithm) (binding : PropDef) (wired : Algorithm) (ctx : EvalCtx) :
+    monotone (fun rec : EvalRec => EvalBody.publicationBinding? rec owner binding wired ctx) := by
   unfold EvalBody.publicationBinding?; mono_tac
 
-theorem EvalBody.writtenCalleeBinding?_mono (callee : Expr) (caller : EvalCtx) (invoked : Algorithm) :
-    monotone (fun rec : EvalRec => EvalBody.writtenCalleeBinding? rec callee caller invoked) := by
+theorem EvalBody.writtenCalleeBinding?_mono (callee : Expr) (caller : EvalCtx) :
+    monotone (fun rec : EvalRec => EvalBody.writtenCalleeBinding? rec callee caller) := by
   have := EvalBody.publicationBinding?_mono
   unfold EvalBody.writtenCalleeBinding?; mono_tac
 
-theorem EvalBody.cellCalleeBinding?_mono (address : Nat) (invoked : Algorithm) :
-    monotone (fun rec : EvalRec => EvalBody.cellCalleeBinding? rec address invoked) := by
+theorem EvalBody.cellCalleeBinding?_mono (address : Nat) :
+    monotone (fun rec : EvalRec => EvalBody.cellCalleeBinding? rec address) := by
   have := EvalBody.writtenCalleeBinding?_mono
   unfold EvalBody.cellCalleeBinding?; mono_tac
 
-theorem EvalBody.originBinding?_mono (origin : CalleeOrigin) (ctx : EvalCtx) (invoked : Algorithm) :
-    monotone (fun rec : EvalRec => EvalBody.originBinding? rec origin ctx invoked) := by
+theorem EvalBody.aliasOriginBinding?_mono (a : Algorithm) (ctx : EvalCtx) :
+    monotone (fun rec : EvalRec => EvalBody.aliasOriginBinding? rec a ctx) := by
+  have := planRoute_classify_mono
+  have := EvalBody.cellCalleeBinding?_mono
+  unfold EvalBody.aliasOriginBinding?; mono_tac
+
+theorem EvalBody.originBinding?_mono (origin : CalleeOrigin) (ctx : EvalCtx) :
+    monotone (fun rec : EvalRec => EvalBody.originBinding? rec origin ctx) := by
   have := EvalBody.publicationBinding?_mono
   have := EvalBody.writtenCalleeBinding?_mono
   have := EvalBody.cellCalleeBinding?_mono
@@ -743,7 +791,7 @@ theorem EvalBody.originBinding?_mono (origin : CalleeOrigin) (ctx : EvalCtx) (in
 
 theorem EvalBody.evalSuppliedCallCounted_mono (origin : CalleeOrigin) (callee : Algorithm) (cells : List NeedSupply.Sourced) (ctx : EvalCtx) (env : ValEnv) (calleeName : String) :
     monotone (fun rec : EvalRec => EvalBody.evalSuppliedCallCounted rec origin callee cells ctx env calleeName) := by
-  have := EvalBody.originBinding?_mono origin ctx callee
+  have := EvalBody.originBinding?_mono origin ctx
   unfold EvalBody.evalSuppliedCallCounted; mono_tac
 
 theorem EvalBody.evalNeedUserSupplyOutput_mono (callee : Algorithm) (cells : List Nat) (ctx : EvalCtx) (env : ValEnv) :
@@ -835,8 +883,14 @@ theorem EvalBody.evalAlgOutputCounted_mono (a : Algorithm) (ctx : EvalCtx) (env 
     monotone (fun rec : EvalRec => EvalBody.evalAlgOutputCounted rec a ctx env) := by
   unfold EvalBody.evalAlgOutputCounted; mono_tac
 
+-- OD-E (M4★): the bare read at a VALUE terminal, a plain helper over evaluator answers.
+theorem EvalBody.terminalAccess_mono (t : AliasTerminal) (ctx : EvalCtx) (env : ValEnv) :
+    monotone (fun rec : EvalRec => EvalBody.terminalAccess rec t ctx env) := by
+  unfold EvalBody.terminalAccess; mono_tac
+
 theorem EvalBody.evalZeroArgumentDemandOutputCounted_mono (a : Algorithm) (ctx : EvalCtx) (env : ValEnv) :
     monotone (fun rec : EvalRec => EvalBody.evalZeroArgumentDemandOutputCounted rec a ctx env) := by
+  have := EvalBody.terminalAccess_mono
   unfold EvalBody.evalZeroArgumentDemandOutputCounted; mono_tac
 
 theorem EvalBody.evalZeroArgumentDemandOutput_mono (a : Algorithm) (ctx : EvalCtx) (env : ValEnv) :
@@ -968,10 +1022,12 @@ theorem EvalBody.rejectDotStringIntrinsicArguments_mono (argsOpt : Option Output
 
 theorem EvalBody.evalDotStringReceiverValue_mono (target : Expr) (targetAlg : Algorithm) (ctx : EvalCtx) (env : ValEnv) :
     monotone (fun rec : EvalRec => EvalBody.evalDotStringReceiverValue rec target targetAlg ctx env) := by
+  have := EvalBody.terminalAccess_mono
   unfold EvalBody.evalDotStringReceiverValue; mono_tac
 
 theorem EvalBody.evalDotCallCounted_mono (target : Expr) (name : Ident) (fallback : Expr) (argsOpt : Option OutputBundle) (ctx : EvalCtx) (env : ValEnv) :
     monotone (fun rec : EvalRec => EvalBody.evalDotCallCounted rec target name fallback argsOpt ctx env) := by
+  have := EvalBody.terminalAccess_mono
   unfold EvalBody.evalDotCallCounted; mono_tac
 
 theorem EvalBody.rejectInvokeIntrinsicArguments_mono (argsOpt : Option OutputBundle) (ctx : EvalCtx) (env : ValEnv) :
@@ -992,6 +1048,7 @@ theorem EvalBody.evalArgumentViewBuiltin_mono (b : Builtin) (a : Nat) :
 
 theorem EvalBody.evalSequenceSpreadOperandValue_mono (e : Expr) (ctx : EvalCtx) (env : ValEnv) :
     monotone (fun rec : EvalRec => EvalBody.evalSequenceSpreadOperandValue rec e ctx env) := by
+  have := EvalBody.terminalAccess_mono
   unfold EvalBody.evalSequenceSpreadOperandValue; mono_tac
 
 theorem EvalBody.evalSequenceSpreadCounted_mono (e : Expr) (ctx : EvalCtx) (env : ValEnv) :
@@ -1028,6 +1085,7 @@ theorem EvalBody.evalComparisonLinksCounted_mono (previousExpr : Expr) (previous
 
 theorem EvalBody.evalCounted_mono (e : Expr) (ctx : EvalCtx) (env : ValEnv) :
     monotone (fun rec : EvalRec => EvalBody.evalCounted rec e ctx env) := by
+  have := EvalBody.terminalAccess_mono
   unfold EvalBody.evalCounted; mono_tac
 
 theorem EvalBody.evalUserCall_mono (callee : Algorithm) (args : OutputBundle) (ctx : EvalCtx) (env : ValEnv) :
@@ -1054,11 +1112,13 @@ theorem evalStep_monotone : monotone evalStep := by
   intro r₁ r₂ h c
   cases c with
   | whileLoop step ctx env stepName cells => exact EvalBody.whileLoop_mono step ctx env stepName cells _ _ h
-  | aliasStepIsRuntime step target ctx => exact EvalBody.aliasStepIsRuntime_mono step target ctx _ _ h
+  | aliasStepIsRuntime step target ctx visited => exact EvalBody.aliasStepIsRuntime_mono step target ctx visited _ _ h
   | aliasValue wired ctx env => exact EvalBody.aliasValue_mono wired ctx env _ _ h
-  | resolveAliasChase callable a ctx visited projectedFrom => exact EvalBody.resolveAliasChase_mono callable a ctx visited projectedFrom _ _ h
+  | resolveAliasChase followCarriers projectRuntime a ctx visited last => exact EvalBody.resolveAliasChase_mono followCarriers projectRuntime a ctx visited last _ _ h
   | resolveAliasTarget a ctx => exact EvalBody.resolveAliasTarget_mono a ctx _ _ h
+  | resolveAliasStructure a ctx => exact EvalBody.resolveAliasStructure_mono a ctx _ _ h
   | resolveAliasValueTarget a ctx => exact EvalBody.resolveAliasValueTarget_mono a ctx _ _ h
+  | aliasOriginBinding? a ctx => exact EvalBody.aliasOriginBinding?_mono a ctx _ _ h
   | lookupLexicalProperty a name ctx => exact EvalBody.lookupLexicalProperty_mono a name ctx _ _ h
   | lookupLexicalValueProperty a name ctx => exact EvalBody.lookupLexicalValueProperty_mono a name ctx _ _ h
   | lookupLexical a name ctx => exact EvalBody.lookupLexical_mono a name ctx _ _ h

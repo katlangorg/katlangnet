@@ -497,9 +497,8 @@ public class ZeroArgumentReferenceLiftingTests
     /// callables are collecting"): it IS <c>Cnt</c>'s callable, collecting signature included, so it
     /// takes arguments directly and as a callback exactly like <c>Cnt</c> and like the written
     /// forwarding alias. Read BARE it is still a cached zero-argument value (Q-03 applies to the
-    /// alias as to any callable that works with no arguments) — of its OWN binding: cache identity
-    /// follows binding identity, so the target's zero-argument demand is evaluated once for the
-    /// alias's entry and the callee's bare reads keep theirs.
+    /// alias as to any callable that works with no arguments) — its TARGET's: an alias owns no entry
+    /// of its own (OD-E, M4★), so the alias's and the callee's bare reads share the callee's one entry.
     /// </summary>
     [Fact]
     public async Task AliasOfAZeroArgumentCallable_KeepsItsSignature_AndIsReadWhenBare()
@@ -517,12 +516,11 @@ public class ZeroArgumentReferenceLiftingTests
                 "S[3, L[1, 1], L[1, 1]]");
         }
 
-        // One evaluation per BINDING: the alias's entry, then Only's own entry.
+        // One evaluation in all: the alias reads Only's own entry (formerly one per binding: S[1, 2, 2]).
         AssertOk(
             await OnEveryRouteAsync($"{Only}\nAlias = Only\nAlias, Alias + Alias, Only"),
-            "S[1, 2, 2]",
-            "tick#1",
-            "tick#2");
+            "S[1, 2, 1]",
+            "tick#1");
         // A FORMULA over Only is a value read of Only's entry: one evaluation in all.
         AssertOk(
             await OnEveryRouteAsync($"{Only}\nFormula = Only + 0\nFormula, Formula + Formula, Only"),

@@ -93,13 +93,14 @@ def completedAt (s : EvalState) (address : Nat) : Bool :=
 -- 4. A real demand failure is final: no later sibling.
 #guard let out := run production [.literal (.litInt 0), .literal (.litInt 2)] [0, 1] (heap [failingCell, readyCell (.atom 2)]) true
   isDivByZero out.1 && out.2.events == [.value 0]
--- 5. Repeated equality: VALUE current, VALUE representative, CALLABLE representative, CALLABLE current.
+-- 5. Repeated equality over Ready data (NEED-04, group-aware): each occurrence projects its CALLABLE
+--    first; a value-only contribution then demands its own VALUE, the first one being the anchor.
 #guard (run production [.bind "x", .bind "x"] [0, 1] (readyHeap [.atom 1, .atom 1])).2.events
-  == [.value 0, .value 1, .value 0, .callable 0, .callable 1]
--- 6. Repeated inequality: no projection, no later sibling.
+  == [.callable 0, .value 0, .callable 1, .value 1]
+-- 6. Repeated inequality: the second VALUE disagrees with the anchor; no later sibling.
 #guard let out := (run production [.bind "x", .bind "x", .literal (.litInt 2)] [0, 1, 2]
     (readyHeap [.atom 1, .atom 9, .atom 2]) true)
-  isOkNone out.1 && out.2.events == [.value 0, .value 1, .value 0]
+  isOkNone out.1 && out.2.events == [.callable 0, .value 0, .callable 1, .value 1]
 -- 7. Two nested list levels before the sibling, depth first, with their ready allocations.
 #guard (run production [.list [.list [.literal (.litInt 1)], .literal (.litInt 2)], .literal (.litInt 3)] [0, 1]
     (readyHeap [.listValue [.listValue [.atom 1], .atom 2], .atom 3])).2.events
@@ -126,9 +127,10 @@ def completedAt (s : EvalState) (address : Nat) : Bool :=
 #guard let out := (run production [.literal (.litInt 7), .literal (.litInt 7)] [0, 0]
     (heap [expressionCell (.binary .add (.num 3) (.num 4))]))
   isOkSome out.1 && out.2.events == [.value 0, .value 0] && completedAt out.2.semantic 0
--- A repeated name over one aliased failing cell: the first demand fails, nothing follows.
+-- A repeated name over one aliased failing cell: a computed expression has no CALLABLE, so its
+-- own VALUE is demanded and fails; nothing follows.
 #guard let out := run production [.bind "x", .bind "x"] [0, 0] (heap [failingCell])
-  isDivByZero out.1 && out.2.events == [.value 0]
+  isDivByZero out.1 && out.2.events == [.callable 0, .value 0]
 -- Three nested list levels, each opened after its parent's demand and allocation.
 #guard let out := (run production [.list [.list [.list [.literal (.litInt 5)]]]] [0]
     (readyHeap [.listValue [.listValue [.listValue [.atom 5]]]]))
@@ -164,12 +166,13 @@ def boundedAllocator : NeedCapabilities EvalM :=
 
 /-! ## Repeated names: modes, failure points, identities (stateful synthetic channels) -/
 
--- Ordinary mode, unequal values: the repeated-parameter badArity, after exactly the two VALUE events.
+-- Ordinary mode, unequal values: the repeated-parameter badArity, after each occurrence's CALLABLE
+-- and own VALUE.
 #guard let out := run production [.bind "x", .bind "x"] [0, 1] (readyHeap [.atom 1, .atom 9])
-  isRepeatedBadArity out.1 && out.2.events == [.value 0, .value 1, .value 0]
--- The CURRENT occurrence's VALUE fails before any representative or CALLABLE event.
+  isRepeatedBadArity out.1 && out.2.events == [.callable 0, .value 0, .callable 1, .value 1]
+-- The second occurrence's own VALUE fails after its CALLABLE; nothing more.
 #guard let out := run production [.bind "x", .bind "x"] [0, 1] (heap [readyCell (.atom 1), failingCell])
-  isDivByZero out.1 && out.2.events == [.value 0, .value 1]
+  isDivByZero out.1 && out.2.events == [.callable 0, .value 0, .callable 1, .value 1]
 
 /-- A channel record whose VALUE demand of cell 0 fails once ANY VALUE demand has succeeded
     (the success counter is `nextRuntimeDeclaration`); every other demand answers `1` and
@@ -184,9 +187,10 @@ def flakyRepresentative : NeedCapabilities EvalM where
   allocate := allocateNeed
   reference := NeedPlan.reference
 
--- The representative's re-demand fails: events end at it, no CALLABLE projection.
+-- The anchor's VALUE is demanded ONCE and kept in the group state, never re-demanded: a channel
+-- whose re-demand of cell 0 would fail binds, the anchor's cell being the representative.
 #guard let out := run flakyRepresentative [.bind "x", .bind "x"] [0, 1] (heap [])
-  isDemandCycle out.1 && out.2.events == [.value 0, .value 1, .value 0]
+  bindingIs [("x", 0)] out.1 && out.2.events == [.callable 0, .value 0, .callable 1, .value 1]
 
 /-- Equal values; CALLABLE of cell `failAt` raises; cells 2 and 3 carry DIFFERENT builtin
     identities; every other cell has none. -/
@@ -200,20 +204,67 @@ def projectionChannels (failAt : Nat) : NeedCapabilities EvalM where
   allocate := allocateNeed
   reference := NeedPlan.reference
 
--- The representative's CALLABLE projection fails: the current one is never projected.
+-- The first occurrence's CALLABLE projection fails: it propagates (never absence) and nothing
+-- else is invoked.
 #guard let out := run (projectionChannels 0) [.bind "x", .bind "x"] [0, 1] (heap [])
-  isIllegal out.1 && out.2.events == [.value 0, .value 1, .value 0, .callable 0]
--- The current occurrence's CALLABLE projection fails last.
+  isIllegal out.1 && out.2.events == [.callable 0]
+-- A later occurrence's CALLABLE projection fails after the earlier occurrence's events.
 #guard let out := run (projectionChannels 1) [.bind "x", .bind "x"] [0, 1] (heap [])
-  isIllegal out.1 && out.2.events == [.value 0, .value 1, .value 0, .callable 0, .callable 1]
--- Incompatible identities: the type error in ordinary mode, the non-match in a family.
+  isIllegal out.1 && out.2.events == [.callable 0, .value 0, .callable 1]
+-- Incompatible identities: the type error in ordinary mode, the non-match in a family, after the
+-- two CALLABLE events and before any VALUE demand.
 #guard let out := run (projectionChannels 99) [.bind "x", .bind "x"] [2, 3] (heap [])
-  isTypeMismatch out.1 && out.2.events == [.value 2, .value 3, .value 2, .callable 2, .callable 3]
+  isTypeMismatch out.1 && out.2.events == [.callable 2, .callable 3]
 #guard isOkNone (run (projectionChannels 99) [.bind "x", .bind "x"] [2, 3] (heap []) true).1
 -- A richer later contribution replaces the representative; an equally rich one keeps it.
 #guard bindingIs [("x", 2)] (run (projectionChannels 99) [.bind "x", .bind "x"] [0, 2] (heap [])).1
 #guard bindingIs [("x", 2)] (run (projectionChannels 99) [.bind "x", .bind "x"] [2, 0] (heap [])).1
 #guard bindingIs [("x", 0)] (run (projectionChannels 99) [.bind "x", .bind "x"] [0, 1] (heap [])).1
+
+/-- NEED-04 groups (ALIAS-UNIFY-1): cells 0 and 1 carry the SAME builtin identity but DIFFERENT
+    completed VALUEs (1 and 2); cell 2 a different identity; cells 3 (VALUE 1) and 4 (VALUE 2)
+    none. -/
+def groupChannels : NeedCapabilities EvalM where
+  value address := pure (if address == 1 || address == 4 then (.atom 2, 1) else (.atom 1, 1))
+  callable address :=
+    pure (if address == 0 || address == 1 then some (.builtin .countBuiltin)
+      else if address == 2 then some (.builtin .sumBuiltin) else none)
+  allocate := allocateNeed
+  reference := NeedPlan.reference
+
+-- REFERENCE-GROUP INERTNESS: equal identities match by identity alone — no VALUE is demanded,
+-- even though the two completed VALUEs differ; the first callable cell is the representative.
+#guard let out := run groupChannels [.bind "x", .bind "x"] [0, 1] (heap [])
+  bindingIs [("x", 0)] out.1 && out.2.events == [.callable 0, .callable 1]
+#guard let out := run groupChannels [.bind "x", .bind "x"] [1, 0] (heap [])
+  bindingIs [("x", 1)] out.1 && out.2.events == [.callable 1, .callable 0]
+-- An identity conflict ends the group after the two projections, before any VALUE.
+#guard let out := run groupChannels [.bind "x", .bind "x"] [0, 2] (heap [])
+  isTypeMismatch out.1 && out.2.events == [.callable 0, .callable 2]
+#guard let out := run groupChannels [.bind "x", .bind "x"] [0, 2] (heap []) true
+  isOkNone out.1 && out.2.events == [.callable 0, .callable 2]
+-- THE ANCHOR IS DEMANDED BEFORE THE PENDING VALUES, which follow in occurrence order: the value-only
+-- anchor (cell 3, VALUE 1) agrees with cell 0 and then disagrees with cell 1 — every contribution's
+-- OWN VALUE is checked, so a binder comparing the anchor with one representative only would accept.
+#guard let out := run groupChannels [.bind "x", .bind "x", .bind "x"] [0, 1, 3] (heap [])
+  isRepeatedBadArity out.1
+    && out.2.events == [.callable 0, .callable 1, .callable 3, .value 3, .value 0, .value 1]
+-- Permuting the pending references: the first pending disagreement stops the check.
+#guard let out := run groupChannels [.bind "x", .bind "x", .bind "x"] [1, 0, 3] (heap [])
+  isRepeatedBadArity out.1 && out.2.events == [.callable 1, .callable 0, .callable 3, .value 3, .value 1]
+-- A callable contribution AFTER the anchor demands its own VALUE at once.
+#guard let out := run groupChannels [.bind "x", .bind "x"] [3, 1] (heap [])
+  isRepeatedBadArity out.1 && out.2.events == [.callable 3, .value 3, .callable 1, .value 1]
+-- Mixed agreement: the callable contribution stays the representative (it outranks the value-only
+-- anchor) in either order, each contribution's own VALUE demanded once.
+#guard let out := run groupChannels [.bind "x", .bind "x"] [0, 3] (heap [])
+  bindingIs [("x", 0)] out.1 && out.2.events == [.callable 0, .callable 3, .value 3, .value 0]
+#guard let out := run groupChannels [.bind "x", .bind "x"] [3, 0] (heap [])
+  bindingIs [("x", 0)] out.1 && out.2.events == [.callable 3, .value 3, .callable 0, .value 0]
+-- Two names keep their own groups: `y`'s anchor never checks `x`'s pending reference.
+#guard let out := run groupChannels [.bind "x", .bind "y", .bind "x", .bind "y"] [0, 3, 0, 3] (heap [])
+  bindingIs [("x", 0), ("y", 3)] out.1
+    && out.2.events == [.callable 0, .callable 3, .value 3, .callable 0, .callable 3, .value 3]
 
 /-! ## Families: precedence, retained effects, activation under a nonempty context -/
 
@@ -334,17 +385,18 @@ def erasesExactly (k : NeedCapabilities EvalM) (patterns : List NeedPattern) (ce
 
 /-! ## Independent review: counted values, nested repetition and hostile capabilities -/
 
--- Equal semantic values with DIFFERENT emitted counts are incompatible before any CALLABLE.
+-- Equal semantic values with DIFFERENT emitted counts are incompatible value-only contributions.
 def differentCounts : NeedCapabilities EvalM :=
-  { production with value := fun address => pure (.atom 7, address + 1) }
+  { production with value := fun address => pure (.atom 7, address + 1), callable := fun _ => pure none }
 #guard let out := run differentCounts [.bind "x", .bind "x"] [0, 1] (heap [])
-  isRepeatedBadArity out.1 && out.2.events == [.value 0, .value 1, .value 0]
+  isRepeatedBadArity out.1 && out.2.events == [.callable 0, .value 0, .callable 1, .value 1]
 
--- Repetition crosses a structural boundary; depth-first inspection retains the nested cell.
+-- Repetition crosses a structural boundary; depth-first inspection retains the nested cell, whose
+-- opened Ready child has no CALLABLE: both contributions are value-only, the nested one the anchor.
 #guard let out := (run production [.list [.bind "x"], .bind "x"] [0, 1]
     (readyHeap [.listValue [.atom 7], .atom 7]))
   bindingIs [("x", 2)] out.1
-    && out.2.events == [.value 0, .ready 2, .value 2, .value 1, .value 2, .callable 2, .callable 1]
+    && out.2.events == [.value 0, .ready 2, .callable 2, .value 2, .callable 1, .value 1]
 
 -- Two available, equal callable identities keep the earlier complete contribution.
 def equalIdentities : NeedCapabilities EvalM :=
@@ -356,13 +408,15 @@ def equalIdentities : NeedCapabilities EvalM :=
 -- A channel can mutate semantic state BEFORE raising an incompatibility-shaped error.
 -- Both modes must propagate it; family search must stop without retry or activation.
 def statefulIncompatibility : NeedCapabilities EvalM :=
-  { production with value := fun _ => do
+  { production with
+    value := fun _ => do
       let _ <- allocateNeed (.ready (.atom 9, 1))
       modify fun s => { s with nextRuntimeDeclaration := s.nextRuntimeDeclaration + 11 }
-      throw (Error.arityMismatch 3 4) }
+      throw (Error.arityMismatch 3 4)
+    callable := fun _ => pure none }
 #guard [false, true].all fun family =>
   let out := run statefulIncompatibility [.bind "x", .bind "x"] [0, 1] (heap []) family
-  isArity 3 4 out.1 && out.2.events == [.value 0]
+  isArity 3 4 out.1 && out.2.events == [.callable 0, .value 0]
     && out.2.semantic.needs.size == 1 && out.2.semantic.nextRuntimeDeclaration == 11
 #guard let out := runFamily statefulIncompatibility literalFamily [0] EvalCtx.empty [] (heap [])
   isArity 3 4 out.1 && out.2.events == [.value 0]

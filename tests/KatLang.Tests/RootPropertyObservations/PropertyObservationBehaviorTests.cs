@@ -77,11 +77,17 @@ public class PropertyObservationBehaviorTests
     }
 
     [Fact]
-    public void StaticAlias_AndItsTarget_AreSeparateObservations()
+    public void StaticAlias_IsObservedOnlyThroughItsTarget()
     {
+        // M4★ OD-E: `B = A` is a transparent reference that owns no entry, so reading B publishes — and
+        // observes — A only (formerly "A=5#1; B=5#1"); nothing fakes an entry for the alias.
         var result = Run("A = 5\nB = A\nB");
-        Assert.Equal("A=5#1; B=5#1", Describe(result));
-        Assert.NotEqual(Single(result, "A").DeclarationSpan, Single(result, "B").DeclarationSpan);
+        Assert.Equal("A=5#1", Describe(result));
+
+        // A calculation over A is a property of its own: two observations, two declarations.
+        var computed = Run("A = 5\nB = A + 0\nB");
+        Assert.Equal("A=5#1; B=5#1", Describe(computed));
+        Assert.NotEqual(Single(computed, "A").DeclarationSpan, Single(computed, "B").DeclarationSpan);
     }
 
     [Fact]

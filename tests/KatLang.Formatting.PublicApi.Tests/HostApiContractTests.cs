@@ -17,6 +17,62 @@ namespace KatLang.Formatting.PublicApi.Tests;
 /// </summary>
 public class HostApiContractTests
 {
+    [Fact]
+    public void SemanticModelResourceRefusal_IsADocumentedPublicExceptionAndDoesNotPublish()
+    {
+        var shared = new Algorithm.User(null, [], [], [], [new Expr.Num(1)]);
+        var root = new Algorithm.User(null, [], [], Enumerable.Range(0, 64)
+            .Select(i => new Property($"P{i}", shared)).ToArray(), [new Expr.Resolve("P0")]);
+        SemanticModel? model = null;
+        var error = Assert.Throws<InvalidOperationException>(() => model = SemanticModelBuilder.Build(root,
+            new SourceProcessingLimits { MaxStaticStructureBytes = 1024 }));
+        Assert.Contains("static-analysis resource budget", error.Message, StringComparison.Ordinal);
+        Assert.NotNull(error.InnerException);
+        Assert.False(error.InnerException.GetType().IsVisible);
+        Assert.Null(model);
+        Assert.NotNull(SemanticModelBuilder.Build(root));
+    }
+
+    [Fact]
+    public void SemanticModelConfiguredAdmission_PreservesArgumentCancellationAndIdentityContracts()
+    {
+        var parsed = Parser.Parse("A=1\nA+0");
+        Assert.False(parsed.HasErrors);
+        AssertNullArgument("root", () => SemanticModelBuilder.Build(null!, SourceProcessingLimits.Default));
+        AssertNullArgument("sourceProcessingLimits", () => SemanticModelBuilder.Build(parsed.Root, (SourceProcessingLimits)null!));
+        var properties = new List<Property>();
+        var cyclic = new Algorithm.User(null, [], [], properties, []);
+        properties.Add(new Property("Self", cyclic));
+        Assert.Throws<ArgumentException>(() => SemanticModelBuilder.Build(cyclic));
+        Assert.Throws<ArgumentException>(() => SemanticModelBuilder.Build(cyclic, SourceProcessingLimits.Default));
+        using var cts = new CancellationTokenSource();
+        cts.Cancel();
+        var error = Assert.Throws<OperationCanceledException>(() => SemanticModelBuilder.Build(parsed.Root,
+            SourceProcessingLimits.Default, cts.Token));
+        Assert.Equal(cts.Token, error.CancellationToken);
+        var model = SemanticModelBuilder.Build(parsed.Root, SourceProcessingLimits.Default);
+        var reference = model.FindResolutionAt(new SourcePosition(2, 1));
+        Assert.NotNull(reference);
+        Assert.Equal("A", reference.ResolvedDeclaration!.Name);
+        Assert.Same(model.Declarations.Single(d => d.Name == "A"), reference.ResolvedDeclaration);
+        Assert.Equal(SemanticModelBuilder.Build(parsed).FindResolutionAt(new SourcePosition(2, 1))!.ResolvedDeclaration,
+            reference.ResolvedDeclaration);
+        // A genuinely host-built Resolved graph crosses fresh admission; its declaration
+        // identity must be the same object selected by the model's public reference.
+        var hostProperty = new Property("A", new Algorithm.User(null, [], [], [], [new Expr.Num(1)]))
+        {
+            DeclarationSpans = [new SourceSpan(new SourcePosition(1, 1), new SourcePosition(1, 2))],
+        };
+        var hostReference = new Expr.Resolve("A")
+        {
+            Span = new SourceSpan(new SourcePosition(2, 1), new SourcePosition(2, 2)),
+        };
+        var hostRoot = new Algorithm.User(null, [], [], [hostProperty], [hostReference]);
+        var hostModel = SemanticModelBuilder.Build(hostRoot, SourceProcessingLimits.Default);
+        Assert.Same(hostModel.Declarations.Single(d => d.Name == "A"),
+            hostModel.FindResolutionAt(new SourcePosition(2, 1))!.ResolvedDeclaration);
+    }
+
     private static readonly Assembly KatLangAssembly = typeof(KatLangEngine).Assembly;
 
     // ── Implementation machinery stays internal ──────────────────────────────

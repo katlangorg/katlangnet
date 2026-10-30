@@ -341,6 +341,20 @@ theorem repeatLoop_app {rec : EvalRec} (hrec : RecSound rec) {ctx : EvalCtx} {en
 attribute [ht_spec] outputRowsCollect_app explicitRowsCollect_app listLiteralCollect_app
   sequenceConstructLoop_app prepareControls_app reduceLoop_app filterLoop_app mapLoop_app repeatLoop_app
 
+/-- The bare read at a VALUE terminal (OD-E, M4★): one evaluator call per terminal kind, each with the
+    terminal's own context and environment. -/
+theorem terminalAccess_spec {rec : EvalRec} (hrec : RecSound rec) (t : AliasTerminal) (ctx : EvalCtx)
+    (env : ValEnv) {P : Array NeedCell → Prop} (_hP : HMono P) (hreq : ∀ h, P h → ValidCtx h ctx ∧ VEV h env) :
+    SoundI P (EvalBody.terminalAccess rec t ctx env) (fun r h => CRV h r) := by
+  cases t <;> (unfold EvalBody.terminalAccess; ht_tac)
+
+theorem terminalAccess_app {rec : EvalRec} (hrec : RecSound rec) {t : AliasTerminal} {ctx : EvalCtx}
+    {env : ValEnv} {P : Array NeedCell → Prop} (hreq : ∀ h, P h → ValidCtx h ctx ∧ VEV h env) :
+    SoundI P (EvalBody.terminalAccess rec t ctx env) (fun r h => CRV h r) :=
+  fun hP => terminalAccess_spec hrec t ctx env hP hreq hP
+
+attribute [ht_spec] terminalAccess_app
+
 theorem RALV.head' {h : Array NeedCell} {x : ResolvedArgumentAlgorithm} {xs : List ResolvedArgumentAlgorithm}
     (v : RALV h (x :: xs)) : RAV h x := v x List.mem_cons_self
 theorem RALV.tail' {h : Array NeedCell} {x : ResolvedArgumentAlgorithm} {xs : List ResolvedArgumentAlgorithm}
@@ -398,21 +412,29 @@ theorem EvalBody.whileLoop_sound (rec : EvalRec) (hrec : RecSound rec) (step : R
     SoundI (CallPre (.whileLoop step ctx env stepName cells)) (EvalBody.whileLoop rec step ctx env stepName cells) (CallPost (.whileLoop step ctx env stepName cells)) := by
   unfold EvalBody.whileLoop; ht_tac
 
-theorem EvalBody.aliasStepIsRuntime_sound (rec : EvalRec) (hrec : RecSound rec) (step : Algorithm) (target : Expr) (ctx : EvalCtx) :
-    SoundI (CallPre (.aliasStepIsRuntime step target ctx)) (EvalBody.aliasStepIsRuntime rec step target ctx) (CallPost (.aliasStepIsRuntime step target ctx)) := by
+theorem EvalBody.aliasStepIsRuntime_sound (rec : EvalRec) (hrec : RecSound rec) (step : Algorithm) (target : Expr) (ctx : EvalCtx) (visited : List String) :
+    SoundI (CallPre (.aliasStepIsRuntime step target ctx visited)) (EvalBody.aliasStepIsRuntime rec step target ctx visited) (CallPost (.aliasStepIsRuntime step target ctx visited)) := by
   unfold EvalBody.aliasStepIsRuntime; ht_tac
 
 theorem EvalBody.aliasValue_sound (rec : EvalRec) (hrec : RecSound rec) (wired : Algorithm) (ctx : EvalCtx) (env : ValEnv) :
     SoundI (CallPre (.aliasValue wired ctx env)) (EvalBody.aliasValue rec wired ctx env) (CallPost (.aliasValue wired ctx env)) := by
   unfold EvalBody.aliasValue; ht_tac
 
-theorem EvalBody.resolveAliasChase_sound (rec : EvalRec) (hrec : RecSound rec) (callable : Bool) (a : Algorithm) (ctx : EvalCtx) (visited : List String) (projectedFrom : Option Algorithm) :
-    SoundI (CallPre (.resolveAliasChase callable a ctx visited projectedFrom)) (EvalBody.resolveAliasChase rec callable a ctx visited projectedFrom) (CallPost (.resolveAliasChase callable a ctx visited projectedFrom)) := by
+theorem EvalBody.resolveAliasChase_sound (rec : EvalRec) (hrec : RecSound rec) (followCarriers projectRuntime : Bool) (a : Algorithm) (ctx : EvalCtx) (visited : List String) (last : Option (Algorithm × PropDef)) :
+    SoundI (CallPre (.resolveAliasChase followCarriers projectRuntime a ctx visited last)) (EvalBody.resolveAliasChase rec followCarriers projectRuntime a ctx visited last) (CallPost (.resolveAliasChase followCarriers projectRuntime a ctx visited last)) := by
   unfold EvalBody.resolveAliasChase; ht_tac
 
 theorem EvalBody.resolveAliasTarget_sound (rec : EvalRec) (hrec : RecSound rec) (a : Algorithm) (ctx : EvalCtx) :
     SoundI (CallPre (.resolveAliasTarget a ctx)) (EvalBody.resolveAliasTarget rec a ctx) (CallPost (.resolveAliasTarget a ctx)) := by
   unfold EvalBody.resolveAliasTarget; ht_tac
+
+theorem EvalBody.resolveAliasStructure_sound (rec : EvalRec) (hrec : RecSound rec) (a : Algorithm) (ctx : EvalCtx) :
+    SoundI (CallPre (.resolveAliasStructure a ctx)) (EvalBody.resolveAliasStructure rec a ctx) (CallPost (.resolveAliasStructure a ctx)) := by
+  unfold EvalBody.resolveAliasStructure; ht_tac
+
+theorem EvalBody.aliasOriginBinding?_sound (rec : EvalRec) (hrec : RecSound rec) (a : Algorithm) (ctx : EvalCtx) :
+    SoundI (CallPre (.aliasOriginBinding? a ctx)) (EvalBody.aliasOriginBinding? rec a ctx) (CallPost (.aliasOriginBinding? a ctx)) := by
+  unfold EvalBody.aliasOriginBinding?; ht_tac
 
 theorem EvalBody.resolveAliasValueTarget_sound (rec : EvalRec) (hrec : RecSound rec) (a : Algorithm) (ctx : EvalCtx) :
     SoundI (CallPre (.resolveAliasValueTarget a ctx)) (EvalBody.resolveAliasValueTarget rec a ctx) (CallPost (.resolveAliasValueTarget a ctx)) := by
@@ -863,9 +885,11 @@ theorem evalStep_sound : BodySound := by
   intro rec hrec c
   cases c with
   | whileLoop step ctx env stepName cells => exact EvalBody.whileLoop_sound rec hrec step ctx env stepName cells
-  | aliasStepIsRuntime step target ctx => exact EvalBody.aliasStepIsRuntime_sound rec hrec step target ctx
+  | aliasStepIsRuntime step target ctx visited => exact EvalBody.aliasStepIsRuntime_sound rec hrec step target ctx visited
   | aliasValue wired ctx env => exact EvalBody.aliasValue_sound rec hrec wired ctx env
-  | resolveAliasChase callable a ctx visited projectedFrom => exact EvalBody.resolveAliasChase_sound rec hrec callable a ctx visited projectedFrom
+  | resolveAliasChase followCarriers projectRuntime a ctx visited last => exact EvalBody.resolveAliasChase_sound rec hrec followCarriers projectRuntime a ctx visited last
+  | resolveAliasStructure a ctx => exact EvalBody.resolveAliasStructure_sound rec hrec a ctx
+  | aliasOriginBinding? a ctx => exact EvalBody.aliasOriginBinding?_sound rec hrec a ctx
   | resolveAliasTarget a ctx => exact EvalBody.resolveAliasTarget_sound rec hrec a ctx
   | resolveAliasValueTarget a ctx => exact EvalBody.resolveAliasValueTarget_sound rec hrec a ctx
   | lookupLexicalProperty a name ctx => exact EvalBody.lookupLexicalProperty_sound rec hrec a name ctx
