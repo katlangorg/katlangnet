@@ -8,10 +8,13 @@ internal enum StaticAstPhase { RawSource, NameResolved, Resolved }
 /// </summary>
 internal abstract class StaticLookupFacts
 {
-    private Dictionary<Algorithm, StaticScopeKey?>? _exactBodies;
-    private Dictionary<Algorithm, Algorithm?>? _receiverBodies;
-    private HashSet<Algorithm>? _differentReceivers;
-    private Dictionary<(StaticScopeKey Parent, object Body, object? Region), StaticScopeKey>? _contextualBodies;
+    // One complete body index per view version. Sealed facts may be shared by parallel consumers,
+    // so every collection is built privately and published together; a reader uses one snapshot.
+    private sealed record BodyIndex(int Version, Dictionary<Algorithm, StaticScopeKey?> Exact,
+        Dictionary<Algorithm, Algorithm?> Receivers, HashSet<Algorithm> DifferentReceivers,
+        Dictionary<(StaticScopeKey Parent, object Body, object? Region), StaticScopeKey> Contextual);
+    private BodyIndex? _bodyIndex;
+    private readonly Lock _bodyIndexGate = new();
     private sealed class BodyContextComparer : IEqualityComparer<(StaticScopeKey Parent, object Body, object? Region)>
     {
         internal static readonly BodyContextComparer Instance = new();
@@ -22,9 +25,11 @@ internal abstract class StaticLookupFacts
                 System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(value.Body),
                 value.Region is null ? 0 : System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(value.Region));
     }
-    private int _indexedVersion = -1;
-    internal long BodyIndexBuilds { get; private set; }
-    internal long BodyIndexScopeVisits { get; private set; }
+    private long _bodyIndexBuilds;
+    private long _bodyIndexScopeVisits;
+    /// <summary>Published (complete) index snapshots; a failed construction publishes and counts nothing.</summary>
+    internal long BodyIndexBuilds => Interlocked.Read(ref _bodyIndexBuilds);
+    internal long BodyIndexScopeVisits => Interlocked.Read(ref _bodyIndexScopeVisits);
     internal abstract StaticScopeKey PreludeKey { get; }
     internal Algorithm Prelude => Facts(PreludeKey)!.Body!;
     internal abstract CompletedStaticStructures.BodyFacts? Facts(StaticScopeKey key);
@@ -37,8 +42,7 @@ internal abstract class StaticLookupFacts
 
     internal CompletedStructureContext? ExactContext(Algorithm body)
     {
-        IndexBodies();
-        if (!_exactBodies!.TryGetValue(body, out var selected)) return null;
+        if (!IndexBodies().Exact.TryGetValue(body, out var selected)) return null;
         if (selected is null)
             throw new ArgumentException("A shared body has several structural contexts; supply its occurrence context explicitly.", nameof(body));
         return Context(selected);
@@ -47,31 +51,34 @@ internal abstract class StaticLookupFacts
     /// <summary>A context-free catalog may use a receiver only when every published occurrence agrees.</summary>
     internal Algorithm? AgreedReceiver(Algorithm body)
     {
-        IndexBodies();
-        if (_differentReceivers!.Contains(body))
+        var index = IndexBodies();
+        if (index.DifferentReceivers.Contains(body))
             throw new ArgumentException("Receiver structure depends on the occurrence context.", nameof(body));
-        return _receiverBodies!.GetValueOrDefault(body);
+        return index.Receivers.GetValueOrDefault(body);
     }
 
     internal StaticScopeKey? ContextualBody(StaticScopeKey parent, Algorithm body, object? region)
-    {
-        IndexBodies();
-        return _contextualBodies!.GetValueOrDefault((parent, body, region));
-    }
+        => IndexBodies().Contextual.GetValueOrDefault((parent, body, region));
 
-    private void IndexBodies()
+    private BodyIndex IndexBodies()
     {
         EnsureUsable();
-        if (_exactBodies is null || _indexedVersion != ViewVersion)
+        // Views change only through single-owner publication (Retarget before Seal, a Q8 projection's
+        // own revision); sealed shared facts keep one version, so contended readers build once.
+        var version = ViewVersion;
+        if (Volatile.Read(ref _bodyIndex) is { } current && current.Version == version) return current;
+        lock (_bodyIndexGate)
         {
-            BodyIndexBuilds++;
+            if (_bodyIndex is { } published && published.Version == version) return published;
+            // Construction reads only Scopes/Facts, never this index, so the gate is not reentered.
             var index = new Dictionary<Algorithm, StaticScopeKey?>(ReferenceEqualityComparer.Instance);
             var receivers = new Dictionary<Algorithm, Algorithm?>(ReferenceEqualityComparer.Instance);
             var different = new HashSet<Algorithm>(ReferenceEqualityComparer.Instance);
             var contextual = new Dictionary<(StaticScopeKey Parent, object Body, object? Region), StaticScopeKey>(BodyContextComparer.Instance);
+            long visits = 0;
             foreach (var key in Scopes)
             {
-                BodyIndexScopeVisits++;
+                visits++;
                 if (Facts(key) is { Body: { } view } facts)
                 {
                     if (!index.TryAdd(view, key)) index[view] = null;
@@ -81,11 +88,11 @@ internal abstract class StaticLookupFacts
                     if (!receivers.TryAdd(view, receiver) && !ReferenceEquals(receivers[view], receiver)) different.Add(view);
                 }
             }
-            _exactBodies = index;
-            _receiverBodies = receivers;
-            _differentReceivers = different;
-            _contextualBodies = contextual;
-            _indexedVersion = ViewVersion;
+            var built = new BodyIndex(version, index, receivers, different, contextual);
+            Volatile.Write(ref _bodyIndex, built);
+            Interlocked.Increment(ref _bodyIndexBuilds);
+            Interlocked.Add(ref _bodyIndexScopeVisits, visits);
+            return built;
         }
     }
 }
