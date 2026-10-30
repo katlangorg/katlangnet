@@ -771,7 +771,7 @@ macro "link_unfold_rec" : tactic => `(tactic| dsimp (config := { proj := false }
 set_option hygiene false in
 /-- Syntax-directed link discipline (base: no recursive helper lemmas), given that `hrec`
     is link-disciplined. -/
-macro "link_tac_base" : tactic => `(tactic| ((try link_unfold_rec) <;> repeat' (first
+macro "link_tac_base" : tactic => `(tactic| without_info_trees ((try link_unfold_rec) <;> repeat' (first
   | link_rec
   | link_hyp
   | link_absurd
@@ -1068,7 +1068,7 @@ end LocalLoops
 set_option hygiene false in
 /-- Syntax-directed link discipline of an evaluator body, given that its recursive answer `hrec`
     is link-disciplined. -/
-macro "link_tac" : tactic => `(tactic| ((try link_unfold_rec) <;> repeat' (first
+macro "link_tac" : tactic => `(tactic| without_info_trees ((try link_unfold_rec) <;> repeat' (first
   | link_rec
   | link_hyp
   | link_absurd

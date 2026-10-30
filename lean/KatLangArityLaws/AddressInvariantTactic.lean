@@ -825,7 +825,7 @@ elab "ht_step" : tactic => do
               | _ => throwError "ht: stuck on bind head {x}"
 
 /-- The whole procedure. -/
-macro "ht_tac" : tactic => `(tactic| ((try ht_unfold_rec) <;> repeat' (first | disc_absurd | (beta_all; ht_step) | ht_step)))
+macro "ht_tac" : tactic => `(tactic| without_info_trees ((try ht_unfold_rec) <;> repeat' (first | disc_absurd | (beta_all; ht_step) | ht_step)))
 
 
 end KatLang.AddressInvariant

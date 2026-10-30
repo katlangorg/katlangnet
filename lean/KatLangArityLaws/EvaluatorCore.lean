@@ -95,6 +95,17 @@ macro "mono_cb_tac" : tactic =>
 /-- The body tactic: zeta-reduce local definitions first, then the same procedure. -/
 macro "mono_tac" : tactic => `(tactic| (try dsimp only) <;> mono_cb_tac)
 
+open Lean Elab Tactic in
+/-- Runs a tactic without recording info trees; the proof it builds is unchanged. The command-line
+    driver keeps every command's info tree until the end of the module, and backtracking through
+    `first` keeps the info nodes of the alternatives that failed, each pinning a
+    metavariable-context snapshot. The downstream whole-body procedures (`pres_tac`, `disc_tac`,
+    `link_tac`, `ht_tac`) try dozens of alternatives at every step of a large evaluator body, so
+    recording them made `EvaluatorCacheLaws` alone commit about 13 GB, and the 16 GB CI runner ran
+    out of memory building two such modules at once; unrecorded it stays under 3 GB. Only the
+    editor's goal view inside the procedure is lost. -/
+elab "without_info_trees " tac:tacticSeq : tactic => withEnableInfoTree false (evalTactic tac)
+
 /-! ## Monotonicity of the total helpers the bodies call with evaluator callbacks
 
 Each lemma states that a total helper is monotone in the callbacks it is given (`γ` is any

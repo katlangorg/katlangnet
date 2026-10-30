@@ -323,7 +323,7 @@ macro "pres_frame" : tactic => `(tactic| (apply FieldFrame.frame <;> rfl))
 
 set_option hygiene false in
 /-- Syntax-directed preservation of a field-framed relation, base form (framework lemmas only). -/
-macro "pres_tac_base" : tactic => `(tactic| ((try pres_unfold_rec) <;> repeat' (first
+macro "pres_tac_base" : tactic => `(tactic| without_info_trees ((try pres_unfold_rec) <;> repeat' (first
   | pres_rec
   | pres_hyp
   | pres_absurd
@@ -376,7 +376,7 @@ end Helpers
 
 set_option hygiene false in
 /-- Syntax-directed preservation of a field-framed relation, with the state-writing helpers. -/
-macro "pres_tac_mid" : tactic => `(tactic| ((try pres_unfold_rec) <;> repeat' (first
+macro "pres_tac_mid" : tactic => `(tactic| without_info_trees ((try pres_unfold_rec) <;> repeat' (first
   | pres_rec
   | pres_hyp
   | pres_absurd
@@ -671,7 +671,7 @@ end Helpers2
 set_option hygiene false in
 /-- Syntax-directed preservation of a field-framed relation by an evaluator body, given that its
     recursive answer `hrec` preserves it. -/
-macro "pres_tac" : tactic => `(tactic| ((try pres_unfold_rec) <;> repeat' (first
+macro "pres_tac" : tactic => `(tactic| without_info_trees ((try pres_unfold_rec) <;> repeat' (first
   | pres_rec
   | pres_hyp
   | pres_absurd

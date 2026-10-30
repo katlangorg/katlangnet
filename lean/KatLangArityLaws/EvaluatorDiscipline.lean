@@ -247,7 +247,7 @@ theorem disc_foldlM {α β : Type} (f : β → α → EvalM β) (h : ∀ b a, Di
 set_option hygiene false in
 /-- Syntax-directed heap discipline of an evaluator body, given that its recursive answer `hrec`
     is disciplined. -/
-macro "disc_tac_base" : tactic => `(tactic| ((try disc_unfold_rec) <;> repeat' (first
+macro "disc_tac_base" : tactic => `(tactic| without_info_trees ((try disc_unfold_rec) <;> repeat' (first
   | disc_rec
   | disc_hyp
   | disc_absurd
@@ -572,7 +572,7 @@ theorem supply_keeps_cells (source : Expr) (caller : EvalCtx) (values : ValEnv) 
 set_option hygiene false in
 /-- Syntax-directed heap discipline of an evaluator body, given that its recursive answer `hrec`
     is disciplined. -/
-macro "disc_tac" : tactic => `(tactic| ((try disc_unfold_rec) <;> repeat' (first
+macro "disc_tac" : tactic => `(tactic| without_info_trees ((try disc_unfold_rec) <;> repeat' (first
   | disc_rec
   | disc_hyp
   | disc_absurd
