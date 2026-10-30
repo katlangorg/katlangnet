@@ -1,0 +1,13 @@
+What is current validation mechanism? Do not make any changes. just evaluation.
+
+---
+
+in currently running Codex session, V3 was stopped at 15th minute. Why?
+
+---
+
+How to fix this? Tests should run once, not two times (once and then forced). Also tests should not be stopped with timeout. Do not make changes, just evaluate.
+
+---
+
+is there way to improve performance of tests? Maybe we can skip tests and let GitHub Actions to run tests? (that is not good, but tests takes too much time to run).
