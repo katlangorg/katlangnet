@@ -33,16 +33,16 @@ public sealed class AliasUnifyReviewRegressionTests
     // ── Evaluator: an alias receiver of `.string` reads its VALUE terminal ──
 
     [Theory]
-    [InlineData("F = tick()\nF, { F }.string")]
-    [InlineData("F = tick()\nC = { F }\nF, C.string")]
-    [InlineData("F = tick()\nA = F\nF, A.string")]
-    [InlineData("F = tick()\nF, F.string")]
+    [InlineData("F = tock()\nF, { F }.string")]
+    [InlineData("F = tock()\nC = { F }\nF, C.string")]
+    [InlineData("F = tock()\nA = F\nF, A.string")]
+    [InlineData("F = tock()\nF, F.string")]
     public async Task AnAliasReceiverOfString_ReadsItsTerminalsCachedEntry(string source)
     {
         var outcome = await SixRouteAgreement.OnEveryRouteAsync(source);
         Assert.Equal("ok", outcome.Kind);
         Assert.Equal("S[1, '1']", outcome.Value);
-        Assert.Equal(["tick#1"], outcome.HostCalls);
+        Assert.Equal(["tock#1"], outcome.HostCalls);
     }
 
     [Theory]
@@ -221,7 +221,7 @@ public sealed class AliasUnifyReviewRegressionTests
     [InlineData("A == A()", "false", 2)]
     public async Task ABlockHeadedReference_NavigatesTheProcessedBlock(string rows, string expected, int ticks)
     {
-        var outcome = await SixRouteAgreement.OnEveryRouteAsync("A = {\n    Z = tick() + 0\n    K = Z\n}.K\n" + rows);
+        var outcome = await SixRouteAgreement.OnEveryRouteAsync("A = {\n    Z = tock() + 0\n    K = Z\n}.K\n" + rows);
         Assert.Equal("ok", outcome.Kind);
         Assert.Equal(expected, outcome.Value);
         Assert.Equal(ticks, outcome.HostCalls.Count);

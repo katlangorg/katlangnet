@@ -169,25 +169,25 @@ public class GroupAwareRepeatedNameTests
         var source = $"""
             Agree(x, x, x) = 0
             Probe(p, q) = p + 0, q + 0, {agree}
-            A = if(tick() == 1, Probe(A, A), tick())
+            A = if(tock() == 1, Probe(A, A), tock())
             A
             """;
         var observation = await RunAsync(source);
-        AssertError(observation, "ArityMismatch", "tick#1", "tick#2", "tick#3", "tick#4", "tick#5");
+        AssertError(observation, "ArityMismatch", "tock#1", "tock#2", "tock#3", "tock#4", "tock#5");
         Assert.Contains(RepeatedValueMessage, observation.Errors[0]);
     }
 
     // The research's own host-fixture witness and its swapped variant, run in production: its premise —
-    // two independent `tick` cells completing with DIFFERENT values — does not hold, because a bare
-    // `tick` is a zero-argument read of the host operation's prelude property, cached per run (the
-    // ordinary `A` vs `A()` rule; explicit `tick()` calls stay fresh). Both cells complete with 1, so the
+    // two independent `tock` cells completing with DIFFERENT values — does not hold, because a bare
+    // `tock` is a zero-argument read of the host operation's prelude property, cached per run (the
+    // ordinary `A` vs `A()` rule; explicit `tock()` calls stay fresh). Both cells complete with 1, so the
     // value-only 1 agrees with each in either order. The policy is unchanged: the same-identity /
     // different-VALUE case is pinned above with Q-37 re-entrant reads, which do differ.
     [Theory]
     [InlineData("Agree(p, q, 1)")]
     [InlineData("Agree(q, p, 1)")]
     public async Task TheHostFixtureWitness_ReadsOneCachedHostValue_SoTheMixedAgreementHolds(string agree)
-        => AssertValue(await RunAsync($"Agree(x, x, x) = 0\nProbe(p, q) = p + 0, q + 0, {agree}\nProbe(tick, tick)"), "S[1, 1, 0]", "tick#1");
+        => AssertValue(await RunAsync($"Agree(x, x, x) = 0\nProbe(p, q) = p + 0, q + 0, {agree}\nProbe(tock, tock)"), "S[1, 1, 0]", "tock#1");
 
     [Fact]
     public async Task SameIdentityWithDifferentValues_MatchesByIdentityAlone_AndKeepsTheFirstCell()
@@ -197,10 +197,10 @@ public class GroupAwareRepeatedNameTests
         var source = """
             Pick(x, x) = x
             Probe(p, q) = p + 0, q + 0, Pick(p, q), Pick(q, p)
-            A = if(tick() == 1, Probe(A, A), tick())
+            A = if(tock() == 1, Probe(A, A), tock())
             A
             """;
-        AssertValue(await RunAsync(source), "S[3, 5, 3, 5]", "tick#1", "tick#2", "tick#3", "tick#4", "tick#5");
+        AssertValue(await RunAsync(source), "S[3, 5, 3, 5]", "tock#1", "tock#2", "tock#3", "tock#4", "tock#5");
     }
 
     // ── R7: the mixed-demand schedule ─────────────────────────────────────────────────

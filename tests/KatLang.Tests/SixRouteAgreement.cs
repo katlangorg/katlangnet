@@ -11,9 +11,12 @@ namespace KatLang.Tests;
 /// (<see cref="SiblingDependencyCycleTests"/>, <see cref="InferredParameterOutputValidationTests"/>,
 /// <see cref="BuiltinArityRenderingParityTests"/>). A source the front end rejects is observed on
 /// every route as its front-end errors: the engines' <see cref="RunResult.ParseFailure"/>, and the
-/// parse result the evaluator routes would otherwise evaluate. <c>tick()</c> and <c>trace(x)</c>
+/// parse result the evaluator routes would otherwise evaluate. <c>tock()</c> and <c>trace(x)</c>
 /// are host operations that log every call (suspending on the twin routes), so the host-call log is
 /// part of every observation.
+/// <para>Use the native <c>tick()</c> for a run-local numeric counter. Keep <c>tock()</c> when the
+/// assertion needs the ordered host-call log or genuine host suspension; bare host-operation reads
+/// also have different value semantics from the invocation-required builtin.</para>
 /// </summary>
 internal static class SixRouteAgreement
 {
@@ -65,10 +68,10 @@ internal static class SixRouteAgreement
 
         public Result Tick()
         {
-            var tick = Interlocked.Increment(ref _ticks);
+            var tock = Interlocked.Increment(ref _ticks);
             lock (Calls)
-                Calls.Add($"tick#{tick}");
-            return new Result.Atom((Decimal128)tick);
+                Calls.Add($"tock#{tock}");
+            return new Result.Atom((Decimal128)tock);
         }
 
         public Result Trace(Result value)
@@ -82,10 +85,10 @@ internal static class SixRouteAgreement
     private static HostOperations OperationsFor(HostLog log, bool suspending)
         => suspending
             ? HostOperations.Create(
-                HostOperation.CreateAsync("tick", async (_, _) => { await Task.Yield(); return log.Tick(); }),
+                HostOperation.CreateAsync("tock", async (_, _) => { await Task.Yield(); return log.Tick(); }),
                 HostOperation.CreateAsync("trace", async (args, _) => { await Task.Yield(); return log.Trace(args[0]); }, "x"))
             : HostOperations.Create(
-                HostOperation.Create("tick", (_, _) => log.Tick()),
+                HostOperation.Create("tock", (_, _) => log.Tick()),
                 HostOperation.Create("trace", (args, _) => log.Trace(args[0]), "x"));
 
     /// <summary>

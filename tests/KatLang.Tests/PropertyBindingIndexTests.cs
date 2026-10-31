@@ -140,10 +140,10 @@ public class PropertyBindingIndexTests
         var ticks = 0;
         Result Tick() => new Result.Atom((Decimal128)(++ticks));
         var operations = HostOperations.Create(route == 2
-            ? HostOperation.CreateAsync("tick", async (_, _) => { await Task.Yield(); return Tick(); })
-            : HostOperation.Create("tick", (_, _) => Tick()));
+            ? HostOperation.CreateAsync("tock", async (_, _) => { await Task.Yield(); return Tick(); })
+            : HostOperation.Create("tock", (_, _) => Tick()));
         Property[] shared = [.. Enumerable.Range(0, 64).Select(i => Constant($"Pad{i}", i)),
-            new("Read", Body([], new Expr.NativeCall("host:tick", [])))];
+            new("Read", Body([], new Expr.NativeCall("host:tock", [])))];
         var left = Body(shared, new Expr.Resolve("Read"), new Expr.Resolve("Read"));
         var right = Body(shared, new Expr.Resolve("Read"), new Expr.Resolve("Read"));
         Assert.NotSame(left.Declaration, right.Declaration);
@@ -210,9 +210,9 @@ public class PropertyBindingIndexTests
     [InlineData("X = 10\nLib = { public X = 20 }\nOuter = {\nopen Lib\n{PAD}Inner = X\nInner\n}\nOuter", "ok 10")]
     [InlineData("X = 10\nOuter = {\n{PAD}X = 20\nInner = X\nInner\n}\nOuter", "ok 20")]
     // OD-E (M4★): every link of the chain reads Lib.Only's one entry (formerly one per binding).
-    [InlineData("Lib = {\n{PAD}public Only(*xs) = tick()\n}\nA = Lib.Only\nB = A\nB, Lib.Only, A, B", "ok S[1, 1, 1, 1] [tick#1]")]
-    [InlineData("Outer(x) = {\n{PAD}Value = tick() + x\nInner = { Value, Value }\nInner\n}\nOuter(10), Outer(20)", "ok S[S[11, 11], S[22, 22]] [tick#1,tick#2]")]
-    [InlineData("Lib = {\n{PAD}public X = tick()\n}\nRead = {\nopen Lib\n{PAD}X, Lib.X, X\n}\nRead", "ok S[1, 1, 1] [tick#1]")]
+    [InlineData("Lib = {\n{PAD}public Only(*xs) = tock()\n}\nA = Lib.Only\nB = A\nB, Lib.Only, A, B", "ok S[1, 1, 1, 1] [tock#1]")]
+    [InlineData("Outer(x) = {\n{PAD}Value = tock() + x\nInner = { Value, Value }\nInner\n}\nOuter(10), Outer(20)", "ok S[S[11, 11], S[22, 22]] [tock#1,tock#2]")]
+    [InlineData("Lib = {\n{PAD}public X = tock()\n}\nRead = {\nopen Lib\n{PAD}X, Lib.X, X\n}\nRead", "ok S[1, 1, 1] [tock#1]")]
     [InlineData("Inc(x) = x + 1\nA = Inc\nB = A\nOuter = {\n{PAD}Inc(x) = x + 100\nB(1)\n}\nOuter", "ok 2")]
     [InlineData("Step(x) = {\n{PAD}Next = x + 1\nNext\n}\nrepeat(Step(0), 20)", "ok 20")]
     public async Task IndexedScopes_PreserveOwnershipCacheAndAliasesOnSixRoutes(string source, string expected)

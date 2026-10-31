@@ -47,7 +47,7 @@ public class ParameterlessOwnerEntryContextTests
 
     private static string[] Traces(params int[] values) => [.. values.Select(static value => $"trace({value})")];
 
-    private static string[] Ticks(int count) => [.. Enumerable.Range(1, count).Select(static tick => $"tick#{tick}")];
+    private static string[] Ticks(int count) => [.. Enumerable.Range(1, count).Select(static tock => $"tock#{tock}")];
 
     // ── 1. The research matrix (§ 2.2) ──────────────────────────────────────────────────────
 
@@ -67,9 +67,9 @@ public class ParameterlessOwnerEntryContextTests
             Traces(3)
         },
         // D1-VAL: B's own V and B.V are ONE binding in one activation (was false, two ticks).
-        { "D1-VAL", F("B = {\n    V = k + tick()\n    V\n}", "[1].map{ n * 0 + B }[0] == B.V"), "true", Ticks(1) },
+        { "D1-VAL", F("B = {\n    V = k + tock()\n    V\n}", "[1].map{ n * 0 + B }[0] == B.V"), "true", Ticks(1) },
         // D1-VALc (control).
-        { "D1-VALc", F("B = {\n    V = k + tick()\n    V\n}", "B == B.V"), "true", Ticks(1) },
+        { "D1-VALc", F("B = {\n    V = k + tock()\n    V\n}", "B == B.V"), "true", Ticks(1) },
         // D1-OPEN: the opened V shares the callback's entry (was t3,t3).
         {
             "D1-OPEN",
@@ -344,7 +344,7 @@ public class ParameterlessOwnerEntryContextTests
         // Q-37: B entered in a callback evaluates V, whose body re-enters V through B.V. Both spellings are
         // ONE key, so the inner reads are re-entrant and only the outermost result is published and reused.
         // A split key can instead publish an inner result for the later structural read.
-        var source = F("B = {\n    V = if(tick() < 3, B.V + 1, k)\n    V\n}", "[0].map{ n + B }[0] + B.V", "F(10)");
+        var source = F("B = {\n    V = if(tock() < 3, B.V + 1, k)\n    V\n}", "[0].map{ n + B }[0] + B.V", "F(10)");
         var oracle = await ObserveAsync(source);
         Assert.Equal("24", oracle.Value);
         Assert.Equal(Ticks(3), oracle.HostCalls);
@@ -353,7 +353,7 @@ public class ParameterlessOwnerEntryContextTests
     [Fact]
     public async Task AFailingOutermostOwner_PublishesNothing()
     {
-        var source = F("B = {\n    V = if(tick() == 1, 1 / 0, k)\n    V\n}", "[0].map{ n + B }[0] + B.V");
+        var source = F("B = {\n    V = if(tock() == 1, 1 / 0, k)\n    V\n}", "[0].map{ n + B }[0] + B.V");
         var oracle = await ObserveAsync(source);
         Assert.Equal("err", oracle.Kind);
         Assert.StartsWith("DivisionByZero: ", Assert.Single(oracle.Errors), StringComparison.Ordinal);
@@ -520,7 +520,7 @@ public class ParameterlessOwnerEntryContextTests
         var ticks = 0;
         Result Tick()
         {
-            log.Add($"tick#{++ticks}");
+            log.Add($"tock#{++ticks}");
             return new Result.Atom(ticks);
         }
 
@@ -532,10 +532,10 @@ public class ParameterlessOwnerEntryContextTests
 
         return suspending
             ? HostOperations.Create(
-                HostOperation.CreateAsync("tick", async (_, _) => { await Task.Yield(); return Tick(); }),
+                HostOperation.CreateAsync("tock", async (_, _) => { await Task.Yield(); return Tick(); }),
                 HostOperation.CreateAsync("trace", async (args, _) => { await Task.Yield(); return Trace(args[0]); }, "x"))
             : HostOperations.Create(
-                HostOperation.Create("tick", (_, _) => Tick()),
+                HostOperation.Create("tock", (_, _) => Tick()),
                 HostOperation.Create("trace", (args, _) => Trace(args[0]), "x"));
     }
 

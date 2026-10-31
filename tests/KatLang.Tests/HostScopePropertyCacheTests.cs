@@ -33,15 +33,15 @@ public partial class HostScopePropertyCacheTests
 
     private static HostOperations Ops(Log log, bool withAsync = false)
     {
-        var tick = HostOperation.Create("tick", (_, _) =>
+        var tock = HostOperation.Create("tock", (_, _) =>
         {
             log.Ticks++;
-            log.Effects.Add("tick" + log.Ticks);
+            log.Effects.Add("tock" + log.Ticks);
             return new Result.Atom(log.Ticks);
         });
         var boom = HostOperation.Create("boom", (_, _) => throw new InvalidOperationException("boom"));
         return withAsync
-            ? HostOperations.Create(tick, boom,
+            ? HostOperations.Create(tock, boom,
                 // Genuine suspension: the evaluation spine really awaits an incomplete task.
                 HostOperation.CreateAsync("atrace", async (args, _) =>
                 {
@@ -49,7 +49,7 @@ public partial class HostScopePropertyCacheTests
                     log.Effects.Add("a" + ((Result.Atom)args[0]).Value);
                     return args[1];
                 }, "tag", "value"))
-            : HostOperations.Create(tick, boom);
+            : HostOperations.Create(tock, boom);
     }
 
     /// <summary>A prelude-backed host chain root, so host operations and builtins resolve by name (itself an ownerless host level).</summary>
@@ -60,7 +60,7 @@ public partial class HostScopePropertyCacheTests
     private static Expr X(string name) => new Expr.Param(name);
     private static Expr Add(Expr a, Expr b) => new Expr.Binary(BinaryOp.Add, a, b);
     private static Expr Call(string name, params Expr[] args) => new Expr.Call(R(name), new OutputBundle(args));
-    private static Expr Tick() => Call("tick");
+    private static Expr Tick() => Call("tock");
     private static Expr Seq(params Expr[] items) => items.Skip(1).Aggregate(items[0], (left, right) => new Expr.SequenceConstruct(left, right));
     private static Algorithm.User Body(params Expr[] rows) => new(null, [], [], [], new OutputBundle(rows));
     private static Algorithm.User Fn(string param, params Expr[] rows)
@@ -70,7 +70,7 @@ public partial class HostScopePropertyCacheTests
         PropertyExposure exposure = PropertyExposure.Exported, string[]? required = null)
         => new(name, value, isPublic, exposure) { RequiredAncestorParameters = required ?? [] };
 
-    /// <summary>Q-37 witness body: <c>if(tick() &lt; 3, P + 1, 0)</c> (or <c>P() + 1</c>).</summary>
+    /// <summary>Q-37 witness body: <c>if(tock() &lt; 3, P + 1, 0)</c> (or <c>P() + 1</c>).</summary>
     private static Algorithm.User Reentrant(Expr self) => Body(Call("if",
         new Expr.Comparison(Tick(), [new ComparisonLink(ComparisonOp.Lt, N(3))]), Add(self, N(1)), N(0)));
 
@@ -222,23 +222,23 @@ public partial class HostScopePropertyCacheTests
     public static TheoryData<string, string, string> HostWitnesses => new()
     {
         // id, expected value, expected effects
-        { "H1 P + P", "2", "tick1" },
-        { "H7 P() + P", "2", "tick1" },
-        { "H7b P, P()", "(1, 2)", "tick1,tick2" },
-        { "H7c P(), P", "(1, 1)", "tick1" },
-        { "H7d P(), P, P(), P", "(1, 1, 2, 1)", "tick1,tick2" },
-        { "H7e P(E*), P with an empty spread", "(1, 1)", "tick1" },
-        { "H7f nonempty supply F(1), F(1), F", "(1, 2, 3)", "tick1,tick2,tick3" },
-        { "H8 Q-37 P + P", "4", "tick1,tick2,tick3" },
-        { "H8i Q-37 through P(): P(), P", "(2, 2)", "tick1,tick2,tick3" },
-        { "H11 Q = P + P; Q + Q", "4", "tick1" },
-        { "H12 map callback reads P", "[2, 3, 4]", "tick1" },
+        { "H1 P + P", "2", "tock1" },
+        { "H7 P() + P", "2", "tock1" },
+        { "H7b P, P()", "(1, 2)", "tock1,tock2" },
+        { "H7c P(), P", "(1, 1)", "tock1" },
+        { "H7d P(), P, P(), P", "(1, 1, 2, 1)", "tock1,tock2" },
+        { "H7e P(E*), P with an empty spread", "(1, 1)", "tock1" },
+        { "H7f nonempty supply F(1), F(1), F", "(1, 2, 3)", "tock1,tock2,tock3" },
+        { "H8 Q-37 P + P", "4", "tock1,tock2,tock3" },
+        { "H8i Q-37 through P(): P(), P", "(2, 2)", "tock1,tock2,tock3" },
+        { "H11 Q = P + P; Q + Q", "4", "tock1" },
+        { "H12 map callback reads P", "[2, 3, 4]", "tock1" },
         // OD-E (M4★): the alias owns no entry; A() publishes under its target P, which A and P then read.
-        { "alias A = P: A(), A, P", "(1, 1, 1)", "tick1" },
-        { "forwarded P: Apply(P), P", "(1, 1)", "tick1" },
-        { "META Invoke: Apply(P()), P", "(1, 1)", "tick1" },
-        { "META Algorithm: Apply(P()), P", "(1, 1)", "tick1" },
-        { "two bindings P, Q in one scope", "(1, 2, 1, 2)", "tick1,tick2" },
+        { "alias A = P: A(), A, P", "(1, 1, 1)", "tock1" },
+        { "forwarded P: Apply(P), P", "(1, 1)", "tock1" },
+        { "META Invoke: Apply(P()), P", "(1, 1)", "tock1" },
+        { "META Algorithm: Apply(P()), P", "(1, 1)", "tock1" },
+        { "two bindings P, Q in one scope", "(1, 2, 1, 2)", "tock1,tock2" },
         { "H9 async P = atrace(1, 7); P + P", "14", "a1" },
     };
 
@@ -305,7 +305,7 @@ public partial class HostScopePropertyCacheTests
         // Formerly 5 steps and two ticks (the bypass re-evaluated P); the owned control is 4.
         var host = await OnEveryRouteAsync(pre => OpenedThrough(new ScopeCtx(pre, [], [Prop("P", Body(Tick()))]), Add(R("P"), R("P"))));
         Assert.Equal(4, host.Steps);
-        Assert.Equal("tick1", host.Effects);
+        Assert.Equal("tock1", host.Effects);
     }
 
     [Fact]
@@ -314,7 +314,7 @@ public partial class HostScopePropertyCacheTests
         var outcome = await OnEveryRouteAsync(pre => OpenedThrough(
             new ScopeCtx(new ScopeCtx(pre, [], [Prop("P", Body(Tick()))]), [], [Prop("Q", Body(N(5)))]),
             Add(R("P"), R("P"))));
-        Assert.Equal(("2", "tick1"), (outcome.Value, outcome.Effects));
+        Assert.Equal(("2", "tock1"), (outcome.Value, outcome.Effects));
 
         // The owner identity is the DECLARING (grandparent) level object, not the level the lookup started at.
         var log = new Log();
@@ -362,13 +362,13 @@ public partial class HostScopePropertyCacheTests
     [Fact]
     public async Task LocalOnlyHostProperty_IsSharedWithinOneActivation_AndSeparateAcrossActivations()
     {
-        // F(x) = Q + Q with local-only host Q = x + tick() * 0: one evaluation per F activation.
+        // F(x) = Q + Q with local-only host Q = x + tock() * 0: one evaluation per F activation.
         var outcome = await OnEveryRouteAsync(pre => OpenedThrough(
             new ScopeCtx(pre, [], [Prop("Q", Body(Add(X("x"), new Expr.Binary(BinaryOp.Mul, Tick(), N(0)))),
                 exposure: PropertyExposure.LocalOnlyCapturedAncestorParameters, required: ["x"])], ["x"]),
             Seq(Call("F", N(1)), Call("F", N(2)), Call("F", N(1))),
             Prop("F", Fn("x", Add(R("Q"), R("Q"))), isPublic: true)));
-        Assert.Equal(("(2, 4, 2)", "tick1,tick2,tick3"), (outcome.Value, outcome.Effects));
+        Assert.Equal(("(2, 4, 2)", "tock1,tock2,tock3"), (outcome.Value, outcome.Effects));
     }
 
     [Fact]
@@ -386,7 +386,7 @@ public partial class HostScopePropertyCacheTests
         var host = await OnEveryRouteAsync(pre => Build(pre, host: true));
         var owned = await OnEveryRouteAsync(pre => Build(pre, host: false));
         Assert.Equal("((11, 11, 12, 11), (23, 23, 24, 23))", host.Value);
-        Assert.Equal("tick1,tick2,tick3,tick4", host.Effects);
+        Assert.Equal("tock1,tock2,tock3,tock4", host.Effects);
         Assert.Equal(owned, host);
     }
 
@@ -405,15 +405,15 @@ public partial class HostScopePropertyCacheTests
         var lib = new Algorithm.User(null, [], [], [Prop("V", Body(Tick()), isPublic: true)], OutputBundle.Empty);
         var outcome = await OnEveryRouteAsync(pre => OpenedThrough(
             new ScopeCtx(pre, [new Expr.AlgorithmExpr(lib)], []), Add(R("V"), R("V"))));
-        Assert.Equal(("2", "tick1"), (outcome.Value, outcome.Effects));
+        Assert.Equal(("2", "tock1"), (outcome.Value, outcome.Effects));
     }
 
     // M4★ (L-RUN, OD-E): a call through the established target is fresh and publishes under the
     // TARGET F, whose entry the bare reads then share (formerly D4 kept a zero-parameter target an
     // ordinary property of the alias, and a collecting one published nothing).
     [Theory]
-    [InlineData(false, "(1, 1, 2, 1)", "tick1,tick2")]
-    [InlineData(true, "(1, 1, 2, 1)", "tick1,tick2")]
+    [InlineData(false, "(1, 1, 2, 1)", "tock1,tock2")]
+    [InlineData(true, "(1, 1, 2, 1)", "tock1,tock2")]
     public async Task RuntimeAliasInAHostScope_PublishesUnderItsTarget_AndCallsFreshly(
         bool collectingTarget, string value, string effects)
     {
@@ -452,12 +452,12 @@ public partial class HostScopePropertyCacheTests
     /// M4★ every call through the established target is fresh, whatever the target's arity.
     /// </summary>
     [Theory]
-    [InlineData(false, "shared properties list", "((1, 2, 1, 3), (4, 5, 4, 6))", "tick1,tick2,tick3,tick4,tick5,tick6")]
-    [InlineData(false, "record with-copy", "((1, 2, 1, 3), (4, 5, 4, 6))", "tick1,tick2,tick3,tick4,tick5,tick6")]
-    [InlineData(false, "one host object opened twice", "((1, 2, 1, 3), (1, 4, 1, 5))", "tick1,tick2,tick3,tick4,tick5")]
-    [InlineData(true, "shared properties list", "((1, 2, 1, 3), (4, 5, 4, 6))", "tick1,tick2,tick3,tick4,tick5,tick6")]
-    [InlineData(true, "record with-copy", "((1, 2, 1, 3), (4, 5, 4, 6))", "tick1,tick2,tick3,tick4,tick5,tick6")]
-    [InlineData(true, "one host object opened twice", "((1, 2, 1, 3), (1, 4, 1, 5))", "tick1,tick2,tick3,tick4,tick5")]
+    [InlineData(false, "shared properties list", "((1, 2, 1, 3), (4, 5, 4, 6))", "tock1,tock2,tock3,tock4,tock5,tock6")]
+    [InlineData(false, "record with-copy", "((1, 2, 1, 3), (4, 5, 4, 6))", "tock1,tock2,tock3,tock4,tock5,tock6")]
+    [InlineData(false, "one host object opened twice", "((1, 2, 1, 3), (1, 4, 1, 5))", "tock1,tock2,tock3,tock4,tock5")]
+    [InlineData(true, "shared properties list", "((1, 2, 1, 3), (4, 5, 4, 6))", "tock1,tock2,tock3,tock4,tock5,tock6")]
+    [InlineData(true, "record with-copy", "((1, 2, 1, 3), (4, 5, 4, 6))", "tock1,tock2,tock3,tock4,tock5,tock6")]
+    [InlineData(true, "one host object opened twice", "((1, 2, 1, 3), (1, 4, 1, 5))", "tock1,tock2,tock3,tock4,tock5")]
     public async Task RuntimeAliasInRecordEqualHostScopes_KeepsOneBindingCellPerHostScopeObject(
         bool collectingTarget, string shape, string value, string effects)
     {
@@ -512,7 +512,7 @@ public partial class HostScopePropertyCacheTests
             return OpenedThrough(new ScopeCtx(pre, [], members), Seq(Call("A", N(5)), R("A"), Call("A")));
         }
         var outcome = await OnEveryRouteAsync(Build);
-        Assert.Equal(("(1, 2, 3)", "tick1,tick2,tick3"), (outcome.Value, outcome.Effects));
+        Assert.Equal(("(1, 2, 3)", "tock1,tock2,tock3"), (outcome.Value, outcome.Effects));
     }
 
     [Fact]
@@ -563,7 +563,7 @@ public partial class HostScopePropertyCacheTests
                 await release.Task.WaitAsync(token);
                 return new Result.Atom(1);
             }),
-            HostOperation.Create("tick", (_, _) => new Result.Atom(++ticks)));
+            HostOperation.Create("tock", (_, _) => new Result.Atom(++ticks)));
         var members = RuntimeAliasMembers(collectingTarget: true);
         members = members.Select(p => p.Name switch
         {
@@ -836,7 +836,7 @@ public partial class HostScopePropertyCacheTests
             Assert.True(result.IsError);
             Assert.Equal(KatLangErrorCode.DivisionByZero, result.Error.Code);
             Assert.Equal(divisionSpan, KatLangError.FromEvalError(result.Error).Span);
-            Assert.Equal("tick1,tick2,tick3", string.Join(",", log.Effects));
+            Assert.Equal("tock1,tock2,tock3", string.Join(",", log.Effects));
             // The inner P() succeeded, but cannot publish for its failing owner. S keeps its entry.
             Assert.Equal(1, route == 2 ? asyncCache.PublishedCount : syncCache.Inner.GetSnapshot().Stores);
             Assert.Equal(0, route == 2 ? asyncCache.ActiveOwnerCount : syncCache.Inner.ActiveOwnerCount);
@@ -875,7 +875,7 @@ public partial class HostScopePropertyCacheTests
     public async Task CancellationDuringAnOwningHostEvaluation_IsTerminal_AndPublishesNothing()
     {
         using var cts = new CancellationTokenSource();
-        var ops = HostOperations.Create(HostOperation.Create("tick", (_, _) => { cts.Cancel(); return new Result.Atom(1); }));
+        var ops = HostOperations.Create(HostOperation.Create("tock", (_, _) => { cts.Cancel(); return new Result.Atom(1); }));
         // P's owning evaluation is still running when the next charged boundary (the read of Q) observes the token.
         Expr Build() => OpenedThrough(new ScopeCtx(Prelude(ops), [], [Prop("P", Body(Add(Tick(), R("Q")))), Prop("Q", Body(N(1)))]),
             Add(R("P"), R("P")));
@@ -886,7 +886,7 @@ public partial class HostScopePropertyCacheTests
         Assert.Equal(0, cache.ActiveOwnerCount);
 
         using var asyncCts = new CancellationTokenSource();
-        var asyncOps = HostOperations.Create(HostOperation.CreateAsync("tick", async (_, _) =>
+        var asyncOps = HostOperations.Create(HostOperation.CreateAsync("tock", async (_, _) =>
         {
             await Task.Yield();
             asyncCts.Cancel();

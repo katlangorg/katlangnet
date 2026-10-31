@@ -23,7 +23,7 @@ namespace KatLang.Tests;
 /// cache: a failing argument ran twice (<c>trace(1)</c> logged twice), a seeded failure
 /// healed into a value, and one parameter yielded two different values in one activation
 /// (<c>Pair(B)</c> gave <c>(3, 5)</c>). The evidence here is deterministic host
-/// instrumentation (<c>tick</c> counts its invocations, <c>trace</c> logs its argument)
+/// instrumentation (<c>tock</c> counts its invocations, <c>trace</c> logs its argument)
 /// and seeded random streams, on every execution route: the public sync and async
 /// engines, the async twin (an async host operation present), the generic and optimized
 /// evaluators, and the forced async twin. Lean: the slot's need cell (<c>supplyNeed</c> /
@@ -67,10 +67,10 @@ public class ArgumentValueOutcomeTests
 
         public Result Tick()
         {
-            var tick = Interlocked.Increment(ref _ticks);
+            var tock = Interlocked.Increment(ref _ticks);
             lock (Calls)
-                Calls.Add($"tick#{tick}");
-            return new Result.Atom((Decimal128)tick);
+                Calls.Add($"tock#{tock}");
+            return new Result.Atom((Decimal128)tock);
         }
 
         public Result Trace(Result value)
@@ -83,19 +83,19 @@ public class ArgumentValueOutcomeTests
 
     private static HostOperations OperationsFor(HostLog log, bool withAsyncOperation)
     {
-        var tick = withAsyncOperation
-            ? HostOperation.CreateAsync("tick", async (_, _) => { await Task.Yield(); return log.Tick(); })
-            : HostOperation.Create("tick", (_, _) => log.Tick());
+        var tock = withAsyncOperation
+            ? HostOperation.CreateAsync("tock", async (_, _) => { await Task.Yield(); return log.Tick(); })
+            : HostOperation.Create("tock", (_, _) => log.Tick());
         var trace = withAsyncOperation
             ? HostOperation.CreateAsync("trace", async (args, _) => { await Task.Yield(); return log.Trace(args[0]); }, "x")
             : HostOperation.Create("trace", (args, _) => log.Trace(args[0]), "x");
         return withAsyncOperation
-            ? HostOperations.Create(tick, trace, HostOperation.CreateAsync("pause", async (_, _) =>
+            ? HostOperations.Create(tock, trace, HostOperation.CreateAsync("pause", async (_, _) =>
             {
                 await Task.Yield();
                 return new Result.Atom((Decimal128)0);
             }))
-            : HostOperations.Create(tick, trace);
+            : HostOperations.Create(tock, trace);
     }
 
     private sealed record Observation(string Kind, string? Value, IReadOnlyList<string> Codes, IReadOnlyList<string> HostCalls)
@@ -249,16 +249,16 @@ public class ArgumentValueOutcomeTests
 
     /// <summary>
     /// Example 2: one parameter never acquires several values. The slot's first evaluation of
-    /// <c>B</c> fails (<c>tick#1</c>), so every read of <c>x</c> in that activation is that
+    /// <c>B</c> fails (<c>tock#1</c>), so every read of <c>x</c> in that activation is that
     /// failure: the former <c>(3, 5)</c> — two retries producing two different successes — is
     /// impossible, and the call fails after ONE host call.
     /// </summary>
     [Fact]
     public async Task StatefulFailure_IsRetained_OneParameterNeverHasTwoValues()
         => AssertFails(
-            await OnEveryRouteAsync("B = if(tick() < 2, 1 / 0, tick())\nPair(x) = x, x\nPair(B), B"),
+            await OnEveryRouteAsync("B = if(tock() < 2, 1 / 0, tock())\nPair(x) = x, x\nPair(B), B"),
             KatLangErrorCode.DivisionByZero,
-            "tick#1");
+            "tock#1");
 
     /// <summary>
     /// Reading the PROPERTY <c>B</c> inside the callee is a separate, ordinary property
@@ -268,9 +268,9 @@ public class ArgumentValueOutcomeTests
     [Fact]
     public async Task PropertyReadBesideTheParameter_FollowsPropertySemantics_TheParameterKeepsItsFailure()
         => AssertFails(
-            await OnEveryRouteAsync("B = if(tick() < 2, 1 / 0, tick())\nPair(x) = B, x, B, x\nPair(B), B"),
+            await OnEveryRouteAsync("B = if(tock() < 2, 1 / 0, tock())\nPair(x) = B, x, B, x\nPair(B), B"),
             KatLangErrorCode.DivisionByZero,
-            "tick#1");
+            "tock#1");
 
     /// <summary>
     /// Example 3: a failure cannot heal. Seed 4's stream starts <c>2, 0</c>: the first
@@ -357,10 +357,10 @@ public class ArgumentValueOutcomeTests
     [Fact]
     public async Task UndemandedPropertySlots_DoNotPrimeOrFailThePropertyCache()
     {
-        const string flaky = "B = if(tick() < 2, 1 / 0, tick())";
-        AssertFails(await OnEveryRouteAsync($"{flaky}\nIgnore(x) = 0\nIgnore(B), B, B"), KatLangErrorCode.DivisionByZero, "tick#1");
-        AssertFails(await OnEveryRouteAsync($"{flaky}\nSecond(x, y) = y\nSecond(B, B)"), KatLangErrorCode.DivisionByZero, "tick#1");
-        AssertFails(await OnEveryRouteAsync($"{flaky}\nBoth(x, y) = y, x\nBoth(B, B)"), KatLangErrorCode.DivisionByZero, "tick#1");
+        const string flaky = "B = if(tock() < 2, 1 / 0, tock())";
+        AssertFails(await OnEveryRouteAsync($"{flaky}\nIgnore(x) = 0\nIgnore(B), B, B"), KatLangErrorCode.DivisionByZero, "tock#1");
+        AssertFails(await OnEveryRouteAsync($"{flaky}\nSecond(x, y) = y\nSecond(B, B)"), KatLangErrorCode.DivisionByZero, "tock#1");
+        AssertFails(await OnEveryRouteAsync($"{flaky}\nBoth(x, y) = y, x\nBoth(B, B)"), KatLangErrorCode.DivisionByZero, "tock#1");
     }
 
     /// <summary>
@@ -376,8 +376,8 @@ public class ArgumentValueOutcomeTests
             "S[S[S[10, 10], 10], S[S[20, 20], 20]]",
             "trace(10)", "trace(20)");
         AssertFails(await OnEveryRouteAsync(
-            "Pair(x) = x, x\nIgnore(x) = 0\nOuter(n) = {\n    L = if(tick() < 2, 1 / 0, n * 10)\n    Ignore(L), L, Pair(L)\n}\nOuter(1)"),
-            KatLangErrorCode.DivisionByZero, "tick#1");
+            "Pair(x) = x, x\nIgnore(x) = 0\nOuter(n) = {\n    L = if(tock() < 2, 1 / 0, n * 10)\n    Ignore(L), L, Pair(L)\n}\nOuter(1)"),
+            KatLangErrorCode.DivisionByZero, "tock#1");
     }
 
     /// <summary>
@@ -389,10 +389,10 @@ public class ArgumentValueOutcomeTests
     [Fact]
     public async Task EverySpellingOfOneProperty_EstablishesTheSameSlotOutcome()
     {
-        const string box = "Box = {\n    public V = if(tick() < 2, 1 / 0, tick())\n}\nPair(x) = x, x";
-        AssertFails(await OnEveryRouteAsync($"{box}\nPair(Box.V), Box.V"), KatLangErrorCode.DivisionByZero, "tick#1");
-        AssertFails(await OnEveryRouteAsync($"open Box\n{box}\nPair(V), V"), KatLangErrorCode.DivisionByZero, "tick#1");
-        AssertFails(await OnEveryRouteAsync($"{box}\nAlias = Box.V\nPair(Alias), Alias"), KatLangErrorCode.DivisionByZero, "tick#1");
+        const string box = "Box = {\n    public V = if(tock() < 2, 1 / 0, tock())\n}\nPair(x) = x, x";
+        AssertFails(await OnEveryRouteAsync($"{box}\nPair(Box.V), Box.V"), KatLangErrorCode.DivisionByZero, "tock#1");
+        AssertFails(await OnEveryRouteAsync($"open Box\n{box}\nPair(V), V"), KatLangErrorCode.DivisionByZero, "tock#1");
+        AssertFails(await OnEveryRouteAsync($"{box}\nAlias = Box.V\nPair(Alias), Alias"), KatLangErrorCode.DivisionByZero, "tock#1");
     }
 
     // ── 3. Explicit calls stay fresh; the algorithm channel stays usable ─────────────
@@ -409,27 +409,27 @@ public class ArgumentValueOutcomeTests
     public async Task ExplicitInvocationOfTheParameter_StaysAFreshCall()
     {
         AssertOk(
-            await OnEveryRouteAsync("P = tick()\nCall0(f) = f()\nP, Call0(P), P"),
+            await OnEveryRouteAsync("P = tock()\nCall0(f) = f()\nP, Call0(P), P"),
             "S[1, 2, 1]",
-            "tick#1", "tick#2");
+            "tock#1", "tock#2");
         AssertOk(
-            await OnEveryRouteAsync("P = tick()\nTwice0(f) = f(), f(), f\nTwice0(P)"),
+            await OnEveryRouteAsync("P = tock()\nTwice0(f) = f(), f(), f\nTwice0(P)"),
             "S[1, 2, 1]",
-            "tick#1", "tick#2");
+            "tock#1", "tock#2");
     }
 
     /// <summary>
     /// INVOKING the callable is not demanding the slot's VALUE (NEED-06): <c>Call0(B)</c> never
-    /// reads B through the slot; its explicit call runs B's body afresh, here at its first tick,
+    /// reads B through the slot; its explicit call runs B's body afresh, here at its first tock,
     /// which fails. A later VALUE read of the same parameter demands the cell once and reports
     /// that outcome; an invocation never reads, repairs or replaces it.
     /// </summary>
     [Fact]
     public async Task CallableInvocation_DoesNotPredemandItsCellValue()
     {
-        const string flaky = "B = if(tick() < 2, 1 / 0, tick())";
-        AssertFails(await OnEveryRouteAsync($"{flaky}\nCall0(f) = f()\nCall0(B)"), KatLangErrorCode.DivisionByZero, "tick#1");
-        AssertFails(await OnEveryRouteAsync($"{flaky}\nThenRead(f) = f(), f\nThenRead(B)"), KatLangErrorCode.DivisionByZero, "tick#1");
+        const string flaky = "B = if(tock() < 2, 1 / 0, tock())";
+        AssertFails(await OnEveryRouteAsync($"{flaky}\nCall0(f) = f()\nCall0(B)"), KatLangErrorCode.DivisionByZero, "tock#1");
+        AssertFails(await OnEveryRouteAsync($"{flaky}\nThenRead(f) = f(), f\nThenRead(B)"), KatLangErrorCode.DivisionByZero, "tock#1");
     }
 
     public static TheoryData<string, string> HigherOrderPrograms() => new()
@@ -567,23 +567,23 @@ public class ArgumentValueOutcomeTests
         var reads = string.Join(", ", Enumerable.Repeat("v", 64));
         var definitions = $"{chain}\nF32(v) = {reads}";
         // The success control also establishes sufficient stack headroom for this depth.
-        AssertOk(await OnEveryRouteAsync($"{definitions}\nF0(tick())"),
-            "S[" + string.Join(", ", Enumerable.Repeat("1", 64)) + "]", "tick#1");
-        AssertFails(await OnEveryRouteAsync($"{definitions}\nB = if(tick() < 2, 1 / 0, tick())\nF0(B)"),
-            KatLangErrorCode.DivisionByZero, "tick#1");
+        AssertOk(await OnEveryRouteAsync($"{definitions}\nF0(tock())"),
+            "S[" + string.Join(", ", Enumerable.Repeat("1", 64)) + "]", "tock#1");
+        AssertFails(await OnEveryRouteAsync($"{definitions}\nB = if(tock() < 2, 1 / 0, tock())\nF0(B)"),
+            KatLangErrorCode.DivisionByZero, "tock#1");
     }
 
     [Fact]
     public async Task ExplicitCallSlot_AndForwardedInvocation_DoNotReplaceTheValueOutcome()
     {
-        AssertOk(await OnEveryRouteAsync("P = tick()\nFour(v) = v, v, v, v\nP, Four(P()), P, P()"),
-            "S[1, S[2, 2, 2, 2], 1, 3]", "tick#1", "tick#2", "tick#3");
-        AssertOk(await OnEveryRouteAsync("P = tick()\nUse(f) = f, f(), f, f()\nFwd(g) = Use(g)\nFwd(P)"),
-            "S[1, 2, 1, 3]", "tick#1", "tick#2", "tick#3");
-        AssertFails(await OnEveryRouteAsync("B = if(tick() < 2, 1 / 0, tick())\nUse(f) = f, f()\nFwd(g) = Use(g)\nFwd(B)"),
-            KatLangErrorCode.DivisionByZero, "tick#1");
-        AssertFails(await OnEveryRouteAsync("B = if(tick() < 2, 1 / 0, tick())\nUse(f) = f(), f\nFwd(g) = Use(g)\nFwd(B)"),
-            KatLangErrorCode.DivisionByZero, "tick#1");
+        AssertOk(await OnEveryRouteAsync("P = tock()\nFour(v) = v, v, v, v\nP, Four(P()), P, P()"),
+            "S[1, S[2, 2, 2, 2], 1, 3]", "tock#1", "tock#2", "tock#3");
+        AssertOk(await OnEveryRouteAsync("P = tock()\nUse(f) = f, f(), f, f()\nFwd(g) = Use(g)\nFwd(P)"),
+            "S[1, 2, 1, 3]", "tock#1", "tock#2", "tock#3");
+        AssertFails(await OnEveryRouteAsync("B = if(tock() < 2, 1 / 0, tock())\nUse(f) = f, f()\nFwd(g) = Use(g)\nFwd(B)"),
+            KatLangErrorCode.DivisionByZero, "tock#1");
+        AssertFails(await OnEveryRouteAsync("B = if(tock() < 2, 1 / 0, tock())\nUse(f) = f(), f\nFwd(g) = Use(g)\nFwd(B)"),
+            KatLangErrorCode.DivisionByZero, "tock#1");
     }
 
     [Fact]
@@ -599,8 +599,8 @@ public class ArgumentValueOutcomeTests
     [Fact]
     public async Task OpenedStructuralAndAliasArguments_ShareTheSuccessfulPropertyEntry()
         => AssertOk(await OnEveryRouteAsync(
-            "open Box\nBox = {public V = tick()}\nAlias = Box.V\nPair(x) = x, x\nPair(Box.V), Pair(V), Pair(Alias), Box.V"),
-            "S[S[1, 1], S[1, 1], S[1, 1], 1]", "tick#1");
+            "open Box\nBox = {public V = tock()}\nAlias = Box.V\nPair(x) = x, x\nPair(Box.V), Pair(V), Pair(Alias), Box.V"),
+            "S[S[1, 1], S[1, 1], S[1, 1], 1]", "tock#1");
 
     [Theory]
     [InlineData("sum(v)")]
@@ -736,12 +736,12 @@ public class ArgumentValueOutcomeTests
 
     private const string LawDefinitions = """
         Bad = trace(1) / 0
-        Flaky = if(tick() < 2, 1 / 0, tick())
+        Flaky = if(tock() < 2, 1 / 0, tock())
         Pick = [10, 20][trace(randomInt(0, 3))]
         Roll = trace(randomInt(1, 1000000))
-        Tock = tick() * 100
+        Tock = tock() * 100
         Box = {
-            public V = if(tick() < 2, 1 / 0, tick())
+            public V = if(tock() < 2, 1 / 0, tock())
             public R = trace(randomInt(1, 1000000))
         }
         One(x) = x

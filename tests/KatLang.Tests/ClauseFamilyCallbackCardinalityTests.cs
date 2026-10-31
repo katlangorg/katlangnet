@@ -398,17 +398,17 @@ public sealed partial class ClauseFamilyCallbackCardinalityTests
     public async Task MultiRowCallback_RunsItsWholeBodyExactlyOnce()
     {
         // The callback result is the ordinary call's: every row of the selected clause runs once, in order.
-        var (observation, _) = await AllRoutesAsync("F(0) = tick(), tick()\nF(n) = n, n\nmap([0], F)");
+        var (observation, _) = await AllRoutesAsync("F(0) = tock(), tock()\nF(n) = n, n\nmap([0], F)");
         Assert.Equal(("ok", "L[S[1, 2]]"), (observation.Kind, observation.Value));
-        Assert.Equal(["tick#1", "tick#2"], observation.HostCalls);
+        Assert.Equal(["tock#1", "tock#2"], observation.HostCalls);
     }
 
     [Fact]
     public async Task AcceptedFamilyCallbacks_InvokeOncePerItem()
     {
-        var (observation, _) = await AllRoutesAsync("F(0) = tick()\nF(n) = (tick(), n)\nmap([0, 5], F), tick()");
+        var (observation, _) = await AllRoutesAsync("F(0) = tock()\nF(n) = (tock(), n)\nmap([0, 5], F), tock()");
         Assert.Equal(("ok", "S[L[1, S[2, 5]], 3]"), (observation.Kind, observation.Value));
-        Assert.Equal(["tick#1", "tick#2", "tick#3"], observation.HostCalls);
+        Assert.Equal(["tock#1", "tock#2", "tock#3"], observation.HostCalls);
     }
 
     [Theory]
@@ -517,7 +517,7 @@ public sealed partial class ClauseFamilyCallbackCardinalityTests
             return value;
         }
 
-        public Result Tick() => Log($"tick#{Interlocked.Increment(ref _ticks)}", new Result.Atom(_ticks));
+        public Result Tick() => Log($"tock#{Interlocked.Increment(ref _ticks)}", new Result.Atom(_ticks));
 
         public Result Trace(Result value) => Log($"trace({SixRouteAgreement.Neutral(value)})", value);
 
@@ -532,11 +532,11 @@ public sealed partial class ClauseFamilyCallbackCardinalityTests
     private static HostOperations Operations(HostLog log, bool suspending)
         => suspending
             ? HostOperations.Create(
-                HostOperation.CreateAsync("tick", async (_, _) => { await Task.Yield(); return log.Tick(); }),
+                HostOperation.CreateAsync("tock", async (_, _) => { await Task.Yield(); return log.Tick(); }),
                 HostOperation.CreateAsync("trace", async (args, _) => { await Task.Yield(); return log.Trace(args[0]); }, "x"),
                 HostOperation.CreateAsync("cancel", async (args, _) => { await Task.Yield(); return log.Cancel(args[0]); }, "x"))
             : HostOperations.Create(
-                HostOperation.Create("tick", (_, _) => log.Tick()),
+                HostOperation.Create("tock", (_, _) => log.Tick()),
                 HostOperation.Create("trace", (args, _) => log.Trace(args[0]), "x"),
                 HostOperation.Create("cancel", (args, _) => log.Cancel(args[0]), "x"));
 

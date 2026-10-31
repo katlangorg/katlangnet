@@ -191,6 +191,20 @@ public class Q06Q27FinalHostileReviewTests
         foreach (var descriptor in BuiltinRegistry.AllBuiltins)
         {
             var minimum = descriptor.ArityFacts.MinTopLevelArgumentCount;
+            if (minimum == 0)
+            {
+                // A zero-arity builtin (`tick`): its empty call is valid, so a bare VALUE demand is the
+                // invocation-required refusal — never "expected 0, received 0" — and one supplied argument
+                // is the ordinary arity rejection, raised before the argument is demanded.
+                var refused = Assert.IsType<RunResult.EvalFailure>(KatLangEngine.Run(descriptor.Id.ToString()));
+                var invocation = Assert.IsType<EvalError.IllegalInEval>(Inner(Assert.Single(refused.Errors).Source!));
+                Assert.Equal(Evaluator.BuiltinInvocationRequiredMessage(descriptor.Id), invocation.Reason);
+                var surplus = Assert.IsType<RunResult.EvalFailure>(KatLangEngine.Run(descriptor.Id + "(1 / 0)"));
+                var surplusMismatch = Assert.IsType<EvalError.ArityMismatch>(Inner(Assert.Single(surplus.Errors).Source!));
+                Assert.Equal((0, 1), (surplusMismatch.Expected, surplusMismatch.Actual));
+                continue;
+            }
+
             // A bare builtin takes the zero-supply VALUE-demand path, independently
             // of an explicit call's binder; both must report the same true minimum.
             var bareFailure = Assert.IsType<RunResult.EvalFailure>(KatLangEngine.Run(descriptor.Id.ToString()));

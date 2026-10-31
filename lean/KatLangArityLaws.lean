@@ -3932,19 +3932,34 @@ theorem structural_clauses_do_not_name_a_slot :
 /-- Q-03's complement for BUILTINS (the user case is `lifts_bare_value_reference_iff_not_cacheable`;
 no kind-independent theorem is stated): a builtin never accepts a zero-argument call, and its
 lifting signature always requires an argument, so the specification always lifts a builtin
-reference in a value role. -/
-theorem builtin_reference_lifts_and_is_never_cacheable (b : Builtin) :
+reference in a value role — every builtin except the zero-arity `tick`
+(`tick_reference_is_neither_lifted_nor_a_value`). -/
+theorem builtin_reference_lifts_and_is_never_cacheable (b : Builtin) (h : b ≠ .tickBuiltin) :
     Algorithm.acceptsZeroSuppliedArguments (.builtin b) = false
     ∧ liftsBareValueReference (builtinLiftingSignature b) = true := by
-  cases b <;> decide
+  cases b <;> first | exact absurd rfl h | decide
+
+/-- The zero-arity builtin `tick`: its lifting signature requires nothing, so a bare `tick` in a value
+    role is never lifted into a call; it stays the bare reference, whose VALUE demand is the
+    invocation-required refusal (`evalBuiltinValueCounted`) — never a cached value — while its CALLABLE
+    is the builtin itself. -/
+theorem tick_reference_is_neither_lifted_nor_a_value :
+    Algorithm.acceptsZeroSuppliedArguments (.builtin .tickBuiltin) = false
+    ∧ liftsBareValueReference (builtinLiftingSignature .tickBuiltin) = false := by
+  decide
 
 /-- Q-27 payload hygiene, checked against the independent acceptance predicate for every
-    builtin: the reported minimum is accepted, positive, and the LEAST accepted supply — every
-    smaller supply is rejected (strengthened from the immediately smaller supply alone, R8/X-13). -/
+    builtin: the reported minimum is accepted and is the LEAST accepted supply — every smaller
+    supply is rejected (strengthened from the immediately smaller supply alone, R8/X-13). -/
 theorem builtin_minimum_payload_is_the_least_accepted_supply (b : Builtin) :
     builtinAcceptsArity b (builtinMinimumArity b) = true
-    ∧ builtinMinimumArity b > 0
     ∧ ∀ k, k < builtinMinimumArity b → builtinAcceptsArity b k = false := by
+  cases b <;> decide
+
+/-- Every builtin requires a supplied argument except `tick`, the one zero-arity builtin, whose only
+    accepted call supplies nothing. -/
+theorem builtin_minimum_is_positive_except_tick (b : Builtin) :
+    builtinMinimumArity b = 0 ↔ b = .tickBuiltin := by
   cases b <;> decide
 
 /-- EXAMPLE: the family `G(0)` / `G(n)` has the lifting signature `[n]`, which the

@@ -484,7 +484,7 @@ public class ImplicitForwardingByBindingNameTests
         var satisfied = await Outcome(implicitProgram.Replace("#", satisfying, StringComparison.Ordinal));
         Assert.StartsWith("ok ", satisfied, StringComparison.Ordinal);
 
-        foreach (var argument in new[] { satisfying, $"trace({satisfying})", "Bad", "Inc", "tick()", "randomInt(0, 9)" })
+        foreach (var argument in new[] { satisfying, $"trace({satisfying})", "Bad", "Inc", "tock()", "randomInt(0, 9)" })
         {
             var expected = await Outcome(explicitProgram.Replace("#", argument, StringComparison.Ordinal), seed: 4);
             var actual = await Outcome(implicitProgram.Replace("#", argument, StringComparison.Ordinal), seed: 4);
@@ -567,7 +567,7 @@ public class ImplicitForwardingByBindingNameTests
         { "direct-equal", P + "P(7, 7)", "ok 7" },
         { "forwarded", P + "Some = [P][0]\nSome(7)", "ok 7" },
         { "forwarded-once", P + "Some = [P][0]\nSome(trace(7))", "ok 7 [trace(7)]" },
-        { "forwarded-tick-once", P + "Some = [P][0]\nSome(tick())", "ok 1 [tick#1]" },
+        { "forwarded-tock-once", P + "Some = [P][0]\nSome(tock())", "ok 1 [tock#1]" },
         { "forwarded-failed", "Bad = trace(1) / 0\n" + P + "Some = [P][0]\nSome(Bad)",
             "err DivisionByZero: while evaluating call to Some: while evaluating call to P: Division by zero [trace(1)]" },
         { "forwarded-callable-only", "Inc(y) = y + 1\nPC(x, x) = x, x(5)\nSome = [PC][0]\nSome(Inc)",
@@ -604,7 +604,7 @@ public class ImplicitForwardingByBindingNameTests
     [InlineData("[1, 2]")]
     [InlineData("(1, 2)")]
     [InlineData("{ 5 }")]
-    [InlineData("tick()")]
+    [InlineData("tock()")]
     public async Task SomeEqualsSame_ForEveryArgumentKind(string argument)
     {
         const string Prelude = "Bad = trace(1) / 0\nInc(y) = y + 1\nA = 5\nP(x, x) = x, x.string\n";

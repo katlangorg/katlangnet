@@ -15,11 +15,12 @@ public partial class InvocationPlanTests
     {
         const string url = "https://katlang.org/s0-review/invalid.kat";
         var downloads = 0;
-        var ticks = 0;
+        var afterFailureCalls = 0;
         EvalError? observed = null;
+        // A plain host canary observes a missing terminal boundary independently of tick()'s own guard.
         var operations = HostOperations.Create(
             HostOperation.Create("Meta", (_, _) => throw new InvalidOperationException("META receiver missing"), "operation"),
-            HostOperation.Create("tick", (_, _) => { ticks++; return Zero; }));
+            HostOperation.Create("afterFailure", (_, _) => { afterFailureCalls++; return Zero; }));
         var options = new RunOptions
         {
             HostOperations = operations,
@@ -34,7 +35,7 @@ public partial class InvocationPlanTests
             }
             Add2(a, b) = a + b
             Meta({{argument}})
-            tick()
+            afterFailure()
             """, options);
         Assert.False(parsed.HasErrors, string.Join(Environment.NewLine, parsed.Diagnostics));
         Assert.Equal(0, downloads);
@@ -75,14 +76,14 @@ public partial class InvocationPlanTests
         Assert.Same(sourceFailure, Cause(result.Error));
         Assert.Same(sourceFailure, Cause(Assert.IsAssignableFrom<EvalError>(budget.CheckContinuation())));
         Assert.Equal(1, downloads);
-        Assert.Equal(0, ticks);
+        Assert.Equal(0, afterFailureCalls);
         // Failure terminates this budget, but is not a permanent cache entry in the module loader.
         var (retry, retryBudget) = await Evaluator.RunCountedObservedAsync(new Expr.AlgorithmExpr(parsed.Root),
             hostOperations: operations);
         Assert.True(retry.IsError);
         Assert.NotSame(budget, retryBudget);
         Assert.Equal(2, downloads);
-        Assert.Equal(0, ticks);
+        Assert.Equal(0, afterFailureCalls);
     }
 
     [Theory]

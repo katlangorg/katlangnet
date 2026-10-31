@@ -313,9 +313,46 @@ public static partial class Evaluator
         => EvalZeroArgumentDemandOutputCounted(alg, ctx, valEnv);
 
     // No builtin is valid as a bare zero-argument value; every builtin requires
-    // a call. (The empty sequence value is written `()`, not a builtin.)
+    // a call. (The empty sequence value is written `()`, not a builtin.) A builtin whose
+    // arity IS zero (`tick`) is refused as an INVOCATION-REQUIRED demand, never with the
+    // misleading "expected 0, received 0" arity report; every other builtin keeps the very
+    // arity error its empty call reports. Lean: `evalBuiltinValueCounted`.
     private static EvalResult<CountedResult> EvalBuiltinValueCounted(BuiltinId builtin)
-        => WrongBuiltinArity(builtin, 0);
+        => BuiltinRegistry.GetBuiltin(builtin).FixedArity == 0
+            ? new EvalError.IllegalInEval(BuiltinInvocationRequiredMessage(builtin))
+            : WrongBuiltinArity(builtin, 0);
+
+    /// <summary>
+    /// The refusal of a bare VALUE demand of a zero-arity builtin. Lean:
+    /// <c>builtinInvocationRequiredMessage</c>.
+    /// </summary>
+    internal static string BuiltinInvocationRequiredMessage(BuiltinId builtin)
+    {
+        var name = BuiltinRegistry.GetBuiltin(builtin).Name;
+        return $"`{name}` is a builtin operation that runs only when it is invoked: write `{name}()`.";
+    }
+
+    /// <summary>The refusal of a <c>tick()</c> whose run counter is exhausted. Lean: <c>tickExhaustedMessage</c>.</summary>
+    internal const string TickExhaustedMessage =
+        "`tick()` cannot advance: the run's counter has reached its limit of 9223372036854775807.";
+
+    /// <summary>
+    /// ONE execution of the <c>tick()</c> primitive, reached only by the dispatch arm of an accepted
+    /// zero-argument call (after its route's admission, arity, step and depth checks): the run's
+    /// terminal state and cancellation are observed first, then the run counter advances once and its
+    /// new value is the ONE numeric result (emitted count 1). An exhausted counter is the ordinary
+    /// <see cref="EvalError.IllegalInEval"/> domain failure and does not move. Nothing is rolled back
+    /// when a surrounding computation later fails. Shared by the sync and async dispatch twins.
+    /// Lean: the <c>.tickBuiltin</c> arm of <c>applyBuiltinCounted</c> (<c>runTick</c>).
+    /// </summary>
+    private static EvalResult<CountedResult> ExecuteTick(EvalCtx ctx)
+    {
+        if (ctx.Budget.CheckContinuation() is { } terminal)
+            return terminal;
+        if (!ctx.Budget.TryAdvanceTick(out var value))
+            return new EvalError.IllegalInEval(TickExhaustedMessage);
+        return EvalResult<CountedResult>.Ok(new CountedResult(new Result.Atom(value), 1));
+    }
 
     /// <summary>
     /// Evaluate a callable that the ONE zero-argument value-demand law
@@ -2742,6 +2779,11 @@ public static partial class Evaluator
 
         switch (builtin, args.Count)
         {
+            // `tick()`: the accepted zero-argument call executes the primitive once. Any supplied
+            // argument falls to the default arm's arity rejection before anything is demanded.
+            case (BuiltinId.@tick, 0):
+                return ExecuteTick(ctx);
+
             case (BuiltinId.@if, 3):
                 {
                     var condR = EvalResolvedArgument(args[0], ctx, valEnv);

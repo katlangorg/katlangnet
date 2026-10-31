@@ -10,7 +10,7 @@ namespace KatLang.Tests;
 /// bindings of their own (a holder's read of the module's OUTPUT is cached under the holder, FWD-02),
 /// distinct canonical URLs are distinct declarations even when they serve identical bytes, and an
 /// explicit call is fresh as ever. Source admission (Q-71) is unchanged: one fetch per canonical URL
-/// per operation. Seeded draws (<c>randomInt</c>) and logged host calls (<c>tick()</c>) make binding
+/// per operation. Seeded draws (<c>randomInt</c>) and logged host calls (<c>tock()</c>) make binding
 /// identity observable; every observation is pinned on every module route.
 /// </summary>
 public class ModuleIdentityTests
@@ -30,7 +30,7 @@ public class ModuleIdentityTests
     private static Modules Server() => new(
         (Random, RandomText),
         (RandomTwin, RandomText),
-        (Tick, "public T = tick()"),
+        (Tick, "public T = tock()"),
         (Five, "public X = 5"),
         (FiveTwin, "public X = 5"),
         (OutputDraw, "public R = randomInt(0, 1000000)\nrandomInt(0, 1000000)"),
@@ -109,11 +109,11 @@ public class ModuleIdentityTests
     {
         var observed = await OnEveryRouteAsync($"A = load('{Tick}')\nB = load('{Tick}')\nA.T, B.T, A.T()", Server);
         Assert.Equal("ok S[1, 1, 2]", $"{observed.Kind} {observed.Value}");
-        Assert.Equal(["tick#1", "tick#2"], observed.HostCalls);
+        Assert.Equal(["tock#1", "tock#2"], observed.HostCalls);
 
         var opened = await OnEveryRouteAsync($"open '{Tick}'\nA = load('{Tick}')\nT, A.T", Server);
         Assert.Equal("ok S[1, 1]", $"{opened.Kind} {opened.Value}");
-        Assert.Equal(["tick#1"], opened.HostCalls);
+        Assert.Equal(["tock#1"], opened.HostCalls);
     }
 
     [Fact]

@@ -9,7 +9,7 @@ namespace KatLang.Tests;
 /// reference, to the owner identity of the property cache and to the scope identity of the
 /// runtime-alias memos — not only a host DECLARING level. An evaluator-owned declaration nested under
 /// two distinct host objects (a shared property list, or a record <c>with</c> copy) formerly kept a
-/// structural chain identity, so host <c>{ S = tick(); P = { public Q = S } }</c> read as
+/// structural chain identity, so host <c>{ S = tock(); P = { public Q = S } }</c> read as
 /// <c>(S, P.Q)</c> through two such objects gave <c>((1, 1), (2, 1))</c>: the second <c>P.Q</c> returned
 /// the first object's <c>S</c>. Equivalent rebuilt evaluator-owned levels keep their structural identity.
 /// </summary>
@@ -17,14 +17,14 @@ public partial class HostScopePropertyCacheTests
 {
     // ── 4. HOST-NESTED-1: host ancestors by reference ────────────────────────────────────────
 
-    /// <summary>Host level members <c>S = tick(); P = { public Q = S }</c> (fresh objects on every call).</summary>
+    /// <summary>Host level members <c>S = tock(); P = { public Q = S }</c> (fresh objects on every call).</summary>
     private static Property[] NestedMembers() =>
     [
         Prop("S", Body(Tick())),
         Prop("P", new Algorithm.User(null, [], [], [Prop("Q", Body(R("S")), isPublic: true)], OutputBundle.Empty)),
     ];
 
-    /// <summary>Host level members <c>S = tick(); M = { public P = { public Q = S } }</c>: the host level is TWO levels above <c>Q</c>'s owner.</summary>
+    /// <summary>Host level members <c>S = tock(); M = { public P = { public Q = S } }</c>: the host level is TWO levels above <c>Q</c>'s owner.</summary>
     private static Property[] DeepNestedMembers() =>
     [
         Prop("S", Body(Tick())),
@@ -52,15 +52,15 @@ public partial class HostScopePropertyCacheTests
     }
 
     [Theory]
-    [InlineData("same object", false, "((1, 1), (1, 1))", "tick1")]
-    [InlineData("fresh equal scopes", false, "((1, 1), (2, 2))", "tick1,tick2")]
-    [InlineData("shared Property, distinct lists", false, "((1, 1), (2, 2))", "tick1,tick2")]
-    [InlineData("shared properties list", false, "((1, 1), (2, 2))", "tick1,tick2")]
-    [InlineData("record with-copy", false, "((1, 1), (2, 2))", "tick1,tick2")]
+    [InlineData("same object", false, "((1, 1), (1, 1))", "tock1")]
+    [InlineData("fresh equal scopes", false, "((1, 1), (2, 2))", "tock1,tock2")]
+    [InlineData("shared Property, distinct lists", false, "((1, 1), (2, 2))", "tock1,tock2")]
+    [InlineData("shared properties list", false, "((1, 1), (2, 2))", "tock1,tock2")]
+    [InlineData("record with-copy", false, "((1, 1), (2, 2))", "tock1,tock2")]
     // The second scope reads P.Q BEFORE S: no stale first-scope value, and both rows agree within a scope.
-    [InlineData("same object", true, "((1, 1), (1, 1))", "tick1")]
-    [InlineData("shared properties list", true, "((1, 1), (2, 2))", "tick1,tick2")]
-    [InlineData("record with-copy", true, "((1, 1), (2, 2))", "tick1,tick2")]
+    [InlineData("same object", true, "((1, 1), (1, 1))", "tock1")]
+    [InlineData("shared properties list", true, "((1, 1), (2, 2))", "tock1,tock2")]
+    [InlineData("record with-copy", true, "((1, 1), (2, 2))", "tock1,tock2")]
     public async Task NestedOwnedProperty_UnderDistinctHostObjects_KeepsOneEntryPerHostObject(
         string shape, bool secondReadsNestedFirst, string value, string effects)
     {
@@ -123,7 +123,7 @@ public partial class HostScopePropertyCacheTests
             var row = Seq(R("S"), Dot(R("P"), "Q"));
             return OpenedTwo(new ScopeCtx(first, [], []), row, new ScopeCtx(second, [], []), row, sequence: true);
         });
-        Assert.Equal(("((1, 1), (2, 2))", "tick1,tick2"), (outcome.Value, outcome.Effects));
+        Assert.Equal(("((1, 1), (2, 2))", "tock1,tock2"), (outcome.Value, outcome.Effects));
     }
 
     [Fact]
@@ -264,7 +264,7 @@ public partial class HostScopePropertyCacheTests
         }
 
         var outcome = await OnEveryRouteAsync(Build);
-        Assert.Equal(("(1, 1)", "tick1"), (outcome.Value, outcome.Effects));
+        Assert.Equal(("(1, 1)", "tock1"), (outcome.Value, outcome.Effects));
         var (_, ticks, cache) = Recorded((pre, _) => Build(pre));
         Assert.Equal(1, ticks);
         Assert.Equal(qKeys, cache.Reads.Where(k => k.BindingIdentity is Property { Name: "Q" })

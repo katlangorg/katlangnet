@@ -150,7 +150,7 @@ public class DeferredSourceAdmissionTests
         var observation = await Observe(source, fixture, route);
         AssertRefusal(observation);
         Assert.Equal(1, fixture.Fetches);
-        Assert.Equal(["tick", "fetch"], fixture.Events);
+        Assert.Equal(["tock", "fetch"], fixture.Events);
     }
 
     [Theory]
@@ -347,7 +347,7 @@ public class DeferredSourceAdmissionTests
             RandomSeed = 3,
             AllowedHosts = ["katlang.org", "mods.test"],
             SourceProcessingLimits = restrictive ? new SourceProcessingLimits { MaxSourceLength = RestrictiveLimit } : null,
-            HostOperations = HostOperations.Create(HostOperation.Create("Tick", (_, _) => { Events.Add("tick"); return new Result.Atom(42); })),
+            HostOperations = HostOperations.Create(HostOperation.Create("Tick", (_, _) => { Events.Add("tock"); return new Result.Atom(42); })),
             DownloadCode = async (url, _) =>
             {
                 Fetches++;

@@ -194,7 +194,7 @@ public class BranchLazyModuleLoadingTests
         // failed downloads. Each evaluation still gets a fresh budget and property cache.
         var downloads = 0;
         var ticks = 0;
-        var tick = asyncHost
+        var tock = asyncHost
             ? HostOperation.CreateAsync("Tick", async (_, _) =>
             {
                 await Task.Yield();
@@ -210,7 +210,7 @@ public class BranchLazyModuleLoadingTests
                 await Task.Yield();
                 throw new InvalidOperationException("deterministic missing module");
             },
-            HostOperations = HostOperations.Create(tick),
+            HostOperations = HostOperations.Create(tock),
             SourceProcessingLimits = new SourceProcessingLimits { MaxModuleCount = 2 },
             EvaluationLimits = new EvaluationLimits { MaxSteps = 100 },
         };
@@ -232,7 +232,7 @@ public class BranchLazyModuleLoadingTests
             Assert.Equal(attempt <= 2 ? KatLangErrorCode.LoadFetchFailed : KatLangErrorCode.ModuleCountExceeded,
                 result.Error.Code);
             Assert.Equal(Math.Min(attempt, 2), downloads);
-            Assert.Equal(attempt, ticks); // P is read twice: one tick per fresh evaluation.
+            Assert.Equal(attempt, ticks); // P is read twice: one tock per fresh evaluation.
             Assert.NotSame(previousBudget, budget);
             Assert.True(budget.ConsumedSteps > 0);
             expectedSteps ??= budget.ConsumedSteps;

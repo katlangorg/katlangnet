@@ -115,7 +115,7 @@ public class DifferentialObservationTests
         Assert.Equal(new[] { "binding-failure-outranks-repeated-name-conflict", "decon-arity-over", "decon-arity-under",
             "fixed-call-preserves-boundaries", "fixed-empty-spread-zero-items", "need-closed-core-demand-is-runtime",
             "need-container-call-checks-cardinality-first", "need-selected-signature-payload", "need-variadic-minimum-payload",
-            "need-wrong-arity-precedes-cell-demand" }, cases.Select(c => c.Id).Order());
+            "need-wrong-arity-precedes-cell-demand", "tick-argument-is-an-arity-error" }, cases.Select(c => c.Id).Order());
         foreach (var c in cases)
         {
             var ast = new Expr.AlgorithmExpr(SourceProvenance.ParseValid(c.Source).Root);
@@ -154,6 +154,6 @@ public class DifferentialObservationTests
         foreach (var (kind, minimum) in minimums)
             Assert.True(kinds.GetValueOrDefault(kind) >= minimum, $"Supplementary {kind} guards shrank below {minimum}.");
         var canonical = LanguageSpecArtifactsTests.GenerateArtifact();
-        Assert.Equal(10, canonical.Split('\n').Count(l => l.StartsWith("#guard errorObs ", StringComparison.Ordinal)));
+        Assert.Equal(11, canonical.Split('\n').Count(l => l.StartsWith("#guard errorObs ", StringComparison.Ordinal)));
     }
 }

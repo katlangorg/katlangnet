@@ -166,6 +166,7 @@ public enum KatLang.BuiltinId : int
   sum = 18
   avg = 19
   reduce = 20
+  tick = 21
 
 public sealed record KatLang.CallContext : KatLang.ErrorContext, System.IEquatable<KatLang.CallContext>
   ctor     public CallContext(string CalleeDescription)

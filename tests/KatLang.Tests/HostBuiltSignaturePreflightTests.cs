@@ -18,11 +18,11 @@ public class HostBuiltSignaturePreflightTests
     {
         var effects = 0;
         var hosts = route is 2 or 5
-            ? HostOperations.Create(HostOperation.CreateAsync("tick", async (_, _) =>
+            ? HostOperations.Create(HostOperation.CreateAsync("tock", async (_, _) =>
                 { await Task.Yield(); effects++; return new Result.Atom(1); }))
-            : HostOperations.Create(HostOperation.Create("tick", (_, _) =>
+            : HostOperations.Create(HostOperation.Create("tock", (_, _) =>
                 { effects++; return new Result.Atom(1); }));
-        var source = "F(x)=x\nAlias=F\ntick()\n" + (use switch
+        var source = "F(x)=x\nAlias=F\ntock()\n" + (use switch
         {
             "unused" => "7",
             "call" => "F(1, 2)",

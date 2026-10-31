@@ -42,7 +42,7 @@ public class DotSemanticsDecisionTests
     private const string ObjStringValue = "Obj = {\n    public string = 5\n    7\n}\n";
     private const string ObjStringCallable = "Obj = {\n    public string(x) = x * 2\n    7\n}\n";
     private const string ObjWithoutString = "Obj = {\n    public V = 1\n    7\n}\n";
-    private const string Box = "Box = {\n    public G(x) = x * 10\n    public H(f) = f(3)\n    public V = tick()\n}\n";
+    private const string Box = "Box = {\n    public G(x) = x * 10\n    public H(f) = f(3)\n    public V = tock()\n}\n";
     private const string Apply = "Apply(f, v) = f(v)\n";
     private const string PlainBox = "Box = {\n    public G(x) = x * 10\n    public H(f) = f(3)\n}\n";
 
@@ -85,7 +85,7 @@ public class DotSemanticsDecisionTests
         { "lexical string does not pre-empt the intrinsic", "string(x) = 99\n3.string, string(3)", "ok S['3', 99]", "" },
         { "spread receiver is the lexical call", "string(x) = 99\nA = 5\nA.string, A*.string, string(A)", "ok S['5', 99, 99]", "" },
         { "parameter receiver without the member", "Use(o) = o.string\nUse(12)", "ok '12'", "" },
-        { "property receiver is read through the cache", "A = tick()\nA.string, A, A.string", "ok S['1', 1, '1']", "tick#1" },
+        { "property receiver is read through the cache", "A = tock()\nA.string, A, A.string", "ok S['1', 1, '1']", "tock#1" },
         { "Boolean receiver", "true.string", "err TypeMismatch", "" },
         { "receiver without output", "Obj = {\n    A = 1\n}\nObj.string", "err MissingOutput", "" },
     };
@@ -306,11 +306,11 @@ public class DotSemanticsDecisionTests
         // grouped call that finds the entry EMPTY establishes it (formerly it never populated it).
         var (read, _) = await AllRoutesAsync(Box + "Box.V, Box.V(), (Box.V)(), Box.V(), Box.V");
         Assert.Equal("ok S[1, 2, 3, 4, 1]", read.Semantic);
-        Assert.Equal(["tick#1", "tick#2", "tick#3", "tick#4"], read.HostCalls);
+        Assert.Equal(["tock#1", "tock#2", "tock#3", "tock#4"], read.HostCalls);
 
         var (populate, _) = await AllRoutesAsync(Box + "(Box.V)(), Box.V, (Box.V)(), Box.V");
         Assert.Equal("ok S[1, 1, 2, 1]", populate.Semantic);
-        Assert.Equal(["tick#1", "tick#2"], populate.HostCalls);
+        Assert.Equal(["tock#1", "tock#2"], populate.HostCalls);
         var (member, _) = await AllRoutesAsync(Box + "Box.V(), Box.V, (Box.V)(), Box.V");
         Assert.Equal(populate.Semantic, member.Semantic);
 
@@ -613,7 +613,7 @@ public class DotSemanticsDecisionTests
     [Fact]
     public async Task MR3_GroupedEmptyCall_EqualsTheExplicitEmptyCall()
     {
-        foreach (var (name, definitions, member) in StructuralMembers.Append(("zero-parameter member", "R = {\n    public M = tick()\n}\n", "R.M")))
+        foreach (var (name, definitions, member) in StructuralMembers.Append(("zero-parameter member", "R = {\n    public M = tock()\n}\n", "R.M")))
         {
             var (direct, _) = await AllRoutesAsync(definitions + $"{member}(), {member}()");
             var (grouped, _) = await AllRoutesAsync(definitions + $"({member})(), ({member})()");
@@ -772,10 +772,10 @@ public class DotSemanticsDecisionTests
 
         public Result Tick()
         {
-            var tick = Interlocked.Increment(ref _ticks);
+            var tock = Interlocked.Increment(ref _ticks);
             lock (Calls)
-                Calls.Add($"tick#{tick}");
-            return new Result.Atom(tick);
+                Calls.Add($"tock#{tock}");
+            return new Result.Atom(tock);
         }
 
         public Result Trace(Result value)
@@ -789,10 +789,10 @@ public class DotSemanticsDecisionTests
     private static HostOperations Operations(HostLog log, bool suspending)
         => suspending
             ? HostOperations.Create(
-                HostOperation.CreateAsync("tick", async (_, _) => { await Task.Yield(); return log.Tick(); }),
+                HostOperation.CreateAsync("tock", async (_, _) => { await Task.Yield(); return log.Tick(); }),
                 HostOperation.CreateAsync("trace", async (args, _) => { await Task.Yield(); return log.Trace(args[0]); }, "x"))
             : HostOperations.Create(
-                HostOperation.Create("tick", (_, _) => log.Tick()),
+                HostOperation.Create("tock", (_, _) => log.Tick()),
                 HostOperation.Create("trace", (args, _) => log.Trace(args[0]), "x"));
 
     private static async Task<(Observation Observation, Budget? Budget)> ObserveAsync(

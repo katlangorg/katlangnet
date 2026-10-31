@@ -8773,5 +8773,116 @@ public static class LanguageSpecCorpus
             Notes = "ALIAS-UNIFY-1 third review: formerly the open target's chase did not see `Q`'s parameter `p`, so it opened the root `p` and `K` failed only at run time as a local-only property. No elaborated Lean program exists.",
             Explanation = "`M = p` names `Q`'s parameter, so `M` is a reference to a run-time value: opening it opens `M`'s own, empty namespace. `K` is therefore not declared in `F`'s closed parameter list.",
         },
+        // ==================== tick() ====================
+        new()
+        {
+            Id = "tick-counts-executions-in-the-run",
+            Category = "arithmetic",
+            Source = "tick(), tick(), tick()",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "1\n2\n3",
+            ExpectedRaw = "S[1, 2, 3]",
+            ExpectedEmittedCount = 3,
+            Probes =
+            [
+                new SpecProbe("tick() * 10 + tick()", "ok raw=12 n=1"),
+                new SpecProbe("if(false, tick(), 0), tick()", "ok raw=S[0, 1] n=2"),
+            ],
+            Explanation = "Every run starts its counter at zero; every actual execution of `tick()` adds one and returns the new count as one number, so the counter also shows the order in which calls run.",
+        },
+        new()
+        {
+            Id = "tick-property-is-cached-call-is-fresh",
+            Category = "arithmetic",
+            Source = "A = tick()\nA(), A, A(), A",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "1\n1\n2\n1",
+            ExpectedRaw = "S[1, 1, 2, 1]",
+            ExpectedEmittedCount = 4,
+            Probes =
+            [
+                new SpecProbe("A = tick()\nA + A", "ok raw=2 n=1"),
+                new SpecProbe("A = tick()\nA() + A()", "ok raw=3 n=1"),
+                new SpecProbe("A = tick()\nA, A(), A", "ok raw=S[1, 2, 1] n=3"),
+            ],
+            IncludeInGeneratorPrompt = true,
+            Explanation = "`A = tick()` is an ordinary property: declaring it runs nothing, a bare read reuses the value established for the binding, and `A()` runs afresh. The first explicit call finds the entry empty and establishes it (CACHE-PUB-1); later calls never replace it.",
+        },
+        new()
+        {
+            Id = "tick-argument-is-one-lazy-computation",
+            Category = "arithmetic",
+            Source = "Ignore(x) = 7\nTwice(x) = x + x\nIgnore(tick()), Twice(tick()), tick()",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "7\n2\n2",
+            ExpectedRaw = "S[7, 2, 2]",
+            ExpectedEmittedCount = 3,
+            Explanation = "An unused argument is never computed, and a supplied computation demanded twice runs once (its NeedCell outcome is reused): the final independent call is only the second tick.",
+        },
+        new()
+        {
+            Id = "tick-callable-reference-is-not-an-execution",
+            Category = "arithmetic",
+            Source = "T = tick\nApply(f) = f()\nT(), Apply(tick), tick()",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "1\n2\n3",
+            ExpectedRaw = "S[1, 2, 3]",
+            ExpectedEmittedCount = 3,
+            Probes =
+            [
+                new SpecProbe("T = tick\nIgnore(f) = 7\nIgnore(tick), Ignore(T)", "ok raw=S[7, 7] n=2"),
+            ],
+            Explanation = "Bare `tick` is the builtin's callable identity: an alias of it, or passing it, runs nothing, and every explicit call through it is one fresh execution.",
+        },
+        new()
+        {
+            Id = "tick-meta-replay-is-fresh",
+            Category = "arithmetic",
+            Source = "Replay(meta op) = op.Invoke() + op.Invoke()\nReplay(tick()), tick()",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "3\n3",
+            ExpectedRaw = "S[3, 3]",
+            ExpectedEmittedCount = 2,
+            Explanation = "Capturing the call `tick()` is inert; each `Invoke()` is a fresh execution of the captured call (1 + 2), and the independent call after it is the third tick.",
+        },
+        new()
+        {
+            Id = "tick-bare-value-requires-invocation",
+            Category = "errors",
+            Source = "tick + 1",
+            Outcome = SpecOutcome.EvalError,
+            ExpectedErrorCategory = "illegalInEval",
+            Probes =
+            [
+                new SpecProbe("tick", "err illegalInEval"),
+                new SpecProbe("A = tick\nA", "err illegalInEval"),
+            ],
+            Explanation = "A bare `tick` demanded as a value is refused with an invocation-required diagnostic recommending `tick()` — never the misleading zero-argument arity report — and nothing is counted. Its callable uses (`T = tick`, `Apply(tick)`) stay valid.",
+        },
+        new()
+        {
+            Id = "tick-argument-is-an-arity-error",
+            Category = "errors",
+            Source = "tick(1 / 0)",
+            Outcome = SpecOutcome.EvalError,
+            ExpectedErrorCategory = "arity",
+            ExpectedErrorPayload = new("arity", [], [0, 1]),
+            Probes =
+            [
+                new SpecProbe("5.tick", "err arity"),
+            ],
+            Explanation = "`tick` accepts exactly zero arguments. A supplied argument is the ordinary arity rejection, checked before the argument is demanded (no DivisionByZero), and an extension call supplies its receiver, so `5.tick` is `tick(5)`.",
+        },
+        new()
+        {
+            Id = "tick-is-an-ordinary-shadowable-binding",
+            Category = "name-resolution",
+            Source = "tick(x) = x + 100\ntick(1)",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "101",
+            ExpectedRaw = "101",
+            ExpectedEmittedCount = 1,
+            Explanation = "`tick` is an ordinary prelude binding, not a keyword: a user definition of the same name shadows it completely, and no layer dispatches by spelling.",
+        },
     ];
 }

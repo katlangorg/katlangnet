@@ -86,7 +86,7 @@ public partial class LoopStepCallableDispatchTests
         { "bare member path as the META argument", Lib + "repeat(Lib.Step, 2)", "metaRefusal" },
         { "property read as the META argument", Step + "Start = Step(3)\nrepeat(Start, 2)", "metaRefusal" },
         { "zero-parameter property", "Z = 5\nrepeat(Z(0), 1)", "unbound" },
-        { "zero-parameter host operation", "repeat(tick(0), 1)", "unbound" },
+        { "zero-parameter host operation", "repeat(tock(0), 1)", "unbound" },
         { "zero-parameter Math member", "repeat(pi(0), 1)", "unbound" },
     };
 
@@ -569,11 +569,11 @@ public partial class LoopStepCallableDispatchTests
     [Fact]
     public async Task FamilyStep_LocalPropertiesBelongToEachIterationsActivation()
     {
-        const string definitions = "A = tick()\nF(0) = 0\nF(n) = {\n  T = n + tick()\n  n - 1 + A - A + T - T\n}\n";
+        const string definitions = "A = tock()\nF(0) = 0\nF(n) = {\n  T = n + tock()\n  n - 1 + A - A + T - T\n}\n";
         var (loop, _) = await AllRoutesAsync(definitions + "repeat(F(3), 3), A");
         var (call, _) = await AllRoutesAsync(definitions + "F(F(F(3))), A");
         Assert.Equal(call.Semantic, loop.Semantic);
-        Assert.Equal(["tick#1", "tick#2", "tick#3", "tick#4"], loop.HostCalls);
+        Assert.Equal(["tock#1", "tock#2", "tock#3", "tock#4"], loop.HostCalls);
     }
 
     [Theory]
@@ -814,7 +814,7 @@ public partial class LoopStepCallableDispatchTests
             return value;
         }
 
-        public Result Tick() => Log($"tick#{Interlocked.Increment(ref _ticks)}", new Result.Atom(_ticks));
+        public Result Tick() => Log($"tock#{Interlocked.Increment(ref _ticks)}", new Result.Atom(_ticks));
 
         public Result Trace(Result value) => Log($"trace({SixRouteAgreement.Neutral(value)})", value);
 
@@ -829,11 +829,11 @@ public partial class LoopStepCallableDispatchTests
     private static HostOperations Operations(HostLog log, bool suspending)
         => suspending
             ? HostOperations.Create(
-                HostOperation.CreateAsync("tick", async (_, _) => { await Task.Yield(); return log.Tick(); }),
+                HostOperation.CreateAsync("tock", async (_, _) => { await Task.Yield(); return log.Tick(); }),
                 HostOperation.CreateAsync("trace", async (args, _) => { await Task.Yield(); return log.Trace(args[0]); }, "x"),
                 HostOperation.CreateAsync("cancel", async (args, _) => { await Task.Yield(); return log.Cancel(args[0]); }, "x"))
             : HostOperations.Create(
-                HostOperation.Create("tick", (_, _) => log.Tick()),
+                HostOperation.Create("tock", (_, _) => log.Tick()),
                 HostOperation.Create("trace", (args, _) => log.Trace(args[0]), "x"),
                 HostOperation.Create("cancel", (args, _) => log.Cancel(args[0]), "x"));
 

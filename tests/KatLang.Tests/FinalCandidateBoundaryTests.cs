@@ -33,6 +33,8 @@ public sealed class FinalCandidateBoundaryTests(ITestOutputHelper output)
             [BuiltinId.reduce] = 3,
             // META-S3-3: `while(meta step)` and `repeat(meta step, count)` are fixed-arity too.
             [BuiltinId.@while] = 1, [BuiltinId.@repeat] = 2,
+            // `tick()`: the one zero-arity builtin.
+            [BuiltinId.@tick] = 0,
         };
         Assert.Equal(Enum.GetValues<BuiltinId>().Order(), exact.Keys.Order());
         foreach (var id in Enum.GetValues<BuiltinId>())

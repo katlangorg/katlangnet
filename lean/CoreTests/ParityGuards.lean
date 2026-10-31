@@ -113,7 +113,7 @@ def builtinArityParityTargets : List KatLang.Builtin :=
     .rangeBuiltin, .filterBuiltin, .mapBuiltin, .orderBuiltin, .orderDescBuiltin,
     .countBuiltin, .containsBuiltin, .firstBuiltin, .lastBuiltin, .distinctBuiltin,
     .takeBuiltin, .skipBuiltin, .minBuiltin, .maxBuiltin, .sumBuiltin,
-    .avgBuiltin, .reduceBuiltin ]
+    .avgBuiltin, .reduceBuiltin, .tickBuiltin ]
 
 /-- Compile-time exhaustiveness pin: this match is deliberately wildcard-free,
     so adding a `Builtin` constructor stops compiling here until the new
@@ -124,7 +124,7 @@ def builtinArityParitySweepCovers (b : KatLang.Builtin) : Bool :=
   | .rangeBuiltin | .filterBuiltin | .mapBuiltin | .orderBuiltin | .orderDescBuiltin
   | .countBuiltin | .containsBuiltin | .firstBuiltin | .lastBuiltin | .distinctBuiltin
   | .takeBuiltin | .skipBuiltin | .minBuiltin | .maxBuiltin | .sumBuiltin
-  | .avgBuiltin | .reduceBuiltin => builtinArityParityTargets.contains b
+  | .avgBuiltin | .reduceBuiltin | .tickBuiltin => builtinArityParityTargets.contains b
 
 #guard builtinArityParityTargets.all builtinArityParitySweepCovers
 
@@ -157,7 +157,7 @@ def builtinWrittenMinimumArity : KatLang.Builtin -> Nat
   | .orderDescBuiltin => 1 | .countBuiltin => 1 | .containsBuiltin => 2 | .firstBuiltin => 1
   | .lastBuiltin => 1 | .distinctBuiltin => 1 | .takeBuiltin => 2 | .skipBuiltin => 2
   | .minBuiltin => 1 | .maxBuiltin => 1 | .sumBuiltin => 1 | .avgBuiltin => 1
-  | .reduceBuiltin => 3
+  | .reduceBuiltin => 3 | .tickBuiltin => 0
 
 def builtinArityRejectionCarriesMinimum (b : KatLang.Builtin) (maxArgCount : Nat := 6) : Bool :=
   (List.range (maxArgCount + 1)).all fun argCount =>
@@ -190,7 +190,8 @@ def builtinAcceptedAritySpotCases : List (KatLang.Builtin × Nat) :=
     (.containsBuiltin, 2),
     (.takeBuiltin, 2),
     (.skipBuiltin, 2),
-    (.reduceBuiltin, 3) ]
+    (.reduceBuiltin, 3),
+    (.tickBuiltin, 0) ]
 
 def builtinAcceptedAritySpotFailures : List String :=
   (builtinAcceptedAritySpotCases.filter (fun (b, argCount) =>

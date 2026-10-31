@@ -146,8 +146,8 @@ public class InterpolationHostileReviewTests
     public static TheoryData<string, string, string[]> DemandPrograms => new()
     {
         { "F(a, b) = a\nF(\"{trace(1)}\", \"{trace(2)}\")", "1", ["trace(1)"] },
-        { "F(a) = \"{a}{a}\"\nF(\"{tick()}\")", "11", ["tick#1"] },
-        { "A = \"{tick()}\"\n\"{A}|{A()}|{A}\"", "1|2|1", ["tick#1", "tick#2"] },
+        { "F(a) = \"{a}{a}\"\nF(\"{tock()}\")", "11", ["tock#1"] },
+        { "A = \"{tock()}\"\n\"{A}|{A()}|{A}\"", "1|2|1", ["tock#1", "tock#2"] },
         { "if(false, \"{trace(1)}\", \"{trace(2)}\")", "2", ["trace(2)"] },
         { "\"{['42', 42, 'true', true, 'a, b', ()]}\"", "[42, 42, true, true, a, b, ()]", [] },
         { "Need(x) = x + 1\nF(x) = \"{Need}:{x}\"\nF(3)", "4:3", [] },

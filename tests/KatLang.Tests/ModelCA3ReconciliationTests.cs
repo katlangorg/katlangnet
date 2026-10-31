@@ -16,7 +16,6 @@ public class ModelCA3ReconciliationTests
     private static readonly RunOptions HostVocabulary = new()
     {
         HostOperations = HostOperations.Create(
-            HostOperation.Create("tick", static (_, _) => new Result.Atom(0)),
             HostOperation.Create("trace", static (args, _) => args[0], "x")),
     };
 

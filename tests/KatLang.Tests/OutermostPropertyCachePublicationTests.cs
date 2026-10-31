@@ -22,7 +22,7 @@ namespace KatLang.Tests;
 /// under which the INNERMOST re-entrant read completed first, stored its result, and the
 /// outermost result never replaced it: the seeded reproduction printed <c>2, 0</c>; it now prints
 /// <c>2, 2</c>. The evidence is deterministic — the seeded random stream (its exact draw count
-/// observed on the run's own budget), the counting <c>tick</c> host operation and the logging
+/// observed on the run's own budget), the counting <c>tock</c> host operation and the logging
 /// <c>trace</c> — on all six execution routes (<see cref="SixRouteAgreement"/>), plus internal
 /// publication recording for the failure, resource-limit, and cancellation boundaries, which the
 /// surface cannot observe after a terminal error. Lean: <c>evalZeroArgPropertyAccessCounted</c>
@@ -34,9 +34,9 @@ public class OutermostPropertyCachePublicationTests
     private const string SeededReproduction = """
         Classify(r) = if(r == 796, 1, if(r == 339, 2, 3))
 
-        tick = Classify(randomInt(0, 1000))
+        tock = Classify(randomInt(0, 1000))
 
-        A = if(tick() < 3, A + 1, 0)
+        A = if(tock() < 3, A + 1, 0)
 
         A, A
         """;
@@ -48,7 +48,7 @@ public class OutermostPropertyCachePublicationTests
     [Fact]
     public async Task SeededReproduction_PublishesTheOutermostEvaluation_OnEveryRoute()
     {
-        // `tick` is the program's own zero-parameter property: `tick()` is an explicit, fresh
+        // `tock` is the program's own zero-parameter property: `tock()` is an explicit, fresh
         // evaluation drawing 796, 339, 489 (classified 1, 2, 3). The innermost read returns 0,
         // the middle 1, the outermost 2 — and the outermost 2 is what the second row reads.
         var oracle = await SixRouteAgreement.OnEveryRouteAsync(SeededReproduction, randomSeed: ReproductionSeed);
@@ -103,11 +103,11 @@ public class OutermostPropertyCachePublicationTests
     {
         // The same shape over the counting host operation (1, 2, 3), independent of the random
         // generator's constants.
-        var oracle = await SixRouteAgreement.OnEveryRouteAsync("A = if(tick() < 3, A + 1, 0)\nA, A");
+        var oracle = await SixRouteAgreement.OnEveryRouteAsync("A = if(tock() < 3, A + 1, 0)\nA, A");
 
         Assert.Equal("ok", oracle.Kind);
         Assert.Equal("S[2, 2]", oracle.Value);
-        Assert.Equal(["tick#1", "tick#2", "tick#3"], oracle.HostCalls);
+        Assert.Equal(["tock#1", "tock#2", "tock#3"], oracle.HostCalls);
     }
 
     // ── 3. The law on every route ────────────────────────────────────────────────────────────
@@ -115,87 +115,87 @@ public class OutermostPropertyCachePublicationTests
     public static TheoryData<string, string, string[]> RecursivePrograms => new()
     {
         // Deeper recursion: five re-entrant levels below the owner; every row reads the owner's 5.
-        { "A = if(tick() < 6, A + 1, 0)\nA, A, A", "S[5, 5, 5]", Ticks(6) },
+        { "A = if(tock() < 6, A + 1, 0)\nA, A, A", "S[5, 5, 5]", Ticks(6) },
 
         // Re-entrant evaluations RETURN their intermediate values (traced 0, then 1) — only the
         // owner's 2 is published.
-        { "A = if(tick() < 3, trace(A) + 1, 0)\nA, A", "S[2, 2]", [.. Ticks(3), "trace(0)", "trace(1)"] },
+        { "A = if(tock() < 3, trace(A) + 1, 0)\nA, A", "S[2, 2]", [.. Ticks(3), "trace(0)", "trace(1)"] },
 
         // Indirect recursion A → B → A: the inner A read is re-entrant through B. B's own owner
         // publishes 3 (computed from A's intermediate 2), A's owner publishes 4.
-        { "A = if(tick() < 3, B + 1, 0)\nB = A + 1\nA, A, B, B", "S[4, 4, 3, 3]", Ticks(3) },
+        { "A = if(tock() < 3, B + 1, 0)\nB = A + 1\nA, A, B, B", "S[4, 4, 3, 3]", Ticks(3) },
 
         // The same pair entered through B: B's owner publishes 5, A's owner (nested) publishes 4.
-        { "A = if(tick() < 3, B + 1, 0)\nB = A + 1\nB, A", "S[5, 4]", Ticks(3) },
+        { "A = if(tock() < 3, B + 1, 0)\nB = A + 1\nB, A", "S[5, 4]", Ticks(3) },
 
         // Sibling re-entrant reads: neither publishes, so EACH evaluates (five ticks) and the
         // owner's 3 is published. This row separates the law from both alternatives: under
         // first-completion-wins the second sibling hit the innermost 1 (`S[3, 1]`, three ticks);
         // under a last-writer-wins publication it hit an intermediate entry (`S[4, 4]`, three).
-        { "A = if(tick() < 3, A + A, 1)\nA, A", "S[3, 3]", Ticks(5) },
+        { "A = if(tock() < 3, A + A, 1)\nA, A", "S[3, 3]", Ticks(5) },
 
         // A local-only property of a RECURSIVE owner: each activation of F is its own key, so
         // the nested F(0)'s P is that key's owner (not a re-entrant read of F(1)'s P) and
-        // publishes 1 for its second read — one tick in all.
-        { "F(x) = {\n    P = if(x == 0, tick(), F(x - 1) + 10)\n    P + P\n}\nF(1)", "24", Ticks(1) },
+        // publishes 1 for its second read — one tock in all.
+        { "F(x) = {\n    P = if(x == 0, tock(), F(x - 1) + 10)\n    P + P\n}\nF(1)", "24", Ticks(1) },
 
         // An exported binding read from inside calls: one key per run, owned by its first read.
-        { "A = if(tick() < 3, A + 1, 0)\nG(y) = A + y\nG(10), G(20), A", "S[12, 22, 2]", Ticks(3) },
+        { "A = if(tock() < 3, A + 1, 0)\nG(y) = A + y\nG(10), G(20), A", "S[12, 22, 2]", Ticks(3) },
 
         // A local-only binding: each owner activation is its own key with its own owner.
-        { "F(x) = {\n    A = if(tick() < x, A + 1, 0)\n    A, A\n}\nF(3), F(5)", "S[S[2, 2], S[1, 1]]", Ticks(5) },
+        { "F(x) = {\n    A = if(tock() < x, A + 1, 0)\n    A, A\n}\nF(3), F(5)", "S[S[2, 2], S[1, 1]]", Ticks(5) },
 
         // Structural self-reference: `Box.A` inside Box's own member is the same binding.
-        { "Box = {\n    public A = if(tick() < 3, Box.A + 1, 0)\n}\nBox.A, Box.A", "S[2, 2]", Ticks(3) },
+        { "Box = {\n    public A = if(tock() < 3, Box.A + 1, 0)\n}\nBox.A, Box.A", "S[2, 2]", Ticks(3) },
 
         // A shadowing local A is a different binding with its own entry.
-        { "A = if(tick() < 3, A + 1, 0)\nH = {\n    A = tick() * 100\n    A, A\n}\nA, H, A", "S[2, S[400, 400], 2]", Ticks(4) },
+        { "A = if(tock() < 3, A + 1, 0)\nH = {\n    A = tock() * 100\n    A, A\n}\nA, H, A", "S[2, S[400, 400], 2]", Ticks(4) },
 
         // CACHE-PUB-1: the explicit A() is A's OWNER (empty, inactive key), so the property-style
         // read inside it is re-entrant (returns 1, publishes nothing) and A()'s own 2 is published
         // and reused. Formerly A() owned nothing, the inner read published 1, and this was S[2, 1].
-        { "A = if(tick() < 3, A + 1, 0)\nA(), A", "S[2, 2]", Ticks(3) },
+        { "A = if(tock() < 3, A + 1, 0)\nA(), A", "S[2, 2]", Ticks(3) },
 
         // CACHE-PUB-1: an explicit call owning an inner explicit call of the same key — the inner
         // A() is re-entrant; the owner's 2 is published (formerly nothing was, and the bare read
         // evaluated a fourth time: S[2, 0]).
-        { "A = if(tick() < 3, A() + 1, 0)\nA(), A", "S[2, 2]", Ticks(3) },
+        { "A = if(tock() < 3, A() + 1, 0)\nA(), A", "S[2, 2]", Ticks(3) },
 
         // CACHE-PUB-1: a property read owning an inner explicit call: the inner A() is re-entrant.
-        { "A = if(tick() < 3, A() + 1, 0)\nA, A, A()", "S[2, 2, 0]", Ticks(4) },
+        { "A = if(tock() < 3, A() + 1, 0)\nA, A, A()", "S[2, 2, 0]", Ticks(4) },
 
         // CACHE-PUB-1: indirect re-entry through another property's explicit call: A() owns A, B()
         // owns B, and both inner requests are re-entrant; each owner publishes once.
-        { "A = if(tick() < 3, B() + 1, 0)\nB = A + 0\nA(), A, B", "S[2, 2, 1]", Ticks(3) },
+        { "A = if(tock() < 3, B() + 1, 0)\nB = A + 0\nA(), A, B", "S[2, 2, 1]", Ticks(3) },
 
         // M4★ (OD-E): `B = A` is a transparent alias owning no entry, so B() is the fresh A() — re-entrant
         // under A()'s ownership, never an owner of its own — and the bare B reads A's one entry (formerly
         // B's own entry held 1: S[2, 2, 1]).
-        { "A = if(tick() < 3, B() + 1, 0)\nB = A\nA(), A, B", "S[2, 2, 2]", Ticks(3) },
+        { "A = if(tock() < 3, B() + 1, 0)\nB = A\nA(), A, B", "S[2, 2, 2]", Ticks(3) },
 
         // An explicit call after publication evaluates afresh (0) and replaces nothing.
-        { "A = if(tick() < 3, A + 1, 0)\nA, A(), A", "S[2, 0, 2]", Ticks(4) },
+        { "A = if(tock() < 3, A + 1, 0)\nA, A(), A", "S[2, 0, 2]", Ticks(4) },
 
         // Re-entrance is detected THROUGH an explicit-call frame: B's read inside A() inside B's
         // owner is re-entrant (returns 0, publishes nothing); B's owner publishes 1.
-        { "A = if(tick() < 3, B + 1, 0)\nB = A()\nA, A, B", "S[2, 2, 1]", Ticks(3) },
+        { "A = if(tock() < 3, B + 1, 0)\nB = A()\nA, A, B", "S[2, 2, 1]", Ticks(3) },
 
         // Loop steps: an exported step property is one run-wide key, owned at the first
         // iteration (2 + 2 + 2); a local-only one reads the step's state (A * 10 + A over 7).
-        { "Step(n) = {\n    A = if(tick() < 3, A + 1, 0)\n    n + A\n}\nStep(0).repeat(3)", "6", Ticks(3) },
-        { "Step(n) = {\n    A = if(tick() < 3, A + 1, n)\n    A * 10 + A\n}\nStep(5).repeat(1)", "77", Ticks(3) },
+        { "Step(n) = {\n    A = if(tock() < 3, A + 1, 0)\n    n + A\n}\nStep(0).repeat(3)", "6", Ticks(3) },
+        { "Step(n) = {\n    A = if(tock() < 3, A + 1, n)\n    A * 10 + A\n}\nStep(5).repeat(1)", "77", Ticks(3) },
 
         // Assignment deconstruction: the targets are ordinary properties over the hoisted source, so a
         // re-entrant target read re-reads the source re-entrantly and a target's owner publishes its own
         // result. The C#-only shared-bind memo must not serve a bind computed from an intermediate
         // (re-entrant) source evaluation: these mirror the sibling row above and the reference semantics
         // (one independent bind per target read, as Lean models it).
-        { "a, b = if(tick() < 3, (a + a, 0), (1, 1))\na, a", "S[3, 3]", Ticks(5) },
-        { "a, b = if(tick() < 3, (a + 1, b), (0, tick()))\na, b", "S[2, 6]", Ticks(6) },
+        { "a, b = if(tock() < 3, (a + a, 0), (1, 1))\na, a", "S[3, 3]", Ticks(5) },
+        { "a, b = if(tock() < 3, (a + 1, b), (0, tock()))\na, b", "S[2, 6]", Ticks(6) },
 
         // Ordinary (non-recursive) caching is unchanged.
-        { "P = tick()\nP, P, P", "S[1, 1, 1]", Ticks(1) },
-        { "P = tick()\nQ = P + P\nQ, Q, P", "S[2, 2, 1]", Ticks(1) },
+        { "P = tock()\nP, P, P", "S[1, 1, 1]", Ticks(1) },
+        { "P = tock()\nQ = P + P\nQ, Q, P", "S[2, 2, 1]", Ticks(1) },
     };
 
     [Theory]
@@ -217,7 +217,7 @@ public class OutermostPropertyCachePublicationTests
     {
         // A's owner reads B (B's owner completes: published) and then A re-entrantly (completes
         // with 0: NOT published), then fails. Before Q-37 the inner A's 0 was stored.
-        const string source = "B = tick() * 10\nA = if(tick() < 3, B + A + 1 / 0, 0)\nA";
+        const string source = "B = tock() * 10\nA = if(tock() < 3, B + A + 1 / 0, 0)\nA";
         var oracle = await SixRouteAgreement.OnEveryRouteAsync(source);
         Assert.Equal("err", oracle.Kind);
         Assert.StartsWith(nameof(KatLangErrorCode.DivisionByZero) + ":", Assert.Single(oracle.Errors), StringComparison.Ordinal);
@@ -234,7 +234,7 @@ public class OutermostPropertyCachePublicationTests
     [Fact]
     public async Task FailedOwnerWithoutNestedSuccess_PublishesNothing()
     {
-        const string source = "A = if(tick() < 3, A + 1 / 0, 7)\nA";
+        const string source = "A = if(tock() < 3, A + 1 / 0, 7)\nA";
         foreach (var observation in await ObservePublicationsAsync(source))
         {
             Assert.True(observation.Failed, observation.ToString());
@@ -247,7 +247,7 @@ public class OutermostPropertyCachePublicationTests
     public async Task ResourceLimit_AfterAnInnerSameKeySuccess_PublishesNothing()
     {
         // The innermost A completes with 0; its caller then reaches the step limit inside Heavy.
-        const string source = "S(x) = x + 1\nHeavy = repeat(S(0), 1000)\nA = if(tick() < 3, A + Heavy, 0)\nA";
+        const string source = "S(x) = x + 1\nHeavy = repeat(S(0), 1000)\nA = if(tock() < 3, A + Heavy, 0)\nA";
         var limits = new EvaluationLimits { MaxSteps = 300 };
         var oracle = await SixRouteAgreement.OnEveryRouteAsync(source, limits: limits);
         Assert.Equal("err", oracle.Kind);
@@ -264,7 +264,7 @@ public class OutermostPropertyCachePublicationTests
     [Fact]
     public async Task Cancellation_DuringReentrantEvaluation_PublishesNothing_AndLeavesNoActiveOwner()
     {
-        const string source = "A = if(tick() < 3, A + 1, 0)\nA";
+        const string source = "A = if(tock() < 3, A + 1, 0)\nA";
 
         // Synchronous generic evaluator.
         {
@@ -303,7 +303,7 @@ public class OutermostPropertyCachePublicationTests
         var cache = new SuspendingAsyncZeroArgPropertyResultCache();
         var operations = CountingTicks(asynchronous: true);
         var observed = await AsyncEvaluationHarness.Complete(Evaluator.RunCountedObservedAsync(
-            await ProgramAsync($"A = if(tick() < {depth}, A + 1, 0)\nA, A", operations),
+            await ProgramAsync($"A = if(tock() < {depth}, A + 1, 0)\nA, A", operations),
             zeroArgPropertyResultCache: cache,
             hostOperations: operations));
 
@@ -319,7 +319,7 @@ public class OutermostPropertyCachePublicationTests
         var cache = new RunScopedZeroArgPropertyResultCache();
         var operations = CountingTicks(asynchronous: false);
         var result = Evaluator.RunCountedObserved(
-            await ProgramAsync("A = if(tick() < 3, A + 1, 0)\nB = A * 10\nA, B, A, B", operations),
+            await ProgramAsync("A = if(tock() < 3, A + 1, 0)\nB = A * 10\nA, B, A, B", operations),
             zeroArgPropertyResultCache: cache, hostOperations: operations).Result;
 
         Assert.False(result.IsError, result.ToString());
@@ -471,12 +471,12 @@ public class OutermostPropertyCachePublicationTests
     // ── Harness ──────────────────────────────────────────────────────────────────────────────
 
     private static string[] Ticks(int count)
-        => [.. Enumerable.Range(1, count).Select(static i => $"tick#{i}")];
+        => [.. Enumerable.Range(1, count).Select(static i => $"tock#{i}")];
 
     private static Expr Program(string source)
         => new Expr.AlgorithmExpr(SourceProvenance.ParseValid(source).Root);
 
-    /// <summary>Parses with the host operations the program names (<c>tick</c>) in scope.</summary>
+    /// <summary>Parses with the host operations the program names (<c>tock</c>) in scope.</summary>
     private static async Task<Expr> ProgramAsync(string source, HostOperations operations)
         => new Expr.AlgorithmExpr((await SourceProvenance.ParseValidAsync(source, new RunOptions { HostOperations = operations })).Root);
 
@@ -491,12 +491,12 @@ public class OutermostPropertyCachePublicationTests
     {
         var ticks = 0;
         return HostOperations.Create(asynchronous
-            ? HostOperation.CreateAsync("tick", async (_, _) =>
+            ? HostOperation.CreateAsync("tock", async (_, _) =>
             {
                 await Task.Yield();
                 return new Result.Atom((Decimal128)Interlocked.Increment(ref ticks));
             })
-            : HostOperation.Create("tick", (_, _) => new Result.Atom((Decimal128)Interlocked.Increment(ref ticks))));
+            : HostOperation.Create("tock", (_, _) => new Result.Atom((Decimal128)Interlocked.Increment(ref ticks))));
     }
 
     private static HostOperations CancellingTicks(CancellationTokenSource cancellation, int cancelAt, bool asynchronous)
@@ -504,15 +504,15 @@ public class OutermostPropertyCachePublicationTests
         var ticks = 0;
         Result Tick()
         {
-            var tick = Interlocked.Increment(ref ticks);
-            if (tick == cancelAt)
+            var tock = Interlocked.Increment(ref ticks);
+            if (tock == cancelAt)
                 cancellation.Cancel();
-            return new Result.Atom((Decimal128)tick);
+            return new Result.Atom((Decimal128)tock);
         }
 
         return HostOperations.Create(asynchronous
-            ? HostOperation.CreateAsync("tick", async (_, _) => { await Task.Yield(); return Tick(); })
-            : HostOperation.Create("tick", (_, _) => Tick()));
+            ? HostOperation.CreateAsync("tock", async (_, _) => { await Task.Yield(); return Tick(); })
+            : HostOperation.Create("tock", (_, _) => Tick()));
     }
 
     private sealed record PublicationObservation(string Route, bool Failed, IReadOnlyList<string> Published, int ActiveOwners)

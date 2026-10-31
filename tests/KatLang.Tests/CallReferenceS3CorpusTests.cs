@@ -223,17 +223,15 @@ public class CallReferenceS3CorpusTests
     private sealed record Observation(string Outcome, string Traces, long Steps, string Loops, string Fusion,
         string Diagnostic = "", int Admissions = 0, bool CompilationFailure = false);
 
-    /// <summary>The harness host: <c>trace</c>, <c>tick</c>; <c>aflag</c>/<c>atrace</c>/<c>stop</c> genuinely asynchronous on the async engine.</summary>
+    /// <summary>Host traces and asynchronous gates; execution counts use the native <c>tick()</c>.</summary>
     private sealed class Probe(Case c)
     {
         public readonly List<string> Traces = [];
         public readonly CancellationTokenSource? Cancel = c.WithCancel ? new CancellationTokenSource() : null;
         public int Admissions;
-        private int _ticks;
 
         public HostOperations Operations(bool asynchronous) => HostOperations.Create(
             HostOperation.Create("trace", (args, _) => { lock (Traces) Traces.Add(Format(args[0])); return args[0]; }, "x"),
-            HostOperation.Create("tick", (_, _) => new Result.Atom(Interlocked.Increment(ref _ticks))),
             asynchronous
                 ? HostOperation.CreateAsync("aflag", async (_, _) => { await Task.Yield(); return new Result.Bool(true); })
                 : HostOperation.Create("aflag", (_, _) => new Result.Bool(true)),

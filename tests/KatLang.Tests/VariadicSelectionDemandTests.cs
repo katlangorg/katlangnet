@@ -14,7 +14,7 @@ namespace KatLang.Tests;
 /// the selection with no later ordinary selector demanded; (4) the selected values are normalized.
 /// An otherwise unused selection is never demanded.
 ///
-/// <para>Evidence is deterministic host instrumentation — <c>tick</c> counts its invocations,
+/// <para>Evidence is deterministic host instrumentation — <c>tock</c> counts its invocations,
 /// <c>trace</c> logs its argument — compared on every execution route against the synchronous
 /// engine: the public sync and async engines, the async twin (an async host operation present, so
 /// evaluation genuinely suspends), the generic and optimized evaluators, and the twin forced by an
@@ -35,9 +35,9 @@ public class VariadicSelectionDemandTests
 
         public Result Tick()
         {
-            var tick = Interlocked.Increment(ref _ticks);
-            lock (Calls) Calls.Add($"tick#{tick}");
-            return new Result.Atom((Decimal128)tick);
+            var tock = Interlocked.Increment(ref _ticks);
+            lock (Calls) Calls.Add($"tock#{tock}");
+            return new Result.Atom((Decimal128)tock);
         }
 
         public Result Trace(Result value)
@@ -49,13 +49,13 @@ public class VariadicSelectionDemandTests
 
     private static HostOperations OperationsFor(HostLog log, bool withAsyncOperation)
     {
-        var tick = withAsyncOperation
-            ? HostOperation.CreateAsync("tick", async (_, _) => { await Task.Yield(); return log.Tick(); })
-            : HostOperation.Create("tick", (_, _) => log.Tick());
+        var tock = withAsyncOperation
+            ? HostOperation.CreateAsync("tock", async (_, _) => { await Task.Yield(); return log.Tick(); })
+            : HostOperation.Create("tock", (_, _) => log.Tick());
         var trace = withAsyncOperation
             ? HostOperation.CreateAsync("trace", async (args, _) => { await Task.Yield(); return log.Trace(args[0]); }, "x")
             : HostOperation.Create("trace", (args, _) => log.Trace(args[0]), "x");
-        return HostOperations.Create(tick, trace);
+        return HostOperations.Create(tock, trace);
     }
 
     private sealed record Observation(string Kind, string? Value, IReadOnlyList<string> Codes, IReadOnlyList<string> HostCalls)
@@ -154,21 +154,21 @@ public class VariadicSelectionDemandTests
 
     [Fact]
     public async Task AFreshInvocation_IsOneInvocationForEverySelectorRepetitionsIncluded()
-        => AssertValue(await OnEveryRouteAsync("Data = [tick(), tick(), tick()]\nData()[2, 0, 2]"),
-            "S[3, 1, 3]", "tick#1", "tick#2", "tick#3");
+        => AssertValue(await OnEveryRouteAsync("Data = [tock(), tock(), tock()]\nData()[2, 0, 2]"),
+            "S[3, 1, 3]", "tock#1", "tock#2", "tock#3");
 
     [Fact]
     public async Task ACachedRead_IsEvaluatedOnceAcrossSelections()
-        => AssertValue(await OnEveryRouteAsync("Data = [tick(), tick()]\nData[0], Data[1], Data[1, 0]"),
-            "S[1, 2, S[2, 1]]", "tick#1", "tick#2");
+        => AssertValue(await OnEveryRouteAsync("Data = [tock(), tock()]\nData[0], Data[1], Data[1, 0]"),
+            "S[1, 2, S[2, 1]]", "tock#1", "tock#2");
 
     [Fact]
     public async Task AFreshInvocation_NeverReadsThePropertyCache_ButEstablishesAnEmptyEntry()
-        // `Data()` runs afresh (tick 1) and, finding Data's entry empty, establishes it (CACHE-PUB-1);
-        // the bare reads that follow reuse it; a later `Data()` runs afresh again (tick 2) and replaces
+        // `Data()` runs afresh (tock 1) and, finding Data's entry empty, establishes it (CACHE-PUB-1);
+        // the bare reads that follow reuse it; a later `Data()` runs afresh again (tock 2) and replaces
         // nothing. Formerly the first call populated nothing: S[1, 2, 2, 3] over three ticks.
-        => AssertValue(await OnEveryRouteAsync("Data = [tick()]\nData()[0], Data[0], Data[0], Data()[0]"),
-            "S[1, 1, 1, 2]", "tick#1", "tick#2");
+        => AssertValue(await OnEveryRouteAsync("Data = [tock()]\nData()[0], Data[0], Data[0], Data()[0]"),
+            "S[1, 1, 1, 2]", "tock#1", "tock#2");
 
     [Fact]
     public async Task AnEmptySelection_StillDemandsItsReceiver()
@@ -243,9 +243,9 @@ public class VariadicSelectionDemandTests
     [Fact]
     public async Task AnUnusedSelection_IsNeverDemanded()
     {
-        AssertValue(await OnEveryRouteAsync("Data = [tick()]\nK(x) = 7\nK(Data()[trace(0)])"), "7");
-        AssertValue(await OnEveryRouteAsync("Data = [tick()]\nif(false, Data()[trace(0)], 0)"), "0");
-        AssertValue(await OnEveryRouteAsync("Data = [tick()]\nUnused = Data()[trace(0)]\n5"), "5");
+        AssertValue(await OnEveryRouteAsync("Data = [tock()]\nK(x) = 7\nK(Data()[trace(0)])"), "7");
+        AssertValue(await OnEveryRouteAsync("Data = [tock()]\nif(false, Data()[trace(0)], 0)"), "0");
+        AssertValue(await OnEveryRouteAsync("Data = [tock()]\nUnused = Data()[trace(0)]\n5"), "5");
     }
 
     // ── Normalization through every route ────────────────────────────────────
@@ -263,9 +263,9 @@ public class VariadicSelectionDemandTests
         // then the selector's count). Neither form is rewritten into the other on any route.
         => AssertValue(
             await OnEveryRouteAsync(
-                "BuildData = tick(), tick()\nlast(BuildData()), BuildData()[count(BuildData()) - 1], first(BuildData()), BuildData()[0]"),
+                "BuildData = tock(), tock()\nlast(BuildData()), BuildData()[count(BuildData()) - 1], first(BuildData()), BuildData()[0]"),
             "S[2, 4, 7, 9]",
-            "tick#1", "tick#2", "tick#3", "tick#4", "tick#5", "tick#6", "tick#7", "tick#8", "tick#9", "tick#10");
+            "tock#1", "tock#2", "tock#3", "tock#4", "tock#5", "tock#6", "tock#7", "tock#8", "tock#9", "tock#10");
 
     // ── Budgets ──────────────────────────────────────────────────────────────
 

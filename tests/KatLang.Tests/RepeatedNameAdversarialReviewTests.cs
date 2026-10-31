@@ -70,22 +70,22 @@ public class RepeatedNameAdversarialReviewTests(ITestOutputHelper output)
     }
 
     [Theory]
-    [InlineData("P(Bad, 7)", "err DivisionByZero:", new[] { "tick#1" })]
-    [InlineData("P(7, Bad)", "err DivisionByZero:", new[] { "tick#1" })]
-    [InlineData("Same(Bad)", "err DivisionByZero:", new[] { "tick#1" })]
+    [InlineData("P(Bad, 7)", "err DivisionByZero:", new[] { "tock#1" })]
+    [InlineData("P(7, Bad)", "err DivisionByZero:", new[] { "tock#1" })]
+    [InlineData("Same(Bad)", "err DivisionByZero:", new[] { "tock#1" })]
     [InlineData("P(Each, 7)", "err DivisionByZero:", new[] { "trace(1)" })]
     [InlineData("P(7, Each)", "err DivisionByZero:", new[] { "trace(1)" })]
     [InlineData("Same(Each)", "err DivisionByZero:", new[] { "trace(1)" })]
-    [InlineData("Alias(Bad, 7)", "err DivisionByZero:", new[] { "tick#1" })]
+    [InlineData("Alias(Bad, 7)", "err DivisionByZero:", new[] { "tock#1" })]
     [InlineData("Alias(Each, 7)", "err DivisionByZero:", new[] { "trace(1)" })]
-    [InlineData("Lifted(Bad)", "err DivisionByZero:", new[] { "tick#1" })]
+    [InlineData("Lifted(Bad)", "err DivisionByZero:", new[] { "tock#1" })]
     [InlineData("Lifted(Each)", "err DivisionByZero:", new[] { "trace(1)" })]
     public async Task RetainedFailures_FromStatefulBodiesAndCallbacks_AreNotRetried(
         string call, string prefix, string[] effects)
     {
         // P reads x, so a failure is reached whether the binder demands it (beside the value 7) or
         // the body does (`Same(a)`: one reference twice matches by identity — NEED-04, group-aware).
-        const string source = "Bad = if(tick() == 1, 1 / 0, 7)\n"
+        const string source = "Bad = if(tock() == 1, 1 / 0, 7)\n"
             + "Each = map([1, 2], {trace(x) / 0})\nP(x, x) = x\nSame(a) = P(a, a)\nAlias = P\nLifted = [P][0]\n";
         var result = await RepeatedNameConstraintTests.OnEveryRouteAsync(source + call);
         Assert.StartsWith(prefix, result.Outcome);
@@ -101,8 +101,8 @@ public class RepeatedNameAdversarialReviewTests(ITestOutputHelper output)
     public async Task OneReferenceTwice_MatchesWithoutRunningIt(string call)
     {
         // NEED-04 (group-aware): the same reference twice matches by identity, so a body that ignores
-        // the name runs nothing at all — no tick, no trace (formerly the binder demanded the value).
-        const string source = "Bad = if(tick() == 1, 1 / 0, 7)\n"
+        // the name runs nothing at all — no tock, no trace (formerly the binder demanded the value).
+        const string source = "Bad = if(tock() == 1, 1 / 0, 7)\n"
             + "Each = map([1, 2], {trace(x) / 0})\nP(x, x) = 0\nSame(a) = P(a, a)\nLifted = [P][0]\n";
         var result = await RepeatedNameConstraintTests.OnEveryRouteAsync(source + call);
         Assert.Equal("ok 0", result.Outcome);

@@ -107,9 +107,9 @@ public class ModuleLawPostCommitReviewTests
     public async Task ReusingOneCompiledDocument_DoesNotReuseAMemberValueAcrossRuns()
     {
         var ticks = 0;
-        var host = HostOperations.Create(HostOperation.Create("tick", (_, _) => new Result.Atom((Decimal128)(++ticks))));
+        var host = HostOperations.Create(HostOperation.Create("tock", (_, _) => new Result.Atom((Decimal128)(++ticks))));
         var parsed = await Parser.ParseAsync($"A = load('{Url}')\nB = load('{Url}')\nA.X, B.X",
-            new Modules((Url, "public X = tick()")).Options(host));
+            new Modules((Url, "public X = tock()")).Options(host));
         Assert.Empty(parsed.Diagnostics);
         var program = new Expr.AlgorithmExpr(parsed.Root);
         for (var run = 1; run <= 2; run++)
@@ -218,7 +218,7 @@ public class ModuleLawPostCommitReviewTests
         { "random", "random(0, 1)" }, { "randomInt", "randomInt(1, 1000000)" },
         { "Math", "Math.Abs(-3)" }, { "abs", "abs(-3)" },
         { "sqrt", "sqrt(9)" }, { "round", "round(3.4, 0)" }, { "pi", "pi" },
-        { "trace", "trace(3)" }, { "tick", "tick()" },
+        { "trace", "trace(3)" }, { "tock", "tock()" },
     };
 
     [Theory]
@@ -295,12 +295,12 @@ public class ModuleLawPostCommitReviewTests
     public async Task NestedDeferredUnitAndRootDeferredUnit_ShareTheEagerMembersBinding()
     {
         const string outer = "https://mods.test/outer.kat";
-        var server = () => new Modules((Url, "public X = tick()"),
+        var server = () => new Modules((Url, "public X = tock()"),
             (outer, $"public F(0) = 0\npublic F(k) = {{ S = load('{Url}')\nS.X + k * 0 }}"));
         var source = $"E = load('{Url}')\nO = load('{outer}')\nF(0) = 0\nF(k) = {{ M = load('{Url}')\nM.X + k * 0 }}\nO.F(1), F(1), E.X, O.F(2), F(2)";
         var observed = await OnEveryRouteAsync(source, server, AsyncRoutes);
         Assert.Equal("ok S[1, 1, 1, 1, 1]", $"{observed.Kind} {observed.Value}");
-        Assert.Equal(["tick#1"], observed.HostCalls);
+        Assert.Equal(["tock#1"], observed.HostCalls);
     }
 
     [Fact]
@@ -318,21 +318,21 @@ public class ModuleLawPostCommitReviewTests
     [Fact]
     public async Task InternalParameterizedOwnerCache_RemainsActivationSensitiveAcrossHolders()
     {
-        var server = () => new Modules((Url, "public F(k) = { R = tick() + k\nR, R }\npublic A = tick()\npublic B = tick()"));
+        var server = () => new Modules((Url, "public F(k) = { R = tock() + k\nR, R }\npublic A = tock()\npublic B = tock()"));
         var source = $"M = load('{Url}')\nN = load('{Url}')\nM.F(10), N.F(20), M.A, N.A, N.B, M.B, M.A(), N.A";
         var observed = await OnEveryRouteAsync(source, server);
         Assert.Equal("ok S[S[11, 11], S[22, 22], 3, 3, 4, 4, 5, 3]", $"{observed.Kind} {observed.Value}");
-        Assert.Equal(["tick#1", "tick#2", "tick#3", "tick#4", "tick#5"], observed.HostCalls);
+        Assert.Equal(["tock#1", "tock#2", "tock#3", "tock#4", "tock#5"], observed.HostCalls);
     }
 
     [Fact]
     public async Task ModuleArgumentsAndCallbackAliases_KeepHygieneAndIdentity()
     {
-        var server = () => new Modules((Url, "public X = tick()\npublic V = Base + 1\npublic F(x) = abs(x)"));
+        var server = () => new Modules((Url, "public X = tock()\npublic V = Base + 1\npublic F(x) = abs(x)"));
         var source = $"Base = 999\nabs(x) = 888\nM = load('{Url}')\nN = load('{Url}')\nRead(m) = m.X\nUse(m, Base) = m.V(Base)\nAlias = M.F\nRead(M), Read(N), Use(M, 4), sum(map([-3, -4], Alias))";
         var observed = await OnEveryRouteAsync(source, server);
         Assert.Equal("ok S[1, 1, 5, 7]", $"{observed.Kind} {observed.Value}");
-        Assert.Equal(["tick#1"], observed.HostCalls);
+        Assert.Equal(["tock#1"], observed.HostCalls);
     }
 
     [Theory]
@@ -344,9 +344,9 @@ public class ModuleLawPostCommitReviewTests
     [InlineData("F(0) = X\nF(k) = k\nF(1)", 1)]
     public void StaticAmbiguity_RejectsEveryWrittenOccurrenceWithoutDemandingIt(string body, int occurrences)
     {
-        var source = "open A, B\nA = { public X = tick() }\nB = { public X = trace(2) }\n" + body;
+        var source = "open A, B\nA = { public X = tock() }\nB = { public X = trace(2) }\n" + body;
         var effects = 0;
-        var operations = HostOperations.Create(HostOperation.Create("tick", (_, _) => { effects++; return new Result.Atom(1); }),
+        var operations = HostOperations.Create(HostOperation.Create("tock", (_, _) => { effects++; return new Result.Atom(1); }),
             HostOperation.Create("trace", (args, _) => { effects++; return args[0]; }, "x"));
         var parsed = Parser.Parse(source, new RunOptions { HostOperations = operations });
         Assert.Equal(occurrences, parsed.Diagnostics.Count(d => d.Code == DiagnosticCode.AmbiguousOpen));

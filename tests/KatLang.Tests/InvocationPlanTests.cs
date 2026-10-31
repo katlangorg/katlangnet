@@ -12,7 +12,7 @@ namespace KatLang.Tests;
 /// the PRODUCTION supplied cells: <c>SupplyCell</c> → <c>NeedCell</c> → <c>Demand</c>/<c>DemandAsync</c>.
 /// <c>Meta</c> is a host operation registered as an internal META receiver: it receives the transported cells
 /// unforced and reaches the plan below the surface <c>meta</c> binder (whose language-level cases are
-/// <c>CallReferenceS1Tests</c>/<c>CallReferenceS2Tests</c>). <c>trace(x)</c>, <c>tick()</c> and <c>pair()</c>
+/// <c>CallReferenceS1Tests</c>/<c>CallReferenceS2Tests</c>). <c>trace(x)</c>, <c>tock()</c> and <c>pair()</c>
 /// are counting host operations. The assertions check object identity of plans, references and need cells,
 /// in addition to values. The retention-representation cases are in <c>CallPlanRetentionTests.cs</c>.
 /// </summary>
@@ -40,7 +40,7 @@ public partial class InvocationPlanTests
         };
 
         var value = probe.Run("""
-            F(v) = v + tick()
+            F(v) = v + tock()
             Probe(x) = Meta(x)
             Probe(F(trace(10)))
             """, optimized);
@@ -76,12 +76,12 @@ public partial class InvocationPlanTests
         };
 
         var value = probe.Run("""
-            F(v) = v + tick()
+            F(v) = v + tock()
             Probe(x) = (x, Meta(x))
             Probe(F(trace(10)))
             """, optimized);
 
-        // VALUE ran the target once (tick 1); each invocation ran it afresh (ticks 2 and 3) over the
+        // VALUE ran the target once (tock 1); each invocation ran it afresh (ticks 2 and 3) over the
         // SAME argument cell, whose trace ran once.
         Assert.Equal("S[11, S[12, 13]]", value);
         Assert.Equal(1, probe.Traces);
@@ -107,7 +107,7 @@ public partial class InvocationPlanTests
         };
 
         var value = probe.Run("""
-            F(v) = v + tick()
+            F(v) = v + tock()
             Probe(x) = (Meta(x), x)
             Probe(F(trace(10)))
             """, optimized);
@@ -143,7 +143,7 @@ public partial class InvocationPlanTests
         };
 
         var value = probe.Run("""
-            F(v) = v + tick()
+            F(v) = v + tock()
             Probe(x) = (x, Meta(x))
             G(v) = Probe(F(v))
             G(trace(41))
@@ -174,7 +174,7 @@ public partial class InvocationPlanTests
         };
 
         var value = probe.Run("""
-            F(v) = v + tick()
+            F(v) = v + tock()
             Forward(y) = Meta(y)
             Forward2(z) = Forward(z)
             (Forward(F(trace(10))), Forward2(F(trace(20))))
@@ -202,7 +202,7 @@ public partial class InvocationPlanTests
         };
 
         var value = probe.Run("""
-            F(v) = v + tick()
+            F(v) = v + tock()
             Forward(y) = Meta(y)
             Forward2(z) = (z, Forward(z))
             Forward2(F(trace(10)))
@@ -228,7 +228,7 @@ public partial class InvocationPlanTests
         };
 
         var value = probe.Run("""
-            F(v) = v + tick()
+            F(v) = v + tock()
             G(k) = Meta(F(trace(k)))
             (G(1), G(2))
             """);
@@ -254,7 +254,7 @@ public partial class InvocationPlanTests
         };
 
         var value = probe.Run("""
-            F(v) = v + tick()
+            F(v) = v + tock()
             H(x) = (Meta(F(x)), Meta(F(x)))
             H(trace(5))
             """);
@@ -306,7 +306,7 @@ public partial class InvocationPlanTests
         };
 
         var value = probe.Run("""
-            Add2(a, b) = a + b + tick()
+            Add2(a, b) = a + b + tock()
             Probe(x) = (Meta(x), x)
             Probe(Add2(pair()*))
             """);
@@ -363,7 +363,7 @@ public partial class InvocationPlanTests
         };
 
         Assert.Equal("0", probe.Run("""
-            Bad(v) = tick() + v / 0
+            Bad(v) = tock() + v / 0
             Probe(x) = Meta(x)
             Probe(Bad(1))
             """));
@@ -396,7 +396,7 @@ public partial class InvocationPlanTests
             return Zero;
         };
 
-        Assert.Equal("0", probe.Run("F(*xs) = count(xs)\nMeta(F((tick() + 1 / 0)*))"));
+        Assert.Equal("0", probe.Run("F(*xs) = count(xs)\nMeta(F((tock() + 1 / 0)*))"));
     }
 
     [Fact]
@@ -411,7 +411,7 @@ public partial class InvocationPlanTests
         };
 
         Assert.Equal("S[0, 0, 6, 7]", probe.Run("""
-            F(v) = v + tick()
+            F(v) = v + tock()
             Observe(a, b) = { Meta(a), Meta(b), a, b }
             Pack(*xs) = Observe(xs*)
             Pack(F(trace(5)), F(trace(5)))
@@ -469,7 +469,7 @@ public partial class InvocationPlanTests
             Assert.Equal(1, probe.Ticks);
             return Zero;
         };
-        const string source = "F(v) = tick() + count(range(1, 4)) + v\nMeta(F(5))";
+        const string source = "F(v) = tock() + count(range(1, 4)) + v\nMeta(F(5))";
         var outcome = asyncTwin
             ? await probe.ObserveAsyncTwin(source)
             : probe.Observe(source, experiment: true, optimized: false);
@@ -577,7 +577,7 @@ public partial class InvocationPlanTests
     {
         var probe = new Probe();
         var value = probe.RunWithoutExperiment("""
-            F(v) = v + tick()
+            F(v) = v + tock()
             G(x) = (x, x)
             G(F(trace(10)))
             """);
@@ -592,7 +592,7 @@ public partial class InvocationPlanTests
     /// on the generic and the optimized strategies.
     /// </summary>
     [Theory]
-    [InlineData("F(v) = v + tick()\nG(x) = (x, x)\nG(F(trace(10)))")]
+    [InlineData("F(v) = v + tock()\nG(x) = (x, x)\nG(F(trace(10)))")]
     [InlineData("F(a, b) = a\nG(x) = x\nG(F(trace(1), 1 / 0))")]
     [InlineData("F(v) = v\nG(x) = x\nG(F(trace(1), trace(2)))")]
     [InlineData("Add2(a, b) = a + b\nG(x) = (x, x)\nG(Add2(pair()*))")]
@@ -604,8 +604,8 @@ public partial class InvocationPlanTests
     [InlineData("Fact(n) = if(n < 2, 1, n * Fact(n - 1))\nG(x) = x\nG(Fact(trace(5)))")]
     [InlineData("F(*xs) = count(xs)\nG(x) = x\nG(F(trace(1), trace(2), pair()*))")]
     [InlineData("G(x) = x\nG(Missing(trace(1)))")]
-    [InlineData("a, b = tick(), 5\nG(x) = (x, x)\nG(a()), G(b()), a, b")]
-    [InlineData("F(v) = v + tick()\nAlias = F\nG(x) = x\nG(Alias(trace(5)))")]
+    [InlineData("a, b = tock(), 5\nG(x) = (x, x)\nG(a()), G(b()), a, b")]
+    [InlineData("F(v) = v + tock()\nAlias = F\nG(x) = x\nG(Alias(trace(5)))")]
     [InlineData("F(a, b) = a + b\nPack(*xs) = F(xs*)\nG(x) = x\nG(Pack(trace(1), trace(2)))")]
     [InlineData("F(0) = 1\nF(1) = 2\nG(x) = x\nG(F(trace(2)))")]
     [InlineData("F((a, b)) = b + a\nG(x) = x\nG(F((trace(1), trace(2))))")]
@@ -626,7 +626,7 @@ public partial class InvocationPlanTests
     [Fact]
     public void PlanRoutedValue_PreservesTightBudgetFailuresAndAccounting()
     {
-        const string source = "F(v) = tick() + v\nG(x) = (x, x)\nG(F(trace(5)))";
+        const string source = "F(v) = tock() + v\nG(x) = (x, x)\nG(F(trace(5)))";
         foreach (var optimized in new[] { false, true })
         foreach (var steps in Enumerable.Range(1, 12))
         {
@@ -668,7 +668,7 @@ public partial class InvocationPlanTests
         };
 
         var value = await probe.RunAsyncTwin("""
-            Add2(a, b) = a + b + tick()
+            Add2(a, b) = a + b + tock()
             Probe(x) = (x, Meta(x))
             Probe(Add2(pair()*))
             """);
@@ -695,7 +695,7 @@ public partial class InvocationPlanTests
         };
         Result.CallReference? reference = null;
         probe.OnMeta = cells => { reference = Reify(cells[0]); return Zero; };
-        var run = probe.RunAsyncTwin("Add2(a, b) = a + b + tick()\nProbe(x) = (Meta(x), x)\nProbe(Add2(pair()*))");
+        var run = probe.RunAsyncTwin("Add2(a, b) = a + b + tock()\nProbe(x) = (Meta(x), x)\nProbe(Add2(pair()*))");
         try
         {
             await entered.Task.WaitAsync(WaitLimit);
@@ -808,7 +808,7 @@ public partial class InvocationPlanTests
 
         private HostOperations Operations => HostOperations.Create(
             HostOperation.Create("trace", (args, _) => { Traces++; Log.Add("trace(" + Neutral(args[0]) + ")"); return args[0]; }, "x"),
-            HostOperation.Create("tick", (_, _) => { Ticks++; Log.Add("tick"); return new Result.Atom(Ticks); }),
+            HostOperation.Create("tock", (_, _) => { Ticks++; Log.Add("tock"); return new Result.Atom(Ticks); }),
             PairOverride ?? HostOperation.Create("pair", (_, _) => { Pairs++; Log.Add("pair"); return new Result.SequenceValue([new Result.Atom(1), new Result.Atom(2)]); }),
             HostOperation.Create("Meta", (_, _) => throw new InvalidOperationException("META receiver reached as an ordinary host operation"), "operation"));
 

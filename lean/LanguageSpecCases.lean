@@ -14,11 +14,11 @@ This is bounded differential validation over the Lean-guarded partition,
 not a formal verification of the evaluators.
 
 Partition (machine-checked by the `specCaseIds.length` guard below):
-- specification surface cases: 504
+- specification surface cases: 512
 - excluded parse-level cases (Lean has no surface parser): 74
 - excluded C#-only cases (each carries an explicit reason in the corpus): 22
-- Lean-guarded cases: 408
-- probe observations (C#-only by design): 1459
+- Lean-guarded cases: 416
+- probe observations (C#-only by design): 1468
 - internal-node cases live in the semantic-explorer corpus, not here: see
   lean/SemanticExplorerCases.lean
 
@@ -2240,7 +2240,48 @@ def case_reference_head_is_the_parameter_its_own_scope_binds : Expr :=
   .algorithmExpr (alg [] [] [privateProp "F" (alg ["x"] [] [{ (privateLocalProp "A" (.localCapturedAncestorParams ["x"]) (.alias none [] [] (.param "x"))) with requiredOwnerDepths := some [("x", some 0)] }, { (privateLocalProp "G" (.localCapturedAncestorParams ["x"]) (alg ["x"] [] [] [(.binary .add (.dotCall (.resolve "A") "W" none) (.num 0))])) with requiredOwnerDepths := some [("x", some 0)] }] [(.call (.resolve "G") [.num 5])])] [(.call (.resolve "F") [(.algorithmExpr (alg [] [] [publicProp "W" (alg [] [] [] [.num 9])] []))])])
 #guard obs case_reference_head_is_the_parameter_its_own_scope_binds == "ok raw=9 n=1"
 
--- 408 canonical Lean-guarded specification cases.
+-- tick-counts-executions-in-the-run [arithmetic]: tick(), tick(), tick()
+def case_tick_counts_executions_in_the_run : Expr :=
+  .algorithmExpr (alg [] [] [] [(.call (.resolve "tick") []), (.call (.resolve "tick") []), (.call (.resolve "tick") [])])
+#guard obs case_tick_counts_executions_in_the_run == "ok raw=S[1, 2, 3] n=3"
+
+-- tick-property-is-cached-call-is-fresh [arithmetic]: A = tick() \n A(), A, A(), A
+def case_tick_property_is_cached_call_is_fresh : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "A" (alg [] [] [] [(.call (.resolve "tick") [])])] [(.call (.resolve "A") []), .resolve "A", (.call (.resolve "A") []), .resolve "A"])
+#guard obs case_tick_property_is_cached_call_is_fresh == "ok raw=S[1, 1, 2, 1] n=4"
+
+-- tick-argument-is-one-lazy-computation [arithmetic]: Ignore(x) = 7 \n Twice(x) = x + x \n Ignore(tick()), Twice(tick()), tick()
+def case_tick_argument_is_one_lazy_computation : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Ignore" (alg ["x"] [] [] [.num 7]), privateProp "Twice" (alg ["x"] [] [] [(.binary .add (.param "x") (.param "x"))])] [(.call (.resolve "Ignore") [(.call (.resolve "tick") [])]), (.call (.resolve "Twice") [(.call (.resolve "tick") [])]), (.call (.resolve "tick") [])])
+#guard obs case_tick_argument_is_one_lazy_computation == "ok raw=S[7, 2, 2] n=3"
+
+-- tick-callable-reference-is-not-an-execution [arithmetic]: T = tick \n Apply(f) = f() \n T(), Apply(tick), tick()
+def case_tick_callable_reference_is_not_an_execution : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "T" (.alias none [] [] (.resolve "tick")), privateProp "Apply" (alg ["f"] [] [] [(.call (.param "f") [])])] [(.call (.resolve "T") []), (.call (.resolve "Apply") [.resolve "tick"]), (.call (.resolve "tick") [])])
+#guard obs case_tick_callable_reference_is_not_an_execution == "ok raw=S[1, 2, 3] n=3"
+
+-- tick-meta-replay-is-fresh [arithmetic]: Replay(meta op) = op.Invoke() + op.Invoke() \n Replay(tick()), tick()
+def case_tick_meta_replay_is_fresh : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Replay" (algWithParameters [{ name := "op", kind := .metaRef }] [] [] [(.binary .add (.dotCall (.param "op") "Invoke" (some [])) (.dotCall (.param "op") "Invoke" (some [])))])] [(.call (.resolve "Replay") [(.call (.resolve "tick") [])]), (.call (.resolve "tick") [])])
+#guard obs case_tick_meta_replay_is_fresh == "ok raw=S[3, 3] n=2"
+
+-- tick-bare-value-requires-invocation [errors]: tick + 1
+def case_tick_bare_value_requires_invocation : Expr :=
+  .algorithmExpr (alg [] [] [] [(.binary .add (.resolve "tick") (.num 1))])
+#guard obs case_tick_bare_value_requires_invocation == "err illegalInEval"
+
+-- tick-argument-is-an-arity-error [errors]: tick(1 / 0)
+def case_tick_argument_is_an_arity_error : Expr :=
+  .algorithmExpr (alg [] [] [] [(.call (.resolve "tick") [(.binary .div (.num 1) (.num 0))])])
+#guard obs case_tick_argument_is_an_arity_error == "err arity"
+
+#guard errorObs case_tick_argument_is_an_arity_error == .matched (some { kind := "arity", names := [], counts := [0, 1] })
+-- tick-is-an-ordinary-shadowable-binding [name-resolution]: tick(x) = x + 100 \n tick(1)
+def case_tick_is_an_ordinary_shadowable_binding : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "tick" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 100))])] [(.call (.resolve "tick") [.num 1])])
+#guard obs case_tick_is_an_ordinary_shadowable_binding == "ok raw=101 n=1"
+
+-- 416 canonical Lean-guarded specification cases.
 
 /--
 Machine-checked Lean-guarded partition count: the id list is built by the
@@ -2655,8 +2696,16 @@ def specCaseIds : List String := [
   "block-receiver-reference-member",
   "reference-cycle-only-the-final-providers-close-is-no-alias",
   "member-path-through-a-lower-cyclic-receiver-is-no-alias",
-  "reference-head-is-the-parameter-its-own-scope-binds"
+  "reference-head-is-the-parameter-its-own-scope-binds",
+  "tick-counts-executions-in-the-run",
+  "tick-property-is-cached-call-is-fresh",
+  "tick-argument-is-one-lazy-computation",
+  "tick-callable-reference-is-not-an-execution",
+  "tick-meta-replay-is-fresh",
+  "tick-bare-value-requires-invocation",
+  "tick-argument-is-an-arity-error",
+  "tick-is-an-ordinary-shadowable-binding"
 ]
-#guard specCaseIds.length == 408
+#guard specCaseIds.length == 416
 
 end LanguageSpecCases

@@ -39,7 +39,7 @@ public class LoopStepUnboundStateMessageTests
         // callables and never reach this shape — see FormerlyUnboundStepCategories below.)
         // zero-parameter prelude members
         { "zero-parameter Math member", "repeat(pi(1), 1)", "repeat", 1, ["while evaluating call to repeat"] },
-        { "zero-parameter host operation", "repeat(tick(1), 1)", "repeat", 1, ["while evaluating call to repeat"] },
+        { "zero-parameter host operation", "repeat(tock(1), 1)", "repeat", 1, ["while evaluating call to repeat"] },
         // (Q-06: a value with no CALLABLE identity is not a step at all — see NoCallableIdentityStep.)
     };
 
@@ -183,10 +183,10 @@ public class LoopStepUnboundStateMessageTests
         static HostOperations Operations(bool suspending)
             => suspending
                 ? HostOperations.Create(
-                    HostOperation.CreateAsync("tick", async (_, _) => { await Task.Yield(); return new Result.Atom(1); }),
+                    HostOperation.CreateAsync("tock", async (_, _) => { await Task.Yield(); return new Result.Atom(1); }),
                     HostOperation.CreateAsync("trace", async (args, _) => { await Task.Yield(); return args[0]; }, "x"))
                 : HostOperations.Create(
-                    HostOperation.Create("tick", (_, _) => new Result.Atom(1)),
+                    HostOperation.Create("tock", (_, _) => new Result.Atom(1)),
                     HostOperation.Create("trace", (args, _) => args[0], "x"));
 
         static KatLangError Failure(RunResult result)

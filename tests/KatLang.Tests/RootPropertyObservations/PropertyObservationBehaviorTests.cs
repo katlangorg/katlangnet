@@ -48,11 +48,11 @@ public class PropertyObservationBehaviorTests
     public void RepeatedReads_ProduceOneObservation()
     {
         var log = new TickLog();
-        var result = Run("A = tick()\nA + A + A", log.Operations());
+        var result = Run("A = tock()\nA + A + A", log.Operations());
 
         Assert.Equal("0", result.ToDisplayString());
         Assert.Equal("A=0#1", Describe(result));
-        Assert.Equal(["tick:0"], log.Calls);
+        Assert.Equal(["tock:0"], log.Calls);
     }
 
     [Fact]
@@ -115,7 +115,7 @@ public class PropertyObservationBehaviorTests
     public void LazyBranch_LeavesTheUnselectedPropertyUnevaluatedAndUnobserved()
     {
         var log = new TickLog();
-        var result = Run("Cheap = 1\nExpensive = tick()\nif(Cheap == 1, Cheap, Expensive)", log.Operations());
+        var result = Run("Cheap = 1\nExpensive = tock()\nif(Cheap == 1, Cheap, Expensive)", log.Operations());
 
         Assert.Equal("Cheap=1#1", Describe(result));
         Assert.Empty(log.Calls);
@@ -146,26 +146,26 @@ public class PropertyObservationBehaviorTests
         // its caller and used), and the outermost owner publishes 3. Only that publication is an
         // observation (D0(A)).
         var log = new TickLog();
-        var result = Run("A = if(tick() < 3, A + 1, 0)\nA", log.Operations());
+        var result = Run("A = if(tock() < 3, A + 1, 0)\nA", log.Operations());
 
         Assert.Equal("3", result.ToDisplayString());
         Assert.Equal("A=3#1", Describe(result));
-        Assert.Equal(["tick:0", "tick:1", "tick:2", "tick:3"], log.Calls);
+        Assert.Equal(["tock:0", "tock:1", "tock:2", "tock:3"], log.Calls);
     }
 
     [Fact]
     public void SuccessfulInnerCompletion_UnderAFailingOwner_ProducesNoObservation()
     {
-        // tick 0 < 1 takes the A / 0 branch; the inner, re-entrant A completes successfully as 1
-        // (tick 1), then the owner divides by zero. Nothing is published, so nothing is observed,
+        // tock 0 < 1 takes the A / 0 branch; the inner, re-entrant A completes successfully as 1
+        // (tock 1), then the owner divides by zero. Nothing is published, so nothing is observed,
         // although a successful calculation of A did complete.
         var log = new TickLog();
-        var result = Run("A = if(tick() < 1, A / 0, 1)\nA", log.Operations());
+        var result = Run("A = if(tock() < 1, A / 0, 1)\nA", log.Operations());
 
         var failure = Assert.IsType<RunResult.EvalFailure>(result);
         Assert.Equal(KatLangErrorCode.DivisionByZero, Assert.Single(failure.Errors).Code);
         Assert.Empty(result.PropertyObservations!);
-        Assert.Equal(["tick:0", "tick:1"], log.Calls);
+        Assert.Equal(["tock:0", "tock:1"], log.Calls);
     }
 
     // ── 3. Explicit calls ───────────────────────────────────────────────────────────────────
@@ -177,35 +177,35 @@ public class PropertyObservationBehaviorTests
     public void ExplicitCallOnly_IsObserved_AsTheEstablishedValue()
     {
         var log = new TickLog();
-        var result = Run("A = tick()\nA()", log.Operations());
+        var result = Run("A = tock()\nA()", log.Operations());
 
         Assert.Equal("0", result.ToDisplayString());
         Assert.Equal("A=0#1", Describe(result));
-        Assert.Equal(["tick:0"], log.Calls);
+        Assert.Equal(["tock:0"], log.Calls);
     }
 
     [Fact]
     public void MixedExplicitAndPropertyReads_ObserveTheEstablishedValue_NotTheLatestCall()
     {
         var log = new TickLog();
-        var result = Run("A = tick()\nA() + A + A()", log.Operations());
+        var result = Run("A = tock()\nA() + A + A()", log.Operations());
 
         // A() = 0 (establishes the entry), A = 0 (reused), A() = 1 (fresh; replaces nothing and adds
         // no observation). Formerly A() = 0, A = 1 (published), A() = 2.
         Assert.Equal("1", result.ToDisplayString());
         Assert.Equal("A=0#1", Describe(result));
-        Assert.Equal(["tick:0", "tick:1"], log.Calls);
+        Assert.Equal(["tock:0", "tock:1"], log.Calls);
     }
 
     [Fact]
     public void LaterExplicitCall_AddsNoObservation_AndNeverReplacesTheEstablishedValue()
     {
         var log = new TickLog();
-        var result = Run("A = tick()\nA, A(), A(), A", log.Operations());
+        var result = Run("A = tock()\nA, A(), A(), A", log.Operations());
 
         Assert.Equal("0\n1\n2\n0", result.ToDisplayString().ReplaceLineEndings("\n"));
         Assert.Equal("A=0#1", Describe(result));
-        Assert.Equal(["tick:0", "tick:1", "tick:2"], log.Calls);
+        Assert.Equal(["tock:0", "tock:1", "tock:2"], log.Calls);
     }
 
     // ── 4. Partial observations on failure (D1(A)) ──────────────────────────────────────────
@@ -231,11 +231,11 @@ public class PropertyObservationBehaviorTests
     public void EvalFailure_EvaluatesNothingAfterTheFailure()
     {
         var log = new TickLog();
-        var result = Run("Before = tick()\nBoom = 1 / 0\nAfter = tick()\nBefore + Boom + After", log.Operations());
+        var result = Run("Before = tock()\nBoom = 1 / 0\nAfter = tock()\nBefore + Boom + After", log.Operations());
 
         Assert.IsType<RunResult.EvalFailure>(result);
         Assert.Equal("Before=0#1", Describe(result));
-        Assert.Equal(["tick:0"], log.Calls);
+        Assert.Equal(["tock:0"], log.Calls);
     }
 
     [Fact]
@@ -302,8 +302,8 @@ public class PropertyObservationBehaviorTests
     public static TheoryData<string> ParitySources => new()
     {
         Brief,
-        "A = if(tick() < 3, A + 1, 0)\nA",
-        "A = tick()\nA() + A + A()",
+        "A = if(tock() < 3, A + 1, 0)\nA",
+        "A = tock()\nA() + A + A()",
         "B = 2\nA = 1 / 0\nB + A",
         "x, y = 1, 2\nx + y",
         "P = 1, 2\nQ = trace(P.count)\nQ, P",

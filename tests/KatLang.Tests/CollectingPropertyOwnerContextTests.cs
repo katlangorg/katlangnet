@@ -38,7 +38,7 @@ public class CollectingPropertyOwnerContextTests
 
     private static string[] Traces(params int[] values) => [.. values.Select(static value => $"trace({value})")];
 
-    private static string[] Ticks(int count) => [.. Enumerable.Range(1, count).Select(static tick => $"tick#{tick}")];
+    private static string[] Ticks(int count) => [.. Enumerable.Range(1, count).Select(static tock => $"tock#{tock}")];
 
     // ── C1–C4, C7, C8, C12, C17: one evaluation per binding in one activation ────────────────
 
@@ -53,8 +53,8 @@ public class CollectingPropertyOwnerContextTests
         // C3: a direct read before a nested consumer keeps its reuse (was two traces).
         { "C3-PRE", F(TracedOnly, "Only + [0].map{ n + Only }[0] + Only.V"), "9", Traces(3) },
         // C4: the value-sensitive witnesses (were false with two ticks).
-        { "C4", F("Only(*xs) = {\n    V = k + tick()\n    V\n}", "[0].map{ n * 0 + Only }[0] == Only.V"), "true", Ticks(1) },
-        { "C4-DIRECT", F("Only(*xs) = {\n    V = k + tick()\n    V\n}", "Only == Only.V"), "true", Ticks(1) },
+        { "C4", F("Only(*xs) = {\n    V = k + tock()\n    V\n}", "[0].map{ n * 0 + Only }[0] == Only.V"), "true", Ticks(1) },
+        { "C4-DIRECT", F("Only(*xs) = {\n    V = k + tock()\n    V\n}", "Only == Only.V"), "true", Ticks(1) },
         // C7: the bare read binds precisely the empty collection, which V's owner reads too.
         { "C7", F("Only(*xs) = {\n    V = trace(k)\n    V + xs.count\n}", "[0].map{ n + Only }[0] + Only.V"), "6", Traces(3) },
         { "C7-LIST", F("Only(*xs) = {\n    V = trace(k)\n    V, xs\n}", "[0].map{ n * 0 + Only.V }[0], Only, Only.V"), "S[3, S[3, L[]], 3]", Traces(3) },
@@ -235,7 +235,7 @@ public class CollectingPropertyOwnerContextTests
         // projection publishes under its target's origin too (OD-E, M4★; formerly a parameterized runtime
         // alias named no publication binding: S[4, 5, 6, 6]). Only.V belongs to F and never reuses either
         // call's local V.
-        var owner = "Only(*xs) = {\n    V = k + tick()\n    V\n}\nCapture(meta op) = op\nR = Capture(Only())";
+        var owner = "Only(*xs) = {\n    V = k + tock()\n    V\n}\nCapture(meta op) = op\nR = Capture(Only())";
         var oracle = await ObserveAsync(F(owner, rows));
         Assert.Equal("ok", oracle.Kind);
         Assert.Equal(expected, oracle.Value);
@@ -424,13 +424,13 @@ public class CollectingPropertyOwnerContextTests
     [Fact]
     public async Task C19_AHostScopeCollectingOwner_KeepsItsReferenceIdentity()
     {
-        // The host scope declares Only(*xs) = { V = tick() + xs.count ⏎ V + V } with V marked local-only
+        // The host scope declares Only(*xs) = { V = tock() + xs.count ⏎ V + V } with V marked local-only
         // on the collector. Two opened blocks read Only: Only is ONE entry keyed on the host scope by
         // reference (D3), and its V is evaluated once (the reader fallback: no activated declaring level).
         static Expr Build(ScopeCtx prelude)
         {
             var v = new Property("V", new Algorithm.User(null, [], [], [],
-                    new OutputBundle([new Expr.Binary(BinaryOp.Add, new Expr.Call(new Expr.Resolve("tick"), OutputBundle.Empty),
+                    new OutputBundle([new Expr.Binary(BinaryOp.Add, new Expr.Call(new Expr.Resolve("tock"), OutputBundle.Empty),
                         new Expr.Call(new Expr.Resolve("count"), new OutputBundle([new Expr.Param("xs")])))])),
                 false, PropertyExposure.LocalOnlyCapturedAncestorParameters) { RequiredAncestorParameters = ["xs"] };
             var only = new Algorithm.User(null, [new CaptureParameterPattern("xs", Kind: ParameterKind.Collecting)], [], [v],
@@ -466,7 +466,7 @@ public class CollectingPropertyOwnerContextTests
         // Q-37: Only entered in a callback evaluates V, whose body re-enters V through Only.V. Both
         // spellings are ONE key, so the inner reads are re-entrant and only the outermost result is
         // published and reused. Before the fix the split key published an inner result (22, four ticks).
-        var source = F("Only(*xs) = {\n    V = if(tick() < 3, Only.V + 1, k)\n    V\n}", "[0].map{ n + Only }[0] + Only.V", "F(10)");
+        var source = F("Only(*xs) = {\n    V = if(tock() < 3, Only.V + 1, k)\n    V\n}", "[0].map{ n + Only }[0] + Only.V", "F(10)");
         var oracle = await ObserveAsync(source);
         Assert.Equal("24", oracle.Value);
         Assert.Equal(Ticks(3), oracle.HostCalls);
@@ -480,7 +480,7 @@ public class CollectingPropertyOwnerContextTests
     [Fact]
     public async Task C20_AFailingOutermostOwner_PublishesNothing()
     {
-        var source = F("Only(*xs) = {\n    V = if(tick() == 1, 1 / 0, k)\n    V\n}", "[0].map{ n + Only }[0] + Only.V");
+        var source = F("Only(*xs) = {\n    V = if(tock() == 1, 1 / 0, k)\n    V\n}", "[0].map{ n + Only }[0] + Only.V");
         var oracle = await ObserveAsync(source);
         Assert.Equal("err", oracle.Kind);
         Assert.StartsWith("DivisionByZero: ", Assert.Single(oracle.Errors), StringComparison.Ordinal);
@@ -554,7 +554,7 @@ public class CollectingPropertyOwnerContextTests
         var ticks = 0;
         Result Tick()
         {
-            log.Add($"tick#{++ticks}");
+            log.Add($"tock#{++ticks}");
             return new Result.Atom(ticks);
         }
 
@@ -566,10 +566,10 @@ public class CollectingPropertyOwnerContextTests
 
         return suspending
             ? HostOperations.Create(
-                HostOperation.CreateAsync("tick", async (_, _) => { await Task.Yield(); return Tick(); }),
+                HostOperation.CreateAsync("tock", async (_, _) => { await Task.Yield(); return Tick(); }),
                 HostOperation.CreateAsync("trace", async (args, _) => { await Task.Yield(); return Trace(args[0]); }, "x"))
             : HostOperations.Create(
-                HostOperation.Create("tick", (_, _) => Tick()),
+                HostOperation.Create("tock", (_, _) => Tick()),
                 HostOperation.Create("trace", (args, _) => Trace(args[0]), "x"));
     }
 

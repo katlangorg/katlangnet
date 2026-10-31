@@ -313,10 +313,9 @@ public class InvocationRouteTests
     public void RebuiltPlan_TransportsTheOriginalCells_AndEndedRunsRefuse(bool optimized)
     {
         Result.CallReference? rebuilt = null;
-        int traces = 0, ticks = 0;
+        var traces = 0;
         var operations = HostOperations.Create(
             HostOperation.Create("trace", (args, _) => { traces++; return args[0]; }, "x"),
-            HostOperation.Create("tick", (_, _) => new Result.Atom(++ticks)),
             HostOperation.Create("Meta", (_, _) => throw new InvalidOperationException("ordinary Meta reached"), "original", "rebuilt"));
         var seam = new InvocationPlanTestSeam(new Dictionary<string, Func<IReadOnlyList<NeedCell?>, Result>>
         {
@@ -335,7 +334,7 @@ public class InvocationRouteTests
                 Assert.Equal(0, rebuilt.Plan.SupplyFormations);
                 Assert.Null(rebuilt.Plan.RouteState);
                 Assert.Equal(0, traces);
-                Assert.Equal(0, ticks);
+                Assert.Equal(0, original.Plan.Caller.Budget.TickCount);
                 Assert.Equal("8", InvocationRouteCorpus.Value(rebuilt.Invoke().Value.Value));
                 // The receiver is the transported META adapter cell itself, even though an ordinary
                 // invocation preserves the written parameter read's checkpoint and error protocol.
@@ -363,11 +362,11 @@ public class InvocationRouteTests
             """, new RunOptions { HostOperations = operations });
         Assert.False(parsed.HasErrors, string.Join(" | ", parsed.Diagnostics.Select(d => d.Message)));
         using var activation = InvocationPlanTestSeam.Activate(seam);
-        var (result, _) = Evaluator.RunCountedObserved(new Expr.AlgorithmExpr(parsed.Root), enableOptimizations: optimized, hostOperations: operations,
+        var (result, budget) = Evaluator.RunCountedObserved(new Expr.AlgorithmExpr(parsed.Root), enableOptimizations: optimized, hostOperations: operations,
             observations: new EvaluationObservations());
         Assert.True(result.IsOk, result.IsError ? result.Error.ToString() : "");
         Assert.Equal(1, traces);
-        Assert.Equal(3, ticks);
+        Assert.Equal(3, budget.TickCount);
         Assert.True(rebuilt!.Plan.Caller.Budget.RunEnded);
         var ended = Evaluator.InvokeCallReferenceValue(rebuilt, rebuilt.Plan.Caller);
         Assert.Equal(Evaluator.EndedCallReferenceMessage, Assert.IsType<EvalError.IllegalInEval>(ended.Error).Reason);

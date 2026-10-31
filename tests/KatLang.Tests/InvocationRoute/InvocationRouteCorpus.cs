@@ -231,12 +231,11 @@ internal static class InvocationRouteCorpus
     internal static async Task<Observation> Observe(Case c, int mode)
     {
         var trace = new List<string>();
-        int ticks = 0, suspensions = 0;
+        var suspensions = 0;
         using var cancel = new CancellationTokenSource();
         var boom = new InvalidOperationException("boom host failure");
         var operations = HostOperations.Create(
             HostOperation.Create("trace", (args, _) => { lock (trace) trace.Add(Value(args[0])); return args[0]; }, "x"),
-            HostOperation.Create("tick", (_, _) => new Result.Atom(Interlocked.Increment(ref ticks))),
             HostOperation.Create("boom", (_, _) => throw boom),
             mode == 2
                 ? HostOperation.CreateAsync("aflag", async (_, _) => { await Task.Yield(); Interlocked.Increment(ref suspensions); return new Result.Bool(true); })

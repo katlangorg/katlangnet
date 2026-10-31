@@ -95,7 +95,7 @@ public sealed class MetaBindingRefusalDiagnosticTests
 
     [Fact]
     public async Task ARefusedComputedArgument_IsNeverEvaluated()
-        => await AssertRefusedOnEveryRoute("Capture(meta operation) = operation\nCapture(trace(5) + tick())", "operation");
+        => await AssertRefusedOnEveryRoute("Capture(meta operation) = operation\nCapture(trace(5) + tock())", "operation");
 
     // ── C: several META parameters — the first failing pattern in written order ───────────────
 
@@ -365,7 +365,7 @@ public sealed class MetaBindingRefusalDiagnosticTests
     [Fact]
     public async Task AnEarlierInspectingFailure_WinsOverTheLaterMetaRefusal()
     {
-        var observation = await SixRouteAgreement.OnEveryRouteAsync("Mix([x], meta op) = x\nMix(trace(5), tick() + 1)");
+        var observation = await SixRouteAgreement.OnEveryRouteAsync("Mix([x], meta op) = x\nMix(trace(5), tock() + 1)");
         var error = Assert.Single(observation.Errors);
         Assert.StartsWith($"{KatLangErrorCode.TypeMismatch}: ", error, StringComparison.Ordinal);
         Assert.DoesNotContain("while binding meta parameter", error, StringComparison.Ordinal);
@@ -378,7 +378,7 @@ public sealed class MetaBindingRefusalDiagnosticTests
 
     [Fact]
     public async Task AnExplicitSpread_IsFormedFirst_ThenItsItemsAreRefused()
-        => await AssertRefusedOnEveryRoute("P = tick(), tick()\nUse(meta first, meta second) = 0\nUse(P*)", "first", "tick#1", "tick#2");
+        => await AssertRefusedOnEveryRoute("P = tock(), tock()\nUse(meta first, meta second) = 0\nUse(P*)", "first", "tock#1", "tock#2");
 
     [Fact]
     public async Task Cardinality_PrecedesTheNamedRefusal()
@@ -406,7 +406,7 @@ public sealed class MetaBindingRefusalDiagnosticTests
     {
         var program = new InvocationRouteCorpus.Case("meta-diag-1-counters", """
             CheckBefore([x], meta operation) = 0
-            CheckBefore([aflag()], trace(5) + tick())
+            CheckBefore([aflag()], trace(5) + tock())
             """);
         var generic = await InvocationRouteCorpus.Observe(program, 0);
         Assert.StartsWith("err NotAnAlgorithm | ", generic.Outcome, StringComparison.Ordinal);

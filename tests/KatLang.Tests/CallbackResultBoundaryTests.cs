@@ -86,7 +86,7 @@ public sealed class CallbackResultBoundaryTests
         { "E7-host-effects-two-rows", "F(x) = trace(x), trace(x * 10)\nmap([1, 2], F)", "ok L[S[1, 10], S[2, 20]]", "trace(1) | trace(10) | trace(2) | trace(20)" },
         { "E7-host-effects-spread", "F(x) = { [trace(x), x]* }\nmap([1, 2], F)", "ok L[S[1, 1], S[2, 2]]", "trace(1) | trace(2)" },
         { "E7-unused-callback-empty-collection", "D(x) = x, x\nmap([], D)", "ok L[]", "" },
-        { "E7-fresh-effect-order", "F(x) = tick(), x\nmap([5, 6], F)", "ok L[S[1, 5], S[2, 6]]", "tick#1 | tick#2" },
+        { "E7-fresh-effect-order", "F(x) = tock(), x\nmap([5, 6], F)", "ok L[S[1, 5], S[2, 6]]", "tock#1 | tock#2" },
         { "P8-alias", "D(x) = x, x\nA = D\nmap([1], A)", "ok L[S[1, 1]]", "" },
         { "P8-parameter-forwarded", "D(x) = x, x\nApply(f, L) = map(L, f)\nApply(D, [1])", "ok L[S[1, 1]]", "" },
         { "P8-collector-forwarded", "D(x) = x, x\nFwd(L, *fs) = map(L, fs*)\nFwd([1], D)", "ok L[S[1, 1]]", "" },
@@ -373,9 +373,9 @@ public sealed class CallbackResultBoundaryTests
     [Fact]
     public async Task EveryRowRunsOnce_InWrittenOrder_ItemByItem()
     {
-        var (observation, _) = await AllRoutesAsync("F(x) = tick(), x, tick()\nmap([5, 6], F), tick()");
+        var (observation, _) = await AllRoutesAsync("F(x) = tock(), x, tock()\nmap([5, 6], F), tock()");
         Assert.Equal("ok S[L[S[1, 5, 2], S[3, 6, 4]], 5]", observation.Outcome);
-        Assert.Equal(["tick#1", "tick#2", "tick#3", "tick#4", "tick#5"], observation.HostCalls);
+        Assert.Equal(["tock#1", "tock#2", "tock#3", "tock#4", "tock#5"], observation.HostCalls);
     }
 
     [Theory]
@@ -415,7 +415,7 @@ public sealed class CallbackResultBoundaryTests
     [InlineData("R(x, acc) = ()\nP(x, x) = x\n[P(reduce([1], R, 0), ()), P((), reduce([1], R, 0))]", "ok L[S[], S[]]")]
     [InlineData("R(x, acc) = ()\nC(*xs) = xs\n[C(reduce([1], R, 0)), C(reduce([1], R, 0)*)]", "ok L[L[S[]], L[]]")]
     [InlineData("R(x, acc) = ()\n[reduce([1], R, 0), reduce([1], R, 0).string]", "err TypeMismatch")]
-    [InlineData("R(x, acc) = ()\n[reduce([1], R, 0), tick(), reduce([2], R, ()), tick()]", "ok L[S[], 1, S[], 2]")]
+    [InlineData("R(x, acc) = ()\n[reduce([1], R, 0), tock(), reduce([2], R, ()), tock()]", "ok L[S[], 1, S[], 2]")]
     [InlineData("D(0) = (), []\nD(n) = n, []\nKeep(x) = true\ncount(filter(map([0, 1], D), Keep))", "ok 2")]
     [InlineData("Pair = {s, s + 1}\nD(x) = repeat(Pair(x), 1)\nmap([1, 2], D)", "ok L[S[1, 2], S[2, 3]]")]
     [InlineData("D(x) = x, x\nApply(f, *xs) = map(xs, f)\nApply(D, (), [])", "ok L[S[S[], S[]], S[L[], L[]]]")]
@@ -476,12 +476,12 @@ public sealed class CallbackResultBoundaryTests
     [Fact]
     public async Task Independent_ReduceAndNestedOrdinaryCalls_CanDifferOnSuccessfulEffectfulValues()
     {
-        const string reducer = "R(x, acc) = tick() * x + acc\n";
+        const string reducer = "R(x, acc) = tock() * x + acc\n";
         var (fold, _) = await AllRoutesAsync(reducer + "reduce([1, 2], R, 0)");
         var (nested, _) = await AllRoutesAsync(reducer + "R(2, R(1, 0))");
         Assert.Equal("ok 5", fold.Outcome);
         Assert.Equal("ok 4", nested.Outcome);
-        Assert.Equal(new[] { "tick#1", "tick#2" }, fold.HostCalls);
+        Assert.Equal(new[] { "tock#1", "tock#2" }, fold.HostCalls);
         Assert.Equal(fold.HostCalls, nested.HostCalls);
     }
 
@@ -498,13 +498,13 @@ public sealed class CallbackResultBoundaryTests
     [Fact]
     public async Task Independent_MapAndOrdinaryCalls_CanDifferOnSuccessfulEffectfulValues()
     {
-        const string definitions = "L = [tick(), tick()]\nF(x) = tick()\n";
+        const string definitions = "L = [tock(), tock()]\nF(x) = tock()\n";
         var (mapped, _) = await AllRoutesAsync(definitions + "map(L, F)");
         var (calls, _) = await AllRoutesAsync(definitions + "[F(L[0]), F(L[1])]");
         Assert.Equal("ok L[3, 4]", mapped.Outcome);
         Assert.Equal("ok L[1, 2]", calls.Outcome);
-        Assert.Equal(new[] { "tick#1", "tick#2", "tick#3", "tick#4" }, mapped.HostCalls);
-        Assert.Equal(new[] { "tick#1", "tick#2" }, calls.HostCalls);
+        Assert.Equal(new[] { "tock#1", "tock#2", "tock#3", "tock#4" }, mapped.HostCalls);
+        Assert.Equal(new[] { "tock#1", "tock#2" }, calls.HostCalls);
     }
 
     [Theory]
@@ -579,8 +579,8 @@ public sealed class CallbackResultBoundaryTests
 
         public Result Tick()
         {
-            var tick = Interlocked.Increment(ref _ticks);
-            return Log($"tick#{tick}", new Result.Atom(tick));
+            var tock = Interlocked.Increment(ref _ticks);
+            return Log($"tock#{tock}", new Result.Atom(tock));
         }
 
         public Result Trace(Result value) => Log($"trace({SixRouteAgreement.Neutral(value)})", value);
@@ -589,10 +589,10 @@ public sealed class CallbackResultBoundaryTests
     private static HostOperations Operations(HostLog log, bool suspending)
         => suspending
             ? HostOperations.Create(
-                HostOperation.CreateAsync("tick", async (_, _) => { await Task.Yield(); return log.Tick(); }),
+                HostOperation.CreateAsync("tock", async (_, _) => { await Task.Yield(); return log.Tick(); }),
                 HostOperation.CreateAsync("trace", async (args, _) => { await Task.Yield(); return log.Trace(args[0]); }, "x"))
             : HostOperations.Create(
-                HostOperation.Create("tick", (_, _) => log.Tick()),
+                HostOperation.Create("tock", (_, _) => log.Tick()),
                 HostOperation.Create("trace", (args, _) => log.Trace(args[0]), "x"));
 
     private static async Task<(Observation Observation, Budget? Budget)> ObserveAsync(

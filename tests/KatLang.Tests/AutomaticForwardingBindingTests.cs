@@ -70,23 +70,23 @@ public class AutomaticForwardingBindingTests
 
         public Result Tick()
         {
-            var tick = Interlocked.Increment(ref _ticks);
+            var tock = Interlocked.Increment(ref _ticks);
             lock (Calls)
-                Calls.Add($"tick#{tick}");
-            return new Result.Atom((Decimal128)tick);
+                Calls.Add($"tock#{tock}");
+            return new Result.Atom((Decimal128)tock);
         }
     }
 
     private static HostOperations OperationsFor(HostLog log, bool withAsyncOperation)
         => withAsyncOperation
             ? HostOperations.Create(
-                HostOperation.CreateAsync("tick", async (_, _) => { await Task.Yield(); return log.Tick(); }),
+                HostOperation.CreateAsync("tock", async (_, _) => { await Task.Yield(); return log.Tick(); }),
                 HostOperation.CreateAsync("pause", async (_, _) =>
                 {
                     await Task.Yield();
                     return new Result.Atom((Decimal128)0);
                 }))
-            : HostOperations.Create(HostOperation.Create("tick", (_, _) => log.Tick()));
+            : HostOperations.Create(HostOperation.Create("tock", (_, _) => log.Tick()));
 
     private static async Task<string> ObserveAsync(Route route, string source)
     {
@@ -260,8 +260,8 @@ public class AutomaticForwardingBindingTests
 
         // A helper that now reads an enclosing parameter is an ordinary zero-parameter property:
         // one evaluation per activation of its owner (formerly one fresh call per reference).
-        { "reused-helper-is-read-once-per-activation", "A = y + 1\nF(y) = {\n    G = A * 10 + tick() * 0\n    G + G\n}\nF(3)", "ok 80 [tick#1]" },
-        { "reused-helper-is-per-activation", "A = y + 1\nF(y) = {\n    G = A * 10 + tick() * 0\n    G + G\n}\nF(3), F(4)", "ok S[80, 100] [tick#1,tick#2]" },
+        { "reused-helper-is-read-once-per-activation", "A = y + 1\nF(y) = {\n    G = A * 10 + tock() * 0\n    G + G\n}\nF(3)", "ok 80 [tock#1]" },
+        { "reused-helper-is-per-activation", "A = y + 1\nF(y) = {\n    G = A * 10 + tock() * 0\n    G + G\n}\nF(3), F(4)", "ok S[80, 100] [tock#1,tock#2]" },
 
         // A forwarded parameter never gives a meaning to a name nothing declares either: the
         // closed body's `v` stays undeclared (formerly 14 / 22.0, bound to the forwarded one).

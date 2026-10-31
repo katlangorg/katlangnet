@@ -689,7 +689,6 @@ public class MalformedSourceRecoveryTests(ITestOutputHelper output)
         var diagnostic = Assert.Single(Parser.ParseSyntax(source).Diagnostics, d => d.Code == DiagnosticCode.ExplicitParametersRequireOutput);
         Assert.Equal(new SourceSpan(line, column, endLine, endColumn), diagnostic.Span);
     }
-
     // ── Termination and the swallowed-suffix law over generated sources ────
 
     /// <summary>
@@ -701,15 +700,48 @@ public class MalformedSourceRecoveryTests(ITestOutputHelper output)
     /// hung), with a linear diagnostic count and no parser diagnostic that names the reported
     /// character; and whenever such a malformed source's delimiters balance by count, a
     /// declaration appended on a new line stays a root declaration.
+    /// <para>The sweep runs in a fresh process (<see cref="GeneratedMalformedSourcesProbe"/>
+    /// through the shared <see cref="TerminationProbe"/>): a parse that never returns cannot be
+    /// interrupted in place, so a hang is detected as no input COMPLETED — its parse, assertions
+    /// and suffix check — for <see cref="TerminationProbe.ParserStallWindow"/>, and the child is
+    /// terminated and joined. The window bounds no total duration (the former two-minute
+    /// whole-sweep guard expired under full-suite contention), so this establishes termination,
+    /// not an aggregate performance bound.</para>
     /// </summary>
     [Fact]
-    public async Task GeneratedMalformedSources_Terminate_AndNeverSwallowALaterDeclaration()
+    public void GeneratedMalformedSources_Terminate_AndNeverSwallowALaterDeclaration()
     {
-        string[] alphabet = ["(", ")", "[", "]", "{", "}", ",", "x", "=", "+", ".", "\n", "true ", "public ", "F(", "@"];
-        var current = "";
-        var parsed = 0;
-        var sweep = Task.Run(() =>
+        var run = TerminationProbe.RunAndAssert(
+            typeof(GeneratedMalformedSourcesProbe), nameof(GeneratedMalformedSourcesProbe.Sweep),
+            GeneratedMalformedSourcesProbe.InputCount, TerminationProbe.ParserStallWindow);
+        output.WriteLine(
+            $"{run.Completion}; probe started {run.ProbeStarted?.TotalSeconds:0.000} s and the child exited "
+            + $"{run.Exited.TotalSeconds:0.000} s after launch.");
+    }
+
+    /// <summary>
+    /// The generated malformed-source sweep, run in its own process by
+    /// <see cref="GeneratedMalformedSources_Terminate_AndNeverSwallowALaterDeclaration"/>: an
+    /// explicitly named probe, not a discovered test. One completed item is one input whose
+    /// parse, assertions and applicable suffix check have all finished.
+    /// </summary>
+    public sealed class GeneratedMalformedSourcesProbe
+    {
+        public const int InputCount = 16 + 256 + 4096 + 65536;
+
+        public void Sweep()
         {
+            using var progress = TerminationProgress.Start();
+            var (parsed, suffixChecks) = Run(progress);
+            Assert.Equal(InputCount, parsed);
+            progress.Finish($"suffixChecks={suffixChecks}");
+        }
+
+        private static (int Parsed, int SuffixChecks) Run(TerminationProgress progress)
+        {
+            string[] alphabet = ["(", ")", "[", "]", "{", "}", ",", "x", "=", "+", ".", "\n", "true ", "public ", "F(", "@"];
+            var parsed = 0;
+            var suffixChecks = 0;
             var indices = new int[4];
             for (var length = 1; length <= 4; length++)
             {
@@ -717,22 +749,32 @@ public class MalformedSourceRecoveryTests(ITestOutputHelper output)
                 while (true)
                 {
                     var source = string.Concat(indices.Take(length).Select(i => alphabet[i]));
-                    Volatile.Write(ref current, source);
-                    var result = Parser.ParseSyntax(source);
-                    Assert.True(result.Diagnostics.Count <= 2 * source.Length + 1, $"{result.Diagnostics.Count} diagnostics: {Escape(source)}");
-                    Assert.False(
-                        result.Diagnostics.Any(d => d.Message.Contains("unrecognized character", StringComparison.Ordinal)),
-                        $"The parser named a character the lexer already reported: {Escape(source)}");
-                    if (result.HasErrors && DelimitersBalanceByCount(source))
+                    progress.Begin(parsed + 1, "original", source);
+                    try
                     {
-                        var withSuffix = Parser.ParseSyntax(source + "\nGood = 41\nGood");
-                        var good = Assert.Single(withSuffix.Root.Properties, p => p.Name == "Good");
-                        Assert.True(
-                            Assert.Single(good.DeclarationSpans).Start.Line == source.Count(c => c == '\n') + 2,
-                            $"The appended declaration was swallowed after: {Escape(source)}");
+                        var result = Parser.ParseSyntax(source);
+                        Assert.True(result.Diagnostics.Count <= 2 * source.Length + 1, $"{result.Diagnostics.Count} diagnostics: {Escape(source)}");
+                        Assert.False(
+                            result.Diagnostics.Any(d => d.Message.Contains("unrecognized character", StringComparison.Ordinal)),
+                            $"The parser named a character the lexer already reported: {Escape(source)}");
+                        if (result.HasErrors && DelimitersBalanceByCount(source))
+                        {
+                            progress.Enter("suffix-recovery");
+                            var withSuffix = Parser.ParseSyntax(source + "\nGood = 41\nGood");
+                            var good = Assert.Single(withSuffix.Root.Properties, p => p.Name == "Good");
+                            Assert.True(
+                                Assert.Single(good.DeclarationSpans).Start.Line == source.Count(c => c == '\n') + 2,
+                                $"The appended declaration was swallowed after: {Escape(source)}");
+                            suffixChecks++;
+                        }
+                    }
+                    catch (Exception) when (progress.ReportFailure())
+                    {
+                        throw; // Unreachable: the filter only reports the failing input and never catches.
                     }
 
                     parsed++;
+                    progress.Complete();
                     var position = 0;
                     while (position < length && ++indices[position] == alphabet.Length)
                         indices[position++] = 0;
@@ -740,16 +782,13 @@ public class MalformedSourceRecoveryTests(ITestOutputHelper output)
                         break;
                 }
             }
-        });
 
-        var finished = await Task.WhenAny(sweep, Task.Delay(TimeSpan.FromMinutes(2)));
-        Assert.True(finished == sweep, $"The sweep did not terminate; last input: {Escape(Volatile.Read(ref current))}");
-        await sweep;
-        Assert.Equal(16 + 256 + 4096 + 65536, parsed);
+            return (parsed, suffixChecks);
+        }
 
-        static string Escape(string source) => source.Replace("\n", "\\n", StringComparison.Ordinal);
+        private static string Escape(string source) => source.Replace("\n", "\\n", StringComparison.Ordinal);
 
-        static bool DelimitersBalanceByCount(string source)
+        private static bool DelimitersBalanceByCount(string source)
         {
             var depth = 0;
             foreach (var c in source)
@@ -765,24 +804,54 @@ public class MalformedSourceRecoveryTests(ITestOutputHelper output)
     }
 
     [Fact]
-    public async Task DeclarationHeadAfterASlotBoundary_Terminates_WithOneTargetedDiagnostic()
+    public void DeclarationHeadAfterASlotBoundary_Terminates_WithOneTargetedDiagnostic()
     {
         // The reserved-literal and public heads are part of THE declaration-starter
         // relation: the slot boundary stops before them exactly where operand recovery
         // refuses them, so the loop cannot re-admit the refused token (the first version
-        // of the operand rule looped forever on `A` newline `true=`). Guarded, so a
-        // regression fails instead of hanging the suite.
-        var parses = Task.Run(() => (
-            Reserved: Parser.ParseSyntax("A\ntrue = 1"),
-            ReservedInList: Parser.ParseSyntax("1;\nfalse(x) = x\n[1,\ntrue = 2]"),
-            Public: Parser.ParseSyntax("A\npublic B = 1\nB")));
-        Assert.True(await Task.WhenAny(parses, Task.Delay(TimeSpan.FromMinutes(1))) == parses, "The parse did not terminate.");
-        var (reserved, reservedInList, publicHead) = await parses;
+        // of the operand rule looped forever on `A` newline `true=`). The parses and their
+        // assertions run in a terminable child (`DeclarationHeadAfterASlotBoundaryProbe`),
+        // so a regression fails with its source instead of hanging the suite or leaving a
+        // worker running.
+        TerminationProbe.RunAndAssert(
+            typeof(DeclarationHeadAfterASlotBoundaryProbe), nameof(DeclarationHeadAfterASlotBoundaryProbe.Parse),
+            3, TerminationProbe.ParserStallWindow);
+    }
 
-        Assert.Contains("reserved Boolean literal", Assert.Single(reserved.Diagnostics).Message, StringComparison.Ordinal);
-        Assert.Contains(reservedInList.Diagnostics, d => d.Message.Contains("reserved Boolean literal", StringComparison.Ordinal));
-        Assert.Empty(publicHead.Diagnostics);
-        Assert.True(RootProperty(publicHead.Root, "B").IsPublic);
+    /// <summary>
+    /// The three parses of <see cref="DeclarationHeadAfterASlotBoundary_Terminates_WithOneTargetedDiagnostic"/>,
+    /// each with its assertions, as one explicitly named probe; not a discovered test.
+    /// </summary>
+    public sealed class DeclarationHeadAfterASlotBoundaryProbe
+    {
+        public void Parse()
+        {
+            using var progress = TerminationProgress.Start();
+            Item(progress, 1, "A\ntrue = 1", reserved =>
+                Assert.Contains("reserved Boolean literal", Assert.Single(reserved.Diagnostics).Message, StringComparison.Ordinal));
+            Item(progress, 2, "1;\nfalse(x) = x\n[1,\ntrue = 2]", reservedInList =>
+                Assert.Contains(reservedInList.Diagnostics, d => d.Message.Contains("reserved Boolean literal", StringComparison.Ordinal)));
+            Item(progress, 3, "A\npublic B = 1\nB", publicHead =>
+            {
+                Assert.Empty(publicHead.Diagnostics);
+                Assert.True(RootProperty(publicHead.Root, "B").IsPublic);
+            });
+            progress.Finish("sources=3");
+        }
+
+        private static void Item(TerminationProgress progress, int ordinal, string source, Action<SyntaxParseResult> assert)
+        {
+            progress.Begin(ordinal, "parse", source);
+            try
+            {
+                assert(Parser.ParseSyntax(source));
+            }
+            catch (Exception) when (progress.ReportFailure())
+            {
+                throw; // Unreachable: the filter only reports the failing source and never catches.
+            }
+            progress.Complete();
+        }
     }
 
     // ── Invalid source never evaluates; editor tooling accepts every recovery tree ──

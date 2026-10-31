@@ -176,7 +176,14 @@ public class CorpusExecutionEquivalenceTests
             // that is exact only for programs the J7 gate proves META-free.
             if (Evaluator.ProgramMayCaptureCalls(program))
                 continue;
-            var cached = Neutral(Evaluator.RunCounted(program, new RunScopedZeroArgPropertyResultCache()));
+            // `tick()` observes executions, so it makes the cache observable too (`A = tick()` / `A + A`
+            // is 2 cached and 3 recomputed). A program whose cached run executes no tick recomputes the
+            // same tick-free bodies, so only a run that actually ticked is excluded.
+            var (cachedRun, cachedBudget) = Evaluator.RunCountedObserved(
+                program, zeroArgPropertyResultCache: new RunScopedZeroArgPropertyResultCache());
+            if (cachedBudget.TickCount > 0)
+                continue;
+            var cached = Neutral(cachedRun);
             var uncached = Neutral(Evaluator.RunCounted(program, UncachedZeroArgPropertyResultCache.CreateForRun()));
             if (cached != uncached)
                 mismatches.Add($"{id}: cached={cached} uncached={uncached}");

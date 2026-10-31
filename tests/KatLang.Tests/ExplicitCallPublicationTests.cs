@@ -12,7 +12,7 @@ namespace KatLang.Tests;
 /// never obtain their result from an established entry and never replace it. It supersedes "an explicit
 /// call neither reads, replaces, nor populates the entry" (PROP-06 before this decision).
 ///
-/// <para>The evidence is deterministic: the logging <c>tick</c>/<c>trace</c> host operations on the six
+/// <para>The evidence is deterministic: the logging <c>tock</c>/<c>trace</c> host operations on the six
 /// execution routes (<see cref="SixRouteAgreement"/>: sync and async engines, the genuinely suspending
 /// twin, the generic and optimized evaluators and the forced twin), internal publication statistics of
 /// the run-scoped caches, and the IV-1/IV-2 observation snapshot. Lean: the <c>invoke</c> request of
@@ -32,7 +32,7 @@ public class ExplicitCallPublicationTests
     [InlineData("A, A(), A", "S[1, 2, 1]", 2, 1)]
     public async Task CallReadMatrix_OnEveryRoute(string rows, string expected, int ticks, int observedValue)
     {
-        var source = "A = tick()\n" + rows;
+        var source = "A = tock()\n" + rows;
         var oracle = await SixRouteAgreement.OnEveryRouteAsync(source);
         Assert.Equal("ok", oracle.Kind);
         Assert.Equal(expected, oracle.Value);
@@ -73,16 +73,16 @@ public class ExplicitCallPublicationTests
     public static TheoryData<string, string, int> ReentrantPrograms => new()
     {
         // An explicit call owning an inner property read (formerly S[2, 1]).
-        { "A = if(tick() < 3, A + 1, 0)\nA(), A", "S[2, 2]", 3 },
+        { "A = if(tock() < 3, A + 1, 0)\nA(), A", "S[2, 2]", 3 },
         // An explicit call owning an inner explicit call (formerly S[2, 0] over four ticks).
-        { "A = if(tick() < 3, A() + 1, 0)\nA(), A", "S[2, 2]", 3 },
+        { "A = if(tock() < 3, A() + 1, 0)\nA(), A", "S[2, 2]", 3 },
         // A property read owning an inner explicit call; a later explicit call is fresh.
-        { "A = if(tick() < 3, A() + 1, 0)\nA, A, A()", "S[2, 2, 0]", 4 },
+        { "A = if(tock() < 3, A() + 1, 0)\nA, A, A()", "S[2, 2, 0]", 4 },
         // Indirect re-entry through a reference: `B = A` owns no entry (OD-E, M4★), so B() re-enters
         // A's own key and a bare B reads A's entry (formerly B published its own: S[2, 2, 1]).
-        { "A = if(tick() < 3, B() + 1, 0)\nB = A\nA(), A, B", "S[2, 2, 2]", 3 },
+        { "A = if(tock() < 3, B() + 1, 0)\nB = A\nA(), A, B", "S[2, 2, 2]", 3 },
         // A fresh explicit call while the entry is established: executes, replaces nothing.
-        { "A = if(tick() < 3, A + 1, 0)\nA, A(), A", "S[2, 0, 2]", 4 },
+        { "A = if(tock() < 3, A + 1, 0)\nA, A(), A", "S[2, 0, 2]", 4 },
     };
 
     [Theory]
@@ -101,7 +101,7 @@ public class ExplicitCallPublicationTests
     {
         // A() owns A: its inner re-entrant A() succeeds with 5, then the owner fails. S's owner
         // completed inside the failed attempt, so S's entry stays; A has none.
-        const string source = "S = tick() * 100\nA = if(tick() == 1, S + A() + 1 / 0, 5)\nA(), A";
+        const string source = "S = tock() * 100\nA = if(tock() == 1, S + A() + 1 / 0, 5)\nA(), A";
         var oracle = await SixRouteAgreement.OnEveryRouteAsync(source);
         Assert.Equal("err", oracle.Kind);
         Assert.Contains("DivisionByZero", oracle.Errors[0], StringComparison.Ordinal);
@@ -123,7 +123,7 @@ public class ExplicitCallPublicationTests
     [InlineData(true)]
     public async Task CancellationInsideAnOwningInvocation_ClearsOwnership_AndPublishesNothing(bool asynchronous)
     {
-        const string source = "A = tick() + tick()\nA(), A";
+        const string source = "A = tock() + tock()\nA(), A";
         using var cancellation = new CancellationTokenSource();
         var ticks = 0;
         Result Tick()
@@ -133,8 +133,8 @@ public class ExplicitCallPublicationTests
         }
 
         var operations = HostOperations.Create(asynchronous
-            ? HostOperation.CreateAsync("tick", async (_, _) => { await Task.Yield(); return Tick(); })
-            : HostOperation.Create("tick", (_, _) => Tick()));
+            ? HostOperation.CreateAsync("tock", async (_, _) => { await Task.Yield(); return Tick(); })
+            : HostOperation.Create("tock", (_, _) => Tick()));
         var program = await ProgramAsync(source, operations);
         if (asynchronous)
         {
@@ -172,20 +172,20 @@ public class ExplicitCallPublicationTests
     public static TheoryData<string, string, string, int> EligibilityPrograms => new()
     {
         // A spread contributing no slot is a zero supply: it establishes the entry.
-        { "A = tick()\nE = []\nA(E*), A", "ok", "S[1, 1]", 1 },
+        { "A = tock()\nE = []\nA(E*), A", "ok", "S[1, 1]", 1 },
         // A collecting-only callable accepts zero supplied slots: its zero supply qualifies …
-        { "C(*xs) = tick()\nC(), C", "ok", "S[1, 1]", 1 },
-        { "C(*xs) = tick()\nE = []\nC(E*), C", "ok", "S[1, 1]", 1 },
+        { "C(*xs) = tock()\nC(), C", "ok", "S[1, 1]", 1 },
+        { "C(*xs) = tock()\nE = []\nC(E*), C", "ok", "S[1, 1]", 1 },
         // … one supplied EMPTY value is one slot, not zero: no publication.
-        { "C(*xs) = tick()\nC(()), C", "ok", "S[1, 2]", 2 },
-        { "C(*xs) = tick()\nC([]), C", "ok", "S[1, 2]", 2 },
-        { "C(*xs) = tick()\nC(1), C", "ok", "S[1, 2]", 2 },
+        { "C(*xs) = tock()\nC(()), C", "ok", "S[1, 2]", 2 },
+        { "C(*xs) = tock()\nC([]), C", "ok", "S[1, 2]", 2 },
+        { "C(*xs) = tock()\nC(1), C", "ok", "S[1, 2]", 2 },
         // A nonempty spread is a nonzero supply.
-        { "C(*xs) = tick()\nE = [5]\nC(E*), C", "ok", "S[1, 2]", 2 },
+        { "C(*xs) = tock()\nE = [5]\nC(E*), C", "ok", "S[1, 2]", 2 },
         // A callable that requires arguments never qualifies (its own arity rejection).
-        { "F(x) = tick()\nF()", "err", "", 0 },
+        { "F(x) = tock()\nF()", "err", "", 0 },
         // A builtin or host operation never acquires an entry from a zero-supply call.
-        { "tick(), tick(), tick", "ok", "S[1, 2, 3]", 3 },
+        { "tock(), tock(), tock", "ok", "S[1, 2, 3]", 3 },
     };
 
     [Theory]
@@ -215,15 +215,13 @@ public class ExplicitCallPublicationTests
             ]);
         foreach (var route in new[] { 0, 1, 2 })
         {
-            var ticks = 0;
-            var operations = HostOperations.Create(HostOperation.Create("tick", (_, _) => new Result.Atom(++ticks)));
             var program = new Expr.AlgorithmExpr(root);
-            var result = route == 2
-                ? (await Evaluator.RunCountedObservedAsync(program, zeroArgPropertyResultCache: new RunScopedAsyncZeroArgPropertyResultCache(), hostOperations: operations)).Result
-                : Evaluator.RunCountedObserved(program, enableOptimizations: route == 1, hostOperations: operations).Result;
+            var (result, budget) = route == 2
+                ? await Evaluator.RunCountedObservedAsync(program, zeroArgPropertyResultCache: new RunScopedAsyncZeroArgPropertyResultCache())
+                : Evaluator.RunCountedObserved(program, enableOptimizations: route == 1);
             Assert.False(result.IsError, result.IsError ? result.Error.ToString() : null);
             Assert.Equal([1m, 1m, 2m], result.Value.Value.ToAtoms());
-            Assert.Equal(2, ticks);
+            Assert.Equal(2, budget.TickCount);
         }
     }
 
@@ -232,17 +230,17 @@ public class ExplicitCallPublicationTests
     public static TheoryData<string, string, int> IdentityPrograms => new()
     {
         // A structural member, grouped or not, establishes the member's ONE entry.
-        { "Box = { public V = tick() }\nBox.V(), Box.V, (Box.V)(), Box.V", "S[1, 1, 2, 1]", 2 },
-        { "Box = { public V = tick() }\n(Box.V)(), Box.V", "S[1, 1]", 1 },
+        { "Box = { public V = tock() }\nBox.V(), Box.V, (Box.V)(), Box.V", "S[1, 1, 2, 1]", 2 },
+        { "Box = { public V = tock() }\n(Box.V)(), Box.V", "S[1, 1]", 1 },
         // The opened spelling of the same binding shares that entry.
-        { "open Box\nBox = { public V = tick() }\nV(), Box.V, V", "S[1, 1, 1]", 1 },
+        { "open Box\nBox = { public V = tock() }\nV(), Box.V, V", "S[1, 1, 1]", 1 },
         // Activation-dependent locals: one entry per owner activation, never shared across inputs.
-        { "F(x) = {\n    L = x * 100 + tick()\n    L(), L\n}\nF(1), F(2), F(1)", "S[S[101, 101], S[202, 202], S[103, 103]]", 3 },
+        { "F(x) = {\n    L = x * 100 + tock()\n    L(), L\n}\nF(1), F(2), F(1)", "S[S[101, 101], S[202, 202], S[103, 103]]", 3 },
         // A shadowing property is a different binding with its own entry.
-        { "A = tick()\nInner = {\n    A = tick() * 10\n    A(), A\n}\nInner, A", "S[S[10, 10], 2]", 2 },
+        { "A = tock()\nInner = {\n    A = tock() * 10\n    A(), A\n}\nInner, A", "S[S[10, 10], 2]", 2 },
         // An intervening helper does not change which entry the explicit call establishes.
-        { "A = tick()\nHelp = A\nA(), Help, A", "S[1, 1, 1]", 1 },
-        { "A = tick()\nHelp = A()\nHelp, A, Help", "S[1, 1, 1]", 1 },
+        { "A = tock()\nHelp = A\nA(), Help, A", "S[1, 1, 1]", 1 },
+        { "A = tock()\nHelp = A()\nHelp, A, Help", "S[1, 1, 1]", 1 },
     };
 
     [Theory]
@@ -256,7 +254,7 @@ public class ExplicitCallPublicationTests
     }
 
     [Fact]
-    public async Task OnePropertyObject_UnderTwoOwners_KeepsTwoEntries()
+    public void OnePropertyObject_UnderTwoOwners_KeepsTwoEntries()
     {
         // A host DAG reusing ONE Property instance under two owners: the owners stay distinct keys.
         var shared = new Property("P", new Algorithm.User(
@@ -274,14 +272,11 @@ public class ExplicitCallPublicationTests
             ]);
         foreach (var optimized in new[] { false, true })
         {
-            var ticks = 0;
-            var operations = HostOperations.Create(HostOperation.Create("tick", (_, _) => new Result.Atom(++ticks)));
-            var result = Evaluator.RunCountedObserved(new Expr.AlgorithmExpr(root), enableOptimizations: optimized, hostOperations: operations).Result;
+            var (result, budget) = Evaluator.RunCountedObserved(new Expr.AlgorithmExpr(root), enableOptimizations: optimized);
             Assert.False(result.IsError, result.IsError ? result.Error.ToString() : null);
             Assert.Equal([1m, 2m, 1m], result.Value.Value.ToAtoms());
+            Assert.Equal(2, budget.TickCount);
         }
-
-        await Task.CompletedTask;
     }
 
     // ── 5. Callable and META routes ───────────────────────────────────────────────────────────
@@ -289,21 +284,21 @@ public class ExplicitCallPublicationTests
     public static TheoryData<string, string, int> CallableRoutePrograms => new()
     {
         // A callable parameter: the invocation's origin is the cell's written `A`.
-        { "A = tick()\nCall0(f) = f()\nCall0(A), A", "S[1, 1]", 1 },
+        { "A = tock()\nCall0(f) = f()\nCall0(A), A", "S[1, 1]", 1 },
         // Forwarding transports the cell, so its origin is unchanged.
-        { "A = tick()\nCall0(f) = f()\nFwd(g) = Call0(g)\nFwd(A), A", "S[1, 1]", 1 },
+        { "A = tock()\nCall0(f) = f()\nFwd(g) = Call0(g)\nFwd(A), A", "S[1, 1]", 1 },
         // Repeated invocation stays fresh.
-        { "A = tick()\nTwice0(f) = f(), f()\nTwice0(A), A", "S[S[1, 2], 1]", 2 },
+        { "A = tock()\nTwice0(f) = f(), f()\nTwice0(A), A", "S[S[1, 2], 1]", 2 },
         // A STATIC reference owns no entry (OD-E, M4★): OA() publishes under its target Only, which OA
         // and Only then read (formerly the alias had an entry of its own: S[1, 1, 2]).
-        { "Only(*xs) = tick()\nOA = Only\nOA(), OA, Only", "S[1, 1, 1]", 1 },
+        { "Only(*xs) = tock()\nOA = Only\nOA(), OA, Only", "S[1, 1, 1]", 1 },
         // A RUNTIME reference publishes under its binding cell's origin — the supplied `Only` — whatever
         // its target's arity (formerly a parameterized runtime-callable alias never published: S[1, 2]).
-        { "Only(*xs) = tick()\nUse(f) = {\n    A = f\n    A(), A\n}\nUse(Only)", "S[1, 1]", 1 },
+        { "Only(*xs) = tock()\nUse(f) = {\n    A = f\n    A(), A\n}\nUse(Only)", "S[1, 1]", 1 },
         // A shared argument cell is demanded once: one invocation, which establishes A.
-        { "A = tick()\nTwice(v) = v, v\nTwice(A()), A", "S[S[1, 1], 1]", 1 },
+        { "A = tock()\nTwice(v) = v, v\nTwice(A()), A", "S[S[1, 1], 1]", 1 },
         // An UNDEMANDED supplied invocation stays undemanded (Model-C laziness is unchanged).
-        { "A = tick()\nIgnore(v) = 0\nIgnore(A()), A", "S[0, 1]", 1 },
+        { "A = tock()\nIgnore(v) = 0\nIgnore(A()), A", "S[0, 1]", 1 },
     };
 
     [Theory]
@@ -316,7 +311,7 @@ public class ExplicitCallPublicationTests
         Assert.Equal(Ticks(ticks), oracle.HostCalls);
     }
 
-    private const string Meta = "Capture(meta c) = c\nId(x) = x\nA = tick()\n";
+    private const string Meta = "Capture(meta c) = c\nId(x) = x\nA = tock()\n";
 
     public static TheoryData<string, string, int> MetaPrograms => new()
     {
@@ -331,9 +326,9 @@ public class ExplicitCallPublicationTests
         { Meta + "R = Capture(A())\nR.Algorithm(), A", "S[1, 1]", 1 },
         { Meta + "R = Capture(A())\n(R.Algorithm)(), A", "S[1, 1]", 1 },
         // A captured MEMBER call.
-        { "Capture(meta c) = c\nBox = { public V = tick() }\nR = Capture(Box.V())\nR.Invoke(), Box.V", "S[1, 1]", 1 },
+        { "Capture(meta c) = c\nBox = { public V = tock() }\nR = Capture(Box.V())\nR.Invoke(), Box.V", "S[1, 1]", 1 },
         // A capture with arguments: R.Algorithm() with zero supply still names the captured binding.
-        { "Capture(meta c) = c\nC(*xs) = tick()\nR = Capture(C(5))\nR.Algorithm(), C, R.Invoke()", "S[1, 1, 2]", 2 },
+        { "Capture(meta c) = c\nC(*xs) = tock()\nR = Capture(C(5))\nR.Algorithm(), C, R.Invoke()", "S[1, 1, 2]", 2 },
     };
 
     [Theory]
@@ -378,7 +373,7 @@ public class ExplicitCallPublicationTests
     [Fact]
     public async Task ALaterExplicitFailure_Propagates_EvenWithACachedValue()
     {
-        const string source = "A = if(tick() == 1, 5, 1 / 0)\nA, A()";
+        const string source = "A = if(tock() == 1, 5, 1 / 0)\nA, A()";
         var oracle = await SixRouteAgreement.OnEveryRouteAsync(source);
         Assert.Equal("err", oracle.Kind);
         Assert.Contains("DivisionByZero", oracle.Errors[0], StringComparison.Ordinal);
@@ -400,10 +395,10 @@ public class ExplicitCallPublicationTests
     }
 
     [Theory]
-    [InlineData("A = tick()\nA(), A, A(), A")]
-    [InlineData("A = if(tick() < 3, A() + 1, 0)\nA(), A")]
-    [InlineData("A = tick()\nCall0(f) = f()\nCall0(A), A")]
-    [InlineData("Capture(meta c) = c\nA = tick()\nR = Capture(A())\nR.Invoke(), A")]
+    [InlineData("A = tock()\nA(), A, A(), A")]
+    [InlineData("A = if(tock() < 3, A() + 1, 0)\nA(), A")]
+    [InlineData("A = tock()\nCall0(f) = f()\nCall0(A), A")]
+    [InlineData("Capture(meta c) = c\nA = tock()\nR = Capture(A())\nR.Invoke(), A")]
     public void ObservationIsPassive_TheSameRunWithAndWithoutIt(string source)
     {
         var plain = KatLangEngine.Run(source, new RunOptions { HostOperations = TickOperations(new List<string>()) });
@@ -448,11 +443,11 @@ public class ExplicitCallPublicationTests
 
     public static TheoryData<string> LimitSweepPrograms => new()
     {
-        "A = tick()\nA(), A, A(), A",
-        "A = if(tick() < 3, A() + 1, 0)\nA(), A",
-        "Box = { public V = tick() }\nCall0(f) = f()\nCall0(Box.V), Box.V, (Box.V)()",
-        "Capture(meta c) = c\nA = tick()\nR = Capture(A())\nR.Invoke(), A, R.Algorithm()",
-        "F(x) = {\n    L = x + tick()\n    L(), L\n}\nF(1), F(2)",
+        "A = tock()\nA(), A, A(), A",
+        "A = if(tock() < 3, A() + 1, 0)\nA(), A",
+        "Box = { public V = tock() }\nCall0(f) = f()\nCall0(Box.V), Box.V, (Box.V)()",
+        "Capture(meta c) = c\nA = tock()\nR = Capture(A())\nR.Invoke(), A, R.Algorithm()",
+        "F(x) = {\n    L = x + tock()\n    L(), L\n}\nF(1), F(2)",
     };
 
     [Theory]
@@ -473,13 +468,13 @@ public class ExplicitCallPublicationTests
 
     // ── Harness ───────────────────────────────────────────────────────────────────────────────
 
-    private static string[] Ticks(int count) => [.. Enumerable.Range(1, count).Select(static i => $"tick#{i}")];
+    private static string[] Ticks(int count) => [.. Enumerable.Range(1, count).Select(static i => $"tock#{i}")];
 
     private static HostOperations TickOperations(List<string> log)
         => HostOperations.Create(
-            HostOperation.Create("tick", (_, _) =>
+            HostOperation.Create("tock", (_, _) =>
             {
-                log.Add("tick");
+                log.Add("tock");
                 return new Result.Atom(log.Count);
             }),
             HostOperation.Create("trace", (args, _) => args[0], "x"));

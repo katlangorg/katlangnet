@@ -44,7 +44,7 @@ public class DeferredBodyEvaluatorAdmissionTests
         {
             AllowedHosts = ["katlang.org"],
             EvaluationLimits = limits,
-            HostOperations = HostOperations.Create(HostOperation.Create("Tick", (_, _) => { Events.Add("tick"); return new Result.Atom(42); })),
+            HostOperations = HostOperations.Create(HostOperation.Create("Tick", (_, _) => { Events.Add("tock"); return new Result.Atom(42); })),
             DownloadCode = (url, _) =>
             {
                 Events.Add("fetch " + url);
@@ -645,8 +645,8 @@ public class DeferredBodyEvaluatorAdmissionTests
     // ── T7: a structural rejection is terminal ──────────────────────────────
 
     [Theory]
-    [InlineData("Tick(), F(1), Tick()", new[] { "tick", "fetch" })]
-    [InlineData("Pick(0) = 42\nPick(n) = 99\nTick(), Pick(F(1)), Tick()", new[] { "tick", "fetch" })]
+    [InlineData("Tick(), F(1), Tick()", new[] { "tock", "fetch" })]
+    [InlineData("Pick(0) = 42\nPick(n) = 99\nTick(), Pick(F(1)), Tick()", new[] { "tock", "fetch" })]
     [InlineData("Then(x, y) = x + y\nThen(F(1), Tick())\nTick()", new[] { "fetch" })]
     [InlineData("Keep(*xs) = xs\nKeep(Tick(), F(1)*, Tick())", new[] { "fetch" })]
     public async Task T7_StructuralRejection_StopsEveryLaterHostEffect(string output, string[] expected)

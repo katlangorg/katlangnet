@@ -48,7 +48,7 @@ public class DeconstructionMemoEligibilityTests
     }
 
     private static readonly HostOperations ParseOperations = HostOperations.Create(
-        HostOperation.Create("tick", (_, _) => new Result.Atom(0)),
+        HostOperation.Create("tock", (_, _) => new Result.Atom(0)),
         HostOperation.Create("trace", (args, _) => args[0], "x"));
 
     internal static Algorithm.User Parse(string source)
@@ -99,9 +99,9 @@ public class DeconstructionMemoEligibilityTests
         {
             lock (log)
             {
-                var tick = ++ticks;
-                log.Add($"tick#{tick}");
-                return new Result.Atom((Decimal128)tick);
+                var tock = ++ticks;
+                log.Add($"tock#{tock}");
+                return new Result.Atom((Decimal128)tock);
             }
         }
 
@@ -117,7 +117,7 @@ public class DeconstructionMemoEligibilityTests
         if (route == Route.SuspendingAsync)
         {
             var operations = HostOperations.Create(
-                HostOperation.CreateAsync("tick", async (_, _) => { await Task.Yield(); return Tick(); }),
+                HostOperation.CreateAsync("tock", async (_, _) => { await Task.Yield(); return Tick(); }),
                 HostOperation.CreateAsync("trace", async (args, _) => { await Task.Yield(); return Trace(args[0]); }, "x"));
             (result, budget) = await AsyncEvaluationHarness.Complete(Evaluator.RunCountedObservedAsync(
                 program, limits, PropertyCache(route, shareBinds), observations: observations,
@@ -126,7 +126,7 @@ public class DeconstructionMemoEligibilityTests
         else
         {
             var operations = HostOperations.Create(
-                HostOperation.Create("tick", (_, _) => Tick()),
+                HostOperation.Create("tock", (_, _) => Tick()),
                 HostOperation.Create("trace", (args, _) => Trace(args[0]), "x"));
             (result, budget) = Evaluator.RunCountedObserved(
                 program, limits, enableOptimizations: route == Route.Optimized, zeroArgPropertyResultCache: PropertyCache(route, shareBinds), observations: observations,
@@ -234,7 +234,7 @@ public class DeconstructionMemoEligibilityTests
     /// </summary>
     private static Algorithm.User UnchangedHelperCopy(params string[] rows)
     {
-        var root = Parse("a, b = tick(), 2\na");
+        var root = Parse("a, b = tock(), 2\na");
         return WithPropertyAndRows(root, new Property("c", TargetBody(root, "a") with { }), rows);
     }
 
@@ -244,7 +244,7 @@ public class DeconstructionMemoEligibilityTests
     /// </summary>
     private static Algorithm.User ChangedTargetIndexCopy(params string[] rows)
     {
-        var root = Parse("a, b = tick(), 2\na");
+        var root = Parse("a, b = tock(), 2\na");
         var aBody = TargetBody(root, "a");
         var call = HelperCall(aBody);
         var helper = Helper(call);
@@ -254,7 +254,7 @@ public class DeconstructionMemoEligibilityTests
 
     /// <summary>H01/H02/H03: the root rows read the hoisted source directly before the targets (Q-37 re-entry).</summary>
     private static Algorithm.User DirectSourceRead(params string[] rows)
-        => WithPropertyAndRows(Parse("a, b = if(tick() < 2, a + 10, 0), tick()\nb"), null, rows);
+        => WithPropertyAndRows(Parse("a, b = if(tock() < 2, a + 10, 0), tock()\nb"), null, rows);
 
     /// <summary>
     /// D3-*: the root's properties live in ownerless host <see cref="ScopeCtx"/> levels parenting two opened
@@ -318,9 +318,9 @@ public class DeconstructionMemoEligibilityTests
         ("R10", "F(k) = {\n    a, b = trace(k), k + 1\n    [1].map{ n + a }[0] + b\n}\nF(1), F(2)", null),
         ("R11", "F(k) = {\n    a, b = trace(k), k + 1\n    [1].map{ n + a }[0] + b\n}\nF(1), F(1)", null),
         ("R12", "F(k) = {\n    a, b = if(k > 0, F(k - 1), 0), k\n    a + b\n}\nF(3)", null),
-        ("R13", "a, b = if(tick() < 3, a + 1, 0), 5\na, a, b", null),
-        ("R14", "a, b = if(tick() < 3, [1].map{ n * 0 + a + 1 }[0], 0), 5\na, a, b", null),
-        ("R15", "a, b = if(tick() < 3, b + 1, 0), 5\na, b, a", null),
+        ("R13", "a, b = if(tock() < 3, a + 1, 0), 5\na, a, b", null),
+        ("R14", "a, b = if(tock() < 3, [1].map{ n * 0 + a + 1 }[0], 0), 5\na, a, b", null),
+        ("R15", "a, b = if(tock() < 3, b + 1, 0), 5\na, b, a", null),
         ("R16", "Step(s) = {\n    p, q = s + 1, s + 1 < 3\n    p, q\n}\nStep(0).while", null),
         ("R17", "Step(s) = {\n    p, q = s + 1, false\n    p, q\n}\nStep(0).while", null),
         ("R18", "F(k) = {\n    a, b = trace(k), k + 1\n    Step(s) = s + a\n    Step(0).repeat(3) + b\n}\nF(3)", null),
@@ -334,7 +334,7 @@ public class DeconstructionMemoEligibilityTests
         ("R26", "Step(s) = {\n    p, q = s + 1, s * 10\n    p\n}\nStep(0).repeat(3)", null),
         ("R27", "[1, 2, 3].map{\n    a, b = n * 10, n\n    [0].map{ m + a }[0] + b\n}", null),
         ("R28", "F(k) = {\n    B = {\n        C = {\n            a, b = trace(k), k + 1\n            a + b\n        }\n        C\n    }\n    [0].map{ n + B.C.a }[0] + [0].map{ n + B.C.b }[0] + B.C.a\n}\nF(3)", null),
-        ("R29", "a, b = if(tick() < 3, [1].map{ n * 0 + a + b * 0 }[0] + 1, 0), tick()\na, b", null),
+        ("R29", "a, b = if(tock() < 3, [1].map{ n * 0 + a + b * 0 }[0] + 1, 0), tock()\na, b", null),
         ("X01", "F(k) = {\n    Only(*xs) = {\n        a, b = trace(k), k + 1\n        a + b + xs.count\n    }\n    [1].map{ n * 0 + Only.a }[0] + Only.b + Only\n}\nF(3)", null),
         ("X04", "F(k) = {\n    a, b = trace(k), k + 1\n    G = [1].map{ n + a }[0]\n    G + b\n}\nH = F\nH(3) + H(3)", null),
         ("V01", "F(k) = {\n    h, *t = trace(k), k + 1, k + 2\n    [1, 2, 3].map{ n * 0 + t().count }.sum + h\n}\nF(3)", null),
@@ -384,9 +384,9 @@ public class DeconstructionMemoEligibilityTests
         ["R10"] = "ok S[4, 6] n=2 | t(1),t(2) | steps=18 chk=66 depth=6 items=10 binds=4",
         ["R11"] = "ok S[4, 4] n=2 | t(1),t(1) | steps=18 chk=66 depth=6 items=10 binds=4",
         ["R12"] = "ok 6 n=1 |  | steps=27 chk=95 depth=16 items=8 binds=7",
-        ["R13"] = "ok S[2, 2, 5] n=3 | tick#1,tick#2,tick#3 | steps=15 chk=50 depth=10 items=9 binds=3",
-        ["R14"] = "ok S[2, 2, 5] n=3 | tick#1,tick#2,tick#3 | steps=17 chk=84 depth=12 items=13 binds=3",
-        ["R15"] = "ok S[6, 5, 6] n=3 | tick#1,tick#2,tick#3 | steps=14 chk=49 depth=10 items=9 binds=3",
+        ["R13"] = "ok S[2, 2, 5] n=3 | tock#1,tock#2,tock#3 | steps=15 chk=50 depth=10 items=9 binds=3",
+        ["R14"] = "ok S[2, 2, 5] n=3 | tock#1,tock#2,tock#3 | steps=17 chk=84 depth=12 items=13 binds=3",
+        ["R15"] = "ok S[6, 5, 6] n=3 | tock#1,tock#2,tock#3 | steps=14 chk=49 depth=10 items=9 binds=3",
         ["R16"] = "ok 2 n=1 |  | steps=16 chk=63 depth=3 items=6 binds=3",
         ["R17"] = "ok 0 n=1 |  | steps=4 chk=12 depth=3 items=2 binds=1",
         ["R18"] = "ok 13 n=1 | t(3) | steps=13 chk=40 depth=5 items=2 binds=2",
@@ -400,7 +400,7 @@ public class DeconstructionMemoEligibilityTests
         ["R26"] = "ok 3 n=1 |  | steps=12 chk=48 depth=3 items=6 binds=3",
         ["R27"] = "ok L[11, 22, 33] n=1 |  | steps=24 chk=96 depth=5 items=18 binds=6",
         ["R28"] = "ok 10 n=1 | t(3) | steps=11 chk=50 depth=6 items=6 binds=2",
-        ["R29"] = "ok S[2, 6] n=2 | tick#1,tick#2,tick#3,tick#4,tick#5,tick#6,tick#7,tick#8 | steps=24 chk=114 depth=12 items=14 binds=4",
+        ["R29"] = "ok S[2, 6] n=2 | tock#1,tock#2,tock#3,tock#4,tock#5,tock#6,tock#7,tock#8 | steps=24 chk=114 depth=12 items=14 binds=4",
         ["X01"] = "ok 14 n=1 | t(3) | steps=12 chk=51 depth=6 items=4 binds=2",
         ["X04"] = "ok 16 n=1 | t(3),t(3) | steps=20 chk=74 depth=7 items=8 binds=4",
         ["V01"] = "ok 9 n=1 | t(3) | steps=17 chk=69 depth=6 items=15 binds=4",
@@ -449,9 +449,9 @@ public class DeconstructionMemoEligibilityTests
         ["R10"] = "ok S[4, 6] n=2 | t(1),t(2) | steps=16 chk=64 depth=6 items=10 binds=2",
         ["R11"] = "ok S[4, 4] n=2 | t(1),t(1) | steps=16 chk=64 depth=6 items=10 binds=2",
         ["R12"] = "ok 6 n=1 |  | steps=27 chk=95 depth=16 items=8 binds=7",
-        ["R13"] = "ok S[2, 2, 5] n=3 | tick#1,tick#2,tick#3 | steps=15 chk=50 depth=10 items=9 binds=3",
-        ["R14"] = "ok S[2, 2, 5] n=3 | tick#1,tick#2,tick#3 | steps=17 chk=84 depth=12 items=13 binds=3",
-        ["R15"] = "ok S[6, 5, 6] n=3 | tick#1,tick#2,tick#3 | steps=14 chk=49 depth=10 items=9 binds=3",
+        ["R13"] = "ok S[2, 2, 5] n=3 | tock#1,tock#2,tock#3 | steps=15 chk=50 depth=10 items=9 binds=3",
+        ["R14"] = "ok S[2, 2, 5] n=3 | tock#1,tock#2,tock#3 | steps=17 chk=84 depth=12 items=13 binds=3",
+        ["R15"] = "ok S[6, 5, 6] n=3 | tock#1,tock#2,tock#3 | steps=14 chk=49 depth=10 items=9 binds=3",
         ["R16"] = "ok 2 n=1 |  | steps=16 chk=63 depth=3 items=6 binds=3",
         ["R17"] = "ok 0 n=1 |  | steps=4 chk=12 depth=3 items=2 binds=1",
         ["R18"] = "ok 13 n=1 | t(3) | steps=12 chk=39 depth=5 items=2 binds=1",
@@ -465,7 +465,7 @@ public class DeconstructionMemoEligibilityTests
         ["R26"] = "ok 3 n=1 |  | steps=12 chk=48 depth=3 items=6 binds=3",
         ["R27"] = "ok L[11, 22, 33] n=1 |  | steps=21 chk=93 depth=5 items=18 binds=3",
         ["R28"] = "ok 10 n=1 | t(3) | steps=10 chk=49 depth=6 items=6 binds=1",
-        ["R29"] = "ok S[2, 6] n=2 | tick#1,tick#2,tick#3,tick#4,tick#5,tick#6,tick#7,tick#8 | steps=24 chk=114 depth=12 items=14 binds=4",
+        ["R29"] = "ok S[2, 6] n=2 | tock#1,tock#2,tock#3,tock#4,tock#5,tock#6,tock#7,tock#8 | steps=24 chk=114 depth=12 items=14 binds=4",
         ["X01"] = "ok 14 n=1 | t(3) | steps=11 chk=50 depth=6 items=4 binds=1",
         ["X04"] = "ok 16 n=1 | t(3),t(3) | steps=18 chk=72 depth=7 items=8 binds=2",
         ["V01"] = "ok 9 n=1 | t(3) | steps=14 chk=66 depth=6 items=11 binds=1",
@@ -764,13 +764,13 @@ public class DeconstructionMemoEligibilityTests
         ("V06", ordinary => Program(ChangedPatternCopy("a", "c"), ordinary)),
         ("V07", ordinary => Program(LocallyShadowedSourceCopy("a", "c"), ordinary)),
         ("V07-C-FIRST", ordinary => Program(LocallyShadowedSourceCopy("c", "a"), ordinary)),
-        ("D3-SAME", ordinary => HostScopes("a, b = tick(), tick()\na", "same", "a", "b", ordinary)),
-        ("D3-FRESH", ordinary => HostScopes("a, b = tick(), tick()\na", "fresh", "a", "b", ordinary)),
-        ("D3-COPY", ordinary => HostScopes("a, b = tick(), tick()\na", "copy", "a", "b", ordinary)),
-        ("D3-FRESH-BB", ordinary => HostScopes("a, b = tick(), tick()\na", "fresh", "b", "b", ordinary)),
+        ("D3-SAME", ordinary => HostScopes("a, b = tock(), tock()\na", "same", "a", "b", ordinary)),
+        ("D3-FRESH", ordinary => HostScopes("a, b = tock(), tock()\na", "fresh", "a", "b", ordinary)),
+        ("D3-COPY", ordinary => HostScopes("a, b = tock(), tock()\na", "copy", "a", "b", ordinary)),
+        ("D3-FRESH-BB", ordinary => HostScopes("a, b = tock(), tock()\na", "fresh", "b", "b", ordinary)),
         ("D3-COPY-PURE", ordinary => HostScopes("a, b = 1, 2\na", "copy", "a", "b", ordinary)),
-        ("L01", ordinary => TwoDeclarationsOneList("a, b = tick(), tick()\na", "a", "b", ordinary)),
-        ("L02", ordinary => TwoDeclarationsOneList("P = tick()\nP", "P", "P", ordinary)),
+        ("L01", ordinary => TwoDeclarationsOneList("a, b = tock(), tock()\na", "a", "b", ordinary)),
+        ("L02", ordinary => TwoDeclarationsOneList("P = tock()\nP", "P", "P", ordinary)),
         ("COPY", ordinary => Program(UnchangedHelperCopy("c", "a", "b"), ordinary)),
         ("IDX", ordinary => Program(ChangedTargetIndexCopy("c", "b"), ordinary)),
         ("IDX-B-FIRST", ordinary => Program(ChangedTargetIndexCopy("b", "c"), ordinary)),
@@ -796,25 +796,25 @@ public class DeconstructionMemoEligibilityTests
     /// </summary>
     private static readonly Dictionary<string, string> HostExpectations = new(StringComparer.Ordinal)
     {
-        ["H01"] = "ok S[S[10, 4], 4] n=2 | tick#1,tick#2,tick#3,tick#4",
-        ["H02"] = "ok S[10, 4] n=2 | tick#1,tick#2,tick#3,tick#4",
-        ["H03"] = "ok S[S[10, 4], 0, 4] n=3 | tick#1,tick#2,tick#3,tick#4",
+        ["H01"] = "ok S[S[10, 4], 4] n=2 | tock#1,tock#2,tock#3,tock#4",
+        ["H02"] = "ok S[10, 4] n=2 | tock#1,tock#2,tock#3,tock#4",
+        ["H03"] = "ok S[S[10, 4], 0, 4] n=3 | tock#1,tock#2,tock#3,tock#4",
         ["H04"] = "ok S[7, 1] n=2 | ",
         ["H05"] = "ok S[1, 7] n=2 | ",
         ["V05"] = "ok S[1, L[1]] n=2 | ",
         ["V06"] = "ok S[L[1], 1] n=2 | ",
         ["V07"] = "ok S[1, 7] n=2 | ",
         ["V07-C-FIRST"] = "ok S[7, 1] n=2 | ",
-        ["D3-SAME"] = "ok S[1, 2] n=2 | tick#1,tick#2",
-        ["D3-FRESH"] = "ok S[1, 4] n=2 | tick#1,tick#2,tick#3,tick#4",
-        ["D3-COPY"] = "ok S[1, 4] n=2 | tick#1,tick#2,tick#3,tick#4",
-        ["D3-FRESH-BB"] = "ok S[2, 4] n=2 | tick#1,tick#2,tick#3,tick#4",
+        ["D3-SAME"] = "ok S[1, 2] n=2 | tock#1,tock#2",
+        ["D3-FRESH"] = "ok S[1, 4] n=2 | tock#1,tock#2,tock#3,tock#4",
+        ["D3-COPY"] = "ok S[1, 4] n=2 | tock#1,tock#2,tock#3,tock#4",
+        ["D3-FRESH-BB"] = "ok S[2, 4] n=2 | tock#1,tock#2,tock#3,tock#4",
         ["D3-COPY-PURE"] = "ok S[1, 2] n=2 | ",
-        ["L01"] = "ok S[1, 4] n=2 | tick#1,tick#2,tick#3,tick#4",
-        ["L02"] = "ok S[1, 2] n=2 | tick#1,tick#2",
-        ["COPY"] = "ok S[1, 1, 2] n=3 | tick#1",
-        ["IDX"] = "ok S[1, 2] n=2 | tick#1",
-        ["IDX-B-FIRST"] = "ok S[2, 1] n=2 | tick#1",
+        ["L01"] = "ok S[1, 4] n=2 | tock#1,tock#2,tock#3,tock#4",
+        ["L02"] = "ok S[1, 2] n=2 | tock#1,tock#2",
+        ["COPY"] = "ok S[1, 1, 2] n=3 | tock#1",
+        ["IDX"] = "ok S[1, 2] n=2 | tock#1",
+        ["IDX-B-FIRST"] = "ok S[2, 1] n=2 | tock#1",
     };
 
     public static TheoryData<string, Route> HostCases()
@@ -875,15 +875,11 @@ public class DeconstructionMemoEligibilityTests
     {
         static string Run(Algorithm.User root)
         {
-            var ticks = 0;
-            var operations = HostOperations.Create(
-                HostOperation.Create("tick", (_, _) => new Result.Atom(++ticks)),
-                HostOperation.Create("trace", (args, _) => args[0], "x"));
             var observations = new EvaluationObservations();
-            var (result, _) = Evaluator.RunCountedObserved(new Expr.AlgorithmExpr(root), zeroArgPropertyResultCache: UncachedZeroArgPropertyResultCache.Instance,
-                observations: observations, hostOperations: operations);
+            var (result, budget) = Evaluator.RunCountedObserved(new Expr.AlgorithmExpr(root), zeroArgPropertyResultCache: UncachedZeroArgPropertyResultCache.Instance,
+                observations: observations);
             Assert.True(result.IsOk);
-            return $"{SixRouteAgreement.Neutral(result.Value.Value)} ticks={ticks} binds={observations.DeconstructionFullBindCount}";
+            return $"{SixRouteAgreement.Neutral(result.Value.Value)} ticks={budget.TickCount} binds={observations.DeconstructionFullBindCount}";
         }
 
         var root = Parse("a, b = tick(), tick()\na, b");
@@ -1028,7 +1024,7 @@ public class DeconstructionMemoEligibilityTests
         using (var cts = new CancellationTokenSource())
         {
             var operations = HostOperations.Create(
-                HostOperation.Create("tick", (_, _) => new Result.Atom(0)),
+                HostOperation.Create("tock", (_, _) => new Result.Atom(0)),
                 HostOperation.Create("trace", (args, _) => { cts.Cancel(); return args[0]; }, "x"));
             Assert.ThrowsAny<OperationCanceledException>(() => Evaluator.RunCountedObserved(source, hostOperations: operations, cancellationToken: cts.Token));
         }
@@ -1038,7 +1034,7 @@ public class DeconstructionMemoEligibilityTests
             var gate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
             var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
             var operations = HostOperations.Create(
-                HostOperation.Create("tick", (_, _) => new Result.Atom(0)),
+                HostOperation.Create("tock", (_, _) => new Result.Atom(0)),
                 HostOperation.CreateAsync("trace", async (args, token) =>
                 {
                     entered.TrySetResult();
@@ -1102,7 +1098,7 @@ public class DeconstructionMemoEligibilityTests
         var diagnostics = new LoopOptimizationDiagnostics();
         var observations = new EvaluationObservations();
         var operations = HostOperations.Create(
-            HostOperation.Create("tick", (_, _) => new Result.Atom(0)),
+            HostOperation.Create("tock", (_, _) => new Result.Atom(0)),
             HostOperation.Create("trace", (args, _) => args[0], "x"));
         var (result, budget) = Evaluator.RunCountedObserved(program, loopDiagnostics: diagnostics, observations: observations,
             hostOperations: operations, randomSeed: 7);
@@ -1151,7 +1147,7 @@ public class DeconstructionMemoEligibilityTests
         using (var cts = new CancellationTokenSource())
         {
             var operations = HostOperations.Create(
-                HostOperation.Create("tick", (_, _) => new Result.Atom(0)),
+                HostOperation.Create("tock", (_, _) => new Result.Atom(0)),
                 HostOperation.Create("trace", (args, _) => { cts.Cancel(); return args[0]; }, "x"));
             Assert.ThrowsAny<OperationCanceledException>(() => Evaluator.RunCountedObserved(source, hostOperations: operations, cancellationToken: cts.Token));
         }
@@ -1161,7 +1157,7 @@ public class DeconstructionMemoEligibilityTests
             var gate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
             var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
             var operations = HostOperations.Create(
-                HostOperation.Create("tick", (_, _) => new Result.Atom(0)),
+                HostOperation.Create("tock", (_, _) => new Result.Atom(0)),
                 HostOperation.CreateAsync("trace", async (args, token) =>
                 {
                     entered.TrySetResult();

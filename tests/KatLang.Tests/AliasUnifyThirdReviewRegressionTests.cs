@@ -441,8 +441,8 @@ public sealed class AliasUnifyThirdReviewRegressionTests
     {
         // The lower reading follows A to B, whose X is D: E's target chase E -> D -> A.X -> D returns, so E is no
         // alias: each E() reads D's one cached value, and E and D are distinct identities.
-        var calls = await OkAsync("X(v) = tick()\n" + MemberPathThroughACyclicReceiver + "E(), E()", "S[1, 1]");
-        Assert.Equal(new[] { "tick#1" }, calls.HostCalls);
+        var calls = await OkAsync("X(v) = tock()\n" + MemberPathThroughACyclicReceiver + "E(), E()", "S[1, 1]");
+        Assert.Equal(new[] { "tock#1" }, calls.HostCalls);
         Assert.IsType<Algorithm.User>(Kinds("X(v) = 0\n" + MemberPathThroughACyclicReceiver + "E")["E"]);
 
         var identity = await SixRouteAgreement.OnEveryRouteAsync("X(v) = 0\n" + MemberPathThroughACyclicReceiver + "Same(x, x) = 0\nSame(E, D)");

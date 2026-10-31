@@ -2206,6 +2206,10 @@ public static partial class Evaluator
 
         switch (builtin, args.Count)
         {
+            // `tick()` — see the synchronous twin (the primitive itself never awaits).
+            case (BuiltinId.@tick, 0):
+                return ExecuteTick(ctx);
+
             case (BuiltinId.@if, 3):
                 {
                     var condR = await EvalResolvedArgumentValueAsync(args[0], ctx, valEnv).ConfigureAwait(false);

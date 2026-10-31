@@ -123,7 +123,7 @@ public class LimitConfigurationTransparencyTests
     internal static string EngineOutcome(string source, EvaluationLimits? limits, long? seed = 7)
     {
         var log = new HostLog();
-        var operations = source.Contains("tick(", StringComparison.Ordinal) || source.Contains("trace(", StringComparison.Ordinal)
+        var operations = source.Contains("tock(", StringComparison.Ordinal) || source.Contains("trace(", StringComparison.Ordinal)
             ? Operations(log)
             : null;
         var result = KatLangEngine.Run(source, new RunOptions { EvaluationLimits = limits, HostOperations = operations, RandomSeed = seed });

@@ -22,7 +22,7 @@ namespace KatLang.Tests;
 /// sync and async engines, the genuinely suspending async twin, the generic and optimized evaluators and
 /// the forced async twin) and must agree on value, errors and the exact host-call log; the generic,
 /// optimized and suspending-twin evaluator routes must also agree on the semantic step count.
-/// <c>tick()</c> counts body evaluations, so sharing and freshness are observed through effects, never
+/// <c>tock()</c> counts body evaluations, so sharing and freshness are observed through effects, never
 /// through final values alone. Lean: <c>CoreTests/PropertyCacheConsumers.lean</c> (the D2 guards).</para>
 /// </summary>
 public class MetaCallBindingContextTests
@@ -32,11 +32,11 @@ public class MetaCallBindingContextTests
     // F's B is a parameterless owner whose local-only V reads F's parameter k.
     private const string FWithB = "F(k) = {\n    B = {\n        V = k * 1\n        V\n    }\n    Capture(B())\n}\n";
 
-    private const string FWithTickingB = "F(k) = {\n    B = {\n        V = k + tick()\n        V\n    }\n    Capture(B())\n}\n";
+    private const string FWithTickingB = "F(k) = {\n    B = {\n        V = k + tock()\n        V\n    }\n    Capture(B())\n}\n";
 
     private static readonly string Pv = Capture + FWithB + "R1 = F(3)\nR2 = F(4)\n";
 
-    private static string[] Ticks(int count) => [.. Enumerable.Range(1, count).Select(static tick => $"tick#{tick}")];
+    private static string[] Ticks(int count) => [.. Enumerable.Range(1, count).Select(static tock => $"tock#{tock}")];
 
     // ── 1. The research witnesses (wrong values before the fix) ─────────────────────────────
 
@@ -134,7 +134,7 @@ public class MetaCallBindingContextTests
     // ── 2. Positive cases beyond the witnesses ───────────────────────────────────────────────
 
     [Theory]
-    // The SAME captured activation invoked twice: two calls, two fresh contexts (was S[11, 11], 1 tick).
+    // The SAME captured activation invoked twice: two calls, two fresh contexts (was S[11, 11], 1 tock).
     [InlineData("R = F(10)\nR.Algorithm(), R.Algorithm()", "S[11, 12]", 2)]
     // The parenthesized projection call is the same ordinary call (CR-13).
     [InlineData("R1 = F(3)\nR2 = F(40)\n(R1.Algorithm)(), (R2.Algorithm)(), (R1.Algorithm)()", "S[4, 42, 6]", 3)]
@@ -183,7 +183,7 @@ public class MetaCallBindingContextTests
     public async Task TwoReadsOfALocalPropertyWithinOneActivation_ShareOneEvaluation()
     {
         // V is read twice by B's own body: one evaluation per activation, two activations in all.
-        const string source = Capture + "F(k) = {\n    B = {\n        V = k + tick()\n        V + V\n    }\n    Capture(B())\n}\nR = F(10)\nR.Algorithm(), R.Algorithm()";
+        const string source = Capture + "F(k) = {\n    B = {\n        V = k + tock()\n        V + V\n    }\n    Capture(B())\n}\nR = F(10)\nR.Algorithm(), R.Algorithm()";
         var oracle = await ObserveAsync(source);
         Assert.Equal("S[22, 24]", oracle.Value);
         Assert.Equal(Ticks(2), oracle.HostCalls);
@@ -194,7 +194,7 @@ public class MetaCallBindingContextTests
     {
         // E reads no captured parameter, so it is Exported: ONE evaluation for the whole run, while the
         // local-only output of each activation still sees its own k.
-        const string source = Capture + "F(k) = {\n    B = {\n        E = tick() * 100\n        E + k\n    }\n    Capture(B())\n}\nR1 = F(3)\nR2 = F(4)\nR1.Algorithm(), R2.Algorithm(), R1.Algorithm()";
+        const string source = Capture + "F(k) = {\n    B = {\n        E = tock() * 100\n        E + k\n    }\n    Capture(B())\n}\nR1 = F(3)\nR2 = F(4)\nR1.Algorithm(), R2.Algorithm(), R1.Algorithm()";
         var root = SourceProvenance.ParseValid(source).Root;
         var b = Assert.Single(Assert.Single(root.Properties, static p => p.Name == "F").Value.Properties, static p => p.Name == "B");
         Assert.Equal(PropertyExposure.Exported, Assert.Single(b.Value.Properties, static p => p.Name == "E").Exposure);
@@ -208,7 +208,7 @@ public class MetaCallBindingContextTests
     public async Task TwoExplicitInnerCalls_StayTwoActivations_FromAParameterizedCaller()
     {
         // The established EnvironmentIdentityInvariantTests shape with an effect: each Inner() is fresh.
-        const string source = "Outer(x) = {\n    Inner = {\n        P = x + tick()\n        P + P\n    }\n    Inner(), Inner()\n}\nOuter(10)";
+        const string source = "Outer(x) = {\n    Inner = {\n        P = x + tock()\n        P + P\n    }\n    Inner(), Inner()\n}\nOuter(10)";
         var oracle = await ObserveAsync(source);
         Assert.Equal("S[22, 24]", oracle.Value);
         Assert.Equal(Ticks(2), oracle.HostCalls);
@@ -246,7 +246,7 @@ public class MetaCallBindingContextTests
         // within that zero-binding round, then evaluated afresh in the other loop's round.
         // A successful true round with one output would feed that item back as state (Q-24).
         const string source = Capture
-            + "F(k) = {\n    B = {\n        V = k + tick()\n        V == V and V < k\n    }\n    Capture(B())\n}\n"
+            + "F(k) = {\n    B = {\n        V = k + tock()\n        V == V and V < k\n    }\n    Capture(B())\n}\n"
             + "R = F(10)\ncount(while(R.Algorithm())), count(while(R.Algorithm()))";
         var oracle = await ObserveAsync(source);
         Assert.Equal("ok", oracle.Kind);
@@ -258,7 +258,7 @@ public class MetaCallBindingContextTests
     public async Task ANewActivationDoesNotHideItsFailureBehindAPreviousSuccess()
     {
         const string source = Capture
-            + "F(k) = {\n    B = {\n        V = if(tick() == 1, k, 1 / 0)\n        V\n    }\n    Capture(B())\n}\n"
+            + "F(k) = {\n    B = {\n        V = if(tock() == 1, k, 1 / 0)\n        V\n    }\n    Capture(B())\n}\n"
             + "R = F(10)\nR.Algorithm(), R.Algorithm()";
         var oracle = await ObserveAsync(source);
         Assert.Equal("err", oracle.Kind);
@@ -272,7 +272,7 @@ public class MetaCallBindingContextTests
         // The step's local-only Val reads the step's state: once per iteration, reused within it, on the
         // planned route too (the optimized route must actually plan the loop).
         const string source = Capture
-            + "F(k) = {\n    B = {\n        Step(x) = {\n            Val = x * 2 + k * 0 + tick() * 0\n            x + Val + Val + [0][0]\n        }\n        repeat(Step(1), 3)\n    }\n    Capture(B())\n}\n"
+            + "F(k) = {\n    B = {\n        Step(x) = {\n            Val = x * 2 + k * 0 + tock() * 0\n            x + Val + Val + [0][0]\n        }\n        repeat(Step(1), 3)\n    }\n    Capture(B())\n}\n"
             + "R = F(5)\nR.Algorithm(), R.Algorithm()";
         var oracle = await ObserveAsync(source);
         Assert.Equal("S[125, 125]", oracle.Value);
@@ -294,7 +294,7 @@ public class MetaCallBindingContextTests
         // a and b come from ONE bind per activation (a + b + a evaluates the right-hand side once), and the
         // two zero-supply activations never share it (the root value environment used to key both).
         const string source = Capture
-            + "F(k) = {\n    B = {\n        a, b = (k + tick(), 1)\n        a + b + a\n    }\n    Capture(B())\n}\n"
+            + "F(k) = {\n    B = {\n        a, b = (k + tock(), 1)\n        a + b + a\n    }\n    Capture(B())\n}\n"
             + "R1 = F(3)\nR2 = F(40)\nR1.Algorithm(), R2.Algorithm()";
         var oracle = await ObserveAsync(source);
         Assert.Equal("S[9, 85]", oracle.Value);
@@ -319,8 +319,8 @@ public class MetaCallBindingContextTests
     // No META: explicit root-level calls of a parameterless owner. The hoisted right-hand side reads no
     // captured parameter, so it is an EXPORTED property evaluated once per run, however many group binds
     // the activations perform.
-    [InlineData("F = {\n    a, b = (tick(), 1)\n    a + b\n}\nF(), F()", "S[2, 2]", 1)]
-    [InlineData("F = {\n    a, b = (tick(), 1)\n    a + b\n}\nF, F(), F", "S[2, 2, 2]", 1)]
+    [InlineData("F = {\n    a, b = (tock(), 1)\n    a + b\n}\nF(), F()", "S[2, 2]", 1)]
+    [InlineData("F = {\n    a, b = (tock(), 1)\n    a + b\n}\nF, F(), F", "S[2, 2, 2]", 1)]
     public async Task AnExportedDeconstructionSource_KeepsItsRunWideEntry_AcrossRootLevelCalls(string source, string expected, int ticks)
     {
         var oracle = await ObserveAsync(source);
@@ -335,9 +335,9 @@ public class MetaCallBindingContextTests
     // R.Algorithm was a terminal ordinary property whose row re-read the plan's callee VALUE. Under M4★
     // (L-RUN) the alias's target B is established once per declaring activation and every call through it
     // is the direct, FRESH call of B (CR-14c); a bare read is the binding cell's VALUE. trace(V) counts runs
-    // of B's body, tick() runs of V's.
+    // of B's body, tock() runs of V's.
 
-    private const string FWithTracedB = "F(k) = {\n    B = {\n        V = k + tick()\n        trace(V)\n    }\n    Capture(B())\n}\n";
+    private const string FWithTracedB = "F(k) = {\n    B = {\n        V = k + tock()\n        trace(V)\n    }\n    Capture(B())\n}\n";
 
     private const string TwoPlans = "R1 = F(3)\nR2 = F(40)\n";
 
@@ -347,36 +347,36 @@ public class MetaCallBindingContextTests
         // (formerly both H(R1) shared R1's plan callee VALUE: S[404, 404, 4242]).
         {
             "M06", Capture + FWithTracedB + TwoPlans + "H(r) = {\n    A = r.Algorithm\n    A() * 100 + A()\n}\nH(R1), H(R1), H(R2)",
-            "S[405, 607, 4546]", ["tick#1", "trace(4)", "tick#2", "trace(5)", "tick#3", "trace(6)", "tick#4", "trace(7)", "tick#5", "trace(45)", "tick#6", "trace(46)"]
+            "S[405, 607, 4546]", ["tock#1", "trace(4)", "tock#2", "trace(5)", "tock#3", "trace(6)", "tock#4", "trace(7)", "tock#5", "trace(45)", "tock#6", "trace(46)"]
         },
         // M27: a COMPUTED receiver, evaluated once for AM's binding cell; each AM() is a fresh call of the
         // plan's B, the first publishing B's empty entry (OD-E), which the bare AM (B's bare view) reads.
         {
             "M27", Capture + FWithTracedB + "AM = F(3).Algorithm\nAM(), AM(), AM",
-            "S[4, 5, 4]", ["tick#1", "trace(4)", "tick#2", "trace(5)"]
+            "S[4, 5, 4]", ["tock#1", "trace(4)", "tock#2", "trace(5)"]
         },
         // M16: Call(A1) and Call(R1.Algorithm) both forward B itself (a reference transports its target),
         // so every f() is a fresh call of B (formerly Call(A1) forwarded A1's property: S[4, 4, 5, 6]).
         {
             "M16", Capture + FWithTracedB + TwoPlans + "A1 = R1.Algorithm\nCall(f) = f()\nCall(A1), Call(A1), Call(R1.Algorithm), Call(R1.Algorithm)",
-            "S[4, 5, 6, 7]", ["tick#1", "trace(4)", "tick#2", "trace(5)", "tick#3", "trace(6)", "tick#4", "trace(7)"]
+            "S[4, 5, 6, 7]", ["tock#1", "trace(4)", "tock#2", "trace(5)", "tock#3", "trace(6)", "tock#4", "trace(7)"]
         },
         // C04: the static zero-parameter control S = B is the same: S is a reference, so Call(S) calls B.
         {
-            "C04", "F(k) = {\n    B = {\n        V = k + tick()\n        trace(V)\n    }\n    S = B\n    Call(f) = f()\n    Call(S), Call(S), Call(B), Call(B)\n}\nF(3)",
-            "S[4, 5, 6, 7]", ["tick#1", "trace(4)", "tick#2", "trace(5)", "tick#3", "trace(6)", "tick#4", "trace(7)"]
+            "C04", "F(k) = {\n    B = {\n        V = k + tock()\n        trace(V)\n    }\n    S = B\n    Call(f) = f()\n    Call(S), Call(S), Call(B), Call(B)\n}\nF(3)",
+            "S[4, 5, 6, 7]", ["tock#1", "trace(4)", "tock#2", "trace(5)", "tock#3", "trace(6)", "tock#4", "trace(7)"]
         },
         // M04f: the direct call and both alias calls are fresh calls of B (formerly the alias rows re-read
         // the plan's callee VALUE: S[4, 4, 4], one run of B).
         {
             "M04f", Capture + FWithTracedB + TwoPlans + "A1 = R1.Algorithm\nR1.Algorithm(), A1(), A1()",
-            "S[4, 5, 6]", ["tick#1", "trace(4)", "tick#2", "trace(5)", "tick#3", "trace(6)"]
+            "S[4, 5, 6]", ["tock#1", "trace(4)", "tock#2", "trace(5)", "tock#3", "trace(6)"]
         },
         // M07: a parameterized projected callee: every A(x) is a fresh call, as for every arity. (Collecting-
         // only controls: RuntimeCallableAliasCorpusTests RF1-D3-zero-accepting and
         // RuntimeAliasPublicationTests.ParameterizedRuntimeTargets_PublishUnderTheirTarget.)
         {
-            "M07", Capture + "G(k) = {\n    Sq(x) = x * x + k + tick()\n    Capture(Sq(2))\n}\nR = G(10)\nA = R.Algorithm\nA(3), A(3), A(4), R.Algorithm(3)",
+            "M07", Capture + "G(k) = {\n    Sq(x) = x * x + k + tock()\n    Capture(Sq(2))\n}\nR = G(10)\nA = R.Algorithm\nA(3), A(3), A(4), R.Algorithm(3)",
             "S[20, 21, 29, 23]", Ticks(4)
         },
     };
@@ -466,7 +466,7 @@ public class MetaCallBindingContextTests
         var ticks = 0;
         Result Tick()
         {
-            log.Add($"tick#{++ticks}");
+            log.Add($"tock#{++ticks}");
             return new Result.Atom(ticks);
         }
 
@@ -478,10 +478,10 @@ public class MetaCallBindingContextTests
 
         return suspending
             ? HostOperations.Create(
-                HostOperation.CreateAsync("tick", async (_, _) => { await Task.Yield(); return Tick(); }),
+                HostOperation.CreateAsync("tock", async (_, _) => { await Task.Yield(); return Tick(); }),
                 HostOperation.CreateAsync("trace", async (args, _) => { await Task.Yield(); return Trace(args[0]); }, "x"))
             : HostOperations.Create(
-                HostOperation.Create("tick", (_, _) => Tick()),
+                HostOperation.Create("tock", (_, _) => Tick()),
                 HostOperation.Create("trace", (args, _) => Trace(args[0]), "x"));
     }
 

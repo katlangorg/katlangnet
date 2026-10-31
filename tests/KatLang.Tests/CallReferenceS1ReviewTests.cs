@@ -192,11 +192,9 @@ public class CallReferenceS1ReviewTests
         string entry, string exit, bool prepared)
     {
         Result.CallReference? reference = null;
-        var effects = 0;
         var hostException = new InvalidOperationException("review host failure");
         var operations = HostOperations.Create(
             HostOperation.Create("Grab", (_, _) => throw new InvalidOperationException("missing receiver"), "operation"),
-            HostOperation.Create("tick", (_, _) => new Result.Atom(++effects)),
             HostOperation.Create("fail", (_, _) => throw hostException));
         var experiment = new InvocationPlanTestSeam(new Dictionary<string, Func<IReadOnlyList<NeedCell?>, Result>>
         {
@@ -250,6 +248,6 @@ public class CallReferenceS1ReviewTests
         Assert.Equal(Evaluator.EndedCallReferenceMessage, Assert.IsType<EvalError.IllegalInEval>(sync.Error).Reason);
         Assert.Equal(Evaluator.EndedCallReferenceMessage, Assert.IsType<EvalError.IllegalInEval>(asyncResult.Error).Reason);
         Assert.Same(supply, captured.Plan.Supply);
-        Assert.Equal(prepared ? 1 : 0, effects);
+        Assert.Equal(prepared ? 1 : 0, ctx.Budget.TickCount);
     }
 }

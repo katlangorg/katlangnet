@@ -398,7 +398,7 @@ public sealed class CollectingCallableForwardingLawTests
     public static TheoryData<string, string, string[]> IndependentDemandIntersections() => new()
     {
         { "Ignore(*ys) = 7\nPass(v) = Ignore(v*)\nOuter(*xs) = Pass(xs)\nOuter(trace(4))", "ok 7 n=1", [] },
-        { "Use(a, b) = a + b\nOuter(*xs) = Use(xs*, xs*)\nOuter(tick())", "ok 2 n=1", ["tick#1"] },
+        { "Use(a, b) = a + b\nOuter(*xs) = Use(xs*, xs*)\nOuter(tock())", "ok 2 n=1", ["tock#1"] },
         { "Z = trace(7)\nCall(f) = f()\nOuter(*xs) = xs, Call(xs*), xs\nOuter(Z)", "ok S[L[7], 7, L[7]] n=1", ["trace(7)", "trace(7)"] },
         { "Choose([], x) = 0\nChoose(tag, x) = tag + x\nOuter(*xs) = Choose(xs*)\nOuter(trace(2), trace(3))", "ok 5 n=1", ["trace(2)", "trace(3)"] },
         { "Outer(*xs) = xs.count\nOuter(trace(1), trace(2), trace(3))", "ok 3 n=1", ["trace(1)", "trace(2)", "trace(3)"] },
@@ -492,7 +492,7 @@ public sealed class CollectingCallableForwardingLawTests
             return value;
         }
 
-        public Result Tick() => Log($"tick#{Interlocked.Increment(ref _ticks)}", new Result.Atom(_ticks));
+        public Result Tick() => Log($"tock#{Interlocked.Increment(ref _ticks)}", new Result.Atom(_ticks));
 
         public Result Trace(Result value) => Log($"trace({SixRouteAgreement.Neutral(value)})", value);
 
@@ -507,11 +507,11 @@ public sealed class CollectingCallableForwardingLawTests
     private static HostOperations Operations(HostLog log, bool suspending)
         => suspending
             ? HostOperations.Create(
-                HostOperation.CreateAsync("tick", async (_, _) => { await Task.Yield(); return log.Tick(); }),
+                HostOperation.CreateAsync("tock", async (_, _) => { await Task.Yield(); return log.Tick(); }),
                 HostOperation.CreateAsync("trace", async (args, _) => { await Task.Yield(); return log.Trace(args[0]); }, "x"),
                 HostOperation.CreateAsync("cancel", async (args, _) => { await Task.Yield(); return log.Cancel(args[0]); }, "x"))
             : HostOperations.Create(
-                HostOperation.Create("tick", (_, _) => log.Tick()),
+                HostOperation.Create("tock", (_, _) => log.Tick()),
                 HostOperation.Create("trace", (args, _) => log.Trace(args[0]), "x"),
                 HostOperation.Create("cancel", (args, _) => log.Cancel(args[0]), "x"));
 

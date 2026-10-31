@@ -328,7 +328,7 @@ public class AliasAndBareForwardingTests
         "RG((x, a), x) = a",
         "RL([x, x]) = x",
         "Div(a, b) = a / b",
-        "Eff(v) = trace(v), tick()",
+        "Eff(v) = trace(v), tock()",
     ];
 
     private static readonly string[] AliasSupplies =
@@ -336,7 +336,7 @@ public class AliasAndBareForwardingTests
         "", "7", "7, 7", "7, 8", "1, 0", "[7]", "[[7]]", "(1, 2)", "[1, 2]", "(1, 2, 3)", "[1, 2, 3]",
         "((1, 2), 3)", "([1, 2], 3)", "[(1, 2), 3]", "(), []", "[], ()", "()", "[]", "7, ()", "((7, 1), 7)",
         "'a'", "true", "((1, 2), (3, 4))", "[(1, 2)]", "[()]", "[[]]", "[[1, 2], 3]", "[(1, 2, 3), 4]", "[1], (2, 3)", "0, [7]",
-        "trace(7)", "trace(7), trace(7)", "[trace(7)]", "(trace(1), trace(2))", "tick(), tick()",
+        "trace(7)", "trace(7), trace(7)", "[trace(7)]", "(trace(1), trace(2))", "tock(), tock()",
         "Bad", "7, Bad", "Inc", "randomInt(0, 9), randomInt(0, 9)",
     ];
 
@@ -945,15 +945,15 @@ public class AliasAndBareForwardingTests
     // CACHE-PUB-1 under OD-E: the first A() establishes the TARGET's empty entry, which the bare reads
     // of A and Only share; a second call is fresh (formerly the alias binding had its own entry:
     // S[1, 1, 2] and S[1, 1, 2, 2] over two ticks).
-    [InlineData("A = Only\nA(), A(), A", "ok S[1, 2, 1] [tick#1,tick#2]")]
-    [InlineData("A = Only\nA(), A, Only", "ok S[1, 1, 1] [tick#1]")]
-    [InlineData("A = Only\nOnly, Only, A, A", "ok S[1, 1, 1, 1] [tick#1]")]
-    [InlineData("W(p) = Only\nW(1), W(2), Only", "ok S[1, 1, 1] [tick#1]")]
-    [InlineData("W(*xs) = Only\nW(1), W(2)", "ok S[1, 2] [tick#1,tick#2]")]
+    [InlineData("A = Only\nA(), A(), A", "ok S[1, 2, 1] [tock#1,tock#2]")]
+    [InlineData("A = Only\nA(), A, Only", "ok S[1, 1, 1] [tock#1]")]
+    [InlineData("A = Only\nOnly, Only, A, A", "ok S[1, 1, 1, 1] [tock#1]")]
+    [InlineData("W(p) = Only\nW(1), W(2), Only", "ok S[1, 1, 1] [tock#1]")]
+    [InlineData("W(*xs) = Only\nW(1), W(2)", "ok S[1, 2] [tock#1,tock#2]")]
     [InlineData("G(*xs) = Cnt\nG(), G(1), G(1, 2)", "ok S[0, 1, 2]")]
     [InlineData("G(xs) = Cnt\nG((1, 2))", "ok 1")]
     public async Task ZeroArgumentCallables_AreAliasedForwardedOrRead(string program, string expected)
-        => Assert.Equal(expected, await Outcome("Cnt(*xs) = xs.count\nOnly(*xs) = tick()\n" + program));
+        => Assert.Equal(expected, await Outcome("Cnt(*xs) = xs.count\nOnly(*xs) = tock()\n" + program));
 
     /// <summary>
     /// A zero-parameter target under bare forwarding is its cached value however often the
@@ -961,11 +961,11 @@ public class AliasAndBareForwardingTests
     /// of it stays fresh.
     /// </summary>
     [Theory]
-    [InlineData("A(p) = Cached\nA(1), A(2), Cached", "ok S[1, 1, 1] [tick#1]")]
+    [InlineData("A(p) = Cached\nA(1), A(2), Cached", "ok S[1, 1, 1] [tock#1]")]
     [InlineData("A(p) = Rand\nA(1) == A(2), A(1) == Rand", "ok S[true, true]")]
-    [InlineData("A(p) = Cached()\nA(1), A(2)", "ok S[1, 2] [tick#1,tick#2]")]
+    [InlineData("A(p) = Cached()\nA(1), A(2)", "ok S[1, 2] [tock#1,tock#2]")]
     public async Task AZeroParameterTarget_IsItsCachedValue(string program, string expected)
-        => Assert.Equal(expected, await Outcome("Cached = tick()\nRand = randomInt(1, 1000000)\n" + program, seed: 7));
+        => Assert.Equal(expected, await Outcome("Cached = tock()\nRand = randomInt(1, 1000000)\n" + program, seed: 7));
 
     /// <summary>
     /// A clause family declares parameterized callable structure (dispatch over its clause heads), so
@@ -1001,19 +1001,19 @@ public class AliasAndBareForwardingTests
     [InlineData("G((a, b)) = Pair2\nH((a, b)) = G\nH((trace(1), trace(2)))", "Pair2((trace(1), trace(2)))")]
     [InlineData("A = Eff\nA(Bad)", "Eff(Bad)")]
     [InlineData("G(v) = Eff\nG(Bad)", "Eff(Bad)")]
-    [InlineData("A = Eff2\nA(tick(), tick())", "Eff2(tick(), tick())")]
+    [InlineData("A = Eff2\nA(tock(), tock())", "Eff2(tock(), tock())")]
     [InlineData("G(a, b) = Eff3\nG(randomInt(0, 99), randomInt(0, 99)), randomInt(0, 99)", "Eff3(randomInt(0, 99), randomInt(0, 99)), randomInt(0, 99)")]
     [InlineData("A = Eff3\nA(Cached, Cached), Cached", "Eff3(Cached, Cached), Cached")]
     [InlineData("G(a, b) = Eff3\nG(Cached, Cached()), Cached", "Eff3(Cached, Cached()), Cached")]
     [InlineData("G(a, b) = Eff3\nG(Rand, Rand), Rand", "Eff3(Rand, Rand), Rand")]
     [InlineData("G(a, b) = Eff3\nG(Rand, Rand()), Rand", "Eff3(Rand, Rand()), Rand")]
     [InlineData("Outer(a, b) = {\n  Local(q) = Eff3\n  Local(0)\n}\nOuter(trace(1), trace(2))", "Eff3(trace(1), trace(2))")]
-    [InlineData("Outer(a, b) = {\n  Local(q) = Eff3\n  Local(0), Local(1)\n}\nOuter(Rand, tick())", "Eff3(Rand, tick()), Eff3(Rand, 1)")]
+    [InlineData("Outer(a, b) = {\n  Local(q) = Eff3\n  Local(0), Local(1)\n}\nOuter(Rand, tock())", "Eff3(Rand, tock()), Eff3(Rand, 1)")]
     public async Task ForwardingEvaluatesEveryArgumentExactlyOnce(string program, string direct)
     {
         const string prelude = Vocabulary
-            + "Eff(v) = trace(v), tick()\nLEff([v]) = trace(v), tick()\nEff2(*vs) = vs, tick()\nEff3(a, b) = [a, b], tick()\n"
-            + "Pair2((a, b)) = [a, b], tick()\nCached = tick()\nRand = randomInt(1, 1000000)\n";
+            + "Eff(v) = trace(v), tock()\nLEff([v]) = trace(v), tock()\nEff2(*vs) = vs, tock()\nEff3(a, b) = [a, b], tock()\n"
+            + "Pair2((a, b)) = [a, b], tock()\nCached = tock()\nRand = randomInt(1, 1000000)\n";
         var implicitObservation = await OnEveryRoute(prelude + program, seed: 3);
         var directObservation = await OnEveryRoute(prelude + direct, seed: 3);
         Assert.Equal(directObservation.HostCalls, implicitObservation.HostCalls);

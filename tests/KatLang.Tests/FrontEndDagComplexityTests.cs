@@ -1,4 +1,5 @@
 using System.Numerics;
+using System.Runtime.CompilerServices;
 using KatLang.Semantics;
 
 namespace KatLang.Tests;
@@ -17,8 +18,8 @@ namespace KatLang.Tests;
 /// signal — the "completes at all" witnesses use depths (250/600 doublings) where a
 /// path-expanding walk could not finish in any amount of real time, so completion itself is the
 /// proof. The deep cases additionally run under a generous SECONDARY wall-clock net
-/// (<see cref="AssertCompletesUnderWallClockGuard(Func{Task})"/>) so a regression there fails
-/// deterministically instead of wedging the run.</para>
+/// so unfinished work can be terminated and joined instead of wedging the run.
+/// A timeout alone does not diagnose path expansion.</para>
 ///
 /// <para>Semantics are pinned against the tree-vs-DAG oracle: a shared DAG must elaborate
 /// exactly like its fully duplicated tree (free-name discovery, implicit lifting, exposure,
@@ -38,7 +39,7 @@ public class FrontEndDagComplexityTests
     [InlineData(10)]
     [InlineData(40)]
     public Task DependencySummary_CallBoundariesDoNotMultiplySharedPendingPaths(int depth)
-        => AssertCompletesUnderWallClockGuard(() =>
+        => AssertCompletesUnderWallClockGuard(depth, () =>
     {
         Algorithm shared = EmptyAlgorithm(new Expr.DotCall(new Expr.Resolve("Global"), "X", null));
         for (var i = 0; i < depth; i++)
@@ -173,35 +174,25 @@ public class FrontEndDagComplexityTests
     }
 
     /// <summary>
-    /// Generous SECONDARY wall-clock net for the deep cases. The PRIMARY regression signal
-    /// stays the exact expansion counters and sharing pins, which fail within seconds at
-    /// <see cref="ShallowDepth"/> under a broken memo — but the deep shapes wrapped in this
-    /// guard (2^40 to 2^600 root-to-node paths) would spin through path expansion instead of
-    /// reaching any assertion, wedging the run until an outer job timeout. The guard turns
-    /// that hang into a deterministic failure. A healthy build finishes each wrapped
-    /// traversal in milliseconds, so thirty seconds cannot flake, and timing is never the
-    /// pass/fail signal for correct code — the same pattern as the aliased-cycle probe in
-    /// <c>SharedValueGraphComplexityTests</c>. The work runs on a pool thread, which keeps
-    /// the documented 1 MiB default stack the deep shapes are calibrated for.
+    /// Secondary 30-second lack-of-completion guard in an owned process. The exact work counters
+    /// and sharing assertions decide complexity. Every child runs the actual test row and all its
+    /// assertions on the calibrated 1 MiB pool stack; a timed-out child is terminated and joined.
+    /// The selected loader path reports completed passes/verified levels. Other bodies are atomic:
+    /// 30 seconds without returning still fails under extreme OS scheduling delay, so a timeout
+    /// alone establishes neither exponential work nor a production defect.
     /// </summary>
-    private static async Task AssertCompletesUnderWallClockGuard(Func<Task> traversalWork)
-    {
-        var work = Task.Run(traversalWork);
-        var finished = await Task.WhenAny(work, Task.Delay(TimeSpan.FromSeconds(30)));
-        Assert.True(
-            ReferenceEquals(finished, work),
-            "The deep shared-DAG traversal did not complete within the generous wall-clock guard. "
-            + "Distinct-node-bounded work finishes in milliseconds, so this indicates a "
-            + "path-expanding (exponential) traversal regression.");
-        await work;
-    }
+    private Task AssertCompletesUnderWallClockGuard(Func<Task> traversalWork, [CallerMemberName] string method = "")
+        => DagTraversalProbe.Guard(GetType(), method, null, 1, traversalWork);
 
-    private static Task AssertCompletesUnderWallClockGuard(Action traversalWork)
-        => AssertCompletesUnderWallClockGuard(() =>
-        {
-            traversalWork();
-            return Task.CompletedTask;
-        });
+    private Task AssertCompletesUnderWallClockGuard(Action traversalWork, [CallerMemberName] string method = "")
+        => AssertCompletesUnderWallClockGuard(() => { traversalWork(); return Task.CompletedTask; }, method);
+
+    private Task AssertCompletesUnderWallClockGuard(int depth, Func<Task> traversalWork,
+        long completedWork = 1, [CallerMemberName] string method = "")
+        => DagTraversalProbe.Guard(GetType(), method, depth, completedWork, traversalWork);
+
+    private Task AssertCompletesUnderWallClockGuard(int depth, Action traversalWork, [CallerMemberName] string method = "")
+        => AssertCompletesUnderWallClockGuard(depth, () => { traversalWork(); return Task.CompletedTask; }, method: method);
 
     // ── 1. ParameterDetector ────────────────────────────────────────────────
 
@@ -209,7 +200,7 @@ public class FrontEndDagComplexityTests
     [InlineData(ShallowDepth)]
     [InlineData(DeepDepth)]
     public Task Detector_DiamondWithFreeName_ExpandsEachDistinctNodeOnce(int depth)
-        => AssertCompletesUnderWallClockGuard(() =>
+        => AssertCompletesUnderWallClockGuard(depth, () =>
         {
             var observations = new FrontEndTraversalObservations();
             var root = EmptyAlgorithm(BinaryDiamond(depth, new Expr.Resolve("q")));
@@ -632,7 +623,7 @@ public class FrontEndDagComplexityTests
     [InlineData(ShallowDepth)]
     [InlineData(DeepDepth)]
     public Task Resolver_DiamondOverLiftableReference_ExpandsEachDistinctNodeOnce(int depth)
-        => AssertCompletesUnderWallClockGuard(() =>
+        => AssertCompletesUnderWallClockGuard(depth, () =>
         {
             var root = LiftingHelpers() with
             {
@@ -771,7 +762,7 @@ public class FrontEndDagComplexityTests
     [InlineData(ShallowDepth)]
     [InlineData(DeepDepth)]
     public Task Exposure_Diamond_ExpandsEachDistinctNodeOnce(int depth)
-        => AssertCompletesUnderWallClockGuard(() =>
+        => AssertCompletesUnderWallClockGuard(depth, () =>
         {
             var observations = new FrontEndTraversalObservations();
             var root = EmptyAlgorithm(BinaryDiamond(depth, new Expr.AlgorithmExpr(EmptyAlgorithm(new Expr.Num(1)))));
@@ -791,7 +782,7 @@ public class FrontEndDagComplexityTests
     [InlineData(ShallowDepth)]
     [InlineData(DeepDepth)]
     public Task Exposure_InvariantDiamond_IsReturnedAsItIs(int depth)
-        => AssertCompletesUnderWallClockGuard(() =>
+        => AssertCompletesUnderWallClockGuard(depth, () =>
         {
             var observations = new FrontEndTraversalObservations();
             var diamond = BinaryDiamond(depth, new Expr.Num(1));
@@ -864,7 +855,7 @@ public class FrontEndDagComplexityTests
     [InlineData(ShallowDepth)]
     [InlineData(DeepDepth)]
     public Task DependencyGraph_Diamond_ExpandsEachDistinctNodeOnce(int depth)
-        => AssertCompletesUnderWallClockGuard(() =>
+        => AssertCompletesUnderWallClockGuard(depth, () =>
         {
             var observations = new FrontEndTraversalObservations();
             var root = new Algorithm.User(
@@ -1337,7 +1328,7 @@ public class FrontEndDagComplexityTests
     [InlineData(ShallowDepth)]
     [InlineData(DeepDepth)]
     public Task Loader_SyncWalkDiamond_ExpandsEachDistinctNodeOnce(int depth)
-        => AssertCompletesUnderWallClockGuard(async () =>
+        => AssertCompletesUnderWallClockGuard(depth, async () =>
         {
             var observations = new FrontEndTraversalObservations();
             var diagnostics = new DiagnosticBag();
@@ -1378,7 +1369,7 @@ public class FrontEndDagComplexityTests
     [InlineData(ShallowDepth)]
     [InlineData(DeepDepth)]
     public Task Loader_ClauseFamilyDiamondOverLoad_DefersAlternativesWithoutExpandingPaths(int depth)
-        => AssertCompletesUnderWallClockGuard(async () =>
+        => AssertCompletesUnderWallClockGuard(depth, async () =>
         {
             var downloads = 0;
             var observations = new FrontEndTraversalObservations();
@@ -1413,7 +1404,7 @@ public class FrontEndDagComplexityTests
     [InlineData(ShallowDepth)]
     [InlineData(DeepDepth)]
     public Task Loader_ClauseFamilyDiamondOverLoad_MaterializesOnlyTheSelectedPath(int depth)
-        => AssertCompletesUnderWallClockGuard(async () =>
+        => AssertCompletesUnderWallClockGuard(depth, async () =>
         {
             var downloads = 0;
             var diagnostics = new DiagnosticBag();
@@ -1425,6 +1416,8 @@ public class FrontEndDagComplexityTests
 
             var elaborated = await loader.ElaborateAsync(ClauseFamilyDiamond(depth, load: true));
             Assert.Empty(diagnostics);
+            Assert.Equal(0, downloads);
+            DagTraversalProbe.Completed("eager-load");
             // This fixture composes the internal passes rather than FrontEndPipeline. Preserve
             // its one module registry and publish the completed eager handoff before demand.
             var modules = new ModuleUnits(loader.ModuleUnits);
@@ -1436,10 +1429,15 @@ public class FrontEndDagComplexityTests
             // is its own provisional region over the same nested chain: two chains of `depth`
             // regions, not 2^depth.
             Assert.Equal(2 * depth, detectorObservations.DetectorBranchBodyRegionExpansions);
+            DagTraversalProbe.Completed("eager-detection");
             var resolved = ImplicitArgumentResolver.Resolve(detectedInput);
             new ParameterPropertyCollisionValidator(diagnostics).VisitAlgorithm(resolved);
+            DagTraversalProbe.Completed("resolution-and-validation");
             var exposed = PropertyExposureResolver.Resolve(resolved, observations: null, modules: modules);
             modules.Publish(detectedInput.Operation!.Freeze());
+            Assert.Empty(diagnostics);
+            Assert.Equal(0, downloads);
+            DagTraversalProbe.Completed("exposure-and-publication");
             var demandObservations = new FrontEndTraversalObservations();
             loader.TraversalObservations = demandObservations;
 
@@ -1456,6 +1454,7 @@ public class FrontEndDagComplexityTests
             Console.WriteLine($"Demand depth={depth}: detector={demandObservations.DetectorBranchBodyRegionExpansions}, "
                 + $"resolver={demandObservations.ResolverBranchBodyRegionExpansions}, exposure={demandObservations.ExposureAlgorithmExpansions}, "
                 + $"loader={demandObservations.LoaderWalkExpansions}, summaries={demandObservations.DependencyBranchBodySummaryComputations}");
+            DagTraversalProbe.Completed("evaluation-and-counters");
             var current = Assert.IsType<Algorithm.User>(Assert.Single(exposed.Properties, p => p.Name == "Mod").Value);
             for (var level = 0; level < depth; level++)
             {
@@ -1471,9 +1470,11 @@ public class FrontEndDagComplexityTests
                 Assert.Equal(0, rightRegion.MaterializationAttempts);
                 Assert.True(leftRegion.TryGetMaterialized(out var materialized));
                 current = Assert.IsType<Algorithm.User>(materialized);
+                Assert.False(rightRegion.TryGetMaterialized(out _));
+                DagTraversalProbe.Completed("verified-level");
             }
             Assert.IsType<Expr.AlgorithmExpr>(Assert.Single(current.Opens));
-        });
+        }, completedWork: depth + 6);
 
     // ── 6. Shared conditional families (M4): once per distinct node and semantic region ──
 
@@ -1535,7 +1536,7 @@ public class FrontEndDagComplexityTests
     [InlineData(ShallowDepth)]
     [InlineData(DeepDepth)]
     public Task FrontEnd_ClauseFamilyDiamond_ElaboratesEachBranchBodyOncePerRegion(int depth)
-        => AssertCompletesUnderWallClockGuard(() =>
+        => AssertCompletesUnderWallClockGuard(depth, () =>
         {
             var root = ClauseFamilyDiamond(depth, load: false);
 
@@ -1806,7 +1807,7 @@ public class FrontEndDagComplexityTests
     [InlineData(ShallowDepth)]
     [InlineData(DeepDepth)]
     public Task Resolver_PropertyValueDiamond_RewritesEachValueOncePerRegion(int depth)
-        => AssertCompletesUnderWallClockGuard(() =>
+        => AssertCompletesUnderWallClockGuard(depth, () =>
         {
             var root = new Algorithm.User(
                 null, [], [],
@@ -1841,7 +1842,7 @@ public class FrontEndDagComplexityTests
     [InlineData(ShallowDepth)]
     [InlineData(DeepDepth)]
     public Task Resolver_PropertyValueDiamond_UnderDistinctObservations_RewritesIndependentlyOncePerRegion(int depth)
-        => AssertCompletesUnderWallClockGuard(() =>
+        => AssertCompletesUnderWallClockGuard(depth, () =>
         {
             var diamond = PropertyValueDiamond(depth, "Leaf");
             Algorithm.User Block(Algorithm leaf)
@@ -1967,7 +1968,7 @@ public class FrontEndDagComplexityTests
     [InlineData(ShallowDepth)]
     [InlineData(DeepDepth)]
     public Task SemanticModel_ExpressionDiamond_AnalyzesEachNodeOncePerFrame(int depth)
-        => AssertCompletesUnderWallClockGuard(() =>
+        => AssertCompletesUnderWallClockGuard(depth, () =>
         {
             var leaf = new Expr.Resolve("Leaf") { Span = new SourceSpan(2, 1, 2, 5) };
             var root = new Algorithm.User(
@@ -1999,7 +2000,7 @@ public class FrontEndDagComplexityTests
     [InlineData(ShallowDepth)]
     [InlineData(DeepDepth)]
     public Task SemanticModel_PropertyValueDiamond_AnalyzesEachAlgorithmOncePerFrame(int depth)
-        => AssertCompletesUnderWallClockGuard(() =>
+        => AssertCompletesUnderWallClockGuard(depth, () =>
         {
             var root = new Algorithm.User(
                 null, [], [],
@@ -2058,7 +2059,7 @@ public class FrontEndDagComplexityTests
     [InlineData(ShallowDepth)]
     [InlineData(DeepDepth)]
     public Task Loader_AsyncWalkDiamondOverLoad_IsBoundedAndDiagnosesTheSharedNodeOnce(int depth)
-        => AssertCompletesUnderWallClockGuard(async () =>
+        => AssertCompletesUnderWallClockGuard(depth, async () =>
         {
             var observations = new FrontEndTraversalObservations();
             var diagnostics = new DiagnosticBag();

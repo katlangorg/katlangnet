@@ -122,7 +122,7 @@ public sealed class AliasUnifySecondReviewRegressionTests
 
     // ── Coverage the second review found missing ──
 
-    private const string CapturedPlan = "B(x) = x * 10\nCapture(meta c) = c\nR = Capture(B(tick()))\n";
+    private const string CapturedPlan = "B(x) = x * 10\nCapture(meta c) = c\nR = Capture(B(tock()))\n";
 
     [Theory]
     [InlineData("R.Invoke(), { R }.Invoke(), { R }.Arguments == R.Arguments", "S[10, 10, true]")]
@@ -131,9 +131,9 @@ public sealed class AliasUnifySecondReviewRegressionTests
     [InlineData("A = R\nR.Invoke(), A.Invoke(), A.Arguments == R.Arguments, A.Algorithm(3)", "S[10, 10, true, 30]")]
     public async Task AnAliasReceiverOfACallReferenceIntrinsic_ReadsTheOneCapturedPlan(string rows, string value)
     {
-        // Every receiver spelling reads R's ONE cached reference: one plan, one sticky argument cell, one tick.
+        // Every receiver spelling reads R's ONE cached reference: one plan, one sticky argument cell, one tock.
         var outcome = await OkAsync(CapturedPlan + rows, value);
-        Assert.Equal(["tick#1"], outcome.HostCalls);
+        Assert.Equal(["tock#1"], outcome.HostCalls);
     }
 
     [Theory]
@@ -155,8 +155,8 @@ public sealed class AliasUnifySecondReviewRegressionTests
     [Fact]
     public async Task AValueOnlyRuntimeAlias_AnswersEveryZeroSupplyCallWithItsOneValue_AndPassesNoCallable()
     {
-        var reads = await OkAsync("Use(f) = {\n    A = f\n    A(), A, A()\n}\nUse(tick())", "S[1, 1, 1]");
-        Assert.Equal(["tick#1"], reads.HostCalls);
+        var reads = await OkAsync("Use(f) = {\n    A = f\n    A(), A, A()\n}\nUse(tock())", "S[1, 1, 1]");
+        Assert.Equal(["tock#1"], reads.HostCalls);
 
         var passed = await SixRouteAgreement.OnEveryRouteAsync("Apply(g) = g()\nUse(f) = {\n    A = f\n    Apply(A)\n}\nUse(5)");
         Assert.Equal("err", passed.Kind);
@@ -167,9 +167,9 @@ public sealed class AliasUnifySecondReviewRegressionTests
     public async Task AHostOperationTarget_PublishesNothing_ThroughItsReference()
     {
         // `A()` is a fresh host call that publishes nothing (host targets publish nothing); bare `A` is
-        // tick's own prelude read. A synthetic entry for the alias or its call would give (1, 1, 1).
-        var outcome = await OkAsync("A = tick\nA(), A, tick", "S[1, 2, 2]");
-        Assert.Equal(["tick#1", "tick#2"], outcome.HostCalls);
+        // tock's own prelude read. A synthetic entry for the alias or its call would give (1, 1, 1).
+        var outcome = await OkAsync("A = tock\nA(), A, tock", "S[1, 2, 2]");
+        Assert.Equal(["tock#1", "tock#2"], outcome.HostCalls);
     }
 
     [Fact]
@@ -256,11 +256,10 @@ public sealed class AliasUnifySecondReviewRegressionTests
     [Fact]
     public void AnAliasCall_IsObservedUnderItsTargetOnly()
     {
-        var ticks = 0;
-        var operations = HostOperations.Create(HostOperation.Create("tick", (_, _) => new Result.Atom(++ticks)));
         var success = Assert.IsType<RunResult.Success>(KatLangEngine.Run(
-            "P = tick()\nA = P\nA(), P", new RunOptions { HostOperations = operations, ObservePropertyValues = true }));
-        Assert.Equal(1, ticks);
+            "P = tick()\nA = P\nA(), P, tick()", new RunOptions { ObservePropertyValues = true }));
+        // The final tick is second: A() ran P once and the bare P reused that value.
+        Assert.Equal("S[1, 1, 2]", SixRouteAgreement.Neutral(success.Value));
         var observation = Assert.Single(success.PropertyObservations!);
         Assert.Equal("P", observation.Name);
         Assert.Equal("1", SixRouteAgreement.Neutral(observation.Value!));
@@ -272,7 +271,7 @@ public sealed class AliasUnifySecondReviewRegressionTests
     public async Task CancellationInsideAnAliasCall_ClearsOwnership_AndPublishesNothing(bool asynchronous)
     {
         // `A()` is P's fresh call under P's publication origin, owning P's empty entry when it is cancelled.
-        const string source = "P = tick() + tick()\nA = P\nA(), P";
+        const string source = "P = tock() + tock()\nA = P\nA(), P";
         using var cancellation = new CancellationTokenSource();
         var ticks = 0;
         Result Tick()
@@ -282,8 +281,8 @@ public sealed class AliasUnifySecondReviewRegressionTests
         }
 
         var operations = HostOperations.Create(asynchronous
-            ? HostOperation.CreateAsync("tick", async (_, _) => { await Task.Yield(); return Tick(); })
-            : HostOperation.Create("tick", (_, _) => Tick()));
+            ? HostOperation.CreateAsync("tock", async (_, _) => { await Task.Yield(); return Tick(); })
+            : HostOperation.Create("tock", (_, _) => Tick()));
         var program = new Expr.AlgorithmExpr((await SourceProvenance.ParseValidAsync(source, new RunOptions { HostOperations = operations })).Root);
         if (asynchronous)
         {

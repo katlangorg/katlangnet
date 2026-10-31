@@ -11,7 +11,7 @@ namespace KatLang.Tests;
 /// Every source program runs through the public engine, and <see cref="Observe"/> requires the synchronous
 /// generic and optimized evaluator routes and the async twin to give the SAME outcome, the SAME host effects
 /// and the SAME semantic step count. Host operations count effects: <c>trace(x)</c> records <c>x</c> and
-/// returns it, <c>tick()</c> returns how often it ran. Laziness, sharing and freshness are observed through
+/// returns it, <c>tock()</c> returns how often it ran. Laziness, sharing and freshness are observed through
 /// those effects, never through final values alone. Lean: <c>KatLangArityLaws/AlgorithmProjection.lean</c>
 /// (laws) and <c>AlgorithmProjectionGuards.lean</c> (whole programs).
 /// </summary>
@@ -31,7 +31,7 @@ public class CallReferenceS3AlgorithmTests
             lock (effects.Traces) effects.Traces.Add(SemanticExplorerHarness.Neutral(args[0]));
             return args[0];
         }, "x"),
-        HostOperation.Create("tick", (_, _) => new Result.Atom(Interlocked.Increment(ref effects.Ticks))));
+        HostOperation.Create("tock", (_, _) => new Result.Atom(Interlocked.Increment(ref effects.Ticks))));
 
     private static string Innermost(EvalError error)
     {
@@ -198,7 +198,7 @@ public class CallReferenceS3AlgorithmTests
     public void ValueBeforeMeta_InvokeArgumentsAndAlgorithmReuseTheOriginalCells()
     {
         var (outcome, effects) = Watch("""
-            F(v) = v + tick()
+            F(v) = v + tock()
             Use(meta r) = (r.Invoke(), r.Algorithm(r.Arguments*), r.Arguments.count)
             Probe(x) = (x, Use(x), x)
             Probe(F(trace(10)))
@@ -330,11 +330,11 @@ public class CallReferenceS3AlgorithmTests
     [Fact]
     public void BareValue_OfAZeroParameterProperty_ReadsTheSharedPropertyCache()
     {
-        var (outcome, effects) = Watch("Z = tick()\nR = Capture(Z())\nR.Algorithm, Z, R.Algorithm");
+        var (outcome, effects) = Watch("Z = tock()\nR = Capture(Z())\nR.Algorithm, Z, R.Algorithm");
         Assert.Equal("ok S[1, 1, 1]", outcome);
         Assert.Equal(1, effects.Ticks);
         // The explicit fresh call evaluates the property's body again.
-        var (fresh, freshEffects) = Watch("Z = tick()\nR = Capture(Z())\nR.Algorithm, R.Algorithm()");
+        var (fresh, freshEffects) = Watch("Z = tock()\nR = Capture(Z())\nR.Algorithm, R.Algorithm()");
         Assert.Equal("ok S[1, 2]", fresh);
         Assert.Equal(2, freshEffects.Ticks);
     }

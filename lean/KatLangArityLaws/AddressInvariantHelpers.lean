@@ -502,6 +502,17 @@ theorem SoundI.modify_aliasCells {P : Array NeedCell → Prop} {key : String} {a
 
 attribute [ht_spec] SoundI.modify_aliasCells
 
+/-- **The `tickCounter` write point** (`runTick`): the counter is address-free, so advancing it keeps
+    the heap, every recorded address and the invariant exactly as they were. -/
+theorem SoundI.modify_tickCounter {P : Array NeedCell → Prop} :
+    SoundI P (modify fun s => { s with tickCounter := s.tickCounter + 1 } : EvalM Unit)
+      (fun _ _ => True) := by
+  intro _ s vs _
+  rw [modify_run]
+  exact ⟨⟨vs.collectors, vs.cells, vs.activations, vs.cache, vs.aliasCells⟩, Nat.le_refl _, fun _ _ => trivial⟩
+
+attribute [ht_spec] SoundI.modify_tickCounter
+
 /-- **The `aliasCells` write point.** -/
 theorem aliasBindingCellRecorded_spec {P : Array NeedCell → Prop} {wired : Algorithm} {target : Expr}
     {ctx : EvalCtx} (hreq : ∀ h, P h → ValidCtx h ctx) :

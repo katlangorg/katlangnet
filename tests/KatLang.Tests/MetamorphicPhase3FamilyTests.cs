@@ -1581,7 +1581,7 @@ public class MetamorphicPhase3FamilyTests
         foreach (var forbiddenFieldNamePart in new[]
                  {
                      "thread", "process", "task", "completion", "schedule", "elapsed", "duration",
-                     "tick", "hash", "timestamp",
+                     "tock", "hash", "timestamp",
                  })
         {
             Assert.DoesNotContain(

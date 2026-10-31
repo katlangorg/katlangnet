@@ -92,7 +92,7 @@ public class CallableAliasBindingIndirectionTests
     [MemberData(nameof(EveryBuiltin))]
     public async Task EveryBuiltin_ThroughAnAliasChain_IsTheBuiltinItself(string builtin)
     {
-        Assert.Equal(21, Enum.GetValues<BuiltinId>().Length);
+        Assert.Equal(22, Enum.GetValues<BuiltinId>().Length);
         foreach (var supply in BuiltinSupplies)
             await AssertAliasIsTheDirectCall(Vocabulary, builtin, supply);
     }
@@ -115,16 +115,16 @@ public class CallableAliasBindingIndirectionTests
 
     [Theory]
     // OD-E (M4★): every link of the chain reads the ONE entry of the opened member it denotes.
-    [InlineData("open Lib\nLib = {\n    public Only(*xs) = tick()\n}\nA = Only\nB = A\nC = B\nC, Lib.Only, A, B, C",
-        "ok S[1, 1, 1, 1, 1] [tick#1]")]
+    [InlineData("open Lib\nLib = {\n    public Only(*xs) = tock()\n}\nA = Only\nB = A\nC = B\nC, Lib.Only, A, B, C",
+        "ok S[1, 1, 1, 1, 1] [tock#1]")]
     [InlineData("F = y + 1\nLib = {\n    public A = F\n}\nG = {\n    W(x) = Lib.A\n    W(1) + y\n}\nG(10)", "ok 21")]
     [InlineData("I = if\nB = I\nApply(f) = f(true, trace(1), trace(2) / 0)\nApply(B)", "ok 1 [trace(1)]")]
     [InlineData("Inc(x) = trace(x) + 1\nR = repeat\nB = R\nApply(f) = f(Inc(0), 3)\nApply(B)", "ok 3 [trace(0),trace(1),trace(2)]")]
     [InlineData("U((0, x)) = x\nU([x, 0]) = x\nA = U\nB = A\nmap([(0, 4), [5, 0]], B)", "ok L[4, 5]")]
     // NEED-04 (group-aware): the alias and its target are ONE callable identity, so they match by
     // identity without reading either value, and `f()` runs Only once (formerly both bare values
-    // were demanded and disagreed: `[tick#1,tick#2]`).
-    [InlineData("Only(*xs) = tick()\nA = Only\nP(f, f) = f()\nP(A, Only)", "ok 1 [tick#1]")]
+    // were demanded and disagreed: `[tock#1,tock#2]`).
+    [InlineData("Only(*xs) = tock()\nA = Only\nP(f, f) = f()\nP(A, Only)", "ok 1 [tock#1]")]
     // M4★: the carrier A keeps its own M; the reference B and the passed A are the carrier's structure.
     [InlineData("F(x) = {\n    M = 2\n    x\n}\nA = {\n    M = 1\n    F\n}\nB = A\nM(v) = 9\nNavigate(f) = f.M\nA.M, F.M, B.M, Navigate(A)", "ok S[1, 2, 1, 1]")]
     [InlineData("K = C + 1\nC = B\nB = A\nA = F\nF = Inc + 1\nInc(x) = x + 1\nK(3)", "ok 6")]
@@ -201,17 +201,17 @@ public class CallableAliasBindingIndirectionTests
     [Theory]
     // OD-E (M4★): an alias owns no entry — a bare read of it is its TARGET's bare read (formerly each
     // alias binding had its own entry: S[1, 2, 1] and S[1, 2, 1, 3]).
-    [InlineData("Only(*xs) = tick()\nA = Only\nA, Only, A", "ok S[1, 1, 1] [tick#1]")]
+    [InlineData("Only(*xs) = tock()\nA = Only\nA, Only, A", "ok S[1, 1, 1] [tock#1]")]
     // An explicit call is fresh; CACHE-PUB-1: on an EMPTY entry it establishes the TARGET's entry, which
     // the bare reads reuse.
-    [InlineData("Only(*xs) = tick()\nA = Only\nA(), A, A", "ok S[1, 1, 1] [tick#1]")]
-    [InlineData("Only(*xs) = tick()\nA = Only\nA, A(), A", "ok S[1, 2, 1] [tick#1,tick#2]")]
+    [InlineData("Only(*xs) = tock()\nA = Only\nA(), A, A", "ok S[1, 1, 1] [tock#1]")]
+    [InlineData("Only(*xs) = tock()\nA = Only\nA, A(), A", "ok S[1, 2, 1] [tock#1,tock#2]")]
     // Every link of a chain reads the terminal binding.
-    [InlineData("Only(*xs) = tick()\nA = Only\nB = A\nB, A, B, Only", "ok S[1, 1, 1, 1] [tick#1]")]
+    [InlineData("Only(*xs) = tock()\nA = Only\nB = A\nB, A, B, Only", "ok S[1, 1, 1, 1] [tock#1]")]
     // A ZERO-PARAMETER target is aliased the same way (M4★): one entry, Z's.
-    [InlineData("Z = tick()\nA = Z\nA, Z, A", "ok S[1, 1, 1] [tick#1]")]
-    [InlineData("Z = tick()\nA = Z\nB = A\nB, A, Z", "ok S[1, 1, 1] [tick#1]")]
-    [InlineData("Z = tick()\nA = Z\nA(), A, Z(), Z", "ok S[1, 1, 2, 1] [tick#1,tick#2]")]
+    [InlineData("Z = tock()\nA = Z\nA, Z, A", "ok S[1, 1, 1] [tock#1]")]
+    [InlineData("Z = tock()\nA = Z\nB = A\nB, A, Z", "ok S[1, 1, 1] [tock#1]")]
+    [InlineData("Z = tock()\nA = Z\nA(), A, Z(), Z", "ok S[1, 1, 2, 1] [tock#1,tock#2]")]
     public async Task Caching_FollowsTheTerminalBinding_NeverTheAlias(string source, string expected)
         => Assert.Equal(expected, await Outcome(source));
 
@@ -464,7 +464,7 @@ public class CallableAliasBindingIndirectionTests
     {
         var ticks = 0;
         var downloads = 0;
-        var operations = HostOperations.Create(HostOperation.CreateAsync("tick", async (_, _) =>
+        var operations = HostOperations.Create(HostOperation.CreateAsync("tock", async (_, _) =>
         {
             await Task.Yield();
             return new Result.Atom(Interlocked.Increment(ref ticks));
@@ -476,7 +476,7 @@ public class CallableAliasBindingIndirectionTests
             {
                 await Task.Yield();
                 Interlocked.Increment(ref downloads);
-                return "public Only(*xs) = tick()";
+                return "public Only(*xs) = tock()";
             },
         };
         const string source = "Pick(0) = 0\nPick(n) = {\n    M = load('https://katlang.org/aliases/deferred.kat')\n    A = M.Only\n    B = A\n    (B, M.Only, B)\n}\nPick(0), Pick(1), Pick(2)";

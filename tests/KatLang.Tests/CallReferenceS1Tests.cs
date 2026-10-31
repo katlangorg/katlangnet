@@ -11,7 +11,7 @@ namespace KatLang.Tests;
 /// invocation-plan retention. Every source program here parses cleanly and runs through the public engine,
 /// and <see cref="Observe"/> additionally requires the synchronous generic and optimized evaluator routes and
 /// the forced async twin to give the SAME outcome and the SAME host effects. Host operations count effects:
-/// <c>tick()</c> returns how often it ran, <c>trace(x)</c> returns <c>x</c> and counts, <c>pair()</c> returns
+/// <c>tock()</c> returns how often it ran, <c>trace(x)</c> returns <c>x</c> and counts, <c>pair()</c> returns
 /// <c>(1, 2)</c> and counts. Lean: <c>KatLangArityLaws/CallReference.lean</c> (laws) and
 /// <c>CallReferenceGuards.lean</c> (the same programs, executable).
 /// </summary>
@@ -27,7 +27,7 @@ public class CallReferenceS1Tests
     }
 
     private static HostOperations Operations(Effects effects) => HostOperations.Create(
-        HostOperation.Create("tick", (_, _) => { effects.Ticks++; return new Result.Atom(effects.Ticks); }),
+        HostOperation.Create("tock", (_, _) => { effects.Ticks++; return new Result.Atom(effects.Ticks); }),
         HostOperation.Create("trace", (args, _) => { effects.Traces++; return args[0]; }, "x"),
         HostOperation.Create("pair", (_, _) =>
         {
@@ -119,7 +119,7 @@ public class CallReferenceS1Tests
     private const string Prelude = """
         Square(x) = x * x
         Capture(meta operation) = operation
-        T(x) = x + tick()
+        T(x) = x + tock()
         Add(a, b) = a + b
         Inc(x) = x + 1
         Ap(f, x) = f(x)
@@ -293,7 +293,7 @@ public class CallReferenceS1Tests
             G(v) = Both(v, v)
             G(T(trace(5)))
             """);
-        // The invocation (tick 1) runs before the ordinary VALUE of x (tick 2).
+        // The invocation (tock 1) runs before the ordinary VALUE of x (tock 2).
         Assert.Equal("ok 607", outcome);
         Assert.Equal("ticks=2 traces=1 pairs=0", effects.ToString());
     }
@@ -444,7 +444,7 @@ public class CallReferenceS1Tests
     /// inertly: nothing runs, and the reference it yields is refused only at the run boundary (CR-6).
     /// </summary>
     [Theory]
-    [InlineData("Box = { public F(x) = x + tick() }\nCapture(Box.F(T(1)))")]
+    [InlineData("Box = { public F(x) = x + tock() }\nCapture(Box.F(T(1)))")]
     [InlineData("Capture(5.Inc())")]
     [InlineData("Capture(T(5).Add(T(1)))")]
     public void WrittenDotInvocations_AreCaptured_WithoutEvaluatingAnything(string body)

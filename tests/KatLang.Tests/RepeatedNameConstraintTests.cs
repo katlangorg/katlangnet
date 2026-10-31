@@ -77,10 +77,10 @@ public class RepeatedNameConstraintTests
 
         public Result Tick()
         {
-            var tick = Interlocked.Increment(ref _ticks);
+            var tock = Interlocked.Increment(ref _ticks);
             lock (Calls)
-                Calls.Add($"tick#{tick}");
-            return new Result.Atom((Decimal128)tick);
+                Calls.Add($"tock#{tock}");
+            return new Result.Atom((Decimal128)tock);
         }
 
         public Result Trace(Result value)
@@ -93,19 +93,19 @@ public class RepeatedNameConstraintTests
 
     private static HostOperations OperationsFor(HostLog log, bool withAsyncOperation)
     {
-        var tick = withAsyncOperation
-            ? HostOperation.CreateAsync("tick", async (_, _) => { await Task.Yield(); return log.Tick(); })
-            : HostOperation.Create("tick", (_, _) => log.Tick());
+        var tock = withAsyncOperation
+            ? HostOperation.CreateAsync("tock", async (_, _) => { await Task.Yield(); return log.Tick(); })
+            : HostOperation.Create("tock", (_, _) => log.Tick());
         var trace = withAsyncOperation
             ? HostOperation.CreateAsync("trace", async (args, _) => { await Task.Yield(); return log.Trace(args[0]); }, "x")
             : HostOperation.Create("trace", (args, _) => log.Trace(args[0]), "x");
         return withAsyncOperation
-            ? HostOperations.Create(tick, trace, HostOperation.CreateAsync("pause", async (_, _) =>
+            ? HostOperations.Create(tock, trace, HostOperation.CreateAsync("pause", async (_, _) =>
             {
                 await Task.Yield();
                 return new Result.Atom((Decimal128)0);
             }))
-            : HostOperations.Create(tick, trace);
+            : HostOperations.Create(tock, trace);
     }
 
     /// <summary>
@@ -250,7 +250,7 @@ public class RepeatedNameConstraintTests
 
         // 2. Unequal values do not match (the language's normal repeated-name failure).
         { "unequal-values", "P(x, x) = x\nP(7, 8)", Unequal("x", Call("P")) },
-        { "unequal-ticks", "P(x, x) = x\nP(tick(), tick())", Unequal("x", Call("P")) + " [tick#1,tick#2]" },
+        { "unequal-ticks", "P(x, x) = x\nP(tock(), tock())", Unequal("x", Call("P")) + " [tock#1,tock#2]" },
 
         // 3. A callable-only argument beside a value: never a dual-channel binding, both orders.
         // Formerly `ok S[1, 6]`: x read the value 1 and x(5) invoked Inc.

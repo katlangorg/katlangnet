@@ -9,7 +9,7 @@ namespace KatLang.Tests;
 /// <c>F(R.Arguments*)</c>. Every source program parses cleanly and runs through the public engine, and
 /// <see cref="Observe"/> additionally requires the synchronous generic and optimized evaluator routes and the
 /// forced async twin to give the SAME outcome and the SAME host effects. Host operations count effects:
-/// <c>trace(x)</c> returns <c>x</c> and counts, <c>pair()</c> returns <c>(1, 2)</c> and counts, <c>tick()</c>
+/// <c>trace(x)</c> returns <c>x</c> and counts, <c>pair()</c> returns <c>(1, 2)</c> and counts, <c>tock()</c>
 /// returns how often it ran. Laziness is observed through those counts and through the plans' prepared
 /// supplies, never through final values alone. Lean: <c>KatLangArityLaws/ArgumentView.lean</c> (laws) and
 /// <c>ArgumentViewGuards.lean</c> (the same programs, executable).
@@ -26,7 +26,7 @@ public class CallReferenceS2Tests
     }
 
     private static HostOperations Operations(Effects effects) => HostOperations.Create(
-        HostOperation.Create("tick", (_, _) => { effects.Ticks++; return new Result.Atom(effects.Ticks); }),
+        HostOperation.Create("tock", (_, _) => { effects.Ticks++; return new Result.Atom(effects.Ticks); }),
         HostOperation.Create("trace", (args, _) => { effects.Traces++; return args[0]; }, "x"),
         HostOperation.Create("pair", (_, _) =>
         {

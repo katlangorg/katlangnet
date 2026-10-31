@@ -56,7 +56,7 @@ public sealed class AliasUnifyHeldGateTests
                     Record("trace " + Format(args[0]));
                     return args[0];
                 }, "x"),
-                HostOperation.Create("tick", (_, _) => new Result.Atom(Interlocked.Increment(ref _ticks)))),
+                HostOperation.Create("tock", (_, _) => new Result.Atom(Interlocked.Increment(ref _ticks)))),
         };
 
         private static string Format(Result value) => value is Result.Atom atom ? atom.Value.ToString() : value.ToString()!;
@@ -109,7 +109,7 @@ public sealed class AliasUnifyHeldGateTests
     public async Task ASuspendedCallThroughAnAlias_EstablishesTheTargetsEntry(string rows)
     {
         var fixture = new Fixture();
-        var result = await RunHeld(fixture, "P = gate(tick())\n" + rows, "gate 1");
+        var result = await RunHeld(fixture, "P = gate(tock())\n" + rows, "gate 1");
         AssertValues(result, 1, 1, 1);
         Assert.Equal(1, fixture.GateEntries);
         Assert.Equal(["gate 1"], fixture.Log());
@@ -123,7 +123,7 @@ public sealed class AliasUnifyHeldGateTests
         var fixture = new Fixture();
         const string source =
             "Capture(meta op) = op\n" +
-            "Z(y) = tick()\n" +
+            "Z(y) = tock()\n" +
             "Mk(n) = if(gate(n) == n, Capture(Z(n)), 0)\n" +
             "A = Mk(5).Algorithm\n" +
             "A(1), A(2), A(3)";

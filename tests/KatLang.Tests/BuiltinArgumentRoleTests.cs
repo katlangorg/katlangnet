@@ -66,10 +66,10 @@ public class BuiltinArgumentRoleTests
 
         public Result Tick()
         {
-            var tick = Interlocked.Increment(ref _ticks);
+            var tock = Interlocked.Increment(ref _ticks);
             lock (Calls)
-                Calls.Add($"tick#{tick}");
-            return new Result.Atom((Decimal128)tick);
+                Calls.Add($"tock#{tock}");
+            return new Result.Atom((Decimal128)tock);
         }
 
         public Result Trace(Result value)
@@ -81,16 +81,16 @@ public class BuiltinArgumentRoleTests
     }
 
     /// <summary>
-    /// <c>tick()</c> counts its invocations and <c>trace(x)</c> logs and returns its argument.
+    /// <c>tock()</c> counts its invocations and <c>trace(x)</c> logs and returns its argument.
     /// On the twin routes both genuinely suspend (<c>Task.Yield</c>) before acting.
     /// </summary>
     private static HostOperations OperationsFor(HostLog log, bool suspending)
         => suspending
             ? HostOperations.Create(
-                HostOperation.CreateAsync("tick", async (_, _) => { await Task.Yield(); return log.Tick(); }),
+                HostOperation.CreateAsync("tock", async (_, _) => { await Task.Yield(); return log.Tick(); }),
                 HostOperation.CreateAsync("trace", async (args, _) => { await Task.Yield(); return log.Trace(args[0]); }, "x"))
             : HostOperations.Create(
-                HostOperation.Create("tick", (_, _) => log.Tick()),
+                HostOperation.Create("tock", (_, _) => log.Tick()),
                 HostOperation.Create("trace", (args, _) => log.Trace(args[0]), "x"));
 
     private sealed record Observation(string Kind, string? Value, IReadOnlyList<string> Codes, IReadOnlyList<string> HostCalls)
@@ -306,12 +306,12 @@ public class BuiltinArgumentRoleTests
     [Fact]
     public async Task InitialFailure_IsTheFirstRaisedFailure_NotTheRetrysKind()
     {
-        // The first evaluation raises DivisionByZero (tick#1 < 2); a retry used to take the
-        // other branch and report ITS kind (a TypeMismatch after tick#2).
+        // The first evaluation raises DivisionByZero (tock#1 < 2); a retry used to take the
+        // other branch and report ITS kind (a TypeMismatch after tock#2).
         AssertFails(
-            await OnEveryRouteAsync(Add + "reduce([1], Add, if(tick() < 2, 1 / 0, [5] + 1))"),
+            await OnEveryRouteAsync(Add + "reduce([1], Add, if(tock() < 2, 1 / 0, [5] + 1))"),
             KatLangErrorCode.DivisionByZero,
-            "tick#1");
+            "tock#1");
     }
 
     [Fact]
@@ -327,8 +327,8 @@ public class BuiltinArgumentRoleTests
             await OnEveryRouteAsync(Add + "reduce([1, 2], Add, randomInt(0, 1000)), randomInt(0, 1000)", seed: 5),
             $"S[{first + 3}, {reference[1]}]");
         AssertOk(await OnEveryRouteAsync(Add + "reduce([1, 2], Add, trace(10))"), "13", "trace(10)");
-        // A named property initial is its ordinary cached read: one tick for three reads.
-        AssertOk(await OnEveryRouteAsync(Add + "A = tick()\nreduce([1, 2], Add, A), A, reduce([], Add, A)"), "S[4, 1, 1]", "tick#1");
+        // A named property initial is its ordinary cached read: one tock for three reads.
+        AssertOk(await OnEveryRouteAsync(Add + "A = tock()\nreduce([1, 2], Add, A), A, reduce([], Add, A)"), "S[4, 1, 1]", "tock#1");
         // A multi-output initial is ONE accumulator value.
         AssertOk(await OnEveryRouteAsync(Add + "P = 1, 2\nreduce([], Add, P)"), "S[1, 2]");
     }
@@ -354,18 +354,18 @@ public class BuiltinArgumentRoleTests
     // ── 3. PV-19 — a callback slot is never value-evaluated merely because it was supplied
 
     [Theory]
-    [InlineData("A = tick()\nmap([], A)", "L[]")]
-    [InlineData("A = tick()\nfilter([], A)", "L[]")]
-    [InlineData("A = tick()\nreduce([], A, 0)", "0")]
-    [InlineData("A = tick()\n[].map(A)", "L[]")]
-    [InlineData("A = tick()\n[].filter(A).count", "0")]
-    [InlineData("A = tick()\nB = A\nmap([], B)", "L[]")]
-    [InlineData("map([], {tick()})", "L[]")]
-    [InlineData("map([], (tick()))", "L[]")]
-    [InlineData("map([], tick() + 1)", "L[]")]
-    [InlineData("Box = {\n    public V = tick()\n}\nmap([], Box.V)", "L[]")]
-    [InlineData("open Lib\nLib = {\n    public V = tick()\n}\nmap([], V)", "L[]")]
-    [InlineData("A = tick()\nOuter = { map([], A) }\nOuter", "L[]")]
+    [InlineData("A = tock()\nmap([], A)", "L[]")]
+    [InlineData("A = tock()\nfilter([], A)", "L[]")]
+    [InlineData("A = tock()\nreduce([], A, 0)", "0")]
+    [InlineData("A = tock()\n[].map(A)", "L[]")]
+    [InlineData("A = tock()\n[].filter(A).count", "0")]
+    [InlineData("A = tock()\nB = A\nmap([], B)", "L[]")]
+    [InlineData("map([], {tock()})", "L[]")]
+    [InlineData("map([], (tock()))", "L[]")]
+    [InlineData("map([], tock() + 1)", "L[]")]
+    [InlineData("Box = {\n    public V = tock()\n}\nmap([], Box.V)", "L[]")]
+    [InlineData("open Lib\nLib = {\n    public V = tock()\n}\nmap([], V)", "L[]")]
+    [InlineData("A = tock()\nOuter = { map([], A) }\nOuter", "L[]")]
     public async Task UnusedCallback_RunsNoEffect(string program, string value)
         => AssertOk(await OnEveryRouteAsync(program), value);
 
@@ -373,8 +373,8 @@ public class BuiltinArgumentRoleTests
     public async Task UnusedCallback_BehavesLikeAZeroIterationLoopStep()
     {
         // The same algorithm-channel rule the loop builtins always had.
-        AssertOk(await OnEveryRouteAsync("A = tick()\nrepeat(A(5), 0)"), "5");
-        AssertOk(await OnEveryRouteAsync("A = tick()\nmap([], A)"), "L[]");
+        AssertOk(await OnEveryRouteAsync("A = tock()\nrepeat(A(5), 0)"), "5");
+        AssertOk(await OnEveryRouteAsync("A = tock()\nmap([], A)"), "L[]");
     }
 
     [Theory]
@@ -415,12 +415,12 @@ public class BuiltinArgumentRoleTests
     [Fact]
     public async Task InvokedCallback_IsAnOrdinaryCallPerElement()
     {
-        AssertOk(await OnEveryRouteAsync("map([1, 2], {x + tick()})"), "L[2, 4]", "tick#1", "tick#2");
+        AssertOk(await OnEveryRouteAsync("map([1, 2], {x + tock()})"), "L[2, 4]", "tock#1", "tock#2");
         AssertOk(await OnEveryRouteAsync("Keep(x) = trace(x) > 1\nfilter([1, 2], Keep)"), "L[2]", "trace(1)", "trace(2)");
         AssertOk(await OnEveryRouteAsync(Add + "reduce([1, 2, 3], Add, 0)"), "6");
         // A zero-parameter callable invoked with an element is rejected by the binder before
         // its body runs (formerly the eager attempt had already run it once).
-        AssertFails(await OnEveryRouteAsync("A = tick()\nmap([1], A)"), KatLangErrorCode.ArityMismatch);
+        AssertFails(await OnEveryRouteAsync("A = tock()\nmap([1], A)"), KatLangErrorCode.ArityMismatch);
         // A value has no CALLABLE identity: NotAnAlgorithm (Q-06), never by demanding the value.
         AssertFails(await OnEveryRouteAsync("map([1, 2], 1 / 0)"), KatLangErrorCode.NotAnAlgorithm);
         AssertFails(await OnEveryRouteAsync("map([1, 2], 5)"), KatLangErrorCode.NotAnAlgorithm);
@@ -430,9 +430,9 @@ public class BuiltinArgumentRoleTests
     public async Task UnusedCallback_LeavesThePropertyCacheToTheValueReads()
     {
         // The callback slot reads nothing; the root reads evaluate `A` once and share it.
-        AssertOk(await OnEveryRouteAsync("A = tick()\nmap([], A), A, A"), "S[L[], 1, 1]", "tick#1");
+        AssertOk(await OnEveryRouteAsync("A = tock()\nmap([], A), A, A"), "S[L[], 1, 1]", "tock#1");
         // Explicit forwarding transfers the cell without a value demand.
-        AssertOk(await OnEveryRouteAsync("A = tick()\nApply(f, xs) = map(xs, f)\nApply(A, [])"), "L[]");
+        AssertOk(await OnEveryRouteAsync("A = tock()\nApply(f, xs) = map(xs, f)\nApply(A, [])"), "L[]");
     }
 
     [Fact]
@@ -440,7 +440,7 @@ public class BuiltinArgumentRoleTests
     {
         foreach (var pipeline in new[] { "[].filter(A).count", "count([].filter(A))", "E.filter(A).count", "count(filter(range(1, 3), A))" })
         {
-            var source = $"A = tick()\nE = ()\n{pipeline}";
+            var source = $"A = tock()\nE = ()\n{pipeline}";
             var observation = await OnEveryRouteAsync(source);
             Assert.Empty(observation.HostCalls);
         }
@@ -554,8 +554,8 @@ public class BuiltinArgumentRoleTests
     {
         // Written argument indices differ from supplied positions. The next callback must
         // stay inert, and the next initial must be demanded, after either kind of spread.
-        AssertOk(await OnEveryRouteAsync("E = ()\nA = tick()\nmap(E*, [], A)"), "L[]");
-        AssertOk(await OnEveryRouteAsync("P = [[]]\nA = tick()\nmap(P*, A)"), "L[]");
+        AssertOk(await OnEveryRouteAsync("E = ()\nA = tock()\nmap(E*, [], A)"), "L[]");
+        AssertOk(await OnEveryRouteAsync("P = [[]]\nA = tock()\nmap(P*, A)"), "L[]");
         AssertOk(
             await OnEveryRouteAsync("P = trace([]), trace(17)\nreduce(P*, trace(9))"),
             "9", "trace(L[])", "trace(17)", "trace(9)");
@@ -589,7 +589,7 @@ public class BuiltinArgumentRoleTests
 
     [Fact]
     public async Task UnusedDotFallbackCallback_DoesNotEvaluateItsReceiverOrBody()
-        => AssertOk(await OnEveryRouteAsync("Callback(x) = trace(x)\nmap([], tick().Callback)"), "L[]");
+        => AssertOk(await OnEveryRouteAsync("Callback(x) = trace(x)\nmap([], tock().Callback)"), "L[]");
 
     // ── 5. Laziness is preserved ────────────────────────────────────────────────────────
 
@@ -597,8 +597,8 @@ public class BuiltinArgumentRoleTests
     public async Task Laziness_UndemandedComputationsStayUndemanded()
     {
         // All these consumers leave unused cells unevaluated.
-        AssertOk(await OnEveryRouteAsync("if(true, 7, tick())"), "7");
-        AssertOk(await OnEveryRouteAsync("Step = {tick()}\nrepeat(Step(5), 0)"), "5");
+        AssertOk(await OnEveryRouteAsync("if(true, 7, tock())"), "7");
+        AssertOk(await OnEveryRouteAsync("Step = {tock()}\nrepeat(Step(5), 0)"), "5");
         AssertOk(await OnEveryRouteAsync("Ignore(f) = 0\nIgnore({1 / 0})"), "0");
         // Supplied cardinality is checked before any ordinary cell is demanded.
         AssertFails(await OnEveryRouteAsync("count(trace(1), trace(2))"), KatLangErrorCode.ArityMismatch);
@@ -644,7 +644,7 @@ public class BuiltinArgumentRoleTests
 
     public static IEnumerable<object[]> CallbackExpressions()
     {
-        foreach (var callback in new[] { "A", "{tick()}", "(tick())", "tick() + 1", "Box.V", "L", "1 / 0", "{x + tick()}" })
+        foreach (var callback in new[] { "A", "{tock()}", "(tock())", "tock() + 1", "Box.V", "L", "1 / 0", "{x + tock()}" })
         foreach (var builtin in new[] { "map([], C)", "filter([], C)", "reduce([], C, 7)", "[].filter(C).count" })
             yield return [callback, builtin];
     }
@@ -657,7 +657,7 @@ public class BuiltinArgumentRoleTests
     [MemberData(nameof(CallbackExpressions))]
     public async Task UnusedCallback_HasTheEffectsOfAZeroIterationLoopStep(string callback, string builtin)
     {
-        const string prelude = "A = tick()\nBox = {\n    public V = tick()\n}\nL = L + 1\n";
+        const string prelude = "A = tock()\nBox = {\n    public V = tock()\n}\nL = L + 1\n";
         var viaBuiltin = await OnEveryRouteAsync(prelude + builtin.Replace("C", callback, StringComparison.Ordinal));
         // The callback supplied as the callee of the loop's captured call (META-S3-3): a zero-iteration
         // `repeat` never projects or invokes it either.

@@ -24,13 +24,13 @@ public class ModelCPropagationTests
     [InlineData("Flip(a, b) = b + a\ntrace(1).Flip(trace(2))", "ok 3", "trace(2) | trace(1)")]
     [InlineData("Flip(a, b) = b + a\nFlip(trace(1), trace(2))", "ok 3", "trace(2) | trace(1)")]
     // Demanded at most once, however often the callee reads it.
-    [InlineData("Twice(a, b) = a + a + b\ntick().Twice(10)", "ok 12", "tick#1")]
+    [InlineData("Twice(a, b) = a + a + b\ntock().Twice(10)", "ok 12", "tock#1")]
     // Cardinality is checked before any demand, the receiver's included.
     [InlineData("Second(a, b) = b\ntrace(1).Second(trace(2), trace(3))", "err ArityMismatch", "")]
     // A spread receiver is an explicit spread: opened while the supply is formed.
     [InlineData("Third(a, b, c) = c\ntrace((1, 2))*.Third(trace(3))", "ok 3", "trace(S[1, 2]) | trace(3)")]
     // An unused property receiver performs no access: the root read is the property's first.
-    [InlineData("B = tick()\nIgn(x, y) = y\nB.Ign(5), B", "ok S[5, 1]", "tick#1")]
+    [InlineData("B = tock()\nIgn(x, y) = y\nB.Ign(5), B", "ok S[5, 1]", "tock#1")]
     public async Task DotCallReceiver_IsDemandedLikeTheWrittenLeadingArgument(string source, string outcome, string hostCalls)
         => AssertOutcome(await OnEveryRouteAsync(source), outcome, hostCalls);
 
@@ -66,12 +66,12 @@ public class ModelCPropagationTests
     // ── PAT-09: two written cells are two computations; one transported cell is one ─────────────
 
     [Theory]
-    // Two cells naming one property: each demands it through the property cache — one tick.
-    [InlineData("T = tick()\nQ(x, x) = x\nQ(T, T), T", "ok S[1, 1]", "tick#1")]
+    // Two cells naming one property: each demands it through the property cache — one tock.
+    [InlineData("T = tock()\nQ(x, x) = x\nQ(T, T), T", "ok S[1, 1]", "tock#1")]
     // Two independent computations: two executions, and their values differ.
-    [InlineData("Q(x, x) = x\nQ(tick(), tick())", "err ArityMismatch", "tick#1 | tick#2")]
+    [InlineData("Q(x, x) = x\nQ(tock(), tock())", "err ArityMismatch", "tock#1 | tock#2")]
     // One cell transported to both occurrences: one execution (NEED-04).
-    [InlineData("Q(x, x) = x\nPass(g) = Q(g, g)\nPass(tick())", "ok 1", "tick#1")]
+    [InlineData("Q(x, x) = x\nPass(g) = Q(g, g)\nPass(tock())", "ok 1", "tock#1")]
     // The first occurrence's failure ends the call before the second cell is demanded.
     [InlineData("Bad = trace(1) / 0\nQ(x, x) = x\nQ(Bad, Bad)", "err DivisionByZero", "trace(1)")]
     public async Task RepeatedName_DemandsEachOccurrencesOwnCell(string source, string outcome, string hostCalls)
@@ -86,7 +86,7 @@ public class ModelCPropagationTests
     // A demanded failing right-hand side fails at its first demand, and the run ends there.
     [InlineData("p, q = trace(1) / 0, 2\nI(f) = 0\nI(p), q, p", "err DivisionByZero", "trace(1)")]
     // One successful evaluation per activation; every target is a projection of it.
-    [InlineData("p, q = tick(), 5\np, q, p, p + q", "ok S[1, 5, 1, 6]", "tick#1")]
+    [InlineData("p, q = tock(), 5\np, q, p, p + q", "ok S[1, 5, 1, 6]", "tock#1")]
     public async Task Deconstruction_RunsItsRightHandSideOnTheFirstTargetDemand(string source, string outcome, string hostCalls)
         => AssertOutcome(await OnEveryRouteAsync(source), outcome, hostCalls);
 
@@ -94,16 +94,16 @@ public class ModelCPropagationTests
 
     [Theory]
     // An empty collection never invokes, so the forwarded callback is never projected or demanded.
-    [InlineData("Through(xs, f) = map(xs, f)\nThrough([], tick())", "ok L[]", "")]
-    // Projecting a cell that has no callable identity demands no VALUE: the tick never runs.
-    [InlineData("Through(xs, f) = map(xs, f)\nThrough([1], tick())", "err NotAnAlgorithm", "")]
+    [InlineData("Through(xs, f) = map(xs, f)\nThrough([], tock())", "ok L[]", "")]
+    // Projecting a cell that has no callable identity demands no VALUE: the tock never runs.
+    [InlineData("Through(xs, f) = map(xs, f)\nThrough([1], tock())", "err NotAnAlgorithm", "")]
     // The collection is demanded first; the callback is projected at its first invocation.
     [InlineData("map([trace(1), 2], 5)", "err NotAnAlgorithm", "trace(1)")]
     // Invoking is fresh and passing reads nothing. CACHE-PUB-1: the first invocation establishes A's
     // entry, which Apply's demand and the bare read reuse (formerly S[1, 2, 4, 3] over three ticks,
     // when A's first property read was Apply's demand).
-    [InlineData("A = tick()\nCall0(f) = f()\nApply(f) = f + 1\nCall0(A), Call0(A), Apply(A), A", "ok S[1, 2, 2, 1]",
-        "tick#1 | tick#2")]
+    [InlineData("A = tock()\nCall0(f) = f()\nApply(f) = f + 1\nCall0(A), Call0(A), Apply(A), A", "ok S[1, 2, 2, 1]",
+        "tock#1 | tock#2")]
     public async Task CallbackAndInvokedArguments_AreProjectedOnlyWhenInvoked(string source, string outcome, string hostCalls)
         => AssertOutcome(await OnEveryRouteAsync(source), outcome, hostCalls);
 

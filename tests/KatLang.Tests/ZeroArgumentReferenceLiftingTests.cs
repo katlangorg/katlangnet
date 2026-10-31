@@ -29,7 +29,7 @@ namespace KatLang.Tests;
 /// 2^k times. Both halves now read ONE rule, <c>ParameterPattern.AcceptsZeroSuppliedSlots</c>
 /// (<c>ImplicitArgumentResolver.RequiresSuppliedArguments</c> is its complement).</para>
 ///
-/// <para>The evidence is deterministic host instrumentation (<c>tick</c> counts body executions)
+/// <para>The evidence is deterministic host instrumentation (<c>tock</c> counts body executions)
 /// and seeded random streams, on six execution routes: the public sync and async engines, the
 /// async twin (an async host operation present), the generic and optimized evaluators, and the
 /// forced async twin. Lean: the specification predicate <c>liftsBareValueReference</c>, the
@@ -71,23 +71,23 @@ public class ZeroArgumentReferenceLiftingTests
 
         public Result Tick()
         {
-            var tick = Interlocked.Increment(ref _ticks);
+            var tock = Interlocked.Increment(ref _ticks);
             lock (Calls)
-                Calls.Add($"tick#{tick}");
-            return new Result.Atom((Decimal128)tick);
+                Calls.Add($"tock#{tock}");
+            return new Result.Atom((Decimal128)tock);
         }
     }
 
     private static HostOperations OperationsFor(HostLog log, bool withAsyncOperation)
         => withAsyncOperation
             ? HostOperations.Create(
-                HostOperation.CreateAsync("tick", async (_, _) => { await Task.Yield(); return log.Tick(); }),
+                HostOperation.CreateAsync("tock", async (_, _) => { await Task.Yield(); return log.Tick(); }),
                 HostOperation.CreateAsync("pause", async (_, _) =>
                 {
                     await Task.Yield();
                     return new Result.Atom((Decimal128)0);
                 }))
-            : HostOperations.Create(HostOperation.Create("tick", (_, _) => log.Tick()));
+            : HostOperations.Create(HostOperation.Create("tock", (_, _) => log.Tick()));
 
     private sealed record Observation(string Kind, string? Value, IReadOnlyList<string> Codes, IReadOnlyList<string> HostCalls)
     {
@@ -198,14 +198,14 @@ public class ZeroArgumentReferenceLiftingTests
             .ToArray();
 
     /// <summary>A collecting-only callable whose every body execution is one host call.</summary>
-    private const string Only = "Only(*xs) = tick()";
+    private const string Only = "Only(*xs) = tock()";
 
     // ── 1. The rule's own examples ───────────────────────────────────────────────────
 
     /// <summary>Two bare reads of a collecting-only callable share ONE evaluation.</summary>
     [Fact]
     public async Task BareReads_ShareOneEvaluation()
-        => AssertOk(await OnEveryRouteAsync($"{Only}\nOnly, Only"), "S[1, 1]", "tick#1");
+        => AssertOk(await OnEveryRouteAsync($"{Only}\nOnly, Only"), "S[1, 1]", "tock#1");
 
     /// <summary>
     /// Both operands of an operator read the SAME cached evaluation. Before Q-03 each operand
@@ -214,10 +214,10 @@ public class ZeroArgumentReferenceLiftingTests
     [Fact]
     public async Task OperatorOperands_ReadTheSameCachedEvaluation()
     {
-        AssertOk(await OnEveryRouteAsync($"{Only}\nOnly + Only"), "2", "tick#1");
-        AssertOk(await OnEveryRouteAsync($"{Only}\nOnly == Only"), "true", "tick#1");
-        AssertOk(await OnEveryRouteAsync($"{Only}\nOnly <= Only < Only + 1"), "true", "tick#1");
-        AssertOk(await OnEveryRouteAsync($"{Only}\nOnly * 10 + Only, -Only"), "S[11, -1]", "tick#1");
+        AssertOk(await OnEveryRouteAsync($"{Only}\nOnly + Only"), "2", "tock#1");
+        AssertOk(await OnEveryRouteAsync($"{Only}\nOnly == Only"), "true", "tock#1");
+        AssertOk(await OnEveryRouteAsync($"{Only}\nOnly <= Only < Only + 1"), "true", "tock#1");
+        AssertOk(await OnEveryRouteAsync($"{Only}\nOnly * 10 + Only, -Only"), "S[11, -1]", "tock#1");
     }
 
     /// <summary>
@@ -229,23 +229,23 @@ public class ZeroArgumentReferenceLiftingTests
     [Fact]
     public async Task ExplicitCalls_StayFresh_AndNeverTouchTheEntry()
     {
-        AssertOk(await OnEveryRouteAsync($"{Only}\nOnly, Only(), Only"), "S[1, 2, 1]", "tick#1", "tick#2");
+        AssertOk(await OnEveryRouteAsync($"{Only}\nOnly, Only(), Only"), "S[1, 2, 1]", "tock#1", "tock#2");
         // The first explicit zero-supply call establishes the entry (CACHE-PUB-1; formerly the first
         // bare read evaluated again: S[1, 2, 3, 2]); the second call is fresh and replaces nothing.
         AssertOk(
             await OnEveryRouteAsync($"{Only}\nOnly(), Only, Only(), Only"),
             "S[1, 1, 2, 1]",
-            "tick#1", "tick#2");
+            "tock#1", "tock#2");
         // A call WITH arguments is equally fresh and equally separate from the entry.
         AssertOk(
             await OnEveryRouteAsync($"{Only}\nOnly(1, 2), Only, Only(3), Only"),
             "S[1, 2, 3, 2]",
-            "tick#1", "tick#2", "tick#3");
+            "tock#1", "tock#2", "tock#3");
         // In a lifting position the explicit call is still the only fresh evaluation.
         AssertOk(
             await OnEveryRouteAsync($"{Only}\nOnly + Only() + Only"),
             "4",
-            "tick#1", "tick#2");
+            "tock#1", "tock#2");
     }
 
     /// <summary>
@@ -329,10 +329,10 @@ public class ZeroArgumentReferenceLiftingTests
     {
         var prelude = defs.Length == 0 ? "" : defs + "\n";
         var collecting = await OnEveryRouteAsync($"{Only}\n{prelude}Only, {consumer}");
-        var zeroParameter = await OnEveryRouteAsync($"Only = tick()\n{prelude}Only, {consumer}");
+        var zeroParameter = await OnEveryRouteAsync($"Only = tock()\n{prelude}Only, {consumer}");
 
         Assert.Equal(zeroParameter.ToString(), collecting.ToString());
-        Assert.Equal(["tick#1"], collecting.HostCalls);
+        Assert.Equal(["tock#1"], collecting.HostCalls);
     }
 
     /// <summary>
@@ -388,9 +388,9 @@ public class ZeroArgumentReferenceLiftingTests
     [Fact]
     public async Task Selection_FirstAndIndex_ObserveTheSameEvaluation()
         => AssertOk(
-            await OnEveryRouteAsync("Pair(*xs) = tick(), tick()\nfirst(Pair), Pair[0], last(Pair), Pair[1], Pair"),
+            await OnEveryRouteAsync("Pair(*xs) = tock(), tock()\nfirst(Pair), Pair[0], last(Pair), Pair[1], Pair"),
             "S[1, 1, 2, 2, S[1, 2]]",
-            "tick#1", "tick#2");
+            "tock#1", "tock#2");
 
     [Theory]
     [InlineData(5L)]
@@ -411,19 +411,19 @@ public class ZeroArgumentReferenceLiftingTests
     [Fact]
     public async Task FormulaChain_EvaluatesTheBaseOnce()
     {
-        var chain = new System.Text.StringBuilder("Only(*xs) = tick() * 0 + 1\nA1 = Only + Only\n");
+        var chain = new System.Text.StringBuilder("Only(*xs) = tock() * 0 + 1\nA1 = Only + Only\n");
         for (var level = 2; level <= 12; level++)
             chain.Append($"A{level} = A{level - 1} + A{level - 1}\n");
         chain.Append("A12");
 
-        AssertOk(await OnEveryRouteAsync(chain.ToString()), "4096", "tick#1");
+        AssertOk(await OnEveryRouteAsync(chain.ToString()), "4096", "tock#1");
 
         // The same through strict Math arguments and list elements.
         AssertOk(
             await OnEveryRouteAsync(
-                "Only(*xs) = tick() * 0 + 1\nB1 = abs(Only) + [Only][0]\nB2 = abs(B1) + [B1][0]\nB3 = abs(B2) + [B2][0]\nB3"),
+                "Only(*xs) = tock() * 0 + 1\nB1 = abs(Only) + [Only][0]\nB2 = abs(B1) + [B1][0]\nB3 = abs(B2) + [B2][0]\nB3"),
             "8",
-            "tick#1");
+            "tock#1");
     }
 
     // ── 4. Lifting is untouched where arguments are REQUIRED ─────────────────────────
@@ -447,9 +447,9 @@ public class ZeroArgumentReferenceLiftingTests
         AssertOk(await OnEveryRouteAsync("G((*xs)) = xs.count\nUse(*items) = G + 0\nUse(1, 2)"), "2");
         // Each lifted reference is a fresh call of a callable that requires its argument.
         AssertOk(
-            await OnEveryRouteAsync("Twice(x) = x + tick()\nK = Twice + Twice\nK(10)"),
+            await OnEveryRouteAsync("Twice(x) = x + tock()\nK = Twice + Twice\nK(10)"),
             "23",
-            "tick#1", "tick#2");
+            "tock#1", "tock#2");
 
         var root = SourceProvenance.ParseValid("Inc(x) = x + 1\nK = Inc * 2\nK(4)").Root;
         var k = Assert.IsType<Algorithm.User>(Assert.Single(root.Properties, static p => p.Name == "K").Value);
@@ -481,11 +481,11 @@ public class ZeroArgumentReferenceLiftingTests
     public async Task ZeroParameterProperty_AVersusACall_IsUnchanged()
     {
         AssertOk(
-            await OnEveryRouteAsync("A = tick()\nA, A(), A, A + A, [A]"),
+            await OnEveryRouteAsync("A = tock()\nA, A(), A, A + A, [A]"),
             "S[1, 2, 1, 2, L[1]]",
-            "tick#1", "tick#2");
+            "tock#1", "tock#2");
         // CACHE-PUB-1: the explicit call establishes the empty entry (formerly S[1, 2]).
-        AssertOk(await OnEveryRouteAsync("A = tick()\nA(), A"), "S[1, 1]", "tick#1");
+        AssertOk(await OnEveryRouteAsync("A = tock()\nA(), A"), "S[1, 1]", "tock#1");
     }
 
     // ── 6. Aliases ───────────────────────────────────────────────────────────────────
@@ -520,12 +520,12 @@ public class ZeroArgumentReferenceLiftingTests
         AssertOk(
             await OnEveryRouteAsync($"{Only}\nAlias = Only\nAlias, Alias + Alias, Only"),
             "S[1, 2, 1]",
-            "tick#1");
+            "tock#1");
         // A FORMULA over Only is a value read of Only's entry: one evaluation in all.
         AssertOk(
             await OnEveryRouteAsync($"{Only}\nFormula = Only + 0\nFormula, Formula + Formula, Only"),
             "S[1, 2, 1]",
-            "tick#1");
+            "tock#1");
     }
 
     // ── 7. Closed lists, scopes, opens, dot calls, loops ─────────────────────────────
@@ -540,7 +540,7 @@ public class ZeroArgumentReferenceLiftingTests
     [Fact]
     public async Task ClosedLists_ReadTheCachedValue_AndAreNeverRejectedForIt()
     {
-        AssertOk(await OnEveryRouteAsync($"{Only}\nF(xs) = Only + 1\nF(10), F(20)"), "S[2, 2]", "tick#1");
+        AssertOk(await OnEveryRouteAsync($"{Only}\nF(xs) = Only + 1\nF(10), F(20)"), "S[2, 2]", "tock#1");
         AssertOk(await OnEveryRouteAsync("Cnt(*ys) = ys.count\nH(k) = abs(Cnt) + k\nH(5)"), "5");
         AssertOk(await OnEveryRouteAsync("Cnt(*ys) = ys.count\nH(k) = Math.Abs(Cnt) + Cnt.abs + k\nH(5)"), "5");
     }
@@ -555,17 +555,17 @@ public class ZeroArgumentReferenceLiftingTests
     public async Task NestedScopes_FollowTheOrdinaryCacheScope()
     {
         AssertOk(
-            await OnEveryRouteAsync("F(v) = {\n  Inner(*xs) = tick()\n  Inner + Inner + v\n}\nF(0), F(10)"),
+            await OnEveryRouteAsync("F(v) = {\n  Inner(*xs) = tock()\n  Inner + Inner + v\n}\nF(0), F(10)"),
             "S[2, 12]",
-            "tick#1");
+            "tock#1");
         AssertOk(
-            await OnEveryRouteAsync("F(v) = {\n  Inner(*xs) = tick() + v\n  Inner + Inner\n}\nF(0), F(10)"),
+            await OnEveryRouteAsync("F(v) = {\n  Inner(*xs) = tock() + v\n  Inner + Inner\n}\nF(0), F(10)"),
             "S[2, 24]",
-            "tick#1", "tick#2");
+            "tock#1", "tock#2");
         AssertOk(
             await OnEveryRouteAsync($"{Only}\nNested = Only + Only\nNested, Only + Only, Nested"),
             "S[2, 2, 2]",
-            "tick#1");
+            "tock#1");
     }
 
     /// <summary>Lexical, opened and structural spellings of one binding share its one entry.</summary>
@@ -573,9 +573,9 @@ public class ZeroArgumentReferenceLiftingTests
     public async Task LexicalOpenedAndStructuralReads_ShareOneEntry()
         => AssertOk(
             await OnEveryRouteAsync(
-                "open Lib\nLib = {\n  public Only(*xs) = tick()\n}\nOnly + Only, Lib.Only + 0, Lib.Only[0], abs(Lib.Only)"),
+                "open Lib\nLib = {\n  public Only(*xs) = tock()\n}\nOnly + Only, Lib.Only + 0, Lib.Only[0], abs(Lib.Only)"),
             "S[2, 1, 1, 1]",
-            "tick#1");
+            "tock#1");
 
     /// <summary>
     /// Dot-call paths agree with their plain spellings: the must-selected Math fallback
@@ -587,7 +587,7 @@ public class ZeroArgumentReferenceLiftingTests
         => AssertOk(
             await OnEveryRouteAsync($"{Only}\nTwice(v) = v + v\nOnly.Twice, Twice(Only), Only.abs, abs(Only), (Only + 0).abs"),
             "S[2, 2, 1, 1, 1]",
-            "tick#1");
+            "tock#1");
 
     /// <summary>
     /// A loop step that reads the callable reads the cached value on every iteration, on the
@@ -596,9 +596,9 @@ public class ZeroArgumentReferenceLiftingTests
     [Fact]
     public async Task LoopSteps_ReadTheCachedValue()
     {
-        AssertOk(await OnEveryRouteAsync($"Step = {{s + Only}}\n{Only}\nrepeat(Step(0), 3)"), "3", "tick#1");
-        AssertOk(await OnEveryRouteAsync($"{Only}\nStep = s + Only\nrepeat(Step(0), 3)"), "3", "tick#1");
-        AssertOk(await OnEveryRouteAsync($"Step = {{s + Only, s + Only < 3}}\n{Only}\nwhile(Step(0))"), "2", "tick#1");
+        AssertOk(await OnEveryRouteAsync($"Step = {{s + Only}}\n{Only}\nrepeat(Step(0), 3)"), "3", "tock#1");
+        AssertOk(await OnEveryRouteAsync($"{Only}\nStep = s + Only\nrepeat(Step(0), 3)"), "3", "tock#1");
+        AssertOk(await OnEveryRouteAsync($"Step = {{s + Only, s + Only < 3}}\n{Only}\nwhile(Step(0))"), "2", "tock#1");
     }
 
     // ── 8. Collectors: a failed read is that read's failure ──────────────────────────
@@ -620,8 +620,8 @@ public class ZeroArgumentReferenceLiftingTests
     public async Task Collectors_SurfaceTheGenuineFailureOfAZeroArgumentCallable(string use)
     {
         const string support = "Coll(*ys) = ys\nMid(a, *m, z) = m\n";
-        var collecting = await OnEveryRouteAsync($"Bad(*xs) = tick() / 0\n{support}{use}");
-        var zeroParameter = await OnEveryRouteAsync($"Bad = tick() / 0\n{support}{use}");
+        var collecting = await OnEveryRouteAsync($"Bad(*xs) = tock() / 0\n{support}{use}");
+        var zeroParameter = await OnEveryRouteAsync($"Bad = tock() / 0\n{support}{use}");
 
         AssertFails(collecting, KatLangErrorCode.DivisionByZero);
         Assert.Equal(zeroParameter.Codes, collecting.Codes);
@@ -646,10 +646,10 @@ public class ZeroArgumentReferenceLiftingTests
     public async Task CollectorForwarding_PreservesWholeValuesAndTheBareReadEntry()
         => AssertOk(
             await OnEveryRouteAsync(
-                "Pair(*xs) = tick(), tick()\nColl(*ys) = ys\nForward(*ys) = Coll(ys*)\n"
+                "Pair(*xs) = tock(), tock()\nColl(*ys) = ys\nForward(*ys) = Coll(ys*)\n"
                 + "Coll(Pair), Forward(Pair), Pair.Coll, Coll(Pair()), Coll(Pair)"),
             "S[L[S[1, 2]], L[S[1, 2]], L[S[1, 2]], L[S[3, 4]], L[S[1, 2]]]",
-            "tick#1", "tick#2", "tick#3", "tick#4");
+            "tock#1", "tock#2", "tock#3", "tock#4");
 
     [Theory]
     [InlineData("Coll(Bad)")]
@@ -660,36 +660,36 @@ public class ZeroArgumentReferenceLiftingTests
     public async Task CollectorFailures_KeepOneAttemptThroughNestedForwarding(string use)
     {
         var result = await OnEveryRouteAsync(
-            "Bad(*xs) = tick() / 0\nColl(*ys) = ys\nForward(f) = Coll(f)\nRelay(g) = Forward(g)\n" + use);
+            "Bad(*xs) = tock() / 0\nColl(*ys) = ys\nForward(f) = Coll(f)\nRelay(g) = Forward(g)\n" + use);
         AssertFails(result, KatLangErrorCode.DivisionByZero);
-        Assert.Equal(["tick#1"], result.HostCalls);
+        Assert.Equal(["tock#1"], result.HostCalls);
     }
 
     [Fact]
     public async Task ShadowedCollectingBindings_HaveSeparateEntries()
         => AssertOk(
             await OnEveryRouteAsync(
-                $"{Only}\nBlock = {{ Only(*xs) = tick()\nOnly + Only, Only(), Only }}\nOnly, Block, Only"),
+                $"{Only}\nBlock = {{ Only(*xs) = tock()\nOnly + Only, Only(), Only }}\nOnly, Block, Only"),
             "S[1, S[4, 3, 2], 1]",
-            "tick#1", "tick#2", "tick#3");
+            "tock#1", "tock#2", "tock#3");
 
     [Fact]
     public async Task ClauseBodies_ReadOneValue_WhileInvokingSlotsStillCall()
     {
         AssertOk(
             await OnEveryRouteAsync($"{Only}\nF(0) = Only + Only\nF(n) = n + Only\nF(0), F(10), Only"),
-            "S[2, 11, 1]", "tick#1");
+            "S[2, 11, 1]", "tock#1");
         AssertOk(
             await OnEveryRouteAsync($"{Only}\nOnly, map([7, 8], Only), Only"),
-            "S[1, L[2, 3], 1]", "tick#1", "tick#2", "tick#3");
+            "S[1, L[2, 3], 1]", "tock#1", "tock#2", "tock#3");
     }
 
     [Fact]
     public async Task ExplicitStructuralCall_BypassesTheSharedOpenedEntry()
         => AssertOk(
             await OnEveryRouteAsync(
-                "open Lib\nLib = { public Only(*xs) = tick() }\nOnly, Lib.Only(), Only, Lib.Only"),
-            "S[1, 2, 1, 1]", "tick#1", "tick#2");
+                "open Lib\nLib = { public Only(*xs) = tock() }\nOnly, Lib.Only(), Only, Lib.Only"),
+            "S[1, 2, 1, 1]", "tock#1", "tock#2");
 
     // ── Helpers ──────────────────────────────────────────────────────────────────────
 

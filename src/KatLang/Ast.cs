@@ -118,8 +118,12 @@ public sealed record InterpolationLink(Expr Hole, string Text);
 /// to right; the current callback item is a selected value under the same
 /// value-boundary rule as <c>S[i]</c>, <c>reducer(element, accumulator)</c> must return exactly
 /// one next accumulator value, and sequence-value accumulators are preserved whole.
+/// <c>tick()</c> is the zero-argument diagnostic counter: every actual execution
+/// increments the run's own counter (zero when the run starts) and returns the new
+/// value — 1, 2, 3, … — as one number; a bare <c>tick</c> is its callable reference,
+/// and demanding it as a value requires the explicit invocation <c>tick()</c>.
 /// </summary>
-public enum BuiltinId { @if, @while, @repeat, @atoms, @range, @filter, @map, @order, @orderDesc, @count, @contains, @first, @last, @distinct, @take, @skip, @min, @max, @sum, @avg, @reduce }
+public enum BuiltinId { @if, @while, @repeat, @atoms, @range, @filter, @map, @order, @orderDesc, @count, @contains, @first, @last, @distinct, @take, @skip, @min, @max, @sum, @avg, @reduce, @tick }
 
 // ── Source span: SourceSpan.cs (SourcePosition, SourceSpan) ──────────────────
 

@@ -395,6 +395,10 @@ internal static class BuiltinRegistry
         Sequence(BuiltinId.@sum, SumSequenceMetadata),
         Sequence(BuiltinId.@avg, AvgSequenceMetadata),
         Sequence(BuiltinId.@reduce, ReduceSequenceMetadata),
+        // The run-local diagnostic counter: an ordinary fixed-arity builtin whose arity is ZERO, so
+        // only the explicit invocation `tick()` executes it (EvalBuiltinValueCounted refuses a bare
+        // value demand) and every supplied argument is the ordinary arity rejection.
+        Fixed(BuiltinId.@tick),
     ];
 
     private static readonly IReadOnlyDictionary<BuiltinId, BuiltinDescriptor> BuiltinsById =

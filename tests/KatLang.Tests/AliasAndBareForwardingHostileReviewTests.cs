@@ -103,8 +103,8 @@ public class AliasAndBareForwardingHostileReviewTests
         // Read bare, an alias is its TARGET's zero-argument binding (OD-E, M4★), read once however often
         // and through however many links it is used (formerly each link had an entry of its own:
         // S[2, 4] over two ticks; the fresh-call rows are in AliasAndBareForwardingTests).
-        { "bare-alias-is-read-once", "Only(*xs) = tick()\nA = Only\nA + A + A", "ok 3 [tick#1]" },
-        { "bare-alias-chain-is-read-once", "Only(*xs) = tick()\nA = Only\nB = A\nB + B, A + A", "ok S[2, 2] [tick#1]" },
+        { "bare-alias-is-read-once", "Only(*xs) = tock()\nA = Only\nA + A + A", "ok 3 [tock#1]" },
+        { "bare-alias-chain-is-read-once", "Only(*xs) = tock()\nA = Only\nB = A\nB + B, A + A", "ok S[2, 2] [tock#1]" },
 
         // ── Bare forwarding is by name ────────────────────────────────────────────────────
         { "forwarding-with-a-repeated-list", "F(x, y) = x * 10 + y\nG(x, x, y) = F\nG(3, 3, 4)", "ok 34" },

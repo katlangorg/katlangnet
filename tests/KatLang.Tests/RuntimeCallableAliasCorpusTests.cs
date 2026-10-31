@@ -77,10 +77,10 @@ public class RuntimeCallableAliasCorpusTests
         new("A01-callable", "Use(f) = {\n  A = f\n  A(9)\n}\nUse(Square)", "ok 81", "9", Was: "err ArityMismatch"),
         new("A02-value-only", "Use(f) = {\n  A = f\n  A, A(9)\n}\nUse(5)", "err ArityMismatch", "", Diagnostic: "while evaluating call to Use: Callable `A` expects 0 arguments, but was called with 1 argument. @[7:6, 7:10)"),
         new("A02b-value-only-bare", "Use(f) = {\n  A = f\n  A + 1\n}\nUse(5)", "ok 6", ""),
-        new("A03-zero-param-property", "Z = tick()\nUse(f) = {\n  A = f\n  A, A, Z\n}\nUse(Z)", "ok (1, 1, 1)", "", Ticks: 1),
-        new("A03b-zero-param-property-call", "Z = tick()\nUse(f) = {\n  A = f\n  A(9)\n}\nUse(Z)", "err ArityMismatch", "", Diagnostic: "while evaluating call to Use: Callable `A` expects 0 arguments, but was called with 1 argument. @[8:3, 8:7)"),
-        new("A04-collecting-F10", "Only(*xs) = tick()\nUse(f) = {\n  A = f\n  A, A(), A()\n}\nUse(Only)", "ok (1, 2, 3)", "", Ticks: 3, Was: "ok (1, 1, 1) ticks 1"),
-        new("A04b-collecting-static-oracle", "Only(*xs) = tick()\nA = Only\nA, A(), A()", "ok (1, 2, 3)", "", Ticks: 3),
+        new("A03-zero-param-property", "Z = tock()\nUse(f) = {\n  A = f\n  A, A, Z\n}\nUse(Z)", "ok (1, 1, 1)", "", Ticks: 1),
+        new("A03b-zero-param-property-call", "Z = tock()\nUse(f) = {\n  A = f\n  A(9)\n}\nUse(Z)", "err ArityMismatch", "", Diagnostic: "while evaluating call to Use: Callable `A` expects 0 arguments, but was called with 1 argument. @[8:3, 8:7)"),
+        new("A04-collecting-F10", "Only(*xs) = tock()\nUse(f) = {\n  A = f\n  A, A(), A()\n}\nUse(Only)", "ok (1, 2, 3)", "", Ticks: 3, Was: "ok (1, 1, 1) ticks 1"),
+        new("A04b-collecting-static-oracle", "Only(*xs) = tock()\nA = Only\nA, A(), A()", "ok (1, 2, 3)", "", Ticks: 3),
         new("A05-family", "Describe(0) = 'zero'\nDescribe(n) = 'other'\nUse(f) = {\n  A = f\n  A(0), A(5)\n}\nUse(Describe)", "ok ('zero', 'other')", "", Was: "err ArityMismatch"),
         new("A06-bare-callable", "Use(f) = {\n  A = f\n  A\n}\nUse(Square)", "err ArityMismatch", "", Diagnostic: "while evaluating call to Use: Property 'Square' expects 1 parameter, but was called with 0 arguments. @[9:5, 9:11)"),
         new("A07-inferred-not-alias", "Use = {\n  A = f\n  A(9)\n}\nUse", "ok 9", ""),
@@ -96,8 +96,8 @@ public class RuntimeCallableAliasCorpusTests
         new("B07b-absent-callee-direct", "Mk(g) = Capture(g(1))\nR = Mk(5)\nR.Algorithm(9)", "err NotAnAlgorithm", "", Diagnostic: "while evaluating dotCall .Algorithm of R: Not an algorithm: captured callee @[7:1, 7:15)"),
         new("B08-non-reference", "R = 5\nA = R.Algorithm\nA(9)", "err TypeMismatch", "", Diagnostic: "while evaluating call to A: Type mismatch: `Algorithm` requires a call reference, got numeric value 5 @[7:1, 7:2)", Was: "err ArityMismatch"),
         new("B08b-non-reference-bare", "R = 5\nA = R.Algorithm\nA", "err TypeMismatch", "", Diagnostic: "while evaluating dotCall .Algorithm of R: Type mismatch: `Algorithm` requires a call reference, got numeric value 5 @[6:5, 6:16)"),
-        new("B10-computed-receiver", "Only(*xs) = tick()\nMk(n) = if(trace(n) > 0, Capture(Only(n)), 0)\nA = Mk(5).Algorithm\nA, A", "ok (1, 1)", "5", Ticks: 1),
-        new("B10b-computed-receiver-supplied", "Only(*xs) = tick()\nMk(n) = if(trace(n) > 0, Capture(Only(n)), 0)\nUse(f) = f, f(), Apply(f, 1)\nUse(Mk(5).Algorithm)", "ok (1, 2, 3)", "5", Ticks: 3),
+        new("B10-computed-receiver", "Only(*xs) = tock()\nMk(n) = if(trace(n) > 0, Capture(Only(n)), 0)\nA = Mk(5).Algorithm\nA, A", "ok (1, 1)", "5", Ticks: 1),
+        new("B10b-computed-receiver-supplied", "Only(*xs) = tock()\nMk(n) = if(trace(n) > 0, Capture(Only(n)), 0)\nUse(f) = f, f(), Apply(f, 1)\nUse(Mk(5).Algorithm)", "ok (1, 2, 3)", "5", Ticks: 3),
         new("B09-param-rooted-algorithm", "Use(r) = {\n  A = r.Algorithm\n  A(9)\n}\nUse(Capture(Square(5)))", "ok 81", "9", Was: "err ArityMismatch"),
         new("C01-declared-member-lexical", "G(o) = o + 100\nBox = { G(x) = x * 10 }\nUse(b) = {\n  A = b.G\n  A, A(3)\n}\nUse(Box)", "err ArityMismatch", "", Diagnostic: "while evaluating call to Use: Property 'G' on `b` expects 1 parameter, but was called with 0 arguments. @[8:7, 8:10)"),
         new("C02-runtime-selected-lexical", "G(o) = o + 100\nBox = { G(x) = x * 10 }\nUse(b) = {\n  A = b.G\n  A(3)\n}\nUse(Box), Use(5)", "err ArityMismatch", "", Diagnostic: "while evaluating call to Use: Callable `A` expects 0 arguments, but was called with 1 argument. @[9:3, 9:7)"),
@@ -107,8 +107,8 @@ public class RuntimeCallableAliasCorpusTests
         new("C06-shadowed-G", "G(o) = o + 100\nUse(b) = {\n  G(o) = o + 200\n  A = b.G\n  A\n}\nUse(5)", "ok 205", ""),
         new("C06b-shadow-at-consumer", "G(o) = o + 100\nUse(b) = {\n  A = b.G\n  Box2 = { G(o) = o + 300\n  K = A }\n  Box2.K\n}\nUse(5)", "ok 105", ""),
         new("C07-missing-runtime-member", "G(o) = 7\nNoG = { K = 1\n 5 }\nUse(b) = {\n  A = b.G\n  A, A(3)\n}\nUse(NoG)", "err ArityMismatch", "", Diagnostic: "while evaluating call to Use: Callable `A` expects 0 arguments, but was called with 1 argument. @[10:6, 10:10)"),
-        new("C08-value-vs-callable", "G(o) = o\nBox = { G(*xs) = tick() }\nUse(b) = {\n  A = b.G\n  A, A(), A()\n}\nUse(Box)", "ok (1, 2, 3)", "", Ticks: 3, Was: "ok (1, 1, 1) ticks 1"),
-        new("C08b-static-oracle", "Box = { G(*xs) = tick() }\nA = Box.G\nA, A(), A()", "ok (1, 2, 3)", "", Ticks: 3),
+        new("C08-value-vs-callable", "G(o) = o\nBox = { G(*xs) = tock() }\nUse(b) = {\n  A = b.G\n  A, A(), A()\n}\nUse(Box)", "ok (1, 2, 3)", "", Ticks: 3, Was: "ok (1, 1, 1) ticks 1"),
+        new("C08b-static-oracle", "Box = { G(*xs) = tock() }\nA = Box.G\nA, A(), A()", "ok (1, 2, 3)", "", Ticks: 3),
         new("C09-effects", "G(o) = o\nBox = { G(x) = trace(x) * 10 }\nUse(b) = {\n  A = b.G\n  A(3), A(4)\n}\nUse(Box)", "ok (30, 40)", "3,4", Was: "err ArityMismatch"),
         new("C09b-receiver-failure", "G(o) = o + 1\nUse(b) = {\n  A = b.G\n  A, A(3)\n}\nUse(1 / 0)", "err DivisionByZero", "", Diagnostic: "while evaluating call to Use: while evaluating dotCall .G of b: Division by zero @[10:5, 10:10)"),
         new("C10-supplied-path-control", "Box = { G(x) = x * 10 }\nUse(b) = Apply(b.G, 3)\nUse(Box)", "ok 30", ""),
@@ -157,8 +157,8 @@ public class RuntimeCallableAliasCorpusTests
         new("F07d-navigate-direct-param", "Lib(*xs) = {\n  public K = 99\n  0\n}\nK(v) = 7\nNavigate(f) = f.K\nUse(f) = Navigate(f)\nUse(Lib)", "ok 99", ""),
         new("F07s-navigate-static-oracle", "Lib(*xs) = {\n  public K = 99\n  0\n}\nK(v) = 7\nNavigate(f) = f.K\nA = Lib\nNavigate(A)", "ok 99", ""),
         new("F07r-navigate-runtime-ref", "Lib(*xs) = {\n  public K = 99\n  0\n}\nK(v) = 7\nNavigate(f) = f.K\nR = Capture(Lib(1))\nA = R.Algorithm\nNavigate(A), Navigate(R.Algorithm)", "ok (99, 99)", "", Was: "ok (7, 99)"),
-        new("F08-twice-zero-call", "Only(*xs) = tick()\nTwice(f) = f(), f()\nUse(f) = {\n  A = f\n  Twice(A)\n}\nUse(Only)", "ok (1, 2)", "", Ticks: 2, Was: "ok (1, 1) ticks 1"),
-        new("F08s-twice-static-oracle", "Only(*xs) = tick()\nTwice(f) = f(), f()\nA = Only\nTwice(A)", "ok (1, 2)", "", Ticks: 2),
+        new("F08-twice-zero-call", "Only(*xs) = tock()\nTwice(f) = f(), f()\nUse(f) = {\n  A = f\n  Twice(A)\n}\nUse(Only)", "ok (1, 2)", "", Ticks: 2, Was: "ok (1, 1) ticks 1"),
+        new("F08s-twice-static-oracle", "Only(*xs) = tock()\nTwice(f) = f(), f()\nA = Only\nTwice(A)", "ok (1, 2)", "", Ticks: 2),
         new("F06-two-edges", "Thousand(v) = v * 1000\nUse(b) = {\n  A = b.H.G\n  A(Thousand, Thousand)\n}\nUse(5)", "err ArityMismatch", "", Diagnostic: "while evaluating call to Use: Callable `A` expects 0 arguments, but was called with 2 arguments. @[8:3, 8:24)", Was: "M4★ (OD-B): ok 5000000"),
         new("G01-absent-callable", "Use(f) = {\n  A = f\n  A(9)\n}\nUse(5)", "err ArityMismatch", "", Diagnostic: "while evaluating call to Use: Callable `A` expects 0 arguments, but was called with 1 argument. @[7:3, 7:7)"),
         new("G02-projection-failure", "Bad = min([])\nUse(f) = {\n  A = f\n  A(9)\n}\nUse(Bad.Algorithm)", "err IllegalInEval", "", Diagnostic: "while evaluating call to Use: while evaluating call to A: while evaluating call to min: Illegal in eval: min requires a non-empty collection @[5:7, 5:14)", Was: "err ArityMismatch"),
@@ -183,7 +183,7 @@ public class RuntimeCallableAliasCorpusTests
         new("V07-two-runtime-links", "R = Capture(Square(5))\nA = R.Algorithm\nB = A\nB(9)", "ok 81", "9", Was: "err ArityMismatch"),
         new("V08-value-only-direct-alias", "Use(f) = {\n A = f\n A, A(), A()\n}\nUse(5)", "ok (5, 5, 5)", ""),
         new("V09-runtime-cycle-two-links", "A = R.Algorithm\nB = A\nR = Capture(B(1))\nB(2)", "err DemandCycle", "", Diagnostic: "while evaluating call to B: Demand cycle: the argument depends on its own value while it is being evaluated. @[5:5, 5:16)", Was: "err ArityMismatch"),
-        new("V10-chain-known-signature-cache", "Only(*xs) = tick()\nUse(f) = {\n A = f\n B = A\n A, B, B()\n}\nUse(Only)", "ok (1, 1, 2)", "", Ticks: 2, Was: "ok (1, 1, 1) ticks 1"),
+        new("V10-chain-known-signature-cache", "Only(*xs) = tock()\nUse(f) = {\n A = f\n B = A\n A, B, B()\n}\nUse(Only)", "ok (1, 1, 2)", "", Ticks: 2, Was: "ok (1, 1, 1) ticks 1"),
         new("V11-structural-supply-async", "R = if(aflag(), Capture(Square(5)), 0)\nBox = { A = R.Algorithm }\nApply(Box.A, 9)", "ok 81", "9", Was: "err ArityMismatch"),
         new("V12-param-structural-supply-async", "R = if(aflag(), Capture(Square(5)), 0)\nBox = { A = R.Algorithm }\nUse(b) = Apply(b.A, 9)\nUse(Box)", "ok 81", "9", Was: "err ArityMismatch"),
         new("V13-structural-map-async", "R = if(aflag(), Capture(Square(5)), 0)\nBox = { A = R.Algorithm }\n[1, 2].map(Box.A)", "ok [1, 4]", "1,2", Was: "err ArityMismatch"),
@@ -192,7 +192,7 @@ public class RuntimeCallableAliasCorpusTests
         new("V16-identity-through-runtime-alias-name", "Lib(*xs) = { public K(x) = x + 100\n 0 }\nUse(f) = {\n A = f\n B = A.K\n B(3)\n}\nUse(Lib)", "err ArityMismatch", "", Diagnostic: "while evaluating call to Use: while evaluating call to B: Property 'K' on `A` expects 1 parameter, but was called with 0 arguments. @[9:6, 9:9)", Was: "M4★ (A.K reads the target's member K): err NotAnAlgorithm through the fallback K(A)"),
         new("V17-identity-through-runtime-alias-param", "Lib(*xs) = { public K(x) = x + 100\n 0 }\nUse(f) = {\n A = f\n C(b) = {\n  K(o) = 7\n  B = b.K\n  B(3)\n }\n C(A)\n}\nUse(Lib)", "ok 103", "", Was: "err ArityMismatch"),
         new("V18-own-member", "Lib(*xs) = { public K = 99\n 0 }\nUse(f) = {\n A = { public K = 5\n f }\n A.K\n}\nUse(Lib)", "ok 5", ""),
-        new("V19-zero-target-chain", "Z = tick()\nUse(f) = {\n A = f\n B = A\n A, B, B(), A()\n}\nUse(Z)", "ok (1, 1, 2, 3)", "", Ticks: 3, Was: "M4★ (D4 retired: a call through the target is fresh): ok (1, 1, 1, 1) ticks 1"),
+        new("V19-zero-target-chain", "Z = tock()\nUse(f) = {\n A = f\n B = A\n A, B, B(), A()\n}\nUse(Z)", "ok (1, 1, 2, 3)", "", Ticks: 3, Was: "M4★ (D4 retired: a call through the target is fresh): ok (1, 1, 1, 1) ticks 1"),
         new("V20-named-link-failure", "Bad = min([])\nA = Bad.Algorithm\nUse(f) = {\n B = f\n B(9)\n}\nUse(A)", "err IllegalInEval", "", Diagnostic: "while evaluating call to Use: while evaluating call to B: while evaluating call to min: Illegal in eval: min requires a non-empty collection @[5:7, 5:14)", Was: "err ArityMismatch"),
         new("V21-static-own-forward-namespace", "A = { public K = 5\n Square }\nA.K, Apply(A, 3)", "ok (5, 9)", "3"),
         new("V22-alias-own-fallback", "Lib(*xs) = { public K(x) = x + 100\n 0 }\nUse(f) = {\n A = f\n B = A.K\n B(Inc)\n}\nUse(Lib)", "err ArityMismatch", "", Diagnostic: "while evaluating call to Use: while evaluating call to B: Property 'K' on `A` expects 1 parameter, but was called with 0 arguments. @[9:6, 9:9)", Was: "M4★ (A.K reads the target's member K): ok 1 through the fallback K(A)"),
@@ -203,9 +203,9 @@ public class RuntimeCallableAliasCorpusTests
         new("V27-valid-current-cycle", "Hold(g) = Capture(g(0))\nR = Hold(R.Algorithm)\nR.Algorithm(1)", "err DemandCycle", "", Diagnostic: "while evaluating dotCall .Algorithm of R: Demand cycle: the argument depends on its own value while it is being evaluated. @[6:10, 6:21)"),
         new("V28-direct-cancellation", "R = if(stop(), Capture(Square(5)), 0)\nR.Algorithm(9), trace(1)", "cancelled", "", WithCancel: true),
         new("V29-forced-twin-alias-error", "if(aflag(), {\n R = Capture(Square(5))\n A = R.Algorithm\n A(9)\n}, 0)", "ok 81", "9", Was: "err ArityMismatch"),
-        new("X01-share-value-then-call", "Only(*xs) = tick()\nMk(n) = if(trace(n) > 0, Capture(Only(n)), 0)\nA = Mk(5).Algorithm\nA, A()", "ok (1, 2)", "5", Ticks: 2, Was: "ok (1, 1) [5,5] ticks 1"),
-        new("X01b-share-call-then-value", "Only(*xs) = tick()\nMk(n) = if(trace(n) > 0, Capture(Only(n)), 0)\nA = Mk(5).Algorithm\nA(), A", "ok (1, 1)", "5", Ticks: 1, Was: "M4★ (OD-E: A() publishes under its target Only): ok (1, 2) ticks 2; S3-1: ok (1, 1) [5,5] ticks 1"),
-        new("X01c-share-forwarded", "Only(*xs) = tick()\nMk(n) = if(trace(n) > 0, Capture(Only(n)), 0)\nA = Mk(5).Algorithm\nTwice(f) = f(), f()\nA, Twice(A), A", "ok (1, (2, 3), 1)", "5", Ticks: 3, Was: "ok (1, (1, 1), 1) [5,5,5] ticks 1"),
+        new("X01-share-value-then-call", "Only(*xs) = tock()\nMk(n) = if(trace(n) > 0, Capture(Only(n)), 0)\nA = Mk(5).Algorithm\nA, A()", "ok (1, 2)", "5", Ticks: 2, Was: "ok (1, 1) [5,5] ticks 1"),
+        new("X01b-share-call-then-value", "Only(*xs) = tock()\nMk(n) = if(trace(n) > 0, Capture(Only(n)), 0)\nA = Mk(5).Algorithm\nA(), A", "ok (1, 1)", "5", Ticks: 1, Was: "M4★ (OD-E: A() publishes under its target Only): ok (1, 2) ticks 2; S3-1: ok (1, 1) [5,5] ticks 1"),
+        new("X01c-share-forwarded", "Only(*xs) = tock()\nMk(n) = if(trace(n) > 0, Capture(Only(n)), 0)\nA = Mk(5).Algorithm\nTwice(f) = f(), f()\nA, Twice(A), A", "ok (1, (2, 3), 1)", "5", Ticks: 3, Was: "ok (1, (1, 1), 1) [5,5,5] ticks 1"),
         new("X02-inline-param-callable", "Use(f) = Apply({ f }, 9)\nUse(Square)", "ok 81", "9", Was: "err ArityMismatch"),
         new("X02b-inline-param-value", "Use(f) = { f } + 1\nUse(5)", "ok 6", ""),
         new("X02c-inline-link-callee", "R = Capture(Square(5))\nApply({ R.Algorithm }, 9), [1, 2].map({ R.Algorithm })", "ok (81, [1, 4])", "9,1,2", Was: "err ArityMismatch"),
@@ -224,30 +224,30 @@ public class RuntimeCallableAliasCorpusTests
         new("X07-cancel-param-alias", "Use(f) = {\n  A = f\n  A(9)\n}\nR = if(stop(), Capture(Square(5)), 0)\nUse(R.Algorithm), trace(1)", "cancelled", "", WithCancel: true, Was: "err ArityMismatch"),
         new("X07b-async-param-alias", "Use(f) = {\n  A = f\n  A(9), A(2)\n}\nUse(if(aflag(), Capture(Square(5)), 0).Algorithm)", "ok (81, 4)", "9,2", Was: "err ArityMismatch"),
         new("X07c-failure-param-alias", "Use(f) = {\n  A = f\n  A(9)\n}\nUse(5.Algorithm)", "err TypeMismatch", "", Diagnostic: "while evaluating call to Use: while evaluating call to A: Type mismatch: `Algorithm` requires a call reference, got numeric value 5 @[7:3, 7:4)", Was: "err ArityMismatch"),
-        new("X08-zero-param-callee", "Z = tick()\nR = Capture(Z())\nA = R.Algorithm\nA, A(), A", "ok (1, 2, 1)", "", Ticks: 2, Was: "M4★ (D4 retired: A() is a fresh call of Z): ok (1, 1, 1) ticks 1"),
+        new("X08-zero-param-callee", "Z = tock()\nR = Capture(Z())\nA = R.Algorithm\nA, A(), A", "ok (1, 2, 1)", "", Ticks: 2, Was: "M4★ (D4 retired: A() is a fresh call of Z): ok (1, 1, 1) ticks 1"),
         new("X08b-value-member-terminal", "Box = { G = 42 }\nG(o) = o\nUse(b) = {\n  A = b.G\n  A, A()\n}\nUse(Box)", "ok (42, 42)", ""),
         new("X09-fused-count-filter", "IsBig(x) = x > 5\nUse(p) = {\n  A = p\n  count(filter(range(1, 10), A))\n}\nUse(IsBig)", "ok 5", "", Fusion: "1/1", Was: "err ArityMismatch"),
         new("X09b-dot-fallback-builtin", "Use(f) = {\n  A = f\n  [1, 2, 3].A\n}\nUse(count)", "ok 3", "", Was: "err ArityMismatch"),
         // A zero-parameter runtime target is established ONCE per declaring activation (M4★ L-RUN; D4's
         // ordinary-property preservation is retired): ONE call runs the computed receiver once, never twice.
-        new("X10-terminal-call-receiver-once", "Z = tick()\nMk(n) = if(trace(n) == n, Capture(Z()), 0)\nA = Mk(5).Algorithm\nA()", "ok 1", "5", Ticks: 1),
+        new("X10-terminal-call-receiver-once", "Z = tock()\nMk(n) = if(trace(n) == n, Capture(Z()), 0)\nA = Mk(5).Algorithm\nA()", "ok 1", "5", Ticks: 1),
         // Repeating the receiver can also change the calculation, not just its trace and charges.
-        new("X10b-terminal-call-keeps-selected-value", "Ten = 10\nTwenty = 20\nMk(n) = if(tick() == 1, Capture(Ten()), Capture(Twenty()))\nA = Mk(5).Algorithm\nA()", "ok 10", "", Ticks: 1, Steps: 4, Was: "M4★ (the forwarding hop charges nothing): steps 5"),
-        new("RF1-D4-single", "Ten = 10\nTwenty = 20\nMk(n) = if(tick() == 1, Capture(Ten()), Capture(Twenty()))\nA = Mk(5).Algorithm\nA()", "ok 10", "", Ticks: 1, Emitted: 1),
-        new("RF1-D4-twice", "Ten = 10\nTwenty = 20\nMk(n) = if(tick() == 1, Capture(Ten()), Capture(Twenty()))\nA = Mk(5).Algorithm\nA(), A()", "ok (10, 10)", "", Ticks: 1, Emitted: 2, Was: "M4★ (L-RUN): ok (10, 20) ticks 2"),
-        new("RF1-D4-bare-call", "Ten = 10\nTwenty = 20\nMk(n) = if(tick() == 1, Capture(Ten()), Capture(Twenty()))\nA = Mk(5).Algorithm\nA, A()", "ok (10, 10)", "", Ticks: 1, Emitted: 2, Was: "M4★ (L-RUN): ok (10, 20) ticks 2"),
-        new("RF1-D4-call-bare", "Ten = 10\nTwenty = 20\nMk(n) = if(tick() == 1, Capture(Ten()), Capture(Twenty()))\nA = Mk(5).Algorithm\nA(), A", "ok (10, 10)", "", Ticks: 1, Emitted: 2),
-        new("RF1-D4-bare-bare", "Ten = 10\nTwenty = 20\nMk(n) = if(tick() == 1, Capture(Ten()), Capture(Twenty()))\nA = Mk(5).Algorithm\nA, A", "ok (10, 10)", "", Ticks: 1, Emitted: 2),
-        new("RF1-D4-alternating", "Ten = 10\nTwenty = 20\nMk(n) = if(tick() == 1, Capture(Ten()), Capture(Twenty()))\nA = Mk(5).Algorithm\nA(), A, A(), A, A()", "ok (10, 10, 10, 10, 10)", "", Ticks: 1, Emitted: 5, Was: "M4★ (L-RUN): ok (10, 10, 20, 10, 20) ticks 3"),
-        new("RF1-D4-chain-2", "Ten = 10\nTwenty = 20\nMk(n) = if(tick() == 1, Capture(Ten()), Capture(Twenty()))\nA = Mk(5).Algorithm\nS1 = A\nS2 = S1\nS2(), A, S2()", "ok (10, 10, 10)", "", Ticks: 1, Was: "M4★ (L-RUN): ok (10, 20, 20) ticks 3"),
-        new("RF1-D4-chain-10", "Ten = 10\nTwenty = 20\nMk(n) = if(tick() == 1, Capture(Ten()), Capture(Twenty()))\nA = Mk(5).Algorithm\nS1 = A\nS2 = S1\nS3 = S2\nS4 = S3\nS5 = S4\nS6 = S5\nS7 = S6\nS8 = S7\nS9 = S8\nS10 = S9\nS10(), A, S10()", "ok (10, 10, 10)", "", Ticks: 1, Was: "M4★ (L-RUN): ok (10, 20, 20) ticks 3"),
-        new("RF1-D4-inline", "Call0(f) = f()\nTen = 10\nTwenty = 20\nMk(n) = if(tick() == 1, Capture(Ten()), Capture(Twenty()))\nCall0({ Mk(5).Algorithm })", "ok 10", "", Ticks: 1),
-        new("RF1-D4-forward", "Call0(f) = f()\nTen = 10\nTwenty = 20\nMk(n) = if(tick() == 1, Capture(Ten()), Capture(Twenty()))\nA = Mk(5).Algorithm\nCall0(A), Call0(A), A", "ok (10, 10, 10)", "", Ticks: 1, Was: "M4★ (L-RUN): ok (10, 20, 10) ticks 2"),
+        new("X10b-terminal-call-keeps-selected-value", "Ten = 10\nTwenty = 20\nMk(n) = if(tock() == 1, Capture(Ten()), Capture(Twenty()))\nA = Mk(5).Algorithm\nA()", "ok 10", "", Ticks: 1, Steps: 4, Was: "M4★ (the forwarding hop charges nothing): steps 5"),
+        new("RF1-D4-single", "Ten = 10\nTwenty = 20\nMk(n) = if(tock() == 1, Capture(Ten()), Capture(Twenty()))\nA = Mk(5).Algorithm\nA()", "ok 10", "", Ticks: 1, Emitted: 1),
+        new("RF1-D4-twice", "Ten = 10\nTwenty = 20\nMk(n) = if(tock() == 1, Capture(Ten()), Capture(Twenty()))\nA = Mk(5).Algorithm\nA(), A()", "ok (10, 10)", "", Ticks: 1, Emitted: 2, Was: "M4★ (L-RUN): ok (10, 20) ticks 2"),
+        new("RF1-D4-bare-call", "Ten = 10\nTwenty = 20\nMk(n) = if(tock() == 1, Capture(Ten()), Capture(Twenty()))\nA = Mk(5).Algorithm\nA, A()", "ok (10, 10)", "", Ticks: 1, Emitted: 2, Was: "M4★ (L-RUN): ok (10, 20) ticks 2"),
+        new("RF1-D4-call-bare", "Ten = 10\nTwenty = 20\nMk(n) = if(tock() == 1, Capture(Ten()), Capture(Twenty()))\nA = Mk(5).Algorithm\nA(), A", "ok (10, 10)", "", Ticks: 1, Emitted: 2),
+        new("RF1-D4-bare-bare", "Ten = 10\nTwenty = 20\nMk(n) = if(tock() == 1, Capture(Ten()), Capture(Twenty()))\nA = Mk(5).Algorithm\nA, A", "ok (10, 10)", "", Ticks: 1, Emitted: 2),
+        new("RF1-D4-alternating", "Ten = 10\nTwenty = 20\nMk(n) = if(tock() == 1, Capture(Ten()), Capture(Twenty()))\nA = Mk(5).Algorithm\nA(), A, A(), A, A()", "ok (10, 10, 10, 10, 10)", "", Ticks: 1, Emitted: 5, Was: "M4★ (L-RUN): ok (10, 10, 20, 10, 20) ticks 3"),
+        new("RF1-D4-chain-2", "Ten = 10\nTwenty = 20\nMk(n) = if(tock() == 1, Capture(Ten()), Capture(Twenty()))\nA = Mk(5).Algorithm\nS1 = A\nS2 = S1\nS2(), A, S2()", "ok (10, 10, 10)", "", Ticks: 1, Was: "M4★ (L-RUN): ok (10, 20, 20) ticks 3"),
+        new("RF1-D4-chain-10", "Ten = 10\nTwenty = 20\nMk(n) = if(tock() == 1, Capture(Ten()), Capture(Twenty()))\nA = Mk(5).Algorithm\nS1 = A\nS2 = S1\nS3 = S2\nS4 = S3\nS5 = S4\nS6 = S5\nS7 = S6\nS8 = S7\nS9 = S8\nS10 = S9\nS10(), A, S10()", "ok (10, 10, 10)", "", Ticks: 1, Was: "M4★ (L-RUN): ok (10, 20, 20) ticks 3"),
+        new("RF1-D4-inline", "Call0(f) = f()\nTen = 10\nTwenty = 20\nMk(n) = if(tock() == 1, Capture(Ten()), Capture(Twenty()))\nCall0({ Mk(5).Algorithm })", "ok 10", "", Ticks: 1),
+        new("RF1-D4-forward", "Call0(f) = f()\nTen = 10\nTwenty = 20\nMk(n) = if(tock() == 1, Capture(Ten()), Capture(Twenty()))\nA = Mk(5).Algorithm\nCall0(A), Call0(A), A", "ok (10, 10, 10)", "", Ticks: 1, Was: "M4★ (L-RUN): ok (10, 20, 10) ticks 2"),
         new("RF1-D4-nested", "Z = 7\nUse(n) = {\n Mk(t) = if(trace(t) == t, Capture(Z()), 0)\n A = Mk(n).Algorithm\n A(), A, A(), A\n}\nUse(3), Use(4)", "ok ((7, 7, 7, 7), (7, 7, 7, 7))", "3,4", Was: "M4★ (L-RUN): traces [3,3,4,4]"),
         new("RF1-D4-value-only", "G(o) = trace(o)\nUse(b) = {\n A = b.G\n A(), A, A(), A\n}\nUse(5)", "ok (5, 5, 5, 5)", "5", Was: "M4★ (L-RUN: a value-only target's call reads the binding cell): traces [5,5]"),
-        new("RF1-D4-zero-member", "G(o) = o\nBox = { G = tick() }\nUse(b) = {\n A = b.G\n A(), A, A(), A\n}\nUse(Box)", "ok (1, 1, 2, 1)", "", Ticks: 2, Was: "M4★ (L-RUN, OD-E: A() is a fresh call of G that establishes G's empty entry): ok (1, 1, 1, 1) ticks 1"),
+        new("RF1-D4-zero-member", "G(o) = o\nBox = { G = tock() }\nUse(b) = {\n A = b.G\n A(), A, A(), A\n}\nUse(Box)", "ok (1, 1, 2, 1)", "", Ticks: 2, Was: "M4★ (L-RUN, OD-E: A() is a fresh call of G that establishes G's empty entry): ok (1, 1, 1, 1) ticks 1"),
         new("RF1-D4-async", "Z = 7\nMk(n) = if(atrace(n) == n, Capture(Z()), 0)\nA = Mk(5).Algorithm\nA(), A, A(), A", "ok (7, 7, 7, 7)", "a5", Was: "M4★ (L-RUN): traces [a5,a5]"),
-        new("RF1-D3-zero-accepting", "Only(*xs) = tick()\nMk(n) = if(trace(n) == n, Capture(Only()), 0)\nA = Mk(5).Algorithm\nA(), A, A(), A", "ok (1, 1, 2, 1)", "5", Ticks: 2, Was: "M4★ (OD-E: A() publishes under its target Only): ok (1, 2, 3, 2) ticks 3"),
+        new("RF1-D3-zero-accepting", "Only(*xs) = tock()\nMk(n) = if(trace(n) == n, Capture(Only()), 0)\nA = Mk(5).Algorithm\nA(), A, A(), A", "ok (1, 1, 2, 1)", "5", Ticks: 2, Was: "M4★ (OD-E: A() publishes under its target Only): ok (1, 2, 3, 2) ticks 3"),
         new("RF1-open-chain-1", "Outer(n) = {\n A = n\n B1 = { public K = 11\n A }\n P = { open B1\n K }\n P\n}\nOuter(1)", "ok 11", ""),
         new("RF1-open-chain-2", "Outer(n) = {\n A = n\n B1 = { public K = 11\n A }\n B2 = { public K = 12\n B1 }\n P = { open B2\n K }\n P\n}\nOuter(1)", "ok 12", ""),
         new("RF1-open-chain-10", "Outer(n) = {\n A = n\n B1 = { public K = 11\n A }\n B2 = { public K = 12\n B1 }\n B3 = { public K = 13\n B2 }\n B4 = { public K = 14\n B3 }\n B5 = { public K = 15\n B4 }\n B6 = { public K = 16\n B5 }\n B7 = { public K = 17\n B6 }\n B8 = { public K = 18\n B7 }\n B9 = { public K = 19\n B8 }\n B10 = { public K = 20\n B9 }\n P = { open B10\n K }\n P\n}\nOuter(1)", "ok 20", ""),
@@ -265,33 +265,33 @@ public class RuntimeCallableAliasCorpusTests
         // observation afterwards — a bare read or a terminal call — consumes it, exactly as the S3-1
         // ordinary-property oracle evaluates these programs. RF1 refused to lend that work ((7, 20) with
         // two ticks), which made eligibility checking duplicate the receiver evaluation.
-        new("RF1-prior-projection-call", "Ten = 10\nTwenty = 20\nMk(n) = if(tick() == 1, Capture(Ten()), Capture(Twenty()))\nA = { public K = 7\n Mk(5).Algorithm }\nNavigate(f) = f.K\nNavigate(A), A()", "ok (7, 10)", "", Ticks: 1),
-        new("RF1-prior-projection-bare", "Ten = 10\nTwenty = 20\nMk(n) = if(tick() == 1, Capture(Ten()), Capture(Twenty()))\nA = { public K = 7\n Mk(5).Algorithm }\nNavigate(f) = f.K\nNavigate(A), A", "ok (7, 10)", "", Ticks: 1),
-        new("RF1-prior-projection-mixed", "Ten = 10\nTwenty = 20\nMk(n) = if(tick() == 1, Capture(Ten()), Capture(Twenty()))\nA = { public K = 7\n Mk(5).Algorithm }\nNavigate(f) = f.K\nNavigate(A), A(), A", "ok (7, 10, 10)", "", Ticks: 1),
-        new("RF1-prior-projection-planned-value", "Ten = 10\nTwenty = 20\nMk(n) = if(tick() == 1, Capture(Ten()), Capture(Twenty()))\nA = { public K = 7\n Mk(5).Algorithm }\nNavigate(f) = f.K\nId(x) = x\nNavigate(A), Id(A()), A", "ok (7, 10, 10)", "", Ticks: 1),
-        new("RF1-prior-projection-planned-invoke", "Ten = 10\nTwenty = 20\nMk(n) = if(tick() == 1, Capture(Ten()), Capture(Twenty()))\nA = { public K = 7\n Mk(5).Algorithm }\nNavigate(f) = f.K\nP = Capture(A())\nNavigate(A), P.Invoke(), P.Invoke(), A", "ok (7, 10, 10, 10)", "", Ticks: 1, Was: "M4★ (L-RUN: the carrier's target is established once): ok (7, 10, 20, 10) ticks 2"),
-        new("RF1-prior-projection-async", "Ten = 10\nTwenty = 20\nMk(n) = if(atrace(tick()) == 1, Capture(Ten()), Capture(Twenty()))\nA = { public K = 7\n Mk(5).Algorithm }\nNavigate(f) = f.K\nNavigate(A), A(), A", "ok (7, 10, 10)", "a1", Ticks: 1),
+        new("RF1-prior-projection-call", "Ten = 10\nTwenty = 20\nMk(n) = if(tock() == 1, Capture(Ten()), Capture(Twenty()))\nA = { public K = 7\n Mk(5).Algorithm }\nNavigate(f) = f.K\nNavigate(A), A()", "ok (7, 10)", "", Ticks: 1),
+        new("RF1-prior-projection-bare", "Ten = 10\nTwenty = 20\nMk(n) = if(tock() == 1, Capture(Ten()), Capture(Twenty()))\nA = { public K = 7\n Mk(5).Algorithm }\nNavigate(f) = f.K\nNavigate(A), A", "ok (7, 10)", "", Ticks: 1),
+        new("RF1-prior-projection-mixed", "Ten = 10\nTwenty = 20\nMk(n) = if(tock() == 1, Capture(Ten()), Capture(Twenty()))\nA = { public K = 7\n Mk(5).Algorithm }\nNavigate(f) = f.K\nNavigate(A), A(), A", "ok (7, 10, 10)", "", Ticks: 1),
+        new("RF1-prior-projection-planned-value", "Ten = 10\nTwenty = 20\nMk(n) = if(tock() == 1, Capture(Ten()), Capture(Twenty()))\nA = { public K = 7\n Mk(5).Algorithm }\nNavigate(f) = f.K\nId(x) = x\nNavigate(A), Id(A()), A", "ok (7, 10, 10)", "", Ticks: 1),
+        new("RF1-prior-projection-planned-invoke", "Ten = 10\nTwenty = 20\nMk(n) = if(tock() == 1, Capture(Ten()), Capture(Twenty()))\nA = { public K = 7\n Mk(5).Algorithm }\nNavigate(f) = f.K\nP = Capture(A())\nNavigate(A), P.Invoke(), P.Invoke(), A", "ok (7, 10, 10, 10)", "", Ticks: 1, Was: "M4★ (L-RUN: the carrier's target is established once): ok (7, 10, 20, 10) ticks 2"),
+        new("RF1-prior-projection-async", "Ten = 10\nTwenty = 20\nMk(n) = if(atrace(tock()) == 1, Capture(Ten()), Capture(Twenty()))\nA = { public K = 7\n Mk(5).Algorithm }\nNavigate(f) = f.K\nNavigate(A), A(), A", "ok (7, 10, 10)", "a1", Ticks: 1),
         // The distinguishing pair of the final review: the same program with the parameter read directly
         // or through one nested call. Under RF1's invocation tokens the nested read fell outside the
         // token that performed the projection, so the bare read re-evaluated the receiver ((20, 20), two
-        // ticks) while the direct read shared it ((10, 10), one tick); a bare read's value cannot depend
-        // on incidental call nesting. The S3-1 ordinary-property oracle gives (10, 10) with one tick.
-        new("FR-nav-direct-read", "Ten = 10\nTwenty = 20\nMk(n) = if(tick() == 1, Capture(Ten()), Capture(Twenty()))\nA = Mk(5).Algorithm\nK(x) = x\nNavigate(f) = f.K\nNavigate(A), A", "ok (10, 10)", "", Ticks: 1),
-        new("FR-nav-nested-call-read", "Ten = 10\nTwenty = 20\nMk(n) = if(tick() == 1, Capture(Ten()), Capture(Twenty()))\nA = Mk(5).Algorithm\nId(y) = y\nK(x) = Id(x)\nNavigate(f) = f.K\nNavigate(A), A", "ok (10, 10)", "", Ticks: 1),
-        new("FR-nav-nested-call-then-call", "Ten = 10\nTwenty = 20\nMk(n) = if(tick() == 1, Capture(Ten()), Capture(Twenty()))\nA = Mk(5).Algorithm\nId(y) = y\nK(x) = Id(x)\nNavigate(f) = f.K\nNavigate(A), A()", "ok (10, 10)", "", Ticks: 1, Was: "M4★ (L-RUN): ok (10, 20) ticks 2"),
-        new("FR-nav-twice-bare", "Ten = 10\nTwenty = 20\nMk(n) = if(tick() == 1, Capture(Ten()), Capture(Twenty()))\nA = { public K = 7\n Mk(5).Algorithm }\nNavigate(f) = f.K\nNavigate(A), Navigate(A), A", "ok (7, 7, 10)", "", Ticks: 1),
-        new("FR-call-then-nav-then-bare", "Ten = 10\nTwenty = 20\nMk(n) = if(tick() == 1, Capture(Ten()), Capture(Twenty()))\nA = { public K = 7\n Mk(5).Algorithm }\nNavigate(f) = f.K\nA(), Navigate(A), A", "ok (10, 7, 10)", "", Ticks: 1),
-        new("FR-chain-nested-nav", "Ten = 10\nTwenty = 20\nMk(n) = if(tick() == 1, Capture(Ten()), Capture(Twenty()))\nA = Mk(5).Algorithm\nB = A\nId(y) = y\nKK(x) = Id(x)\nNav2(f) = f.KK\nNav2(B), A, B(), A", "ok (10, 10, 10, 10)", "", Ticks: 1, Was: "M4★ (L-RUN): ok (10, 10, 20, 10) ticks 2"),
-        new("FR-activation-nav-call-bare", "Ten = 10\nTwenty = 20\nMk(n) = if(tick() == 1, Capture(Ten()), Capture(Twenty()))\nUse(n) = {\n A = { public K = 7\n  Mk(n).Algorithm }\n Navigate(f) = f.K\n Navigate(A), A(), A\n}\nUse(5)", "ok (7, 10, 10)", "", Ticks: 1),
-        new("FR-string-then-call-then-bare", "Ten = 10\nTwenty = 20\nMk(n) = if(tick() == 1, Capture(Ten()), Capture(Twenty()))\nA = Mk(5).Algorithm\nS1 = A\nS2 = S1\nS2.string, S2(), A", "ok ('10', 10, 10)", "", Ticks: 1, Was: "M4★ (L-RUN): ok ('10', 20, 10) ticks 2"),
-        new("RF1-prior-peek-empty-filter", "Ten = 10\nTwenty = 20\nMk(n) = if(tick() == 1, Capture(Ten()), Capture(Twenty()))\nA = Mk(5).Algorithm\ncount(filter([], A)), A()", "ok (0, 10)", "", Ticks: 1),
-        new("RF1-D4-first-planned-invoke", "Run(meta p) = p.Invoke()\nTen = 10\nTwenty = 20\nMk(n) = if(tick() == 1, Capture(Ten()), Capture(Twenty()))\nA = Mk(5).Algorithm\nRun(A())", "ok 10", "", Ticks: 1),
-        new("RF1-D4-first-planned-value", "Force(x) = x\nTen = 10\nTwenty = 20\nMk(n) = if(tick() == 1, Capture(Ten()), Capture(Twenty()))\nA = Mk(5).Algorithm\nForce(A())", "ok 10", "", Ticks: 1),
-        new("RF1-D4-local-cache-alias", "Ten = 10\nTwenty = 20\nUse(n) = {\n A = {\n R = if(tick() + n == n + 1, Capture(Ten()), Capture(Twenty()))\n R.Algorithm\n }\n A(), A, A(), A\n}\nUse(5)", "ok (10, 10, 10, 10)", "", Ticks: 1, Was: "M4★ (OD-E, L-RUN): ok (10, 10, 20, 10) ticks 2 (D4 ordinary property)"),
+        // ticks) while the direct read shared it ((10, 10), one tock); a bare read's value cannot depend
+        // on incidental call nesting. The S3-1 ordinary-property oracle gives (10, 10) with one tock.
+        new("FR-nav-direct-read", "Ten = 10\nTwenty = 20\nMk(n) = if(tock() == 1, Capture(Ten()), Capture(Twenty()))\nA = Mk(5).Algorithm\nK(x) = x\nNavigate(f) = f.K\nNavigate(A), A", "ok (10, 10)", "", Ticks: 1),
+        new("FR-nav-nested-call-read", "Ten = 10\nTwenty = 20\nMk(n) = if(tock() == 1, Capture(Ten()), Capture(Twenty()))\nA = Mk(5).Algorithm\nId(y) = y\nK(x) = Id(x)\nNavigate(f) = f.K\nNavigate(A), A", "ok (10, 10)", "", Ticks: 1),
+        new("FR-nav-nested-call-then-call", "Ten = 10\nTwenty = 20\nMk(n) = if(tock() == 1, Capture(Ten()), Capture(Twenty()))\nA = Mk(5).Algorithm\nId(y) = y\nK(x) = Id(x)\nNavigate(f) = f.K\nNavigate(A), A()", "ok (10, 10)", "", Ticks: 1, Was: "M4★ (L-RUN): ok (10, 20) ticks 2"),
+        new("FR-nav-twice-bare", "Ten = 10\nTwenty = 20\nMk(n) = if(tock() == 1, Capture(Ten()), Capture(Twenty()))\nA = { public K = 7\n Mk(5).Algorithm }\nNavigate(f) = f.K\nNavigate(A), Navigate(A), A", "ok (7, 7, 10)", "", Ticks: 1),
+        new("FR-call-then-nav-then-bare", "Ten = 10\nTwenty = 20\nMk(n) = if(tock() == 1, Capture(Ten()), Capture(Twenty()))\nA = { public K = 7\n Mk(5).Algorithm }\nNavigate(f) = f.K\nA(), Navigate(A), A", "ok (10, 7, 10)", "", Ticks: 1),
+        new("FR-chain-nested-nav", "Ten = 10\nTwenty = 20\nMk(n) = if(tock() == 1, Capture(Ten()), Capture(Twenty()))\nA = Mk(5).Algorithm\nB = A\nId(y) = y\nKK(x) = Id(x)\nNav2(f) = f.KK\nNav2(B), A, B(), A", "ok (10, 10, 10, 10)", "", Ticks: 1, Was: "M4★ (L-RUN): ok (10, 10, 20, 10) ticks 2"),
+        new("FR-activation-nav-call-bare", "Ten = 10\nTwenty = 20\nMk(n) = if(tock() == 1, Capture(Ten()), Capture(Twenty()))\nUse(n) = {\n A = { public K = 7\n  Mk(n).Algorithm }\n Navigate(f) = f.K\n Navigate(A), A(), A\n}\nUse(5)", "ok (7, 10, 10)", "", Ticks: 1),
+        new("FR-string-then-call-then-bare", "Ten = 10\nTwenty = 20\nMk(n) = if(tock() == 1, Capture(Ten()), Capture(Twenty()))\nA = Mk(5).Algorithm\nS1 = A\nS2 = S1\nS2.string, S2(), A", "ok ('10', 10, 10)", "", Ticks: 1, Was: "M4★ (L-RUN): ok ('10', 20, 10) ticks 2"),
+        new("RF1-prior-peek-empty-filter", "Ten = 10\nTwenty = 20\nMk(n) = if(tock() == 1, Capture(Ten()), Capture(Twenty()))\nA = Mk(5).Algorithm\ncount(filter([], A)), A()", "ok (0, 10)", "", Ticks: 1),
+        new("RF1-D4-first-planned-invoke", "Run(meta p) = p.Invoke()\nTen = 10\nTwenty = 20\nMk(n) = if(tock() == 1, Capture(Ten()), Capture(Twenty()))\nA = Mk(5).Algorithm\nRun(A())", "ok 10", "", Ticks: 1),
+        new("RF1-D4-first-planned-value", "Force(x) = x\nTen = 10\nTwenty = 20\nMk(n) = if(tock() == 1, Capture(Ten()), Capture(Twenty()))\nA = Mk(5).Algorithm\nForce(A())", "ok 10", "", Ticks: 1),
+        new("RF1-D4-local-cache-alias", "Ten = 10\nTwenty = 20\nUse(n) = {\n A = {\n R = if(tock() + n == n + 1, Capture(Ten()), Capture(Twenty()))\n R.Algorithm\n }\n A(), A, A(), A\n}\nUse(5)", "ok (10, 10, 10, 10)", "", Ticks: 1, Was: "M4★ (OD-E, L-RUN): ok (10, 10, 20, 10) ticks 2 (D4 ordinary property)"),
         // The carrier `A = { R = … ⏎ R.Algorithm }` owns no entry (M4★ OD-E): its target is established
         // once in its declaring activation. The ordinary control — a calculation — keeps CACHE-PUB-1: its
         // first owning A() establishes A's empty entry and later calls stay fresh.
-        new("RF1-D4-local-cache-ordinary-control", "Ten = 10\nTwenty = 20\nUse(n) = {\n A = {\n R = if(tick() + n == n + 1, Capture(Ten()), Capture(Twenty()))\n R.Algorithm + 0\n }\n A(), A, A(), A\n}\nUse(5)", "ok (10, 10, 20, 10)", "", Ticks: 2),
+        new("RF1-D4-local-cache-ordinary-control", "Ten = 10\nTwenty = 20\nUse(n) = {\n A = {\n R = if(tock() + n == n + 1, Capture(Ten()), Capture(Twenty()))\n R.Algorithm + 0\n }\n A(), A, A(), A\n}\nUse(5)", "ok (10, 10, 20, 10)", "", Ticks: 2),
     ];
 
     [Theory]
@@ -368,7 +368,7 @@ public class RuntimeCallableAliasCorpusTests
     private sealed record Observation(string Outcome, string Diagnostic, string Traces, int Ticks, long Steps,
         string Loops, string Fusion, int Downloads, int? Emitted);
 
-    /// <summary>The harness host: <c>trace</c>, <c>tick</c>; <c>aflag</c>/<c>atrace</c>/<c>stop</c> genuinely asynchronous on the async engine.</summary>
+    /// <summary>The harness host: <c>trace</c>, <c>tock</c>; <c>aflag</c>/<c>atrace</c>/<c>stop</c> genuinely asynchronous on the async engine.</summary>
     private sealed class Probe(Case c)
     {
         private readonly List<string> _traces = [];
@@ -378,7 +378,7 @@ public class RuntimeCallableAliasCorpusTests
 
         public HostOperations Operations(bool asynchronous) => HostOperations.Create(
             HostOperation.Create("trace", (args, _) => { lock (_traces) _traces.Add(Format(args[0])); return args[0]; }, "x"),
-            HostOperation.Create("tick", (_, _) => new Result.Atom(Interlocked.Increment(ref _ticks))),
+            HostOperation.Create("tock", (_, _) => new Result.Atom(Interlocked.Increment(ref _ticks))),
             asynchronous
                 ? HostOperation.CreateAsync("aflag", async (_, _) => { await Task.Yield(); return new Result.Bool(true); })
                 : HostOperation.Create("aflag", (_, _) => new Result.Bool(true)),

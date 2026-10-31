@@ -8,7 +8,7 @@ namespace KatLang.Tests.RootPropertyObservations;
 /// </summary>
 internal static class PropertyObservationTestSupport
 {
-    /// <summary>A counting <c>tick()</c> host operation returning 0, 1, 2, … and logging each call.</summary>
+    /// <summary>A counting <c>tock()</c> host operation returning 0, 1, 2, … and logging each call.</summary>
     internal sealed class TickLog
     {
         private int _next;
@@ -19,8 +19,8 @@ internal static class PropertyObservationTestSupport
         public HostOperations Operations(bool suspending = false)
             => HostOperations.Create(
                 suspending
-                    ? HostOperation.CreateAsync("tick", async (_, _) => { await Task.Yield(); return Tick(); })
-                    : HostOperation.Create("tick", (_, _) => Tick()),
+                    ? HostOperation.CreateAsync("tock", async (_, _) => { await Task.Yield(); return Tick(); })
+                    : HostOperation.Create("tock", (_, _) => Tick()),
                 suspending
                     ? HostOperation.CreateAsync("trace", async (args, _) => { await Task.Yield(); return Trace(args[0]); }, "x")
                     : HostOperation.Create("trace", (args, _) => Trace(args[0]), "x"));
@@ -29,7 +29,7 @@ internal static class PropertyObservationTestSupport
         {
             lock (_gate)
             {
-                Calls.Add("tick:" + _next);
+                Calls.Add("tock:" + _next);
                 return new Result.Atom(_next++);
             }
         }

@@ -96,7 +96,7 @@ internal static class SubprocessProbe
         }
     }
 
-    private static object CreateInstance(Type type)
+    internal static object CreateInstance(Type type)
     {
         if (type.GetConstructor(Type.EmptyTypes) is { } plain)
             return plain.Invoke(null);

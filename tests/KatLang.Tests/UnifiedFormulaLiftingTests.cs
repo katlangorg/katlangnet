@@ -42,11 +42,11 @@ public class UnifiedFormulaLiftingTests
     private static string Signature(Algorithm.User algorithm)
         => string.Join(", ", algorithm.ParameterPatterns.Select(static pattern => pattern.DisplayName));
 
-    /// <summary>The host operations the six-route runner provides (<c>tick()</c>, <c>trace(x)</c>), for elaboration alone.</summary>
+    /// <summary>The host operations the six-route runner provides (<c>tock()</c>, <c>trace(x)</c>), for elaboration alone.</summary>
     private static readonly RunOptions HostVocabulary = new()
     {
         HostOperations = HostOperations.Create(
-            HostOperation.Create("tick", static (_, _) => new Result.Atom(0)),
+            HostOperation.Create("tock", static (_, _) => new Result.Atom(0)),
             HostOperation.Create("trace", static (args, _) => args[0], "x")),
     };
 
@@ -354,14 +354,14 @@ public class UnifiedFormulaLiftingTests
     [Fact]
     public async Task LiftedCalls_EvaluateLikeTheExplicitCalls_OnceEach()
     {
-        const string Roll = "Roll(x) = tick() + x\n";
+        const string Roll = "Roll(x) = tock() + x\n";
         Assert.Equal(
             await Outcome(Roll + "G(x) = Roll(x) + Roll(x)\nG(0)"),
             await Outcome(Roll + "G = Roll + Roll\nG(0)"));
-        Assert.Equal("ok 3 [tick#1,tick#2]", await Outcome(Roll + "G = Roll + Roll\nG(0)"));
+        Assert.Equal("ok 3 [tock#1,tock#2]", await Outcome(Roll + "G = Roll + Roll\nG(0)"));
 
         // A callable that works with no arguments is still read from the cache, never lifted (Q-03).
-        Assert.Equal("ok 2 [tick#1]", await Outcome("Once = tick()\nG = Once + Once\nG"));
+        Assert.Equal("ok 2 [tock#1]", await Outcome("Once = tock()\nG = Once + Once\nG"));
     }
 
     [Fact]

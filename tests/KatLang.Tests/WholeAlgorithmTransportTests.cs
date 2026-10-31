@@ -214,28 +214,27 @@ public sealed class WholeAlgorithmTransportTests
     [InlineData("P, B(), B", "ok (1, 2, 1)")]
     [InlineData("B(), B(), P()", "ok (1, 2, 3)")]
     public async Task R4_AReferenceAndACarrier_ReadAndPublishUnderTheTarget(string rows, string expected)
-        => await AssertAllEngines("P = tick()\nA = P\nB = { P }\n" + rows, expected);
+        => await AssertAllEngines("P = tock()\nA = P\nB = { P }\n" + rows, expected);
 
     [Fact]
     public async Task R4_TheOwnedHolder_DelegatesItsBareView()
         => await AssertAllEngines(
-            "B = {\n    public P = tick()\n    public Q = 99\n    P\n}\nB.P, B(), B, B.P",
+            "B = {\n    public P = tock()\n    public Q = 99\n    P\n}\nB.P, B(), B, B.P",
             "ok (1, 2, 1, 1)");
 
     [Theory]
-    [InlineData("Only(*xs) = tick()\nA = Only\nA, Only, A", "ok (1, 1, 1)")]
-    [InlineData("Only(*xs) = tick()\nA = Only\nA(), Only, A", "ok (1, 1, 1)")]
-    [InlineData("P = tick()\nA = P\nB = A\nB, A, P", "ok (1, 1, 1)")]
-    [InlineData("P = tick()\nA = P\nB = A\nB(), P", "ok (1, 1)")]
+    [InlineData("Only(*xs) = tock()\nA = Only\nA, Only, A", "ok (1, 1, 1)")]
+    [InlineData("Only(*xs) = tock()\nA = Only\nA(), Only, A", "ok (1, 1, 1)")]
+    [InlineData("P = tock()\nA = P\nB = A\nB, A, P", "ok (1, 1, 1)")]
+    [InlineData("P = tock()\nA = P\nB = A\nB(), P", "ok (1, 1)")]
     public async Task R4_CollectorsAndTransitiveReferences_ShareTheTargetsEntry(string source, string expected)
         => await AssertAllEngines(source, expected);
 
     [Fact]
     public void R4_NoAliasOwnsARootPropertyObservation()
     {
-        var operations = HostOperations.Create(HostOperation.Create("tick", (_, _) => new Result.Atom(1)));
         var result = KatLangEngine.Run("P = tick()\nA = P\nB = { P }\nA, B, P",
-            new RunOptions { HostOperations = operations, ObservePropertyValues = true });
+            new RunOptions { ObservePropertyValues = true });
         var success = Assert.IsType<RunResult.Success>(result);
         Assert.Equal(["P"], success.PropertyObservations!.Select(static observation => observation.Name).ToArray());
     }
@@ -244,7 +243,7 @@ public sealed class WholeAlgorithmTransportTests
 
     private const string ComputedTarget =
         "Capture(meta op) = op\n" +
-        "Z(y) = tick()\n" +
+        "Z(y) = tock()\n" +
         "Mk(n) = if(trace(n) == n, Capture(Z(n)), 0)\n";
 
     [Fact]
@@ -360,12 +359,12 @@ public sealed class WholeAlgorithmTransportTests
     [Fact]
     public void R11_ASharedHostBuiltTree_KeepsNoStateAcrossRuns()
     {
-        // One host-built tree evaluated twice over ONE tick counter: each run reads its own target entry —
-        // one tick per run, the reference sharing it — never the previous run's (a leaked entry would make
-        // the second run (1, 1, 1) with no tick).
+        // One host-built tree evaluated twice over ONE tock counter: each run reads its own target entry —
+        // one tock per run, the reference sharing it — never the previous run's (a leaked entry would make
+        // the second run (1, 1, 1) with no tock).
         var tree = new Expr.AlgorithmExpr(new Algorithm.User(
             null, [], [],
-            [new Property("P", new Algorithm.User(null, [], [], [], [new Expr.Call(new Expr.Resolve("tick"), [])])),
+            [new Property("P", new Algorithm.User(null, [], [], [], [new Expr.Call(new Expr.Resolve("tock"), [])])),
                 new Property("A", new Algorithm.Alias(null, [], [], new Expr.Resolve("P")))],
             [new Expr.Resolve("A"), new Expr.Resolve("P"), new Expr.Resolve("A")]));
         var probe = new Probe();
@@ -386,7 +385,7 @@ public sealed class WholeAlgorithmTransportTests
         var probe = new Probe();
         var operations = probe.Operations(asynchronous: false);
         var parsed = Parser.Parse(
-            "Capture(meta c) = c\nZ = tick()\nR = Capture(Z())\nA = R.Algorithm\nA(), A, A()",
+            "Capture(meta c) = c\nZ = tock()\nR = Capture(Z())\nA = R.Algorithm\nA(), A, A()",
             new RunOptions { HostOperations = operations });
         Assert.False(parsed.HasErrors, string.Join(" | ", parsed.Diagnostics.Select(static d => d.Message)));
         var tree = new Expr.AlgorithmExpr(parsed.Root);
@@ -409,8 +408,8 @@ public sealed class WholeAlgorithmTransportTests
         public HostOperations Operations(bool asynchronous) => HostOperations.Create(
             HostOperation.Create("trace", (args, _) => { lock (_traces) _traces.Add(Format(args[0])); return args[0]; }, "x"),
             asynchronous
-                ? HostOperation.CreateAsync("tick", async (_, _) => { await Task.Yield(); return new Result.Atom(Interlocked.Increment(ref _ticks)); })
-                : HostOperation.Create("tick", (_, _) => new Result.Atom(Interlocked.Increment(ref _ticks))));
+                ? HostOperation.CreateAsync("tock", async (_, _) => { await Task.Yield(); return new Result.Atom(Interlocked.Increment(ref _ticks)); })
+                : HostOperation.Create("tock", (_, _) => new Result.Atom(Interlocked.Increment(ref _ticks))));
 
         public Observation Observe(string outcome, long steps) => new(outcome, string.Join(",", _traces), steps);
     }

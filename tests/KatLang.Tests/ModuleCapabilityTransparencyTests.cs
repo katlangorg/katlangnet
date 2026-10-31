@@ -152,18 +152,18 @@ public class ModuleCapabilityTransparencyTests
 
     private static HostOperations HostOperationsFor(List<string> hostCalls, bool withAsyncOperation)
     {
-        var tick = HostOperation.Create("tick", (_, _) =>
+        var tock = HostOperation.Create("tock", (_, _) =>
         {
-            hostCalls.Add("tick");
+            hostCalls.Add("tock");
             return new Result.Atom((Decimal128)hostCalls.Count);
         });
         return withAsyncOperation
-            ? HostOperations.Create(tick, HostOperation.CreateAsync("pause", async (_, _) =>
+            ? HostOperations.Create(tock, HostOperation.CreateAsync("pause", async (_, _) =>
             {
                 await Task.Yield();
                 return new Result.Atom((Decimal128)0);
             }))
-            : HostOperations.Create(tick);
+            : HostOperations.Create(tock);
     }
 
     private static RunOptions OptionsFor(
@@ -437,14 +437,14 @@ public class ModuleCapabilityTransparencyTests
             V(a) = 7
             A = {
                 {
-                    public V = tick()
+                    public V = tock()
                     V + 100
                 }
             }
             A, A.V, A
             """,
             "S[101, 7, 101]",
-            ["tick"]
+            ["tock"]
         },
         {
             // three levels of written nesting, one-line nesting, a parameter receiver, and

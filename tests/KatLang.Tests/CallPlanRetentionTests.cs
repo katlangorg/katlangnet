@@ -12,7 +12,7 @@ namespace KatLang.Tests;
 /// supply after the cell's VALUE has completed. Every program runs on the production supplied cells.
 /// <c>Meta</c> is the internal META receiver seam of <see cref="InvocationPlanTestSeam"/>; these cases pin the
 /// representation below the surface <c>meta</c> binder, whose language-level behaviour is pinned by
-/// <c>CallReferenceS1Tests</c>/<c>CallReferenceS2Tests</c>. <c>trace</c>, <c>tick</c> and <c>pair</c> count effects.
+/// <c>CallReferenceS1Tests</c>/<c>CallReferenceS2Tests</c>. <c>trace</c>, <c>tock</c> and <c>pair</c> count effects.
 /// </summary>
 public partial class InvocationPlanTests
 {
@@ -146,7 +146,7 @@ public partial class InvocationPlanTests
         };
 
         Assert.Equal("S[11, S[12, 13]]", probe.Run("""
-            F(v) = v + tick()
+            F(v) = v + tock()
             Probe(x) = (x, Meta(x))
             Probe(F(trace(10)))
             """, optimized));
@@ -186,7 +186,7 @@ public partial class InvocationPlanTests
         };
 
         Assert.Equal("S[11, S[12, 11]]", probe.Run("""
-            F(v) = v + tick()
+            F(v) = v + tock()
             Probe(x) = (x, Meta(x))
             Probe(F(trace(10)))
             """, optimized));
@@ -225,7 +225,7 @@ public partial class InvocationPlanTests
         };
 
         Assert.Equal("S[4, S[5, 6]]", probe.Run("""
-            Add2(a, b) = a + b + tick()
+            Add2(a, b) = a + b + tock()
             Probe(x) = (x, Meta(x))
             Probe(Add2(pair()*))
             """, optimized));
@@ -250,7 +250,7 @@ public partial class InvocationPlanTests
         };
 
         Assert.Equal("S[11, 12]", probe.Run("""
-            F(v) = v + tick()
+            F(v) = v + tock()
             Hop3(c) = Meta(c)
             Hop2(b) = Hop3(b)
             Hop1(a) = Hop2(a)
@@ -330,7 +330,7 @@ public partial class InvocationPlanTests
         };
 
         Assert.Equal("S[6, 7, 8, 9]", probe.Run("""
-            F(v) = v + tick()
+            F(v) = v + tock()
             Observe(a, b) = { a, b, Meta(a), Meta(b) }
             Pack(*xs) = Observe(xs*)
             Pack(F(trace(5)), F(trace(5)))
@@ -453,7 +453,7 @@ public partial class InvocationPlanTests
         };
         Result.CallReference? reference = null;
         probe.OnMeta = cells => { reference = Reify(cells[0]); return Zero; };
-        var run = probe.RunAsyncTwin("Add2(a, b) = a + b + tick()\nProbe(x) = (Meta(x), x)\nProbe(Add2(pair()*))");
+        var run = probe.RunAsyncTwin("Add2(a, b) = a + b + tock()\nProbe(x) = (Meta(x), x)\nProbe(Add2(pair()*))");
         try
         {
             await entered.Task.WaitAsync(TimeSpan.FromSeconds(30));
@@ -540,14 +540,14 @@ public partial class InvocationPlanTests
         "F(v) = v + 1\nG(x) = \"{x}!\"\nG(F(trace(2)))",
         "F(v) = (v, v + 1)\nG(x) = x[1]\nG(F(trace(2)))",
         "F(v) = (v, v)\nAdd2(a, b) = a + b\nG(x) = x\nG(Add2(F(trace(4))*))",
-        "P = tick()\nG(x) = (x, x)\nG(P()), P, P, G(P())",
+        "P = tock()\nG(x) = (x, x)\nG(P()), P, P, G(P())",
         "open Lib\nLib = { public F(v) = v * 2 }\nG(x) = x\nG(F(trace(3)))",
         "G(x) = x\nApply(f, v) = G(f(v))\nApply({k * 3}, trace(2))",
         "G(x) = x\nG(abs(trace(-3)))",
         "Keep(a, b) = a\nG(x) = x\nG(Keep(trace(1), Keep(trace(2), 1 / 0)))",
         "G(x) = x\nG(count(filter(range(1, trace(30)), {v > 2})))",
         "Pair2(v) = (v, v)\na, b = Pair2(trace(7))\nG(x) = x + 1\nG(a), G(b)",
-        "F(v) = v + tick()\nTwice(x) = (x, x)\nTwice(F(trace(1))), Twice(F(trace(2)))",
+        "F(v) = v + tock()\nTwice(x) = (x, x)\nTwice(F(trace(1))), Twice(F(trace(2)))",
         "Count(*xs) = xs.count\nWrap(*ys) = Count(ys*)\nWrap(trace(1), trace(2), pair()*)",
     };
 
@@ -609,7 +609,7 @@ public partial class InvocationPlanTests
     // ── Sync / async agreement in plan runs ─────────────────────────────────
 
     [Theory]
-    [InlineData("F(v) = v + tick()\nG(x) = (x, x)\nG(F(trace(10)))")]
+    [InlineData("F(v) = v + tock()\nG(x) = (x, x)\nG(F(trace(10)))")]
     [InlineData("F(a, b) = a\nG(x) = x\nG(F(trace(1), 1 / 0))")]
     [InlineData("F(v) = v\nG(x) = x\nG(F(trace(1), trace(2)))")]
     [InlineData("Add2(a, b) = a + b\nG(x) = (x, x)\nG(Add2(pair()*))")]
@@ -621,7 +621,7 @@ public partial class InvocationPlanTests
     [InlineData("Fact(n) = if(n < 2, 1, n * Fact(n - 1))\nG(x) = x\nG(Fact(trace(5)))")]
     [InlineData("F(*xs) = count(xs)\nG(x) = x\nG(F(trace(1), trace(2), pair()*))")]
     [InlineData("G(x) = x\nG(Missing(trace(1)))")]
-    [InlineData("F(v) = v + tick()\nAlias = F\nG(x) = x\nG(Alias(trace(5)))")]
+    [InlineData("F(v) = v + tock()\nAlias = F\nG(x) = x\nG(Alias(trace(5)))")]
     [InlineData("F(a, b) = a + b\nPack(*xs) = F(xs*)\nG(x) = x\nG(Pack(trace(1), trace(2)))")]
     [InlineData("F(0) = 1\nF(1) = 2\nG(x) = x\nG(F(trace(2)))")]
     [InlineData("F((a, b)) = b + a\nG(x) = x\nG(F((trace(1), trace(2))))")]

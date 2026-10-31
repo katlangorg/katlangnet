@@ -71,10 +71,10 @@ public class ResourceLimitTerminalityTests
 
         public Result Tick()
         {
-            var tick = Interlocked.Increment(ref _ticks);
+            var tock = Interlocked.Increment(ref _ticks);
             lock (Calls)
-                Calls.Add($"tick#{tick}");
-            return new Result.Atom((Decimal128)tick);
+                Calls.Add($"tock#{tock}");
+            return new Result.Atom((Decimal128)tock);
         }
 
         public Result Trace(Result value)
@@ -93,7 +93,7 @@ public class ResourceLimitTerminalityTests
     }
 
     /// <summary>
-    /// <c>tick()</c> counts its invocations, <c>trace(x)</c> logs and returns its argument,
+    /// <c>tock()</c> counts its invocations, <c>trace(x)</c> logs and returns its argument,
     /// and <c>pause()</c> logs and returns 0. On the twin routes every operation genuinely
     /// suspends (<c>Task.Yield</c>) before acting, so terminality is exercised across real
     /// suspension points; on the other routes they are synchronous.
@@ -101,11 +101,11 @@ public class ResourceLimitTerminalityTests
     private static HostOperations OperationsFor(HostLog log, bool suspending)
         => suspending
             ? HostOperations.Create(
-                HostOperation.CreateAsync("tick", async (_, _) => { await Task.Yield(); return log.Tick(); }),
+                HostOperation.CreateAsync("tock", async (_, _) => { await Task.Yield(); return log.Tick(); }),
                 HostOperation.CreateAsync("trace", async (args, _) => { await Task.Yield(); return log.Trace(args[0]); }, "x"),
                 HostOperation.CreateAsync("pause", async (_, _) => { await Task.Yield(); return log.Pause(); }))
             : HostOperations.Create(
-                HostOperation.Create("tick", (_, _) => log.Tick()),
+                HostOperation.Create("tock", (_, _) => log.Tick()),
                 HostOperation.Create("trace", (args, _) => log.Trace(args[0]), "x"),
                 HostOperation.Create("pause", (_, _) => log.Pause()));
 
@@ -827,12 +827,12 @@ public class ResourceLimitTerminalityTests
     {
         AssertFails(await OnEveryRouteAsync("Bad = trace(1) / 0\nPair(x) = x, x\nPair(Bad)"),
             KatLangErrorCode.DivisionByZero, "trace(1)");
-        AssertOk(await OnEveryRouteAsync("A = trace(tick())\nPair(x) = x, x\nPair(A), A"),
-            "S[S[1, 1], 1]", "tick#1", "trace(1)");
+        AssertOk(await OnEveryRouteAsync("A = trace(tock())\nPair(x) = x, x\nPair(A), A"),
+            "S[S[1, 1], 1]", "tock#1", "trace(1)");
         // CACHE-PUB-1: the first invocation establishes P's entry, which the cell's one VALUE
         // demand reads (formerly S[1, 2, 3]); the cell itself is still demanded at most once.
-        AssertOk(await OnEveryRouteAsync("P = tick()\nTwice0(f) = f(), f(), f\nTwice0(P)"),
-            "S[1, 2, 1]", "tick#1", "tick#2");
+        AssertOk(await OnEveryRouteAsync("P = tock()\nTwice0(f) = f(), f(), f\nTwice0(P)"),
+            "S[1, 2, 1]", "tock#1", "tock#2");
         // An ordinary failure beside a demanded limit: G demands only y, so Bad is never
         // evaluated, and y's limit ends the run after trace(2). (Until Model C the first slot
         // was evaluated at assembly and its failure retained.)

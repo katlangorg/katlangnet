@@ -82,10 +82,10 @@ public sealed class DisplayDecimalsFilterCompositionTests
 
         public Result Tick()
         {
-            var tick = Interlocked.Increment(ref _ticks);
+            var tock = Interlocked.Increment(ref _ticks);
             lock (Calls)
-                Calls.Add($"tick#{tick}");
-            return new Result.Atom((Decimal128)tick);
+                Calls.Add($"tock#{tock}");
+            return new Result.Atom((Decimal128)tock);
         }
 
         public Result Trace(Result value)
@@ -107,11 +107,11 @@ public sealed class DisplayDecimalsFilterCompositionTests
     private static HostOperations OperationsFor(HostLog log, bool suspending)
         => suspending
             ? HostOperations.Create(
-                HostOperation.CreateAsync("tick", async (_, _) => { await Task.Yield(); return log.Tick(); }),
+                HostOperation.CreateAsync("tock", async (_, _) => { await Task.Yield(); return log.Tick(); }),
                 HostOperation.CreateAsync("trace", async (args, _) => { await Task.Yield(); return log.Trace(args[0]); }, "x"),
                 HostOperation.CreateAsync("cancel", async (_, _) => { await Task.Yield(); return log.Cancel(); }))
             : HostOperations.Create(
-                HostOperation.Create("tick", (_, _) => log.Tick()),
+                HostOperation.Create("tock", (_, _) => log.Tick()),
                 HostOperation.Create("trace", (args, _) => log.Trace(args[0]), "x"),
                 HostOperation.Create("cancel", (_, _) => log.Cancel()));
 
@@ -406,14 +406,14 @@ public sealed class DisplayDecimalsFilterCompositionTests
     [InlineData(99)]
     public async Task ExplicitCall_IsFresh_AndNeverSatisfiesTheCachedEngineRead(int? hostFilter)
     {
-        var explicitOnly = await OnEveryEngineRouteAsync("DisplayDecimals = tick() + 4\nDisplayDecimals(), 1 / 7", hostFilter);
-        Assert.Equal(["tick#1"], explicitOnly.HostCalls);
+        var explicitOnly = await OnEveryEngineRouteAsync("DisplayDecimals = tock() + 4\nDisplayDecimals(), 1 / 7", hostFilter);
+        Assert.Equal(["tock#1"], explicitOnly.HostCalls);
         Assert.StartsWith("S[5, ", explicitOnly.Value, StringComparison.Ordinal);
         Assert.Equal(hostFilter is { } h ? Math.Min(5, h) : 5, explicitOnly.Decimals);
 
         // A cached read in the output, then an explicit call: the engine reuses the cached 5.
-        var cachedFirst = await OnEveryEngineRouteAsync("DisplayDecimals = tick() + 4\nDisplayDecimals, DisplayDecimals(), 1 / 7", hostFilter);
-        Assert.Equal(["tick#1", "tick#2"], cachedFirst.HostCalls);
+        var cachedFirst = await OnEveryEngineRouteAsync("DisplayDecimals = tock() + 4\nDisplayDecimals, DisplayDecimals(), 1 / 7", hostFilter);
+        Assert.Equal(["tock#1", "tock#2"], cachedFirst.HostCalls);
         Assert.StartsWith("S[5, 6, ", cachedFirst.Value, StringComparison.Ordinal);
         Assert.Equal(hostFilter is { } h2 ? Math.Min(5, h2) : 5, cachedFirst.Decimals);
     }

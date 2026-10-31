@@ -1,4 +1,5 @@
 using KatLang.Semantics;
+using Xunit.Abstractions;
 
 namespace KatLang.Tests;
 
@@ -31,7 +32,7 @@ namespace KatLang.Tests;
 /// otherwise combine, and that shape is pinned on its own below.
 /// </para>
 /// </summary>
-public class RootStrayCloserRecoveryTests
+public class RootStrayCloserRecoveryTests(ITestOutputHelper testOutput)
 {
     private const char StrayMarker = '¤';
 
@@ -483,25 +484,58 @@ public class RootStrayCloserRecoveryTests
     /// Recovery in the parser is a set of non-consuming returns (an owed closer, the end of
     /// input) balanced by loops that must END at those tokens; this sweep is the executable
     /// statement that no combination of open and close delimiters re-enters a loop without
-    /// consuming (the September 2026 audit's first owed-closer rule hung on `[ (1, ]`). The
-    /// whole sweep is bounded by a wall-clock guard so a regression fails with the offending
-    /// input instead of hanging the suite; the guard is awaited, never blocked on, so a
-    /// diagnostic-count failure inside the sweep surfaces as itself rather than wrapped.
+    /// consuming (the September 2026 audit's first owed-closer rule hung on `[ (1, ]`).
     /// <para>It also states the delimiter-ownership law's consequence (#9): every closer
     /// closes at least one open construct, so when a malformed source's delimiters balance
     /// by COUNT, whatever their kinds (`(1, 2]`, `{ 1 ) 2 }`, `[({[1)}]`), every construct
     /// it opens is closed within it, and a declaration written after it on a new line stays
     /// a declaration of the root — no wrong closer can leave a construct open to swallow
     /// the rest of the document.</para>
+    /// <para>The sweep runs in a fresh process (<see cref="DelimiterSoupProbe"/> through the
+    /// shared <see cref="TerminationProbe"/>) because a parse that never returns cannot be
+    /// interrupted in place: the parser observes no cancellation in its delimiter loops, so only
+    /// ending the process stops it. The hang detector bounds the time WITHOUT COMPLETED WORK — no
+    /// input finished, original parse and suffix check included, for
+    /// <see cref="TerminationProbe.ParserStallWindow"/> — never the sweep's total duration, which
+    /// depends on what else the machine runs (about 1.5 s alone; the former two-minute whole-sweep
+    /// guard expired under full-suite contention). It establishes termination, not an aggregate
+    /// performance bound. A stalled child is terminated and joined, and the failure quotes the
+    /// last progress record as an observation, not a proven counterexample. An assertion failure
+    /// surfaces from the child unchanged, with its input and phase.</para>
     /// </summary>
     [Fact]
-    public async Task DelimiterSoup_AlwaysTerminates_WithLinearDiagnostics()
+    public void DelimiterSoup_AlwaysTerminates_WithLinearDiagnostics()
     {
-        char[] alphabet = ['(', ')', '[', ']', '{', '}', ',', '1', ' ', '\n'];
-        var current = "";
-        var parsed = 0;
-        var sweep = Task.Run(() =>
+        var run = TerminationProbe.RunAndAssert(
+            typeof(DelimiterSoupProbe), nameof(DelimiterSoupProbe.Sweep), DelimiterSoupProbe.InputCount, TerminationProbe.ParserStallWindow);
+        testOutput.WriteLine(
+            $"{run.Completion}; probe started {run.ProbeStarted?.TotalSeconds:0.000} s and the child exited "
+            + $"{run.Exited.TotalSeconds:0.000} s after launch.");
+    }
+
+    /// <summary>
+    /// The delimiter-soup sweep, run in its own process by
+    /// <see cref="DelimiterSoup_AlwaysTerminates_WithLinearDiagnostics"/>: an explicitly named probe,
+    /// not a discovered test. One completed item is one input whose original parse and, when it
+    /// applies, suffix check have both finished with their assertions.
+    /// </summary>
+    public sealed class DelimiterSoupProbe
+    {
+        public const int InputCount = 111_110;
+
+        public void Sweep()
         {
+            using var progress = TerminationProgress.Start();
+            var (parsed, suffixChecks) = Run(progress);
+            Assert.Equal(InputCount, parsed);
+            progress.Finish($"suffixChecks={suffixChecks}");
+        }
+
+        private static (int Parsed, int SuffixChecks) Run(TerminationProgress progress)
+        {
+            char[] alphabet = ['(', ')', '[', ']', '{', '}', ',', '1', ' ', '\n'];
+            var parsed = 0;
+            var suffixChecks = 0;
             var buffer = new char[5];
             for (var length = 1; length <= 5; length++)
             {
@@ -515,35 +549,40 @@ public class RootStrayCloserRecoveryTests
                         rest /= alphabet.Length;
                     }
                     var source = new string(buffer, 0, length);
-                    Volatile.Write(ref current, source);
-                    var result = Parser.ParseSyntax(source);
-                    Assert.True(
-                        result.Diagnostics.Count <= 2 * length + 1,
-                        $"{result.Diagnostics.Count} diagnostics for {length} characters: {Escape(source)}");
-                    if (result.HasErrors && DelimitersBalanceByCount(source))
+                    progress.Begin(parsed + 1, "original", source);
+                    try
                     {
-                        var withSuffix = Parser.ParseSyntax(source + "\nGood = 41\nGood");
-                        var good = Assert.Single(withSuffix.Root.Properties, p => p.Name == "Good");
+                        var result = Parser.ParseSyntax(source);
                         Assert.True(
-                            Assert.Single(good.DeclarationSpans).Start.Line == source.Count(c => c == '\n') + 2,
-                            $"The declaration after a count-balanced prefix was not kept at the root: {Escape(source)}");
+                            result.Diagnostics.Count <= 2 * length + 1,
+                            $"{result.Diagnostics.Count} diagnostics for {length} characters: {Escape(source)}");
+                        if (result.HasErrors && DelimitersBalanceByCount(source))
+                        {
+                            progress.Enter("suffix-recovery");
+                            var withSuffix = Parser.ParseSyntax(source + "\nGood = 41\nGood");
+                            var good = Assert.Single(withSuffix.Root.Properties, p => p.Name == "Good");
+                            Assert.True(
+                                Assert.Single(good.DeclarationSpans).Start.Line == source.Count(c => c == '\n') + 2,
+                                $"The declaration after a count-balanced prefix was not kept at the root: {Escape(source)}");
+                            suffixChecks++;
+                        }
+                    }
+                    catch (Exception) when (progress.ReportFailure())
+                    {
+                        throw; // Unreachable: the filter only reports the failing input and never catches.
                     }
                     parsed++;
+                    progress.Complete();
                 }
             }
-        });
 
-        var finished = await Task.WhenAny(sweep, Task.Delay(TimeSpan.FromMinutes(2)));
-        Assert.True(
-            finished == sweep,
-            $"The delimiter sweep did not terminate; last input: {Escape(Volatile.Read(ref current))}");
-        await sweep;
-        Assert.Equal(111_110, parsed);
+            return (parsed, suffixChecks);
+        }
 
-        static string Escape(string source) => source.Replace("\n", "\\n", StringComparison.Ordinal);
+        private static string Escape(string source) => source.Replace("\n", "\\n", StringComparison.Ordinal);
 
         // No prefix closes more delimiters than it opened, and the totals match — kinds ignored.
-        static bool DelimitersBalanceByCount(string source)
+        private static bool DelimitersBalanceByCount(string source)
         {
             var depth = 0;
             foreach (var c in source)

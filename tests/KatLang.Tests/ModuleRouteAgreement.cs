@@ -10,7 +10,7 @@ namespace KatLang.Tests;
 /// synchronous and with genuinely suspending host operations, the generic and the optimized evaluator
 /// over the async front end's tree, and the forced async twin. A program with a deferred module region
 /// (a load-bearing clause branch) runs on the asynchronous routes only — the synchronous evaluator
-/// routes refuse such a tree by contract. <c>tick()</c> and <c>trace(x)</c> are host operations that
+/// routes refuse such a tree by contract. <c>tock()</c> and <c>trace(x)</c> are host operations that
 /// log every call; the module server counts fetches per URL.
 /// </summary>
 internal static class ModuleRouteAgreement
@@ -54,10 +54,10 @@ internal static class ModuleRouteAgreement
 
         public Result Tick()
         {
-            var tick = Interlocked.Increment(ref _ticks);
+            var tock = Interlocked.Increment(ref _ticks);
             lock (Calls)
-                Calls.Add($"tick#{tick}");
-            return new Result.Atom((Decimal128)tick);
+                Calls.Add($"tock#{tock}");
+            return new Result.Atom((Decimal128)tock);
         }
 
         public Result Trace(Result value)
@@ -71,10 +71,10 @@ internal static class ModuleRouteAgreement
     private static HostOperations OperationsFor(HostLog log, bool suspending)
         => suspending
             ? HostOperations.Create(
-                HostOperation.CreateAsync("tick", async (_, _) => { await Task.Yield(); return log.Tick(); }),
+                HostOperation.CreateAsync("tock", async (_, _) => { await Task.Yield(); return log.Tick(); }),
                 HostOperation.CreateAsync("trace", async (args, _) => { await Task.Yield(); return log.Trace(args[0]); }, "x"))
             : HostOperations.Create(
-                HostOperation.Create("tick", (_, _) => log.Tick()),
+                HostOperation.Create("tock", (_, _) => log.Tick()),
                 HostOperation.Create("trace", (args, _) => log.Trace(args[0]), "x"));
 
     /// <summary>One route's observation of <paramref name="source"/> over a fresh module server built by <paramref name="server"/>.</summary>

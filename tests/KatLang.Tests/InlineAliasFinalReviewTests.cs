@@ -30,7 +30,7 @@ public class InlineAliasFinalReviewTests
         { "callable-after-transport", Inc + "Apply(f, x) = f(x)\nPass(f, x) = Apply(f, x)\nPass({ A = Inc\n A }, 4)", "5", null, null, [] },
         { "zero-accepting-chain", "Only(*xs) = xs\nA = Only\nB = A\nK(z) = count({ B })\nK(1)", "0", null, null, [] },
         { "zero-property-values", "Z = 4\nK(z) = { Z }, { { Z } }, Z\nK(1)", "S[4, 4, 4]", null, null, [] },
-        { "one-cell-two-demands", "Only(*xs) = tick()\nTwice(v) = v + v\nTwice({ Only })", "2", null, null, ["tick#1"] },
+        { "one-cell-two-demands", "Only(*xs) = tock()\nTwice(v) = v + v\nTwice({ Only })", "2", null, null, ["tock#1"] },
     };
 
     [Theory]

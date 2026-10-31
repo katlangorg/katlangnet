@@ -372,13 +372,13 @@ public class OpenTargetHeadValidityTests
         var options = new RunOptions
         {
             HostOperations = HostOperations.Create(
-                HostOperation.Create("tick", (_, _) => { calls.Add("tick"); return new Result.Atom(1); })),
+                HostOperation.Create("tock", (_, _) => { calls.Add("tock"); return new Result.Atom(1); })),
         };
-        var result = KatLangEngine.Run("open { public S = { public Q = 3 }\n    tick() }.S\nQ", options);
+        var result = KatLangEngine.Run("open { public S = { public Q = 3 }\n    tock() }.S\nQ", options);
         Assert.Equal("3", Assert.IsType<RunResult.Success>(result).ToDisplayString());
         Assert.Empty(calls);
 
-        var refused = KatLangEngine.Run("open { public S = { public Q = 3 }\n    tick() }.Nope\n1", options);
+        var refused = KatLangEngine.Run("open { public S = { public Q = 3 }\n    tock() }.Nope\n1", options);
         Assert.Equal(KatLangErrorCode.UnresolvedOpenTarget, Assert.Single(Assert.IsType<RunResult.ParseFailure>(refused).Errors).Code);
         Assert.Empty(calls);
     }

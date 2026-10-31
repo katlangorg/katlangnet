@@ -667,6 +667,8 @@ inductive UnaryOp where
 
 inductive Builtin where
   | ifBuiltin | whileBuiltin | repeatBuiltin | atomsBuiltin | rangeBuiltin | filterBuiltin | mapBuiltin | orderBuiltin | orderDescBuiltin | countBuiltin | containsBuiltin | firstBuiltin | lastBuiltin | distinctBuiltin | takeBuiltin | skipBuiltin | minBuiltin | maxBuiltin | sumBuiltin | avgBuiltin | reduceBuiltin
+  -- `tick()`: the zero-argument run-local diagnostic counter (`EvalState.tickCounter`, `runTick`).
+  | tickBuiltin
   deriving Repr, BEq, DecidableEq
 
 inductive SequenceBuiltinSuffixArgKind where
@@ -830,6 +832,7 @@ def builtinDisplayName : Builtin -> String
   | .sumBuiltin => "sum"
   | .avgBuiltin => "avg"
   | .reduceBuiltin => "reduce"
+  | .tickBuiltin => "tick"
 
 /-- THE ONE AUTHORITATIVE BUILTIN SIGNATURE (META-S3-3, October 2026): a builtin's ordinary
     parameter patterns, read by its runtime arity (`builtinAcceptsArity`), the META binding of
@@ -851,6 +854,8 @@ def builtinSignature (b : Builtin) : List ParameterPattern :=
       | .repeatBuiltin => [.capture { name := "step", kind := .metaRef }] ++ fixed ["count"]
       | .atomsBuiltin => fixed ["value"]
       | .rangeBuiltin => fixed ["start", "stop"]
+      -- `tick()` declares no parameter: its only accepted call supplies nothing.
+      | .tickBuiltin => []
       | _ => []
 
 /-- Whether a builtin's signature declares a META parameter (META-S3-3): such a builtin binds
@@ -2227,6 +2232,11 @@ structure EvalState where
   /-- META-S3-2: the BINDING CELL of each runtime-target alias per declaring activation
       (`aliasCellKey`), established on first use by `aliasBindingCell` and never changed. -/
   aliasCells : List (String × Nat) := []
+  /-- The run's `tick()` counter: the number of `tick` executions so far — zero when the run
+      starts, advanced ONLY by `runTick` (one successful execution of the primitive), never reset
+      and never rolled back. Genuine language state (it decides `tick()`'s value), not an
+      observation trace. C#: `EvaluationBudget`'s tick counter. -/
+  tickCounter : Nat := 0
   deriving Repr
 
 namespace EvalState
@@ -4263,10 +4273,46 @@ def reCountValueBoundary (r : CountedResult) : CountedResult :=
 def buildEmptySequenceValue (_ : Nat) : Result :=
   Result.sequenceValue []
 
+/-- The refusal of a bare VALUE demand of a ZERO-arity builtin (`tick`): its only valid use as a
+    value is the explicit invocation, so the report names it instead of the misleading "expected 0
+    arguments, received 0". C#: `Evaluator.BuiltinInvocationRequiredMessage`. -/
+def builtinInvocationRequiredMessage (b : Builtin) : String :=
+  let name := builtinDisplayName b
+  s!"`{name}` is a builtin operation that runs only when it is invoked: write `{name}()`."
+
 -- No builtin is valid as a bare zero-argument value; every builtin requires a
--- call. (The empty sequence value is written `()`, not a builtin.)
+-- call. (The empty sequence value is written `()`, not a builtin.) A builtin whose
+-- arity is zero (`tick`) is refused as INVOCATION REQUIRED (`illegalInEval`); every
+-- other builtin keeps the very arity error its empty call reports.
 def evalBuiltinValueCounted : Builtin -> EvalM CountedResult
-  | b => .error (builtinArityError b 0)
+  | b =>
+      if builtinMinimumArity b == 0 then
+        .error (Error.illegalInEval (builtinInvocationRequiredMessage b))
+      else
+        .error (builtinArityError b 0)
+
+/-- The largest value a run's `tick()` counter can return: 2^63 - 1 = 9223372036854775807, an
+    exact integer in C#'s Decimal128 and the C# counter's `long.MaxValue`. C#:
+    `EvaluationBudget.MaxTickCount`. -/
+def tickCounterLimit : Nat := 9223372036854775807
+
+/-- The refusal of a `tick()` whose run counter is exhausted. C#: `Evaluator.TickExhaustedMessage`. -/
+def tickExhaustedMessage : String :=
+  "`tick()` cannot advance: the run's counter has reached its limit of 9223372036854775807."
+
+/-- ONE execution of the `tick()` primitive (the `.tickBuiltin` arm of `applyBuiltinCounted`, reached
+    only by an accepted zero-argument call): the run counter advances by exactly one and its NEW
+    value is the ONE numeric result (emitted count 1). An exhausted counter (`tickCounterLimit`) is the
+    ordinary domain failure `illegalInEval` and leaves the state unchanged: the counter never wraps,
+    rounds or saturates into a duplicate value. Nothing else in the state changes, and nothing is
+    rolled back when a surrounding computation later fails. C#: `Evaluator.ExecuteTick` over
+    `EvaluationBudget.TryAdvanceTick`. -/
+def runTick : EvalM CountedResult := do
+  let state <- get
+  if state.tickCounter >= tickCounterLimit then
+    throw (Error.illegalInEval tickExhaustedMessage)
+  modify fun s => { s with tickCounter := s.tickCounter + 1 }
+  pure (Result.atom (Int.ofNat (state.tickCounter + 1)), 1)
 
 /-- Flatten a `sequenceConstruct` subtree into its ordered leaves without changing
     sequence-value/block values inside those leaves. -/
@@ -10508,6 +10554,9 @@ def EvalBody.algorithmIntrinsicRoute (rec : EvalRec) (receiver : Expr) (ctx : Ev
         | _, _ => .error (builtinArityError b args.length)
       else
         match b, args with
+        -- `tick()`: the accepted zero-argument call executes the primitive once (`runTick`). A
+        -- supplied argument is the final arm's arity rejection, before anything is demanded.
+        | .tickBuiltin, [] => runTick
         | .ifBuiltin, [c,t,e] => do
             let cr <- rec.evalArgumentValue c ctx env
             -- The selected branch is one argument expression, so `if` observes it
@@ -13063,6 +13112,7 @@ def preludeAlg : Algorithm :=
     , publicProp "sum" (Algorithm.builtin .sumBuiltin)
     , publicProp "avg" (Algorithm.builtin .avgBuiltin)
     , publicProp "reduce" (Algorithm.builtin .reduceBuiltin)
+    , publicProp "tick" (Algorithm.builtin .tickBuiltin)
     ]
     []
 

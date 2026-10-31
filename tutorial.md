@@ -332,6 +332,68 @@ A property may also read itself, directly or through other properties. Each such
 
 The same rule covers an algorithm that has parameters but still works with no arguments: its name alone reads its cached value, and only `A()` evaluates it again (see [Using the Name Alone](#using-the-name-alone)).
 
+### Counting Evaluations with `tick()`
+
+`tick()` makes these rules visible. Each run of a program starts a counter at zero; every time `tick()` actually runs, it adds one and returns the new count:
+
+```
+tick(), tick(), tick()
+```
+
+**Results:**
+```
+1
+2
+3
+```
+
+A property that uses `tick()` runs it once, when it is first read; explicit calls run it again:
+
+```
+A = tick()
+A(), A, A(), A
+```
+
+**Results:**
+```
+1
+1
+2
+1
+```
+
+Defining `A` runs nothing, an argument that is never used is never computed, and an argument used twice is computed once:
+
+```
+Ignore(x) = 7
+Twice(x) = x + x
+Ignore(tick()), Twice(tick()), tick()
+```
+
+**Results:**
+```
+7
+2
+2
+```
+
+Only the written call `tick()` runs the counter. The name `tick` alone is the operation itself, so it can be named and passed on like any other algorithm, and each call through that name counts once:
+
+```
+T = tick
+Apply(f) = f()
+T(), Apply(tick), tick()
+```
+
+**Results:**
+```
+1
+2
+3
+```
+
+Using `tick` without parentheses as a number is an error that asks for `tick()`, and `tick(5)` is an argument-count error; neither one counts. The counter belongs to the run: the next run starts at zero again, and nothing else in the program — other properties, random numbers, the order of evaluation — is affected by it. Like any built-in name, `tick` can be redefined by a definition of your own.
+
 ### Displayed Decimal Places
 
 A property named `DisplayDecimals` at the top level of a program is a display filter: it limits how many decimal places the program's results show:
@@ -3075,6 +3137,7 @@ Written as `X = A*` followed by the row `X`, the program prints the same `(1, 2)
 | `atoms` | `atoms(value)` | Every number in a nested structure, in one flat list |
 | `repeat` | `step(initial...).repeat(n)` | The state after `n` applications of `step`, starting from the arguments of the written call |
 | `while` | `step(initial...).while` | The state reached while the last supplied item of `step` is `true`; each round discovers that condition from right to left and forms the remaining earlier rows only when it is `true` |
+| `tick` | `tick()` | The run's counter after adding one: `1`, `2`, `3`, … for each time the call actually runs (see [Counting Evaluations with `tick()`](#counting-evaluations-with-tick)) |
 | `string` | `number.string` | The number as text (dot form only) |
 | `Invoke` | `reference.Invoke()` | Runs the call a `meta` parameter captured (dot form only; see [Capturing a Call with `meta`](#capturing-a-call-with-meta)) |
 | `Arguments` | `reference.Arguments` | A lazy view of the captured call's arguments: `count`, `[i]`, `first`, `last`, and `F(reference.Arguments*)` (dot form only; see [Looking at a Captured Call's Arguments](#looking-at-a-captured-calls-arguments)) |

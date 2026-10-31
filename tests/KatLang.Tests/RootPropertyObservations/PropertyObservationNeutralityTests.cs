@@ -222,13 +222,13 @@ public class PropertyObservationNeutralityTests
 
     public static TheoryData<string> EffectfulSources => new()
     {
-        "A = if(tick() < 3, A + 1, 0)\nA, A",
-        "A = tick()\nB = trace(A + 10)\nA() + B + A + A()",
+        "A = if(tock() < 3, A + 1, 0)\nA, A",
+        "A = tock()\nB = trace(A + 10)\nA() + B + A + A()",
         "R = randomInt(0, 1000)\nS = R + random()\nR, S, randomInt(0, 9)",
-        "Step(s) = trace(s) + tick()\nX = Step(0).repeat(4)\nX, X",
+        "Step(s) = trace(s) + tock()\nX = Step(0).repeat(4)\nX, X",
         "L = range(1, 20).map{trace(n)}.filter{n mod 2 == 0}\nC = L.count\nC + L.count",
         "Before = trace(1)\nBoom = trace(2) / 0\nAfter = trace(3)\nBefore + Boom + After",
-        "x, y = trace(1), tick()\nZ = x + y\nZ, y, x",
+        "x, y = trace(1), tock()\nZ = x + y\nZ, y, x",
     };
 
     [Theory]

@@ -51,7 +51,7 @@ public class DeconstructionConsumerOrderTests
         ("TARGET-CALLS", "F(k) = {\n    a, b = trace(k), k + 1\n    [0].map{ n + a() }[0] + a + b() + b\n}\nF(3)"),
         ("COLLECTOR", "F(k) = {\n    h, *t = trace(k), k + 1, k + 2\n    [0].map{ n + t.count }[0] + h + t.count + t().count\n}\nF(3)"),
         // Q-37 / Constitution mechanism note: binds nested in a running bind of their group are never stored.
-        ("REENTRANT", "a, b = if(tick() < 3, (a + a, 0), (1, 1))\na, a"),
+        ("REENTRANT", "a, b = if(tock() < 3, (a + a, 0), (1, 1))\na, a"),
         // A successful right-hand side, then a count mismatch: the source is evaluated once.
         ("MISMATCH", "F(k) = {\n    a, b = trace(k), k + 1, k + 2\n    [0].map{ n + a }[0] + b\n}\nF(3)"),
         ("MISMATCH-AFTER-READ", "F(k) = {\n    s = trace(k), k + 1, k + 2\n    a, b = s\n    s.count + [0].map{ n + a }[0]\n}\nF(3)"),
@@ -75,7 +75,7 @@ public class DeconstructionConsumerOrderTests
             ["EXPORTED"] = ("ok S[4, 5] n=2 | t(1)", 12, 57, 6, 8, 1),
             ["TARGET-CALLS"] = ("ok 14 n=1 | t(3)", 10, 40, 6, 4, 1),
             ["COLLECTOR"] = ("ok 9 n=1 | t(3)", 11, 50, 6, 7, 1),
-            ["REENTRANT"] = ("ok S[3, 3] n=2 | tick#1,tick#2,tick#3,tick#4,tick#5", 21, 77, 10, 12, 5),
+            ["REENTRANT"] = ("ok S[3, 3] n=2 | tock#1,tock#2,tock#3,tock#4,tock#5", 21, 77, 10, 12, 5),
             ["MISMATCH"] = ("err ArityMismatch | t(3)", 6, 30, 6, 4, 1),
             ["MISMATCH-AFTER-READ"] = ("err ArityMismatch | t(3)", 8, 34, 6, 4, 1),
         };
@@ -293,7 +293,7 @@ public class DeconstructionConsumerOrderTests
         var program = Program("REENTRANT");
         var shared = await Observe(program, route);
         var unshared = await Observe(program, route, shareBinds: false);
-        Assert.Equal("ok S[3, 3] n=2 | tick#1,tick#2,tick#3,tick#4,tick#5", shared.Comparable);
+        Assert.Equal("ok S[3, 3] n=2 | tock#1,tock#2,tock#3,tock#4,tock#5", shared.Comparable);
         Assert.Equal(shared.Comparable, unshared.Comparable);
         Assert.Equal(5, shared.Binds);
         Assert.Equal(unshared.Binds, shared.Binds);

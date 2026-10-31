@@ -38,7 +38,7 @@ public class StrategyNeutralBudgetParityTests
         public Result Tick()
         {
             var t = Interlocked.Increment(ref _ticks);
-            Calls.Add($"tick#{t}");
+            Calls.Add($"tock#{t}");
             return new Result.Atom(t);
         }
 
@@ -50,7 +50,7 @@ public class StrategyNeutralBudgetParityTests
     }
 
     internal static HostOperations Operations(HostLog log) => HostOperations.Create(
-        HostOperation.Create("tick", (_, _) => log.Tick()),
+        HostOperation.Create("tock", (_, _) => log.Tick()),
         HostOperation.Create("trace", (args, _) => log.Trace(args[0]), "x"));
 
     /// <summary>One observed run: the full outcome plus every budget counter the run charged.</summary>
@@ -114,7 +114,7 @@ public class StrategyNeutralBudgetParityTests
     }
 
     private static bool UsesHostOperations(string source)
-        => source.Contains("tick(", StringComparison.Ordinal) || source.Contains("trace(", StringComparison.Ordinal);
+        => source.Contains("tock(", StringComparison.Ordinal) || source.Contains("trace(", StringComparison.Ordinal);
 
     /// <summary>Which optimized strategy a case must exercise.</summary>
     [Flags]

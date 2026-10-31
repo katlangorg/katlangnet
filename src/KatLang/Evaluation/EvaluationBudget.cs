@@ -176,6 +176,47 @@ internal sealed class EvaluationBudget
     internal RandomSource RandomSource { get; }
 
     /// <summary>
+    /// The largest value the run's <c>tick()</c> counter can return:
+    /// <see cref="long.MaxValue"/> (9223372036854775807), an exact Decimal128 integer. Lean:
+    /// <c>tickCounterLimit</c>.
+    /// </summary>
+    internal const long MaxTickCount = long.MaxValue;
+
+    // The run's `tick()` counter: zero when the run starts, never reset, never shared with another
+    // run (a run started reentrantly by host code creates its own budget). It is independent of the
+    // step, depth, item and string counters, of property-cache statistics and of the random stream.
+    private long _tickCount = TickCounterTestSeam.Current?.InitialCount ?? 0;
+
+    /// <summary>The number of <c>tick()</c> executions this run has performed (test observation).</summary>
+    internal long TickCount => Interlocked.Read(ref _tickCount);
+
+    /// <summary>
+    /// ONE execution of the <c>tick()</c> primitive: increments the run's counter and returns the new
+    /// value, or — when the counter already holds <see cref="MaxTickCount"/> — returns <c>false</c> and
+    /// leaves it unchanged (the deterministic exhaustion failure; the counter never wraps, rounds or
+    /// saturates into a duplicate value). Compare-and-set, so every successful execution returns a
+    /// distinct value even if two demands of one run ever raced. Lean: <c>runTick</c>.
+    /// </summary>
+    internal bool TryAdvanceTick(out long value)
+    {
+        while (true)
+        {
+            var current = Interlocked.Read(ref _tickCount);
+            if (current >= MaxTickCount)
+            {
+                value = current;
+                return false;
+            }
+
+            if (Interlocked.CompareExchange(ref _tickCount, current + 1, current) == current)
+            {
+                value = current + 1;
+                return true;
+            }
+        }
+    }
+
+    /// <summary>
     /// The run's host cancellation token, exposed so host-facing evaluation sites
     /// (host operations) can hand the exact token to host code. Identity matters:
     /// hosts correlate cancellation by comparing this token to the one they supplied.
