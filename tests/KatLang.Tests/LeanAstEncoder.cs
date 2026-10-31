@@ -46,14 +46,17 @@ namespace KatLang.Tests;
 /// algorithm encodes as <c>Algorithm.withParent (some scope) …</c> over its ordinary encoding, the
 /// scope as the ownerless <c>ScopeCtx.mk</c> level it is (see <c>EncodeScope</c>), inner to outer;
 /// an unwired algorithm keeps its exact former text. The sharing pre-pass walks parent scopes too,
-/// and a property declared in a host level gets its shared identity per SCOPE OBJECT, so one
-/// object reached twice is one Lean declaring scope and two record-equal objects are two. The
-/// deliberate boundaries: evaluator-created scopes (internal owner/activation state) are refused,
-/// a cyclic or over-deep graph is refused by the evaluator's own structural preflight, and the
-/// residual HOST-LEAN-O6 shapes Lean cannot represent with per-object property identities alone
-/// (empty host levels as open-provider identity, O6-18; the C# pass-through inconsistency
-/// O6-11x awaiting owner decision OD-1) are pinned as machine-checked divergence fixtures in
-/// <c>HostParentDifferentialCorpus</c>, never as green comparisons.
+/// and shared properties keep declaration provenance separately from their declaring scope.
+/// HOST-LEAN-O6: every host level also carries its OBJECT's host-scope token in its identity slot
+/// (<c>PropertyIdentity.host</c>, one per <see cref="ScopeCtx"/> object by reference, see
+/// <c>HostToken</c>), so C#'s by-reference identity of ownerless levels — at the declaring level
+/// and at every ancestor, empty and opens-only levels included — is an explicit input of the
+/// Lean cache owner, alias cell, callable, open-provider and accessibility identities. Lean
+/// cannot rediscover object identity from equal values; this reference map is the encoder's half
+/// of the host-token contract, and Lean's <c>hostProvenanceViolation?</c> checks the
+/// consistency half. The deliberate boundaries: evaluator-created scopes (internal
+/// owner/activation state) are refused, and a cyclic or over-deep graph is refused by the
+/// evaluator's own structural preflight.
 /// </para>
 /// </summary>
 public static class LeanAstEncoder
@@ -93,15 +96,22 @@ internal sealed class LeanAstEncoding
     private readonly SharedDeclarations _sharing = new();
     // Keyed by the C# owner identity, so an ownerless host ANCESTOR of the owner counts by object
     // reference (HOST-NESTED-1): owned declarations under two distinct host objects get distinct ids.
-    // Empty or opens-only host levels still carry no Lean token of their own (O6-18, HP-14b).
     private readonly Dictionary<StructuralOwnerIdentity, Dictionary<Property, int>> _identities = new();
-    // HOST-DIFF-1: a property declared directly in a host-built (ownerless) ScopeCtx level is one
-    // C# binding PER SCOPE OBJECT (CACHE-OWNER-D3 / HOST-ALIAS-R14 key that level by reference), so
-    // its shared Lean identity is allocated per (scope object, property object), never per
-    // record-equal scope content.
-    private readonly Dictionary<ScopeCtx, Dictionary<Property, int>> _hostScopeIdentities =
-        new(ReferenceEqualityComparer.Instance);
+    // HOST-LEAN-O6: the Lean host-scope token (`PropertyIdentity.host`) of every ORIGINAL host-built
+    // ScopeCtx object, by reference: one object reached through any number of edges is one token,
+    // and distinct objects — record copies, levels sharing a property list, empty and opens-only
+    // levels included — are distinct tokens. One map per encoding, so one compared graph has one
+    // token namespace. Evaluator-owned traversal scopes (`Owner` set) never reach it.
+    private readonly Dictionary<ScopeCtx, int> _hostTokens = new(ReferenceEqualityComparer.Instance);
+    // The declaration identity of a property declared directly in a host-built level: per property
+    // OBJECT; the declaring host object is the level's token above, never part of this id.
+    private readonly Dictionary<Property, int> _hostPropertyIdentities = new(ReferenceEqualityComparer.Instance);
     private readonly Dictionary<DeclarationIdentity, int> _algorithmIdentities = new();
+    // IsSameDeclaringScope also compares nonempty lists by reference (empty lists are equivalent).
+    // Component tokens are global across declarations. When owned variants or shared alias literals
+    // need them, every owned node is annotated coherently; ordinary source keeps its existing text.
+    private readonly Dictionary<StructuralOwnerIdentity, int> _componentIdentities = new();
+    private readonly bool _needsComponentProvenance;
     private int _nextIdentity;
     private ScopeCtx? _scope;
     private readonly bool _compact;
@@ -114,6 +124,7 @@ internal sealed class LeanAstEncoding
         RequireAdmissibleGraph(root);
         _compact = NeedsCompactTerms(root);
         _sharing.VisitAlgorithm(root);
+        _needsComponentProvenance = _sharing.NeedsComponentProvenance;
     }
 
     public LeanAstEncoding(Expr root)
@@ -121,6 +132,7 @@ internal sealed class LeanAstEncoding
         RequireAdmissibleGraph(root);
         _compact = NeedsCompactTerms(root);
         _sharing.VisitExpr(root);
+        _needsComponentProvenance = _sharing.NeedsComponentProvenance;
     }
 
     // Keep existing small and source-derived goldens byte-identical. Large host graphs use Lean
@@ -226,21 +238,57 @@ internal sealed class LeanAstEncoding
     }
 
     /// <summary>
-    /// The shared Lean identity of <paramref name="property"/> as declared in the host-built level
-    /// <paramref name="scope"/>: one per (scope OBJECT, property OBJECT). The same scope reached
-    /// twice gives its properties equal ids (C#: one host object is one declaring owner), while two
-    /// distinct scope objects that share a property, a property list, or are record <c>with</c>
-    /// copies get distinct ids (C#: two objects are two owners), so Lean's structural owner key
-    /// separates exactly what C# separates (HOST-LEAN-O6 option C: O6-02..O6-09, O6-16, O6-17).
+    /// The Lean host-scope token of the ORIGINAL host-built level <paramref name="scope"/>
+    /// (<c>PropertyIdentity.host</c>): one per scope OBJECT, allocated on first emission, so C#'s
+    /// by-reference identity of an ownerless level becomes an explicit Lean input (HOST-LEAN-O6).
+    /// Record-equal copies, levels sharing a property list, and empty or opens-only levels each get
+    /// their own token; the same object reached again gets its first one.
     /// </summary>
-    private int HostDeclarationIdentity(Property property, ScopeCtx scope)
+    private int HostToken(ScopeCtx scope)
     {
-        if (!_hostScopeIdentities.TryGetValue(scope, out var byProperty))
-            _hostScopeIdentities[scope] = byProperty = new(ReferenceEqualityComparer.Instance);
-        if (!byProperty.TryGetValue(property, out var identity))
-            byProperty[property] = identity = _nextIdentity++;
+        if (!_hostTokens.TryGetValue(scope, out var token))
+            _hostTokens[scope] = token = _hostTokens.Count;
+        return token;
+    }
+
+    /// <summary>
+    /// The shared Lean DECLARATION identity of <paramref name="property"/> as declared in a host-built
+    /// level: one per property OBJECT (its declaration), wherever it is declared. Which host OBJECT
+    /// declares it is not a declaration fact: it is the level's host-scope token
+    /// (<see cref="HostToken"/>), which every Lean identity built from the declaring chain reads
+    /// (HOST-LEAN-O6). So one host object reached twice is one token with one declaration, and two
+    /// host objects sharing a property, a property list, or a record <c>with</c> copy are two tokens
+    /// over one declaration — C#'s (host object, property) binding. (HOST-DIFF-1 formerly encoded
+    /// the host object INTO this id, per (scope object, property object); the token superseded it.)
+    /// </summary>
+    private int HostDeclarationIdentity(Property property)
+    {
+        if (!_hostPropertyIdentities.TryGetValue(property, out var identity))
+            _hostPropertyIdentities[property] = identity = _nextIdentity++;
         return identity;
     }
+
+    private string AlgorithmIdentity(Algorithm algorithm, int identity, bool module)
+    {
+        var kind = module ? "module" : "shared";
+        if (!_needsComponentProvenance) return $"(.{kind} {identity})";
+        // Zero denotes the resolution-equivalent pair of empty lists, including runtime-created
+        // empty owners that carry no input component annotation.
+        if (algorithm.Opens.Count == 0 && algorithm.Properties.Count == 0)
+            return $"(.{kind}View {identity} 0)";
+        // Reuse production's component comparison and hashing. This is an evaluator-owned
+        // traversal level, with no parent: ancestry is compared separately by Lean's relation.
+        var components = ComponentIdentity(algorithm);
+        if (!_componentIdentities.TryGetValue(components, out var view))
+        {
+            view = _componentIdentities.Count + 1;
+            _componentIdentities.Add(components, view);
+        }
+        return $"(.{kind}View {identity} {view})";
+    }
+
+    private static StructuralOwnerIdentity ComponentIdentity(Algorithm algorithm)
+        => StructuralOwnerIdentity.FromScope(new ScopeCtx(null, algorithm.Opens, algorithm.Properties) { Owner = algorithm });
 
     // Two graph-bounded walks preserve host sharing without confusing equal
     // bodies with one declaration. A repeated subtree marks all its properties.
@@ -258,12 +306,23 @@ internal sealed class LeanAstEncoding
         private readonly HashSet<Property> _properties = new(ReferenceEqualityComparer.Instance);
         private readonly HashSet<ScopeCtx> _scopes = new(ReferenceEqualityComparer.Instance);
         private readonly SharedMarker _marker = new();
+        private readonly Dictionary<DeclarationIdentity, StructuralOwnerIdentity> _firstComponents = new();
+        private readonly HashSet<Algorithm.Alias> _literalAliases = new(ReferenceEqualityComparer.Instance);
+        private bool _hasOwnedVariants;
+        public bool NeedsComponentProvenance => _hasOwnedVariants || _literalAliases.Any(Contains);
         public bool Contains(Property property) => _marker.Properties.Contains(property);
         public bool Contains(Algorithm algorithm) => _marker.Algorithms.Contains(algorithm)
             || (algorithm.Declaration is { } declaration && _sharedDeclarations.Contains(declaration));
         protected override bool VisitsExplicitParameterDeclarations => false;
         public override void VisitAlgorithm(Algorithm algorithm)
         {
+            if (algorithm.Declaration is { } ownerDeclaration)
+            {
+                var components = ComponentIdentity(algorithm);
+                if (_firstComponents.TryGetValue(ownerDeclaration, out var previous))
+                    _hasOwnedVariants |= !previous.Equals(components);
+                else _firstComponents.Add(ownerDeclaration, components);
+            }
             // A host `with` copy is another object representing the SAME declaration.
             // Visit distinct object graphs normally (copies may have different children),
             // but give every view of a repeated declaration the same Lean shared id.
@@ -278,6 +337,7 @@ internal sealed class LeanAstEncoding
         }
         public override void VisitExpr(Expr expression)
         {
+            if (expression is Expr.AlgorithmExpr { Algorithm: Algorithm.Alias literal }) _literalAliases.Add(literal);
             if (expression is Expr.SequenceConstruct or Expr.SequenceSpread)
             {
                 WalkJoinSpine(expression, _expressions, VisitExpr, _marker.VisitExpr);
@@ -499,15 +559,15 @@ internal sealed class LeanAstEncoding
                     ?? throw new NotSupportedException("A loaded module must have a declaration identity.");
                 if (!_algorithmIdentities.TryGetValue(module, out var moduleIdentity))
                     _algorithmIdentities[module] = moduleIdentity = _algorithmIdentities.Count;
-                return $"(Algorithm.withDeclarationId (some (.module {moduleIdentity})) {encoded})";
+                return $"(Algorithm.withDeclarationId (some {AlgorithmIdentity(algorithm, moduleIdentity, module: true)}) {encoded})";
             }
 
-            if (!_sharing.Contains(algorithm)) return encoded;
+            if (!_sharing.Contains(algorithm) && !_needsComponentProvenance) return encoded;
             var declaration = algorithm.Declaration
                 ?? throw new NotSupportedException("A shared algorithm must have a declaration identity.");
             if (!_algorithmIdentities.TryGetValue(declaration, out var identity))
                 _algorithmIdentities[declaration] = identity = _algorithmIdentities.Count;
-            return $"(Algorithm.withDeclarationId (some (.shared {identity})) {encoded})";
+            return $"(Algorithm.withDeclarationId (some {AlgorithmIdentity(algorithm, identity, module: false)}) {encoded})";
         }
         finally { _scope = parent; }
     }
@@ -528,10 +588,10 @@ internal sealed class LeanAstEncoding
     /// activation declarationId</c>. A host level is OWNERLESS — no owner body (its Lean
     /// <c>output</c>/<c>branches</c>, which retain an owner's body for scope reconstruction, are
     /// empty: Lean reconstructs only evaluator-owned scopes, and the host level reaches lookup only
-    /// through its opens and properties), no activation and no declaration identity, exactly
-    /// <c>CoreTests/HostScopePropertyCache.lean</c>'s <c>hostLevel</c>. Its properties are declared
+    /// through its opens and properties) and no activation; its identity slot holds the OBJECT's
+    /// host-scope token <c>some (.host n)</c> (<see cref="HostToken"/>). Its properties are declared
     /// IN this level (their values resolve names under it, Lean <c>lookupInParentsStructuralProperty</c>),
-    /// and a property shared across encodings carries its per-scope-object identity
+    /// and a property reached more than once carries its per-property-object declaration identity
     /// (<see cref="HostDeclarationIdentity"/>). An evaluator-created scope (internal
     /// <see cref="ScopeCtx.Owner"/> / <see cref="ScopeCtx.Activation"/>) is runtime state no input AST
     /// carries, so it is refused rather than encoded as an ownerless level.
@@ -551,6 +611,7 @@ internal sealed class LeanAstEncoding
         }
 
         var outer = scope.Parent is { } parent ? $"(some {EncodeScope(parent)})" : "none";
+        var token = HostToken(scope);
         var enclosing = _scope;
         _scope = scope;
         try
@@ -558,8 +619,8 @@ internal sealed class LeanAstEncoding
             var parameters = EncodeList(scope.Parameters, Quote);
             var opens = EncodeOpens(scope.Opens);
             var properties = EncodeList(scope.Properties, property => EncodePropertyCore(property,
-                _sharing.Contains(property) ? HostDeclarationIdentity(property, scope) : null));
-            return $"(ScopeCtx.mk {outer} [{parameters}] [{opens}] [{properties}] [] [] none none)";
+                _sharing.Contains(property) ? HostDeclarationIdentity(property) : null));
+            return $"(ScopeCtx.mk {outer} [{parameters}] [{opens}] [{properties}] [] [] none (some (.host {token})))";
         }
         finally { _scope = enclosing; }
     }

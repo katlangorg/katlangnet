@@ -49,5 +49,6 @@ import CoreTests.VariadicSelection
 import CoreTests.ParentScopeValidation
 import CoreTests.RepeatedSpread
 import CoreTests.HostScopePropertyCache
+import CoreTests.HostScopeIdentity
 import CoreTests.HostParentDifferential
 import CoreTests.SpreadFailureOrigin

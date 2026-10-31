@@ -287,7 +287,7 @@ def asBuiltin? : Algorithm → Option Builtin
 
 /-- The comparison of two non-builtin algorithms. -/
 def identityCore (a b : Algorithm) : Bool :=
-  a.declarationId == b.declarationId && sameParent a.parent b.parent &&
+  PropertyIdentity.callableDeclaration a.declarationId == PropertyIdentity.callableDeclaration b.declarationId && sameParent a.parent b.parent &&
     compatibleActivations a.parent b.parent && compatibleActivations b.parent a.parent
 
 /-- `sameRepeatedCallableIdentity` in two layers: builtins by their tag, two non-builtins by
@@ -318,7 +318,7 @@ theorem identity_core_refl (a : Algorithm) : identityCore a a = true := by
 
 theorem identity_core_symm (a b : Algorithm) : identityCore a b = identityCore b a := by
   simp only [identityCore]
-  rw [beq_comm_of_lawful a.declarationId, same_parent_symm a.parent]
+  rw [beq_comm_of_lawful (PropertyIdentity.callableDeclaration a.declarationId), same_parent_symm a.parent]
   cases compatibleActivations a.parent b.parent <;> cases compatibleActivations b.parent a.parent <;>
     simp
 

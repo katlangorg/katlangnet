@@ -1155,15 +1155,31 @@ end Pattern
 /-- Declaration identity is independent of executable body equality. Ordinary
     tree declarations receive a fresh `syntax` identity once at run preparation.
     `shared` represents a host AST declaration reused at several syntax sites; encoders
-    preserve that DECLARATION sharing explicitly. It does not by itself encode C#'s
-    binding-plus-host-scope identity: C# also keys every ownerless host `ScopeCtx` level (the
-    declaring level and every host ancestor, HOST-NESTED-1) by OBJECT reference, and Lean has
-    no host-object token, so one `shared` id placed under two distinct C# host objects MERGES
-    them here (guard 5b of `CoreTests/HostScopePropertyCache.lean`), while default `syntax`
-    ids SPLIT one C# host object reached through several edges. A shared declaration is not
-    a shared host owner; empty or opens-only host levels carry no declaration to hold an id
-    at all. This deferred O-6 boundary also covers alias memos, NEED-04 callable identity and
-    Q-19 open providers (SEMANTIC-ALIGNMENT.md, O6-DOCS).
+    preserve that DECLARATION sharing explicitly. A shared declaration is not a shared host
+    owner: placed under two host levels it is one declaration in two declaring scopes.
+    `host` is HOST-SCOPE PROVENANCE (HOST-LEAN-O6, October 2026), never a declaration: the token
+    of one ORIGINAL ownerless host `ScopeCtx` object (C#: a `ScopeCtx` with no internal `Owner`),
+    carried ONLY in a host level's `ScopeCtx.declarationId` slot. C# keys every such level — the
+    declaring level and every host ancestor (HOST-NESTED-1) — by object reference, so the token
+    takes part in every identity built from a scope chain: the property-cache owner
+    (`ZeroArgPropertyCacheKey.hostOwners`), the runtime-alias binding cell and chase visit
+    (`aliasCellKey`, `aliasChaseKey`), the declaring-scope relation of NEED-04 callable identity,
+    Q-19 open providers and member accessibility (`sameDeclaringScope`), empty and opens-only
+    levels included. Lean cannot recover object identity from two equal values: the token is an
+    INPUT CONTRACT the encoder supplies (one object, one token; distinct objects and record
+    copies, distinct tokens; the declarations under a level reached twice carry their `shared`
+    identities), checked for consistency before evaluation (`hostProvenanceViolation?`). A
+    derived owner rebuilt from a host level (`lookupInParentsStructuralProperty`) carries the
+    level's token as its own `declarationId`; no input algorithm or property may.
+    `sharedView` / `moduleView` retain a declaration together with GLOBAL component provenance
+    for its opens/property lists (nonempty lists by reference, empty lists equivalent, across
+    declarations). The encoder annotates a whole graph when owned variants or shared alias
+    literals need this information; ordinary source keeps its prior encoding. Typed
+    `componentOwners` and a second alias prefix preserve it at every depth, even in property-free
+    parents. `sameDeclaringScope` compares the whole view;
+    `PropertyIdentity.callableDeclaration` erases it for callable identity and an alias's own
+    declaration (C# compares their declaration and PARENT, not their own list storage). The encoder
+    retains context-qualified property identities for cache/alias structural owner components.
     `module` marks the ONE declaration of a loaded module (Q-31 H-P + Q-32 I-U, decided
     2026-10-06): a hygienic source unit rooted at the prelude, so wherever it is reached it is
     wired under the chain's root level (`Algorithm.withParent`), never under its holder, and
@@ -1175,7 +1191,30 @@ inductive PropertyIdentity where
   | shared : Nat -> PropertyIdentity
   | runtime : Nat -> PropertyIdentity
   | module : Nat -> PropertyIdentity
+  | host : Nat -> PropertyIdentity
+  /-- One declaration with a distinct nonempty opens/property-list view (encoder provenance).
+      Scope comparison retains the view; callable/alias declaration comparison erases it. -/
+  | sharedView : Nat -> Nat -> PropertyIdentity
+  | moduleView : Nat -> Nat -> PropertyIdentity
   deriving Repr, BEq
+
+/-- The host-scope token an identity slot carries, if it is one (`PropertyIdentity.host`). -/
+def PropertyIdentity.hostToken? : Option PropertyIdentity -> Option Nat
+  | some (.host n) => some n
+  | _ => none
+
+/-- The declaration carried by an owned view, independently of that view's scope components.
+    A C# record copy keeps its declaration even when it replaces an opens/property list. -/
+def PropertyIdentity.callableDeclaration : Option PropertyIdentity -> Option PropertyIdentity
+  | some (.sharedView declaration _) => some (.shared declaration)
+  | some (.moduleView declaration _) => some (.module declaration)
+  | id => id
+
+/-- Global identity of an owned level's opens/property-list components, supplied by the encoder.
+    Equal nonempty list references have one token across declarations; empty lists are equivalent. -/
+def PropertyIdentity.componentToken? : Option PropertyIdentity -> Option Nat
+  | some (.sharedView _ (n + 1)) | some (.moduleView _ (n + 1)) => some (n + 1)
+  | _ => none
 
 mutual
   inductive Expr where
@@ -2024,8 +2063,11 @@ inductive ZeroArgPropertyAccessKind where
     immutable AST values rather than C# object identities. Run preparation
     assigns declaration identities before wiring, so separate declarations with
     equal bodies never alias; explicit `shared` identities preserve declaration
-    sharing in host ASTs, but they do not represent C#'s by-reference host-scope
-    identity for arbitrary host DAGs (O-6, deferred: see `PropertyIdentity`).
+    sharing in host ASTs. C#'s by-reference identity of ownerless host scopes is the
+    typed `hostOwners` component: the host marks (`hostMarks`) of the owner's whole
+    chain, so the same host object reuses an owner and distinct host objects — at
+    the declaring level or as any ancestor — never share one (HOST-LEAN-O6; see
+    `PropertyIdentity`). A chain with no host level has no marks.
     The owner is its `asScopeCtx` (including parent chain), and exported
     lexical/structural spellings have one key. Explicit calls never read nor
     replace their own cache entry; a qualifying zero-supply invocation computes
@@ -2039,6 +2081,10 @@ inductive ZeroArgPropertyAccessKind where
 structure ZeroArgPropertyCacheKey where
   accessKind : ZeroArgPropertyAccessKind
   owner      : String
+  /-- The owner chain's host marks (`hostMarks 0 owner.asScopeCtx.hostChain`): C#'s
+      by-reference identity of every ownerless host level on the chain (HOST-LEAN-O6). -/
+  hostOwners : List (Nat × Nat)
+  componentOwners : List (Nat × Nat)
   propertyName : Ident
   propertyAlgorithm : String
   valEnv : Option String
@@ -2466,7 +2512,7 @@ namespace Algorithm
 
   /-- Whether this is a loaded module's own declaration (`PropertyIdentity.module`). -/
   def isModuleRoot (a : Algorithm) : Bool :=
-    match a.declarationId with
+    match PropertyIdentity.callableDeclaration a.declarationId with
     | some (.module _) => true
     | _ => false
 
@@ -2474,12 +2520,16 @@ namespace Algorithm
       level instead, wherever it is reached: its names never see its holder's, and every reach
       is the one declaration in the one declaring scope (Q-32 I-U). C#: `Evaluator.WithParent`. -/
   def withParent (p : Option ScopeCtx) : Algorithm -> Algorithm
+    | .mk _ parameterPatterns op pr out (some (.moduleView n view)) =>
+        .mk (p.map ScopeCtx.chainRoot) parameterPatterns op pr out (some (.moduleView n view))
     | .mk _ parameterPatterns op pr out (some (.module n)) =>
         .mk (p.map ScopeCtx.chainRoot) parameterPatterns op pr out (some (.module n))
     | .mk _ parameterPatterns op pr out id => .mk p parameterPatterns op pr out id
     | .builtin b => .builtin b
     | .conditional _ op bs id => .conditional p op bs id
     | .alias _ op pr target (some (.module n)) r => .alias (p.map ScopeCtx.chainRoot) op pr target (some (.module n)) r
+    | .alias _ op pr target (some (.moduleView n view)) r =>
+        .alias (p.map ScopeCtx.chainRoot) op pr target (some (.moduleView n view)) r
     | .alias _ op pr target id r => .alias p op pr target id r
 
   def parameterForName? (x : Ident) : List CallableParameter -> Option CallableParameter
@@ -2992,6 +3042,60 @@ mutual
     | _ => 0
 end
 
+/-- The HOST PROVENANCE of a scope chain, innermost level first: each level's host-scope token
+    (`PropertyIdentity.hostToken?`), `none` for an evaluator-owned or anonymous level. Every
+    identity built from a chain reads it at EVERY depth (HOST-NESTED-1), never only at the
+    declaring level. TOTAL: structural over the finite parent chain. -/
+def ScopeCtx.hostChain : ScopeCtx -> List (Option Nat)
+  | .mk parent _ _ _ _ _ _ id =>
+      PropertyIdentity.hostToken? id :: (match parent with
+        | none => []
+        | some p => hostChain p)
+
+/-- The host chain of an optional scope (`[]` for none). -/
+def ScopeCtx.hostChainOf : Option ScopeCtx -> List (Option Nat)
+  | none => []
+  | some scope => scope.hostChain
+
+/-- Owned component provenance at every depth, independently of declaration and host identity. -/
+def ScopeCtx.componentChain : ScopeCtx -> List (Option Nat)
+  | .mk parent _ _ _ _ _ _ id =>
+      PropertyIdentity.componentToken? id :: (match parent with
+        | none => []
+        | some p => componentChain p)
+
+def ScopeCtx.componentChainOf : Option ScopeCtx -> List (Option Nat)
+  | none => []
+  | some scope => scope.componentChain
+
+/-- The HOST MARKS of a host chain: one `(depth, token)` pair per host level, innermost first,
+    depth counted from `depth`. Only host levels contribute, so a chain with no host level has no
+    marks — evaluator-owned and source-built chains keep exactly their former identities — and
+    a host level changed, added or removed at ANY depth changes the marks
+    (`HostScopeIdentity.hostMarks_separate`). -/
+def hostMarks (depth : Nat) : List (Option Nat) -> List (Nat × Nat)
+  | [] => []
+  | none :: rest => hostMarks (depth + 1) rest
+  | some token :: rest => (depth, token) :: hostMarks (depth + 1) rest
+
+/-- A unary numeral, `u…uz`: a prefix code (no numeral is a proper prefix of another) whose
+    injectivity is kernel-checked rather than assumed of a printer. -/
+def unaryKeyChars : Nat -> List Char
+  | 0 => ['z']
+  | n + 1 => 'u' :: unaryKeyChars n
+
+/-- The characters of host marks: `h`, the depth and the token per mark. -/
+def hostMarksKeyChars : List (Nat × Nat) -> List Char
+  | [] => []
+  | (depth, token) :: rest => 'h' :: (unaryKeyChars depth ++ unaryKeyChars token ++ hostMarksKeyChars rest)
+
+/-- THE TEXTUAL HOST COMPONENT of a string identity key: the host marks of the chain, then `@`.
+    Neither `h`, `u` nor `z` is `@`, so the prefix ends at its first `@` and two keys with
+    different marks differ whatever follows (`HostScopeIdentity.hostKeyPrefix_append_inj`); a
+    chain with no host level contributes the constant `"@"`. -/
+def hostKeyPrefix (chain : List (Option Nat)) : String :=
+  String.ofList (hostMarksKeyChars (hostMarks 0 chain)) ++ "@"
+
 /-- A host-built parent scope chain as the STATIC chain its members are declared in, outermost
     first: each scope a plain algorithm holding its opens and properties. A member of a parent
     scope resolves names through that scope chain, never through the algorithm the scope parents,
@@ -3147,13 +3251,127 @@ mutual
         | none => pure ()
 end
 
+/-- The message of a host-scope identity (`PropertyIdentity.host`) outside a host level's identity
+    slot, or on a level that carries an owner body or an activation (Lean-only input contract). -/
+def hostIdentityMisplacedMessage : String :=
+  "a host scope identity may only mark an ownerless host-built parent scope level"
+
+/-- The message of one host-scope token on two different scope levels (Lean-only input contract). -/
+def hostProvenanceIncoherentMessage (token : Nat) : String :=
+  s!"host scope identity {token} marks two different scope levels"
+
+/-- The host provenance an input tree carries (`hostProvenanceViolation?`): every host level met,
+    by token, with its description, and whether a host identity was found where none may be. -/
+structure HostProvenanceScan where
+  levels : List (Nat × String) := []
+  misplaced : Bool := false
+  conflict : Option Nat := none
+
+/-- Record one host level: its description is the level itself without its parent, plus the
+    parent chain's host provenance (`ScopeCtx.hostChain`) — one node description and ancestry. -/
+def HostProvenanceScan.level (scope : ScopeCtx) (token : Nat) (scan : HostProvenanceScan) : HostProvenanceScan :=
+  match scope with
+  | .mk parent params opens props output branches activation id =>
+      let description := reprStr (ScopeCtx.mk none params opens props output branches activation id)
+        ++ "^" ++ reprStr (ScopeCtx.hostChainOf parent)
+      let misplaced := scan.misplaced || activation.isSome || !output.isEmpty || !branches.isEmpty
+      match scan.levels.find? (·.1 == token) with
+      | some (_, known) =>
+          if known == description then { scan with misplaced := misplaced }
+          else { scan with misplaced := misplaced, conflict := scan.conflict.orElse fun _ => some token }
+      | none => { scan with misplaced := misplaced, levels := (token, description) :: scan.levels }
+
+mutual
+  /-- Scan an expression's blocks for host provenance. -/
+  partial def scanHostProvenanceExpr : Expr -> StateM HostProvenanceScan Unit
+    | .algorithmExpr a => scanHostProvenanceAlgorithm a
+    | .interpolatedString _ links => links.forM (scanHostProvenanceExpr ·.hole)
+    | .unary _ operand => scanHostProvenanceExpr operand
+    | .binary _ left right => do scanHostProvenanceExpr left; scanHostProvenanceExpr right
+    | .comparison first links => do
+        scanHostProvenanceExpr first
+        links.forM (scanHostProvenanceExpr ·.operand)
+    | .index target selectors => do
+        scanHostProvenanceExpr target
+        selectors.forM scanHostProvenanceExpr
+    | .sequenceConstruct left right => do scanHostProvenanceExpr left; scanHostProvenanceExpr right
+    | .sequenceSpread operand => scanHostProvenanceExpr operand
+    | .listLiteral items => items.forM scanHostProvenanceExpr
+    | .capture rows => rows.forM scanHostProvenanceExpr
+    | .call fn args => do scanHostProvenanceExpr fn; args.forM scanHostProvenanceExpr
+    | .dotMember target _ fallback args? => do
+        scanHostProvenanceExpr target
+        scanHostProvenanceExpr fallback
+        (args?.getD []).forM scanHostProvenanceExpr
+    | _ => pure ()
+
+  /-- Scan an algorithm: its own identity, its parent scope chain and its whole body. -/
+  partial def scanHostProvenanceAlgorithm (a : Algorithm) : StateM HostProvenanceScan Unit := do
+    if (PropertyIdentity.hostToken? a.declarationId).isSome then
+      modify fun scan => { scan with misplaced := true }
+    match a with
+    | .builtin _ => pure ()
+    | .mk parent _ opens props output _ => do
+        parent.forM scanHostProvenanceScope
+        opens.forM scanHostProvenanceExpr
+        props.forM scanHostProvenanceProperty
+        output.forM scanHostProvenanceExpr
+    | .conditional parent opens branches _ => do
+        parent.forM scanHostProvenanceScope
+        opens.forM scanHostProvenanceExpr
+        branches.forM (scanHostProvenanceAlgorithm ·.body)
+    | .alias parent opens props target _ _ => do
+        parent.forM scanHostProvenanceScope
+        opens.forM scanHostProvenanceExpr
+        props.forM scanHostProvenanceProperty
+        scanHostProvenanceExpr target
+
+  /-- Scan a scope level: a host level is recorded with its description; every level's content and
+      parent are scanned. -/
+  partial def scanHostProvenanceScope (scope : ScopeCtx) : StateM HostProvenanceScan Unit := do
+    match scope with
+    | .mk parent _ opens props output branches _ id => do
+        if let some token := PropertyIdentity.hostToken? id then
+          modify (HostProvenanceScan.level scope token)
+        parent.forM scanHostProvenanceScope
+        opens.forM scanHostProvenanceExpr
+        props.forM scanHostProvenanceProperty
+        output.forM scanHostProvenanceExpr
+        branches.forM (scanHostProvenanceAlgorithm ·.body)
+
+  /-- Scan a property: its own identity and its value. -/
+  partial def scanHostProvenanceProperty (p : PropDef) : StateM HostProvenanceScan Unit := do
+    if (PropertyIdentity.hostToken? p.identity).isSome then
+      modify fun scan => { scan with misplaced := true }
+    scanHostProvenanceAlgorithm p.alg
+end
+
+/-- THE HOST PROVENANCE CHECK (HOST-LEAN-O6) of a prepared program: the enforceable part of the
+    host-token input contract (`PropertyIdentity.host`). A host token may mark only an ownerless
+    host level's identity slot (no activation, owner body or branches), never an algorithm or a
+    property; and one token must denote ONE level description and ancestry wherever it occurs
+    after identification — so a reused host level whose declarations do not carry their shared
+    identities, which identification would split per occurrence, is refused rather than evaluated
+    as two owners. What Lean cannot check is the external half of the contract: that one token was
+    given to exactly one original host object (two equal C# objects with one token are
+    indistinguishable here); the C# encoder's reference map owns it (`LeanAstEncoder`). -/
+def hostProvenanceViolation? (e : Expr) : Option String :=
+  let scan := ((scanHostProvenanceExpr e).run {}).2
+  if scan.misplaced then some hostIdentityMisplacedMessage
+  else scan.conflict.map hostProvenanceIncoherentMessage
+
 /-- The pre-evaluation validation of one algorithm tree (`validateAlgorithmTree` over the
-    whole tree, its alias count read once). -/
-def validateExplicitParamOutputInvariant (a : Algorithm) (name : Ident := "conditional") : EvalM Unit :=
+    whole tree, its alias count read once), after the host provenance check. -/
+def validateExplicitParamOutputInvariant (a : Algorithm) (name : Ident := "conditional") : EvalM Unit := do
+  if let some message := hostProvenanceViolation? (.algorithmExpr a) then
+    .error (Error.illegalInEval message)
   validateAlgorithmTree a name [] a.aliasCount
 
-/-- The pre-evaluation validation of a program expression (`validateExprTree`). -/
-def validateExplicitParamOutputInvariantExpr (e : Expr) : EvalM Unit :=
+/-- The pre-evaluation validation of a program expression (`validateExprTree`), after the host
+    provenance check (`hostProvenanceViolation?`). -/
+def validateExplicitParamOutputInvariantExpr (e : Expr) : EvalM Unit := do
+  if let some message := hostProvenanceViolation? e then
+    .error (Error.illegalInEval message)
   validateExprTree e [] e.aliasCount
 
 namespace ScopeCtx
@@ -3291,8 +3509,12 @@ mutual
     { p with alg := cacheAlgorithmShape p.alg }
 end
 
-/-- Known declaration identities compare only the binder view and parent chain. Walking
+/-- Known declaration identities compare the declaration/component view, binder view and parent chain. Walking
     or printing their complete property/output graphs at every lookup is unnecessary.
+    A host level's identity is its host-scope token (`PropertyIdentity.host`), so two host
+    levels are one declaring scope exactly when they carry one token — the C# object-reference
+    comparison of ownerless levels (HOST-LEAN-O6) — at every depth of the compared chains; this
+    is the relation of NEED-04 callable identity, Q-19 open providers and accessibility.
     TOTAL (S5, October 2026; formerly `partial`): structural recursion over the finite parent
     chain, matching the constructor so that the parent is visibly a subterm. Its equation is
     the former body's, field accessor for field accessor
@@ -3729,7 +3951,7 @@ def sameRepeatedCallableIdentity (left right : Algorithm) : Bool :=
   | .builtin a, .builtin b => a == b
   | .builtin _, _ | _, .builtin _ => false
   | _, _ =>
-      left.declarationId == right.declarationId &&
+      PropertyIdentity.callableDeclaration left.declarationId == PropertyIdentity.callableDeclaration right.declarationId &&
       (match left.parent, right.parent with
        | none, none => true
        | some a, some b => sameDeclaringScope a b
@@ -3771,7 +3993,8 @@ def flatBinderUserEquivalent? (callee : Algorithm) : Option Algorithm :=
             (Algorithm.normalParameters ps)
             (Algorithm.opens wiredBody)
             (Algorithm.props wiredBody)
-            (Algorithm.output wiredBody))
+            (Algorithm.output wiredBody)
+            (Algorithm.declarationId wiredBody))
       | none => none
   | _ => none
 
@@ -5250,6 +5473,8 @@ def zeroArgPropertyCacheKey (_accessKind : ZeroArgPropertyAccessKind)
   {
     accessKind := .lexical,
     owner := reprStr owner.declarationId ++ reprStr (cacheScopeShape owner.asScopeCtx),
+    hostOwners := hostMarks 0 owner.asScopeCtx.hostChain,
+    componentOwners := hostMarks 0 owner.asScopeCtx.componentChain,
     propertyName := binding.name,
     propertyAlgorithm := reprStr (cacheAlgorithmShape binding.alg),
     valEnv := if bindingContextFree || ownerBindingContext.isSome then none else some (reprStr env),
@@ -6137,15 +6362,30 @@ def ScopeCtx.activationChain : Option ScopeCtx -> List (Option Nat)
   | none => []
   | some (.mk parent _ _ _ _ _ activation _) => activation :: ScopeCtx.activationChain parent
 
+/-- The STRUCTURAL part of `aliasCellKey`: the alias's declaration (independent of its own list view), the shape of its declaring
+    chain (`cacheScopeShape`, which carries no identity slot) and that chain's activations. -/
+def aliasCellShapeKey (wired : Algorithm) : String :=
+  reprStr (PropertyIdentity.callableDeclaration wired.declarationId) ++ "@" ++ reprStr (wired.parent.map cacheScopeShape)
+    ++ "@" ++ reprStr (ScopeCtx.activationChain wired.parent)
+
 /-- The memo key of a runtime-target alias's BINDING CELL (META-S3-2): the alias's declaration,
     resolving scope shape and the activations of its declaring scope chain — ONE cell per declaring
     scope and activation, the run-level case (no activation) included. A shared declaration wired
     under different namespaces must not share its cell merely because both scopes are unactivated.
     C#: `Evaluator.AliasTargetKey` over the alias's declaration and structural owner identity, on the
-    nearest activation's memo (or the run's). -/
+    nearest activation's memo (or the run's).
+
+    The key opens with the HOST COMPONENT of the declaring chain (`hostKeyPrefix`, HOST-LEAN-O6): C#
+    keys the declaring level and every host ancestor of that owner identity by object reference
+    (HOST-ALIAS-R14, HOST-NESTED-1), so one host object keeps one cell and distinct host objects —
+    however equal their content, at the declaring level or above — never share a cell, a resolved
+    target or a chase visit (`aliasChaseKey` extends this key). The rest is the structural part
+    (`aliasCellShapeKey`). A second independently delimited prefix retains owned component marks
+    (`ScopeCtx.componentChainOf`), even in a parent with no binding property. A chain with neither
+    host nor component annotations gains only the constant `"@@"`. -/
 def aliasCellKey (wired : Algorithm) : String :=
-  reprStr wired.declarationId ++ "@" ++ reprStr (wired.parent.map cacheScopeShape)
-    ++ "@" ++ reprStr (ScopeCtx.activationChain wired.parent)
+  hostKeyPrefix (ScopeCtx.hostChainOf wired.parent) ++
+    (hostKeyPrefix (ScopeCtx.componentChainOf wired.parent) ++ aliasCellShapeKey wired)
 
 /-- The VISITED KEY of an alias chase (`resolveAliasChase`, ALIAS-UNIFY-1 review): the alias's BINDING
     identity — its declaration, resolving scope shape and the activations of its declaring scope chain
@@ -12830,7 +13070,33 @@ def preludeAlg : Algorithm :=
     immutable values: two different declarations can have identical bodies,
     so `reprStr` alone cannot identify them. These numbers identify written
     declarations, not activations. Host-supplied sharing identities survive.
-    This pass changes no names, ownership, exposure, or executable expression. -/
+    This pass changes no names, ownership, exposure, or executable expression.
+    A scope level's identity slot — a host level's provenance token (`PropertyIdentity.host`)
+    included — is kept verbatim (`identifyPropertyScope`), so the pass never mints or drops host
+    provenance; a misplaced `host` identity on an algorithm or a property is kept too, for the
+    pre-evaluation validation to refuse (`hostProvenanceViolation?`) instead of being silently
+    renamed. -/
+
+/-- The declaration identity identification gives an ALGORITHM and the next fresh number: a
+    supplied `shared`, `module`, owned-view or `host` identity survives unchanged, anything else takes the next
+    `syntax` id. -/
+def preparedAlgorithmIdentity (id : Option PropertyIdentity) (next : Nat) : PropertyIdentity × Nat :=
+  match id with
+  | some (.shared n) => (.shared n, next)
+  | some (.module n) => (.module n, next)
+  | some (.host n) => (.host n, next)
+  | some (.sharedView n view) => (.sharedView n view, next)
+  | some (.moduleView n view) => (.moduleView n view, next)
+  | _ => (.syntax next, next + 1)
+
+/-- The declaration identity identification gives a PROPERTY (`preparedAlgorithmIdentity`'s
+    property twin): a supplied `shared` or `host` identity survives, anything else is fresh. -/
+def preparedPropertyIdentity (id : Option PropertyIdentity) (next : Nat) : PropertyIdentity × Nat :=
+  match id with
+  | some (.shared n) => (.shared n, next)
+  | some (.host n) => (.host n, next)
+  | _ => (.syntax next, next + 1)
+
 mutual
   partial def identifyPropertyExpr : Expr -> StateM Nat Expr
     | .param n => pure (.param n)
@@ -12861,13 +13127,7 @@ mutual
           (<- identifyPropertyExpr fallback) (<- args.mapM (List.mapM identifyPropertyExpr))
 
   partial def identifyPropertyAlgorithm (algorithm : Algorithm) : StateM Nat Algorithm := do
-    let identity <- match algorithm.declarationId with
-      | some (.shared n) => pure (.shared n)
-      | some (.module n) => pure (.module n)
-      | _ => do
-          let next <- get
-          set (next + 1)
-          pure (.syntax next)
+    let identity <- modifyGet (preparedAlgorithmIdentity algorithm.declarationId)
     match algorithm with
     | .builtin b => pure (.builtin b)
     | .mk parent parameters opens props output _ =>
@@ -12891,12 +13151,7 @@ mutual
           (<- branches.mapM fun b => return { b with body := (<- identifyPropertyAlgorithm b.body) }) none id
 
   partial def identifyPropertyDefinition (p : PropDef) : StateM Nat PropDef := do
-    let identity <- match p.identity with
-      | some (.shared n) => pure (.shared n)
-      | _ => do
-          let next <- get
-          set (next + 1)
-          pure (.syntax next)
+    let identity <- modifyGet (preparedPropertyIdentity p.identity)
     return { p with identity := some identity, alg := (<- identifyPropertyAlgorithm p.alg) }
 end
 

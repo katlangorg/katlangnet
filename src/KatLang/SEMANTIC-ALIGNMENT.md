@@ -754,7 +754,55 @@ in the existing `ScopeCtx.declarationId` slot) is an untested proposal whose obs
 pass-through policy; it must be reassessed for reference identity throughout ancestry, declaration
 provenance and alias keys. HOST-LEAN-O6 alignment and the faithful host encoder remain OPEN/deferred.
 Updated: `evaluator-and-hosting.md`, `ownership-and-lookup.md`, the `PropertyIdentity.shared` and
-`ZeroArgPropertyCacheKey` doc comments in `lean/KatLang.lean` (comments only).
+`ZeroArgPropertyCacheKey` doc comments in `lean/KatLang.lean` (comments only). (Superseded by
+HOST-LEAN-O6, next entry: the alignment and the faithful host encoder are implemented.)
+
+HOST-LEAN-O6 — Lean host-scope identity aligned with C# reference identity (October 31 2026;
+OD-1(a) at every resolving ancestor; V3 semantic/correspondence work, CI acceptance pending).
+`PropertyIdentity.host n` is explicit host-object provenance in a host level's existing identity
+slot. The encoder supplies one token per original ScopeCtx reference, including empty/opens-only
+levels and record copies; shared declaration provenance remains separate. Lean checks placement
+and consistency with `hostProvenanceViolation?` after preparation. Equal unannotated Lean values
+cannot recover C# object identity; guard 5b remains an abstract unannotated value.
+
+PRODUCTION CONSUMERS: typed `ZeroArgPropertyCacheKey.hostOwners` records host marks at every
+depth; the proven injective `hostKeyPrefix` prefixes alias binding/value-view/chase keys; the
+identified `sameDeclaringScope` branch compares host tokens throughout ancestry for NEED-04,
+Q-19 and accessibility. Read/invocation/publication, environment/activation/run distinctions,
+M4★, OD-E and Model-C remain intact. Derived host owners legitimately retain their level token;
+input algorithms/properties with host tokens are refused. C# host/alias production is unchanged.
+
+INDEPENDENT REVIEW REPAIR: declaration identity alone did not preserve C#'s reference-sensitive
+nonempty opens/property-list components for OWNED record copies. HP-14k/l reproduced false NEED-04
+acceptance. The encoder now assigns distinct `sharedView`/`moduleView` identities over the same
+declaration for different component views, using production StructuralOwnerIdentity's comparison
+and hashing (empty lists remain equivalent). `sameDeclaringScope` retains the view;
+`PropertyIdentity.callableDeclaration` erases the OWN view for callable and alias-declaration
+comparison, preserving callable identity when its own lists change. Module views retain module
+rooting. The raw flat-family adapter preserves its branch body declaration/component identity (the C# record-view rule). Component zero denotes the equivalent empty-list pair and contributes no component mark, matching runtime-created empty owners. Typed componentOwners and a second proven alias-key prefix retain GLOBAL component tokens at every depth, including property-free parents. The encoder annotates every owned node when copied list views or shared alias literals require this provenance. Existing context-qualified owned PROPERTY ids remain in place in the cache/alias shapes,
+which erase scope slots; they are not redundant and must not be removed as cleanup.
+
+EVIDENCE: HP-14b is comparable with unchanged C# `err ambiguousOpen`; HP-14e..j exercise empty
+host ancestors; HP-14k..r cover owned list views, empty-list equivalence, own-callable preservation
+and Q-19. The corpus has 102 comparable cases, 96 with pre-wired parents, 181 named cache guards,
+no divergences, with raised ratchets and registered artifact generation. Encoder entry-point
+goldens and graph-safety controls remain. Direct guards additionally cover actual member
+accessibility, malformed provenance, derived owners, alias-key/view identity and module rooting.
+`KatLangArityLaws/HostScopeIdentity.lean` has 58 kernel-checked production/helper laws: kind
+separation, preparation decisions, host-chain positions, cache and alias reuse/separation at any
+depth, proven prefix-code injectivity, declaring-scope/callable separation, owned-view distinction,
+token-free compatibility and injective host renaming. The ordinary preparation compatibility
+law excludes BOTH new host and owned-view input annotations; owned-view preservation is proved
+separately. Existing repeated-callable equivalence laws now compare the canonical declaration,
+with unchanged hypotheses. No new axiom/sorry or printer-injectivity assumption.
+
+BOUNDARIES: coherent finite supported C# graph encoding is an external provenance obligation,
+not a proof of C# refinement. Partial identification and consistency traversal have executable
+coverage plus total per-node laws, not a whole-pass theorem; mixed anonymous/identified fallback
+retains its existing NoCrossFallback domain. Local checks are the brief-authorized focused set;
+repository-wide V3 acceptance belongs to CI. Full report, exact commands/results and limitations:
+`experimental/features/host-lean-o6-alignment-implementation.md`; independent evidence:
+`artifacts/validation/host-lean-o6-alignment/review/`.
 
 OOS-24 — consumer-order independence of the deconstruction group-bind memo (October 24 2026; evidence
 only, no production, Lean or rule change). The Constitution audit (snapshot `e62e3ac6`) recorded that the
@@ -876,7 +924,7 @@ optimized and suspending async routes and guarded in `lean/CoreTests/HostParentD
 shapes are NOT comparable and are pinned on both sides as known divergences: HP-14b (O6-18, open
 provider identity over two EMPTY host levels: C# `AmbiguousOpen`, Lean 7 — needs a Lean host-level
 token, design E) and HP-14d (O6-11x, the C# pass-through inconsistency awaiting OD-1). Guard 5b is
-unchanged. (Since HOST-NESTED-1, above, HP-14d is comparable and HP-14b is the one pinned divergence.) Report: `experimental/features/host-diff-1-implementation.md`.
+unchanged. (Since HOST-NESTED-1, above, HP-14d is comparable and HP-14b is the one pinned divergence; since HOST-LEAN-O6, above, every case is comparable and option C is retired.) Report: `experimental/features/host-diff-1-implementation.md`.
 
 HOST-ALIAS-R14 — host-declared alias memo identity (October 24 2026; C# host representation,
 CACHE-OWNER-D3's existing D3-B rule): a single ownerless host scope already handled `A = R.Algorithm`
@@ -891,8 +939,8 @@ owner, cell per lookup, public API or D4/publication policy. `HostScopePropertyC
 shared-list/with-copy isolation versus one-object reuse on generic, optimized and suspending async
 routes, actual canonical cell identity and inert formation, run isolation, rebuilt owned-scope
 reuse, and cancellation during a suspended receiver or target with publication-owner cleanup.
-Lean's host identity remains structural (O-6 deferred); no Lean production edit or host-DAG parity
-claim. Pre-wired parent encoding is HOST-DIFF-1 (above). Report:
+Lean's host identity remained structural at the time (O-6 deferred; superseded by HOST-LEAN-O6, above); no
+Lean production edit or host-DAG parity claim. Pre-wired parent encoding is HOST-DIFF-1 (above). Report:
 `experimental/features/host-alias-r14-research-and-fix.md`. Full V3 required.
 
 COLLECT-CACHE-1 — declaring-context inheritance for collecting-only property reads (2026-10-23; the
@@ -981,7 +1029,7 @@ the publication law, `RootPropertyObservationSink` (a host key is not a `Structu
 is never a root observation). No synthetic owner, process-global table or second cache. COMPATIBILITY
 (O-4): an `Exported` host property that reads a caller binding is now run-cached like an owned one
 (H6e `G(1) + G(2)` over `P = x`: 3 → 2); hosts must classify exposure correctly. MODEL DISTINCTION
-(O-6, deferred): Lean's ownerless key is STRUCTURAL; two equal host chains whose `PropDef`s carry one
+(O-6, deferred then; resolved by HOST-LEAN-O6, above): Lean's ownerless key is STRUCTURAL; two equal host chains whose `PropDef`s carry one
 explicit `shared` identity merge in Lean and stay separate in C#; ordinary host ASTs (distinct objects
 with their own declarations) agree. The full O-6 scope (alias, NEED-04 and Q-19 identity too, both
 directions, empty levels) is O6-DOCS, above. GUARDS: `lean/CoreTests/HostScopePropertyCache.lean` (exported host

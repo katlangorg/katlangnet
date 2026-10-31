@@ -285,12 +285,26 @@ declared in an evaluator-owned level beneath two distinct host objects (a shared
 `with` copy) keeps one cell and target memo per host object, while rebuilt owned levels over the SAME
 host ancestry still share one. The cell memo
 is distinct from the property-result cache and never makes an eligible explicit call reuse a call
-result. Lean's structural host-identity boundary remains O-6 (deferred; its full scope is under
-[`evaluator-and-hosting.md` § Zero-argument property cache](evaluator-and-hosting.md#zero-argument-property-cache)). Since HOST-DIFF-1 the
+result. Lean keys the same cells by the host-scope tokens of the whole declaring chain (`aliasCellKey`,
+HOST-LEAN-O6; the identity contract is under
+[`evaluator-and-hosting.md` § Zero-argument property cache](evaluator-and-hosting.md#zero-argument-property-cache)), and the
 differential corpus `lean/CoreTests/HostParentDifferential.lean` compares these shapes with Lean
-(HP-12c/HP-12d: one object vs record-equal objects sharing the member list), with per-object
-property identities supplied by `LeanAstEncoder`. `HostScopePropertyCacheTests` pins these C# host
+(HP-12c/HP-12d: one object vs record-equal objects sharing the member list; HP-14i/HP-14j: one
+declaration under two empty host ancestors vs one), with one host-scope token per original object
+supplied by `LeanAstEncoder`. `HostScopePropertyCacheTests` pins these C# host
 distinctions.
+
+Evaluator-owned scope levels also retain their nonempty opens/property-list identity (C# compares
+the lists by reference; separately allocated empty lists are equivalent). A record copy can keep its
+declaration while replacing those lists. The encoder supplies `sharedView`/`moduleView` provenance
+for such views: `sameDeclaringScope` retains it, while `PropertyIdentity.callableDeclaration` erases
+the OWN view for callable identity and an alias's own declaration key. Their PARENT scope still
+decides captured identity. Context-qualified property ids remain necessary for cache/alias structural
+shapes. Component tokens are global across declarations: the same nonempty list references share a
+token and different references stay distinct, while empty lists are equivalent. When owned variants
+or shared alias literals require this information, the encoder annotates the whole owned graph.
+Typed `componentOwners` and a second delimited alias prefix retain it at every depth, including
+property-free parents. HP-14k..r and the `HostScopeIdentity` guards pin these keys and accessibility.
 
 THE RULE (owner decisions D1 = yes, D2 = Option A, D3 = fresh invocation). **A lone reference row of an open, parameterless declaration is a callable alias of whatever callable its row denotes; when that identity is known only at run time, it is decided at run time; a name that nothing declares is still a parameter.** It generalizes FWD-02's alias — it is the same `Algorithm.Alias` and the same normalization, not a second callable system.
 

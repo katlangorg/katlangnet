@@ -125,10 +125,11 @@ public static class HostParentDifferentialCorpus
     private static ReadOnlyCollection<HostParentCase> Build()
     {
         var cases = new List<HostParentCase>();
+        // Every case is comparable since HOST-LEAN-O6. A future reviewed model divergence is added with its
+        // HostParentDivergence (`cases.Add(new(id, description, program, watched, divergence))`) and named in
+        // HostParentDifferentialTests' exact partition guard.
         void Case(string id, string description, Expr program, params string[] watched)
             => cases.Add(new(id, description, program, L(watched)));
-        void Divergent(string id, string description, Expr program, HostParentDivergence divergence, params string[] watched)
-            => cases.Add(new(id, description, program, L(watched), divergence));
 
         // HP-01: a host parent's property read through an opened inline block — one declaring binding.
         Case("HP-01a", "host parent property read through an opened block", OpenedThrough(Scope(null, Prop("P", Body(N(7)))), [R("P")]), "P");
@@ -418,23 +419,18 @@ public static class HostParentDifferentialCorpus
                 OpenedThrough(Scope(null, Prop("M", preludeModule)), [R("M")]), "M");
         }
 
-        // HP-14: the residual HOST-LEAN-O6 shapes. Comparable controls, and the one known divergence
-        // (HP-14b), which is excluded from the comparable partition and pinned on BOTH sides. HP-14d was a
-        // known divergence until HOST-NESTED-1 (OD-1(a)) made C# key host ANCESTORS by reference too.
+        // HP-14: the HOST-LEAN-O6 shapes. HP-14b was the one known divergence (O6-18: an EMPTY host level has
+        // no declaration to carry a per-object identity) until HOST-LEAN-O6 gave every host level its object's
+        // Lean host-scope token; HP-14d was one until HOST-NESTED-1 (OD-1(a)) made C# key host ANCESTORS by
+        // reference too. Both are ordinary comparable cases now.
         {
             var member = Public("F", Body(N(7)));
             var provider = new Algorithm.User(Scope(null), L<ParameterPattern>(), L<Expr>(), L(member), OutputBundle.Empty);
             var empty = Scope(null);
             Case("HP-14a", "control: one declaration opened twice under ONE empty host level object is one provider",
                 Program([Block(provider with { Parent = empty }), Block(provider with { Parent = empty })], [], R("F")), "F");
-            Divergent("HP-14b", "one declaration opened twice under two DISTINCT empty host level objects",
-                Program([Block(provider with { Parent = Scope(null) }), Block(provider with { Parent = Scope(null) })], [], R("F")),
-                new HostParentDivergence(
-                    "HOST-LEAN-O6 O6-18 (Q-19 open-provider identity over EMPTY host levels): C# compares host levels by object " +
-                    "reference, Lean by content, and an empty level has no PropDef to carry a per-object identity; a faithful " +
-                    "encoding needs a Lean host-level token (deferred HOST-LEAN-O6 alignment; candidate design E, unimplemented).",
-                    CSharpNeutral: "err ambiguousOpen",
-                    LeanNeutral: "ok raw=7 n=1"));
+            Case("HP-14b", "Q-19: one declaration opened twice under two DISTINCT empty host level objects is two providers",
+                Program([Block(provider with { Parent = Scope(null) }), Block(provider with { Parent = Scope(null) })], [], R("F")), "F");
 
             // O6-11x: an evaluator-owned Q nested under two record-equal host levels sharing ONE list.
             static Property[] Nested() => [Prop("S", Body(X("x"))), Prop("P", Namespace(Public("Q", Body(R("S")))))];
@@ -448,6 +444,100 @@ public static class HostParentDifferentialCorpus
             Case("HP-14d", "an owned Q nested under two record-equal host levels that share ONE property list keeps (S, P.Q) per level",
                 OpenedTwo(new ScopeCtx(null, L<Expr>(), sharedList), Call("G", N(1)), new ScopeCtx(null, L<Expr>(), sharedList), Call("G", N(2)), Reader),
                 "S", "Q");
+
+            // HOST-LEAN-O6: identity that ONLY an empty host ANCESTOR distinguishes. One evaluator-owned
+            // declaration (`with` copies of one block) is pre-wired under two empty host levels, each opened
+            // by its own wrapper namespace (so no name is ambiguous). The owners, callables and alias cells
+            // under the two levels differ only in that ancestor's object identity — no property, list or
+            // declaration tells them apart in C#. The encoder also qualifies owned property ids by
+            // host ancestry; the direct Lean guards isolate omission of the ancestor token itself.
+            static Expr Wrapper(Algorithm.User block, ScopeCtx parent, params Property[] members)
+                => Block(new Algorithm.User(null, L<ParameterPattern>(), L(Block(block with { Parent = parent })), L(members), OutputBundle.Empty));
+            var dynamicBlock = Namespace(PDyn(), GReader());
+            Expr Cache(ScopeCtx first, ScopeCtx second)
+                => Program([Wrapper(dynamicBlock, first, Public("RunA", Body(Call("G", N(1))))),
+                            Wrapper(dynamicBlock, second, Public("RunB", Body(Call("G", N(2)))))], [], R("RunA"), R("RunB"));
+            Case("HP-14e", "an owned P under two DISTINCT empty host ancestors is two cache owners (first caller's x per owner)",
+                Cache(Scope(null), Scope(null)), "P");
+            var oneEmpty = Scope(null);
+            Case("HP-14f", "control: the owned P under ONE empty host ancestor object reached twice is one cache owner",
+                Cache(oneEmpty, oneEmpty), "P");
+
+            var callableBlock = Namespace(FCollecting() with { IsPublic = true });
+            static Property AliasTo(string name, string target) => Public(name, new Algorithm.Alias(null, L<Expr>(), L<Property>(), R(target)));
+            Expr Need04Ancestors(ScopeCtx first, ScopeCtx second)
+                => Program([Wrapper(callableBlock, first, AliasTo("FA", "F")), Wrapper(callableBlock, second, AliasTo("FB", "F"))],
+                    [Prop("P", Fn(["f", "f"], N(0)))], Call("P", R("FA"), R("FB")));
+            Case("HP-14g", "NEED-04: one F declaration under two DISTINCT empty host ancestors is two callables",
+                Need04Ancestors(Scope(null), Scope(null)));
+            Case("HP-14h", "NEED-04 control: one F declaration under ONE empty host ancestor object is one callable",
+                Need04Ancestors(oneEmpty, oneEmpty));
+
+            // A runtime alias `A = R.Algorithm` projects F through its BINDING CELL, keyed by the alias's
+            // declaring chain. Distinct empty ancestors keep two cells, so FA and FB project two callables
+            // (NEED-04 refuses P(FA, FB)); a cell shared across the two ancestors would project the first
+            // ancestor's F twice and accept.
+            var projectingBlock = Namespace(
+                Prop("F", Fn(["v"], Add(X("v"), N(1)))),
+                Prop("Capture", new Algorithm.User(null, L<ParameterPattern>(new CaptureParameterPattern("op", Kind: ParameterKind.Meta)), L<Expr>(), L<Property>(), new OutputBundle([X("op")]))),
+                Prop("R", Body(Call("Capture", Call("F", N(1))))),
+                Public("A", new Algorithm.Alias(null, L<Expr>(), L<Property>(), Dot(R("R"), "Algorithm")) { HasRuntimeTarget = true }));
+            Expr AliasAncestors(ScopeCtx first, ScopeCtx second)
+                => Program([Wrapper(projectingBlock, first, AliasTo("FA", "A")), Wrapper(projectingBlock, second, AliasTo("FB", "A"))],
+                    [Prop("P", Fn(["f", "f"], N(0)))], Call("P", R("FA"), R("FB")));
+            Case("HP-14i", "runtime alias cells under two DISTINCT empty host ancestors project two callables (NEED-04 refuses)",
+                AliasAncestors(Scope(null), Scope(null)));
+            Case("HP-14j", "control: runtime alias cells under ONE empty host ancestor object project one callable",
+                AliasAncestors(oneEmpty, oneEmpty));
+
+            // One evaluator-owned declaration can have several host-built views. C# compares each
+            // nonempty opens/property list by reference, and separately allocated empty lists as
+            // equivalent. Neither equal printed lists nor a shared declaration can replace that fact.
+            Expr Need04Views(Algorithm.User first, Algorithm.User second)
+                => Program([Wrapper(first, oneEmpty, AliasTo("FA", "F")), Wrapper(second, oneEmpty, AliasTo("FB", "F"))],
+                    [Prop("P", Fn(["f", "f"], N(0)))], Call("P", R("FA"), R("FB")));
+            Case("HP-14k", "NEED-04: owned views with distinct nonempty property lists are distinct declaring scopes",
+                Need04Views(callableBlock, callableBlock with { Properties = L(callableBlock.Properties.ToArray()) }));
+            var open = Block(Namespace(Public("Unused", Body(N(3)))));
+            var withOpen = callableBlock with { Opens = L(open) };
+            Case("HP-14l", "NEED-04: owned views with distinct nonempty opens lists are distinct declaring scopes",
+                Need04Views(withOpen, withOpen with { Opens = L(open) }));
+            Case("HP-14m", "NEED-04 control: copied empty opens lists keep equivalent owned scopes",
+                Need04Views(callableBlock, callableBlock with { Opens = L<Expr>() }));
+            var replacedProperties = callableBlock with { Properties = L(callableBlock.Properties.ToArray()) };
+            Case("HP-14n", "NEED-04: replacing a callable's OWN lists preserves its declaration identity",
+                Program([], [Prop("P", Fn(["f", "f"], N(0)))],
+                    Call("P", Block(callableBlock), Block(replacedProperties))));
+            var holder = Namespace(Public("Lib", Namespace(Public("F", Body(N(7)))))) with { Parent = oneEmpty };
+            Expr Providers(Algorithm.User second)
+                => Program([Dot(R("A"), "Lib"), Dot(R("B"), "Lib")],
+                    [Prop("A", holder), Prop("B", second)], R("F"));
+            Case("HP-14o", "Q-19: provider declarations under owned views with different nonempty lists stay distinct",
+                Providers(holder with { Properties = L(holder.Properties.ToArray()) }));
+            Case("HP-14p", "Q-19 control: providers under equivalent owned reconstructions share identity",
+                Providers(holder with { }));
+
+            Expr LiteralAliases(bool sameComponents)
+            {
+                var host = Scope(null, Prop("F", Body(N(7))),
+                    Prop("Capture", new Algorithm.User(null, L<ParameterPattern>(new CaptureParameterPattern("op", Kind: ParameterKind.Meta)),
+                        L<Expr>(), L<Property>(), new OutputBundle([X("op")]))),
+                    Prop("R", Body(Call("Capture", Call("F")))));
+                var literal = new Algorithm.Alias(null, L<Expr>(), L<Property>(), Dot(R("R"), "Algorithm")) { HasRuntimeTarget = true };
+                var opens = L(Block(Namespace(Public("Unused", Body(N(3))))));
+                // Distinct declarations, no properties in either owned parent: a shared literal's
+                // alias key must retain the opens-list identity directly, without a binding id.
+                var first = new Algorithm.User(host, L<ParameterPattern>(), opens, L<Property>(), new OutputBundle([Block(literal)]));
+                var second = new Algorithm.User(host, L<ParameterPattern>(), sameComponents ? opens : L(opens.ToArray()),
+                    L<Property>(), new OutputBundle([Block(literal)]));
+                // Value-position blocks wire to their caller. Supply the target through that
+                // caller too; the pre-wired host edge remains part of the encoded input graph.
+                return Program([], host.Properties.ToArray(), Block(first), Block(second));
+            }
+            Case("HP-14q", "shared runtime alias literal under property-free owned parents with distinct opens lists",
+                LiteralAliases(false), "R", "F");
+            Case("HP-14r", "control: shared runtime alias literal under owned parents sharing their opens list",
+                LiteralAliases(true), "R", "F");
         }
 
         // HP-15: DECON-CACHE-2 — parsed assignment deconstructions transformed with public record copies

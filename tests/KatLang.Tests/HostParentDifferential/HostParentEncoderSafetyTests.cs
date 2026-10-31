@@ -36,8 +36,10 @@ public class HostParentEncoderSafetyTests
         Assert.True(encoded.Length < 4_000_000);
     }
 
-    [Fact]
-    public void SharedParentScopeDiamond_IsPrintedOncePerObject()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void SharedParentScopeDiamond_IsPrintedOncePerObject(bool componentProvenance)
     {
         ScopeCtx scope = new(null, [], []);
         for (var i = 0; i < 16; i++)
@@ -45,7 +47,10 @@ public class HostParentEncoderSafetyTests
             var block = new Expr.AlgorithmExpr(new Algorithm.User(scope, [], [], [], []));
             scope = new ScopeCtx(null, [block, block], []);
         }
-        var program = new Algorithm.User(scope, [], [], [], [new Expr.Num(1)]);
+        var alias = new Algorithm.Alias(null, [], [], new Expr.Num(1)) { HasRuntimeTarget = true };
+        var program = new Algorithm.User(scope, [], [], [], componentProvenance
+            ? new OutputBundle([new Expr.AlgorithmExpr(alias), new Expr.AlgorithmExpr(alias)])
+            : new OutputBundle([new Expr.Num(1)]));
         Assert.Null(AstStructuralPreflight.Check(program, EvaluationLimits.MaxSupportedAstDepth,
             AstConsumerProfile.EvaluatorIterativeJoinSpines));
         var encoded = LeanAstEncoder.EncodeAlgorithm(program);

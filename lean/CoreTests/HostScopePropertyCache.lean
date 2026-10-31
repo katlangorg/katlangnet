@@ -12,12 +12,11 @@ parent at run time is an `open` block target with a pre-set parent (`wireOpenBlo
 
 These guards pass under the EXISTING semantics: Lean always cached these properties. The C# evaluator
 bypassed its cache for them until CACHE-OWNER-D3, which identifies an ownerless host level by the
-REFERENCE of the `ScopeCtx` object (D3-B). Lean's ownerless key is STRUCTURAL instead (the level's
-shape plus per-occurrence `syntax` identities), so the two models agree on every ordinary host AST —
-distinct scope objects with their own `PropDef`s stay separate — but differ for deliberate host DAG
-sharing: equal chains whose `PropDef`s carry one explicit `shared` identity merge in Lean and stay
-separate in C# (guard 5b; owner decision O-6 defers a Lean scope identity). C# twin:
-`tests/KatLang.Tests/HostScopePropertyCacheTests.cs`.
+REFERENCE of the `ScopeCtx` object (D3-B). The levels here are UNANNOTATED (no host-scope token): abstract
+Lean values keyed structurally, with no claim about C# objects. Since HOST-LEAN-O6 a host level that
+stands for a C# object carries that object's token (`PropertyIdentity.host`), and Lean separates exactly
+what C# separates — see `CoreTests/HostScopeIdentity.lean` (guard 5b with provenance) and the generated
+`CoreTests/HostParentDifferential.lean`. C# twin: `tests/KatLang.Tests/HostScopePropertyCacheTests.cs`.
 
 Evidence technique of `CoreTests/PropertyCachePublication.lean`: `P` reads `x`, a name it does not
 bind, dynamically from its caller, so a cache hit returns the FIRST caller's `x`.
@@ -107,11 +106,12 @@ def twoScopes (a b : PropDef) : KatLang.Expr :=
     [] [resolve "RunA", resolve "RunB"])
 #guard (pEntries (twoScopes pDyn pDyn)).map (·.1) == some (.sequenceValue [.atom 1, .atom 2])
 #guard (pEntries (twoScopes pDyn pDyn)).map (·.2.length) == some 2
--- 5b. THE MODELLED DISTINCTION (O-6, deferred). With ONE explicitly `shared` PropDef identity and equal
---     chains, Lean's two OWNERLESS keys coincide (the owner string has no declaration identity to
---     separate them), so B reads A's value. C# keys each host level by its object reference and keeps
---     the two scopes separate (`HostScopePropertyCacheTests.DistinctHostScopeObjects_NeverShareAnOwner_*`).
---     Pinned so a future Lean scope identity changes it deliberately.
+-- 5b. AN UNANNOTATED VALUE, not a C# graph. With ONE explicitly `shared` PropDef identity, equal chains
+--     and NO host-scope token, the two levels are one Lean value and their keys coincide, so B reads A's
+--     value. It is retained with that abstract meaning only: it says nothing about two C# host objects.
+--     The provenance-aware pair (HOST-LEAN-O6) is `CoreTests/HostScopeIdentity.lean` § 2 — ONE object
+--     (one token) reuses the owner, TWO objects sharing the declaration (two tokens) are two owners, as
+--     C# keeps them (`HostScopePropertyCacheTests.DistinctHostScopeObjects_NeverShareAnOwner_*`, HP-08b).
 def pShared : PropDef := { pDyn with identity := some (.shared 888) }
 #guard (pEntries (twoScopes pShared pShared)).map (·.1) == some (.sequenceValue [.atom 1, .atom 1])
 

@@ -11,8 +11,9 @@ namespace KatLang.Tests;
 /// evaluated by C# on every route (<see cref="HostParentDifferentialHarness"/>) and encoded for Lean
 /// by <see cref="LeanAstEncoder"/>; the artifact guards Lean's neutral observation and published
 /// zero-argument cache entries against the recorded C# ones, and <c>lake build CoreTests</c>
-/// compiles it (it is imported by <c>lean/CoreTests.lean</c>). The known HOST-LEAN-O6 model
-/// divergences (HP-14b since HOST-NESTED-1) are excluded from the comparable partition and pinned on
+/// compiles it (it is imported by <c>lean/CoreTests.lean</c>). Every case is comparable: HOST-LEAN-O6 gave
+/// every host level its object's Lean host-scope token, which retired the last known model divergence
+/// (HP-14b). A future reviewed divergence would be excluded from the comparable partition and pinned on
 /// both sides instead.
 ///
 /// Regenerate with:
@@ -72,14 +73,15 @@ public class HostParentDifferentialTests
 
     /// <summary>
     /// The comparable / divergent partition is exact and reviewed: a case can leave the comparable
-    /// partition only by being named here with its machine-checked divergence.
+    /// partition only by being named here with its machine-checked divergence. Since HOST-LEAN-O6 the
+    /// divergent partition is EMPTY: HP-14b (O6-18, Q-19 over empty host levels) is comparable.
     /// </summary>
     [Fact]
     public void Partition_DivergentCasesAreExactlyTheReviewedHostLeanO6Shapes()
     {
         var divergent = HostParentDifferentialCorpus.AllCases().Where(c => c.Divergence is not null)
             .Select(c => c.Id).ToList();
-        Assert.Equal(["HP-14b"], divergent);
+        Assert.Empty(divergent);
         Assert.All(HostParentDifferentialCorpus.AllCases().Where(c => c.Divergence is not null), c =>
         {
             Assert.False(string.IsNullOrWhiteSpace(c.Divergence!.Reason), c.Id);
@@ -97,9 +99,9 @@ public class HostParentDifferentialTests
     [Fact]
     public void FidelityRatchet_ComparableHostParentCoverageCannotSilentlyShrink()
     {
-        const int MinimumComparableCases = 87;
-        const int MinimumComparableCasesWithPreWiredParents = 82;
-        const int MinimumCacheGuards = 150;
+        const int MinimumComparableCases = 102;
+        const int MinimumComparableCasesWithPreWiredParents = 96;
+        const int MinimumCacheGuards = 181;
 
         var cases = HostParentDifferentialCorpus.AllCases();
         var comparable = cases.Where(c => c.Divergence is null).ToList();
@@ -140,26 +142,88 @@ public class HostParentDifferentialTests
     }
 
     /// <summary>
-    /// Sharing fidelity of the encoded corpus itself: the one-object cases (HP-09a, HP-12c) carry
-    /// EQUAL host identities on both occurrences, the distinct-object cases (HP-08b..d) DISTINCT ones,
-    /// and the fresh-object case (HP-08a) none at all.
+    /// Declaration fidelity of the encoded corpus itself (HOST-LEAN-O6): a property declared in a host
+    /// level carries ONE declaration identity per property OBJECT — the one-object cases (HP-09a,
+    /// HP-12c) and the distinct-object cases that share a property, a list or a record copy (HP-08b..d)
+    /// alike, the declaring OBJECT being the host token instead (<see cref="HostScopeTokens_FollowScopeObjectIdentity"/>)
+    /// — and the fresh-object case (HP-08a) none at all.
     /// </summary>
     [Theory]
     [InlineData("HP-09a", 1, 2)]
     [InlineData("HP-12c", 4, 8)]
-    [InlineData("HP-08b", 2, 2)]
-    [InlineData("HP-08c", 2, 2)]
-    [InlineData("HP-08d", 2, 2)]
+    [InlineData("HP-08b", 1, 2)]
+    [InlineData("HP-08c", 1, 2)]
+    [InlineData("HP-08d", 1, 2)]
     [InlineData("HP-08a", 0, 0)]
     public void HostScopeIdentities_FollowObjectIdentity(string id, int distinctIds, int occurrences)
     {
         var hostCase = HostParentDifferentialCorpus.AllCases().Single(c => c.Id == id);
         var encoded = LeanAstEncoder.EncodeExpr(hostCase.Program);
-        var hostLevelIds = Regex.Matches(encoded, @"ScopeCtx\.mk none \[\] \[\] \[(?<props>.*?)\] \[\] \[\] none none")
+        var hostLevelIds = Regex.Matches(encoded, @"ScopeCtx\.mk none \[\] \[\] \[(?<props>.*?)\] \[\] \[\] none \(some \(\.host \d+\)\)")
             .SelectMany(m => Regex.Matches(m.Groups["props"].Value, @"identity := some \(\.shared (\d+)\)").Select(x => x.Groups[1].Value))
             .ToList();
         Assert.Equal(occurrences, hostLevelIds.Count);
         Assert.Equal(distinctIds, hostLevelIds.Distinct(StringComparer.Ordinal).Count());
+    }
+
+    /// <summary>
+    /// HOST-LEAN-O6 encoder fidelity of the corpus itself: the encoded program carries exactly one Lean
+    /// host-scope token per original host <see cref="ScopeCtx"/> OBJECT it reaches — one object
+    /// reached through several edges (HP-09a, HP-12c, HP-14a, HP-14f) is one token, distinct objects
+    /// (fresh, record copies, levels sharing a list or a property, empty levels, ancestors) are
+    /// distinct tokens.
+    /// </summary>
+    [Theory]
+    [InlineData("HP-09a", 1)]
+    [InlineData("HP-09b", 3)]
+    [InlineData("HP-12c", 1)]
+    [InlineData("HP-12d", 2)]
+    [InlineData("HP-08d", 2)]
+    [InlineData("HP-08e", 4)]
+    [InlineData("HP-14a", 1)]
+    [InlineData("HP-14b", 2)]
+    [InlineData("HP-14e", 2)]
+    [InlineData("HP-14f", 1)]
+    [InlineData("HP-14i", 2)]
+    [InlineData("HP-14j", 1)]
+    public void HostScopeTokens_FollowScopeObjectIdentity(string id, int tokens)
+    {
+        var hostCase = HostParentDifferentialCorpus.AllCases().Single(c => c.Id == id);
+        var encoded = LeanAstEncoder.EncodeExpr(hostCase.Program);
+        var distinct = Regex.Matches(encoded, @"\(some \(\.host (\d+)\)\)").Select(m => int.Parse(m.Groups[1].Value, CultureInfo.InvariantCulture))
+            .Distinct().Order().ToList();
+        Assert.Equal(Enumerable.Range(0, tokens), distinct);
+    }
+
+    /// <summary>
+    /// HOST-LEAN-O6 migration and its new witnesses, with the reviewed C# observations. HP-14b was the
+    /// pinned divergence (C# <c>err ambiguousOpen</c>, Lean <c>ok raw=7 n=1</c>); its C# expectation is
+    /// UNCHANGED and Lean now agrees through the generated guard. HP-14e/g/i separate identities that only
+    /// an empty host ANCESTOR distinguishes (cache owner, NEED-04 callable, runtime-alias binding cell);
+    /// HP-14f/h/j are their one-object controls.
+    /// </summary>
+    [Theory]
+    [InlineData("HP-14a", "ok raw=7 n=1")]
+    [InlineData("HP-14b", "err ambiguousOpen")]
+    [InlineData("HP-14e", "ok raw=S[1, 2] n=2")]
+    [InlineData("HP-14f", "ok raw=S[1, 1] n=2")]
+    [InlineData("HP-14g", "err type")]
+    [InlineData("HP-14h", "ok raw=0 n=1")]
+    [InlineData("HP-14i", "err type")]
+    [InlineData("HP-14j", "ok raw=0 n=1")]
+    [InlineData("HP-14k", "err type")]
+    [InlineData("HP-14l", "err type")]
+    [InlineData("HP-14m", "ok raw=0 n=1")]
+    [InlineData("HP-14n", "ok raw=0 n=1")]
+    [InlineData("HP-14o", "err ambiguousOpen")]
+    [InlineData("HP-14p", "ok raw=7 n=1")]
+    [InlineData("HP-14q", "ok raw=S[7, 7] n=2")]
+    [InlineData("HP-14r", "ok raw=S[7, 7] n=2")]
+    public void HostLeanO6Cases_CSharpObservesTheReviewedValue(string id, string expected)
+    {
+        var hostCase = HostParentDifferentialCorpus.AllCases().Single(c => c.Id == id);
+        Assert.Null(hostCase.Divergence);
+        Assert.Equal(expected, HostParentDifferentialHarness.Observe(hostCase).Neutral);
     }
 
     private static List<string> WatchedNames(HostParentCase hostCase, HostParentObservation observation)
