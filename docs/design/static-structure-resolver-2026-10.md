@@ -207,6 +207,23 @@ order is preserved wherever answers are unchanged.
     answer itself. Declare P's parameters explicitly, or remove the dependency."
   - The body publishes no inference, and dependent lifts are suppressed. The operation is already rejected, so this
     avoids cascading errors.
+- **Diagnostic recovery after A1 (F4, 2026-10-31).** A1 stays a rejection: the unit (the eager program or one deferred
+  branch) is never forwarded, exposure-settled, frozen or published, and is never evaluated.
+  - Independent errors are still reported where the detected tree alone establishes them: the parameter/property
+    collision rule runs over the detected tree, after detection's own reports
+    (`ParameterPropertyCollisionValidator.ValidateAfterSelfDependentInference`, from `FrontEndPipeline` and
+    `DeferredModuleRegion.CompileLoadedBody`). A detected signature holds the written parameters and the inputs Q6
+    decided Yes; an undecided input is absent and forwarding only appends, so every collision found holds for any
+    completion. A collision only an undecided input or a forwarded parameter could cause is not reported, and the
+    walk records no completed bindings on deferred regions.
+  - Deliberately suppressed, because they read signatures, targets or forwarding outcomes the undecided inputs
+    leave open: implicit-argument resolution and its reports (`UnforwardableParameter`, `UnforwardableCallable`,
+    `UnliftableClauseFamily`, …), the `open` provider rule (`UnresolvedOpenTarget`, `IllegalInOpen`, …), the
+    inferred-parameter output rule (its message lists the completed signature) and exposure settlement.
+  - Recovered reports use the same bag (budget, prefix law, marker) and the same phase order as an ordinary run; a
+    provisional elaboration still withholds them.
+  - Editor tooling inspects the erroneous, non-evaluable detected tree; its sealed completed facts keep the
+    A1-affected entries unavailable (`A1DiagnosticRecoveryTests`).
 - **Order independence.** The least fixed point is unique, and path-step returns are structural facts.
 - **Minimal rejection.** Branch agreement decides any decision whose answer does not actually depend on the unknown.
   For example, `a` iff (`a` or true) is decided Yes.

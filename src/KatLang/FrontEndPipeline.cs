@@ -386,6 +386,13 @@ internal static class FrontEndPipeline
             {
                 operation.CompleteLookups(input.Current);
                 input.Current.CompletedStructure!.Facts.Seal(cancellationToken);
+                // A1 recovery (F4): the unit is rejected and never forwarded, validated by the
+                // open-provider and output rules, exposure-settled or published — those read
+                // signatures and targets the undecided inputs leave open. Only the collision rule,
+                // which is monotone in the parameters a signature holds, runs, over the detected
+                // tree (see ParameterPropertyCollisionValidator.ValidateAfterSelfDependentInference).
+                cancellationToken.ThrowIfCancellationRequested();
+                ValidateCollisionsAfterSelfDependentInference(input, passDiagnostics);
                 return new(ElaboratedUserRoot(input.Take()), diagnostics, hasDeferredModuleRegions);
             }
         }
@@ -489,6 +496,13 @@ internal static class FrontEndPipeline
     {
         var root = input.Current;
         new ParameterPropertyCollisionValidator(passDiagnostics, programRoot: root).VisitAlgorithm(root);
+    }
+
+    private static void ValidateCollisionsAfterSelfDependentInference(ElaborationInput input, DiagnosticBag passDiagnostics)
+    {
+        var root = input.Current;
+        ParameterPropertyCollisionValidator.ValidateAfterSelfDependentInference(
+            root, passDiagnostics, enclosingParameters: null, programRoot: root, importSite: null);
     }
 
     private static void ValidateOpenProviders(ElaborationInput input, DiagnosticBag passDiagnostics, HostOperations? hostOperations)

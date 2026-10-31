@@ -20,13 +20,35 @@ namespace KatLang;
 /// root row <c>Q + 1</c> is a missing <c>open Lib</c> / <c>Lib.Q</c>, not a conflict in
 /// <c>Lib</c>). A nested owner's completed signature keeps the full rule: its parameters
 /// are bound by its calls, so a deeper property of the same name really would hide them.</para>
+/// <para>A1 recovery (F4) also runs this rule over the DETECTED tree of a rejected unit
+/// (<see cref="ValidateAfterSelfDependentInference"/>); <paramref name="completedSignatures"/>
+/// is false there, so no deferred region records those bindings.</para>
 /// </summary>
 internal sealed class ParameterPropertyCollisionValidator(
     DiagnosticBag diagnostics,
     ParameterPropertyCollisionValidator.ParameterBindings? enclosingParameters = null,
     Algorithm? programRoot = null,
-    SourceSpan? importSite = null) : AstWalker
+    SourceSpan? importSite = null,
+    bool completedSignatures = true) : AstWalker
 {
+    /// <summary>
+    /// The collision rule over the DETECTED tree of a unit that parameter detection rejected with
+    /// <see cref="DiagnosticCode.SelfDependentInferredParameters"/> (A1), which never reaches
+    /// automatic forwarding. A detected signature holds the written parameters and the inputs Q6
+    /// decided Yes; an undecided input is absent, and forwarding only ever appends parameters. So
+    /// every collision found here holds whatever the undecided inputs and the forwarding would have
+    /// added, and a collision with a parameter only they could supply is not reported. Nothing is
+    /// recorded on deferred regions: these bindings are not completed signatures.
+    /// </summary>
+    internal static void ValidateAfterSelfDependentInference(
+        Algorithm detected,
+        DiagnosticBag diagnostics,
+        ParameterBindings? enclosingParameters,
+        Algorithm? programRoot,
+        SourceSpan? importSite)
+        => new ParameterPropertyCollisionValidator(diagnostics, enclosingParameters, programRoot, importSite, completedSignatures: false)
+            .VisitAlgorithm(detected);
+
     // Validity depends on the names in scope, not the route through a shared DAG. The
     // first conflicting source reach supplies diagnostic metadata for a shared declaration,
     // which is reported once by its declaration NODE (never by span identity: an imported
@@ -232,7 +254,10 @@ internal sealed class ParameterPropertyCollisionValidator(
         // carries; validate after materialization. (This walk rewrites nothing, so the
         // recording is the one in-place update a region ever receives from the front end.)
         if (algorithm.DeferredRegion is { } region)
-            region.RecordValidation(_parameters);
+        {
+            if (completedSignatures)
+                region.RecordValidation(_parameters);
+        }
         else
             base.VisitAlgorithm(algorithm);
     }

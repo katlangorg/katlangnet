@@ -377,7 +377,14 @@ internal sealed class DeferredModuleRegion
                 new HashSet<string>(structural.Pattern.BoundNames(), StringComparer.Ordinal), structural.BranchName, structural.CapturedParameters);
             var detected = ParameterDetector.ElaborateDeferredBranch(loaded, detection, diagnostics, observations, ImportSite, modules, structural.Pattern);
             cancellationToken.ThrowIfCancellationRequested();
-            if (diagnostics.HasReported(DiagnosticCode.SelfDependentInferredParameters)) return null;
+            if (diagnostics.HasReported(DiagnosticCode.SelfDependentInferredParameters))
+            {
+                // A1 recovery (F4), as in the eager pipeline: the branch fails unpublished, and only
+                // the collision rule runs, over the detected body.
+                ParameterPropertyCollisionValidator.ValidateAfterSelfDependentInference(
+                    detected, diagnostics, Validation, programRoot: null, ImportSite);
+                return null;
+            }
             var resolved = ImplicitArgumentResolver.ElaborateStructuralDeferredBranch(detected, structural, operation,
                 diagnostics, observations, ImportSite, modules);
             cancellationToken.ThrowIfCancellationRequested();
