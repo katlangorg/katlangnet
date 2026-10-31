@@ -3275,3 +3275,20 @@ existing enum values are unchanged), `EvaluationBudget`'s compare-and-set counte
 the registry-derived metadata (signature display `tick`, empty dot signature, prelude inventories, host-name reservation,
 completion) already covers a zero-parameter builtin. The existing test fixtures that registered a host operation named `tick` now
 register `tock` (same length, so asserted columns are unchanged), keeping every host-call trace and count assertion.
+
+### CDO-1: consumer-directed observation consolidated (October 31 2026)
+
+Classification: documentation consolidation plus test-only coverage; no Lean update required (no observable semantics,
+AST, evaluator, front-end or cache rule changed). The owner approved CDO-R1..R8 on 2026-10-31 as a restatement of
+Model-C NEED-06/NEED-10 and the result boundary, SYN-05, Q-03/Q-04, the formula-lifting law, M4★ OD-B–OD-E, FWD-02 and
+CACHE-PUB-1; the full text is `docs/design/language-rules/ownership-and-lookup.md` § Consumer-directed observation, with
+the compact CDO-1 bullet in `AGENTS.md`. The rule-to-code audit found the C# lookup twins, NeedCell channels,
+zero-supply acceptance funnel, alias formation and publication origins aligned with their Lean counterparts
+(`lookupLexicalProperty`, `projectNeedCallable`/`demandNeed`, `Algorithm.acceptsZeroSuppliedArguments`,
+`evalZeroArgumentDemandOutputCounted`, `Algorithm.alias … reference`, `evalZeroArgPropertyAccessCounted`); the only
+defects were documentary: the FWD-02 section of `ownership-and-lookup.md` still stated in the present tense that a
+zero-parameter target is no alias and that an alias owns a zero-argument cache key and never its target's members.
+Those sentences now state the M4★ law at their point of use and mark the former rule as historical. The Lean law
+`zero_parameter_user_algorithm_is_not_an_alias_target` keeps its historical name (its docstring already states the
+closed-body scope). `ConsumerDirectedObservationTests` pins the CDO boundary witnesses on all six routes. NEED-04,
+repeated-name matching, `Same(x, x)` and Q-28 are untouched.

@@ -14,7 +14,8 @@ namespace KatLang.Tests;
 /// property-style value demand. The front end never rewrites it into a fresh forwarding call
 /// merely because its signature declares parameters, so the demand follows the ordinary
 /// zero-argument property cache in EVERY position. An explicit call — <c>A()</c> or
-/// <c>A(args)</c> — stays fresh and never reads, replaces or populates the entry, and implicit
+/// <c>A(args)</c> — stays fresh and never reads or replaces an established entry; under
+/// CACHE-PUB-1 an eligible zero-supply call may establish an empty entry. Implicit
 /// lifting and forwarding stay exactly as they were for a callable that REQUIRES supplied
 /// arguments.</para>
 ///
