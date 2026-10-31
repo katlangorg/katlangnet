@@ -427,6 +427,7 @@ public class KatLangErrorCodeTests
             ["InvalidMetaParameter"] = 59,
             ["SelfDependentInferredParameters"] = 60,
             ["StaticStructureLimitExceeded"] = 61,
+            ["UnboundLoadReference"] = 62,
         };
 
         var actual = Enum.GetValues<DiagnosticCode>().ToDictionary(v => v.ToString(), v => (int)v);
@@ -522,6 +523,7 @@ public class KatLangErrorCodeTests
             ["InvalidMetaParameter"] = 81,
             ["SelfDependentInferredParameters"] = 82,
             ["StaticStructureLimitExceeded"] = 83,
+            ["UnboundLoadReference"] = 84,
         };
 
         var actual = Enum.GetValues<KatLangErrorCode>().ToDictionary(v => v.ToString(), v => (int)v);

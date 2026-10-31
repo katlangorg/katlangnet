@@ -507,4 +507,14 @@ public enum DiagnosticCode
 
     /// <summary>Static structure analysis exceeded its operation work or memory admission bound.</summary>
     StaticStructureLimitExceeded = 61,
+
+    /// <summary>
+    /// A written bare reference to <c>load</c> that no property, parameter or opened member binds
+    /// (X-36 / Q-62, October 2026): <c>X = load</c>, <c>load + 1</c>, <c>F(load)</c>. Only the call
+    /// form <c>load('url')</c> is special — the static module directive (MOD-07); the bare name is an
+    /// ordinary reference and the runtime prelude holds no loader value, so it is reported before
+    /// evaluation, wherever it is written and whether or not evaluation would demand it. A real
+    /// binding named <c>load</c> is ordinary and never reported.
+    /// </summary>
+    UnboundLoadReference = 62,
 }

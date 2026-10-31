@@ -366,4 +366,7 @@ public enum KatLangErrorCode
 
     /// <summary>Front-end <see cref="DiagnosticCode.StaticStructureLimitExceeded"/>.</summary>
     StaticStructureLimitExceeded = 83,
+
+    /// <summary>Front-end <see cref="DiagnosticCode.UnboundLoadReference"/>.</summary>
+    UnboundLoadReference = 84,
 }

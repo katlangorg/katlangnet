@@ -429,6 +429,8 @@ If ANY checklist item fails, fix the output before emitting it.
       load('https://katlang.org/lib.kat')            # invalid: load is not allowed as runtime output
       Lib = load("https://katlang.org/{name}.kat")   # invalid: a URL is fixed text, never interpolated
 
+  Only the call form is the directive, and it stays the directive even where the program declares something named `load`. A bare `load` is not a value: `X = load` or `F(load)` is rejected before the program runs unless the program itself declares a property, parameter, or opened member named `load`.
+
 ## Naming
 
 - PascalCase for properties and algorithms. Lowercase for implicit parameters.

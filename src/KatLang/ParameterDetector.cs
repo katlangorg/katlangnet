@@ -991,6 +991,7 @@ internal static class ParameterDetector
     {
         public readonly Dictionary<Expr, Expr> Rewrites = new(ReferenceEqualityComparer.Instance);
         public readonly HashSet<Expr> ReportedGrace = new(ReferenceEqualityComparer.Instance);
+        public HashSet<Expr.Resolve>? ReportedUnboundLoads;
 
         public readonly IReadOnlyDictionary<Expr.DotCall, ImplicitParameterProvenance>? DotMembers = dotMembers;
 
@@ -1002,6 +1003,12 @@ internal static class ParameterDetector
         /// <see cref="ReportAmbiguousOpenUse"/> stays silent.
         /// </summary>
         public bool AmbiguousOpenUseSuppressed;
+
+        /// <summary>
+        /// Set while the callee of a written <c>load(...)</c> directive is rewritten: that name is
+        /// module syntax, not a value reference, so <see cref="ReportUnboundLoadReference"/> stays silent.
+        /// </summary>
+        public bool DirectiveCalleeSuppressed;
 
         public readonly DetectionRun Run = run;
 
@@ -2569,6 +2576,12 @@ internal static class ParameterDetector
         ParameterOwnership parameters,
         RewriteWalkMemo memo)
     {
+        // A shared name may first be visited as a directive callee or an unused dot fallback.
+        // Observe its value-use obligation before the rewrite memo: suppression is per edge,
+        // while the rewrite and diagnostic multiplicity are per node within this region.
+        if (expr is Expr.Resolve reference)
+            ReportUnboundLoadReference(reference, scope, memo);
+
         // Resolve leaves can rewrite to newly allocated Params and therefore must be memoized
         // to preserve leaf sharing. Other childless leaves return themselves unchanged.
         var hasTraversableChildren = AstTraversalDagSafety.HasTraversableExprChildren(expr);
@@ -2576,7 +2589,13 @@ internal static class ParameterDetector
             return RewriteParamsCore(expr, scope, parameters, memo);
 
         if (memo.Rewrites.TryGetValue(expr, out var rewritten))
+        {
+            // A first Grace visit reports the marker before rewriting its name. On a memo hit
+            // the stripped name still needs to observe this edge's value-use obligation.
+            if (expr is Expr.Grace grace && grace.UnwrapGraceOperand() is Expr.Resolve gracedReference)
+                ReportUnboundLoadReference(gracedReference, scope, memo);
             return rewritten;
+        }
 
         if (hasTraversableChildren)
             memo.Observations?.RecordDetectorRewriteExpansion();
@@ -2691,6 +2710,61 @@ internal static class ParameterDetector
         return resolve;
     }
 
+    /// <summary>
+    /// X-36 / Q-62 (2026-10-31): a WRITTEN bare reference to <c>load</c> whose binding is the
+    /// semantic prelude's signature-only directive placeholder denotes nothing at run time — the
+    /// runtime prelude has no <c>load</c> — so it is the front-end error
+    /// <see cref="DiagnosticCode.UnboundLoadReference"/> at the occurrence, whether or not evaluation
+    /// would ever demand it, never a run-time <c>UnknownName</c>. Only that registry declaration is
+    /// excluded, by provenance (<see cref="IsLoadDirectivePlaceholder"/>): a parameter, a property or
+    /// an opened public member named <c>load</c> is an ordinary binding and is never reported. Q1's
+    /// owner walk reaches the prelude placeholder before any open, so the opened binding (Q1's
+    /// <see cref="StaticQueryProjection.OpenedBinding"/>, the provider the runtime selects because its
+    /// prelude has no <c>load</c>) decides: a provider, an ambiguity or a pending match keeps its
+    /// existing resolution, and only a confirmed miss is reported. The callee of a written directive
+    /// <c>load(...)</c> is module syntax, not a value reference (<see cref="RewriteCall"/> suppresses
+    /// it), and a dot edge's fallback name is a written use only when the edge certainly selects it,
+    /// exactly as for <see cref="ReportAmbiguousOpenUse"/>. Once per occurrence per region (written
+    /// leaves are deduplicated even on a rewrite memo hit); a provisional walk reports nothing.
+    /// </summary>
+    private static void ReportUnboundLoadReference(Expr.Resolve resolve, ElaboratedPropertyScope scope, RewriteWalkMemo memo)
+    {
+        if (memo.Diagnostics is null
+            || memo.AmbiguousOpenUseSuppressed
+            || memo.DirectiveCalleeSuppressed
+            || !HasNoRuntimeLoadBinding(resolve, scope))
+            return;
+
+        if (!(memo.ReportedUnboundLoads ??= new(ReferenceEqualityComparer.Instance)).Add(resolve))
+            return;
+
+        memo.Diagnostics.Report(DiagnosticCode.UnboundLoadReference, UnboundLoadReferenceMessage, resolve.Span ?? memo.Run.ImportSite);
+    }
+
+    private static bool HasNoRuntimeLoadBinding(Expr.Resolve resolve, ElaboratedPropertyScope scope)
+        => resolve.Name == LoadDirectiveName
+            && scope.StaticContext is { } context
+            && IsLoadDirectivePlaceholder(context.Operation, context.Operation.Binding(context.Key, resolve.Name))
+            && context.Operation.Binding(context.Key, resolve.Name, StaticQueryProjection.OpenedBinding).Kind == StaticFactKind.Missing;
+
+    private const string LoadDirectiveName = "load";
+
+    /// <summary>The wording of <see cref="DiagnosticCode.UnboundLoadReference"/>.</summary>
+    internal const string UnboundLoadReferenceMessage =
+        "'load' names no property, parameter or opened member here, so it has no value. "
+        + "A module is imported with the static directive load('url'), written as a call with one literal URL.";
+
+    /// <summary>
+    /// Whether Q1 selected the semantic prelude's own <c>load</c> declaration — the registry's
+    /// signature-only directive placeholder, which the runtime prelude does not hold — rather than a
+    /// source binding of that spelling. A host operation can never declare <c>load</c>
+    /// (<see cref="HostOperations.ReservedPreludeNames"/>), so the prelude level's declaration of it is
+    /// that placeholder.
+    /// </summary>
+    private static bool IsLoadDirectivePlaceholder(StaticStructureOperation operation, StaticFact binding)
+        => binding is { Kind: StaticFactKind.Declaration, Property.Name: LoadDirectiveName }
+            && ReferenceEquals(binding.Scope, operation.Queries.Keys.Root);
+
     /// <summary>The wording of <see cref="DiagnosticCode.AmbiguousOpen"/>: the name, the providers as written, and the two repairs.</summary>
     internal static string FormatAmbiguousOpenUse(string name, IReadOnlyList<ResolvedOpenProvider> providers)
     {
@@ -2728,8 +2802,20 @@ internal static class ParameterDetector
         // Keep the established argument-before-callee rewrite order: both sides can
         // report diagnostics and update the region's shared-node metadata.
         var rewrittenArgs = RewriteParams(call.Args, scope, parameters, memo);
-        return new Expr.Call(
-            RewriteParams(call.Function, scope, parameters, memo), rewrittenArgs) { Span = call.Span };
+
+        // The callee of a written directive `load(...)` is module syntax recognized by spelling
+        // (MOD-07), never a value reference (ReportUnboundLoadReference); its arguments are ordinary.
+        var suppressed = memo.DirectiveCalleeSuppressed;
+        memo.DirectiveCalleeSuppressed = call.TryGetUnresolvedLoadArguments(out _);
+        try
+        {
+            return new Expr.Call(
+                RewriteParams(call.Function, scope, parameters, memo), rewrittenArgs) { Span = call.Span };
+        }
+        finally
+        {
+            memo.DirectiveCalleeSuppressed = suppressed;
+        }
     }
 
     /// <summary>Rewrites every slot of a scope-less bundle (capture rows, list elements, argument slots) in the enclosing param context.</summary>
@@ -2851,6 +2937,27 @@ internal static class ParameterDetector
                 {
                     Code = DiagnosticCode.AmbiguousOpen,
                 });
+            }));
+        }
+
+        // The same MAY -> MUST transition can establish that `load` is a written value use.
+        // Read binding availability now from Q1; the delayed check retains no operation and uses
+        // the established receiver verdict, anchor and per-region diagnostic deduplication.
+        if (fallbackSelection == LexicalFallbackSelection.Conditional
+            && memo.Diagnostics is { } loadDiagnostics
+            && rewrittenFallback.UnwrapGraceOperand() is Expr.Resolve loadName
+            && HasNoRuntimeLoadBinding(loadName, scope))
+        {
+            var span = loadName.Span ?? memo.Run.ImportSite;
+            var reported = memo.ReportedUnboundLoads ??= new(ReferenceEqualityComparer.Instance);
+            var anchor = loadDiagnostics.ReserveAnchor();
+            var miss = memo.Run.ProvisionalMissOf(dotCall, scope);
+            miss.Depend(new DeferredFallbackCheck(() =>
+            {
+                if (!miss.IsCertain || !reported.Add(loadName))
+                    return;
+                using var place = loadDiagnostics.InsertingAt(anchor);
+                loadDiagnostics.Report(DiagnosticCode.UnboundLoadReference, UnboundLoadReferenceMessage, span);
             }));
         }
 

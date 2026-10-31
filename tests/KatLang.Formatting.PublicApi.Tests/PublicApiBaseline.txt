@@ -330,6 +330,7 @@ public enum KatLang.DiagnosticCode : int
   InvalidMetaParameter = 59
   SelfDependentInferredParameters = 60
   StaticStructureLimitExceeded = 61
+  UnboundLoadReference = 62
 
 public enum KatLang.DiagnosticSeverity : int
   Hint = 1
@@ -1495,6 +1496,7 @@ public enum KatLang.KatLangErrorCode : int
   InvalidMetaParameter = 81
   SelfDependentInferredParameters = 82
   StaticStructureLimitExceeded = 83
+  UnboundLoadReference = 84
 
 public sealed class KatLang.KatLangException : System.Exception
   ctor     public KatLangException(System.Collections.Generic.IReadOnlyList<KatLang.KatLangError> errors)

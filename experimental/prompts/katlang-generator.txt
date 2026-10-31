@@ -1058,6 +1058,7 @@ Rules:
 - Module loading requires a downloader configured through the asynchronous parser/engine `RunOptions` surface and obeys an allowed-host policy (the default allowlist is `katlang.org`).
 - Do not invent local file loading or runtime URL construction (an interpolated URL is invalid).
 - A loaded module is self-contained: its names resolve in the module itself and then the built-in prelude, never in the importing program (an importer's `sum`, `abs`, or properties never change what it computes). A name the module does not define is a parameter of the member that uses it, so pass it as an argument (`Lib.Price(10)`) — or let a same-named parameter of the importing algorithm reach it by bare forwarding or formula lifting.
+- Only the call form is the directive, and it stays the directive even where the program declares something named `load`. A bare `load` is not a value: `X = load` or `F(load)` is rejected before the program runs unless the program itself declares a property, parameter, or opened member named `load`.
 - Every `load`/`open` of one URL in a program is the SAME module (`open 'url'` is `Lib = load('url')` plus `open Lib`), so its members are computed once; two URLs are two modules.
 Invalid:
     Url = 'https://katlang.org/lib.kat'

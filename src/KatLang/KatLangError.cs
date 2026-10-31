@@ -207,6 +207,7 @@ public sealed class KatLangError
             DiagnosticCode.InvalidMetaParameter => KatLangErrorCode.InvalidMetaParameter,
             DiagnosticCode.SelfDependentInferredParameters => KatLangErrorCode.SelfDependentInferredParameters,
             DiagnosticCode.StaticStructureLimitExceeded => KatLangErrorCode.StaticStructureLimitExceeded,
+            DiagnosticCode.UnboundLoadReference => KatLangErrorCode.UnboundLoadReference,
             _ when !Enum.IsDefined(code) => KatLangErrorCode.Unspecified,
             _ => throw new InvalidOperationException(
                 $"Unhandled declared {nameof(DiagnosticCode)} family in {nameof(KatLangError)}: {code}. "

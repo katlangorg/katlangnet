@@ -2897,6 +2897,8 @@ A loaded module is self-contained. Its names mean what they mean inside the modu
 
 Loading is off unless the host application allows it — the command-line tool needs the option `--allow-loading` — and a program that loads without permission is rejected. A module URL must use `https` and a host that the application allows, by default `katlang.org` and its subdomains.
 
+Only the call `load('url')` is special: it is always the module directive, even where the program also defines something named `load`. The name `load` on its own is not a value. `X = load` or `F(load)` is rejected before the program runs — unless the program itself defines a property, parameter, or opened member named `load`, which then works like any other name.
+
 ---
 
 ## Layout and Common Pitfalls
