@@ -137,6 +137,25 @@ public class TerminationProbeTests
     }
 
     [Fact]
+    public async Task AChildRejectsALivePidWithTheWrongStartIdentity()
+    {
+        using var owner = Process.GetCurrentProcess();
+        var start = SubprocessProbe.StartInfo(typeof(Fixture), nameof(Fixture.Pass));
+        // Keep the live owner's PID but supply a different birth token, as with PID reuse.
+        start.Environment[TerminationProbe.OwnerVariable] = TerminationProbe.OwnerIdentity(owner) + "0";
+        using var child = Process.Start(start)!;
+        var stdout = child.StandardOutput.ReadToEndAsync();
+        var stderr = child.StandardError.ReadToEndAsync();
+        await child.WaitForExitAsync();
+        var text = await stdout;
+        Assert.Equal(TerminationProgress.OwnerGoneExitCode, child.ExitCode);
+        Assert.Contains($"PROBE START {typeof(Fixture).FullName}.{nameof(Fixture.Pass)}", text, StringComparison.Ordinal);
+        Assert.DoesNotContain(TerminationProbe.CompletePrefix, text, StringComparison.Ordinal);
+        Assert.DoesNotContain("PROBE PASS ", text, StringComparison.Ordinal);
+        Assert.Empty(await stderr);
+    }
+
+    [Fact]
     public void AnAssertionFailure_StaysAFailure_WithItsInputAndPhase()
     {
         var run = TerminationProbe.Run(typeof(Fixture), nameof(Fixture.FailInSuffix), 3, TerminationProbe.ParserStallWindow);

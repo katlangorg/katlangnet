@@ -406,7 +406,7 @@ public sealed class MetaBindingRefusalDiagnosticTests
     {
         var program = new InvocationRouteCorpus.Case("meta-diag-1-counters", """
             CheckBefore([x], meta operation) = 0
-            CheckBefore([aflag()], trace(5) + tock())
+            CheckBefore([aflag()], trace(5) + tick())
             """);
         var generic = await InvocationRouteCorpus.Observe(program, 0);
         Assert.StartsWith("err NotAnAlgorithm | ", generic.Outcome, StringComparison.Ordinal);

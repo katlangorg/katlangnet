@@ -63,7 +63,7 @@ internal static class TerminationProbe
             foreach (var (name, value) in environment)
                 start.Environment[name] = value;
         using (var self = Process.GetCurrentProcess())
-            start.Environment[OwnerVariable] = OwnerIdentity(Environment.ProcessId, self.StartTime);
+            start.Environment[OwnerVariable] = OwnerIdentity(self);
 
         var launched = Stopwatch.GetTimestamp();
         var monitor = new TerminationMonitor(probe, launched, stallWindow);
@@ -108,8 +108,20 @@ internal static class TerminationProbe
         return monitor.Evaluate(process.ExitCode, stalled, expectedCompleted, standardError.ToString(), exitedAt);
     }
 
-    public static string OwnerIdentity(int processId, DateTime startTime)
-        => string.Create(CultureInfo.InvariantCulture, $"{processId}:{startTime.ToUniversalTime().Ticks}");
+    public static string OwnerIdentity(Process process)
+    {
+        if (!OperatingSystem.IsLinux())
+            return string.Create(CultureInfo.InvariantCulture, $"{process.Id}:{process.StartTime.ToUniversalTime().Ticks}");
+
+        // Linux Process.StartTime adds a per-process estimate of boot's wall-clock time.
+        // Compare the kernel's unconverted start time instead, so parent and child agree exactly.
+        var stat = File.ReadAllText(string.Create(CultureInfo.InvariantCulture, $"/proc/{process.Id}/stat"));
+        // The parenthesized command name may itself contain spaces and closing parentheses.
+        // The remaining fields start at field 3 (state); field 22 is the process start time.
+        var fields = stat[(stat.LastIndexOf(')') + 1)..].Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        var startTime = ulong.Parse(fields[19], NumberStyles.None, CultureInfo.InvariantCulture);
+        return string.Create(CultureInfo.InvariantCulture, $"{process.Id}:{startTime}");
+    }
 
     /// <summary>Escapes an input so that a protocol record stays on one line.</summary>
     public static string Escape(string text)
@@ -575,22 +587,21 @@ internal sealed class TerminationProgress : IDisposable
         if (separator < 1)
             throw new FormatException($"Invalid {TerminationProbe.OwnerVariable}: {identity}");
         var id = int.Parse(identity.AsSpan(0, separator), CultureInfo.InvariantCulture);
-        Process owner;
+        Process? owner = null;
         try
         {
             owner = Process.GetProcessById(id);
+            // A reused process id names a different process: the owner is gone.
+            if (!owner.HasExited && TerminationProbe.OwnerIdentity(owner) == identity)
+                return owner;
         }
-        catch (ArgumentException)
+        catch (Exception exception) when (exception is ArgumentException or InvalidOperationException
+            or FileNotFoundException or DirectoryNotFoundException)
         {
-            Environment.Exit(OwnerGoneExitCode);
-            throw; // Unreachable.
+            // The owner can exit between opening its PID and reading its start identity.
         }
-        // A reused process id names a different process: the owner is gone.
-        if (TerminationProbe.OwnerIdentity(id, owner.StartTime) != identity || owner.HasExited)
-        {
-            owner.Dispose();
-            Environment.Exit(OwnerGoneExitCode);
-        }
-        return owner;
+        owner?.Dispose();
+        Environment.Exit(OwnerGoneExitCode);
+        throw new InvalidOperationException("The probe owner is gone."); // Unreachable.
     }
 }
