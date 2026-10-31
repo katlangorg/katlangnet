@@ -223,7 +223,12 @@ public class SemanticSupervisionTests
 
         var descriptor = Environment.GetEnvironmentVariable(DescriptorVariable)!;
         var result = Environment.GetEnvironmentVariable(ResultVariable)!;
-        File.WriteAllText(Environment.GetEnvironmentVariable(PidVariable)!, Environment.ProcessId.ToString(System.Globalization.CultureInfo.InvariantCulture));
+        var pidPath = Environment.GetEnvironmentVariable(PidVariable)!;
+        var pendingPidPath = pidPath + ".pending";
+        // Publish readiness only after the writer closes, so a parent observing the signal
+        // can read the complete PID without racing an open write handle.
+        File.WriteAllText(pendingPidPath, Environment.ProcessId.ToString(System.Globalization.CultureInfo.InvariantCulture));
+        File.Move(pendingPidPath, pidPath);
         switch (mode)
         {
             case "normal":

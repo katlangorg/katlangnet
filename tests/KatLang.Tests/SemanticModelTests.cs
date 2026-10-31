@@ -789,6 +789,294 @@ public class SemanticModelTests
         Assert.Equal(parameterDeclaration, memberReference.ResolvedDeclaration);
     }
 
+    // A member selected from a receiver only the runtime supplies is RuntimeMemberReference:
+    // indeterminate, never Unresolved, and never given a declaration borrowed from a same-named
+    // member of an algorithm the document happens to pass.
+
+    private static Result EvaluateValid(string source)
+    {
+        var result = Evaluator.Run(new Expr.AlgorithmExpr(SourceProvenance.ParseValid(source).Root));
+        Assert.False(result.IsError, result.IsError ? result.Error.ToString() : null);
+        return result.Value;
+    }
+
+    private static void AssertRuntimeMember(SemanticModel model, int line, int column, string name)
+    {
+        var member = ResolutionAt(model, line, column);
+        Assert.Equal(OccurrenceKind.DotMemberReference, member.Occurrence.Kind);
+        Assert.Equal(name, member.Occurrence.Name);
+        AssertSpan(member.Occurrence.Span, line, column, line, column + name.Length);
+        Assert.Equal(IdentifierClassification.RuntimeMemberReference, member.Classification);
+        Assert.Null(member.ResolvedDeclaration);
+        Assert.Null(member.ResolvedProperty);
+        Assert.Null(model.FindPropertyAt(new SourcePosition(line, column)));
+    }
+
+    [Fact]
+    public void Build_DotCall_MemberOfHigherOrderParameter_IsRuntimeDependent()
+    {
+        const string source = """
+            B = {
+                public F(x) = x * x
+                public Q = 99
+                F
+            }
+
+            GetQ(f) = f.Q
+
+            B.Q
+            GetQ(B)
+            """;
+        Assert.True(Result.ValueComparer.Equals(
+            new Result.SequenceValue([new Result.Atom(99m), new Result.Atom(99m)]),
+            EvaluateValid(source)));
+
+        var model = BuildModel(source);
+        AssertRuntimeMember(model, 7, 13, "Q");
+
+        var receiver = ResolutionAt(model, 7, 11);
+        Assert.Equal(OccurrenceKind.ParameterReference, receiver.Occurrence.Kind);
+        Assert.Equal(IdentifierClassification.ExplicitParameterReference, receiver.Classification);
+        Assert.Same(Assert.Single(model.FindDeclarations("f")), receiver.ResolvedDeclaration);
+
+        // The statically known `B.Q` keeps its real declaration link, and is the only reference to it.
+        var qDeclaration = Assert.Single(model.FindDeclarations("Q"));
+        AssertSpan(qDeclaration.Span, 3, 12, 3, 13);
+        var staticMember = ResolutionAt(model, 9, 3);
+        Assert.Equal(OccurrenceKind.DotMemberReference, staticMember.Occurrence.Kind);
+        Assert.Equal(IdentifierClassification.PropertyReference, staticMember.Classification);
+        Assert.Same(qDeclaration, staticMember.ResolvedDeclaration);
+        Assert.Equal("Q", staticMember.ResolvedProperty?.Name);
+        Assert.Same(
+            staticMember,
+            Assert.Single(model.IdentifierResolutions, resolution => ReferenceEquals(resolution.ResolvedDeclaration, qDeclaration)
+                && resolution.Occurrence.Kind != OccurrenceKind.PropertyDefinition));
+    }
+
+    [Fact]
+    public void Build_DotCall_MemberOfHigherOrderParameter_WithoutCallSite_IsRuntimeDependent()
+    {
+        // BuildModel asserts the parse has no diagnostics: the getter alone is valid.
+        var model = BuildModel("GetQ(f) = f.Q");
+        AssertRuntimeMember(model, 1, 13, "Q");
+    }
+
+    [Fact]
+    public void Build_DotCall_RuntimeMemberSites_ReadEachSuppliedAlgorithm_WithoutSharedIdentity()
+    {
+        const string source = """
+            A = {
+                public Q = 1
+            }
+            C = {
+                public Q = 2
+            }
+            GetQ(f) = f.Q
+            Other(g) = g.Q
+            GetQ(A)
+            GetQ(C)
+            Other(C)
+            """;
+        Assert.True(Result.ValueComparer.Equals(
+            new Result.SequenceValue([new Result.Atom(1m), new Result.Atom(2m), new Result.Atom(2m)]),
+            EvaluateValid(source)));
+
+        var model = BuildModel(source);
+        AssertRuntimeMember(model, 7, 13, "Q");
+        AssertRuntimeMember(model, 8, 14, "Q");
+
+        // Each declared `Q` is referenced by its own definition only; the runtime sites link to neither.
+        Assert.Equal(2, model.FindDeclarations("Q").Count);
+        foreach (var declaration in model.FindDeclarations("Q"))
+        {
+            Assert.All(
+                model.IdentifierResolutions.Where(resolution => ReferenceEquals(resolution.ResolvedDeclaration, declaration)),
+                resolution => Assert.Equal(OccurrenceKind.PropertyDefinition, resolution.Occurrence.Kind));
+        }
+    }
+
+    [Fact]
+    public void Build_DotCall_RuntimeMember_FollowsReceiverFactsThroughAliasesAndForwarding()
+    {
+        // A property that transparently refers to the parameter is a valid runtime receiver.
+        const string alias = """
+            B = {
+                public Q = 99
+            }
+            GetQ(p) = {
+                r = p
+                r.Q
+            }
+            GetQ(B)
+            """;
+        Assert.True(Result.ValueComparer.Equals(new Result.Atom(99m), EvaluateValid(alias)));
+        var aliasModel = BuildModel(alias);
+        AssertRuntimeMember(aliasModel, 6, 7, "Q");
+        Assert.Equal(IdentifierClassification.PropertyReference, ResolutionAt(aliasModel, 6, 5).Classification);
+
+        // Parameter forwarding through another algorithm and a direct alias at the call site
+        // leave the generic site as it is.
+        const string forwarding = """
+            B = {
+                public Q = 99
+            }
+            GetQ(p) = p.Q
+            Fwd(h) = GetQ(h)
+            A = B
+            Fwd(A)
+            """;
+        Assert.True(Result.ValueComparer.Equals(new Result.Atom(99m), EvaluateValid(forwarding)));
+        AssertRuntimeMember(BuildModel(forwarding), 4, 13, "Q");
+
+        // A runtime-target member alias, and a member chain over an aliased runtime receiver.
+        const string memberAlias = """
+            B = {
+                public Q = 99
+            }
+            GetQ(p) = {
+                M = p.Q
+                M
+            }
+            Deep(p) = {
+                r = p
+                r.X.Q
+            }
+            GetQ(B)
+            """;
+        Assert.True(Result.ValueComparer.Equals(new Result.Atom(99m), EvaluateValid(memberAlias)));
+        var memberAliasModel = BuildModel(memberAlias);
+        AssertRuntimeMember(memberAliasModel, 5, 11, "Q");
+        AssertRuntimeMember(memberAliasModel, 10, 7, "X");
+        AssertRuntimeMember(memberAliasModel, 10, 9, "Q");
+    }
+
+    [Fact]
+    public void Build_DotCall_RuntimeReceiver_KeepsResolvableLexicalFallbacks()
+    {
+        // A resolvable MAY-selected fallback keeps its classification and navigation.
+        var propertyFallback = BuildModel(
+            """
+            Q = 5
+            GetQ(p) = p.Q
+            """);
+        var propertyMember = ResolutionAt(propertyFallback, 2, 13);
+        Assert.Equal(IdentifierClassification.PropertyReference, propertyMember.Classification);
+        Assert.Same(Assert.Single(propertyFallback.FindDeclarations("Q")), propertyMember.ResolvedDeclaration);
+
+        var aliasFallback = BuildModel(
+            """
+            Ext(x) = x + 1
+            Get(p) = {
+                r = p
+                r.Ext
+            }
+            """);
+        var aliasMember = ResolutionAt(aliasFallback, 4, 7);
+        Assert.Equal(IdentifierClassification.PropertyReference, aliasMember.Classification);
+        Assert.Same(Assert.Single(aliasFallback.FindDeclarations("Ext")), aliasMember.ResolvedDeclaration);
+
+        var builtinFallback = BuildModel("Size(p) = p.count");
+        var builtinMember = ResolutionAt(builtinFallback, 1, 13);
+        Assert.Equal(IdentifierClassification.Builtin, builtinMember.Classification);
+        Assert.Null(builtinMember.ResolvedDeclaration);
+
+        var parameterFallback = BuildModel("K(a, t) = a.t");
+        var parameterMember = ResolutionAt(parameterFallback, 1, 13);
+        Assert.Equal(IdentifierClassification.ExplicitParameterReference, parameterMember.Classification);
+        Assert.Same(Assert.Single(parameterFallback.FindDeclarations("t")), parameterMember.ResolvedDeclaration);
+    }
+
+    [Fact]
+    public void Build_DotCall_DefiniteFailures_StayUnresolved()
+    {
+        // An undeclared receiver in a closed body carries the error; its member is not made
+        // runtime-dependent.
+        var undeclared = SemanticModelBuilder.Build(Parser.Parse("G(f) = zz.Q"));
+        Assert.Equal(IdentifierClassification.Unresolved, ResolutionAt(undeclared, 1, 8).Classification);
+        Assert.Equal(IdentifierClassification.Unresolved, ResolutionAt(undeclared, 1, 11).Classification);
+
+        var undeclaredBare = SemanticModelBuilder.Build(Parser.Parse("G(f) = zz"));
+        Assert.Equal(IdentifierClassification.Unresolved, ResolutionAt(undeclaredBare, 1, 8).Classification);
+
+        // A statically known receiver that certainly lacks the member, with no fallback.
+        var missing = SemanticModelBuilder.Build(Parser.Parse("A = {\n    public P = 1\n}\nG(f) = A.Missing"));
+        var missingMember = ResolutionAt(missing, 4, 10);
+        Assert.Equal(IdentifierClassification.Unresolved, missingMember.Classification);
+        Assert.Null(missingMember.ResolvedDeclaration);
+
+        // A failed structural receiver (a branch-only member) never reaches the outer member.
+        var failed = BuildModel("F(0) = {\n    Sub = 1\n    0\n}\nF(n) = n\nF.Sub.Q");
+        Assert.Equal(IdentifierClassification.Unresolved, ResolutionAt(failed, 6, 3).Classification);
+        Assert.Equal(IdentifierClassification.Unresolved, ResolutionAt(failed, 6, 7).Classification);
+    }
+
+    [Theory]
+    [InlineData("Box.Sub", "t")]
+    [InlineData("Alias", "t")]
+    [InlineData("Box.Sub", "x")]
+    public void Build_DotCall_RuntimeMember_InaccessibleStructuralReceiverStaysUnresolved(string receiver, string parameter)
+    {
+        var source = $$"""
+            Box(x) = {
+                Sub = x
+                x
+            }
+            Alias = Box.Sub
+            Get({{parameter}}) = {{receiver}}.Q
+            Get(0)
+            """;
+        var model = BuildModel(source);
+        var result = Evaluator.Run(new Expr.AlgorithmExpr(SourceProvenance.ParseValid(source).Root));
+        Assert.True(result.IsError);
+        Assert.Equal(KatLangErrorCode.LocalOnlyProperty, result.Error.Code);
+        Assert.Equal(IdentifierClassification.PropertyReference, ResolutionAt(model, 5, 13).Classification);
+        var member = ResolutionAt(model, 6, 11 + receiver.Length);
+        Assert.Equal(IdentifierClassification.Unresolved, member.Classification);
+        Assert.Null(member.ResolvedDeclaration);
+        Assert.Null(member.ResolvedProperty);
+    }
+
+    [Fact]
+    public void Build_DotCall_RuntimeMember_CapturedStructuralReceiverInsideItsOwnerRemainsValid()
+    {
+        const string source = """
+            Box(x) = {
+                Sub = x
+                Get(t) = Box.Sub.Q
+                Get(0)
+            }
+            B = {
+                public Q = 99
+            }
+            Box(B)
+            """;
+        var model = BuildModel(source);
+        AssertRuntimeMember(model, 3, 22, "Q");
+        Assert.True(Result.ValueComparer.Equals(new Result.Atom(99m), EvaluateValid(source)));
+    }
+
+    [Fact]
+    public void Build_DotCall_RuntimeMember_IncompatibleArgumentStillFailsAtRuntime()
+    {
+        const string source = """
+            GetQ(f) = f.Q
+            GetQ(5)
+            """;
+        AssertRuntimeMember(BuildModel(source), 1, 13, "Q");
+
+        var result = Evaluator.Run(new Expr.AlgorithmExpr(SourceProvenance.ParseValid(source).Root));
+        Assert.True(result.IsError);
+        Assert.Equal(KatLangErrorCode.UnknownName, result.Error.Code);
+    }
+
+    [Fact]
+    public void IdentifierClassification_NumericValuesAreStable()
+    {
+        Assert.Equal(10, (int)IdentifierClassification.Unresolved);
+        Assert.Equal(11, (int)IdentifierClassification.DeferredModuleReference);
+        Assert.Equal(12, (int)IdentifierClassification.RuntimeMemberReference);
+    }
+
     [Fact]
     public void Build_GracedDot_MemberClassifiesLikeTheOrdinaryDotMember()
     {

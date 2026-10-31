@@ -396,6 +396,8 @@ public static class SemanticModelBuilder
             public HashSet<AlgorithmVisitKey>? Algorithms;
 
             public Dictionary<Expr, bool>? DeferredReceivers;
+
+            public Dictionary<Expr, bool>? RuntimeReceivers;
         }
 
         /// <summary>An algorithm node plus the extra-parameter table it was visited with, both by reference.</summary>
@@ -1525,12 +1527,16 @@ public static class SemanticModelBuilder
                     (IdentifierClassification.DeferredModuleReference, null, null),
 
                 // The editor surfaces a MAY-selected stored fallback for a
-                // runtime parameter as the possible callable binding, exactly
-                // like implicit signature inference. Exposure analysis remains
-                // the separate MUST-selected consumer.
+                // runtime receiver — a parameter, or a resolved name or member
+                // whose structure only the runtime knows — as the possible
+                // callable binding, exactly like implicit signature inference.
+                // Exposure analysis remains the separate MUST-selected consumer.
+                // Without a resolvable fallback the runtime receiver's own member
+                // is the selection: runtime-dependent, never a definite miss.
                 LexicalFallbackSelection.Conditional
-                    when provider.Kind == StaticStructuralMemberProviderKind.RuntimeParameter =>
-                    ResolveDotMemberFallbackBinding(dotCall, scope),
+                    when provider.Kind == StaticStructuralMemberProviderKind.RuntimeParameter
+                        || IsValidRuntimeReceiver(dotCall.Target, scope) =>
+                    ResolveRuntimeDotMemberFallbackBinding(dotCall, scope),
                 LexicalFallbackSelection.Always =>
                     ResolveDotMemberFallbackBinding(dotCall, scope),
 
@@ -1581,6 +1587,117 @@ public static class SemanticModelBuilder
                 default:
                     return (IdentifierClassification.Unresolved, null, null);
             }
+        }
+
+        /// <summary>
+        /// The MAY-selected fallback of a dot edge over a valid runtime receiver: a resolvable
+        /// fallback keeps its ordinary classification and navigation, and an unresolvable one
+        /// leaves the receiver's own member as the selection — known only once the runtime
+        /// supplies the receiver, so <see cref="IdentifierClassification.RuntimeMemberReference"/>
+        /// with no declaration target, never a declaration manufactured from the member spelling.
+        /// </summary>
+        private (IdentifierClassification Classification, DeclarationOccurrence? Declaration, PropertyInfo? PropertyInfo) ResolveRuntimeDotMemberFallbackBinding(Expr.DotCall dotCall, ScopeFrame scope)
+        {
+            var fallback = ResolveDotMemberFallbackBinding(dotCall, scope);
+            return fallback.Classification == IdentifierClassification.Unresolved
+                ? (IdentifierClassification.RuntimeMemberReference, null, null)
+                : fallback;
+        }
+
+        /// <summary>
+        /// Whether a receiver whose structure the completed facts leave undecided
+        /// (<see cref="StaticStructuralMemberProviderKind.LexicalReference"/>) is nevertheless a
+        /// VALID runtime receiver: a property with a completed Runtime fact whose captured owners
+        /// are available here, or a member edge over another valid runtime receiver. An
+        /// unresolved or ambiguous head stays invalid — its own site carries the error, and the
+        /// member keeps its unresolved classification. Memoized per frame like
+        /// <see cref="IsDeferredModuleReceiver"/>.
+        /// </summary>
+        private bool IsValidRuntimeReceiver(Expr receiver, ScopeFrame scope)
+        {
+            var memo = VisitsOf(scope).RuntimeReceivers ??= new(ReferenceEqualityComparer.Instance);
+            if (memo.TryGetValue(receiver, out var cached))
+                return cached;
+
+            var valid = receiver.UnwrapGraceOperand() switch
+            {
+                Expr.Param parameter => ResolveParameter(scope, parameter.Name) is not null,
+                Expr.Resolve resolve => IsRuntimeLexicalReceiver(resolve.Name, scope),
+                Expr.DotCall dotCall => IsRuntimeDotReceiver(dotCall, scope),
+                _ => false,
+            };
+            memo[receiver] = valid;
+            return valid;
+        }
+
+        private bool IsRuntimeLexicalReceiver(string name, ScopeFrame scope)
+        {
+            var selected = ElaboratedScopeLookup.SelectOwnedDeclaration(
+                scope.PropertyScope, name, ElaboratedScopeLookup.OwnParameterBindings.Instance);
+            if (selected.TryGetProperty(out var owner, out var hit))
+            {
+                var completed = owner.BoundLookupContext();
+                return IsRuntimePropertyReceiver(hit.Property, completed.BodyKey(hit.Property.Value), completed.Facts, scope);
+            }
+            if (ElaboratedScopeLookup.LookupSingleOpenMember(scope.PropertyScope, name) is { } opened)
+            {
+                var completed = opened.MemberLevel.BoundLookupContext();
+                return IsRuntimePropertyReceiver(opened.Hit.Property,
+                    completed.BodyKey(opened.Hit.Property.Value), completed.Facts, scope);
+            }
+            return false;
+        }
+
+        private bool IsRuntimeDotReceiver(Expr.DotCall edge, ScopeFrame scope)
+        {
+            var provider = ResolveStructuralMemberProvider(edge.Target, scope);
+            if (provider.Kind == StaticStructuralMemberProviderKind.KnownAlgorithm)
+            {
+                if (provider.Scope is not { BodyKey: { } owner, CompletedFacts: { } facts }
+                    || ElaboratedScopeLookup.TryLookupProperty(provider.Algorithm!, edge.Name) is not { } hit)
+                    return false;
+                return IsRuntimePropertyReceiver(hit.Property, facts.Member(owner, edge.Name), facts, scope);
+            }
+            return provider.Kind is StaticStructuralMemberProviderKind.RuntimeParameter
+                or StaticStructuralMemberProviderKind.LexicalReference
+                && IsValidRuntimeReceiver(edge.Target, scope)
+                && ResolveDotMember(edge, scope).Classification != IdentifierClassification.Unresolved;
+        }
+
+        // A completed Runtime selection is different from unavailable or failed structure. For a
+        // captured property, an absent required owner proves that the receiver cannot be reached
+        // from this site. This is only a static prerequisite: runtime activation checks remain the
+        // evaluator's job. Compare contextual owners, never a same-named parameter at another owner.
+        private static bool IsRuntimePropertyReceiver(Property property, StaticScopeKey? key, StaticLookupFacts facts, ScopeFrame scope)
+        {
+            if (key is null || facts.Facts(key)?.Receiver.Kind != StaticFactKind.Runtime)
+                return false;
+            if (property.Exposure == PropertyExposure.Exported)
+                return true;
+            if (property.Exposure != PropertyExposure.LocalOnlyCapturedAncestorParameters
+                || property.CaptureRequirements is not { } requirements)
+                return false;
+
+            foreach (var requirement in requirements)
+            {
+                var owner = key.Parent;
+                for (var depth = 0; depth < requirement.OwnerDepth && owner is not null; depth++)
+                    owner = owner.Parent;
+                if (requirement.OwnerDepth < 0 || owner is null
+                    || facts.Facts(owner)?.Parameters.Contains(requirement.Name) != true)
+                    return false;
+                var available = false;
+                for (var frame = scope; frame is not null; frame = frame.Parent)
+                    if (frame.PropertyScope.CompletedContext is { } context
+                        && ReferenceEquals(context.Facts, facts) && ReferenceEquals(context.Key, owner))
+                    {
+                        available = true;
+                        break;
+                    }
+                if (!available)
+                    return false;
+            }
+            return true;
         }
 
         private static PropertyInfo? GetLexicalDotFallbackPropertyInfo(SymbolDefinition symbol)

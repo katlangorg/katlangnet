@@ -2102,6 +2102,7 @@ public enum KatLang.Semantics.IdentifierClassification : int
   OpenTarget = 9
   Unresolved = 10
   DeferredModuleReference = 11
+  RuntimeMemberReference = 12
 
 public record KatLang.Semantics.IdentifierOccurrence : System.IEquatable<KatLang.Semantics.IdentifierOccurrence>
   ctor     protected IdentifierOccurrence(KatLang.Semantics.IdentifierOccurrence original)

@@ -48,6 +48,21 @@ public enum IdentifierClassification
     /// <see cref="Unresolved"/>.
     /// </summary>
     DeferredModuleReference,
+    /// <summary>
+    /// A dot member (<see cref="OccurrenceKind.DotMemberReference"/>) whose selection depends on
+    /// a valid receiver only the runtime supplies — a parameter such as <c>f</c> in
+    /// <c>GetQ(f) = f.Q</c>, a property that transparently refers to one, or a member chain
+    /// rooted at either — when no lexical fallback the edge may select instead resolves. The
+    /// supplied algorithm's own member is selected at runtime, so the site is indeterminate at
+    /// analysis time: tooling should treat it as neither resolved nor an error. It is NOT a
+    /// proven lookup — an argument that lacks the member still fails when the call runs — and it
+    /// has no declaration target: <see cref="IdentifierResolution.ResolvedDeclaration"/> and
+    /// <see cref="IdentifierResolution.ResolvedProperty"/> are <see langword="null"/>, so two such
+    /// sites never share an identity merely because their member names match. A receiver that is
+    /// unresolved, ambiguous, or statically known to fail, and a statically known receiver that
+    /// lacks the member with no resolvable fallback, stay <see cref="Unresolved"/>.
+    /// </summary>
+    RuntimeMemberReference,
 }
 
 /// <summary>
@@ -65,7 +80,8 @@ public sealed record DeclarationOccurrence(string Name, SourceSpan Span, Occurre
 /// Semantic resolution information for one identifier site of the current document.
 /// <see cref="ResolvedDeclaration"/> is the document's declaration occurrence the
 /// site resolves to, or <see langword="null"/> when the target has no site in this
-/// document: a builtin, an implicit parameter, an unresolved or deferred name, or a
+/// document: a builtin, an implicit parameter, an unresolved or deferred name, a
+/// runtime-dependent member (<see cref="IdentifierClassification.RuntimeMemberReference"/>), or a
 /// property supplied by a load-elaborated module (a module-provided target keeps its
 /// <see cref="ResolvedProperty"/> metadata but is locationless with respect to the
 /// importing document — see <see cref="PropertyInfo.Declaration"/>).

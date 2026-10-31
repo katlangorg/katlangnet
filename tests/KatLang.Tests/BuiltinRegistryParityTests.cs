@@ -374,7 +374,18 @@ public class BuiltinRegistryParityTests
         {
             var (root, diagnostics) = DetectSingleResolve(name);
 
-            Assert.Empty(diagnostics);
+            // The load directive placeholder still prevents parameter inference, but
+            // X-36/Q-62 rejects its unbound bare reference instead of resolving a value.
+            if (name == "load")
+            {
+                var diagnostic = Assert.Single(diagnostics);
+                Assert.Equal(DiagnosticCode.UnboundLoadReference, diagnostic.Code);
+                Assert.Equal(DiagnosticSeverity.Error, diagnostic.Severity);
+            }
+            else
+            {
+                Assert.Empty(diagnostics);
+            }
             Assert.Empty(root.Params);
 
             var resolve = Assert.IsType<Expr.Resolve>(Assert.Single(root.Output));
