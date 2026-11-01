@@ -412,7 +412,7 @@ jobs:
           }
 
       - name: Upload tested release archive
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: release-${{ matrix.rid }}
           path: release-artifact/katlang-cli-${{ needs.verify.outputs.version }}-${{ matrix.rid }}.${{ matrix.extension }}
@@ -460,7 +460,7 @@ jobs:
           Set-Content -LiteralPath ./dist/SHA256SUMS -Value $checksumRows -Encoding utf8NoBOM
 
       - name: Upload complete release bundle
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: complete-release-bundle
           path: dist/
