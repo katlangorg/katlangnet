@@ -511,7 +511,8 @@ public class ContinuousIntegrationPolicyTests
             Assert.True(run > 0 && upload > run, $"the {artifact} upload must follow the {phase} validation step");
             var step = source[source.LastIndexOf("- name:", upload, StringComparison.Ordinal)..upload];
             Assert.Contains("if: ${{ always() }}", step, StringComparison.Ordinal);
-            Assert.Contains("uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1", step, StringComparison.Ordinal);
+            // Revision pinning is covered by EveryActionUse_IsPinnedToACommentedCommitSha.
+            Assert.Contains("uses: actions/upload-artifact@", step, StringComparison.Ordinal);
         }
         Assert.Equal(2, Regex.Matches(source, @"(?m)^          path: artifacts/validation/$").Count);
     }
