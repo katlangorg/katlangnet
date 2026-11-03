@@ -51,10 +51,11 @@ public class WideSemanticContextComplexityTests
     // ── Resolver: the visible signature map ──────────────────────────────────
 
     /// <summary>
-    /// K root properties whose values are blocks declaring a local property: the root extends the
-    /// empty map by its K signatures and records each processed one; each block extends the root's
-    /// map by its ONE local and records it — 4K entries. Copying the K-entry parent map per block
-    /// (the former <c>new Dictionary(parentParamMap)</c>) wrote K per block.
+    /// K root properties whose values are blocks declaring a local property: in each of the two
+    /// B3-5★ phases (the signature analysis, then the rewrite) the root extends the empty map by its
+    /// K selected signatures and each block extends the root's map by its ONE local — 4K entries, and
+    /// no map is written after it is created. Copying the K-entry parent map per block (the former
+    /// <c>new Dictionary(parentParamMap)</c>) wrote K per block.
     /// </summary>
     [Theory]
     [InlineData(300)]
@@ -74,10 +75,10 @@ public class WideSemanticContextComplexityTests
 
     /// <summary>
     /// W root properties and K clause families whose second branch owns an unresolved load (a
-    /// DEFERRED region): each deferred branch keeps an O(1) snapshot of the visible map. The root
-    /// extends the empty map by its W + K signatures and records its W processed plain values —
-    /// 2W + K entries; a copying snapshot wrote W + K per deferred branch (and kept every copy alive
-    /// in the tree).
+    /// DEFERRED region): no deferred branch copies the visible map. In each of the two B3-5★ phases
+    /// the root extends the empty map by its W + K signatures — 2(W + K) entries, nothing written
+    /// afterwards; a copying snapshot wrote W + K per deferred branch (and kept every copy alive in
+    /// the tree).
     /// </summary>
     [Theory]
     [InlineData(300, 200)]
@@ -100,7 +101,7 @@ public class WideSemanticContextComplexityTests
         _ = ImplicitArgumentResolver.ResolvePrevalidated(detected, observations, diagnostics);
 
         Assert.Empty(diagnostics);
-        Assert.Equal(2 * width + families, observations.ContextEntriesWritten);
+        Assert.Equal(2 * (width + families), observations.ContextEntriesWritten);
     }
 
     // ── Detector: parameter ownership and branch-body region keys ────────────
@@ -341,43 +342,24 @@ public class WideSemanticContextComplexityTests
         Assert.Equal(1, observations.SummaryMemberExpansions);
     }
 
-    // ── Sibling-order walk: shadow scopes ─────────────────────────────────────
+    // ── Signature analysis (B3-5★): analysis regions ─────────────────────────
 
     /// <summary>
-    /// A property value declaring W properties with K output blocks, each declaring one: entering
-    /// each block EXTENDS the value's shadow names by one — W + K canonicalized names. Copying and
-    /// re-sorting the W enclosing names per block cost K × W.
+    /// The signature analysis' DERIVATION diamond: one shared body per level is reached in two contexts
+    /// (inside a body declaring <c>p</c> then <c>q</c>, and one declaring <c>q</c> then <c>p</c>) whose
+    /// static scope keys differ — they are paths — while every name it reads (<c>W</c>, at the root) is
+    /// the same declaration. The analysis region keys by what a body reads, as the rewrite's region does,
+    /// so the shared body is analyzed once per level, never once per path (2^depth), and the analysis
+    /// analyzes exactly the bodies the rewrite rewrites (and the root). (The name-resolved host entry
+    /// registers its input per path, so deeper diamonds are refused there before resolution starts.)
     /// </summary>
     [Theory]
-    [InlineData(400, 300)]
-    [InlineData(800, 600)]
-    public void DependencyOrder_BodiesUnderAWideShadowScope_ExtendTheShadowNamesByTheirOwn(int width, int blocks)
-    {
-        var source = "V = {\n"
-            + string.Concat(Enumerable.Range(0, width).Select(i => $"p{i} = 1\n"))
-            + string.Concat(Enumerable.Repeat("{x = 1\nx}\n", blocks))
-            + "p0\n}\n1";
-        var detected = Assert.IsType<Algorithm.User>(Detect(Syntax(source)).Root);
-        var observations = new FrontEndTraversalObservations();
-
-        _ = PropertyDependencyGraphBuilder.BuildDependencyOrder(detected, observations: observations);
-
-        Assert.Equal(width + blocks, observations.ContextNamesCanonicalized);
-    }
-
-    /// <summary>
-    /// The sibling-order walk's DERIVATION diamond: one shared body per level is reached under the
-    /// same shadow names through two orders of nested bodies (declaring <c>p</c> then <c>q</c>, and
-    /// <c>q</c> then <c>p</c>). The shadow key is the names' CONTENT, so the shared body is walked
-    /// once per level, never once per path.
-    /// </summary>
-    [Theory]
+    [InlineData(6)]
     [InlineData(8)]
-    [InlineData(16)]
-    public void DependencyOrder_DerivationDiamond_WalksEachBodyOncePerShadowSet(int depth)
+    public void SignatureAnalysis_DerivationDiamond_AnalyzesEachBodyOncePerRegion(int depth)
     {
         static Property Declare(string name) => new(name, User([], [], new Expr.Num(1)));
-        Algorithm current = User([], [], new Expr.Num(1));
+        Algorithm current = User([], [], new Expr.Binary(BinaryOp.Add, new Expr.Resolve("W"), new Expr.Num(1)));
         for (var level = 1; level <= depth; level++)
         {
             var shared = new Expr.AlgorithmExpr(current);
@@ -390,12 +372,12 @@ public class WideSemanticContextComplexityTests
         var root = User([], [new Property("V", current), new Property("W", User([], [], new Expr.Num(2)))], new Expr.Num(1));
         var observations = new FrontEndTraversalObservations();
 
-        _ = PropertyDependencyGraphBuilder.BuildDependencyOrder(root, observations: observations);
+        _ = ImplicitArgumentResolver.ResolveNameResolvedPrevalidated(root, observations);
 
-        // Each level's four bodies enter one name each; the shared body adds none of its own.
-        Assert.Equal(4 * depth, observations.ContextNamesCanonicalized);
-        // Every level's body and its four owners' output rows, each walked once.
-        Assert.Equal(5 * depth, observations.DependencySiblingExpansions);
+        // Per level: the level's body and its four owners and their four declared values; then the innermost body,
+        // the root and W. The rewrite rewrites every one of them but the root once.
+        Assert.Equal(9 * depth + 3, observations.SignatureAnalysisBodies);
+        Assert.Equal(observations.SignatureAnalysisBodies - 1, observations.ResolverAlgorithmRegionExpansions);
     }
 
     // ── A shared diamond under a wide context ─────────────────────────────────
@@ -405,7 +387,8 @@ public class WideSemanticContextComplexityTests
     /// declared in an owner of W parameters beside W root properties. Region counts stay one per
     /// level in every pass, sharing survives, and the W-wide context is paid ONCE: the captured
     /// names canonicalized once, the owner's parameter names materialized once, and the resolver
-    /// writing each root signature twice plus two locals per level.
+    /// writing each root signature once and two locals per level in each of its two B3-5★ phases
+    /// (the signature analysis, then the rewrite).
     /// </summary>
     [Theory]
     [InlineData(300, 8)]
@@ -437,7 +420,7 @@ public class WideSemanticContextComplexityTests
         var resolverObservations = new FrontEndTraversalObservations();
         var resolved = ImplicitArgumentResolver.ResolvePrevalidated(detectedInput, resolverObservations, new DiagnosticBag());
         Assert.Equal(depth, resolverObservations.ResolverBranchBodyRegionExpansions);
-        Assert.Equal(2 * width + 2 * depth + 2, resolverObservations.ContextEntriesWritten);
+        Assert.Equal(2 * width + 4 * depth + 2, resolverObservations.ContextEntriesWritten);
         AssertSharedAtEveryLevel(resolved, depth);
 
         var exposureObservations = new FrontEndTraversalObservations();
@@ -471,7 +454,7 @@ public class WideSemanticContextComplexityTests
     /// outside the measured action.
     /// </summary>
     public static TheoryData<string> WidthWorkloads =>
-        ["resolver-blocks", "detector-blocks", "detector-branches", "collision-blocks", "exposure-properties", "sibling-walk-blocks"];
+        ["resolver-blocks", "detector-blocks", "detector-branches", "collision-blocks", "exposure-properties"];
 
     private static Action WidthWorkload(string workload, int width, int children)
     {
@@ -514,15 +497,6 @@ public class WideSemanticContextComplexityTests
                     + string.Concat(Enumerable.Range(0, children).Select(i => $"P{i} = v0\n"))
                     + "v0\n}\n1")));
                 return () => PropertyExposureResolver.Resolve(resolved);
-            }
-
-            case "sibling-walk-blocks":
-            {
-                var detected = Assert.IsType<Algorithm.User>(Detect(Syntax("V = {\n"
-                    + string.Concat(Enumerable.Range(0, width).Select(i => $"p{i} = 1\n"))
-                    + string.Concat(Enumerable.Repeat("{x = 1\nx}\n", children))
-                    + "p0\n}\n1")).Root);
-                return () => PropertyDependencyGraphBuilder.BuildDependencyOrder(detected);
             }
 
             default:

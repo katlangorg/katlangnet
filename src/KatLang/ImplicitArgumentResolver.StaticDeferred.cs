@@ -17,10 +17,22 @@ internal static partial class ImplicitArgumentResolver
             Modules = modules,
         };
         var map = CompletedSignatureMap(context.Declaring, run);
-        var resolved = ProcessAlgorithm(detectedBody, map,
-            (context.Forwardable ?? throw new InvalidOperationException("Deferred structure has no Q8 binding context."))
-                .Rebase(run.ReferenceNameSets),
-            isRoot: false, observations, diagnostics, new(context.BranchName, context.Pattern), run);
+        var forwardable = (context.Forwardable ?? throw new InvalidOperationException("Deferred structure has no Q8 binding context."))
+            .Rebase(run.ReferenceNameSets);
+        var branch = new ConditionalBranchContext(context.BranchName, context.Pattern);
+
+        // B3-5★: the branch's own bodies are selected before any of them is rewritten (every eager signature it reads is
+        // final already). A refusal publishes nothing; the caller takes A1's recovery route over the detected body.
+        run.Selected = SelectSignatures(detectedBody, map, forwardable, isRoot: false, branch, run);
+        if (!run.Selected.Succeeded)
+        {
+            ReportRefusedSelection(run.Selected, run);
+            run.ReleaseLevels();
+            return detectedBody;
+        }
+
+        var resolved = ProcessAlgorithm(detectedBody, map, forwardable, isRoot: false, observations, diagnostics, branch, run);
+        run.CompletePendingTargets();
         run.CommitDeferredChecks();
         run.ReleaseLevels();
         operation.CompleteLookups(resolved);
@@ -49,13 +61,12 @@ internal static partial class ImplicitArgumentResolver
             }
             selected[name] = entry;
             return entry;
-        }, run.Observations, run.Pending);
+        }, run.Observations);
         while (chain.TryPop(out var key))
         {
             var body = operation.Published(key, StaticPublicationStage.Detected) ?? operation.SourceOf(key);
-            var level = operation.ResolverLevel(key)!;
             if (body.Opens.Count != 0)
-                map.AttachOpens(current => OpenProvidersOf(body.Opens, current, run.Prelude, run.StructuralViews, level.StaticContext));
+                map.AttachOpens();
         }
         return map;
     }

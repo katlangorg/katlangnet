@@ -49,50 +49,32 @@ internal sealed partial class StaticStructureOperation
         return level;
     }
 
-    internal ImplicitArgumentResolver.StaticDeclaration Declaration(StaticScopeKey key, bool current,
-        ImplicitArgumentResolver.SignatureMap map)
+    /// <summary>
+    /// The declaration <paramref name="key"/> denotes as a static chase reads it: its DETECTED input, never a processed
+    /// form (B3-5★: every signature a chase could need is selected before any rewrite, so no reading depends on which
+    /// body a region processed first).
+    /// </summary>
+    internal ImplicitArgumentResolver.StaticDeclaration Declaration(StaticScopeKey key)
     {
         var parent = key.Parent ?? Queries.Keys.Root;
         var level = ResolverLevel(parent);
-        var source = SourceOf(key);
-        // The order channel reads the detector's immutable input, even after another region has completed this
-        // declaration. Only a signature read may observe or demand a resolved publication.
-        var value = current ? Published(key, StaticPublicationStage.Resolved) : null;
-        var raw = value is null;
-        value ??= Published(key, StaticPublicationStage.Detected) ?? source;
-        if (current && raw && level?.Entries is { } entries)
-            foreach (var entry in entries.Values)
-                if (ReferenceEquals(OpenProviderIdentity.DeclarationOf(entry.Value), key.Declaration))
-                {
-                    value = map.CurrentOf(entry).Value;
-                    raw = map.IsUnsettled(entry);
-                    break;
-                }
-        return new(value, OpenProviderIdentity.DeclaredIn(value, OwnersOf(parent)), OwnersOf(parent), level) { Raw = raw };
+        var value = Published(key, StaticPublicationStage.Detected) ?? SourceOf(key);
+        return new(value, OpenProviderIdentity.DeclaredIn(value, OwnersOf(parent)), OwnersOf(parent), level) { Raw = true };
     }
 
     internal ImplicitArgumentResolver.StaticDeclaration? SelectedDeclaration(StaticScopeKey from, string name,
-        StaticQueryProjection projection, bool current, ImplicitArgumentResolver.SignatureMap map, StaticCycleCheck stratum)
+        StaticQueryProjection projection, StaticCycleCheck stratum)
     {
         var fact = Binding(from, name, projection, stratum);
         return fact.Kind == StaticFactKind.Declaration
-            ? Declaration(ContextOf(fact.Scope!, fact.Property!.Value), current, map) : null;
+            ? Declaration(ContextOf(fact.Scope!, fact.Property!.Value)) : null;
     }
 
-    internal ImplicitArgumentResolver.StaticDeclaration? SelectedStructure(StaticScopeKey key, bool current,
-        ImplicitArgumentResolver.SignatureMap map, bool viaOpens, StaticCycleCheck stratum)
+    internal ImplicitArgumentResolver.StaticDeclaration? SelectedStructure(StaticScopeKey key, bool viaOpens, StaticCycleCheck stratum)
     {
         var fact = Read(viaOpens ? StaticQueryKey.TargetWalk(key, stratum)
             : StaticQueryKey.Project(StaticQueryKind.TargetWalk, key, StaticQueryProjection.OpenStructure, stratum: stratum));
-        return fact.Kind == StaticFactKind.Structure && fact.Scope is { } target ? Declaration(target, current, map) : null;
-    }
-
-    internal ImplicitArgumentResolver.StaticDeclaration? OpenDeclaration(StaticScopeKey key, Expr written,
-        bool current, ImplicitArgumentResolver.SignatureMap map, StaticCycleCheck stratum)
-    {
-        var fact = Read(StaticQueryKey.Project(StaticQueryKind.OpenProviders, key, StaticQueryProjection.OpenTarget,
-            stratum: stratum, node: written));
-        return fact.Data is StaticScopeKey[] { Length: 1 } targets ? Declaration(targets[0], current, map) : null;
+        return fact.Kind == StaticFactKind.Structure && fact.Scope is { } target ? Declaration(target) : null;
     }
 
     internal bool IsCyclic(StaticScopeKey scope, StaticCycleCheck check)
@@ -102,12 +84,12 @@ internal sealed partial class StaticStructureOperation
                 StaticQueryProjection.TargetCycle, stratum: StaticCycleCheck.Lower)).Kind == StaticFactKind.Refused;
 
     internal (ImplicitArgumentResolver.StaticDeclaration End, Expr? Through) InvocationTarget(
-        ImplicitArgumentResolver.StaticDeclaration start, ImplicitArgumentResolver.SignatureMap map)
+        ImplicitArgumentResolver.StaticDeclaration start)
     {
         var key = ContextOf(start.Level?.StaticContext?.Key ?? Queries.Keys.Root, start.Target);
         var end = Read(StaticQueryKey.Project(StaticQueryKind.TargetWalk, key, StaticQueryProjection.InvocationTarget));
         if (end.Kind != StaticFactKind.Structure || end.Scope is null)
             throw new InvalidOperationException("An invocation target must be conclusive after A1 admission.");
-        return (Declaration(end.Scope, current: false, map), end.Data as Expr);
+        return (Declaration(end.Scope), end.Data as Expr);
     }
 }

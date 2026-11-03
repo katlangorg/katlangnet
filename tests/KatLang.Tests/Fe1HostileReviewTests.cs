@@ -357,19 +357,6 @@ public class Fe1HostileReviewTests
         Assert.Equal(0, observations.SuggestionCandidatesExamined);
     }
 
-    [Fact]
-    public void SharedWideBranch_CanonicalizesShadowNamesOnce()
-    {
-        const int width = 300;
-        var shared = User([.. Enumerable.Range(0, width).Select(i => Member($"p{i}"))]);
-        var family = new Algorithm.Conditional(null, [],
-            [.. Enumerable.Range(0, 200).Select(i => new CondBranch(new Pattern.LitInt(i), shared))]);
-        var root = User([new Property("Family", family)]);
-        var observations = new FrontEndTraversalObservations();
-        _ = PropertyDependencyGraphBuilder.BuildDependencyOrder(root, observations: observations);
-        Assert.Equal(width, observations.ContextNamesCanonicalized);
-    }
-
     private static Algorithm.User SharedReferenceFamily(int width, int branches)
     {
         var shared = User() with { Output = new OutputBundle(

@@ -22,21 +22,16 @@ public class PropertyExposureResolverTests
             }
             """);
 
-        var orderGraph = PropertyDependencyGraphBuilder.BuildDependencyOrder(algorithm);
         var graph = PropertyDependencyGraphBuilder.BuildSummaries(algorithm);
         var leftNode = graph[PropertyIndex(graph, "Left")];
         var rightNode = graph[PropertyIndex(graph, "Right")];
 
-        // The processing-order channel sees the nested references too (the resolver rewrites
-        // InnerLeft while processing Left and reads Right's signature there): a direct
-        // sibling cycle, which the topological order resolves by declaration order. The
-        // summary channel's facts are computed independently and stay exactly as before.
-        Assert.Equal([PropertyIndex(graph, "Right")], orderGraph[PropertyIndex(graph, "Left")].SiblingDependencyIndices);
+        // The summary channel sees the nested references: a summary sibling cycle, whose facts the
+        // exposure fixpoint settles (implicit-argument resolution reads no sibling order since B3-5★).
         Assert.Equal([PropertyIndex(graph, "Right")], leftNode.SummarySiblingDependencyIndices);
         Assert.Empty(leftNode.SummaryVisiblePropertyDependencyNames);
         Assert.Empty(leftNode.RequiredAncestorOwnedParameterNames);
 
-        Assert.Equal([PropertyIndex(graph, "Left")], orderGraph[PropertyIndex(graph, "Right")].SiblingDependencyIndices);
         Assert.Equal([PropertyIndex(graph, "Left")], rightNode.SummarySiblingDependencyIndices);
         Assert.Empty(rightNode.SummaryVisiblePropertyDependencyNames);
         Assert.Equal(["x"], rightNode.RequiredAncestorOwnedParameterNames);

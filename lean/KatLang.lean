@@ -12365,39 +12365,29 @@ def elaborateOpenHead (chain : List OwnerLevel) (name : Ident) : Expr :=
    than by capture-name equality. This is not a general positional
    parameter-matching rule.
 
-   **Transitive ordering invariant**: Properties must be processed in dependency
-   order. If property B references property A (even if A currently has zero
-   parameters), then A must be resolved before B, so that A's final parameter
-   list (which may itself have been augmented by transitive dependencies) is
-   visible when resolving B's implicit arguments.
+   **Final signatures, selected before rewriting** (B3-5★, November 2026; owner
+   decisions X-04 = B and CG4 = A-agree, 2026-11-03): every reference reads the
+   FINAL signature of what it resolves to, so a property that references a
+   sibling sees that sibling's final parameter-pattern signature — augmented by
+   its own transitive dependencies — whatever the declaration order. The C#
+   surface pass (`ImplicitArgumentResolver`) obtains these signatures in two
+   phases: an analysis records one equation per written open body per
+   declaring context (a nested helper's references belong to the helper), and
+   a selection (`SignatureSelector`, rule G6) decides every equation — and
+   every `.Algorithm` link's class, a calculation exactly when its signature is
+   nonempty — jointly, before any body is rewritten.
 
-   This ordering is computed by topological sort over ALL bare sibling property
-   references — not just those with parameters at detection time — because a
-   property with initially zero parameters may acquire parameters through its
-   own transitive dependencies during resolution.
-
-   Formally:
-     Let G = (properties, edges) where edge (B, A) exists iff B's output
-     expressions contain a bare Resolve(A) and A is a sibling property.
-     Process properties in topological order of G.
-     At each step, the parameter map is updated with the processed property's
-     final parameter-pattern signature before processing subsequent dependents.
-
-   Cycles (mutually recursive siblings) are not excluded from lifting: each
-   cycle — a strongly connected component of G — is ordered as ONE unit,
-   processed once every sibling its members reference outside it has been,
-   its members in DECLARATION order, each seeing the signatures completed so
-   far (the C# `PropertyDependencyGraph.TopologicalOrder`). That fallback is
-   confined to the cycle's members: a property that references a cycle is
-   not part of it, so it is processed after all of the cycle's members and
-   sees their final signatures, whatever the declaration order. C# also
-   anticipates reads through soft preferences: when those close a cycle
-   around hard units, the combined component settles before outside
-   consumers, retaining the hard scheduler's order inside it (no fixed
-   point or call recomputation). This is the
-   one documented way two reaches of a node can observe different sibling
-   signatures (the "sibling CYCLE" exception of the shared-DAG guarantee in
-   `docs/design/language-rules/evaluator-and-hosting.md`). -/
+   Cycles: a cyclic group of open bodies is evaluated with every member read as
+   declaring no parameter (the closed gate). When no reference inside the cycle
+   then lifts, that evaluation is the group's one non-lifting meaning; otherwise
+   the group is a genuine lifting cycle, which has no meaning and is refused
+   with the front-end error `SelfDependentInferredParameters` (X-04 B), as is
+   any classification of links that has no unique grounded reading. Explicit
+   recursive calls never lift, so they are unaffected. Declaration order is
+   therefore unobservable; formerly a cycle was processed in declaration order
+   (the documented "sibling CYCLE" exception, now removed). Lean models no
+   signature construction: the spec and explorer programs are derived from the
+   C# elaboration. -/
 
 /-- **Implicit-lifting eligibility** (Q-03, decided 2026-09-28; surface syntax
     support — the specification of the surface pass's one lifting decision).

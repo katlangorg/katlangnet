@@ -18,9 +18,9 @@ fingerprint verification. Cross-class co-residency, process-state lifetime and c
 between batches; that residual limitation remains explicit. This approval is scoped to this
 candidate, not a general validation-policy change.
 
-Q8 requirement equations, processing order and MAY→MUST refinement, and Q9 pending/completed
-publication remain in place. B3-5★ is separate future work, including the inherited Round-14
-items; B2 is not adopted and X-04 remains an owner decision.
+Superseded in part by B3-5★ (November 2026; static-structure-resolver-2026-10.md § 10): Q8's processing order,
+on-demand processing and the miss refinement's order were replaced by signature selection, and Q9's pending cells complete
+from the selected endpoints. B2 is not adopted; X-04 is decided B (2026-11-03). The contracts below for Q1–Q7 stand.
 
 Q8 symbolic work sharing does not select structure. A computation that neither observes nor anchors a contextual
 selection may reuse a pristine immutable summary by exact body reference (branches also by binder-name set,

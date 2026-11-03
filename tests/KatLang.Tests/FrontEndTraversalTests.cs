@@ -2,8 +2,9 @@ namespace KatLang.Tests;
 
 /// <summary>
 /// Traversal-semantics pins for the hand-written <see cref="Expr"/> walks of the
-/// front-end elaboration passes: ParameterDetector, ImplicitArgumentResolver,
-/// PropertyExposureResolver, PropertyDependencyGraphBuilder, and ModuleLoader,
+/// front-end elaboration passes: ParameterDetector, ImplicitArgumentResolver (its one
+/// formula-lifting role walk serves both the B3-5★ signature analysis and dependency
+/// collection), PropertyExposureResolver, PropertyDependencyGraphBuilder, and ModuleLoader,
 /// together with the semantic model visitor. (The parser's former branch-body Grace scan,
 /// <c>Parser.ScanPendingForGraceSpan</c>, was deleted by Q-16 G-O, 2026-10-07: Grace
 /// eligibility is the parameter detector's per-owner decision.)
@@ -20,7 +21,7 @@ namespace KatLang.Tests;
 ///   ignored, not accidentally skipped);</item>
 ///   <item>every composite variant's children are actually traversed with each pass's
 ///   own semantics (free-name detection, implicit-call lifting, exposure
-///   classification, sibling ordering, load elaboration) — a present-but-childless
+///   classification, signature equations, load elaboration) — a present-but-childless
 ///   arm is compiler-exhaustive and still wrong.</item>
 /// </list>
 /// </summary>
@@ -33,23 +34,17 @@ public class FrontEndTraversalTests
 
     // ── Statement-form traversals: runtime guards pinned per variant ─────────
     //
-    // These six walks are side-effect switch statements (collectors, visitors, and the loader's
+    // These five walks are side-effect switch statements (collectors, visitors, and the loader's
     // awaiting twin), the one dispatch shape a closed hierarchy cannot make
-    // compiler-exhaustive, so each keeps a fail-loud guard. Every current variant must
-    // dispatch through each of them without hitting it; the theory fails with a message
-    // naming the traversal and the variant.
+    // compiler-exhaustive, so each keeps a fail-loud guard (AstWalker.VisitExpr, the sixth, is
+    // pinned by AstWalkerTraversalTests). Every current variant must dispatch through each of them
+    // without hitting it; the theory fails with a message naming the traversal and the variant.
 
     private static Task RunParameterDetectorCollectFreeParams(Expr sample)
     {
         var detectedInput = ParameterDetector.Detect(EmptyAlgorithm(sample));
         var (detected, _) = detectedInput;
         Assert.NotNull(detected);
-        return Task.CompletedTask;
-    }
-
-    private static Task RunImplicitCollectImplicitDeps(Expr sample)
-    {
-        Assert.NotNull(ImplicitArgumentResolver.ResolveNameResolved(EmptyAlgorithm(sample)));
         return Task.CompletedTask;
     }
 
@@ -67,8 +62,11 @@ public class FrontEndTraversalTests
         return Task.CompletedTask;
     }
 
-    private static Task RunDependencyCollectSiblingIndices(Expr sample)
+    private static Task RunImplicitWalkLiftingRoles(Expr sample)
     {
+        // B3-5★: the sample — in the root's own row, and in a nested body's — is walked by BOTH instantiations of the one
+        // role walk: the signature analysis (equation recording) before anything is rewritten, then dependency collection.
+        Assert.NotNull(ImplicitArgumentResolver.ResolveNameResolved(EmptyAlgorithm(sample)));
         var root = new Algorithm.User(
             Parent: null,
             ParameterPatterns: [],
@@ -79,7 +77,7 @@ public class FrontEndTraversalTests
                 new Property("B", EmptyAlgorithm(new Expr.Num(1))),
             ],
             Output: OutputBundle.Empty);
-        Assert.Equal(2, PropertyDependencyGraphBuilder.BuildDependencyOrder(root).Count);
+        Assert.NotNull(ImplicitArgumentResolver.ResolveNameResolved(root));
         return Task.CompletedTask;
     }
 
@@ -111,9 +109,8 @@ public class FrontEndTraversalTests
         new Dictionary<string, Func<Expr, Task>>(StringComparer.Ordinal)
         {
             ["ParameterDetector.CollectFreeParams"] = RunParameterDetectorCollectFreeParams,
-            ["ImplicitArgumentResolver.CollectImplicitDeps"] = RunImplicitCollectImplicitDeps,
             ["ImplicitArgumentResolver.CollectReferenceNames"] = RunImplicitCollectReferenceNames,
-            ["PropertyDependencyGraphBuilder.CollectSiblingDependencyIndices"] = RunDependencyCollectSiblingIndices,
+            ["ImplicitArgumentResolver.WalkLiftingRoles"] = RunImplicitWalkLiftingRoles,
             ["ModuleLoader.ProcessExprAsync"] = RunModuleLoaderAsyncWalkDispatch,
             ["SemanticModelBuilder.VisitExpr"] = sample =>
             {
@@ -472,7 +469,7 @@ public class FrontEndTraversalTests
         Assert.Equal(PropertyExposure.LocalOnlyCapturedAncestorParameters, finder.FoundExposure);
     }
 
-    // ── PropertyDependencyGraphBuilder: sibling refs in child positions ─────
+    // ── Signature equations and summaries: sibling refs in child positions ─────
 
     public static TheoryData<string> SiblingDependencyPositions()
     {
@@ -501,31 +498,39 @@ public class FrontEndTraversalTests
         return data;
     }
 
-    private static PropertyDependencyGraph BuildSiblingGraph(Expr referencingBody)
-        => PropertyDependencyGraphBuilder.BuildDependencyOrder(new Algorithm.User(
+    /// <summary>
+    /// The SELECTED signature of <c>A</c> (B3-5★) when its row is <paramref name="referencingBody"/> and its
+    /// sibling <c>B(y)</c> requires an argument: a value-role reference to <c>B</c> anywhere in the row lifts
+    /// <c>y</c> into <c>A</c>'s signature.
+    /// </summary>
+    private static IReadOnlyList<string> SelectedSiblingReaderParameters(Expr referencingBody)
+    {
+        var root = new Algorithm.User(
             Parent: null,
             ParameterPatterns: [],
             Opens: [],
             Properties:
             [
                 new Property("A", EmptyAlgorithm(referencingBody)),
-                new Property("B", EmptyAlgorithm(new Expr.Num(1))),
+                new Property("B", new Algorithm.User(null, [new CaptureParameterPattern("y")], [], [], [new Expr.Param("y")])),
             ],
-            Output: OutputBundle.Empty));
+            Output: OutputBundle.Empty);
+        var resolved = ImplicitArgumentResolver.ResolveNameResolved(root);
+        return Assert.Single(resolved.Properties, static property => property.Name == "A").Value.Params;
+    }
 
     /// <summary>
-    /// A sibling reference inside each recursive value position produces a
-    /// processing-order dependency edge — the dependency walk descended into
-    /// the child.
+    /// A sibling reference inside each recursive value position is an occurrence of the reader's
+    /// equation — the analysis walk descended into the child — so the selection lifts the sibling's
+    /// parameter, and the rewrite (which must agree with the selection) forwards it.
     /// </summary>
     [Theory]
     [MemberData(nameof(SiblingDependencyPositions))]
-    public void PropertyDependencyGraphBuilder_FindsSiblingReferencesInsideRecursiveChildren(string position)
+    public void ImplicitArgumentResolver_FindsSiblingReferencesInsideRecursiveChildren(string position)
     {
         var embedded = RecursiveEmbeddings[position](new Expr.Resolve("B"));
-        var graph = BuildSiblingGraph(embedded);
 
-        Assert.Contains(1, graph[0].SiblingDependencyIndices);
+        Assert.Equal(["y"], SelectedSiblingReaderParameters(embedded));
     }
 
     /// <summary>
@@ -552,19 +557,13 @@ public class FrontEndTraversalTests
     }
 
     /// <summary>
-    /// The two documented negative positions stay negative: a CALLED sibling
-    /// (call-function position, and a dot-call-with-arguments target) is not a
-    /// processing-order dependency.
+    /// The documented negative position stays negative: a CALLED sibling (call-function position) is a
+    /// callee, not a value read, so it lifts nothing into the reader's signature.
     /// </summary>
     [Fact]
-    public void PropertyDependencyGraphBuilder_KeepsCallPositionsOutOfSiblingOrdering()
+    public void ImplicitArgumentResolver_KeepsCallPositionsOutOfTheEquation()
     {
-        var calledSibling = BuildSiblingGraph(new Expr.Call(new Expr.Resolve("B"), OutputBundle.Empty));
-        Assert.DoesNotContain(1, calledSibling[0].SiblingDependencyIndices);
-
-        var dotCalledSibling = BuildSiblingGraph(
-            new Expr.DotCall(new Expr.Resolve("B"), "M", new OutputBundle([new Expr.Num(1)])));
-        Assert.DoesNotContain(1, dotCalledSibling[0].SiblingDependencyIndices);
+        Assert.Empty(SelectedSiblingReaderParameters(new Expr.Call(new Expr.Resolve("B"), new OutputBundle([new Expr.Num(1)]))));
     }
 
     // ── ModuleLoader: loads inside recursive child positions are never skipped ──

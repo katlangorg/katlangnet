@@ -383,18 +383,7 @@ internal static class FrontEndPipeline
             operation = StaticStructureAdmission.Create(input.Current, hostOperations, sourceProcessingLimits, cancellationToken: cancellationToken).Operation;
             DetectParameters(input, hostOperations, passDiagnostics, modules, operation);
             if (operation is not null && passDiagnostics.HasReported(DiagnosticCode.SelfDependentInferredParameters))
-            {
-                operation.CompleteLookups(input.Current);
-                input.Current.CompletedStructure!.Facts.Seal(cancellationToken);
-                // A1 recovery (F4): the unit is rejected and never forwarded, validated by the
-                // open-provider and output rules, exposure-settled or published — those read
-                // signatures and targets the undecided inputs leave open. Only the collision rule,
-                // which is monotone in the parameters a signature holds, runs, over the detected
-                // tree (see ParameterPropertyCollisionValidator.ValidateAfterSelfDependentInference).
-                cancellationToken.ThrowIfCancellationRequested();
-                ValidateCollisionsAfterSelfDependentInference(input, passDiagnostics);
-                return new(ElaboratedUserRoot(input.Take()), diagnostics, hasDeferredModuleRegions);
-            }
+                return RecoverAfterSelfDependentInference(input, diagnostics, passDiagnostics, operation, hasDeferredModuleRegions, cancellationToken);
         }
         catch (StaticQueryLimitExceededException error)
         {
@@ -410,7 +399,15 @@ internal static class FrontEndPipeline
         // by any call of that algorithm, so it is a static well-formedness failure of the
         // closed interface — the same rule parameter detection applies to a directly written
         // undeclared identifier, one indirection further out.
-        try { ResolveImplicitArguments(input, passDiagnostics, hostOperations, modules, operation); }
+        try
+        {
+            ResolveImplicitArguments(input, passDiagnostics, hostOperations, modules, operation);
+            // B3-5★: a refused signature selection (a genuine lifting cycle, X-04 B, or an .Algorithm classification
+            // without one grounded consistent reading) is the same family as A1, with the same recovery: the resolver
+            // returned the detected tree unrewritten and unpublished.
+            if (operation is not null && passDiagnostics.HasReported(DiagnosticCode.SelfDependentInferredParameters))
+                return RecoverAfterSelfDependentInference(input, diagnostics, passDiagnostics, operation, hasDeferredModuleRegions, cancellationToken);
+        }
         catch (StaticQueryLimitExceededException error)
         {
             diagnostics.Add(StaticStructureAdmission.Rejection(error));
@@ -421,11 +418,11 @@ internal static class FrontEndPipeline
         // need completed signatures (an inferred parameter list is final only now) and nothing
         // from exposure, so they run here: an algorithm with inferred parameters and no output is
         // this front end's error, never the evaluator's (X-07; a written list was reported at
-        // parse time).
-        ValidateCompletedSignatures(input, passDiagnostics, hostOperations);
-
+        // parse time). They read completed structure, whose projections below served regions
+        // (B3-5★) the static ledger charges, so its refusal is theirs as well.
         try
         {
+            ValidateCompletedSignatures(input, passDiagnostics, hostOperations);
             cancellationToken.ThrowIfCancellationRequested();
             ResolveExposure(input, hostOperations, modules, cancellationToken);
             cancellationToken.ThrowIfCancellationRequested();
@@ -496,6 +493,23 @@ internal static class FrontEndPipeline
     {
         var root = input.Current;
         new ParameterPropertyCollisionValidator(passDiagnostics, programRoot: root).VisitAlgorithm(root);
+    }
+
+    /// <summary>
+    /// A1 recovery (F4), shared by self-dependent inference (parameter detection) and a refused B3-5★ signature selection
+    /// (implicit-argument resolution): the unit is rejected and never forwarded, validated by the open-provider and output
+    /// rules, exposure-settled or published — those read signatures and targets the undecided inputs leave open. Only the
+    /// collision rule, which is monotone in the parameters a signature holds, runs, over the detected tree (see
+    /// <see cref="ParameterPropertyCollisionValidator.ValidateAfterSelfDependentInference"/>).
+    /// </summary>
+    private static FrontEndResult RecoverAfterSelfDependentInference(ElaborationInput input, DiagnosticBag diagnostics,
+        DiagnosticBag passDiagnostics, StaticStructureOperation operation, bool hasDeferredModuleRegions, CancellationToken cancellationToken)
+    {
+        operation.CompleteLookups(input.Current);
+        input.Current.CompletedStructure!.Facts.Seal(cancellationToken);
+        cancellationToken.ThrowIfCancellationRequested();
+        ValidateCollisionsAfterSelfDependentInference(input, passDiagnostics);
+        return new(ElaboratedUserRoot(input.Take()), diagnostics, hasDeferredModuleRegions);
     }
 
     private static void ValidateCollisionsAfterSelfDependentInference(ElaborationInput input, DiagnosticBag passDiagnostics)

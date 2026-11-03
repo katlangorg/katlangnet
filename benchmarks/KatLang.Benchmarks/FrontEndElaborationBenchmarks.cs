@@ -138,11 +138,12 @@ internal static class FrontEndElaborationScenarios
 			throw new InvalidOperationException("Nested benchmark parameter detection unexpectedly failed.");
 		var resolverObservations = new FrontEndTraversalObservations();
 		var resolved = ImplicitArgumentResolver.ResolvePrevalidated(detected, resolverObservations);
-		if (resolverObservations.DependencySiblingExpansions != 2L * depth
+		// B3-5★ signature analysis: each level's two open formulas, plus the root's call row.
+		if (resolverObservations.SignatureAnalysisExpansions != 2L * depth + 1
 			|| resolverObservations.DependencySeedExpansions != 0
 			|| resolverObservations.DependencyAlgorithmSummaryComputations != 0)
 		{
-			throw new InvalidOperationException("Nested benchmark no longer exercises the expected order-only resolver work.");
+			throw new InvalidOperationException("Nested benchmark no longer exercises the expected selection-only resolver work.");
 		}
 
 		var exposureObservations = new FrontEndTraversalObservations();
@@ -254,8 +255,8 @@ internal static class FrontEndElaborationScenarios
 			throw new InvalidOperationException("Wide benchmark parameter detection unexpectedly failed.");
 		var observations = new FrontEndTraversalObservations();
 		ImplicitArgumentResolver.ResolvePrevalidated(detected, observations);
-		if (observations.DependencySiblingExpansions <= 0)
-			throw new InvalidOperationException("Wide benchmark no longer exercises dependency-order analysis.");
+		if (observations.SignatureAnalysisExpansions <= 0)
+			throw new InvalidOperationException("Wide benchmark no longer exercises signature analysis.");
 		if (observations.DependencySeedExpansions != 0 || observations.DependencyAlgorithmSummaryComputations != 0)
 			throw new InvalidOperationException("Wide benchmark resolver path unexpectedly executed summary analysis.");
 	}

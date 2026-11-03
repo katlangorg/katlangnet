@@ -63,6 +63,22 @@ internal sealed record CallableSignature
         _derived = new(new DerivedFacts(parameters?.ToArray(), parameterSource, displayText));
     }
 
+    // The renamed view WithName builds: the source's stored patterns are already a snapshot this assembly owns.
+    private CallableSignature(string name, CallableSignature source)
+    {
+        Name = name;
+        ParameterPatterns = source.ParameterPatterns;
+        HasExplicitParameterList = source.HasExplicitParameterList;
+        _derived = new(new DerivedFacts(parameters: null, source._derived.Value.Source, displayText: null));
+    }
+
+    /// <summary>
+    /// This signature named <paramref name="name"/> — the spelling a reference reached it by (B3-5★) — over the very same
+    /// stored patterns, never snapshotted again: every name of one signature composes through one pattern list.
+    /// </summary>
+    internal CallableSignature WithName(string name)
+        => string.Equals(name, Name, StringComparison.Ordinal) ? this : new(name, this);
+
     public string Name { get; }
 
     public IReadOnlyList<ParameterPattern> ParameterPatterns { get; }
@@ -99,6 +115,9 @@ internal sealed record CallableSignature
         private IReadOnlyList<string>? _parameterNames;
         private string? _displayText = displayText;
         private CallableArityFacts? _arityFacts;
+
+        /// <summary>How the signature's parameters are classified when derived (null: explicit).</summary>
+        public CallableParameterSource? Source => parameterSource;
 
         public IReadOnlyList<CallableParameter> Parameters(CallableSignature signature)
         {
@@ -212,6 +231,13 @@ internal sealed record CallableSignature
             hasExplicitParameterList,
             displayText: null);
     }
+
+    /// <summary>
+    /// The signature of an open body whose inferred parameter patterns implicit-argument resolution SELECTED (B3-5★):
+    /// read before the body is rewritten, exactly as <see cref="FromUserAlgorithm"/> reads it afterwards.
+    /// </summary>
+    internal static CallableSignature FromInferredPatterns(string name, IReadOnlyList<ParameterPattern> patterns)
+        => new(name, patterns, parameters: null, CallableParameterSource.Implicit, hasExplicitParameterList: false, displayText: null);
 
     internal static CallableSignature FromParameterDeclarations(
         string name,

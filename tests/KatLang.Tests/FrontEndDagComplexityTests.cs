@@ -849,7 +849,11 @@ public class FrontEndDagComplexityTests
         Assert.All(rewritten.Properties, p => Assert.Equal(PropertyExposure.Exported, p.Exposure));
     }
 
-    // ── 4. PropertyDependencyGraphBuilder ───────────────────────────────────
+    // ── 4. Signature analysis (B3-5★) and PropertyDependencyGraphBuilder ─────
+
+    /// <summary>A sibling <c>B(y)</c> that requires an argument, so a value-role reference to it lifts <c>y</c>.</summary>
+    private static Algorithm.User ParameterizedSibling()
+        => new(null, [new CaptureParameterPattern("y")], [], [], [new Expr.Param("y")]);
 
     [Theory]
     [InlineData(ShallowDepth)]
@@ -865,20 +869,20 @@ public class FrontEndDagComplexityTests
                 Properties:
                 [
                     new Property("A", EmptyAlgorithm(BinaryDiamond(depth, new Expr.Resolve("B")))),
-                    new Property("B", EmptyAlgorithm(new Expr.Num(1))),
+                    new Property("B", ParameterizedSibling()),
                 ],
                 Output: OutputBundle.Empty);
 
-            var orderGraph = PropertyDependencyGraphBuilder.BuildDependencyOrder(root, observations: observations);
+            var resolved = ImplicitArgumentResolver.ResolveNameResolvedPrevalidated(root, observations);
             var summaryGraph = PropertyDependencyGraphBuilder.BuildSummaries(root, observations: observations);
 
-            // The dependency SET is identical to the tree expansion's: one edge A -> B, neither
-            // lost nor duplicated (indices are a set), regardless of the 2^depth paths.
-            Assert.Equal([1], orderGraph[0].SiblingDependencyIndices);
+            // The equation records the one callee B once (occurrences are deduplicated by identity), however
+            // many of the 2^depth paths reach it, so A selects exactly the one lifted parameter the tree
+            // expansion gives; the summary edge set is one edge A -> B, neither lost nor duplicated.
+            Assert.Equal(["y"], resolved.Properties[0].Value.Params);
             Assert.Equal([1], summaryGraph[0].SummarySiblingDependencyIndices);
-            Assert.Empty(orderGraph[1].SiblingDependencyIndices);
 
-            Assert.Equal(depth, observations.DependencySiblingExpansions);
+            Assert.Equal(depth, observations.SignatureAnalysisExpansions);
             Assert.Equal(depth, observations.DependencySeedExpansions);
         });
 
@@ -905,10 +909,6 @@ public class FrontEndDagComplexityTests
         var dagRoot = TwoPropertyRoot(BinaryDiamond(depth, ReferencingLeaf()));
         var treeRoot = TwoPropertyRoot(BinaryTree(depth, ReferencingLeaf));
 
-        var dagOrder = PropertyDependencyGraphBuilder.BuildDependencyOrder(dagRoot);
-        var treeOrder = PropertyDependencyGraphBuilder.BuildDependencyOrder(treeRoot);
-        Assert.Equal(treeOrder[0].SiblingDependencyIndices, dagOrder[0].SiblingDependencyIndices);
-
         var dag = PropertyDependencyGraphBuilder.BuildSummaries(dagRoot);
         var tree = PropertyDependencyGraphBuilder.BuildSummaries(treeRoot);
         Assert.Equal(tree[0].SummarySiblingDependencyIndices, dag[0].SummarySiblingDependencyIndices);
@@ -922,11 +922,11 @@ public class FrontEndDagComplexityTests
 
     /// <summary>
     /// The same shared expression reached from TWO different property owners contributes to
-    /// each owner's node independently (the memo is per Build region and per property walk,
-    /// never global), so per-owner dependency context is preserved.
+    /// each owner's equation independently (the analysis memo is per body's row region, never
+    /// global), so per-owner context is preserved: both owners select the lifted parameter.
     /// </summary>
     [Fact]
-    public void DependencyGraph_ExpressionSharedAcrossProperties_ContributesToEachOwner()
+    public void SignatureAnalysis_ExpressionSharedAcrossProperties_ContributesToEachOwner()
     {
         var sharedReference = new Expr.Binary(BinaryOp.Add, new Expr.Resolve("C"), new Expr.Num(1));
         var root = new Algorithm.User(
@@ -937,14 +937,14 @@ public class FrontEndDagComplexityTests
             [
                 new Property("A", EmptyAlgorithm(sharedReference)),
                 new Property("B", EmptyAlgorithm(sharedReference)),
-                new Property("C", EmptyAlgorithm(new Expr.Num(1))),
+                new Property("C", ParameterizedSibling()),
             ],
             Output: OutputBundle.Empty);
 
-        var graph = PropertyDependencyGraphBuilder.BuildDependencyOrder(root);
+        var resolved = ImplicitArgumentResolver.ResolveNameResolved(root);
 
-        Assert.Equal([2], graph[0].SiblingDependencyIndices);
-        Assert.Equal([2], graph[1].SiblingDependencyIndices);
+        Assert.Equal(["y"], resolved.Properties[0].Value.Params);
+        Assert.Equal(["y"], resolved.Properties[1].Value.Params);
     }
 
     /// <summary>
@@ -983,13 +983,12 @@ public class FrontEndDagComplexityTests
     // ── 4b. M17: per-channel builder entries + resolution-scoped summary memo ──
 
     /// <summary>
-    /// The implicit-argument resolver consumes ONLY the dependency/order channel. Nested
-    /// property values give the summary channel real work IF it ran; a recursive output row
-    /// gives the order channel an observable sibling expansion, proving the observer was
-    /// live on the builder path.
+    /// The implicit-argument resolver never runs the summary channel. Nested property values give
+    /// the summary channel real work IF it ran; a recursive output row gives the B3-5★ signature
+    /// analysis an observable expansion, proving the observer was live on the resolver path.
     /// </summary>
     [Fact]
-    public void Resolver_ConsumesOnlyTheDependencyOrderChannel()
+    public void Resolver_NeverRunsTheSummaryChannel()
     {
         var observations = new FrontEndTraversalObservations();
         var nested = new Algorithm.User(
@@ -1012,9 +1011,9 @@ public class FrontEndDagComplexityTests
 
         ImplicitArgumentResolver.ResolveNameResolvedPrevalidated(root, observations);
 
-        Assert.Equal(1, observations.DependencySiblingExpansions);
+        Assert.Equal(1, observations.SignatureAnalysisExpansions);
         // The summary channel never ran: no expression seed expanded, no algorithm summary
-        // computed (M17 — the resolver reads only the topological property order).
+        // computed (M17; the resolver reads selected signatures only).
         Assert.Equal(0, observations.DependencySeedExpansions);
         Assert.Equal(0, observations.DependencyAlgorithmSummaryComputations);
     }
@@ -1242,40 +1241,6 @@ public class FrontEndDagComplexityTests
         Assert.Same(StringComparer.Ordinal, original.VisiblePropertyDependencyNames.Comparer);
         Assert.Same(StringComparer.Ordinal, clone.RequiredAncestorOwnedParameterNames.Comparer);
         Assert.Same(StringComparer.Ordinal, clone.VisiblePropertyDependencyNames.Comparer);
-    }
-
-    /// <summary>
-    /// The topological property order stays deterministic after the channel split: ready
-    /// properties leave in DECLARATION (index) order, a dependent follows its dependency,
-    /// and a dependency cycle is one unit of the order, its members in index order (X-04 pins
-    /// what follows a cycle: <see cref="SiblingDependencyCycleTests"/>).
-    /// </summary>
-    [Fact]
-    public void DependencyOrder_TopologicalOrder_IsDeterministicWithDeclarationOrderTies()
-    {
-        var acyclic = new Algorithm.User(
-            null, [], [],
-            [
-                new Property("A", EmptyAlgorithm(new Expr.Num(1))),
-                new Property("B", EmptyAlgorithm(new Expr.Unary(UnaryOp.Minus, new Expr.Resolve("D")))),
-                new Property("C", EmptyAlgorithm(new Expr.Num(2))),
-                new Property("D", EmptyAlgorithm(new Expr.Num(3))),
-            ],
-            OutputBundle.Empty);
-        Assert.Equal(
-            [0, 2, 3, 1],
-            PropertyDependencyGraphBuilder.BuildDependencyOrder(acyclic).TopologicalOrder);
-
-        var cyclic = new Algorithm.User(
-            null, [], [],
-            [
-                new Property("X", EmptyAlgorithm(new Expr.Unary(UnaryOp.Minus, new Expr.Resolve("Y")))),
-                new Property("Y", EmptyAlgorithm(new Expr.Unary(UnaryOp.Minus, new Expr.Resolve("X")))),
-            ],
-            OutputBundle.Empty);
-        Assert.Equal(
-            [0, 1],
-            PropertyDependencyGraphBuilder.BuildDependencyOrder(cyclic).TopologicalOrder);
     }
 
     /// <summary>
@@ -1659,51 +1624,48 @@ public class FrontEndDagComplexityTests
     }
 
     /// <summary>
-    /// The resolver's region is the signature SNAPSHOT of a body's free names: when two
-    /// families sharing one body genuinely observe different signatures for a name the body
-    /// reads, the body is rewritten again under the new observation and only the family that
-    /// saw the lifted signature reports the blocked forwarding — exactly what two separate
-    /// bodies would do — while families reached under one observation share one rewrite.
-    /// Within an ACYCLIC property graph every consumer is processed after the siblings it
-    /// reads (complete dependency edges), so distinct observations arise only among the MEMBERS
-    /// of a sibling cycle, which fall back to declaration order among themselves (X-04: a
-    /// property that merely depends on a cycle follows all of its members). Here P and R
-    /// reference each other, and P's closed helper reads Before and Early, which read P: the
-    /// cycle {Before, Early, P, R} processes Before and Early first (P still detected: no
-    /// parameters), then P (lifting `x` from the bare `Math.Abs`); Late only depends on the
-    /// cycle, so it follows it and sees P(x).
+    /// The resolver's region is the signature SNAPSHOT of a body's free names: when families
+    /// sharing one body genuinely observe different signatures for a name the body reads, the
+    /// body is rewritten again under the new observation — exactly what two separate bodies would
+    /// do — while families reached under one observation share one rewrite. Since B3-5★ every
+    /// signature a body reads is final, so a different observation is a different DECLARATION:
+    /// here Before and Early read the root's <c>P(x)</c>, while Late, inside <c>Inner</c>, reads
+    /// Inner's own parameterless <c>P</c>. (Formerly members of a sibling cycle could also observe
+    /// a provisional signature; nothing observes one now.)
     /// </summary>
     [Fact]
     public void Resolver_SharedBranchBody_SplitsOnObservedSignatures_AndSharesWithinOne()
     {
-        // `Math.Abs(P)` is a proven strict-value position: the blocked forwarding is diagnosed
-        // exactly when the visible signature of P carries the lifted `x`. The helper's closed list
-        // keeps its family reads as runtime demands (never lifted), so they only order the level.
-        var parsed = Parser.ParseSyntax("P = { H(q) = Before + Early + q\n  Math.Abs + R }\nR = P + 1\nF(0) = Math.Abs(P)\nF(1) = 0\nF(0)");
+        // `Math.Abs(P)` is a strict-value position inside a closed branch: the reference stays a runtime demand, so the
+        // rewrite lifts nothing, but the region still reads P's signature.
+        var parsed = Parser.ParseSyntax("P = Math.Abs + 0\nF(0) = Math.Abs(P)\nF(1) = 0\nF(0)");
         Assert.False(parsed.HasErrors);
         var syntax = parsed.SyntaxRoot;
         var sharedBody = Assert.IsType<Algorithm.Conditional>(Assert.Single(syntax.Properties, p => p.Name == "F").Value).Branches[0].Body;
         var p = Assert.Single(syntax.Properties, p => p.Name == "P");
-        var r = Assert.Single(syntax.Properties, p => p.Name == "R");
         Algorithm.Conditional Family() => new(null, [], [new CondBranch(new Pattern.LitInt(0), sharedBody)]);
+        var inner = new Algorithm.User(
+            null, [], [],
+            [new Property("P", new Algorithm.User(null, [], [], [], [new Expr.Num(1)])), new Property("Late", Family())],
+            new OutputBundle([new Expr.Num(0)]));
         var root = new Algorithm.User(
             null, [], [],
-            [new Property("Before", Family()), new Property("Early", Family()), p, r, new Property("Late", Family())],
+            [new Property("Before", Family()), new Property("Early", Family()), p, new Property("Inner", inner)],
             OutputBundle.Empty);
         var detectedInput = ParameterDetector.DetectPrevalidated(root);
-        var (detected, detectorDiagnostics) = detectedInput;
+        var (_, detectorDiagnostics) = detectedInput;
         Assert.Empty(detectorDiagnostics);
         var observations = new FrontEndTraversalObservations();
         var diagnostics = new DiagnosticBag();
 
         var resolved = ImplicitArgumentResolver.ResolvePrevalidated(detectedInput, observations, diagnostics);
 
-        Assert.Equal(2, observations.ResolverBranchBodyRegionExpansions);
-        Algorithm BodyOf(string family)
-            => Assert.IsType<Algorithm.Conditional>(Assert.Single(resolved.Properties, prop => prop.Name == family).Value).Branches[0].Body;
-        Assert.Same(BodyOf("Before"), BodyOf("Early"));
-        Assert.NotSame(BodyOf("Early"), BodyOf("Late"));
         Assert.Empty(diagnostics);
+        Assert.Equal(2, observations.ResolverBranchBodyRegionExpansions);
+        static Algorithm BodyOf(Algorithm owner, string family)
+            => Assert.IsType<Algorithm.Conditional>(Assert.Single(owner.Properties, prop => prop.Name == family).Value).Branches[0].Body;
+        Assert.Same(BodyOf(resolved, "Before"), BodyOf(resolved, "Early"));
+        Assert.NotSame(BodyOf(resolved, "Early"), BodyOf(Assert.Single(resolved.Properties, prop => prop.Name == "Inner").Value, "Late"));
     }
 
     /// <summary>
@@ -1873,55 +1835,6 @@ public class FrontEndDagComplexityTests
             Assert.Empty(plain.Params);
             Assert.Equal(["y"], lifting.Params);
         });
-
-    /// <summary>
-    /// The processing-order channel sees every value-position sibling reference in a property's
-    /// whole value subtree: nested property values and conditional branch bodies contribute
-    /// edges, a nested body's own property shadows the same-named sibling, a neutral call
-    /// argument lifts nothing, and a block literal inside such an argument is a body of its
-    /// own. Complete edges are what make sibling declaration order unobservable.
-    /// </summary>
-    [Fact]
-    public void DependencyOrder_SeesNestedBodiesAndBranchBodies_UnderShadowingAndTransparency()
-    {
-        Expr B() => new Expr.Resolve("B");
-        var root = new Algorithm.User(
-            null, [], [],
-            [
-                // A = { Inner = B + 1  Inner }
-                new Property("A", EmptyAlgorithm(new Expr.Resolve("Inner")) with
-                {
-                    Properties = [new Property("Inner", EmptyAlgorithm(new Expr.Binary(BinaryOp.Add, B(), new Expr.Num(1))))],
-                }),
-                // F(0) = B
-                new Property("F", new Algorithm.Conditional(null, [], [new CondBranch(new Pattern.LitInt(0), EmptyAlgorithm(B()))])),
-                // C = { B = 1  B + 1 }: the nested B shadows the sibling.
-                new Property("C", EmptyAlgorithm(new Expr.Binary(BinaryOp.Add, B(), new Expr.Num(1))) with
-                {
-                    Properties = [new Property("B", EmptyAlgorithm(new Expr.Num(1)))],
-                }),
-                // D = Apply(B): a neutral argument is transparent.
-                new Property("D", EmptyAlgorithm(new Expr.Call(new Expr.Resolve("Apply"), new OutputBundle([B()])))),
-                // E = Apply({ B }): the block literal inside the argument is a body of its own.
-                new Property("E", EmptyAlgorithm(new Expr.Call(new Expr.Resolve("Apply"), new OutputBundle([new Expr.AlgorithmExpr(EmptyAlgorithm(B()))])))),
-                new Property("B", EmptyAlgorithm(new Expr.Num(5))),
-            ],
-            OutputBundle.Empty);
-
-        var order = PropertyDependencyGraphBuilder.BuildDependencyOrder(root);
-
-        Assert.True(order.TryGetPropertyIndex("B", out var b));
-        Assert.Equal([b], order[0].SiblingDependencyIndices);
-        Assert.Equal([b], order[1].SiblingDependencyIndices);
-        Assert.Empty(order[2].SiblingDependencyIndices);
-        Assert.Empty(order[3].SiblingDependencyIndices);
-        Assert.Equal([b], order[4].SiblingDependencyIndices);
-        // B is processed before every consumer, whatever the declaration order.
-        var topological = order.TopologicalOrder.ToList();
-        Assert.True(topological.IndexOf(b) < topological.IndexOf(0));
-        Assert.True(topological.IndexOf(b) < topological.IndexOf(1));
-        Assert.True(topological.IndexOf(b) < topological.IndexOf(4));
-    }
 
     /// <summary>
     /// Sibling declaration order is not observable: two programs that differ only in the order

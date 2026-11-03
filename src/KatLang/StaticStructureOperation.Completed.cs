@@ -8,6 +8,10 @@ internal sealed partial class StaticStructureOperation
     private CompletedStaticStructures? _completed;
     private CompletedStaticStructures? _completedBase;
 
+    /// <summary>The identity a selection of <paramref name="key"/> carries: its declaration in its declaring owners.</summary>
+    private OpenProviderIdentity DeclaredIdentityOf(StaticScopeKey key)
+        => OpenProviderIdentity.DeclaredIn(SourceOf(key), OwnersOf(key.Parent ?? Queries.Keys.Root));
+
     /// <summary>Projects completed local views, including erroneous resolved trees, without freezing a successful unit.</summary>
     internal void CompleteLookups(Algorithm root)
     {
@@ -28,14 +32,50 @@ internal sealed partial class StaticStructureOperation
             while (chain.TryPop(out var next)) pending.Enqueue(next);
         }
         Include(Queries.Keys.Root);
+        // B3-5★ REGION REACHES: every context this resolution served from another context's processing of the same region,
+        // with both declaring identities. A reach's own facts are built like any published context's; every context below
+        // it is a PROJECTION of its counterpart (CompletedStaticStructures), adopted once every published context's facts
+        // exist — never built, nor its members walked, once per path of a shared graph. A context below a reach that has no
+        // counterpart definition (the processing context's region never named it) stays unavailable.
+        graph.SuspendProjection();
+        if (_regionAliases is not null)
+        {
+            foreach (var (reach, processed) in _regionAliases)
+            {
+                Queries.EnsureUsable();
+                // Both declaring chains are built here and retained with the reach: charged by their length first (a key's
+                // chain holds its declaration and one per enclosing level).
+                var chain = 2L + reach.Depth + processed.Depth;
+                Queries.Resources.Metadata((chain + 7) / 8, chain);
+                graph.AddReach(reach, processed, DeclaredIdentityOf(reach), DeclaredIdentityOf(processed));
+            }
+        }
         // Include registers query contexts, not publications; do not copy the whole key set.
         foreach (var key in _publications.Keys) { Queries.EnsureUsable(); Queries.Resources.Metadata(0); Include(key); }
         var built = new List<StaticScopeKey>();
+        // This compilation's own keys below reaches, each paired with its counterpart DEFINITION by DEFINITION (as
+        // RegionAliasStep maps them): definitions sharing one declaration stay apart.
+        var belowReaches = new List<(StaticScopeKey Key, StaticScopeKey Counterpart)>();
+        var belowReach = new HashSet<StaticScopeKey>(ReferenceEqualityComparer.Instance);
+        var counterparts = new Dictionary<StaticScopeKey, StaticScopeKey>(ReferenceEqualityComparer.Instance);
         while (pending.TryDequeue(out var key))
         {
             Queries.EnsureUsable();
             var source = SourceOf(key);
             var view = Published(key, StaticPublicationStage.Resolved) ?? (prelude.Contains(key) || source is Algorithm.Builtin ? source : null);
+            if (view is null && key.Parent is { } owner && (belowReach.Contains(owner) || graph.IsReach(owner)))
+            {
+                Queries.Resources.Metadata(2);
+                belowReach.Add(key);
+                if ((counterparts.TryGetValue(owner, out var counterpartOwner) || TryGetRegionAlias(owner, out counterpartOwner))
+                    && Queries.Keys.KnownDefinitionIn(counterpartOwner, source, key.BindingRegion) is { } counterpart)
+                {
+                    counterparts.Add(key, counterpart);
+                    belowReaches.Add((key, counterpart));
+                    Include(counterpart);
+                }
+                continue;
+            }
             var detected = Published(key, StaticPublicationStage.Detected);
             var provisional = view is null && detected is Algorithm.User or Algorithm.Conditional
                 && (source.DeferredRegion is not null || key.Parent is { } parent && graph.Facts(parent)?.IsProvisional == true);
@@ -80,9 +120,9 @@ internal sealed partial class StaticStructureOperation
                 receiver = open = Select(new(StaticFactKind.Structure, key));
                 if (view is Algorithm.Alias { IsReference: true })
                 {
-                    receiver = Select(Read(StaticQueryKey.TargetWalk(key, StaticCycleCheck.Formation)));
-                    open = Select(Read(StaticQueryKey.Project(StaticQueryKind.TargetWalk, key,
-                        StaticQueryProjection.OpenStructure, stratum: StaticCycleCheck.Formation)));
+                    receiver = Select(SelectedLinkClass(Read(StaticQueryKey.TargetWalk(key, StaticCycleCheck.Formation))));
+                    open = Select(SelectedLinkClass(Read(StaticQueryKey.Project(StaticQueryKind.TargetWalk, key,
+                        StaticQueryProjection.OpenStructure, stratum: StaticCycleCheck.Formation))));
                 }
             }
             if (provisional)
@@ -110,6 +150,8 @@ internal sealed partial class StaticStructureOperation
                 RequirementReceiver: requirementReceiver, RequirementOpen: requirementOpen));
             built.Add(key);
         }
+        // Every published context's facts exist: the contexts below reaches (parents first) become their projections.
+        graph.AdoptBelowReaches(belowReaches);
         // An exact terminal may have no completed view (for example a Q8 depth-limited body). Preserve unavailable
         // knowledge, rather than exporting its written body or treating it as a successful publication.
         foreach (var key in built)
@@ -164,11 +206,18 @@ internal sealed partial class StaticStructureOperation
         if (graph.Facts(Root)?.Body is not null) graph.Retarget(Root, root);
         _completed = graph;
 
+        // The Q8 COMPLETION of a Q3 source answer (B3-5★): Q3 reads an `.Algorithm` link as the runtime recipe it is before
+        // Q8 decides its class, and keeps reading it so (its definitions are never overwritten); a link the selection made
+        // a CALCULATION — its resolved body declares a parameter — is its own structure, so what reaches it completes there.
+        StaticFact SelectedLinkClass(StaticFact fact)
+            => fact is { Kind: StaticFactKind.Runtime, Scope: { } link }
+                && ResolvedView(link) is Algorithm.User { ParameterPatterns.Count: > 0 }
+                    ? new StaticFact(StaticFactKind.Structure, link) : fact;
+
         CompletedStaticStructures.Selection Select(StaticFact fact)
         {
             if (fact.Scope is { } selected) Include(selected);
-            return new(fact.Kind, fact.Scope, fact.Scope is { } selectedScope
-                ? OpenProviderIdentity.DeclaredIn(SourceOf(selectedScope), OwnersOf(selectedScope.Parent ?? Queries.Keys.Root)) : null);
+            return new(fact.Kind, fact.Scope, fact.Scope is { } selectedScope ? DeclaredIdentityOf(selectedScope) : null);
         }
         CompletedStaticStructures.Selection Eligible(CompletedStaticStructures.Selection selection)
             => selection is { Kind: StaticFactKind.Structure, Target: { } target }

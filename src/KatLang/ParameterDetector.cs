@@ -2877,8 +2877,8 @@ internal static class ParameterDetector
         // later pass reads the edge's ROUTE from it: the scope-free exposure walk
         // charges a parameter-naming fallback exactly when the runtime may take it
         // (AstHelpers.LexicalFallbackMayBeSelected), and the formula-lifting roles
-        // and the sibling order classify a `.string` edge as the declared member or
-        // the intrinsic by its receiver (FormulaLiftingRoles.EdgeKind).
+        // classify a `.string` edge as the declared member or the intrinsic by its
+        // receiver (FormulaLiftingRoles.EdgeKind).
         var missSelection = scope.StaticContext is { } structuralContext
             ? structuralContext.Operation.Miss(structuralContext.Key, dotCall)
             : dotCall.GetStructuralMissSelection(ResolveDotCallReceiverProvider(dotCall, scope, parameters));

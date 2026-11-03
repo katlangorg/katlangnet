@@ -135,19 +135,32 @@ internal static partial class ImplicitArgumentResolver
             Modules = modules ?? new(),
             StructuralOperation = structuralOperation,
         };
+
+        // B3-5★: every Q8 fact is selected before anything is rewritten, so no body reads another's provisional signature.
+        // A refused selection is a front-end error of the self-dependent-inference family (A1, X-04 B): nothing is
+        // rewritten or published, and the caller takes A1's recovery route over the detected tree.
+        run.Selected = SelectSignatures(root, SignatureMap.Empty(observations), ForwardableParameters.None, isRoot: true, branchContext: null, run);
+        if (!run.Selected.Succeeded)
+        {
+            ReportRefusedSelection(run.Selected, run);
+            run.ReleaseLevels();
+            return root;
+        }
+
         var resolved = ProcessAlgorithm(
             root,
-            parentParamMap: SignatureMap.Empty(observations, run.Pending),
+            parentParamMap: SignatureMap.Empty(observations),
             ForwardableParameters.None,
             isRoot: true,
             observations,
             diagnostics,
             branchContext: null,
             run);
-        run.CommitDeferredChecks();
-        run.ReleaseLevels();
         if (structuralOperation.Published(structuralOperation.Root, StaticPublicationStage.Resolved) is null)
             structuralOperation.Publish(structuralOperation.Root, StaticPublicationStage.Resolved, resolved);
+        run.CompletePendingTargets();
+        run.CommitDeferredChecks();
+        run.ReleaseLevels();
         observations?.StageObserver?.Invoke("completed-publication", true);
         structuralOperation.CompleteLookups(resolved);
         observations?.StageObserver?.Invoke("completed-publication", false);
@@ -163,7 +176,7 @@ internal static partial class ImplicitArgumentResolver
     /// SEMANTIC REGION rather than once per path (M4). Run-local: created per resolution,
     /// garbage afterwards — never static, never ambient.
     /// </summary>
-    private sealed class ResolutionRun(SourceSpan? importSite = null, PendingProperties? outerPending = null, ProcessedBodies? outerBodies = null,
+    private sealed class ResolutionRun(SourceSpan? importSite = null, ProcessedBodies? outerBodies = null,
         StaticStructureOperation? structuralOperation = null)
     {
         /// <summary>
@@ -214,6 +227,18 @@ internal static partial class ImplicitArgumentResolver
         /// </summary>
         public ModuleUnits Modules = new();
         public StaticStructureOperation? StructuralOperation = structuralOperation;
+
+        /// <summary>The analysis in progress (B3-5★): non-null only while <see cref="SelectSignatures"/> walks the input.</summary>
+        public SignatureAnalysis? Analysis;
+
+        /// <summary>
+        /// The selected Q8 facts of this resolution (B3-5★), decided before the rewrite starts: every open body's final
+        /// signature by its context. The rewrite reads a document body's signature here and nowhere else.
+        /// </summary>
+        public SelectedSignatures? Selected;
+
+        /// <summary>The admitting operation's cancellation token.</summary>
+        public CancellationToken CancellationToken => StructuralOperation?.Queries.OperationToken ?? default;
 
         /// <summary>
         /// The DIRECT declaration chain of the level the walk is currently inside (<see cref="ResolverLevel"/>,
@@ -345,9 +370,6 @@ internal static partial class ImplicitArgumentResolver
         /// <summary>The prelude a name the owner walk leaves to it resolves in (builtins, Math, host operations).</summary>
         public required PreludeContext Prelude { get; init; }
 
-        /// <summary>The properties whose owners' loops have not processed them yet (the demand table).</summary>
-        public readonly PendingProperties Pending = new(outerPending);
-
         /// <summary>The bodies this run processed — and, for a deferred branch's run, the eager run's (<see cref="ProcessedBodies"/>).</summary>
         public readonly ProcessedBodies Bodies = new(outerBodies, structuralOperation);
 
@@ -408,82 +430,83 @@ internal static partial class ImplicitArgumentResolver
             _walkLevels = null;
         }
 
-        /// <summary>
-        /// The processed form of the written body <paramref name="written"/> where a static read ended, processing it first
-        /// when it is a property its loop has not processed yet and that is allowed (<see cref="PendingProperties.Demand"/>:
-        /// a read that reaches a pending property processes it on demand); null while it stays unprocessed — a member of a
-        /// sibling cycle, one in progress — or no loop records it.
-        /// </summary>
-        public Algorithm? ProcessedFormOrDemand(Algorithm written)
-        {
-            if (Bodies.ProcessedFormOf(written) is { } processed)
-                return processed;
-            Pending.Demand(written);
-            return Bodies.ProcessedFormOf(written);
-        }
-
-        // The recorded alias targets that are still a written body this run has not processed (M4★): the target cells
-        // pending on each written body.
-        private Dictionary<Algorithm, List<AliasTargetCell>>? _pendingTargets;
+        // The recorded alias targets whose endpoint this run has not processed yet (M4★), by the endpoint's identity (its
+        // context, B3-5★): the target cells pending on it.
+        private Dictionary<object, List<AliasTargetCell>>? _pendingTargets;
 
         /// <summary>
-        /// The target cell of an alias whose target <paramref name="target"/> is a written body not processed yet (an
-        /// in-progress or unsettled declaration, M4★): pending on that body, completed by <see cref="CompleteStructure"/>.
+        /// The target cell of an alias whose endpoint <paramref name="target"/> this run has not processed yet: pending on
+        /// it, completed once that body is processed (<see cref="CompleteStructure"/>, <see cref="CompletePendingTargets"/>).
+        /// Its identity and signature are final already; only the processed algorithm is still to come.
         /// </summary>
         public AliasTargetCell PendingTargetOn(AliasTarget target)
         {
             var cell = AliasTargetCell.PendingOn(target);
             _pendingTargets ??= new(ReferenceEqualityComparer.Instance);
-            if (!_pendingTargets.TryGetValue(target.Algorithm, out var cells))
-                _pendingTargets.Add(target.Algorithm, cells = []);
+            if (!_pendingTargets.TryGetValue(target.Identity, out var cells))
+                _pendingTargets.Add(target.Identity, cells = []);
             cells.Add(cell);
             return cell;
         }
 
         /// <summary>
-        /// Records that <paramref name="written"/>, the value of the property <paramref name="name"/>, is processed as
-        /// <paramref name="processed"/> (<paramref name="entry"/> its processed binding), completing each target cell
-        /// pending on it with the target a read of the processed binding gives (its lifted parameters included; a
-        /// family's from its clauses, which processing leaves as they are).
+        /// Records that <paramref name="written"/> — the value of a property, in the context <paramref name="key"/> — is
+        /// processed as <paramref name="processed"/>, completing each target cell pending on that context with it.
         /// </summary>
-        public void CompleteStructure(Algorithm written, Algorithm processed, VisibleProperty? entry, string name)
+        public void CompleteStructure(Algorithm written, Algorithm processed, StaticScopeKey? key)
         {
             Bodies.Record(written, processed);
-            if (_pendingTargets is not null && _pendingTargets.Remove(written, out var targets))
+            if (key is not null && _pendingTargets is not null && _pendingTargets.Remove(key, out var targets))
             {
                 foreach (var target in targets)
-                    target.Complete(ProcessedTarget(target.Target!, processed, entry, name));
+                    target.Complete(ProcessedTarget(target.Target!, processed));
             }
         }
 
-        // The target a read of the processed binding gives, written as the alias wrote it (TryResolveCallable's reads).
-        private AliasTarget? ProcessedTarget(AliasTarget written, Algorithm processed, VisibleProperty? entry, string name)
+        /// <summary>
+        /// Completes every target cell still pending when the rewrite ends (B3-5★; research defect D15): a cell pending on a
+        /// body the rewrite processed as a nested region (a block's member) rather than as a property of a level it walked is
+        /// completed from that body's contextual publication — through the region alias of a context the rewrite served from
+        /// another context's processing (<see cref="StaticStructureOperation.AliasResolvedRegion"/>) — and so is every
+        /// structure cell still pending. Never from a body-only memo: a body shared by two contexts has a processed form per
+        /// context.
+        /// </summary>
+        public void CompletePendingTargets()
+        {
+            if (StructuralOperation is not { } operation)
+                return;
+            operation.CompletePendingStructureCells();
+            if (_pendingTargets is null)
+                return;
+            foreach (var (identity, cells) in _pendingTargets.ToArray())
+            {
+                if (identity is not StaticScopeKey key || operation.ResolvedView(key) is not { } processed)
+                    continue;
+                foreach (var cell in cells)
+                    cell.Complete(ProcessedTarget(cell.Target!, processed));
+                _pendingTargets.Remove(identity);
+            }
+        }
+
+        // The target a read of the processed body gives: the same identity and signature, the processed algorithm.
+        private static AliasTarget? ProcessedTarget(AliasTarget written, Algorithm processed)
             => processed switch
             {
                 Algorithm.Alias { HasRuntimeTarget: false } alias => alias.ResolvedTarget ?? written,
                 Algorithm.Alias => written,
-                Algorithm.Conditional family
-                    => new AliasTarget(family, written.DisplayName, family, FamilyLiftingSignature(name, family, this), IsStrictValue: false),
-                _ when entry is not null
-                    => new AliasTarget(entry, written.DisplayName, processed, LiftingSignature.Of(entry.Signature), Prelude.IsStrictValue(processed)),
-                _ => written,
+                _ => written with { Algorithm = processed },
             };
-
-        /// <summary>The live structural depth and the on-demand processing it admits.</summary>
-        public readonly DemandDepthBudget DepthBudget = new();
-
-        /// <summary>Admits a demand for <paramref name="property"/> (see <see cref="DemandDepthBudget.TryEnter"/>).</summary>
-        public bool TryEnterDemand(Property property, DiagnosticBag? diagnostics)
-            => DepthBudget.TryEnter(property, diagnostics, ImportSite);
-
-        public void ExitDemand() => DepthBudget.Exit();
 
         /// <summary>The first-PUBLIC member index of each open provider, by exact provider reference.</summary>
         public OpenMemberIndexCache OpenMemberIndexes => _openMemberIndexes ??= new(Observations);
         private OpenMemberIndexCache? _openMemberIndexes;
 
-        /// <summary>The lifting signature of each resolved algorithm outside the document's map (prelude, opened and dotted members, families), by reference.</summary>
-        public readonly Dictionary<Algorithm, LiftingSignature> LiftingSignatures = new(ReferenceEqualityComparer.Instance);
+        /// <summary>
+        /// The lifting signature of each resolved algorithm outside the selection (prelude, opened and dotted members,
+        /// families, closed bodies), by reference and the name it is displayed under — never the first name that reached
+        /// it, which the analysis and the rewrite need not share (B3-5★).
+        /// </summary>
+        public readonly Dictionary<(Algorithm Algorithm, string Name), LiftingSignature> LiftingSignatures = new(NamedAlgorithmComparer.Instance);
 
         /// <summary>The run's static-chase memos (OD-D verdicts; <see cref="StructuralProcessingViews"/>).</summary>
         public StructuralProcessingViews StructuralViews => _structuralViews ??= new(OpenMemberIndexes, StructuralOperation);
@@ -559,78 +582,6 @@ internal static partial class ImplicitArgumentResolver
 
     }
 
-    /// <summary>
-    /// HOST SAFETY OF ON-DEMAND PROCESSING (one per resolution run). A demand processes a pending
-    /// property in the MIDDLE of another property's rewrite, so the two recursions stack — the one
-    /// place the resolver's depth is not the tree's own, which the structural preflight bounded. A
-    /// demand is admitted only when the demanded property's structural height fits the depth left
-    /// under the pass's structural gate (<see cref="EvaluationLimits.MaxSupportedAstDepth"/>) after
-    /// the live depth and this demand's own frames (<see cref="FrameWeight"/>, charged to the live
-    /// depth while it runs): however demands chain, the stack never exceeds what one legal traversal
-    /// of that depth may use. A refused demand is the front-end error
-    /// <see cref="DiagnosticCode.AstDepthLimitExceeded"/> at the demanded property, reported once —
-    /// never a silent stale read and never a host stack overflow. Deterministic: the live depth is a
-    /// function of the program and the traversal order alone.
-    /// </summary>
-    internal sealed class DemandDepthBudget
-    {
-        /// <summary>
-        /// The resolver's LIVE structural depth: the algorithms, rewritten expressions and collected
-        /// expressions currently on its recursion path, one unit each — the depth the structural
-        /// preflight bounds for one traversal — plus <see cref="FrameWeight"/> units for every active
-        /// on-demand processing's own frames.
-        /// </summary>
-        public int LiveDepth;
-
-        private HashSet<Property>? _refused;
-
-        /// <summary>
-        /// The depth units one on-demand processing's own frames are charged: measured in September
-        /// 2026 at about 7.9 KB of frames per demand beside about 0.96 KB per live-depth unit of the
-        /// rewrite (debug build), so one demand weighs a little over eight units; ten keep a margin.
-        /// </summary>
-        internal const int FrameWeight = 10;
-
-        /// <summary>
-        /// Admits a demand for <paramref name="property"/>, charging its frames to the live depth
-        /// until <see cref="Exit"/>; otherwise reports the refusal once (at the property's declaration,
-        /// or <paramref name="importSite"/> for imported content) and returns false.
-        /// </summary>
-        public bool TryEnter(Property property, DiagnosticBag? diagnostics, SourceSpan? importSite)
-        {
-            if (_refused?.Contains(property) == true)
-                return false;
-
-            var remaining = EvaluationLimits.MaxSupportedAstDepth - LiveDepth - FrameWeight;
-            if (remaining >= 1
-                && AstStructuralPreflight.Check(property.Value, remaining, AstConsumerProfile.FullyRecursive) is null)
-            {
-                LiveDepth += FrameWeight;
-                return true;
-            }
-
-            (_refused ??= new(ReferenceEqualityComparer.Instance)).Add(property);
-            diagnostics?.Report(
-                DiagnosticCode.AstDepthLimitExceeded,
-                property.FirstDeclarationSpan ?? importSite,
-                property.Name,
-                static name => BeyondBudgetMessage(name));
-            return false;
-        }
-
-        /// <summary>Ends an admitted demand, releasing its frames' charge.</summary>
-        public void Exit() => LiveDepth -= FrameWeight;
-
-        internal static string BeyondBudgetMessage(string name)
-        {
-            var property = ExprNameRenderer.BoundName(name);
-            return $"'{property}' is reached through a chain of definitions that is too deep to elaborate safely: "
-                + $"formula lifting needs the signature of '{property}' while the definitions that lead to it are still being elaborated, "
-                + $"and elaborating it there would exceed the structural depth limit of {EvaluationLimits.MaxSupportedAstDepth} nodes. "
-                + "Shorten this chain of definitions that depend on one another.";
-        }
-    }
-
     /// <summary>Q8 processing adapters over the operation's selected Q1–Q7 facts. No structural-result cache.</summary>
     internal sealed class StructuralProcessingViews(OpenMemberIndexCache indexes,
         StaticStructureOperation? structuralOperation = null)
@@ -643,187 +594,6 @@ internal static partial class ImplicitArgumentResolver
                 outer?.StaticContext?.Key ?? StructuralOperation.Queries.Keys.Root, body))!;
         public Algorithm? DeclaredMember(Algorithm body, string name)
             => ElaboratedScopeLookup.TryLookupProperty(body, name)?.Property.Value;
-    }
-
-    /// <summary>
-    /// The DEMAND TABLE of one resolution: every property entry a level's loop has not processed yet,
-    /// with its loop. The sibling-order channel orders a level's properties so every read it can
-    /// classify sees processed siblings, and honors a soft preference for every read it can only
-    /// anticipate (a callee resolved only by name resolution's full power — an opened member, a
-    /// callee a nested body declares); a read that still reaches a pending property processes it on
-    /// demand (<see cref="PropertyLoop.EnsureOnDemand"/>), so no formula reads an unprocessed
-    /// signature outside a sibling cycle (whose members keep the processing-order fallback).
-    /// </summary>
-    internal sealed class PendingProperties(PendingProperties? outer = null)
-    {
-        private readonly Dictionary<VisibleProperty, (PropertyLoop Loop, int Index)> _entries = new(ReferenceEqualityComparer.Instance);
-
-        // Each recorded entry by its INPUT body, so a static read that ends at a written body reaches the property it is
-        // the value of (Demand). A body several entries share — two holders of one module (Q-32 I-U), a host DAG — answers
-        // with the first: the run records ONE processed form per body (ProcessedBodies, the first), so a read of the body
-        // reads that one whichever entry processes it.
-        private readonly Dictionary<Algorithm, VisibleProperty> _bodies = new(ReferenceEqualityComparer.Instance);
-
-        public void Register(VisibleProperty entry, PropertyLoop loop, int index)
-        {
-            _entries[entry] = (loop, index);
-            _bodies.TryAdd(entry.Value, entry);
-        }
-
-        /// <summary>
-        /// The current entry of the property <paramref name="entry"/> was recorded for, processing it
-        /// first when allowed. A deferred branch's run consults the eager run's table for the entries
-        /// its snapshot recorded (their loops completed long before).
-        /// </summary>
-        public VisibleProperty Current(VisibleProperty entry)
-        {
-            if (!_entries.TryGetValue(entry, out var pending))
-                return outer?.Current(entry) ?? entry;
-            pending.Loop.EnsureOnDemand(pending.Index);
-            return pending.Loop.CurrentEntry(pending.Index);
-        }
-
-        /// <summary>
-        /// Processes the property whose INPUT body is <paramref name="written"/> — where a static read ended — when its loop
-        /// has not processed it yet and that is allowed (<see cref="Current"/>): a member reached through an owner in
-        /// progress (<c>Lib.A</c> inside Lib), or through a reference to it, is a read of that property like its name.
-        /// Nothing for a body no loop records.
-        /// </summary>
-        public void Demand(Algorithm written)
-        {
-            if (_bodies.TryGetValue(written, out var entry))
-                Current(entry);
-            else
-                outer?.Demand(written);
-        }
-
-        /// <summary>
-        /// Whether the property <paramref name="entry"/> was recorded for is still its INPUT — its loop has not
-        /// completed it (a member of a sibling cycle, one in progress, or one depending on either) — so a read of it
-        /// is its written body. Reads only: nothing is processed.
-        /// </summary>
-        public bool IsUnsettled(VisibleProperty entry)
-            => _entries.TryGetValue(entry, out var pending)
-                ? !pending.Loop.IsDone(pending.Index)
-                : outer?.IsUnsettled(entry) ?? false;
-    }
-
-    /// <summary>
-    /// One level's property loop: processes each property once — in the order channel's topological
-    /// order, or earlier when a read demands it — and records its processed entry.
-    /// </summary>
-    internal sealed class PropertyLoop(PropertyDependencyGraph order, Action<int> process, Func<int, bool> tryEnterDemand, Action exitDemand)
-    {
-        private readonly byte[] _states = new byte[order.Count];   // 0 pending, 1 in progress, 2 done
-        private readonly VisibleProperty?[] _current = new VisibleProperty?[order.Count];
-
-        // How many properties of this level have completed: a refused demand stays refused until the
-        // next completion, because until then every property it reached in progress still is.
-        private int _completions;
-        private int[]? _refusedAtCompletion;   // 1 + the completion count a demand was refused at; 0 = never
-
-        public void Initialize(int index, VisibleProperty entry) => _current[index] = entry;
-
-        public VisibleProperty CurrentEntry(int index) => _current[index]!;
-
-        /// <summary>Whether the loop has completed property <paramref name="index"/>.</summary>
-        public bool IsDone(int index) => _states[index] == 2;
-
-        public void Complete(int index, VisibleProperty entry) => _current[index] = entry;
-
-        /// <summary>The loop driver: processes <paramref name="index"/> unless done or in progress.</summary>
-        public void Ensure(int index)
-        {
-            if (_states[index] != 0)
-                return;
-            _states[index] = 1;
-            process(index);
-            _states[index] = 2;
-            _completions++;
-        }
-
-        /// <summary>
-        /// A read's demand: processes the property ahead of its turn, together with every sibling it
-        /// hard-depends on that is still pending — dependencies first, exactly the order its turn would
-        /// have — so what it reads is what it would have read in order. Refused (the read sees the
-        /// property's current entry) for a member of a sibling cycle or a property depending on one
-        /// (<see cref="PropertyDependencyGraph.CyclicIndices"/>: the cycle keeps its processing-order
-        /// fallback); when that closure reaches a sibling still IN PROGRESS — the demanding read comes
-        /// from inside a property the demanded one depends on, so processing it now would read that
-        /// property unprocessed (a cycle no channel edge closed; the in-progress property is the one
-        /// that reads the unprocessed entry, as its turn came first); and when the run's depth budget
-        /// refuses (<see cref="DemandDepthBudget.TryEnter"/>).
-        /// </summary>
-        public void EnsureOnDemand(int index)
-        {
-            if (_states[index] != 0
-                || order.CyclicIndices.Contains(index)
-                || _refusedAtCompletion?[index] == _completions + 1)
-            {
-                return;
-            }
-
-            if (PendingClosure(index) is not { } closure)
-            {
-                (_refusedAtCompletion ??= new int[_states.Length])[index] = _completions + 1;
-                return;
-            }
-
-            foreach (var member in closure)
-            {
-                // A nested demand may have processed a later member meanwhile.
-                if (_states[member] != 0)
-                    continue;
-                if (!tryEnterDemand(member))
-                    return;
-                try
-                {
-                    Ensure(member);
-                }
-                finally
-                {
-                    exitDemand();
-                }
-            }
-        }
-
-        /// <summary>
-        /// The pending hard-dependency closure of <paramref name="root"/> in dependency-first order
-        /// (<paramref name="root"/> last), or null when it reaches a property in progress. Iterative:
-        /// a long dependency chain never grows the host stack. A dependency of a property outside
-        /// every cycle is outside every cycle too (the cyclic set includes a cycle's dependents).
-        /// </summary>
-        private List<int>? PendingClosure(int root)
-        {
-            var closure = new List<int>();
-            var entered = new HashSet<int> { root };
-            var stack = new Stack<(int Property, int Next)>();
-            stack.Push((root, 0));
-            while (stack.TryPop(out var frame))
-            {
-                var dependencies = order[frame.Property].SiblingDependencyIndices;
-                var next = frame.Next;
-                var descended = false;
-                while (next < dependencies.Count)
-                {
-                    var dependency = dependencies[next++];
-                    if (_states[dependency] == 1)
-                        return null;
-                    if (_states[dependency] == 2 || !entered.Add(dependency))
-                        continue;
-
-                    stack.Push((frame.Property, next));
-                    stack.Push((dependency, 0));
-                    descended = true;
-                    break;
-                }
-
-                if (!descended)
-                    closure.Add(frame.Property);
-            }
-
-            return closure;
-        }
     }
 
     /// <summary>
@@ -875,56 +645,40 @@ internal static partial class ImplicitArgumentResolver
     /// <summary>
     /// The visible signature map of one rewrite: the signature of every property the algorithm
     /// can see, nearest declaration winning. PERSISTENT (FE-1): a nested algorithm that declares
-    /// properties EXTENDS its parent's map with just those names, and a deferred branch keeps an
-    /// O(1) snapshot, so a scope seeing W signatures with K such nested algorithms costs O(K)
-    /// small extensions — never K copies of the W-entry map. A map is written only by the property
-    /// loop of the algorithm that created it (its own local names, after each is processed); a
-    /// child reads it, extends it, or snapshots it, and an extension or snapshot is independent of
-    /// every later write to the map it came from — exactly the copy-on-entry semantics the former
-    /// dictionary copy had.
+    /// properties EXTENDS its parent's map with just those names, so a scope seeing W signatures
+    /// with K such nested algorithms costs O(K) small extensions — never K copies of the W-entry
+    /// map. IMMUTABLE (B3-5★): a level's entries carry its properties' SELECTED signatures from the
+    /// moment the level creates its map (<see cref="SelectSignatures"/> decides every signature of
+    /// the run before any rewrite reads one), so no map is written after it is created and no read
+    /// depends on which sibling a level processes first.
     /// </summary>
     internal sealed class SignatureMap
     {
-        private ImmutableDictionary<string, VisibleProperty> _entries;
+        private readonly ImmutableDictionary<string, VisibleProperty> _entries;
         public SignatureVersion Version { get; private set; }
         private readonly FrontEndTraversalObservations? _observations;
-        private readonly PendingProperties? _pending;
         private readonly Func<string, VisibleProperty?>? _external;
 
         private SignatureMap(
             ImmutableDictionary<string, VisibleProperty> entries,
             OpenLevel? opens,
-            PendingProperties? pending,
             FrontEndTraversalObservations? observations,
             Func<string, VisibleProperty?>? external = null)
         {
             _entries = entries;
             Version = new(Parent: null, Changes: []);
             Opens = opens;
-            _pending = pending;
             _observations = observations;
             _external = external;
         }
 
         /// <summary>A fresh map with no visible signature (a root, an open-target region).</summary>
-        public static SignatureMap Empty(FrontEndTraversalObservations? observations, PendingProperties? pending = null)
-            => new(ImmutableDictionary.Create<string, VisibleProperty>(StringComparer.Ordinal), opens: null, pending, observations);
+        public static SignatureMap Empty(FrontEndTraversalObservations? observations)
+            => new(ImmutableDictionary.Create<string, VisibleProperty>(StringComparer.Ordinal), opens: null, observations);
 
         internal static SignatureMap CompletedExternal(Func<string, VisibleProperty?> lookup,
-            FrontEndTraversalObservations? observations, PendingProperties pending)
-            => new(ImmutableDictionary.Create<string, VisibleProperty>(StringComparer.Ordinal), null, pending, observations, lookup);
-
-        /// <summary>
-        /// A map over a recorded <see cref="Snapshot"/> (a deferred branch's demand-time run), answering
-        /// pending questions through <paramref name="pending"/> — that run's table, chained to the one
-        /// the snapshot was recorded under.
-        /// </summary>
-        public static SignatureMap FromSnapshot(MapSnapshot snapshot, FrontEndTraversalObservations? observations, PendingProperties pending)
-            => new(snapshot.Entries, snapshot.Opens, pending, observations);
-
-        /// <summary>The current entries and open chain, frozen: later writes to this map never reach the snapshot.</summary>
-        public MapSnapshot Snapshot => _external is null ? new(_entries, Opens, _pending)
-            : throw new InvalidOperationException("A structural deferred context is captured by identity, never as a legacy signature snapshot.");
+            FrontEndTraversalObservations? observations)
+            => new(ImmutableDictionary.Create<string, VisibleProperty>(StringComparer.Ordinal), null, observations, lookup);
 
         /// <summary>
         /// The <c>open</c> levels visible here, innermost first: consulted for a name only after the
@@ -932,7 +686,7 @@ internal static partial class ImplicitArgumentResolver
         /// </summary>
         public OpenLevel? Opens { get; private set; }
 
-        /// <summary>The entry as recorded in THIS map — a kind question, which processing never changes.</summary>
+        /// <summary>The entry recorded for <paramref name="name"/>: its selected signature and its written algorithm.</summary>
         public bool TryGetValue(string name, [System.Diagnostics.CodeAnalysis.MaybeNullWhen(false)] out VisibleProperty entry)
         {
             if (_entries.TryGetValue(name, out entry)) return true;
@@ -940,38 +694,7 @@ internal static partial class ImplicitArgumentResolver
             return entry is not null;
         }
 
-        /// <summary>
-        /// The entry as it stands NOW — a signature question. A property its owner's loop has not
-        /// processed yet is processed on demand first when that is allowed
-        /// (<see cref="PropertyLoop.EnsureOnDemand"/>); otherwise — a cycle member, a property in
-        /// progress, one that depends on a property in progress — it answers with its current entry.
-        /// </summary>
-        public bool TryGetCurrent(string name, [System.Diagnostics.CodeAnalysis.MaybeNullWhen(false)] out VisibleProperty entry)
-        {
-            if (!TryGetValue(name, out entry))
-                return false;
-            if (_pending is { } pending)
-                entry = pending.Current(entry);
-            return true;
-        }
-
         public bool ContainsKey(string name) => TryGetValue(name, out _);
-
-        /// <summary>
-        /// Whether the property recorded under <paramref name="name"/> is still its INPUT (a member of a sibling cycle,
-        /// or one in progress): read through <see cref="TryGetCurrent"/> it is its written body. Reads only.
-        /// </summary>
-        public bool IsUnsettled(string name) => TryGetValue(name, out var entry) && IsUnsettled(entry);
-
-        /// <summary>Whether the property <paramref name="entry"/> was recorded for is still its INPUT. Reads only.</summary>
-        public bool IsUnsettled(VisibleProperty entry) => _pending?.IsUnsettled(entry) ?? false;
-
-        /// <summary>
-        /// The entry as it stands NOW of a property <paramref name="entry"/> was recorded for, wherever it was
-        /// found (a static chase's direct declaration chain): processed on demand when that is allowed, exactly
-        /// as <see cref="TryGetCurrent"/> answers it.
-        /// </summary>
-        public VisibleProperty CurrentOf(VisibleProperty entry) => _pending is { } pending ? pending.Current(entry) : entry;
 
         /// <summary>A NEW map: these entries overlaid with <paramref name="locals"/> (local wins), the open chain inherited.</summary>
         public SignatureMap Extend(IReadOnlyDictionary<string, VisibleProperty> locals)
@@ -986,41 +709,24 @@ internal static partial class ImplicitArgumentResolver
                 _observations?.RecordContextEntryWritten();
             }
 
-            var result = new SignatureMap(extended.ToImmutable(), Opens, _pending, _observations, _external);
+            var result = new SignatureMap(extended.ToImmutable(), Opens, _observations, _external);
             result.Version = new(Version, changes);
             return result;
         }
 
         /// <summary>
-        /// Makes <paramref name="providers"/> (built over THIS map, whose entries the opener level's
-        /// loop keeps current) the innermost open level. Only on a map the opener level itself just
-        /// created, before anything reads it: its property loop writes to it and every nested body
-        /// extends it, so both see the level's opens.
+        /// Makes the opener level's <c>open</c> declaration the innermost open level. Only on a map the opener level
+        /// itself just created, before anything reads it: every nested body extends it, so each sees the level's opens.
         /// </summary>
-        public void AttachOpens(Func<SignatureMap, IReadOnlyList<OpenProvider>> providers)
-            => Opens = new OpenLevel(providers(this), Opens);
-
-        /// <summary>Records a processed property's entry in THIS map (its creator's property loop only).</summary>
-        public void Set(string name, VisibleProperty entry)
-        {
-            var previous = TryGetValue(name, out var existing) ? existing : null;
-            _entries = _entries.SetItem(name, entry);
-            Version = new(Version, [new(name, previous, entry)]);
-            _observations?.RecordContextEntryWritten();
-        }
+        public void AttachOpens() => Opens = new OpenLevel(Opens);
     }
 
-    /// <summary>A frozen <see cref="SignatureMap"/>: entries, open chain, and the demand table its pending entries answer through.</summary>
-    internal sealed record MapSnapshot(
-        ImmutableDictionary<string, VisibleProperty> Entries,
-        OpenLevel? Opens,
-        PendingProperties? Pending);
-
     /// <summary>
-    /// One visible property of a rewrite: its signature and its algorithm — the INPUT value until its
-    /// owner's property loop has processed it, the processed value afterwards (a new entry). The
-    /// algorithm answers kind questions (a clause family, a user algorithm) and member questions (a
-    /// dotted or opened callee's own signature); an entry's identity is a region-key token.
+    /// One visible property of a rewrite: its SELECTED signature (B3-5★) and its WRITTEN algorithm.
+    /// The algorithm answers member questions (a dotted or opened callee's own signature) and the
+    /// kind questions processing never changes (a clause family, a user algorithm — whether a body
+    /// becomes an alias is the static structure's answer, <see cref="StaticCalleeKindOf"/>); an
+    /// entry's identity is a region-key token.
     /// </summary>
     internal sealed class VisibleProperty(CallableSignature signature, Algorithm value, DeclaringOwners? owners = null)
     {
@@ -1042,19 +748,22 @@ internal static partial class ImplicitArgumentResolver
     }
 
     /// <summary>
-    /// One level's <c>open</c> targets (a repeated written-target key skipped as the pure
-    /// optimization it is — <see cref="Evaluator.OpenTargetDedupKey"/>; providers are counted by
-    /// identity when a name is looked up), and the enclosing levels' chain.
+    /// One level's <c>open</c> declaration as a REGION-KEY TOKEN (<see cref="AlgorithmRegionKey"/>, <see cref="OpensReadBy"/>):
+    /// what an opened name resolves to is the static structure's answer (Q1's opened binding, read through the level's
+    /// static context — <see cref="StaticOpenedDeclaration"/>), so the token carries no provider; it only distinguishes the
+    /// open contexts a shared body is rewritten in, innermost first.
     /// </summary>
-    internal sealed record OpenLevel(IReadOnlyList<OpenProvider> Providers, OpenLevel? Outer);
+    internal sealed class OpenLevel(OpenLevel? outer)
+    {
+        public OpenLevel? Outer { get; } = outer;
+    }
 
     /// <summary>
     /// One LEVEL of the resolver's DIRECT declaration chain (M4★; ALIAS-UNIFY-1 review): the properties the level
     /// itself declares and the enclosing level, so a static reference chase resolves a followed row from ITS OWN
     /// declarations outward — never in the map of the body that started the chase, where a nearer declaration
     /// could shadow the head or the head may not be visible at all (the evaluator's direct lookup from the
-    /// reference's own scope). A level the walk processes records its INPUT entries (a pending property is then
-    /// processed on demand through them, <see cref="SignatureMap.CurrentOf"/>); a body a chase NAVIGATES into — a
+    /// reference's own scope). A level the walk processes records its INPUT entries; a body a chase NAVIGATES into — a
     /// provider's, a receiver's, a block's — is a level over that algorithm's own declared properties, ONE object per
     /// static scope (<see cref="StructuralProcessingViews.LevelOf"/>). A loaded module's body restarts the chain
     /// (Q-31 H-P). The operation keeps each level (<see cref="StaticStructureOperation.ResolverLevel"/>), so a level is
@@ -1091,7 +800,7 @@ internal static partial class ImplicitArgumentResolver
 
         /// <summary>
         /// The body a chase NAVIGATED into, whose own declarations this level holds: the owner of every member found
-        /// here, processed with them (<see cref="ProcessedFormOnDemand"/>). Null for a level the walk processes.
+        /// here. Null for a level the walk processes.
         /// </summary>
         public Algorithm? NavigatedBody => _body;
 
@@ -1156,49 +865,28 @@ internal static partial class ImplicitArgumentResolver
         }
     }
 
-    /// <summary>Projects the selected Q3 endpoint; Q8 decides only whether its processed view is required.</summary>
+    /// <summary>Projects the selected Q3 endpoint of a declaration (its detected input; B3-5★ reads no processed form).</summary>
     private static StaticDeclaration? StaticReferenceStructure(
-        StaticDeclaration start, bool current, SignatureMap map, PreludeContext prelude, StructuralProcessingViews memos, bool viaOpens, StaticCycleCheck check)
+        StaticDeclaration start, StructuralProcessingViews memos, bool viaOpens, StaticCycleCheck check)
     {
         var operation = memos.StructuralOperation;
         var key = operation.ContextOf(start.Level?.StaticContext?.Key ?? operation.Queries.Keys.Root, start.Target);
-        return operation.SelectedStructure(key, current, map, viaOpens, check);
+        return operation.SelectedStructure(key, viaOpens, check);
     }
 
-
-
-
-    /// <summary>Projects Q1's owned declaration into the Q8 processing map.</summary>
-    private static StaticDeclaration? DirectDeclaration(string name, ResolverLevel? level, bool current, SignatureMap map, PreludeContext prelude)
+    /// <summary>Projects Q1's owned declaration (or, outside every level, the prelude member).</summary>
+    private static StaticDeclaration? DirectDeclaration(string name, ResolverLevel? level, PreludeContext prelude)
         => level?.StaticContext is { } context
-            ? context.Operation.SelectedDeclaration(context.Key, name, StaticQueryProjection.OwnedBinding, current, map, StaticCycleCheck.Formation)
+            ? context.Operation.SelectedDeclaration(context.Key, name, StaticQueryProjection.OwnedBinding, StaticCycleCheck.Formation)
             : prelude.TryGetMember(name, out var member)
                 ? new StaticDeclaration(member.Value, OpenProviderIdentity.DeclaredIn(member.Value, DeclaringOwners.Root), DeclaringOwners.Root, null)
                 : null;
 
-
     /// <summary>Projects Q1's opened binding without independently selecting providers.</summary>
     private static StaticDeclaration? StaticOpenedDeclaration(
-        string name, ResolverLevel? level, SignatureMap map, PreludeContext prelude, StructuralProcessingViews memos,
-        StaticCycleCheck stratum = StaticCycleCheck.Formation)
+        string name, ResolverLevel? level, StaticCycleCheck stratum = StaticCycleCheck.Formation)
         => level?.StaticContext is { } context
-            ? context.Operation.SelectedDeclaration(context.Key, name, StaticQueryProjection.OpenedBinding, false, map, stratum) : null;
-
-
-
-    /// <summary>A Q8 view of one query-selected provider; it never follows a raw reference.</summary>
-    internal sealed class OpenProvider(Expr target, SignatureMap openerMap,
-        StaticStructureContext? structuralContext = null, Expr? written = null)
-    {
-        public Expr Head => target.OpenTargetHead();
-        public Algorithm? Resolve(bool current) => ResolveProvider(current)?.Target;
-        public ResolvedOpenTarget? ResolveProvider(bool current)
-        {
-            var context = structuralContext ?? throw new InvalidOperationException("An open requires the shared structural context.");
-            return context.Operation.OpenDeclaration(context.Key, written!, current, openerMap, StaticCycleCheck.Formation) is { } selected
-                ? new ResolvedOpenTarget(selected.Target, selected.Identity) : null;
-        }
-    }
+            ? context.Operation.SelectedDeclaration(context.Key, name, StaticQueryProjection.OpenedBinding, stratum) : null;
 
     /// <summary>
     /// Q-04 (decided September 28 2026): the PARAMETER bindings automatic parameter forwarding may
@@ -1462,9 +1150,11 @@ internal static partial class ImplicitArgumentResolver
     /// A completed algorithm region: the rewritten algorithm and, for a conditional branch
     /// body, the diagnostics its own rewrite reported — unforwardable bare-forwarding parameters
     /// (worded with the family's name), unforwardable callables and unliftable clause families — as
-    /// re-issuable templates.
+    /// re-issuable templates; and the context it was processed in, whose publications every other
+    /// context the region serves reads for its own descendants (B3-5★).
     /// </summary>
-    private sealed record AlgorithmRegion(Algorithm Rewritten, IReadOnlyList<BranchDiagnosticTemplate>? DiagnosticTemplates);
+    private sealed record AlgorithmRegion(Algorithm Rewritten, IReadOnlyList<BranchDiagnosticTemplate>? DiagnosticTemplates,
+        StaticScopeKey? Context);
 
     /// <summary>One branch-body report, minus the family name that words it.</summary>
     private readonly record struct BranchDiagnosticTemplate(
@@ -1478,8 +1168,8 @@ internal static partial class ImplicitArgumentResolver
     /// bind itself (a body's property names bind for everything inside it; parameters and
     /// binders are already <see cref="Expr.Param"/>s). These are exactly the names whose
     /// visible-map signatures the rewrite of the subtree can read — bare and called
-    /// references, the alias and canonical <c>Math</c> shadow checks, and the sibling-order
-    /// channel's shadow predicate all probe the map by a written name — while open targets
+    /// references, the alias and canonical <c>Math</c> shadow checks, and the signature analysis's
+    /// equation references all probe the map by a written name — while open targets
     /// (rewritten with fresh maps) and stored dot-edge fallbacks (never rewritten) read
     /// nothing. A pure function of the node: memoized per run, and reference-visited per
     /// subtree so a shared expression contributes its names once.
@@ -2083,14 +1773,22 @@ internal static partial class ImplicitArgumentResolver
     private static (VisibleProperty[] ByIndex, Dictionary<string, VisibleProperty> ByName) BuildPropertyEntries(
         IReadOnlyList<Property> properties,
         DeclaringOwners owners,
-        ResolverLevel? level = null)
+        ResolverLevel? level,
+        ResolutionRun run)
     {
         var byIndex = new VisibleProperty[properties.Count];
         var byName = new Dictionary<string, VisibleProperty>(StringComparer.Ordinal);
+        var operation = run.StructuralOperation;
         for (var i = 0; i < properties.Count; i++)
         {
             var property = properties[i];
-            byIndex[i] = new VisibleProperty(CallableSignature.FromAlgorithm(property.Name, property.Value), property.Value, owners) { Level = level };
+            // B3-5★: an open body's entry carries its SELECTED signature from the start (once the selection exists), so
+            // no read of it — before or after its rewrite — sees an intermediate one.
+            var signature = run.Selected is not null && operation is not null && level?.StaticContext is { } context
+                && SelectedSignatureOf(operation.ContextOf(context.Key, property.Value), property.Name, run) is { } selected
+                    ? selected
+                    : CallableSignature.FromAlgorithm(property.Name, property.Value);
+            byIndex[i] = new VisibleProperty(signature, property.Value, owners) { Level = level };
             byName[property.Name] = byIndex[i];
         }
 
@@ -2098,212 +1796,8 @@ internal static partial class ImplicitArgumentResolver
     }
 
     /// <summary>
-    /// One level's <c>open</c> targets over its processed targets, a repeated written-target key
-    /// skipped (it resolves the same target); whether two different targets are one provider is
-    /// decided by identity when a name is looked up (<see cref="TryResolveOpened"/>).
-    /// </summary>
-    private static IReadOnlyList<OpenProvider> OpenProvidersOf(IReadOnlyList<Expr> opens, SignatureMap openerMap, PreludeContext prelude, StructuralProcessingViews memos, StaticStructureContext? structuralContext = null)
-    {
-        var providers = new List<OpenProvider>(opens.Count);
-        var keys = new HashSet<string>(StringComparer.Ordinal);
-        for (var i = 0; i < opens.Count; i++)
-        {
-            if (keys.Add(Evaluator.OpenTargetDedupKey(opens[i], i)))
-                providers.Add(new OpenProvider(opens[i], openerMap, structuralContext, structuralContext?.Operation.SourceOf(structuralContext.Key).Opens[i]));
-        }
-
-        return providers;
-    }
-
-    /// <summary>
-    /// The sibling-order channel's view of a callee NAME at a level: the owner walk over the level's
-    /// map (its own properties, then every enclosing level's) and the prelude — the same resolution
-    /// the rewrite reads, so its value-role reads coincide. A name only an <c>open</c> provides is
-    /// left <see cref="LiftingCalleeKind.Dynamic"/> here: a nested body's opens are consulted before
-    /// the level's, so only the rewrite knows which provider decides; the channel records a soft
-    /// preference for what it can anticipate, and a read that still reaches a pending sibling is
-    /// processed on demand (<see cref="PendingProperties"/>).
-    /// </summary>
-    private static LiftingCallee CalleeKindByOwnerWalk(string name, SignatureMap map, PreludeContext prelude)
-        => map.TryGetValue(name, out var entry)
-            ? StaticCalleeKind(entry.Value, map, prelude)
-            : prelude.TryGetMember(name, out var member)
-                ? LiftingCallee.OfAlgorithm(member.Value, prelude.IsStrictValue(member.Value))
-                : LiftingCallee.Dynamic;
-
-    /// <summary>
-    /// The sibling of the level of <paramref name="owner"/> (the body in progress, <paramref name="level"/>) whose processing
-    /// an argumentless structural member path reads through that owner (the sibling-order channel's
-    /// <see cref="SiblingOrderLookup.OwnedMemberSibling"/>): the path read statically, every declaration as written — the
-    /// very read this pass makes of a path whose head is still in progress (<see cref="StructuralMemberAt"/>) — reaching a
-    /// member of the owner, directly or through a reference to it: that member when the path ends there (<c>Lib.A</c>
-    /// inside <c>Lib</c>), the member it passes on the way otherwise (<c>Lib.Y.W</c>: Y, whose processing processes W).
-    /// A path that never passes through the owner — a sibling's member, an outer declaration — reads none, and so does one
-    /// whose head only an <c>open</c> provides (a nested body's open may provide it first, so this channel leaves it to
-    /// the rewrite, which processes what it reads on demand); <paramref name="siblingIndexes"/> is the level's property
-    /// index by value, built once.
-    /// </summary>
-    private static int? OwnedMemberSibling(
-        Expr.DotCall path,
-        Algorithm.User owner,
-        ResolverLevel level,
-        SignatureMap levelMap,
-        IReadOnlyList<Property> siblings,
-        ref Dictionary<Algorithm, int>? siblingIndexes,
-        ResolutionRun run)
-    {
-        // The member a path reaches through the owner is selected from it by name: some step names a property of the level.
-        if (level.Entries is not { } entries || !PathNamesAnyOf(path, entries))
-            return null;
-        if (PathHead(path) is Expr.Resolve(var headName) && DirectDeclaration(headName, level, current: false, levelMap, run.Prelude) is null)
-            return null;
-        if (StructuralMemberAt(path, level, levelMap, run.Prelude, run.StructuralViews, current: false, StaticCycleCheck.Formation) is not { } selected)
-            return null;
-        var body = selected.Target;
-        if (run.StructuralOperation is { } operation && level.StaticContext is { } ownerContext)
-        {
-            for (var key = selected.Level?.StaticContext?.Key; key is not null; key = key.Parent)
-            {
-                if (ReferenceEquals(key, ownerContext.Key))
-                    return (siblingIndexes ??= SiblingIndexesOf(siblings)).TryGetValue(body, out var index) ? index : null;
-                body = operation.Published(key, StaticPublicationStage.Detected) ?? operation.SourceOf(key);
-            }
-            return null;
-        }
-        for (var at = selected.Level; at?.NavigatedBody is { } holder; at = at.Outer)
-        {
-            if (ReferenceEquals(holder, owner))
-                return (siblingIndexes ??= SiblingIndexesOf(siblings)).TryGetValue(body, out var index) ? index : null;
-            body = holder;
-        }
-
-        return null;
-
-        static bool PathNamesAnyOf(Expr path, IReadOnlyDictionary<string, VisibleProperty> entries)
-        {
-            for (var step = path; step is Expr.DotCall { Args: null } edge; step = edge.Target.UnwrapGraceOperand())
-            {
-                if (entries.ContainsKey(edge.Name))
-                    return true;
-            }
-
-            return false;
-        }
-    }
-
-    /// <summary>
-    /// The sibling-order channel's view of a MAY edge's refinement (<see cref="SiblingOrderLookup.RefinedMiss"/>): its
-    /// receiver read at <paramref name="level"/> exactly as <see cref="MissSelectionOf"/> reads it, from this pass's input
-    /// with nothing processed (<see cref="ReadReceiver"/>) — a certain miss, whose reads the channel orders as a certain
-    /// miss's; or an <c>.Algorithm</c> link body, which resolution processes where the verdict decides a lift, with the
-    /// sibling of this level it is or is held by (<see cref="SiblingHolding"/>; none when it lies outside the level). Null
-    /// when the refinement reads nothing — a parameter's member, a runtime reference's, an unresolved name's, a receiver
-    /// that has the member — and for a receiver whose head only an <c>open</c> provides when a body between the level and
-    /// the edge has opens of its own (<paramref name="nestedOpens"/>: its provider may provide the head first; the rewrite
-    /// processes what it reads on demand).
-    /// </summary>
-    private static RefinedMiss? ChannelRefinedMiss(
-        Expr.DotCall edge,
-        bool nestedOpens,
-        ResolverLevel level,
-        SignatureMap levelMap,
-        IReadOnlyList<Property> siblings,
-        ref Dictionary<Algorithm, int>? siblingIndexes,
-        ResolutionRun run)
-    {
-        if (nestedOpens && PathHead(edge.Target) is Expr.Resolve(var head) && DirectDeclaration(head, level, current: false, levelMap, run.Prelude) is null)
-            return null;
-        var receiver = ReadReceiver(edge.Target, level, levelMap, run, demand: null);
-        if (receiver.Kind == ReceiverReadingKind.Link)
-            return new RefinedMiss(CertainMiss: false, SiblingHolding(receiver.Link, siblings, ref siblingIndexes));
-        return receiver.Lacks(edge.Name, run) ? new RefinedMiss(CertainMiss: true, Link: null) : null;
-    }
-
-    /// <summary>
-    /// The sibling of a level whose processing processes the declaration <paramref name="declared"/> a static read reached:
-    /// the declaration itself when it is a sibling, otherwise the nearest of its owners that is — a sibling it is a member
-    /// of (the owner in progress's member is a sibling itself); null when its owners leave the level without one.
-    /// </summary>
-    private static int? SiblingHolding(StaticDeclaration declared, IReadOnlyList<Property> siblings, ref Dictionary<Algorithm, int>? siblingIndexes)
-    {
-        siblingIndexes ??= SiblingIndexesOf(siblings);
-        var body = declared.Target;
-        var at = declared.Level;
-        while (true)
-        {
-            if (siblingIndexes.TryGetValue(body, out var index))
-                return index;
-            if (at?.StaticContext is { } context)
-            {
-                body = context.Operation.Published(context.Key, StaticPublicationStage.Detected) ?? context.Operation.SourceOf(context.Key);
-                at = context.Key.Parent is { } parent ? context.Operation.ResolverLevel(parent) : null;
-                continue;
-            }
-            if (at?.NavigatedBody is not { } holder)
-                return null;
-            body = holder;
-            at = at.Outer;
-        }
-    }
-
-    /// <summary>A level's property index by value (the first property holding each value).</summary>
-    private static Dictionary<Algorithm, int> SiblingIndexesOf(IReadOnlyList<Property> siblings)
-    {
-        var indexes = new Dictionary<Algorithm, int>(ReferenceEqualityComparer.Instance);
-        for (var i = 0; i < siblings.Count; i++)
-            indexes.TryAdd(siblings[i].Value, i);
-        return indexes;
-    }
-
-    /// <summary>
-    /// The sibling whose value a name this level's OWN <c>open</c> provides comes from: the owner walk
-    /// leaves the name to the opens (no property of any level, no prelude member), and exactly one
-    /// provider of this level's innermost open level publicly declares it, headed by one of this
-    /// level's properties. A reference to it needs that sibling processed first, like a reference to
-    /// the sibling itself. Null otherwise (the rewrite demands anything else it reads).
-    /// </summary>
-    private static int? OpenedSiblingProvider(string name, OpenLevel? ownOpens, SignatureMap levelMap, IReadOnlyList<Property> siblings, ResolutionRun run)
-    {
-        // Only the level's OWN open level can be headed by one of its siblings: an enclosing
-        // level's opens resolve their heads in that level's scope.
-        if (ownOpens is not { } level || levelMap.ContainsKey(name) || run.Prelude.TryGetMember(name, out _))
-            return null;
-
-        int? provider = null;
-        HashSet<OpenProviderIdentity>? providers = null;
-        foreach (var open in level.Providers)
-        {
-            // Q-19 D-I: two targets of one provider are one provider (the first represents it).
-            if (open.ResolveProvider(current: false) is not { } resolved
-                || run.OpenMemberIndexes.IndexOf(resolved.Target).Lookup(name) is null
-                || !(providers ??= []).Add(resolved.Identity))
-            {
-                continue;
-            }
-
-            if (providers.Count == 1)
-                provider = SiblingHeadIndex(open, siblings);
-        }
-
-        return providers?.Count == 1 ? provider : null;
-    }
-
-    private static int? SiblingHeadIndex(OpenProvider open, IReadOnlyList<Property> siblings)
-    {
-        if (open.Head is not Expr.Resolve(var headName))
-            return null;
-        for (var i = siblings.Count - 1; i >= 0; i--)
-        {
-            if (siblings[i].Name == headName)
-                return i;
-        }
-
-        return null;
-    }
-
-    /// <summary>
-    /// Processes an algorithm: topologically sorts its properties, recursively processes each,
-    /// then collects implicit deps and rewrites the algorithm's own output. Every NESTED
+    /// Processes an algorithm: processes each of its properties (in declaration order: every signature it reads is
+    /// selected beforehand, B3-5★), then collects implicit deps and rewrites the algorithm's own output. Every NESTED
     /// algorithm — a property value, a block literal, an open target, a conditional branch
     /// body — goes through the run's region memo (M4): one rewrite per
     /// <see cref="AlgorithmRegionKey"/>, sharing preserved in the output, and a branch body's
@@ -2363,7 +1857,7 @@ internal static partial class ImplicitArgumentResolver
             using var owners = run.EnterLevel(DeclaringOwners.Root, level: null);
             resolved = ProcessUserAlgorithmRegion(
                 module,
-                SignatureMap.Empty(observations, run.Pending),
+                SignatureMap.Empty(observations),
                 ForwardableParameters.None,
                 isRoot: false,
                 observations,
@@ -2395,9 +1889,7 @@ internal static partial class ImplicitArgumentResolver
         // The root is processed exactly once and keeps its bare-root rule; nothing shares it.
         if (isRoot)
         {
-            run.DepthBudget.LiveDepth++;
             var root = ProcessUserAlgorithm(alg, parentParamMap, forwardable, isRoot: true, observations, diagnostics, branchContext: null, run, diagnosticTemplates: null);
-            run.DepthBudget.LiveDepth--;
             PublishStructuralBody(alg, root, null, run);
             return root;
         }
@@ -2421,7 +1913,10 @@ internal static partial class ImplicitArgumentResolver
         {
             if (branchContext is not null)
                 ReplayBranchDiagnostics(completedRegion, branchContext.BranchName, diagnostics);
-            PublishStructuralBody(alg, completedRegion.Rewritten, branchContext, run);
+            // The reach shares the region's processed object, so its descendants' resolved publications are the processing
+            // context's (publishing them per reach would cost one copy per PATH of a shared graph).
+            if (PublishStructuralBody(alg, completedRegion.Rewritten, branchContext, run) is { } reach && completedRegion.Context is { } processed)
+                run.StructuralOperation!.AliasResolvedRegion(reach, processed);
             return completedRegion.Rewritten;
         }
 
@@ -2433,20 +1928,20 @@ internal static partial class ImplicitArgumentResolver
         var diagnosticTemplates = branchContext is not null && diagnostics is not null
             ? new List<BranchDiagnosticTemplate>()
             : null;
-        run.DepthBudget.LiveDepth++;
         var rewritten = ProcessUserAlgorithm(alg, parentParamMap, forwardable, isRoot: false, observations, diagnostics, branchContext, run, diagnosticTemplates);
-        run.DepthBudget.LiveDepth--;
-        PublishStructuralBody(alg, rewritten, branchContext, run);
+        var context = PublishStructuralBody(alg, rewritten, branchContext, run);
         // Admitted only after the whole body completed (acyclic by the structural preflight).
-        regions[regionKey] = new AlgorithmRegion(rewritten, diagnosticTemplates);
+        regions[regionKey] = new AlgorithmRegion(rewritten, diagnosticTemplates, context);
         return rewritten;
     }
 
-    private static void PublishStructuralBody(Algorithm source, Algorithm processed, ConditionalBranchContext? branch, ResolutionRun run)
+    /// <summary>Publishes <paramref name="processed"/> as the resolved view of <paramref name="source"/> in its context; the context.</summary>
+    private static StaticScopeKey? PublishStructuralBody(Algorithm source, Algorithm processed, ConditionalBranchContext? branch, ResolutionRun run)
     {
-        if (run.StructuralOperation is not { } operation) return;
+        if (run.StructuralOperation is not { } operation) return null;
         var key = operation.ContextOf(run.Level?.StaticContext?.Key ?? operation.Queries.Keys.Root, source, branch?.Pattern);
         operation.Publish(key, StaticPublicationStage.Resolved, processed);
+        return key;
     }
 
     private static Algorithm ProcessUserAlgorithm(
@@ -2461,7 +1956,7 @@ internal static partial class ImplicitArgumentResolver
         List<BranchDiagnosticTemplate>? diagnosticTemplates)
     {
         // This body is a level of its own (Q-19 D-I: what its properties' provider identities
-        // are anchored at); its property loop re-enters it for a property processed on demand.
+        // are anchored at).
         var levelOwners = run.Owners.Inside(alg);
         var structuralContext = run.StructuralOperation is { } operation
             ? operation.Context(operation.ContextOf(run.Level?.StaticContext?.Key ?? operation.Queries.Keys.Root, alg, branchContext?.Pattern)) : null;
@@ -2485,9 +1980,9 @@ internal static partial class ImplicitArgumentResolver
                 : ParameterPattern.FlattenCaptures(BranchBinderParameterPatterns(branchContext.Pattern)),
             run.ReferenceNameSets);
 
-        // The level's own entries: every property's INPUT signature and value until the loop below
-        // processes it.
-        var (localEntries, localEntriesByName) = BuildPropertyEntries(alg.Properties, levelOwners, level);
+        // The level's own entries: every property's written value with its FINAL signature — the one the selection chose
+        // (B3-5★) — so every read of a sibling, before or after its rewrite, sees the same signature.
+        var (_, localEntriesByName) = BuildPropertyEntries(alg.Properties, levelOwners, level, run);
         level.Entries = localEntriesByName;
 
         // Visible map = parent + local (local overrides), plus this level's `open` providers as the
@@ -2500,34 +1995,15 @@ internal static partial class ImplicitArgumentResolver
             ? parentParamMap
             : parentParamMap.Extend(localEntriesByName);
         if (newOpens.Count > 0)
-            visibleParamMap.AttachOpens(map => OpenProvidersOf(newOpens, map, run.Prelude, run.StructuralViews, level.StaticContext));
+            visibleParamMap.AttachOpens();
 
-        // The sibling-order channel classifies every slot with THE role classifier the rewriting
-        // below uses (FormulaLiftingRoles), resolving callee kinds by the owner walk over this
-        // level's map, and records which sibling each value-role read needs processed first. This
-        // pass consumes ONLY the dependency/order channel: the builder's recursive property-summary
-        // channel belongs to the exposure resolver and is deliberately never computed here (M17).
-        var levelMap = visibleParamMap;
-        var ownOpens = newOpens.Count > 0 ? visibleParamMap.Opens : null;
-        Dictionary<Algorithm, int>? siblingIndexes = null;
-        var dependencyGraph = PropertyDependencyGraphBuilder.BuildDependencyOrder(
-            alg,
-            preludeNameShadowedByCaller: parentParamMap.ContainsKey,
-            observations,
-            new SiblingOrderLookup(
-                name => CalleeKindByOwnerWalk(name, levelMap, run.Prelude),
-                name => OpenedSiblingProvider(name, ownOpens, levelMap, alg.Properties, run))
-            {
-                OwnedMemberSibling = path => OwnedMemberSibling(path, alg, level, levelMap, alg.Properties, ref siblingIndexes, run),
-                RefinedMiss = (edge, nestedOpens) => ChannelRefinedMiss(edge, nestedOpens, level, levelMap, alg.Properties, ref siblingIndexes, run),
-            });
-
-        // Process properties in topological order, or earlier on demand (PendingProperties): a read
-        // the order channel could not classify processes its pending sibling first.
+        // Every signature this level can read is final (B3-5★), so its properties are processed in declaration order:
+        // no processing order, sibling-order channel, on-demand processing or demand nesting exists, and none could change
+        // what a read sees. The map is never re-written while the level is processed, so a body shared by two properties
+        // keys one rewrite region whatever was processed in between.
         var processedProperties = new Property[alg.Properties.Count];
         var loopImportSite = run.ImportSite;
-        PropertyLoop? loop = null;
-        loop = new PropertyLoop(dependencyGraph, idx =>
+        for (var idx = 0; idx < alg.Properties.Count; idx++)
         {
             var prop = alg.Properties[idx];
 
@@ -2548,19 +2024,11 @@ internal static partial class ImplicitArgumentResolver
                     var processedFamily = ProcessConditionalProperty(
                         condAlg, prop.Name, visibleParamMap, nestedForwarding, observations, diagnostics, run);
                     processedProperties[idx] = prop.WithValue(processedFamily);
-                    run.CompleteStructure(condAlg, processedFamily, entry: null, prop.Name);
+                    run.CompleteStructure(condAlg, processedFamily, run.StructuralOperation!.ContextOf(level.StaticContext!.Key, condAlg));
                 }
             }
             else
             {
-                // visibleParamMap is UPDATED after each processed property, so a value shared
-                // by two properties could observe different sibling signatures if it were
-                // reached between two writes it depends on. The run's region memo keys each
-                // value on the signatures its FREE names actually see (M4), so a shared value
-                // rewrites once per distinct observation and never once per referencing
-                // property — and the dependency order (with demand for what it could not
-                // classify) processes every referenced sibling first, so within an acyclic
-                // property graph every reach observes the same, final signatures.
                 Algorithm processedBody;
                 using (run.EnterImportSiteExactly(ImportSite.OfProperty(prop) ?? loopImportSite))
                 using (run.EnterLevel(levelOwners, level))
@@ -2569,26 +2037,10 @@ internal static partial class ImplicitArgumentResolver
                         prop.Value, visibleParamMap, nestedForwarding, isRoot: false, observations, diagnostics, branchContext: null, run);
                 }
 
-                // Update the map with the processed, potentially augmented signature.
-                var processedEntry = new VisibleProperty(CallableSignature.FromAlgorithm(prop.Name, processedBody), processedBody, levelOwners) { Level = level };
-                visibleParamMap.Set(prop.Name, processedEntry);
-                loop!.Complete(idx, processedEntry);
-                run.CompleteStructure(prop.Value, processedBody, processedEntry, prop.Name);
-
+                run.CompleteStructure(prop.Value, processedBody, run.StructuralOperation!.ContextOf(level.StaticContext!.Key, prop.Value));
                 processedProperties[idx] = prop.WithValue(processedBody);
             }
-        },
-        idx => run.TryEnterDemand(alg.Properties[idx], diagnostics),
-        run.ExitDemand);
-
-        for (var idx = 0; idx < localEntries.Length; idx++)
-        {
-            loop.Initialize(idx, localEntries[idx]);
-            run.Pending.Register(localEntries[idx], loop, idx);
         }
-
-        foreach (var idx in dependencyGraph.TopologicalOrder)
-            loop.Ensure(idx);
 
         var newProperties = processedProperties.ToList();
 
@@ -2680,16 +2132,14 @@ internal static partial class ImplicitArgumentResolver
             CollectImplicitDeps(expr, visibleParamMap, seen, deps, rowRole, depsMemo);
         }
 
-        // Compute lifted parameter patterns: existing patterns first, then new
-        // dependency captures with their recursive shape preserved — as a SHARED
-        // signature template (FE-3, see LiftSignature). A capture an enclosing
-        // parameter binding supplies is reused, never lifted (Q-04).
-        var lifting = LiftSignature(alg.ParameterPatterns, deps, ownForwarding, run);
-        // X-02: an inferred signature satisfies the rules a written one is held to. A lift that
-        // would compose an invalid contract — two collecting parameters at one pattern level — is
-        // this definition's front-end error, reported here at elaboration, never at a later call.
-        if (lifting.Lifted && ParameterPattern.FindSignatureViolation(lifting.Patterns) is { } violation)
-            lifting = RejectInvalidLiftedSignature(lifting, violation, deps, walkMemos);
+        // The lifted parameter patterns: existing patterns first, then new dependency captures with
+        // their recursive shape preserved — as a SHARED signature template (FE-3, see LiftSignature),
+        // composed once by the signature selection (B3-5★). A capture an enclosing parameter binding
+        // supplies is reused, never lifted (Q-04). X-02: an inferred signature satisfies the rules a
+        // written one is held to — a lift that would compose an invalid contract (two collecting
+        // parameters at one pattern level) is this definition's front-end error, reported here at
+        // elaboration, never at a later call.
+        var lifting = SelectedLifting(level, alg.ParameterPatterns, deps, ownForwarding, walkMemos);
         var finalPatterns = lifting.Patterns;
 
         // Rewrite output expressions. Source binding kinds come from the
@@ -2758,8 +2208,8 @@ internal static partial class ImplicitArgumentResolver
     ///   <item>a RUNTIME ROW (<see cref="AliasTargetRows.IsRuntimeRow"/>): an enclosing parameter binding,
     ///   an argumentless <c>.Algorithm</c> link, or an argumentless parameter-rooted member path;</item>
     ///   <item>a name or static structural path whose identity resolution (<see cref="TryResolveCallable"/>)
-    ///   selects another runtime-target alias — a chain, forward references included (the on-demand
-    ///   property processing settles the target first).</item>
+    ///   ends at a runtime-target body (<see cref="IsRuntimeTargetEndpoint"/>) — a chain, forward references
+    ///   included: the endpoint's class is selected (B3-5★), never read from a processing order.</item>
     /// </list>
     /// Null for every other body. The classification is by binding and elaboration (the row's kind
     /// after detection, the selected declaration), never by spelling; the synthetic deconstruction
@@ -2780,7 +2230,8 @@ internal static partial class ImplicitArgumentResolver
         if (AliasTargetRows.IsRuntimeRow(row))
             return row;
         return row is Expr.Resolve or Expr.DotCall { Args: null }
-            && TryResolveCallable(row, paramMap, memos, out _) is { Algorithm: Algorithm.Alias { HasRuntimeTarget: true } }
+            && TryResolveCallable(row, paramMap, memos, out _) is { } target
+            && IsRuntimeTargetEndpoint(target, memos.Run)
             ? row
             : null;
     }
@@ -2947,7 +2398,7 @@ internal static partial class ImplicitArgumentResolver
         {
             Expr.AlgorithmExpr block => block with
             {
-                Algorithm = ProcessSharedNestedAlgorithm(block.Algorithm, ImportSite.OfBlock(block), SignatureMap.Empty(memos.Observations, memos.Run.Pending), memos),
+                Algorithm = ProcessSharedNestedAlgorithm(block.Algorithm, ImportSite.OfBlock(block), SignatureMap.Empty(memos.Observations), memos),
             },
 
             // Capture targets own no scope; rows recurse without lifting,
@@ -2956,7 +2407,7 @@ internal static partial class ImplicitArgumentResolver
             {
                 Body = new OutputBundle(
                     capture.Body
-                        .Select(row => ProcessExprNested(row, SignatureMap.Empty(memos.Observations, memos.Run.Pending), memos))
+                        .Select(row => ProcessExprNested(row, SignatureMap.Empty(memos.Observations), memos))
                         .ToList()),
             },
 
@@ -2966,7 +2417,7 @@ internal static partial class ImplicitArgumentResolver
             {
                 Target = ProcessOpenExpr(dotCall.Target, memos),
                 Args = dotCall.Args is { } dotArgs
-                    ? ProcessArgumentBundle(dotArgs, SignatureMap.Empty(memos.Observations, memos.Run.Pending), memos)
+                    ? ProcessArgumentBundle(dotArgs, SignatureMap.Empty(memos.Observations), memos)
                     : null,
             },
 
@@ -2983,7 +2434,7 @@ internal static partial class ImplicitArgumentResolver
             Expr.Call call => call with
             {
                 Function = ProcessOpenExpr(call.Function, memos),
-                Args = ProcessArgumentBundle(call.Args, SignatureMap.Empty(memos.Observations, memos.Run.Pending), memos),
+                Args = ProcessArgumentBundle(call.Args, SignatureMap.Empty(memos.Observations), memos),
             },
 
             // Operator forms are never valid open targets (open-form validation
@@ -2995,7 +2446,7 @@ internal static partial class ImplicitArgumentResolver
             // `open ({ ... }, 1)`. An interpolated string is never an open target either
             // (the parser refuses one there); a host-built one is walked the same way.
             Expr.Unary or Expr.Binary or Expr.Comparison or Expr.Index or Expr.InterpolatedString
-                => ProcessExprNestedCore(expr, SignatureMap.Empty(memos.Observations, memos.Run.Pending), memos),
+                => ProcessExprNestedCore(expr, SignatureMap.Empty(memos.Observations), memos),
 
             // Intentional leaves: name/literal leaves carry no nested algorithm
             // to process (a bare Resolve IS the ordinary open-target form);
@@ -3027,7 +2478,7 @@ internal static partial class ImplicitArgumentResolver
 
     /// <summary>
     /// THE implicit-lifting eligibility rule (Q-03, decided September 28 2026), consulted for
-    /// every value-role reference whatever its category (<see cref="CollectImplicitDepsCore"/>,
+    /// every value-role reference whatever its category (<see cref="CollectImplicitDeps"/>,
     /// <see cref="RewriteBareReference"/>, <see cref="RewriteDotCall"/>) and by root-row
     /// preservation (<see cref="ShouldPreserveBareRootRow"/>): a value-role reference lifts to an
     /// implicit forwarding call ONLY when its callee's lifting signature REQUIRES supplied
@@ -3169,19 +2620,27 @@ internal static partial class ImplicitArgumentResolver
         IReadOnlyList<LiftedDependency> deps,
         ResolverWalkMemos memos)
     {
-        if (memos.Diagnostics is { } diagnostics)
-        {
-            var (message, reference) = DescribeInvalidLiftedSignature(lifting.Patterns, violation, deps);
-            diagnostics.Add(new Diagnostic(message, DiagnosticSeverity.Error, reference?.Span ?? memos.Run.ImportSite)
-            {
-                Code = violation == ParameterSignatureViolation.SingletonSequencePattern
-                    ? DiagnosticCode.SingletonSequencePattern
-                    : DiagnosticCode.InvalidCollectingBinding,
-            });
-        }
-
+        ReportInvalidLiftedSignature(lifting.Patterns, violation, deps, memos);
         var recovered = memos.Run.Templates.InternFlat(ParameterPattern.KeepFirstCollectingCapturePerLevel(lifting.Patterns));
         return new(recovered, recovered.Facts.BindingKinds, Lifted: true);
+    }
+
+    /// <summary>The report of <see cref="RejectInvalidLiftedSignature"/> about the composed, unrecovered <paramref name="signature"/>.</summary>
+    private static void ReportInvalidLiftedSignature(
+        IReadOnlyList<ParameterPattern> signature,
+        ParameterSignatureViolation violation,
+        IReadOnlyList<LiftedDependency> deps,
+        ResolverWalkMemos memos)
+    {
+        if (memos.Diagnostics is not { } diagnostics)
+            return;
+        var (message, reference) = DescribeInvalidLiftedSignature(signature, violation, deps);
+        diagnostics.Add(new Diagnostic(message, DiagnosticSeverity.Error, reference?.Span ?? memos.Run.ImportSite)
+        {
+            Code = violation == ParameterSignatureViolation.SingletonSequencePattern
+                ? DiagnosticCode.SingletonSequencePattern
+                : DiagnosticCode.InvalidCollectingBinding,
+        });
     }
 
     /// <summary>
@@ -3715,7 +3174,7 @@ internal static partial class ImplicitArgumentResolver
             // forwarding carrier when written in braces (`Algorithm.Alias.IsReference`). A chain to a
             // runtime-target alias is classified after inference (`RuntimeAliasRow`), and a cyclic
             // static reference chase is no alias (OD-D): it stays an ordinary lazy property.
-            if (target.Algorithm is Algorithm.Alias { HasRuntimeTarget: true }
+            if (IsRuntimeTargetEndpoint(target, memos.Run)
                 || IsCyclicReferenceChase(alg, row, paramMap, memos))
             {
                 return null;
@@ -3724,7 +3183,7 @@ internal static partial class ImplicitArgumentResolver
             // Assignment deconstruction's hoisted source keeps its own contract: it is no written
             // definition, so it becomes an alias only of a callable that declares parameterized
             // structure (FWD-02, unchanged) and otherwise stays the ordinary property its targets share.
-            if (alg.IsSyntheticDeconstructionPlumbing && !DeclaresParameterizedStructure(target.Algorithm))
+            if (alg.IsSyntheticDeconstructionPlumbing && !DeclaresParameterizedStructure(target))
                 return null;
 
             // THE ALIAS: the same written declaration, its row kept as written — a block head replaced by
@@ -3732,7 +3191,7 @@ internal static partial class ImplicitArgumentResolver
             // records its static structure (a carrier's is itself).
             var alias = new Algorithm.Alias(alg, WithProcessedBlockHead(row, paramMap, memos))
             {
-                ResolvedTargetCell = TargetCellOf(row, target, paramMap, memos),
+                ResolvedTargetCell = TargetCellOf(target, memos),
             };
             return alias.IsReference
                 ? alias with { ResolvedStructureCell = StaticStructureOfRow(row, paramMap, memos) }
@@ -3741,7 +3200,7 @@ internal static partial class ImplicitArgumentResolver
 
         // A CLOSED body keeps FWD-02's bare forwarding, over a callee that declares parameterized
         // structure only: a callee that declares nothing leaves the row its bare name.
-        if (!DeclaresParameterizedStructure(target.Algorithm))
+        if (!DeclaresParameterizedStructure(target))
             return null;
 
         // BARE FORWARDING through the target's forwarding contract, which names every parameter it
@@ -3780,7 +3239,8 @@ internal static partial class ImplicitArgumentResolver
 
         var arguments = OutputBundle.From(forwarded);
         memos.Run.Observations?.RecordImplicitArgumentBundleBuilt(arguments.Count);
-        return alg with { Output = [memos.SynthesizedImplicitCall(LoneRowCall(row, arguments))] };
+        // The callee path's block head is processed like the alias row's, so the call reaches the block this pass elaborated.
+        return alg with { Output = [memos.SynthesizedImplicitCall(LoneRowCall(WithProcessedBlockHead(row, paramMap, memos), arguments))] };
     }
 
     /// <summary>The operation's OD-D formation verdict, with no local cycle walk.</summary>
@@ -3792,16 +3252,15 @@ internal static partial class ImplicitArgumentResolver
 
 
 
-    /// <summary>Q3 selects a written member; Q8 may project its processed view.</summary>
-    private static StaticDeclaration? StructuralMemberAt(
-        Expr.DotCall edge, ResolverLevel? level, SignatureMap map, PreludeContext prelude, StructuralProcessingViews memos, bool current, StaticCycleCheck check)
+    /// <summary>Q3 selects a written member (its detected input; B3-5★ reads no processed form).</summary>
+    private static StaticDeclaration? StructuralMemberAt(Expr.DotCall edge, ResolverLevel? level, StaticCycleCheck check)
     {
         if (level?.StaticContext is not { } context) return null;
         var expression = context.Operation.WrittenExpression(context.Key, edge);
         var selected = context.Operation.Read(StaticQueryKey.Project(StaticQueryKind.TargetWalk, context.Key,
             StaticQueryProjection.MemberSelection, stratum: check, node: expression));
         return selected.Kind == StaticFactKind.Structure && selected.Scope is { } key
-            ? context.Operation.Declaration(key, current, map) : null;
+            ? context.Operation.Declaration(key) : null;
     }
 
     /// <summary>
@@ -3856,15 +3315,31 @@ internal static partial class ImplicitArgumentResolver
     /// with none forwards nothing and simply reads that value (an open body is its alias). Neither
     /// nameability (an unnameable family is forwardable) nor zero-argument acceptance (a collector-only
     /// <c>Only(*xs)</c> is forwardable) decides. An alias is never asked: identity resolution looks through it to its
-    /// normalized target first. Lean: <c>Algorithm.declaresParameterizedStructure</c>.
+    /// normalized target first. "Complete" is the target's FINAL signature (B3-5★: the selected one when this resolution
+    /// has not processed the target yet), never its written input. Lean: <c>Algorithm.declaresParameterizedStructure</c>.
     /// </summary>
-    private static bool DeclaresParameterizedStructure(Algorithm target)
-        => target switch
+    private static bool DeclaresParameterizedStructure(AliasTarget target)
+        => target.Algorithm switch
         {
             Algorithm.Builtin or Algorithm.Conditional => true,
-            Algorithm.User user => user.ParameterPatterns.Count != 0,
+            Algorithm.User => target.Signature.Signature is { ParameterPatterns.Count: > 0 },
             Algorithm.Alias => false,
         };
+
+    /// <summary>
+    /// Whether a static endpoint is a RUNTIME-TARGET body (META-S3-2): an open lone body whose one written row is a runtime
+    /// row — an enclosing parameter, a parameter-rooted member path, an <c>.Algorithm</c> link — and whose FINAL signature
+    /// declares nothing (B3-5★: a link's selected class), so the rewrite makes it a runtime-target alias, whatever the
+    /// order its body is processed in. The row is read as DETECTED: only detection knows that a name is a parameter.
+    /// </summary>
+    private static bool IsRuntimeTargetEndpoint(AliasTarget target, ResolutionRun run)
+        => target.Identity is StaticScopeKey key
+            && (run.StructuralOperation!.Published(key, StaticPublicationStage.Detected) ?? run.StructuralOperation.SourceOf(key))
+                is Algorithm.User { HasExplicitParameterList: false, IsSyntheticDeconstructionPlumbing: false } body
+            && body.Output.Count == 1
+            && AstHelpers.WrittenRows(body).Count == 1
+            && AliasTargetRows.IsRuntimeRow(body.Output[0])
+            && target.Signature.Signature is { ParameterPatterns.Count: 0 };
 
     /// <summary>
     /// ONE pattern rebuilt from its own bindings — the argument bare forwarding passes for a
@@ -4348,73 +3823,44 @@ internal static partial class ImplicitArgumentResolver
     /// ambiguous open, a run-time receiver's member): a callable known only at run time has no
     /// identity here. <paramref name="writtenName"/> is the reference as written (diagnostics name
     /// it; through an alias the result's <see cref="AliasTarget.DisplayName"/> is the target's).
+    ///
+    /// <para>B3-5★: the identity is the STATIC one (<see cref="ResolveStaticCallable"/>, read from the input, every
+    /// reference row followed to its Q3 endpoint), and an open body's signature is the SELECTED one — so what a reference
+    /// denotes, and what it lifts, never depend on which bodies were processed first.</para>
     /// </summary>
     private static AliasTarget? TryResolveCallable(Expr reference, SignatureMap paramMap, ResolverWalkMemos memos, out string writtenName)
+        => ResolveStaticCallable(reference, paramMap, memos, out writtenName) is { } callable
+            ? TargetOf(callable, memos.Run)
+            : null;
+
+    /// <summary>
+    /// What the front end records of a static callable (B3-5★): its identity and display name, the algorithm it invokes —
+    /// as this resolution processed it once it has, as written until then (its kind is the same either way) — and its
+    /// FINAL lifting signature: the selected one for an open body of this resolution, the declared or completed one
+    /// otherwise.
+    /// </summary>
+    private static AliasTarget TargetOf(StaticCallable callable, ResolutionRun run)
     {
-        var run = memos.Run;
-        switch (reference)
-        {
-            case Expr.Resolve(var name):
-                writtenName = name;
-                if (paramMap.TryGetCurrent(name, out var entry))
-                {
-                    // A sibling its loop has not processed yet (a member of a sibling cycle) is still its written body:
-                    // a lone reference or forwarding row is resolved STATICALLY, in its own scope, so the identity it
-                    // denotes never depends on the processing order (M4★, ALIAS-UNIFY-1 second review).
-                    if (entry.Value is Algorithm.User written && IsUnprocessedAliasShape(written) && paramMap.IsUnsettled(name))
-                    {
-                        // Named, as through a processed alias, by the hop that reached the target, which is read as a
-                        // name reads it: processed on demand when its loop has not processed it yet, with its owners.
-                        var (end, through) = StaticInvocationTarget(EntryDeclaration(entry, raw: true), paramMap, run);
-                        return OfResolvedMember(through ?? name, ProcessedOnDemand(end, run), run);
-                    }
+        var algorithm = callable.Key is { } key
+            ? run.StructuralOperation!.ResolvedView(key) ?? callable.Written
+            : callable.Written;
+        // Named by the hop that reached it (the spelling of the final written reference), whatever reached the cache first.
+        var signature = callable.Key is { } selectedKey && SelectedSignatureOf(selectedKey, callable.DisplayName, run) is { } selected
+            ? LiftingSignature.Of(selected)
+            : FinalLiftingSignature(callable, callable.DisplayName, run);
+        return new AliasTarget(callable.Identity, callable.DisplayName, algorithm, signature, run.Prelude.IsStrictValue(callable.Written));
+    }
 
-                    return entry.Value switch
-                    {
-                        // A runtime-target alias has no static target: every front-end question is
-                        // answered as for its ordinary zero-parameter property (META-S3-2).
-                        Algorithm.Alias { HasRuntimeTarget: false } alias => alias.ResolvedTarget,
-                        Algorithm.Conditional family => new AliasTarget(family, name, family, FamilyLiftingSignature(name, family, run), IsStrictValue: false),
-                        _ => new AliasTarget(entry, name, entry.Value, LiftingSignature.Of(entry.Signature), run.Prelude.IsStrictValue(entry.Value)),
-                    };
-                }
+    /// <summary>Equality of a (reference, name) pair: the algorithm by reference, the name ordinally.</summary>
+    private sealed class NamedAlgorithmComparer : IEqualityComparer<(Algorithm Algorithm, string Name)>
+    {
+        public static readonly NamedAlgorithmComparer Instance = new();
 
-                if (run.Prelude.TryGetMember(name, out var preludeMember))
-                    return OfResolvedMember(name, preludeMember.Value, run);
+        public bool Equals((Algorithm Algorithm, string Name) x, (Algorithm Algorithm, string Name) y)
+            => ReferenceEquals(x.Algorithm, y.Algorithm) && string.Equals(x.Name, y.Name, StringComparison.Ordinal);
 
-                return TryResolveOpened(name, paramMap, run, current: true, out var opened)
-                    ? OfResolvedMember(name, opened.Value, run)
-                    : null;
-
-            case Expr.DotCall { Args: null } edge
-                when EdgeKindOf(edge, paramMap, memos) == DotEdgeKind.StructuralMember && HasUnsettledHead(edge, paramMap, settle: true):
-                // A path whose head stays unprocessed — a member of a sibling cycle, the owner in progress — is read
-                // statically end to end (as above); a merely pending head was processed on demand first, as its name's
-                // read processes it, and the member the path reaches is processed on demand too, with every owner on the
-                // way (`Lib.A` inside Lib; `Lib.Y.W` processes Y, whose loop processes W).
-                writtenName = DottedDisplayName(edge);
-                if (StructuralMemberAt(edge, run.Level, paramMap, run.Prelude, run.StructuralViews, current: false, StaticCycleCheck.Formation) is not { } selected)
-                    return null;
-                var (selectedEnd, selectedThrough) = StaticInvocationTarget(selected, paramMap, run);
-                return OfResolvedMember(selectedThrough ?? writtenName, ProcessedOnDemand(selectedEnd, run), run);
-
-            case Expr.DotCall { Args: null } edge
-                when EdgeKindOf(edge, paramMap, memos) == DotEdgeKind.StructuralMember
-                    && StructuralMemberOf(edge, paramMap, memos, current: true) is { } member:
-                writtenName = DottedDisplayName(edge);
-                return OfResolvedMember(writtenName, member, run);
-
-            default:
-                writtenName = "";
-                return null;
-        }
-
-        // A callable outside the document's map (a prelude member, an opened or dotted member): its
-        // algorithm is its identity; an alias among them is its recorded target.
-        static AliasTarget? OfResolvedMember(string name, Algorithm algorithm, ResolutionRun run)
-            => algorithm is Algorithm.Alias { HasRuntimeTarget: false } alias
-                ? alias.ResolvedTarget
-                : new AliasTarget(algorithm, name, algorithm, LiftingSignatureOf(name, algorithm, run), run.Prelude.IsStrictValue(algorithm));
+        public int GetHashCode((Algorithm Algorithm, string Name) value)
+            => HashCode.Combine(System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(value.Algorithm), StringComparer.Ordinal.GetHashCode(value.Name));
     }
 
     /// <summary>
@@ -4429,7 +3875,7 @@ internal static partial class ImplicitArgumentResolver
     /// <summary>The lifting signature of an algorithm outside the document's map (cached per algorithm by reference).</summary>
     private static LiftingSignature LiftingSignatureOf(string name, Algorithm algorithm, ResolutionRun run)
     {
-        if (run.LiftingSignatures.TryGetValue(algorithm, out var cached))
+        if (run.LiftingSignatures.TryGetValue((algorithm, name), out var cached))
             return cached;
 
         var signature = algorithm switch
@@ -4440,7 +3886,7 @@ internal static partial class ImplicitArgumentResolver
             // An alias's is its target's (an alias with no recorded target declares nothing).
             Algorithm.Alias alias => alias.ResolvedTarget?.Signature ?? LiftingSignature.Of(new CallableSignature(name, [])),
         };
-        run.LiftingSignatures.Add(algorithm, signature);
+        run.LiftingSignatures.Add((algorithm, name), signature);
         return signature;
     }
 
@@ -4522,174 +3968,13 @@ internal static partial class ImplicitArgumentResolver
     }
 
     /// <summary>
-    /// The member a name resolves to through <c>open</c>: after the whole owner walk found nothing,
-    /// the open levels innermost first; at a level, exactly one provider publicly declaring the name
-    /// selects it, two select nothing (the evaluator's <c>ambiguousOpen</c>), none defers outward.
-    /// <paramref name="current"/> reads processed providers (a signature question).
-    /// </summary>
-    private static bool TryResolveOpened(
-        string name,
-        SignatureMap paramMap,
-        ResolutionRun run,
-        bool current,
-        [System.Diagnostics.CodeAnalysis.NotNullWhen(true)] out Property? member)
-    {
-        for (var level = paramMap.Opens; level is not null; level = level.Outer)
-        {
-            // Q-19 D-I: the level's PROVIDERS decide — targets resolving to one provider are one.
-            Property? found = null;
-            HashSet<OpenProviderIdentity>? providers = null;
-            foreach (var provider in level.Providers)
-            {
-                if (provider.ResolveProvider(current) is { } resolved
-                    && run.OpenMemberIndexes.IndexOf(resolved.Target).Lookup(name) is { } hit
-                    && (providers ??= []).Add(resolved.Identity)
-                    && providers.Count == 1)
-                {
-                    found = hit.Property;
-                }
-            }
-
-            if (providers?.Count == 1)
-            {
-                member = found!;
-                return true;
-            }
-
-            if (providers?.Count > 1)
-                break;
-        }
-
-        member = null;
-        return false;
-    }
-
-    /// <summary>
-    /// The KIND of the callee a call or dot edge names — never a signature. Entries are read as
-    /// recorded: elaboration changes a kind only by turning a lone bare row into a CALLABLE ALIAS,
-    /// whose kind is its target's (an alias's argument roles ARE its target's — no alias-specific
-    /// role exists; <see cref="LiftingCallee.OfAlgorithm"/> reads the recorded target). A callee that
-    /// is still such an unprocessed row is therefore processed first (on demand, exactly as a
-    /// value-role read of it would be), so its kind is decided by its target whatever the processing
-    /// order; a row whose processing is refused (a member of a sibling cycle) stays a user callee.
+    /// The KIND of the callee a call or dot edge names — never a signature — read STATICALLY (B3-5★,
+    /// <see cref="StaticCalleeKindOf"/>): a lone bare row the rewrite makes a callable alias has its endpoint's kind (an
+    /// alias's argument roles ARE its target's — no alias-specific role exists), whatever was processed before, so
+    /// nothing is ever processed to learn a kind.
     /// </summary>
     private static LiftingCallee ResolveCalleeKind(Expr callee, SignatureMap paramMap, ResolverWalkMemos memos)
-    {
-        while (callee is Expr.Grace(var inner, _))
-            callee = inner;
-        if (callee is Expr.AlgorithmExpr)
-            return LiftingCallee.User;
-        return SettledCalleeAlgorithm(callee, paramMap, memos) is { } algorithm
-            ? LiftingCallee.OfAlgorithm(algorithm, memos.Run.Prelude.IsStrictValue(algorithm))
-            : LiftingCallee.Dynamic;
-    }
-
-    /// <summary>
-    /// The algorithm a callee NAME or structural member path names, read the way the role classifier
-    /// reads it (<see cref="ResolveCalleeKind"/>): as recorded, except that a row that may still
-    /// become a callable alias (<see cref="MayBecomeAlias"/>) is processed first. Null for a callee
-    /// with no static algorithm (a parameter, an unresolved or ambiguous name, a run-time receiver's
-    /// member). Every reader of a callee's kind or identity reads THIS, so a second reading after the
-    /// classifier's own processes nothing further.
-    /// </summary>
-    private static Algorithm? SettledCalleeAlgorithm(Expr callee, SignatureMap paramMap, ResolverWalkMemos memos)
-    {
-        var run = memos.Run;
-        switch (callee)
-        {
-            case Expr.Grace(var inner, _):
-                return SettledCalleeAlgorithm(inner, paramMap, memos);
-
-            case Expr.Resolve(var name):
-                if (paramMap.TryGetValue(name, out var entry))
-                {
-                    if (MayBecomeAlias(entry.Value) && paramMap.TryGetCurrent(name, out var current))
-                        entry = current;
-                    return entry.Value;
-                }
-                if (run.Prelude.TryGetMember(name, out var preludeMember))
-                    return preludeMember.Value;
-                if (!TryResolveOpened(name, paramMap, run, current: false, out var opened))
-                    return null;
-                if (MayBecomeAlias(opened.Value) && TryResolveOpened(name, paramMap, run, current: true, out var processedOpened))
-                    opened = processedOpened;
-                return opened.Value;
-
-            case Expr.DotCall { Args: null } edge when EdgeKindOf(edge, paramMap, memos) == DotEdgeKind.StructuralMember:
-            {
-                // A member path is read STATICALLY through every receiver — a reference to a body, the owner in progress — so
-                // the member it selects is the one its name selects whatever the order and the spelling (M4★: identity never
-                // spelling); a member that may still become a callable alias is processed first, with every owner on the way
-                // (ProcessedFormOnDemand). A path that starts at a block written here reads the block as the region processes it.
-                if (PathHead(edge) is Expr.Resolve
-                    && StructuralMemberAt(edge, run.Level, paramMap, run.Prelude, run.StructuralViews, current: false, StaticCycleCheck.Formation) is { } selected)
-                {
-                    if (!MayBecomeAlias(selected.Target)) return selected.Target;
-                    // Signature demand activates the written holder path as well as the selected declaration.
-                    // A hygienic module's contextual parent is the prelude, so climbing the selected member's
-                    // owners cannot activate an unprocessed lexical holder (Lib.M.F). Keep structural selection
-                    // above authoritative and use the existing Q8 head-demand protocol, including its cycle guard.
-                    HasUnsettledHead(edge, paramMap, settle: true);
-                    return ProcessedOnDemand(selected, run);
-                }
-
-                // An inline block is a region we own here. Form its references before navigating the path,
-                // just as TryResolveCallable does: its written K = Lib has no inherited members until processed.
-                // Otherwise a path through K loses its callee identity and classifies the call's slots as Dynamic.
-                if (PathHead(edge) is Expr.AlgorithmExpr)
-                    return StructuralMemberOf(edge, paramMap, memos, current: true);
-
-                var member = StructuralMemberOf(edge, paramMap, memos, current: false);
-                return member is not null && MayBecomeAlias(member) && StructuralMemberOf(edge, paramMap, memos, current: true) is { } processedMember
-                    ? processedMember
-                    : member;
-            }
-
-            default:
-                return null;
-        }
-    }
-
-    /// <summary>
-    /// Whether an algorithm as recorded is a body this pass may still turn into a callable alias: an
-    /// unprocessed open body whose one written row is a bare reference (<see cref="HasLoneBareRowShape"/>).
-    /// </summary>
-    private static bool MayBecomeAlias(Algorithm algorithm)
-        => algorithm is Algorithm.User { HasExplicitParameterList: false, ParameterPatterns.Count: 0 } user
-            && (HasLoneBareRowShape(user)
-                || (user.Output.Count == 1 && AliasTargetRows.IsRuntimeRow(user.Output[0]) && AstHelpers.WrittenRows(user).Count == 1));
-
-    /// <summary>
-    /// The sibling-order channel's view of a callee's kind, which can demand nothing (the order is
-    /// being computed): a processed alias reads its recorded target; a sibling that is still a lone
-    /// bare NAME row is looked through statically — its row name resolved by the same owner walk (the
-    /// level's map as recorded, then the prelude), iteratively and cycle-safely — because elaboration
-    /// will make it an alias of what its row names (since M4★ at any arity). Every other row — a user
-    /// target, an opened or dotted target, a cycle — is a user callable for ordering; the rewrite
-    /// decides the final kind by demand (<see cref="ResolveCalleeKind"/>).
-    /// </summary>
-    private static LiftingCallee StaticCalleeKind(Algorithm value, SignatureMap map, PreludeContext prelude)
-    {
-        HashSet<Algorithm>? visited = null;
-        while (MayBecomeAlias(value) && value.Output[0] is Expr.Resolve(var targetName))
-        {
-            if (!(visited ??= new(ReferenceEqualityComparer.Instance)).Add(value))
-                return LiftingCallee.User;
-
-            if (map.TryGetValue(targetName, out var entry))
-            {
-                value = entry.Value;
-                continue;
-            }
-
-            if (prelude.TryGetMember(targetName, out var member))
-                return LiftingCallee.OfAlgorithm(member.Value, prelude.IsStrictValue(member.Value));
-
-            return LiftingCallee.User;
-        }
-
-        return LiftingCallee.OfAlgorithm(value, prelude.IsStrictValue(value));
-    }
+        => StaticCalleeKindOf(callee, paramMap, memos);
 
     /// <summary>
     /// How a dot edge dispatches (<see cref="FormulaLiftingRoles.EdgeKind"/>): the detector's stamped
@@ -4708,10 +3993,10 @@ internal static partial class ImplicitArgumentResolver
     /// only this pass decides: a navigated body whose head an enclosing body may infer (<c>A = x</c>), which this pass's
     /// INPUT already decides, and an <c>.Algorithm</c> link body (<c>A = Mk(x).Algorithm</c>: a calculation when it keeps
     /// a parameter, a runtime reference otherwise), which only its processing decides. So the receiver is read from the
-    /// input with nothing processed (<see cref="ReadReceiver"/>), the same whatever the processing order; a link body is
-    /// processed only where a certain miss would give the receiver or an argument a VALUE role
+    /// input with nothing processed (<see cref="ReadReceiver"/>), the same whatever was processed before; a link body's
+    /// SELECTED class (B3-5★) is read only where a certain miss would give the receiver or an argument a VALUE role
     /// (<see cref="CertainMissDecidesALift"/>: elsewhere MAY and MUST give every slot the same role, and no later pass
-    /// tells MAY from MUST — they read NEVER against the rest), on demand when the order has not processed it. A
+    /// tells MAY from MUST — they read NEVER against the rest). A
     /// parameter's member, a runtime reference's and an unresolved name's stay MAY, with nothing read. Never NEVER:
     /// detection's inference reads MAY and MUST alike, and the refinement must not contradict it. ONE answer per edge and
     /// region (<see cref="ResolverWalkMemos.LiftMissSelections"/>), so the dependency walk and the rewrite read the same.
@@ -4726,11 +4011,14 @@ internal static partial class ImplicitArgumentResolver
         if (!memos.LiftMissSelections.TryGetValue(edge, out var selection))
         {
             var run = memos.Run;
-            var receiver = ReadReceiver(edge.Target, run.Level, paramMap, run, demand: null);
+            var receiver = ReadReceiver(edge.Target, run.Level, paramMap, run, selectedLinks: false);
             if (receiver.Kind == ReceiverReadingKind.Link)
             {
+                // B3-5★: a link's class is SELECTED, never processed on demand — the very class the analysis guarded this
+                // edge's slots with. A calculation link declares no member, so its miss is certain; a runtime reference's
+                // is the runtime's.
                 receiver = CertainMissDecidesALift(edge, paramMap, run)
-                    ? ReadReceiver(edge.Target, run.Level, paramMap, run, demand: memos)
+                    ? ReadReceiver(edge.Target, run.Level, paramMap, run, selectedLinks: true)
                     : default;
             }
 
@@ -4779,13 +4067,13 @@ internal static partial class ImplicitArgumentResolver
     private static LiftingCallee StaticFallbackCalleeKind(Expr fallback, SignatureMap map, ResolutionRun run)
     {
         if (fallback.UnwrapGraceOperand() is not Expr.Resolve(var name)
-            || (DirectDeclaration(name, run.Level, current: false, map, run.Prelude)
-                ?? StaticOpenedDeclaration(name, run.Level, map, run.Prelude, run.StructuralViews)) is not { } declared)
+            || (DirectDeclaration(name, run.Level, run.Prelude)
+                ?? StaticOpenedDeclaration(name, run.Level)) is not { } declared)
         {
             return LiftingCallee.Dynamic;
         }
 
-        var target = StaticInvocationTarget(declared, map, run).End.Target;
+        var target = StaticInvocationTarget(declared, run).End.Target;
         return LiftingCallee.OfAlgorithm(target, run.Prelude.IsStrictValue(target));
     }
 
@@ -4834,25 +4122,23 @@ internal static partial class ImplicitArgumentResolver
     /// What the receiver <paramref name="receiver"/> of a MAY edge is, read from this pass's INPUT at
     /// <paramref name="level"/> — every declaration as written, a reference followed to its target by the stratified static
     /// chase (<see cref="StaticReferenceStructure"/>), each member path through its receivers' structures — so the reading
-    /// is the same whatever the processing order: a name by the owner walk and the prelude, then the levels' written
+    /// is the same whatever was processed before: a name by the owner walk and the prelude, then the levels' written
     /// opens; an inner edge as its own verdict reads (a structural member's structure, a certain miss's value, a MAY edge's
     /// own refinement); a block as written. A body is its own structure — processing changes no body's declared members —
     /// unless it has the one shape implicit-argument resolution turns into a reference rather than a structure
     /// (<see cref="IsUnbracedLoneRowBody"/>): a parameter row or a member path rooted at one is a runtime reference
-    /// (unknown), and an <c>.Algorithm</c> link is a <see cref="ReceiverReadingKind.Link"/>. With <paramref name="demand"/>
-    /// (the region whose walk asks) a link body is processed — on demand when the order has not processed it, with its
-    /// owners (<see cref="ProcessedFormOnDemand"/>; a block a path starts at processed through the region's memo first) —
-    /// and read as processed: a calculation is its own structure, a runtime reference unknown; without it nothing is
-    /// processed.
+    /// (unknown), and an <c>.Algorithm</c> link is a <see cref="ReceiverReadingKind.Link"/> — or, with
+    /// <paramref name="selectedLinks"/>, what its SELECTED class makes it (B3-5★): a calculation is its own structure (it
+    /// declares no member), a runtime reference unknown. Nothing is ever processed to read a receiver.
     /// </summary>
-    private static ReceiverReading ReadReceiver(Expr receiver, ResolverLevel? level, SignatureMap map, ResolutionRun run, ResolverWalkMemos? demand)
+    private static ReceiverReading ReadReceiver(Expr receiver, ResolverLevel? level, SignatureMap map, ResolutionRun run, bool selectedLinks)
     {
         switch (receiver.UnwrapGraceOperand())
         {
             case Expr.Resolve(var name):
-                return (DirectDeclaration(name, level, current: false, map, run.Prelude)
-                        ?? StaticOpenedDeclaration(name, level, map, run.Prelude, run.StructuralViews)) is { } declared
-                    ? ReadDeclaration(declared, map, run, demand)
+                return (DirectDeclaration(name, level, run.Prelude)
+                        ?? StaticOpenedDeclaration(name, level)) is { } declared
+                    ? ReadDeclaration(declared, run, selectedLinks)
                     : default;
 
             case Expr.DotCall { Args: null } inner when inner.ElaboratedMissSelection is { } selection:
@@ -4860,15 +4146,13 @@ internal static partial class ImplicitArgumentResolver
                     return new(ReceiverReadingKind.Value);
                 if (selection == LexicalFallbackSelection.Never)
                 {
-                    if (demand is not null && PathHead(inner) is Expr.AlgorithmExpr block)
-                        ProcessSharedNestedAlgorithm(block.Algorithm, ImportSite.OfBlock(block), map, demand);
-                    return StructuralMemberAt(inner, level, map, run.Prelude, run.StructuralViews, current: false, StaticCycleCheck.Formation) is { } member
-                        ? ReadDeclaration(member, map, run, demand)
+                    return StructuralMemberAt(inner, level, StaticCycleCheck.Formation) is { } member
+                        ? ReadDeclaration(member, run, selectedLinks)
                         : default;
                 }
 
                 // A MAY inner edge is a value exactly when its own receiver certainly lacks its member.
-                var innerReceiver = ReadReceiver(inner.Target, level, map, run, demand);
+                var innerReceiver = ReadReceiver(inner.Target, level, map, run, selectedLinks);
                 return innerReceiver.Kind == ReceiverReadingKind.Link
                     ? innerReceiver
                     : innerReceiver.Lacks(inner.Name, run) ? new(ReceiverReadingKind.Value) : default;
@@ -4882,7 +4166,7 @@ internal static partial class ImplicitArgumentResolver
     }
 
     /// <summary>The receiver <see cref="ReadReceiver"/> found a declaration to be (its static structure; see there).</summary>
-    private static ReceiverReading ReadDeclaration(StaticDeclaration declared, SignatureMap map, ResolutionRun run, ResolverWalkMemos? demand)
+    private static ReceiverReading ReadDeclaration(StaticDeclaration declared, ResolutionRun run, bool selectedLinks)
     {
         if (run.StructuralOperation is { } operation)
         {
@@ -4890,23 +4174,15 @@ internal static partial class ImplicitArgumentResolver
             var selected = operation.Read(StaticQueryKey.TargetWalk(key, StaticCycleCheck.Formation));
             if (selected.Kind == StaticFactKind.Runtime)
             {
-                // Runtime carries a written reference recipe, never a static namespace. Q8 still has to ask whether
-                // completing that recipe's invocation signature makes an Algorithm link a calculation requiring inputs.
+                // Runtime carries a written reference recipe, never a static namespace. Q8 decides whether completing that
+                // recipe's signature makes an Algorithm link a calculation (B3-5★: its selected class).
                 if (selected.Scope is not { } recipe || operation.SourceOf(recipe) is not Algorithm.User source
                     || source.Output is not [Expr.DotCall { Args: null } edge] || !edge.UsesDotAlgorithmIntrinsic()) return default;
-                var link = operation.Declaration(recipe, current: false, map);
-                // The order channel must classify the written recipe independently of which regions have run.
-                // Its edge still denotes a processed-signature dependency when that signature is already available.
-                if (demand is null) return new(ReceiverReadingKind.Link, Link: link);
-                var completed = operation.Published(recipe, StaticPublicationStage.Resolved);
-                if (completed is not null)
-                    return completed is Algorithm.User { ParameterPatterns.Count: > 0 } calculation
-                        ? new(ReceiverReadingKind.Structure, calculation) : default;
-                return ProcessedFormOnDemand(link.Target, link.Level, run) is Algorithm.User { ParameterPatterns.Count: > 0 } calculated
-                    ? new(ReceiverReadingKind.Structure, calculated) : default;
+                var link = operation.Declaration(recipe);
+                return selectedLinks ? SelectedLinkReading(link, run) : new(ReceiverReadingKind.Link, Link: link);
             }
         }
-        if (StaticReferenceStructure(declared, current: false, map, run.Prelude, run.StructuralViews, viaOpens: true, StaticCycleCheck.Formation) is not { } structure)
+        if (StaticReferenceStructure(declared, run.StructuralViews, viaOpens: true, StaticCycleCheck.Formation) is not { } structure)
             return default;
         if (structure.Raw && structure.Target is Algorithm.User body && IsUnbracedLoneRowBody(body))
         {
@@ -4915,17 +4191,22 @@ internal static partial class ImplicitArgumentResolver
             if (row is Expr.Param || AliasTargetRows.IsParamHeaded(row))
                 return default;
             if (row is Expr.DotCall { Args: null } link && link.UsesDotAlgorithmIntrinsic())
-            {
-                if (demand is null)
-                    return new(ReceiverReadingKind.Link, Link: structure);
-                return ProcessedFormOnDemand(structure.Target, structure.Level, run) is Algorithm.User { ParameterPatterns.Count: > 0 } calculation
-                    ? new(ReceiverReadingKind.Structure, calculation)
-                    : default;
-            }
+                return selectedLinks ? SelectedLinkReading(structure, run) : new(ReceiverReadingKind.Link, Link: structure);
         }
 
         return new(ReceiverReadingKind.Structure, structure.Target);
     }
+
+    /// <summary>A link receiver as its SELECTED class reads (B3-5★): a calculation is its own structure, a runtime reference unknown.</summary>
+    private static ReceiverReading SelectedLinkReading(StaticDeclaration link, ResolutionRun run)
+        => SelectedLinkIsCalculation(LinkKey(link, run), run) ? new(ReceiverReadingKind.Structure, link.Target) : default;
+
+    /// <summary>
+    /// Whether the link <paramref name="key"/> is a calculation (B3-5★): its selected signature declares a parameter; a link
+    /// an earlier operation completed reads its completed body.
+    /// </summary>
+    private static bool SelectedLinkIsCalculation(StaticScopeKey key, ResolutionRun run)
+        => run.Selected?.TryGetFact(key, out var fact) == true ? fact.IsNonempty : FinalLinkIsCalculation(key, run);
 
     /// <summary>
     /// The input shape implicit-argument resolution may make a REFERENCE — static or runtime — rather than a structure of
@@ -4952,36 +4233,6 @@ internal static partial class ImplicitArgumentResolver
         return head;
     }
 
-    /// <summary>
-    /// The processed form of the written body <paramref name="written"/> a static read reached, declared at
-    /// <paramref name="level"/>, processed on demand when that is allowed — a read that reaches a pending property processes
-    /// it, as a read of its name does (<see cref="ResolutionRun.ProcessedFormOrDemand"/>) — and, for a member of a body no
-    /// loop has reached yet (a sibling's member, a member of a reference's target, of a block in a reference's row), with
-    /// that body: its owner is processed first, owner by owner outward, so a path reads every member it passes as
-    /// processed (<c>Lib.Y.W</c> inside Lib processes Y, whose loop processes W). Null while it stays unprocessed: a member
-    /// of a sibling cycle, one in progress, one beyond the depth budget, a member of a block no property holds.
-    /// </summary>
-    private static Algorithm? ProcessedFormOnDemand(Algorithm written, ResolverLevel? level, ResolutionRun run)
-    {
-        if (run.ProcessedFormOrDemand(written) is { } processed)
-            return processed;
-        if (level?.StaticContext is { } context)
-        {
-            if (ReferenceEquals(context.Key, context.Operation.Queries.Keys.Root)) return null;
-            var owningBody = context.Operation.Published(context.Key, StaticPublicationStage.Detected) ?? context.Operation.SourceOf(context.Key);
-            ProcessedFormOnDemand(owningBody, context.Key.Parent is { } parent ? context.Operation.ResolverLevel(parent) : null, run);
-            return run.Bodies.ProcessedFormOf(written);
-        }
-        if (level?.NavigatedBody is not { } owner)
-            return null;
-        ProcessedFormOnDemand(owner, level.Outer, run);
-        return run.Bodies.ProcessedFormOf(written);
-    }
-
-    /// <summary><see cref="ProcessedFormOnDemand"/> for a declaration a static read reached: its written body while it stays unprocessed.</summary>
-    private static Algorithm ProcessedOnDemand(StaticDeclaration declared, ResolutionRun run)
-        => ProcessedFormOnDemand(declared.Target, declared.Level, run) ?? declared.Target;
-
     private static DotEdgeKind EdgeKindOf(Expr.DotCall edge, SignatureMap paramMap, PreludeContext prelude)
         => FormulaLiftingRoles.EdgeKind(
             edge,
@@ -4994,60 +4245,16 @@ internal static partial class ImplicitArgumentResolver
                             : new(StaticStructuralMemberProviderKind.LexicalReference))));
 
     /// <summary>
-    /// The member algorithm a STRUCTURAL dot edge selects: its receiver resolved statically — a name
-    /// (the map, the prelude's <c>Math</c>, an opened member), an inner structural edge, or a block —
-    /// then the receiver's declared member (any visibility: structural access selects declared
-    /// members, and accessibility is decided after selection). <paramref name="current"/> reads
-    /// processed receivers (a signature question); a block receiver is processed through the region's
-    /// memo, so the dependency walk and the rewrite read the same processed block.
+    /// The cell an alias records its TARGET in (<see cref="AliasTargetCell"/>, M4★): the target's identity and signature are
+    /// final when the alias is formed (B3-5★: the endpoint and its selected signature); only the algorithm it invokes can
+    /// still be a body this run has not processed, in which case the cell is pending on that body's context and completed
+    /// once it is processed. Any other target is final.
     /// </summary>
-    private static Algorithm? StructuralMemberOf(Expr.DotCall edge, SignatureMap paramMap, ResolverWalkMemos memos, bool current)
-    {
-        var member = RecordedStructuralMemberOf(edge, paramMap, memos, current, out var pending);
-        // A receiver whose recorded structure is still pending — a written body this run has not processed — is read
-        // statically end to end, like an unprocessed head: every declaration as written, the member it reaches read as
-        // its processed form (a member reached through an `open` of a processed provider), processed on demand when its
-        // loop has not processed it yet, with every owner on the way (a member of the owner in progress reached through a
-        // reference to it).
-        if (!pending)
-            return member;
-        return StructuralMemberAt(edge, memos.Run.Level, paramMap, memos.Run.Prelude, memos.Run.StructuralViews, current: false, StaticCycleCheck.Formation) is { } selected
-            ? current ? ProcessedOnDemand(selected, memos.Run) : selected.Target
-            : null;
-    }
-
-    /// <summary>Projects Q3's written member and invokes only the existing Q8 processing adapter.</summary>
-    private static Algorithm? RecordedStructuralMemberOf(
-        Expr.DotCall edge, SignatureMap paramMap, ResolverWalkMemos memos, bool current, out bool pending)
-    {
-        pending = false;
-        return StructuralMemberAt(edge, memos.Run.Level, paramMap, memos.Run.Prelude, memos.Run.StructuralViews,
-            current: false, StaticCycleCheck.Formation) is { } selected
-                ? current ? ProcessedOnDemand(selected, memos.Run) : selected.Target : null;
-    }
-
-    /// <summary>
-    /// The cell an alias records its TARGET in (<see cref="AliasTargetCell"/>, M4★): an alias whose lone row names another
-    /// alias shares that alias's cell (<c>C = A</c>), so it completes with it; a target that is a written body this run has
-    /// not processed yet — the body enclosing the alias, in progress, or an unsettled sibling — is pending on that body and
-    /// completed with the target as the processed body reads (its lifted parameters included); any other target is final.
-    /// </summary>
-    private static AliasTargetCell TargetCellOf(Expr row, AliasTarget target, SignatureMap paramMap, ResolverWalkMemos memos)
-    {
-        var selection = row switch
-        {
-            Expr.Resolve(var name) when !paramMap.IsUnsettled(name) && paramMap.TryGetCurrent(name, out var entry) => entry.Value,
-            Expr.DotCall { Args: null } path when !HasUnsettledHead(path, paramMap)
-                => RecordedStructuralMemberOf(path, paramMap, memos, current: true, out var pending) is { } member && !pending ? member : null,
-            _ => null,
-        };
-        if (selection is Algorithm.Alias { HasRuntimeTarget: false, ResolvedTargetCell: { } shared })
-            return shared;
-        return target.Algorithm is Algorithm.User or Algorithm.Conditional && !memos.Run.Bodies.IsProcessed(target.Algorithm)
-            && !memos.Run.Prelude.IsFinalRegistryAlgorithm(target.Algorithm)
-            ? memos.Run.PendingTargetOn(target)
-            : AliasTargetCell.Of(target);
-    }
+    private static AliasTargetCell TargetCellOf(AliasTarget target, ResolverWalkMemos memos)
+        => target.Identity is StaticScopeKey key
+            && memos.Run.StructuralOperation!.ResolvedView(key) is null
+                ? memos.Run.PendingTargetOn(target)
+                : AliasTargetCell.Of(target);
 
     /// <summary>Q9 retains the publication cell of the Q3-selected row target.</summary>
     private static AliasStructureCell? StaticStructureOfRow(Expr row, SignatureMap paramMap, ResolverWalkMemos memos)
@@ -5068,36 +4275,6 @@ internal static partial class ImplicitArgumentResolver
         return context.Operation.StructureCell(key);
     }
 
-    /// <summary>
-    /// Whether the head of the argumentless member path <paramref name="edge"/> names a property its loop has not
-    /// processed yet — a member of a sibling cycle, one in progress, or (unless <paramref name="settle"/>) one merely
-    /// pending: the path is then read statically (<see cref="StructuralMemberAt"/>). A signature question
-    /// <paramref name="settle"/>s the head first — processes it on demand when that is allowed, as a read of its name
-    /// does — so only a head that stays unprocessed is read statically.
-    /// </summary>
-    private static bool HasUnsettledHead(Expr.DotCall edge, SignatureMap paramMap, bool settle = false)
-    {
-        Expr head = edge;
-        while (head is Expr.DotCall { Args: null } inner)
-            head = inner.Target.UnwrapGraceOperand();
-        if (head is not Expr.Resolve(var name))
-            return false;
-        if (settle)
-            paramMap.TryGetCurrent(name, out _);
-        return paramMap.IsUnsettled(name);
-    }
-
-    /// <summary>
-    /// The shape implicit-argument resolution classifies as an alias (<see cref="TryCompleteLoneCalleeRow"/>) while it
-    /// is still unprocessed: an open body — no written parameter list or pattern — whose one written row is a bare
-    /// reference; assignment deconstruction's hoisted source keeps its own contract.
-    /// </summary>
-    private static bool IsUnprocessedAliasShape(Algorithm.User body)
-        => !body.HasExplicitParameterList
-            && body.ParameterPatterns.Count == 0
-            && !body.IsSyntheticDeconstructionPlumbing
-            && HasLoneBareRowShape(body);
-
     /// <summary>The declaration a recorded entry denotes, as a static chase reads it.</summary>
     private static StaticDeclaration EntryDeclaration(VisibleProperty entry, bool raw)
     {
@@ -5106,11 +4283,11 @@ internal static partial class ImplicitArgumentResolver
     }
 
     /// <summary>Q3's invocation projection, preserving the written final hop for diagnostics.</summary>
-    private static (StaticDeclaration End, string? Through) StaticInvocationTarget(StaticDeclaration start, SignatureMap map, ResolutionRun run)
+    private static (StaticDeclaration End, string? Through) StaticInvocationTarget(StaticDeclaration start, ResolutionRun run)
     {
         if (!start.Raw) return (start, null);
         var operation = run.StructuralOperation ?? throw new InvalidOperationException("Invocation selection requires a structural operation.");
-        var (end, row) = operation.InvocationTarget(start, map);
+        var (end, row) = operation.InvocationTarget(start);
         return (end, row is Expr.DotCall dotted ? DottedDisplayName(dotted) : (row as Expr.Resolve)?.Name);
     }
 
@@ -5128,7 +4305,9 @@ internal static partial class ImplicitArgumentResolver
     /// (<see cref="FormulaLiftingRoles"/>) whose resolved callable has a lifting signature that
     /// REQUIRES supplied arguments (<see cref="RequiresSuppliedArguments"/>), once per resolved
     /// identity. A reference in a CALLABLE role, one to a callable that accepts zero supplied
-    /// arguments (a cached read, Q-03), and one to an unnameable family contribute nothing.
+    /// arguments (a cached read, Q-03), and one to an unnameable family contribute nothing. The walk
+    /// is the shared role walk (<see cref="WalkLiftingRoles{TSink}"/>), the one the analysis phase
+    /// records equations with.
     /// </summary>
     private static void CollectImplicitDeps(
         Expr expr,
@@ -5138,153 +4317,50 @@ internal static partial class ImplicitArgumentResolver
         LiftingRole role,
         DepsWalkMemo memo)
     {
-        // DAG-safety: every contribution of this walk is identity deduplicated, so a completed node
-        // reference reached again under the same role — the one context dimension that changes what a
-        // node contributes — adds nothing and is skipped. Childless leaves decide in place.
-        if (!AstTraversalDagSafety.HasTraversableExprChildren(expr))
-        {
-            CollectImplicitDepsCore(expr, paramMap, seen, deps, role, memo);
-            return;
-        }
-
-        var visited = role == LiftingRole.Callable
-            ? memo.CalleeVisited ??= new(ReferenceEqualityComparer.Instance)
-            : memo.ValueVisited;
-        if (visited.Contains(expr))
-            return;
-
-        memo.Observations?.RecordResolverCollectExpansion();
-        memo.Walk.Run.DepthBudget.LiveDepth++;
-        CollectImplicitDepsCore(expr, paramMap, seen, deps, role, memo);
-        memo.Walk.Run.DepthBudget.LiveDepth--;
-        visited.Add(expr);
+        var sink = new DependencySink(paramMap, seen, deps, memo);
+        WalkLiftingRoles(expr, role, guard: null, ref sink);
     }
 
-    private static void CollectImplicitDepsCore(
-        Expr expr,
-        SignatureMap paramMap,
-        HashSet<object> seen,
-        List<LiftedDependency> deps,
-        LiftingRole role,
-        DepsWalkMemo memo)
+    /// <summary>
+    /// The rewrite's instantiation of the role walk: a value-role reference lifts its callee's FINAL signature; a dot edge
+    /// reads its refined verdict (<see cref="MissSelectionOf"/>, a link's selected class). DAG-safety: every contribution is
+    /// identity deduplicated, so a completed node reached again under the same role — the one context dimension that
+    /// changes what a node contributes — adds nothing and is skipped; childless leaves decide in place.
+    /// </summary>
+    private readonly struct DependencySink(SignatureMap paramMap, HashSet<object> seen, List<LiftedDependency> deps, DepsWalkMemo memo)
+        : ILiftingWalkSink
     {
-        switch (expr)
+        public bool Enter(Expr expr, LiftingRole role, StaticScopeKey? guard)
         {
-            case Expr.Resolve:
-                if (role == LiftingRole.Value)
-                    AddLiftedDependency(expr, paramMap, seen, deps, memo);
-                break;
-
-            case Expr.Call(var function, var callArgs):
-            {
-                CollectImplicitDeps(function, paramMap, seen, deps, LiftingRole.Callable, memo);
-                var roles = FormulaLiftingRoles.ArgumentRoles(ResolveCalleeKind(function, paramMap, memo.Walk), callArgs);
-                for (var i = 0; i < callArgs.Count; i++)
-                    CollectImplicitDeps(callArgs[i], paramMap, seen, deps, roles[i], memo);
-                break;
-            }
-
-            case Expr.Binary(_, var left, var right):
-                CollectImplicitDeps(left, paramMap, seen, deps, LiftingRole.Value, memo);
-                CollectImplicitDeps(right, paramMap, seen, deps, LiftingRole.Value, memo);
-                break;
-
-            case Expr.Comparison(var first, var links):
-                CollectImplicitDeps(first, paramMap, seen, deps, LiftingRole.Value, memo);
-                foreach (var link in links)
-                    CollectImplicitDeps(link.Operand, paramMap, seen, deps, LiftingRole.Value, memo);
-                break;
-
-            case Expr.Unary(_, var operand):
-                CollectImplicitDeps(operand, paramMap, seen, deps, LiftingRole.Value, memo);
-                break;
-
-            case Expr.Index(var target, var selectors):
-                // The receiver and EVERY selector slot are VALUE uses (a spread slot's
-                // operand through its own arm). A selection has no callee, so its slots are
-                // never classified by a callee's argument roles.
-                CollectImplicitDeps(target, paramMap, seen, deps, LiftingRole.Value, memo);
-                foreach (var selector in selectors)
-                    CollectImplicitDeps(selector, paramMap, seen, deps, LiftingRole.Value, memo);
-                break;
-
-            case Expr.SequenceSpread(var operand):
-                CollectImplicitDeps(operand, paramMap, seen, deps, LiftingRole.Value, memo);
-                break;
-
-            case Expr.SequenceConstruct(var left, var right):
-                CollectImplicitDeps(left, paramMap, seen, deps, LiftingRole.Value, memo);
-                CollectImplicitDeps(right, paramMap, seen, deps, LiftingRole.Value, memo);
-                break;
-
-            case Expr.ListLiteral(var listItems):
-                foreach (var item in listItems)
-                    CollectImplicitDeps(item, paramMap, seen, deps, LiftingRole.Value, memo);
-                break;
-
-            case Expr.Capture(var rows):
-                // A capture element is a value: a capture has no algorithm identity to transport.
-                foreach (var row in rows)
-                    CollectImplicitDeps(row, paramMap, seen, deps, LiftingRole.Value, memo);
-                break;
-
-            case Expr.InterpolatedString(_, var interpolationLinks):
-                // An interpolation hole is a VALUE use of the enclosing owner (VAL-12).
-                foreach (var link in interpolationLinks)
-                    CollectImplicitDeps(link.Hole, paramMap, seen, deps, LiftingRole.Value, memo);
-                break;
-
-            case Expr.DotCall dotCall:
-            {
-                var kind = EdgeKindOf(dotCall, paramMap, memo.Walk);
-                if (dotCall.Args is null && kind == DotEdgeKind.StructuralMember)
-                {
-                    // A dotted callable reference: the edge itself lifts in a value role; its
-                    // receiver is navigated.
-                    if (role == LiftingRole.Value)
-                        AddLiftedDependency(dotCall, paramMap, seen, deps, memo);
-                    CollectImplicitDeps(dotCall.Target, paramMap, seen, deps, LiftingRole.Callable, memo);
-                    break;
-                }
-
-                var callee = DotEdgeCallee(dotCall, kind, paramMap, memo.Walk);
-                CollectImplicitDeps(dotCall.Target, paramMap, seen, deps, FormulaLiftingRoles.ReceiverRole(kind, callee), memo);
-                if (dotCall.Args is { } dotArgs)
-                {
-                    var roles = FormulaLiftingRoles.DotArgumentRoles(dotCall, kind, callee);
-                    for (var i = 0; i < dotArgs.Count; i++)
-                        CollectImplicitDeps(dotArgs[i], paramMap, seen, deps, roles[i], memo);
-                }
-
-                break;
-            }
-
-            case Expr.Grace(var inner, _):
-                CollectImplicitDeps(inner, paramMap, seen, deps, role, memo);
-                break;
-
-            case Expr.AlgorithmExpr:
-                // A scoped block is its own inferring level: its references lift into ITS signature.
-                break;
-
-            // Intentional leaves: no bare callable references to lift.
-            case Expr.Num:
-            case Expr.Param:
-            case Expr.StringLiteral:
-            case Expr.BoolLiteral:
-            case Expr.EmptySequence:
-            case Expr.NativeCall:
-                break;
-
-            // Runtime exhaustiveness guard (statement-form collector, which the
-            // closed Expr hierarchy cannot make compiler-exhaustive — see
-            // AstWalker.VisitExpr): a new Expr variant must be classified above
-            // rather than silently contributing no implicit dependencies.
-            default:
-                throw new InvalidOperationException(
-                    $"Unhandled Expr variant in {nameof(ImplicitArgumentResolver)}.{nameof(CollectImplicitDeps)}: {expr.GetType().Name}. " +
-                    "Classify the new variant explicitly as a collected case or an intentional leaf.");
+            if (!AstTraversalDagSafety.HasTraversableExprChildren(expr))
+                return true;
+            var visited = role == LiftingRole.Callable
+                ? memo.CalleeVisited ??= new(ReferenceEqualityComparer.Instance)
+                : memo.ValueVisited;
+            if (visited.Contains(expr))
+                return false;
+            memo.Observations?.RecordResolverCollectExpansion();
+            return true;
         }
+
+        public void Exit(Expr expr, LiftingRole role, StaticScopeKey? guard)
+        {
+            if (AstTraversalDagSafety.HasTraversableExprChildren(expr))
+                (role == LiftingRole.Callable ? memo.CalleeVisited! : memo.ValueVisited).Add(expr);
+        }
+
+        public void Reference(Expr reference, StaticScopeKey? guard) => AddLiftedDependency(reference, paramMap, seen, deps, memo);
+
+        public LiftingCallee CalleeKind(Expr callee) => ResolveCalleeKind(callee, paramMap, memo.Walk);
+
+        public DotEdgeKind EdgeKind(Expr.DotCall edge, out DotEdgeKind mayKind, out StaticScopeKey? link)
+        {
+            mayKind = default;
+            link = null;
+            return EdgeKindOf(edge, paramMap, memo.Walk);
+        }
+
+        public LiftingCallee DotEdgeCallee(Expr.DotCall edge, DotEdgeKind kind) => ImplicitArgumentResolver.DotEdgeCallee(edge, kind, paramMap, memo.Walk);
     }
 
     /// <summary>Adds a value-role reference's callee to the dependencies when it lifts (once per identity).</summary>
@@ -5325,9 +4401,7 @@ internal static partial class ImplicitArgumentResolver
         var rewriteMap = memos.RewriteMapFor(role);
         if (rewriteMap.TryGetValue(expr, out var rewritten)) return rewritten;
         if (AstTraversalDagSafety.HasTraversableExprChildren(expr)) memos.Observations?.RecordResolverRewriteExpansion();
-        memos.Run.DepthBudget.LiveDepth++;
         rewritten = RewriteImplicitCallsCore(expr, paramMap, context, role, memos);
-        memos.Run.DepthBudget.LiveDepth--;
         rewriteMap[expr] = rewritten;
         return rewritten;
     }
@@ -5554,7 +4628,7 @@ internal static partial class ImplicitArgumentResolver
         {
             var edge = dotCall;
             var level = memos.Run.Level;
-            provisional.Register(() => ReadReceiver(edge.Target, level, paramMap, memos.Run, demand: memos).Lacks(edge.Name, memos.Run));
+            provisional.Register(() => ReadReceiver(edge.Target, level, paramMap, memos.Run, selectedLinks: true).Lacks(edge.Name, memos.Run));
             memos.Run.Await(provisional);
         }
 

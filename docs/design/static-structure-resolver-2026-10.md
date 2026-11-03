@@ -18,9 +18,9 @@ fingerprint verification. Cross-class co-residency, process-state lifetime and c
 between batches; that residual limitation remains explicit. This approval is scoped to this
 candidate, not a general validation-policy change.
 
-Q8 requirement equations, processing order and MAY→MUST refinement, and Q9 pending/completed
-publication remain in place. B3-5★ is separate future work, including the inherited Round-14
-items; B2 is not adopted and X-04 remains an owner decision.
+B3-5★ (November 2026, § 10) replaced Q8's processing order and on-demand processing with signature
+selection: every inferred signature and link class is selected jointly before the rewrite, and Q9's cells complete
+from the selected endpoints. B2 is not adopted; X-04 is decided B (2026-11-03): lifting cycles are refused.
 
 ## 1. Owner decisions (2026-10-27)
 
@@ -182,13 +182,13 @@ the definitions assert this.
 | Q5 `MissSelection(edge)` | Never / MAY / MUST | The receiver's `TargetWalk` / `Members`; whether a link body keeps an input (`Signature`) | Detection's stamp and the resolver's refinement (`MissSelectionOf`, `ReadReceiver`, `ReadDeclaration`, `CertainMissDecidesALift`, `StaticFallbackCalleeKind`, `ProvisionalMiss`, `CertainFallbackReports`) |
 | Q6 `IsInput(body, name)` | Yes / No / Unknown | `Binding`, `MissSelection` of the edges whose fallback is the name | The decider (`InputDecider`, `InferredInputDecisions`, `AgreesWith`, repeated passes, tentative forget/settle, `SuspendWalk` / `TakeSuspendedWalk`) |
 | Q7 `Inputs(body)` | Ordered inputs (first semantic occurrence plus Grace movement) | `IsInput` of each candidate | The detector's collection order |
-| Q8 `Signature(body)` | The processed signature: inputs plus the parameters formula lifting adds | `Inputs`, the role classifier (`FormulaLiftingRoles`, kept), `Signature` of callees through aliases | Processing order and its repairs (`PropertyLoop`, `SiblingOrderLookup.RefinedMiss` / `OwnedMemberSibling` / `OpenedSiblingProvider`, soft preferences, `EnsureOnDemand`, `ProcessedFormOnDemand`, `DemandDepthBudget` nesting) |
-| Q9 `AliasTarget(body)` | Reference(target), carrier(target), runtime, or no alias | `TargetWalk` (formation stratum), `Signature` | `TryCompleteLoneCalleeRow`, `RuntimeAliasRow`, `AliasTargetCell` / `PendingTargetOn` |
+| Q8 `Signature(body)` | The selected signature: inputs plus the parameters formula lifting adds (B3-5★, § 10) | `Inputs`, the role classifier (`FormulaLiftingRoles`, kept), `Signature` of callees through aliases | Replaced at B3-5★ by signature selection: processing order and its repairs (`PropertyLoop`, `SiblingOrderLookup.RefinedMiss` / `OwnedMemberSibling` / `OpenedSiblingProvider`, soft preferences, `EnsureOnDemand`, `ProcessedFormOnDemand`, `DemandDepthBudget` nesting) are deleted |
+| Q9 `AliasTarget(body)` | Reference(target), carrier(target), runtime, or no alias | `TargetWalk` (formation stratum), `Signature` | `TryCompleteLoneCalleeRow`, `RuntimeAliasRow`, `AliasTargetCell` / `PendingTargetOn` (B3-5★: completed from the selected endpoints, through region aliases) |
 
-**Consumers (production Q1–Q7, future Q8/Q9 consolidation at B3-5★).**
+**Consumers (production Q1–Q7; Q8/Q9 consolidated at B3-5★, § 10).**
 
 - The detector rewrites names from Q1/Q7 and stamps Q5.
-- The resolver reads Q1–Q7 while preserving Q8 lifting/forwarding, processing order and Q9 alias publication. Removing the Q8/Q9 processing order is future B3-5★ scope.
+- The resolver reads Q1–Q7 and selects Q8 before its rewrite (B3-5★, § 10); there is no processing order.
 - Exposure, the editor model and the provenance finalizer read the same answers.
 
 **Queries never report.** Diagnostics stay with the passes, at their current sites and in their walk order, so report
@@ -255,7 +255,7 @@ never partly on two models for one capability.
 | **B3-2** | Q1–Q4. The detector's static chases and the resolver's static reads switch to them, and their memos and suspension machinery are deleted. | Navigated-body witnesses (`probe-cases-r9h.txt`): `strata0-get` = 42, `strata0-ambiguous` = static `AmbiguousOpen`. All alias and ownership suites pass. |
 | **B3-3** | Q6–Q7 plus the A1 diagnostic. The decider is deleted. | A.3.x witnesses rejected in every order. HEAD signatures for every non-self-dependent body (differential over all saved probe corpora). |
 | **B3-4** | Q5. The resolver refinement and deferred checks are deleted where subsumed. | Round-12/13 refinement witnesses |
-| **B3-5** | Q8–Q9. Processing order, the channel's repairs, soft preferences, on-demand processing and demand nesting are deleted. | Round-14 witnesses: no `AstDepthLimitExceeded` on the K = 40 chains, order-independent results. Rounds 12–13 witnesses. |
+| **B3-5** | Q8–Q9. Processing order, the channel's repairs, soft preferences, on-demand processing and demand nesting are deleted (done as B3-5★, § 10). | Round-14 witnesses: no `AstDepthLimitExceeded` on the K = 40 chains, order-independent results. Rounds 12–13 witnesses. |
 | **B3-6** | Editor and exposure consumers; `AGENTS.md`, `ownership-and-lookup.md`, `SEMANTIC-ALIGNMENT.md`; spec cases; A1 public code and the API baseline | Editor suites, spec artifacts |
 | **B3-7** | Mutation runs, differential tests within the suite, full V3 (one ordinary `-Phase DotNet`, one `-Phase Lean`; local execution only when requested) | All green |
 
@@ -312,7 +312,7 @@ So **{Q1, Q2, Q3, Q5, Q6} is one strongly connected capability**; Q4 and Q7 hang
    - B3-2★ keeps that refinement, reading engine structure instead of its own chase. That is today's documented split
      between detection's verdict and resolution's refinement, not a second authority.
    - The refinement moves with Q8; old stages B3-4 and B3-5 merge as B3-5★.
-4. **Owner decision needed before B3-5★.** Inside a sibling cycle, today's rule is the documented processing-order
+4. **Owner decision needed before B3-5★** (decided 2026-11-03: (b), X-04 = B; § 10). Inside a sibling cycle, today's rule is the documented processing-order
    fallback (X-04): members are processed in declaration order, and the first one reads the others' unprocessed
    signatures. A least-fixed-point Q8 changes that observably. The order-independent choices are:
    - (a) the least fixed point over lifted-parameter sets, where each member of the cycle gets the union;
@@ -338,7 +338,7 @@ So **{Q1, Q2, Q3, Q5, Q6} is one strongly connected capability**; Q4 and Q7 hang
 | --- | --- |
 | **B3-0, B3-1** | Done |
 | **B3-2★** | Q1–Q7 and A1, as above. The scale: `ElaboratedScopeLookup` (2,730 lines), `ParameterDetector` (3,568), `ImplicitArgumentResolver` (6,630) and `PropertyDependencyGraph` (4,322) together hold the mechanisms it replaces. The list is in the B3-1 checkpoint report. |
-| **B3-5★** | Q8/Q9, the miss refinement and the processing order, after the owner decision in § 9.2(4) |
+| **B3-5★** | Q8/Q9, the miss refinement and the processing order, after the owner decision in § 9.2(4) — done (§ 10) |
 | **B3-6, B3-7** | Unchanged |
 
 ## 8. Risks
@@ -354,3 +354,67 @@ So **{Q1, Q2, Q3, Q5, Q6} is one strongly connected capability**; Q4 and Q7 hang
   above are the protection against a half-migrated capability.
 - **Obstacle protocol.** A fundamental obstacle, such as a selected rule that is not monotone in any information
   order, is to be documented here and stopped for an owner decision. It must not be worked around by narrowing M4★.
+
+## 10. B3-5★: signature selection (November 2026)
+
+Owner decisions (2026-11-03): **X-04 = B** — a genuine lifting cycle is refused with a deterministic front-end error
+of the A1 family (`SelfDependentInferredParameters`), never completed by an iteration rule; **CG4 = A-agree** (moot
+under B). § 9.2(4)'s option (b) is the one chosen.
+
+**Design.** Implicit-argument resolution has two phases.
+
+1. **Analysis** (`ImplicitArgumentResolver.SignatureAnalysis.cs`): the same recursion the rewrite makes, writing
+   nothing the rewrite reads. One **equation** per written open body per declaring context (D1a): the body's own
+   patterns and its value-role references in written order, each with its static callee identity
+   (`ResolveStaticCallable`, every reference row followed to its Q3 endpoint) and, where a link's class decides
+   whether the read is a value read, that link as its guard. The walk is the ONE formula-lifting role walk
+   (`WalkLiftingRoles<TSink>`), instantiated by the analysis (`EquationSink`) and by the rewrite's dependency
+   collection (`DependencySink`). DAG safety: regions are memoized by `AnalysisRegionKey` (node, free-name
+   identities, forwardable and collecting names, closed spec, opens), which refines the rewrite's region key, and a
+   path-sensitive context the analysis served from another context's analysis is mapped to that counterpart
+   (`SignatureKeyAliases`).
+2. **Selection** (`SignatureSelection.cs`, `SignatureSelector`): rule G6 over the equations. A guard vector
+   classifies every link; Φ_B evaluates the active read graph dependency-first, a cyclic component by the closed
+   gate (every member read as declaring nothing: no lifting inside the cycle gives its unique non-lifting meaning,
+   Lemma B1, and a lifting read inside it makes it a genuine lifting cycle without meaning); a vector is consistent
+   when every link evaluates to its class and every body has a meaning, grounded when every nonempty set of its
+   calculation links is refuted (three-valued, U1). G6 selects the unique grounded consistent vector; otherwise the
+   group is refused by category (`SignatureSelectionOutcome`: Ambiguous, Contradiction, UngroundedOnly,
+   Undetermined, LiftingCycle; readers of a refused group are Blocked and not reported again). Components are an
+   optimization only: a dependency-first local pass, then joint regions — every failed component with the closure of
+   its readers, regions whose dependency cones meet merged — solved over the whole cone by persistent
+   alternative-carrying stratification. All work and storage are charged to the operation's ledger
+   (`StaticQueryResourceBudget`; a table charges its 2^dimensions classifications before evaluating any).
+3. **Rewrite**: declarations in their elaborated order over the selected signatures. The rewrite never recomposes a
+   signature (`SelectedLifting`); `RequireSelectedComposition` checks, by reference and in O(dependencies), that it
+   reads exactly the callees the selection composed from. Region memo hits are recorded as **region aliases**
+   (`StaticStructureOperation.AliasResolvedRegion`): resolved views and pending target and structure cells below a served
+   context are read through its counterpart (`ResolvedView`, `RegionCounterpart`); a served context's completed facts
+   are its own (contextual identity, receiver, open, providers) over the counterpart's processed view, and every context
+   below it is a lazy **projection** of its counterpart (`CompletedStaticStructures`; independent review checkpoint 3b,
+   finding 1; checkpoint 4): one key per context by every route (`CompleteLookups` pairs the compilation's own keys
+   with their counterparts definition by definition), selections inside the region re-based onto the occurrence and
+   re-declared there, members that restart outside it (module roots) kept, and the view exposure gave that occurrence
+   (`RetargetTree` walks each exposed node beside the view it was copied from — so a copied member, branch body or inline
+   block, deconstruction rows included, finds its context through its original — and records a view, level by level, only
+   where exposure copied the occurrence); projected facts are recomputed only when their counterpart's facts or their own
+   view change; the walks over members, providers, counterparts (a current entry's validation included) and ancestors
+   are charged, and so are the declaring
+   chains a reach records and a projection re-declares (the body index walks each owner once per build and checks a
+   context against reaches only inside a served region);
+   continuations carry the aliases to deferred units (`EarlierResolvedView`), and a later unit inherits the projections
+   made before sealing.
+
+Refusals take A1's recovery route (`FrontEndPipeline.RecoverAfterSelfDependentInference`, and the deferred-unit
+equivalent in `DeferredModuleRegion`). Deleted: `PropertyLoop`, `PendingProperties`, `DemandDepthBudget`, on-demand
+processing (`EnsureOnDemand`, `ProcessedFormOnDemand`), the mutable signature map's pending/current members, the
+open-provider snapshots, `PropertyDependencyGraph`'s order channel (`SiblingOrderLookup`, `RefinedMiss`, soft
+preferences, `SettleSoftCycleConsumers`, `CyclicIndices`), and `PropertyProcessingOrderTests`.
+
+**Evidence.** Research outcomes carried forward as tests (`SignatureSelectionTests`): D06 = 5, D15 = 4, ReadQ
+(7, 7, 8, 100, 100, 100), the FU7 example (100, 7, 0), deferred 10/11, case H's module reuse. The independent oracle
+(`SignatureSelectionReviewRegressionTests`): rule G6 applied to whole random equation systems agrees with the
+selector on every system (six seeds × 500); W14u selects jointly in 120 of its 720 declaration orders. Independent
+read-only reviews (Codex, gpt-6.1-sol at maximum effort): checkpoint 1 (plan) and checkpoint 2 (implementation) each
+required changes, all resolved; their reports are under
+`artifacts/validation/alias-unify-1-b35-production/review/` (git-ignored).

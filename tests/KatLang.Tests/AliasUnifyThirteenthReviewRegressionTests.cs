@@ -141,14 +141,22 @@ public sealed class AliasUnifyThirteenthReviewRegressionTests
         Assert.Equal(new[] { "z" }, Member(root, "A").Params);
     }
 
-    [Fact]
-    public async Task AnUnresolvedReceiversMiss_KeepsTheResolversReportOrder()
-        // `u` is undeclared in P1's closed list: its miss reads nothing, so P1 and P2 keep the declaration order.
-        => await ParseErrorsAsync(
-            "U(0) = 0\nU(1) = 1\nC1(a, *p) = a\nC2(b, *q) = b\nP1(z) = {\n    W = U + 0\n    u.if(1, P2) + W + z\n}\nP2 = C1 + C2\n0",
-            ("UndeclaredIdentifier:", "[7:5, 7:6)"),
-            ("UnliftableClauseFamily:", "[6:9, 6:10)"),
-            ("InvalidCollectingBinding:", "[9:11, 9:13)"));
+    [Theory]
+    // `u` is undeclared in P1's closed list: its miss reads nothing and orders nothing. B3-5★: the resolver reports in its
+    // own traversal order — the elaborated declaration list, where the simple definition P2 precedes the clause-headed
+    // ones — whatever the receiver and whatever reads what.
+    [InlineData("    u.if(1, P2) + W + z\n")]
+    [InlineData("    W + z\n")]
+    public async Task AnUnresolvedReceiversMiss_KeepsTheResolversReportOrder(string row)
+    {
+        var source = "U(0) = 0\nU(1) = 1\nC1(a, *p) = a\nC2(b, *q) = b\nP1(z) = {\n    W = U + 0\n" + row + "}\nP2 = C1 + C2\n0";
+        var reports = new List<(string Start, string Span)>();
+        if (row.StartsWith("    u.", StringComparison.Ordinal))
+            reports.Add(("UndeclaredIdentifier:", "[7:5, 7:6)"));
+        reports.Add(("InvalidCollectingBinding:", "[9:11, 9:13)"));
+        reports.Add(("UnliftableClauseFamily:", "[6:9, 6:10)"));
+        await ParseErrorsAsync(source, [.. reports]);
+    }
 
     /// <summary>`Bi(p) = p.g(i+1)` / `g(i+1) = B(i+1)` … `BK(p) = p`: each miss is a parameter's member.</summary>
     private static string ParameterMemberChain(int size)
@@ -334,18 +342,17 @@ public sealed class AliasUnifyThirteenthReviewRegressionTests
     [Fact]
     public void APublishedAlias_ReachesNoLevelOfTheResolversInput()
     {
-        // SEC-S1: an alias's recorded target is its target's processed entry, which names the level that declares it —
-        // whose input entries and written opens are let go of once the run ends.
+        // SEC-S1: an alias's recorded target reaches none of the resolver's state. B3-5★: its identity is the target's
+        // static context, a chain of declaration tokens — never a level of the resolver's walk, nor the input tree.
         var root = SourceProvenance.ParseValid("F(x) = x + 1\nA = F\nLib = {\n    open Q\n    public B = F\n    Q = { public z = 1 }\n    0\n}\nA(2)").Root;
         foreach (var alias in new[] { root.Properties.Single(p => p.Name == "A").Value, Member(root, "Lib").Properties.Single(p => p.Name == "B").Value })
         {
             var target = Assert.IsType<Algorithm.Alias>(alias).ResolvedTarget;
             Assert.NotNull(target);
-            var identity = Assert.IsType<ImplicitArgumentResolver.VisibleProperty>(target.Identity);
-            for (var level = identity.Level; level is not null; level = level.Outer)
+            for (StaticScopeKey? key = Assert.IsType<StaticScopeKey>(target.Identity); key is not null; key = key.Parent)
             {
-                Assert.Null(level.Entries);
-                Assert.Empty(level.Opens);
+                Assert.False(key.Declaration is Algorithm, "A static identity reaches a declaration token, never a body.");
+                Assert.False(key.Declaration is ImplicitArgumentResolver.VisibleProperty or ImplicitArgumentResolver.ResolverLevel);
             }
         }
     }

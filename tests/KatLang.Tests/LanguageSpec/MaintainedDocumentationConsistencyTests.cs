@@ -410,6 +410,13 @@ public class MaintainedDocumentationConsistencyTests
             + @"ResultsToExprBundle|IsEmptySequenceChain|CountedArgAlgorithm|lookupPropDefExportedAny\??)(?![\w?])",
             "the Result-to-Expr reification retired on 2026-10-13 (ResultToExpr / resultToExpr with its helpers and work counter), the uncalled lookupPropDefExportedAny?, or the deleted counted-argument wrapper"
         },
+        // B3-5★ (November 2026) deleted the resolver's processing order: every inferred signature is selected before the
+        // rewrite. The dated entry of SEMANTIC-ALIGNMENT.md (not scanned) keeps the record.
+        {
+            @"(?<![\w.])(?:PropertyLoop|EnsureOnDemand|ProcessedFormOnDemand|DemandDepthBudget|SiblingOrderLookup|SettleSoftCycleConsumers|"
+            + @"PropertyProcessingOrderTests|CollectSiblingDependencyIndices|OwnedMemberSibling|OpenedSiblingProvider|PendingProperties)(?!\w)",
+            "the implicit-argument processing order B3-5★ deleted (signatures are selected before the rewrite)"
+        },
     };
 
     [Theory]

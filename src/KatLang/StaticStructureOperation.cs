@@ -33,6 +33,13 @@ internal sealed partial class StaticStructureOperation
     private readonly Pattern? _unitPattern;
     private HashSet<object>? _suppliedSourceNodes;
 
+    // REGION ALIASES (B3-5★): a context whose body the resolver served from the region another context processed holds the
+    // very object that context's processing produced, so its descendants' resolved views are that context's — read through
+    // the alias, never published once per PATH of a shared graph (exponential in its depth).
+    private Dictionary<StaticScopeKey, StaticScopeKey>? _regionAliases;
+    private readonly ImmutableDictionary<StaticScopeKey, StaticScopeKey> _frozenRegionAliases
+        = ImmutableDictionary.Create<StaticScopeKey, StaticScopeKey>(ReferenceEqualityComparer.Instance);
+
     internal StaticStructureOperation(Algorithm root, StaticQueryLimits limits, Algorithm? prelude = null, StaticAstPhase phase = StaticAstPhase.RawSource,
         CancellationToken cancellationToken = default)
     {
@@ -43,7 +50,8 @@ internal sealed partial class StaticStructureOperation
     }
 
     private StaticStructureOperation(StaticStructureQueries.Snapshot snapshot, ImmutableDictionary<StaticScopeKey, FrozenPublication> publications,
-        ImmutableDictionary<Algorithm, Algorithm> views, ImmutableDictionary<Algorithm, Algorithm> resolvedSources, StaticScopeKey declaring,
+        ImmutableDictionary<Algorithm, Algorithm> views, ImmutableDictionary<Algorithm, Algorithm> resolvedSources,
+        ImmutableDictionary<StaticScopeKey, StaticScopeKey> regionAliases, StaticScopeKey declaring,
         Algorithm loadedBody, Pattern pattern, StaticQueryLimits limits, CompletedStaticStructures? completed, long retainedStorageUnits, CancellationToken cancellationToken)
     {
         Queries = new(snapshot, limits, cancellationToken);
@@ -52,6 +60,7 @@ internal sealed partial class StaticStructureOperation
         _frozenPublications = publications;
         _frozenViews = views;
         _frozenResolvedSources = resolvedSources;
+        _frozenRegionAliases = regionAliases;
         _completedBase = completed;
         Root = Queries.MaterializedBranchIn(declaring, loadedBody, pattern);
         Queries.Resources.Metadata(2, cancellationToken: cancellationToken);
@@ -213,6 +222,7 @@ internal sealed partial class StaticStructureOperation
         if (stage == StaticPublicationStage.Resolved && _structureCells.TryGetValue(scope, out var cell)) cell.Complete(body);
     }
 
+    /// <summary>The view <paramref name="stage"/> published for exactly <paramref name="scope"/> (see <see cref="ResolvedView"/>).</summary>
     internal Algorithm? Published(StaticScopeKey scope, StaticPublicationStage stage)
     {
         Queries.EnsureUsable();
@@ -220,6 +230,119 @@ internal sealed partial class StaticStructureOperation
             return stage == StaticPublicationStage.Detected ? publication.Detected : publication.Resolved;
         return _frozenPublications.TryGetValue(scope, out var frozen)
             ? stage == StaticPublicationStage.Detected ? frozen.Detected : frozen.Resolved : null;
+    }
+
+    /// <summary>
+    /// The resolved view a read of <paramref name="scope"/> observes: its own publication, else — below a region the
+    /// resolver served from another context's processing (<see cref="AliasResolvedRegion"/>) — that context's
+    /// counterpart's (<see cref="RegionCounterpart"/>). A check of what the resolver processed IN a context reads
+    /// <see cref="Published"/>.
+    /// </summary>
+    internal Algorithm? ResolvedView(StaticScopeKey scope)
+        => Published(scope, StaticPublicationStage.Resolved)
+            ?? (RegionCounterpart(scope) is { } counterpart ? Published(counterpart, StaticPublicationStage.Resolved) : null);
+
+    /// <summary>
+    /// The resolved view an EARLIER operation completed for <paramref name="scope"/> (the frozen continuation a deferred
+    /// unit materializes from) — never one this operation published — read like <see cref="ResolvedView"/>.
+    /// </summary>
+    internal Algorithm? EarlierResolvedView(StaticScopeKey scope)
+    {
+        Queries.EnsureUsable();
+        if (_frozenPublications.TryGetValue(scope, out var frozen))
+            return frozen.Resolved;
+        // A view THIS operation published is never earlier; a context it merely registered (`ContextOf` keeps an empty
+        // slot for every new key) may still lie below a frozen served region, whose counterpart's view is.
+        if (_publications.TryGetValue(scope, out var local) && (local.Detected is not null || local.Resolved is not null)
+            || _frozenRegionAliases.IsEmpty)
+            return null;
+        return RegionCounterpart(scope) is { } counterpart && _frozenPublications.TryGetValue(counterpart, out var mapped)
+            ? mapped.Resolved : null;
+    }
+
+    /// <summary>
+    /// Records that the resolver served the region of <paramref name="reach"/> from its processing in
+    /// <paramref name="processed"/> (the same processed object, B3-5★): every context below the reach has its counterpart
+    /// below the processing context, whose resolved views it observes — never published once per PATH of a shared graph,
+    /// which is exponential in its depth.
+    /// </summary>
+    internal void AliasResolvedRegion(StaticScopeKey reach, StaticScopeKey processed)
+    {
+        Queries.EnsureUsable();
+        if (ReferenceEquals(reach, processed) || _frozenRegionAliases.ContainsKey(reach))
+            return;
+        _regionAliases ??= new(ReferenceEqualityComparer.Instance);
+        if (_regionAliases.TryAdd(reach, processed))
+            Queries.Resources.Metadata(2);
+    }
+
+    /// <summary>
+    /// The directly published context whose resolved views a context without its own observes (<see cref="ResolvedView"/>):
+    /// the same path below the processing context of its nearest region-aliased ancestor, followed while that context is
+    /// itself unpublished; null when no region alias applies.
+    /// </summary>
+    internal StaticScopeKey? RegionCounterpart(StaticScopeKey scope)
+    {
+        Queries.EnsureUsable();
+        // Every step consumes a distinct alias of an acyclic map, so the count bounds the chase.
+        var remaining = (_regionAliases?.Count ?? 0) + _frozenRegionAliases.Count;
+        for (var current = scope; remaining-- > 0 && RegionAliasStep(current) is { } mapped; current = mapped)
+        {
+            if (Published(mapped, StaticPublicationStage.Resolved) is not null)
+                return mapped;
+        }
+
+        return null;
+    }
+
+    private bool TryGetRegionAlias(StaticScopeKey reach, [System.Diagnostics.CodeAnalysis.NotNullWhen(true)] out StaticScopeKey? processed)
+        => _regionAliases is not null && _regionAliases.TryGetValue(reach, out processed)
+            || _frozenRegionAliases.TryGetValue(reach, out processed);
+
+    /// <summary>The same path below the nearest region alias of <paramref name="key"/> or its ancestors; null when none applies.</summary>
+    private StaticScopeKey? RegionAliasStep(StaticScopeKey key)
+    {
+        StaticScopeKey? reach = null;
+        for (StaticScopeKey? at = key; at is not null; at = at.Parent)
+        {
+            Queries.Resources.Work();
+            if (TryGetRegionAlias(at, out _))
+            {
+                reach = at;
+                break;
+            }
+        }
+
+        if (reach is null || !TryGetRegionAlias(reach, out var mapped))
+            return null;
+        if (ReferenceEquals(reach, key))
+            return mapped;
+        var path = new Stack<StaticScopeKey>();
+        for (var at = key; !ReferenceEquals(at, reach); at = at.Parent!)
+            path.Push(at);
+        while (path.TryPop(out var child))
+        {
+            Queries.Resources.Work();
+            if (Queries.Keys.KnownDefinitionIn(mapped, SourceOf(child), child.BindingRegion) is not { } next)
+                return null;
+            mapped = next;
+        }
+
+        return mapped;
+    }
+
+    /// <summary>
+    /// Completes every structure cell still pending once resolution has ended, from the resolved view its context observes
+    /// (<see cref="ResolvedView"/>).
+    /// </summary>
+    internal void CompletePendingStructureCells()
+    {
+        Queries.EnsureUsable();
+        foreach (var (scope, cell) in _structureCells)
+        {
+            if (cell.IsPending && ResolvedView(scope) is { } body)
+                cell.Complete(body);
+        }
     }
 
     /// <summary>
@@ -235,7 +358,7 @@ internal sealed partial class StaticStructureOperation
         if (_frozenPublications.TryGetValue(terminal, out var frozen)) return frozen.StructureCell;
         if (!_structureCells.TryGetValue(terminal, out var cell))
         {
-            var resolved = Published(terminal, StaticPublicationStage.Resolved);
+            var resolved = ResolvedView(terminal);
             Queries.Resources.Metadata(2);
             _structureCells.Add(terminal, cell = resolved is null
                 ? AliasStructureCell.PendingOn(SourceOf(terminal)) : AliasStructureCell.Of(resolved));
@@ -256,6 +379,16 @@ internal sealed partial class StaticStructureOperation
         var publications = _frozenPublications.ToBuilder();
         var views = _frozenViews.ToBuilder();
         var resolvedSources = _frozenResolvedSources.ToBuilder();
+        var regionAliases = _frozenRegionAliases.ToBuilder();
+        if (_regionAliases is not null)
+        {
+            foreach (var (reach, processed) in _regionAliases)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                regionAliases[reach] = processed;
+            }
+        }
+
         foreach (var (key, publication) in _publications)
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -278,7 +411,8 @@ internal sealed partial class StaticStructureOperation
         _completed?.Seal(Queries.OperationToken);
         cancellationToken.ThrowIfCancellationRequested();
         Queries.EnsureUsable();
-        return new(snapshot, publications.ToImmutable(), views.ToImmutable(), resolvedSources.ToImmutable(), _completed, snapshot.RetainedStorageUnits + 16L * publications.Count + (_completed?.RetainedStorageUnits ?? 0));
+        return new(snapshot, publications.ToImmutable(), views.ToImmutable(), resolvedSources.ToImmutable(), regionAliases.ToImmutable(), _completed,
+            snapshot.RetainedStorageUnits + 16L * publications.Count + 2L * regionAliases.Count + (_completed?.RetainedStorageUnits ?? 0));
     }
 
     internal sealed class Continuation
@@ -287,18 +421,19 @@ internal sealed partial class StaticStructureOperation
         private readonly ImmutableDictionary<StaticScopeKey, FrozenPublication> _publications;
         private readonly ImmutableDictionary<Algorithm, Algorithm> _views;
         private readonly ImmutableDictionary<Algorithm, Algorithm> _resolvedSources;
+        private readonly ImmutableDictionary<StaticScopeKey, StaticScopeKey> _regionAliases;
         private readonly CompletedStaticStructures? _completed;
         private readonly long _retainedStorageUnits;
         internal Continuation(StaticStructureQueries.Snapshot snapshot, ImmutableDictionary<StaticScopeKey, FrozenPublication> publications,
             ImmutableDictionary<Algorithm, Algorithm> views, ImmutableDictionary<Algorithm, Algorithm> resolvedSources,
-            CompletedStaticStructures? completed, long retainedStorageUnits)
-            => (_snapshot, _publications, _views, _resolvedSources, _completed, _retainedStorageUnits)
-                = (snapshot, publications, views, resolvedSources, completed, retainedStorageUnits);
+            ImmutableDictionary<StaticScopeKey, StaticScopeKey> regionAliases, CompletedStaticStructures? completed, long retainedStorageUnits)
+            => (_snapshot, _publications, _views, _resolvedSources, _regionAliases, _completed, _retainedStorageUnits)
+                = (snapshot, publications, views, resolvedSources, regionAliases, completed, retainedStorageUnits);
 
         internal Algorithm Prelude => _snapshot.Contexts[_snapshot.Keys.Root].Body;
 
         internal StaticStructureOperation Materialize(StaticScopeKey declaring, Algorithm loadedBody, Pattern pattern,
             StaticQueryLimits limits, CancellationToken cancellationToken = default)
-            => new(_snapshot, _publications, _views, _resolvedSources, declaring, loadedBody, pattern, limits, _completed, _retainedStorageUnits, cancellationToken);
+            => new(_snapshot, _publications, _views, _resolvedSources, _regionAliases, declaring, loadedBody, pattern, limits, _completed, _retainedStorageUnits, cancellationToken);
     }
 }

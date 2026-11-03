@@ -146,60 +146,6 @@ public sealed class FinalCandidateBoundaryTests(ITestOutputHelper output)
         Assert.Equal(selected == 0 ? Array.Empty<string>() : [Outer, Inner], downloads);
     }
 
-    [Fact]
-    public void DemandRefusalSetMatchesIndependentReachabilityForHardAndSoftCycles()
-    {
-        var random = new Random(5901);
-        for (var sample = 0; sample < 300; sample++)
-        {
-            var count = random.Next(2, 14);
-            var nodes = Enumerable.Range(0, count).Select(i =>
-            {
-                var hard = Enumerable.Range(0, count).Where(j => j != i && random.Next(6) == 0).ToArray();
-                var soft = Enumerable.Range(0, count).Where(j => j != i && !hard.Contains(j) && random.Next(6) == 0).ToArray();
-                return new PropertyDependencyNode(i, hard) { SoftSiblingDependencyIndices = soft };
-            }).ToArray();
-            var properties = Enumerable.Range(0, count).Select(i => new Property($"P{i}", new Algorithm.User(null, [], [], [], [new Expr.Num(0)]))).ToArray();
-            var graph = new PropertyDependencyGraph(properties, properties.Select((p, i) => (p.Name, i)).ToDictionary(p => p.Name, p => p.i), nodes);
-            var reach = new bool[count, count];
-            for (var i = 0; i < count; i++)
-                foreach (var j in nodes[i].SiblingDependencyIndices.Concat(nodes[i].SoftSiblingDependencyIndices)) reach[i, j] = true;
-            for (var k = 0; k < count; k++)
-                for (var i = 0; i < count; i++)
-                    for (var j = 0; j < count; j++) reach[i, j] |= reach[i, k] && reach[k, j];
-            var expected = Enumerable.Range(0, count).Where(i => reach[i, i]).ToHashSet();
-            bool changed;
-            do
-            {
-                changed = false;
-                for (var i = 0; i < count; i++)
-                    if (nodes[i].SiblingDependencyIndices.Any(expected.Contains)) changed |= expected.Add(i);
-            } while (changed);
-            Assert.Equal(expected.Order(), graph.CyclicIndices.Order());
-        }
-    }
-
-    [Fact]
-    public void ManyComponentsAndDemandRefusalsStayStackSafeAndBounded()
-    {
-        const int Count = 100_000;
-        // 25,000 hard two-member components and tails; a soft back edge absorbs the first tail
-        // node into each combined component, exercising the final settlement pass at scale.
-        var nodes = Enumerable.Range(0, Count).Select(i => new PropertyDependencyNode(i,
-            (i % 4) switch { 0 => [i + 1], 1 => [i - 1], _ => [i - 1] })
-            { SoftSiblingDependencyIndices = i % 4 == 0 ? [i + 2] : [] }).ToArray();
-        var properties = Enumerable.Range(0, Count).Select(i => new Property($"P{i}", new Algorithm.User(null, [], [], [], [new Expr.Num(0)]))).ToArray();
-        var graph = new PropertyDependencyGraph(properties, properties.Select((p, i) => (p.Name, i)).ToDictionary(p => p.Name, p => p.i), nodes);
-        IReadOnlyList<int>? order = null;
-        IReadOnlySet<int>? refusals = null;
-        var timer = Stopwatch.StartNew();
-        AstStructuralDepthProcessTests.RunOnThreadWithStack(1024 * 1024, () => { order = graph.TopologicalOrder; refusals = graph.CyclicIndices; });
-        output.WriteLine($"100,000 nodes in 25,000 SCCs and tails, both graph projections: {timer.ElapsedMilliseconds} ms");
-        Assert.Equal(Enumerable.Range(0, Count), order);
-        Assert.NotNull(refusals);
-        Assert.Equal(Count, refusals.Count);
-    }
-
     [Theory]
     [InlineData(true)]
     [InlineData(false)]

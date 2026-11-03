@@ -1218,7 +1218,7 @@ public closed record Expr
         /// canonical spelling (<c>open Math</c> … <c>Sin(A)</c>) is the same member as the
         /// alias <c>sin</c> and the qualified <c>Math.Sin</c>, whose SHAPES the static
         /// consumers recognize without scope; this stamp is how those consumers — implicit
-        /// argument resolution and its sibling-order channel — recognize the third spelling as
+        /// argument resolution's signature analysis and rewrite — recognize the third spelling as
         /// a CALLEE by what it resolves to rather than by how it is written, so its arguments
         /// are the member's strict value positions
         /// (<see cref="AstHelpers.TryGetRegistryProvenMathCalleeFacts"/>). Lifting the bare name

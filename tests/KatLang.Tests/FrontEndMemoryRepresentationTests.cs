@@ -23,10 +23,11 @@ public class FrontEndMemoryRepresentationTests
     private static Algorithm Leaf() => new Algorithm.User(null, [], [], [], OutputBundle.Empty);
 
     /// <summary>
-    /// A level of P properties writes its map P times. Every write path-copies the persistent
-    /// dictionary, and the version chain used to keep each version's dictionary — about P·log P
-    /// nodes. Now a version records only its changes, so the map reaches its CURRENT dictionary's
-    /// nodes alone (one per distinct name hash): linear in P, whatever the history.
+    /// P nested levels extend their maps P times. Every extension path-copies the persistent
+    /// dictionary, and a version chain that kept each version's dictionary would reach about P·log P
+    /// nodes. A version records only its changes, so the innermost map reaches its CURRENT
+    /// dictionary's nodes alone (one per distinct name hash): linear in P, whatever the history.
+    /// (Since B3-5★ no map is written after it is created: extension is the only way a version grows.)
     /// </summary>
     [Fact]
     public void SignatureMap_VersionChain_RetainsOnlyTheCurrentDictionary()
@@ -35,7 +36,7 @@ public class FrontEndMemoryRepresentationTests
         var map = SignatureMap.Empty(observations: null);
         var leaf = Leaf();
         for (var i = 0; i < writes; i++)
-            map.Set($"n{i}", Entry(leaf));
+            map = map.Extend(new Dictionary<string, VisibleProperty>(StringComparer.Ordinal) { [$"n{i}"] = Entry(leaf) });
 
         var census = ObjectCensus.Of(map);
         var dictionaryNodes = census.CountWhere(type => type.Name.StartsWith("SortedInt32KeyNode", StringComparison.Ordinal));
@@ -77,7 +78,11 @@ public class FrontEndMemoryRepresentationTests
                     break;
                 case 1:
                 case 2:
-                    map.Set(universe[random.Next(universe.Length)], values[random.Next(values.Length)]);
+                    // An overwrite of one name: ancestor probes then see a name changed on the walked path.
+                    maps.Add(map.Extend(new Dictionary<string, VisibleProperty>(StringComparer.Ordinal)
+                    {
+                        [universe[random.Next(universe.Length)]] = values[random.Next(values.Length)],
+                    }));
                     break;
                 default:
                     var free = names.With(NameSetInterner.Empty, universe.Where(_ => random.Next(2) == 0));

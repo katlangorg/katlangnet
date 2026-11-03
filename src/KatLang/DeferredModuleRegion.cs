@@ -388,6 +388,14 @@ internal sealed class DeferredModuleRegion
             var resolved = ImplicitArgumentResolver.ElaborateStructuralDeferredBranch(detected, structural, operation,
                 diagnostics, observations, ImportSite, modules);
             cancellationToken.ThrowIfCancellationRequested();
+            if (diagnostics.HasReported(DiagnosticCode.SelfDependentInferredParameters))
+            {
+                // B3-5★: a refused signature selection is the same family, with the same recovery: the resolver returned
+                // the detected body unrewritten and unpublished, and only the collision rule runs over it.
+                ParameterPropertyCollisionValidator.ValidateAfterSelfDependentInference(
+                    resolved, diagnostics, Validation, programRoot: null, ImportSite);
+                return null;
+            }
             if (diagnostics.HasReportedErrors) return null;
             new ParameterPropertyCollisionValidator(diagnostics, Validation, importSite: ImportSite).VisitAlgorithm(resolved);
             OpenProviderValidator.Validate(resolved, diagnostics, Exposure!.Scope.PropertyScope, ImportSite);

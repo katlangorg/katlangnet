@@ -38,6 +38,13 @@ internal abstract class StaticLookupFacts
     internal virtual int ViewVersion => 0;
     internal abstract void EnsureUsable();
     internal CompletedStructureContext Context(StaticScopeKey key) => new(this, key);
+
+    /// <summary>
+    /// Whether the body of <paramref name="key"/> also occurs in a context the scope list does not enumerate (B3-5★: below
+    /// a reach — see <c>CompletedStaticStructures.AddReach</c>), so the context-free body index has no unique context
+    /// for it. <paramref name="memo"/> belongs to one index build.
+    /// </summary>
+    internal virtual bool OccursBelowAReach(StaticScopeKey key, Dictionary<StaticScopeKey, bool> memo) => false;
     internal StaticScopeKey? Member(StaticScopeKey owner, string name) => Facts(owner)?.Members.GetValueOrDefault(name);
 
     internal CompletedStructureContext? ExactContext(Algorithm body)
@@ -75,13 +82,14 @@ internal abstract class StaticLookupFacts
             var receivers = new Dictionary<Algorithm, Algorithm?>(ReferenceEqualityComparer.Instance);
             var different = new HashSet<Algorithm>(ReferenceEqualityComparer.Instance);
             var contextual = new Dictionary<(StaticScopeKey Parent, object Body, object? Region), StaticScopeKey>(BodyContextComparer.Instance);
+            var repeated = new Dictionary<StaticScopeKey, bool>(ReferenceEqualityComparer.Instance);
             long visits = 0;
             foreach (var key in Scopes)
             {
                 visits++;
                 if (Facts(key) is { Body: { } view } facts)
                 {
-                    if (!index.TryAdd(view, key)) index[view] = null;
+                    if (!index.TryAdd(view, key) || OccursBelowAReach(key, repeated)) index[view] = null;
                     if (key.Parent is { } parent) contextual.TryAdd((parent, view, key.BindingRegion), key);
                     var receiver = facts.Receiver is { Kind: StaticFactKind.Structure, Target: { } target }
                         ? Facts(target)?.Body : null;

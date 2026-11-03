@@ -4,8 +4,8 @@ namespace KatLang;
 /// Passive, pass-scoped observer of front-end AST traversal work. One instance belongs to ONE
 /// measured front-end invocation and is passed explicitly through the internal observation
 /// overloads (<c>ParameterDetector.DetectPrevalidated</c>, <c>ImplicitArgumentResolver.ResolvePrevalidated</c>,
-/// <c>PropertyExposureResolver.Resolve</c>, <c>PropertyDependencyGraphBuilder.BuildDependencyOrder</c> /
-/// <c>.BuildSummaries</c>, <c>ModuleLoader.TraversalObservations</c>,
+/// <c>PropertyExposureResolver.Resolve</c>, <c>PropertyDependencyGraphBuilder.BuildSummaries</c>,
+/// <c>ModuleLoader.TraversalObservations</c>,
 /// <c>LoadElaborationGuard.CreateUnavailableDiagnostics</c>), so it records the structural
 /// work its own pass performs. It is never static and never ambient: the production paths carry no
 /// observer and record nothing, so a count can never leak across operations, runs, or threads.
@@ -628,11 +628,24 @@ internal sealed class FrontEndTraversalObservations
     internal void RecordDependencyBranchBodySummaryComputation()
         => DependencyBranchBodySummaryComputations = checked(DependencyBranchBodySummaryComputations + 1);
 
-    /// <summary>Sibling-dependency expansions (<c>PropertyDependencyGraphBuilder.CollectSiblingDependencyIndices</c>).</summary>
-    public long DependencySiblingExpansions { get; private set; }
+    /// <summary>
+    /// Expansions of the B3-5★ signature-analysis walk (<c>ImplicitArgumentResolver</c>'s equation recording): one per
+    /// node with children first reached under one (role, guard) in one body's row region, so a shared subtree is walked
+    /// once per body and context, never once per path.
+    /// </summary>
+    public long SignatureAnalysisExpansions { get; private set; }
 
-    internal void RecordDependencySiblingExpansion()
-        => DependencySiblingExpansions = checked(DependencySiblingExpansions + 1);
+    internal void RecordSignatureAnalysisExpansion()
+        => SignatureAnalysisExpansions = checked(SignatureAnalysisExpansions + 1);
+
+    /// <summary>
+    /// Bodies the B3-5★ signature analysis analyzed: one per distinct analysis region (a body reached again in a region it was
+    /// analyzed in reads that context's facts), mirroring <see cref="ResolverAlgorithmRegionExpansions"/>.
+    /// </summary>
+    public long SignatureAnalysisBodies { get; private set; }
+
+    internal void RecordSignatureAnalysisBody()
+        => SignatureAnalysisBodies = checked(SignatureAnalysisBodies + 1);
 
     /// <summary>
     /// Rewrite expansions of the module loader's traversal (synchronous walk and async twins

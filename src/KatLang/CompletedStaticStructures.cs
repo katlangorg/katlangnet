@@ -29,6 +29,41 @@ internal sealed class CompletedStaticStructures : StaticLookupFacts
     private bool _failed;
     private StaticQueryResourceBudget? _resources;
 
+    // B3-5★ REGION REACHES. A reach is a context the resolver served from another context's processing of the same region
+    // (`StaticStructureOperation.AliasResolvedRegion`): it has facts of its own, and every context BELOW it is a PROJECTION
+    // of its counterpart below the processing context — created only when a consumer reaches it, its facts the
+    // counterpart's with every selection inside the region re-based onto the reach and re-declared there, and its body the
+    // view the exposed tree holds at that occurrence (exposure may copy one occurrence's subtree; see RetargetTree). So a
+    // shared graph is never published once per path, and no context reads another occurrence's declaring identity or view.
+    // Each projected context has ONE key in this table — the compilation's own key when it named one (paired with its
+    // counterpart definition by definition, so definitions sharing one declaration stay apart), else one the table creates
+    // per counterpart — and a key the table did not create (another unit's, a consumer's own) reads the facts of its
+    // context's key wherever its declaration names one context. A member whose context restarts outside the region (a
+    // loaded module's root) is the same context from every occurrence and is never projected.
+    internal sealed record Reach(StaticScopeKey Processed, OpenProviderIdentity ReachIdentity, OpenProviderIdentity ProcessedIdentity);
+
+    /// <summary>A projected context: its reach, its counterpart and, when exposure gave this occurrence a view of its own, that view.</summary>
+    private sealed record Projection(StaticScopeKey Reach, StaticScopeKey Counterpart, Algorithm? View = null);
+
+    private ImmutableDictionary<StaticScopeKey, Reach> _reaches;
+    // One list per processing context (a family may serve many branch occurrences from one): appending stays logarithmic.
+    private ImmutableDictionary<StaticScopeKey, ImmutableList<StaticScopeKey>> _reachesOfProcessed;
+    // Every projection table below is read and written under this gate only: sealed facts may serve parallel readers. The
+    // gate is never held while the body index is built (that index reads projected facts under its own gate).
+    private readonly object _projectionGate = new();
+    private ImmutableDictionary<StaticScopeKey, Projection> _projections;
+    private ImmutableDictionary<(StaticScopeKey Parent, StaticScopeKey Counterpart), StaticScopeKey> _projectedChildren;
+    // A later unit inherits the projections this compilation made before sealing — keys, views and all; what a sealed table
+    // projects afterwards is its readers' cache, never inherited or charged (both stay independent of who read what, when).
+    private ImmutableDictionary<StaticScopeKey, Projection>? _sealedProjections;
+    private ImmutableDictionary<(StaticScopeKey Parent, StaticScopeKey Counterpart), StaticScopeKey>? _sealedProjectedChildren;
+    // A projected occurrence by the view exposure gave it, under its parent and region (`Child` of that copy).
+    private ImmutableDictionary<(StaticScopeKey Parent, object View, object? Region), StaticScopeKey> _viewedChildren;
+    private ImmutableDictionary<(StaticScopeKey Parent, object View, object? Region), StaticScopeKey>? _sealedViewedChildren;
+    private readonly Dictionary<StaticScopeKey, (Projection Projection, BodyFacts? Counterpart, BodyFacts? Facts)> _projectedFacts
+        = new(ReferenceEqualityComparer.Instance);
+    private bool _projectionSuspended;
+
     internal CompletedStaticStructures(StaticScopeKey prelude, CompletedStaticStructures? previous = null, StaticQueryResourceBudget? resources = null)
     {
         previous?.EnsureUsable();
@@ -41,6 +76,14 @@ internal sealed class CompletedStaticStructures : StaticLookupFacts
         _children = previous?._children ?? ImmutableDictionary.Create<(StaticScopeKey, object, object?), StaticScopeKey?>(ChildComparer.Instance);
         _alternateChildDeclarations = previous?._alternateChildDeclarations
             ?? ImmutableHashSet.Create<(StaticScopeKey, object, object?)>(ChildComparer.Instance);
+        _reaches = previous?._reaches ?? ImmutableDictionary.Create<StaticScopeKey, Reach>(ReferenceEqualityComparer.Instance);
+        _reachesOfProcessed = previous?._reachesOfProcessed
+            ?? ImmutableDictionary.Create<StaticScopeKey, ImmutableList<StaticScopeKey>>(ReferenceEqualityComparer.Instance);
+        _projections = previous?._sealedProjections ?? ImmutableDictionary.Create<StaticScopeKey, Projection>(ReferenceEqualityComparer.Instance);
+        _projectedChildren = previous?._sealedProjectedChildren
+            ?? ImmutableDictionary.Create<(StaticScopeKey, StaticScopeKey), StaticScopeKey>(KeyPairComparer.Instance);
+        _viewedChildren = previous?._sealedViewedChildren
+            ?? ImmutableDictionary.Create<(StaticScopeKey, object, object?), StaticScopeKey>(ChildComparer.Instance);
     }
 
     internal static void Attach(Algorithm body, CompletedStructurePublication publication)
@@ -62,6 +105,8 @@ internal sealed class CompletedStaticStructures : StaticLookupFacts
     private int _viewVersion;
     internal override int ViewVersion => _viewVersion;
     internal long RetargetNodeVisits { get; private set; }
+    /// <summary>Projected facts computed (B3-5★; read under the projection gate): every build is a counterpart change or a first read.</summary>
+    internal long ProjectedFactsBuilds { get; private set; }
     internal long RetainedStorageUnits { get; private set; }
     internal bool IsFailed => _failed || _resources?.IsFailed == true;
     internal void RejectUnsealed()
@@ -72,7 +117,343 @@ internal sealed class CompletedStaticStructures : StaticLookupFacts
     internal override BodyFacts? Facts(StaticScopeKey key)
     {
         EnsureUsable();
-        return _local?.GetValueOrDefault(key) ?? _bodies.GetValueOrDefault(key);
+        var direct = _local?.GetValueOrDefault(key) ?? _bodies.GetValueOrDefault(key);
+        if (direct is not null || _reaches.IsEmpty || key.Parent is null)
+            return direct;
+        lock (_projectionGate)
+            return _projectionSuspended ? null : ProjectedFacts(key);
+    }
+
+    /// <summary>Registers a reach (B3-5★): <paramref name="reach"/> was served from <paramref name="processed"/>'s processing.</summary>
+    internal void AddReach(StaticScopeKey reach, StaticScopeKey processed, OpenProviderIdentity reachIdentity, OpenProviderIdentity processedIdentity)
+    {
+        EnsureUsable();
+        if (_local is null) throw new InvalidOperationException("A sealed structural publication is immutable.");
+        if (_reaches.ContainsKey(reach)) return;
+        _resources?.Metadata(6);
+        // A later unit inherits the record and both declaring chains (whose construction its producer charged).
+        RetainedStorageUnits += 6 + ((long)reachIdentity.Length + processedIdentity.Length + 7) / 8;
+        _reaches = _reaches.Add(reach, new(processed, reachIdentity, processedIdentity));
+        _reachesOfProcessed = _reachesOfProcessed.SetItem(processed,
+            (_reachesOfProcessed.GetValueOrDefault(processed) ?? ImmutableList<StaticScopeKey>.Empty).Add(reach));
+    }
+
+    /// <summary>Whether <paramref name="key"/> is a reach (see <see cref="AddReach"/>).</summary>
+    internal bool IsReach(StaticScopeKey key) => _reaches.ContainsKey(key);
+
+    /// <summary>
+    /// Suspends projection while the compilation's own facts are being built: nothing below a reach may be projected before
+    /// every published context's facts exist (<see cref="AdoptBelowReaches"/> resumes it).
+    /// </summary>
+    internal void SuspendProjection()
+    {
+        lock (_projectionGate)
+            _projectionSuspended = true;
+    }
+
+    /// <summary>
+    /// Adopts the compilation's own contexts below reaches (parents first), each paired with its counterpart, as their
+    /// projections, then resumes projection: a member key or selection target the compilation already named is the ONE key
+    /// of its context.
+    /// </summary>
+    internal void AdoptBelowReaches(IReadOnlyList<(StaticScopeKey Key, StaticScopeKey Counterpart)> pairs)
+    {
+        EnsureUsable();
+        if (_local is null) throw new InvalidOperationException("A sealed structural publication is immutable.");
+        lock (_projectionGate)
+        {
+            foreach (var (key, counterpart) in pairs)
+            {
+                _resources?.Metadata(0);
+                if (!_projections.ContainsKey(key) && key.Parent is { } parent && ProjectionRootOf(parent) is not null
+                    && !_projectedChildren.ContainsKey((parent, counterpart)))
+                    Adopt(parent, counterpart, key);
+            }
+
+            _projectionSuspended = false;
+        }
+    }
+
+    // ── Projection (every method below runs under _projectionGate) ──
+
+    private StaticScopeKey? ProjectionRootOf(StaticScopeKey key)
+        => _reaches.ContainsKey(key) ? key : _projections.TryGetValue(key, out var projection) ? projection.Reach : null;
+
+    private StaticScopeKey CounterpartOf(StaticScopeKey key)
+        => _reaches.TryGetValue(key, out var reach) ? reach.Processed : _projections[key].Counterpart;
+
+    private BodyFacts? FactsUnderGate(StaticScopeKey key)
+        => _local?.GetValueOrDefault(key) ?? _bodies.GetValueOrDefault(key) ?? ProjectedFacts(key);
+
+    /// <summary>
+    /// The child of <paramref name="parent"/> with this declaration and region: a published one, or — below a reach — the
+    /// projection of its counterpart's child (out through the counterparts to the context that publishes it, then back in
+    /// through their projections: nested reaches never recurse).
+    /// </summary>
+    private StaticScopeKey? CounterpartChild(StaticScopeKey parent, object declaration, object? region)
+    {
+        var owners = new Stack<StaticScopeKey>();
+        StaticScopeKey? child;
+        // Region aliases are acyclic, so the counterparts of one chain are distinct; the bound only guards that invariant.
+        var remaining = _reaches.Count + _projections.Count + 1;
+        for (var at = parent; !_children.TryGetValue((at, declaration, region), out child); at = CounterpartOf(at))
+        {
+            if (ProjectionRootOf(at) is null || remaining-- == 0)
+                return null;
+            owners.Push(at);
+        }
+
+        _resources?.Metadata(0, 1L + owners.Count);
+        while (child is not null && owners.TryPop(out var owner))
+            child = ProjectedChild(owner, child);
+        return child;
+    }
+
+    /// <summary>
+    /// The ONE key of the context <paramref name="key"/> names: the key itself when this table knows it (published, a reach,
+    /// or a projection); otherwise, below a reach, its context's projection — whoever constructed the key; null when it
+    /// names no context with facts here.
+    /// </summary>
+    private StaticScopeKey? CanonicalOf(StaticScopeKey key)
+    {
+        var path = new Stack<StaticScopeKey>();
+        var at = key;
+        while (!_reaches.ContainsKey(at) && !_projections.ContainsKey(at) && _local?.ContainsKey(at) != true && !_bodies.ContainsKey(at))
+        {
+            path.Push(at);
+            if (at.Parent is not { } parent)
+                return null;
+            at = parent;
+        }
+
+        _resources?.Metadata(0, 1L + path.Count);
+        StaticScopeKey? canonical = at;
+        while (canonical is not null && path.TryPop(out var step))
+            canonical = CounterpartChild(canonical, step.Declaration, step.BindingRegion);
+        return canonical;
+    }
+
+    /// <summary>The ONE key of <paramref name="parent"/>'s child corresponding to <paramref name="counterpart"/>.</summary>
+    private StaticScopeKey ProjectedChild(StaticScopeKey parent, StaticScopeKey counterpart)
+    {
+        if (_projectedChildren.TryGetValue((parent, counterpart), out var known))
+            return known;
+        var key = new StaticScopeKey(parent, counterpart.Declaration, counterpart.BindingRegion);
+        Adopt(parent, counterpart, key);
+        return key;
+    }
+
+    private void Adopt(StaticScopeKey parent, StaticScopeKey counterpart, StaticScopeKey key)
+    {
+        // The compilation charges what it projects; a sealed table's projections are its readers' cache (see the fields).
+        _resources?.Metadata(4);
+        if (_local is not null) RetainedStorageUnits += 4;
+        _projections = _projections.Add(key, new(ProjectionRootOf(parent)!, counterpart));
+        _projectedChildren = _projectedChildren.Add((parent, counterpart), key);
+    }
+
+    private BodyFacts? ProjectedFacts(StaticScopeKey key)
+    {
+        if (!_projections.TryGetValue(key, out var projection))
+        {
+            // A key this table did not create names the context of its ONE key, whose facts it reads.
+            return CanonicalOf(key) is { } canonical && !ReferenceEquals(canonical, key) ? FactsUnderGate(canonical) : null;
+        }
+
+        // A projection's facts are a function of its record (reach, counterpart, view) and its counterpart's facts only, so
+        // they are recomputed exactly when one of those two objects changed (a revised or retargeted counterpart, a view).
+        // Validating reads the counterpart chain, one hop per level, so even a current entry charges its hop.
+        var counterpartFacts = FactsUnderGate(projection.Counterpart);
+        if (_projectedFacts.TryGetValue(key, out var cached)
+            && ReferenceEquals(cached.Projection, projection) && ReferenceEquals(cached.Counterpart, counterpartFacts))
+        {
+            _resources?.Metadata(0);
+            return cached.Facts;
+        }
+        var reach = projection.Reach;
+        var record = _reaches[reach];
+        var facts = counterpartFacts;
+        if (facts is not null)
+        {
+            var slots = (long)facts.Members.Count + facts.Providers.Length;
+            _resources?.Metadata(4 + 2 * slots, 1 + slots);
+            var members = new Dictionary<string, StaticScopeKey>(facts.Members.Count, StringComparer.Ordinal);
+            foreach (var (name, member) in facts.Members)
+                members[name] = ReferenceEquals(member.Parent, projection.Counterpart) ? ProjectedChild(key, member) : member;
+            facts = facts with
+            {
+                Body = projection.View ?? facts.Body,
+                Members = members,
+                Receiver = Rebased(facts.Receiver, reach, record),
+                Open = Rebased(facts.Open, reach, record),
+                Providers = Rebased(facts.Providers, reach, record),
+                RequirementReceiver = facts.RequirementReceiver is { } receiver ? Rebased(receiver, reach, record) : null,
+                RequirementOpen = facts.RequirementOpen is { } open ? Rebased(open, reach, record) : null,
+            };
+        }
+
+        ProjectedFactsBuilds++;
+        _projectedFacts[key] = (projection, counterpartFacts, facts);
+        return facts;
+    }
+
+    /// <summary>
+    /// The number of projections between <paramref name="key"/> and the published context its counterparts lead to: what
+    /// a projection's view is compared with is final once every projection of a lower level has its view.
+    /// </summary>
+    private int ProjectionLevel(StaticScopeKey key)
+    {
+        var level = 0;
+        for (var at = key; _projections.TryGetValue(at, out var projection); at = projection.Counterpart)
+            level++;
+        _resources?.Metadata(0, level);
+        return level;
+    }
+
+    /// <summary>
+    /// Records the view the exposed tree holds at a projected occurrence, and whether its subtree needs the same: an
+    /// occurrence holding its counterpart's view (exposure shared it) holds that view's whole subtree, so nothing below it
+    /// differs; one holding a copy of its own keeps that copy as its body.
+    /// </summary>
+    private bool RetargetProjection(StaticScopeKey key, Algorithm body)
+    {
+        lock (_projectionGate)
+        {
+            if (!_projections.TryGetValue(key, out var projection) || ProjectedFacts(key) is not { Body: { } current }
+                || ReferenceEquals(current, body))
+                return false;
+            if (!ReferenceEquals(OpenProviderIdentity.DeclarationOf(current), OpenProviderIdentity.DeclarationOf(body)))
+                throw new InvalidOperationException("Exposure must preserve a published declaration identity.");
+            _resources?.Metadata(2);
+            RetainedStorageUnits += 2;
+            _projections = _projections.SetItem(key, projection with { View = body });
+            _viewedChildren = _viewedChildren.SetItem((key.Parent!, body, key.BindingRegion), key);
+            _viewVersion++;
+            return true;
+        }
+    }
+
+    /// <summary>
+    /// A counterpart's selection as the reach's context reads it: a target inside the region (at or below the processing
+    /// context) is the reach's corresponding context, re-declared there; a target outside the region is the same declaration
+    /// from every occurrence (the region's free names select it alike).
+    /// </summary>
+    /// <summary>The counterpart's providers as the reach's context reads them: the same array when none lies inside the region.</summary>
+    private ImmutableArray<Selection> Rebased(ImmutableArray<Selection> selections, StaticScopeKey reach, Reach record)
+    {
+        Selection[]? rebased = null;
+        for (var index = 0; index < selections.Length; index++)
+        {
+            var selection = Rebased(selections[index], reach, record);
+            if (rebased is null)
+            {
+                if (selection == selections[index])
+                    continue;
+                rebased = selections.ToArray();
+            }
+
+            rebased[index] = selection;
+        }
+
+        return rebased is null ? selections : System.Runtime.InteropServices.ImmutableCollectionsMarshal.AsImmutableArray(rebased);
+    }
+
+    private Selection Rebased(Selection selection, StaticScopeKey reach, Reach record)
+    {
+        if (selection.Target is not { } target)
+            return selection;
+        var path = new Stack<StaticScopeKey>();
+        var at = target;
+        while (at is not null && !ReferenceEquals(at, record.Processed))
+        {
+            path.Push(at);
+            at = at.Parent;
+        }
+
+        _resources?.Metadata(0, 1L + path.Count);
+        if (at is null)
+            return selection;
+        var rebased = reach;
+        while (path.TryPop(out var step))
+            rebased = ProjectedChild(rebased, step);
+        if (selection.Identity is not { } identity)
+            return selection with { Target = rebased };
+        // Re-declaring reads, copies and hashes the whole declaring chain, and the projected facts retain the copy.
+        var chain = (long)identity.Length + record.ReachIdentity.Length;
+        _resources?.Metadata((chain + 7) / 8, chain);
+        return identity.Rebased(record.ProcessedIdentity, record.ReachIdentity) is { } redeclared
+            ? selection with { Target = rebased, Identity = redeclared }
+            : Selection.Unavailable;
+    }
+
+    /// <summary>
+    /// Whether the body of <paramref name="key"/> also occurs below a reach, so the context-free body index has no unique
+    /// context for it: <paramref name="key"/> lies strictly below a reach's processing context, and that reach's
+    /// corresponding context holds no view of its own (a projection's body is its counterpart's unless exposure copied its
+    /// occurrence, and a copied occurrence's ancestors below the reach are copies too). <paramref name="memo"/> belongs to one
+    /// index build: it records, per context, whether a processing context lies strictly above it, so the owners many
+    /// contexts share are walked once and a context no processing context encloses (most of a program) costs nothing more.
+    /// </summary>
+    internal override bool OccursBelowAReach(StaticScopeKey key, Dictionary<StaticScopeKey, bool> memo)
+    {
+        if (_reaches.IsEmpty)
+            return false;
+        var unknown = new Stack<StaticScopeKey>();
+        var enclosed = false;
+        for (var at = key; at.Parent is { } parent; at = parent)
+        {
+            if (memo.TryGetValue(at, out enclosed))
+                break;
+            unknown.Push(at);
+            if (_reachesOfProcessed.ContainsKey(parent))
+            {
+                enclosed = true;
+                break;
+            }
+        }
+
+        _resources?.Metadata(0, 1L + unknown.Count);
+        while (unknown.TryPop(out var visited))
+            memo[visited] = enclosed;
+        if (!enclosed)
+            return false;
+
+        // Inside a served region: the precise check walks from the context to each processing context above it, and from
+        // each of its reaches down the same path.
+        long work = 0;
+        try
+        {
+            lock (_projectionGate)
+            {
+                var path = new List<StaticScopeKey>();
+                for (var at = key; at.Parent is { } parent; at = parent)
+                {
+                    path.Add(at);
+                    work++;
+                    if (!_reachesOfProcessed.TryGetValue(parent, out var reaches))
+                        continue;
+                    foreach (var reach in reaches)
+                    {
+                        StaticScopeKey? correspondent = reach;
+                        for (var step = path.Count - 1; correspondent is not null && step >= 0; step--)
+                        {
+                            work++;
+                            correspondent = _projectedChildren.TryGetValue((correspondent, path[step]), out var next)
+                                && _projections[next].View is not null ? next : null;
+                        }
+
+                        if (correspondent is null)
+                            return true;
+                    }
+                }
+            }
+
+            return false;
+        }
+        finally
+        {
+            _resources?.Metadata(0, work);
+        }
     }
 
     internal override void EnsureUsable()
@@ -144,6 +525,8 @@ internal sealed class CompletedStaticStructures : StaticLookupFacts
                 builder[key] = facts;
             }
             _bodies = builder.ToImmutable();
+            lock (_projectionGate)
+                (_sealedProjections, _sealedProjectedChildren, _sealedViewedChildren) = (_projections, _projectedChildren, _viewedChildren);
             _local = null;
             // Completed immutable facts outlive their producer. A later cancellation/fault of that
             // producer cannot invalidate this successful publication or any continuation sharing it.
@@ -152,56 +535,115 @@ internal sealed class CompletedStaticStructures : StaticLookupFacts
         catch { _failed = true; throw; }
     }
 
-    /// <summary>Retargets the final exposed tree by published context, including memo hits and branch occurrences.</summary>
+    /// <summary>
+    /// Retargets the final exposed tree by published context, including memo hits and branch occurrences. Exposure copies
+    /// declaration-preserving views, so each exposed node is walked beside the node it was copied from (its context's view
+    /// before retargeting): a copied algorithm finds its context through that original — by member name, branch region or
+    /// position — never through its own identity, which nothing records yet, so definitions sharing one declaration stay
+    /// apart. B3-5★: an occurrence below a reach is a projection whose view the walk records only where exposure copied it —
+    /// walked level by level (<see cref="ProjectionLevel"/>), so each comparison is with a final view and a shared subtree is
+    /// never walked per path.
+    /// </summary>
     internal void RetargetTree(StaticScopeKey entry, Algorithm tree, CancellationToken cancellationToken = default)
     {
         EnsureUsable();
         if (_local is null) return;
         using var storage = _resources?.Temporary();
+        // Every published context's view before retargeting, and the published contexts by (parent, that view, region).
+        var original = new Dictionary<StaticScopeKey, Algorithm>(ReferenceEqualityComparer.Instance);
+        var byOriginal = new Dictionary<(StaticScopeKey Parent, object View, object? Region), StaticScopeKey>(ChildComparer.Instance);
         var seen = new Dictionary<StaticScopeKey, HashSet<object>>(ReferenceEqualityComparer.Instance);
-        var pending = new Stack<(object Node, StaticScopeKey Context)>();
-        pending.Push((tree, entry));
+        var levels = new List<Stack<(object Node, StaticScopeKey Context, object? Original)>> { new() };
+        var level = 0;
         try
         {
-            while (pending.TryPop(out var item))
+            foreach (var (key, facts) in _local)
             {
                 cancellationToken.ThrowIfCancellationRequested();
-                _resources?.Metadata(0, cancellationToken: cancellationToken);
-                if (!seen.TryGetValue(item.Context, out var nodes))
+                if (facts.Body is not { } view) continue;
+                storage?.Add(2, cancellationToken);
+                original[key] = view;
+                if (key.Parent is { } parent) byOriginal.TryAdd((parent, view, key.BindingRegion), key);
+            }
+
+            levels[0].Push((tree, entry, null));
+            for (; level < levels.Count; level++)
+            {
+                while (levels[level].TryPop(out var item))
                 {
-                    storage?.Add(3, cancellationToken);
-                    seen[item.Context] = nodes = new(ReferenceEqualityComparer.Instance);
-                }
-                if (nodes.Contains(item.Node)) continue;
-                storage?.Add(1, cancellationToken);
-                nodes.Add(item.Node);
-                RetargetNodeVisits++;
-                if (item.Node is Algorithm body)
-                {
-                    if (!_local.TryGetValue(item.Context, out var facts) || facts.Body is null) continue;
-                    Retarget(item.Context, body);
-                    foreach (var property in body.Properties)
-                        if (property.Value is Algorithm.User { IsAssignmentDeconstructionSource: true } source)
-                        {
-                            // Detection and resolution admitted these rows in the written owner.
-                            foreach (var row in source.Output) pending.Push((row, item.Context));
-                        }
-                        else if (Child(item.Context, property.Value) is { } child) pending.Push((property.Value, child));
-                    foreach (var open in body.Opens) pending.Push((open, PreludeKey));
-                    if (body is Algorithm.Conditional family)
+                    cancellationToken.ThrowIfCancellationRequested();
+                    _resources?.Metadata(0, cancellationToken: cancellationToken);
+                    if (!seen.TryGetValue(item.Context, out var nodes))
                     {
-                        var declaring = family.Opens.Count == 0 ? item.Context.Parent ?? PreludeKey : item.Context;
-                        foreach (var branch in family.Branches)
-                            if (Child(declaring, branch.Body, branch.Pattern) is { } child) pending.Push((branch.Body, child));
+                        storage?.Add(3, cancellationToken);
+                        seen[item.Context] = nodes = new(ReferenceEqualityComparer.Instance);
                     }
-                    else foreach (var row in body.Output) pending.Push((row, item.Context));
+                    if (nodes.Contains(item.Node)) continue;
+                    storage?.Add(1, cancellationToken);
+                    nodes.Add(item.Node);
+                    RetargetNodeVisits++;
+                    if (item.Node is Algorithm body)
+                    {
+                        if (_local.TryGetValue(item.Context, out var facts))
+                        {
+                            if (facts.Body is null) continue;
+                            Retarget(item.Context, body);
+                        }
+                        else if (!RetargetProjection(item.Context, body)) continue;
+                        var before = OriginalView(item.Context);
+                        var originalProperties = before is not null && before.Properties.Count == body.Properties.Count ? before.Properties : null;
+                        for (var index = 0; index < body.Properties.Count; index++)
+                        {
+                            var property = body.Properties[index];
+                            if (property.Value is Algorithm.User { IsAssignmentDeconstructionSource: true } source)
+                            {
+                                // Detection and resolution admitted these rows in the written owner, and exposure rewrote them
+                                // there: each is walked in the owner's context beside its original row.
+                                var originalRows = originalProperties?[index] is
+                                    { Value: Algorithm.User { IsAssignmentDeconstructionSource: true } copiedFrom } originalProperty
+                                    && originalProperty.Name == property.Name && copiedFrom.Output.Count == source.Output.Count
+                                        ? copiedFrom.Output : null;
+                                for (var row = 0; row < source.Output.Count; row++)
+                                    Push(source.Output[row], item.Context, originalRows?[row]);
+                            }
+                            else if ((MemberContext(item.Context, property) ?? Child(item.Context, property.Value)) is { } child)
+                                Push(property.Value, child, null);
+                        }
+                        var originalOpens = before is not null && before.Opens.Count == body.Opens.Count ? before.Opens : null;
+                        for (var index = 0; index < body.Opens.Count; index++)
+                            Push(body.Opens[index], PreludeKey, originalOpens?[index]);
+                        if (body is Algorithm.Conditional family)
+                        {
+                            var declaring = family.Opens.Count == 0 ? item.Context.Parent ?? PreludeKey : item.Context;
+                            var originalBranches = before is Algorithm.Conditional { } copiedFrom && copiedFrom.Branches.Count == family.Branches.Count
+                                ? copiedFrom.Branches : null;
+                            for (var index = 0; index < family.Branches.Count; index++)
+                            {
+                                var branch = family.Branches[index];
+                                var child = (originalBranches is { } branches && SameDeclaration(branches[index].Body, branch.Body)
+                                    ? ContextOfOriginal(declaring, branches[index].Body, branches[index].Pattern) : null)
+                                    ?? Child(declaring, branch.Body, branch.Pattern);
+                                if (child is not null) Push(branch.Body, child, null);
+                            }
+                        }
+                        else
+                        {
+                            var originalRows = before is not null && before.Output.Count == body.Output.Count ? before.Output : null;
+                            for (var index = 0; index < body.Output.Count; index++)
+                                Push(body.Output[index], item.Context, originalRows?[index]);
+                        }
+                    }
+                    else if (item.Node is Expr.AlgorithmExpr block)
+                    {
+                        var child = (item.Original is Expr.AlgorithmExpr { Algorithm: var copiedFrom }
+                            && SameDeclaration(copiedFrom, block.Algorithm)
+                                ? ContextOfOriginal(item.Context, copiedFrom, null) : null) ?? Child(item.Context, block.Algorithm);
+                        if (child is not null) Push(block.Algorithm, child, null);
+                    }
+                    else for (var i = 0; AstStructuralPreflight.TryGetChild(item.Node, i, out var child); i++)
+                        Push(child, item.Context, item.Original is { } copiedFrom && copiedFrom.GetType() == item.Node.GetType()
+                            && AstStructuralPreflight.TryGetChild(copiedFrom, i, out var originalChild) ? originalChild : null);
                 }
-                else if (item.Node is Expr.AlgorithmExpr block)
-                {
-                    if (Child(item.Context, block.Algorithm) is { } child) pending.Push((block.Algorithm, child));
-                }
-                else for (var i = 0; AstStructuralPreflight.TryGetChild(item.Node, i, out var child); i++)
-                    pending.Push((child, item.Context));
             }
         }
         catch
@@ -209,9 +651,61 @@ internal sealed class CompletedStaticStructures : StaticLookupFacts
             _failed = true;
             throw;
         }
+
+        // The view a context had before retargeting: a published context's own; a projection's, that of the published
+        // context its counterparts lead to (the processing this occurrence was served from).
+        Algorithm? OriginalView(StaticScopeKey key)
+        {
+            lock (_projectionGate)
+                for (var at = key; ; at = _projections[at].Counterpart)
+                {
+                    if (original.TryGetValue(at, out var view)) return view;
+                    if (_bodies.TryGetValue(at, out var inherited)) return inherited.Body;
+                    if (!_projections.ContainsKey(at)) return null;
+                }
+        }
+
+        // The context below parent whose view before retargeting was view: a published one, or — below a reach — the
+        // projection of its counterpart's (nested reaches recurse once per level).
+        StaticScopeKey? ContextOfOriginal(StaticScopeKey parent, Algorithm view, object? region)
+        {
+            if (byOriginal.TryGetValue((parent, view, region), out var published)) return published;
+            StaticScopeKey counterpartParent;
+            lock (_projectionGate)
+            {
+                if (ProjectionRootOf(parent) is null) return null;
+                counterpartParent = CounterpartOf(parent);
+            }
+            if (ContextOfOriginal(counterpartParent, view, region) is not { } counterpart) return null;
+            lock (_projectionGate)
+                return ProjectedChild(parent, counterpart);
+        }
+
+        // A property's context is its owner's member of that name: unambiguous where definitions share one declaration. The
+        // declaration check keeps any other member out.
+        StaticScopeKey? MemberContext(StaticScopeKey owner, Property property)
+            => property.Name is { } name && Member(owner, name) is { } member && Facts(member)?.Body is { } current
+                && SameDeclaration(current, property.Value) ? member : null;
+
+        // A positional original is trusted only when it is a view of the same declaration (exposure preserves both).
+        static bool SameDeclaration(Algorithm first, Algorithm second)
+            => ReferenceEquals(OpenProviderIdentity.DeclarationOf(first), OpenProviderIdentity.DeclarationOf(second));
+
+        // A context's level never falls below its parent's; one that would (an open target, written at the root level) is
+        // walked with its parent's.
+        void Push(object node, StaticScopeKey context, object? originalNode)
+        {
+            int at;
+            lock (_projectionGate)
+                at = Math.Max(level, ProjectionLevel(context));
+            while (levels.Count <= at) levels.Add(new());
+            levels[at].Push((node, context, originalNode));
+        }
     }
 
-    internal override IEnumerable<StaticScopeKey> Scopes => _bodies.Keys.Concat(_local?.Keys ?? Enumerable.Empty<StaticScopeKey>()).Distinct();
+    internal override IEnumerable<StaticScopeKey> Scopes
+        => _bodies.Keys.Concat(_local?.Keys ?? Enumerable.Empty<StaticScopeKey>())
+            .Concat(_projections.Where(projection => projection.Value.View is not null).Select(projection => projection.Key)).Distinct();
 
     internal override StaticScopeKey? Child(StaticScopeKey parent, Algorithm body, Pattern? pattern = null)
     {
@@ -225,7 +719,46 @@ internal sealed class CompletedStaticStructures : StaticLookupFacts
         // preserves declarations, so a missing inert helper cannot become a child after a
         // view change. Ambiguous definitions and alternate owner identities still use the
         // body-specific projection; neither their contexts nor their language identities merge.
-        return _alternateChildDeclarations.Contains(child) ? ContextualBody(declaring, body, region) : null;
+        if (_alternateChildDeclarations.Contains(child))
+            return ContextualBody(declaring, body, region);
+        if (_reaches.IsEmpty || body.IsModuleRoot)
+            return null;
+        // B3-5★: below a reach, the projection of the counterpart's child for this body. The counterpart's own lookup may build
+        // the body index, which reads projected facts under its gate, so it runs outside the projection gate.
+        StaticScopeKey? owner, counterpartOwner = null;
+        lock (_projectionGate)
+        {
+            if (_projectionSuspended || CanonicalOf(declaring) is not { } canonical)
+                return null;
+            owner = canonical;
+            if (ReferenceEquals(owner, declaring))
+            {
+                if (ProjectionRootOf(owner) is null)
+                    return null;
+                // An occurrence exposure copied is found by its own view; any other one through its counterpart's.
+                if (_viewedChildren.TryGetValue((owner, body, region), out var viewed))
+                    return viewed;
+                counterpartOwner = CounterpartOf(owner);
+            }
+        }
+
+        // A key this table did not create asks for its context's child under that context's ONE key.
+        if (counterpartOwner is null)
+            return Child(owner, body, pattern);
+        if (Child(counterpartOwner, body, pattern) is not { } counterpart)
+            return null;
+        lock (_projectionGate)
+            return ProjectedChild(owner, counterpart);
+    }
+
+    private sealed class KeyPairComparer : IEqualityComparer<(StaticScopeKey Parent, StaticScopeKey Counterpart)>
+    {
+        internal static readonly KeyPairComparer Instance = new();
+        public bool Equals((StaticScopeKey Parent, StaticScopeKey Counterpart) x, (StaticScopeKey Parent, StaticScopeKey Counterpart) y)
+            => ReferenceEquals(x.Parent, y.Parent) && ReferenceEquals(x.Counterpart, y.Counterpart);
+        public int GetHashCode((StaticScopeKey Parent, StaticScopeKey Counterpart) value)
+            => HashCode.Combine(System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(value.Parent),
+                System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(value.Counterpart));
     }
 
     private sealed class ChildComparer : IEqualityComparer<(StaticScopeKey Parent, object Declaration, object? Region)>

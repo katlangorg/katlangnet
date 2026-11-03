@@ -935,10 +935,6 @@ public class DotCallFallbackExposureTests
         Assert.True(graph.TryGetPropertyIndex("P", out var pIndex));
         Assert.True(graph.TryGetPropertyIndex("t", out var tIndex));
         Assert.Equal([tIndex], graph[pIndex].SummarySiblingDependencyIndices);
-        // The fallback is a CALLED name: it never contributes to the sibling
-        // evaluation-order channel, matching Call function position.
-        var orderGraph = PropertyDependencyGraphBuilder.BuildDependencyOrder(outer);
-        Assert.Empty(orderGraph[pIndex].SiblingDependencyIndices);
     }
 
     // ── The static certainty predicate mirrors evaluator dispatch ───────────

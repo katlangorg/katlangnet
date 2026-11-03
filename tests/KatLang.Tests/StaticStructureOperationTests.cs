@@ -38,17 +38,15 @@ public sealed class StaticStructureOperationTests
         var p = operation.ContextOf(operation.Root, raw);
         var detected = raw with { Output = raw.Output.ToArray() };
         operation.Publish(p, StaticPublicationStage.Detected, detected);
-        var map = ImplicitArgumentResolver.SignatureMap.Empty(null);
-        var before = operation.Declaration(p, current: false, map);
+        var before = operation.Declaration(p);
         var resolved = Assert.IsType<Algorithm.User>(detected.WithParams(new[] { "x" }));
         operation.Publish(p, StaticPublicationStage.Resolved, resolved);
-        var after = operation.Declaration(p, current: false, map);
+        var after = operation.Declaration(p);
+        // B3-5★: a static chase reads the detected input only, before and after the resolved publication — no
+        // reading depends on which body a region processed first.
         Assert.Same(detected, before.Target);
         Assert.Same(before.Target, after.Target);
         Assert.True(before.Raw && after.Raw);
-        var signature = operation.Declaration(p, current: true, map);
-        Assert.Same(resolved, signature.Target);
-        Assert.False(signature.Raw);
     }
 
     [Fact]

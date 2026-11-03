@@ -508,6 +508,9 @@ internal sealed class OpenProviderIdentity : IEquatable<OpenProviderIdentity>
     /// </summary>
     internal bool IsComplete { get; }
 
+    /// <summary>The number of declarations in the chain (the provider's and its owners').</summary>
+    internal int Length => _declarations.Length;
+
     /// <summary>A provider declared as a property of <paramref name="level"/>: its declaration, then the owners of that level outward.</summary>
     internal static OpenProviderIdentity DeclaredAt(Algorithm provider, ElaboratedPropertyScope level)
     {
@@ -584,6 +587,26 @@ internal sealed class OpenProviderIdentity : IEquatable<OpenProviderIdentity>
                 return;
             }
         }
+    }
+
+    /// <summary>
+    /// This identity — of a provider declared at or below the level <paramref name="from"/> identifies, so that its chain
+    /// ends with <paramref name="from"/>'s — re-declared at the same place below the level <paramref name="to"/>
+    /// identifies (B3-5★: a context below a region the resolver served from another context's processing); null when this
+    /// identity is not declared at or below <paramref name="from"/>.
+    /// </summary>
+    internal OpenProviderIdentity? Rebased(OpenProviderIdentity from, OpenProviderIdentity to)
+    {
+        var prefix = _declarations.Length - from._declarations.Length;
+        if (prefix < 0 || !IsComplete || !from.IsComplete || !to.IsComplete)
+            return null;
+        for (var i = 0; i < from._declarations.Length; i++)
+        {
+            if (!ReferenceEquals(_declarations[prefix + i], from._declarations[i]))
+                return null;
+        }
+
+        return new([.. _declarations.AsSpan(0, prefix), .. to._declarations], complete: true);
     }
 
     /// <summary>The root level's element of a declaring chain (see <see cref="DeclaringOwners.Root"/>).</summary>

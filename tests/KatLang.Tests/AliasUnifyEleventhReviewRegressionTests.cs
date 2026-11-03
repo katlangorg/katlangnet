@@ -255,15 +255,14 @@ public sealed class AliasUnifyEleventhReviewRegressionTests
 
     // ── The sibling order records what a certain miss reads and what a path through the owner selects ──
 
-    [Fact]
-    public async Task ACertainMissesRead_IsASiblingDependency_ThatClosesACycle()
-    {
-        // F's `Lib.A.abs` reads Lib (a certain miss: A is A(x)) and Lib reads F: one cycle, processed in declaration order,
-        // so Lib reads F unprocessed and lifts nothing.
-        var outcome = await ErrAsync("Cfg = {\n    public x = 1\n}\nLib = {\n    public A = x\n    Cfg.x + F\n}\nF = Lib.A.abs + 0\nLib(-3)", "ArityMismatch");
-        Assert.Contains("Callable `Lib` expects 0 arguments, but was called with 1 argument.", outcome.Errors[0], StringComparison.Ordinal);
-        await OkAsync("Cfg = {\n    public x = 1\n}\nF = Lib.A.abs + 0\nLib = {\n    public A = x\n    Cfg.x + F\n}\nLib(-3)", "4");
-    }
+    [Theory]
+    // F's `Lib.A.abs` reads Lib's member A (a certain miss: A is A(x)), never Lib's own signature, and Lib reads F: no
+    // cycle (B3-5★: equations read exactly what they read), so F(x) and Lib(x) in every declaration order — formerly the
+    // sibling-order channel read Lib itself, closing a cycle that declaration order resolved.
+    [InlineData("Cfg = {\n    public x = 1\n}\nLib = {\n    public A = x\n    Cfg.x + F\n}\nF = Lib.A.abs + 0\nLib(-3)")]
+    [InlineData("Cfg = {\n    public x = 1\n}\nF = Lib.A.abs + 0\nLib = {\n    public A = x\n    Cfg.x + F\n}\nLib(-3)")]
+    public async Task ACertainMissesRead_ReadsTheMember_NotItsOwner_InEveryOrder(string source)
+        => await OkAsync(source, "4");
 
     private static string LinkAliasChain(int size, bool reversed)
     {

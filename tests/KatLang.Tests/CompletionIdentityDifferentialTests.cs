@@ -288,6 +288,16 @@ public class CompletionIdentityDifferentialTests
                 wrappedInList = true;
             }
 
+            // A bare value reference of an open body to ITSELF is a lifting cycle, refused at the front end (B3-5★, X-04
+            // B); the same name written as a callee — a written call never lifts — is an ordinary reference to the same
+            // declaration.
+            if (parsedVariant.Diagnostics.Any(static diagnostic => diagnostic.Code is DiagnosticCode.SelfDependentInferredParameters))
+            {
+                variant = program.Template.Replace(ProbeMarker, spelling + "()", StringComparison.Ordinal);
+                parsedVariant = Parser.Parse(variant);
+                wrappedInList = true;
+            }
+
             // A written reference to a name two different providers supply at the deciding open
             // level is the front end's AmbiguousOpen at the reference (Q-29 A-U) — exactly where
             // authoritative lookup selects no unique declaration and completion offers nothing.

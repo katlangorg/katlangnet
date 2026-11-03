@@ -2574,6 +2574,18 @@ Gcd(48, 18)
 
 **Result:** `6`
 
+A definition without a written parameter list can recurse too, as long as it calls itself with its arguments written out:
+
+```
+Fact = if(n <= 1, 1, n * Fact(n - 1))
+
+Fact(5)
+```
+
+**Result:** `120`
+
+When such a definition needs arguments, it must not use its own bare name as a value, as in `Steps = if(n <= 0, 0, Steps + 1)`: the bare `Steps` would need the very argument `n` that KatLang is still inferring for `Steps`, so this is an error. Write the call with its arguments instead: `Steps = if(n <= 0, 0, Steps(n - 1) + 1)`. (A definition that needs no arguments may read its own value.)
+
 Recursion cannot go arbitrarily deep. By default KatLang allows at most 128 nested calls, and a separate protection of the host's stack can stop a deep recursion sooner, depending on what each call does; either way the calculation stops with an error. For long iterations use `repeat`, `while`, or `reduce` instead: `range(1, n).reduce({x * product}, 1)` computes a factorial without recursion.
 
 ### Matching Text

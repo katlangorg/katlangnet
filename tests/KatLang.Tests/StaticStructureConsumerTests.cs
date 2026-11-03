@@ -102,19 +102,6 @@ public sealed class StaticStructureConsumerTests
         Assert.Equal(1, downloads);
     }
 
-    [Theory]
-    [InlineData(false, true)]
-    [InlineData(true, false)]
-    public void OrderingOnlyChargesTheLevelOpen_WhenNoNestedOpenCanIntervene(bool nestedOpen, bool expectedEdge)
-    {
-        var root = Assert.IsType<Algorithm.User>(SourceProvenance.ParseSyntaxValidRoot(
-            "Provider={public X=1}\nQ={public X=2}\nReader={" + (nestedOpen ? "open Q\n" : "") + "X+0}\n0"));
-        var graph = PropertyDependencyGraphBuilder.BuildDependencyOrder(root,
-            lookup: new SiblingOrderLookup(_ => LiftingCallee.Dynamic, name => name == "X" ? 0 : null));
-        var reader = root.Properties.Select((p,i) => (p,i)).Single(t => t.p.Name == "Reader").i;
-        Assert.Equal(expectedEdge, graph[reader].SiblingDependencyIndices.Contains(0));
-    }
-
     private static (Algorithm Root, DiagnosticBag Diagnostics, StaticStructureOperation Operation) Process(string source, bool reverse = false)
     {
         var raw = SourceProvenance.ParseSyntaxValidRoot(source);
