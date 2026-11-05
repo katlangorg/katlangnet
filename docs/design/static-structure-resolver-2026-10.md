@@ -20,7 +20,7 @@ candidate, not a general validation-policy change.
 
 B3-5★ (November 2026, § 10) replaced Q8's processing order and on-demand processing with signature
 selection: every inferred signature and link class is selected jointly before the rewrite, and Q9's cells complete
-from the selected endpoints. B2 is not adopted; X-04 is decided B (2026-11-03): lifting cycles are refused.
+from the selected endpoints. B2 is not adopted; X-04 is plain A-agree with R1 origins (owner direction 2026-11-05, superseding B of 2026-11-03): lifting cycles are completed simultaneously, and one that does not settle is refused.
 
 ## 1. Owner decisions (2026-10-27)
 
@@ -312,7 +312,7 @@ So **{Q1, Q2, Q3, Q5, Q6} is one strongly connected capability**; Q4 and Q7 hang
    - B3-2★ keeps that refinement, reading engine structure instead of its own chase. That is today's documented split
      between detection's verdict and resolution's refinement, not a second authority.
    - The refinement moves with Q8; old stages B3-4 and B3-5 merge as B3-5★.
-4. **Owner decision needed before B3-5★** (decided 2026-11-03: (b), X-04 = B; § 10). Inside a sibling cycle, today's rule is the documented processing-order
+4. **Owner decision needed before B3-5★** (decided 2026-11-03: (b), X-04 = B; superseded 2026-11-05 by simultaneous completion, § 10.1). Inside a sibling cycle, today's rule is the documented processing-order
    fallback (X-04): members are processed in declaration order, and the first one reads the others' unprocessed
    signatures. A least-fixed-point Q8 changes that observably. The order-independent choices are:
    - (a) the least fixed point over lifted-parameter sets, where each member of the cycle gets the union;
@@ -357,9 +357,38 @@ So **{Q1, Q2, Q3, Q5, Q6} is one strongly connected capability**; Q4 and Q7 hang
 
 ## 10. B3-5★: signature selection (November 2026)
 
-Owner decisions (2026-11-03): **X-04 = B** — a genuine lifting cycle is refused with a deterministic front-end error
-of the A1 family (`SelfDependentInferredParameters`), never completed by an iteration rule; **CG4 = A-agree** (moot
-under B). § 9.2(4)'s option (b) is the one chosen.
+Owner decisions (2026-11-03): X-04 = B, CG4 = A-agree; § 9.2(4)'s option (b). **Superseded for X-04 on 2026-11-05: plain
+A-agree with R1 origins (§ 10.1).** CG4 stays A-agree. The design below stands, with the closed gate's lifting branch
+replaced as § 10.1 says.
+
+### 10.1 Simultaneous completion and origins (owner direction 2026-11-05)
+
+Normative text: `docs/design/language-rules/ownership-and-lookup.md` § Recursive parameter inference. Mechanics:
+
+- **Rounds.** `SignatureSelector.Complete` iterates `F^{k+1}_i = C(i, F^k)` from the closed gate. The state is every
+  member's pattern tree and X-02 flag, compared structurally (`SamePatterns`), never by object. Brent's rule keeps two
+  detector snapshots, so a repetition at distance above one is found without a history table; a composition is a pure
+  function of the state, so that repetition proves non-settling. Round lists still stay in the run's template interner, so
+  each composition is charged, in work and storage, before it runs.
+- **One object per reading.** `EvaluateEquation` keeps one fact per equation per exact lifted inputs, and `Sealed` keeps
+  one sealed result per exact settled facts. A table or joint region that reads a component again therefore gets the same
+  objects, and a selected reader's composition and the rewrite agree by reference.
+- **Sealing.** `SealCompletion` (`ImplicitArgumentResolver.CycleOrigins.cs`) runs inside `Complete`, before any reader
+  composes: readers must lift final records. It derives origins by the first-provider law, builds final lists, recomposes
+  every member from them with the real law, and requires the same structure and origin content. `Composition`, including
+  X-02's `Unrecovered`, comes from that recomposition.
+- **Carrier.** The capture record. A determined capture holds its origin's record, or a kind-correct view with
+  `ParameterDeclaration.OriginalDeclaration` when the kinds differ. A cycle capture is a generated record with no span whose
+  note carries `ParameterCycleOrigin`. Identity of a source: `ParameterOriginKey`. Templates intern by record, so origins
+  need no side table and no extra publication step; they are published by what publishes the signatures, on success only.
+- **Contexts.** A body served to several contexts is one record, so a cycle's members are named relative to the innermost
+  body declaring them all: that holds in every context the record reaches. Origins follow the same projections as the body.
+- **Member metadata.** Captures with the same semantic cycle-member set share one immutable member array and its paths,
+  interned within the seal by equation identities. Each capture keeps its own sources. Temporary keys and path preparation
+  are admitted to the ledger, and joined path text is charged in work and storage before allocation; a returned array
+  retains no interning cache, operation or token.
+- **Settled cycles without a source.** Q-04 can make a callee stop lifting after its name entered a cycle, so a settled
+  cycle can have no reachable source. The descriptor then has no roots: nothing is invented and nothing is refused.
 
 **Design.** Implicit-argument resolution has two phases.
 
@@ -376,11 +405,11 @@ under B). § 9.2(4)'s option (b) is the one chosen.
 2. **Selection** (`SignatureSelection.cs`, `SignatureSelector`): rule G6 over the equations. A guard vector
    classifies every link; Φ_B evaluates the active read graph dependency-first, a cyclic component by the closed
    gate (every member read as declaring nothing: no lifting inside the cycle gives its unique non-lifting meaning,
-   Lemma B1, and a lifting read inside it makes it a genuine lifting cycle without meaning); a vector is consistent
+   Lemma B1, and a lifting read inside it makes it a genuine lifting cycle, completed as § 10.1 says); a vector is consistent
    when every link evaluates to its class and every body has a meaning, grounded when every nonempty set of its
    calculation links is refuted (three-valued, U1). G6 selects the unique grounded consistent vector; otherwise the
    group is refused by category (`SignatureSelectionOutcome`: Ambiguous, Contradiction, UngroundedOnly,
-   Undetermined, LiftingCycle; readers of a refused group are Blocked and not reported again). Components are an
+   Undetermined, NonSettling; readers of a refused group are Blocked and not reported again). Components are an
    optimization only: a dependency-first local pass, then joint regions — every failed component with the closure of
    its readers, regions whose dependency cones meet merged — solved over the whole cone by persistent
    alternative-carrying stratification. All work and storage are charged to the operation's ledger

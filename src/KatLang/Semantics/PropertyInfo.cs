@@ -47,6 +47,19 @@ public sealed record PropertyParameterInfo(string Name, PropertyParameterKind Ki
 
     public string? DisplayNameOverride { get; init; }
 
+    /// <summary>
+    /// Where an inferred parameter comes from: one span for a parameter with a single source declaration, every source's
+    /// span for a parameter a recursive group shares (<see cref="HasSharedCycleOrigin"/>), and empty for a written parameter
+    /// or for a source with no location in this document. The list is a set: its order means nothing.
+    /// </summary>
+    public IReadOnlyList<SourceSpan> OriginSpans { get; init; } = [];
+
+    /// <summary>
+    /// Whether a recursive group shares this inferred parameter, so no single declaration is its origin: a client offers
+    /// <see cref="OriginSpans"/> as a set. It can be true with no span at all (module content, or no source in the group).
+    /// </summary>
+    public bool HasSharedCycleOrigin { get; init; }
+
     public string DisplayName => DisplayNameOverride
         ?? (IsCollecting
             ? $"*{Name}"

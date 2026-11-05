@@ -2039,6 +2039,10 @@ public static class SemanticModelBuilder
                 {
                     IsCollecting = parameter.Kind == ParameterKind.Collecting,
                     IsMeta = parameter.Kind == ParameterKind.Meta,
+                    // Unlike a declaration span, an origin needs no document-local gate: module content has no spans, so a span
+                    // here always belongs to this document, and a local alias's surface keeps its target's origins.
+                    OriginSpans = InferredOriginSpans(parameter),
+                    HasSharedCycleOrigin = HasSharedCycleOrigin(parameter),
                 });
             }
 
@@ -2410,6 +2414,8 @@ public static class SemanticModelBuilder
                 {
                     IsCollecting = parameter.Kind == ParameterKind.Collecting,
                     IsMeta = parameter.Kind == ParameterKind.Meta,
+                    OriginSpans = InferredOriginSpans(parameter),
+                    HasSharedCycleOrigin = HasSharedCycleOrigin(parameter),
                 })
                 .ToList();
         }
@@ -2449,6 +2455,50 @@ public static class SemanticModelBuilder
                 && parameter.DeclaringPattern is CaptureParameterPattern capture
                     ? capture.Span
                     : null;
+
+        private static ParameterDeclaration? InferredDeclaration(CallableParameter parameter)
+            => parameter.Source == CallableParameterSource.Implicit && parameter.DeclaringPattern is CaptureParameterPattern capture
+                ? capture.Parameter
+                : null;
+
+        private static bool HasSharedCycleOrigin(CallableParameter parameter)
+            => InferredDeclaration(parameter)?.InferredProvenance?.CycleOrigin is not null;
+
+        /// <summary>The source spans of an inferred parameter (R1): one origin, or the set a recursive group shares.</summary>
+        private static IReadOnlyList<SourceSpan> InferredOriginSpans(CallableParameter parameter)
+        {
+            if (InferredDeclaration(parameter) is not { } declaration)
+                return [];
+            if (declaration.InferredProvenance?.CycleOrigin is { } cycle)
+            {
+                return new OriginSpanList([.. cycle.Roots.Select(static root => root.Span)
+                    .Where(static span => span.HasValue).Select(static span => span!.Value).Distinct()]);
+            }
+
+            return declaration.OriginSpan is { } span ? new OriginSpanList([span]) : [];
+        }
+
+        /// <summary>An immutable span list with VALUE equality: two models of one document compare equal.</summary>
+        private sealed class OriginSpanList(SourceSpan[] spans) : IReadOnlyList<SourceSpan>
+        {
+            public int Count => spans.Length;
+
+            public SourceSpan this[int index] => spans[index];
+
+            public IEnumerator<SourceSpan> GetEnumerator() => ((IEnumerable<SourceSpan>)spans).GetEnumerator();
+
+            System.Collections.IEnumerator System.Collections.IEnumerable.GetEnumerator() => spans.GetEnumerator();
+
+            public override bool Equals(object? obj) => obj is OriginSpanList other && spans.SequenceEqual(other);
+
+            public override int GetHashCode()
+            {
+                var hash = new HashCode();
+                foreach (var span in spans)
+                    hash.Add(span);
+                return hash.ToHashCode();
+            }
+        }
 
         private static IReadOnlyList<ConditionalBranchInfo> CreateConditionalBranches(
             string name,

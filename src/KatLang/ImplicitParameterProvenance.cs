@@ -38,6 +38,11 @@ namespace KatLang;
 /// materialization itself minted — and evaluation only reads, so no note is
 /// ever mutated concurrently.</para>
 ///
+/// <para><b>Generated cycle notes (R1).</b> A capture of a recursive completion with no single derivable origin carries a
+/// GENERATED note (<see cref="ForCycle"/>) instead of a promotion note: it holds no span and no suggestion, and its
+/// <see cref="CycleOrigin"/> names the cycle and the source declarations that supply the name. It is no source
+/// declaration, so nothing that asks for one origin can read a root out of it.</para>
+///
 /// <para><b>Deferred suggestion (FE-1).</b> A promotion captures only the
 /// suggestion's candidate context (<see cref="SuggestionQuery"/>, immutable and
 /// free of scope chains); the suggestion itself is computed on the first read of
@@ -70,7 +75,14 @@ internal sealed class ImplicitParameterProvenance
         DotMemberOrigin = dotMemberOrigin;
     }
 
+    /// <summary>The generated note of a capture whose name a recursive cycle shares (see the class documentation).</summary>
+    internal static ImplicitParameterProvenance ForCycle(string name, ParameterCycleOrigin origin)
+        => new(name, span: null, suggestion: null) { CycleOrigin = origin };
+
     internal string Name { get; }
+
+    /// <summary>The cycle and its sources, for a generated note; null for a promotion note.</summary>
+    internal ParameterCycleOrigin? CycleOrigin { get; private init; }
 
     /// <summary>
     /// The first semantic source occurrence of the promoted name, or null when that
@@ -156,12 +168,131 @@ internal sealed class ImplicitParameterProvenance
         List<ImplicitParameterProvenance>? notes = null;
         foreach (var parameter in parameters)
         {
-            if (parameter.InferredProvenance is { } provenance)
-                (notes ??= []).Add(provenance);
+            if (parameter.InferredProvenance is not { } provenance)
+                continue;
+            (notes ??= []).Add(provenance);
+            if (provenance.CycleOrigin is not { } cycle)
+                continue;
+            // A cycle reports every source's promotion: each stays what it is, none stands for the cycle.
+            foreach (var root in cycle.Roots)
+            {
+                if (root.Declaration.InferredProvenance is { } source && !notes.Contains(source))
+                    notes.Add(source);
+            }
         }
 
         return notes;
     }
+}
+
+/// <summary>
+/// The shared origin of a capture in a first-provider cycle of a recursive completion (R1): the cycle's members and the
+/// source declarations reachable from it through every active, lifted, non-inert provider. A SET in meaning: the arrays
+/// are in canonical order only so that rendering is stable, and <see cref="SameContent"/> ignores order. Immutable.
+/// Generated metadata, never a declaration. No root means no source declaration supplies the name to the settled cycle.
+/// </summary>
+internal sealed class ParameterCycleOrigin(IReadOnlyList<ParameterCycleMember> members, IReadOnlyList<ParameterCycleRoot> roots)
+{
+    internal IReadOnlyList<ParameterCycleMember> Members { get; } = members;
+
+    internal IReadOnlyList<ParameterCycleRoot> Roots { get; } = roots;
+
+    internal bool SameContent(ParameterCycleOrigin other)
+    {
+        if (ReferenceEquals(this, other))
+            return true;
+        if (Members.Count != other.Members.Count || Roots.Count != other.Roots.Count)
+            return false;
+        var keys = new HashSet<ParameterOriginKey>(Roots.Count);
+        foreach (var root in Roots)
+            keys.Add(ParameterOriginKey.Of(root.Declaration));
+        foreach (var root in other.Roots)
+        {
+            if (!keys.Contains(ParameterOriginKey.Of(root.Declaration)))
+                return false;
+        }
+
+        var paths = new HashSet<ParameterCycleMember>(Members);
+        return other.Members.All(paths.Contains);
+    }
+}
+
+/// <summary>One member of a cycle: the names of its declaring bodies and its definition's span.</summary>
+internal readonly record struct ParameterCycleMember(string Path, SourceSpan? Span)
+{
+    internal static readonly Comparison<ParameterCycleMember> RenderOrder = (left, right) =>
+    {
+        var byPath = string.CompareOrdinal(left.Path, right.Path);
+        return byPath != 0 ? byPath : ParameterCycleRoot.ComparePositions(left.Span, right.Span);
+    };
+}
+
+/// <summary>One source of a cycle: the declaration record, and the callee or body name a report shows it under.</summary>
+internal readonly record struct ParameterCycleRoot(ParameterDeclaration Declaration, string Provider)
+{
+    /// <summary>Where the source is written, or null for locationless module content.</summary>
+    internal SourceSpan? Span => Declaration.OriginSpan;
+
+    internal static readonly Comparison<ParameterCycleRoot> RenderOrder = (left, right) =>
+    {
+        var byPosition = ComparePositions(left.Span, right.Span);
+        return byPosition != 0 ? byPosition : string.CompareOrdinal(left.Provider, right.Provider);
+    };
+
+    internal static int ComparePositions(SourceSpan? left, SourceSpan? right)
+    {
+        if (left is not { } a)
+            return right is null ? 0 : 1;
+        if (right is not { } b)
+            return -1;
+        var byLine = a.Start.Line.CompareTo(b.Start.Line);
+        return byLine != 0 ? byLine : a.Start.Column.CompareTo(b.Start.Column);
+    }
+}
+
+/// <summary>
+/// The IDENTITY of a source origin: the source position of a name when it has one, else the promotion note or original
+/// record of locationless content. Copies (a META lift, X-02 recovery, a re-elaboration of the same text) are one origin.
+/// A kind is no part of an origin. Never used for a generated cycle record: <see cref="SameOrigin"/> compares those by content.
+/// </summary>
+internal readonly struct ParameterOriginKey : IEquatable<ParameterOriginKey>
+{
+    private readonly string _name;
+    private readonly SourceSpan? _span;
+    private readonly object? _record;
+
+    private ParameterOriginKey(string name, SourceSpan? span, object? record)
+    {
+        _name = name;
+        _span = span;
+        _record = record;
+    }
+
+    internal static ParameterOriginKey Of(ParameterDeclaration declaration)
+    {
+        var original = declaration.OriginalDeclaration ?? declaration;
+        if (original.Span is { } span)
+            return new(original.Name, span, null);
+        return original.InferredProvenance is { } note
+            ? note.Span is { } occurrence ? new(original.Name, occurrence, null) : new(original.Name, null, note)
+            : new(original.Name, null, original);
+    }
+
+    internal static bool SameOrigin(ParameterDeclaration left, ParameterDeclaration right)
+    {
+        var (cycle, otherCycle) = (left.InferredProvenance?.CycleOrigin, right.InferredProvenance?.CycleOrigin);
+        return cycle is null || otherCycle is null
+            ? cycle is null && otherCycle is null && Of(left).Equals(Of(right))
+            : cycle.SameContent(otherCycle);
+    }
+
+    public bool Equals(ParameterOriginKey other)
+        => string.Equals(_name, other._name, StringComparison.Ordinal) && _span == other._span && ReferenceEquals(_record, other._record);
+
+    public override bool Equals(object? obj) => obj is ParameterOriginKey other && Equals(other);
+
+    public override int GetHashCode()
+        => HashCode.Combine(_name, _span, _record is null ? 0 : System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(_record));
 }
 
 /// <summary>

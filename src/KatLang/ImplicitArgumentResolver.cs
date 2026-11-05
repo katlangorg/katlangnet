@@ -137,7 +137,7 @@ internal static partial class ImplicitArgumentResolver
         };
 
         // B3-5★: every Q8 fact is selected before anything is rewritten, so no body reads another's provisional signature.
-        // A refused selection is a front-end error of the self-dependent-inference family (A1, X-04 B): nothing is
+        // A refused selection is a front-end error of the self-dependent-inference family (A1, non-settling recursion): nothing is
         // rewritten or published, and the caller takes A1's recovery route over the detected tree.
         run.Selected = SelectSignatures(root, SignatureMap.Empty(observations), ForwardableParameters.None, isRoot: true, branchContext: null, run);
         if (!run.Selected.Succeeded)
@@ -2825,7 +2825,7 @@ internal static partial class ImplicitArgumentResolver
     /// </summary>
     private static CaptureParameterPattern LiftedCapture(CaptureParameterPattern capture)
         => capture.Kind == ParameterKind.Meta
-            ? new CaptureParameterPattern(capture.Parameter with { Kind = ParameterKind.Normal })
+            ? new CaptureParameterPattern(capture.Parameter.WithKindOf(ParameterKind.Normal))
             : capture;
 
     /// <summary>

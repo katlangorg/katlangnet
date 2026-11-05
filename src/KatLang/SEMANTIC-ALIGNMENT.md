@@ -19,7 +19,7 @@ between batches; that residual limitation remains explicit. This approval is sco
 candidate, not a general validation-policy change.
 
 B3-5★ (November 2026, record at the end) replaced Q8's processing order and on-demand processing with signature
-selection, and Q9's cells complete from the selected endpoints. B2 is not adopted; X-04 is decided B (2026-11-03).
+selection, and Q9's cells complete from the selected endpoints. B2 is not adopted; X-04 is plain A-agree with R1 origins (owner direction 2026-11-05, superseding B of 2026-11-03).
 
 F1–F3 are FORMAL-02 C# resource/API-boundary/documentation corrections. No Lean semantic rule,
 AST variant, evaluator law, Q1–Q7 equation, Q8 requirement or Q9 publication rule changes.
@@ -3292,7 +3292,53 @@ Those sentences now state the M4★ law at their point of use and mark the forme
 closed-body scope). `ConsumerDirectedObservationTests` pins the CDO boundary witnesses on all six routes. NEED-04,
 repeated-name matching, `Same(x, x)` and Q-28 are untouched.
 
+### X-04 plain A-agree: recursive parameter inference and R1 origins (November 2026)
+
+Classification: "Lookup / ownership / open" for front-end signature construction, with one deliberate observable change.
+Lean was considered and needs no semantic edit: it models no signature construction, so `lean/KatLang.lean` changes only
+in the docstring describing the C# resolver (a comment). The generated Lean corpora are unchanged: no canonical case is a
+lifting cycle. Lean proves neither the rounds nor the origin law. Owner direction 2026-11-05 supersedes X-04 = B below.
+
+`SignatureSelector` completes a genuine lifting cycle by simultaneous rounds from the closed gate, with the ordinary
+composition law, and the reached state is authoritative: no uniqueness search and no refusal for a withdrawn requirement.
+Rule G6 and its decomposition are unchanged, with one reading per vector; CG4 stays a contradiction. Every capture records
+a determined origin or one generated cycle origin (`ImplicitParameterProvenance.CycleOrigin`), carried by the capture record
+and so published only with the operation's own result. Diagnostics report the cycle and its sources;
+`PropertyParameterInfo` gains `OriginSpans` and `HasSharedCycleOrigin`.
+
+Observable consequences of the selected rule (C2 compatibility acknowledgment accepted 2026-11-05):
+
+- A settled recursive group is accepted: `F = if(tick() > 3, x, F + 1)` / `F(10)` is 13 instead of an error, and so for the
+  mutual, three-way and pure mixed recursion in `RecursiveParameterInferenceTests`.
+- `SelfDependentInferredParameters` from selection now means a recursive inference that does not settle, or a link
+  category. The oscillator `A = B + X` / `B = A + Y` stays refused, with new wording; so does a group whose grouping alternates.
+- DC1 and U1 are accepted (formerly UngroundedOnly and Undetermined): their counterfactual now has a meaning.
+- COMPATIBILITY: previously accepted code can be refused when recursive inference makes an additional alias classification
+  meaningful. The C2 fixture now has two grounded readings and is refused as `SelfDependentInferredParameters` with the
+  ambiguity wording. The complete tested migration writes `K(p)` and `M(p)`; writing only `N(o)` retains the ambiguity.
+  Facts defined under the former rule agree wherever both rules accept; that does not guarantee whole-program acceptance
+  or characterize every possible break. The owner explicitly accepted this consequence on 2026-11-05, closing C2 acknowledgment; it excludes
+  rootless origins, intermediate collector recovery, unrelated regressions and release authorization. Evidence and decision:
+  `artifacts/validation/a-agree-r1-production/c2-closeout/decision.md`. This closeout changes prose only; production is unchanged.
+- A settled state may have passed through an X-02 violation: the flag is part of the state, but only the settled state's
+  violation is reported. A settled cycle may have no reachable source; its origin then names the group alone.
+
+Changed test expectations: `SignatureSelectionTests` (the X-04 B refusals moved to `RecursiveParameterInferenceTests` as
+completions; DC1 and U1 accepted, with new fixtures for the two refused categories),
+`SignatureSelectionReviewRegressionTests` (oscillators replace `F = F + x` where a refusal is the subject; the oracle gains
+simultaneous rounds). Coverage: `RecursiveParameterInferenceTests`, `CycleOriginConsumerTests`,
+`RecursiveInferenceLifecycleTests`, `RecursiveOriginOracleTests` (an independent model of rounds and origins, with mutation
+controls). Full text: `docs/design/language-rules/ownership-and-lookup.md` § Recursive parameter inference. V3.
+
+R1 member-path resource repair: a seal interns immutable member arrays by the exact semantic equation set, sharing their
+paths across capture names while preserving each capture's own sources. Joined path storage and copying are charged before
+allocation. C# metadata representation and host resource accounting only; inferred signatures, R1 origin content, runtime
+semantics and the public API are unchanged. `CycleOriginConsumerTests` pins native allocation growth and refusal before
+unfunded path publication; `RecursiveInferenceLifecycleTests` pins funded retry on the same retained tree. V3; no Lean edit.
+
 ### B3-5★: signature selection replaces the processing order (November 2026)
+
+Superseded for X-04 by the record above: this record's refusals of lifting cycles describe the former rule.
 
 Classification: "Lookup / ownership / open" — C#-only front-end signature construction. Lean was considered and needs
 no semantic edit: Lean models no signature construction (`forwardingSource` decides per name, and the derived spec and

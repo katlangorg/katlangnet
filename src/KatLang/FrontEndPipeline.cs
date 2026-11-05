@@ -402,7 +402,7 @@ internal static class FrontEndPipeline
         try
         {
             ResolveImplicitArguments(input, passDiagnostics, hostOperations, modules, operation);
-            // B3-5★: a refused signature selection (a genuine lifting cycle, X-04 B, or an .Algorithm classification
+            // B3-5★: a refused signature selection (a recursive inference that does not settle, or an .Algorithm classification
             // without one grounded consistent reading) is the same family as A1, with the same recovery: the resolver
             // returned the detected tree unrewritten and unpublished.
             if (operation is not null && passDiagnostics.HasReported(DiagnosticCode.SelfDependentInferredParameters))

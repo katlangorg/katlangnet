@@ -502,7 +502,12 @@ public enum DiagnosticCode
     /// </summary>
     InvalidMetaParameter = 59,
 
-    /// <summary>Implicit input classification remains self-dependent at the structural least information fixed point.</summary>
+    /// <summary>
+    /// Inferred parameters cannot be decided. Detection: implicit input classification remains self-dependent at the
+    /// structural least information fixed point. Selection: a recursive inference does not settle (its state repeats with a
+    /// period above one), or the <c>.Algorithm</c> links have no unique grounded reading. A recursive group that settles is
+    /// completed, not reported. Resource exhaustion is <see cref="StaticStructureLimitExceeded"/>, never this code.
+    /// </summary>
     SelfDependentInferredParameters = 60,
 
     /// <summary>Static structure analysis exceeded its operation work or memory admission bound.</summary>

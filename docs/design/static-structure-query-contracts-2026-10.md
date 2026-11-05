@@ -20,7 +20,7 @@ candidate, not a general validation-policy change.
 
 Superseded in part by B3-5★ (November 2026; static-structure-resolver-2026-10.md § 10): Q8's processing order,
 on-demand processing and the miss refinement's order were replaced by signature selection, and Q9's pending cells complete
-from the selected endpoints. B2 is not adopted; X-04 is decided B (2026-11-03). The contracts below for Q1–Q7 stand.
+from the selected endpoints. B2 is not adopted; X-04 is plain A-agree with R1 origins (owner direction 2026-11-05, superseding B of 2026-11-03). The contracts below for Q1–Q7 stand.
 
 Q8 symbolic work sharing does not select structure. A computation that neither observes nor anchors a contextual
 selection may reuse a pristine immutable summary by exact body reference (branches also by binder-name set,

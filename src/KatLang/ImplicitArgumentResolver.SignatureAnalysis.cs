@@ -569,7 +569,7 @@ internal static partial class ImplicitArgumentResolver
 
         /// <summary>
         /// The refused groups, each reported at its bodies with the names of the <c>.Algorithm</c> links it could not classify
-        /// (none for a lifting cycle); empty when selection succeeded.
+        /// (none for a cycle that does not settle); empty when selection succeeded.
         /// </summary>
         internal IReadOnlyList<(IReadOnlyList<RefusedBody> Bodies, IReadOnlyList<string> Links, SignatureSelectionOutcome Outcome)> Refusals { get; }
 
@@ -647,6 +647,7 @@ internal static partial class ImplicitArgumentResolver
 
         SignatureFact Compose(int equation, IReadOnlyList<(int Reference, CallableSignature Signature)> lifted)
         {
+            run.Observations?.RecordSignatureSelectionStep();
             var body = equations[equation];
             var dependencies = new List<LiftedDependency>(lifted.Count);
             for (var i = 0; i < lifted.Count; i++)
@@ -670,8 +671,12 @@ internal static partial class ImplicitArgumentResolver
             return new SignatureFact(patterns, violation, lifting.Lifted, composition, CallableSignature.FromInferredPatterns(body.Name, patterns));
         }
 
+        IReadOnlyDictionary<int, SignatureFact> Seal(IReadOnlyList<int> component, IReadOnlyDictionary<int, SignatureFact> settled,
+            SignatureSelector.LiftedFrom liftedFrom)
+            => SealCompletion(component, settled, liftedFrom, equations, references, Compose, analysis, run);
+
         var closed = new SignatureFact([], null, isLifted: false, composition: null, new CallableSignature("", []));
-        var selection = new SignatureSelector(references, isLink, Compose, closed,
+        var selection = new SignatureSelector(references, isLink, Compose, Seal, closed,
             operation.Queries.Resources, run.CancellationToken).Solve();
 
         var facts = new Dictionary<StaticScopeKey, SignatureFact>(selection.Facts.Count, ReferenceEqualityComparer.Instance);
@@ -715,20 +720,23 @@ internal static partial class ImplicitArgumentResolver
     }
 
     /// <summary>
-    /// The wording of a refused selection, by category: a lifting cycle names the group that uses itself by name; every
-    /// other category names the <c>.Algorithm</c> references <paramref name="links"/> it could not classify.
+    /// The wording of a refused selection, by category: a recursive inference that does not settle names the group that
+    /// uses itself by name; every other category names the <c>.Algorithm</c> references <paramref name="links"/> it could
+    /// not classify.
     /// </summary>
     internal static string RefusedSelectionMessage(string name, string group, bool single, string links, bool oneLink, SignatureSelectionOutcome outcome)
     {
         var references = links.Length == 0 ? "references among " + group : oneLink ? "reference " + links : "references " + links;
         return outcome switch
         {
-            SignatureSelectionOutcome.LiftingCycle when single =>
-                $"Cannot infer parameters for '{name}' because they depend on themselves: {group} uses itself by name in a formula, "
-                + "so it needs the parameters its own inference gives it. Declare the parameters explicitly, or write the call with its arguments.",
-            SignatureSelectionOutcome.LiftingCycle =>
-                $"Cannot infer parameters for '{name}' because they depend on themselves: {group} use one another by name in formulas, "
-                + "so each needs the parameters the others infer. Declare the parameters explicitly, or write the calls with their arguments.",
+            SignatureSelectionOutcome.NonSettling when single =>
+                $"Cannot infer parameters for '{name}' because they depend on themselves and recursive inference does not settle: {group} "
+                + "uses itself by name in a formula, and completing its parameters keeps returning to an earlier signature. "
+                + "Declare the parameters explicitly, or write the call with its arguments.",
+            SignatureSelectionOutcome.NonSettling =>
+                $"Cannot infer parameters for '{name}' because they depend on themselves and recursive inference does not settle: {group} "
+                + "use one another by name in formulas, and completing their parameters keeps returning to an earlier signature. "
+                + "Declare the parameters explicitly, or write the calls with their arguments.",
             SignatureSelectionOutcome.Ambiguous =>
                 $"Cannot infer parameters for '{name}' because the .Algorithm {references} can be read in more than one consistent way. "
                 + "Declare the parameters explicitly or remove the circular dependency.",
@@ -736,8 +744,8 @@ internal static partial class ImplicitArgumentResolver
                 $"Cannot infer parameters for '{name}' because every consistent reading of the .Algorithm {references} supports only itself: "
                 + "it holds only because of the parameters it would give. Declare the parameters explicitly or remove the circular dependency.",
             SignatureSelectionOutcome.Undetermined =>
-                $"Cannot infer parameters for '{name}' because reading the .Algorithm {references} would need a rule for definitions "
-                + "whose inferred parameters depend on themselves. Declare the parameters explicitly or remove the circular dependency.",
+                $"Cannot infer parameters for '{name}' because deciding the .Algorithm {references} depends on a recursive inference "
+                + "that does not settle. Declare the parameters explicitly or remove the circular dependency.",
             _ =>
                 $"Cannot infer parameters for '{name}' because no consistent reading of the .Algorithm {references} exists: "
                 + (oneLink ? "whether it is a calculation depends on the parameters this inference would give it. "

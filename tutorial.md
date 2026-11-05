@@ -2584,7 +2584,19 @@ Fact(5)
 
 **Result:** `120`
 
-When such a definition needs arguments, it must not use its own bare name as a value, as in `Steps = if(n <= 0, 0, Steps + 1)`: the bare `Steps` would need the very argument `n` that KatLang is still inferring for `Steps`, so this is an error. Write the call with its arguments instead: `Steps = if(n <= 0, 0, Steps(n - 1) + 1)`. (A definition that needs no arguments may read its own value.)
+Definitions can also use themselves, or each other, by bare name. KatLang then infers their parameters together, by the same rules as everywhere: each definition's own parameters first, then those of the definitions it uses, in the order it uses them. The bare name passes the current arguments along:
+
+```
+Count = if(tick() > 3, start, Count + 1)
+
+Count(10)
+```
+
+**Result:** `13`
+
+Bare-name recursion passes the same arguments again, so use it only when something else ends the recursion. To change an argument, write the call: `Steps = if(n <= 0, 0, Steps(n - 1) + 1)`.
+
+Inference only reads definitions; it never runs them. If definitions keep swapping the order of their inferred parameters, as in `A = B + X` and `B = A + Y` with `X(x)` and `Y(y)`, inference does not settle and KatLang reports an error: write the parameters out. When several orders would work, KatLang uses the one its rounds reach, so write the parameter list yourself whenever the order matters to you. A parameter that recursive definitions pass around can come from several declarations at once, and error messages then name all of them.
 
 Recursion cannot go arbitrarily deep. By default KatLang allows at most 128 nested calls, and a separate protection of the host's stack can stop a deep recursion sooner, depending on what each call does; either way the calculation stops with an error. For long iterations use `repeat`, `while`, or `reduce` instead: `range(1, n).reduce({x * product}, 1)` computes a factorial without recursion.
 

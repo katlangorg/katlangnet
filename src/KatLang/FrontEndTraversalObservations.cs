@@ -648,6 +648,21 @@ internal sealed class FrontEndTraversalObservations
         => SignatureAnalysisBodies = checked(SignatureAnalysisBodies + 1);
 
     /// <summary>
+    /// Compositions of the signature selection and steps of its origin preparation, in execution order. A deterministic
+    /// position inside a selection: a test uses <see cref="OnSignatureSelectionStep"/> to act exactly there.
+    /// </summary>
+    public long SignatureSelectionSteps { get; private set; }
+
+    /// <summary>Called after each step with its number. Test-only, like every observer: production runs carry none.</summary>
+    internal Action<long>? OnSignatureSelectionStep { get; init; }
+
+    internal void RecordSignatureSelectionStep()
+    {
+        SignatureSelectionSteps = checked(SignatureSelectionSteps + 1);
+        OnSignatureSelectionStep?.Invoke(SignatureSelectionSteps);
+    }
+
+    /// <summary>
     /// Rewrite expansions of the module loader's traversal (synchronous walk and async twins
     /// together — the twins mirror the same walk, so one counter keeps their accounting united).
     /// </summary>

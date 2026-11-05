@@ -776,7 +776,7 @@ public sealed class SignatureSelectionReviewRegressionTests
 
     private static SignatureSelector.Selection SelectChain(int readers, out int[] refusedAt)
     {
-        // E0 reads itself and requires an argument (a genuine lifting cycle); E1..En each read the one before.
+        // E0 reads itself and does not settle; E1..En each read the one before.
         var identities = Enumerable.Range(0, readers + 1).Select(_ => new object()).ToArray();
         var references = Enumerable.Range(0, readers + 1)
             .Select(i => (IReadOnlyList<SignatureEquationReference>)[new SignatureEquationReference(i == 0 ? 0 : i - 1, null, identities[i == 0 ? 0 : i - 1], -1, new Expr.Resolve("r"), "r")])
@@ -784,18 +784,21 @@ public sealed class SignatureSelectionReviewRegressionTests
         var closed = new SignatureFact([], null, isLifted: false, composition: null, new CallableSignature("", []));
         SignatureFact Compose(int equation, IReadOnlyList<(int Reference, CallableSignature Signature)> lifted)
         {
-            IReadOnlyList<ParameterPattern> patterns = equation == 0 || lifted.Count > 0 ? [new CaptureParameterPattern("x")] : [];
+            // E0 alternates between two signatures: its completion repeats with period two.
+            IReadOnlyList<ParameterPattern> patterns = equation == 0
+                ? [new CaptureParameterPattern(lifted.Count > 0 && lifted[0].Signature.ParameterNames[0] == "x" ? "y" : "x")]
+                : lifted.Count > 0 ? [new CaptureParameterPattern("x")] : [];
             return new SignatureFact(patterns, null, lifted.Count > 0, null, CallableSignature.FromInferredPatterns($"E{equation}", patterns));
         }
 
-        var selection = new SignatureSelector(references, new bool[readers + 1], Compose, closed,
+        var selection = new SignatureSelector(references, new bool[readers + 1], Compose, static (_, settled, _) => settled, closed,
             new StaticQueryResourceBudget(StaticQueryLimits.Default), CancellationToken.None).Solve();
         refusedAt = [.. selection.Refusals.SelectMany(static refusal => refusal.Equations)];
         return selection;
     }
 
     /// <summary>
-    /// Review checkpoint 3: a lifting cycle read by a long chain of readers — every reader fails only through it — forms
+    /// Review checkpoint 3: a cycle that does not settle, read by a long chain of readers — every reader fails only through it — forms
     /// its joint region in work linear in the chain (formerly one reader closure per failed component, Θ(n²) and
     /// uncharged), and is reported once, at the cycle; the readers are not reported again.
     /// </summary>
@@ -806,31 +809,27 @@ public sealed class SignatureSelectionReviewRegressionTests
         var large = SelectChain(800, out var largeRefused);
         Assert.Equal([0], smallRefused);
         Assert.Equal([0], largeRefused);
-        Assert.Equal(SignatureSelectionOutcome.LiftingCycle, Assert.Single(large.Refusals).Outcome);
+        Assert.Equal(SignatureSelectionOutcome.NonSettling, Assert.Single(large.Refusals).Outcome);
         Assert.True(small.RegionVisits > 400, $"Only {small.RegionVisits} region visits were observed.");
         var ratio = (double)large.RegionVisits / small.RegionVisits;
         Assert.True(ratio < 2.6, $"Doubling the readers grew the region work {ratio:F2}x ({small.RegionVisits} -> {large.RegionVisits}).");
     }
 
     /// <summary>
-    /// Review checkpoint 3: two lifting cycles whose cones merely meet (both read <c>C</c>) are one joint region, but each
-    /// is reported as what it is — a definition that uses ITSELF — never as two definitions that use one another; a true
-    /// mutual cycle keeps its group wording.
+    /// Review checkpoint 3: two cycles that do not settle, whose cones merely meet (both read <c>X</c>), are one joint region,
+    /// but each is reported as what it is, with its own members, never as one group.
     /// </summary>
     [Fact]
-    public void IndependentSelfCycles_AreReportedSeparately_AndAMutualCycleTogether()
+    public void IndependentCycles_AreReportedSeparately()
     {
-        var parsed = Parser.Parse("C = p + 0\nA = C + A\nB = C + B\n0");
-        Assert.Equal(2, parsed.Diagnostics.Count);
+        var parsed = Parser.Parse("X(x) = x\nY(y) = y\nA = B + X\nB = A + Y\nC = D + X\nD = C + Y\n0");
+        Assert.Equal(4, parsed.Diagnostics.Count);
         Assert.All(parsed.Diagnostics, diagnostic => Assert.Equal(DiagnosticCode.SelfDependentInferredParameters, diagnostic.Code));
-        Assert.Contains(parsed.Diagnostics, diagnostic => diagnostic.Message.Contains("'A' uses itself by name", StringComparison.Ordinal));
-        Assert.Contains(parsed.Diagnostics, diagnostic => diagnostic.Message.Contains("'B' uses itself by name", StringComparison.Ordinal));
-        Assert.DoesNotContain(parsed.Diagnostics, diagnostic => diagnostic.Message.Contains("one another", StringComparison.Ordinal));
-
-        var mutual = Parser.Parse("C = p + 0\nA = C + B\nB = C + A\n0");
-        Assert.Equal(2, mutual.Diagnostics.Count);
-        Assert.All(mutual.Diagnostics, diagnostic => Assert.Contains("'A' and 'B' use one another by name", diagnostic.Message, StringComparison.Ordinal));
+        Assert.Equal(2, parsed.Diagnostics.Count(diagnostic => diagnostic.Message.Contains("'A' and 'B' use one another by name", StringComparison.Ordinal)));
+        Assert.Equal(2, parsed.Diagnostics.Count(diagnostic => diagnostic.Message.Contains("'C' and 'D' use one another by name", StringComparison.Ordinal)));
     }
+
+    private const string Oscillator = "X(x) = x\nY(y) = y\nF = G + X\nG = F + Y\n0";
 
     // ── A refusal inside a loaded module is positioned at its import site ──────────────────────────
 
@@ -842,7 +841,7 @@ public sealed class SignatureSelectionReviewRegressionTests
         };
 
     /// <summary>
-    /// A module's own lifting cycle (<c>F = F + x</c>) is reported in the loading document's coordinates: at the
+    /// A module's own cycle that does not settle is reported in the loading document's coordinates: at the
     /// declaration that imports it — never unpositioned, never at the module's own coordinates.
     /// </summary>
     [Theory]
@@ -852,11 +851,14 @@ public sealed class SignatureSelectionReviewRegressionTests
     {
         var parsed = await Parser.ParseAsync(source, ModuleOptions(new Dictionary<string, string>
         {
-            ["https://modules.example/u.kat"] = "\n\n\nF = F + x\n0",
+            ["https://modules.example/u.kat"] = "\n\n\n" + Oscillator,
         }));
-        var refusal = Assert.Single(parsed.Diagnostics, diagnostic => diagnostic.Severity == DiagnosticSeverity.Error);
-        Assert.Equal(DiagnosticCode.SelfDependentInferredParameters, refusal.Code);
-        Assert.Equal(new SourceSpan(line, column, endLine, endColumn), refusal.Span);
+        Assert.Equal(2, parsed.Diagnostics.Count);
+        Assert.All(parsed.Diagnostics, refusal =>
+        {
+            Assert.Equal(DiagnosticCode.SelfDependentInferredParameters, refusal.Code);
+            Assert.Equal(new SourceSpan(line, column, endLine, endColumn), refusal.Span);
+        });
     }
 
     // ── One deferred region, evaluated again ────────────────────────────────────────────────────
@@ -867,7 +869,7 @@ public sealed class SignatureSelectionReviewRegressionTests
         => Evaluator.RunFlatAsync(new Expr.AlgorithmExpr(root), limits: null, cancellationToken);
 
     /// <summary>
-    /// The SAME parsed program, evaluated again: a deferred unit whose selection refuses (its module's lifting cycle) is
+    /// The SAME parsed program, evaluated again: a deferred unit whose selection refuses (its module's cycle does not settle) is
     /// refused the same way every time it is selected, publishes nothing, and leaves the other branch's unit — selected
     /// in the same tree afterwards — to select and evaluate normally.
     /// </summary>
@@ -876,7 +878,7 @@ public sealed class SignatureSelectionReviewRegressionTests
     {
         var options = ModuleOptions(new Dictionary<string, string>
         {
-            ["https://modules.example/bad.kat"] = "F = F + x\n0",
+            ["https://modules.example/bad.kat"] = Oscillator,
             ["https://modules.example/good.kat"] = GoodModule,
         });
         var parsed = await Parser.ParseAsync(
@@ -953,12 +955,14 @@ public sealed class SignatureSelectionReviewRegressionTests
         using var cancellation = new CancellationTokenSource();
         cancellation.Cancel();
         var selector = new SignatureSelector(references, [false, false],
-            (equation, _) => new SignatureFact([], null, false, null, new CallableSignature($"E{equation}", [])), closed, ledger, cancellation.Token);
+            (equation, _) => new SignatureFact([], null, false, null, new CallableSignature($"E{equation}", [])), static (_, settled, _) => settled, closed, ledger, cancellation.Token);
         Assert.ThrowsAny<OperationCanceledException>(() => selector.Solve());
         Assert.True(ledger.IsFailed);
     }
 
     // ── A reader resolves an ambiguous lower component (research W14u) ──────────────────────────
+
+    private const string Prelude = "Cap(meta op) = op\nId(v) = v\nC(a, *p) = a\nA0 = C + 0\nB(p) = p\nDc(*w) = count(w)\n";
 
     private static readonly string[] W14uDeclarations =
     [
@@ -994,7 +998,6 @@ public sealed class SignatureSelectionReviewRegressionTests
     [Fact]
     public void AReader_ResolvesAnAmbiguousLowerComponent_InEveryOrder()
     {
-        const string Prelude = "Cap(meta op) = op\nId(v) = v\nC(a, *p) = a\nA0 = C + 0\nB(p) = p\nDc(*w) = count(w)\n";
         var order = 0;
         foreach (var declarations in Permutations(W14uDeclarations))
         {
@@ -1015,6 +1018,25 @@ public sealed class SignatureSelectionReviewRegressionTests
         }
 
         Assert.Equal(720, order);
+    }
+
+    /// <summary>
+    /// A completed cycle inside a joint cone is read by the local pass and again by the joint solve. Both readings must end
+    /// in one list per fact, or a reader's selected composition and the rewrite would disagree by reference (independent
+    /// review, checkpoint 1). The added <c>p</c> changes no signature, only what the region reads.
+    /// </summary>
+    [Fact]
+    public void ACompletedCycleInAJointCone_IsOneList()
+    {
+        string[] added = ["P(p) = p", "Q(p) = p", "R = S + P", "S = R + Q"];
+        var declarations = W14uDeclarations.Select(static row => row.StartsWith("Hf1", StringComparison.Ordinal) ? row + " + R" : row).Concat(added).ToArray();
+        foreach (var order in new[] { declarations, [.. declarations.Reverse()] })
+        {
+            var root = SourceProvenance.ParseValid(Prelude + "Outer(a) = {\n    " + string.Join("\n    ", order) + "\n    0\n}\n0").Root;
+            var outer = Assert.Single(root.Properties, property => property.Name == "Outer").Value;
+            var hf1 = ParameterPattern.FlattenCaptures(Assert.Single(outer.Properties, property => property.Name == "Hf1").Value.ParameterPatterns);
+            Assert.NotNull(Assert.Single(hf1, static capture => capture.Name == "p"));
+        }
     }
 
     // ── The independent oracle: rule G6 over a whole system ────────────────────────────────────
@@ -1090,10 +1112,11 @@ public sealed class SignatureSelectionReviewRegressionTests
     }
 
     /// <summary>
-    /// Φ_B of the WHOLE system under the calculation links <paramref name="open"/>: components of the active read graph
-    /// dependency-first, a cyclic one by the closed gate; null for an equation with no meaning.
+    /// The reading of the WHOLE system under the calculation links <paramref name="open"/>: components of the active read
+    /// graph dependency-first, a cyclic one by the closed gate and then simultaneous rounds over this oracle's own
+    /// composition and its own record of every state; null for an equation with no meaning.
     /// </summary>
-    private static string[]?[] EvaluateWhole(SyntheticSystem system, IReadOnlySet<int> open)
+    private static string[]?[] EvaluateWhole(SyntheticSystem system, IReadOnlySet<int> open, bool guardBlindRounds = false)
     {
         bool Active(SyntheticReference reference) => reference.Target >= 0 && (reference.Guard < 0 || open.Contains(reference.Guard));
         var facts = new string[]?[system.Count];
@@ -1117,18 +1140,44 @@ public sealed class SignatureSelectionReviewRegressionTests
             }
 
             var closed = component.ToDictionary(key => key, key => ComposeNames(system, key, open, target => members.Contains(target) ? [] : facts[target]!));
+            var reached = closed;
             if (component.Any(key => system.References[key].Any(reference => Active(reference) && members.Contains(reference.Target) && closed[reference.Target].Length > 0)))
             {
-                foreach (var key in component)
-                    meaningless[key] = true;
-                continue;
+                reached = Rounds(system, component, members, guardBlindRounds ? AllEquations(system) : open, closed, target => facts[target] ?? []);
+                if (reached is null)
+                {
+                    foreach (var key in component)
+                        meaningless[key] = true;
+                    continue;
+                }
             }
 
-            foreach (var (key, names) in closed)
+            foreach (var (key, names) in reached)
                 facts[key] = names;
         }
 
         return facts;
+    }
+
+    private static HashSet<int> AllEquations(SyntheticSystem system) => [.. Enumerable.Range(0, system.Count)];
+
+    /// <summary>Simultaneous rounds with every state remembered: successive equality settles, any other repeat is non-settling.</summary>
+    private static Dictionary<int, string[]>? Rounds(SyntheticSystem system, List<int> component, HashSet<int> members, IReadOnlySet<int> open,
+        Dictionary<int, string[]> closed, Func<int, string[]> lower)
+    {
+        string State(Dictionary<int, string[]> round) => string.Join(";", component.Order().Select(key => string.Join(",", round[key])));
+        var seen = new HashSet<string> { State(closed) };
+        var previous = closed;
+        while (true)
+        {
+            var read = previous;
+            var next = component.ToDictionary(key => key, key => ComposeNames(system, key, open, target => members.Contains(target) ? read[target] : lower(target)));
+            if (State(next) == State(previous))
+                return next;
+            if (!seen.Add(State(next)))
+                return null;
+            previous = next;
+        }
     }
 
     /// <summary>Tarjan's components, each emitted after every component it reaches: callees first.</summary>
@@ -1190,7 +1239,7 @@ public sealed class SignatureSelectionReviewRegressionTests
     }
 
     /// <summary>Rule G6 over every classification of every link of the whole system: the selected facts, or null.</summary>
-    private static string[][]? GlobalRuleG6(SyntheticSystem system)
+    private static string[][]? GlobalRuleG6(SyntheticSystem system, bool guardBlindRounds = false)
     {
         var links = Enumerable.Range(0, system.Count).Where(key => system.IsLink[key]).ToArray();
         string[][]? grounded = null;
@@ -1198,7 +1247,7 @@ public sealed class SignatureSelectionReviewRegressionTests
         var undetermined = false;
         foreach (var gamma in AllSubsets(links))
         {
-            var facts = EvaluateWhole(system, gamma);
+            var facts = EvaluateWhole(system, gamma, guardBlindRounds);
             if (links.Any(link => facts[link] is { } fact && fact.Length > 0 != gamma.Contains(link)))
                 continue;
             if (facts.Any(fact => fact is null))
@@ -1209,7 +1258,7 @@ public sealed class SignatureSelectionReviewRegressionTests
             {
                 if (support.Count == 0)
                     continue;
-                var counterfactual = EvaluateWhole(system, gamma.Except(support).ToHashSet());
+                var counterfactual = EvaluateWhole(system, gamma.Except(support).ToHashSet(), guardBlindRounds);
                 if (support.Any(link => counterfactual[link] is { Length: > 0 }))
                     continue;
                 if (support.All(link => counterfactual[link] is not null))
@@ -1283,7 +1332,7 @@ public sealed class SignatureSelectionReviewRegressionTests
                 return new SignatureFact(patterns, null, lifted.Count > 0, null, CallableSignature.FromInferredPatterns($"E{equation}", patterns));
             }
 
-            var selection = new SignatureSelector(references, system.IsLink, Compose, closed,
+            var selection = new SignatureSelector(references, system.IsLink, Compose, static (_, settled, _) => settled, closed,
                 new StaticQueryResourceBudget(StaticQueryLimits.Default), CancellationToken.None).Solve();
             var oracle = GlobalRuleG6(system);
             Assert.True(oracle is not null == selection.Succeeded,
@@ -1300,7 +1349,24 @@ public sealed class SignatureSelectionReviewRegressionTests
             }
         }
 
-        // The random systems exercise both outcomes.
-        Assert.InRange(selected, 50, 450);
+        // The random systems exercise both outcomes; recursive completion selects most of them.
+        Assert.InRange(selected, 50, 499);
+    }
+
+    /// <summary>A control of the comparison: rounds that ignore their guards answer differently on some system.</summary>
+    [Fact]
+    public void GuardBlindRounds_AreExposedByRuleG6()
+    {
+        var random = new Random(77);
+        for (var trial = 0; trial < 20000; trial++)
+        {
+            var system = RandomSystem(random);
+            var (correct, blind) = (GlobalRuleG6(system), GlobalRuleG6(system, guardBlindRounds: true));
+            if (correct is null != blind is null
+                || (correct is not null && !correct.Zip(blind!).All(static pair => pair.First.SequenceEqual(pair.Second))))
+                return;
+        }
+
+        Assert.Fail("Guard-blind rounds went unnoticed.");
     }
 }

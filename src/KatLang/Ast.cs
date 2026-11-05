@@ -299,6 +299,7 @@ internal enum ParameterSignatureViolation
 public sealed record ParameterDeclaration(string Name, SourceSpan? Span = null, ParameterKind Kind = ParameterKind.Normal)
 {
     private readonly RuntimeStateSlot<ImplicitParameterProvenance?> _inferredProvenance;
+    private readonly RuntimeStateSlot<ParameterDeclaration?> _originalDeclaration;
     private readonly RuntimeStateSlot<bool> _isRecoveryPlaceholder;
 
     // A parser-inserted hole, independent of source positions: imported real
@@ -333,6 +334,29 @@ public sealed record ParameterDeclaration(string Name, SourceSpan? Span = null, 
         get => _inferredProvenance.Value;
         init => _inferredProvenance = new(value);
     }
+
+    /// <summary>
+    /// The record a kind-changing copy stands for (a lifted META capture, a collector X-02 recovery made plain), or null
+    /// for a record that is no such copy. Such a copy is a new record of the same declaration, so origin identity reads
+    /// this rather than a record's own identity; locationless module content has nothing else to compare. Metadata only,
+    /// equality-transparent like <see cref="InferredProvenance"/>.
+    /// </summary>
+    internal ParameterDeclaration? OriginalDeclaration
+    {
+        get => _originalDeclaration.Value;
+        init => _originalDeclaration = new(value);
+    }
+
+    /// <summary>Where this declaration's source is written, or null for location-free module content or a generated record.</summary>
+    internal SourceSpan? OriginSpan => (OriginalDeclaration ?? this).Span ?? InferredProvenance?.Span;
+
+    /// <summary>A copy of this record with another kind, standing for the same declaration.</summary>
+    internal ParameterDeclaration WithKindOf(ParameterKind kind) => this with
+    {
+        Kind = kind,
+        CollectMarkerSpan = kind == ParameterKind.Collecting ? CollectMarkerSpan : null,
+        OriginalDeclaration = OriginalDeclaration ?? this,
+    };
 
     public string DisplayName => Kind switch
     {
@@ -881,7 +905,7 @@ public closed record ParameterPattern
             var recovered = pattern switch
             {
                 CaptureParameterPattern { Kind: ParameterKind.Collecting } collecting when levelHasCollecting
-                    => new CaptureParameterPattern(collecting.Parameter with { Kind = ParameterKind.Normal, CollectMarkerSpan = null }),
+                    => new CaptureParameterPattern(collecting.Parameter.WithKindOf(ParameterKind.Normal)),
                 CaptureParameterPattern => pattern,
                 _ => KeepFirstCollectingCapturePerGroupLevel(pattern),
             };

@@ -1,15 +1,14 @@
 namespace KatLang.Tests;
 
 /// <summary>
-/// B3-5★ SIGNATURE SELECTION (November 2026; owner decisions X-04 = B and CG4 = A-agree, 2026-11-03). Implicit-argument
+/// B3-5★ SIGNATURE SELECTION (November 2026; owner direction 2026-11-05: X-04 = plain A-agree, CG4 = A-agree). Implicit-argument
 /// resolution decides every inferred signature of an operation — and through it every <c>.Algorithm</c> link's class —
 /// JOINTLY, before it rewrites anything: one equation per written body per declaring context (D1a), rule G6 over the
-/// joint classifications, the closed gate for cycles. No read observes a provisional signature, so declaration order is
+/// joint classifications, the closed gate and simultaneous completion for cycles. No read observes a provisional signature, so declaration order is
 /// unobservable, and a group with no selected answer is refused with a front-end error of the
 /// <see cref="DiagnosticCode.SelfDependentInferredParameters"/> family, on A1's recovery route.
 ///
-/// <para>Pinned here: the X-04 B refusals (implicit self and mutual recursion, a cycle through a member path) with the
-/// programs X-04 leaves untouched; the link-classification categories (only self-supporting, undetermined U1, no
+/// <para>Pinned here: the programs recursive inference leaves untouched; the link-classification categories (only self-supporting, undetermined U1, no
 /// consistent reading); the research outcomes carried forward (D06 = 5, D15 = 4, ReadQ, the FU7 example, deferred
 /// 10 / 11, case H's module reuse); bounded selection with explicit resource refusal; and cancellation and resource
 /// exhaustion followed by a successful retry. Declaration-order permutations of helper-only "cycles" are pinned by
@@ -57,68 +56,7 @@ public sealed class SignatureSelectionTests
         Assert.True(observation is { Kind: "ok" } && observation.Value == value, $"{source}\ngave {observation}");
     }
 
-    // ── X-04 B: a genuine lifting cycle is refused ──────────────────────────────────────────────
-
-    /// <summary>
-    /// Implicit recursion through a bare self-reference: under the closed gate <c>F</c> reads itself as declaring nothing,
-    /// infers <c>x</c>, and then its own read of <c>F</c> requires an argument — a genuine lifting cycle (X-04 B). Either
-    /// one-line fix the diagnostic names evaluates as HEAD did (13).
-    /// </summary>
-    [Fact]
-    public async Task ImplicitSelfRecursion_IsRefused_AndEitherFixEvaluates()
-    {
-        const string Source = "F = if(tick() > 3, x, F + 1)\nF(10)";
-        var refused = await RefusedOnEveryRoute(Source, errors: 1);
-        Assert.Equal(
-            "SelfDependentInferredParameters: Cannot infer parameters for 'F' because they depend on themselves: 'F' uses itself by name in a formula, "
-            + "so it needs the parameters its own inference gives it. Declare the parameters explicitly, or write the call with its arguments. @ [1:1, 1:2)",
-            refused.Errors[0]);
-
-        await AssertValueOnEveryRoute("F(x) = if(tick() > 3, x, F + 1)\nF(10)", "13");
-        await AssertValueOnEveryRoute("F = if(tick() > 3, x, F(x) + 1)\nF(10)", "13");
-    }
-
-    /// <summary>
-    /// Mutual implicit recursion is refused in EVERY declaration order (HEAD: an arity error, or 16 with <c>B</c> declared
-    /// first), reported at both definitions; with the calls written out it gives 16 in every order.
-    /// </summary>
-    [Fact]
-    public async Task MutualImplicitRecursion_IsRefusedInEveryOrder_AndWrittenCallsEvaluate()
-    {
-        foreach (var declared in Permutations(["A = if(tick() > 3, x, B + 1)", "B = A + 1"]))
-        {
-            var source = Program(declared, "A(10)");
-            var refused = await RefusedOnEveryRoute(source, errors: 2);
-            Assert.Contains(refused.Errors, error => error.Contains("'A' and 'B' use one another", StringComparison.Ordinal)
-                || error.Contains("'B' and 'A' use one another", StringComparison.Ordinal));
-            Assert.EndsWith($"@ [{LineOf(source, declared[0][..2])}:1, {LineOf(source, declared[0][..2])}:2)", refused.Errors[0], StringComparison.Ordinal);
-            Assert.EndsWith($"@ [{LineOf(source, declared[1][..2])}:1, {LineOf(source, declared[1][..2])}:2)", refused.Errors[1], StringComparison.Ordinal);
-        }
-
-        foreach (var declared in Permutations(["A = if(tick() > 3, x, B(x) + 1)", "B = A(x) + 1"]))
-            await AssertValueOnEveryRoute(Program(declared, "A(10)"), "16");
-    }
-
-    /// <summary>
-    /// A cycle through a member path (research witness I1): <c>X</c> reads <c>Outer.Y</c>, which reads <c>X</c>. HEAD
-    /// accepted it and failed at run time; it is now refused at both definitions, in either order.
-    /// </summary>
-    [Fact]
-    public async Task ACycleThroughAMemberPath_IsRefusedInEitherOrder()
-    {
-        const string X = "X = p + Outer.Y + 0";
-        const string Outer = "Outer(p) = {\n    Y = X + 0\n    0\n}";
-        foreach (var declared in Permutations([X, Outer]))
-        {
-            var source = Program(declared, "0");
-            var refused = await RefusedOnEveryRoute(source, errors: 2);
-            Assert.Contains("'X' and 'Y' use one another by name in formulas", refused.Errors[0], StringComparison.Ordinal);
-            var x = LineOf(source, "X = ");
-            var y = LineOf(source, "    Y = ");
-            Assert.Contains(refused.Errors, error => error.EndsWith($"@ [{x}:1, {x}:2)", StringComparison.Ordinal));
-            Assert.Contains(refused.Errors, error => error.EndsWith($"@ [{y}:5, {y}:6)", StringComparison.Ordinal));
-        }
-    }
+    // ── What recursive inference leaves untouched (RecursiveParameterInferenceTests pins the completions) ──────
 
     /// <summary>
     /// What X-04 leaves alone: explicit recursive calls never lift; a self-read whose body infers nothing reads a
@@ -137,9 +75,11 @@ public sealed class SignatureSelectionTests
     private const string LinkPrelude = "Cap(meta op) = op\nId(v) = v\nC(a, *p) = a\n";
 
     /// <summary>
-    /// The link classes G6 decides, and the categories it refuses with: NL1 has one grounded reading in either order;
-    /// DC1's only consistent reading supports itself; U1's needs a rule for definitions whose inferred parameters depend
-    /// on themselves (distinct from a lifting cycle); CG4 has no consistent reading (CG4 = A-agree: the same error as B).
+    /// The link classes G6 decides, and the categories it refuses with. NL1 has one grounded reading in either order.
+    /// DC1 and U1 changed deliberately with recursive inference: a counterfactual that had no meaning now completes, so
+    /// their runtime reading is the one grounded answer. The two refused categories below keep a group that really does not
+    /// settle, <c>A</c> and <c>B</c> without the link's read: only a self-supporting reading is left, or one that cannot be
+    /// decided. CG4 has no consistent reading.
     /// </summary>
     [Fact]
     public async Task LinkClassification_SelectsTheGroundedReading_OrRefusesWithItsCategory()
@@ -149,16 +89,23 @@ public sealed class SignatureSelectionTests
 
         const string Dc1 = LinkPrelude + "B(p) = p\nD(z) = z\nOuter(a) = {\n    L = Cap(Id(K + 0)).Algorithm\n    K = L.repeat(D) + 0\n"
             + "    X = L.repeat(C) + B + Y\n    Y = X + 0\n    0\n}\n0";
-        var dc1 = await RefusedOnEveryRoute(Dc1, errors: 2);
-        Assert.Contains("because every consistent reading of the .Algorithm reference 'L' supports only itself", dc1.Errors[0], StringComparison.Ordinal);
-        Assert.EndsWith("@ [9:5, 9:6)", dc1.Errors[0], StringComparison.Ordinal);
-        Assert.EndsWith("@ [10:5, 10:6)", dc1.Errors[1], StringComparison.Ordinal);
+        await AssertValueOnEveryRoute(Dc1, "0");
 
         const string U1 = LinkPrelude + "B(p) = p\nD(z) = z\nOuter(a) = {\n    L = Cap(Id(K + X + 0)).Algorithm\n    K = L.repeat(D) + 0\n"
             + "    X = L.repeat(C) + B + Y\n    Y = X + 0\n    0\n}\n0";
-        var u1 = await RefusedOnEveryRoute(U1, errors: 4);
-        Assert.All(u1.Errors, error => Assert.Contains(
-            "because reading the .Algorithm reference 'L' would need a rule for definitions whose inferred parameters depend on themselves",
+        await AssertValueOnEveryRoute(U1, "0");
+
+        const string Group = "W(x, y) = x\nX1(x) = x\nY1(y) = y\nD(z) = z\n";
+        const string Members = "    K = L.repeat(D) + 0\n    A = L.repeat(W) + B + X1\n    B = A + Y1\n    0\n}\n0";
+
+        // Without L, A and B alternate; with it W fixes their order, and L reads only K, so L supports itself.
+        var ungrounded = await RefusedOnEveryRoute(LinkPrelude + Group + "Outer(a) = {\n    L = Cap(Id(K + 0)).Algorithm\n" + Members, errors: 2);
+        Assert.All(ungrounded.Errors, error => Assert.Contains("because every consistent reading of the .Algorithm reference 'L' supports only itself", error, StringComparison.Ordinal));
+
+        // L reads A too, so whether L stands without its own support is the question that does not settle.
+        var undetermined = await RefusedOnEveryRoute(LinkPrelude + Group + "Outer(a) = {\n    L = Cap(Id(K + A + 0)).Algorithm\n" + Members, errors: 4);
+        Assert.All(undetermined.Errors, error => Assert.Contains(
+            "because deciding the .Algorithm reference 'L' depends on a recursive inference that does not settle",
             error, StringComparison.Ordinal));
 
         foreach (var declared in Permutations(["    L1 = Cap(Id(H1 + 0)).Algorithm", "    H1 = L1.abs.repeat(A0) + B"]))

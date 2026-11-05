@@ -12366,7 +12366,8 @@ def elaborateOpenHead (chain : List OwnerLevel) (name : Ident) : Expr :=
    parameter-matching rule.
 
    **Final signatures, selected before rewriting** (B3-5★, November 2026; owner
-   decisions X-04 = B and CG4 = A-agree, 2026-11-03): every reference reads the
+   direction 2026-11-05: X-04 = plain A-agree with R1 origins, CG4 = A-agree):
+   every reference reads the
    FINAL signature of what it resolves to, so a property that references a
    sibling sees that sibling's final parameter-pattern signature — augmented by
    its own transitive dependencies — whatever the declaration order. The C#
@@ -12380,14 +12381,16 @@ def elaborateOpenHead (chain : List OwnerLevel) (name : Ident) : Expr :=
    Cycles: a cyclic group of open bodies is evaluated with every member read as
    declaring no parameter (the closed gate). When no reference inside the cycle
    then lifts, that evaluation is the group's one non-lifting meaning; otherwise
-   the group is a genuine lifting cycle, which has no meaning and is refused
-   with the front-end error `SelfDependentInferredParameters` (X-04 B), as is
-   any classification of links that has no unique grounded reading. Explicit
-   recursive calls never lift, so they are unaffected. Declaration order is
-   therefore unobservable; formerly a cycle was processed in declaration order
-   (the documented "sibling CYCLE" exception, now removed). Lean models no
-   signature construction: the spec and explorer programs are derived from the
-   C# elaboration. -/
+   the group is a genuine lifting cycle, completed by simultaneous rounds from
+   that evaluation with the same composition law, and the reached signatures
+   are the answer. A group that does not settle is refused with the front-end
+   error `SelfDependentInferredParameters`, as is any classification of links
+   that has no unique grounded reading. Explicit recursive calls never lift, so
+   they are unaffected. Declaration order is therefore unobservable; formerly a
+   cycle was processed in declaration order (the documented "sibling CYCLE"
+   exception, now removed). Lean models no signature construction, so nothing
+   here proves the rounds or the inferred parameters' origins: the spec and
+   explorer programs are derived from the C# elaboration. -/
 
 /-- **Implicit-lifting eligibility** (Q-03, decided 2026-09-28; surface syntax
     support — the specification of the surface pass's one lifting decision).

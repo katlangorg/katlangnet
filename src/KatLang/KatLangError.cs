@@ -246,16 +246,24 @@ public sealed class KatLangError
             case EvalError.UnresolvedImplicitParams { InferredImplicitParameters: { Count: > 0 } notes } unresolved:
                 {
                     var single = unresolved.ParamNames.Count == 1;
+                    var shared = notes.Any(static note => note.CycleOrigin is not null);
+                    HashSet<string>? suggested = null;
                     var builder = new System.Text.StringBuilder(message);
                     foreach (var note in notes)
                     {
-                        if (!single && note.DotMemberOrigin is { } origin)
+                        if (note.CycleOrigin is { } cycle)
+                        {
+                            builder.Append('\n').Append(RenderFragment(FormatCycleOrigin(note.Name, cycle), renderFragment));
+                            continue;
+                        }
+
+                        if ((!single || shared) && note.DotMemberOrigin is { } origin)
                         {
                             builder.Append('\n');
                             builder.Append(RenderFragment(FormatDotMemberFallbackInference(note.Name, origin.ReceiverDescription, note.Span), renderFragment));
                         }
 
-                        if (note.SuggestedName is not { } suggestion)
+                        if (note.SuggestedName is not { } suggestion || !(suggested ??= []).Add($"{note.Name}\n{suggestion}"))
                             continue;
 
                         builder.Append('\n');
@@ -273,6 +281,12 @@ public sealed class KatLangError
                     var builder = new System.Text.StringBuilder(message);
                     foreach (var note in notes)
                     {
+                        if (note.CycleOrigin is { } cycle)
+                        {
+                            builder.Append('\n').Append(RenderFragment(FormatCycleOrigin(note.Name, cycle), renderFragment));
+                            continue;
+                        }
+
                         if (signatureShown && note.SuggestedName is null && note.DotMemberOrigin is null)
                             continue;
 
@@ -296,6 +310,31 @@ public sealed class KatLangError
             default:
                 return message;
         }
+    }
+
+    /// <summary>
+    /// The report of a shared cycle origin (R1): the recursive group and every source that supplies the name. The group and
+    /// the sources are sets, printed in their canonical order; no one of them is singled out, and a long group is shortened.
+    /// </summary>
+    private static string FormatCycleOrigin(string name, ParameterCycleOrigin cycle)
+    {
+        const int Shown = 8;
+        static string Listed(IReadOnlyList<string> items)
+        {
+            var quoted = items.Take(Shown).Select(static item => $"'{ExprNameRenderer.BoundName(item)}'");
+            var more = items.Count - Shown;
+            return more > 0 ? string.Join(", ", quoted) + $" and {more} more" : string.Join(", ", quoted);
+        }
+
+        var group = Listed(cycle.Members.Select(static member => member.Path).ToArray());
+        if (cycle.Roots.Count == 0)
+            return $"Parameter '{name}' is inferred around the recursive group {group}; no declaration outside the group supplies it.";
+        var sources = cycle.Roots.Take(Shown).Select(static root => root.Span is { } span
+            ? $"'{ExprNameRenderer.BoundName(root.Provider)}' at [{span.Start.Line}:{span.Start.Column}]"
+            : $"'{ExprNameRenderer.BoundName(root.Provider)}'");
+        var others = cycle.Roots.Count - Shown;
+        return $"Parameter '{name}' is inferred around the recursive group {group}; it comes from {string.Join(", ", sources)}"
+            + (others > 0 ? $" and {others} more." : ".");
     }
 
     private static string FormatEvalError(EvalError error, Func<string, string>? renderFragment = null)
@@ -1126,7 +1165,8 @@ public sealed class KatLangError
     /// </summary>
     private static ImplicitParameterProvenance? SingleDotMemberOriginNote(EvalError.UnresolvedImplicitParams e)
     {
-        if (e.ParamNames.Count != 1 || e.InferredImplicitParameters is not { } notes)
+        if (e.ParamNames.Count != 1 || e.InferredImplicitParameters is not { } notes
+            || notes.Any(static note => note.CycleOrigin is not null))
             return null;
 
         foreach (var note in notes)
