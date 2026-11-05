@@ -222,6 +222,32 @@ public sealed class RecursiveParameterInferenceTests
     }
 
     /// <summary>
+    /// Reading <c>B</c> LAST keeps the violation: <c>C1</c> and <c>C2</c> rebuild the two collectors in every round, so the
+    /// settled state carries the flag. Its recovered list is what the editor reads, and the program never runs: no route
+    /// evaluates anything, in any declaration order.
+    /// </summary>
+    [Fact]
+    public async Task ASettledViolation_PreventsExecution_InEveryOrder()
+    {
+        const string C2Reference = "C2 + B)";
+        foreach (var declared in Permutations(["C1(a, *p) = a", "C2(b, *q) = b", "A = if(tick() > 2, 0, C1 + C2 + B)", "B = A + 0"]))
+        {
+            var source = Program(declared, "A(1, 2, 3, 4, 5)");
+            var observation = await SixRouteAgreement.OnEveryRouteAsync(source);
+            Assert.True(observation.Kind == "parse", $"{source}\ngave {observation}");
+            Assert.Empty(observation.HostCalls);
+            var report = Assert.Single(observation.Errors);
+            Assert.StartsWith($"{nameof(KatLangErrorCode.InvalidCollectingBinding)}: ", report, StringComparison.Ordinal);
+            Assert.Contains("'*p' (needed by 'C1') and '*q' (needed by 'C2')", report, StringComparison.Ordinal);
+
+            var diagnostic = Assert.Single(Parser.Parse(source).Diagnostics);
+            var line = source.Split('\n')[diagnostic.Span!.Value.Start.Line - 1];
+            Assert.Equal(line.IndexOf(C2Reference, StringComparison.Ordinal) + 1, diagnostic.Span!.Value.Start.Column);
+            Assert.Equal("A(a, *p, b, q)", Signature(source, "A"));
+        }
+    }
+
+    /// <summary>
     /// The X-02 flag belongs to the state but a violation of an intermediate round is no refusal: reading <c>B</c> FIRST
     /// gives <c>A</c> the recovered list, whose later collector is plain, and <c>C2</c>'s <c>*q</c> then adds nothing. The
     /// settled state has no violation, so the program is accepted with the signature the rounds reached.
@@ -234,11 +260,36 @@ public sealed class RecursiveParameterInferenceTests
         Assert.Equal("A(a, *p, b, q)", Signature(Source, "A"));
     }
 
-    /// <summary>A lone collector accepts zero arguments: a nonempty signature is not a signature that requires arguments.</summary>
+    /// <summary>
+    /// The recovered signature is an ordinary one. It passes the validator every written head passes, it is accepted when
+    /// written out, and on every route it binds the same slots as the written form in every declaration order: <c>a</c> is 1,
+    /// <c>*p</c> takes 2 and 3, <c>b</c> is 4 and <c>q</c> is 5, so each of the two levels before the tick stops adds 1 + 4.
+    /// </summary>
+    [Fact]
+    public async Task ARecoveredSignature_IsAWritableOne_AndBindsLikeItsWrittenForm()
+    {
+        var parsed = Parser.Parse("C1(a, *p) = a\nC2(b, *q) = b\nA = if(tick() > 2, 0, B + C1 + C2)\nB = A + 0\n0");
+        var completed = parsed.Root.Properties.Single(static property => property.Name == "A").Value;
+        Assert.Null(ParameterPattern.FindSignatureViolation(completed.ParameterPatterns));
+
+        foreach (var head in new[] { "A", "A(a, *p, b, q)" })
+        {
+            foreach (var declared in Permutations(["C1(a, *p) = a", "C2(b, *q) = b", head + " = if(tick() > 2, 0, B + C1 + C2)", "B = A + 0"]))
+            {
+                var source = Program(declared, "A(1, 2, 3, 4, 5)");
+                Assert.Equal("B(a, *p, b, q)", Signature(source, "B"));
+                await AssertValue(source, "10");
+            }
+        }
+    }
+
+    /// <summary>
+    /// A lone collector accepts zero arguments, so a bare <c>Sum</c> is a value read that lifts nothing: <c>F</c> stays
+    /// without parameters and its self read lifts nothing either, a non-lifting cycle.
+    /// </summary>
     [Fact]
     public async Task ALoneCollector_IsNotALiftingRead()
     {
-        // F's closed fact is `*xs`, which accepts zero arguments, so its self read lifts nothing: a non-lifting cycle.
         const string Source = "Sum(*xs) = 7\nF = if(tick() > 2, 1, F + Sum)\nF";
         Assert.Equal("F", Signature(Source, "F"));
         await AssertValue(Source, "15");

@@ -390,6 +390,50 @@ Normative text: `docs/design/language-rules/ownership-and-lookup.md` § Recursiv
 - **Settled cycles without a source.** Q-04 can make a callee stop lifting after its name entered a cycle, so a settled
   cycle can have no reachable source. The descriptor then has no roots: nothing is invented and nothing is refused.
 
+  Complete witness (`CycleOriginConsumerTests.RootlessLater`; `RecursiveOriginOracleTests` derives the same rounds on its
+  own model, and `HasSharedCycleOrigin` with an empty `OriginSpans` is what the semantic model reports for `A` and `B`):
+
+  ```katlang
+  P(n) = n
+  Q(k, *n) = 0
+  Outer(k) = {
+      public C = D + P
+      0
+  }
+  A = B + Outer.C
+  B = A + 0
+  D = E + P
+  E = Q + A
+  0
+  ```
+
+  | State | A | B | C | D | E | What changed |
+  | --- | --- | --- | --- | --- | --- | --- |
+  | closed gate | () | () | (n) | (n) | (k, \*n) | `P` and `Q` are the only lifted callees |
+  | round 2 | (n) | () | (n) | (k, \*n) | (k, \*n) | `A` lifts `C`; `D` lifts `E`, whose `*n` claims the name before `P` |
+  | round 3 | (n) | (n) | (\*n) | (k, \*n) | (k, \*n) | Q-04 drops `k` from `D`'s list in `C`, so `C` accepts zero arguments |
+  | round 4 | (n) | (n) | (\*n) | (k, \*n) | (k, \*n) | `A` no longer lifts `C`; it keeps `n` from `B`; settled |
+
+  The provider graph of the settled state is what R1 reads. `A`'s only provider of `n` is `B` and `B`'s is `A`, so the
+  first-provider cycle is {A, B}, and neither has an edge leaving it: the root set is empty. History is not a provider: `P`
+  brought the name in through `C`, but `C` is inert in the final graph. `C`, `D` and `E` have the determined origin `Q.n`.
+  A reader such as `R = A + 0` holds the same record, an earlier rootless origin adds no root to a later cycle, and reports
+  say that no source declaration supplies the name. Such members depend on the enclosing parameter that filtered the callee.
+- **Provisional violations.** The X-02 flag is state, not a refusal. Both programs below start from `C1(a, *p) = a` and
+  `C2(b, *q) = b`, with `B = A + 0` (`!` marks the flag):
+
+  | State | `A = if(tick() > 2, 0, B + C1 + C2)` | B | `A = if(tick() > 2, 0, C1 + C2 + B)` | B |
+  | --- | --- | --- | --- | --- |
+  | closed gate | (a, \*p, b, q)! | () | (a, \*p, b, q)! | () |
+  | round 2 | (a, \*p, b, q)! | (a, \*p, b, q) | (a, \*p, b, q)! | (a, \*p, b, q) |
+  | round 3 | (a, \*p, b, q) | (a, \*p, b, q) | (a, \*p, b, q)! (settled) | (a, \*p, b, q) |
+  | round 4 | (a, \*p, b, q) (settled) | (a, \*p, b, q) | | |
+
+  `KeepFirstCollectingCapturePerLevel` makes the later collector plain in the recovered list. Read first, that list binds
+  `q` as a plain name, so `C2`'s `*q` is a repeat of a bound name and contributes nothing: the composition is valid and the
+  flag clears. Read last, `C1` and `C2` have already composed both collectors, so the reader's plain `q` adds nothing and
+  the flag stays: `InvalidCollectingBinding` at the `C2` reference, on every route, with no evaluation.
+
 **Design.** Implicit-argument resolution has two phases.
 
 1. **Analysis** (`ImplicitArgumentResolver.SignatureAnalysis.cs`): the same recursion the rewrite makes, writing

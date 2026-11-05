@@ -2602,6 +2602,8 @@ internal static partial class ImplicitArgumentResolver
     /// error, reported where lifting builds it (<see cref="ParameterPattern.FindSignatureViolation"/>,
     /// the one validity rule every written parameter list is held to), never deferred to a call: a
     /// collecting binding is never chosen, merged, split or turned fixed to make the lift succeed.
+    /// In a recursive group the judged signature is the settled one: a round may read another member's
+    /// recovered list, whose flag is part of the state, and only a flag the settled state keeps is reported.
     /// Two callees that collect under the SAME name share one binding (by-name lifting), so
     /// <c>K(a, *rest, b)</c> is valid, and so is a collector nested in its own structural group.
     ///

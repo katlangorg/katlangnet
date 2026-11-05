@@ -50,7 +50,8 @@ public sealed record PropertyParameterInfo(string Name, PropertyParameterKind Ki
     /// <summary>
     /// Where an inferred parameter comes from: one span for a parameter with a single source declaration, every source's
     /// span for a parameter a recursive group shares (<see cref="HasSharedCycleOrigin"/>), and empty for a written parameter
-    /// or for a source with no location in this document. The list is a set: its order means nothing.
+    /// or for a source with no location in this document. The list is a set: its order means nothing. Read it with
+    /// <see cref="HasSharedCycleOrigin"/>: an empty list alone does not mean that the parameter has no recorded origin.
     /// </summary>
     public IReadOnlyList<SourceSpan> OriginSpans { get; init; } = [];
 

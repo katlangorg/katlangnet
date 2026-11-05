@@ -328,7 +328,7 @@ public sealed class KatLangError
 
         var group = Listed(cycle.Members.Select(static member => member.Path).ToArray());
         if (cycle.Roots.Count == 0)
-            return $"Parameter '{name}' is inferred around the recursive group {group}; no declaration outside the group supplies it.";
+            return $"Parameter '{name}' is inferred around the recursive group {group}; no source declaration supplies it.";
         var sources = cycle.Roots.Take(Shown).Select(static root => root.Span is { } span
             ? $"'{ExprNameRenderer.BoundName(root.Provider)}' at [{span.Start.Line}:{span.Start.Column}]"
             : $"'{ExprNameRenderer.BoundName(root.Provider)}'");

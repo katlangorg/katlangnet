@@ -400,7 +400,7 @@ public sealed class CycleOriginConsumerTests(ITestOutputHelper output)
         Assert.True(parameter.HasSharedCycleOrigin);
         Assert.Empty(parameter.OriginSpans);
         var failure = Assert.IsType<RunResult.EvalFailure>(KatLangEngine.Run(RootlessLater.Replace("\n0", "\nA(1, 2)", StringComparison.Ordinal)));
-        Assert.Contains("Parameter 'n' is inferred around the recursive group 'A', 'B'; no declaration outside the group supplies it.",
+        Assert.Contains("Parameter 'n' is inferred around the recursive group 'A', 'B'; no source declaration supplies it.",
             failure.Errors[0].Message, StringComparison.Ordinal);
     }
 
@@ -418,6 +418,103 @@ public sealed class CycleOriginConsumerTests(ITestOutputHelper output)
             Assert.Empty(cycle.Roots);
             Assert.Equal(["I", "J"], cycle.Members.Select(static m => m.Path));
         }
+
+        var model = SemanticModelBuilder.Build(parsed);
+        foreach (var name in new[] { "I", "J" })
+        {
+            var parameter = Assert.Single(Assert.Single(model.FindProperties(name)).Parameters);
+            Assert.True(parameter.HasSharedCycleOrigin);
+            Assert.Empty(parameter.OriginSpans);
+        }
+
+        // The member the cycle's name first came through has its own determined source: a shared origin is a fact of I and J.
+        Assert.Equal("single Vs", Origin(Rootless, parsed, "Outer.T", "n"));
+        Assert.Equal("single Vs", Origin(Rootless, parsed, "V", "n"));
+        Assert.False(Assert.Single(Assert.Single(model.FindProperties("T")).Parameters).HasSharedCycleOrigin);
+    }
+
+    /// <summary>
+    /// A reader inherits the origin unchanged: the same generated record reaches a plain reader and a reader's own cycle, and
+    /// neither gains a source or a member. A report at the reader names the group the origin belongs to.
+    /// </summary>
+    [Fact]
+    public void AReader_InheritsARootlessOrigin()
+    {
+        var source = RootlessLater[..RootlessLater.LastIndexOf('\n')] + "\nR = A + 0\nS = R + T\nT = S + 0\n0";
+        var parsed = Parser.Parse(source);
+        Assert.False(parsed.HasErrors, string.Join("; ", parsed.Diagnostics.Select(static diagnostic => diagnostic.Message)));
+        var origin = Capture(parsed.Root, "A", "n").InferredProvenance!.CycleOrigin!;
+        foreach (var reader in new[] { "R", "S", "T" })
+        {
+            Assert.Same(origin, Capture(parsed.Root, reader, "n").InferredProvenance!.CycleOrigin);
+            var parameter = Assert.Single(Assert.Single(SemanticModelBuilder.Build(parsed).FindProperties(reader)).Parameters);
+            Assert.True(parameter.HasSharedCycleOrigin);
+            Assert.Empty(parameter.OriginSpans);
+        }
+
+        var failure = Assert.IsType<RunResult.EvalFailure>(KatLangEngine.Run(source[..source.LastIndexOf('\n')] + "\nR(1, 2)"));
+        Assert.Contains("Parameter 'n' is inferred around the recursive group 'A', 'B'; no source declaration supplies it.",
+            failure.Errors[0].Message, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// A later unit inherits the earlier table, so it reads the same generated record: the same group, still no source. The
+    /// structural table is read directly because a loaded unit cannot reach these members at run time: a witness needs
+    /// the enclosing parameter that filters its callee, so its members are local-only outside their own unit.
+    /// </summary>
+    [Fact]
+    public void ALaterUnit_ReadsARootlessOrigin()
+    {
+        var detected = ParameterDetector.DetectPrevalidated(SourceProvenance.ParseSyntaxValidRoot(RootlessLater));
+        Assert.Empty(detected.Diagnostics);
+        var diagnostics = new DiagnosticBag();
+        var resolved = ImplicitArgumentResolver.ResolveNameResolvedPrevalidated(detected.Root, diagnostics: diagnostics);
+        Assert.Equal(0, diagnostics.ReportedCount);
+        var publication = PropertyExposureResolver.Resolve(resolved, observations: null).CompletedStructure!;
+        var earlier = publication.Facts;
+        var key = earlier.Member(publication.Entry!, "A")!;
+        var prelude = publication.Entry!;
+        while (prelude.Parent is { } parent)
+            prelude = parent;
+
+        var later = new CompletedStaticStructures(prelude, earlier);
+        later.Seal();
+        Assert.Same(earlier.Facts(key), later.Facts(key));
+        var body = Assert.IsType<Algorithm.User>(later.Facts(key)!.Body);
+        var cycle = ParameterPattern.FlattenCaptures(body.ParameterPatterns).Single().InferredProvenance!.CycleOrigin!;
+        Assert.Equal(["A", "B"], cycle.Members.Select(static member => member.Path));
+        Assert.Empty(cycle.Roots);
+
+        var report = KatLangError.FromEvalError(new EvalError.ArityMismatch(1, 2)
+        {
+            Signature = CallableSignature.FromAlgorithm("A", body),
+            InferredImplicitParameters = ImplicitParameterProvenance.CollectFrom(body.Parameters),
+        });
+        Assert.Contains("Parameter 'n' is inferred around the recursive group 'A', 'B'; no source declaration supplies it.", report.Message, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// A later cycle over a rootless origin: its first providers are each other, and <c>A</c> stays an active provider that
+    /// contributes no source. Alone, the later cycle is rootless too, and it names its own members: the report says no
+    /// source declaration supplies the name, which stays true though <c>A</c> is a declaration outside the group. With a
+    /// second provider, that one source collapses the cycle: the rootless origin adds nothing to the set.
+    /// </summary>
+    [Fact]
+    public void ALaterCycle_GainsNoRootFromARootlessOrigin()
+    {
+        var earlier = RootlessLater[..RootlessLater.LastIndexOf('\n')];
+        var alone = Parser.Parse(earlier + "\nR = T + A\nT = R + 0\n0");
+        Assert.False(alone.HasErrors, string.Join("; ", alone.Diagnostics.Select(static diagnostic => diagnostic.Message)));
+        var cycle = Capture(alone.Root, "R", "n").InferredProvenance!.CycleOrigin!;
+        Assert.Equal(["R", "T"], cycle.Members.Select(static member => member.Path));
+        Assert.Empty(cycle.Roots);
+        var failure = Assert.IsType<RunResult.EvalFailure>(KatLangEngine.Run(earlier + "\nR = T + A\nT = R + 0\nR(1, 2)"));
+        Assert.Contains("Parameter 'n' is inferred around the recursive group 'R', 'T'; no source declaration supplies it.",
+            failure.Errors[0].Message, StringComparison.Ordinal);
+
+        var source = earlier + "\nZ(n) = n\nR = T + A\nT = R + Z\n0";
+        foreach (var member in new[] { "R", "T" })
+            Assert.Equal("single Z", Origin(source, member, "n"));
     }
 
     // ── locationless content ────────────────────────────────────────────────────────────────────

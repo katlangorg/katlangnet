@@ -3321,7 +3321,9 @@ Observable consequences of the selected rule (C2 compatibility acknowledgment ac
   rootless origins, intermediate collector recovery, unrelated regressions and release authorization. Evidence and decision:
   `artifacts/validation/a-agree-r1-production/c2-closeout/decision.md`. This closeout changes prose only; production is unchanged.
 - A settled state may have passed through an X-02 violation: the flag is part of the state, but only the settled state's
-  violation is reported. A settled cycle may have no reachable source; its origin then names the group alone.
+  violation is reported, and a settled list without the flag has passed the common validator. A settled cycle may have no
+  reachable source; its origin then names the group alone, and `HasSharedCycleOrigin` with empty `OriginSpans` reports it
+  (`ownership-and-lookup.md` § Recursive parameter inference, rules 8 and 9; traces in `static-structure-resolver-2026-10.md` § 10.1).
 
 Changed test expectations: `SignatureSelectionTests` (the X-04 B refusals moved to `RecursiveParameterInferenceTests` as
 completions; DC1 and U1 accepted, with new fixtures for the two refused categories),
