@@ -120,9 +120,11 @@ internal sealed class AnalyzedStaticStructures : StaticLookupFacts
                 foreach (var branch in family.Branches)
                     Include(operation.ContextOf(family.Opens.Count == 0 ? key.Parent ?? queries.Keys.Root : key,
                         branch.Body, branch.Pattern));
-            // Own written expressions only. An algorithm reached in an open is rooted at the prelude.
+            // Own written expressions only. An algorithm reached in an open is rooted at the prelude. A hoisted deconstruction
+            // source's rows are its owner's (WrittenRows): its context, storage below that owner, has none of its own.
             IncludeExpressions(source.Opens, queries.Keys.Root);
-            IncludeExpressions(source.Output, key);
+            if (source is not Algorithm.User { IsAssignmentDeconstructionSource: true } || ReferenceEquals(key, entry))
+                IncludeExpressions(AstHelpers.WrittenRows(source), key);
             var receiver = ready ? Select(operation.Read(StaticQueryKey.TargetWalk(key, StaticCycleCheck.Formation)))
                 : CompletedStaticStructures.Selection.Unavailable;
             var open = ready ? Select(operation.Read(StaticQueryKey.Project(StaticQueryKind.TargetWalk, key,

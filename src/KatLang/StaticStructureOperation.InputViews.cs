@@ -15,12 +15,20 @@ internal sealed partial class StaticStructureOperation
             var body = SourceOf(key);
             Publish(key, StaticPublicationStage.Detected, body);
             if (body is Algorithm.Alias) Publish(key, StaticPublicationStage.Resolved, body);
-            foreach (var property in body.Properties) Add(ContextOf(key, property.Value));
+            foreach (var property in body.Properties)
+            {
+                var child = ContextOf(key, property.Value);
+                // A hoisted deconstruction source is storage, never a scope: like detection, this admits only the view its
+                // resolved rows are published over. Its rows, and their blocks, belong to this body (WrittenRows, below).
+                if (property.Value is Algorithm.User { IsAssignmentDeconstructionSource: true })
+                    Publish(child, StaticPublicationStage.Detected, property.Value);
+                else Add(child);
+            }
             if (body is Algorithm.Conditional family)
                 foreach (var branch in family.Branches)
                     Add(ContextOf(family.Opens.Count == 0 ? key.Parent ?? Queries.Keys.Root : key, branch.Body, branch.Pattern));
             EnqueueExpressions(body.Opens, Queries.Keys.Root);
-            EnqueueExpressions(body.Output, key);
+            EnqueueExpressions(AstHelpers.WrittenRows(body), key);
         }
 
         void Add(StaticScopeKey key)

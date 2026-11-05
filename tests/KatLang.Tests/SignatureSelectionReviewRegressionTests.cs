@@ -436,11 +436,13 @@ public sealed class SignatureSelectionReviewRegressionTests
     /// <summary>
     /// Review checkpoint 4c: the same inline definitions in <c>Q</c>'s hoisted deconstruction right-hand side — rows detection,
     /// resolution and exposure treat as rows of <c>Q</c> itself — keep their own contexts, in the processed branch and the
-    /// branch served from it alike. (The name-resolved host admission cannot elaborate such rows at all, before B3-5★ as
-    /// now: it has no detected view for their blocks; so this runs the detection pipeline.)
+    /// branch served from it alike. Detection and the name-resolved host admission agree: each registers these blocks in
+    /// <c>Q</c>, the owner resolution reads them in, and the synthetic source property is storage, never their scope.
     /// </summary>
-    [Fact]
-    public void DeconstructionRowDefinitionsSharingADeclaration_BelowAServedRegion_KeepTheirOwnContexts()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void DeconstructionRowDefinitionsSharingADeclaration_BelowAServedRegion_KeepTheirOwnContexts(bool nameResolved)
     {
         const string Source = "$deconstruct$0";
         var a = Block([new Property("X", Block([], new Expr.Num(1)), IsPublic: true)], new Expr.Num(1));
@@ -451,7 +453,7 @@ public sealed class SignatureSelectionReviewRegressionTests
             [new Property("F", new Algorithm.Conditional(null, [], [new CondBranch(new Pattern.LitInt(0), shared), new CondBranch(new Pattern.LitInt(1), shared)]))],
             new Expr.Num(0));
 
-        var exposed = Elaborate(root);
+        var exposed = Elaborate(root, nameResolved);
         var publication = exposed.CompletedStructure!;
         var graph = publication.Facts;
         var family = Assert.IsType<Algorithm.Conditional>(Assert.Single(exposed.Properties).Value);
@@ -465,13 +467,30 @@ public sealed class SignatureSelectionReviewRegressionTests
                 var block = Assert.IsType<Expr.AlgorithmExpr>(row).Algorithm;
                 var key = graph.Child(keys[1], block);
                 Assert.NotNull(key);
+                Assert.Same(keys[1], key.Parent);
                 Assert.Same(block, graph.Facts(key)!.Body);
+                Assert.NotNull(graph.Member(key, "X"));
                 contexts.Add(key);
             }
         }
 
         Assert.True(graph.IsReach(BranchPath(publication, family.Branches[1])[0]));
         Assert.Equal(4, contexts.Distinct(ReferenceEqualityComparer.Instance).Count());
+    }
+
+    /// <summary>
+    /// The same rows in <c>Q</c> of one name-resolved body shared by <c>Left.S</c> and <c>Right.S</c>: the processed occurrence
+    /// and the occurrence projected from it each keep both definitions, under their own <c>Q</c>.
+    /// </summary>
+    [Fact]
+    public void DeconstructionRowDefinitions_InASharedNameResolvedBody_KeepTheirOwnContexts()
+    {
+        const string Source = "$deconstruct$0";
+        var a = Block([new Property("X", Block([], new Expr.Num(1)), IsPublic: true)], new Expr.Num(1));
+        var b = a with { Output = new OutputBundle([new Expr.Num(2)]) };
+        var rows = Block([], new Expr.AlgorithmExpr(a), new Expr.AlgorithmExpr(b)) with { AssignmentDeconstructionRowIndex = 0 };
+        AssertInlineDefinitionsKeepTheirOwnContexts(Block([new Property(Source, rows)], new Expr.Num(0)),
+            q => q.Properties.Single(property => property.Name == Source).Value.Output);
     }
 
     /// <summary>
