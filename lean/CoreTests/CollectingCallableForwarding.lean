@@ -22,6 +22,10 @@ import CoreTests.Common
 --   never a collector-specific type mismatch. The unspread collector is one
 --   collection-valued computation with no CALLABLE identity.
 --
+-- A transparent reference to such a parameter (`A = xs`, `B = A`), written as a name or as a member
+-- path (`Box.A`), is the same known slice (A-2, owner decision November 2026;
+-- `EvalBody.transparentCollectorSlice?`).
+--
 -- An ARBITRARY spread `E*` (a list literal, a call result, a fixed parameter
 -- holding a list) is still evaluated during supply formation (NEED-07), and
 -- re-spread items are never reopened. These guards evaluate the production model
@@ -295,5 +299,165 @@ private def fixedCarrier : Algorithm := alg ["v"] [] [] [.call (.resolve "Apply"
 -- Selection receives the whole eager list: a failure in its tail aborts before selection.
 #guard fails [("Outer", collecting "xs" [.index (.param "xs") [.num 0]])]
   [.call (.resolve "Outer") [.num 1, bad]] innermostIsDivByZero
+
+-- 8. A transparent reference keeps the known slice (A-2) ------------------------------
+-- The programs below are the front end's elaborated shape: a local alias with its captured
+-- requirement. C#: `CollectingCallableForwardingLawTests.TransparentReferences.cs`; spec cases
+-- `collector-alias-*`.
+
+private def localProp (name : Ident) (a : Algorithm) (owner : Ident := "xs") : PropDef :=
+  { (privateLocalProp name (.localCapturedAncestorParams [owner]) a) with requiredOwnerDepths := some [(owner, some 0)] }
+private def reference (name : Ident) (target : Expr) (owner : Ident := "xs") : PropDef :=
+  localProp name (.alias none [] [] target) owner
+private def carrier (name : Ident) (target : Expr) : PropDef :=
+  localProp name (.alias none [] [] target none false)
+private def coll : PropDef := privateProp "Coll" (collecting "ys" [.num 0])
+private def collCount : PropDef := privateProp "Coll" (collecting "ys" [Expr.dotCall (.param "ys") "count" none])
+private def collList : PropDef := privateProp "Coll" (collecting "ys" [.param "ys"])
+private def fWith (props : List PropDef) (rows : List Expr) : PropDef :=
+  privateProp "F" (algWithParameters [{ name := "xs", kind := .collecting }] [] props rows)
+private def spreadTo (callee : Ident) (operand : Expr) : Expr := .call (.resolve callee) [.sequenceSpread operand]
+private def program (props : List PropDef) (out : Expr) : Except Error Result :=
+  runResult (.algorithmExpr (alg [] [] props [out]))
+private def callF (args : List Expr) : Expr := .call (.resolve "F") args
+private def is (expected : Result) : Except Error Result → Bool
+  | .ok value => value == expected
+  | _ => false
+private def isDiv : Except Error Result → Bool
+  | .error err => innermostIsDivByZero err
+  | _ => false
+private def same (left right : Except Error Result) : Bool :=
+  match left, right with
+  | .ok a, .ok b => a == b
+  | _, _ => sameInnermostFailure left right
+private def tick : Expr := .call (.resolve "tick") []
+
+private def oneHop : List PropDef := [reference "A" (.param "xs")]
+private def twoHops : List PropDef := oneHop ++ [reference "B" (.resolve "A")]
+private def threeHops : List PropDef := twoHops ++ [reference "C" (.resolve "B")]
+
+-- Direct, one hop, two and three hops: the failing cell is transported unforced.
+#guard is (.atom 0) (program [coll, fWith [] [spreadTo "Coll" (.param "xs")]] (callF [bad]))
+#guard is (.atom 0) (program [coll, fWith oneHop [spreadTo "Coll" (.resolve "A")]] (callF [bad]))
+#guard is (.atom 0) (program [coll, fWith twoHops [spreadTo "Coll" (.resolve "B")]] (callF [bad]))
+#guard is (.atom 0) (program [coll, fWith threeHops [spreadTo "Coll" (.resolve "C")]] (callF [bad]))
+-- A fixed parameter retaining the collector cell is the row's own cell: the slice survives.
+private def passAlias (body : Expr) : PropDef :=
+  privateProp "Pass" (alg ["v"] [] [reference "A" (.param "v") "v"] [body])
+private def outer : PropDef := privateProp "Outer" (collecting "fs" [.call (.resolve "Pass") [.param "fs"]])
+#guard is (.atom 0) (program [coll, passAlias (spreadTo "Coll" (.resolve "A")), outer] (.call (.resolve "Outer") [bad]))
+-- A selector supply transports the same cells: the bad index is found before the failing cell.
+private def selectFrom (operand : Expr) : Expr := .index (.listLiteral [.num 10, .num 20]) [.sequenceSpread operand]
+#guard same (program [fWith oneHop [selectFrom (.resolve "A")]] (callF [.num 99, bad]))
+  (program [fWith [] [selectFrom (.param "xs")]] (callF [.num 99, bad]))
+-- Demand raises the original error, the empty slice supplies nothing, and order and shape survive.
+#guard isDiv (program [collCount, fWith oneHop [spreadTo "Coll" (.resolve "A")]] (callF [bad, .num 2]))
+#guard is (.atom 0) (program [collCount, fWith oneHop [spreadTo "Coll" (.resolve "A")]] (callF []))
+#guard same (program [collList, fWith oneHop [spreadTo "Coll" (.resolve "A")]] (callF [.num 1, .capture [.num 2, .num 3], .num 4]))
+  (program [collList, fWith [] [spreadTo "Coll" (.param "xs")]] (callF [.num 1, .capture [.num 2, .num 3], .num 4]))
+-- A forwarded callable stays callable: `Apply(A*)` is `Apply(xs*)`.
+private def applyDef : PropDef := privateProp "Apply" ccfApply
+private def incDef : PropDef := privateProp "Inc" ccfInc
+#guard is (.atom 10) (program [incDef, applyDef, fWith oneHop [spreadTo "Apply" (.resolve "A")]] (callF [.resolve "Inc"]))
+#guard is (.atom 10) (program [incDef, applyDef, fWith twoHops [spreadTo "Apply" (.resolve "B")]] (callF [.resolve "Inc"]))
+#guard is (.atom 10) (program [incDef, applyDef, passAlias (spreadTo "Apply" (.resolve "A")), outer] (.call (.resolve "Outer") [.resolve "Inc"]))
+-- One cell, one completion, no effect at formation: an unused `tick()` argument does not advance the
+-- counter, exactly as the direct spelling; a demanded one runs once across two spreads.
+#guard same (program [coll, fWith oneHop [spreadTo "Coll" (.resolve "A"), tick]] (callF [tick]))
+  (program [coll, fWith [] [spreadTo "Coll" (.param "xs"), tick]] (callF [tick]))
+#guard is (.sequenceValue [.atom 0, .atom 1]) (program [coll, fWith oneHop [spreadTo "Coll" (.resolve "A"), tick]] (callF [tick]))
+#guard same (program [collList, fWith oneHop [spreadTo "Coll" (.resolve "A"), spreadTo "Coll" (.resolve "A"), tick]] (callF [tick]))
+  (program [collList, fWith [] [spreadTo "Coll" (.param "xs"), spreadTo "Coll" (.param "xs"), tick]] (callF [tick]))
+-- A parameter of the spread site with the same name does not capture the alias's row.
+private def shadowing (row : Expr) : PropDef :=
+  fWith (oneHop ++ [localProp "G" (collecting "xs" [spreadTo "Coll" (.resolve "A")])]) [row]
+#guard is (.listValue [.atom 1, .atom 2]) (program [collList, shadowing (.call (.resolve "G") [.num 7, .num 8])] (callF [.num 1, .num 2]))
+#guard is (.atom 0) (program [coll, shadowing (.call (.resolve "G") [.num 7])] (callF [bad]))
+
+-- Negative boundaries: every one is still an arbitrary spread, raised during supply formation.
+#guard isDiv (program [coll, fWith [carrier "A" (.param "xs")] [spreadTo "Coll" (.resolve "A")]] (callF [bad]))
+#guard isDiv (program [coll, fWith [carrier "A" (.param "xs"), reference "B" (.resolve "A")] [spreadTo "Coll" (.resolve "B")]] (callF [bad]))
+#guard isDiv (program [coll, fWith (oneHop ++ [carrier "B" (.resolve "A")]) [spreadTo "Coll" (.resolve "B")]] (callF [bad]))
+#guard isDiv (program [coll, fWith [localProp "A" (alg [] [] [] [.binary .add (.param "xs") (.num 0)])] [spreadTo "Coll" (.resolve "A")]] (callF [bad]))
+#guard isDiv (program [coll, fWith [localProp "A" (alg [] [] [] [.listLiteral [.sequenceSpread (.param "xs")]])] [spreadTo "Coll" (.resolve "A")]] (callF [bad]))
+#guard isDiv (program [coll, fWith [] [spreadTo "Coll" (.algorithmExpr (.alias none [] [] (.param "xs") none false))]] (callF [bad]))
+-- A fixed parameter holding an ordinary computation, aliased or not.
+private def fixedOwner (props : List PropDef) (body : Expr) : PropDef := privateProp "F" (alg ["x"] [] props [body])
+#guard isDiv (program [coll, fixedOwner [reference "A" (.param "x") "x"] (spreadTo "Coll" (.resolve "A"))] (callF [bad]))
+#guard isDiv (program [coll, fixedOwner [] (spreadTo "Coll" (.param "x"))] (callF [bad]))
+-- A static reference to an ordinary property is that property's read.
+#guard isDiv (program [coll, privateProp "P" (alg [] [] [] [bad]), privateProp "A" (.alias none [] [] (.resolve "P"))] (spreadTo "Coll" (.resolve "A")))
+-- A stacked star stays computed, as the direct `xs**` does.
+#guard isDiv (program [coll, fWith oneHop [.call (.resolve "Coll") [.sequenceSpread (.sequenceSpread (.resolve "A"))]]] (callF [bad]))
+#guard isDiv (program [coll, fWith [] [.call (.resolve "Coll") [.sequenceSpread (.sequenceSpread (.param "xs"))]]] (callF [bad]))
+-- A bare read still materializes, an element failure included.
+#guard isDiv (program [fWith oneHop [.resolve "A"]] (callF [bad]))
+#guard is (.listValue [.atom 1, .atom 2]) (program [fWith oneHop [.resolve "A"]] (callF [.num 1, .num 2]))
+
+-- 9. A member path keeps the known slice (A-2) ----------------------------------------
+-- `Box.A*` selects the member as `Y = Box.A` does: the receiver's declaration, never its output. The
+-- shapes are the front end's (`case_collector_member_path_*` in `LanguageSpecCases.lean`). C#:
+-- `CollectingCallableForwardingLawTests.TransparentReferences.cs`.
+
+private def member (name : Ident) (a : Algorithm) (owner : Ident := "xs") (depth : Nat := 1) : PropDef :=
+  { (publicLocalProp name (.localCapturedAncestorParams [owner]) a) with requiredOwnerDepths := some [(owner, some depth)] }
+private def memberReference (name : Ident) (target : Expr) (owner : Ident := "xs") (depth : Nat := 1) : PropDef :=
+  member name (.alias none [] [] target) owner depth
+private def box (members : List PropDef) (output : Expr := .num 0) (name : Ident := "Box") : PropDef :=
+  privateProp name (alg [] [] members [output])
+private def memberA : PropDef := memberReference "A" (.param "xs")
+private def boxA : PropDef := box [memberA]
+private def dot (receiver : Expr) (name : Ident) : Expr := Expr.dotCall receiver name none
+private def boxDotA : Expr := dot (.resolve "Box") "A"
+
+-- The witness, its re-aliased form, an inner hop, a nested receiver and an aliased receiver.
+#guard is (.atom 0) (program [coll, fWith [boxA] [spreadTo "Coll" boxDotA]] (callF [bad]))
+#guard is (.atom 0) (program [coll, fWith [boxA, reference "Y" boxDotA] [spreadTo "Coll" (.resolve "Y")]] (callF [bad]))
+#guard is (.atom 0) (program [coll, fWith [box [memberA, memberReference "B" (.resolve "A")]] [spreadTo "Coll" (dot (.resolve "Box") "B")]] (callF [bad]))
+#guard is (.atom 0) (program [coll, fWith [box [member "Inner" (alg [] [] [memberReference "A" (.param "xs") "xs" 2] [.num 0])]]
+    [spreadTo "Coll" (dot (dot (.resolve "Box") "Inner") "A")]] (callF [bad]))
+#guard is (.atom 0) (program [coll, fWith [boxA, reference "R" (.resolve "Box")] [spreadTo "Coll" (dot (.resolve "R") "A")]] (callF [bad]))
+-- SELECTING A MEMBER IS NOT CROSSING THE RECEIVER'S OUTPUT: the receiver's row, a failure or the
+-- collector itself, is never read, while spreading the receiver itself evaluates that row.
+#guard is (.atom 0) (program [coll, fWith [box [memberA] bad] [spreadTo "Coll" boxDotA]] (callF [.num 1]))
+#guard is (.atom 0) (program [coll, fWith [box [memberA] (.param "xs")] [spreadTo "Coll" boxDotA]] (callF [bad]))
+#guard isDiv (program [coll, fWith [box [memberA] (.param "xs")] [spreadTo "Coll" (.resolve "Box")]] (callF [bad]))
+-- Demand raises the original error, the empty slice supplies nothing, order and shape survive.
+#guard isDiv (program [collCount, fWith [boxA] [spreadTo "Coll" boxDotA]] (callF [bad, .num 2]))
+#guard is (.atom 0) (program [collCount, fWith [boxA] [spreadTo "Coll" boxDotA]] (callF []))
+#guard same (program [collList, fWith [boxA] [spreadTo "Coll" boxDotA]] (callF [.num 1, .capture [.num 2, .num 3], .num 4]))
+  (program [collList, fWith [] [spreadTo "Coll" (.param "xs")]] (callF [.num 1, .capture [.num 2, .num 3], .num 4]))
+-- A forwarded callable stays callable; a selector supply transports the same cells.
+#guard is (.atom 10) (program [incDef, applyDef, fWith [boxA] [spreadTo "Apply" boxDotA]] (callF [.resolve "Inc"]))
+#guard same (program [fWith [boxA] [selectFrom boxDotA]] (callF [.num 99, bad]))
+  (program [fWith [] [selectFrom (.param "xs")]] (callF [.num 99, bad]))
+-- One cell, one completion, no effect at formation.
+#guard is (.sequenceValue [.atom 0, .atom 1]) (program [coll, fWith [boxA] [spreadTo "Coll" boxDotA, tick]] (callF [tick]))
+#guard same (program [collList, fWith [boxA] [spreadTo "Coll" boxDotA, spreadTo "Coll" boxDotA, tick]] (callF [tick]))
+  (program [collList, fWith [] [spreadTo "Coll" (.param "xs"), spreadTo "Coll" (.param "xs"), tick]] (callF [tick]))
+-- A parameter of the spread site with the same name does not capture the member's row.
+private def shadowingMember (row : Expr) : PropDef :=
+  fWith [boxA, localProp "G" (collecting "xs" [spreadTo "Coll" boxDotA])] [row]
+#guard is (.listValue [.atom 1, .atom 2]) (program [collList, shadowingMember (.call (.resolve "G") [.num 7, .num 8])] (callF [.num 1, .num 2]))
+#guard is (.atom 0) (program [coll, shadowingMember (.call (.resolve "G") [.num 7])] (callF [bad]))
+
+-- Negative boundaries: every one is still an arbitrary spread, raised during supply formation.
+#guard isDiv (program [coll, fWith [box [member "A" (.alias none [] [] (.param "xs") none false)]] [spreadTo "Coll" boxDotA]] (callF [bad]))
+#guard isDiv (program [coll, fWith [box [memberA, member "B" (.alias none [] [] (.resolve "A") none false)]] [spreadTo "Coll" (dot (.resolve "Box") "B")]] (callF [bad]))
+#guard isDiv (program [coll, fWith [box [member "A" (alg [] [] [] [.binary .add (.param "xs") (.num 0)])]] [spreadTo "Coll" boxDotA]] (callF [bad]))
+#guard isDiv (program [coll, box [publicProp "A" (alg [] [] [] [bad])]] (spreadTo "Coll" boxDotA))
+#guard isDiv (program [coll, fixedOwner [box [memberReference "A" (.param "x") "x"]] (spreadTo "Coll" boxDotA)] (callF [bad]))
+-- A stacked star and a call of the member are not the member reference.
+#guard isDiv (program [coll, fWith [boxA] [.call (.resolve "Coll") [.sequenceSpread (.sequenceSpread boxDotA)]]] (callF [bad]))
+#guard isDiv (program [coll, fWith [boxA] [.call (.resolve "Coll") [.sequenceSpread (Expr.dotCall (.resolve "Box") "A" (some []))]]] (callF [bad]))
+-- An argument passed to an ordinary parameter stays that argument's computation.
+private def passSpread : PropDef := privateProp "Pass" (alg ["v"] [] [] [spreadTo "Coll" (.param "v")])
+#guard isDiv (program [coll, passSpread, fWith [boxA] [.call (.resolve "Pass") [boxDotA]]] (callF [bad]))
+-- A receiver handed over as an argument leaves the member's owner behind: refused, never a slice.
+private def isLocalOnly : Except Error Result → Bool
+  | .error err => innermostIsLocalOnlyProperty "b" "A" (.localCapturedAncestorParams ["xs"]) err
+  | _ => false
+#guard isLocalOnly (program [coll, privateProp "G" (alg ["b"] [] [] [spreadTo "Coll" (dot (.param "b") "A")]),
+    fWith [boxA] [.call (.resolve "G") [.resolve "Box"]]] (callF [bad]))
 
 end KatLangTests.CollectingCallableForwarding

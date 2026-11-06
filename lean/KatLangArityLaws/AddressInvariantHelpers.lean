@@ -312,11 +312,25 @@ theorem aliasStepNavigateWith_spec {P : Array NeedCell → Prop}
 
 attribute [ht_spec] aliasStepNavigateWith_spec
 
+theorem staticPathSelectWith_aux {P : Array NeedCell → Prop} (hP : HMono P)
+    {structureOf : Algorithm → EvalCtx → EvalM (Option Algorithm)} {owner : Algorithm} {target : Expr}
+    {stepCtx : EvalCtx} (hs : ∀ a, SoundI P (structureOf a stepCtx) (fun _ _ => True)) :
+    SoundI P (staticPathSelectWith structureOf owner target stepCtx) (fun _ _ => True) := by
+  unfold staticPathSelectWith; ht_tac
+
+theorem staticPathSelectWith_spec {P : Array NeedCell → Prop}
+    {structureOf : Algorithm → EvalCtx → EvalM (Option Algorithm)} {owner : Algorithm} {target : Expr}
+    {stepCtx : EvalCtx} (hs : ∀ a, SoundI P (structureOf a stepCtx) (fun _ _ => True)) :
+    SoundI P (staticPathSelectWith structureOf owner target stepCtx) (fun _ _ => True) :=
+  fun hP => staticPathSelectWith_aux hP hs hP
+
+attribute [ht_spec] staticPathSelectWith_spec
+
 theorem resolveAliasStepWith_aux {P : Array NeedCell → Prop} (hP : HMono P)
     {structureOf : Algorithm → EvalCtx → EvalM (Option Algorithm)} {step : Algorithm} {target : Expr}
     {ctx : EvalCtx} (hs : ∀ a, SoundI P (structureOf a (ctx.push step)) (fun _ _ => True)) :
     SoundI P (resolveAliasStepWith structureOf step target ctx) (fun _ _ => True) := by
-  unfold resolveAliasStepWith; ht_tac
+  unfold resolveAliasStepWith; exact staticPathSelectWith_aux hP hs
 
 theorem resolveAliasStepWith_spec {P : Array NeedCell → Prop}
     {structureOf : Algorithm → EvalCtx → EvalM (Option Algorithm)} {step : Algorithm} {target : Expr}

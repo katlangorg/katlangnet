@@ -340,6 +340,130 @@ public static class LanguageSpecCorpus
         },
         new()
         {
+            Id = "collector-alias-keeps-known-slice",
+            Category = "variadic-calls",
+            Source = "Coll(*ys) = 0\nF(*xs) = {\n    A = xs\n    Coll(A*)\n}\nF(1 / 0)",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "0",
+            ExpectedRaw = "0",
+            ExpectedEmittedCount = 1,
+            Probes =
+            [
+                new SpecProbe("Coll(*ys) = 0\nF(*xs) = Coll(xs*)\nF(1 / 0)", "ok raw=0 n=1"),
+                new SpecProbe("Coll(*ys) = 0\nF(*xs) = {\n    A = xs\n    B = A\n    C = B\n    Coll(C*)\n}\nF(1 / 0)", "ok raw=0 n=1"),
+                new SpecProbe("Coll(*ys) = 0\nPass(v) = {\n    A = v\n    Coll(A*)\n}\nOuter(*fs) = Pass(fs)\nOuter(1 / 0)", "ok raw=0 n=1"),
+                new SpecProbe("Coll(*ys) = ys\nF(*xs) = {\n    A = xs\n    Coll(0, A*, 9)\n}\nF(1, 2)", "ok raw=L[0, 1, 2, 9] n=1"),
+                new SpecProbe("Coll(*ys) = ys.count\nF(*xs) = {\n    A = xs\n    Coll(A*)\n}\nF()", "ok raw=0 n=1"),
+                new SpecProbe("Coll(*ys) = ys\nF(*xs) = {\n    A = xs\n    G(*xs) = Coll(A*)\n    G(7, 8)\n}\nF(1, 2)", "ok raw=L[1, 2] n=1"),
+                new SpecProbe("Coll(*ys) = 0\nF(t, *xs) = {\n    A = xs\n    Coll(A*) + t + tick()\n}\nF(0, tick())", "ok raw=1 n=1"),
+            ],
+            Explanation = "A transparent reference to a collecting parameter is that parameter's known slice: `A*` transfers the very cells `xs*` does, through any number of unbraced hops, so an unused failing argument is never evaluated and the second `tick()` still reads 1.",
+        },
+        new()
+        {
+            Id = "collector-alias-keeps-callable-elements",
+            Category = "variadic-calls",
+            Source = "Inc(x) = x + 1\nApply(f) = f(9)\nFwd(*fs) = {\n    A = fs\n    Apply(A*)\n}\nFwd(Inc)",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "10",
+            ExpectedRaw = "10",
+            ExpectedEmittedCount = 1,
+            Probes =
+            [
+                new SpecProbe("Inc(x) = x + 1\nApply(f) = f(9)\nPass(v) = {\n    A = v\n    Apply(A*)\n}\nOuter(*fs) = Pass(fs)\nOuter(Inc)", "ok raw=10 n=1"),
+            ],
+            Explanation = "The transferred cell keeps its CALLABLE channel: re-spreading a collected callable through a transparent reference hands it to `Apply` unforced, exactly as `fs*` does.",
+        },
+        new()
+        {
+            Id = "collector-alias-demand-raises-the-element-failure",
+            Category = "errors",
+            Source = "Coll(*ys) = ys.count\nF(*xs) = {\n    A = xs\n    Coll(A*)\n}\nF(1 / 0, 2)",
+            Outcome = SpecOutcome.EvalError,
+            ExpectedErrorCategory = "div0",
+            Explanation = "Transfer defers a failure to the operation that demands the cell, never suppresses it: `ys.count` materializes the collector, whose first element is the original division.",
+        },
+        new()
+        {
+            Id = "collector-carrier-spread-is-arbitrary",
+            Category = "errors",
+            Source = "Coll(*ys) = 0\nF(*xs) = {\n    A = { xs }\n    Coll(A*)\n}\nF(1 / 0)",
+            Outcome = SpecOutcome.EvalError,
+            ExpectedErrorCategory = "div0",
+            Probes =
+            [
+                new SpecProbe("Coll(*ys) = 0\nF(*xs) = {\n    A = xs\n    B = { A }\n    Coll(B*)\n}\nF(1 / 0)", "err div0"),
+                new SpecProbe("Coll(*ys) = 0\nF(*xs) = {\n    A = { Helper = 0\n        xs }\n    Coll(A*)\n}\nF(1 / 0)", "err div0"),
+                new SpecProbe("Coll(*ys) = 0\nF(*xs) = {\n    A = xs + 0\n    Coll(A*)\n}\nF(1 / 0)", "err div0"),
+                new SpecProbe("Coll(*ys) = 0\nF(*xs) = {\n    A = [xs*]\n    Coll(A*)\n}\nF(1 / 0)", "err div0"),
+                new SpecProbe("Coll(*ys) = 0\nF(x) = {\n    A = x\n    Coll(A*)\n}\nF(1 / 0)", "err div0"),
+            ],
+            Explanation = "Written braces make a distinct carrier, and a calculation or a fixed parameter holding an ordinary computation is no collector: each is an arbitrary spread, evaluated during supply formation, whatever value it would have.",
+        },
+        new()
+        {
+            Id = "collector-member-path-keeps-known-slice",
+            Category = "variadic-calls",
+            Source = "Coll(*ys) = 0\nF(*xs) = {\n    Box = {\n        public A = xs\n        0\n    }\n    Coll(Box.A*)\n}\nF(1 / 0)",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "0",
+            ExpectedRaw = "0",
+            ExpectedEmittedCount = 1,
+            Probes =
+            [
+                new SpecProbe("Coll(*ys) = 0\nF(*xs) = {\n    Box = {\n        public A = xs\n        0\n    }\n    Y = Box.A\n    Coll(Y*)\n}\nF(1 / 0)", "ok raw=0 n=1"),
+                new SpecProbe("Coll(*ys) = 0\nF(*xs) = {\n    Box = {\n        public A = xs\n        public B = A\n        0\n    }\n    Coll(Box.B*)\n}\nF(1 / 0)", "ok raw=0 n=1"),
+                new SpecProbe("Coll(*ys) = 0\nF(*xs) = {\n    Box = {\n        public Inner = {\n            public A = xs\n            0\n        }\n        0\n    }\n    Coll(Box.Inner.A*)\n}\nF(1 / 0)", "ok raw=0 n=1"),
+                new SpecProbe("Coll(*ys) = 0\nF(*xs) = {\n    Box = {\n        public A = xs\n        0\n    }\n    R = Box\n    Coll(R.A*)\n}\nF(1 / 0)", "ok raw=0 n=1"),
+                new SpecProbe("Coll(*ys) = 0\nF(*xs) = {\n    C = {\n        public A = xs\n        xs\n    }\n    Coll(C.A*)\n}\nF(1 / 0)", "ok raw=0 n=1"),
+                new SpecProbe("Coll(*ys) = ys\nF(*xs) = {\n    Box = {\n        public A = xs\n        0\n    }\n    Coll(0, Box.A*, 9)\n}\nF(1, 2)", "ok raw=L[0, 1, 2, 9] n=1"),
+                new SpecProbe("Coll(*ys) = ys.count\nF(*xs) = {\n    Box = {\n        public A = xs\n        0\n    }\n    Coll(Box.A*)\n}\nF()", "ok raw=0 n=1"),
+                new SpecProbe("Coll(*ys) = ys\nF(*xs) = {\n    Box = {\n        public A = xs\n        0\n    }\n    G(*xs) = Coll(Box.A*)\n    G(7, 8)\n}\nF(1, 2)", "ok raw=L[1, 2] n=1"),
+                new SpecProbe("Coll(*ys) = 0\nF(t, *xs) = {\n    Box = {\n        public A = xs\n        0\n    }\n    Coll(Box.A*) + t + tick()\n}\nF(0, tick())", "ok raw=1 n=1"),
+            ],
+            Explanation = "Selecting a member that is a transparent reference to a collecting parameter is that parameter's known slice too: `Box.A*` transfers the very cells `xs*` does, as `Y = Box.A` then `Y*` does. The receiver's own output is never read, even when it is the same collector.",
+        },
+        new()
+        {
+            Id = "collector-member-path-keeps-callable-elements",
+            Category = "variadic-calls",
+            Source = "Inc(x) = x + 1\nApply(f) = f(9)\nFwd(*fs) = {\n    Box = {\n        public A = fs\n        0\n    }\n    Apply(Box.A*)\n}\nFwd(Inc)",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "10",
+            ExpectedRaw = "10",
+            ExpectedEmittedCount = 1,
+            Explanation = "The transferred cell keeps its CALLABLE channel through a member path, exactly as through a name.",
+        },
+        new()
+        {
+            Id = "collector-member-path-demand-raises-the-element-failure",
+            Category = "errors",
+            Source = "Coll(*ys) = ys.count\nF(*xs) = {\n    Box = {\n        public A = xs\n        0\n    }\n    Coll(Box.A*)\n}\nF(1 / 0, 2)",
+            Outcome = SpecOutcome.EvalError,
+            ExpectedErrorCategory = "div0",
+            Explanation = "A member path defers a failure to the operation that demands the cell, never suppresses it.",
+        },
+        new()
+        {
+            Id = "collector-member-nontransparent-spread-is-arbitrary",
+            Category = "errors",
+            Source = "Coll(*ys) = 0\nF(*xs) = {\n    Box = {\n        public A = { xs }\n        0\n    }\n    Coll(Box.A*)\n}\nF(1 / 0)",
+            Outcome = SpecOutcome.EvalError,
+            ExpectedErrorCategory = "div0",
+            Probes =
+            [
+                new SpecProbe("Coll(*ys) = 0\nF(*xs) = {\n    Box = {\n        public A = xs\n        public B = { A }\n        0\n    }\n    Coll(Box.B*)\n}\nF(1 / 0)", "err div0"),
+                new SpecProbe("Coll(*ys) = 0\nF(*xs) = {\n    Box = {\n        public A = xs + 0\n        0\n    }\n    Coll(Box.A*)\n}\nF(1 / 0)", "err div0"),
+                new SpecProbe("Coll(*ys) = 0\nF(x) = {\n    Box = {\n        public A = x\n        0\n    }\n    Coll(Box.A*)\n}\nF(1 / 0)", "err div0"),
+                new SpecProbe("Coll(*ys) = 0\nF(*xs) = {\n    Box = {\n        public A = xs\n        0\n    }\n    Coll(Box.A**)\n}\nF(1 / 0)", "err div0"),
+                new SpecProbe("Coll(*ys) = 0\nF(*xs) = {\n    Box = {\n        public A = xs\n        0\n    }\n    Coll(Box.A()*)\n}\nF(1 / 0)", "err div0"),
+                new SpecProbe("Coll(*ys) = 0\nPass(v) = Coll(v*)\nF(*xs) = {\n    Box = {\n        public A = xs\n        0\n    }\n    Pass(Box.A)\n}\nF(1 / 0)", "err div0"),
+                new SpecProbe("Coll(*ys) = 0\nBox = {\n    public A = 1 / 0\n    0\n}\nColl(Box.A*)", "err div0"),
+            ],
+            Explanation = "A selected member keeps its own kind: written braces, a calculation or a fixed parameter holding an ordinary computation is no known slice, and neither is a stacked star, a call of the member, or a reference passed as one ordinary argument and spread by the callee.",
+        },
+        new()
+        {
             Id = "collected-callable-survives-explicit-respread",
             Category = "variadic-calls",
             Source = "Inc(x) = x + 1\nApply(f) = f(9)\nFwd(*fs) = Apply(fs*)\nFwd(Inc)",

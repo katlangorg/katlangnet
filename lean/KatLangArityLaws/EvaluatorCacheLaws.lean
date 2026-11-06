@@ -585,13 +585,18 @@ theorem pres_aliasStepNavigateWith (structureOf : Algorithm → EvalCtx → Eval
   | nil => unfold aliasStepNavigateWith; pres_tac_mid
   | cons member rest ih => unfold aliasStepNavigateWith; pres_tac_mid
 
-theorem pres_resolveAliasStepWith (structureOf : Algorithm → EvalCtx → EvalM (Option Algorithm))
-    (h : ∀ a c, Preserves R (structureOf a c)) (step : Algorithm) (target : Expr) (ctx : EvalCtx) :
-    Preserves R (resolveAliasStepWith structureOf step target ctx) := by
+theorem pres_staticPathSelectWith (structureOf : Algorithm → EvalCtx → EvalM (Option Algorithm))
+    (h : ∀ a c, Preserves R (structureOf a c)) (owner : Algorithm) (target : Expr) (stepCtx : EvalCtx) :
+    Preserves R (staticPathSelectWith structureOf owner target stepCtx) := by
   have := pres_aliasStepNavigateWith (R := R) structureOf h
   have := pres_lookupOpenProperties (R := R)
   have := pres_lookupOpenPropertiesInParentChain (R := R)
-  unfold resolveAliasStepWith; pres_tac_mid
+  unfold staticPathSelectWith; pres_tac_mid
+
+theorem pres_resolveAliasStepWith (structureOf : Algorithm → EvalCtx → EvalM (Option Algorithm))
+    (h : ∀ a c, Preserves R (structureOf a c)) (step : Algorithm) (target : Expr) (ctx : EvalCtx) :
+    Preserves R (resolveAliasStepWith structureOf step target ctx) := by
+  unfold resolveAliasStepWith; exact pres_staticPathSelectWith structureOf h step target (ctx.push step)
 
 theorem pres_aliasRouteIsIntrinsicWith (structureOf : Algorithm → EvalCtx → EvalM (Option Algorithm))
     (h : ∀ a c, Preserves R (structureOf a c)) (receiver : Expr) (ctx : EvalCtx) :
@@ -716,10 +721,13 @@ macro "pres_tac" : tactic => `(tactic| without_info_trees ((try pres_unfold_rec)
   | (with_reducible apply pres_resolveAlgForOpen)
   | (with_reducible apply pres_openStructure)
   | (with_reducible apply pres_resolveAliasStepWith)
+  | (with_reducible apply pres_staticPathSelectWith)
   | (with_reducible apply pres_aliasRouteIsIntrinsicWith)
   | (with_reducible apply pres_lookupOpenProperties)
   | (with_reducible apply pres_lookupOpenPropertiesInParentChain)
   | (with_reducible apply EvalBody.terminalAccess_pres rec hrec)
+  | (with_reducible apply EvalBody.staticReferenceTerminal_pres rec hrec)
+  | (with_reducible apply EvalBody.transparentCollectorSlice_pres rec hrec)
   | (with_reducible apply pres_outputRowsCollect rec hrec)
   | (with_reducible apply pres_explicitRowsCollect rec hrec)
   | (with_reducible apply pres_listLiteralCollect rec hrec)
@@ -1115,6 +1123,14 @@ theorem EvalBody.evalSequenceSpreadOperandValue_pres (rec : EvalRec) (hrec : ∀
 theorem EvalBody.evalSequenceSpreadCounted_pres (rec : EvalRec) (hrec : ∀ c, Preserves R (rec c)) (e : Expr) (ctx : EvalCtx) (env : ValEnv) :
     Preserves R (EvalBody.evalSequenceSpreadCounted rec e ctx env) := by
   unfold EvalBody.evalSequenceSpreadCounted; pres_tac
+
+theorem EvalBody.staticReferenceTerminal_pres (rec : EvalRec) (hrec : ∀ c, Preserves R (rec c)) (owner : Algorithm) (reference : Expr) (ctx : EvalCtx) :
+    Preserves R (EvalBody.staticReferenceTerminal rec owner reference ctx) := by
+  unfold EvalBody.staticReferenceTerminal; pres_tac
+
+theorem EvalBody.transparentCollectorSlice_pres (rec : EvalRec) (hrec : ∀ c, Preserves R (rec c)) (e : Expr) (ctx : EvalCtx) :
+    Preserves R (EvalBody.transparentCollectorSlice? rec e ctx) := by
+  unfold EvalBody.transparentCollectorSlice?; pres_tac
 
 theorem EvalBody.evalSupplySpread_pres (rec : EvalRec) (hrec : ∀ c, Preserves R (rec c)) (e : Expr) (ctx : EvalCtx) (env : ValEnv) :
     Preserves R (EvalBody.evalSupplySpread rec e ctx env) := by

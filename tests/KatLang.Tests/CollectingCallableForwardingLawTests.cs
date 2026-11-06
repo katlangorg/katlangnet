@@ -28,7 +28,7 @@ namespace KatLang.Tests;
 /// Lean: <c>CoreTests/CollectingCallableForwarding.lean</c>; spec case
 /// <c>collected-callable-survives-explicit-respread</c>.</para>
 /// </summary>
-public sealed class CollectingCallableForwardingLawTests
+public sealed partial class CollectingCallableForwardingLawTests
 {
     private const string Inc = "Inc(x) = x + 1\n";
     private const string Apply = "Apply(f) = f(9)\n";

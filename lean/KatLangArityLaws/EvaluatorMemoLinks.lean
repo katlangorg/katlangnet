@@ -984,13 +984,18 @@ theorem link_aliasStepNavigateWith (structureOf : Algorithm → EvalCtx → Eval
   | nil => unfold aliasStepNavigateWith; link_tac_base
   | cons member rest ih => unfold aliasStepNavigateWith; link_tac_base
 
-theorem link_resolveAliasStepWith (structureOf : Algorithm → EvalCtx → EvalM (Option Algorithm))
-    (h : ∀ a c, LinkDisc (structureOf a c)) (step : Algorithm) (target : Expr) (ctx : EvalCtx) :
-    LinkDisc (resolveAliasStepWith structureOf step target ctx) := by
+theorem link_staticPathSelectWith (structureOf : Algorithm → EvalCtx → EvalM (Option Algorithm))
+    (h : ∀ a c, LinkDisc (structureOf a c)) (owner : Algorithm) (target : Expr) (stepCtx : EvalCtx) :
+    LinkDisc (staticPathSelectWith structureOf owner target stepCtx) := by
   have := link_aliasStepNavigateWith structureOf h
   have := link_lookupOpenProperties
   have := link_lookupOpenPropertiesInParentChain
-  unfold resolveAliasStepWith; link_tac_base
+  unfold staticPathSelectWith; link_tac_base
+
+theorem link_resolveAliasStepWith (structureOf : Algorithm → EvalCtx → EvalM (Option Algorithm))
+    (h : ∀ a c, LinkDisc (structureOf a c)) (step : Algorithm) (target : Expr) (ctx : EvalCtx) :
+    LinkDisc (resolveAliasStepWith structureOf step target ctx) := by
+  unfold resolveAliasStepWith; exact link_staticPathSelectWith structureOf h step target (ctx.push step)
 
 theorem link_aliasRouteIsIntrinsicWith (structureOf : Algorithm → EvalCtx → EvalM (Option Algorithm))
     (h : ∀ a c, LinkDisc (structureOf a c)) (receiver : Expr) (ctx : EvalCtx) :
@@ -1125,10 +1130,13 @@ macro "link_tac" : tactic => `(tactic| without_info_trees ((try link_unfold_rec)
   | (with_reducible apply link_resolveAlgForOpen)
   | (with_reducible apply link_openStructure)
   | (with_reducible apply link_resolveAliasStepWith)
+  | (with_reducible apply link_staticPathSelectWith)
   | (with_reducible apply link_aliasRouteIsIntrinsicWith)
   | (with_reducible apply link_lookupOpenProperties)
   | (with_reducible apply link_lookupOpenPropertiesInParentChain)
   | (with_reducible apply EvalBody.terminalAccess_linkDisc rec hrec)
+  | (with_reducible apply EvalBody.staticReferenceTerminal_linkDisc rec hrec)
+  | (with_reducible apply EvalBody.transparentCollectorSlice_linkDisc rec hrec)
   | (with_reducible apply link_outputRowsCollect rec hrec)
   | (with_reducible apply link_explicitRowsCollect rec hrec)
   | (with_reducible apply link_listLiteralCollect rec hrec)
@@ -1527,6 +1535,14 @@ theorem EvalBody.evalSequenceSpreadOperandValue_linkDisc (rec : EvalRec) (hrec :
 theorem EvalBody.evalSequenceSpreadCounted_linkDisc (rec : EvalRec) (hrec : ∀ c, LinkDisc (rec c)) (e : Expr) (ctx : EvalCtx) (env : ValEnv) :
     LinkDisc (EvalBody.evalSequenceSpreadCounted rec e ctx env) := by
   unfold EvalBody.evalSequenceSpreadCounted; link_tac
+
+theorem EvalBody.staticReferenceTerminal_linkDisc (rec : EvalRec) (hrec : ∀ c, LinkDisc (rec c)) (owner : Algorithm) (reference : Expr) (ctx : EvalCtx) :
+    LinkDisc (EvalBody.staticReferenceTerminal rec owner reference ctx) := by
+  unfold EvalBody.staticReferenceTerminal; link_tac
+
+theorem EvalBody.transparentCollectorSlice_linkDisc (rec : EvalRec) (hrec : ∀ c, LinkDisc (rec c)) (e : Expr) (ctx : EvalCtx) :
+    LinkDisc (EvalBody.transparentCollectorSlice? rec e ctx) := by
+  unfold EvalBody.transparentCollectorSlice?; link_tac
 
 theorem EvalBody.evalSupplySpread_linkDisc (rec : EvalRec) (hrec : ∀ c, LinkDisc (rec c)) (e : Expr) (ctx : EvalCtx) (env : ValEnv) :
     LinkDisc (EvalBody.evalSupplySpread rec e ctx env) := by

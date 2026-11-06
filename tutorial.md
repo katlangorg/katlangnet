@@ -523,6 +523,25 @@ Ignore(1 / 0, 2)
 
 Reading the collector as a value creates its entire eager list, evaluating every element from left to right. `xs.first`, `xs.count`, `sum(xs)` and `xs[0]` all receive that complete list: they cannot skip a failing later element. Forwarding `xs*` to another collector shares the slice without materializing it.
 
+A transparent alias to the retained collector shares that slice too. This works through an accessible member such as `Box.A`, without evaluating the receiver's output:
+
+<!-- spec:collector-member-path-keeps-known-slice -->
+```
+Coll(*ys) = 0
+F(*xs) = {
+    Box = {
+        public A = xs
+        0
+    }
+    Coll(Box.A*)
+}
+F(1 / 0)
+```
+
+**Result:** `0`
+
+`A = xs` followed by `Coll(A*)`, or `Y = Box.A` followed by `Coll(Y*)`, preserves the same lazy slice. A member whose body calculates a value or uses a brace carrier, such as `public A = { xs }`, still forms an ordinary spread and demands its elements. Passing the alias as an ordinary argument also keeps the ordinary demand rule: with `Pass(v) = Coll(v*)`, `Pass(Box.A)` materializes the collector when `v*` is formed.
+
 Literal, structural and repeated-name patterns may need values before the body starts. Patterns are inspected from left to right. A structural pattern first evaluates its complete parent value. A repeated name requires each supplied occurrence to agree; an early conflict stops before a later argument runs. Conditional clauses share the same argument computations across attempts. A plain name in a clause binds without forcing, so ordinary selectors can leave their unselected arguments untouched just like `if`.
 
 An explicit parameter list still adds no implicit inputs. A reference to a defined callable that needs inputs can remain a runtime no-argument demand, including inside Math calls: if the value is unused it does not run, and if demanded it reports that callable's ordinary arity error. A directly written undeclared name remains a definition error.

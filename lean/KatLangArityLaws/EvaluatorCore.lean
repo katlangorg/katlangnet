@@ -198,11 +198,17 @@ variable {γ : Type} [PartialOrder γ]
   | nil => unfold aliasStepNavigateWith; mono_cb_tac
   | cons member rest ih => unfold aliasStepNavigateWith; mono_cb_tac
 
+@[partial_fixpoint_monotone] theorem monotone_staticPathSelectWith
+    (structureOf : γ → Algorithm → EvalCtx → EvalM (Option Algorithm)) (h : monotone structureOf)
+    (owner : Algorithm) (target : Expr) (stepCtx : EvalCtx) :
+    monotone (fun x => staticPathSelectWith (structureOf x) owner target stepCtx) := by
+  unfold staticPathSelectWith; mono_cb_tac
+
 @[partial_fixpoint_monotone] theorem monotone_resolveAliasStepWith
     (structureOf : γ → Algorithm → EvalCtx → EvalM (Option Algorithm)) (h : monotone structureOf)
     (step : Algorithm) (target : Expr) (ctx : EvalCtx) :
     monotone (fun x => resolveAliasStepWith (structureOf x) step target ctx) := by
-  unfold resolveAliasStepWith; mono_cb_tac
+  unfold resolveAliasStepWith; exact monotone_staticPathSelectWith structureOf h step target (ctx.push step)
 
 @[partial_fixpoint_monotone] theorem monotone_aliasRouteIsIntrinsicWith
     (structureOf : γ → Algorithm → EvalCtx → EvalM (Option Algorithm)) (h : monotone structureOf)
@@ -1066,9 +1072,20 @@ theorem EvalBody.evalSequenceSpreadCounted_mono (e : Expr) (ctx : EvalCtx) (env 
     monotone (fun rec : EvalRec => EvalBody.evalSequenceSpreadCounted rec e ctx env) := by
   unfold EvalBody.evalSequenceSpreadCounted; mono_tac
 
+theorem EvalBody.staticReferenceTerminal_mono (owner : Algorithm) (reference : Expr) (ctx : EvalCtx) :
+    monotone (fun rec : EvalRec => EvalBody.staticReferenceTerminal rec owner reference ctx) := by
+  unfold EvalBody.staticReferenceTerminal; mono_tac
+
+theorem EvalBody.transparentCollectorSlice_mono (e : Expr) (ctx : EvalCtx) :
+    monotone (fun rec : EvalRec => EvalBody.transparentCollectorSlice? rec e ctx) := by
+  have := EvalBody.staticReferenceTerminal_mono
+  unfold EvalBody.transparentCollectorSlice?; mono_tac
+
 theorem EvalBody.evalSupplySpread_mono (e : Expr) (ctx : EvalCtx) (env : ValEnv) :
     monotone (fun rec : EvalRec => EvalBody.evalSupplySpread rec e ctx env) := by
-  have := planRoute_classify_mono; unfold EvalBody.evalSupplySpread; mono_tac
+  have := planRoute_classify_mono
+  have := EvalBody.transparentCollectorSlice_mono
+  unfold EvalBody.evalSupplySpread; mono_tac
 
 theorem EvalBody.evalListLiteralCounted_mono (elements : List Expr) (ctx : EvalCtx) (env : ValEnv) :
     monotone (fun rec : EvalRec => EvalBody.evalListLiteralCounted rec elements ctx env) := by

@@ -3665,7 +3665,9 @@ def supplyNeed (source : Expr) (caller : EvalCtx) (values : ValEnv) : EvalM Nat 
 /-- The KNOWN collector slice a spread operand transports (NEED-07/08): the slice of a
     parameter bound to a supplied collector cell, found exactly as `supplyNeed` finds a
     parameter's cell. It allocates nothing — any other operand is evaluated by the spread
-    itself (`formNeedSupplySourced`). C#: the `Slice` test in `FormSpreadSupplySlot`. -/
+    itself (`formNeedSupplySourced`), where a transparent reference to such a parameter is
+    still recognized (`EvalBody.transparentCollectorSlice?`, A-2). C#: the `Slice` test in
+    `FormSpreadSupplySlot`. -/
 def spreadCollectorSlice? (operand : Expr) (caller : EvalCtx) : EvalM (Option (List Nat)) := do
   if let .param name := operand then
     let activation <- capturedParameterActivation? name caller
@@ -5083,6 +5085,21 @@ def AliasTerminal.readNameOr : AliasTerminal → Ident → Ident
   | .binding _ b _ _, _ => b.name
   | _, n => n
 
+/-- The RUNTIME PARAMETER ROW a VALUE terminal reads through nothing but transparent references
+    (audit finding A-2, owner decision November 2026): the runtime-target alias and its parameter
+    row, when the chase crossed no carrier and the terminal is itself a reference. A carrier, a
+    static terminal binding, or a `.Algorithm` / member row has none. This reads the alias
+    classification, never a result. C#: the test in `Evaluator.TransparentCollectorSlice`. -/
+def AliasTerminal.transparentParameterRow? : AliasTerminal → Option (Algorithm × Expr)
+  | .runtime alias false =>
+      match alias with
+      | .alias _ _ _ row _ true =>
+          match row with
+          | .param _ => some (alias, row)
+          | _ => none
+      | _ => none
+  | _ => none
+
 /-- The zero-argument value-demand rejection of a VALUE terminal read at the written `source`
     (`zeroArgumentDemandError?`, FA-OQ-1): none for a runtime-target alias, whose binding cell's VALUE
     is read, else the law over the terminal's algorithm. -/
@@ -6361,27 +6378,27 @@ def aliasStepNavigateWith (structureOf : Algorithm → EvalCtx → EvalM (Option
           else
             .error notStatic
 
-/-- One STATIC STEP of an alias chase (M4★): the BINDING the alias `step`'s written `target` selects
-    in the alias's OWN scope — the alias pushed as the head, exactly where its body would be
-    evaluated — with its owner and declaration (the terminal binding a bare read and a publication
-    origin of the chain use, OD-E): a name by the ownership-first lexical lookup, RAW, so a target
-    that is itself an alias continues the chase; a member path by structural navigation of DECLARED
-    members, each RECEIVER read through its STATIC STRUCTURE (`structureOf`: a transparent reference is
-    its target's, a carrier its own — production: the static-only structure chase, which never
-    projects a cell), each member wired to its receiver and checked for accessibility from the alias's
-    site exactly like `resolveDotReceiver` navigates (a member declared only in branches is the same
-    `localOnlyProperty` error). A target that is not a static path, or a path step whose receiver has
-    no static structure or declares no such member, has no callable: `illegalInEval` — only a
-    host-built tree has either, since the surface pass forms an alias over a statically known member
-    only. C#: `Evaluator.ResolveAliasStep`. -/
-def resolveAliasStepWith (structureOf : Algorithm → EvalCtx → EvalM (Option Algorithm))
-    (step : Algorithm) (target : Expr) (ctx : EvalCtx) : EvalM ResolvedProperty := do
-  let stepCtx := ctx.push step
+/-- THE BINDING A STATIC PATH SELECTS from the scope `owner`, under `stepCtx` (whose head is `owner`),
+    with its owner and declaration (the terminal binding a bare read and a publication origin of the
+    chain use, OD-E): a name by the ownership-first lexical lookup, RAW, so a target that is itself an
+    alias continues the chase; a member path by structural navigation of DECLARED members, each
+    RECEIVER read through its STATIC STRUCTURE (`structureOf`: a transparent reference is its target's,
+    a carrier its own — production: the static-only structure chase, which never projects a cell), each
+    member wired to its receiver and checked for accessibility from the site exactly like
+    `resolveDotReceiver` navigates (a member declared only in branches is the same `localOnlyProperty`
+    error). A path that is not static, or a step whose receiver has no static structure or declares no
+    such member, is `illegalInEval`. Selecting a member reads the receiver's own declarations: a
+    carrier's forwarding output is never consulted. Shared by an alias's own step
+    (`resolveAliasStepWith`) and a spread's written reference
+    (`EvalBody.transparentCollectorSlice?`), so `R*` and `Y = R` then `Y*` select the same binding.
+    C#: `Evaluator.ResolveStaticPath`. -/
+def staticPathSelectWith (structureOf : Algorithm → EvalCtx → EvalM (Option Algorithm))
+    (owner : Algorithm) (target : Expr) (stepCtx : EvalCtx) : EvalM ResolvedProperty := do
   let notStatic : Error := Error.illegalInEval (aliasTargetNotStaticPathMessage (openExprName target))
   match Expr.staticAliasPath? target with
   | none => .error notStatic
   | some (.resolve name, steps) =>
-      let resolved <- lookupLexicalPropertyRaw step name stepCtx
+      let resolved <- lookupLexicalPropertyRaw owner name stepCtx
       match <- aliasStepNavigateWith structureOf stepCtx notStatic resolved.alg (some resolved) name steps with
       | some found => pure found
       | none => .error notStatic
@@ -6391,6 +6408,16 @@ def resolveAliasStepWith (structureOf : Algorithm → EvalCtx → EvalM (Option 
       | some found => pure found
       | none => .error notStatic
   | some (_, _) => .error notStatic
+
+/-- One STATIC STEP of an alias chase (M4★): the binding the alias `step`'s written `target` selects
+    in the alias's OWN scope — the alias pushed as the head, exactly where its body would be
+    evaluated (`staticPathSelectWith`). A target that is not a static path, or a path step whose
+    receiver has no static structure or declares no such member, has no callable: `illegalInEval` —
+    only a host-built tree has either, since the surface pass forms an alias over a statically known
+    member only. C#: `Evaluator.ResolveAliasStep`. -/
+def resolveAliasStepWith (structureOf : Algorithm → EvalCtx → EvalM (Option Algorithm))
+    (step : Algorithm) (target : Expr) (ctx : EvalCtx) : EvalM ResolvedProperty :=
+  staticPathSelectWith structureOf step target (ctx.push step)
 
 /-- THE VALUE VIEW of a runtime-target alias whose binding cell projected NO callable identity
     (L-RUN, M4★): the same written declaration, wired where the alias is, with the alias's own opens
@@ -11178,6 +11205,48 @@ def EvalBody.algorithmIntrinsicRoute (rec : EvalRec) (receiver : Expr) (ctx : Ev
     let supplied <- openSpreadItems (layers - 1) value
     pure (spreadSupplyResult supplied)
 
+  /-- The VALUE TERMINAL of a written STATIC REFERENCE, without evaluating it (A-2): a name's is the
+      VALUE lookup every read of that name takes (`lookupLexicalValueProperty`); a member path's is
+      the VALUE chase of the member `staticPathSelectWith` selects at the site — each receiver read
+      through its static structure, each member declared and accessible, as an alias over the same
+      path reads it — so `Box.A` is the terminal of the selected member `A`, never of `Box`'s output.
+      C#: `Evaluator.StaticReferenceTerminal`. -/
+  def EvalBody.staticReferenceTerminal (rec : EvalRec) (owner : Algorithm) (reference : Expr) (ctx : EvalCtx) : EvalM AliasTerminal :=
+    match reference with
+    | .resolve name => rec.lookupLexicalValueProperty owner name ctx
+    | path => do
+      let structureOf : Algorithm → EvalCtx → EvalM (Option Algorithm) := fun receiver stepCtx => do
+        match <- rec.resolveAliasChase false false receiver stepCtx [] none with
+        | .identity found _ => pure (some found)
+        | _ => pure none
+      let selected <- staticPathSelectWith structureOf owner path ctx
+      rec.resolveAliasValueTarget selected.alg ctx
+
+  /-- THE KNOWN SLICE OF A TRANSPARENT REFERENCE (VAR-03 / FWD-03, audit finding A-2, owner decision
+      November 2026): a single-star spread of a written static reference — a name or a member path
+      (`Expr.staticAliasPath?`) — whose read goes, through transparent references only, to a parameter
+      row (`AliasTerminal.transparentParameterRow?`) whose own cell is a collector. The classification
+      is `staticReferenceTerminal` (ownership-first selection, accessibility, the one alias chase),
+      and the row's cell is found by `spreadCollectorSlice?` in the alias's own context, exactly as
+      `aliasBindingCell` finds it — so this is the same retained cell a bare read would demand, and a
+      shadowing parameter of the spread site cannot capture it. Any other outcome, a selection failure
+      included, is "no known slice": the ordinary spread then evaluates the operand and reports that
+      failure itself. Reads only: it demands no cell and allocates nothing.
+      C#: `Evaluator.TransparentCollectorSlice`. -/
+  def EvalBody.transparentCollectorSlice? (rec : EvalRec) (e : Expr) (ctx : EvalCtx) : EvalM (Option (List Nat)) :=
+    match e with
+    | .sequenceSpread reference =>
+      match Expr.staticAliasPath? reference, ctx.callStack with
+      | some _, owner :: _ => do
+        match <- evalAttempt (EvalBody.staticReferenceTerminal rec owner reference ctx) with
+        | .ok terminal =>
+          match terminal.transparentParameterRow? with
+          | some (alias, row) => spreadCollectorSlice? row (ctx.push alias)
+          | none => pure none
+        | .error _ => pure none
+      | _, _ => pure none
+    | _ => pure none
+
   /-- THE SPREAD CAPABILITY OF SUPPLY FORMATION (CallReference S2; `NeedSupply.SpreadEval`): what
       a COMPUTED explicit spread slot `e` of an argument or selector supply contributes. The
       operand is evaluated ONCE, exactly as `evalSequenceSpreadCounted` evaluates it, and its
@@ -11187,13 +11256,20 @@ def EvalBody.algorithmIntrinsicRoute (rec : EvalRec) (receiver : Expr) (ctx : Ev
       the slot contributes that view's ORIGINAL cells (`argumentViewCells`: the plan's one
       sticky preparation), each with its own written source (`needWrittenSource?`, as a
       collecting parameter's transported slice), and demands none of them.
+      A TRANSPARENT REFERENCE TO A RETAINED COLLECTOR CELL (`transparentCollectorSlice?`, A-2) is
+      not computed: it contributes that cell's exact slice the way a direct `xs*` does, evaluating
+      and allocating nothing.
       C#: `Evaluator.FormSpreadSupplySlot`. -/
   def EvalBody.evalSupplySpread (rec : EvalRec) (e : Expr) (ctx : EvalCtx) (env : ValEnv) : EvalM SpreadSupply := do
-    let (operand, layers) := peelSequenceSpreadLayers e 0
-    let value <- rec.evalSequenceSpreadOperandValue operand ctx env
-    match <- openSupplySpread (layers - 1) value with
-    | .items supplied => pure (.items (countedTopLevelValues (spreadSupplyResult supplied)))
-    | .view a => NeedPlan.viewSupply rec.evalSupplySpread rec.planRoute.classify a
+    match <- EvalBody.transparentCollectorSlice? rec e ctx with
+    | some slice =>
+      pure (.cells (<- slice.mapM (fun a => do pure (a, <- needWrittenSource? a))))
+    | none =>
+      let (operand, layers) := peelSequenceSpreadLayers e 0
+      let value <- rec.evalSequenceSpreadOperandValue operand ctx env
+      match <- openSupplySpread (layers - 1) value with
+      | .items supplied => pure (.items (countedTopLevelValues (spreadSupplyResult supplied)))
+      | .view a => NeedPlan.viewSupply rec.evalSupplySpread rec.planRoute.classify a
 
   /-- Evaluate a surface list literal `[e1, ..., en]` as exactly ONE exact
       immutable list value. Element slots reuse the written-parentheses

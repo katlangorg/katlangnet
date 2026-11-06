@@ -353,7 +353,9 @@ public static partial class Evaluator
     /// <summary>
     /// The ONE formation of an explicit spread slot, shared by every supply a written expression
     /// list forms — a call's arguments (<see cref="FormNeedSupply"/>) and a postfix selection's
-    /// selectors (<see cref="FormSelectionSupply"/>): a collecting parameter's known slice is
+    /// selectors (<see cref="FormSelectionSupply"/>): a collecting parameter's known slice, written
+    /// directly or through a name or member path of transparent references
+    /// (<see cref="TransparentCollectorSlice"/>), is
     /// transported unforced; any other spread operand is evaluated NOW, during formation, and
     /// opened one boundary into Ready items — except that when the value its LAST star opens is an
     /// ARGUMENT VIEW (CallReference S2), the slot transports that view's ORIGINAL cells (the plan's
@@ -373,8 +375,18 @@ public static partial class Evaluator
         List<NeedCell> supply, List<Expr?>? sources, TransientSupply bound)
     {
         // A collecting parameter's known slice, found exactly as SupplyCell finds a parameter's
-        // cell — without allocating a cell for any other operand.
-        if (argument.Operand is Expr.Param(var name) && ParameterNeedCell(name, caller) is { Slice: { } known })
+        // cell — without allocating a cell for any other operand — or the same retained slice
+        // reached through a written name or member path of transparent references (A-2).
+        var slice = argument.Operand switch
+        {
+            Expr.Param(var name) => ParameterNeedCell(name, caller)?.Slice,
+            var reference when caller.Budget.MayReachRuntimeAliases && caller.CallStack.Count > 0
+                && StaticAliasTargets.IsStaticPath(reference) => asynchronous
+                    ? await TransparentCollectorSliceAsync(reference, caller).ConfigureAwait(false)
+                    : TransparentCollectorSlice(reference, caller),
+            _ => null,
+        };
+        if (slice is { } known)
         {
             if (AdmitTransient(caller.Budget, ref bound, known.Count, expansion: true))
             {
@@ -419,6 +431,68 @@ public static partial class Evaluator
             }
         }
         return new(null, bound);
+    }
+
+    /// <summary>
+    /// THE KNOWN SLICE OF A TRANSPARENT REFERENCE (VAR-03 / FWD-03, audit finding A-2, owner decision
+    /// November 2026): the written static reference <paramref name="reference"/> — a name or a member path
+    /// (<see cref="StaticAliasTargets.IsStaticPath"/>) — is read, through transparent references only, at a
+    /// parameter row whose own cell is a collector. The classification is
+    /// <see cref="StaticReferenceTerminal"/> (selection, accessibility and the one alias chase), and the
+    /// row's cell is found in the alias's own context exactly as <see cref="AliasBindingCell"/> finds it —
+    /// the retained cell a bare read would demand, which a shadowing parameter of the spread site cannot
+    /// capture. A structural carrier, a static terminal binding and any other runtime row have no known
+    /// slice, and neither does a parameter whose cell is no collector. Any failure is "no known slice":
+    /// the ordinary spread then evaluates the operand and reports that failure itself. Demands no cell,
+    /// allocates nothing and charges nothing, as a direct slice. Lean:
+    /// <c>EvalBody.transparentCollectorSlice?</c>.
+    /// </summary>
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+    private static IReadOnlyList<NeedCell>? TransparentCollectorSlice(Expr reference, EvalCtx ctx)
+        => TransparentCollectorSliceOutcome(reference, ctx) is { IsOk: true } outcome ? outcome.Value : null;
+
+    /// <summary>The async twin of <see cref="TransparentCollectorSlice"/>: the ONE resolver through <see cref="ResolveAsync{TState,T}"/>.</summary>
+    private static async ValueTask<IReadOnlyList<NeedCell>?> TransparentCollectorSliceAsync(Expr reference, EvalCtx ctx)
+    {
+        var outcome = await ResolveAsync(ctx, (reference, ctx), static state => TransparentCollectorSliceOutcome(state.reference, state.ctx)).ConfigureAwait(false);
+        return outcome.IsOk ? outcome.Value : null;
+    }
+
+    private static EvalResult<IReadOnlyList<NeedCell>?> TransparentCollectorSliceOutcome(Expr reference, EvalCtx ctx)
+    {
+        var terminal = StaticReferenceTerminal(reference, ctx);
+        if (terminal.IsError)
+            return terminal.Error;
+        return EvalResult<IReadOnlyList<NeedCell>?>.Ok(
+            terminal.Value is { Algorithm: Algorithm.Alias { IsReference: true, Target: Expr.Param(var row) } alias, CrossesCarrier: false }
+                ? ParameterNeedCell(row, ctx.Push(alias))?.Slice
+                : null);
+    }
+
+    /// <summary>
+    /// The VALUE TERMINAL of a written STATIC REFERENCE, without evaluating it (A-2): a name's is the VALUE
+    /// lookup every read of that name takes (<see cref="LookupLexicalForValue"/>); a member path's is the
+    /// VALUE chase of the member <see cref="ResolveStaticPath"/> selects at the site — each receiver read
+    /// through its static structure, each member declared and accessible, as an alias over the same path
+    /// reads it — so <c>Box.A</c> is the terminal of the selected member <c>A</c>, never of <c>Box</c>'s
+    /// output. Lean: <c>EvalBody.staticReferenceTerminal</c>.
+    /// </summary>
+    private static EvalResult<AliasTerminal> StaticReferenceTerminal(Expr reference, EvalCtx ctx)
+    {
+        if (reference is Expr.Resolve(var name))
+        {
+            var resolved = LookupLexicalForValue(ctx.CallStack[0], name, ctx);
+            return resolved.IsError
+                ? resolved.Error
+                : EvalResult<AliasTerminal>.Ok(new AliasTerminal(resolved.Value.ResolvedAlgorithm, null, IsRuntime: false, resolved.Value.CrossesCarrier));
+        }
+
+        var selected = ResolveStaticPath(ctx.CallStack[0], (Expr.DotCall)reference, ctx, null, out var hop);
+        if (selected.IsError)
+            return selected.Error;
+        return selected.Value is Algorithm.Alias alias
+            ? ResolveAliasValueTerminal(alias, ctx, hop?.Binding)
+            : EvalResult<AliasTerminal>.Ok(new AliasTerminal(selected.Value, null, IsRuntime: false));
     }
 
     /// <summary>One spread slot's formation (<see cref="FormSpreadSupplySlot"/>): its failure, if any, and the supply's updated SEC-01 bound.</summary>

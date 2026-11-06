@@ -252,7 +252,7 @@ itself an alias is returned RAW for the chase to continue. Nothing here reads th
 theorem static_name_step_is_the_raw_lookup (structureOf : Algorithm → EvalCtx → EvalM (Option Algorithm))
     (step : Algorithm) (n : Ident) (ctx : EvalCtx) :
     resolveAliasStepWith structureOf step (.resolve n) ctx = lookupLexicalPropertyRaw step n (ctx.push step) := by
-  simp only [resolveAliasStepWith, Expr.staticAliasPath?, aliasStepNavigateWith, EvalM.pure_bind]
+  simp only [resolveAliasStepWith, staticPathSelectWith, Expr.staticAliasPath?, aliasStepNavigateWith, EvalM.pure_bind]
   exact EvalM.bind_pure' _
 
 /-! ## §2 — structure-first inertness -/
@@ -532,5 +532,105 @@ theorem open_structure_never_consults_an_open (fuel : Nat) (ctx : EvalCtx) (p : 
       = (.error (Error.unknownName n), s) := by
   simp only [openStructure, Expr.staticAliasPath?, h, EvalM.bind_runState]
   rfl
+
+/-! ## A transparent reference keeps its collector's known slice (A-2)
+
+Audit finding A-2, owner decision November 2026: a single-star spread of a written name or accessible
+member path whose read goes through transparent references only to a parameter row whose own cell is a collector
+transports that cell's exact slice, as a direct `xs*` does (`EvalBody.transparentCollectorSlice?`).
+The row test reads the alias classification alone. A carrier, a static terminal, a non-parameter row
+and any spread operand that is no written static reference have no row, whatever their values would
+be. A member path (`Box.A*`) is classified by the path selection of an alias over that path
+(`staticPathSelectWith`), so selecting a member is reading the receiver's declarations, not crossing
+its output. -/
+
+theorem no_row_through_a_carrier (alias : Algorithm) :
+    (AliasTerminal.runtime alias true).transparentParameterRow? = none := rfl
+
+theorem no_row_at_a_carrier_terminal (p : Option ScopeCtx) (op : List Expr) (pr : List PropDef) (row : Expr)
+    (id : Option PropertyIdentity) (nested : Bool) :
+    (AliasTerminal.runtime (.alias p op pr row id false) nested).transparentParameterRow? = none := by
+  cases nested <;> rfl
+
+theorem no_row_at_a_static_terminal (owner alg : Algorithm) (binding : PropDef) (nested : Bool) :
+    (AliasTerminal.binding owner binding alg nested).transparentParameterRow? = none := rfl
+
+theorem no_row_at_a_plain_terminal (alg : Algorithm) (nested : Bool) :
+    (AliasTerminal.plain alg nested).transparentParameterRow? = none := rfl
+
+theorem no_row_without_a_parameter (p : Option ScopeCtx) (op : List Expr) (pr : List PropDef) (row : Expr)
+    (id : Option PropertyIdentity) (hnp : ∀ n, row ≠ .param n) :
+    (AliasTerminal.runtime (.alias p op pr row id true) false).transparentParameterRow? = none := by
+  cases row <;> first | rfl | exact absurd rfl (hnp _)
+
+theorem parameter_row_of_a_transparent_reference (p : Option ScopeCtx) (op : List Expr) (pr : List PropDef)
+    (name : Ident) (id : Option PropertyIdentity) :
+    (AliasTerminal.runtime (.alias p op pr (.param name) id true) false).transparentParameterRow? =
+      some (.alias p op pr (.param name) id true, .param name) := rfl
+
+/-- Only a single-star spread of a written static reference is classified: a selection, a call, a
+    calculation, a bare inline block, a parameter (`spreadCollectorSlice?`'s own arm), a parameter-headed
+    path and a stacked star never are. -/
+theorem no_slice_without_a_static_reference (rec : EvalRec) (e : Expr) (ctx : EvalCtx)
+    (hpath : ∀ reference, e = .sequenceSpread reference → Expr.staticAliasPath? reference = none) :
+    EvalBody.transparentCollectorSlice? rec e ctx = pure none := by
+  unfold EvalBody.transparentCollectorSlice?
+  split
+  · rename_i reference
+    simp only [hpath reference rfl]
+  · rfl
+
+/-- A path headed by a parameter is no static reference (its receiver is a cell's runtime projection),
+    and so is an edge with an argument list (a call). -/
+theorem parameter_headed_path_is_no_static_reference (x member : Ident) (fallback : Expr) :
+    Expr.staticAliasPath? (.dotMember (.param x) member fallback none) = none := rfl
+
+theorem member_call_is_no_static_reference (receiver : Expr) (member : Ident) (fallback : Expr) (args : OutputBundle) :
+    Expr.staticAliasPath? (.dotMember receiver member fallback (some args)) = none := rfl
+
+/-- **A spread and an alias over the same path select the same binding**: `R*` reads
+    `staticPathSelectWith` at the site, `Y = R` reads it in `Y`'s own scope. -/
+theorem alias_step_is_the_path_selection (structureOf : Algorithm → EvalCtx → EvalM (Option Algorithm))
+    (step : Algorithm) (target : Expr) (ctx : EvalCtx) :
+    resolveAliasStepWith structureOf step target ctx = staticPathSelectWith structureOf step target (ctx.push step) := rfl
+
+/-- **A member step selects the declared member, never the receiver's output.** The step reads the
+    receiver's static structure and its own declaration; the structure's forwarding row, whatever it is,
+    is not consulted: the selected binding is that member wired to the receiver. -/
+theorem member_step_selects_the_declaration (structureOf : Algorithm → EvalCtx → EvalM (Option Algorithm))
+    (stepCtx : EvalCtx) (notStatic : Error) (value receiver : Algorithm) (last : Option ResolvedProperty)
+    (name member : String) (p : PropDef) (s : EvalState)
+    (hs : (structureOf value stepCtx).runState s = (.ok (some receiver), s))
+    (hp : Algorithm.lookupPropDefAny? receiver member = some p)
+    (ha : memberAccessible? stepCtx receiver p = true) :
+    (aliasStepNavigateWith structureOf stepCtx notStatic value last name [member]).runState s =
+      (.ok (some { owner := receiver, binding := p, alg := childOfInContext receiver p.alg stepCtx }), s) := by
+  unfold aliasStepNavigateWith
+  simp only [KatLang.CallPlan.bind_run, hs, hp, ha]
+  rfl
+
+/-- **Exact transport.** A transparent reference's slice reaches the supply as a direct spread's does:
+    the same addresses, in order, each with its own written source, and nothing demanded, allocated or
+    written. -/
+theorem transparent_slice_transports (rec : EvalRec) (e : Expr) (ctx : EvalCtx) (env : ValEnv)
+    (s : EvalState) (slice : List Nat)
+    (hslice : (EvalBody.transparentCollectorSlice? rec e ctx).runState s = (.ok (some slice), s)) :
+    (EvalBody.evalSupplySpread rec e ctx env).runState s =
+      (.ok (.cells (slice.map (fun a => (a, KatLang.NeedControl.Provenance.sourceAt s.needs a)))), s) := by
+  unfold EvalBody.evalSupplySpread
+  simp only [KatLang.CallPlan.bind_run, hslice, KatLang.NeedControl.Provenance.reopen_run]
+  rfl
+
+/-- **The same retained cell.** The cell a transparent reference's slice is read from IS the alias's
+    binding cell, the one its bare read and CALLABLE use: a parameter row's own cell, nothing allocated. -/
+theorem transparent_slice_is_the_binding_cell (wired : Algorithm) (name : Ident) (ctx : EvalCtx)
+    (s : EvalState) (activation : Option ParameterActivation) (p : Nat) (cell : NeedCell) (slice : List Nat)
+    (hact : (capturedParameterActivation? name (ctx.push wired)).runState s = (.ok activation, s))
+    (hfind : lookupAssoc name (activation.map ParameterActivation.needs |>.getD (ctx.push wired).needEnv) = some p)
+    (hcell : s.needs[p]? = some cell) (hcollector : cell.suspension = .collector slice) :
+    (aliasBindingCell wired (.param name) ctx).runState s = (.ok p, s) ∧
+      (spreadCollectorSlice? (.param name) (ctx.push wired)).runState s = (.ok (some slice), s) :=
+  ⟨KatLang.RuntimeAliasLaws.aliasBindingCell_parameter_transport wired name ctx s activation p hact hfind,
+    KatLang.NeedControl.Allocation.known_collector name (ctx.push wired) s activation p cell slice hact hfind hcell hcollector⟩
 
 end KatLang.WholeAlgorithmTransport

@@ -456,13 +456,18 @@ theorem disc_aliasStepNavigateWith (structureOf : Algorithm → EvalCtx → Eval
   | nil => unfold aliasStepNavigateWith; disc_tac_base
   | cons member rest ih => unfold aliasStepNavigateWith; disc_tac_base
 
-theorem disc_resolveAliasStepWith (structureOf : Algorithm → EvalCtx → EvalM (Option Algorithm))
-    (h : ∀ a c, Disciplined (structureOf a c)) (step : Algorithm) (target : Expr) (ctx : EvalCtx) :
-    Disciplined (resolveAliasStepWith structureOf step target ctx) := by
+theorem disc_staticPathSelectWith (structureOf : Algorithm → EvalCtx → EvalM (Option Algorithm))
+    (h : ∀ a c, Disciplined (structureOf a c)) (owner : Algorithm) (target : Expr) (stepCtx : EvalCtx) :
+    Disciplined (staticPathSelectWith structureOf owner target stepCtx) := by
   have := disc_aliasStepNavigateWith structureOf h
   have := disc_lookupOpenProperties
   have := disc_lookupOpenPropertiesInParentChain
-  unfold resolveAliasStepWith; disc_tac_base
+  unfold staticPathSelectWith; disc_tac_base
+
+theorem disc_resolveAliasStepWith (structureOf : Algorithm → EvalCtx → EvalM (Option Algorithm))
+    (h : ∀ a c, Disciplined (structureOf a c)) (step : Algorithm) (target : Expr) (ctx : EvalCtx) :
+    Disciplined (resolveAliasStepWith structureOf step target ctx) := by
+  unfold resolveAliasStepWith; exact disc_staticPathSelectWith structureOf h step target (ctx.push step)
 
 theorem disc_aliasRouteIsIntrinsicWith (structureOf : Algorithm → EvalCtx → EvalM (Option Algorithm))
     (h : ∀ a c, Disciplined (structureOf a c)) (receiver : Expr) (ctx : EvalCtx) :
@@ -625,10 +630,13 @@ macro "disc_tac" : tactic => `(tactic| without_info_trees ((try disc_unfold_rec)
   | (with_reducible apply disc_resolveAlgForOpen)
   | (with_reducible apply disc_openStructure)
   | (with_reducible apply disc_resolveAliasStepWith)
+  | (with_reducible apply disc_staticPathSelectWith)
   | (with_reducible apply disc_aliasRouteIsIntrinsicWith)
   | (with_reducible apply disc_lookupOpenProperties)
   | (with_reducible apply disc_lookupOpenPropertiesInParentChain)
   | (with_reducible apply EvalBody.terminalAccess_disciplined rec hrec)
+  | (with_reducible apply EvalBody.staticReferenceTerminal_disciplined rec hrec)
+  | (with_reducible apply EvalBody.transparentCollectorSlice_disciplined rec hrec)
   | (with_reducible apply disc_outputRowsCollect rec hrec)
   | (with_reducible apply disc_explicitRowsCollect rec hrec)
   | (with_reducible apply disc_listLiteralCollect rec hrec)
@@ -1027,6 +1035,14 @@ theorem EvalBody.evalSequenceSpreadOperandValue_disciplined (rec : EvalRec) (hre
 theorem EvalBody.evalSequenceSpreadCounted_disciplined (rec : EvalRec) (hrec : ∀ c, Disciplined (rec c)) (e : Expr) (ctx : EvalCtx) (env : ValEnv) :
     Disciplined (EvalBody.evalSequenceSpreadCounted rec e ctx env) := by
   unfold EvalBody.evalSequenceSpreadCounted; disc_tac
+
+theorem EvalBody.staticReferenceTerminal_disciplined (rec : EvalRec) (hrec : ∀ c, Disciplined (rec c)) (owner : Algorithm) (reference : Expr) (ctx : EvalCtx) :
+    Disciplined (EvalBody.staticReferenceTerminal rec owner reference ctx) := by
+  unfold EvalBody.staticReferenceTerminal; disc_tac
+
+theorem EvalBody.transparentCollectorSlice_disciplined (rec : EvalRec) (hrec : ∀ c, Disciplined (rec c)) (e : Expr) (ctx : EvalCtx) :
+    Disciplined (EvalBody.transparentCollectorSlice? rec e ctx) := by
+  unfold EvalBody.transparentCollectorSlice?; disc_tac
 
 theorem EvalBody.evalSupplySpread_disciplined (rec : EvalRec) (hrec : ∀ c, Disciplined (rec c)) (e : Expr) (ctx : EvalCtx) (env : ValEnv) :
     Disciplined (EvalBody.evalSupplySpread rec e ctx env) := by

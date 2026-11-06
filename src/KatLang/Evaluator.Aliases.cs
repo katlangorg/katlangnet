@@ -428,7 +428,7 @@ public static partial class Evaluator
     /// alias <paramref name="step"/>'s written target selects in the alias's OWN scope — the alias pushed
     /// as the head — with its owner and declaration (<paramref name="hop"/>, the terminal binding a bare
     /// read and a publication origin of the chain use): a name by the ownership-first lexical lookup, RAW;
-    /// a member path by structural navigation of DECLARED members (<see cref="ResolveAliasStepPath"/>), each
+    /// a member path by structural navigation of DECLARED members (<see cref="ResolveStaticPath"/>), each
     /// receiver's structure read within the chase's <paramref name="structureContext"/>.
     /// </summary>
     private static EvalResult<Algorithm> ResolveAliasStep(
@@ -448,25 +448,29 @@ public static partial class Evaluator
             }
 
             case Expr.DotCall { Args: null } edge:
-                return ResolveAliasStepPath(step, edge, stepCtx, structureContext, out hop);
+                return ResolveStaticPath(step, edge, stepCtx, structureContext, out hop);
 
             default:
-                return NotAStaticAliasTarget(step);
+                return NotAStaticAliasTarget(step.Target);
         }
     }
 
     /// <summary>
-    /// The member steps of a static alias path (Lean <c>Expr.staticAliasPath?</c> with
-    /// <c>aliasStepNavigateWith</c>): a name or block head, then each DECLARED member of the previous
-    /// receiver read through its STATIC structure (a transparent reference is its target's, a carrier its
-    /// own, a runtime reference has none — nothing is projected), wired to it and checked for
-    /// accessibility from the alias's site; a member declared only in branches is the local-only error,
-    /// and a missing member or a receiver without static structure has no callable: the path is not a
-    /// static alias target (only a host-built tree has one — the surface pass forms an alias over a
-    /// statically known member only).
+    /// The member steps of a static path from the scope <paramref name="owner"/>, under
+    /// <paramref name="stepCtx"/> whose head it is (Lean <c>staticPathSelectWith</c> over
+    /// <c>Expr.staticAliasPath?</c> and <c>aliasStepNavigateWith</c>): a name or block head, then each
+    /// DECLARED member of the previous receiver read through its STATIC structure (a transparent reference
+    /// is its target's, a carrier its own, a runtime reference has none — nothing is projected), wired to
+    /// it and checked for accessibility from the site; a member declared only in branches is the local-only
+    /// error, and a missing member or a receiver without static structure has no callable: the path is not
+    /// a static alias target (only a host-built tree has one as an alias — the surface pass forms an alias
+    /// over a statically known member only). Selecting a member reads the receiver's own declarations, so a
+    /// carrier's forwarding output is never consulted. An alias's own step and a spread's written reference
+    /// (<see cref="StaticReferenceTerminal"/>) both select here, so <c>R*</c> and <c>Y = R</c> then
+    /// <c>Y*</c> select the same binding.
     /// </summary>
-    private static EvalResult<Algorithm> ResolveAliasStepPath(
-        Algorithm.Alias step, Expr.DotCall path, EvalCtx stepCtx, HashSet<AliasChaseVisit>? structureContext, out PropertyCallBinding? hop)
+    private static EvalResult<Algorithm> ResolveStaticPath(
+        Algorithm owner, Expr.DotCall path, EvalCtx stepCtx, HashSet<AliasChaseVisit>? structureContext, out PropertyCallBinding? hop)
     {
         hop = null;
         var edges = new List<Expr.DotCall>();
@@ -483,9 +487,9 @@ public static partial class Evaluator
         {
             case Expr.Resolve(var name):
             {
-                var resolved = LookupLexicalRaw(step, name, stepCtx);
+                var resolved = LookupLexicalRaw(owner, name, stepCtx);
                 if (resolved.IsError)
-                    return AtSpanIfMissing(resolved.Error, head.Span ?? step.Target.Span);
+                    return AtSpanIfMissing(resolved.Error, head.Span ?? path.Span);
                 value = resolved.Value.ResolvedAlgorithm;
                 hop = new PropertyCallBinding(resolved.Value.Owner, resolved.Value.Binding);
                 break;
@@ -496,7 +500,7 @@ public static partial class Evaluator
                 break;
 
             default:
-                return NotAStaticAliasTarget(step);
+                return NotAStaticAliasTarget(path);
         }
 
         foreach (var edge in edges)
@@ -507,7 +511,7 @@ public static partial class Evaluator
             if (structure.IsError)
                 return structure.Error;
             if (structure.Value.Kind != AliasChaseEndKind.Identity)
-                return NotAStaticAliasTarget(step);
+                return NotAStaticAliasTarget(path);
 
             var receiver = structure.Value.Algorithm;
             var member = LookupPropBinding(receiver, edge.Name, stepCtx.Budget);
@@ -516,7 +520,7 @@ public static partial class Evaluator
                 return receiver.DefinesConditionalBranchProperty(edge.Name)
                     ? new EvalError.LocalOnlyProperty(OpenExprName(edge.Target), edge.Name, PropertyExposure.LocalOnlyConditionalAlgorithm)
                     { Span = edge.Span }
-                    : NotAStaticAliasTarget(step);
+                    : NotAStaticAliasTarget(path);
             }
 
             if (!IsAccessibleFrom(member, receiver, stepCtx))
@@ -532,8 +536,8 @@ public static partial class Evaluator
     private static EvalError AliasCycleError(Algorithm.Alias step)
         => new EvalError.IllegalInEval(AliasCycleMessage) { Span = step.Target.Span };
 
-    private static EvalError NotAStaticAliasTarget(Algorithm.Alias step)
-        => new EvalError.IllegalInEval(AliasTargetNotStaticPathMessage(step.Target)) { Span = step.Target.Span };
+    private static EvalError NotAStaticAliasTarget(Expr target)
+        => new EvalError.IllegalInEval(AliasTargetNotStaticPathMessage(target)) { Span = target.Span };
 
     /// <summary>Lean: <c>aliasCycleMessage</c>.</summary>
     internal const string AliasCycleMessage

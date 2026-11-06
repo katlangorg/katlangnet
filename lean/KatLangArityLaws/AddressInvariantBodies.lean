@@ -771,6 +771,21 @@ theorem EvalBody.evalSequenceSpreadCounted_sound (rec : EvalRec) (hrec : RecSoun
     SoundI (CallPre (.evalSequenceSpreadCounted e ctx env)) (EvalBody.evalSequenceSpreadCounted rec e ctx env) (CallPost (.evalSequenceSpreadCounted e ctx env)) := by
   unfold EvalBody.evalSequenceSpreadCounted; ht_tac
 
+theorem staticReferenceTerminal_spec {rec : EvalRec} (hrec : RecSound rec) (owner : Algorithm) (reference : Expr) (ctx : EvalCtx)
+    {P : Array NeedCell → Prop} (hreq : ∀ h, P h → ValidCtx h ctx) :
+    SoundI P (EvalBody.staticReferenceTerminal rec owner reference ctx) (fun _ _ => True) := by
+  unfold EvalBody.staticReferenceTerminal; ht_tac
+
+attribute [ht_spec] staticReferenceTerminal_spec
+
+theorem transparentCollectorSlice_spec {rec : EvalRec} (hrec : RecSound rec) (e : Expr) (ctx : EvalCtx)
+    {P : Array NeedCell → Prop} (hreq : ∀ h, P h → ValidCtx h ctx) :
+    SoundI P (EvalBody.transparentCollectorSlice? rec e ctx) (fun r h => OptSliceV h r) := by
+  unfold EvalBody.transparentCollectorSlice?; ht_tac
+  all_goals exact fun _ _ _ absent => by cases absent
+
+attribute [ht_spec] transparentCollectorSlice_spec
+
 theorem EvalBody.evalSupplySpread_sound (rec : EvalRec) (hrec : RecSound rec) (e : Expr) (ctx : EvalCtx) (env : ValEnv) :
     SoundI (CallPre (.evalSupplySpread e ctx env)) (EvalBody.evalSupplySpread rec e ctx env) (CallPost (.evalSupplySpread e ctx env)) := by
   unfold EvalBody.evalSupplySpread; ht_tac

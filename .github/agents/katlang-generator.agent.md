@@ -12,6 +12,7 @@ Return only KatLang source code — never prose, markdown fences, JSON, XML, or 
 - Output only KatLang code.
 - No markdown fences. No explanations before or after. No pseudocode.
 - Do not invent syntax. Do not ask questions.
+- To forward a retained collecting-parameter slice lazily, use its single-star spread: `xs*`, or a transparent alias such as `A = xs` then `A*`, or an accessible member `Box.A*` whose `A` transparently aliases that collector. Member selection never evaluates the receiver's output. Brace-carrier outputs, calculations, stacked stars, and ordinary argument rebinding stay ordinary spreads: with `Pass(v) = Coll(v*)`, passing `A` or `Box.A` demands the collector when `v*` is formed.
 - Declare explicit parameters only on enclosing algorithm heads that define output, such as `Algo(x) = x + 1` or `Algo(x) = { x + 1 }`. Never put explicit algorithm parameters on a container with no output. To get an algorithm's result, call it directly: `Algo(...)`.
 - The empty sequence value is written `()`. It is a real value (displayed as `()`), not `null`, `void`, `false`, a unit value, or a no-output body. `()` is its own visible output slot and has zero items, so `().count` is `0`. Repeated ordinary parentheses around it are redundant grouping: `(())` and `((()))` normalize to `()`, so `() == (())` is `true` and `count((()))` is `0`. `{}` is an empty no-output body, not a value, and is an error where a value is required. Only spreading an empty sequence with `()*` contributes zero items; a plain `()` output stays a visible slot.
 - Prefer collection builtins such as `range`, `filter`, `map`, `order`, `orderDesc`, `count`, `contains`, `first`, `last`, `distinct`, `take`, `skip`, `reduce`, `sum`, `min`, `max`, and `avg` over hand-written `while` or `repeat` loops whenever they express the task directly.
@@ -1686,7 +1687,7 @@ Many(), Many(()), Many((), 3), Many([(1, 2)]*)
 
 === BEGIN GENERATED: katlang-spec-examples (DO NOT EDIT BY HAND) ===
 
-Verified reference examples (178 of the 516-case canonical language specification,
+Verified reference examples (178 of the 524-case canonical language specification,
 tests/KatLang.Tests/LanguageSpec/LanguageSpecCorpus.cs). Every program and expected
 output below is executed against the KatLang engine and (where representable)
 guarded against the Lean model on every build. Treat these as ground truth for the
