@@ -121,7 +121,8 @@ public static partial class Evaluator
     /// the SAME projection a supplied argument is (<see cref="ProjectDotPathCallable"/>): an
     /// argumentless structural path is its member's own callable — <c>(Box.G)(2)</c> is the
     /// member call <c>Box.G(2)</c> and <c>(Box.V)()</c> the explicit fresh call <c>Box.V()</c>
-    /// (grouping never changes identity) — and every other dot expression is a computed VALUE,
+    /// (grouping never changes identity), a value-only runtime member included
+    /// (<see cref="ResolveNoIdentityDotCallee"/>) — and every other dot expression is a computed VALUE,
     /// which has no callable identity: <see cref="ComputedDotCalleeDescription"/>. (The parser
     /// admits a call after an argumentless dot edge only, so only a host-built tree can write a
     /// call after an argument-bearing one.) Every other callee shape resolves through canonical
@@ -143,7 +144,32 @@ public static partial class Evaluator
             return projected.Error;
         return projected.Value is { } member
             ? EvalResult<Algorithm>.Ok(member)
-            : new EvalError.NotAnAlgorithm(ComputedDotCalleeDescription) { Span = callee.Span };
+            : ResolveNoIdentityDotCallee(callee, ctx);
+    }
+
+    /// <summary>
+    /// A dot callee the projection found no identity for. A selected member that is an alias is still
+    /// CALLED through its INVOCATION chase, exactly as the member call <c>Box.A()</c> is
+    /// (<see cref="EvalAliasMemberCounted"/>; DOT-09, grouping never changes identity): a value-only
+    /// runtime member, which has no STRUCTURE, is its VALUE VIEW, which answers a zero-supply call and
+    /// is its row's arity rejection on any other, and a failed projection, which the structure read
+    /// reports as absence, keeps its kind here. Everything else is a computed value. No identity reaches
+    /// a supplied position: the value view lives only at this call. Lean: the <c>normalize</c> step of
+    /// <c>resolveCalleeAlgWith</c> over the selected member.
+    /// </summary>
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+    private static EvalResult<Algorithm> ResolveNoIdentityDotCallee(Expr.DotCall callee, EvalCtx ctx)
+    {
+        if (callee.Args is null)
+        {
+            var receiver = ResolveDotReceiver(callee.Target, ctx, out _);
+            if (receiver.IsOk
+                && SelectDotEdge(callee, receiver.Value, ctx, out var route, out var member) is null
+                && route == DotEdgeRoute.Member
+                && ChildOfInContext(receiver.Value, member!.Value, ctx) is Algorithm.Alias alias)
+                return ResolveAliasTarget(alias, ctx, member);
+        }
+        return new EvalError.NotAnAlgorithm(ComputedDotCalleeDescription) { Span = callee.Span };
     }
 
     /// <summary>

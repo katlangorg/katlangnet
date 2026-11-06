@@ -14,11 +14,11 @@ This is bounded differential validation over the Lean-guarded partition,
 not a formal verification of the evaluators.
 
 Partition (machine-checked by the `specCaseIds.length` guard below):
-- specification surface cases: 512
-- excluded parse-level cases (Lean has no surface parser): 74
+- specification surface cases: 516
+- excluded parse-level cases (Lean has no surface parser): 75
 - excluded C#-only cases (each carries an explicit reason in the corpus): 22
-- Lean-guarded cases: 416
-- probe observations (C#-only by design): 1468
+- Lean-guarded cases: 419
+- probe observations (C#-only by design): 1470
 - internal-node cases live in the semantic-explorer corpus, not here: see
   lean/SemanticExplorerCases.lean
 
@@ -2281,7 +2281,23 @@ def case_tick_is_an_ordinary_shadowable_binding : Expr :=
   .algorithmExpr (alg [] [] [privateProp "tick" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 100))])] [(.call (.resolve "tick") [.num 1])])
 #guard obs case_tick_is_an_ordinary_shadowable_binding == "ok raw=101 n=1"
 
--- 416 canonical Lean-guarded specification cases.
+-- grouped-runtime-member-value-call [name-resolution]: Use(v) = { \n     Box = { \n         public A = v \n         0 \n     } \n     (Box.A)() \n } \n Use(5)
+def case_grouped_runtime_member_value_call : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Use" (alg ["v"] [] [privateProp "Box" (alg [] [] [{ (publicLocalProp "A" (.localCapturedAncestorParams ["v"]) (.alias none [] [] (.param "v"))) with requiredOwnerDepths := some [("v", some 1)] }] [.num 0])] [(.call (.dotCall (.resolve "Box") "A" none) [])])] [(.call (.resolve "Use") [.num 5])])
+#guard obs case_grouped_runtime_member_value_call == "ok raw=5 n=1"
+
+-- grouped-runtime-member-value-arity [errors]: Use(v) = { \n     Box = { \n         public A = v \n         0 \n     } \n     (Box.A)(1) \n } \n Use(5)
+def case_grouped_runtime_member_value_arity : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Use" (alg ["v"] [] [privateProp "Box" (alg [] [] [{ (publicLocalProp "A" (.localCapturedAncestorParams ["v"]) (.alias none [] [] (.param "v"))) with requiredOwnerDepths := some [("v", some 1)] }] [.num 0])] [(.call (.dotCall (.resolve "Box") "A" none) [.num 1])])] [(.call (.resolve "Use") [.num 5])])
+#guard obs case_grouped_runtime_member_value_arity == "err arity"
+
+#guard errorObs case_grouped_runtime_member_value_arity == .matched (some { kind := "arity", names := [], counts := [0, 1] })
+-- open-reference-private-member-provides-public-names [name-resolution]: open A \n Lib = { \n     Sub = { \n         public Q(x) = x + 1 \n     } \n } \n A = Lib.Sub \n Q(5)
+def case_open_reference_private_member_provides_public_names : Expr :=
+  .algorithmExpr (alg [] [.resolve "A"] [privateProp "Lib" (alg [] [] [privateProp "Sub" (alg [] [] [publicProp "Q" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 1))])] [])] []), privateProp "A" (.alias none [] [] ((.dotCall (.resolve "Lib") "Sub" none)))] [(.call (.resolve "Q") [.num 5])])
+#guard obs case_open_reference_private_member_provides_public_names == "ok raw=6 n=1"
+
+-- 419 canonical Lean-guarded specification cases.
 
 /--
 Machine-checked Lean-guarded partition count: the id list is built by the
@@ -2704,8 +2720,11 @@ def specCaseIds : List String := [
   "tick-meta-replay-is-fresh",
   "tick-bare-value-requires-invocation",
   "tick-argument-is-an-arity-error",
-  "tick-is-an-ordinary-shadowable-binding"
+  "tick-is-an-ordinary-shadowable-binding",
+  "grouped-runtime-member-value-call",
+  "grouped-runtime-member-value-arity",
+  "open-reference-private-member-provides-public-names"
 ]
-#guard specCaseIds.length == 416
+#guard specCaseIds.length == 419
 
 end LanguageSpecCases

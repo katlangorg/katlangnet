@@ -581,6 +581,15 @@ internal static class BuiltinRegistry
     public static IReadOnlyList<string> SemanticPreludeExtraNames { get; } = Array.AsReadOnly(
         new[] { MathModuleName, "load" }.Concat(MathAliasNames).ToArray());
 
+    /// <summary>
+    /// Whether <paramref name="name"/> is declared by the semantic prelude only: a signature-only
+    /// directive placeholder the runtime prelude does not hold. It keeps parameter detection from
+    /// inferring the directive's name, but it denotes no algorithm, so an open target's direct lookup
+    /// (Lean <c>lookupLexicalDirect</c>) never selects it.
+    /// </summary>
+    public static bool IsSemanticPreludeOnlyName(string name)
+        => SemanticPreludeExtraNames.Contains(name) && !RuntimePreludeExtraNames.Contains(name);
+
     public static IReadOnlyList<string> ParameterDetectorPreludeNames { get; } =
         Array.AsReadOnly(BuiltinNames.Concat(SemanticPreludeExtraNames).ToArray());
 

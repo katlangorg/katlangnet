@@ -335,7 +335,9 @@ internal sealed partial class StaticStructureQueries : IStaticQueryDefinition<St
         {
             var phantomRoot = projection == StaticQueryProjection.OpenHeadBinding && ReferenceEquals(context.Key, Root);
             if (!phantomRoot && context.WrittenParameters.Contains(name)) return new(StaticFactKind.Parameter, context.Key);
-            var property = context.Members.Declared(name);
+            // An open head resolves as at run time: a signature-only prelude placeholder is no provider.
+            var property = projection == StaticQueryProjection.OpenHeadBinding && ReferenceEquals(context.Key, Keys.Root) && BuiltinRegistry.IsSemanticPreludeOnlyName(name)
+                ? null : context.Members.Declared(name);
             if (property is not null) return new(StaticFactKind.Declaration, context.Key, property);
             var input = !phantomRoot && context.Infers && context.Syntax.Uses.ContainsKey(name)
                 ? reader.Read(StaticQueryKey.IsInput(context.Key, name)) : StaticFact.No;

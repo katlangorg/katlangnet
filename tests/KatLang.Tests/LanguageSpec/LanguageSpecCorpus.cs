@@ -8884,5 +8884,52 @@ public static class LanguageSpecCorpus
             ExpectedEmittedCount = 1,
             Explanation = "`tick` is an ordinary prelude binding, not a keyword: a user definition of the same name shadows it completely, and no layer dispatches by spelling.",
         },
+        new()
+        {
+            Id = "grouped-runtime-member-value-call",
+            Category = "name-resolution",
+            Source = "Use(v) = {\n    Box = {\n        public A = v\n        0\n    }\n    (Box.A)()\n}\nUse(5)",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "5",
+            ExpectedRaw = "5",
+            ExpectedEmittedCount = 1,
+            Probes =
+            [
+                new SpecProbe("Use(v) = {\n    Box = {\n        public A = v\n        0\n    }\n    Box.A()\n}\nUse(5)", "ok raw=5 n=1"),
+                new SpecProbe("Inc(x) = x + 1\nUse(v) = {\n    Box = {\n        public A = v\n        0\n    }\n    (Box.A)(2)\n}\nUse(Inc)", "ok raw=3 n=1"),
+            ],
+            Explanation = "Parentheses never change a call: a value-only runtime member answers `(Box.A)()` with its one supplied value, exactly as the member call `Box.A()` does. Grouping creates no callable identity: passing `Box.A` on still passes no callable.",
+        },
+        new()
+        {
+            Id = "grouped-runtime-member-value-arity",
+            Category = "errors",
+            Source = "Use(v) = {\n    Box = {\n        public A = v\n        0\n    }\n    (Box.A)(1)\n}\nUse(5)",
+            Outcome = SpecOutcome.EvalError,
+            ExpectedErrorCategory = "arity",
+            ExpectedErrorPayload = new("arity", [], [0, 1]),
+            Explanation = "A non-empty supply of a value-only runtime member is its row's arity rejection, grouped or not, never `NotAnAlgorithm`.",
+        },
+        new()
+        {
+            Id = "open-reference-private-member-provides-public-names",
+            Category = "name-resolution",
+            Source = "open A\nLib = {\n    Sub = {\n        public Q(x) = x + 1\n    }\n}\nA = Lib.Sub\nQ(5)",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "6",
+            ExpectedRaw = "6",
+            ExpectedEmittedCount = 1,
+            Explanation = "`A = Lib.Sub` is an ordinary dot reference, whose path selects declared members in its lexical owner, so `open A` provides the target's public `Q` to the front end and the evaluator alike. A written `open Lib.Sub` still selects public members only.",
+        },
+        new()
+        {
+            Id = "open-reference-private-member-keeps-private-names",
+            Category = "name-resolution",
+            Source = "open Lib.Sub\nLib = {\n    Sub = {\n        public Q(x) = x + 1\n    }\n}\nQ(5)",
+            Outcome = SpecOutcome.ParseError,
+            ExpectedDiagnosticCode = DiagnosticCode.UnresolvedOpenTarget,
+            ExpectedParseDiagnosticFragment = "is not public",
+            Explanation = "A written open path selects public members: a private step is refused, although a reference to the same member can be opened.",
+        },
     ];
 }

@@ -1310,7 +1310,8 @@ internal static class ElaboratedScopeLookup
                 for (var current = scope; current is not null; current = current.Parent)
                 {
                     observations?.RecordLookupLevelVisit();
-                    if (current.TryLookupOwnProperty(name) is { } hit)
+                    if (current.TryLookupOwnProperty(name) is { } hit
+                        && (current.Parent is not null || !BuiltinRegistry.IsSemanticPreludeOnlyName(name)))
                     {
                         var provider = hit.Property.Value;
                         level = current;

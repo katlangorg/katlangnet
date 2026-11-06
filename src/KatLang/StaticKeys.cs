@@ -284,6 +284,8 @@ internal enum StaticQueryProjection : byte
     EmptyOpenNamespace,
     FallbackParticipation,
     InvocationTarget,
+    OpenReferencePath,
+    OpenReferenceReceiver,
 }
 
 /// <summary>

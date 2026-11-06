@@ -86,6 +86,14 @@ internal sealed partial class StaticStructureQueries
             => Project(StaticQueryKind.TargetWalk, scope, open ? StaticQueryProjection.OpenStructure : StaticQueryProjection.Default, stratum: stratum);
         private static StaticQueryKey Expression(StaticScopeKey scope, Expr expression, StaticCycleCheck stratum, bool direct)
             => Project(StaticQueryKind.TargetWalk, scope, direct ? StaticQueryProjection.OpenRowTarget : StaticQueryProjection.RowTarget, stratum: stratum, node: expression);
+        // A transparent reference's OWN target path inside an open structure: the stratified walk of a written
+        // open path, selecting DECLARED members (DirectPath's runtimeParameter arm; Lean openNavigateWith). Its
+        // receivers are read by the open structure, but one that declares only private members still leads
+        // to the provider, so it is retained (MOD-03).
+        private static StaticQueryKey ReferencePath(StaticScopeKey scope, Expr expression, StaticCycleCheck stratum)
+            => Project(StaticQueryKind.TargetWalk, scope, StaticQueryProjection.OpenReferencePath, stratum: stratum, node: expression);
+        private static StaticQueryKey ReferenceReceiver(StaticScopeKey scope, StaticCycleCheck stratum)
+            => Project(StaticQueryKind.TargetWalk, scope, StaticQueryProjection.OpenReferenceReceiver, stratum: stratum);
         private static StaticQueryKey ReceiverKey(StaticScopeKey scope, Expr expression, StaticCycleCheck stratum)
             => Project(StaticQueryKind.TargetWalk, scope, StaticQueryProjection.Receiver, stratum: stratum, node: expression);
 
@@ -271,12 +279,13 @@ internal sealed partial class StaticStructureQueries
         private Outcomes Structure(StaticQueryKey key)
         {
             var result = NewOutcomes();
-            var fact = reader.Read(key);
-            var open = key.Projection == StaticQueryProjection.OpenStructure;
-            if (fact.Kind == StaticFactKind.Structure) { Own(result, fact.Scope!, open); return result; }
+            var referenceReceiver = key.Projection == StaticQueryProjection.OpenReferenceReceiver;
+            var open = referenceReceiver || key.Projection == StaticQueryProjection.OpenStructure;
+            var fact = reader.Read(referenceReceiver ? Namespace(key.Scope, key.Stratum, open: true) : key);
+            if (fact.Kind == StaticFactKind.Structure) { Own(result, fact.Scope!, open && !referenceReceiver); return result; }
             if (fact.Kind == StaticFactKind.Runtime) { result.Runtime = true; return result; }
             if (!fact.IsUnknown) return result;
-            Own(result, key.Scope, open); // eligibility failure, calculation and OD-D refusal all keep own structure
+            Own(result, key.Scope, open && !referenceReceiver); // eligibility failure, calculation and OD-D refusal all keep own structure
             var context = queries.ContextOf(key.Scope);
             if (context.Body is Algorithm.Alias { ResolvedTargetCell.IsPending: true } or Algorithm.Alias { ResolvedStructureCell.IsPending: true })
             {
@@ -286,13 +295,14 @@ internal sealed partial class StaticStructureQueries
             if (!IsExpandable(context)) return result; // carriers/modules/closed bodies never inherit members
             var inputs = queries.NoInputs(context, reader);
             if (inputs.Kind == StaticFactKind.No) return result;
-            var targets = Read(Expression(key.Scope, WrittenReferenceRow(context)!, key.Stratum, open));
+            var row = WrittenReferenceRow(context)!;
+            var targets = Read(open ? ReferencePath(key.Scope, row, key.Stratum) : Expression(key.Scope, row, key.Stratum, direct: false));
             result.Unresolved |= targets.Unresolved;
             if (!open) result.Runtime |= targets.Runtime;
             foreach (var target in targets.Scopes)
             {
                 Work();
-                Include(result, Read(Namespace(target, key.Stratum, open)));
+                Include(result, Read(referenceReceiver ? ReferenceReceiver(target, key.Stratum) : Namespace(target, key.Stratum, open)));
             }
             return result;
         }
@@ -329,7 +339,8 @@ internal sealed partial class StaticStructureQueries
         private Outcomes Targets(StaticQueryKey key)
         {
             var expression = key.Node!.UnwrapGraceOperand();
-            var direct = key.Projection == StaticQueryProjection.OpenRowTarget;
+            var referencePath = key.Projection == StaticQueryProjection.OpenReferencePath;
+            var direct = referencePath || key.Projection == StaticQueryProjection.OpenRowTarget;
             if (expression is Expr.Resolve(var name))
                 return Read(Project(StaticQueryKind.Binding, key.Scope,
                     direct ? StaticQueryProjection.OpenHeadBinding : StaticQueryProjection.Default, name, key.Stratum));
@@ -345,10 +356,11 @@ internal sealed partial class StaticStructureQueries
             if (direct)
             {
                 receivers = NewOutcomes();
-                var targets = Read(Expression(key.Scope, edge.Target, key.Stratum, direct: true));
+                var targets = Read(referencePath ? ReferencePath(key.Scope, edge.Target, key.Stratum)
+                    : Expression(key.Scope, edge.Target, key.Stratum, direct: true));
                 receivers.Unresolved |= targets.Unresolved;
                 foreach (var target in targets.Scopes)
-                    Include(receivers, Read(Namespace(target, key.Stratum, open: true)));
+                    Include(receivers, Read(referencePath ? ReferenceReceiver(target, key.Stratum) : Namespace(target, key.Stratum, open: true)));
             }
             else receivers = Read(ReceiverKey(key.Scope, edge.Target, key.Stratum));
             result.Runtime = receivers.Runtime;
@@ -358,7 +370,8 @@ internal sealed partial class StaticStructureQueries
             {
                 Work();
                 var members = queries.ContextOf(receiver).Members;
-                var member = direct ? members.Public(edge.Name) : members.Declared(edge.Name);
+                // A written open step selects a public member; a reference's own target path a declared one.
+                var member = direct && !referencePath ? members.Public(edge.Name) : members.Declared(edge.Name);
                 if (member is not null) Add(result, queries.BodyIn(receiver, member.Value));
                 else if (!direct && edge.UsesDotAlgorithmIntrinsic()) result.Runtime = true;
             }

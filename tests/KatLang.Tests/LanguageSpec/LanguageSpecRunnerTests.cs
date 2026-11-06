@@ -243,6 +243,7 @@ public class LanguageSpecRunnerTests
             // Constitution PV-11 / PV-25 / PV-49 (September 2026): open-target heads and
             // steps, open placement after clause definitions, and Grace in a branch
             // deconstruction are front-end rejections, parse-level by construction.
+            "open-reference-private-member-keeps-private-names",
             "open-target-head-must-name-an-algorithm",
             "open-inline-headed-path-must-resolve",
             "open-after-clause-definition-rejected",
