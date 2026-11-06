@@ -49,8 +49,9 @@ chain a given production read resolves stays a source fact pinned by guards; tha
 property reads route through `evalZeroArgPropertyAccessCounted`; `WiresDirectly` for a module or
 builtin, which rebuild a different chain or have none; reuse across a fresh owner activation or a
 rebuilt unrelated chain (their keys differ); explicit invocations, which never read an entry; that a
-miss publishes under the key a later read uses (the cache entry is a premise); key injectivity,
-reentrancy (FG-K1), `FuelReached` for the binder channels; anything about C#.
+miss publishes under the key a later read uses (the cache entry is a premise; the owner publishes
+under its entry-state key, `CacheReentrancy.owner_success_establishes`); key injectivity,
+`FuelReached` for the binder channels; anything about C#.
 -/
 
 namespace KatLang.OwnerContextStability

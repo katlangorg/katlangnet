@@ -19,11 +19,12 @@ open KatLang (resolve param num)
 -- first-successful-completion rule, under which the INNERMOST re-entrant completion
 -- was stored first and the outer results never replaced it.
 --
--- Evidence technique. The Lean model has no host operations and no randomness, so a
--- SURFACE program cannot make a same-key re-entrant read terminate (C# pins the
--- surface reproductions with `tick()` and the seeded stream:
--- `OutermostPropertyCachePublicationTests`). These guards therefore use hand-built
--- trees: `P` is a parameterless EXPORTED property whose body reads `x` — a name it
+-- Evidence technique. These guards use hand-built trees that need no effect: the
+-- `tick()` programs, the counted entries and the kernel theorems are
+-- `KatLangArityLaws/CacheReentrancyGuards.lean` and `CacheReentrancy.lean`; C# pins the
+-- surface reproductions with `tock` and the seeded stream
+-- (`OutermostPropertyCachePublicationTests`). Here
+-- `P` is a parameterless EXPORTED property whose body reads `x` — a name it
 -- does not bind — dynamically from its caller (`ctx.push` keeps the caller's need
 -- environment), so every read of `P` has ONE cache key while successive re-entrant
 -- reads see different `x`:

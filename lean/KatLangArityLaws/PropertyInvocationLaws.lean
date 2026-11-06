@@ -24,7 +24,8 @@ total core's every fuel and at the production answer), each a statement about on
 * `read_with_entry_is_hit` — a read of an established entry returns it and changes nothing;
 * `invocation_with_entry_is_fresh` — an invocation of an established entry is its own fresh
   calculation (never a cache hit), so it can neither return nor replace the entry;
-* `reentrant_request_is_its_calculation` — a request on an ACTIVE key publishes nothing of its own;
+* `reentrant_request_is_its_calculation` — a request on an ACTIVE key publishes nothing of its own
+  in this step; that its calculation cannot publish the key either is whole-evaluator, below;
 * `owner_success_publishes` — an owning request's success is published, with exactly the counted
   result its calculation produced, and the owner set is restored;
 * `owner_failure_publishes_nothing` — an owning request's completed failure adds no entry of its
@@ -39,9 +40,10 @@ total core's every fuel and at the production answer), each a statement about on
 
 Whole-run consequences come from `EvaluatorCacheLaws` unchanged in statement: every established
 entry survives every completed computation (`cache_entries_survive`, now covering invocations),
-and the owner set is restored on every completed run (`owner_set_restored`). NOT claimed: a
-whole-evaluator equivalence theorem, key injectivity, that a re-entrant run can never publish its
-own key (needs `LawfulBEq` of the key, as in `EvaluatorCacheLaws`), or any C# behaviour.
+and the owner set is restored on every completed run (`owner_set_restored`). That a re-entrant run
+can never publish its own key, and the owner corollaries over production, are
+`KatLangArityLaws/CacheReentrancy.lean`. NOT claimed: a whole-evaluator equivalence theorem, key
+injectivity, or any C# behaviour.
 -/
 
 namespace KatLang.PropertyInvocationLaws
@@ -80,7 +82,9 @@ theorem invocation_with_entry_is_fresh (calleeName : String) (v : CountedResult)
   rw [hhit]
 
 /-- **Re-entrant requests publish nothing of their own**: a request — read or invocation — on an
-    empty key whose owner is still active is exactly its calculation from the same state. -/
+    empty key whose owner is still active is exactly its calculation from the same state. At an
+    arbitrary `rec` that calculation could publish the key; at production it cannot
+    (`CacheReentrancy.reentrant_request_stays_absent`). -/
 theorem reentrant_request_is_its_calculation (request : ZeroArgPropertyRequest)
     (hc : isCacheableZeroArgPropertyAlgorithm a = true)
     (hmiss : ZeroArgPropertyCache.lookup s.zeroArgPropertyCache (keyAt k owner binding a ctx env s) = none)

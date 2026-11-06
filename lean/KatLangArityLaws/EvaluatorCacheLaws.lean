@@ -31,9 +31,10 @@ which, since CACHE-PUB-1, is the body's `invoke` request: never a cache hit, and
 empty, inactive key) are the body itself, now a kernel term of the total core; their one-step
 statements over that body are `KatLangArityLaws/PropertyInvocationLaws.lean`. Both whole-run
 theorems below cover invocations unchanged in statement: the writer body is still the ONE
-`evalZeroArgPropertyAccessCounted`, now with a `read` / `invoke` request. Not claimed: that a reentrant run can
-never publish its own key (needs `LawfulBEq` of the cache key), property-cache key injectivity, or
-any C# cache/accounting behaviour.
+`evalZeroArgPropertyAccessCounted`, now with a `read` / `invoke` request. That a reentrant run never
+publishes its own key is a third relation over this framework, `ActiveProtected` of
+`KatLangArityLaws/CacheReentrancy.lean`. Not claimed: property-cache key injectivity, or any C#
+cache/accounting behaviour.
 -/
 
 namespace KatLang.EvaluatorCacheLaws
