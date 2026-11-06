@@ -837,8 +837,7 @@ public static class SemanticModelBuilder
             {
                 if (current.CompletedContext is { } completed
                     && completed.Facts.Facts(completed.Key)?.AmbiguousOpenNames?.Contains(name) == true) return false;
-                var matches = current.GetResolvedOpenProviders()
-                    .Count(provider => provider.TryLookupPublicMember(name) is not null);
+                var matches = ElaboratedScopeLookup.SelectOpenLevel(current, name).Count;
                 if (matches > 1)
                     return false;
                 if (OwnsDeferredModuleOpen(current))

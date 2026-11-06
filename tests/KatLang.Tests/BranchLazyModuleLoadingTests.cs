@@ -1408,6 +1408,27 @@ public class BranchLazyModuleLoadingTests
         }
     }
 
+    /// <summary>
+    /// Two known providers of one level settle the name before that level's deferred open is considered:
+    /// it is no deferred reference, it names no declaration, and the module stays unfetched.
+    /// </summary>
+    [Fact]
+    public async Task SemanticModel_KnownAmbiguity_DecidesBeforeADeferredOpen()
+    {
+        var modules = Modules();
+        var parsed = await Parser.ParseAsync(
+            $"F(0) = {{\n    open {{ public X = 1 }}, {{ public X = 2 }}, '{ModuleA}'\n    X\n}}\nF(1) = 0\nF(0)",
+            modules.Options);
+
+        var model = SemanticModelBuilder.Build(parsed);
+
+        Assert.Empty(modules.Fetches);
+        var resolution = Assert.Single(model.FindResolutions("X"),
+            candidate => candidate.Occurrence.Kind == OccurrenceKind.ResolveReference);
+        Assert.NotEqual(IdentifierClassification.DeferredModuleReference, resolution.Classification);
+        Assert.Null(resolution.ResolvedDeclaration);
+    }
+
     [Theory]
     [InlineData(false)]
     [InlineData(true)]

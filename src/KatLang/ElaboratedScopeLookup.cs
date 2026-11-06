@@ -458,6 +458,58 @@ internal sealed class OpenMemberIndexCache(FrontEndTraversalObservations? observ
 
 internal readonly record struct PropertyLookupHit(Algorithm Owner, Property Property);
 
+/// <summary>One open provider's public member for a looked-up name: the provider stays attached to the member it selected.</summary>
+internal readonly record struct OpenMemberMatch(ResolvedOpenProvider Provider, PropertyLookupHit Hit);
+
+/// <summary>
+/// What one open level decides for one name: every provider of <see cref="Level"/> that publicly declares it, in the
+/// level's provider order. Empty (<c>default</c>, <see cref="Level"/> null) when no consulted level provides the name.
+/// Open-only and over the providers the level publishes: lexical precedence and availability belong to the caller
+/// (<see cref="ElaboratedScopeLookup.SelectFirstOpenLevel"/>). A lone match allocates nothing.
+/// </summary>
+internal readonly struct OpenNameSelection
+{
+    private readonly OpenMemberMatch _first;
+    private readonly List<OpenMemberMatch>? _later;
+
+    internal OpenNameSelection(ElaboratedPropertyScope level, OpenMemberMatch first, List<OpenMemberMatch>? later)
+    {
+        Level = level;
+        _first = first;
+        _later = later;
+    }
+
+    /// <summary>The deciding level; null when the selection is empty.</summary>
+    public ElaboratedPropertyScope? Level { get; }
+
+    public int Count => Level is null ? 0 : 1 + (_later?.Count ?? 0);
+
+    /// <summary>The one match of an unambiguous selection; null when it is empty or ambiguous.</summary>
+    public OpenMemberMatch? Single => Count == 1 ? _first : null;
+
+    public OpenMemberMatch this[int index] => index == 0 && Level is not null ? _first
+        : _later is not null && index > 0 && index <= _later.Count ? _later[index - 1]
+        : throw new ArgumentOutOfRangeException(nameof(index));
+
+    /// <summary>The selected members, in provider order.</summary>
+    public IReadOnlyList<PropertyLookupHit> Hits()
+    {
+        if (Count == 0) return [];
+        var hits = new PropertyLookupHit[Count];
+        for (var index = 0; index < hits.Length; index++) hits[index] = this[index].Hit;
+        return hits;
+    }
+
+    /// <summary>The deciding providers, in provider order.</summary>
+    public IReadOnlyList<ResolvedOpenProvider> Providers()
+    {
+        if (Count == 0) return [];
+        var providers = new ResolvedOpenProvider[Count];
+        for (var index = 0; index < providers.Length; index++) providers[index] = this[index].Provider;
+        return providers;
+    }
+}
+
 /// <summary>
 /// The SEMANTIC identity of one <c>open</c> provider (Q-19 D-I, decided 2026-10-06): the
 /// provider's declaration followed by the declarations of the owners that declare it, outward to
@@ -1222,31 +1274,9 @@ internal static class ElaboratedScopeLookup
     /// </summary>
     internal static (PropertyLookupHit Hit, ElaboratedPropertyScope MemberLevel)? LookupSingleOpenMember(
         ElaboratedPropertyScope scope, string name, StaticCycleCheck stratum = StaticCycleCheck.Formation)
-    {
-        for (var current = scope; current is not null; current = current.Parent)
-        {
-            var providers = current.GetResolvedOpenProviders(stratum);
-            PropertyLookupHit? found = null;
-            ResolvedOpenProvider? owner = null;
-            var count = 0;
-            foreach (var provider in providers)
-            {
-                if (provider.TryLookupPublicMember(name) is { } hit)
-                {
-                    count++;
-                    found = hit;
-                    owner = provider;
-                }
-            }
-
-            if (count == 1)
-                return (found!.Value, BodyLevelOf(owner!.Target, owner.Level ?? scope.Root));
-            if (count > 1)
-                return null;
-        }
-
-        return null;
-    }
+        => SelectFirstOpenLevel(scope, name, stratum).Single is { } single
+            ? (single.Hit, BodyLevelOf(single.Provider.Target, single.Provider.Level ?? scope.Root))
+            : null;
 
     /// <summary>
     /// The scope a statically known receiver STRUCTURE is declared at (M4★): what lets a member of that structure be
@@ -1380,34 +1410,58 @@ internal static class ElaboratedScopeLookup
     }
 
     /// <summary>
-    /// The open matches of <paramref name="name"/>: at the first level whose providers publicly declare it, every such
-    /// member. <paramref name="stratum"/> selects the provider stratum (<see cref="ElaboratedPropertyScope.GetResolvedOpenProviders"/>).
+    /// THE per-level opened-name rule over a level's published providers: the matches of
+    /// <paramref name="name"/> at <paramref name="level"/> alone, each provider's public member in provider order.
+    /// A caller whose walk interleaves another check reads this level by level; every other caller reads
+    /// <see cref="SelectFirstOpenLevel"/>.
     /// </summary>
-    public static IReadOnlyList<PropertyLookupHit> LookupOpenPropertyMatches(
+    internal static OpenNameSelection SelectOpenLevel(
+        ElaboratedPropertyScope level, string name, StaticCycleCheck stratum = StaticCycleCheck.Formation)
+    {
+        var providers = level.GetResolvedOpenProviders(stratum);
+        OpenMemberMatch first = default;
+        List<OpenMemberMatch>? later = null;
+        var found = false;
+        for (var index = 0; index < providers.Count; index++)
+        {
+            if (providers[index].TryLookupPublicMember(name) is not { } hit) continue;
+            var match = new OpenMemberMatch(providers[index], hit);
+            if (!found) (first, found) = (match, true);
+            else (later ??= []).Add(match);
+        }
+
+        return found ? new OpenNameSelection(level, first, later) : default;
+    }
+
+    /// <summary>
+    /// THE opened-name selection of the completed-fact and editor adapters: from <paramref name="scope"/> outward, the
+    /// first open level with any match decides, so a level without one permits continuing, a nearer ambiguity never falls
+    /// through to a farther unique match and a nearer unique match hides a farther ambiguity. This is open lookup ONLY: it
+    /// performs no owner walk, so the caller establishes lexical precedence at its own boundary
+    /// (<see cref="SelectOwnedDeclaration"/>, <see cref="TryLookupDirectLexicalProperty"/>). Providers are the level's
+    /// (<see cref="ElaboratedPropertyScope.GetResolvedOpenProviders"/>), read in <paramref name="stratum"/>. Q1's
+    /// incremental <see cref="StaticQueryProjection.OpenedBinding"/> states the same rule over partial facts and stays
+    /// the structural authority.
+    /// </summary>
+    internal static OpenNameSelection SelectFirstOpenLevel(
         ElaboratedPropertyScope scope, string name, StaticCycleCheck stratum = StaticCycleCheck.Formation)
     {
         for (var current = scope; current is not null; current = current.Parent)
         {
-            var providers = current.GetResolvedOpenProviders(stratum);
-            if (providers.Count == 0)
-                continue;
-
-            List<PropertyLookupHit>? hits = null;
-            foreach (var provider in providers)
-            {
-                if (provider.TryLookupPublicMember(name) is { } hit)
-                {
-                    hits ??= [];
-                    hits.Add(hit);
-                }
-            }
-
-            if (hits is not null && hits.Count > 0)
-                return hits;
+            var selection = SelectOpenLevel(current, name, stratum);
+            if (selection.Count > 0) return selection;
         }
 
-        return [];
+        return default;
     }
+
+    /// <summary>
+    /// The open matches of <paramref name="name"/>: at the first level whose providers publicly declare it, every such
+    /// member (<see cref="SelectFirstOpenLevel"/>). <paramref name="stratum"/> selects the provider stratum (<see cref="ElaboratedPropertyScope.GetResolvedOpenProviders"/>).
+    /// </summary>
+    public static IReadOnlyList<PropertyLookupHit> LookupOpenPropertyMatches(
+        ElaboratedPropertyScope scope, string name, StaticCycleCheck stratum = StaticCycleCheck.Formation)
+        => SelectFirstOpenLevel(scope, name, stratum).Hits();
 
     public static IReadOnlyList<PropertyLookupHit> LookupLexicalPropertyMatches(ElaboratedPropertyScope scope, string name)
     {
@@ -1431,20 +1485,8 @@ internal static class ElaboratedScopeLookup
         if (!scope.HasOpensInChain || TryLookupDirectLexicalProperty(scope, name) is not null)
             return null;
 
-        for (var current = scope; current is not null; current = current.Parent)
-        {
-            List<ResolvedOpenProvider>? providing = null;
-            foreach (var provider in current.GetResolvedOpenProviders())
-            {
-                if (provider.TryLookupPublicMember(name) is not null)
-                    (providing ??= []).Add(provider);
-            }
-
-            if (providing is not null)
-                return providing.Count > 1 ? providing : null;
-        }
-
-        return null;
+        var selection = SelectFirstOpenLevel(scope, name);
+        return selection.Count > 1 ? selection.Providers() : null;
     }
 
     private static ElaboratedPropertyScope? CreateParentScope(ScopeCtx? parent, OpenMemberIndexCache? memberIndexes,
