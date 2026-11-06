@@ -2005,7 +2005,7 @@ public static class SemanticModelBuilder
                 parameters,
                 [])
             {
-                Signatures = CreateOrdinarySignatures(signature, parameters),
+                Signatures = CreateOrdinarySignatures(signature, parameters, documentLocalSpans),
                 SupportsLexicalDotCall = signature.TopLevelParameterCount > 0,
             };
         }
@@ -2016,10 +2016,10 @@ public static class SemanticModelBuilder
                 CaptureParameterPattern capture when capture.Parameter.IsRecoveryPlaceholder =>
                     new CaptureParameterPattern(capture.Parameter with { Name = "?" }),
                 CaptureParameterPattern => pattern,
-                SequenceValueParameterPattern group => new SequenceValueParameterPattern(
-                    group.Items.Select(RecoveryDisplayParameter).ToArray()),
-                ListValueParameterPattern list => new ListValueParameterPattern(
-                    list.Items.Select(RecoveryDisplayParameter).ToArray()),
+                SequenceValueParameterPattern group => group with {
+                    Items = group.Items.Select(RecoveryDisplayParameter).ToArray() },
+                ListValueParameterPattern list => list with {
+                    Items = list.Items.Select(RecoveryDisplayParameter).ToArray() },
                 UnpackingParameterPattern unpacking => new UnpackingParameterPattern(
                     unpacking.Items.Select(RecoveryDisplayParameter).ToArray()),
             };
@@ -2049,9 +2049,33 @@ public static class SemanticModelBuilder
             return parameters;
         }
 
+        /// <summary>
+        /// One signature slot of a pattern-display layout. A structural slot IS a group, so it reads as a capture's flat
+        /// entry does: a declared group is located where it is written, and an inferred one names its written group as an
+        /// origin instead, because that group is not this signature's declaration of the slot. A filtered group is no
+        /// written pattern, so it never has a location, and a capture slot stays as it is here (its flat entry locates it).
+        /// </summary>
+        private static PropertyParameterInfo CreatePatternDisplayParameter(
+            ParameterPattern pattern,
+            PropertyParameterKind kind,
+            bool documentLocalSpans)
+        {
+            var source = ParameterPattern.GroupSource(pattern);
+            var written = documentLocalSpans && kind == PropertyParameterKind.Explicit ? source?.WrittenSpan : null;
+            return new PropertyParameterInfo(pattern.DisplayName, kind, written)
+            {
+                DisplayNameOverride = pattern.DisplayName,
+                IsMeta = pattern is CaptureParameterPattern { Kind: ParameterKind.Meta },
+                OriginSpans = kind == PropertyParameterKind.Implicit && source is { } origin
+                    ? new OriginSpanList([origin.OriginSpan])
+                    : [],
+            };
+        }
+
         private static IReadOnlyList<PropertySignatureInfo> CreateOrdinarySignatures(
             CallableSignature signature,
-            IReadOnlyList<PropertyParameterInfo> flatParameters)
+            IReadOnlyList<PropertyParameterInfo> flatParameters,
+            bool documentLocalSpans)
         {
             if (signature.ParameterPatterns.Count == 0)
                 return [];
@@ -2065,14 +2089,7 @@ public static class SemanticModelBuilder
                 : ToPropertyParameterKind(signature.Parameters.FirstOrDefault()?.Source ?? CallableParameterSource.Implicit);
 
             var displayParameters = signature.ParameterPatterns
-                .Select(pattern => new PropertyParameterInfo(
-                    pattern.DisplayName,
-                    patternParameterKind,
-                    Span: null)
-                {
-                    DisplayNameOverride = pattern.DisplayName,
-                    IsMeta = pattern is CaptureParameterPattern { Kind: ParameterKind.Meta },
-                })
+                .Select(pattern => CreatePatternDisplayParameter(pattern, patternParameterKind, documentLocalSpans))
                 .ToList();
 
             var signatureParameters = useFlatParameters ? flatParameters : displayParameters;
@@ -2218,11 +2235,7 @@ public static class SemanticModelBuilder
                 ? PropertyParameterKind.Explicit
                 : ToPropertyParameterKind(signature.Parameters.FirstOrDefault()?.Source ?? CallableParameterSource.Implicit);
             var patternParameters = new SharedPropertyParameterList([.. signature.ParameterPatterns
-                    .Select(pattern => new PropertyParameterInfo(pattern.DisplayName, patternParameterKind, Span: null)
-                    {
-                        DisplayNameOverride = pattern.DisplayName,
-                        IsMeta = pattern is CaptureParameterPattern { Kind: ParameterKind.Meta },
-                    })]);
+                    .Select(pattern => CreatePatternDisplayParameter(pattern, patternParameterKind, documentLocalSpans))]);
             var signatureParameters = useFlatParameters ? flat : patternParameters;
             var dot = new SharedPropertyParameterList([.. signatureParameters.Skip(1)]);
             var receiverName = signatureParameters.Count > 0 ? signatureParameters[0].Name : string.Empty;
@@ -2338,8 +2351,13 @@ public static class SemanticModelBuilder
                 parameters[i] = new PropertyParameterInfo(
                     name,
                     PropertyParameterKind.ConditionalBinder,
-                    documentLocalSpans && pattern is Pattern.Bind binder
-                        ? binder.NameSpan : null)
+                    documentLocalSpans ? pattern switch
+                    {
+                        Pattern.Bind binder => binder.NameSpan,
+                        Pattern.SequenceValue group => group.Span,
+                        Pattern.ListValue list => list.Span,
+                        _ => null,
+                    } : null)
                 {
                     IsCollecting = pattern is Pattern.Bind { ParameterKind: ParameterKind.Collecting },
                 };
@@ -2530,9 +2548,9 @@ public static class SemanticModelBuilder
                             binderNames.Add(binder.Name);
                             return binder;
                         case Pattern.SequenceValue group:
-                            return new Pattern.SequenceValue(group.Items.Select(DescribeBinders).ToArray());
+                            return group with { Items = group.Items.Select(DescribeBinders).ToArray() };
                         case Pattern.ListValue list:
-                            return new Pattern.ListValue(list.Items.Select(DescribeBinders).ToArray());
+                            return list with { Items = list.Items.Select(DescribeBinders).ToArray() };
                         case Pattern.LitInt or Pattern.LitString or Pattern.LitBool:
                             return pattern;
                         default:

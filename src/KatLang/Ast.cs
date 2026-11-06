@@ -524,12 +524,14 @@ public closed record ParameterPattern
     /// <paramref name="items"/>: the one rebuild every structure-preserving rewrite uses, so a
     /// rewrite can never turn a list pattern into a sequence pattern or back.
     /// </summary>
+    /// <remarks>The rebuilt group stands for the same written group, so it keeps its source. A rewrite that
+    /// drops part of the group's content uses <see cref="WithFilteredStructuralItems"/> instead.</remarks>
     internal static ParameterPattern WithStructuralItems(ParameterPattern pattern, IReadOnlyList<ParameterPattern> items)
         => pattern switch
         {
-            SequenceValueParameterPattern => new SequenceValueParameterPattern(items),
-            ListValueParameterPattern => new ListValueParameterPattern(items),
-            UnpackingParameterPattern => new UnpackingParameterPattern(items),
+            SequenceValueParameterPattern sequence => sequence with { Items = items },
+            ListValueParameterPattern list => list with { Items = items },
+            UnpackingParameterPattern unpacking => unpacking with { Items = items },
             CaptureParameterPattern => throw new InvalidOperationException("A capture pattern has no structural items."),
         };
 
@@ -595,11 +597,42 @@ public closed record ParameterPattern
         => items.Count == 1 && items[0] is not CaptureParameterPattern { Kind: ParameterKind.Collecting };
 
     /// <summary>
+    /// A copy of a structural group holding only part of what was written: the copy keeps the written
+    /// group as its origin but is not itself located there (<see cref="PatternGroupSource.IsFiltered"/>).
+    /// </summary>
+    internal static ParameterPattern WithFilteredStructuralItems(ParameterPattern pattern, IReadOnlyList<ParameterPattern> items)
+        => pattern switch
+        {
+            SequenceValueParameterPattern sequence => sequence with { Items = items, Source = Filtered(sequence.Source) },
+            ListValueParameterPattern list => list with { Items = items, Source = Filtered(list.Source) },
+            UnpackingParameterPattern unpacking => unpacking with { Items = items },
+            CaptureParameterPattern => throw new InvalidOperationException("A capture pattern has no structural items."),
+        };
+
+    private static PatternGroupSource? Filtered(PatternGroupSource? source)
+        => source is { } written ? written with { IsFiltered = true } : null;
+
+    /// <summary>The source of a written structural group; null for every other pattern, a capture included.</summary>
+    internal static PatternGroupSource? GroupSource(ParameterPattern pattern)
+        => pattern switch
+        {
+            SequenceValueParameterPattern sequence => sequence.Source,
+            ListValueParameterPattern list => list.Source,
+            CaptureParameterPattern or UnpackingParameterPattern => null,
+        };
+
+    /// <summary>
     /// Whether an invalid one-item SEQUENCE pattern (<see cref="IsSingletonSequenceItems"/>)
-    /// occurs at any depth of a pattern list. Walked with an explicit stack: patterns are
-    /// host-constructible to arbitrary depth. Lean: <c>ParameterPattern.anyHasSingletonSequenceGroup</c>.
+    /// occurs at any depth of a pattern list. Lean: <c>ParameterPattern.anyHasSingletonSequenceGroup</c>.
     /// </summary>
     internal static bool HasSingletonSequenceGroup(IReadOnlyList<ParameterPattern> patterns)
+        => FindSingletonSequenceGroup(patterns) is not null;
+
+    /// <summary>
+    /// The first invalid one-item SEQUENCE pattern of a pattern list, depth first, or null. Walked
+    /// with an explicit stack: patterns are host-constructible to arbitrary depth.
+    /// </summary>
+    internal static SequenceValueParameterPattern? FindSingletonSequenceGroup(IReadOnlyList<ParameterPattern> patterns)
     {
         Stack<ParameterPattern>? pending = null;
         for (var index = patterns.Count - 1; index >= 0; index--)
@@ -614,13 +647,13 @@ public closed record ParameterPattern
         {
             var pattern = pending.Pop();
             if (pattern is SequenceValueParameterPattern sequence && IsSingletonSequenceItems(sequence.Items))
-                return true;
+                return sequence;
 
             if (StructuralItems(pattern) is { } items)
                 PushItems(pending, items);
         }
 
-        return false;
+        return null;
     }
 
     /// <summary>
@@ -927,6 +960,25 @@ public closed record ParameterPattern
 }
 
 /// <summary>
+/// The source of a written structural parameter group (<see cref="SequenceValueParameterPattern"/>,
+/// <see cref="ListValueParameterPattern"/>). <see cref="OriginSpan"/> is the exact extent of the group
+/// as written, delimiters included. <see cref="IsFiltered"/> marks a group derived from that written
+/// group by dropping content (lifting drops a capture an earlier one binds, a branch head's literal
+/// has no binder): the origin stays true, but nobody wrote this pattern there, so
+/// <see cref="WrittenSpan"/> is null. A group no parser wrote has no source at all, and an
+/// <see cref="UnpackingParameterPattern"/> has no delimiters to have one. Diagnostic and tooling
+/// metadata with no Lean counterpart: it never takes part in binding, identity, equality or display.
+/// </summary>
+internal readonly record struct PatternGroupSource(SourceSpan OriginSpan, bool IsFiltered = false)
+{
+    /// <summary>The exact location of this very pattern, or null for a filtered group.</summary>
+    public SourceSpan? WrittenSpan => IsFiltered ? null : OriginSpan;
+
+    /// <summary>The source of a group holding exactly what is written at <paramref name="span"/>, if anything is.</summary>
+    public static PatternGroupSource? Written(SourceSpan? span) => span is { } written ? new(written) : null;
+}
+
+/// <summary>
 /// A capture leaf: binds ONE name (Lean: <c>ParameterPattern.capture : CallableParameter →
 /// ParameterPattern</c>). The leaf HOLDS its <see cref="Parameter"/> declaration — name, span,
 /// kind, collect-marker span, and the diagnostic provenance note — so flattening a pattern
@@ -987,6 +1039,15 @@ public sealed record CaptureParameterPattern(ParameterDeclaration Parameter) : P
 public sealed record SequenceValueParameterPattern(IReadOnlyList<ParameterPattern> Items)
     : ParameterPattern
 {
+    private readonly RuntimeStateSlot<PatternGroupSource?> _source;
+
+    /// <summary>Where this group is written, or null for a host-built, generated or imported group.</summary>
+    internal PatternGroupSource? Source
+    {
+        get => _source.Value;
+        init => _source = new(value);
+    }
+
     public override string DisplayName => $"({string.Join(", ", Items.Select(static item => item.DisplayName))})";
 
     /// <summary>
@@ -1007,6 +1068,15 @@ public sealed record SequenceValueParameterPattern(IReadOnlyList<ParameterPatter
 public sealed record ListValueParameterPattern(IReadOnlyList<ParameterPattern> Items)
     : ParameterPattern
 {
+    private readonly RuntimeStateSlot<PatternGroupSource?> _source;
+
+    /// <summary>Where this group is written, or null for a host-built, generated or imported group.</summary>
+    internal PatternGroupSource? Source
+    {
+        get => _source.Value;
+        init => _source = new(value);
+    }
+
     public override string DisplayName => $"[{string.Join(", ", Items.Select(static item => item.DisplayName))}]";
 
     /// <summary>
@@ -1556,14 +1626,38 @@ public closed record Pattern
     /// sub-pattern matching its element — never a list and never a scalar (Lean:
     /// <c>Pattern.sequenceValue</c>). At the top of a clause head: the head's argument list.
     /// </summary>
-    public sealed record SequenceValue(IReadOnlyList<Pattern> Items) : Pattern;
+    public sealed record SequenceValue(IReadOnlyList<Pattern> Items) : Pattern
+    {
+        private readonly RuntimeStateSlot<SourceSpan?> _span;
+
+        /// <summary>
+        /// The exact written extent of this group, delimiters included, taken from its real opening and closing
+        /// tokens. Null for a clause head's own argument list, which is no sequence pattern, and for a host-built,
+        /// imported or unclosed group. Metadata only: equality, hashing and printing ignore it.
+        /// </summary>
+        internal SourceSpan? Span
+        {
+            get => _span.Value;
+            init => _span = new(value);
+        }
+    }
 
     /// <summary>
     /// Matches only a <c>Result.ListValue(items)</c> of the same length, each sub-pattern
     /// matching its element — never a sequence and never a scalar (Lean:
     /// <c>Pattern.listValue</c>).
     /// </summary>
-    public sealed record ListValue(IReadOnlyList<Pattern> Items) : Pattern;
+    public sealed record ListValue(IReadOnlyList<Pattern> Items) : Pattern
+    {
+        private readonly RuntimeStateSlot<SourceSpan?> _span;
+
+        /// <summary>The exact written extent of this group, delimiters included (see <see cref="SequenceValue.Span"/>).</summary>
+        internal SourceSpan? Span
+        {
+            get => _span.Value;
+            init => _span = new(value);
+        }
+    }
 
     /// <summary>
     /// Collect all binder names in this pattern (left-to-right). Walked with an
@@ -1610,9 +1704,14 @@ public closed record Pattern
     /// <c>Pattern.headHasSingletonSequenceGroup</c>): whether a NESTED sequence pattern has
     /// exactly one item that is not a collecting binder. A top-level
     /// <see cref="SequenceValue"/> is the head's own argument list and is not itself checked.
-    /// Walked with an explicit stack.
     /// </summary>
-    internal bool HeadHasSingletonSequenceGroup()
+    internal bool HeadHasSingletonSequenceGroup() => FindHeadSingletonSequenceGroup() is not null;
+
+    /// <summary>
+    /// The first nested one-item sequence pattern of this clause head, depth first, or null
+    /// (<see cref="HeadHasSingletonSequenceGroup"/>). Walked with an explicit stack.
+    /// </summary>
+    internal SequenceValue? FindHeadSingletonSequenceGroup()
     {
         var pending = new Stack<Pattern>();
         if (this is SequenceValue(var headItems))
@@ -1631,7 +1730,7 @@ public closed record Pattern
             {
                 case SequenceValue sequence:
                     if (IsSingletonSequenceItems(sequence.Items))
-                        return true;
+                        return sequence;
                     for (var i = sequence.Items.Count - 1; i >= 0; i--)
                         pending.Push(sequence.Items[i]);
                     break;
@@ -1642,7 +1741,7 @@ public closed record Pattern
             }
         }
 
-        return false;
+        return null;
     }
 
     /// <summary>
@@ -1792,11 +1891,11 @@ public closed record Pattern
             return true;
         }
 
-        var (structuralItems, isList) = pattern switch
+        var (structuralItems, isList, groupSpan) = pattern switch
         {
-            SequenceValue(var items) => (items, false),
-            ListValue(var items) => (items, true),
-            _ => ((IReadOnlyList<Pattern>?)null, false),
+            SequenceValue sequence => (sequence.Items, false, sequence.Span),
+            ListValue list => (list.Items, true, list.Span),
+            _ => ((IReadOnlyList<Pattern>?)null, false, (SourceSpan?)null),
         };
         if (structuralItems is not null)
         {
@@ -1815,8 +1914,8 @@ public closed record Pattern
             // Each structural pattern keeps its KIND: a sequence pattern stays a sequence
             // pattern and a list pattern a list pattern (Lean: `Pattern.parameterPattern?`).
             parameterPattern = isList
-                ? new ListValueParameterPattern(childPatterns)
-                : new SequenceValueParameterPattern(childPatterns);
+                ? new ListValueParameterPattern(childPatterns) { Source = PatternGroupSource.Written(groupSpan) }
+                : new SequenceValueParameterPattern(childPatterns) { Source = PatternGroupSource.Written(groupSpan) };
             return true;
         }
 
@@ -3289,10 +3388,11 @@ internal closed record PreEvaluationAstViolation
     /// <summary>
     /// A parameter pattern or branch pattern holding a one-item SEQUENCE pattern (the singleton
     /// rule; the parser reports <see cref="DiagnosticCode.SingletonSequencePattern"/> for the
-    /// written form, so only a host-built tree reaches this). Lean:
+    /// written form, so only a host-built tree or a recovered tree handed to the evaluator reaches
+    /// this). <see cref="Span"/> is the offending group's exact written extent, if it has one. Lean:
     /// <c>Error.illegalInEval singletonSequencePatternMessage</c>.
     /// </summary>
-    internal sealed record SingletonSequencePattern() : PreEvaluationAstViolation;
+    internal sealed record SingletonSequencePattern(SourceSpan? Span) : PreEvaluationAstViolation;
 
     /// <summary>
     /// A parameter-pattern level holding more than one collecting capture (X-02: the binders
@@ -3926,7 +4026,8 @@ internal static class AlgorithmValidation
                 PreEvaluationAstViolation? patternViolation =
                     ParameterPattern.FindSignatureViolation(algorithm.ParameterPatterns) switch
                     {
-                        ParameterSignatureViolation.SingletonSequencePattern => new PreEvaluationAstViolation.SingletonSequencePattern(),
+                        ParameterSignatureViolation.SingletonSequencePattern => new PreEvaluationAstViolation.SingletonSequencePattern(
+                            ParameterPattern.FindSingletonSequenceGroup(algorithm.ParameterPatterns)?.Source?.WrittenSpan),
                         ParameterSignatureViolation.MultipleCollectingAtOneLevel => new PreEvaluationAstViolation.MultipleCollectingCaptures(),
                         ParameterSignatureViolation.RepeatedNameIncludesCollecting => new PreEvaluationAstViolation.RepeatedNameIncludesCollecting(),
                         null => null,
@@ -3996,9 +4097,10 @@ internal static class AlgorithmValidation
             // (`a.hasSingletonSequencePattern`), then validateConditionalBranchArities, both
             // BEFORE the conditional's opens and branch bodies are walked.
             if (checkConditionalBranchArities
-                && algorithm.Branches.Any(static branch => branch.Pattern.HeadHasSingletonSequenceGroup()))
+                && algorithm.Branches.Select(static branch => branch.Pattern.FindHeadSingletonSequenceGroup())
+                    .FirstOrDefault(static group => group is not null) is { } singleton)
             {
-                Violations.Add(new PreEvaluationAstViolation.SingletonSequencePattern());
+                Violations.Add(new PreEvaluationAstViolation.SingletonSequencePattern(singleton.Span));
                 if (stopAfterFirst)
                     return;
             }

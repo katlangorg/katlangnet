@@ -2864,7 +2864,7 @@ internal static partial class ImplicitArgumentResolver
             return group;
         if (group is SequenceValueParameterPattern && ParameterPattern.IsSingletonSequenceItems(missingItems))
             return missingItems[0];
-        return ParameterPattern.WithStructuralItems(group, missingItems);
+        return ParameterPattern.WithFilteredStructuralItems(group, missingItems);
     }
 
     private static bool TryGetSingleTopLevelCollectingCapture(
@@ -3045,7 +3045,7 @@ internal static partial class ImplicitArgumentResolver
     /// captures, but single-collecting forwarding also depends on those group boundaries.
     /// Collecting binders in conditional families are host-AST-only; the parser rejects them.
     /// </summary>
-    private static IReadOnlyList<ParameterPattern> BranchBinderParameterPatterns(Pattern pattern)
+    internal static IReadOnlyList<ParameterPattern> BranchBinderParameterPatterns(Pattern pattern)
     {
         // A top-level sequence pattern IS the branch's parameter list; any other top-level
         // pattern is one single parameter position.
@@ -3073,15 +3073,17 @@ internal static partial class ImplicitArgumentResolver
                 };
                 return true;
 
-            case Pattern.SequenceValue(var items):
+            case Pattern.SequenceValue sequence:
             {
-                parameterPattern = new SequenceValueParameterPattern(BinderChildPatterns(items));
+                var binders = BinderChildPatterns(sequence.Items);
+                parameterPattern = new SequenceValueParameterPattern(binders) { Source = BinderGroupSource(sequence.Span, sequence.Items, binders) };
                 return true;
             }
 
-            case Pattern.ListValue(var items):
+            case Pattern.ListValue list:
             {
-                parameterPattern = new ListValueParameterPattern(BinderChildPatterns(items));
+                var binders = BinderChildPatterns(list.Items);
+                parameterPattern = new ListValueParameterPattern(binders) { Source = BinderGroupSource(list.Span, list.Items, binders) };
                 return true;
             }
 
@@ -3107,6 +3109,11 @@ internal static partial class ImplicitArgumentResolver
 
             return childPatterns;
         }
+
+        // A literal item has no binder, so a head group that holds one is only part of what was written.
+        static PatternGroupSource? BinderGroupSource(SourceSpan? span, IReadOnlyList<Pattern> items, List<ParameterPattern> binders)
+            => span is not { } written ? null
+                : new(written, binders.Count != items.Count || binders.Exists(static binder => ParameterPattern.GroupSource(binder) is { IsFiltered: true }));
     }
 
     /// <summary>

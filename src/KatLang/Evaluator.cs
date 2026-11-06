@@ -2746,8 +2746,8 @@ public static partial class Evaluator
                 new EvalError.ExplicitParametersRequireOutput() { Span = v.Span },
             PreEvaluationAstViolation.ConditionalBranchArityMismatch v =>
                 new EvalError.BranchArityMismatch(v.AlgorithmName, v.Expected, v.Actual),
-            PreEvaluationAstViolation.SingletonSequencePattern =>
-                new EvalError.IllegalInEval(Parser.SingletonSequencePatternDiagnostic),
+            PreEvaluationAstViolation.SingletonSequencePattern v =>
+                new EvalError.IllegalInEval(Parser.SingletonSequencePatternDiagnostic) { Span = v.Span },
             PreEvaluationAstViolation.MultipleCollectingCaptures =>
                 new EvalError.IllegalInEval(Parser.MultipleCollectingBindingsPerLevelDiagnostic),
             PreEvaluationAstViolation.RepeatedNameIncludesCollecting =>

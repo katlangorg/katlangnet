@@ -32,6 +32,8 @@ public enum PropertyParameterKind
 /// <summary>
 /// Editor-facing metadata for one property parameter slot.
 /// For builtins, spans are typically unavailable and remain <see langword="null"/>.
+/// A structural signature slot such as <c>(x, y)</c> is located at its written group, delimiters
+/// included, when it is declared there; an inferred one names that group in <see cref="OriginSpans"/>.
 /// </summary>
 public sealed record PropertyParameterInfo(string Name, PropertyParameterKind Kind, SourceSpan? Span)
 {

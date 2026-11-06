@@ -167,13 +167,13 @@ internal sealed partial class ModuleLoader
                     : bind with { NameSpan = null, CollectMarkerSpan = null },
                 Pattern.LitInt or Pattern.LitString or Pattern.LitBool => pattern,
                 Pattern.SequenceValue sequence => RewriteList(sequence.Items, RewritePattern) is var items
-                    && ReferenceEquals(items, sequence.Items)
+                    && ReferenceEquals(items, sequence.Items) && sequence.Span is null
                     ? sequence
-                    : new Pattern.SequenceValue(items),
+                    : sequence with { Items = items, Span = null },
                 Pattern.ListValue list => RewriteList(list.Items, RewritePattern) is var listItems
-                    && ReferenceEquals(listItems, list.Items)
+                    && ReferenceEquals(listItems, list.Items) && list.Span is null
                     ? list
-                    : new Pattern.ListValue(listItems),
+                    : list with { Items = listItems, Span = null },
             };
             _patterns[pattern] = rewritten;
             return rewritten;
@@ -192,13 +192,13 @@ internal sealed partial class ModuleLoader
                     ? capture
                     : capture with { Parameter = capture.Parameter with { Span = null, CollectMarkerSpan = null } },
                 SequenceValueParameterPattern sequence => RewriteList(sequence.Items, RewriteParameterPattern) is var items
-                    && ReferenceEquals(items, sequence.Items)
+                    && ReferenceEquals(items, sequence.Items) && sequence.Source is null
                     ? sequence
-                    : new SequenceValueParameterPattern(items),
+                    : sequence with { Items = items, Source = null },
                 ListValueParameterPattern list => RewriteList(list.Items, RewriteParameterPattern) is var listItems
-                    && ReferenceEquals(listItems, list.Items)
+                    && ReferenceEquals(listItems, list.Items) && list.Source is null
                     ? list
-                    : new ListValueParameterPattern(listItems),
+                    : list with { Items = listItems, Source = null },
                 UnpackingParameterPattern unpacking => RewriteList(unpacking.Items, RewriteParameterPattern) is var targets
                     && ReferenceEquals(targets, unpacking.Items)
                     ? unpacking

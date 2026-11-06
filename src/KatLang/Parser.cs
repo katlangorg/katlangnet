@@ -1152,6 +1152,16 @@ public sealed class Parser
     private void ReportErrorAcross(DiagnosticCode code, string message, Token first, Token last)
         => ReportError(code, message, first.Span.Union(last.Span));
 
+    /// <summary>A sequence pattern group. Only a real closing token completes an exact written extent.</summary>
+    [System.Runtime.CompilerServices.MethodImpl(LeafFrame)]
+    private static Pattern.SequenceValue SequencePatternGroup(List<Pattern> items, Token open, Token close)
+        => new(items) { Span = close.Kind == TokenKind.RParen ? open.Span.Union(close.Span) : null };
+
+    /// <summary>A list pattern group. Only a real closing token completes an exact written extent.</summary>
+    [System.Runtime.CompilerServices.MethodImpl(LeafFrame)]
+    private static Pattern.ListValue ListPatternGroup(List<Pattern> items, Token open, Token close)
+        => new(items) { Span = close.Kind == TokenKind.RBracket ? open.Span.Union(close.Span) : null };
+
     [System.Runtime.CompilerServices.MethodImpl(LeafFrame)]
     private static Expr.Num NumAt(Token token) => new(token.NumValue) { Span = token.Span };
 
@@ -3224,7 +3234,7 @@ public sealed class Parser
 
         if (!changed)
             return pattern;
-        return pattern is Pattern.ListValue ? new Pattern.ListValue(kept) : new Pattern.SequenceValue(kept);
+        return WithGroupItems(pattern, kept);
     }
 
     /// <summary>
@@ -3433,10 +3443,14 @@ public sealed class Parser
         => pattern switch
         {
             Pattern.Bind { ParameterKind: ParameterKind.Meta } binder => binder with { ParameterKind = ParameterKind.Normal },
-            Pattern.SequenceValue(var items) => new Pattern.SequenceValue(items.Select(WithoutMetaBinders).ToList()),
-            Pattern.ListValue(var items) => new Pattern.ListValue(items.Select(WithoutMetaBinders).ToList()),
+            Pattern.SequenceValue(var items) => WithGroupItems(pattern, items.Select(WithoutMetaBinders).ToList()),
+            Pattern.ListValue(var items) => WithGroupItems(pattern, items.Select(WithoutMetaBinders).ToList()),
             _ => pattern,
         };
+
+    /// <summary>A recovered copy of a sequence or list pattern: the same written group, so it keeps its span.</summary>
+    private static Pattern WithGroupItems(Pattern group, List<Pattern> items)
+        => group is Pattern.ListValue list ? list with { Items = items } : (Pattern.SequenceValue)group with { Items = items };
 
     /// <summary>
     /// Parses a collecting binding <c>*name</c> at the start of a pattern
@@ -3691,17 +3705,18 @@ public sealed class Parser
                             close);
                     }
 
-                    return new Pattern.SequenceValue(items);
+                    return SequencePatternGroup(items, open, close);
                 }
 
             case TokenKind.LBracket:
                 {
-                    Advance(); // consume '['
+                    var open = Advance(); // consume '['
                     // Brackets in patterns select the LIST kind: [x] -> ListValue([x]) matches a
                     // one-element list; `[]` is the empty list pattern.
                     var items = Current.Kind == TokenKind.RBracket ? [] : ParsePatternItems();
+                    var close = Current;
                     Expect(TokenKind.RBracket);
-                    return new Pattern.ListValue(items);
+                    return ListPatternGroup(items, open, close);
                 }
 
             default:
