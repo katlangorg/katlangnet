@@ -129,6 +129,14 @@ public sealed class LoopConditionFirstTests
         // repeat is unchanged: its rows are formed left to right.
         { "repeat stays left to right", "S(x) = mark(x - 1), mark(x > 1)\nrepeat(S(3), 1)", "ok S[2, true]", "mark(2),mark(true)" },
         { "ordinary call stays left to right", "S(x) = mark(x - 1), mark(x > 1)\nS(3)", "ok S[2, true]", "mark(2),mark(true)" },
+        // FG-L1: the first failure ends the composition, and nothing after it runs.
+        { "repeat failure after a successful prefix", "D(n) = mark(n) + 1 / n * 0 - 1\nrepeat(D(2), 5)", "err DivByZero",
+            "mark(2),mark(1.0),mark(0.0)" },
+        { "while failure after accepted rounds", "D(n) = mark(n) + 1 / n * 0 - 1, true\nwhile(D(2))", "err DivByZero",
+            "mark(2),mark(1.0),mark(0.0)" },
+        // FG-L1: zero rounds still materialize the initial cells; one round leaves an unused input lazy.
+        { "zero rounds materialize the initial cell", "Drop(x) = 1\nrepeat(Drop(mark(1) / 0), 0)", "err DivByZero", "mark(1)" },
+        { "one round leaves an unused input lazy", "Drop(x) = 1\nrepeat(Drop(mark(1) / 0), 1)", "ok 1", "" },
     };
 
     [Theory]

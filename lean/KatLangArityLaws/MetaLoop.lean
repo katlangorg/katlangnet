@@ -41,11 +41,14 @@ Proved here, over those total definitions:
 * plain/dot preparation — `X.while` / `X.repeat(n)` prepare the bundles of `while(X)` /
   `repeat(X, n)` (`dot_while_preparation`, `dot_repeat_preparation`).
 
-NOT claimed (source facts pinned by `MetaLoopGuards.lean` and the regenerated corpora): that the
-evaluator's `applyBuiltinCounted` installs these definitions with `read := demandNeedRecursive` and
-`view := argumentViewCells` (an installation of the total core, R7), that the dot route then reaches
-the ordinary call funnel (Q-66), whole-loop refinement, and anything about C# async resolution,
-cancellation, J7 plan retention or diagnostics (C#-only, `MetaLoopInterfaceTests`).
+That the evaluator's `applyBuiltinCounted` installs these definitions with
+`read := demandNeedRecursive` and `view := argumentViewCells`, and the finite loop beyond them, are
+proved in `FiniteLoopCorrespondence.lean` (FG-L1: `repeat_arm`, `while_arm`, `repeat_setup_stages`,
+`while_setup_stages`, `repeat_builtin_iff`, `while_builtin_iff`).
+
+NOT claimed (source facts pinned by `MetaLoopGuards.lean` and the regenerated corpora): that the dot
+route reaches the ordinary call funnel (Q-66), and anything about C# async resolution, cancellation,
+J7 plan retention or diagnostics (C#-only, `MetaLoopInterfaceTests`).
 -/
 
 namespace KatLang.MetaLoopLaws

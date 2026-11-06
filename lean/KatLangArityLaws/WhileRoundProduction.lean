@@ -66,10 +66,13 @@ that premise is derived from the intervening production operations in
 NOT claimed here (open): that every ordinary expression evaluation routes its property reads
 through `evalZeroArgPropertyAccessCounted` with the same key inputs (evaluator internals); key
 injectivity; `FuelReached` for the binder/family channels
-(the round's dispatch equations keep a completion premise); the `.whileBuiltin` loop driver beyond
-`WhileRound.advance` (`EvalBody.whileLoop` is a `production_unfolds` instance); whole-run
+(the round's dispatch equations keep a completion premise); whole-run
 heap/cache refinement, reachable-state / active-cell discipline, termination and R7; anything
 about C# (budgets, cancellation, host effects, random draws, async suspension, planning).
+
+The `.whileBuiltin` and `.repeatBuiltin` drivers over these rounds, an atomic production subcall
+each, are `KatLangArityLaws/FiniteLoopCorrespondence.lean` (FG-L1), which also compares a step with
+the ordinary call without `FuelReached` for the binder.
 -/
 
 namespace KatLang.WhileRoundProduction
