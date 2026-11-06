@@ -1263,7 +1263,7 @@ public class MetamorphicPhase3FamilyTests
     /// materializing is allowed to move the boundary, but within one policy the law is absolute.</para>
     /// </summary>
     [Fact]
-    public void SearchedBoundaries_AreMonotoneAcrossTheirCompleteInterval()
+    public async Task SearchedBoundaries_AreMonotoneAcrossTheirCompleteInterval()
     {
         var units = (
             from template in MetamorphicBudgetLawTemplate.BoundaryTemplates
@@ -1276,12 +1276,28 @@ public class MetamorphicPhase3FamilyTests
 
         // The sweep is pure and shares no state, so it may run concurrently; results are collected
         // BY INDEX and asserted in order, so the outcome never depends on completion order.
-        Parallel.For(0, units.Count, index =>
-        {
-            var (template, dimension, optimize) = units[index];
-            failures[index] = SweepCompleteInterval(template, dimension, optimize, out var first, out var count);
-            sweeps[index] = (first, count);
-        });
+        //
+        // The workers are DEDICATED threads, never pool threads, because this is minutes of CPU
+        // work in a host where other test classes are running. An unbounded Parallel.For keeps one
+        // more replica queued for as long as an index remains, so every pool thread that came free
+        // joined the sweep until it ended, and the next hop of a concurrent async test waited for a
+        // thread the pool is slow to add while the CPU is saturated. Tests that otherwise take
+        // 0.06 s took 90 s beside it, and one run tripped the 45 s hang guard in
+        // AsyncEvaluationHarness.Complete.
+        var next = -1;
+        await Task.WhenAll(Enumerable.Range(0, Environment.ProcessorCount).Select(_ => Task.Factory.StartNew(
+            () =>
+            {
+                for (var index = Interlocked.Increment(ref next); index < units.Count; index = Interlocked.Increment(ref next))
+                {
+                    var (template, dimension, optimize) = units[index];
+                    failures[index] = SweepCompleteInterval(template, dimension, optimize, out var first, out var count);
+                    sweeps[index] = (first, count);
+                }
+            },
+            CancellationToken.None,
+            TaskCreationOptions.LongRunning,
+            TaskScheduler.Default)));
 
         var withTransition = 0;
         long executed = 0;
