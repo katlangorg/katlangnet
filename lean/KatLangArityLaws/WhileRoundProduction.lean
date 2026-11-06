@@ -59,11 +59,13 @@ ordinary row formation it passes, and the production operations themselves.
   without evaluating; Q-37 published entries survive every later production run; so an EXPORTED
   binding published during discovery is reused by every later read in the round.
 
+LOCAL-only reuse across rows is `local_publication_reused` here, with its owner-context premise, and
+that premise is derived from the intervening production operations in
+`KatLangArityLaws/OwnerContextStability.lean` (which imports this module).
+
 NOT claimed here (open): that every ordinary expression evaluation routes its property reads
 through `evalZeroArgPropertyAccessCounted` with the same key inputs (evaluator internals); key
-stability for LOCAL-only bindings across rows (needs the declaring owner's lexical activation to
-be unchanged between the reads — a whole-run lexical-activation invariant — and the `partial`
-`propertyOwnerBindingContext`); key injectivity; `FuelReached` for the binder/family channels
+injectivity; `FuelReached` for the binder/family channels
 (the round's dispatch equations keep a completion premise); the `.whileBuiltin` loop driver beyond
 `WhileRound.advance` (`EvalBody.whileLoop` is a `production_unfolds` instance); whole-run
 heap/cache refinement, reachable-state / active-cell discipline, termination and R7; anything
@@ -795,9 +797,9 @@ theorem exported_publication_reused (k k' : ZeroArgPropertyAccessKind) (owner : 
   rw [cacheKey_exported_context_free k' k owner binding hexp ctx ctx₀ env env₀ _ oc]
   exact hkept _ v hpub
 
-/-- The LOCAL-only counterpart, with its residual premise explicit: the read's declaring-owner
-    context must still be the retained `n` the entry was published under (the whole-run stability
-    of lexical activations is NOT proved here). -/
+/-- The LOCAL-only counterpart, low level: the read's declaring-owner context must still be the
+    retained `n` the entry was published under (`hstable`). A premise here; derived from the
+    intervening operations by `OwnerContextStability.local_publication_reused_after_production`. -/
 theorem local_publication_reused (k k' : ZeroArgPropertyAccessKind) (owner : Algorithm)
     (binding : PropDef) (resolved : Algorithm) (hcache : isCacheableZeroArgPropertyAlgorithm resolved = true)
     (ctx₀ : EvalCtx) (env₀ : ValEnv) (n : Nat) (s₂ t : EvalState) (v : CountedResult)

@@ -7,11 +7,15 @@ open KatLang KatLang.EvaluatorCore
 # R7: whole-run property-cache discipline (Q-37)
 
 A FIELD-FRAMED relation depends on a state only through its property cache and its active owner
-set. Every evaluator body except the one that writes those fields
-(`EvalBody.evalZeroArgPropertyAccessCounted`) preserves every such relation whenever its recursive
-answer does (`evalStep_preserves_other`, one theorem per body, `EvalBody.*_pres`; syntax-directed
-`pres_tac`, the field-generic counterpart of `EvaluatorDiscipline`'s procedure). For two relations
-the property-access body is then proved by hand:
+set. A `WriteFrame` relation is weaker: it accepts every write that keeps those two fields and the
+lexical-activation array, and every single activation append; each field-framed relation is one
+(`instance : WriteFrame`), and so is the activation-prefix relation of
+`KatLangArityLaws/OwnerContextStability.lean`, which is NOT field-framed. Every evaluator body
+except the one that writes the two cache fields
+(`EvalBody.evalZeroArgPropertyAccessCounted`) preserves every `WriteFrame` relation whenever its
+recursive answer does (`evalStep_preserves_other`, one theorem per body, `EvalBody.*_pres`;
+syntax-directed `pres_tac`, the field-generic counterpart of `EvaluatorDiscipline`'s procedure).
+For two relations the property-access body is then proved by hand:
 
 * `CacheKept` — published entries survive with their values: `cache_entries_survive_core` (every
   completed core run, every fuel, every state) and `cache_entries_survive` (every production run).
@@ -34,7 +38,7 @@ any C# cache/accounting behaviour.
 
 namespace KatLang.EvaluatorCacheLaws
 
--- The relation-generic sections carry `[StateRel R] [FieldFrame R]` for every lemma; a lemma
+-- The relation-generic sections carry `[StateRel R] [WriteFrame R]` for every lemma; a lemma
 -- that needs only one of them is still stated in the shared section.
 set_option linter.unusedSectionVars false
 
@@ -48,6 +52,20 @@ class StateRel (R : EvalState → EvalState → Prop) : Prop where
 class FieldFrame (R : EvalState → EvalState → Prop) : Prop where
   frame : ∀ s t, t.zeroArgPropertyCache = s.zeroArgPropertyCache →
     t.activeZeroArgProperties = s.activeZeroArgProperties → R s t
+
+/-- What the evaluator bodies other than the property access need of a relation: it accepts every
+    write that keeps the property cache, the active owner set and the lexical-activation array,
+    and every single append to that array (`recordParameterActivation`, the array's one writer).
+    A field-framed relation is one; a relation about the activation array can be one without
+    being field-framed. -/
+class WriteFrame (R : EvalState → EvalState → Prop) : Prop where
+  keep : ∀ s t, t.zeroArgPropertyCache = s.zeroArgPropertyCache →
+    t.activeZeroArgProperties = s.activeZeroArgProperties →
+    t.lexicalActivations = s.lexicalActivations → R s t
+  push : ∀ s a, R s { s with lexicalActivations := s.lexicalActivations.push a }
+
+instance {R : EvalState → EvalState → Prop} [FieldFrame R] : WriteFrame R :=
+  ⟨fun s t hc ha _ => FieldFrame.frame s t hc ha, fun s _ => FieldFrame.frame s _ rfl rfl⟩
 
 /-- `m` relates the one entry state `st` (read by a preceding `get`) to its exit state. -/
 def PresAt {α : Type} (R : EvalState → EvalState → Prop) (st : EvalState) (m : EvalM α) : Prop :=
@@ -318,11 +336,12 @@ macro "pres_unfold_rec" : tactic => `(tactic| dsimp (config := { proj := false }
 syntax "pres_rel_close" : tactic
 macro_rules | `(tactic| pres_rel_close) => `(tactic| fail "no relation-specific closer")
 
-/-- A field-framed write: a goal `R s t` whose `t` keeps the cache and the owner set. -/
-macro "pres_frame" : tactic => `(tactic| (apply FieldFrame.frame <;> rfl))
+/-- A framed write: a goal `R s t` whose `t` keeps the cache, the owner set and the activations, or
+    appends one activation (a body entry unfolded in place). -/
+macro "pres_frame" : tactic => `(tactic| first | (apply WriteFrame.keep <;> rfl) | exact WriteFrame.push _ _)
 
 set_option hygiene false in
-/-- Syntax-directed preservation of a field-framed relation, base form (framework lemmas only). -/
+/-- Syntax-directed preservation of a write-framed relation, base form (framework lemmas only). -/
 macro "pres_tac_base" : tactic => `(tactic| without_info_trees ((try pres_unfold_rec) <;> repeat' (first
   | pres_rec
   | pres_hyp
@@ -357,7 +376,7 @@ macro "pres_tac_base" : tactic => `(tactic| without_info_trees ((try pres_unfold
   | (with_reducible apply PresAt.of_pres))))
 
 section Helpers
-variable {R : EvalState → EvalState → Prop} [StateRel R] [FieldFrame R]
+variable {R : EvalState → EvalState → Prop} [StateRel R] [WriteFrame R]
 
 
 theorem pres_allocate (sus : NeedSuspension) : Preserves R (allocateNeed sus) := by
@@ -366,8 +385,8 @@ theorem pres_bindParameters (names : List Ident) (ctx : EvalCtx) :
     Preserves R (EvalCtx.bindParameters names ctx) := by
   unfold EvalCtx.bindParameters; pres_tac_base
 theorem pres_recordActivation (names : List Ident) (ctx : EvalCtx) (env : ValEnv) :
-    Preserves R (recordParameterActivation names ctx env) := by
-  unfold recordParameterActivation; pres_tac_base
+    Preserves R (recordParameterActivation names ctx env) :=
+  fun s => WriteFrame.push s _
 theorem pres_identifyRuntime (a : Algorithm) : Preserves R (identifyRuntimeAlgorithm a) := by
   unfold identifyRuntimeAlgorithm; pres_tac_base
 theorem pres_valueViewCell (a : Algorithm) : Preserves R (valueViewCell? a) := by
@@ -375,7 +394,7 @@ theorem pres_valueViewCell (a : Algorithm) : Preserves R (valueViewCell? a) := b
 end Helpers
 
 set_option hygiene false in
-/-- Syntax-directed preservation of a field-framed relation, with the state-writing helpers. -/
+/-- Syntax-directed preservation of a write-framed relation, with the state-writing helpers. -/
 macro "pres_tac_mid" : tactic => `(tactic| without_info_trees ((try pres_unfold_rec) <;> repeat' (first
   | pres_rec
   | pres_hyp
@@ -416,7 +435,7 @@ macro "pres_tac_mid" : tactic => `(tactic| without_info_trees ((try pres_unfold_
 
 
 section Helpers2
-variable {R : EvalState → EvalState → Prop} [StateRel R] [FieldFrame R]
+variable {R : EvalState → EvalState → Prop} [StateRel R] [WriteFrame R]
 
 theorem pres_openNavigateWith (structureOf : Algorithm → EvalM Algorithm)
     (h : ∀ a, Preserves R (structureOf a)) (ctx : EvalCtx) (notStatic : Error)
@@ -674,7 +693,7 @@ end LocalLoops
 end Helpers2
 
 set_option hygiene false in
-/-- Syntax-directed preservation of a field-framed relation by an evaluator body, given that its
+/-- Syntax-directed preservation of a write-framed relation by an evaluator body, given that its
     recursive answer `hrec` preserves it. -/
 macro "pres_tac" : tactic => `(tactic| without_info_trees ((try pres_unfold_rec) <;> repeat' (first
   | pres_rec
@@ -747,7 +766,7 @@ macro "pres_tac" : tactic => `(tactic| without_info_trees ((try pres_unfold_rec)
 
 
 section Bodies
-variable {R : EvalState → EvalState → Prop} [StateRel R] [FieldFrame R]
+variable {R : EvalState → EvalState → Prop} [StateRel R] [WriteFrame R]
 
 theorem EvalBody.whileLoop_pres (rec : EvalRec) (hrec : ∀ c, Preserves R (rec c)) (step : ResolvedArgumentAlgorithm) (ctx : EvalCtx) (env : ValEnv) (stepName : String) (cells : List Nat) :
     Preserves R (EvalBody.whileLoop rec step ctx env stepName cells) := by
@@ -984,7 +1003,7 @@ theorem EvalBody.evalArgumentValue_pres (rec : EvalRec) (hrec : ∀ c, Preserves
   unfold EvalBody.evalArgumentValue; pres_tac
 
 /-- CACHE-PUB-1: a property request's calculation — a read's demand or an invocation's fresh
-    zero-supply call — preserves every field-framed relation its recursive answer does. -/
+    zero-supply call — preserves every write-framed relation its recursive answer does. -/
 theorem EvalBody.zeroArgPropertyCalculation_pres (rec : EvalRec) (hrec : ∀ c, Preserves R (rec c)) (request : ZeroArgPropertyRequest) (resolvedAlgorithm : Algorithm) (ctx : EvalCtx) (env : ValEnv) :
     Preserves R (EvalBody.zeroArgPropertyCalculation rec request resolvedAlgorithm ctx env) := by
   unfold EvalBody.zeroArgPropertyCalculation; pres_tac
@@ -1184,7 +1203,7 @@ theorem EvalBody.eval_pres (rec : EvalRec) (hrec : ∀ c, Preserves R (rec c)) (
     Preserves R (EvalBody.eval rec e ctx env) := by
   unfold EvalBody.eval; pres_tac
 
-/-- The per-body step of every field-framed whole-run invariant, given its step for the one
+/-- The per-body step of every write-framed whole-run invariant, given its step for the one
     body that writes the property cache and its owner set. -/
 theorem evalStep_preserves
     (hprop : ∀ rec : EvalRec, (∀ c, Preserves R (rec c)) → ∀ accessKind owner binding resolvedAlgorithm ctx env request,
@@ -1302,7 +1321,7 @@ def isPropertyAccessCall : EvalCall → Bool
   | .evalZeroArgPropertyAccessCounted .. => true
   | _ => false
 
-/-- Every other body preserves every field-framed relation. -/
+/-- Every other body preserves every write-framed relation. -/
 theorem evalStep_preserves_other (rec : EvalRec) (hrec : ∀ c, Preserves R (rec c)) (c : EvalCall)
     (hc : isPropertyAccessCall c = false) : Preserves R (evalStep rec c) := by
   cases c with

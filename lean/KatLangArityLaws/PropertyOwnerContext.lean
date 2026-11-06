@@ -53,7 +53,8 @@ What is proved here, over the production definitions:
 
 Whole-run cache laws need no restatement: `cache_entries_survive` and `owner_set_restored`
 (`EvaluatorCacheLaws`) are proved over every body, the new one included, so published entries
-are never replaced and the owner set is restored. NOT claimed: a whole-evaluator equivalence
+are never replaced and the owner set is restored. Stability of the owner context across later
+evaluation is `OwnerContextStability.lean`. NOT claimed: a whole-evaluator equivalence
 theorem, that the declaring activation found in context is the semantically intended one (a
 source fact of `scopeInContext`, pinned by the CoreTests D1 guards), or any C# behaviour.
 -/

@@ -25,9 +25,8 @@ cell- and cache-sharing subclaims.
 What is NOT proved here or there, and stays a source-level, executable or open fact:
 
 * that every ordinary expression evaluation routes its property reads through the production
-  property access with stable key inputs (evaluator internals), and key stability for LOCAL-only
-  bindings across rows (a whole-run lexical-activation invariant; `propertyOwnerBindingContext`
-  is `partial`);
+  property access with stable key inputs (evaluator internals); owner-context stability for a
+  fixed LOCAL-only binding across rows is proved in `OwnerContextStability.lean`;
 * the round's dispatch (`runNeedWhileRound`) is proved only for COMPLETED runs
   (`production_unfolds`); the binder/family channels are not covered by the finite-use converse;
 * anything about C# (budgets, cancellation, host effects, random draws, async suspension):
