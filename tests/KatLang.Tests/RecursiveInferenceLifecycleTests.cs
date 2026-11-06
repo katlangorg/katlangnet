@@ -20,7 +20,8 @@ public sealed class RecursiveInferenceLifecycleTests
             AllowedHosts = ["modules.example"],
             DownloadCode = async (url, _) =>
             {
-                // A genuine suspension: the materialization leaves the caller's synchronous path.
+                // Suspends this delegate, which promises nothing about its caller: one that looks only after the pool has
+                // finished the delegate carries on synchronously. A test that needs the two apart gates the download itself.
                 await Task.Yield();
                 return modules[url];
             },
@@ -109,12 +110,31 @@ public sealed class RecursiveInferenceLifecycleTests
     private static Task<EvalResult<IReadOnlyList<Decimal128>>> RunFlat(Algorithm root, CancellationToken token = default)
         => Evaluator.RunFlatAsync(new Expr.AlgorithmExpr(root), limits: null, token);
 
-    /// <summary>A module with a long ring, so rounds and sealing both run for a while inside the deferred unit.</summary>
+    /// <summary>
+    /// A module with a long ring, so rounds and sealing both run for a while inside the deferred unit. The producer holds
+    /// until its consumer has left, so the two must be apart, and the download is what keeps them apart: a download that is
+    /// finished when its caller looks counts as completing synchronously, which by the run contract keeps the materialization
+    /// on the consumer's own stack, where the producer would wait for itself. It therefore stays suspended until the consumer
+    /// has parked.
+    /// </summary>
     private static async Task CancelInDeferredUnitAt(long step)
     {
         var modules = new Dictionary<string, string> { [Url + "u.kat"] = Ring(16) };
         var main = "G(0) = 0\nG(a) = {\n    M = load('" + Url + "u.kat')\n    M.F(a)\n}\nG(10)";
-        var parsed = await Parser.ParseAsync(main, Serve(modules));
+        // The consumer's own thread sets this: run inline there, the unit's compilation would be on the consumer's stack again.
+        var consumerParked = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var downloads = 0;
+        var options = new RunOptions
+        {
+            AllowedHosts = ["modules.example"],
+            DownloadCode = async (url, _) =>
+            {
+                downloads++;
+                await consumerParked.Task.ConfigureAwait(false);
+                return modules[url];
+            },
+        };
+        var parsed = await Parser.ParseAsync(main, options);
         Assert.False(parsed.HasErrors);
         var family = Assert.IsType<Algorithm.Conditional>(Assert.Single(parsed.Root.Properties, static property => property.Name == "G").Value);
         var region = Assert.Single(family.Branches, static branch => branch.Body.DeferredRegion is not null).Body.DeferredRegion!;
@@ -140,7 +160,12 @@ public sealed class RecursiveInferenceLifecycleTests
         {
             try
             {
-                await RunFlat(parsed.Root, cancellation.Token).ConfigureAwait(false);
+                // An evaluation returns to its caller only by suspending, and it suspends nowhere before this download, so
+                // from here on the consumer is parked on the materialization and the producer cannot be running on it.
+                var evaluation = RunFlat(parsed.Root, cancellation.Token);
+                Assert.Equal(1, downloads);
+                consumerParked.SetResult();
+                await evaluation.ConfigureAwait(false);
             }
             finally
             {
