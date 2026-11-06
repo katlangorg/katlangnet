@@ -36,7 +36,11 @@ internal static class PropertyExposureResolver
             PropertyScope = propertyScope;
             Summaries = summaries;
             Root = parent is null ? this : parent.Root;
+            Depth = parent is null ? 0 : parent.Depth + 1;
         }
+
+        /// <summary>The number of levels above this one.</summary>
+        public int Depth { get; }
 
         private static readonly IReadOnlySet<string> NoParameters = new HashSet<string>(StringComparer.Ordinal);
 
@@ -192,7 +196,9 @@ internal static class PropertyExposureResolver
         CancellationToken cancellationToken = default)
     {
         var run = new ExposureRun(observations) { Modules = modules ?? new() };
-        root = ProcessAlgorithm(root, parent, new PropertyDependencyGraphBuilder.SummaryMemo(observations), observations, run, structuralContext);
+        run.SharedBodies = SharedBodyCensus.Of(root, cancellationToken);
+        root = ProcessAlgorithm(root, parent, new PropertyDependencyGraphBuilder.SummaryMemo(observations) { SharedBodies = run.SharedBodies },
+            observations, run, structuralContext);
         if (root.CompletedStructure is { Entry: { } entry } completed && !completed.Facts.IsSealed
             && (structuralContext is null || ReferenceEquals(structuralContext.Facts, completed.Facts)))
         {
@@ -202,7 +208,7 @@ internal static class PropertyExposureResolver
             observations?.StageObserver?.Invoke("retarget-and-seal", false);
         }
         if (run.HasDotMemberOrigins)
-            new DotMemberProvenanceFinalizer(parent.PropertyScope) { TraversalObservations = observations }.VisitAlgorithm(root);
+            new DotMemberProvenanceFinalizer(parent.PropertyScope) { TraversalObservations = observations, SharedBodies = SharedBodyCensus.Of(root, cancellationToken) }.VisitAlgorithm(root);
         return root;
     }
 
@@ -215,6 +221,15 @@ internal static class PropertyExposureResolver
         }
 
         public bool HasDotMemberOrigins;
+
+        /// <summary>What this exposure input shares across paths; null when nothing is.</summary>
+        public SharedBodyCensus? SharedBodies;
+
+        /// <summary>Rewritten shared bodies across parents (see <see cref="SharedExposureRegion"/>).</summary>
+        public Dictionary<SharedExposureRegion, Algorithm>? SharedRegions;
+
+        private RegionFreeNames? _regionNames;
+        public RegionFreeNames RegionNames => _regionNames ??= new(new NameSetInterner());
 
         /// <summary>
         /// The operation's loaded module units (Q-32 I-U): every resolved module declaration (one
@@ -505,18 +520,103 @@ internal static class PropertyExposureResolver
         memos.Algorithms ??= new(ReferenceEqualityComparer.Instance);
         if (!memos.Algorithms.TryGetValue(algorithm, out var rewritten))
         {
-            rewritten = algorithm is Algorithm.Conditional conditional
-                ? ProcessConditionalAlgorithm(conditional, memos, completedContext)
-                : ProcessAlgorithm(
-                    algorithm,
-                    memos.Scope,
-                    memos.SummaryMemo,
-                    memos.Observations,
-                    memos.Run, completedContext);
+            var region = algorithm is Algorithm.User or Algorithm.Alias && !algorithm.IsModuleRoot
+                && memos.Run.SharedBodies?.Holds(algorithm) == true ? SharedExposureRegion.Of(algorithm, memos) : null;
+            if (region is not null && memos.Run.SharedRegions?.TryGetValue(region, out var served) == true)
+            {
+                memos.Observations?.RecordExposureSharedRegionHit();
+                rewritten = served;
+            }
+            else
+            {
+                rewritten = algorithm is Algorithm.Conditional conditional
+                    ? ProcessConditionalAlgorithm(conditional, memos, completedContext)
+                    : ProcessAlgorithm(
+                        algorithm,
+                        memos.Scope,
+                        memos.SummaryMemo,
+                        memos.Observations,
+                        memos.Run, completedContext);
+                if (region is not null)
+                {
+                    memos.Observations?.RecordExposureSharedRegionExpansion();
+                    (memos.Run.SharedRegions ??= new())[region] = rewritten;
+                }
+            }
+
             memos.Algorithms[algorithm] = rewritten;
         }
 
         return rewritten;
+    }
+
+    /// <summary>
+    /// The region of a shared body across parents: what its rewrite reads of the enclosing chain. Its property metadata is
+    /// summaries over the body's free names and owner positions RELATIVE to the level, so a name's read is the level
+    /// that declares it (the final summaries and members of one exact level), or the relative position of the level that binds
+    /// it as a parameter; the depth positions what those summaries carry; and a name no direct level answers reaches the
+    /// opens of the chain, exactly the nearest level with opens onward. Two contexts with equal regions rewrite the body
+    /// to the same metadata, so the second holds the first's rewritten object and retargeting records it (no view of its own).
+    /// </summary>
+    private sealed class SharedExposureRegion : IEquatable<SharedExposureRegion>
+    {
+        private readonly Algorithm _body;
+        private readonly int _depth;
+        private readonly SummaryScope? _opens;
+        private readonly (object? Declaring, int Owner)[] _names;
+        private readonly int _hash;
+
+        private SharedExposureRegion(Algorithm body, int depth, SummaryScope? opens, (object?, int)[] names)
+        {
+            (_body, _depth, _opens, _names) = (body, depth, opens, names);
+            var hash = new HashCode();
+            hash.Add(System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(body));
+            hash.Add(depth);
+            hash.Add(opens is null ? 0 : System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(opens));
+            foreach (var (declaring, owner) in names)
+            {
+                hash.Add(declaring is null ? 0 : System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(declaring));
+                hash.Add(owner);
+            }
+            _hash = hash.ToHashCode();
+        }
+
+        public static SharedExposureRegion Of(Algorithm body, ExposureWalkMemos memos)
+        {
+            var scope = memos.Scope;
+            var free = memos.Run.RegionNames.Of(body);
+            var names = new (object?, int)[free.Count];
+            var next = 0;
+            var reachesOpens = false;
+            foreach (var name in free.Names)
+            {
+                object? declaring = scope.TryLookup(name, out var level, out _, out _) ? level : null;
+                var owner = -1;
+                for (var at = scope; at is not null; at = at.Parent)
+                    if (at.Parameters.Contains(name)) { owner = scope.Depth - at.Depth; break; }
+                reachesOpens |= declaring is null && owner < 0;
+                names[next++] = (declaring, owner);
+            }
+
+            SummaryScope? opens = null;
+            if (reachesOpens)
+                for (var at = scope; at is not null && opens is null; at = at.Parent)
+                    if (at.PropertyScope.Opens.Count > 0) opens = at;
+            return new(body, scope.Depth, opens, names);
+        }
+
+        public bool Equals(SharedExposureRegion? other)
+        {
+            if (other is null || !ReferenceEquals(_body, other._body) || _depth != other._depth
+                || !ReferenceEquals(_opens, other._opens) || _names.Length != other._names.Length) return false;
+            for (var index = 0; index < _names.Length; index++)
+                if (!ReferenceEquals(_names[index].Declaring, other._names[index].Declaring) || _names[index].Owner != other._names[index].Owner)
+                    return false;
+            return true;
+        }
+
+        public override bool Equals(object? obj) => Equals(obj as SharedExposureRegion);
+        public override int GetHashCode() => _hash;
     }
 
     /// <summary>

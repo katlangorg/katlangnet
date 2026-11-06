@@ -3469,13 +3469,42 @@ internal sealed class StaticAliasTargets(IReadOnlySet<string>? targetHeads = nul
     private readonly Dictionary<IReadOnlyList<Property>, Dictionary<string, Property>> _indexes = new(ReferenceEqualityComparer.Instance);
     private readonly Dictionary<int, Dictionary<IReadOnlyList<Property>, int>> _contexts = [];
     private readonly Dictionary<IReadOnlyList<Property>, bool> _relevantScopes = new(ReferenceEqualityComparer.Instance);
+    private readonly Dictionary<(int Region, string Head, int Context), int> _regions = [];
+    private readonly RegionFreeNames _freeNames = new(new NameSetInterner());
     private int _nextContext;
 
-    internal int ContextOf(IReadOnlyList<Algorithm> chain)
+    internal int ContextOf(IReadOnlyList<Algorithm> chain) => ContextOf(chain, chain.Count);
+
+    /// <summary>
+    /// What the chases below <paramref name="node"/> read of <paramref name="chain"/>: for each alias-target head free in
+    /// the node, the chain prefix ending at the scope that declares it. A chase inside the node resolves its head there or
+    /// inside the node and continues in that prefix, so contexts agreeing here settle every alias below the node alike, and
+    /// parents that declare none of those heads do not split it, whichever heads they declare for their own aliases.
+    /// </summary>
+    internal int RegionOf(object node, IReadOnlyList<Algorithm> chain)
+    {
+        var region = 0;
+        foreach (var name in _freeNames.Of(node).Names)
+        {
+            if (targetHeads?.Contains(name) == false) continue;
+            var context = -1;
+            for (var level = chain.Count - 1; level >= 0 && context < 0; level--)
+                if (Lookup(chain[level], name) is not null)
+                    context = ContextOf(chain, level + 1);
+            if (!_regions.TryGetValue((region, name, context), out var next))
+                _regions.Add((region, name, context), next = _regions.Count + 1);
+            region = next;
+        }
+
+        return region;
+    }
+
+    private int ContextOf(IReadOnlyList<Algorithm> chain, int count)
     {
         var context = 0;
-        foreach (var owner in chain)
+        for (var index = 0; index < count; index++)
         {
+            var owner = chain[index];
             if (owner.Properties.Count == 0 || !HasRelevantDeclarations(owner.Properties))
                 continue;
             if (!_contexts.TryGetValue(context, out var children))
@@ -3781,7 +3810,7 @@ internal static class AlgorithmValidation
             if (!checkConditionalBranchArities || !AstStructuralPreflight.ReachesAlias(node, _aliasReach))
                 return first;
 
-            var context = (_aliasTargets ??= new(AstStructuralPreflight.AliasTargetHeads(node))).ContextOf(_chain);
+            var context = (_aliasTargets ??= new(AstStructuralPreflight.AliasTargetHeads(node))).RegionOf(node, _chain);
             if (!_scopedVisits.TryGetValue(context, out var visited))
                 _scopedVisits.Add(context, visited = new(ReferenceEqualityComparer.Instance));
             return visited.Add(node);

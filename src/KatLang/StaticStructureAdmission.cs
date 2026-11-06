@@ -9,13 +9,18 @@ internal static class StaticStructureAdmission
         SourceProcessingLimits? sourceProcessingLimits = null, StaticAstPhase phase = StaticAstPhase.RawSource, IReadOnlyList<Algorithm>? sourceAncestors = null, CancellationToken cancellationToken = default)
     {
         var prelude = hostOperations?.SemanticPreludeAlgorithm ?? BuiltinRegistry.CreateSemanticPreludeAlgorithm();
-        var measurement = Measure(root, prelude, sourceProcessingLimits, sourceAncestors, cancellationToken);
-        return (new(root, measurement.Limits, prelude, phase, cancellationToken), measurement);
+        var measurement = Measure(root, prelude, sourceProcessingLimits, sourceAncestors, out var sharedNodes, cancellationToken);
+        return (new(root, measurement.Limits, prelude, phase, cancellationToken) { SharedBodies = SharedBodyCensus.FromSharedNodes(sharedNodes) }, measurement);
     }
 
     internal static Measurement Measure(Algorithm root, Algorithm prelude, SourceProcessingLimits? sourceProcessingLimits = null,
         IReadOnlyList<Algorithm>? sourceAncestors = null, CancellationToken cancellationToken = default)
+        => Measure(root, prelude, sourceProcessingLimits, sourceAncestors, out _, cancellationToken);
+
+    private static Measurement Measure(Algorithm root, Algorithm prelude, SourceProcessingLimits? sourceProcessingLimits,
+        IReadOnlyList<Algorithm>? sourceAncestors, out HashSet<object>? sharedNodes, CancellationToken cancellationToken)
     {
+        sharedNodes = null;
         cancellationToken.ThrowIfCancellationRequested();
         // Immutable explicit policy, never inferred from GC or machine memory. Preserve the
         // conservative 1 KiB/entry and 64-byte ledger slots as well as operation-scaled work.
@@ -43,7 +48,11 @@ internal static class StaticStructureAdmission
                 cancellationToken.ThrowIfCancellationRequested();
                 if (edges >= graphBytes / 8) throw new StaticQueryLimitExceededException("Static source admission exceeded its edge-work envelope.");
                 edges++;
-                if (seen.Contains(child)) continue;
+                if (seen.Contains(child))
+                {
+                    (sharedNodes ??= new(ReferenceEqualityComparer.Instance)).Add(child);
+                    continue;
+                }
                 if (seen.Count >= maxSourceFacts) throw new StaticQueryLimitExceededException("Static source admission exceeded its memory envelope.");
                 seen.Add(child); pending.Push(child);
             }

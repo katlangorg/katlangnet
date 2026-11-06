@@ -1164,7 +1164,7 @@ KatLang validity:
 
 Numeric, operator, and literal correctness:
 - power negation prefers the explicit `-(a ^ b)` for visual clarity (semantically equivalent to `-a ^ b`, since `^` binds tighter than unary minus); a negative power BASE is parenthesized as `(-a) ^ b` — required, because bare `-a ^ b` negates the power;
-- `not` is parenthesized or rewritten as a direct comparison when it must apply to a comparison (`not (x > 0)` or `x <= 0`, never `not x > 0`);
+- `not` over a comparison prefers the explicit `not (x > 0)` for visual clarity, or a direct comparison such as `x <= 0` (semantically equivalent to `not x > 0`, since `not` binds below the comparisons);
 - range tests are written as one comparison chain (`a < b < c`, `low <= x <= high`), never as `a < b and b < c` (which evaluates `b` twice);
 - `/` vs `div` is chosen intentionally (`/` keeps fractions, `div` truncates toward zero);
 - `avg` returns the decimal arithmetic mean and is used freely for fractional means (the exact total over the count, rounded once — it equals `sum(x) / count(x)` whenever that left-to-right sum is exact);

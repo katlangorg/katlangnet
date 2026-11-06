@@ -320,7 +320,7 @@ algebra's lone atom generalized to the real model's non-structures) and
 is the real-model `canonicalSupply_items_of_canonical`; and the grouped spelling
 `(value*)*` is linked through the shallow `combineOutputSlots` of its capture arm
 (`grouped_spread_layer_is_reopen`, `stacked_spread_layer_is_grouped_layer`).
-That the `partial` evaluator routes both spellings through those helpers and
+That the evaluator routes both spellings through those helpers and
 evaluates the operand once is guard-checked (CoreTests `RepeatedSpread`). Since
 CallReference S2 the evaluator opens through the checked `openSpreadItems`, which
 is these helpers wherever no opening exposes an argument view

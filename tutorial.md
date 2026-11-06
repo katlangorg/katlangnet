@@ -1658,7 +1658,7 @@ Each call of `A` is a fresh call of the algorithm `f` received, with exactly the
 
 ### Brace Algorithms
 
-Braces write an algorithm without giving it a name. The undefined names inside the braces become the brace algorithm's own parameters, in order of first appearance:
+Braces write an algorithm without giving it a name. Undefined names used only inside the braces become the brace algorithm's own parameters, in order of first appearance; a name the enclosing algorithm also uses belongs to the enclosing algorithm:
 
 ```
 Apply(f, x) = f(x)
@@ -2407,6 +2407,8 @@ F(3)
 
 **Result:** `true`
 
+A group or helper that reads nothing from the call is different: it has one value for the whole run, however many calls of `F` reach it.
+
 ---
 
 <a id="repetition"></a>
@@ -3116,8 +3118,12 @@ Written as `X = A*` followed by the row `X`, the program prints the same `(1, 2)
 | `and` | Logical and | |
 | `xor` | Logical exclusive or | |
 | `or` | Logical or | Lowest |
+| `( )` | Call with arguments (`f(1, 2)`) | Postfix |
 | `[ ]` | Selection by zero-based position (`value[0]`, `value[0, 1]`) | Postfix |
 | `.` | Dot call or member access (`a.f(b)`) | Postfix |
+| `*` | Spread: supply the items of a value (`value*`) | Postfix |
+
+Postfix forms bind tighter than every operator above them, `^` included.
 
 ### Syntax
 

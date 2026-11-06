@@ -14,6 +14,8 @@ internal sealed partial class StaticStructureOperation
 
     internal Expr WrittenExpression(StaticScopeKey scope, Expr view)
     {
+        // A served context reads the written nodes of the context that processed its one detected view.
+        scope = DetectedProcessingContext(scope);
         if (!_writtenNodes.TryGetValue(scope, out var nodes)) { Queries.Resources.Metadata(2); _writtenNodes.Add(scope, nodes = new(ReferenceEqualityComparer.Instance)); }
         if (nodes.TryGetValue(view, out var written)) return written;
         // Q8 can rebuild a path after processing its inline block. Canonicalize published block views at this

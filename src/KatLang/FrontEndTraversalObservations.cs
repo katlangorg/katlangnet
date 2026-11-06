@@ -129,6 +129,30 @@ internal sealed class FrontEndTraversalObservations
     internal void RecordDetectorBranchBodyRegionExpansion()
         => DetectorBranchBodyRegionExpansions = checked(DetectorBranchBodyRegionExpansions + 1);
 
+    /// <summary>Shared bodies detection elaborated, once per body and binding region (<c>ParameterDetector.ProcessSharedBody</c>).</summary>
+    public long DetectorSharedRegionExpansions { get; private set; }
+
+    internal void RecordDetectorSharedRegionExpansion()
+        => DetectorSharedRegionExpansions = checked(DetectorSharedRegionExpansions + 1);
+
+    /// <summary>Reaches of a shared body detection served from its completed region.</summary>
+    public long DetectorSharedRegionHits { get; private set; }
+
+    internal void RecordDetectorSharedRegionHit()
+        => DetectorSharedRegionHits = checked(DetectorSharedRegionHits + 1);
+
+    /// <summary>Shared bodies exposure rewrote across parents, once per body and summary region.</summary>
+    public long ExposureSharedRegionExpansions { get; private set; }
+
+    internal void RecordExposureSharedRegionExpansion()
+        => ExposureSharedRegionExpansions = checked(ExposureSharedRegionExpansions + 1);
+
+    /// <summary>Reaches of a shared body exposure served from its completed region.</summary>
+    public long ExposureSharedRegionHits { get; private set; }
+
+    internal void RecordExposureSharedRegionHit()
+        => ExposureSharedRegionHits = checked(ExposureSharedRegionHits + 1);
+
     /// <summary>Implicit-dependency collection expansions (<c>ImplicitArgumentResolver.CollectImplicitDeps</c>).</summary>
     public long ResolverCollectExpansions { get; private set; }
 

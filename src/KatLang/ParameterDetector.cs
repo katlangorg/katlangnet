@@ -107,7 +107,7 @@ internal static class ParameterDetector
             capturedParameters: ParameterOwnership.Empty,
             diagnostics,
             observations,
-            new DetectionRun { ProgramRoot = root, Diagnostics = diagnostics, Modules = modules });
+            new DetectionRun { ProgramRoot = root, Diagnostics = diagnostics, Modules = modules, SharedBodies = structuralOperation.SharedBodies });
         // Leaf roots (notably builtins) have no recursive body publication, but still complete this stage.
         if (structuralOperation.Published(structuralOperation.Root, StaticPublicationStage.Detected) is null)
             structuralOperation.Publish(structuralOperation.Root, StaticPublicationStage.Detected, processed);
@@ -140,6 +140,10 @@ internal static class ParameterDetector
 
             Algorithm.User { IsModuleElaborated: true } module => ProcessModuleRoot(module, parentScope, observations, run),
 
+            Algorithm.User user when run.SharedBodies?.Holds(user) == true
+                => ProcessSharedBody(user, parentScope, null, default, diagnostics, observations, run,
+                    () => ProcessUserAlgorithm(user, parentScope, capturedParameters, diagnostics, observations, run)),
+
             Algorithm.User user => ProcessUserAlgorithm(user, parentScope, capturedParameters, diagnostics, observations, run),
 
             // A callable alias is produced AFTER name resolution, by implicit-argument resolution
@@ -147,6 +151,67 @@ internal static class ParameterDetector
             Algorithm.Alias => throw new InvalidOperationException(
                 "Parameter detection received a callable alias: aliases are elaborated after name resolution, never before it."),
         };
+
+    /// <summary>
+    /// One elaboration per shared body and SEMANTIC REGION across parents: a body reached in a second declaring context
+    /// whose free names bind exactly as in the first (<see cref="BindingFootprint"/>) elaborates identically, so that context
+    /// holds the first one's detected view and everything below it is read through the alias
+    /// (<see cref="StaticStructureOperation.AliasDetectedRegion"/>). Only a CLEAN processing is reusable: one that reported
+    /// nothing and left no check waiting for resolution. A diagnostic can depend on far more than the free names (a
+    /// suggestion reads the whole visible scope) and is an occurrence's own, so a reported body stays once per reach.
+    /// </summary>
+    private static Algorithm ProcessSharedBody(
+        Algorithm body,
+        ElaboratedPropertyScope parentScope,
+        Pattern? branchPattern,
+        CanonicalNameSet boundByBranch,
+        DiagnosticBag? diagnostics,
+        FrontEndTraversalObservations? observations,
+        DetectionRun run,
+        Func<Algorithm> process)
+    {
+        // A provisional walk (a deferred region's body, diagnostics withheld) is an occurrence's own: its demand-time run
+        // starts from exactly that context.
+        if (diagnostics is null) return process();
+        var context = parentScope.StaticContext!;
+        var operation = context.Operation;
+        var names = run.RegionNames.Of(body);
+        if (boundByBranch.Count > 0) names = run.RegionNames.Names.Except(names, boundByBranch);
+        if (BindingFootprint.At(operation, context.Key, names) is not { } footprint) return process();
+        var key = new SharedBodyRegionKey(body, branchPattern, footprint);
+        var regions = run.SharedBodyRegions ??= new();
+        if (regions.TryGetValue(key, out var region))
+        {
+            var reach = operation.ContextOf(context.Key, body, branchPattern);
+            operation.Publish(reach, StaticPublicationStage.Detected, region.Detected);
+            operation.AliasDetectedRegion(reach, region.Context);
+            observations?.RecordDetectorSharedRegionHit();
+            return region.Detected;
+        }
+
+        observations?.RecordDetectorSharedRegionExpansion();
+        var reported = diagnostics.ReportedCount;
+        var waiting = run.ProvisionalMissCount;
+        var detected = process();
+        if (diagnostics.ReportedCount == reported && run.ProvisionalMissCount == waiting)
+        {
+            operation.Queries.Resources.Metadata(4);
+            regions[key] = new(detected, operation.ContextOf(context.Key, body, branchPattern));
+        }
+        return detected;
+    }
+
+    private readonly record struct SharedBodyRegionKey(Algorithm Body, Pattern? BranchPattern, BindingFootprint Footprint)
+    {
+        public bool Equals(SharedBodyRegionKey other)
+            => ReferenceEquals(Body, other.Body) && ReferenceEquals(BranchPattern, other.BranchPattern) && Footprint.Equals(other.Footprint);
+
+        public override int GetHashCode()
+            => HashCode.Combine(System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(Body),
+                BranchPattern is null ? 0 : System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(BranchPattern), Footprint);
+    }
+
+    private sealed record SharedBodyRegion(Algorithm Detected, StaticScopeKey Context);
 
     private static ElaboratedPropertyScope CreateStructuralScope(Algorithm source, Algorithm view,
         ElaboratedPropertyScope parent, Pattern? pattern = null)
@@ -741,6 +806,21 @@ internal static class ParameterDetector
         /// every other shared node within one diagnostic context.
         /// </summary>
         public Dictionary<BranchBodyRegionKey, BranchBodyRegion>? BranchBodyRegions;
+
+        /// <summary>Open-target algorithms this run elaborated with its diagnostics, by node.</summary>
+        public readonly Dictionary<Algorithm, Algorithm> OpenBlocks = new(ReferenceEqualityComparer.Instance);
+
+        /// <summary>What this admission shares across paths; null when nothing is, and in a deferred unit's own run.</summary>
+        public SharedBodyCensus? SharedBodies;
+
+        /// <summary>Shared bodies elaborated cleanly so far, across parents (see <see cref="ProcessSharedBody"/>).</summary>
+        public Dictionary<SharedBodyRegionKey, SharedBodyRegion>? SharedBodyRegions;
+
+        private RegionFreeNames? _regionNames;
+        public RegionFreeNames RegionNames => _regionNames ??= new(new NameSetInterner());
+
+        /// <summary>The checks created so far that wait on resolution: a processing that adds one is not a clean one.</summary>
+        public long ProvisionalMissCount;
         public readonly Dictionary<StaticScopeKey, ElaboratedPropertyScope> FamilyScopes = new(ReferenceEqualityComparer.Instance);
 
         // The provisional misses of this run (Expr.DotCall.ProvisionalMiss), by the INPUT edge and the scope that reads it
@@ -751,6 +831,7 @@ internal static class ParameterDetector
         /// <summary>The provisional miss of the input edge <paramref name="edge"/> read in <paramref name="scope"/> (created on first use).</summary>
         public ProvisionalMiss ProvisionalMissOf(Expr.DotCall edge, ElaboratedPropertyScope scope)
         {
+            ProvisionalMissCount += _provisionalMisses?.ContainsKey((edge, scope)) == true ? 0 : 1;
             _provisionalMisses ??= new(EdgeInScopeComparer.Instance);
             if (!_provisionalMisses.TryGetValue((edge, scope), out var miss))
                 _provisionalMisses.Add((edge, scope), miss = new ProvisionalMiss());
@@ -1452,13 +1533,14 @@ internal static class ParameterDetector
         DiagnosticBag? diagnostics,
         OpenWalkMemo memo)
     {
-        memo.OpenAlgorithms ??= new(ReferenceEqualityComparer.Instance);
-        if (!memo.OpenAlgorithms.TryGetValue(algorithm, out var processedAlgorithm))
+        // Prelude-rooted: one context for the whole run, whichever region of a shared body reaches the block.
+        var processedBlocks = diagnostics is null ? memo.OpenAlgorithms ??= new(ReferenceEqualityComparer.Instance) : memo.Run.OpenBlocks;
+        if (!processedBlocks.TryGetValue(algorithm, out var processedAlgorithm))
         {
             using var site = memo.Run.EnterImportSite(importSite);
             processedAlgorithm = ProcessAlgorithm(
                 algorithm, openParentScope, ParameterOwnership.Empty, diagnostics, memo.Observations, memo.Run);
-            memo.OpenAlgorithms[algorithm] = processedAlgorithm;
+            processedBlocks[algorithm] = processedAlgorithm;
         }
 
         return processedAlgorithm;
@@ -1489,6 +1571,22 @@ internal static class ParameterDetector
         FrontEndTraversalObservations? observations,
         DetectionRun run,
         Pattern? branchPattern = null)
+        => branchBody is Algorithm.User && branchPattern is not null && run.SharedBodies?.Holds(branchBody) == true
+            ? ProcessSharedBody(branchBody, parentScope, branchPattern,
+                run.RegionNames.Names.With(NameSetInterner.Empty, binderNames), diagnostics, observations, run,
+                () => ProcessBranchBody(branchBody, parentScope, binderNames, branchName, capturedParameters, diagnostics, observations, run, branchPattern))
+            : ProcessBranchBody(branchBody, parentScope, binderNames, branchName, capturedParameters, diagnostics, observations, run, branchPattern);
+
+    private static Algorithm ProcessBranchBody(
+        Algorithm branchBody,
+        ElaboratedPropertyScope parentScope,
+        IReadOnlySet<string> binderNames,
+        string branchName,
+        ParameterOwnership capturedParameters,
+        DiagnosticBag? diagnostics,
+        FrontEndTraversalObservations? observations,
+        DetectionRun run,
+        Pattern? branchPattern)
     {
         // Builtins own no body payload. A host-built Conditional has no user rows, but
         // DOES own opens: elaborate those under this branch's binder ownership as usual.

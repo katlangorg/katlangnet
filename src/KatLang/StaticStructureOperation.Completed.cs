@@ -62,7 +62,7 @@ internal sealed partial class StaticStructureOperation
         {
             Queries.EnsureUsable();
             var source = SourceOf(key);
-            var view = Published(key, StaticPublicationStage.Resolved) ?? (prelude.Contains(key) || source is Algorithm.Builtin ? source : null);
+            var view = OwnResolvedView(key) ?? (prelude.Contains(key) || source is Algorithm.Builtin ? source : null);
             if (view is null && key.Parent is { } owner && (belowReach.Contains(owner) || graph.IsReach(owner)))
             {
                 Queries.Resources.Metadata(2);
@@ -76,7 +76,7 @@ internal sealed partial class StaticStructureOperation
                 }
                 continue;
             }
-            var detected = Published(key, StaticPublicationStage.Detected);
+            var detected = DetectedView(key);
             var provisional = view is null && detected is Algorithm.User or Algorithm.Conditional
                 && (source.DeferredRegion is not null || key.Parent is { } parent && graph.Facts(parent)?.IsProvisional == true);
             var lexicalView = view ?? (provisional ? detected : null);

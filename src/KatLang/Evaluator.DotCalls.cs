@@ -564,7 +564,7 @@ public static partial class Evaluator
     ///      (never a supply of its own; only the spread receiver <c>a*.f</c>, lowered
     ///      by the parser to <c>f(a*)</c>, opens a boundary).
     ///    Dot resolution therefore has three classes — structural member access (1),
-    ///    the intrinsic <c>.string</c> and extension fallback (3) — and only the
+    ///    the intrinsics and extension fallback (3) — and only the
     ///    extension call injects the receiver.
     /// When receiver resolution returns notAnAlgorithm (a value receiver, e.g. a numeric
     /// literal), there is no member to select: the miss route applies directly.

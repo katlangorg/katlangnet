@@ -40,7 +40,9 @@ public class CallReferenceS3CorpusTests
     private const string ModuleUrl = "https://modules.example/m.kat";
     private const string ModuleText = "public Inc2(x) = x + 2";
     private const string Q = "Take(x) = x\n";
-    private static readonly TimeSpan WaitLimit = TimeSpan.FromSeconds(30);
+    // A hang detector, not a performance bound. C8b walks 3000 links on a pool thread: 3.9 s alone, but up to 48 s across its
+    // three bounded runs inside the parallel suite, where each run also waits for a pool thread under this same clock.
+    private static readonly TimeSpan WaitLimit = TimeSpan.FromSeconds(120);
 
     public sealed record Case(string Id, string Source, string Expected, string Traces, string Loops, string Fusion,
         bool AsyncOnly = false, bool HeadroomSensitive = false, EvaluationLimits? Limits = null, string? Module = null,

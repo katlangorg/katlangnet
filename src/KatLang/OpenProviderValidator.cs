@@ -35,6 +35,9 @@ internal sealed class OpenProviderValidator : AstWalker
     private ElaboratedPropertyScope _scope;
     private Pattern? _branchPattern;
     private CompletedStructureContext? _enteringCompleted;
+    private SharedBodyCensus? _sharedBodies;
+    private RegionFreeNames? _regionNames;
+    private HashSet<CompletedBodyRegion>? _cleanRegions;
     private readonly Dictionary<StaticScopeKey, HashSet<object>> _completedVisited = new(ReferenceEqualityComparer.Instance);
     // The import site of the module content the walk is inside (see ImportSite): where a
     // refused imported open target — which has no span of its own — is reported. Starts at
@@ -85,7 +88,7 @@ internal sealed class OpenProviderValidator : AstWalker
             ElaboratedScopeLookup.CreateScope(prelude, memberIndexes: new OpenMemberIndexCache(observations),
                 completedContext: completed?.Context(completed.PreludeKey)),
             importSite: null,
-            observations, presence).VisitAlgorithm(root);
+            observations, presence) { _sharedBodies = SharedBodyCensus.Of(root) }.VisitAlgorithm(root);
     }
 
     /// <summary>
@@ -128,10 +131,17 @@ internal sealed class OpenProviderValidator : AstWalker
             if (!nodes.Add(algorithm)) return;
         }
         else if (!FirstVisit(algorithm)) return;
+        // A shared body whose free names select what they selected in a context that validated clean validates clean: its opens
+        // read the same providers. A body that reported anything is an occurrence's own and is walked again at every reach.
+        var region = completed is not null && _sharedBodies?.Holds(algorithm) == true && !algorithm.IsModuleRoot
+            ? CompletedBodyRegion.Of(completed.Facts, completed.Key, algorithm, _regionNames ??= new(new NameSetInterner())) : null;
+        if (region is not null && _cleanRegions?.Contains(region) == true) return;
+        var reported = _diagnostics.ReportedCount;
         var savedCompleted = _enteringCompleted;
         _enteringCompleted = completed;
         try { base.VisitAlgorithm(algorithm); }
         finally { _enteringCompleted = savedCompleted; }
+        if (region is not null && _diagnostics.ReportedCount == reported) (_cleanRegions ??= []).Add(region);
     }
 
     protected override void VisitConditionalBranch(CondBranch branch)

@@ -9,8 +9,9 @@ namespace KatLang;
 /// </summary>
 internal sealed class AnalyzedStaticStructures : StaticLookupFacts
 {
-    private readonly Dictionary<StaticScopeKey, CompletedStaticStructures.BodyFacts> _facts = new(ReferenceEqualityComparer.Instance);
-    private readonly Dictionary<(StaticScopeKey Parent, object Declaration, object? Pattern), StaticScopeKey?> _children = new(ChildComparer.Instance);
+    // Reuse the immutable occurrence projection representation, without attaching it to syntax or publishing Q9 completion.
+    // It holds closed analysis facts only; sealing drops the ledger and retains no producer operation or token.
+    private readonly CompletedStaticStructures _graph;
     private sealed class ChildComparer : IEqualityComparer<(StaticScopeKey Parent, object Declaration, object? Pattern)>
     {
         internal static readonly ChildComparer Instance = new();
@@ -23,16 +24,32 @@ internal sealed class AnalyzedStaticStructures : StaticLookupFacts
     }
     private readonly Dictionary<(StaticScopeKey Parent, object Declaration, object? Pattern), StaticScopeKey> _definitions = new(ChildComparer.Instance);
     private readonly AnalyzedStaticStructures? _base;
-    private AnalyzedStaticStructures(StaticScopeKey prelude, AnalyzedStaticStructures? inherited = null)
-        => (PreludeKey, _base) = (prelude, inherited);
+    private AnalyzedStaticStructures(StaticScopeKey prelude, AnalyzedStaticStructures? inherited, StaticQueryResourceBudget resources)
+        => (PreludeKey, _base, _graph) = (prelude, inherited, new(prelude, inherited?._graph, resources));
     internal override StaticScopeKey PreludeKey { get; }
-    internal override IEnumerable<StaticScopeKey> Scopes => (_base?.Scopes ?? []).Concat(_facts.Keys);
+    internal override IEnumerable<StaticScopeKey> Scopes => _graph.Scopes;
     internal StaticQueryStatistics Statistics { get; private set; }
-    internal override void EnsureUsable() { }
-    internal override CompletedStaticStructures.BodyFacts? Facts(StaticScopeKey key) => _facts.GetValueOrDefault(key) ?? _base?.Facts(key);
+    internal override void EnsureUsable() => _graph.EnsureUsable();
+    internal override CompletedStaticStructures.BodyFacts? Facts(StaticScopeKey key) => _graph.Facts(key);
+    internal override bool OccursBelowAReach(StaticScopeKey key, Dictionary<StaticScopeKey, bool> memo)
+        => _graph.OccursBelowAReach(key, memo);
     internal override StaticScopeKey? Child(StaticScopeKey parent, Algorithm body, Pattern? pattern = null)
-        => _definitions.GetValueOrDefault((body.IsModuleRoot ? PreludeKey : parent, body, body.IsModuleRoot ? null : pattern))
-            ?? _base?.Child(parent, body, pattern);
+    {
+        if ((_definitions.GetValueOrDefault((body.IsModuleRoot ? PreludeKey : parent, body, body.IsModuleRoot ? null : pattern))
+            ?? _base?.Child(parent, body, pattern)) is { } exact) return exact;
+        var projected = _graph.Child(parent, body, pattern);
+        // A declaration-preserving host copy is a new source view, not an admitted occurrence of the old body. Analysis
+        // previously indexed exact bodies only; projection must preserve that boundary, including unavailable recipes.
+        return projected is not null && ReferenceEquals(_graph.Facts(projected)?.Body, body) ? projected : null;
+    }
+
+    private readonly record struct Region(Algorithm Body, object? Branch, BindingFootprint Bindings)
+    {
+        public bool Equals(Region other) => ReferenceEquals(Body, other.Body) && ReferenceEquals(Branch, other.Branch)
+            && Bindings.Equals(other.Bindings);
+        public override int GetHashCode() => HashCode.Combine(System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(Body),
+            Branch is null ? 0 : System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(Branch), Bindings);
+    }
 
     /// <summary>Analyzes an already name-resolved host AST as supplied, without inference or compiler passes.</summary>
     internal static CompletedStructureContext ForBoundAst(Algorithm root, HostOperations? hostOperations = null,
@@ -82,10 +99,17 @@ internal sealed class AnalyzedStaticStructures : StaticLookupFacts
         => Project(context.Operation, context.Key, cancellationToken: cancellationToken);
 
     internal static CompletedStructureContext Project(StaticStructureOperation operation, StaticScopeKey entry,
-        AnalyzedStaticStructures? inherited = null, CancellationToken cancellationToken = default)
+        AnalyzedStaticStructures? inherited = null, bool projectOccurrences = true, CancellationToken cancellationToken = default)
     {
         var queries = operation.Queries;
-        var result = new AnalyzedStaticStructures(queries.Keys.Root, inherited);
+        var result = new AnalyzedStaticStructures(queries.Keys.Root, inherited, queries.Resources);
+        var graph = result._graph;
+        graph.SuspendProjection();
+        var regions = new Dictionary<Region, StaticScopeKey>();
+        var regionNames = new RegionFreeNames(new NameSetInterner());
+        var belowReaches = new Dictionary<StaticScopeKey, StaticScopeKey>(ReferenceEqualityComparer.Instance);
+        var reaches = new Dictionary<StaticScopeKey, StaticScopeKey>(ReferenceEqualityComparer.Instance);
+        var projected = new List<(StaticScopeKey Key, StaticScopeKey Counterpart)>();
         var pending = new Queue<StaticScopeKey>();
         var admitted = new HashSet<StaticScopeKey>(ReferenceEqualityComparer.Instance);
         var prelude = new HashSet<StaticScopeKey>(ReferenceEqualityComparer.Instance) { queries.Keys.Root };
@@ -104,17 +128,48 @@ internal sealed class AnalyzedStaticStructures : StaticLookupFacts
             cancellationToken.ThrowIfCancellationRequested();
             queries.EnsureUsable();
             var source = operation.SourceOf(key);
+            // A query may already have named a descendant below a served occurrence (for example its receiver). Adopt that
+            // exact key as the projection of its counterpart rather than eagerly expanding its children as well.
+            if (key.Parent is { } outer && (reaches.TryGetValue(outer, out var counterpartParent)
+                || belowReaches.TryGetValue(outer, out counterpartParent))
+                && queries.Keys.KnownDefinitionIn(counterpartParent, source, key.BindingRegion) is { } counterpart)
+            {
+                queries.Resources.Metadata(4, cancellationToken: cancellationToken);
+                belowReaches.Add(key, counterpart);
+                projected.Add((key, counterpart));
+                Include(counterpart);
+                continue;
+            }
             var view = operation.Published(key, StaticPublicationStage.Resolved)
-                ?? operation.Published(key, StaticPublicationStage.Detected) ?? source;
+                ?? operation.DetectedView(key) ?? source;
             var ready = view is not Algorithm.Alias { ResolvedTargetCell.IsPending: true }
                 && view is not Algorithm.Alias { ResolvedStructureCell.IsPending: true };
+            var served = false;
+            if (ready && key.Parent is { } declaring && !source.IsModuleRoot && source is not Algorithm.Conditional
+                && projectOccurrences && operation.SharedBodies?.Holds(source) == true
+                && BindingFootprint.At(operation, declaring, regionNames.Of(source)) is { } footprint)
+            {
+                var region = new Region(source, key.BindingRegion, footprint);
+                queries.Resources.Metadata(4, cancellationToken: cancellationToken);
+                if (regions.TryGetValue(region, out var processed))
+                {
+                    var chain = 2L + key.Depth + processed.Depth;
+                    queries.Resources.Metadata((chain + 7) / 8, chain, cancellationToken);
+                    graph.AddReach(key, processed, Identity(key), Identity(processed));
+                    reaches.Add(key, processed);
+                    queries.Observations?.StageObserver?.Invoke("analysis-region-reuse", true);
+                    queries.EnsureUsable();
+                    served = true;
+                }
+                else regions.Add(region, key);
+            }
             var members = new Dictionary<string, StaticScopeKey>(StringComparer.Ordinal);
             foreach (var property in source.Properties)
             {
                 var child = operation.ContextOf(key, property.Value);
                 if (property.Name is not null) members.TryAdd(property.Name, child);
                 if (prelude.Contains(key)) prelude.Add(child);
-                Include(child);
+                if (!served) Include(child);
             }
             if (source is Algorithm.Conditional family)
                 foreach (var branch in family.Branches)
@@ -122,8 +177,8 @@ internal sealed class AnalyzedStaticStructures : StaticLookupFacts
                         branch.Body, branch.Pattern));
             // Own written expressions only. An algorithm reached in an open is rooted at the prelude. A hoisted deconstruction
             // source's rows are its owner's (WrittenRows): its context, storage below that owner, has none of its own.
-            IncludeExpressions(source.Opens, queries.Keys.Root);
-            if (source is not Algorithm.User { IsAssignmentDeconstructionSource: true } || ReferenceEquals(key, entry))
+            if (!served) IncludeExpressions(source.Opens, queries.Keys.Root);
+            if (!served && (source is not Algorithm.User { IsAssignmentDeconstructionSource: true } || ReferenceEquals(key, entry)))
                 IncludeExpressions(AstHelpers.WrittenRows(source), key);
             var receiver = ready ? Select(operation.Read(StaticQueryKey.TargetWalk(key, StaticCycleCheck.Formation)))
                 : CompletedStaticStructures.Selection.Unavailable;
@@ -146,16 +201,19 @@ internal sealed class AnalyzedStaticStructures : StaticLookupFacts
             var parameters = parameterNames.ToFrozenSet(StringComparer.Ordinal);
             queries.Resources.Metadata(12 + 2L * members.Count + 2L * providers.Count + 4L * parameters.Count,
                 cancellationToken: cancellationToken);
-            result._facts.Add(key, new(ready ? view : null, receiver, open, members.ToFrozenDictionary(StringComparer.Ordinal), parameters, providers.ToImmutable()));
-            if (key.Parent is { } outer)
+            graph.Add(key, new(ready ? view : null, receiver, open, members.ToFrozenDictionary(StringComparer.Ordinal), parameters, providers.ToImmutable()));
+            if (key.Parent is { } parent)
             {
-                if (ready) result._definitions.TryAdd((outer, view, key.BindingRegion), key);
-                var child = (outer, key.Declaration, key.BindingRegion);
-                if (!result._children.TryAdd(child, key) && !ReferenceEquals(result._children[child], key)) result._children[child] = null;
+                if (ready) result._definitions.TryAdd((parent, view, key.BindingRegion), key);
             }
         }
+        graph.AdoptBelowReaches(projected);
+        graph.Seal(cancellationToken);
         result.Statistics = queries.Statistics;
         return result.Context(entry);
+
+        OpenProviderIdentity Identity(StaticScopeKey key)
+            => OpenProviderIdentity.DeclaredIn(operation.SourceOf(key), operation.OwnersOf(key.Parent ?? queries.Keys.Root));
 
         CompletedStaticStructures.Selection Select(StaticFact fact)
         {

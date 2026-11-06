@@ -10,7 +10,8 @@ namespace KatLang.Tests;
 /// its own, so the programs below, whose sibling reads once closed a "cycle" through a helper
 /// (<c>A = { H = B + 0 ⏎ x + 1 }</c> / <c>B = y + A</c>), have no equation cycle at all and settle the
 /// same way in every declaration order — including the one where the former fallback let a member
-/// processed first read another unprocessed. (A genuine lifting cycle is refused, X-04 B; see
+/// processed first read another unprocessed. (A genuine lifting cycle is completed simultaneously and
+/// refused only when it does not settle, X-04 plain A-agree; see
 /// <see cref="SignatureSelectionTests"/>.)</para>
 ///
 /// <para>Pinned as a declaration-order METAMORPHIC matrix over source programs of every graph shape —

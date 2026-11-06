@@ -3343,7 +3343,7 @@ internal static partial class ImplicitArgumentResolver
     /// </summary>
     private static bool IsRuntimeTargetEndpoint(AliasTarget target, ResolutionRun run)
         => target.Identity is StaticScopeKey key
-            && (run.StructuralOperation!.Published(key, StaticPublicationStage.Detected) ?? run.StructuralOperation.SourceOf(key))
+            && (run.StructuralOperation!.DetectedView(key) ?? run.StructuralOperation.SourceOf(key))
                 is Algorithm.User { HasExplicitParameterList: false, IsSyntheticDeconstructionPlumbing: false } body
             && body.Output.Count == 1
             && AstHelpers.WrittenRows(body).Count == 1
@@ -4277,7 +4277,7 @@ internal static partial class ImplicitArgumentResolver
         if (memos.Run.Prelude.IsFinalRegistryAlgorithm(source)
             && context.Operation.Published(key, StaticPublicationStage.Resolved) is null)
         {
-            if (context.Operation.Published(key, StaticPublicationStage.Detected) is null)
+            if (context.Operation.DetectedView(key) is null)
                 context.Operation.Publish(key, StaticPublicationStage.Detected, source);
             context.Operation.Publish(key, StaticPublicationStage.Resolved, source);
         }

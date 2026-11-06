@@ -264,14 +264,14 @@ public class ImplicitParameterProvenanceAttachmentTests
     [Fact]
     public void OneSharedRawBody_GetsOneNotePerFrontEndContext()
     {
-        // A host DAG: the same raw property-value algorithm under two owners. Each
-        // owner is its own front-end context and elaborates the body separately, so
-        // each output view is a separate promotion with a separate note — while the
-        // two references under ONE owner share one elaboration and one note.
+        // A host DAG: the same raw property-value algorithm under two owners that bind its free
+        // names to different declarations. Each owner is its own front-end context and elaborates
+        // the body separately, so each output view is a separate promotion with a separate note —
+        // while the two references under ONE owner share one elaboration and one note.
         var syntax = SourceProvenance.ParseSyntaxValidRoot(LibraryTypo);
         var shared = PropertyValue(syntax, "Use");
         var lib = Assert.Single(syntax.Properties, property => property.Name == "Lib");
-        var nested = new Algorithm.User(null, [], [], [new Property("Q", shared)], [new Expr.Resolve("Q")]);
+        var nested = new Algorithm.User(null, [], [], [new Property("Lib", lib.Value), new Property("Q", shared)], [new Expr.Resolve("Q")]);
         var host = new Algorithm.User(
             null,
             [],
@@ -295,6 +295,15 @@ public class ImplicitParameterProvenanceAttachmentTests
         // The raw input carries nothing: elaboration stamps its OUTPUT views only.
         Assert.Null(Assert.IsType<Expr.DotCall>(Assert.Single(shared.Output)).InferredFallbackProvenance);
         Assert.Empty(shared.Parameters);
+
+        // An owner under which the same names select the same declarations is one binding region: one elaboration, one note.
+        var sameBindings = host with
+        {
+            Properties = [lib, new Property("P", shared), new Property("Outer", new Algorithm.User(null, [], [], [new Property("Q", shared)], [new Expr.Resolve("Q")]))],
+        };
+        var regionInput = ParameterDetector.Detect(sameBindings);
+        Assert.Empty(regionInput.Diagnostics);
+        Assert.Same(PropertyValue(regionInput.Root, "P"), PropertyValue(PropertyValue(regionInput.Root, "Outer"), "Q"));
     }
 
     // ── D. The slot is invisible to structural identity ─────────────────────

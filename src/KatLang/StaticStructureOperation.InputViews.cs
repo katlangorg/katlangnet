@@ -8,6 +8,9 @@ internal sealed partial class StaticStructureOperation
         if (!ReferenceEquals(SourceOf(Root), root)) throw new ArgumentException("The input does not belong to this admission.", nameof(root));
         var pending = new Queue<StaticScopeKey>();
         var seen = new HashSet<StaticScopeKey>(ReferenceEqualityComparer.Instance);
+        // A supplied body is its own detected view in every context, so its first context registers its subtree and any other
+        // context is an alias of that one: a shared graph registers its nodes, never its paths.
+        var firstContexts = new Dictionary<Algorithm, StaticScopeKey>(ReferenceEqualityComparer.Instance);
         Add(Root);
         while (pending.TryDequeue(out var key))
         {
@@ -15,6 +18,13 @@ internal sealed partial class StaticStructureOperation
             var body = SourceOf(key);
             Publish(key, StaticPublicationStage.Detected, body);
             if (body is Algorithm.Alias) Publish(key, StaticPublicationStage.Resolved, body);
+            // A family is no level of its branches (they are declared in its holder), so each holder walks them.
+            if (body is not Algorithm.Conditional && !firstContexts.TryAdd(body, key))
+            {
+                AliasDetectedRegion(key, firstContexts[body]);
+                continue;
+            }
+            Queries.Resources.Metadata(2);
             foreach (var property in body.Properties)
             {
                 var child = ContextOf(key, property.Value);

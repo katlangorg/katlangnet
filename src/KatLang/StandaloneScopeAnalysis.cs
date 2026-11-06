@@ -28,7 +28,9 @@ internal sealed class StandaloneScopeAnalysis
                 sourceAncestors: [body], cancellationToken: cancellationToken).Operation;
         var key = ownerIdentity is null ? operation.Root
             : operation.Queries.BodyIn(operation.Queries.Keys.Root, body, ownerIdentity);
-        var context = AnalyzedStaticStructures.Project(operation, key, cancellationToken: cancellationToken);
+        // These facts accompany a query-source snapshot that future Inside calls extend. Every returned context must
+        // therefore exist in that snapshot, unlike one-shot analysis whose lazy keys are consumed only as facts.
+        var context = AnalyzedStaticStructures.Project(operation, key, projectOccurrences: false, cancellationToken: cancellationToken);
         var source = operation.Queries.Freeze(cancellationToken);
         return new(source, context, phase, operation.Queries.Statistics, 0);
     }
@@ -59,7 +61,7 @@ internal sealed class StandaloneScopeAnalysis
             cancellationToken: cancellationToken).Limits;
         var operation = new StaticStructureOperation(Source, limits, declaring, body, pattern, phase, ownerIdentity, cancellationToken);
         var context = AnalyzedStaticStructures.Project(operation, operation.Root,
-            (AnalyzedStaticStructures)Context.Facts, cancellationToken);
+            (AnalyzedStaticStructures)Context.Facts, projectOccurrences: false, cancellationToken: cancellationToken);
         var source = operation.Queries.Freeze(cancellationToken);
         cancellationToken.ThrowIfCancellationRequested();
         // Append only a successful immutable source version. Related siblings share syntax and closed equations;

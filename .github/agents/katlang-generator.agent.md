@@ -312,7 +312,7 @@ Before emitting code, verify silently:
 - No dummy arithmetic for parameter reordering — grace `~` is used.
 - All Unicode math symbols are normalized to ASCII KatLang operators.
 - Power negation prefers the explicit `-(a ^ b)` for visual clarity (semantically equivalent to `-a ^ b`, since `^` binds tighter than unary minus); a negative power BASE is parenthesized as `(-a) ^ b` — required, because bare `-a ^ b` negates the power.
-- `not` is parenthesized or rewritten as a direct comparison when it must apply to a comparison (`not (x > 0)` or `x <= 0`, never `not x > 0`).
+- `not` over a comparison prefers the explicit `not (x > 0)` for visual clarity, or a direct comparison such as `x <= 0` (semantically equivalent to `not x > 0`, since `not` binds below the comparisons).
 - Range tests are written as one comparison chain (`a < b < c`, `low <= x <= high`): the chain compares each adjacent pair, evaluates every operand once, and is the idiomatic spelling; `a < b and b < c` is equivalent for a plain value but evaluates `b` twice.
 - `/` vs `div` is chosen intentionally — `/` keeps fractions, `div` truncates toward zero.
 - `avg` returns the decimal arithmetic mean (the exact total divided by the count, rounded once) and is used freely for fractional means.

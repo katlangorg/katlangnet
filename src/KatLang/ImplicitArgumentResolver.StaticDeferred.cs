@@ -55,7 +55,7 @@ internal static partial class ImplicitArgumentResolver
             {
                 var key = operation.ContextOf(binding.Scope!, binding.Property!.Value);
                 var value = operation.Published(key, StaticPublicationStage.Resolved)
-                    ?? operation.Published(key, StaticPublicationStage.Detected) ?? operation.SourceOf(key);
+                    ?? operation.DetectedView(key) ?? operation.SourceOf(key);
                 entry = new(CallableSignature.FromAlgorithm(name, value), value, operation.OwnersOf(binding.Scope!))
                     { Level = operation.ResolverLevel(binding.Scope!) };
             }
@@ -64,7 +64,7 @@ internal static partial class ImplicitArgumentResolver
         }, run.Observations);
         while (chain.TryPop(out var key))
         {
-            var body = operation.Published(key, StaticPublicationStage.Detected) ?? operation.SourceOf(key);
+            var body = operation.DetectedView(key) ?? operation.SourceOf(key);
             if (body.Opens.Count != 0)
                 map.AttachOpens();
         }

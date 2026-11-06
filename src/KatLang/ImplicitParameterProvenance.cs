@@ -363,6 +363,12 @@ internal sealed class DotMemberProvenanceFinalizer(ElaboratedPropertyScope paren
     private Pattern? _branchPattern;
     private readonly Dictionary<StaticScopeKey, HashSet<object>> _completedVisited = new(ReferenceEqualityComparer.Instance);
     private readonly Dictionary<ElaboratedPropertyScope, HashSet<object>> _visited = new(ReferenceEqualityComparer.Instance);
+    private RegionFreeNames? _regionNames;
+    private HashSet<CompletedBodyRegion>? _regions;
+
+    /// <summary>The bodies of the finalized tree several paths reach; null when none is.</summary>
+    internal SharedBodyCensus? SharedBodies { get; init; }
+
     // A note outlives this walk. Keep only immutable member spellings, never a receiver AST or
     // its caller-owned lists; share the snapshot across all confirmations of one receiver.
     private readonly Dictionary<Algorithm, FrozenSet<string>> _receiverMembers = new(ReferenceEqualityComparer.Instance);
@@ -404,6 +410,11 @@ internal sealed class DotMemberProvenanceFinalizer(ElaboratedPropertyScope paren
             visited = !nodes.Add(algorithm);
         }
         else visited = !Enter(algorithm);
+        // Contexts whose free names select the same declarations give every edge below one verdict: a shared note is settled
+        // by the first of them, never once per path of a shared graph.
+        if (!visited && completed is not null && !algorithm.IsModuleRoot && SharedBodies?.Holds(algorithm) == true
+            && CompletedBodyRegion.Of(completed.Facts, completed.Key, algorithm, _regionNames ??= new(new NameSetInterner())) is { } region)
+            visited = !(_regions ??= []).Add(region);
         if (algorithm.DeferredRegion is not null || visited)
         {
             _scope = previousScope;

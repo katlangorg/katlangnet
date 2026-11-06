@@ -378,6 +378,10 @@ public static class SemanticModelBuilder
             return hostOperationNames?.Contains(name) == true ? null : false;
         }
 
+        private SharedBodyCensus? _sharedBodies;
+        private RegionFreeNames? _regionNames;
+        private readonly HashSet<(CompletedBodyRegion Region, object? Binders)> _analyzedRegions = [];
+
         private sealed class FrameVisits
         {
             public HashSet<Expr>? ValueExpressions;
@@ -430,6 +434,7 @@ public static class SemanticModelBuilder
         public SemanticModel Build(Algorithm root, Dictionary<ScopeVisibility, IReadOnlyList<VisibleSymbol>>? eagerReference)
         {
             ModuleProvidedAlgorithmCollector.Collect(root, _moduleProvidedAlgorithms, _observations);
+            _sharedBodies = SharedBodyCensus.Of(root);
             VisitAlgorithm(root, _preludeScope, extraParameters: null);
             EmitScopeVisibilities(eagerReference);
 
@@ -482,6 +487,15 @@ public static class SemanticModelBuilder
             if (!visits.Algorithms.Add(new AlgorithmVisitKey(algorithm,
                 parentScope.PropertyScope.CompletedContext is not null && branchPattern is not null ? branchPattern
                     : extraParameters is { Count: > 0 } ? extraParameters : null)))
+                return;
+
+            // A shared body under a second parent whose free names select what they selected under the first is the same
+            // analysis: one host-graph body records one set of occurrences, never one per path of a shared graph. The module
+            // collector and the binder table keep their own regions; a body with no completed context stays per frame.
+            if (_sharedBodies?.Holds(algorithm) == true && !algorithm.IsModuleRoot && algorithm is not Algorithm.Builtin
+                && CompletedStructureContext.For(algorithm, parentScope.PropertyScope, branchPattern) is { } completed
+                && CompletedBodyRegion.Of(completed.Facts, completed.Key, algorithm, _regionNames ??= new(new NameSetInterner())) is { } sharedRegion
+                && !_analyzedRegions.Add((sharedRegion, extraParameters is { Count: > 0 } ? extraParameters : null)))
                 return;
 
             _observations?.RecordSemanticModelAlgorithmVisit();

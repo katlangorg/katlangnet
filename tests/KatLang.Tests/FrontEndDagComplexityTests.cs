@@ -1324,6 +1324,53 @@ public class FrontEndDagComplexityTests
         });
 
     /// <summary>
+    /// A deferred module region below a body two parents share: its forked continuation is an occurrence's own, so neither
+    /// detection nor exposure serves that body across parents, and each occurrence materializes the module by its own context.
+    /// </summary>
+    [Fact]
+    public Task SharedBodyHoldingADeferredRegion_IsNeverServedAcrossParents()
+        => AssertCompletesUnderWallClockGuard(async () =>
+        {
+            var downloads = 0;
+            var diagnostics = new DiagnosticBag();
+            var loader = CreateLoader(diagnostics, observations: null, (url, ct) =>
+            {
+                downloads++;
+                return ValueTask.FromResult("public X = 1");
+            });
+            Algorithm body = EmptyAlgorithm(new Expr.Resolve("X")) with { Opens = [LoadCall()] };
+            var shared = EmptyAlgorithm(new Expr.Call(new Expr.Resolve("F"), new OutputBundle([new Expr.Num(0)]))) with
+            {
+                Properties = [new Property("F", new Algorithm.Conditional(null, [], [new CondBranch(new Pattern.LitInt(0), body)]))],
+            };
+            Algorithm.User Parent() => EmptyAlgorithm(new Expr.Resolve("S")) with { Properties = [new Property("S", shared)] };
+            var root = EmptyAlgorithm(new Expr.Binary(BinaryOp.Add, new Expr.Resolve("Left"), new Expr.Resolve("Right"))) with
+            {
+                Properties = [new Property("Left", Parent()), new Property("Right", Parent())],
+            };
+
+            var elaborated = await loader.ElaborateAsync(root);
+            Assert.Empty(diagnostics);
+            var modules = new ModuleUnits(loader.ModuleUnits);
+            var observations = new FrontEndTraversalObservations();
+            var detectedInput = ParameterDetector.DetectPrevalidated(elaborated, null, observations, modules: modules);
+            Assert.Empty(detectedInput.Diagnostics);
+            Assert.Equal(0, observations.DetectorSharedRegionHits);
+            var resolved = ImplicitArgumentResolver.Resolve(detectedInput);
+            new ParameterPropertyCollisionValidator(diagnostics).VisitAlgorithm(resolved);
+            var exposure = new FrontEndTraversalObservations();
+            var exposed = PropertyExposureResolver.Resolve(resolved, observations: exposure, modules: modules);
+            modules.Publish(detectedInput.Operation!.Freeze());
+            Assert.Empty(diagnostics);
+            Assert.Equal(0, exposure.ExposureSharedRegionHits);
+
+            var result = await Evaluator.RunFlatAsync(new Expr.AlgorithmExpr(exposed));
+            Assert.False(result.IsError, result.IsError ? result.Error.ToString() : null);
+            Assert.Equal([2m], result.Value);
+            Assert.Equal(1, downloads);
+        });
+
+    /// <summary>
     /// A load beneath a DIAMOND of nested clause families — at every level two families share
     /// ONE branch body, so the root-to-load paths double per level (B2c). Initial elaboration
     /// never descends into an alternative branch body: it expands the root and its output

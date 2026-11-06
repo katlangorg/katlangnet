@@ -111,6 +111,9 @@ internal sealed class StaticKeyTable
         => _firstDefinitions.GetValueOrDefault((body.IsModuleRoot ? Root : parent,
             OpenProviderIdentity.DeclarationOf(body), body.IsModuleRoot ? null : region));
 
+    /// <summary>Definitions this table has interned, one per context of a body.</summary>
+    internal int DefinitionCount => _definitions.Count;
+
     internal StaticScopeKey? KnownDefinitionIn(StaticScopeKey parent, Algorithm body, object? region)
         => _definitions.GetValueOrDefault((body.IsModuleRoot ? Root : parent, body, body.IsModuleRoot ? null : region));
 

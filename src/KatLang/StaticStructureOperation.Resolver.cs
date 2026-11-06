@@ -41,7 +41,7 @@ internal sealed partial class StaticStructureOperation
         if (ReferenceEquals(key, Queries.Keys.Root)) return null;
         if (_resolverLevels.TryGetValue(key, out var level)) return level;
         var parent = ResolverLevel(key.Parent!);
-        var body = Published(key, StaticPublicationStage.Detected) ?? SourceOf(key);
+        var body = DetectedView(key) ?? SourceOf(key);
         Queries.Resources.Metadata(8);
         level = new(body, OwnersOf(key), parent, staticContext: Context(key)) { Raw = true };
         _resolverLevels.Add(key, level);
@@ -58,7 +58,7 @@ internal sealed partial class StaticStructureOperation
     {
         var parent = key.Parent ?? Queries.Keys.Root;
         var level = ResolverLevel(parent);
-        var value = Published(key, StaticPublicationStage.Detected) ?? SourceOf(key);
+        var value = DetectedView(key) ?? SourceOf(key);
         return new(value, OpenProviderIdentity.DeclaredIn(value, OwnersOf(parent)), OwnersOf(parent), level) { Raw = true };
     }
 

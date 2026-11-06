@@ -1493,6 +1493,26 @@ internal static class PropertyDependencyGraphBuilder
         internal long ExpansionCycleCuts;
         internal Dictionary<(string Left, string Right), ResolvedOpenCandidate>? UnitedCandidates;
 
+        /// <summary>The bodies of the exposure input reached through several paths; null outside exposure, or when none is.</summary>
+        internal SharedBodyCensus? SharedBodies;
+        private RegionFreeNames? _regionNames;
+        private Dictionary<CompletedBodyRegion, CompletedStructureContext>? _sharedRegions;
+
+        /// <summary>
+        /// The context whose summary stands for <paramref name="context"/>: the first one of the same shared body whose free
+        /// names select the same declarations (<see cref="CompletedBodyRegion"/>). A summary's anchored origins lie in that
+        /// representative, whose chain answers every escaping name exactly as this context's does, and every context below
+        /// a representative is summarized once. Only the summary memo uses it: actual keys and publications stay distinct.
+        /// </summary>
+        internal CompletedStructureContext SharedRegionContext(CompletedStructureContext context, Algorithm body)
+        {
+            if (SharedBodies?.Holds(body) != true || body.IsModuleRoot) return context;
+            _regionNames ??= new(new NameSetInterner());
+            if (CompletedBodyRegion.Of(context.Facts, context.Key, body, _regionNames) is not { } region) return context;
+            _sharedRegions ??= new();
+            return _sharedRegions.TryAdd(region, context) ? context : _sharedRegions[region];
+        }
+
         internal readonly BranchContextInterner BranchContexts = new();
         private readonly Dictionary<Algorithm, CompletedStructureContext> _analysisContexts = new(ReferenceEqualityComparer.Instance);
         internal CompletedStructureContext AnalysisContextOf(Algorithm body)
@@ -2094,6 +2114,7 @@ internal static class PropertyDependencyGraphBuilder
         var context = exactContext ?? (memos.CompletedContext is { } parent
             ? ChildContext(parent, algorithm) : memos.SharedMemo.AnalysisContextOf(algorithm));
         context = memos.SharedMemo.RequirementContext(context, algorithm)!;
+        context = memos.SharedMemo.SharedRegionContext(context, algorithm);
         var independent = memos.SharedMemo.IndependentAlgorithmSummaries ??= new(ReferenceEqualityComparer.Instance);
         var canShare = context.Key.BindingRegion is null;
         if (canShare && independent.TryGetValue(algorithm, out var shared)) return shared;
@@ -2552,6 +2573,7 @@ internal static class PropertyDependencyGraphBuilder
         CompletedStructureContext? completedContext)
     {
         completedContext = sharedMemo.SummaryRegion(completedContext, branch.Body);
+        if (completedContext is not null) completedContext = sharedMemo.SharedRegionContext(completedContext, branch.Body);
         if (completedContext is not null) key = key with { Scope = completedContext.Key, Facts = completedContext.Facts };
         var independentKey = key with { Scope = null, Facts = null };
         var independent = sharedMemo.IndependentBranchSummaries ??= new();

@@ -216,9 +216,9 @@ public sealed class SignatureSelectionReviewRegressionTests
     /// <summary>
     /// Review checkpoint 3b: ONE host-built, name-resolved body <c>S = { public Q = { public V = { public W = 1 ⏎ public T =
     /// Top ⏎ 0 } ⏎ public U = V ⏎ 0 } ⏎ 0 }</c> under <c>Left</c> and <c>Right</c>. Resolution processes it once and serves
-    /// <c>Right.S</c> from that processing, while exposure copies <c>Right.S</c>'s subtree; every context below
+    /// <c>Right.S</c> from that processing, and exposure shares its one rewritten body between both; every context below
     /// <c>Right.S</c>, however deep, still has completed facts of its OWN: one key per context by every route (a key another
-    /// unit or a consumer constructs reads the same facts), the copy the exposed tree holds there, its own declaring identity,
+    /// unit or a consumer constructs reads the same facts), the view the exposed tree holds there, its own declaring identity,
     /// and its selections re-based onto it — a target inside the region is this occurrence's context, one outside it
     /// (<c>Top</c>) the same declaration from both occurrences.
     /// </summary>
@@ -249,7 +249,7 @@ public sealed class SignatureSelectionReviewRegressionTests
         Assert.True(graph.IsReach(rightKeys[0]), "Right.S is not served from Left.S's processing, so nothing below it is projected.");
         var leftBodies = WrittenPath(exposed.Properties.Single(property => property.Name == "Left").Value, path);
         var rightBodies = WrittenPath(exposed.Properties.Single(property => property.Name == "Right").Value, path);
-        Assert.NotSame(leftBodies[1], rightBodies[1]);
+        Assert.Same(leftBodies[1], rightBodies[1]);
         var owners = DeclaringOwners.Root.Inside(root).Inside(right);
         for (var depth = 0; depth < path.Length; depth++)
         {
@@ -258,9 +258,9 @@ public sealed class SignatureSelectionReviewRegressionTests
             Assert.NotSame(leftKeys[depth], rightKeys[depth]);
             Assert.Same(leftBodies[depth], leftFacts.Body);
             Assert.Same(rightBodies[depth], rightFacts.Body);
-            // Each occurrence's copy has a context of its own in the context-free body index.
-            Assert.Same(leftKeys[depth], graph.ExactContext(leftBodies[depth])!.Key);
-            Assert.Same(rightKeys[depth], graph.ExactContext(rightBodies[depth])!.Key);
+            // One view in two occurrences has no context of its own in the context-free index: the occurrence names it.
+            Assert.Throws<ArgumentException>(() => graph.ExactContext(rightBodies[depth]));
+            Assert.Same(leftKeys[depth], graph.Child(depth == 0 ? leftKey : leftKeys[depth - 1], leftBodies[depth]));
             Assert.Same(rightKeys[depth], graph.Child(depth == 0 ? rightKey : rightKeys[depth - 1], rightBodies[depth]));
             Assert.Same(rightKeys[depth], rightFacts.Open.Target);
             Assert.Same(rightKeys[depth], rightFacts.Receiver.Target);
@@ -410,7 +410,6 @@ public sealed class SignatureSelectionReviewRegressionTests
             {
                 Assert.Same(body, graph.Facts(key)!.Body);
                 Assert.Same(key, graph.Child(keys[1], body));
-                Assert.Same(key, graph.ExactContext(body)!.Key);
                 Assert.Same(key, graph.Facts(key)!.Open.Target);
             }
         }
@@ -422,7 +421,7 @@ public sealed class SignatureSelectionReviewRegressionTests
 
     /// <summary>
     /// Review checkpoint 4b: the same two definitions written as INLINE blocks of <c>Q</c>'s output — no member name to go by —
-    /// keep their own contexts on both sides too: retargeting matches each exposed copy through the view it was copied from.
+    /// keep their own contexts on both sides too, each exposed block through its occurrence's <c>Child</c>.
     /// </summary>
     [Fact]
     public void InlineDefinitionsSharingADeclaration_BelowAServedRegion_KeepTheirOwnContexts()
@@ -495,8 +494,8 @@ public sealed class SignatureSelectionReviewRegressionTests
 
     /// <summary>
     /// <paramref name="q"/> as <c>Q</c> of ONE name-resolved body shared by <c>Left.S</c> and <c>Right.S</c>: on both sides, each
-    /// inline block <paramref name="blocksOf"/> finds in the exposed <c>Q</c> has a context of its own, by <c>Child</c> and
-    /// <c>ExactContext</c> alike, with that exposed block as its body.
+    /// inline block <paramref name="blocksOf"/> finds in the exposed <c>Q</c> has a context of its own by <c>Child</c>, with
+    /// that exposed block as its body.
     /// </summary>
     private static void AssertInlineDefinitionsKeepTheirOwnContexts(Algorithm.User q, Func<Algorithm, IEnumerable<Expr>> blocksOf)
     {
@@ -523,7 +522,6 @@ public sealed class SignatureSelectionReviewRegressionTests
                 var key = graph.Child(keys[1], block);
                 Assert.NotNull(key);
                 Assert.Same(block, graph.Facts(key)!.Body);
-                Assert.Same(key, graph.ExactContext(block)!.Key);
                 contexts.Add(key);
             }
         }
