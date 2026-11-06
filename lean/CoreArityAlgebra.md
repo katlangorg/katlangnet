@@ -477,8 +477,7 @@ production success), no structural or literal pattern, and no VALUE demand. R5 c
 the total public `demandNeed` collector arm to `NeedDemand.materialize` by
 `KatLang.NeedControl.Production.demand_specialization` and `collector_specialization`, and
 proves its exact list construction with `collector_success` in
-`KatLangArityLaws/NeedControl.lean`. The partial `demandNeedRecursive` driver's wiring
-remains source/guard evidence;
+`KatLangArityLaws/NeedControl.lean`. Since R7 the `demandNeedRecursive` driver is a body of the total core;
 `makeCollectionListResult = (collectSegment ·, 1)` is a theorem
 (`make_collection_list_result_is_collect_segment`); `collect` corresponds to `collectSegment` by
 construction and executable guards. `bindDeconstruct`'s

@@ -1,20 +1,6 @@
 # Binding architecture ownership
 
-Lean R5 (2026-10-15) extracts total supply and collector-demand control without changing
-this C# implementation. `NeedSupply` is the one concrete `EvalM` formation core, with only
-computed-spread evaluation injected. `NeedDemand` sequences collector VALUE demands and
-publishes completion into the current cell. The total public entry points specialize these
-helpers; recursive evaluator callers install the same helpers through the thin partial
-`demandNeedRecursive` driver. `KatLangArityLaws/NeedControl.lean` proves formation provenance,
-ordered exact-list materialization, failure-state retention, memo publication and qualified
-heap invariants. The driver and expression evaluator remain opaque; whole-run heap refinement
-and R7 remain open. S5 (2026-10-18) proves the binder's correspondence over formed supplies
-(`KatLangArityLaws/SupplyCorrespondence.lean`) and Q-28's repeated-name laws
-(`KatLangArityLaws/RepeatedNameLaws.lean`), both under stated premises; S6a (2026-10-20) extends the
-repeated-name laws to validated nested and mixed heads with a production stability instance for the
-binder channels on completed and Ready cells (`KatLangArityLaws/NestedRepeatedNames.lean`) and widens
-callable-identity transitivity (`KatLangArityLaws/CallableIdentityDomain.lean`). These are Lean
-theorems; C# behavior is supported by tests.
+Proof status: this file describes the C# runtime. Which of its laws are proved, for which model, is the ledger `docs/design/formal-correspondence-ledger.md`; a Lean theorem about the evaluator or binder is not a proof about this C# code, whose agreement rests on the differential corpora and tests. In short: Lean's supply and collector control is total (`NeedSupply`, `NeedDemand`, R5; `KatLangArityLaws/NeedControl.lean`); since R7 the recursive evaluator and `demandNeedRecursive` are bodies of the total fuel-indexed core, with the production bridge, whole-run heap discipline and address invariant proved (`EvaluatorCore.lean`, `EvaluatorDiscipline.lean`, `AddressInvariantProduction.lean`), and the opaque part left is the validation and wiring prefix of `runResultM`. The repeated-name and supply-correspondence laws (`RepeatedNameLaws.lean`, `NestedRepeatedNames.lean`, `SupplyCorrespondence.lean`) hold under their stated premises.
 
 ## Canonical runtime
 

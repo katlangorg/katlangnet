@@ -656,6 +656,12 @@ internal sealed class FrontEndTraversalObservations
     /// <summary>Called after each step with its number. Test-only, like every observer: production runs carry none.</summary>
     internal Action<long>? OnSignatureSelectionStep { get; init; }
 
+    /// <summary>
+    /// Called once per signature selection with what it read and what it decided (the correspondence bridge's read of the
+    /// real selector, <see cref="SignatureSelectionProbe"/>). Test-only: production runs carry none, and it changes nothing.
+    /// </summary>
+    internal Action<SignatureSelectionProbe>? OnSignatureSelection { get; init; }
+
     internal void RecordSignatureSelectionStep()
     {
         SignatureSelectionSteps = checked(SignatureSelectionSteps + 1);

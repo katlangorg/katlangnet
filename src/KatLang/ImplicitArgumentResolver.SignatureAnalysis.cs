@@ -678,6 +678,13 @@ internal static partial class ImplicitArgumentResolver
         var closed = new SignatureFact([], null, isLifted: false, composition: null, new CallableSignature("", []));
         var selection = new SignatureSelector(references, isLink, Compose, Seal, closed,
             operation.Queries.Resources, run.CancellationToken).Solve();
+        if (run.Observations?.OnSignatureSelection is { } observer)
+        {
+            observer(new SignatureSelectionProbe(
+                [.. equations.Select((body, index) => new SignatureSelectionProbeEquation(
+                    body.Name, body.Written.ParameterPatterns, [.. body.Forwardable.BoundNames], body.IsLink, references[index]))],
+                selection, Compose, closed));
+        }
 
         var facts = new Dictionary<StaticScopeKey, SignatureFact>(selection.Facts.Count, ReferenceEqualityComparer.Instance);
         foreach (var (index, fact) in selection.Facts)

@@ -1263,7 +1263,8 @@ executes both counterexamples) and stay as stated; FG-H1-FU-01, below, replaces 
 uses by premise-free theorems over the stronger invariant `Inv`. NOT covered HERE (covered by
 FG-H1-FU-01's `Inv`): addresses inside results (`callRef`, `argView`, completed outcomes), Ready
 payloads, prepared plan supplies, `callee` / `receiver` / `aliasBare`, `aliasCells`, `ValEnv`;
-covered nowhere: any VALUE/CALLABLE acyclicity. Guards `HeapAddressValidityGuards.lean`
+acyclicity: see `docs/design/formal-correspondence-ledger.md` § Acyclicity (collector edges proved, stored addresses
+refuted, demand cycles reachable). Guards `HeapAddressValidityGuards.lean`
 (actual production runs; negative witnesses: each dropped premise makes the universal statement
 false, reversed collector order rejected). Report
 `artifacts/validation/fg-h1/fg-h1-implementation-report.md`.
@@ -3371,3 +3372,5 @@ machinery it pinned. Coverage: `SignatureSelectionTests`, `SignatureSelectionRev
 whole-system G6 oracle, W14u, served regions and the projections below them, same-tree retries). Full text: `docs/design/language-rules/
 ownership-and-lookup.md` § Signature selection; design: `docs/design/static-structure-resolver-2026-10.md` § 10.
 NEED-04, repeated-name matching and `Same(x, x)` are untouched. V3.
+
+- **SC-1 and FC-AC — the signature-completion reference kernel, its native bridge, and the acyclicity audit (November 2026).** New Lean, no language change, no Lean change to `KatLang.lean`. `lean/KatLangArityLaws/SignatureCompletion*.lean` is a FRONT-END REFERENCE MODEL of the finite equation system `SignatureSelector` receives, over the authoritative `ParameterPattern`, `minimumSuppliedSlots` and `signatureViolation?`; it is not the Lean evaluator and FORMAL-02 stands: Lean still models no signature construction in `KatLang.lean`. Theorems over it (`select_obligations`, `select_relabel`, `acyclic_agrees`, `nonSettling_never_settles`, `select_verdict_stable`, `composeFact_ordered`, `no_pending_cell`) are about the kernel. `SignatureCompletionBridgeTests` runs 299 programs through the real analysis and selector and compares every outcome with what the kernel computes (the outcomes file has one writer, `lean/SignatureCompletionBridgeEmit.lean`, and `#guard renderCorpus bridgeCases == committedOutcomes` in `SignatureCompletionGuards.lean` recomputes it in the Lean phase): finite executable evidence, not a proof about C#. The one production change is a test-only observer (`FrontEndTraversalObservations.OnSignatureSelection`, `SignatureSelectionProbe`); production runs carry none. `HeapEdgeAcyclicity.lean` proves collector slice edges acyclic for production, and `HeapEdgeAcyclicityGuards.lean` refutes acyclicity of all stored addresses with a valid program. Status of every claim: `docs/design/formal-correspondence-ledger.md`. V3.

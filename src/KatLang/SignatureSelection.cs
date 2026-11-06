@@ -53,6 +53,25 @@ internal sealed class SignatureFact(
     public bool IsNonempty => Patterns.Count != 0;
 }
 
+/// <summary>One equation exactly as a selection received it from the analysis (the correspondence bridge's input).</summary>
+internal sealed record SignatureSelectionProbeEquation(
+    string Name,
+    IReadOnlyList<ParameterPattern> Own,
+    IReadOnlyList<string> Forwardable,
+    bool IsLink,
+    IReadOnlyList<SignatureEquationReference> References);
+
+/// <summary>
+/// One real selection, as the correspondence bridge observes it (<see cref="FrontEndTraversalObservations.OnSignatureSelection"/>):
+/// the analyzed equations it read, the outcome it reached, and its own composition law, so a control can run the real
+/// selector over a deliberately changed system while the operation is alive. Test-only; it is valid during the callback.
+/// </summary>
+internal sealed record SignatureSelectionProbe(
+    IReadOnlyList<SignatureSelectionProbeEquation> Equations,
+    SignatureSelector.Selection Selection,
+    SignatureSelector.Compose Compose,
+    SignatureFact Closed);
+
 /// <summary>Why a selection published nothing for a group of equations: rule G6's categories (B3-5★).</summary>
 internal enum SignatureSelectionOutcome : byte
 {

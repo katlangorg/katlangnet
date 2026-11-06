@@ -45,7 +45,11 @@ internal static class RegenerationFlags
         Prefix + "HOST_PARENT_DIFFERENTIAL",
         "lean/CoreTests/HostParentDifferential.lean");
 
-    public static readonly IReadOnlyList<RegenerationFlag> All = [LanguageSpec, SemanticExplorer, PublicApi, HostParentDifferential];
+    public static readonly RegenerationFlag SignatureCompletionBridge = new(
+        Prefix + "SIGNATURE_COMPLETION_BRIDGE",
+        "lean/KatLangArityLaws/SignatureCompletionBridgeCases.lean");
+
+    public static readonly IReadOnlyList<RegenerationFlag> All = [LanguageSpec, SemanticExplorer, PublicApi, HostParentDifferential, SignatureCompletionBridge];
 }
 
 /// <summary>
