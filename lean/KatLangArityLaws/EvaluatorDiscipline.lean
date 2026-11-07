@@ -1071,7 +1071,7 @@ theorem EvalBody.evalSequenceSpreadCounted_disciplined (rec : EvalRec) (hrec : �
 
 theorem EvalBody.transparentCollectorSlice_disciplined (rec : EvalRec) (hrec : ∀ c, Disciplined (rec c)) (e : Expr) (ctx : EvalCtx) :
     Disciplined (EvalBody.transparentCollectorSlice? rec e ctx) := by
-  unfold EvalBody.transparentCollectorSlice? collectorSliceAt?; disc_tac
+  unfold EvalBody.transparentCollectorSlice?; disc_tac
 
 theorem EvalBody.evalSupplySpread_disciplined (rec : EvalRec) (hrec : ∀ c, Disciplined (rec c)) (e : Expr) (ctx : EvalCtx) (env : ValEnv) :
     Disciplined (EvalBody.evalSupplySpread rec e ctx env) := by

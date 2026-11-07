@@ -538,6 +538,9 @@ theorem open_structure_never_consults_an_open (fuel : Nat) (ctx : EvalCtx) (p : 
 Audit finding A-2, owner decision November 2026: a single-star spread of a written name or accessible
 member path whose read goes through transparent references only to a parameter row whose own cell is a collector
 transports that cell's exact slice, as a direct `xs*` does (`EvalBody.transparentCollectorSlice?`).
+Extended the same month across ordinary argument boundaries: a parameter holding a suspended written
+reference (`Pass(A)`, `Pass(Box.A)` with `Pass(v) = Coll(v*)`) opens what that reference retains,
+through `EvalBody.retainedCellSlice?`, while staying one argument cell.
 The row test reads the alias classification alone. A carrier, a static terminal, a non-parameter row
 and any spread operand that is no written static reference have no row, whatever their values would
 be. A member path (`Box.A*`) is classified by the path selection of an alias over that path
@@ -568,17 +571,21 @@ theorem parameter_row_of_a_transparent_reference (p : Option ScopeCtx) (op : Lis
     (AliasTerminal.runtime (.alias p op pr (.param name) id true) false).transparentParameterRow? =
       some (.alias p op pr (.param name) id true, .param name) := rfl
 
-/-- Only a single-star spread of a written static reference is classified: a selection, a call, a
-    calculation, a bare inline block, a parameter (`spreadCollectorSlice?`'s own arm), a parameter-headed
-    path and a stacked star never are. -/
+/-- Only a single-star spread of a parameter or a written static reference is classified: a selection,
+    a call, a calculation, a bare inline block, a parameter-headed path and a stacked star never are. -/
 theorem no_slice_without_a_static_reference (rec : EvalRec) (e : Expr) (ctx : EvalCtx)
+    (hparam : ∀ reference name, e = .sequenceSpread reference → reference ≠ .param name)
     (hpath : ∀ reference, e = .sequenceSpread reference → Expr.staticAliasPath? reference = none) :
     EvalBody.transparentCollectorSlice? rec e ctx = pure none := by
   unfold EvalBody.transparentCollectorSlice?
   split
   · rename_i reference
-    simp only [EvalBody.transparentRetainedCell?, hpath reference rfl]
-    rfl
+    have hcell : EvalBody.transparentRetainedCell? rec reference ctx = pure none := by
+      simp only [EvalBody.transparentRetainedCell?, hpath reference rfl]
+    unfold EvalBody.writtenCollectorSlice?
+    cases reference
+    case param name => exact (hparam _ name rfl rfl).elim
+    all_goals (simp only [hcell]; rfl)
   · rfl
 
 /-- A path headed by a parameter is no static reference (its receiver is a cell's runtime projection),
@@ -621,6 +628,61 @@ theorem transparent_slice_transports (rec : EvalRec) (e : Expr) (ctx : EvalCtx) 
   unfold EvalBody.evalSupplySpread
   simp only [KatLang.CallPlan.bind_run, hslice, KatLang.NeedControl.Provenance.reopen_run]
   rfl
+
+/-- **A spread reads the one retained-slice rule.** Spreading a parameter or static reference is the
+    written-receiver rule the selective observers read; there is no spread-specific resolver. -/
+theorem spread_slice_is_the_written_slice (rec : EvalRec) (reference : Expr) (ctx : EvalCtx) :
+    EvalBody.transparentCollectorSlice? rec (.sequenceSpread reference) ctx =
+      EvalBody.writtenCollectorSlice? rec reference ctx := rfl
+
+/-- **A parameter's spread reads the cell it holds.** `v*` starts from `v`'s own cell, found as
+    `supplyNeed` finds it, so what that cell retains is decided at the spread. -/
+theorem parameter_spread_reads_its_cell (rec : EvalRec) (name : Ident) (ctx : EvalCtx)
+    (s : EvalState) (address : Nat)
+    (haddress : (parameterNeedAddress? name ctx).runState s = (.ok (some address), s)) :
+    (EvalBody.transparentCollectorSlice? rec (.sequenceSpread (.param name)) ctx).runState s =
+      (EvalBody.retainedSliceAt? rec address).runState s := by
+  simp only [spread_slice_is_the_written_slice, EvalBody.writtenCollectorSlice?,
+    KatLang.CallPlan.bind_run, haddress]
+
+/-- One step of a retained chain in the state `s`: the cell at `start` is a suspended written expression
+    whose read reaches the cell at `next`, by a classification that leaves the state untouched. -/
+def RetainedHop (rec : EvalRec) (s : EvalState) (start next : Nat) : Prop :=
+  ∃ cell source caller values,
+    s.needs[start]? = some cell ∧ cell.suspension = .expression source caller values ∧
+      (EvalBody.transparentRetainedCell? rec source caller).runState s = (.ok (some next), s)
+
+/-- A forwarding chain of reference cells, in order. -/
+inductive RetainedChain (rec : EvalRec) (s : EvalState) : Nat → List Nat → Nat → Prop where
+  | done (address : Nat) : RetainedChain rec s address [] address
+  | hop {start next last : Nat} {hops : List Nat} :
+      RetainedHop rec s start next → RetainedChain rec s next hops last →
+      RetainedChain rec s start (next :: hops) last
+
+/-- **An ordinary argument boundary loses nothing.** However many reference cells separate a cell from
+    a collector, each one written by a further fixed-parameter boundary, the rule reads exactly the
+    collector's slice, in one walk over cells, given fuel for the hops: nothing is demanded, allocated or
+    written, and neither the reference cells nor the collector's own VALUE are touched. -/
+theorem reference_chain_retains_the_collector (rec : EvalRec) (s : EvalState) {start last : Nat}
+    {hops : List Nat} (hchain : RetainedChain rec s start hops last)
+    (cell : NeedCell) (slice : List Nat) (fuel : Nat)
+    (hcell : s.needs[last]? = some cell) (hslice : cell.suspension = .collector slice) :
+    (EvalBody.retainedCellSlice? rec (fuel + hops.length + 1) start).runState s = (.ok (some slice), s) := by
+  induction hchain generalizing fuel with
+  | done address =>
+    simp only [EvalBody.retainedCellSlice?, KatLang.CallPlan.bind_run, List.length_nil, Nat.add_zero]
+    rw [show (get : EvalM EvalState).runState s = (.ok s, s) from rfl]
+    simp only [hcell, hslice]
+    rfl
+  | @hop start next last hops hhop _ ih =>
+    obtain ⟨hopCell, source, caller, values, hat, hsuspended, hread⟩ := hhop
+    have hfuel : fuel + (next :: hops).length + 1 = (fuel + hops.length + 1) + 1 := by
+      simp only [List.length_cons]; omega
+    rw [hfuel]
+    simp only [EvalBody.retainedCellSlice?, KatLang.CallPlan.bind_run]
+    rw [show (get : EvalM EvalState).runState s = (.ok s, s) from rfl]
+    simp only [hat, hsuspended, KatLang.CallPlan.bind_run, hread]
+    exact ih fuel hcell
 
 /-- **The same retained cell.** The cell a transparent reference's slice is read from IS the alias's
     binding cell, the one its bare read and CALLABLE use: a parameter row's own cell, nothing allocated. -/

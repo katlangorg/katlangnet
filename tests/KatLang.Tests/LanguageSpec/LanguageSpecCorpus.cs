@@ -402,6 +402,71 @@ public static class LanguageSpecCorpus
         },
         new()
         {
+            Id = "collector-reference-argument-keeps-known-slice",
+            Category = "variadic-calls",
+            Source = "Coll(*ys) = 0\nPass(v) = Coll(v*)\nF(*xs) = {\n    A = xs\n    Pass(A)\n}\nF(1 / 0)",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "0",
+            ExpectedRaw = "0",
+            ExpectedEmittedCount = 1,
+            Probes =
+            [
+                new SpecProbe("Coll(*ys) = 0\nPass(v) = Coll(v*)\nF(*xs) = Pass(xs)\nF(1 / 0)", "ok raw=0 n=1"),
+                new SpecProbe("Coll(*ys) = 0\nPass(v) = Coll(v*)\nF(*xs) = {\n    Box = {\n        public A = xs\n        0\n    }\n    Pass(Box.A)\n}\nF(1 / 0)", "ok raw=0 n=1"),
+                new SpecProbe("Coll(*ys) = 0\nPass(v) = Coll(v*)\nRelay(w) = {\n    B = w\n    Pass(B)\n}\nF(*xs) = {\n    A = xs\n    Relay(A)\n}\nF(1 / 0)", "ok raw=0 n=1"),
+                new SpecProbe("Coll(*ys) = ys\nPass(v) = Coll(v*)\nF(*xs) = {\n    A = xs\n    Pass(A)\n}\nF()", "ok raw=L[] n=1"),
+                new SpecProbe("Coll(*ys) = ys\nPass(v) = Coll(v*)\nF(*xs) = {\n    A = xs\n    Pass(A)\n}\nF([1], 2)", "ok raw=L[L[1], 2] n=1"),
+            ],
+            Explanation = "A transparent reference passed as one ordinary argument stays that one argument, and it keeps its way to the collector's original computations: the later explicit `v*` opens them unevaluated, exactly as with `Pass(xs)`, so the failing `1 / 0` is never demanded.",
+        },
+        new()
+        {
+            Id = "collector-reference-argument-is-one-argument",
+            Category = "variadic-calls",
+            Source = "Count(*ys) = ys.count\nPass(v) = Count(v), Count(v*)\nF(*xs) = {\n    A = xs\n    Pass(A)\n}\nF(1 / 0, 2, 3)",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "(1, 3)",
+            ExpectedRaw = "S[1, 3]",
+            ExpectedEmittedCount = 1,
+            Explanation = "Without a star the reference is one argument, however many elements the collector holds; only the explicit star opens its three positions.",
+        },
+        new()
+        {
+            Id = "collector-reference-argument-keeps-callable-elements",
+            Category = "variadic-calls",
+            Source = "Inc(x) = x + 1\nApply(f, *rest) = f(9)\nPass(v) = Apply(v*)\nF(*xs) = {\n    A = xs\n    Pass(A)\n}\nF(Inc, 1 / 0)",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "10",
+            ExpectedRaw = "10",
+            ExpectedEmittedCount = 1,
+            Explanation = "The spread opens the original arguments, not their values, so the collected algorithm stays invocable and the unused failing element is never demanded.",
+        },
+        new()
+        {
+            Id = "collector-reference-argument-arity-precedes-elements",
+            Category = "errors",
+            Source = "Two(a, b) = a\nPass(v) = Two(v*)\nF(*xs) = {\n    A = xs\n    Pass(A)\n}\nF(1 / 0)",
+            Outcome = SpecOutcome.EvalError,
+            ExpectedErrorCategory = "arity",
+            Explanation = "The opened supply has a known count, so the wrong-arity call is rejected before the failing element could be demanded.",
+        },
+        new()
+        {
+            Id = "collector-reference-argument-carrier-stays-arbitrary",
+            Category = "errors",
+            Source = "Coll(*ys) = 0\nPass(v) = Coll(v*)\nF(*xs) = {\n    A = { xs }\n    Pass(A)\n}\nF(1 / 0)",
+            Outcome = SpecOutcome.EvalError,
+            ExpectedErrorCategory = "div0",
+            Probes =
+            [
+                new SpecProbe("Coll(*ys) = 0\nPass(v) = Coll(v*)\nId(*zs) = zs\nF(*xs) = Pass(Id(xs))\nF(1 / 0)", "err div0"),
+                new SpecProbe("Coll(*ys) = 0\nPass(v) = Coll(v*)\nF(x) = {\n    A = x\n    Pass(A)\n}\nF(1 / 0)", "err div0"),
+                new SpecProbe("Pass(v) = v\nF(*xs) = {\n    A = xs\n    Pass(A)\n}\nF(1 / 0)", "err div0"),
+            ],
+            Explanation = "Written braces, a call and a fixed parameter holding an ordinary computation are computations, not references to a retained collector, so the spread evaluates them when it is formed; reading the collector as a whole value stays eager too.",
+        },
+        new()
+        {
             Id = "selective-collector-count-reads-positions",
             Category = "variadic-calls",
             Source = "CountItems(*xs) = xs.count\nCountItems(1 / 0)",
@@ -559,10 +624,10 @@ public static class LanguageSpecCorpus
                 new SpecProbe("Coll(*ys) = 0\nF(x) = {\n    Box = {\n        public A = x\n        0\n    }\n    Coll(Box.A*)\n}\nF(1 / 0)", "err div0"),
                 new SpecProbe("Coll(*ys) = 0\nF(*xs) = {\n    Box = {\n        public A = xs\n        0\n    }\n    Coll(Box.A**)\n}\nF(1 / 0)", "err div0"),
                 new SpecProbe("Coll(*ys) = 0\nF(*xs) = {\n    Box = {\n        public A = xs\n        0\n    }\n    Coll(Box.A()*)\n}\nF(1 / 0)", "err div0"),
-                new SpecProbe("Coll(*ys) = 0\nPass(v) = Coll(v*)\nF(*xs) = {\n    Box = {\n        public A = xs\n        0\n    }\n    Pass(Box.A)\n}\nF(1 / 0)", "err div0"),
+                new SpecProbe("Coll(*ys) = 0\nPass(v) = Coll(v*)\nF(*xs) = {\n    Box = {\n        public A = { xs }\n        0\n    }\n    Pass(Box.A)\n}\nF(1 / 0)", "err div0"),
                 new SpecProbe("Coll(*ys) = 0\nBox = {\n    public A = 1 / 0\n    0\n}\nColl(Box.A*)", "err div0"),
             ],
-            Explanation = "A selected member keeps its own kind: written braces, a calculation or a fixed parameter holding an ordinary computation is no known slice, and neither is a stacked star, a call of the member, or a reference passed as one ordinary argument and spread by the callee.",
+            Explanation = "A selected member keeps its own kind: written braces, a calculation or a fixed parameter holding an ordinary computation is no known slice, and neither is a stacked star or a call of the member, even when it is passed as one ordinary argument and spread by the callee.",
         },
         new()
         {

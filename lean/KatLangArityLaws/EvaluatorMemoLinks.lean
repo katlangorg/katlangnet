@@ -1571,7 +1571,7 @@ theorem EvalBody.evalSequenceSpreadCounted_linkDisc (rec : EvalRec) (hrec : ∀ 
 
 theorem EvalBody.transparentCollectorSlice_linkDisc (rec : EvalRec) (hrec : ∀ c, LinkDisc (rec c)) (e : Expr) (ctx : EvalCtx) :
     LinkDisc (EvalBody.transparentCollectorSlice? rec e ctx) := by
-  unfold EvalBody.transparentCollectorSlice? collectorSliceAt?; link_tac
+  unfold EvalBody.transparentCollectorSlice?; link_tac
 
 theorem EvalBody.evalSupplySpread_linkDisc (rec : EvalRec) (hrec : ∀ c, LinkDisc (rec c)) (e : Expr) (ctx : EvalCtx) (env : ValEnv) :
     LinkDisc (EvalBody.evalSupplySpread rec e ctx env) := by

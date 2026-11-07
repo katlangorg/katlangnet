@@ -247,9 +247,10 @@ public sealed partial class CollectingCallableForwardingLawTests
     [InlineData("Coll(*ys) = 0\nF(x) = {\nA = x\nColl(A*)\n}\nF(1 / 0)", "DivisionByZero/DivByZero")]
     [InlineData("Coll(*ys) = 0\nF(x) = Coll(x*)\nF(1 / 0)", "DivisionByZero/DivByZero")]
     [InlineData(Inline + "Coll(*ys) = 1\nPass(f) = {\nA = f\nColl(A*)\n}\nPass(Inc)", "ArityMismatch/ArityMismatch")]
-    // A reference supplied as one argument is that argument's computation, not a retained collector cell.
-    [InlineData("Coll(*ys) = 0\nPass(v) = Coll(v*)\nF(*xs) = {\nA = xs\nPass(A)\n}\nF(1 / 0)", "DivisionByZero/DivByZero")]
-    [InlineData("Coll(*ys) = 0\nPass(v) = Coll(v*)\nF(*xs) = {\n" + BoxA + "\nPass(Box.A)\n}\nF(1 / 0)", "DivisionByZero/DivByZero")]
+    // A carrier supplied as one argument is that argument's computation, not a retained collector; a
+    // transparent reference supplied so keeps its slice (CollectorReferenceArgumentTransportTests).
+    [InlineData("Coll(*ys) = 0\nPass(v) = Coll(v*)\nF(*xs) = {\nA = { xs }\nPass(A)\n}\nF(1 / 0)", "DivisionByZero/DivByZero")]
+    [InlineData("Coll(*ys) = 0\nPass(v) = Coll(v*)\nF(*xs) = {\nBox = {\npublic A = { xs }\n0\n}\nPass(Box.A)\n}\nF(1 / 0)", "DivisionByZero/DivByZero")]
     // A member over a fixed parameter holding an ordinary computation, a structural collector and an ordinary property.
     [InlineData("Coll(*ys) = 0\nF(x) = {\nBox = {\npublic A = x\n0\n}\nColl(Box.A*)\n}\nF(1 / 0)", "DivisionByZero/DivByZero")]
     [InlineData("Coll(*ys) = 0\nF((x, *r)) = {\nBox = {\npublic A = r\n0\n}\nColl(Box.A*)\n}\nF((1, 1 / 0))", "DivisionByZero/DivByZero")]

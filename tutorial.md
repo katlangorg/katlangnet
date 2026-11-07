@@ -3206,7 +3206,7 @@ F(10, 20, 1 / 0)
 
 The second argument runs first and its value is reused. The third argument is never needed. A list literal evaluates its elements before selection, so `[10, 1 / 0][0]` fails while building the list.
 
-Spreading a collecting parameter into a call, as in `Coll(xs*)`, passes along the original arguments for the callee to evaluate as needed. A direct alias such as `A = xs` also keeps this behavior. Spreading into a new list or sequence evaluates every element. [Language rules for collected arguments](docs/design/language-rules/call-by-need.md#need-07--lazy-supply-eager-collection-value)
+Spreading a collecting parameter into a call, as in `Coll(xs*)`, passes along the original arguments for the callee to evaluate as needed. A direct alias such as `A = xs` also keeps this behavior, even when it is passed as one argument and spread later: with `Pass(v) = Coll(v*)`, `Pass(A)` works like `Pass(xs)`. Spreading into a new list or sequence evaluates every element. [Language rules for collected arguments](docs/design/language-rules/call-by-need.md#need-07--lazy-supply-eager-collection-value)
 
 ### Patterns That Need Values
 

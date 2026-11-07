@@ -1179,7 +1179,7 @@ theorem EvalBody.evalSequenceSpreadCounted_pres (rec : EvalRec) (hrec : ∀ c, P
 
 theorem EvalBody.transparentCollectorSlice_pres (rec : EvalRec) (hrec : ∀ c, Preserves R (rec c)) (e : Expr) (ctx : EvalCtx) :
     Preserves R (EvalBody.transparentCollectorSlice? rec e ctx) := by
-  unfold EvalBody.transparentCollectorSlice? collectorSliceAt?; pres_tac
+  unfold EvalBody.transparentCollectorSlice?; pres_tac
 
 theorem EvalBody.evalSupplySpread_pres (rec : EvalRec) (hrec : ∀ c, Preserves R (rec c)) (e : Expr) (ctx : EvalCtx) (env : ValEnv) :
     Preserves R (EvalBody.evalSupplySpread rec e ctx env) := by

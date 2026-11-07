@@ -3687,9 +3687,10 @@ def collectorSliceAt? (address : Nat) : EvalM (Option (List Nat)) := do
 /-- The KNOWN collector slice a spread operand transports (NEED-07/08): the slice of a
     parameter bound to a supplied collector cell, found exactly as `supplyNeed` finds a
     parameter's cell. It allocates nothing — any other operand is evaluated by the spread
-    itself (`formNeedSupplySourced`), where a transparent reference to such a parameter is
-    still recognized (`EvalBody.transparentCollectorSlice?`, A-2). C#: the `Slice` test in
-    `FormSpreadSupplySlot`. -/
+    itself (`formNeedSupplySourced`), where a transparent reference to a retained collector,
+    written at the spread or held by a parameter's cell, is still recognized
+    (`EvalBody.transparentCollectorSlice?`, A-2). C#: the first test of
+    `RetainedCellSlice`, read through `FormSpreadSupplySlot`. -/
 def spreadCollectorSlice? (operand : Expr) (caller : EvalCtx) : EvalM (Option (List Nat)) := do
   if let .param name := operand then
     if let some address <- parameterNeedAddress? name caller then
@@ -11339,25 +11340,25 @@ def EvalBody.algorithmIntrinsicRoute (rec : EvalRec) (receiver : Expr) (ctx : Ev
     let supplied <- openSpreadItems (layers - 1) value
     pure (spreadSupplyResult supplied)
 
-  /-- THE KNOWN SLICE OF A TRANSPARENT REFERENCE (VAR-03 / FWD-03, audit finding A-2, owner decision
-      November 2026): a single-star spread of a written static reference — a name or a member path
-      (`Expr.staticAliasPath?`) — whose read goes, through transparent references only, to a parameter
-      row (`AliasTerminal.transparentParameterRow?`) whose own cell is a collector. The classification
-      is `staticReferenceTerminal` (ownership-first selection, accessibility, the one alias chase),
-      and the row's cell is `transparentRetainedCell?`'s, found in the alias's own context, exactly as
-      `aliasBindingCell` finds it — so this is the same retained cell a bare read would demand, and a
-      shadowing parameter of the spread site cannot capture it. Any other outcome, a selection failure
-      included, is "no known slice": the ordinary spread then evaluates the operand and reports that
-      failure itself. Reads only: it demands no cell and allocates nothing. A spread reads only a
-      cell that IS a collector; a reference argument's own cell, which the selective observers read
-      through (`retainedCellSlice?`), stays arbitrary here (NEED-07).
-      C#: `Evaluator.TransparentCollectorSlice`. -/
+  /-- THE KNOWN SLICE OF A SINGLE-STAR SPREAD OF A TRANSPARENT REFERENCE (VAR-03 / FWD-03, audit
+      finding A-2, owner decision November 2026; extended across ordinary argument boundaries,
+      November 2026): the operand is a parameter or a written static reference (a name or a member
+      path, `Expr.staticAliasPath?`), and the cell it reads retains a slice by THE ONE RULE
+      (`writtenCollectorSlice?` over `retainedCellSlice?`): a collector cell, or a suspended written
+      reference that transparently reaches one, however many fixed-parameter boundaries lie between.
+      So `Pass(v) = Coll(v*)` opens `Pass(A)` and `Pass(Box.A)` as `Pass(xs)` opens, while the
+      reference argument itself stays ONE cell with its own VALUE and CALLABLE: the spread only
+      OBSERVES its suspension, and only here, when a written star executes. The classification is
+      `staticReferenceTerminal` (ownership-first selection, accessibility, the one alias chase) in
+      the reference's own captured caller context, and each row's cell is found in the alias's own
+      context, exactly as `aliasBindingCell` finds it, so a shadowing parameter of the spread site
+      cannot capture it. Any other outcome, a selection failure included, is "no known slice": the
+      ordinary spread then evaluates the operand and reports that failure itself. Reads only: it
+      demands no cell and allocates nothing. C#: `Evaluator.WrittenCollectorSlice`, read by
+      `Evaluator.FormSpreadSupplySlot`. -/
   def EvalBody.transparentCollectorSlice? (rec : EvalRec) (e : Expr) (ctx : EvalCtx) : EvalM (Option (List Nat)) :=
     match e with
-    | .sequenceSpread reference => do
-      match <- EvalBody.transparentRetainedCell? rec reference ctx with
-      | some address => collectorSliceAt? address
-      | none => pure none
+    | .sequenceSpread reference => EvalBody.writtenCollectorSlice? rec reference ctx
     | _ => pure none
 
   /-- THE SPREAD CAPABILITY OF SUPPLY FORMATION (CallReference S2; `NeedSupply.SpreadEval`): what
@@ -11369,8 +11370,9 @@ def EvalBody.algorithmIntrinsicRoute (rec : EvalRec) (receiver : Expr) (ctx : Ev
       the slot contributes that view's ORIGINAL cells (`argumentViewCells`: the plan's one
       sticky preparation), each with its own written source (`needWrittenSource?`, as a
       collecting parameter's transported slice), and demands none of them.
-      A TRANSPARENT REFERENCE TO A RETAINED COLLECTOR CELL (`transparentCollectorSlice?`, A-2) is
-      not computed: it contributes that cell's exact slice the way a direct `xs*` does, evaluating
+      A TRANSPARENT REFERENCE TO A RETAINED COLLECTOR (`transparentCollectorSlice?`, A-2), written
+      at the spread or held by a parameter that received it as one ordinary argument, is not
+      computed: it contributes that collector's exact slice the way a direct `xs*` does, evaluating
       and allocating nothing.
       C#: `Evaluator.FormSpreadSupplySlot`. -/
   def EvalBody.evalSupplySpread (rec : EvalRec) (e : Expr) (ctx : EvalCtx) (env : ValEnv) : EvalM SpreadSupply := do

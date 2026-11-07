@@ -353,9 +353,10 @@ public static partial class Evaluator
     /// <summary>
     /// The ONE formation of an explicit spread slot, shared by every supply a written expression
     /// list forms — a call's arguments (<see cref="FormNeedSupply"/>) and a postfix selection's
-    /// selectors (<see cref="FormSelectionSupply"/>): a collecting parameter's known slice, written
-    /// directly or through a name or member path of transparent references
-    /// (<see cref="TransparentCollectorSlice"/>), is
+    /// selectors (<see cref="FormSelectionSupply"/>): the known slice of a collector, reached by a
+    /// parameter, a name or a member path, directly, through transparent references, or through a
+    /// parameter that received such a reference as one ordinary argument
+    /// (<see cref="WrittenCollectorSlice"/>, THE ONE retained-slice rule), is
     /// transported unforced; any other spread operand is evaluated NOW, during formation, and
     /// opened one boundary into Ready items — except that when the value its LAST star opens is an
     /// ARGUMENT VIEW (CallReference S2), the slot transports that view's ORIGINAL cells (the plan's
@@ -374,17 +375,14 @@ public static partial class Evaluator
         Expr.SequenceSpread argument, EvalCtx caller, ValEnv values, bool asynchronous,
         List<NeedCell> supply, List<Expr?>? sources, TransientSupply bound)
     {
-        // A collecting parameter's known slice, found exactly as SupplyCell finds a parameter's
-        // cell — without allocating a cell for any other operand — or the same retained slice
-        // reached through a written name or member path of transparent references (A-2).
-        var slice = argument.Operand switch
-        {
-            Expr.Param(var name) => ParameterNeedCell(name, caller)?.Slice,
-            var reference when MayBeTransparentReference(reference, caller) => asynchronous
-                ? await TransparentCollectorSliceAsync(reference, caller).ConfigureAwait(false)
-                : TransparentCollectorSlice(reference, caller),
-            _ => null,
-        };
+        // The operand's retained slice, found without allocating a cell for any other operand: a
+        // parameter reads the cell SupplyCell would transport, and a written name or member path
+        // the cell its transparent chain ends at (A-2). A reference that crossed an ordinary
+        // argument boundary is OBSERVED here, only because this star executes: the argument stays
+        // its own one cell, with its own VALUE and CALLABLE, and only its slice is opened.
+        var slice = asynchronous
+            ? await WrittenCollectorSliceAsync(argument.Operand, caller).ConfigureAwait(false)
+            : WrittenCollectorSlice(argument.Operand, caller);
         if (slice is { } known)
         {
             if (AdmitTransient(caller.Budget, ref bound, known.Count, expansion: true))
@@ -433,39 +431,6 @@ public static partial class Evaluator
     }
 
     /// <summary>
-    /// THE KNOWN SLICE OF A TRANSPARENT REFERENCE (VAR-03 / FWD-03, audit finding A-2, owner decision
-    /// November 2026): the written static reference <paramref name="reference"/> — a name or a member path
-    /// (<see cref="StaticAliasTargets.IsStaticPath"/>) — is read, through transparent references only, at a
-    /// parameter row whose own cell is a collector. The classification is
-    /// <see cref="StaticReferenceTerminal"/> (selection, accessibility and the one alias chase), and the
-    /// row's cell is found in the alias's own context exactly as <see cref="AliasBindingCell"/> finds it —
-    /// the retained cell a bare read would demand, which a shadowing parameter of the spread site cannot
-    /// capture. A structural carrier, a static terminal binding and any other runtime row have no known
-    /// slice, and neither does a parameter whose cell is no collector. Any failure is "no known slice":
-    /// the ordinary spread then evaluates the operand and reports that failure itself. Demands no cell,
-    /// allocates nothing and charges nothing, as a direct slice. A spread reads only a cell that IS a
-    /// collector; a reference argument's own cell, which the selective observers read through
-    /// (<see cref="RetainedCellSlice"/>), stays arbitrary here (NEED-07). Lean:
-    /// <c>EvalBody.transparentCollectorSlice?</c>.
-    /// </summary>
-    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
-    private static IReadOnlyList<NeedCell>? TransparentCollectorSlice(Expr reference, EvalCtx ctx)
-        => TransparentCollectorSliceOutcome(reference, ctx) is { IsOk: true } outcome ? outcome.Value : null;
-
-    /// <summary>The async twin of <see cref="TransparentCollectorSlice"/>: the ONE resolver through <see cref="ResolveAsync{TState,T}"/>.</summary>
-    private static async ValueTask<IReadOnlyList<NeedCell>?> TransparentCollectorSliceAsync(Expr reference, EvalCtx ctx)
-    {
-        var outcome = await ResolveAsync(ctx, (reference, ctx), static state => TransparentCollectorSliceOutcome(state.reference, state.ctx)).ConfigureAwait(false);
-        return outcome.IsOk ? outcome.Value : null;
-    }
-
-    private static EvalResult<IReadOnlyList<NeedCell>?> TransparentCollectorSliceOutcome(Expr reference, EvalCtx ctx)
-    {
-        var cell = TransparentReferenceCell(reference, ctx);
-        return cell.IsError ? cell.Error : EvalResult<IReadOnlyList<NeedCell>?>.Ok(cell.Value?.Slice);
-    }
-
-    /// <summary>
     /// Whether <paramref name="reference"/> can be a written static reference a transparent chain reads
     /// through at all: the run's admitted program holds a runtime-row alias, the site has an owner, and
     /// the expression is a name or a member path. Everything else skips classification outright.
@@ -474,10 +439,14 @@ public static partial class Evaluator
         => ctx.Budget.MayReachRuntimeAliases && ctx.CallStack.Count > 0 && StaticAliasTargets.IsStaticPath(reference);
 
     /// <summary>
-    /// THE CELL A TRANSPARENT REFERENCE READS (A-2): the parameter row a written static reference reads
-    /// through transparent references only (<see cref="StaticReferenceTerminal"/>), found in the alias's
-    /// own context, exactly as <see cref="AliasBindingCell"/> finds it; <c>null</c> when the read ends
-    /// anywhere else. Reads only: it demands no cell and allocates nothing. Lean:
+    /// THE CELL A TRANSPARENT REFERENCE READS (VAR-03 / FWD-03, audit finding A-2): the parameter row a
+    /// written static reference, a name or a member path (<see cref="StaticAliasTargets.IsStaticPath"/>),
+    /// reads through transparent references only (<see cref="StaticReferenceTerminal"/>: selection,
+    /// accessibility and the one alias chase), found in the alias's own context, exactly as
+    /// <see cref="AliasBindingCell"/> finds it: the retained cell a bare read would demand, which a
+    /// shadowing parameter of the reading site cannot capture. <c>null</c> when the read ends anywhere
+    /// else: a structural carrier, a static terminal binding or any other runtime row. Reads only: it
+    /// demands and allocates no cell and adds no semantic charge. Lookup may allocate transient state. Lean:
     /// <c>EvalBody.transparentRetainedCell?</c>.
     /// </summary>
     private static EvalResult<NeedCell?> TransparentReferenceCell(Expr reference, EvalCtx ctx)
@@ -492,13 +461,14 @@ public static partial class Evaluator
     }
 
     /// <summary>
-    /// THE ONE RETAINED-SLICE RULE of selective collector observation (November 2026; NEED-07): the
-    /// exact slice <paramref name="cell"/> retains. A collector cell retains its own slice; a suspended
+    /// THE ONE RETAINED-SLICE RULE of selective collector observation and spread transport (November
+    /// 2026; NEED-07): the exact slice <paramref name="cell"/> retains. A collector cell retains its own slice; a suspended
     /// written reference retains what its transparent target's cell retains
     /// (<see cref="TransparentReferenceCell"/>, in the reference's captured caller context); nothing else
     /// retains one, however equal its eventual value. A long forwarding chain is this ONE loop, never a
     /// recursion, and it ends because each hop reaches a cell its predecessor's caller already held.
-    /// Classification demands, projects and allocates nothing. Any failure is "no retained slice": the
+    /// Classification neither demands nor projects a cell and allocates no cell. Lookup may allocate
+    /// transient state. Any failure is "no retained slice": the
     /// consumer's ordinary path then evaluates the reference and reports that failure itself, so an
     /// inaccessible member or a failed projection is never turned into a success. Lean:
     /// <c>EvalBody.retainedCellSlice?</c>.
@@ -550,9 +520,10 @@ public static partial class Evaluator
     }
 
     /// <summary>
-    /// The slice a selection's written receiver retains, without a VALUE demand (Lean:
-    /// <c>EvalBody.writtenCollectorSlice?</c>): only a parameter, a name or a member path can retain one,
-    /// so every other receiver, and an ordinary program's every name, costs one test here.
+    /// The slice a selection's written receiver or a spread's written operand retains, without a VALUE
+    /// demand (Lean: <c>EvalBody.writtenCollectorSlice?</c>; a single-star spread reads it through
+    /// <c>EvalBody.transparentCollectorSlice?</c>): only a parameter, a name or a member path can retain
+    /// one, so every other expression, and an ordinary program's every name, costs one test here.
     /// </summary>
     [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
     private static IReadOnlyList<NeedCell>? WrittenCollectorSlice(Expr receiver, EvalCtx ctx)

@@ -24,7 +24,8 @@ import CoreTests.Common
 --
 -- A transparent reference to such a parameter (`A = xs`, `B = A`), written as a name or as a member
 -- path (`Box.A`), is the same known slice (A-2, owner decision November 2026;
--- `EvalBody.transparentCollectorSlice?`).
+-- `EvalBody.transparentCollectorSlice?`), and stays so when it is supplied as one ordinary argument
+-- and the receiving parameter is spread later (section 10).
 --
 -- An ARBITRARY spread `E*` (a list literal, a call result, a fixed parameter
 -- holding a list) is still evaluated during supply formation (NEED-07), and
@@ -453,14 +454,68 @@ private def shadowingMember (row : Expr) : PropDef :=
 -- A stacked star and a call of the member are not the member reference.
 #guard isDiv (program [coll, fWith [boxA] [.call (.resolve "Coll") [.sequenceSpread (.sequenceSpread boxDotA)]]] (callF [bad]))
 #guard isDiv (program [coll, fWith [boxA] [.call (.resolve "Coll") [.sequenceSpread (Expr.dotCall (.resolve "Box") "A" (some []))]]] (callF [bad]))
--- An argument passed to an ordinary parameter stays that argument's computation.
+-- A computation passed to an ordinary parameter stays that argument's computation.
 private def passSpread : PropDef := privateProp "Pass" (alg ["v"] [] [] [spreadTo "Coll" (.param "v")])
-#guard isDiv (program [coll, passSpread, fWith [boxA] [.call (.resolve "Pass") [boxDotA]]] (callF [bad]))
+#guard isDiv (program [coll, passSpread, fWith [box [member "A" (.alias none [] [] (.param "xs") none false)]]
+    [.call (.resolve "Pass") [boxDotA]]] (callF [bad]))
 -- A receiver handed over as an argument leaves the member's owner behind: refused, never a slice.
 private def isLocalOnly : Except Error Result → Bool
   | .error err => innermostIsLocalOnlyProperty "b" "A" (.localCapturedAncestorParams ["xs"]) err
   | _ => false
 #guard isLocalOnly (program [coll, privateProp "G" (alg ["b"] [] [] [spreadTo "Coll" (dot (.param "b") "A")]),
     fWith [boxA] [.call (.resolve "G") [.resolve "Box"]]] (callF [bad]))
+
+-- 10. A reference keeps the slice across an ordinary argument boundary ----------------------------
+-- `Pass(A)` and `Pass(Box.A)` supply ONE argument; only a later `v*` opens the collector, whose cells
+-- the argument's reference retains (`retainedCellSlice?`). Multi-hop chains, shape, arity precedence,
+-- callable elements and the genuine negatives. C#: `CollectorReferenceArgumentTransportTests`.
+private def passA : Expr := .call (.resolve "Pass") [.resolve "A"]
+private def passBoxA : Expr := .call (.resolve "Pass") [boxDotA]
+private def passSpreadList : List PropDef := [collList, passSpread]
+private def aHop : PropDef := reference "A" (.param "xs")
+private def isArity : Except Error Result → Bool
+  | .error err => innermostIsAnyArityMismatch err
+  | _ => false
+-- The primary and static member witnesses, and the direct control.
+#guard is (.atom 0) (program [coll, passSpread, fWith [aHop] [passA]] (callF [bad]))
+#guard is (.atom 0) (program [coll, passSpread, fWith [boxA] [passBoxA]] (callF [bad]))
+#guard is (.atom 0) (program [coll, passSpread, fWith [] [.call (.resolve "Pass") [.param "xs"]]] (callF [bad]))
+-- Multi-hop parameter transport: plain forwarding, and a further reference at each boundary.
+private def relayPlain : PropDef := privateProp "Relay" (alg ["w"] [] [] [.call (.resolve "Pass") [.param "w"]])
+private def relayAlias : PropDef :=
+  privateProp "Relay" (alg ["w"] [] [reference "B" (.param "w") "w"] [.call (.resolve "Pass") [.resolve "B"]])
+private def outerAlias : PropDef :=
+  privateProp "Outer" (alg ["u"] [] [reference "C" (.param "u") "u"] [.call (.resolve "Relay") [.resolve "C"]])
+#guard is (.atom 0) (program [coll, passSpread, relayPlain, fWith [aHop] [.call (.resolve "Relay") [.resolve "A"]]] (callF [bad]))
+#guard is (.atom 0) (program [coll, passSpread, relayAlias, fWith [aHop] [.call (.resolve "Relay") [.resolve "A"]]] (callF [bad]))
+#guard is (.atom 0) (program [coll, passSpread, relayAlias, outerAlias, fWith [aHop] [.call (.resolve "Outer") [.resolve "A"]]] (callF [bad]))
+-- The spread itself written through a reference to the receiving parameter.
+private def passThroughAlias : PropDef :=
+  privateProp "Pass" (alg ["v"] [] [reference "B" (.param "v") "v"] [spreadTo "Coll" (.resolve "B")])
+#guard is (.atom 0) (program [coll, passThroughAlias, fWith [aHop] [passA]] (callF [bad]))
+-- Empty, singleton and multiple elements, exact shape, in order.
+#guard is (.listValue []) (program (passSpreadList ++ [fWith [aHop] [passA]]) (callF []))
+#guard is (.listValue [.atom 1]) (program (passSpreadList ++ [fWith [aHop] [passA]]) (callF [.num 1]))
+#guard is (.listValue [.atom 1, .atom 2, .atom 3]) (program (passSpreadList ++ [fWith [aHop] [passA]]) (callF [.num 1, .num 2, .num 3]))
+#guard is (.listValue [.sequenceValue []]) (program (passSpreadList ++ [fWith [aHop] [passA]]) (callF [.emptySequence 0]))
+-- One ordinary argument: the receiver's own count is one until a star opens it.
+private def wrongOrdinary : PropDef := privateProp "Pass" (alg ["a", "b"] [] [] [.num 0])
+#guard isArity (program [wrongOrdinary, fWith [aHop] [passA]] (callF [.num 1, .num 2]))
+-- Arity precedence: the known count rejects before the failing element.
+private def two : PropDef := privateProp "Two" (alg ["a", "b"] [] [] [.param "a"])
+private def passTwo : PropDef := privateProp "Pass" (alg ["v"] [] [] [spreadTo "Two" (.param "v")])
+#guard isArity (program [two, passTwo, fWith [aHop] [passA]] (callF [bad]))
+#guard isArity (program [two, passTwo, fWith [boxA] [passBoxA]] (callF [bad]))
+-- A callable element stays invocable; the failing neighbour is never demanded.
+private def applyFirst : PropDef :=
+  privateProp "Apply" (algWithParameters [{ name := "f" }, { name := "rest", kind := .collecting }] [] []
+    [.call (.param "f") [.num 9]])
+#guard is (.atom 10) (program [privateProp "Inc" ccfInc, applyFirst,
+    privateProp "Pass" (alg ["v"] [] [] [spreadTo "Apply" (.param "v")]), fWith [aHop] [passA]] (callF [.resolve "Inc", bad]))
+-- Genuine negatives: a carrier, a calculation, a whole read and an ordinary failing argument.
+#guard isDiv (program [coll, passSpread, fWith [carrier "A" (.param "xs")] [passA]] (callF [bad]))
+#guard isDiv (program [coll, passSpread, fWith [] [.call (.resolve "Pass") [.binary .add (.param "xs") (.num 0)]]] (callF [bad]))
+#guard isDiv (program [privateProp "Pass" (alg ["v"] [] [] [.param "v"]), fWith [aHop] [passA]] (callF [bad]))
+#guard isDiv (program [coll, passSpread, fixedOwner [reference "A" (.param "x") "x"] passA] (callF [bad]))
 
 end KatLangTests.CollectingCallableForwarding

@@ -171,10 +171,6 @@ public sealed class SelectiveCollectorReadTests
     public Task HelperTransport_ReadsTheSameCells(string source, string expected) => Ok(source, expected);
 
     [Fact]
-    public Task AReferenceArgumentSpreadByItsCallee_StaysAnArbitrarySpread_UntilArgumentTransportLands()
-        => Fails("Coll(*ys) = 0\nPass(v) = Coll(v*)\nF(*xs) = {\nA = xs\nPass(A)\n}\nF(1 / 0)", "DivisionByZero");
-
-    [Fact]
     public Task ALongChainOfReferenceArguments_IsOneLoop()
     {
         const string source = "Walk(w, n) = {\nB = w\nif(n == 0, B.count, Walk(B, n - 1))\n}\nF(*xs) = {\nA = xs\nWalk(A, 30)\n}\nF(1 / 0, 2)";

@@ -1108,7 +1108,7 @@ theorem EvalBody.evalSequenceSpreadCounted_mono (e : Expr) (ctx : EvalCtx) (env 
 
 theorem EvalBody.transparentCollectorSlice_mono (e : Expr) (ctx : EvalCtx) :
     monotone (fun rec : EvalRec => EvalBody.transparentCollectorSlice? rec e ctx) := by
-  have := EvalBody.transparentRetainedCell_mono
+  have := EvalBody.writtenCollectorSlice_mono
   unfold EvalBody.transparentCollectorSlice?; mono_tac
 
 theorem EvalBody.evalSupplySpread_mono (e : Expr) (ctx : EvalCtx) (env : ValEnv) :

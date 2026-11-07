@@ -14,11 +14,11 @@ This is bounded differential validation over the Lean-guarded partition,
 not a formal verification of the evaluators.
 
 Partition (machine-checked by the `specCaseIds.length` guard below):
-- specification surface cases: 534
+- specification surface cases: 539
 - excluded parse-level cases (Lean has no surface parser): 75
 - excluded C#-only cases (each carries an explicit reason in the corpus): 22
-- Lean-guarded cases: 437
-- probe observations (C#-only by design): 1499
+- Lean-guarded cases: 442
+- probe observations (C#-only by design): 1507
 - internal-node cases live in the semantic-explorer corpus, not here: see
   lean/SemanticExplorerCases.lean
 
@@ -329,6 +329,31 @@ def case_collector_alias_demand_raises_the_element_failure : Expr :=
 def case_collector_carrier_spread_is_arbitrary : Expr :=
   .algorithmExpr (alg [] [] [privateProp "Coll" (algWithParameters [{ name := "ys", kind := .collecting }] [] [] [.num 0]), privateProp "F" (algWithParameters [{ name := "xs", kind := .collecting }] [] [{ (privateLocalProp "A" (.localCapturedAncestorParams ["xs"]) (.alias none [] [] (.param "xs") none false)) with requiredOwnerDepths := some [("xs", some 0)] }] [(.call (.resolve "Coll") [(.sequenceSpread (.resolve "A"))])])] [(.call (.resolve "F") [(.binary .div (.num 1) (.num 0))])])
 #guard obs case_collector_carrier_spread_is_arbitrary == "err div0"
+
+-- collector-reference-argument-keeps-known-slice [variadic-calls]: Coll(*ys) = 0 \n Pass(v) = Coll(v*) \n F(*xs) = { \n     A = xs \n     Pass(A) \n } \n F(1 / 0)
+def case_collector_reference_argument_keeps_known_slice : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Coll" (algWithParameters [{ name := "ys", kind := .collecting }] [] [] [.num 0]), privateProp "Pass" (alg ["v"] [] [] [(.call (.resolve "Coll") [(.sequenceSpread (.param "v"))])]), privateProp "F" (algWithParameters [{ name := "xs", kind := .collecting }] [] [{ (privateLocalProp "A" (.localCapturedAncestorParams ["xs"]) (.alias none [] [] (.param "xs"))) with requiredOwnerDepths := some [("xs", some 0)] }] [(.call (.resolve "Pass") [.resolve "A"])])] [(.call (.resolve "F") [(.binary .div (.num 1) (.num 0))])])
+#guard obs case_collector_reference_argument_keeps_known_slice == "ok raw=0 n=1"
+
+-- collector-reference-argument-is-one-argument [variadic-calls]: Count(*ys) = ys.count \n Pass(v) = Count(v), Count(v*) \n F(*xs) = { \n     A = xs \n     Pass(A) \n } \n F(1 / 0, 2, 3)
+def case_collector_reference_argument_is_one_argument : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Count" (algWithParameters [{ name := "ys", kind := .collecting }] [] [] [(.dotCall (.param "ys") "count" none)]), privateProp "Pass" (alg ["v"] [] [] [(.call (.resolve "Count") [.param "v"]), (.call (.resolve "Count") [(.sequenceSpread (.param "v"))])]), privateProp "F" (algWithParameters [{ name := "xs", kind := .collecting }] [] [{ (privateLocalProp "A" (.localCapturedAncestorParams ["xs"]) (.alias none [] [] (.param "xs"))) with requiredOwnerDepths := some [("xs", some 0)] }] [(.call (.resolve "Pass") [.resolve "A"])])] [(.call (.resolve "F") [(.binary .div (.num 1) (.num 0)), .num 2, .num 3])])
+#guard obs case_collector_reference_argument_is_one_argument == "ok raw=S[1, 3] n=1"
+
+-- collector-reference-argument-keeps-callable-elements [variadic-calls]: Inc(x) = x + 1 \n Apply(f, *rest) = f(9) \n Pass(v) = Apply(v*) \n F(*xs) = { \n     A = xs \n     Pass(A) \n } \n F(Inc, 1 / 0)
+def case_collector_reference_argument_keeps_callable_elements : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Inc" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 1))]), privateProp "Apply" (algWithParameters [{ name := "f" }, { name := "rest", kind := .collecting }] [] [] [(.call (.param "f") [.num 9])]), privateProp "Pass" (alg ["v"] [] [] [(.call (.resolve "Apply") [(.sequenceSpread (.param "v"))])]), privateProp "F" (algWithParameters [{ name := "xs", kind := .collecting }] [] [{ (privateLocalProp "A" (.localCapturedAncestorParams ["xs"]) (.alias none [] [] (.param "xs"))) with requiredOwnerDepths := some [("xs", some 0)] }] [(.call (.resolve "Pass") [.resolve "A"])])] [(.call (.resolve "F") [.resolve "Inc", (.binary .div (.num 1) (.num 0))])])
+#guard obs case_collector_reference_argument_keeps_callable_elements == "ok raw=10 n=1"
+
+-- collector-reference-argument-arity-precedes-elements [errors]: Two(a, b) = a \n Pass(v) = Two(v*) \n F(*xs) = { \n     A = xs \n     Pass(A) \n } \n F(1 / 0)
+def case_collector_reference_argument_arity_precedes_elements : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Two" (alg ["a", "b"] [] [] [.param "a"]), privateProp "Pass" (alg ["v"] [] [] [(.call (.resolve "Two") [(.sequenceSpread (.param "v"))])]), privateProp "F" (algWithParameters [{ name := "xs", kind := .collecting }] [] [{ (privateLocalProp "A" (.localCapturedAncestorParams ["xs"]) (.alias none [] [] (.param "xs"))) with requiredOwnerDepths := some [("xs", some 0)] }] [(.call (.resolve "Pass") [.resolve "A"])])] [(.call (.resolve "F") [(.binary .div (.num 1) (.num 0))])])
+#guard obs case_collector_reference_argument_arity_precedes_elements == "err arity"
+
+-- collector-reference-argument-carrier-stays-arbitrary [errors]: Coll(*ys) = 0 \n Pass(v) = Coll(v*) \n F(*xs) = { \n     A = { xs } \n     Pass(A) \n } \n F(1 / 0)
+def case_collector_reference_argument_carrier_stays_arbitrary : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Coll" (algWithParameters [{ name := "ys", kind := .collecting }] [] [] [.num 0]), privateProp "Pass" (alg ["v"] [] [] [(.call (.resolve "Coll") [(.sequenceSpread (.param "v"))])]), privateProp "F" (algWithParameters [{ name := "xs", kind := .collecting }] [] [{ (privateLocalProp "A" (.localCapturedAncestorParams ["xs"]) (.alias none [] [] (.param "xs") none false)) with requiredOwnerDepths := some [("xs", some 0)] }] [(.call (.resolve "Pass") [.resolve "A"])])] [(.call (.resolve "F") [(.binary .div (.num 1) (.num 0))])])
+#guard obs case_collector_reference_argument_carrier_stays_arbitrary == "err div0"
 
 -- selective-collector-count-reads-positions [variadic-calls]: CountItems(*xs) = xs.count \n CountItems(1 / 0)
 def case_selective_collector_count_reads_positions : Expr :=
@@ -2387,7 +2412,7 @@ def case_open_reference_private_member_provides_public_names : Expr :=
   .algorithmExpr (alg [] [.resolve "A"] [privateProp "Lib" (alg [] [] [privateProp "Sub" (alg [] [] [publicProp "Q" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 1))])] [])] []), privateProp "A" (.alias none [] [] ((.dotCall (.resolve "Lib") "Sub" none)))] [(.call (.resolve "Q") [.num 5])])
 #guard obs case_open_reference_private_member_provides_public_names == "ok raw=6 n=1"
 
--- 437 canonical Lean-guarded specification cases.
+-- 442 canonical Lean-guarded specification cases.
 
 /--
 Machine-checked Lean-guarded partition count: the id list is built by the
@@ -2422,6 +2447,11 @@ def specCaseIds : List String := [
   "collector-alias-keeps-callable-elements",
   "collector-alias-demand-raises-the-element-failure",
   "collector-carrier-spread-is-arbitrary",
+  "collector-reference-argument-keeps-known-slice",
+  "collector-reference-argument-is-one-argument",
+  "collector-reference-argument-keeps-callable-elements",
+  "collector-reference-argument-arity-precedes-elements",
+  "collector-reference-argument-carrier-stays-arbitrary",
   "selective-collector-count-reads-positions",
   "selective-collector-selection-demands-selected-positions",
   "selective-collector-first-selects-one-element",
@@ -2833,6 +2863,6 @@ def specCaseIds : List String := [
   "grouped-runtime-member-value-arity",
   "open-reference-private-member-provides-public-names"
 ]
-#guard specCaseIds.length == 437
+#guard specCaseIds.length == 442
 
 end LanguageSpecCases
