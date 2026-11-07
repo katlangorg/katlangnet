@@ -1,6 +1,8 @@
 # KatLang Tutorial
 
-KatLang is a language for calculations. You write formulas, give them names, and combine them into larger calculations, and KatLang evaluates them with exact decimal arithmetic. This tutorial is a learning path: it starts with a single expression and builds up, chapter by chapter, to collections, algorithms that take other algorithms, pattern matching, and larger programs. Each chapter relies only on the chapters before it, so it reads best from beginning to end.
+KatLang is a language for calculations. You write formulas, give them names, and combine them into larger calculations, and KatLang evaluates them in decimal arithmetic. This tutorial is a learning path: it starts with a single expression and builds up, chapter by chapter, to collections, algorithms that take other algorithms, pattern matching, and larger programs. Each chapter relies only on the chapters before it, so it reads best from beginning to end.
+
+Chapters 1 to 16 teach the language. Chapters 17 to 19 go deeper, for when you need them, and the last two chapters are for reference.
 
 ## Contents
 
@@ -13,15 +15,18 @@ KatLang is a language for calculations. You write formulas, give them names, and
 7. [Dot Calls](#dot-calls)
 8. [Sequences](#sequences)
 9. [Lists](#lists)
-10. [Algorithms as Values](#algorithms-as-values)
+10. [Algorithms as Arguments](#algorithms-as-arguments)
 11. [Working with Collections](#working-with-collections)
 12. [Collecting Parameters](#collecting-parameters)
 13. [Deconstruction](#deconstruction)
-14. [Loops](#loops)
-15. [Pattern Matching](#pattern-matching)
+14. [Pattern Matching](#pattern-matching)
+15. [Loops](#loops)
 16. [Organizing Programs](#organizing-programs)
-17. [Layout and Common Pitfalls](#layout-and-common-pitfalls)
-18. [Quick Reference](#quick-reference)
+17. [Formulas and Aliases in Depth](#formulas-and-aliases-in-depth)
+18. [Captured Calls](#captured-calls)
+19. [When Things Are Evaluated](#when-things-are-evaluated)
+20. [Layout and Common Pitfalls](#layout-and-common-pitfalls)
+21. [Quick Reference](#quick-reference)
 
 ---
 
@@ -36,11 +41,9 @@ katlang eval "2 + 3 * 4"
 katlang run program.kat
 ```
 
-A program that contains double-quoted strings needs shell quoting that keeps its double quotes — in a POSIX shell, `katlang eval '"Total: {2 + 3}"'` — or can be stored in a file and run with `katlang run`.
-
 Each example below is followed by its result: **Result** for one output, **Results** for several outputs in order, and **Result:** error for an example that is intentionally invalid. These results are checked automatically against the current implementation of KatLang.
 
-The command-line tool writes errors to stderr. Controls and invisible formatting characters in diagnostic text appear as visible `\uXXXX` escapes; explanatory notes keep their line breaks. Successful program output keeps its ordinary rendering.
+If any part of a program fails, the program shows only the error, not the results of the other rows. The command-line tool writes the error to stderr.
 
 ### Your First Program
 
@@ -121,7 +124,7 @@ On one line the comma is required: `1 2` is an error, never two outputs.
 49
 ```
 
-`/` is ordinary division. `div` divides and drops the fractional part (it truncates toward zero), `mod` gives the remainder, and `^` raises to a power.
+`/` is ordinary division. `div` divides and drops the fractional part (it truncates toward zero), `mod` gives the remainder (with the sign of the left number), and `^` raises to a power.
 
 ### Precedence
 
@@ -175,7 +178,7 @@ KatLang numbers are decimal numbers with 34 significant digits. Decimal fraction
 0.3333333333333333333333333333333333
 ```
 
-A result keeps the decimal places of its inputs, which is why `0.2 * 50` is displayed as `10.0` and `2.50 * 4` as `10.00`: the value is ten either way, and only the display differs. To shorten a result, round it with `round(value, digits)` or set the number of displayed decimal places for the whole program (see [Displayed Decimal Places](#displayed-decimal-places)).
+A result can keep trailing decimal places from its inputs, which is why `0.2 * 50` is displayed as `10.0` and `2.50 * 4` as `10.00`: the value is ten either way, and only the trailing zeros differ. To shorten a result, round it with `round(value, digits)` or set the number of displayed decimal places for the whole program (see [Displayed Decimal Places](#displayed-decimal-places)).
 
 Number literals may use `_` between digits and an exponent written with a lowercase `e`: `1_000_000`, `6.674e-11`, `1.5e3`. A decimal point needs digits on both sides (`0.5`, not `.5`).
 
@@ -214,18 +217,18 @@ exp(1)
 |---|---|
 | `abs(x)`, `sign(x)` | Absolute value; the sign as `-1`, `0`, or `1` |
 | `floor(x)`, `ceil(x)` | Round down; round up |
-| `round(x, digits)` | Round to `digits` decimal places (halves round away from zero) |
+| `round(value, digits)` | Round to `digits` decimal places (halves round away from zero) |
 | `sqrt(x)` | Square root |
-| `exp(x)`, `ln(x)`, `lg(x)`, `log(x, base)` | Exponential; natural, base-10, and any-base logarithm |
+| `exp(x)`, `ln(x)`, `lg(x)`, `log(value, base)` | Exponential; natural, base-10, and any-base logarithm |
 | `pow(x, y)` | `x` raised to the power `y`, the same as `x ^ y` |
-| `sin(x)`, `cos(x)`, `tan(x)` | Trigonometric functions of an angle in radians |
+| `sin(radians)`, `cos(radians)`, `tan(radians)` | Trigonometric functions of an angle in radians |
 | `asin(x)`, `acos(x)`, `atan(x)`, `atan2(y, x)` | Inverse trigonometric functions |
 | `pi` | The constant π |
 | `random(start, end)`, `randomInt(start, end)` | Random numbers (see below) |
 
 There is no separate constant for Euler's number: write `exp(1)`.
 
-These names are shortcuts for the members of the built-in `Math` algorithm: `sqrt(2)` is `Math.Sqrt(2)`, and `pi` is `Math.Pi`. Both spellings work. The lowercase names read well in formulas; the `Math.` form is useful when one of your own definitions uses the same name.
+These names are shortcuts: `sqrt(2)` can also be written `Math.Sqrt(2)`, and `pi` can be written `Math.Pi`. Both spellings work. The lowercase names read well in formulas; the `Math.` form is useful when one of your own definitions uses the same name. [Dot Calls](#members-come-first) explains the dot.
 
 ### Random Numbers
 
@@ -236,7 +239,7 @@ randomInt(1, 7)
 random(0, 1)
 ```
 
-Every run draws new values, so this example has no fixed result. To reproduce a run, the host can fix the random seed; with the command-line tool, `katlang eval "randomInt(1, 7)" --random-seed 42` prints the same number every time.
+Every run draws new values, so this example has no fixed result. To reproduce a run, fix the random seed: with the command-line tool, `katlang eval "randomInt(1, 7)" --random-seed 42` prints the same number every time.
 
 ---
 
@@ -254,7 +257,7 @@ Area
 
 **Result:** `12`
 
-`Name = expression` defines a **property**: a named calculation. A definition produces no output by itself; the last row reads the property `Area` and outputs its value. Property names are conventionally written in PascalCase.
+`Name = expression` defines a **property**: a named calculation. A definition produces no output by itself; the last row reads the property `Area` and outputs its value. Property names are conventionally written in PascalCase. Names are case-sensitive: `Area` and `area` are two different names. A name may contain letters, digits, and `_`, but cannot start with a digit.
 
 ### Definitions and Output Rows
 
@@ -273,7 +276,7 @@ By convention, definitions come first and output rows last.
 
 ### Algorithms
 
-KatLang's general word for a calculation is **algorithm**. An algorithm can have *parameters* (its inputs, the subject of the next chapter), *properties* (named algorithms that belong to it), and *output* (the values its rows produce). The program itself is an algorithm, the **root algorithm**: the properties you define at the top level belong to it, and its output rows are what the program displays. A property is a named algorithm, and reading the property evaluates it. Where other languages speak of functions and modules, KatLang uses this one idea for both.
+KatLang's general word for a calculation is **algorithm**. An algorithm can have *parameters* (its inputs, the subject of the next chapter), *properties* (named algorithms that belong to it), and *output* (the values its rows produce). The program itself is an algorithm: the properties you define at the top level belong to it, and its output rows are what the program displays. A property is a named algorithm, and reading the property evaluates it. Where other languages speak of functions and modules, KatLang uses this one idea for both.
 
 ### Names Are Bound Once
 
@@ -308,33 +311,13 @@ Answer()
 42
 ```
 
-The two forms differ only for a calculation that can give a different result each time, such as a random number. KatLang evaluates a property when it is first read, and a later read of the same property during the run reuses that value, while an explicit call evaluates the property anew:
+The parentheses belong to the call, not to the definition: a property without parameters is defined without them, so `Answer() = 42` is an error.
 
-```
-Roll = randomInt(1, 7)
-Roll == Roll
-```
-
-**Result:** `true`
-
-`Roll() == Roll()`, by contrast, rolls twice and is `true` only when the two rolls happen to agree.
-
-An explicit call never reuses the stored value, but it can provide it: if nothing has read the property yet, the value of the first explicit call becomes the value that later reads reuse. A later explicit call still evaluates afresh and never changes that stored value:
-
-```
-Roll = randomInt(1, 7)
-Roll(), Roll, Roll(), Roll
-```
-
-Here `Roll()` rolls first, the bare `Roll` reuses that roll, the second `Roll()` rolls again, and the final `Roll` still shows the first roll: rows one, two and four always agree.
-
-A property may also read itself, directly or through other properties. Each such inner read is evaluated afresh while the outer read is still being computed and gives its own result, and the value the OUTERMOST read computes is the one later reads reuse. With `A = if(Roll() < 4, A + 1, 0)`, the first read of `A` counts how many rolls in a row were below 4, and every later read of `A` in the run gives that same count.
-
-The same rule covers an algorithm that has parameters but still works with no arguments: its name alone reads its cached value, and only `A()` evaluates it again (see [Using the Name Alone](#using-the-name-alone)).
+The two forms differ only for a calculation that can give a different result each time. KatLang evaluates a property when it is first read, and later reads of the same property during the run reuse that value, while an explicit call evaluates the property anew.
 
 ### Counting Evaluations with `tick()`
 
-`tick()` makes these rules visible. Each run of a program starts a counter at zero; every time `tick()` actually runs, it adds one and returns the new count:
+`tick()` makes this rule visible. Each run of a program starts a counter at zero; every time `tick()` actually runs, it adds one and returns the new count:
 
 ```
 tick(), tick(), tick()
@@ -351,7 +334,7 @@ A property that uses `tick()` runs it once, when it is first read; explicit call
 
 ```
 A = tick()
-A(), A, A(), A
+A, A, A(), A
 ```
 
 **Results:**
@@ -362,37 +345,11 @@ A(), A, A(), A
 1
 ```
 
-Defining `A` runs nothing, an argument that is never used is never computed, and an argument used twice is computed once:
+Defining `A` runs nothing. The first read runs `tick()`, the second read reuses the value, `A()` runs `tick()` again, and the last read still shows the stored value, which an explicit call never changes. An explicit call can provide that value, though: if nothing has read the property yet, the value of the first explicit call is the one that later reads reuse, so `A(), A` shows `1` twice.
 
-```
-Ignore(x) = 7
-Twice(x) = x + x
-Ignore(tick()), Twice(tick()), tick()
-```
+Random numbers follow the same rule: with `Roll = randomInt(1, 7)`, `Roll` is one roll however often it is read during a run, while each `Roll()` rolls again.
 
-**Results:**
-```
-7
-2
-2
-```
-
-Only the written call `tick()` runs the counter. The name `tick` alone is the operation itself, so it can be named and passed on like any other algorithm, and each call through that name counts once:
-
-```
-T = tick
-Apply(f) = f()
-T(), Apply(tick), tick()
-```
-
-**Results:**
-```
-1
-2
-3
-```
-
-Using `tick` without parentheses as a number is an error that asks for `tick()`, and `tick(5)` is an argument-count error; neither one counts. The counter belongs to the run: the next run starts at zero again, and nothing else in the program — other properties, random numbers, the order of evaluation — is affected by it. Like any built-in name, `tick` can be redefined by a definition of your own.
+`tick` needs its parentheses: using it as a number without them is an error that asks for `tick()`, and `tick(5)` is an argument-count error; neither one counts. The counter belongs to the run: the next run starts at zero again, and nothing else in the program — other properties, random numbers, the order of evaluation — is affected by it. Like any built-in name, `tick` can be redefined by a definition of your own.
 
 ### Displayed Decimal Places
 
@@ -415,9 +372,9 @@ pi
 10
 ```
 
-Numbers with decimal places are rounded or padded to exactly that many places, while a number without decimal places, such as the `10` of `5 * 2`, is shown as it is. The setting changes only the display: calculations, comparisons, and `.string` still use the full values. It must be a whole number from 0 to 99.
+Numbers with decimal places are rounded or padded to exactly that many places, while a number without decimal places, such as the `10` of `5 * 2`, is shown as it is. The setting changes only the display: calculations and comparisons still use the full values. It must be a whole number from 0 to 99.
 
-The program that runs your code can apply a display filter of its own — the command-line tool has the option `--display-decimals`, and an application can offer a display setting. When both are present, the smaller count is used: with the program above, a host filter of 2 shows `3.14`, `0.14` and `2.50`, while a host filter of 6 still shows four places. Without a host filter, the program's `DisplayDecimals` alone decides; without either, numbers are shown in full. Only a `DisplayDecimals` written at the top level of the program is a filter — inside a block, a module, or as a parameter it is an ordinary name.
+The program that runs your code can apply a display filter of its own, such as the command-line option `--display-decimals`. When both are present, the smaller count is used: with the program above, `--display-decimals 2` shows `3.14`, `0.14` and `2.50`, while `--display-decimals 6` still shows four places. Only a `DisplayDecimals` written at the top level of the program is a filter; anywhere else it is an ordinary name.
 
 ---
 
@@ -432,7 +389,9 @@ Tax(50)
 
 **Result:** `10.0`
 
-`price` is not defined anywhere, so KatLang treats it as a **parameter** of `Tax`: an input that the caller supplies. `Tax(50)` calls `Tax` with `price` equal to `50`. Parameter names are conventionally written in camelCase, which keeps them apart from PascalCase property names; in physics and similar fields, prefer the field's standard notation, as in `v = s / t`.
+`price` is not defined anywhere, so KatLang treats it as a **parameter** of `Tax`: an input that the caller supplies. `Tax(50)` calls `Tax` with `price` equal to `50`. A short definition like this, one expression over its inputs, is called a **formula**; a formula is simply a small algorithm. Parameter names are conventionally written in camelCase, which keeps them apart from PascalCase property names; in physics and similar fields, prefer the field's standard notation, as in `v = s / t`.
+
+Only a name that nothing defines becomes a parameter, and built-in names such as `count`, `max`, and `sum` count as defined. [Formulas That Use Formulas](#formulas-that-use-formulas) shows what that can lead to.
 
 ### Parameter Order
 
@@ -474,11 +433,22 @@ KeepFirst(42, 999)
 
 **Result:** `42`
 
-Inferred parameters keep short formulas short; explicit lists document the inputs of larger algorithms. Many later examples use an explicit list because they need one — for example, to call with an order other than the order of first appearance, or because a name written after a dot or inside braces is not inferred the way you might expect (see [Members Come First](#members-come-first) and [Callbacks Receive One Element](#callbacks-receive-one-element)).
+Inferred parameters keep short formulas short; explicit lists document the inputs of larger algorithms. Many later examples use an explicit list because they need one — for example, to call with an order other than the order of first appearance, or because a name written after a dot or inside braces is not inferred the way you might expect (see [Algorithms as Containers](#algorithms-as-containers) and [Callbacks Receive One Element](#callbacks-receive-one-element)).
+
+### Undefined Names in the Program
+
+The program itself is never called, so nothing can supply a parameter to it, and an undefined name at the top level is an error. This is how KatLang reports a typo:
+
+```
+Total = 5
+Totl + 1
+```
+
+**Result:** error — `Totl` is not defined, so it becomes a parameter of the program, which nothing supplies; the report suggests `Total`.
 
 ### Each Argument Is Evaluated At Most Once
 
-An ordinary call argument is evaluated only when its value is first needed, at most once for that supplied computation. If the corresponding parameter is read multiple times, those reads reuse the same argument outcome and do not re-evaluate the original argument expression:
+An argument is evaluated only when its value is first needed, and at most once. However many times the parameter is read, those reads reuse the same result:
 
 ```
 Double(x) = x + x
@@ -487,9 +457,9 @@ Double(randomInt(1, 7)) mod 2
 
 **Result:** `0`
 
-The die is rolled once, so `x + x` is always even. The same holds when evaluating an argument fails: every read of the parameter reports that same failure, and reading the parameter again never evaluates the argument again, so it cannot turn the failure into a value.
+The die is rolled once, so `x + x` is always even. If evaluating an argument fails, the first read of the parameter stops the program with that error.
 
-An unused plain parameter is never evaluated, whether the receiver is your own algorithm, a conditional selector, or a builtin:
+An argument that is never used is never evaluated, even if evaluating it would fail:
 
 ```
 Keep(x) = 42
@@ -498,57 +468,26 @@ Keep(1 / 0)
 
 **Result:** `42`
 
-Effects and random draws follow the order in which values are first needed. With `Reverse(x, y) = y + x`, the computation supplied for `y` runs before the one for `x`. Passing a parameter to another algorithm, or forwarding it by name, shares the same computation and adds no evaluation. A wrong argument count is rejected before ordinary arguments run. Explicit spread is different: its operand may have to run to discover how many arguments it supplies.
-
-A callable parameter also has an independent function identity. Using it as a function needs that identity, without first evaluating its no-argument value:
+`tick()` shows both rules at once. The argument of `Ignore` never runs, and the argument of `Twice` runs once, however often `x` is read:
 
 ```
-Inc(x) = x + 1
-Apply(f) = f(4)
-Apply(Inc)
+Ignore(x) = 7
+Twice(x) = x + x
+Ignore(tick()), Twice(tick()), tick()
 ```
 
-**Result:** `5`
-
-An explicit invocation is fresh; it does not replace the outcome reused by VALUE reads. A scalar, tuple or selected value does not become a function automatically. An alias adds another name for the same callable, without forcing an argument or introducing an extra memoized computation. Bare property caching stays separate: a demanded `Z` reads its cached value, while a demanded `Z()` makes a fresh call once within that argument.
-
-Collecting parameters hold a slice of argument computations. An unused collector does no work:
-
+**Results:**
 ```
-Ignore(*xs) = 10
-Ignore(1 / 0, 2)
+7
+2
+2
 ```
 
-**Result:** `10`
-
-Reading the collector as a value creates its entire eager list, evaluating every element from left to right. `xs.first`, `xs.count`, `sum(xs)` and `xs[0]` all receive that complete list: they cannot skip a failing later element. Forwarding `xs*` to another collector shares the slice without materializing it.
-
-A transparent alias to the retained collector shares that slice too. This works through an accessible member such as `Box.A`, without evaluating the receiver's output:
-
-<!-- spec:collector-member-path-keeps-known-slice -->
-```
-Coll(*ys) = 0
-F(*xs) = {
-    Box = {
-        public A = xs
-        0
-    }
-    Coll(Box.A*)
-}
-F(1 / 0)
-```
-
-**Result:** `0`
-
-`A = xs` followed by `Coll(A*)`, or `Y = Box.A` followed by `Coll(Y*)`, preserves the same lazy slice. A member whose body calculates a value or uses a brace carrier, such as `public A = { xs }`, still forms an ordinary spread and demands its elements. Passing the alias as an ordinary argument also keeps the ordinary demand rule: with `Pass(v) = Coll(v*)`, `Pass(Box.A)` materializes the collector when `v*` is formed.
-
-Literal, structural and repeated-name patterns may need values before the body starts. Patterns are inspected from left to right. A structural pattern first evaluates its complete parent value. A repeated name requires each supplied occurrence to agree; an early conflict stops before a later argument runs. Conditional clauses share the same argument computations across attempts. A plain name in a clause binds without forcing, so ordinary selectors can leave their unselected arguments untouched just like `if`.
-
-An explicit parameter list still adds no implicit inputs. A reference to a defined callable that needs inputs can remain a runtime no-argument demand, including inside Math calls: if the value is unused it does not run, and if demanded it reports that callable's ordinary arity error. A directly written undeclared name remains a definition error.
+Arguments run in the order in which their values are first needed, not the order in which they are written: with `Reverse(x, y) = y + x`, the argument for `y` runs before the one for `x`. A call with the wrong number of arguments is rejected before any of them runs, apart from the spreads that [Sequences](#sequences) introduces. [When Things Are Evaluated](#when-things-are-evaluated) collects the finer points, once the later chapters have introduced them.
 
 ### Formulas That Use Formulas
 
-A formula can use another formula that still needs inputs. KatLang then passes those inputs along, and they become parameters of the formula that uses it:
+A formula can use another formula that still needs inputs. KatLang then hands those inputs on, and they become parameters of the formula that uses it:
 
 ```
 Speed = distance / time
@@ -559,97 +498,27 @@ KineticEnergy(2, 10, 5)
 
 **Result:** `4`
 
-`KineticEnergy` uses `Speed`, which needs `distance` and `time`, so `KineticEnergy` takes them as well and hands them on to `Speed`. Only a formula that still needs inputs is handed them this way; one that works with no arguments is simply read, like a property (see [Using the Name Alone](#using-the-name-alone)). Its parameters are its own names first, followed by the ones it passes on: `KineticEnergy(mass, distance, time)`. The inputs are handed on **by name**, not by position, so an explicit parameter list must declare them under the same names: `KineticEnergy(mass, distance, time) = mass * Speed ^ 2 / 2` works, while in `KineticEnergy(m, d, t) = m * Speed ^ 2 / 2` nothing named `distance` or `time` is there to hand on, and calling it is an error.
+`KineticEnergy` uses `Speed`, which needs `distance` and `time`, so `KineticEnergy` takes them as well and hands them on to `Speed`. Its parameters are its own names first, followed by the ones it hands on: `KineticEnergy(mass, distance, time)`. Only a formula that still needs inputs is handed them this way; one that works with no arguments is simply read, like a property.
 
-This is **automatic parameter forwarding**, and it never changes what a name you wrote refers to. It hands on parameters only. When the formula is used inside an algorithm that already has a parameter of the needed name — its own, or one of an algorithm around it — that parameter is handed on, and nothing new is added:
+The inputs are handed on **by name**, not by position, so an explicit parameter list must declare them under the same names: `KineticEnergy(mass, distance, time) = mass * Speed ^ 2 / 2` works, while in `KineticEnergy(m, d, t) = m * Speed ^ 2 / 2` nothing named `distance` or `time` is there to hand on, and calling it is an error.
 
-```
-Area = width * height
-Report(width, height) = {
-    Doubled = Area * 2
-    Doubled + 1
-}
-Report(3, 4)
-```
+Because inputs go by name, two formulas that need the same name share one input:
 
-**Result:** `25`
-
-`Doubled` uses `Area`, which needs `width` and `height`. `Doubled` is written inside `Report`, whose parameters have those names, so `Area` receives Report's `width` and `height`, and `Doubled` needs no inputs of its own: it is an ordinary property of `Report`. A new parameter is added only when no parameter of the needed name is available, and never to an algorithm with an explicit parameter list. Properties, opened names, and builtins are not handed on as parameters, even when their names match: with `v = 99` and `Need(v) = v`, the formula `Outer = Need + 1` still takes its own `v`, so `Outer(7)` is `8`.
-
-Because inputs are handed on by name, one name is always one input, however many times it appears. Two formulas that both need `x` share one `x`, and so do the two places where one formula's parameter list names `x`:
-
-<!-- spec:implicit-forwarding-is-by-binding-name -->
 ```
 F(x) = x + 1
 G(x) = x * 2
 H = F + G
 
-Common(x, x) = x
-Twice = Common * 2
-
 H(3)
-Twice(7)
 ```
 
-**Results:**
-```
-10
-14
-```
+**Result:** `10`
 
-`H = F + G` means `H(x) = F(x) + G(x)`, and in the same way `Twice = Common * 2` means `Twice(x) = Common(x, x) * 2`: `Twice` takes one input and hands it to both places where `Common` names `x`, so `Twice` is called with one argument. Calling `Common` yourself is different: `Common(7, 8)` supplies two separate arguments, and two arguments for the same name must be equal (see [Equal Arguments](#equal-arguments)), so it is an error.
+`H = F + G` means `H(x) = F(x) + G(x)`.
 
-Every kind of callable a formula uses as a value hands its inputs on the same way — your own formulas, builtins, members reached with a dot or through `open`, Math functions, and conditional algorithms alike. A builtin hands on its own parameter names, and a conditional algorithm's inputs are named by the parameters its clauses use:
+This is also why a built-in name cannot stand in for a parameter. `count` is a built-in operation that needs an input, so `PerItem = total / count` means `PerItem(total, collection) = total / count(collection)`. `PerItem(100, 4)` then quietly gives `100` instead of `25`, because a single number counts as one item. Use another name, such as `items`, or list the parameters yourself: `PerItem(total, count) = total / count` makes `count` a parameter.
 
-<!-- spec:formula-lifting-is-one-law-for-every-callable -->
-```
-Lib = {
-    public Inc(x) = x + 1
-}
-E(0) = 100
-E(n) = n
-Total = count + 0
-Next = Lib.Inc + 0
-Fam = E + 1
-
-Total((1, 2, 3))
-Next(4)
-Fam(0)
-```
-
-**Results:**
-```
-3
-5
-101
-```
-
-`Total = count + 0` means `Total(collection) = count(collection) + 0`, and `Fam = E + 1` means `Fam(n) = E(n) + 1`, because the general clause of `E` names its input `n`. A conditional algorithm whose clauses do not name an input — only literals, as in `S(1) = 1` and `S(-1) = -1` — cannot be used this way: `G = S + 0` is an error at `S`, so call it with an explicit argument instead (`G(v) = S(v) + 0`).
-
-Whether a name is handed the formula's inputs depends on what the expression around it does with it. Where its VALUE is needed — in arithmetic, a comparison, a list, an `if`, a builtin's collection or value argument, a Math function's argument, `.string` — it is called with them. Where it is passed on as a function — to your own algorithm (`Apply(Inc)`), as the function of `map`, `filter` or `reduce`, or as a loop step — it is passed as it is:
-
-<!-- spec:formula-lifting-follows-the-consumers-role -->
-```
-Inc(x) = x + 1
-Apply(f) = f(10)
-
-Values = [Inc, Inc * 2]
-Kept = Apply(Inc)
-Branch = if(true, Inc, 0)
-
-Values(4)
-Kept
-Branch(4)
-```
-
-**Results:**
-```
-[5, 10]
-11
-5
-```
-
-`Values` and `Branch` take the input `x` of `Inc`, while `Kept` passes `Inc` itself to `Apply` and takes no input. A name inside a larger argument is judged by that expression: in `Apply(Inc + 0)` the `+` needs the value of `Inc`, so `Inc` is handed `x`. An `if` branch hands its inputs on even when it is not the branch chosen, but it is still evaluated only when chosen. A name written alone on a top-level line is not a formula: `count` or `abs` on its own reports that it needs an argument.
+Handing on never changes what a name you wrote refers to, and it hands on parameters only. A new parameter is added only when no parameter of the needed name is available, and never to an algorithm with an explicit parameter list. Properties and built-in names are not handed on, even when their names match: with `v = 99` and `Need(v) = v`, the formula `Outer = Need + 1` still takes its own `v`, so `Outer(7)` is `8`.
 
 All of this is about formulas that *use* another formula inside an expression. A definition whose whole body is just the name of a formula is different, as the next section shows.
 
@@ -686,100 +555,9 @@ Formula(5)
 - `Explicit(x) = Other(x)` is an **explicit call**: the arguments are passed exactly as written, so the names do not have to match.
 - `Formula = Double + 1` *uses* `Double` in an expression, so Double's input becomes an input of `Formula` (see [Formulas That Use Formulas](#formulas-that-use-formulas)): it means `Formula(x) = Double(x) + 1`.
 
-So `Forward(x) = Double` is not the same as `Forward(x) = Double(x)` — the two only agree when the names do. With `Sub(y, x) = y - x`, the definition `G(x, y) = Sub` hands G's `y` to Sub's `y` and G's `x` to Sub's `x`, so `G(10, 3)` is `3 - 10`, which is `-7`, while `G(x, y) = Sub(x, y)` passes the arguments in the written order and gives `7`.
+So `Forward(x) = Double` is not the same as `Forward(x) = Double(x)` — the two only agree when the names do. With `Sub(y, x) = y - x`, the definition `G(x, y) = Sub` gives G's `y` to Sub's `y` and G's `x` to Sub's `x`, so `G(10, 3)` is `3 - 10`, which is `-7`, while `G(x, y) = Sub(x, y)` passes the arguments in the written order and gives `7`.
 
-The same four forms work with structural parameters:
-
-<!-- spec:alias-structural-forwarding-and-written-call -->
-```
-Single([x]) = x
-
-Alias = Single
-SameShape([x]) = Single
-Explicit(x) = Single(x)
-Construct = Single([x])
-
-Alias([7])
-SameShape([7])
-Explicit([7])
-Construct(7)
-```
-
-**Results:**
-```
-7
-7
-7
-7
-```
-
-- `Alias = Single` has Single's parameter `[x]`, so it takes exactly the arguments `Single` takes: `Alias(7)` is an error, just like `Single(7)`.
-- `SameShape([x]) = Single` forwards by name: its own parameter is the same pattern `[x]`, so `Single` receives it as the list it matched.
-- `Explicit(x) = Single(x)` passes its whole argument `x` as Single's list argument, so `Explicit([7])` is `Single([7])`.
-- `Construct = Single([x])` is an ordinary formula: its parameter `x` comes from the `[x]` written in it, and it builds the list before calling `Single`, so it takes the element itself.
-
-`Bad(x) = Single` is an error: Single's parameter is the pattern `[x]`, a one-element list, while `Bad`'s parameter is a whole value that happens to be called `x`. Forwarding by name matches whole parameters, never a name inside a pattern, and it never reshapes an argument — write `Bad(x) = Single(x)` to pass `x` whole, or declare the same pattern, `Bad([x]) = Single`. In the same way, with `Add((a, b)) = a + b`, `Pair(a, b) = Add` is an error, because `Add` takes one pair; `Pair((a, b)) = Add` forwards the pair, and `Pair(a, b) = Add((a, b))` builds it.
-
-An alias keeps everything about the formula it names — its structural parameters, collecting parameters, and repeated names: with `Common(x, x) = x`, `Same = Common` takes two arguments that must be equal, just like `Common`. Forwarding by name keeps the kind of each parameter: a collecting parameter hands on everything it collected to a collecting parameter of the same name (`Many(*vs) = Coll` with `Coll(*vs) = vs` means `Coll(vs*)`), and a structural parameter is rebuilt as its own list or sequence.
-
-Because of this, renaming a formula's parameters affects each form differently. An alias takes the new names with it, and a formula that uses it takes them as its inputs. Forwarding by name must be updated to match, or it becomes an error. An explicit call is unaffected, because its arguments are written out: in `G = Add((x, y))` the parameters of `G` are `x` and `y`, the names written there, and renaming `Add`'s parameters to `left` and `right` changes nothing about `G`.
-
-#### Aliases of Any Function
-
-An alias works for every function that takes parameters, not only for your own formulas: built-in functions, Math functions, and functions defined with several clauses can be aliased too. The alias is the same function under another name, so it keeps everything that function does:
-
-<!-- spec:alias-of-a-builtin-is-the-builtin -->
-```
-C = count
-I = if
-M = map
-Bad(x) = x / 0
-
-C([1, 2, 3])
-I(true, 1, 1 / 0)
-M([], Bad)
-```
-
-**Results:**
-```
-3
-1
-[]
-```
-
-`C([1, 2, 3])` is exactly `count([1, 2, 3])`. `I` keeps the rule of `if` that only the chosen branch is computed, so the division by zero never runs, and `M` keeps the rule of `map` that the function is called once per element, so `M([], Bad)` never calls `Bad`. In the same way, with `Fact(0) = 1` and `Fact(n) = n * Fact(n - 1)`, `F = Fact` makes `F(4)` choose a clause exactly as `Fact(4)` does, and an alias of an alias is the same function again. The arguments of a call through an alias are treated exactly as in a call of the original: with `Inc(x) = x + 1`, `A = abs` and `K = A(Inc)`, `K(-5)` is `4`, just like `abs(Inc(-5))`.
-
-An alias is the very definition it names. Used alone, without arguments, it gives the value its definition gives with no arguments — the same value, worked out once: the alias and the original share it. Any definition can be aliased, also one without parameters: with `Z = 2 + 3`, `A = Z` is `Z` under another name, so `A()` is a fresh call of `Z`, exactly like `Z()`.
-
-An alias names the WHOLE definition, its members included, while writing the name in braces makes a new definition that hands its calls on:
-
-```
-Box = {
-    public Q = 99
-    F(x) = x * x
-    F
-}
-A = Box
-B = { Box }
-GetQ(f) = f.Q
-
-A.Q
-GetQ(A)
-A(3)
-B(3)
-```
-
-**Results:**
-```
-99
-99
-9
-9
-```
-
-`Box` declares its own members and its only row is the name `F`, so a call `Box(3)` is handed on to `F`. `A = Box` is `Box` itself: `A.Q` and `GetQ(A)` read Box's `Q`, `A(3)` is `Box(3)`, and `open A` opens Box's public members. `B = { Box }` is a definition of its own, written in braces: `B(3)` is handed on to `Box` as well, but `B` has only the members it declares itself — none — so `B.Q` does not reach Box's `Q`, and `open B` opens nothing of Box. The same holds for a definition that declares helpers of its own beside the name, such as a `Helper = 0` line written above `Box`: it has its own member `Helper` and hands its calls on to `Box`. Calling such a definition with no arguments is the call of what it names: `Box()` is an error, because `F` needs an argument — it never gives `F` back as a value.
-
-Forwarding by name needs parameter names. A function defined by clauses that bind no parameter name, such as `S(1) = 1` and `S(-1) = -1`, can be aliased, but `W(x) = S` is an error: there is no parameter name to hand `x` on by. Write the call instead: `W(x) = S(x)`.
+These four forms are the ones you will use most. [Formulas and Aliases in Depth](#formulas-and-aliases-in-depth) shows how they work with patterns, built-in operations, and members.
 
 <a id="reordering-parameters-with-grace-operator"></a>
 <a id="grace-with-dotcall"></a>
@@ -806,47 +584,7 @@ Double(4)
 
 **Result:** `8`
 
-Markers add up: `~~x` requests two positions earlier for `x`, stopping at the end or a blocking neighbour. Equal accumulated weights preserve their original relative order. A contiguous equal-weight run moves as a unit when every parameter outside that run has zero weight. Other moving parameters can split the run while preserving its relative order. The outside name has zero weight in both examples below, so `x` and `y` stay side by side:
-
-```
-Prefixed = s * 100 + ~x * 10 + ~y
-Prefixed(1, 2, 3)
-```
-
-**Result:** `312`
-
-```
-Postfixed = s~ * 100 + x~ * 10 + y
-Postfixed(1, 2, 3)
-```
-
-**Result:** `231`
-
-`Prefixed` takes its parameters in the order `(x, y, s)`, and `Postfixed` in the order `(y, s, x)`. A name never passes a neighbour that moves the same way at least as strongly. To get an exact order, mark in one direction only: give each name one `~` in front for every earlier-written name that must come after it, or one `~` behind for every later-written name that must come before it.
-
-Other movers can separate both original runs:
-
-```
-K = a~ * 1000 + b~ * 100 + ~c * 10 + ~d
-K(1, 2, 3, 4)
-```
-
-**Result:** `2413`
-
-`K` takes `(c, a, d, b)`: `a` stays before `b` and `c` before `d`, but neither pair stays adjacent.
-
-A marker is an error only where there is no inferred parameter to reorder: on an explicit parameter, a property, or a built-in name such as `~count`.
-
-### Undefined Names in the Program
-
-The program itself is never called, so nothing can supply a parameter to it, and an undefined name at the top level is an error. This is how KatLang reports a typo:
-
-```
-Total = 5
-Totl + 1
-```
-
-**Result:** error — `Totl` is not defined, so it becomes a parameter of the program, which nothing supplies; the report suggests `Total`.
+A marker is an error only where there is no inferred parameter to reorder: on an explicit parameter, a property, or a built-in name such as `~count`. Several markers can work together; see [Several Grace Markers](#several-grace-markers).
 
 ---
 
@@ -911,7 +649,7 @@ false
 false
 ```
 
-Comparisons bind more tightly than the logical operators, so `x > 0 and x < 10` needs no parentheses, and `not x > 3` means `not (x > 3)`. Both operands of `and`, `or`, and `xor` are always evaluated.
+`xor` is `true` when exactly one operand is `true`; unlike `or`, it is `false` when both are. Comparisons bind more tightly than the logical operators, so `x > 0 and x < 10` needs no parentheses, and `not x > 3` means `not (x > 3)`. Both operands of `and`, `or`, and `xor` are always evaluated, so `and` cannot protect a calculation: `d != 0 and n / d > 1` still divides by zero when `d` is `0`. Use `if` for that.
 
 Only `true` and `false` are truth values. Numbers are not, so `1 and 0` is a type error: write the comparison you mean, such as `x != 0`.
 
@@ -947,8 +685,6 @@ SafeDivide(1, 0)
 0
 ```
 
-There is one exception: an explicit spread such as `Values*` (see [Sequences](#sequences)) is computed while a call's arguments are being formed, before `if` chooses a branch, so a spread written in the other branch still runs.
-
 The condition must be a Boolean:
 
 ```
@@ -957,7 +693,7 @@ if(1, 2, 3)
 
 **Result:** error — the condition `1` is a number, not a Boolean.
 
-For a choice among many cases, see [Pattern Matching](#pattern-matching).
+To choose among fixed values or shapes, see [Pattern Matching](#pattern-matching).
 
 ---
 
@@ -995,9 +731,26 @@ pass
 fail
 ```
 
+An `if` can sit inside another `if`, which handles ranges of values:
+
+```
+Grade(score) = if(score >= 90, 'A', if(score >= 50, 'B', 'C'))
+
+Grade(95)
+Grade(60)
+Grade(10)
+```
+
+**Results:**
+```
+A
+B
+C
+```
+
 ### Double Quotes and Escapes
 
-A single-quoted string is raw: its text is exactly what is written between the quotes. A double-quoted string may also contain **escapes** — `\"` for a double quote, `\\` for a backslash, `\n` for a line break, `\t` for a tab — and `{{` and `}}` for literal braces; any other backslash sequence is an error. Without holes, the two spellings are the same string:
+A single-quoted string is raw: its text is exactly what is written between the quotes. A double-quoted string may also contain **escapes** — `\"` for a double quote, `\\` for a backslash, `\n` for a line break, `\t` for a tab — and `{{` and `}}` for literal braces; any other backslash sequence is an error. Without interpolation, described next, the two spellings are the same string:
 
 ```
 "She said \"hi\""
@@ -1042,9 +795,11 @@ Ada: 9 points, pass
 Bob: 3 points, fail
 ```
 
-The holes are evaluated from left to right, each once, and the result is one string. A number appears with exactly its digits — `"{1.50}"` is `1.50` — and `true` and `false` appear as words; display settings such as `DisplayDecimals` never change the text inside a string. A hole holds one expression, so `"{a, b}"` is an error (write `"{a}, {b}"`), and there are no format specifiers: a `:` inside a hole is an error. A selection is written as anywhere else, as in `"{xs[0]}"`. An interpolated string cannot stand where fixed text is required, such as a [pattern](#matching-text) or a `load` URL.
+The holes are evaluated from left to right, each once, and the result is one string. A number appears with exactly its digits — `"{1.50}"` is `1.50` — and `true` and `false` appear as words; display settings such as `DisplayDecimals` never change the text inside a string. A hole holds one expression, so `"{a, b}"` is an error (write `"{a}, {b}"`), and there are no format specifiers: a `:` inside a hole is an error. An interpolated string cannot stand where fixed text is required, such as a [pattern](#matching-text) or a [`load`](#loading-external-algorithms) URL.
 
 There is still no `+` for text: `'a' + 'b'` is an error, while `"{x}{y}"` joins two values.
+
+On the command line, a program that contains double quotes needs shell quoting that keeps them — in a POSIX shell, `katlang eval '"Total: {2 + 3}"'` — or can be stored in a file and run with `katlang run`.
 
 The next chapter shows how to turn a number into text, and [Pattern Matching](#pattern-matching) shows how to choose among text values.
 
@@ -1052,7 +807,7 @@ The next chapter shows how to turn a number into text, and [Pattern Matching](#p
 
 ## Dot Calls
 
-Every call so far has been written `f(a)`. KatLang has a second spelling of the same call, `a.f`, in which the value before the dot becomes the call's first argument; the one refinement, for algorithms that have members of their own, is explained in [Members Come First](#members-come-first). The rest of this tutorial uses both spellings, because the dot lets a calculation read from left to right.
+The calls so far have been written `f(a)`. KatLang has a second spelling of the same call, `a.f`, in which the value before the dot becomes the call's first argument; the one refinement, for algorithms that have members of their own, is explained in [Members Come First](#members-come-first). The rest of this tutorial uses both spellings, because the dot lets a calculation read from left to right.
 
 ### Two Ways to Write a Call
 
@@ -1084,7 +839,7 @@ Add(10, 5)
 15
 ```
 
-In general, `a.f(b, c)` is the call `f(a, b, c)`. The value before the dot is called the **receiver**, and it is passed as a single argument. The rule applies to every callable, your own and the built-in ones alike:
+In general, `a.f(b, c)` is the call `f(a, b, c)`. The value before the dot is called the **receiver**, and it is passed as a single argument. The rule applies to every algorithm, your own and the built-in ones alike:
 
 ```
 16.sqrt
@@ -1098,6 +853,8 @@ pi.round(2)
 3.14
 1024
 ```
+
+A leading minus is not part of the receiver: `-7.abs` is `-(7.abs)`, which is `-7`. Write `(-7).abs` to pass the negative number.
 
 ### Chains Read Left to Right
 
@@ -1127,13 +884,13 @@ This style is especially natural for processing collections, as in `range(1, 10)
 
 A dot can also select a **member** of an algorithm. `Math` is a built-in algorithm whose members are the mathematical functions and constants: `Math.Pi` reads its member `Pi`, and `Math.Sqrt(16)` calls its member `Sqrt` with the argument `16`. In this case the receiver is not passed as an argument.
 
-The complete rule for `a.f(...)` is therefore:
+The rule for `a.f(...)` is therefore:
 
 1. If the receiver `a` is an algorithm with a member named `f`, that member is used.
-2. Otherwise, if `f` is `string`, the dot converts a number to text (see [Converting a Number to Text](#converting-a-number-to-text)).
+2. Otherwise, if `f` is a built-in dot operation, that operation runs. So far the only one is `string`, which converts a number to text (see [Converting a Number to Text](#converting-a-number-to-text)).
 3. Otherwise, `a.f(...)` is the call `f(a, ...)`.
 
-Numbers, text, and the sequences and lists of the next chapters have no members, so for them the dot always means a call: `16.sqrt` is `sqrt(16)`. You will define algorithms with members of your own in [Organizing Programs](#organizing-programs).
+Numbers, text, and the sequences and lists of the next chapters have no members, so for them the dot means a call, apart from `.string`: `16.sqrt` is `sqrt(16)`. You will define algorithms with members of your own in [Organizing Programs](#organizing-programs).
 
 A member written without arguments names that member, so it can also be passed on or called after parentheses — `(Math.Sqrt)(16)` is exactly `Math.Sqrt(16)`:
 
@@ -1150,11 +907,9 @@ Math.Sqrt(16)
 
 A call can follow only such a name, never a result that has already been computed: `Math.Sqrt(16)(2)` is an error, and so is `(16.sqrt)(2)`, because `16.sqrt` is the call `sqrt(16)`, whose result is a number.
 
-The rule also affects inferred parameters. In `Area = shape.V * 2`, the argument for `shape` might have no member `V`, and then `shape.V` would be the call `V(shape)`; so when nothing named `V` is defined, `V` is inferred as a parameter as well, and the signature is `Area(shape, V)`. To keep `V` out of the inferred parameters, write the parameter list: `Area(shape) = shape.V * 2`. The list settles only the signature, not what the dot does: a member `V` of `shape` still wins, and otherwise `shape.V` is still the call `V(shape)`. When the receiver certainly has no such member — a number, a text, or an algorithm defined without it — the dot is certainly that call, so under a parameter list its name must be defined exactly as in the written call: `Get(x) = 5.Size` is an error unless `Size` is defined, just like `Get(x) = Size(5)`.
-
 ### Converting a Number to Text
 
-`.string` turns a number into text. It is a built-in dot operation rather than a call, so it exists only in dot form — `string(42)` is not defined. Members still come first: an algorithm with its own member named `string` uses that member, and a callable you define under the name `string` is reached only by the call `string(...)`, never by `.string`:
+`.string` turns a number into text:
 
 ```
 42.string
@@ -1167,7 +922,9 @@ The rule also affects inferred parameters. In `Area = shape.V * 2`, the argument
 true
 ```
 
-Interpolation produces the same text — `"{42}"` is `42` — and works for every other value too ([Building Text with Interpolation](#building-text-with-interpolation)).
+It is a built-in dot operation rather than a call, so it exists only in dot form — `string(42)` is not defined. By the rule above, an algorithm with its own member named `string` uses that member, and a definition of your own named `string` is a separate thing, reached only by the call `string(...)`.
+
+Empty parentheses are allowed, as in `42.string()`. `.string` gives all of a number's digits, whatever `DisplayDecimals` says. Interpolation produces the same text — `"{42}"` is `42` — and works for every other value too ([Building Text with Interpolation](#building-text-with-interpolation)).
 
 ---
 
@@ -1269,7 +1026,7 @@ Selection returns the chosen value as it is: selecting a sequence gives the whol
 Several indices select several values at once, in the order written; repeating an index repeats the value. The selected values form one sequence — a single index gives the value itself, and no index at all gives the empty value `()`:
 
 ```
-Data = [10, 20, 30]
+Data = 10, 20, 30
 
 Data[2, 0, 2]
 Data[0]
@@ -1283,18 +1040,9 @@ Data[]
 ()
 ```
 
-Commas select siblings, while a second pair of brackets goes one level deeper: with `Grid = [[10, 20], [30, 40]]`, `Grid[0, 1]` is `([10, 20], [30, 40])` and `Grid[0][1]` is `20`. To take the indices from a collection, open it with `*` (see the next sections):
+Commas select siblings, while a second pair of brackets goes one level deeper: with `Grid = (10, 20), (30, 40)`, `Grid[0, 1]` is `((10, 20), (30, 40))` and `Grid[0][1]` is `20`.
 
-```
-Data = [10, 20, 30]
-Order = [2, 0]
-
-Data[Order*]
-```
-
-**Result:** `(30, 10)`
-
-Brackets select from a value and never run anything: `Data[0]` selects from the value of `Data`, while `Data()[0]` first runs `Data` afresh and selects from that result. Counting and selection see the same positions — a value's immediate items, never their insides. A number, a Boolean, or a string is one value with the single position `0`, so `count('abc')` is `1` and `'abc'[0]` is `'abc'`; KatLang has no character selection.
+Brackets select from a value and never call it: `Data[0]` selects from the value of `Data`, while `Data()[0]` first runs `Data` afresh and selects from that result. Counting and selection see the same positions — a value's immediate items, never their insides. A number, a Boolean, or a string is one value with the single position `0`, so `count('abc')` is `1` and `'abc'[0]` is `'abc'`; KatLang has no character selection.
 
 ### Values Stay Values
 
@@ -1310,11 +1058,11 @@ Add(Pair)
 
 **Result:** error — `Pair` is one argument, but `Add` needs two.
 
-KatLang never takes a value apart on its own. A dot call passes its receiver in the same way: `(10, 20).Add` is `Add((10, 20))`, which fails for the same reason. To use the items of a value, say so explicitly in one of three ways: select them with brackets, as in `Add(Pair[0], Pair[1])`; open the value with `*` (next section); or declare a parameter that unpacks it (see [Unpacking an Argument](#unpacking-an-argument)).
+KatLang never takes a value apart on its own. A dot call passes its receiver in the same way: `(10, 20).Add` is `Add((10, 20))`, which fails for the same reason. To use the items of a value, say so explicitly: select them with brackets, as in `Add(Pair[0], Pair[1])`; open the value with `*` (next section); or declare a parameter that unpacks it (see [Unpacking an Argument](#unpacking-an-argument)). Arithmetic does not reach inside a value either: `Pair * 2` is a type error, and [`map`](#pipelines) is the way to work on each item.
 
 ### Opening a Value with `*`
 
-A star after a value opens it: `value*` hands the value's items to the surrounding context one by one. At the top level they become separate outputs:
+A star after a value opens it: `value*` supplies the value's items to the surrounding context one by one. At the top level they become separate outputs:
 
 <!-- spec:property-value-boundary -->
 ```
@@ -1373,7 +1121,7 @@ Distance(P*, Q*)
 
 **Result:** `5`
 
-A spread opens exactly one level: `((1, 2), 3)*` supplies the two items `(1, 2)` and `3`, and the inner sequence stays whole.
+A spread opens exactly one level: `((1, 2), 3)*` supplies the two items `(1, 2)` and `3`, and the inner sequence stays whole. A value that is neither a sequence nor a list supplies itself, so `7*` is just `7`.
 
 The spread value is computed before the call counts its arguments, so if computing it fails, the call — your own algorithm or a built-in one — fails with that same error:
 
@@ -1389,6 +1137,17 @@ Add(Bad*)
 This happens before the called algorithm does anything, so not even `if` can skip a spread: with the same `Bad`, `if(false, Bad*, 0)` fails in the same way, while `if(false, Bad, 0)` is `0`, because `if` never evaluates an ordinary argument in the branch it does not choose.
 
 When another item follows a spread on the same line, separate the two with a comma, as in `A*, B`. Without the comma, `A* B` is the multiplication `A * B`. At the end of a line the star's spacing decides: an attached `A*` is a finished spread, so the next line is a new item, while a detached `A *` is a multiplication that continues on the next line ([Spread or Multiplication?](#spread-or-multiplication)).
+
+A spread also works among the indices of a selection, which takes the indices from a stored value:
+
+```
+Data = 10, 20, 30
+Order = 2, 0
+
+Data[Order*]
+```
+
+**Result:** `(30, 10)`
 
 ### Unpacking an Argument
 
@@ -1437,7 +1196,7 @@ There is no pattern `(x)`: a sequence never has exactly one item — `(7)` is ju
 0
 ```
 
-Spreading `()` supplies nothing. Do not confuse it with `{}`, an empty algorithm body: `{}` has no output at all, and using it where a value is required is an error.
+Spreading `()` supplies nothing.
 
 ### Comparing Values
 
@@ -1568,37 +1327,16 @@ F(([10, 20], 30))
 | `x` | any one value, whole |
 | `()` | the empty sequence |
 | `(x, y)` | a sequence of exactly two items |
-| `(x, *rest)` | a sequence of at least one item; `rest` is the list of the others |
-| `(*xs)` | any sequence; `xs` is the list of its items |
 | `[]` | the empty list |
 | `[x]` | a list of exactly one element |
 | `[x, y]` | a list of exactly two elements |
-| `[*xs]` | any list; `xs` is the list of its elements |
-
-An alias of such a definition takes exactly the same arguments (see [Aliases, Forwarding, and Explicit Calls](#aliases-forwarding-and-explicit-calls)), so the pattern unpacks exactly the same items either way:
-
-```
-Only([x]) = x
-First = Only
-
-Only([[7]])
-First([[7]])
-```
-
-**Results:**
-```
-[7]
-[7]
-```
-
-The pattern `[x]` unpacks the one element of `[[7]]`, which is `[7]`, and `First` does exactly the same: an alias never changes the structure of an argument, and never unpacks a value a second time.
 
 ### Lists or Sequences?
 
 - A **sequence** is what several outputs become, and what parentheses write. It is the natural shape for results that belong together, like the area and perimeter returned by `Rectangle`.
 - A **list** is a collection that keeps its exact shape, even with one item or none. Use lists for data such as measurements, scores, or the rows of a table.
 
-The collection operations of the next chapters accept both, and every operation that produces a collection returns a list.
+The collection operations of the next chapters accept both, and those that produce a collection return a list.
 
 ### Sequences and Lists as Text
 
@@ -1618,11 +1356,13 @@ Interpolation turns a sequence or a list into text with its brackets, keeping ev
 
 **Result:** `[one, two, three] (a, [b])`
 
-The text is meant for reading, not for storing data: as the second example shows, a comma inside a text cannot be told apart from the commas between items.
+The text is meant for reading, not for storing data: as the second example shows, a comma inside a string cannot be told apart from the commas between items.
 
 ---
 
-## Algorithms as Values
+<a id="algorithms-as-values"></a>
+
+## Algorithms as Arguments
 
 ### Passing an Algorithm
 
@@ -1642,7 +1382,7 @@ Apply(sqrt, 16)
 4
 ```
 
-The parameter `f` receives an algorithm, and `f(x)` calls it. Inferred parameters work the same way — a name that is called becomes a parameter that receives an algorithm:
+The parameter `f` receives an algorithm, and `f(x)` calls it. Passing an algorithm does not run it: `f` holds the algorithm itself until the body calls it. Inferred parameters work the same way — a name that is called becomes a parameter that receives an algorithm:
 
 ```
 Twice = f(f(x))
@@ -1653,31 +1393,28 @@ Twice(Square, 3)
 
 **Result:** `81`
 
-Passing works in one direction: an algorithm's result is always a calculated value, never an algorithm. With `Pick(f) = f`, the call `Apply(Pick(Square), 4)` is an error, because `Pick(Square)` is a computation rather than something to call. A call must also receive all of its arguments: for `Add(x, y) = x + y`, `Add(10)` is an argument-count error, not a partly applied `Add`.
+Built-in operations are passed in the same way. The name `tick` alone is the operation itself, so it can be named and passed on like any other algorithm, and each call through that name counts once:
 
-### Naming a Received Algorithm
-
-A definition whose only row is a parameter gives that parameter a second name. `A` below is whatever algorithm `f` receives, so `A(9)` calls `Square(9)`, `2.A` is `Square(2)`, and `A` can be passed on like `f` itself:
-
-<!-- spec:runtime-alias-of-a-parameter -->
 ```
-Square(x) = x * x
-Apply(f, x) = f(x)
-Use(f) = {
-    A = f
-    A(9), 2.A, Apply(A, 4)
-}
-
-Use(Square)
+T = tick
+Apply(f) = f()
+T(), Apply(tick), tick()
 ```
 
-**Result:** `(81, 4, 16)`
+**Results:**
+```
+1
+2
+3
+```
 
-Each call of `A` is a fresh call of the algorithm `f` received, with exactly the arguments written there — whatever that algorithm's parameters: when `f` receives an algorithm with no parameters, `A()` calls it afresh just as `f()` would, and `A` alone reads its value (see [Calling a Captured Call's Algorithm](#calling-a-captured-calls-algorithm) for `A = R.Algorithm`). If `f` receives a plain value instead of an algorithm, `A` names that value: `A` reads it, and `A(9)` is an argument-count error. The same works for a member of a parameter — inside `Use(b)`, `A = b.G` calls the `G` that `b` itself declares. There `G` is a member name, never an input of `A`: when `b` has no member `G`, `A` names the computed value `G(b)`, so `A(9)` is an argument-count error. `A` stands for what `f` received in every way, so `A.K` is that algorithm's member `K`, exactly like `f.K`.
+Anything that can be called — an algorithm of your own, a built-in operation, a Math function — is called a **callable**.
+
+An algorithm is not a value, so passing works in one direction: a call can receive an algorithm, but its result is always a calculated value, and a list holds only values. With `Pick(f) = f`, the call `Apply(Pick(Square), 4)` is an error, because `Pick(Square)` is a computation rather than something to call. A plain value cannot be called either: `Apply(5, 4)` is an error. A call must also receive all of its arguments: for `Add(x, y) = x + y`, `Add(10)` is an argument-count error, not a partly applied `Add`.
 
 ### Brace Algorithms
 
-Braces write an algorithm without giving it a name. Undefined names used only inside the braces become the brace algorithm's own parameters, in order of first appearance; a name the enclosing algorithm also uses belongs to the enclosing algorithm:
+Braces write an algorithm without giving it a name. Undefined names used only inside the braces become the brace algorithm's own parameters, in order of first appearance, even when the algorithm around the braces has an explicit parameter list; a name the enclosing algorithm also uses belongs to the enclosing algorithm:
 
 ```
 Apply(f, x) = f(x)
@@ -1713,141 +1450,45 @@ So when you design an algorithm that takes other algorithms, put the data parame
 
 Parentheses and braces look alike but mean different things:
 
-- `(n + 1)` is computed right where it is written, with the `n` of the surrounding algorithm.
-- `{n + 1}` is an algorithm that computes `n + 1` whenever it is called, and `n` is its own parameter.
+- `(n + 1)` is just the expression `n + 1`: the parentheses only group it, and `n` means whatever it means around it.
+- `{n + 1}` is an algorithm that computes `n + 1` whenever it is called, and `n` is its own parameter unless `n` is already defined around it.
 
-A brace algorithm without parameters simply produces its output when it is read, so `{1, 2, 3}.count` is `3`, just like `(1, 2, 3).count`. Braces also give an algorithm room for definitions of its own, as [Organizing Programs](#organizing-programs) shows.
+A brace algorithm without parameters simply produces its output when it is read, so `{1, 2, 3}.count` is `3`, just like `(1, 2, 3).count`. Empty braces are an algorithm with no output at all: unlike the empty sequence `()`, `{}` is an error where a value is required.
 
-### Capturing a Call with `meta`
-
-Writing `meta` before a parameter name makes the parameter receive the *call* written as its argument instead of that call's value. The call is not run when it is captured; the parameter holds a **call reference**, and `.Invoke()` runs the captured call:
+Braces also give an algorithm room for definitions of its own. They belong to that algorithm, and the rows that are not definitions are its output:
 
 ```
-Square(x) = x * x
-Capture(meta operation) = operation
+Circle(r) = {
+    Area = pi * r ^ 2
+    Area.round(2)
+}
 
-R = Capture(Square(5))
-R.Invoke()
+Circle(1)
 ```
 
-**Result:** `25`
+**Result:** `3.14`
 
-Every `.Invoke()` runs the call again, in the place where it was written, with the same arguments. A call reference is an ordinary value that can be stored and passed on:
+[Organizing Programs](#organizing-programs) has the full rules for such local definitions. Braces around a definition's whole body change nothing about its parameters: `F(a) = { b + a }` is as closed as `F(a) = b + a`.
 
-```
-Square(x) = x * x
-Capture(meta operation) = operation
-Twice(r) = r.Invoke() + r.Invoke()
+### Naming a Received Algorithm
 
-Twice(Capture(Square(3)))
-```
+A definition whose only row is a parameter of an enclosing algorithm gives that parameter a second name. `A` below is whatever algorithm `f` receives, so `A(9)` calls `Square(9)`, `2.A` is `Square(2)`, and `A` can be passed on like `f` itself:
 
-**Result:** `18`
-
-Only a written call can be captured: `Capture(5)`, `Capture(Square)` and `Capture(Y)` for a property `Y` are errors. `meta` goes before one plain parameter name of a written parameter list (not before `*name`, a pattern or a literal), and `R.Invoke` without parentheses is an error rather than a call. A call reference is used inside the program: a program cannot output one, and it cannot be shown as text:
-
-```
-Square(x) = x * x
-Capture(meta operation) = operation
-
-Capture(Square(5))
-```
-
-**Result:** error
-
-### Looking at a Captured Call's Arguments
-
-`.Arguments` is a view of the arguments supplied to a captured call. `count` tells how many there are, and selection reads one of them (counting from `0`):
-
-```
-Add(x, y) = x + y
-Capture(meta operation) = operation
-
-R = Capture(Add(10, 20))
-R.Arguments.count, R.Arguments[0], R.Arguments[1]
-```
-
-**Results:**
-```
-2
-10
-20
-```
-
-Obtaining the view runs nothing. `count` leaves ordinary argument values suspended, and selecting an argument computes only that one. Counting may evaluate an explicit spread such as `Pair()*` to determine how many arguments it supplies; that preparation happens once and is shared with selection and `R.Invoke()`. Spreading the view into another call passes it the same arguments — `R.Arguments*` hands over the original argument computations, so an argument the new call never uses is never computed:
-
-```
-Add(x, y) = x + y
-First(x, y) = x
-Capture(meta operation) = operation
-
-R = Capture(Add(5, 1 / 0))
-R.Arguments.count, First(R.Arguments*)
-```
-
-**Results:**
-```
-2
-5
-```
-
-`.first` and `.last` work as for a list, but an argument view is not a list: other collection operations such as `sum(R.Arguments)` or `[R.Arguments*]` are errors — select the values you need instead. `Arguments` is a property, so `R.Arguments()` is an error too, and like the reference itself a view cannot be a program result.
-
-### Calling a Captured Call's Algorithm
-
-`.Algorithm` is the captured call's algorithm itself, without its arguments. Calling it runs that algorithm afresh with exactly the arguments you give it, while `R.Invoke()` still runs the captured call:
-
-```
-Square(x) = x * x
-Capture(meta operation) = operation
-
-R = Capture(Square(5))
-R.Algorithm(8), R.Invoke()
-```
-
-**Results:**
-```
-64
-25
-```
-
-It is an ordinary callable, so it can be passed to a higher-order parameter, used as a `map` or `filter` callback, or called with the original arguments through `R.Arguments*`:
-
+<!-- spec:runtime-alias-of-a-parameter -->
 ```
 Square(x) = x * x
 Apply(f, x) = f(x)
-Capture(meta operation) = operation
+Use(f) = {
+    A = f
+    A(9), 2.A, Apply(A, 4)
+}
 
-R = Capture(Square(5))
-Apply(R.Algorithm, 7), [1, 2, 3].map(R.Algorithm), R.Algorithm(R.Arguments*)
+Use(Square)
 ```
 
-**Results:**
-```
-49
-[1, 4, 9]
-25
-```
+**Result:** `(81, 4, 16)`
 
-Together with `.Arguments*`, a `meta` parameter can drive a loop over the captured step from the captured starting state. `operation.Algorithm(operation.Arguments*)` is itself a written call — of the captured algorithm, over the captured arguments — so a loop captures it like any other call (see [Loops](#loops)):
-
-```
-Step(x) = x + 1, x < 3
-Loop(meta operation) = operation.Algorithm(operation.Arguments*).while
-
-Step(0).Loop
-```
-
-**Result:** `3`
-
-The rebuilt call is a new call, but its arguments are the very arguments of the captured one: each is computed at most once, whichever call needs it first.
-
-Obtaining `R.Algorithm` does not run the captured call or compute its arguments. A clause family is chosen again by the new arguments, and the algorithm keeps the names it was written with. Written without arguments, `R.Algorithm` is the captured algorithm read as a value, so for `Square`, which needs an argument, `R.Algorithm` alone is an error; `R.Algorithm()` calls it with no arguments, which is an error too — it never repeats the captured `5` (that is `R.Invoke()`). A property such as `A = R.Algorithm` is a new name for the captured algorithm, whatever its parameters, as in [Naming a Received Algorithm](#naming-a-received-algorithm): `A(8)` calls it afresh, `[1, 2].map(A)` uses it, and `A` alone is its value. Like `Invoke` and `Arguments`, `x.Algorithm` means the call-reference operation unless `x` has its own member named `Algorithm`; a definition named `Algorithm` of your own is still called as `Algorithm(x)`.
-
-The same holds when the captured algorithm has no parameters at all — say `R = F(3)` where `F` captures a call `B()` of its own parameterless `B`: `A = R.Algorithm` is a new name for `B`, so `A()` calls `B` afresh, `A` alone is `B`'s own value, and passing `A` to `Call(f) = f()` passes `B`. To repeat the captured call itself, with its original arguments, write `R.Invoke()`. If the receiver is itself a calculation, as in `A = F(3).Algorithm`, `F(3)` is worked out once, when `A` is first needed, and every `A()` then calls the algorithm it captured afresh.
-
-An alias never keeps a value of its own. Whatever it receives — a function with parameters or a property without any — `A()` calls the received target afresh, and `A` alone is the target's own value: the first `A()` may store that value for the target, exactly as the target's own first call would, and later calls never replace it. When what it receives is a plain value with no definition behind it — `b.G` where `b` has no member `G` but a function `G` takes it — `A` is that value, and `A()` gives the same value again without working anything out a second time; such an `A` cannot be handed on as a function. A runtime alias keeps its own declared members through alias chains; opening it imports those members, without importing the target's members. An alias of a definition that is known in advance, such as `A = Lib`, opens the members of `Lib` itself.
-
+Each call of `A` is a fresh call of the algorithm `f` received, with exactly the arguments written there. When `f` receives an algorithm with no parameters, `A()` calls it afresh just as `f()` would, and `A` alone reads its value. If `f` receives a plain value instead of an algorithm, `A` names that value: `A` reads it, and `A(9)` is an argument-count error.
 
 ---
 
@@ -1855,7 +1496,7 @@ An alias never keeps a value of its own. Whatever it receives — a function wit
 
 ### Ranges
 
-`range(start, end)` lists the whole numbers from `start` to `end`, inclusive:
+`range(start, stop)` lists the whole numbers from `start` to `stop`, inclusive:
 
 <!-- spec:range-inclusive -->
 ```
@@ -1864,7 +1505,7 @@ range(1, 5)
 
 **Result:** `[1, 2, 3, 4, 5]`
 
-When `start` is greater than `end`, the range counts down: `range(5, 1)` is `[5, 4, 3, 2, 1]`.
+When `start` is greater than `stop`, the range counts down: `range(5, 1)` is `[5, 4, 3, 2, 1]`.
 
 ### Pipelines
 
@@ -1933,17 +1574,17 @@ The last row chains two operations to find the three best scores.
 | Operation | Result |
 |---|---|
 | `xs.count` | The number of items |
-| `xs.sum`, `xs.avg` | The total and the mean of the numeric items |
-| `xs.min`, `xs.max` | The smallest and the largest numeric item |
+| `xs.sum`, `xs.avg` | The total and the mean of the items, which must be numbers |
+| `xs.min`, `xs.max` | The smallest and the largest item; the items must be numbers |
 | `xs.first`, `xs.last` | The first and the last item |
 | `xs.contains(v)` | `true` when an item equals `v` |
 | `xs.filter(p)` | The items for which `p` returns `true` |
 | `xs.map(f)` | `f` applied to every item |
-| `xs.order`, `xs.orderDesc` | The numeric items sorted in ascending or descending order |
+| `xs.order`, `xs.orderDesc` | The items in ascending or descending order; the items must be numbers |
 | `xs.distinct` | The items with later duplicates removed |
 | `xs.take(n)`, `xs.skip(n)` | The first `n` items; the items after the first `n` |
 | `xs.reduce(f, initial)` | The items combined into one value (see below) |
-| `range(start, end)` | The whole numbers from `start` to `end` |
+| `range(start, stop)` | The whole numbers from `start` to `stop` |
 | `atoms(value)` | Every number inside a nested structure, in one flat list |
 
 Each operation can also be written as an ordinary call, such as `count(xs)` or `take(xs, n)`. The test given to `filter` must return a Boolean: `{n mod 2 == 0}` is right, while `{n mod 2}` is a type error. `min`, `max`, `avg`, `first`, and `last` need at least one item, and the `sum` of an empty collection is `0`.
@@ -1973,7 +1614,7 @@ sum(1, 2, 3)
 
 **Result:** error — `sum` takes one collection, but three separate numbers were passed.
 
-To combine collections, build one collection from their items: with `A = 1, 2` and `B = 3, 4`, `sum((A*, B*))` is `10`.
+To combine collections, build one collection from their items: with `A = 1, 2` and `B = 3, 4`, `sum((A*, B*))` is `10`. The same goes for two numbers: `max(3, 5)` is an error, and `max((3, 5))` is `5`.
 
 ### Results Are Lists
 
@@ -2030,11 +1671,9 @@ map(((1, 2), (3, 4)), Swap)
 
 A `map` or `filter` callback with two ordinary parameters, such as `Add(a, b) = a + b`, does not accept a pair element, just as `Add((1, 2))` is an error. A list element is unpacked by a list pattern instead: `[[1, 2], [3, 4]].map(LSwap)` with `LSwap([a, b]) = [b, a]`.
 
-A brace callback's parameters are its undefined names, so choose names that are not already defined around it. If the program defines a property `x`, then `{x * 2}` uses that `x`, and no parameter is left to receive the element.
+A brace callback's parameters are its undefined names, so choose names that are not already defined around it. If the program defines a property `x` without parameters, then `{x * 2}` uses that `x`, and no parameter is left to receive the element. A built-in name counts as defined too, and it fails quietly: the element is handed to the built-in, so `[10, 20, 30].map{count + 1}` is `[2, 2, 2]`.
 
 Conversely, a name that appears only inside the braces is a parameter of the callback, not of the algorithm around it: in `Scale = values.map{n * factor}`, the callback has the parameters `n` and `factor`, `Scale` has only `values`, and calling the callback with one element fails. To make `factor` an input of `Scale`, declare it — `Scale(values, factor) = values.map{n * factor}` — and the `factor` in the braces is then the parameter of `Scale`.
-
-The same rule applies one level further in: a name used only inside a property declared in the callback belongs to that property. In `[1, 2].map{ Sq = n * n ⏎ Sq + Sq }` (two lines inside the braces), `n` appears only in `Sq`, so `Sq` is a function of `n` and the row `Sq + Sq` is the two calls `Sq(n) + Sq(n)`, each calculated afresh. When the callback's own rows use the name — `n * 0 + Sq + Sq` — `n` is the callback's parameter, `Sq` is an ordinary property that reads it, and `Sq` is calculated once per element. Naming the callback (`Cb = { … }`, then `map(Cb)`) changes nothing: what matters is who owns the name.
 
 A callback runs only when it is called. Passing it evaluates nothing, so a callback that is never called — here because the collection is empty — has no effect and cannot fail:
 
@@ -2048,7 +1687,7 @@ map([], Broken)
 
 ### A Callback Returns One Value
 
-A callback's result is exactly what an ordinary call of it returns, so `map(L, F)` is the list `[F(L[0]), F(L[1]), …]`. When the callback writes several output rows, they become one sequence value — one element of the result, never several:
+A callback's result is exactly what an ordinary call of it returns: for each element, `map` puts the result of `F(element)` into the new list as one element. When the callback writes several output rows, they become one sequence value — one element of the result, never several:
 
 ```
 Twice(x) = x, x
@@ -2122,10 +1761,10 @@ Each result of the reducer becomes the next accumulator exactly as an ordinary c
 
 ```
 Pair(x, acc) = x, acc
-Keep(x, acc) = acc
+Clear(x, acc) = ()
 
 [1, 2].reduce(Pair, 0)
-[1, 2].reduce(Keep, ())
+[1, 2].reduce(Clear, 0)
 ```
 
 **Results:**
@@ -2144,7 +1783,7 @@ The first fold is `Pair(2, Pair(1, 0))`: each pair is passed on whole, never fla
 
 **Result:** error — division by zero, in the initial accumulator.
 
-For pure, deterministic, total computations, `reduce([a, b], R, initial)` gives the same result value as `R(b, R(a, initial))`. Reduce processes elements from left to right, using each complete call result as the next accumulator. Nested calls follow Model-C demand order and can skip an unused inner accumulator. The equation does not promise identical effects, argument demand, random draws, resource use or error timing. The analogous map equation, `map(L, F) == [F(L[0]), F(L[1]), …]`, has the same qualification: map demands the collection, while expanded calls may ignore their indexed arguments.
+`reduce` computes its collection first and then makes the calls from the first element to the last, so the nest of calls above is a picture, not an exact equivalent: with `Sub(x, acc) = x - acc`, `[tick(), tick()].reduce(Sub, 0)` is `1`, while `Sub(tick(), Sub(tick(), 0))` is `-1`.
 
 ### Flattening with `atoms`
 
@@ -2222,7 +1861,7 @@ Collect([1, 2])
 
 ### Using the Name Alone
 
-If an algorithm works with no arguments, using its name alone reads its cached value, even if it declares optional or collecting parameters. Use `A()` when you want to evaluate it again and get a fresh value:
+If an algorithm works with no arguments, using its name alone reads its stored value, even if it declares a collecting parameter. Use `A()` when you want to evaluate it again and get a fresh value:
 
 ```
 Roll(*bonus) = randomInt(1, 7) + bonus.sum
@@ -2283,7 +1922,7 @@ Data*.Mean
 
 ### Fixed and Collecting Parameters Together
 
-A collecting parameter can stand beside ordinary parameters. The ordinary parameters take their arguments from the front and the back, and the collecting parameter collects the rest:
+A collecting parameter can stand beside fixed parameters, which take one argument each. The fixed parameters take their arguments from the front and the back, and the collecting parameter collects the rest:
 
 ```
 Scale(*values, factor) = values.map{n * factor}
@@ -2302,7 +1941,36 @@ Tail(5, 6, 7)
 [6, 7]
 ```
 
-A parameter list may contain only one collecting parameter.
+A parameter list may contain only one collecting parameter of its own.
+
+### Collecting Inside a Pattern
+
+A star also works inside a pattern, where it collects the remaining items of the one argument that the pattern unpacks:
+
+```
+Rest((x, *others)) = others
+Items([*xs]) = xs.count
+
+Rest((1, 2, 3))
+Items([5, 6])
+Items([])
+```
+
+**Results:**
+```
+[2, 3]
+2
+0
+```
+
+| Pattern | Matches |
+|---|---|
+| `(x, *rest)` | a non-empty sequence; `rest` is the list of the others |
+| `(*xs)` | any sequence; `xs` is the list of its items |
+| `[x, *rest]` | a non-empty list; `rest` is the list of the others |
+| `[*xs]` | any list; `xs` is the list of its elements |
+
+A pattern counts separately from the parameter list around it, so it may collect even when the list does.
 
 ### Forwarding Collected Arguments
 
@@ -2323,11 +1991,13 @@ Forward([1, 2])
 [[1, 2]]
 ```
 
-`Forward` hands on exactly the arguments it received: `Forward(1, 2)` passes two numbers, and `Forward([1, 2])` passes one list. `Forward(*items) = Target` means the same here: Forward's collecting parameter `items` is handed on by name to Target's collecting parameter `items`, re-spread (see [Aliases, Forwarding, and Explicit Calls](#aliases-forwarding-and-explicit-calls)). Inside a larger formula the call must be written out: in `Forward(*items) = [Target, 0]`, the name `Target` alone would be `Target`'s own value, `[]`, whatever `Forward` received (see [Using the Name Alone](#using-the-name-alone)).
+`Forward` passes along exactly the arguments it received: `Forward(1, 2)` passes two numbers, and `Forward([1, 2])` passes one list. `Forward(*items) = Target` means the same here: Forward's collecting parameter `items` is forwarded by name to Target's collecting parameter `items`, spread again (see [Aliases, Forwarding, and Explicit Calls](#aliases-forwarding-and-explicit-calls)).
+
+The names must match: with `Target(*xs) = xs`, `Forward(*items) = Target` quietly gives `[]`, because nothing named `xs` is there to forward, while the written call `Target(items*)` has no such trap. Inside a larger formula the call must be written out: in `Forward(*items) = [Target, 0]`, the name `Target` alone would be `Target`'s own value, `[]`, whatever `Forward` received (see [Using the Name Alone](#using-the-name-alone)).
 
 ### Values and Items at a Glance
 
-The last chapters rest on one idea: a value stays one value until you open it explicitly. With `A = [1, 2]` and `B = [3, 4]`:
+The chapters since Sequences rest on one idea: a value stays one value until you open it explicitly. With `A = [1, 2]`, `B = [3, 4]`, and an algorithm `F`, called or defined:
 
 | You write | Meaning |
 |---|---|
@@ -2345,8 +2015,6 @@ The last chapters rest on one idea: a value stays one value until you open it ex
 ---
 
 ## Deconstruction
-
-Deconstruction shares one right-hand-side calculation. After `a, b = 10, 20`, both `a` and `a()` select the first result of that shared calculation. An explicit target call does not run the right-hand side again; if it is the first access to any target, it starts the first calculation. This also holds for an effectful right-hand side such as `a, b = randomInt(1, 100), 20`: repeated `a()` calls reuse its draw. An ordinary property such as `A = randomInt(1, 100)` keeps its usual behavior: `A` reads the cached value and `A()` requests a fresh evaluation of A’s body.
 
 One definition can bind several names at once:
 
@@ -2411,141 +2079,22 @@ rest
 
 Without a collecting name, the number of names must match the number of items: `x, y = 1, 2, 3` is an error as soon as `x` or `y` is used.
 
-Inside an algorithm call the sharing holds once per call. A group declared in a nested block, such as `B` inside `F(k)` below, is calculated once for each call of `F`, whichever access comes first — `B` read inside a callback or a helper, the member `B.a`, or a name opened from `B` — so every access sees the same draw. An explicit call `B()` is a fresh calculation of its own, and two calls of `F` never share one:
+All the names of one deconstruction share one calculation of the right-hand side. It runs when the first of the names is needed, and only then. Calling one of the names, as in `a()`, selects from that same calculation instead of running it again, unlike an explicit call of an ordinary property:
 
 ```
-F(k) = {
-    B = {
-        a, b = k + randomInt(1, 100), k
-        a - b
-    }
-    [1].map{ n * 0 + B }[0] == B.a - B.b
-}
-F(3)
-```
-
-**Result:** `true`
-
-A group or helper that reads nothing from the call is different: it has one value for the whole run, however many calls of `F` reach it.
-
----
-
-<a id="repetition"></a>
-
-## Loops
-
-### Repeating a Step with `repeat`
-
-`repeat` applies a step algorithm a fixed number of times, feeding each result back in as the next input. You write the step as a call with its starting value, and the number of rounds after it:
-
-```
-Increment = x + 1
-Increment(0).repeat(5)
-```
-
-**Result:** `5`
-
-`Increment(0).repeat(5)` — the dot spelling of `repeat(Increment(0), 5)` — starts from `0` and applies `Increment` five times. `repeat` does not simply run the call `Increment(0)`: it takes it apart, using `Increment` as the step and the call's arguments as the starting state. That is what its parameter `meta step` means (see [Capturing a Call with `meta`](#capturing-a-call-with-meta)).
-
-### State with Several Values
-
-A step with several outputs carries several values from one round to the next; together they are the loop's **state**. Write the step's call with one initial value for each state value:
-
-```
-Fibonacci(a, b) = b, a + b
-Final = Fibonacci(0, 1).repeat(10)
-
-Final
-Final[0]
+a, b = tick(), 20
+a, a(), a(), tick()
 ```
 
 **Results:**
 ```
-(55, 89)
-55
+1
+1
+1
+2
 ```
 
-Each round turns the state `(a, b)` into `(b, a + b)`. Starting from `(0, 1)`, ten rounds reach `(55, 89)`, and `[0]` selects the tenth Fibonacci number.
-
-Each argument of the step's call is one state value, and values stay values here too: to start from a stored pair such as `Start = 0, 1`, spread it inside the call, as in `Fibonacci(Start*).repeat(10)`. A step can also start from no values at all: with `Done = false`, `Done().while` is `()`.
-
-### Which Calls Are Steps
-
-The loop must see the call itself — a call written with its argument list: `Increment(0).repeat(5)` and `while(Countdown(5))` work, and so do a call through a parameter, as in `Run(step, start) = step(start).while`, a call of a member or of a module algorithm, such as `Box.Step(0).while` or `Math.Abs(-3).repeat(2)`, and a call rebuilt from a captured call, `op.Algorithm(op.Arguments*).while`. Anything else is an error, and nothing is computed: a plain value (`repeat(5, 2)`), a property that only holds the result of a call (with `Start = Increment(0)`, `Start.repeat(5)` reads the value of `Start` and cannot look back at how it was computed), the algorithm without a call (`Increment.repeat(5)`), and a member without an argument list (`Box.Step.while`). An anonymous block is given a name first, so that it can be called:
-
-```
-Box = { Step(x) = x + 1, x < 3 }
-Add = { x + 10 }
-
-Box.Step(0).while, Math.Abs(-3).repeat(2), Add(0).repeat(3)
-```
-
-**Results:**
-```
-3
-3
-30
-```
-
-The count of `repeat` is an ordinary value. The step's starting values are prepared before the count is computed, but only a spread among them is computed at that point; the others are computed when the loop needs them.
-
-### Looping While a Condition Holds
-
-`while` repeats a step as long as a condition holds. The step's **last output** is the condition, and the outputs before it are the state:
-
-```
-Countdown = x - 1, x > 1
-Countdown(5).while
-```
-
-**Result:** `1`
-
-Read `Countdown` as "while `x > 1`, replace `x` with `x - 1`": starting from 5, the state becomes 4, 3, 2, and 1, and at 1 the condition `x > 1` is `false`, so the loop stops with `1`. Precisely: each round evaluates the **condition first**; if it is `false`, the loop ends and returns the current state without computing the other outputs at all, and if it is `true`, the other outputs are computed, in order, and become the next state. So a condition protects the step from a computation that would fail:
-
-<!-- spec:loop-while-condition-first-skips-transition -->
-```
-Step(x) = 10 / (x - 1), x > 1
-Step(1).while
-```
-
-**Result:** `1`
-
-The condition `x > 1` is `false` for the initial state, so `10 / (x - 1)` is never evaluated and the initial state comes back unchanged. When the condition is written in terms of the step's inputs, as here, `while` behaves like an ordinary while loop. The condition must be a Boolean.
-
-The condition is the **last item** supplied by the step's outputs. To find it, `while` evaluates output rows from right to left until one supplies an item. Trailing empty spreads still run, including their effects; the last item of the first nonempty row is the condition. That whole row runs before the remaining earlier rows. Anything the condition itself needs is still computed — `Step(x) = 10 / (x - 1), 10 / (x - 1) > 0` divides by zero — and a condition produced inside another call is not separate: with `Pack(x) = 10 / (x - 1), x > 1` and `Step(x) = Pack(x)*`, the call `Pack(x)` computes both of its outputs, so `Step(1).while` also divides by zero. Write the condition as its own output to get the protection. After `true`, the remaining earlier rows run left to right. This order also applies to random draws and host operations.
-
-Two more examples: how many years it takes 5% interest to double 1000, and how many steps the Collatz sequence needs to get from 27 down to 1:
-
-```
-Grow(years, balance) = years + 1, balance * 1.05, balance < 2000
-Collatz(n, steps) = if(n mod 2 == 0, n / 2, 3 * n + 1), steps + 1, n != 1
-
-Grow(0, 1000).while[0]
-Collatz(27, 0).while[1]
-```
-
-**Results:**
-```
-15
-111
-```
-
-A loop whose condition never becomes `false` runs forever, so check the condition carefully. When you are transforming a known collection, a pipeline with `map`, `filter`, and `reduce` is usually clearer than a loop; loops are for state that evolves step by step.
-
-### Any Callable Can Be a Step
-
-A step is called exactly as it would be called directly, with the current state as its arguments, so any callable — including a conditional algorithm (see Pattern Matching below) or a builtin — can be a step whenever the state supplies arguments it accepts. Clauses give a step a natural base case:
-
-<!-- spec:loop-step-family-while -->
-```
-Countdown(0) = 0, false
-Countdown(n) = n - 1, true
-Countdown(3).while
-```
-
-**Result:** `0`
-
-Each round calls `Countdown` on the state and the matching clause's outputs form the next state and the condition, so the state becomes 2, 1 and 0, where the first clause returns `false`. A builtin step works the same way: `repeat(count([1, 2]), 1)` is `count([1, 2])`, which is `2`.
+Inside an algorithm the sharing holds once per call: each call has its own calculation. A deconstruction that reads nothing from the call has one value for the whole run.
 
 ---
 
@@ -2553,7 +2102,7 @@ Each round calls `Countdown` on the state and the matching clause's outputs form
 
 ### Clauses
 
-Several definitions with the same name, each with **patterns** in place of plain parameters, form one **conditional algorithm**:
+Several definitions with the same name, whose parameter lists may hold **patterns** such as literals, are the **clauses** of one **conditional algorithm**:
 
 ```
 Describe(0) = 'zero'
@@ -2571,7 +2120,7 @@ negative
 positive
 ```
 
-A call tries the clauses from top to bottom and uses the first one whose patterns match. A literal such as `0` matches only that value; a name such as `n` matches any value and binds it. Put the catch-all clause last.
+A call tries the clauses from top to bottom and uses the first one whose patterns match. A literal such as `0` matches only that value; a name such as `n` matches any value and binds it. Put the catch-all clause last. Patterns match fixed values and shapes, not conditions, so a range of values still takes an `if`, as in `Describe`.
 
 ### Recursion
 
@@ -2595,7 +2144,7 @@ Gcd(48, 18)
 
 **Result:** `6`
 
-A definition without a written parameter list can recurse too, as long as it calls itself with its arguments written out:
+A definition without a written parameter list can recurse too, by calling itself with its arguments written out:
 
 ```
 Fact = if(n <= 1, 1, n * Fact(n - 1))
@@ -2605,21 +2154,7 @@ Fact(5)
 
 **Result:** `120`
 
-Definitions can also use themselves, or each other, by bare name. KatLang then infers their parameters together, by the same rules as everywhere: each definition's own parameters first, then those of the definitions it uses, in the order it uses them. The bare name passes the current arguments along:
-
-```
-Count = if(tick() > 3, start, Count + 1)
-
-Count(10)
-```
-
-**Result:** `13`
-
-Bare-name recursion passes the same arguments again, so use it only when something else ends the recursion. To change an argument, write the call: `Steps = if(n <= 0, 0, Steps(n - 1) + 1)`.
-
-Inference only reads definitions; it never runs them. If definitions keep swapping the order of their inferred parameters, as in `A = B + X` and `B = A + Y` with `X(x)` and `Y(y)`, inference does not settle and KatLang reports an error: write the parameters out. When several orders would work, KatLang uses the one its rounds reach, so write the parameter list yourself whenever the order matters to you. A parameter that recursive definitions pass around can come from several declarations at once, and error messages then name all of them.
-
-Recursion cannot go arbitrarily deep. By default KatLang allows at most 128 nested calls, and a separate protection of the host's stack can stop a deep recursion sooner, depending on what each call does; either way the calculation stops with an error. For long iterations use `repeat`, `while`, or `reduce` instead: `range(1, n).reduce({x * product}, 1)` computes a factorial without recursion.
+Recursion cannot go arbitrarily deep. By default KatLang allows at most 128 nested calls, and a separate safety check can stop a deep recursion sooner, depending on what each call does; either way the calculation stops with an error. For long iterations use `reduce` or the loops of the next chapter instead: for a positive `n`, `range(1, n).reduce({x * product}, 1)` computes a factorial without recursion.
 
 ### Matching Text
 
@@ -2701,7 +2236,13 @@ true
 false
 ```
 
-Two arguments that name the same definition are the same argument: they agree without being calculated. Arguments that name different definitions differ, even when their values are equal, while a plain value is compared by its value:
+`_` is an ordinary name here, not a wildcard, so `F(_, _)` also requires two equal arguments.
+
+What counts as equal depends on what is passed:
+
+- Two arguments that name the same definition are the same argument: they agree without being calculated.
+- Arguments that name different definitions differ, even when their values are equal, because a name passes the definition itself and not only its value.
+- A plain value is compared by its value.
 
 ```
 A = 7
@@ -2721,7 +2262,7 @@ false
 true
 ```
 
-When a plain value takes part, every argument must bring its own value to compare with it. A function that requires arguments cannot supply a value just by being named, and an argument whose calculation fails reports its own error — the other argument never stands in for it:
+When a plain value takes part, every argument must bring its own value to compare with it. An algorithm that requires arguments cannot supply a value just by being named, and an argument whose calculation fails reports its own error — the other argument never stands in for it:
 
 ```
 Inc(y) = y + 1
@@ -2734,28 +2275,9 @@ Check(1)
 
 **Result:** error — `Inc` needs an argument, so it has no value to compare with `1`.
 
-A callable that accepts zero arguments can supply its value through the ordinary cached read. `Check` declares its parameter list, so nothing is handed on to `Inc`; a formula without one would pass its own input on instead — `Check = Same(Inc, 1)` means `Check(y) = Same(Inc(y), 1)` (see [Formulas That Use Formulas](#formulas-that-use-formulas)).
+An algorithm that works with no arguments supplies its value by an ordinary read.
 
-The check is about arguments that are supplied separately. When one input is handed on to both places, as `Twice = Common * 2` does with `Common(x, x) = x` (see [Formulas That Use Formulas](#formulas-that-use-formulas)), both places receive that same input, so they cannot differ — and if that input fails, or is a function that needs arguments, the error is that input's own. An alias is different: `Same = Common` takes two separate arguments, exactly like `Common`.
-
-Equal means equal as values, the same test `==` makes: `1.5` and `1.50` are one number, and so are `0` and `-0`, so they are accepted as equal arguments. The name then holds the argument written first, exactly as it was written, which `.string` can show:
-
-```
-Show(x, x) = x.string
-
-Show(1.5, 1.50)
-Show(1.50, 1.5)
-```
-
-**Results:**
-```
-1.5
-1.50
-```
-
-A named property passed as one of the arguments is kept in preference to a plain number, on whichever side it stands: with `A = 1.50`, both `Show(1.5, A)` and `Show(A, 1.5)` give `1.50`.
-
-Repeated names preserve satisfiability when their contributions are permuted. When a plain value takes part, successful binding also preserves the value up to `==`; when every argument names the same definition, the binding keeps that definition and its first argument, whose value is that argument's own. Equally rich compatible inputs retain the first written representation. When different incompatibilities coexist, ordinary binding order may report different categories: with `A = 1.0`, `B = 1.00`, `P(x,x,x) = x`, `P(A,B,2)` is `TypeMismatch` and `P(A,2,B)` is `ArityMismatch`. Both fail; family incompatibilities are clause non-match.
+Compared values are equal when `==` says so: `1.5` and `1.50` are one number, and so are `0` and `-0`. ([Patterns That Need Values](#patterns-that-need-values) shows which of two equal arguments the name then holds.)
 
 ### Rules for Clauses
 
@@ -2770,7 +2292,7 @@ Grade(3)
 
 **Result:** error — no clause of `Grade` matches the argument `3`.
 
-All clauses of one conditional algorithm take the same number of parameters and produce the same number of outputs. A family of clauses that disagrees is rejected before anything runs:
+All clauses of one conditional algorithm take the same number of parameters and write the same number of outputs, a spread counting as one however many items it supplies. A conditional algorithm whose clauses disagree is rejected before anything runs:
 
 <!-- spec:conditional-clauses-share-top-level-arity -->
 ```
@@ -2782,7 +2304,30 @@ F(0)
 
 The error points at the second clause, which takes two parameters where the first takes one. Two clauses whose patterns have the same structure, such as `F(x)` and `F(y)`, are rejected too, as duplicates, even when the names they bind differ. Apart from such duplicates, KatLang does not check whether a clause can ever be chosen: after `F(n)`, a clause `F(0)` is accepted but never used, which is why the catch-all belongs last.
 
-A clause's own inputs come entirely from its head, so Grace cannot reorder them: `F(n) = ~n + 1` is an error. A `{ … }` algorithm written inside a clause is a separate algorithm that infers its own parameters, so it may use Grace on those:
+Clauses cannot collect: `*name` works only in a single definition without literal patterns. `Sum([]) = 0` followed by `Sum([x, *rest]) = x + Sum(rest)` is rejected, and so is `K(0, *rest) = 1`. To walk through a list, use `reduce`; for a short list, a recursion that selects from the list works too:
+
+```
+Sum(xs) = if(xs.count == 0, 0, xs[0] + Sum(xs.skip(1)))
+
+Sum([1, 2, 3])
+```
+
+**Result:** `6`
+
+A conditional algorithm may need to inspect its arguments, so for handing on, each of its arguments counts as a value ([Value or Algorithm?](#value-or-algorithm) has the full rule). A formula that still needs inputs is therefore handed them, where an ordinary definition would receive the formula itself: with the `Same` clauses above, `Check = Same(Inc, 1)`, written without a parameter list, means `Check(y) = Same(Inc(y), 1)`, and a top-level `Same(Inc, Inc)` is an error, because nothing there supplies `y`. To pass an algorithm to a conditional algorithm, write it as a brace algorithm:
+
+```
+Times(0, f, x) = x
+Times(n, f, x) = Times(n - 1, f, f(x))
+
+Times(3, {y + 1}, 0)
+```
+
+**Result:** `3`
+
+With `Inc(y) = y + 1`, the row `Times(3, Inc, 0)` is an error, because `Inc` is handed an input `y` that nothing supplies. To pass a named formula, put its name in braces: `Times(3, {Inc}, 0)` is `3`.
+
+A clause infers no parameters: every name in its body must come from its head, the part before `=`, or be defined around it, so `F(0) = z` is an error. For the same reason Grace cannot reorder a clause's inputs: beside `F(0) = 0`, the clause `F(n) = ~n + 1` is an error. A `{ … }` algorithm used inside a clause's expression is a separate algorithm that infers its own parameters, so it may use Grace on those:
 
 <!-- spec:grace-in-branch-nested-block-belongs-to-the-block -->
 ```
@@ -2793,7 +2338,142 @@ F(0)
 
 **Result:** `9`
 
-The block's parameters are `(x, y)`, so `Apply` calls it with `x = 1` and `y = 10`. They belong to the block: the clause `F(0)` still takes only the input its head describes.
+The brace algorithm's parameters are `(x, y)`, so `Apply` calls it with `x = 1` and `y = 10`. They belong to the brace algorithm: the clause `F(0)` still takes only the input its head describes.
+
+---
+
+<a id="repetition"></a>
+
+## Loops
+
+### Repeating a Step with `repeat`
+
+`repeat` applies a step algorithm a fixed number of times, feeding each result back in as the next input. You write the step as a call with its starting value, and the number of rounds after it:
+
+```
+Increment = x + 1
+Increment(0).repeat(5)
+```
+
+**Result:** `5`
+
+`Increment(0).repeat(5)` — the dot spelling of `repeat(Increment(0), 5)` — starts from `0` and applies `Increment` five times. `repeat` does not simply run the call `Increment(0)`: it takes it apart, using `Increment` as the step and the call's arguments as the starting state. ([Captured Calls](#captured-calls) shows how your own algorithms can do the same.)
+
+### State with Several Values
+
+A step with several outputs carries several values from one round to the next; together they are the loop's **state**. Write the step's call with one initial value for each state value:
+
+```
+Fibonacci(a, b) = b, a + b
+Final = Fibonacci(0, 1).repeat(10)
+
+Final
+Final[0]
+```
+
+**Results:**
+```
+(55, 89)
+55
+```
+
+Each round turns the state `(a, b)` into `(b, a + b)`. Starting from `(0, 1)`, ten rounds reach `(55, 89)`, and `[0]` selects the tenth Fibonacci number.
+
+Each argument of the step's call is one state value, and values stay values here too: to start from a stored pair such as `Start = 0, 1`, spread it inside the call, as in `Fibonacci(Start*).repeat(10)`.
+
+Each fixed parameter of the step is part of the state, so it needs an output of its own. A value that never changes can be passed along as an output or, more simply, read from around the step:
+
+```
+Power(base, n) = {
+    Step(x) = x * base
+    Step(1).repeat(n)
+}
+
+Power(2, 10)
+```
+
+**Result:** `1024`
+
+### Looping While a Condition Holds
+
+`while` repeats a step as long as a condition holds. The step's **last output** is the condition, and the outputs before it are the state:
+
+```
+Countdown = x - 1, x > 1
+Countdown(5).while
+```
+
+**Result:** `1`
+
+Read `Countdown` as "while `x > 1`, replace `x` with `x - 1`": starting from 5, the state becomes 4, 3, 2, and 1, and at 1 the condition `x > 1` is `false`, so the loop stops with `1`. Precisely: each round evaluates the **condition first**; if it is `false`, the loop ends and returns the current state without computing the other outputs at all, and if it is `true`, the other outputs are computed, in order, and become the next state. So a condition protects the step from a computation that would fail:
+
+<!-- spec:loop-while-condition-first-skips-transition -->
+```
+Step(x) = 10 / (x - 1), x > 1
+Step(1).while
+```
+
+**Result:** `1`
+
+The condition `x > 1` is `false` for the initial state, so `10 / (x - 1)` is never evaluated and the initial state comes back unchanged. When the condition is written in terms of the step's inputs, as here, `while` behaves like an ordinary while loop. The condition must be a Boolean.
+
+The condition is the last value the step produces, and the protection covers only the other outputs. Anything the condition itself needs is still computed — `Step(x) = 10 / (x - 1), 10 / (x - 1) > 0` divides by zero — and a condition produced inside another call is not separate: with `Pack(x) = 10 / (x - 1), x > 1` and `Step(x) = Pack(x)*`, the call `Pack(x)` computes both of its outputs, so `Step(1).while` also divides by zero. Write the condition as its own output to get the protection.
+
+Two more examples: how many years it takes 5% interest to double 1000, and how many steps the Collatz sequence needs to get from 27 down to 1:
+
+```
+Grow(years, balance) = years + 1, balance * 1.05, balance < 2000
+Collatz(n, steps) = if(n mod 2 == 0, n / 2, 3 * n + 1), steps + 1, n != 1
+
+Grow(0, 1000).while[0]
+Collatz(27, 0).while[1]
+```
+
+**Results:**
+```
+15
+111
+```
+
+A loop whose condition never becomes `false` runs forever, so check the condition carefully. When you are transforming a known collection, a pipeline with `map`, `filter`, and `reduce` is usually clearer than a loop; loops are for state that evolves step by step.
+
+### Which Calls Are Steps
+
+The loop must see the call itself — a call written with its argument list: `Increment(0).repeat(5)`, `0.Increment().repeat(5)`, and `while(Countdown(5))` work, and so do a call through a parameter, as in `Run(step, start) = step(start).while`, and a call of a member, such as `Math.Abs(-3).repeat(2)`. A plain parameter passes along a written call it receives, so a loop can sit inside a helper:
+
+```
+Countdown = x - 1, x > 1
+Loop(s) = s.while
+
+Loop(Countdown(5))
+```
+
+**Result:** `1`
+
+Anything else is an error, and nothing is computed: a plain value (`repeat(5, 2)`), a property that only holds the result of a call (with `Start = Increment(0)`, `Start.repeat(5)` sees only a name, not a written call), the algorithm without a call (`Increment.repeat(5)`), and a dot call or member without an argument list (`0.Increment.repeat(5)`, `Math.Abs.repeat(2)`). A brace algorithm is given a name first, so that it can be called:
+
+```
+Add = { x + 10 }
+
+Add(0).repeat(3)
+```
+
+**Result:** `30`
+
+### Any Callable Can Be a Step
+
+A step is called exactly as it would be called directly, with the current state as its arguments, so any callable — including a conditional algorithm or a built-in operation — can be a step whenever the state supplies arguments it accepts. Clauses give a step a natural base case:
+
+<!-- spec:loop-step-family-while -->
+```
+Countdown(0) = 0, false
+Countdown(n) = n - 1, true
+Countdown(3).while
+```
+
+**Result:** `0`
+
+Each round calls `Countdown` on the state and the matching clause's outputs form the next state and the condition, so the state becomes 2, 1 and 0, where the first clause returns `false`. A built-in operation works the same way as a step: `repeat(count([1, 2]), 1)` is `count([1, 2])`, which is `2`.
 
 ---
 
@@ -2828,6 +2508,30 @@ Loan.MonthlyRate
 ```
 
 **Result:** error — `MonthlyRate` depends on the parameter `rate` of `Loan`, so it can be used only inside `Loan`.
+
+A local property that reads nothing from the call is different: like any property, it has one value for the whole run, however many calls reach it. Call it to calculate it afresh:
+
+```
+Fixed(i) = {
+    T = tick()
+    T
+}
+Fresh(i) = {
+    T = tick()
+    T()
+}
+
+[1, 2].map(Fixed)
+[1, 2].map(Fresh)
+```
+
+**Results:**
+```
+[1, 1]
+[2, 3]
+```
+
+This matters most for random numbers: a helper `Roll = randomInt(1, 7)` inside `Trial(i)` gives every call of `Trial` the same roll. Write `Roll()`, or `randomInt(1, 7)` itself, to roll again in each call.
 
 ### How Names Are Found
 
@@ -2866,9 +2570,37 @@ Outer(7)
 
 A property may not reuse the name of a parameter of its own algorithm or of an enclosing one; rename one of the two. After your own definitions come the built-in names such as `sum`, `sqrt`, and `if`, so a definition of your own with the same name takes precedence over a built-in one. A name that is found nowhere becomes an inferred parameter, as described in [Parameters](#parameters), or is an error in an algorithm with an explicit parameter list.
 
+Handing on follows the same search. When a formula is used inside an algorithm that already has a parameter of the needed name — its own, or one of an algorithm around it — that parameter is handed on, and nothing new is added:
+
+```
+Area = width * height
+Report(width, height) = {
+    Doubled = Area * 2
+    Doubled + 1
+}
+Report(3, 4)
+```
+
+**Result:** `25`
+
+`Doubled` uses `Area`, which needs `width` and `height`. `Doubled` is written inside `Report`, whose parameters have those names, so `Area` receives Report's `width` and `height`, and `Doubled` needs no inputs of its own: it is an ordinary property of `Report`. Forwarding by name searches in the same way: with `Other(y) = y * 2`, a local `Use(x) = Other` inside `Outer(y)` gives `Other` the `y` of `Outer`.
+
+A name used only inside a local definition belongs to that definition. In this callback `n` appears only in `Sq`, so `Sq` is a formula of `n`, and the row `Sq + Sq` means the two calls `Sq(n) + Sq(n)`, each calculated afresh:
+
+```
+[1, 2].map{
+    Sq = n * n
+    Sq + Sq
+}
+```
+
+**Result:** `[2, 8]`
+
+When the callback's own rows use the name — `n * 0 + Sq + Sq` — `n` is the callback's parameter, `Sq` is an ordinary property that reads it, and `Sq` is calculated once per element. Naming the callback (`Cb = { … }`, then `[1, 2].map(Cb)`) changes nothing: what matters is who owns the name.
+
 ### Algorithms as Containers
 
-An algorithm can also be a container that groups related definitions. Its members are reached with a dot:
+An algorithm can also be a container that groups related definitions. Its members are reached with a dot (`public` matters for `open`, as the next section shows):
 
 ```
 Physics = {
@@ -2905,7 +2637,13 @@ Obj.B(5)
 305
 ```
 
-`Obj` has its own member `B`, so `Obj.B(5)` calls that member with `5`. The number `3` has no members, so `3.B(5)` is the call `B(3, 5)`.
+`Obj` has its own member `B`, so `Obj.B(5)` calls that member with `5`. The number `3` has no members, so `3.B(5)` is the call `B(3, 5)`. A call's result has no members either: `Lib().X` is the call `X(Lib())`, even when `Lib` has a member `X`.
+
+The member rule also affects inferred parameters. In `Area = shape.V * 2`, the argument for `shape` might have no member `V`, and then `shape.V` would be the call `V(shape)`; so when nothing named `V` is defined, `V` is inferred as a parameter as well, and the parameters are `Area(shape, V)`.
+
+To keep `V` out of the inferred parameters, write the parameter list: `Area(shape) = shape.V * 2`. The list settles only the parameters, not what the dot does: a member `V` of `shape` still wins, and otherwise `shape.V` is still the call `V(shape)`.
+
+When the receiver certainly has no such member — a number, a string, or an algorithm defined without it — the dot is certainly that call, so under a parameter list its name must be defined exactly as in the written call: `Get(x) = 5.Size` is an error unless `Size` is defined, just like `Get(x) = Size(5)`.
 
 ### Public Members and `open`
 
@@ -2944,9 +2682,9 @@ Lib.Helper
 
 After `open Lib`, `Area` could be used on its own, but `Helper` could not. A few rules keep `open` predictable:
 
-- `open` comes first in its algorithm, before any definitions (clause definitions such as `P(x) = ...` included) and output rows. An algorithm has one `open` declaration, which may list several targets: `open Geometry, Physics`.
-- An open target names an algorithm: a name, a dotted path of public members such as `open Geometry.Shapes`, or a `{ ... }` block. Every part must exist, so a misspelled target is reported even if nothing is ever looked up through it.
-- Opened names never override other names. Your own definitions and the built-in names are found first, and `open` is consulted only for a name that neither provides.
+- `open` comes first in its algorithm, before any definitions and output rows. An algorithm has one `open` declaration, which may list several targets: `open Geometry, Physics`.
+- An open target names an algorithm: a name, a dotted path of public members such as `open Geometry.Shapes`, a brace algorithm, or a module URL ([Loading External Algorithms](#loading-external-algorithms)). Every part must exist, so a misspelled target is reported even if nothing is ever looked up through it. The target cannot be a parameter, a conditional algorithm, or a built-in operation, and the opened algorithm must take no parameters of any kind: written, inferred, or collecting.
+- Opened names never override other names. Your own definitions and the built-in names are found first, and `open` is consulted only for a name that neither provides. Like your own properties, an opened property never supplies an input that a formula needs.
 - Two different opened algorithms may contain the same name; that alone is fine. Writing that name is an error, reported before the program runs — even in a definition that is never used — because it does not say which algorithm you mean. Use the qualified form (`A.X`) or open only one of them. Opening the same algorithm twice, under any spelling, counts once.
 - `open Math` makes the members of `Math` available under their own names, such as `Sqrt(16)` and `Pi`.
 
@@ -2970,7 +2708,7 @@ P + Q + A.X + B.X
 
 ### Loading External Algorithms
 
-A program can load an algorithm from a URL with `load` and use its members, or `open` a URL directly:
+A program can load an algorithm from a URL with `load` and use its members, or `open` a URL directly (the address and its results below are only an illustration):
 
 <!-- spec:skip module loading needs a host-configured network downloader; the URL and its outputs are illustrative -->
 ```
@@ -3000,11 +2738,529 @@ X + 3
 
 **Result:** `23`
 
-A loaded module is self-contained. Its names mean what they mean inside the module itself, or the built-in names — never what the loading program happens to define, so a program's own `sum` or `Rate` cannot change a library's results. A name the module uses without defining it becomes a parameter of the member that uses it: if the module's `public Price = Base * 1.2` does not define `Base`, then `Price` takes `Base` as a parameter and the program writes `Lib.Price(10)`. Loading the same URL several times in one program, or opening it, is always the same module: `open 'url'`, `Lib = load('url')` followed by `open Lib`, and `Lib.X` all mean one thing, and its members are computed once. Two different URLs are two modules, even if they contain the same text. A URL is fixed text: it may be written in double quotes without holes, but never built with interpolation.
+A loaded algorithm is called a **module**, and it is self-contained. Its names mean what they mean inside the module itself, or the built-in names — never what the loading program happens to define, so a program's own `sum` or `Rate` cannot change a library's results. A name the module uses without defining it becomes a parameter of the member that uses it: if the module's `public Price = Base * 1.2` does not define `Base`, then `Price` takes `Base` as a parameter and the program writes `Lib.Price(10)`.
 
-Loading is off unless the host application allows it — the command-line tool needs the option `--allow-loading` — and a program that loads without permission is rejected. A module URL must use `https` and a host that the application allows, by default `katlang.org` and its subdomains.
+One address is one module, however often it is loaded and however its URL is spelled: `open 'url'`, `Lib = load('url')` followed by `open Lib`, and `Lib.X` all use the same module. Reading one of its members gives one stored value, as for any property, and an explicit call of a member is still fresh. Two different addresses are two modules, even if they contain the same text. A URL is fixed text: it may be written in double quotes without holes, but never built with interpolation.
+
+Loading is off unless the program that runs your code allows it — the command-line tool needs the option `--allow-loading` — and a program that loads without permission is rejected. A module URL must use `https` and a host that it allows, by default `katlang.org` and its subdomains.
 
 Only the call `load('url')` is special: it is always the module directive, even where the program also defines something named `load`. The name `load` on its own is not a value. `X = load` or `F(load)` is rejected before the program runs — unless the program itself defines a property, parameter, or opened member named `load`, which then works like any other name.
+
+---
+
+## Formulas and Aliases in Depth
+
+[Parameters](#parameters) introduced handing on and the four ways to define a formula through another one. This chapter gives the rules that needed the later chapters: patterns, conditional algorithms, built-in operations, and members.
+
+### One Name Is One Input
+
+Because inputs are handed on by name, one name is always one input, however many times it appears. Two formulas that both need `x` share one `x`, and so do the two places where one formula's parameter list names `x`:
+
+<!-- spec:implicit-forwarding-is-by-binding-name -->
+```
+F(x) = x + 1
+G(x) = x * 2
+H = F + G
+
+Common(x, x) = x
+Twice = Common * 2
+
+H(3)
+Twice(7)
+```
+
+**Results:**
+```
+10
+14
+```
+
+`Twice = Common * 2` means `Twice(x) = Common(x, x) * 2`: `Twice` takes one input and hands it to both places where `Common` names `x`, so `Twice` is called with one argument. Both places receive that same input, so they cannot differ — and if that input fails, or is an algorithm that needs arguments, the error is that input's own.
+
+Calling `Common` yourself is different: `Common(7, 8)` supplies two separate arguments, and two arguments for the same name must be equal (see [Equal Arguments](#equal-arguments)), so it is an error. An alias is different too: `Same = Common` takes two separate arguments, exactly like `Common`.
+
+### Every Callable Receives Its Inputs the Same Way
+
+Every kind of callable a formula uses as a value is handed its inputs the same way — your own formulas, built-in operations, members reached with a dot or through `open`, Math functions, and conditional algorithms alike. A built-in operation's inputs take its own parameter names, and a conditional algorithm's inputs are named by the parameters its clauses use:
+
+<!-- spec:formula-lifting-is-one-law-for-every-callable -->
+```
+Lib = {
+    public Inc(x) = x + 1
+}
+E(0) = 100
+E(n) = n
+Total = count + 0
+Next = Lib.Inc + 0
+Fam = E + 1
+
+Total((1, 2, 3))
+Next(4)
+Fam(0)
+```
+
+**Results:**
+```
+3
+5
+101
+```
+
+`Total = count + 0` means `Total(collection) = count(collection) + 0`, and `Fam = E + 1` means `Fam(n) = E(n) + 1`, because the general clause of `E` names its input `n`. A conditional algorithm whose clauses do not name an input — only literals, as in `S(1) = 1` and `S(-1) = -1` — cannot be used this way: `G = S + 0` is an error at `S`, so call it with an explicit argument instead (`G(v) = S(v) + 0`). The same goes for clauses that give one input different names.
+
+### Value or Algorithm?
+
+Whether a name is handed the formula's inputs depends on what the expression around it does with it. Where its value is needed — in arithmetic, a comparison, a list, an `if`, a built-in operation's collection or value argument, a Math function's argument, an argument of a conditional algorithm, `.string` — it is called with them. Where it is passed on as an algorithm — to your own algorithm (`Apply(Inc)`), or as the algorithm of `map`, `filter` or `reduce` — it is passed as it is:
+
+<!-- spec:formula-lifting-follows-the-consumers-role -->
+```
+Inc(x) = x + 1
+Apply(f) = f(10)
+
+Values = [Inc, Inc * 2]
+Kept = Apply(Inc)
+Branch = if(true, Inc, 0)
+
+Values(4)
+Kept
+Branch(4)
+```
+
+**Results:**
+```
+[5, 10]
+11
+5
+```
+
+`Values` and `Branch` take the input `x` of `Inc`, while `Kept` passes `Inc` itself to `Apply` and takes no input. A name inside a larger argument is judged by that expression: with `Id(v) = v`, in `Id(Inc + 0)` the `+` needs the value of `Inc`, so `Inc` is handed `x`. An `if` branch is handed its inputs even when it is not the branch chosen, but it is still evaluated only when chosen. A name written alone on a top-level line is not a formula: `count` or `abs` on its own reports that it needs an argument.
+
+### Forwarding with Patterns
+
+The same four forms work with pattern parameters:
+
+<!-- spec:alias-structural-forwarding-and-written-call -->
+```
+Single([x]) = x
+
+Alias = Single
+SameShape([x]) = Single
+Explicit(x) = Single(x)
+Construct = Single([x])
+
+Alias([7])
+SameShape([7])
+Explicit([7])
+Construct(7)
+```
+
+**Results:**
+```
+7
+7
+7
+7
+```
+
+- `Alias = Single` has Single's parameter `[x]`, so it takes exactly the arguments `Single` takes: `Alias(7)` is an error, just like `Single(7)`.
+- `SameShape([x]) = Single` forwards by name: its own parameter is the same pattern `[x]`, so `Single` receives it as the list it matched.
+- `Explicit(x) = Single(x)` passes its whole argument `x` as Single's list argument, so `Explicit([7])` is `Single([7])`.
+- `Construct = Single([x])` is an ordinary formula: its parameter `x` comes from the `[x]` written in it, and it builds the list before calling `Single`, so it takes the element itself.
+
+`Bad(x) = Single` is an error: Single's parameter is the pattern `[x]`, a one-element list, while `Bad`'s parameter is a whole value that happens to be called `x`. Forwarding by name matches whole parameters, never a name inside a pattern, and it never reshapes an argument — write `Bad(x) = Single(x)` to pass `x` whole, or declare the same pattern, `Bad([x]) = Single`. In the same way, with `Add((a, b)) = a + b`, `Pair(a, b) = Add` is an error, because `Add` takes one pair; `Pair((a, b)) = Add` forwards the pair, and `Pair(a, b) = Add((a, b))` builds it.
+
+An alias keeps everything about the formula it names — its pattern parameters, collecting parameters, and repeated names. Forwarding by name keeps the kind of each parameter: a collecting parameter passes along everything it collected to a collecting parameter of the same name (`Many(*vs) = Coll` with `Coll(*vs) = vs` means `Coll(vs*)`), and a pattern parameter is rebuilt as its own list or sequence.
+
+Because of this, renaming a formula's parameters affects each form differently. An alias takes the new names with it, and a formula that uses it takes them as its inputs. Forwarding by name must be updated to match, or it becomes an error; a collecting parameter is the exception, because with no parameter of its name it quietly collects nothing. An explicit call is unaffected, because its arguments are written out: in `G = Add((x, y))` the parameters of `G` are `x` and `y`, the names written there, and renaming `Add`'s parameters to `left` and `right` changes nothing about `G`.
+
+<a id="aliases-of-any-function"></a>
+
+### Aliases of Any Algorithm
+
+An alias works for every algorithm that takes parameters, not only for your own formulas: built-in operations, Math functions, and conditional algorithms can be aliased too. The alias is the same algorithm under another name, so it keeps everything that algorithm does:
+
+<!-- spec:alias-of-a-builtin-is-the-builtin -->
+```
+C = count
+I = if
+M = map
+Bad(x) = x / 0
+
+C([1, 2, 3])
+I(true, 1, 1 / 0)
+M([], Bad)
+```
+
+**Results:**
+```
+3
+1
+[]
+```
+
+`C([1, 2, 3])` is exactly `count([1, 2, 3])`. `I` keeps the rule of `if` that only the chosen branch is computed, so the division by zero never runs, and `M` keeps the rule of `map` that the algorithm is called once per element, so `M([], Bad)` never calls `Bad`. In the same way, with `Fact(0) = 1` and `Fact(n) = n * Fact(n - 1)`, `F = Fact` makes `F(4)` choose a clause exactly as `Fact(4)` does, and an alias of an alias is the same algorithm again. The arguments of a call through an alias are treated exactly as in a call of the original: with `Inc(x) = x + 1`, `A = abs` and `K = A(Inc)`, `K(-5)` is `4`, just like `abs(Inc(-5))`.
+
+An alias is the very definition it names. Used alone, without arguments, it gives the value its definition gives with no arguments — the same value, worked out once: the alias and the original share it. Any definition can be aliased, also one without parameters: with `Z = 2 + 3`, `A = Z` is `Z` under another name, so `A()` is a fresh call of `Z`, exactly like `Z()`.
+
+Forwarding by name needs parameter names. A conditional algorithm whose clauses bind no parameter name, such as `S(1) = 1` and `S(-1) = -1`, can be aliased, but `W(x) = S` is an error: there is no parameter name to forward `x` by. Write the call instead: `W(x) = S(x)`.
+
+### An Alias Names the Whole Definition
+
+An alias names the whole definition, its members included, while writing the name in braces makes a new definition that passes its calls along:
+
+```
+Box = {
+    public Q = 99
+    F(x) = x * x
+    F
+}
+A = Box
+B = { Box }
+GetQ(f) = f.Q
+
+A.Q
+GetQ(A)
+A(3)
+B(3)
+```
+
+**Results:**
+```
+99
+99
+9
+9
+```
+
+`Box` declares its own members and its only row is the name `F`, so a call `Box(3)` is passed along to `F`. `A = Box` is `Box` itself: `A.Q` and `GetQ(A)` read Box's `Q`, `A(3)` is `Box(3)`, and `open A` opens Box's public members.
+
+`B = { Box }` is a definition of its own, written in braces: `B(3)` is passed along to `Box` as well, but `B` has only the members it declares itself — none — so `B.Q` does not reach Box's `Q`, and `open B` opens nothing of Box. The same holds for a definition that declares helpers of its own beside the name, such as a `Helper = 0` line written above `Box`: it has its own member `Helper` and passes its calls along to `Box`.
+
+Calling such a definition with no arguments is the call of what it names: `Box()` is an error, because `F` needs an argument — it never gives `F` back as a value.
+
+A definition whose only row is a member of a parameter names that member, as in [Naming a Received Algorithm](#naming-a-received-algorithm):
+
+```
+Box = {
+    public G = {
+        public K = 7
+        n * 2
+    }
+}
+Use(b) = {
+    A = b.G
+    A(9), A.K
+}
+
+Use(Box)
+```
+
+**Result:** `(18, 7)`
+
+`A(9)` calls the `G` that `b` declares, and `A.K` reads that algorithm's member `K`. `G` is a member name here, never an input of `A`: when `b` has no member `G` and a `G` is defined around `Use`, `A` names the computed value `G(b)`, so `A(9)` is an argument-count error.
+
+An alias keeps no value of its own, with one exception: an alias that turns out to hold a plain value with no definition behind it, as `A = f` does when `f` receives one, or `A = b.G` inside `Use(b)` when `b` has no member `G` and the value comes from the call `G(b)`. `A` then reads that value, `A()` gives the same value again without working anything out a second time, and `A` cannot be passed on as an algorithm.
+
+`open` needs to know its target before the program runs. `open A` with `A = Lib` opens the public members of `Lib`, but an alias of a parameter, whose target is known only during a call, exposes none of that target's members through `open`: read them with a dot instead, as in `A.K`.
+
+### Definitions That Use Themselves by Name
+
+A definition can also use itself, or another definition that uses it, by bare name. KatLang then works out their parameters together, by the rules of [Formulas That Use Formulas](#formulas-that-use-formulas), and the bare name passes the current arguments along:
+
+```
+Count = if(tick() > 3, start, Count + 1)
+
+Count(10)
+```
+
+**Result:** `13`
+
+Bare-name recursion passes the same arguments again, so use it only when something else ends the recursion, as `tick()` does here. To change an argument, write the call: `Steps = if(n <= 0, 0, Steps(n - 1) + 1)`.
+
+Working out parameters only reads the definitions; it never runs them. If it cannot settle — for example when `A = B + X` and `B = A + Y`, with `X(x)` and `Y(y)`, keep swapping the order of their parameters — KatLang reports an error, and you write the parameter lists yourself. Write them as well whenever the order matters to you.
+
+A property without inputs can read itself, too. While the first read is still running there is no stored value to reuse, so the inner read evaluates the property again, and the value of the outermost read is the one that later reads reuse:
+
+```
+A = if(tick() < 3, A + 1, 0)
+
+A, A
+```
+
+**Results:**
+```
+2
+2
+```
+
+### Several Grace Markers
+
+Markers add up. Each `~` in front of a name asks for one position earlier and each `~` behind it for one position later; opposite markers cancel, and markers on several occurrences of a name count together. The total is the name's **weight**, and a name without markers has zero weight. So `~~x` requests two positions earlier for `x`, stopping at the end of the list or at a blocking neighbour. Equal accumulated weights preserve their original relative order. Names that stand side by side with equal weights form a contiguous run. A contiguous equal-weight run moves as a unit when every parameter outside that run has zero weight. Other moving parameters can split the run while preserving its relative order. The outside name has zero weight in both examples below, so the two marked names stay side by side:
+
+```
+Prefixed = s * 100 + ~x * 10 + ~y
+Prefixed(1, 2, 3)
+```
+
+**Result:** `312`
+
+```
+Postfixed = s~ * 100 + x~ * 10 + y
+Postfixed(1, 2, 3)
+```
+
+**Result:** `231`
+
+`Prefixed` takes its parameters in the order `(x, y, s)`, and `Postfixed` in the order `(y, s, x)`. A name never passes a neighbour that moves the same way at least as strongly. To get an exact order, mark in one direction only: give each name one `~` in front for every earlier-written name that must come after it, or one `~` behind for every later-written name that must come before it.
+
+Other movers can separate both original runs:
+
+```
+K = a~ * 1000 + b~ * 100 + ~c * 10 + ~d
+K(1, 2, 3, 4)
+```
+
+**Result:** `2413`
+
+`K` takes `(c, a, d, b)`: `a` stays before `b` and `c` before `d`, but neither pair stays adjacent.
+
+---
+
+## Captured Calls
+
+`repeat` and `while` take a written call apart instead of running it. A parameter marked `meta` gives your own algorithms the same ability: it lets an algorithm look at a call before deciding what to do with it. The step of a loop is such a parameter.
+
+### Capturing a Call with `meta`
+
+Writing `meta` before a parameter name makes the parameter receive the *call* written as its argument instead of that call's value. The call is not run when it is captured; the parameter holds a **call reference**, and `.Invoke()` runs the captured call:
+
+```
+Square(x) = x * x
+Capture(meta operation) = operation
+
+R = Capture(Square(5))
+R.Invoke()
+```
+
+**Result:** `25`
+
+Every `.Invoke()` runs the call again, in the place where it was written, with the same arguments. Each argument is still computed only once, so only the algorithm's own work repeats. A call reference is an ordinary value that can be stored and passed on:
+
+```
+Square(x) = x * x
+Capture(meta operation) = operation
+Twice(r) = r.Invoke() + r.Invoke()
+
+Twice(Capture(Square(3)))
+```
+
+**Result:** `18`
+
+Only a written call can be captured: `Capture(5)`, `Capture(Square)` and `Capture(Y)` for a property `Y` are errors, and so is a dot call without parentheses, such as `Capture(5.Square)`. A plain parameter passes a written call along, so with `Pass(y) = Capture(y)`, `Pass(Square(5))` captures `Square(5)`. `meta` goes before a plain parameter name of a written parameter list (not before `*name`, a pattern or a literal, and not in a conditional algorithm), and `R.Invoke` without parentheses is an error rather than a call. A dot operation that is not a call of an algorithm, such as `42.string()`, can be captured too, but nothing can run it.
+
+A call reference is used inside the program: a program cannot output one, and it cannot be shown as text:
+
+```
+Square(x) = x * x
+Capture(meta operation) = operation
+
+Capture(Square(5))
+```
+
+**Result:** error
+
+### Looking at a Captured Call's Arguments
+
+`.Arguments` is a view of the arguments supplied to a captured call. `count` tells how many there are, and selection reads one of them (counting from `0`):
+
+```
+Add(x, y) = x + y
+Capture(meta operation) = operation
+
+R = Capture(Add(10, 20))
+R.Arguments.count, R.Arguments[0], R.Arguments[1]
+```
+
+**Results:**
+```
+2
+10
+20
+```
+
+Obtaining the view runs nothing. `count` computes none of the arguments, and selecting an argument computes only that one. A spread among the arguments, such as `Pair*`, must run so that the arguments can be counted; it runs once, and selection and `R.Invoke()` share its result. Spreading the view into another call passes it the same arguments — `R.Arguments*` passes on the original argument computations, so an argument the new call never uses is never computed:
+
+```
+Add(x, y) = x + y
+First(x, y) = x
+Capture(meta operation) = operation
+
+R = Capture(Add(5, 1 / 0))
+R.Arguments.count, First(R.Arguments*)
+```
+
+**Results:**
+```
+2
+5
+```
+
+`.first` and `.last` work as for a list, but an argument view is not a list: other collection operations such as `sum(R.Arguments)` or `[R.Arguments*]` are errors — select the values you need instead. `Arguments` is a property, so `R.Arguments()` is an error too, and like the reference itself a view cannot be a program result.
+
+### Calling a Captured Call's Algorithm
+
+`.Algorithm` is the captured call's algorithm itself, without its arguments. Calling it runs that algorithm afresh with exactly the arguments you give it, while `R.Invoke()` still runs the captured call:
+
+```
+Square(x) = x * x
+Capture(meta operation) = operation
+
+R = Capture(Square(5))
+R.Algorithm(8), R.Invoke()
+```
+
+**Results:**
+```
+64
+25
+```
+
+It is an ordinary callable, so it can be passed to another algorithm, used as a `map` or `filter` callback, or called with the original arguments through `R.Arguments*`:
+
+```
+Square(x) = x * x
+Apply(f, x) = f(x)
+Capture(meta operation) = operation
+
+R = Capture(Square(5))
+Apply(R.Algorithm, 7), [1, 2, 3].map(R.Algorithm), R.Algorithm(R.Arguments*)
+```
+
+**Results:**
+```
+49
+[1, 4, 9]
+25
+```
+
+Together with `.Arguments*`, a `meta` parameter can drive a loop over the captured step from the captured starting state. `operation.Algorithm(operation.Arguments*)` is itself a written call — of the captured algorithm, over the captured arguments — so a loop captures it like any other call (see [Loops](#loops)):
+
+```
+Step(x) = x + 1, x < 3
+Loop(meta operation) = operation.Algorithm(operation.Arguments*).while
+
+Step(0).Loop
+```
+
+**Result:** `3`
+
+The rebuilt call is a new call, but its arguments are the very arguments of the captured one: each is computed at most once, whichever call needs it first. The rebuilding is necessary, because a call reference is a value, not a written call: `operation.while` is an error.
+
+A few more rules complete the picture:
+
+- Obtaining `R.Algorithm` does not run the captured call or compute its arguments.
+- A conditional algorithm chooses its clause again from the new arguments, and the algorithm still sees the names around the place where it was written.
+- Written without arguments, `R.Algorithm` is the captured algorithm read as a value, so for `Square`, which needs an argument, `R.Algorithm` alone is an error.
+- `R.Algorithm()` calls it with no arguments, which is an error too: it never repeats the captured `5` (that is `R.Invoke()`).
+- A property such as `A = R.Algorithm` is a new name for the captured algorithm, as in [Naming a Received Algorithm](#naming-a-received-algorithm): `A(8)` calls it afresh, `[1, 2].map(A)` uses it, and `A` alone is its value.
+- When the call reference itself comes from a calculation, as in `A = F(3).Algorithm` where `F(3)` returns a captured call, `F(3)` is worked out once, when `A` is first needed, and every call of `A` then calls the captured algorithm afresh.
+
+Like `Invoke` and `Arguments`, `x.Algorithm` means the call-reference operation unless `x` has its own member named `Algorithm`; a definition named `Algorithm` of your own is still called as `Algorithm(x)`.
+
+---
+
+## When Things Are Evaluated
+
+[Each Argument Is Evaluated At Most Once](#each-argument-is-evaluated-at-most-once) gave the basic rule: a computation runs when its value is first needed, and at most once. This chapter collects what the later chapters add to that rule. Most examples use a computation that fails, because a failure shows whether it ran.
+
+### Passing Is Not Evaluating
+
+Passing a parameter to another algorithm, or forwarding it by name, passes the same computation along and evaluates nothing. A parameter that receives an algorithm can be called without its no-argument value ever being computed, and an alias adds another name without evaluating anything.
+
+A written argument is one computation. With `Z = tick()`, the argument `Z` reads the property's stored value, while the argument `Z()` makes one fresh call, the first time the parameter's value is needed, however often the parameter is read.
+
+### Spreads Run Early
+
+An explicit spread runs while a call's arguments are being formed, because it decides how many arguments there are. That is why not even `if` can skip one (see [Opening a Value with `*`](#opening-a-value-with-)), and why `repeat` runs a spread among the step's starting values before it computes its count. Other arguments are computed when they are needed.
+
+### Collected Arguments
+
+A collecting parameter holds the computations of its arguments, so an unused one does no work:
+
+```
+Ignore(*xs) = 10
+Ignore(1 / 0, 2)
+```
+
+**Result:** `10`
+
+Reading the collected list as a value builds the whole list, evaluating every element from left to right. `xs.first`, `xs.count`, `sum(xs)` and `xs[0]` all receive that complete list, so they cannot skip a failing later element. Spreading it into a call, as in `Coll(xs*)`, passes the computations along without evaluating them: unlike an ordinary spread, it runs nothing. Spreading it into a new list or sequence does evaluate every element.
+
+Spreading an alias of the collecting parameter into a call also passes the computations along, even through a member such as `Box.A`, and without evaluating the output of `Box`:
+
+<!-- spec:collector-member-path-keeps-known-slice -->
+```
+Coll(*ys) = 0
+F(*xs) = {
+    Box = {
+        public A = xs
+        0
+    }
+    Coll(Box.A*)
+}
+F(1 / 0)
+```
+
+**Result:** `0`
+
+A member that calculates something, or has braces of its own, such as `public A = { xs }`, is an ordinary value, and spreading it evaluates its elements. So does passing the alias as an ordinary argument first: with `Pass(v) = Coll(v*)`, `Pass(Box.A)` evaluates the list when `v*` is formed.
+
+### Patterns That Need Values
+
+A plain parameter name binds its argument without evaluating it. Literals, unpacking patterns, and repeated names may need values before the body starts, and they are inspected from left to right. An unpacking pattern first evaluates the whole argument it unpacks. A repeated name requires its arguments to agree, and an early conflict stops before a later argument runs. The clauses of a conditional algorithm share the same argument computations across attempts, and a plain name in a clause evaluates nothing, so a conditional algorithm can leave an unselected argument untouched, just like `if`:
+
+```
+First(0, a, b) = a
+First(n, a, b) = b
+
+First(0, 10, 1 / 0)
+```
+
+**Result:** `10`
+
+Among plain values, a repeated name holds the one written first, exactly as it was written, which `.string` can show:
+
+```
+Show(x, x) = x.string
+
+Show(1.5, 1.50)
+Show(1.50, 1.5)
+```
+
+**Results:**
+```
+1.5
+1.50
+```
+
+If one of the arguments names a definition, the repeated name holds that definition, wherever it stands: with `A = 1.50`, both `Show(1.5, A)` and `Show(A, 1.5)` give `1.50`.
+
+When the arguments of a repeated name have fixed values that can be computed, swapping those arguments never changes whether they agree. Otherwise the order can matter, because arguments are inspected from left to right: an early conflict stops a later argument from running, calculations such as `tick()` run in a different order, and when arguments conflict in more than one way, a different error may be reported. In a conditional algorithm a conflict simply means that the clause does not match.
+
+### Names That Need Inputs in an Explicit List
+
+An explicit parameter list adds no inputs. A formula used in its body still receives any input available under the same name, from the list or from an algorithm around it, as [Formulas That Use Formulas](#formulas-that-use-formulas) and [How Names Are Found](#how-names-are-found) showed. When a needed input is not available, the formula is not called: its name stays usable as an algorithm, and if its value is ever needed, the result is its ordinary argument-count error. If the value is not needed, nothing happens, even inside a Math function:
+
+```
+Inc(x) = x + 1
+Safe(z) = if(false, abs(Inc), z)
+
+Safe(7)
+```
+
+**Result:** `7`
+
+With `Broken(z) = abs(Inc)`, the same call fails, because `abs` needs the value of `Inc`. With a parameter of the needed name, as in `Use(x) = abs(Inc)`, the input is handed on, and `Use(-5)` is `4`. Because the name stays an algorithm, it can also be passed to a conditional algorithm from such a body: with the `Times` of [Rules for Clauses](#rules-for-clauses) and `Inc(y) = y + 1`, `Run(k) = Times(k, Inc, 0)` gives `Run(3)` the value `3`. A name that nothing defines is different: `Bad(z) = y` is an error in the definition itself.
 
 ---
 
@@ -3023,13 +3279,13 @@ KatLang follows one newline rule:
 
 > Newlines separate complete expressions by default. An incomplete expression continues when valid syntax permits it, without consuming a new declaration. Otherwise, an independent expression or declaration begins a new construct. Syntax that cannot stand alone but can legally continue the preceding expression attaches backward. All decisions are syntactic, never based on evaluated values.
 
-Incomplete syntax can continue: end the line with an operator or comma, or keep a delimiter open. A following line can also continue it with a designated leading token, such as `+`, an expression-list comma or `.`. The full token table is in [the physical-line rules](docs/design/language-rules/syntax.md#lexical-identity-and-physical-lines-q-65); comments, blank lines and indentation do not affect the choice:
+Incomplete syntax continues on the next line: end the line with an operator or a comma, or keep a delimiter open. Inside parentheses and brackets, a new line also separates items, as a comma does; a comma cannot follow the last item before a closing delimiter.
 
 ```
 Total = 1 +
     2
 Values = [
-    10,
+    10
     20
 ]
 
@@ -3042,7 +3298,20 @@ Total, Values.sum
 30
 ```
 
-Grammar role has priority on the next line: a valid independent expression or declaration stays independent; otherwise ordinary continuation applies. Unary minus requires direct attachment: `10` then `-2` is two rows, but `10` then `- 2` is subtraction, and detached `- 2` without a left operand is a syntax error. Leading `* 2` likewise continues multiplication. `Add` followed by a line `(1, 2)` is two rows, not a call, so keep a call's opening parenthesis on the same line as its name; and `A` followed by a line `-1` is the two rows `A` and `-1`, not a subtraction. Each definition starts on its own line: `x = 1 y = 2` is an error. `P = 1` followed by `, 2` continues P's two-slot body, and `10` followed by `+ 2` is one addition. A continuation announces itself at the start of its line; the end of the preceding line alone does not always settle whether the expression is finished. A star at the end of a line is the one case its spacing settles on that line, as the next section shows.
+Otherwise, the start of the next line decides. Comments, blank lines and indentation do not affect the choice:
+
+| The next line starts with | Reading | Example |
+|---|---|---|
+| `.` | Continues a dotted chain | `xs` then `.sum` |
+| `,` | Continues a list of items | `P = 1` then `, 2` gives `P` two outputs |
+| `+`, `/`, `div`, `mod`, `^`, a comparison, `and`, `or`, `xor` | Continues the expression | `10` then `+ 2` is `12` |
+| `*` | Continues as multiplication | `10` then `* 2` is `20` |
+| A minus with a space after it | Continues as subtraction | `10` then `- 2` is `8` |
+| A minus attached to its operand | Starts a new row | `10` then `-2` is two rows |
+| `(`, `[`, `{`, `not`, `~` | Starts a new row | `Add` then `(1, 2)` is two rows, not a call |
+| A definition | Starts a definition | Never joins the line before it |
+
+So keep a call's opening parenthesis on the same line as its name. A minus that negates must touch its operand on any line: `3 * -2` works, while `3 * - 2` and a detached `- 2` with no row before it are syntax errors. Each definition starts on its own line: `x = 1 y = 2` is an error. At the end of a line, a star's spacing decides, as the next section shows.
 
 ### Spread or Multiplication?
 
@@ -3082,7 +3351,7 @@ A* B
 6
 ```
 
-A definition that ends in a spread therefore needs nothing special: the attached star ends it at the line. Parentheses (braces work too) close it explicitly and capture the items as one value:
+A definition that ends in a spread therefore needs nothing special: the attached star ends it at the line. Parentheses (braces work too) close it explicitly and group the items into one value:
 
 ```
 A = (1, 2)
@@ -3093,24 +3362,59 @@ X
 
 **Result:** `(1, 2)`
 
-Written as `X = A*` followed by the row `X`, the program prints the same `(1, 2)`: X is the spread and `X` is the output row. Only a detached star joins the lines: `X = A *` followed by the row `X` reads as the one definition `X = A * X`, and the program has no output row at all. That layout is not an error when an operand follows: it is a valid multiplication, just not the one intended.
+Written as `X = A*` followed by the row `X`, the program prints the same `(1, 2)`: `X` is defined as the spread, and the row `X` outputs it. Only a detached star joins the lines: `X = A *` followed by the row `X` reads as the one definition `X = A * X`, and the program has no output row at all. That layout is not an error when an operand follows: it is a valid multiplication, just not the one intended.
 
 ### Common Mistakes
 
 - **A misspelled name becomes a parameter.** An undefined name is inferred as a parameter, so a typo shows up as a missing argument ([Undefined Names in the Program](#undefined-names-in-the-program)).
 - **A misspelled member falls back to a call.** `Math` has no member `Ceiling`, so `Math.Ceiling(2.1)` means `Ceiling(Math, 2.1)`; as nothing named `Ceiling` is defined, the name becomes a parameter, and the error message suggests `Math.Ceil`.
 - **Parameters follow first appearance.** `Ratio = b / a` takes `b` first; use an explicit parameter list or Grace to change the order.
+- **A built-in name is not a parameter.** In `PerItem = total / count`, `count` is the built-in operation, so the call quietly gives a wrong number; choose another name or list the parameters ([Formulas That Use Formulas](#formulas-that-use-formulas)).
 - **Values are not unpacked automatically.** A sequence or list is one argument. Open it with `*`, select its items with brackets (`v[0]`), or unpack it with a pattern parameter.
+- **Arithmetic works on single numbers.** `[1, 2] * 2` is a type error; use `map` to work on each item.
 - **A pattern unpacks only its own kind.** `(x, y)` takes a sequence and `[x, y]` a list. There is no one-item pattern `(x)`: write `x` for a whole value or `[x]` for the element of a one-element list.
 - **Collection operations take one collection.** Write `sum((1, 2, 3))` or `[1, 2, 3].sum`, not `sum(1, 2, 3)`.
 - **Collecting parameters take separate arguments.** Spread a stored collection into them: `Data*.Mean`.
-- **A line-final `*` reads by its spacing.** An attached `A*` is a finished spread, so the next line starts a new row; a detached `A *` continues as multiplication with the usual operator precedence, and EOF or a new definition then leaves a missing operand. On one line, separate a spread from the next item with a comma: `A*, B`; `X = (A*)` captures the items as one value instead ([Spread or Multiplication?](#spread-or-multiplication)).
+- **A line-final `*` reads by its spacing.** An attached `A*` is a finished spread, so the next line starts a new row; a detached `A *` continues as multiplication with the usual operator precedence, and the end of the program or a new definition then leaves a missing operand. On one line, separate a spread from the next item with a comma: `A*, B`; `X = (A*)` groups the items into one value instead ([Spread or Multiplication?](#spread-or-multiplication)).
 - **Only Booleans are conditions.** `if`, `filter`, `while`, and the logical operators need `true` or `false`; a number is a type error.
-- **Parentheses compute, braces define.** `(n + 1)` is a value computed now; `{n + 1}` is an algorithm with the parameter `n`.
+- **`and` does not protect a calculation.** Both operands are always evaluated, so guard a division with `if` ([Logical Operators](#logical-operators)).
+- **Parentheses group, braces define.** `(n + 1)` is the expression `n + 1`; `{n + 1}` is an algorithm, with `n` as its parameter unless `n` is defined around it.
+- **Indentation never groups.** Only braces give an algorithm several rows; an indented line is an ordinary row of the algorithm around it.
 - **`()`, `[]`, and `{}` are different.** They are the empty sequence, the empty list, and an algorithm without output.
 - **A brace in double quotes opens a hole.** Write `{{` and `}}` for literal braces in a double-quoted string, or use single quotes, where braces and backslashes are plain text.
-- **A hole holds one expression.** `"{a, b}"` is an error; write `"{a}, {b}"` or `"{(a, b)}"`; a selection needs no parentheses: `"{xs[0]}"`.
+- **A hole holds one expression.** `"{a, b}"` is an error; write `"{a}, {b}"` or `"{(a, b)}"`.
+- **A local helper that reads nothing from the call has one value.** Write `Roll()` or `randomInt(1, 7)` to roll again in each call ([Local Definitions](#local-definitions)).
+- **Clauses cannot collect.** `*name` works only in a single definition without literal patterns. Walk through a list with `xs[0]` and `xs.skip(1)`, or use `reduce` ([Rules for Clauses](#rules-for-clauses)).
+- **A conditional algorithm treats its arguments as values.** Put the name of a formula that needs inputs in braces: `Times(3, {Inc}, 0)` ([Rules for Clauses](#rules-for-clauses)).
 - **Deep recursion stops with an error.** Use `repeat`, `while`, or `reduce` for long iterations.
+
+### Words in Error Messages
+
+Error messages use a few words of their own:
+
+| In an error message | In this tutorial |
+|---|---|
+| implicit parameter | An inferred parameter |
+| arity | The number of arguments or outputs |
+| branch | A clause of a conditional algorithm |
+| clause family | A conditional algorithm |
+| local-only | A property that depends on its algorithm's parameters, so it can be used only inside that algorithm |
+| formula lifting | Handing inputs on to a formula used in an expression |
+| bare forwarding | Forwarding by name |
+| fell back to a lexical callable | `a.f` became the call `f(a)`, because `a` has no member `f` |
+| Illegal in eval | An operation that these values do not allow, such as the `min` of an empty list |
+| prelude | The built-in names |
+| scalar | A single value, not a sequence or a list |
+| dotCall | A dot call |
+| host stack | The memory available for nested calls; reaching its limit means a recursion went too deep |
+| open provider | An algorithm named by `open` |
+| signature | An algorithm's parameter list |
+| binder | A name in a parameter list or pattern |
+| slot | One output, argument, or list item |
+| module elaboration | Loading a module; with the command-line tool, add `--allow-loading` |
+| meta parameter, written invocation | The step of `repeat` or `while`, which must be a written call ([Which Calls Are Steps](#which-calls-are-steps)) |
+| declaration | A definition |
+| callable identity | Which definition an argument names |
 
 ### Numbers: Precision and Limits
 
@@ -3150,16 +3454,18 @@ Postfix forms bind tighter than every operator above them, `^` included.
 |---|---|
 | `Name = expression` | Define a property |
 | `Name(a, b) = expression` | Define a property with an explicit parameter list |
-| `Name(pattern) = expression` | One clause of a conditional algorithm |
+| `Name(0) = expression` | One clause of a conditional algorithm: a literal in the head, or several definitions of one name, make clauses |
 | `a, b` | Separate outputs, arguments, or items |
 | `(a, b)` | A sequence; parentheses around one expression only group it |
 | `[a, b]` | A list |
 | `{ ... }` | An algorithm: a brace algorithm, or a body with local definitions |
 | `value*` | Spread: supply the items of a value |
-| `*name` | Collecting parameter or collecting deconstruction target |
+| `*name` | Collecting parameter, or a collecting name in a deconstruction |
 | `(x, y)` in a parameter list | Sequence pattern: unpack one sequence argument |
 | `[x, y]` in a parameter list | List pattern: unpack one list argument |
 | `~x`, `x~` | Grace: move an inferred parameter one position earlier or later |
+| `x, y = value` | Deconstruction: bind several names at once |
+| `Name(meta p) = expression` | `p` captures the written call instead of its value |
 | `load('url')` | Load an algorithm from a URL; a special form, not a keyword |
 | `'text'` | String; raw — no escapes, no holes |
 | `"text"` | String with the escapes `\"` `\\` `\n` `\t`, and `{{` `}}` for braces |
@@ -3171,26 +3477,26 @@ Postfix forms bind tighter than every operator above them, `^` included.
 | Operation | Written as | Result |
 |---|---|---|
 | `if` | `if(condition, a, b)` | `a` when the condition is `true`, otherwise `b`; only the chosen branch is evaluated (a spread argument is computed before `if` chooses) |
-| `range` | `range(start, end)` | The whole numbers from `start` to `end`, counting up or down |
+| `range` | `range(start, stop)` | The whole numbers from `start` to `stop`, counting up or down |
 | `count` | `xs.count` | The number of items |
-| `sum`, `avg` | `xs.sum`, `xs.avg` | The total and the mean of numeric items (the sum of no items is `0`) |
-| `min`, `max` | `xs.min`, `xs.max` | The smallest and the largest numeric item |
+| `sum`, `avg` | `xs.sum`, `xs.avg` | The total and the mean of the items, which must be numbers (the sum of no items is `0`) |
+| `min`, `max` | `xs.min`, `xs.max` | The smallest and the largest item; the items must be numbers |
 | `first`, `last` | `xs.first`, `xs.last` | The first and the last item |
 | `contains` | `xs.contains(v)` | `true` when an item equals `v` |
 | `filter` | `xs.filter(p)` | The items for which `p(item)` is `true` |
 | `map` | `xs.map(f)` | `f(item)` for every item |
 | `reduce` | `xs.reduce(f, initial)` | The items combined from left to right by `f(item, accumulator)`, starting from `initial` |
-| `order`, `orderDesc` | `xs.order`, `xs.orderDesc` | The numeric items in ascending or descending order |
+| `order`, `orderDesc` | `xs.order`, `xs.orderDesc` | The items in ascending or descending order; the items must be numbers |
 | `distinct` | `xs.distinct` | The items without later duplicates |
 | `take`, `skip` | `xs.take(n)`, `xs.skip(n)` | The first `n` items; the items after the first `n` |
 | `atoms` | `atoms(value)` | Every number in a nested structure, in one flat list |
-| `repeat` | `step(initial...).repeat(n)` | The state after `n` applications of `step`, starting from the arguments of the written call |
-| `while` | `step(initial...).while` | The state reached while the last supplied item of `step` is `true`; each round discovers that condition from right to left and forms the remaining earlier rows only when it is `true` |
+| `repeat` | `step(start).repeat(n)` | The state after `n` applications of `step`, starting from the arguments of the written call |
+| `while` | `step(start).while` | The state reached when the condition, the last value `step` produces, is `false`; each round checks the condition first |
 | `tick` | `tick()` | The run's counter after adding one: `1`, `2`, `3`, … for each time the call actually runs (see [Counting Evaluations with `tick()`](#counting-evaluations-with-tick)) |
 | `string` | `number.string` | The number as text (dot form only) |
 | `Invoke` | `reference.Invoke()` | Runs the call a `meta` parameter captured (dot form only; see [Capturing a Call with `meta`](#capturing-a-call-with-meta)) |
-| `Arguments` | `reference.Arguments` | A lazy view of the captured call's arguments: `count`, `[i]`, `first`, `last`, and `F(reference.Arguments*)` (dot form only; see [Looking at a Captured Call's Arguments](#looking-at-a-captured-calls-arguments)) |
-| `Algorithm` | `reference.Algorithm(args)` | The captured call's algorithm as a callable: call it with new arguments, pass it on, or use it as a callback or loop step (dot form only; see [Calling a Captured Call's Algorithm](#calling-a-captured-calls-algorithm)) |
+| `Arguments` | `reference.Arguments` | A view of the captured call's arguments: `count`, `[i]`, `first`, `last`, and `F(reference.Arguments*)` (dot form only; see [Looking at a Captured Call's Arguments](#looking-at-a-captured-calls-arguments)) |
+| `Algorithm` | `reference.Algorithm(args)` | The captured call's algorithm as a callable: call it with new arguments, pass it on, or use it as a callback (dot form only; see [Calling a Captured Call's Algorithm](#calling-a-captured-calls-algorithm)) |
 | `Math` | `Math.Sqrt(2)`, `sqrt(2)` | Mathematical functions and constants (see [Math Functions](#math-functions)) |
 
 Operations that produce a collection (`range`, `filter`, `map`, `order`, `orderDesc`, `distinct`, `take`, `skip`, `atoms`) return a list. Built-in names such as `count` and `if` are not reserved: a definition of your own with the same name takes precedence.
@@ -3205,4 +3511,4 @@ Operations that produce a collection (`range`, `filter`, `map`, `order`, `orderD
 | `public` | Make a member available to `open` |
 | `open` | Use the public members of other algorithms without a prefix |
 
-A root-final spread (`Values*`) is valid: an attached star at the end of the program completes its spread and emits the items as rows. Grouping into a capture or brace creates one value instead and changes root row structure.
+`meta` is special only in front of a parameter name in a parameter list; everywhere else it is an ordinary name.

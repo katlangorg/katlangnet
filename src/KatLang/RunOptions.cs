@@ -82,9 +82,10 @@ public sealed class RunOptions
     /// fetch as well. The delegate may be invoked from any thread and, for runs sharing this
     /// options object, concurrently.</para>
     /// <para><b>Capabilities.</b> Downloaded source is part of the program: it is elaborated
-    /// and evaluated with every <see cref="HostOperations"/> member the run registers, and a
-    /// module bound with <c>Name = load('…')</c> resolves free names through its importer's
-    /// scope. Admit only hosts whose code you would run yourself.</para>
+    /// and evaluated with every <see cref="HostOperations"/> member the run registers. However
+    /// it is held, a module resolves free names in its own declarations, then the prelude, then
+    /// its own opens, never at the load site; a name it cannot resolve is a parameter of the
+    /// member that uses it. Admit only hosts whose code you would run yourself.</para>
     /// </summary>
     public Func<string, CancellationToken, ValueTask<string>>? DownloadCode { get; init; }
 
