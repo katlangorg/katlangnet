@@ -748,6 +748,10 @@ macro "pres_tac" : tactic => `(tactic| without_info_trees ((try pres_unfold_rec)
   | (with_reducible apply EvalBody.terminalAccess_pres rec hrec)
   | (with_reducible apply EvalBody.staticReferenceTerminal_pres rec hrec)
   | (with_reducible apply EvalBody.transparentCollectorSlice_pres rec hrec)
+  | (with_reducible apply EvalBody.transparentRetainedCell_pres rec hrec)
+  | (with_reducible apply EvalBody.retainedSliceAt_pres rec hrec)
+  | (with_reducible apply EvalBody.writtenCollectorSlice_pres rec hrec)
+  | (with_reducible apply retainedCollectorBuiltin_pres rec hrec)
   | (with_reducible apply pres_outputRowsCollect rec hrec)
   | (with_reducible apply pres_explicitRowsCollect rec hrec)
   | (with_reducible apply pres_listLiteralCollect rec hrec)
@@ -1037,6 +1041,35 @@ theorem EvalBody.demandSequenceBuiltinCallItemValue_pres (rec : EvalRec) (hrec :
     Preserves R (EvalBody.demandSequenceBuiltinCallItemValue rec item ctx env) := by
   unfold EvalBody.demandSequenceBuiltinCallItemValue; pres_tac
 
+theorem EvalBody.staticReferenceTerminal_pres (rec : EvalRec) (hrec : ∀ c, Preserves R (rec c)) (owner : Algorithm) (reference : Expr) (ctx : EvalCtx) :
+    Preserves R (EvalBody.staticReferenceTerminal rec owner reference ctx) := by
+  unfold EvalBody.staticReferenceTerminal; pres_tac
+
+theorem EvalBody.transparentRetainedCell_pres (rec : EvalRec) (hrec : ∀ c, Preserves R (rec c)) (reference : Expr) (ctx : EvalCtx) :
+    Preserves R (EvalBody.transparentRetainedCell? rec reference ctx) := by
+  unfold EvalBody.transparentRetainedCell? parameterNeedAddress?; pres_tac
+
+theorem EvalBody.retainedCellSlice_pres (rec : EvalRec) (hrec : ∀ c, Preserves R (rec c)) (fuel address : Nat) :
+    Preserves R (EvalBody.retainedCellSlice? rec fuel address) := by
+  induction fuel generalizing address with
+  | zero => unfold EvalBody.retainedCellSlice?; pres_tac
+  | succ n ih => unfold EvalBody.retainedCellSlice?; pres_tac
+
+theorem EvalBody.retainedSliceAt_pres (rec : EvalRec) (hrec : ∀ c, Preserves R (rec c)) (address : Nat) :
+    Preserves R (EvalBody.retainedSliceAt? rec address) := by
+  have := EvalBody.retainedCellSlice_pres (R := R) rec hrec
+  unfold EvalBody.retainedSliceAt?; pres_tac
+
+theorem EvalBody.writtenCollectorSlice_pres (rec : EvalRec) (hrec : ∀ c, Preserves R (rec c)) (receiver : Expr) (ctx : EvalCtx) :
+    Preserves R (EvalBody.writtenCollectorSlice? rec receiver ctx) := by
+  unfold EvalBody.writtenCollectorSlice? parameterNeedAddress?; pres_tac
+
+theorem retainedCollectorBuiltin_pres (rec : EvalRec) (hrec : ∀ c, Preserves R (rec c)) (b : Builtin)
+    (metadata : SequenceBuiltinMetadata) (suffixArgs : List PreparedSequenceBuiltinSuffixArg) (slice : List Nat) :
+    Preserves R (retainedCollectorBuiltin rec.demandNeedRecursive b metadata suffixArgs slice) := by
+  unfold retainedCollectorBuiltin argumentViewBuiltin NeedDemand.materialize; pres_tac
+
+set_option maxHeartbeats 2000000 in
 theorem EvalBody.bindSequenceBuiltinArguments_pres (rec : EvalRec) (hrec : ∀ c, Preserves R (rec c)) (b : Builtin) (metadata : SequenceBuiltinMetadata) (args : List ResolvedArgumentAlgorithm) (ctx : EvalCtx) (env : ValEnv) :
     Preserves R (EvalBody.bindSequenceBuiltinArguments rec b metadata args ctx env) := by
   unfold EvalBody.bindSequenceBuiltinArguments; pres_tac
@@ -1144,13 +1177,9 @@ theorem EvalBody.evalSequenceSpreadCounted_pres (rec : EvalRec) (hrec : ∀ c, P
     Preserves R (EvalBody.evalSequenceSpreadCounted rec e ctx env) := by
   unfold EvalBody.evalSequenceSpreadCounted; pres_tac
 
-theorem EvalBody.staticReferenceTerminal_pres (rec : EvalRec) (hrec : ∀ c, Preserves R (rec c)) (owner : Algorithm) (reference : Expr) (ctx : EvalCtx) :
-    Preserves R (EvalBody.staticReferenceTerminal rec owner reference ctx) := by
-  unfold EvalBody.staticReferenceTerminal; pres_tac
-
 theorem EvalBody.transparentCollectorSlice_pres (rec : EvalRec) (hrec : ∀ c, Preserves R (rec c)) (e : Expr) (ctx : EvalCtx) :
     Preserves R (EvalBody.transparentCollectorSlice? rec e ctx) := by
-  unfold EvalBody.transparentCollectorSlice?; pres_tac
+  unfold EvalBody.transparentCollectorSlice? collectorSliceAt?; pres_tac
 
 theorem EvalBody.evalSupplySpread_pres (rec : EvalRec) (hrec : ∀ c, Preserves R (rec c)) (e : Expr) (ctx : EvalCtx) (env : ValEnv) :
     Preserves R (EvalBody.evalSupplySpread rec e ctx env) := by

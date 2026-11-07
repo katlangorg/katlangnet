@@ -637,6 +637,10 @@ macro "disc_tac" : tactic => `(tactic| without_info_trees ((try disc_unfold_rec)
   | (with_reducible apply EvalBody.terminalAccess_disciplined rec hrec)
   | (with_reducible apply EvalBody.staticReferenceTerminal_disciplined rec hrec)
   | (with_reducible apply EvalBody.transparentCollectorSlice_disciplined rec hrec)
+  | (with_reducible apply EvalBody.transparentRetainedCell_disciplined rec hrec)
+  | (with_reducible apply EvalBody.retainedSliceAt_disciplined rec hrec)
+  | (with_reducible apply EvalBody.writtenCollectorSlice_disciplined rec hrec)
+  | (with_reducible apply retainedCollectorBuiltin_disciplined rec hrec)
   | (with_reducible apply disc_outputRowsCollect rec hrec)
   | (with_reducible apply disc_explicitRowsCollect rec hrec)
   | (with_reducible apply disc_listLiteralCollect rec hrec)
@@ -929,6 +933,35 @@ theorem EvalBody.demandSequenceBuiltinCallItemValue_disciplined (rec : EvalRec) 
     Disciplined (EvalBody.demandSequenceBuiltinCallItemValue rec item ctx env) := by
   unfold EvalBody.demandSequenceBuiltinCallItemValue; disc_tac
 
+theorem EvalBody.staticReferenceTerminal_disciplined (rec : EvalRec) (hrec : ∀ c, Disciplined (rec c)) (owner : Algorithm) (reference : Expr) (ctx : EvalCtx) :
+    Disciplined (EvalBody.staticReferenceTerminal rec owner reference ctx) := by
+  unfold EvalBody.staticReferenceTerminal; disc_tac
+
+theorem EvalBody.transparentRetainedCell_disciplined (rec : EvalRec) (hrec : ∀ c, Disciplined (rec c)) (reference : Expr) (ctx : EvalCtx) :
+    Disciplined (EvalBody.transparentRetainedCell? rec reference ctx) := by
+  unfold EvalBody.transparentRetainedCell? parameterNeedAddress?; disc_tac
+
+theorem EvalBody.retainedCellSlice_disciplined (rec : EvalRec) (hrec : ∀ c, Disciplined (rec c)) (fuel address : Nat) :
+    Disciplined (EvalBody.retainedCellSlice? rec fuel address) := by
+  induction fuel generalizing address with
+  | zero => unfold EvalBody.retainedCellSlice?; disc_tac
+  | succ n ih => unfold EvalBody.retainedCellSlice?; disc_tac
+
+theorem EvalBody.retainedSliceAt_disciplined (rec : EvalRec) (hrec : ∀ c, Disciplined (rec c)) (address : Nat) :
+    Disciplined (EvalBody.retainedSliceAt? rec address) := by
+  have := EvalBody.retainedCellSlice_disciplined rec hrec
+  unfold EvalBody.retainedSliceAt?; disc_tac
+
+theorem EvalBody.writtenCollectorSlice_disciplined (rec : EvalRec) (hrec : ∀ c, Disciplined (rec c)) (receiver : Expr) (ctx : EvalCtx) :
+    Disciplined (EvalBody.writtenCollectorSlice? rec receiver ctx) := by
+  unfold EvalBody.writtenCollectorSlice? parameterNeedAddress?; disc_tac
+
+theorem retainedCollectorBuiltin_disciplined (rec : EvalRec) (hrec : ∀ c, Disciplined (rec c)) (b : Builtin)
+    (metadata : SequenceBuiltinMetadata) (suffixArgs : List PreparedSequenceBuiltinSuffixArg) (slice : List Nat) :
+    Disciplined (retainedCollectorBuiltin rec.demandNeedRecursive b metadata suffixArgs slice) := by
+  unfold retainedCollectorBuiltin argumentViewBuiltin NeedDemand.materialize; disc_tac
+
+set_option maxHeartbeats 2000000 in
 theorem EvalBody.bindSequenceBuiltinArguments_disciplined (rec : EvalRec) (hrec : ∀ c, Disciplined (rec c)) (b : Builtin) (metadata : SequenceBuiltinMetadata) (args : List ResolvedArgumentAlgorithm) (ctx : EvalCtx) (env : ValEnv) :
     Disciplined (EvalBody.bindSequenceBuiltinArguments rec b metadata args ctx env) := by
   unfold EvalBody.bindSequenceBuiltinArguments; disc_tac
@@ -1036,13 +1069,9 @@ theorem EvalBody.evalSequenceSpreadCounted_disciplined (rec : EvalRec) (hrec : �
     Disciplined (EvalBody.evalSequenceSpreadCounted rec e ctx env) := by
   unfold EvalBody.evalSequenceSpreadCounted; disc_tac
 
-theorem EvalBody.staticReferenceTerminal_disciplined (rec : EvalRec) (hrec : ∀ c, Disciplined (rec c)) (owner : Algorithm) (reference : Expr) (ctx : EvalCtx) :
-    Disciplined (EvalBody.staticReferenceTerminal rec owner reference ctx) := by
-  unfold EvalBody.staticReferenceTerminal; disc_tac
-
 theorem EvalBody.transparentCollectorSlice_disciplined (rec : EvalRec) (hrec : ∀ c, Disciplined (rec c)) (e : Expr) (ctx : EvalCtx) :
     Disciplined (EvalBody.transparentCollectorSlice? rec e ctx) := by
-  unfold EvalBody.transparentCollectorSlice?; disc_tac
+  unfold EvalBody.transparentCollectorSlice? collectorSliceAt?; disc_tac
 
 theorem EvalBody.evalSupplySpread_disciplined (rec : EvalRec) (hrec : ∀ c, Disciplined (rec c)) (e : Expr) (ctx : EvalCtx) (env : ValEnv) :
     Disciplined (EvalBody.evalSupplySpread rec e ctx env) := by

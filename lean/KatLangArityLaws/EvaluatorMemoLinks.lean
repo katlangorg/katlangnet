@@ -1137,6 +1137,10 @@ macro "link_tac" : tactic => `(tactic| without_info_trees ((try link_unfold_rec)
   | (with_reducible apply EvalBody.terminalAccess_linkDisc rec hrec)
   | (with_reducible apply EvalBody.staticReferenceTerminal_linkDisc rec hrec)
   | (with_reducible apply EvalBody.transparentCollectorSlice_linkDisc rec hrec)
+  | (with_reducible apply EvalBody.transparentRetainedCell_linkDisc rec hrec)
+  | (with_reducible apply EvalBody.retainedSliceAt_linkDisc rec hrec)
+  | (with_reducible apply EvalBody.writtenCollectorSlice_linkDisc rec hrec)
+  | (with_reducible apply retainedCollectorBuiltin_linkDisc rec hrec)
   | (with_reducible apply link_outputRowsCollect rec hrec)
   | (with_reducible apply link_explicitRowsCollect rec hrec)
   | (with_reducible apply link_listLiteralCollect rec hrec)
@@ -1429,6 +1433,35 @@ theorem EvalBody.demandSequenceBuiltinCallItemValue_linkDisc (rec : EvalRec) (hr
     LinkDisc (EvalBody.demandSequenceBuiltinCallItemValue rec item ctx env) := by
   unfold EvalBody.demandSequenceBuiltinCallItemValue; link_tac
 
+theorem EvalBody.staticReferenceTerminal_linkDisc (rec : EvalRec) (hrec : ∀ c, LinkDisc (rec c)) (owner : Algorithm) (reference : Expr) (ctx : EvalCtx) :
+    LinkDisc (EvalBody.staticReferenceTerminal rec owner reference ctx) := by
+  unfold EvalBody.staticReferenceTerminal; link_tac
+
+theorem EvalBody.transparentRetainedCell_linkDisc (rec : EvalRec) (hrec : ∀ c, LinkDisc (rec c)) (reference : Expr) (ctx : EvalCtx) :
+    LinkDisc (EvalBody.transparentRetainedCell? rec reference ctx) := by
+  unfold EvalBody.transparentRetainedCell? parameterNeedAddress?; link_tac
+
+theorem EvalBody.retainedCellSlice_linkDisc (rec : EvalRec) (hrec : ∀ c, LinkDisc (rec c)) (fuel address : Nat) :
+    LinkDisc (EvalBody.retainedCellSlice? rec fuel address) := by
+  induction fuel generalizing address with
+  | zero => unfold EvalBody.retainedCellSlice?; link_tac
+  | succ n ih => unfold EvalBody.retainedCellSlice?; link_tac
+
+theorem EvalBody.retainedSliceAt_linkDisc (rec : EvalRec) (hrec : ∀ c, LinkDisc (rec c)) (address : Nat) :
+    LinkDisc (EvalBody.retainedSliceAt? rec address) := by
+  have := EvalBody.retainedCellSlice_linkDisc rec hrec
+  unfold EvalBody.retainedSliceAt?; link_tac
+
+theorem EvalBody.writtenCollectorSlice_linkDisc (rec : EvalRec) (hrec : ∀ c, LinkDisc (rec c)) (receiver : Expr) (ctx : EvalCtx) :
+    LinkDisc (EvalBody.writtenCollectorSlice? rec receiver ctx) := by
+  unfold EvalBody.writtenCollectorSlice? parameterNeedAddress?; link_tac
+
+theorem retainedCollectorBuiltin_linkDisc (rec : EvalRec) (hrec : ∀ c, LinkDisc (rec c)) (b : Builtin)
+    (metadata : SequenceBuiltinMetadata) (suffixArgs : List PreparedSequenceBuiltinSuffixArg) (slice : List Nat) :
+    LinkDisc (retainedCollectorBuiltin rec.demandNeedRecursive b metadata suffixArgs slice) := by
+  unfold retainedCollectorBuiltin argumentViewBuiltin NeedDemand.materialize; link_tac
+
+set_option maxHeartbeats 2000000 in
 theorem EvalBody.bindSequenceBuiltinArguments_linkDisc (rec : EvalRec) (hrec : ∀ c, LinkDisc (rec c)) (b : Builtin) (metadata : SequenceBuiltinMetadata) (args : List ResolvedArgumentAlgorithm) (ctx : EvalCtx) (env : ValEnv) :
     LinkDisc (EvalBody.bindSequenceBuiltinArguments rec b metadata args ctx env) := by
   unfold EvalBody.bindSequenceBuiltinArguments; link_tac
@@ -1536,13 +1569,9 @@ theorem EvalBody.evalSequenceSpreadCounted_linkDisc (rec : EvalRec) (hrec : ∀ 
     LinkDisc (EvalBody.evalSequenceSpreadCounted rec e ctx env) := by
   unfold EvalBody.evalSequenceSpreadCounted; link_tac
 
-theorem EvalBody.staticReferenceTerminal_linkDisc (rec : EvalRec) (hrec : ∀ c, LinkDisc (rec c)) (owner : Algorithm) (reference : Expr) (ctx : EvalCtx) :
-    LinkDisc (EvalBody.staticReferenceTerminal rec owner reference ctx) := by
-  unfold EvalBody.staticReferenceTerminal; link_tac
-
 theorem EvalBody.transparentCollectorSlice_linkDisc (rec : EvalRec) (hrec : ∀ c, LinkDisc (rec c)) (e : Expr) (ctx : EvalCtx) :
     LinkDisc (EvalBody.transparentCollectorSlice? rec e ctx) := by
-  unfold EvalBody.transparentCollectorSlice?; link_tac
+  unfold EvalBody.transparentCollectorSlice? collectorSliceAt?; link_tac
 
 theorem EvalBody.evalSupplySpread_linkDisc (rec : EvalRec) (hrec : ∀ c, LinkDisc (rec c)) (e : Expr) (ctx : EvalCtx) (env : ValEnv) :
     LinkDisc (EvalBody.evalSupplySpread rec e ctx env) := by

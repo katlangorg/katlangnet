@@ -110,7 +110,8 @@ def SuffixLV (h : Array NeedCell) (xs : List PreparedSequenceBuiltinSuffixArg) :
 
 /-- Bound collection-builtin arguments. -/
 def BoundV (h : Array NeedCell) (b : BoundSequenceBuiltinArguments) : Prop :=
-  RLV h b.preparedInput.items ∧ CRLV h b.iterationItems ∧ SuffixLV h b.suffixArgs ∧ OptAddr h b.view?
+  RLV h b.preparedInput.items ∧ CRLV h b.iterationItems ∧ SuffixLV h b.suffixArgs ∧ OptAddr h b.view? ∧
+    (∀ slice, b.slice? = some slice → ValidAddresses h slice)
 
 /-- A computed spread's supply contribution: Ready items' payloads, transported cells. -/
 def SupplyV (h : Array NeedCell) : SpreadSupply → Prop
@@ -213,7 +214,8 @@ theorem SuffixV.mono {x : PreparedSequenceBuiltinSuffixArg} (v : SuffixV h x) : 
 theorem SuffixLV.mono {xs : List PreparedSequenceBuiltinSuffixArg} (v : SuffixLV h xs) : SuffixLV h' xs :=
   fun x m => SuffixV.mono g (v x m)
 theorem BoundV.mono {b : BoundSequenceBuiltinArguments} (v : BoundV h b) : BoundV h' b :=
-  ⟨RLV.mono g v.1, CRLV.mono g v.2.1, SuffixLV.mono g v.2.2.1, OptAddr.mono g v.2.2.2⟩
+  ⟨RLV.mono g v.1, CRLV.mono g v.2.1, SuffixLV.mono g v.2.2.1, OptAddr.mono g v.2.2.2.1,
+    fun s e => ValidAddresses.mono g (v.2.2.2.2 s e)⟩
 theorem SupplyV.mono {x : SpreadSupply} (v : SupplyV h x) : SupplyV h' x := by
   cases x with
   | items _ => exact RLV.mono g v

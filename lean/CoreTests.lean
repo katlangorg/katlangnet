@@ -46,6 +46,7 @@ import CoreTests.EmptyStructuralPatterns
 import CoreTests.CallbackResultBoundary
 import CoreTests.PropertyCachePublication
 import CoreTests.VariadicSelection
+import CoreTests.SelectiveCollectorReads
 import CoreTests.ParentScopeValidation
 import CoreTests.RepeatedSpread
 import CoreTests.HostScopePropertyCache

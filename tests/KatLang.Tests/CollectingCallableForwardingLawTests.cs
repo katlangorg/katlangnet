@@ -401,7 +401,8 @@ public sealed partial class CollectingCallableForwardingLawTests
         { "Use(a, b) = a + b\nOuter(*xs) = Use(xs*, xs*)\nOuter(tock())", "ok 2 n=1", ["tock#1"] },
         { "Z = trace(7)\nCall(f) = f()\nOuter(*xs) = xs, Call(xs*), xs\nOuter(Z)", "ok S[L[7], 7, L[7]] n=1", ["trace(7)", "trace(7)"] },
         { "Choose([], x) = 0\nChoose(tag, x) = tag + x\nOuter(*xs) = Choose(xs*)\nOuter(trace(2), trace(3))", "ok 5 n=1", ["trace(2)", "trace(3)"] },
-        { "Outer(*xs) = xs.count\nOuter(trace(1), trace(2), trace(3))", "ok 3 n=1", ["trace(1)", "trace(2)", "trace(3)"] },
+        { "Outer(*xs) = xs.count\nOuter(trace(1), trace(2), trace(3))", "ok 3 n=1", [] },
+        { "Outer(*xs) = xs\nOuter(trace(1), trace(2), trace(3))", "ok L[1, 2, 3] n=1", ["trace(1)", "trace(2)", "trace(3)"] },
     };
 
     [Theory]
@@ -423,9 +424,17 @@ public sealed partial class CollectingCallableForwardingLawTests
     }
 
     [Fact]
-    public async Task FirstOfACollector_MaterializesTheTailBeforeSelecting()
+    public async Task FirstOfACollector_DemandsOnlyTheFirstElement()
     {
-        const string source = "Outer(*xs) = xs.first\nOuter(trace(1), 2 / 0, trace(3))";
+        var observation = await AllRoutesAsync("Outer(*xs) = xs.first\nOuter(trace(1), 2 / 0, trace(3))");
+        Assert.Equal("ok 1 n=1", observation.Outcome);
+        Assert.Equal(["trace(1)"], observation.HostCalls);
+    }
+
+    [Fact]
+    public async Task AWholeCollectorRead_StopsAtTheFailingElement()
+    {
+        const string source = "Outer(*xs) = xs\nOuter(trace(1), 2 / 0, trace(3))";
         var observation = await AllRoutesAsync(source);
         Assert.Equal("err", observation.Kind);
         Assert.Equal("DivisionByZero/DivByZero", Assert.Single(observation.Causes));

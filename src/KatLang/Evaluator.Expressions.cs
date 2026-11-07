@@ -130,6 +130,13 @@ public static partial class Evaluator
         /// </summary>
         public List<SuppliedSelector>? Selection;
 
+        /// <summary>
+        /// Index: the exact slice of a RETAINED COLLECTOR receiver (NEED-07,
+        /// <see cref="WrittenCollectorSlice"/>), obtained without a VALUE demand; <see cref="FirstValue"/>
+        /// then stays null and each selector reads one of these cells.
+        /// </summary>
+        public IReadOnlyList<NeedCell>? RetainedSlice;
+
         /// <summary>InterpolatedString text accumulator; created on the frame's first visit.</summary>
         public InterpolatedTextBuilder? Text;
     }
@@ -323,15 +330,28 @@ public static partial class Evaluator
                 {
                     if (frame.Phase == 0)
                     {
-                        // (1) The receiver, once, through its ordinary value path.
+                        // (1) A retained collector's slice, without a VALUE demand; otherwise the
+                        // receiver, once, through its ordinary value path.
                         if (!hasPendingChild)
                         {
-                            requestedChild = selection.Target;
-                            break;
+                            if (EnterRetainedSelection(ref frame, WrittenCollectorSlice(selection.Target, ctx), ctx) is { } terminal)
+                            {
+                                completed = terminal;
+                                break;
+                            }
+
+                            if (frame.RetainedSlice is null)
+                            {
+                                requestedChild = selection.Target;
+                                break;
+                            }
+                        }
+                        else
+                        {
+                            hasPendingChild = false;
+                            frame.FirstValue = pendingChild.Value;
                         }
 
-                        hasPendingChild = false;
-                        frame.FirstValue = pendingChild.Value;
                         frame.Phase = 1;
                         // (2) Supply formation: every explicit spread slot runs now.
                         if (HasSpreadSelector(selection.Selectors))
@@ -358,9 +378,12 @@ public static partial class Evaluator
                             : AdvanceSelection(ref frame, demanded.Value.Value, ctx, out requestedChild, out _, out viewIndex);
                     }
 
-                    // An argument view's validated position: read that ONE cell, demand it (S2).
+                    // A validated position of an argument view (S2) or a retained collector: read
+                    // that ONE cell, demand it.
                     if (viewIndex >= 0)
-                        completed = SelectArgumentViewSync(ref frame, viewIndex, ctx);
+                        completed = frame.RetainedSlice is { } retained
+                            ? AcceptRetainedSelection(ref frame, retained[viewIndex].Demand(), ctx)
+                            : SelectArgumentViewSync(ref frame, viewIndex, ctx);
 
                     break;
                 }
@@ -614,6 +637,18 @@ public static partial class Evaluator
         {
             var position = frame.Phase - 1;
             var slot = supplied is null ? selection.Selectors[position] : supplied[position].Slot;
+            if (frame.RetainedSlice is { } retained)
+            {
+                // A retained collector's position is validated before its ONE element is demanded.
+                var retainedR = SelectorIndex(arrived, slot, selection);
+                if (retainedR.IsError)
+                    return retainedR.Error;
+                if (retainedR.Value >= retained.Count)
+                    return new EvalError.BadIndex { Span = slot.Span ?? selection.Span };
+                viewIndex = retainedR.Value;
+                return null;
+            }
+
             if (IsArgumentView(frame.FirstValue!))
             {
                 var indexR = SelectorIndex(arrived, slot, selection);
@@ -707,6 +742,39 @@ public static partial class Evaluator
         if (CheckCallReferenceOwnership((Result.CallReference)frame.FirstValue!, ctx) is { } terminal)
             return terminal;
         var selection = (Expr.Index)frame.Node;
+        var total = frame.Selection?.Count ?? selection.Selectors.Count;
+        return AcceptSelected(ref frame, demanded.Value.Value, total, ctx, selection);
+    }
+
+    /// <summary>
+    /// Records a selection's retained receiver (NEED-07; a <c>null</c> slice leaves the ordinary path) and
+    /// observes its entry checks, which no element demand may supply. Out of line so the spine machine's
+    /// frame keeps its size.
+    /// </summary>
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static EvalError? EnterRetainedSelection(ref ExpressionSpineFrame frame, IReadOnlyList<NeedCell>? slice, EvalCtx ctx)
+    {
+        if (slice is null)
+            return null;
+        frame.RetainedSlice = slice;
+        return RetainedObservationTerminal(ctx);
+    }
+
+    /// <summary>
+    /// Accepts the demanded VALUE of a retained collector's selected element (NEED-07): a failure is the
+    /// element's own, nested in the selection as the whole list's construction nested it and located at
+    /// the selection when it carries no location; the run's continuation is observed again, and the
+    /// value is selected whole. Lean: <c>selectViewWith</c> under the <c>.index</c> arm's nesting.
+    /// </summary>
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static EvalResult<CountedResult>? AcceptRetainedSelection(
+        ref ExpressionSpineFrame frame, EvalResult<CountedResult> demanded, EvalCtx ctx)
+    {
+        var selection = (Expr.Index)frame.Node;
+        if (demanded.IsError)
+            return AtSpanIfMissing(NestMissingOutput(demanded.Error), selection.Span);
+        if (RetainedObservationTerminal(ctx) is { } terminal)
+            return terminal;
         var total = frame.Selection?.Count ?? selection.Selectors.Count;
         return AcceptSelected(ref frame, demanded.Value.Value, total, ctx, selection);
     }

@@ -241,10 +241,10 @@ public static class LanguageSpecCorpus
         {
             Id = "need-collector-demand-materializes-whole-slice",
             Category = "variadic-calls",
-            Source = "F(*xs) = xs.first\nF(1, 1 / 0)",
+            Source = "F(*xs) = xs\nF(1, 1 / 0)",
             Outcome = SpecOutcome.EvalError,
             ExpectedErrorCategory = "div0",
-            Explanation = "Demanding any value from a collector first materializes the full collected list left to right.",
+            Explanation = "A VALUE read of a collector materializes the full collected list left to right.",
         },
         new()
         {
@@ -378,10 +378,10 @@ public static class LanguageSpecCorpus
         {
             Id = "collector-alias-demand-raises-the-element-failure",
             Category = "errors",
-            Source = "Coll(*ys) = ys.count\nF(*xs) = {\n    A = xs\n    Coll(A*)\n}\nF(1 / 0, 2)",
+            Source = "Coll(*ys) = ys\nF(*xs) = {\n    A = xs\n    Coll(A*)\n}\nF(1 / 0, 2)",
             Outcome = SpecOutcome.EvalError,
             ExpectedErrorCategory = "div0",
-            Explanation = "Transfer defers a failure to the operation that demands the cell, never suppresses it: `ys.count` materializes the collector, whose first element is the original division.",
+            Explanation = "Transfer defers a failure to the operation that demands the cell, never suppresses it: a read of `ys` as a value materializes the collector, whose first element is the original division.",
         },
         new()
         {
@@ -399,6 +399,108 @@ public static class LanguageSpecCorpus
                 new SpecProbe("Coll(*ys) = 0\nF(x) = {\n    A = x\n    Coll(A*)\n}\nF(1 / 0)", "err div0"),
             ],
             Explanation = "Written braces make a distinct carrier, and a calculation or a fixed parameter holding an ordinary computation is no collector: each is an arbitrary spread, evaluated during supply formation, whatever value it would have.",
+        },
+        new()
+        {
+            Id = "selective-collector-count-reads-positions",
+            Category = "variadic-calls",
+            Source = "CountItems(*xs) = xs.count\nCountItems(1 / 0)",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "1",
+            ExpectedRaw = "1",
+            ExpectedEmittedCount = 1,
+            Explanation = "A collecting parameter retains an exact slice of its argument computations. `count` reads that slice's length, one position per supplied argument, so it needs no element's value: the failing `1 / 0` is never demanded.",
+        },
+        new()
+        {
+            Id = "selective-collector-selection-demands-selected-positions",
+            Category = "variadic-calls",
+            Source = "F(*xs) = xs[1, 0, 1]\nF(10, 20, 1 / 0)",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "(20, 10, 20)",
+            ExpectedRaw = "S[20, 10, 20]",
+            ExpectedEmittedCount = 1,
+            Explanation = "Postfix selection validates each position of a retained collector, then demands that one element. Positions 1 and 0 run; the third element is never selected, so its failure stays dormant.",
+        },
+        new()
+        {
+            Id = "selective-collector-first-selects-one-element",
+            Category = "variadic-calls",
+            Source = "FirstItem(*xs) = xs[0]\nFirstItem(10, 1 / 0)",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "10",
+            ExpectedRaw = "10",
+            ExpectedEmittedCount = 1,
+            Explanation = "Selecting position 0 needs only the first argument.",
+        },
+        new()
+        {
+            Id = "selective-collector-take-demands-its-prefix",
+            Category = "variadic-calls",
+            Source = "Prefix(*xs) = xs.take(1)\nPrefix(10, 1 / 0)",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "[10]",
+            ExpectedRaw = "L[10]",
+            ExpectedEmittedCount = 1,
+            Explanation = "`take` validates its count, then demands exactly the kept prefix in source order and builds an ordinary eager list from those values.",
+        },
+        new()
+        {
+            Id = "selective-collector-take-needs-the-prefix-element",
+            Category = "errors",
+            Source = "Prefix(*xs) = xs.take(2)\nPrefix(10, 1 / 0)",
+            Outcome = SpecOutcome.EvalError,
+            ExpectedErrorCategory = "div0",
+            Explanation = "A requested element is demanded: the second position belongs to the prefix, so its failure is the failure of `take`.",
+        },
+        new()
+        {
+            Id = "selective-collector-effects-follow-first-demand",
+            Category = "variadic-calls",
+            Source = "F(*xs) = xs[1], xs[0], xs[1]\nF(tick(), tick())",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "(1, 2, 1)",
+            ExpectedRaw = "S[1, 2, 1]",
+            ExpectedEmittedCount = 1,
+            Explanation = "Selected positions decide first-demand order: position 1 runs first and draws 1, position 0 draws 2, and the repeated position 1 reuses its one completed outcome instead of running again.",
+        },
+        new()
+        {
+            Id = "selective-collector-reads-through-a-transparent-reference",
+            Category = "variadic-calls",
+            Source = "F(*xs) = {\n    A = xs\n    Box = {\n        public B = A\n        0\n    }\n    A.count, Box.B[0]\n}\nF(10, 1 / 0)",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "(2, 10)",
+            ExpectedRaw = "S[2, 10]",
+            ExpectedEmittedCount = 1,
+            Explanation = "A transparent reference reads the collector's own cell, so `A.count` and `Box.B[0]` observe the same retained slice as `xs.count` and `xs[0]`.",
+        },
+        new()
+        {
+            Id = "selective-collector-whole-value-stays-eager",
+            Category = "errors",
+            Source = "F(*xs) = xs\nF(1 / 0)",
+            Outcome = SpecOutcome.EvalError,
+            ExpectedErrorCategory = "div0",
+            Explanation = "Reading the collector as a value still builds its whole exact list; only a qualified observer reads positions.",
+        },
+        new()
+        {
+            Id = "selective-collector-written-list-stays-eager",
+            Category = "errors",
+            Source = "F(*xs) = [xs*][0]\nF(10, 1 / 0)",
+            Outcome = SpecOutcome.EvalError,
+            ExpectedErrorCategory = "div0",
+            Explanation = "A written list is ordinary eager data, even when it holds a collector's items and its selection needs only one of them.",
+        },
+        new()
+        {
+            Id = "selective-collector-carrier-stays-eager",
+            Category = "errors",
+            Source = "F(*xs) = {\n    A = { xs }\n    A.count\n}\nF(1 / 0)",
+            Outcome = SpecOutcome.EvalError,
+            ExpectedErrorCategory = "div0",
+            Explanation = "A brace carrier is a computed value, not a transparent reference, so `count` receives its whole value.",
         },
         new()
         {
@@ -438,7 +540,7 @@ public static class LanguageSpecCorpus
         {
             Id = "collector-member-path-demand-raises-the-element-failure",
             Category = "errors",
-            Source = "Coll(*ys) = ys.count\nF(*xs) = {\n    Box = {\n        public A = xs\n        0\n    }\n    Coll(Box.A*)\n}\nF(1 / 0, 2)",
+            Source = "Coll(*ys) = ys\nF(*xs) = {\n    Box = {\n        public A = xs\n        0\n    }\n    Coll(Box.A*)\n}\nF(1 / 0, 2)",
             Outcome = SpecOutcome.EvalError,
             ExpectedErrorCategory = "div0",
             Explanation = "A member path defers a failure to the operation that demands the cell, never suppresses it.",

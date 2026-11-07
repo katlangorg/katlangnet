@@ -66,7 +66,10 @@ theorem known_collector (name : Ident) (ctx : EvalCtx) (st : EvalState)
     (hcell : st.needs[a]? = some cell)
     (hslice : cell.suspension = .collector slice) :
     (spreadCollectorSlice? (.param name) ctx).runState st = (.ok (some slice), st) := by
-  simp only [spreadCollectorSlice?, bind_run, hc, ha]
+  have hp : (parameterNeedAddress? name ctx).runState st = (.ok (some a), st) := by
+    simp only [parameterNeedAddress?, bind_run, hc, ha]
+    rfl
+  simp only [spreadCollectorSlice?, bind_run, hp, collectorSliceAt?]
   rw [show (get : EvalM EvalState).runState st = (.ok st, st) from rfl]
   simp only [hcell, hslice]
   rfl
@@ -526,7 +529,10 @@ theorem noncollector_parameter (name : Ident) (caller : EvalCtx) (s : EvalState)
     (present : s.needs[a]? = some cell)
     (kind : ∀ slice, cell.suspension ≠ .collector slice) :
     (spreadCollectorSlice? (.param name) caller).runState s = (.ok none, s) := by
-  simp only [spreadCollectorSlice?, bind_run, hc, ha, get_run, present]
+  have hp : (parameterNeedAddress? name caller).runState s = (.ok (some a), s) := by
+    simp only [parameterNeedAddress?, bind_run, hc, ha]
+    rfl
+  simp only [spreadCollectorSlice?, bind_run, hp, collectorSliceAt?, get_run, present]
   cases hs : cell.suspension with
   | expression e ctx env => rfl
   | ready v => rfl

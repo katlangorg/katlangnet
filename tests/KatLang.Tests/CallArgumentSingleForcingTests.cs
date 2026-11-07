@@ -69,13 +69,27 @@ public class CallArgumentSingleForcingTests
             10m, 2, 6
         },
         // Collecting call V(Make()): steps = V + Make = 2; items = range list
-        // (4) + the one-slot collected exact list (1). The collector receives
+        // (4) + the one-slot collected exact list (1) + skip's result list (1). The collector receives
         // ONE written argument (the range list stays one collected slot,
-        // hence count = 1) — collection is not re-forcing.
+        // hence count = 1) — collection is not re-forcing. The whole collected
+        // list reserves its one slot beside the range's four.
         {
             "collecting",
+            "Make = range(1, 4)\nV(*items) = items.skip(0).first.count\nV(Make())",
+            4m, 2, 6
+        },
+        // `count` reads the retained position, so the argument is never forced
+        // (NEED-07): V alone runs and nothing is materialized.
+        {
+            "collecting-count",
             "Make = range(1, 4)\nV(*items) = items.count\nV(Make())",
-            1m, 2, 5
+            1m, 1, 0
+        },
+        // A selected position forces its element once: V + Make, the range's four.
+        {
+            "collecting-selection",
+            "Make = range(1, 4)\nV(*items) = items[0].count + items[0].count\nV(Make())",
+            8m, 2, 4
         },
         // Clause-family call C(Make()): argument preparation happens ONCE
         // before clause selection; trying the literal clause first must not

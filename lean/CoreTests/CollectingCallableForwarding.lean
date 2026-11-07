@@ -296,8 +296,11 @@ private def fixedCarrier : Algorithm := alg ["v"] [] [] [.call (.resolve "Apply"
 #guard yields [("Z", alg [] [] [] [.num 7]), ("Call", alg ["f"] [] [] [.call (.param "f") []]),
     ("Outer", collecting "xs" [.param "xs", .call (.resolve "Call") [.sequenceSpread (.param "xs")]])]
   [.call (.resolve "Outer") [.resolve "Z"]] (.sequenceValue [.listValue [.atom 7], .atom 7])
--- Selection receives the whole eager list: a failure in its tail aborts before selection.
-#guard fails [("Outer", collecting "xs" [.index (.param "xs") [.num 0]])]
+-- Selection reads the retained slice (NEED-07): only the selected element is demanded, while a
+-- selection from the collector's whole VALUE, an ordinary list, still fails on its tail.
+#guard yields [("Outer", collecting "xs" [.index (.param "xs") [.num 0]])]
+  [.call (.resolve "Outer") [.num 1, bad]] (.atom 1)
+#guard fails [("Outer", collecting "xs" [.index (.listLiteral [.sequenceSpread (.param "xs")]) [.num 0]])]
   [.call (.resolve "Outer") [.num 1, bad]] innermostIsDivByZero
 
 -- 8. A transparent reference keeps the known slice (A-2) ------------------------------
@@ -351,7 +354,7 @@ private def selectFrom (operand : Expr) : Expr := .index (.listLiteral [.num 10,
 #guard same (program [fWith oneHop [selectFrom (.resolve "A")]] (callF [.num 99, bad]))
   (program [fWith [] [selectFrom (.param "xs")]] (callF [.num 99, bad]))
 -- Demand raises the original error, the empty slice supplies nothing, and order and shape survive.
-#guard isDiv (program [collCount, fWith oneHop [spreadTo "Coll" (.resolve "A")]] (callF [bad, .num 2]))
+#guard isDiv (program [collList, fWith oneHop [spreadTo "Coll" (.resolve "A")]] (callF [bad, .num 2]))
 #guard is (.atom 0) (program [collCount, fWith oneHop [spreadTo "Coll" (.resolve "A")]] (callF []))
 #guard same (program [collList, fWith oneHop [spreadTo "Coll" (.resolve "A")]] (callF [.num 1, .capture [.num 2, .num 3], .num 4]))
   (program [collList, fWith [] [spreadTo "Coll" (.param "xs")]] (callF [.num 1, .capture [.num 2, .num 3], .num 4]))
@@ -423,7 +426,7 @@ private def boxDotA : Expr := dot (.resolve "Box") "A"
 #guard is (.atom 0) (program [coll, fWith [box [memberA] (.param "xs")] [spreadTo "Coll" boxDotA]] (callF [bad]))
 #guard isDiv (program [coll, fWith [box [memberA] (.param "xs")] [spreadTo "Coll" (.resolve "Box")]] (callF [bad]))
 -- Demand raises the original error, the empty slice supplies nothing, order and shape survive.
-#guard isDiv (program [collCount, fWith [boxA] [spreadTo "Coll" boxDotA]] (callF [bad, .num 2]))
+#guard isDiv (program [collList, fWith [boxA] [spreadTo "Coll" boxDotA]] (callF [bad, .num 2]))
 #guard is (.atom 0) (program [collCount, fWith [boxA] [spreadTo "Coll" boxDotA]] (callF []))
 #guard same (program [collList, fWith [boxA] [spreadTo "Coll" boxDotA]] (callF [.num 1, .capture [.num 2, .num 3], .num 4]))
   (program [collList, fWith [] [spreadTo "Coll" (.param "xs")]] (callF [.num 1, .capture [.num 2, .num 3], .num 4]))

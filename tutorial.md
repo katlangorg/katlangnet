@@ -3181,7 +3181,7 @@ A written argument is one computation. With `Z = tick()`, the argument `Z` reads
 
 ### Spreads Run Early
 
-An explicit spread runs while a call's arguments are being formed, because it decides how many arguments there are. That is why not even `if` can skip one (see [Opening a Value with `*`](#opening-a-value-with-)), and why `repeat` runs a spread among the step's starting values before it computes its count. Other arguments are computed when they are needed.
+A spread supplies its arguments before the call checks how many it received. A spread of a computed value evaluates it at this point, even in an unchosen branch of `if` or among a `repeat` step's starting values before `repeat` reads its count. An argument written without `*` is evaluated when its value is needed.
 
 ### Collected Arguments
 
@@ -3194,26 +3194,19 @@ Ignore(1 / 0, 2)
 
 **Result:** `10`
 
-Reading the collected list as a value builds the whole list, evaluating every element from left to right. `xs.first`, `xs.count`, `sum(xs)` and `xs[0]` all receive that complete list, so they cannot skip a failing later element. Spreading it into a call, as in `Coll(xs*)`, passes the computations along without evaluating them: unlike an ordinary spread, it runs nothing. Spreading it into a new list or sequence does evaluate every element.
+Using `xs` as a whole list, for example in `sum(xs)`, reads every argument's value from left to right. `count(xs)` counts the arguments without evaluating them. `first(xs)`, `last(xs)`, and `xs[i]` evaluate only the positions they select. `take(xs, n)` evaluates only the requested prefix and returns it as a list.
 
-Spreading an alias of the collecting parameter into a call also passes the computations along, even through a member such as `Box.A`, and without evaluating the output of `Box`:
-
-<!-- spec:collector-member-path-keeps-known-slice -->
+<!-- spec:selective-collector-selection-demands-selected-positions -->
 ```
-Coll(*ys) = 0
-F(*xs) = {
-    Box = {
-        public A = xs
-        0
-    }
-    Coll(Box.A*)
-}
-F(1 / 0)
+F(*xs) = xs[1, 0, 1]
+F(10, 20, 1 / 0)
 ```
 
-**Result:** `0`
+**Result:** `(20, 10, 20)`
 
-A member that calculates something, or has braces of its own, such as `public A = { xs }`, is an ordinary value, and spreading it evaluates its elements. So does passing the alias as an ordinary argument first: with `Pass(v) = Coll(v*)`, `Pass(Box.A)` evaluates the list when `v*` is formed.
+The second argument runs first and its value is reused. The third argument is never needed. A list literal evaluates its elements before selection, so `[10, 1 / 0][0]` fails while building the list.
+
+Spreading a collecting parameter into a call, as in `Coll(xs*)`, passes along the original arguments for the callee to evaluate as needed. A direct alias such as `A = xs` also keeps this behavior. Spreading into a new list or sequence evaluates every element. [Language rules for collected arguments](docs/design/language-rules/call-by-need.md#need-07--lazy-supply-eager-collection-value)
 
 ### Patterns That Need Values
 

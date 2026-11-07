@@ -86,11 +86,37 @@ theorem captured_state {name : Ident} {ctx : EvalCtx} {s t : EvalState}
   rw [h] at this
   exact this
 
+theorem parameter_address_readonly (name : Ident) (ctx : EvalCtx) (s : EvalState) :
+    ((parameterNeedAddress? name ctx).runState s).2 = s := by
+  simp only [parameterNeedAddress?, bind_run]
+  split
+  · rename_i heq
+    simp only [pure_run]
+    exact captured_state heq
+  · exact captured_state (by assumption)
+
+theorem collector_slice_readonly (address : Nat) (s : EvalState) :
+    ((collectorSliceAt? address).runState s).2 = s := by
+  simp only [collectorSliceAt?, bind_run, get_run]
+  repeat' (first | rfl | split)
+
 theorem spread_slice_readonly (operand : Expr) (ctx : EvalCtx) (s : EvalState) :
     ((spreadCollectorSlice? operand ctx).runState s).2 = s := by
   unfold spreadCollectorSlice?
-  repeat' (first | rfl | split | dsimp only | simp only [bind_run, get_run, pure_run, throw_run])
-  all_goals exact captured_state (by assumption)
+  cases operand
+  case param name =>
+    have hstate := parameter_address_readonly name ctx s
+    simp only [bind_run]
+    rcases hrun : (parameterNeedAddress? name ctx).runState s with ⟨out, next⟩
+    rw [hrun] at hstate
+    cases hstate
+    cases out with
+    | error => rfl
+    | ok found =>
+      cases found with
+      | none => rfl
+      | some address => exact collector_slice_readonly address _
+  all_goals rfl
 
 
 theorem supply_cases (source : Expr) (caller : EvalCtx) (values : ValEnv) (s : EvalState) :

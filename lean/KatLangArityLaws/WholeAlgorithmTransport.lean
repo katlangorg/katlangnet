@@ -577,7 +577,8 @@ theorem no_slice_without_a_static_reference (rec : EvalRec) (e : Expr) (ctx : Ev
   unfold EvalBody.transparentCollectorSlice?
   split
   · rename_i reference
-    simp only [hpath reference rfl]
+    simp only [EvalBody.transparentRetainedCell?, hpath reference rfl]
+    rfl
   · rfl
 
 /-- A path headed by a parameter is no static reference (its receiver is a cell's runtime projection),

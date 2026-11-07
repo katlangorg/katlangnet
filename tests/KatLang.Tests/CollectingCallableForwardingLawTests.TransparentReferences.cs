@@ -95,7 +95,7 @@ public sealed partial class CollectingCallableForwardingLawTests
 
     /// <summary>A demanded element raises its own error, once, at the demand; a check that precedes demand is unchanged.</summary>
     [Theory]
-    [InlineData("Coll(*ys) = ys.count", "Coll(@*)", "F(1 / 0, 2)", "DivisionByZero/DivByZero")]
+    [InlineData("Coll(*ys) = ys", "Coll(@*)", "F(1 / 0, 2)", "DivisionByZero/DivByZero")]
     [InlineData("Coll(*ys) = ys", "Coll(@*)", "F(1, 2 / 0, 3)", "DivisionByZero/DivByZero")]
     [InlineData("Two(a, b) = a", "Two(@*)", "F(1 / 0, 2)", "DivisionByZero/DivByZero")]
     [InlineData("Two(a, b) = 0", "Two(@*)", "F(1 / 0)", "ArityMismatch/ArityMismatch")]

@@ -1163,12 +1163,25 @@ public static partial class Evaluator
                         {
                             if (!hasPendingChild)
                             {
-                                requestedChild = selection.Target;
-                                break;
+                                var retainedSlice = await WrittenCollectorSliceAsync(selection.Target, ctx).ConfigureAwait(false);
+                                if (EnterRetainedSelection(ref frames[top], retainedSlice, ctx) is { } terminal)
+                                {
+                                    completed = terminal;
+                                    break;
+                                }
+
+                                if (frames[top].RetainedSlice is null)
+                                {
+                                    requestedChild = selection.Target;
+                                    break;
+                                }
+                            }
+                            else
+                            {
+                                hasPendingChild = false;
+                                frames[top].FirstValue = pendingChild.Value;
                             }
 
-                            hasPendingChild = false;
-                            frames[top].FirstValue = pendingChild.Value;
                             frames[top].Phase = 1;
                             if (HasSpreadSelector(selection.Selectors))
                             {
@@ -1193,9 +1206,15 @@ public static partial class Evaluator
                                 : AdvanceSelection(ref frames[top], demanded.Value.Value, ctx, out requestedChild, out _, out viewIndex);
                         }
 
-                        // MIRROR of the sync machine's argument-view step (S2): the view's cells, the ONE
-                        // cell at the validated position, its demand, then its acceptance.
-                        if (viewIndex >= 0)
+                        // MIRROR of the sync machine's step: a retained collector's ONE cell, or an argument
+                        // view's (S2): the view's cells, the ONE cell at the validated position, its demand,
+                        // then its acceptance.
+                        if (viewIndex >= 0 && frames[top].RetainedSlice is { } retained)
+                        {
+                            var retainedValue = await retained[viewIndex].DemandAsync().ConfigureAwait(false);
+                            completed = AcceptRetainedSelection(ref frames[top], retainedValue, ctx);
+                        }
+                        else if (viewIndex >= 0)
                         {
                             var view = (Result.CallReference)frames[top].FirstValue!;
                             var viewCells = await PrepareArgumentViewAsync(view, ctx).ConfigureAwait(false);
@@ -2381,6 +2400,16 @@ public static partial class Evaluator
             };
         }
 
+        // A retained collector bound as the whole collection — see the synchronous twin.
+        if (ReadsRetainedCollector(builtin) && items[0].Cell is { } collectionCell
+            && await RetainedCellSliceAsync(collectionCell, ctx).ConfigureAwait(false) is { } retained)
+        {
+            var retainedControls = await PrepareSequenceBuiltinControlsAsync(builtin, metadata, items, ctx, valEnv).ConfigureAwait(false);
+            return retainedControls.IsError
+                ? retainedControls.Error
+                : EvalResult<BoundSequenceBuiltinArguments>.Ok(new BoundSequenceBuiltinArguments(default!, [], retainedControls.Value, null, retained));
+        }
+
         // The `collection` parameter is a VALUE position — see the synchronous twin.
         var collectionItem = await DemandSequenceBuiltinCallItemValueAsync(items[0], ctx, valEnv).ConfigureAwait(false);
         if (collectionItem.Value is null)
@@ -2398,6 +2427,25 @@ public static partial class Evaluator
         var preparedInputR = PrepareSequenceBuiltinInput(builtin, metadata, collected);
         if (preparedInputR.IsError) return preparedInputR.Error;
 
+        var suffixArgsR = await PrepareSequenceBuiltinControlsAsync(builtin, metadata, items, ctx, valEnv).ConfigureAwait(false);
+        if (suffixArgsR.IsError) return suffixArgsR.Error;
+
+        var iterationItems = collectionValues
+            .Select(static value => new CountedResult(value, 1))
+            .ToList();
+
+        return EvalResult<BoundSequenceBuiltinArguments>.Ok(
+            new BoundSequenceBuiltinArguments(preparedInputR.Value, iterationItems, suffixArgsR.Value));
+    }
+
+    /// <summary>MIRROR OF <see cref="PrepareSequenceBuiltinControls"/> — keep in lock-step.</summary>
+    private static async ValueTask<EvalResult<IReadOnlyList<PreparedSequenceBuiltinSuffixArg>>> PrepareSequenceBuiltinControlsAsync(
+        BuiltinId builtin,
+        SequenceBuiltinMetadata metadata,
+        IReadOnlyList<VariadicCallItem> items,
+        EvalCtx ctx,
+        ValEnv valEnv)
+    {
         var suffixArgs = new List<PreparedSequenceBuiltinSuffixArg>(metadata.SuffixArgs.Count);
         for (var index = 0; index < metadata.SuffixArgs.Count; index++)
         {
@@ -2420,12 +2468,7 @@ public static partial class Evaluator
             suffixArgs.Add(preparedArgR.Value);
         }
 
-        var iterationItems = collectionValues
-            .Select(static value => new CountedResult(value, 1))
-            .ToList();
-
-        return EvalResult<BoundSequenceBuiltinArguments>.Ok(
-            new BoundSequenceBuiltinArguments(preparedInputR.Value, iterationItems, suffixArgs));
+        return EvalResult<IReadOnlyList<PreparedSequenceBuiltinSuffixArg>>.Ok(suffixArgs);
     }
 
     /// <summary>MIRROR OF <see cref="ApplyBuiltinCountedSequence"/> — keep in lock-step.</summary>
@@ -2440,9 +2483,11 @@ public static partial class Evaluator
         if (boundR.IsError) return boundR.Error;
         if (boundR.Value.ArgumentView is { } argumentView)
             return await EvalArgumentViewBuiltinAsync(builtin, argumentView, ctx).ConfigureAwait(false);
+        if (boundR.Value.RetainedSlice is { } retainedSlice)
+            return await EvalRetainedCollectorBuiltin(builtin, metadata, boundR.Value.SuffixArgs, retainedSlice, ctx, asynchronous: true).ConfigureAwait(false);
 
         // Deconstructed before the local functions capture them — see the synchronous twin.
-        var (preparedInput, iterationItems, suffixArgs, _) = boundR.Value;
+        var (preparedInput, iterationItems, suffixArgs, _, _) = boundR.Value;
 
         // The pure per-builtin execution helpers are shared with the synchronous twin;
         // only the callback-driven builtins (filter, map, reduce) await.

@@ -49,7 +49,8 @@ def collecting (body : List Expr) : Algorithm :=
 def collectingCall (body : List Expr) (arguments : OutputBundle) : Expr :=
   .algorithmExpr (alg [] [] [] [.call (.algorithmExpr (collecting body)) arguments])
 #guard (runResult (collectingCall [.num 9] [bad])).toOption == some (.atom 9)
-#guard match runResult (collectingCall [.call (.resolve "first") [.param "xs"]] [.num 1, bad]) with
+#guard (runResult (collectingCall [.call (.resolve "first") [.param "xs"]] [.num 1, bad])).toOption == some (.atom 1)
+#guard match runResult (collectingCall [.param "xs"] [.num 1, bad]) with
   | .error error => innermostIsDivByZero error
   | _ => false
 #guard (runResult (.algorithmExpr (alg [] [] [] [.call (.resolve "map") [.listLiteral [], bad]]))).toOption == some (.listValue [])

@@ -1041,11 +1041,14 @@ public static partial class Evaluator
 
     // `ArgumentView` (CallReference S2): the view bound as the whole collection of count/first/last,
     // whose cells the builtin reads instead of a collection value (Lean `BoundSequenceBuiltinArguments.view?`).
+    // `RetainedSlice` (NEED-07): a retained collector bound as the whole collection of count/first/last/take,
+    // whose cells the builtin reads instead of a collection value (Lean `slice?`).
     private readonly record struct BoundSequenceBuiltinArguments(
         PreparedSequenceBuiltinInput PreparedInput,
         IReadOnlyList<CountedResult> IterationItems,
         IReadOnlyList<PreparedSequenceBuiltinSuffixArg> SuffixArgs,
-        Result.CallReference? ArgumentView = null);
+        Result.CallReference? ArgumentView = null,
+        IReadOnlyList<NeedCell>? RetainedSlice = null);
 
     /// <summary>
     /// The call item of an argument that assembly does not evaluate: its supplied cell, its
@@ -1634,6 +1637,18 @@ public static partial class Evaluator
             };
         }
 
+        // A RETAINED COLLECTOR bound as the whole collection of a selective observer (NEED-07): its slice
+        // is obtained without a VALUE demand, and the controls are demanded and validated BEFORE any
+        // element (EvalRetainedCollectorBuiltin then reads the cells). Selected by the resolved builtin's
+        // identity, never its spelling; every other builtin consumes the ordinary whole VALUE.
+        if (ReadsRetainedCollector(builtin) && items[0].Cell is { } collectionCell && RetainedCellSlice(collectionCell) is { } retained)
+        {
+            var retainedControls = PrepareSequenceBuiltinControls(builtin, metadata, items, ctx, valEnv);
+            return retainedControls.IsError
+                ? retainedControls.Error
+                : EvalResult<BoundSequenceBuiltinArguments>.Ok(new BoundSequenceBuiltinArguments(default!, [], retainedControls.Value, null, retained));
+        }
+
         var collectionValueR = BindSequenceBuiltinCollectionValue(items[0], ctx, valEnv);
         if (collectionValueR.IsError) return collectionValueR.Error;
         // An argument view bound as the whole collection (CallReference S2): count/first/last read
@@ -1648,6 +1663,28 @@ public static partial class Evaluator
         var preparedInputR = PrepareSequenceBuiltinInput(builtin, metadata, collected);
         if (preparedInputR.IsError) return preparedInputR.Error;
 
+        var suffixArgsR = PrepareSequenceBuiltinControls(builtin, metadata, items, ctx, valEnv);
+        if (suffixArgsR.IsError) return suffixArgsR.Error;
+
+        var iterationItems = collectionValues
+            .Select(static value => new CountedResult(value, 1))
+            .ToList();
+
+        return EvalResult<BoundSequenceBuiltinArguments>.Ok(
+            new BoundSequenceBuiltinArguments(preparedInputR.Value, iterationItems, suffixArgsR.Value));
+    }
+
+    /// <summary>
+    /// The fixed control arguments of a collection builtin, in order, each prepared by the ONE
+    /// <see cref="PrepareSequenceBuiltinSuffixArg"/>; the first failure ends them. Lean: <c>prepareControls</c>.
+    /// </summary>
+    private static EvalResult<IReadOnlyList<PreparedSequenceBuiltinSuffixArg>> PrepareSequenceBuiltinControls(
+        BuiltinId builtin,
+        SequenceBuiltinMetadata metadata,
+        IReadOnlyList<VariadicCallItem> items,
+        EvalCtx ctx,
+        ValEnv valEnv)
+    {
         var suffixArgs = new List<PreparedSequenceBuiltinSuffixArg>(metadata.SuffixArgs.Count);
         for (var index = 0; index < metadata.SuffixArgs.Count; index++)
         {
@@ -1662,12 +1699,60 @@ public static partial class Evaluator
             suffixArgs.Add(preparedArgR.Value);
         }
 
-        var iterationItems = collectionValues
-            .Select(static value => new CountedResult(value, 1))
-            .ToList();
+        return EvalResult<IReadOnlyList<PreparedSequenceBuiltinSuffixArg>>.Ok(suffixArgs);
+    }
 
-        return EvalResult<BoundSequenceBuiltinArguments>.Ok(
-            new BoundSequenceBuiltinArguments(preparedInputR.Value, iterationItems, suffixArgs));
+    /// <summary>
+    /// The builtins that observe a retained collector selectively (NEED-07): <c>count</c> reads its
+    /// length, <c>first</c>/<c>last</c> demand one cell and <c>take</c> its prefix. Every other builtin
+    /// consumes the ordinary whole VALUE. Lean: <c>Builtin.readsRetainedCollector</c>.
+    /// </summary>
+    private static bool ReadsRetainedCollector(BuiltinId builtin)
+        => builtin is BuiltinId.@count or BuiltinId.@first or BuiltinId.@last or BuiltinId.@take;
+
+    /// <summary>
+    /// SELECTIVE OBSERVATION OF A RETAINED COLLECTOR (November 2026; NEED-07): <c>count</c>, <c>first</c>,
+    /// <c>last</c> and <c>take</c> over the collector's exact slice, read as positions and never
+    /// materialized, so no whole list is reserved or built. <c>count</c> reads the slice's length and
+    /// demands nothing; <c>first</c>/<c>last</c> report the ordinary empty-collection failure or demand
+    /// exactly one cell, selected through the ordinary value boundary; <c>take</c> demands exactly the
+    /// prefix its ALREADY VALIDATED count keeps (<see cref="TakeLength"/>), in source order, and reserves
+    /// only that list. Every demand is the element's own cell, so its outcome is shared with every other
+    /// read and with a later whole VALUE. Lean: <c>retainedCollectorBuiltin</c>.
+    /// </summary>
+    private static async ValueTask<EvalResult<CountedResult>> EvalRetainedCollectorBuiltin(
+        BuiltinId builtin,
+        SequenceBuiltinMetadata metadata,
+        IReadOnlyList<PreparedSequenceBuiltinSuffixArg> suffixArgs,
+        IReadOnlyList<NeedCell> slice,
+        EvalCtx ctx,
+        bool asynchronous)
+    {
+        if (RetainedObservationTerminal(ctx) is { } entry)
+            return entry;
+        if (builtin == BuiltinId.@count)
+            return EvalResult<CountedResult>.Ok(new CountedResult(new Result.Atom(slice.Count), 1));
+
+        if (builtin == BuiltinId.@take)
+        {
+            var countR = ExpectPreparedWholeNumberSuffixArg(builtin, metadata.SuffixArgs, suffixArgs, 0);
+            if (countR.IsError) return countR.Error;
+            var length = TakeLength(countR.Value, slice.Count);
+            var taken = new List<Result>(length);
+            for (var index = 0; index < length; index++)
+            {
+                var element = await DemandCell(slice[index], asynchronous).ConfigureAwait(false);
+                if (element.IsError) return element.Error;
+                taken.Add(element.Value.Value);
+            }
+            return RetainedObservationTerminal(ctx) is { } afterPrefix ? afterPrefix : MakeCollectionListResult(ctx, taken);
+        }
+
+        if (slice.Count == 0)
+            return ArgumentViewEmptySelection(builtin);
+        var selected = await DemandCell(slice[builtin == BuiltinId.@first ? 0 : slice.Count - 1], asynchronous).ConfigureAwait(false);
+        if (selected.IsError) return selected.Error;
+        return RetainedObservationTerminal(ctx) is { } afterElement ? afterElement : CountValue(selected.Value.Value);
     }
 
     private static EvalResult<T> ExpectPreparedSequenceBuiltinSuffixArgAt<T>(
@@ -2056,15 +2141,20 @@ public static partial class Evaluator
         IReadOnlyList<Result> items,
         Decimal128 count)
     {
-        // Saturate before narrowing: `count` is a validated whole number that may
-        // exceed int.MaxValue, and an oversized count means "all items" by
-        // specification, so it must never reach the host (int) conversion.
-        IReadOnlyList<Result> taken = count <= 0
-            ? []
-            : items.Take(count >= items.Count ? items.Count : (int)count).ToList();
+        IReadOnlyList<Result> taken = items.Take(TakeLength(count, items.Count)).ToList();
 
         return MakeCollectionListResult(ctx, taken);
     }
+
+    /// <summary>
+    /// THE length of the prefix <c>take</c> keeps of <paramref name="available"/> items, values or a
+    /// retained collector's cells alike: nothing for a non-positive count, all items for an oversized
+    /// one. Saturates before narrowing: <paramref name="count"/> is a validated whole number that may
+    /// exceed <see cref="int.MaxValue"/>, and an oversized count means "all items" by specification, so
+    /// it must never reach the host (int) conversion. Lean: <c>takePrefix</c>.
+    /// </summary>
+    private static int TakeLength(Decimal128 count, int available)
+        => count <= 0 ? 0 : count >= available ? available : (int)count;
 
     /// <summary>
     /// Evaluate <c>skip(collection, count)</c> by returning the extracted
@@ -2323,9 +2413,11 @@ public static partial class Evaluator
 
         if (boundR.Value.ArgumentView is { } argumentView)
             return EvalArgumentViewBuiltin(builtin, argumentView, ctx);
+        if (boundR.Value.RetainedSlice is { } retainedSlice)
+            return EvalRetainedCollectorBuiltin(builtin, metadata, boundR.Value.SuffixArgs, retainedSlice, ctx, asynchronous: false).GetAwaiter().GetResult();
         // Deconstructed before the local functions capture them, so their closure holds exactly these
-        // three references (the S2 view field never enlarges an ordinary collection-builtin call).
-        var (preparedInput, iterationItems, suffixArgs, _) = boundR.Value;
+        // three references (the view and slice fields never enlarge an ordinary collection-builtin call).
+        var (preparedInput, iterationItems, suffixArgs, _, _) = boundR.Value;
 
         EvalResult<CountedResult> WithPreparedFlatItems(
             Func<IReadOnlyList<Result>, EvalResult<CountedResult>> handler)

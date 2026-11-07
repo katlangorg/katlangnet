@@ -248,7 +248,7 @@ public class CallArgumentAssemblyTests
         // A zero-parameter VALUE property is NOT callable-shaped: when its
         // body fails, the collecting binding surfaces the genuine evaluation error
         // instead of misdescribing the argument as "a callable".
-        var divisionError = AssertFails("Bad = 1 / 0\nG(*items) = items.count\nG(Bad)");
+        var divisionError = AssertFails("Bad = 1 / 0\nG(*items) = items\nG(Bad)");
         Assert.IsType<EvalError.DivByZero>(Innermost(divisionError));
 
         // `first([])` selects no position: BadIndex (SEQ-04, Q-27).

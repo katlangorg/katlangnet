@@ -427,31 +427,35 @@ theorem slice_run (operand : Expr) (caller : EvalCtx) (s : EvalState) :
   cases operand
   case param name =>
     obtain ⟨act?, hc, _⟩ := captured_run name caller s
+    have hp : (parameterNeedAddress? name caller).runState s =
+        (.ok (lookupAssoc name (act?.map ParameterActivation.needs |>.getD caller.needEnv)), s) := by
+      simp only [parameterNeedAddress?, bind_run, hc]
+      rfl
     cases hl : lookupAssoc name (act?.map ParameterActivation.needs |>.getD caller.needEnv) with
     | none =>
       refine ⟨.ok none, ?_, fun _ h => by cases h⟩
-      simp only [spreadCollectorSlice?, bind_run, hc, hl]
+      simp only [spreadCollectorSlice?, bind_run, hp, hl]
       rfl
     | some a =>
       cases hcell : s.needs[a]? with
       | none =>
         refine ⟨.error .badArity, ?_, fun _ h => by cases h⟩
-        simp only [spreadCollectorSlice?, bind_run, hc, hl, KatLang.NeedControl.Provenance.get_run, hcell]
+        simp only [spreadCollectorSlice?, collectorSliceAt?, bind_run, hp, hl, KatLang.NeedControl.Provenance.get_run, hcell]
         rfl
       | some cell =>
         cases hs : cell.suspension with
         | collector slice =>
           refine ⟨.ok (some slice), ?_, fun sl h => ?_⟩
-          · simp only [spreadCollectorSlice?, bind_run, hc, hl, KatLang.NeedControl.Provenance.get_run, hcell, hs]
+          · simp only [spreadCollectorSlice?, collectorSliceAt?, bind_run, hp, hl, KatLang.NeedControl.Provenance.get_run, hcell, hs]
             rfl
           · cases h; exact ⟨a, cell, hcell, hs⟩
         | expression e c v =>
           refine ⟨.ok none, ?_, fun _ h => by cases h⟩
-          simp only [spreadCollectorSlice?, bind_run, hc, hl, KatLang.NeedControl.Provenance.get_run, hcell, hs]
+          simp only [spreadCollectorSlice?, collectorSliceAt?, bind_run, hp, hl, KatLang.NeedControl.Provenance.get_run, hcell, hs]
           rfl
         | ready v =>
           refine ⟨.ok none, ?_, fun _ h => by cases h⟩
-          simp only [spreadCollectorSlice?, bind_run, hc, hl, KatLang.NeedControl.Provenance.get_run, hcell, hs]
+          simp only [spreadCollectorSlice?, collectorSliceAt?, bind_run, hp, hl, KatLang.NeedControl.Provenance.get_run, hcell, hs]
           rfl
   all_goals exact ⟨.ok none, rfl, fun _ h => by cases h⟩
 

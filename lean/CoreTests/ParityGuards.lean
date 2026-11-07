@@ -637,9 +637,12 @@ def dotCallParityCases : List DotCallParityCase :=
     { label := "N/unknown-name", target := .num 1, name := "DoesNotExist",
       expected := .failedOtherwise },
     -- O: receiver evaluation failure (division by zero) propagates with the
-    -- same diagnostic on both paths.
-    { label := "O/receiver-evaluation-failure", target := resolve "Bad", name := "NItems",
+    -- same diagnostic on both paths through a WHOLE VALUE consumer, ...
+    { label := "O/receiver-evaluation-failure", target := resolve "Bad", name := "sum",
       expected := .failedOtherwise },
+    -- ... while `NItems(*values) = count(values)` reads the collected position, not its VALUE.
+    { label := "O/collected-position-needs-no-value", target := resolve "Bad", name := "NItems",
+      expectedAtoms := some [1] },
     -- P: structural zero-arg property access through dot-call writes the
     -- per-run cache; both paths must leave the same cache state.
     { label := "P/structural-zero-arg-cache", target := resolve "Holder", name := "Inner",

@@ -67,10 +67,21 @@ theorem collectItems_valid {h : Array NeedCell} {args : List ResolvedArgumentAlg
 theorem ItemLV.of_eq {h : Array NeedCell} {xs ys : List CallableCallItem} (v : ItemLV h xs) (e : xs = ys) :
     ItemLV h ys := e ▸ v
 theorem BoundV.mk' {h : Array NeedCell} {p : PreparedSequenceBuiltinInput} {it : List CountedResult}
-    {sa : List PreparedSequenceBuiltinSuffixArg} {view : Option Nat} (v1 : RLV h p.items) (v2 : CRLV h it)
-    (v3 : SuffixLV h sa) (v4 : OptAddr h view) :
-    BoundV h { preparedInput := p, iterationItems := it, suffixArgs := sa, view? := view } := ⟨v1, v2, v3, v4⟩
-attribute [ht_lemmas] BoundV.mk'
+    {sa : List PreparedSequenceBuiltinSuffixArg} {view : Option Nat} {slice? : Option (List Nat)}
+    (v1 : RLV h p.items) (v2 : CRLV h it) (v3 : SuffixLV h sa) (v4 : OptAddr h view) (v5 : OptSliceV h slice?) :
+    BoundV h { preparedInput := p, iterationItems := it, suffixArgs := sa, view? := view, slice? := slice? } :=
+  ⟨v1, v2, v3, v4, v5⟩
+theorem OptSliceV.nothing {h : Array NeedCell} : OptSliceV h none := fun _ e => by cases e
+theorem OptSliceV.of_valid {h : Array NeedCell} {slice : List Nat} (v : ValidAddresses h slice) :
+    OptSliceV h (Option.some slice) := fun _ e => by cases e; exact v
+theorem RLV.takePrefix' {h : Array NeedCell} {xs : List Result} {count : Int} (v : RLV h xs) :
+    RLV h (takePrefix xs count) := by
+  intro x m
+  unfold takePrefix at m
+  split at m
+  · cases m
+  · exact v x (List.mem_of_mem_take m)
+attribute [ht_lemmas] BoundV.mk' OptSliceV.nothing OptSliceV.of_valid RLV.takePrefix'
 attribute [ht_lemmas] ItemV.with_value ItemV.with_error ItemV.with_error_callable collectItems_valid ItemLV.of_eq
 attribute [ht_fwd] collectItems_valid ItemLV.of_eq
 
@@ -141,7 +152,9 @@ theorem BoundV.items {b : BoundSequenceBuiltinArguments} (v : BoundV h b) : RLV 
 theorem BoundV.iteration {b : BoundSequenceBuiltinArguments} (v : BoundV h b) : CRLV h b.iterationItems := v.2.1
 theorem BoundV.suffix {b : BoundSequenceBuiltinArguments} (v : BoundV h b) : SuffixLV h b.suffixArgs := v.2.2.1
 theorem BoundV.view {b : BoundSequenceBuiltinArguments} {a : Nat} (v : BoundV h b) (e : b.view? = some a) :
-    a < h.size := v.2.2.2 a e
+    a < h.size := v.2.2.2.1 a e
+theorem BoundV.slice {b : BoundSequenceBuiltinArguments} {slice : List Nat} (v : BoundV h b)
+    (e : b.slice? = some slice) : ValidAddresses h slice := v.2.2.2.2 slice e
 theorem SuffixLV.nil' : SuffixLV h [] := fun _ m => by cases m
 theorem SuffixLV.cons' {x : PreparedSequenceBuiltinSuffixArg} {xs : List PreparedSequenceBuiltinSuffixArg}
     (v : SuffixV h x) (vs : SuffixLV h xs) : SuffixLV h (x :: xs) := by
@@ -169,11 +182,11 @@ theorem CRLV.map_ready {xs : List Result} (v : RLV h xs) :
 end Aux
 
 attribute [ht_lemmas] PreparedV.counted' PreparedV.slots PreparedV.mk' RAV.need RAV.mk ItemV.need
-  ItemV.value ItemV.mk' BoundV.items BoundV.iteration BoundV.suffix BoundV.view SuffixLV.nil'
+  ItemV.value ItemV.mk' BoundV.items BoundV.iteration BoundV.suffix BoundV.view BoundV.slice SuffixLV.nil'
   SuffixLV.cons' SuffixLV.getElem? SuffixV.need SuffixV.value OptRLV.some' OptRLV.nothing OptRLV.of_rlv
   OriginV.cell' OriginV.written' OriginV.none' OriginV.bound' CRLV.map_ready
 attribute [ht_fwd] PreparedV.counted' PreparedV.slots RAV.need ItemV.need ItemV.value BoundV.items
-  BoundV.iteration BoundV.suffix BoundV.view SuffixLV.getElem? OptRLV.some'
+  BoundV.iteration BoundV.suffix BoundV.view BoundV.slice SuffixLV.getElem? OptRLV.some'
 
 theorem RALV.map_need {h : Array NeedCell} {α : Type} {xs : List α} {f : α → ResolvedArgumentAlgorithm}
     (v : ∀ x ∈ xs, OptAddr h (f x).need?) : RALV h (xs.map f) := by
@@ -664,6 +677,112 @@ theorem EvalBody.demandSequenceBuiltinCallItemValue_sound (rec : EvalRec) (hrec 
     SoundI (CallPre (.demandSequenceBuiltinCallItemValue item ctx env)) (EvalBody.demandSequenceBuiltinCallItemValue rec item ctx env) (CallPost (.demandSequenceBuiltinCallItemValue item ctx env)) := by
   unfold EvalBody.demandSequenceBuiltinCallItemValue; ht_tac
 
+theorem staticReferenceTerminal_spec {rec : EvalRec} (hrec : RecSound rec) (owner : Algorithm) (reference : Expr) (ctx : EvalCtx)
+    {P : Array NeedCell → Prop} (hreq : ∀ h, P h → ValidCtx h ctx) :
+    SoundI P (EvalBody.staticReferenceTerminal rec owner reference ctx) (fun _ _ => True) := by
+  unfold EvalBody.staticReferenceTerminal; ht_tac
+
+attribute [ht_spec] staticReferenceTerminal_spec
+
+theorem parameterNeedAddress_spec {P : Array NeedCell → Prop} {name : Ident} {ctx : EvalCtx} :
+    SoundI P (parameterNeedAddress? name ctx) (fun _ _ => True) := by
+  unfold parameterNeedAddress?; ht_tac
+
+attribute [ht_spec] parameterNeedAddress_spec
+
+theorem transparentRetainedCell_spec {rec : EvalRec} (hrec : RecSound rec) (reference : Expr) (ctx : EvalCtx)
+    {P : Array NeedCell → Prop} (hreq : ∀ h, P h → ValidCtx h ctx) :
+    SoundI P (EvalBody.transparentRetainedCell? rec reference ctx) (fun _ _ => True) := by
+  unfold EvalBody.transparentRetainedCell?; ht_tac
+
+attribute [ht_spec] transparentRetainedCell_spec
+
+/-- **The retained slice is inside the heap**, whatever cell the chain starts from: a read of a stored
+    collector cell's slice, or of a stored reference's target through its stored caller context. -/
+theorem retainedCellSlice_spec {rec : EvalRec} (hrec : RecSound rec) (fuel address : Nat)
+    {P : Array NeedCell → Prop} :
+    SoundI P (EvalBody.retainedCellSlice? rec fuel address) (fun r h => OptSliceV h r) := by
+  induction fuel generalizing address P with
+  | zero =>
+    unfold EvalBody.retainedCellSlice?
+    exact SoundI.pure none (fun _ _ _ e => by cases e)
+  | succ n ih =>
+    unfold EvalBody.retainedCellSlice?
+    apply SoundI.get_bind
+    intro hp st vs ps
+    cases hc : st.needs[address]? with
+    | none =>
+      simp only [hc]
+      exact SoundAt.pure (Q := fun r h => OptSliceV h r) none vs (fun _ e => by cases e)
+    | some cell =>
+      have hcell := (vs.cells address cell hc).susp
+      simp only [hc]
+      cases hs : cell.suspension with
+      | collector slice =>
+        rw [hs] at hcell
+        simp only [hs]
+        exact SoundAt.pure (Q := fun r h => OptSliceV h r) (some slice) vs (fun _ e => by cases e; exact hcell)
+      | ready _ =>
+        simp only [hs]
+        exact SoundAt.pure (Q := fun r h => OptSliceV h r) none vs (fun _ e => by cases e)
+      | expression source caller values =>
+        rw [hs] at hcell
+        simp only [hs]
+        have hm : HMono (fun h => ValidCtx h caller) := fun _ _ g v => ValidCtx.mono g v
+        refine SoundAt.of_soundI (P := fun h => ValidCtx h caller)
+          (SoundI.bind (transparentRetainedCell_spec hrec source caller (fun _ v => v))
+            (fun _ _ _ _ _ => trivial) (fun next => ?_)) hm vs hcell.1
+        cases next with
+        | none => exact SoundI.pure none (fun _ _ _ e => by cases e)
+        | some a => exact ih a
+
+theorem retainedSliceAt_spec {rec : EvalRec} (hrec : RecSound rec) (address : Nat) {P : Array NeedCell → Prop} :
+    SoundI P (EvalBody.retainedSliceAt? rec address) (fun r h => OptSliceV h r) := by
+  unfold EvalBody.retainedSliceAt?
+  apply SoundI.get_bind
+  intro hp st vs ps
+  exact SoundAt.of_soundI (retainedCellSlice_spec hrec st.needs.size address) hp vs ps
+
+attribute [ht_spec] retainedSliceAt_spec
+
+theorem writtenCollectorSlice_spec {rec : EvalRec} (hrec : RecSound rec) (receiver : Expr) (ctx : EvalCtx)
+    {P : Array NeedCell → Prop} (hreq : ∀ h, P h → ValidCtx h ctx) :
+    SoundI P (EvalBody.writtenCollectorSlice? rec receiver ctx) (fun r h => OptSliceV h r) := by
+  unfold EvalBody.writtenCollectorSlice?; ht_tac
+  all_goals exact fun _ _ _ absent => by cases absent
+
+attribute [ht_spec] writtenCollectorSlice_spec
+
+theorem validSourced_retained {h : Array NeedCell} {slice : List Nat} (v : ValidAddresses h slice) :
+    ValidSourced h (retainedSourced slice) := by
+  intro x m
+  obtain ⟨a, ma, rfl⟩ := List.mem_map.mp m
+  exact v a ma
+
+attribute [ht_lemmas] validSourced_retained
+
+theorem validAddresses_takePrefix {h : Array NeedCell} {slice : List Nat} {count : Int}
+    (v : ValidAddresses h slice) : ValidAddresses h (takePrefix slice count) := by
+  intro a m
+  unfold takePrefix at m
+  split at m
+  · cases m
+  · exact v a (List.mem_of_mem_take m)
+
+theorem retainedCollectorBuiltin_spec {P : Array NeedCell → Prop} {demand : Nat → EvalM CountedResult}
+    {b : Builtin} {metadata : SequenceBuiltinMetadata} {suffixArgs : List PreparedSequenceBuiltinSuffixArg}
+    {slice : List Nat} (hd : DemandSpec demand) (hreq : ∀ h, P h → ValidAddresses h slice) :
+    SoundI P (retainedCollectorBuiltin demand b metadata suffixArgs slice) (fun r h => CRV h r) := by
+  have hprefix : ∀ count, ∀ h, P h → ValidAddresses h (takePrefix slice count) :=
+    fun _ h ph => validAddresses_takePrefix (hreq h ph)
+  have hviews : ∀ h, P h → ValidSourced h (retainedSourced slice) :=
+    fun h ph => validSourced_retained (hreq h ph)
+  unfold retainedCollectorBuiltin argumentViewBuiltin; ht_tac
+  all_goals exact fun h ph => hprefix _ h ph.1
+
+attribute [ht_spec] retainedCollectorBuiltin_spec
+
+set_option maxHeartbeats 2000000 in
 theorem EvalBody.bindSequenceBuiltinArguments_sound (rec : EvalRec) (hrec : RecSound rec) (b : Builtin) (metadata : SequenceBuiltinMetadata) (args : List ResolvedArgumentAlgorithm) (ctx : EvalCtx) (env : ValEnv) :
     SoundI (CallPre (.bindSequenceBuiltinArguments b metadata args ctx env)) (EvalBody.bindSequenceBuiltinArguments rec b metadata args ctx env) (CallPost (.bindSequenceBuiltinArguments b metadata args ctx env)) := by
   unfold EvalBody.bindSequenceBuiltinArguments; ht_tac
@@ -771,12 +890,31 @@ theorem EvalBody.evalSequenceSpreadCounted_sound (rec : EvalRec) (hrec : RecSoun
     SoundI (CallPre (.evalSequenceSpreadCounted e ctx env)) (EvalBody.evalSequenceSpreadCounted rec e ctx env) (CallPost (.evalSequenceSpreadCounted e ctx env)) := by
   unfold EvalBody.evalSequenceSpreadCounted; ht_tac
 
-theorem staticReferenceTerminal_spec {rec : EvalRec} (hrec : RecSound rec) (owner : Algorithm) (reference : Expr) (ctx : EvalCtx)
-    {P : Array NeedCell → Prop} (hreq : ∀ h, P h → ValidCtx h ctx) :
-    SoundI P (EvalBody.staticReferenceTerminal rec owner reference ctx) (fun _ _ => True) := by
-  unfold EvalBody.staticReferenceTerminal; ht_tac
+theorem collectorSliceAt_spec {P : Array NeedCell → Prop} {address : Nat} :
+    SoundI P (collectorSliceAt? address) (fun r h => OptSliceV h r) := by
+  unfold collectorSliceAt?
+  apply SoundI.get_bind
+  intro hp st vs ps
+  cases hc : st.needs[address]? with
+  | none =>
+    simp only [hc]
+    exact SoundAt.throw _ vs
+  | some cell =>
+    have hcell := (vs.cells address cell hc).susp
+    simp only [hc]
+    cases hs : cell.suspension with
+    | collector slice =>
+      rw [hs] at hcell
+      simp only [hs]
+      exact SoundAt.pure (Q := fun r h => OptSliceV h r) (some slice) vs (fun _ e => by cases e; exact hcell)
+    | ready _ =>
+      simp only [hs]
+      exact SoundAt.pure (Q := fun r h => OptSliceV h r) none vs (fun _ e => by cases e)
+    | expression _ _ _ =>
+      simp only [hs]
+      exact SoundAt.pure (Q := fun r h => OptSliceV h r) none vs (fun _ e => by cases e)
 
-attribute [ht_spec] staticReferenceTerminal_spec
+attribute [ht_spec] collectorSliceAt_spec
 
 theorem transparentCollectorSlice_spec {rec : EvalRec} (hrec : RecSound rec) (e : Expr) (ctx : EvalCtx)
     {P : Array NeedCell → Prop} (hreq : ∀ h, P h → ValidCtx h ctx) :

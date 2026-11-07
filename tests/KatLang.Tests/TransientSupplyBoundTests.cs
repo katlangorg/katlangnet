@@ -279,8 +279,12 @@ public class TransientSupplyBoundTests(ITestOutputHelper output)
     private const string Doubling = "G(n, *xs) = if(n == 0, xs.count, G(n - 1, xs*, xs*))\n";
 
     [Fact]
+    public void KnownSliceForwarding_WithinTheLimit_CountsWithoutDemandingTheSharedCell()
+        => AssertOutcome("ok 1024", Doubling + "G(10, trace(1))", effects: "traces=0", peak: 1025);
+
+    [Fact]
     public void KnownSliceForwarding_WithinTheLimit_DemandsTheSharedCellOnce()
-        => AssertOutcome("ok 1024", Doubling + "G(10, trace(1))", effects: "traces=1", peak: 1025);
+        => AssertOutcome("ok S[1, 1]", Doubling.Replace("xs.count", "(xs.first, xs.last)", StringComparison.Ordinal) + "G(10, trace(1))", effects: "traces=1", peak: 1025);
 
     [Fact]
     public void KnownSliceForwarding_RecursiveDuplicationIsBounded_AndNeverDemanded()
@@ -306,7 +310,7 @@ public class TransientSupplyBoundTests(ITestOutputHelper output)
 
     [Fact]
     public void ArgumentView_BoundLeavesInvokeAndSharingUnchanged()
-        => AssertOutcome("ok S[3, 3]", Meta + "R = Capture(Count(trace(1), trace(2), trace(3)))\nCount(R.Arguments*), R.Invoke()",
+        => AssertOutcome("ok S[L[1, 2, 3], L[1, 2, 3]]", Meta + "List(*xs) = xs\nR = Capture(List(trace(1), trace(2), trace(3)))\nList(R.Arguments*), R.Invoke()",
             maxCollectionItems: 3, effects: "traces=3");
 
     [Fact]

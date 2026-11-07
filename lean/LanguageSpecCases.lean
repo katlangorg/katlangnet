@@ -14,10 +14,10 @@ This is bounded differential validation over the Lean-guarded partition,
 not a formal verification of the evaluators.
 
 Partition (machine-checked by the `specCaseIds.length` guard below):
-- specification surface cases: 524
+- specification surface cases: 534
 - excluded parse-level cases (Lean has no surface parser): 75
 - excluded C#-only cases (each carries an explicit reason in the corpus): 22
-- Lean-guarded cases: 427
+- Lean-guarded cases: 437
 - probe observations (C#-only by design): 1499
 - internal-node cases live in the semantic-explorer corpus, not here: see
   lean/SemanticExplorerCases.lean
@@ -259,9 +259,9 @@ def case_need_explicit_spread_precedes_arity : Expr :=
   .algorithmExpr (alg [] [] [privateProp "F" (alg ["x"] [] [] [.num 7])] [(.call (.resolve "F") [.num 9, (.sequenceSpread (.binary .div (.num 1) (.num 0)))])])
 #guard obs case_need_explicit_spread_precedes_arity == "err div0"
 
--- need-collector-demand-materializes-whole-slice [variadic-calls]: F(*xs) = xs.first \n F(1, 1 / 0)
+-- need-collector-demand-materializes-whole-slice [variadic-calls]: F(*xs) = xs \n F(1, 1 / 0)
 def case_need_collector_demand_materializes_whole_slice : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "F" (algWithParameters [{ name := "xs", kind := .collecting }] [] [] [(.dotCall (.param "xs") "first" none)])] [(.call (.resolve "F") [.num 1, (.binary .div (.num 1) (.num 0))])])
+  .algorithmExpr (alg [] [] [privateProp "F" (algWithParameters [{ name := "xs", kind := .collecting }] [] [] [.param "xs"])] [(.call (.resolve "F") [.num 1, (.binary .div (.num 1) (.num 0))])])
 #guard obs case_need_collector_demand_materializes_whole_slice == "err div0"
 
 -- need-callable-projection-does-not-force-value [variadic-calls]: Inc(x) = x + 1 \n Apply(f) = f(4) \n Apply(Inc)
@@ -320,15 +320,65 @@ def case_collector_alias_keeps_callable_elements : Expr :=
   .algorithmExpr (alg [] [] [privateProp "Inc" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 1))]), privateProp "Apply" (alg ["f"] [] [] [(.call (.param "f") [.num 9])]), privateProp "Fwd" (algWithParameters [{ name := "fs", kind := .collecting }] [] [{ (privateLocalProp "A" (.localCapturedAncestorParams ["fs"]) (.alias none [] [] (.param "fs"))) with requiredOwnerDepths := some [("fs", some 0)] }] [(.call (.resolve "Apply") [(.sequenceSpread (.resolve "A"))])])] [(.call (.resolve "Fwd") [.resolve "Inc"])])
 #guard obs case_collector_alias_keeps_callable_elements == "ok raw=10 n=1"
 
--- collector-alias-demand-raises-the-element-failure [errors]: Coll(*ys) = ys.count \n F(*xs) = { \n     A = xs \n     Coll(A*) \n } \n F(1 / 0, 2)
+-- collector-alias-demand-raises-the-element-failure [errors]: Coll(*ys) = ys \n F(*xs) = { \n     A = xs \n     Coll(A*) \n } \n F(1 / 0, 2)
 def case_collector_alias_demand_raises_the_element_failure : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "Coll" (algWithParameters [{ name := "ys", kind := .collecting }] [] [] [(.dotCall (.param "ys") "count" none)]), privateProp "F" (algWithParameters [{ name := "xs", kind := .collecting }] [] [{ (privateLocalProp "A" (.localCapturedAncestorParams ["xs"]) (.alias none [] [] (.param "xs"))) with requiredOwnerDepths := some [("xs", some 0)] }] [(.call (.resolve "Coll") [(.sequenceSpread (.resolve "A"))])])] [(.call (.resolve "F") [(.binary .div (.num 1) (.num 0)), .num 2])])
+  .algorithmExpr (alg [] [] [privateProp "Coll" (algWithParameters [{ name := "ys", kind := .collecting }] [] [] [.param "ys"]), privateProp "F" (algWithParameters [{ name := "xs", kind := .collecting }] [] [{ (privateLocalProp "A" (.localCapturedAncestorParams ["xs"]) (.alias none [] [] (.param "xs"))) with requiredOwnerDepths := some [("xs", some 0)] }] [(.call (.resolve "Coll") [(.sequenceSpread (.resolve "A"))])])] [(.call (.resolve "F") [(.binary .div (.num 1) (.num 0)), .num 2])])
 #guard obs case_collector_alias_demand_raises_the_element_failure == "err div0"
 
 -- collector-carrier-spread-is-arbitrary [errors]: Coll(*ys) = 0 \n F(*xs) = { \n     A = { xs } \n     Coll(A*) \n } \n F(1 / 0)
 def case_collector_carrier_spread_is_arbitrary : Expr :=
   .algorithmExpr (alg [] [] [privateProp "Coll" (algWithParameters [{ name := "ys", kind := .collecting }] [] [] [.num 0]), privateProp "F" (algWithParameters [{ name := "xs", kind := .collecting }] [] [{ (privateLocalProp "A" (.localCapturedAncestorParams ["xs"]) (.alias none [] [] (.param "xs") none false)) with requiredOwnerDepths := some [("xs", some 0)] }] [(.call (.resolve "Coll") [(.sequenceSpread (.resolve "A"))])])] [(.call (.resolve "F") [(.binary .div (.num 1) (.num 0))])])
 #guard obs case_collector_carrier_spread_is_arbitrary == "err div0"
+
+-- selective-collector-count-reads-positions [variadic-calls]: CountItems(*xs) = xs.count \n CountItems(1 / 0)
+def case_selective_collector_count_reads_positions : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "CountItems" (algWithParameters [{ name := "xs", kind := .collecting }] [] [] [(.dotCall (.param "xs") "count" none)])] [(.call (.resolve "CountItems") [(.binary .div (.num 1) (.num 0))])])
+#guard obs case_selective_collector_count_reads_positions == "ok raw=1 n=1"
+
+-- selective-collector-selection-demands-selected-positions [variadic-calls]: F(*xs) = xs[1, 0, 1] \n F(10, 20, 1 / 0)
+def case_selective_collector_selection_demands_selected_positions : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "F" (algWithParameters [{ name := "xs", kind := .collecting }] [] [] [(.index (.param "xs") [.num 1, .num 0, .num 1])])] [(.call (.resolve "F") [.num 10, .num 20, (.binary .div (.num 1) (.num 0))])])
+#guard obs case_selective_collector_selection_demands_selected_positions == "ok raw=S[20, 10, 20] n=1"
+
+-- selective-collector-first-selects-one-element [variadic-calls]: FirstItem(*xs) = xs[0] \n FirstItem(10, 1 / 0)
+def case_selective_collector_first_selects_one_element : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "FirstItem" (algWithParameters [{ name := "xs", kind := .collecting }] [] [] [(.index (.param "xs") [.num 0])])] [(.call (.resolve "FirstItem") [.num 10, (.binary .div (.num 1) (.num 0))])])
+#guard obs case_selective_collector_first_selects_one_element == "ok raw=10 n=1"
+
+-- selective-collector-take-demands-its-prefix [variadic-calls]: Prefix(*xs) = xs.take(1) \n Prefix(10, 1 / 0)
+def case_selective_collector_take_demands_its_prefix : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Prefix" (algWithParameters [{ name := "xs", kind := .collecting }] [] [] [(.dotCall (.param "xs") "take" (some [.num 1]))])] [(.call (.resolve "Prefix") [.num 10, (.binary .div (.num 1) (.num 0))])])
+#guard obs case_selective_collector_take_demands_its_prefix == "ok raw=L[10] n=1"
+
+-- selective-collector-take-needs-the-prefix-element [errors]: Prefix(*xs) = xs.take(2) \n Prefix(10, 1 / 0)
+def case_selective_collector_take_needs_the_prefix_element : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Prefix" (algWithParameters [{ name := "xs", kind := .collecting }] [] [] [(.dotCall (.param "xs") "take" (some [.num 2]))])] [(.call (.resolve "Prefix") [.num 10, (.binary .div (.num 1) (.num 0))])])
+#guard obs case_selective_collector_take_needs_the_prefix_element == "err div0"
+
+-- selective-collector-effects-follow-first-demand [variadic-calls]: F(*xs) = xs[1], xs[0], xs[1] \n F(tick(), tick())
+def case_selective_collector_effects_follow_first_demand : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "F" (algWithParameters [{ name := "xs", kind := .collecting }] [] [] [(.index (.param "xs") [.num 1]), (.index (.param "xs") [.num 0]), (.index (.param "xs") [.num 1])])] [(.call (.resolve "F") [(.call (.resolve "tick") []), (.call (.resolve "tick") [])])])
+#guard obs case_selective_collector_effects_follow_first_demand == "ok raw=S[1, 2, 1] n=1"
+
+-- selective-collector-reads-through-a-transparent-reference [variadic-calls]: F(*xs) = { \n     A = xs \n     Box = { \n         public B = A \n         0 \n     } \n     A.count, Box.B[0] \n } \n F(10, 1 / 0)
+def case_selective_collector_reads_through_a_transparent_reference : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "F" (algWithParameters [{ name := "xs", kind := .collecting }] [] [{ (privateLocalProp "A" (.localCapturedAncestorParams ["xs"]) (.alias none [] [] (.param "xs"))) with requiredOwnerDepths := some [("xs", some 0)] }, privateProp "Box" (alg [] [] [{ (publicLocalProp "B" (.localCapturedAncestorParams ["xs"]) (.alias none [] [] (.resolve "A"))) with requiredOwnerDepths := some [("xs", some 1)] }] [.num 0])] [(.dotCall (.resolve "A") "count" none), (.index (.dotCall (.resolve "Box") "B" none) [.num 0])])] [(.call (.resolve "F") [.num 10, (.binary .div (.num 1) (.num 0))])])
+#guard obs case_selective_collector_reads_through_a_transparent_reference == "ok raw=S[2, 10] n=1"
+
+-- selective-collector-whole-value-stays-eager [errors]: F(*xs) = xs \n F(1 / 0)
+def case_selective_collector_whole_value_stays_eager : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "F" (algWithParameters [{ name := "xs", kind := .collecting }] [] [] [.param "xs"])] [(.call (.resolve "F") [(.binary .div (.num 1) (.num 0))])])
+#guard obs case_selective_collector_whole_value_stays_eager == "err div0"
+
+-- selective-collector-written-list-stays-eager [errors]: F(*xs) = [xs*][0] \n F(10, 1 / 0)
+def case_selective_collector_written_list_stays_eager : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "F" (algWithParameters [{ name := "xs", kind := .collecting }] [] [] [(.index (.listLiteral [(.sequenceSpread (.param "xs"))]) [.num 0])])] [(.call (.resolve "F") [.num 10, (.binary .div (.num 1) (.num 0))])])
+#guard obs case_selective_collector_written_list_stays_eager == "err div0"
+
+-- selective-collector-carrier-stays-eager [errors]: F(*xs) = { \n     A = { xs } \n     A.count \n } \n F(1 / 0)
+def case_selective_collector_carrier_stays_eager : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "F" (algWithParameters [{ name := "xs", kind := .collecting }] [] [{ (privateLocalProp "A" (.localCapturedAncestorParams ["xs"]) (.alias none [] [] (.param "xs") none false)) with requiredOwnerDepths := some [("xs", some 0)] }] [(.dotCall (.resolve "A") "count" none)])] [(.call (.resolve "F") [(.binary .div (.num 1) (.num 0))])])
+#guard obs case_selective_collector_carrier_stays_eager == "err div0"
 
 -- collector-member-path-keeps-known-slice [variadic-calls]: Coll(*ys) = 0 \n F(*xs) = { \n     Box = { \n         public A = xs \n         0 \n     } \n     Coll(Box.A*) \n } \n F(1 / 0)
 def case_collector_member_path_keeps_known_slice : Expr :=
@@ -340,9 +390,9 @@ def case_collector_member_path_keeps_callable_elements : Expr :=
   .algorithmExpr (alg [] [] [privateProp "Inc" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 1))]), privateProp "Apply" (alg ["f"] [] [] [(.call (.param "f") [.num 9])]), privateProp "Fwd" (algWithParameters [{ name := "fs", kind := .collecting }] [] [privateProp "Box" (alg [] [] [{ (publicLocalProp "A" (.localCapturedAncestorParams ["fs"]) (.alias none [] [] (.param "fs"))) with requiredOwnerDepths := some [("fs", some 1)] }] [.num 0])] [(.call (.resolve "Apply") [(.sequenceSpread (.dotCall (.resolve "Box") "A" none))])])] [(.call (.resolve "Fwd") [.resolve "Inc"])])
 #guard obs case_collector_member_path_keeps_callable_elements == "ok raw=10 n=1"
 
--- collector-member-path-demand-raises-the-element-failure [errors]: Coll(*ys) = ys.count \n F(*xs) = { \n     Box = { \n         public A = xs \n         0 \n     } \n     Coll(Box.A*) \n } \n F(1 / 0, 2)
+-- collector-member-path-demand-raises-the-element-failure [errors]: Coll(*ys) = ys \n F(*xs) = { \n     Box = { \n         public A = xs \n         0 \n     } \n     Coll(Box.A*) \n } \n F(1 / 0, 2)
 def case_collector_member_path_demand_raises_the_element_failure : Expr :=
-  .algorithmExpr (alg [] [] [privateProp "Coll" (algWithParameters [{ name := "ys", kind := .collecting }] [] [] [(.dotCall (.param "ys") "count" none)]), privateProp "F" (algWithParameters [{ name := "xs", kind := .collecting }] [] [privateProp "Box" (alg [] [] [{ (publicLocalProp "A" (.localCapturedAncestorParams ["xs"]) (.alias none [] [] (.param "xs"))) with requiredOwnerDepths := some [("xs", some 1)] }] [.num 0])] [(.call (.resolve "Coll") [(.sequenceSpread (.dotCall (.resolve "Box") "A" none))])])] [(.call (.resolve "F") [(.binary .div (.num 1) (.num 0)), .num 2])])
+  .algorithmExpr (alg [] [] [privateProp "Coll" (algWithParameters [{ name := "ys", kind := .collecting }] [] [] [.param "ys"]), privateProp "F" (algWithParameters [{ name := "xs", kind := .collecting }] [] [privateProp "Box" (alg [] [] [{ (publicLocalProp "A" (.localCapturedAncestorParams ["xs"]) (.alias none [] [] (.param "xs"))) with requiredOwnerDepths := some [("xs", some 1)] }] [.num 0])] [(.call (.resolve "Coll") [(.sequenceSpread (.dotCall (.resolve "Box") "A" none))])])] [(.call (.resolve "F") [(.binary .div (.num 1) (.num 0)), .num 2])])
 #guard obs case_collector_member_path_demand_raises_the_element_failure == "err div0"
 
 -- collector-member-nontransparent-spread-is-arbitrary [errors]: Coll(*ys) = 0 \n F(*xs) = { \n     Box = { \n         public A = { xs } \n         0 \n     } \n     Coll(Box.A*) \n } \n F(1 / 0)
@@ -2337,7 +2387,7 @@ def case_open_reference_private_member_provides_public_names : Expr :=
   .algorithmExpr (alg [] [.resolve "A"] [privateProp "Lib" (alg [] [] [privateProp "Sub" (alg [] [] [publicProp "Q" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 1))])] [])] []), privateProp "A" (.alias none [] [] ((.dotCall (.resolve "Lib") "Sub" none)))] [(.call (.resolve "Q") [.num 5])])
 #guard obs case_open_reference_private_member_provides_public_names == "ok raw=6 n=1"
 
--- 427 canonical Lean-guarded specification cases.
+-- 437 canonical Lean-guarded specification cases.
 
 /--
 Machine-checked Lean-guarded partition count: the id list is built by the
@@ -2372,6 +2422,16 @@ def specCaseIds : List String := [
   "collector-alias-keeps-callable-elements",
   "collector-alias-demand-raises-the-element-failure",
   "collector-carrier-spread-is-arbitrary",
+  "selective-collector-count-reads-positions",
+  "selective-collector-selection-demands-selected-positions",
+  "selective-collector-first-selects-one-element",
+  "selective-collector-take-demands-its-prefix",
+  "selective-collector-take-needs-the-prefix-element",
+  "selective-collector-effects-follow-first-demand",
+  "selective-collector-reads-through-a-transparent-reference",
+  "selective-collector-whole-value-stays-eager",
+  "selective-collector-written-list-stays-eager",
+  "selective-collector-carrier-stays-eager",
   "collector-member-path-keeps-known-slice",
   "collector-member-path-keeps-callable-elements",
   "collector-member-path-demand-raises-the-element-failure",
@@ -2773,6 +2833,6 @@ def specCaseIds : List String := [
   "grouped-runtime-member-value-arity",
   "open-reference-private-member-provides-public-names"
 ]
-#guard specCaseIds.length == 427
+#guard specCaseIds.length == 437
 
 end LanguageSpecCases

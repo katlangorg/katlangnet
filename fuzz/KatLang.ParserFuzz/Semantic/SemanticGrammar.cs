@@ -251,7 +251,8 @@ internal static class SemanticGrammar
 
         void Invocation(IReadOnlyList<int>? fresh)
         {
-            if (fresh is null)
+            // A collecting target only counts its retained slice (NEED-07): it demands no cell.
+            if (fresh is null && !collecting)
             {
                 for (var i = 0; i < cells.Count; i++) Demand(i);
             }
@@ -554,15 +555,16 @@ internal static class SemanticGrammar
                 f.Features.Add("list");
                 break;
             case 3:
+                // A selection reads the retained collector: only the selected element runs (NEED-07).
                 body = new MExpr.Select(new MExpr.Ref(restSym), [Atom(0)]);
                 value = Res(restValues[0]);
-                RestEvents();
+                if (traceRest) events.Add("trace:" + restValues[0].ToString(CultureInfo.InvariantCulture));
                 f.Features.Add("select");
                 break;
             default:
+                // `count` reads the retained collector's length: no element runs (NEED-07).
                 body = new MExpr.Prim("count", [new MExpr.Ref(restSym)]);
                 value = Res(restCount);
-                RestEvents();
                 break;
         }
 

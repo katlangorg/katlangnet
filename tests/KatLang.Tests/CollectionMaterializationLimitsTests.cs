@@ -216,7 +216,7 @@ public class CollectionMaterializationLimitsTests
     [Fact]
     public void OrdinaryFlatVariadic_IsCheckedBeforeItsExactListIsCreated()
     {
-        const string source = "F(*items) = items.count\nF(1, 2, 3, 4)";
+        const string source = "F(*items) = items\nF(1, 2, 3, 4)";
         var failed = Observe(source, Items(3));
         var error = Assert.IsType<EvalError.CollectionSizeLimitExceeded>(failed.Result.Error);
         Assert.Equal(4, error.Requested);
@@ -246,10 +246,10 @@ public class CollectionMaterializationLimitsTests
     }
 
     [Theory]
-    [InlineData("F((head, *tail)) = tail.count\nF((1, 2, 3))", 5)]
+    [InlineData("F((head, *tail)) = tail\nF((1, 2, 3))", 5)]
     [InlineData("x, *tail = [1, 2, 3, 4]\ntail.count", 7)]
-    [InlineData("Collect(*items) = items.count\nRows = [1, 2]\nRows.map(Collect)", 6)]
-    [InlineData("Collect(*items) = items.count\nRows = [1, 2]\nRows.reduce(Collect, 0)", 6)]
+    [InlineData("Collect(*items) = items\nRows = [1, 2]\nRows.map(Collect)", 6)]
+    [InlineData("Collect(*items) = items\nRows = [1, 2]\nRows.reduce(Collect, 0)", 6)]
     public void EveryCollectingBindingShape_ChargesItsExactPersistentList(string source, long expectedItems)
     {
         var observed = Observe(source, Total(expectedItems));

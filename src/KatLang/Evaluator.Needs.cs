@@ -380,10 +380,9 @@ public static partial class Evaluator
         var slice = argument.Operand switch
         {
             Expr.Param(var name) => ParameterNeedCell(name, caller)?.Slice,
-            var reference when caller.Budget.MayReachRuntimeAliases && caller.CallStack.Count > 0
-                && StaticAliasTargets.IsStaticPath(reference) => asynchronous
-                    ? await TransparentCollectorSliceAsync(reference, caller).ConfigureAwait(false)
-                    : TransparentCollectorSlice(reference, caller),
+            var reference when MayBeTransparentReference(reference, caller) => asynchronous
+                ? await TransparentCollectorSliceAsync(reference, caller).ConfigureAwait(false)
+                : TransparentCollectorSlice(reference, caller),
             _ => null,
         };
         if (slice is { } known)
@@ -444,7 +443,9 @@ public static partial class Evaluator
     /// capture. A structural carrier, a static terminal binding and any other runtime row have no known
     /// slice, and neither does a parameter whose cell is no collector. Any failure is "no known slice":
     /// the ordinary spread then evaluates the operand and reports that failure itself. Demands no cell,
-    /// allocates nothing and charges nothing, as a direct slice. Lean:
+    /// allocates nothing and charges nothing, as a direct slice. A spread reads only a cell that IS a
+    /// collector; a reference argument's own cell, which the selective observers read through
+    /// (<see cref="RetainedCellSlice"/>), stays arbitrary here (NEED-07). Lean:
     /// <c>EvalBody.transparentCollectorSlice?</c>.
     /// </summary>
     [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
@@ -460,13 +461,129 @@ public static partial class Evaluator
 
     private static EvalResult<IReadOnlyList<NeedCell>?> TransparentCollectorSliceOutcome(Expr reference, EvalCtx ctx)
     {
+        var cell = TransparentReferenceCell(reference, ctx);
+        return cell.IsError ? cell.Error : EvalResult<IReadOnlyList<NeedCell>?>.Ok(cell.Value?.Slice);
+    }
+
+    /// <summary>
+    /// Whether <paramref name="reference"/> can be a written static reference a transparent chain reads
+    /// through at all: the run's admitted program holds a runtime-row alias, the site has an owner, and
+    /// the expression is a name or a member path. Everything else skips classification outright.
+    /// </summary>
+    private static bool MayBeTransparentReference(Expr reference, EvalCtx ctx)
+        => ctx.Budget.MayReachRuntimeAliases && ctx.CallStack.Count > 0 && StaticAliasTargets.IsStaticPath(reference);
+
+    /// <summary>
+    /// THE CELL A TRANSPARENT REFERENCE READS (A-2): the parameter row a written static reference reads
+    /// through transparent references only (<see cref="StaticReferenceTerminal"/>), found in the alias's
+    /// own context, exactly as <see cref="AliasBindingCell"/> finds it; <c>null</c> when the read ends
+    /// anywhere else. Reads only: it demands no cell and allocates nothing. Lean:
+    /// <c>EvalBody.transparentRetainedCell?</c>.
+    /// </summary>
+    private static EvalResult<NeedCell?> TransparentReferenceCell(Expr reference, EvalCtx ctx)
+    {
         var terminal = StaticReferenceTerminal(reference, ctx);
         if (terminal.IsError)
             return terminal.Error;
-        return EvalResult<IReadOnlyList<NeedCell>?>.Ok(
+        return EvalResult<NeedCell?>.Ok(
             terminal.Value is { Algorithm: Algorithm.Alias { IsReference: true, Target: Expr.Param(var row) } alias, CrossesCarrier: false }
-                ? ParameterNeedCell(row, ctx.Push(alias))?.Slice
+                ? ParameterNeedCell(row, ctx.Push(alias))
                 : null);
+    }
+
+    /// <summary>
+    /// THE ONE RETAINED-SLICE RULE of selective collector observation (November 2026; NEED-07): the
+    /// exact slice <paramref name="cell"/> retains. A collector cell retains its own slice; a suspended
+    /// written reference retains what its transparent target's cell retains
+    /// (<see cref="TransparentReferenceCell"/>, in the reference's captured caller context); nothing else
+    /// retains one, however equal its eventual value. A long forwarding chain is this ONE loop, never a
+    /// recursion, and it ends because each hop reaches a cell its predecessor's caller already held.
+    /// Classification demands, projects and allocates nothing. Any failure is "no retained slice": the
+    /// consumer's ordinary path then evaluates the reference and reports that failure itself, so an
+    /// inaccessible member or a failed projection is never turned into a success. Lean:
+    /// <c>EvalBody.retainedCellSlice?</c>.
+    /// </summary>
+    private static EvalResult<IReadOnlyList<NeedCell>?> RetainedCellSliceOutcome(NeedCell cell)
+    {
+        while (true)
+        {
+            if (cell.Slice is { } slice)
+                return EvalResult<IReadOnlyList<NeedCell>?>.Ok(slice);
+            if (cell.Suspension is not { } suspension || !MayBeTransparentReference(cell.Source!, suspension.Caller))
+                return EvalResult<IReadOnlyList<NeedCell>?>.Ok(null);
+            var next = TransparentReferenceCell(cell.Source!, suspension.Caller);
+            if (next.IsError)
+                return next.Error;
+            if (next.Value is not { } target)
+                return EvalResult<IReadOnlyList<NeedCell>?>.Ok(null);
+            cell = target;
+        }
+    }
+
+    /// <summary>The synchronous engine's read of <see cref="RetainedCellSliceOutcome"/>.</summary>
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+    private static IReadOnlyList<NeedCell>? RetainedCellSlice(NeedCell cell)
+        => cell.Slice ?? (RetainedCellSliceOutcome(cell) is { IsOk: true } outcome ? outcome.Value : null);
+
+    /// <summary>The async twin of <see cref="RetainedCellSlice"/>: the ONE resolver through <see cref="ResolveAsync{TState,T}"/>.</summary>
+    private static async ValueTask<IReadOnlyList<NeedCell>?> RetainedCellSliceAsync(NeedCell cell, EvalCtx ctx)
+    {
+        if (cell.Slice is { } slice)
+            return slice;
+        if (cell.Suspension is not { } suspension || !MayBeTransparentReference(cell.Source!, suspension.Caller))
+            return null;
+        var outcome = await ResolveAsync(ctx, cell, static start => RetainedCellSliceOutcome(start)).ConfigureAwait(false);
+        return outcome.IsOk ? outcome.Value : null;
+    }
+
+    /// <summary>
+    /// The cell a WRITTEN RECEIVER starts its retained-slice chain from: a parameter's own cell, or the
+    /// cell a name or member path reads through its transparent chain. Lean: the first half of
+    /// <c>EvalBody.writtenCollectorSlice?</c>.
+    /// </summary>
+    private static EvalResult<IReadOnlyList<NeedCell>?> WrittenCollectorSliceOutcome(Expr receiver, EvalCtx ctx)
+    {
+        var start = TransparentReferenceCell(receiver, ctx);
+        if (start.IsError)
+            return start.Error;
+        return start.Value is { } cell ? RetainedCellSliceOutcome(cell) : EvalResult<IReadOnlyList<NeedCell>?>.Ok(null);
+    }
+
+    /// <summary>
+    /// The slice a selection's written receiver retains, without a VALUE demand (Lean:
+    /// <c>EvalBody.writtenCollectorSlice?</c>): only a parameter, a name or a member path can retain one,
+    /// so every other receiver, and an ordinary program's every name, costs one test here.
+    /// </summary>
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+    private static IReadOnlyList<NeedCell>? WrittenCollectorSlice(Expr receiver, EvalCtx ctx)
+    {
+        if (receiver is Expr.Param(var name))
+            return ParameterNeedCell(name, ctx) is { } parameter ? RetainedCellSlice(parameter) : null;
+        return MayBeTransparentReference(receiver, ctx) && WrittenCollectorSliceOutcome(receiver, ctx) is { IsOk: true } outcome
+            ? outcome.Value
+            : null;
+    }
+
+    /// <summary>The async twin of <see cref="WrittenCollectorSlice"/>.</summary>
+    private static async ValueTask<IReadOnlyList<NeedCell>?> WrittenCollectorSliceAsync(Expr receiver, EvalCtx ctx)
+    {
+        if (receiver is Expr.Param(var name))
+            return ParameterNeedCell(name, ctx) is { } parameter ? await RetainedCellSliceAsync(parameter, ctx).ConfigureAwait(false) : null;
+        if (!MayBeTransparentReference(receiver, ctx))
+            return null;
+        var outcome = await ResolveAsync(ctx, (receiver, ctx), static state => WrittenCollectorSliceOutcome(state.receiver, state.ctx)).ConfigureAwait(false);
+        return outcome.IsOk ? outcome.Value : null;
+    }
+
+    /// <summary>
+    /// The entry checks of a retained collector's observation, which no element demand may supply: a
+    /// metadata read observes cancellation and run terminality exactly as the collector's whole VALUE
+    /// demand did (NEED-09), and a selected cell's demand never absorbs a terminal run.
+    /// </summary>
+    private static EvalError? RetainedObservationTerminal(EvalCtx ctx)
+    {
+        ctx.Budget.CancellationToken.ThrowIfCancellationRequested();
+        return ctx.Budget.CheckContinuation();
     }
 
     /// <summary>

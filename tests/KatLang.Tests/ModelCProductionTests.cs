@@ -57,7 +57,7 @@ public class ModelCProductionTests
     [InlineData("F(0)=7\nF(1)=8\nF(trace(1)/0,2)", KatLangErrorCode.ArityMismatch, "")]
     [InlineData("F(x,x,(a,b))=7\nF(trace(1),trace(2),1/0)", KatLangErrorCode.ArityMismatch, "1,2")]
     [InlineData("F(x,x,x)=7\nF(trace(1),trace(2),1/0)", KatLangErrorCode.ArityMismatch, "1,2")]
-    [InlineData("F(*xs)=xs.first\nF(trace(1),1/0)", KatLangErrorCode.DivisionByZero, "1")]
+    [InlineData("F(*xs)=xs\nF(trace(1),1/0)", KatLangErrorCode.DivisionByZero, "1")]
     [InlineData("F(0,x)=7\nF(n,0)=8\nF(1/0,0)", KatLangErrorCode.DivisionByZero, "")]
     [InlineData("F(x)=7\nF(trace(1),[trace(2)/0]*)", KatLangErrorCode.DivisionByZero, "2")]
     [InlineData("F(x)=x.string(trace(1)/0)\nF(7)", KatLangErrorCode.ArityMismatch, "")]

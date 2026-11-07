@@ -3669,6 +3669,21 @@ def supplyNeed (source : Expr) (caller : EvalCtx) (values : ValEnv) : EvalM Nat 
       return address
   allocateNeed (.expression source caller values)
 
+/-- The address of the cell parameter `name` holds, found exactly as `supplyNeed` finds it: its
+    captured activation first, else the context's own environment. Reads only.
+    C#: `Evaluator.ParameterNeedCell`. -/
+def parameterNeedAddress? (name : Ident) (caller : EvalCtx) : EvalM (Option Nat) := do
+  let activation <- capturedParameterActivation? name caller
+  pure (lookupAssoc name (activation.map ParameterActivation.needs |>.getD caller.needEnv))
+
+/-- The slice of the cell at `address` when that cell IS a collector. A missing address is the
+    binder's ordinary internal failure. -/
+def collectorSliceAt? (address : Nat) : EvalM (Option (List Nat)) := do
+  let some cell := (<- get).needs[address]? | throw Error.badArity
+  match cell.suspension with
+  | .collector slice => pure (some slice)
+  | _ => pure none
+
 /-- The KNOWN collector slice a spread operand transports (NEED-07/08): the slice of a
     parameter bound to a supplied collector cell, found exactly as `supplyNeed` finds a
     parameter's cell. It allocates nothing — any other operand is evaluated by the spread
@@ -3677,10 +3692,8 @@ def supplyNeed (source : Expr) (caller : EvalCtx) (values : ValEnv) : EvalM Nat 
     `FormSpreadSupplySlot`. -/
 def spreadCollectorSlice? (operand : Expr) (caller : EvalCtx) : EvalM (Option (List Nat)) := do
   if let .param name := operand then
-    let activation <- capturedParameterActivation? name caller
-    if let some address := lookupAssoc name (activation.map ParameterActivation.needs |>.getD caller.needEnv) then
-      let some cell := (<- get).needs[address]? | throw Error.badArity
-      if let .collector slice := cell.suspension then return some slice
+    if let some address <- parameterNeedAddress? name caller then
+      return <- collectorSliceAt? address
   pure none
 
 /-- THE member-accessibility law, applied AFTER a member has been selected — by structural
@@ -4483,7 +4496,18 @@ structure BoundSequenceBuiltinArguments where
   /-- The plan of an ARGUMENT VIEW bound as the whole collection of `count`, `first` or `last`
       (CallReference S2): the builtin then reads the view's cells, not a collection value. -/
   view? : Option Nat := none
+  /-- The RETAINED COLLECTOR slice bound as the whole collection of `count`, `first`, `last` or
+      `take` (selective collector reads, November 2026): the builtin then reads those cells
+      (`retainedCollectorBuiltin`), not a collection value. -/
+  slice? : Option (List Nat) := none
   deriving Repr
+
+/-- The collection builtins that observe a retained collector selectively: `count` reads its
+    length, `first`/`last` demand one cell and `take` demands its prefix. Every other builtin
+    consumes the collector's ordinary whole VALUE. C#: `Evaluator.ReadsRetainedCollector`. -/
+def Builtin.readsRetainedCollector : Builtin -> Bool
+  | .countBuiltin | .firstBuiltin | .lastBuiltin | .takeBuiltin => true
+  | _ => false
 
 /-- The collection builtins an argument view supports as its WHOLE collection (CallReference
     S2): `count` reads the cardinality of the plan's supply, `first`/`last` select a cell. Every
@@ -5858,6 +5882,11 @@ def evalLastCounted (items : List Result) : EvalM CountedResult := do
   | some last => pure (last, Result.valueCount last)
   | none => .error Error.badIndex
 
+/-- THE prefix `take` keeps, over values or a retained collector's cells alike: nothing for a
+    non-positive count, all items for an oversized one. C#: `Evaluator.TakeLength`. -/
+def takePrefix {α : Type} (items : List α) (count : Int) : List α :=
+  if count <= 0 then [] else items.take (Int.toNat count)
+
 /-- Evaluate `take(collection, count)`.
     `take` returns the first `count` extracted top-level items unchanged,
     materialized as one list value.
@@ -5868,12 +5897,7 @@ def evalLastCounted (items : List Result) : EvalM CountedResult := do
     as exact elements (so `take(((1, 2), (3, 4)), 1)` yields `[(1, 2)]`), and
     the original top-level order is preserved. -/
 def evalTakeCounted (items : List Result) (count : Int) : EvalM CountedResult := do
-  let taken :=
-    if count <= 0 then
-      []
-    else
-      items.take (Int.toNat count)
-  pure (makeCollectionListResult taken)
+  pure (makeCollectionListResult (takePrefix items count))
 
 /-- Evaluate `skip(collection, count)`.
     `skip` returns the extracted top-level items after the first `count`
@@ -7787,6 +7811,9 @@ def argumentViewBuiltin (cellsOf : EvalM (List NeedSupply.Sourced)) (demandCell 
       | none => .error (argumentViewEmptySelection b)
   | _ => .error (Error.typeMismatch (argumentViewUnsupportedMessage (builtinDisplayName b)))
 
+/-- A retained collector's cells as the positions of the shared selective operations. -/
+def retainedSourced (slice : List Nat) : List NeedSupply.Sourced := slice.map (fun cell => (cell, none))
+
 /-- `R.Arguments` over the receiver's VALUE (CallReference S2): a call reference yields its
     ARGUMENT VIEW — the same plan address; nothing is run, read, prepared or allocated
     (`arguments_inert`). Any other value (an argument view included) is the intrinsic's kind
@@ -7846,6 +7873,22 @@ def step (ev : Expr → EvalCtx → ValEnv → EvalM CountedResult) (route : Nee
     return ← outcome
 
 end NeedDemand
+
+/-- SELECTIVE OBSERVATION OF A RETAINED COLLECTOR (November 2026; NEED-07): `count`, `first`, `last`
+    and `take` over the collector's exact slice, read as positions and never materialized. `count`
+    is the slice's length and demands nothing; `first`/`last` are the argument views' position reads
+    (`argumentViewBuiltin`: the same empty-collection `badIndex`, one cell demanded, the ordinary
+    selection boundary) over the slice's cells, and `take` demands exactly the prefix the ALREADY
+    VALIDATED count keeps (`takePrefix`), in source order, into one ordinary eager list
+    (`NeedDemand.materialize`, the collector's own construction over a shorter slice).
+    C#: `Evaluator.EvalRetainedCollectorBuiltin`. -/
+def retainedCollectorBuiltin (demand : Nat → EvalM CountedResult) (b : Builtin) (metadata : SequenceBuiltinMetadata)
+    (suffixArgs : List PreparedSequenceBuiltinSuffixArg) (slice : List Nat) : EvalM CountedResult :=
+  match b with
+  | .takeBuiltin => do
+      let count <- expectPreparedSequenceBuiltinWholeNumberSuffixArg b metadata.suffixArgs suffixArgs 0
+      NeedDemand.materialize demand (takePrefix slice count)
+  | _ => argumentViewBuiltin (pure (retainedSourced slice)) (fun cell => Prod.fst <$> demand cell) b
 
 /-- THE BINDER'S CHANNELS AS THE TWO TOTAL SHELLS (S6a, October 2026): VALUE is `NeedDemand.step`
     over the cell's written-expression evaluator `ev a`, the plan route and the recursive VALUE
@@ -10265,6 +10308,79 @@ def EvalBody.algorithmIntrinsicRoute (rec : EvalRec) (receiver : Expr) (ctx : Ev
           pure item
     | _, _, _ => pure item
 
+  /-- The VALUE TERMINAL of a written STATIC REFERENCE, without evaluating it (A-2): a name's is the
+      VALUE lookup every read of that name takes (`lookupLexicalValueProperty`); a member path's is
+      the VALUE chase of the member `staticPathSelectWith` selects at the site — each receiver read
+      through its static structure, each member declared and accessible, as an alias over the same
+      path reads it — so `Box.A` is the terminal of the selected member `A`, never of `Box`'s output.
+      C#: `Evaluator.StaticReferenceTerminal`. -/
+  def EvalBody.staticReferenceTerminal (rec : EvalRec) (owner : Algorithm) (reference : Expr) (ctx : EvalCtx) : EvalM AliasTerminal :=
+    match reference with
+    | .resolve name => rec.lookupLexicalValueProperty owner name ctx
+    | path => do
+      let structureOf : Algorithm → EvalCtx → EvalM (Option Algorithm) := fun receiver stepCtx => do
+        match <- rec.resolveAliasChase false false receiver stepCtx [] none with
+        | .identity found _ => pure (some found)
+        | _ => pure none
+      let selected <- staticPathSelectWith structureOf owner path ctx
+      rec.resolveAliasValueTarget selected.alg ctx
+
+  /-- THE CELL A TRANSPARENT REFERENCE READS (A-2): a written static reference — a name or a member
+      path (`Expr.staticAliasPath?`) — whose read goes, through transparent references only, to a
+      parameter row (`AliasTerminal.transparentParameterRow?`) reads that row's own cell, found in the
+      alias's own context exactly as `aliasBindingCell` finds it. Any other outcome, a selection
+      failure included, is `none`: the consumer's ordinary path then evaluates the reference and
+      reports that failure itself. Reads only: it demands no cell and allocates nothing.
+      C#: `Evaluator.TransparentReferenceCell`. -/
+  def EvalBody.transparentRetainedCell? (rec : EvalRec) (reference : Expr) (ctx : EvalCtx) : EvalM (Option Nat) :=
+    match Expr.staticAliasPath? reference, ctx.callStack with
+    | some _, owner :: _ => do
+      match <- evalAttempt (EvalBody.staticReferenceTerminal rec owner reference ctx) with
+      | .ok terminal =>
+        match terminal.transparentParameterRow? with
+        | some (alias, .param row) => parameterNeedAddress? row (ctx.push alias)
+        | _ => pure none
+      | .error _ => pure none
+    | _, _ => pure none
+
+  /-- THE ONE RETAINED-SLICE RULE of selective collector observation (November 2026; NEED-07): the
+      slice the cell at `address` retains. A collector cell retains its own slice; a suspended written
+      reference retains what its transparent target's cell retains (`transparentRetainedCell?`, in
+      the reference's captured caller context); nothing else retains one, however equal its eventual
+      value, and classification demands, projects and allocates nothing. The chain is one loop over
+      cells: `fuel` is the heap's size (`retainedSliceAt?`), which a chain of existing cells never
+      exhausts because each hop reaches a cell its predecessor's caller already held.
+      C#: `Evaluator.RetainedCellSlice`. -/
+  def EvalBody.retainedCellSlice? (rec : EvalRec) : Nat → Nat → EvalM (Option (List Nat))
+    | 0, _ => pure none
+    | fuel + 1, address => do
+      match (<- get).needs[address]? with
+      | none => pure none
+      | some cell =>
+        match cell.suspension with
+        | .collector slice => pure (some slice)
+        | .ready _ => pure none
+        | .expression source caller _ =>
+          match <- EvalBody.transparentRetainedCell? rec source caller with
+          | some next => EvalBody.retainedCellSlice? rec fuel next
+          | none => pure none
+
+  /-- `retainedCellSlice?` of the supplied cell `address`, fuelled by the heap. -/
+  def EvalBody.retainedSliceAt? (rec : EvalRec) (address : Nat) : EvalM (Option (List Nat)) := do
+    EvalBody.retainedCellSlice? rec (<- get).needs.size address
+
+  /-- The slice a WRITTEN RECEIVER retains (`retainedSliceAt?`): a parameter reads its own cell; a
+      name or member path reads the cell its transparent chain ends at. C#:
+      `Evaluator.WrittenCollectorSlice`. -/
+  def EvalBody.writtenCollectorSlice? (rec : EvalRec) (receiver : Expr) (ctx : EvalCtx) : EvalM (Option (List Nat)) := do
+    let start? <-
+      match receiver with
+      | .param name => parameterNeedAddress? name ctx
+      | reference => EvalBody.transparentRetainedCell? rec reference ctx
+    match start? with
+    | some address => EvalBody.retainedSliceAt? rec address
+    | none => pure none
+
     def EvalBody.bindSequenceBuiltinArguments (rec : EvalRec) (b : Builtin) (metadata : SequenceBuiltinMetadata) (args : List ResolvedArgumentAlgorithm) (ctx : EvalCtx) (env : ValEnv) : EvalM BoundSequenceBuiltinArguments := do
     let items := collectSequenceCallableCallItems args
     -- A collection builtin is an ordinary fixed-arity callable: exactly one
@@ -10282,6 +10398,32 @@ def EvalBody.algorithmIntrinsicRoute (rec : EvalRec) (receiver : Expr) (ctx : Ev
     match items with
     | [] => .error (Error.arityMismatch expectedArgCount 0)
     | collectionItem :: controlItems => do
+        let rec prepareControls :
+            List SequenceBuiltinSuffixArgDescriptor ->
+            List CallableCallItem ->
+            EvalM (List PreparedSequenceBuiltinSuffixArg)
+          | [], [] => pure []
+          | descriptor :: descriptors, item :: rest => do
+              -- A `.value` / `.wholeNumber` control is a VALUE position, so it is
+              -- demanded through the ONE law; an `.algorithm` control is a
+              -- CALLBACK slot and is never demanded.
+              let item <-
+                match descriptor.kind with
+                | .algorithm => pure item
+                | _ => rec.demandSequenceBuiltinCallItemValue item ctx env
+              let prepared <- prepareSequenceBuiltinSuffixArgItem b descriptor item
+              let tail <- prepareControls descriptors rest
+              pure (prepared :: tail)
+          | _, _ =>
+              internalSequenceBuiltinSuffixArgMetadataError b "mismatched control arguments"
+        -- A RETAINED COLLECTOR bound as the whole collection of a selective observer (NEED-07): its
+        -- slice is obtained without a VALUE demand, and the controls are demanded and validated
+        -- BEFORE any element (`retainedCollectorBuiltin` then reads the cells).
+        if b.readsRetainedCollector then
+          if let some address := collectionItem.need? then
+            if let some slice <- EvalBody.retainedSliceAt? rec address then
+              let suffixArgs <- prepareControls metadata.suffixArgs controlItems
+              return { preparedInput := { items := [] }, iterationItems := [], suffixArgs := suffixArgs, slice? := some slice }
         -- The `collection` parameter is a VALUE position, so demand the bound item
         -- through the ONE zero-argument value-demand law before reading its value.
         let collectionItem <- rec.demandSequenceBuiltinCallItemValue collectionItem ctx env
@@ -10308,24 +10450,6 @@ def EvalBody.algorithmIntrinsicRoute (rec : EvalRec) (receiver : Expr) (ctx : Ev
         let collectionValues := builtinCollectionItems collectionValue
         let collected : CollectedSequenceBuiltinInput := { items := collectionValues }
         let preparedInput <- prepareSequenceBuiltinInput b metadata collected
-        let rec prepareControls :
-            List SequenceBuiltinSuffixArgDescriptor ->
-            List CallableCallItem ->
-            EvalM (List PreparedSequenceBuiltinSuffixArg)
-          | [], [] => pure []
-          | descriptor :: descriptors, item :: rest => do
-              -- A `.value` / `.wholeNumber` control is a VALUE position, so it is
-              -- demanded through the ONE law; an `.algorithm` control is a
-              -- CALLBACK slot and is never demanded.
-              let item <-
-                match descriptor.kind with
-                | .algorithm => pure item
-                | _ => rec.demandSequenceBuiltinCallItemValue item ctx env
-              let prepared <- prepareSequenceBuiltinSuffixArgItem b descriptor item
-              let tail <- prepareControls descriptors rest
-              pure (prepared :: tail)
-          | _, _ =>
-              internalSequenceBuiltinSuffixArgMetadataError b "mismatched control arguments"
         let suffixArgs <- prepareControls metadata.suffixArgs controlItems
         pure {
           preparedInput := preparedInput
@@ -10429,6 +10553,8 @@ def EvalBody.algorithmIntrinsicRoute (rec : EvalRec) (receiver : Expr) (ctx : Ev
       let bound <- rec.bindSequenceBuiltinArguments b metadata args ctx env
       if let some a := bound.view? then
         return <- rec.evalArgumentViewBuiltin b a
+      if let some slice := bound.slice? then
+        return <- retainedCollectorBuiltin rec.demandNeedRecursive b metadata bound.suffixArgs slice
       let withPreparedItems
           (k : List Result -> EvalM CountedResult) : EvalM CountedResult :=
         k bound.preparedInput.items
@@ -11213,46 +11339,25 @@ def EvalBody.algorithmIntrinsicRoute (rec : EvalRec) (receiver : Expr) (ctx : Ev
     let supplied <- openSpreadItems (layers - 1) value
     pure (spreadSupplyResult supplied)
 
-  /-- The VALUE TERMINAL of a written STATIC REFERENCE, without evaluating it (A-2): a name's is the
-      VALUE lookup every read of that name takes (`lookupLexicalValueProperty`); a member path's is
-      the VALUE chase of the member `staticPathSelectWith` selects at the site — each receiver read
-      through its static structure, each member declared and accessible, as an alias over the same
-      path reads it — so `Box.A` is the terminal of the selected member `A`, never of `Box`'s output.
-      C#: `Evaluator.StaticReferenceTerminal`. -/
-  def EvalBody.staticReferenceTerminal (rec : EvalRec) (owner : Algorithm) (reference : Expr) (ctx : EvalCtx) : EvalM AliasTerminal :=
-    match reference with
-    | .resolve name => rec.lookupLexicalValueProperty owner name ctx
-    | path => do
-      let structureOf : Algorithm → EvalCtx → EvalM (Option Algorithm) := fun receiver stepCtx => do
-        match <- rec.resolveAliasChase false false receiver stepCtx [] none with
-        | .identity found _ => pure (some found)
-        | _ => pure none
-      let selected <- staticPathSelectWith structureOf owner path ctx
-      rec.resolveAliasValueTarget selected.alg ctx
-
   /-- THE KNOWN SLICE OF A TRANSPARENT REFERENCE (VAR-03 / FWD-03, audit finding A-2, owner decision
       November 2026): a single-star spread of a written static reference — a name or a member path
       (`Expr.staticAliasPath?`) — whose read goes, through transparent references only, to a parameter
       row (`AliasTerminal.transparentParameterRow?`) whose own cell is a collector. The classification
       is `staticReferenceTerminal` (ownership-first selection, accessibility, the one alias chase),
-      and the row's cell is found by `spreadCollectorSlice?` in the alias's own context, exactly as
+      and the row's cell is `transparentRetainedCell?`'s, found in the alias's own context, exactly as
       `aliasBindingCell` finds it — so this is the same retained cell a bare read would demand, and a
       shadowing parameter of the spread site cannot capture it. Any other outcome, a selection failure
       included, is "no known slice": the ordinary spread then evaluates the operand and reports that
-      failure itself. Reads only: it demands no cell and allocates nothing.
+      failure itself. Reads only: it demands no cell and allocates nothing. A spread reads only a
+      cell that IS a collector; a reference argument's own cell, which the selective observers read
+      through (`retainedCellSlice?`), stays arbitrary here (NEED-07).
       C#: `Evaluator.TransparentCollectorSlice`. -/
   def EvalBody.transparentCollectorSlice? (rec : EvalRec) (e : Expr) (ctx : EvalCtx) : EvalM (Option (List Nat)) :=
     match e with
-    | .sequenceSpread reference =>
-      match Expr.staticAliasPath? reference, ctx.callStack with
-      | some _, owner :: _ => do
-        match <- evalAttempt (EvalBody.staticReferenceTerminal rec owner reference ctx) with
-        | .ok terminal =>
-          match terminal.transparentParameterRow? with
-          | some (alias, row) => spreadCollectorSlice? row (ctx.push alias)
-          | none => pure none
-        | .error _ => pure none
-      | _, _ => pure none
+    | .sequenceSpread reference => do
+      match <- EvalBody.transparentRetainedCell? rec reference ctx with
+      | some address => collectorSliceAt? address
+      | none => pure none
     | _ => pure none
 
   /-- THE SPREAD CAPABILITY OF SUPPLY FORMATION (CallReference S2; `NeedSupply.SpreadEval`): what
@@ -11534,6 +11639,13 @@ def EvalBody.algorithmIntrinsicRoute (rec : EvalRec) (receiver : Expr) (ctx : Ev
                   pure (counted.fst, Result.valueCount counted.fst)
         | [] => .error (Error.unknownName n)
     | .index receiver selectors => withNestedMissingOutput do
+        -- A RETAINED COLLECTOR receiver (NEED-07) is obtained without a VALUE demand: the supply is
+        -- formed as below, and `selectViewWith` validates each selector BEFORE it demands that one
+        -- element, so an unselected element stays undemanded.
+        if let some slice <- EvalBody.writtenCollectorSlice? rec receiver ctx then
+          let cells <- NeedSupply.addresses rec.evalSupplySpread ctx env selectors
+          let demandCell := fun cell => Prod.fst <$> rec.demandNeedRecursive cell
+          return selectionResult (<- selectViewWith demandCell (pure (retainedSourced slice)) demandCell cells)
         -- VARIADIC POSTFIX SELECTION (October 2026). (1) The receiver is demanded
         -- ONCE through its ordinary value path (`Data` is the cached property
         -- read, `Data()` one fresh call), even when no selector is supplied.

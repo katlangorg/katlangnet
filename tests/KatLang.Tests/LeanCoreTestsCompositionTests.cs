@@ -56,6 +56,7 @@ public class LeanCoreTestsCompositionTests
         "CallbackResultBoundary",
         "PropertyCachePublication",
         "VariadicSelection",
+        "SelectiveCollectorReads",
         "ParentScopeValidation",
         "RepeatedSpread",
         "HostScopePropertyCache",

@@ -366,6 +366,12 @@ theorem monotone_planInvoke (route : γ → NeedPlan.Route) (h : RouteMono route
     monotone (fun x => NeedDemand.materialize (demand x) slice) := by
   unfold NeedDemand.materialize; mono_cb_tac
 
+@[partial_fixpoint_monotone] theorem monotone_retainedCollectorBuiltin
+    (demand : γ → Nat → EvalM CountedResult) (h : monotone demand) (b : Builtin)
+    (metadata : SequenceBuiltinMetadata) (suffixArgs : List PreparedSequenceBuiltinSuffixArg) (slice : List Nat) :
+    monotone (fun x => retainedCollectorBuiltin (demand x) b metadata suffixArgs slice) := by
+  unfold retainedCollectorBuiltin; mono_cb_tac
+
 theorem monotone_suspendedValue
     (ev : γ → Expr → EvalCtx → ValEnv → EvalM CountedResult) (hev : monotone ev)
     (route : γ → NeedPlan.Route) (hroute : RouteMono route)
@@ -965,8 +971,36 @@ theorem EvalBody.demandSequenceBuiltinCallItemValue_mono (item : CallableCallIte
     monotone (fun rec : EvalRec => EvalBody.demandSequenceBuiltinCallItemValue rec item ctx env) := by
   unfold EvalBody.demandSequenceBuiltinCallItemValue; mono_tac
 
+theorem EvalBody.staticReferenceTerminal_mono (owner : Algorithm) (reference : Expr) (ctx : EvalCtx) :
+    monotone (fun rec : EvalRec => EvalBody.staticReferenceTerminal rec owner reference ctx) := by
+  unfold EvalBody.staticReferenceTerminal; mono_tac
+
+theorem EvalBody.transparentRetainedCell_mono (reference : Expr) (ctx : EvalCtx) :
+    monotone (fun rec : EvalRec => EvalBody.transparentRetainedCell? rec reference ctx) := by
+  have := EvalBody.staticReferenceTerminal_mono
+  unfold EvalBody.transparentRetainedCell?; mono_tac
+
+theorem EvalBody.retainedCellSlice_mono (fuel address : Nat) :
+    monotone (fun rec : EvalRec => EvalBody.retainedCellSlice? rec fuel address) := by
+  have := EvalBody.transparentRetainedCell_mono
+  induction fuel generalizing address with
+  | zero => unfold EvalBody.retainedCellSlice?; mono_tac
+  | succ n ih => unfold EvalBody.retainedCellSlice?; mono_tac
+
+theorem EvalBody.retainedSliceAt_mono (address : Nat) :
+    monotone (fun rec : EvalRec => EvalBody.retainedSliceAt? rec address) := by
+  have := EvalBody.retainedCellSlice_mono
+  unfold EvalBody.retainedSliceAt?; mono_tac
+
+theorem EvalBody.writtenCollectorSlice_mono (receiver : Expr) (ctx : EvalCtx) :
+    monotone (fun rec : EvalRec => EvalBody.writtenCollectorSlice? rec receiver ctx) := by
+  have := EvalBody.transparentRetainedCell_mono
+  have := EvalBody.retainedSliceAt_mono
+  unfold EvalBody.writtenCollectorSlice?; mono_tac
+
 theorem EvalBody.bindSequenceBuiltinArguments_mono (b : Builtin) (metadata : SequenceBuiltinMetadata) (args : List ResolvedArgumentAlgorithm) (ctx : EvalCtx) (env : ValEnv) :
     monotone (fun rec : EvalRec => EvalBody.bindSequenceBuiltinArguments rec b metadata args ctx env) := by
+  have := EvalBody.retainedSliceAt_mono
   unfold EvalBody.bindSequenceBuiltinArguments; mono_tac
 
 theorem EvalBody.evalReduceCounted_mono (collection : List CountedResult) (stepAlg : Algorithm) (initial : Result) (ctx : EvalCtx) (env : ValEnv) :
@@ -1072,13 +1106,9 @@ theorem EvalBody.evalSequenceSpreadCounted_mono (e : Expr) (ctx : EvalCtx) (env 
     monotone (fun rec : EvalRec => EvalBody.evalSequenceSpreadCounted rec e ctx env) := by
   unfold EvalBody.evalSequenceSpreadCounted; mono_tac
 
-theorem EvalBody.staticReferenceTerminal_mono (owner : Algorithm) (reference : Expr) (ctx : EvalCtx) :
-    monotone (fun rec : EvalRec => EvalBody.staticReferenceTerminal rec owner reference ctx) := by
-  unfold EvalBody.staticReferenceTerminal; mono_tac
-
 theorem EvalBody.transparentCollectorSlice_mono (e : Expr) (ctx : EvalCtx) :
     monotone (fun rec : EvalRec => EvalBody.transparentCollectorSlice? rec e ctx) := by
-  have := EvalBody.staticReferenceTerminal_mono
+  have := EvalBody.transparentRetainedCell_mono
   unfold EvalBody.transparentCollectorSlice?; mono_tac
 
 theorem EvalBody.evalSupplySpread_mono (e : Expr) (ctx : EvalCtx) (env : ValEnv) :
@@ -1114,6 +1144,7 @@ theorem EvalBody.evalComparisonLinksCounted_mono (previousExpr : Expr) (previous
 theorem EvalBody.evalCounted_mono (e : Expr) (ctx : EvalCtx) (env : ValEnv) :
     monotone (fun rec : EvalRec => EvalBody.evalCounted rec e ctx env) := by
   have := EvalBody.terminalAccess_mono
+  have := EvalBody.writtenCollectorSlice_mono
   unfold EvalBody.evalCounted; mono_tac
 
 theorem EvalBody.evalUserCall_mono (callee : Algorithm) (args : OutputBundle) (ctx : EvalCtx) (env : ValEnv) :
