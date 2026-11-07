@@ -69,7 +69,7 @@ internal sealed partial class StaticStructureQueries
         retained += Keys.DefinitionIdentityStorageUnits - (_snapshot?.Keys.DefinitionIdentityStorageUnits ?? 0);
         return new()
         {
-            Keys = Keys.Fork(cancellationToken),
+            Keys = Keys.Fork(_cancellationToken, cancellationToken),
             Root = Root,
             Contexts = contexts.ToImmutable(),
             Syntax = syntax.ToImmutable(),

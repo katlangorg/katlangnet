@@ -80,7 +80,7 @@ internal sealed class OpenProviderValidator : AstWalker
         if (!presence.Contains(root)) return;
         var context = AnalyzedStaticStructures.ForBoundAst(root, hostOperations);
         var completed = context.Facts;
-        var prelude = completed?.Prelude ?? hostOperations?.SemanticPreludeAlgorithm ?? BuiltinRegistry.CreateSemanticPreludeAlgorithm();
+        var prelude = completed?.Prelude ?? hostOperations?.SemanticPreludeAlgorithm ?? BuiltinRegistry.SharedSemanticPreludeAlgorithm;
         // The syntax-only presence memo is independent of lookup context. Reuse the scan above
         // rather than silently scanning the same shared bundles again in the validation visitor.
         new OpenProviderValidator(

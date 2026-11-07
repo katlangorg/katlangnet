@@ -97,7 +97,10 @@ internal sealed class StaticQueryEngine<TKey, TValue>
     private readonly StaticQueryLimits _limits;
     private readonly CancellationToken _cancellationToken;
     private readonly TValue _pathCycleValue;
-    private readonly Dictionary<TKey, Entry> _entries;
+    // Entries index themselves: a slot holds the entry reference and its hash, and the key lives once, in the entry.
+    // Ordinary wide programs reach thousands of keys, and a slot embedding the key put this table on the large object heap.
+    private readonly HashSet<Entry> _entries;
+    private readonly HashSet<Entry>.AlternateLookup<TKey> _entryByKey;
     private readonly Queue<Entry> _pending = [];
     private readonly Queue<Entry> _observerPending = [];
     private readonly List<Entry> _newEntries = [];
@@ -137,7 +140,8 @@ internal sealed class StaticQueryEngine<TKey, TValue>
         Resources = new(_limits);
         _cancellationToken = cancellationToken;
         _pathCycleValue = definition.PathCycleValue;
-        _entries = new Dictionary<TKey, Entry>(comparer);
+        _entries = new HashSet<Entry>(new EntryComparer(comparer ?? EqualityComparer<TKey>.Default));
+        _entryByKey = _entries.GetAlternateLookup<TKey>();
         _reader = new StaticQueryReader<TKey, TValue>(this);
     }
 
@@ -193,7 +197,7 @@ internal sealed class StaticQueryEngine<TKey, TValue>
     public bool TryGetFinal(TKey key, out TValue value)
     {
         EnsureUsable();
-        if (_entries.TryGetValue(key, out var entry) && entry.Final)
+        if (_entryByKey.TryGetValue(key, out var entry) && entry.Final)
         {
             value = entry.Value;
             return true;
@@ -209,10 +213,10 @@ internal sealed class StaticQueryEngine<TKey, TValue>
     internal IEnumerable<KeyValuePair<TKey, TValue>> EnumerateFinalValues(CancellationToken cancellationToken = default)
     {
         EnsureUsable();
-        foreach (var (key, entry) in _entries)
+        foreach (var entry in _entries)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            if (entry.Final) yield return new(key, entry.Value);
+            if (entry.Final) yield return new(entry.Key, entry.Value);
         }
     }
 
@@ -319,7 +323,7 @@ internal sealed class StaticQueryEngine<TKey, TValue>
 
     private Entry EntryOf(TKey key)
     {
-        if (_entries.TryGetValue(key, out var known))
+        if (_entryByKey.TryGetValue(key, out var known))
             return known;
         if (_entries.Count >= _limits.MaxEntries)
             throw new StaticQueryLimitExceededException($"The static queries exceeded their entry bound ({_limits.MaxEntries}).");
@@ -331,7 +335,7 @@ internal sealed class StaticQueryEngine<TKey, TValue>
         _cancellationToken.ThrowIfCancellationRequested();
         var entry = new Entry(key, initial);
         entry.InitializeComponent();
-        _entries.Add(key, entry);
+        _entries.Add(entry);
         _newEntries.Add(entry);
         Schedule(entry, Dirty.Compute);
         return entry;
@@ -519,6 +523,21 @@ internal sealed class StaticQueryEngine<TKey, TValue>
         public bool Cyclic;
 
         public void InitializeComponent() => Parent = Head = Tail = this;
+    }
+
+    private sealed class EntryComparer(IEqualityComparer<TKey> keys) : IEqualityComparer<Entry>, IAlternateEqualityComparer<TKey, Entry>
+    {
+        public bool Equals(Entry? left, Entry? right)
+            => ReferenceEquals(left, right) || left is not null && right is not null && keys.Equals(left.Key, right.Key);
+
+        public int GetHashCode(Entry entry) => keys.GetHashCode(entry.Key);
+
+        public bool Equals(TKey alternate, Entry other) => keys.Equals(alternate, other.Key);
+
+        public int GetHashCode(TKey alternate) => keys.GetHashCode(alternate);
+
+        // Only lookups go through the key; EntryOf adds the entry it constructed.
+        public Entry Create(TKey alternate) => throw new NotSupportedException();
     }
 
     // One live ordinary edge, linked by source and doubly linked by target. No per-entry hash tables.

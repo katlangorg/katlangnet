@@ -22,8 +22,17 @@ public class DeferredBodyEvaluatorAdmissionTests
     private static readonly TimeSpan WaitLimit = TimeSpan.FromSeconds(30);
 
     // `1.count.count…` is 1 at every length; each link weighs 3 evaluator units and 1 front-end unit.
+    private static string DotChain(int links)
+        => "1" + string.Concat(Enumerable.Repeat(".count", links));
+
     private static string DotChainModule(int links)
-        => "public X = 1" + string.Concat(Enumerable.Repeat(".count", links)) + "\n";
+        => $"public X = {DotChain(links)}\n";
+
+    // At the configured limit of 100, the fully recursive profile fits and the evaluator profile
+    // crosses the limit. Most of the depth is an iterative unary spine, so the default-limit
+    // control can require the exact value independently of the test thread's recursion headroom.
+    private static string ConfiguredLimitModule()
+        => $"public X = {new string('-', 72)}({DotChain(12)})\n";
 
     // A unary chain weighs one unit per link on every profile and evaluates on the iterative spine
     // machine, so a body near the ceiling still produces its value on a test thread.
@@ -236,7 +245,7 @@ public class DeferredBodyEvaluatorAdmissionTests
     {
         const int Limit = 100;
         var limits = new EvaluationLimits { MaxAstDepth = Limit };
-        var modules = new Modules((Deep, DotChainModule(40)));
+        var modules = new Modules((Deep, ConfiguredLimitModule()));
         var source = Family(Deep, "F(1)");
         if (route == 0)
         {
@@ -245,12 +254,15 @@ public class DeferredBodyEvaluatorAdmissionTests
             Assert.Equal(KatLangErrorCode.AstDepthLimitExceeded, error.Code);
             Assert.True(error.IsResourceLimit);
             Assert.Contains($"{Limit} weighted units", error.Message, StringComparison.Ordinal);
-            Assert.IsType<RunResult.Success>(await KatLangEngine.RunAsync(source, modules.Options()));
+            var success = Assert.IsType<RunResult.Success>(await KatLangEngine.RunAsync(source, modules.Options()));
+            Assert.Equal("1", success.ToDisplayString());
             return;
         }
 
         var provenance = await SourceProvenance.ParseValidAsync(source, modules.Options());
         AssertDepthRejected(await RunDirect(provenance.Root, modules, limits, suspending: route == 2), Limit);
+        Assert.Null(AstStructuralPreflight.Check(
+            new Expr.AlgorithmExpr(Composed(provenance.Root)), Limit, AstConsumerProfile.FullyRecursive));
         Assert.False(ComposedAdmitted(provenance.Root, Limit));
         Assert.True(ComposedAdmitted(provenance.Root, EvaluationLimits.MaxSupportedAstDepth));
         AssertValue(await RunDirect(provenance.Root, modules, suspending: route == 2), 1);
@@ -521,7 +533,7 @@ public class DeferredBodyEvaluatorAdmissionTests
     public async Task T4_CachedBody_IsJudgedByEachRunsOwnLimit_InEitherOrder(bool permissiveFirst)
     {
         var restrictive = new EvaluationLimits { MaxAstDepth = 100 };
-        var modules = new Modules((Deep, DotChainModule(40)));
+        var modules = new Modules((Deep, ConfiguredLimitModule()));
         var provenance = await SourceProvenance.ParseValidAsync(Family(Deep, "F(1), F(1)"), modules.Options());
         var region = OnlyRegion(provenance.Root);
 

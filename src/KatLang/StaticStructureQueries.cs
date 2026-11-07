@@ -131,7 +131,7 @@ internal sealed partial class StaticStructureQueries : IStaticQueryDefinition<St
         _cancellationToken = cancellationToken;
         _phase = phase;
         Keys = new StaticKeyTable();
-        var preludeBody = prelude ?? BuiltinRegistry.CreateSemanticPreludeAlgorithm();
+        var preludeBody = prelude ?? BuiltinRegistry.SharedSemanticPreludeAlgorithm;
         _engine = new(this, limits: limits, cancellationToken: cancellationToken);
         Resources.Metadata(8, cancellationToken: cancellationToken);
         _contexts.Add(Keys.Root, new(Keys.Root, SyntaxOf(preludeBody), null, resourceBudget: Resources, cancellationToken: cancellationToken) { HasOpens = preludeBody.Opens.Count != 0 });

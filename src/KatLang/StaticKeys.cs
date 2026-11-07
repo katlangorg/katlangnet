@@ -54,28 +54,27 @@ internal sealed class StaticScopeKey
 /// </summary>
 internal sealed class StaticKeyTable
 {
-    private ImmutableDictionary<(StaticScopeKey Parent, object Declaration, object? Region), StaticScopeKey> _scopes
-        = ImmutableDictionary.Create<(StaticScopeKey Parent, object Declaration, object? Region), StaticScopeKey>(ChildComparer.Instance);
+    private ForkableMap<(StaticScopeKey Parent, object Declaration, object? Region), StaticScopeKey> _scopes = new(ChildComparer.Instance);
     private readonly Dictionary<DeclaringOwners, StaticScopeKey> _owners = new(ReferenceEqualityComparer.Instance);
     private readonly Dictionary<ElaboratedPropertyScope, StaticScopeKey> _levels = new(ReferenceEqualityComparer.Instance);
-    private ImmutableDictionary<(StaticScopeKey Parent, object Definition, object? Region), StaticScopeKey> _definitions
-        = ImmutableDictionary.Create<(StaticScopeKey, object, object?), StaticScopeKey>(ChildComparer.Instance);
-    private ImmutableDictionary<(StaticScopeKey Parent, object Declaration, object? Region), Algorithm> _firstDefinitions
-        = ImmutableDictionary.Create<(StaticScopeKey, object, object?), Algorithm>(ChildComparer.Instance);
-    private ImmutableDictionary<StaticScopeKey, StaticScopeKey> _providerScopes
-        = ImmutableDictionary.Create<StaticScopeKey, StaticScopeKey>(ReferenceEqualityComparer.Instance);
+    private ForkableMap<(StaticScopeKey Parent, object Definition, object? Region), StaticScopeKey> _definitions = new(ChildComparer.Instance);
+    private ForkableMap<(StaticScopeKey Parent, object Declaration, object? Region), Algorithm> _firstDefinitions = new(ChildComparer.Instance);
+    private ForkableMap<StaticScopeKey, StaticScopeKey> _providerScopes = new(ReferenceEqualityComparer.Instance);
 
     public StaticKeyTable() => Root = new StaticScopeKey(null, OpenProviderIdentity.RootLevelDeclaration);
 
     private StaticKeyTable(StaticScopeKey root) => Root = root;
 
     /// <summary>Preserves interned source identities without retaining a previous pass's physical scope adapters.</summary>
-    internal StaticKeyTable Fork(CancellationToken cancellationToken = default)
+    internal StaticKeyTable Fork(CancellationToken operationToken = default, CancellationToken cancellationToken = default)
     {
-        cancellationToken.ThrowIfCancellationRequested();
-        var copy = new StaticKeyTable(Root) { _scopes = _scopes, _definitions = _definitions,
-            _firstDefinitions = _firstDefinitions, _providerScopes = _providerScopes };
-        return copy;
+        return new StaticKeyTable(Root)
+        {
+            _scopes = _scopes.Fork(operationToken, cancellationToken),
+            _definitions = _definitions.Fork(operationToken, cancellationToken),
+            _firstDefinitions = _firstDefinitions.Fork(operationToken, cancellationToken),
+            _providerScopes = _providerScopes.Fork(operationToken, cancellationToken),
+        };
     }
 
     /// <summary>The root level: the prelude every chain is rooted at, and the document root's own level.</summary>
@@ -97,25 +96,25 @@ internal sealed class StaticKeyTable
         if (_definitions.TryGetValue((parent, body, region), out var key)) return key;
         resources.Metadata(4, cancellationToken: cancellationToken);
         key = new StaticScopeKey(parent, ownerIdentity ?? OpenProviderIdentity.DeclarationOf(body), region);
-        _definitions = _definitions.Add((parent, body, region), key);
+        _definitions.Add((parent, body, region), key);
         var declared = (parent, OpenProviderIdentity.DeclarationOf(body), region);
-        if (!_firstDefinitions.ContainsKey(declared))
+        if (!_firstDefinitions.TryGetValue(declared, out _))
         {
             resources.Metadata(2, cancellationToken: cancellationToken);
-            _firstDefinitions = _firstDefinitions.Add(declared, body);
+            _firstDefinitions.Add(declared, body);
         }
         return key;
     }
 
     internal Algorithm? FirstDefinitionIn(StaticScopeKey parent, Algorithm body, object? region)
-        => _firstDefinitions.GetValueOrDefault((body.IsModuleRoot ? Root : parent,
-            OpenProviderIdentity.DeclarationOf(body), body.IsModuleRoot ? null : region));
+        => _firstDefinitions.TryGetValue((body.IsModuleRoot ? Root : parent,
+            OpenProviderIdentity.DeclarationOf(body), body.IsModuleRoot ? null : region), out var first) ? first : null;
 
     /// <summary>Definitions this table has interned, one per context of a body.</summary>
     internal int DefinitionCount => _definitions.Count;
 
     internal StaticScopeKey? KnownDefinitionIn(StaticScopeKey parent, Algorithm body, object? region)
-        => _definitions.GetValueOrDefault((body.IsModuleRoot ? Root : parent, body, body.IsModuleRoot ? null : region));
+        => _definitions.TryGetValue((body.IsModuleRoot ? Root : parent, body, body.IsModuleRoot ? null : region), out var known) ? known : null;
 
     /// <summary>The provider's language identity, independent of its source/view graph representative.</summary>
     internal StaticScopeKey ProviderScope(StaticScopeKey scope, StaticQueryResourceBudget resources,
@@ -136,7 +135,7 @@ internal sealed class StaticKeyTable
         while (path.TryPop(out var next))
         {
             known = Inside(known, next.Declaration);
-            _providerScopes = _providerScopes.Add(next, known);
+            _providerScopes.Add(next, known);
         }
         return known;
     }
@@ -147,7 +146,7 @@ internal sealed class StaticKeyTable
         ArgumentNullException.ThrowIfNull(parent);
         ArgumentNullException.ThrowIfNull(declaration);
         if (!_scopes.TryGetValue((parent, declaration, bindingRegion), out var key))
-            _scopes = _scopes.Add((parent, declaration, bindingRegion), key = new StaticScopeKey(parent, declaration, bindingRegion));
+            _scopes.Add((parent, declaration, bindingRegion), key = new StaticScopeKey(parent, declaration, bindingRegion));
         return key;
     }
 
@@ -215,6 +214,58 @@ internal sealed class StaticKeyTable
     private StaticScopeKey AttachedKey(StaticStructureContext context)
         => ReferenceEquals(context.Operation.Queries.Keys.Root, Root) ? context.Key
             : throw new InvalidOperationException("A physical scope belongs to another static operation's key table.");
+
+    /// <summary>
+    /// An interning map whose only immutable moment is a <see cref="Fork"/>: an operation adds to a local table, and the
+    /// shared persistent base (structurally shared by every fork, so K deferred units never copy it) absorbs those additions
+    /// when a fork is taken, each entry once. An ordinary program never forks and pays no persistent node per interned key.
+    /// A fork of a table with no local additions only reads it, so a frozen snapshot's table can be forked concurrently.
+    /// </summary>
+    internal sealed class ForkableMap<TKey, TValue>
+        where TKey : notnull
+    {
+        private readonly Dictionary<TKey, TValue> _local;
+        private ImmutableDictionary<TKey, TValue> _shared;
+
+        public ForkableMap(IEqualityComparer<TKey> comparer)
+            : this(ImmutableDictionary.Create<TKey, TValue>(comparer)) { }
+
+        private ForkableMap(ImmutableDictionary<TKey, TValue> shared)
+        {
+            _shared = shared;
+            _local = new(shared.KeyComparer);
+        }
+
+        public int Count => _shared.Count + _local.Count;
+
+        public bool TryGetValue(TKey key, [System.Diagnostics.CodeAnalysis.MaybeNullWhen(false)] out TValue value)
+            => _local.TryGetValue(key, out value) || _shared.TryGetValue(key, out value);
+
+        public void Add(TKey key, TValue value) => _local.Add(key, value);
+
+        public ForkableMap<TKey, TValue> Fork(CancellationToken operationToken, CancellationToken cancellationToken)
+        {
+            operationToken.ThrowIfCancellationRequested();
+            cancellationToken.ThrowIfCancellationRequested();
+            if (_local.Count == 0)
+                return new(_shared);
+
+            // Move the already-accounted keys without exposing a partial base on cancellation.
+            var shared = _shared.ToBuilder();
+            foreach (var (key, value) in _local)
+            {
+                operationToken.ThrowIfCancellationRequested();
+                cancellationToken.ThrowIfCancellationRequested();
+                shared.Add(key, value);
+            }
+            operationToken.ThrowIfCancellationRequested();
+            cancellationToken.ThrowIfCancellationRequested();
+
+            _shared = shared.ToImmutable();
+            _local.Clear();
+            return new(_shared);
+        }
+    }
 
     private sealed class ChildComparer : IEqualityComparer<(StaticScopeKey Parent, object Declaration, object? Region)>
     {

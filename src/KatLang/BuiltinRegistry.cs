@@ -723,6 +723,15 @@ internal static class BuiltinRegistry
     public static Algorithm.User CreateRuntimePreludeAlgorithm(Algorithm.User? mathAlgorithm = null)
         => CreatePreludeAlgorithm(includeLoad: false, mathAlgorithm ?? CreateMathAlgorithm(MathAlgorithmFlavor.Runtime));
 
+    /// <summary>
+    /// The one default signature-only prelude: immutable registry data, read like the set a <see cref="HostOperations"/>
+    /// builds once and reuses. A compilation never attaches anything to a prelude object (<c>CompleteLookups</c>), so a
+    /// host-free parse does not rebuild the prelude per pass.
+    /// </summary>
+    internal static Algorithm.User SharedSemanticPreludeAlgorithm => SharedSemanticPrelude.Value;
+
+    private static readonly Lazy<Algorithm.User> SharedSemanticPrelude = new(() => CreateSemanticPreludeAlgorithm());
+
     public static Algorithm.User CreateSemanticPreludeAlgorithm(Algorithm.User? mathAlgorithm = null)
         => CreatePreludeAlgorithm(includeLoad: true, mathAlgorithm ?? CreateMathAlgorithm(MathAlgorithmFlavor.SignatureOnly));
 

@@ -532,7 +532,7 @@ internal static partial class ImplicitArgumentResolver
     internal sealed class PreludeContext
     {
         private static readonly Lazy<PreludeContext> SharedDefault =
-            new(() => new PreludeContext(BuiltinRegistry.CreateSemanticPreludeAlgorithm()));
+            new(() => new PreludeContext(BuiltinRegistry.SharedSemanticPreludeAlgorithm));
 
         private readonly Algorithm.User _prelude;
         private readonly HashSet<string> _callableNames;
@@ -565,7 +565,8 @@ internal static partial class ImplicitArgumentResolver
         }
 
         public static PreludeContext For(HostOperations? hostOperations, Algorithm.User? admittedPrelude = null)
-            => admittedPrelude is not null ? new PreludeContext(admittedPrelude)
+            => admittedPrelude is not null
+                ? ReferenceEquals(admittedPrelude, BuiltinRegistry.SharedSemanticPreludeAlgorithm) ? SharedDefault.Value : new PreludeContext(admittedPrelude)
                 : hostOperations is null ? SharedDefault.Value : new PreludeContext(hostOperations.SemanticPreludeAlgorithm);
 
         /// <summary>The prelude member a name the owner walk leaves undecided resolves to, if it is a runtime callable.</summary>

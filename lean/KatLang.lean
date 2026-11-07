@@ -1696,7 +1696,9 @@ inductive Result where
 mutual
   /-- Structural VALUE EQUALITY of two results: the `BEq Result` instance below. -/
   def Result.beq : Result -> Result -> Bool
-    | .atom a, .atom b => a == b
+    -- The standard Int BEq reduces to this same decision, but its order package
+    -- carries classical proofs. Keep result equality's axiom footprint constructive.
+    | .atom a, .atom b => @decide (a = b) (Int.decEq a b)
     | .str a, .str b => a == b
     | .bool a, .bool b => a == b
     | .sequenceValue xs, .sequenceValue ys => Result.beqList xs ys

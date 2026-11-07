@@ -84,8 +84,11 @@ internal static class FrontEndRegionKeys
     /// </summary>
     internal static string NameSet(IEnumerable<string> names)
     {
+        var sorted = names.ToArray();
+        if (sorted.Length == 0) return string.Empty;
+        Array.Sort(sorted, StringComparer.Ordinal);
         var builder = new System.Text.StringBuilder();
-        foreach (var name in names.Order(StringComparer.Ordinal))
+        foreach (var name in sorted)
             builder.Append(name.Length).Append(':').Append(name);
         return builder.ToString();
     }

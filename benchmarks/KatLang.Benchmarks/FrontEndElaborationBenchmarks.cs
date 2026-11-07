@@ -99,6 +99,21 @@ internal static class FrontEndElaborationScenarios
 		return source.ToString();
 	}
 
+	/// <summary>
+	/// count independent literal declarations plus one output row referencing the last: no
+	/// local bodies, no captures and no written dependency between declarations, so it
+	/// isolates per-declaration work from the costs of
+	/// <see cref="BuildWidePropertiesSource"/> and <see cref="BuildWideLookupChainSource"/>.
+	/// </summary>
+	internal static string BuildFlatDeclarationsSource(int count)
+	{
+		var source = new StringBuilder();
+		for (var i = 0; i < count; i++)
+			source.AppendLine($"V{i} = {i}");
+		source.AppendLine($"V{count - 1}");
+		return source.ToString();
+	}
+
 	internal static void AssertParsesCleanly(string source)
 	{
 		var result = Parser.Parse(source);
@@ -133,8 +148,8 @@ internal static class FrontEndElaborationScenarios
 		var syntax = Parser.ParseSyntax(source);
 		if (syntax.HasErrors)
 			throw new InvalidOperationException("Nested benchmark syntax parse unexpectedly failed.");
-		var (detected, detectionDiagnostics) = ParameterDetector.DetectPrevalidated(syntax.Root);
-		if (detectionDiagnostics.Any(diagnostic => diagnostic.Severity == DiagnosticSeverity.Error))
+		var detected = ParameterDetector.DetectPrevalidated(syntax.Root);
+		if (detected.Diagnostics.Any(diagnostic => diagnostic.Severity == DiagnosticSeverity.Error))
 			throw new InvalidOperationException("Nested benchmark parameter detection unexpectedly failed.");
 		var resolverObservations = new FrontEndTraversalObservations();
 		var resolved = ImplicitArgumentResolver.ResolvePrevalidated(detected, resolverObservations);
@@ -147,7 +162,7 @@ internal static class FrontEndElaborationScenarios
 		}
 
 		var exposureObservations = new FrontEndTraversalObservations();
-		PropertyExposureResolver.Resolve(resolved, exposureObservations);
+		PropertyExposureResolver.Resolve(resolved, exposureObservations, modules: detected.Modules);
 		if (exposureObservations.DependencySeedExpansions != 2L * depth
 			|| exposureObservations.DependencyAlgorithmSummaryComputations != 3L * depth)
 		{
@@ -176,7 +191,7 @@ internal static class FrontEndElaborationScenarios
 			}
 		}
 
-		AssertLookupWorkObserved(source, expectedIndexBuilds: 1, expectedLevelVisits: 2L * count - 1);
+		AssertLookupWorkObserved(source, count);
 	}
 
 	internal static void AssertWideLookupMissShape(string source, int count)
@@ -197,13 +212,14 @@ internal static class FrontEndElaborationScenarios
 			throw new InvalidOperationException("Lookup-miss benchmark no longer contains exactly the intended promoted references.");
 		}
 
-		AssertLookupWorkObserved(source, expectedIndexBuilds: 2, expectedLevelVisits: null);
+		AssertLookupWorkObserved(source, count);
 	}
 
-	private static void AssertLookupWorkObserved(
-		string source,
-		long expectedIndexBuilds,
-		long? expectedLevelVisits)
+	/// <summary>
+	/// Written names resolve through the static query engine: at least one Q1 read per
+	/// declaration, and no linear property scan, root rediscovery or open-member work.
+	/// </summary>
+	private static void AssertLookupWorkObserved(string source, int minimumStaticReads)
 	{
 		var syntax = Parser.ParseSyntax(source);
 		if (syntax.HasErrors)
@@ -212,21 +228,33 @@ internal static class FrontEndElaborationScenarios
 		var (_, diagnostics) = ParameterDetector.DetectPrevalidated(syntax.Root, null, observations);
 		if (diagnostics.Any(diagnostic => diagnostic.Severity == DiagnosticSeverity.Error))
 			throw new InvalidOperationException("Lookup benchmark parameter detection unexpectedly failed.");
-		if (observations.LookupNameIndexBuilds != expectedIndexBuilds
+		if (observations.StaticQueryReads < minimumStaticReads
 			|| observations.LookupPropertyComparisons != 0
 			|| observations.StaticOpenTargetComputations != 0
 			|| observations.LookupOpenMemberIndexBuilds != 0
-			|| observations.LookupRootDiscoveryWalks != 0
-			|| (expectedLevelVisits is { } visits
-				? observations.LookupLevelVisits != visits
-				: observations.LookupLevelVisits <= 0))
+			|| observations.LookupRootDiscoveryWalks != 0)
 		{
 			throw new InvalidOperationException(
 				"Lookup benchmark no longer exercises the intended indexed substrate: "
-				+ $"indexes={observations.LookupNameIndexBuilds}, linearComparisons={observations.LookupPropertyComparisons}, "
+				+ $"staticReads={observations.StaticQueryReads}, linearComparisons={observations.LookupPropertyComparisons}, "
 				+ $"openTargets={observations.StaticOpenTargetComputations}, openMemberIndexes={observations.LookupOpenMemberIndexBuilds}, "
-				+ $"rootWalks={observations.LookupRootDiscoveryWalks}, levelVisits={observations.LookupLevelVisits}.");
+				+ $"rootWalks={observations.LookupRootDiscoveryWalks}.");
 		}
+	}
+
+	internal static void AssertFlatDeclarationsShape(string source, int count)
+	{
+		var result = Parser.Parse(source);
+		AssertParsesCleanly(result);
+		var root = AssertUser(result.Root, "root");
+		if (root.Properties.Count != count)
+			throw new InvalidOperationException($"Flat-declaration benchmark expected {count} root properties, found {root.Properties.Count}.");
+		if (root.Parameters.Count != 0)
+			throw new InvalidOperationException("Flat-declaration benchmark unexpectedly promoted implicit parameters.");
+		if (root.Output is not [Expr.Resolve { Name: var finalName }] || finalName != $"V{count - 1}")
+			throw new InvalidOperationException("Flat-declaration benchmark lost its final written reference.");
+
+		AssertLookupWorkObserved(source, count);
 	}
 
 	internal static void AssertWidePropertiesShape(string source, int count)
@@ -250,8 +278,8 @@ internal static class FrontEndElaborationScenarios
 		var syntax = Parser.ParseSyntax(source);
 		if (syntax.HasErrors)
 			throw new InvalidOperationException("Wide benchmark syntax parse unexpectedly failed.");
-		var (detected, detectionDiagnostics) = ParameterDetector.DetectPrevalidated(syntax.Root);
-		if (detectionDiagnostics.Any(diagnostic => diagnostic.Severity == DiagnosticSeverity.Error))
+		var detected = ParameterDetector.DetectPrevalidated(syntax.Root);
+		if (detected.Diagnostics.Any(diagnostic => diagnostic.Severity == DiagnosticSeverity.Error))
 			throw new InvalidOperationException("Wide benchmark parameter detection unexpectedly failed.");
 		var observations = new FrontEndTraversalObservations();
 		ImplicitArgumentResolver.ResolvePrevalidated(detected, observations);
@@ -358,4 +386,38 @@ public class FrontEndOrdinaryElaborationBenchmarks
 
 	[Benchmark]
 	public ParseResult SmallProgram() => Parser.Parse(FrontEndElaborationScenarios.SmallProgramSource);
+}
+
+/// <summary>
+/// Width scaling of ordinary flat programs, companion to the fixed-width
+/// <see cref="FrontEndOrdinaryElaborationBenchmarks"/> (whose meaning stays unchanged): wide
+/// properties with shallow local bodies, and independent declarations that separate
+/// per-declaration work from local-body cost. Run with
+/// <c>dotnet run -c Release --project ./benchmarks/KatLang.Benchmarks/KatLang.Benchmarks.csproj -- --filter "*FrontEndOrdinaryWidthBenchmarks*"</c>.
+/// </summary>
+[MemoryDiagnoser]
+[SimpleJob(launchCount: 1, warmupCount: 3, iterationCount: 8)]
+[Orderer(SummaryOrderPolicy.FastestToSlowest)]
+public class FrontEndOrdinaryWidthBenchmarks
+{
+	private string widePropertiesSource = string.Empty;
+	private string flatDeclarationsSource = string.Empty;
+
+	[Params(100, 200, 400, 800)]
+	public int Width { get; set; }
+
+	[GlobalSetup]
+	public void Setup()
+	{
+		widePropertiesSource = FrontEndElaborationScenarios.BuildWidePropertiesSource(Width);
+		FrontEndElaborationScenarios.AssertWidePropertiesShape(widePropertiesSource, Width);
+		flatDeclarationsSource = FrontEndElaborationScenarios.BuildFlatDeclarationsSource(Width);
+		FrontEndElaborationScenarios.AssertFlatDeclarationsShape(flatDeclarationsSource, Width);
+	}
+
+	[Benchmark]
+	public ParseResult WideProperties() => Parser.Parse(widePropertiesSource);
+
+	[Benchmark]
+	public ParseResult FlatDeclarations() => Parser.Parse(flatDeclarationsSource);
 }

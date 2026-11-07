@@ -53,6 +53,9 @@ internal sealed partial class StaticStructureOperation
     /// <summary>The bodies of this admission more than one path reaches; null when none is, and for a deferred unit.</summary>
     internal SharedBodyCensus? SharedBodies { get; init; }
 
+    /// <summary>Admission walked every reachable node of this operation's tree, its prelude included, and met no open list.</summary>
+    internal bool AdmittedWithoutOpens { get; init; }
+
     internal StaticStructureOperation(Algorithm root, StaticQueryLimits limits, Algorithm? prelude = null, StaticAstPhase phase = StaticAstPhase.RawSource,
         CancellationToken cancellationToken = default)
     {

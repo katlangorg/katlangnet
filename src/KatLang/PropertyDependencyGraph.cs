@@ -1439,14 +1439,17 @@ internal static class PropertyDependencyGraphBuilder
 
         internal string ContentKeyFor(FrontEndTraversalObservations? observations)
         {
-            var key = PendingReference.KeyParts([
-                FrontEndRegionKeys.NameSet(RequiredAncestorOwnedParameterNames),
-                FrontEndRegionKeys.NameSet(VisiblePropertyDependencyNames),
-                FrontEndRegionKeys.NameSet(PendingReferences.Select(static pending => pending.ContentKey)),
-                FrontEndRegionKeys.NameSet(OwnerQualifiedParameters.Select(static r => r.ContentKey))]);
+            // Reads the folded sets directly: most seeds are empty, and a key must not materialize what it describes.
+            var key = IsEmpty ? EmptyContentKey : PendingReference.KeyParts([
+                _requiredAncestorOwnedParameterNames is { } required ? FrontEndRegionKeys.NameSet(required) : string.Empty,
+                _visiblePropertyDependencyNames is { } visible ? FrontEndRegionKeys.NameSet(visible) : string.Empty,
+                _pendingReferences is { } pending ? FrontEndRegionKeys.NameSet(pending.Select(static reference => reference.ContentKey)) : string.Empty,
+                _ownerQualifiedParameters is { } qualified ? FrontEndRegionKeys.NameSet(qualified.Select(static r => r.ContentKey)) : string.Empty]);
             observations?.RecordSummaryKey(key);
             return key;
         }
+
+        private static readonly string EmptyContentKey = PendingReference.KeyParts([string.Empty, string.Empty, string.Empty, string.Empty]);
     }
 
     /// <summary>
@@ -2005,6 +2008,12 @@ internal static class PropertyDependencyGraphBuilder
         for (var i = 0; i < algorithm.Properties.Count; i++)
         {
             var summarySeed = CollectSharedAlgorithmSummarySeed(algorithm.Properties[i].Value, buildMemos);
+            if (summarySeed.IsEmpty)
+            {
+                nodes[i] = new PropertyDependencySummaryNode(i, [], [], [], [], []);
+                continue;
+            }
+
             var summarySiblingDependencyIndices = new HashSet<int>();
             var summaryVisiblePropertyDependencyNames = CreateNameSet();
             foreach (var dependencyName in summarySeed.VisiblePropertyDependencyNames)
@@ -2032,7 +2041,7 @@ internal static class PropertyDependencyGraphBuilder
     /// <summary>A capability gate only: ordinary symbolic Q8 equations require no Q1–Q7 selection.</summary>
     private static bool HasStructuralSelectionQuestion(Algorithm algorithm)
     {
-        var declarations = BuiltinRegistry.CreateSemanticPreludeAlgorithm().Properties.Select(property => property.Name).ToHashSet(StringComparer.Ordinal);
+        var declarations = BuiltinRegistry.SharedSemanticPreludeAlgorithm.Properties.Select(property => property.Name).ToHashSet(StringComparer.Ordinal);
         var heads = new HashSet<string>(StringComparer.Ordinal);
         var seen = new HashSet<object>(ReferenceEqualityComparer.Instance);
         var pending = new Stack<object>();
@@ -2295,7 +2304,9 @@ internal static class PropertyDependencyGraphBuilder
     /// </summary>
     internal static SummarySeed ExpandAtLevel(SummarySeed baseSeed, LevelContext level)
     {
-        return RunExpansion(ExpandFrame(baseSeed, level)).Seed!;
+        // A seed with no requirement, name or reference has nothing to resolve, escape or qualify at any level, and a cycle
+        // cut cannot change that: its expansion is the empty seed, whatever the level.
+        return baseSeed.IsEmpty ? new SummarySeed() : RunExpansion(ExpandFrame(baseSeed, level)).Seed!;
     }
 
     /// <summary>

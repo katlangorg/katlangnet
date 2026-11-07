@@ -1,3 +1,5 @@
+using System.Runtime.CompilerServices;
+
 namespace KatLang;
 
 /// <summary>
@@ -362,67 +364,13 @@ internal static class FrontEndPipeline
         // tree is exactly the tree the same program elaborates to without its modules.
         var passDiagnostics = provisional ? diagnostics.CreateStage() : diagnostics;
 
-        // Host-operation names resolve during parameter detection (through the
-        // configuration's extended semantic prelude), so referencing one never turns
-        // it into an implicit parameter — the front-end half of the same name-level
-        // agreement the built-in Math module relies on.
-        // NAME RESOLUTION and AUTOMATIC PARAMETER FORWARDING are two separate operations
-        // (Q-04, decided September 28 2026): detection decides what every written name
-        // denotes, and implicit-argument resolution then forwards, to each referenced callee,
-        // the parameter bindings those decisions established — adding a forwarded parameter
-        // only where none exists. Forwarding never feeds back into name resolution: a
-        // parameter it adds is never what a written name refers to, so no binding is
-        // re-selected once signatures are complete (the former ownership-completion pass
-        // re-selected them, which is how adding a reference could rebind a written name).
-        // Every loaded module is ONE unit of the program (Q-31 H-P + Q-32 I-U): each pass elaborates
-        // it once, rooted at the prelude, wherever it is spliced (see ModuleUnitRegistry).
         modules ??= new ModuleUnits();
-        StaticStructureOperation? operation = null;
         try
         {
-            operation = StaticStructureAdmission.Create(input.Current, hostOperations, sourceProcessingLimits, cancellationToken: cancellationToken).Operation;
-            DetectParameters(input, hostOperations, passDiagnostics, modules, operation);
-            if (operation is not null && passDiagnostics.HasReported(DiagnosticCode.SelfDependentInferredParameters))
-                return RecoverAfterSelfDependentInference(input, diagnostics, passDiagnostics, operation, hasDeferredModuleRegions, cancellationToken);
-        }
-        catch (StaticQueryLimitExceededException error)
-        {
-            diagnostics.Add(StaticStructureAdmission.Rejection(error));
-            return new(new Algorithm.User(null, [], [], [], []), diagnostics);
-        }
+            if (CompleteBeforeExposure(input, passDiagnostics, hostOperations, modules, hasDeferredModuleRegions,
+                    sourceProcessingLimits, out var deferredOperation, cancellationToken) is { } refused)
+                return refused;
 
-        cancellationToken.ThrowIfCancellationRequested();
-
-        // Implicit-argument resolution also REPORTS the forwarding it had to refuse: a
-        // registry-proven value-demanding position whose referenced callable needs implicit
-        // parameters the enclosing CLOSED explicit list cannot supply can never be satisfied
-        // by any call of that algorithm, so it is a static well-formedness failure of the
-        // closed interface — the same rule parameter detection applies to a directly written
-        // undeclared identifier, one indirection further out.
-        try
-        {
-            ResolveImplicitArguments(input, passDiagnostics, hostOperations, modules, operation);
-            // B3-5★: a refused signature selection (a recursive inference that does not settle, or an .Algorithm classification
-            // without one grounded consistent reading) is the same family as A1, with the same recovery: the resolver
-            // returned the detected tree unrewritten and unpublished.
-            if (operation is not null && passDiagnostics.HasReported(DiagnosticCode.SelfDependentInferredParameters))
-                return RecoverAfterSelfDependentInference(input, diagnostics, passDiagnostics, operation, hasDeferredModuleRegions, cancellationToken);
-        }
-        catch (StaticQueryLimitExceededException error)
-        {
-            diagnostics.Add(StaticStructureAdmission.Rejection(error));
-            return new(new Algorithm.User(null, [], [], [], []), diagnostics);
-        }
-
-        // The parameter/property collision rule, the open PROVIDER rule, and the output rule
-        // need completed signatures (an inferred parameter list is final only now) and nothing
-        // from exposure, so they run here: an algorithm with inferred parameters and no output is
-        // this front end's error, never the evaluator's (X-07; a written list was reported at
-        // parse time). They read completed structure, whose projections below served regions
-        // (B3-5★) the static ledger charges, so its refusal is theirs as well.
-        try
-        {
-            ValidateCompletedSignatures(input, passDiagnostics, hostOperations);
             cancellationToken.ThrowIfCancellationRequested();
             ResolveExposure(input, hostOperations, modules, cancellationToken);
             cancellationToken.ThrowIfCancellationRequested();
@@ -430,7 +378,7 @@ internal static class FrontEndPipeline
             // The program's later operations (deferred materializations) receive these module units —
             // the very declarations this tree holds — when this elaboration is the evaluable one.
             if (!provisional && !diagnostics.HasReportedErrors)
-                modules.Publish(operation is not null && hasDeferredModuleRegions ? operation.Freeze(cancellationToken) : null);
+                modules.Publish(deferredOperation?.Freeze(cancellationToken));
         }
         catch (StaticQueryLimitExceededException error)
         {
@@ -446,6 +394,61 @@ internal static class FrontEndPipeline
         return new FrontEndResult(ElaboratedUserRoot(input.Take()), diagnostics, hasDeferredModuleRegions);
     }
 
+    // End the producer's frame before exposure. Clearing the operation local alone leaves the
+    // admission call's return buffer (and its argument spills) live in Tier 0.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    internal static FrontEndResult? CompleteBeforeExposure(
+        ElaborationInput input, DiagnosticBag passDiagnostics, HostOperations? hostOperations, ModuleUnits modules,
+        bool hasDeferredModuleRegions, SourceProcessingLimits? sourceProcessingLimits,
+        out StaticStructureOperation? deferredOperation, CancellationToken cancellationToken)
+    {
+        deferredOperation = null;
+
+        // Host-operation names resolve during parameter detection (through the
+        // configuration's extended semantic prelude), so referencing one never turns
+        // it into an implicit parameter — the front-end half of the same name-level
+        // agreement the built-in Math module relies on.
+        // NAME RESOLUTION and AUTOMATIC PARAMETER FORWARDING are two separate operations
+        // (Q-04, decided September 28 2026): detection decides what every written name
+        // denotes, and implicit-argument resolution then forwards, to each referenced callee,
+        // the parameter bindings those decisions established — adding a forwarded parameter
+        // only where none exists. Forwarding never feeds back into name resolution: a
+        // parameter it adds is never what a written name refers to, so no binding is
+        // re-selected once signatures are complete (the former ownership-completion pass
+        // re-selected them, which is how adding a reference could rebind a written name).
+        // Every loaded module is ONE unit of the program (Q-31 H-P + Q-32 I-U): each pass elaborates
+        // it once, rooted at the prelude, wherever it is spliced (see ModuleUnitRegistry).
+        var operation = StaticStructureAdmission.Create(input.Current, hostOperations, sourceProcessingLimits, cancellationToken: cancellationToken).Operation;
+        DetectParameters(input, hostOperations, passDiagnostics, modules, operation);
+        if (passDiagnostics.HasReported(DiagnosticCode.SelfDependentInferredParameters))
+            return RecoverAfterSelfDependentInference(input, input.Diagnostics, passDiagnostics, operation, hasDeferredModuleRegions, cancellationToken);
+
+        cancellationToken.ThrowIfCancellationRequested();
+
+        // Implicit-argument resolution also REPORTS the forwarding it had to refuse: a
+        // registry-proven value-demanding position whose referenced callable needs implicit
+        // parameters the enclosing CLOSED explicit list cannot supply can never be satisfied
+        // by any call of that algorithm, so it is a static well-formedness failure of the
+        // closed interface — the same rule parameter detection applies to a directly written
+        // undeclared identifier, one indirection further out.
+        ResolveImplicitArguments(input, passDiagnostics, hostOperations, modules, operation);
+        // B3-5★: a refused signature selection (a recursive inference that does not settle, or an .Algorithm classification
+        // without one grounded consistent reading) is the same family as A1, with the same recovery: the resolver
+        // returned the detected tree unrewritten and unpublished.
+        if (passDiagnostics.HasReported(DiagnosticCode.SelfDependentInferredParameters))
+            return RecoverAfterSelfDependentInference(input, input.Diagnostics, passDiagnostics, operation, hasDeferredModuleRegions, cancellationToken);
+
+        // The parameter/property collision rule, the open PROVIDER rule, and the output rule
+        // need completed signatures (an inferred parameter list is final only now) and nothing
+        // from exposure, so they run here: an algorithm with inferred parameters and no output is
+        // this front end's error, never the evaluator's (X-07; a written list was reported at
+        // parse time). They read completed structure, whose projections below served regions
+        // (B3-5★) the static ledger charges, so its refusal is theirs as well.
+        ValidateCompletedSignatures(input, passDiagnostics, hostOperations, operation);
+        if (hasDeferredModuleRegions) deferredOperation = operation;
+        return null;
+    }
+
     // ── One frame per pass (SEC-S1) ────────────────────────────────────────────
     // Each helper takes its pass's input out of the hand-off and puts the output back, so the
     // input is referenced only from the helper's own frame and becomes unreachable when the pass
@@ -456,6 +459,9 @@ internal static class FrontEndPipeline
 
     private static FrontEndResult? RejectOverDeepElaboration(ElaborationInput input)
     {
+        if (input.ConsumeRawGateMeasurement(EvaluationLimits.MaxSupportedAstDepth))
+            return null;
+
         if (AstStructuralPreflight.Check(
                 input.Current,
                 EvaluationLimits.MaxSupportedAstDepth,
@@ -482,10 +488,13 @@ internal static class FrontEndPipeline
 
     // One frame per validator as well, so one validator's memo is gone before the next runs.
     private static void ValidateCompletedSignatures(
-        ElaborationInput input, DiagnosticBag passDiagnostics, HostOperations? hostOperations)
+        ElaborationInput input, DiagnosticBag passDiagnostics, HostOperations? hostOperations, StaticStructureOperation? operation)
     {
         ValidateParameterPropertyCollisions(input, passDiagnostics);
-        ValidateOpenProviders(input, passDiagnostics, hostOperations);
+        // Passes rewrite the open lists they were given and never introduce one, so an admitted graph with no open has no
+        // provider question, and the presence walk over every node of the final tree would only repeat that answer.
+        if (operation is not { AdmittedWithoutOpens: true })
+            ValidateOpenProviders(input, passDiagnostics, hostOperations);
         ValidateInferredParameterOutputs(input, passDiagnostics);
     }
 
@@ -534,13 +543,15 @@ internal static class FrontEndPipeline
     /// Built from the raw parse inside <see cref="Parse(string, DiagnosticBag)"/>, so not even the
     /// parse result record outlives the call that produced it.
     /// </summary>
-    private sealed class ElaborationInput
+    internal sealed class ElaborationInput
     {
         private Algorithm? _current;
+        private int _rawGateHeight;
 
         private ElaborationInput(SyntaxParseResult syntax)
         {
             _current = syntax.SyntaxRoot;
+            _rawGateHeight = syntax.FullyRecursiveHeight;
             Diagnostics = syntax.Diagnostics;
         }
 
@@ -555,10 +566,27 @@ internal static class FrontEndPipeline
         {
             var current = Current;
             _current = null;
+            _rawGateHeight = -1;
             return current;
         }
 
-        public void Put(Algorithm next) => _current = next;
+        public void Put(Algorithm next)
+        {
+            _current = next;
+            _rawGateHeight = -1;
+        }
+
+        /// <summary>
+        /// Whether the raw gate already measured the current tree within <paramref name="maxDepth"/>: the same immutable root
+        /// under the same profile, so the walk would only repeat its answer. The height expires at the first handoff
+        /// or replacement, including a handoff to the module loader before this gate. It holds no second root reference.
+        /// </summary>
+        public bool ConsumeRawGateMeasurement(int maxDepth)
+        {
+            var height = _rawGateHeight;
+            _rawGateHeight = -1;
+            return height >= 0 && height <= maxDepth;
+        }
 
         public static ElaborationInput Parse(string source, DiagnosticBag diagnostics)
             => new(Parser.ParseSyntax(source, diagnostics));
@@ -601,6 +629,9 @@ internal static class FrontEndPipeline
 internal sealed record SyntaxParseResult(Algorithm.User Root, DiagnosticBag Diagnostics)
 {
     public Algorithm.User SyntaxRoot => Root;
+
+    /// <summary>The weighted height the raw gate measured for <see cref="Root"/> (fully recursive profile); -1 when rejected.</summary>
+    internal int FullyRecursiveHeight { get; init; } = -1;
 
     /// <summary>Whether the parse REPORTED an error — stored or dropped by the diagnostic budget.</summary>
     public bool HasErrors => Diagnostics.HasReportedErrors;

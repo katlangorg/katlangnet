@@ -191,9 +191,15 @@ internal sealed partial class StaticStructureOperation
                         ambiguousNames = (ambiguousNames ?? ImmutableHashSet.Create<string>(StringComparer.Ordinal)).Add(name);
                 }
             }
-            graph.Add(key, facts with { Receiver = Eligible(facts.Receiver), Open = Eligible(facts.Open),
-                Providers = facts.Providers.Select(Eligible).ToImmutableArray(), UnavailableOpenNames = unavailableNames,
-                AmbiguousOpenNames = ambiguousNames });
+            var receiverEligible = Eligible(facts.Receiver);
+            var openEligible = Eligible(facts.Open);
+            var providersEligible = facts.Providers.IsEmpty ? facts.Providers : facts.Providers.Select(Eligible).ToImmutableArray();
+            // The common context stays exactly as built; the provider list above is the one structure a copy would rewrite.
+            if (unavailableNames is null && ambiguousNames is null && receiverEligible == facts.Receiver && openEligible == facts.Open
+                && (facts.Providers.IsEmpty || facts.Providers.SequenceEqual(providersEligible)))
+                continue;
+            graph.Add(key, facts with { Receiver = receiverEligible, Open = openEligible, Providers = providersEligible,
+                UnavailableOpenNames = unavailableNames, AmbiguousOpenNames = ambiguousNames });
         }
         // Registry-owned builtin objects never retain a per-program graph; their exposure is already final.
         if (root is Algorithm.Builtin)

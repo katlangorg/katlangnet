@@ -3,14 +3,18 @@ namespace KatLang;
 /// <summary>Operation admission policy. A resource refusal is terminal and never an inference answer.</summary>
 internal static class StaticStructureAdmission
 {
-    internal readonly record struct Measurement(long Nodes, long Edges, long GraphBytes, StaticQueryLimits Limits);
+    internal readonly record struct Measurement(long Nodes, long Edges, long GraphBytes, StaticQueryLimits Limits, bool HasOpens = true);
 
     internal static (StaticStructureOperation Operation, Measurement Measurement) Create(Algorithm root, HostOperations? hostOperations = null,
         SourceProcessingLimits? sourceProcessingLimits = null, StaticAstPhase phase = StaticAstPhase.RawSource, IReadOnlyList<Algorithm>? sourceAncestors = null, CancellationToken cancellationToken = default)
     {
-        var prelude = hostOperations?.SemanticPreludeAlgorithm ?? BuiltinRegistry.CreateSemanticPreludeAlgorithm();
+        var prelude = hostOperations?.SemanticPreludeAlgorithm ?? BuiltinRegistry.SharedSemanticPreludeAlgorithm;
         var measurement = Measure(root, prelude, sourceProcessingLimits, sourceAncestors, out var sharedNodes, cancellationToken);
-        return (new(root, measurement.Limits, prelude, phase, cancellationToken) { SharedBodies = SharedBodyCensus.FromSharedNodes(sharedNodes) }, measurement);
+        return (new(root, measurement.Limits, prelude, phase, cancellationToken)
+        {
+            SharedBodies = SharedBodyCensus.FromSharedNodes(sharedNodes),
+            AdmittedWithoutOpens = !measurement.HasOpens,
+        }, measurement);
     }
 
     internal static Measurement Measure(Algorithm root, Algorithm prelude, SourceProcessingLimits? sourceProcessingLimits = null,
@@ -40,9 +44,11 @@ internal static class StaticStructureAdmission
         }
         if (seen.Count > maxSourceFacts) throw new StaticQueryLimitExceededException("Static source admission exceeded its node-storage envelope.");
         long edges = 0;
+        var hasOpens = false;
         while (pending.TryPop(out var node))
         {
             cancellationToken.ThrowIfCancellationRequested();
+            hasOpens |= node is Algorithm { Opens.Count: > 0 };
             for (var i = 0; AstStructuralPreflight.TryGetChild(node, i, out var child); i++)
             {
                 cancellationToken.ThrowIfCancellationRequested();
@@ -60,7 +66,7 @@ internal static class StaticStructureAdmission
         var facts = seen.Count + edges;
         var entries = (int)Math.Min(int.MaxValue, Math.Min(graphBytes / 1024, 4096 + 128 * Math.Min(facts, (long.MaxValue - 4096) / 128)));
         var limits = new StaticQueryLimits(16_384 + 1024 * Math.Min(facts, (long.MaxValue - 16_384) / 1024), 4, entries, 65_536 + 4096 * Math.Min(facts, (long.MaxValue - 65_536) / 4096), graphBytes / 64);
-        return new(seen.Count, edges, graphBytes, limits);
+        return new(seen.Count, edges, graphBytes, limits, hasOpens);
     }
 
     internal static Diagnostic Rejection(StaticQueryLimitExceededException error)

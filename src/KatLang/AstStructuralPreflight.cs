@@ -261,7 +261,19 @@ internal static class AstStructuralPreflight
         int maxDepth,
         AstConsumerProfile profile,
         FrontEndTraversalObservations? observations = null)
-        => CheckCore(root, maxDepth, profile, observations, detectCallCapture: false, deferredMemo: null, out _);
+        => CheckCore(root, maxDepth, profile, observations, detectCallCapture: false, deferredMemo: null, out _, out _);
+
+    /// <summary>
+    /// <see cref="Check"/>, also reporting the root's exact weighted height under <paramref name="profile"/> (-1 on a
+    /// rejection). The rejection test of the walk is exactly <c>height &gt; maxDepth</c> over an acyclic graph, so an
+    /// unchanged immutable root that fits a lower limit under the same profile needs no second walk.
+    /// </summary>
+    internal static AstStructuralRejection? CheckMeasuringHeight(
+        object root,
+        int maxDepth,
+        AstConsumerProfile profile,
+        out int rootHeight)
+        => CheckCore(root, maxDepth, profile, observations: null, detectCallCapture: false, deferredMemo: null, out _, out rootHeight);
 
     /// <summary>
     /// The evaluator's admission walk: <see cref="Check"/>
@@ -276,7 +288,7 @@ internal static class AstStructuralPreflight
         int maxDepth,
         AstConsumerProfile profile,
         out AdmittedProgramFacts facts)
-        => CheckCore(root, maxDepth, profile, observations: null, detectCallCapture: true, deferredMemo: null, out facts);
+        => CheckCore(root, maxDepth, profile, observations: null, detectCallCapture: true, deferredMemo: null, out facts, out _);
 
     /// <summary>
     /// Completed, context-independent subtree facts for ONE run's deferred-body checks. Only
@@ -299,7 +311,7 @@ internal static class AstStructuralPreflight
         object root, int maxDepth, DeferredAdmissionMemo memo, out bool hasDeferredRegions)
     {
         var rejection = CheckCore(root, maxDepth, AstConsumerProfile.EvaluatorIterativeJoinSpines,
-            observations: null, detectCallCapture: false, deferredMemo: memo, out _);
+            observations: null, detectCallCapture: false, deferredMemo: memo, out _, out _);
         hasDeferredRegions = rejection is null && memo.Completed[root].HasDeferredRegion;
         // Reuse can omit descendants from THIS walk's local height table. On rejection,
         // replay the ordinary walk once: its first crossing/cycle and shared-grouping slot
@@ -361,12 +373,14 @@ internal static class AstStructuralPreflight
         FrontEndTraversalObservations? observations,
         bool detectCallCapture,
         DeferredAdmissionMemo? deferredMemo,
-        out AdmittedProgramFacts facts)
+        out AdmittedProgramFacts facts,
+        out int rootHeight)
     {
         var mayCaptureCalls = false;
         var mayReachRuntimeAlias = false;
         var hasDeferredRegion = false;
         facts = default;
+        rootHeight = -1;
         // The hard ceiling is enforced HERE, not only at the configuration surface, so
         // no caller — present or future — can hand in a raised limit and re-open the
         // process-safety hole. The fully-recursive profile may use the larger
@@ -514,6 +528,7 @@ internal static class AstStructuralPreflight
             pathWeight += transitionWeight + childWeight;
         }
 
+        rootHeight = heights[root];
         facts = new AdmittedProgramFacts(mayCaptureCalls, mayReachRuntimeAlias, hasDeferredRegion);
         return null;
     }

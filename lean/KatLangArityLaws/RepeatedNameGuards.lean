@@ -18,6 +18,9 @@ namespace KatLang.RepeatedNameGuards
 
 /-! ## Value equality is structural and counts the emitted count -/
 
+/-- info: 'KatLang.Result.beq' depends on axioms: [propext] -/
+#guard_msgs in #print axioms Result.beq
+
 #guard (Result.listValue [.atom 1] == Result.listValue [.atom 1])
 #guard !(Result.listValue [.atom 1] == Result.sequenceValue [.atom 1])
 #guard !(Result.listValue [] == Result.sequenceValue [])

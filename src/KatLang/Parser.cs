@@ -697,10 +697,11 @@ public sealed class Parser
         // to overflow the recursive walkers that consume parser output. The iterative
         // preflight bounds the finished tree's TOTAL depth with one structured
         // diagnostic; downstream consumers never see the unsafe tree.
-        if (AstStructuralPreflight.Check(
+        if (AstStructuralPreflight.CheckMeasuringHeight(
                 root,
                 AstStructuralPreflight.RawSyntaxMaxAstDepth,
-                AstConsumerProfile.FullyRecursive) is { } structuralRejection)
+                AstConsumerProfile.FullyRecursive,
+                out var structuralHeight) is { } structuralRejection)
         {
             diagnostics.Add(AstStructuralPreflight.ToParseDiagnostic(
                 structuralRejection, AstStructuralPreflight.RawSyntaxMaxAstDepth));
@@ -716,7 +717,7 @@ public sealed class Parser
         }
 
         traversalObservations?.RecordTokenSteps(parser._tokenSteps);
-        return new SyntaxParseResult(root, diagnostics);
+        return new SyntaxParseResult(root, diagnostics) { FullyRecursiveHeight = structuralHeight };
     }
 
     /// <summary>
