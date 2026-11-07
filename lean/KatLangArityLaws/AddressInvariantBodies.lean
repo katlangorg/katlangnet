@@ -17,8 +17,8 @@ combinators by hand where noted.
 
 The opaque `partial` helpers the bodies reach (`peelSequenceSpreadLayers`,
 `sequenceConstructLeavesLoop`, `requiredParameterOwner?` through `capturedParameterActivation?`,
-`activeDeclaration?`, `scopeChainContains`, `reprStr` keys) return address-free data; every
-proof here holds for ARBITRARY values of them (no equation about them is used).
+`scopeChainContains`, `reprStr` keys), and the total `activeDeclaration?`, return address-free
+data; every proof here holds for ARBITRARY values of them (no equation about them is used).
 -/
 
 namespace KatLang.AddressInvariant

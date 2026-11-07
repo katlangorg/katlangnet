@@ -3401,9 +3401,13 @@ namespace ScopeCtx
     | .mk _ _ _ _ _ _ value _ => value
   def withActivation (value : Nat) : ScopeCtx -> ScopeCtx
     | .mk p ps op props out branches _ id => .mk p ps op props out branches (some value) id
-  partial def declaration : ScopeCtx -> ScopeCtx
-    | .mk p ps op props out branches _ id =>
-        .mk (p.map declaration) ps op props out branches none id
+  /-- The level without its activations, at every depth; declaration identities stay. TOTAL
+      (FG-I1, November 2026; formerly `partial`): structural over the finite parent chain, one arm
+      per parent presence so that the parent is visibly a subterm. -/
+  def declaration : ScopeCtx -> ScopeCtx
+    | .mk none ps op props out branches _ id => .mk none ps op props out branches none id
+    | .mk (some p) ps op props out branches _ id =>
+        .mk (some (declaration p)) ps op props out branches none id
   def ancestor? (scope : ScopeCtx) : Nat -> Option ScopeCtx
     | 0 => some scope
     | n + 1 => scope.parent >>= fun p => ancestor? p n
@@ -3556,12 +3560,15 @@ def compatibleActivations (required actual : Option ScopeCtx) : Bool :=
 def siteScope? (ctx : EvalCtx) : Option ScopeCtx :=
   ctx.headScope.orElse (fun _ => ctx.head?.map Algorithm.asScopeCtx)
 
-partial def activeDeclaration? (required : ScopeCtx) (level : Option ScopeCtx) : Option ScopeCtx :=
-  match level with
+/-- The nearest level of the chain `level` that is the same declaring scope as `required` under
+    compatible activations. TOTAL (FG-I1, November 2026; formerly `partial`): structural over the
+    finite parent chain, with the former body as its equation. -/
+def activeDeclaration? (required : ScopeCtx) : Option ScopeCtx -> Option ScopeCtx
   | none => none
-  | some scope =>
+  | some (.mk parent ps op props out branches activation id) =>
+      let scope := ScopeCtx.mk parent ps op props out branches activation id
       if sameDeclaringScope required scope && compatibleActivations (some required) (some scope)
-      then some scope else activeDeclaration? required scope.parent
+      then some scope else activeDeclaration? required parent
 
 def scopeInContext (a : Algorithm) (ctx : EvalCtx) : ScopeCtx :=
   let scope := a.asScopeCtx
@@ -6895,10 +6902,11 @@ up to an injective binder renaming). Repeated callable
 identity `sameRepeatedCallableIdentity` is no longer opaque either (S5, October 2026): its helpers
 `sameDeclaringScope` / `compatibleActivations` are total, so its outcome is a kernel term; only
 the anonymous-declaration fallback of `sameDeclaringScope` compares two `reprStr` strings of
-`ScopeCtx.declaration`, opaque values whose string equality is still lawful
-(`KatLangArityLaws/RepeatedNameLaws.lean` proves the identity laws it needs;
-`KatLangArityLaws/CallableIdentityDomain.lean` proves transitivity whenever no compared level
-decides an identified/anonymous pair through that fallback).
+`ScopeCtx.declaration`, opaque values (the core printer's layout loop is `partial`) whose string
+equality is still lawful (`KatLangArityLaws/RepeatedNameLaws.lean` proves the identity laws it
+needs; `KatLangArityLaws/CallableIdentityDomain.lean` proves transitivity whenever no compared level
+decides an identified/anonymous pair through that fallback;
+`KatLangArityLaws/CallableIdentityProvenance.lean` derives that from construction provenance).
 
 ONE GENERIC CORE (R3, October 2026). The binder and the dispatcher's search are written ONCE,
 in the `NeedBinder` namespace, over any monad with `Error` exceptions and the three
@@ -13216,8 +13224,31 @@ def preparedPropertyIdentity (id : Option PropertyIdentity) (next : Nat) : Prope
   | some (.host n) => (.host n, next)
   | _ => (.syntax next, next + 1)
 
+theorem InterpolationLink.sizeOf_hole_lt (link : InterpolationLink) :
+    sizeOf link.hole < sizeOf link := by cases link; simp; omega
+theorem ComparisonLink.sizeOf_operand_lt (link : ComparisonLink) :
+    sizeOf link.operand < sizeOf link := by cases link; simp; omega
+theorem CondBranch.sizeOf_body_lt (branch : CondBranch) :
+    sizeOf branch.body < sizeOf branch := by cases branch; simp; omega
+theorem PropDef.sizeOf_alg_lt (property : PropDef) :
+    sizeOf property.alg < sizeOf property := by cases property; simp; omega
+
+/-- Identification descends only into proper subterms of the tree it is given. -/
+macro "identify_decreasing" : tactic => `(tactic| (
+  simp_wf
+  all_goals first
+    | (simp <;> omega)
+    | (have := List.sizeOf_lt_of_mem ‹_ ∈ _›; have := InterpolationLink.sizeOf_hole_lt ‹_›; simp <;> omega)
+    | (have := List.sizeOf_lt_of_mem ‹_ ∈ _›; have := ComparisonLink.sizeOf_operand_lt ‹_›; simp <;> omega)
+    | (have := List.sizeOf_lt_of_mem ‹_ ∈ _›; have := CondBranch.sizeOf_body_lt ‹_›; simp <;> omega)
+    | (have := List.sizeOf_lt_of_mem ‹_ ∈ _›; simp <;> omega)
+    | (have := PropDef.sizeOf_alg_lt ‹_›; simp <;> omega)))
+
+/- The pass is TOTAL (FG-I1, November 2026; formerly `partial`): well-founded on the tree it is
+   given, one explicit `match` per optional child so that the child is visibly a subterm
+   (`Option.mapM`'s own equations), otherwise the former bodies. -/
 mutual
-  partial def identifyPropertyExpr : Expr -> StateM Nat Expr
+  def identifyPropertyExpr : Expr -> StateM Nat Expr
     | .param n => pure (.param n)
     | .num n => pure (.num n)
     | .stringLiteral s => pure (.stringLiteral s)
@@ -13243,35 +13274,54 @@ mutual
     | .call f args => return .call (<- identifyPropertyExpr f) (<- args.mapM identifyPropertyExpr)
     | .dotMember target name fallback args =>
         return .dotMember (<- identifyPropertyExpr target) name
-          (<- identifyPropertyExpr fallback) (<- args.mapM (List.mapM identifyPropertyExpr))
+          (<- identifyPropertyExpr fallback)
+          (<- match args with
+            | none => pure none
+            | some items => some <$> items.mapM identifyPropertyExpr)
+  termination_by expr => sizeOf expr
+  decreasing_by identify_decreasing
 
-  partial def identifyPropertyAlgorithm (algorithm : Algorithm) : StateM Nat Algorithm := do
+  def identifyPropertyAlgorithm (algorithm : Algorithm) : StateM Nat Algorithm := do
     let identity <- modifyGet (preparedAlgorithmIdentity algorithm.declarationId)
     match algorithm with
     | .builtin b => pure (.builtin b)
     | .mk parent parameters opens props output _ =>
-        return .mk (<- parent.mapM identifyPropertyScope) parameters
+        return .mk (<- match parent with
+          | none => pure none
+          | some scope => some <$> identifyPropertyScope scope) parameters
           (<- opens.mapM identifyPropertyExpr) (<- props.mapM identifyPropertyDefinition)
           (<- output.mapM identifyPropertyExpr) (some identity)
     | .conditional parent opens branches _ =>
-        return .conditional (<- parent.mapM identifyPropertyScope)
+        return .conditional (<- match parent with
+          | none => pure none
+          | some scope => some <$> identifyPropertyScope scope)
           (<- opens.mapM identifyPropertyExpr)
           (<- branches.mapM fun b => return { b with body := (<- identifyPropertyAlgorithm b.body) }) (some identity)
     | .alias parent opens props target _ reference =>
-        return .alias (<- parent.mapM identifyPropertyScope)
+        return .alias (<- match parent with
+          | none => pure none
+          | some scope => some <$> identifyPropertyScope scope)
           (<- opens.mapM identifyPropertyExpr) (<- props.mapM identifyPropertyDefinition)
           (<- identifyPropertyExpr target) (some identity) reference
+  termination_by sizeOf algorithm
+  decreasing_by identify_decreasing
 
-  partial def identifyPropertyScope : ScopeCtx -> StateM Nat ScopeCtx
+  def identifyPropertyScope : ScopeCtx -> StateM Nat ScopeCtx
     | .mk parent params opens props output branches _ id =>
-        return .mk (<- parent.mapM identifyPropertyScope) params
+        return .mk (<- match parent with
+          | none => pure none
+          | some scope => some <$> identifyPropertyScope scope) params
           (<- opens.mapM identifyPropertyExpr) (<- props.mapM identifyPropertyDefinition)
           (<- output.mapM identifyPropertyExpr)
           (<- branches.mapM fun b => return { b with body := (<- identifyPropertyAlgorithm b.body) }) none id
+  termination_by scope => sizeOf scope
+  decreasing_by identify_decreasing
 
-  partial def identifyPropertyDefinition (p : PropDef) : StateM Nat PropDef := do
+  def identifyPropertyDefinition (p : PropDef) : StateM Nat PropDef := do
     let identity <- modifyGet (preparedPropertyIdentity p.identity)
     return { p with identity := some identity, alg := (<- identifyPropertyAlgorithm p.alg) }
+  termination_by sizeOf p
+  decreasing_by identify_decreasing
 end
 
 /-- THE RUN RESULT BOUNDARY (CallReference S1, J4): a call reference is run-scoped, so a

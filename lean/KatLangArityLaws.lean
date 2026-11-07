@@ -97,7 +97,8 @@ connects them to this traversal on flat levels of name patterns; since S6a
 `KatLangArityLaws/NestedRepeatedNames.lean` connects them to nested and mixed heads (fresh Ready
 children, collectors, literals, META) and proves the stability premise for the production binder
 channels on completed and Ready cells, and `KatLangArityLaws/CallableIdentityDomain.lean` widens
-callable-identity transitivity to every pair without an identified/anonymous fallback; and
+callable-identity transitivity to every pair without an identified/anonymous fallback, with
+`KatLangArityLaws/CallableIdentityProvenance.lean` deriving that from construction provenance; and
 `KatLangArityLaws/SupplyCorrespondence.lean` proves a heap-renaming SIMULATION of the whole binder
 and the callback route's Ready-supply correspondence (premises: the two `partial` channels). The outcomes of the pattern helpers (literal
 matching, kind-mismatch payload, duplicate-clause check) stay symbolic there — they need no more —
@@ -2255,9 +2256,12 @@ mixed heads (`KatLangArityLaws/NestedRepeatedNames.lean`: `production_head_walk`
 whose VALUE clause is likewise conditional on a mixed group), over the production binder
 channels' completed and Ready cells (`shell_model_caps`), and callable identity is transitive
 whenever no compared level is decided by an identified/anonymous printed-declaration fallback
-(`KatLangArityLaws/CallableIdentityDomain.lean`); arbitrary suspended or failing contributions and
-full transitivity (one residual about the opaque printer, `ReprSeparatesPresence`) remain open
-(roadmap R4). Concrete outcomes are executed by guards — CoreTests `HigherOrderCalls`
+(`KatLangArityLaws/CallableIdentityDomain.lean`) and on the provenance domain, with no printer
+premise (`KatLangArityLaws/CallableIdentityProvenance.lean`, `production_head_walk_follows`). Open:
+arbitrary suspended or failing contributions, that every CALLABLE of a real run lies in that domain
+(`ModelFollows` is a premise), and full transitivity (one residual about the opaque printer,
+`ReprSeparatesPresence`; the printer's layout loop is `partial`, and no kernel proof of the
+residual is supplied), roadmap R4. Concrete outcomes are executed by guards — CoreTests `HigherOrderCalls`
 (`repeatedNameCompatibilityAndFirstFailure`, `twoOccurrenceRepeatsKeepThePairwiseRule`,
 `repeatedSuccessfulCallablePermutationsKeepBothChannels`,
 `repeatedCountedBindingChecksTheCompletePair`), `ModelC` (`mixedRepeatedConflicts`,
@@ -4017,7 +4021,8 @@ identity `sameRepeatedCallableIdentity` was the fourth such helper until S5 (Oct
 `sameDeclaringScope` / `compatibleActivations` became total; the R3 modules still treat its outcome
 symbolically (they need nothing more), and `KatLangArityLaws/RepeatedNameLaws.lean` proves its
 reflexivity, symmetry and (on a stated domain) transitivity for the Q-28 laws
-(`KatLangArityLaws/CallableIdentityDomain.lean` widens the domain, S6a).
+(`KatLangArityLaws/CallableIdentityDomain.lean` widens the domain, S6a;
+`KatLangArityLaws/CallableIdentityProvenance.lean` states it by construction, FG-I1).
 -/
 
 namespace KatLang.BinderCore

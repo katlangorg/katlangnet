@@ -20,8 +20,9 @@ about the definition the evaluator calls.
 WHAT IS NOT CLAIMED. Lean cannot recover C# object provenance from equal values: that one host
 object received one token and distinct objects distinct tokens is the encoder's obligation
 (`tests/KatLang.Tests/LeanAstEncoder.cs`, a reference map), exercised by the executable differential
-corpus `CoreTests/HostParentDifferential.lean`, not proved here. The partial identification pass
-(`identifyPropertyScope` keeps every identity slot verbatim) and the pre-evaluation consistency check
+corpus `CoreTests/HostParentDifferential.lean`, not proved here. The identification pass
+(`identifyPropertyScope` keeps every identity slot verbatim: `identifyPropertyScope_slots`,
+`CallableIdentityProvenance`) and the partial pre-evaluation consistency check
 (`hostProvenanceViolation?`) are executable (`CoreTests/HostScopeIdentity.lean`); their per-node
 identity decisions are proved below. Separation statements for TEXTUAL keys rest on the prefix code
 `hostMarksKeyChars`, proved injective here — no property of `reprStr` is assumed.

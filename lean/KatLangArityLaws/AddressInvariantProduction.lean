@@ -24,7 +24,7 @@ replaced here by premise-free (`Inv` + structural input validity) theorems:
   `production_needActivateBranch`.
 * **Entry** (`production_entry_program`, `production_entry_eval`): `evalProgramOutput wired` and
   `eval e` from `{callStack := [preludeAlg]}` and `[]`, for EVERY `wired` / `e` (in particular every
-  output of the opaque `identifyPropertyExpr` / `validateExprTree` passes of `runResultM`), from
+  output of the `identifyPropertyExpr` / `validateExprTree` passes of `runResultM`), from
   every `Inv` state, in particular `EvalState.empty`. The `runResultM`-level bridge stays open.
 -/
 

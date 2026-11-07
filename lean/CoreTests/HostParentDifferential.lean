@@ -11,8 +11,8 @@ evaluator ran on every route (plain, counted, generic, optimized, suspending asy
 (per property name, and in total). A failing guard is a Lean/C# divergence on that case.
 
 Partition (machine-checked by the `*CaseIds.length` guards below):
-- corpus cases: 102
-- comparable cases: 102
+- corpus cases: 104
+- comparable cases: 104
 - known HOST-LEAN-O6 divergences, pinned on both sides and excluded from comparison: 0
 
 Regenerate from the repo root with:
@@ -906,6 +906,16 @@ def hp_14r : Expr :=
 #guard cacheEntries hp_14r "R" == 1
 #guard cacheTotal hp_14r == 2
 
+-- HP-14s: NEED-04: one shared block as an open target and a property is two callables
+def hp_14s : Expr :=
+  (.algorithmExpr (alg [] [(.algorithmExpr (Algorithm.withDeclarationId (some (.shared 1)) (alg [] [] [{ (publicProp "F" (Algorithm.withDeclarationId (some (.shared 0)) (alg ["x"] [] [] [.param "x"]))) with identity := some (.shared 0) }] [])))] [publicProp "N" (Algorithm.withDeclarationId (some (.shared 1)) (alg [] [] [{ (publicProp "F" (Algorithm.withDeclarationId (some (.shared 0)) (alg ["x"] [] [] [.param "x"]))) with identity := some (.shared 1) }] [])), privateProp "P" (alg ["f", "f", "f"] [] [] [.num 0])] [(.call (.resolve "P") [.resolve "F", (.dotCall (.resolve "N") "F" none), .resolve "F"])]))
+#guard obs hp_14s == "err type"
+
+-- HP-14t: NEED-04: one block under two host levels and the prelude, at one depth, is three callables
+def hp_14t : Expr :=
+  (.algorithmExpr (alg [] [] [publicProp "P" (alg [] [(.algorithmExpr (Algorithm.withDeclarationId (some (.shared 1)) (Algorithm.withParent (some (ScopeCtx.mk none [] [] [] [] [] none (some (.host 0)))) (alg [] [] [{ (publicProp "F" (Algorithm.withDeclarationId (some (.shared 0)) (alg ["x"] [] [] [.param "x"]))) with identity := some (.shared 0) }] []))))] [publicProp "G" (.alias none [] [] (.resolve "F"))] []), publicProp "Q" (alg [] [(.algorithmExpr (Algorithm.withDeclarationId (some (.shared 1)) (alg [] [] [{ (publicProp "F" (Algorithm.withDeclarationId (some (.shared 0)) (alg ["x"] [] [] [.param "x"]))) with identity := some (.shared 1) }] [])))] [publicProp "G" (.alias none [] [] (.resolve "F"))] []), publicProp "R" (alg [] [(.algorithmExpr (Algorithm.withDeclarationId (some (.shared 1)) (Algorithm.withParent (some (ScopeCtx.mk none [] [] [] [] [] none (some (.host 1)))) (alg [] [] [{ (publicProp "F" (Algorithm.withDeclarationId (some (.shared 0)) (alg ["x"] [] [] [.param "x"]))) with identity := some (.shared 2) }] []))))] [publicProp "G" (.alias none [] [] (.resolve "F"))] []), privateProp "Same" (alg ["f", "f", "f"] [] [] [.num 0])] [(.call (.resolve "Same") [(.dotCall (.resolve "P") "G" none), (.dotCall (.resolve "Q") "G" none), (.dotCall (.resolve "R") "G" none)])]))
+#guard obs hp_14t == "err type"
+
 -- HP-15a: a deconstruction helper copied over another argument, copy read first (H04)
 def hp_15a : Expr :=
   (.algorithmExpr (alg [] [] [privateProp "$deconstruct$0" (alg [] [] [] [(.capture [.num 1, .num 2])]), privateProp "a" (Algorithm.withDeclarationId (some (.shared 1)) (alg [] [] [] [(.call (.algorithmExpr (Algorithm.withDeclarationId (some (.shared 0)) (algWithParameterPatterns [.unpacking [.capture { name := "a" }, .capture { name := "b" }]] [] [] [.param "a"]))) [.resolve "$deconstruct$0"])])), privateProp "b" (alg [] [] [] [(.call (.algorithmExpr (algWithParameterPatterns [.unpacking [.capture { name := "a" }, .capture { name := "b" }]] [] [] [.param "b"])) [.resolve "$deconstruct$0"])]), privateProp "q" (alg [] [] [] [(.capture [.num 7, .num 8])]), privateProp "c" (Algorithm.withDeclarationId (some (.shared 1)) (alg [] [] [] [(.call (.algorithmExpr (Algorithm.withDeclarationId (some (.shared 0)) (algWithParameterPatterns [.unpacking [.capture { name := "a" }, .capture { name := "b" }]] [] [] [.param "a"]))) [.resolve "q"])]))] [.resolve "c", .resolve "a"]))
@@ -1055,13 +1065,15 @@ def comparableCaseIds : List String := [
   "HP-14p",
   "HP-14q",
   "HP-14r",
+  "HP-14s",
+  "HP-14t",
   "HP-15a",
   "HP-15b",
   "HP-15c",
   "HP-15d",
   "HP-15e"
 ]
-#guard comparableCaseIds.length == 102
+#guard comparableCaseIds.length == 104
 
 /--
 Machine-checked known-divergence partition count (HOST-LEAN-O6 shapes pinned on both sides).
@@ -1071,5 +1083,5 @@ def divergentCaseIds : List String := [
 ]
 #guard divergentCaseIds.length == 0
 
--- 102 comparable cases, 0 known divergences.
+-- 104 comparable cases, 0 known divergences.
 end HostParentDifferential

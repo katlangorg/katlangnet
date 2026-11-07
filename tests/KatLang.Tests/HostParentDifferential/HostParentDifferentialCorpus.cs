@@ -538,6 +538,36 @@ public static class HostParentDifferentialCorpus
                 LiteralAliases(false), "R", "F");
             Case("HP-14r", "control: shared runtime alias literal under owned parents sharing their opens list",
                 LiteralAliases(true), "R", "F");
+
+            // FG-I1: one declaration under an identified and under an anonymous level. One block object
+            // is an inline `open` target (wired under the root's anonymous level) and a property
+            // (wired under the identified root), so the two reaches of `F` are one declaration, equal
+            // block levels, and a MIXED parent pair: the outside of Lean's provenance domain.
+            Expr SharedAcrossPresence()
+            {
+                var block = Namespace(Public("F", Fn(["x"], X("x"))));
+                return Program([Block(block)], [Public("N", block), Prop("P", Fn(["f", "f", "f"], N(0)))],
+                    Call("P", R("F"), Dot(R("N"), "F"), R("F")));
+            }
+            Case("HP-14s", "NEED-04: one shared block as an open target and a property is two callables",
+                SharedAcrossPresence());
+
+            // FG-I1: the same block pre-wired under two ownerless host levels and left unwired once: three
+            // chains of EQUAL depth, so activations cannot refuse the pair. In Lean only the printed
+            // fallback separates the identified from the anonymous outer level (`equalDepthFork`).
+            Expr EqualDepthFork()
+            {
+                var block = Namespace(Public("F", Fn(["x"], X("x"))));
+                static Property Opener(string name, Algorithm opened) => Public(name, new Algorithm.User(null,
+                    L<ParameterPattern>(), L(Block(opened)),
+                    L(Public("G", new Algorithm.Alias(null, L<Expr>(), L<Property>(), R("F")))), OutputBundle.Empty));
+                return Program([],
+                    [Opener("P", block with { Parent = Scope(null) }), Opener("Q", block),
+                     Opener("R", block with { Parent = Scope(null) }), Prop("Same", Fn(["f", "f", "f"], N(0)))],
+                    Call("Same", Dot(R("P"), "G"), Dot(R("Q"), "G"), Dot(R("R"), "G")));
+            }
+            Case("HP-14t", "NEED-04: one block under two host levels and the prelude, at one depth, is three callables",
+                EqualDepthFork());
         }
 
         // HP-15: DECON-CACHE-2 — parsed assignment deconstructions transformed with public record copies

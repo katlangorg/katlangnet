@@ -44,7 +44,8 @@ The premises that remain are initial facts about a chain (`RetainedAt` at the ea
 discharged by §3 for entered and dispatched bodies; `RetainedAt` mentions no later state.
 
 NOT claimed: that `scopeInContext` selected the semantically intended declaration
-(`activeDeclaration?` is `partial`, hence `childOfInContext_chain`'s selection premise), so which
+(`activeDeclaration?` decides mixed pairs by printed text, hence `childOfInContext_chain`'s selection
+premise), so which
 chain a given production read resolves stays a source fact pinned by guards; that every expression's
 property reads route through `evalZeroArgPropertyAccessCounted`; `WiresDirectly` for a module or
 builtin, which rebuild a different chain or have none; reuse across a fresh owner activation or a
@@ -415,7 +416,8 @@ theorem RetainedAt.wired {chain : Option ScopeCtx} {s : EvalState} {n : Nat} {ch
   rw [hw]; exact hr
 
 /-- What `childOfInContext` wires, GIVEN the scope `scopeInContext` selected. That selection is the
-    lookup-fidelity question (`activeDeclaration?` is `partial`), kept as a premise here. -/
+    lookup-fidelity question (`activeDeclaration?` is total, but decides a mixed-presence pair by
+    printed text), kept as a premise here. -/
 theorem childOfInContext_chain {parent child : Algorithm} {ctx : EvalCtx} {scope : ScopeCtx}
     (hw : WiresDirectly child) (hsel : scopeInContext parent ctx = scope) :
     (childOfInContext parent child ctx).parent = some scope := by

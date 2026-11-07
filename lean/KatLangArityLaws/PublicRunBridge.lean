@@ -26,18 +26,19 @@ drift of `runResultM` breaks this module. Over it, with standard axioms only:
   phrased through ONE predicate `Incomplete`, the interface its statements use for the incomplete
   representation (Constitution Q-82, open). The bridge proofs also use the core's normal-form laws.
 
-THE OPAQUE PREFIX. Identification (`identifyPropertyExpr`), validation
-(`validateExplicitParamOutputInvariantExpr` → the partial `validate*Tree`/`aliasCount`/
-`staticChain`) and root wiring (`wireToCaller` → the partial `activeDeclaration?`/
-`ScopeCtx.declaration`) are `partial def`s, i.e. kernel-opaque constants. Every theorem below is
-PARAMETRIC in them: the proofs never unfold them, they case-split on whatever outcome and state the
-validator yields and whatever tree identification yields (`runResultWith_oneCall`). They assume no
-reachable-state, address or admission premise.
+THE PREFIX. Validation (`validateExplicitParamOutputInvariantExpr` → the partial
+`validate*Tree`/`aliasCount`/`staticChain`) stays a kernel-opaque `partial def`. Identification
+(`identifyPropertyExpr`) and root wiring (`wireToCaller`) are total since FG-I1, but the theorems
+below were and stay PARAMETRIC in all three: the proofs never unfold them, they case-split on
+whatever outcome and state the validator yields and whatever tree identification yields
+(`runResultWith_oneCall`). They assume no reachable-state, address or admission premise. What
+identification and root wiring do to identities is `CallableIdentityProvenance` § Entry and
+preparation.
 
-NOT claimed (it needs the prefix made total — Tier 2 of the R7-FU-01 plan,
-`artifacts/validation/r7-fu-01/REPORT.md`): anything about what identification, validation or
-wiring DO (the validator leaves the state unchanged or never yields the incomplete outcome,
-identification keeps the root constructor, the admitted set); any entry-state invariant at the
+NOT claimed here (it needs validation made total — Tier 2 of the R7-FU-01 plan,
+`artifacts/validation/r7-fu-01/REPORT.md`): anything about what validation DOES (the validator
+leaves the state unchanged or never yields the incomplete outcome, the admitted set), or that
+identification keeps the root constructor; any entry-state invariant at the
 public root call (e.g. FG-H1's `StateValid`, "no stored incomplete outcome"); that a public
 incomplete outcome means divergence (in the kernel it means: the validator yields it, OR the root
 call is incomplete at every fuel from the post-validation state — and a crafted entry state can

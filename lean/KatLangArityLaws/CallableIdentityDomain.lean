@@ -13,9 +13,10 @@ transitivity remains open.
 
 THE ONE NON-STRUCTURAL STEP. `sameDeclaringScope l r` compares two levels structurally when both
 carry a declaration identity and otherwise falls back to `reprStr l.declaration ==
-reprStr r.declaration`. `ScopeCtx.declaration` is `partial` and the derived `Repr` is opaque to
-the kernel, so nothing is known about those strings except that string equality is an
-equivalence. The fallback is reached between two levels of DIFFERENT presence (one identified,
+reprStr r.declaration`. The current proofs use only that string equality is an equivalence;
+no separation or injectivity theorem for the printed declarations is supplied. (FG-I1, November 2026: `ScopeCtx.declaration` is total now, but `reprStr` still goes
+through the core printer `Std.Format.pretty`, whose layout loop is `partial`, so the strings stay
+kernel-opaque whatever the transformation before them.) The fallback is reached between two levels of DIFFERENT presence (one identified,
 one anonymous) exactly when the comparison walks down to such a pair — a CROSS fallback.
 
 RESULTS.
@@ -32,12 +33,19 @@ RESULTS.
 4. `same_identity_trans_of_separating`, `callable_trans_on_of_separating`: FULL transitivity for
    every algorithm, every list — under ONE explicit residual, `ReprSeparatesPresence`: the
    printed declaration of an identified scope never equals that of an anonymous one. It is not a
-   kernel fact (opaque `partial` printer) and is NOT assumed anywhere else; executable evidence
-   only (`CallableIdentityDomainGuards`).
+   proved kernel fact (opaque `partial` printer). The conditional
+   `CallableIdentityProvenance.sitePresence_of_separating` also takes this premise explicitly;
+   executable evidence lives in `NestedRepeatedNameGuards` and `CallableIdentityProvenanceGuards`.
 5. `intransitive_identity_breaks_permutation`: what would fail without it. Any intransitive
    triple — which needs a successful cross fallback (`intransitivity_needs_a_cross_fallback`) —
    makes repeated-name SATISFIABILITY order dependent (result 2 of `RepeatedNameLaws`): one order
    fails with a callable conflict, a permutation of the same contributions succeeds.
+6. FG-I1, the PRINTER-FREE domain: `WalkAligned` follows the comparison's own decision path and
+   reads no printed text; `SuccessAligned` is the weakest pairwise condition these proofs use (a
+   successful comparison is presence-aligned). `same_identity_trans_of_success_aligned` and
+   `callable_trans_on_of_success_aligned` are the common core; `success_aligned_of_no_cross` and
+   `success_aligned_of_walk_aligned` connect both sufficient domains to it.
+   `CallableIdentityProvenance` derives the printer-free domain from construction provenance.
 
 No identity semantics changed. The optional-callable trap is independent of all of this: under the
 group-aware NEED-04 fold it follows from `gfold_ok_iff_compatible` (`RepeatedNameLaws`) and is guarded in
@@ -149,9 +157,10 @@ theorem broader_than_equal_profiles :
 /-! ## The residual: printed declarations separate presence -/
 
 /-- THE ONE RESIDUAL OF FULL TRANSITIVITY: the printed declaration of an identified scope never
-    equals the printed declaration of an anonymous one. `ScopeCtx.declaration` is `partial` and
-    the derived `Repr` opaque, so this is not a kernel fact; no theorem outside this section
-    assumes it. Executable evidence: `CallableIdentityDomainGuards`. -/
+    equals the printed declaration of an anonymous one. The derived `Repr` and the core printer
+    are opaque, and no kernel proof of this proposition is supplied. It is an explicit premise
+    here and in `CallableIdentityProvenance.sitePresence_of_separating`. Executable evidence:
+    `NestedRepeatedNameGuards`, `CallableIdentityProvenanceGuards`. -/
 def ReprSeparatesPresence : Prop :=
   ∀ u v : ScopeCtx, u.declarationId.isSome = true → v.declarationId = none →
     reprStr u.declaration ≠ reprStr v.declaration
@@ -231,6 +240,152 @@ theorem same_identity_trans_of_separating (hsep : ReprSeparatesPresence) (a b c 
 theorem callable_trans_on_of_separating (hsep : ReprSeparatesPresence) (l : List Contribution) :
     CallableTransOn l :=
   fun a b c _ _ _ hab hbc => same_identity_trans_of_separating hsep a b c hab hbc
+
+/-! ## The printer-free domain (FG-I1)
+
+`NoCrossFallback` still quotes printed text at a mixed level, and walks past levels whose comparison
+has already failed. The two relations below do neither. -/
+
+/-- The comparison's DECISION PATH never meets a mixed-presence level: two identified levels are
+    read further only when their identity and binder view agree (otherwise the comparison has
+    already failed), two anonymous levels end the walk, a mixed pair is refused. No printed text. -/
+def WalkAligned : ScopeCtx → ScopeCtx → Prop
+  | .mk p ps _ _ _ _ _ (some a), .mk q qs _ _ _ _ _ (some b) =>
+      a = b → ps = qs →
+        match p, q with
+        | some p, some q => WalkAligned p q
+        | _, _ => True
+  | .mk _ _ _ _ _ _ _ none, .mk _ _ _ _ _ _ _ none => True
+  | _, _ => False
+
+/-- A successful comparison along an aligned decision path is presence-aligned. -/
+theorem aligned_of_walk_aligned : ∀ x y : ScopeCtx,
+    WalkAligned x y → sameDeclaringScope x y = true → Aligned x y
+  | .mk xp _ _ _ _ _ _ (some _), .mk yp _ _ _ _ _ _ (some _), hw, hs => by
+      rcases xp with _ | p <;> rcases yp with _ | q <;> simp only [Aligned]
+      simp only [sameDeclaringScope, Bool.and_eq_true, beq_iff_eq] at hs
+      simp only [WalkAligned] at hw
+      exact aligned_of_walk_aligned p q (hw hs.1.1 hs.1.2) hs.2
+  | .mk _ _ _ _ _ _ _ none, .mk _ _ _ _ _ _ _ none, _, _ => by simp only [Aligned]
+  | .mk _ _ _ _ _ _ _ (some _), .mk _ _ _ _ _ _ _ none, hw, _ => by simp only [WalkAligned] at hw
+  | .mk _ _ _ _ _ _ _ none, .mk _ _ _ _ _ _ _ (some _), hw, _ => by simp only [WalkAligned] at hw
+
+/-- Declaring-scope sameness is transitive along aligned decision paths. -/
+theorem same_declaring_scope_trans_of_walk_aligned (x y z : ScopeCtx)
+    (hxy : WalkAligned x y) (hyz : WalkAligned y z)
+    (h1 : sameDeclaringScope x y = true) (h2 : sameDeclaringScope y z = true) :
+    sameDeclaringScope x z = true :=
+  same_declaring_scope_trans_aligned x y z
+    (aligned_of_walk_aligned x y hxy h1) (aligned_of_walk_aligned y z hyz h2) h1 h2
+
+/-- Two optional parents read at aligned presence. -/
+def ParentAligned : Option ScopeCtx → Option ScopeCtx → Prop
+  | some p, some q => Aligned p q
+  | _, _ => True
+
+/-- The weakest pairwise condition of the transitivity proof: a SUCCESSFUL identity comparison
+    read its parents at aligned presence. It constrains no failing pair, so unrelated callables
+    may have any parent shape. -/
+def SuccessAligned (a b : Algorithm) : Prop :=
+  sameRepeatedCallableIdentity a b = true → ParentAligned a.parent b.parent
+
+theorem same_parent_trans_of_aligned (p q r : Option ScopeCtx)
+    (h1 : ParentAligned p q) (h2 : ParentAligned q r)
+    (hpq : sameParent p q = true) (hqr : sameParent q r = true) : sameParent p r = true := by
+  rcases p with _ | p <;> rcases q with _ | q <;> rcases r with _ | r <;>
+    simp_all [sameParent, ParentAligned]
+  exact same_declaring_scope_trans_aligned p q r h1 h2 hpq hqr
+
+/-- THE COMMON CORE: repeated callable identity is transitive on successful presence-aligned
+    pairs. -/
+theorem same_identity_trans_of_success_aligned (a b c : Algorithm)
+    (h1 : SuccessAligned a b) (h2 : SuccessAligned b c)
+    (hab : sameRepeatedCallableIdentity a b = true) (hbc : sameRepeatedCallableIdentity b c = true) :
+    sameRepeatedCallableIdentity a c = true := by
+  have al1 := h1 hab
+  have al2 := h2 hbc
+  rw [same_identity_eq] at hab hbc ⊢
+  cases ha : asBuiltin? a <;> cases hb : asBuiltin? b <;> cases hc : asBuiltin? c <;>
+    simp_all [beq_iff_eq]
+  simp only [identityCore, Bool.and_eq_true, beq_iff_eq] at hab hbc ⊢
+  obtain ⟨⟨⟨d1, s1⟩, c1⟩, c1'⟩ := hab
+  obtain ⟨⟨⟨d2, s2⟩, c2⟩, c2'⟩ := hbc
+  have e1 := (compatible_activations_both_iff a.parent b.parent).mp ⟨c1, c1'⟩
+  have e2 := (compatible_activations_both_iff b.parent c.parent).mp ⟨c2, c2'⟩
+  have e := (compatible_activations_both_iff a.parent c.parent).mpr (e1.trans e2)
+  exact ⟨⟨⟨d1.trans d2, same_parent_trans_of_aligned _ _ _ al1 al2 s1 s2⟩, e.1⟩, e.2⟩
+
+/-- `CallableTransOn` for every list whose present identities are pairwise success-aligned. -/
+theorem callable_trans_on_of_success_aligned (l : List Contribution)
+    (h : ∀ a b, Present l a → Present l b → SuccessAligned a b) : CallableTransOn l := by
+  intro a b c ha hb hc hab hbc
+  exact same_identity_trans_of_success_aligned a b c (h a b ha hb) (h b c hb hc) hab hbc
+
+/-- A successful identity comparison of two non-builtins compares their declarations and parents;
+    a successful comparison of builtins has no parent to compare. -/
+theorem same_identity_parts (a b : Algorithm) (h : sameRepeatedCallableIdentity a b = true) :
+    (a.parent = none ∧ b.parent = none) ∨
+      (PropertyIdentity.callableDeclaration a.declarationId =
+          PropertyIdentity.callableDeclaration b.declarationId ∧
+        sameParent a.parent b.parent = true) := by
+  rw [same_identity_eq] at h
+  cases ha : asBuiltin? a with
+  | some x =>
+    cases hb : asBuiltin? b with
+    | some y =>
+      cases a <;> cases b <;> simp_all [asBuiltin?, Algorithm.parent]
+    | none => simp [ha, hb] at h
+  | none =>
+    cases hb : asBuiltin? b with
+    | some y => simp [ha, hb] at h
+    | none =>
+      simp only [ha, hb, identityCore, Bool.and_eq_true, beq_iff_eq] at h
+      exact Or.inr ⟨h.1.1.1, h.1.1.2⟩
+
+/-- The existing no-cross domain is inside the common core. -/
+theorem success_aligned_of_no_cross (a b : Algorithm) (h : IdentityNoCross a b) :
+    SuccessAligned a b := by
+  intro hs
+  rcases same_identity_parts a b hs with ⟨hp, _⟩ | ⟨_, hp⟩
+  · simp [hp, ParentAligned]
+  · unfold IdentityNoCross at h
+    cases hl : a.parent <;> cases hr : b.parent <;> simp only [ParentAligned]
+    rw [hl, hr] at h hp
+    simp only [ParentNoCross] at h
+    simp only [sameParent] at hp
+    exact same_declaring_scope_profile_aligned _ _ h hp
+
+/-- Two optional parents whose comparison stays on an aligned decision path. -/
+def ParentWalkAligned : Option ScopeCtx → Option ScopeCtx → Prop
+  | some p, some q => WalkAligned p q
+  | _, _ => True
+
+/-- The printer-free pairwise domain: two algorithms of ONE callable declaration compare their
+    parents along an aligned decision path. Distinct declarations are unconstrained. -/
+def IdentityWalkAligned (a b : Algorithm) : Prop :=
+  PropertyIdentity.callableDeclaration a.declarationId =
+      PropertyIdentity.callableDeclaration b.declarationId →
+    ParentWalkAligned a.parent b.parent
+
+theorem success_aligned_of_walk_aligned (a b : Algorithm) (h : IdentityWalkAligned a b) :
+    SuccessAligned a b := by
+  intro hs
+  rcases same_identity_parts a b hs with ⟨hp, _⟩ | ⟨hd, hp⟩
+  · simp [hp, ParentAligned]
+  · have hw := h hd
+    cases hl : a.parent <;> cases hr : b.parent <;> simp only [ParentAligned]
+    rw [hl, hr] at hw hp
+    simp only [ParentWalkAligned] at hw
+    simp only [sameParent] at hp
+    exact aligned_of_walk_aligned _ _ hw hp
+
+/-- PRINTER-FREE TRANSITIVITY of repeated callable identity on aligned decision paths. -/
+theorem same_identity_trans_of_walk_aligned (a b c : Algorithm)
+    (h1 : IdentityWalkAligned a b) (h2 : IdentityWalkAligned b c)
+    (hab : sameRepeatedCallableIdentity a b = true) (hbc : sameRepeatedCallableIdentity b c = true) :
+    sameRepeatedCallableIdentity a c = true :=
+  same_identity_trans_of_success_aligned a b c (success_aligned_of_walk_aligned a b h1)
+    (success_aligned_of_walk_aligned b c h2) hab hbc
 
 /-! ## What fails without the residual -/
 

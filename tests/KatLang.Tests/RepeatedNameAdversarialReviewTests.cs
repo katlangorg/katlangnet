@@ -189,6 +189,90 @@ public class RepeatedNameAdversarialReviewTests(ITestOutputHelper output)
         Assert.InRange(allocated, 0, 4096L * items.Count + 65536);
     }
 
+    /// <summary>
+    /// FG-I1: groups of three callable contributions, the shape transitivity decides. Agreement reads
+    /// the declaration, the declaring scope and the activation, never a value or a similar body, so
+    /// the verdict must be the same in every written order of one multiset of contributions.
+    /// </summary>
+    private const string ThreeCallableProgram = """
+        Same(f, f, f) = 0
+        Inc(x) = x
+        Twin(x) = x
+        Ref = Inc
+        Carrier = { Inc }
+        One = 1
+        Uno = 1
+        Fwd(g) = Same(g, g, g)
+        OneActivation(n) = {
+            L(x) = n
+            Same(L, L, L)
+        }
+        W(n, k) = {
+            L(x) = n
+            k(L)
+        }
+        TwoActivations(g) = {
+            C(h) = Same(g, h, g)
+            W(1, C)
+        }
+        Opened = {
+            open { public F(x) = x }
+            Same(F, F, F)
+        }
+        OpenedAgainstLocal = {
+            open { public F(x) = x }
+            Same(F, Inc, F)
+        }
+        Mid = {
+            open Lib.Sub
+            Lib = { public Sub = { public X(x) = x } }
+            Inner = Same(X, X, X)
+            Inner
+        }
+
+        """;
+
+    [Theory]
+    [InlineData("Fwd(Inc)", true)] // one retained declaration, forwarded, nothing evaluated
+    [InlineData("OneActivation(1)", true)]
+    [InlineData("W(1, TwoActivations)", false)] // one declaration, two activations, equal values
+    [InlineData("Same(map, map, map)", true)]
+    [InlineData("Opened", true)] // an anonymous ancestor below the opened block
+    [InlineData("OpenedAgainstLocal", false)]
+    [InlineData("Mid", true)] // a dotted open read from the anonymous lookup wrapper of a nested site
+    public async Task CallableGroups_AgreeOnTheDeclarationAndItsActivation(string call, bool agrees)
+    {
+        var result = await RepeatedNameConstraintTests.OnEveryRouteAsync(ThreeCallableProgram + call);
+        if (agrees)
+            Assert.Equal("ok 0", result.Outcome);
+        else
+            Assert.StartsWith("err TypeMismatch:", result.Outcome);
+    }
+
+    [Theory]
+    [InlineData("Inc", "Inc", "Ref", true)] // a transparent reference is its target
+    [InlineData("Ref", "Ref", "Ref", true)]
+    [InlineData("Carrier", "Carrier", "Carrier", true)]
+    [InlineData("Inc", "Inc", "Twin", false)] // equal bodies are distinct declarations
+    [InlineData("Inc", "Inc", "Carrier", false)] // a carrier is its own declaration
+    [InlineData("Ref", "Ref", "Carrier", false)]
+    [InlineData("map", "map", "filter", false)]
+    [InlineData("One", "One", "1", true)] // a value-only contribution, its VALUE equal
+    [InlineData("One", "1", "Uno", false)] // nor does it hide a conflict between two identities
+    public async Task CallableGroups_AcceptOrRefuseEveryOrderOfOneMultiset(string a, string b, string c, bool agrees)
+    {
+        string[][] orders = [[a, b, c], [a, c, b], [b, a, c], [b, c, a], [c, a, b], [c, b, a]];
+        foreach (var order in orders)
+        {
+            var result = await RepeatedNameConstraintTests.OnEveryRouteAsync(
+                ThreeCallableProgram + $"Same({string.Join(", ", order)})");
+            if (agrees)
+                Assert.Equal("ok 0", result.Outcome);
+            else
+                Assert.StartsWith("err TypeMismatch:", result.Outcome);
+        }
+    }
+
     private sealed class CountingPatterns(IReadOnlyList<ParameterPattern> items) : IReadOnlyList<ParameterPattern>
     {
         public int Reads { get; private set; }
