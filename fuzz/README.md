@@ -411,7 +411,29 @@ $probe = "fuzz\KatLang.ParserFuzz\bin\Release\net11.0\KatLang.ParserFuzz.exe"
 & $probe fe-mem --sizes 256k --env FE_MEM_LIVE_SAMPLE_MS=5
 # semantic differential of two builds: run with each build, then compare the two files
 & $probe fe-mem-diff hashes.txt fuzz\artifacts\corpus-frontend fuzz\artifacts\corpus
+# cancellation latency (2.06): cancel the source-processing token N ms after Parser.Parse starts;
+# open_chain sizes 159700 and 405700 are exactly 2,000 and 5,000 links
+& $probe fe-mem --shapes open_chain --sizes 159700,405700 --routes parse-cancel-500,parse-cancel-3000 --repeat 3 --timeout-ms 1200000
+# which pass a latency row hit: the synchronous passes timed one by one (trees retained, so slower than Parse)
+& $probe fe-mem --shapes dense_props --sizes 2m --routes parse-stages --timeout-ms 600000
+# the longest interval between consecutive elaboration-pass cancellation checkpoints, by checkpoint kind
+& $probe fe-mem --shapes open_chain --sizes 159700 --routes parse-gaps --timeout-ms 1200000
 ```
+
+`open_chain` is `ExposureOpenChainComplexityTests.NestedOwnerChain(N, last: "p")` — N links
+`P1`…`PN` inside `O(p)`, each opening the next and reading its public member, the last reading `p`,
+read by `R` through `open P1` — whose exposure settlement makes N(N + 3) frames (EXPOSURE-OPEN-1 /
+OOS-22). A shape's unit is one link, so a size is a character count: the generator stops at the last
+link that leaves the shape's suffix reserve (160 here, 64 for the other shapes), and the two sizes above
+give 2,000 and 5,000 links. `parse-cancel-N` reports `cancelled latencyMs=…` (from the token's
+cancellation to the escaping `OperationCanceledException`) or `completed-before-cancel` with the
+diagnostic count, since a shape the static-query ledger refuses at 2 MiB (`wide_decon`,
+`implicit_lift`, `ancestor_blocks`) completes with that one diagnostic. `parse-stages` composes the
+passes as `FrontEndPipeline.FinalizeElaboration` does and reports each one's time, or
+`outcome=static-query-refusal` where the ledger stops it. `parse-gaps` runs the observed test entry
+(`Parser.ParseObserved`) with a live token and reports, per checkpoint kind, the count and the longest
+interval that followed one (`kind=count/ms#ordinal`); an interval is an upper bound on the latency
+there, because it also spans the phase-boundary and static-query token checks the hook does not see.
 
 Reported per child: UTF-16 length, UTF-8 bytes and SHA-256, diagnostics, operation-attributed allocation
 (`GC.GetTotalAllocatedBytes(precise)` delta — process-wide, so valid across async transitions;

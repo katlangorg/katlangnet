@@ -35,6 +35,14 @@ public abstract class AstWalker
     internal FrontEndTraversalObservations? TraversalObservations { get; init; }
 
     /// <summary>
+    /// The source-processing token a front-end walk observes once per algorithm it expands (2.06): the
+    /// pipeline's completed-signature validators carry it; every other walk keeps the default token, for
+    /// which the checkpoint is one null check. An observed walk records the checkpoint in
+    /// <see cref="TraversalObservations"/> (see <see cref="FrontEndTraversalObservations.ObserveCancellation"/>).
+    /// </summary>
+    internal CancellationToken CancellationToken { get; init; }
+
+    /// <summary>
     /// Visits an algorithm node.
     /// </summary>
     public virtual void VisitAlgorithm(Algorithm algorithm)
@@ -76,6 +84,7 @@ public abstract class AstWalker
     protected virtual void VisitUserAlgorithm(Algorithm.User algorithm)
     {
         TraversalObservations?.RecordWalkerAlgorithmExpansion();
+        FrontEndTraversalObservations.ObserveCancellation(TraversalObservations, FrontEndCancellationCheckpoint.WalkerAlgorithm, CancellationToken);
 
         // Walkers that need neither explicit-declaration hook can opt out of this
         // per-parameter loop. It matters for wide assignment deconstructions: those elaborate to
@@ -106,6 +115,7 @@ public abstract class AstWalker
     protected virtual void VisitConditionalAlgorithm(Algorithm.Conditional algorithm)
     {
         TraversalObservations?.RecordWalkerAlgorithmExpansion();
+        FrontEndTraversalObservations.ObserveCancellation(TraversalObservations, FrontEndCancellationCheckpoint.WalkerAlgorithm, CancellationToken);
 
         foreach (var open in algorithm.Opens)
             VisitOpenExpression(open);
@@ -129,6 +139,7 @@ public abstract class AstWalker
     protected virtual void VisitAliasAlgorithm(Algorithm.Alias algorithm)
     {
         TraversalObservations?.RecordWalkerAlgorithmExpansion();
+        FrontEndTraversalObservations.ObserveCancellation(TraversalObservations, FrontEndCancellationCheckpoint.WalkerAlgorithm, CancellationToken);
 
         foreach (var open in algorithm.Opens)
             VisitOpenExpression(open);

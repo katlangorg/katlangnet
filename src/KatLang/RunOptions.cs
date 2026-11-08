@@ -97,8 +97,10 @@ public sealed class RunOptions
     /// Host cancellation for parsing, module fetching, and front-end source processing.
     /// The token is passed unchanged to <see cref="DownloadCode"/> for eager loads and linked
     /// with consumer cancellation for deferred branch loads, including their loader-gate wait. Cancellation
-    /// is checked at front-end phase boundaries and immediately before and after each module
-    /// fetch. It does not cancel arbitrary evaluator computation after source processing has
+    /// is checked at front-end phase boundaries, immediately before and after each module
+    /// fetch, and inside the elaboration passes in bounded blocks of work (per algorithm, per
+    /// property or output row, and per settlement or expansion frame), so a cancelled pass stops
+    /// within one such block. It does not cancel arbitrary evaluator computation after source processing has
     /// completed, but remains authoritative for later deferred module materialization;
     /// use <see cref="EvaluationCancellationToken"/> to cancel evaluation and
     /// <see cref="EvaluationLimits"/> to bound evaluator work.

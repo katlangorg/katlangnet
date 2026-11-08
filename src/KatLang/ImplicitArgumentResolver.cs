@@ -242,6 +242,13 @@ internal static partial class ImplicitArgumentResolver
         public CancellationToken CancellationToken => StructuralOperation?.Queries.OperationToken ?? default;
 
         /// <summary>
+        /// The rewrite walk's cancellation checkpoint (2.06): once per algorithm and per property or output row, on the
+        /// admitting operation's token (a deferred compile's operation owns the materialization's linked token).
+        /// </summary>
+        public void ObserveCancellation(FrontEndCancellationCheckpoint kind)
+            => FrontEndTraversalObservations.ObserveCancellation(Observations, kind, CancellationToken);
+
+        /// <summary>
         /// The DIRECT declaration chain of the level the walk is currently inside (<see cref="ResolverLevel"/>,
         /// M4★): what a static reference chase resolves a followed row in. Walk state only, set with
         /// <see cref="Owners"/>; null outside every level (a module root and an open target restart it).
@@ -1983,6 +1990,7 @@ internal static partial class ImplicitArgumentResolver
         List<BranchDiagnosticTemplate>? diagnosticTemplates)
     {
         FrontEndStack.Ensure();
+        run.ObserveCancellation(FrontEndCancellationCheckpoint.ResolverAlgorithm);
         // This body is a level of its own (Q-19 D-I: what its properties' provider identities
         // are anchored at).
         var levelOwners = run.Owners.Inside(alg);
@@ -2034,6 +2042,7 @@ internal static partial class ImplicitArgumentResolver
         for (var idx = 0; idx < alg.Properties.Count; idx++)
         {
             var prop = alg.Properties[idx];
+            run.ObserveCancellation(FrontEndCancellationCheckpoint.ResolverRow);
 
             if (prop.Value is Algorithm.User { IsAssignmentDeconstructionSource: true })
             {
@@ -2124,6 +2133,7 @@ internal static partial class ImplicitArgumentResolver
             var newOutput = new List<Expr>(alg.Output.Count);
             foreach (var expr in alg.Output)
             {
+                run.ObserveCancellation(FrontEndCancellationCheckpoint.ResolverRow);
                 newOutput.Add(
                     RewriteImplicitCalls(
                         expr,
@@ -2187,6 +2197,7 @@ internal static partial class ImplicitArgumentResolver
         var rewrittenOutput = new List<Expr>(alg.Output.Count);
         foreach (var expr in alg.Output)
         {
+            run.ObserveCancellation(FrontEndCancellationCheckpoint.ResolverRow);
             rewrittenOutput.Add(
                 ShouldPreserveBareRootRow(expr, visibleParamMap, isRoot, walkMemos)
                     // THE ROOT CLAUSE keeps the ROW unlifted, never its block: a block head (`{ … }.K`, `{ … }.S.K`) is a

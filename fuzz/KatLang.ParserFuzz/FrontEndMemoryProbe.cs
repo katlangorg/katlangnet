@@ -22,7 +22,10 @@ namespace KatLang.ParserFuzz;
 ///
 /// Routes: lex, parse, parse-async, parse-async-dl (the shape is a module loaded through an
 /// in-memory downloader that genuinely suspends), run, run-async, and the diagnostic
-/// parse-cancel-N (cancellation latency). <c>--max-peak-commit-mb N</c> turns a parent run into a
+/// parse-cancel-N (cancellation latency), parse-stages (per-pass timing for attributing a latency row),
+/// parse-gaps (the longest interval between consecutive elaboration-pass cancellation checkpoints) and
+/// parse-cancel-after-KIND-ORDINAL-MS (latency inside the block that follows a chosen checkpoint).
+/// <c>--max-peak-commit-mb N</c> turns a parent run into a
 /// regression check: any child over the envelope, or any incomplete measurement, fails it.
 /// Diagnostic-only environment switches (never set by default): FE_MEM_LIVE_SAMPLE_MS (forced
 /// full collections during the operation — a live-set measurement that perturbs time),
@@ -53,7 +56,8 @@ internal static class FrontEndMemoryProbe
 {
     // ── shapes: generated up to a target length in UTF-16 code units ─────────────
 
-    private sealed record Shape(string Id, string Kind, string Prefix, Func<int, string> Unit, Func<int, string> Suffix);
+    private sealed record Shape(string Id, string Kind, string Prefix, Func<int, string> Unit, Func<int, string> Suffix,
+        int SuffixReserve = DefaultSuffixReserve);
 
     private static string Names(string prefix, int count)
         => string.Join(", ", Enumerable.Range(0, count).Select(i => $"{prefix}{i}"));
@@ -78,6 +82,12 @@ internal static class FrontEndMemoryProbe
         // already-fixed sharing shapes (FE-2 implicit lifting, FE-3/FE-4 ancestor requirements)
         new("implicit_lift", "sharing", $"G = {Names("v", 300)}\nH = ", _ => "abs(G), ", _ => "abs(G)\n1"),
         new("ancestor_blocks", "sharing", $"F({Names("v", 150)}) = v0", i => $", {{b{i} = a + 1\nb{i}}}", _ => "\n1"),
+        // EXPOSURE-OPEN-1 / OOS-22: exactly ExposureOpenChainComplexityTests.NestedOwnerChain(N, last: "p") with
+        // N = units + 1 links opened from one another inside O(p); the settlement makes N(N + 3) frames.
+        new("open_chain", "sharing", "O(p) = {\n",
+            i => $"    P{i + 1} = {{\n        open P{i + 2}\n        public A{i + 1} = A{i + 2} + 1\n        0\n    }}\n",
+            n => $"    P{n + 1} = {{\n        public A{n + 1} = p\n        0\n    }}\n    R = {{\n        open P1\n        A1\n    }}\n    R\n}}\nO(1)",
+            SuffixReserve: 160),
         new("nested_opens", "sharing", "Lib = {\n    public X = 1\n}\n", i => $"B{i} = {{\n    open Lib\n    C = {{\n        open Lib\n        X + {i}\n    }}\n    C\n}}\n", _ => "1"),
         // bounded malformed input (diagnostic list capped by MaxDiagnosticCount)
         new("diag_tokens", "malformed", "", _ => "@ ", _ => ""),
@@ -86,17 +96,17 @@ internal static class FrontEndMemoryProbe
 
     private static Shape? Find(string id) => Shapes.FirstOrDefault(s => s.Id == id);
 
-    private const int SuffixReserve = 64;
+    private const int DefaultSuffixReserve = 64;
 
     private static string Generate(Shape shape, int targetChars)
     {
-        var sb = new StringBuilder(targetChars + SuffixReserve);
+        var sb = new StringBuilder(targetChars + shape.SuffixReserve);
         sb.Append(shape.Prefix);
         var n = 0;
         while (true)
         {
             var unit = shape.Unit(n);
-            if (sb.Length + unit.Length + SuffixReserve > targetChars) break;
+            if (sb.Length + unit.Length + shape.SuffixReserve > targetChars) break;
             sb.Append(unit);
             n++;
         }
@@ -500,6 +510,138 @@ internal static class FrontEndMemoryProbe
                 facts = $"diags={result.Diagnostics.Count} errors={result.HasErrors} syncCompleted={completedSynchronously} downloaderSuspended={suspended}";
                 return result;
             }
+            case "parse-stages":
+            {
+                // Pass attribution for the cancellation-latency rows (diagnostic): the synchronous
+                // front end's passes composed as FrontEndPipeline.FinalizeElaboration composes them,
+                // each timed on its own, with the operation owning a live, never-cancelled token. A
+                // static-query refusal ends the run where the public pipeline would report it.
+                using var cts = new CancellationTokenSource();
+                var token = cts.Token;
+                var clock = new Stopwatch();
+                var timings = new StringBuilder();
+                T Stage<T>(string name, Func<T> pass)
+                {
+                    clock.Restart();
+                    try { return pass(); }
+                    finally { timings.Append(CultureInfo.InvariantCulture, $"{name}Ms={clock.Elapsed.TotalMilliseconds:F1} "); }
+                }
+
+                var diagnostics = new DiagnosticBag();
+                object outcome = diagnostics;
+                try
+                {
+                    var input = Stage("parse", () => FrontEndPipeline.ElaborationInput.Parse(source, diagnostics));
+                    var operation = Stage("admit", () => StaticStructureAdmission.Create(input.Current, cancellationToken: token).Operation);
+                    var modules = new ModuleUnits();
+                    var detected = Stage("detect", () => ParameterDetector.DetectPrevalidated(input.Take(), null, null, diagnostics, modules, operation));
+                    var resolved = Stage("resolve", () => ImplicitArgumentResolver.ResolvePrevalidated(detected.Root, null, diagnostics, null, modules, operation));
+                    Stage("collisions", () => { new ParameterPropertyCollisionValidator(diagnostics, programRoot: resolved).VisitAlgorithm(resolved); return 0; });
+                    Stage("openProviders", () => { OpenProviderValidator.Validate(resolved, diagnostics, hostOperations: null); return 0; });
+                    Stage("outputs", () => { InferredParameterOutputValidator.ValidateProgram(resolved, diagnostics); return 0; });
+                    outcome = Stage("exposure", () => PropertyExposureResolver.Resolve(resolved, null, null, modules, token));
+                    RequireClean(diagnostics, requireClean);
+                    timings.Append("outcome=complete ");
+                }
+                catch (StaticQueryLimitExceededException)
+                {
+                    timings.Append("outcome=static-query-refusal ");
+                }
+
+                facts = timings.Append(CultureInfo.InvariantCulture, $"diags={diagnostics.Count}").ToString();
+                return outcome;
+            }
+            case "parse-gaps":
+            {
+                // Checkpoint spacing (diagnostic, 2.06): one Parser.Parse with a live, never-cancelled
+                // source-processing token through the observed test entry, timing the interval between
+                // consecutive elaboration-pass cancellation checkpoints. The interval that follows a
+                // checkpoint of kind K is the longest block of K's pass that runs without observing the
+                // token (an upper bound: phase-boundary and static-query checks inside it are not timed).
+                using var cts = new CancellationTokenSource();
+                var kinds = Enum.GetValues<FrontEndCancellationCheckpoint>();
+                var maxAfter = new long[kinds.Length];
+                var counts = new long[kinds.Length];
+                var maxAfterOrdinal = new long[kinds.Length];
+                var maxAfterGen2 = new int[kinds.Length];
+                var lastGen2 = GC.CollectionCount(2);
+                long last = 0, maxGap = 0, firstGap = -1;
+                var lastKind = -1;
+                var maxFrom = -1;
+                long lastOrdinal = 0, maxFromOrdinal = 0;
+                var observations = new FrontEndTraversalObservations
+                {
+                    CheckpointReached = (kind, ordinal) =>
+                    {
+                        var now = Stopwatch.GetTimestamp();
+                        if (lastKind >= 0)
+                        {
+                            var gap = now - last;
+                            var gen2 = GC.CollectionCount(2);
+                            if (gap > maxAfter[lastKind]) { maxAfter[lastKind] = gap; maxAfterOrdinal[lastKind] = lastOrdinal; maxAfterGen2[lastKind] = gen2 - lastGen2; }
+                            lastGen2 = gen2;
+                            if (gap > maxGap) { maxGap = gap; maxFrom = lastKind; maxFromOrdinal = lastOrdinal; }
+                        }
+                        else firstGap = now - last;
+                        counts[(int)kind]++;
+                        last = now;
+                        lastKind = (int)kind;
+                        lastOrdinal = ordinal;
+                    },
+                };
+                last = Stopwatch.GetTimestamp();
+                var started = last;
+                var result = Parser.ParseObserved(source, new RunOptions { SourceProcessingCancellationToken = cts.Token }, observations);
+                var ended = Stopwatch.GetTimestamp();
+                double Ms(long ticks) => ticks * 1000.0 / Stopwatch.Frequency;
+                var text = new StringBuilder();
+                text.Append(CultureInfo.InvariantCulture,
+                    $"checkpoints={observations.CancellationCheckpoints} totalMs={Ms(ended - started):F1} startToFirstMs={Ms(firstGap):F1} " +
+                    $"lastToEndMs={Ms(ended - last):F1} maxGapMs={Ms(maxGap):F2} maxAfter={(maxFrom >= 0 ? kinds[maxFrom].ToString() : "-")}#{maxFromOrdinal}");
+                for (var k = 0; k < kinds.Length; k++)
+                    if (counts[k] > 0)
+                        text.Append(CultureInfo.InvariantCulture, $" {kinds[k]}={counts[k]}/{Ms(maxAfter[k]):F2}ms#{maxAfterOrdinal[k]}gen2+{maxAfterGen2[k]}");
+                facts = text.Append(CultureInfo.InvariantCulture, $" diags={result.Diagnostics.Count}").ToString();
+                return result;
+            }
+            case var after when after.StartsWith("parse-cancel-after-", StringComparison.Ordinal):
+            {
+                // Latency INSIDE a chosen block (diagnostic, 2.06): parse-cancel-after-KIND-ORDINAL-MS starts a timer at
+                // the ORDINAL-th checkpoint of KIND that cancels the source-processing token MS ms later, and reports the
+                // time from that cancellation to the escaping OperationCanceledException.
+                var parts = after["parse-cancel-after-".Length..].Split('-');
+                var kind = Enum.Parse<FrontEndCancellationCheckpoint>(parts[0]);
+                var ordinal = long.Parse(parts[1], CultureInfo.InvariantCulture);
+                var delayMs = int.Parse(parts[2], CultureInfo.InvariantCulture);
+                using var cts = new CancellationTokenSource();
+                long cancelledAt = 0;
+                var clock = Stopwatch.StartNew();
+                Timer? timer = null;
+                var observations = new FrontEndTraversalObservations
+                {
+                    CheckpointReached = (reached, reachedOrdinal) =>
+                    {
+                        if (reached == kind && reachedOrdinal == ordinal && timer is null)
+                            timer = new Timer(_ => { Interlocked.Exchange(ref cancelledAt, clock.ElapsedTicks); cts.Cancel(); }, null, delayMs, Timeout.Infinite);
+                    },
+                };
+                try
+                {
+                    var result = Parser.ParseObserved(source, new RunOptions { SourceProcessingCancellationToken = cts.Token }, observations);
+                    facts = $"completed-before-cancel armed={timer is not null} totalMs={clock.Elapsed.TotalMilliseconds:F0} diags={result.Diagnostics.Count}";
+                    return result;
+                }
+                catch (OperationCanceledException)
+                {
+                    var latencyMs = (clock.ElapsedTicks - Interlocked.Read(ref cancelledAt)) * 1000.0 / Stopwatch.Frequency;
+                    facts = $"cancelled latencyMs={latencyMs:F1} totalMs={clock.Elapsed.TotalMilliseconds:F0}";
+                    return facts;
+                }
+                finally
+                {
+                    timer?.Dispose();
+                }
+            }
             case var cancel when cancel.StartsWith("parse-cancel-", StringComparison.Ordinal):
             {
                 // Cancellation LATENCY (diagnostic): the source-processing token is cancelled
@@ -512,14 +654,14 @@ internal static class FrontEndMemoryProbe
                 try
                 {
                     var result = Parser.Parse(source, new RunOptions { SourceProcessingCancellationToken = cts.Token });
-                    RequireClean(result.Diagnostics, requireClean);
+                    // A shape the static-query ledger refuses completes with its one diagnostic; reported, not required clean.
                     facts = $"completed-before-cancel totalMs={clock.Elapsed.TotalMilliseconds:F0} diags={result.Diagnostics.Count}";
                     return result;
                 }
                 catch (OperationCanceledException)
                 {
                     var latencyMs = (clock.ElapsedTicks - Interlocked.Read(ref cancelledAt)) * 1000.0 / Stopwatch.Frequency;
-                    facts = $"cancelled latencyMs={latencyMs:F0} totalMs={clock.Elapsed.TotalMilliseconds:F0}";
+                    facts = $"cancelled latencyMs={latencyMs:F1} totalMs={clock.Elapsed.TotalMilliseconds:F0}";
                     return facts;
                 }
             }

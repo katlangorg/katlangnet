@@ -45,15 +45,23 @@ internal sealed class InferredParameterOutputValidator : AstWalker
     protected override bool VisitsExplicitParameterDeclarations => false;
 
     /// <summary>Validates a completed program tree; <paramref name="programRoot"/> is its root.</summary>
-    internal static void ValidateProgram(Algorithm programRoot, DiagnosticBag diagnostics)
-        => new InferredParameterOutputValidator(diagnostics, programRoot, importSite: null).VisitAlgorithm(programRoot);
+    internal static void ValidateProgram(Algorithm programRoot, DiagnosticBag diagnostics,
+        FrontEndTraversalObservations? observations = null, CancellationToken cancellationToken = default)
+        => new InferredParameterOutputValidator(diagnostics, programRoot, importSite: null)
+            {
+                TraversalObservations = observations,
+                CancellationToken = cancellationToken,
+            }
+            .VisitAlgorithm(programRoot);
 
     /// <summary>
     /// Validates a materialized deferred branch body, starting from the import site the region
     /// recorded for the body.
     /// </summary>
-    internal static void ValidateDeferredBody(Algorithm body, DiagnosticBag diagnostics, SourceSpan? importSite)
-        => new InferredParameterOutputValidator(diagnostics, programRoot: null, importSite).VisitAlgorithm(body);
+    internal static void ValidateDeferredBody(Algorithm body, DiagnosticBag diagnostics, SourceSpan? importSite,
+        CancellationToken cancellationToken = default)
+        => new InferredParameterOutputValidator(diagnostics, programRoot: null, importSite) { CancellationToken = cancellationToken }
+            .VisitAlgorithm(body);
 
     public override void VisitAlgorithm(Algorithm algorithm)
     {

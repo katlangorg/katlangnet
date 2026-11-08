@@ -95,7 +95,7 @@ internal static class FrontEndStageProbe
         if (loadDiags.Count == 0)
         {
             sw.Restart();
-            var (parameterized, _) = ParameterDetector.Detect(current);
+            var parameterized = ParameterDetector.Detect(current);
             paramDetect = sw.Elapsed.TotalMilliseconds;
 
             sw.Restart();
