@@ -149,6 +149,12 @@ internal sealed class DeferredModuleRegion
     /// <summary>Completed materializations plus failed attempts; test-observable, never a decision input.</summary>
     internal int MaterializationAttempts => Volatile.Read(ref _materializationAttempts);
 
+    /// <summary>
+    /// Consumers counted on the in-flight run (zero when none is in flight); read without the
+    /// run lock, so it is test-observable only, never a decision input.
+    /// </summary>
+    internal int InFlightConsumers => Volatile.Read(ref _inFlight)?.Consumers ?? 0;
+
     internal bool IsMaterialized => Volatile.Read(ref _materialized) is not null;
 
     internal bool TryGetMaterialized([NotNullWhen(true)] out Algorithm? body)
@@ -177,6 +183,27 @@ internal sealed class DeferredModuleRegion
     /// links that with the host's source-processing token, which stays authoritative and keeps
     /// its identity for every consumer. A run cancelled that way publishes no region body; the next
     /// selection starts a fresh run, while already-completed dependency modules stay cached.</para>
+    ///
+    /// <para><b>Who runs the work, and how cancellation reaches it.</b> The consumer that starts
+    /// a run executes it on its own stack, OUTSIDE the region's run lock, exactly as
+    /// synchronously as the downloader allows: a synchronously completing downloader (or an
+    /// already-cached module) completes the whole materialization on the calling thread, and
+    /// after a genuine suspension the starter resumes wherever the downloader's awaitable
+    /// completes. Every consumer — the starter included — registers its evaluation token for
+    /// as long as it waits, and that registration performs the consumer's ordinary leave
+    /// (idempotent per consumer, so the registration and the consumer's own exit never count
+    /// twice): when the leaving consumer is the last, the run is cancelled at once, which
+    /// reaches the downloader's token and the compile's cancellation checks even while the
+    /// work is running inline on some consumer's thread. Joiners wait on the run's shared
+    /// completion, whose continuations run asynchronously, so a consumer that joined during
+    /// the starter's inline segment never resumes on the starter's stack. A consumer whose own
+    /// thread is running the work cannot return before that work next observes cancellation,
+    /// suspends, or ends; its leave still counts immediately, so if it was the last consumer
+    /// the work has already been cancelled, and otherwise the work continues for the
+    /// consumers that still wait. A failure raised by a host token callback while a leave
+    /// cancels the run belongs to the abandoned run: it never replaces a consumer's
+    /// <see cref="OperationCanceledException"/> and never escapes into the host's own
+    /// <c>Cancel()</c>.</para>
     /// </summary>
     internal async ValueTask<EvalResult<Algorithm>> MaterializeAsync(CancellationToken evaluationCancellationToken)
     {
@@ -194,10 +221,19 @@ internal sealed class DeferredModuleRegion
         Loader.SourceProcessingCancellationToken.ThrowIfCancellationRequested();
         evaluationCancellationToken.ThrowIfCancellationRequested();
 
-        var run = JoinOrStartRun();
+        var consumer = JoinOrStartRun(out var starts);
+        // Registered only once the consumer is counted: a token cancelled in the meantime runs
+        // the leave synchronously here, so a run abandoned before it starts fails fast at the
+        // loader gate without an attempt. A consumer's cancellation is its leave wherever its
+        // thread is — including inside the work this consumer is about to run inline.
+        var registration = evaluationCancellationToken.UnsafeRegister(
+            static state => ((MaterializationConsumer)state!).Leave(), consumer);
         try
         {
-            return await run.Completion.WaitAsync(evaluationCancellationToken).ConfigureAwait(false);
+            // The starter awaits the work itself, so after a genuine suspension it resumes where
+            // the downloader's awaitable completes; joiners await the shared completion.
+            var pending = starts ? StartRun(consumer.Run) : consumer.Run.Completion.Task;
+            return await pending.WaitAsync(evaluationCancellationToken).ConfigureAwait(false);
         }
         catch (OperationCanceledException)
         {
@@ -207,7 +243,28 @@ internal sealed class DeferredModuleRegion
         }
         finally
         {
-            LeaveRun(run);
+            // Outside the run lock: disposing a registration waits for a callback that is running
+            // on another thread, and that callback takes the lock.
+            registration.Dispose();
+            consumer.Leave();
+        }
+    }
+
+    /// <summary>
+    /// One evaluation's membership in a <see cref="MaterializationRun"/>. Its leave is performed
+    /// by whichever comes first — the evaluation token's registration or the consumer's own
+    /// exit from <see cref="MaterializeAsync"/> — and exactly once.
+    /// </summary>
+    private sealed class MaterializationConsumer(DeferredModuleRegion region, MaterializationRun run)
+    {
+        private int _left;
+
+        public MaterializationRun Run => run;
+
+        public void Leave()
+        {
+            if (Interlocked.Exchange(ref _left, 1) == 0)
+                region.LeaveRun(run);
         }
     }
 
@@ -216,6 +273,11 @@ internal sealed class DeferredModuleRegion
     /// it is in flight. <see cref="Consumers"/> counts the evaluations waiting on it (guarded by
     /// the region's run lock); <see cref="Cancellation"/> is cancelled when the last one leaves
     /// before completion, which aborts the wait for the loader's turn or the load in progress.
+    /// <see cref="Completion"/> exists before the work starts — the starting consumer runs the
+    /// work outside the run lock, possibly inline for its whole duration, so a consumer that
+    /// joins meanwhile (from another thread, or from the starter's own stack through a
+    /// downloader that evaluates the same tree) always has a completion to wait on — and the
+    /// work completes it exactly once, with every outcome, after its own cleanup.
     /// </summary>
     private sealed class MaterializationRun
     {
@@ -229,10 +291,19 @@ internal sealed class DeferredModuleRegion
 
         public bool IsFinished;
 
-        public Task<EvalResult<Algorithm>> Completion = null!;
+        // Continuations run asynchronously: a joiner never resumes on the stack of the thread
+        // that completes the work (the starter's, while it runs the work inline).
+        public readonly TaskCompletionSource<EvalResult<Algorithm>> Completion =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        // A host token callback that failed while the last consumer's leave cancelled the run.
+        // It belongs to the abandoned work, never to a consumer (guarded by the run lock).
+        public Exception? AbandonmentFailure;
     }
 
-    private MaterializationRun JoinOrStartRun()
+    // Joins the region's in-flight run or creates one. It never starts the work, so the lock
+    // is held only for the membership update.
+    private MaterializationConsumer JoinOrStartRun(out bool starts)
     {
         lock (_runLock)
         {
@@ -240,22 +311,35 @@ internal sealed class DeferredModuleRegion
             if (run is not null && !run.AbandonRequested && !run.IsFinished)
             {
                 run.Consumers++;
-                return run;
+                starts = false;
+                return new MaterializationConsumer(this, run);
             }
 
             run = new MaterializationRun();
             _inFlight = run;
-            run.Completion = RunAsync(run);
             // A run every consumer abandoned completes with nobody awaiting it; observe its
             // fault so cancellation of unwanted work never surfaces as an unobserved exception.
-            run.Completion.ContinueWith(
-                static completed => _ = completed.Exception,
-                CancellationToken.None,
-                TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously,
-                TaskScheduler.Default);
-            return run;
+            ObserveFault(run.Completion.Task);
+            starts = true;
+            return new MaterializationConsumer(this, run);
         }
     }
+
+    // Runs the work on the starting consumer's stack, outside the run lock.
+    private Task<EvalResult<Algorithm>> StartRun(MaterializationRun run)
+    {
+        var work = RunAsync(run);
+        // The starter may leave before the work ends; its fault is also the shared completion's.
+        ObserveFault(work);
+        return work;
+    }
+
+    private static void ObserveFault(Task task)
+        => task.ContinueWith(
+            static completed => _ = completed.Exception,
+            CancellationToken.None,
+            TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously,
+            TaskScheduler.Default);
 
     private void LeaveRun(MaterializationRun run)
     {
@@ -281,6 +365,14 @@ internal sealed class DeferredModuleRegion
             {
                 run.Cancellation.Cancel();
             }
+            catch (Exception error)
+            {
+                // A callback the downloader registered on its token threw. The failure belongs to
+                // the abandoned run: it must not replace the leaving consumer's cancellation, nor
+                // escape into the host's Cancel() when this leave runs inside a token callback.
+                lock (_runLock)
+                    run.AbandonmentFailure ??= error;
+            }
             finally
             {
                 lock (_runLock)
@@ -293,7 +385,30 @@ internal sealed class DeferredModuleRegion
         }
     }
 
+    // The work. It completes the run's shared completion exactly once, with every outcome,
+    // after its own cleanup (RunCoreAsync's finally) has finished the run and cleared it from
+    // the region, so a joiner observes the same ordering the work's own task gives the starter.
     private async Task<EvalResult<Algorithm>> RunAsync(MaterializationRun run)
+    {
+        try
+        {
+            var result = await RunCoreAsync(run).ConfigureAwait(false);
+            run.Completion.TrySetResult(result);
+            return result;
+        }
+        catch (OperationCanceledException error)
+        {
+            run.Completion.TrySetCanceled(error.CancellationToken);
+            throw;
+        }
+        catch (Exception error)
+        {
+            run.Completion.TrySetException(error);
+            throw;
+        }
+    }
+
+    private async Task<EvalResult<Algorithm>> RunCoreAsync(MaterializationRun run)
     {
         using var linkedCancellation = CancellationTokenSource.CreateLinkedTokenSource(
             Loader.SourceProcessingCancellationToken, run.Cancellation.Token);

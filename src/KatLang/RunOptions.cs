@@ -86,6 +86,10 @@ public sealed class RunOptions
     /// it is held, a module resolves free names in its own declarations, then the prelude, then
     /// its own opens, never at the load site; a name it cannot resolve is a parameter of the
     /// member that uses it. Admit only hosts whose code you would run yourself.</para>
+    /// <para>A downloader must not wait synchronously for an evaluation of the program it is
+    /// loading for: that evaluation joins the materialization the downloader itself is
+    /// serving, or waits for the loader's turn it holds, and ends only through its own
+    /// cancellation.</para>
     /// </summary>
     public Func<string, CancellationToken, ValueTask<string>>? DownloadCode { get; init; }
 
@@ -122,7 +126,10 @@ public sealed class RunOptions
     /// <para>A cancelled evaluation leaves a shared deferred materialization immediately. The
     /// underlying work is cancelled only when its last consumer leaves; it cannot publish an
     /// abandoned body. Source-processing cancellation remains authoritative when both tokens
-    /// are cancelled during materialization.</para>
+    /// are cancelled during materialization. An evaluation whose own thread is running that
+    /// work (a synchronously completing <see cref="DownloadCode"/>, or the front-end passes
+    /// over the downloaded module) returns when the work next observes cancellation, suspends,
+    /// or ends; if it was the last consumer, its cancellation has already cancelled the work.</para>
     /// <para>Requested cancellation escapes as
     /// <see cref="OperationCanceledException"/> carrying this token — never a KatLang
     /// diagnostic, and never a retained resource-limit value, so a cancelled run does
