@@ -14,10 +14,10 @@ This is bounded differential validation over the Lean-guarded partition,
 not a formal verification of the evaluators.
 
 Partition (machine-checked by the `specCaseIds.length` guard below):
-- specification surface cases: 539
-- excluded parse-level cases (Lean has no surface parser): 75
+- specification surface cases: 541
+- excluded parse-level cases (Lean has no surface parser): 76
 - excluded C#-only cases (each carries an explicit reason in the corpus): 22
-- Lean-guarded cases: 442
+- Lean-guarded cases: 443
 - probe observations (C#-only by design): 1507
 - internal-node cases live in the semantic-explorer corpus, not here: see
   lean/SemanticExplorerCases.lean
@@ -960,6 +960,12 @@ def case_formula_lifting_follows_the_consumers_role : Expr :=
   .algorithmExpr (alg [] [] [privateProp "Values" (alg ["x"] [] [] [(.listLiteral [(.call (.resolve "Inc") [.param "x"]), (.binary .mul (.call (.resolve "Inc") [.param "x"]) (.num 2))])]), privateProp "Kept" (alg [] [] [] [(.call (.resolve "Apply") [.resolve "Inc"])]), privateProp "Branch" (alg ["x"] [] [] [(.call (.resolve "if") [.boolLiteral true, (.call (.resolve "Inc") [.param "x"]), .num 0])]), privateProp "Inc" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 1))]), privateProp "Apply" (alg ["f"] [] [] [(.call (.param "f") [.num 10])])] [(.call (.resolve "Values") [.num 4]), .resolve "Kept", (.call (.resolve "Branch") [.num 4])])
 #guard obs case_formula_lifting_follows_the_consumers_role == "ok raw=S[L[5, 10], 11, 5] n=3"
 
+-- root-row-block-head-is-elaborated [variadic-calls]: Inc(x) = x + 1 \n { \n     public K = if(true, 5, Inc) \n     0 \n }.K
+def case_root_row_block_head_is_elaborated : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Inc" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 1))])] [(.dotCall (.algorithmExpr (alg [] [] [publicProp "K" (alg ["x"] [] [] [(.call (.resolve "if") [.boolLiteral true, .num 5, (.call (.resolve "Inc") [.param "x"])])])] [.num 0])) "K" none)])
+#guard obs case_root_row_block_head_is_elaborated == "err arity"
+
+#guard errorObs case_root_row_block_head_is_elaborated == .matched (some { kind := "arity", names := [], counts := [1, 0] })
 -- repeated-name-wrapper-keeps-independent-arguments [variadic-calls]: Common(x, x) = x \n Both(a, b) = Common(a, b) \n Twice(v) = Common(v, v) \n Some = Common \n  \n Both(7, 7) \n Twice(8) \n Some(9, 9)
 def case_repeated_name_wrapper_keeps_independent_arguments : Expr :=
   .algorithmExpr (alg [] [] [privateProp "Some" (.alias none [] [] (.resolve "Common")), privateProp "Common" (alg ["x", "x"] [] [] [.param "x"]), privateProp "Both" (alg ["a", "b"] [] [] [(.call (.resolve "Common") [.param "a", .param "b"])]), privateProp "Twice" (alg ["v"] [] [] [(.call (.resolve "Common") [.param "v", .param "v"])])] [(.call (.resolve "Both") [.num 7, .num 7]), (.call (.resolve "Twice") [.num 8]), (.call (.resolve "Some") [.num 9, .num 9])])
@@ -2412,7 +2418,7 @@ def case_open_reference_private_member_provides_public_names : Expr :=
   .algorithmExpr (alg [] [.resolve "A"] [privateProp "Lib" (alg [] [] [privateProp "Sub" (alg [] [] [publicProp "Q" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 1))])] [])] []), privateProp "A" (.alias none [] [] ((.dotCall (.resolve "Lib") "Sub" none)))] [(.call (.resolve "Q") [.num 5])])
 #guard obs case_open_reference_private_member_provides_public_names == "ok raw=6 n=1"
 
--- 442 canonical Lean-guarded specification cases.
+-- 443 canonical Lean-guarded specification cases.
 
 /--
 Machine-checked Lean-guarded partition count: the id list is built by the
@@ -2572,6 +2578,7 @@ def specCaseIds : List String := [
   "implicit-forwarding-is-by-binding-name",
   "formula-lifting-is-one-law-for-every-callable",
   "formula-lifting-follows-the-consumers-role",
+  "root-row-block-head-is-elaborated",
   "repeated-name-wrapper-keeps-independent-arguments",
   "implicit-forwarding-preserves-structural-kind",
   "alias-forwarding-and-explicit-call",
@@ -2863,6 +2870,6 @@ def specCaseIds : List String := [
   "grouped-runtime-member-value-arity",
   "open-reference-private-member-provides-public-names"
 ]
-#guard specCaseIds.length == 442
+#guard specCaseIds.length == 443
 
 end LanguageSpecCases

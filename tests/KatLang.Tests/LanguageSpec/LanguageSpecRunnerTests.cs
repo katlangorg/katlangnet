@@ -320,6 +320,9 @@ public class LanguageSpecRunnerTests
             // The unified formula-lifting law (September 2026): a clause family its clauses
             // do not name is a front-end rejection where a formula would lift it.
             "unliftable-clause-family",
+            // S-10 F1 (November 2026): a block in a preserved root row is elaborated, so its
+            // front-end errors are reported.
+            "root-row-block-head-reports-front-end-errors",
             // Callable aliases as binding indirection (October 2026): a closed lone row whose
             // callable names no parameter (narrowed Q-77) and `open` of a callable alias are
             // front-end rejections.

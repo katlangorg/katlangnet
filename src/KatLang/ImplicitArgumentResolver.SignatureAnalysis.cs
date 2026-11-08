@@ -574,6 +574,49 @@ internal static partial class ImplicitArgumentResolver
         internal IReadOnlyList<(IReadOnlyList<RefusedBody> Bodies, IReadOnlyList<string> Links, SignatureSelectionOutcome Outcome)> Refusals { get; }
 
         internal bool Succeeded => Refusals.Count == 0;
+
+        /// <summary>
+        /// Every body the analysis recorded, open and closed, in analysis order (a body the analysis served from another
+        /// context's analysis is not recorded): what the reach invariant checks (<see cref="RequireEveryAnalyzedBodyRewritten"/>).
+        /// </summary>
+        internal IReadOnlyList<AnalyzedBody> Analyzed { get; init; } = [];
+    }
+
+    /// <summary>A body the signature analysis recorded: its context, and its name and location for an internal-defect report.</summary>
+    internal sealed record AnalyzedBody(StaticScopeKey Key, string Name, SourceSpan? Span, SourceSpan? ImportSite, Algorithm.User Written)
+    {
+        /// <summary>
+        /// Where the body is written, computed only for a report: its declaration, else the import site the walk was inside,
+        /// else (an anonymous block) its first written declaration or row.
+        /// </summary>
+        internal SourceSpan? Location
+            => Span ?? ImportSite
+                ?? Written.Properties.Select(static property => property.FirstDeclarationSpan).FirstOrDefault(static span => span is not null)
+                ?? Written.Output.Select(static row => row.Span).FirstOrDefault(static span => span is not null);
+    }
+
+    /// <summary>
+    /// THE REACH INVARIANT (S-10), the mirror of <see cref="RequireSelectedComposition"/>: every body the selection analyzed
+    /// has a resolved view when the resolution completes — the rewrite processed it in that context, or served it from the
+    /// processing of another (<see cref="StaticStructureOperation.AliasResolvedRegion"/>, which
+    /// <see cref="StaticStructureOperation.ResolvedView"/> follows) — so no written body escapes elaboration and no selected
+    /// signature goes unused. A miss means the analysis and the rewrite walked different bodies — an internal defect of this
+    /// pass, never a program's error — so it fails loudly instead of letting the evaluator run an unelaborated body. Not
+    /// checked after a refused selection, which rewrites nothing.
+    /// </summary>
+    private static void RequireEveryAnalyzedBodyRewritten(ResolutionRun run)
+    {
+        if (run.Selected is not { Succeeded: true } selected || run.StructuralOperation is not { } operation)
+            return;
+        foreach (var body in selected.Analyzed)
+        {
+            operation.Queries.Resources.Work(cancellationToken: run.CancellationToken);
+            if (operation.ResolvedView(body.Key) is null)
+                throw new InvalidOperationException(
+                    $"Implicit-argument resolution analyzed the body '{body.Name}'"
+                    + (body.Location is { } location ? $" at {location.Start}" : "")
+                    + " but never rewrote it: the analysis and the rewrite walked different bodies.");
+        }
     }
 
     /// <summary>
@@ -696,7 +739,16 @@ internal static partial class ImplicitArgumentResolver
                 (IReadOnlyList<string>)refusal.Links.Select(index => equations[index].Name).Distinct(StringComparer.Ordinal).ToArray(),
                 refusal.Outcome))
             .ToArray();
-        return new SelectedSignatures(facts, refusals, aliases);
+        if (refusals.Length != 0)
+            return new SelectedSignatures(facts, refusals, aliases);
+
+        // A record (including two optional value-type spans) and its array slot need two 64-byte ledger slots per body,
+        // plus one for the array header. Charge construction work here; the reach walk charges its own work separately.
+        operation.Queries.Resources.Metadata(2L * analysis.Order.Count + 1, work: analysis.Order.Count, cancellationToken: run.CancellationToken);
+        return new SelectedSignatures(facts, refusals, aliases)
+        {
+            Analyzed = [.. analysis.Order.Select(static body => new AnalyzedBody(body.Key, body.Name, body.Span, body.ImportSite, body.Written))],
+        };
     }
 
     /// <summary>
@@ -1029,15 +1081,17 @@ internal static partial class ImplicitArgumentResolver
         {
             // A lone bare row is never formula-lifted: it is a callable alias or bare forwarding (FWD-02), so its reference
             // takes the CALLABLE role; the root keeps its bare rows as their own zero-argument demands, and such a row
-            // never lifts (a preserved row is not walked; one that requires nothing contributes nothing either way).
+            // never lifts (a preserved row's own references are not walked; one that requires nothing contributes nothing
+            // either way). A block written in a preserved row is still a body: the loop below analyzes it, and the rewrite
+            // processes it as the row's block head (THE ROOT CLAUSE keeps the row unlifted, never its block).
             var rowRole = !isRoot && HasLoneBareRowShape(alg) ? LiftingRole.Callable : LiftingRole.Value;
             var sink = new EquationSink(visibleParamMap, memos, body, new EquationWalkMemo());
             foreach (var expr in AstHelpers.WrittenRows(alg, isRoot ? expr => !IsBareRootCallableRow(expr, visibleParamMap, memos) : null))
                 WalkLiftingRoles(expr, rowRole, null, ref sink);
         }
 
-        // Every block a row holds is a body of its own (D1a), analyzed in this body's context — and under its import site —
-        // as the rewrite processes it.
+        // Every block a row holds, a preserved root row's included, is a body of its own (D1a), analyzed in this body's
+        // context and under its import site, as the rewrite processes it (enforced by RequireEveryAnalyzedBodyRewritten).
         foreach (var block in BlocksIn(AstHelpers.WrittenRows(alg)))
         {
             using var site = run.EnterImportSite(KatLang.ImportSite.OfBlock(block));

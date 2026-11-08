@@ -3412,3 +3412,38 @@ Owner-authorized language change (`experimental/features/collector-reference-arg
 - **Implementation correspondence.** `spreadCollectorSlice?` stays the total, evaluator-independent fast arm; the reference arm remains in the evaluator capability. C#'s `MayBeTransparentReference` stays an optimization gate, as it is for A-2.
 - **Coverage.** `CollectorReferenceArgumentTransportTests` (six routes, suspension, cancellation, meta, ownership, negatives, materialization and bounded repeated-list evidence), section 10 of `CoreTests/CollectingCallableForwarding.lean`, `spread_slice_is_the_written_slice`, `parameter_spread_reads_its_cell`, `reference_chain_retains_the_collector` in `WholeAlgorithmTransport.lean`, spec `collector-reference-argument-*`, ledger E-11. Superseded pins were retired in `CollectingCallableForwardingLawTests.TransparentReferences.cs`, `SelectiveCollectorReadTests.cs` and section 9 of `CoreTests/CollectingCallableForwarding.lean`, with carrier negatives kept.
 - **Validation.** V3; see the implementation report.
+
+### S-10 batch 2: a preserved root row's block is elaborated, the reach invariant, open heads in region keys (November 2026)
+
+Classification: "Lookup / ownership / open", its C#-only signature-construction exception, like B3-5★. These are
+front-end elaboration corrections in `ImplicitArgumentResolver` only. Lean needs no semantic edit: it receives
+elaborated trees, and both defects occur before anything Lean sees. No language rule changes; each correction restores
+the stated rule. The generated `lean/LanguageSpecCases.lean` gains one derived case, and the two generator files'
+corpus-size line changes. No AST variant, evaluator law, public API, EBNF, tutorial or generator guidance changes.
+
+- **Correction note, F1 (High).** THE ROOT CLAUSE preserves a bare root ROW, never its BLOCK. The signature analysis
+  recorded the bodies of a block written in a preserved row (`{ public K = if(true, 5, Inc) ⏎ 0 }.K`). The rewrite
+  returned the whole row unchanged, so the evaluator ran `K`'s raw body. The program printed 5 instead of `K`'s arity
+  error, blamed an inner callee (`Inc`), or lost a front-end error (`InvalidCollectingBinding`,
+  `UnliftableClauseFamily`, `UnforwardableParameter`). The row now keeps its shape with its block head processed
+  (`WithProcessedBlockHead`, already used by alias formation and bare forwarding). THE NAMED-HOLDER LAW holds: `{ M }.K`
+  at the root behaves like `Lib = { M }` followed by `Lib.K`.
+- **The reach invariant.** `RequireEveryAnalyzedBodyRewritten` mirrors `RequireSelectedComposition`. It runs after the
+  eager rewrite and after a deferred unit's, never after a refused selection. It requires every body the analysis
+  recorded to have a resolved view (`StaticStructureOperation.ResolvedView`, which follows region aliases); otherwise it
+  throws an internal `InvalidOperationException` that names the body and its location. The check is always on, like the
+  pass's other invariant guards. Its list is charged to the static ledger. No exemption was needed: module bodies that a
+  deferred unit selects again are found through their frozen eager publications.
+- **Correction note, F2 (Low).** The resolver's region key (`AlgorithmRegionKey`, through `FreeReferenceNames`) now also
+  counts a body's own `open` heads. A level's declarations never remove them, as in detection's `RegionFreeNames`. Stored
+  lexical fallbacks are still left out. Open heads have a separate traversal from rows, so a shared path remains an input
+  after local names are removed. Before this, one shared body under two parents whose open heads select different
+  callees got ONE signature on the name-resolved route (`ResolveNameResolved*`, which has no production caller). Source
+  mode was already right.
+- **Coverage.** `RootRowBlockHeadTests` covers Appendix A of the S-10 batch-2 brief beside named-holder controls (blame,
+  host effects on six routes, declaration orders, a module control) and a 240-pair named-holder sweep with non-vacuity
+  counters. `SharedGraphExpansionTests.ASharedBodysOwnOpenHead_*` runs D-1, D-2b and the controls D-2 and D-3 in both
+  resolver modes; `ASharedOpenPathAlsoUsedInARow_StillKeysItsRegion` pins the same region rule when a path object is shared
+  between a row and an open head. Spec cases: `root-row-block-head-is-elaborated` (Lean-guarded, derived) and
+  `root-row-block-head-reports-front-end-errors` (parse level). Report:
+  `experimental/features/s10-batch2-f1-f2-implementation.md`.

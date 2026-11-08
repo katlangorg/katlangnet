@@ -216,8 +216,8 @@ internal static class FrontEndElaborationScenarios
 	}
 
 	/// <summary>
-	/// Written names resolve through the static query engine: at least one Q1 read per
-	/// declaration, and no linear property scan, root rediscovery or open-member work.
+	/// Checks aggregate static-query activity proportional to the declaration count,
+	/// with no linear property scan, root rediscovery or open-member work.
 	/// </summary>
 	private static void AssertLookupWorkObserved(string source, int minimumStaticReads)
 	{

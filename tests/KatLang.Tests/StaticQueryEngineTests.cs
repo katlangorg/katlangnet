@@ -486,4 +486,216 @@ public sealed class StaticQueryEngineTests
 
         Assert.Throws<InvalidOperationException>(() => engine.Get("careless"));
     }
+
+    // ── Final ordinary edges are unlinked at quiescence; the logical charge is kept ──
+
+    // 0 = 1 & 2, 1 = 2, 2 = Yes: three ordinary edges, two into key 2. The counters below were derived by tracing the
+    // engine before final-edge unlinking existed; unlinking must not change any of them.
+    private static Gate[] FanInCircuit() =>
+        [new Gate('&', 1, 2, Tri.Unknown), new Gate('=', 2, 0, Tri.Unknown), new Gate('c', 0, 0, Tri.Yes)];
+
+    private static void AssertFanInStatistics(StaticQueryStatistics statistics)
+    {
+        Assert.Equal(5, statistics.Evaluations);
+        Assert.Equal(5, statistics.Computations);
+        Assert.Equal(6, statistics.Reads);
+        Assert.Equal(3, statistics.ValueChanges);
+        Assert.Equal(0, statistics.PathEdges);
+        Assert.Equal(0, statistics.PathCycles);
+        Assert.Equal(2, statistics.MaxPending);
+        Assert.Equal(3, statistics.Entries);
+        Assert.Equal(3, statistics.Dependencies);
+        Assert.Equal(22, statistics.StorageUnits);
+        Assert.Equal(22, statistics.PeakStorageUnits);
+        Assert.Equal(0, statistics.MetadataUnits);
+    }
+
+    [Fact]
+    public void FinalQuiescence_UnlinksEveryOrdinaryEdge_AndKeepsTheLogicalCharge()
+    {
+        var engine = new StaticQueryEngine<int, Tri>(new Circuit(FanInCircuit()));
+        Assert.Equal(Tri.Yes, engine.Get(0));
+        // Before unlinking, the three edges stayed reachable from both ends (six links).
+        Assert.Equal(0, engine.ReachableOrdinaryEdgeLinksForTesting());
+        AssertFanInStatistics(engine.Statistics);
+        for (var key = 0; key < 3; key++)
+            Assert.True(engine.TryGetFinal(key, out var value) && value == Tri.Yes);
+
+        // A wider shared DAG: no edge survives, while the charged dependency count does.
+        const int N = 500;
+        var gates = new Gate[N];
+        for (var k = 0; k < N - 2; k++)
+            gates[k] = new Gate('&', k + 1, k + 2, Tri.Unknown);
+        gates[N - 2] = new Gate('c', 0, 0, Tri.Yes);
+        gates[N - 1] = new Gate('c', 0, 0, Tri.Yes);
+        var wide = new StaticQueryEngine<int, Tri>(new Circuit(gates));
+        Assert.Equal(Tri.Yes, wide.Get(0));
+        Assert.Equal(0, wide.ReachableOrdinaryEdgeLinksForTesting());
+        Assert.Equal(2 * (N - 2), wide.Statistics.Dependencies);
+    }
+
+    [Fact]
+    public void FinalEdgeUnlinking_KeepsStorageAndReadAdmissionAtTheirExactBoundaries()
+    {
+        var atStorage = new StaticQueryEngine<int, Tri>(new Circuit(FanInCircuit()), limits: new(long.MaxValue, 64, MaxStorageUnits: 22));
+        Assert.Equal(Tri.Yes, atStorage.Get(0));
+        AssertFanInStatistics(atStorage.Statistics);
+
+        var belowStorage = new StaticQueryEngine<int, Tri>(new Circuit(FanInCircuit()), limits: new(long.MaxValue, 64, MaxStorageUnits: 21));
+        Assert.Throws<StaticQueryLimitExceededException>(() => belowStorage.Get(0));
+        Assert.Equal(20, belowStorage.Statistics.PeakStorageUnits);
+        Assert.Throws<InvalidOperationException>(() => belowStorage.Get(0));
+
+        var atReads = new StaticQueryEngine<int, Tri>(new Circuit(FanInCircuit()), limits: new(long.MaxValue, 64, MaxReads: 6));
+        Assert.Equal(Tri.Yes, atReads.Get(0));
+        AssertFanInStatistics(atReads.Statistics);
+
+        var belowReads = new StaticQueryEngine<int, Tri>(new Circuit(FanInCircuit()), limits: new(long.MaxValue, 64, MaxReads: 5));
+        Assert.Throws<StaticQueryLimitExceededException>(() => belowReads.Get(0));
+        Assert.Equal(5, belowReads.Statistics.Reads);
+        Assert.Throws<InvalidOperationException>(() => belowReads.Get(0));
+    }
+
+    // ── A later Get: new mutually recursive entries subscribe to earlier final ones and refine several times ──
+
+    private sealed class Rising(Dictionary<int, Func<StaticQueryReader<int, int>, StaticQueryStep<int>>> rules)
+        : IStaticQueryDefinition<int, int>
+    {
+        public StaticQueryStep<int> Compute(int key, StaticQueryReader<int, int> reader) => rules[key](reader);
+
+        public int Initial(int key) => 0;
+
+        public int PathCycleValue => -1;
+
+        public bool ValueEquals(int left, int right) => left == right;
+
+        public bool IsRefinement(int before, int after) => after >= before;
+    }
+
+    // 11 = 2 and 10 = 11 + 1 are solved first. Later 0 = max(10, 1) and 1 = min(0 + 1, 11 + 4) climb 3, 4, 5, 6 together,
+    // re-subscribing to the final 10 and 11 (11 had a reader in the first Get) on every recomputation.
+    private static Rising LaterRecursion() => new(new()
+    {
+        [11] = _ => StaticQueryStep.Complete(2),
+        [10] = r => StaticQueryStep.Complete(r.Read(11) + 1),
+        [0] = r => StaticQueryStep.Complete(Math.Max(r.Read(10), r.Read(1))),
+        [1] = r => StaticQueryStep.Complete(Math.Min(r.Read(0) + 1, r.Read(11) + 4)),
+    });
+
+    [Fact]
+    public void ALaterGet_SubscribesFreshlyToFinalEntries_AndUnsubscribesWithoutStaleEdges()
+    {
+        var engine = new StaticQueryEngine<int, int>(LaterRecursion());
+        Assert.Equal(3, engine.Get(10));
+        Assert.Equal(0, engine.ReachableOrdinaryEdgeLinksForTesting());
+        var first = engine.Statistics;
+        Assert.Equal((3L, 3L, 2L, 3L, 1, 2, 1L, 12L, 12L), (first.Evaluations, first.Computations, first.Reads, first.ValueChanges,
+            first.MaxPending, first.Entries, first.Dependencies, first.StorageUnits, first.PeakStorageUnits));
+
+        Assert.Equal(6, engine.Get(0));
+        Assert.Equal(0, engine.ReachableOrdinaryEdgeLinksForTesting());
+        var second = engine.Statistics;
+        Assert.Equal((11L, 11L, 18L, 10L, 1, 4, 5L, 30L, 30L), (second.Evaluations, second.Computations, second.Reads, second.ValueChanges,
+            second.MaxPending, second.Entries, second.Dependencies, second.StorageUnits, second.PeakStorageUnits));
+        Assert.Equal((0L, 0L, 0L), (second.PathEdges, second.PathCycles, second.MetadataUnits));
+
+        // Repeated lookups compute nothing and observe the same facts.
+        foreach (var (key, expected) in new[] { (0, 6), (1, 6), (10, 3), (11, 2), (0, 6) })
+        {
+            Assert.Equal(expected, engine.Get(key));
+            Assert.True(engine.TryGetFinal(key, out var final) && final == expected);
+        }
+        Assert.Equal(second, engine.Statistics);
+        Assert.Equal(
+            new[] { (0, 6), (1, 6), (10, 3), (11, 2) },
+            engine.EnumerateFinalValues().Select(pair => (pair.Key, pair.Value)).OrderBy(pair => pair.Key).ToArray());
+    }
+
+    [Fact]
+    public void ALaterGet_KeepsCumulativeStorageAndReadBoundaries()
+    {
+        var atStorage = new StaticQueryEngine<int, int>(LaterRecursion(), limits: new(long.MaxValue, 64, MaxStorageUnits: 30));
+        Assert.Equal(3, atStorage.Get(10));
+        Assert.Equal(6, atStorage.Get(0));
+        Assert.Equal(30, atStorage.Statistics.PeakStorageUnits);
+
+        var belowStorage = new StaticQueryEngine<int, int>(LaterRecursion(), limits: new(long.MaxValue, 64, MaxStorageUnits: 29));
+        Assert.Equal(3, belowStorage.Get(10));
+        Assert.Throws<StaticQueryLimitExceededException>(() => belowStorage.Get(0));
+        Assert.Equal(28, belowStorage.Statistics.PeakStorageUnits);
+        Assert.Throws<InvalidOperationException>(() => belowStorage.Get(10));
+
+        var atReads = new StaticQueryEngine<int, int>(LaterRecursion(), limits: new(long.MaxValue, 64, MaxReads: 18));
+        Assert.Equal(3, atReads.Get(10));
+        Assert.Equal(6, atReads.Get(0));
+        Assert.Equal(18, atReads.Statistics.Reads);
+
+        var belowReads = new StaticQueryEngine<int, int>(LaterRecursion(), limits: new(long.MaxValue, 64, MaxReads: 17));
+        Assert.Equal(3, belowReads.Get(10));
+        Assert.Throws<StaticQueryLimitExceededException>(() => belowReads.Get(0));
+        Assert.Equal(17, belowReads.Statistics.Reads);
+        Assert.Throws<InvalidOperationException>(() => belowReads.TryGetFinal(10, out _));
+    }
+
+    // ── Cancellation inside the final-edge walk ──
+
+    // Key 0 reads keys 1..width: one entry's dependency list holds the whole fan-in.
+    private sealed class Hub(int width) : IStaticQueryDefinition<int, Tri>
+    {
+        public StaticQueryStep<Tri> Compute(int key, StaticQueryReader<int, Tri> reader)
+        {
+            if (key != 0)
+                return StaticQueryStep.Complete(Tri.Yes);
+            var all = Tri.Yes;
+            for (var input = 1; input <= width; input++)
+                all = Apply('&', all, reader.Read(input));
+            return StaticQueryStep.Complete(all);
+        }
+
+        public Tri Initial(int key) => Tri.Unknown;
+
+        public Tri PathCycleValue => Tri.No;
+
+        public bool ValueEquals(Tri left, Tri right) => left == right;
+
+        public bool IsRefinement(Tri before, Tri after) => before == Tri.Unknown || before == after;
+    }
+
+    [Fact]
+    public void FinalEdgeWalk_VisitsEachChargedEdgeOnce()
+    {
+        const int width = 64;
+        var engine = new StaticQueryEngine<int, Tri>(new Hub(width));
+        var visited = 0;
+        engine.BeforeFinalEdgeReleaseForTesting = () => visited++;
+        Assert.Equal(Tri.Yes, engine.Get(0));
+        Assert.Equal(width, engine.Statistics.Dependencies);
+        Assert.Equal(width, visited);
+        Assert.Equal(0, engine.ReachableOrdinaryEdgeLinksForTesting());
+    }
+
+    [Fact]
+    public void Cancellation_InsideAFinalFanInWalk_FaultsTheEngine_WithTheOriginalToken()
+    {
+        const int width = 64;
+        using var cancellation = new CancellationTokenSource();
+        var engine = new StaticQueryEngine<int, Tri>(new Hub(width), cancellationToken: cancellation.Token);
+        var visited = 0;
+        engine.BeforeFinalEdgeReleaseForTesting = () =>
+        {
+            if (++visited == 10)
+                cancellation.Cancel();
+        };
+
+        var error = Assert.Throws<OperationCanceledException>(() => engine.Get(0));
+        Assert.Equal(cancellation.Token, error.CancellationToken);
+        // The walk stopped inside the hub's own dependency list, not at the next entry boundary.
+        Assert.Equal(10, visited);
+        Assert.True(engine.Resources.IsFailed);
+        Assert.Throws<InvalidOperationException>(() => engine.Get(0));
+        Assert.Throws<InvalidOperationException>(() => engine.Get(1));
+        Assert.Throws<InvalidOperationException>(() => engine.TryGetFinal(1, out _));
+        Assert.Throws<InvalidOperationException>(() => engine.EnumerateFinalValues().ToList());
+        Assert.Equal(10, visited);
+    }
 }

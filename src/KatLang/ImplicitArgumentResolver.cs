@@ -160,6 +160,7 @@ internal static partial class ImplicitArgumentResolver
             structuralOperation.Publish(structuralOperation.Root, StaticPublicationStage.Resolved, resolved);
         run.CompletePendingTargets();
         run.CommitDeferredChecks();
+        RequireEveryAnalyzedBodyRewritten(run);
         run.ReleaseLevels();
         observations?.StageObserver?.Invoke("completed-publication", true);
         structuralOperation.CompleteLookups(resolved);
@@ -1170,10 +1171,16 @@ internal static partial class ImplicitArgumentResolver
     /// binders are already <see cref="Expr.Param"/>s). These are exactly the names whose
     /// visible-map signatures the rewrite of the subtree can read — bare and called
     /// references, the alias and canonical <c>Math</c> shadow checks, and the signature analysis's
-    /// equation references all probe the map by a written name — while open targets
-    /// (rewritten with fresh maps) and stored dot-edge fallbacks (never rewritten) read
-    /// nothing. A pure function of the node: memoized per run, and reference-visited per
-    /// subtree so a shared expression contributes its names once.
+    /// equation references all probe the map by a written name — plus the names of each
+    /// body's OWN open heads: an open target is rewritten with fresh maps, but its head is
+    /// resolved where the body is written and decides which callees the body's rows lift
+    /// (equations read open providers), so two reaches whose open heads select different
+    /// callees must not share a region (S-10 F2). A level's declarations never remove its
+    /// own open heads: an open list is read outside the level that writes it, as in
+    /// <see cref="RegionFreeNames"/>. Stored dot-edge lexical fallbacks (never rewritten)
+    /// still read nothing here, deliberately unlike <see cref="RegionFreeNames"/>. A pure
+    /// function of the node: memoized per run, and reference-visited per subtree so a
+    /// shared expression contributes its names once.
     /// </summary>
     private sealed class ReferenceNames(NameSetInterner interner)
     {
@@ -1218,12 +1225,28 @@ internal static partial class ImplicitArgumentResolver
                     names.UnionWith(FreeReferenceNames(property.Value, run));
                 foreach (var property in user.Properties)
                     names.Remove(property.Name);
+                // A body's own open heads decide which callees its rows lift, and an open list is read outside the level
+                // that writes it: they are added AFTER the level's declarations are removed (RegionFreeNames' rule).
+                if (user.Opens.Count > 0)
+                {
+                    // A path shared with a row must be walked again: removing local names also removed its contribution.
+                    visited.Clear();
+                    foreach (var open in user.Opens)
+                        CollectReferenceNames(open, names, visited, run);
+                }
                 break;
             }
 
             case Algorithm.Conditional conditional:
                 foreach (var branch in conditional.Branches)
                     names.UnionWith(FreeReferenceNames(branch.Body, run));
+                // Kept for RegionFreeNames' rule: elaboration leaves a family's own open list empty (its clauses own theirs).
+                if (conditional.Opens.Count > 0)
+                {
+                    var heads = new HashSet<Expr>(ReferenceEqualityComparer.Instance);
+                    foreach (var open in conditional.Opens)
+                        CollectReferenceNames(open, names, heads, run);
+                }
                 break;
 
             case Algorithm.Builtin:
@@ -2162,7 +2185,9 @@ internal static partial class ImplicitArgumentResolver
         {
             rewrittenOutput.Add(
                 ShouldPreserveBareRootRow(expr, visibleParamMap, isRoot, walkMemos)
-                    ? expr
+                    // THE ROOT CLAUSE keeps the ROW unlifted, never its block: a block head (`{ … }.K`, `{ … }.S.K`) is a
+                    // body of its own, elaborated like every other body (the analysis recorded it).
+                    ? WithProcessedBlockHead(expr, visibleParamMap, walkMemos)
                     : RewriteImplicitCalls(
                         expr,
                         visibleParamMap,

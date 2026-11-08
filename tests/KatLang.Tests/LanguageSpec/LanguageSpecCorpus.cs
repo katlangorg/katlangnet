@@ -2745,6 +2745,29 @@ public static class LanguageSpecCorpus
         },
         new()
         {
+            Id = "root-row-block-head-is-elaborated",
+            Category = "variadic-calls",
+            Source = "Inc(x) = x + 1\n{\n    public K = if(true, 5, Inc)\n    0\n}.K",
+            Outcome = SpecOutcome.EvalError,
+            ExpectedErrorCategory = "arity",
+            ExpectedErrorPayload = new("arity", [], [1, 0]),
+            IncludeInGeneratorPrompt = false,
+            Notes = "S-10 F1 (November 2026): this printed 5 before the fix, because the rewrite returned the preserved row with its block unprocessed and the evaluator ran K's raw body. The resolver now checks that every body the signature analysis records is rewritten.",
+            Explanation = "THE ROOT CLAUSE keeps a bare root row unlifted, never the block written in it. `K` uses `Inc` in a value role, so formula lifting makes it `K(x)`, and the row `{ … }.K` is `K`'s own zero-argument demand: its arity error, exactly as `Lib = { … }` followed by `Lib.K`.",
+        },
+        new()
+        {
+            Id = "root-row-block-head-reports-front-end-errors",
+            Category = "variadic-calls",
+            Source = "C1(a, *p) = a\nC2(b, *q) = b\n{\n    public K = C1 + C2\n    0\n}.K",
+            Outcome = SpecOutcome.ParseError,
+            ExpectedDiagnosticCode = DiagnosticCode.InvalidCollectingBinding,
+            IncludeInGeneratorPrompt = false,
+            Notes = "S-10 F1 (November 2026): the error was lost before the fix, because the block in the preserved root row was never elaborated. Source-level front-end diagnostic; no elaborated Lean program exists.",
+            Explanation = "A block written in a preserved root row is elaborated like every other body, so its front-end errors are reported: `K = C1 + C2` would lift two collecting parameters at one level, which no written signature may declare.",
+        },
+        new()
+        {
             Id = "repeated-name-wrapper-keeps-independent-arguments",
             Category = "variadic-calls",
             Source = "Common(x, x) = x\nBoth(a, b) = Common(a, b)\nTwice(v) = Common(v, v)\nSome = Common\n\nBoth(7, 7)\nTwice(8)\nSome(9, 9)",

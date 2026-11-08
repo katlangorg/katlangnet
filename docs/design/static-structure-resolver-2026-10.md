@@ -104,6 +104,9 @@ batched. Ordinary subscriptions are replaced on recomputation, so obsolete branc
 Values stay in place; there are no provisional result owners, chase frames, suspension recipes or invalidation logs.
 No new key becomes final until the entire worklist is quiescent. The resulting reachable closure is cached; later
 demand roots can add incoming edges but cannot alter an already final closure under the purity contract.
+At successful quiescence every ordinary edge joins final entries and has no future reader, so the engine unlinks
+the edges created by that call (bounded O(E) work, cancellation checked per entry and edge); path and component
+state is kept for later OD-D detection, and the logical dependency/storage charge is not refunded.
 
 Starting at bottom and applying monotone equations fairly computes their least information fixed point, with
 refusal seeds exactly for confirmed path cycles. This justifies scheduling independence *under the definition
@@ -129,8 +132,9 @@ the simpler independent-input rescan pathology, but does not prove universal FE-
 O(R), even with linear resident space. B3-2★ must use bounded fan-in/shared aggregates or demonstrate equivalent
 bounds on its actual equations; use the read limit as a terminal resource bound, not a substitute for that analysis.
 The engine uses no host recursion. Callbacks must cooperate with cancellation and remain bounded between reads.
-Statistics expose events, computations, reads, value changes, path edges/cycles, queue peak, entries and live
-ordinary dependencies for regression and complexity checks.
+Statistics expose events, computations, reads, value changes, path edges/cycles, queue peak, entries and
+ordinary dependencies (the edges the latest subscriptions charged, still counted after final edges are unlinked) for
+regression and complexity checks.
 
 **Gate C private integration (2026-10-29).** Closed namespace observers use a second FIFO queue, run only
 when ordinary work is quiescent; an observer that unlocks ordinary work yields to that work before the next
@@ -460,7 +464,18 @@ Normative text: `docs/design/language-rules/ownership-and-lookup.md` § Recursiv
    (`StaticQueryResourceBudget`; a table charges its 2^dimensions classifications before evaluating any).
 3. **Rewrite**: declarations in their elaborated order over the selected signatures. The rewrite never recomposes a
    signature (`SelectedLifting`); `RequireSelectedComposition` checks, by reference and in O(dependencies), that it
-   reads exactly the callees the selection composed from. Region memo hits are recorded as **region aliases**
+   reads exactly the callees the selection composed from. Its mirror, THE REACH INVARIANT
+   (`RequireEveryAnalyzedBodyRewritten`, S-10), checks the other direction once the rewrite (eager, or a deferred
+   unit's) completes: every body the analysis recorded, open or closed, has a resolved view — processed in that
+   context or served through a region alias — so "the same recursion the rewrite makes" (item 1) is enforced, not
+   assumed. Its counterexample was S-10 F1: the analysis recorded the bodies of a block written in a preserved bare
+   root row (`{ public K = … ⏎ 0 }.K`), while the rewrite returned the row unchanged, so the evaluator ran `K`'s raw
+   body (a wrong value, the wrong callable blamed, or a lost front-end error). The root clause now keeps the row and
+   processes its block head (`WithProcessedBlockHead`), and a skipped body is an internal failure, never a program's
+   result. The resolver's region key (`AlgorithmRegionKey`, through `FreeReferenceNames`) also counts a body's own
+   `open` heads, never removed by the level's declarations, as detection's `RegionFreeNames` does (S-10 F2), so one
+   shared body whose open heads select different callees under two parents gets one signature per parent on the
+   name-resolved route too. Region memo hits are recorded as **region aliases**
    (`StaticStructureOperation.AliasResolvedRegion`): resolved views and pending target and structure cells below a served
    context are read through its counterpart (`ResolvedView`, `RegionCounterpart`); a served context's completed facts
    are its own (contextual identity, receiver, open, providers) over the counterpart's processed view, and every context

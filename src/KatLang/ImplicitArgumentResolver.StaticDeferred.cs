@@ -34,6 +34,7 @@ internal static partial class ImplicitArgumentResolver
         var resolved = ProcessAlgorithm(detectedBody, map, forwardable, isRoot: false, observations, diagnostics, branch, run);
         run.CompletePendingTargets();
         run.CommitDeferredChecks();
+        RequireEveryAnalyzedBodyRewritten(run);
         run.ReleaseLevels();
         operation.CompleteLookups(resolved);
         return resolved;

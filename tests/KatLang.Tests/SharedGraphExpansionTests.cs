@@ -460,6 +460,169 @@ public sealed class SharedGraphExpansionTests
         Assert.Equal([(Decimal128)1, (Decimal128)3], Evaluate(elaborated.Exposed));
     }
 
+    // ── A body's own open heads are part of its resolver region (S-10 F2) ─────────────────────────
+
+    /// <summary>A user body with one <c>open</c>.</summary>
+    private static Algorithm.User Opening(Expr open, IReadOnlyList<Property> properties, params Expr[] rows)
+        => new(null, [], [open], properties, new OutputBundle(rows));
+
+    /// <summary>A body with a written parameter list.</summary>
+    private static Algorithm.User WithParams(IReadOnlyList<string> names, params Expr[] rows)
+        => new(null, [.. names.Select(static name => (ParameterPattern)new CaptureParameterPattern(name))], [], [], new OutputBundle(rows))
+        {
+            HasExplicitParameterList = true,
+        };
+
+    private static Expr Param(string name) => new Expr.Param(name);
+    private static Expr Call(string callee, params Expr[] args) => new Expr.Call(Name(callee), new OutputBundle(args));
+
+    /// <summary>
+    /// Left and Right each declare <c>L</c> (whose <c>F</c> the shared body's open head selects) and the shared <c>S</c>; Left
+    /// calls <c>S</c> with <paramref name="leftArgs"/>, Right with <paramref name="rightArgs"/>.
+    /// </summary>
+    private static Algorithm.User OpenHeadParents(Algorithm shared, Algorithm leftF, Algorithm rightF, Expr[] leftArgs, Expr[] rightArgs)
+        => Block(
+            [
+                Public("Left", Block([Public("L", Block([Public("F", leftF)], Number(0))), Public("S", shared)],
+                    leftArgs.Length == 0 ? Name("S") : Call("S", leftArgs))),
+                Public("Right", Block([Public("L", Block([Public("F", rightF)], Number(0))), Public("S", shared)],
+                    rightArgs.Length == 0 ? Name("S") : Call("S", rightArgs))),
+            ],
+            Name("Left"), Name("Right"));
+
+    /// <summary>Every parameter list below <paramref name="algorithm"/>, by property path: what the signature selection decided.</summary>
+    private static string Signatures(Algorithm algorithm)
+    {
+        var lines = new List<string>();
+        void Walk(Algorithm body, string path)
+        {
+            var (patterns, properties) = body switch
+            {
+                Algorithm.User user => (user.ParameterPatterns, user.Properties),
+                Algorithm.Alias alias => ((IReadOnlyList<ParameterPattern>)[], alias.Properties),
+                _ => ((IReadOnlyList<ParameterPattern>)[], (IReadOnlyList<Property>)[]),
+            };
+            lines.Add($"{path}({string.Join(", ", patterns.Select(static pattern => pattern.DisplayName))}){(body is Algorithm.Alias ? " alias" : "")}");
+            foreach (var property in properties)
+                Walk(property.Value, path + "." + property.Name);
+        }
+
+        Walk(algorithm, "");
+        return string.Join("\n", lines);
+    }
+
+    /// <summary>
+    /// (case, the graph, its tree's outputs). D-1: the only difference between the parents is what the shared body's OWN open
+    /// head selects, <c>F(x)</c> or <c>F(y, z)</c>, so <c>S</c> is <c>S(x)</c> under Left and <c>S(y, z)</c> under Right.
+    /// D-2b: the open head belongs to a nested helper <c>H</c> of the shared body, with different arities. Before the fix the
+    /// name-resolved route served Right from Left's region (one signature, then <c>ArityMismatch</c>), while source mode,
+    /// whose detection keys regions by <see cref="RegionFreeNames"/>, was already right. Controls: D-2, the nested head with
+    /// equal arity, whose VALUES never differed (the callee is resolved at run time) but whose name-resolved <c>H</c> was
+    /// Left's <c>H(x)</c> under Right too before the fix, and D-3, a shared body whose free row name each parent declares.
+    /// </summary>
+    public static TheoryData<string, bool> OpenHeadGraphs => new()
+    {
+        { "D-1", false }, { "D-1", true },
+        { "D-2b", false }, { "D-2b", true },
+        { "D-2", false }, { "D-2", true },
+        { "D-3", false }, { "D-3", true },
+    };
+
+    private static (Algorithm.User Graph, Decimal128[] Expected) OpenHeadGraph(string id)
+    {
+        var x = WithParams(["x"], Param("x"));
+        var yz = WithParams(["y", "z"], Add(Param("y"), Param("z")));
+        switch (id)
+        {
+            case "D-1":
+                return (OpenHeadParents(Opening(Name("L"), [], Add(Name("F"), Number(0))), x, yz, [Number(5)], [Number(5), Number(6)]), [(Decimal128)5, (Decimal128)11]);
+            case "D-2b":
+            {
+                var shared = Block([Public("H", Opening(Name("L"), [], Add(Name("F"), Number(0))))], Name("H"));
+                return (OpenHeadParents(shared, x, yz, [Number(5)], [Number(5), Number(6)]), [(Decimal128)5, (Decimal128)11]);
+            }
+            case "D-2":
+            {
+                var shared = Block([Public("H", Opening(Name("L"), [], Add(Name("F"), Number(0))))], Call("H", Number(5)));
+                return (OpenHeadParents(shared, x, WithParams(["y"], Add(Param("y"), Number(100))), [], []), [(Decimal128)5, (Decimal128)105]);
+            }
+            case "D-3":
+            {
+                var shared = Block([], Add(Name("F"), Number(0)));
+                var graph = Block(
+                    [
+                        Public("Left", Block([Public("F", x), Public("S", shared)], Call("S", Number(5)))),
+                        Public("Right", Block([Public("F", yz), Public("S", shared)], Call("S", Number(5), Number(6)))),
+                    ],
+                    Name("Left"), Name("Right"));
+                return (graph, [(Decimal128)5, (Decimal128)11]);
+            }
+            default:
+                throw new ArgumentOutOfRangeException(nameof(id), id, null);
+        }
+    }
+
+    [Theory]
+    [MemberData(nameof(OpenHeadGraphs))]
+    public void ASharedBodysOwnOpenHead_KeysItsRegion(string id, bool nameResolved)
+    {
+        var (graph, expected) = OpenHeadGraph(id);
+        var tree = (Algorithm.User)CloneTree(graph);
+        var fromTree = Elaborate(tree, nameResolved);
+        var fromGraph = Elaborate(graph, nameResolved);
+        Assert.Equal(expected, Evaluate(fromTree.Exposed));
+        Assert.Equal(expected, Evaluate(fromGraph.Exposed));
+        Assert.Equal(Signatures(fromTree.Exposed), Signatures(fromGraph.Exposed));
+    }
+
+    /// <summary>The D-1 signatures themselves, so the comparison above cannot pass on two equally wrong selections.</summary>
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void ASharedBodysOwnOpenHead_SelectsEachParentsCallee(bool nameResolved)
+    {
+        var exposed = Elaborate(OpenHeadGraph("D-1").Graph, nameResolved).Exposed;
+        string SignatureOf(string parent)
+            => string.Join(", ", ((Algorithm.User)Member(Member(exposed, parent).Value, "S").Value).ParameterPatterns
+                .Select(static pattern => pattern.DisplayName));
+        Assert.Equal(("x", "y, z"), (SignatureOf("Left"), SignatureOf("Right")));
+    }
+
+    /// <summary>
+    /// Open heads stay in the conservative region inputs even when the same expression object is also a row and the
+    /// body declares its head name. A shared graph must use the same region rule as a tree of independent bodies.
+    /// </summary>
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void ASharedOpenPathAlsoUsedInARow_StillKeysItsRegion(bool nameResolved)
+    {
+        var head = new Expr.DotCall(Name("L"), "M", null);
+        var shared = Opening(head, [Public("L", Block([Public("M", Block([Public("F", Block([], Number(9)))], Number(0)))], Number(0)))],
+            head, Add(Name("F"), Number(0)));
+        Algorithm Library(Algorithm f) => Block([Public("M", Block([Public("F", f)], Number(0)))], Number(0));
+        var graph = Block(
+            [
+                Public("Left", Block([Public("L", Library(WithParams(["x"], Param("x")))), Public("S", shared)],
+                    Name("S"))),
+                Public("Right", Block([Public("L", Library(WithParams(["y", "z"], Add(Param("y"), Param("z"))))), Public("S", shared)],
+                    Name("S"))),
+            ],
+            Name("Left"), Name("Right"));
+        var fromTree = Elaborate((Algorithm.User)CloneTree(graph), nameResolved).Exposed;
+        var diagnostics = new DiagnosticBag();
+        var resolved = nameResolved
+            ? ImplicitArgumentResolver.ResolveNameResolvedPrevalidated(graph, diagnostics: diagnostics)
+            : ImplicitArgumentResolver.ResolvePrevalidated(ParameterDetector.DetectPrevalidated(graph, diagnostics: diagnostics), diagnostics: diagnostics);
+        Assert.Equal(0, diagnostics.ReportedCount);
+        Assert.NotSame(Member(Member(resolved, "Left").Value, "S").Value, Member(Member(resolved, "Right").Value, "S").Value);
+        var fromGraph = PropertyExposureResolver.Resolve(resolved);
+        Decimal128[] expected = [(Decimal128)0, (Decimal128)9, (Decimal128)0, (Decimal128)9];
+        Assert.Equal(expected, Evaluate(fromTree));
+        Assert.Equal(expected, Evaluate(fromGraph));
+        Assert.Equal(Signatures(fromTree), Signatures(fromGraph));
+    }
+
     private static Property Member(Algorithm owner, string name) => owner.Properties.Single(property => property.Name == name);
 
     /// <summary>

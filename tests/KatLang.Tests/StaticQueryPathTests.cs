@@ -136,6 +136,51 @@ public sealed class StaticQueryPathTests
     }
 
     [Fact]
+    public void LaterPathsIntoFinalComponents_KeepRefusalAndEndpoints_AfterFinalEdgesAreUnlinked()
+    {
+        // Every path step also reads an ordinary input, so each Get leaves ordinary edges for quiescence to unlink.
+        StaticQueryTestGate[] gates =
+        [
+            new('f', 1, Ignored: 4), // 0 → 1 → 0: a cycle solved first
+            new('f', 0, Ignored: 4),
+            new('f', 3, Ignored: 0), // 2 → 3 = 7: an acyclic closure solved first
+            new('c', Value: 7),
+            new('c', Value: 1),
+            new('f', 0, Ignored: 1), // a later tail into the final cyclic component
+            new('f', 7, Ignored: 2), // 6 → 7 → 6: a later, wholly new cycle reading final entries
+            new('f', 6, Ignored: 3),
+            new('f', 2, Ignored: 0), // a later acyclic tail into the final closure 2 → 3
+        ];
+        var model = new StaticQueryTestModel(gates);
+        var engine = new StaticQueryEngine<int, int>(model);
+
+        Assert.Equal(-1, engine.Get(0));
+        Assert.Equal(7, engine.Get(2));
+        Assert.Equal(0, engine.ReachableOrdinaryEdgeLinksForTesting());
+        Assert.Equal(1, engine.Statistics.PathCycles);
+
+        var runs = model.Runs;
+        Assert.Equal(-1, engine.Get(5));
+        Assert.Equal(runs + 1, model.Runs); // the final component is not recomputed
+        Assert.Equal(1, engine.Statistics.PathCycles);
+        Assert.Equal(0, engine.ReachableOrdinaryEdgeLinksForTesting());
+
+        Assert.Equal(-1, engine.Get(6));
+        Assert.Equal(-1, engine.Get(7));
+        Assert.Equal(2, engine.Statistics.PathCycles);
+        Assert.Equal(0, engine.ReachableOrdinaryEdgeLinksForTesting());
+
+        Assert.Equal(7, engine.Get(8));
+        Assert.Equal(2, engine.Statistics.PathCycles);
+        Assert.Equal(7, engine.Statistics.PathEdges);
+        Assert.Equal(0, engine.ReachableOrdinaryEdgeLinksForTesting());
+
+        int[] expected = [-1, -1, 7, 7, 1, -1, -1, -1, 7];
+        for (var key = 0; key < gates.Length; key++)
+            Assert.True(engine.TryGetFinal(key, out var final) && final == expected[key], $"key {key}");
+    }
+
+    [Fact]
     public void ALongCycle_IsDetectedOnce_WithinLinearWork()
     {
         const int size = 50_000;

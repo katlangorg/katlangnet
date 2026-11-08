@@ -178,6 +178,28 @@ internal sealed class StaticQueryEngine<TKey, TValue>
                     throw new InvalidOperationException("A static query reached quiescence without an equation.");
                 completed.Final = true;
             }
+
+            // Every entry is now final: earlier ones by their own Get, this call's new ones above (nested Get is
+            // refused). A final entry is never scheduled, so Compute/Unsubscribe never walk its Dependencies, and
+            // Publish never changes it, so its Readers are never notified. Every ordinary edge was made by a new
+            // entry's computation in this call (earlier calls unlinked theirs), so walking the new entries'
+            // Dependencies reaches every Readers list that holds one. Unlink them so the dead graph is not kept alive.
+            // A later Get's reader of a final target starts a fresh Readers list. Path/component state is kept (OD-D).
+            // The unlinking is physical only: _dependencies and the storage ledger keep the logical charge of the
+            // final solve, so statistics, peaks and admission boundaries are unchanged. Cancellation is observed per
+            // entry and per edge; it faults the engine, so a partially unlinked graph is never usable.
+            foreach (var completed in _newEntries)
+            {
+                _cancellationToken.ThrowIfCancellationRequested();
+                for (var dependency = completed.Dependencies; dependency is not null; dependency = dependency.NextDependency)
+                {
+                    BeforeFinalEdgeReleaseForTesting?.Invoke();
+                    _cancellationToken.ThrowIfCancellationRequested();
+                    dependency.Target.Readers = null;
+                }
+                completed.Dependencies = null;
+                completed.Readers = null;
+            }
             _newEntries.Clear();
             return entry.Value;
         }
@@ -218,6 +240,23 @@ internal sealed class StaticQueryEngine<TKey, TValue>
             cancellationToken.ThrowIfCancellationRequested();
             if (entry.Final) yield return new(entry.Key, entry.Value);
         }
+    }
+
+    /// <summary>Test-only: runs before each final ordinary edge is unlinked, so a test can cancel inside that walk.</summary>
+    internal Action? BeforeFinalEdgeReleaseForTesting { get; set; }
+
+    /// <summary>Test-only: ordinary edge links still reachable from entries (each live edge counts once per list).</summary>
+    internal long ReachableOrdinaryEdgeLinksForTesting()
+    {
+        long links = 0;
+        foreach (var entry in _entries)
+        {
+            for (var dependency = entry.Dependencies; dependency is not null; dependency = dependency.NextDependency)
+                links++;
+            for (var dependency = entry.Readers; dependency is not null; dependency = dependency.NextReader)
+                links++;
+        }
+        return links;
     }
 
     internal TValue Read(TKey key)
