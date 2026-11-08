@@ -32,7 +32,7 @@ internal sealed partial class ModuleLoader
     /// <remarks>
     /// Recursive like the loader's own walks, on the tree the raw-syntax structural
     /// preflight has just admitted at the nested allowance, with the same stack-reserve
-    /// probe (<see cref="ThrowIfInsufficientStack"/>) at every level.
+    /// probe (<see cref="FrontEndStack.Ensure"/>) at every level.
     /// </remarks>
     private static Algorithm.User ToImportView(Algorithm.User parsedModuleRoot)
         => (Algorithm.User)new ImportViewRewriter().Rewrite(parsedModuleRoot);
@@ -48,7 +48,7 @@ internal sealed partial class ModuleLoader
 
         public Algorithm Rewrite(Algorithm algorithm)
         {
-            ThrowIfInsufficientStack();
+            FrontEndStack.Ensure();
             if (_algorithms.TryGetValue(algorithm, out var memoized))
                 return memoized;
 
@@ -210,7 +210,7 @@ internal sealed partial class ModuleLoader
 
         public Expr Rewrite(Expr expr)
         {
-            ThrowIfInsufficientStack();
+            FrontEndStack.Ensure();
             if (_expressions.TryGetValue(expr, out var memoized))
                 return memoized;
 

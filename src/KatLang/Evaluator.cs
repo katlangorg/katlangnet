@@ -2736,10 +2736,24 @@ public static partial class Evaluator
     /// example a conditional with mismatched branch arities — is rejected here,
     /// before branch matching, optimizer planning, or any evaluation, exactly
     /// where Lean rejects it. Runs after <see cref="StructuralPreflight"/> because
-    /// the validation walk itself is recursive.
+    /// the validation walk itself is recursive. The walk probes the host stack's
+    /// reserve per level (<see cref="FrontEndStack"/>), so an entry on a stack too
+    /// small to walk the tree is the structured
+    /// <see cref="EvalError.EvaluationStackExhausted"/>, never an overflow.
     /// </summary>
     private static EvalError? PreEvaluationValidationError(Expr expr)
-        => AlgorithmValidation.FindFirstPreEvaluationViolation(expr) switch
+    {
+        PreEvaluationAstViolation? violation;
+        try
+        {
+            violation = AlgorithmValidation.FindFirstPreEvaluationViolation(expr);
+        }
+        catch (FrontEndStackExhaustedException)
+        {
+            return new EvalError.EvaluationStackExhausted();
+        }
+
+        return violation switch
         {
             null => null,
             PreEvaluationAstViolation.ExplicitParametersWithoutOutput v =>
@@ -2763,6 +2777,7 @@ public static partial class Evaluator
             PreEvaluationAstViolation.AliasCycle v =>
                 new EvalError.IllegalInEval(AliasCycleMessage) { Span = v.Target.Span },
         };
+    }
 
     /// <summary>
     /// Outcome of the shared run-entry preparation: either a pre-evaluation rejection

@@ -222,9 +222,13 @@ public enum DiagnosticCode
     ModuleNestingTooDeep = 30,
 
     /// <summary>
-    /// Module elaboration stopped because the host thread's remaining stack
-    /// cannot safely walk the composition, although it is within the structural
-    /// depth limit.
+    /// Source processing stopped because the host thread's remaining stack cannot
+    /// safely elaborate the code, although it is within the structural depth limit:
+    /// the module loader's walk, or the elaboration passes, ran out of stack. A
+    /// conditional branch whose modules load on demand compiles when it is selected,
+    /// on whatever stack evaluation has already used, so recursion before that
+    /// selection counts too; a thread smaller than the documented 1 MiB minimum can
+    /// cause it with no modules at all. Where it fires is host-dependent.
     /// </summary>
     ModuleElaborationStackExhausted = 31,
 

@@ -411,6 +411,15 @@ internal sealed class DeferredModuleRegion
             diagnostics.Add(StaticStructureAdmission.Rejection(error));
             return null;
         }
+        catch (FrontEndStackExhaustedException)
+        {
+            // A pass's per-level stack probe fired (FrontEndStack): this compile runs on whatever
+            // stack evaluation had already used when the branch was selected. Nothing was
+            // published (the operation is frozen only on success), so the region stays
+            // retryable — the same tree compiles on a run with more stack.
+            diagnostics.Add(SourceProcessingDiagnostics.ModuleElaborationStackExhausted(ModuleLoader.MaxTraversalDepth));
+            return null;
+        }
     }
 
     // ── Routing helpers (stateless) ─────────────────────────────────────────

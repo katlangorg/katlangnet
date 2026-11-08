@@ -232,12 +232,21 @@ internal static class SourceProcessingDiagnostics
             + "Move the load closer to the top level of its module, or split the module chain into smaller modules.",
             span);
 
+    /// <summary>
+    /// The host thread ran out of stack while the module loader or the elaboration passes walked
+    /// code that is within the structural depth limit (<paramref name="limit"/>: the gate the walked
+    /// tree passed). Worded for both routes: a deferred branch compiles on whatever stack evaluation
+    /// has already used, and an eager front end can still meet a thread smaller than the documented
+    /// minimum, with or without modules.
+    /// </summary>
     internal static Diagnostic ModuleElaborationStackExhausted(int limit)
         => Error(
             DiagnosticCode.ModuleElaborationStackExhausted,
-            "Module elaboration stopped: the host thread's remaining stack cannot safely walk this composition, "
+            "Source processing stopped: the host thread does not have enough stack left to elaborate this code safely, "
             + $"although it is within the structural depth limit of {Quantity(limit, "level")}. "
-            + "Run source processing on a thread with at least the documented 1 MiB stack, or reduce structural nesting around load directives.",
+            + "A conditional branch whose modules load on demand is elaborated when it is selected, on the stack evaluation has already used, "
+            + "so deep recursion before that selection counts too. "
+            + "Reduce the recursion depth or the structural nesting, or run on a thread with more stack (at least the documented 1 MiB).",
             span: null);
 
     private static string Quantity(long value, string singular)

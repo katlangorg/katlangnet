@@ -434,6 +434,7 @@ internal static partial class ImplicitArgumentResolver
         /// <summary>The pattern with every lifted capture holding its derived origin; own captures and shapes stay exactly.</summary>
         private ParameterPattern Rewrite(int equation, ParameterPattern pattern)
         {
+            FrontEndStack.Ensure();
             Step();
             if (pattern is CaptureParameterPattern capture)
             {
@@ -482,6 +483,7 @@ internal static partial class ImplicitArgumentResolver
         /// </summary>
         private bool SameComposition(IReadOnlyList<ParameterPattern> left, IReadOnlyList<ParameterPattern> right)
         {
+            FrontEndStack.Ensure();
             Step();
             if (left.Count != right.Count)
                 return false;

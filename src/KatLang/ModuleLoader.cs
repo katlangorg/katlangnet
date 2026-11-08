@@ -1,5 +1,3 @@
-using System.Runtime.CompilerServices;
-
 namespace KatLang;
 
 /// <summary>
@@ -234,7 +232,7 @@ internal sealed partial class ModuleLoader
     /// synchronous walk, so this calibration still holds for them unchanged; the
     /// async twin frames on load-bearing spines are heavier and their slack over the
     /// <see cref="NestedParseStackDebt"/> model is absorbed by the
-    /// <see cref="ThrowIfInsufficientStack"/> reserve backstop (see the debt model's
+    /// <see cref="FrontEndStack.Ensure"/> reserve backstop (see the debt model's
     /// doc for the combined argument).
     ///
     /// <para><b>Nested parses are covered too:</b> a nested module's PARSE also runs
@@ -243,8 +241,11 @@ internal sealed partial class ModuleLoader
     /// from the live traversal levels (<see cref="NestedParseStackDebt"/>). The
     /// parser's own cumulative recursion budget (<c>Parser.MaxNestingDepth</c>, held
     /// to under half of a 1 MiB stack on its worst measured shape) then bounds
-    /// loader frames plus parser frames together, so no module source accepted for
-    /// parsing at any permitted load position can overflow the documented envelope.</para>
+    /// loader frames plus parser frames together for a walk that starts near the top of
+    /// its thread. A deferred region's walk starts on whatever stack evaluation has
+    /// already used, so that bound is a shape bound only: the walk and the parse
+    /// also probe the runtime's reserve at every level (<see cref="FrontEndStack"/>)
+    /// and refuse structured, at a host-dependent point that is never promised.</para>
     /// </summary>
     internal const int MaxTraversalDepth = AstStructuralPreflight.RawSyntaxMaxAstDepth;
 
@@ -280,12 +281,18 @@ internal sealed partial class ModuleLoader
     /// several hundred bytes above the calibrated synchronous frames, so the real
     /// per-level cost can exceed this model's ~0.83 KB. Two mechanisms keep that
     /// safe: every walk level probes the runtime's stack reserve
-    /// (<see cref="ThrowIfInsufficientStack"/>), so a descent the model under-priced
+    /// (<see cref="FrontEndStack.Ensure"/>), so a descent the model under-priced
     /// stops with a structured diagnostic instead of overflowing; and a nested parse
     /// is admitted only with <c>Parser.MaxNestingDepth − debt</c> units — near the
     /// debt ceiling that admitted budget (a few units ≈ KBs) is far below the
     /// reserve the last probed level guaranteed, while at shallow bases the real
-    /// remaining stack dwarfs the admitted parse. The subprocess probes
+    /// remaining stack dwarfs the admitted parse. Neither argument knows the stack the
+    /// WALK started on, though: a deferred region's materialization runs on whatever
+    /// stack evaluation has already used, so the debt is a shape bound only, and the
+    /// parse itself also probes the reserve at every level (<c>Parser.EnterNestingLevel</c>
+    /// and its post-parse validation walk, through <see cref="FrontEndStack"/>), refusing
+    /// with the parser's budget diagnostic — classified here as
+    /// <c>ModuleNestingTooDeep</c> — instead of overflowing. The subprocess probes
     /// (<c>DeepNestedModuleChains_ProbeChild</c>, <c>NearBoundaryShapes_ProbeChild</c>)
     /// revalidate these boundary shapes on dedicated 1 MiB threads in both
     /// configurations.</para>
@@ -533,7 +540,7 @@ internal sealed partial class ModuleLoader
     /// CUMULATIVELY: a load site's own traversal depth counts against the same
     /// ceiling for the module it loads, so stacked nested loads cannot multiply past
     /// the measured envelope. As a final fail-safe, both walks probe the runtime's
-    /// stack reserve at every level (<see cref="ThrowIfInsufficientStack"/>): a
+    /// stack reserve at every level (<see cref="FrontEndStack.Ensure"/>): a
     /// host-built composition that outgrows the actual thread stack despite the
     /// structural gates is rejected with a structured diagnostic, never a process
     /// crash.</para>
@@ -585,7 +592,7 @@ internal sealed partial class ModuleLoader
                 MarkLoadBearing(root);
                 elaborated = await RouteAlgorithmAsync(root, LoadContext.TopLevel, depth: 1).ConfigureAwait(false);
             }
-            catch (ModuleElaborationStackException)
+            catch (FrontEndStackExhaustedException)
             {
                 // The reserve backstop fired mid-walk: the composition outgrew the actual
                 // thread stack despite the structural gates (for example a host thread
@@ -697,7 +704,7 @@ internal sealed partial class ModuleLoader
             // preflight-gated), so it carries the same reserve backstop — on a host
             // thread below the documented envelope the scan must fail structured,
             // not by overflowing before the walk even starts.
-            ThrowIfInsufficientStack();
+            FrontEndStack.Ensure();
             if (_visited.Contains(algorithm))
             {
                 if (marked.Contains(algorithm))
@@ -721,7 +728,7 @@ internal sealed partial class ModuleLoader
 
         public override void VisitExpr(Expr expr)
         {
-            ThrowIfInsufficientStack();
+            FrontEndStack.Ensure();
             if (_visited.Contains(expr))
             {
                 if (marked.Contains(expr))
@@ -798,7 +805,7 @@ internal sealed partial class ModuleLoader
     // calibrated one-frame-per-level stack shape this walk's measured envelope rests on.
     private Algorithm ProcessAlgorithm(Algorithm alg, LoadContext context, int depth)
     {
-        ThrowIfInsufficientStack();
+        FrontEndStack.Ensure();
         ThrowIfCancellationRequested();
 
         if (alg is Algorithm.Builtin) return alg;
@@ -882,7 +889,7 @@ internal sealed partial class ModuleLoader
     /// </summary>
     private async ValueTask<Algorithm> ProcessAlgorithmAsync(Algorithm alg, LoadContext context, int depth)
     {
-        ThrowIfInsufficientStack();
+        FrontEndStack.Ensure();
         ThrowIfCancellationRequested();
 
         if (alg is Algorithm.Builtin) return alg;
@@ -959,7 +966,7 @@ internal sealed partial class ModuleLoader
     private async ValueTask<Algorithm> ProcessConditionalAlgorithmAsync(
         Algorithm.Conditional conditional, LoadContext context, int depth)
     {
-        ThrowIfInsufficientStack();
+        FrontEndStack.Ensure();
         ThrowIfCancellationRequested();
 
         var memo = _loadBearingAlgorithmWalkMemos[(int)context] ??=
@@ -1125,7 +1132,7 @@ internal sealed partial class ModuleLoader
                 MarkLoadBearing(region.RawBody);
                 loaded = await RouteAlgorithmAsync(region.RawBody, region.Context, region.Depth).ConfigureAwait(false);
             }
-            catch (ModuleElaborationStackException)
+            catch (FrontEndStackExhaustedException)
             {
                 ReportSourceProcessingDiagnostic(
                     SourceProcessingDiagnostics.ModuleElaborationStackExhausted(MaxTraversalDepth));
@@ -1301,7 +1308,7 @@ internal sealed partial class ModuleLoader
 
     private Expr ProcessExpr(Expr expr, LoadContext context, int depth)
     {
-        ThrowIfInsufficientStack();
+        FrontEndStack.Ensure();
 
         if (expr.TryGetUnresolvedLoadArguments(out _))
         {
@@ -1428,7 +1435,7 @@ internal sealed partial class ModuleLoader
     /// </summary>
     private async ValueTask<Expr> ProcessExprAsync(Expr expr, LoadContext context, int depth)
     {
-        ThrowIfInsufficientStack();
+        FrontEndStack.Ensure();
 
         // Childless leaves skip the memo, exactly as in the synchronous walk. Load-bearing
         // nodes key their rewrite by effective live depth as well as context (see the field
@@ -2026,25 +2033,20 @@ internal sealed partial class ModuleLoader
 
     // ── Stack reserve backstop ──────────────────────────────────────────────
 
-    /// <summary>
-    /// Fail-safe net under the structural gates: probes the runtime's conservative
-    /// execution-stack reserve at every walk level (both walks — the async twins'
-    /// heavier state-machine frames sit ABOVE synchronous subtree walks on the same
-    /// stack, so the synchronous walk needs the probe too). It can only stop an
-    /// elaboration EARLIER than a physical overflow would, never change one that has
-    /// host stack headroom; every composition inside the measured envelope keeps a
-    /// reserve far above the probe's threshold at the gated maximum depth. On failure
-    /// the walk unwinds via a private control exception (budget frames release
-    /// through their <c>finally</c> blocks) and <see cref="ElaborateAsync"/> reports
-    /// one structured diagnostic with the established placeholder root.
-    /// </summary>
-    private static void ThrowIfInsufficientStack()
-    {
-        if (!RuntimeHelpers.TryEnsureSufficientExecutionStack())
-            throw new ModuleElaborationStackException();
-    }
-
-    private sealed class ModuleElaborationStackException : Exception;
+    // Every walk level (both walks, the load-bearing pre-scan, and the import-view rewrite)
+    // probes the runtime's execution-stack reserve through the front end's ONE probe,
+    // FrontEndStack.Ensure — the async twins' heavier state-machine frames sit ABOVE
+    // synchronous subtree walks on the same stack, so the synchronous walk needs the probe
+    // too. The structural gates bound the composition's SHAPE; they cannot bound the stack
+    // a walk starts on (a deferred materialization runs on whatever stack evaluation has
+    // already used) nor what a level costs, so the probe — not the calibration — is what
+    // keeps every accepted composition from overflowing. It can only stop an elaboration
+    // EARLIER than a physical overflow would, never change one that has host stack headroom.
+    // On failure the walk unwinds via the probe's control exception (budget frames release
+    // through their finally blocks), and ElaborateAsync and the deferred materialization
+    // each report one structured ModuleElaborationStackExhausted diagnostic with their
+    // established placeholder. A nested module's PARSE refuses through the parser's own
+    // budget diagnostic instead (classified as ModuleNestingTooDeep at the load site).
 
     // ── Error reporting ──────────────────────────────────────────────────────
 

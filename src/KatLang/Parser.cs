@@ -129,6 +129,18 @@ public sealed class Parser
     // the loader converts its live traversal levels into debt conservatively
     // (see ModuleLoader). A parse that starts in debt simply has less budget.
     //
+    // RESERVE PROBE: the budget and the debt bound the parse's SHAPE, calibrated for a
+    // parse that starts near the top of a 1 MiB thread. A parse does not always start
+    // there — a deferred module region's selected branch loads, and so parses its
+    // modules, on whatever stack evaluation has already used — and no debt model can
+    // know that base. So the one chokepoint every recursive level crosses
+    // (EnterNestingLevel) also probes the runtime's stack reserve (FrontEndStack) and
+    // refuses through the SAME budget diagnostic when it is short; the post-parse
+    // validation walk in ParseSyntaxCore probes too, because flat operator, postfix and
+    // dot chains parse iteratively and are first walked recursively THERE. Where a probe
+    // fires is host-dependent and never promised; it changes nothing for a parse that
+    // has enough stack.
+    //
     // This metric is DISTINCT from: EvaluationLimits.MaxAstDepth / MaxSupportedAstDepth
     // (weighted STRUCTURAL depth of the finished AST, judged after parsing),
     // AstStructuralPreflight.RawSyntaxMaxAstDepth (the raw post-parse tree gate),
@@ -220,12 +232,15 @@ public sealed class Parser
 
     private void ThrowNestingTooDeep()
     {
-        ReportError(
-            DiagnosticCode.NestingTooDeep,
-            NestingTooDeepMessage +
-            " Reduce the depth of nested parentheses, brackets, braces, calls, operators, or patterns.");
+        ReportError(DiagnosticCode.NestingTooDeep, NestingTooDeepFullMessage);
         throw new NestingLimitExceededException();
     }
+
+    // The budget diagnostic's whole text, shared by the chokepoint and by the post-parse
+    // validation walk's stack-reserve refusal (ParseSyntaxCore).
+    private const string NestingTooDeepFullMessage =
+        NestingTooDeepMessage +
+        " Reduce the depth of nested parentheses, brackets, braces, calls, operators, or patterns.";
 
     /// <summary>
     /// One admitted base level of the shared recursion budget — the chokepoint charge of
@@ -252,11 +267,14 @@ public sealed class Parser
     /// Admits and charges ONE base unit of the recursion budget, returning the level
     /// the caller MUST dispose from a <c>using</c>. A refused enter mutates nothing: the
     /// budget diagnostic aborts the parse before the unit is charged, so no release is
-    /// owed for a level that was never admitted.
+    /// owed for a level that was never admitted. Every recursive parse level crosses
+    /// this chokepoint, so it is also where the parser probes the host stack's reserve
+    /// (<see cref="FrontEndStack.HasReserve"/>): a parse that starts deep on its thread
+    /// refuses with the same budget diagnostic instead of overflowing.
     /// </summary>
     private NestingLevel EnterNestingLevel()
     {
-        if (_nestingDepth >= MaxNestingDepth)
+        if (_nestingDepth >= MaxNestingDepth || !FrontEndStack.HasReserve)
             ThrowNestingTooDeep();
 
         var ticket = _stateScopes.Enter();
@@ -708,7 +726,26 @@ public sealed class Parser
             root = new Algorithm.User(null, [], [], [], []);
         }
 
-        foreach (var violation in AlgorithmValidation.FindExplicitParameterOutputViolations(root))
+        // The validation walk is the FIRST recursive consumer of a flat chain (operator,
+        // postfix and dot chains parse iteratively and charge no nesting per link), so it
+        // probes the host stack's reserve per level (FrontEndStack); a refusal is the
+        // parser's budget diagnostic with the placeholder root — which a nested module's
+        // parse then classifies as ModuleNestingTooDeep, exactly like a chokepoint refusal.
+        // Violations are collected before any is reported, so a refusal reports nothing else.
+        IReadOnlyList<ExplicitParameterOutputViolation> violations;
+        try
+        {
+            violations = AlgorithmValidation.FindExplicitParameterOutputViolations(root);
+        }
+        catch (FrontEndStackExhaustedException)
+        {
+            diagnostics.Report(DiagnosticCode.NestingTooDeep, NestingTooDeepFullMessage, span: null);
+            root = new Algorithm.User(null, [], [], [], []);
+            structuralHeight = -1; // measured on the discarded tree: the elaboration gate re-measures
+            violations = [];
+        }
+
+        foreach (var violation in violations)
         {
             diagnostics.Report(
                 DiagnosticCode.ExplicitParametersRequireOutput,
@@ -734,7 +771,12 @@ public sealed class Parser
     /// stack of at least 1 MiB — with at least a 2x margin. Source nested beyond the budget
     /// returns one structured, source-positioned "nesting is too deep" diagnostic
     /// (<see cref="DiagnosticCode.NestingTooDeep"/>) instead of risking process termination;
-    /// this also covers module sources parsed during load elaboration.</para>
+    /// this also covers module sources parsed during load elaboration. Every recursive level
+    /// of the parser and of the elaboration passes also probes the host stack's remaining
+    /// reserve, so source processed on a thread smaller than the documented minimum returns a
+    /// structured diagnostic (<see cref="DiagnosticCode.NestingTooDeep"/> or
+    /// <see cref="DiagnosticCode.ModuleElaborationStackExhausted"/>) instead of overflowing;
+    /// where that happens depends on the host and is never promised.</para>
     /// </summary>
     /// <exception cref="ArgumentNullException"><paramref name="source"/> is null.</exception>
     public static ParseResult Parse(string source)
@@ -3907,6 +3949,11 @@ public sealed class Parser
     /// </summary>
     private Expr NormalizeOpenExpr(Expr expr)
     {
+        // The open target's dot chain was parsed iteratively (no chokepoint per link), so this
+        // recursion over it probes the host stack itself, refusing through the budget diagnostic.
+        if (!FrontEndStack.HasReserve)
+            ThrowNestingTooDeep();
+
         switch (expr)
         {
             case Expr.Grace grace:

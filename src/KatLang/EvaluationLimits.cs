@@ -178,7 +178,20 @@ public sealed record EvaluationLimits
     /// environment — a thread stack of at least 1 MiB (the CLR/Windows default) —
     /// every tree this gate accepts either evaluates normally or returns an
     /// established structured KatLang error; no accepted shape is known to overflow
-    /// the process stack. This holds because the stack-heavy pure-expression spine
+    /// the process stack. That includes code compiled DURING evaluation: a conditional
+    /// branch whose modules load on demand is parsed and elaborated when it is
+    /// selected, on whatever stack evaluation has already used, so a compile does not
+    /// start near the top of the thread and its structural gates cannot bound the stack
+    /// it needs. Every recursive front-end walk therefore probes the runtime's stack
+    /// reserve once per level and stops with a structured error —
+    /// <see cref="KatLangErrorCode.ModuleElaborationStackExhausted"/>, or the parser's
+    /// <see cref="KatLangErrorCode.NestingTooDeep"/> (a module's own text:
+    /// <see cref="KatLangErrorCode.ModuleNestingTooDeep"/>) — instead of overflowing.
+    /// Where such a probe stops a compile depends on the host, the build and the stack
+    /// already in use, and is never promised; it can only refuse a compile that would
+    /// otherwise have needed the runtime's last reserve, and a refused branch stays
+    /// unpublished, so the same program compiles on a run with more stack. The
+    /// evaluator side of the invariant holds because the stack-heavy pure-expression spine
     /// shapes (unary/binary operators, index selection, list literals, and the
     /// internal sequence joins) evaluate ITERATIVELY and so consume no proportional
     /// call stack; dot-call links are weighted at 3 units so a maximal accepted chain
@@ -202,9 +215,10 @@ public sealed record EvaluationLimits
     /// with the structured <see cref="EvalError.AstDepthLimitExceeded"/> instead of
     /// being consumed at machine-dependent risk. A per-node
     /// <see cref="System.Runtime.CompilerServices.RuntimeHelpers.TryEnsureSufficientExecutionStack"/>
-    /// backstop was evaluated and rejected for the expression paths: the CLR probe
-    /// reserves roughly half of a 1 MiB stack, so it falsely rejects deep programs
-    /// that complete fine.</para>
+    /// backstop was evaluated and rejected for the expression paths: the runtime's
+    /// conservative reserve can reject deep programs that otherwise complete.
+    /// Its size depends on the runtime and platform; no fixed fraction of the
+    /// thread stack is promised.</para>
     /// </summary>
     public const int MaxSupportedAstDepth = 300;
 

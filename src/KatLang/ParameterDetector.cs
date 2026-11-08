@@ -292,6 +292,7 @@ internal static class ParameterDetector
         FrontEndTraversalObservations? observations,
         DetectionRun run)
     {
+        FrontEndStack.Ensure();
         var newOpens = ProcessOpenExprs(alg.Opens, parentScope, diagnostics, observations, run);
         var algWithProcessedOpens = alg with { Opens = newOpens };
         var scope = CreateStructuralScope(alg, algWithProcessedOpens, parentScope);
@@ -501,6 +502,7 @@ internal static class ParameterDetector
         FrontEndTraversalObservations? observations,
         DetectionRun run)
     {
+        FrontEndStack.Ensure();
         var familyContext = scope.StaticContext!;
         var publicationKey = familyContext.Operation.ContextOf(familyContext.Key, condAlg);
         var canonical = familyContext.Operation.Published(publicationKey, StaticPublicationStage.Detected) as Algorithm.Conditional;
@@ -1445,6 +1447,7 @@ internal static class ParameterDetector
         DiagnosticBag? diagnostics,
         OpenWalkMemo memo)
     {
+        FrontEndStack.Ensure();
         return expr switch
         {
             // An open target has no parameter inference to reorder, so a
@@ -2196,6 +2199,7 @@ internal static class ParameterDetector
         ImplicitParameterOccurrenceRecorder? recorder,
         FreeNameWalkMemo memo)
     {
+        FrontEndStack.Ensure();
         switch (expr)
         {
             case Expr.Grace(var graceOperand, var graceWeight):
@@ -2674,6 +2678,7 @@ internal static class ParameterDetector
         ParameterOwnership parameters,
         RewriteWalkMemo memo)
     {
+        FrontEndStack.Ensure();
         // A shared name may first be visited as a directive callee or an unused dot fallback.
         // Observe its value-use obligation before the rewrite memo: suppression is per edge,
         // while the rewrite and diagnostic multiplicity are per node within this region.
@@ -3109,6 +3114,7 @@ internal static class ParameterDetector
         ElaboratedPropertyScope scope,
         OpenWalkMemo memo)
     {
+        FrontEndStack.Ensure();
         // DAG-safety: one rewrite per shared node reference per open-target region. The
         // transparent walk keeps its own map — the same node can also be reached by
         // ProcessOpenExpr, whose open-form rewriting legitimately differs.

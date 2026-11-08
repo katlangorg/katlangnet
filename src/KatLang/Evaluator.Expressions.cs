@@ -1022,9 +1022,10 @@ public static partial class Evaluator
         // internal sequence joins) evaluate ITERATIVELY, so recursion here grows only
         // at algorithm boundaries (blocks, calls, dot-calls) — the shapes the ceiling
         // is calibrated against. Deliberately NO TryEnsureSufficientExecutionStack
-        // probe here: the CLR probe reserves roughly half of a 1 MiB stack, so a
-        // per-node probe rejects deep parser-produced programs that complete fine
-        // today (measured: a 288-level bracket nesting). The structural-nesting
+        // probe here: the runtime's conservative reserve (its size depends on the
+        // runtime and platform and is not a KatLang guarantee) makes a per-node probe
+        // reject deep parser-produced programs that complete fine today (measured: a
+        // 288-level bracket nesting). The structural-nesting
         // backstop lives instead at the two per-nesting-level row-loop funnels
         // (EvalOutputRowsPreparedCore, EvalExplicitSequenceValueRowSlots and their
         // async twins), where static nesting multiplied by dynamic recursion

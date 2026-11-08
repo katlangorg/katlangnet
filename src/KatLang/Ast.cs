@@ -3823,6 +3823,9 @@ internal static class AlgorithmValidation
 
         public override void VisitAlgorithm(Algorithm algorithm)
         {
+            // Per-level host-stack probe (FrontEndStack): the parser's post-parse walk is the
+            // first recursive consumer of a flat chain, and evaluator entry runs it too.
+            FrontEndStack.Ensure();
             if (stopAfterFirst && Violations.Count > 0)
                 return;
 
@@ -3972,6 +3975,7 @@ internal static class AlgorithmValidation
 
         public override void VisitExpr(Expr expr)
         {
+            FrontEndStack.Ensure();
             if (stopAfterFirst && Violations.Count > 0)
                 return;
 

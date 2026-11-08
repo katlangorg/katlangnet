@@ -1209,6 +1209,7 @@ internal static partial class ImplicitArgumentResolver
 
     private static CanonicalNameSet FreeReferenceNames(Algorithm algorithm, ResolutionRun run)
     {
+        FrontEndStack.Ensure();
         var memo = run.FreeReferenceNames ??= new(ReferenceEqualityComparer.Instance);
         if (memo.TryGetValue(algorithm, out var cached))
             return cached;
@@ -1263,6 +1264,7 @@ internal static partial class ImplicitArgumentResolver
 
     private static void CollectReferenceNames(Expr expr, ReferenceNames names, HashSet<Expr> visited, ResolutionRun run)
     {
+        FrontEndStack.Ensure();
         if (AstTraversalDagSafety.HasTraversableExprChildren(expr) && !visited.Add(expr))
             return;
 
@@ -1722,6 +1724,7 @@ internal static partial class ImplicitArgumentResolver
 
         private OutputBundle BuildImplicitArgumentBundle(IReadOnlyList<ParameterPattern> calleePatterns, ImplicitRewriteContext context)
         {
+            FrontEndStack.Ensure();
             if (calleePatterns is ImplicitSignatureTemplate { Tail: { } tail } composed
                 && context.FinalSignature is ImplicitSignatureTemplate source
                 && ReferenceEquals(source.Tail ?? source, tail))
@@ -1979,6 +1982,7 @@ internal static partial class ImplicitArgumentResolver
         ResolutionRun run,
         List<BranchDiagnosticTemplate>? diagnosticTemplates)
     {
+        FrontEndStack.Ensure();
         // This body is a level of its own (Q-19 D-I: what its properties' provider identities
         // are anchored at).
         var levelOwners = run.Owners.Inside(alg);
@@ -2297,6 +2301,7 @@ internal static partial class ImplicitArgumentResolver
         DiagnosticBag? diagnostics,
         ResolutionRun run)
     {
+        FrontEndStack.Ensure();
         var operation = run.StructuralOperation!;
         var publicationKey = operation.ContextOf(run.Level?.StaticContext?.Key ?? operation.Queries.Keys.Root, conditional);
         var canonical = operation.Published(publicationKey, StaticPublicationStage.Resolved) as Algorithm.Conditional;
@@ -2420,6 +2425,7 @@ internal static partial class ImplicitArgumentResolver
 
     private static Expr ProcessOpenExprCore(Expr expr, ResolverWalkMemos memos)
     {
+        FrontEndStack.Ensure();
         return expr switch
         {
             Expr.AlgorithmExpr block => block with
@@ -2871,6 +2877,7 @@ internal static partial class ImplicitArgumentResolver
         HashSet<string> existing,
         ForwardableParameters forwardable)
     {
+        FrontEndStack.Ensure();
         var groupItems = ParameterPattern.StructuralItems(group)!;
         var missingItems = new List<ParameterPattern>(groupItems.Count);
         var unchanged = true;
@@ -3090,6 +3097,7 @@ internal static partial class ImplicitArgumentResolver
         Pattern pattern,
         [System.Diagnostics.CodeAnalysis.NotNullWhen(true)] out ParameterPattern? parameterPattern)
     {
+        FrontEndStack.Ensure();
         switch (pattern)
         {
             case Pattern.Bind binder:
@@ -3306,6 +3314,7 @@ internal static partial class ImplicitArgumentResolver
     /// </summary>
     private static Expr WithProcessedBlockHead(Expr row, SignatureMap paramMap, ResolverWalkMemos memos)
     {
+        FrontEndStack.Ensure();
         if (row is not Expr.DotCall { Args: null } edge)
             return row;
         var target = edge.Target switch
@@ -3722,6 +3731,7 @@ internal static partial class ImplicitArgumentResolver
         Func<CaptureParameterPattern, string> mapCaptureName,
         Func<CaptureParameterPattern, bool> forwardAsSpread)
     {
+        FrontEndStack.Ensure();
         return pattern switch
         {
             // A collecting destination whose source binding is a collecting binding's
@@ -4168,6 +4178,7 @@ internal static partial class ImplicitArgumentResolver
     /// </summary>
     private static ReceiverReading ReadReceiver(Expr receiver, ResolverLevel? level, SignatureMap map, ResolutionRun run, bool selectedLinks)
     {
+        FrontEndStack.Ensure();
         switch (receiver.UnwrapGraceOperand())
         {
             case Expr.Resolve(var name):
@@ -4328,12 +4339,15 @@ internal static partial class ImplicitArgumentResolver
 
     /// <summary>The written spelling of a dotted callee (<c>Lib.Inc</c>, <c>Math.Abs</c>) for diagnostics, bounded.</summary>
     private static string DottedDisplayName(Expr.DotCall edge)
-        => ExprNameRenderer.BoundName(edge.Target.UnwrapGraceOperand() switch
+    {
+        FrontEndStack.Ensure();
+        return ExprNameRenderer.BoundName(edge.Target.UnwrapGraceOperand() switch
         {
             Expr.Resolve(var head) => head + "." + edge.Name,
             Expr.DotCall { Args: null } inner => DottedDisplayName(inner) + "." + edge.Name,
             _ => edge.Name,
         });
+    }
 
     /// <summary>
     /// Collects the implicit dependencies of a formula's rows: every VALUE-role reference
@@ -4430,6 +4444,7 @@ internal static partial class ImplicitArgumentResolver
         LiftingRole role,
         ResolverWalkMemos memos)
     {
+        FrontEndStack.Ensure();
         memos.PinRewriteContext(context);
         if (!AstTraversalDagSafety.HasTraversableExprChildren(expr) && expr is not Expr.Resolve)
             return RewriteImplicitCallsCore(expr, paramMap, context, role, memos);
@@ -4811,6 +4826,7 @@ internal static partial class ImplicitArgumentResolver
         SignatureMap paramMap,
         ResolverWalkMemos memos)
     {
+        FrontEndStack.Ensure();
         // DAG-safety: one rewrite per shared node reference per open-target region; the memo
         // returns the same rewritten node for every later reach.
         if (!AstTraversalDagSafety.HasTraversableExprChildren(expr))

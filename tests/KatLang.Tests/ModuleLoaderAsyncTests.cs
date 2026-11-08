@@ -422,9 +422,12 @@ public class ModuleLoaderAsyncTests
         });
 
         Assert.Empty(elaborated.Output);
+        // The structured code is the contract; the wording (reworded for deferred and eager
+        // refusals alike in F1) only has to name the stack.
         Assert.Contains(
             diagnostics,
-            d => d.Message.Contains("remaining stack", StringComparison.Ordinal));
+            d => d.Code == DiagnosticCode.ModuleElaborationStackExhausted
+                && d.Message.Contains("enough stack left", StringComparison.Ordinal));
     }
 
     /// <summary>

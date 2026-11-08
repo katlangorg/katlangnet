@@ -847,6 +847,7 @@ internal static class PropertyDependencyGraphBuilder
 
         public void UnionWith(SummarySeed other)
         {
+            FrontEndStack.Ensure();
             UnionOwnSets(other);
             AbsorbAll(other._absorbed);
         }
@@ -1848,6 +1849,7 @@ internal static class PropertyDependencyGraphBuilder
         // when the part carries anything but required names), once per (part, tail).
         private string[]? ResidualOf(SummarySeed part, IReadOnlySet<string> tail)
         {
+            FrontEndStack.Ensure();
             _residuals ??= new(OwnedPartKeyComparer.Instance);
             if (!_residuals.TryGetValue((part, tail), out var residual))
             {
@@ -2158,6 +2160,7 @@ internal static class PropertyDependencyGraphBuilder
         FrontEndTraversalObservations? observations,
         CompletedStructureContext? completedContext = null)
     {
+        FrontEndStack.Ensure();
         // Only the Q8 walk supplies this already detected provisional view. It is a lexical
         // requirement frame, never a successful structural body or a raw-reference fallback.
         completedContext = sharedMemo.RequirementContext(completedContext, algorithm);
@@ -2658,6 +2661,7 @@ internal static class PropertyDependencyGraphBuilder
         SummaryWalkMemos memos,
         bool inTransparentContext)
     {
+        FrontEndStack.Ensure();
         SummarySeed Seed(Expr child)
             => CollectSummarySeed(child, localPropertySummaries, ownedHere, memos, inTransparentContext);
 
@@ -2743,6 +2747,7 @@ internal static class PropertyDependencyGraphBuilder
     /// </summary>
     private static SummarySeed CompletedArgumentBundleSeed(OutputBundle bundle, SummaryWalkMemos memos)
     {
+        FrontEndStack.Ensure();
         var independent = memos.SharedMemo.IndependentArgumentBundles ??= new(ReferenceEqualityComparer.Instance);
         if (memos.CompletedContext is not null && independent.TryGetValue(bundle, out var shared)) return shared;
         var bundleSeeds = memos.CompletedContext is null

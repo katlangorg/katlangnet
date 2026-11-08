@@ -258,6 +258,7 @@ internal static class PropertyExposureResolver
 
         public bool IsRewriteInvariant(Expr expr)
         {
+            FrontEndStack.Ensure();
             if (!AstTraversalDagSafety.HasTraversableExprChildren(expr))
                 return expr is not Expr.AlgorithmExpr and not Expr.DotCall;
             _rewriteInvariant ??= new(ReferenceEqualityComparer.Instance);
@@ -437,6 +438,7 @@ internal static class PropertyExposureResolver
         ExposureRun run,
         CompletedStructureContext? completedContext = null)
     {
+        FrontEndStack.Ensure();
         // A synthetic assignment-deconstruction helper (`x, *y, z = RHS`) is a fully-elaborated
         // leaf: no properties, no opens, and an output that is exactly its own bound Param. It
         // captures no ancestor-owned parameter, so it needs no exposure rewriting. The general
@@ -1256,6 +1258,7 @@ internal static class PropertyExposureResolver
         ExposureWalkMemos memos,
         CompletedStructureContext? completedContext = null)
     {
+        FrontEndStack.Ensure();
         // Family-owned opens exist in host trees only (parsed families own none; the branch
         // bodies own theirs). They are a lookup level of their own for the branch bodies, and
         // they are rewritten like any open list: an open target's nested algorithms classify
@@ -1367,6 +1370,7 @@ internal static class PropertyExposureResolver
     // expression keeps the same shape and metadata.
     private static Expr RewriteExpr(Expr expr, ExposureWalkMemos memos)
     {
+        FrontEndStack.Ensure();
         // DAG-safety: one rewrite per shared node reference per region; the memo returns
         // the same rewritten node for every later reach, preserving the input's sharing.
         if (!AstTraversalDagSafety.HasTraversableExprChildren(expr))

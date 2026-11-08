@@ -385,6 +385,15 @@ internal static class FrontEndPipeline
             diagnostics.Add(StaticStructureAdmission.Rejection(error));
             return new(new Algorithm.User(null, [], [], [], []), diagnostics);
         }
+        catch (FrontEndStackExhaustedException)
+        {
+            // A pass's per-level stack probe fired (FrontEndStack): the host thread cannot finish
+            // elaborating a tree the gate above admitted. Like the static-query refusal, the
+            // diagnostic goes to the operation's bag — never to passDiagnostics, which a
+            // provisional elaboration never commits — with the established placeholder root.
+            diagnostics.Add(SourceProcessingDiagnostics.ModuleElaborationStackExhausted(EvaluationLimits.MaxSupportedAstDepth));
+            return new(new Algorithm.User(null, [], [], [], []), diagnostics);
+        }
 
         // B2c: a tree with deferred module regions is evaluated by the async evaluation
         // family only (materializing a selected branch awaits the module downloader). The

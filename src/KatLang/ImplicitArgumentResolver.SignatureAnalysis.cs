@@ -117,6 +117,7 @@ internal static partial class ImplicitArgumentResolver
     private static void WalkLiftingRoles<TSink>(Expr expr, LiftingRole role, StaticScopeKey? guard, ref TSink sink)
         where TSink : struct, ILiftingWalkSink
     {
+        FrontEndStack.Ensure();
         if (!sink.Enter(expr, role, guard))
             return;
 
@@ -963,6 +964,7 @@ internal static partial class ImplicitArgumentResolver
         ForwardableParameters forwardable,
         ResolutionRun run)
     {
+        FrontEndStack.Ensure();
         AnalyzeOpenTargets(conditional.Opens, run);
         var operation = run.StructuralOperation!;
         var familyOwners = conditional.Opens.Count == 0 ? run.Owners : run.Owners.Inside(conditional);
@@ -990,6 +992,7 @@ internal static partial class ImplicitArgumentResolver
         ResolutionRun run,
         Property? definition = null)
     {
+        FrontEndStack.Ensure();
         var analysis = run.Analysis!;
         var operation = run.StructuralOperation!;
         var key = operation.ContextOf(run.Level?.StaticContext?.Key ?? operation.Queries.Keys.Root, alg, branchContext?.Pattern);
