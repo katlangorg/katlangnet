@@ -5990,11 +5990,15 @@ def evalAvgCounted (numbers : List Int) : EvalM CountedResult := do
     independent of the resolved callee: the receiver is never pre-expanded,
     never unwrapped, never given a supply of its own, and no parameter shape
     is inspected; a spread receiver is the ordinary spread slot `F(R*, …)`.
-    Laws (argument PREPARATION only; that the bundle then reaches the ordinary funnel
-    `evalResolvedCallCounted` is the body `EvalBody.callLexicalWithReceiverCounted`, a kernel term
-    since R7, but no end-to-end dot-funnel theorem is stated):
+    Laws: argument PREPARATION —
     `dot_receiver_is_ordinary_leading_argument`,
     `spread_dot_receiver_is_ordinary_spread_argument` (`KatLangArityLaws.lean`).
+    End to end (Q-66 dot funnel, `KatLangArityLaws/DotFunnel.lean`): `KatLang.DotFunnel.dot_funnel` —
+    after a receiver probe completing at `(.ok alg?, s')` with an EXTENSION miss, for a receiver
+    that is not a `.sequenceSpread` and a `.resolve F` / `.param F` fallback, the dot call from `s`
+    and the written call `F(receiver, …)` from `s'` are both incomplete or both complete with the
+    same final state and the same value or the same inner error under `CtxMsg.dotCall` /
+    `CtxMsg.call`. A receiver declaring `F`, the intrinsics and a spread receiver are outside it.
     C#: `BuildLexicalReceiverCallArgs`. -/
 def prepareLexicalDotCallArgs (receiver : Expr) (extraArgs : Option OutputBundle)
     : OutputBundle :=
