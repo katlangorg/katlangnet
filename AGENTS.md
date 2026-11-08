@@ -322,6 +322,29 @@ A V3 run is not release publishing, a benchmark campaign, or unbounded fuzzing; 
   git-ignored `artifacts/validation/validate-all-*` directory (a temporary
   directory if that path is not ignored). `validate.yml` uploads it with
   `if: always()`; the job result remains the validation result.
+- Both phases build and test in the default Debug configuration, but stack
+  frame sizes are configuration-sensitive: the S3 `AstWalker` overflow and the
+  Batch 1 F1 deferred-compile overflow appeared only (or far earlier) in
+  Release. The third `validate.yml` job, `Release stack suites (x64)`
+  (`release-stack-suites`, 30 minutes), is the Release backstop the Debug jobs
+  cannot be: `scripts/validate-stack-suites.ps1` builds
+  `tests/KatLang.Tests` with `-c Release` and runs only the listed
+  `SubprocessProbe` process-death stack suites plus `AsyncStackDepthTests` in
+  Release. It fails on a build or test failure, a zero-test filter, or a listed
+  class that executed nothing, and writes its logs and TRX to a fresh ignored
+  `artifacts/validation/stack-suites-release-*` directory (uploaded with
+  `if: always()`). It is a CI backstop, not a validation level, and does not
+  change the `validate-all.ps1` phase contract. `release.yml` runs the same job
+  and gates every build on it. `[Conditional("DEBUG")]` / `#if DEBUG`
+  invariant checks are compiled out of Release, so the Debug jobs remain their
+  only coverage. ARM64 is not covered per pull request: no ARM64-specific frame
+  gap has been measured, so it waits on measuring frame sizes on
+  `ubuntu-24.04-arm` and would be a second `arch` matrix leg, not a new job;
+  until then ARM64 has only the release build-and-smoke check. The job runs on
+  Linux x64 only, while the S3 and F1 frame measurements were taken on Windows
+  x64 (whose Release frames and stack-probe behaviour differ), so it cannot
+  guarantee detection of a Windows x64-only Release stack regression; a
+  Windows x64 matrix leg is the open follow-up.
 - `.github/workflows/release.yml` is manual-only. Dispatch it from `main` with
   the version already present in `KatLangVersion.props`. A push, merge, or tag
   never publishes a release automatically.

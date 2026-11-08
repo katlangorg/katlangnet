@@ -118,12 +118,52 @@ jobs:
         shell: pwsh
         run: pwsh -NoProfile -File ./scripts/validate-all.ps1 -Phase Lean
 
+  # The same Release stack-suite backstop as validate.yml: a release is never checked less
+  # than a pull request. The diagnostics artifact name must not match the `release-*`
+  # pattern that the collect job downloads into the release bundle.
+  release-stack-suites:
+    name: Release stack suites (${{ matrix.arch }})
+    needs: verify
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x64
+            runner: ubuntu-24.04
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    steps:
+      - name: Check out verified source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.verify.outputs.source-sha }}
+          persist-credentials: false
+
+      - name: Install repository-pinned .NET SDK
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          global-json-file: global.json
+
+      - name: Run Release stack suites on the release commit
+        shell: pwsh
+        run: pwsh -NoProfile -File ./scripts/validate-stack-suites.ps1
+
+      - name: Upload Release stack-suite diagnostics
+        if: ${{ always() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: stack-suite-diagnostics-${{ matrix.arch }}
+          path: artifacts/validation/stack-suites-release-*/
+          if-no-files-found: warn
+          retention-days: 14
+
   build:
     name: Build and smoke-test ${{ matrix.rid }}
     needs:
       - verify
       - dotnet-validation
       - lean-validation
+      - release-stack-suites
     strategy:
       # Let every platform finish so one toolchain failure does not hide the
       # status of another. The collect/publish dependency still makes release

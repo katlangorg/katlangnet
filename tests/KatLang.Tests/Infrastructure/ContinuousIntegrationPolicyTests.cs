@@ -546,6 +546,168 @@ public class ContinuousIntegrationPolicyTests
         Assert.DoesNotMatch(@"(?i)<Exec\b[^>]*\btar\b", source);
     }
 
+    private const string StackSuiteScriptPath = "scripts/validate-stack-suites.ps1";
+    private const string StackSuiteJob = "release-stack-suites";
+    private const string StackSuiteInvocation = "pwsh -NoProfile -File ./scripts/validate-stack-suites.ps1";
+
+    // The Release stack-suite job's class list. Every class but the in-process async-twin
+    // characterization is a SubprocessProbe process-death probe.
+    private static readonly string[] StackSuiteClasses =
+    [
+        "KatLang.Tests.AstStructuralDepthProcessTests",
+        "KatLang.Tests.EvaluationLimitsProcessTests",
+        "KatLang.Tests.ModelCStackProcessTests",
+        "KatLang.Tests.DeferredCompileStackProcessTests",
+        "KatLang.Tests.ExposureOpenChainDepthProcessTests",
+        "KatLang.Tests.EvaluatorOpenChainStackProcessTests",
+        "KatLang.Tests.StructuralNestingStackBackstopProcessTests",
+        "KatLang.Tests.ClauseFamilyCompositionDepthProcessTests",
+        "KatLang.Tests.AstGraphFuzzProcessTests",
+        "KatLang.Tests.WeightedCostCompositionProcessTests",
+        "KatLang.Tests.ScopeVisibilityIterativeUpdateTests",
+        "KatLang.Tests.ParserExpressionChainDepthTests",
+        "KatLang.Tests.AsyncEvaluation.AsyncStackDepthTests",
+    ];
+
+    private static readonly string[] InProcessStackSuiteClasses =
+    [
+        "KatLang.Tests.AsyncEvaluation.AsyncStackDepthTests",
+    ];
+
+    [Theory]
+    [InlineData(ValidatePath)]
+    [InlineData(ReleasePath)]
+    public void ReleaseStackSuiteJob_RunsTheFocusedReleaseScript(string workflow)
+    {
+        var section = JobSection(Text(workflow), StackSuiteJob);
+        Assert.True(section.Length > 0, $"Missing {StackSuiteJob} job in {workflow}.");
+        // Stable check name; the matrix leg is the architecture.
+        Assert.Single(Regex.Matches(section, @"(?m)^    name: Release stack suites \(\$\{\{ matrix\.arch \}\}\)$").Cast<Match>());
+        Assert.Matches(@"(?m)^    runs-on: \$\{\{ matrix\.runner \}\}$", section);
+        // x64 only until ARM64 frame sizes are measured; a later ARM64 leg is another include entry.
+        Assert.Single(Regex.Matches(section, @"(?m)^          - arch:").Cast<Match>());
+        Assert.Matches(@"(?m)^          - arch: x64\n            runner: ubuntu-24.04$", section);
+        // Comfortably inside the agreed 60-minute .NET budget.
+        Assert.Single(Regex.Matches(section, @"(?m)^    timeout-minutes:").Cast<Match>());
+        Assert.Matches(@"(?m)^    timeout-minutes: 30$", section);
+        Assert.Single(Regex.Matches(section, Regex.Escape(StackSuiteInvocation)).Cast<Match>());
+        Assert.DoesNotContain("validate-all.ps1", section, StringComparison.Ordinal);
+        Assert.Contains("global-json-file: global.json", section, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData(ValidatePath)]
+    [InlineData(ReleasePath)]
+    public void ReleaseStackSuiteJob_UploadsDiagnosticsEvenAfterAFailure_OutsideTheReleaseBundle(string workflow)
+    {
+        var section = JobSection(Text(workflow), StackSuiteJob);
+        var run = section.IndexOf(StackSuiteInvocation, StringComparison.Ordinal);
+        var upload = section.IndexOf("name: stack-suite-diagnostics-${{ matrix.arch }}", StringComparison.Ordinal);
+        Assert.True(run > 0 && upload > run, $"the stack-suite diagnostics upload must follow the script in {workflow}");
+        var step = section[section.LastIndexOf("- name:", upload, StringComparison.Ordinal)..upload];
+        Assert.Contains("if: ${{ always() }}", step, StringComparison.Ordinal);
+        Assert.Contains("uses: actions/upload-artifact@", step, StringComparison.Ordinal);
+        Assert.Matches(@"(?m)^          path: artifacts/validation/stack-suites-release-\*/$", section);
+        // The release collect job downloads every `release-*` artifact into the published bundle.
+        Assert.DoesNotMatch(@"(?m)^          name: release-", section);
+    }
+
+    [Fact]
+    public void ValidateWorkflow_ExposesTheReleaseStackSuiteCheckOnce()
+    {
+        var source = Text(ValidatePath);
+        Assert.Single(Regex.Matches(source, @"(?m)^  release-stack-suites:$").Cast<Match>());
+        Assert.Single(Regex.Matches(source, Regex.Escape(StackSuiteInvocation)).Cast<Match>());
+    }
+
+    [Fact]
+    public void ReleaseWorkflow_GatesEveryBuildOnTheReleaseStackSuites()
+    {
+        var source = Text(ReleasePath);
+        Assert.Matches(@"(?m)^  release-stack-suites:\n    name: [^\n]+\n    needs: verify$", source);
+        Assert.Contains("ref: ${{ needs.verify.outputs.source-sha }}", JobSection(source, StackSuiteJob), StringComparison.Ordinal);
+        Assert.Matches(@"(?s)  build:.*?needs:\n      - verify\n      - dotnet-validation\n      - lean-validation\n      - release-stack-suites\n", source);
+    }
+
+    [Fact]
+    public void StackSuiteScript_BuildsAndTestsInRelease()
+    {
+        var source = Text(StackSuiteScriptPath);
+        Assert.Single(Regex.Matches(source, Regex.Escape("& dotnet build $project -c Release -p:UseSharedCompilation=false")).Cast<Match>());
+        Assert.Single(Regex.Matches(source, Regex.Escape("& dotnet test $project -c Release -p:UseSharedCompilation=false --no-build")).Cast<Match>());
+        Assert.Contains("$project = \"./tests/KatLang.Tests/KatLang.Tests.csproj\"", source, StringComparison.Ordinal);
+        Assert.DoesNotMatch(@"(?i)(?:-c|--configuration)\s+Debug", source);
+        Assert.Equal(2, Regex.Matches(source, @"(?m)^\s*& dotnet ").Count);
+        // The filter is built from the class list, members of each named class only.
+        Assert.Contains("$filter = ($stackSuiteClasses | ForEach-Object { \"FullyQualifiedName~$_.\" }) -join \"|\"", source, StringComparison.Ordinal);
+        Assert.Contains("--filter $filter", source, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void StackSuiteScript_TreatsZeroExecutedTestsAsAFailure()
+    {
+        var source = Text(StackSuiteScriptPath);
+        var anyGuard = source.IndexOf("if ($results.Count -eq 0) {", StringComparison.Ordinal);
+        var classGuard = source.IndexOf("if ($classResults.Count -eq 0) {", StringComparison.Ordinal);
+        var missingGuard = source.IndexOf("if ($missingClasses.Count -gt 0) {", StringComparison.Ordinal);
+        var passed = source.IndexOf("Write-Host \"Release stack suites passed.\"", StringComparison.Ordinal);
+        Assert.True(anyGuard > 0 && classGuard > 0 && missingGuard > 0 && passed > anyGuard && passed > missingGuard,
+            "the script must fail when nothing ran or a listed class ran nothing, before it reports a pass");
+        Assert.Contains("Release stack suites FAILED: the filter executed no tests.", source, StringComparison.Ordinal);
+        // VSTest's exit code is not trusted for discovery: the executed tests are read from the TRX.
+        Assert.Contains("Read-TrxResults -Path (Join-Path $resultsDirectory $trxName)", source, StringComparison.Ordinal);
+        Assert.Contains("exit $exitCode", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("continue-on-error", source, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void StackSuiteScript_KeepsDiagnosticsInAnIgnoredDirectory()
+    {
+        var source = Text(StackSuiteScriptPath);
+        Assert.Contains("$relative = \"artifacts/validation/$name\"", source, StringComparison.Ordinal);
+        Assert.Contains("& git check-ignore -q -- \"$relative/stack-suites-build.log\"", source, StringComparison.Ordinal);
+        Assert.Contains("\"stack-suites-release-{0:yyyyMMddTHHmmssZ}-{1}\"", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("Remove-Item", source, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void StackSuiteScript_NamesRealStackSuites()
+    {
+        var source = Text(StackSuiteScriptPath);
+        var list = Regex.Match(source, @"(?s)\$stackSuiteClasses = @\((?<body>.*?)\n\)");
+        Assert.True(list.Success, "the script must declare $stackSuiteClasses");
+        var named = Regex.Matches(list.Groups["body"].Value, "\"(?<name>[^\"]+)\"").Select(match => match.Groups["name"].Value).ToArray();
+        Assert.Equal(StackSuiteClasses, named);
+
+        var testFiles = Directory.GetFiles(Absolute("tests/KatLang.Tests"), "*.cs", SearchOption.AllDirectories)
+            .Where(path => !path.Contains($"{Path.DirectorySeparatorChar}obj{Path.DirectorySeparatorChar}", StringComparison.Ordinal)
+                && !path.Contains($"{Path.DirectorySeparatorChar}bin{Path.DirectorySeparatorChar}", StringComparison.Ordinal))
+            .ToArray();
+        foreach (var name in named)
+        {
+            var type = typeof(ContinuousIntegrationPolicyTests).Assembly.GetType(name);
+            Assert.True(type is not null, $"{name} is not a test class of KatLang.Tests.");
+            Assert.True(
+                type!.GetMethods().Any(method => method.GetCustomAttributes(typeof(FactAttribute), inherit: true).Length > 0),
+                $"{name} declares no test.");
+            if (InProcessStackSuiteClasses.Contains(name))
+                continue;
+
+            // A process-death probe runs its deep shapes in a SubprocessProbe child and rejects overflow text.
+            var declaration = new Regex($@"\bclass {Regex.Escape(type.Name)}\b");
+            var file = Assert.Single(testFiles, path => declaration.IsMatch(File.ReadAllText(path)));
+            var text = File.ReadAllText(file);
+            Assert.Contains("SubprocessProbe.StartInfo(", text, StringComparison.Ordinal);
+            Assert.Contains("Stack overflow", text, StringComparison.Ordinal);
+        }
+    }
+
+    private static string JobSection(string source, string job)
+    {
+        var section = Regex.Match(source, $@"(?ms)^  {Regex.Escape(job)}:\n.*?(?=^  [a-z][a-z-]*:|\z)");
+        return section.Success ? section.Value : string.Empty;
+    }
+
     private static string WorkflowText()
         => Text(ValidatePath) + "\n" + Text(ReleasePath);
 

@@ -162,12 +162,15 @@ public class StructuralNestingStackBackstopProcessTests
         // threads (the widest members overflow the PARSER on a smaller test-host thread,
         // which is a different, out-of-scope regime).
         Expr auditAst = null!;
+        var auditDeepSource = Program("brace", 30, 60);
+        Expr auditDeepAst = null!;
         List<(string Kind, int Width, int Depth, string Source, Expr Ast)> sweep = null!;
         List<(string Kind, int Width, Expr Ast)> widestAtDepth60 = null!;
         List<(string Kind, Expr Ast)> smallControls = null!;
         AstStructuralDepthProcessTests.RunOnThreadWithStack(1_048_576, () =>
         {
             auditAst = Ast(AuditMinimalRepro);
+            auditDeepAst = Ast(auditDeepSource);
             sweep = (
                 from kind in Kinds
                 from depth in new[] { 9, 20 }
@@ -190,16 +193,25 @@ public class StructuralNestingStackBackstopProcessTests
             // The audit's exact reproduction, through every entry point it was proven on:
             // the public engine (front end + evaluation on this thread), the direct
             // evaluator, the generic strategies (a configured step budget), and the twin.
-            // On Windows — the audit's measured environment, both build configurations —
-            // the program needs more than the whole thread, so the ONLY correct outcome is
-            // the structured stack error. Other platforms' frame sizes are not calibrated
-            // here: a smaller-framed runtime may legitimately complete it, which is equally
-            // a non-crash outcome; it must never be a depth or step verdict.
-            var strict = OperatingSystem.IsWindows();
-            AssertEngine(AuditMinimalRepro, [0m], strictStackError: strict);
-            AssertDirect(auditAst, [0m], strictStackError: strict);
-            AssertDirect(auditAst, [0m], strictStackError: strict, new EvaluationLimits { MaxSteps = 1_000_000 });
-            AssertTwin(auditAst, [0m], strictStackError: strict);
+            // It sits NEAR the 1 MiB frontier, and which side it lands on depends on JIT
+            // frame sizes, not on the guard: measured on Windows x64 (November 2026), Debug
+            // completes this width at recursion depth 5 and exhausts by 7, while Release
+            // completes depth 9 and exhausts by 11. So BOTH non-crash outcomes are correct,
+            // on every platform and configuration: completion with the right value, or
+            // exactly one structured stack error. A depth or step verdict is never correct,
+            // and a crash kills this process before the marker is written.
+            AssertEngine(AuditMinimalRepro, [0m], strictStackError: false);
+            AssertDirect(auditAst, [0m], strictStackError: false);
+            AssertDirect(auditAst, [0m], strictStackError: false, new EvaluationLimits { MaxSteps = 1_000_000 });
+            AssertTwin(auditAst, [0m], strictStackError: false);
+
+            // The audit's own width, far past that frontier (depth 60, more than five times
+            // the deepest completing depth measured in either configuration): the backstop
+            // MUST fire through every one of the same entry points.
+            AssertEngine(auditDeepSource, [0m], strictStackError: true);
+            AssertDirect(auditDeepAst, [0m], strictStackError: true);
+            AssertDirect(auditDeepAst, [0m], strictStackError: true, new EvaluationLimits { MaxSteps = 1_000_000 });
+            AssertTwin(auditDeepAst, [0m], strictStackError: true);
 
             // Shapes that cannot fit any 1 MiB stack (thousands of frames per chain): the
             // backstop MUST fire, identically on both families, through both entry points.
@@ -237,7 +249,7 @@ public class StructuralNestingStackBackstopProcessTests
         // or a route around it, overflows this thread long before the 1 MiB one.
         AstStructuralDepthProcessTests.RunOnThreadWithStack(393_216, () =>
         {
-            // The exact reproduction needs roughly a whole 1 MiB thread, so on 384 KiB the
+            // The exact reproduction sits near the 1 MiB frontier, so on 384 KiB the
             // structured stack error is the only correct outcome on every platform.
             AssertDirect(auditAst, [0m], strictStackError: true);
             AssertDirect(auditAst, [0m], strictStackError: true, new EvaluationLimits { MaxSteps = 1_000_000 });
