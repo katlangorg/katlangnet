@@ -409,8 +409,8 @@ public class ContinuousIntegrationPolicyTests
         var installScript = Text(LeanInstallPath);
         Assert.DoesNotContain(toolchain, source + installScript, StringComparison.Ordinal);
         Assert.Contains("$(<lean/lean-toolchain)", installScript, StringComparison.Ordinal);
-        Assert.Contains("leanprover/elan/227caca133724d5516bee25c2aeb3e609478f2d8/elan-init.sh", source, StringComparison.Ordinal);
-        Assert.Contains("a620ff1641616222c8d37c54845492004bb84d6877cdbc944dd65c1aa685bf53", source, StringComparison.Ordinal);
+        Assert.Contains("leanprover/elan/227caca133724d5516bee25c2aeb3e609478f2d8/elan-init.sh", installScript, StringComparison.Ordinal);
+        Assert.Contains("a620ff1641616222c8d37c54845492004bb84d6877cdbc944dd65c1aa685bf53", installScript, StringComparison.Ordinal);
     }
 
     [Theory]
@@ -419,7 +419,7 @@ public class ContinuousIntegrationPolicyTests
     public void LeanValidation_InstallsToolchainBeforeBuilding(string workflow)
     {
         var source = Text(workflow);
-        var install = source.IndexOf($"run: bash {LeanInstallPath}", StringComparison.Ordinal);
+        var install = source.IndexOf($"bash {LeanInstallPath}", StringComparison.Ordinal);
         var validation = source.IndexOf("validate-all.ps1 -Phase Lean", StringComparison.Ordinal);
         Assert.True(install >= 0 && install < validation,
             $"{workflow} must install the Lean toolchain before running Lean validation.");
@@ -530,6 +530,8 @@ public class ContinuousIntegrationPolicyTests
             Assert.Contains("uses: actions/upload-artifact@", step, StringComparison.Ordinal);
         }
         Assert.Equal(2, Regex.Matches(source, @"(?m)^          path: artifacts/validation/$").Count);
+        Assert.Contains($"bash {LeanInstallPath} 2>&1 | tee artifacts/validation/lean-toolchain-install.log",
+            source, StringComparison.Ordinal);
     }
 
     [Fact]
