@@ -18,12 +18,12 @@ namespace KatLang.Tests;
 ///
 /// <para>A process death cannot be observed in-process, so each sweep runs in a child
 /// (<see cref="SubprocessProbe"/>) that writes a success marker; a pass needs the marker AND exit
-/// code 0. The crash frontier is sharp, machine-dependent and different in Debug and Release, so no
-/// test pins where a probe fires (Q-09a): every sweep crosses the frontier by construction and
-/// asserts it saw both a refusal and a compile, so it cannot pass vacuously, and allows only the
-/// structured outcomes in <see cref="AllowedRefusals"/>. glibc can hand a thread a larger cached
-/// stack than it requested (<see cref="ThreadStackSize"/>); where the actual size differs the
-/// frontier assertion is relaxed — the crash and outcome assertions never are.</para>
+/// code 0. Every sweep requires a compile and allows only the structured outcomes in
+/// <see cref="AllowedRefusals"/>. Sweeps of deep trees also require a compile refusal without
+/// pinning where it occurs (Q-09a). The flat comparison chain adds width to a single node, so an
+/// evaluator stack check can stop smaller threads before compilation and leave no compile refusal
+/// in the sweep. The compile-refusal assertion also allows for a larger stack supplied by glibc
+/// (<see cref="ThreadStackSize"/>). The crash and outcome checks apply at every size.</para>
 /// </summary>
 public class DeferredCompileStackProcessTests
 {
@@ -55,11 +55,10 @@ public class DeferredCompileStackProcessTests
     ];
 
     /// <summary>
-    /// The deep shapes, at depths every structural gate admits, that together reach every probed
-    /// recursion: nested blocks, braces, lists, groups, calls, builtin calls, clause families,
-    /// flat operator / dot / comparison / selector chains (which parse iteratively and are first
-    /// walked recursively AFTER the parse), prefix operators, interpolation holes, opens of blocks
-    /// and clause-head patterns.
+    /// Shapes admitted by the structural gates: nested blocks, braces, lists, groups, calls,
+    /// builtin calls, clause families, operator / dot / selector chains (which build deep trees
+    /// during iterative parsing), a wide flat comparison chain, prefix operators, interpolation
+    /// holes, opens of blocks and clause-head patterns.
     /// </summary>
     internal static readonly (string Shape, int Depth)[] Shapes =
     [
@@ -231,7 +230,7 @@ public class DeferredCompileStackProcessTests
     /// One (route, shape): parse on a large thread and evaluate on the thread under test, so only
     /// the deferred compile (and the module parse it drives) is under test; a fresh parse per size,
     /// so every size compiles a fresh region. The compile starts near the top of the small thread
-    /// (<c>R(0)</c>), and the sizes run from below the point where the shape compiles to well past it.
+    /// (<c>R(0)</c>), and the sweep samples small stacks through sizes where the shape compiles.
     /// </summary>
     [Fact]
     public void ThreadSizeSweep_ProbeChild()
@@ -253,9 +252,8 @@ public class DeferredCompileStackProcessTests
         Assert.True(reference.Outcome.IsOk || reference.Outcome.Error.Code == KatLangErrorCode.EvaluationDepthExceeded,
             $"{route}/{shape}: the program must evaluate on a large stack: {Describe(reference.Outcome)}");
 
-        // From below the point where the shape compiles to well past it: the fixed range first,
-        // then wider steps until a compile was seen (a Debug nested module parse of a deep shape
-        // needs more than the fixed range).
+        // Sweep the fixed range first, then take wider steps if compilation needs more room
+        // (for example, a Debug nested module parse of a deep shape).
         var sweep = new SweepTally($"{route}/{shape}");
         for (var kib = 144; kib <= 688 || (!sweep.SawCompile && kib <= 4096); kib += kib < 688 ? 16 : 128)
         {
@@ -266,7 +264,7 @@ public class DeferredCompileStackProcessTests
                 Assert.Equal(0, prepared.DownloadsDuringEvaluation);
         }
 
-        sweep.AssertCrossedTheFrontier();
+        sweep.AssertOutcomes(requireCompileRefusal: shape != "cmp");
         WriteProbeMarker();
     }
 
@@ -294,7 +292,7 @@ public class DeferredCompileStackProcessTests
                 sweep.Record(n, run, reference);
             }
 
-            sweep.AssertCrossedTheFrontier();
+            sweep.AssertOutcomes();
         }
 
         WriteProbeMarker();
@@ -611,7 +609,7 @@ public class DeferredCompileStackProcessTests
         for (var kib = 144; kib <= 688 || (!sweep.SawCompile && kib <= 4096); kib += kib < 688 ? 16 : 128)
             sweep.Record(kib, EvaluateOn(kib * 1024, Prepare(source, Download)), reference.Outcome);
 
-        sweep.AssertCrossedTheFrontier();
+        sweep.AssertOutcomes();
         WriteProbeMarker();
     }
 
@@ -732,12 +730,13 @@ public class DeferredCompileStackProcessTests
             _log.Add($"{point}:{(run.Materialized ? "compiled" : "unpublished")}:{code}");
         }
 
-        public void AssertCrossedTheFrontier()
+        public void AssertOutcomes(bool requireCompileRefusal = true)
         {
             Console.WriteLine($"{label}: {string.Join(" ", _log)}");
             Assert.True(_compiles > 0, $"{label}: no run compiled the branch\n{string.Join(" ", _log)}");
-            Assert.True(_refusals > 0 || !_exact,
-                $"{label}: no run refused the compile; the sweep no longer crosses the frontier\n{string.Join(" ", _log)}");
+            if (requireCompileRefusal && _exact)
+                Assert.True(_refusals > 0,
+                    $"{label}: no run refused the compile; the sweep no longer crosses the frontier\n{string.Join(" ", _log)}");
         }
     }
 
