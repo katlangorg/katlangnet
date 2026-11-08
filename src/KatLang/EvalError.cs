@@ -322,8 +322,9 @@ public closed record EvalError
         private readonly RuntimeStateSlot<bool> _isSelectedMemberOutput;
 
         /// <summary>
-        /// Diagnostic-only: this missing output is a SELECTED STRUCTURAL MEMBER's own — the
-        /// zero-argument member read <c>R.n</c> (DOT-01) — never its receiver's. A dot context
+        /// Diagnostic-only: this missing output came from a SELECTED STRUCTURAL MEMBER — the
+        /// zero-argument member read <c>R.n</c> (DOT-01), or an explicit member invocation's
+        /// unclaimed nested failure — never its receiver's. A dot context
         /// alone cannot tell a member named <c>string</c> (selected like any member, Q-17 S-C)
         /// from the <c>.string</c> intrinsic, which demands its RECEIVER's value and so blames the
         /// receiver; the renderer reads this to name the member reference. Like the other
@@ -347,8 +348,11 @@ public closed record EvalError
         /// operand, a builtin's argument or callback, an argument the binder inspects, a dot
         /// intrinsic's receiver; <c>Evaluator.NestMissingOutput</c>). It belongs to the completed
         /// failure, so every memo (a property's cached outcome, a need cell's completed outcome)
-        /// keeps it for every consumer. Only the spread reads it: an operand's own missing output
-        /// is <see cref="SpreadMissingOutput"/>, a nested one is preserved. The public category is
+        /// keeps it for every consumer. The spread is the one DECISION that reads it: an operand's
+        /// own missing output is <see cref="SpreadMissingOutput"/>, a nested one is preserved.
+        /// Diagnostics read it too (2026-11-08): a report names a binding or callee as output-less
+        /// only when the missing output is that subject's own (<c>Evaluator.IsOwnForBlame</c>); a
+        /// nested one keeps the innermost generic report at its own span. The public category is
         /// <see cref="KatLangErrorCode.MissingOutput"/> either way; carried in an
         /// equality-transparent slot, so the span-attaching and context-wrapping copies keep it
         /// while record equality ignores it.
@@ -357,6 +361,28 @@ public closed record EvalError
         {
             get => _isNested.Value;
             init => _isNested = new(value);
+        }
+
+        private readonly RuntimeStateSlot<bool> _keepsOwnBlame;
+
+        /// <summary>
+        /// Diagnostic-only (2026-11-08): this NESTED missing output still counts as OWN for blame
+        /// (<c>Evaluator.IsOwnForBlame</c>), because it was nested only AFTER the subject it belongs
+        /// to was identified: either it was nested while it sat directly under that subject's
+        /// context frame (<c>F() + 1</c> with an output-less <c>F</c>: the call frame still claims
+        /// it), or it was nested only by a transparent layer whose subject the next frame names: the
+        /// deconstruction plumbing (the written right-hand side's own missing output reaching a
+        /// target's read, so <c>x, y = { }</c> keeps rendering exactly as <c>x = { }</c>, F3), or a
+        /// structural carrier crossed by a VALUE read of its terminal (<c>A = { P }</c>, M4★). It
+        /// never changes <see cref="IsNested"/>, so no spread decision moves. C#-side metadata with
+        /// no Lean counterpart (Lean has neither call-frame rendering nor deconstruction, and frames a
+        /// carrier's terminal binding before nesting it), carried in an equality-transparent slot like
+        /// the other diagnostic slots.
+        /// </summary>
+        internal bool KeepsOwnBlame
+        {
+            get => _keepsOwnBlame.Value;
+            init => _keepsOwnBlame = new(value);
         }
     }
 

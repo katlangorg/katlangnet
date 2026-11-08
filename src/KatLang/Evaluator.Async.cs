@@ -1454,7 +1454,7 @@ public static partial class Evaluator
         {
             var countedR = await EvalCountedAsync(expr, rowCtx, valEnv).ConfigureAwait(false);
             // A row is a SUBORDINATE computation of the body or capture (Q-36).
-            if (countedR.IsError) return NestMissingOutput(countedR.Error);
+            if (countedR.IsError) return NestOutputRowFailure(countedR.Error, rows, rowCtx.CallStack);
 
             // The row-slot accumulator is transient-bounded BEFORE it grows (SEC-01): once `(A*, A*)`
             // passes the limit the remaining rows are formed count-only and the capture's own
@@ -2811,7 +2811,7 @@ public static partial class Evaluator
             var wired = ChildOfInContext(targetAlg!, prop!.Value, ctx);
             // MIRROR — a member that is an alias is read and called as its target.
             if (wired is Algorithm.Alias)
-                return await EvalAliasMemberCountedAsync(targetAlg!, prop, wired, argsOpt, name, ctx, valEnv).ConfigureAwait(false);
+                return MarkNestedMemberInvocationOutput(await EvalAliasMemberCountedAsync(targetAlg!, prop, wired, argsOpt, name, ctx, valEnv).ConfigureAwait(false));
             if (argsOpt is null)
             {
                 // See the synchronous twin: the ONE law decides, and the rejection names
@@ -2839,15 +2839,15 @@ public static partial class Evaluator
 
             // MIRROR — CACHE-PUB-1: a possibly zero-supply member call names the selected member binding.
             if (MayFormZeroSupply(argsOpt) && TakesOriginDispatch(wired))
-                return await EvalOriginCallCountedAsync(CalleeOrigin.Bound(targetAlg!, prop), wired, argsOpt, ctx, valEnv,
-                    CallDiagnosticName.FromKnown(name)).ConfigureAwait(false);
+                return MarkNestedMemberInvocationOutput(await EvalOriginCallCountedAsync(CalleeOrigin.Bound(targetAlg!, prop), wired, argsOpt, ctx, valEnv,
+                    CallDiagnosticName.FromKnown(name)).ConfigureAwait(false));
 
-            return await EvalResolvedCallCountedAsync(
+            return MarkNestedMemberInvocationOutput(await EvalResolvedCallCountedAsync(
                 wired,
                 argsOpt,
                 ctx,
                 valEnv,
-                CallDiagnosticName.FromKnown(name)).ConfigureAwait(false);
+                CallDiagnosticName.FromKnown(name)).ConfigureAwait(false));
         }
 
         // MIRROR — a structural miss: the intrinsics, or the extension call.

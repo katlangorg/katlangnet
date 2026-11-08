@@ -187,6 +187,48 @@ def missingOutputError8 : Bool :=
 
 #guard missingOutputError8
 
+/-! Nested missing output is not the read property's (2026-11-08). `H2 = {} + 1` HAS an output;
+its missing output is the `{}` operand's, `nested` once the operator consumes it (Q-36), so the
+read of `H2` attaches no `while evaluating property H2` frame (`withMissingOutputCtx` frames only
+`.missingOutput .own`). The own guards above (`missingOutputError5/7/8`) keep their frame, and a
+named operand that has no output keeps ITS own frame through the consuming read (`G`). C#:
+`NestedMissingOutputBlameTests`. -/
+
+private def innermostIsNestedMissingOutput : Error -> Bool
+  | .withContext _ inner => innermostIsNestedMissingOutput inner
+  | .missingOutput .nested => true
+  | _ => false
+
+def nestedMissingOutputRoot : Algorithm :=
+  algPrivate [] [] [
+    ("H2", alg [] [] [] [.binary .add (.algorithmExpr (alg [] [] [] [])) (.num 1)])
+  ] [.resolve "H2"]
+
+def nestedMissingOutputIsNotThePropertys : Bool :=
+  match runResult (.algorithmExpr nestedMissingOutputRoot) with
+  | Except.error err =>
+      innermostIsNestedMissingOutput err
+      && !hasContext "while evaluating property H2" err
+  | Except.ok _ => false
+
+#guard nestedMissingOutputIsNotThePropertys
+
+def namedOperandMissingOutputRoot : Algorithm :=
+  algPrivate [] [] [
+    ("G", noOutputBraceAlg),
+    ("H2", alg [] [] [] [.binary .add (.resolve "G") (.num 1)])
+  ] [.resolve "H2"]
+
+def namedOperandMissingOutputKeepsItsOwnFrame : Bool :=
+  match runResult (.algorithmExpr namedOperandMissingOutputRoot) with
+  | Except.error err =>
+      hasContext "while evaluating property G" err
+      && !hasContext "while evaluating property H2" err
+      && innermostIsMissingOutput err
+  | Except.ok _ => false
+
+#guard namedOperandMissingOutputKeepsItsOwnFrame
+
 def missingOutputError9Root : Algorithm :=
   algPrivate [] [] [
     ("A", noOutputBraceAlg),

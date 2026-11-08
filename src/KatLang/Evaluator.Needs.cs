@@ -1042,12 +1042,13 @@ public static partial class Evaluator
         {
             var inspected = await DemandCell(supply.Value[0], asynchronous).ConfigureAwait(false);
             // The right-hand side is a SUBORDINATE computation of every target it unpacks into
-            // (Q-36; Lean: the helper call's binder).
-            if (inspected.IsError) return NestMissingOutput(inspected.Error);
+            // (Q-36; Lean: the helper call's binder). Its own missing output keeps its blame, so the
+            // target's read names the target exactly as an ordinary assignment's does (F3 parity).
+            if (inspected.IsError) return NestDeconstructionSourceFailure(inspected.Error);
         }
         var bindings = await BindAcceptedNeedPatterns(patterns, supply.Value, ctx, asynchronous, family: false).ConfigureAwait(false);
         if (bindings.IsError)
-            return bindings.Error is EvalError.ArityMismatch shape ? DeconstructionArityMismatch(helper, shape) : NestMissingOutput(bindings.Error);
+            return bindings.Error is EvalError.ArityMismatch shape ? DeconstructionArityMismatch(helper, shape) : NestDeconstructionSourceFailure(bindings.Error);
         // The bound cells by binding name: each target projects the binding its own output reads.
         var bound = bindings.Value!;
         var byName = new Dictionary<string, NeedCell>(bound.Count, StringComparer.Ordinal);

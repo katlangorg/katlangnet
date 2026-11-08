@@ -619,7 +619,7 @@ public static partial class Evaluator
                 ? WithPropertyContextOnMissingOutput(hop.Binding.Name, span: null, terminal.Algorithm,
                     EvalZeroArgPropertyAccessCounted(hop.Owner, hop.Binding, ZeroArgPropertyAccessKind.CountedLexical, terminal.Algorithm, ctx, valEnv))
                 : EvalZeroArgumentDemandOutputCounted(terminal.Algorithm, ctx, valEnv);
-        return terminal.CrossesCarrier ? NestMissingOutput(read) : read;
+        return terminal.CrossesCarrier ? NestCarrierCrossing(read) : read;
     }
 
     /// <summary>
@@ -633,7 +633,7 @@ public static partial class Evaluator
             ? EvalRuntimeAliasValueCounted(runtime, ctx, valEnv)
             : EvalZeroArgPropertyAccessCounted(resolved, ctx, valEnv);
         // A read reaching its binding through a structural carrier is nested (Q-36 with M4★).
-        return resolved.CrossesCarrier ? NestMissingOutput(read) : read;
+        return resolved.CrossesCarrier ? NestCarrierCrossing(read) : read;
     }
 
     /// <summary>
@@ -762,12 +762,12 @@ public static partial class Evaluator
             if (terminal.IsRuntime)
             {
                 var runtimeRead = ReCountValueBoundary(EvalRuntimeAliasValueCounted((Algorithm.Alias)terminal.Algorithm, ctx, valEnv));
-                return terminal.CrossesCarrier ? NestMissingOutput(runtimeRead) : runtimeRead;
+                return terminal.CrossesCarrier ? NestCarrierCrossing(runtimeRead) : runtimeRead;
             }
             PropertyDeclaringOwner owner = terminal.Binding is { } hop ? hop.Owner : targetAlg;
             var binding = terminal.Binding is { } bound ? bound.Binding : prop;
             var memberRead = EvalAliasMemberRead(owner, binding, terminal.Algorithm, name, ctx, valEnv);
-            return terminal.CrossesCarrier ? NestMissingOutput(memberRead) : memberRead;
+            return terminal.CrossesCarrier ? NestCarrierCrossing(memberRead) : memberRead;
         }
 
         var wiredR = ResolveAliasTarget((Algorithm.Alias)wiredAlias, ctx, prop);
@@ -960,7 +960,7 @@ public static partial class Evaluator
                 ? WithPropertyContextOnMissingOutput(hop.Binding.Name, span: null, terminal.Algorithm,
                     await EvalZeroArgPropertyAccessCountedAsync(hop.Owner, hop.Binding, ZeroArgPropertyAccessKind.CountedLexical, terminal.Algorithm, ctx, valEnv).ConfigureAwait(false))
                 : await EvalZeroArgumentDemandOutputCountedAsync(terminal.Algorithm, ctx, valEnv).ConfigureAwait(false);
-        return terminal.CrossesCarrier ? NestMissingOutput(read) : read;
+        return terminal.CrossesCarrier ? NestCarrierCrossing(read) : read;
     }
 
     /// <summary>MIRROR OF <see cref="ReadValueBindingCounted"/> — keep in lock-step.</summary>
@@ -969,7 +969,7 @@ public static partial class Evaluator
         var read = resolved.ResolvedAlgorithm is Algorithm.Alias runtime
             ? await EvalRuntimeAliasValueCountedAsync(runtime, ctx, valEnv).ConfigureAwait(false)
             : await EvalZeroArgPropertyAccessCountedAsync(resolved, ctx, valEnv).ConfigureAwait(false);
-        return resolved.CrossesCarrier ? NestMissingOutput(read) : read;
+        return resolved.CrossesCarrier ? NestCarrierCrossing(read) : read;
     }
 
     /// <summary>MIRROR OF <see cref="EvalInlineAliasValue"/> — keep in lock-step.</summary>
@@ -1063,12 +1063,12 @@ public static partial class Evaluator
             if (terminal.IsRuntime)
             {
                 var runtimeRead = ReCountValueBoundary(await EvalRuntimeAliasValueCountedAsync((Algorithm.Alias)terminal.Algorithm, ctx, valEnv).ConfigureAwait(false));
-                return terminal.CrossesCarrier ? NestMissingOutput(runtimeRead) : runtimeRead;
+                return terminal.CrossesCarrier ? NestCarrierCrossing(runtimeRead) : runtimeRead;
             }
             PropertyDeclaringOwner owner = terminal.Binding is { } hop ? hop.Owner : targetAlg;
             var binding = terminal.Binding is { } bound ? bound.Binding : prop;
             var memberRead = await EvalAliasMemberReadAsync(owner, binding, terminal.Algorithm, name, ctx, valEnv).ConfigureAwait(false);
-            return terminal.CrossesCarrier ? NestMissingOutput(memberRead) : memberRead;
+            return terminal.CrossesCarrier ? NestCarrierCrossing(memberRead) : memberRead;
         }
 
         var wiredR = await ResolveAliasTargetAsync((Algorithm.Alias)wiredAlias, ctx, prop).ConfigureAwait(false);

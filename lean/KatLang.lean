@@ -563,9 +563,11 @@ end PropExposure
     an argument inspected while binding, a `.string` receiver) it is `nested`
     (`Error.nestMissingOutput`, `withNestedMissingOutput`). It is part of the COMPLETED outcome,
     so it survives every memo — a property's cached outcome, a need cell's completed outcome — and
-    is consumer-independent. Only the spread reads it: the spread operand's `own` missing output
-    is `spreadMissingOutput`, a `nested` one is preserved (`spreadOperandFailure`). The public
-    category of both is `missingOutput`. C#: `EvalError.MissingOutput.IsNested`. -/
+    is consumer-independent. The spread is the one DECISION that reads it: the spread operand's
+    `own` missing output is `spreadMissingOutput`, a `nested` one is preserved
+    (`spreadOperandFailure`). The property frame reads it too (2026-11-08): `withMissingOutputCtx`
+    names the read property only for its `own` missing output. The public category of both is
+    `missingOutput`. C#: `EvalError.MissingOutput.IsNested`. -/
 inductive MissingOutputOrigin where
   | own
   | nested
@@ -4080,12 +4082,15 @@ def withCtx (ctx : String) (m : EvalM A) : EvalM A := do
     | .ok result => pure result
     | .error err => .error (Error.withContext ctx err)
 
-/-- Attach property context specifically to a missing-output failure.
-    Other errors are preserved unchanged. -/
+/-- Attach property context specifically to the read property's OWN missing-output failure
+    (2026-11-08): a report names a binding as output-less only when the missing output is that
+    binding's own. A `nested` one (`H2 = {} + 1`: the `{}` operand's) is someone else's and keeps
+    its innermost report; every other error is preserved unchanged.
+    C#: `Evaluator.WithPropertyContextOnMissingOutput` with `Evaluator.IsOwnForBlame`. -/
 def withMissingOutputCtx (ctx : String) (m : EvalM A) : EvalM A := do
     match <- evalAttempt m with
     | .ok result => pure result
-    | .error (.missingOutput origin) => .error (.withContext ctx (.missingOutput origin))
+    | .error (.missingOutput .own) => .error (.withContext ctx (.missingOutput .own))
     | .error err => .error err
 
 /-- Any missing output, whatever its origin and context frames (the category test). -/

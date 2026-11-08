@@ -543,13 +543,19 @@ public sealed class KatLangError
             return true;
         }
 
-        if (error is EvalError.WithContext { ErrorContext: CallContext callContext, Inner: EvalError.MissingOutput })
+        // A call or member frame names its callee or member as output-less only when the missing
+        // output is that subject's OWN (Evaluator.IsOwnForBlame); a nested one (`F(x) = { } + x`)
+        // is someone else's and falls through to the ordinary context rendering
+        // ("while evaluating call to F: Algorithm has no defined output.").
+        if (error is EvalError.WithContext { ErrorContext: CallContext callContext, Inner: EvalError.MissingOutput callMissing }
+            && Evaluator.IsOwnForBlame(callMissing))
         {
             message = FormatCallMissingOutput(callContext.CalleeDescription, renderFragment);
             return true;
         }
 
-        if (error is EvalError.WithContext { ErrorContext: DotCallContext dotCallContext, Inner: EvalError.MissingOutput missing })
+        if (error is EvalError.WithContext { ErrorContext: DotCallContext dotCallContext, Inner: EvalError.MissingOutput missing }
+            && (IsStringIntrinsicMissingOutput(dotCallContext.PropertyName, missing.IsSelectedMemberOutput) || Evaluator.IsOwnForBlame(missing)))
         {
             message = FormatDotCallMissingOutput(dotCallContext.ReceiverDescription, dotCallContext.PropertyName, missing.IsSelectedMemberOutput, renderFragment);
             return true;
@@ -846,9 +852,20 @@ public sealed class KatLangError
     /// </summary>
     private static string FormatDotCallMissingOutput(
         string receiverDesc, string propertyName, bool isSelectedMemberOutput, Func<string, string>? renderFragment)
-        => !isSelectedMemberOutput && string.Equals(propertyName, "string", StringComparison.Ordinal)
+        => IsStringIntrinsicMissingOutput(propertyName, isSelectedMemberOutput)
             ? FormatReferenceMissingOutput(receiverDesc, renderFragment)
             : FormatReferenceMissingOutput($"{receiverDesc}.{propertyName}", renderFragment);
+
+    /// <summary>
+    /// The dot frame is the <c>.string</c> intrinsic's, whose missing output is its RECEIVER's:
+    /// it reaches the frame nested by design (Q-36 nests intrinsic receivers), so this half keeps
+    /// naming the receiver whatever the origin. A selected member read is marked
+    /// (<see cref="EvalError.MissingOutput.IsSelectedMemberOutput"/>) for own and nested outcomes;
+    /// explicit member invocations mark their unclaimed nested failures too. Historical own-case
+    /// invocation wording is unchanged.
+    /// </summary>
+    private static bool IsStringIntrinsicMissingOutput(string propertyName, bool isSelectedMemberOutput)
+        => !isSelectedMemberOutput && string.Equals(propertyName, "string", StringComparison.Ordinal);
 
     private static string FormatPropertyArityMismatch(EvalError.ArityMismatch arity, string propertyName)
         => FormatArityMismatch(arity, propertyName, preferPropertyName: true);

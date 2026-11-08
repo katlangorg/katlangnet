@@ -453,6 +453,19 @@ public static partial class Evaluator
             : result;
 
     /// <summary>
+    /// An explicit selected-member call can also return a bare NESTED missing output. Retain that
+    /// route so a declared member named <c>string</c> cannot be mistaken for the intrinsic and blame
+    /// its receiver. Mark only failures that have no own blame: existing own-case invocation wording
+    /// stays unchanged, including the historical receiver wording of an own <c>Obj.string()</c>.
+    /// No origin, span or evaluation changes; ordinary, async and planned member routes share this.
+    /// </summary>
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static EvalResult<CountedResult> MarkNestedMemberInvocationOutput(EvalResult<CountedResult> result)
+        => result.IsError && result.Error is EvalError.MissingOutput missing && !IsOwnForBlame(missing)
+            ? MarkSelectedMemberOutput(result)
+            : result;
+
+    /// <summary>
     /// The <c>.string</c> intrinsic is a ZERO-parameter member. A written argument list is
     /// formed exactly like every call's supply (<see cref="FormNeedSupply"/>: explicit
     /// spreads are opened, every other slot stays a suspended need cell) and then rejected
@@ -613,7 +626,7 @@ public static partial class Evaluator
         {
             var wired = ChildOfInContext(targetAlg!, prop!.Value, ctx);
             if (wired is Algorithm.Alias)
-                return EvalAliasMemberCounted(targetAlg!, prop, wired, argsOpt, name, ctx, valEnv);
+                return MarkNestedMemberInvocationOutput(EvalAliasMemberCounted(targetAlg!, prop, wired, argsOpt, name, ctx, valEnv));
             if (argsOpt is null)
             {
                 // A structurally navigated member read with NO argument list is an
@@ -639,14 +652,14 @@ public static partial class Evaluator
 
             // CACHE-PUB-1: a possibly zero-supply member call names the selected member binding.
             if (MayFormZeroSupply(argsOpt) && TakesOriginDispatch(wired))
-                return EvalBoundMemberCallCounted(targetAlg!, prop, wired, argsOpt, name, ctx, valEnv);
+                return MarkNestedMemberInvocationOutput(EvalBoundMemberCallCounted(targetAlg!, prop, wired, argsOpt, name, ctx, valEnv));
 
-            return EvalResolvedCallCounted(
+            return MarkNestedMemberInvocationOutput(EvalResolvedCallCounted(
                 wired,
                 argsOpt,
                 ctx,
                 valEnv,
-                CallDiagnosticName.FromKnown(name));
+                CallDiagnosticName.FromKnown(name)));
         }
 
         // A structural miss: `string` is the number-to-text intrinsic (DOT-08) — it takes the

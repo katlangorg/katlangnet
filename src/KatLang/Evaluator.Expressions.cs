@@ -924,13 +924,19 @@ public static partial class Evaluator
     /// reported as that PARAMETER's failure (the argument the caller supplied has no
     /// output), so the enclosing call context never reads as if the callee itself had
     /// none. Any other outcome keeps the plain span attachment.
+    ///
+    /// <para>A BARE missing output is the parameter's only when it is the argument's own
+    /// (<see cref="IsOwnForBlame"/>); a nested one is someone else's and keeps the plain span
+    /// attachment. The written argument's F5 frame is re-labeled as before, whatever its origin
+    /// (the F5 blame of a written argument is deliberately origin-independent).</para>
     /// </summary>
     private static EvalResult<Result> WithParameterContextOnMissingOutput(string name, SourceSpan? span, EvalResult<Result> result)
     {
         if (!result.IsError) return result;
-        var failure = result.Error is EvalError.WithContext { ErrorContext: ArgumentEvaluationContext, Inner: EvalError.MissingOutput missing }
-            ? missing : result.Error;
-        return failure is EvalError.MissingOutput
+        var failure = result.Error is EvalError.WithContext { ErrorContext: ArgumentEvaluationContext, Inner: EvalError.MissingOutput argumentMissing }
+            ? argumentMissing
+            : result.Error is EvalError.MissingOutput missing && IsOwnForBlame(missing) ? missing : null;
+        return failure is not null
             ? EvalResult<Result>.Err(new EvalError.WithContext(new ParameterEvaluationContext(name), failure) { Span = failure.Span ?? span })
             : WithSpan(span, result);
     }

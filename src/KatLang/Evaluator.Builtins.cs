@@ -867,18 +867,94 @@ public static partial class Evaluator
     };
 
     /// <summary>
+    /// THE ONE BLAME TEST (2026-11-08): may a report NAME the subject of the frame that holds
+    /// <paramref name="missing"/> as output-less — "Property 'P' …", "Parameter 'x' …",
+    /// "Cannot call 'F' …", "The value <c>R.n</c> …"? Only when the missing output is that
+    /// subject's OWN (<see cref="EvalError.MissingOutput.IsNested"/> is <c>false</c>), or was
+    /// nested only after its subject was identified (<see cref="EvalError.MissingOutput.KeepsOwnBlame"/>:
+    /// nested under the subject's own frame, or through deconstruction plumbing alone). A nested
+    /// missing output is someone else's (<c>H2 = { } + 1</c>: the <c>{ }</c> operand's), so it keeps
+    /// the innermost generic report at its own span, and the enclosing frames render as ordinary
+    /// context. Reads stored provenance only: it evaluates nothing and never decides by name,
+    /// spelling or span. Lean: the <c>.missingOutput .own</c> arm of <c>withMissingOutputCtx</c>.
+    /// </summary>
+    internal static bool IsOwnForBlame(EvalError.MissingOutput missing)
+        => !missing.IsNested || missing.KeepsOwnBlame;
+
+    /// <summary>
     /// The same failure as part of a CONSUMING computation's outcome (Q-36): a missing output in
     /// it is nested; its context frames, spans and every other error are unchanged. Never mutates
     /// <paramref name="error"/> (a memoized failure is shared by every consumer): an own missing
     /// output is copied. Lean: <c>Error.nestMissingOutput</c> / <c>withNestedMissingOutput</c>.
+    ///
+    /// <para>An own missing output that already sits DIRECTLY under a context frame was claimed by
+    /// that frame's subject before it was nested (<c>F() + 1</c>: the call frame of an output-less
+    /// <c>F</c>), so its copy also keeps that blame (<see cref="EvalError.MissingOutput.KeepsOwnBlame"/>,
+    /// <see cref="IsOwnForBlame"/>); the origin itself is nested exactly as before.</para>
     /// </summary>
     internal static EvalError NestMissingOutput(EvalError error) => error switch
     {
         EvalError.MissingOutput { IsNested: false } missing => missing with { IsNested = true },
+        EvalError.WithContext { Inner: EvalError.MissingOutput { IsNested: false } framed } context
+            => context.WithInner(framed with { IsNested = true, KeepsOwnBlame = true }),
         EvalError.WithContext context when IsOwnMissingOutputError(context.Inner)
             => context.WithInner(NestMissingOutput(context.Inner)),
         _ => error,
     };
+
+    /// <summary>
+    /// <see cref="NestMissingOutput(EvalError)"/> through a TRANSPARENT layer whose subject the next
+    /// frame already names: a BARE own missing output is nested exactly as before, and its copy keeps
+    /// its blame (<see cref="EvalError.MissingOutput.KeepsOwnBlame"/>); any other failure nests as
+    /// <see cref="NestMissingOutput(EvalError)"/> does, so a missing output that was already nested
+    /// stays someone else's. Two layers are transparent this way:
+    /// <list type="bullet">
+    /// <item>the deconstruction plumbing (F3): the written right-hand side's failure, nested into the
+    /// synthetic frames that carry it to the targets, so the target's read names the target exactly as
+    /// <c>x = { }</c> does, while <c>x, y = { } + 1</c> stays the operand's;</item>
+    /// <item>a structural carrier crossed by a VALUE read of its terminal (M4★: a transparent reference
+    /// IS its target): <c>A = { P }</c> with an output-less <c>P</c> reads as P's own missing output,
+    /// which the read's frame names ("Property 'P' …"), while the Q-36 origin is nested.</item>
+    /// </list>
+    /// <para>Out of line (FRAME-SIZE DISCIPLINE): it runs on error paths only, but its callers sit on
+    /// the lexical read and output-row recursion spines, so its record copy must not be inlined into
+    /// their frames.</para>
+    /// </summary>
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static EvalError NestKeepingOwnBlame(EvalError error)
+        => error is EvalError.MissingOutput { IsNested: false } missing
+            ? missing with { IsNested = true, KeepsOwnBlame = true }
+            : NestMissingOutput(error);
+
+    /// <summary>
+    /// The deconstruction binder's nesting of the right-hand side's failure (F3 parity,
+    /// <see cref="NestKeepingOwnBlame"/>).
+    /// </summary>
+    private static EvalError NestDeconstructionSourceFailure(EvalError error) => NestKeepingOwnBlame(error);
+
+    /// <summary>
+    /// A VALUE read that crosses a structural carrier is nested (Q-36 with M4★); the terminal's own
+    /// missing output keeps the terminal's blame (<see cref="NestKeepingOwnBlame"/>).
+    /// </summary>
+    private static EvalResult<T> NestCarrierCrossing<T>(EvalResult<T> result)
+        => result.IsError ? NestKeepingOwnBlame(result.Error) : result;
+
+    /// <summary>
+    /// The output-row loop's nesting of a failed row (Q-36), shared by the sync and async loops. The
+    /// rows of a deconstruction's synthetic frame (<see cref="Algorithm.IsSyntheticDeconstructionFrame"/>:
+    /// the hoisted <c>$deconstruct$N</c> source, whose one row IS the written right-hand side, or a
+    /// target helper) are plumbing, so they nest through <see cref="NestDeconstructionSourceFailure"/>;
+    /// every other row loop, a capture's rows evaluated inside such a frame included (its rows are
+    /// not the frame's own output list), nests as before. Structural provenance and reference
+    /// identity only; this runs on the error path only, out of line (FRAME-SIZE DISCIPLINE: the row
+    /// loops are the structural-nesting recursion spine, so this test must not widen their frames).
+    /// </summary>
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static EvalError NestOutputRowFailure(EvalError error, IReadOnlyList<Expr> rows, IReadOnlyList<Algorithm> callStack)
+        => callStack is [Algorithm.User { IsSyntheticDeconstructionPlumbing: true } frame, ..]
+            && ReferenceEquals(frame.Output, rows)
+                ? NestDeconstructionSourceFailure(error)
+                : NestMissingOutput(error);
 
     /// <inheritdoc cref="NestMissingOutput(EvalError)"/>
     private static EvalResult<T> NestMissingOutput<T>(EvalResult<T> result)
@@ -2820,8 +2896,11 @@ public static partial class Evaluator
             // deconstruction's own target helper, which is an Algorithm.User call.
             Expr.Resolve(var name) => WithPropertyContextOnMissingOutput(name, source.Span, resolvedAlgorithm: null, result),
             // A PARAMETER read in the slot (`F(a) = sum(a)` with an output-less argument):
-            // the parameter's failure, exactly as a value-position read reports it.
-            Expr.Param(var name) => WithSpan<CountedResult>(source.Span, new EvalError.WithContext(new ParameterEvaluationContext(name), result.Error)),
+            // the parameter's failure, exactly as a value-position read reports it — so only
+            // when it is the argument's own (IsOwnForBlame); a nested one keeps the span only.
+            Expr.Param(var name) => result.Error is EvalError.MissingOutput missing && IsOwnForBlame(missing)
+                ? WithSpan<CountedResult>(source.Span, new EvalError.WithContext(new ParameterEvaluationContext(name), result.Error))
+                : WithSpan(source.Span, result),
             // F5: a written block, capture, call, selection, or operator expression has no
             // name to report. Blaming the written argument is what keeps `count({ })` from
             // reading as though `count` itself had no output — or as though the source had

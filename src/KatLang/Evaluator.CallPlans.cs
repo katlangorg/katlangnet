@@ -854,11 +854,11 @@ public static partial class Evaluator
                 if (wired is Algorithm.Alias alias)
                 {
                     var target = ResolveAliasTarget(alias, ctx, route.Value.Member!);
-                    if (target.IsError) return target.Error;
+                    if (target.IsError) return MarkNestedMemberInvocationOutput(target.Error);
                     wired = target.Value;
                 }
                 // CACHE-PUB-1: the member call's origin is its argumentless member path (Lean `effective`).
-                return DispatchPlannedCounted(plan, wired, CallDiagnosticName.FromKnown(dot.Name), byInvocation, CalleeOrigin.Written(dot));
+                return MarkNestedMemberInvocationOutput(DispatchPlannedCounted(plan, wired, CallDiagnosticName.FromKnown(dot.Name), byInvocation, CalleeOrigin.Written(dot)));
             }
             case PlanRouteKind.Extension:
             {
@@ -1085,10 +1085,10 @@ public static partial class Evaluator
                 if (wired is Algorithm.Alias alias)
                 {
                     var target = await ResolveAliasTargetAsync(alias, ctx, route.Value.Member!).ConfigureAwait(false);
-                    if (target.IsError) return target.Error;
+                    if (target.IsError) return MarkNestedMemberInvocationOutput(target.Error);
                     wired = target.Value;
                 }
-                return await DispatchPlannedAsync(plan, wired, CallDiagnosticName.FromKnown(dot.Name), byInvocation, CalleeOrigin.Written(dot)).ConfigureAwait(false);
+                return MarkNestedMemberInvocationOutput(await DispatchPlannedAsync(plan, wired, CallDiagnosticName.FromKnown(dot.Name), byInvocation, CalleeOrigin.Written(dot)).ConfigureAwait(false));
             }
             case PlanRouteKind.Extension:
             {

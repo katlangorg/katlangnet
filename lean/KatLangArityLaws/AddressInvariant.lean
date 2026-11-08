@@ -631,7 +631,11 @@ theorem SoundI.withMissingOutputCtx {α : Type} {P : Array NeedCell → Prop} {m
   | ok x => exact SoundI.pure _ (fun _ h => h.2 x rfl)
   | error e =>
     cases e
-    all_goals first | exact SoundI.error _ | exact SoundI.throw _
+    -- The frame applies to an `own` missing output only, so that arm splits on its origin.
+    all_goals first
+      | exact SoundI.error _
+      | exact SoundI.throw _
+      | (rename_i origin; cases origin <;> first | exact SoundI.error _ | exact SoundI.throw _)
 
 theorem SoundI.withNestedMissingOutput {α : Type} {P : Array NeedCell → Prop} {m : EvalM α}
     {Q : α → Array NeedCell → Prop} (hm : SoundI P m Q) (hq : PMono Q) :

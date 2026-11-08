@@ -966,6 +966,12 @@ public static partial class Evaluator
     /// written right-hand side's own output-less error, at the right-hand side's own span,
     /// instead of naming a property nobody wrote. Pass <c>null</c> where the demanded
     /// algorithm is not at hand; the frame is then attached as before.</para>
+    ///
+    /// <para>Only the property's OWN missing output is blamed on it (<see cref="IsOwnForBlame"/>):
+    /// <c>H2 = { } + 1</c> has an output, and its missing output is the <c>{ }</c> operand's
+    /// (nested, Q-36), so the read passes it on with the reference's span attached only if it has
+    /// none, and the report stays the operand's generic one at the operand's span.
+    /// Lean: <c>withMissingOutputCtx</c>.</para>
     /// </summary>
     private static EvalResult<T> WithPropertyContextOnMissingOutput<T>(
         string name,
@@ -974,7 +980,8 @@ public static partial class Evaluator
         EvalResult<T> result)
     {
         if (result.IsError
-            && result.Error is EvalError.MissingOutput
+            && result.Error is EvalError.MissingOutput missing
+            && IsOwnForBlame(missing)
             && !Algorithm.IsSyntheticDeconstructionFrame(resolvedAlgorithm))
         {
             return WithSpan<T>(span, new EvalError.WithContext(CtxProperty(name), result.Error));
