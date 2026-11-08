@@ -1619,19 +1619,26 @@ public static partial class Evaluator
     /// Open-based lookup in parent chain (helper for LookupOpensInChain).
     /// Checks opens at each level of the parent chain as fallback.
     /// Lean: lookupOpensInParentChain → EvalM (Option Algorithm).
+    /// <para>Lean's tail recursion over the parent chain is a loop here, for the same reason as
+    /// <see cref="LookupInParentsDirectBinding"/>: no O(chain) recursion on top of the deepest
+    /// evaluation stack, so this walk needs no host-stack probe of its own (Q-09a). Each level's
+    /// open resolution returns before the next level is consulted, and that resolution probes
+    /// per open-target link (<see cref="ResolveOpenPropAccess"/>) and per structure read
+    /// (<see cref="OpenStructure"/>).</para>
     /// </summary>
     private static EvalResult<ResolvedLexicalProperty?> LookupOpensInParentChain(
         ScopeCtx sc, string name, EvalCtx ctx)
     {
-        var tempAlg = ForOpens(sc);
-        var openResult = LookupOpens(tempAlg, name, ctx);
-        if (openResult.IsError) return openResult.Error;
-        if (openResult.Value is not null)
-            return EvalResult<ResolvedLexicalProperty?>.Ok(openResult.Value);
+        for (ScopeCtx? current = sc; current is not null; current = current.Parent)
+        {
+            var tempAlg = ForOpens(current);
+            var openResult = LookupOpens(tempAlg, name, ctx);
+            if (openResult.IsError) return openResult.Error;
+            if (openResult.Value is not null)
+                return EvalResult<ResolvedLexicalProperty?>.Ok(openResult.Value);
+        }
 
-        return sc.Parent is { } parent
-            ? LookupOpensInParentChain(parent, name, ctx)
-            : EvalResult<ResolvedLexicalProperty?>.Ok(null);
+        return EvalResult<ResolvedLexicalProperty?>.Ok(null);
     }
 
     /// <summary>
@@ -2267,10 +2274,20 @@ public static partial class Evaluator
     /// <summary>
     /// Shared logic for resolving property access in open expressions.
     /// Used by DotCall(target, name, null) in ResolveAlgForOpen.
+    /// <para>Host-stack backstop, one per open-target link (Q-09a): this method and
+    /// <see cref="ResolveAlgForOpen"/> recurse once per <c>.name</c> link of an open target, and
+    /// a lexical lookup that consults the opens can start this navigation deep on the
+    /// evaluator's stack, so the structural gate alone cannot bound it. The probe runs BEFORE
+    /// the receiver recursion (the <see cref="OpenStructure"/> probe runs only after it returns),
+    /// on this half of the pair only, so a link costs one probe, as on the dot navigation
+    /// (<see cref="ResolveDotReceiver"/>).</para>
     /// </summary>
     private static EvalResult<Algorithm> ResolveOpenPropAccess(
         Expr target, string propName, EvalCtx ctx)
     {
+        if (!System.Runtime.CompilerServices.RuntimeHelpers.TryEnsureSufficientExecutionStack())
+            return new EvalError.EvaluationStackExhausted();
+
         var targetResult = ResolveAlgForOpen(target, ctx);
         if (targetResult.IsError) return targetResult.Error;
 
@@ -2371,6 +2388,10 @@ public static partial class Evaluator
     /// argument, a callback, a loop step and the callee alike — reads a dot expression's
     /// identity through <see cref="ProjectDotPathCallable"/> (DOT-09), which gives a computed
     /// value no callable identity at all.
+    /// <para>No host-stack probe: this builds one wrapper and never recurses per dot link (nor does
+    /// <see cref="ResolveAlg"/>, which dispatches one node); the per-link recursions are the receiver
+    /// navigation (<see cref="ResolveDotReceiver"/>) and the open navigation
+    /// (<see cref="ResolveOpenPropAccess"/>), and each probes once per link (Q-09a).</para>
     /// </summary>
     private static EvalResult<Algorithm> ResolveDotCallAlgorithm(Expr.DotCall dotCall, EvalCtx ctx)
     {

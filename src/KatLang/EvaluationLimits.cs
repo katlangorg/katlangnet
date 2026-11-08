@@ -194,9 +194,13 @@ public sealed record EvaluationLimits
     /// evaluator side of the invariant holds because the stack-heavy pure-expression spine
     /// shapes (unary/binary operators, index selection, list literals, and the
     /// internal sequence joins) evaluate ITERATIVELY and so consume no proportional
-    /// call stack; dot-call links are weighted at 3 units so a maximal accepted chain
-    /// (~100 links) stays well below the measured ~160-link (Debug) / ~250-link
-    /// (Release) failure boundary of the dot-call resolution machinery; nested calls
+    /// call stack; dot-call links are weighted at 3 units, which bounds an accepted
+    /// chain to ~100 links, and the recursive navigations a link drives — the dot
+    /// receiver navigation and the <c>open</c>-target navigation — probe the
+    /// runtime's stack reserve once per link, so a chain that does not fit the stack
+    /// left stops with <see cref="EvalError.EvaluationStackExhausted"/> at a point
+    /// that depends on the host, the build and the stack already in use and is never
+    /// promised (a maximal chain can be refused on a 1 MiB thread); nested calls
     /// stop with the structured invocation-depth/stack backstop; and the deepest
     /// remaining recursive shape — nested block/algorithm bodies at 2 counted nodes
     /// per level — was measured to survive 240 nesting levels (~481 counted nodes) on

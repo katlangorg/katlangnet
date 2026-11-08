@@ -756,6 +756,14 @@ public class ResourceLimitTerminalityTests
                 });
 
                 var result = outcome!.Value;
+                if (result.IsOk)
+                {
+                    Assert.Equal(new Result.Atom(110), result.Value.Value);
+                    Assert.Equal(1, result.Value.EmittedCount);
+                    Assert.Equal(["trace(1)", "trace(9)"], log.Calls);
+                    continue;
+                }
+
                 Assert.True(result.IsError && result.Error.IsResourceLimit, $"{stackBytes} twin={twin}: {result}");
                 Assert.Equal(["trace(1)"], log.Calls);
                 sawStackExhaustion |= KatLangError.FromEvalError(result.Error).Code == KatLangErrorCode.EvaluationStackExhausted;
