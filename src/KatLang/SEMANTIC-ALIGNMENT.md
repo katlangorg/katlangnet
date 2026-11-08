@@ -3451,3 +3451,46 @@ corpus-size line changes. No AST variant, evaluator law, public API, EBNF, tutor
   between a row and an open head. Spec cases: `root-row-block-head-is-elaborated` (Lean-guarded, derived) and
   `root-row-block-head-reports-front-end-errors` (parse level). Report:
   `experimental/features/s10-batch2-f1-f2-implementation.md`.
+
+### S-10 batch 1 and N1: open lone dot rows and continuation-aware receiver expansion (November 2026)
+
+Classification: "Lookup / ownership / open". Both are C#-only front-end structural corrections in the static
+structure queries under the existing rules (Lean `openStructure` and `Evaluator.OpenStructure` for the open target;
+the receiver-expansion contract of `docs/design/static-structure-query-contracts-2026-10.md` for the return). Lean
+needs no semantic edit: it evaluates elaborated trees and never runs this source-resolution algorithm. The generated
+`lean/LanguageSpecCases.lean` gains the derived evaluating cases. No AST variant, evaluator law, public API, EBNF,
+tutorial or generator guidance changes.
+
+- **Correction note, F3 (open target is a lone dot row).** The open branch of `WrittenRowTarget` sent every row through
+  `DirectPath`, which answered `Missing` for any row that is no reference: calculation links (`Mk.Algorithm`,
+  `Add.abs`) were silently accepted, runtime links (`Cap(Inc(1)).Algorithm`) were refused with `UnresolvedOpenTarget`,
+  and when the receiver-return guard later turned true the same equation answered its own structure, a forbidden
+  `Missing → Structure` refinement (a host exception in some declaration orders, K01). A row that is no static path or
+  whose own member step misses is now its own namespace; a miss keeps its terminal and completion (`CompletedMiss`)
+  decides it once bodies are resolved; and the open stratum's receiver expansion reads direct bindings
+  (`OpenReceiverExpansionCycle`/`Step`, `OpenHeadBinding`, OD-C) instead of finding receivers through opens.
+- **Correction note, N1 (receiver expansion through a later transparent body).** The first-expansion recipe stopped at
+  the first transparent body with members pending and missed a return through a later one (`A = B;
+  B = { public M = C ⏎ 0 }; C = A.M.abs`), so valid source reached "An invocation target must be conclusive after A1
+  admission." `ReceiverExpansionNav`/`End` summaries and the `ReceiverExpansionVerdict` closure observer (each also in
+  the open/direct mode) keep every pending member; a revisit with a valid record proves the return, a revisit after
+  the members below were consumed does not (`B.M.M.N` with `M = B` is `B.N`). A pending return ending at `.Algorithm`
+  stays a runtime link. The verdict is consulted only once the recipe's cycle is decided without a pending return.
+- **Blocked expansion sharing (review correction).** A verdict walk stopped by an undecided input, binding or member
+  query retains that query key for each valid continuation record, per stratum and binding mode. Reuse reads the key
+  through the ordinary reader, returning Unknown while it remains undecided and retrying after refinement. Neither
+  an Unknown End nor a No verdict is stored as a decided fact. This removes repeated blocked-suffix walking without
+  changing answers; `ReceiverExpansionCostTests.BlockedSuffixesShareReceiverExpansionWorkBeforeDetection` pins the
+  new work on an A1 witness. The design records the measured, pre-existing namespace-certificate cost separately.
+- **Engine scheduling.** Decision observers (`IStaticQueryDefinition.IsDecisionObserver`, the verdicts) run before the
+  other closure observers; scheduling only. Proved divergences are shared across walks per stratum and binding mode.
+  Both are what keeps the ring of member-path bodies linear (`ReceiverExpansionCostTests`); the resolver design records
+  the measurements.
+- **Coverage.** `OpenLoneDotRowProviderTests` (the F3 cases in every declaration order, terminal misses, runtime links,
+  ordinary/direct separation, demand order), `ReceiverExpansionReturnTests` (the hand cases in every declaration order,
+  the reference-inlining law, a stratified revisit grammar, contract witnesses, demand order, public routes, cancellation
+  and refusal), `ReceiverExpansionCostTests`. Spec cases `open-runtime-link-provides-its-own-namespace`,
+  `open-calculation-link-is-refused`, `open-reference-to-a-calculation-link-reports-the-target-refusal`,
+  `open-parameterized-fallback-row-is-refused`, `open-link-over-a-head-only-an-open-provides-is-unresolved`,
+  `open-of-a-link-over-a-cyclic-head-compiles-in-every-order` and the four `receiver-expansion-*` cases. Report:
+  `experimental/features/s10-open-path-and-receiver-expansion-implementation.md`.

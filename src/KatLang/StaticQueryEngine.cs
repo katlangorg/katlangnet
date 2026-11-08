@@ -40,6 +40,12 @@ internal interface IStaticQueryDefinition<TKey, TValue>
     /// </summary>
     bool IsClosureObserver(TKey key) => false;
 
+    /// <summary>
+    /// A closure observer whose answer decides ordinary structure that other closure observers would otherwise
+    /// over-approximate. Such observers run, FIFO, before the remaining closure observers. Scheduling only, as above.
+    /// </summary>
+    bool IsDecisionObserver(TKey key) => false;
+
     TValue PathCycleValue { get; }
 
     bool ValueEquals(TValue left, TValue right);
@@ -102,6 +108,7 @@ internal sealed class StaticQueryEngine<TKey, TValue>
     private readonly HashSet<Entry> _entries;
     private readonly HashSet<Entry>.AlternateLookup<TKey> _entryByKey;
     private readonly Queue<Entry> _pending = [];
+    private readonly Queue<Entry> _decisionPending = [];
     private readonly Queue<Entry> _observerPending = [];
     private readonly List<Entry> _newEntries = [];
     private readonly HashSet<Entry> _readsThisRun = [];
@@ -157,7 +164,7 @@ internal sealed class StaticQueryEngine<TKey, TValue>
         {
             _cancellationToken.ThrowIfCancellationRequested();
             var entry = EntryOf(key);
-            while (_pending.TryDequeue(out var next) || _observerPending.TryDequeue(out next))
+            while (_pending.TryDequeue(out var next) || _decisionPending.TryDequeue(out next) || _observerPending.TryDequeue(out next))
             {
                 _cancellationToken.ThrowIfCancellationRequested();
                 Resources.Work(cancellationToken: _cancellationToken);
@@ -388,8 +395,8 @@ internal sealed class StaticQueryEngine<TKey, TValue>
         if (entry.Queued)
             return;
         entry.Queued = true;
-        (_definition.IsClosureObserver(entry.Key) ? _observerPending : _pending).Enqueue(entry);
-        _maxPending = Math.Max(_maxPending, _pending.Count + _observerPending.Count);
+        (!_definition.IsClosureObserver(entry.Key) ? _pending : _definition.IsDecisionObserver(entry.Key) ? _decisionPending : _observerPending).Enqueue(entry);
+        _maxPending = Math.Max(_maxPending, _pending.Count + _decisionPending.Count + _observerPending.Count);
     }
 
     private void Compute(Entry entry)

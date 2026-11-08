@@ -248,7 +248,12 @@ internal sealed partial class StaticStructureQueries : IStaticQueryDefinition<St
     }
 
     public bool IsClosureObserver(StaticQueryKey key) => key.Projection is StaticQueryProjection.OpenMemberAbsence
-        or StaticQueryProjection.EmptyOpenNamespace or StaticQueryProjection.FallbackParticipation or StaticQueryProjection.PreservedOpenPresence;
+        or StaticQueryProjection.EmptyOpenNamespace or StaticQueryProjection.FallbackParticipation or StaticQueryProjection.PreservedOpenPresence
+        or StaticQueryProjection.ReceiverExpansionVerdict or StaticQueryProjection.OpenReceiverExpansionVerdict;
+
+    // A receiver-expansion verdict decides structure; the namespace certificates over-approximate undecided structure.
+    public bool IsDecisionObserver(StaticQueryKey key) => key.Projection is StaticQueryProjection.ReceiverExpansionVerdict
+        or StaticQueryProjection.OpenReceiverExpansionVerdict;
 
     public StaticFact Initial(StaticQueryKey key) => StaticFact.Unknown;
     public StaticFact PathCycleValue => StaticFact.Refused;
@@ -289,8 +294,10 @@ internal sealed partial class StaticStructureQueries : IStaticQueryDefinition<St
             return StaticQueryStep.Complete(StaticFact.Yes);
         if (key.Kind == StaticQueryKind.TargetWalk && key.Projection == StaticQueryProjection.TargetCycle)
             return Cycle(context, key.Stratum, reader);
-        if (key.Kind == StaticQueryKind.TargetWalk && key.Projection == StaticQueryProjection.ReceiverExpansionCycle)
-            return ReceiverExpansionCycle(context, key.Stratum, reader);
+        if (key.Kind == StaticQueryKind.TargetWalk && key.Projection is StaticQueryProjection.ReceiverExpansionCycle or StaticQueryProjection.OpenReceiverExpansionCycle)
+            return ReceiverExpansionCycle(context, key.Stratum, reader, direct: key.Projection == StaticQueryProjection.OpenReceiverExpansionCycle);
+        if (key.Kind == StaticQueryKind.TargetWalk && key.Projection is StaticQueryProjection.ReceiverExpansionEnd or StaticQueryProjection.OpenReceiverExpansionEnd)
+            return ReceiverExpansionEnd(context, key.Stratum, reader, direct: key.Projection == StaticQueryProjection.OpenReceiverExpansionEnd);
         if (key.Kind == StaticQueryKind.TargetWalk && key.Projection == StaticQueryProjection.Default)
             return Structure(context, key.Stratum, reader);
         if (key.Kind == StaticQueryKind.TargetWalk && key.Projection == StaticQueryProjection.OpenStructure)
@@ -310,6 +317,11 @@ internal sealed partial class StaticStructureQueries : IStaticQueryDefinition<St
             StaticQueryKind.TargetWalk when key.Projection == StaticQueryProjection.OpenRowTarget => RowTarget(context, key.Stratum, reader, open: true),
             StaticQueryKind.TargetWalk when key.Projection == StaticQueryProjection.InvocationTarget => InvocationTarget(context, reader),
             StaticQueryKind.TargetWalk when key.Projection == StaticQueryProjection.ReceiverExpansionStep => ReceiverExpansionStep(context, key.Stratum, reader),
+            StaticQueryKind.TargetWalk when key.Projection == StaticQueryProjection.OpenReceiverExpansionStep => ReceiverExpansionStep(context, key.Stratum, reader, direct: true),
+            StaticQueryKind.TargetWalk when key.Projection == StaticQueryProjection.ReceiverExpansionNav => ReceiverExpansionNav(context, key.Stratum, reader),
+            StaticQueryKind.TargetWalk when key.Projection == StaticQueryProjection.OpenReceiverExpansionNav => ReceiverExpansionNav(context, key.Stratum, reader, direct: true),
+            StaticQueryKind.TargetWalk when key.Projection == StaticQueryProjection.ReceiverExpansionVerdict => ReceiverExpansionVerdict(context, key.Stratum, reader),
+            StaticQueryKind.TargetWalk when key.Projection == StaticQueryProjection.OpenReceiverExpansionVerdict => ReceiverExpansionVerdict(context, key.Stratum, reader, direct: true),
             StaticQueryKind.TargetWalk when key.Projection == StaticQueryProjection.Receiver => Receiver(key.Scope, key.Node!, key.Stratum, reader),
             StaticQueryKind.OpenProviders when key.Projection == StaticQueryProjection.ProviderRange => ProviderRange(context, key, reader),
             StaticQueryKind.OpenProviders when key.Projection == StaticQueryProjection.OpenMemberIndex => ClosedOpenMemberIndex(context, key.Stratum, reader),
@@ -402,8 +414,11 @@ internal sealed partial class StaticStructureQueries : IStaticQueryDefinition<St
             if (direct.Kind != StaticFactKind.Structure) return direct.IsUnknown ? direct : new(StaticFactKind.Providers, Data: Array.Empty<StaticScopeKey>());
             var structure = reader.Read(Project(StaticQueryKind.TargetWalk, direct.Scope!, StaticQueryProjection.OpenStructure, stratum: stratum));
             if (structure.IsUnknown) return structure;
-            var provider = structure.Kind == StaticFactKind.Refused ? direct.Scope : structure.Scope;
-            if (provider is null) return new(StaticFactKind.Providers, Data: Array.Empty<StaticScopeKey>());
+            var provider = structure.Kind == StaticFactKind.Refused ? direct.Scope
+                : structure.Kind == StaticFactKind.Structure ? structure.Scope : null;
+            // A miss keeps the terminal whose own row no direct lookup resolves; completion decides it.
+            if (provider is null)
+                return new(StaticFactKind.Providers, structure.Kind == StaticFactKind.Missing ? structure.Scope : null, Data: Array.Empty<StaticScopeKey>());
             // Eligibility diagnostics remain with open validation, as in the existing front end.
             return new(StaticFactKind.Providers, Data: new[] { provider });
         }
@@ -456,7 +471,8 @@ internal sealed partial class StaticStructureQueries : IStaticQueryDefinition<St
             _cancellationToken.ThrowIfCancellationRequested();
             var structure = reader.Read(Project(StaticQueryKind.TargetWalk, current.Scope!, StaticQueryProjection.OpenStructure, stratum: stratum));
             if (structure.IsUnknown) return structure;
-            var receiver = structure.Kind == StaticFactKind.Refused ? current.Scope : structure.Scope;
+            var receiver = structure.Kind == StaticFactKind.Refused ? current.Scope
+                : structure.Kind == StaticFactKind.Structure ? structure.Scope : null;
             if (receiver is null) return StaticFact.Missing;
             var members = reader.Read(StaticQueryKey.Members(receiver));
             if (members.IsUnknown) return members;
@@ -464,7 +480,7 @@ internal sealed partial class StaticStructureQueries : IStaticQueryDefinition<St
             // Written open steps select public members; a transparent reference's own
             // target path selects declared members (Lean openNavigateWith, OD-C).
             if ((runtimeParameter ? index.Declared(memberName) : index.Public(memberName)) is not { } member)
-                return StaticFact.Missing;
+                return runtimeParameter ? StaticFact.No : StaticFact.Missing;
             current = new(StaticFactKind.Structure, BodyIn(receiver, member.Value));
         }
         return current;
@@ -485,10 +501,18 @@ internal sealed partial class StaticStructureQueries : IStaticQueryDefinition<St
         StaticQueryReader<StaticQueryKey, StaticFact> reader, bool open = false)
     {
         if (WrittenReferenceRow(context) is not { } expression) return open ? StaticFact.No : StaticFact.Missing;
-        if (HasPendingReceiverReturn(context, stratum, reader))
+        if (HasPendingReceiverReturn(context, stratum, reader, direct: open))
             return IsAlgorithmLink(expression) ? new(StaticFactKind.Runtime, context.Key) : open ? StaticFact.No : StaticFact.Missing;
         if (expression is Expr.Param) return new(StaticFactKind.Runtime, context.Key);
-        if (open) return DirectPath(context.Key, expression, stratum, reader, runtimeParameter: true);
+        if (open)
+        {
+            // Evaluator.OpenStructure / Lean openStructure: a row that is no static path, or whose member
+            // step misses, is no reference: its own namespace, exactly what the pending arm answers.
+            var own = IsAlgorithmLink(expression) ? new StaticFact(StaticFactKind.Runtime, context.Key) : StaticFact.No;
+            if (!StaticAliasTargets.IsStaticPath(expression)) return own;
+            var path = DirectPath(context.Key, expression, stratum, reader, runtimeParameter: true);
+            return path.Kind == StaticFactKind.No ? own : path;
+        }
         if (expression is Expr.Resolve(var name))
         {
             var binding = reader.Read(StaticQueryKey.Binding(context.Key, name, stratum));
@@ -562,12 +586,12 @@ internal sealed partial class StaticStructureQueries : IStaticQueryDefinition<St
     /// proves a miss after a return. Bare prefixes still transport that calculation's identity.
     /// </summary>
     private StaticQueryStep<StaticFact> ReceiverExpansionCycle(BodyContext context, StaticCycleCheck stratum,
-        StaticQueryReader<StaticQueryKey, StaticFact> reader)
+        StaticQueryReader<StaticQueryKey, StaticFact> reader, bool direct = false)
     {
-        var step = reader.Read(Project(StaticQueryKind.TargetWalk, context.Key, StaticQueryProjection.ReceiverExpansionStep, stratum: stratum));
+        var step = reader.Read(Project(StaticQueryKind.TargetWalk, context.Key, direct ? StaticQueryProjection.OpenReceiverExpansionStep : StaticQueryProjection.ReceiverExpansionStep, stratum: stratum));
         if (step.IsUnknown) return StaticQueryStep.Complete(step);
         return step.Kind is StaticFactKind.ExpansionPending or StaticFactKind.ExpansionFinal
-            ? reader.Follow(Project(StaticQueryKind.TargetWalk, step.Scope!, StaticQueryProjection.ReceiverExpansionCycle, stratum: stratum))
+            ? reader.Follow(Project(StaticQueryKind.TargetWalk, step.Scope!, direct ? StaticQueryProjection.OpenReceiverExpansionCycle : StaticQueryProjection.ReceiverExpansionCycle, stratum: stratum))
             : StaticQueryStep.Complete(StaticFact.No);
     }
 
@@ -579,16 +603,249 @@ internal sealed partial class StaticStructureQueries : IStaticQueryDefinition<St
     private static bool IsAlgorithmLink(Expr expression)
         => expression is Expr.DotCall { Args: null } edge && edge.UsesDotAlgorithmIntrinsic();
 
+    // In the open stratum (direct) the expansions follow direct bindings only, like the open target itself (OD-C).
     private bool HasPendingReceiverReturn(BodyContext context, StaticCycleCheck stratum,
-        StaticQueryReader<StaticQueryKey, StaticFact> reader)
+        StaticQueryReader<StaticQueryKey, StaticFact> reader, bool direct = false)
     {
-        var cycle = reader.Read(Project(StaticQueryKind.TargetWalk, context.Key, StaticQueryProjection.ReceiverExpansionCycle, stratum: stratum));
-        return cycle.Kind == StaticFactKind.Refused && reader.Read(Project(StaticQueryKind.TargetWalk, context.Key,
-            StaticQueryProjection.ReceiverExpansionStep, stratum: stratum)).Kind == StaticFactKind.ExpansionPending;
+        var cycle = reader.Read(Project(StaticQueryKind.TargetWalk, context.Key, direct ? StaticQueryProjection.OpenReceiverExpansionCycle : StaticQueryProjection.ReceiverExpansionCycle, stratum: stratum));
+        if (cycle.Kind == StaticFactKind.Refused && reader.Read(Project(StaticQueryKind.TargetWalk, context.Key,
+            direct ? StaticQueryProjection.OpenReceiverExpansionStep : StaticQueryProjection.ReceiverExpansionStep, stratum: stratum)).Kind == StaticFactKind.ExpansionPending)
+            return true;
+        // S-10 N1: the first-expansion recipe above commits its edge at the first transparent body with members pending,
+        // so it misses a return through a later one. The body's own summary decides every walk that ends; only a walk
+        // whose summary stays undecided needs the deferred exact walk. A row without members has nothing pending.
+        // While the recipe itself is undecided this answer stays the recipe's own (false), as before: a return the recipe
+        // proves never creates the summaries, so a ring of first expansions keeps its linear Follow-chain cost.
+        if (cycle.IsUnknown || !IsExpandable(context) || WrittenReferenceRow(context) is not Expr.DotCall { Args: null }) return false;
+        var own = reader.Read(Project(StaticQueryKind.TargetWalk, context.Key,
+            direct ? StaticQueryProjection.OpenReceiverExpansionNav : StaticQueryProjection.ReceiverExpansionNav, stratum: stratum));
+        if (own.Kind == StaticFactKind.Refused) return true;
+        if (!own.IsUnknown) return false;
+        return reader.Read(Project(StaticQueryKind.TargetWalk, context.Key,
+            direct ? StaticQueryProjection.OpenReceiverExpansionVerdict : StaticQueryProjection.ReceiverExpansionVerdict, stratum: stratum)).Kind == StaticFactKind.Yes;
+    }
+
+    /// <summary>
+    /// S-10 N1: where a transparent body's own row leads once its members are consumed, starting from its expansion with
+    /// members pending below it: a Structure fact naming the body reached, No (own inputs, a miss, or a head that names no
+    /// declaration) or Refused (an expansion inside it never reaches a carrier). Reads bindings, inputs, members and End
+    /// facts only, never a receiver-expansion verdict, so it is shared by every walk that crosses the body.
+    /// </summary>
+    private StaticFact ReceiverExpansionNav(BodyContext context, StaticCycleCheck stratum,
+        StaticQueryReader<StaticQueryKey, StaticFact> reader, bool direct = false)
+    {
+        if (!IsExpandable(context)) return StaticFact.No;
+        var inputs = NoInputs(context, reader);
+        if (inputs.IsUnknown) return inputs;
+        if (inputs.Kind == StaticFactKind.No) return StaticFact.No;
+        // The member path is written source: one charged step and one temporary slot per member, released on every exit.
+        using var storage = Resources.Temporary();
+        var head = WrittenReferenceRow(context)!;
+        var members = new Stack<string>();
+        while (head is Expr.DotCall { Args: null } edge)
+        {
+            Resources.Metadata(0, cancellationToken: _cancellationToken);
+            storage.Add(1, _cancellationToken);
+            members.Push(edge.Name);
+            head = edge.Target;
+        }
+        StaticScopeKey target;
+        var writtenIdentity = false;
+        if (head is Expr.AlgorithmExpr(var block)) { target = BodyIn(context.Key, block); writtenIdentity = true; }
+        else if (head is Expr.Resolve(var name))
+        {
+            var binding = reader.Read(direct ? Project(StaticQueryKind.Binding, context.Key, StaticQueryProjection.OpenHeadBinding, name, stratum)
+                : StaticQueryKey.Binding(context.Key, name, stratum));
+            if (binding.HasUnknownSelection) return StaticFact.Unknown;
+            if (binding.Kind != StaticFactKind.Declaration) return StaticFact.No;
+            target = BodyIn(binding.Scope!, binding.Property!.Value);
+        }
+        else return StaticFact.No;
+        while (members.TryPop(out var memberName))
+        {
+            Resources.Metadata(0, cancellationToken: _cancellationToken);
+            if (!writtenIdentity && IsExpandable(ContextOf(target)))
+            {
+                var end = reader.Read(Project(StaticQueryKind.TargetWalk, target,
+                    direct ? StaticQueryProjection.OpenReceiverExpansionEnd : StaticQueryProjection.ReceiverExpansionEnd, stratum: stratum));
+                if (end.Kind != StaticFactKind.Structure) return end;
+                target = end.Scope!;
+            }
+            var fact = reader.Read(StaticQueryKey.Members(target));
+            if (fact.IsUnknown) return fact;
+            if (((StaticMembers)fact.Data!).Declared(memberName) is not { } member) return StaticFact.No;
+            target = BodyIn(target, member.Value);
+            writtenIdentity = false;
+        }
+        return new StaticFact(StaticFactKind.Structure, target);
+    }
+
+    /// <summary>
+    /// S-10 N1: the carrier reached by expanding a transparent body while members are pending below it: its Nav, then the
+    /// Nav of every transparent body it lands on. A path cycle (Refused) is an expansion that never reaches a carrier.
+    /// </summary>
+    private StaticQueryStep<StaticFact> ReceiverExpansionEnd(BodyContext context, StaticCycleCheck stratum,
+        StaticQueryReader<StaticQueryKey, StaticFact> reader, bool direct = false)
+    {
+        if (!IsExpandable(context)) return StaticQueryStep.Complete(new StaticFact(StaticFactKind.Structure, context.Key));
+        var nav = reader.Read(Project(StaticQueryKind.TargetWalk, context.Key,
+            direct ? StaticQueryProjection.OpenReceiverExpansionNav : StaticQueryProjection.ReceiverExpansionNav, stratum: stratum));
+        if (nav.Kind != StaticFactKind.Structure) return StaticQueryStep.Complete(nav);
+        return IsExpandable(ContextOf(nav.Scope!))
+            ? reader.Follow(Project(StaticQueryKind.TargetWalk, nav.Scope!,
+                direct ? StaticQueryProjection.OpenReceiverExpansionEnd : StaticQueryProjection.ReceiverExpansionEnd, stratum: stratum))
+            : StaticQueryStep.Complete(new StaticFact(StaticFactKind.Structure, nav.Scope!));
+    }
+
+    /// <summary>
+    /// S-10 N1: the exact receiver expansion of a body whose own summary is undecided, a closure observer (run when
+    /// ordinary work is quiescent). It walks the body's row keeping every pending member, crossing decided End facts and
+    /// expanding undecided bodies in place. Each in-place expansion is recorded with the number of members pending below
+    /// it and stays valid while those members are untouched; reaching a body with a valid record is a pending-member
+    /// return, since the walk would repeat forever. A body reached again after members below its expansion were consumed
+    /// is no return: `B.M.M.N` with `M = B` is B.N.
+    /// <para>Sharing. A Yes proves that no valid record's expansion ever returns below its depth: the walk repeats (or an
+    /// End is a path cycle) without consuming a member pending below any of them. Each of those bodies' expansions
+    /// therefore never reaches a carrier, a fact of the source and the decided facts read, independent of the walk's
+    /// origin. It is remembered per stratum and binding mode, and a later walk that expands such a body in place with
+    /// members pending stops there with Yes instead of retraversing the loop (a ring of N member-path bodies is linear,
+    /// not N walks of length N). A blocked walk shares its undecided input/binding/member query for every valid record;
+    /// every reuse re-reads that query, so it subscribes to refinement and returns Unknown only while it still blocks.
+    /// Neither End's Unknown nor a verdict's No is remembered as a conclusive fact.</para>
+    /// <para>Accounting. Every member push, record, invalidation and member step is one adapter work unit through the
+    /// operation ledger, which also observes cancellation; members and records hold temporary slots released on every
+    /// exit; a remembered divergence is one persistent slot and a blocked recipe three per body/mode.</para>
+    /// </summary>
+    private StaticFact ReceiverExpansionVerdict(BodyContext context, StaticCycleCheck stratum,
+        StaticQueryReader<StaticQueryKey, StaticFact> reader, bool direct = false)
+    {
+        if (!IsExpandable(context)) return StaticFact.No;
+        var own = reader.Read(Project(StaticQueryKind.TargetWalk, context.Key,
+            direct ? StaticQueryProjection.OpenReceiverExpansionNav : StaticQueryProjection.ReceiverExpansionNav, stratum: stratum));
+        if (own.Kind == StaticFactKind.Refused) return StaticFact.Yes;
+        if (!own.IsUnknown) return StaticFact.No;
+        // The remembered fact is an expansion's divergence, not this verdict: a row whose last step completes a reference
+        // to a divergent body is no pending return (No), so the origin itself is never answered from it.
+        var mode = DivergenceMode(stratum, direct);
+        if (TryBlockedExpansion(context.Key, mode, reader, out _)) return StaticFact.Unknown;
+        using var storage = Resources.Temporary();
+        storage.Add(2, _cancellationToken);
+        var records = new List<(StaticScopeKey Body, int Depth)> { (context.Key, 0) };
+        var recorded = new HashSet<StaticScopeKey>(ReferenceEqualityComparer.Instance) { context.Key };
+        var members = new Stack<string>();
+        var current = context;
+        while (true)
+        {
+            Resources.Metadata(0, cancellationToken: _cancellationToken);
+            var inputKey = NoInputsKey(current);
+            var inputs = reader.Read(inputKey);
+            if (inputs.IsUnknown) return BlockedOn(records, mode, inputKey);
+            if (inputs.Kind == StaticFactKind.No) return StaticFact.No;
+            var head = WrittenReferenceRow(current)!;
+            while (head is Expr.DotCall { Args: null } edge)
+            {
+                Resources.Metadata(0, cancellationToken: _cancellationToken);
+                storage.Add(1, _cancellationToken);
+                members.Push(edge.Name);
+                head = edge.Target;
+            }
+            StaticScopeKey target;
+            var writtenIdentity = false;
+            if (head is Expr.AlgorithmExpr(var block)) { target = BodyIn(current.Key, block); writtenIdentity = true; }
+            else if (head is Expr.Resolve(var name))
+            {
+                var bindingKey = direct ? Project(StaticQueryKind.Binding, current.Key, StaticQueryProjection.OpenHeadBinding, name, stratum)
+                    : StaticQueryKey.Binding(current.Key, name, stratum);
+                var binding = reader.Read(bindingKey);
+                if (binding.HasUnknownSelection) return BlockedOn(records, mode, bindingKey);
+                if (binding.Kind != StaticFactKind.Declaration) return StaticFact.No;
+                target = BodyIn(binding.Scope!, binding.Property!.Value);
+            }
+            else return StaticFact.No;
+            while (true)
+            {
+                ReceiverExpansionWalkStepForTesting?.Invoke();
+                Resources.Metadata(0, cancellationToken: _cancellationToken);
+                if (!writtenIdentity && IsExpandable(ContextOf(target)))
+                {
+                    // A completed reference step is no pending return.
+                    if (members.Count == 0) return StaticFact.No;
+                    var end = reader.Read(Project(StaticQueryKind.TargetWalk, target,
+                        direct ? StaticQueryProjection.OpenReceiverExpansionEnd : StaticQueryProjection.ReceiverExpansionEnd, stratum: stratum));
+                    if (end.Kind == StaticFactKind.Structure) { target = end.Scope!; writtenIdentity = false; continue; }
+                    if (end.Kind == StaticFactKind.Refused || end.IsUnknown && (IsKnownDivergent(target, mode) || recorded.Contains(target)))
+                        return Diverged(records, mode);
+                    if (!end.IsUnknown) return StaticFact.No;
+                    if (TryBlockedExpansion(target, mode, reader, out var blocker)) return BlockedOn(records, mode, blocker);
+                    storage.Add(2, _cancellationToken);
+                    recorded.Add(target);
+                    records.Add((target, members.Count));
+                    current = ContextOf(target);
+                    break;
+                }
+                if (!members.TryPop(out var memberName)) return StaticFact.No;
+                // Valid records are ordered by depth: those whose pending members this pop touched no longer witness a return.
+                while (records[^1].Depth > members.Count)
+                {
+                    Resources.Metadata(0, cancellationToken: _cancellationToken);
+                    recorded.Remove(records[^1].Body);
+                    records.RemoveAt(records.Count - 1);
+                }
+                var memberKey = StaticQueryKey.Members(target);
+                var fact = reader.Read(memberKey);
+                if (fact.IsUnknown) return BlockedOn(records, mode, memberKey);
+                if (((StaticMembers)fact.Data!).Declared(memberName) is not { } member) return StaticFact.No;
+                target = BodyIn(target, member.Value);
+                writtenIdentity = false;
+            }
+        }
+    }
+
+    /// <summary>Test-only: runs before each step of a receiver-expansion verdict walk, so a test can cancel inside it.</summary>
+    internal Action? ReceiverExpansionWalkStepForTesting { get; set; }
+
+    // Proved receiver-expansion divergences, one bit per stratum and binding mode: see ReceiverExpansionVerdict.
+    private readonly Dictionary<StaticScopeKey, byte> _divergentExpansions = new(ReferenceEqualityComparer.Instance);
+
+    // A blocked expansion is a recipe, never a conclusive fact: decided local guards lead to this still-undecided
+    // input/binding/member query before any member below the record is consumed. Re-read it through the reader on
+    // every use, subscribing this verdict to its refinement. End's Unknown alone is never memoized as a blocker.
+    private readonly Dictionary<(StaticScopeKey Body, byte Mode), StaticQueryKey> _blockedExpansions = [];
+
+    private bool TryBlockedExpansion(StaticScopeKey body, byte mode, StaticQueryReader<StaticQueryKey, StaticFact> reader,
+        out StaticQueryKey blocker)
+        => _blockedExpansions.TryGetValue((body, mode), out blocker) && reader.Read(blocker).HasUnknownSelection;
+
+    private StaticFact BlockedOn(List<(StaticScopeKey Body, int Depth)> records, byte mode, StaticQueryKey blocker)
+    {
+        foreach (var (body, _) in records)
+        {
+            var key = (body, mode);
+            Resources.Metadata(_blockedExpansions.ContainsKey(key) ? 0 : 3, cancellationToken: _cancellationToken);
+            _blockedExpansions[key] = blocker;
+        }
+        return StaticFact.Unknown;
+    }
+
+    private static byte DivergenceMode(StaticCycleCheck stratum, bool direct) => (byte)(1 << ((int)stratum * 2 + (direct ? 1 : 0)));
+
+    private bool IsKnownDivergent(StaticScopeKey body, byte mode)
+        => _divergentExpansions.TryGetValue(body, out var known) && (known & mode) != 0;
+
+    private StaticFact Diverged(List<(StaticScopeKey Body, int Depth)> records, byte mode)
+    {
+        foreach (var (body, _) in records)
+        {
+            var known = _divergentExpansions.GetValueOrDefault(body);
+            Resources.Metadata(known == 0 ? 1 : 0, cancellationToken: _cancellationToken);
+            if ((known & mode) != 0) continue;
+            _divergentExpansions[body] = (byte)(known | mode);
+        }
+        return StaticFact.Yes;
     }
 
     private StaticFact ReceiverExpansionStep(BodyContext context, StaticCycleCheck stratum,
-        StaticQueryReader<StaticQueryKey, StaticFact> reader)
+        StaticQueryReader<StaticQueryKey, StaticFact> reader, bool direct = false)
     {
         if (!IsExpandable(context)) return StaticFact.No;
         var noInputs = NoInputs(context, reader);
@@ -602,7 +859,8 @@ internal sealed partial class StaticStructureQueries : IStaticQueryDefinition<St
         if (head is Expr.AlgorithmExpr(var block)) { target = BodyIn(context.Key, block); writtenIdentity = true; }
         else if (head is Expr.Resolve(var name))
         {
-            var binding = reader.Read(StaticQueryKey.Binding(context.Key, name, stratum));
+            var binding = reader.Read(direct ? Project(StaticQueryKind.Binding, context.Key, StaticQueryProjection.OpenHeadBinding, name, stratum)
+                : StaticQueryKey.Binding(context.Key, name, stratum));
             if (binding.HasUnknownSelection) return StaticFact.Unknown;
             if (binding.Kind == StaticFactKind.Declaration) target = BodyIn(binding.Scope!, binding.Property!.Value);
         }
@@ -629,7 +887,7 @@ internal sealed partial class StaticStructureQueries : IStaticQueryDefinition<St
             return StaticQueryStep.Complete(StaticFact.Unknown);
         if (!IsExpandable(context))
             return StaticQueryStep.Complete(new StaticFact(StaticFactKind.Structure, context.Key));
-        if (HasPendingReceiverReturn(context, stratum, reader))
+        if (HasPendingReceiverReturn(context, stratum, reader, direct: open))
             return StaticQueryStep.Complete(!open && IsAlgorithmLink(WrittenReferenceRow(context)!)
                 ? new StaticFact(StaticFactKind.Runtime, context.Key) : new StaticFact(StaticFactKind.Structure, context.Key));
         if (stratum != StaticCycleCheck.None)
@@ -647,7 +905,7 @@ internal sealed partial class StaticStructureQueries : IStaticQueryDefinition<St
         if (target.Kind == StaticFactKind.Structure)
             return reader.Follow(open ? Project(StaticQueryKind.TargetWalk, target.Scope!, StaticQueryProjection.OpenStructure, stratum: stratum)
                 : StaticQueryKey.TargetWalk(target.Scope!, stratum));
-        return StaticQueryStep.Complete(open && target.Kind == StaticFactKind.Missing ? StaticFact.Missing
+        return StaticQueryStep.Complete(open && target.Kind == StaticFactKind.Missing ? new StaticFact(StaticFactKind.Missing, context.Key)
             : !open && target.Kind == StaticFactKind.Runtime ? target : new StaticFact(StaticFactKind.Structure, context.Key));
     }
 

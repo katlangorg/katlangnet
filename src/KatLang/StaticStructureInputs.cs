@@ -165,9 +165,12 @@ internal sealed partial class StaticStructureQueries
         return key.Name == "none" ? input.IsUnknown ? input : input.Kind == StaticFactKind.Yes ? StaticFact.No : StaticFact.Yes
             : input.IsUnknown ? input : StaticFact.Yes;
     }
+    private static StaticQueryKey NoInputsKey(BodyContext context)
+        => StaticQueryKey.Project(StaticQueryKind.IsInput, context.Key, StaticQueryProjection.InputRange,
+            "none", length: context.Syntax.Names.Count);
+
     private StaticFact NoInputs(BodyContext context, StaticQueryReader<StaticQueryKey, StaticFact> reader)
-        => reader.Read(StaticQueryKey.Project(StaticQueryKind.IsInput, context.Key, StaticQueryProjection.InputRange,
-            "none", length: context.Syntax.Names.Count));
+        => reader.Read(NoInputsKey(context));
 
     private StaticFact InputUses(BodyContext context, StaticQueryKey key, StaticQueryReader<StaticQueryKey, StaticFact> reader)
     {

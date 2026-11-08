@@ -362,6 +362,13 @@ public class LanguageSpecRunnerTests
             // M4★ (ALIAS-UNIFY-1 third review): an open path into a parameterized body opens the runtime
             // reference's own namespace — a front-end rejection, parse-level by construction.
             "open-path-into-a-parameterized-body-is-its-own-namespace",
+            // S-10 F3 (November 2026): an open target that is a lone dot row is judged by the provider rule, or is
+            // unresolved when only an open provides a reference's head — front-end rejections, parse-level by
+            // construction.
+            "open-calculation-link-is-refused",
+            "open-reference-to-a-calculation-link-reports-the-target-refusal",
+            "open-parameterized-fallback-row-is-refused",
+            "open-link-over-a-head-only-an-open-provides-is-unresolved",
         ];
         string[] expectedModelDivergences =
         [

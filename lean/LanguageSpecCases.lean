@@ -14,10 +14,10 @@ This is bounded differential validation over the Lean-guarded partition,
 not a formal verification of the evaluators.
 
 Partition (machine-checked by the `specCaseIds.length` guard below):
-- specification surface cases: 541
-- excluded parse-level cases (Lean has no surface parser): 76
+- specification surface cases: 551
+- excluded parse-level cases (Lean has no surface parser): 80
 - excluded C#-only cases (each carries an explicit reason in the corpus): 22
-- Lean-guarded cases: 443
+- Lean-guarded cases: 449
 - probe observations (C#-only by design): 1507
 - internal-node cases live in the semantic-explorer corpus, not here: see
   lean/SemanticExplorerCases.lean
@@ -2418,7 +2418,37 @@ def case_open_reference_private_member_provides_public_names : Expr :=
   .algorithmExpr (alg [] [.resolve "A"] [privateProp "Lib" (alg [] [] [privateProp "Sub" (alg [] [] [publicProp "Q" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 1))])] [])] []), privateProp "A" (.alias none [] [] ((.dotCall (.resolve "Lib") "Sub" none)))] [(.call (.resolve "Q") [.num 5])])
 #guard obs case_open_reference_private_member_provides_public_names == "ok raw=6 n=1"
 
--- 443 canonical Lean-guarded specification cases.
+-- open-runtime-link-provides-its-own-namespace [name-resolution]: Cap(meta r) = r \n Inc(x) = x + 1 \n L = Cap(Inc(1)).Algorithm \n K = { \n     open L \n     5 \n } \n K
+def case_open_runtime_link_provides_its_own_namespace : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "L" (.alias none [] [] ((.dotCall (.call (.resolve "Cap") [(.call (.resolve "Inc") [.num 1])]) "Algorithm" none))), privateProp "K" (alg [] [.resolve "L"] [] [.num 5]), privateProp "Cap" (algWithParameters [{ name := "r", kind := .metaRef }] [] [] [.param "r"]), privateProp "Inc" (alg ["x"] [] [] [(.binary .add (.param "x") (.num 1))])] [.resolve "K"])
+#guard obs case_open_runtime_link_provides_its_own_namespace == "ok raw=5 n=1"
+
+-- open-of-a-link-over-a-cyclic-head-compiles-in-every-order [name-resolution]: P5 = { \n     open P3 \n     Z \n } \n P6 = P6 \n P3 = P6.Algorithm \n P5(1)
+def case_open_of_a_link_over_a_cyclic_head_compiles_in_every_order : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "P5" (alg ["Z"] [.resolve "P3"] [] [.param "Z"]), privateProp "P6" (alg [] [] [] [.resolve "P6"]), privateProp "P3" (.alias none [] [] ((.dotCall (.resolve "P6") "Algorithm" none)))] [(.call (.resolve "P5") [.num 1])])
+#guard obs case_open_of_a_link_over_a_cyclic_head_compiles_in_every_order == "ok raw=1 n=1"
+
+-- receiver-expansion-return-through-a-reference [name-resolution]: A = B \n B = { \n     public M = C \n     0 \n } \n C = A.M.abs \n 7
+def case_receiver_expansion_return_through_a_reference : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "A" (.alias none [] [] (.resolve "B")), privateProp "B" (alg [] [] [publicProp "M" (.alias none [] [] (.resolve "C"))] [.num 0]), privateProp "C" (alg [] [] [] [(.dotCall (.dotCall (.resolve "A") "M" none) "abs" none)])] [.num 7])
+#guard obs case_receiver_expansion_return_through_a_reference == "ok raw=7 n=1"
+
+-- receiver-expansion-return-through-a-reference-link [name-resolution]: A = B \n B = { \n     public M = C \n     0 \n } \n C = A.M.Algorithm \n 7
+def case_receiver_expansion_return_through_a_reference_link : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "A" (.alias none [] [] (.resolve "B")), privateProp "B" (alg [] [] [publicProp "M" (.alias none [] [] (.resolve "C"))] [.num 0]), privateProp "C" (.alias none [] [] ((.dotCall (.dotCall (.resolve "A") "M" none) "Algorithm" none)))] [.num 7])
+#guard obs case_receiver_expansion_return_through_a_reference_link == "ok raw=7 n=1"
+
+-- receiver-expansion-return-through-a-self-member [name-resolution]: B = { \n     public M = B \n     public N = C \n     0 \n } \n C = B.M.N.abs \n 7
+def case_receiver_expansion_return_through_a_self_member : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "B" (alg [] [] [publicProp "M" (.alias none [] [] (.resolve "B")), publicProp "N" (.alias none [] [] (.resolve "C"))] [.num 0]), privateProp "C" (alg [] [] [] [(.dotCall (.dotCall (.dotCall (.resolve "B") "M" none) "N" none) "abs" none)])] [.num 7])
+#guard obs case_receiver_expansion_return_through_a_self_member == "ok raw=7 n=1"
+
+-- receiver-expansion-consumed-members-are-no-return [name-resolution]: Q = { \n     public V = 5 \n } \n B = { \n     public M = B \n     public N = Q \n     0 \n } \n C = B.M.M.N \n C.V
+def case_receiver_expansion_consumed_members_are_no_return : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "Q" (alg [] [] [publicProp "V" (alg [] [] [] [.num 5])] []), privateProp "B" (alg [] [] [publicProp "M" (.alias none [] [] (.resolve "B")), publicProp "N" (.alias none [] [] (.resolve "Q"))] [.num 0]), privateProp "C" (.alias none [] [] ((.dotCall (.dotCall (.dotCall (.resolve "B") "M" none) "M" none) "N" none)))] [(.dotCall (.resolve "C") "V" none)])
+#guard obs case_receiver_expansion_consumed_members_are_no_return == "ok raw=5 n=1"
+
+-- 449 canonical Lean-guarded specification cases.
 
 /--
 Machine-checked Lean-guarded partition count: the id list is built by the
@@ -2868,8 +2898,14 @@ def specCaseIds : List String := [
   "tick-is-an-ordinary-shadowable-binding",
   "grouped-runtime-member-value-call",
   "grouped-runtime-member-value-arity",
-  "open-reference-private-member-provides-public-names"
+  "open-reference-private-member-provides-public-names",
+  "open-runtime-link-provides-its-own-namespace",
+  "open-of-a-link-over-a-cyclic-head-compiles-in-every-order",
+  "receiver-expansion-return-through-a-reference",
+  "receiver-expansion-return-through-a-reference-link",
+  "receiver-expansion-return-through-a-self-member",
+  "receiver-expansion-consumed-members-are-no-return"
 ]
-#guard specCaseIds.length == 443
+#guard specCaseIds.length == 449
 
 end LanguageSpecCases

@@ -141,6 +141,38 @@ when ordinary work is quiescent; an observer that unlocks ordinary work yields t
 observer. This coalesces intermediate closures without changing initial facts, refinement order, `Follow`
 equations or language identity. It is not a richer identity domain or a solution to Q8/X-04.
 
+**Decision observers (S-10 N1, 2026-11-08).** The receiver-expansion verdict (`ReceiverExpansionVerdict`, ordinary
+and open; static-structure query contracts, receiver expansion) is a closure observer that DECIDES structure, while
+the namespace certificates over-approximate structure that is still undecided. Decision observers have their own FIFO
+queue, drained before the other closure observers (`IsDecisionObserver`); ordinary work still settles before each
+observer. This is scheduling only. Measured on the production route: a ring of N member-path bodies
+(`Ai = Bi; Bi = { public M = C(i+1) ⏎ 0 }; Ci = Ai.M.abs`) cost 61·N² certificate work and ~3.5× reads per doubling
+when every `.abs` certificate ran over the whole undecided ring before the verdicts; with the precedence every
+counter doubles with N. The verdict walk itself:
+- uses decided inputs, head bindings and members for every concrete step, expanding an Unknown End in place. An
+  observer can discover new ordinary queries, so quiescence on entry does NOT prove a terminating End already decided.
+  Instead, a repeated VALID record proves that the deterministic expansion repeats without consuming a member below
+  that record. Every still-valid ancestor reaches that repeat before returning to its own continuation; each one's
+  End therefore diverges too. Those bodies are remembered per stratum and binding
+  mode, one persistent ledger slot each, and a later walk that expands one of them in place with members pending stops
+  with Yes. Later walks share these proved divergent suffixes, keeping measured aggregate work linear in admitted
+  source (`ReceiverExpansionCostTests`: ring, readers into a ring, independent loops,
+  bare and member-path chains, the first-expansion ring, three sizes each). A walk
+  blocked on an undecided input, binding or member query records that QUERY for every still-valid ancestor. Reuse
+  reads it through the ordinary reader and returns Unknown while it remains undecided; refinement schedules the
+  reader, which then walks again. Decided prefix guards cannot change, and no member below a saved record was
+  consumed, so the blocker is independent of the caller's continuation. An Unknown End alone is never a blocker.
+  A chain into an undecided A1 witness formerly took 1,632 / 6,336 / 24,960 verdict walk steps at 16 / 32 / 64 bodies;
+  sharing its blocker makes these 192 / 384 / 768. Namespace-certificate work for this rejected unit was already
+  superlinear at the baseline and remains a separate cost; these figures concern the added receiver-expansion work.
+- charges every member push, record, invalidation and member step as one adapter work unit through the operation
+  ledger (which also observes cancellation), and holds its member stack and records in a temporary lease released on
+  every exit. A blocked recipe charges three persistent slots per body/mode, and both memo-publication loops charge
+  each visited record. `ReceiverExpansionNav` charges its member path the same way.
+- is consulted only when the first-expansion recipe's cycle is decided without a pending return. A return the recipe
+  proves never creates the summaries, so a ring of first expansions (`Xi = X(i+1).abs`) keeps exactly its unfixed
+  cost (the historical candidate read the summaries while the recipe was still Unknown and was quadratic there).
+
 The production admission policy is deterministic for equivalent source, configured resource policy and
 compilation phase. `SourceProcessingLimits.MaxStaticStructureBytes` may lower the fixed 1-GiB ceiling;
 values must be positive, larger requests clamp to the ceiling, and null selects that ceiling. No GC
@@ -332,6 +364,21 @@ So **{Q1, Q2, Q3, Q5, Q6} is one strongly connected capability**; Q4 and Q7 hang
 
    No non-monotone selected rule was found. This is an analysis, not yet a proof on real queries; B3-2★ adds
    order-permutation tests per query.
+
+   Correction (S-10 F3, November 2026): that statement was false for the open stratum. `P5 = { open P3 ⏎ Z }`,
+   `P6 = P6`, `P3 = P6.Algorithm` (K01) answered `Missing` for the open structure of P3 and later, once the
+   receiver-return guard turned true, P3's own structure, which `IsRefinement` forbids (a host exception in some
+   declaration orders). Two causes: the open branch of `WrittenRowTarget` answered `Missing` for every row that is no
+   reference (a member miss or a head that is no static path), and the open stratum's guard found receivers through
+   opens while the open target itself resolves directly (Y1, a head only an open provides). The fix answers the
+   own-namespace fact for a row that is no reference (Lean `openStructure`), keeps a miss's terminal in the fact so
+   completion can tell a reference (unresolved) from a body that is its own namespace (`CompletedMiss`), and makes the
+   open stratum's receiver expansion follow direct bindings (`OpenReceiverExpansionCycle`/`Step`/`Nav`/`End`/`Verdict`
+   read `OpenHeadBinding`). Agreement argument: whenever the direct guard will become true, the non-pending branch
+   answers Unknown or exactly the pending arm's own-namespace fact (a row that is no static path names no expansion
+   target; a direct miss stops the direct chain, which then cannot return; a hit on every step passes only declared
+   members, which a returning lone row does not have). This is still an argument, not a proof; the evidence is the
+   41,472-program × 24-order sweep and `OpenLoneDotRowProviderTests`.
 6. **Editor.** The editor reads the published elaborated tree: formed aliases carry their targets, and inputs are
    `Param` nodes. B3-2★ must list every `ElaboratedScopeLookup` chase entry point the editor still calls. Any that
    remains reads the front end's engine through the parse result, never a third chase.

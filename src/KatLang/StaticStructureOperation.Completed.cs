@@ -121,8 +121,8 @@ internal sealed partial class StaticStructureOperation
                 if (view is Algorithm.Alias { IsReference: true })
                 {
                     receiver = Select(SelectedLinkClass(Read(StaticQueryKey.TargetWalk(key, StaticCycleCheck.Formation))));
-                    open = Select(SelectedLinkClass(Read(StaticQueryKey.Project(StaticQueryKind.TargetWalk, key,
-                        StaticQueryProjection.OpenStructure, stratum: StaticCycleCheck.Formation))));
+                    open = Select(CompletedMiss(SelectedLinkClass(Read(StaticQueryKey.Project(StaticQueryKind.TargetWalk, key,
+                        StaticQueryProjection.OpenStructure, stratum: StaticCycleCheck.Formation)))));
                 }
             }
             if (provisional)
@@ -141,9 +141,11 @@ internal sealed partial class StaticStructureOperation
                     Queries.Resources.Metadata(2);
                     var offered = Read(StaticQueryKey.Project(StaticQueryKind.OpenProviders, key,
                         StaticQueryProjection.OpenTarget, stratum: StaticCycleCheck.Formation, node: written));
+                    var completedMiss = CompletedMiss(offered);
                     providers.Add(offered.Data is StaticScopeKey[] { Length: 1 } keys
                         ? Select(new(StaticFactKind.Structure, keys[0]))
-                        : offered.IsUnknown ? CompletedStaticStructures.Selection.Unavailable : new(StaticFactKind.Missing));
+                        : offered.IsUnknown ? CompletedStaticStructures.Selection.Unavailable
+                        : completedMiss.Kind == StaticFactKind.Structure ? Select(completedMiss) : new(StaticFactKind.Missing));
                 }
             graph.Add(key, new(ready ? view : null, receiver, open, members.ToFrozenDictionary(StringComparer.Ordinal),
                 parameters.ToFrozenSet(StringComparer.Ordinal), providers.ToImmutableArray(), IsProvisional: provisional,
@@ -220,6 +222,13 @@ internal sealed partial class StaticStructureOperation
                 && ResolvedView(link) is Algorithm.User { ParameterPatterns.Count: > 0 }
                     ? new StaticFact(StaticFactKind.Structure, link) : fact;
 
+        // THE COMPLETION OF A Q2 MISS (S-10 F3): before selection Q2 cannot tell whether a row whose static head
+        // no direct lookup provides is a reference; once its body is resolved, a body that is no reference is its
+        // own namespace (Evaluator.OpenStructure, Lean openStructure: every non-alias is itself).
+        StaticFact CompletedMiss(StaticFact fact)
+            => fact is { Kind: StaticFactKind.Missing or StaticFactKind.Providers, Scope: { } terminal }
+                && ResolvedView(terminal) is { } and not Algorithm.Alias { IsReference: true }
+                    ? new StaticFact(StaticFactKind.Structure, terminal) : fact;
         CompletedStaticStructures.Selection Select(StaticFact fact)
         {
             if (fact.Scope is { } selected) Include(selected);

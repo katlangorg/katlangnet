@@ -113,6 +113,34 @@ The original seven-family key catalog is too coarse to name distinct equations t
   A row ending in the `.Algorithm` intrinsic remains a runtime reference, rather than a calculation namespace.
   This return is distinct from a cyclic target walk; the latter is No in the first witness. This uses the IR-04
   protocol without weakening A1 or conflating inference dependencies with paths.
+- The first-expansion recipe is incomplete on its own (S-10 N1, November 2026). It stops at the first transparent body
+  with members pending and asks that body's own expansion question, which omits the continuation below it. In
+  `A = B; B = { public M = C ⏎ 0 }; C = A.M.abs`, A's own expansion finishes at the carrier B (recipe cycle No) while
+  `.M.abs` is pending; B.M returns to C with `.abs` pending, a return the recipe never sees, so the invocation target
+  of valid source stayed undecided. The continuation-aware completion keeps every pending member:
+  - `ReceiverExpansionNav` (per body, stratum and binding mode) is where a transparent body's own row leads once its
+    own members are consumed: a body (Structure), No (own inputs, a miss, a head naming no declaration) or Refused (an
+    expansion inside it never reaches a carrier). `ReceiverExpansionEnd` follows Nav endpoints to the first carrier,
+    with a Follow edge only once the successor is decided. Neither reads a verdict directly; both may depend on
+    verdicts indirectly through inputs and bindings.
+  - `ReceiverExpansionVerdict` is a closure observer, consulted only when the recipe's cycle is decided without a
+    pending return and the body's own Nav stays Unknown. It walks the row with a member stack, crossing decided End
+    facts and expanding undecided bodies in place. Each in-place expansion is RECORDED with the number of members
+    pending below it; the record is VALID while none of those members has been consumed. Reaching a body that has a
+    valid record proves the return (the walk would repeat forever without touching anything below); a body reached
+    again after the members below its expansion were consumed is no witness. The terminating control is
+    `Q = { public V = 5 }; B = { public M = B ⏎ public N = Q ⏎ 0 }; C = B.M.M.N`: consuming the M members reaches
+    `B.N`, so C is an alias of Q (its own Nav decides it, and no verdict walks). Unknown alone never establishes a
+    return.
+  - A walk blocked on an undecided input, binding or member query shares that query key for every valid record,
+    separately by stratum and binding mode. Every reuse re-reads it, subscribes to its refinement and answers Unknown
+    only while it still blocks. The fixed prefix never consumed a member below the record, so the same query blocks
+    every continuation of that expansion. An Unknown End alone establishes neither a blocker nor a return.
+  - The verdict answers the same question the recipe answers: a pending-member return makes the row a calculation
+    (or, ending at `.Algorithm`, a runtime link), and both binding modes keep their own head lookup (ordinary
+    binding; direct `OpenHeadBinding` in the open stratum, OD-C). Bare reference transport, carrier identity, the
+    recipe's returns (W1, W2, `X = Y.abs; Y = X.abs`) and target cycles stay distinct: the recipe's own returns
+    never create the summaries.
 - Receiver/open-target projections name written expression nodes by reference. They keep dotted navigation work
   shared instead of recursively re-running arbitrary callbacks.
 - Range/occurrence projections provide bounded fan-in for large lists and repeated dependencies where needed.
