@@ -471,11 +471,11 @@ public class DeferredBodyEvaluatorAdmissionTests
             .Select(i => new Property($"P{i}", new Algorithm.User(null, [], [], [], [new Expr.Num(i)]))).ToArray());
         var raw = new Algorithm.User(null, [], [], [], [new Expr.Num(1)]);
         var loader = new ModuleLoader(new DiagnosticBag(), (_, _) => ValueTask.FromResult("public X = 1"));
-        var nestedRegion = new DeferredModuleRegion(loader, raw, ModuleLoader.LoadContext.PropertyDef, 0, 0, null);
+        var nestedRegion = new DeferredModuleRegion(loader, raw, ModuleLoader.LoadContext.PropertyDef, 0, 0, null, 0);
         var shared = new Algorithm.User(null, [], nested ? [new Expr.AlgorithmExpr(raw with { DeferredRegion = nestedRegion })] : [],
             members, [new Expr.Num(1)]);
         var regions = Enumerable.Range(0, regionCount).Select(_ => new DeferredModuleRegion(
-            loader, raw, ModuleLoader.LoadContext.PropertyDef, 0, 0, null)).ToArray();
+            loader, raw, ModuleLoader.LoadContext.PropertyDef, 0, 0, null, 0)).ToArray();
         var root = new Expr.AlgorithmExpr(raw with
         {
             Properties = regions.Select((region, i) => new Property($"F{i}", raw with { DeferredRegion = region })).ToArray(),

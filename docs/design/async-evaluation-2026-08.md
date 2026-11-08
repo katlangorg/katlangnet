@@ -608,9 +608,13 @@ The loader's rewrite walk exists in two lock-step forms, routed per subtree:
   the configured source-processing token into the active token every walk check and the
   downloader observe for the duration of the load (the linked source is disposed on the way
   out), so an in-flight download is aborted with the evaluation, nothing partial reaches the
-  module cache, aggregate-source reservations roll back as for host cancellation (download attempts stay charged), and the region
-  publishes no region body — the next selection starts a fresh run. Completed dependency
-  modules remain reusable. Publication and abandonment share a lock, and run cancellation
+  module cache, and the next selection starts a fresh run. Every unpublished attempt releases
+  the cache-hit splices from its own walk and its uncached nested module walks exactly once
+  (November 2026, audit F4). Module slots and source text admitted for parsing stay charged.
+  Completed dependency modules remain reusable and keep their full weight, including their
+  own splices. Their next splice charges that weight again, so under an aggregate that exactly
+  fits the program a retry can stay refused until the tree is parsed again. Publication and
+  abandonment share a lock, and run cancellation
   sources are disposed after completion and any concurrent cancellation finish.
   The source-processing token stays
   authoritative and keeps its identity; ordinary eager loads observe only that token.

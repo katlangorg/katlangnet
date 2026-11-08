@@ -12,9 +12,25 @@ namespace KatLang;
 /// one module slot immediately before every downloader invocation and keeps it whatever the
 /// download returns — a failed, oversized, or aggregate-rejected download still happened — and
 /// reserves aggregate source for text accepted for parsing and for every splice of a cached
-/// module. A module frame that is aborted by observed host cancellation rolls its own aggregate
-/// reservations (its source and the splices its walk made) back before unwinding; downloader
+/// module. An eager module frame that is aborted by observed host cancellation rolls its own
+/// aggregate reservations (its source and the splices its walk made) back before unwinding. Downloader
 /// invocations remain charged, including cancelled ones.</para>
+///
+/// <para><b>Deferred materialization attempts.</b> An attempt to materialize a deferred branch
+/// that publishes nothing — a failed load, a front-end error in the body, a structural or stack
+/// refusal, cancellation, or abandonment after the load — added nothing to the program, so the
+/// cache-hit splices charged by its walk and by nested walks that did not enter the cache are
+/// released exactly once before the loader's materialization gate is released. Its DOWNLOADS
+/// stay charged: the module slots and the aggregate for text accepted for parsing. Modules
+/// cached inside the attempt keep their full weight, including their own splices. The aggregate also bounds total
+/// parsing, so refunding downloads would let attempts that each fetch a new module and fail parse
+/// far more than the configured aggregate. A successful attempt keeps every charge.</para>
+///
+/// <para><b>Import depth across deferral.</b> A deferred branch's loads are judged at the import
+/// depth of the module that contains the branch: the loader records the live depth when it
+/// defers the branch, resumes it for the materialization's walk (<see cref="ResumeDepth"/>), and
+/// restores the displaced depth afterwards (<see cref="RestoreDepth"/>), so a materialized load
+/// is refused, and reported, at the depth eager elaboration would use.</para>
 ///
 /// <para>The diagnostic count is not a counter here: it bounds each diagnostic LIST, so the
 /// budget only hands every operation its own bounded <see cref="DiagnosticBag"/>.</para>
@@ -44,7 +60,7 @@ internal sealed class SourceProcessingBudget
     /// </summary>
     internal DiagnosticBag CreateDiagnosticBag() => new(MaxDiagnosticCount);
 
-    /// <summary>Total source (main plus every module accepted for parsing) reserved so far this run.</summary>
+    /// <summary>Current aggregate reservations for source text and cache-hit splices.</summary>
     internal long AggregateSource => _aggregateSource;
 
     /// <summary>Module downloads requested so far this run.</summary>
@@ -106,7 +122,8 @@ internal sealed class SourceProcessingBudget
     /// <summary>
     /// Rolls back previously successful <see cref="TryReserveAggregate"/> calls totalling
     /// <paramref name="length"/> code units — a frame's own source and the splices its walk
-    /// charged — when host cancellation aborts that frame before its result is kept.
+    /// charged — when eager cancellation aborts the frame, or only the unpublished splices
+    /// when a deferred attempt ends without publishing.
     /// </summary>
     internal void RollbackAggregate(long length)
     {
@@ -137,6 +154,37 @@ internal sealed class SourceProcessingBudget
             throw new InvalidOperationException("Cannot exit a module depth that was not entered.");
 
         _depth--;
+    }
+
+    /// <summary>
+    /// Replaces the current import depth with <paramref name="depth"/> — the depth a deferred
+    /// region recorded when the loader deferred it — and returns the depth it displaced. The
+    /// loader records only depths already reached by this run, so a production resume is within
+    /// the ceiling and never raises <see cref="PeakDepth"/>. Pair every call with
+    /// <see cref="RestoreDepth"/>; the loader does so from its walk-context scope.
+    /// </summary>
+    internal int ResumeDepth(int depth)
+    {
+        if (depth < 0 || depth > _limits.EffectiveMaxModuleDepth)
+            throw new ArgumentOutOfRangeException(nameof(depth), depth, "A resumed import depth must have been reachable under this run's ceiling.");
+
+        var displaced = _depth;
+        _depth = depth;
+        if (_depth > PeakDepth) PeakDepth = _depth;
+        return displaced;
+    }
+
+    /// <summary>
+    /// Ends a <see cref="ResumeDepth"/>: restores <paramref name="displaced"/>. Returns
+    /// <c>false</c> when the depth no longer equals <paramref name="resumed"/> — a module frame of
+    /// the resumed walk did not exit — after restoring anyway, so the caller can report the
+    /// broken invariant without leaving the run at a wrong depth.
+    /// </summary>
+    internal bool RestoreDepth(int resumed, int displaced)
+    {
+        var balanced = _depth == resumed;
+        _depth = displaced;
+        return balanced;
     }
 }
 

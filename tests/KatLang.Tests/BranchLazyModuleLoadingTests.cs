@@ -1475,9 +1475,18 @@ public class BranchLazyModuleLoadingTests
 
         using var tokenSource = new CancellationTokenSource();
         var outerLedger = NewLedger();
-        var outer = Enter("EnterMaterializationContext", new DiagnosticBag(), 7, null!, outerLedger, tokenSource.Token);
+        // A materialization scope also resumes the import depth its region recorded (F3) and
+        // restores the displaced one; a nested-traversal scope leaves the depth as it is.
+        var outer = Enter("EnterMaterializationContext", new DiagnosticBag(), 7, null!, 2, outerLedger, tokenSource.Token);
         var outerContext = loader.WalkContext;
         Assert.Same(outerLedger, outerContext.SpliceLedger);
+        Assert.Equal(2, loader.SourceBudget.CurrentDepth);
+        var invalidEntry = Assert.Throws<System.Reflection.TargetInvocationException>(() =>
+            Enter("EnterMaterializationContext", new DiagnosticBag(), 7, null!, int.MaxValue, NewLedger(), tokenSource.Token));
+        Assert.IsType<ArgumentOutOfRangeException>(invalidEntry.InnerException);
+        Assert.Equal(outerContext, loader.WalkContext);
+        Assert.Equal(2, loader.SourceBudget.CurrentDepth);
+        Assert.Equal(2, loader.SourceBudget.PeakDepth);
         var copied = (IDisposable)System.Runtime.CompilerServices.RuntimeHelpers.GetObjectValue(outer);
         Assert.Throws<OperationCanceledException>((Action)(() =>
         {
@@ -1490,16 +1499,23 @@ public class BranchLazyModuleLoadingTests
             throw new OperationCanceledException();
         }));
         Assert.Equal(outerContext, loader.WalkContext);
+        Assert.Equal(2, loader.SourceBudget.CurrentDepth);
         outer.Dispose();
         Assert.Equal(original, loader.WalkContext);
-        using (Enter("EnterMaterializationContext", new DiagnosticBag(), 23, new SourceSpan(5, 1, 5, 3), NewLedger(), tokenSource.Token))
+        Assert.Equal(0, loader.SourceBudget.CurrentDepth);
+        using (Enter("EnterMaterializationContext", new DiagnosticBag(), 23, new SourceSpan(5, 1, 5, 3), 1, NewLedger(), tokenSource.Token))
         {
             var later = loader.WalkContext;
             Assert.Throws<InvalidOperationException>(() => copied.Dispose());
             Assert.Equal(later, loader.WalkContext);
+            Assert.Equal(1, loader.SourceBudget.CurrentDepth);
         }
+        var unbalanced = Enter("EnterMaterializationContext", new DiagnosticBag(), 23, null!, 1, NewLedger(), tokenSource.Token);
+        Assert.True(loader.SourceBudget.TryEnterModule());
+        Assert.Throws<InvalidOperationException>(() => unbalanced.Dispose());
         ((IDisposable)Activator.CreateInstance(outer.GetType())!).Dispose();
         Assert.Equal(original, loader.WalkContext);
+        Assert.Equal(0, loader.SourceBudget.CurrentDepth);
     }
 
     /// <summary>

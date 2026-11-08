@@ -57,10 +57,12 @@ internal sealed class DeferredModuleRegion
         ModuleLoader.LoadContext context,
         int depth,
         int nestedTraversalBase,
-        SourceSpan? importSite)
+        SourceSpan? importSite,
+        int importDepth)
     {
         if (rawBody.DeferredRegion is not null)
             throw new ArgumentException("A deferred region's raw body is unelaborated source structure and carries no region.", nameof(rawBody));
+        ArgumentOutOfRangeException.ThrowIfNegative(importDepth);
 
         Loader = loader;
         RawBody = rawBody;
@@ -68,6 +70,7 @@ internal sealed class DeferredModuleRegion
         Depth = depth;
         NestedTraversalBase = nestedTraversalBase;
         ImportSite = importSite;
+        ImportDepth = importDepth;
     }
 
     // A fork: the same occurrence's loader facts and every context recorded so far, with
@@ -80,6 +83,7 @@ internal sealed class DeferredModuleRegion
         Depth = source.Depth;
         NestedTraversalBase = source.NestedTraversalBase;
         ImportSite = source.ImportSite;
+        ImportDepth = source.ImportDepth;
         _validation = source._validation;
         Exposure = source.Exposure;
         Structure = source.Structure;
@@ -105,6 +109,16 @@ internal sealed class DeferredModuleRegion
 
     /// <summary>The live traversal base at deferral (non-zero when the family sits inside a loaded module).</summary>
     internal int NestedTraversalBase { get; }
+
+    /// <summary>
+    /// The live IMPORT DEPTH at deferral: how many module frames enclosed the family (0 for a
+    /// family the current document wrote; for a family inside a materialized branch, the
+    /// depth that materialization resumed plus the frames entered since). The materialization's
+    /// walk resumes at this depth and restores the displaced one when it ends, so the body's
+    /// loads obey <see cref="SourceProcessingLimits.MaxModuleDepth"/> — and a refusal names the
+    /// depth — exactly as eager elaboration would. Forks copy it.
+    /// </summary>
+    internal int ImportDepth { get; }
 
     /// <summary>
     /// The import site the family was reached under (see <c>ModuleLoader._importSite</c>): null
@@ -171,6 +185,19 @@ internal sealed class DeferredModuleRegion
     /// and NEVER memoized on failure: a failed or cancelled attempt leaves no partially
     /// elaborated body behind, and a later selection retries exactly like the module cache
     /// retries a failed download.
+    ///
+    /// <para><b>Accounting of an attempt.</b> The body's loads are judged at the import depth
+    /// recorded at deferral (<see cref="ImportDepth"/>), as eager elaboration would judge them.
+    /// An attempt that publishes nothing — whether its load failed, its body has a front-end
+    /// error, a structural or stack refusal stopped it, or it was cancelled or abandoned during
+    /// the load, the compile, or at publication — releases the cache-hit splices charged by its
+    /// walk and by nested walks that did not enter the cache, exactly once, before the loader's gate is released
+    /// (<see cref="ModuleLoader.ReleaseUnpublishedSplices"/>), so failed retries do not drain the
+    /// aggregate. Downloads and their admitted source text stay charged. A module that was
+    /// cached inside the attempt keeps its full weight, so its next splice
+    /// charges again. Under an aggregate limit that exactly fits the program, a retry after such
+    /// an attempt can therefore stay refused until the tree is parsed again — over-refusal
+    /// only, by design. A published attempt keeps every charge: the program grew by them.</para>
     ///
     /// <para><b>Cancellation and shared demand.</b> A materialization exists only because an
     /// evaluation selected the branch, so the requesting evaluation's lifetime governs it:
@@ -426,38 +453,54 @@ internal sealed class DeferredModuleRegion
                 // One materialization is one operation with its own bounded diagnostic list —
                 // the one this evaluation's error reports; nothing accumulates across attempts.
                 var diagnostics = Loader.CreateDiagnosticBag();
-                var loaded = await Loader.LoadDeferredRegionAsync(this, diagnostics, cancellationToken).ConfigureAwait(false);
-                if (!diagnostics.HasReportedErrors)
+                // The attempt's own splice ledger: released below, under the gate, unless the
+                // attempt publishes (see MaterializeAsync, Accounting of an attempt).
+                var attemptLedger = Loader.CreateMaterializationLedger();
+                var published = false;
+                try
                 {
-                    cancellationToken.ThrowIfCancellationRequested();
-                    var observations = Loader.TraversalObservations;
-                    // The program's loaded modules are ONE unit each (Q-32 I-U): the body's loads
-                    // receive the declarations earlier operations elaborated (ModuleUnitRegistry).
-                    var modules = Loader.ModuleUnits.BeginOperation();
-                    // Name resolution, then automatic parameter forwarding, exactly as the eager
-                    // pipeline runs them (Q-04: forwarding never re-selects a binding). Every
-                    // demand-time pass starts from the import site the region recorded: a
-                    // diagnostic raised against module content — which carries no source
-                    // location — is positioned at the site the current document wrote.
-                    var exposed = CompileLoadedBody(loaded, diagnostics, observations, modules, out var continuation, cancellationToken);
-                    if (exposed is not null)
+                    var loaded = await Loader.LoadDeferredRegionAsync(this, diagnostics, attemptLedger, cancellationToken).ConfigureAwait(false);
+                    if (!diagnostics.HasReportedErrors)
                     {
-                        lock (_runLock)
+                        cancellationToken.ThrowIfCancellationRequested();
+                        var observations = Loader.TraversalObservations;
+                        // The program's loaded modules are ONE unit each (Q-32 I-U): the body's loads
+                        // receive the declarations earlier operations elaborated (ModuleUnitRegistry).
+                        var modules = Loader.ModuleUnits.BeginOperation();
+                        // Name resolution, then automatic parameter forwarding, exactly as the eager
+                        // pipeline runs them (Q-04: forwarding never re-selects a binding). Every
+                        // demand-time pass starts from the import site the region recorded: a
+                        // diagnostic raised against module content — which carries no source
+                        // location — is positioned at the site the current document wrote.
+                        var exposed = CompileLoadedBody(loaded, diagnostics, observations, modules, out var continuation, cancellationToken);
+                        if (exposed is not null)
                         {
-                            cancellationToken.ThrowIfCancellationRequested();
-                            if (run.AbandonRequested)
-                                throw new OperationCanceledException(cancellationToken);
+                            lock (_runLock)
+                            {
+                                cancellationToken.ThrowIfCancellationRequested();
+                                if (run.AbandonRequested)
+                                    throw new OperationCanceledException(cancellationToken);
 
-                            Volatile.Write(ref _materialized, exposed);
-                            run.IsFinished = true;
-                            modules.Publish(continuation);
+                                Volatile.Write(ref _materialized, exposed);
+                                published = true;
+                                run.IsFinished = true;
+                                modules.Publish(continuation);
+                            }
+                            return EvalResult<Algorithm>.Ok(exposed);
                         }
-                        return EvalResult<Algorithm>.Ok(exposed);
                     }
-                }
 
-                // The evaluation's error keeps a read-only snapshot of the bounded list.
-                return EvalError.ModuleRegionMaterializationFailed.From(Array.AsReadOnly(diagnostics.ToArray()));
+                    // The evaluation's error keeps a read-only snapshot of the bounded list.
+                    return EvalError.ModuleRegionMaterializationFailed.From(Array.AsReadOnly(diagnostics.ToArray()));
+                }
+                finally
+                {
+                    // An attempt that published nothing added nothing to the program, whatever
+                    // the reason: release its own splices (exactly once; a release during the
+                    // load on cancellation already zeroed the ledger). Downloads stay charged.
+                    if (!published)
+                        Loader.ReleaseUnpublishedSplices(attemptLedger);
+                }
             }
             finally
             {

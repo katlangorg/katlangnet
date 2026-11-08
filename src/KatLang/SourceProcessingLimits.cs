@@ -47,7 +47,11 @@ namespace KatLang;
 /// <para>The source and module ceilings are RUN-scoped and INHERITED: the main program and every
 /// module it loads — nested modules, and modules a deferred conditional branch loads when
 /// evaluation selects it — draw on the same budget, so a descendant never starts from a fresh
-/// one. The diagnostic count bounds each diagnostic LIST KatLang produces: the one list of a
+/// one. In particular, a deferred branch's loads are judged at the import depth of the module
+/// that contains the branch, exactly as eager elaboration would judge them, however late the
+/// branch is selected. An unpublished materialization attempt releases its splices and those
+/// of its uncached modules. Downloads and their admitted source text stay charged, and cached
+/// modules keep their full weight. The diagnostic count bounds each diagnostic LIST KatLang produces: the one list of a
 /// parse (the main program, every module it loads, and every nested module share it) and the
 /// list of each demand-time materialization of a deferred branch, which belongs to the
 /// evaluation that requested it.</para>
