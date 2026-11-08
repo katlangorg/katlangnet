@@ -409,8 +409,9 @@ public class ContinuousIntegrationPolicyTests
         var installScript = Text(LeanInstallPath);
         Assert.DoesNotContain(toolchain, source + installScript, StringComparison.Ordinal);
         Assert.Contains("$(<lean/lean-toolchain)", installScript, StringComparison.Ordinal);
-        Assert.Contains("leanprover/elan/227caca133724d5516bee25c2aeb3e609478f2d8/elan-init.sh", installScript, StringComparison.Ordinal);
-        Assert.Contains("a620ff1641616222c8d37c54845492004bb84d6877cdbc944dd65c1aa685bf53", installScript, StringComparison.Ordinal);
+        Assert.Contains("https://api.github.com/repos/leanprover/lean4/releases", installScript, StringComparison.Ordinal);
+        Assert.Contains("Accept: application/octet-stream", installScript, StringComparison.Ordinal);
+        Assert.Contains("sha256sum -c -", installScript, StringComparison.Ordinal);
     }
 
     [Theory]

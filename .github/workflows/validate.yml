@@ -54,7 +54,7 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Install Elan and the repository-pinned Lean toolchain
+      - name: Install repository-pinned Lean toolchain
         shell: bash
         run: |
           mkdir -p artifacts/validation

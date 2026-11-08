@@ -1,33 +1,34 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-retry() {
-    local operation=$1
-    shift
-    local attempt delay
-
-    for attempt in 1 2 3; do
-        if "$@"; then
-            return 0
-        fi
-
-        if (( attempt < 3 )); then
-            delay=$((10 * attempt))
-            printf '%s failed on attempt %s. Retrying in %s seconds.\n' "$operation" "$attempt" "$delay" >&2
-            sleep "$delay"
-        fi
-    done
-
-    printf '%s failed after three attempts.\n' "$operation" >&2
-    return 1
-}
-
 toolchain=$(<lean/lean-toolchain)
-installer="$RUNNER_TEMP/elan-init.sh"
-retry 'Downloading the Elan bootstrap script' curl --proto '=https' --tlsv1.2 -sSfL \
-    https://raw.githubusercontent.com/leanprover/elan/227caca133724d5516bee25c2aeb3e609478f2d8/elan-init.sh \
-    -o "$installer"
-printf '%s  %s\n' 'a620ff1641616222c8d37c54845492004bb84d6877cdbc944dd65c1aa685bf53' "$installer" | sha256sum -c -
-retry 'Installing Elan' sh "$installer" -y --default-toolchain none
-retry "Installing Lean toolchain $toolchain" "$HOME/.elan/bin/elan" toolchain install "$toolchain"
-printf '%s\n' "$HOME/.elan/bin" >> "$GITHUB_PATH"
+if [[ ! $toolchain =~ ^leanprover/lean4:(v[0-9]+\.[0-9]+\.[0-9]+(-[A-Za-z0-9.-]+)?)$ ]]; then
+    printf 'Expected a Lean release tag in lean/lean-toolchain, got %s.\n' "$toolchain" >&2
+    exit 1
+fi
+tag=${BASH_REMATCH[1]}
+asset_name="lean-${tag#v}-linux.tar.zst"
+release_api=https://api.github.com/repos/leanprover/lean4/releases
+curl_options=(--proto '=https' --proto-redir '=https' --tlsv1.2 --fail --silent --show-error --location --retry 2 --retry-delay 10)
+
+# The public release download redirects have returned 504s on GitHub-hosted runners.
+printf 'Resolving %s via the GitHub releases API.\n' "$asset_name"
+release=$(curl "${curl_options[@]}" --header 'Accept: application/vnd.github+json' "$release_api/tags/$tag")
+asset=$(jq -er --arg name "$asset_name" \
+    '.assets[] | select(.name == $name and .state == "uploaded") | [.id, .digest] | @tsv' <<< "$release")
+IFS=$'\t' read -r asset_id digest <<< "$asset"
+if [[ ! $asset_id =~ ^[0-9]+$ || ! $digest =~ ^sha256:[a-f0-9]{64}$ ]]; then
+    printf 'Release asset %s lacks a valid ID or SHA-256 digest.\n' "$asset_name" >&2
+    exit 1
+fi
+
+archive="$RUNNER_TEMP/$asset_name"
+install_dir="$RUNNER_TEMP/lean-toolchain"
+printf 'Downloading %s from release asset %s.\n' "$asset_name" "$asset_id"
+curl "${curl_options[@]}" --header 'Accept: application/octet-stream' \
+    "$release_api/assets/$asset_id" --output "$archive"
+printf '%s  %s\n' "${digest#sha256:}" "$archive" | sha256sum -c -
+mkdir -p "$install_dir"
+tar --zstd --strip-components=1 -xf "$archive" -C "$install_dir"
+test -x "$install_dir/bin/lake"
+printf '%s\n' "$install_dir/bin" >> "$GITHUB_PATH"
