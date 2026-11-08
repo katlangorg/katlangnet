@@ -614,6 +614,22 @@ The loader's rewrite walk exists in two lock-step forms, routed per subtree:
   sources are disposed after completion and any concurrent cancellation finish.
   The source-processing token stays
   authoritative and keeps its identity; ordinary eager loads observe only that token.
+  Inline runs (November 2026, resource/cancellation audit F2 and F5): the starting
+  consumer runs the work on its own stack OUTSIDE the region's run lock — as synchronously
+  as the downloader allows, so the synchronous-completion contract holds, and after a
+  genuine suspension it resumes wherever the downloader's awaitable completes — while
+  joiners hold the lock only to count themselves and await the run's shared completion (a
+  `TaskCompletionSource` created with the run, with asynchronous continuations, completed
+  by the work after its own cleanup). Every consumer registers its evaluation token for as
+  long as it waits, and the registration performs that consumer's ordinary, idempotent
+  leave, so cancelling the last consumer cancels the run even while it runs inline on some
+  consumer's thread: the downloader's token and the compile's checks observe it. A consumer
+  whose own thread runs the work returns when the work next observes cancellation,
+  suspends, or ends. A host token callback that throws while a leave cancels the run is
+  recorded on the abandoned run; it never replaces a consumer's cancellation and never
+  escapes into the host's `Cancel()`. A downloader that synchronously evaluates the program
+  it is loading for joins its own run (or waits for the loader gate it holds) and ends only
+  through its own token. No `Task.Run`, yield, or thread is introduced.
 - The pre-scan and BOTH walks probe the runtime's execution-stack reserve at every
   level; exhaustion (for example a host thread below the documented 1 MiB envelope, or
   Debug async-frame slack over the debt model at an extreme composition) unwinds to one
