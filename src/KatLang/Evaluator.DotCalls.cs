@@ -357,6 +357,12 @@ public static partial class Evaluator
         if (target is not Expr.DotCall { Args: null } edge)
             return ResolveReceiverHead(target, ctx, routeVisited);
 
+        // Host-stack backstop, one per chain link (Q-09a): the navigation recurses once per
+        // argumentless edge, and evaluation of a deferred branch can reach it deep on the
+        // evaluator's stack, so the shape bound alone cannot prevent stack exhaustion.
+        if (!RuntimeHelpers.TryEnsureSufficientExecutionStack())
+            return new EvalError.EvaluationStackExhausted();
+
         var receiverResult = ResolveDotReceiver(edge.Target, ctx, out _, routeVisited);
         if (receiverResult.IsError)
         {

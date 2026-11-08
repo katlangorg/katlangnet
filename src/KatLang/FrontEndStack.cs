@@ -42,7 +42,10 @@ namespace KatLang;
 /// reaching every shared node no shallower. Visit order matters: each pass elaborates a spliced
 /// module root once, at its FIRST reach, and the exposure pass visits properties before opens
 /// while the detector and the resolver visit opens first, so on a module chain the exposure pass
-/// alone stacks every module's nesting and only its own probes stop it.</para>
+/// alone stacks every module's nesting, and no earlier pass's probe stops it. Within that walk
+/// the dependency-summary collection it drives at each scope probes too, so the exposure
+/// recursion and the summary recursion each stop at their own probes; neither relies on an
+/// earlier pass.</para>
 /// </summary>
 internal static class FrontEndStack
 {

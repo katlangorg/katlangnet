@@ -152,7 +152,8 @@ public class DeferredCompileStackProcessTests
     /// opens before properties, so they reach each module at its shallow open and their stack stays
     /// about one module's nesting. The exposure pass visits properties first, so it reaches each
     /// module at the deep site and its stack grows with the whole chain. On a stack that the earlier
-    /// passes leave, only the exposure pass's own probes stop the compile. Every level is an ordinary
+    /// passes leave, the exposure walk's own and dependency-summary probes stop the compile.
+    /// Every level is an ordinary
     /// block, so the program evaluates with default limits.
     /// </summary>
     internal static (string Source, IReadOnlyDictionary<string, string> Modules) ModuleChain(int modules, int depth)
@@ -537,7 +538,11 @@ public class DeferredCompileStackProcessTests
 
     /// <summary>
     /// Earlier, larger pass frames can refuse before exposure is reached. Run exposure alone on
-    /// a legally parsed, completed tree so removing its probes has an independent crash witness.
+    /// a legally parsed, completed tree, so no earlier pass's probe can stand in for the exposure
+    /// pass's walk. That walk drives the dependency-summary collection at every scope, and both
+    /// probe: removing the summary probes kills this child, while removing only the exposure
+    /// file's probes does not, because the summary probes in the same recursion still refuse
+    /// first (mutation-checked on 2026-11-08: every sweep shape in Debug, this block shape in Release).
     /// The internal pass propagates the control signal; the public conversion boundaries are
     /// exercised by the eager and deferred sweeps above.
     /// </summary>
@@ -581,8 +586,10 @@ public class DeferredCompileStackProcessTests
     /// The production-route witness for the exposure probes (<see cref="ModuleChain"/>): a deferred
     /// compile through the real loader and pipeline, where the exposure pass needs far more stack
     /// than any earlier probed walk. Below the frontier where the earlier passes refuse, there is a
-    /// window that only the exposure pass's probes turn into a structured refusal. Without them the
-    /// child dies there with a stack overflow, in Debug and in Release. The sweep asserts only the
+    /// window that only the exposure walk's probes turn into a structured refusal: its own and the
+    /// dependency-summary probes it drives per scope. Without the summary probes the child dies
+    /// there with a stack overflow; the exposure file's own probes are not independently
+    /// witnessed, since the summary probes refuse first. The sweep asserts only the
     /// allowed outcomes and that it saw both a refusal and a compile. It never pins where either
     /// one happens.
     /// </summary>
