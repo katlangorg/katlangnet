@@ -339,14 +339,24 @@ theorem collectSegment_canonical_of_canonical_elements {xs : List Result}
 For extension-call fallback (a structural MISS: `evalDotCallCounted` tries a declared member
 first), `receiver.F(args)` is the written call `F(receiver, args)`. What is PROVED here is the
 argument PREPARATION: `prepareLexicalDotCallArgs` places the ORIGINAL receiver expression as the
-ordinary first slot of the bundle, adding nothing else. Everything after preparation is
-`partial` and therefore a fact of the source, executed by CoreTests `DotReceiverSegments` /
-`DotCallSemantics` and the Lean/C# differential corpora, not a theorem:
-`callLexicalWithReceiverCounted` hands the bundle to the ONE `evalResolvedCallCounted` funnel
-every written call uses, and `formNeedSupply` forms one supply cell per non-spread slot. No
-dot-call ≡ direct-call evaluator theorem exists (Q-66 keeps the dot-funnel obligation open).
+ordinary first slot of the bundle, adding nothing else. Since R7 the rest of the route is a total,
+kernel-visible definition, and the end-to-end statement is PROVED in its qualified form by
+`KatLang.DotFunnel.dot_funnel` (`KatLangArityLaws/DotFunnel.lean`, Q-66 dot funnel, 2026-11-08):
+after a receiver probe that completes at `(.ok alg?, s')` with an EXTENSION miss
+(`selectDotEdge`), for a receiver that is not a `.sequenceSpread` and a name fallback
+(`.resolve F` / `.param F`), the dot call run from `s` and the written call `F(receiver, args)`
+run from `s'` are both incomplete, or both complete with the same final state and the same value
+or the same inner error under their own frames (`CtxMsg.dotCall` / `CtxMsg.call`); incomplete
+runs are related by outcome only. `callLexicalWithReceiverCounted` hands the bundle to the ONE
+`evalResolvedCallCounted` funnel every written call uses (`lexical_call_body`,
+`written_call_body`), and the callee origin, the one difference, is read only for an empty
+supply (`resolved_origin_independent`). The unrestricted equality is false (a receiver declaring
+`F` takes the member route; the intrinsics; a state-changing probe), so it is not stated; the
+loop dot spellings reach the `repeat` / `while` arms (`dot_repeat_funnel`, `dot_while_funnel`).
+CoreTests `DotReceiverSegments` / `DotCallSemantics` and the Lean/C# corpora remain the evidence
+for C#.
 
-Given those source facts, the ordinary argument laws apply to the receiver unchanged, and the
+Given that funnel, the ordinary argument laws apply to the receiver unchanged, and the
 binder half of each is a production theorem over the cell the receiver forms (§ Production
 collector and dot-receiver laws, after the FORMAL-07 section):
 
@@ -365,7 +375,8 @@ collector and dot-receiver laws, after the FORMAL-07 section):
 
 /-- Argument PREPARATION for extension-call fallback: `receiver.F(args)` prepares exactly the
 argument bundle of the written call `F(receiver, args)` — the receiver is the ordinary leading
-slot. (That the bundle then reaches the ordinary call funnel is a `partial`-source fact.) -/
+slot. (That the bundle then reaches the ordinary call funnel, and that the whole dot call is the
+written call after an extension miss, is `KatLang.DotFunnel.dot_funnel`.) -/
 theorem dot_receiver_is_ordinary_leading_argument (receiver : Expr) (args : OutputBundle) :
     prepareLexicalDotCallArgs receiver (some args) = receiver :: args := rfl
 
