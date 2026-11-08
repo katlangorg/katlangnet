@@ -13,6 +13,7 @@ public class ContinuousIntegrationPolicyTests
 {
     private const string ValidatePath = ".github/workflows/validate.yml";
     private const string ReleasePath = ".github/workflows/release.yml";
+    private const string LeanInstallPath = "scripts/install-lean-toolchain.sh";
 
     private static readonly string[] LeanTargets =
     [
@@ -405,9 +406,23 @@ public class ContinuousIntegrationPolicyTests
     {
         var source = WorkflowText();
         var toolchain = Text("lean/lean-toolchain").Trim();
-        Assert.DoesNotContain(toolchain, source, StringComparison.Ordinal);
+        var installScript = Text(LeanInstallPath);
+        Assert.DoesNotContain(toolchain, source + installScript, StringComparison.Ordinal);
+        Assert.Contains("$(<lean/lean-toolchain)", installScript, StringComparison.Ordinal);
         Assert.Contains("leanprover/elan/227caca133724d5516bee25c2aeb3e609478f2d8/elan-init.sh", source, StringComparison.Ordinal);
         Assert.Contains("a620ff1641616222c8d37c54845492004bb84d6877cdbc944dd65c1aa685bf53", source, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData(ValidatePath)]
+    [InlineData(ReleasePath)]
+    public void LeanValidation_InstallsToolchainBeforeBuilding(string workflow)
+    {
+        var source = Text(workflow);
+        var install = source.IndexOf($"run: bash {LeanInstallPath}", StringComparison.Ordinal);
+        var validation = source.IndexOf("validate-all.ps1 -Phase Lean", StringComparison.Ordinal);
+        Assert.True(install >= 0 && install < validation,
+            $"{workflow} must install the Lean toolchain before running Lean validation.");
     }
 
     [Fact]

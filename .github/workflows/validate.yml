@@ -64,6 +64,10 @@ jobs:
           sh "$RUNNER_TEMP/elan-init.sh" -y --default-toolchain none
           echo "$HOME/.elan/bin" >> "$GITHUB_PATH"
 
+      - name: Install repository-pinned Lean toolchain
+        shell: bash
+        run: bash scripts/install-lean-toolchain.sh
+
       - name: Run Lean validation
         shell: pwsh
         run: pwsh -NoProfile -File ./scripts/validate-all.ps1 -Phase Lean
