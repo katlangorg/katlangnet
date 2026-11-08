@@ -26,25 +26,30 @@ drift of `runResultM` breaks this module. Over it, with standard axioms only:
   phrased through ONE predicate `Incomplete`, the interface its statements use for the incomplete
   representation (Constitution Q-82, open). The bridge proofs also use the core's normal-form laws.
 
-THE PREFIX. Validation (`validateExplicitParamOutputInvariantExpr` → the partial
-`validate*Tree`/`aliasCount`/`staticChain`) stays a kernel-opaque `partial def`. Identification
-(`identifyPropertyExpr`) and root wiring (`wireToCaller`) are total since FG-I1, but the theorems
-below were and stay PARAMETRIC in all three: the proofs never unfold them, they case-split on
+THE PREFIX. Identification (`identifyPropertyExpr`) and root wiring (`wireToCaller`) are total
+since FG-I1, validation (`validateExplicitParamOutputInvariantExpr` → `validate*Tree`, `aliasCount`,
+`staticChain` and the host-provenance scan) since E-6 Tier 2 (November 2026). The theorems below
+were proved PARAMETRIC in all three and stay so: the proofs never unfold them, they case-split on
 whatever outcome and state the validator yields and whatever tree identification yields
-(`runResultWith_oneCall`). They assume no reachable-state, address or admission premise. What
-identification and root wiring do to identities is `CallableIdentityProvenance` § Entry and
-preparation.
+(`runResultWith_oneCall`), and they assume no reachable-state, address or admission premise. What
+validation DOES is `ValidationFrame`: it returns its entry state, fails only with a
+`ValidatorError` and never yields the incomplete outcome (`validate_frame`,
+`validate_never_incomplete`), and its outcome does not depend on the entry state
+(`validate_state_independent`); identification keeps the root constructor (`identify_root_shape`);
+and the public run keeps the address invariant from every `Inv` entry state (`public_inv`,
+`public_inv_from_empty`). What identification and root wiring do to identities is
+`CallableIdentityProvenance` § Entry and preparation.
 
-NOT claimed here (it needs validation made total — Tier 2 of the R7-FU-01 plan,
-`artifacts/validation/r7-fu-01/REPORT.md`): anything about what validation DOES (the validator
-leaves the state unchanged or never yields the incomplete outcome, the admitted set), or that
-identification keeps the root constructor; any entry-state invariant at the
-public root call (e.g. FG-H1's `StateValid`, "no stored incomplete outcome"); that a public
-incomplete outcome means divergence (in the kernel it means: the validator yields it, OR the root
-call is incomplete at every fuel from the post-validation state — and a crafted entry state can
-re-raise a stored one); transitive opacity-freedom. Not a Lean/C# claim and not a relation to the
-retired `partial` evaluator. The incomplete STATES are unrelated (production keeps its entry
-state, the core forgets it), so incomplete runs are related by outcome only.
+NOT claimed here: the admitted set (which trees validation accepts); any entry-state invariant at
+the public root call beyond `Inv` (e.g. "no stored incomplete outcome"); that a public incomplete
+outcome means divergence (in the kernel it means that the root call is incomplete at every fuel
+from the ENTRY state — validation never yields it and returns its entry state — and a crafted
+entry state can re-raise a stored one); transitive opacity-freedom (validation still reaches the
+derived `Repr` printers through `reprStr`, and the evaluator bodies reach the remaining `partial`
+leaves). Not a Lean/C# claim
+and not a relation to the retired `partial` evaluator. The incomplete STATES are unrelated
+(production keeps its entry state, the core forgets it), so incomplete runs are related by
+outcome only.
 -/
 
 namespace KatLang.PublicRunBridge
@@ -78,8 +83,8 @@ theorem runResultM_is_production (e : Expr) : runResultM e = runResultWith evalU
 
 A composition `f : EvalRec → EvalM α` is ONE-CALL at an entry state when its run there either does
 not depend on the evaluator answer at all, or is exactly one call `c` from some state `t` followed
-by a fixed continuation `k`. The witnesses (`c`, `k`, `t`) are whatever the opaque prefix
-produced; nothing about them is known or needed. -/
+by a fixed continuation `k`. The witnesses (`c`, `k`, `t`) are whatever the prefix produced;
+nothing about them is known or needed. -/
 
 def OneCallAt {α : Type} (f : EvalRec → EvalM α) (s : EvalState) : Prop :=
   (∀ rec rec' : EvalRec, (f rec).runState s = (f rec').runState s) ∨
@@ -167,8 +172,8 @@ theorem rootRun_shape (e : Expr) :
   · refine .inr ⟨.eval e { callStack := [preludeAlg] } [], exportRunValue, fun _ => ?_⟩
     cases e <;> first | rfl | exact absurd ⟨_, rfl⟩ ha
 
-/-- `runResultWith` is one-call at every entry state, for every expression: the opaque prefix's
-    outcome and state are case-split, never computed. -/
+/-- `runResultWith` is one-call at every entry state, for every expression: the prefix's outcome
+    and state are case-split, never computed. -/
 theorem runResultWith_oneCall (e : Expr) (s : EvalState) :
     OneCallAt (fun rec => runResultWith rec e) s := by
   have hsplit : ∀ rec : EvalRec, (runResultWith rec e).runState s =
@@ -194,7 +199,7 @@ theorem runResultWith_oneCall (e : Expr) (s : EvalState) :
 
 /-- **THE PUBLIC BRIDGE.** From every entry state, the public run completes with `r` (outcome AND
     final state) exactly when the same public composition over the total core completes with `r`
-    at some fuel. Parametric in the opaque prefix. -/
+    at some fuel. Parametric in the prefix. -/
 theorem public_bridge (e : Expr) (s : EvalState) (r : Except Error Result × EvalState) :
     ((runResultM e).runState s = r ∧ ¬ Incomplete r.1) ↔
     ∃ n, (runResultWith (evalFuel n) e).runState s = r ∧ ¬ Incomplete r.1 :=

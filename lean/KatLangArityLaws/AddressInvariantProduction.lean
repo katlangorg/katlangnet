@@ -25,7 +25,8 @@ replaced here by premise-free (`Inv` + structural input validity) theorems:
 * **Entry** (`production_entry_program`, `production_entry_eval`): `evalProgramOutput wired` and
   `eval e` from `{callStack := [preludeAlg]}` and `[]`, for EVERY `wired` / `e` (in particular every
   output of the `identifyPropertyExpr` / `validateExprTree` passes of `runResultM`), from
-  every `Inv` state, in particular `EvalState.empty`. The `runResultM`-level bridge stays open.
+  every `Inv` state, in particular `EvalState.empty`. The `runResultM`-level instance is
+  `ValidationFrame.public_inv`, over the total validation's frame.
 -/
 
 namespace KatLang.AddressInvariant
@@ -278,7 +279,7 @@ theorem bindNeedPatterns_inv (patterns : List NeedPattern) (cells : List Nat) (f
 theorem entry_ctx_valid (h : Array NeedCell) : ValidCtx h { callStack := [preludeAlg] } := fun _ m => by cases m
 
 /-- **Entry (program root).** For EVERY root algorithm `wired` — in particular every output of the
-    opaque preprocessing passes of `runResultM` — `evalProgramOutput wired {callStack :=
+    preprocessing passes of `runResultM` — `evalProgramOutput wired {callStack :=
     [preludeAlg]} []` keeps `Inv` from every `Inv` state and returns a valid result. -/
 theorem production_entry_program (wired : Algorithm) :
     SoundOver Inv (fun _ => True) (evalProgramOutput wired { callStack := [preludeAlg] } [])

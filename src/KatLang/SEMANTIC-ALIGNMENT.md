@@ -1406,6 +1406,37 @@ upstream, `ordinary_user_of_nonempty`). Ledger row E-17; E-13's dot route now po
 for binder-result refinement, callback ≡ direct-call evaluation and `E** ≡ (E*)*` at expression level. Evidence
 `artifacts/validation/dot-funnel/`.
 
+E-6 Tier 2 — the pre-evaluation validation is total; the public-run validator frame (2026-11-08; Lean definitions change
+FORM only, V3 by the FG-I1 precedent; no language, C#, `Error`, `EvalM`, `evalUnbounded` or generated-artifact change). In
+`lean/KatLang.lean` the validation prefix of `runResultM` is now well-founded (formerly `partial`, kernel-opaque):
+`Algorithm.aliasCount` / `ScopeCtx.parentAliasCount` / `Expr.aliasCount`, `ScopeCtx.staticChain`, `validateAlgorithmTree` /
+`validateScopeTree` / `validateExprTree`, and the HOST-LEAN-O6 scan `scanHostProvenanceExpr/Algorithm/Scope/Property`
+(`termination_by sizeOf`, the sibling macro `validation_decreasing`; the FG-I1 `sizeOf` lemmas and `identify_decreasing` moved
+before the block, unchanged). Names, types, messages, check order and left-to-right traversal are unchanged; the only form
+changes are a `forM` over an `attach`ed list and an explicit `match` / `if let` on an optional child (the `dotMember`
+arguments of `Expr.aliasCount` and the scan, formerly `args?.getD []`; the parents of `staticChain` and the scan, formerly
+`Option.map` / `Option.forM`). `partial def` sites: 26 → 15.
+New module `KatLangArityLaws/ValidationFrame.lean` (built by the `.andSubmodules` glob, not imported by `KatLangArityLaws.lean`),
+standard axioms only: every former body, verbatim, as an equation of the total definition (`*_equation`, 11 theorems);
+`ValidatorError` (the R7-FU-01 error set plus HOST-LEAN-O6's two host-provenance messages); `validate_frame` (the validation
+returns its entry state and fails only with a `ValidatorError`), `validate_never_incomplete`, `validate_state_independent`;
+`identify_root_shape`; and E-5's `runResultM`-level instance `public_inv` / `public_inv_from_empty` (from every
+`AddressInvariant.Inv` entry state the public run ends in an `Inv` state and a completed value is `RV`-valid there). The frame
+proofs use a syntax-directed tactic (`frame_tac`, head-symbol dispatch) so that no step unifies against the well-founded
+definitions or the message strings. Guards `ValidationFrameGuards.lean`: one host-built fixture per `ValidatorError`
+constructor (refused with that exact error from two entry states, each returned unchanged, and by `runResult` with the same
+innermost error), first-error order (host check first, left to right, singleton before collector and before explicit
+parameters) and two accepted trees. Mutation proofs in scratch copies: swapping the singleton and collector checks breaks
+`validateAlgorithmTree_equation` and the order guard; one `modify` in `validateExprTree` breaks `validateExprTree_equation`,
+`validateExprTree_frame` and the accepting guards; dropping `ValidatorError.explicitParams` stops the module. NOT claimed:
+the admitted set; public incompletion from `EvalState.empty` in outcome form (the R7-FU-01 plan's stretch corollary, not
+attempted); transitive opacity-freedom — the prefix still reaches the derived `Repr` printers through `reprStr`
+(`HostProvenanceScan.level` during validation; `sameDeclaringScope`'s fallback on root wiring's scope-comparison path),
+never computed by a proof, and the bodies reach the remaining
+`partial` leaves; anything about C#. Q-82 stays open: nothing claims the public run never returns `fuelExhausted`, and
+incomplete runs are related by outcome only (`PublicRunBridge.Incomplete`). Ledger rows E-5 (public instance, now no remaining
+bridge for Lean) and E-6 (Production Lean). The R7-FU-01 entry above is history. Evidence `artifacts/validation/e6-tier2/`.
+
 META-S3-4 — generalized META capture of written invocations (2026-10-20; an INTENTIONAL language
 extension, owner decisions D-1A/D-2A/D-4, consequences D-3/D-5; Lean first, then C#). The capture domain
 is syntactic in both engines (Lean `NeedPlan.callShape?` with `CallForm`, C# `IsPlannableCall`): a call

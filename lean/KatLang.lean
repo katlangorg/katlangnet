@@ -3013,12 +3013,58 @@ def staticAliasTarget? : Nat -> List Algorithm -> Algorithm -> Option Algorithm
       | some (next, nextChain) => staticAliasTarget? fuel nextChain next
       | none => none
 
+theorem InterpolationLink.sizeOf_hole_lt (link : InterpolationLink) :
+    sizeOf link.hole < sizeOf link := by cases link; simp; omega
+theorem ComparisonLink.sizeOf_operand_lt (link : ComparisonLink) :
+    sizeOf link.operand < sizeOf link := by cases link; simp; omega
+theorem CondBranch.sizeOf_body_lt (branch : CondBranch) :
+    sizeOf branch.body < sizeOf branch := by cases branch; simp; omega
+theorem PropDef.sizeOf_alg_lt (property : PropDef) :
+    sizeOf property.alg < sizeOf property := by cases property; simp; omega
+
+/-- Identification descends only into proper subterms of the tree it is given. -/
+macro "identify_decreasing" : tactic => `(tactic| (
+  simp_wf
+  all_goals first
+    | (simp <;> omega)
+    | (have := List.sizeOf_lt_of_mem ‹_ ∈ _›; have := InterpolationLink.sizeOf_hole_lt ‹_›; simp <;> omega)
+    | (have := List.sizeOf_lt_of_mem ‹_ ∈ _›; have := ComparisonLink.sizeOf_operand_lt ‹_›; simp <;> omega)
+    | (have := List.sizeOf_lt_of_mem ‹_ ∈ _›; have := CondBranch.sizeOf_body_lt ‹_›; simp <;> omega)
+    | (have := List.sizeOf_lt_of_mem ‹_ ∈ _›; simp <;> omega)
+    | (have := PropDef.sizeOf_alg_lt ‹_›; simp <;> omega)))
+
+/-- The pre-evaluation passes (`aliasCount`, `validate*Tree`, the host-provenance scan) descend
+    only into proper subterms of the tree they are given. `identify_decreasing`'s sibling: every
+    goal is first simplified, an element reached through a `for` loop or an `attach`ed list is
+    a list member, and a property is reached through its algorithm. -/
+macro "validation_decreasing" : tactic => `(tactic| (
+  all_goals (try simp_wf)
+  all_goals first
+    | omega
+    | (simp <;> omega)
+    | (have := List.sizeOf_lt_of_mem ‹_ ∈ _›; first | omega | (simp <;> omega))
+    | (have := List.sizeOf_lt_of_mem ‹_ ∈ _›; have := InterpolationLink.sizeOf_hole_lt ‹_›;
+        first | omega | (simp <;> omega))
+    | (have := List.sizeOf_lt_of_mem ‹_ ∈ _›; have := ComparisonLink.sizeOf_operand_lt ‹_›;
+        first | omega | (simp <;> omega))
+    | (have := List.sizeOf_lt_of_mem ‹_ ∈ _›; have := CondBranch.sizeOf_body_lt ‹_›;
+        first | omega | (simp <;> omega))
+    | (have := List.sizeOf_lt_of_mem ‹_ ∈ _›; have := PropDef.sizeOf_alg_lt ‹_›;
+        first | omega | (simp <;> omega))
+    | (have := PropDef.sizeOf_alg_lt ‹_›; first | omega | (simp <;> omega))))
+
+/- The pre-evaluation passes below are TOTAL (E-6 Tier 2, November 2026; formerly `partial`):
+   well-founded on the tree they are given (`validation_decreasing`). `for` loops and
+   `List.map` see their element's membership automatically; a `forM` walks an `attach`ed list
+   and an optional child is matched explicitly, so that each child is visibly a subterm.
+   Otherwise the bodies are the former ones; `KatLangArityLaws/ValidationFrame` proves each
+   former body as an equation of the total definition. -/
 mutual
   /-- The number of callable aliases in an algorithm tree — the fuel of the static alias chase
       (`staticAliasCycle`): a chase landing on more aliases than the tree holds has revisited one.
       A host-built parent scope is part of the tree the pre-evaluation pass validates
       (`validateScopeTree`), so its aliases are counted too. -/
-  partial def Algorithm.aliasCount : Algorithm -> Nat
+  def Algorithm.aliasCount : Algorithm -> Nat
     | .mk p _ op pr out _ =>
         ScopeCtx.parentAliasCount p + (op.map Expr.aliasCount).sum
           + (pr.map (fun prop => prop.alg.aliasCount)).sum + (out.map Expr.aliasCount).sum
@@ -3029,17 +3075,21 @@ mutual
     | .alias p op pr target _ _ =>
         1 + ScopeCtx.parentAliasCount p + (op.map Expr.aliasCount).sum
           + (pr.map (fun prop => prop.alg.aliasCount)).sum + target.aliasCount
+  termination_by a => sizeOf a
+  decreasing_by validation_decreasing
 
   /-- The callable aliases in a parent scope chain: in each scope's opens and properties, the
       parts the pre-evaluation pass validates (`validateScopeTree`). -/
-  partial def ScopeCtx.parentAliasCount : Option ScopeCtx -> Nat
+  def ScopeCtx.parentAliasCount : Option ScopeCtx -> Nat
     | none => 0
     | some (.mk parent? _ op pr _ _ _ _) =>
         ScopeCtx.parentAliasCount parent? + (op.map Expr.aliasCount).sum
           + (pr.map (fun prop => prop.alg.aliasCount)).sum
+  termination_by p => sizeOf p
+  decreasing_by validation_decreasing
 
   /-- The callable aliases inside an expression (in its blocks). -/
-  partial def Expr.aliasCount : Expr -> Nat
+  def Expr.aliasCount : Expr -> Nat
     | .algorithmExpr alg => alg.aliasCount
     | .unary _ operand => operand.aliasCount
     | .binary _ left right => left.aliasCount + right.aliasCount
@@ -3052,8 +3102,12 @@ mutual
     | .capture rows => (rows.map Expr.aliasCount).sum
     | .call fn args => fn.aliasCount + (args.map Expr.aliasCount).sum
     | .dotMember target _ fallback args? =>
-        target.aliasCount + fallback.aliasCount + ((args?.getD []).map Expr.aliasCount).sum
+        target.aliasCount + fallback.aliasCount + (match args? with
+          | none => 0
+          | some args => (args.map Expr.aliasCount).sum)
     | _ => 0
+  termination_by e => sizeOf e
+  decreasing_by validation_decreasing
 end
 
 /-- The HOST PROVENANCE of a scope chain, innermost level first: each level's host-scope token
@@ -3115,9 +3169,11 @@ def hostKeyPrefix (chain : List (Option Nat)) : String :=
     scope resolves names through that scope chain, never through the algorithm the scope parents,
     so the alias check (`staticAliasCycle`) chases a member's target through this chain exactly as
     through enclosing algorithms. -/
-partial def ScopeCtx.staticChain : ScopeCtx -> List Algorithm
+def ScopeCtx.staticChain : ScopeCtx -> List Algorithm
   | .mk parent? _ op pr _ _ _ _ =>
-      ((parent?.map ScopeCtx.staticChain).getD []) ++ [Algorithm.mk none [] op pr [] none]
+      (match parent? with
+        | none => []
+        | some parent => parent.staticChain) ++ [Algorithm.mk none [] op pr [] none]
 
 mutual
   /-- Pre-evaluation structural validation over a whole algorithm tree:
@@ -3152,7 +3208,7 @@ mutual
       `conditional`. `chain` is the static scope chain around `a` (outermost
       first) and `aliases` the whole tree's alias count, which the alias check
       reads. C#: `AlgorithmValidation.PreEvaluationValidationWalker`. -/
-  partial def validateAlgorithmTree (a : Algorithm) (name : Ident)
+  def validateAlgorithmTree (a : Algorithm) (name : Ident)
       (chain : List Algorithm) (aliases : Nat) : EvalM Unit := do
     -- A loaded module is rooted at the prelude (Q-31 H-P): the static chain its aliases
     -- resolve in restarts at the module, whatever holds it.
@@ -3199,6 +3255,8 @@ mutual
         validateExprTree target inner aliases
         if let some scope := parent? then
           validateScopeTree scope aliases
+  termination_by sizeOf a
+  decreasing_by validation_decreasing
 
   /-- The pre-evaluation validation of a host-built PARENT scope, and of its own parent:
       its `open` targets and its property algorithms, the parts lexical lookup and `open`
@@ -3206,7 +3264,7 @@ mutual
       that nothing evaluates, so they are not walked. The members are validated against the
       scope chain (`ScopeCtx.staticChain`), the chain they resolve names in. No front end
       builds such a scope; a host may. C#: `PreEvaluationValidationWalker.VisitParentScopes`. -/
-  partial def validateScopeTree (s : ScopeCtx) (aliases : Nat) : EvalM Unit := do
+  def validateScopeTree (s : ScopeCtx) (aliases : Nat) : EvalM Unit := do
     let chain := s.staticChain
     match s with
     | .mk parent? _ op pr _ _ _ _ =>
@@ -3216,16 +3274,18 @@ mutual
           validateAlgorithmTree prop.alg prop.name chain aliases
         if let some outer := parent? then
           validateScopeTree outer aliases
+  termination_by sizeOf s
+  decreasing_by validation_decreasing
 
   /-- Traverse expressions so nested block literals and call-argument
       algorithms also satisfy the same pre-evaluation invariants. -/
-  partial def validateExprTree (e : Expr) (chain : List Algorithm) (aliases : Nat) : EvalM Unit :=
+  def validateExprTree (e : Expr) (chain : List Algorithm) (aliases : Nat) : EvalM Unit :=
     match e with
     | .param _ => pure ()
     | .num _ => pure ()
     | .stringLiteral _ => pure ()
     | .interpolatedString _ links =>
-        links.forM (fun link => validateExprTree link.hole chain aliases)
+        links.attach.forM (fun ⟨link, _⟩ => validateExprTree link.hole chain aliases)
     | .boolLiteral _ => pure ()
     | .resolve _ => pure ()
     | .unary _ operand =>
@@ -3235,10 +3295,10 @@ mutual
         validateExprTree right chain aliases
     | .comparison first links => do
         validateExprTree first chain aliases
-        links.forM (fun link => validateExprTree link.operand chain aliases)
+        links.attach.forM (fun ⟨link, _⟩ => validateExprTree link.operand chain aliases)
     | .index target selectors => do
         validateExprTree target chain aliases
-        selectors.forM (fun selector => validateExprTree selector chain aliases)
+        selectors.attach.forM (fun ⟨selector, _⟩ => validateExprTree selector chain aliases)
     | .sequenceConstruct left right => do
       validateExprTree left chain aliases
       validateExprTree right chain aliases
@@ -3246,14 +3306,14 @@ mutual
     | .sequenceSpread operand => do
         validateExprTree operand chain aliases
     | .listLiteral items =>
-        items.forM (fun item => validateExprTree item chain aliases)
+        items.attach.forM (fun ⟨item, _⟩ => validateExprTree item chain aliases)
     | .algorithmExpr alg =>
         validateAlgorithmTree alg "conditional" chain aliases
     | .capture rows =>
-        rows.forM (fun row => validateExprTree row chain aliases)
+        rows.attach.forM (fun ⟨row, _⟩ => validateExprTree row chain aliases)
     | .call fn args => do
         validateExprTree fn chain aliases
-        args.forM (fun arg => validateExprTree arg chain aliases)
+        args.attach.forM (fun ⟨arg, _⟩ => validateExprTree arg chain aliases)
     | .dotMember target _ fallback args? => do
         validateExprTree target chain aliases
         -- The stored lexical fallback is a real child (Resolve/Param for
@@ -3261,8 +3321,10 @@ mutual
         -- so the validation walk covers it like every other reference.
         validateExprTree fallback chain aliases
         match args? with
-        | some args => args.forM (fun arg => validateExprTree arg chain aliases)
+        | some args => args.attach.forM (fun ⟨arg, _⟩ => validateExprTree arg chain aliases)
         | none => pure ()
+  termination_by sizeOf e
+  decreasing_by validation_decreasing
 end
 
 /-- The message of a host-scope identity (`PropertyIdentity.host`) outside a host level's identity
@@ -3297,67 +3359,79 @@ def HostProvenanceScan.level (scope : ScopeCtx) (token : Nat) (scan : HostProven
 
 mutual
   /-- Scan an expression's blocks for host provenance. -/
-  partial def scanHostProvenanceExpr : Expr -> StateM HostProvenanceScan Unit
+  def scanHostProvenanceExpr : Expr -> StateM HostProvenanceScan Unit
     | .algorithmExpr a => scanHostProvenanceAlgorithm a
-    | .interpolatedString _ links => links.forM (scanHostProvenanceExpr ·.hole)
+    | .interpolatedString _ links => links.attach.forM (fun ⟨link, _⟩ => scanHostProvenanceExpr link.hole)
     | .unary _ operand => scanHostProvenanceExpr operand
     | .binary _ left right => do scanHostProvenanceExpr left; scanHostProvenanceExpr right
     | .comparison first links => do
         scanHostProvenanceExpr first
-        links.forM (scanHostProvenanceExpr ·.operand)
+        links.attach.forM (fun ⟨link, _⟩ => scanHostProvenanceExpr link.operand)
     | .index target selectors => do
         scanHostProvenanceExpr target
-        selectors.forM scanHostProvenanceExpr
+        selectors.attach.forM (fun ⟨selector, _⟩ => scanHostProvenanceExpr selector)
     | .sequenceConstruct left right => do scanHostProvenanceExpr left; scanHostProvenanceExpr right
     | .sequenceSpread operand => scanHostProvenanceExpr operand
-    | .listLiteral items => items.forM scanHostProvenanceExpr
-    | .capture rows => rows.forM scanHostProvenanceExpr
-    | .call fn args => do scanHostProvenanceExpr fn; args.forM scanHostProvenanceExpr
+    | .listLiteral items => items.attach.forM (fun ⟨item, _⟩ => scanHostProvenanceExpr item)
+    | .capture rows => rows.attach.forM (fun ⟨row, _⟩ => scanHostProvenanceExpr row)
+    | .call fn args => do
+        scanHostProvenanceExpr fn
+        args.attach.forM (fun ⟨arg, _⟩ => scanHostProvenanceExpr arg)
     | .dotMember target _ fallback args? => do
         scanHostProvenanceExpr target
         scanHostProvenanceExpr fallback
-        (args?.getD []).forM scanHostProvenanceExpr
+        match args? with
+        | none => pure ()
+        | some args => args.attach.forM (fun ⟨arg, _⟩ => scanHostProvenanceExpr arg)
     | _ => pure ()
+  termination_by e => sizeOf e
+  decreasing_by validation_decreasing
 
   /-- Scan an algorithm: its own identity, its parent scope chain and its whole body. -/
-  partial def scanHostProvenanceAlgorithm (a : Algorithm) : StateM HostProvenanceScan Unit := do
+  def scanHostProvenanceAlgorithm (a : Algorithm) : StateM HostProvenanceScan Unit := do
     if (PropertyIdentity.hostToken? a.declarationId).isSome then
       modify fun scan => { scan with misplaced := true }
     match a with
     | .builtin _ => pure ()
     | .mk parent _ opens props output _ => do
-        parent.forM scanHostProvenanceScope
-        opens.forM scanHostProvenanceExpr
-        props.forM scanHostProvenanceProperty
-        output.forM scanHostProvenanceExpr
+        if let some scope := parent then scanHostProvenanceScope scope
+        opens.attach.forM (fun ⟨openExpr, _⟩ => scanHostProvenanceExpr openExpr)
+        props.attach.forM (fun ⟨prop, _⟩ => scanHostProvenanceProperty prop)
+        output.attach.forM (fun ⟨expr, _⟩ => scanHostProvenanceExpr expr)
     | .conditional parent opens branches _ => do
-        parent.forM scanHostProvenanceScope
-        opens.forM scanHostProvenanceExpr
-        branches.forM (scanHostProvenanceAlgorithm ·.body)
+        if let some scope := parent then scanHostProvenanceScope scope
+        opens.attach.forM (fun ⟨openExpr, _⟩ => scanHostProvenanceExpr openExpr)
+        branches.attach.forM (fun ⟨branch, _⟩ => scanHostProvenanceAlgorithm branch.body)
     | .alias parent opens props target _ _ => do
-        parent.forM scanHostProvenanceScope
-        opens.forM scanHostProvenanceExpr
-        props.forM scanHostProvenanceProperty
+        if let some scope := parent then scanHostProvenanceScope scope
+        opens.attach.forM (fun ⟨openExpr, _⟩ => scanHostProvenanceExpr openExpr)
+        props.attach.forM (fun ⟨prop, _⟩ => scanHostProvenanceProperty prop)
         scanHostProvenanceExpr target
+  termination_by sizeOf a
+  decreasing_by validation_decreasing
 
   /-- Scan a scope level: a host level is recorded with its description; every level's content and
       parent are scanned. -/
-  partial def scanHostProvenanceScope (scope : ScopeCtx) : StateM HostProvenanceScan Unit := do
+  def scanHostProvenanceScope (scope : ScopeCtx) : StateM HostProvenanceScan Unit := do
     match scope with
     | .mk parent _ opens props output branches _ id => do
         if let some token := PropertyIdentity.hostToken? id then
           modify (HostProvenanceScan.level scope token)
-        parent.forM scanHostProvenanceScope
-        opens.forM scanHostProvenanceExpr
-        props.forM scanHostProvenanceProperty
-        output.forM scanHostProvenanceExpr
-        branches.forM (scanHostProvenanceAlgorithm ·.body)
+        if let some outer := parent then scanHostProvenanceScope outer
+        opens.attach.forM (fun ⟨openExpr, _⟩ => scanHostProvenanceExpr openExpr)
+        props.attach.forM (fun ⟨prop, _⟩ => scanHostProvenanceProperty prop)
+        output.attach.forM (fun ⟨expr, _⟩ => scanHostProvenanceExpr expr)
+        branches.attach.forM (fun ⟨branch, _⟩ => scanHostProvenanceAlgorithm branch.body)
+  termination_by sizeOf scope
+  decreasing_by validation_decreasing
 
   /-- Scan a property: its own identity and its value. -/
-  partial def scanHostProvenanceProperty (p : PropDef) : StateM HostProvenanceScan Unit := do
+  def scanHostProvenanceProperty (p : PropDef) : StateM HostProvenanceScan Unit := do
     if (PropertyIdentity.hostToken? p.identity).isSome then
       modify fun scan => { scan with misplaced := true }
     scanHostProvenanceAlgorithm p.alg
+  termination_by sizeOf p
+  decreasing_by validation_decreasing
 end
 
 /-- THE HOST PROVENANCE CHECK (HOST-LEAN-O6) of a prepared program: the enforceable part of the
@@ -7950,8 +8024,11 @@ that be incomplete, with ever more fuel from the same entry state (`searchFuel`,
 `partial_fixpoint`, so its unfolding equation is a kernel theorem). A completed production outcome
 is therefore exactly the outcome of the total core at some fuel; a divergent program still
 diverges (the search never ends at run time; the kernel-level fallback of `evalUnbounded` is
-never reached by compiled code). No `partial` definition remains between a public run and the
-evaluator bodies. -/
+never reached by compiled code). Between a public run and the evaluator bodies, identification,
+root wiring (FG-I1) and the pre-evaluation validation (E-6 Tier 2) are total. What stays `partial`
+on that path is the leaves the bodies reach (for example `sequenceConstructLeavesLoop`,
+`exprDiagnosticName`, the `cache*Shape` normalizers) and the derived `Repr` printers, which
+the validation and the bodies reach through `reprStr`. -/
 
 namespace EvalM
 
@@ -13348,26 +13425,6 @@ def preparedPropertyIdentity (id : Option PropertyIdentity) (next : Nat) : Prope
   | some (.shared n) => (.shared n, next)
   | some (.host n) => (.host n, next)
   | _ => (.syntax next, next + 1)
-
-theorem InterpolationLink.sizeOf_hole_lt (link : InterpolationLink) :
-    sizeOf link.hole < sizeOf link := by cases link; simp; omega
-theorem ComparisonLink.sizeOf_operand_lt (link : ComparisonLink) :
-    sizeOf link.operand < sizeOf link := by cases link; simp; omega
-theorem CondBranch.sizeOf_body_lt (branch : CondBranch) :
-    sizeOf branch.body < sizeOf branch := by cases branch; simp; omega
-theorem PropDef.sizeOf_alg_lt (property : PropDef) :
-    sizeOf property.alg < sizeOf property := by cases property; simp; omega
-
-/-- Identification descends only into proper subterms of the tree it is given. -/
-macro "identify_decreasing" : tactic => `(tactic| (
-  simp_wf
-  all_goals first
-    | (simp <;> omega)
-    | (have := List.sizeOf_lt_of_mem ‹_ ∈ _›; have := InterpolationLink.sizeOf_hole_lt ‹_›; simp <;> omega)
-    | (have := List.sizeOf_lt_of_mem ‹_ ∈ _›; have := ComparisonLink.sizeOf_operand_lt ‹_›; simp <;> omega)
-    | (have := List.sizeOf_lt_of_mem ‹_ ∈ _›; have := CondBranch.sizeOf_body_lt ‹_›; simp <;> omega)
-    | (have := List.sizeOf_lt_of_mem ‹_ ∈ _›; simp <;> omega)
-    | (have := PropDef.sizeOf_alg_lt ‹_›; simp <;> omega)))
 
 /- The pass is TOTAL (FG-I1, November 2026; formerly `partial`): well-founded on the tree it is
    given, one explicit `match` per optional child so that the child is visibly a subterm
