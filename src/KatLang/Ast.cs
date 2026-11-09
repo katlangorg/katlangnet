@@ -2924,6 +2924,20 @@ public closed record Algorithm
         /// other constructors have no branches).
         /// </summary>
         public bool HasDuplicateBranchPatterns()
+            => HasDuplicatePatterns(Branches, observations: null, CancellationToken.None);
+
+        /// <summary>
+        /// The ONE duplicate-head decision over an explicit branch list, shared by the public
+        /// <see cref="HasDuplicateBranchPatterns()"/> and the evaluator's run-local family preparation,
+        /// which decides it ONCE per run per branch list and observes the run's cancellation token
+        /// here. Cancellation surfaces as <see cref="OperationCanceledException"/> carrying
+        /// <paramref name="cancellationToken"/>; it is never a verdict. The work is AST-bounded and
+        /// uncharged (no step or structural unit), like the structural preflight.
+        /// </summary>
+        internal static bool HasDuplicatePatterns(
+            IReadOnlyList<CondBranch> branches,
+            PatternComparisonObservations? observations,
+            CancellationToken cancellationToken)
         {
             // Single pass over the shared duplicate index: a branch duplicates an earlier one
             // exactly when its pattern fails to enter the index (the ordered branch list is
@@ -2931,14 +2945,13 @@ public closed record Algorithm
             // genuine equivalence relation, so one representative per class suffices. The index
             // uses ordered canonical keys and binder maps (see its precise worst-case bound),
             // independently of any hash (SEC-03; no bucket an attacker or a host-built AST could flood).
-            var branches = Branches;
             if (branches.Count < 2)
                 return false;
 
-            var seen = new PatternMatchEquivalenceIndex();
-            foreach (var branch in branches)
+            var seen = new PatternMatchEquivalenceIndex(observations);
+            for (var i = 0; i < branches.Count; i++)
             {
-                if (!seen.TryAdd(branch.Pattern))
+                if (!seen.TryAdd(branches[i].Pattern, cancellationToken))
                     return true;
             }
             return false;

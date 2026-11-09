@@ -11,7 +11,7 @@ namespace KatLang.Benchmarks;
 /// from process-global <c>ConditionalWeakTable</c>s onto the runtime model): every shape
 /// repeats its measured operation in a single root row. Divide per-run measurements by
 /// <c>All.UnitsPerRun</c> to compare per-operation costs (201 ordinarily, 804 nested
-/// calls, or 41 recursive calls). The sources are
+/// calls, 41 recursive calls, or 1,973 recursive family calls). The sources are
 /// deterministic and fixed; the pass/fail question is behavioural equivalence, and the
 /// measurement question is per-operation time, allocated bytes, and Gen0 pressure.
 /// </summary>
@@ -62,6 +62,15 @@ internal static class EvaluatorIdentityStateScenarios
 	/// <summary>A clause-family call per unit: branch matching wires the selected body under an activated family scope.</summary>
 	internal static readonly string ConditionalCall = "F(0) = 100\nF(x) = x + 1\n" + Chain("F(1)") + "\n";
 
+	/// <summary>Family calls of the <see cref="RecursiveFamily"/> shape: Fib(15) makes 1,973 clause-family calls.</summary>
+	internal const int RecursiveFamilyCalls = 1973;
+
+	/// <summary>
+	/// A recursive clause family: every call re-enters ONE family through a fresh wired lookup copy,
+	/// so the per-call family decision (duplicate-head verdict, head translation) dominates.
+	/// </summary>
+	internal static readonly string RecursiveFamily = "Fib(0) = 0\nFib(1) = 1\nFib(n) = Fib(n - 1) + Fib(n - 2)\nFib(15)\n";
+
 	internal static readonly IReadOnlyList<(string Name, string Source, int UnitsPerRun)> All =
 	[
 		("ParameterizedCall", ParameterizedCall, Units),
@@ -72,6 +81,7 @@ internal static class EvaluatorIdentityStateScenarios
 		("CapturedAncestorParameter", CapturedAncestorParameter, Units),
 		("Recursion", Recursion, RecursionDepth + 1),
 		("ConditionalCall", ConditionalCall, Units),
+		("RecursiveFamily", RecursiveFamily, RecursiveFamilyCalls),
 	];
 
 	private static string Chain(string term)
@@ -118,6 +128,7 @@ public class EvaluatorIdentityStateBenchmarks
 	private static readonly Algorithm CapturedAncestorParameterRoot = EvaluatorIdentityStateScenarios.Prepare(EvaluatorIdentityStateScenarios.CapturedAncestorParameter);
 	private static readonly Algorithm RecursionRoot = EvaluatorIdentityStateScenarios.Prepare(EvaluatorIdentityStateScenarios.Recursion);
 	private static readonly Algorithm ConditionalCallRoot = EvaluatorIdentityStateScenarios.Prepare(EvaluatorIdentityStateScenarios.ConditionalCall);
+	private static readonly Algorithm RecursiveFamilyRoot = EvaluatorIdentityStateScenarios.Prepare(EvaluatorIdentityStateScenarios.RecursiveFamily);
 
 	[Benchmark(Baseline = true)]
 	public Result ParameterizedCall() => EvaluatorIdentityStateScenarios.Evaluate(ParameterizedCallRoot);
@@ -142,6 +153,9 @@ public class EvaluatorIdentityStateBenchmarks
 
 	[Benchmark]
 	public Result ConditionalCall() => EvaluatorIdentityStateScenarios.Evaluate(ConditionalCallRoot);
+
+	[Benchmark]
+	public Result RecursiveFamily() => EvaluatorIdentityStateScenarios.Evaluate(RecursiveFamilyRoot);
 }
 
 /// <summary>

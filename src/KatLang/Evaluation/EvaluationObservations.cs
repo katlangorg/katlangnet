@@ -53,6 +53,27 @@ internal sealed class EvaluationObservations
         => DeconstructionFullBindCount = checked(DeconstructionFullBindCount + 1);
 
     /// <summary>
+    /// Optional observer handed to every runtime duplicate-head index the run's clause-family
+    /// preparations build, so a test can read that work across the whole run or cancel at a known
+    /// checkpoint through <see cref="PatternComparisonObservations.CheckpointReached"/>. Supplied by
+    /// the measuring test; <c>null</c> records nothing.
+    /// </summary>
+    public PatternComparisonObservations? FamilyDuplicateIndex { get; init; }
+
+    /// <summary>
+    /// Number of clause-family preparations COMPLETED during this run: one per distinct branch-list
+    /// reference whose duplicate-head verdict (and, when duplicate-free, translated heads) the run
+    /// decided. Wired copies of one family share their list and so one preparation, however many
+    /// calls reach them; a <c>with { Branches = … }</c> copy is prepared separately. A cancelled
+    /// preparation completes nothing and is not counted.
+    /// </summary>
+    public long ClauseFamilyPreparationCount => Interlocked.Read(ref _clauseFamilyPreparationCount);
+
+    private long _clauseFamilyPreparationCount;
+
+    internal void RecordClauseFamilyPreparation() => Interlocked.Increment(ref _clauseFamilyPreparationCount);
+
+    /// <summary>
     /// Number of compound expression names rendered for call or dot-call diagnostics during this
     /// run. Successful calls and resource-limit errors observe zero; an ordinary error increments
     /// once for each diagnostic/context frame that actually needs the compound name. Simple

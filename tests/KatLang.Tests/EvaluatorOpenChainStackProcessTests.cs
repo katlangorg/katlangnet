@@ -224,9 +224,17 @@ public class EvaluatorOpenChainStackProcessTests(ITestOutputHelper output)
 
         // Stacks far below the documented minimum can refuse before any positioned frame, so no span is required here.
         var sweep = new Tally("one-name open chain", reference.Value, requireSpan: false);
-        for (var kib = 128; kib <= 1536; kib += 32)
+        // The top is 2048 KiB, not 1536 KiB (owner-approved calibration, November 2026). In Debug the
+        // chain first completes at about 1536 KiB, give or take a few KiB per process (measured at 4 KiB
+        // resolution), so a top sample of exactly 1536 KiB had no headroom: whenever a fresh process's
+        // threshold landed a few KiB above it, every sample refused and the sweep failed with "no run
+        // evaluated" (about 10-15% of runs). The extra samples only add completions; the low end still
+        // refuses, and both outcomes remain required.
+        for (var kib = 128; kib <= 2048; kib += 32)
             AstStructuralDepthProcessTests.RunOnThreadWithStack(kib * 1024, () => sweep.Record(kib, "sync", Evaluator.RunFlat(ast)));
 
+        // Diagnostic only, never asserted: where this process first completed.
+        Console.WriteLine($"one-name open chain: first completion at {sweep.FirstCompletion?.ToString() ?? "none"} KiB");
         sweep.AssertOutcomes();
         WriteProbeMarker();
     }
@@ -293,11 +301,15 @@ public class EvaluatorOpenChainStackProcessTests(ITestOutputHelper output)
         private int _refusals;
         private readonly List<string> _log = [];
 
+        /// <summary>The first point (in recording order) whose run completed; diagnostic only.</summary>
+        public int? FirstCompletion { get; private set; }
+
         public void Record(int point, string route, EvalResult<IReadOnlyList<Decimal128>> outcome)
         {
             if (outcome.IsOk)
             {
                 Assert.Equal(_expected, outcome.Value);
+                FirstCompletion ??= point;
                 _completions++;
                 _log.Add($"{point}{route[0]}:ok");
                 return;

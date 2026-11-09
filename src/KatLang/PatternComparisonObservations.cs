@@ -2,7 +2,9 @@ namespace KatLang;
 
 /// <summary>
 /// Passive, operation-scoped observer of clause-family duplicate-detection work. One instance belongs
-/// to ONE measured operation — a single parse (every family index it builds), or a single indexed
+/// to ONE measured operation — a single parse (every family index it builds), a single observed
+/// evaluator run (every runtime family index its preparations build, through
+/// <see cref="EvaluationObservations.FamilyDuplicateIndex"/>), or a single indexed
 /// duplicate check — and is passed explicitly to <see cref="PatternMatchEquivalenceIndex"/>, so the
 /// index records the work it performs. It is never static and never ambient: a production index
 /// carries no observer, separate parses never share one, and concurrent parses each own their own, so

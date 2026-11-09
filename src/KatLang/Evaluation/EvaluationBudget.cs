@@ -369,6 +369,19 @@ internal sealed class EvaluationBudget
     private PropertyBindingIndexCache? _propertyBindings;
 
     /// <summary>
+    /// Clause-family preparation for this run (duplicate-head verdict and translated heads), shared
+    /// across wired views by branch-list reference. Like <see cref="PropertyBindings"/>, it is held
+    /// here so neither AST records nor EvalCtx acquire cache state, and independent runs observe
+    /// host-list edits afresh.
+    /// </summary>
+    internal Evaluator.NeedFamilyPreparationCache FamilyPreparations
+        => Volatile.Read(ref _familyPreparations)
+            ?? Interlocked.CompareExchange(ref _familyPreparations, new(), null)
+            ?? _familyPreparations;
+
+    private Evaluator.NeedFamilyPreparationCache? _familyPreparations;
+
+    /// <summary>
     /// Observes the run's host cancellation token, throwing
     /// <see cref="OperationCanceledException"/> (carrying that token) when cancellation
     /// has been requested, and doing nothing otherwise. The default token follows the

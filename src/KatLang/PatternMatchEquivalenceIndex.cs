@@ -7,7 +7,8 @@ namespace KatLang;
 /// <summary>
 /// The ONE duplicate-detection index over <see cref="Pattern.IsMatchEquivalent"/> classes, shared by
 /// the parser's clause-family builder and the runtime duplicate-branch guard
-/// (<see cref="Algorithm.Conditional.HasDuplicateBranchPatterns"/>). It is a C# host-runtime
+/// (<see cref="Algorithm.Conditional.HasDuplicateBranchPatterns()"/>, decided once per run per family by the
+/// evaluator's run-local family preparation, <c>Evaluator.NeedFamilyPreparationCache</c>). It is a C# host-runtime
 /// implementation detail with no semantic content: <see cref="TryAdd"/> answers whether the pattern
 /// adds a new match-equivalence class, and the ordered branch list of its owner
 /// stays the source of truth for branch order, diagnostics, and spans.
@@ -54,15 +55,17 @@ namespace KatLang;
 /// are created when a SECOND pattern arrives. Up to <see cref="SmallIndexCapacity"/> keys are kept
 /// in a short list probed by ordinal equality (at most that many comparisons per insertion, each
 /// bounded by the new key's length — a constant factor, not a hash), and only a larger family moves
-/// them into the ordered tree. The runtime guard runs per family call, so small families stay
-/// cheap.</para>
+/// them into the ordered tree. The evaluator decides the runtime guard once per run per family
+/// branch list (not per call; the public method still decides afresh on each call), and small
+/// families stay cheap either way.</para>
 ///
 /// <para><b>Cancellation.</b> <see cref="TryAdd"/> observes the supplied tokens (the authoritative
 /// source-processing token first, so a host cancellation always carries that token's identity) once
 /// per call and in bounded blocks while traversing, writing, copying and comparing keys and binder
 /// names. Blocks contain at most <see cref="CanonicalizationCheckpointInterval"/> units; a checkpoint
 /// follows at most two such blocks, including for a single long literal or common prefix. The index
-/// holds no static or ambient state; an instance belongs to one family of one parse or one guard call.</para>
+/// holds no static or ambient state; an instance belongs to one family of one parse or one guard call.
+/// The runtime guard passes the run's token (an uncharged, cancellable, AST-bounded preparation).</para>
 /// </summary>
 internal sealed class PatternMatchEquivalenceIndex(PatternComparisonObservations? observations = null)
 {

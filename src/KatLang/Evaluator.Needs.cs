@@ -685,7 +685,7 @@ public static partial class Evaluator
     // `Meta` (CallReference S1) marks a META capture: its name binds a Ready adapter holding the
     // supplied call's reference (ReferenceAdapterCell), reified when written traversal reaches it.
     // Lean: NeedPattern.metaRef.
-    private sealed record NeedPattern(
+    internal sealed record NeedPattern(
         string? Name = null, bool Collecting = false,
         IReadOnlyList<NeedPattern>? Children = null, bool List = false, Pattern? Literal = null, bool Unpacking = false, ParameterPattern? Original = null,
         bool Meta = false);
@@ -1413,21 +1413,17 @@ public static partial class Evaluator
     // ArityMismatch with the first clause's minimum (0 when there is no clause). Which clause binds
     // is each clause's own gate afterwards, in written order: the driver's per-clause check, where a
     // refused count is that clause's non-match, then BindAcceptedNeedPatterns in family mode.
-    private static EvalResult<IReadOnlyList<IReadOnlyList<NeedPattern>>> PrepareNeedFamilyHeads(
-        Algorithm callee, int supplied)
+    // The verdict and the translated heads are a pure function of the branch list, decided ONCE
+    // per run per list (NeedFamilyPreparationCache); every call still checks the verdict first and
+    // then decides its own arity. The driver selects bodies from the same prepared view.
+    private static EvalResult<NeedFamilyPreparation> PrepareNeedFamilyHeads(
+        Algorithm callee, int supplied, in EvalCtx ctx)
     {
-        if (callee.HasDuplicateBranchPatterns()) return new EvalError.DuplicateBranchPattern();
-        var branches = callee.Branches;
-        var heads = new IReadOnlyList<NeedPattern>[branches.Count];
-        var accepted = false;
+        var family = NeedFamilyPreparationOf(callee, ctx);
+        if (family.Heads is not { } heads) return new EvalError.DuplicateBranchPattern();
         for (var i = 0; i < heads.Length; i++)
-        {
-            heads[i] = NeedClauseHead(branches[i].Pattern);
-            accepted = accepted || NeedAcceptsCardinality(heads[i], supplied);
-        }
-        return accepted
-            ? EvalResult<IReadOnlyList<IReadOnlyList<NeedPattern>>>.Ok(heads)
-            : new EvalError.ArityMismatch(heads.Length == 0 ? 0 : NeedMinimumSuppliedSlots(heads[0]), supplied);
+            if (NeedAcceptsCardinality(heads[i], supplied)) return EvalResult<NeedFamilyPreparation>.Ok(family);
+        return new EvalError.ArityMismatch(heads.Length == 0 ? 0 : NeedMinimumSuppliedSlots(heads[0]), supplied);
     }
 
     // The clause-attempt observation both family drivers share (SEC-02-FU2, ClauseAttemptObservations):
@@ -1458,7 +1454,8 @@ public static partial class Evaluator
     private static NeedFamilyActivation ActivateNeedFamilyBranch(
         Algorithm callee, Algorithm selected, NeedEnv matched, EvalCtx ctx, ValEnv values)
     {
-        var names = matched.Select(binding => binding.Name).ToArray();
+        var names = new string[matched.Count];
+        for (var i = 0; i < names.Length; i++) names[i] = matched[i].Name;
         var boundCtx = WithNeedBindings(ctx.Push(callee), matched, names);
         var boundValues = ShadowValEnv(values, names);
         return new(ChildOfConditionalCall(callee, selected, names, boundCtx, boundValues), boundCtx, boundValues);
@@ -1471,23 +1468,23 @@ public static partial class Evaluator
     private static EvalResult<NeedFamilyActivation> BindNeedFamilySupplyCounted(
         Algorithm callee, IReadOnlyList<NeedCell> supply, EvalCtx ctx, ValEnv values, CallDiagnosticName name)
     {
-        var prepared = PrepareNeedFamilyHeads(callee, supply.Count);
+        var prepared = PrepareNeedFamilyHeads(callee, supply.Count, ctx);
         if (prepared.IsError) return prepared.Error;
-        var heads = prepared.Value;
+        var family = prepared.Value;
         ObserveFamilyStart(callee, ctx);
-        for (var i = 0; i < heads.Count; i++)
+        for (var i = 0; i < family.Branches.Length; i++)
         {
             // The clause's ONE cardinality gate, in family mode: a refused count is its non-match.
             // Decided here rather than in a gated binder frame, so a literal or structural pattern
             // that demands a recursive argument holds no extra frame (stack headroom per level).
-            if (!NeedAcceptsCardinality(heads[i], supply.Count)) continue;
+            if (!NeedAcceptsCardinality(family.Heads![i], supply.Count)) continue;
             ObserveClauseAttempt(i, ctx);
-            var bindings = BindAcceptedNeedPatterns(heads[i], supply, ctx, asynchronous: false, family: true).GetAwaiter().GetResult();
+            var bindings = BindAcceptedNeedPatterns(family.Heads![i], supply, ctx, asynchronous: false, family: true).GetAwaiter().GetResult();
             ObserveClauseOutcome(bindings, ctx);
             // An argument a clause pattern inspects is a SUBORDINATE computation of the call (Q-36).
             if (bindings.IsError) return NestMissingOutput(bindings.Error);
             if (bindings.Value is not { } matched) continue;
-            var selected = SelectedBranchBody(callee.Branches[i], ctx);
+            var selected = SelectedBranchBody(family.Branches[i], ctx);
             if (selected.IsError) return selected.Error;
             return EvalResult<NeedFamilyActivation>.Ok(ActivateNeedFamilyBranch(callee, selected.Value, matched, ctx, values));
         }
@@ -1500,22 +1497,22 @@ public static partial class Evaluator
         Algorithm callee, IReadOnlyList<NeedCell> supply, EvalCtx ctx, ValEnv values,
         CallDiagnosticName name, bool asynchronous)
     {
-        var prepared = PrepareNeedFamilyHeads(callee, supply.Count);
+        var prepared = PrepareNeedFamilyHeads(callee, supply.Count, ctx);
         if (prepared.IsError) return prepared.Error;
-        var heads = prepared.Value;
+        var family = prepared.Value;
         ObserveFamilyStart(callee, ctx);
-        for (var i = 0; i < heads.Count; i++)
+        for (var i = 0; i < family.Branches.Length; i++)
         {
-            if (!NeedAcceptsCardinality(heads[i], supply.Count)) continue;
+            if (!NeedAcceptsCardinality(family.Heads![i], supply.Count)) continue;
             ObserveClauseAttempt(i, ctx);
-            var bindings = await BindAcceptedNeedPatterns(heads[i], supply, ctx, asynchronous, family: true).ConfigureAwait(false);
+            var bindings = await BindAcceptedNeedPatterns(family.Heads![i], supply, ctx, asynchronous, family: true).ConfigureAwait(false);
             ObserveClauseOutcome(bindings, ctx);
             // An argument a clause pattern inspects is a SUBORDINATE computation of the call (Q-36).
             if (bindings.IsError) return NestMissingOutput(bindings.Error);
             if (bindings.Value is not { } matched) continue;
             var selected = asynchronous
-                ? await SelectedBranchBodyAsync(callee.Branches[i], ctx).ConfigureAwait(false)
-                : SelectedBranchBody(callee.Branches[i], ctx);
+                ? await SelectedBranchBodyAsync(family.Branches[i], ctx).ConfigureAwait(false)
+                : SelectedBranchBody(family.Branches[i], ctx);
             if (selected.IsError) return selected.Error;
             return EvalResult<NeedFamilyActivation>.Ok(ActivateNeedFamilyBranch(callee, selected.Value, matched, ctx, values));
         }
