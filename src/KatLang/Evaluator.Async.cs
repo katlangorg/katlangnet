@@ -2071,7 +2071,7 @@ public static partial class Evaluator
 
         if (callee is Algorithm.Builtin(var builtinId))
         {
-            var argAlgsR = await ResolveNeedSupply(args, ctx, valEnv, asynchronous: true).ConfigureAwait(false);
+            var argAlgsR = await ResolveNeedSupply(args, ctx, valEnv, asynchronous: true, callee).ConfigureAwait(false);
             if (argAlgsR.IsError) return argAlgsR.Error;
             return NestMissingOutput(await ApplyBuiltinCountedResolvedAsync(builtinId, argAlgsR.Value, ctx, valEnv).ConfigureAwait(false));
         }

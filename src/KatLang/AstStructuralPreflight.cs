@@ -321,8 +321,24 @@ internal static class AstStructuralPreflight
                 ?? throw new InvalidOperationException("The deferred AST changed during structural admission.");
     }
 
-    /// <summary>The program facts the admission walk decides (<see cref="CheckAdmittedProgram"/>).</summary>
-    internal readonly record struct AdmittedProgramFacts(bool MayCaptureCalls, bool MayReachRuntimeAlias, bool HasDeferredModuleRegion);
+    /// <summary>
+    /// The program facts the admission walk decides (<see cref="CheckAdmittedProgram"/>).
+    /// <see cref="HasMetaBinder"/> records which J7 clause fired: a <c>meta</c> capture or clause binder
+    /// (<see cref="IsMetaBinder"/>), as opposed to a loop spelling or a deferred region. A run is
+    /// <see cref="IsLoopOnly"/> when it may capture but holds no META binder and no deferred region: its
+    /// only META binders are then the builtin loops' <c>step</c> parameters (per-site plan retention,
+    /// <see cref="Evaluation.EvaluationBudget.UsesPerSiteInvocationPlans"/>).
+    /// </summary>
+    internal readonly record struct AdmittedProgramFacts(
+        bool MayCaptureCalls, bool MayReachRuntimeAlias, bool HasDeferredModuleRegion, bool HasMetaBinder = false)
+    {
+        /// <summary>The J7 gate fired only through the builtin loops: no user META binder, no deferred region.</summary>
+        internal bool IsLoopOnly => MayCaptureCalls && !HasMetaBinder && !HasDeferredModuleRegion;
+    }
+
+    /// <summary>The user-META clause of <see cref="MayCaptureCalls"/>: a <c>meta</c> capture or clause binder.</summary>
+    internal static bool IsMetaBinder(object node)
+        => node is CaptureParameterPattern { Kind: ParameterKind.Meta } or Pattern.Bind { ParameterKind: ParameterKind.Meta };
 
     /// <summary>
     /// <b>PROGRAM-GATED RUNTIME-ALIAS REACH</b> (FWD-02, META-S3-2). A runtime-target alias is an alias
@@ -360,8 +376,7 @@ internal static class AstStructuralPreflight
     /// </summary>
     internal static bool MayCaptureCalls(object node)
         => node is Algorithm { DeferredRegion: not null }
-                or CaptureParameterPattern { Kind: ParameterKind.Meta }
-                or Pattern.Bind { ParameterKind: ParameterKind.Meta }
+            || IsMetaBinder(node)
             || node is Expr.Resolve resolve && BuiltinRegistry.MetaBuiltinNames.Contains(resolve.Name)
             || node is Expr.DotCall dot && BuiltinRegistry.MetaBuiltinNames.Contains(dot.Name)
             || node is Algorithm.Builtin builtin && BuiltinRegistry.GetBuiltin(builtin.Id).DeclaresMetaParameter;
@@ -379,6 +394,7 @@ internal static class AstStructuralPreflight
         var mayCaptureCalls = false;
         var mayReachRuntimeAlias = false;
         var hasDeferredRegion = false;
+        var hasMetaBinder = false;
         facts = default;
         rootHeight = -1;
         // The hard ceiling is enforced HERE, not only at the configuration surface, so
@@ -434,6 +450,7 @@ internal static class AstStructuralPreflight
             mayCaptureCalls = MayCaptureCalls(root);
             mayReachRuntimeAlias = MayReachRuntimeAlias(root);
             hasDeferredRegion = root is Algorithm { DeferredRegion: not null };
+            hasMetaBinder = IsMetaBinder(root);
         }
 
         while (frameCount > 0)
@@ -515,6 +532,8 @@ internal static class AstStructuralPreflight
                     mayReachRuntimeAlias = MayReachRuntimeAlias(child);
                 if (!hasDeferredRegion)
                     hasDeferredRegion = child is Algorithm { DeferredRegion: not null };
+                if (!hasMetaBinder)
+                    hasMetaBinder = IsMetaBinder(child);
             }
             if (frameCount == frames.Length)
             {
@@ -529,7 +548,7 @@ internal static class AstStructuralPreflight
         }
 
         rootHeight = heights[root];
-        facts = new AdmittedProgramFacts(mayCaptureCalls, mayReachRuntimeAlias, hasDeferredRegion);
+        facts = new AdmittedProgramFacts(mayCaptureCalls, mayReachRuntimeAlias, hasDeferredRegion, hasMetaBinder);
         return null;
     }
 

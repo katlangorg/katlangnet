@@ -1,0 +1,4 @@
+Id(x) = x
+S(x) = Id(Id(Id(x + 1))), x < 1000
+
+S(0).while

@@ -324,7 +324,7 @@ public static partial class Evaluator
                 && TryProjectSharedDeconstructionTarget(helper, target, args, ctx, valEnv) is { } projected)
                 return projected.IsError ? projected.Error : EvalResult<CountedResult>.Ok(new(projected.Value, projected.Value.ValueCount()));
             var occurrences = MetaOccurrenceSlots(callee, args, ctx, out var sources);
-            var supply = FormNeedSupply(args, ctx, valEnv, asynchronous: false, sources).GetAwaiter().GetResult();
+            var supply = FormNeedSupply(args, ctx, valEnv, asynchronous: false, sources, callee).GetAwaiter().GetResult();
             if (supply.IsError) return supply.Error;
             if (supply.Value.Count == 0 && ZeroSupplyPublication(origin, property, ctx) is { } binding)
             {
@@ -349,7 +349,7 @@ public static partial class Evaluator
 
         try
         {
-            var supply = FormNeedSupply(args, ctx, valEnv, asynchronous: false).GetAwaiter().GetResult();
+            var supply = FormNeedSupply(args, ctx, valEnv, asynchronous: false, boundCallee: callee).GetAwaiter().GetResult();
             if (supply.IsError) return supply.Error;
             if (supply.Value.Count == 0 && ZeroSupplyPublication(origin, callee, ctx) is { } binding)
             {
@@ -412,7 +412,7 @@ public static partial class Evaluator
                 && await TryProjectSharedDeconstructionTargetAsync(helper, target, args, ctx, valEnv).ConfigureAwait(false) is { } projected)
                 return projected.IsError ? projected.Error : EvalResult<CountedResult>.Ok(new(projected.Value, projected.Value.ValueCount()));
             var occurrences = MetaOccurrenceSlots(callee, args, ctx, out var sources);
-            var supply = await FormNeedSupply(args, ctx, valEnv, asynchronous: true, sources).ConfigureAwait(false);
+            var supply = await FormNeedSupply(args, ctx, valEnv, asynchronous: true, sources, callee).ConfigureAwait(false);
             if (supply.IsError) return supply.Error;
             if (supply.Value.Count == 0 && ZeroSupplyPublication(origin, property, ctx) is { } binding)
             {
@@ -437,7 +437,7 @@ public static partial class Evaluator
 
         try
         {
-            var supply = await FormNeedSupply(args, ctx, valEnv, asynchronous: true).ConfigureAwait(false);
+            var supply = await FormNeedSupply(args, ctx, valEnv, asynchronous: true, boundCallee: callee).ConfigureAwait(false);
             if (supply.IsError) return supply.Error;
             if (supply.Value.Count == 0 && ZeroSupplyPublication(origin, callee, ctx) is { } binding)
             {

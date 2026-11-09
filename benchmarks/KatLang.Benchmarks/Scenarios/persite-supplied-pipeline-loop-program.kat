@@ -1,0 +1,5 @@
+IsEven = x mod 2 == 0
+Id(x) = x
+Unused(s) = s.while
+
+Id(count(filter(range(1, 20000), IsEven)))

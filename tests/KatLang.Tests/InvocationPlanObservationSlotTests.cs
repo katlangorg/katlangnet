@@ -191,24 +191,27 @@ public partial class InvocationPlanTests
 
     // ── The P1 workloads keep their values on every engine ──────────────────────────────────────────────
 
-    public static TheoryData<string, string, int, int, int> ObservationSlotWorkloads => new()
+    public static TheoryData<string, string, int, int, int, int> ObservationSlotWorkloads => new()
     {
-        // F11/F12: two plannable nested arguments per accepted transition, plus the captured step.
-        { "Id(x) = x\nS(x) = Id(Id(Id(x + 1))), x < 1000\n\nS(0).while", "1000", 2001, 1, 0 },
-        { "Id(x) = x\nS(x) = Id(Id(Id(x + 1))), x < 0\n\nS(0).while", "0", 1, 1, 0 },
-        { "Step(x) = x + 1, x < 3\n\nLoop(meta op) = op.Algorithm(op.Arguments*).while\n\nStep(0).Loop", "3", 2, 1, 0 },
-        { "Inc(x) = x + 1\nInc(0).repeat(1000)", "1000", 1, 1, 0 },
-        { "Inc(x) = x + 1\nInc(0).repeat(0)", "0", 1, 0, 0 },
-        { "Fib(a, b) = b, a + b\nFib(0, 1).repeat(10)", "S[55, 89]", 1, 1, 0 },
-        { "Z = false\nZ().while", "S[]", 1, 0, 1 },
+        // F11/F12: two plannable nested arguments per accepted transition, plus the captured step, under FULL
+        // retention (the last column, a forced-plan process); a loop-only production run plans only the captured
+        // step, because `Id`'s parameter cannot pass its cell on (J7 per-site retention).
+        { "Id(x) = x\nS(x) = Id(Id(Id(x + 1))), x < 1000\n\nS(0).while", "1000", 1, 1, 0, 2001 },
+        { "Id(x) = x\nS(x) = Id(Id(Id(x + 1))), x < 0\n\nS(0).while", "0", 1, 1, 0, 1 },
+        { "Step(x) = x + 1, x < 3\n\nLoop(meta op) = op.Algorithm(op.Arguments*).while\n\nStep(0).Loop", "3", 2, 1, 0, 2 },
+        { "Inc(x) = x + 1\nInc(0).repeat(1000)", "1000", 1, 1, 0, 1 },
+        { "Inc(x) = x + 1\nInc(0).repeat(0)", "0", 1, 0, 0, 1 },
+        { "Fib(a, b) = b, a + b\nFib(0, 1).repeat(10)", "S[55, 89]", 1, 1, 0, 1 },
+        { "Z = false\nZ().while", "S[]", 1, 0, 1, 1 },
     };
 
     [Theory]
     [MemberData(nameof(ObservationSlotWorkloads))]
     public async Task ObservationSlot_LoopWorkloads_KeepValuesAndPlanCounts_OnEveryEngine(
-        string source, string expected, int plans, int optimizedHits, int optimizedFallbacks)
+        string source, string expected, int productionPlans, int optimizedHits, int optimizedFallbacks, int fullRetentionPlans)
     {
         var root = new Expr.AlgorithmExpr(SourceProvenance.ParseValid(source).Root);
+        var plans = ForcedInvocationPlansHook.Forced ? fullRetentionPlans : productionPlans;
         foreach (var optimized in new[] { false, true })
         {
             var observations = new EvaluationObservations();

@@ -1,0 +1,4 @@
+IsEven = x mod 2 == 0
+Id(x) = x
+
+Id(count(filter(range(1, 20000), IsEven)))

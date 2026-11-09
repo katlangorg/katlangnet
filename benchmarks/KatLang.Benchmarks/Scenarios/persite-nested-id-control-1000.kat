@@ -1,0 +1,3 @@
+Id(x) = x
+
+last(map(range(0, 999), {Id(Id(Id(v + 1)))}))

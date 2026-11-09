@@ -33,9 +33,10 @@ public static partial class Evaluator
     private static EvalResult<IReadOnlyList<ResolvedArgumentAlgorithm>> ResolveArgAlgsWithSequenceSpread(
         OutputBundle args,
         EvalCtx ctx,
-        ValEnv valEnv)
+        ValEnv valEnv,
+        Algorithm? boundCallee = null)
     {
-        return ResolveNeedSupply(args, ctx, valEnv, asynchronous: false).GetAwaiter().GetResult();
+        return ResolveNeedSupply(args, ctx, valEnv, asynchronous: false, boundCallee).GetAwaiter().GetResult();
     }
 
     /// <summary>
@@ -424,7 +425,7 @@ public static partial class Evaluator
 
         if (callee is Algorithm.Builtin(var builtinId))
         {
-            var argAlgsR = ResolveArgAlgsWithSequenceSpread(args, ctx, valEnv);
+            var argAlgsR = ResolveArgAlgsWithSequenceSpread(args, ctx, valEnv, callee);
             if (argAlgsR.IsError) return argAlgsR.Error;
             return NestMissingOutput(ApplyBuiltinCountedResolved(builtinId, argAlgsR.Value, ctx, valEnv));
         }

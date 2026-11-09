@@ -238,6 +238,50 @@ internal static class BenchmarkScenarioCatalog
 			resourceName: "KatLang.Benchmarks.Scenarios.dispatch-non-candidate-dot-calls.kat",
 			expectedAtoms: [100000m]));
 
+	private static readonly Lazy<BenchmarkScenario> PerSiteSuppliedPipelineLoopProgramScenario =
+		new(() => Load(
+			id: "persite-supplied-pipeline-loop-program",
+			displayName: "Per-site supplied pipeline in a loop program",
+			description: "S1 workload: Id(count(filter(range(1, 20000), IsEven))) in a program that also spells a loop (Unused(s) = s.while), so the run is loop-only and J7 per-site retention decides whether the supplied pipeline is a plan.",
+			origin: "S1 (task 849017db, 2026-10-17) and J7 per-site retention (2026-11-09).",
+			resourceName: "KatLang.Benchmarks.Scenarios.persite-supplied-pipeline-loop-program.kat",
+			expectedAtoms: [10000m]));
+
+	private static readonly Lazy<BenchmarkScenario> PerSiteSuppliedPipelineControlScenario =
+		new(() => Load(
+			id: "persite-supplied-pipeline-control",
+			displayName: "Per-site supplied pipeline control",
+			description: "Loop-free control of the S1 workload: the same supplied pipeline in a META-free program, which never retains plans.",
+			origin: "S1 (task 849017db, 2026-10-17) and J7 per-site retention (2026-11-09).",
+			resourceName: "KatLang.Benchmarks.Scenarios.persite-supplied-pipeline-control.kat",
+			expectedAtoms: [10000m]));
+
+	private static readonly Lazy<BenchmarkScenario> PerSiteNestedIdLoop1000Scenario =
+		new(() => Load(
+			id: "persite-nested-id-loop-1000",
+			displayName: "Per-site nested Id loop 1000",
+			description: "P1 workload: S(x) = Id(Id(Id(x + 1))), x < 1000 / S(0).while, two supplied calls per transition (2001 plans under full retention, 1 under per-site retention).",
+			origin: "P1 (task 150a158f, 2026-10-20) and J7 per-site retention (2026-11-09).",
+			resourceName: "KatLang.Benchmarks.Scenarios.persite-nested-id-loop-1000.kat",
+			expectedAtoms: [1000m]));
+
+	private static readonly Lazy<BenchmarkScenario> PerSiteNestedIdControl1000Scenario =
+		new(() => Load(
+			id: "persite-nested-id-control-1000",
+			displayName: "Per-site nested Id control 1000",
+			description: "Loop-free control of the P1 workload: the same nested Id calls once per item of a 1000-item map in a META-free program.",
+			origin: "P1 (task 150a158f, 2026-10-20) and J7 per-site retention (2026-11-09).",
+			resourceName: "KatLang.Benchmarks.Scenarios.persite-nested-id-control-1000.kat",
+			expectedAtoms: [1000m]));
+
+	public static BenchmarkScenario PerSiteSuppliedPipelineLoopProgram => PerSiteSuppliedPipelineLoopProgramScenario.Value;
+
+	public static BenchmarkScenario PerSiteSuppliedPipelineControl => PerSiteSuppliedPipelineControlScenario.Value;
+
+	public static BenchmarkScenario PerSiteNestedIdLoop1000 => PerSiteNestedIdLoop1000Scenario.Value;
+
+	public static BenchmarkScenario PerSiteNestedIdControl1000 => PerSiteNestedIdControl1000Scenario.Value;
+
 	public static BenchmarkScenario RepeatedZeroArgPropertyReuse => RepeatedZeroArgPropertyReuseScenario.Value;
 
 	public static BenchmarkScenario ScalarHelperSumCalls => ScalarHelperSumCallsScenario.Value;

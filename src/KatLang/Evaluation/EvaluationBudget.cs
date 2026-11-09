@@ -241,16 +241,28 @@ internal sealed class EvaluationBudget
     /// the test process default) when the budget is created; <c>null</c> for every production run. A seam
     /// forces plan retention (<see cref="RetainsInvocationPlans"/>) and may register internal META receivers.
     /// </summary>
-    internal InvocationPlanTestSeam? PlanTestSeam { get; } = InvocationPlanTestSeam.Current;
+    internal InvocationPlanTestSeam? PlanTestSeam => _invocationPlanState switch
+    {
+        InvocationPlanTestSeam seam => seam,
+        PerSitePlanState state => state.TestSeam,
+        _ => null,
+    };
+
+    // Reuse the original seam slot: production full-retention/META-free runs keep null, seam runs
+    // keep their seam, and loop-only runs keep their analysis. No extra budget fields or allocation
+    // in META-free runs. Direct internal fact queries may wrap a seam without enabling per-site mode.
+    private object? _invocationPlanState = InvocationPlanTestSeam.Current;
 
     /// <summary>
-    /// <b>J7: whether this run retains invocation plans.</b> Every call-shaped supplied cell of a retaining
-    /// run is an invocation plan whose formed supply survives VALUE completion, so a later <c>meta</c>
+    /// <b>J7: whether this run retains invocation plans.</b> In a fully retaining run every call-shaped
+    /// supplied cell is an invocation plan whose formed supply survives VALUE completion, so a later <c>meta</c>
     /// capture can reuse it; a non-retaining run allocates ordinary cells only. The run decides ONCE,
     /// before any supplied cell exists (<see cref="DecideInvocationPlanRetention"/>, from the structural
     /// preflight's walk over the admitted program, <see cref="AstStructuralPreflight.MayCaptureCalls"/>),
     /// and the decision is immutable for the rest of the run: it is run state, never a process-wide
-    /// production flag. A test seam (<see cref="PlanTestSeam"/>) always retains.
+    /// production flag. A test seam (<see cref="PlanTestSeam"/>) always retains. A loop-only retaining run
+    /// plans only the call-shaped cells that can reach a META binder (<see cref="UsesPerSiteInvocationPlans"/>);
+    /// this property's meaning — and everything gated on it, the reference scans included — is unchanged.
     /// </summary>
     internal bool RetainsInvocationPlans => _retainsInvocationPlans;
 
@@ -262,12 +274,79 @@ internal sealed class EvaluationBudget
     /// a test seam keeps retention on whatever the program gate says. Fail-loud on a second decision: a
     /// run never switches plans on or off midway.
     /// </summary>
-    internal void DecideInvocationPlanRetention(bool programMayCapture)
+    internal void DecideInvocationPlanRetention(bool programMayCapture, bool loopOnly = false, object? admittedProgram = null)
     {
         if (_invocationPlanRetentionDecided)
             throw new InvalidOperationException("A run decides invocation-plan retention exactly once, before evaluation.");
         _invocationPlanRetentionDecided = true;
         _retainsInvocationPlans |= programMayCapture;
+        if (programMayCapture && loopOnly && PlanTestSeam is null)
+            _invocationPlanState = new PerSitePlanState(usesPerSite: true, admittedProgram, testSeam: null);
+    }
+
+    /// <summary>
+    /// The admitted program of a per-site run (the root its structural preflight walked), whose
+    /// INHERITED-READ names (<c>Evaluator.InheritedTransportNames</c>) are computed lazily, once. Null in
+    /// every other run, and in a per-site run decided without a program (then no slot is unobserved).
+    /// </summary>
+    internal object? AdmittedProgram => (_invocationPlanState as PerSitePlanState)?.AdmittedProgram;
+
+    /// <summary>The run's once-computed inherited-read names (<c>Evaluator.InheritedTransportNames</c>).</summary>
+    internal Evaluator.TransportNames? InheritedTransportNames
+    {
+        get => (_invocationPlanState as PerSitePlanState)?.InheritedNames;
+        set => PlanAnalysis.InheritedNames = value;
+    }
+
+    /// <summary>
+    /// <b>J7 per-site retention</b> (loop-only runs): whether this retaining run plans only the call-shaped
+    /// supplied cells that can reach a META binder. Decided together with <see cref="RetainsInvocationPlans"/>
+    /// (whose meaning is unchanged: such a run still retains plans and keeps every reference boundary), and
+    /// only for a LOOP-ONLY program (<see cref="AstStructuralPreflight.AdmittedProgramFacts.IsLoopOnly"/>:
+    /// the gate fired through <c>while</c>/<c>repeat</c> alone, with no <c>meta</c> capture or clause binder and
+    /// no deferred module region), so the only META binders the run can reach are the builtin loops'
+    /// <c>step</c> parameters. Supply formation for a RESOLVED callee then gives a call-shaped argument an
+    /// ordinary cell when the callee's slot cannot pass the cell on (<c>Evaluator.IsUnobservedSupplySlot</c>);
+    /// every other cell is still a plan. A test seam (and so <c>KATLANG_FORCE_INVOCATION_PLANS</c>) keeps full
+    /// retention: it is the oracle. Immutable after the decision.
+    /// </summary>
+    internal bool UsesPerSiteInvocationPlans => _invocationPlanState is PerSitePlanState { UsesPerSite: true };
+
+    /// <summary>
+    /// The run's memo of per-node TRANSPORTED NAMES (<c>Evaluator.TransportedNamesOf</c>): for an admitted AST
+    /// node, the parameter names that occur below it in a position that may pass their cell on. A pure function
+    /// of the immutable node, keyed by reference identity, computed lazily and only in a per-site run.
+    /// </summary>
+    internal Dictionary<object, Evaluator.TransportNames> TransportedNames
+        => PlanAnalysis.TransportedNames ??= new(ReferenceEqualityComparer.Instance);
+
+    /// <summary>
+    /// The run's callee-level transported names (<c>Evaluator.CalleeTransportedNames</c>), keyed by a callee's
+    /// shared BODY lists so every per-call wiring of one body shares one entry. Guarded by <see cref="TransportedNames"/>.
+    /// </summary>
+    internal Dictionary<Evaluator.CalleeBodyKey, Evaluator.TransportNames> CalleeTransportedNames
+        => PlanAnalysis.CalleeNames ??= [];
+
+    private PerSitePlanState PlanAnalysis
+    {
+        get
+        {
+            if (_invocationPlanState is PerSitePlanState state)
+                return state;
+            var created = new PerSitePlanState(usesPerSite: false, admittedProgram: null, _invocationPlanState as InvocationPlanTestSeam);
+            _invocationPlanState = created;
+            return created;
+        }
+    }
+
+    private sealed class PerSitePlanState(bool usesPerSite, object? admittedProgram, InvocationPlanTestSeam? testSeam)
+    {
+        internal bool UsesPerSite { get; } = usesPerSite;
+        internal object? AdmittedProgram { get; } = admittedProgram;
+        internal InvocationPlanTestSeam? TestSeam { get; } = testSeam;
+        internal Evaluator.TransportNames? InheritedNames;
+        internal Dictionary<object, Evaluator.TransportNames>? TransportedNames;
+        internal Dictionary<Evaluator.CalleeBodyKey, Evaluator.TransportNames>? CalleeNames;
     }
 
     /// <summary>

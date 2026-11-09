@@ -47,7 +47,7 @@ public static partial class Evaluator
     /// The supplied cell of one written argument slot (Lean <c>supplyNeed</c>): a bound parameter
     /// transports its existing cell; every other expression becomes a suspended cell whose
     /// suspension (<see cref="ExpressionSuspension"/>: the caller context and value environment)
-    /// is kept as data. In a run that retains invocation plans (J7, <see cref="EvaluationBudget.RetainsInvocationPlans"/>),
+    /// is kept as data. In a fully retaining run (J7, <see cref="EvaluationBudget.RetainsInvocationPlans"/>),
     /// a WRITTEN INVOCATION (<see cref="IsPlannableCall"/>, META-S3-4: a call through a name, parameter or
     /// argumentless path, or an argument-bearing dot edge) IS an invocation plan
     /// (<see cref="InvocationPlan"/>): its VALUE executes through the plan's route and one supply
@@ -57,8 +57,11 @@ public static partial class Evaluator
     /// link (<see cref="LinkSuspension"/>, CR-15); a statically selected member stays identity-only.
     /// <paramref name="retained"/> marks a cell an owner establishes once and retains (a link's
     /// receiver, a plan's callee cell), which is retry-stable and therefore exempt from Guard B.
+    /// <paramref name="unobserved"/> (per-site retention, <see cref="EvaluationBudget.UsesPerSiteInvocationPlans"/>)
+    /// marks a slot whose resolved callee cannot pass the cell on (<see cref="IsUnobservedSupplySlot"/>): a
+    /// written invocation there keeps the ordinary suspension, exactly as in a run without plans.
     /// </summary>
-    internal static NeedCell SupplyCell(Expr expression, EvalCtx caller, ValEnv values, bool retained = false)
+    internal static NeedCell SupplyCell(Expr expression, EvalCtx caller, ValEnv values, bool retained = false, bool unobserved = false)
     {
         if (expression is Expr.Param(var name))
         {
@@ -67,7 +70,7 @@ public static partial class Evaluator
         }
         ExpressionSuspension suspension;
         var runtimeProjection = false;
-        if (caller.Budget.RetainsInvocationPlans && IsPlannableCall(expression))
+        if (caller.Budget.RetainsInvocationPlans && !unobserved && IsPlannableCall(expression))
         {
             caller.Observations?.RecordInvocationPlan();
             suspension = new InvocationPlan(caller, values);
@@ -316,9 +319,17 @@ public static partial class Evaluator
 
     // Sync formation has no suspending operation. Both engines execute this one ordered
     // supply algorithm; only the evaluation of an arbitrary spread has an async twin.
+    // `boundCallee` is the RESOLVED, alias-normalized callee whose patterns bind this supply, when the
+    // caller knows it: in a per-site run (EvaluationBudget.UsesPerSiteInvocationPlans) a written
+    // invocation at an effective slot that callee cannot pass on gets an ordinary cell
+    // (IsUnobservedSupplySlot). After an explicit spread the effective slots are unknown, so every later
+    // slot stays conservative. Null (every other caller) keeps full retention.
     private static async ValueTask<EvalResult<IReadOnlyList<NeedCell>>> FormNeedSupply(
-        OutputBundle arguments, EvalCtx caller, ValEnv values, bool asynchronous, List<Expr?>? sources = null)
+        OutputBundle arguments, EvalCtx caller, ValEnv values, bool asynchronous, List<Expr?>? sources = null,
+        Algorithm? boundCallee = null)
     {
+        if (!caller.Budget.UsesPerSiteInvocationPlans)
+            boundCallee = null;
         var supply = new List<NeedCell>(arguments.Count);
         // SEC-01: the supply is transient-bounded (TransientSupply); an overflowed supply forms
         // count-only to its end, then is refused at the slot that overflowed it.
@@ -334,13 +345,17 @@ public static partial class Evaluator
                 var overflowed = bound.Overflowed;
                 if (AdmitTransient(caller.Budget, ref bound, 1, expansion: false))
                 {
-                    supply.Add(SupplyCell(argument, caller, values));
+                    var unobserved = boundCallee is not null && IsPlannableCall(argument)
+                        && IsUnobservedSupplySlot(boundCallee, index, caller.Budget);
+                    supply.Add(SupplyCell(argument, caller, values, unobserved: unobserved));
                     sources?.Add(argument);
                 }
                 if (bound.Overflowed && !overflowed)
                     overflowAt = argument.Span;
                 continue;
             }
+            // A spread's cardinality is known only after formation: later slots are not effective slots.
+            boundCallee = null;
             var formed = await FormSpreadSupplySlot(spread, caller, values, asynchronous, supply, sources, bound).ConfigureAwait(false);
             if (formed.Failure is { } failure)
                 return failure;
@@ -652,10 +667,10 @@ public static partial class Evaluator
     }
 
     private static async ValueTask<EvalResult<IReadOnlyList<ResolvedArgumentAlgorithm>>> ResolveNeedSupply(
-        OutputBundle args, EvalCtx ctx, ValEnv values, bool asynchronous)
+        OutputBundle args, EvalCtx ctx, ValEnv values, bool asynchronous, Algorithm? boundCallee = null)
     {
         var sources = new List<Expr?>(args.Count);
-        var formed = await FormNeedSupply(args, ctx, values, asynchronous, sources).ConfigureAwait(false);
+        var formed = await FormNeedSupply(args, ctx, values, asynchronous, sources, boundCallee).ConfigureAwait(false);
         return formed.IsError ? formed.Error : EvalResult<IReadOnlyList<ResolvedArgumentAlgorithm>>.Ok(ResolvedSupply(formed.Value, sources));
     }
 
@@ -1290,7 +1305,7 @@ public static partial class Evaluator
         Algorithm callee, OutputBundle arguments, EvalCtx ctx, ValEnv values, CallDiagnosticName name)
     {
         var occurrences = MetaOccurrenceSlots(callee, arguments, ctx, out var sources);
-        var supply = FormNeedSupply(arguments, ctx, values, asynchronous: false, sources).GetAwaiter().GetResult();
+        var supply = FormNeedSupply(arguments, ctx, values, asynchronous: false, sources, callee).GetAwaiter().GetResult();
         if (supply.IsError) return supply.Error;
         return EvalNeedUserSupplyCounted(callee, supply.Value, ctx, values, name, variadicArityStyle: true, occurrences);
     }
@@ -1371,7 +1386,7 @@ public static partial class Evaluator
         CallDiagnosticName name, bool asynchronous)
     {
         var occurrences = MetaOccurrenceSlots(callee, arguments, ctx, out var sources);
-        var supply = await FormNeedSupply(arguments, ctx, values, asynchronous, sources).ConfigureAwait(false);
+        var supply = await FormNeedSupply(arguments, ctx, values, asynchronous, sources, callee).ConfigureAwait(false);
         if (supply.IsError) return supply.Error;
         return await EvalNeedUserSupply(callee, supply.Value, ctx, values, name, asynchronous, variadicArityStyle: true, occurrences).ConfigureAwait(false);
     }
@@ -1440,7 +1455,7 @@ public static partial class Evaluator
         Algorithm callee, OutputBundle arguments, EvalCtx ctx, ValEnv values,
         CallDiagnosticName name, bool asynchronous)
     {
-        var supply = await FormNeedSupply(arguments, ctx, values, asynchronous).ConfigureAwait(false);
+        var supply = await FormNeedSupply(arguments, ctx, values, asynchronous, boundCallee: callee).ConfigureAwait(false);
         if (supply.IsError) return supply.Error;
         return await EvalNeedFamilySupply(callee, supply.Value, ctx, values, name, asynchronous).ConfigureAwait(false);
     }
@@ -1451,7 +1466,7 @@ public static partial class Evaluator
     private static EvalResult<CountedResult> EvalNeedFamilyBodyCounted(
         Algorithm callee, OutputBundle arguments, EvalCtx ctx, ValEnv values, CallDiagnosticName name)
     {
-        var supply = FormNeedSupply(arguments, ctx, values, asynchronous: false).GetAwaiter().GetResult();
+        var supply = FormNeedSupply(arguments, ctx, values, asynchronous: false, boundCallee: callee).GetAwaiter().GetResult();
         if (supply.IsError) return supply.Error;
         return EvalNeedFamilySupplyCounted(callee, supply.Value, ctx, values, name);
     }

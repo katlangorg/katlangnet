@@ -22,10 +22,13 @@ public class OrdinaryCallBindingAllocationTests
         bool asynchronous, bool family, IReadOnlyList<Expr?>? occurrences);
 
     private delegate ValueTask<EvalResult<IReadOnlyList<Evaluator.ResolvedArgumentAlgorithm>>> ResolveSupply(
-        OutputBundle args, Evaluator.EvalCtx ctx, IReadOnlyList<(string Name, Result Value)> values, bool asynchronous);
+        OutputBundle args, Evaluator.EvalCtx ctx, IReadOnlyList<(string Name, Result Value)> values, bool asynchronous,
+        Algorithm? boundCallee = null);
 
+    // `boundCallee` (J7 per-site retention) is null here: no per-site run, so formation is unchanged.
     private delegate ValueTask<EvalResult<IReadOnlyList<NeedCell>>> FormSupply(
-        OutputBundle arguments, Evaluator.EvalCtx caller, IReadOnlyList<(string Name, Result Value)> values, bool asynchronous, List<Expr?>? sources);
+        OutputBundle arguments, Evaluator.EvalCtx caller, IReadOnlyList<(string Name, Result Value)> values, bool asynchronous, List<Expr?>? sources,
+        Algorithm? boundCallee = null);
 
     private delegate ValueTask<EvalResult<Evaluator.CountedResult>> CallbackBody(
         Algorithm callee, IReadOnlyList<Evaluator.CountedResult> arguments, Evaluator.EvalCtx ctx,

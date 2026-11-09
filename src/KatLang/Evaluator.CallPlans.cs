@@ -11,8 +11,11 @@ namespace KatLang;
 /// retention and execution run only in a run that RETAINS invocation plans (<see cref="EvaluationBudget.RetainsInvocationPlans"/>):
 /// a run whose admitted program may perform META capture (the J7 program gate,
 /// <see cref="AstStructuralPreflight.MayCaptureCalls"/>), or a test-seam run
-/// (<see cref="InvocationPlanTestSeam"/>). Every other run uses ordinary expression cells. The reference
-/// boundary checks in this file remain active in every run.
+/// (<see cref="InvocationPlanTestSeam"/>). Every other run uses ordinary expression cells. A retaining run whose
+/// gate fired only through the builtin loops retains PER SITE (<see cref="EvaluationBudget.UsesPerSiteInvocationPlans"/>):
+/// only a supplied call its resolved callee can pass on to a loop step is a plan, every other supplied call keeps
+/// the ordinary cell (<see cref="IsUnobservedSupplySlot"/>). The reference boundary checks in this file remain
+/// active in every run.
 ///
 /// <para><b>Representation.</b> Every written argument's cell keeps its suspension as data
 /// (<see cref="ExpressionSuspension"/>: the caller context and value environment; the written expression is
@@ -523,8 +526,10 @@ public static partial class Evaluator
     /// is Ready data: it has no CALLABLE identity, so a further META of it refuses. The run's
     /// continuation is observed first (a cancelled or terminal run captures nothing). A META binder can
     /// only execute in a run that retains plans (the J7 gate decided that before evaluation); reaching
-    /// one in a run that does not is an internal gate defect and fails loudly instead of refusing.
-    /// Lean: <c>NeedPlan.reference</c>.
+    /// one in a run that does not is an internal gate defect and fails loudly instead of refusing. Likewise,
+    /// in a per-site run (<see cref="EvaluationBudget.UsesPerSiteInvocationPlans"/>) a call-shaped cell the
+    /// per-site rule left unplanned is a defect of that rule and fails loudly
+    /// (<see cref="ThrowIfUnplannedCallReachesMeta"/>). Lean: <c>NeedPlan.reference</c>.
     /// </summary>
     internal static EvalResult<NeedCell> ReferenceAdapterCell(NeedCell cell, EvalCtx ctx)
     {
@@ -533,6 +538,7 @@ public static partial class Evaluator
         if (!ctx.Budget.RetainsInvocationPlans)
             throw new InvalidOperationException(
                 "A meta parameter was bound in a run whose program gate disabled invocation plans (J7 false negative).");
+        ThrowIfUnplannedCallReachesMeta(cell, ctx.Budget);
         var reference = ReifyMeta(cell);
         return reference.IsError
             ? reference.Error

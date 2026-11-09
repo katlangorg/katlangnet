@@ -418,3 +418,42 @@ public class SequencePipelineDispatchBenchmarks
 			BenchmarkLoopMode.Generic,
 			SequencePipelineMode);
 }
+
+/// <summary>
+/// J7 per-site plan retention (2026-11-09): the S1 supplied-pipeline workload in a loop-only program and the
+/// P1 nested-Id loop, each beside a loop-free control. A loop-only run plans only the supplied calls that can
+/// reach a loop step, so the S1 pipeline fuses again and the P1 loop forms one plan instead of 2001. Prepared
+/// evaluation with both optimizations enabled (the production configuration); allocated bytes/op is the
+/// secondary metric. Filter: <c>--filter *PerSitePlanRetention*</c>.
+/// </summary>
+[MemoryDiagnoser]
+[SimpleJob(launchCount: 1, warmupCount: 3, iterationCount: 8)]
+[Orderer(SummaryOrderPolicy.FastestToSlowest)]
+[RankColumn]
+public class PerSitePlanRetentionBenchmarks
+{
+	private static readonly BenchmarkScenario SuppliedPipelineLoopProgramScenario = BenchmarkScenarioCatalog.PerSiteSuppliedPipelineLoopProgram;
+	private static readonly BenchmarkScenario SuppliedPipelineControlScenario = BenchmarkScenarioCatalog.PerSiteSuppliedPipelineControl;
+	private static readonly BenchmarkScenario NestedIdLoop1000Scenario = BenchmarkScenarioCatalog.PerSiteNestedIdLoop1000;
+	private static readonly BenchmarkScenario NestedIdControl1000Scenario = BenchmarkScenarioCatalog.PerSiteNestedIdControl1000;
+
+	[Benchmark]
+	public IReadOnlyList<Decimal128> SuppliedPipelineLoopProgram()
+		=> KatLangBenchmarkRunner.RunPrepared(SuppliedPipelineLoopProgramScenario, BenchmarkCacheMode.Stage1,
+			BenchmarkLoopMode.Optimized, BenchmarkSequencePipelineMode.Optimized);
+
+	[Benchmark]
+	public IReadOnlyList<Decimal128> SuppliedPipelineControl()
+		=> KatLangBenchmarkRunner.RunPrepared(SuppliedPipelineControlScenario, BenchmarkCacheMode.Stage1,
+			BenchmarkLoopMode.Optimized, BenchmarkSequencePipelineMode.Optimized);
+
+	[Benchmark]
+	public IReadOnlyList<Decimal128> NestedIdLoop1000()
+		=> KatLangBenchmarkRunner.RunPrepared(NestedIdLoop1000Scenario, BenchmarkCacheMode.Stage1,
+			BenchmarkLoopMode.Optimized, BenchmarkSequencePipelineMode.Optimized);
+
+	[Benchmark]
+	public IReadOnlyList<Decimal128> NestedIdControl1000()
+		=> KatLangBenchmarkRunner.RunPrepared(NestedIdControl1000Scenario, BenchmarkCacheMode.Stage1,
+			BenchmarkLoopMode.Optimized, BenchmarkSequencePipelineMode.Optimized);
+}

@@ -128,7 +128,8 @@ public static partial class Evaluator
             GetDotCallLexicalBuiltinFallbackReason: (stageDotCall, expectedBuiltin) =>
                 GetDotCallLexicalBuiltinFallbackReason(stageDotCall, expectedBuiltin, ctx),
             EvaluateDotReceiverIterationItems: receiver => EvaluateDotReceiverIterationItemsForSequenceOptimizer(receiver, ctx, valEnv),
-            ResolveArgumentAlgorithms: args => ResolveArgAlgsWithSequenceSpread(args, ctx, valEnv),
+            // The resolved callee of these arguments is the recognized `filter` stage (per-site retention).
+            ResolveArgumentAlgorithms: args => ResolveArgAlgsWithSequenceSpread(args, ctx, valEnv, FilterCallee),
             // Recognition resolves CALLEES (`filter` in `count(filter(…))`, `range` in its source),
             // so it reads the ONE callee identity the generic call reads (DOT-09) — through a
             // NON-INITIATING observation (META-S3-0b): an identity that needs a runtime step is
@@ -173,7 +174,7 @@ public static partial class Evaluator
         EvalCtx ctx,
         ValEnv valEnv)
     {
-        var receiverArgsR = ResolveArgAlgsWithSequenceSpread(OutputBundle.TakeOwnership([receiver]), ctx, valEnv);
+        var receiverArgsR = ResolveArgAlgsWithSequenceSpread(OutputBundle.TakeOwnership([receiver]), ctx, valEnv, FilterCallee);
         if (receiverArgsR.IsError)
             return receiverArgsR.Error;
 
@@ -227,7 +228,7 @@ public static partial class Evaluator
         EvalCtx ctx,
         ValEnv valEnv)
     {
-        var argAlgsR = ResolveArgAlgsWithSequenceSpread(args, ctx, valEnv);
+        var argAlgsR = ResolveArgAlgsWithSequenceSpread(args, ctx, valEnv, RangeCallee);
         if (argAlgsR.IsError) return argAlgsR.Error;
 
         return EvalBuiltinRangeArguments(argAlgsR.Value, ctx, valEnv);
