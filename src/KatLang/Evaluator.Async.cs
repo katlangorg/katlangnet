@@ -1042,7 +1042,7 @@ public static partial class Evaluator
         EvalCtx ctx,
         ValEnv valEnv)
     {
-        var frames = new ExpressionSpineFrame[16];
+        var frames = new ExpressionSpineFrame[ExpressionSpineInitialFrameCapacity];
         var frameCount = 0;
         frames[frameCount++] = new ExpressionSpineFrame(root);
 
