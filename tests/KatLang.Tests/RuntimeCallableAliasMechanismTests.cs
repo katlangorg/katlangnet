@@ -39,6 +39,8 @@ public class RuntimeCallableAliasMechanismTests
     [InlineData("Use(f) = {\n    B = A\n    A = f\n    B(9)\n}\nSq(x) = x * x\nUse(Sq)", "Use", "B")]
     // A structure whose one row is a parameter (it keeps its own members).
     [InlineData("Outer(n) = {\n    Lib = { public X = 10\n    n }\n    Lib.X\n}\nOuter(1)", "Outer", "Lib")]
+    // F4 control (B3-5★-R3 a15 without lifting): an argumentless link whose captured call lifts nothing.
+    [InlineData("Capture(meta op) = op\nId(v) = v\nL = Capture(Id(5)).Algorithm\nL(4)", null, "L")]
     public void ARuntimeReferenceRow_OfAnOpenParameterlessBody_IsARuntimeTargetAlias(string source, string? owner, string name)
     {
         var root = SourceProvenance.ParseValid(source).Root;
@@ -55,6 +57,8 @@ public class RuntimeCallableAliasMechanismTests
     [InlineData("Thousand(v) = v * 1000\nV = 5\nA = V.G\nA(Thousand)", null, "A", "G")]
     // Formula lifting runs first: `A = Mk.Algorithm` with `Mk(t)` is lifted to `A(t)`.
     [InlineData("Capture(meta op) = op\nSq(x) = x * x\nMk(t) = Capture(Sq(t))\nA = Mk.Algorithm\nA(9)", null, "A", "t")]
+    // F4 (B3-5★-R3 a15): `H` lifts `x` into the link body, so `L` is the formula `L(x)`, never a runtime alias.
+    [InlineData("Capture(meta op) = op\nId(v) = v\nH = x + 0\nL = Capture(Id(H + 0)).Algorithm\nL(4)", null, "L", "x")]
     public void AnInferredOrLiftedParameter_KeepsTheBodyAFormula(string source, string? owner, string name, string parameters)
     {
         var root = SourceProvenance.ParseValid(source).Root;
