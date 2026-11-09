@@ -1553,6 +1553,7 @@ structural model.
 | `kl-sem2b-case` v1 descriptors and result documents | `Semantic/SemanticDescriptor.cs` |
 | Replay, export, corpus and worker commands | `Semantic/SemanticReplay.cs` |
 | Bounded child-process supervision | `Semantic/SemanticSupervisor.cs` |
+| Per-id case builders, recording/replaying choosers, the reducer, `kl-sem2b-reduction` records (SEM-2C) | `Semantic/SemanticReduction.cs` |
 | Tests | `tests/KatLang.Tests/SemanticTesting/` |
 
 ### Case kinds
@@ -1705,7 +1706,10 @@ parsing is bounded (1 Mi characters, 64 Ki per source, 8 members, 512 list items
 replay reports DRIFT field by field instead of reinterpreting; `--exact-source` runs the recorded
 sources against the recorded expectation and says the recipe was not re-verified. The existing
 metamorphic, UTF-16 and editor seed formats are untouched, and the original structural corpus renders
-byte-identically (pinned by digest).
+byte-identically (pinned by digest). The SEM-2B fixed corpus itself is pinned by digest as well
+(`SemanticReductionTests.FixedCorpus_RendersByteIdentically`, every descriptor minus provenance).
+The id prefix `sem2b/v1/reduced/` is RESERVED for reduced cases (§ Reduction): no recipe builds it,
+recipe mode refuses it with an explicit message, and `--exact-source` replays it like any descriptor.
 
 ### Commands
 
@@ -1728,12 +1732,22 @@ $fuzz = "fuzz/KatLang.ParserFuzz/bin/Debug/net11.0/KatLang.ParserFuzz.exe"
 
 # the checked-in v1 descriptors
 & $fuzz semantic-replay fuzz/KatLang.ParserFuzz/SemanticTestcases
+
+# reduce a failing case (a recipe id or a descriptor), optionally one supervised child per candidate
+& $fuzz semantic-reduce sem2b/v1/seed/5EED2B000003/3 artifacts/sem2c-reduced --max-attempts 200
+& $fuzz semantic-reduce artifacts/sem2b/one.json artifacts/sem2c-reduced --supervised
+& $fuzz semantic-replay --exact-source artifacts/sem2c-reduced   # the reduced descriptor(s)
 ```
 
 Exit codes: 0 — every selected case passed; 1 — a failure (mismatch, drift, front end, harness,
 timeout, crash, malformed output, missing observation, floor violation); 2 — usage, an unreadable
 descriptor, or NOTHING selected (zero cases is never a successful replay or campaign). In the test
-suite the same pipeline runs as `KatLang.Tests.SemanticTesting.*`.
+suite the same pipeline runs as `KatLang.Tests.SemanticTesting.*`. `semantic-reduce` uses 0 — reduced
+artifacts written (reduced, or already minimal within the bounds); 1 — stopped at the first
+generator precondition failure (a throw, missing expectation, or front-end-rejected valid member),
+with the failing choice sequence printed and the best prior artifacts retained; 2 —
+usage, an unreadable or drifted descriptor, an unknown or reduced id; 3 — the case PASSES, nothing to
+reduce (no artifact is written).
 
 ### Supervision
 
@@ -1756,6 +1770,66 @@ hang) launched through `dotnet vstest`. Every dispatched worker retains a `.supe
 sidecar with descriptor/profile identity, exit status, elapsed time and bounded stdout/stderr.
 Supervised replay prints its retained temporary evidence directory.
 
+### Reduction
+
+`SemanticReducer` shrinks a failing generated case to a SMALLER GENERATED case with the same
+failure. It never edits a source: an edited program would have no constructed expectation (which is
+also why the structural shrinker, driven by metamorphic rules over a model, does not apply).
+
+* **Builders.** `SemanticCorpus.TryBuilder(id)` returns the production sequence of one durable id —
+  seeded (`seed/…`), nested-seeded (`seed-nested/…`) and every systematic id — separated from its
+  decision source. `SeededCase`, `NestedSeededCase`, `Systematic()` and `All()` are these builders run
+  with their original choosers, so every id, source, expectation and descriptor is unchanged (pinned
+  by the corpus digest and by recorded-versus-plain generation equality).
+* **Choice sequences.** `RecordingChooser` records `(dimension, count, value)` for every `Pick`
+  (`Chance` is a pick of 100) without changing a decision. `ReplayingChooser` returns recorded values
+  in order, clamped to `count - 1`, and `0` once exhausted. Productions are valid for every choice, so
+  each replay is a generated case whose expectation `Assemble` constructs; a replay that throws is a
+  generator precondition defect. A throw, missing expectation or front-end-rejected valid member
+  stops the search immediately and is reported with its sequence (never skipped silently).
+* **Loop.** Starting from the recorded sequence, repeated to a fixpoint: delete blocks of 8, 4, 2 and 1
+  choices at every offset; lower single values to 0; decrement them. A candidate is regenerated
+  through the SAME builder, then accepted when it is strictly smaller and fails with the same
+  signature. Case size is lexicographic: rendered base source length, root fragments, declarations
+  (the scope graph's count). Simpler choices for the IDENTICAL case may be adopted without running
+  (runs are deterministic), using choice-sequence length then value sum to ensure normalization
+  terminates. Those free moves do not make an unchanged case `Reduced`. A different case must be
+  strictly smaller by case size, and a case already run is never run twice.
+* **Signature.** The verdict plus the FIRST finding's location (member role and profile, declared
+  pair, relation, or path) and facet (which anchor template failed: value, emitted count, host
+  events, error kind, failure stage, outcome, front-end code, `path:<Path>`, or the compared field
+  of a parity/relation). A rejected path keeps its failing profile too. The signature is
+  derived from fixed finding templates and comparison field labels, never their variable values; a
+  candidate with another verdict (a crash instead of a mismatch) or another facet is rejected.
+* **Bounds.** `--max-attempts N` (default 200) bounds candidate EXECUTIONS; the original run is not
+  counted and generation alone is cheap. The record says whether the limit was reached. Same input,
+  same output: no clock, randomness or unordered iteration takes part.
+* **Supervision.** `--supervised` runs the original and every candidate one at a time in a bounded
+  `semantic-worker` child (`--exact-source`, since a candidate is not a recipe case); a timeout or
+  crash is a verdict like any other and must be preserved exactly. Candidate descriptors and worker
+  sidecars are retained in a printed temporary directory.
+
+**Artifacts.** `semantic-reduce` writes two files to OUT. `<id>.json` is an ordinary `kl-sem2b-case`
+v1 descriptor (exact sources, constructed expectation, the reduced run's result) under the reserved
+id `sem2b/v1/reduced/<original local id>/<16 hex of the reduced sequence>` with tier `reduced`
+(seed and index stay the original's, so profile selection is unchanged). The v1 reader's acceptance
+is unchanged — no recipe ever built that prefix — and recipe replay refuses it explicitly rather than
+treating it as a recipe case or as drift. `<id>.reduction.json` is a separately versioned
+`kl-sem2b-reduction` v1 record: generator and recipe version, original and reduced ids, the reduced
+base fingerprint, status, signature, both sizes, attempts and bound, and the ORIGINAL and REDUCED
+choice sequences. `SemanticReduction.TryRebuild` regenerates the reduced case from the record (the
+original and reduced sequences must be the generator's own traces and their sizes must match),
+then checks the reduced source fingerprint. The reader rejects contradictory status, sizes,
+attempt bounds and passing signatures; unknown formats, versions and generators are refused.
+Directory replay skips `*.reduction.json` beside descriptors.
+
+Example (`SemanticReductionTests`, an injected wrong value on `base@sync-optimized` whenever the
+source contains `.Arguments`): `sem2b/v1/seed/5EED2B000001/1` reduces from 306 to 169 source
+characters and from 18 to 8 declarations in 22 executions, keeping signature
+`Mismatch base@sync-optimized value`. Limitation: block deletion of at most 8 choices cannot remove a
+whole fragment whose decisions span more, so a 3-fragment case may stay at 3 fragments while every
+fragment shrinks.
+
 ### Extending it
 
 * **A production** — add a variant to a family in `SemanticGrammar.cs` (or a new family to
@@ -1772,10 +1846,11 @@ Supervised replay prints its retained temporary evidence directory.
 
 ### Remaining work (SEM-2C)
 
-Broader and longer campaigns, automatic reduction of generated failures (the existing structural
-shrinker is driven by the structural rules and is not wired to SEM-2B cases; failures are reduced by
-hand from the descriptor), fault injection beyond the apparatus checks here, and Lean evidence
-beyond the identity-prelude members. Every valid generated case now has a per-case Lean guard on
+Broader and longer campaigns (a bounded `semantic-campaign` that feeds failures to
+`semantic-reduce`), structure-aware reduction moves (fragment-span deletion, which the choice-level
+blocks above cannot always reach), fault injection beyond the apparatus checks here, and Lean evidence
+beyond the identity-prelude members. Automatic reduction of generated failures is implemented
+(§ Reduction). Every valid generated case now has a per-case Lean guard on
 its identity-prelude member (§ Per-case Lean guards); the host-operation base program, host events,
 async and optimizer paths, and the two transformation members still rest on C# profile parity plus
 the independent constructed anchors.

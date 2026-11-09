@@ -12,6 +12,7 @@ namespace KatLang.ParserFuzz;
 /// semantic-replay [--exact-source] [--supervised] DESCRIPTOR...
 /// semantic-corpus [--supervised] [--out DIR] [--only PREFIX] [--deadline-seconds N]
 /// semantic-worker DESCRIPTOR RESULT [--exact-source]     (child process of a supervised run)
+/// semantic-reduce DESCRIPTOR|CASE-ID OUT [--max-attempts N] [--supervised]   (SemanticReduction.RunReduce)
 /// </code>
 ///
 /// <para><b>Modes.</b> The default RECIPE mode rebuilds the case from its generator, recipe version
@@ -38,7 +39,8 @@ internal static class SemanticReplay
         public bool Passed => Problem is null && Verdict == SemanticVerdict.Passed;
     }
 
-    internal static Outcome Replay(string descriptorText, Mode mode)
+    /// <param name="observationFilter">The runner's inert test seam (<see cref="SemanticRunner.Run"/>); production callers never pass it.</param>
+    internal static Outcome Replay(string descriptorText, Mode mode, Func<SemanticProfileRun, SemanticProfileRun>? observationFilter = null)
     {
         if (!SemanticDescriptor.TryParse(descriptorText, out var parsed, out var problem))
             return new Outcome("?", SemanticVerdict.HarnessFailure, "descriptor rejected: " + problem, null, problem);
@@ -46,6 +48,13 @@ internal static class SemanticReplay
         var semanticCase = parsed.Case;
         if (mode == Mode.Recipe)
         {
+            // A reduced case has no recipe: refused explicitly, never reported as a recipe case or as drift.
+            if (SemanticReduction.IsReducedCaseId(semanticCase.CaseId))
+            {
+                var refusal = SemanticReduction.RecipeRefusal(semanticCase.CaseId);
+                return new Outcome(semanticCase.CaseId, SemanticVerdict.HarnessFailure, "[recipe] refused: " + refusal, null, refusal);
+            }
+
             if (!SemanticCorpus.TryReconstruct(semanticCase.CaseId, parsed.RecipeVersion, out var rebuilt, out var reconstructProblem))
                 return new Outcome(semanticCase.CaseId, SemanticVerdict.RecipeDrift, "recipe cannot rebuild the case: " + reconstructProblem, null, null);
             if (Drift(semanticCase, rebuilt) is { } drift)
@@ -53,7 +62,7 @@ internal static class SemanticReplay
             semanticCase = rebuilt;
         }
 
-        var result = SemanticRunner.Run(semanticCase);
+        var result = SemanticRunner.Run(semanticCase, observationFilter);
         var report = new StringBuilder()
             .Append(mode == Mode.Recipe ? "[recipe] " : "[exact-source, recipe not re-verified] ")
             .Append(result.Headline);
@@ -121,7 +130,7 @@ internal static class SemanticReplay
         var mode = args.Contains("--exact-source", StringComparer.Ordinal) ? Mode.ExactSource : Mode.Recipe;
         var supervised = args.Contains("--supervised", StringComparer.Ordinal);
         var paths = args.Skip(1).Where(a => !a.StartsWith("--", StringComparison.Ordinal)).ToList();
-        var files = paths.SelectMany(p => Directory.Exists(p) ? Directory.GetFiles(p, "*.json").Where(f => !f.EndsWith(".result.json", StringComparison.Ordinal)).Order(StringComparer.Ordinal) : (IEnumerable<string>)[p]).ToList();
+        var files = paths.SelectMany(p => Directory.Exists(p) ? Directory.GetFiles(p, "*.json").Where(f => !f.EndsWith(".result.json", StringComparison.Ordinal) && !f.EndsWith(".reduction.json", StringComparison.Ordinal)).Order(StringComparer.Ordinal) : (IEnumerable<string>)[p]).ToList();
         if (files.Count == 0)
         {
             Console.Error.WriteLine("semantic-replay: no descriptors given; nothing was verified.");

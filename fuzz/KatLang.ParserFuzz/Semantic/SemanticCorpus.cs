@@ -72,21 +72,32 @@ internal static class SemanticCorpus
 
     internal static IReadOnlyList<SemanticCase> All() => [.. Systematic(), .. Seeded()];
 
-    internal static IReadOnlyList<SemanticCase> Systematic()
+    internal static IReadOnlyList<SemanticCase> Systematic() => [.. SystematicBuilders().Select(static b => b.Build())];
+
+    /// <summary>
+    /// One builder per systematic case, in corpus order. Each builder owns the chooser its case was
+    /// always built from (<see cref="SemanticChooser.Systematic"/> at a fixed index) and the exact
+    /// production sequence, so <see cref="Systematic"/> is unchanged while a reducer can rebuild ONE
+    /// case from any chooser. Enumerating builders generates nothing.
+    /// </summary>
+    internal static IEnumerable<SemanticCaseBuilder> SystematicBuilders()
     {
-        var cases = new List<SemanticCase>();
         foreach (var family in SemanticGrammar.Families)
         {
             for (var j = 0; j < SystematicSuccessPerFamily; j++)
             {
-                var g = new SemanticGrammar.Gen(SemanticChooser.Systematic(j));
-                cases.Add(Assemble($"sys/{family}/{j}", "systematic", null, j, g, [SemanticGrammar.Build(family, g, failing: false)], null, false));
+                var at = j;
+                var id = $"sys/{family}/{j}";
+                yield return SemanticCaseBuilder.Systematic(id, at, g =>
+                    Assemble(id, "systematic", null, at, g, [SemanticGrammar.Build(family, g, failing: false)], null, false));
             }
 
             for (var j = 0; j < SystematicFailuresPerFamily; j++)
             {
-                var g = new SemanticGrammar.Gen(SemanticChooser.Systematic(j));
-                cases.Add(Assemble($"sys/{family}-fail/{j}", "systematic", null, j, g, [SemanticGrammar.Build(family, g, failing: true)], null, false));
+                var at = j;
+                var id = $"sys/{family}-fail/{j}";
+                yield return SemanticCaseBuilder.Systematic(id, at, g =>
+                    Assemble(id, "systematic", null, at, g, [SemanticGrammar.Build(family, g, failing: true)], null, false));
             }
         }
 
@@ -96,60 +107,78 @@ internal static class SemanticCorpus
             for (var r = 0; r < 2; r++)
             {
                 var family = SemanticGrammar.Families[(context * 2 + r) % SemanticGrammar.Families.Length];
-                var g = new SemanticGrammar.Gen(SemanticChooser.Systematic(context + r));
-                var fragment = SemanticGrammar.Build(family, g, failing: false);
-                SemanticGrammar.ApplyContext(g, fragment, context);
-                cases.Add(Assemble($"sys/context/{SemanticGrammar.Contexts[context]}/{family}", "systematic", null, context, g, [fragment], null, false));
+                var at = context;
+                var id = $"sys/context/{SemanticGrammar.Contexts[context]}/{family}";
+                yield return SemanticCaseBuilder.Systematic(id, context + r, g =>
+                {
+                    var fragment = SemanticGrammar.Build(family, g, failing: false);
+                    SemanticGrammar.ApplyContext(g, fragment, at);
+                    return Assemble(id, "systematic", null, at, g, [fragment], null, false);
+                });
             }
         }
 
         // Each invalid production inside an otherwise valid generated program.
         for (var p = 0; p < SemanticGrammar.InvalidProductions.Length; p++)
         {
-            var g = new SemanticGrammar.Gen(SemanticChooser.Systematic(p));
-            var fragment = SemanticGrammar.Build(SemanticGrammar.Families[p], g, failing: false);
-            cases.Add(Assemble($"sys/invalid/{SemanticGrammar.InvalidProductions[p].Name}", "systematic", null, p, g, [fragment], p, false));
+            var at = p;
+            var id = $"sys/invalid/{SemanticGrammar.InvalidProductions[p].Name}";
+            yield return SemanticCaseBuilder.Systematic(id, at, g =>
+            {
+                var fragment = SemanticGrammar.Build(SemanticGrammar.Families[at], g, failing: false);
+                return Assemble(id, "systematic", null, at, g, [fragment], at, false);
+            });
         }
 
         for (var i = 0; i < SelectedPairs.Length; i++)
         {
             var (a, b, failB) = SelectedPairs[i];
-            var g = new SemanticGrammar.Gen(SemanticChooser.Systematic(i));
-            cases.Add(Assemble($"sys/pair/{a}+{b}{(failB ? "-fail" : "")}", "systematic", null, i, g,
-                [SemanticGrammar.Build(a, g, failing: false), SemanticGrammar.Build(b, g, failing: failB)], null, false));
+            var at = i;
+            var id = $"sys/pair/{a}+{b}{(failB ? "-fail" : "")}";
+            yield return SemanticCaseBuilder.Systematic(id, at, g =>
+                Assemble(id, "systematic", null, at, g,
+                    [SemanticGrammar.Build(a, g, failing: false), SemanticGrammar.Build(b, g, failing: failB)], null, false));
         }
 
         for (var i = 0; i < SelectedTriples.Length; i++)
         {
             var (a, b, c, failC) = SelectedTriples[i];
-            var g = new SemanticGrammar.Gen(SemanticChooser.Systematic(i + 1));
-            var first = SemanticGrammar.Build(a, g, failing: false);
-            SemanticGrammar.ApplyContext(g, first, 1 + (i % 7));
-            cases.Add(Assemble($"sys/triple/{a}+{b}+{c}{(failC ? "-fail" : "")}", "systematic", null, i, g,
-                [first, SemanticGrammar.Build(b, g, failing: false), SemanticGrammar.Build(c, g, failing: failC)], null, false));
+            var at = i;
+            var id = $"sys/triple/{a}+{b}+{c}{(failC ? "-fail" : "")}";
+            yield return SemanticCaseBuilder.Systematic(id, at + 1, g =>
+            {
+                var first = SemanticGrammar.Build(a, g, failing: false);
+                SemanticGrammar.ApplyContext(g, first, 1 + (at % 7));
+                return Assemble(id, "systematic", null, at, g,
+                    [first, SemanticGrammar.Build(b, g, failing: false), SemanticGrammar.Build(c, g, failing: failC)], null, false);
+            });
         }
 
         // Bounded cancellation fixtures: the first suspended wait is cancelled.
         for (var i = 0; i < 2; i++)
         {
-            var g = new SemanticGrammar.Gen(SemanticChooser.Systematic(i));
-            var waits = SemanticGrammar.Build("async", g, failing: false);
-            var after = SemanticGrammar.Build(i == 0 ? "cache" : "meta", g, failing: false);
-            cases.Add(Assemble($"sys/cancel/{i}", "systematic", null, i, g, [waits, after], null, cancellation: true));
+            var at = i;
+            var id = $"sys/cancel/{i}";
+            yield return SemanticCaseBuilder.Systematic(id, at, g =>
+            {
+                var waits = SemanticGrammar.Build("async", g, failing: false);
+                var after = SemanticGrammar.Build(at == 0 ? "cache" : "meta", g, failing: false);
+                return Assemble(id, "systematic", null, at, g, [waits, after], null, cancellation: true);
+            });
         }
 
         // Additional named cases leave every existing recipe/seed unchanged.
         for (var variant = 0; variant < 3; variant++)
         {
-            var g = new SemanticGrammar.Gen(SemanticChooser.Systematic(variant));
-            cases.Add(Assemble($"sys/guard/while-condition-first/{variant}", "systematic", null, variant, g,
-                [SemanticGrammar.WhileGuard(g, variant)], null, false));
-            var nested = new SemanticGrammar.Gen(SemanticChooser.Systematic(variant));
-            cases.Add(Assemble($"sys/guard/nested-pattern/{variant}", "systematic", null, variant, nested,
-                [SemanticGrammar.NestedPattern(nested, outerList: variant == 1, failing: variant == 2)], null, false));
+            var at = variant;
+            var whileId = $"sys/guard/while-condition-first/{variant}";
+            yield return SemanticCaseBuilder.Systematic(whileId, at, g =>
+                Assemble(whileId, "systematic", null, at, g, [SemanticGrammar.WhileGuard(g, at)], null, false));
+            var nestedId = $"sys/guard/nested-pattern/{variant}";
+            yield return SemanticCaseBuilder.Systematic(nestedId, at, nested =>
+                Assemble(nestedId, "systematic", null, at, nested,
+                    [SemanticGrammar.NestedPattern(nested, outerList: at == 1, failing: at == 2)], null, false));
         }
-
-        return cases;
     }
 
     internal static IReadOnlyList<SemanticCase> Seeded()
@@ -169,40 +198,49 @@ internal static class SemanticCorpus
     }
 
     /// <summary>One seeded compositional case, rebuilt from (seed, index) alone.</summary>
-    internal static SemanticCase SeededCase(ulong seed, int index)
-    {
-        var g = new SemanticGrammar.Gen(SemanticChooser.Seeded(seed, index));
-        var count = 1 + g.Pick("compose.count", 3);
-        var failAt = g.Chance("compose.failing", 35) ? g.Pick("compose.failAt", count) : -1;
-        var fragments = new List<SemanticFragment>();
-        var loopUsed = false;
-        for (var i = 0; i < count; i++)
-        {
-            var family = SemanticGrammar.Families[g.Pick("compose.family", SemanticGrammar.Families.Length)];
-            if (family == "loop" && loopUsed) family = "cache"; // loop evidence is per run: one loop fragment
-            var fragment = SemanticGrammar.Build(family, g, failing: i == failAt);
-            loopUsed |= fragment.IsLoop;
-            var depth = g.Pick("compose.depth", 3);
-            for (var d = 0; d < depth; d++)
-                SemanticGrammar.ApplyContext(g, fragment, 1 + g.Pick("compose.context", SemanticGrammar.Contexts.Length - 1));
-            fragments.Add(fragment);
-        }
+    internal static SemanticCase SeededCase(ulong seed, int index) => SeededBuilder(seed, index).Build();
 
-        int? invalid = g.Chance("compose.invalid", 10) ? g.Pick("compose.invalidKind", SemanticGrammar.InvalidProductions.Length) : null;
-        return Assemble(
-            "seed/" + seed.ToString("X", CultureInfo.InvariantCulture) + "/" + index.ToString(CultureInfo.InvariantCulture),
-            "seeded", seed, index, g, fragments, invalid, cancellation: false);
+    internal static SemanticCase NestedSeededCase(ulong seed, int index) => NestedSeededBuilder(seed, index).Build();
+
+    /// <summary>The builder of <c>seed/&lt;hex&gt;/&lt;index&gt;</c>: its own SplitMix64 stream by default, any chooser on request.</summary>
+    internal static SemanticCaseBuilder SeededBuilder(ulong seed, int index)
+    {
+        var localId = "seed/" + seed.ToString("X", CultureInfo.InvariantCulture) + "/" + index.ToString(CultureInfo.InvariantCulture);
+        return new SemanticCaseBuilder(localId, () => SemanticChooser.Seeded(seed, index), g =>
+        {
+            var count = 1 + g.Pick("compose.count", 3);
+            var failAt = g.Chance("compose.failing", 35) ? g.Pick("compose.failAt", count) : -1;
+            var fragments = new List<SemanticFragment>();
+            var loopUsed = false;
+            for (var i = 0; i < count; i++)
+            {
+                var family = SemanticGrammar.Families[g.Pick("compose.family", SemanticGrammar.Families.Length)];
+                if (family == "loop" && loopUsed) family = "cache"; // loop evidence is per run: one loop fragment
+                var fragment = SemanticGrammar.Build(family, g, failing: i == failAt);
+                loopUsed |= fragment.IsLoop;
+                var depth = g.Pick("compose.depth", 3);
+                for (var d = 0; d < depth; d++)
+                    SemanticGrammar.ApplyContext(g, fragment, 1 + g.Pick("compose.context", SemanticGrammar.Contexts.Length - 1));
+                fragments.Add(fragment);
+            }
+
+            int? invalid = g.Chance("compose.invalid", 10) ? g.Pick("compose.invalidKind", SemanticGrammar.InvalidProductions.Length) : null;
+            return Assemble(localId, "seeded", seed, index, g, fragments, invalid, cancellation: false);
+        });
     }
 
-    internal static SemanticCase NestedSeededCase(ulong seed, int index)
+    /// <summary>The builder of <c>seed-nested/&lt;hex&gt;/&lt;index&gt;</c>.</summary>
+    internal static SemanticCaseBuilder NestedSeededBuilder(ulong seed, int index)
     {
-        var g = new SemanticGrammar.Gen(SemanticChooser.Seeded(seed, index));
-        var fragment = SemanticGrammar.NestedPattern(g, g.Pick("nested.outer", 2) == 1, g.Chance("nested.fail", 25));
-        var depth = 1 + g.Pick("nested.depth", 2);
-        for (var d = 0; d < depth; d++)
-            SemanticGrammar.ApplyContext(g, fragment, 1 + g.Pick("nested.context", SemanticGrammar.Contexts.Length - 1));
-        return Assemble("seed-nested/" + seed.ToString("X", CultureInfo.InvariantCulture) + "/" + index.ToString(CultureInfo.InvariantCulture),
-            "seeded", seed, index, g, [fragment], null, false);
+        var localId = "seed-nested/" + seed.ToString("X", CultureInfo.InvariantCulture) + "/" + index.ToString(CultureInfo.InvariantCulture);
+        return new SemanticCaseBuilder(localId, () => SemanticChooser.Seeded(seed, index), g =>
+        {
+            var fragment = SemanticGrammar.NestedPattern(g, g.Pick("nested.outer", 2) == 1, g.Chance("nested.fail", 25));
+            var depth = 1 + g.Pick("nested.depth", 2);
+            for (var d = 0; d < depth; d++)
+                SemanticGrammar.ApplyContext(g, fragment, 1 + g.Pick("nested.context", SemanticGrammar.Contexts.Length - 1));
+            return Assemble(localId, "seeded", seed, index, g, [fragment], null, false);
+        });
     }
 
     /// <summary>
@@ -212,6 +250,19 @@ internal static class SemanticCorpus
     internal static bool TryReconstruct(string caseId, int recipeVersion, out SemanticCase semanticCase, out string problem)
     {
         semanticCase = null!;
+        if (!TryBuilder(caseId, recipeVersion, out var builder, out problem)) return false;
+        semanticCase = builder.Build();
+        return true;
+    }
+
+    /// <summary>
+    /// The builder behind a durable recipe id (seeded, nested-seeded or systematic) under THIS recipe
+    /// version, without generating any case. Reduced ids (<see cref="SemanticReduction.ReducedLocalPrefix"/>)
+    /// are refused: a reduced case is rebuilt from its recorded choice sequence, never from a recipe id.
+    /// </summary>
+    internal static bool TryBuilder(string caseId, int recipeVersion, out SemanticCaseBuilder builder, out string problem)
+    {
+        builder = null!;
         if (recipeVersion != SemanticRecipe.RecipeVersion)
         {
             problem = $"recipe version {recipeVersion.ToString(CultureInfo.InvariantCulture)} is not built by this generator " +
@@ -222,6 +273,12 @@ internal static class SemanticCorpus
         if (!caseId.StartsWith(SemanticRecipe.CasePrefix, StringComparison.Ordinal))
         {
             problem = $"case id '{caseId}' does not carry the '{SemanticRecipe.CasePrefix}' recipe prefix.";
+            return false;
+        }
+
+        if (SemanticReduction.IsReducedCaseId(caseId))
+        {
+            problem = SemanticReduction.RecipeRefusal(caseId);
             return false;
         }
 
@@ -238,19 +295,19 @@ internal static class SemanticCorpus
                 return false;
             }
 
-            semanticCase = parts[0] == "seed-nested" ? NestedSeededCase(seed, index) : SeededCase(seed, index);
+            builder = parts[0] == "seed-nested" ? NestedSeededBuilder(seed, index) : SeededBuilder(seed, index);
             problem = "";
             return true;
         }
 
-        var found = Systematic().FirstOrDefault(c => string.Equals(c.CaseId, caseId, StringComparison.Ordinal));
+        var found = SystematicBuilders().FirstOrDefault(b => string.Equals(b.CaseId, caseId, StringComparison.Ordinal));
         if (found is null)
         {
             problem = $"no systematic case '{caseId}' exists in recipe v{SemanticRecipe.RecipeVersion.ToString(CultureInfo.InvariantCulture)}.";
             return false;
         }
 
-        semanticCase = found;
+        builder = found;
         problem = "";
         return true;
     }
@@ -263,7 +320,7 @@ internal static class SemanticCorpus
     /// is the sequence of row values followed by the root control row; an invalid declaration
     /// stops everything in the front end.
     /// </summary>
-    private static SemanticCase Assemble(
+    private static SemanticBuiltCase Assemble(
         string localId,
         string tier,
         ulong? seed,
@@ -362,9 +419,10 @@ internal static class SemanticCorpus
         }
 
         var caseId = SemanticRecipe.CasePrefix + localId;
-        return new SemanticCase(
+        var semanticCase = new SemanticCase(
             caseId, tier, seed, index, expected, [.. members], families, [.. features], paths, minimumCacheHits,
             Profiles(tier, index ?? 0, expected, invalidProduction is not null, cancellation));
+        return new SemanticBuiltCase(semanticCase, ordered.Count, program.AllDeclarations().Count);
     }
 
     /// <summary>

@@ -62,6 +62,8 @@ internal static class Program
             return SemanticReplay.RunCorpus(args);         // the fixed corpus, optionally supervised
         if (args.Length > 0 && args[0] == "semantic-worker")
             return SemanticReplay.RunWorker(args);         // one supervised child execution
+        if (args.Length > 0 && args[0] == "semantic-reduce")
+            return SemanticReduction.RunReduce(args);      // shrink a failing generated case (SEM-2C)
 
         // Phase-6 UTF-16 lexer/parser/span subcommands.
         if (args.Length > 0 && args[0] == "utf16-replay")
