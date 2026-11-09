@@ -35,7 +35,8 @@ behavior matters, the assumption is a STRUCTURAL contract, never the conclusion:
   abstract callback contract, NOT a property established for the production dispatch:
   dispatch can demand `a` when `a` is suspended. `CallPlanGuards.dispatchIsNotGloballyOblivious`
   pins that counterexample. Ordinary VALUE starts with `a` evaluating, a narrower invariant
-  not expressed by this global contract; production conservativity remains executable evidence.
+  not expressed by this global contract; production conservativity remains executable evidence
+  (open: `docs/design/formal-correspondence-ledger.md` row E-18).
 
 Not claimed (here; R7 adds the production bridge in `EvaluatorCore.lean` and discharges
 `ProductionDiscipline` in `EvaluatorDiscipline.lean`): kernel refinement of the `partial` evaluator (`evalCounted`, `demandNeedRecursive`,
