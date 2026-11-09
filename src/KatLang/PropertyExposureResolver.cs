@@ -195,30 +195,57 @@ internal static class PropertyExposureResolver
         CompletedStructureContext? structuralContext = null,
         CancellationToken cancellationToken = default)
     {
-        var run = new ExposureRun(observations) { Modules = modules ?? new() };
+        var run = new ExposureRun(observations, cancellationToken) { Modules = modules ?? new() };
         run.SharedBodies = SharedBodyCensus.Of(root, cancellationToken);
-        root = ProcessAlgorithm(root, parent, new PropertyDependencyGraphBuilder.SummaryMemo(observations) { SharedBodies = run.SharedBodies },
+        root = ProcessAlgorithm(root, parent,
+            new PropertyDependencyGraphBuilder.SummaryMemo(observations) { SharedBodies = run.SharedBodies, CancellationToken = cancellationToken },
             observations, run, structuralContext);
+        CompletedStaticStructures? sealedHere = null;
         if (root.CompletedStructure is { Entry: { } entry } completed && !completed.Facts.IsSealed
             && (structuralContext is null || ReferenceEquals(structuralContext.Facts, completed.Facts)))
         {
             observations?.StageObserver?.Invoke("retarget-and-seal", true);
             completed.Facts.RetargetTree(entry, root, cancellationToken);
             completed.Facts.Seal(cancellationToken);
+            sealedHere = completed.Facts;
             observations?.StageObserver?.Invoke("retarget-and-seal", false);
         }
         if (run.HasDotMemberOrigins)
-            new DotMemberProvenanceFinalizer(parent.PropertyScope) { TraversalObservations = observations, SharedBodies = SharedBodyCensus.Of(root, cancellationToken) }.VisitAlgorithm(root);
+        {
+            try
+            {
+                new DotMemberProvenanceFinalizer(parent.PropertyScope)
+                {
+                    TraversalObservations = observations, SharedBodies = SharedBodyCensus.Of(root, cancellationToken),
+                    CancellationToken = cancellationToken,
+                }.VisitAlgorithm(root);
+            }
+            catch
+            {
+                // This call has not completed exposure yet. Its own sealed facts must not survive a
+                // cancellation/failure of the last walk; a previously completed foreign table is independent.
+                sealedHere?.RejectIncompleteExposure();
+                throw;
+            }
+        }
         return root;
     }
 
     private sealed class ExposureRun
     {
-        public ExposureRun(FrontEndTraversalObservations? observations)
+        public ExposureRun(FrontEndTraversalObservations? observations, CancellationToken cancellationToken)
         {
             Requirements = new RequirementSetInterner(observations);
             Outputs = new RequiredAncestorOutputs(Requirements, observations);
+            CancellationToken = cancellationToken;
         }
+
+        /// <summary>
+        /// The source-processing token of this resolution (the materialization's linked token in a deferred
+        /// compile), observed at the start of each algorithm level, level-equation evaluation and settlement
+        /// frame (see <see cref="FrontEndTraversalObservations.ObserveCancellation"/>).
+        /// </summary>
+        public readonly CancellationToken CancellationToken;
 
         public bool HasDotMemberOrigins;
 
@@ -447,6 +474,7 @@ internal static class PropertyExposureResolver
             return algorithm;
 
         observations?.RecordExposureAlgorithmExpansion();
+        FrontEndTraversalObservations.ObserveCancellation(observations, FrontEndCancellationCheckpoint.ExposureAlgorithm, run.CancellationToken);
 
         // The summary channel is the ONLY builder data this pass consumes: what ancestors own
         // is not an input to it (a captured parameter is reported by name regardless), so no
@@ -474,7 +502,9 @@ internal static class PropertyExposureResolver
         // children with the final summaries (FE-4a: dependency-driven, over canonical sets).
         var finalLevel = new SummaryScope(parent, levelScope, summaries, parameterNames, algorithm);
         if (algorithm.Properties.Count > 0)
-            new LevelSolver(summaryGraph, finalLevel, summaries, new PendingResolution(walkMemos, run.Requirements, finalLevel), run.Requirements, observations)
+            new LevelSolver(summaryGraph, finalLevel, summaries,
+                    new PendingResolution(walkMemos, run.Requirements, finalLevel, run.CancellationToken), run.Requirements, observations,
+                    run.CancellationToken)
                 .Solve();
 
         // Properties and output share one lexical scope and summary context. Inline
@@ -650,7 +680,8 @@ internal static class PropertyExposureResolver
         Dictionary<string, RequirementSet> summaries,
         PendingResolution resolution,
         RequirementSetInterner sets,
-        FrontEndTraversalObservations? observations)
+        FrontEndTraversalObservations? observations,
+        CancellationToken cancellationToken)
     {
         private readonly RequirementSet?[] _constants = new RequirementSet?[graph.Count];
         private Dictionary<string, Settlement>? _visibleSettlements;
@@ -694,6 +725,8 @@ internal static class PropertyExposureResolver
             {
                 queued[index] = false;
                 observations?.RecordRequiredAncestorLevelEvaluation();
+                FrontEndTraversalObservations.ObserveCancellation(
+                    observations, FrontEndCancellationCheckpoint.ExposureLevelEvaluation, cancellationToken);
                 reads.Clear();
                 var next = Evaluate(index, reads);
                 foreach (var readName in reads)
@@ -812,7 +845,8 @@ internal static class PropertyExposureResolver
     private sealed class PendingResolution(
         PropertyDependencyGraphBuilder.SummaryWalkMemos memos,
         RequirementSetInterner sets,
-        SummaryScope levelInProgress)
+        SummaryScope levelInProgress,
+        CancellationToken cancellationToken)
     {
         private readonly record struct SettlementKey(string Key, SummaryScope Level, SummaryScope Site, string Bound);
         private readonly record struct AnchoredSeed(PropertyDependencyGraphBuilder.SummarySeed Seed, SummaryScope Level);
@@ -880,10 +914,16 @@ internal static class PropertyExposureResolver
             frames.Push(root);
             try
             {
+                // One cancellation checkpoint per frame pushed, before its body first runs (2.06): a
+                // cancelled settlement unwinds through the finally below like any other exception.
+                ObserveCancellation();
                 while (frames.TryPeek(out var frame))
                 {
                     if (frame.Body.MoveNext())
+                    {
                         frames.Push(frame.Body.Current);
+                        ObserveCancellation();
+                    }
                     else
                     {
                         frames.Pop();
@@ -904,6 +944,10 @@ internal static class PropertyExposureResolver
 
             return root.Result;
         }
+
+        private void ObserveCancellation()
+            => FrontEndTraversalObservations.ObserveCancellation(
+                memos.Observations, FrontEndCancellationCheckpoint.ExposureSettlementFrame, cancellationToken);
 
         private Frame ReferenceFrame(PendingReference pending, SummaryScope level, SummaryScope? site, IReadOnlySet<Algorithm>? boundOwners)
         {

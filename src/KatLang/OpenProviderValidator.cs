@@ -49,13 +49,15 @@ internal sealed class OpenProviderValidator : AstWalker
         ElaboratedPropertyScope parentScope,
         SourceSpan? importSite,
         FrontEndTraversalObservations? observations,
-        OpenPresence? presence = null)
+        OpenPresence? presence = null,
+        CancellationToken cancellationToken = default)
     {
         _diagnostics = diagnostics;
         _scope = parentScope;
         _importSite = importSite;
-        _openPresence = presence ?? new() { TraversalObservations = observations };
+        _openPresence = presence ?? new() { TraversalObservations = observations, CancellationToken = cancellationToken };
         TraversalObservations = observations;
+        CancellationToken = cancellationToken;
     }
 
     protected override bool VisitsExplicitParameterDeclarations => false;
@@ -72,13 +74,14 @@ internal sealed class OpenProviderValidator : AstWalker
         Algorithm root,
         DiagnosticBag diagnostics,
         HostOperations? hostOperations,
-        FrontEndTraversalObservations? observations = null)
+        FrontEndTraversalObservations? observations = null,
+        CancellationToken cancellationToken = default)
     {
         // No structural question exists when the DAG contains no opens. Preserve the existing
         // distinct-node presence gate before admitting any contextual lookup graph.
-        var presence = new OpenPresence { TraversalObservations = observations };
+        var presence = new OpenPresence { TraversalObservations = observations, CancellationToken = cancellationToken };
         if (!presence.Contains(root)) return;
-        var context = AnalyzedStaticStructures.ForBoundAst(root, hostOperations);
+        var context = AnalyzedStaticStructures.ForBoundAst(root, hostOperations, cancellationToken: cancellationToken);
         var completed = context.Facts;
         var prelude = completed?.Prelude ?? hostOperations?.SemanticPreludeAlgorithm ?? BuiltinRegistry.SharedSemanticPreludeAlgorithm;
         // The syntax-only presence memo is independent of lookup context. Reuse the scan above
@@ -88,7 +91,7 @@ internal sealed class OpenProviderValidator : AstWalker
             ElaboratedScopeLookup.CreateScope(prelude, memberIndexes: new OpenMemberIndexCache(observations),
                 completedContext: completed?.Context(completed.PreludeKey)),
             importSite: null,
-            observations, presence) { _sharedBodies = SharedBodyCensus.Of(root) }.VisitAlgorithm(root);
+            observations, presence, cancellationToken) { _sharedBodies = SharedBodyCensus.Of(root, cancellationToken) }.VisitAlgorithm(root);
     }
 
     /// <summary>
@@ -100,8 +103,9 @@ internal sealed class OpenProviderValidator : AstWalker
         DiagnosticBag diagnostics,
         ElaboratedPropertyScope parentScope,
         SourceSpan? importSite = null,
-        FrontEndTraversalObservations? observations = null)
-        => new OpenProviderValidator(diagnostics, parentScope, importSite, observations).VisitAlgorithm(root);
+        FrontEndTraversalObservations? observations = null,
+        CancellationToken cancellationToken = default)
+        => new OpenProviderValidator(diagnostics, parentScope, importSite, observations, cancellationToken: cancellationToken).VisitAlgorithm(root);
 
     public override void VisitAlgorithm(Algorithm algorithm)
     {

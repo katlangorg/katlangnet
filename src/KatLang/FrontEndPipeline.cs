@@ -16,7 +16,8 @@ internal static class FrontEndPipeline
             return rejected;
 
         return ProcessWithoutModuleElaboration(
-            ElaborationInput.Parse(source, budget.CreateDiagnosticBag()), hostOperations: null, budget.Limits, CancellationToken.None);
+            ElaborationInput.Parse(source, budget.CreateDiagnosticBag()), hostOperations: null, budget.Limits, traversalObservations: null,
+            CancellationToken.None);
     }
 
     /// <summary>
@@ -40,7 +41,8 @@ internal static class FrontEndPipeline
     /// <see cref="Process(string, RunOptions?)"/> with a passive clause-family duplicate-detection
     /// observer (null in production; see <see cref="PatternComparisonObservations"/>). Test entry.
     /// </summary>
-    internal static FrontEndResult Process(string source, RunOptions? options, PatternComparisonObservations? comparisonObservations)
+    internal static FrontEndResult Process(string source, RunOptions? options, PatternComparisonObservations? comparisonObservations,
+        FrontEndTraversalObservations? traversalObservations = null)
     {
         // Validation only: no loader exists on the synchronous path, but a nonsensical
         // allow-list fails loudly at every options boundary, not just the loading one.
@@ -60,7 +62,7 @@ internal static class FrontEndPipeline
         var input = ElaborationInput.Parse(source, budget.CreateDiagnosticBag(), comparisonObservations, cancellationToken);
         cancellationToken.ThrowIfCancellationRequested();
 
-        return ProcessWithoutModuleElaboration(input, options?.HostOperations, budget.Limits, cancellationToken);
+        return ProcessWithoutModuleElaboration(input, options?.HostOperations, budget.Limits, traversalObservations, cancellationToken);
     }
 
     /// <summary>
@@ -83,7 +85,8 @@ internal static class FrontEndPipeline
     internal static async ValueTask<FrontEndResult> ProcessAsync(
         string source,
         RunOptions? options,
-        PatternComparisonObservations? comparisonObservations)
+        PatternComparisonObservations? comparisonObservations,
+        FrontEndTraversalObservations? traversalObservations = null)
     {
         // MIRROR OF Process(string, RunOptions?) — keep in lock-step; only module
         // elaboration is awaited.
@@ -110,9 +113,10 @@ internal static class FrontEndPipeline
                 budget,
                 options.HostOperations,
                 comparisonObservations,
+                traversalObservations,
                 cancellationToken).ConfigureAwait(false);
 
-        return ProcessWithoutModuleElaboration(input, options?.HostOperations, budget.Limits, cancellationToken);
+        return ProcessWithoutModuleElaboration(input, options?.HostOperations, budget.Limits, traversalObservations, cancellationToken);
     }
 
     /// <summary>
@@ -214,6 +218,7 @@ internal static class FrontEndPipeline
         ElaborationInput input,
         HostOperations? hostOperations,
         SourceProcessingLimits sourceProcessingLimits,
+        FrontEndTraversalObservations? traversalObservations,
         CancellationToken cancellationToken)
     {
         var modulesUnavailable = ReportUnavailableLoads(input);
@@ -223,6 +228,7 @@ internal static class FrontEndPipeline
             hostOperations: hostOperations,
             provisional: modulesUnavailable,
             sourceProcessingLimits: sourceProcessingLimits,
+            traversalObservations: traversalObservations,
             cancellationToken: cancellationToken);
     }
 
@@ -236,6 +242,7 @@ internal static class FrontEndPipeline
         SourceProcessingBudget budget,
         HostOperations? hostOperations,
         PatternComparisonObservations? comparisonObservations,
+        FrontEndTraversalObservations? traversalObservations,
         CancellationToken cancellationToken)
     {
         var loader = new ModuleLoader(
@@ -246,6 +253,7 @@ internal static class FrontEndPipeline
             cancellationToken)
         {
             ComparisonObservations = comparisonObservations,
+            TraversalObservations = traversalObservations,
         };
         input.Put(await loader.ElaborateAsync(input.Take()).ConfigureAwait(false));
         cancellationToken.ThrowIfCancellationRequested();
@@ -262,6 +270,7 @@ internal static class FrontEndPipeline
             provisional: modulesMissing,
             modules: loader.ModuleUnits.BeginOperation(),
             sourceProcessingLimits: budget.Limits,
+            traversalObservations: traversalObservations,
             cancellationToken: cancellationToken);
     }
 
@@ -337,6 +346,7 @@ internal static class FrontEndPipeline
         bool provisional = false,
         ModuleUnits? modules = null,
         SourceProcessingLimits? sourceProcessingLimits = null,
+        FrontEndTraversalObservations? traversalObservations = null,
         CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
@@ -368,11 +378,11 @@ internal static class FrontEndPipeline
         try
         {
             if (CompleteBeforeExposure(input, passDiagnostics, hostOperations, modules, hasDeferredModuleRegions,
-                    sourceProcessingLimits, out var deferredOperation, cancellationToken) is { } refused)
+                    sourceProcessingLimits, traversalObservations, out var deferredOperation, cancellationToken) is { } refused)
                 return refused;
 
             cancellationToken.ThrowIfCancellationRequested();
-            ResolveExposure(input, hostOperations, modules, cancellationToken);
+            ResolveExposure(input, hostOperations, modules, traversalObservations, cancellationToken);
             cancellationToken.ThrowIfCancellationRequested();
 
             // The program's later operations (deferred materializations) receive these module units —
@@ -403,12 +413,21 @@ internal static class FrontEndPipeline
         return new FrontEndResult(ElaboratedUserRoot(input.Take()), diagnostics, hasDeferredModuleRegions);
     }
 
+    /// <summary><see cref="CompleteBeforeExposure(ElaborationInput, DiagnosticBag, HostOperations?, ModuleUnits, bool, SourceProcessingLimits?, FrontEndTraversalObservations?, out StaticStructureOperation?, CancellationToken)"/> unobserved.</summary>
+    internal static FrontEndResult? CompleteBeforeExposure(
+        ElaborationInput input, DiagnosticBag passDiagnostics, HostOperations? hostOperations, ModuleUnits modules,
+        bool hasDeferredModuleRegions, SourceProcessingLimits? sourceProcessingLimits,
+        out StaticStructureOperation? deferredOperation, CancellationToken cancellationToken)
+        => CompleteBeforeExposure(input, passDiagnostics, hostOperations, modules, hasDeferredModuleRegions, sourceProcessingLimits,
+            observations: null, out deferredOperation, cancellationToken);
+
     // End the producer's frame before exposure. Clearing the operation local alone leaves the
     // admission call's return buffer (and its argument spills) live in Tier 0.
     [MethodImpl(MethodImplOptions.NoInlining)]
     internal static FrontEndResult? CompleteBeforeExposure(
         ElaborationInput input, DiagnosticBag passDiagnostics, HostOperations? hostOperations, ModuleUnits modules,
         bool hasDeferredModuleRegions, SourceProcessingLimits? sourceProcessingLimits,
+        FrontEndTraversalObservations? observations,
         out StaticStructureOperation? deferredOperation, CancellationToken cancellationToken)
     {
         deferredOperation = null;
@@ -428,7 +447,7 @@ internal static class FrontEndPipeline
         // Every loaded module is ONE unit of the program (Q-31 H-P + Q-32 I-U): each pass elaborates
         // it once, rooted at the prelude, wherever it is spliced (see ModuleUnitRegistry).
         var operation = StaticStructureAdmission.Create(input.Current, hostOperations, sourceProcessingLimits, cancellationToken: cancellationToken).Operation;
-        DetectParameters(input, hostOperations, passDiagnostics, modules, operation);
+        DetectParameters(input, hostOperations, passDiagnostics, modules, operation, observations);
         if (passDiagnostics.HasReported(DiagnosticCode.SelfDependentInferredParameters))
             return RecoverAfterSelfDependentInference(input, input.Diagnostics, passDiagnostics, operation, hasDeferredModuleRegions, cancellationToken);
 
@@ -440,7 +459,7 @@ internal static class FrontEndPipeline
         // by any call of that algorithm, so it is a static well-formedness failure of the
         // closed interface — the same rule parameter detection applies to a directly written
         // undeclared identifier, one indirection further out.
-        ResolveImplicitArguments(input, passDiagnostics, hostOperations, modules, operation);
+        ResolveImplicitArguments(input, passDiagnostics, hostOperations, modules, operation, observations);
         // B3-5★: a refused signature selection (a recursive inference that does not settle, or an .Algorithm classification
         // without one grounded consistent reading) is the same family as A1, with the same recovery: the resolver
         // returned the detected tree unrewritten and unpublished.
@@ -453,7 +472,7 @@ internal static class FrontEndPipeline
         // this front end's error, never the evaluator's (X-07; a written list was reported at
         // parse time). They read completed structure, whose projections below served regions
         // (B3-5★) the static ledger charges, so its refusal is theirs as well.
-        ValidateCompletedSignatures(input, passDiagnostics, hostOperations, operation);
+        ValidateCompletedSignatures(input, passDiagnostics, hostOperations, operation, observations, cancellationToken);
         if (hasDeferredModuleRegions) deferredOperation = operation;
         return null;
     }
@@ -483,34 +502,43 @@ internal static class FrontEndPipeline
     }
 
     private static void DetectParameters(
-        ElaborationInput input, HostOperations? hostOperations, DiagnosticBag passDiagnostics, ModuleUnits modules, StaticStructureOperation? operation)
+        ElaborationInput input, HostOperations? hostOperations, DiagnosticBag passDiagnostics, ModuleUnits modules, StaticStructureOperation? operation,
+        FrontEndTraversalObservations? observations)
     {
         var (parameterizedRoot, _) = ParameterDetector.DetectPrevalidated(
-            input.Take(), hostOperations, diagnostics: passDiagnostics, modules: modules, structuralOperation: operation);
+            input.Take(), hostOperations, observations, passDiagnostics, modules, operation);
         input.Put(parameterizedRoot);
     }
 
     private static void ResolveImplicitArguments(
-        ElaborationInput input, DiagnosticBag passDiagnostics, HostOperations? hostOperations, ModuleUnits modules, StaticStructureOperation? operation)
+        ElaborationInput input, DiagnosticBag passDiagnostics, HostOperations? hostOperations, ModuleUnits modules, StaticStructureOperation? operation,
+        FrontEndTraversalObservations? observations)
         => input.Put(ImplicitArgumentResolver.ResolvePrevalidated(
-            input.Take(), observations: null, passDiagnostics, hostOperations, modules, operation));
+            input.Take(), observations, passDiagnostics, hostOperations, modules, operation));
 
     // One frame per validator as well, so one validator's memo is gone before the next runs.
+    // Each validator observes the source-processing token once per algorithm it expands (2.06).
     private static void ValidateCompletedSignatures(
-        ElaborationInput input, DiagnosticBag passDiagnostics, HostOperations? hostOperations, StaticStructureOperation? operation)
+        ElaborationInput input, DiagnosticBag passDiagnostics, HostOperations? hostOperations, StaticStructureOperation? operation,
+        FrontEndTraversalObservations? observations, CancellationToken cancellationToken)
     {
-        ValidateParameterPropertyCollisions(input, passDiagnostics);
+        ValidateParameterPropertyCollisions(input, passDiagnostics, observations, cancellationToken);
         // Passes rewrite the open lists they were given and never introduce one, so an admitted graph with no open has no
         // provider question, and the presence walk over every node of the final tree would only repeat that answer.
         if (operation is not { AdmittedWithoutOpens: true })
-            ValidateOpenProviders(input, passDiagnostics, hostOperations);
-        ValidateInferredParameterOutputs(input, passDiagnostics);
+            ValidateOpenProviders(input, passDiagnostics, hostOperations, observations, cancellationToken);
+        ValidateInferredParameterOutputs(input, passDiagnostics, observations, cancellationToken);
     }
 
-    private static void ValidateParameterPropertyCollisions(ElaborationInput input, DiagnosticBag passDiagnostics)
+    private static void ValidateParameterPropertyCollisions(ElaborationInput input, DiagnosticBag passDiagnostics,
+        FrontEndTraversalObservations? observations, CancellationToken cancellationToken)
     {
         var root = input.Current;
-        new ParameterPropertyCollisionValidator(passDiagnostics, programRoot: root).VisitAlgorithm(root);
+        new ParameterPropertyCollisionValidator(passDiagnostics, programRoot: root)
+        {
+            TraversalObservations = observations,
+            CancellationToken = cancellationToken,
+        }.VisitAlgorithm(root);
     }
 
     /// <summary>
@@ -537,14 +565,17 @@ internal static class FrontEndPipeline
             root, passDiagnostics, enclosingParameters: null, programRoot: root, importSite: null);
     }
 
-    private static void ValidateOpenProviders(ElaborationInput input, DiagnosticBag passDiagnostics, HostOperations? hostOperations)
-        => OpenProviderValidator.Validate(input.Current, passDiagnostics, hostOperations);
+    private static void ValidateOpenProviders(ElaborationInput input, DiagnosticBag passDiagnostics, HostOperations? hostOperations,
+        FrontEndTraversalObservations? observations, CancellationToken cancellationToken)
+        => OpenProviderValidator.Validate(input.Current, passDiagnostics, hostOperations, observations, cancellationToken);
 
-    private static void ValidateInferredParameterOutputs(ElaborationInput input, DiagnosticBag passDiagnostics)
-        => InferredParameterOutputValidator.ValidateProgram(input.Current, passDiagnostics);
+    private static void ValidateInferredParameterOutputs(ElaborationInput input, DiagnosticBag passDiagnostics,
+        FrontEndTraversalObservations? observations, CancellationToken cancellationToken)
+        => InferredParameterOutputValidator.ValidateProgram(input.Current, passDiagnostics, observations, cancellationToken);
 
-    private static void ResolveExposure(ElaborationInput input, HostOperations? hostOperations, ModuleUnits modules, CancellationToken cancellationToken)
-        => input.Put(PropertyExposureResolver.Resolve(input.Take(), observations: null, hostOperations, modules, cancellationToken));
+    private static void ResolveExposure(ElaborationInput input, HostOperations? hostOperations, ModuleUnits modules,
+        FrontEndTraversalObservations? observations, CancellationToken cancellationToken)
+        => input.Put(PropertyExposureResolver.Resolve(input.Take(), observations, hostOperations, modules, cancellationToken));
 
     /// <summary>
     /// The tree and diagnostic list of ONE elaboration, handed from pass to pass (see the pass

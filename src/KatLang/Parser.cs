@@ -844,6 +844,26 @@ public sealed class Parser
         return (await FrontEndPipeline.ProcessAsync(source, options).ConfigureAwait(false)).ToParseResult(options?.HostOperations);
     }
 
+    /// <summary>
+    /// <see cref="Parse(string, RunOptions?)"/> with a passive traversal observer threaded through every
+    /// elaboration pass (test entry: its cancellation-checkpoint hook places a source-processing
+    /// cancellation inside a pass; see <see cref="FrontEndTraversalObservations.CheckpointReached"/>).
+    /// </summary>
+    internal static ParseResult ParseObserved(string source, RunOptions? options, FrontEndTraversalObservations traversalObservations)
+    {
+        ArgumentNullException.ThrowIfNull(source);
+        return FrontEndPipeline.Process(source, options, comparisonObservations: null, traversalObservations)
+            .ToParseResult(options?.HostOperations);
+    }
+
+    /// <summary>The <see cref="ParseAsync"/> twin of <see cref="ParseObserved"/> (test entry).</summary>
+    internal static async Task<ParseResult> ParseObservedAsync(string source, RunOptions? options, FrontEndTraversalObservations traversalObservations)
+    {
+        ArgumentNullException.ThrowIfNull(source);
+        return (await FrontEndPipeline.ProcessAsync(source, options, comparisonObservations: null, traversalObservations)
+            .ConfigureAwait(false)).ToParseResult(options?.HostOperations);
+    }
+
     // ── Token access helpers ────────────────────────────────────────────────
 
     // Two kinds of token stay in the stream for consumers such as colorizers but are

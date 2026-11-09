@@ -935,6 +935,87 @@ internal sealed class FrontEndTraversalObservations
 
     internal void RecordLookupRootDiscoveryWalk()
         => LookupRootDiscoveryWalks = checked(LookupRootDiscoveryWalks + 1);
+
+    /// <summary>
+    /// Source-processing cancellation checkpoints the elaboration passes reached (2.06): one per bounded
+    /// block of pass work, recorded BEFORE the token is read (see <see cref="ObserveCancellation"/>), so a
+    /// cancelled pass records the checkpoint that observed its cancellation. The other counters do not see
+    /// checkpoints; this one moves on every observed run, cancelled or not.
+    /// </summary>
+    public long CancellationCheckpoints { get; private set; }
+
+    /// <summary>
+    /// Test-only hook invoked at every cancellation checkpoint, BEFORE the token is observed, with the
+    /// checkpoint's kind and its 1-based ordinal among the checkpoints of that kind. A cancellation test
+    /// cancels its own token source here to place a cancellation deterministically inside a pass; it
+    /// belongs to this one observed operation (the SEC-03 shape of <see cref="PatternComparisonObservations.CheckpointReached"/>).
+    /// </summary>
+    internal Action<FrontEndCancellationCheckpoint, long>? CheckpointReached { get; init; }
+
+    private long[]? _checkpointsByKind;
+
+    /// <summary>The checkpoints of one kind reached so far.</summary>
+    internal long CancellationCheckpointsOf(FrontEndCancellationCheckpoint kind)
+        => _checkpointsByKind?[(int)kind] ?? 0;
+
+    internal void RecordCancellationCheckpoint(FrontEndCancellationCheckpoint kind)
+    {
+        CancellationCheckpoints = checked(CancellationCheckpoints + 1);
+        _checkpointsByKind ??= new long[FrontEndCancellationCheckpointKinds.Count];
+        var ordinal = _checkpointsByKind[(int)kind] = checked(_checkpointsByKind[(int)kind] + 1);
+        CheckpointReached?.Invoke(kind, ordinal);
+    }
+
+    /// <summary>
+    /// THE source-processing cancellation checkpoint of the elaboration passes: records the checkpoint
+    /// (and runs the test hook) when the pass is observed, then observes <paramref name="cancellationToken"/>,
+    /// so an escaping <see cref="OperationCanceledException"/> carries that token. One volatile read when
+    /// nothing observes the pass; it never allocates and changes no other counter.
+    /// </summary>
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]
+    internal static void ObserveCancellation(
+        FrontEndTraversalObservations? observations, FrontEndCancellationCheckpoint kind, CancellationToken cancellationToken)
+    {
+        observations?.RecordCancellationCheckpoint(kind);
+        cancellationToken.ThrowIfCancellationRequested();
+    }
+}
+
+/// <summary>
+/// The bounded blocks of elaboration work at whose start the passes observe the source-processing
+/// token (2.06; see <see cref="FrontEndTraversalObservations.ObserveCancellation"/>).
+/// </summary>
+internal enum FrontEndCancellationCheckpoint
+{
+    /// <summary>One algorithm (a body or a branch body) processed by parameter detection.</summary>
+    DetectorAlgorithm,
+    /// <summary>One property or output row of an algorithm processed by parameter detection.</summary>
+    DetectorRow,
+    /// <summary>One algorithm rewritten by implicit-argument resolution.</summary>
+    ResolverAlgorithm,
+    /// <summary>One property or output row of an algorithm rewritten by implicit-argument resolution.</summary>
+    ResolverRow,
+    /// <summary>
+    /// One algorithm expanded by a front-end <see cref="AstWalker"/> that carries the token: the completed-signature
+    /// validators (collision, open-provider and output rules) and the exposure pass's dot-member provenance finalizer.
+    /// </summary>
+    WalkerAlgorithm,
+    /// <summary>One algorithm level of the exposure pass.</summary>
+    ExposureAlgorithm,
+    /// <summary>One equation evaluation of an exposure level's fixed point (<c>LevelSolver</c>).</summary>
+    ExposureLevelEvaluation,
+    /// <summary>One frame pushed by an exposure settlement (<c>PendingResolution.Run</c>).</summary>
+    ExposureSettlementFrame,
+    /// <summary>
+    /// One unit of the exposure pass's summary channel: an algorithm summarized, a property of a level's summary
+    /// graph, or a frame pushed by the level-expansion driver.
+    /// </summary>
+    SummaryChannel,
+}
+
+internal static class FrontEndCancellationCheckpointKinds
+{
+    internal const int Count = (int)FrontEndCancellationCheckpoint.SummaryChannel + 1;
 }
 
 /// <summary>

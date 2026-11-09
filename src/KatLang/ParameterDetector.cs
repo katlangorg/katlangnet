@@ -107,7 +107,11 @@ internal static class ParameterDetector
             capturedParameters: ParameterOwnership.Empty,
             diagnostics,
             observations,
-            new DetectionRun { ProgramRoot = root, Diagnostics = diagnostics, Modules = modules, SharedBodies = structuralOperation.SharedBodies });
+            new DetectionRun
+            {
+                ProgramRoot = root, Diagnostics = diagnostics, Modules = modules, SharedBodies = structuralOperation.SharedBodies,
+                CancellationToken = structuralOperation.Queries.OperationToken,
+            });
         // Leaf roots (notably builtins) have no recursive body publication, but still complete this stage.
         if (structuralOperation.Published(structuralOperation.Root, StaticPublicationStage.Detected) is null)
             structuralOperation.Publish(structuralOperation.Root, StaticPublicationStage.Detected, processed);
@@ -293,6 +297,7 @@ internal static class ParameterDetector
         DetectionRun run)
     {
         FrontEndStack.Ensure();
+        run.ObserveCancellation(observations, FrontEndCancellationCheckpoint.DetectorAlgorithm);
         var newOpens = ProcessOpenExprs(alg.Opens, parentScope, diagnostics, observations, run);
         var algWithProcessedOpens = alg with { Opens = newOpens };
         var scope = CreateStructuralScope(alg, algWithProcessedOpens, parentScope);
@@ -401,6 +406,7 @@ internal static class ParameterDetector
         var newProperties = new List<Property>(alg.Properties.Count);
         foreach (var prop in alg.Properties)
         {
+            run.ObserveCancellation(observations, FrontEndCancellationCheckpoint.DetectorRow);
             if (prop.Value is Algorithm.User { IsAssignmentDeconstructionSource: true })
             {
                 // Hoisted deconstruction right-hand side: its rows were collected with this
@@ -460,7 +466,10 @@ internal static class ParameterDetector
             provenanceRecorder?.DotMembers);
         var rewrittenOutput = new List<Expr>(alg.Output.Count);
         foreach (var expr in alg.Output)
+        {
+            run.ObserveCancellation(observations, FrontEndCancellationCheckpoint.DetectorRow);
             rewrittenOutput.Add(RewriteParams(expr, scope, bodyParameters, rewriteMemo));
+        }
         AstHelpers.RewriteDeconstructionSourceRows(
             alg, newProperties, expr => RewriteParams(expr, scope, bodyParameters, rewriteMemo),
             (source, view) => scope.StaticContext!.Operation.Publish(
@@ -637,7 +646,12 @@ internal static class ParameterDetector
             context.CapturedParameters,
             diagnostics,
             observations,
-            new DetectionRun { ImportSite = importSite, Diagnostics = diagnostics, Modules = modules ?? new() }, branchPattern);
+            new DetectionRun
+            {
+                ImportSite = importSite, Diagnostics = diagnostics, Modules = modules ?? new(),
+                // The deferred operation owns the materialization's linked token.
+                CancellationToken = context.ParentScope.StaticContext?.Operation.Queries.OperationToken ?? default,
+            }, branchPattern);
 
     /// <summary>
     /// Records the diagnostic-only origin of each implicit parameter at the
@@ -797,6 +811,17 @@ internal static class ParameterDetector
         /// callable-binding decisions — the static open-target head classification — never do.
         /// </summary>
         public Algorithm? ProgramRoot;
+
+        /// <summary>
+        /// The structural operation's source-processing token (a deferred compile's operation owns the
+        /// materialization's linked token), observed once per algorithm and per property or output row
+        /// (2.06; see <see cref="FrontEndTraversalObservations.ObserveCancellation"/>).
+        /// </summary>
+        public CancellationToken CancellationToken;
+
+        public void ObserveCancellation(FrontEndTraversalObservations? observations, FrontEndCancellationCheckpoint kind)
+            => FrontEndTraversalObservations.ObserveCancellation(observations, kind, CancellationToken);
+
         /// <summary>
         /// Conditional branch bodies elaborated so far, by <see cref="BranchBodyRegionKey"/>.
         /// A branch body's rewrite depends on exactly the key's dimensions (parent scope,
@@ -1595,6 +1620,7 @@ internal static class ParameterDetector
         // DOES own opens: elaborate those under this branch's binder ownership as usual.
         if (branchBody is Algorithm.Builtin)
             return branchBody;
+        run.ObserveCancellation(observations, FrontEndCancellationCheckpoint.DetectorAlgorithm);
 
         // M4: one elaboration per (body, semantic region). A body shared by several families
         // — or a family reached from several parents of a shared host tree — is rewritten once
@@ -1709,6 +1735,7 @@ internal static class ParameterDetector
         var newProperties = new List<Property>(body.Properties.Count);
         foreach (var prop in body.Properties)
         {
+            run.ObserveCancellation(observations, FrontEndCancellationCheckpoint.DetectorRow);
             Algorithm processedProp;
             if (prop.Value is Algorithm.User { IsAssignmentDeconstructionSource: true })
             {
@@ -1761,7 +1788,10 @@ internal static class ParameterDetector
             run, observations, diagnostics, GraceEffectPolicy.ClosedBranch, level: bodyScope);
         var rewrittenOutput = new List<Expr>(body.Output.Count);
         foreach (var expr in body.Output)
+        {
+            run.ObserveCancellation(observations, FrontEndCancellationCheckpoint.DetectorRow);
             rewrittenOutput.Add(RewriteParams(expr, bodyScope, bodyParameters, rewriteMemo));
+        }
         AstHelpers.RewriteDeconstructionSourceRows(
             body, newProperties, expr => RewriteParams(expr, bodyScope, bodyParameters, rewriteMemo),
             (source, view) => bodyScope.StaticContext!.Operation.Publish(

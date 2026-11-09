@@ -1497,6 +1497,16 @@ internal static class PropertyDependencyGraphBuilder
         internal long ExpansionCycleCuts;
         internal Dictionary<(string Left, string Right), ResolvedOpenCandidate>? UnitedCandidates;
 
+        /// <summary>
+        /// The source-processing token of the exposure resolution this memo spans (none for a standalone
+        /// <see cref="BuildSummaries"/> call), observed once per frame of the level-expansion driver.
+        /// </summary>
+        internal CancellationToken CancellationToken { get; init; }
+
+        internal void ObserveCancellation()
+            => FrontEndTraversalObservations.ObserveCancellation(
+                observations, FrontEndCancellationCheckpoint.SummaryChannel, CancellationToken);
+
         /// <summary>The bodies of the exposure input reached through several paths; null outside exposure, or when none is.</summary>
         internal SharedBodyCensus? SharedBodies;
         private RegionFreeNames? _regionNames;
@@ -2009,6 +2019,7 @@ internal static class PropertyDependencyGraphBuilder
         var nodes = new PropertyDependencySummaryNode[algorithm.Properties.Count];
         for (var i = 0; i < algorithm.Properties.Count; i++)
         {
+            buildMemos.SharedMemo.ObserveCancellation();
             var summarySeed = CollectSharedAlgorithmSummarySeed(algorithm.Properties[i].Value, buildMemos);
             if (summarySeed.IsEmpty)
             {
@@ -2161,6 +2172,7 @@ internal static class PropertyDependencyGraphBuilder
         CompletedStructureContext? completedContext = null)
     {
         FrontEndStack.Ensure();
+        sharedMemo.ObserveCancellation();
         // Only the Q8 walk supplies this already detected provisional view. It is a lexical
         // requirement frame, never a successful structural body or a raw-reference fallback.
         completedContext = sharedMemo.RequirementContext(completedContext, algorithm);
@@ -2309,7 +2321,7 @@ internal static class PropertyDependencyGraphBuilder
     {
         // A seed with no requirement, name or reference has nothing to resolve, escape or qualify at any level, and a cycle
         // cut cannot change that: its expansion is the empty seed, whatever the level.
-        return baseSeed.IsEmpty ? new SummarySeed() : RunExpansion(ExpandFrame(baseSeed, level)).Seed!;
+        return baseSeed.IsEmpty ? new SummarySeed() : RunExpansion(ExpandFrame(baseSeed, level), level.Memos.SharedMemo).Seed!;
     }
 
     /// <summary>
@@ -2336,17 +2348,23 @@ internal static class PropertyDependencyGraphBuilder
     /// frame is suspended until that frame completes. An exception unwinds every suspended frame
     /// innermost first, so each one's active key and level cache are released exactly as the
     /// recursion's <c>finally</c> blocks released them; no partial result is stored on that path.
+    /// Each frame pushed is one cancellation checkpoint of <paramref name="memo"/>'s token (2.06), so a
+    /// cancelled expansion unwinds the same way.
     /// </summary>
-    private static ExpansionFrame RunExpansion(ExpansionFrame root)
+    private static ExpansionFrame RunExpansion(ExpansionFrame root, SummaryMemo memo)
     {
         var frames = new Stack<ExpansionFrame>();
         frames.Push(root);
         try
         {
+            memo.ObserveCancellation();
             while (frames.TryPeek(out var frame))
             {
                 if (frame.Body.MoveNext())
+                {
                     frames.Push(frame.Body.Current);
+                    memo.ObserveCancellation();
+                }
                 else
                     frames.Pop();
             }

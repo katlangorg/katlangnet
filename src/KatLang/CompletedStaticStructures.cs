@@ -113,6 +113,12 @@ internal sealed class CompletedStaticStructures : StaticLookupFacts
     {
         if (!IsSealed) _failed = true;
     }
+    /// <summary>
+    /// Rejects the current exposure unit if its final diagnostic-provenance walk fails after structural sealing.
+    /// Only the exposure call that sealed this table may use this: a foreign completed publication stays immutable
+    /// under a later consumer's cancellation. Sealing order and the finalizer's uncharged reads are unchanged.
+    /// </summary>
+    internal void RejectIncompleteExposure() => _failed = true;
     internal int Count => _bodies.Count + (_local?.Keys.Count(k => !_bodies.ContainsKey(k)) ?? 0);
     internal override BodyFacts? Facts(StaticScopeKey key)
     {
