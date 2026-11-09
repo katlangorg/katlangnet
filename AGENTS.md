@@ -322,7 +322,13 @@ A V3 run is not release publishing, a benchmark campaign, or unbounded fuzzing; 
   test project, a failure summary and the GC-isolated allocation logs to a fresh
   git-ignored `artifacts/validation/validate-all-*` directory (a temporary
   directory if that path is not ignored). `validate.yml` uploads it with
-  `if: always()`; the job result remains the validation result.
+  `if: always()`; the job result remains the validation result. On Windows a
+  detached run survives losing its console: when PowerShell's console host fails
+  to restore the console title or mode around a native command with Win32 error
+  0xE9 ("No process is on the other end of the pipe."), the script records
+  `console host lost`, keeps the completed command's real exit code (or starts a
+  command that never ran), and runs every later native command in a hidden
+  console of its own; any other failure is rethrown unchanged.
 - Both phases build and test in the default Debug configuration, but stack
   frame sizes are configuration-sensitive: the S3 `AstWalker` overflow and the
   Batch 1 F1 deferred-compile overflow appeared only (or far earlier) in
@@ -346,6 +352,17 @@ A V3 run is not release publishing, a benchmark campaign, or unbounded fuzzing; 
   x64 (whose Release frames and stack-probe behaviour differ), so it cannot
   guarantee detection of a Windows x64-only Release stack regression; a
   Windows x64 matrix leg is the open follow-up.
+- `KatLang.slnx` deliberately omits the standalone tool projects (today only the
+  SharpFuzz harness `fuzz/KatLang.ParserFuzz`), so the .NET phase never compiles
+  them. The fourth `validate.yml` job, `Standalone tool build`
+  (`standalone-tool-build`, 15 minutes), runs
+  `scripts/build-standalone-tools.ps1`, which compiles each of them in Debug and
+  Release and fails on a build failure or when its project list differs from the
+  tracked projects outside the solution. It is build-only (no tool or test runs),
+  not a validation level, does not change the `validate-all.ps1` phase contract,
+  and writes its logs to a fresh ignored
+  `artifacts/validation/standalone-tools-build-*` directory (uploaded with
+  `if: always()`). `release.yml` does not run it.
 - `.github/workflows/release.yml` is manual-only. Dispatch it from `main` with
   the version already present in `KatLangVersion.props`. A push, merge, or tag
   never publishes a release automatically.

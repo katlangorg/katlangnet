@@ -26,6 +26,6 @@ public static class Program
 			return;
 		}
 
-		BenchmarkSwitcher.FromAssembly(typeof(Program).Assembly).Run(args);
+		BenchmarkSwitcher.FromAssembly(typeof(Program).Assembly).Run(args, PinnedProjectToolchain.CreateConfig());
 	}
 }

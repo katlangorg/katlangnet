@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using System.Xml.Linq;
@@ -516,6 +517,40 @@ public class ContinuousIntegrationPolicyTests
     }
 
     [Fact]
+    public void ValidateScript_SurvivesALostConsoleWithoutMaskingFailures()
+    {
+        var source = Text("scripts/validate-all.ps1");
+        // Only the console host's Win32 233 failure (ERROR_PIPE_NOT_CONNECTED) is recognized.
+        Assert.Contains("$errorPipeNotConnected = 233", source, StringComparison.Ordinal);
+        Assert.Contains("-isnot [System.ComponentModel.Win32Exception]", source, StringComparison.Ordinal);
+        // After completion the command's own exit code is kept; before start the command never ran.
+        Assert.Contains(
+            "if (-not $wrapped -and $null -ne $global:LASTEXITCODE -and $errorId -in @(\"SetConsoleWindowTitle\", \"SetConsoleMode\")) {",
+            source, StringComparison.Ordinal);
+        Assert.Contains(
+            "if ($wrapped -and $null -eq $global:LASTEXITCODE -and $errorId -in @(\"GetConsoleMode\", \"SetConsoleMode\", \"RetreiveActiveScreenBufferConsoleHandle\")) {",
+            source, StringComparison.Ordinal);
+        Assert.Contains("    if ($null -eq $loss) {\n        throw $ErrorRecord\n    }", source, StringComparison.Ordinal);
+        // Every native call resets the exit code first and resolves a lost console the same way.
+        Assert.Equal(3, Regex.Matches(source, @"(?m)^\s+\$global:LASTEXITCODE = \$null$").Count);
+        Assert.Equal(3, Regex.Matches(source, Regex.Escape("= Resolve-ConsoleHostLoss -ErrorRecord $_ -FilePath ")).Count);
+        Assert.Contains("$startInfo.CreateNoWindow = $true", source, StringComparison.Ordinal);
+        Assert.Contains("return $process.ExitCode", source, StringComparison.Ordinal);
+        // ConsoleHost also reads its dead screen buffer while formatting Write-Warning.
+        // Once the loss is known, even diagnostic output must bypass that formatter.
+        Assert.Contains("function Write-ValidationWarning {", source, StringComparison.Ordinal);
+        var warning = source[source.IndexOf("function Write-ValidationWarning {", StringComparison.Ordinal)
+            ..source.IndexOf("function Write-ValidationRecord {", StringComparison.Ordinal)];
+        Assert.Contains("if ($script:consoleHostLost)", warning, StringComparison.Ordinal);
+        Assert.Contains("[Console]::Error.WriteLine(\"WARNING: $Message\")", warning, StringComparison.Ordinal);
+        Assert.Contains("else {\n        Write-Warning $Message\n    }", warning, StringComparison.Ordinal);
+        Assert.Single(Regex.Matches(source, @"(?m)^\s+Write-Warning ").Cast<Match>());
+        Assert.Contains("Write-ValidationWarning \"The console of this run went away", source, StringComparison.Ordinal);
+        // No other bare native invocation bypasses the handling.
+        Assert.Equal(4, Regex.Matches(source, @"(?m)^\s+& (?:\$FilePath|git) ").Count);
+    }
+
+    [Fact]
     public void ValidateWorkflow_UploadsDiagnosticsEvenAfterAFailure_WithoutMaskingIt()
     {
         var source = Text(ValidatePath);
@@ -700,6 +735,139 @@ public class ContinuousIntegrationPolicyTests
             Assert.Contains("SubprocessProbe.StartInfo(", text, StringComparison.Ordinal);
             Assert.Contains("Stack overflow", text, StringComparison.Ordinal);
         }
+    }
+
+    private const string StandaloneBuildScriptPath = "scripts/build-standalone-tools.ps1";
+    private const string StandaloneBuildJob = "standalone-tool-build";
+    private const string StandaloneBuildInvocation = "pwsh -NoProfile -File ./scripts/build-standalone-tools.ps1";
+
+    // Every tracked project KatLang.slnx omits; the build-only job compiles each of them.
+    private static readonly string[] StandaloneProjects =
+    [
+        "fuzz/KatLang.ParserFuzz/KatLang.ParserFuzz.csproj",
+    ];
+
+    [Fact]
+    public void StandaloneToolBuildJob_RunsTheFocusedBuildScript()
+    {
+        var section = JobSection(Text(ValidatePath), StandaloneBuildJob);
+        Assert.True(section.Length > 0, $"Missing {StandaloneBuildJob} job in {ValidatePath}.");
+        Assert.Single(Regex.Matches(section, @"(?m)^    name: Standalone tool build$").Cast<Match>());
+        Assert.Matches(@"(?m)^    runs-on: ubuntu-24\.04$", section);
+        Assert.Single(Regex.Matches(section, @"(?m)^    timeout-minutes:").Cast<Match>());
+        Assert.Matches(@"(?m)^    timeout-minutes: 15$", section);
+        Assert.Single(Regex.Matches(section, Regex.Escape(StandaloneBuildInvocation)).Cast<Match>());
+        Assert.DoesNotContain("validate-all.ps1", section, StringComparison.Ordinal);
+        Assert.DoesNotContain("validate-stack-suites.ps1", section, StringComparison.Ordinal);
+        Assert.Contains("global-json-file: global.json", section, StringComparison.Ordinal);
+        Assert.DoesNotContain("needs:", section, StringComparison.Ordinal);
+        Assert.DoesNotContain("continue-on-error", section, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void StandaloneToolBuildJob_UploadsDiagnosticsEvenAfterAFailure()
+    {
+        var section = JobSection(Text(ValidatePath), StandaloneBuildJob);
+        var run = section.IndexOf(StandaloneBuildInvocation, StringComparison.Ordinal);
+        var upload = section.IndexOf("name: standalone-tool-build-diagnostics", StringComparison.Ordinal);
+        Assert.True(run > 0 && upload > run, "the standalone build diagnostics upload must follow the script");
+        var step = section[section.LastIndexOf("- name:", upload, StringComparison.Ordinal)..upload];
+        Assert.Contains("if: ${{ always() }}", step, StringComparison.Ordinal);
+        Assert.Contains("uses: actions/upload-artifact@", step, StringComparison.Ordinal);
+        Assert.Matches(@"(?m)^          path: artifacts/validation/standalone-tools-build-\*/$", section);
+    }
+
+    [Fact]
+    public void ValidateWorkflow_ExposesTheStandaloneToolBuildCheckOnce()
+    {
+        var source = Text(ValidatePath);
+        Assert.Single(Regex.Matches(source, @"(?m)^  standalone-tool-build:$").Cast<Match>());
+        Assert.Single(Regex.Matches(WorkflowText(), Regex.Escape(StandaloneBuildInvocation)).Cast<Match>());
+    }
+
+    [Fact]
+    public void StandaloneToolBuildScript_BuildsEveryListedProjectInDebugAndRelease()
+    {
+        var source = Text(StandaloneBuildScriptPath);
+        Assert.Equal(StandaloneProjects, DeclaredStandaloneProjects(source));
+        Assert.Contains("$configurations = @(\"Debug\", \"Release\")", source, StringComparison.Ordinal);
+        Assert.Matches(@"(?m)^    foreach \(\$project in \$standaloneProjects\) \{\n        foreach \(\$configuration in \$configurations\) \{$", source);
+        // The only native .NET command is a build of the listed project: no tool run, no test, no publish.
+        Assert.Single(Regex.Matches(source, Regex.Escape("& dotnet build $project -c $configuration -p:UseSharedCompilation=false *> $log")).Cast<Match>());
+        Assert.Single(Regex.Matches(source, @"(?m)^\s*& dotnet ").Cast<Match>());
+        Assert.DoesNotMatch(@"(?m)^[^#\n]*\bdotnet\s+(?:test|run|publish)\b", source);
+        Assert.DoesNotContain("--no-build", source, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void StandaloneToolBuildScript_FailsOnABuildFailureOrAnInventoryMismatch()
+    {
+        var source = Text(StandaloneBuildScriptPath);
+        var inventory = source.IndexOf("$problems = @(Test-StandaloneInventory)", StringComparison.Ordinal);
+        var build = source.IndexOf("& dotnet build $project", StringComparison.Ordinal);
+        var passed = source.IndexOf("Write-Host \"Standalone tool build passed:", StringComparison.Ordinal);
+        Assert.True(inventory > 0 && build > inventory && passed > build,
+            "the inventory check must run before any build, and both before the pass is reported");
+        Assert.Contains("$buildExitCode = $LASTEXITCODE", source, StringComparison.Ordinal);
+        Assert.Contains("return $buildExitCode", source, StringComparison.Ordinal);
+        Assert.Contains("if ($project -notin $inSolution -and $project -notin $standaloneProjects) {", source, StringComparison.Ordinal);
+        Assert.Contains("if ($project -in $inSolution) {", source, StringComparison.Ordinal);
+        Assert.Contains("& git ls-files -- \"*.csproj\" \"*.fsproj\" \"*.vbproj\"", source, StringComparison.Ordinal);
+        Assert.Contains("exit $exitCode", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("continue-on-error", source, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void StandaloneToolBuildScript_KeepsDiagnosticsInAnIgnoredDirectory()
+    {
+        var source = Text(StandaloneBuildScriptPath);
+        Assert.Contains("$relative = \"artifacts/validation/$name\"", source, StringComparison.Ordinal);
+        Assert.Contains("& git check-ignore -q -- \"$relative/standalone-tools-build.log\"", source, StringComparison.Ordinal);
+        Assert.Contains("\"standalone-tools-build-{0:yyyyMMddTHHmmssZ}-{1}\"", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("Remove-Item", source, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task StandaloneProjects_AreExactlyTheProjectsTheSolutionOmits()
+    {
+        var root = RepoRoot.Find();
+        var inSolution = Regex.Matches(Text("KatLang.slnx"), "Path=\"(?<path>[^\"]+)\"")
+            .Select(match => match.Groups["path"].Value.Replace('\\', '/'))
+            .ToHashSet(StringComparer.Ordinal);
+        // Use the script's tracked inventory: ignored copies may live anywhere, including Backup*/.
+        // Filtering after a recursive filesystem scan would also traverse every scratch worktree.
+        var startInfo = new ProcessStartInfo("git")
+        {
+            WorkingDirectory = root,
+            UseShellExecute = false,
+            CreateNoWindow = true,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            StandardOutputEncoding = System.Text.Encoding.UTF8,
+        };
+        foreach (var argument in new[] { "ls-files", "-z", "--", "*.csproj", "*.fsproj", "*.vbproj" })
+            startInfo.ArgumentList.Add(argument);
+        using var git = Process.Start(startInfo) ?? throw new InvalidOperationException("Could not start git ls-files.");
+        var errorOutput = git.StandardError.ReadToEndAsync();
+        var projectOutput = await git.StandardOutput.ReadToEndAsync();
+        await git.WaitForExitAsync();
+        var errorText = await errorOutput;
+        Assert.True(git.ExitCode == 0, $"git ls-files failed: {errorText}");
+
+        var omitted = projectOutput.Split('\0', StringSplitOptions.RemoveEmptyEntries)
+            .Where(path => !inSolution.Contains(path))
+            .Order(StringComparer.Ordinal)
+            .ToArray();
+        Assert.Equal(StandaloneProjects.Order(StringComparer.Ordinal), omitted);
+        foreach (var project in StandaloneProjects)
+            Assert.True(File.Exists(Absolute(project)), $"{project} does not exist.");
+    }
+
+    private static string[] DeclaredStandaloneProjects(string source)
+    {
+        var list = Regex.Match(source, @"(?s)\$standaloneProjects = @\((?<body>.*?)\n\)");
+        Assert.True(list.Success, "the script must declare $standaloneProjects");
+        return Regex.Matches(list.Groups["body"].Value, "\"(?<name>[^\"]+)\"").Select(match => match.Groups["name"].Value).ToArray();
     }
 
     private static string JobSection(string source, string job)

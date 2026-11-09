@@ -22,6 +22,10 @@ dotnet run -c Release --project benchmarks/KatLang.Benchmarks/KatLang.Benchmarks
 dotnet run -c Release --project benchmarks/KatLang.Benchmarks/KatLang.Benchmarks.csproj -- --sequence-stats
 ```
 
+The run is unambiguous from the main checkout even when git-ignored copies of `KatLang.Benchmarks.csproj` exist (under `artifacts/`, `.claude/worktrees/`, or a scratch export). BenchmarkDotNet 0.14.0 would otherwise search the whole repository for a project of that name and report every benchmark as `NA` ("Found more than one matching project file"). The build records its own project path in the assembly, and `PinnedProjectToolchain` makes every job — `[SimpleJob]` attributes and command-line jobs such as `--job dry` alike — build exactly that project; the summary's job names show `Toolchain=CsProj (pinned project)`. Do not delete other people's scratch copies or worktrees to work around a benchmark run. The pinned toolchain targets `net11.0` only, so `--runtimes` is not supported.
+
+Compare timings only against a same-build control — a control workload or mode measured in the same build and run (for example each `PerSitePlanRetention` workload against its loop-free control); across a code change compare those same-build ratios, never raw timings: timings can move 7–15% between builds with byte-identical allocation (JIT/layout effects).
+
 BenchmarkDotNet writes summaries under `BenchmarkDotNet.Artifacts/results/`.
 
 ## What Is Measured

@@ -71,7 +71,9 @@ folder is shared the same way, and in the other direction this project links the
 symbol-addressed grammar model (`tests/KatLang.Tests/StructuralFuzz/StructuralModel.cs` and
 `StructuralFuzzer.cs`) so its `semantic-*` commands rebuild cases with exactly the generator the
 tests run. Nothing else in `fuzz/` is part of normal validation, and none of the shared files may
-reference SharpFuzz.
+reference SharpFuzz. The whole harness is still compiled on every pull request: the build-only
+`Standalone tool build` CI job runs `scripts/build-standalone-tools.ps1`, which builds this project in
+Debug and Release (locally: `pwsh -NoProfile -File ./scripts/build-standalone-tools.ps1`).
 
 ## Invariants
 

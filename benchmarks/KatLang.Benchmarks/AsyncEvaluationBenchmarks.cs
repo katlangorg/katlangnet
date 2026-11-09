@@ -17,7 +17,10 @@ namespace KatLang.Benchmarks;
 ///   baseline for twin overhead).</item>
 ///   <item><b>AsyncFastPath</b> — the public <c>Evaluator.RunAsync</c> with the default
 ///   (synchronous) cache: the async surface delegating to the synchronous pipeline
-///   inline. Expected cost over SyncOptimized: one Task allocation per run.</item>
+///   inline. Expected cost over SyncOptimized: a small fixed allocation per run (about
+///   30 B in the S19 review of the once-per-run route decision, be9d57ab, 2026-11-09) and
+///   no extra routing walk — the deferred-region fact is decided once, the same single
+///   walk the synchronous entry's own guard makes.</item>
 ///   <item><b>AsyncTwinPath</b> — the async twin family (async-capable run-scoped
 ///   cache, every seam access completing synchronously): the state-machine overhead an
 ///   async-capable run pays while no operation actually suspends. Compare against

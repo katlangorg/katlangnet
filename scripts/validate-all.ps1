@@ -14,6 +14,24 @@ function Write-Section {
     Write-Host "==== $Title ===="
 }
 
+function Write-ValidationWarning {
+    param([Parameter(Mandatory = $true)][string]$Message)
+
+    if ($script:consoleHostLost) {
+        # ConsoleHost's warning formatter reads the screen buffer even with redirected streams;
+        # that also throws Win32 233 after its console dies. Diagnostics must not interrupt recovery.
+        try {
+            [Console]::Error.WriteLine("WARNING: $Message")
+        }
+        catch {
+            # Warning output is observational, like the validation record.
+        }
+    }
+    else {
+        Write-Warning $Message
+    }
+}
+
 function Write-ValidationRecord {
     param([AllowEmptyString()][Parameter(Mandatory = $true)][string]$Line)
 
@@ -26,7 +44,7 @@ function Write-ValidationRecord {
         Add-Content -LiteralPath $script:validationRecordPath -Value $Line -Encoding utf8
     }
     catch {
-        Write-Warning "Could not write the validation record: $($_.Exception.Message)"
+        Write-ValidationWarning "Could not write the validation record: $($_.Exception.Message)"
     }
 }
 
@@ -39,8 +57,20 @@ function Invoke-Native {
     $watch = [System.Diagnostics.Stopwatch]::StartNew()
     $exitCode = $null
     try {
-        & $FilePath @Arguments
-        $exitCode = $LASTEXITCODE
+        if ($script:consoleHostLost) {
+            $exitCode = Invoke-NativeWithOwnConsole -FilePath $FilePath -Arguments $Arguments
+        }
+        else {
+            # Reset so a lost console can tell a completed command (exit code set) from one that never ran.
+            $global:LASTEXITCODE = $null
+            try {
+                & $FilePath @Arguments
+                $exitCode = $LASTEXITCODE
+            }
+            catch {
+                $exitCode = Resolve-ConsoleHostLoss -ErrorRecord $_ -FilePath $FilePath -Arguments $Arguments
+            }
+        }
     }
     finally {
         $outcome = if ($null -eq $exitCode) { "did not complete" } else { "exit code $exitCode" }
@@ -52,19 +82,191 @@ function Invoke-Native {
     }
 }
 
+# Runs a native command with its standard output (and, with -MergeErrorOutput, its standard error)
+# captured as lines. Returns the exit code and the lines; it never throws for a nonzero exit code.
+function Invoke-NativeCollect {
+    param(
+        [Parameter(Mandatory = $true)][string]$FilePath,
+        [string[]]$Arguments = @(),
+        [switch]$MergeErrorOutput
+    )
+
+    # Lines are collected as they arrive, so they survive a host exception raised after the command completed.
+    $output = [System.Collections.Generic.List[string]]::new()
+    if ($script:consoleHostLost) {
+        $exitCode = Invoke-NativeWithOwnConsole -FilePath $FilePath -Arguments $Arguments -Output $output -MergeErrorOutput:$MergeErrorOutput
+    }
+    else {
+        $global:LASTEXITCODE = $null
+        try {
+            if ($MergeErrorOutput) {
+                & $FilePath @Arguments 2>&1 | ForEach-Object { $output.Add("$_") }
+            }
+            else {
+                & $FilePath @Arguments | ForEach-Object { $output.Add($_) }
+            }
+            $exitCode = $LASTEXITCODE
+        }
+        catch {
+            $exitCode = Resolve-ConsoleHostLoss -ErrorRecord $_ -FilePath $FilePath -Arguments $Arguments -Output $output -MergeErrorOutput:$MergeErrorOutput
+        }
+    }
+
+    return [pscustomobject]@{ ExitCode = $exitCode; Output = $output.ToArray() }
+}
+
 function Invoke-NativeCapture {
     param(
         [Parameter(Mandatory = $true)][string]$FilePath,
         [string[]]$Arguments = @()
     )
 
-    $output = @(& $FilePath @Arguments)
-    $exitCode = $LASTEXITCODE
+    $result = Invoke-NativeCollect -FilePath $FilePath -Arguments $Arguments
+    $exitCode = $result.ExitCode
     if ($exitCode -ne 0) {
         throw "Command failed with exit code ${exitCode}: $FilePath $($Arguments -join ' ')"
     }
 
-    return $output
+    return $result.Output
+}
+
+# DETACHED CONSOLE (Windows). Around every native command PowerShell's console host saves and then
+# restores the console mode and window title (ConsoleHost.NotifyBeginApplication/NotifyEndApplication).
+# When the console serving a detached run goes away while this process keeps running (its conhost
+# exits, for example with the terminal or agent that started the run), those calls fail with Win32
+# error 233 (0xE9, "No process is on the other end of the pipe.") and the host throws a HostException:
+# AFTER a command completed ("...while setting the console window title"; $LASTEXITCODE already holds
+# that command's real exit code), or BEFORE the next one starts ("...while getting the console mode";
+# nothing ran). Console programs started later would inherit the dead console and fail to initialize
+# (0xC0000142). So the first such failure switches every later native command to
+# Invoke-NativeWithOwnConsole, and the failure itself is resolved exactly: a completed command keeps
+# its own exit code (nonzero still fails), a command that never started is started there. Any other
+# exception, any other Win32 error, and a lost console without a recorded exit code are rethrown.
+$script:consoleHostLost = $false
+# Read while the console is alive: PowerShell decodes native output with it, and the fallback decodes
+# the same way, so repository fingerprints taken before and after a switch stay comparable.
+$script:nativeOutputEncoding = try { [Console]::OutputEncoding } catch { [System.Text.UTF8Encoding]::new($false) }
+
+# Classifies a native-command exception: "after-completion", "before-start", or $null (not a lost console).
+function Get-ConsoleHostLoss {
+    param([Parameter(Mandatory = $true)][System.Management.Automation.ErrorRecord]$ErrorRecord)
+
+    # Before a command starts the host's failure arrives wrapped in "Program '...' failed to run".
+    $wrapped = $false
+    $exception = $ErrorRecord.Exception
+    while ($null -ne $exception -and $exception -isnot [System.Management.Automation.Host.HostException]) {
+        $wrapped = $wrapped -or ($exception -is [System.Management.Automation.ApplicationFailedException])
+        $exception = $exception.InnerException
+    }
+
+    $errorPipeNotConnected = 233
+    if ($null -eq $exception -or $exception.InnerException -isnot [System.ComponentModel.Win32Exception] `
+            -or $exception.InnerException.NativeErrorCode -ne $errorPipeNotConnected) {
+        return $null
+    }
+
+    $errorId = if ($null -ne $exception.ErrorRecord) { $exception.ErrorRecord.FullyQualifiedErrorId } else { "" }
+    if (-not $wrapped -and $null -ne $global:LASTEXITCODE -and $errorId -in @("SetConsoleWindowTitle", "SetConsoleMode")) {
+        return "after-completion"
+    }
+
+    if ($wrapped -and $null -eq $global:LASTEXITCODE -and $errorId -in @("GetConsoleMode", "SetConsoleMode", "RetreiveActiveScreenBufferConsoleHandle")) {
+        return "before-start"
+    }
+
+    return $null
+}
+
+# Called from the catch of a native command run through the console host (with $LASTEXITCODE reset
+# before it): returns the command's real exit code when the console went away, else rethrows.
+function Resolve-ConsoleHostLoss {
+    param(
+        [Parameter(Mandatory = $true)][System.Management.Automation.ErrorRecord]$ErrorRecord,
+        [Parameter(Mandatory = $true)][string]$FilePath,
+        [string[]]$Arguments = @(),
+        [System.Collections.Generic.List[string]]$Output,
+        [switch]$MergeErrorOutput
+    )
+
+    $loss = Get-ConsoleHostLoss -ErrorRecord $ErrorRecord
+    if ($null -eq $loss) {
+        throw $ErrorRecord
+    }
+
+    $command = "$FilePath $($Arguments -join ' ')"
+    $message = ($ErrorRecord.Exception.Message -split "`r?`n")[0]
+    Write-ValidationRecord "console host lost ($loss): $command | $message"
+    if (-not $script:consoleHostLost) {
+        $script:consoleHostLost = $true
+        Write-ValidationWarning "The console of this run went away ($loss of '$command'): $message Later native commands run in a hidden console of their own."
+    }
+
+    if ($loss -eq "after-completion") {
+        return $global:LASTEXITCODE
+    }
+
+    if ($null -ne $Output) {
+        $Output.Clear()
+    }
+    return Invoke-NativeWithOwnConsole -FilePath $FilePath -Arguments $Arguments -Output $Output -MergeErrorOutput:$MergeErrorOutput
+}
+
+# Starts a native command directly, in a hidden console of its own, with the same arguments, working
+# directory, environment and output decoding as `& $FilePath @Arguments`. Standard output goes to
+# $Output when given, otherwise line by line to the host; standard error is added to $Output with
+# -MergeErrorOutput, otherwise written to this process's standard error. Returns the exit code.
+function Invoke-NativeWithOwnConsole {
+    param(
+        [Parameter(Mandatory = $true)][string]$FilePath,
+        [string[]]$Arguments = @(),
+        [System.Collections.Generic.List[string]]$Output,
+        [switch]$MergeErrorOutput
+    )
+
+    $startInfo = [System.Diagnostics.ProcessStartInfo]::new($FilePath)
+    foreach ($argument in $Arguments) {
+        $startInfo.ArgumentList.Add($argument)
+    }
+    $startInfo.UseShellExecute = $false
+    $startInfo.CreateNoWindow = $true
+    $startInfo.WorkingDirectory = (Get-Location).ProviderPath
+    $startInfo.RedirectStandardInput = $true
+    $startInfo.RedirectStandardOutput = $true
+    $startInfo.RedirectStandardError = $true
+    $startInfo.StandardOutputEncoding = $script:nativeOutputEncoding
+    $startInfo.StandardErrorEncoding = $script:nativeOutputEncoding
+
+    $process = [System.Diagnostics.Process]::Start($startInfo)
+    try {
+        $process.StandardInput.Close()
+        $errorText = $process.StandardError.ReadToEndAsync()
+        while ($null -ne ($line = $process.StandardOutput.ReadLine())) {
+            if ($null -ne $Output) {
+                $Output.Add($line)
+            }
+            else {
+                Write-Host $line
+            }
+        }
+        $process.WaitForExit()
+
+        $errors = $errorText.GetAwaiter().GetResult()
+        if ($errors.Length -gt 0) {
+            if ($MergeErrorOutput -and $null -ne $Output) {
+                foreach ($line in ($errors.TrimEnd("`r", "`n") -split "`r?`n")) {
+                    $Output.Add($line)
+                }
+            }
+            else {
+                [Console]::Error.Write($errors)
+            }
+        }
+
+        return $process.ExitCode
+    }
+    finally {
+        $process.Dispose()
+    }
 }
 
 function Get-TextDigest {
@@ -141,8 +343,17 @@ function Initialize-ValidationDiagnostics {
     # temporary directory. Nothing existing is overwritten or deleted.
     $name = "validate-all-{0}-{1:yyyyMMddTHHmmssZ}-{2}" -f $Phase.ToLowerInvariant(), [DateTime]::UtcNow, $PID
     $relative = "artifacts/validation/$name"
-    & git check-ignore -q -- "$relative/validation-record.txt"
-    $directory = if ($LASTEXITCODE -eq 0) {
+    # The run's first native command, so the console host cannot have been lost before it.
+    $global:LASTEXITCODE = $null
+    try {
+        & git check-ignore -q -- "$relative/validation-record.txt"
+        $ignoreExitCode = $LASTEXITCODE
+    }
+    catch {
+        $ignoreExitCode = Resolve-ConsoleHostLoss -ErrorRecord $_ -FilePath "git" -Arguments @(
+            "check-ignore", "-q", "--", "$relative/validation-record.txt")
+    }
+    $directory = if ($ignoreExitCode -eq 0) {
         Join-Path $repoRoot $relative
     }
     else {
@@ -183,14 +394,14 @@ function Write-ValidationEnvironment {
         }
 
         if ($Phase -in @("All", "DotNet")) {
-            Write-ValidationRecord "dotnet SDK: $((& dotnet --version 2>&1) -join ' ')"
-            foreach ($line in @(& dotnet --list-runtimes 2>&1)) {
+            Write-ValidationRecord "dotnet SDK: $((Invoke-NativeCollect -FilePath "dotnet" -Arguments @("--version") -MergeErrorOutput).Output -join ' ')"
+            foreach ($line in @((Invoke-NativeCollect -FilePath "dotnet" -Arguments @("--list-runtimes") -MergeErrorOutput).Output)) {
                 Write-ValidationRecord "  $line"
             }
         }
     }
     catch {
-        Write-Warning "Could not record the validation environment: $($_.Exception.Message)"
+        Write-ValidationWarning "Could not record the validation environment: $($_.Exception.Message)"
     }
 }
 
@@ -254,7 +465,7 @@ function Write-TestResultSummary {
         }
     }
     catch {
-        Write-Warning "Could not summarize the test results: $($_.Exception.Message)"
+        Write-ValidationWarning "Could not summarize the test results: $($_.Exception.Message)"
     }
 }
 
@@ -281,7 +492,7 @@ function Invoke-ValidationPhase {
             throw
         }
 
-        Write-Warning "$Name validation also changed the repository: $($_.Exception.Message)"
+        Write-ValidationWarning "$Name validation also changed the repository: $($_.Exception.Message)"
     }
 
     if ($null -ne $phaseFailure) {
@@ -463,7 +674,7 @@ if ($null -ne $validationFailure) {
     Write-Host ""
     Write-Host "Validation failed: $($validationFailure.Exception.Message)"
     if ($restorationFailures.Count -gt 0) {
-        Write-Warning "Environment restoration also failed (the validation failure above remains authoritative): $($restorationFailures -join '; ')"
+        Write-ValidationWarning "Environment restoration also failed (the validation failure above remains authoritative): $($restorationFailures -join '; ')"
     }
     exit 1
 }

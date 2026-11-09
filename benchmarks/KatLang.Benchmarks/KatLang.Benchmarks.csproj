@@ -20,4 +20,9 @@
 		<EmbeddedResource Include="Scenarios\*.kat" />
 	</ItemGroup>
 
+	<!-- PinnedProjectToolchain builds exactly this project, never a same-named copy found by searching the tree. -->
+	<ItemGroup>
+		<AssemblyMetadata Include="KatLang.Benchmarks.ProjectPath" Value="$(MSBuildProjectFullPath)" />
+	</ItemGroup>
+
 </Project>
