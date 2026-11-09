@@ -632,9 +632,17 @@ public closed record ParameterPattern
     /// The first invalid one-item SEQUENCE pattern of a pattern list, depth first, or null. Walked
     /// with an explicit stack: patterns are host-constructible to arbitrary depth.
     /// </summary>
+    /// <remarks>
+    /// SHARED-DAG RULE (expand once): a host-built pattern may share a structural node along many
+    /// paths, so each structural node is expanded at most once (reference identity, a set
+    /// allocated only when a structural pattern appears). Depth first, a node met again was fully
+    /// explored without a hit the first time, so the verdict and the first witness are those of
+    /// the equivalent tree while the work is linear in the distinct pattern nodes.
+    /// </remarks>
     internal static SequenceValueParameterPattern? FindSingletonSequenceGroup(IReadOnlyList<ParameterPattern> patterns)
     {
         Stack<ParameterPattern>? pending = null;
+        HashSet<ParameterPattern>? expanded = null;
         for (var index = patterns.Count - 1; index >= 0; index--)
         {
             if (patterns[index] is CaptureParameterPattern)
@@ -649,8 +657,51 @@ public closed record ParameterPattern
             if (pattern is SequenceValueParameterPattern sequence && IsSingletonSequenceItems(sequence.Items))
                 return sequence;
 
-            if (StructuralItems(pattern) is { } items)
+            if (StructuralItems(pattern) is { } items
+                && (expanded ??= new HashSet<ParameterPattern>(ReferenceEqualityComparer.Instance)).Add(pattern))
                 PushItems(pending, items);
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// The first capture of a pattern list in <see cref="FlattenCaptures"/> order — the first one
+    /// whose declaration has a span when <paramref name="requireSpan"/> — or null: exactly
+    /// <c>FlattenCaptures(patterns).FirstOrDefault(…)</c> without the per-occurrence projection.
+    /// SHARED-DAG RULE (expand once): a structural node met again was fully explored without a
+    /// hit the first time, so it is skipped; the work is linear in the distinct pattern nodes, and
+    /// a flat list of capture leaves allocates nothing.
+    /// </summary>
+    internal static ParameterDeclaration? FindFirstCapture(IReadOnlyList<ParameterPattern> patterns, bool requireSpan)
+    {
+        Stack<ParameterPattern>? pending = null;
+        HashSet<ParameterPattern>? expanded = null;
+        for (var index = 0; index < patterns.Count; index++)
+        {
+            var top = patterns[index];
+            if (top is CaptureParameterPattern topCapture)
+            {
+                if (!requireSpan || topCapture.Parameter.Span is not null)
+                    return topCapture.Parameter;
+                continue;
+            }
+
+            pending ??= new Stack<ParameterPattern>();
+            pending.Push(top);
+            while (pending.Count > 0)
+            {
+                var pattern = pending.Pop();
+                if (StructuralItems(pattern) is { } items)
+                {
+                    if ((expanded ??= new HashSet<ParameterPattern>(ReferenceEqualityComparer.Instance)).Add(pattern))
+                        PushItems(pending, items);
+                }
+                else if (!requireSpan || ((CaptureParameterPattern)pattern).Parameter.Span is not null)
+                {
+                    return ((CaptureParameterPattern)pattern).Parameter;
+                }
+            }
         }
 
         return null;
@@ -750,41 +801,125 @@ public closed record ParameterPattern
     {
         // Iterative per-level scan: patterns are host-constructible to arbitrary
         // depth, and this public helper must not recurse on the caller's stack.
-        var pending = new Stack<IReadOnlyList<ParameterPattern>>();
-        pending.Push(patterns);
-
-        while (pending.Count > 0)
+        // SHARED-DAG RULE (expand once): a level's verdict depends only on its items, so a
+        // structural node shared along many paths is scanned once (reference identity, a set
+        // allocated only when a structural pattern appears); the work is linear in the distinct
+        // pattern nodes and a flat list of capture leaves allocates nothing.
+        Stack<IReadOnlyList<ParameterPattern>>? pending = null;
+        HashSet<ParameterPattern>? expanded = null;
+        IReadOnlyList<ParameterPattern>? level = patterns;
+        while (level is not null)
         {
-            var level = pending.Pop();
             var collectingAtLevel = 0;
-            foreach (var pattern in level)
+            for (var index = 0; index < level.Count; index++)
             {
+                var pattern = level[index];
                 if (pattern is CaptureParameterPattern { Kind: ParameterKind.Collecting })
                 {
                     if (++collectingAtLevel > 1)
                         return true;
                 }
-                else if (StructuralItems(pattern) is { } groupItems)
+                else if (StructuralItems(pattern) is { } groupItems
+                    && (expanded ??= new HashSet<ParameterPattern>(ReferenceEqualityComparer.Instance)).Add(pattern))
                 {
-                    pending.Push(groupItems);
+                    (pending ??= new Stack<IReadOnlyList<ParameterPattern>>()).Push(groupItems);
                 }
             }
+
+            if (pending is null || !pending.TryPop(out level))
+                return false;
         }
 
         return false;
     }
 
+    /// <summary>
+    /// Whether two capture occurrences of a pattern list share a name. SHARED-DAG RULE (visit at
+    /// most twice, as <see cref="EnumerateCapturesAtMostTwicePerNode"/>): "repeated" needs only
+    /// zero/one/many occurrences per name, so a host DAG is never expanded per path; a flat list of
+    /// capture leaves skips the walk.
+    /// </summary>
     public static bool HasRepeatedCaptureNames(IEnumerable<ParameterPattern> patterns)
     {
+        var list = patterns as IReadOnlyList<ParameterPattern> ?? patterns.ToList();
+        if (list.Count < 2 && (list.Count == 0 || list[0] is CaptureParameterPattern))
+            return false;
+
         var seen = new HashSet<string>(StringComparer.Ordinal);
-        return FlattenCaptures(patterns).Any(capture => !seen.Add(capture.Name));
+        if (IsFlatCaptureList(list, out _))
+        {
+            for (var index = 0; index < list.Count; index++)
+            {
+                if (!seen.Add(((CaptureParameterPattern)list[index]).Name))
+                    return true;
+            }
+
+            return false;
+        }
+
+        foreach (var capture in EnumerateCapturesAtMostTwicePerNode(list, nestedOnly: false))
+        {
+            if (!seen.Add(capture.Name))
+                return true;
+        }
+
+        return false;
     }
 
+    /// <summary>
+    /// Whether a name occurs more than once in a pattern list with at least one of its occurrences
+    /// collecting. SHARED-DAG RULE (visit at most twice, as
+    /// <see cref="EnumerateCapturesAtMostTwicePerNode"/>): each name is counted up to two
+    /// occurrences with whether any occurrence collects, which is all the rule reads, so a host DAG
+    /// is never expanded per path; a flat list without a collecting capture allocates nothing.
+    /// </summary>
     public static bool HasRepeatedCaptureNameIncludingCollecting(IEnumerable<ParameterPattern> patterns)
-        => FlattenCaptures(patterns)
-            .GroupBy(static capture => capture.Name, StringComparer.Ordinal)
-            .Any(static captures => captures.Count() > 1
-                && captures.Any(static capture => capture.Kind == ParameterKind.Collecting));
+    {
+        var list = patterns as IReadOnlyList<ParameterPattern> ?? patterns.ToList();
+        var flat = IsFlatCaptureList(list, out var flatHasCollecting);
+        if (flat && (!flatHasCollecting || list.Count < 2))
+            return false;
+
+        var occurrences = new Dictionary<string, (int Count, bool Collecting)>(StringComparer.Ordinal);
+        if (flat)
+        {
+            for (var index = 0; index < list.Count; index++)
+                Record(occurrences, ((CaptureParameterPattern)list[index]).Parameter);
+        }
+        else
+        {
+            foreach (var capture in EnumerateCapturesAtMostTwicePerNode(list, nestedOnly: false))
+                Record(occurrences, capture);
+        }
+
+        foreach (var (count, collecting) in occurrences.Values)
+        {
+            if (count > 1 && collecting)
+                return true;
+        }
+
+        return false;
+
+        static void Record(Dictionary<string, (int Count, bool Collecting)> occurrences, ParameterDeclaration capture)
+        {
+            var (count, collecting) = occurrences.GetValueOrDefault(capture.Name);
+            occurrences[capture.Name] = (Math.Min(2, count + 1), collecting || capture.Kind == ParameterKind.Collecting);
+        }
+    }
+
+    // Whether every item is a capture leaf, and whether one of them collects. Reads each item once.
+    private static bool IsFlatCaptureList(IReadOnlyList<ParameterPattern> patterns, out bool hasCollecting)
+    {
+        hasCollecting = false;
+        for (var index = 0; index < patterns.Count; index++)
+        {
+            if (patterns[index] is not CaptureParameterPattern capture)
+                return false;
+            hasCollecting |= capture.Kind == ParameterKind.Collecting;
+        }
+
+        return true;
+    }
 
     /// <summary>
     /// THE STRUCTURAL VALIDITY OF A SIGNATURE (X-02, September 30 2026): the first rule a
@@ -838,7 +973,7 @@ public closed record ParameterPattern
             return null;
 
         // A META capture nested in a structural pattern is misplaced wherever it stands.
-        foreach (var nested in EnumerateMetaValidationCaptures(patterns, nestedOnly: true))
+        foreach (var nested in EnumerateCapturesAtMostTwicePerNode(patterns, nestedOnly: true))
         {
             if (nested.Kind == ParameterKind.Meta)
                 return nested;
@@ -846,7 +981,7 @@ public closed record ParameterPattern
 
         // A top-level META capture whose name the list binds more than once.
         var occurrences = new Dictionary<string, int>(StringComparer.Ordinal);
-        foreach (var capture in EnumerateMetaValidationCaptures(patterns, nestedOnly: false))
+        foreach (var capture in EnumerateCapturesAtMostTwicePerNode(patterns, nestedOnly: false))
             occurrences[capture.Name] = Math.Min(2, occurrences.GetValueOrDefault(capture.Name) + 1);
         foreach (var pattern in patterns)
         {
@@ -857,11 +992,12 @@ public closed record ParameterPattern
         return null;
     }
 
-    // META validity needs only zero/one/many occurrences, never the expanded capture list.
-    // Visit a shared node at most twice so repeated bindings remain repeated while a small
+    // META validity and the repeated-name rules need only zero/one/many occurrences, never the
+    // expanded capture list. SHARED-DAG RULE (visit at most twice): a node is visited
+    // min(2, paths to it) times, so each name keeps min(2, its occurrences). Visit a shared node at most twice so repeated bindings remain repeated while a small
     // host DAG cannot expand to exponentially many paths. Nested-only roots omit top-level
     // captures, preserving the rule's first nested-META rejection before duplicate names.
-    private static IEnumerable<ParameterDeclaration> EnumerateMetaValidationCaptures(
+    private static IEnumerable<ParameterDeclaration> EnumerateCapturesAtMostTwicePerNode(
         IReadOnlyList<ParameterPattern> patterns, bool nestedOnly)
     {
         var pending = new Stack<ParameterPattern>();
@@ -1710,10 +1846,16 @@ public closed record Pattern
     /// <summary>
     /// The first nested one-item sequence pattern of this clause head, depth first, or null
     /// (<see cref="HeadHasSingletonSequenceGroup"/>). Walked with an explicit stack.
+    /// SHARED-DAG RULE (expand once): a host-built head may share a nested structural node along
+    /// many paths, so each one is expanded at most once (reference identity, a set allocated only
+    /// when a nested structural pattern appears). Depth first, a node met again was fully explored
+    /// without a hit the first time, so the first witness is the tree's and the work is linear in
+    /// the distinct pattern nodes.
     /// </summary>
     internal SequenceValue? FindHeadSingletonSequenceGroup()
     {
         var pending = new Stack<Pattern>();
+        HashSet<Pattern>? expanded = null;
         if (this is SequenceValue(var headItems))
         {
             for (var i = headItems.Count - 1; i >= 0; i--)
@@ -1731,10 +1873,15 @@ public closed record Pattern
                 case SequenceValue sequence:
                     if (IsSingletonSequenceItems(sequence.Items))
                         return sequence;
+                    if (!(expanded ??= new HashSet<Pattern>(ReferenceEqualityComparer.Instance)).Add(sequence))
+                        break;
                     for (var i = sequence.Items.Count - 1; i >= 0; i--)
                         pending.Push(sequence.Items[i]);
                     break;
-                case ListValue(var items):
+                case ListValue list:
+                    if (!(expanded ??= new HashSet<Pattern>(ReferenceEqualityComparer.Instance)).Add(list))
+                        break;
+                    var items = list.Items;
                     for (var i = items.Count - 1; i >= 0; i--)
                         pending.Push(items[i]);
                     break;
@@ -4109,11 +4256,16 @@ internal static class AlgorithmValidation
                 // source-backed declaration to point at. (A parsed program never reaches the gate with
                 // one: the front end reports an output-less algorithm with INFERRED parameters once its
                 // signature is complete, positioned at what inferred it — InferredParameterOutputValidator.)
-                var span = algorithm.HasExplicitParameterList ? algorithm.Parameters.FirstOrDefault()?.Span : null;
+                // SHARED-DAG RULE (expand once): both anchors are first-witness walks over the
+                // patterns (ParameterPattern.FindFirstCapture), never the per-occurrence Parameters
+                // projection, so a host pattern sharing subtrees is read linearly in its distinct nodes.
+                var span = algorithm.HasExplicitParameterList
+                    ? ParameterPattern.FindFirstCapture(algorithm.ParameterPatterns, requireSpan: false)?.Span
+                    : null;
                 Violations.Add(new PreEvaluationAstViolation.ExplicitParametersWithoutOutput(span)
                 {
                     WrittenAnchor = algorithm.HasExplicitParameterList
-                        ? algorithm.Parameters.FirstOrDefault(static parameter => parameter.Span is not null)?.Span
+                        ? ParameterPattern.FindFirstCapture(algorithm.ParameterPatterns, requireSpan: true)?.Span
                             ?? _enclosingPropertySpan
                         : null,
                 });
@@ -4123,6 +4275,21 @@ internal static class AlgorithmValidation
 
             base.VisitUserAlgorithm(algorithm);
         }
+
+        // SHARED-DAG RULE (visit once): the base walk of a branch head recurses into every item
+        // of every path, so a host-built head sharing a nested group would be walked once per path.
+        // This walker reads nothing from a pattern node (it overrides no binder hook), so a
+        // structural node already walked is skipped, keeping the head walk linear in its distinct
+        // nodes. Its own reference set: a pattern never reaches an alias region.
+        public override void VisitPattern(Pattern pattern)
+        {
+            if (pattern is Pattern.SequenceValue or Pattern.ListValue
+                && !(_visitedPatterns ??= new(ReferenceEqualityComparer.Instance)).Add(pattern))
+                return;
+            base.VisitPattern(pattern);
+        }
+
+        private HashSet<Pattern>? _visitedPatterns;
 
         protected override void VisitProperty(Property property)
         {
