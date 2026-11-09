@@ -243,6 +243,15 @@ beyond the available headroom still returns a structured resource error.
   host-built tree (an instrumented member collection records zero reads); null
   arguments keep precedence; uncancelled routing is unchanged. The internal twin
   funnels keep their cache-pairing guard ahead of the token (`RunEntryPreparationTests`).
+- `AsyncRouteDecisionTests` — SEC-F5 follow-up (November 2026): on an uncancelled run with
+  no asynchronous component, every public `RunAsync`/`RunFlatAsync` family and the internal
+  funnels (the engine's factory-then-`RunCountedWithTopLevelPropertyAsync` sequence
+  included, with and without a caller-decided fact) read an instrumented host-built graph
+  exactly as often as their synchronous counterparts — one route walk per run; an
+  asynchronous operation configuration decides no tree fact; a deferred-region root keeps
+  the twin path, the synchronous rejection message and the internal cache-pairing message;
+  `KatLangEngine.RunAsync`/`Run` cancel a pre-cancelled evaluation token with that token
+  and invoke no host operation, and a front-end failure still wins over it.
 - `AsyncStackDepthTests` — structured-outcome pins on 1 MiB / 384 KiB threads (the
   384 KiB flat-spine pin holds for the twin machine: it stays iterative, one async
   driver frame).
@@ -434,6 +443,26 @@ configured asynchronous host operation. Enforcement:
 > cache fails loud for it (`ThrowIfAsyncHostOperationsWithoutAsyncCapableCache`), and the
 > synchronous `Evaluator` entries reject it
 > (`ThrowIfDeferredModuleRegionsOnSynchronousEntry`).
+
+> **Update 2026-11-09 (SEC-F5 follow-up, F0474–F0479).** The tree component is decided
+> AT MOST ONCE per async entry call. The public `Evaluator.RunAsync` overloads (and so
+> `RunFlatAsync`), `KatLangEngine.RunAsync` and `RunCountedObservedAsync` (when it builds the
+> cache) call `Evaluator.DecideTreeRequiresAsyncEvaluation` once — skipping the walk
+> entirely, `null`, when an asynchronous operation is configured — and hand the answer to
+> the cache-pairing factory, to `RequiresAsyncEvaluationPath` and, on the fast path, to the
+> synchronous preparation, whose `ThrowIfDeferredModuleRegionsOnSynchronousEntry` reuses it.
+> An internal funnel given no fact lets the route rule decide it, still once, and reuses it
+> the same way. The fact lives only in the call's synchronous prefix (nothing awaits and no
+> host code runs before every consumer has read it); it is never stored on the tree, a
+> cache, the options or a static, so routing is still answered by the tree. Routes, guard
+> order, results, diagnostics and counters are unchanged; a run with no deferred region and
+> no asynchronous operation now walks for routing once instead of three times (the
+> factory, the route rule and the synchronous guard), the same single walk the synchronous
+> entry's own guard makes. `KatLangEngine.RunAsync` (and, mirrored, `KatLangEngine.Run`)
+> observes the evaluation token right after a successful front end, before that walk and
+> before the run cache is built; a front-end failure still wins over a cancelled token.
+> The structural preflight still makes its own walk (folding the route into it would move
+> the pinned guard orders and the cache pairing). Pinned by `AsyncRouteDecisionTests`.
 
 Strategy pinning is unchanged from Phase 2: the twin path pins the generic
 loop/sequence strategies; synchronous host operations on the synchronous pipeline

@@ -157,18 +157,23 @@ public static partial class Evaluator
         Expr expr, EvaluationLimits? limits, long? randomSeed, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(expr);
-        // SEC-F5: an already-cancelled token stops the run before the cache-pairing
-        // factory and the route selection each scan the host-built tree.
+        // SEC-F5: an already-cancelled token stops the run before the route decision
+        // scans the host-built tree.
         cancellationToken.ThrowIfCancellationRequested();
+        // The ONE deferred-region walk of this call; the cache pairing, the route rule and
+        // the fast path's synchronous guard all read this answer.
+        var treeRequiresAsyncEvaluation = DecideTreeRequiresAsyncEvaluation(expr, hostOperations: null);
         return await RunAsync(
             expr,
-            CreateRunScopedZeroArgPropertyResultCache(expr, hostOperations: null),
+            CreateRunScopedZeroArgPropertyResultCache(
+                expr, hostOperations: null, observationSink: null, treeRequiresAsyncEvaluation),
             limits,
             loopDiagnostics: null,
             sequenceDiagnostics: null,
             observations: null,
             hostOperations: null,
             randomSeed,
+            treeRequiresAsyncEvaluation,
             cancellationToken).ConfigureAwait(false);
     }
 
@@ -233,15 +238,19 @@ public static partial class Evaluator
         ArgumentNullException.ThrowIfNull(hostOperations);
         // SEC-F5: as above — after argument validation, before any tree work.
         cancellationToken.ThrowIfCancellationRequested();
+        // As above: at most one deferred-region walk (none with an asynchronous operation).
+        var treeRequiresAsyncEvaluation = DecideTreeRequiresAsyncEvaluation(expr, hostOperations);
         return await RunAsync(
             expr,
-            CreateRunScopedZeroArgPropertyResultCache(expr, hostOperations),
+            CreateRunScopedZeroArgPropertyResultCache(
+                expr, hostOperations, observationSink: null, treeRequiresAsyncEvaluation),
             limits,
             loopDiagnostics: null,
             sequenceDiagnostics: null,
             observations: null,
             hostOperations,
             randomSeed,
+            treeRequiresAsyncEvaluation,
             cancellationToken).ConfigureAwait(false);
     }
 
@@ -322,17 +331,39 @@ public static partial class Evaluator
     /// Everything else — including a configuration of purely SYNCHRONOUS host operations,
     /// whose delegates complete inline by contract — takes the synchronous pipeline inline:
     /// the honest optimum, since nothing could suspend.
+    ///
+    /// <para>The tree component is read from <paramref name="treeRequiresAsyncEvaluation"/>
+    /// when the entry already decided it for this call
+    /// (<see cref="DecideTreeRequiresAsyncEvaluation"/>); otherwise the tree is walked here and
+    /// the answer is written back, so the fast path's synchronous guard reuses it — one walk
+    /// per run either way. The first two components are checked first and need no walk.</para>
     /// </summary>
     private static bool RequiresAsyncEvaluationPath(
         Expr expr,
         IZeroArgPropertyResultCache zeroArgPropertyResultCache,
-        HostOperations? hostOperations)
+        HostOperations? hostOperations,
+        ref bool? treeRequiresAsyncEvaluation)
         => zeroArgPropertyResultCache is IAsyncZeroArgPropertyResultCache
             || hostOperations?.ContainsAsynchronousOperations == true
             // B2c: a root carrying deferred module regions — materializing a selected branch
             // awaits the module downloader, the third and only other run component that can
             // complete asynchronously.
-            || DeferredModuleRegion.RequiresAsyncEvaluation(expr);
+            || (treeRequiresAsyncEvaluation ??= DeferredModuleRegion.RequiresAsyncEvaluation(expr));
+
+    /// <summary>
+    /// The deferred-region routing fact of ONE async entry call, decided at most once, in the
+    /// call's synchronous prefix (no host code runs and nothing is awaited before every
+    /// consumer has read it, so it cannot go stale), and handed to the cache-pairing factory,
+    /// the route rule and the fast path's synchronous guard. It is never stored on the tree, a
+    /// cache, the options or any static field: routing stays answered by the tree.
+    /// <c>null</c> — no walk — when an asynchronous host operation is configured: every
+    /// consumer then short-circuits on that component before it would read the fact (and a
+    /// consumer handed <c>null</c> walks the tree itself, so <c>null</c> is always safe).
+    /// </summary>
+    internal static bool? DecideTreeRequiresAsyncEvaluation(Expr expr, HostOperations? hostOperations)
+        => hostOperations?.ContainsAsynchronousOperations == true
+            ? null
+            : DeferredModuleRegion.RequiresAsyncEvaluation(expr);
 
     /// <summary>
     /// Routing enforcement for the twin path's property seam: the twin family awaits
@@ -382,15 +413,19 @@ public static partial class Evaluator
     /// takes no part in the selection.
     /// <see cref="ThrowIfAsyncHostOperationsWithoutAsyncCapableCache"/> enforces the
     /// same pairing fail-loud for internal callers that supply their own cache.
+    /// An entry that already decided the tree fact for this call passes it as
+    /// <paramref name="treeRequiresAsyncEvaluation"/> (<see cref="DecideTreeRequiresAsyncEvaluation"/>);
+    /// <c>null</c> walks the tree here, as before.
     /// </summary>
     internal static IZeroArgPropertyResultCache CreateRunScopedZeroArgPropertyResultCache(
         Expr expr,
         HostOperations? hostOperations,
-        RootPropertyObservationSink? observationSink = null)
+        RootPropertyObservationSink? observationSink = null,
+        bool? treeRequiresAsyncEvaluation = null)
         => hostOperations?.ContainsAsynchronousOperations == true
             // B2c: a root carrying deferred module regions runs on the twin path too, and
             // so pairs with the async-capable cache by the same rule.
-            || DeferredModuleRegion.RequiresAsyncEvaluation(expr)
+            || (treeRequiresAsyncEvaluation ?? DeferredModuleRegion.RequiresAsyncEvaluation(expr))
             ? new RunScopedAsyncZeroArgPropertyResultCache(observationSink)
             : new RunScopedZeroArgPropertyResultCache(observationSink);
 
@@ -439,9 +474,12 @@ public static partial class Evaluator
     /// Internal async run: routes to the synchronous pipeline (fast path) or the async
     /// twin family, per <see cref="RequiresAsyncEvaluationPath"/>. The twin path shares
     /// the internal synchronous
-    /// <see cref="Run(Expr, IZeroArgPropertyResultCache, bool, LoopOptimizationDiagnostics?, bool, SequencePipelineDiagnostics?, EvaluationLimits?, EvaluationObservations?, HostOperations?, long?, CancellationToken)"/>
+    /// <see cref="Run(Expr, IZeroArgPropertyResultCache, bool, LoopOptimizationDiagnostics?, bool, SequencePipelineDiagnostics?, EvaluationLimits?, EvaluationObservations?, HostOperations?, long?, bool?, CancellationToken)"/>
     /// overload's run preparation (through <see cref="PrepareAsyncTwinRun"/>, which pins
     /// the generic strategies — see the class doc) and differs only in its twin dispatch.
+    /// <paramref name="treeRequiresAsyncEvaluation"/> is the caller's once-per-call tree fact
+    /// (<see cref="DecideTreeRequiresAsyncEvaluation"/>); <c>null</c> lets the route rule
+    /// decide it, still once.
     /// </summary>
     internal static async ValueTask<EvalResult<Result>> RunAsync(
         Expr expr,
@@ -452,11 +490,12 @@ public static partial class Evaluator
         EvaluationObservations? observations = null,
         HostOperations? hostOperations = null,
         long? randomSeed = null,
+        bool? treeRequiresAsyncEvaluation = null,
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(zeroArgPropertyResultCache);
 
-        if (!RequiresAsyncEvaluationPath(expr, zeroArgPropertyResultCache, hostOperations))
+        if (!RequiresAsyncEvaluationPath(expr, zeroArgPropertyResultCache, hostOperations, ref treeRequiresAsyncEvaluation))
         {
             // Fast path: the synchronous pipeline IS the async result. Same code, same
             // budget accounting, same optimizer eligibility as the sync entry point.
@@ -473,6 +512,7 @@ public static partial class Evaluator
                 observations,
                 hostOperations,
                 randomSeed,
+                treeRequiresAsyncEvaluation,
                 cancellationToken);
         }
 
@@ -504,7 +544,7 @@ public static partial class Evaluator
         return result;
     }
 
-    /// <summary>Async twin of the internal <see cref="RunCounted(Expr, IZeroArgPropertyResultCache, EvaluationLimits?, HostOperations?, long?, CancellationToken)"/>.</summary>
+    /// <summary>Async twin of the internal <see cref="RunCounted(Expr, IZeroArgPropertyResultCache, EvaluationLimits?, HostOperations?, long?, bool?, CancellationToken)"/>.</summary>
     internal static async ValueTask<EvalResult<CountedResult>> RunCountedAsync(
         Expr expr,
         IZeroArgPropertyResultCache zeroArgPropertyResultCache,
@@ -515,8 +555,10 @@ public static partial class Evaluator
     {
         ArgumentNullException.ThrowIfNull(zeroArgPropertyResultCache);
 
-        if (!RequiresAsyncEvaluationPath(expr, zeroArgPropertyResultCache, hostOperations))
-            return RunCounted(expr, zeroArgPropertyResultCache, limits, hostOperations, randomSeed, cancellationToken);
+        // Decided by the route rule (at most one walk) and reused by the fast path's guard.
+        bool? treeRequiresAsyncEvaluation = null;
+        if (!RequiresAsyncEvaluationPath(expr, zeroArgPropertyResultCache, hostOperations, ref treeRequiresAsyncEvaluation))
+            return RunCounted(expr, zeroArgPropertyResultCache, limits, hostOperations, randomSeed, treeRequiresAsyncEvaluation, cancellationToken);
 
         // Twin path: the same shared preparation as RunCounted; only the dispatch
         // below is twin-specific.
@@ -534,7 +576,12 @@ public static partial class Evaluator
         return result;
     }
 
-    /// <summary>Async twin of the internal <see cref="RunCountedWithTopLevelProperty"/>.</summary>
+    /// <summary>
+    /// Async twin of the internal <see cref="RunCountedWithTopLevelProperty"/> — the funnel
+    /// <see cref="KatLangEngine.RunAsync"/> evaluates through. <paramref name="treeRequiresAsyncEvaluation"/>
+    /// is the caller's once-per-call tree fact (<see cref="DecideTreeRequiresAsyncEvaluation"/>);
+    /// <c>null</c> lets the route rule decide it, still once.
+    /// </summary>
     internal static async ValueTask<EvalResult<CountedRootProgramResult>> RunCountedWithTopLevelPropertyAsync(
         Expr expr,
         string topLevelPropertyName,
@@ -542,13 +589,18 @@ public static partial class Evaluator
         EvaluationLimits? limits = null,
         HostOperations? hostOperations = null,
         long? randomSeed = null,
+        bool? treeRequiresAsyncEvaluation = null,
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(zeroArgPropertyResultCache);
         ArgumentException.ThrowIfNullOrWhiteSpace(topLevelPropertyName);
 
-        if (!RequiresAsyncEvaluationPath(expr, zeroArgPropertyResultCache, hostOperations))
-            return RunCountedWithTopLevelProperty(expr, topLevelPropertyName, zeroArgPropertyResultCache, limits, hostOperations, randomSeed, cancellationToken);
+        if (!RequiresAsyncEvaluationPath(expr, zeroArgPropertyResultCache, hostOperations, ref treeRequiresAsyncEvaluation))
+        {
+            return RunCountedWithTopLevelProperty(
+                expr, topLevelPropertyName, zeroArgPropertyResultCache, limits, hostOperations, randomSeed,
+                treeRequiresAsyncEvaluation, cancellationToken);
+        }
 
         // Twin path: the same shared preparation as RunCountedWithTopLevelProperty;
         // only the dispatch below is twin-specific.
@@ -594,9 +646,15 @@ public static partial class Evaluator
         long? randomSeed = null,
         CancellationToken cancellationToken = default)
     {
+        // At most one deferred-region walk for this call: decided here when this entry builds
+        // the cache, otherwise by the route rule; the fast path's guard reuses it either way.
+        var treeRequiresAsyncEvaluation = zeroArgPropertyResultCache is null
+            ? DecideTreeRequiresAsyncEvaluation(expr, hostOperations)
+            : null;
         var cache = zeroArgPropertyResultCache
-            ?? CreateRunScopedZeroArgPropertyResultCache(expr, hostOperations);
-        if (!RequiresAsyncEvaluationPath(expr, cache, hostOperations))
+            ?? CreateRunScopedZeroArgPropertyResultCache(
+                expr, hostOperations, observationSink: null, treeRequiresAsyncEvaluation);
+        if (!RequiresAsyncEvaluationPath(expr, cache, hostOperations, ref treeRequiresAsyncEvaluation))
         {
             return RunCountedObserved(
                 expr,
@@ -608,6 +666,7 @@ public static partial class Evaluator
                 observations,
                 hostOperations,
                 randomSeed,
+                treeRequiresAsyncEvaluation,
                 cancellationToken);
         }
 

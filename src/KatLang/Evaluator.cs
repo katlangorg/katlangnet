@@ -2547,7 +2547,7 @@ public static partial class Evaluator
             observations: null,
             hostOperations: null,
             randomSeed,
-            cancellationToken);
+            cancellationToken: cancellationToken);
     }
 
     /// <summary>
@@ -2611,7 +2611,7 @@ public static partial class Evaluator
             observations: null,
             hostOperations,
             randomSeed,
-            cancellationToken);
+            cancellationToken: cancellationToken);
     }
 
     internal static EvalResult<Result> Run(
@@ -2742,11 +2742,14 @@ public static partial class Evaluator
     /// demand) can select a branch only by awaiting the module downloader, which the
     /// synchronous pipeline is structurally unable to do. Rejected here, before any tree
     /// work, as a host configuration error — the same rule and the same shape as the
-    /// asynchronous host-operation rejection above.
+    /// asynchronous host-operation rejection above. An async entry's synchronous fast path
+    /// hands in the fact it already decided for this call (<paramref name="treeRequiresAsyncEvaluation"/>,
+    /// always <c>false</c> there), so the tree is walked once per run; every other caller passes
+    /// <c>null</c> and the tree is walked here.
     /// </summary>
-    private static void ThrowIfDeferredModuleRegionsOnSynchronousEntry(Expr expr)
+    private static void ThrowIfDeferredModuleRegionsOnSynchronousEntry(Expr expr, bool? treeRequiresAsyncEvaluation)
     {
-        if (DeferredModuleRegion.RequiresAsyncEvaluation(expr))
+        if (treeRequiresAsyncEvaluation ?? DeferredModuleRegion.RequiresAsyncEvaluation(expr))
         {
             throw new InvalidOperationException(
                 "The program contains conditional branches whose module dependencies load on demand " +
@@ -2857,6 +2860,9 @@ public static partial class Evaluator
     /// async twin family prepares through <c>PrepareAsyncTwinRun</c>, whose guard order
     /// differs — that ordering difference is each wrapper's contract, so a new entry
     /// point must choose a wrapper, never call <see cref="PrepareAdmittedRun"/> directly.
+    /// <paramref name="treeRequiresAsyncEvaluation"/> is the deferred-region fact an async
+    /// entry already decided for THIS call in its synchronous prefix (<c>null</c>: not decided,
+    /// the guard walks the tree); it is never stored.
     /// </summary>
     private static PreparedRun PrepareSynchronousRun(
         Expr expr,
@@ -2869,13 +2875,14 @@ public static partial class Evaluator
         EvaluationObservations? observations,
         HostOperations? hostOperations,
         long? randomSeed,
+        bool? treeRequiresAsyncEvaluation,
         CancellationToken cancellationToken)
     {
         // Host cancellation preempts every pre-evaluation verdict: an already-cancelled
         // token stops the run before the structural preflight spends O(tree) work.
         cancellationToken.ThrowIfCancellationRequested();
         ThrowIfAsynchronousHostOperationsOnSynchronousEntry(hostOperations);
-        ThrowIfDeferredModuleRegionsOnSynchronousEntry(expr);
+        ThrowIfDeferredModuleRegionsOnSynchronousEntry(expr, treeRequiresAsyncEvaluation);
 
         return PrepareAdmittedRun(
             expr,
@@ -2972,6 +2979,7 @@ public static partial class Evaluator
         EvaluationObservations? observations = null,
         HostOperations? hostOperations = null,
         long? randomSeed = null,
+        bool? treeRequiresAsyncEvaluation = null,
         CancellationToken cancellationToken = default)
     {
         using var preparation = PrepareSynchronousRun(
@@ -2985,6 +2993,7 @@ public static partial class Evaluator
             observations,
             hostOperations,
             randomSeed,
+            treeRequiresAsyncEvaluation,
             cancellationToken);
         if (preparation.Error is { } preparationError)
             return preparationError;
@@ -3031,7 +3040,7 @@ public static partial class Evaluator
         => RunCounted(expr, new RunScopedZeroArgPropertyResultCache());
 
     /// <summary>
-    /// Harness entry point: evaluates exactly like <see cref="RunCounted(Expr, IZeroArgPropertyResultCache, EvaluationLimits?, HostOperations?, long?, CancellationToken)"/>
+    /// Harness entry point: evaluates exactly like <see cref="RunCounted(Expr, IZeroArgPropertyResultCache, EvaluationLimits?, HostOperations?, long?, bool?, CancellationToken)"/>
     /// and additionally hands back the run's <see cref="EvaluationBudget"/> so a test can
     /// read the OPERATIONAL counters this run actually charged (steps, materialized item
     /// slots and string units, peak dynamic depth).
@@ -3044,7 +3053,7 @@ public static partial class Evaluator
     ///
     /// <para>The optional <paramref name="loopDiagnostics"/> and
     /// <paramref name="sequenceDiagnostics"/> collectors are the SAME channel the internal
-    /// <see cref="Run(Expr, IZeroArgPropertyResultCache, bool, LoopOptimizationDiagnostics?, bool, SequencePipelineDiagnostics?, EvaluationLimits?, EvaluationObservations?, HostOperations?, long?, CancellationToken)"/>
+    /// <see cref="Run(Expr, IZeroArgPropertyResultCache, bool, LoopOptimizationDiagnostics?, bool, SequencePipelineDiagnostics?, EvaluationLimits?, EvaluationObservations?, HostOperations?, long?, bool?, CancellationToken)"/>
     /// overload already exposes, so an observed run can additionally record which execution
     /// path the optimizers actually took (planned, fused, fallen back, or generic). They are
     /// write-only counters the evaluator increments through a null-conditional call: supplying
@@ -3060,6 +3069,7 @@ public static partial class Evaluator
         EvaluationObservations? observations = null,
         HostOperations? hostOperations = null,
         long? randomSeed = null,
+        bool? treeRequiresAsyncEvaluation = null,
         CancellationToken cancellationToken = default)
     {
         using var preparation = PrepareSynchronousRun(
@@ -3073,6 +3083,7 @@ public static partial class Evaluator
             observations,
             hostOperations,
             randomSeed,
+            treeRequiresAsyncEvaluation,
             cancellationToken);
         if (preparation.Error is { } preparationError)
             return (preparationError, preparation.Budget);
@@ -3092,6 +3103,7 @@ public static partial class Evaluator
         EvaluationLimits? limits = null,
         HostOperations? hostOperations = null,
         long? randomSeed = null,
+        bool? treeRequiresAsyncEvaluation = null,
         CancellationToken cancellationToken = default)
     {
         using var preparation = PrepareSynchronousRun(
@@ -3105,6 +3117,7 @@ public static partial class Evaluator
             observations: null,
             hostOperations,
             randomSeed,
+            treeRequiresAsyncEvaluation,
             cancellationToken);
         if (preparation.Error is { } preparationError)
             return preparationError;
@@ -3125,6 +3138,7 @@ public static partial class Evaluator
         EvaluationLimits? limits = null,
         HostOperations? hostOperations = null,
         long? randomSeed = null,
+        bool? treeRequiresAsyncEvaluation = null,
         CancellationToken cancellationToken = default)
     {
         using var preparation = PrepareSynchronousRun(
@@ -3138,6 +3152,7 @@ public static partial class Evaluator
             observations: null,
             hostOperations,
             randomSeed,
+            treeRequiresAsyncEvaluation,
             cancellationToken);
         if (preparation.Error is { } preparationError)
             return preparationError;

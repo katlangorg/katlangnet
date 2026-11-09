@@ -625,6 +625,12 @@ public static class KatLangEngine
             return FrontEndFailureResult(frontEndResult, diagnosticDisplayOptions);
         }
 
+        // The evaluation token is observed once the front end has succeeded (a front-end
+        // failure wins over a cancelled evaluation token) and before any run setup — the same
+        // point as in RunAsync. The evaluator's synchronous preparation would observe it next
+        // anyway, before any tree work, so here this only skips the run setup below.
+        evaluationCancellationToken.ThrowIfCancellationRequested();
+
         var observationSink = CreateObservationSink(frontEndResult, options);
         var zeroArgPropertyResultCache = new RunScopedZeroArgPropertyResultCache(observationSink);
 
@@ -645,7 +651,7 @@ public static class KatLangEngine
             options?.EvaluationLimits,
             hostOperations,
             options?.RandomSeed,
-            evaluationCancellationToken);
+            cancellationToken: evaluationCancellationToken);
 
         return AttachPropertyObservations(
             ProjectEvaluationOutcome(
@@ -725,13 +731,21 @@ public static class KatLangEngine
             return FrontEndFailureResult(frontEndResult, diagnosticDisplayOptions);
         }
 
+        // The evaluation token is observed once the front end has succeeded (a front-end
+        // failure wins over a cancelled evaluation token) and before the route decision walks
+        // the program and the run cache is built. This is an async method, so the cancellation
+        // reaches the caller through the returned task.
+        evaluationCancellationToken.ThrowIfCancellationRequested();
+
         // Cache-pairing rule (async-capable cache exactly for asynchronous host-operation
         // configurations and for roots carrying deferred module regions):
-        // Evaluator.CreateRunScopedZeroArgPropertyResultCache.
+        // Evaluator.CreateRunScopedZeroArgPropertyResultCache. The tree half of the rule is
+        // decided ONCE for this run and shared by the cache pairing and the route rule.
         var program = new Expr.AlgorithmExpr(frontEndResult.ElaboratedRoot);
+        var treeRequiresAsyncEvaluation = Evaluator.DecideTreeRequiresAsyncEvaluation(program, hostOperations);
         var observationSink = CreateObservationSink(frontEndResult, options);
-        var zeroArgPropertyResultCache =
-            Evaluator.CreateRunScopedZeroArgPropertyResultCache(program, hostOperations, observationSink);
+        var zeroArgPropertyResultCache = Evaluator.CreateRunScopedZeroArgPropertyResultCache(
+            program, hostOperations, observationSink, treeRequiresAsyncEvaluation);
 
         // One budget for the whole run, exactly as in Run; the host display filter is
         // likewise consumed only afterwards, by the shared projection.
@@ -742,6 +756,7 @@ public static class KatLangEngine
             options?.EvaluationLimits,
             hostOperations,
             options?.RandomSeed,
+            treeRequiresAsyncEvaluation,
             evaluationCancellationToken).ConfigureAwait(false);
 
         return AttachPropertyObservations(
