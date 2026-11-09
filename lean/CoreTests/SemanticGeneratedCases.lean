@@ -15,10 +15,10 @@ Not checked here: the host-operation base program itself, host events, async sus
 cancellation, and optimizer paths (all C# evidence of the SEM-2B profiles).
 
 Partition (machine-checked by the `includedCaseIds.length` guard below):
-- corpus cases: 239
+- corpus cases: 273
 - excluded by kind (invalid front-end programs; Lean has no surface front end): 9
 - excluded by exact id: 0
-- included cases: 230 (153 success, 77 runtime failure)
+- included cases: 264 (187 success, 77 runtime failure)
 
 Regenerate from the repo root with:
   $env:KATLANG_REGENERATE_SEMANTIC_GENERATED = "1"
@@ -842,6 +842,176 @@ def case_sem2b_2Fv1_2Fsys_2Fguard_2Fnested_2Dpattern_2F2 : Expr :=
   .algorithmExpr (alg [] [] [privateProp "trace" (alg ["x"] [] [] [.param "x"]), privateProp "wait" (alg ["x"] [] [] [.param "x"]), privateProp "v1" (algWithParameterPatterns [.sequenceValue [.listValue [.capture { name := "v2" }, .capture { name := "v3", kind := .collecting }], .capture { name := "v4" }]] [] [] [(.listLiteral [.param "v2", (.call (.resolve "count") [.param "v3"]), .param "v4"])])] [(.call (.resolve "v1") [(.capture [.num 99, (.call (.resolve "trace") [.num 4])])]), .num 997])
 #guard obs case_sem2b_2Fv1_2Fsys_2Fguard_2Fnested_2Dpattern_2F2 == "err type"
 
+-- sem2b/v1/sys/path/LoopShortCircuit/dot-bare: v1(v2) = v2 + 1 \n v1(1).repeat(0) \n 997
+def case_sem2b_2Fv1_2Fsys_2Fpath_2FLoopShortCircuit_2Fdot_2Dbare : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "trace" (alg ["x"] [] [] [.param "x"]), privateProp "wait" (alg ["x"] [] [] [.param "x"]), privateProp "v1" (alg ["v2"] [] [] [(.binary .add (.param "v2") (.num 1))])] [(.dotCall (.call (.resolve "v1") [.num 1]) "repeat" (some [.num 0])), .num 997])
+#guard obs case_sem2b_2Fv1_2Fsys_2Fpath_2FLoopShortCircuit_2Fdot_2Dbare == "ok raw=S[1, 997] n=2"
+
+-- sem2b/v1/sys/path/LoopShortCircuit/plain-bare: v1(v2) = v2 + 1 \n repeat(v1(1), 0) \n 997
+def case_sem2b_2Fv1_2Fsys_2Fpath_2FLoopShortCircuit_2Fplain_2Dbare : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "trace" (alg ["x"] [] [] [.param "x"]), privateProp "wait" (alg ["x"] [] [] [.param "x"]), privateProp "v1" (alg ["v2"] [] [] [(.binary .add (.param "v2") (.num 1))])] [(.call (.resolve "repeat") [(.call (.resolve "v1") [.num 1]), .num 0]), .num 997])
+#guard obs case_sem2b_2Fv1_2Fsys_2Fpath_2FLoopShortCircuit_2Fplain_2Dbare == "ok raw=S[1, 997] n=2"
+
+-- sem2b/v1/sys/path/LoopShortCircuit/dot-list: v1(v2) = v2 + 1 \n [v1(1).repeat(0)] \n 997
+def case_sem2b_2Fv1_2Fsys_2Fpath_2FLoopShortCircuit_2Fdot_2Dlist : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "trace" (alg ["x"] [] [] [.param "x"]), privateProp "wait" (alg ["x"] [] [] [.param "x"]), privateProp "v1" (alg ["v2"] [] [] [(.binary .add (.param "v2") (.num 1))])] [(.listLiteral [(.dotCall (.call (.resolve "v1") [.num 1]) "repeat" (some [.num 0]))]), .num 997])
+#guard obs case_sem2b_2Fv1_2Fsys_2Fpath_2FLoopShortCircuit_2Fdot_2Dlist == "ok raw=S[L[1], 997] n=2"
+
+-- sem2b/v1/sys/path/LoopShortCircuit/plain-property: v1(v2) = v2 + 1 \n v3 = repeat(v1(1), 0) \n v3 \n 997
+def case_sem2b_2Fv1_2Fsys_2Fpath_2FLoopShortCircuit_2Fplain_2Dproperty : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "v3" (alg [] [] [] [(.call (.resolve "repeat") [(.call (.resolve "v1") [.num 1]), .num 0])]), privateProp "trace" (alg ["x"] [] [] [.param "x"]), privateProp "wait" (alg ["x"] [] [] [.param "x"]), privateProp "v1" (alg ["v2"] [] [] [(.binary .add (.param "v2") (.num 1))])] [.resolve "v3", .num 997])
+#guard obs case_sem2b_2Fv1_2Fsys_2Fpath_2FLoopShortCircuit_2Fplain_2Dproperty == "ok raw=S[1, 997] n=2"
+
+-- sem2b/v1/sys/path/LoopShortCircuit/dot-wrapper: v1(v2) = v2 + 1 \n v3(v4) = v4 \n v3(v1(1).repeat(0)) \n 997
+def case_sem2b_2Fv1_2Fsys_2Fpath_2FLoopShortCircuit_2Fdot_2Dwrapper : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "trace" (alg ["x"] [] [] [.param "x"]), privateProp "wait" (alg ["x"] [] [] [.param "x"]), privateProp "v1" (alg ["v2"] [] [] [(.binary .add (.param "v2") (.num 1))]), privateProp "v3" (alg ["v4"] [] [] [.param "v4"])] [(.call (.resolve "v3") [(.dotCall (.call (.resolve "v1") [.num 1]) "repeat" (some [.num 0]))]), .num 997])
+#guard obs case_sem2b_2Fv1_2Fsys_2Fpath_2FLoopShortCircuit_2Fdot_2Dwrapper == "ok raw=S[1, 997] n=2"
+
+-- sem2b/v1/sys/path/LoopShortCircuit/plain-if-true: v1(v2) = v2 + 1 \n if(true, repeat(v1(1), 0), trace(666)) \n 997
+def case_sem2b_2Fv1_2Fsys_2Fpath_2FLoopShortCircuit_2Fplain_2Dif_2Dtrue : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "trace" (alg ["x"] [] [] [.param "x"]), privateProp "wait" (alg ["x"] [] [] [.param "x"]), privateProp "v1" (alg ["v2"] [] [] [(.binary .add (.param "v2") (.num 1))])] [(.call (.resolve "if") [.boolLiteral true, (.call (.resolve "repeat") [(.call (.resolve "v1") [.num 1]), .num 0]), (.call (.resolve "trace") [.num 666])]), .num 997])
+#guard obs case_sem2b_2Fv1_2Fsys_2Fpath_2FLoopShortCircuit_2Fplain_2Dif_2Dtrue == "ok raw=S[1, 997] n=2"
+
+-- sem2b/v1/sys/path/LoopShortCircuit/dot-brace: v1(v2) = v2 + 1 \n { \n   v3 = 0 \n   v1(1).repeat(0) \n } \n 997
+def case_sem2b_2Fv1_2Fsys_2Fpath_2FLoopShortCircuit_2Fdot_2Dbrace : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "trace" (alg ["x"] [] [] [.param "x"]), privateProp "wait" (alg ["x"] [] [] [.param "x"]), privateProp "v1" (alg ["v2"] [] [] [(.binary .add (.param "v2") (.num 1))])] [(.algorithmExpr (alg [] [] [privateProp "v3" (alg [] [] [] [.num 0])] [(.dotCall (.call (.resolve "v1") [.num 1]) "repeat" (some [.num 0]))])), .num 997])
+#guard obs case_sem2b_2Fv1_2Fsys_2Fpath_2FLoopShortCircuit_2Fdot_2Dbrace == "ok raw=S[1, 997] n=2"
+
+-- sem2b/v1/sys/path/LoopShortCircuit/plain-property-double: v1(v2) = v2 + 1 \n v3 = repeat(v1(1), 0) \n [v3, v3] \n 997
+def case_sem2b_2Fv1_2Fsys_2Fpath_2FLoopShortCircuit_2Fplain_2Dproperty_2Ddouble : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "v3" (alg [] [] [] [(.call (.resolve "repeat") [(.call (.resolve "v1") [.num 1]), .num 0])]), privateProp "trace" (alg ["x"] [] [] [.param "x"]), privateProp "wait" (alg ["x"] [] [] [.param "x"]), privateProp "v1" (alg ["v2"] [] [] [(.binary .add (.param "v2") (.num 1))])] [(.listLiteral [.resolve "v3", .resolve "v3"]), .num 997])
+#guard obs case_sem2b_2Fv1_2Fsys_2Fpath_2FLoopShortCircuit_2Fplain_2Dproperty_2Ddouble == "ok raw=S[L[1, 1], 997] n=2"
+
+-- sem2b/v1/sys/path/LoopShortCircuit/dot-then-cache: v1(v2) = v2 + 1 \n v3 = wait(2) \n v1(1).repeat(0) \n [v3(), v3] \n 997
+def case_sem2b_2Fv1_2Fsys_2Fpath_2FLoopShortCircuit_2Fdot_2Dthen_2Dcache : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "v3" (alg [] [] [] [(.call (.resolve "wait") [.num 2])]), privateProp "trace" (alg ["x"] [] [] [.param "x"]), privateProp "wait" (alg ["x"] [] [] [.param "x"]), privateProp "v1" (alg ["v2"] [] [] [(.binary .add (.param "v2") (.num 1))])] [(.dotCall (.call (.resolve "v1") [.num 1]) "repeat" (some [.num 0])), (.listLiteral [(.call (.resolve "v3") []), .resolve "v3"]), .num 997])
+#guard obs case_sem2b_2Fv1_2Fsys_2Fpath_2FLoopShortCircuit_2Fdot_2Dthen_2Dcache == "ok raw=S[1, L[2, 2], 997] n=3"
+
+-- sem2b/v1/sys/path/LoopShortCircuit/meta-then-plain-list: v1(meta v2) = v2 \n v3 = v1 \n v4(v5, v6, v7) = (v5 * 100) + (v6 * 10) + v7 \n v8 = v3(v4(trace(1), trace(2), trace(3))) \n v9(v10, v11, v12) = v12 \n v13(v14) = v14 + 1 \n [v8.Arguments.count, v8.Arguments[1], v8.Invoke(), v9(v8.Arguments*)] \n [repeat(v13(4), 0)] \n 997
+def case_sem2b_2Fv1_2Fsys_2Fpath_2FLoopShortCircuit_2Fmeta_2Dthen_2Dplain_2Dlist : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "v3" (.alias none [] [] (.resolve "v1")), privateProp "v8" (alg [] [] [] [(.call (.resolve "v3") [(.call (.resolve "v4") [(.call (.resolve "trace") [.num 1]), (.call (.resolve "trace") [.num 2]), (.call (.resolve "trace") [.num 3])])])]), privateProp "trace" (alg ["x"] [] [] [.param "x"]), privateProp "wait" (alg ["x"] [] [] [.param "x"]), privateProp "v1" (algWithParameters [{ name := "v2", kind := .metaRef }] [] [] [.param "v2"]), privateProp "v4" (alg ["v5", "v6", "v7"] [] [] [(.binary .add (.binary .add (.binary .mul (.param "v5") (.num 100)) (.binary .mul (.param "v6") (.num 10))) (.param "v7"))]), privateProp "v9" (alg ["v10", "v11", "v12"] [] [] [.param "v12"]), privateProp "v13" (alg ["v14"] [] [] [(.binary .add (.param "v14") (.num 1))])] [(.listLiteral [(.dotCall (.dotCall (.resolve "v8") "Arguments" none) "count" none), (.index (.dotCall (.resolve "v8") "Arguments" none) [.num 1]), (.dotCall (.resolve "v8") "Invoke" (some [])), (.call (.resolve "v9") [(.sequenceSpread (.dotCall (.resolve "v8") "Arguments" none))])]), (.listLiteral [(.call (.resolve "repeat") [(.call (.resolve "v13") [.num 4]), .num 0])]), .num 997])
+#guard obs case_sem2b_2Fv1_2Fsys_2Fpath_2FLoopShortCircuit_2Fmeta_2Dthen_2Dplain_2Dlist == "ok raw=S[L[3, 2, 123, 3], L[4], 997] n=3"
+
+-- sem2b/v1/sys/path/LoopShortCircuit/clause-family-step-dot: v1(0) = 100 \n v1(v2) = v2 + 1 \n v1(1).repeat(0) \n 997
+def case_sem2b_2Fv1_2Fsys_2Fpath_2FLoopShortCircuit_2Fclause_2Dfamily_2Dstep_2Ddot : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "trace" (alg ["x"] [] [] [.param "x"]), privateProp "wait" (alg ["x"] [] [] [.param "x"]), privateProp "v1" (.conditional none [] [⟨.litInt 0, (alg [] [] [] [.num 100])⟩, ⟨.bind "v2", (alg [] [] [] [(.binary .add (.param "v2") (.num 1))])⟩])] [(.dotCall (.call (.resolve "v1") [.num 1]) "repeat" (some [.num 0])), .num 997])
+#guard obs case_sem2b_2Fv1_2Fsys_2Fpath_2FLoopShortCircuit_2Fclause_2Dfamily_2Dstep_2Ddot == "ok raw=S[1, 997] n=2"
+
+-- sem2b/v1/sys/path/LoopShortCircuit/collecting-step-plain: v1(*v2) = v2[0] + 1 \n repeat(v1(1), 0) \n 997
+def case_sem2b_2Fv1_2Fsys_2Fpath_2FLoopShortCircuit_2Fcollecting_2Dstep_2Dplain : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "trace" (alg ["x"] [] [] [.param "x"]), privateProp "wait" (alg ["x"] [] [] [.param "x"]), privateProp "v1" (algWithParameters [{ name := "v2", kind := .collecting }] [] [] [(.binary .add (.index (.param "v2") [.num 0]) (.num 1))])] [(.call (.resolve "repeat") [(.call (.resolve "v1") [.num 1]), .num 0]), .num 997])
+#guard obs case_sem2b_2Fv1_2Fsys_2Fpath_2FLoopShortCircuit_2Fcollecting_2Dstep_2Dplain == "ok raw=S[1, 997] n=2"
+
+-- sem2b/v1/sys/path/LoopShortCircuit/traced-step-dot-wrapper: v1(v2) = trace(v2) + 1 \n v3(v4) = v4 \n v3(v1(1).repeat(0)) \n 997
+def case_sem2b_2Fv1_2Fsys_2Fpath_2FLoopShortCircuit_2Ftraced_2Dstep_2Ddot_2Dwrapper : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "trace" (alg ["x"] [] [] [.param "x"]), privateProp "wait" (alg ["x"] [] [] [.param "x"]), privateProp "v1" (alg ["v2"] [] [] [(.binary .add (.call (.resolve "trace") [.param "v2"]) (.num 1))]), privateProp "v3" (alg ["v4"] [] [] [.param "v4"])] [(.call (.resolve "v3") [(.dotCall (.call (.resolve "v1") [.num 1]) "repeat" (some [.num 0]))]), .num 997])
+#guard obs case_sem2b_2Fv1_2Fsys_2Fpath_2FLoopShortCircuit_2Ftraced_2Dstep_2Ddot_2Dwrapper == "ok raw=S[1, 997] n=2"
+
+-- sem2b/v1/sys/path/LoopFallback/clause-family-1-dot-bare: v1(0) = 100 \n v1(v2) = v2 + 1 \n v1(1).repeat(1) \n 997
+def case_sem2b_2Fv1_2Fsys_2Fpath_2FLoopFallback_2Fclause_2Dfamily_2D1_2Ddot_2Dbare : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "trace" (alg ["x"] [] [] [.param "x"]), privateProp "wait" (alg ["x"] [] [] [.param "x"]), privateProp "v1" (.conditional none [] [⟨.litInt 0, (alg [] [] [] [.num 100])⟩, ⟨.bind "v2", (alg [] [] [] [(.binary .add (.param "v2") (.num 1))])⟩])] [(.dotCall (.call (.resolve "v1") [.num 1]) "repeat" (some [.num 1])), .num 997])
+#guard obs case_sem2b_2Fv1_2Fsys_2Fpath_2FLoopFallback_2Fclause_2Dfamily_2D1_2Ddot_2Dbare == "ok raw=S[2, 997] n=2"
+
+-- sem2b/v1/sys/path/LoopFallback/clause-family-2-plain-bare: v1(0) = 100 \n v1(v2) = v2 + 1 \n repeat(v1(1), 2) \n 997
+def case_sem2b_2Fv1_2Fsys_2Fpath_2FLoopFallback_2Fclause_2Dfamily_2D2_2Dplain_2Dbare : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "trace" (alg ["x"] [] [] [.param "x"]), privateProp "wait" (alg ["x"] [] [] [.param "x"]), privateProp "v1" (.conditional none [] [⟨.litInt 0, (alg [] [] [] [.num 100])⟩, ⟨.bind "v2", (alg [] [] [] [(.binary .add (.param "v2") (.num 1))])⟩])] [(.call (.resolve "repeat") [(.call (.resolve "v1") [.num 1]), .num 2]), .num 997])
+#guard obs case_sem2b_2Fv1_2Fsys_2Fpath_2FLoopFallback_2Fclause_2Dfamily_2D2_2Dplain_2Dbare == "ok raw=S[3, 997] n=2"
+
+-- sem2b/v1/sys/path/LoopFallback/clause-family-3-dot-list: v1(0) = 100 \n v1(v2) = v2 + 1 \n [v1(1).repeat(3)] \n 997
+def case_sem2b_2Fv1_2Fsys_2Fpath_2FLoopFallback_2Fclause_2Dfamily_2D3_2Ddot_2Dlist : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "trace" (alg ["x"] [] [] [.param "x"]), privateProp "wait" (alg ["x"] [] [] [.param "x"]), privateProp "v1" (.conditional none [] [⟨.litInt 0, (alg [] [] [] [.num 100])⟩, ⟨.bind "v2", (alg [] [] [] [(.binary .add (.param "v2") (.num 1))])⟩])] [(.listLiteral [(.dotCall (.call (.resolve "v1") [.num 1]) "repeat" (some [.num 3]))]), .num 997])
+#guard obs case_sem2b_2Fv1_2Fsys_2Fpath_2FLoopFallback_2Fclause_2Dfamily_2D3_2Ddot_2Dlist == "ok raw=S[L[4], 997] n=2"
+
+-- sem2b/v1/sys/path/LoopFallback/clause-family-4-plain-property: v1(0) = 100 \n v1(v2) = v2 + 1 \n v3 = repeat(v1(1), 4) \n v3 \n 997
+def case_sem2b_2Fv1_2Fsys_2Fpath_2FLoopFallback_2Fclause_2Dfamily_2D4_2Dplain_2Dproperty : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "v3" (alg [] [] [] [(.call (.resolve "repeat") [(.call (.resolve "v1") [.num 1]), .num 4])]), privateProp "trace" (alg ["x"] [] [] [.param "x"]), privateProp "wait" (alg ["x"] [] [] [.param "x"]), privateProp "v1" (.conditional none [] [⟨.litInt 0, (alg [] [] [] [.num 100])⟩, ⟨.bind "v2", (alg [] [] [] [(.binary .add (.param "v2") (.num 1))])⟩])] [.resolve "v3", .num 997])
+#guard obs case_sem2b_2Fv1_2Fsys_2Fpath_2FLoopFallback_2Fclause_2Dfamily_2D4_2Dplain_2Dproperty == "ok raw=S[5, 997] n=2"
+
+-- sem2b/v1/sys/path/LoopFallback/collecting-1-plain-bare: v1(*v2) = v2[0] + 1 \n repeat(v1(1), 1) \n 997
+def case_sem2b_2Fv1_2Fsys_2Fpath_2FLoopFallback_2Fcollecting_2D1_2Dplain_2Dbare : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "trace" (alg ["x"] [] [] [.param "x"]), privateProp "wait" (alg ["x"] [] [] [.param "x"]), privateProp "v1" (algWithParameters [{ name := "v2", kind := .collecting }] [] [] [(.binary .add (.index (.param "v2") [.num 0]) (.num 1))])] [(.call (.resolve "repeat") [(.call (.resolve "v1") [.num 1]), .num 1]), .num 997])
+#guard obs case_sem2b_2Fv1_2Fsys_2Fpath_2FLoopFallback_2Fcollecting_2D1_2Dplain_2Dbare == "ok raw=S[2, 997] n=2"
+
+-- sem2b/v1/sys/path/LoopFallback/collecting-2-dot-wrapper: v1(*v2) = v2[0] + 1 \n v3(v4) = v4 \n v3(v1(1).repeat(2)) \n 997
+def case_sem2b_2Fv1_2Fsys_2Fpath_2FLoopFallback_2Fcollecting_2D2_2Ddot_2Dwrapper : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "trace" (alg ["x"] [] [] [.param "x"]), privateProp "wait" (alg ["x"] [] [] [.param "x"]), privateProp "v1" (algWithParameters [{ name := "v2", kind := .collecting }] [] [] [(.binary .add (.index (.param "v2") [.num 0]) (.num 1))]), privateProp "v3" (alg ["v4"] [] [] [.param "v4"])] [(.call (.resolve "v3") [(.dotCall (.call (.resolve "v1") [.num 1]) "repeat" (some [.num 2]))]), .num 997])
+#guard obs case_sem2b_2Fv1_2Fsys_2Fpath_2FLoopFallback_2Fcollecting_2D2_2Ddot_2Dwrapper == "ok raw=S[3, 997] n=2"
+
+-- sem2b/v1/sys/path/LoopFallback/collecting-3-plain-if-true: v1(*v2) = v2[0] + 1 \n if(true, repeat(v1(1), 3), trace(666)) \n 997
+def case_sem2b_2Fv1_2Fsys_2Fpath_2FLoopFallback_2Fcollecting_2D3_2Dplain_2Dif_2Dtrue : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "trace" (alg ["x"] [] [] [.param "x"]), privateProp "wait" (alg ["x"] [] [] [.param "x"]), privateProp "v1" (algWithParameters [{ name := "v2", kind := .collecting }] [] [] [(.binary .add (.index (.param "v2") [.num 0]) (.num 1))])] [(.call (.resolve "if") [.boolLiteral true, (.call (.resolve "repeat") [(.call (.resolve "v1") [.num 1]), .num 3]), (.call (.resolve "trace") [.num 666])]), .num 997])
+#guard obs case_sem2b_2Fv1_2Fsys_2Fpath_2FLoopFallback_2Fcollecting_2D3_2Dplain_2Dif_2Dtrue == "ok raw=S[4, 997] n=2"
+
+-- sem2b/v1/sys/path/LoopFallback/collecting-4-dot-brace: v1(*v2) = v2[0] + 1 \n { \n   v3 = 0 \n   v1(1).repeat(4) \n } \n 997
+def case_sem2b_2Fv1_2Fsys_2Fpath_2FLoopFallback_2Fcollecting_2D4_2Ddot_2Dbrace : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "trace" (alg ["x"] [] [] [.param "x"]), privateProp "wait" (alg ["x"] [] [] [.param "x"]), privateProp "v1" (algWithParameters [{ name := "v2", kind := .collecting }] [] [] [(.binary .add (.index (.param "v2") [.num 0]) (.num 1))])] [(.algorithmExpr (alg [] [] [privateProp "v3" (alg [] [] [] [.num 0])] [(.dotCall (.call (.resolve "v1") [.num 1]) "repeat" (some [.num 4]))])), .num 997])
+#guard obs case_sem2b_2Fv1_2Fsys_2Fpath_2FLoopFallback_2Fcollecting_2D4_2Ddot_2Dbrace == "ok raw=S[5, 997] n=2"
+
+-- sem2b/v1/sys/path/LoopFallback/collecting-1-dot-property-double: v1(*v2) = v2[0] + 1 \n v3 = v1(1).repeat(1) \n [v3, v3] \n 997
+def case_sem2b_2Fv1_2Fsys_2Fpath_2FLoopFallback_2Fcollecting_2D1_2Ddot_2Dproperty_2Ddouble : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "v3" (alg [] [] [] [(.dotCall (.call (.resolve "v1") [.num 1]) "repeat" (some [.num 1]))]), privateProp "trace" (alg ["x"] [] [] [.param "x"]), privateProp "wait" (alg ["x"] [] [] [.param "x"]), privateProp "v1" (algWithParameters [{ name := "v2", kind := .collecting }] [] [] [(.binary .add (.index (.param "v2") [.num 0]) (.num 1))])] [(.listLiteral [.resolve "v3", .resolve "v3"]), .num 997])
+#guard obs case_sem2b_2Fv1_2Fsys_2Fpath_2FLoopFallback_2Fcollecting_2D1_2Ddot_2Dproperty_2Ddouble == "ok raw=S[L[2, 2], 997] n=2"
+
+-- sem2b/v1/sys/path/LoopFallback/clause-family-2-dot-then-meta: v1(0) = 100 \n v1(v2) = v2 + 1 \n v3(meta v4) = v4 \n v5(v6) = v3(v6) \n v7(v8) = trace(v8) \n v9 = v5(v7(trace(2))) \n v1(1).repeat(2) \n [v9.Arguments[0]] \n 997
+def case_sem2b_2Fv1_2Fsys_2Fpath_2FLoopFallback_2Fclause_2Dfamily_2D2_2Ddot_2Dthen_2Dmeta : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "v9" (alg [] [] [] [(.call (.resolve "v5") [(.call (.resolve "v7") [(.call (.resolve "trace") [.num 2])])])]), privateProp "trace" (alg ["x"] [] [] [.param "x"]), privateProp "wait" (alg ["x"] [] [] [.param "x"]), privateProp "v1" (.conditional none [] [⟨.litInt 0, (alg [] [] [] [.num 100])⟩, ⟨.bind "v2", (alg [] [] [] [(.binary .add (.param "v2") (.num 1))])⟩]), privateProp "v3" (algWithParameters [{ name := "v4", kind := .metaRef }] [] [] [.param "v4"]), privateProp "v5" (alg ["v6"] [] [] [(.call (.resolve "v3") [.param "v6"])]), privateProp "v7" (alg ["v8"] [] [] [(.call (.resolve "trace") [.param "v8"])])] [(.dotCall (.call (.resolve "v1") [.num 1]) "repeat" (some [.num 2])), (.listLiteral [(.index (.dotCall (.resolve "v9") "Arguments" none) [.num 0])]), .num 997])
+#guard obs case_sem2b_2Fv1_2Fsys_2Fpath_2FLoopFallback_2Fclause_2Dfamily_2D2_2Ddot_2Dthen_2Dmeta == "ok raw=S[3, L[2], 997] n=3"
+
+-- sem2b/v1/sys/path/LoopFallback/collect-then-collecting-3-plain: v1([v2, *v3]) = v2 + count(v3) \n v4(*v5) = v5[0] + 1 \n v1([1, 2]) \n repeat(v4(3), 3) \n 997
+def case_sem2b_2Fv1_2Fsys_2Fpath_2FLoopFallback_2Fcollect_2Dthen_2Dcollecting_2D3_2Dplain : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "trace" (alg ["x"] [] [] [.param "x"]), privateProp "wait" (alg ["x"] [] [] [.param "x"]), privateProp "v1" (algWithParameterPatterns [.listValue [.capture { name := "v2" }, .capture { name := "v3", kind := .collecting }]] [] [] [(.binary .add (.param "v2") (.call (.resolve "count") [.param "v3"]))]), privateProp "v4" (algWithParameters [{ name := "v5", kind := .collecting }] [] [] [(.binary .add (.index (.param "v5") [.num 0]) (.num 1))])] [(.call (.resolve "v1") [(.listLiteral [.num 1, .num 2])]), (.call (.resolve "repeat") [(.call (.resolve "v4") [.num 3]), .num 3]), .num 997])
+#guard obs case_sem2b_2Fv1_2Fsys_2Fpath_2FLoopFallback_2Fcollect_2Dthen_2Dcollecting_2D3_2Dplain == "ok raw=S[2, 6, 997] n=3"
+
+-- sem2b/v1/sys/path/GenericInsideOptimizedLoop/trace-1-dot-bare: v1(v2) = trace(v2) + 1 \n v1(1).repeat(1) \n 997
+def case_sem2b_2Fv1_2Fsys_2Fpath_2FGenericInsideOptimizedLoop_2Ftrace_2D1_2Ddot_2Dbare : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "trace" (alg ["x"] [] [] [.param "x"]), privateProp "wait" (alg ["x"] [] [] [.param "x"]), privateProp "v1" (alg ["v2"] [] [] [(.binary .add (.call (.resolve "trace") [.param "v2"]) (.num 1))])] [(.dotCall (.call (.resolve "v1") [.num 1]) "repeat" (some [.num 1])), .num 997])
+#guard obs case_sem2b_2Fv1_2Fsys_2Fpath_2FGenericInsideOptimizedLoop_2Ftrace_2D1_2Ddot_2Dbare == "ok raw=S[2, 997] n=2"
+
+-- sem2b/v1/sys/path/GenericInsideOptimizedLoop/trace-2-plain-bare: v1(v2) = trace(v2) + 1 \n repeat(v1(1), 2) \n 997
+def case_sem2b_2Fv1_2Fsys_2Fpath_2FGenericInsideOptimizedLoop_2Ftrace_2D2_2Dplain_2Dbare : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "trace" (alg ["x"] [] [] [.param "x"]), privateProp "wait" (alg ["x"] [] [] [.param "x"]), privateProp "v1" (alg ["v2"] [] [] [(.binary .add (.call (.resolve "trace") [.param "v2"]) (.num 1))])] [(.call (.resolve "repeat") [(.call (.resolve "v1") [.num 1]), .num 2]), .num 997])
+#guard obs case_sem2b_2Fv1_2Fsys_2Fpath_2FGenericInsideOptimizedLoop_2Ftrace_2D2_2Dplain_2Dbare == "ok raw=S[3, 997] n=2"
+
+-- sem2b/v1/sys/path/GenericInsideOptimizedLoop/trace-3-dot-list: v1(v2) = trace(v2) + 1 \n [v1(1).repeat(3)] \n 997
+def case_sem2b_2Fv1_2Fsys_2Fpath_2FGenericInsideOptimizedLoop_2Ftrace_2D3_2Ddot_2Dlist : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "trace" (alg ["x"] [] [] [.param "x"]), privateProp "wait" (alg ["x"] [] [] [.param "x"]), privateProp "v1" (alg ["v2"] [] [] [(.binary .add (.call (.resolve "trace") [.param "v2"]) (.num 1))])] [(.listLiteral [(.dotCall (.call (.resolve "v1") [.num 1]) "repeat" (some [.num 3]))]), .num 997])
+#guard obs case_sem2b_2Fv1_2Fsys_2Fpath_2FGenericInsideOptimizedLoop_2Ftrace_2D3_2Ddot_2Dlist == "ok raw=S[L[4], 997] n=2"
+
+-- sem2b/v1/sys/path/GenericInsideOptimizedLoop/trace-4-plain-wrapper: v1(v2) = trace(v2) + 1 \n v3(v4) = v4 \n v3(repeat(v1(1), 4)) \n 997
+def case_sem2b_2Fv1_2Fsys_2Fpath_2FGenericInsideOptimizedLoop_2Ftrace_2D4_2Dplain_2Dwrapper : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "trace" (alg ["x"] [] [] [.param "x"]), privateProp "wait" (alg ["x"] [] [] [.param "x"]), privateProp "v1" (alg ["v2"] [] [] [(.binary .add (.call (.resolve "trace") [.param "v2"]) (.num 1))]), privateProp "v3" (alg ["v4"] [] [] [.param "v4"])] [(.call (.resolve "v3") [(.call (.resolve "repeat") [(.call (.resolve "v1") [.num 1]), .num 4])]), .num 997])
+#guard obs case_sem2b_2Fv1_2Fsys_2Fpath_2FGenericInsideOptimizedLoop_2Ftrace_2D4_2Dplain_2Dwrapper == "ok raw=S[5, 997] n=2"
+
+-- sem2b/v1/sys/path/GenericInsideOptimizedLoop/wait-1-dot-bare: v1(v2) = wait(v2) + 1 \n v1(1).repeat(1) \n 997
+def case_sem2b_2Fv1_2Fsys_2Fpath_2FGenericInsideOptimizedLoop_2Fwait_2D1_2Ddot_2Dbare : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "trace" (alg ["x"] [] [] [.param "x"]), privateProp "wait" (alg ["x"] [] [] [.param "x"]), privateProp "v1" (alg ["v2"] [] [] [(.binary .add (.call (.resolve "wait") [.param "v2"]) (.num 1))])] [(.dotCall (.call (.resolve "v1") [.num 1]) "repeat" (some [.num 1])), .num 997])
+#guard obs case_sem2b_2Fv1_2Fsys_2Fpath_2FGenericInsideOptimizedLoop_2Fwait_2D1_2Ddot_2Dbare == "ok raw=S[2, 997] n=2"
+
+-- sem2b/v1/sys/path/GenericInsideOptimizedLoop/wait-2-plain-property: v1(v2) = wait(v2) + 1 \n v3 = repeat(v1(1), 2) \n v3 \n 997
+def case_sem2b_2Fv1_2Fsys_2Fpath_2FGenericInsideOptimizedLoop_2Fwait_2D2_2Dplain_2Dproperty : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "v3" (alg [] [] [] [(.call (.resolve "repeat") [(.call (.resolve "v1") [.num 1]), .num 2])]), privateProp "trace" (alg ["x"] [] [] [.param "x"]), privateProp "wait" (alg ["x"] [] [] [.param "x"]), privateProp "v1" (alg ["v2"] [] [] [(.binary .add (.call (.resolve "wait") [.param "v2"]) (.num 1))])] [.resolve "v3", .num 997])
+#guard obs case_sem2b_2Fv1_2Fsys_2Fpath_2FGenericInsideOptimizedLoop_2Fwait_2D2_2Dplain_2Dproperty == "ok raw=S[3, 997] n=2"
+
+-- sem2b/v1/sys/path/GenericInsideOptimizedLoop/wait-3-dot-if-true: v1(v2) = wait(v2) + 1 \n if(true, v1(1).repeat(3), trace(666)) \n 997
+def case_sem2b_2Fv1_2Fsys_2Fpath_2FGenericInsideOptimizedLoop_2Fwait_2D3_2Ddot_2Dif_2Dtrue : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "trace" (alg ["x"] [] [] [.param "x"]), privateProp "wait" (alg ["x"] [] [] [.param "x"]), privateProp "v1" (alg ["v2"] [] [] [(.binary .add (.call (.resolve "wait") [.param "v2"]) (.num 1))])] [(.call (.resolve "if") [.boolLiteral true, (.dotCall (.call (.resolve "v1") [.num 1]) "repeat" (some [.num 3])), (.call (.resolve "trace") [.num 666])]), .num 997])
+#guard obs case_sem2b_2Fv1_2Fsys_2Fpath_2FGenericInsideOptimizedLoop_2Fwait_2D3_2Ddot_2Dif_2Dtrue == "ok raw=S[4, 997] n=2"
+
+-- sem2b/v1/sys/path/GenericInsideOptimizedLoop/wait-4-plain-brace: v1(v2) = wait(v2) + 1 \n { \n   v3 = 0 \n   repeat(v1(1), 4) \n } \n 997
+def case_sem2b_2Fv1_2Fsys_2Fpath_2FGenericInsideOptimizedLoop_2Fwait_2D4_2Dplain_2Dbrace : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "trace" (alg ["x"] [] [] [.param "x"]), privateProp "wait" (alg ["x"] [] [] [.param "x"]), privateProp "v1" (alg ["v2"] [] [] [(.binary .add (.call (.resolve "wait") [.param "v2"]) (.num 1))])] [(.algorithmExpr (alg [] [] [privateProp "v3" (alg [] [] [] [.num 0])] [(.call (.resolve "repeat") [(.call (.resolve "v1") [.num 1]), .num 4])])), .num 997])
+#guard obs case_sem2b_2Fv1_2Fsys_2Fpath_2FGenericInsideOptimizedLoop_2Fwait_2D4_2Dplain_2Dbrace == "ok raw=S[5, 997] n=2"
+
+-- sem2b/v1/sys/path/GenericInsideOptimizedLoop/trace-2-dot-then-collect: v1(v2) = trace(v2) + 1 \n v3(v4, *v5) = v4 \n v6 = () \n v1(1).repeat(2) \n v3(trace(2), trace(3), trace(4), trace(5), v6*) \n 997
+def case_sem2b_2Fv1_2Fsys_2Fpath_2FGenericInsideOptimizedLoop_2Ftrace_2D2_2Ddot_2Dthen_2Dcollect : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "v6" (alg [] [] [] [(.emptySequence 0)]), privateProp "trace" (alg ["x"] [] [] [.param "x"]), privateProp "wait" (alg ["x"] [] [] [.param "x"]), privateProp "v1" (alg ["v2"] [] [] [(.binary .add (.call (.resolve "trace") [.param "v2"]) (.num 1))]), privateProp "v3" (algWithParameters [{ name := "v4" }, { name := "v5", kind := .collecting }] [] [] [.param "v4"])] [(.dotCall (.call (.resolve "v1") [.num 1]) "repeat" (some [.num 2])), (.call (.resolve "v3") [(.call (.resolve "trace") [.num 2]), (.call (.resolve "trace") [.num 3]), (.call (.resolve "trace") [.num 4]), (.call (.resolve "trace") [.num 5]), (.sequenceSpread (.resolve "v6"))]), .num 997])
+#guard obs case_sem2b_2Fv1_2Fsys_2Fpath_2FGenericInsideOptimizedLoop_2Ftrace_2D2_2Ddot_2Dthen_2Dcollect == "ok raw=S[3, 2, 997] n=3"
+
+-- sem2b/v1/sys/path/GenericInsideOptimizedLoop/cache-then-wait-2-plain: v1 = trace(1) \n v2(v3) = wait(v3) + 1 \n [v1, v1] \n repeat(v2(2), 2) \n 997
+def case_sem2b_2Fv1_2Fsys_2Fpath_2FGenericInsideOptimizedLoop_2Fcache_2Dthen_2Dwait_2D2_2Dplain : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "v1" (alg [] [] [] [(.call (.resolve "trace") [.num 1])]), privateProp "trace" (alg ["x"] [] [] [.param "x"]), privateProp "wait" (alg ["x"] [] [] [.param "x"]), privateProp "v2" (alg ["v3"] [] [] [(.binary .add (.call (.resolve "wait") [.param "v3"]) (.num 1))])] [(.listLiteral [.resolve "v1", .resolve "v1"]), (.call (.resolve "repeat") [(.call (.resolve "v2") [.num 2]), .num 2]), .num 997])
+#guard obs case_sem2b_2Fv1_2Fsys_2Fpath_2FGenericInsideOptimizedLoop_2Fcache_2Dthen_2Dwait_2D2_2Dplain == "ok raw=S[L[1, 1], 4, 997] n=3"
+
 -- sem2b/v1/seed/5EED2B000001/0: v1(v2) = v2 + v2 \n v3(v4) = v4 + 1 \n v5 = repeat(v3(2), 0) \n v6 = v5 \n [[[v1(trace(1)), v1(trace(1))]]] \n [v6, v6] \n 997
 def case_sem2b_2Fv1_2Fseed_2F5EED2B000001_2F0 : Expr :=
   .algorithmExpr (alg [] [] [privateProp "v5" (alg [] [] [] [(.call (.resolve "repeat") [(.call (.resolve "v3") [.num 2]), .num 0])]), privateProp "v6" (.alias none [] [] (.resolve "v5")), privateProp "trace" (alg ["x"] [] [] [.param "x"]), privateProp "wait" (alg ["x"] [] [] [.param "x"]), privateProp "v1" (alg ["v2"] [] [] [(.binary .add (.param "v2") (.param "v2"))]), privateProp "v3" (alg ["v4"] [] [] [(.binary .add (.param "v4") (.num 1))])] [(.listLiteral [(.listLiteral [(.listLiteral [(.call (.resolve "v1") [(.call (.resolve "trace") [.num 1])]), (.call (.resolve "v1") [(.call (.resolve "trace") [.num 1])])])])]), (.listLiteral [.resolve "v6", .resolve "v6"]), .num 997])
@@ -1504,6 +1674,40 @@ def includedCaseIds : List String := [
   "sem2b/v1/sys/guard/nested-pattern/1",
   "sem2b/v1/sys/guard/while-condition-first/2",
   "sem2b/v1/sys/guard/nested-pattern/2",
+  "sem2b/v1/sys/path/LoopShortCircuit/dot-bare",
+  "sem2b/v1/sys/path/LoopShortCircuit/plain-bare",
+  "sem2b/v1/sys/path/LoopShortCircuit/dot-list",
+  "sem2b/v1/sys/path/LoopShortCircuit/plain-property",
+  "sem2b/v1/sys/path/LoopShortCircuit/dot-wrapper",
+  "sem2b/v1/sys/path/LoopShortCircuit/plain-if-true",
+  "sem2b/v1/sys/path/LoopShortCircuit/dot-brace",
+  "sem2b/v1/sys/path/LoopShortCircuit/plain-property-double",
+  "sem2b/v1/sys/path/LoopShortCircuit/dot-then-cache",
+  "sem2b/v1/sys/path/LoopShortCircuit/meta-then-plain-list",
+  "sem2b/v1/sys/path/LoopShortCircuit/clause-family-step-dot",
+  "sem2b/v1/sys/path/LoopShortCircuit/collecting-step-plain",
+  "sem2b/v1/sys/path/LoopShortCircuit/traced-step-dot-wrapper",
+  "sem2b/v1/sys/path/LoopFallback/clause-family-1-dot-bare",
+  "sem2b/v1/sys/path/LoopFallback/clause-family-2-plain-bare",
+  "sem2b/v1/sys/path/LoopFallback/clause-family-3-dot-list",
+  "sem2b/v1/sys/path/LoopFallback/clause-family-4-plain-property",
+  "sem2b/v1/sys/path/LoopFallback/collecting-1-plain-bare",
+  "sem2b/v1/sys/path/LoopFallback/collecting-2-dot-wrapper",
+  "sem2b/v1/sys/path/LoopFallback/collecting-3-plain-if-true",
+  "sem2b/v1/sys/path/LoopFallback/collecting-4-dot-brace",
+  "sem2b/v1/sys/path/LoopFallback/collecting-1-dot-property-double",
+  "sem2b/v1/sys/path/LoopFallback/clause-family-2-dot-then-meta",
+  "sem2b/v1/sys/path/LoopFallback/collect-then-collecting-3-plain",
+  "sem2b/v1/sys/path/GenericInsideOptimizedLoop/trace-1-dot-bare",
+  "sem2b/v1/sys/path/GenericInsideOptimizedLoop/trace-2-plain-bare",
+  "sem2b/v1/sys/path/GenericInsideOptimizedLoop/trace-3-dot-list",
+  "sem2b/v1/sys/path/GenericInsideOptimizedLoop/trace-4-plain-wrapper",
+  "sem2b/v1/sys/path/GenericInsideOptimizedLoop/wait-1-dot-bare",
+  "sem2b/v1/sys/path/GenericInsideOptimizedLoop/wait-2-plain-property",
+  "sem2b/v1/sys/path/GenericInsideOptimizedLoop/wait-3-dot-if-true",
+  "sem2b/v1/sys/path/GenericInsideOptimizedLoop/wait-4-plain-brace",
+  "sem2b/v1/sys/path/GenericInsideOptimizedLoop/trace-2-dot-then-collect",
+  "sem2b/v1/sys/path/GenericInsideOptimizedLoop/cache-then-wait-2-plain",
   "sem2b/v1/seed/5EED2B000001/0",
   "sem2b/v1/seed/5EED2B000001/1",
   "sem2b/v1/seed/5EED2B000001/2",
@@ -1604,7 +1808,7 @@ def includedCaseIds : List String := [
   "sem2b/v1/seed-nested/5EED2B000002/2",
   "sem2b/v1/seed-nested/5EED2B000002/3"
 ]
-#guard includedCaseIds.length == 230
+#guard includedCaseIds.length == 264
 
--- 230 differential cases.
+-- 264 differential cases.
 end SemanticGeneratedCases

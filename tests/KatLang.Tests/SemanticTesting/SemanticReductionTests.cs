@@ -102,12 +102,15 @@ public class SemanticReductionTests(ITestOutputHelper output)
 
     /// <summary>
     /// The fixed corpus is unchanged by the builder refactor: the digest of every descriptor (minus
-    /// build provenance) was recorded from the pre-reducer revision 1e9ccf85.
+    /// build provenance) was recorded from the pre-reducer revision 1e9ccf85. The SEM-2C named path
+    /// block (<c>sys/path/…</c>, new ids only) is excluded, so the pin still covers exactly the cases it
+    /// was recorded over; <see cref="SemanticPathCoverageTests"/> pins the block's own invariants.
     /// </summary>
     [Fact]
     public void FixedCorpus_RendersByteIdentically()
     {
-        var digest = CorpusDigest(SemanticCorpus.All());
+        var pathBlock = SemanticRecipe.CasePrefix + "sys/path/";
+        var digest = CorpusDigest(SemanticCorpus.All().Where(c => !c.CaseId.StartsWith(pathBlock, StringComparison.Ordinal)));
         Assert.True(digest == FixedCorpusDigest, $"SEM-2B fixed corpus digest changed: {digest}");
     }
 

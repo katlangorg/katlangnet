@@ -83,6 +83,16 @@ internal sealed class SemanticCoverage
         }
     }
 
+    /// <summary>Accepted, evidence-admitted cases each optimizer loop path needs (the family floor's precedent).</summary>
+    internal const int LoopPathFloor = 8;
+
+    /// <summary>
+    /// The optimizer loop paths held to <see cref="LoopPathFloor"/>. Every other intended path keeps
+    /// the "at least one exercised case" rule.
+    /// </summary>
+    internal static readonly ImmutableArray<SemanticPath> LoopPathFloors =
+        [SemanticPath.OptimizedLoop, SemanticPath.LoopShortCircuit, SemanticPath.LoopFallback, SemanticPath.GenericInsideOptimizedLoop];
+
     /// <summary>Explicit coverage floors for the fixed CI corpus. Returns every violated floor.</summary>
     public IReadOnlyList<string> Floors(IReadOnlyList<(string A, string B)> requiredInteractions)
     {
@@ -118,7 +128,12 @@ internal sealed class SemanticCoverage
         foreach (var path in Enum.GetValues<SemanticPath>())
         {
             if (path is SemanticPath.None or SemanticPath.EvidenceBacked || BitCount(path) != 1) continue;
-            if (PathsExercised.GetValueOrDefault(path.ToString()) == 0) violations.Add($"intended path {path} has zero exercised cases");
+            var exercised = PathsExercised.GetValueOrDefault(path.ToString());
+            var floor = LoopPathFloors.Contains(path) ? LoopPathFloor : 1;
+            if (exercised >= floor) continue;
+            violations.Add(exercised == 0
+                ? $"intended path {path} has zero exercised cases"
+                : $"intended path {path} has {exercised} exercised cases (floor {floor})");
         }
 
         foreach (var production in SemanticGrammar.InvalidProductions)

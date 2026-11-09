@@ -179,7 +179,113 @@ internal static class SemanticCorpus
                 Assemble(nestedId, "systematic", null, at, nested,
                     [SemanticGrammar.NestedPattern(nested, outerList: at == 1, failing: at == 2)], null, false));
         }
+
+        // Named path cases (SEM-2C): the thin optimizer loop paths, each built from the loop
+        // production with its kind (and shape, count, spelling) forced, in contexts and beside one
+        // non-loop fragment. Appended last, so every earlier recipe is unchanged.
+        for (var i = 0; i < PathVariants.Length; i++)
+        {
+            var variant = PathVariants[i];
+            var at = i;
+            var id = $"sys/path/{variant.Path}/{variant.Name}";
+            var forced = variant.Forced;
+            yield return new SemanticCaseBuilder(id, () => SemanticChooser.Forcing(SemanticChooser.Systematic(at), forced), g =>
+            {
+                var fragments = new List<SemanticFragment>();
+                if (variant.Partner is { } before && variant.PartnerFirst)
+                    fragments.Add(SemanticGrammar.Build(before, g, failing: false));
+                var loop = variant.ZeroIterationStep is { } shape
+                    ? SemanticGrammar.ZeroIterationRepeat(g, shape)
+                    : SemanticGrammar.Build("loop", g, failing: false);
+                if (variant.Context != 0) SemanticGrammar.ApplyContext(g, loop, variant.Context);
+                fragments.Add(loop);
+                if (variant.Partner is { } after && !variant.PartnerFirst)
+                    fragments.Add(SemanticGrammar.Build(after, g, failing: false));
+                return Assemble(id, "systematic", null, at, g, fragments, null, false);
+            });
+        }
     }
+
+    /// <summary>
+    /// One named path case: the path it is built for, a shape name, the forced loop dimensions, the
+    /// context around the loop row (index into <see cref="SemanticGrammar.Contexts"/>), an optional
+    /// successful non-loop partner fragment (before or after the loop row), and for a short circuit
+    /// over another step the <see cref="SemanticGrammar.ZeroIterationRepeat"/> step shape.
+    /// </summary>
+    internal sealed record PathVariant(
+        SemanticPath Path,
+        string Name,
+        IReadOnlyDictionary<string, int> Forced,
+        int Context = 0,
+        string? Partner = null,
+        bool PartnerFirst = false,
+        int? ZeroIterationStep = null);
+
+    private const int Dot = 0;
+    private const int Plain = 1;
+
+    private static Dictionary<string, int> ShortCircuit(int spelling)
+        => new(StringComparer.Ordinal) { ["loop.kind"] = 1, ["loop.spelling"] = spelling };
+
+    private static Dictionary<string, int> ZeroOver(int spelling)
+        => new(StringComparer.Ordinal) { ["loop.spelling"] = spelling };
+
+    /// <summary>Kind 3: shape 0 clause family, 1 collecting step; <paramref name="count"/> iterations (1–4).</summary>
+    private static Dictionary<string, int> Fallback(int shape, int count, int spelling)
+        => new(StringComparer.Ordinal) { ["loop.kind"] = 3, ["loop.fallbackShape"] = shape, ["loop.count"] = count - 1, ["loop.spelling"] = spelling };
+
+    /// <summary>Kind 4: a traced or waited step; <c>loop.wait</c> is a 40 % chance, so 0 forces wait and 99 trace.</summary>
+    private static Dictionary<string, int> GenericInside(bool wait, int count, int spelling)
+        => new(StringComparer.Ordinal) { ["loop.kind"] = 4, ["loop.wait"] = wait ? 0 : 99, ["loop.count"] = count - 1, ["loop.spelling"] = spelling };
+
+    /// <summary>
+    /// The named path block, in corpus order. A <c>while</c> loop always projects its step and
+    /// consults the optimizer before its first flag is read, so no <c>while</c> spelling reaches
+    /// <see cref="SemanticPath.LoopShortCircuit"/>; only a zero-count <c>repeat</c> does, over any step.
+    /// </summary>
+    internal static readonly ImmutableArray<PathVariant> PathVariants =
+    [
+        // Zero-iteration repeat: both spellings, every context, beside another fragment, and over
+        // steps the planner would decline or that would emit an event (none is ever run).
+        new(SemanticPath.LoopShortCircuit, "dot-bare", ShortCircuit(Dot)),
+        new(SemanticPath.LoopShortCircuit, "plain-bare", ShortCircuit(Plain)),
+        new(SemanticPath.LoopShortCircuit, "dot-list", ShortCircuit(Dot), Context: 1),
+        new(SemanticPath.LoopShortCircuit, "plain-property", ShortCircuit(Plain), Context: 4),
+        new(SemanticPath.LoopShortCircuit, "dot-wrapper", ShortCircuit(Dot), Context: 6),
+        new(SemanticPath.LoopShortCircuit, "plain-if-true", ShortCircuit(Plain), Context: 2),
+        new(SemanticPath.LoopShortCircuit, "dot-brace", ShortCircuit(Dot), Context: 7),
+        new(SemanticPath.LoopShortCircuit, "plain-property-double", ShortCircuit(Plain), Context: 5),
+        new(SemanticPath.LoopShortCircuit, "dot-then-cache", ShortCircuit(Dot), Partner: "cache"),
+        new(SemanticPath.LoopShortCircuit, "meta-then-plain-list", ShortCircuit(Plain), Context: 1, Partner: "meta", PartnerFirst: true),
+        new(SemanticPath.LoopShortCircuit, "clause-family-step-dot", ZeroOver(Dot), ZeroIterationStep: 0),
+        new(SemanticPath.LoopShortCircuit, "collecting-step-plain", ZeroOver(Plain), ZeroIterationStep: 1),
+        new(SemanticPath.LoopShortCircuit, "traced-step-dot-wrapper", ZeroOver(Dot), Context: 6, ZeroIterationStep: 2),
+
+        // Declined steps: both fallback shapes, every count, both spellings, contexts and partners.
+        new(SemanticPath.LoopFallback, "clause-family-1-dot-bare", Fallback(0, 1, Dot)),
+        new(SemanticPath.LoopFallback, "clause-family-2-plain-bare", Fallback(0, 2, Plain)),
+        new(SemanticPath.LoopFallback, "clause-family-3-dot-list", Fallback(0, 3, Dot), Context: 1),
+        new(SemanticPath.LoopFallback, "clause-family-4-plain-property", Fallback(0, 4, Plain), Context: 4),
+        new(SemanticPath.LoopFallback, "collecting-1-plain-bare", Fallback(1, 1, Plain)),
+        new(SemanticPath.LoopFallback, "collecting-2-dot-wrapper", Fallback(1, 2, Dot), Context: 6),
+        new(SemanticPath.LoopFallback, "collecting-3-plain-if-true", Fallback(1, 3, Plain), Context: 2),
+        new(SemanticPath.LoopFallback, "collecting-4-dot-brace", Fallback(1, 4, Dot), Context: 7),
+        new(SemanticPath.LoopFallback, "collecting-1-dot-property-double", Fallback(1, 1, Dot), Context: 5),
+        new(SemanticPath.LoopFallback, "clause-family-2-dot-then-meta", Fallback(0, 2, Dot), Partner: "meta"),
+        new(SemanticPath.LoopFallback, "collect-then-collecting-3-plain", Fallback(1, 3, Plain), Partner: "collect", PartnerFirst: true),
+
+        // A host call inside a planned step: trace and wait, every count, both spellings.
+        new(SemanticPath.GenericInsideOptimizedLoop, "trace-1-dot-bare", GenericInside(false, 1, Dot)),
+        new(SemanticPath.GenericInsideOptimizedLoop, "trace-2-plain-bare", GenericInside(false, 2, Plain)),
+        new(SemanticPath.GenericInsideOptimizedLoop, "trace-3-dot-list", GenericInside(false, 3, Dot), Context: 1),
+        new(SemanticPath.GenericInsideOptimizedLoop, "trace-4-plain-wrapper", GenericInside(false, 4, Plain), Context: 6),
+        new(SemanticPath.GenericInsideOptimizedLoop, "wait-1-dot-bare", GenericInside(true, 1, Dot)),
+        new(SemanticPath.GenericInsideOptimizedLoop, "wait-2-plain-property", GenericInside(true, 2, Plain), Context: 4),
+        new(SemanticPath.GenericInsideOptimizedLoop, "wait-3-dot-if-true", GenericInside(true, 3, Dot), Context: 2),
+        new(SemanticPath.GenericInsideOptimizedLoop, "wait-4-plain-brace", GenericInside(true, 4, Plain), Context: 7),
+        new(SemanticPath.GenericInsideOptimizedLoop, "trace-2-dot-then-collect", GenericInside(false, 2, Dot), Partner: "collect"),
+        new(SemanticPath.GenericInsideOptimizedLoop, "cache-then-wait-2-plain", GenericInside(true, 2, Plain), Partner: "cache", PartnerFirst: true),
+    ];
 
     internal static IReadOnlyList<SemanticCase> Seeded()
     {

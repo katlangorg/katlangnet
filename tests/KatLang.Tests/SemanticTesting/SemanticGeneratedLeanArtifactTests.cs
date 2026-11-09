@@ -50,7 +50,7 @@ public class SemanticGeneratedLeanArtifactTests
     private const int ExpectedInvalidFrontEndCases = 9;
 
     /// <summary>Coverage ratchet: may only be raised, or lowered in a reviewed diff that removes cases.</summary>
-    private const int MinimumIncludedCases = 230;
+    private const int MinimumIncludedCases = 264;
 
     /// <summary>
     /// Lean build-cost caps (SEM-2C measurement, 2026-11-09: 230 cases, 234,301 bytes, cold module build

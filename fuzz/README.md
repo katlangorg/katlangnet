@@ -1594,6 +1594,19 @@ with a collecting inner binder, successful and wrong-inner-kind outcomes, host e
 consumer contexts. Its additional seeded identities are `sem2b/v1/seed-nested/<hex>/<index>`;
 existing `seed/<hex>/<index>` recipes retain their sources and expectations.
 
+The named path block `sem2b/v1/sys/path/<Path>/<shape>` (`SemanticCorpus.PathVariants`, appended
+after every other systematic case) widens the thin optimizer loop paths. Each case is the `loop`
+production with its kind, fallback shape, count, `wait`/`trace` choice and `repeat` spelling forced
+by `SemanticChooser.Forcing` (every other dimension is the ordinary systematic chooser's), placed
+bare, in a list, property, cached double read, wrapper call, live `if` or brace scope, or beside one
+successful non-loop fragment: `LoopShortCircuit` — zero-count `repeat` in both spellings and over a
+clause-family, collecting or traced step that never runs (`ZeroIterationRepeat`; a `while` always
+projects its step and consults the optimizer, so no `while` form reaches the short circuit);
+`LoopFallback` — both declined step shapes at every count 1–4; `GenericInsideOptimizedLoop` —
+traced and waited steps at every count 1–4. `SemanticPathCoverageTests` pins a digest of every
+pre-existing case (sources, expectation, paths, profiles), checks that the block adds only
+`sys/path/` ids, and requires every claim of a path case to be admitted on evidence.
+
 Contexts wrap a row in a list, a live or dead `if` branch, a property, a cached double read, a wrapper
 call or a brace scope. `SemanticCorpus.RequiredInteractions` names the feature pairs that must have
 an accepted case; `SelectedPairs`/`SelectedTriples` add explicit cross-family compositions.
@@ -1684,7 +1697,9 @@ its required paths. Anchor-backed paths (`LazyTransport`,
 when the case's exact anchors hold.
 
 `SemanticCoverage.Floors` fails the fixed corpus when any family has fewer than 8 accepted cases,
-any required interaction, profile, declared comparison, transformation, intended path, invalid
+any of the four optimizer loop paths (`OptimizedLoop`, `LoopShortCircuit`, `LoopFallback`,
+`GenericInsideOptimizedLoop`) has fewer than 8 evidence-admitted cases (`LoopPathFloor`), any other
+intended path, required interaction, profile, declared comparison, transformation, invalid
 production, case kind or context has zero accepted cases, or more than 10% of evidence-backed path
 claims are rejected. Counts: generated, parsed-clean, executed runs, accepted, rejected path claims,
 and one count per verdict. Both in-process and supervised full-corpus commands enforce these
@@ -1853,4 +1868,8 @@ beyond the identity-prelude members. Automatic reduction of generated failures i
 (§ Reduction). Every valid generated case now has a per-case Lean guard on
 its identity-prelude member (§ Per-case Lean guards); the host-operation base program, host events,
 async and optimizer paths, and the two transformation members still rest on C# profile parity plus
-the independent constructed anchors.
+the independent constructed anchors. The thin optimizer loop paths now have named cases and an
+8-case floor each (§ Path evidence and coverage floors). Still unsupported and never reported as
+covered: asynchronous optimizer selection (the twin pins both optimizers off and the engine takes
+no optimizer switch) and asynchronous cache statistics (the async-capable cache keeps none), so no
+asynchronous profile claims optimizer or cache evidence (§ Profiles, facets and comparisons).

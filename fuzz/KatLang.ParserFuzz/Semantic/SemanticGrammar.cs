@@ -37,6 +37,15 @@ internal abstract class SemanticChooser
 
     internal static SemanticChooser Seeded(ulong seed, int index) => new SeededChooser(seed, index);
 
+    /// <summary>
+    /// <paramref name="inner"/> with the named dimensions FIXED (for example <c>loop.kind</c>): a
+    /// forced dimension always takes its value and consumes nothing from the inner chooser; every
+    /// other dimension is the inner chooser's. A forced value outside a dimension's range is a
+    /// generator bug and throws.
+    /// </summary>
+    internal static SemanticChooser Forcing(SemanticChooser inner, IReadOnlyDictionary<string, int> forced)
+        => new ForcingChooser(inner, forced);
+
     /// <summary>FNV-1a over UTF-16 units: a platform-independent dimension offset.</summary>
     internal static int StableHash(string text)
     {
@@ -68,6 +77,17 @@ internal abstract class SemanticChooser
             var occurrence = _occurrences.GetValueOrDefault(dimension);
             _occurrences[dimension] = occurrence + 1;
             return (int)(((long)index + StableHash(dimension) + occurrence) % count);
+        }
+    }
+
+    private sealed class ForcingChooser(SemanticChooser inner, IReadOnlyDictionary<string, int> forced) : SemanticChooser
+    {
+        public override int Pick(string dimension, int count)
+        {
+            if (!forced.TryGetValue(dimension, out var value)) return inner.Pick(dimension, count);
+            if (value < 0 || value >= count)
+                throw new InvalidOperationException($"forced value {value} is outside dimension '{dimension}' (count {count}).");
+            return value;
         }
     }
 
@@ -1103,27 +1123,7 @@ internal static class SemanticGrammar
             {
                 // A step the planner declines: a clause family, or a collecting step.
                 var n = 1 + g.Pick("loop.count", 4);
-                Sym step;
-                if (g.Pick("loop.fallbackShape", 2) == 0)
-                {
-                    step = g.Fresh();
-                    var x = g.Fresh();
-                    f.Decls.Add(new MDecl.Family(step,
-                    [
-                        new MClause(new MPattern.Literal(0m), Atom(100)),
-                        new MClause(new MPattern.Binder(x), new MExpr.Add(new MExpr.Ref(x), Atom(1))),
-                    ]));
-                    f.Features.Add("clause-family");
-                }
-                else
-                {
-                    step = g.Fresh();
-                    var xs = g.Fresh();
-                    f.Decls.Add(new MDecl.Func(step, [new MParam(xs, true)],
-                        new MExpr.Add(new MExpr.Select(new MExpr.Ref(xs), [Atom(0)]), Atom(1))));
-                    f.Features.Add("collect");
-                }
-
+                var step = DeclinedStep(g, f, g.Pick("loop.fallbackShape", 2));
                 f.Row = RepeatOf(g, new MExpr.Call(step, [Atom(start0)]), n);
                 f.Value = Res(start0 + n);
                 f.Paths |= SemanticPath.LoopFallback;
@@ -1177,6 +1177,59 @@ internal static class SemanticGrammar
                 return f;
             }
         }
+    }
+
+    /// <summary>
+    /// A successor step the loop planner declines: shape 0 is the clause family
+    /// <c>Step(0) = 100 / Step(x) = x + 1</c>, shape 1 the collecting <c>Step(*xs) = xs(0) + 1</c>. Both
+    /// compute <c>x + 1</c> for every non-zero state.
+    /// </summary>
+    private static Sym DeclinedStep(Gen g, SemanticFragment f, int shape)
+    {
+        var step = g.Fresh();
+        if (shape == 0)
+        {
+            var x = g.Fresh();
+            f.Decls.Add(new MDecl.Family(step,
+            [
+                new MClause(new MPattern.Literal(0m), Atom(100)),
+                new MClause(new MPattern.Binder(x), new MExpr.Add(new MExpr.Ref(x), Atom(1))),
+            ]));
+            f.Features.Add("clause-family");
+        }
+        else
+        {
+            var xs = g.Fresh();
+            f.Decls.Add(new MDecl.Func(step, [new MParam(xs, true)],
+                new MExpr.Add(new MExpr.Select(new MExpr.Ref(xs), [Atom(0)]), Atom(1))));
+            f.Features.Add("collect");
+        }
+
+        return step;
+    }
+
+    /// <summary>
+    /// Zero-iteration <c>repeat</c> over a step the planned loop would never reach (SEM-2C path
+    /// block): shape 0 the clause family and 1 the collecting step of <see cref="DeclinedStep"/>, 2 a
+    /// traced <c>Inc(x) = trace(x) + 1</c>. A zero count never projects or runs the step (LOOP-05), so
+    /// the value is the initial state, no host event occurs, and the loop returns before the
+    /// optimizer is consulted — <see cref="SemanticPath.LoopShortCircuit"/> whatever the step.
+    /// </summary>
+    internal static SemanticFragment ZeroIterationRepeat(Gen g, int stepShape)
+    {
+        var f = new SemanticFragment("loop") { IsLoop = true };
+        f.Features.UnionWith(["loop", "repeat", "zero-iterations"]);
+        var start0 = g.Digit();
+        var step = stepShape switch
+        {
+            0 or 1 => DeclinedStep(g, f, stepShape),
+            2 => IncStep(g, f, 1, effect: "trace"),
+            _ => throw new ArgumentOutOfRangeException(nameof(stepShape)),
+        };
+        f.Row = RepeatOf(g, new MExpr.Call(step, [Atom(start0)]), 0);
+        f.Value = Res(start0);
+        f.Paths |= SemanticPath.LoopShortCircuit;
+        return f;
     }
 
     /// <summary><c>Inc(x) = x + c</c>, or <c>Inc(x) = effect(x) + c</c>.</summary>
