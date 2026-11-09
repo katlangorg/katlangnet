@@ -49,7 +49,11 @@ internal static class RegenerationFlags
         Prefix + "SIGNATURE_COMPLETION_BRIDGE",
         "lean/KatLangArityLaws/SignatureCompletionBridgeCases.lean");
 
-    public static readonly IReadOnlyList<RegenerationFlag> All = [LanguageSpec, SemanticExplorer, PublicApi, HostParentDifferential, SignatureCompletionBridge];
+    public static readonly RegenerationFlag SemanticGenerated = new(
+        Prefix + "SEMANTIC_GENERATED",
+        "lean/CoreTests/SemanticGeneratedCases.lean");
+
+    public static readonly IReadOnlyList<RegenerationFlag> All = [LanguageSpec, SemanticExplorer, PublicApi, HostParentDifferential, SignatureCompletionBridge, SemanticGenerated];
 }
 
 /// <summary>

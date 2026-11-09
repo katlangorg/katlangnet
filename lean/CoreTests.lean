@@ -53,3 +53,4 @@ import CoreTests.HostScopePropertyCache
 import CoreTests.HostScopeIdentity
 import CoreTests.HostParentDifferential
 import CoreTests.SpreadFailureOrigin
+import CoreTests.SemanticGeneratedCases

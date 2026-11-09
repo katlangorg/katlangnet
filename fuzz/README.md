@@ -1625,6 +1625,28 @@ fresh invocation from a memoized VALUE, a dead failure from a demanded one, and 
 after a terminal failure. A uniformly wrong implementation passes every parity and still fails the
 anchor on every structure-projecting run (pinned by `UniformlyWrongImplementation_IsCaughtByTheIndependentAnchor`).
 
+### Per-case Lean guards (identity-prelude members)
+
+`tests/KatLang.Tests/SemanticTesting/SemanticGeneratedLeanArtifactTests.cs` generates
+`lean/CoreTests/SemanticGeneratedCases.lean` (imported by the canonical `CoreTests` target) with one
+`#guard` per VALID case of `SemanticCorpus.All()`; the invalid front-end cases are excluded by kind
+and the exact-id exclusion map is empty. Lean models no host operations, so for each case the test
+builds an IDENTITY-PRELUDE member: the base source with `trace(x) = x` and `wait(x) = x` prepended
+(both operations return their argument; the test fails if the host fixture is not exactly
+`trace`/`wait` or if a source declares either name). It checks that the member parses cleanly,
+that `Evaluator.RunCounted` gives the constructed value and emitted count (or the constructed error
+kind) and that the shared neutral observation is the expected one, then encodes its real elaborated
+AST with the fail-loud `LeanAstEncoder` and pins that observation (plus the Q-67 `errorObs` payload
+where shared). The member is built only in that test: it is not a `SemanticCase.Members` entry, so
+descriptors and replay are unchanged.
+
+What the guards check: Lean's plain and counted evaluators on each identity-prelude member agree
+with C# and with the generator's constructed expectation. What they do NOT check: the
+host-operation base program in Lean (its relation to the member is C# evidence: the SEM-2B profiles
+plus the member check), host events, async suspension and cancellation, optimizer paths, and the
+`alpha-rename` / `declaration-reorder` members. Regenerate with
+`$env:KATLANG_REGENERATE_SEMANTIC_GENERATED = "1"` and `--filter SemanticGeneratedLeanArtifact`.
+
 ### Path evidence and coverage floors
 
 Evidence-backed paths participate in admission: `OptimizedLoop` (optimized: a plan selected AND
@@ -1730,6 +1752,8 @@ Supervised replay prints its retained temporary evidence directory.
 
 Broader and longer campaigns, automatic reduction of generated failures (the existing structural
 shrinker is driven by the structural rules and is not wired to SEM-2B cases; failures are reduced by
-hand from the descriptor), fault injection beyond the apparatus checks here, and
-per-generated-case Lean evidence. Today the generated corpus has NO per-case Lean evidence: it rests
-on C# profile parity plus the independent constructed anchors.
+hand from the descriptor), fault injection beyond the apparatus checks here, and Lean evidence
+beyond the identity-prelude members. Every valid generated case now has a per-case Lean guard on
+its identity-prelude member (§ Per-case Lean guards); the host-operation base program, host events,
+async and optimizer paths, and the two transformation members still rest on C# profile parity plus
+the independent constructed anchors.

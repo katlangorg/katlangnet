@@ -170,9 +170,18 @@ every generated case with these same observations — SEM-2A's typed structural
 value and `kl-struct-v1` identity, the root emitted count as its own facet, the
 `MetamorphicErrorDetail` strict policy between profiles of one source — plus an
 exact host-event log from a deterministic fixture. Its expectations are
-constructed by the generator, not observed from a run. Generated cases carry no
-per-case Lean evidence: their confidence comes from C# profile parity
-(generic, optimized, asynchronous twin, public sync and async engines, a fresh
-re-run) together with those independent constructed anchors. Lean-comparable
-evidence for the same language areas remains the existing spec, explorer and
-CoreTests corpora.
+constructed by the generator, not observed from a run. Their confidence comes
+from C# profile parity (generic, optimized, asynchronous twin, public sync and
+async engines, a fresh re-run) together with those independent constructed
+anchors.
+
+Since SEM-2C every valid generated case also has a per-case Lean guard in
+`lean/CoreTests/SemanticGeneratedCases.lean` (`SemanticGeneratedLeanArtifactTests`).
+The guarded program is the case's IDENTITY-PRELUDE member — the base source
+with `trace(x) = x` and `wait(x) = x` prepended in place of the host operations
+Lean does not model — encoded from its real elaborated AST. C# checks that
+member against the constructed expectation, and the guard pins its FORMAL-06
+neutral observation (plus the Q-67 `errorObs` payload where shared). The guards
+do NOT observe the host-operation base program in Lean (the member-to-base
+relation is C# evidence), host events, async suspension or cancellation,
+optimizer paths, or the transformation members.

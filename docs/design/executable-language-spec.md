@@ -102,13 +102,33 @@ summaries are written to `LanguageSpecReport.json` (and the explorer's
   that replace nonempty opens/property lists also carry `sharedView`/`moduleView`
   provenance over their declaration, with component tokens global across declarations; scope comparison retains this view and
   callable identity erases it. The encoder keeps context-qualified property
-  provenance for cache and alias shapes. All 102 cases are comparable (96 with
+  provenance for cache and alias shapes. All 104 cases are comparable (96 with
   pre-wired parents, 181 named cache guards); a future reviewed model divergence would be excluded from the
   comparable partition by exact id and pinned on BOTH sides (the Lean value by
   a generated guard, the C# value by `HostParentDifferentialTests`). Regenerate with
   `$env:KATLANG_REGENERATE_HOST_PARENT_DIFFERENTIAL = "1"; dotnet test .\KatLang.slnx --filter HostParentDifferential`
+- `lean/CoreTests/SemanticGeneratedCases.lean` (SEM-2C, imported by the
+  canonical `CoreTests` target) — the SEM-2B generated corpus
+  (`SemanticCorpus.All()`): one guard per VALID case (`ValidSuccess` and
+  `ValidRuntimeFailure`; the invalid front-end cases are excluded by kind,
+  and an exact-id exclusion map with reasons is empty). Most generated
+  programs call the host operations `trace(x)`/`wait(x)`, which Lean does
+  not model, so `SemanticGeneratedLeanArtifactTests` builds each case's
+  IDENTITY-PRELUDE member — the base source with `trace(x) = x` and
+  `wait(x) = x` prepended — checks that it parses cleanly, that its C#
+  result equals the generator's constructed expectation (value and emitted
+  count, or error kind) and that its neutral observation is the expected
+  one, and encodes its real elaborated AST with `LeanAstEncoder`. The member
+  exists only in that test; SEM-2B members, descriptors and replay are
+  unchanged. Lean is checked on the identity-prelude member only: the
+  host-operation base program, host events, async suspension and
+  cancellation, and optimizer paths remain C# evidence. Partition, a
+  coverage ratchet, case/byte caps sized from the measured Lean build cost,
+  and the injective `case_…` name mangling are pinned by the test class.
+  Regenerate with
+  `$env:KATLANG_REGENERATE_SEMANTIC_GENERATED = "1"; dotnet test ./tests/KatLang.Tests/KatLang.Tests.csproj --filter SemanticGeneratedLeanArtifact`
 
-The three Lean artifacts embed the same observation machinery (`neutral`,
+The four Lean artifacts embed the same observation machinery (`neutral`,
 `errCategory`, `runCountedM`, `obs`, and Q-67's `sharedError`/`errorObs`),
 emitted from the single C# constant `LeanObsTemplate.SharedDefinitions`. When
 adding an error kind, extend `errCategory` and `sharedError` there AND
@@ -116,7 +136,7 @@ adding an error kind, extend `errCategory` and `sharedError` there AND
 `SemanticExplorerHarness.ErrorCategory` delegates to) together, record its
 reviewed policy (a constructor-projection golden in `DifferentialErrorContracts`,
 or the host-only inventory of `DifferentialObservationTests` for a C#-only
-kind), then regenerate all three Lean artifacts with their registered flags.
+kind), then regenerate all four Lean artifacts with their registered flags.
 
 Q-67 adds a separate structured-error projection (`DifferentialErrors` /
 `sharedError`, guarded by `errorObs`), while preserving the FORMAL-06 neutral

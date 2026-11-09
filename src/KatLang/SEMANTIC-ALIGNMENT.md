@@ -902,6 +902,17 @@ dispatch and a genuinely suspended deferred-module import. `BinderCardinalityGat
 signature takes the ordinary cardinality gate before demand. Report:
 `experimental/features/decon-cache-2-implementation.md`.
 
+SEM-2C (first step) — per-case Lean guards for the SEM-2B generated corpus (November 9 2026;
+test/formal-correspondence evidence only, no production C# or Lean semantic edit and no rule change,
+classified by the "Lean/C# correspondence" trigger: full V3). `SemanticGeneratedLeanArtifactTests`
+generates `lean/CoreTests/SemanticGeneratedCases.lean` (imported by `CoreTests`): one `#guard obs` per
+VALID case of `SemanticCorpus.All()` (230 of 239; the 9 invalid front-end cases are excluded by kind,
+the exact-id exclusion map is empty). The guarded program is each case's IDENTITY-PRELUDE member — the
+base source with `trace(x) = x` and `wait(x) = x` prepended in place of the host operations Lean does
+not model — encoded from its real elaborated AST by `LeanAstEncoder`; C# checks the member against
+the constructed expectation first. The member is built only in that test (SEM-2B members,
+descriptors and replay unchanged). The host-operation base program, host events, async and
+optimizer paths remain C# evidence.
 HOST-DIFF-1 — Lean/C# differential coverage of host-built ASTs with pre-wired parent scopes
 (October 24 2026; test/formal-correspondence infrastructure, no production C# or Lean semantic
 edit, classified by the "Lean/C# correspondence" trigger: full V3). `LeanAstEncoder` (tests) no
