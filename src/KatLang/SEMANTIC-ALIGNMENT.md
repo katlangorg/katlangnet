@@ -1244,7 +1244,9 @@ callable identities were omitted), not equality of complete state. Reviewer migr
 and limits are recorded in `artifacts/validation/r7-review/`. Proved scope and outstanding
 requirements (reachable-state invariants, callback ≡ direct call, complete Q-37 publication/key
 laws, the dot funnel, Q-25, plan conservativity and the admitted public-run bridge) are recorded in
-`experimental/features/s6d-r7-whole-run-evaluator-refinement.md`. The `Error.fuelExhausted`
+`experimental/features/s6d-r7-whole-run-evaluator-refinement.md` (git-ignored; optional reading). The
+tracked status of plan conservativity, still OPEN, is row E-18 of
+`docs/design/formal-correspondence-ledger.md`. The `Error.fuelExhausted`
 constructor required one line in the shared generated-artifact template (`LeanObsTemplate`) and the
 regenerated `SemanticExplorerCases.lean` / `LanguageSpecCases.lean` headers.
 
