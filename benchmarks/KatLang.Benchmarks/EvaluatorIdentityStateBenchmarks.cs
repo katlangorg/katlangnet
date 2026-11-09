@@ -11,7 +11,8 @@ namespace KatLang.Benchmarks;
 /// from process-global <c>ConditionalWeakTable</c>s onto the runtime model): every shape
 /// repeats its measured operation in a single root row. Divide per-run measurements by
 /// <c>All.UnitsPerRun</c> to compare per-operation costs (201 ordinarily, 804 nested
-/// calls, 41 recursive calls, or 1,973 recursive family calls). The sources are
+/// calls, 41 recursive calls, or 1,973 recursive family calls; the two-parameter,
+/// builtin-call and callback shapes are 201 units each). The sources are
 /// deterministic and fixed; the pass/fail question is behavioural equivalence, and the
 /// measurement question is per-operation time, allocated bytes, and Gen0 pressure.
 /// </summary>
@@ -71,6 +72,21 @@ internal static class EvaluatorIdentityStateScenarios
 	/// </summary>
 	internal static readonly string RecursiveFamily = "Fib(0) = 0\nFib(1) = 1\nFib(n) = Fib(n - 1) + Fib(n - 2)\nFib(15)\n";
 
+	/// <summary>
+	/// A two-parameter call per unit: <c>Add(1, 2)</c> binds a flat level of two unique plain names,
+	/// the multi-name binder's direct path.
+	/// </summary>
+	internal static readonly string TwoParameterCall = "Add(a, b) = a + b\n" + Chain("Add(1, 2)") + "\n";
+
+	/// <summary>
+	/// A user call whose body is one builtin call per unit: <c>Abs(-3)</c> runs <c>if</c>, so every
+	/// unit forms a builtin argument supply (the builtin-call path).
+	/// </summary>
+	internal static readonly string BuiltinCall = "Abs(x) = if(x < 0, -x, x)\n" + Chain("Abs(-3)") + "\n";
+
+	/// <summary>One <c>map</c> callback invocation per unit: <c>range(1, 201).map(Inc)</c> (201 items).</summary>
+	internal static readonly string CallbackMap = $"Inc(v) = v + 1\nrange(1, {Units}).map(Inc)\n";
+
 	internal static readonly IReadOnlyList<(string Name, string Source, int UnitsPerRun)> All =
 	[
 		("ParameterizedCall", ParameterizedCall, Units),
@@ -82,6 +98,9 @@ internal static class EvaluatorIdentityStateScenarios
 		("Recursion", Recursion, RecursionDepth + 1),
 		("ConditionalCall", ConditionalCall, Units),
 		("RecursiveFamily", RecursiveFamily, RecursiveFamilyCalls),
+		("TwoParameterCall", TwoParameterCall, Units),
+		("BuiltinCall", BuiltinCall, Units),
+		("CallbackMap", CallbackMap, Units),
 	];
 
 	private static string Chain(string term)
@@ -129,6 +148,9 @@ public class EvaluatorIdentityStateBenchmarks
 	private static readonly Algorithm RecursionRoot = EvaluatorIdentityStateScenarios.Prepare(EvaluatorIdentityStateScenarios.Recursion);
 	private static readonly Algorithm ConditionalCallRoot = EvaluatorIdentityStateScenarios.Prepare(EvaluatorIdentityStateScenarios.ConditionalCall);
 	private static readonly Algorithm RecursiveFamilyRoot = EvaluatorIdentityStateScenarios.Prepare(EvaluatorIdentityStateScenarios.RecursiveFamily);
+	private static readonly Algorithm TwoParameterCallRoot = EvaluatorIdentityStateScenarios.Prepare(EvaluatorIdentityStateScenarios.TwoParameterCall);
+	private static readonly Algorithm BuiltinCallRoot = EvaluatorIdentityStateScenarios.Prepare(EvaluatorIdentityStateScenarios.BuiltinCall);
+	private static readonly Algorithm CallbackMapRoot = EvaluatorIdentityStateScenarios.Prepare(EvaluatorIdentityStateScenarios.CallbackMap);
 
 	[Benchmark(Baseline = true)]
 	public Result ParameterizedCall() => EvaluatorIdentityStateScenarios.Evaluate(ParameterizedCallRoot);
@@ -156,6 +178,15 @@ public class EvaluatorIdentityStateBenchmarks
 
 	[Benchmark]
 	public Result RecursiveFamily() => EvaluatorIdentityStateScenarios.Evaluate(RecursiveFamilyRoot);
+
+	[Benchmark]
+	public Result TwoParameterCall() => EvaluatorIdentityStateScenarios.Evaluate(TwoParameterCallRoot);
+
+	[Benchmark]
+	public Result BuiltinCall() => EvaluatorIdentityStateScenarios.Evaluate(BuiltinCallRoot);
+
+	[Benchmark]
+	public Result CallbackMap() => EvaluatorIdentityStateScenarios.Evaluate(CallbackMapRoot);
 }
 
 /// <summary>

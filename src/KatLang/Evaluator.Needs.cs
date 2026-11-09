@@ -324,8 +324,11 @@ public static partial class Evaluator
         // count-only to its end, then is refused at the slot that overflowed it.
         TransientSupply bound = default;
         SourceSpan? overflowAt = null;
-        foreach (var argument in arguments)
+        // Indexed, in written order: the bundle's iterator-method enumerator would cost one heap
+        // object per call of every kind (PERF-ORD-1 F0360).
+        for (var index = 0; index < arguments.Count; index++)
         {
+            var argument = arguments[index];
             if (argument is not Expr.SequenceSpread spread)
             {
                 var overflowed = bound.Overflowed;
@@ -653,8 +656,18 @@ public static partial class Evaluator
     {
         var sources = new List<Expr?>(args.Count);
         var formed = await FormNeedSupply(args, ctx, values, asynchronous, sources).ConfigureAwait(false);
-        return formed.IsError ? formed.Error : EvalResult<IReadOnlyList<ResolvedArgumentAlgorithm>>.Ok(
-            formed.Value.Select((cell, index) => new ResolvedArgumentAlgorithm(null) { Cell = cell, Source = sources[index] }).ToArray());
+        return formed.IsError ? formed.Error : EvalResult<IReadOnlyList<ResolvedArgumentAlgorithm>>.Ok(ResolvedSupply(formed.Value, sources));
+    }
+
+    // Each formed cell with its written source, in supply order: one direct array fill, so a builtin
+    // call allocates no closure, delegate or LINQ iterator (PERF-ORD-1 F0360). `sources` is parallel
+    // to `cells` (FormNeedSupply appends to both in lockstep); without it, every source is null.
+    private static ResolvedArgumentAlgorithm[] ResolvedSupply(IReadOnlyList<NeedCell> cells, IReadOnlyList<Expr?>? sources = null)
+    {
+        var resolved = new ResolvedArgumentAlgorithm[cells.Count];
+        for (var i = 0; i < resolved.Length; i++)
+            resolved[i] = new ResolvedArgumentAlgorithm(null) { Cell = cells[i], Source = sources?[i] };
+        return resolved;
     }
 
     // A collector's materialization needs only the RUN: its slice's cells and the run budget that
@@ -809,12 +822,57 @@ public static partial class Evaluator
             : new(family ? EvalResult<NeedEnv?>.Ok(null) : new EvalError.ArityMismatch(arity.Minimum, supply.Count));
     }
 
+    /// <summary>Widest flat level <see cref="IsFlatUniqueNameLevel"/> checks pairwise; a wider one takes the general path.</summary>
+    internal const int FlatUniqueNameBindingWidth = 16;
+
+    /// <summary>
+    /// The binder's direct path for a FLAT LEVEL OF UNIQUE PLAIN NAMES (two to
+    /// <see cref="FlatUniqueNameBindingWidth"/> patterns, each a plain name: not collecting, not META,
+    /// no children, no literal; the names pairwise distinct by ordinal comparison, checked without
+    /// allocating): pattern <c>i</c> binds supplied cell <c>i</c>, in written order, and nothing is
+    /// demanded or projected. <see cref="IsFlatUniqueNameLevel"/> recognizes such a level; every other
+    /// level takes the general path. The caller has accepted the supply count, which for such a level
+    /// is exactly the pattern count.
+    /// <para>EQUIVALENCE with the general path on such a level: every name counts once, so no group
+    /// forms and no cell is inspected; <c>PushLevel</c> pushes the patterns last-first, so the pops
+    /// visit them in written order, each storing <c>bound[name_i] = supply[i]</c> into a dictionary
+    /// that is only ever added to; and an add-only dictionary enumerates in insertion order, so the
+    /// copied environment is <c>(name_i, supply[i])</c> in written order — exactly this array. Both
+    /// return a fresh array per call. Pinned by <c>OrdinaryCallBindingAllocationTests</c>.</para>
+    /// </summary>
+    private static (string Name, NeedCell Cell)[] FlatUniqueNameBindings(IReadOnlyList<NeedPattern> patterns, IReadOnlyList<NeedCell> supply)
+    {
+        var env = new (string Name, NeedCell Cell)[patterns.Count];
+        for (var i = 0; i < env.Length; i++)
+            env[i] = (patterns[i].Name!, supply[i]);
+        return env;
+    }
+
+    /// <summary>Whether <see cref="FlatUniqueNameBindings"/> binds this level (allocation-free).</summary>
+    private static bool IsFlatUniqueNameLevel(IReadOnlyList<NeedPattern> patterns, IReadOnlyList<NeedCell> supply)
+    {
+        var count = patterns.Count;
+        if (count < 2 || count > FlatUniqueNameBindingWidth || supply.Count != count)
+            return false;
+        for (var i = 0; i < count; i++)
+        {
+            var pattern = patterns[i];
+            if (pattern.Name is not { } name || pattern.Collecting || pattern.Meta || pattern.Children is not null || pattern.Literal is not null)
+                return false;
+            for (var j = 0; j < i; j++)
+                if (string.Equals(patterns[j].Name, name, StringComparison.Ordinal))
+                    return false;
+        }
+        return true;
+    }
+
     /// <summary>
     /// The inspecting binder over a supply whose count its top-level patterns ACCEPT. The caller's
     /// cardinality gate has already decided that count, either <see cref="BindNeedPatterns"/> or a
     /// caller's own shaped report, so allocation here never re-checks it. Each structural level's
     /// own gate stays here, exactly once per level. Patterns traverse in written order, depth
-    /// first: a unique plain name transports its cell; every occurrence of a repeated name projects
+    /// first: a unique plain name transports its cell (a flat level of unique plain names binds
+    /// directly, <see cref="FlatUniqueNameBindings"/>); every occurrence of a repeated name projects
     /// its cell's CALLABLE when reached and demands VALUE only as NEED-04's group-aware rule requires
     /// (a value-only contribution, or a callable one once its group has a data anchor; Lean
     /// <c>NeedBinder.bindName</c>); a literal or a structural pattern demands its cell when reached;
@@ -828,8 +886,8 @@ public static partial class Evaluator
         IReadOnlyList<NeedPattern> patterns, IReadOnlyList<NeedCell> supply,
         EvalCtx ctx, bool asynchronous, bool family, IReadOnlyList<Expr?>? occurrences = null)
     {
-        // Empty and single-name heads need no traversal metadata. These are the same
-        // non-inspecting binding rules as the general work-stack path.
+        // Empty and single-name heads, and a flat level of unique plain names, need no traversal
+        // metadata. These are the same non-inspecting binding rules as the general work-stack path.
         if (patterns.Count == 0) return EvalResult<NeedEnv?>.Ok([]);
         if (patterns.Count == 1 && patterns[0].Name is { } onlyName)
         {
@@ -840,6 +898,9 @@ public static partial class Evaluator
             }
             return EvalResult<NeedEnv?>.Ok([(onlyName, patterns[0].Collecting ? CollectorCell(supply.ToArray(), ctx) : supply[0])]);
         }
+        // No local here: the async state machine of this binder stays the size it was.
+        if (IsFlatUniqueNameLevel(patterns, supply))
+            return EvalResult<NeedEnv?>.Ok(FlatUniqueNameBindings(patterns, supply));
 
         // Multiplicity is only zero/one/many. Visit a shared pattern node at most twice,
         // so a host DAG cannot expand into exponentially many paths before binding.
@@ -1353,16 +1414,26 @@ public static partial class Evaluator
         Algorithm callee, IReadOnlyList<CountedResult> arguments, EvalCtx ctx, ValEnv values,
         string name, bool asynchronous)
     {
-        var supply = arguments.Select(argument => NeedCell.Ready(argument)).ToArray();
+        // Direct array fills, in argument order: no LINQ iterator or delegate per invocation.
+        var supply = ReadyCells(arguments);
         if (callee is Algorithm.Builtin builtin)
         {
-            var resolved = supply.Select(cell => new ResolvedArgumentAlgorithm(null) { Cell = cell }).ToArray();
+            var resolved = ResolvedSupply(supply);
             return NestMissingOutput(asynchronous ? await ApplyBuiltinCountedResolvedAsync(builtin.Id, resolved, ctx, values).ConfigureAwait(false)
                 : ApplyBuiltinCountedResolved(builtin.Id, resolved, ctx, values));
         }
         return callee is Algorithm.Conditional
             ? await EvalNeedFamilySupply(callee, supply, ctx, values, CallDiagnosticName.FromKnown(name), asynchronous).ConfigureAwait(false)
             : await EvalNeedUserSupply(callee, supply, ctx, values, CallDiagnosticName.FromKnown(name), asynchronous, variadicArityStyle: false).ConfigureAwait(false);
+    }
+
+    // One Ready cell per already-evaluated value, in order (a callback's supply).
+    private static NeedCell[] ReadyCells(IReadOnlyList<CountedResult> values)
+    {
+        var cells = new NeedCell[values.Count];
+        for (var i = 0; i < cells.Length; i++)
+            cells[i] = NeedCell.Ready(values[i]);
+        return cells;
     }
 
     private static async ValueTask<EvalResult<CountedResult>> EvalNeedFamilyBody(
