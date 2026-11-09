@@ -46,7 +46,7 @@ Every theorem below is about those authoritative definitions. Proved here:
 
 NOT claimed (source facts, executable guards in `ArgumentViewGuards.lean`): that the `partial`
 evaluator's `Arguments` arm, `.index` arm, sequence-builtin binding and `evalSupplySpread` call
-these definitions; the reachable-state refinement (still open, ledger E-18) and `ProductionDiscipline`
+these definitions; the reachable-state refinement (open, ledger E-18; refuted for META states) and `ProductionDiscipline`
 (which now also names `evalSupplySpread`; open until R7, now the theorem `productionDiscipline_holds`,
 `EvaluatorDiscipline.lean`); run identity and the ended-run, foreign-run and terminal
 refusals (C#-only obligations: Lean has one run per state); C# concurrency, cancellation and

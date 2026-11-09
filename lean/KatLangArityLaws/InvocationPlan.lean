@@ -24,8 +24,7 @@ behavior matters, the assumption is a STRUCTURAL contract, never the conclusion:
 * `Disciplined m`: `m` keeps every existing cell's suspension, completed VALUE and prepared plan
   supply. `NeedSupply.form`, `NeedPlan.prepare`, `NeedPlan.execute`, `NeedDemand.suspendedValue`,
   `NeedDemand.step`, `NeedPlan.reify` and `NeedPlan.invoke` are PROVED disciplined from their
-  callbacks' discipline; that the `partial` production callbacks are disciplined is the one
-  named opaque obligation `ProductionDiscipline` (source fact, executable guards). R7 (October
+  callbacks' discipline; the historical named obligation was `ProductionDiscipline`. R7 (October
   2026): it is now a THEOREM, `KatLang.EvaluatorDiscipline.productionDiscipline_holds`
   (`KatLangArityLaws/EvaluatorDiscipline.lean`, which imports this file), in this exact general
   form; the `production_*` specializations below keep their hypothesis here and are restated
@@ -34,15 +33,19 @@ behavior matters, the assumption is a STRUCTURAL contract, never the conclusion:
   record of cell `a`, over ALL valid input heaps and plan records. This is a sufficient
   abstract callback contract, NOT a property established for the production dispatch:
   dispatch can demand `a` when `a` is suspended. `CallPlanGuards.dispatchIsNotGloballyOblivious`
-  pins that counterexample. Ordinary VALUE starts with `a` evaluating, a narrower invariant
-  not expressed by this global contract; production conservativity remains executable evidence
-  (open: `docs/design/formal-correspondence-ledger.md` row E-18).
+  pins that counterexample. `PlanConservativity.lean` relativizes it (`ObliviousOn P a`,
+  `fresh_plan_is_ordinary_call_on`) and transfers it through the core from per-body obligations;
+  the entry hypothesis `a` evaluating, even strengthened by no stored reference to `a`, is
+  insufficient for reachable META states (`PlanConservativityGuards`), so production conservativity is not a
+  theorem (ledger `docs/design/formal-correspondence-ledger.md` row E-18).
 
-Not claimed (here; R7 adds the production bridge in `EvaluatorCore.lean` and discharges
-`ProductionDiscipline` in `EvaluatorDiscipline.lean`): kernel refinement of the `partial` evaluator (`evalCounted`, `demandNeedRecursive`,
-`evalSuppliedCallCounted`, `evalCallCountedExpr`) — that the ordinary call is `ordinaryCall` and
-that the recursive edge installs `productionPlanRoute` are source facts, checked executably by
-`InvocationPlanGuards`; C# concurrency, cancellation, terminality and resource accounting.
+Not claimed here: the production bridge is R7's (`EvaluatorCore.lean`, the total core; there is
+no `partial` evaluator left), `ProductionDiscipline` is discharged in `EvaluatorDiscipline.lean`,
+and that the ordinary call is `ordinaryCall` is now a theorem for the call and extension routes on
+completed runs (`PlanConservativity.ordinaryCall_is_written_call`, `written_call_is_evalCallCountedExpr`).
+That the recursive edge installs `productionPlanRoute` is `rfl` (`production_demand`,
+`EvaluatorCore.productionPlanRoute_is_core`). C# concurrency, cancellation, terminality and resource
+accounting are not modelled.
 -/
 
 namespace KatLang.CallPlan
@@ -1405,8 +1408,11 @@ def Oblivious {α : Type} (a : Nat) (m : EvalM α) : Prop :=
     with `NeedSupply.form evalSupplySpread` and dispatches through `evalSuppliedCallCounted`, the
     same dispatch `productionPlanRoute` installs) over the route's callee and effective bundle
     (META-S3-4: an extension is the call `F(t, args)`, `effective`). The correspondence with the
-    `partial` production definitions is a source fact, checked executably by
-    `InvocationPlanGuards.agrees` and `InvocationRouteGuards`. -/
+    total production definitions is proved for call and extension routes on completed runs in
+    `PlanConservativity.ordinaryCall_is_written_call`; the bridge to `evalCallCountedExpr` additionally
+    excludes an `X.Algorithm` callee. The `.Algorithm` route and the bridge to dot-member evaluation
+    remain open (ledger E-18). `InvocationPlanGuards.agrees` and `InvocationRouteGuards` give finite
+    executable evidence. -/
 def ordinaryCall (route : NeedPlan.Route) (a : Nat)
     (shape : NeedPlan.CallShape) (r : PlanRoute) : EvalM CountedResult := do
   let eff := NeedPlan.effective shape r
