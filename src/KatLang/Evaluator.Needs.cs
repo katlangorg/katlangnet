@@ -1558,19 +1558,19 @@ public static partial class Evaluator
         if (prepared.IsError) return prepared.Error;
         var family = prepared.Value;
         ObserveFamilyStart(callee, ctx);
-        for (var i = 0; i < family.Branches.Length; i++)
+        for (var i = 0; i < family.BranchCount(); i++)
         {
             // The clause's ONE cardinality gate, in family mode: a refused count is its non-match.
             // Decided here rather than in a gated binder frame, so a literal or structural pattern
             // that demands a recursive argument holds no extra frame (stack headroom per level).
-            if (!NeedAcceptsCardinality(family.Heads![i], supply.Count)) continue;
+            if (!NeedAcceptsCardinality(family.HeadAt(i), supply.Count)) continue;
             ObserveClauseAttempt(i, ctx);
-            var bindings = BindAcceptedNeedPatterns(family.Heads![i], supply, ctx, asynchronous: false, family: true).GetAwaiter().GetResult();
+            var bindings = BindAcceptedNeedPatterns(family.HeadAt(i), supply, ctx, asynchronous: false, family: true).GetAwaiter().GetResult();
             ObserveClauseOutcome(bindings, ctx);
             // An argument a clause pattern inspects is a SUBORDINATE computation of the call (Q-36).
             if (bindings.IsError) return NestMissingOutput(bindings.Error);
             if (bindings.Value is not { } matched) continue;
-            var selected = SelectedBranchBody(family.Branches[i], ctx);
+            var selected = SelectedBranchBody(family.BranchAt(i), ctx);
             if (selected.IsError) return selected.Error;
             return EvalResult<NeedFamilyActivation>.Ok(ActivateNeedFamilyBranch(callee, selected.Value, matched, ctx, values));
         }
@@ -1587,18 +1587,18 @@ public static partial class Evaluator
         if (prepared.IsError) return prepared.Error;
         var family = prepared.Value;
         ObserveFamilyStart(callee, ctx);
-        for (var i = 0; i < family.Branches.Length; i++)
+        for (var i = 0; i < family.BranchCount(); i++)
         {
-            if (!NeedAcceptsCardinality(family.Heads![i], supply.Count)) continue;
+            if (!NeedAcceptsCardinality(family.HeadAt(i), supply.Count)) continue;
             ObserveClauseAttempt(i, ctx);
-            var bindings = await BindAcceptedNeedPatterns(family.Heads![i], supply, ctx, asynchronous, family: true).ConfigureAwait(false);
+            var bindings = await BindAcceptedNeedPatterns(family.HeadAt(i), supply, ctx, asynchronous, family: true).ConfigureAwait(false);
             ObserveClauseOutcome(bindings, ctx);
             // An argument a clause pattern inspects is a SUBORDINATE computation of the call (Q-36).
             if (bindings.IsError) return NestMissingOutput(bindings.Error);
             if (bindings.Value is not { } matched) continue;
             var selected = asynchronous
-                ? await SelectedBranchBodyAsync(family.Branches[i], ctx).ConfigureAwait(false)
-                : SelectedBranchBody(family.Branches[i], ctx);
+                ? await SelectedBranchBodyAsync(family.BranchAt(i), ctx).ConfigureAwait(false)
+                : SelectedBranchBody(family.BranchAt(i), ctx);
             if (selected.IsError) return selected.Error;
             return EvalResult<NeedFamilyActivation>.Ok(ActivateNeedFamilyBranch(callee, selected.Value, matched, ctx, values));
         }

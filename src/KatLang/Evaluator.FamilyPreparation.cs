@@ -27,6 +27,17 @@ public static partial class Evaluator
         internal IReadOnlyList<NeedPattern>[]? Heads { get; } = heads;
 
         internal bool HasDuplicateBranchPatterns => Heads is null;
+
+        // These leaf calls return before a clause binder can demand a recursive argument.
+        // Keep array-access temporaries out of that driver's frame (FRAME-SIZE DISCIPLINE).
+        [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+        internal int BranchCount() => Branches.Length;
+
+        [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+        internal IReadOnlyList<NeedPattern> HeadAt(int index) => Heads![index];
+
+        [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+        internal CondBranch BranchAt(int index) => Branches[index];
     }
 
     /// <summary>
