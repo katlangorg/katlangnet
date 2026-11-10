@@ -882,6 +882,98 @@ public static partial class Evaluator
     }
 
     /// <summary>
+    /// Whether a clause head is a FLAT LITERAL LEVEL (allocation-free): one to
+    /// <see cref="FlatUniqueNameBindingWidth"/> patterns, at least one a literal, every other a plain
+    /// unique name (not collecting, not META, no children); the supply count equals the pattern
+    /// count. Only clause heads carry literal patterns (<see cref="NeedClausePatterns"/>), so only the
+    /// family drivers ask. Such a head binds through <see cref="BindFlatLiteralHead"/>.
+    /// </summary>
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+    private static bool IsFlatLiteralHead(IReadOnlyList<NeedPattern> patterns, IReadOnlyList<NeedCell> supply)
+    {
+        var count = patterns.Count;
+        if (count == 0 || count > FlatUniqueNameBindingWidth || supply.Count != count)
+            return false;
+        var literal = false;
+        for (var i = 0; i < count; i++)
+        {
+            var pattern = patterns[i];
+            if (pattern.Collecting || pattern.Meta || pattern.Children is not null)
+                return false;
+            if (pattern.Literal is not null)
+            {
+                if (pattern.Name is not null) return false;
+                literal = true;
+                continue;
+            }
+            if (pattern.Name is not { } name)
+                return false;
+            for (var j = 0; j < i; j++)
+                if (string.Equals(patterns[j].Name, name, StringComparison.Ordinal))
+                    return false;
+        }
+        return literal;
+    }
+
+    /// <summary>
+    /// The family binder's direct path for a FLAT LITERAL LEVEL (<see cref="IsFlatLiteralHead"/>):
+    /// pattern <c>i</c> reads supplied cell <c>i</c>, in written order; a literal demands its cell
+    /// and matches it (<see cref="MatchLiteralPattern"/>), a name transports its cell undemanded.
+    /// A demand or comparison failure is the binding's error, a literal mismatch its non-match.
+    /// <para>EQUIVALENCE with the general path of <see cref="BindAcceptedNeedPatterns"/> on such a
+    /// level: every name counts once, so no group forms; <c>PushLevel</c> pushes the patterns
+    /// last-first with cell <c>i</c> for pattern <c>i</c>, so the pops visit them in written order,
+    /// a name storing <c>bound[name] = cell</c> into an add-only dictionary and a literal demanding,
+    /// matching and returning the same error or non-match at the same point; on success the env is
+    /// the names with their cells in insertion (written) order, exactly this array. The path
+    /// allocates only that array (none for an all-literal head). It also holds no binder state
+    /// machine while a literal demands a recursive argument.</para>
+    /// </summary>
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+    private static EvalResult<NeedEnv?> BindFlatLiteralHead(IReadOnlyList<NeedPattern> patterns, IReadOnlyList<NeedCell> supply, in EvalCtx ctx)
+    {
+        var names = 0;
+        for (var i = 0; i < patterns.Count; i++)
+        {
+            if (patterns[i].Literal is not { } literal) { names++; continue; }
+            var outcome = supply[i].Demand();
+            if (outcome.IsError) return outcome.Error;
+            var matched = MatchLiteralPattern(literal, outcome.Value.Value, ctx);
+            if (matched.IsError) return matched.Error;
+            if (!matched.Value) return EvalResult<NeedEnv?>.Ok(null);
+        }
+        return EvalResult<NeedEnv?>.Ok(FlatLiteralHeadBindings(patterns, supply, names));
+    }
+
+    /// <summary>MIRROR OF <see cref="BindFlatLiteralHead"/> — keep in lock-step.</summary>
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+    private static async ValueTask<EvalResult<NeedEnv?>> BindFlatLiteralHeadAsync(IReadOnlyList<NeedPattern> patterns, IReadOnlyList<NeedCell> supply, EvalCtx ctx)
+    {
+        var names = 0;
+        for (var i = 0; i < patterns.Count; i++)
+        {
+            if (patterns[i].Literal is not { } literal) { names++; continue; }
+            var outcome = await supply[i].DemandAsync().ConfigureAwait(false);
+            if (outcome.IsError) return outcome.Error;
+            var matched = MatchLiteralPattern(literal, outcome.Value.Value, ctx);
+            if (matched.IsError) return matched.Error;
+            if (!matched.Value) return EvalResult<NeedEnv?>.Ok(null);
+        }
+        return EvalResult<NeedEnv?>.Ok(FlatLiteralHeadBindings(patterns, supply, names));
+    }
+
+    private static (string Name, NeedCell Cell)[] FlatLiteralHeadBindings(IReadOnlyList<NeedPattern> patterns, IReadOnlyList<NeedCell> supply, int names)
+    {
+        if (names == 0) return [];
+        var env = new (string Name, NeedCell Cell)[names];
+        var next = 0;
+        for (var i = 0; i < patterns.Count; i++)
+            if (patterns[i].Name is { } name)
+                env[next++] = (name, supply[i]);
+        return env;
+    }
+
+    /// <summary>
     /// The inspecting binder over a supply whose count its top-level patterns ACCEPT. The caller's
     /// cardinality gate has already decided that count, either <see cref="BindNeedPatterns"/> or a
     /// caller's own shaped report, so allocation here never re-checks it. Each structural level's
@@ -1498,7 +1590,8 @@ public static partial class Evaluator
     // duplicate heads. Then, if no clause's head accepts the supply count, the call is an
     // ArityMismatch with the first clause's minimum (0 when there is no clause). Which clause binds
     // is each clause's own gate afterwards, in written order: the driver's per-clause check, where a
-    // refused count is that clause's non-match, then BindAcceptedNeedPatterns in family mode.
+    // refused count is that clause's non-match, then BindAcceptedNeedPatterns in family mode (a flat
+    // literal head binds through its equivalent direct path, BindFlatLiteralHead).
     // The verdict and the translated heads are a pure function of the branch list, decided ONCE
     // per run per list (NeedFamilyPreparationCache); every call still checks the verdict first and
     // then decides its own arity. The driver selects bodies from the same prepared view.
@@ -1563,9 +1656,13 @@ public static partial class Evaluator
             // The clause's ONE cardinality gate, in family mode: a refused count is its non-match.
             // Decided here rather than in a gated binder frame, so a literal or structural pattern
             // that demands a recursive argument holds no extra frame (stack headroom per level).
-            if (!NeedAcceptsCardinality(family.HeadAt(i), supply.Count)) continue;
+            var head = family.HeadAt(i);
+            if (!NeedAcceptsCardinality(head, supply.Count)) continue;
             ObserveClauseAttempt(i, ctx);
-            var bindings = BindAcceptedNeedPatterns(family.HeadAt(i), supply, ctx, asynchronous: false, family: true).GetAwaiter().GetResult();
+            // A flat literal head binds directly (no dictionaries, stacks or binder state machine).
+            var bindings = IsFlatLiteralHead(head, supply)
+                ? BindFlatLiteralHead(head, supply, in ctx)
+                : BindAcceptedNeedPatterns(head, supply, ctx, asynchronous: false, family: true).GetAwaiter().GetResult();
             ObserveClauseOutcome(bindings, ctx);
             // An argument a clause pattern inspects is a SUBORDINATE computation of the call (Q-36).
             if (bindings.IsError) return NestMissingOutput(bindings.Error);
@@ -1589,9 +1686,18 @@ public static partial class Evaluator
         ObserveFamilyStart(callee, ctx);
         for (var i = 0; i < family.BranchCount(); i++)
         {
-            if (!NeedAcceptsCardinality(family.HeadAt(i), supply.Count)) continue;
+            var head = family.HeadAt(i);
+            if (!NeedAcceptsCardinality(head, supply.Count)) continue;
             ObserveClauseAttempt(i, ctx);
-            var bindings = await BindAcceptedNeedPatterns(family.HeadAt(i), supply, ctx, asynchronous, family: true).ConfigureAwait(false);
+            // As in the synchronous driver: a flat literal head binds directly. Separate await sites
+            // keep this state machine's frame closest to its former size.
+            EvalResult<NeedEnv?> bindings;
+            if (!IsFlatLiteralHead(head, supply))
+                bindings = await BindAcceptedNeedPatterns(head, supply, ctx, asynchronous, family: true).ConfigureAwait(false);
+            else if (asynchronous)
+                bindings = await BindFlatLiteralHeadAsync(head, supply, ctx).ConfigureAwait(false);
+            else
+                bindings = BindFlatLiteralHead(head, supply, in ctx);
             ObserveClauseOutcome(bindings, ctx);
             // An argument a clause pattern inspects is a SUBORDINATE computation of the call (Q-36).
             if (bindings.IsError) return NestMissingOutput(bindings.Error);

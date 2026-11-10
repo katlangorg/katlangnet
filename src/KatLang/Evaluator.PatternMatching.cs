@@ -292,8 +292,11 @@ public static partial class Evaluator
         var emittedCount = 0;
         TransientSupply bound = default;
 
-        foreach (var expr in rows)
+        // Indexed, in written order: a body's rows are an OutputBundle, whose iterator-method
+        // enumerator would cost one heap object per body evaluation (2026-11 allocation attribution).
+        for (var row = 0; row < rows.Count; row++)
         {
+            var expr = rows[row];
             var countedR = EvalCounted(expr, rowCtx, valEnv);
             // A row is a SUBORDINATE computation of the body or capture (Q-36).
             if (countedR.IsError) return NestOutputRowFailure(countedR.Error, rows, in rowCtx);

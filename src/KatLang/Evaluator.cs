@@ -229,7 +229,25 @@ public static partial class Evaluator
     /// Lean: <c>EvalCtx.bindParameters</c> (which also performs the prepend).
     /// </summary>
     internal static EvalCtx ShadowInheritedParameterEnvironments(EvalCtx ctx, IReadOnlyList<string> parameterNames)
-        => ctx.WithNeedEnv(ctx.NeedEnv.Where(binding => !ContainsOrdinal(parameterNames, binding.Name)).ToArray());
+        => ctx.WithNeedEnv(UnshadowedBindings(ctx.NeedEnv, parameterNames));
+
+    // The kept bindings in order, as the former `Where(…).ToArray()` produced them — a fresh array,
+    // or the shared empty array when none is kept — without its closure, delegate and iterator
+    // (three heap objects per binding site; 2026-11 allocation attribution).
+    private static NeedEnv UnshadowedBindings(NeedEnv inherited, IReadOnlyList<string> parameterNames)
+    {
+        var kept = 0;
+        for (var i = 0; i < inherited.Count; i++)
+            if (!ContainsOrdinal(parameterNames, inherited[i].Name)) kept++;
+        if (kept == 0)
+            return Array.Empty<(string Name, NeedCell Cell)>();
+        var bindings = new (string Name, NeedCell Cell)[kept];
+        var next = 0;
+        for (var i = 0; i < inherited.Count && next < kept; i++)
+            if (!ContainsOrdinal(parameterNames, inherited[i].Name))
+                bindings[next++] = inherited[i];
+        return bindings;
+    }
 
     /// <summary>
     /// Removes the named bindings from an INHERITED value environment — the
@@ -1308,8 +1326,10 @@ public static partial class Evaluator
     /// <summary>Returns the <see cref="SourceSpan"/> of the first output expression that has one.</summary>
     private static SourceSpan? FirstSpan(IReadOnlyList<Expr> output)
     {
-        foreach (var e in output)
-            if (e.Span is { } s) return s;
+        // Indexed, in written order: a body's output is an OutputBundle, whose iterator-method
+        // enumerator would cost one heap object per user call (2026-11 allocation attribution).
+        for (var i = 0; i < output.Count; i++)
+            if (output[i].Span is { } s) return s;
         return null;
     }
 

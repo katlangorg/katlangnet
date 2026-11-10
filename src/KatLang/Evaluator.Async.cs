@@ -1522,8 +1522,10 @@ public static partial class Evaluator
         var emittedCount = 0;
         TransientSupply bound = default;
 
-        foreach (var expr in rows)
+        // Indexed, as in the synchronous funnel (no bundle enumerator per body evaluation).
+        for (var row = 0; row < rows.Count; row++)
         {
+            var expr = rows[row];
             var countedR = await EvalCountedAsync(expr, rowCtx, valEnv).ConfigureAwait(false);
             // A row is a SUBORDINATE computation of the body or capture (Q-36).
             if (countedR.IsError) return NestOutputRowFailure(countedR.Error, rows, in rowCtx);

@@ -13,7 +13,9 @@ namespace KatLang.Tests;
 /// implementation-only optimizations: every program keeps its value, error and resource profile on
 /// the three engines, every other pattern level (a repeated name, a collecting capture, META, a
 /// structural pattern, a literal head) keeps the general path's own rule, and the environment is a
-/// fresh array in written order. The strict allocation counts run in isolated child processes.
+/// fresh array in written order. (The family drivers bind a FLAT literal head through an equivalent
+/// direct path, pinned against this binder by <see cref="FamilyLiteralHeadBindingTests"/>.) The strict
+/// allocation counts run in isolated child processes.
 /// </summary>
 public class OrdinaryCallBindingAllocationTests
 {
