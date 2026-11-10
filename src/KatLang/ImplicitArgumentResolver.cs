@@ -2508,6 +2508,11 @@ internal static partial class ImplicitArgumentResolver
     /// instead of lifting its parameters into the never-called root. A callable that accepts zero
     /// supplied arguments is never lifted anywhere (<see cref="RequiresSuppliedArguments"/>), so it
     /// needs no preservation.
+    /// <para>The row is the analysis's bare root callable row (<see cref="BareRootRowCallable"/>, the one static
+    /// decision of both phases), refined by the callee's FINAL lifting signature — the very one
+    /// <see cref="TryResolveLiftable"/> reads (<see cref="TargetOf"/> of the same static callable). A bare root callable
+    /// row that is not preserved names a callee that accepts zero supplied arguments and lifts nothing
+    /// (see <see cref="BareRootRowCallable"/> for why, and for the check that enforces it).</para>
     /// </summary>
     private static bool ShouldPreserveBareRootRow(
         Expr expr,
@@ -2515,9 +2520,9 @@ internal static partial class ImplicitArgumentResolver
         bool isRoot,
         ResolverWalkMemos memos)
         => isRoot
-            && expr is Expr.Resolve or Expr.DotCall { Args: null }
-            && TryResolveLiftable(expr, paramMap, memos) is { } liftable
-            && (liftable.Signature.Unnameable is not null || RequiresSuppliedArguments(liftable.Signature.Signature!));
+            && BareRootRowCallable(expr, paramMap, memos) is { } callable
+            && TargetOf(callable, memos.Run).Signature is var signature
+            && (signature.Unnameable is not null || RequiresSuppliedArguments(signature.Signature!));
 
     /// <summary>
     /// THE implicit-lifting eligibility rule (Q-03, decided September 28 2026), consulted for

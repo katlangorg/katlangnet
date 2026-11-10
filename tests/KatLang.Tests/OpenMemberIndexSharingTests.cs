@@ -33,6 +33,15 @@ public class OpenMemberIndexSharingTests
         => ElaboratedScopeLookup.CreateScope(new Algorithm.User(null, [], [new Expr.AlgorithmExpr(target)], [], []),
             parent, memberIndexes: cache, sourcePhase: StaticAstPhase.NameResolved);
 
+    /// <summary>
+    /// A provider of <paramref name="target"/> declared at a root level, as a level's provider projection builds one
+    /// (the identity and the declaring level are required); only its member index is exercised here.
+    /// </summary>
+    private static ResolvedOpenProvider ProviderOf(Algorithm target, OpenMemberIndexCache? cache = null)
+        => new(target, OpenProviderIdentity.DeclaredAtRoot(target),
+            ElaboratedScopeLookup.CreateScope(Owner(), sourcePhase: StaticAstPhase.NameResolved),
+            observations: null, cache);
+
     /// <summary>K sibling blocks each opening one W-member library and reading one member.</summary>
     private static string SiblingOpens(int blocks, int width)
         => "Lib = {\n" + string.Concat(Enumerable.Range(0, width).Select(i => $"    public m{i} = {i}\n")) + "    1\n}\n"
@@ -80,8 +89,8 @@ public class OpenMemberIndexSharingTests
         foreach (var (target, expected) in new[] { (privateThenPublic, publicSecond), (publicThenPrivate, publicFirst), (onlyPrivate, (Property?)null) })
         {
             var cache = new OpenMemberIndexCache();
-            var shared = new ResolvedOpenProvider(target, observations: null, cache).TryLookupPublicMember("x");
-            var alone = new ResolvedOpenProvider(target, observations: null).TryLookupPublicMember("x");
+            var shared = ProviderOf(target, cache).TryLookupPublicMember("x");
+            var alone = ProviderOf(target).TryLookupPublicMember("x");
             var linear = ElaboratedScopeLookup.TryLookupPublicProperty(target, "x");
             Assert.Same(expected, shared?.Property);
             Assert.Same(expected, alone?.Property);
@@ -94,7 +103,7 @@ public class OpenMemberIndexSharingTests
             Assert.Equal(expected is null ? 0 : 1, matches.Count);
             if (expected is not null)
                 Assert.Same(expected, matches[0].Property);
-            Assert.Null(new ResolvedOpenProvider(target, null, cache).TryLookupPublicMember("absent"));
+            Assert.Null(ProviderOf(target, cache).TryLookupPublicMember("absent"));
         }
     }
 
@@ -109,9 +118,9 @@ public class OpenMemberIndexSharingTests
         var publicNull = new Property(null!, ValueAlgorithm(2), IsPublic: true);
         var target = Owner(privateNull, publicNull);
         var cache = new OpenMemberIndexCache();
-        Assert.Same(publicNull, new ResolvedOpenProvider(target, null, cache).TryLookupPublicMember(null!)?.Property);
-        Assert.Same(publicNull, new ResolvedOpenProvider(target, null).TryLookupPublicMember(null!)?.Property);
-        Assert.Null(new ResolvedOpenProvider(target, null, cache).TryLookupPublicMember("y"));
+        Assert.Same(publicNull, ProviderOf(target, cache).TryLookupPublicMember(null!)?.Property);
+        Assert.Same(publicNull, ProviderOf(target).TryLookupPublicMember(null!)?.Property);
+        Assert.Null(ProviderOf(target, cache).TryLookupPublicMember("y"));
     }
 
     // ── Exact target identity ─────────────────────────────────────────────────────────

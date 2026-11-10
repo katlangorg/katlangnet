@@ -485,10 +485,11 @@ internal static class AstHelpers
             || ElaboratedScopeLookup.SelectOwnedDeclaration(scope, name, parameters).Kind != OwnedDeclarationKind.None)
             return null;
 
-        var hits = ElaboratedScopeLookup.LookupOpenPropertyMatches(scope, name);
-        return hits.Count == 1
+        // The unique first-level selection (ambiguity at the deciding level selects nothing), read without
+        // materializing the match list.
+        return ElaboratedScopeLookup.SelectFirstOpenLevel(scope, name).Single is { } single
             && scope.Root.TryLookupOwnProperty(BuiltinRegistry.MathModuleName) is { } preludeMath
-            && ReferenceEquals(hits[0].Owner, preludeMath.Property.Value)
+            && ReferenceEquals(single.Hit.Owner, preludeMath.Property.Value)
                 ? facts
                 : null;
     }

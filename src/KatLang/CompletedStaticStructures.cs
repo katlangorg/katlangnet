@@ -908,8 +908,9 @@ internal sealed class CompletedStructureContext(StaticLookupFacts facts, StaticS
         if (Facts.Facts(Key)?.Providers is not { } providers) return result;
         for (var index = 0; index < providers.Length; index++)
             if (Provider(providers[index], caller) is { } selected && seen.Add(selected.Identity))
-                result.Add(new(selected.Target, caller.Observations, caller.MemberIndexes, selected.Identity)
-                { Level = selected.Level, Written = index < caller.Opens.Count ? caller.Opens[index] : null });
+                // Provider always supplies the declaring level (Level(parent, caller)).
+                result.Add(new(selected.Target, selected.Identity, selected.Level!, caller.Observations, caller.MemberIndexes)
+                { Written = index < caller.Opens.Count ? caller.Opens[index] : null });
         return result;
     }
 

@@ -312,32 +312,40 @@ internal sealed class ResolvedOpenProvider
     private readonly OpenMemberIndexCache? _memberIndexes;
     private OpenTargetMemberIndex? _index;
 
+    /// <summary>
+    /// A provider as its level resolved it. The identity and the declaring level are REQUIRED: every provider is built
+    /// by a level's provider projection (<c>StaticStructureOperation.Providers</c>, <c>CompletedStructureContext.Providers</c>),
+    /// which knows both, and lookup reads the declaring level unconditionally (<see cref="ElaboratedScopeLookup.LookupSingleOpenMember"/>).
+    /// </summary>
     public ResolvedOpenProvider(
         Algorithm target,
+        OpenProviderIdentity identity,
+        ElaboratedPropertyScope level,
         FrontEndTraversalObservations? observations,
-        OpenMemberIndexCache? memberIndexes = null,
-        OpenProviderIdentity? identity = null)
+        OpenMemberIndexCache? memberIndexes = null)
     {
+        ArgumentNullException.ThrowIfNull(identity);
+        ArgumentNullException.ThrowIfNull(level);
         Target = target;
+        Identity = identity;
+        Level = level;
         _observations = observations;
         _memberIndexes = memberIndexes;
-        Identity = identity;
     }
 
     public Algorithm Target { get; }
 
-    /// <summary>The provider's semantic identity (<see cref="OpenProviderIdentity"/>) when its level resolved it; null for a host-built provider.</summary>
-    public OpenProviderIdentity? Identity { get; }
+    /// <summary>The provider's semantic identity (<see cref="OpenProviderIdentity"/>), as its level resolved it.</summary>
+    public OpenProviderIdentity Identity { get; }
 
     /// <summary>The first written open target of the level that resolved to this provider (diagnostics only).</summary>
     public Expr? Written { get; init; }
 
     /// <summary>
     /// The level that DECLARES the provider (M4★): a member it provides is declared in the provider's own
-    /// body inside this level, which is where a member that is a reference is followed. Null for a
-    /// host-built provider.
+    /// body inside this level, which is where a member that is a reference is followed.
     /// </summary>
-    public ElaboratedPropertyScope? Level { get; init; }
+    public ElaboratedPropertyScope Level { get; }
 
     public PropertyLookupHit? TryLookupPublicMember(string name)
     {
@@ -1275,7 +1283,7 @@ internal static class ElaboratedScopeLookup
     internal static (PropertyLookupHit Hit, ElaboratedPropertyScope MemberLevel)? LookupSingleOpenMember(
         ElaboratedPropertyScope scope, string name, StaticCycleCheck stratum = StaticCycleCheck.Formation)
         => SelectFirstOpenLevel(scope, name, stratum).Single is { } single
-            ? (single.Hit, BodyLevelOf(single.Provider.Target, single.Provider.Level ?? scope.Root))
+            ? (single.Hit, BodyLevelOf(single.Provider.Target, single.Provider.Level))
             : null;
 
     /// <summary>

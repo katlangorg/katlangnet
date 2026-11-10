@@ -1084,8 +1084,9 @@ internal static partial class ImplicitArgumentResolver
         {
             // A lone bare row is never formula-lifted: it is a callable alias or bare forwarding (FWD-02), so its reference
             // takes the CALLABLE role; the root keeps its bare rows as their own zero-argument demands, and such a row
-            // never lifts (a preserved row's own references are not walked; one that requires nothing contributes nothing
-            // either way). A block written in a preserved row is still a body: the loop below analyzes it, and the rewrite
+            // never lifts (BareRootRowCallable: a preserved row's own references are not walked; one whose callee requires
+            // nothing contributes nothing either way, which the selection invariant checks against the rewrite's walk of it).
+            // A block written in a preserved row is still a body: the loop below analyzes it, and the rewrite
             // processes it as the row's block head (THE ROOT CLAUSE keeps the row unlifted, never its block).
             var rowRole = !isRoot && HasLoneBareRowShape(alg) ? LiftingRole.Callable : LiftingRole.Value;
             var sink = new EquationSink(visibleParamMap, memos, body, new EquationWalkMemo());
@@ -1102,10 +1103,29 @@ internal static partial class ImplicitArgumentResolver
         }
     }
 
-    /// <summary>A bare root row that names a callable (<see cref="ShouldPreserveBareRootRow"/>'s shape, read statically).</summary>
+    /// <summary>
+    /// THE BARE ROOT CALLABLE ROW, the one static decision both phases make about a bare ROOT output row: the row is a
+    /// name or an argumentless member path (<see cref="IsBareRowShape"/>) and has a static callable identity
+    /// (<see cref="ResolveStaticCallable"/>, read from the input, so both phases read the same callee). Null for every other row.
+    /// <para>The analysis excludes every such row from the root's lifting equations (<see cref="IsBareRootCallableRow"/>).
+    /// The rewrite PRESERVES the subset whose callee requires supplied arguments or is an unnameable family
+    /// (<see cref="ShouldPreserveBareRootRow"/>, which refines this predicate with the final lifting signature the analysis
+    /// cannot yet read). The rows in between name a callee that accepts zero supplied arguments: the rewrite walks and
+    /// rewrites them as ordinary rows, and they lift nothing there either. A value-role reference to such a callee is never
+    /// lifted (<see cref="RequiresSuppliedArguments"/>), and a structural member path's receivers are callable-role
+    /// navigation, which contributes nothing. <see cref="RequireSelectedComposition"/> enforces this on every run: a lifted callee such a row
+    /// added first would make the rewrite's dependency list differ from the composed one and fail loudly.
+    /// <c>BareRootRowPredicateTests</c> pins it across categories and routes.</para>
+    /// </summary>
+    private static StaticCallable? BareRootRowCallable(Expr expr, SignatureMap paramMap, ResolverWalkMemos memos)
+        => IsBareRowShape(expr) ? ResolveStaticCallable(expr, paramMap, memos, out _) : null;
+
+    /// <summary>The written shape of a bare row: a name or an argumentless member path.</summary>
+    private static bool IsBareRowShape(Expr expr) => expr is Expr.Resolve or Expr.DotCall { Args: null };
+
+    /// <summary>Whether a bare root row names a static callable (<see cref="BareRootRowCallable"/>): the analysis's exclusion.</summary>
     private static bool IsBareRootCallableRow(Expr expr, SignatureMap paramMap, ResolverWalkMemos memos)
-        => expr is Expr.Resolve or Expr.DotCall { Args: null }
-            && ResolveStaticCallable(expr, paramMap, memos, out _) is not null;
+        => BareRootRowCallable(expr, paramMap, memos) is not null;
 
     /// <summary>The blocks an open target holds, each a body rooted at the prelude (as the rewrite's open-target region processes them).</summary>
     private static void AnalyzeOpenTargets(IReadOnlyList<Expr> opens, ResolutionRun run)

@@ -127,9 +127,9 @@ internal sealed partial class StaticStructureOperation
                 seen.Add(identity);
                 var body = SourceOf(key);
                 var declaring = LookupLevel(key.Parent ?? Queries.Keys.Root);
-                providers.Add(new(body, declaring.Observations, declaring.MemberIndexes, OpenProviderIdentity.DeclaredAt(body, declaring))
+                providers.Add(new(body, OpenProviderIdentity.DeclaredAt(body, declaring), declaring, declaring.Observations, declaring.MemberIndexes)
                 {
-                    Level = declaring, Written = expression,
+                    Written = expression,
                 });
             }
         }
