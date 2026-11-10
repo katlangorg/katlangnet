@@ -186,6 +186,10 @@ public class DeferredCompileStackProcessTests
         => await RunProbeChild(nameof(ThreadSizeSweep_ProbeChild), route, shape);
 
     [Fact]
+    public async Task DeferredCompile_NeverCrashes_AcrossThreadSizes_UnderCpuLoad()
+        => await RunProbeChild(nameof(ThreadSizeSweepUnderCpuLoad_ProbeChild));
+
+    [Fact]
     public async Task DeferredCompile_NeverCrashes_AcrossEvaluatorDepth_OnOneMiB()
         => await RunProbeChild(nameof(EvaluatorWindow_ProbeChild));
 
@@ -238,8 +242,32 @@ public class DeferredCompileStackProcessTests
         if (Environment.GetEnvironmentVariable(ProbeChildEnvironment) != "1")
             return;
 
-        var route = Environment.GetEnvironmentVariable(ProbeRouteEnvironment)!;
-        var shape = Environment.GetEnvironmentVariable(ProbeShapeEnvironment)!;
+        SweepThreadSizes(Environment.GetEnvironmentVariable(ProbeRouteEnvironment)!, Environment.GetEnvironmentVariable(ProbeShapeEnvironment)!);
+        WriteProbeMarker();
+    }
+
+    /// <summary>
+    /// The stress variant of <see cref="ThreadSizeSweep_ProbeChild"/>: every (route, shape) sweep in
+    /// one child while every processor spins a busy loop (<see cref="CpuLoad"/>, as in the open-chain
+    /// stress: half of the threads allocate, to provoke collections), so JIT tier-up and GC pauses
+    /// perturb frame sizes and timing during the sweeps. Same workloads and assertions as the theory.
+    /// </summary>
+    [Fact]
+    public void ThreadSizeSweepUnderCpuLoad_ProbeChild()
+    {
+        if (Environment.GetEnvironmentVariable(ProbeChildEnvironment) != "1")
+            return;
+
+        using var load = CpuLoad.Start();
+        foreach (var route in Routes)
+            foreach (var (shape, _) in Shapes)
+                SweepThreadSizes(route, shape);
+        Console.WriteLine($"cpu load: {load.Threads} spinning threads, {load.Collections} gen-0 collections during the sweeps");
+        WriteProbeMarker();
+    }
+
+    private static void SweepThreadSizes(string route, string shape)
+    {
         var depth = Shapes.Single(s => s.Shape == shape).Depth;
         var source = Source(shape, depth, 0, route);
         var module = Module(shape, depth, route);
@@ -253,9 +281,11 @@ public class DeferredCompileStackProcessTests
             $"{route}/{shape}: the program must evaluate on a large stack: {Describe(reference.Outcome)}");
 
         // Sweep the fixed range first, then take wider steps if compilation needs more room
-        // (for example, a Debug nested module parse of a deep shape).
+        // (for example, a Debug nested module parse of a deep shape). Keep at least three
+        // compile samples: stopping at the first adaptive success leaves it at the highest
+        // sampled stack, with no observed headroom if that frontier shifts in another process.
         var sweep = new SweepTally($"{route}/{shape}");
-        for (var kib = 144; kib <= 688 || (!sweep.SawCompile && kib <= 4096); kib += kib < 688 ? 16 : 128)
+        for (var kib = 144; kib <= 688 || (sweep.CompileCount < 3 && kib <= 4096); kib += kib < 688 ? 16 : 128)
         {
             var prepared = Prepare(source, module);
             var run = EvaluateOn(kib * 1024, prepared);
@@ -264,8 +294,7 @@ public class DeferredCompileStackProcessTests
                 Assert.Equal(0, prepared.DownloadsDuringEvaluation);
         }
 
-        sweep.AssertOutcomes(requireCompileRefusal: shape != "cmp");
-        WriteProbeMarker();
+        sweep.AssertOutcomes(requireCompileRefusal: shape != "cmp", minimumCompiles: 3);
     }
 
     /// <summary>
@@ -606,10 +635,10 @@ public class DeferredCompileStackProcessTests
         Assert.Equal([7m], reference.Outcome.Value);
 
         var sweep = new SweepTally("module chain");
-        for (var kib = 144; kib <= 688 || (!sweep.SawCompile && kib <= 4096); kib += kib < 688 ? 16 : 128)
+        for (var kib = 144; kib <= 688 || (sweep.CompileCount < 3 && kib <= 4096); kib += kib < 688 ? 16 : 128)
             sweep.Record(kib, EvaluateOn(kib * 1024, Prepare(source, Download)), reference.Outcome);
 
-        sweep.AssertOutcomes();
+        sweep.AssertOutcomes(minimumCompiles: 3);
         WriteProbeMarker();
     }
 
@@ -698,7 +727,7 @@ public class DeferredCompileStackProcessTests
         private bool _exact = true;
         private readonly List<string> _log = [];
 
-        public bool SawCompile => _compiles > 0;
+        public int CompileCount => _compiles;
 
         public void Record(int point, Evaluation run, EvalResult<IReadOnlyList<Decimal128>>? reference)
         {
@@ -730,10 +759,11 @@ public class DeferredCompileStackProcessTests
             _log.Add($"{point}:{(run.Materialized ? "compiled" : "unpublished")}:{code}");
         }
 
-        public void AssertOutcomes(bool requireCompileRefusal = true)
+        public void AssertOutcomes(bool requireCompileRefusal = true, int minimumCompiles = 1)
         {
             Console.WriteLine($"{label}: {string.Join(" ", _log)}");
-            Assert.True(_compiles > 0, $"{label}: no run compiled the branch\n{string.Join(" ", _log)}");
+            Assert.True(_compiles >= minimumCompiles,
+                $"{label}: expected at least {minimumCompiles} compile sample(s), saw {_compiles}\n{string.Join(" ", _log)}");
             if (requireCompileRefusal && _exact)
                 Assert.True(_refusals > 0,
                     $"{label}: no run refused the compile; the sweep no longer crosses the frontier\n{string.Join(" ", _log)}");

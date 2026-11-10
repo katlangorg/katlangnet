@@ -2771,6 +2771,13 @@ public static partial class Evaluator
     /// reserve per level (<see cref="FrontEndStack"/>), so an entry on a stack too
     /// small to walk the tree is the structured
     /// <see cref="EvalError.EvaluationStackExhausted"/>, never an overflow.
+    /// <para>That refusal is ROOT-LEVEL and carries no span. The gate walks the whole program
+    /// before evaluation enters any written expression, and the node its walk had reached when the
+    /// reserve ran out marks where the host stack ran short, not a written cause. Attaching that
+    /// node's span would invent a position (Q-09a: where a stack refusal fires is never promised).
+    /// The refusal does no evaluation work at all, which
+    /// <c>EvaluatorOpenChainStackProcessTests.OneNameOpenChain_ProbeChild</c> pins (it is the only
+    /// spanless refusal there, about 140 KiB and less on Windows x64).</para>
     /// </summary>
     private static EvalError? PreEvaluationValidationError(Expr expr)
     {

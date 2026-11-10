@@ -296,7 +296,7 @@ public static partial class Evaluator
         {
             var countedR = EvalCounted(expr, rowCtx, valEnv);
             // A row is a SUBORDINATE computation of the body or capture (Q-36).
-            if (countedR.IsError) return NestOutputRowFailure(countedR.Error, rows, rowCtx.CallStack);
+            if (countedR.IsError) return NestOutputRowFailure(countedR.Error, rows, in rowCtx);
 
             // The row-slot accumulator is transient-bounded BEFORE it grows (SEC-01): once `(A*, A*)`
             // passes the limit the remaining rows are formed count-only and the capture's own

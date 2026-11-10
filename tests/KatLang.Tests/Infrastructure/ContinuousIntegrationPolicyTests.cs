@@ -1,4 +1,6 @@
 using System.Diagnostics;
+using System.Reflection;
+using System.Reflection.Emit;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using System.Xml.Linq;
@@ -601,6 +603,7 @@ public class ContinuousIntegrationPolicyTests
         "KatLang.Tests.WeightedCostCompositionProcessTests",
         "KatLang.Tests.ScopeVisibilityIterativeUpdateTests",
         "KatLang.Tests.ParserExpressionChainDepthTests",
+        "KatLang.Tests.LimitConfigurationTransparencyTests",
         "KatLang.Tests.AsyncEvaluation.AsyncStackDepthTests",
     ];
 
@@ -735,6 +738,98 @@ public class ContinuousIntegrationPolicyTests
             Assert.Contains("SubprocessProbe.StartInfo(", text, StringComparison.Ordinal);
             Assert.Contains("Stack overflow", text, StringComparison.Ordinal);
         }
+    }
+
+    // Test classes that launch a SubprocessProbe child themselves but stay out of the Release
+    // stack-suite job, each with the reason. Every other such class must be in StackSuiteClasses.
+    private static readonly IReadOnlyDictionary<string, string> ProcessProbeClassesOutsideTheStackSuite =
+        new Dictionary<string, string>(StringComparer.Ordinal)
+        {
+            ["KatLang.Tests.RuntimeCallableAliasCorpusTests"] =
+                "its child isolates an alias-to-self dispatch regression, which is unbounded recursion and overflows in every configuration, so the Debug phase already catches it; no frame-size frontier is swept",
+            ["KatLang.Tests.Infrastructure.SubprocessProbeTests"] =
+                "tests the probe launcher itself with trivial fixture children; no stack workload",
+            ["KatLang.Tests.Infrastructure.TerminationProbeTests"] =
+                "tests the termination (hang) probe harness with trivial fixture children; no stack workload",
+        };
+
+    /// <summary>
+    /// Every test class that launches a <see cref="SubprocessProbe"/> child is either in
+    /// the Release stack-suite job or excluded above with a reason, so a new process-death probe
+    /// class cannot be missed silently. Inspect method operands in the compiled assembly, including
+    /// async state machines and closures, so formatting, namespaces, partial classes and sibling
+    /// classes in one file cannot hide or misattribute a probe. The helpers that wrap the launcher (<c>TerminationProbe</c>,
+    /// <c>GcIsolatedAllocation</c>, <c>DagTraversalProbe</c>) are not test classes, and their
+    /// callers are termination and allocation probes, not stack probes.
+    /// </summary>
+    [Fact]
+    public void EveryProcessProbeClass_IsInTheReleaseStackSuite_OrExcludedWithAReason()
+    {
+        var launchTokens = typeof(SubprocessProbe).GetMethods(BindingFlags.Public | BindingFlags.Static)
+            .Where(method => method.Name == nameof(SubprocessProbe.StartInfo))
+            .Select(method => method.MetadataToken).ToHashSet();
+        var testTypes = typeof(ContinuousIntegrationPolicyTests).Assembly.GetTypes()
+            .Where(type => type.IsClass && type.GetMethods()
+                .Any(method => method.GetCustomAttributes(typeof(FactAttribute), inherit: true).Length > 0))
+            .ToArray();
+        var found = testTypes.Where(type => LaunchesSubprocessProbe(type, launchTokens))
+            .Select(type => type.FullName!).ToHashSet(StringComparer.Ordinal);
+
+        // The scan sees the known probe classes, so a broken pattern cannot pass vacuously.
+        Assert.Contains("KatLang.Tests.EvaluatorOpenChainStackProcessTests", found);
+        Assert.Contains("KatLang.Tests.AstStructuralDepthProcessTests", found);
+        foreach (var name in found)
+        {
+            Assert.True(StackSuiteClasses.Contains(name) || ProcessProbeClassesOutsideTheStackSuite.ContainsKey(name),
+                $"{name} launches a SubprocessProbe child but is neither in {StackSuiteScriptPath} nor excluded with a reason in ProcessProbeClassesOutsideTheStackSuite.");
+        }
+
+        foreach (var (name, reason) in ProcessProbeClassesOutsideTheStackSuite)
+        {
+            Assert.Contains(name, found);
+            Assert.DoesNotContain(name, StackSuiteClasses);
+            Assert.False(string.IsNullOrWhiteSpace(reason), $"{name} needs a reason to stay out of the stack suite.");
+        }
+    }
+
+    private static readonly IReadOnlyDictionary<short, OpCode> ProbeInventoryOpCodes = typeof(OpCodes)
+        .GetFields(BindingFlags.Public | BindingFlags.Static)
+        .Select(field => (OpCode)field.GetValue(null)!).ToDictionary(opCode => opCode.Value);
+
+    private static bool LaunchesSubprocessProbe(Type type, HashSet<int> launchTokens)
+    {
+        const BindingFlags declared = BindingFlags.DeclaredOnly | BindingFlags.Public | BindingFlags.NonPublic
+            | BindingFlags.Static | BindingFlags.Instance;
+        foreach (var method in type.GetMethods(declared).Cast<MethodBase>().Concat(type.GetConstructors(declared)))
+        {
+            if (method.GetMethodBody()?.GetILAsByteArray() is not { } il)
+                continue;
+            var offset = 0;
+            while (offset < il.Length)
+            {
+                short value = il[offset++];
+                if (value == 0xFE)
+                    value = (short)(0xFE00 | il[offset++]);
+                var operand = ProbeInventoryOpCodes[value].OperandType;
+                if (operand == OperandType.InlineMethod && launchTokens.Contains(BitConverter.ToInt32(il, offset)))
+                    return true;
+                offset += operand switch
+                {
+                    OperandType.InlineNone => 0,
+                    OperandType.ShortInlineBrTarget or OperandType.ShortInlineI or OperandType.ShortInlineVar => 1,
+                    OperandType.InlineVar => 2,
+                    OperandType.InlineBrTarget or OperandType.InlineField or OperandType.InlineI or OperandType.InlineMethod
+                        or OperandType.InlineSig or OperandType.InlineString or OperandType.InlineTok or OperandType.InlineType
+                        or OperandType.ShortInlineR => 4,
+                    OperandType.InlineI8 or OperandType.InlineR => 8,
+                    OperandType.InlineSwitch => 4 + 4 * BitConverter.ToInt32(il, offset),
+                    _ => throw new InvalidOperationException($"Unexpected IL operand {operand} in {method}"),
+                };
+            }
+        }
+
+        return type.GetNestedTypes(BindingFlags.Public | BindingFlags.NonPublic)
+            .Any(nested => LaunchesSubprocessProbe(nested, launchTokens));
     }
 
     private const string StandaloneBuildScriptPath = "scripts/build-standalone-tools.ps1";

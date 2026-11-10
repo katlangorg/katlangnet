@@ -46,8 +46,16 @@ public class EvaluatorOpenChainStackProcessTests(ITestOutputHelper output)
     /// <summary>Open-target dot-link counts: one link through a near-ceiling dotted target. The one-name-open control is separate.</summary>
     internal static readonly int[] LinkCounts = [1, 32, 64, 95];
 
-    /// <summary>The highest recursion depth swept; the measured Debug and Release frontiers lie within this window.</summary>
-    internal const int MaxRecursion = 40;
+    /// <summary>
+    /// The highest recursion depth the window sweep covers. It is 48, not 40: on the 1536 KiB thread in
+    /// Release the SYNCHRONOUS route still completed at depth 40 (its frontier lies near 42; measured on
+    /// Windows x64, November 2026), so only the async twin refused there and the sync side had no
+    /// headroom. Every measured Debug and Release frontier of both routes now lies inside the window.
+    /// </summary>
+    internal const int MaxRecursion = 48;
+
+    /// <summary>The highest recursion depth the deferred sweeps cover; their measured frontiers are 22 or less.</summary>
+    internal const int DeferredMaxRecursion = 40;
 
     internal static string OpenTarget(int links)
         => "A" + new StringBuilder().Insert(0, ".N", links);
@@ -76,6 +84,21 @@ public class EvaluatorOpenChainStackProcessTests(ITestOutputHelper output)
     internal static readonly string[] DeferredRoutes = ["branch-outer", "module-outer", "branch-inner", "module-inner"];
 
     internal const int DeferredLinks = 90;
+
+    /// <summary>
+    /// The <c>inner</c> routes' stack sizes: <see cref="StackSizes"/> plus a contiguous band of
+    /// 4 KiB steps from 1028 to 1152 KiB. With the <c>ResolveOpenPropAccess</c> probe removed, an
+    /// <c>inner</c> run crashes only when the recursion inside the compiled branch leaves the open
+    /// navigation a reserve that passed every earlier probe but cannot hold 90 links. One
+    /// recursion level moves that point by a fixed amount of stack, so the crash window recurs
+    /// with that period as the thread size grows. Measured on Windows x64 in November 2026: in
+    /// Release the window is 10–14 KiB wide every ~82 KiB (for example 1000–1010 and 1082–1094 KiB,
+    /// ±4 KiB between processes), which none of the four coarse sizes reaches; in Debug it is
+    /// ~64 KiB wide every ~112 KiB. The band spans 128 KiB, more than either period, at a step
+    /// below the narrowest window, so the mutation kills the child in both configurations.
+    /// </summary>
+    internal static readonly int[] InnerStackSizes =
+        [.. StackSizes.Concat(Enumerable.Range(1, 32).Select(static i => (1024 + 4 * i) * 1024)).Distinct().Order()];
 
     internal static string DeferredSource(string route, int n)
     {
@@ -198,7 +221,7 @@ public class EvaluatorOpenChainStackProcessTests(ITestOutputHelper output)
             return;
         ReportEvaluatorAssembly();
 
-        RunDeferredSweeps();
+        RunDeferredSweeps(innerBand: true);
         WriteProbeMarker();
     }
 
@@ -222,8 +245,14 @@ public class EvaluatorOpenChainStackProcessTests(ITestOutputHelper output)
         if (!reference.IsOk)
             Assert.Fail($"the control must evaluate on a large stack: {reference.Error}");
 
-        // Stacks far below the documented minimum can refuse before any positioned frame, so no span is required here.
-        var sweep = new Tally("one-name open chain", reference.Value, requireSpan: false);
+        // Every refusal carries a span except a ROOT-LEVEL one: on a stack far below the documented
+        // minimum (about 140 KiB and less on Windows x64, both configurations, November 2026) the
+        // pre-evaluation validation gate (`Evaluator.PreEvaluationValidationError`) runs out of reserve
+        // while walking the whole program, before evaluation has entered any written expression, so
+        // there is no written position to report (the node its walk had reached is where the host
+        // stack ran short, not a cause). The observed entry point exposes the run's budget, which
+        // proves the spanless refusal did no evaluation work at all.
+        var sweep = new Tally("one-name open chain", reference.Value);
         // The top is 2048 KiB, not 1536 KiB (owner-approved calibration, November 2026). In Debug the
         // chain first completes at about 1536 KiB, give or take a few KiB per process (measured at 4 KiB
         // resolution), so a top sample of exactly 1536 KiB had no headroom: whenever a fresh process's
@@ -231,23 +260,27 @@ public class EvaluatorOpenChainStackProcessTests(ITestOutputHelper output)
         // evaluated" (about 10-15% of runs). The extra samples only add completions; the low end still
         // refuses, and both outcomes remain required.
         for (var kib = 128; kib <= 2048; kib += 32)
-            AstStructuralDepthProcessTests.RunOnThreadWithStack(kib * 1024, () => sweep.Record(kib, "sync", Evaluator.RunFlat(ast)));
+            AstStructuralDepthProcessTests.RunOnThreadWithStack(kib * 1024, () =>
+            {
+                var (result, budget) = Evaluator.RunCountedObserved(ast);
+                sweep.RecordObserved(kib, result, budget.ConsumedSteps, budget.ConsumedExpressionCheckpoints, budget.PeakDepth);
+            });
 
         // Diagnostic only, never asserted: where this process first completed.
-        Console.WriteLine($"one-name open chain: first completion at {sweep.FirstCompletion?.ToString() ?? "none"} KiB");
+        Console.WriteLine($"one-name open chain: first completion at {sweep.FirstCompletion?.ToString() ?? "none"} KiB, {sweep.RootLevelRefusals} root-level refusal(s)");
         sweep.AssertOutcomes();
         WriteProbeMarker();
     }
 
-    private static void RunDeferredSweeps(bool innerOnly = false)
+    private static void RunDeferredSweeps(bool innerOnly = false, bool innerBand = false)
     {
         foreach (var route in DeferredRoutes.Where(r => !innerOnly || r.EndsWith("-inner", StringComparison.Ordinal)))
         {
             var module = DeferredModule(route);
-            foreach (var stack in StackSizes)
+            foreach (var stack in innerBand && route.EndsWith("-inner", StringComparison.Ordinal) ? InnerStackSizes : StackSizes)
             {
                 var sweep = new Tally($"deferred {route} / {stack / 1024} KiB", allowDeferredCompileRefusal: true);
-                for (var n = 0; n <= MaxRecursion; n++)
+                for (var n = 0; n <= DeferredMaxRecursion; n++)
                 {
                     // A fresh parse per run: every run compiles a fresh region on the thread under test.
                     var root = Prepare(DeferredSource(route, n), module);
@@ -293,8 +326,7 @@ public class EvaluatorOpenChainStackProcessTests(ITestOutputHelper output)
 
     /// <summary>Checks a sweep's expected value and route-specific refusals without pinning their boundary.</summary>
     private sealed class Tally(
-        string label, IReadOnlyList<Decimal128>? expected = null, bool requireSpan = true,
-        bool allowDeferredCompileRefusal = false)
+        string label, IReadOnlyList<Decimal128>? expected = null, bool allowDeferredCompileRefusal = false)
     {
         private readonly IReadOnlyList<Decimal128> _expected = expected ?? [7m];
         private int _completions;
@@ -322,11 +354,46 @@ public class EvaluatorOpenChainStackProcessTests(ITestOutputHelper output)
                 Assert.Fail($"{label} @{point} ({route}): unexpected outcome {error.Code}: {error}");
             if (error.Code == KatLangErrorCode.EvaluationStackExhausted)
                 Assert.True(error.IsResourceLimit);
-            if (requireSpan)
-                Assert.NotNull(error.Span);
+            Assert.NotNull(error.Span);
             _refusals++;
             _log.Add($"{point}{route[0]}:{error.Code}@{error.Span}");
         }
+
+        /// <summary>
+        /// A synchronous observed run: the <see cref="Record"/> rules, except that a SPANLESS
+        /// refusal is accepted only when it is root-level — <see cref="EvalError.EvaluationStackExhausted"/>
+        /// after no evaluation step, no expression checkpoint and no invocation depth.
+        /// </summary>
+        public void RecordObserved(int point, EvalResult<Evaluator.CountedResult> outcome, long steps, long checkpoints, int peakDepth)
+        {
+            if (outcome.IsOk)
+            {
+                Assert.True(outcome.Value.Value.TryToHostAtoms(int.MaxValue, out var atoms));
+                Assert.Equal(_expected, atoms);
+                FirstCompletion ??= point;
+                _completions++;
+                _log.Add($"{point}s:ok");
+                return;
+            }
+
+            var error = outcome.Error;
+            if (error.Code is not (KatLangErrorCode.EvaluationStackExhausted or KatLangErrorCode.EvaluationDepthExceeded))
+                Assert.Fail($"{label} @{point} (sync): unexpected outcome {error.Code}: {error}");
+            if (error.Code == KatLangErrorCode.EvaluationStackExhausted)
+                Assert.True(error.IsResourceLimit);
+            if (error.Span is null)
+            {
+                Assert.True(error.Code == KatLangErrorCode.EvaluationStackExhausted && steps == 0 && checkpoints == 0 && peakDepth == 0,
+                    $"{label} @{point}: a spanless refusal must be the root-level stack refusal before any evaluation, not {error.Code} after {steps} steps, {checkpoints} checkpoints, depth {peakDepth}");
+                RootLevelRefusals++;
+            }
+
+            _refusals++;
+            _log.Add($"{point}s:{error.Code}@{error.Span?.ToString() ?? "root"}");
+        }
+
+        /// <summary>Spanless refusals <see cref="RecordObserved"/> accepted as root-level; diagnostic only.</summary>
+        public int RootLevelRefusals { get; private set; }
 
         public void RecordTwin(int point, EvalResult<Evaluator.CountedResult> outcome)
         {
@@ -351,56 +418,6 @@ public class EvaluatorOpenChainStackProcessTests(ITestOutputHelper output)
             Console.WriteLine($"{label}: {string.Join(" ", _log)}");
             Assert.True(_completions > 0, $"{label}: no run evaluated\n{string.Join(" ", _log)}");
             Assert.True(_refusals > 0, $"{label}: no run was refused; the sweep no longer crosses the frontier\n{string.Join(" ", _log)}");
-        }
-    }
-
-    /// <summary>
-    /// <see cref="Environment.ProcessorCount"/> background threads spinning until disposed; every
-    /// other one allocates short-lived arrays so gen-0 collections run during the sweep.
-    /// </summary>
-    private sealed class CpuLoad : IDisposable
-    {
-        private readonly CancellationTokenSource _stop = new();
-        private readonly List<Thread> _threads = [];
-        private readonly int _collectionsAtStart = GC.CollectionCount(0);
-
-        public int Threads => _threads.Count;
-
-        public int Collections => GC.CollectionCount(0) - _collectionsAtStart;
-
-        public static CpuLoad Start()
-        {
-            var load = new CpuLoad();
-            var token = load._stop.Token;
-            for (var i = 0; i < Environment.ProcessorCount; i++)
-            {
-                var allocate = i % 2 == 1;
-                var thread = new Thread(() =>
-                {
-                    var sink = 0L;
-                    while (!token.IsCancellationRequested)
-                    {
-                        if (allocate)
-                            sink += new byte[1024 + (int)(sink & 4095)].Length;
-                        else
-                            sink = unchecked(sink * 31 + 7);
-                    }
-
-                    GC.KeepAlive(sink);
-                }) { IsBackground = true };
-                thread.Start();
-                load._threads.Add(thread);
-            }
-
-            return load;
-        }
-
-        public void Dispose()
-        {
-            _stop.Cancel();
-            foreach (var thread in _threads)
-                thread.Join();
-            _stop.Dispose();
         }
     }
 

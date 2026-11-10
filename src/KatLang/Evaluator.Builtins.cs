@@ -948,10 +948,14 @@ public static partial class Evaluator
     /// not the frame's own output list), nests as before. Structural provenance and reference
     /// identity only; this runs on the error path only, out of line (FRAME-SIZE DISCIPLINE: the row
     /// loops are the structural-nesting recursion spine, so this test must not widen their frames).
+    /// The row context arrives by reference: passing <c>rowCtx.CallStack</c> made the caller hold the
+    /// getter's result in one more frame slot, 16 bytes per row-loop frame in Debug and in Release
+    /// Tier-0 code (848 instead of 832 and 592 instead of 576 bytes, measured on Windows x64 in
+    /// November 2026), about 2 KiB over the 100 levels of the one-name open-chain control.
     /// </summary>
     [MethodImpl(MethodImplOptions.NoInlining)]
-    private static EvalError NestOutputRowFailure(EvalError error, IReadOnlyList<Expr> rows, IReadOnlyList<Algorithm> callStack)
-        => callStack is [Algorithm.User { IsSyntheticDeconstructionPlumbing: true } frame, ..]
+    private static EvalError NestOutputRowFailure(EvalError error, IReadOnlyList<Expr> rows, in EvalCtx rowCtx)
+        => rowCtx.CallStack is [Algorithm.User { IsSyntheticDeconstructionPlumbing: true } frame, ..]
             && ReferenceEquals(frame.Output, rows)
                 ? NestDeconstructionSourceFailure(error)
                 : NestMissingOutput(error);

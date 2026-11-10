@@ -30,6 +30,7 @@ $stackSuiteClasses = @(
     "KatLang.Tests.WeightedCostCompositionProcessTests",
     "KatLang.Tests.ScopeVisibilityIterativeUpdateTests",
     "KatLang.Tests.ParserExpressionChainDepthTests",
+    "KatLang.Tests.LimitConfigurationTransparencyTests",
     "KatLang.Tests.AsyncEvaluation.AsyncStackDepthTests"
 )
 # The trailing dot matches only members of the named class, never a class whose name extends it.

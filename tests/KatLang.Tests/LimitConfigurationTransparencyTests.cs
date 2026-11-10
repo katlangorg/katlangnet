@@ -481,6 +481,7 @@ public class LimitConfigurationTransparencyTests
             await process.WaitForExitAsync();
             var text = await output + Environment.NewLine + await errors;
             Assert.True(process.ExitCode == 0, text);
+            Assert.DoesNotContain("Stack overflow", text, StringComparison.OrdinalIgnoreCase);
             Assert.True(File.Exists(marker), "The child did not execute its assertions.\n" + text);
             Assert.Equal("all-16-configurations-100-pauses-and-minimum-stack-control-passed", await File.ReadAllTextAsync(marker));
         }
