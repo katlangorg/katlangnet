@@ -155,19 +155,42 @@ internal static class SemanticDescriptor
             w.WriteString("format", ResultFormat);
             w.WriteNumber("formatVersion", FormatVersion);
             w.WritePropertyName("result");
-            WriteResult(w, result);
+            WriteResult(w, result, findingRecords: true);
             w.WriteEndObject();
         }
 
         return Encoding.UTF8.GetString(stream.ToArray());
     }
 
-    private static void WriteResult(Utf8JsonWriter w, SemanticCaseResult result)
+    /// <summary>
+    /// One result object. <paramref name="findingRecords"/> adds the optional, additive
+    /// <c>findingRecords</c> member (one structured record per finding, aligned with
+    /// <c>findings</c>) to the worker result document only; a case descriptor's recorded result keeps
+    /// its v1 text exactly, and a reader treats an absent member as "no structured records".
+    /// </summary>
+    private static void WriteResult(Utf8JsonWriter w, SemanticCaseResult result, bool findingRecords = false)
     {
         w.WriteStartObject();
         w.WriteString("caseId", result.CaseId);
         w.WriteString("verdict", result.Verdict.ToString());
         Strings(w, "findings", result.Findings);
+        if (findingRecords && SemanticFailureSignature.HasAlignedRecords(result))
+        {
+            w.WriteStartArray("findingRecords");
+            foreach (var record in result.FindingRecords)
+            {
+                w.WriteStartObject();
+                w.WriteString("verdict", record.Verdict.ToString());
+                w.WriteString("member", record.Member);
+                w.WriteString("profile", record.Profile);
+                w.WriteString("facet", SemanticFindingFacets.Name(record.Facet));
+                w.WriteString("location", record.Location);
+                w.WriteEndObject();
+            }
+
+            w.WriteEndArray();
+        }
+
         w.WriteString("pathsExercised", result.PathsExercised.ToString());
         Strings(w, "pathRejections", result.PathRejections);
         Strings(w, "relations", result.RelationsChecked);
@@ -474,7 +497,10 @@ internal static class SemanticDescriptor
             var caseId = Str(result, "caseId") ?? throw new FormatException("result without caseId");
             if (!Enum.TryParse<SemanticPath>(Str(result, "pathsExercised"), out var exercised)) throw new FormatException("invalid exercised paths");
             var coverage = new SemanticCaseResult(caseId, verdict, findings, [.. runs], exercised,
-                [.. StringArray(result, "pathRejections")], [.. StringArray(result, "relations")]);
+                [.. StringArray(result, "pathRejections")], [.. StringArray(result, "relations")])
+            {
+                FindingRecords = FindingRecords(result, findings.Length),
+            };
             summary = new ResultSummary(caseId, verdict, findings, observed, coverage);
             problem = "";
             return true;
@@ -484,6 +510,33 @@ internal static class SemanticDescriptor
             problem = "malformed result document: " + exception.Message;
             return false;
         }
+    }
+
+    /// <summary>
+    /// The optional <c>findingRecords</c> member: absent means none (an older worker; the signature
+    /// then falls back to the text classifier). When present it must hold exactly one valid record
+    /// per finding — a partial or unknown record is a malformed document, never silently dropped.
+    /// </summary>
+    private static ImmutableArray<SemanticFinding> FindingRecords(JsonElement result, int findings)
+    {
+        if (!result.TryGetProperty("findingRecords", out _)) return [];
+        var records = ImmutableArray.CreateBuilder<SemanticFinding>();
+        foreach (var item in Array(result, "findingRecords"))
+        {
+            if (!Enum.TryParse<SemanticVerdict>(Str(item, "verdict"), ignoreCase: false, out var verdict) || !Enum.IsDefined(verdict)
+                || verdict == SemanticVerdict.Passed)
+                throw new FormatException($"finding record with invalid verdict '{Str(item, "verdict")}'");
+            if (!SemanticFindingFacets.TryParse(Str(item, "facet"), out var facet))
+                throw new FormatException($"finding record with unknown facet '{Str(item, "facet")}'");
+            records.Add(new SemanticFinding(verdict,
+                Str(item, "member") ?? throw new FormatException("finding record without member"),
+                Str(item, "profile") ?? throw new FormatException("finding record without profile"),
+                facet,
+                Str(item, "location") ?? throw new FormatException("finding record without location")));
+        }
+
+        if (records.Count != findings) throw new FormatException("finding records are not aligned with the findings");
+        return records.ToImmutable();
     }
 
     private static string? Str(JsonElement element, string name)

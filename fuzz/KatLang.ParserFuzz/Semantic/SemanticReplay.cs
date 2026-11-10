@@ -261,9 +261,10 @@ internal static class SemanticReplay
         return Work(args[1], args[2], args.Contains("--exact-source", StringComparer.Ordinal) ? Mode.ExactSource : Mode.Recipe);
     }
 
-    internal static int Work(string descriptorPath, string resultPath, Mode mode)
+    /// <param name="observationFilter">The runner's inert test seam, so a test worker can fail on a known shape; <c>semantic-worker</c> never passes it.</param>
+    internal static int Work(string descriptorPath, string resultPath, Mode mode, Func<SemanticProfileRun, SemanticProfileRun>? observationFilter = null)
     {
-        var outcome = Replay(ReadBounded(descriptorPath), mode);
+        var outcome = Replay(ReadBounded(descriptorPath), mode, observationFilter);
         if (outcome.Problem is not null)
         {
             Console.Error.WriteLine("semantic-worker: " + outcome.Report);

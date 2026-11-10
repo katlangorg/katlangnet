@@ -36,7 +36,7 @@ public class SemanticReductionTests(ITestOutputHelper output)
     }
 
     /// <summary>A wrong value on the base member under sync-optimized: an anchor (and parity, relation) mismatch.</summary>
-    private static SemanticProfileRun WrongValue(SemanticProfileRun run)
+    internal static SemanticProfileRun WrongValue(SemanticProfileRun run)
         => run.Profile == SemanticProfiles.SyncOptimized && run.Member == SemanticMember.BaseRole && run.Observation is { } o
             ? run with { Observation = o with { Semantic = MetamorphicSemanticObservation.OfValue(new Result.Atom(123456), o.Semantic.EmittedCount) } }
             : run;

@@ -1842,15 +1842,49 @@ also why the structural shrinker, driven by metamorphic rules over a model, does
   pair, relation, or path) and facet (which anchor template failed: value, emitted count, host
   events, error kind, failure stage, outcome, front-end code, `path:<Path>`, or the compared field
   of a parity/relation). A rejected path keeps its failing profile too. The signature is
-  derived from fixed finding templates and comparison field labels, never their variable values; a
-  candidate with another verdict (a crash instead of a mismatch) or another facet is rejected.
+  classified from the finding's STRUCTURED record (below), never from its wording or its variable
+  values; a candidate with another verdict (a crash instead of a mismatch) or another facet is
+  rejected.
+* **Structured findings.** Every finding site in `SemanticRunner` records, beside its text, a
+  `SemanticFinding(Verdict, Member, Profile, Facet, Location)` (`SemanticCaseResult.FindingRecords`,
+  aligned one-to-one with `Findings`). `Member` is the member role or `-`; `Profile` is the profile
+  id, the declared pair id (`parity:L~R`), `cancellation parity`, `front-end`, or `-`; `Facet` is the
+  stable `SemanticFindingFacet` enumeration (case contract; front-end rejected, accepted, phase,
+  diagnostic; the anchor checks harness, observation-missing, facet-contract, front-end-reached,
+  front-end-failure, front-end-effects, cancellation, cancellation-events, unscheduled-cancellation,
+  surface-refused, resource-limit, outcome, structure-missing, value, emitted-count-missing,
+  emitted-count, error-missing, error-kind, failure-stage, host-events; path; parity,
+  parity-host-events, cancellation-parity; relation); `Location` is the facet's value-free qualifier
+  (the path name, the comparator's `<class> relation violated on <field>`, `observation-missing`, or
+  the first diagnostic code), empty otherwise. `SemanticFindingFacets` owns the serialized names and
+  maps each record to the signature facet string the former text classifier produced, so a
+  structured signature equals the text-derived one for every current template (pinned for every
+  facet by `SemanticFindingSignatureTests`) and existing `kl-sem2b-reduction` v1 records keep their
+  meaning. The text classifier (`SemanticFailureSignature.ClassifyText`) is only the FALLBACK for a
+  result without aligned records. The worker result document (`kl-sem2b-result` v1) carries the
+  records as an optional, additive `findingRecords` array: a document without it (an older worker)
+  still parses and falls back; a present but misaligned, unknown-facet or passing record is a
+  `MalformedOutput`. The `kl-sem2b-case` v1 descriptor, including its recorded `result`, and the
+  `kl-sem2b-reduction` v1 record are written exactly as before, so no version changed.
 * **Bounds.** `--max-attempts N` (default 200) bounds candidate EXECUTIONS; the original run is not
   counted and generation alone is cheap. The record says whether the limit was reached. Same input,
   same output: no clock, randomness or unordered iteration takes part.
 * **Supervision.** `--supervised` runs the original and every candidate one at a time in a bounded
   `semantic-worker` child (`--exact-source`, since a candidate is not a recipe case); a timeout or
   crash is a verdict like any other and must be preserved exactly. Candidate descriptors and worker
-  sidecars are retained in a printed temporary directory.
+  sidecars are retained in a printed temporary directory. The child's structured finding records
+  travel in its result document, so a supervised signature is classified exactly as an in-process
+  one. `SemanticReduction.RunReduce(args, workerCommand, evidenceDirectory)` is an internal,
+  test-only seam over the child launch (default `SemanticSupervisor.SelfWorker`); supervisor
+  deadlines, crash detection and output bounds are unchanged.
+  `SemanticSupervisedReductionTests` drives a complete supervised reduction through it: the child
+  (the test assembly re-entered through `dotnet vstest`, readiness-gated) injects a wrong value on
+  `base@sync-optimized` whenever a candidate contains `repeat`, and `sem2b/v1/sys/loop/4` reduces
+  from 81 to 35 source characters through three children (original `Mismatch`, a rejected candidate
+  that lost its `repeat` and `Passed`, an accepted `Mismatch`). The test requires the written record
+  to equal the in-process reduction's under the same fault byte for byte (apart from `supervised`),
+  the signature `Mismatch base@sync-optimized value` to survive regeneration and exact-source
+  replay, and no reducer move from the reduced sequence to give a smaller case with that signature.
 
 **Artifacts.** `semantic-reduce` writes two files to OUT. `<id>.json` is an ordinary `kl-sem2b-case`
 v1 descriptor (exact sources, constructed expectation, the reduced run's result) under the reserved
@@ -1886,6 +1920,10 @@ fragment shrinks.
   entry point is new), add it to `SemanticProfiles.All`, decide its comparisons in `Pairs`, and
   document what it cannot observe.
 * **A fixture** — `semantic-export CASE_ID fuzz/KatLang.ParserFuzz/SemanticTestcases/NAME.json --run`.
+  The checked-in set includes one named path descriptor per thin optimizer loop path
+  (`sys_path_LoopShortCircuit_dot-bare`, `sys_path_LoopFallback_clause-family-2-plain-bare`,
+  `sys_path_GenericInsideOptimizedLoop_wait-1-dot-bare`); `SemanticReplayTests` replays every
+  fixture in both modes and requires each of the three paths to be admitted by one of them.
 
 ### Remaining work (SEM-2C)
 

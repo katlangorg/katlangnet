@@ -104,7 +104,11 @@ internal readonly record struct SemanticCaseSize(int SourceLength, int Fragments
 /// <summary>
 /// What a reduced case must preserve: the verdict plus the FIRST finding's location (member role and
 /// profile, pair or relation) and facet (which anchor template, relation or path failed). Built from
-/// the runner's fixed finding templates, never from the variable message text (values, events).
+/// the runner's STRUCTURED finding (<see cref="SemanticCaseResult.FindingRecords"/>) whenever the
+/// result carries aligned records, so rewording a finding never changes it. Only a result without
+/// them (a worker result document that predates them) falls back to the text classifier, which
+/// parses the fixed templates and never the variable values (values, events). Both produce the same
+/// strings, which <c>kl-sem2b-reduction</c> v1 records store.
 /// </summary>
 internal sealed record SemanticFailureSignature(SemanticVerdict Verdict, string Member, string Profile, string Facet)
 {
@@ -116,8 +120,19 @@ internal sealed record SemanticFailureSignature(SemanticVerdict Verdict, string 
     {
         ArgumentNullException.ThrowIfNull(result);
         if (result.Findings.IsEmpty) return new SemanticFailureSignature(result.Verdict, None, None, None);
-        var (member, profile, facet) = Classify(result.Findings[0]);
+        var (member, profile, facet) = HasAlignedRecords(result) ? Classify(result.FindingRecords[0]) : ClassifyText(result.Findings[0]);
         return new SemanticFailureSignature(result.Verdict, member, profile, facet);
+    }
+
+    /// <summary>Records are used only when they describe exactly the findings (one per finding).</summary>
+    internal static bool HasAlignedRecords(SemanticCaseResult result)
+        => !result.FindingRecords.IsDefaultOrEmpty && result.FindingRecords.Length == result.Findings.Length;
+
+    /// <summary>The signature location and facet of one structured finding.</summary>
+    internal static (string Member, string Profile, string Facet) Classify(SemanticFinding finding)
+    {
+        ArgumentNullException.ThrowIfNull(finding);
+        return (finding.Member, finding.Profile, SemanticFindingFacets.SignatureFacet(finding));
     }
 
     // (message prefix after "location: ", facet) for the anchor templates of SemanticRunner.CheckAnchors.
@@ -145,7 +160,12 @@ internal sealed record SemanticFailureSignature(SemanticVerdict Verdict, string 
         ("expected a front-end failure", "front-end-failure"),
     ];
 
-    private static (string Member, string Profile, string Facet) Classify(string finding)
+    /// <summary>
+    /// The FALLBACK text classifier, for findings without a structured record. It depends on the
+    /// runner's message templates; <c>SemanticFindingSignatureTests</c> pins that it agrees with
+    /// <see cref="Classify(SemanticFinding)"/> on every template the runner currently produces.
+    /// </summary>
+    internal static (string Member, string Profile, string Facet) ClassifyText(string finding)
     {
         var colon = finding.IndexOf(": ", StringComparison.Ordinal);
         var head = colon < 0 ? finding : finding[..colon];
@@ -752,7 +772,16 @@ internal static class SemanticReduction
     /// observed (a generator precondition defect; artifacts are still written); 2 — usage, an
     /// unreadable or drifted descriptor, or an unsupported id; 3 — the case passes, nothing to reduce.
     /// </summary>
-    public static int RunReduce(string[] args)
+    public static int RunReduce(string[] args) => RunReduce(args, workerCommand: null);
+
+    /// <summary>
+    /// <c>semantic-reduce</c> with its internal, test-only supervision seam. <paramref name="workerCommand"/>
+    /// builds the child launch for one candidate descriptor and its result path (default:
+    /// <see cref="SemanticSupervisor.SelfWorker"/> in exact-source mode); <paramref name="evidenceDirectory"/>
+    /// replaces the printed temporary evidence directory. Both only matter with <c>--supervised</c>;
+    /// the supervisor itself (deadlines, crash detection, output bounds) is unchanged.
+    /// </summary>
+    internal static int RunReduce(string[] args, Func<string, string, SemanticWorkerCommand>? workerCommand, string? evidenceDirectory = null)
     {
         var positional = new List<string>();
         int? maxAttempts = null;
@@ -829,9 +858,12 @@ internal static class SemanticReduction
         string? evidence = null;
         if (supervised)
         {
-            evidence = Directory.CreateTempSubdirectory("katlang-sem2c-reduce-").FullName;
+            evidence = evidenceDirectory is null
+                ? Directory.CreateTempSubdirectory("katlang-sem2c-reduce-").FullName
+                : Directory.CreateDirectory(evidenceDirectory).FullName;
             var counter = 0;
-            options = options with { Runner = c => SuperviseOne(c, evidence, ++counter) };
+            var command = workerCommand ?? DefaultWorker;
+            options = options with { Runner = c => SuperviseOne(c, evidence, ++counter, command) };
         }
 
         var result = SemanticReducer.Reduce(builder, options);
@@ -855,13 +887,16 @@ internal static class SemanticReduction
         return result.GenerationFailures.IsEmpty ? 0 : 1;
     }
 
+    private static SemanticWorkerCommand DefaultWorker(string descriptor, string result)
+        => SemanticSupervisor.SelfWorker(descriptor, result, SemanticReplay.Mode.ExactSource);
+
     /// <summary>One candidate in a bounded supervised child (exact-source: a candidate is not a recipe case).</summary>
-    private static SemanticCaseResult SuperviseOne(SemanticCase semanticCase, string evidence, int number)
+    private static SemanticCaseResult SuperviseOne(
+        SemanticCase semanticCase, string evidence, int number, Func<string, string, SemanticWorkerCommand> workerCommand)
     {
         var descriptor = Path.Combine(evidence, "candidate-" + number.ToString("D4", CultureInfo.InvariantCulture) + ".json");
         File.WriteAllText(descriptor, SemanticDescriptor.Write(semanticCase));
-        var run = SemanticSupervisor.Run(
-            SemanticSupervisor.SelfWorker(descriptor, descriptor + ".result.json", SemanticReplay.Mode.ExactSource), SemanticSupervisor.DefaultDeadline);
+        var run = SemanticSupervisor.Run(workerCommand(descriptor, descriptor + ".result.json"), SemanticSupervisor.DefaultDeadline);
         return run.Result is { } summary && summary.Verdict == run.Verdict
             ? summary.CoverageResult
             : new SemanticCaseResult(semanticCase.CaseId, run.Verdict, [], [], SemanticPath.None, [], []);

@@ -60,6 +60,7 @@ public class SemanticReplayTests
     {
         var files = Directory.GetFiles(FixtureDirectory, "*.json");
         Assert.True(files.Length >= 3, $"expected the checked-in SEM-2B fixtures in {FixtureDirectory}");
+        var admitted = new List<(string CaseId, SemanticPath Paths)>();
         foreach (var file in files)
         {
             var text = File.ReadAllText(file);
@@ -69,6 +70,15 @@ public class SemanticReplayTests
             Assert.True(recipe.Passed, $"{Path.GetFileName(file)}: {recipe.Report}");
             var exact = SemanticReplay.Replay(text, SemanticReplay.Mode.ExactSource);
             Assert.True(exact.Passed, $"{Path.GetFileName(file)}: {exact.Report}");
+            admitted.Add((parsed.Case.CaseId, recipe.Result!.PathsExercised & exact.Result!.PathsExercised));
+        }
+
+        // The named path block (sys/path/…) has one checked-in descriptor per thin optimizer loop
+        // path, and direct replay admits that path on evidence in both modes.
+        foreach (var path in new[] { SemanticPath.LoopShortCircuit, SemanticPath.LoopFallback, SemanticPath.GenericInsideOptimizedLoop })
+        {
+            Assert.True(admitted.Any(a => a.CaseId.StartsWith($"{SemanticRecipe.CasePrefix}sys/path/{path}/", StringComparison.Ordinal) && a.Paths.HasFlag(path)),
+                $"no checked-in sys/path descriptor admits {path} on replay");
         }
     }
 

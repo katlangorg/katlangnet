@@ -73,6 +73,13 @@ internal sealed record SemanticCaseResult(
     ImmutableArray<string> PathRejections,
     ImmutableArray<string> RelationsChecked)
 {
+    /// <summary>
+    /// The structured form of each finding, aligned with <see cref="Findings"/> (same order, same
+    /// length) when the runner produced them; empty for results read from a document that predates
+    /// them. <see cref="SemanticFailureSignature"/> classifies from these, never from the text, when present.
+    /// </summary>
+    public ImmutableArray<SemanticFinding> FindingRecords { get; init; } = [];
+
     public bool Passed => Verdict == SemanticVerdict.Passed;
 
     public string Headline => Verdict == SemanticVerdict.Passed
@@ -96,17 +103,22 @@ internal static class SemanticRunner
         SemanticCase semanticCase, Func<SemanticProfileRun, SemanticProfileRun>? observationFilter = null)
     {
         ArgumentNullException.ThrowIfNull(semanticCase);
-        var findings = new List<(SemanticVerdict Verdict, string Text)>();
+        var findings = new Findings();
         var runs = new List<SemanticProfileRun>();
         var relations = new List<string>();
-        var rejections = new List<string>();
+        var rejections = new List<(SemanticPath Path, string Profile, string Text)>();
         var exercised = SemanticPath.None;
         var expected = semanticCase.Expected;
 
         if (semanticCase.Profiles.IsEmpty || semanticCase.Members.IsEmpty
             || (semanticCase.Members.Length > 1 && !semanticCase.Profiles.Contains(SemanticProfiles.SyncOptimized)))
-            return new SemanticCaseResult(semanticCase.CaseId, SemanticVerdict.HarnessFailure,
-                ["a case needs members and execution profiles, including sync-optimized for transformations; nothing verified"], [], SemanticPath.None, [], []);
+        {
+            const string contract = "a case needs members and execution profiles, including sync-optimized for transformations; nothing verified";
+            return new SemanticCaseResult(semanticCase.CaseId, SemanticVerdict.HarnessFailure, [contract], [], SemanticPath.None, [], [])
+            {
+                FindingRecords = [new SemanticFinding(SemanticVerdict.HarnessFailure, SemanticFinding.None, SemanticFinding.None, SemanticFindingFacet.CaseContract, "")],
+            };
+        }
 
         // 1. Front end, for every member, BEFORE any evaluator assertion.
         foreach (var member in semanticCase.Members)
@@ -129,7 +141,8 @@ internal static class SemanticRunner
         {
             exercised = JudgePaths(semanticCase, baseRuns, rejections);
             foreach (var rejection in rejections)
-                findings.Add((SemanticVerdict.MissingObservation, "required path not admitted: " + rejection));
+                findings.Add(SemanticVerdict.MissingObservation, SemanticMember.BaseRole, rejection.Profile, SemanticFindingFacet.Path, rejection.Path.ToString(),
+                    "required path not admitted: " + rejection.Text);
         }
 
         // 4. Declared profile parity over one source.
@@ -142,15 +155,18 @@ internal static class SemanticRunner
             {
                 if (MetamorphicComparator.Compare(pair.SemanticRelation, pair.OperationalRelation,
                         MetamorphicErrorPolicy.StrictSameSource, left.Observation, right.Observation) is { } mismatch)
-                    findings.Add((SemanticVerdict.Mismatch, $"{pair.Id}: {mismatch.Headline}"));
+                    findings.Add(SemanticVerdict.Mismatch, SemanticMember.BaseRole, pair.Id, SemanticFindingFacet.Parity,
+                        SemanticFinding.ComparisonLocation(mismatch), $"{pair.Id}: {mismatch.Headline}");
             }
             catch (MetamorphicHarnessException exception)
             {
-                findings.Add((SemanticVerdict.MissingObservation, $"{pair.Id}: {exception.Message}"));
+                findings.Add(SemanticVerdict.MissingObservation, SemanticMember.BaseRole, pair.Id, SemanticFindingFacet.Parity,
+                    SemanticFinding.ObservationMissingLocation, $"{pair.Id}: {exception.Message}");
             }
 
             if (!left.Events.SequenceEqual(right.Events))
-                findings.Add((SemanticVerdict.Mismatch, $"{pair.Id}: host events differ [{string.Join(",", left.Events)}] vs [{string.Join(",", right.Events)}]"));
+                findings.Add(SemanticVerdict.Mismatch, SemanticMember.BaseRole, pair.Id, SemanticFindingFacet.ParityHostEvents, "",
+                    $"{pair.Id}: host events differ [{string.Join(",", left.Events)}] vs [{string.Join(",", right.Events)}]");
         }
 
         if (baseRuns.TryGetValue(SemanticProfiles.AsyncTwinCancel, out var cancelTwin)
@@ -158,7 +174,8 @@ internal static class SemanticRunner
         {
             relations.Add("parity:" + SemanticProfiles.AsyncTwinCancel + "~" + SemanticProfiles.EngineRunAsyncCancel);
             if (cancelTwin.Cancelled != cancelEngine.Cancelled || !cancelTwin.Events.SequenceEqual(cancelEngine.Events))
-                findings.Add((SemanticVerdict.Mismatch, "cancellation parity: twin and public async runs ended differently"));
+                findings.Add(SemanticVerdict.Mismatch, SemanticMember.BaseRole, SemanticFinding.CancellationParityProfile, SemanticFindingFacet.CancellationParity, "",
+                    "cancellation parity: twin and public async runs ended differently");
         }
 
         // 5. Well-founded transformations: same anchors, and equal to the base under one profile.
@@ -177,24 +194,55 @@ internal static class SemanticRunner
                 {
                     if (MetamorphicComparator.Compare(MetamorphicSemanticRelation.SemanticEqual, MetamorphicOperationalRelation.NotCompared,
                             MetamorphicErrorPolicy.Normalized, baseObservation, observation) is { } mismatch)
-                        findings.Add((SemanticVerdict.Mismatch, $"relation:{member.Role}: {mismatch.Headline}"));
+                        findings.Add(SemanticVerdict.Mismatch, member.Role, SemanticProfiles.SyncOptimized, SemanticFindingFacet.Relation,
+                            SemanticFinding.ComparisonLocation(mismatch), $"relation:{member.Role}: {mismatch.Headline}");
                 }
                 catch (MetamorphicHarnessException exception)
                 {
-                    findings.Add((SemanticVerdict.MissingObservation, $"relation:{member.Role}: {exception.Message}"));
+                    findings.Add(SemanticVerdict.MissingObservation, member.Role, SemanticProfiles.SyncOptimized, SemanticFindingFacet.Relation,
+                        SemanticFinding.ObservationMissingLocation, $"relation:{member.Role}: {exception.Message}");
                 }
             }
         }
 
-        var verdict = findings.Count == 0 ? SemanticVerdict.Passed : findings.Select(f => f.Verdict).Aggregate(Severity);
+        var verdict = findings.Count == 0 ? SemanticVerdict.Passed : findings.Records.Select(f => f.Verdict).Aggregate(Severity);
         return new SemanticCaseResult(
             semanticCase.CaseId,
             verdict,
-            [.. findings.Select(f => f.Text)],
+            [.. findings.Texts],
             [.. runs],
             verdict == SemanticVerdict.Passed ? exercised : SemanticPath.None,
-            [.. rejections],
-            [.. relations]);
+            [.. rejections.Select(r => r.Text)],
+            [.. relations])
+        {
+            FindingRecords = [.. findings.Records],
+        };
+    }
+
+    /// <summary>
+    /// The runner's findings: each text is recorded TOGETHER with its structured form at the same
+    /// site, so the two lists stay aligned by construction.
+    /// </summary>
+    private sealed class Findings
+    {
+        private readonly List<SemanticFinding> _records = [];
+        private readonly List<string> _texts = [];
+
+        public int Count => _texts.Count;
+
+        public IReadOnlyList<SemanticFinding> Records => _records;
+
+        public IReadOnlyList<string> Texts => _texts;
+
+        public void Add(SemanticVerdict verdict, string member, string profile, SemanticFindingFacet facet, string location, string text)
+        {
+            _records.Add(new SemanticFinding(verdict, member, profile, facet, location));
+            _texts.Add(text);
+        }
+
+        /// <summary>An anchor finding of one profile run: located at the run's member and the profile.</summary>
+        public void Anchor(SemanticVerdict verdict, SemanticProfileRun run, SemanticProfile profile, SemanticFindingFacet facet, string text)
+            => Add(verdict, run.Member, profile.Id, facet, "", text);
     }
 
     /// <summary>The most specific verdict wins: front-end and harness problems before mismatches.</summary>
@@ -212,7 +260,7 @@ internal static class SemanticRunner
 
     // ── Front end ───────────────────────────────────────────────────────────
 
-    private static void CheckFrontEnd(SemanticCase semanticCase, SemanticMember member, List<(SemanticVerdict, string)> findings)
+    private static void CheckFrontEnd(SemanticCase semanticCase, SemanticMember member, Findings findings)
     {
         var syntax = Parser.ParseSyntax(member.Source);
         var parsed = Parser.Parse(member.Source, new RunOptions { HostOperations = MetamorphicHostFixture.Synchronous().Operations });
@@ -223,8 +271,8 @@ internal static class SemanticRunner
             if (parsed.HasErrors)
             {
                 var first = parsed.Diagnostics.First(d => d.Severity == DiagnosticSeverity.Error);
-                findings.Add((SemanticVerdict.FrontEndUnexpected,
-                    $"{member.Role}: valid source rejected by the front end ({first.Code}: {Preview(first.Message)})"));
+                findings.Add(SemanticVerdict.FrontEndUnexpected, member.Role, SemanticFinding.FrontEndProfile, SemanticFindingFacet.FrontEndRejected, first.Code.ToString(),
+                    $"{member.Role}: valid source rejected by the front end ({first.Code}: {Preview(first.Message)})");
             }
 
             return;
@@ -235,12 +283,14 @@ internal static class SemanticRunner
         var phase = syntaxCodes.Count > 0 ? SemanticExpectation.SyntaxPhase : SemanticExpectation.ElaborationPhase;
         var codes = phase == SemanticExpectation.SyntaxPhase ? syntaxCodes : allCodes;
         if (allCodes.Count == 0)
-            findings.Add((SemanticVerdict.FrontEndExpectation, $"{member.Role}: invalid source accepted (expected {expected.Diagnostic} in {expected.DiagnosticPhase})"));
+            findings.Add(SemanticVerdict.FrontEndExpectation, member.Role, SemanticFinding.FrontEndProfile, SemanticFindingFacet.FrontEndAccepted, "",
+                $"{member.Role}: invalid source accepted (expected {expected.Diagnostic} in {expected.DiagnosticPhase})");
         else if (!string.Equals(phase, expected.DiagnosticPhase, StringComparison.Ordinal))
-            findings.Add((SemanticVerdict.FrontEndExpectation, $"{member.Role}: rejected in phase {phase}, expected {expected.DiagnosticPhase}"));
+            findings.Add(SemanticVerdict.FrontEndExpectation, member.Role, SemanticFinding.FrontEndProfile, SemanticFindingFacet.FrontEndPhase, "",
+                $"{member.Role}: rejected in phase {phase}, expected {expected.DiagnosticPhase}");
         else if (!codes.Contains(expected.Diagnostic!.Value))
-            findings.Add((SemanticVerdict.FrontEndExpectation,
-                $"{member.Role}: expected diagnostic {expected.Diagnostic} in {phase}, got [{string.Join(",", codes)}]"));
+            findings.Add(SemanticVerdict.FrontEndExpectation, member.Role, SemanticFinding.FrontEndProfile, SemanticFindingFacet.FrontEndDiagnostic, "",
+                $"{member.Role}: expected diagnostic {expected.Diagnostic} in {phase}, got [{string.Join(",", codes)}]");
     }
 
     // ── Execution ───────────────────────────────────────────────────────────
@@ -290,28 +340,28 @@ internal static class SemanticRunner
     // ── Anchors ─────────────────────────────────────────────────────────────
 
     private static void CheckAnchors(
-        SemanticCase semanticCase, SemanticProfile profile, SemanticProfileRun run, List<(SemanticVerdict, string)> findings)
+        SemanticCase semanticCase, SemanticProfile profile, SemanticProfileRun run, Findings findings)
     {
         var where = $"{run.Member}@{profile.Id}";
         var expected = semanticCase.Expected;
         if (run.HarnessProblem is { } problem)
         {
-            findings.Add((SemanticVerdict.HarnessFailure, $"{where}: {problem}"));
+            findings.Anchor(SemanticVerdict.HarnessFailure, run, profile, SemanticFindingFacet.Harness, $"{where}: {problem}");
             return;
         }
 
         var definition = profile.Definition;
         if (run.Ran && run.Observation is null)
         {
-            findings.Add((SemanticVerdict.MissingObservation, $"{where}: the surface returned no observation"));
+            findings.Anchor(SemanticVerdict.MissingObservation, run, profile, SemanticFindingFacet.ObservationMissing, $"{where}: the surface returned no observation");
             return;
         }
 
         if (run.Observation is { } declared
             && (declared.Facets != definition.Facets || declared.Surface != definition.Id))
         {
-            findings.Add((SemanticVerdict.MissingObservation,
-                $"{where}: observation does not carry the declared surface and required facets ({definition.Id}: {definition.Facets})"));
+            findings.Anchor(SemanticVerdict.MissingObservation, run, profile, SemanticFindingFacet.FacetContract,
+                $"{where}: observation does not carry the declared surface and required facets ({definition.Id}: {definition.Facets})");
             return;
         }
 
@@ -320,38 +370,38 @@ internal static class SemanticRunner
             if (definition.RequiresParsableSource)
             {
                 if (run.Ran || run.Reason != "parse-error")
-                    findings.Add((SemanticVerdict.FrontEndExpectation, $"{where}: an invalid source reached the evaluator ({run.OutcomeText})"));
+                    findings.Anchor(SemanticVerdict.FrontEndExpectation, run, profile, SemanticFindingFacet.FrontEndReached, $"{where}: an invalid source reached the evaluator ({run.OutcomeText})");
             }
             else if (run.Observation is not { } rejected
                      || rejected.Semantic.Outcome != "err"
                      || rejected.FailureStage != MetamorphicOperationalObservation.FrontEndFailureStage)
             {
-                findings.Add((SemanticVerdict.FrontEndExpectation, $"{where}: expected a front-end failure, observed {run.OutcomeText} stage={run.Observation?.FailureStage ?? "-"}"));
+                findings.Anchor(SemanticVerdict.FrontEndExpectation, run, profile, SemanticFindingFacet.FrontEndFailure, $"{where}: expected a front-end failure, observed {run.OutcomeText} stage={run.Observation?.FailureStage ?? "-"}");
             }
 
             if (!run.Events.IsEmpty)
-                findings.Add((SemanticVerdict.Mismatch, $"{where}: host effects ran for a front-end-rejected program"));
+                findings.Anchor(SemanticVerdict.Mismatch, run, profile, SemanticFindingFacet.FrontEndEffects, $"{where}: host effects ran for a front-end-rejected program");
             return;
         }
 
         if (profile.IsCancellation)
         {
             if (!run.Cancelled)
-                findings.Add((SemanticVerdict.Mismatch, $"{where}: expected a scheduled cancellation, observed {run.OutcomeText}"));
+                findings.Anchor(SemanticVerdict.Mismatch, run, profile, SemanticFindingFacet.Cancellation, $"{where}: expected a scheduled cancellation, observed {run.OutcomeText}");
             if (!run.Events.SequenceEqual(expected.CancelledEventsPrefix))
-                findings.Add((SemanticVerdict.Mismatch, $"{where}: events [{string.Join(",", run.Events)}], expected exactly [{string.Join(",", expected.CancelledEventsPrefix)}] before cancellation"));
+                findings.Anchor(SemanticVerdict.Mismatch, run, profile, SemanticFindingFacet.CancellationEvents, $"{where}: events [{string.Join(",", run.Events)}], expected exactly [{string.Join(",", expected.CancelledEventsPrefix)}] before cancellation");
             return;
         }
 
         if (run.Cancelled)
         {
-            findings.Add((SemanticVerdict.Mismatch, $"{where}: an unscheduled cancellation"));
+            findings.Anchor(SemanticVerdict.Mismatch, run, profile, SemanticFindingFacet.UnscheduledCancellation, $"{where}: an unscheduled cancellation");
             return;
         }
 
         if (!run.Ran)
         {
-            findings.Add((SemanticVerdict.FrontEndUnexpected, $"{where}: the surface refused the valid source ({run.Reason})"));
+            findings.Anchor(SemanticVerdict.FrontEndUnexpected, run, profile, SemanticFindingFacet.SurfaceRefused, $"{where}: the surface refused the valid source ({run.Reason})");
             return;
         }
 
@@ -360,7 +410,7 @@ internal static class SemanticRunner
         var facets = observation.Facets;
         if (semantic.IsResourceLimit)
         {
-            findings.Add((SemanticVerdict.ResourceTermination, $"{where}: stopped at a resource limit ({semantic.ErrorCategory})"));
+            findings.Anchor(SemanticVerdict.ResourceTermination, run, profile, SemanticFindingFacet.ResourceLimit, $"{where}: stopped at a resource limit ({semantic.ErrorCategory})");
             return;
         }
 
@@ -368,8 +418,8 @@ internal static class SemanticRunner
         {
             if (semantic.Outcome != "ok")
             {
-                findings.Add((SemanticVerdict.Mismatch,
-                    $"{where}: expected success, observed {semantic} stage={observation.FailureStage ?? "-"}"));
+                findings.Anchor(SemanticVerdict.Mismatch, run, profile, SemanticFindingFacet.Outcome,
+                    $"{where}: expected success, observed {semantic} stage={observation.FailureStage ?? "-"}");
             }
             else
             {
@@ -377,15 +427,15 @@ internal static class SemanticRunner
                 {
                     if (semantic.Value is null && semantic.StructuralIdentity is null)
                     {
-                        findings.Add((SemanticVerdict.MissingObservation, $"{where}: the structure facet carries no value"));
+                        findings.Anchor(SemanticVerdict.MissingObservation, run, profile, SemanticFindingFacet.StructureMissing, $"{where}: the structure facet carries no value");
                     }
                     else
                     {
                         var anchor = MetamorphicSemanticObservation.OfValue(expected.Value!, expected.EmittedCount);
                         if (!MetamorphicComparator.StructurallyEqual(anchor, semantic))
                         {
-                            findings.Add((SemanticVerdict.Mismatch,
-                                $"{where}: value {MetamorphicStructuralIdentity.Preview(semantic.StructuralIdentity)} != constructed {MetamorphicStructuralIdentity.Preview(expected.ValueIdentity)}"));
+                            findings.Anchor(SemanticVerdict.Mismatch, run, profile, SemanticFindingFacet.Value,
+                                $"{where}: value {MetamorphicStructuralIdentity.Preview(semantic.StructuralIdentity)} != constructed {MetamorphicStructuralIdentity.Preview(expected.ValueIdentity)}");
                         }
                     }
                 }
@@ -393,9 +443,9 @@ internal static class SemanticRunner
                 if (facets.HasFlag(MetamorphicFacets.EmittedCount))
                 {
                     if (semantic.EmittedCount is not { } count)
-                        findings.Add((SemanticVerdict.MissingObservation, $"{where}: the emitted-count facet is empty"));
+                        findings.Anchor(SemanticVerdict.MissingObservation, run, profile, SemanticFindingFacet.EmittedCountMissing, $"{where}: the emitted-count facet is empty");
                     else if (count != expected.EmittedCount)
-                        findings.Add((SemanticVerdict.Mismatch, $"{where}: emitted count {count} != constructed {expected.EmittedCount}"));
+                        findings.Anchor(SemanticVerdict.Mismatch, run, profile, SemanticFindingFacet.EmittedCount, $"{where}: emitted count {count} != constructed {expected.EmittedCount}");
                 }
             }
         }
@@ -403,27 +453,27 @@ internal static class SemanticRunner
         {
             if (semantic.Outcome != "err")
             {
-                findings.Add((SemanticVerdict.Mismatch, $"{where}: expected runtime failure {expected.ErrorCategory}, observed {semantic}"));
+                findings.Anchor(SemanticVerdict.Mismatch, run, profile, SemanticFindingFacet.Outcome, $"{where}: expected runtime failure {expected.ErrorCategory}, observed {semantic}");
             }
             else
             {
                 if (facets.HasFlag(MetamorphicFacets.StructuredError))
                 {
                     if (semantic.ErrorCategory is null || semantic.ErrorDetail is null)
-                        findings.Add((SemanticVerdict.MissingObservation, $"{where}: the structured-error facet is empty"));
+                        findings.Anchor(SemanticVerdict.MissingObservation, run, profile, SemanticFindingFacet.ErrorMissing, $"{where}: the structured-error facet is empty");
                     else if (semantic.ErrorCategory != expected.ErrorCategory)
-                        findings.Add((SemanticVerdict.Mismatch, $"{where}: error {semantic.ErrorCategory} != constructed {expected.ErrorCategory}"));
+                        findings.Anchor(SemanticVerdict.Mismatch, run, profile, SemanticFindingFacet.ErrorKind, $"{where}: error {semantic.ErrorCategory} != constructed {expected.ErrorCategory}");
                 }
 
                 if (definition.UsesFrontEndPipeline && observation.FailureStage != MetamorphicOperationalObservation.EvaluationFailureStage)
-                    findings.Add((SemanticVerdict.Mismatch, $"{where}: failure stage {observation.FailureStage ?? "-"}, expected evaluation"));
+                    findings.Anchor(SemanticVerdict.Mismatch, run, profile, SemanticFindingFacet.FailureStage, $"{where}: failure stage {observation.FailureStage ?? "-"}, expected evaluation");
             }
         }
 
         if (!run.Events.SequenceEqual(expected.Events))
         {
-            findings.Add((SemanticVerdict.Mismatch,
-                $"{where}: host events [{string.Join(",", run.Events)}] != constructed [{string.Join(",", expected.Events)}]"));
+            findings.Anchor(SemanticVerdict.Mismatch, run, profile, SemanticFindingFacet.HostEvents,
+                $"{where}: host events [{string.Join(",", run.Events)}] != constructed [{string.Join(",", expected.Events)}]");
         }
     }
 
@@ -449,7 +499,7 @@ internal static class SemanticRunner
         RequiredPaths: MetamorphicOptimizerPath.OptimizedLoopSelected | MetamorphicOptimizerPath.GenericExpressionInsideOptimizedLoop);
 
     private static SemanticPath JudgePaths(
-        SemanticCase semanticCase, IReadOnlyDictionary<string, SemanticProfileRun> runs, List<string> rejections)
+        SemanticCase semanticCase, IReadOnlyDictionary<string, SemanticProfileRun> runs, List<(SemanticPath Path, string Profile, string Text)> rejections)
     {
         var claimed = semanticCase.Paths;
         var exercised = SemanticPath.None;
@@ -458,13 +508,13 @@ internal static class SemanticRunner
         {
             if (!runs.TryGetValue(profile, out var run) || run.Observation is not { } observation)
             {
-                rejections.Add($"{path}: {profile} not observed");
+                rejections.Add((path, profile, $"{path}: {profile} not observed"));
                 return false;
             }
 
             if (evidence.Unsatisfied(observation, profile) is { } reason)
             {
-                rejections.Add($"{path}: {reason} ({observation.OptimizerEvidence?.Feature ?? "no-evidence"}, cache {observation.CacheEvidence?.Feature ?? "-"})");
+                rejections.Add((path, profile, $"{path}: {reason} ({observation.OptimizerEvidence?.Feature ?? "no-evidence"}, cache {observation.CacheEvidence?.Feature ?? "-"})"));
                 return false;
             }
 
@@ -498,12 +548,12 @@ internal static class SemanticRunner
             var expectedWaits = semanticCase.ExpectedWaitCalls;
             var gatedRuns = runs.Values.Where(r => SemanticProfiles.Get(r.Profile) is { GatedHost: true, IsCancellation: false }).ToList();
             var ok = expectedWaits > 0 && gatedRuns.Count > 0;
-            if (!ok) rejections.Add("AsyncSuspension: no demanded wait or non-cancellation asynchronous profile");
+            if (!ok) rejections.Add((SemanticPath.AsyncSuspension, SemanticFinding.None, "AsyncSuspension: no demanded wait or non-cancellation asynchronous profile"));
             foreach (var run in gatedRuns)
             {
                 if (run.WaitCalls != expectedWaits || run.Suspensions != expectedWaits || !run.FirstSuspensionReturnedControl)
                 {
-                    rejections.Add($"AsyncSuspension: {run.Profile} witnessed {run.Suspensions}/{run.WaitCalls} suspensions of {expectedWaits} waits (first returned control: {run.FirstSuspensionReturnedControl})");
+                    rejections.Add((SemanticPath.AsyncSuspension, run.Profile, $"AsyncSuspension: {run.Profile} witnessed {run.Suspensions}/{run.WaitCalls} suspensions of {expectedWaits} waits (first returned control: {run.FirstSuspensionReturnedControl})"));
                     ok = false;
                 }
             }
@@ -517,7 +567,7 @@ internal static class SemanticRunner
             if (cancelRuns.Count > 0 && cancelRuns.All(r => r.Cancelled && r.Suspensions >= 1))
                 exercised |= SemanticPath.Cancellation;
             else
-                rejections.Add("Cancellation: no cancellation profile reached its scheduled suspension");
+                rejections.Add((SemanticPath.Cancellation, SemanticFinding.None, "Cancellation: no cancellation profile reached its scheduled suspension"));
         }
 
         // Anchor-backed paths are exercised exactly when the exact anchors hold (judged by the caller).
