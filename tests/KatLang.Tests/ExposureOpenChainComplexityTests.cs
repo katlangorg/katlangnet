@@ -101,6 +101,13 @@ public sealed class ExposureOpenChainComplexityTests
     private static void OnOneMebibyteStack(Action work)
         => AstStructuralDepthProcessTests.RunOnThreadWithStack(1024 * 1024, work);
 
+    /// <summary>
+    /// The settlement frames of an N-link chain of any of the five shapes (opened, dotted, mixed, root-level,
+    /// captured terminal) with the run's settlement share: the root level and the owner each walk the chain once,
+    /// and every later link's level reuses that walk — 6N to 8N frames, less a constant. Formerly N(N + 3).
+    /// </summary>
+    internal static long SharedSettlementFrameBound(int length) => 8L * length + 16;
+
     // ── Reproducer A: nested owner + constant terminal + opens ───────────────
 
     [Theory]
@@ -128,13 +135,14 @@ public sealed class ExposureOpenChainComplexityTests
     /// The work of the opened chain at three doubling sizes. Each link is settled at the owner once and
     /// held by reference by the link above it, so its seed is built once (N candidate rebuilds in all)
     /// and its key costs its own entries (O(N) characters in all). The exposure settlement of each
-    /// link's level still walks the links below it — exactly N(N + 3) frames, unchanged by the repair
-    /// and of the same quadratic order the root-level and dotted chains pay.
+    /// link's level reuses the walk of the links below it from the run's settlement share
+    /// (<see cref="ExposureSettlementShareTests"/>): at most 8 frames a link, where every level formerly
+    /// walked the whole chain below it (N(N + 3) frames, the order the root-level and dotted chains paid too).
     /// Formerly every link rebuilt and re-serialized the nesting below it (the same operations, counted on
     /// the former implementation): 560 rebuilds and 143,522 key characters at N = 16, 8,384 and 9,110,136 at N = 64.
     /// </summary>
     [Fact]
-    public void NestedOwnerOpenedChain_BuildsEachCandidateOnce_AndSettlesQuadratically()
+    public void NestedOwnerOpenedChain_BuildsEachCandidateOnce_AndSettlesLinearly()
     {
         var previous = default(FrontEndTraversalObservations);
         foreach (var length in new[] { 16, 32, 64 })
@@ -146,13 +154,13 @@ public sealed class ExposureOpenChainComplexityTests
 
             Assert.Equal(2L * length + 2, observations.DependencyAlgorithmSummaryComputations);
             Assert.InRange(observations.SummaryKeyCharacters, 1, 512L * length);
-            Assert.InRange(observations.RequiredAncestorSettlementFrames, 1, (long)length * (length + 3));
+            Assert.InRange(observations.RequiredAncestorSettlementFrames, 1, SharedSettlementFrameBound(length));
             Assert.Equal(length + 2L, observations.SummaryMemberExpansions);
             Assert.InRange(observations.CompletedStaticStructureReads, 1, observations.RequiredAncestorSettlementFrames);
             if (previous is not null)
             {
                 Assert.InRange(observations.DependencyAlgorithmSummaryComputations, 1, 5 * previous.DependencyAlgorithmSummaryComputations / 2);
-                Assert.InRange(observations.RequiredAncestorSettlementFrames, 1, 9 * previous.RequiredAncestorSettlementFrames / 2);
+                Assert.InRange(observations.RequiredAncestorSettlementFrames, 1, 11 * previous.RequiredAncestorSettlementFrames / 5);
             }
 
             previous = observations;
@@ -164,7 +172,7 @@ public sealed class ExposureOpenChainComplexityTests
     /// <summary>
     /// The same chain at the root (whose members are settled only by the exposure pass, never nested in
     /// a candidate), and inside the owner through dotted reads (path expansions, no candidates): no
-    /// candidate is ever built, and settlement is the same quadratic.
+    /// candidate is ever built, and settlement is the same linear walk.
     /// </summary>
     [Theory]
     [InlineData("root")]
@@ -184,7 +192,7 @@ public sealed class ExposureOpenChainComplexityTests
             if (shape == "root") Assert.True(observations.CompletedStaticStructureReads > 0);
             else Assert.Equal(0, observations.CompletedStaticStructureReads); // symbolic dotted summaries need no projection
             Assert.InRange(observations.DependencyAlgorithmSummaryComputations, 1, 3L * length + 2);
-            Assert.InRange(observations.RequiredAncestorSettlementFrames, 1, (long)length * (length + 3));
+            Assert.InRange(observations.RequiredAncestorSettlementFrames, 1, SharedSettlementFrameBound(length));
         }
 
         var shortSource = shape == "root" ? RootChain(6) : NestedOwnerChain(6, "dotted");
@@ -213,7 +221,7 @@ public sealed class ExposureOpenChainComplexityTests
             AssertRequires(Member(owner, "R"), ("p", 0));
             Assert.Equal(length + 2L, observations.SummaryMemberExpansions);
             Assert.Equal(2L * length + 2, observations.DependencyAlgorithmSummaryComputations);
-            Assert.InRange(observations.RequiredAncestorSettlementFrames, 1, (long)length * (length + 3));
+            Assert.InRange(observations.RequiredAncestorSettlementFrames, 1, SharedSettlementFrameBound(length));
             Assert.InRange(observations.CompletedStaticStructureReads, 1, observations.RequiredAncestorSettlementFrames);
         }
 
@@ -239,7 +247,7 @@ public sealed class ExposureOpenChainComplexityTests
 
             Assert.InRange(observations.SummaryMemberExpansions, 1, 2L * length + 2);
             Assert.InRange(observations.DependencyAlgorithmSummaryComputations, 1, 3L * length + 2);
-            Assert.InRange(observations.RequiredAncestorSettlementFrames, 1, (long)length * (length + 3));
+            Assert.InRange(observations.RequiredAncestorSettlementFrames, 1, SharedSettlementFrameBound(length));
         }
 
         Assert.Equal("10", Assert.IsType<RunResult.Success>(KatLangEngine.Run(NestedOwnerChain(6, "mixed"))).ToDisplayString());

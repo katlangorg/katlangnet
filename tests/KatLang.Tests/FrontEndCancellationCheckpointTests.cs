@@ -176,21 +176,63 @@ public sealed class FrontEndCancellationCheckpointTests
 
     // ── 1. Exposure settlement ───────────────────────────────────────────────
 
+    /// <summary>
+    /// A theory row standing for <see cref="LastPublishedFrameCheckpoint"/>: a published frame's checkpoint in a later
+    /// top-level settlement than the fixed ordinals reach (formerly the constant 1001, which the run-scoped settlement
+    /// share puts past the end of the chain's settlement: each later link's level now settles in a few frames).
+    /// </summary>
+    private const long InALaterSettlement = -1;
+
+    /// <summary>
+    /// Finds a later settlement's published frame that spawns a counted frame. Published frames are the only
+    /// uncounted pushes. The next checkpoint must be in the same settlement, or it may guard an unrelated frame.
+    /// </summary>
+    private static long LastPublishedFrameCheckpoint()
+    {
+        long previousFrames = -1, previousSettlement = -1, published = -1, target = -1;
+        FrontEndTraversalObservations observations = null!;
+        observations = new FrontEndTraversalObservations
+        {
+            CheckpointReached = (reached, ordinal) =>
+            {
+                if (reached != FrontEndCancellationCheckpoint.ExposureSettlementFrame)
+                    return;
+
+                var frames = observations.RequiredAncestorSettlementFrames;
+                var settlement = observations.RequiredAncestorResolutionComputations;
+                if (published > CancellingOrdinal + 1 && settlement == previousSettlement && frames > previousFrames)
+                    target = published;
+                published = frames == previousFrames ? ordinal : -1;
+                previousFrames = frames;
+                previousSettlement = settlement;
+            },
+        };
+        var (resolved, _) = Resolved(Chain(), CancellationToken.None);
+        PropertyExposureResolver.Resolve(resolved, observations);
+        return target;
+    }
+
     /// <remarks>
     /// With <paramref name="operationOwnsToken"/> (the pipeline's arrangement) the static-query reads inside a frame's
     /// body observe the token as well; without it only the exposure pass's own checkpoints do. A reference frame's
     /// first block only pushes its published frame, which records nothing, so the rows after ordinal 100
-    /// cancel at a published frame's checkpoint (101, 2, 1001): its block settles through counted seed frames, so a
-    /// hook placed after the token read would let that block run and change a counter.
+    /// cancel at a published frame's checkpoint (101, 2, <see cref="InALaterSettlement"/>): its block settles through
+    /// counted seed frames, so a hook placed after the token read would let that block run and change a counter.
     /// </remarks>
     [Theory]
     [InlineData(CancellingOrdinal, true)]
     [InlineData(CancellingOrdinal + 1, true)]
     [InlineData(CancellingOrdinal + 1, false)]
     [InlineData(2, false)]
-    [InlineData(1001, false)]
+    [InlineData(InALaterSettlement, false)]
     public void ExposureSettlement_CancelledAtAFrame_StopsBeforeThatFrameRuns_AndPublishesNothing(long ordinal, bool operationOwnsToken)
     {
+        if (ordinal == InALaterSettlement)
+        {
+            ordinal = LastPublishedFrameCheckpoint();
+            Assert.InRange(ordinal, CancellingOrdinal + 2, long.MaxValue);
+        }
+
         using var cancellation = new CancellationTokenSource();
         var (resolved, _) = Resolved(Chain(), operationOwnsToken ? cancellation.Token : CancellationToken.None);
         var cancel = new CancelAt(cancellation, FrontEndCancellationCheckpoint.ExposureSettlementFrame, ordinal);
@@ -210,10 +252,12 @@ public sealed class FrontEndCancellationCheckpointTests
         Assert.False(facts.IsSealed);
         Assert.True(facts.IsFailed);
 
-        // A fresh elaboration classifies the chain exactly as ExposureOpenChainComplexityTests pins it.
+        // A fresh elaboration classifies the chain exactly as ExposureOpenChainComplexityTests pins it, and
+        // settles on past the cancelling checkpoint.
         var fresh = new FrontEndTraversalObservations();
         AssertChainClassification(ExposureOpenChainComplexityTests.Exposed(Chain(), fresh));
-        Assert.InRange(fresh.RequiredAncestorSettlementFrames, ordinal + 1, (long)ChainLength * (ChainLength + 3));
+        Assert.InRange(fresh.CancellationCheckpointsOf(FrontEndCancellationCheckpoint.ExposureSettlementFrame), ordinal + 1, long.MaxValue);
+        Assert.InRange(fresh.RequiredAncestorSettlementFrames, CancellingOrdinal + 2, 8L * ChainLength + 16);
     }
 
     [Theory]
@@ -464,7 +508,7 @@ public sealed class FrontEndCancellationCheckpointTests
         var b = withoutOperation.Queries.Resources;
         Assert.Equal((b.AdapterWork, b.MetadataUnits, b.PeakStorageUnits, b.StorageUnits, b.IsFailed),
             (a.AdapterWork, a.MetadataUnits, a.PeakStorageUnits, a.StorageUnits, a.IsFailed));
-        Assert.InRange(observedWith.RequiredAncestorSettlementFrames, 1, (long)ChainLength * (ChainLength + 3));
+        Assert.InRange(observedWith.RequiredAncestorSettlementFrames, 1, 8L * ChainLength + 16);
         Assert.True(observedWith.CancellationCheckpointsOf(FrontEndCancellationCheckpoint.ExposureSettlementFrame) >= CancellingOrdinal);
     }
 }

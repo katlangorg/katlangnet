@@ -56,25 +56,64 @@ internal static class PropertyExposureResolver
             IReadOnlySet<Algorithm>? boundOwners = null)
         {
             foreach (var requirement in requirements)
+                if (TryResolveRequirement(requirement, boundOwners, out var resolved, out _))
+                    yield return resolved;
+        }
+
+        /// <summary>
+        /// <see cref="ResolveRequirements(IEnumerable{OwnerQualifiedParameter}, IReadOnlySet{Algorithm}?)"/> with this
+        /// level as a settlement SITE, raising <paramref name="deepestLanding"/> to the depth of the deepest level an
+        /// owner lookup landed at (see <see cref="SettlementShare"/>): <see cref="NoOwnerLookup"/> stands when no
+        /// requirement walked the chain, and <see cref="int.MaxValue"/> when one found no owner on it, because another
+        /// site could hold that owner.
+        /// </summary>
+        public List<Requirement> ResolveRequirementsFromSite(IEnumerable<OwnerQualifiedParameter> requirements,
+            IReadOnlySet<Algorithm>? boundOwners, ref int deepestLanding)
+        {
+            var resolved = new List<Requirement>();
+            foreach (var requirement in requirements)
             {
-                if (requirement.Owner is not null && boundOwners?.Contains(requirement.Owner) == true)
+                if (!TryResolveRequirement(requirement, boundOwners, out var one, out var landing))
                     continue;
-                if (requirement.Owner is null)
-                {
-                    yield return new Requirement(requirement.Name, null);
-                    continue;
-                }
-                var owner = this;
-                while (owner is not null && !ReferenceEquals(owner.Algorithm, requirement.Owner))
-                    owner = owner.Parent;
-                // The completed key names the branch binding region by its body. Runtime capture
-                // positions retain the existing separate family-binding frame above that body.
-                if (owner?.PropertyScope.CompletedContext?.Key.BindingRegion is not null
-                    && !owner.Parameters.Contains(requirement.Name)
-                    && owner.Parent?.Parameters.Contains(requirement.Name) == true)
-                    owner = owner.Parent;
-                yield return new Requirement(requirement.Name, owner?.PropertyScope);
+                resolved.Add(one);
+                deepestLanding = Math.Max(deepestLanding, landing);
             }
+
+            return resolved;
+        }
+
+        /// <summary>The landing of a resolution that walked no chain: it is the same from every site.</summary>
+        public const int NoOwnerLookup = -1;
+
+        // The ONE owner lookup of an owner-qualified requirement: false when a bound owner supplies it.
+        private bool TryResolveRequirement(OwnerQualifiedParameter requirement, IReadOnlySet<Algorithm>? boundOwners,
+            out Requirement resolved, out int landing)
+        {
+            landing = NoOwnerLookup;
+            if (requirement.Owner is null)
+            {
+                resolved = new Requirement(requirement.Name, null);
+                return true;
+            }
+
+            if (boundOwners?.Contains(requirement.Owner) == true)
+            {
+                resolved = default;
+                return false;
+            }
+
+            var owner = this;
+            while (owner is not null && !ReferenceEquals(owner.Algorithm, requirement.Owner))
+                owner = owner.Parent;
+            landing = owner?.Depth ?? int.MaxValue;
+            // The completed key names the branch binding region by its body. Runtime capture
+            // positions retain the existing separate family-binding frame above that body.
+            if (owner?.PropertyScope.CompletedContext?.Key.BindingRegion is not null
+                && !owner.Parameters.Contains(requirement.Name)
+                && owner.Parent?.Parameters.Contains(requirement.Name) == true)
+                owner = owner.Parent;
+            resolved = new Requirement(requirement.Name, owner?.PropertyScope);
+            return true;
         }
 
         public IEnumerable<Requirement> ResolveRequirements(IEnumerable<string> names)
@@ -237,6 +276,7 @@ internal static class PropertyExposureResolver
         {
             Requirements = new RequirementSetInterner(observations);
             Outputs = new RequiredAncestorOutputs(Requirements, observations);
+            Settlements = new SettlementShare(observations);
             CancellationToken = cancellationToken;
         }
 
@@ -273,6 +313,12 @@ internal static class PropertyExposureResolver
 
         /// <summary>FE-4a: the run's one output projection — one shared list per distinct set.</summary>
         public readonly RequiredAncestorOutputs Outputs;
+
+        /// <summary>
+        /// The run's completed nested settlements, shared across its top-level settlements and levels
+        /// (see <see cref="SettlementShare"/>). Its results are sets of <see cref="Requirements"/>.
+        /// </summary>
+        public readonly SettlementShare Settlements;
 
         /// <summary>
         /// FE-3: whether an expression subtree is REWRITE-INVARIANT — it reaches no nested algorithm
@@ -503,7 +549,7 @@ internal static class PropertyExposureResolver
         var finalLevel = new SummaryScope(parent, levelScope, summaries, parameterNames, algorithm);
         if (algorithm.Properties.Count > 0)
             new LevelSolver(summaryGraph, finalLevel, summaries,
-                    new PendingResolution(walkMemos, run.Requirements, finalLevel, run.CancellationToken), run.Requirements, observations,
+                    new PendingResolution(walkMemos, run.Requirements, finalLevel, run.Settlements, run.CancellationToken), run.Requirements, observations,
                     run.CancellationToken)
                 .Solve();
 
@@ -667,10 +713,12 @@ internal static class PropertyExposureResolver
     ///
     /// <para>Settlements of visible names and pending references are memoized per top-level key and
     /// validated against the level-local summaries they read, so K properties reading one opened or
-    /// navigated member settle it once. Across equation evaluations only TOP-LEVEL settlements are
+    /// navigated member settle it once. Across equation evaluations TOP-LEVEL settlements are
     /// cached, validated against every level-local summary they read. Inside ONE synchronous
     /// settlement, complete nested results also share their exact (reference, level, site, bound)
-    /// key; the cache dies before any summary can grow. A nested result that encountered any cycle
+    /// key; that cache dies before any summary can grow. A complete nested result that read NO
+    /// summary of this level is kept for the whole run instead (<see cref="SettlementShare"/>): every
+    /// summary it read is final, so no growth can reach it. A nested result that encountered any cycle
     /// cut is never cached. Every read from a reused computation remains in the enclosing top-level
     /// recording, so dependency validation and reader notification remain complete.</para>
     /// </summary>
@@ -826,6 +874,121 @@ internal static class PropertyExposureResolver
     }
 
     /// <summary>
+    /// Completed nested settlements of ONE exposure run, shared across its top-level settlements and
+    /// levels. A chain of N members opened from one another is settled from every link's level, and
+    /// each of those settlements walks the links below it: N(N + 3) frames without the share, a
+    /// constant number per link with it. Implementation only: every summary is the one the unshared
+    /// settlement computes.
+    ///
+    /// <para>WHAT IS KEPT. A nested settlement whose WHOLE computation — its nested frames and every
+    /// result it reused included — saw no cycle cut, read no summary of the level in progress, and
+    /// resolved nothing that depends on its site (<see cref="Settled.StandsFromEverySite"/>). A level
+    /// is solved before any level below it is processed, and which summaries a settlement reads is
+    /// structural, never summary-dependent, so such a computation read only FINAL summaries; without
+    /// a cut it is the complete union over everything its reference reaches. It is therefore a
+    /// function of its key and of the completed-fact views it consulted, which are kept with it at
+    /// the versions it read: a lookup answers only while each one stands
+    /// (<see cref="StaticLookupFacts.ViewVersion"/>, the anchor cache's rule) and drops the entry
+    /// otherwise.</para>
+    ///
+    /// <para>THE KEY is the settlement's own without its SITE: reference content or seed, level,
+    /// bound owners. The site is the level a settlement resolves owner-qualified parameters from
+    /// (<see cref="SummaryScope.ResolveRequirementsFromSite"/>); it lies at or below the settlement's
+    /// level, on a chain through that level. When every such lookup landed at or above the level,
+    /// every site below the level resolves it to the same scope (an owner on the level's chain cannot
+    /// also be nested below the level: bodies are acyclic), so one entry answers them all. A
+    /// settlement with a lookup that landed below its level, or found no owner (another site could
+    /// hold it), depends on its site and is never kept. Keys hold identities — levels, seeds, and the
+    /// origin and owner ids inside a content key — never a spelling alone, so owners with same-named
+    /// parameters stay apart.</para>
+    ///
+    /// <para>LIFETIME AND SIZE. One share belongs to one resolution (<see cref="ExposureRun"/>),
+    /// whose interner its results are sets of, and dies with it. Only completed settlements are
+    /// stored, so a cancelled or failed resolution leaves nothing partial behind. What it retains is
+    /// bounded (<see cref="DefaultCapacity"/>): a program whose settlements never repeat a key would
+    /// otherwise retain one entry per frame, where the unshared settlement retained none. Past the
+    /// bound nothing more is kept; lookups still answer, and no result depends on a hit.</para>
+    /// </summary>
+    internal sealed class SettlementShare(FrontEndTraversalObservations? observations, long capacity = SettlementShare.DefaultCapacity)
+    {
+        /// <summary>
+        /// The retained weight the share stops storing at. A chain the share serves keeps a constant number
+        /// of small entries per link. Each entry charges its key and every fact-view record it retains.
+        /// </summary>
+        internal const long DefaultCapacity = 1 << 19;
+
+        /// <summary><see cref="Content"/> is a pending reference's content key or a seed.</summary>
+        internal readonly record struct Key(object Content, SummaryScope Level, string Bound)
+        {
+            /// <summary>One unit per entry, plus one per 64 characters of key text the entry keeps alive.</summary>
+            internal long Weight => 1 + (((Content as string)?.Length ?? 0) + (long)Bound.Length) / 64;
+        }
+
+        /// <summary>
+        /// A completed settlement and what its computation depended on beyond its key: the deepest landing
+        /// of its site lookups (<see cref="SummaryScope.NoOwnerLookup"/> when it made none), whether it read
+        /// a summary of the level in progress, and the fact views it consulted with the versions it read
+        /// (<see cref="InconsistentViews"/>: it saw one view at two versions).
+        /// </summary>
+        internal sealed class Settled(RequirementSet result, int siteDepth, bool readLive,
+            (StaticLookupFacts Facts, int Version)[] views, bool inconsistentViews)
+        {
+            public RequirementSet Result => result;
+            public int SiteDepth => siteDepth;
+            public bool ReadLive => readLive;
+            public (StaticLookupFacts Facts, int Version)[] Views => views;
+            public bool InconsistentViews => inconsistentViews;
+
+            /// <summary>
+            /// Whether this result, when its computation also saw no cycle cut, is the settlement of its key at
+            /// <paramref name="level"/> from every site for the rest of the run while its views stand.
+            /// </summary>
+            public bool StandsFromEverySite(SummaryScope level)
+                => !readLive && !inconsistentViews && siteDepth <= level.Depth;
+        }
+
+        private readonly Dictionary<Key, Settled> _entries = [];
+        private long _retained;
+
+        /// <summary>The settlement kept for <paramref name="key"/>, while every view it consulted stands.</summary>
+        public bool TryGet(Key key, [System.Diagnostics.CodeAnalysis.NotNullWhen(true)] out Settled? settled)
+        {
+            if (!_entries.TryGetValue(key, out settled))
+                return false;
+            foreach (var (facts, version) in settled.Views)
+            {
+                if (facts.ViewVersion == version)
+                    continue;
+                observations?.RecordSettlementShareStaleView();
+                _entries.Remove(key);
+                _retained -= RetainedWeight(key, settled);
+                settled = null;
+                return false;
+            }
+
+            observations?.RecordSettlementShareHit();
+            return true;
+        }
+
+        /// <summary>
+        /// Keeps a settlement that completed without a cycle cut and <see cref="Settled.StandsFromEverySite"/>
+        /// at <paramref name="key"/>'s level; nothing once the share is full.
+        /// </summary>
+        public void Store(Key key, Settled settled)
+        {
+            if (!settled.StandsFromEverySite(key.Level))
+                throw new InvalidOperationException("Only a settlement that stands from every site for the rest of the run is shared.");
+            var weight = RetainedWeight(key, settled);
+            if (_retained + weight > capacity || !_entries.TryAdd(key, settled))
+                return;
+            _retained += weight;
+            observations?.RecordSettlementShareStore();
+        }
+
+        private static long RetainedWeight(Key key, Settled settled) => key.Weight + settled.Views.Length;
+    }
+
+    /// <summary>
     /// The owning level's settlement of the references the scope-free summary walk left
     /// pending (<see cref="PendingReference"/>), in exactly the evaluator's lookup order: the
     /// head as a PROPERTY of the level's chain (ownership first), then the providers of the
@@ -840,12 +1003,15 @@ internal static class PropertyExposureResolver
     /// the enclosing sibling fixed point iterates the rest to stability. Results are canonical
     /// sets of the run's interner (FE-4a), and every read of a summary of the level in progress
     /// (<paramref name="levelInProgress"/>) is recorded while a recording is open, so the level's
-    /// solver can reuse a settlement exactly as long as what it read still stands.
+    /// solver can reuse a settlement exactly as long as what it read still stands. A complete nested
+    /// settlement that read none of them and does not depend on its site is kept in the run's
+    /// <paramref name="shared"/> settlements and answers every later level (<see cref="SettlementShare"/>).
     /// </summary>
     private sealed class PendingResolution(
         PropertyDependencyGraphBuilder.SummaryWalkMemos memos,
         RequirementSetInterner sets,
         SummaryScope levelInProgress,
+        SettlementShare shared,
         CancellationToken cancellationToken)
     {
         private readonly record struct SettlementKey(string Key, SummaryScope Level, SummaryScope Site, string Bound);
@@ -854,11 +1020,14 @@ internal static class PropertyExposureResolver
             SummaryScope Level, SummaryScope Site, string Bound);
 
         private readonly HashSet<SettlementKey> _inProgress = [];
-        private readonly Dictionary<SettlementKey, RequirementSet> _completed = [];
-        // Unlike anchoring, settlement reads live equations. Reuse it only inside ONE synchronous Run.
-        private readonly Dictionary<SeedSettlementKey, RequirementSet> _completedSeeds = [];
+        // Unlike anchoring, settlement reads live equations. A complete result that read one, or that depends
+        // on its site, is reused only inside ONE synchronous Run; the run's share keeps the others.
+        private readonly Dictionary<SettlementKey, SettlementShare.Settled> _completed = [];
+        private readonly Dictionary<SeedSettlementKey, SettlementShare.Settled> _completedSeeds = [];
         private long _cycleCuts;
         private HashSet<string>? _levelReads;
+        // The frame whose body is running: what it consults beyond its key is recorded on it (see Frame).
+        private Frame? _running;
 
         /// <summary>Starts recording the level-in-progress summaries a top-level settlement reads.</summary>
         public HashSet<string> BeginRecording() => _levelReads = new HashSet<string>(StringComparer.Ordinal);
@@ -871,9 +1040,17 @@ internal static class PropertyExposureResolver
             if (!from.TryLookup(name, out level, out hit, out summary))
                 return false;
             if (ReferenceEquals(level, levelInProgress))
+            {
                 _levelReads?.Add(name);
+                if (_running is { } frame)
+                    frame.ReadLive = true;
+            }
+
             return true;
         }
+
+        // A completed-fact view the running frame consults: a shared settlement stands while each one it read does.
+        private void NoteView(StaticLookupFacts facts) => _running?.NoteView(facts, facts.ViewVersion);
 
         /// <summary>The settlement of <paramref name="pending"/> at <paramref name="level"/> (a top-level settlement).</summary>
         public RequirementSet Resolve(PendingReference pending, SummaryScope level)
@@ -888,6 +1065,12 @@ internal static class PropertyExposureResolver
         /// order and every in-progress cut follow the recursive form. Completed nested settlements
         /// may be reused during one run, with their reads already in its recording, so shared tails
         /// cost their distinct keys and edges rather than their path count.
+        ///
+        /// <para>A frame also carries what its settlement depended on BEYOND its key — the deepest landing
+        /// of its site lookups, a read of a live summary, the fact views it consulted — for its own body,
+        /// every nested frame (<see cref="Absorb(Frame)"/>) and every result it reused
+        /// (<see cref="Reuse"/>), so a settlement never looks independent merely because what it depended
+        /// on arrived through a cache. <see cref="Complete"/> is that record with the result.</para>
         /// </summary>
         private sealed class Frame
         {
@@ -896,6 +1079,53 @@ internal static class PropertyExposureResolver
             public SettlementKey? CacheKey;
             public SeedSettlementKey? SeedCacheKey;
             public long CycleCutsAtEntry;
+
+            /// <summary>Set on a frame that computes a settlement the run's share may keep.</summary>
+            public SettlementShare.Key? ShareKey;
+            public bool ReadLive;
+            private int _siteDepth = SummaryScope.NoOwnerLookup;
+            private bool _inconsistentViews;
+            private List<(StaticLookupFacts Facts, int Version)>? _views;
+
+            public void NoteSiteLanding(int landing) => _siteDepth = Math.Max(_siteDepth, landing);
+
+            public void NoteView(StaticLookupFacts facts, int version)
+            {
+                _views ??= [];
+                foreach (var (known, seen) in _views)
+                {
+                    if (!ReferenceEquals(known, facts))
+                        continue;
+                    _inconsistentViews |= seen != version;
+                    return;
+                }
+
+                _views.Add((facts, version));
+            }
+
+            public void Absorb(Frame nested)
+            {
+                NoteSiteLanding(nested._siteDepth);
+                ReadLive |= nested.ReadLive;
+                _inconsistentViews |= nested._inconsistentViews;
+                if (nested._views is { } views)
+                    foreach (var (facts, version) in views)
+                        NoteView(facts, version);
+            }
+
+            /// <summary>Takes a completed settlement as this frame's result, with everything it depended on.</summary>
+            public void Reuse(SettlementShare.Settled settled)
+            {
+                Result = settled.Result;
+                NoteSiteLanding(settled.SiteDepth);
+                ReadLive |= settled.ReadLive;
+                _inconsistentViews |= settled.InconsistentViews;
+                foreach (var (facts, version) in settled.Views)
+                    NoteView(facts, version);
+            }
+
+            public SettlementShare.Settled Complete()
+                => new(Result, _siteDepth, ReadLive, _views is null ? [] : [.. _views], _inconsistentViews);
         }
 
         /// <summary>
@@ -919,6 +1149,7 @@ internal static class PropertyExposureResolver
                 ObserveCancellation();
                 while (frames.TryPeek(out var frame))
                 {
+                    _running = frame;
                     if (frame.Body.MoveNext())
                     {
                         frames.Push(frame.Body.Current);
@@ -927,15 +1158,26 @@ internal static class PropertyExposureResolver
                     else
                     {
                         frames.Pop();
-                        if (frame.CacheKey is { } key && frame.CycleCutsAtEntry == _cycleCuts)
-                            _completed.TryAdd(key, frame.Result);
-                        if (frame.SeedCacheKey is { } seedKey && frame.CycleCutsAtEntry == _cycleCuts)
-                            _completedSeeds.TryAdd(seedKey, frame.Result);
+                        // A settlement that saw a cycle cut holds a partial union: it is kept nowhere.
+                        if (frame.CycleCutsAtEntry == _cycleCuts && (frame.CacheKey is not null || frame.SeedCacheKey is not null))
+                        {
+                            var settled = frame.Complete();
+                            if (frame.CacheKey is { } key)
+                                _completed.TryAdd(key, settled);
+                            if (frame.SeedCacheKey is { } seedKey)
+                                _completedSeeds.TryAdd(seedKey, settled);
+                            if (frame.ShareKey is { } shareKey && settled.StandsFromEverySite(shareKey.Level))
+                                shared.Store(shareKey, settled);
+                        }
+
+                        if (frames.TryPeek(out var enclosing))
+                            enclosing.Absorb(frame);
                     }
                 }
             }
             finally
             {
+                _running = null;
                 while (frames.TryPop(out var suspended))
                     suspended.Body.Dispose();
                 _completed.Clear();
@@ -964,13 +1206,15 @@ internal static class PropertyExposureResolver
             memos.Observations?.RecordRequiredAncestorSettlementFrame(seed);
             var key = new SeedSettlementKey(seed, level, site,
                 boundOwners is null ? "" : string.Join(",", boundOwners.Select(OwnerQualifiedParameter.OwnerKey).Order()));
-            var frame = new Frame { SeedCacheKey = key, CycleCutsAtEntry = _cycleCuts };
-            if (_completedSeeds.TryGetValue(key, out var completed))
+            var shareKey = new SettlementShare.Key(seed, level, key.Bound);
+            if (shared.TryGet(shareKey, out var settled) || _completedSeeds.TryGetValue(key, out settled))
             {
-                frame.Result = completed;
-                frame.Body = NoFrames();
-                return frame;
+                var reused = new Frame { Body = NoFrames() };
+                reused.Reuse(settled);
+                return reused;
             }
+
+            var frame = new Frame { SeedCacheKey = key, ShareKey = shareKey, CycleCutsAtEntry = _cycleCuts };
             frame.Body = ResolveSeed(frame, seed, level, site, boundOwners);
             return frame;
         }
@@ -990,9 +1234,10 @@ internal static class PropertyExposureResolver
             }
             var key = new SettlementKey(pending.ContentKey, level, site,
                 boundOwners is null ? "" : string.Join(",", boundOwners.Select(OwnerQualifiedParameter.OwnerKey).Order()));
-            if (_completed.TryGetValue(key, out var completed))
+            var shareKey = new SettlementShare.Key(pending.ContentKey, level, key.Bound);
+            if (shared.TryGet(shareKey, out var settled) || _completed.TryGetValue(key, out settled))
             {
-                self.Result = completed;
+                self.Reuse(settled);
                 yield break;
             }
             if (!_inProgress.Add(key))
@@ -1003,6 +1248,7 @@ internal static class PropertyExposureResolver
             }
 
             self.CacheKey = key;
+            self.ShareKey = shareKey;
             self.CycleCutsAtEntry = _cycleCuts;
 
             try
@@ -1055,6 +1301,10 @@ internal static class PropertyExposureResolver
         {
             var origin = memos.SharedMemo.RequirementContext(pending.Origin)!;
             var facts = origin.Facts;
+            NoteView(facts);
+            // The requirement view is chosen from the written origin's facts, which are a view of their own.
+            if (pending.Origin is { } written && !ReferenceEquals(written.Facts, facts))
+                NoteView(written.Facts);
             if (facts.Facts(origin.Key) is not { } originFacts || originFacts.Body is null && !originFacts.IsProvisional) yield break;
             var scope = memos.SharedMemo.RequirementLevel(origin);
             var parts = new List<AnchoredSeed>();
@@ -1070,7 +1320,13 @@ internal static class PropertyExposureResolver
                 if (owned.TryGetParameter(out var parameterOwner))
                 {
                     if (parameterOwner.OwnerAlgorithm is not { } owner || boundOwners?.Contains(owner) != true)
-                        self.Result = sets.From(site.ResolveRequirements([new OwnerQualifiedParameter(pending.Head, parameterOwner.OwnerAlgorithm)], boundOwners));
+                    {
+                        var landing = SummaryScope.NoOwnerLookup;
+                        self.Result = sets.From(site.ResolveRequirementsFromSite(
+                            [new OwnerQualifiedParameter(pending.Head, parameterOwner.OwnerAlgorithm)], boundOwners, ref landing));
+                        self.NoteSiteLanding(landing);
+                    }
+
                     yield break;
                 }
                 if (owned.TryGetProperty(out var declaring, out var hit))
@@ -1129,6 +1385,7 @@ internal static class PropertyExposureResolver
             List<AnchoredSeed> parts)
         {
             var facts = scope.CompletedContext!.Facts;
+            NoteView(facts);
             var head = target.OpenTargetHead(out var steps);
             if (ElaboratedScopeLookup.ResolveOpenProviderHead(scope, head, out var declaring) is not { } resolved
                 || CompletedStructureContext.For(resolved.Target, declaring) is not { } context) return;
@@ -1153,6 +1410,7 @@ internal static class PropertyExposureResolver
             identity = null!;
             var scope = lookupScope ?? opening.PropertyScope;
             var facts = scope.CompletedContext!.Facts;
+            NoteView(facts);
             if (ElaboratedScopeLookup.ResolveOpenProvider(scope, target) is not { } selected)
                 return false;
             var head = target.OpenTargetHead(out var steps);
@@ -1254,8 +1512,10 @@ internal static class PropertyExposureResolver
         private IEnumerator<Frame> ResolveSeed(Frame self, PropertyDependencyGraphBuilder.SummarySeed seed, SummaryScope level,
             SummaryScope site, IReadOnlySet<Algorithm>? boundOwners)
         {
+            var landing = SummaryScope.NoOwnerLookup;
             var names = sets.From(level.ResolveRequirements(seed.RequiredAncestorOwnedParameterNames)
-                .Concat(site.ResolveRequirements(seed.OwnerQualifiedParameters, boundOwners)));
+                .Concat(site.ResolveRequirementsFromSite(seed.OwnerQualifiedParameters, boundOwners, ref landing)));
+            self.NoteSiteLanding(landing);
             foreach (var dependencyName in seed.VisiblePropertyDependencyNames)
             {
                 // A bare visible name (see ResolveVisibleName): the chain's property first.

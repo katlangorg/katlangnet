@@ -79,7 +79,8 @@ public sealed class ExposureOpenChainDepthProcessTests
             OnOneMebibyteStack(() => exposed = ExposureOpenChainComplexityTests.Exposed(source, observations));
             AssertRequires(Member(Member(exposed, "O").Value, "R"), ("p", 0));
             Assert.Equal(Length + 2L, observations.SummaryMemberExpansions);
-            Assert.InRange(observations.RequiredAncestorSettlementFrames, 1, (long)Length * (Length + 3));
+            Assert.InRange(observations.RequiredAncestorSettlementFrames, 1,
+                ExposureOpenChainComplexityTests.SharedSettlementFrameBound(Length));
         }
 
         // A constant terminal: the whole chain is exported (NestedOwnerOpenedChain_WithAConstantTerminal).

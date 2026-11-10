@@ -625,6 +625,33 @@ internal sealed class FrontEndTraversalObservations
         RequiredAncestorSettlementObserver?.Invoke(subject);
     }
 
+    /// <summary>
+    /// Nested settlements kept in the exposure run's share (<c>PropertyExposureResolver.SettlementShare</c>):
+    /// one per completed settlement that saw no cycle cut and read no summary of the level in progress.
+    /// </summary>
+    public long SettlementShareStores { get; private set; }
+
+    internal void RecordSettlementShareStore()
+        => SettlementShareStores = checked(SettlementShareStores + 1);
+
+    /// <summary>
+    /// Settlement frames answered from the run's share instead of walking what their reference reaches:
+    /// each is one of <see cref="RequiredAncestorSettlementFrames"/> and settles nothing below itself.
+    /// </summary>
+    public long SettlementShareHits { get; private set; }
+
+    internal void RecordSettlementShareHit()
+        => SettlementShareHits = checked(SettlementShareHits + 1);
+
+    /// <summary>
+    /// Shared settlements dropped at a lookup because a completed-fact view they consulted has changed its
+    /// version since (<c>StaticLookupFacts.ViewVersion</c>); the settlement is then computed again.
+    /// </summary>
+    public long SettlementShareStaleViews { get; private set; }
+
+    internal void RecordSettlementShareStaleView()
+        => SettlementShareStaleViews = checked(SettlementShareStaleViews + 1);
+
     /// <summary>Summary-seed expansions (<c>PropertyDependencyGraphBuilder.CollectSummarySeed</c>, expression level).</summary>
     public long DependencySeedExpansions { get; private set; }
 
