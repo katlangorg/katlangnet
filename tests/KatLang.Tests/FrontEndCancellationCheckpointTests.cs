@@ -109,17 +109,16 @@ public sealed class FrontEndCancellationCheckpointTests
     }
 
     /// <summary>
-    /// Every public counter of an observer, by name (the new checkpoint counter included) — except
-    /// <see cref="FrontEndTraversalObservations.SummaryKeyCharacters"/>, whose key text embeds process-global owner
-    /// identities (<c>OwnerQualifiedParameter.OwnerKey</c>, an incrementing id): its value depends on how many ids
-    /// the process has issued before, so it differs between ANY two runs, token or not.
+    /// Every public counter of an observer, by name (the new checkpoint counter included).
+    /// <see cref="FrontEndTraversalObservations.SummaryKeyCharacters"/> is among them: it counts each process-global id
+    /// inside a key (<c>OwnerQualifiedParameter.OwnerKey</c>, an incrementing id) as one character, so its value no
+    /// longer depends on how many ids the process issued before and two runs of one input agree on it.
     /// </summary>
     private static SortedDictionary<string, long> Counters(FrontEndTraversalObservations observations)
     {
         var counters = new SortedDictionary<string, long>(StringComparer.Ordinal);
         foreach (var property in typeof(FrontEndTraversalObservations).GetProperties(BindingFlags.Instance | BindingFlags.Public))
-            if ((property.PropertyType == typeof(long) || property.PropertyType == typeof(int))
-                && property.Name != nameof(FrontEndTraversalObservations.SummaryKeyCharacters))
+            if (property.PropertyType == typeof(long) || property.PropertyType == typeof(int))
                 counters[property.Name] = Convert.ToInt64(property.GetValue(observations));
         counters["StaticQueryEvaluations.Distinct"] = observations.StaticQueryEvaluations.Count;
         counters["StaticQueryEvaluations.Total"] = observations.StaticQueryEvaluations.Values.Sum();

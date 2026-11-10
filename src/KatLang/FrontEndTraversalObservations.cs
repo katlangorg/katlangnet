@@ -38,8 +38,17 @@ namespace KatLang;
 /// </summary>
 internal sealed class FrontEndTraversalObservations
 {
-    // Diagnostic-only phase boundaries; absent on production invocations.
+    // Diagnostic-only phase boundaries; absent on production invocations. Besides the in-pass stages
+    // (completed-publication, retarget-and-seal, analysis-region-reuse) it receives each elaboration
+    // pass's begin and end under a FrontEndPassStage name (PassBoundary).
     internal Action<string, bool>? StageObserver { get; set; }
+
+    /// <summary>
+    /// Reports a pass boundary to <paramref name="observations"/>'s <see cref="StageObserver"/>; nothing without one.
+    /// A pass that throws reports no end: the observer's next event (or the operation's end) closes it.
+    /// </summary>
+    internal static void PassBoundary(FrontEndTraversalObservations? observations, string pass, bool begin)
+        => observations?.StageObserver?.Invoke(pass, begin);
     // Diagnostic-only: keys retain the actual contextual equation, including its branch/owner identity.
     // A repeated evaluation is work even when it returns the same answer; a read is not an evaluation.
     internal Dictionary<StaticQueryKey, long> StaticQueryEvaluations { get; } = [];
@@ -566,13 +575,21 @@ internal sealed class FrontEndTraversalObservations
     /// <summary>
     /// Characters built by summary-seed key serialization, including the full inputs to seed-id
     /// interning and operation-local expansion lookups, rather than only their compact candidate keys.
+    /// Each PROCESS-WIDE id inside a key (a bound or qualifying owner's <c>OwnerQualifiedParameter.OwnerKey</c>,
+    /// a completed origin's requirement identity) counts as ONE character, with the length prefixes around it
+    /// measured on that id-free text: the count depends only on the operation, never on how many ids the
+    /// process issued before it, so two runs of one input agree on it. Analysis-local ids count verbatim.
     /// </summary>
     public long SummaryKeyCharacters { get; private set; }
+
+    /// <summary>Diagnostic-only: receives each summary key exactly as built, process-wide ids included.</summary>
     internal Action<string>? SummaryKeyObserver { get; set; }
 
-    internal void RecordSummaryKey(string key)
+    /// <param name="key">The key as built.</param>
+    /// <param name="idFreeKey">The same key with every process-wide id written as <c>#</c>; its length is counted.</param>
+    internal void RecordSummaryKey(string key, string idFreeKey)
     {
-        RecordSummaryKeyCharacters(key.Length);
+        RecordSummaryKeyCharacters(idFreeKey.Length);
         SummaryKeyObserver?.Invoke(key);
     }
 
@@ -1011,6 +1028,25 @@ internal enum FrontEndCancellationCheckpoint
     /// graph, or a frame pushed by the level-expansion driver.
     /// </summary>
     SummaryChannel,
+}
+
+/// <summary>
+/// The <see cref="FrontEndTraversalObservations.StageObserver"/> names of the elaboration passes
+/// (<c>FrontEndPipeline.CompleteBeforeExposure</c> and <c>FinalizeElaboration</c>), in pipeline order. Each is
+/// reported with <c>begin: true</c> before the pass runs and <c>begin: false</c> after it returns. Diagnostic-only.
+/// </summary>
+internal static class FrontEndPassStage
+{
+    internal const string Admit = "pass:admit";
+    internal const string Detect = "pass:detect";
+    internal const string Resolve = "pass:resolve";
+    internal const string Collisions = "pass:collisions";
+    internal const string OpenProviders = "pass:open-providers";
+    internal const string Outputs = "pass:outputs";
+    internal const string Exposure = "pass:exposure";
+
+    /// <summary>Whether a stage name is a pass boundary rather than an in-pass stage.</summary>
+    internal static bool IsPass(string stage) => stage.StartsWith("pass:", StringComparison.Ordinal);
 }
 
 internal static class FrontEndCancellationCheckpointKinds

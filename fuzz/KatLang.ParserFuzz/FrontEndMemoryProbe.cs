@@ -558,50 +558,19 @@ internal static class FrontEndMemoryProbe
                 // consecutive elaboration-pass cancellation checkpoints. The interval that follows a
                 // checkpoint of kind K is the longest block of K's pass that runs without observing the
                 // token (an upper bound: phase-boundary and static-query checks inside it are not timed).
+                // The pass boundaries the observer reports (FrontEndPassStage) name the pass each interval
+                // fell into, and split the timeline into per-pass stretches (CheckpointGapRecorder).
                 using var cts = new CancellationTokenSource();
-                var kinds = Enum.GetValues<FrontEndCancellationCheckpoint>();
-                var maxAfter = new long[kinds.Length];
-                var counts = new long[kinds.Length];
-                var maxAfterOrdinal = new long[kinds.Length];
-                var maxAfterGen2 = new int[kinds.Length];
-                var lastGen2 = GC.CollectionCount(2);
-                long last = 0, maxGap = 0, firstGap = -1;
-                var lastKind = -1;
-                var maxFrom = -1;
-                long lastOrdinal = 0, maxFromOrdinal = 0;
+                var recorder = new CheckpointGapRecorder(Stopwatch.GetTimestamp, Stopwatch.Frequency, () => GC.CollectionCount(2));
                 var observations = new FrontEndTraversalObservations
                 {
-                    CheckpointReached = (kind, ordinal) =>
-                    {
-                        var now = Stopwatch.GetTimestamp();
-                        if (lastKind >= 0)
-                        {
-                            var gap = now - last;
-                            var gen2 = GC.CollectionCount(2);
-                            if (gap > maxAfter[lastKind]) { maxAfter[lastKind] = gap; maxAfterOrdinal[lastKind] = lastOrdinal; maxAfterGen2[lastKind] = gen2 - lastGen2; }
-                            lastGen2 = gen2;
-                            if (gap > maxGap) { maxGap = gap; maxFrom = lastKind; maxFromOrdinal = lastOrdinal; }
-                        }
-                        else firstGap = now - last;
-                        counts[(int)kind]++;
-                        last = now;
-                        lastKind = (int)kind;
-                        lastOrdinal = ordinal;
-                    },
+                    CheckpointReached = recorder.Checkpoint,
+                    StageObserver = recorder.Stage,
                 };
-                last = Stopwatch.GetTimestamp();
-                var started = last;
+                recorder.Start();
                 var result = Parser.ParseObserved(source, new RunOptions { SourceProcessingCancellationToken = cts.Token }, observations);
-                var ended = Stopwatch.GetTimestamp();
-                double Ms(long ticks) => ticks * 1000.0 / Stopwatch.Frequency;
-                var text = new StringBuilder();
-                text.Append(CultureInfo.InvariantCulture,
-                    $"checkpoints={observations.CancellationCheckpoints} totalMs={Ms(ended - started):F1} startToFirstMs={Ms(firstGap):F1} " +
-                    $"lastToEndMs={Ms(ended - last):F1} maxGapMs={Ms(maxGap):F2} maxAfter={(maxFrom >= 0 ? kinds[maxFrom].ToString() : "-")}#{maxFromOrdinal}");
-                for (var k = 0; k < kinds.Length; k++)
-                    if (counts[k] > 0)
-                        text.Append(CultureInfo.InvariantCulture, $" {kinds[k]}={counts[k]}/{Ms(maxAfter[k]):F2}ms#{maxAfterOrdinal[k]}gen2+{maxAfterGen2[k]}");
-                facts = text.Append(CultureInfo.InvariantCulture, $" diags={result.Diagnostics.Count}").ToString();
+                recorder.End();
+                facts = recorder.Format(observations.CancellationCheckpoints, result.Diagnostics.Count);
                 return result;
             }
             case var after when after.StartsWith("parse-cancel-after-", StringComparison.Ordinal):
@@ -967,6 +936,161 @@ internal static class FrontEndMemoryProbe
         GC.KeepAlive(exposed);
         return $"allocKb[lex={(t1 - t0) / 1024},syntaxInclLex={(t2 - t1) / 1024},detect={(t3 - t2) / 1024}," +
                $"resolve={(t4 - t3) / 1024},validate={(t5 - t4) / 1024},exposure={(t6 - t5) / 1024}]";
+    }
+
+    /// <summary>
+    /// The <c>parse-gaps</c> timeline (diagnostic, 2.06): the cancellation checkpoints and the elaboration-pass boundaries
+    /// one observed parse reports (<see cref="FrontEndTraversalObservations.CheckpointReached"/>,
+    /// <see cref="FrontEndTraversalObservations.StageObserver"/> with <see cref="FrontEndPassStage"/> names; in-pass
+    /// stages are ignored). It keeps the checkpoint-to-checkpoint intervals the route always reported and names the
+    /// pass each one fell into — <c>A&gt;B</c> when it crossed from pass A into pass B — and splits the timeline at
+    /// pass boundaries as well, so each pass also reports its longest stretch without a checkpoint, measured from its
+    /// begin, a checkpoint, or to its end. Time outside every pass (parsing, the gates between passes) belongs to none.
+    /// The clock and the gen-2 counter are injected, so the attribution is testable without timing.
+    /// </summary>
+    internal sealed class CheckpointGapRecorder(Func<long> clock, long ticksPerSecond, Func<int> gen2Collections)
+    {
+        private sealed class PassStretch(string name)
+        {
+            public string Name { get; } = name;
+            public int Runs;
+            public long Ticks;
+            public long Checkpoints;
+            public long MaxStretch = -1;
+            public string MaxFrom = "-";
+        }
+
+        private static readonly FrontEndCancellationCheckpoint[] Kinds = Enum.GetValues<FrontEndCancellationCheckpoint>();
+        private readonly long[] _maxAfter = new long[Kinds.Length];
+        private readonly long[] _counts = new long[Kinds.Length];
+        private readonly long[] _maxAfterOrdinal = new long[Kinds.Length];
+        private readonly int[] _maxAfterGen2 = new int[Kinds.Length];
+        private readonly string[] _maxAfterPass = new string[Kinds.Length];
+        private readonly List<PassStretch> _passes = [];
+        private readonly List<string> _passesSinceCheckpoint = [];
+        private long _started, _ended, _last, _maxGap, _firstGap = -1, _lastOrdinal, _maxFromOrdinal;
+        private int _lastKind = -1, _maxFrom = -1, _lastGen2;
+        private string _maxGapPass = "-";
+        private PassStretch? _current;
+        private long _passBegin, _stretchStart;
+        private string _stretchFrom = "-";
+
+        public void Start()
+        {
+            _started = _last = clock();
+            _lastGen2 = gen2Collections();
+        }
+
+        public void Checkpoint(FrontEndCancellationCheckpoint kind, long ordinal)
+        {
+            var now = clock();
+            if (_lastKind >= 0)
+            {
+                var gap = now - _last;
+                var gen2 = gen2Collections();
+                var pass = IntervalPasses();
+                if (gap > _maxAfter[_lastKind])
+                {
+                    _maxAfter[_lastKind] = gap;
+                    _maxAfterOrdinal[_lastKind] = _lastOrdinal;
+                    _maxAfterGen2[_lastKind] = gen2 - _lastGen2;
+                    _maxAfterPass[_lastKind] = pass;
+                }
+                _lastGen2 = gen2;
+                if (gap > _maxGap) { _maxGap = gap; _maxFrom = _lastKind; _maxFromOrdinal = _lastOrdinal; _maxGapPass = pass; }
+            }
+            else _firstGap = now - _last;
+            _counts[(int)kind]++;
+            _last = now;
+            _lastKind = (int)kind;
+            _lastOrdinal = ordinal;
+            if (_current is { } current)
+            {
+                current.Checkpoints++;
+                Stretch(now, $"{kind}#{ordinal}");
+            }
+            _passesSinceCheckpoint.Clear();
+            _passesSinceCheckpoint.Add(_current?.Name ?? "-");
+        }
+
+        public void Stage(string stage, bool begin)
+        {
+            if (!FrontEndPassStage.IsPass(stage)) return;
+            var now = clock();
+            var name = stage["pass:".Length..];
+            if (begin)
+            {
+                // A pass that threw reported no end; the next begin closes it.
+                if (_current is not null) Close(now);
+                _current = _passes.Find(pass => pass.Name == name) ?? Add(new PassStretch(name));
+                _current.Runs++;
+                _passBegin = _stretchStart = now;
+                _stretchFrom = "begin";
+                if (_passesSinceCheckpoint.Count > 0 && _passesSinceCheckpoint[^1] != name) _passesSinceCheckpoint.Add(name);
+            }
+            else if (_current?.Name == name)
+                Close(now);
+        }
+
+        public void End()
+        {
+            _ended = clock();
+            if (_current is not null) Close(_ended);
+        }
+
+        private PassStretch Add(PassStretch pass)
+        {
+            _passes.Add(pass);
+            return pass;
+        }
+
+        private string IntervalPasses()
+        {
+            var passes = _passesSinceCheckpoint.Count > 1 && _passesSinceCheckpoint[0] == "-" ? _passesSinceCheckpoint.Skip(1) : _passesSinceCheckpoint;
+            return string.Join(">", passes);
+        }
+
+        private void Stretch(long now, string next)
+        {
+            var current = _current!;
+            var stretch = now - _stretchStart;
+            if (stretch > current.MaxStretch) { current.MaxStretch = stretch; current.MaxFrom = _stretchFrom; }
+            _stretchStart = now;
+            _stretchFrom = next;
+        }
+
+        private void Close(long now)
+        {
+            Stretch(now, "end");
+            _current!.Ticks += now - _passBegin;
+            _current = null;
+        }
+
+        private double Ms(long ticks) => ticks * 1000.0 / ticksPerSecond;
+
+        /// <summary>
+        /// The route's facts. The fields before <c>maxGapPass</c> and the per-kind <c>KIND=count/ms#ordinal gen2+N</c>
+        /// entries are the former output, unchanged; <c>maxGapPass</c>, <c>KIND.pass</c> and the <c>pass.NAME</c>
+        /// entries are appended before <c>diags</c>.
+        /// </summary>
+        public string Format(long checkpoints, int diagnostics)
+        {
+            var text = new StringBuilder();
+            text.Append(CultureInfo.InvariantCulture,
+                $"checkpoints={checkpoints} totalMs={Ms(_ended - _started):F1} startToFirstMs={Ms(_firstGap):F1} " +
+                $"lastToEndMs={Ms(_ended - _last):F1} maxGapMs={Ms(_maxGap):F2} maxAfter={(_maxFrom >= 0 ? Kinds[_maxFrom].ToString() : "-")}#{_maxFromOrdinal}");
+            for (var k = 0; k < Kinds.Length; k++)
+                if (_counts[k] > 0)
+                    text.Append(CultureInfo.InvariantCulture, $" {Kinds[k]}={_counts[k]}/{Ms(_maxAfter[k]):F2}ms#{_maxAfterOrdinal[k]}gen2+{_maxAfterGen2[k]}");
+            text.Append(" maxGapPass=").Append(_maxGapPass);
+            for (var k = 0; k < Kinds.Length; k++)
+                if (_maxAfterPass[k] is { } pass)
+                    text.Append(' ').Append(Kinds[k]).Append(".pass=").Append(pass);
+            foreach (var pass in _passes)
+                text.Append(CultureInfo.InvariantCulture,
+                    $" pass.{pass.Name}={pass.Runs}x/{Ms(pass.Ticks):F1}ms/{pass.Checkpoints}cp/max{Ms(Math.Max(pass.MaxStretch, 0)):F2}ms@{pass.MaxFrom}");
+            return text.Append(CultureInfo.InvariantCulture, $" diags={diagnostics}").ToString();
+        }
     }
 
     /// <summary>

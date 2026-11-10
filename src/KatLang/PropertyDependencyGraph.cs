@@ -9,6 +9,13 @@ internal readonly record struct OwnerQualifiedParameter(string Name, Algorithm? 
     private static readonly ConditionalWeakTable<Algorithm, Identity> Identities = new();
     internal static long OwnerKey(Algorithm owner) => Identities.GetValue(owner, static _ => new(Interlocked.Increment(ref _nextIdentity))).Value;
     internal string ContentKey => $"{(Owner is null ? 0 : OwnerKey(Owner))}:{Name.Length}:{Name}";
+
+    /// <summary>
+    /// <see cref="ContentKey"/> with the process-wide owner id written as the one character <c>#</c>. Observation
+    /// only (<see cref="FrontEndTraversalObservations.SummaryKeyCharacters"/>): it is no identity, since owners share it.
+    /// </summary>
+    internal string IdFreeContentKey => $"{(Owner is null ? "0" : "#")}:{Name.Length}:{Name}";
+
     public bool Equals(OwnerQualifiedParameter other) => Name == other.Name && ReferenceEquals(Owner, other.Owner);
     public override int GetHashCode() => HashCode.Combine(Name, Owner is null ? 0 : RuntimeHelpers.GetHashCode(Owner));
 }
@@ -67,6 +74,18 @@ internal sealed class PendingReference : IEquatable<PendingReference>
 
     internal string ContentKey { get; }
     internal string ResolutionKey { get; }
+
+    /// <summary>
+    /// <see cref="ContentKey"/> with each PROCESS-WIDE id — the completed origin's requirement identity and every
+    /// bound owner's <see cref="OwnerQualifiedParameter.OwnerKey"/> — written as the one character <c>#</c>, so its
+    /// length is the same in every process and run. Candidate keys are kept verbatim: their ids are analysis-local
+    /// (<see cref="PropertyDependencyGraphBuilder.SummaryMemo.SeedKeyId"/>, the provider-identity key). Observation
+    /// only (<see cref="FrontEndTraversalObservations.SummaryKeyCharacters"/>), never cached and never an identity.
+    /// </summary>
+    internal string IdFreeContentKey
+        => KeyParts([
+            KeyParts([Origin is null ? "" : $"completed:#:{OpenPath}", Head, KeyParts(Members), KeyParts(Candidates.Select(static candidate => candidate.ContentKey))]),
+            string.Join(",", BoundOwners.Select(static _ => "#"))]);
 
     /// <summary>
     /// The reference without its candidates' charged seeds: head, members, candidate shapes
@@ -1446,9 +1465,21 @@ internal static class PropertyDependencyGraphBuilder
                 _visiblePropertyDependencyNames is { } visible ? FrontEndRegionKeys.NameSet(visible) : string.Empty,
                 _pendingReferences is { } pending ? FrontEndRegionKeys.NameSet(pending.Select(static reference => reference.ContentKey)) : string.Empty,
                 _ownerQualifiedParameters is { } qualified ? FrontEndRegionKeys.NameSet(qualified.Select(static r => r.ContentKey)) : string.Empty]);
-            observations?.RecordSummaryKey(key);
+            observations?.RecordSummaryKey(key, IsEmpty ? key : IdFreeContentKey());
             return key;
         }
+
+        /// <summary>
+        /// <see cref="ContentKeyFor"/>'s key with every process-wide id written as <c>#</c>
+        /// (<see cref="PendingReference.IdFreeContentKey"/>, <see cref="OwnerQualifiedParameter.IdFreeContentKey"/>):
+        /// the text <see cref="FrontEndTraversalObservations.SummaryKeyCharacters"/> counts. Built only for an observer.
+        /// </summary>
+        private string IdFreeContentKey()
+            => PendingReference.KeyParts([
+                _requiredAncestorOwnedParameterNames is { } required ? FrontEndRegionKeys.NameSet(required) : string.Empty,
+                _visiblePropertyDependencyNames is { } visible ? FrontEndRegionKeys.NameSet(visible) : string.Empty,
+                _pendingReferences is { } pending ? FrontEndRegionKeys.NameSet(pending.Select(static reference => reference.IdFreeContentKey)) : string.Empty,
+                _ownerQualifiedParameters is { } qualified ? FrontEndRegionKeys.NameSet(qualified.Select(static r => r.IdFreeContentKey)) : string.Empty]);
 
         private static readonly string EmptyContentKey = PendingReference.KeyParts([string.Empty, string.Empty, string.Empty, string.Empty]);
     }

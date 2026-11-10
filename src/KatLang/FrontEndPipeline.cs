@@ -446,7 +446,9 @@ internal static class FrontEndPipeline
         // re-selected them, which is how adding a reference could rebind a written name).
         // Every loaded module is ONE unit of the program (Q-31 H-P + Q-32 I-U): each pass elaborates
         // it once, rooted at the prelude, wherever it is spliced (see ModuleUnitRegistry).
+        FrontEndTraversalObservations.PassBoundary(observations, FrontEndPassStage.Admit, begin: true);
         var operation = StaticStructureAdmission.Create(input.Current, hostOperations, sourceProcessingLimits, cancellationToken: cancellationToken).Operation;
+        FrontEndTraversalObservations.PassBoundary(observations, FrontEndPassStage.Admit, begin: false);
         DetectParameters(input, hostOperations, passDiagnostics, modules, operation, observations);
         if (passDiagnostics.HasReported(DiagnosticCode.SelfDependentInferredParameters))
             return RecoverAfterSelfDependentInference(input, input.Diagnostics, passDiagnostics, operation, hasDeferredModuleRegions, cancellationToken);
@@ -505,16 +507,22 @@ internal static class FrontEndPipeline
         ElaborationInput input, HostOperations? hostOperations, DiagnosticBag passDiagnostics, ModuleUnits modules, StaticStructureOperation? operation,
         FrontEndTraversalObservations? observations)
     {
+        FrontEndTraversalObservations.PassBoundary(observations, FrontEndPassStage.Detect, begin: true);
         var (parameterizedRoot, _) = ParameterDetector.DetectPrevalidated(
             input.Take(), hostOperations, observations, passDiagnostics, modules, operation);
         input.Put(parameterizedRoot);
+        FrontEndTraversalObservations.PassBoundary(observations, FrontEndPassStage.Detect, begin: false);
     }
 
     private static void ResolveImplicitArguments(
         ElaborationInput input, DiagnosticBag passDiagnostics, HostOperations? hostOperations, ModuleUnits modules, StaticStructureOperation? operation,
         FrontEndTraversalObservations? observations)
-        => input.Put(ImplicitArgumentResolver.ResolvePrevalidated(
+    {
+        FrontEndTraversalObservations.PassBoundary(observations, FrontEndPassStage.Resolve, begin: true);
+        input.Put(ImplicitArgumentResolver.ResolvePrevalidated(
             input.Take(), observations, passDiagnostics, hostOperations, modules, operation));
+        FrontEndTraversalObservations.PassBoundary(observations, FrontEndPassStage.Resolve, begin: false);
+    }
 
     // One frame per validator as well, so one validator's memo is gone before the next runs.
     // Each validator observes the source-processing token once per algorithm it expands (2.06).
@@ -533,12 +541,14 @@ internal static class FrontEndPipeline
     private static void ValidateParameterPropertyCollisions(ElaborationInput input, DiagnosticBag passDiagnostics,
         FrontEndTraversalObservations? observations, CancellationToken cancellationToken)
     {
+        FrontEndTraversalObservations.PassBoundary(observations, FrontEndPassStage.Collisions, begin: true);
         var root = input.Current;
         new ParameterPropertyCollisionValidator(passDiagnostics, programRoot: root)
         {
             TraversalObservations = observations,
             CancellationToken = cancellationToken,
         }.VisitAlgorithm(root);
+        FrontEndTraversalObservations.PassBoundary(observations, FrontEndPassStage.Collisions, begin: false);
     }
 
     /// <summary>
@@ -567,15 +577,27 @@ internal static class FrontEndPipeline
 
     private static void ValidateOpenProviders(ElaborationInput input, DiagnosticBag passDiagnostics, HostOperations? hostOperations,
         FrontEndTraversalObservations? observations, CancellationToken cancellationToken)
-        => OpenProviderValidator.Validate(input.Current, passDiagnostics, hostOperations, observations, cancellationToken);
+    {
+        FrontEndTraversalObservations.PassBoundary(observations, FrontEndPassStage.OpenProviders, begin: true);
+        OpenProviderValidator.Validate(input.Current, passDiagnostics, hostOperations, observations, cancellationToken);
+        FrontEndTraversalObservations.PassBoundary(observations, FrontEndPassStage.OpenProviders, begin: false);
+    }
 
     private static void ValidateInferredParameterOutputs(ElaborationInput input, DiagnosticBag passDiagnostics,
         FrontEndTraversalObservations? observations, CancellationToken cancellationToken)
-        => InferredParameterOutputValidator.ValidateProgram(input.Current, passDiagnostics, observations, cancellationToken);
+    {
+        FrontEndTraversalObservations.PassBoundary(observations, FrontEndPassStage.Outputs, begin: true);
+        InferredParameterOutputValidator.ValidateProgram(input.Current, passDiagnostics, observations, cancellationToken);
+        FrontEndTraversalObservations.PassBoundary(observations, FrontEndPassStage.Outputs, begin: false);
+    }
 
     private static void ResolveExposure(ElaborationInput input, HostOperations? hostOperations, ModuleUnits modules,
         FrontEndTraversalObservations? observations, CancellationToken cancellationToken)
-        => input.Put(PropertyExposureResolver.Resolve(input.Take(), observations, hostOperations, modules, cancellationToken));
+    {
+        FrontEndTraversalObservations.PassBoundary(observations, FrontEndPassStage.Exposure, begin: true);
+        input.Put(PropertyExposureResolver.Resolve(input.Take(), observations, hostOperations, modules, cancellationToken));
+        FrontEndTraversalObservations.PassBoundary(observations, FrontEndPassStage.Exposure, begin: false);
+    }
 
     /// <summary>
     /// The tree and diagnostic list of ONE elaboration, handed from pass to pass (see the pass

@@ -12,6 +12,13 @@ namespace KatLang.ParserFuzz;
 /// bundles, operands, list elements, ...) and never follows the parent/back-reference
 /// (<c>ScopeCtx Parent</c>) or any runtime object identity, so it terminates on the
 /// finite AST tree and is identical for structurally-identical results.
+///
+/// Source metadata that equality ignores is printed explicitly: expression and declaration spans, the
+/// written extent of every clause-head group (<c>PSeq@…</c>, <c>PList@…</c>; <c>-</c> for a head's own
+/// argument list), and the <see cref="PatternGroupSource"/> of every elaborated parameter-pattern group at
+/// any depth (<c>GSeq@…</c>, <c>GList@…</c>; <c>~</c> marks a filtered copy, <c>-</c> a group no parser
+/// wrote). All of it is line/column text, never a process-assigned identity, so the fingerprint is the
+/// same across runs and processes.
 /// </summary>
 internal static class FrontEndFingerprint
 {
@@ -63,7 +70,7 @@ internal static class FrontEndFingerprint
                 sb.Append("params[");
                 foreach (var p in u.Parameters) ParamDecl(sb, p);
                 sb.Append("]patterns[");
-                foreach (var pp in u.ParameterPatterns) sb.Append(pp.DisplayName).Append(';');
+                foreach (var pp in u.ParameterPatterns) { ParamPattern(sb, pp); sb.Append(';'); }
                 sb.Append("]opens[");
                 foreach (var o in u.Opens) Expr(sb, o);
                 sb.Append("]props[");
@@ -97,6 +104,55 @@ internal static class FrontEndFingerprint
         => sb.Append(p.Name).Append(':').Append(p.Kind).Append('@').Append(Span(p.Span))
             .Append("#collecting@").Append(Span(p.CollectMarkerSpan)).Append(';');
 
+    /// <summary>
+    /// A parameter pattern with its structure and every structural group's SOURCE (<see cref="PatternGroupSource"/>):
+    /// the written origin span and whether the group is a filtered copy of it (<c>~</c>), or <c>-</c> for a group no
+    /// parser wrote. Group sources are metadata that equality, hashing and <see cref="ParameterPattern.DisplayName"/>
+    /// ignore, so only this printer makes a regression in them visible. A capture leaf prints its declaration as the
+    /// flat <c>params</c> list does; the unpacking receiver has no delimiters and so no source.
+    /// </summary>
+    private static void ParamPattern(StringBuilder sb, ParameterPattern pattern)
+    {
+        switch (pattern)
+        {
+            case CaptureParameterPattern capture:
+                sb.Append("Cap{");
+                ParamDecl(sb, capture.Parameter);
+                sb.Append('}');
+                return;
+            case UnpackingParameterPattern unpacking:
+                sb.Append("Unpack[");
+                foreach (var item in unpacking.Items) { ParamPattern(sb, item); sb.Append(','); }
+                sb.Append(']');
+                return;
+            case SequenceValueParameterPattern or ListValueParameterPattern:
+                sb.Append(pattern is ListValueParameterPattern ? "GList" : "GSeq").Append('@');
+                GroupSource(sb, ParameterPattern.GroupSource(pattern));
+                sb.Append('[');
+                foreach (var item in pattern is ListValueParameterPattern list ? list.Items : ((SequenceValueParameterPattern)pattern).Items)
+                {
+                    ParamPattern(sb, item);
+                    sb.Append(',');
+                }
+                sb.Append(']');
+                return;
+            default:
+                throw new InvalidOperationException($"Unhandled parameter pattern variant {pattern.GetType().Name}.");
+        }
+    }
+
+    private static void GroupSource(StringBuilder sb, PatternGroupSource? source)
+    {
+        if (source is not { } written)
+        {
+            sb.Append('-');
+            return;
+        }
+
+        if (written.IsFiltered) sb.Append('~');
+        sb.Append(Span(written.OriginSpan));
+    }
+
     private static void Prop(StringBuilder sb, Property p)
     {
         sb.Append('{').Append(p.Name).Append(",pub:").Append(p.IsPublic ? '1' : '0')
@@ -125,12 +181,12 @@ internal static class FrontEndFingerprint
                 sb.Append(b.Value ? "LBool{true}" : "LBool{false}");
                 break;
             case Pattern.SequenceValue sv:
-                sb.Append("PSeq[");
+                sb.Append("PSeq@").Append(Span(sv.Span)).Append('[');
                 foreach (var it in sv.Items) Pattern(sb, it);
                 sb.Append(']');
                 break;
             case Pattern.ListValue lv:
-                sb.Append("PList[");
+                sb.Append("PList@").Append(Span(lv.Span)).Append('[');
                 foreach (var it in lv.Items) Pattern(sb, it);
                 sb.Append(']');
                 break;

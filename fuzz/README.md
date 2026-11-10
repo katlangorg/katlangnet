@@ -418,7 +418,7 @@ $probe = "fuzz\KatLang.ParserFuzz\bin\Release\net11.0\KatLang.ParserFuzz.exe"
 & $probe fe-mem --shapes open_chain --sizes 159700,405700 --routes parse-cancel-500,parse-cancel-3000 --repeat 3 --timeout-ms 1200000
 # which pass a latency row hit: the synchronous passes timed one by one (trees retained, so slower than Parse)
 & $probe fe-mem --shapes dense_props --sizes 2m --routes parse-stages --timeout-ms 600000
-# the longest interval between consecutive elaboration-pass cancellation checkpoints, by checkpoint kind
+# the longest interval between consecutive elaboration-pass cancellation checkpoints, by checkpoint kind and pass
 & $probe fe-mem --shapes open_chain --sizes 159700 --routes parse-gaps --timeout-ms 1200000
 ```
 
@@ -436,6 +436,14 @@ passes as `FrontEndPipeline.FinalizeElaboration` does and reports each one's tim
 (`Parser.ParseObserved`) with a live token and reports, per checkpoint kind, the count and the longest
 interval that followed one (`kind=count/ms#ordinal`); an interval is an upper bound on the latency
 there, because it also spans the phase-boundary and static-query token checks the hook does not see.
+The pass boundaries the observer reports (`FrontEndPassStage`: `admit`, `detect`, `resolve`, `collisions`,
+`open-providers`, `outputs`, `exposure`) name the pass each interval fell into. The former fields keep their
+order and meaning; appended before `diags=` are `maxGapPass=PASS` for the longest interval, `KIND.pass=PASS`
+for each kind's longest one (`A>B` when the interval crossed from pass A into pass B), and per pass
+`pass.NAME=RUNSx/TOTALms/CHECKPOINTScp/maxMAXms@FROM` — the pass's longest stretch without a checkpoint,
+split at its own boundaries, where `FROM` is `begin` or the `KIND#ordinal` that started it. Time outside every
+pass (parsing, the gates between passes) belongs to none, and a pass that throws is closed by the next event.
+The pass names a gap directly, so attributing it no longer needs cross-checking `parse-cancel-after-…` runs.
 
 Reported per child: UTF-16 length, UTF-8 bytes and SHA-256, diagnostics, operation-attributed allocation
 (`GC.GetTotalAllocatedBytes(precise)` delta — process-wide, so valid across async transitions;
