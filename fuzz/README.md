@@ -1678,12 +1678,30 @@ AST with the fail-loud `LeanAstEncoder` and pins that observation (plus the Q-67
 where shared). The member is built only in that test: it is not a `SemanticCase.Members` entry, so
 descriptors and replay are unchanged.
 
-What the guards check: Lean's plain and counted evaluators on each identity-prelude member agree
-with C# and with the generator's constructed expectation. What they do NOT check: the
-host-operation base program in Lean (its relation to the member is C# evidence: the SEM-2B profiles
-plus the member check), host events, async suspension and cancellation, optimizer paths, and the
-`alpha-rename` / `declaration-reorder` members. Regenerate with
-`$env:KATLANG_REGENERATE_SEMANTIC_GENERATED = "1"` and `--filter SemanticGeneratedLeanArtifact`.
+The case's own transformation members are guarded too: `alpha-rename` for every valid case and
+`declaration-reorder` whenever the root has two or more declarations (264 + 150 = 414 members over
+264 cases). Each gets the same identity prelude and the same checks, plus the SEM-2B runner's
+member relation exactly as `SemanticRunner.Run` applies it — SemanticEqual to the base under the
+`Normalized` error policy, which on the neutral observation is equality of the `ok raw=… n=…` or
+`err <kind>` text — and its `#guard obs` pins the BASE member's neutral text, so Lean checks the
+relation as well. A member's `errorObs` guard pins its own C# payload (same-source parity; the
+cross-member relation does not compare payloads). A `guardedMemberIds` count guard and the test's
+partition check pin the member list.
+
+What the guards check: Lean's plain and counted evaluators on each identity-prelude base and
+transformation member agree with C# and with the generator's constructed expectation, and each
+transformation member agrees with its base. What they do NOT check: the host-operation programs in
+Lean (their relation to the identity-prelude members is C# evidence: the SEM-2B profiles plus the
+member checks), host events, async suspension and cancellation, and optimizer paths. Build cost
+(measured 2026-11-10): 678 guarded programs, 663,676 bytes, cold module build 22–25 s on the
+16-processor development host (9.0–9.5 s before the members). Independent review measured the full
+`lake build CoreTests` target with all `.lake/build` outputs absent: 71.4 s before and 83.2 s after
+(one run per tree on the same host; OS file cache uncontrolled). The caps in the test class cite
+both measurements. The last ten completed four-core CI Lean jobs took 6m56s–10m26s; the expected
+additional 20–45 s remains an estimate until the changed artifact runs in CI, well within the
+unchanged 30-minute budget. Regenerate with `$env:KATLANG_REGENERATE_SEMANTIC_GENERATED = "1"` and
+`--filter SemanticGeneratedLeanArtifact`; the class is in `KatLang.Tests.SemanticTesting`, so the
+`KatLang.Tests.SemanticTesting.*` filter below covers it.
 
 ### Path evidence and coverage floors
 

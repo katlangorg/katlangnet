@@ -120,11 +120,16 @@ summaries are written to `LanguageSpecReport.json` (and the explorer's
   count, or error kind) and that its neutral observation is the expected
   one, and encodes its real elaborated AST with `LeanAstEncoder`. The member
   exists only in that test; SEM-2B members, descriptors and replay are
-  unchanged. Lean is checked on the identity-prelude member only: the
-  host-operation base program, host events, async suspension and
-  cancellation, and optimizer paths remain C# evidence. Partition, a
-  coverage ratchet, case/byte caps sized from the measured Lean build cost,
-  and the injective `case_…` name mangling are pinned by the test class.
+  unchanged. The case's SEM-2B transformation members (`alpha-rename`, and
+  `declaration-reorder` when the root has two or more declarations) are
+  guarded the same way with the identity prelude, checked in C# against the
+  runner's member relation (SemanticEqual to the base, `Normalized` errors),
+  each guard pinning the base member's neutral text. The host-operation
+  programs, host events, async suspension and cancellation, and optimizer
+  paths remain C# evidence. Partition, case and member coverage ratchets,
+  case/program/byte caps sized from the measured Lean build cost, and the
+  injective `case_…` name mangling (with `_alpha`/`_reorder` member
+  suffixes) are pinned by the test class.
   Regenerate with
   `$env:KATLANG_REGENERATE_SEMANTIC_GENERATED = "1"; dotnet test ./tests/KatLang.Tests/KatLang.Tests.csproj --filter SemanticGeneratedLeanArtifact`
 

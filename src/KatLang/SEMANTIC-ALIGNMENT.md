@@ -913,6 +913,13 @@ not model — encoded from its real elaborated AST by `LeanAstEncoder`; C# check
 the constructed expectation first. The member is built only in that test (SEM-2B members,
 descriptors and replay unchanged). The host-operation base program, host events, async and
 optimizer paths remain C# evidence.
+SEM-2C transformation members (November 10 2026; test/formal-correspondence evidence only, no
+production C# or Lean semantic edit). The same artifact now also guards each valid case's
+`alpha-rename` member and, when the root has two or more declarations, its `declaration-reorder`
+member (264 + 150 = 414), each with the identity prelude, checked in C# against the constructed
+anchors and the SEM-2B runner's member relation (SemanticEqual to the base, `Normalized` errors),
+each Lean guard pinning the base member's neutral text. 678 guarded programs, 663,676 bytes, cold
+module build 22–25 s (was 9.0–9.5 s); caps raised from that measurement.
 HOST-DIFF-1 — Lean/C# differential coverage of host-built ASTs with pre-wired parent scopes
 (October 24 2026; test/formal-correspondence infrastructure, no production C# or Lean semantic
 edit, classified by the "Lean/C# correspondence" trigger: full V3). `LeanAstEncoder` (tests) no

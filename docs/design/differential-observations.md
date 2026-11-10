@@ -186,7 +186,12 @@ The guarded program is the case's IDENTITY-PRELUDE member — the base source
 with `trace(x) = x` and `wait(x) = x` prepended in place of the host operations
 Lean does not model — encoded from its real elaborated AST. C# checks that
 member against the constructed expectation, and the guard pins its FORMAL-06
-neutral observation (plus the Q-67 `errorObs` payload where shared). The guards
-do NOT observe the host-operation base program in Lean (the member-to-base
-relation is C# evidence), host events, async suspension or cancellation,
-optimizer paths, or the transformation members.
+neutral observation (plus the Q-67 `errorObs` payload where shared). The
+case's transformation members (`alpha-rename` always, `declaration-reorder`
+when the root has two or more declarations) are guarded the same way with the
+identity prelude; C# also checks the SEM-2B runner's member relation
+(SemanticEqual to the base, `Normalized` errors: equal neutral text), and each
+member guard pins the BASE member's neutral text. The guards do NOT observe the
+host-operation programs in Lean (their relation to the identity-prelude members
+is C# evidence), host events, async suspension or cancellation, or optimizer
+paths.
