@@ -1229,6 +1229,8 @@ public static partial class Evaluator
         {
             var args = plan.Args;
             var sources = shape == PlanSupplyShape.Cells ? null : new List<Expr?>(args.Count);
+            // No bound callee, deliberately: a later loop may bind this sticky supply to its own projected step
+            // (per-site retention keeps it fully planned; the B8 note on Evaluator.PerSitePlans says why).
             var formed = FormNeedSupply(args, plan.Caller, plan.Values, asynchronous: false, sources).GetAwaiter().GetResult();
             return PublishPlanSupply(plan, formed, shape, sources);
         }

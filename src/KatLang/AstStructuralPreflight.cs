@@ -327,10 +327,14 @@ internal static class AstStructuralPreflight
     /// (<see cref="IsMetaBinder"/>), as opposed to a loop spelling or a deferred region. A run is
     /// <see cref="IsLoopOnly"/> when it may capture but holds no META binder and no deferred region: its
     /// only META binders are then the builtin loops' <c>step</c> parameters (per-site plan retention,
-    /// <see cref="Evaluation.EvaluationBudget.UsesPerSiteInvocationPlans"/>).
+    /// <see cref="Evaluation.EvaluationBudget.UsesPerSiteInvocationPlans"/>). <see cref="TreeNodeCount"/> is the number of
+    /// distinct nodes when the walk reached EVERY node through exactly one edge (the admitted graph is a TREE: no
+    /// shared node, no cycle), and 0 otherwise — the conservative answer. A per-site run reuses it to walk the
+    /// program without a per-node memo (<c>Evaluator.InheritedTransportNames</c>); it decides nothing else.
     /// </summary>
     internal readonly record struct AdmittedProgramFacts(
-        bool MayCaptureCalls, bool MayReachRuntimeAlias, bool HasDeferredModuleRegion, bool HasMetaBinder = false)
+        bool MayCaptureCalls, bool MayReachRuntimeAlias, bool HasDeferredModuleRegion, bool HasMetaBinder = false,
+        int TreeNodeCount = 0)
     {
         /// <summary>The J7 gate fired only through the builtin loops: no user META binder, no deferred region.</summary>
         internal bool IsLoopOnly => MayCaptureCalls && !HasMetaBinder && !HasDeferredModuleRegion;
@@ -395,6 +399,8 @@ internal static class AstStructuralPreflight
         var mayReachRuntimeAlias = false;
         var hasDeferredRegion = false;
         var hasMetaBinder = false;
+        // Whether some node was reached through a second edge (shared, or a cycle): the graph is no tree.
+        var reachedTwice = false;
         facts = default;
         rootHeight = -1;
         // The hard ceiling is enforced HERE, not only at the configuration surface, so
@@ -496,6 +502,7 @@ internal static class AstStructuralPreflight
 
             if (knownChild)
             {
+                reachedTwice = true;
                 // A shared argument bundle is a grouping node of this walk only: a rejection met
                 // AT it is positioned at the slot the slot-by-slot walk reports.
                 if (deferredMemo is null && (child is OutputBundle or ImplicitSignatureTemplate)
@@ -548,7 +555,8 @@ internal static class AstStructuralPreflight
         }
 
         rootHeight = heights[root];
-        facts = new AdmittedProgramFacts(mayCaptureCalls, mayReachRuntimeAlias, hasDeferredRegion, hasMetaBinder);
+        facts = new AdmittedProgramFacts(mayCaptureCalls, mayReachRuntimeAlias, hasDeferredRegion, hasMetaBinder,
+            TreeNodeCount: reachedTwice ? 0 : heights.Count);
         return null;
     }
 

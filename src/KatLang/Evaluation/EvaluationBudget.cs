@@ -274,14 +274,15 @@ internal sealed class EvaluationBudget
     /// a test seam keeps retention on whatever the program gate says. Fail-loud on a second decision: a
     /// run never switches plans on or off midway.
     /// </summary>
-    internal void DecideInvocationPlanRetention(bool programMayCapture, bool loopOnly = false, object? admittedProgram = null)
+    internal void DecideInvocationPlanRetention(
+        bool programMayCapture, bool loopOnly = false, object? admittedProgram = null, int admittedTreeNodeCount = 0)
     {
         if (_invocationPlanRetentionDecided)
             throw new InvalidOperationException("A run decides invocation-plan retention exactly once, before evaluation.");
         _invocationPlanRetentionDecided = true;
         _retainsInvocationPlans |= programMayCapture;
         if (programMayCapture && loopOnly && PlanTestSeam is null)
-            _invocationPlanState = new PerSitePlanState(usesPerSite: true, admittedProgram, testSeam: null);
+            _invocationPlanState = new PerSitePlanState(usesPerSite: true, admittedProgram, testSeam: null, admittedTreeNodeCount);
     }
 
     /// <summary>
@@ -290,6 +291,13 @@ internal sealed class EvaluationBudget
     /// every other run, and in a per-site run decided without a program (then no slot is unobserved).
     /// </summary>
     internal object? AdmittedProgram => (_invocationPlanState as PerSitePlanState)?.AdmittedProgram;
+
+    /// <summary>
+    /// The distinct node count of <see cref="AdmittedProgram"/> when its admission walk proved it a TREE
+    /// (<see cref="AstStructuralPreflight.AdmittedProgramFacts.TreeNodeCount"/>), else 0. A tree-shaped program's
+    /// inherited-read walk needs no per-node memo; the count bounds that walk (<c>Evaluator.InheritedTransportNames</c>).
+    /// </summary>
+    internal int AdmittedTreeNodeCount => (_invocationPlanState as PerSitePlanState)?.AdmittedTreeNodeCount ?? 0;
 
     /// <summary>The run's once-computed inherited-read names (<c>Evaluator.InheritedTransportNames</c>).</summary>
     internal Evaluator.TransportNames? InheritedTransportNames
@@ -327,6 +335,21 @@ internal sealed class EvaluationBudget
     internal Dictionary<Evaluator.CalleeBodyKey, Evaluator.TransportNames> CalleeTransportedNames
         => PlanAnalysis.CalleeNames ??= [];
 
+    /// <summary>
+    /// The run's memo of per-node BUILTIN-AWARE transport summaries (<c>Evaluator.BuiltinSlotSummaryOf</c>, B9):
+    /// context-free, keyed by reference identity, computed lazily only when a slot's plain classification
+    /// fails. Guarded by <see cref="TransportedNames"/>.
+    /// </summary>
+    internal Dictionary<object, Evaluator.BuiltinSlotSummary> BuiltinSlotSummaries
+        => PlanAnalysis.BuiltinSlotSummaries ??= new(ReferenceEqualityComparer.Instance);
+
+    /// <summary>
+    /// The run's callee-level builtin-aware summaries (<c>Evaluator.CalleeBuiltinSlotSummary</c>), keyed by a
+    /// callee's shared BODY lists like <see cref="CalleeTransportedNames"/>. Guarded by <see cref="TransportedNames"/>.
+    /// </summary>
+    internal Dictionary<Evaluator.CalleeBodyKey, Evaluator.BuiltinSlotSummary> CalleeBuiltinSlotSummaries
+        => PlanAnalysis.CalleeBuiltinSlotSummaries ??= [];
+
     private PerSitePlanState PlanAnalysis
     {
         get
@@ -339,14 +362,18 @@ internal sealed class EvaluationBudget
         }
     }
 
-    private sealed class PerSitePlanState(bool usesPerSite, object? admittedProgram, InvocationPlanTestSeam? testSeam)
+    private sealed class PerSitePlanState(
+        bool usesPerSite, object? admittedProgram, InvocationPlanTestSeam? testSeam, int admittedTreeNodeCount = 0)
     {
         internal bool UsesPerSite { get; } = usesPerSite;
         internal object? AdmittedProgram { get; } = admittedProgram;
+        internal int AdmittedTreeNodeCount { get; } = admittedTreeNodeCount;
         internal InvocationPlanTestSeam? TestSeam { get; } = testSeam;
         internal Evaluator.TransportNames? InheritedNames;
         internal Dictionary<object, Evaluator.TransportNames>? TransportedNames;
         internal Dictionary<Evaluator.CalleeBodyKey, Evaluator.TransportNames>? CalleeNames;
+        internal Dictionary<object, Evaluator.BuiltinSlotSummary>? BuiltinSlotSummaries;
+        internal Dictionary<Evaluator.CalleeBodyKey, Evaluator.BuiltinSlotSummary>? CalleeBuiltinSlotSummaries;
     }
 
     /// <summary>

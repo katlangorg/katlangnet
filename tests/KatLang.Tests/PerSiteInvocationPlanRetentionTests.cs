@@ -136,6 +136,165 @@ public class PerSiteInvocationPlanRetentionTests
         }
     }
 
+    /// <summary>
+    /// B9: the callee hands its parameter only to value-only builtins it resolves at the occurrence (directly,
+    /// below an operator, or as a slot of another value-only builtin), so the supplied call needs no plan. The
+    /// traced arguments pin demand order: the host log is the oracle's exactly. <c>saved</c> is the oracle's
+    /// plan count minus production's.
+    /// </summary>
+    public static TheoryData<string, string, long> BuiltinValueSlotPrograms => new()
+    {
+        { Step + "F(x) = if(x > 0, x, 0)\nF(trace(3)), Step(0).while", "S[3, 3]", 1 },
+        { Step + "F(xs) = count(xs)\nF(filter(range(1, trace(4)), {v > trace(1)})), Step(0).while", "S[3, 3]", 3 },
+        { Step + "F(xs) = count(xs) + 1\nF(range(trace(1), trace(5))), Step(0).while", "S[6, 3]", 3 },
+        // A value-only builtin call as a whole slot of another (count inside if).
+        { Step + "F(xs) = if(trace(1) > 0, count(xs), 0)\nF(range(1, trace(5))), Step(0).while", "S[5, 3]", 3 },
+        // Demand order across two slots: the branch decides which argument is ever demanded.
+        { Step + "F(a, b) = if(a > 1, b, a)\nF(trace(2), trace(7)), F(trace(0), trace(9)), Step(0).while", "S[7, 0, 3]", 4 },
+        // A per-iteration supplied call inside the loop step itself.
+        { "F(x) = if(x > 0, x, 0)\nG(y) = y * 2\nS(n) = n + F(G(n)) - 2 * n + 1, n < 4\nS(trace(0)).while", "4", 4 },
+    };
+
+    [Theory]
+    [MemberData(nameof(BuiltinValueSlotPrograms))]
+    public async Task ValueOnlyBuiltinSlot_InTheCalleeBody_NeedsNoPlan(string source, string expected, long saved)
+    {
+        foreach (var engine in Engines)
+        {
+            var (production, oracle) = await Compare(source, engine);
+            Assert.Equal("ok " + expected, production.Value);
+            Assert.NotEqual("", production.Log);
+            if (ForcedInvocationPlansHook.Forced) continue;
+            Assert.Equal(oracle.Plans - saved, production.Plans);
+        }
+    }
+
+    /// <summary>
+    /// B9 stays conservative where a builtin slot is not a resolved value-only builtin, or where the builtin
+    /// call itself may reach a loop: the parameter's supplied cell stays a plan. <c>saved</c> is what the
+    /// pre-B9 rule already saved elsewhere in the program (here only <c>Id</c>'s own value-only slot).
+    /// </summary>
+    public static TheoryData<string, string, long> BuiltinSlotTransportPrograms => new()
+    {
+        // A user declaration shadows the prelude name and forwards its argument to a loop.
+        { Step + "count(v) = v.while\nF(s) = count(s)\nF(Step(0))", "3", 0 },
+        // An alias of a builtin is not the builtin's own binding: conservative.
+        { Step + "cnt = count\nF(xs) = cnt(xs)\nF(range(1, 3)), Step(0).while", "S[3, 3]", 0 },
+        // A value-only builtin call that is itself captured as a loop step: its plan's supply holds x's cell.
+        { "G(b) = b\nF(x) = if(x, false, true).while\nF(G(true))", "S[true, false, true]", 0 },
+        // The builtin call is a whole argument of a user call: it may be passed on.
+        { Step + "Id(x) = x\nF(x) = Id(count(x))\nF(range(1, 3)), Step(0).while", "S[3, 3]", 1 },
+        // A property's read is another scope's row, not the callee's own.
+        { Step + "F(x) = { G = count(x)\nG }\nF(range(1, 3)), Step(0).while", "S[3, 3]", 0 },
+        // A spread slot of a builtin call stays transport.
+        { Step + "Pair(a, b) = a, b\nF(xs) = count(range(xs*))\nF(Pair(1, 3)), Step(0).while", "S[3, 3]", 1 },
+    };
+
+    [Theory]
+    [MemberData(nameof(BuiltinSlotTransportPrograms))]
+    public async Task BuiltinSlotsThatAreNotProvedValueOnly_KeepThePlan(string source, string expected, long saved)
+    {
+        foreach (var engine in Engines)
+        {
+            var (production, oracle) = await Compare(source, engine);
+            Assert.Equal("ok " + expected, production.Value);
+            if (ForcedInvocationPlansHook.Forced) continue;
+            Assert.Equal(oracle.Plans - saved, production.Plans);
+        }
+    }
+
+    [Fact]
+    public async Task BuiltinHead_IsResolvedAtTheOccurrence_NotMatchedByName()
+    {
+        // A host-built callee whose OWN property `count` is the META builtin `while`: the head spelled `count`
+        // resolves to a loop, so the slot is transport and the supplied step stays a plan (a name match would
+        // leave it unplanned and the loop would fail loudly).
+        static Expr Build(HostOperations operations)
+        {
+            var parsed = Parser.Parse(Step + "F(s) = s\nF(Step(0))", new RunOptions { HostOperations = operations });
+            Assert.False(parsed.HasErrors);
+            var properties = parsed.Root.Properties.Select(property => property.Name != "F" ? property : property with
+            {
+                Value = ((Algorithm.User)property.Value) with
+                {
+                    Properties = [new Property("count", new Algorithm.Builtin(BuiltinId.@while), IsPublic: false)],
+                    Output = [new Expr.Call(new Expr.Resolve("count"), [new Expr.Param("s")])],
+                },
+            }).ToList();
+            return new Expr.AlgorithmExpr(parsed.Root with { Properties = properties });
+        }
+
+        foreach (var engine in Engines)
+        {
+            var (production, oracle) = await Compare(Build, engine);
+            Assert.Equal("ok 3", production.Value);
+            Assert.Equal(oracle.Plans, production.Plans);
+        }
+    }
+
+    [Fact]
+    public async Task BuiltinSlotErrorsAndBudgetFailures_MatchFullRetention()
+    {
+        foreach (var source in new[]
+        {
+            Step + "F(x) = if(true, x, 0)\nF(Missing(1)), Step(0).while",
+            Step + "Div(a, b) = a / b\nF(xs) = count(xs)\nF(Div(1, 0)), Step(0).while",
+            Step + "F(x) = if(x > 0, x, 0)\nF(range(1, 2)), Step(0).while",
+        })
+        foreach (var engine in Engines)
+        {
+            var (production, _) = await Compare(source, engine);
+            Assert.StartsWith("err ", production.Value, StringComparison.Ordinal);
+        }
+
+        const string budgeted = "F(x) = if(x > 0, x, 0)\nG(y) = y * 2\nS(n) = n + F(G(n)) - 2 * n + 1, n < 40\nS(0).while";
+        foreach (var steps in new[] { 1, 7, 50, 300 })
+        foreach (var engine in Engines)
+            await Compare(budgeted, engine, limits: new EvaluationLimits { MaxSteps = steps });
+        foreach (var depth in new[] { 2, 4, 8 })
+        foreach (var engine in Engines)
+            await Compare(budgeted, engine, limits: new EvaluationLimits { MaxDepth = depth });
+    }
+
+    [Fact]
+    public void TreeShapedAdmission_WalksInheritedNamesWithoutAMemo_AndAgreesWithTheMemoizedWalk()
+    {
+        foreach (var source in new[]
+        {
+            "Id(x) = x\nS(x) = Id(Id(Id(x + 1))), x < 10\n\nS(0).while",
+            Step + "Run(s) = { G = s.while\nG }\nRun(Step(0))",
+            Step + "K(p) = D(1)\nD(x) = x\nF(a, *rest) = { a + count(rest) }\nK(Step(0)), F(1, 2, 3), Step(0).while",
+        })
+        {
+            var root = new Expr.AlgorithmExpr(SourceProvenance.ParseValid(source).Root);
+            Assert.Null(AstStructuralPreflight.CheckAdmittedProgram(
+                root, EvaluationLimits.MaxSupportedAstDepth, AstConsumerProfile.EvaluatorIterativeJoinSpines, out var facts));
+            Assert.True(facts.TreeNodeCount > 0, source);
+            var memoized = Evaluator.InheritedTransportNames(root);
+            var tree = Evaluator.InheritedTransportNames(root, facts.TreeNodeCount);
+            Assert.Equal(memoized.IsAll, tree.IsAll);
+            Assert.Equal(memoized.KnownNames.Order(StringComparer.Ordinal), tree.KnownNames.Order(StringComparer.Ordinal));
+            // A count below the walk's frames is no admitted tree: the walk falls back to the memoized one.
+            var fallback = Evaluator.InheritedTransportNames(root, treeNodeCount: 2);
+            Assert.Equal(memoized.KnownNames.Order(StringComparer.Ordinal), fallback.KnownNames.Order(StringComparer.Ordinal));
+
+            var (result, budget) = Evaluator.RunCountedObserved(root);
+            Assert.True(result.IsOk);
+            // A per-site run keeps the admission fact; every other run has no per-site analysis state.
+            Assert.Equal(budget.UsesPerSiteInvocationPlans ? facts.TreeNodeCount : 0, budget.AdmittedTreeNodeCount);
+            Assert.Equal(!ForcedInvocationPlansHook.Forced, budget.UsesPerSiteInvocationPlans);
+        }
+    }
+
+    [Fact]
+    public void SharedAdmittedGraphs_AreNoTree()
+    {
+        var spine = SharedTransportSpine(8);
+        Assert.Null(AstStructuralPreflight.CheckAdmittedProgram(spine, EvaluationLimits.MaxSupportedAstDepth,
+            AstConsumerProfile.EvaluatorIterativeJoinSpines, out var facts));
+        Assert.Equal(0, facts.TreeNodeCount);
+    }
+
     public static TheoryData<int, long> P1Sizes => new() { { 10, 21 }, { 1000, 2001 } };
 
     [Theory]
