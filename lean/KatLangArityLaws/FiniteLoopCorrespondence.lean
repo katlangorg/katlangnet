@@ -84,11 +84,14 @@ row one cell, though both finish as one value.
   `runNeedWhileRound_*` (`WhileRoundProduction.lean`), which keeps its completion premise.
   `FuelReached` for an arbitrary binder is not proved; nothing here needs it.
 * Builtin and alias steps stay on the generic driver. `builtin_step_run` and `alias_step_run` give
-  their dispatch; the only ordinary-call facts are `ordinary_builtin_is_step_application` and
-  the reduction of an alias to its target's step.
-* `UserRowsBounded` is a premise about the run. It is discharged for numeric literal rows
-  (`FiniteLoopCorrespondenceGuards.lean`); that every row of a surface program satisfies it is not
-  proved. Canonical slots are likewise a premise of the value equality.
+  their dispatch; the only ordinary-call facts here are `ordinary_builtin_is_step_application` and
+  the reduction of an alias to its target's step. Their VALUE theorems are in
+  `FiniteLoopSurface.lean` (E-15 widening): `count_one_builtin`, `count_one_alias_value`.
+* `UserRowsBounded` and `FamilyRowsBounded` are premises about the run, and canonical slots a
+  premise of the value equality. `FiniteLoopSurface.lean` discharges them for syntactic row
+  classes (value-boundary rows; scalar rows for canonical slots); bare parameter, bare call and
+  dot-member rows stay outside, so that every row of a surface program satisfies them is not
+  proved.
 * Termination: a finite count does not make a step terminate, and nothing here bounds fuel by
   it. Fuel exhaustion is the incomplete outcome, excluded from every trace; a state reached by
   it is never compared with a completed error's.
