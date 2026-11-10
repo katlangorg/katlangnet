@@ -39,16 +39,20 @@ Proved here, over those total definitions:
 * OD-1 — an empty captured supply is the ordinary zero-slot state (`zero_state_capture`), whose
   completed loop is `()` with emitted count 0 (`zero_state_result`);
 * plain/dot preparation — `X.while` / `X.repeat(n)` prepare the bundles of `while(X)` /
-  `repeat(X, n)` (`dot_while_preparation`, `dot_repeat_preparation`).
+  `repeat(X, n)` (`dot_while_preparation`, `dot_repeat_preparation`). That the dot route then
+  reaches the ordinary call funnel and the loop arms is proved in `DotFunnel.lean` (Q-66 dot
+  funnel, ledger E-17: `dot_funnel`, `dot_repeat_funnel`, `dot_while_funnel`).
 
 That the evaluator's `applyBuiltinCounted` installs these definitions with
 `read := demandNeedRecursive` and `view := argumentViewCells`, and the finite loop beyond them, are
 proved in `FiniteLoopCorrespondence.lean` (FG-L1: `repeat_arm`, `while_arm`, `repeat_setup_stages`,
 `while_setup_stages`, `repeat_builtin_iff`, `while_builtin_iff`).
 
-NOT claimed (source facts pinned by `MetaLoopGuards.lean` and the regenerated corpora): that the dot
-route reaches the ordinary call funnel (Q-66), and anything about C# async resolution, cancellation,
-J7 plan retention or diagnostics (C#-only, `MetaLoopInterfaceTests`).
+NOT claimed (source facts pinned by `MetaLoopGuards.lean` and the regenerated corpora): the rest of
+Q-66 at expression level — binder-result refinement, callback ≡ direct-call evaluation and
+`E** ≡ (E*)*` (items (1), (3) and (4); the dot-funnel item is `DotFunnel.lean`, E-17) — and anything
+about C# async resolution, cancellation, J7 plan retention or diagnostics (C#-only,
+`MetaLoopInterfaceTests`).
 -/
 
 namespace KatLang.MetaLoopLaws
@@ -219,11 +223,13 @@ theorem zero_state_result : loopResultCounted [] = (.sequenceValue [], 0) := by
 
 /-! ## Plain and dot preparation -/
 
-/-- `X.while` prepares the argument bundle of `while(X)`. -/
+/-- `X.while` prepares the argument bundle of `while(X)`. The run itself is
+    `DotFunnel.dot_while_funnel` (the `while` arm via `dot_funnel`, E-17). -/
 theorem dot_while_preparation (receiver : Expr) :
     prepareLexicalDotCallArgs receiver none = [receiver] := rfl
 
-/-- `X.repeat(n)` prepares the argument bundle of `repeat(X, n)`. -/
+/-- `X.repeat(n)` prepares the argument bundle of `repeat(X, n)`. The run itself is
+    `DotFunnel.dot_repeat_funnel` (the `repeat` arm via `dot_funnel`, E-17). -/
 theorem dot_repeat_preparation (receiver count : Expr) :
     prepareLexicalDotCallArgs receiver (some [count]) = [receiver, count] := rfl
 

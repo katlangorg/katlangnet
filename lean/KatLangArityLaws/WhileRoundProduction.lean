@@ -682,8 +682,8 @@ theorem lookupAssoc_append_left {A : Type} (x : Ident) (l r : Assoc Ident A) (v 
     obtain ⟨k, w⟩ := kv
     simp only [lookupAssoc, List.cons_append] at h ⊢
     split
-    · rename_i hk; rw [if_pos hk] at h; exact h
-    · rename_i hk; rw [if_neg hk] at h; exact ih h
+    · rename_i hk; rw [ite_eq_left hk] at h; exact h
+    · rename_i hk; rw [ite_eq_right hk] at h; exact ih h
 
 /-- **The rows read the binder's cells.** A name the binder bound to address `addr` is found at
     `addr` in the context every row of the round is formed in (`enteredCtx` over the binding's
@@ -765,7 +765,7 @@ theorem property_cache_hit_production (k : ZeroArgPropertyAccessKind) (owner : A
   refine production_of_answer_free (.evalZeroArgPropertyAccessCounted k owner binding resolved ctx env .read) s _
     (fun rec => ?_) nofun
   show (EvalBody.evalZeroArgPropertyAccessCounted rec k owner binding resolved ctx env .read).runState s = _
-  simp only [EvalBody.evalZeroArgPropertyAccessCounted, hcache, if_true, EvalM.bind_runState]
+  simp only [EvalBody.evalZeroArgPropertyAccessCounted, hcache, ite_true, EvalM.bind_runState]
   show (match ZeroArgPropertyCache.lookup s.zeroArgPropertyCache _ with
     | some cached => (pure cached : EvalM CountedResult)
     | none => _).runState s = _

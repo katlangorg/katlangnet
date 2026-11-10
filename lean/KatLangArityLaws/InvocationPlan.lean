@@ -394,7 +394,7 @@ theorem prepare_unprepared_incomplete (ev : NeedSupply.SpreadEval) (a : Nat)
     (NeedPlan.prepare ev a shape).runState s =
       (.error .fuelExhausted, ((NeedSupply.form ev shape.caller shape.values shape.args).runState
         (withPlan a .preparing s)).2) := by
-  simp only [NeedPlan.prepare, bind_run, get_run, h, hp, setSupply_run, evalAttempt_run, hinc, if_true]
+  simp only [NeedPlan.prepare, bind_run, get_run, h, hp, setSupply_run, evalAttempt_run, hinc, ite_true]
 
 
 theorem modify_get (h : Array NeedCell) (a b : Nat) (f : NeedCell → NeedCell) :
@@ -420,12 +420,12 @@ theorem bookkeeping_get (h : Array NeedCell) (a b : Nat) (g : NeedCell → NeedC
   by_cases hab : a = b
   · left
     refine ⟨hab, ?_⟩
-    simp only [hab, if_true] at hc
+    simp only [hab, ite_true] at hc
     cases h0 : h[b]? with
     | none => rw [h0] at hc; cases hc
     | some c₀ => rw [h0] at hc; exact ⟨c₀, rfl, (Option.some.inj hc).symm⟩
   · right
-    simp only [hab, if_false] at hc
+    simp only [hab, ite_false] at hc
     exact ⟨hab, hc⟩
 
 theorem keep_withPlan_preparing (s : EvalState) (a : Nat) (cell : NeedCell)
@@ -1220,9 +1220,10 @@ theorem production_value_executes_plan (a : Nat) (s : EvalState) (cell : NeedCel
     `allocateNeed`, `projectNeedCallable`'s CALLABLE memo, `NeedPlan.prepare`, `NeedDemand.step`
     and the memo records `NeedPlan.setCallee` / `NeedLink.setReceiver` / `NeedPlan.setRoute`
     (META-S3-1/S3-4: they write only the `callee` / `receiver` / `route` field, kept by `CellKept`),
-    `prepare` and `step` proved disciplined here; Lean cannot unfold the `partial` definitions, so
-    this is an explicit hypothesis, exercised by `InvocationPlanGuards`. META-S3-4 adds the route
-    classifier and the CALLABLE projection the plan route installs. -/
+    `prepare` and `step` proved disciplined here. It was stated as an explicit hypothesis while the
+    evaluator was `partial` (before R7, whose total core Lean can unfold); it stays a named `Prop` so
+    `productionDiscipline_holds` can discharge it, and `InvocationPlanGuards` still exercises it.
+    META-S3-4 adds the route classifier and the CALLABLE projection the plan route installs. -/
 def ProductionDiscipline : Prop :=
   (∀ a e c v, Disciplined (evalSuppliedAt a e c v)) ∧
   (∀ f c, Disciplined (resolveCalleeAlg f c)) ∧
@@ -1392,7 +1393,7 @@ theorem withPlan_self (a : Nat) (p : NeedPlanSupply) (s : EvalState) (cell : Nee
   simp only [modify_get]
   by_cases hi : a = i
   · subst hi
-    simp only [h, if_true, Option.map_some]
+    simp only [h, ite_true, Option.map_some]
     rw [← hp]
   · simp [hi]
 
@@ -1577,7 +1578,9 @@ theorem prepare_transports_parameter (ev : NeedSupply.SpreadEval)
 
 /-- Non-vacuity of `fresh_plan_is_ordinary_call`'s callback contracts: heap-free callbacks (and
     an argument-free plan) satisfy all of them. This witnesses abstract satisfiability only,
-    not applicability to the partial production callbacks. -/
+    not applicability to the production callbacks (the total R7 evaluator): over reachable META
+    states the unrestricted contract is false, and `PlanConservativity.lean` relativizes it
+    (ledger E-18). -/
 theorem oblivious_pure {α : Type} (a : Nat) (x : α) : Oblivious a (pure x : EvalM α) :=
   fun _ _ _ => rfl
 

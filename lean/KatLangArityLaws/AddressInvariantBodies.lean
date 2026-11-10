@@ -215,8 +215,8 @@ variable {rec : EvalRec} (hrec : RecSound rec)
 include hrec
 
 theorem outputRowsCollect_spec (rowCtx : EvalCtx) (env : ValEnv) : ∀ (rows : List Expr) {P : Array NeedCell → Prop}
-    (hP : HMono P) (acc : List Result) (emitted : Nat)
-    (hreq : ∀ h, P h → ValidCtx h rowCtx ∧ VEV h env ∧ RLV h acc),
+    (_hP : HMono P) (acc : List Result) (emitted : Nat)
+    (_hreq : ∀ h, P h → ValidCtx h rowCtx ∧ VEV h env ∧ RLV h acc),
     SoundI P (EvalBody.evalOutputRowsPreparedCore.collect rec rowCtx env rows acc emitted)
       (fun p h => PreparedV h p) := by
   intro rows
@@ -225,7 +225,7 @@ theorem outputRowsCollect_spec (rowCtx : EvalCtx) (env : ValEnv) : ∀ (rows : L
   | cons e rest ih => intro P hP acc emitted hreq; unfold EvalBody.evalOutputRowsPreparedCore.collect; ht_tac
 
 theorem explicitRowsCollect_spec (rowCtx : EvalCtx) (env : ValEnv) : ∀ (rows : List Expr) {P : Array NeedCell → Prop}
-    (hP : HMono P) (acc : List Result) (hreq : ∀ h, P h → ValidCtx h rowCtx ∧ VEV h env ∧ RLV h acc),
+    (_hP : HMono P) (acc : List Result) (_hreq : ∀ h, P h → ValidCtx h rowCtx ∧ VEV h env ∧ RLV h acc),
     SoundI P (EvalBody.evalExplicitSequenceValueRowSlots.collect rec rowCtx env rows acc)
       (fun xs h => RLV h xs) := by
   intro rows
@@ -234,7 +234,7 @@ theorem explicitRowsCollect_spec (rowCtx : EvalCtx) (env : ValEnv) : ∀ (rows :
   | cons e rest ih => intro P hP acc hreq; unfold EvalBody.evalExplicitSequenceValueRowSlots.collect; ht_tac
 
 theorem listLiteralCollect_spec (ctx : EvalCtx) (env : ValEnv) : ∀ (elements : List Expr) {P : Array NeedCell → Prop}
-    (hP : HMono P) (acc : List Result) (hreq : ∀ h, P h → ValidCtx h ctx ∧ VEV h env ∧ RLV h acc),
+    (_hP : HMono P) (acc : List Result) (_hreq : ∀ h, P h → ValidCtx h ctx ∧ VEV h env ∧ RLV h acc),
     SoundI P (EvalBody.evalListLiteralCounted.collect rec ctx env elements acc) (fun xs h => RLV h xs) := by
   intro elements
   induction elements with
@@ -242,7 +242,7 @@ theorem listLiteralCollect_spec (ctx : EvalCtx) (env : ValEnv) : ∀ (elements :
   | cons e rest ih => intro P hP acc hreq; unfold EvalBody.evalListLiteralCounted.collect; ht_tac
 
 theorem sequenceConstructLoop_spec (ctx : EvalCtx) (env : ValEnv) : ∀ (leaves : List Expr) {P : Array NeedCell → Prop}
-    (hP : HMono P) (items : List Result) (hreq : ∀ h, P h → ValidCtx h ctx ∧ VEV h env ∧ RLV h items),
+    (_hP : HMono P) (items : List Result) (_hreq : ∀ h, P h → ValidCtx h ctx ∧ VEV h env ∧ RLV h items),
     SoundI P (EvalBody.evalSequenceConstructCounted.loop rec ctx env leaves items) (fun r h => CRV h r) := by
   intro leaves
   induction leaves with
@@ -250,8 +250,8 @@ theorem sequenceConstructLoop_spec (ctx : EvalCtx) (env : ValEnv) : ∀ (leaves 
   | cons e rest ih => intro P hP items hreq; unfold EvalBody.evalSequenceConstructCounted.loop; ht_tac
 
 theorem prepareControls_spec (b : Builtin) (ctx : EvalCtx) (env : ValEnv) :
-    ∀ (descriptors : List SequenceBuiltinSuffixArgDescriptor) {P : Array NeedCell → Prop} (hP : HMono P)
-      (items : List CallableCallItem) (hreq : ∀ h, P h → ValidCtx h ctx ∧ VEV h env ∧ ItemLV h items),
+    ∀ (descriptors : List SequenceBuiltinSuffixArgDescriptor) {P : Array NeedCell → Prop} (_hP : HMono P)
+      (items : List CallableCallItem) (_hreq : ∀ h, P h → ValidCtx h ctx ∧ VEV h env ∧ ItemLV h items),
     SoundI P (EvalBody.bindSequenceBuiltinArguments.prepareControls rec b ctx env descriptors items)
       (fun xs h => SuffixLV h xs) := by
   intro descriptors
@@ -264,8 +264,8 @@ theorem prepareControls_spec (b : Builtin) (ctx : EvalCtx) (env : ValEnv) :
     cases items <;> (unfold EvalBody.bindSequenceBuiltinArguments.prepareControls; ht_tac)
 
 theorem reduceLoop_spec (stepAlg : Algorithm) (ctx : EvalCtx) (env : ValEnv) :
-    ∀ (items : List CountedResult) {P : Array NeedCell → Prop} (hP : HMono P) (acc : CountedResult)
-      (hreq : ∀ h, P h → ValidCtx h ctx ∧ VEV h env ∧ CRLV h items ∧ CRV h acc),
+    ∀ (items : List CountedResult) {P : Array NeedCell → Prop} (_hP : HMono P) (acc : CountedResult)
+      (_hreq : ∀ h, P h → ValidCtx h ctx ∧ VEV h env ∧ CRLV h items ∧ CRV h acc),
     SoundI P (EvalBody.evalReduceCounted.reduceLoop rec stepAlg ctx env items acc) (fun r h => CRV h r) := by
   intro items
   induction items with
@@ -273,8 +273,8 @@ theorem reduceLoop_spec (stepAlg : Algorithm) (ctx : EvalCtx) (env : ValEnv) :
   | cons i rest ih => intro P hP acc hreq; unfold EvalBody.evalReduceCounted.reduceLoop; ht_tac
 
 theorem filterLoop_spec (predicateAlg : Algorithm) (ctx : EvalCtx) (env : ValEnv) :
-    ∀ (items : List CountedResult) {P : Array NeedCell → Prop} (hP : HMono P) (index : Nat)
-      (hreq : ∀ h, P h → ValidCtx h ctx ∧ VEV h env ∧ CRLV h items),
+    ∀ (items : List CountedResult) {P : Array NeedCell → Prop} (_hP : HMono P) (index : Nat)
+      (_hreq : ∀ h, P h → ValidCtx h ctx ∧ VEV h env ∧ CRLV h items),
     SoundI P (EvalBody.evalFilterCounted.filterLoop rec predicateAlg ctx env index items) (fun xs h => RLV h xs) := by
   intro items
   induction items with
@@ -282,8 +282,8 @@ theorem filterLoop_spec (predicateAlg : Algorithm) (ctx : EvalCtx) (env : ValEnv
   | cons i rest ih => intro P hP index hreq; unfold EvalBody.evalFilterCounted.filterLoop; ht_tac
 
 theorem mapLoop_spec (transformAlg : Algorithm) (ctx : EvalCtx) (env : ValEnv) :
-    ∀ (items : List CountedResult) {P : Array NeedCell → Prop} (hP : HMono P)
-      (hreq : ∀ h, P h → ValidCtx h ctx ∧ VEV h env ∧ CRLV h items),
+    ∀ (items : List CountedResult) {P : Array NeedCell → Prop} (_hP : HMono P)
+      (_hreq : ∀ h, P h → ValidCtx h ctx ∧ VEV h env ∧ CRLV h items),
     SoundI P (EvalBody.evalMapCounted.mapLoop rec transformAlg ctx env items) (fun xs h => RLV h xs) := by
   intro items
   induction items with
@@ -291,8 +291,8 @@ theorem mapLoop_spec (transformAlg : Algorithm) (ctx : EvalCtx) (env : ValEnv) :
   | cons i rest ih => intro P hP hreq; unfold EvalBody.evalMapCounted.mapLoop; ht_tac
 
 theorem repeatLoop_spec (ctx : EvalCtx) (env : ValEnv) (step : ResolvedArgumentAlgorithm) (stepName : String) :
-    ∀ (remaining : Nat) {P : Array NeedCell → Prop} (hP : HMono P) (cells : List Nat)
-      (hreq : ∀ h, P h → ValidCtx h ctx ∧ VEV h env ∧ RAV h step ∧ ValidAddresses h cells),
+    ∀ (remaining : Nat) {P : Array NeedCell → Prop} (_hP : HMono P) (cells : List Nat)
+      (_hreq : ∀ h, P h → ValidCtx h ctx ∧ VEV h env ∧ RAV h step ∧ ValidAddresses h cells),
     SoundI P (EvalBody.applyBuiltinCounted.repeatLoop rec ctx env step stepName remaining cells)
       (fun xs h => ValidAddresses h xs) := by
   intro remaining
@@ -712,22 +712,22 @@ theorem retainedCellSlice_spec {rec : EvalRec} (hrec : RecSound rec) (fuel addre
     intro hp st vs ps
     cases hc : st.needs[address]? with
     | none =>
-      simp only [hc]
+      simp only
       exact SoundAt.pure (Q := fun r h => OptSliceV h r) none vs (fun _ e => by cases e)
     | some cell =>
       have hcell := (vs.cells address cell hc).susp
-      simp only [hc]
+      simp only
       cases hs : cell.suspension with
       | collector slice =>
         rw [hs] at hcell
-        simp only [hs]
+        simp only
         exact SoundAt.pure (Q := fun r h => OptSliceV h r) (some slice) vs (fun _ e => by cases e; exact hcell)
       | ready _ =>
-        simp only [hs]
+        simp only
         exact SoundAt.pure (Q := fun r h => OptSliceV h r) none vs (fun _ e => by cases e)
       | expression source caller values =>
         rw [hs] at hcell
-        simp only [hs]
+        simp only
         have hm : HMono (fun h => ValidCtx h caller) := fun _ _ g v => ValidCtx.mono g v
         refine SoundAt.of_soundI (P := fun h => ValidCtx h caller)
           (SoundI.bind (transparentRetainedCell_spec hrec source caller (fun _ v => v))
@@ -897,21 +897,21 @@ theorem collectorSliceAt_spec {P : Array NeedCell → Prop} {address : Nat} :
   intro hp st vs ps
   cases hc : st.needs[address]? with
   | none =>
-    simp only [hc]
+    simp only
     exact SoundAt.throw _ vs
   | some cell =>
     have hcell := (vs.cells address cell hc).susp
-    simp only [hc]
+    simp only
     cases hs : cell.suspension with
     | collector slice =>
       rw [hs] at hcell
-      simp only [hs]
+      simp only
       exact SoundAt.pure (Q := fun r h => OptSliceV h r) (some slice) vs (fun _ e => by cases e; exact hcell)
     | ready _ =>
-      simp only [hs]
+      simp only
       exact SoundAt.pure (Q := fun r h => OptSliceV h r) none vs (fun _ e => by cases e)
     | expression _ _ _ =>
-      simp only [hs]
+      simp only
       exact SoundAt.pure (Q := fun r h => OptSliceV h r) none vs (fun _ e => by cases e)
 
 attribute [ht_spec] collectorSliceAt_spec

@@ -998,7 +998,7 @@ theorem suspended_transparent_without_written
   | ready _ => exact transparent_pure a none
   | collector _ => exact transparent_pure a none
   | expression source caller values =>
-    simp only [NeedProjection.suspended, h source caller values rfl, if_true]
+    simp only [NeedProjection.suspended, h source caller values rfl, ite_true]
     exact transparent_pure a none
 
 /-- P10 instance on the production arms: projecting a Ready, collector or capture cell is
@@ -1016,7 +1016,7 @@ theorem identityless_projection (written : Expr → EvalCtx → EvalM (Option Al
     | ready _ => rfl
     | collector _ => rfl
     | expression source caller values =>
-      simp only [NeedProjection.suspended, h source caller values hsus, if_true]
+      simp only [NeedProjection.suspended, h source caller values hsus, ite_true]
       rfl
   rw [transparent_projection_is_marker_free _ a s cell hc hs
     (suspended_transparent_without_written written a cell.suspension h) (by rw [hnone]; rfl)]

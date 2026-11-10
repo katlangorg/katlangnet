@@ -45,7 +45,7 @@ theorem runTick_advances (s : EvalState) (h : s.tickCounter < tickCounterLimit) 
     else
       modify (fun s => { s with tickCounter := s.tickCounter + 1 }) >>= fun _ =>
         (pure (Result.atom (Int.ofNat (s.tickCounter + 1)), 1) : EvalM CountedResult)).runState s = _
-  rw [if_neg hnot]
+  rw [ite_eq_right hnot]
   rfl
 
 /-- At the checked limit the primitive is the deterministic domain refusal and the state is
@@ -59,7 +59,7 @@ theorem runTick_exhausted (s : EvalState) (h : tickCounterLimit ≤ s.tickCounte
     else
       modify (fun s => { s with tickCounter := s.tickCounter + 1 }) >>= fun _ =>
         (pure (Result.atom (Int.ofNat (s.tickCounter + 1)), 1) : EvalM CountedResult)).runState s = _
-  rw [if_pos h]
+  rw [ite_eq_left h]
   rfl
 
 /-- Successive successful executions return strictly increasing values: the value returned is the

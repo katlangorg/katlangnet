@@ -309,7 +309,7 @@ theorem entered_record (a : Algorithm) (ctx : EvalCtx) (env : ValEnv) (s : EvalS
     (enteredState a ctx env s).lexicalActivations[s.lexicalActivations.size]? =
       some (enteredActivation a ctx env) := by
   unfold enteredState
-  rw [if_pos hrec]
+  rw [ite_eq_left hrec]
   exact pushed_record rfl
 
 /-- **Ordinary body entry establishes the retained chain**: a recording entry's head scope is valid
@@ -333,7 +333,7 @@ theorem entered_site_of_parent (a : Algorithm) (ctx : EvalCtx) (env : ValEnv) (s
     RetainedAt (some (enteredSite a s)) (enteredState a ctx env s) n := by
   have hs : enteredState a ctx env s = s := by simp [enteredState, hrec]
   rw [hs]
-  simp only [enteredSite, hrec, Bool.false_eq_true, if_false]
+  simp only [enteredSite, hrec, Bool.false_eq_true, ite_false]
   exact hr.unactivated_level _ _ _ _ _ _
 
 /-- **Any entry whose context carries the retained `n`** — an inherited entry, a selected family
@@ -344,7 +344,7 @@ theorem entered_site_retained (a : Algorithm) (ctx : EvalCtx) (env : ValEnv) (s 
   cases hrec : recordsActivation a with
   | false => exact entered_site_of_parent a ctx env s hrec hr
   | true =>
-    simp only [enteredSite, hrec, if_true]
+    simp only [enteredSite, hrec, ite_true]
     exact hn ▸ entered_scope_retained a ctx env s hrec
 
 /-- **A read-owned entry retains the declaring context.** The entry of `enterPropertyOwnerBody`

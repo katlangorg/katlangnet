@@ -206,7 +206,7 @@ theorem calleeCell_unrecorded (classify : NeedPlan.CallShape → EvalM PlanRoute
     · subst hi; rfl
     · have hb : (r == PlanRoute.intrinsic) = false := by
         cases r <;> first | rfl | exact absurd rfl hi
-      simp only [hb, Bool.false_eq_true, ↓reduceIte, if_neg hi, bind_run, effective_caller, effective_values]
+      simp only [hb, Bool.false_eq_true, ↓reduceIte, ite_eq_right hi, bind_run, effective_caller, effective_values]
       rcases (supplyNeed (NeedPlan.effective shape r).callee shape.caller shape.values).runState t with ⟨_ | c, u⟩ <;> rfl
 
 /-- The inert half of the first observation (META-S3-4): with the plan's route `r` recorded and
@@ -223,7 +223,7 @@ theorem calleeCell_establishes (classify : NeedPlan.CallShape → EvalM PlanRout
        | (.error e, t) => (.error e, t)) := by
   rw [calleeCell_unrecorded classify a s cell shape hc h hshape,
     routeOf_recorded classify a shape s cell r hc hr]
-  exact if_neg hi
+  exact ite_eq_right hi
 
 /-- D-1A: an intrinsic route has no callee cell — the refusal, with no effect. -/
 theorem calleeCell_intrinsic (classify : NeedPlan.CallShape → EvalM PlanRoute)
@@ -295,8 +295,8 @@ theorem calleeCell_canonical (classify : NeedPlan.CallShape → EvalM PlanRoute)
           · obtain ⟨c1, hc1, _⟩ := k1 a cell hc
             dsimp only at h
             by_cases hi : r = .intrinsic
-            · rw [if_pos hi] at h; cases h
-            · rw [if_neg hi] at h
+            · rw [ite_eq_left hi] at h; cases h
+            · rw [ite_eq_right hi] at h
               have k2 := disciplined_supply (NeedPlan.effective shape r).callee shape.caller shape.values t1
               generalize hsu : (supplyNeed (NeedPlan.effective shape r).callee shape.caller shape.values).runState t1 = su at h k2
               rcases su with ⟨_ | c2, t2⟩

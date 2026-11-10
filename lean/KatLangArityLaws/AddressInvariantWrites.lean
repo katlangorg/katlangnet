@@ -113,7 +113,7 @@ theorem inv_set {s : EvalState} (vs : Inv s) (a : Nat) (c' : NeedCell)
     · rename_i ha
       by_cases hab : a = b
       · subst hab
-        simp [ha, Array.getElem?_eq_none (Nat.le_of_not_lt ha)]
+        simp [ha]
       · simp [hab]
   refine ⟨?_, ?_, fun i act e => ActV.mono g (vs.activations i act e),
     fun p m => CRV.mono g (vs.cache p m), fun p m => Nat.lt_of_lt_of_le (vs.aliasCells p m) g⟩

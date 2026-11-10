@@ -1487,8 +1487,8 @@ theorem lookup_insert_keep (c : ZeroArgPropertyCache) (key : ZeroArgPropertyCach
     · exact h
     · simp only [ZeroArgPropertyCache.lookup] at h ⊢
       split
-      · rename_i hk; rw [if_pos hk] at h; exact h
-      · rename_i hk; rw [if_neg hk] at h; exact ih h
+      · rename_i hk; rw [ite_eq_left hk] at h; exact h
+      · rename_i hk; rw [ite_eq_right hk] at h; exact ih h
 
 macro_rules | `(tactic| pres_rel_close) => `(tactic| (first | (exact fun _ _ h => h) | (exact fun _ _ h => lookup_insert_keep _ _ _ _ _ h)))
 
@@ -1580,8 +1580,8 @@ theorem invariant_transfer_completed (R : EvalState → EvalState → Prop) (hre
     have hpart : ∀ c, Preserves R (completedPart n c) := by
       intro c' s'
       by_cases hc' : Completes (evalFuel n c') s'
-      · simp only [completedPart, if_pos hc']; exact ih c' s' hc'
-      · simp only [completedPart, if_neg hc']; exact hrefl s'
+      · simp only [completedPart, ite_eq_left hc']; exact ih c' s' hc'
+      · simp only [completedPart, ite_eq_right hc']; exact hrefl s'
     have hstep := evalStep_monotone _ _ (evalFuel_approx_completedPart n) c s
     have hne := (evalFuel_completes_iff (n + 1) c s).1 hc
     rw [evalFuel_succ] at hne ⊢

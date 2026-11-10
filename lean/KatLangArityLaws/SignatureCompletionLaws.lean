@@ -235,7 +235,7 @@ theorem liftedFrom_congr {opened : Nat → Bool} {look look' : Nat → Patterns}
       fun x hx => h x (List.mem_cons_of_mem _ hx)
     simp only [liftedFrom]
     by_cases ha : r.active opened = true
-    · simp only [ha, if_true]
+    · simp only [ha, ite_true]
       have hsame : signatureOf look r.target = signatureOf look' r.target
           ∨ (acceptsZero (signatureOf look r.target) = true ∧ acceptsZero (signatureOf look' r.target) = true) := by
         cases ht : r.target with
@@ -248,9 +248,9 @@ theorem liftedFrom_congr {opened : Nat → Bool} {look look' : Nat → Patterns}
         · split
           · exact ih _ hrest
           · rw [ih _ hrest]
-      · rw [if_pos z1, if_pos z2]
+      · rw [ite_eq_left z1, ite_eq_left z2]
         exact ih _ hrest
-    · simp only [ha, if_false]
+    · simp only [ha]
       exact ih _ hrest
 
 /-- The composition of an equation reads its signatures only through its active member reads. -/

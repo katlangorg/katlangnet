@@ -1008,9 +1008,9 @@ theorem anchorEvents_prefix (k : NeedCapabilities EvalM) (anchor : CountedResult
     · exact ⟨rest.map NeedEvent.value, rfl⟩
     · dsimp only
       by_cases h : (own == anchor) = true
-      · rw [if_pos h]
+      · rw [ite_eq_left h]
         exact (List.prefix_cons_inj _).mpr (ih s1)
-      · rw [if_neg h]
+      · rw [ite_eq_right h]
         exact ⟨rest.map NeedEvent.value, rfl⟩
 
 /-- A repeated occurrence's events are always a PREFIX of the one canonical order

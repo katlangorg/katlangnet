@@ -98,7 +98,7 @@ theorem retained_count (demand : Nat → EvalM CountedResult) (metadata : Sequen
       (.ok (.atom (Int.ofNat slice.length), 1), s) := by
   simp only [retainedCollectorBuiltin]
   rw [KatLang.ArgumentViewLaws.count_run]
-  simp [retainedSourced, pure_run]
+  simp [retainedSourced]
 
 /-- **`count` demands no element**: two runs that differ only in cell demand agree. -/
 theorem retained_count_demands_nothing (d₁ d₂ : Nat → EvalM CountedResult) (metadata : SequenceBuiltinMetadata)
@@ -156,7 +156,7 @@ theorem retained_take_nonpositive_demands_nothing (demand : Nat → EvalM Counte
     (slice : List Nat) (count : Int) (s : EvalState) (hcount : count ≤ 0) :
     (NeedDemand.materialize demand (takePrefix slice count)).runState s =
       (.ok (makeCollectionListResult []), s) := by
-  simp only [takePrefix, if_pos hcount]
+  simp only [takePrefix, ite_eq_left hcount]
   rfl
 
 /-- `take` depends on cell demand only inside its prefix. -/

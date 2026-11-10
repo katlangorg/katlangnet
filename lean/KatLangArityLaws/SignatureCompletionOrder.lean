@@ -59,7 +59,7 @@ theorem evalComponent_refines {c c' : Nat → Cell} (hr : Refines c c') (fuel mo
       apply hE
       unfold evalComponent
       simp only
-      rw [if_pos h]
+      rw [ite_eq_left h]
   have heq : ∀ t ∈ outsideReads sys opened members, c t = c' t := by
     intro t ht
     rcases hr t with ⟨he, _⟩ | e
@@ -90,7 +90,7 @@ theorem evalComponent_refines {c c' : Nat → Cell} (hr : Refines c c') (fuel mo
     · split
       · rfl
       · rename_i n1 n2 n3
-        rw [if_neg n1, if_neg n2, if_neg n3] at hE
+        rw [ite_eq_right n1, ite_eq_right n2, ite_eq_right n3] at hE
         generalize lowerReads sys opened members c = lower at hE ⊢
         cases hc : completeLoop (roundStep sys opened members lower) (sameState members) fuel
             (gateState sys opened members lower) (gateState sys opened members lower) 0 1 with
@@ -127,9 +127,9 @@ theorem layer_refines (reach : Nat → List Nat) {c c' : Memo Cell} (hr : Refine
           all_congr_on fun t _ => refines_pending hr t
         rw [hready]
         by_cases hrd : layerReady sys opened (componentOf sys reach k) c'.get = true
-        · rw [if_pos hrd, if_pos hrd]
+        · rw [ite_eq_left hrd, ite_eq_left hrd]
           exact evalComponent_refines sys opened hr fuel more _ k
-        · rw [if_neg hrd, if_neg hrd]
+        · rw [ite_eq_right hrd, ite_eq_right hrd]
           exact .inr rfl
   · right
     rw [show (layer sys opened fuel reach c).get k = .pending from tabulate_of_not_mem _ _ _ hk,
@@ -195,7 +195,7 @@ theorem groundednessOf_stable {linkSet : List Nat} {assigned : Nat → Bool}
   simp only at h ⊢
   by_cases h0 : ((subsetsOf (linkSet.filter assigned)).filter (!·.isEmpty)).any
       (fun support => noVerdict sys (evalVector sys (fun k => assigned k && !classOf support k) fuel).get) = true
-  · rw [if_pos h0] at h
+  · rw [ite_eq_left h0] at h
     exact absurd rfl h
   have h0' := Bool.eq_false_iff.2 h0
   have hsame := readings_congr sys wf fuel more h0'
@@ -217,18 +217,18 @@ theorem rowOf_stable {linkSet : List Nat} {assigned : Nat → Bool}
   unfold rowOf at h ⊢
   simp only at h ⊢
   by_cases h1 : noVerdict sys (evalVector sys assigned fuel).get = true
-  · rw [if_pos h1] at h; cases h
+  · rw [ite_eq_left h1] at h; cases h
   have hsame := evalVector_stable sys assigned wf fuel more (Bool.eq_false_iff.2 h1)
   rw [hsame]
-  rw [if_neg h1] at h ⊢
+  rw [ite_eq_right h1] at h ⊢
   split
   · rfl
   · rename_i h2
-    rw [if_neg h2] at h
+    rw [ite_eq_right h2] at h
     split
     · rfl
     · rename_i h3
-      rw [if_neg h3] at h
+      rw [ite_eq_right h3] at h
       have hg : groundednessOf sys fuel linkSet assigned ≠ .noVerdict := by
         intro e
         rw [e] at h
@@ -246,7 +246,7 @@ theorem select_verdict_stable (h : (select sys fuel).isExhausted = false) :
     | false => rfl
     | true =>
       unfold rule at h
-      rw [if_pos hc] at h
+      rw [ite_eq_left hc] at h
       cases h
   have heq : ((subsetsOf (links sys)).map fun gamma => rowOf sys (fuel + more) (links sys) (classOf gamma))
       = (subsetsOf (links sys)).map fun gamma => rowOf sys fuel (links sys) (classOf gamma) :=
@@ -281,7 +281,7 @@ private theorem idx_inj : ∀ {l : List Nat} {a b : Nat}, a ∈ l → l.idxOf a 
         simp [e3, e4] at hab
       · have e3 : (x == a) = false := by simpa using e1
         have e4 : (x == b) = false := by simpa using e2
-        simp only [e3, e4, cond_false, if_false, Bool.false_eq_true] at hab
+        simp only [e3, e4, ite_false, Bool.false_eq_true] at hab
         exact ih ha' (by omega)
 
 private theorem idx_split {k : Nat} {rest : List Nat} : ∀ (pre : List Nat) {d : Nat}, k ∉ pre → d ∈ pre →
@@ -304,7 +304,7 @@ private theorem idx_split {k : Nat} {rest : List Nat} : ∀ (pre : List Nat) {d 
         · exact absurd h.symm e
         · exact h
       have := ih hk' hd'
-      simp only [hdx, Bool.false_eq_true, cond_false, if_false]
+      simp only [hdx, Bool.false_eq_true, ite_false]
       omega
 
 /-- The composition law applied once per key, in the given order, each from what came before it. -/
@@ -374,7 +374,7 @@ private theorem layer_clean {cells : Memo Cell}
     · rw [hp]
       simp only
       by_cases hr : layerReady sys opened (componentOf sys (reachTable sys opened) k) cells.get = true
-      · rw [if_pos hr]
+      · rw [ite_eq_left hr]
         right
         generalize hm : componentOf sys (reachTable sys opened) k = members
         have hmem : ∀ x ∈ members, x = k := by
@@ -405,9 +405,9 @@ private theorem layer_clean {cells : Memo Cell}
           exact no_self_read sys opened wf topo hk ht etk
         unfold evalComponent
         simp only
-        rw [if_neg (by simp [hnoex]), if_neg (by simp [hnome]), if_pos (by simp [hgate])]
+        rw [ite_eq_right (by simp [hnoex]), ite_eq_right (by simp [hnome]), ite_eq_left (by simp [hgate])]
         exact ⟨_, rfl⟩
-      · rw [if_neg hr]
+      · rw [ite_eq_right hr]
         exact .inl rfl
     · rw [hf]
       exact .inr ⟨f, rfl⟩
@@ -501,11 +501,11 @@ private theorem applyOrder_solves : ∀ (rest pre : List Nat) (facts : Nat → F
         subst e
         have := idx_before sys opened wf topo ho topo.nodup hp
         omega
-      simp only [hne, if_false]
+      simp only [hne, ite_false]
       rw [h d hp]
       exact hcongr
     · subst e
-      simp only [if_true]
+      simp only [ite_true]
       exact hcongr
 
 /-- THE ACYCLIC CASE IS PLAIN DEPENDENCY ORDER. For a topological order of the active reads, the reading of the system is

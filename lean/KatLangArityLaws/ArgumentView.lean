@@ -120,7 +120,7 @@ theorem viewCells_routes (sp : NeedSupply.SpreadEval) (classify : NeedPlan.CallS
     · subst hi; rfl
     · have hb : (r == PlanRoute.intrinsic) = false := by
         cases r <;> first | rfl | exact absurd rfl hi
-      simp only [hb, Bool.false_eq_true, ↓reduceIte, if_neg hi]
+      simp only [hb, Bool.false_eq_true, ↓reduceIte, ite_eq_right hi]
 
 /-- With the plan's callable route recorded, the view's supply IS the plan's preparation over the
     route's effective bundle. -/
@@ -131,7 +131,7 @@ theorem viewCells_run (sp : NeedSupply.SpreadEval) (classify : NeedPlan.CallShap
     (NeedPlan.viewCells sp classify a).runState s =
       (NeedPlan.prepare sp a (NeedPlan.effective shape r)).runState s := by
   rw [viewCells_routes sp classify a s shape h, routeOf_recorded classify a shape s cell r hc hr]
-  exact if_neg hi
+  exact ite_eq_right hi
 
 /-- D-1A: the view of an intrinsic-routed capture has no supply — the refusal, with no effect. -/
 theorem viewCells_intrinsic (sp : NeedSupply.SpreadEval) (classify : NeedPlan.CallShape → EvalM PlanRoute)
@@ -196,8 +196,8 @@ theorem disciplined_viewCells (sp : NeedSupply.SpreadEval) (hsp : ∀ e c v, Dis
     · exact k
     · dsimp only
       by_cases hi : r = .intrinsic
-      · rw [if_pos hi]; exact k
-      · rw [if_neg hi]; exact k.trans (disciplined_prepare sp hsp a _ t)
+      · rw [ite_eq_left hi]; exact k
+      · rw [ite_eq_right hi]; exact k.trans (disciplined_prepare sp hsp a _ t)
 
 /-- **Supply formation happens once.** After a first view read of an unprepared plan with a recorded
     route (and then any disciplined computation — the original VALUE, `Invoke()`, other view

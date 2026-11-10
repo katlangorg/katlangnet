@@ -263,7 +263,7 @@ theorem classify_call_link (resolve : Expr → EvalCtx → EvalM (Option Algorit
        | (.ok true, t) => (.ok .algorithm, t)
        | (.ok false, t) => (.ok .call, t)
        | (.error e, t) => (.error e, t)) := by
-  simp only [classifyPlanRouteWith, linkEdge?, if_true, bind_run]
+  simp only [classifyPlanRouteWith, linkEdge?, ite_true, bind_run]
   rcases (algorithmRoute receiver caller).runState s with ⟨_ | b, t⟩
   · rfl
   · cases b <;> rfl

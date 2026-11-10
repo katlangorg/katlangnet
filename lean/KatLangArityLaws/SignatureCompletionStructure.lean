@@ -105,7 +105,7 @@ mutual
           = seenAfter forwardable (ParameterPattern.captures pattern) existing
     | .capture parameter, existing => by
         simp only [missingPattern, ParameterPattern.captures, firstNew, seenAfter]
-        split <;> simp [capturesOfOption, firstNew, seenAfter, ParameterPattern.captures]
+        split <;> simp [capturesOfOption, ParameterPattern.captures]
     | .sequenceValue items, existing => by
         have h := missingItems_spec forwardable items existing
         simp only [missingPattern, ParameterPattern.captures]
@@ -210,18 +210,18 @@ theorem liftedFrom_sublist (opened : Nat → Bool) (look : Nat → Patterns) : �
     intro seen
     simp only [liftedFrom, List.map_cons]
     by_cases ha : r.active opened = true
-    · rw [if_pos ha]
+    · rw [ite_eq_left ha]
       generalize signatureOf look r.target = signature
       by_cases h1 : acceptsZero signature = true
-      · rw [if_pos h1]
+      · rw [ite_eq_left h1]
         exact (ih seen).cons _
-      · rw [if_neg h1]
+      · rw [ite_eq_right h1]
         by_cases h2 : seen.contains r.identity = true
-        · rw [if_pos h2]
+        · rw [ite_eq_left h2]
           exact (ih seen).cons _
-        · rw [if_neg h2]
+        · rw [ite_eq_right h2]
           exact (ih _).cons_cons _
-    · rw [if_neg ha]
+    · rw [ite_eq_right ha]
       exact (ih seen).cons _
 
 mutual
@@ -295,7 +295,7 @@ mutual
         have hnew := hf.2 parameter (by simp [ParameterPattern.captures])
         have h1 : forwardable.contains parameter.name = false := by simpa using hnew.1
         have h2 : existing.contains parameter.name = false := by simpa using hnew.2
-        simp only [missingPattern, h1, h2, Bool.or_false, Bool.false_eq_true, if_false]
+        simp only [missingPattern, h1, h2, Bool.or_false, Bool.false_eq_true, ite_false]
         rw [liftedCapture_whole (by simpa [liftsWhole] using hw)]
     | .sequenceValue items, existing, hw, hf => by
         simp only [liftsWhole, Bool.and_eq_true] at hw

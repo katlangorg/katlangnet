@@ -154,7 +154,7 @@ theorem evalFuel_follow_chase_ends :
     | conditional => cases h'; rfl
     | alias p op pr target id reference =>
       simp only [EvalBody.resolveAliasChase, Bool.not_true, Bool.false_and, Bool.false_eq_true,
-        if_false] at h'
+        ite_false] at h'
       split at h'
       · cases h'
       · rw [EvalM.bind_runState] at h'
@@ -162,11 +162,11 @@ theorem evalFuel_follow_chase_ends :
         · rename_i b s1 _
           cases b with
           | true =>
-            simp only [if_true] at h'
+            simp only [ite_true] at h'
             cases projectRuntime with
             | false => cases h'; trivial
             | true =>
-              simp only [Bool.not_true, Bool.false_eq_true, if_false] at h'
+              simp only [Bool.not_true, Bool.false_eq_true, ite_false] at h'
               rw [EvalM.bind_runState] at h'
               split at h'
               · rename_i step s2 _
@@ -175,7 +175,7 @@ theorem evalFuel_follow_chase_ends :
                 | «continue» identity => exact ih true identity ctx _ none s2 t r h'
               · cases h'
           | false =>
-            simp only [Bool.false_eq_true, if_false] at h'
+            simp only [Bool.false_eq_true, ite_false] at h'
             rw [EvalM.bind_runState] at h'
             split at h'
             · rename_i next s2 _
@@ -284,7 +284,7 @@ theorem own_member_hit_never_resolves_the_target (rec : EvalRec) (receiver : Exp
     (EvalBody.projectNeedStructuralMember rec (.dotMember receiver name fb none) ctx).runState s
       = (.ok (some (childOfInContext c prop.alg ctx)), s') := by
   simp only [EvalBody.projectNeedStructuralMember, EvalM.bind_runState, hrecv, hstruct, hprop, hacc,
-    Bool.not_true, Bool.false_eq_true, if_false]
+    Bool.not_true, Bool.false_eq_true, ite_false]
   rfl
 
 /-- **Production: an own-member hit on a navigated carrier.** Where the production projection of
@@ -309,7 +309,7 @@ theorem production_own_member_hit (receiver : Expr) (name : Ident) (fb : Expr) (
 theorem static_row_is_no_runtime_step (rec : EvalRec) (step : Algorithm) (target : Expr) (ctx : EvalCtx)
     (visited : List String) (s : EvalState) (h : target.isRuntimeAliasRow = false) :
     (EvalBody.aliasStepIsRuntime rec step target ctx visited).runState s = (.ok false, s) := by
-  simp only [EvalBody.aliasStepIsRuntime, h, Bool.not_false, if_true]
+  simp only [EvalBody.aliasStepIsRuntime, h, Bool.not_false, ite_true]
   rfl
 
 /-- **Runtime-reference establishment is distinguished**: a chase that projects nothing (the VALUE
@@ -327,8 +327,8 @@ theorem nonprojecting_chase_stops_at_runtime (rec : EvalRec) (followCarriers : B
         = (.ok true, s1)) :
     (EvalBody.resolveAliasChase rec followCarriers false (.alias p op pr target id reference) ctx visited last).runState s
       = (.ok (.runtime (.alias p op pr target id reference)), s1) := by
-  simp only [EvalBody.resolveAliasChase, hfollow, Bool.false_eq_true, if_false, hfresh, EvalM.bind_runState,
-    hrt, if_true, Bool.not_false]
+  simp only [EvalBody.resolveAliasChase, hfollow, Bool.false_eq_true, ite_false, hfresh, EvalM.bind_runState,
+    hrt, ite_true, Bool.not_false]
   rfl
 
 /-! ## §3 — forwarding -/

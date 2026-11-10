@@ -394,7 +394,7 @@ theorem linkDisc_projectionStep (project : NeedSuspension → EvalM (Option Algo
           simp only [NeedProjection.step, bind_run, get_run, hc, hs, EvalM.modify_runState]
           simp only [KatLang.NeedControl.Projection.setCallable] at hr
           rw [evalAttempt_run, hr]
-          simp only [hinc, if_true]
+          simp only [hinc, ite_true]
         rw [hrun]; exact k12
 
 /-- **Callee establishment keeps entry facts.** A recorded callee is returned with no write; an

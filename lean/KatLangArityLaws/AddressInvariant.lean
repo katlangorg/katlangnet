@@ -1016,9 +1016,9 @@ theorem completedPart_sound (n : Nat)
     RecSound (completedPart n) := by
   intro c _ s vs ps
   by_cases hc : Completes (evalFuel n c) s
-  · simp only [completedPart, if_pos hc]
+  · simp only [completedPart, ite_eq_left hc]
     exact ih c s hc vs ps
-  · simp only [completedPart, if_neg hc]
+  · simp only [completedPart, ite_eq_right hc]
     exact ⟨vs, Nat.le_refl _, fun _ h => by cases h⟩
 
 /-- **HOARE TRANSFER (completed fuel runs).** Under the per-body obligation, every completed

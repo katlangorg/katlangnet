@@ -99,7 +99,7 @@ theorem lookup_insert_missing (c : ZeroArgPropertyCache) (key : ZeroArgPropertyC
     split at hmiss
     · cases hmiss
     · rename_i hk
-      simp only [ZeroArgPropertyCache.insert, if_neg hk, ZeroArgPropertyCache.lookup]
+      simp only [ZeroArgPropertyCache.insert, ite_eq_right hk, ZeroArgPropertyCache.lookup]
       exact ih hmiss
 
 /-- **Publication under a distinct key changes no lookup**, absent or present, on an arbitrary cache
@@ -320,9 +320,9 @@ private theorem owner_cases
     · have he := Except.isIncomplete_eq_true hinc
       cases he
       have hraw := evalAttempt_runState_of_incomplete _ _ t' hcalc
-      simp only [EvalBody.evalZeroArgPropertyAccessCounted, hc, if_true, EvalM.bind_runState, get_runState] at hbody
+      simp only [EvalBody.evalZeroArgPropertyAccessCounted, hc, ite_true, EvalM.bind_runState, get_runState] at hbody
       rw [hmiss] at hbody
-      simp only [hnot, Bool.false_eq_true, if_false, EvalM.bind_runState, set_runState] at hbody
+      simp only [hnot, Bool.false_eq_true, ite_false, EvalM.bind_runState, set_runState] at hbody
       rw [show (evalAttempt (EvalBody.zeroArgPropertyCalculation evalUnbounded request a ctx env)).runState _ = _ from hraw] at hbody
       cases hbody
       simp [Except.isIncomplete] at hdone
@@ -429,9 +429,9 @@ theorem owner_incomplete_keeps_mark (rec : EvalRec) (hrec : ∀ c, Preserves Act
     (markedAt (keyAt k owner binding a ctx env s) s) (keyAt k owner binding a ctx env s) List.mem_cons_self
   rw [hrun] at hp
   refine ⟨?_, hp.1, hp.2.trans hmiss⟩
-  simp only [EvalBody.evalZeroArgPropertyAccessCounted, hc, if_true, EvalM.bind_runState, get_runState]
+  simp only [EvalBody.evalZeroArgPropertyAccessCounted, hc, ite_true, EvalM.bind_runState, get_runState]
   rw [hmiss]
-  simp only [hnot, Bool.false_eq_true, if_false, EvalM.bind_runState, set_runState]
+  simp only [hnot, Bool.false_eq_true, ite_false, EvalM.bind_runState, set_runState]
   rw [show (evalAttempt (EvalBody.zeroArgPropertyCalculation rec request a ctx env)).runState _ = _ from
     evalAttempt_runState_of_incomplete _ _ t hrun]
 

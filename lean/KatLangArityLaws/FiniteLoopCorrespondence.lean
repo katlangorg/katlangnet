@@ -879,7 +879,7 @@ theorem user_ordinary_body (a : Algorithm) (h : UserStep a) (ctx : EvalCtx) (env
   · rfl
   · rfl
   · dsimp only
-    rw [if_neg (by simp [Algorithm.output])]
+    rw [ite_eq_right (by simp [Algorithm.output])]
     simp only [EvalM.bind_runState, needBindingContext_run, hview, pure_runState]
 
 
@@ -2262,8 +2262,8 @@ theorem repeat_tail_capture_ok (c : ResolvedArgumentAlgorithm) (bindings : NeedE
   · rfl
   · dsimp only
     by_cases hn : n < 0
-    · simp only [hn, if_true]; rfl
-    · simp only [hn, if_false]
+    · simp only [hn, ite_true]; rfl
+    · simp only [hn, ite_false]
 
 /-- A count failure happens after the capture, before any iteration. -/
 theorem repeat_count_failure (a c : ResolvedArgumentAlgorithm) (ctx : EvalCtx) (env : ValEnv) (plan cnt stepCell : Nat)
@@ -2290,7 +2290,7 @@ theorem repeat_negative_count (a c : ResolvedArgumentAlgorithm) (ctx : EvalCtx) 
       (.error (Error.illegalInEval "Repeat count must be >= 0"), s₄) := by
     rw [repeat_body_prefix a c ctx env plan cnt s h,
       repeat_tail_capture_ok c _ ctx env _ s₃ _ _ (capture_run _ s s₂ s₃ plan stepCell sourced rfl hc), hcount]
-    simp only [hn, if_true]
+    simp only [hn, ite_true]
   rw [repeat_arm_production a c ctx env s (by unfold ProductionCompletes; rw [hbody]; nofun), hbody]
   rfl
 
@@ -2312,7 +2312,7 @@ theorem repeat_setup_stages {a c : ResolvedArgumentAlgorithm} {ctx : EvalCtx} {e
       (repeatAfterSetup evalUnbounded (stepArgument stepCell) ctx env name n.toNat (sourced.map Prod.fst)).runState s₄ := by
   rw [repeat_body_prefix a c ctx env plan cnt s h.toRepeatPrefix,
     repeat_tail_capture_ok c _ ctx env _ s₃ _ _ (capture_run _ s s₂ s₃ plan stepCell sourced rfl h.capture), h.count]
-  simp only [Int.not_lt.2 h.nonnegative, if_false, EvalM.bind_runState, h.stepName]
+  simp only [Int.not_lt.2 h.nonnegative, ite_false, EvalM.bind_runState, h.stepName]
 
 /-- Moving a post-setup result through the arm's outer boundary, with completion transfer. -/
 theorem arm_transfer {P Body After : EvalM CountedResult} {s s₄ : EvalState}

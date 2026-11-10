@@ -167,7 +167,7 @@ theorem rootRun_shape (e : Expr) :
   · obtain ⟨a, rfl⟩ := ha
     by_cases hz : Algorithm.acceptsZeroSuppliedArguments (wireToCaller { callStack := [preludeAlg] } a) = true
     · exact .inr ⟨.evalProgramOutput (wireToCaller { callStack := [preludeAlg] } a) { callStack := [preludeAlg] } [],
-        exportRunValue, fun _ => by simp only [rootRun, hz, if_true]; rfl⟩
+        exportRunValue, fun _ => by simp only [rootRun, hz, ite_true]; rfl⟩
     · exact .inl (fun _ _ => by simp only [rootRun, hz]; rfl)
   · refine .inr ⟨.eval e { callStack := [preludeAlg] } [], exportRunValue, fun _ => ?_⟩
     cases e <;> first | rfl | exact absurd ⟨_, rfl⟩ ha

@@ -530,14 +530,14 @@ theorem repeatedAt_withCallable {repeated : List Ident} {state : NeedBindState} 
   rw [groupOf_withCallable] at ha
   by_cases he : n = name
   · subst he
-    rw [if_pos rfl] at ha
+    rw [ite_eq_left rfl] at ha
     dsimp only at ha
     split at ha
     · exact Or.inl ⟨n, hn, ha⟩
     · rcases List.mem_append.mp ha with ha | ha
       · exact Or.inl ⟨n, hn, ha⟩
       · exact Or.inr ⟨hn, List.mem_singleton.mp ha⟩
-  · rw [if_neg he] at ha
+  · rw [ite_eq_right he] at ha
     exact Or.inl ⟨n, hn, ha⟩
 
 /-- A data anchor releases its name's pending obligations. -/
@@ -548,9 +548,9 @@ theorem repeatedAt_withAnchor {repeated : List Ident} {state : NeedBindState} {n
   rw [groupOf_withAnchor] at ha
   by_cases he : n = name
   · subst he
-    rw [if_pos rfl] at ha
+    rw [ite_eq_left rfl] at ha
     exact absurd ha List.not_mem_nil
-  · rw [if_neg he] at ha
+  · rw [ite_eq_right he] at ha
     exact ⟨n, hn, ha⟩
 
 theorem repeatedAt_nil {repeated : List Ident} {a : Nat} : ¬ RepeatedAt repeated {} a := by

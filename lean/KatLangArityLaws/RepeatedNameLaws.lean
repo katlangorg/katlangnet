@@ -1233,7 +1233,7 @@ theorem view_withCallable_self (obs : Nat → CountedResult × Option Algorithm)
     (n : Ident) (a : Nat) (identity : Algorithm) :
     view obs (state.withCallable n a identity) n = (view obs state n).withCallable (contrib obs a) identity := by
   have hg := BinderCorrespondence.groupOf_withCallable state n n a identity
-  rw [if_pos rfl] at hg
+  rw [ite_eq_left rfl] at hg
   simp only [view, GState.withCallable, withCallable_bound, hg]
   by_cases h1 : (state.groupOf n).identity.isSome = true <;>
     by_cases h2 : (state.groupOf n).anchor.isSome = true <;>
@@ -1243,7 +1243,7 @@ theorem view_withAnchor_self (obs : Nat → CountedResult × Option Algorithm) (
     (n : Ident) (a : Nat) :
     view obs (state.withAnchor n a (obs a).1) n = (view obs state n).withAnchor (contrib obs a) := by
   have hg := BinderCorrespondence.groupOf_withAnchor state n n a (obs a).1
-  rw [if_pos rfl] at hg
+  rw [ite_eq_left rfl] at hg
   simp only [view, GState.withAnchor, withAnchor_bound, hg]
   by_cases h1 : (state.groupOf n).identity.isSome = true <;>
     simp [h1, NeedEnv.rebind, BinderCorrespondence.lookupAssoc_rebind, contrib]
@@ -1252,7 +1252,7 @@ theorem view_withCallable_other (obs : Nat → CountedResult × Option Algorithm
     (n X : Ident) (a : Nat) (identity : Algorithm) (hX : X ≠ n) :
     view obs (state.withCallable n a identity) X = view obs state X := by
   have hg := BinderCorrespondence.groupOf_withCallable state n X a identity
-  rw [if_neg hX] at hg
+  rw [ite_eq_right hX] at hg
   simp only [view, withCallable_bound, hg]
   by_cases h1 : (state.groupOf n).identity.isSome = true <;>
     simp [h1, NeedEnv.rebind, BinderCorrespondence.lookupAssoc_rebind, hX]
@@ -1261,7 +1261,7 @@ theorem view_withAnchor_other (obs : Nat → CountedResult × Option Algorithm) 
     (n X : Ident) (a : Nat) (anchor : CountedResult) (hX : X ≠ n) :
     view obs (state.withAnchor n a anchor) X = view obs state X := by
   have hg := BinderCorrespondence.groupOf_withAnchor state n X a anchor
-  rw [if_neg hX] at hg
+  rw [ite_eq_right hX] at hg
   simp only [view, withAnchor_bound, hg]
   by_cases h1 : (state.groupOf n).identity.isSome = true <;>
     simp [h1, NeedEnv.rebind, BinderCorrespondence.lookupAssoc_rebind, hX]

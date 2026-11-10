@@ -4646,7 +4646,7 @@ private theorem need_source_at_map {α β : Type} (f : α -> β) (col : Option N
   unfold needSourceAt
   by_cases hc : (col == some i) = true
   · simp [hc, NeedSource.map, List.map_drop, List.map_take]
-  · simp only [hc, Bool.false_eq_true, if_false]
+  · simp only [hc, Bool.false_eq_true, ite_false]
     generalize (if (Option.map (fun j => decide (i > j)) col).getD false = true
       then i + extra - 1 else i) = k
     rw [List.getElem?_map]
@@ -4900,9 +4900,9 @@ theorem algebra_binder_is_the_production_allocation (ps : List CoreArityAlgebra.
         by rw [need_pattern_of_algebra_is_collecting]; exact hicoll⟩
     simp only [hi]
     by_cases hshort : xs.length < ps.length - 1
-    · rw [if_pos hshort, if_neg (by rw [hcp]; simp [hany]; omega)]
+    · rw [ite_eq_left hshort, ite_eq_right (by rw [hcp]; simp [hany]; omega)]
     · have hlen : ps.length ≤ xs.length + 1 := by omega
-      rw [if_neg hshort, if_pos (by rw [hcp]; simp [hany]; omega)]
+      rw [ite_eq_right hshort, ite_eq_left (by rw [hcp]; simp [hany]; omega)]
       congr 1
       rw [need_level_sources_around_the_collector (ps.map needPatternOfAlgebra) xs i
         (by rw [need_pattern_of_algebra_first_collector]; exact hi) (by simp; omega)]
@@ -4990,7 +4990,7 @@ theorem lone_collecting_head_allocates_one_collector_over_its_supply (channels :
     (by simp) [.collector cells] {} family
   rw [BinderCore.bindNeedPatterns_eq, BinderCore.bindNeedLevel_eq, BinderCore.needCardinalityGate_eq]
   rw [hr, hacc, lone_collector_collects_every_supplied_cell]
-  simp only [Bool.not_true, Bool.false_eq_true, if_false]
+  simp only [Bool.not_true, Bool.false_eq_true, ite_false]
   rw [hplain]
   simp only [plainNeedBinding, BinderCore.needSourceAddress_collector, List.headD_cons]
   rw [EvalM.bind_assoc]

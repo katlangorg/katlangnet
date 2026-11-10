@@ -1115,10 +1115,10 @@ theorem bindPats_none_of_undersupplied (ps : List Pat) (xs : Supply)
     (h : xs.length + 1 < ps.length) : bindPats ps xs = none := by
   unfold bindPats
   split
-  · exact if_neg (by omega)
+  · exact ite_eq_right (by omega)
   · cases hidx : ps.findIdx? Pat.isCollecting with
     | none => rfl
-    | some i => exact if_pos (by omega)
+    | some i => exact ite_eq_left (by omega)
   · rfl
 
 private theorem list_payload_not_self (ys : List Val) (hkind : Val) (hpay : [hkind] = ys)

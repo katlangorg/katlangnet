@@ -22,7 +22,12 @@ Finite generated corpora are bounded evidence, not an evaluator refinement proof
 `MetamorphicErrorDetail`, shared as source between the tests and standalone fuzz
 target, owns the C# category and supplementary field policy. `DifferentialErrors`
 maps it to the existing Q-67 records without changing their contract.
-`LeanObsTemplate` owns both generated artifacts' Lean projections. `obs`
+`LeanObsTemplate` owns the Lean projections of all four generated observation
+artifacts: `lean/LanguageSpecCases.lean` (`LanguageSpecLeanArtifactTests`),
+`lean/SemanticExplorerCases.lean` (`SemanticExplorerLeanArtifactTests`),
+`lean/CoreTests/HostParentDifferential.lean` (`HostParentDifferentialTests`) and
+`lean/CoreTests/SemanticGeneratedCases.lean` (`SemanticGeneratedLeanArtifactTests`);
+each emits its `SharedDefinitions` and `AppendErrorGuard`. `obs`
 retains its original contract; `errorObs` is separate. Failed supported cases
 need two extra Lean runs for the supplementary guard; successful cases do not.
 The public engine adds one run only on failures and parse rejections where it

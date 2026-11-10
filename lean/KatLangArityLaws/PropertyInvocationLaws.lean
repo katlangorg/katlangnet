@@ -67,7 +67,7 @@ theorem read_with_entry_is_hit (v : CountedResult)
     (hc : isCacheableZeroArgPropertyAlgorithm a = true)
     (hhit : ZeroArgPropertyCache.lookup s.zeroArgPropertyCache (keyAt k owner binding a ctx env s) = some v) :
     (EvalBody.evalZeroArgPropertyAccessCounted rec k owner binding a ctx env .read).runState s = (.ok v, s) := by
-  simp only [EvalBody.evalZeroArgPropertyAccessCounted, hc, if_true, EvalM.bind_runState, get_runState]
+  simp only [EvalBody.evalZeroArgPropertyAccessCounted, hc, ite_true, EvalM.bind_runState, get_runState]
   rw [hhit]; rfl
 
 /-- **Explicit invocations remain fresh**: an invocation whose key holds an established entry is
@@ -78,7 +78,7 @@ theorem invocation_with_entry_is_fresh (calleeName : String) (v : CountedResult)
     (hhit : ZeroArgPropertyCache.lookup s.zeroArgPropertyCache (keyAt k owner binding a ctx env s) = some v) :
     (EvalBody.evalZeroArgPropertyAccessCounted rec k owner binding a ctx env (.invoke calleeName)).runState s =
       (EvalBody.zeroArgPropertyCalculation rec (.invoke calleeName) a ctx env).runState s := by
-  simp only [EvalBody.evalZeroArgPropertyAccessCounted, hc, if_true, EvalM.bind_runState, get_runState]
+  simp only [EvalBody.evalZeroArgPropertyAccessCounted, hc, ite_true, EvalM.bind_runState, get_runState]
   rw [hhit]
 
 /-- **Re-entrant requests publish nothing of their own**: a request — read or invocation — on an
@@ -91,9 +91,9 @@ theorem reentrant_request_is_its_calculation (request : ZeroArgPropertyRequest)
     (hact : s.activeZeroArgProperties.contains (keyAt k owner binding a ctx env s) = true) :
     (EvalBody.evalZeroArgPropertyAccessCounted rec k owner binding a ctx env request).runState s =
       (EvalBody.zeroArgPropertyCalculation rec request a ctx env).runState s := by
-  simp only [EvalBody.evalZeroArgPropertyAccessCounted, hc, if_true, EvalM.bind_runState, get_runState]
+  simp only [EvalBody.evalZeroArgPropertyAccessCounted, hc, ite_true, EvalM.bind_runState, get_runState]
   rw [hmiss]
-  simp only [hact, if_true]
+  simp only [hact, ite_true]
 
 /-- **The successful outermost owner publishes once, with its calculation's counted result**: a
     request — read or invocation — on an empty, inactive key runs its calculation with the key
@@ -111,9 +111,9 @@ theorem owner_success_publishes (request : ZeroArgPropertyRequest) (counted : Co
         activeZeroArgProperties := s.activeZeroArgProperties,
         zeroArgPropertyCache :=
           ZeroArgPropertyCache.insert t.zeroArgPropertyCache (keyAt k owner binding a ctx env s) counted }) := by
-  simp only [EvalBody.evalZeroArgPropertyAccessCounted, hc, if_true, EvalM.bind_runState, get_runState]
+  simp only [EvalBody.evalZeroArgPropertyAccessCounted, hc, ite_true, EvalM.bind_runState, get_runState]
   rw [hmiss]
-  simp only [hnot, Bool.false_eq_true, if_false, EvalM.bind_runState, set_runState]
+  simp only [hnot, Bool.false_eq_true, ite_false, EvalM.bind_runState, set_runState]
   rw [evalAttempt_runState_of_complete _ _ t (.ok counted) hrun rfl]
   rfl
 
@@ -130,9 +130,9 @@ theorem owner_failure_publishes_nothing (request : ZeroArgPropertyRequest) (e : 
       (markedAt (keyAt k owner binding a ctx env s) s) = (.error e, t)) :
     (EvalBody.evalZeroArgPropertyAccessCounted rec k owner binding a ctx env request).runState s =
       (.error e, { t with activeZeroArgProperties := s.activeZeroArgProperties }) := by
-  simp only [EvalBody.evalZeroArgPropertyAccessCounted, hc, if_true, EvalM.bind_runState, get_runState]
+  simp only [EvalBody.evalZeroArgPropertyAccessCounted, hc, ite_true, EvalM.bind_runState, get_runState]
   rw [hmiss]
-  simp only [hnot, Bool.false_eq_true, if_false, EvalM.bind_runState, set_runState]
+  simp only [hnot, Bool.false_eq_true, ite_false, EvalM.bind_runState, set_runState]
   rw [evalAttempt_runState_of_complete _ _ t (.error e) hrun hcomplete]
   rfl
 
@@ -177,7 +177,7 @@ theorem nonzero_supply_never_requests_the_cache (rec : EvalRec) (origin : Callee
   | builtin b => exact absurd rfl (hb b)
   | alias p o ps t d r => exact absurd rfl (ha p o ps t d r)
   | mk => simp [EvalBody.evalSuppliedCallCounted]
-  | conditional => simp only [EvalBody.evalSuppliedCallCounted, List.isEmpty_cons, Bool.false_eq_true, if_false]; rfl
+  | conditional => simp only [EvalBody.evalSuppliedCallCounted, List.isEmpty_cons, Bool.false_eq_true, ite_false]; rfl
 
 /-- **A zero-supply invocation whose origin names a binding is that binding's `invoke` request**:
     once the origin's binding is read (`originBinding?`, which evaluates nothing), the dispatch of a
@@ -196,8 +196,8 @@ theorem zero_supply_bound_invocation_requests_the_cache (rec : EvalRec) (origin 
   | builtin b => exact absurd rfl (hb b)
   | alias p o ps t d r => exact absurd rfl (ha p o ps t d r)
   | mk =>
-    simp only [EvalBody.evalSuppliedCallCounted, List.isEmpty_nil, if_true, EvalM.bind_runState, horigin]
+    simp only [EvalBody.evalSuppliedCallCounted, List.isEmpty_nil, ite_true, EvalM.bind_runState, horigin]
   | conditional =>
-    simp only [EvalBody.evalSuppliedCallCounted, List.isEmpty_nil, if_true, EvalM.bind_runState, horigin]
+    simp only [EvalBody.evalSuppliedCallCounted, List.isEmpty_nil, ite_true, EvalM.bind_runState, horigin]
 
 end KatLang.PropertyInvocationLaws

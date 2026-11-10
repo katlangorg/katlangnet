@@ -1568,7 +1568,7 @@ noncomputable def completedPart (n : Nat) : EvalRec := fun c =>
 theorem evalFuel_approx_completedPart (n : Nat) : evalFuel n ⊑ completedPart n := by
   intro c s
   by_cases hc : Completes (evalFuel n c) s
-  · right; simp only [completedPart, if_pos hc]
+  · right; simp only [completedPart, ite_eq_left hc]
   · left; exact Classical.not_not.mp hc
 
 /-- **INVARIANT TRANSFER.** -/
@@ -1583,8 +1583,8 @@ theorem invariant_transfer (R : EvalState → EvalState → Prop) (hrefl : ∀ s
     have hpart : ∀ c, Preserves R (completedPart n c) := by
       intro c' s'
       by_cases hc' : Completes (evalFuel n c') s'
-      · simp only [completedPart, if_pos hc']; exact ih c' s' hc'
-      · simp only [completedPart, if_neg hc']; exact hrefl s'
+      · simp only [completedPart, ite_eq_left hc']; exact ih c' s' hc'
+      · simp only [completedPart, ite_eq_right hc']; exact hrefl s'
     have hstep := evalStep_monotone _ _ (evalFuel_approx_completedPart n) c s
     have hne := (evalFuel_completes_iff (n + 1) c s).1 hc
     rw [evalFuel_succ] at hne ⊢

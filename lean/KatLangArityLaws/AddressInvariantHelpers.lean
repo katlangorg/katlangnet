@@ -255,7 +255,7 @@ theorem openStructure_spec {P : Array NeedCell → Prop} {fuel : Nat} {ctx : Eva
 
 attribute [ht_spec] openStructure_spec
 
-theorem resolveAlgForOpen_aux {P : Array NeedCell → Prop} (hP : HMono P) (e : Expr) (ctx : EvalCtx) :
+theorem resolveAlgForOpen_aux {P : Array NeedCell → Prop} (_hP : HMono P) (e : Expr) (ctx : EvalCtx) :
     SoundI P (resolveAlgForOpen e ctx) (fun _ _ => True) := by
   induction e using resolveAlgForOpen.induct ctx with
   | case7 o n a ih => unfold resolveAlgForOpen; ht_tac
@@ -354,7 +354,7 @@ theorem aliasRouteIsIntrinsicWith_spec {P : Array NeedCell → Prop}
 
 attribute [ht_spec] aliasRouteIsIntrinsicWith_spec
 
-theorem collectSingleAtomicNumbers_aux {P : Array NeedCell → Prop} (hP : HMono P) (b : Builtin) (index : Nat)
+theorem collectSingleAtomicNumbers_aux {P : Array NeedCell → Prop} (_hP : HMono P) (b : Builtin) (index : Nat)
     (items : List Result) : SoundI P (collectSingleAtomicNumbers b index items) (fun _ _ => True) := by
   induction items generalizing index with
   | nil => unfold collectSingleAtomicNumbers; ht_tac
@@ -364,13 +364,13 @@ theorem collectSingleAtomicNumbers_spec {P : Array NeedCell → Prop} {b : Built
     {items : List Result} : SoundI P (collectSingleAtomicNumbers b index items) (fun _ _ => True) :=
   fun hP => collectSingleAtomicNumbers_aux hP b index items hP
 
-theorem minLoop_aux {P : Array NeedCell → Prop} (hP : HMono P) (numbers : List Int) (current : Int) :
+theorem minLoop_aux {P : Array NeedCell → Prop} (_hP : HMono P) (numbers : List Int) (current : Int) :
     SoundI P (evalMinCounted.minLoop numbers current) (fun _ _ => True) := by
   induction numbers generalizing current with
   | nil => unfold evalMinCounted.minLoop; ht_tac
   | cons n rest ih => unfold evalMinCounted.minLoop; ht_tac
 
-theorem maxLoop_aux {P : Array NeedCell → Prop} (hP : HMono P) (numbers : List Int) (current : Int) :
+theorem maxLoop_aux {P : Array NeedCell → Prop} (_hP : HMono P) (numbers : List Int) (current : Int) :
     SoundI P (evalMaxCounted.maxLoop numbers current) (fun _ _ => True) := by
   induction numbers generalizing current with
   | nil => unfold evalMaxCounted.maxLoop; ht_tac

@@ -23,13 +23,13 @@ private theorem filter_sublist_of_imp {p q : Nat → Bool} {l : List Nat}
     have hrest := ih (fun y hy => h y (List.mem_cons_of_mem _ hy))
     simp only [List.filter_cons]
     by_cases hpx : p x = true
-    · simp only [hpx, hx hpx, if_true]
+    · simp only [hpx, hx hpx, ite_true]
       exact hrest.cons_cons x
-    · simp only [hpx, if_false]
+    · simp only [hpx]
       by_cases hqx : q x = true
-      · simp only [hqx, if_true]
+      · simp only [hqx, ite_true]
         exact hrest.cons x
-      · simp only [hqx, if_false]
+      · simp only [hqx]
         exact hrest
 
 section Reach
@@ -86,7 +86,7 @@ private theorem chain_sublist (a i : Nat) :
   rw [hp, hq]
   exact filter_sublist_of_imp hsub
 
-private theorem chain_length_le (a i : Nat) (hn : sys.keys.Nodup) :
+private theorem chain_length_le (a i : Nat) (_hn : sys.keys.Nodup) :
     (chain sys opened a i).length ≤ sys.keys.length := by
   obtain ⟨p, h⟩ := chain_filter sys opened a i
   rw [h]
@@ -170,7 +170,7 @@ theorem reachOf_trans (hn : sys.keys.Nodup) {a j x : Nat} (ha : a ∈ sys.keys)
       exact step _ ih
   exact this _ x hx
 
-theorem reachOf_sub_keys {a x : Nat} (ha : a ∈ sys.keys) (hx : x ∈ reachOf sys opened a) : x ∈ sys.keys :=
+theorem reachOf_sub_keys {a x : Nat} (_ha : a ∈ sys.keys) (hx : x ∈ reachOf sys opened a) : x ∈ sys.keys :=
   chain_sub_keys sys opened a _ hx
 
 end Reach
@@ -317,9 +317,9 @@ theorem evalComponent_fact_cases {members : List Nat} {cells : Nat → Cell} {k 
   unfold evalComponent at h ⊢
   simp only at h ⊢
   by_cases h1 : (outsideReads sys opened members).any (fun t => cells t == .exhausted) = true
-  · rw [if_pos h1] at h; simp at h
+  · rw [ite_eq_left h1] at h; simp at h
   by_cases h2 : (outsideReads sys opened members).any (fun t => cells t == .meaningless) = true
-  · rw [if_neg h1, if_pos h2] at h; simp at h
+  · rw [ite_eq_right h1, ite_eq_left h2] at h; simp at h
   have hout : ∀ t ∈ outsideReads sys opened members, cells t ≠ .exhausted ∧ cells t ≠ .meaningless := by
     intro t ht
     constructor
@@ -332,9 +332,9 @@ theorem evalComponent_fact_cases {members : List Nat} {cells : Nat → Cell} {k 
       simp only [List.any_eq_true]
       exact ⟨t, ht, by simp [e]⟩
   refine ⟨hout, ?_⟩
-  rw [if_neg h1, if_neg h2] at h ⊢
+  rw [ite_eq_right h1, ite_eq_right h2] at h ⊢
   by_cases h3 : (!gateLifts sys opened members (lowerReads sys opened members cells)) = true
-  · rw [if_pos h3]
+  · rw [ite_eq_left h3]
     refine ⟨_, rfl, ?_⟩
     intro m hm
     have hgate := roundStep_of_mem sys opened members (lowerReads sys opened members cells) ⟨fun _ => closedFact⟩ hm
@@ -347,7 +347,7 @@ theorem evalComponent_fact_cases {members : List Nat} {cells : Nat → Cell} {k 
     by_cases tm : t ∈ members
     · right
       refine ⟨by simp [readThrough, tm, closedFact, acceptsZero_nil], ?_⟩
-      simp only [tm, if_true]
+      simp only [tm, ite_true]
       have hno : gateLifts sys opened members (lowerReads sys opened members cells) = false := by simpa using h3
       unfold gateLifts at hno
       have hno2 := List.any_eq_false.1 hno m hm
@@ -356,9 +356,9 @@ theorem evalComponent_fact_cases {members : List Nat} {cells : Nat → Cell} {k 
         simpa using hno2
       exact hno3 t ht tm
     · left
-      simp only [readThrough, List.contains_iff_mem, tm, decide_false, Bool.false_eq_true, if_false]
+      simp only [readThrough, List.contains_iff_mem, tm, ite_false]
       exact lowerReads_outside sys opened hm ht tm
-  · rw [if_neg h3] at h ⊢
+  · rw [ite_eq_right h3] at h ⊢
     cases hc : completeLoop (roundStep sys opened members (lowerReads sys opened members cells)) (sameState members) fuel
         (gateState sys opened members (lowerReads sys opened members cells))
         (gateState sys opened members (lowerReads sys opened members cells)) 0 1 with
@@ -372,7 +372,7 @@ theorem evalComponent_fact_cases {members : List Nat} {cells : Nat → Cell} {k 
       left
       by_cases tm : t ∈ members
       · simp [readThrough, tm]
-      · simp only [readThrough, List.contains_iff_mem, tm, decide_false, Bool.false_eq_true, if_false]
+      · simp only [readThrough, List.contains_iff_mem, tm, ite_false]
         exact lowerReads_outside sys opened hm ht tm
     | nonSettling => simp [hc] at h
     | exhausted => simp [hc] at h
@@ -409,14 +409,14 @@ theorem goodCells_layer {cells : Memo Cell} (good : GoodCells sys opened cells.g
     rw [apply_pending ha hpa] at hl
     rw [apply_pending hb hpb, comp_eq ha hb hab]
     by_cases hr : layerReady sys opened (componentOf sys (reachTable sys opened) a) cells.get = true
-    · simp only [hr, if_true] at hl
+    · simp only [hr, ite_true] at hl
       exact absurd hl (evalComponent_not_pending sys opened fuel _ _ _)
     · simp [hr]
   · intro k hk f hf
     by_cases hp : cells.get k = .pending
     · rw [apply_pending hk hp] at hf
       by_cases hr : layerReady sys opened (componentOf sys (reachTable sys opened) k) cells.get = true
-      · simp only [hr, if_true] at hf
+      · simp only [hr, ite_true] at hf
         obtain ⟨hout, state, hE, hfix⟩ := evalComponent_fact_cases sys opened fuel hf
         have hsame : k ∈ componentOf sys (reachTable sys opened) k :=
           (mem_componentOf sys).2 ⟨hk, sameComponent_refl sys opened hk⟩
@@ -431,7 +431,7 @@ theorem goodCells_layer {cells : Memo Cell} (good : GoodCells sys opened cells.g
             have hpt := good.together k hk t tk hst hp
             have e : (layer sys opened fuel (reachTable sys opened) cells).get t = .fact (state t) := by
               rw [apply_pending tk hpt, comp_eq hk tk hst]
-              simp only [hr, if_true, hE]
+              simp only [hr, ite_true, hE]
             rw [e]
             exact ⟨by simp [tm, Cell.patterns], _, rfl⟩
           · have hor : t ∈ outsideReads sys opened (componentOf sys (reachTable sys opened) k) :=
@@ -501,23 +501,23 @@ private theorem countP_strict {S T l : List Nat} {k : Nat} (hnodup : l.Nodup) (h
     have mono : xs.countP (fun x => S.contains x) ≤ xs.countP (fun x => T.contains x) := by
       apply List.countP_mono_left
       intro y _ hy
-      simp only [List.contains_iff_mem, decide_eq_true_eq] at hy ⊢
+      simp only [List.contains_iff_mem] at hy ⊢
       exact hsub y hy
     by_cases e : k = x
     · subst e
       have h1 : S.contains k = false := by simpa using hnot
       have h2 : T.contains k = true := by simpa using hself
-      simp only [h1, h2, if_true, if_false, Bool.false_eq_true]
+      simp only [h1, h2, ite_true, ite_false, Bool.false_eq_true]
       omega
     · have hk' : k ∈ xs := by simpa [e] using hk
       have := ih hxs hk'
       by_cases hsx : S.contains x = true
       · have htx : T.contains x = true := by
-          simp only [List.contains_iff_mem, decide_eq_true_eq] at hsx ⊢
+          simp only [List.contains_iff_mem] at hsx ⊢
           exact hsub x hsx
-        simp only [hsx, htx, if_true]
+        simp only [hsx, htx, ite_true]
         omega
-      · rw [if_neg hsx]
+      · rw [ite_eq_right hsx]
         split <;> omega
 
 private theorem reachTable_measure_drop {k t m : Nat} (hk : k ∈ sys.keys) (hm : m ∈ sys.keys) (ht : t ∈ sys.keys)
@@ -540,7 +540,7 @@ private theorem reachTable_measure_drop {k t m : Nat} (hk : k ∈ sys.keys) (hm 
 
 /-- Some pending key's component is ready: take a pending key reaching the fewest keys; everything its component reads
     outside reaches strictly fewer, so it is not pending. -/
-private theorem exists_ready {cells : Memo Cell} (good : GoodCells sys opened cells.get) {p : Nat} (hp : p ∈ sys.keys)
+private theorem exists_ready {cells : Memo Cell} (_good : GoodCells sys opened cells.get) {p : Nat} (hp : p ∈ sys.keys)
     (hpend : cells.get p = .pending) :
     ∃ k ∈ sys.keys, cells.get k = .pending
       ∧ layerReady sys opened (componentOf sys (reachTable sys opened) k) cells.get = true := by
@@ -600,7 +600,7 @@ private theorem layer_count (cells : Memo Cell) (good : GoodCells sys opened cel
   obtain ⟨k, hk, hkp, hready⟩ := exists_ready sys opened wf (cells := cells) good hp hpp'
   have hgone : (layer sys opened fuel (reachTable sys opened) cells).get k ≠ .pending := by
     rw [layer_apply sys opened fuel _ cells hk, hkp]
-    simp only [hready, if_true]
+    simp only [hready, ite_true]
     exact evalComponent_not_pending sys opened fuel _ _ _
   have key : ∀ l : List Nat, k ∈ l → l.Nodup → (∀ x ∈ l, x ∈ sys.keys) →
       l.countP (fun x => (layer sys opened fuel (reachTable sys opened) cells).get x == .pending) + 1
@@ -624,7 +624,7 @@ private theorem layer_count (cells : Memo Cell) (good : GoodCells sys opened cel
         have h1 : ((layer sys opened fuel (reachTable sys opened) cells).get k == .pending) = false := by
           simpa using hgone
         have h2 : (cells.get k == .pending) = true := by simpa using hkp
-        simp only [h1, h2, if_true, if_false, Bool.false_eq_true]
+        simp only [h1, h2, ite_true, ite_false, Bool.false_eq_true]
         omega
       · have hk' : k ∈ xs := by simpa [e] using hm
         have := ih hk' hxs (fun y hy => hsub y (List.mem_cons_of_mem _ hy))
@@ -632,9 +632,9 @@ private theorem layer_count (cells : Memo Cell) (good : GoodCells sys opened cel
         · have hcx : (cells.get x == .pending) = true := by
             have := hmono x (hsub x List.mem_cons_self) (by simpa using hlx)
             simpa using this
-          simp only [hlx, hcx, if_true]
+          simp only [hlx, hcx, ite_true]
           omega
-        · rw [if_neg hlx]
+        · rw [ite_eq_right hlx]
           split <;> omega
   have := key sys.keys hk wf.nodup (fun _ h => h)
   omega
@@ -692,12 +692,12 @@ theorem rowOf_consistent {assigned : Nat → Bool} {v : Groundedness} {facts : N
   unfold rowOf at h
   simp only at h
   by_cases h1 : noVerdict sys (evalVector sys assigned fuel).get = true
-  · rw [if_pos h1] at h; cases h
+  · rw [ite_eq_left h1] at h; cases h
   by_cases h2 : linkSet.any (refutesClass (evalVector sys assigned fuel).get assigned) = true
-  · rw [if_neg h1, if_pos h2] at h; cases h
+  · rw [ite_eq_right h1, ite_eq_left h2] at h; cases h
   by_cases h3 : sys.keys.any (fun k => (evalVector sys assigned fuel).get k == .meaningless) = true
-  · rw [if_neg h1, if_neg h2, if_pos h3] at h; cases h
-  rw [if_neg h1, if_neg h2, if_neg h3] at h
+  · rw [ite_eq_right h1, ite_eq_right h2, ite_eq_left h3] at h; cases h
+  rw [ite_eq_right h1, ite_eq_right h2, ite_eq_right h3] at h
   split at h
   · cases h
   · rename_i hv _
@@ -773,7 +773,7 @@ theorem rule_selected {rows : List Row} {facts : Nat → Fact} (h : rule rows = 
   unfold rule at h
   by_cases h1 : rows.any Row.isExhausted = true
   · simp [h1] at h
-  simp only [h1, if_false] at h
+  simp only [h1] at h
   cases hf : rows.filter Row.isGrounded with
   | nil =>
     rw [hf] at h
@@ -793,8 +793,8 @@ theorem rule_selected {rows : List Row} {facts : Nat → Fact} (h : rule rows = 
         | grounded =>
           simp only at h
           by_cases hu : rows.any Row.isUndetermined = true
-          · rw [if_pos hu] at h; cases h
-          · rw [if_neg hu] at h
+          · rw [ite_eq_left hu] at h; cases h
+          · rw [ite_eq_right hu] at h
             cases h
             exact ⟨by simpa using h1, rfl, by simpa using hu⟩
         | undetermined => simp [Row.isGrounded] at hg
@@ -836,16 +836,16 @@ private theorem groundedness_refutes {assigned : Nat → Bool}
     | nil => exact absurd rfl hne
     | cons _ _ => rfl
   by_cases h0 : readings.any (fun reading => noVerdict sys reading.2.get) = true
-  · rw [if_pos h0] at h; cases h
-  rw [if_neg h0] at h
+  · rw [ite_eq_left h0] at h; cases h
+  rw [ite_eq_right h0] at h
   generalize hv : readings.map (fun reading => refutedWithout reading.2.get reading.1) = verdicts at h
   have hmv : refutedWithout (evalVector sys (fun k => assigned k && !classOf support k) fuel).get support ∈ verdicts := by
     rw [← hv]
     exact List.mem_map.2 ⟨_, hm, rfl⟩
   by_cases h1 : verdicts.contains (some false) = true
-  · rw [if_pos h1] at h; cases h
+  · rw [ite_eq_left h1] at h; cases h
   by_cases h2 : verdicts.contains none = true
-  · rw [if_neg h1, if_pos h2] at h; cases h
+  · rw [ite_eq_right h1, ite_eq_left h2] at h; cases h
   cases hr' : refutedWithout (evalVector sys (fun k => assigned k && !classOf support k) fuel).get support with
   | none =>
     rw [hr'] at hmv

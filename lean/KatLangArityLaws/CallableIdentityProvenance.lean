@@ -438,7 +438,7 @@ theorem activeDeclaration_self (s : ScopeCtx) : activeDeclaration? s (some s) = 
   cases s with
   | mk p ps op props out branches activation id =>
     simp only [activeDeclaration?, same_declaring_scope_refl, compatible_activations_refl,
-      Bool.and_self, if_true]
+      Bool.and_self, ite_true]
 
 /-- THE PRINTER-DEPENDENT PREMISE of contextual wiring: every site level that `sameDeclaringScope`
     accepts for `required` has `required`'s presence. Production asks this of a mixed pair whenever
@@ -480,7 +480,7 @@ theorem scopeInContext_follows (T : PresenceTable) (a : Algorithm) (ctx : EvalCt
   have hself := chainFollows_asScopeCtx T a ha
   unfold scopeInContext
   have hnone : a.asScopeCtx.activation = none := rfl
-  simp only [hnone, Option.isSome_none, Bool.false_eq_true, if_false]
+  simp only [hnone, Option.isSome_none, Bool.false_eq_true, ite_false]
   cases hact : activeDeclaration? a.asScopeCtx (siteScope? ctx) with
   | none => exact ⟨hself, rfl⟩
   | some x =>
@@ -681,7 +681,7 @@ theorem wireToCaller_entry (a : Algorithm) :
     rw [show siteScope? { callStack := [preludeAlg] } = some preludeAlg.asScopeCtx from rfl]
     exact hself
   have hact : preludeAlg.asScopeCtx.activation = none := rfl
-  simp only [hact, Option.isSome_none, Bool.false_eq_true, if_false, h, Option.getD_some]
+  simp only [hact, Option.isSome_none, Bool.false_eq_true, ite_false, h, Option.getD_some]
 
 /-- The table recording only the root declaration, wired under the anonymous prelude. -/
 def entryTable (a : Algorithm) : PresenceTable := fun k => k == declKey a.declarationId

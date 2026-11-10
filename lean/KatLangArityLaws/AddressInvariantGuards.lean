@@ -100,7 +100,7 @@ theorem badPlan_stateValid : StateValid badPlan := by
 /-- `Inv` rules the state out: its `CellV.plan` clause is exactly the missing constraint. -/
 theorem badPlan_not_inv : ¬ Inv badPlan := by
   intro h
-  have := (h.cells 0 planCell rfl).plan (5, none) (by simp [planCell])
+  have := (h.cells 0 planCell rfl).plan (5, none) (by simp)
   simp [badPlan] at this
 
 /-- The shape `viewCells` / `prepare` see at cell 0. -/
