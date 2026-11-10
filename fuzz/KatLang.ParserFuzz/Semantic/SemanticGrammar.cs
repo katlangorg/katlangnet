@@ -177,7 +177,14 @@ internal static class SemanticGrammar
 
     // ── Families ────────────────────────────────────────────────────────────
 
-    internal static SemanticFragment Build(string family, Gen g, bool failing) => family switch
+    /// <summary>One family's production. Its decisions form a <c>production</c> span (SEM-2C reduction metadata).</summary>
+    internal static SemanticFragment Build(string family, Gen g, bool failing)
+    {
+        using var span = g.Span("production");
+        return BuildProduction(family, g, failing);
+    }
+
+    private static SemanticFragment BuildProduction(string family, Gen g, bool failing) => family switch
     {
         "meta" => Meta(g, failing),
         "collect" => Collect(g, failing),
@@ -1662,16 +1669,59 @@ internal static class SemanticGrammar
         return sum;
     }
 
-    /// <summary>Per-program generation state: names, distinct constants, and the decision source.</summary>
+    /// <summary>
+    /// Per-program generation state: names, distinct constants, and the decision source.
+    ///
+    /// <para><b>Spans (SEM-2C).</b> <see cref="Span"/> brackets the decisions of one structural unit
+    /// (a composed fragment, its production, one context) and reports it to the chooser when the
+    /// chooser is an <see cref="ISemanticSpanObserver"/> (<see cref="RecordingChooser"/>). Spans are
+    /// DERIVED metadata: they never reach a decision, so every existing choice sequence replays to
+    /// the same case, and a reducer reads them only to propose candidates.</para>
+    /// </summary>
     internal sealed class Gen(SemanticChooser chooser)
     {
         private readonly ProgramBuilder _builder = new();
+        private readonly ISemanticSpanObserver? _observer = chooser as ISemanticSpanObserver;
         private int _digit;
         private int _value = 10;
+        private int _picks;
+        private int _spans;
 
-        public int Pick(string dimension, int count) => chooser.Pick(dimension, count);
+        public int Pick(string dimension, int count)
+        {
+            _picks++;
+            return chooser.Pick(dimension, count);
+        }
 
-        public bool Chance(string dimension, int percent) => chooser.Chance(dimension, percent);
+        public bool Chance(string dimension, int percent)
+        {
+            _picks++;
+            return chooser.Chance(dimension, percent);
+        }
+
+        /// <summary>The index of the most recent decision in this generation's choice sequence.</summary>
+        public int LastChoice => _picks - 1;
+
+        /// <summary>
+        /// Opens a span of <paramref name="kind"/> at the next decision; disposing closes it.
+        /// <paramref name="governor"/> is the index of an EARLIER decision whose value counts this
+        /// kind's repetitions (decrementing it by one removes one repetition), or <c>-1</c>.
+        /// </summary>
+        public SpanScope Span(string kind, int governor = -1)
+        {
+            if (governor >= _picks) throw new ArgumentOutOfRangeException(nameof(governor), "a governor is an earlier decision");
+            var ordinal = _spans++;
+            _observer?.BeginSpan(ordinal, kind, _picks, governor);
+            return new SpanScope(this, ordinal);
+        }
+
+        private void EndSpan(int ordinal) => _observer?.EndSpan(ordinal, _picks);
+
+        /// <summary>Closes its span on disposal.</summary>
+        public readonly struct SpanScope(Gen gen, int ordinal) : IDisposable
+        {
+            public void Dispose() => gen.EndSpan(ordinal);
+        }
 
         public Sym Fresh() => _builder.NewSym();
 

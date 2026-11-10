@@ -315,18 +315,26 @@ internal static class SemanticCorpus
         return new SemanticCaseBuilder(localId, () => SemanticChooser.Seeded(seed, index), g =>
         {
             var count = 1 + g.Pick("compose.count", 3);
+            var countChoice = g.LastChoice;
             var failAt = g.Chance("compose.failing", 35) ? g.Pick("compose.failAt", count) : -1;
             var fragments = new List<SemanticFragment>();
             var loopUsed = false;
             for (var i = 0; i < count; i++)
             {
+                // Spans are reduction metadata only (SemanticGrammar.Gen.Span): no decision changes.
+                using var fragmentSpan = g.Span("fragment", governor: countChoice);
                 var family = SemanticGrammar.Families[g.Pick("compose.family", SemanticGrammar.Families.Length)];
                 if (family == "loop" && loopUsed) family = "cache"; // loop evidence is per run: one loop fragment
                 var fragment = SemanticGrammar.Build(family, g, failing: i == failAt);
                 loopUsed |= fragment.IsLoop;
                 var depth = g.Pick("compose.depth", 3);
+                var depthChoice = g.LastChoice;
                 for (var d = 0; d < depth; d++)
+                {
+                    using var contextSpan = g.Span("context", governor: depthChoice);
                     SemanticGrammar.ApplyContext(g, fragment, 1 + g.Pick("compose.context", SemanticGrammar.Contexts.Length - 1));
+                }
+
                 fragments.Add(fragment);
             }
 
@@ -341,10 +349,18 @@ internal static class SemanticCorpus
         var localId = "seed-nested/" + seed.ToString("X", CultureInfo.InvariantCulture) + "/" + index.ToString(CultureInfo.InvariantCulture);
         return new SemanticCaseBuilder(localId, () => SemanticChooser.Seeded(seed, index), g =>
         {
-            var fragment = SemanticGrammar.NestedPattern(g, g.Pick("nested.outer", 2) == 1, g.Chance("nested.fail", 25));
+            var outer = g.Pick("nested.outer", 2) == 1;
+            var failing = g.Chance("nested.fail", 25);
+            SemanticFragment fragment;
+            using (g.Span("production"))
+                fragment = SemanticGrammar.NestedPattern(g, outer, failing);
             var depth = 1 + g.Pick("nested.depth", 2);
+            var depthChoice = g.LastChoice;
             for (var d = 0; d < depth; d++)
+            {
+                using var contextSpan = g.Span("context", governor: depthChoice);
                 SemanticGrammar.ApplyContext(g, fragment, 1 + g.Pick("nested.context", SemanticGrammar.Contexts.Length - 1));
+            }
             return Assemble(localId, "seeded", seed, index, g, [fragment], null, false);
         });
     }

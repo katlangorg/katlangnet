@@ -41,21 +41,104 @@ internal sealed class SemanticCaseBuilder(string localId, Func<SemanticChooser> 
 internal readonly record struct SemanticChoice(string Dimension, int Count, int Value);
 
 /// <summary>
+/// One recorded structural span of a generation (SEM-2C): the decisions <c>[Start, End)</c> of one
+/// <c>fragment</c> (a composed root fragment with its contexts), <c>production</c> (a family's own
+/// decisions) or <c>context</c> (one applied context). <see cref="Ordinal"/> is the span's opening
+/// order in its generation; <see cref="Governor"/> is the index of an earlier decision whose value
+/// counts this kind's repetitions (one less removes one repetition), or <c>-1</c>. Spans are derived
+/// from the builder's structure and are never replay input.
+/// </summary>
+internal readonly record struct SemanticSpan(int Ordinal, string Kind, int Start, int End, int Governor)
+{
+    public int Length => End - Start;
+
+    public override string ToString() => string.Create(CultureInfo.InvariantCulture,
+        $"{Kind}#{Ordinal}[{Start},{End}){(Governor >= 0 ? " governed by " + Governor.ToString(CultureInfo.InvariantCulture) : "")}");
+}
+
+/// <summary>A chooser that observes the generator's spans (<see cref="SemanticGrammar.Gen.Span"/>). Observation never changes a decision.</summary>
+internal interface ISemanticSpanObserver
+{
+    void BeginSpan(int ordinal, string kind, int start, int governor);
+
+    void EndSpan(int ordinal, int end);
+}
+
+/// <summary>
 /// Records every <see cref="SemanticChooser.Pick"/> of an inner chooser and returns the inner value
 /// unchanged, so recording never changes a decision (<see cref="SemanticChooser.Chance"/> goes
-/// through <c>Pick</c> and is recorded as a pick of 100).
+/// through <c>Pick</c> and is recorded as a pick of 100). It also records the generator's spans over
+/// the recorded sequence and forwards them to an inner span observer.
 /// </summary>
-internal sealed class RecordingChooser(SemanticChooser inner) : SemanticChooser
+internal sealed class RecordingChooser(SemanticChooser inner) : SemanticChooser, ISemanticSpanObserver
 {
     private readonly List<SemanticChoice> _choices = [];
+    private readonly List<SemanticSpan> _spans = [];
 
     public ImmutableArray<SemanticChoice> Choices => [.. _choices];
+
+    /// <summary>The closed spans, in opening order.</summary>
+    public ImmutableArray<SemanticSpan> Spans => [.. _spans.Where(static s => s.End >= s.Start)];
 
     public override int Pick(string dimension, int count)
     {
         var value = inner.Pick(dimension, count);
         _choices.Add(new SemanticChoice(dimension, count, value));
         return value;
+    }
+
+    public void BeginSpan(int ordinal, string kind, int start, int governor)
+    {
+        // The generator counts its own decisions; they are this recording's indices only when the
+        // recorder is the generator's direct chooser.
+        if (start != _choices.Count || ordinal != _spans.Count)
+            throw new InvalidOperationException("a span recorder must be the generator's direct chooser");
+        _spans.Add(new SemanticSpan(ordinal, kind, start, -1, governor));
+        (inner as ISemanticSpanObserver)?.BeginSpan(ordinal, kind, start, governor);
+    }
+
+    public void EndSpan(int ordinal, int end)
+    {
+        _spans[ordinal] = _spans[ordinal] with { End = end };
+        (inner as ISemanticSpanObserver)?.EndSpan(ordinal, end);
+    }
+}
+
+/// <summary>
+/// Replays <c>values</c> like <see cref="ReplayingChooser"/>, except that span <c>ordinal</c> is
+/// generated with ITS MINIMAL ALTERNATIVE: every decision inside it is <c>0</c> and consumes nothing,
+/// and the replay resumes after the span's recorded decisions (<c>resumeAt</c>). Because the prefix
+/// before the span is replayed unchanged, the generator opens the same span ordinal at the same point.
+/// The new generation's own trace (recorded around this chooser) is an ordinary choice sequence.
+/// </summary>
+internal sealed class SpanReplacingChooser(IReadOnlyList<int> values, int ordinal, int resumeAt) : SemanticChooser, ISemanticSpanObserver
+{
+    private int _next;
+    private bool _inside;
+
+    public override int Pick(string dimension, int count)
+    {
+        if (count <= 0) throw new ArgumentOutOfRangeException(nameof(count));
+        if (_inside) return 0;
+        if (_next >= values.Count)
+        {
+            _next++;
+            return 0;
+        }
+
+        return Math.Clamp(values[_next++], 0, count - 1);
+    }
+
+    public void BeginSpan(int spanOrdinal, string kind, int start, int governor)
+    {
+        if (spanOrdinal != ordinal) return;
+        _inside = true;
+        _next = resumeAt;
+    }
+
+    public void EndSpan(int spanOrdinal, int end)
+    {
+        if (spanOrdinal == ordinal) _inside = false;
     }
 }
 
@@ -253,6 +336,18 @@ internal sealed record SemanticReductionOptions
     public Func<SemanticCase, SemanticCaseResult> Runner { get; init; } = static c => SemanticRunner.Run(c);
 
     public bool Supervised { get; init; }
+
+    /// <summary>A campaign's original failure must reproduce with this signature before reduction starts.</summary>
+    public SemanticFailureSignature? RequiredSignature { get; init; }
+
+    /// <summary>Optional enclosing budget, checked before candidate generation and execution. An active execution finishes normally.</summary>
+    public Func<bool>? ShouldStop { get; init; }
+
+    /// <summary>
+    /// Whether the structure-aware span moves run before the block moves (default). Turning them off
+    /// gives the block-only reducer of SEM-2B; the tests compare the two.
+    /// </summary>
+    public bool SpanMoves { get; init; } = true;
 }
 
 internal enum SemanticReductionStatus
@@ -263,7 +358,7 @@ internal enum SemanticReductionStatus
     /// <summary>The case fails, but no smaller candidate preserved its signature within the bounds.</summary>
     AlreadyMinimal,
 
-    /// <summary>The case passes: there is no failure to reduce.</summary>
+    /// <summary>The case passes or does not reproduce the required signature: there is no matching failure to reduce.</summary>
     NothingToReduce,
 }
 
@@ -294,6 +389,15 @@ internal sealed record SemanticReductionResult(
     int MaxAttempts,
     bool Supervised)
 {
+    /// <summary>The spans recorded over <see cref="OriginalChoices"/> (derived metadata; not part of the record).</summary>
+    public ImmutableArray<SemanticSpan> OriginalSpans { get; init; } = [];
+
+    /// <summary>The spans recorded over <see cref="ReducedChoices"/>.</summary>
+    public ImmutableArray<SemanticSpan> ReducedSpans { get; init; } = [];
+
+    /// <summary>The enclosing campaign budget stopped the search. Reported in the campaign summary, not replay input.</summary>
+    public bool Stopped { get; init; }
+
     public string Describe() => string.Create(CultureInfo.InvariantCulture,
         $"{Status} {OriginalCaseId} [{Signature}]: {OriginalSize} -> {ReducedSize}; attempts={Attempts}/{MaxAttempts}{(AttemptLimitReached ? " (limit reached)" : "")} generations={Generations} accepted={Accepted.Length} generation-failures={GenerationFailures.Length}");
 }
@@ -302,7 +406,11 @@ internal sealed record SemanticReductionResult(
 /// Choice-sequence reduction of a failing SEM-2B case (SEM-2C). The failing case's generation is
 /// recorded; candidates are smaller choice sequences replayed through the SAME builder, so each is a
 /// generated case with its own constructed expectation. Moves, in order and repeated to a fixpoint:
-/// delete blocks of 8, 4, 2 and 1 choices; lower single values to 0; decrement them. A candidate is
+/// first the SPAN moves over the generator's recorded spans (<see cref="SemanticSpan"/>), span by
+/// span in opening order — delete the whole span and decrement its governor (one repetition fewer),
+/// delete the whole span, replace it with its minimal all-zero alternative
+/// (<see cref="SpanReplacingChooser"/>); then delete blocks of 8, 4, 2 and 1 choices; lower single
+/// values to 0; decrement them. A candidate is
 /// accepted when it is strictly smaller (<see cref="SemanticCaseSize"/>) and fails with the same
 /// <see cref="SemanticFailureSignature"/>. A candidate that generates the IDENTICAL case is adopted
 /// without running (the run is deterministic), so normalizing the sequence costs no attempt.
@@ -324,32 +432,44 @@ internal static class SemanticReducer
         var originalResult = options.Runner(original.Case);
         var signature = SemanticFailureSignature.Of(originalResult);
         var originalSize = SizeOf(original, originalChoices);
+        var originalSpans = recorder.Spans;
 
         var current = original;
         var currentChoices = originalChoices;
+        var currentSpans = originalSpans;
         var currentResult = originalResult;
         var currentSize = originalSize;
         var currentText = SemanticDescriptor.Write(original.Case);
         var attempts = 0;
         var generations = 0;
         var limitReached = false;
+        var stopped = false;
         var accepted = new List<SemanticReductionStep>();
         var failures = new List<SemanticGenerationFailure>();
         var tried = new HashSet<string>(StringComparer.Ordinal);
 
-        if (originalResult.Passed)
+        if (originalResult.Passed || (options.RequiredSignature is { } required && signature != required))
         {
             return new SemanticReductionResult(SemanticReductionStatus.NothingToReduce, original.Case.CaseId, original.Case, originalResult,
                 signature, originalChoices, originalSize, original.Case, originalResult, originalChoices, originalSize,
-                0, 0, false, [], [], options.MaxAttempts, options.Supervised);
+                0, 0, false, [], [], options.MaxAttempts, options.Supervised)
+            {
+                OriginalSpans = originalSpans,
+                ReducedSpans = originalSpans,
+            };
         }
 
+        bool ShouldStop() => stopped || (stopped = options.ShouldStop?.Invoke() == true);
+
         // Returns true when the candidate was adopted.
-        bool Try(string move, ImmutableArray<int> values)
+        bool Try(string move, ImmutableArray<int> values) => TryWith(move, values, new ReplayingChooser(values));
+
+        // The candidate generated by `decisions` (a replay of `values`, possibly with one span replaced).
+        bool TryWith(string move, ImmutableArray<int> values, SemanticChooser decisions)
         {
-            if (limitReached || failures.Count > 0) return false;
+            if (limitReached || failures.Count > 0 || ShouldStop()) return false;
             generations++;
-            var replay = new RecordingChooser(new ReplayingChooser(values));
+            var replay = new RecordingChooser(decisions);
             SemanticBuiltCase candidate;
             try
             {
@@ -357,7 +477,8 @@ internal static class SemanticReducer
             }
             catch (Exception exception) when (exception is not OutOfMemoryException)
             {
-                failures.Add(new SemanticGenerationFailure(values, exception.GetType().Name + ": " + exception.Message));
+                failures.Add(new SemanticGenerationFailure(values,
+                    (decisions is SpanReplacingChooser ? move + ": " : "") + exception.GetType().Name + ": " + exception.Message));
                 return false;
             }
 
@@ -391,6 +512,8 @@ internal static class SemanticReducer
                     return false;
                 }
 
+                if (ShouldStop()) return false;
+
                 attempts++;
                 result = options.Runner(candidate.Case);
                 if (result.Passed || SemanticFailureSignature.Of(result) != signature) return false;
@@ -398,6 +521,7 @@ internal static class SemanticReducer
 
             current = candidate;
             currentChoices = effective;
+            currentSpans = replay.Spans;
             currentResult = result;
             currentSize = size;
             currentText = text;
@@ -406,13 +530,23 @@ internal static class SemanticReducer
         }
 
         var progress = true;
-        while (progress && !limitReached && failures.Count == 0)
+        while (progress && !limitReached && failures.Count == 0 && !ShouldStop())
         {
             progress = false;
+
+            // Span moves: whole structural units first. After an adoption the spans are re-read from
+            // the adopted generation and the same position is tried again (it now holds the next span).
+            var s = 0;
+            while (options.SpanMoves && s < currentSpans.Length && !limitReached && failures.Count == 0 && !ShouldStop())
+            {
+                if (TrySpan(currentSpans[s])) progress = true;
+                else s++;
+            }
+
             foreach (var block in BlockSizes)
             {
                 var i = 0;
-                while (i + block <= currentChoices.Length && !limitReached && failures.Count == 0)
+                while (i + block <= currentChoices.Length && !limitReached && failures.Count == 0 && !ShouldStop())
                 {
                     var values = Values(currentChoices);
                     if (Try($"delete {block.ToString(CultureInfo.InvariantCulture)} at {i.ToString(CultureInfo.InvariantCulture)}",
@@ -423,7 +557,7 @@ internal static class SemanticReducer
                 }
             }
 
-            for (var i = 0; i < currentChoices.Length && !limitReached && failures.Count == 0; i++)
+            for (var i = 0; i < currentChoices.Length && !limitReached && failures.Count == 0 && !ShouldStop(); i++)
             {
                 if (currentChoices[i].Value == 0) continue;
                 if (Try($"zero {i.ToString(CultureInfo.InvariantCulture)}", Values(currentChoices).SetItem(i, 0))) progress = true;
@@ -431,7 +565,7 @@ internal static class SemanticReducer
 
             for (var i = 0; i < currentChoices.Length && !limitReached && failures.Count == 0; i++)
             {
-                while (i < currentChoices.Length && currentChoices[i].Value > 0 && !limitReached
+                while (i < currentChoices.Length && currentChoices[i].Value > 0 && !limitReached && !ShouldStop()
                        && Try($"decrement {i.ToString(CultureInfo.InvariantCulture)}", Values(currentChoices).SetItem(i, currentChoices[i].Value - 1)))
                     progress = true;
             }
@@ -440,7 +574,27 @@ internal static class SemanticReducer
         var status = currentSize.CompareTo(originalSize) < 0 ? SemanticReductionStatus.Reduced : SemanticReductionStatus.AlreadyMinimal;
         return new SemanticReductionResult(status, original.Case.CaseId, original.Case, originalResult, signature, originalChoices, originalSize,
             current.Case, currentResult, currentChoices, currentSize, attempts, generations, limitReached, [.. accepted], [.. failures],
-            options.MaxAttempts, options.Supervised);
+            options.MaxAttempts, options.Supervised)
+        {
+            OriginalSpans = originalSpans,
+            ReducedSpans = currentSpans,
+            Stopped = ShouldStop(),
+        };
+
+        // The three span moves, in order; true when one was adopted.
+        bool TrySpan(SemanticSpan span)
+        {
+            if (span.Length <= 0) return false;
+            var values = Values(currentChoices);
+            var name = span.Kind + " span " + span.Ordinal.ToString(CultureInfo.InvariantCulture);
+            var removed = values.RemoveRange(span.Start, span.Length);
+            if (span.Governor >= 0 && values[span.Governor] > 0
+                && Try("delete " + name + " and decrement its governor", removed.SetItem(span.Governor, values[span.Governor] - 1)))
+                return true;
+            if (Try("delete " + name, removed)) return true;
+            return values.Skip(span.Start).Take(span.Length).Any(static v => v != 0)
+                && TryWith("minimize " + name, values, new SpanReplacingChooser(values, span.Ordinal, span.End));
+        }
     }
 
     internal static ImmutableArray<int> Values(ImmutableArray<SemanticChoice> choices) => [.. choices.Select(static c => c.Value)];
@@ -875,28 +1029,42 @@ internal static class SemanticReduction
             return NothingToReduceExitCode;
         }
 
-        Directory.CreateDirectory(outDir);
-        var record = RecordOf(result);
-        var reduced = AsReduced(result.Reduced, result.OriginalCaseId, result.ReducedChoices);
-        var stem = Path.Combine(outDir, SemanticReplay.SafeName(reduced.CaseId));
-        File.WriteAllText(stem + ".json", SemanticDescriptor.Write(reduced, result.ReducedResult with { CaseId = reduced.CaseId }));
-        File.WriteAllText(stem + ".reduction.json", WriteRecord(record));
+        var (stem, reduced) = WriteArtifacts(result, outDir);
         Console.WriteLine($"wrote {stem}.json and {stem}.reduction.json ({reduced.CaseId})");
         foreach (var failure in result.GenerationFailures.Take(4))
             Console.WriteLine($"GENERATION FAILURE: {failure.Error} choices=[{string.Join(",", failure.Choices)}]");
         return result.GenerationFailures.IsEmpty ? 0 : 1;
     }
 
-    private static SemanticWorkerCommand DefaultWorker(string descriptor, string result)
+    /// <summary>
+    /// Writes a failing reduction's two artifacts to <paramref name="outDir"/>: the reduced
+    /// <c>kl-sem2b-case</c> descriptor (with its run's result) and its <c>kl-sem2b-reduction</c> record.
+    /// Returns the common path stem (without extension) and the reduced case under its reserved id.
+    /// </summary>
+    internal static (string Stem, SemanticCase Reduced) WriteArtifacts(SemanticReductionResult result, string outDir)
+    {
+        if (result.Status == SemanticReductionStatus.NothingToReduce)
+            throw new ArgumentException("a passing case has no reduction artifacts", nameof(result));
+        Directory.CreateDirectory(outDir);
+        var record = RecordOf(result);
+        var reduced = AsReduced(result.Reduced, result.OriginalCaseId, result.ReducedChoices);
+        var stem = Path.Combine(outDir, SemanticReplay.SafeName(reduced.CaseId));
+        File.WriteAllText(stem + ".json", SemanticDescriptor.Write(reduced, result.ReducedResult with { CaseId = reduced.CaseId }));
+        File.WriteAllText(stem + ".reduction.json", WriteRecord(record));
+        return (stem, reduced);
+    }
+
+    internal static SemanticWorkerCommand DefaultWorker(string descriptor, string result)
         => SemanticSupervisor.SelfWorker(descriptor, result, SemanticReplay.Mode.ExactSource);
 
     /// <summary>One candidate in a bounded supervised child (exact-source: a candidate is not a recipe case).</summary>
-    private static SemanticCaseResult SuperviseOne(
-        SemanticCase semanticCase, string evidence, int number, Func<string, string, SemanticWorkerCommand> workerCommand)
+    internal static SemanticCaseResult SuperviseOne(
+        SemanticCase semanticCase, string evidence, int number, Func<string, string, SemanticWorkerCommand> workerCommand,
+        TimeSpan? deadline = null)
     {
         var descriptor = Path.Combine(evidence, "candidate-" + number.ToString("D4", CultureInfo.InvariantCulture) + ".json");
         File.WriteAllText(descriptor, SemanticDescriptor.Write(semanticCase));
-        var run = SemanticSupervisor.Run(workerCommand(descriptor, descriptor + ".result.json"), SemanticSupervisor.DefaultDeadline);
+        var run = SemanticSupervisor.Run(workerCommand(descriptor, descriptor + ".result.json"), deadline ?? SemanticSupervisor.DefaultDeadline);
         return run.Result is { } summary && summary.Verdict == run.Verdict
             ? summary.CoverageResult
             : new SemanticCaseResult(semanticCase.CaseId, run.Verdict, [], [], SemanticPath.None, [], []);

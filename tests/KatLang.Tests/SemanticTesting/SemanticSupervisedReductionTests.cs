@@ -28,8 +28,11 @@ public class SemanticSupervisedReductionTests(ITestOutputHelper output)
     internal const string Trigger = "repeat";
 
     /// <summary>
-    /// A small systematic loop case: three children (the original, one rejected candidate that loses
-    /// its <c>repeat</c> and passes, one accepted candidate), 81 -> 35 source characters.
+    /// A small systematic loop case, 81 -> 35 source characters. With the SEM-2C span moves it takes
+    /// two children: the original and one accepted candidate (minimizing the loop production reaches
+    /// the minimum at once). The block-only reducer took three, one a rejected candidate that lost its
+    /// <c>repeat</c> and passed; rejection of a passing child result is the same code path in process
+    /// (<see cref="AssertLocallyMinimal"/>) and a passing child is <see cref="SemanticSupervisionTests"/>' normal worker.
     /// </summary>
     internal const string CaseId = "sem2b/v1/sys/loop/4";
 
@@ -99,9 +102,8 @@ public class SemanticSupervisedReductionTests(ITestOutputHelper output)
             Assert.True(record.ReducedSize.CompareTo(record.OriginalSize) < 0);
 
             // ── Every child ran: the original plus one per executed candidate, each with its retained
-            // descriptor, result and supervision sidecar. The children both REJECTED a candidate (it
-            // lost the trigger and passed) and ACCEPTED one (same signature), and every failing child
-            // carried structured finding records the signature was classified from.
+            // descriptor, result and supervision sidecar. A child ACCEPTED a candidate (same signature),
+            // and every failing child carried structured finding records the signature was classified from.
             var children = Directory.GetFiles(evidence, "candidate-*.json").Where(f => !f.EndsWith(".result.json", StringComparison.Ordinal)).Order(StringComparer.Ordinal).ToList();
             Assert.Equal(record.Attempts + 1, children.Count);
             var verdicts = new List<SemanticVerdict>();
@@ -117,8 +119,8 @@ public class SemanticSupervisedReductionTests(ITestOutputHelper output)
 
             output.WriteLine("child verdicts: " + string.Join(", ", verdicts));
             Assert.Equal(SemanticVerdict.Mismatch, verdicts[0]); // the original
-            Assert.Contains(SemanticVerdict.Passed, verdicts);
             Assert.True(verdicts.Count(v => v == SemanticVerdict.Mismatch) >= 2, "no candidate was accepted through a child");
+            Assert.Equal([SemanticVerdict.Mismatch, SemanticVerdict.Mismatch], verdicts); // span moves: original + one accepted child
             Assert.All(verdicts, v => Assert.True(v is SemanticVerdict.Passed or SemanticVerdict.Mismatch, v.ToString()));
 
             // ── Stable: the supervised record is exactly the in-process reduction's under the same fault.

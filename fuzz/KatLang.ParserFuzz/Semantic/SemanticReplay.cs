@@ -13,6 +13,7 @@ namespace KatLang.ParserFuzz;
 /// semantic-corpus [--supervised] [--out DIR] [--only PREFIX] [--deadline-seconds N]
 /// semantic-worker DESCRIPTOR RESULT [--exact-source]     (child process of a supervised run)
 /// semantic-reduce DESCRIPTOR|CASE-ID OUT [--max-attempts N] [--supervised]   (SemanticReduction.RunReduce)
+/// semantic-campaign --seeds FIRST[..LAST] [--cases-per-seed N] [--max-cases N] [--max-seconds N] [--no-reduce] [--out DIR]   (SemanticCampaign)
 /// </code>
 ///
 /// <para><b>Modes.</b> The default RECIPE mode rebuilds the case from its generator, recipe version
@@ -130,7 +131,8 @@ internal static class SemanticReplay
         var mode = args.Contains("--exact-source", StringComparer.Ordinal) ? Mode.ExactSource : Mode.Recipe;
         var supervised = args.Contains("--supervised", StringComparer.Ordinal);
         var paths = args.Skip(1).Where(a => !a.StartsWith("--", StringComparison.Ordinal)).ToList();
-        var files = paths.SelectMany(p => Directory.Exists(p) ? Directory.GetFiles(p, "*.json").Where(f => !f.EndsWith(".result.json", StringComparison.Ordinal) && !f.EndsWith(".reduction.json", StringComparison.Ordinal)).Order(StringComparer.Ordinal) : (IEnumerable<string>)[p]).ToList();
+        var files = paths.SelectMany(p => Directory.Exists(p) ? Directory.GetFiles(p, "*.json").Where(f => !f.EndsWith(".result.json", StringComparison.Ordinal)
+            && !f.EndsWith(".reduction.json", StringComparison.Ordinal) && !f.EndsWith(".signature.json", StringComparison.Ordinal)).Order(StringComparer.Ordinal) : (IEnumerable<string>)[p]).ToList();
         if (files.Count == 0)
         {
             Console.Error.WriteLine("semantic-replay: no descriptors given; nothing was verified.");

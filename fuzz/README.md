@@ -1544,7 +1544,8 @@ never a legitimate fix.
 A bounded, deterministic layer that GENERATES meaningful combinations of current KatLang features,
 runs each through a small matrix of shared execution profiles, and judges the results against
 expectations the generator CONSTRUCTED — never against a preliminary run of the implementation.
-It is not a libFuzzer target: there is no byte decoder and no campaign loop. It reuses SEM-2A's
+It is not a libFuzzer target: there is no byte decoder, and its only search loop is the bounded,
+deterministic `semantic-campaign` over seeded recipe ids (§ Campaigns). It reuses SEM-2A's
 observer and comparator, the Phase 3 surface adapters and evidence, and the symbol-addressed
 structural model.
 
@@ -1563,7 +1564,8 @@ structural model.
 | `kl-sem2b-case` v1 descriptors and result documents | `Semantic/SemanticDescriptor.cs` |
 | Replay, export, corpus and worker commands | `Semantic/SemanticReplay.cs` |
 | Bounded child-process supervision | `Semantic/SemanticSupervisor.cs` |
-| Per-id case builders, recording/replaying choosers, the reducer, `kl-sem2b-reduction` records (SEM-2C) | `Semantic/SemanticReduction.cs` |
+| Per-id case builders, recording/replaying choosers, generation spans, the reducer, `kl-sem2b-reduction` records (SEM-2C) | `Semantic/SemanticReduction.cs` |
+| The bounded `semantic-campaign` and its `kl-sem2c-campaign` summary (SEM-2C) | `Semantic/SemanticCampaign.cs` |
 | Tests | `tests/KatLang.Tests/SemanticTesting/` |
 
 ### Case kinds
@@ -1780,6 +1782,9 @@ $fuzz = "fuzz/KatLang.ParserFuzz/bin/Debug/net11.0/KatLang.ParserFuzz.exe"
 & $fuzz semantic-reduce sem2b/v1/seed/5EED2B000003/3 artifacts/sem2c-reduced --max-attempts 200
 & $fuzz semantic-reduce artifacts/sem2b/one.json artifacts/sem2c-reduced --supervised
 & $fuzz semantic-replay --exact-source artifacts/sem2c-reduced   # the reduced descriptor(s)
+
+# a bounded supervised search over seeded ids; every failure persisted and reduced (§ Campaigns)
+& $fuzz semantic-campaign --seeds 5EED2C000001..5EED2C000010 --cases-per-seed 16 --max-cases 256 --max-seconds 600
 ```
 
 Exit codes: 0 — every selected case passed; 1 — a failure (mismatch, drift, front end, harness,
@@ -1790,7 +1795,9 @@ artifacts written (reduced, or already minimal within the bounds); 1 — stopped
 generator precondition failure (a throw, missing expectation, or front-end-rejected valid member),
 with the failing choice sequence printed and the best prior artifacts retained; 2 —
 usage, an unreadable or drifted descriptor, an unknown or reduced id; 3 — the case PASSES, nothing to
-reduce (no artifact is written).
+reduce (no artifact is written). `semantic-campaign` uses 0 — every executed case passed (whether
+the plan was covered or a budget stopped it); 1 — at least one failure, or a reduction stopped at a
+generator precondition failure; 2 — usage, a refused output directory, or no case executed.
 
 ### Supervision
 
@@ -1830,8 +1837,23 @@ also why the structural shrinker, driven by metamorphic rules over a model, does
   each replay is a generated case whose expectation `Assemble` constructs; a replay that throws is a
   generator precondition defect. A throw, missing expectation or front-end-rejected valid member
   stops the search immediately and is reported with its sequence (never skipped silently).
-* **Loop.** Starting from the recorded sequence, repeated to a fixpoint: delete blocks of 8, 4, 2 and 1
-  choices at every offset; lower single values to 0; decrement them. A candidate is regenerated
+* **Spans.** `SemanticGrammar.Gen.Span(kind, governor)` brackets the decisions of one structural
+  unit and reports it to a `RecordingChooser`, which records `SemanticSpan(Ordinal, Kind, Start, End,
+  Governor)` over its sequence: `fragment` (one composed root fragment of a seeded case, from its
+  family pick through its contexts, governed by `compose.count`), `production` (a family's own
+  decisions, `SemanticGrammar.Build`, and the nested-seeded pattern) and `context` (one applied
+  context, governed by `compose.depth` or `nested.depth`). The governor is an EARLIER decision whose
+  value counts the span's repetitions, so one less removes one repetition. Spans are derived
+  metadata, never replay input: the generator counts its own decisions and only reports them, so
+  every existing choice sequence replays to the same case (the fixed-corpus digest is unchanged) and
+  neither the `kl-sem2b-case` descriptor nor the `kl-sem2b-reduction` record carries them.
+* **Loop.** Starting from the recorded sequence, repeated to a fixpoint: first the SPAN moves, span
+  by span in opening order — delete the whole span and decrement its governor, delete the whole
+  span, and replace it with its minimal alternative (`SpanReplacingChooser`: the prefix replays
+  unchanged, every decision inside the span is 0 and consumes nothing, and the replay resumes after
+  the span's recorded decisions); then delete blocks of 8, 4, 2 and 1 choices at every offset; lower
+  single values to 0; decrement them. After an adoption the spans are re-read from the adopted
+  generation. `SemanticReductionOptions.SpanMoves = false` is the block-only reducer (tests only). A candidate is regenerated
   through the SAME builder, then accepted when it is strictly smaller and fails with the same
   signature. Case size is lexicographic: rendered base source length, root fragments, declarations
   (the scope graph's count). Simpler choices for the IDENTICAL case may be adopted without running
@@ -1868,7 +1890,9 @@ also why the structural shrinker, driven by metamorphic rules over a model, does
   `kl-sem2b-reduction` v1 record are written exactly as before, so no version changed.
 * **Bounds.** `--max-attempts N` (default 200) bounds candidate EXECUTIONS; the original run is not
   counted and generation alone is cheap. The record says whether the limit was reached. Same input,
-  same output: no clock, randomness or unordered iteration takes part.
+  same output for standalone reduction: no clock, randomness or unordered iteration takes part.
+  A campaign also supplies its remaining time budget, checked before candidate generation and
+  execution, and its original failure signature, which must reproduce before any candidates run.
 * **Supervision.** `--supervised` runs the original and every candidate one at a time in a bounded
   `semantic-worker` child (`--exact-source`, since a candidate is not a recipe case); a timeout or
   crash is a verdict like any other and must be preserved exactly. Candidate descriptors and worker
@@ -1880,8 +1904,9 @@ also why the structural shrinker, driven by metamorphic rules over a model, does
   `SemanticSupervisedReductionTests` drives a complete supervised reduction through it: the child
   (the test assembly re-entered through `dotnet vstest`, readiness-gated) injects a wrong value on
   `base@sync-optimized` whenever a candidate contains `repeat`, and `sem2b/v1/sys/loop/4` reduces
-  from 81 to 35 source characters through three children (original `Mismatch`, a rejected candidate
-  that lost its `repeat` and `Passed`, an accepted `Mismatch`). The test requires the written record
+  from 81 to 35 source characters through two children (original `Mismatch`, then the span move that
+  minimizes the loop production, an accepted `Mismatch`; the block-only reducer needed a third, a
+  rejected candidate that lost its `repeat` and `Passed`). The test requires the written record
   to equal the in-process reduction's under the same fault byte for byte (apart from `supervised`),
   the signature `Mismatch base@sync-optimized value` to survive regeneration and exact-source
   replay, and no reducer move from the reduced sequence to give a smaller case with that signature.
@@ -1898,14 +1923,77 @@ choice sequences. `SemanticReduction.TryRebuild` regenerates the reduced case fr
 original and reduced sequences must be the generator's own traces and their sizes must match),
 then checks the reduced source fingerprint. The reader rejects contradictory status, sizes,
 attempt bounds and passing signatures; unknown formats, versions and generators are refused.
-Directory replay skips `*.reduction.json` beside descriptors.
+Directory replay skips `*.reduction.json`, `*.result.json` and campaign `*.signature.json` sidecars
+beside descriptors.
 
 Example (`SemanticReductionTests`, an injected wrong value on `base@sync-optimized` whenever the
-source contains `.Arguments`): `sem2b/v1/seed/5EED2B000001/1` reduces from 306 to 169 source
-characters and from 18 to 8 declarations in 22 executions, keeping signature
-`Mismatch base@sync-optimized value`. Limitation: block deletion of at most 8 choices cannot remove a
-whole fragment whose decisions span more, so a 3-fragment case may stay at 3 fragments while every
-fragment shrinks.
+source contains `.Arguments`; `SemanticCampaignTests`): `sem2b/v1/seed/5EED2B000001/1` reduces from 306
+to 74 source characters, 3 to 1 fragments and 18 to 5 declarations in 8 candidate executions, keeping
+signature `Mismatch base@sync-optimized value`. The block moves alone stop at 169 characters with
+all 3 fragments and 8 declarations after 22 candidate executions: deleting at most 8 choices cannot remove a
+whole fragment whose decisions span more, while the span moves delete it together with its count.
+`sem2b/v1/sys/loop/4` (the supervised test) still reduces from 81 to 35 characters, now in one
+execution instead of two.
+
+### Campaigns
+
+`semantic-campaign` searches for failures instead of replaying known ones. It is a manual, opt-in
+tool and is not part of CI.
+
+```text
+semantic-campaign --seeds FIRST[..LAST] [--cases-per-seed N] [--max-cases N] [--max-seconds N]
+                  [--deadline-seconds N] [--max-attempts N] [--no-reduce] [--out DIR]
+```
+
+* **Plan.** The seeded recipe ids `sem2b/v1/seed/<seed>/<index>` for every seed of the inclusive
+  hexadecimal range (at most 65,536 seeds) and every index below `--cases-per-seed` (default 16), in
+  seed-then-index order. These are ordinary recipe ids: any of them replays, exports and reduces by
+  id. The fixed corpus's seeds are `5EED2B000001`–`5EED2B000006`; choose others to search new cases.
+* **Execution.** Each case runs in a bounded `semantic-worker` child in RECIPE mode, one at a time,
+  under the unchanged `SemanticSupervisor` (per-execution `--deadline-seconds`, default 60; crash
+  isolation; bounded output). The descriptor is written before dispatch.
+* **Budgets.** `--max-cases` (default 64) bounds the cases EXECUTED; reduction candidates are not
+  counted. `--max-seconds` (default 600) is checked before every case, reduction, candidate generation
+  and candidate execution. An active child finishes under its usual deadline; no further child
+  starts after the time budget expires. This permits at most one active child's deadline of
+  overshoot, plus bounded generation and artifact-writing work. `--max-attempts` (default 100)
+  bounds each reduction's candidate executions; its original recheck is additional. A time-stopped
+  reduction writes its best result so far and records `reduction.stopped` in the campaign summary.
+  The campaign stops at the first exhausted budget and
+  reports `stop` (`completed`, `case-budget` or `time-budget`), the last covered id and the first
+  uncovered one.
+* **Failures.** Every failure is persisted with its signature; unless `--no-reduce` it is then
+  reduced exactly as `semantic-reduce --supervised` would (exact-source candidate children) and the
+  reduced descriptor and `kl-sem2b-reduction` v1 record are written. A failure whose reducer run
+  passes or produces a different signature is reported as not reproduced; no reduction is written
+  for a different failure.
+* **Determinism.** No randomness or unordered iteration takes part. For a fixed range and bounds,
+  a campaign that completes or stops at its case budget writes byte-identical summaries and the same
+  files; only a time-budget stop depends on the machine.
+* **Output.** `--out` must be a new or empty directory. In a checkout, Git's index is checked too:
+  tracked paths are refused even when absent from disk (Git must be available for that check).
+  Refused or unwritable output returns exit 2. The default is
+  `<checkout>/artifacts/semantic-campaign/<FIRST>-<LAST>x<N>-<UTC stamp>` (git-ignored), or a
+  temporary directory outside a checkout. Layout:
+
+  ```text
+  campaign.json                         kl-sem2c-campaign v1 summary (no clock, no absolute path)
+  failures/<id>.json                    the failing kl-sem2b-case v1 descriptor with its result
+  failures/<id>.signature.json          its signature and first finding
+  reduced/<id>/<reduced id>.json        the reduced descriptor (unless --no-reduce)
+  reduced/<id>/<reduced id>.reduction.json
+  reduced/<id>/evidence/                the reduction's candidate children
+  work/<id>.json(.result.json, ...)     a FAILING case's worker evidence (passing evidence is removed)
+  ```
+
+  `campaign.json` names the plan and bounds, `planned`, `executed`, `passed`, `failed`, `stop`,
+  `lastCovered`, `firstUncovered`, verdict counts, and each failure with its signature and artifact
+  paths (relative to the output directory), reduction status, sizes and attempts.
+* **Seams.** `SemanticCampaignOptions.InProcessRunner`, `WorkerCommand` and `Clock` are internal
+  test seams; the command never sets them. `SemanticCampaignTests` covers determinism and both
+  budgets on a two-seed range, a planted failure found, persisted and reduced through the command,
+  `--no-reduce`, usage refusals, changed rerun signatures, and supervised campaigns whose
+  `dotnet vstest` children find and reduce the planted shape.
 
 ### Extending it
 
@@ -1927,11 +2015,12 @@ fragment shrinks.
 
 ### Remaining work (SEM-2C)
 
-Broader and longer campaigns (a bounded `semantic-campaign` that feeds failures to
-`semantic-reduce`), structure-aware reduction moves (fragment-span deletion, which the choice-level
-blocks above cannot always reach), fault injection beyond the apparatus checks here, and Lean evidence
-beyond the identity-prelude members. Automatic reduction of generated failures is implemented
-(§ Reduction). Every valid generated case now has a per-case Lean guard on
+Campaigns over more than the `seed/` recipe (nested-seeded and systematic ids, more
+families per case), spans inside productions (operation lists, patterns) so the reducer can drop one
+operation rather than a whole production, fault injection beyond the apparatus checks here, and Lean
+evidence beyond the identity-prelude members. Automatic reduction of generated failures, its
+structure-aware span moves (§ Reduction) and the bounded `semantic-campaign` (§ Campaigns) are
+implemented. Every valid generated case now has a per-case Lean guard on
 its identity-prelude member (§ Per-case Lean guards); the host-operation base program, host events,
 async and optimizer paths, and the two transformation members still rest on C# profile parity plus
 the independent constructed anchors. The thin optimizer loop paths now have named cases and an
