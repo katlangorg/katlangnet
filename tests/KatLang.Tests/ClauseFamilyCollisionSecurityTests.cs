@@ -267,7 +267,7 @@ public class ClauseFamilyCollisionSecurityTests
     private static Pattern List(params Pattern[] items) => new Pattern.ListValue(items);
     private static Decimal128 D(string text) => Decimal128.Parse(text, System.Globalization.CultureInfo.InvariantCulture);
 
-    private static IReadOnlyList<Pattern> EquivalenceCorpus()
+    internal static IReadOnlyList<Pattern> EquivalenceCorpus()
     {
         var decomposedE = new string(['e', (char)0x0301]);
         var precomposedE = new string([(char)0x00E9]);
@@ -593,7 +593,10 @@ public class ClauseFamilyCollisionSecurityTests
             () => index.TryAdd(Seq(B(prefix + "x"), B(prefix + "y")), source.Token));
         Assert.Equal(source.Token, exception.CancellationToken);
         Assert.Equal(1, observations.CanonicalKeyCount);
-        Assert.Equal(1, observations.BinderComparisonCount);
+        // One single-character route and the first bounded prefix block suffice. No scan of the
+        // remaining 40,000-unit name is allowed before the token is observed.
+        Assert.InRange(observations.BinderComparisonCount, 1, 2);
+        Assert.InRange(observations.BinderComparisonUnits, 1, PatternMatchEquivalenceIndex.CanonicalizationCheckpointInterval + 1L);
     }
 
     [Fact]

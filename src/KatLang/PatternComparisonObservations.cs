@@ -29,14 +29,32 @@ internal sealed class PatternComparisonObservations
     /// <summary>Code units copied when materializing completed canonical keys.</summary>
     public long KeyCopyUnits { get; private set; }
 
+    /// <summary>Code units copied while growing the canonical-definition text buffer.</summary>
+    public long BufferCopyUnits { get; private set; }
+
+    /// <summary>Definition units written, including equal definitions retracted after interning.</summary>
+    public long DefinitionWriteUnits { get; private set; }
+
     /// <summary>Binder-name input units (names are erased from the resulting key).</summary>
     public long BinderNameUnits { get; private set; }
 
-    /// <summary>Ordered binder-map comparisons, independent of any hashing.</summary>
+    /// <summary>Exact binder-trie prefix and single-character comparisons, independent of hashing.</summary>
     public long BinderComparisonCount { get; private set; }
 
-    /// <summary>Upper bound of the code units examined by ordered binder-map comparisons.</summary>
+    /// <summary>Upper bound of the code units examined by binder-trie comparisons.</summary>
     public long BinderComparisonUnits { get; private set; }
+
+    /// <summary>Exact prefix and single-character comparisons in one head's definition trie.</summary>
+    public long DefinitionComparisonCount { get; private set; }
+
+    /// <summary>Upper bound of the code units examined by definition comparisons.</summary>
+    public long DefinitionComparisonUnits { get; private set; }
+
+    /// <summary>
+    /// Visits that met a node already completed in the same key (reference identity) and reused its
+    /// definition instead of walking it again: zero for a tree, one per repeated edge on a shared head.
+    /// </summary>
+    public long SharedNodeReuseCount { get; private set; }
 
     /// <summary>Ordinal key comparisons performed by the ordered index.</summary>
     public long KeyComparisonCount { get; private set; }
@@ -48,12 +66,14 @@ internal sealed class PatternComparisonObservations
     public long KeyComparisonUnits { get; private set; }
 
     /// <summary>
-    /// Total duplicate-index work, including traversal, writing/copying, binder names and both ordered
-    /// indexes. For N clauses, total key size S, binder-name size T and at most B names per head, the
-    /// bound is O(S log(N + 1) + T log(B + 1)); literal-only families have T = 0.
+    /// Total duplicate-index work, including traversal, ALL definition writes (also retracted ones),
+    /// buffer growth, completed-key copies, binder names, exact tries and the ordered family index.
+    /// For N clauses, total key size S and total distinct-node/edge/literal/name input size H, the
+    /// bound is O(H + S log(N + 1)), using bounded-width CLR indexes and UTF-16 units. Per-head key
+    /// construction is linear in its DISTINCT graph input, never in its paths.
     /// </summary>
-    public long TotalIndexWork => CanonicalKeyUnits + KeyComparisonUnits + TraversalUnits + KeyCopyUnits
-        + BinderNameUnits + BinderComparisonUnits;
+    public long TotalIndexWork => DefinitionWriteUnits + KeyComparisonUnits + TraversalUnits + KeyCopyUnits
+        + BufferCopyUnits + BinderNameUnits + BinderComparisonUnits + DefinitionComparisonUnits;
 
     /// <summary>Cancellation observations per insertion and within traversal, copying and comparisons.</summary>
     public long CancellationCheckpointCount { get; private set; }
@@ -77,9 +97,21 @@ internal sealed class PatternComparisonObservations
         KeyComparisonUnits = checked(KeyComparisonUnits + units);
     }
 
+    internal void RecordDefinitionComparison(int units)
+    {
+        DefinitionComparisonCount = checked(DefinitionComparisonCount + 1);
+        DefinitionComparisonUnits = checked(DefinitionComparisonUnits + units);
+    }
+
+    internal void RecordSharedNodeReuse() => SharedNodeReuseCount = checked(SharedNodeReuseCount + 1);
+
     internal void RecordTraversal() => TraversalUnits = checked(TraversalUnits + 1);
 
     internal void RecordKeyCopy(int units) => KeyCopyUnits = checked(KeyCopyUnits + units);
+
+    internal void RecordBufferCopy(int units) => BufferCopyUnits = checked(BufferCopyUnits + units);
+
+    internal void RecordDefinitionWrite(int units) => DefinitionWriteUnits = checked(DefinitionWriteUnits + units);
 
     internal void RecordBinderName(int units) => BinderNameUnits = checked(BinderNameUnits + units);
 
