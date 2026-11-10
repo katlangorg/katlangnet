@@ -652,6 +652,15 @@ internal sealed class FrontEndTraversalObservations
     internal void RecordSettlementShareStaleView()
         => SettlementShareStaleViews = checked(SettlementShareStaleViews + 1);
 
+    /// <summary>
+    /// Bound-owner work for settlement keys (<c>BoundOwnerSet</c>): one per owner offered to a set and the
+    /// set's count when distinct sets with the same count and fingerprint reach the membership comparison.
+    /// </summary>
+    public long SettlementBoundOwnerVisits { get; private set; }
+
+    internal void RecordSettlementBoundOwnerVisits(long owners)
+        => SettlementBoundOwnerVisits = checked(SettlementBoundOwnerVisits + owners);
+
     /// <summary>Summary-seed expansions (<c>PropertyDependencyGraphBuilder.CollectSummarySeed</c>, expression level).</summary>
     public long DependencySeedExpansions { get; private set; }
 

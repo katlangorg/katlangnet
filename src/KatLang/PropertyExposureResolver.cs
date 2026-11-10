@@ -53,7 +53,7 @@ internal static class PropertyExposureResolver
         public Algorithm? Algorithm { get; }
 
         public IEnumerable<Requirement> ResolveRequirements(IEnumerable<OwnerQualifiedParameter> requirements,
-            IReadOnlySet<Algorithm>? boundOwners = null)
+            BoundOwnerSet? boundOwners = null)
         {
             foreach (var requirement in requirements)
                 if (TryResolveRequirement(requirement, boundOwners, out var resolved, out _))
@@ -61,14 +61,14 @@ internal static class PropertyExposureResolver
         }
 
         /// <summary>
-        /// <see cref="ResolveRequirements(IEnumerable{OwnerQualifiedParameter}, IReadOnlySet{Algorithm}?)"/> with this
+        /// <see cref="ResolveRequirements(IEnumerable{OwnerQualifiedParameter}, BoundOwnerSet?)"/> with this
         /// level as a settlement SITE, raising <paramref name="deepestLanding"/> to the depth of the deepest level an
         /// owner lookup landed at (see <see cref="SettlementShare"/>): <see cref="NoOwnerLookup"/> stands when no
         /// requirement walked the chain, and <see cref="int.MaxValue"/> when one found no owner on it, because another
         /// site could hold that owner.
         /// </summary>
         public List<Requirement> ResolveRequirementsFromSite(IEnumerable<OwnerQualifiedParameter> requirements,
-            IReadOnlySet<Algorithm>? boundOwners, ref int deepestLanding)
+            BoundOwnerSet? boundOwners, ref int deepestLanding)
         {
             var resolved = new List<Requirement>();
             foreach (var requirement in requirements)
@@ -86,7 +86,7 @@ internal static class PropertyExposureResolver
         public const int NoOwnerLookup = -1;
 
         // The ONE owner lookup of an owner-qualified requirement: false when a bound owner supplies it.
-        private bool TryResolveRequirement(OwnerQualifiedParameter requirement, IReadOnlySet<Algorithm>? boundOwners,
+        private bool TryResolveRequirement(OwnerQualifiedParameter requirement, BoundOwnerSet? boundOwners,
             out Requirement resolved, out int landing)
         {
             landing = NoOwnerLookup;
@@ -898,9 +898,10 @@ internal static class PropertyExposureResolver
     /// every site below the level resolves it to the same scope (an owner on the level's chain cannot
     /// also be nested below the level: bodies are acyclic), so one entry answers them all. A
     /// settlement with a lookup that landed below its level, or found no owner (another site could
-    /// hold it), depends on its site and is never kept. Keys hold identities — levels, seeds, and the
-    /// origin and owner ids inside a content key — never a spelling alone, so owners with same-named
-    /// parameters stay apart.</para>
+    /// hold it), depends on its site and is never kept. Keys hold identities — levels, seeds, the
+    /// origin and owner ids inside a content key, and the bound owners themselves
+    /// (<see cref="BoundOwnerSet"/>, equal by content) — never a spelling alone, so owners with
+    /// same-named parameters stay apart.</para>
     ///
     /// <para>LIFETIME AND SIZE. One share belongs to one resolution (<see cref="ExposureRun"/>),
     /// whose interner its results are sets of, and dies with it. Only completed settlements are
@@ -918,10 +919,15 @@ internal static class PropertyExposureResolver
         internal const long DefaultCapacity = 1 << 19;
 
         /// <summary><see cref="Content"/> is a pending reference's content key or a seed.</summary>
-        internal readonly record struct Key(object Content, SummaryScope Level, string Bound)
+        internal readonly record struct Key(object Content, SummaryScope Level, BoundOwnerSet? Bound)
         {
-            /// <summary>One unit per entry, plus one per 64 characters of key text the entry keeps alive.</summary>
-            internal long Weight => 1 + (((Content as string)?.Length ?? 0) + (long)Bound.Length) / 64;
+            /// <summary>
+            /// One unit per entry, plus one per 64 characters of combined content key and former bound-owner
+            /// key length. This preserves admission, including when earlier lifted chains compete for space
+            /// with later reusable settlements. Each owner contributes at least one character and each pair
+            /// of adjacent owners contributes a separator, which bounds retained owner memberships.
+            /// </summary>
+            internal long Weight => 1 + (((Content as string)?.Length ?? 0) + (Bound?.LegacyKeyLength ?? 0)) / 64;
         }
 
         /// <summary>
@@ -1014,10 +1020,10 @@ internal static class PropertyExposureResolver
         SettlementShare shared,
         CancellationToken cancellationToken)
     {
-        private readonly record struct SettlementKey(string Key, SummaryScope Level, SummaryScope Site, string Bound);
+        private readonly record struct SettlementKey(string Key, SummaryScope Level, SummaryScope Site, BoundOwnerSet? Bound);
         private readonly record struct AnchoredSeed(PropertyDependencyGraphBuilder.SummarySeed Seed, SummaryScope Level);
         private readonly record struct SeedSettlementKey(PropertyDependencyGraphBuilder.SummarySeed Seed,
-            SummaryScope Level, SummaryScope Site, string Bound);
+            SummaryScope Level, SummaryScope Site, BoundOwnerSet? Bound);
 
         private readonly HashSet<SettlementKey> _inProgress = [];
         // Unlike anchoring, settlement reads live equations. A complete result that read one, or that depends
@@ -1191,7 +1197,7 @@ internal static class PropertyExposureResolver
             => FrontEndTraversalObservations.ObserveCancellation(
                 memos.Observations, FrontEndCancellationCheckpoint.ExposureSettlementFrame, cancellationToken);
 
-        private Frame ReferenceFrame(PendingReference pending, SummaryScope level, SummaryScope? site, IReadOnlySet<Algorithm>? boundOwners)
+        private Frame ReferenceFrame(PendingReference pending, SummaryScope level, SummaryScope? site, BoundOwnerSet? boundOwners)
         {
             if (pending.Origin is null && level.PropertyScope.CompletedContext is { } completed)
                 pending = pending.At(completed);
@@ -1201,12 +1207,11 @@ internal static class PropertyExposureResolver
             return frame;
         }
 
-        private Frame SeedFrame(PropertyDependencyGraphBuilder.SummarySeed seed, SummaryScope level, SummaryScope site, IReadOnlySet<Algorithm>? boundOwners)
+        private Frame SeedFrame(PropertyDependencyGraphBuilder.SummarySeed seed, SummaryScope level, SummaryScope site, BoundOwnerSet? boundOwners)
         {
             memos.Observations?.RecordRequiredAncestorSettlementFrame(seed);
-            var key = new SeedSettlementKey(seed, level, site,
-                boundOwners is null ? "" : string.Join(",", boundOwners.Select(OwnerQualifiedParameter.OwnerKey).Order()));
-            var shareKey = new SettlementShare.Key(seed, level, key.Bound);
+            var key = new SeedSettlementKey(seed, level, site, boundOwners);
+            var shareKey = new SettlementShare.Key(seed, level, boundOwners);
             if (shared.TryGet(shareKey, out var settled) || _completedSeeds.TryGetValue(key, out settled))
             {
                 var reused = new Frame { Body = NoFrames() };
@@ -1223,18 +1228,15 @@ internal static class PropertyExposureResolver
 
         /// <summary>The settlement of one pending reference (see the class summary); its result is <paramref name="self"/>'s.</summary>
         private IEnumerator<Frame> ResolveReference(Frame self, PendingReference pending, SummaryScope level, SummaryScope? site,
-            IReadOnlySet<Algorithm>? boundOwners)
+            BoundOwnerSet? boundOwners)
         {
             site ??= level;
+            // The walk's bound owners plus this reference's own: the set is extended, never copied or
+            // serialized (BoundOwnerSet), and is itself the bound part of both keys.
             if (pending.BoundOwners.Count > 0)
-            {
-                var combined = new HashSet<Algorithm>(boundOwners is null ? [] : boundOwners, ReferenceEqualityComparer.Instance);
-                combined.UnionWith(pending.BoundOwners);
-                boundOwners = combined;
-            }
-            var key = new SettlementKey(pending.ContentKey, level, site,
-                boundOwners is null ? "" : string.Join(",", boundOwners.Select(OwnerQualifiedParameter.OwnerKey).Order()));
-            var shareKey = new SettlementShare.Key(pending.ContentKey, level, key.Bound);
+                boundOwners = BoundOwnerSet.With(boundOwners, pending.BoundOwners, memos.Observations);
+            var key = new SettlementKey(pending.ContentKey, level, site, boundOwners);
+            var shareKey = new SettlementShare.Key(pending.ContentKey, level, boundOwners);
             if (shared.TryGet(shareKey, out var settled) || _completed.TryGetValue(key, out settled))
             {
                 self.Reuse(settled);
@@ -1297,7 +1299,7 @@ internal static class PropertyExposureResolver
         }
 
         private IEnumerator<Frame> ResolvePublishedReference(Frame self, PendingReference pending, SummaryScope level,
-            SummaryScope site, IReadOnlySet<Algorithm>? boundOwners)
+            SummaryScope site, BoundOwnerSet? boundOwners)
         {
             var origin = memos.SharedMemo.RequirementContext(pending.Origin)!;
             var facts = origin.Facts;
@@ -1510,7 +1512,7 @@ internal static class PropertyExposureResolver
         /// the result is <paramref name="self"/>'s (see <see cref="Frame"/>).
         /// </summary>
         private IEnumerator<Frame> ResolveSeed(Frame self, PropertyDependencyGraphBuilder.SummarySeed seed, SummaryScope level,
-            SummaryScope site, IReadOnlySet<Algorithm>? boundOwners)
+            SummaryScope site, BoundOwnerSet? boundOwners)
         {
             var landing = SummaryScope.NoOwnerLookup;
             var names = sets.From(level.ResolveRequirements(seed.RequiredAncestorOwnedParameterNames)
