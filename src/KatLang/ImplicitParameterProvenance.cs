@@ -162,6 +162,18 @@ internal sealed class ImplicitParameterProvenance
         _suggestion = null;
     }
 
+    /// <summary>
+    /// <c>CollectFrom(FlattenCaptures(patterns))</c> — the same notes in the same order — reading
+    /// only the captures that carry a provenance: <see cref="CollectFrom(IReadOnlyList{ParameterDeclaration})"/>
+    /// skips every other one, so the result is unchanged, while a host-built signature that
+    /// shares structural nodes without a provenance-bearing capture is read once per distinct
+    /// node instead of once per path (<see cref="ParameterPattern.SelectCapturesSkippingBarrenNodes"/>).
+    /// </summary>
+    internal static IReadOnlyList<ImplicitParameterProvenance>? CollectFromPatterns(
+        IReadOnlyList<ParameterPattern> patterns)
+        => CollectFrom(ParameterPattern.SelectCapturesSkippingBarrenNodes(
+            patterns, static parameter => parameter.InferredProvenance is not null));
+
     internal static IReadOnlyList<ImplicitParameterProvenance>? CollectFrom(
         IReadOnlyList<ParameterDeclaration> parameters)
     {

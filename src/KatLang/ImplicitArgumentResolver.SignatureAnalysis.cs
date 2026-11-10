@@ -1036,8 +1036,8 @@ internal static partial class ImplicitArgumentResolver
         var ownForwarding = forwardable.WithoutProperties(alg.Properties, run.ReferenceNameSets);
         var nestedForwarding = ownForwarding.WithParameters(
             branchContext is null
-                ? ParameterPattern.FlattenCaptures(alg.NameResolutionParameterPatterns)
-                : ParameterPattern.FlattenCaptures(BranchBinderParameterPatterns(branchContext.Pattern)),
+                ? ParameterPattern.CapturesExpandingSharedNodesOnce(alg.NameResolutionParameterPatterns)
+                : ParameterPattern.CapturesExpandingSharedNodesOnce(BranchBinderParameterPatterns(branchContext.Pattern)),
             run.ReferenceNameSets);
 
         var (_, localEntriesByName) = BuildPropertyEntries(alg.Properties, levelOwners, level, run);

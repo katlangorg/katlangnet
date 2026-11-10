@@ -305,7 +305,11 @@ internal static class ParameterDetector
         // ONE projection of the written/inferred signature serves every read below. Detection is
         // NAME RESOLUTION and runs before automatic parameter forwarding (Q-04), so every
         // parameter it sees here was written or inferred — never one forwarding appended.
-        var parameterNames = alg.Params;
+        // A closed list needs only ownership/first occurrence and keeps its original shape below.
+        // An open list retains occurrence order for Grace and the generic parameter merge.
+        IReadOnlyList<string> parameterNames = alg.HasExplicitParameterList
+            ? ParameterPattern.CapturesExpandingSharedNodesOnce(alg.ParameterPatterns).Select(static capture => capture.Name).ToArray()
+            : ParameterPattern.CaptureNamesSkippingBarrenNodes(alg.ParameterPatterns);
         var paramNames = new HashSet<string>(parameterNames);
         var paramOrder = new List<string>(parameterNames);
         IReadOnlySet<string> ownParameterNames = paramNames;
@@ -479,7 +483,11 @@ internal static class ParameterDetector
         // or earlier-inferred pattern and appends a fresh capture per newly inferred name.
         var detected = algWithProcessedOpens with
         {
-            ParameterPatterns = Algorithm.MergeParameterPatterns(alg.ParameterPatterns, paramOrder, provenanceRecorder?.Provenance),
+            // A closed list neither infers nor reorders inputs. Preserve its whole written
+            // shape, including every shared occurrence, without flattening it to compare names.
+            ParameterPatterns = hasExplicitParameterList
+                ? alg.ParameterPatterns.ToList()
+                : Algorithm.MergeParameterPatterns(alg.ParameterPatterns, paramOrder, provenanceRecorder?.Provenance),
             Properties = newProperties,
             Output = rewrittenOutput,
         };

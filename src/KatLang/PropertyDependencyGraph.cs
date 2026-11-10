@@ -1939,7 +1939,7 @@ internal static class PropertyDependencyGraphBuilder
             _ownerParameterNames ??= new(ReferenceEqualityComparer.Instance);
             if (!_ownerParameterNames.TryGetValue(owner, out var names))
             {
-                var parameters = owner.Params;
+                IReadOnlyList<string> parameters = ParameterPattern.CapturesExpandingSharedNodesOnce(user.ParameterPatterns).Select(static capture => capture.Name).ToArray();
                 observations?.RecordOwnerParameterNamesMaterialized(parameters.Count);
                 names = new HashSet<string>(parameters, StringComparer.Ordinal);
                 _ownerParameterNames.Add(owner, names);

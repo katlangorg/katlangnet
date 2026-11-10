@@ -346,7 +346,8 @@ public static partial class Evaluator
     /// Lean: <c>Algorithm.asScopeCtx</c>.
     /// </summary>
     private static ScopeCtx AsScopeCtx(Algorithm alg)
-        => new(alg.Parent, alg.Opens, alg.Properties, alg.Params) { Owner = alg };
+        => new(alg.Parent, alg.Opens, alg.Properties,
+            ParameterPattern.CaptureNamesSkippingBarrenNodes(alg.ParameterPatterns)) { Owner = alg };
 
     /// <summary>
     /// Wires a selected branch body under its clause family for one call, publishing the
@@ -1046,8 +1047,10 @@ public static partial class Evaluator
     /// </summary>
     private static EvalError MissingImplicitArgumentsError(Algorithm wired, SourceSpan? span)
     {
-        var paramNames = wired.Params;
-        var notes = ImplicitParameterProvenance.CollectFrom(wired.Parameters);
+        // The per-occurrence names and notes, read output-sensitively: a shared capture-free group of a
+        // host-built signature is expanded once, not once per path (exactly Params / Parameters otherwise).
+        IReadOnlyList<string> paramNames = ParameterPattern.CaptureNamesSkippingBarrenNodes(wired.ParameterPatterns);
+        var notes = ImplicitParameterProvenance.CollectFromPatterns(wired.ParameterPatterns);
         // The ordinary missing-arguments span is the demanded block (the root's
         // first output row). When the ONE unresolved parameter is the misspelled
         // member of a dot edge on a statically known receiver, the member token
@@ -1136,7 +1139,7 @@ public static partial class Evaluator
     private static EvalError.ArityMismatch ZeroArgumentDemandArityMismatch(Algorithm callee)
         => new(ParameterPattern.MinimumSuppliedSlots(callee.ParameterPatterns), 0)
         {
-            InferredImplicitParameters = ImplicitParameterProvenance.CollectFrom(callee.Parameters),
+            InferredImplicitParameters = ImplicitParameterProvenance.CollectFromPatterns(callee.ParameterPatterns),
         };
 
     /// <summary>
@@ -1282,7 +1285,7 @@ public static partial class Evaluator
     /// </summary>
     private static EvalError AttachImplicitParameterProvenance(EvalError error, Algorithm callee)
     {
-        var notes = ImplicitParameterProvenance.CollectFrom(callee.Parameters);
+        var notes = ImplicitParameterProvenance.CollectFromPatterns(callee.ParameterPatterns);
         if (notes is null)
             return error;
 

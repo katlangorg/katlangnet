@@ -20,7 +20,7 @@ internal sealed class BranchContextInterner
     {
         if (!_patterns.TryGetValue(pattern, out var context))
         {
-            IReadOnlySet<string> names = new HashSet<string>(pattern.BoundNames(), StringComparer.Ordinal);
+            IReadOnlySet<string> names = new HashSet<string>(pattern.BoundNamesExpandingSharedNodesOnce(), StringComparer.Ordinal);
             context = new(names, NamesId(names));
             _patterns.Add(pattern, context);
         }

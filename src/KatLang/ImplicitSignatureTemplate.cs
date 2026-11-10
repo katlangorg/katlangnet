@@ -128,7 +128,7 @@ internal sealed class ImplicitSignatureTemplate : IReadOnlyList<ParameterPattern
         {
             _headPatterns = template._items;
             _tail = template._tail?.Facts;
-            _headCaptures = [.. ParameterPattern.FlattenCaptures(template._items)];
+            _headCaptures = [.. ParameterPattern.SelectCapturesSkippingBarrenNodes(template._items)];
             _headFirstCapture = new Dictionary<string, ParameterDeclaration>(_headCaptures.Length, StringComparer.Ordinal);
             foreach (var capture in _headCaptures)
                 _headFirstCapture.TryAdd(capture.Name, capture);

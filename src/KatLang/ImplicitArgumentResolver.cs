@@ -313,7 +313,7 @@ internal static partial class ImplicitArgumentResolver
             _calleeNames ??= new(ReferenceEqualityComparer.Instance);
             if (!_calleeNames.TryGetValue(patterns, out var names))
             {
-                names = new HashSet<string>(ParameterPattern.EnumerateCaptures(patterns).Select(static capture => capture.Name), StringComparer.Ordinal);
+                names = new HashSet<string>(ParameterPattern.CapturesExpandingSharedNodesOnce(patterns).Select(static capture => capture.Name), StringComparer.Ordinal);
                 _calleeNames.Add(patterns, names);
             }
 
@@ -331,9 +331,9 @@ internal static partial class ImplicitArgumentResolver
             _collectingCaptureNames ??= new(ReferenceEqualityComparer.Instance);
             if (!_collectingCaptureNames.TryGetValue(patterns, out var names))
             {
-                IReadOnlyList<ParameterDeclaration> captures = patterns is ImplicitSignatureTemplate template
-                    ? template.Facts.Captures
-                    : ParameterPattern.FlattenCaptures(patterns);
+                IReadOnlyList<ParameterDeclaration> captures = patterns is ImplicitSignatureTemplate { ComputedFacts: { } facts }
+                    ? facts.Captures
+                    : ParameterPattern.CapturesExpandingSharedNodesOnce(patterns);
                 names = captures
                     .Where(static capture => capture.Kind == ParameterKind.Collecting)
                     .Select(static capture => capture.Name)
@@ -1713,7 +1713,7 @@ internal static partial class ImplicitArgumentResolver
             {
                 var calleeNames = Run.CalleeNamesOf(calleePatterns);
                 var headTouchesCallee = false;
-                foreach (var capture in ParameterPattern.EnumerateCaptures(composed.Head))
+                foreach (var capture in ParameterPattern.CapturesExpandingSharedNodesOnce(composed.Head))
                 {
                     if (calleeNames.Contains(capture.Name))
                     {
@@ -2012,8 +2012,8 @@ internal static partial class ImplicitArgumentResolver
         var ownForwarding = forwardable.WithoutProperties(alg.Properties, run.ReferenceNameSets);
         var nestedForwarding = ownForwarding.WithParameters(
             branchContext is null
-                ? ParameterPattern.FlattenCaptures(alg.NameResolutionParameterPatterns)
-                : ParameterPattern.FlattenCaptures(BranchBinderParameterPatterns(branchContext.Pattern)),
+                ? ParameterPattern.CapturesExpandingSharedNodesOnce(alg.NameResolutionParameterPatterns)
+                : ParameterPattern.CapturesExpandingSharedNodesOnce(BranchBinderParameterPatterns(branchContext.Pattern)),
             run.ReferenceNameSets);
 
         // The level's own entries: every property's written value with its FINAL signature — the one the selection chose
@@ -2120,8 +2120,8 @@ internal static partial class ImplicitArgumentResolver
                 ? alg.ParameterPatterns
                 : BranchBinderParameterPatterns(branchContext.Pattern);
             var closedParameterNames = branchContext is null
-                ? new HashSet<string>(alg.Params)
-                : new HashSet<string>(branchContext.Pattern.BoundNames());
+                ? new HashSet<string>(ParameterPattern.CapturesExpandingSharedNodesOnce(alg.ParameterPatterns).Select(static capture => capture.Name))
+                : new HashSet<string>(branchContext.Pattern.BoundNamesExpandingSharedNodesOnce());
             var explicitContext = new ImplicitRewriteContext(
                 closedPatterns,
                 BuildSourceBindingKinds(closedPatterns),
@@ -2617,7 +2617,7 @@ internal static partial class ImplicitArgumentResolver
 
         var tailNames = tail.Facts.NameSet;
         var disjoint = true;
-        foreach (var capture in ParameterPattern.EnumerateCaptures(own))
+        foreach (var capture in ParameterPattern.CapturesExpandingSharedNodesOnce(own))
         {
             if (tailNames.Contains(capture.Name))
             {
@@ -2797,8 +2797,9 @@ internal static partial class ImplicitArgumentResolver
     {
         var existing = new HashSet<string>(StringComparer.Ordinal);
         var merged = new List<ParameterPattern>();
+        HashSet<ParameterPattern>? expandedGroups = null;
         foreach (var dependency in dependencies)
-            AppendMissingPatterns(dependency, existing, merged);
+            AppendMissingPatterns(dependency, existing, merged, ForwardableParameters.None, ref expandedGroups);
         return merged;
     }
 
@@ -2813,11 +2814,12 @@ internal static partial class ImplicitArgumentResolver
         IReadOnlyList<IReadOnlyList<ParameterPattern>> dependencies,
         ForwardableParameters forwardable)
     {
-        var existing = new HashSet<string>(ParameterPattern.EnumerateCaptures(own).Select(static capture => capture.Name), StringComparer.Ordinal);
+        var existing = new HashSet<string>(ParameterPattern.CapturesExpandingSharedNodesOnce(own).Select(static capture => capture.Name), StringComparer.Ordinal);
         var merged = new List<ParameterPattern>(own);
         var ownCount = merged.Count;
+        HashSet<ParameterPattern>? expandedGroups = null;
         foreach (var dependency in dependencies)
-            AppendMissingPatterns(dependency, existing, merged, forwardable);
+            AppendMissingPatterns(dependency, existing, merged, forwardable, ref expandedGroups);
         return merged.Count == ownCount ? null : merged.ToArray();
     }
 
@@ -2839,11 +2841,12 @@ internal static partial class ImplicitArgumentResolver
         IReadOnlyList<ParameterPattern> patterns,
         HashSet<string> existing,
         List<ParameterPattern> merged,
-        ForwardableParameters? forwardable = null)
+        ForwardableParameters forwardable,
+        ref HashSet<ParameterPattern>? expandedGroups)
     {
         foreach (var pattern in patterns)
         {
-            var missingPattern = MissingCapturePattern(pattern, existing, forwardable ?? ForwardableParameters.None);
+            var missingPattern = MissingCapturePattern(pattern, existing, forwardable, ref expandedGroups);
             if (missingPattern is not null)
                 merged.Add(missingPattern);
         }
@@ -2857,13 +2860,14 @@ internal static partial class ImplicitArgumentResolver
     private static ParameterPattern? MissingCapturePattern(
         ParameterPattern pattern,
         HashSet<string> existing,
-        ForwardableParameters forwardable)
+        ForwardableParameters forwardable,
+        ref HashSet<ParameterPattern>? expandedGroups)
         => pattern switch
         {
             CaptureParameterPattern capture
                 => forwardable.Binds(capture.Name) || !existing.Add(capture.Name) ? null : LiftedCapture(capture),
             SequenceValueParameterPattern or ListValueParameterPattern or UnpackingParameterPattern
-                => MissingGroupCapturePattern(pattern, existing, forwardable),
+                => MissingGroupCapturePattern(pattern, existing, forwardable, ref expandedGroups),
         };
 
     /// <summary>
@@ -2891,15 +2895,21 @@ internal static partial class ImplicitArgumentResolver
     private static ParameterPattern? MissingGroupCapturePattern(
         ParameterPattern group,
         HashSet<string> existing,
-        ForwardableParameters forwardable)
+        ForwardableParameters forwardable,
+        ref HashSet<ParameterPattern>? expandedGroups)
     {
         FrontEndStack.Ensure();
+        // existing only grows during this merge, and forwardable is fixed. The first
+        // complete visit handles every name below this group; any later visit contributes
+        // nothing. Keep one reference set across dependencies, never across merge contexts.
+        if (!(expandedGroups ??= new HashSet<ParameterPattern>(ReferenceEqualityComparer.Instance)).Add(group))
+            return null;
         var groupItems = ParameterPattern.StructuralItems(group)!;
         var missingItems = new List<ParameterPattern>(groupItems.Count);
         var unchanged = true;
         foreach (var item in groupItems)
         {
-            var missingItem = MissingCapturePattern(item, existing, forwardable);
+            var missingItem = MissingCapturePattern(item, existing, forwardable, ref expandedGroups);
             unchanged &= ReferenceEquals(missingItem, item);
             if (missingItem is not null)
                 missingItems.Add(missingItem);
@@ -3012,7 +3022,7 @@ internal static partial class ImplicitArgumentResolver
 
         List<string>? missing = null;
         HashSet<string>? seen = null;
-        foreach (var capture in ParameterPattern.FlattenCaptures(calleePatterns))
+        foreach (var capture in ParameterPattern.CapturesExpandingSharedNodesOnce(calleePatterns))
         {
             if (existingParameterNames.Contains(capture.Name) || forwardable.Binds(capture.Name))
                 continue;
@@ -3075,10 +3085,10 @@ internal static partial class ImplicitArgumentResolver
     /// the destination parameter kind alone.
     /// </summary>
     private static Dictionary<string, ParameterKind> BuildSourceBindingKinds(
-        IEnumerable<ParameterPattern> callerPatterns)
+        IReadOnlyList<ParameterPattern> callerPatterns)
     {
         var kinds = new Dictionary<string, ParameterKind>(StringComparer.Ordinal);
-        foreach (var capture in ParameterPattern.FlattenCaptures(callerPatterns))
+        foreach (var capture in ParameterPattern.CapturesExpandingSharedNodesOnce(callerPatterns))
             kinds.TryAdd(capture.Name, capture.Kind);
         return kinds;
     }
@@ -3275,10 +3285,11 @@ internal static partial class ImplicitArgumentResolver
             : BareForwardingSources.OfBranchHead(branchContext.Pattern);
         var calleePatterns = contract.ParameterPatterns;
         var forwarded = new List<Expr>(calleePatterns.Count);
+        Dictionary<ParameterPattern, Expr>? sourceArguments = null;
         List<(ParameterPattern Parameter, bool DifferentPattern)>? unforwardable = null;
         foreach (var parameter in calleePatterns)
         {
-            var verdict = BareForwardingArgument(parameter, sources, ownForwarding);
+            var verdict = BareForwardingArgument(parameter, sources, ownForwarding, ref sourceArguments);
             if (verdict.Argument is { } argument)
                 forwarded.Add(argument);
             else if (verdict.Unforwardable)
@@ -3409,11 +3420,12 @@ internal static partial class ImplicitArgumentResolver
     /// (<see cref="BuildPatternArgument"/> with every capture naming its own binding). Lean:
     /// <c>ParameterPattern.sourceArgument</c>.
     /// </summary>
-    private static Expr BuildSourceArgument(ParameterPattern pattern)
+    private static Expr BuildSourceArgument(ParameterPattern pattern, ref Dictionary<ParameterPattern, Expr>? arguments)
         => BuildPatternArgument(
             pattern,
             static capture => capture.Name,
-            static capture => capture.Kind == ParameterKind.Collecting);
+            static capture => capture.Kind == ParameterKind.Collecting,
+            ref arguments);
 
     /// <summary>
     /// What a CLOSED body's own inputs offer BARE FORWARDING: the kind of every TOP-LEVEL capture it
@@ -3446,7 +3458,7 @@ internal static partial class ImplicitArgumentResolver
         public static BareForwardingSources OfParameterList(IReadOnlyList<ParameterPattern> patterns)
         {
             var boundNames = new HashSet<string>(StringComparer.Ordinal);
-            foreach (var capture in ParameterPattern.FlattenCaptures(patterns))
+            foreach (var capture in ParameterPattern.CapturesExpandingSharedNodesOnce(patterns))
                 boundNames.Add(capture.Name);
             return Of(patterns, boundNames);
         }
@@ -3464,7 +3476,7 @@ internal static partial class ImplicitArgumentResolver
                     patterns.Add(pattern);
             }
 
-            return Of(patterns, new HashSet<string>(head.BoundNames(), StringComparer.Ordinal));
+            return Of(patterns, new HashSet<string>(head.BoundNamesExpandingSharedNodesOnce(), StringComparer.Ordinal));
         }
 
         private static BareForwardingSources Of(IReadOnlyList<ParameterPattern> topLevelPatterns, HashSet<string> boundNames)
@@ -3515,7 +3527,8 @@ internal static partial class ImplicitArgumentResolver
     private static BareForwardingVerdict BareForwardingArgument(
         ParameterPattern parameter,
         BareForwardingSources sources,
-        ForwardableParameters enclosing)
+        ForwardableParameters enclosing,
+        ref Dictionary<ParameterPattern, Expr>? arguments)
     {
         if (parameter is CaptureParameterPattern capture)
         {
@@ -3531,10 +3544,10 @@ internal static partial class ImplicitArgumentResolver
         }
 
         if (sources.StructuralContracts.Contains(parameter))
-            return BareForwardingVerdict.Supplied(BuildSourceArgument(parameter));
+            return BareForwardingVerdict.Supplied(BuildSourceArgument(parameter, ref arguments));
 
         var bindsAName = false;
-        foreach (var leaf in ParameterPattern.FlattenCaptures([parameter]))
+        foreach (var leaf in ParameterPattern.CapturesExpandingSharedNodesOnce([parameter]))
         {
             if (sources.BoundNames.Contains(leaf.Name) || enclosing.Binds(leaf.Name))
             {
@@ -3737,18 +3750,24 @@ internal static partial class ImplicitArgumentResolver
                     : calleeCapture.Kind == ParameterKind.Collecting;
         }
 
-        return calleePatterns
-            .Select(pattern => BuildPatternArgument(pattern, MapCaptureName, ForwardAsSpread))
-            .ToList();
+        Dictionary<ParameterPattern, Expr>? arguments = null;
+        return BuildPatternArgumentOutput(calleePatterns, MapCaptureName, ForwardAsSpread, ref arguments);
     }
 
     private static Expr BuildPatternArgument(
         ParameterPattern pattern,
         Func<CaptureParameterPattern, string> mapCaptureName,
-        Func<CaptureParameterPattern, bool> forwardAsSpread)
+        Func<CaptureParameterPattern, bool> forwardAsSpread,
+        ref Dictionary<ParameterPattern, Expr>? arguments)
     {
         FrontEndStack.Ensure();
-        return pattern switch
+        // Mapping and source-kind callbacks are fixed for this argument bundle. Sharing a
+        // rebuilt value expression preserves all slots and introduces no algorithm scope.
+        // Flat capture lists retain their allocation bound: only structural nodes are memoized.
+        var isGroup = ParameterPattern.StructuralItems(pattern) is not null;
+        if (isGroup && arguments is { } completed && completed.TryGetValue(pattern, out var cached))
+            return cached;
+        var argument = pattern switch
         {
             // A collecting destination whose source binding is a collecting binding's
             // exact list forwards through explicit spread so the callee's collecting
@@ -3763,15 +3782,18 @@ internal static partial class ImplicitArgumentResolver
             // argument the callee pattern can open is a value of its own kind, and
             // reconstruction never converts between sequence and list.
             SequenceValueParameterPattern group
-                => BuildSequenceArgument(BuildPatternArgumentOutput(group.Items, mapCaptureName, forwardAsSpread)),
+                => BuildSequenceArgument(BuildPatternArgumentOutput(group.Items, mapCaptureName, forwardAsSpread, ref arguments)),
             ListValueParameterPattern list => new Expr.ListLiteral(new OutputBundle(
-                BuildPatternArgumentOutput(list.Items, mapCaptureName, forwardAsSpread))),
+                BuildPatternArgumentOutput(list.Items, mapCaptureName, forwardAsSpread, ref arguments))),
             // The deconstruction unpacking receiver (never written; only a host-built callee can
             // carry one here) opens a list one level at every cardinality, so the exact list of
             // its items is the argument it re-binds exactly.
             UnpackingParameterPattern unpacking => new Expr.ListLiteral(new OutputBundle(
-                BuildPatternArgumentOutput(unpacking.Items, mapCaptureName, forwardAsSpread))),
+                BuildPatternArgumentOutput(unpacking.Items, mapCaptureName, forwardAsSpread, ref arguments))),
         };
+        if (isGroup)
+            (arguments ??= new Dictionary<ParameterPattern, Expr>(ReferenceEqualityComparer.Instance)).Add(pattern, argument);
+        return argument;
     }
 
     /// <summary>
@@ -3794,10 +3816,14 @@ internal static partial class ImplicitArgumentResolver
     private static IReadOnlyList<Expr> BuildPatternArgumentOutput(
         IReadOnlyList<ParameterPattern> patterns,
         Func<CaptureParameterPattern, string> mapCaptureName,
-        Func<CaptureParameterPattern, bool> forwardAsSpread)
-        => patterns
-            .Select(pattern => BuildPatternArgument(pattern, mapCaptureName, forwardAsSpread))
-            .ToList();
+        Func<CaptureParameterPattern, bool> forwardAsSpread,
+        ref Dictionary<ParameterPattern, Expr>? arguments)
+    {
+        var output = new List<Expr>(patterns.Count);
+        foreach (var pattern in patterns)
+            output.Add(BuildPatternArgument(pattern, mapCaptureName, forwardAsSpread, ref arguments));
+        return output;
+    }
 
     /// <summary>
     /// The lifting signature of one resolved callable (<see cref="TryResolveLiftable"/>), or — for a

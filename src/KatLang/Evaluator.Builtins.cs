@@ -1217,7 +1217,7 @@ public static partial class Evaluator
     /// Lean: <c>reduceInitialRejection</c>.
     /// </summary>
     private static EvalError? ReduceInitialRejection(Algorithm named, EvalError? rejection)
-        => rejection is not null && named.ParameterCount != 0
+        => rejection is not null && named.HasAnyParameter
             ? ReduceInitialAccumulatorRequiresValueError(named)
             : rejection;
 
@@ -1408,7 +1408,7 @@ public static partial class Evaluator
 
     private static EvalError ReduceInitialAccumulatorRequiresValueError(Algorithm initialAlg)
         => new EvalError.WithContext(
-            new ReduceInitialAccumulatorContext(initialAlg.Params.ToList()),
+            new ReduceInitialAccumulatorContext(ParameterPattern.CaptureNamesSkippingBarrenNodes(initialAlg.ParameterPatterns).ToList()),
             new EvalError.BadArity());
 
     /// <summary>

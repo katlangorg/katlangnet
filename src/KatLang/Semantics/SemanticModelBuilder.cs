@@ -2005,7 +2005,10 @@ public static class SemanticModelBuilder
             // Recovery binders have no written name. Their parser provenance keeps
             // them distinct from locationless imported parameters, including when
             // a host copies an imported body under a document-owned declaration.
-            if (algorithm.Parameters.Any(static parameter => parameter.IsRecoveryPlaceholder))
+            // An existence question: every reachable capture leaf is met by the expand-once walk
+            // (SHARED-DAG RULE), so a host-built signature sharing groups is not expanded per path here.
+            if (ParameterPattern.CapturesExpandingSharedNodesOnce(algorithm.ParameterPatterns)
+                .Any(static parameter => parameter.IsRecoveryPlaceholder))
             {
                 algorithm = algorithm with
                 {

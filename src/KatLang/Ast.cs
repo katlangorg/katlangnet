@@ -503,6 +503,103 @@ public closed record ParameterPattern
     }
 
     /// <summary>
+    /// <c>FlattenCaptures(patterns).Where(select)</c> — EXACTLY, occurrence for occurrence, in
+    /// the same left-to-right depth-first order, duplicates included — with OUTPUT-SENSITIVE
+    /// work on a host-built pattern that shares structural nodes. SHARED-DAG RULE: the selected
+    /// captures of a structural node's first complete expansion occupy a contiguous range in
+    /// the result. Remember that range by reference identity for this call only. A later
+    /// occurrence copies the range (including duplicates), or skips it if barren, without
+    /// re-reading the subtree. Each structural node is expanded once and every appended capture
+    /// belongs to the final result: O(distinct nodes + edges + selected occurrences) work,
+    /// including on a shared long tail contributing just one capture. The selector must be a
+    /// pure predicate of the declaration. For a tree — every parsed program — no node is met
+    /// twice, and the walk is <see cref="FlattenCaptures"/>'s. Iterative (an explicit stack): a
+    /// host pattern may be arbitrarily deep. Nothing is attached to a pattern, so a host that
+    /// mutates a retained items list sees its current content on the next call. A flat list of
+    /// capture leaves allocates only the result.
+    /// </summary>
+    internal static IReadOnlyList<ParameterDeclaration> SelectCapturesSkippingBarrenNodes(
+        IReadOnlyList<ParameterPattern> patterns,
+        Func<ParameterDeclaration, bool>? select = null)
+    {
+        var count = patterns.Count;
+        if (count == 0)
+            return [];
+
+        List<ParameterDeclaration>? selected = null;
+        for (var index = 0; index < count; index++)
+        {
+            if (patterns[index] is not CaptureParameterPattern capture)
+                return Walk(patterns, select);
+            if (select is null || select(capture.Parameter))
+                (selected ??= new List<ParameterDeclaration>(count)).Add(capture.Parameter);
+        }
+
+        return selected is null ? [] : selected;
+
+        static List<ParameterDeclaration> Walk(IReadOnlyList<ParameterPattern> patterns, Func<ParameterDeclaration, bool>? select)
+        {
+            const int Enter = -1;
+            var captures = new List<ParameterDeclaration>();
+            // (pattern, Enter) visits a pattern; (group, n) closes a group whose expansion began
+            // when the result held n captures.
+            var pending = new Stack<(ParameterPattern Pattern, int Start)>();
+            var completed = new Dictionary<ParameterPattern, (int Start, int Count)>(ReferenceEqualityComparer.Instance);
+            for (var index = patterns.Count - 1; index >= 0; index--)
+                pending.Push((patterns[index], Enter));
+
+            while (pending.TryPop(out var entry))
+            {
+                var (pattern, start) = entry;
+                if (start != Enter)
+                {
+                    completed.Add(pattern, (start, captures.Count - start));
+                    continue;
+                }
+
+                if (StructuralItems(pattern) is not { } items)
+                {
+                    var parameter = ((CaptureParameterPattern)pattern).Parameter;
+                    if (select is null || select(parameter))
+                        captures.Add(parameter);
+                    continue;
+                }
+
+                if (completed.TryGetValue(pattern, out var range))
+                {
+                    // The source range is already complete and precedes the appended copy.
+                    // Read through the list, so capacity growth cannot invalidate a source span.
+                    for (var index = 0; index < range.Count; index++)
+                        captures.Add(captures[range.Start + index]);
+                    continue;
+                }
+                pending.Push((pattern, captures.Count));
+                for (var index = items.Count - 1; index >= 0; index--)
+                    pending.Push((items[index], Enter));
+            }
+
+            return captures;
+        }
+    }
+
+    /// <summary>
+    /// The per-occurrence capture names — exactly <see cref="Algorithm.User.Params"/> of a user
+    /// algorithm with these patterns, duplicates and order included — read output-sensitively
+    /// (<see cref="SelectCapturesSkippingBarrenNodes"/>): a shared capture-free group of a
+    /// host-built signature is expanded once, never once per path.
+    /// </summary>
+    internal static string[] CaptureNamesSkippingBarrenNodes(IReadOnlyList<ParameterPattern> patterns)
+    {
+        var captures = SelectCapturesSkippingBarrenNodes(patterns);
+        if (captures.Count == 0)
+            return [];
+        var names = new string[captures.Count];
+        for (var index = 0; index < names.Length; index++)
+            names[index] = captures[index].Name;
+        return names;
+    }
+
+    /// <summary>
     /// The captures of a pattern list in <see cref="FlattenCaptures"/> order with every
     /// STRUCTURAL node expanded at most once (reference identity): for a tree — every parsed
     /// program — exactly <see cref="FlattenCaptures"/>, element for element. SHARED-DAG RULE
@@ -2792,7 +2889,7 @@ public closed record Algorithm
         IReadOnlyList<string> newParameterNames,
         IReadOnlyDictionary<string, ImplicitParameterProvenance>? inferredProvenance = null)
     {
-        var oldCaptures = ParameterPattern.FlattenCaptures(oldPatterns);
+        var oldCaptures = ParameterPattern.SelectCapturesSkippingBarrenNodes(oldPatterns);
         if (newParameterNames.Take(oldCaptures.Count).SequenceEqual(oldCaptures.Select(static capture => capture.Name)))
         {
             var merged = oldPatterns.ToList();

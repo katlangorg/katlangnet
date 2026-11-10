@@ -262,10 +262,10 @@ internal sealed class ElaboratedPropertyScope
             return bindings.DeclaresParameter(this, name);
         if (CompletedContext is { } completed && completed.Facts.Facts(completed.Key) is { } facts)
             return facts.Parameters.Contains(name);
-        if (BranchPattern is { } pattern && pattern.BoundNames().Contains(name, StringComparer.Ordinal)) return true;
+        if (BranchPattern is { } pattern && pattern.BoundNamesExpandingSharedNodesOnce().Contains(name, StringComparer.Ordinal)) return true;
         if (SourceBody is not Algorithm.User { ParameterPatterns.Count: > 0 } user)
             return false;
-        _ownParameterNames ??= new HashSet<string>(user.Params, StringComparer.Ordinal);
+        _ownParameterNames ??= new HashSet<string>(ParameterPattern.CapturesExpandingSharedNodesOnce(user.ParameterPatterns).Select(static capture => capture.Name), StringComparer.Ordinal);
         return _ownParameterNames.Contains(name);
     }
 

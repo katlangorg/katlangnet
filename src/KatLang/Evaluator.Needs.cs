@@ -1350,7 +1350,7 @@ public static partial class Evaluator
         var arity = NeedLevelArity(patterns);
         return variadicStyle && arity.HasCollectingCapture && patterns.All(pattern => pattern.Name is not null)
             ? new EvalError.VariadicArityMismatch(renderedName, arity.Minimum, supplied) { Signature = CallableSignature.FromAlgorithm(renderedName, callee) }
-            : new EvalError.ArityMismatch(arity.Minimum, supplied) { Signature = CallableSignature.FromAlgorithm(renderedName, callee), InferredImplicitParameters = ImplicitParameterProvenance.CollectFrom(callee.Parameters) };
+            : new EvalError.ArityMismatch(arity.Minimum, supplied) { Signature = CallableSignature.FromAlgorithm(renderedName, callee), InferredImplicitParameters = ImplicitParameterProvenance.CollectFromPatterns(callee.ParameterPatterns) };
     }
 
     // A call result crosses the call's value boundary (VAL-06: ONE value, counted by ValueCount),

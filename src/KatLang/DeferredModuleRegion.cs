@@ -733,7 +733,7 @@ internal sealed class DeferredModuleRegion
             var limits = StaticStructureAdmission.Measure(loaded, completed.Prelude, Loader.ProcessingLimits, cancellationToken: cancellationToken).Limits;
             var operation = completed.Materialize(structural.Declaring, loaded, structural.Pattern, limits, cancellationToken);
             var detection = new ParameterDetector.DeferredBranchContext(operation.LookupLevel(structural.Declaring),
-                new HashSet<string>(structural.Pattern.BoundNames(), StringComparer.Ordinal), structural.BranchName, structural.CapturedParameters);
+                new HashSet<string>(structural.Pattern.BoundNamesExpandingSharedNodesOnce(), StringComparer.Ordinal), structural.BranchName, structural.CapturedParameters);
             var detected = ParameterDetector.ElaborateDeferredBranch(loaded, detection, diagnostics, observations, ImportSite, modules, structural.Pattern);
             cancellationToken.ThrowIfCancellationRequested();
             if (diagnostics.HasReported(DiagnosticCode.SelfDependentInferredParameters))
