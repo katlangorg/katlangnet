@@ -669,8 +669,13 @@ public static class SemanticModelBuilder
                     IdentifierClassification.ExplicitParameterDefinition);
             }
 
-            var nameResolutionParameters = algorithm is Algorithm.User { ForwardingParameterStart: not null } forwarding
-                ? ParameterPattern.FlattenCaptures(forwarding.NameResolutionParameterPatterns).Select(static parameter => parameter.Name)
+            // A first-occurrence name set (a name already declared is skipped below): shared host
+            // pattern nodes are expanded once (SHARED-DAG RULE), which for a tree is exactly the
+            // per-occurrence Params / flatten order (NameResolutionParameterPatterns is the whole
+            // list unless a forwarding start cuts it).
+            var nameResolutionParameters = algorithm is Algorithm.User user
+                ? ParameterPattern.CapturesExpandingSharedNodesOnce(user.NameResolutionParameterPatterns)
+                    .Select(static parameter => parameter.Name)
                 : algorithm.Params;
             foreach (var parameterName in nameResolutionParameters)
             {

@@ -82,7 +82,7 @@ internal sealed partial class StaticStructureQueries : IStaticQueryDefinition<St
         internal Algorithm Body { get; } = body;
         internal StaticMembers Members { get; } = new(body, cancellationToken);
         internal IReadOnlySet<string> Parameters { get; } = new HashSet<string>(body is Algorithm.User user
-            ? ParameterPattern.FlattenCaptures(user.NameResolutionParameterPatterns).Select(p => p.Name) : body.Params, StringComparer.Ordinal);
+            ? ParameterPattern.CapturesExpandingSharedNodesOnce(user.NameResolutionParameterPatterns).Select(p => p.Name) : body.Params, StringComparer.Ordinal);
         private StaticInputGraph? _graph;
         internal long InputGraphBuilds { get; private set; }
         internal long InputGraphNodeVisits { get; private set; }
@@ -198,7 +198,10 @@ internal sealed partial class StaticStructureQueries : IStaticQueryDefinition<St
             }
             else
             {
-                var parameters = body is Algorithm.User user ? ParameterPattern.CountCaptures(user.NameResolutionParameterPatterns) : body.Params.Count;
+                // The capture count of the name set Parameters reads (shared host pattern nodes expanded
+                // once, SHARED-DAG RULE): for a tree exactly the capture count.
+                var parameters = body is Algorithm.User user
+                    ? ParameterPattern.CountCapturesExpandingSharedNodesOnce(user.NameResolutionParameterPatterns) : body.Params.Count;
                 Resources.Metadata(4 + 3L * body.Properties.Count + 2L * parameters,
                     1L + body.Properties.Count + parameters, _cancellationToken);
                 syntax = new(body, _cancellationToken);
@@ -236,7 +239,9 @@ internal sealed partial class StaticStructureQueries : IStaticQueryDefinition<St
             if (!_branchNames.TryGetValue(pattern, out var names))
             {
                 var set = new HashSet<string>(StringComparer.Ordinal);
-                foreach (var name in pattern.BoundNames()) { Resources.Metadata(1, cancellationToken: _cancellationToken); set.Add(name); }
+                // A name set: a shared host head group is expanded once (SHARED-DAG RULE), so the
+                // per-name charge is that of a linear walk; for a parsed head exactly BoundNames.
+                foreach (var name in pattern.BoundNamesExpandingSharedNodesOnce()) { Resources.Metadata(1, cancellationToken: _cancellationToken); set.Add(name); }
                 _branchNames.Add(pattern, names = set);
             }
             Resources.Metadata(8, cancellationToken: _cancellationToken);

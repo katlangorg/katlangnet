@@ -44,6 +44,11 @@ internal sealed class InferredParameterOutputValidator : AstWalker
 
     protected override bool VisitsExplicitParameterDeclarations => false;
 
+    // SHARED-DAG RULE (AstWalker audit): this walker reads nothing from a clause head — it
+    // overrides no binder hook, and a pattern holds no expression or algorithm — so the base
+    // per-path head walk is skipped; a host-built head sharing nested groups costs nothing here.
+    public override void VisitPattern(Pattern pattern) { }
+
     /// <summary>Validates a completed program tree; <paramref name="programRoot"/> is its root.</summary>
     internal static void ValidateProgram(Algorithm programRoot, DiagnosticBag diagnostics,
         FrontEndTraversalObservations? observations = null, CancellationToken cancellationToken = default)

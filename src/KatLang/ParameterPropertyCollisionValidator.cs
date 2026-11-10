@@ -335,8 +335,13 @@ internal sealed class ParameterPropertyCollisionValidator(
     {
         if (!_binders.TryGetValue(branch.Pattern, out var parameters))
         {
+            // First declaration wins (Extend): a structural node shared along several paths of a
+            // host-built head is expanded once (SHARED-DAG RULE), so the binders keep their
+            // first-occurrence order and the walk is linear in the head's distinct nodes. For a
+            // tree no node is met twice and the list is the per-occurrence one.
             var declarations = new List<ParameterDeclaration>();
             var pending = new Stack<Pattern>();
+            HashSet<Pattern>? expanded = null;
             pending.Push(branch.Pattern);
             while (pending.TryPop(out var current))
             {
@@ -346,10 +351,14 @@ internal sealed class ParameterPropertyCollisionValidator(
                         declarations.Add(new(binder.Name, binder.NameSpan));
                         break;
                     case Pattern.SequenceValue group:
+                        if (!(expanded ??= new(ReferenceEqualityComparer.Instance)).Add(group))
+                            break;
                         for (var i = group.Items.Count - 1; i >= 0; i--)
                             pending.Push(group.Items[i]);
                         break;
                     case Pattern.ListValue list:
+                        if (!(expanded ??= new(ReferenceEqualityComparer.Instance)).Add(list))
+                            break;
                         for (var i = list.Items.Count - 1; i >= 0; i--)
                             pending.Push(list.Items[i]);
                         break;
@@ -381,11 +390,14 @@ internal sealed class ParameterPropertyCollisionValidator(
         {
             var layered = ExtendByLayer(_parameters, template.Tail ?? template);
             return template.IsComposed
-                ? Extend(layered, template, static composed => ParameterPattern.FlattenCaptures(composed.Head))
+                ? Extend(layered, template, static composed => ParameterPattern.CapturesExpandingSharedNodesOnce(composed.Head))
                 : layered;
         }
 
-        return Extend(_parameters, parameterPatterns, static patterns => ParameterPattern.FlattenCaptures(patterns));
+        // First declaration wins (Extend), so a name list in first-occurrence order is all that is
+        // read: shared host pattern nodes are expanded once (SHARED-DAG RULE), for a tree exactly
+        // the flatten.
+        return Extend(_parameters, parameterPatterns, static patterns => ParameterPattern.CapturesExpandingSharedNodesOnce(patterns));
     }
 
     private ParameterBindings Extend(IReadOnlyList<ParameterDeclaration> parameters)

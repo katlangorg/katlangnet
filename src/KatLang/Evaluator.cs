@@ -567,7 +567,7 @@ public static partial class Evaluator
     /// </summary>
     internal static bool RequiresArguments(Algorithm algorithm)
         => algorithm is Algorithm.Conditional
-            || (algorithm is not Algorithm.Alias && algorithm.ParameterCount > 0);
+            || (algorithm is not Algorithm.Alias && algorithm.HasAnyParameter);
 
     private static EvalError OpenTargetRequiresArguments(string targetDescription, Algorithm provider)
         => new EvalError.IllegalInOpen(FormatOpenTargetRequiresArguments(targetDescription, provider));

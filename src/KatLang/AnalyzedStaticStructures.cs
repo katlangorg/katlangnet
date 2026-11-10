@@ -197,7 +197,8 @@ internal sealed class AnalyzedStaticStructures : StaticLookupFacts
                 if (operation.Read(StaticQueryKey.IsInput(key, candidate)).Kind == StaticFactKind.Yes)
                     parameterNames.Add(candidate);
             if (view is Algorithm.User user)
-                parameterNames.UnionWith(ParameterPattern.FlattenCaptures(user.NameResolutionParameterPatterns).Select(parameter => parameter.Name));
+                // A name set: shared host pattern nodes are expanded once (SHARED-DAG RULE).
+                parameterNames.UnionWith(ParameterPattern.CapturesExpandingSharedNodesOnce(user.NameResolutionParameterPatterns).Select(parameter => parameter.Name));
             var parameters = parameterNames.ToFrozenSet(StringComparer.Ordinal);
             queries.Resources.Metadata(12 + 2L * members.Count + 2L * providers.Count + 4L * parameters.Count,
                 cancellationToken: cancellationToken);

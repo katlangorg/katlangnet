@@ -78,6 +78,16 @@ internal static class AlgorithmAccessors
             Algorithm.Builtin or Algorithm.Conditional or Algorithm.Alias => 0,
         };
 
+        /// <summary>
+        /// <c>ParameterCount &gt; 0</c> without counting: short-circuiting and linear in the
+        /// distinct pattern nodes of a host-built signature that shares structural nodes.
+        /// </summary>
+        internal bool HasAnyParameter => algorithm switch
+        {
+            Algorithm.User user => user.HasAnyParameter,
+            Algorithm.Builtin or Algorithm.Conditional or Algorithm.Alias => false,
+        };
+
         /// <summary>Lean: <c>Algorithm.opens</c>; <c>[]</c> for a builtin.</summary>
         internal IReadOnlyList<Expr> Opens => algorithm switch
         {

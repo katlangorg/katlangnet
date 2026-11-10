@@ -109,6 +109,9 @@ internal sealed class ImplicitSignatureTemplate : IReadOnlyList<ParameterPattern
         }
     }
 
+    /// <summary>Already computed occurrence facts, without starting their per-path capture projection.</summary>
+    internal TemplateFacts? ComputedFacts => Volatile.Read(ref _facts);
+
     /// <summary>
     /// Content facts of one template: the flattened captures and names in order, the name SET,
     /// first-occurrence lookup by name, and the top-level collecting shape. A flat template's

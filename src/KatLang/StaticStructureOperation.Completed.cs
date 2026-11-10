@@ -92,8 +92,11 @@ internal sealed partial class StaticStructureOperation
             var parameters = new HashSet<string>(writtenParameters, StringComparer.Ordinal);
             if (lexicalView is Algorithm.User user)
             {
-                Queries.Resources.Metadata(4L * ParameterPattern.CountCaptures(user.NameResolutionParameterPatterns));
-                foreach (var parameter in ParameterPattern.FlattenCaptures(user.NameResolutionParameterPatterns))
+                // A name set: shared host pattern nodes are expanded once (SHARED-DAG RULE); for a tree
+                // the captures, their count and the per-capture checkpoints are exactly the flatten's.
+                // Charged before the list is built, as before.
+                Queries.Resources.Metadata(4L * ParameterPattern.CountCapturesExpandingSharedNodesOnce(user.NameResolutionParameterPatterns));
+                foreach (var parameter in ParameterPattern.CapturesExpandingSharedNodesOnce(user.NameResolutionParameterPatterns))
                 { Queries.EnsureUsable(); Queries.Resources.Metadata(0); parameters.Add(parameter.Name); }
             }
             var receiver = CompletedStaticStructures.Selection.Unavailable;

@@ -62,6 +62,11 @@ internal sealed class OpenProviderValidator : AstWalker
 
     protected override bool VisitsExplicitParameterDeclarations => false;
 
+    // SHARED-DAG RULE (AstWalker audit): this walker reads nothing from a clause head — it
+    // overrides no binder hook, and a pattern holds no expression or algorithm — so the base
+    // per-path head walk is skipped; a host-built head sharing nested groups costs nothing here.
+    public override void VisitPattern(Pattern pattern) { }
+
     private bool FirstVisit(object node)
     {
         if (!_visited.TryGetValue(_scope, out var nodes))
@@ -230,6 +235,11 @@ internal sealed class OpenProviderValidator : AstWalker
         private readonly Dictionary<object, bool> _memo = new(ReferenceEqualityComparer.Instance);
         private bool _found;
         protected override bool VisitsExplicitParameterDeclarations => false;
+
+        // SHARED-DAG RULE (AstWalker audit): this walker reads nothing from a clause head — it
+        // overrides no binder hook, and a pattern holds no expression or algorithm — so the base
+        // per-path head walk is skipped; a host-built head sharing nested groups costs nothing here.
+        public override void VisitPattern(Pattern pattern) { }
 
         public bool Contains(Algorithm algorithm)
         {

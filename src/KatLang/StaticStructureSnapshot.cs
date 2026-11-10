@@ -105,7 +105,9 @@ internal sealed partial class StaticStructureQueries
         if (!_branchNames.TryGetValue(pattern, out var names))
         {
             var set = new HashSet<string>(StringComparer.Ordinal);
-            foreach (var name in pattern.BoundNames()) { Resources.Metadata(1, cancellationToken: _cancellationToken); set.Add(name); }
+            // A name set: a shared host head group is expanded once (SHARED-DAG RULE), so the
+            // per-name charge is that of a linear walk; for a parsed head exactly BoundNames.
+            foreach (var name in pattern.BoundNamesExpandingSharedNodesOnce()) { Resources.Metadata(1, cancellationToken: _cancellationToken); set.Add(name); }
             _branchNames.Add(pattern, names = set);
         }
         Resources.Metadata(8, cancellationToken: _cancellationToken);

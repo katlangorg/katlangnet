@@ -503,6 +503,129 @@ public closed record ParameterPattern
     }
 
     /// <summary>
+    /// The captures of a pattern list in <see cref="FlattenCaptures"/> order with every
+    /// STRUCTURAL node expanded at most once (reference identity): for a tree — every parsed
+    /// program — exactly <see cref="FlattenCaptures"/>, element for element. SHARED-DAG RULE
+    /// (expand once): a host-built pattern may share a structural node along many paths; the
+    /// node's captures were all produced at its first, depth-first expansion, so a NAME-SET
+    /// consumer sees the same names, in first-occurrence order, with work linear in the distinct
+    /// pattern edges. Never for a consumer that needs the per-occurrence list or count
+    /// (<see cref="Algorithm.User.Parameters"/>, binding, arity). A flat list of capture leaves
+    /// takes one array; the reference set is allocated only when a structural pattern appears.
+    /// </summary>
+    internal static IReadOnlyList<ParameterDeclaration> CapturesExpandingSharedNodesOnce(IReadOnlyList<ParameterPattern> patterns)
+    {
+        if (patterns.Count == 0)
+            return [];
+
+        var flat = new ParameterDeclaration[patterns.Count];
+        for (var index = 0; index < flat.Length; index++)
+        {
+            if (patterns[index] is not CaptureParameterPattern capture)
+                return CollectCapturesExpandingSharedNodesOnce(patterns);
+            flat[index] = capture.Parameter;
+        }
+
+        return flat;
+
+        static List<ParameterDeclaration> CollectCapturesExpandingSharedNodesOnce(IReadOnlyList<ParameterPattern> patterns)
+        {
+            var captures = new List<ParameterDeclaration>();
+            var pending = new Stack<ParameterPattern>();
+            var expanded = new HashSet<ParameterPattern>(ReferenceEqualityComparer.Instance);
+            PushItems(pending, patterns);
+            while (pending.TryPop(out var pattern))
+            {
+                if (StructuralItems(pattern) is not { } items)
+                    captures.Add(((CaptureParameterPattern)pattern).Parameter);
+                else if (expanded.Add(pattern))
+                    PushItems(pending, items);
+            }
+
+            return captures;
+        }
+    }
+
+    /// <summary>
+    /// <c>CapturesExpandingSharedNodesOnce(patterns).Count</c> without materializing the list:
+    /// for a tree exactly <see cref="CountCaptures"/>, so a charge that reads it is unchanged for
+    /// every parsed program, while a host-built pattern sharing structural nodes is counted with
+    /// work linear in its distinct pattern edges (SHARED-DAG RULE, expand once). Allocation-free
+    /// for a flat list of capture leaves.
+    /// </summary>
+    internal static int CountCapturesExpandingSharedNodesOnce(IReadOnlyList<ParameterPattern> patterns)
+    {
+        // Reuse existing template facts only when every capture name is unique: a shared
+        // capture-bearing group would repeat a name, so its per-path count then equals this
+        // walk's count. Never initialize Facts here: it materializes the occurrence list.
+        if (patterns is ImplicitSignatureTemplate { ComputedFacts: { } facts }
+            && facts.CaptureCount == facts.NameSet.Count)
+            return facts.CaptureCount;
+
+        var count = 0;
+        Stack<ParameterPattern>? pending = null;
+        HashSet<ParameterPattern>? expanded = null;
+        for (var index = 0; index < patterns.Count; index++)
+        {
+            var top = patterns[index];
+            if (StructuralItems(top) is null)
+            {
+                count++;
+                continue;
+            }
+
+            pending ??= new Stack<ParameterPattern>();
+            pending.Push(top);
+            while (pending.TryPop(out var pattern))
+            {
+                if (StructuralItems(pattern) is not { } items)
+                    count++;
+                else if ((expanded ??= new HashSet<ParameterPattern>(ReferenceEqualityComparer.Instance)).Add(pattern))
+                    PushItems(pending, items);
+            }
+        }
+
+        return count;
+    }
+
+    /// <summary>
+    /// Whether a pattern list binds at least one capture at any depth —
+    /// <c>CountCaptures(patterns) &gt; 0</c> without counting: it stops at the first capture leaf,
+    /// and a structural node met again is skipped (it held no capture the first time), so a
+    /// host-built pattern sharing structural nodes is decided linearly in its distinct pattern
+    /// edges (SHARED-DAG RULE, expand once). Allocation-free when the first item is a capture.
+    /// Lean: <c>(patterns.flatMap captures) ≠ []</c>.
+    /// </summary>
+    internal static bool HasAnyCapture(IReadOnlyList<ParameterPattern> patterns)
+    {
+        // Completed occurrence facts can answer nonemptiness, but building them would
+        // expand a shared host signature per path before this short-circuiting walk ran.
+        if (patterns is ImplicitSignatureTemplate { ComputedFacts: { } facts })
+            return facts.CaptureCount > 0;
+
+        Stack<ParameterPattern>? pending = null;
+        HashSet<ParameterPattern>? expanded = null;
+        for (var index = 0; index < patterns.Count; index++)
+        {
+            var top = patterns[index];
+            if (StructuralItems(top) is null)
+                return true;
+
+            pending ??= new Stack<ParameterPattern>();
+            pending.Push(top);
+            while (pending.TryPop(out var pattern))
+            {
+                if (StructuralItems(pattern) is not { } items)
+                    return true;
+                if ((expanded ??= new HashSet<ParameterPattern>(ReferenceEqualityComparer.Instance)).Add(pattern))
+                    PushItems(pending, items);
+            }
+        }
+
+        return false;
+    }
+
+    /// <summary>
     /// The items of a STRUCTURAL pattern — a sequence pattern <c>(…)</c>, a list pattern
     /// <c>[…]</c>, or the deconstruction unpacking receiver — or <c>null</c> for a capture
     /// leaf: the ONE accessor every kind-agnostic walk (capture flattening, name searches,
@@ -543,24 +666,71 @@ public closed record ParameterPattern
     /// </summary>
     internal static IEqualityComparer<ParameterPattern> ContractComparer { get; } = new ContractEqualityComparer();
 
+    // SHARED-DAG RULE (memoize per call): a host-built pattern may share a structural node along
+    // many paths. Each Equals call remembers the structural (left, right) reference pairs it has
+    // already proven equal — a pair that differs ends the call — and each GetHashCode call each
+    // structural node's hash, so both are linear in the distinct pattern nodes (pairs) instead of
+    // their paths. The memos are call-local: nothing is attached to a pattern, and a host that
+    // mutates a retained items list sees its current content on the next call. For a tree no memo
+    // entry is ever hit, so verdicts and hash values are exactly those of the plain recursion.
     private sealed class ContractEqualityComparer : IEqualityComparer<ParameterPattern>
     {
         public bool Equals(ParameterPattern? left, ParameterPattern? right)
         {
+            HashSet<(ParameterPattern, ParameterPattern)>? proven = null;
+            return Equal(left, right, ref proven);
+        }
+
+        private static bool Equal(ParameterPattern? left, ParameterPattern? right, ref HashSet<(ParameterPattern, ParameterPattern)>? proven)
+        {
             if (ReferenceEquals(left, right))
                 return true;
-            return (left, right) switch
+            IReadOnlyList<ParameterPattern> leftItems, rightItems;
+            switch (left, right)
             {
-                (CaptureParameterPattern a, CaptureParameterPattern b) => a.Name == b.Name && a.Kind == b.Kind,
-                (SequenceValueParameterPattern a, SequenceValueParameterPattern b) => a.Items.SequenceEqual(b.Items, this),
-                (ListValueParameterPattern a, ListValueParameterPattern b) => a.Items.SequenceEqual(b.Items, this),
-                (UnpackingParameterPattern a, UnpackingParameterPattern b) => a.Items.SequenceEqual(b.Items, this),
-                _ => false,
-            };
+                case (CaptureParameterPattern a, CaptureParameterPattern b):
+                    return a.Name == b.Name && a.Kind == b.Kind;
+                case (SequenceValueParameterPattern a, SequenceValueParameterPattern b):
+                    (leftItems, rightItems) = (a.Items, b.Items);
+                    break;
+                case (ListValueParameterPattern a, ListValueParameterPattern b):
+                    (leftItems, rightItems) = (a.Items, b.Items);
+                    break;
+                case (UnpackingParameterPattern a, UnpackingParameterPattern b):
+                    (leftItems, rightItems) = (a.Items, b.Items);
+                    break;
+                default:
+                    return false;
+            }
+
+            if (proven?.Contains((left, right)) == true)
+                return true;
+            if (leftItems.Count != rightItems.Count)
+                return false;
+            for (var index = 0; index < leftItems.Count; index++)
+            {
+                var leftItem = leftItems[index];
+                var rightItem = rightItems[index];
+                if (!Equal(leftItem, rightItem, ref proven))
+                    return false;
+                // Only a nested pair can be met again; the root pair of a call never is.
+                if (StructuralItems(leftItem) is not null && !ReferenceEquals(leftItem, rightItem))
+                    (proven ??= new HashSet<(ParameterPattern, ParameterPattern)>(ReferencePairComparer.Instance)).Add((leftItem, rightItem));
+            }
+
+            return true;
         }
 
         public int GetHashCode(ParameterPattern pattern)
         {
+            Dictionary<ParameterPattern, int>? hashes = null;
+            return Hash(pattern, ref hashes);
+        }
+
+        private static int Hash(ParameterPattern pattern, ref Dictionary<ParameterPattern, int>? hashes)
+        {
+            if (pattern is not CaptureParameterPattern && hashes?.TryGetValue(pattern, out var known) == true)
+                return known;
             var hash = new HashCode();
             hash.Add(pattern switch
             {
@@ -577,10 +747,30 @@ public closed record ParameterPattern
             else
             {
                 foreach (var item in StructuralItems(pattern)!)
-                    hash.Add(GetHashCode(item));
+                {
+                    var itemHash = Hash(item, ref hashes);
+                    // Only a nested node can be met again; the root of a call never is.
+                    if (item is not CaptureParameterPattern)
+                        (hashes ??= new Dictionary<ParameterPattern, int>(ReferenceEqualityComparer.Instance))[item] = itemHash;
+                    hash.Add(itemHash);
+                }
             }
             return hash.ToHashCode();
         }
+    }
+
+    // Reference identity of both members of a pattern pair (records compare by value).
+    private sealed class ReferencePairComparer : IEqualityComparer<(ParameterPattern Left, ParameterPattern Right)>
+    {
+        public static ReferencePairComparer Instance { get; } = new();
+
+        public bool Equals((ParameterPattern Left, ParameterPattern Right) x, (ParameterPattern Left, ParameterPattern Right) y)
+            => ReferenceEquals(x.Left, y.Left) && ReferenceEquals(x.Right, y.Right);
+
+        public int GetHashCode((ParameterPattern Left, ParameterPattern Right) pair)
+            => HashCode.Combine(
+                System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(pair.Left),
+                System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(pair.Right));
     }
 
     /// <summary>
@@ -1064,7 +1254,23 @@ public closed record ParameterPattern
     /// evaluation and editor signatures refuse. Applied only AFTER the violation was reported: it is
     /// error recovery, never a meaning of the program. The same list instance when nothing changes.
     /// </summary>
+    /// <remarks>
+    /// SHARED-DAG RULE (map each node once, keep sharing): a structural group starts a fresh level,
+    /// so its recovery depends on the group alone. A call-local reference-identity memo maps each
+    /// shared group once and reuses the one recovered group at every path that reaches it, so a
+    /// host-built signature sharing groups is rewritten linearly in its distinct pattern nodes and
+    /// the recovered signature shares exactly where the input did. For a tree the memo is never
+    /// hit and the result is the plain recursive rewrite. Nothing is attached to a pattern.
+    /// </remarks>
     internal static IReadOnlyList<ParameterPattern> KeepFirstCollectingCapturePerLevel(IReadOnlyList<ParameterPattern> patterns)
+    {
+        Dictionary<ParameterPattern, ParameterPattern>? recoveredGroups = null;
+        return KeepFirstCollectingCapturePerLevelMemoized(patterns, ref recoveredGroups);
+    }
+
+    private static IReadOnlyList<ParameterPattern> KeepFirstCollectingCapturePerLevelMemoized(
+        IReadOnlyList<ParameterPattern> patterns,
+        ref Dictionary<ParameterPattern, ParameterPattern>? recoveredGroups)
     {
         List<ParameterPattern>? kept = null;
         var levelHasCollecting = false;
@@ -1076,7 +1282,7 @@ public closed record ParameterPattern
                 CaptureParameterPattern { Kind: ParameterKind.Collecting } collecting when levelHasCollecting
                     => new CaptureParameterPattern(collecting.Parameter.WithKindOf(ParameterKind.Normal)),
                 CaptureParameterPattern => pattern,
-                _ => KeepFirstCollectingCapturePerGroupLevel(pattern),
+                _ => KeepFirstCollectingCapturePerGroupLevel(pattern, ref recoveredGroups),
             };
             levelHasCollecting |= pattern is CaptureParameterPattern { Kind: ParameterKind.Collecting };
             if (kept is null && !ReferenceEquals(recovered, pattern))
@@ -1086,11 +1292,17 @@ public closed record ParameterPattern
 
         return kept ?? patterns;
 
-        static ParameterPattern KeepFirstCollectingCapturePerGroupLevel(ParameterPattern group)
+        static ParameterPattern KeepFirstCollectingCapturePerGroupLevel(
+            ParameterPattern group,
+            ref Dictionary<ParameterPattern, ParameterPattern>? recoveredGroups)
         {
+            if (recoveredGroups?.TryGetValue(group, out var known) == true)
+                return known;
             var items = StructuralItems(group)!;
-            var recoveredItems = KeepFirstCollectingCapturePerLevel(items);
-            return ReferenceEquals(recoveredItems, items) ? group : WithStructuralItems(group, recoveredItems);
+            var recoveredItems = KeepFirstCollectingCapturePerLevelMemoized(items, ref recoveredGroups);
+            var recovered = ReferenceEquals(recoveredItems, items) ? group : WithStructuralItems(group, recoveredItems);
+            (recoveredGroups ??= new Dictionary<ParameterPattern, ParameterPattern>(ReferenceEqualityComparer.Instance))[group] = recovered;
+            return recovered;
         }
     }
 }
@@ -1818,6 +2030,41 @@ public closed record Pattern
                         pending.Push(items[i]);
                     break;
                 case ListValue(var items):
+                    for (var i = items.Count - 1; i >= 0; i--)
+                        pending.Push(items[i]);
+                    break;
+            }
+        }
+
+        return names;
+    }
+
+    /// <summary>
+    /// <see cref="BoundNames"/> with every structural node expanded at most once (reference
+    /// identity): for a tree — every parsed head — exactly <see cref="BoundNames"/>, name for name.
+    /// SHARED-DAG RULE (expand once): a host-built head may share a nested group along many paths;
+    /// its binders were all produced at its first, depth-first expansion, so a NAME-SET consumer
+    /// sees the same names in first-occurrence order with work linear in the distinct head edges.
+    /// Never for a consumer that needs the per-occurrence list.
+    /// </summary>
+    internal IReadOnlyList<string> BoundNamesExpandingSharedNodesOnce()
+    {
+        var names = new List<string>();
+        var pending = new Stack<Pattern>();
+        HashSet<Pattern>? expanded = null;
+        pending.Push(this);
+
+        while (pending.TryPop(out var pattern))
+        {
+            switch (pattern)
+            {
+                case Bind(var name):
+                    names.Add(name);
+                    break;
+                case SequenceValue or ListValue:
+                    if (!(expanded ??= new HashSet<Pattern>(ReferenceEqualityComparer.Instance)).Add(pattern))
+                        break;
+                    var items = pattern is SequenceValue sequence ? sequence.Items : ((ListValue)pattern).Items;
                     for (var i = items.Count - 1; i >= 0; i--)
                         pending.Push(items[i]);
                     break;
@@ -2807,6 +3054,13 @@ public closed record Algorithm
         /// <see cref="ParameterPatterns"/>, allocation-free for a flat pattern list.
         /// </summary>
         internal int ParameterCount => ParameterPattern.CountCaptures(ParameterPatterns);
+
+        /// <summary>
+        /// <c>ParameterCount &gt; 0</c> without counting (<see cref="ParameterPattern.HasAnyCapture"/>):
+        /// stops at the first capture, and is linear in the distinct pattern nodes of a host-built
+        /// signature that shares structural nodes.
+        /// </summary>
+        internal bool HasAnyParameter => ParameterPattern.HasAnyCapture(ParameterPatterns);
 
         /// <summary>Lean: the <c>opens</c> field of <c>Algorithm.mk</c>.</summary>
         public IReadOnlyList<Expr> Opens { get; init; }

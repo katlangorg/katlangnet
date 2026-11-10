@@ -28,7 +28,7 @@ public class FrontEndFingerprintGroupSourceTests
     [Fact]
     public void TheFingerprint_NamesEveryGroupSource_WrittenFilteredAndNested()
     {
-        var fingerprint = Print(Parser.Parse(Example).Root);
+        var fingerprint = Print(SourceProvenance.ParseValid(Example).Root);
 
         // F's elaborated groups, the nested list included.
         Assert.Contains("GSeq@1,3,1,9[", fingerprint);
@@ -44,8 +44,8 @@ public class FrontEndFingerprintGroupSourceTests
     [Fact]
     public void TheFingerprint_IsDeterministic_AndHoldsNoProcessIdentity()
     {
-        var first = Print(Parser.Parse(Example).Root);
-        var second = Print(Parser.Parse(Example).Root);
+        var first = Print(SourceProvenance.ParseValid(Example).Root);
+        var second = Print(SourceProvenance.ParseValid(Example).Root);
         Assert.Equal(first, second);
 
         // A fixed text: the group entries are spans and flags only, never an id a process hands out.
@@ -65,7 +65,7 @@ public class FrontEndFingerprintGroupSourceTests
     [Fact]
     public void AParameterPatternGroupSourceRegression_ChangesTheFingerprint()
     {
-        var root = Parser.Parse(Example).Root;
+        var root = SourceProvenance.ParseValid(Example).Root;
         var f = User(root, "F");
         var sequence = Assert.IsType<SequenceValueParameterPattern>(f.ParameterPatterns[0]);
         var list = Assert.IsType<ListValueParameterPattern>(f.ParameterPatterns[1]);
@@ -94,7 +94,7 @@ public class FrontEndFingerprintGroupSourceTests
     [Fact]
     public void AClausePatternGroupSpanRegression_ChangesTheFingerprint()
     {
-        var family = Family(Parser.Parse(Example).Root, "G");
+        var family = Family(SourceProvenance.ParseValid(Example).Root, "G");
         var branch = family.Branches[0];
         var head = Assert.IsType<Pattern.SequenceValue>(branch.Pattern);
         var group = Assert.IsType<Pattern.SequenceValue>(head.Items[0]);
