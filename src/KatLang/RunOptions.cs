@@ -86,10 +86,51 @@ public sealed class RunOptions
     /// it is held, a module resolves free names in its own declarations, then the prelude, then
     /// its own opens, never at the load site; a name it cannot resolve is a parameter of the
     /// member that uses it. Admit only hosts whose code you would run yourself.</para>
-    /// <para>A downloader must not wait synchronously for an evaluation of the program it is
-    /// loading for: that evaluation joins the materialization the downloader itself is
-    /// serving, or waits for the loader's turn it holds, and ends only through its own
-    /// cancellation.</para>
+    /// <para><b>Reentrancy (host contract).</b> The modules of a conditional branch load on
+    /// demand, when evaluation first selects the branch, and a parsed program runs one such load
+    /// at a time. A load is in progress from when it takes the loader's turn until it gives that
+    /// turn back. That covers every call it makes to this delegate and the parsing and elaboration
+    /// of what they return, not only the time a call is running. Loads made while the program is
+    /// parsed are unaffected, because no evaluation of the program can exist yet.</para>
+    /// <para>While a load is in progress, an evaluation that runs in the execution context of
+    /// that load's downloader, and that selects a branch of the same parsed program whose modules
+    /// are not loaded yet, is refused at once. The downloader's execution context is the delegate
+    /// itself, its <c>await</c> continuations, and anything it starts while execution context
+    /// flows (<c>Task.Run</c>, timers, threads). The rule also applies through nested loads of
+    /// other programs that this context started. The refusal is an evaluation error with exactly
+    /// one <see cref="DiagnosticCode.LoadCycle"/> diagnostic (<see cref="KatLangErrorCode.LoadCycle"/>),
+    /// positioned at the branch's first <c>load</c> or its import site. It needs no cancellation
+    /// token and is never an <see cref="OperationCanceledException"/>. KatLang cannot observe
+    /// whether the downloader waits for that evaluation, so it refuses every such selection. A
+    /// refusal prevents a possible cycle; it does not prove one, and an evaluation the downloader
+    /// never waits for is refused too.</para>
+    /// <para>A branch that is already loaded is always served. Otherwise a cancelled
+    /// <see cref="SourceProcessingCancellationToken"/> takes precedence, then a cancelled
+    /// evaluation token, then the refusal. A refused selection counts nothing against the load
+    /// in progress, which completes normally, and the same selection succeeds once that load has
+    /// finished. These are never refused: code that loads nothing, a branch that is already
+    /// loaded, another parsed program, an evaluation started from any other execution context
+    /// (it waits for the load as before), and an execution context captured during a load and
+    /// used after that load finished.</para>
+    /// <para>Work a downloader starts that does not depend on the download must not carry the
+    /// downloader's execution context. From inside the delegate, suppress flow around the
+    /// scheduling call only:
+    /// <c>using (ExecutionContext.SuppressFlow()) task = Task.Run(...);</c>, with the suppression
+    /// undone on the same thread before any <c>await</c>. That work then waits for the load like
+    /// any other concurrent evaluation. Suppressing flow also drops the caller's other ambient
+    /// state, such as culture and tracing context, for that work. Work that keeps the
+    /// downloader's execution context is accepted only once the load has finished, and the
+    /// delegate cannot observe that: the load goes on after the delegate returns, through
+    /// parsing, elaboration and any further module it downloads.</para>
+    /// <para>A downloader must never wait (<c>await</c>, <c>Wait</c>, <c>Result</c>) for an
+    /// evaluation of the program it is loading for. Moving that evaluation out of the
+    /// downloader's execution context removes the refusal and leaves the deadlock. KatLang
+    /// also does not catch a downloader waiting for an evaluation that another context started,
+    /// or a cycle through another program's load that this context only joined; it makes no
+    /// claim of deadlock freedom. <see cref="KatLangEngine.RunAsync(string, RunOptions?)"/>
+    /// parses and evaluates its own private tree on every call, so only a host that evaluates
+    /// a retained parsed tree through the <see cref="Evaluator"/> asynchronous entry points can
+    /// meet this rule.</para>
     /// </summary>
     public Func<string, CancellationToken, ValueTask<string>>? DownloadCode { get; init; }
 

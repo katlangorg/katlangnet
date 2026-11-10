@@ -9,7 +9,10 @@ namespace KatLang.Tests;
 /// reaches a deferred materialization that runs INLINE — on a consumer's own stack, because
 /// nothing suspended — a second consumer never blocks on the region's run lock, and a host
 /// token callback that throws never replaces a consumer's cancellation. The synchronous-
-/// completion contract and resumption placement are unchanged.
+/// completion contract and resumption placement are unchanged. B15: the region's abandonment
+/// record is an exact count plus a bounded failure summary. B16 (host contract): a selection
+/// of a not-yet-loaded branch made in the execution context of a load in progress of the same
+/// program is refused at once as a possible load cycle, whether or not the downloader waits.
 ///
 /// <para>Every downloader is deterministic and in-memory; a consumer that blocks inline runs on
 /// its own thread (<see cref="Task.Run(Func{Task})"/>), and every wait is bounded by
@@ -50,6 +53,33 @@ public class DeferredMaterializationCancellationTests
                 Assert.Fail($"hang guard: {what}");
             await Task.Delay(1);
         }
+    }
+
+    // B15: what the region recorded about abandonment. A run is abandoned only when its LAST
+    // consumer leaves before completion; the record is settled once that leave's Cancel()
+    // returned, which is inside the test's own Cancel() (the leave is a token registration).
+    private static void AssertNoAbandonment(DeferredModuleRegion region)
+    {
+        Assert.Equal(0, region.AbandonedRuns);
+        Assert.Null(region.LastAbandonmentFailure);
+    }
+
+    private static void AssertAbandonedCleanly(DeferredModuleRegion region, int runs = 1)
+    {
+        Assert.Equal(runs, region.AbandonedRuns);
+        Assert.Null(region.LastAbandonmentFailure);
+    }
+
+    private static void AssertAbandonedWithCallbackFailure(DeferredModuleRegion region, string message)
+    {
+        Assert.Equal(1, region.AbandonedRuns);
+        // CancellationTokenSource.Cancel() aggregates callback failures, once per linked level;
+        // the record keeps the flattened count and the first failure's type and message only.
+        var failure = Assert.IsType<DeferredModuleRegion.AbandonmentFailureSummary>(region.LastAbandonmentFailure);
+        Assert.Equal(typeof(AggregateException).FullName, failure.FailureType);
+        Assert.Equal(1, failure.CallbackFailureCount);
+        Assert.Equal(typeof(InvalidOperationException).FullName, failure.FirstCallbackFailureType);
+        Assert.Equal(message, failure.FirstCallbackFailureMessage);
     }
 
     private static async Task AssertGateFree(DeferredModuleRegion region)
@@ -96,12 +126,16 @@ public class DeferredMaterializationCancellationTests
         Assert.True(sawCancellation, "the inline downloader's token was never cancelled");
         Assert.False(region.IsMaterialized);
         Assert.Equal(1, region.MaterializationAttempts);
+        // The only consumer's leave abandoned the run, and its cancellation completed normally.
+        AssertAbandonedCleanly(region);
         await AssertGateFree(region);
         Assert.Equal(0, region.Loader.InProgressModuleCount);
 
         AssertValue(await RunFlat(root).WaitAsync(HangGuard));
         Assert.Equal(2, region.MaterializationAttempts);
         Assert.Equal(2, calls);
+        // A successful retry abandons nothing.
+        AssertAbandonedCleanly(region);
     }
 
     // ── 2. A joiner leaves while the starter runs inline ────────────────────
@@ -140,6 +174,8 @@ public class DeferredMaterializationCancellationTests
             Assert.Equal(joinerCancellation.Token, error.CancellationToken);
             Assert.False(starter.IsCompleted, "the starter's inline segment was released early");
             Assert.Equal(1, region.InFlightConsumers);
+            // Not the last consumer: nothing was abandoned.
+            AssertNoAbandonment(region);
         }
         finally
         {
@@ -150,6 +186,7 @@ public class DeferredMaterializationCancellationTests
         Assert.True(region.IsMaterialized);
         Assert.Equal(1, region.MaterializationAttempts);
         Assert.Equal(1, calls);
+        AssertNoAbandonment(region);
     }
 
     // ── 3. Inline compile, evaluation cancelled ─────────────────────────────
@@ -225,6 +262,7 @@ public class DeferredMaterializationCancellationTests
         Assert.Equal(cancellation.Token, error.CancellationToken);
         Assert.False(region.IsMaterialized);
         Assert.Equal(1, region.MaterializationAttempts);
+        AssertAbandonedCleanly(region);
         await AssertGateFree(region);
 
         Assert.False((await region.MaterializeAsync(CancellationToken.None).AsTask().WaitAsync(HangGuard)).IsError);
@@ -235,10 +273,40 @@ public class DeferredMaterializationCancellationTests
 
     // ── 4–5. F5: a throwing downloader callback ─────────────────────────────
 
+    /// <summary>
+    /// Keeps a downloader's throwing token registration alive until the test ends. A downloader
+    /// that disposed it on its own exit could race the cancellation it reacts to:
+    /// <see cref="CancellationTokenSource.Cancel()"/> sets the token's wait handle before it runs
+    /// any callback, and runs callbacks last-registered first (a <see cref="Task.Delay(int, CancellationToken)"/>
+    /// awaited after the registration resumes its awaiter inline), so a downloader woken that
+    /// way could unregister the throwing callback before it ever ran — and the test would
+    /// silently exercise no callback failure at all.
+    /// </summary>
+    private sealed class HeldRegistrations : IDisposable
+    {
+        private readonly List<CancellationTokenRegistration> _held = [];
+
+        public void Hold(CancellationTokenRegistration registration)
+        {
+            lock (_held) _held.Add(registration);
+        }
+
+        public void Dispose()
+        {
+            lock (_held)
+            {
+                foreach (var registration in _held)
+                    registration.Dispose();
+                _held.Clear();
+            }
+        }
+    }
+
     [Fact]
     public async Task ThrowingDownloaderCallback_WhileASuspendedLastConsumerLeaves_KeepsTheConsumersCancellation()
     {
         var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var callbacks = new HeldRegistrations();
         var calls = 0;
         var options = new RunOptions
         {
@@ -246,7 +314,7 @@ public class DeferredMaterializationCancellationTests
             {
                 if (Interlocked.Increment(ref calls) > 1)
                     return ModuleSource;
-                using var registration = token.Register(() => throw new InvalidOperationException("host callback failed"));
+                callbacks.Hold(token.Register(() => throw new InvalidOperationException("host callback failed")));
                 entered.TrySetResult();
                 await Task.Delay(Timeout.Infinite, token);
                 return ModuleSource;
@@ -266,9 +334,13 @@ public class DeferredMaterializationCancellationTests
         await AssertGateFree(region);
         Assert.Equal(0, region.Loader.InProgressModuleCount);
         await WaitUntil(() => region.InFlightConsumers == 0, "the abandoned run never finished");
+        // The callback's failure belongs to the abandoned run: recorded there, and nowhere else.
+        AssertAbandonedWithCallbackFailure(region, "host callback failed");
 
         AssertValue(await RunFlat(root).WaitAsync(HangGuard));
         Assert.Equal(2, calls);
+        // The record stays the last abandoned run's; the successful retry abandons nothing.
+        AssertAbandonedWithCallbackFailure(region, "host callback failed");
     }
 
     [Fact]
@@ -276,12 +348,13 @@ public class DeferredMaterializationCancellationTests
     {
         using var started = new ManualResetEventSlim();
         using var evaluation = new CancellationTokenSource();
+        using var callbacks = new HeldRegistrations();
         var sawCancellation = false;
         var options = new RunOptions
         {
             DownloadCode = (_, token) =>
             {
-                using var registration = token.Register(() => throw new InvalidOperationException("host callback failed"));
+                callbacks.Hold(token.Register(() => throw new InvalidOperationException("host callback failed")));
                 started.Set();
                 sawCancellation = token.WaitHandle.WaitOne(HangGuard);
                 token.ThrowIfCancellationRequested();
@@ -300,6 +373,223 @@ public class DeferredMaterializationCancellationTests
         var error = await Assert.ThrowsAnyAsync<OperationCanceledException>(() => run.WaitAsync(HangGuard));
         Assert.Equal(evaluation.Token, error.CancellationToken);
         Assert.True(sawCancellation, "the inline downloader's token was never cancelled");
+    }
+
+    [Fact]
+    public async Task ThrowingDownloaderCallback_WhenTheInlineStartersCancellationLeaves_RecordsTheFailureOnTheAbandonedRun()
+    {
+        using var started = new ManualResetEventSlim();
+        using var evaluation = new CancellationTokenSource();
+        using var callbacks = new HeldRegistrations();
+        var calls = 0;
+        var options = new RunOptions
+        {
+            DownloadCode = (_, token) =>
+            {
+                if (Interlocked.Increment(ref calls) > 1)
+                    return ValueTask.FromResult(ModuleSource);
+                callbacks.Hold(token.Register(() => throw new InvalidOperationException("host callback failed")));
+                started.Set();
+                token.WaitHandle.WaitOne(HangGuard);
+                token.ThrowIfCancellationRequested();
+                return ValueTask.FromResult(ModuleSource);
+            },
+        };
+        var root = (await SourceProvenance.ParseValidAsync(Program, options)).Root;
+        var region = RegionOf(root);
+
+        var run = Task.Run(() => RunFlat(root, evaluation.Token));
+        Assert.True(started.Wait(HangGuard), "hang guard: download never started");
+        // The starter's leave runs inside this Cancel(), while the work runs inline on the
+        // starter's own thread: the failure is recorded before Cancel() returns.
+        Assert.Null(Record.Exception(evaluation.Cancel));
+        AssertAbandonedWithCallbackFailure(region, "host callback failed");
+
+        var error = await Assert.ThrowsAnyAsync<OperationCanceledException>(() => run.WaitAsync(HangGuard));
+        Assert.Equal(evaluation.Token, error.CancellationToken);
+        Assert.False(region.IsMaterialized);
+        await AssertGateFree(region);
+
+        AssertValue(await RunFlat(root).WaitAsync(HangGuard));
+        Assert.Equal(1, region.AbandonedRuns);
+    }
+
+    // ── 4b. B15: the abandonment record is a bounded summary ────────────────
+
+    [Fact]
+    public void AbandonmentFailureSummary_FlattensTheAggregate_CountsEveryCallbackFailure_AndBoundsTheMessage()
+    {
+        var longMessage = new string('x', DeferredModuleRegion.AbandonmentFailureSummary.MaxMessageLength + 50);
+        // Flatten() lists an aggregate's direct failures before those of nested aggregates.
+        var nested = new AggregateException(
+            new InvalidOperationException(longMessage),
+            new AggregateException(new ArgumentException("second")));
+
+        var summary = DeferredModuleRegion.AbandonmentFailureSummary.Of(nested);
+
+        Assert.Equal(typeof(AggregateException).FullName, summary.FailureType);
+        Assert.Equal(2, summary.CallbackFailureCount);
+        Assert.Equal(typeof(InvalidOperationException).FullName, summary.FirstCallbackFailureType);
+        Assert.Equal(
+            new string('x', DeferredModuleRegion.AbandonmentFailureSummary.MaxMessageLength) + "…",
+            summary.FirstCallbackFailureMessage);
+
+        var plain = DeferredModuleRegion.AbandonmentFailureSummary.Of(new TimeoutException("plain"));
+        Assert.Equal(1, plain.CallbackFailureCount);
+        Assert.Equal(typeof(TimeoutException).FullName, plain.FailureType);
+        Assert.Equal("plain", plain.FirstCallbackFailureMessage);
+    }
+
+    private sealed class UnreadableMessageException(bool throws) : Exception
+    {
+        public override string Message => throws ? throw new InvalidOperationException("message getter failed") : null!;
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task AbandonmentFailure_WithAnUnreadableCallbackMessage_DoesNotEscapeHostCancellation(bool throws)
+    {
+        using var callbacks = new HeldRegistrations();
+        using var cancellation = new CancellationTokenSource();
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var calls = 0;
+        var root = (await SourceProvenance.ParseValidAsync(Program, new RunOptions
+        {
+            DownloadCode = async (_, token) =>
+            {
+                if (Interlocked.Increment(ref calls) > 1)
+                    return ModuleSource;
+                callbacks.Hold(token.Register(() => throw new UnreadableMessageException(throws)));
+                entered.TrySetResult();
+                await Task.Delay(Timeout.Infinite, token);
+                return ModuleSource;
+            },
+        })).Root;
+        var region = RegionOf(root);
+        var run = RunFlat(root, cancellation.Token);
+        await entered.Task.WaitAsync(HangGuard);
+        var escaped = Record.Exception(cancellation.Cancel);
+        // Drain the work even when the diagnostic formatter itself regresses.
+        var cancelled = await Assert.ThrowsAnyAsync<OperationCanceledException>(() => run.WaitAsync(HangGuard));
+        await AssertGateFree(region);
+
+        Assert.Null(escaped);
+        Assert.Equal(cancellation.Token, cancelled.CancellationToken);
+        Assert.Equal(1, region.AbandonedRuns);
+        var summary = Assert.IsType<DeferredModuleRegion.AbandonmentFailureSummary>(region.LastAbandonmentFailure);
+        Assert.Equal(1, summary.CallbackFailureCount);
+        Assert.Equal(typeof(UnreadableMessageException).FullName, summary.FirstCallbackFailureType);
+        Assert.Equal("callback exception message unavailable", summary.FirstCallbackFailureMessage);
+        AssertValue(await RunFlat(root).WaitAsync(HangGuard));
+        Assert.Same(summary, region.LastAbandonmentFailure);
+    }
+
+    [Fact]
+    public async Task EachAbandonmentStartsAFreshRecord_ACleanAbandonmentAfterAFailedOneRecordsNoFailure()
+    {
+        using var callbacks = new HeldRegistrations();
+        var entered = new[]
+        {
+            new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously),
+            new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously),
+        };
+        var calls = 0;
+        var options = new RunOptions
+        {
+            DownloadCode = async (_, token) =>
+            {
+                var call = Interlocked.Increment(ref calls);
+                if (call > 2)
+                    return ModuleSource;
+                // The first abandoned run's cancellation meets a throwing callback; the second's does not.
+                if (call == 1)
+                    callbacks.Hold(token.Register(() => throw new InvalidOperationException("host callback failed")));
+                entered[call - 1].TrySetResult();
+                await Task.Delay(Timeout.Infinite, token);
+                return ModuleSource;
+            },
+        };
+        var root = (await SourceProvenance.ParseValidAsync(Program, options)).Root;
+        var region = RegionOf(root);
+
+        for (var attempt = 0; attempt < 2; attempt++)
+        {
+            using var cancellation = new CancellationTokenSource();
+            var run = RunFlat(root, cancellation.Token);
+            await entered[attempt].Task.WaitAsync(HangGuard);
+            cancellation.Cancel();
+            var error = await Assert.ThrowsAnyAsync<OperationCanceledException>(() => run.WaitAsync(HangGuard));
+            Assert.Equal(cancellation.Token, error.CancellationToken);
+            await WaitUntil(() => region.InFlightConsumers == 0, "the abandoned run never finished");
+            if (attempt == 0)
+                AssertAbandonedWithCallbackFailure(region, "host callback failed");
+        }
+
+        // The second abandonment is the most recent one, and it completed normally.
+        AssertAbandonedCleanly(region, runs: 2);
+        AssertValue(await RunFlat(root).WaitAsync(HangGuard));
+        AssertAbandonedCleanly(region, runs: 2);
+    }
+
+    private sealed class RetainedPayloadException(object payload) : InvalidOperationException("host callback failed")
+    {
+        public object Payload { get; } = payload;
+    }
+
+    [Fact]
+    public async Task AbandonmentRecord_DoesNotRetainTheCallbacksExceptionGraph_WhileTheRegionLives()
+    {
+        using var started = new ManualResetEventSlim();
+        using var evaluation = new CancellationTokenSource();
+        using var callbacks = new HeldRegistrations();
+        // Only the callback creates the payload, and only the weak reference sees it from here.
+        var payload = new WeakReference<object>(null!);
+        var calls = 0;
+        var options = new RunOptions
+        {
+            DownloadCode = (_, token) =>
+            {
+                if (Interlocked.Increment(ref calls) > 1)
+                    return ValueTask.FromResult(ModuleSource);
+                callbacks.Hold(token.Register(() =>
+                {
+                    var large = new byte[1 << 20];
+                    payload.SetTarget(large);
+                    throw new RetainedPayloadException(large);
+                }));
+                started.Set();
+                token.WaitHandle.WaitOne(HangGuard);
+                token.ThrowIfCancellationRequested();
+                return ValueTask.FromResult(ModuleSource);
+            },
+        };
+        var root = (await SourceProvenance.ParseValidAsync(Program, options)).Root;
+        var region = RegionOf(root);
+
+        var run = Task.Run(() => RunFlat(root, evaluation.Token));
+        Assert.True(started.Wait(HangGuard), "hang guard: download never started");
+        Assert.Null(Record.Exception(evaluation.Cancel));
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => run.WaitAsync(HangGuard));
+        await AssertGateFree(region);
+        await WaitUntil(() => region.InFlightConsumers == 0, "the abandoned run never finished");
+
+        // The record keeps the diagnostic meaning...
+        var failure = Assert.IsType<DeferredModuleRegion.AbandonmentFailureSummary>(region.LastAbandonmentFailure);
+        Assert.Equal(typeof(RetainedPayloadException).FullName, failure.FirstCallbackFailureType);
+        Assert.Equal("host callback failed", failure.FirstCallbackFailureMessage);
+        // ...but not the exception, so nothing the host attached to it stays alive with the
+        // region (which lives as long as the tree). The registration is released first: the
+        // test's own handle on the callback must not be what keeps anything alive.
+        callbacks.Dispose();
+        await WaitUntil(() =>
+        {
+            GC.Collect();
+            GC.WaitForPendingFinalizers();
+            return !payload.TryGetTarget(out _);
+        }, "the abandonment record retained the callback failure's exception graph");
+        GC.KeepAlive(region);
+        GC.KeepAlive(root);
     }
 
     // ── 6. Synchronous completion ───────────────────────────────────────────
@@ -332,6 +622,7 @@ public class DeferredMaterializationCancellationTests
         Assert.True(flat.IsCompleted, "Evaluator.RunFlatAsync did not complete synchronously");
         AssertValue(await flat);
         Assert.Equal(1, RegionOf(root).MaterializationAttempts);
+        AssertNoAbandonment(RegionOf(root));
         // A cached module is not fetched again by the selection.
         Assert.Equal(cached ? callsBeforeSelection : callsBeforeSelection + 1, calls);
     }
@@ -451,38 +742,839 @@ public class DeferredMaterializationCancellationTests
         Assert.Equal(starterCancellation.Token, error.CancellationToken);
         Assert.True(region.IsMaterialized);
         Assert.Equal(1, region.MaterializationAttempts);
+        // The starter's leave was not the last: nothing was abandoned.
+        AssertNoAbandonment(region);
     }
 
-    // ── 9. Same-tree reentrancy from a synchronous downloader ───────────────
+    // ── 9. Reentrant selection from a module downloader (B16) ───────────────
+    //
+    // Owner decision (Nov 10 2026): fail fast. A downloader that evaluates the program it is
+    // loading for, and selects a branch whose modules are not loaded yet, would wait for the
+    // download it is serving — the same region's run (whose completion follows the download) or
+    // the loader gate that run holds (another region). That selection fails AT ONCE with an
+    // ordinary LoadCycle materialization failure, without any token; the outer run, the gate,
+    // the cache, and later selections are unaffected. The downloader's wait for the nested
+    // evaluation is bounded by HangGuard only as a watchdog: on a regression it returns anyway,
+    // so everything unwinds, and the test fails on NestedCompletedInsideTheDownload. Nothing in
+    // these tests is cancelled to make a nested evaluation finish. The library cannot see the
+    // downloader's wait, so the same refusal is also the host contract for work that nothing
+    // waits for (§ 9b; RunOptions.DownloadCode, Reentrancy).
 
-    [Fact]
-    public async Task SynchronousDownloader_EvaluatingTheSameTree_JoinsItsOwnRun_AndEndsWithItsOwnToken()
+    private const string TwoRegionProgram =
+        $"F(0) = 0\nF(1) = {{\n    N = load('{ModuleA}')\n    N.V\n}}\n" +
+        $"G(0) = 0\nG(1) = {{\n    M = load('{ModuleB}')\n    M.W\n}}\n" +
+        "P(0) = F(1)\nP(1) = G(1)\nP(2) = 5\nP(Which())";
+
+    private const string ModuleB = "https://katlang.org/lazy/b.kat";
+
+    private sealed class ReentrantDownloader
+    {
+        private readonly ManualResetEventSlim _entered = new();
+
+        public required Func<CancellationToken, Task<EvalResult<IReadOnlyList<Decimal128>>>> Nested { get; init; }
+
+        public CancellationToken NestedToken { get; init; }
+
+        /// <summary>Runs inside the download, before the nested evaluation starts.</summary>
+        public Action? BeforeNested { get; init; }
+
+        /// <summary>Runs inside the download, after the nested evaluation ended (or the watchdog fired).</summary>
+        public Action? AfterNested { get; init; }
+
+        public CancellationToken DownloaderToken { get; private set; }
+
+        public bool NestedCompletedInsideTheDownload { get; private set; }
+
+        public EvalResult<IReadOnlyList<Decimal128>>? NestedResult { get; private set; }
+
+        public Exception? NestedException { get; private set; }
+
+        public bool DownloaderTokenCancelledOnReturn { get; private set; }
+
+        public int Calls;
+
+        public ValueTask<string> Download(CancellationToken token, string source)
+        {
+            if (Interlocked.Increment(ref Calls) > 1)
+                return ValueTask.FromResult(source);
+            DownloaderToken = token;
+            BeforeNested?.Invoke();
+            var nested = Nested(NestedToken);
+            _entered.Set();
+            // Watchdog only: a nested evaluation that waits instead of failing is left behind,
+            // and ends once this download has returned.
+            NestedCompletedInsideTheDownload = ((IAsyncResult)nested).AsyncWaitHandle.WaitOne(HangGuard);
+            if (NestedCompletedInsideTheDownload)
+            {
+                NestedException = Record.Exception(() => NestedResult = nested.GetAwaiter().GetResult());
+            }
+            AfterNested?.Invoke();
+            DownloaderTokenCancelledOnReturn = token.IsCancellationRequested;
+            return ValueTask.FromResult(source);
+        }
+
+        public void WaitEntered() => Assert.True(_entered.Wait(HangGuard), "hang guard: the downloader never ran");
+    }
+
+    private static void AssertReentrantSelectionRejected(EvalResult<IReadOnlyList<Decimal128>>? nested, Exception? escaped)
+    {
+        Assert.Null(escaped);
+        Assert.True(nested.HasValue, "the reentrant selection produced no result");
+        var result = nested.Value;
+        Assert.True(result.IsError, "the reentrant selection produced a value");
+        // Evaluation frames wrap the failure in context; the innermost error is the region's.
+        var error = result.Error;
+        while (error is EvalError.WithContext context)
+            error = context.Inner;
+        var failure = Assert.IsType<EvalError.ModuleRegionMaterializationFailed>(error);
+        var diagnostic = Assert.Single(failure.Diagnostics);
+        Assert.Equal(DiagnosticCode.LoadCycle, diagnostic.Code);
+        Assert.Equal(DiagnosticSeverity.Error, diagnostic.Severity);
+        Assert.Equal(DeferredModuleRegion.ReentrantMaterializationMessage, diagnostic.Message);
+        // Positioned at the branch's own load directive, like the region's other load failures.
+        Assert.NotNull(diagnostic.Span);
+        // The public classification is the existing load-cycle code, never a cancellation.
+        Assert.Equal(KatLangErrorCode.LoadCycle, KatLangError.FromEvalError(result.Error).Code);
+    }
+
+    private static void AssertReentrantSelectionRejected(ReentrantDownloader downloader)
+    {
+        Assert.True(downloader.NestedCompletedInsideTheDownload, "the nested selection waited instead of failing fast");
+        AssertReentrantSelectionRejected(downloader.NestedResult, downloader.NestedException);
+    }
+
+    public enum NestedThread
+    {
+        /// <summary>The nested evaluation runs synchronously on the downloader's own thread.</summary>
+        DownloaderThread,
+
+        /// <summary>The downloader blocks on <see cref="Task.Run(Func{Task})"/>: another thread, flowed context.</summary>
+        TaskRun,
+    }
+
+    private static Func<CancellationToken, Task<EvalResult<IReadOnlyList<Decimal128>>>> Nested(
+        NestedThread thread, Func<CancellationToken, Task<EvalResult<IReadOnlyList<Decimal128>>>> evaluate)
+        => thread == NestedThread.TaskRun ? token => Task.Run(() => evaluate(token)) : evaluate;
+
+    [Theory]
+    [InlineData(NestedThread.DownloaderThread)]
+    [InlineData(NestedThread.TaskRun)]
+    public async Task SameRegionReentry_WithoutAToken_FailsFastWithALoadCycle_AndTheOuterRunPublishes(NestedThread thread)
     {
         Algorithm? root = null;
-        Exception? nested = null;
-        CancellationToken nestedToken = default;
+        DeferredModuleRegion? region = null;
+        var consumersDuringTheDownload = -1;
+        var downloader = new ReentrantDownloader
+        {
+            Nested = Nested(thread, token => RunFlat(root!, token)),
+            AfterNested = () => consumersDuringTheDownload = region!.InFlightConsumers,
+        };
+        var options = new RunOptions { DownloadCode = (_, token) => downloader.Download(token, ModuleSource) };
+        root = (await SourceProvenance.ParseValidAsync(Program, options)).Root;
+        region = RegionOf(root);
+
+        AssertValue(await Task.Run(() => RunFlat(root)).WaitAsync(HangGuard));
+
+        AssertReentrantSelectionRejected(downloader);
+        // The rejected selection was never counted on the run it would have waited for.
+        Assert.Equal(1, consumersDuringTheDownload);
+        Assert.False(downloader.DownloaderTokenCancelledOnReturn);
+        Assert.Equal(1, downloader.Calls);
+        Assert.Equal(1, region.MaterializationAttempts);
+        Assert.True(region.IsMaterialized);
+        AssertNoAbandonment(region);
+        await AssertGateFree(region);
+        Assert.Equal(0, region.Loader.InProgressModuleCount);
+
+        // Recovery: the region is published once, and every later evaluation is served from it.
+        AssertValue(await RunFlat(root).WaitAsync(HangGuard));
+        Assert.Equal(1, region.MaterializationAttempts);
+    }
+
+    [Theory]
+    [InlineData(NestedThread.DownloaderThread)]
+    [InlineData(NestedThread.TaskRun)]
+    public async Task OtherRegionReentry_WithoutAToken_FailsFastWithALoadCycle_InsteadOfWaitingForTheHeldGate(NestedThread thread)
+    {
+        var which = 0;
+        var hosts = HostOperations.Create(HostOperation.Create("Which", (_, _) => new Result.Atom(Volatile.Read(ref which))));
+        Algorithm? root = null;
+        DeferredModuleRegion? regionG = null;
+        var gConsumersDuringTheDownload = -1;
+        var downloader = new ReentrantDownloader
+        {
+            Nested = Nested(thread, token => Evaluator.RunFlatAsync(new Expr.AlgorithmExpr(root!), hosts, null, null, token)),
+            // The nested evaluation selects the OTHER region of the same tree.
+            BeforeNested = () => Volatile.Write(ref which, 1),
+            AfterNested = () => gConsumersDuringTheDownload = regionG!.InFlightConsumers,
+        };
+        var options = new RunOptions
+        {
+            HostOperations = hosts,
+            DownloadCode = (url, token) => url == ModuleA
+                ? downloader.Download(token, ModuleSource)
+                : ValueTask.FromResult("public W = 8"),
+        };
+        root = (await SourceProvenance.ParseValidAsync(TwoRegionProgram, options)).Root;
+        var regionF = RegionOf(root, "F");
+        regionG = RegionOf(root, "G");
+
+        AssertValue(await Task.Run(() => Evaluator.RunFlatAsync(new Expr.AlgorithmExpr(root), hosts, null, null, CancellationToken.None))
+            .WaitAsync(HangGuard));
+
+        AssertReentrantSelectionRejected(downloader);
+        // G's selection never started a run: no consumer, no attempt, no abandonment.
+        Assert.Equal(0, gConsumersDuringTheDownload);
+        Assert.Equal(0, regionG.MaterializationAttempts);
+        Assert.False(regionG.IsMaterialized);
+        AssertNoAbandonment(regionG);
+        Assert.True(regionF.IsMaterialized);
+        AssertNoAbandonment(regionF);
+        await AssertGateFree(regionF);
+
+        // Recovery: G is selected again (Which() is now 1) and materializes normally.
+        AssertValue(await Evaluator.RunFlatAsync(new Expr.AlgorithmExpr(root), hosts, null, null, CancellationToken.None)
+            .WaitAsync(HangGuard), 8);
+        Assert.True(regionG.IsMaterialized);
+        Assert.Equal(1, regionG.MaterializationAttempts);
+    }
+
+    [Fact]
+    public async Task SameRegionReentry_FromAnAsynchronousDownloaderContinuation_FailsFast()
+    {
+        Algorithm? root = null;
+        EvalResult<IReadOnlyList<Decimal128>>? nested = null;
+        Exception? escaped = null;
+        var calls = 0;
+        var options = new RunOptions
+        {
+            DownloadCode = async (_, _) =>
+            {
+                if (Interlocked.Increment(ref calls) > 1)
+                    return ModuleSource;
+                // A genuine suspension first: the nested evaluation runs on a continuation, on
+                // whatever thread resumes it, with the downloader's flowed context — and the
+                // download's own completion awaits it, which is the cycle.
+                await Task.Yield();
+                try { nested = await RunFlat(root!).WaitAsync(HangGuard); }
+                catch (Exception error) { escaped = error; }
+                return ModuleSource;
+            },
+        };
+        root = (await SourceProvenance.ParseValidAsync(Program, options)).Root;
+        var region = RegionOf(root);
+
+        AssertValue(await RunFlat(root).WaitAsync(HangGuard));
+
+        AssertReentrantSelectionRejected(nested, escaped);
+        Assert.Equal(1, region.MaterializationAttempts);
+        AssertNoAbandonment(region);
+        await AssertGateFree(region);
+    }
+
+    [Fact]
+    public async Task Reentry_ByWorkAnEarlierDownloadStarted_WhileALaterDownloadOfTheSameLoadWaitsForIt_FailsFast()
+    {
+        // The load is in progress for its whole gate turn, not only while one callback runs. This
+        // load makes two downloads. The first starts a child with its flowed context and returns
+        // at once; the second releases the child and waits for it. The child's selection would
+        // wait for the turn, and the turn waits for the second download: a genuine cycle through
+        // a callback that has already returned. A turn frame that ended with its own callback
+        // would miss it, so this pins the frame's lifetime.
+        var source =
+            $"F(0) = 0\nF(1) = {{\n    N = load('{ModuleA}')\n    M = load('{ModuleB}')\n    N.V + M.W\n}}\nF(1)";
+        var releaseChild = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        Algorithm? root = null;
+        Task<EvalResult<IReadOnlyList<Decimal128>>>? child = null;
+        var childCompletedInsideTheLaterDownload = false;
+        var calls = 0;
+        var options = new RunOptions
+        {
+            DownloadCode = (url, _) =>
+            {
+                // Counted by call, so the test does not depend on which module loads first.
+                switch (Interlocked.Increment(ref calls))
+                {
+                    case 1:
+                        child = Task.Run(async () =>
+                        {
+                            await releaseChild.Task;
+                            return await RunFlat(root!);
+                        });
+                        break;
+                    case 2:
+                        releaseChild.SetResult();
+                        // Watchdog only: a child that waits instead of failing is left behind,
+                        // and ends once this download has returned.
+                        childCompletedInsideTheLaterDownload = ((IAsyncResult)child!).AsyncWaitHandle.WaitOne(HangGuard);
+                        break;
+                }
+
+                return ValueTask.FromResult(url == ModuleA ? ModuleSource : "public W = 8");
+            },
+        };
+        root = (await SourceProvenance.ParseValidAsync(source, options)).Root;
+        var region = RegionOf(root);
+
+        AssertValue(await Task.Run(() => RunFlat(root)).WaitAsync(HangGuard), 15);
+
+        Assert.True(childCompletedInsideTheLaterDownload, "the selection waited for the load whose later download waits for it");
+        EvalResult<IReadOnlyList<Decimal128>>? childResult = null;
+        var escaped = await Record.ExceptionAsync(async () => childResult = await child!.WaitAsync(HangGuard));
+        AssertReentrantSelectionRejected(childResult, escaped);
+        // The refused selection downloaded nothing and counted nothing: one attempt, two downloads.
+        Assert.Equal(2, calls);
+        Assert.Equal(1, region.MaterializationAttempts);
+        Assert.True(region.IsMaterialized);
+        AssertNoAbandonment(region);
+        await AssertGateFree(region);
+    }
+
+    public enum NestedCancellation
+    {
+        /// <summary>A cancellable token nobody cancels: still the load-cycle failure.</summary>
+        Uncancelled,
+
+        /// <summary>The nested evaluation's token is already cancelled: its cancellation wins.</summary>
+        NestedPreCancelled,
+
+        /// <summary>The host's source-processing token is cancelled first: it wins, for both evaluations.</summary>
+        SourceProcessingCancelled,
+    }
+
+    [Theory]
+    [InlineData(false, NestedCancellation.Uncancelled)]
+    [InlineData(false, NestedCancellation.NestedPreCancelled)]
+    [InlineData(false, NestedCancellation.SourceProcessingCancelled)]
+    [InlineData(true, NestedCancellation.Uncancelled)]
+    [InlineData(true, NestedCancellation.NestedPreCancelled)]
+    [InlineData(true, NestedCancellation.SourceProcessingCancelled)]
+    public async Task Reentry_GenuineCancellationKeepsItsPrecedence_OverTheLoadCycleVerdict(bool otherRegion, NestedCancellation mode)
+    {
+        Algorithm? root = null;
+        var which = 0;
+        var hosts = HostOperations.Create(HostOperation.Create("Which", (_, _) => new Result.Atom(Volatile.Read(ref which))));
+        Task<EvalResult<IReadOnlyList<Decimal128>>> Evaluate(CancellationToken cancellationToken = default)
+            => Evaluator.RunFlatAsync(new Expr.AlgorithmExpr(root!), hosts, null, null, cancellationToken);
+        using var nestedCancellation = new CancellationTokenSource();
+        using var sourceCancellation = new CancellationTokenSource();
+        if (mode == NestedCancellation.NestedPreCancelled)
+            nestedCancellation.Cancel();
+        var downloader = new ReentrantDownloader
+        {
+            Nested = Evaluate,
+            NestedToken = nestedCancellation.Token,
+            BeforeNested = () =>
+            {
+                Volatile.Write(ref which, otherRegion ? 1 : 0);
+                if (mode == NestedCancellation.SourceProcessingCancelled)
+                    sourceCancellation.Cancel();
+            },
+        };
+        var options = new RunOptions
+        {
+            HostOperations = hosts,
+            DownloadCode = (url, token) => url == ModuleA
+                ? downloader.Download(token, ModuleSource)
+                : ValueTask.FromResult("public W = 8"),
+            SourceProcessingCancellationToken = sourceCancellation.Token,
+        };
+        root = (await SourceProvenance.ParseValidAsync(TwoRegionProgram, options)).Root;
+        var region = RegionOf(root);
+        var regionG = RegionOf(root, "G");
+
+        var outer = Task.Run(() => Evaluate());
+        if (mode == NestedCancellation.SourceProcessingCancelled)
+        {
+            var outerError = await Assert.ThrowsAnyAsync<OperationCanceledException>(() => outer.WaitAsync(HangGuard));
+            Assert.Equal(sourceCancellation.Token, outerError.CancellationToken);
+        }
+        else
+        {
+            AssertValue(await outer.WaitAsync(HangGuard));
+        }
+
+        Assert.True(downloader.NestedCompletedInsideTheDownload, "the nested selection waited");
+        switch (mode)
+        {
+            case NestedCancellation.Uncancelled:
+                AssertReentrantSelectionRejected(downloader);
+                break;
+            case NestedCancellation.NestedPreCancelled:
+            {
+                var cancelled = Assert.IsAssignableFrom<OperationCanceledException>(downloader.NestedException);
+                Assert.Equal(nestedCancellation.Token, cancelled.CancellationToken);
+                break;
+            }
+            case NestedCancellation.SourceProcessingCancelled:
+            {
+                var cancelled = Assert.IsAssignableFrom<OperationCanceledException>(downloader.NestedException);
+                Assert.Equal(sourceCancellation.Token, cancelled.CancellationToken);
+                Assert.True(downloader.DownloaderTokenCancelledOnReturn);
+                Assert.False(region.IsMaterialized);
+                break;
+            }
+        }
+        // Whichever way the nested selection ended, it counted nothing and abandoned nothing.
+        AssertNoAbandonment(region);
+        AssertNoAbandonment(regionG);
+        Assert.Equal(1, region.MaterializationAttempts);
+        Assert.Equal(0, regionG.MaterializationAttempts);
+        Assert.Equal(0, regionG.InFlightConsumers);
+        await AssertGateFree(region);
+        if (mode != NestedCancellation.SourceProcessingCancelled)
+        {
+            // Rejection/cancellation of the nested selection cannot poison its later use.
+            AssertValue(await Evaluate().WaitAsync(HangGuard), otherRegion ? 8 : 7);
+            Assert.Equal(otherRegion ? 1 : 0, regionG.MaterializationAttempts);
+        }
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Reentry_AfterTheOuterConsumerLeft_StillFailsAsALoadCycle_AndTheAbandonedRunIsRecordedCleanly(bool otherRegion)
+    {
+        Algorithm? root = null;
+        var which = 0;
+        var hosts = HostOperations.Create(HostOperation.Create("Which", (_, _) => new Result.Atom(Volatile.Read(ref which))));
+        Task<EvalResult<IReadOnlyList<Decimal128>>> Evaluate(CancellationToken cancellationToken = default)
+            => Evaluator.RunFlatAsync(new Expr.AlgorithmExpr(root!), hosts, null, null, cancellationToken);
+        using var outerCancellation = new CancellationTokenSource();
+        var downloader = new ReentrantDownloader
+        {
+            Nested = Evaluate,
+            // The outer evaluation is the run's only consumer: its leave abandons the run, which
+            // cancels the downloader's token — but the gate turn is still held until this
+            // download returns, so the nested selection would still wait for it.
+            BeforeNested = () =>
+            {
+                Volatile.Write(ref which, otherRegion ? 1 : 0);
+                outerCancellation.Cancel();
+            },
+        };
+        var options = new RunOptions
+        {
+            HostOperations = hosts,
+            DownloadCode = (url, token) => url == ModuleA
+                ? downloader.Download(token, ModuleSource)
+                : ValueTask.FromResult("public W = 8"),
+        };
+        root = (await SourceProvenance.ParseValidAsync(TwoRegionProgram, options)).Root;
+        var region = RegionOf(root);
+        var regionG = RegionOf(root, "G");
+
+        var outer = Task.Run(() => Evaluate(outerCancellation.Token));
+        var outerError = await Assert.ThrowsAnyAsync<OperationCanceledException>(() => outer.WaitAsync(HangGuard));
+        Assert.Equal(outerCancellation.Token, outerError.CancellationToken);
+
+        // Cancellation of a DIFFERENT evaluation does not turn the cycle into a cancellation.
+        AssertReentrantSelectionRejected(downloader);
+        Assert.True(downloader.DownloaderTokenCancelledOnReturn);
+        Assert.False(region.IsMaterialized);
+        AssertAbandonedCleanly(region);
+        AssertNoAbandonment(regionG);
+        Assert.Equal(0, regionG.InFlightConsumers);
+        Assert.Equal(0, regionG.MaterializationAttempts);
+        await AssertGateFree(region);
+
+        Volatile.Write(ref which, 0);
+        AssertValue(await Evaluate().WaitAsync(HangGuard));
+        Assert.Equal(2, region.MaterializationAttempts);
+        AssertAbandonedCleanly(region);
+        if (otherRegion)
+        {
+            Volatile.Write(ref which, 1);
+            AssertValue(await Evaluate().WaitAsync(HangGuard), 8);
+            Assert.Equal(1, regionG.MaterializationAttempts);
+            AssertNoAbandonment(regionG);
+        }
+    }
+
+    // ── 9b. The host contract for independent consumers (B16) ──────────────
+    //
+    // Owner decision (Nov 10 2026, Option 1): the conservative rule is the supported
+    // RunOptions.DownloadCode contract. The library sees only the selection's wait for the held
+    // turn, never whether the downloader waits for the selection, so an evaluation in the
+    // downloader's flowed context that selects a not-yet-loaded branch of the same tree is
+    // refused during the load EVEN WHEN NOTHING WAITS FOR IT. Those cases are contract pins, not
+    // detected cycles. Work started without the downloader's context (another context, flow
+    // suppressed, after the load) waits for the load like any concurrent consumer and succeeds.
+
+    [Fact]
+    public async Task ConcurrentJoinersFromOtherContexts_AreNeverTakenForReentry_AndShareOneAttempt()
+    {
+        using var started = new ManualResetEventSlim();
+        using var release = new ManualResetEventSlim();
         var calls = 0;
         var options = new RunOptions
         {
             DownloadCode = (_, _) =>
             {
                 Interlocked.Increment(ref calls);
-                // Documented as unsupported (RunOptions.DownloadCode): the nested evaluation joins
-                // the materialization this downloader serves and ends only through its own token.
-                using var limit = new CancellationTokenSource(TimeSpan.FromMilliseconds(50));
-                nestedToken = limit.Token;
-                nested = Record.Exception(() => RunFlat(root!, limit.Token).GetAwaiter().GetResult());
+                started.Set();
+                Assert.True(release.Wait(HangGuard));
                 return ValueTask.FromResult(ModuleSource);
+            },
+        };
+        var root = (await SourceProvenance.ParseValidAsync(Program, options)).Root;
+        var region = RegionOf(root);
+
+        var starter = Task.Run(() => RunFlat(root));
+        Assert.True(started.Wait(HangGuard), "hang guard: download never started");
+        // Two joiners from the test's own (flowed) context, on other threads, while the starter's
+        // work holds the gate turn inline: ordinary joins, never a reentry.
+        using var cancellable = new CancellationTokenSource();
+        var joiners = new[] { Task.Run(() => RunFlat(root)), Task.Run(() => RunFlat(root, cancellable.Token)) };
+        await WaitUntil(() => region.InFlightConsumers == 3, "the joiners never joined the in-flight run");
+        release.Set();
+
+        AssertValue(await starter.WaitAsync(HangGuard));
+        foreach (var joiner in joiners)
+            AssertValue(await joiner.WaitAsync(HangGuard));
+        Assert.Equal(1, calls);
+        Assert.Equal(1, region.MaterializationAttempts);
+        AssertNoAbandonment(region);
+    }
+
+    // What one independent-child scenario observed. The downloader of F's module starts a child
+    // evaluation with Task.Run and never waits for it; only the test's separate controller
+    // completes the download. The two contracts' scenarios differ in nothing but whether the
+    // child carries the downloader's execution context.
+    private sealed record IndependentChildRun(
+        Algorithm Root,
+        HostOperations Hosts,
+        DeferredModuleRegion RegionF,
+        DeferredModuleRegion RegionG,
+        bool ChildCompletedAtItsSelection,
+        int FConsumersWhileHeld,
+        int GConsumersWhileHeld,
+        int GAttemptsWhileHeld,
+        EvalResult<IReadOnlyList<Decimal128>> Outer,
+        EvalResult<IReadOnlyList<Decimal128>>? Child,
+        Exception? ChildEscaped);
+
+    private static async Task<IndependentChildRun> RunIndependentChild(bool otherRegion, bool suppressFlow)
+    {
+        var which = 0;
+        var hosts = HostOperations.Create(HostOperation.Create("Which", (_, _) => new Result.Atom(Volatile.Read(ref which))));
+        var selected = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseDownload = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        Algorithm? root = null;
+        Task<EvalResult<IReadOnlyList<Decimal128>>>? independent = null;
+        var options = new RunOptions
+        {
+            HostOperations = hosts,
+            DownloadCode = async (url, _) =>
+            {
+                if (url != ModuleA)
+                    return "public W = 8";
+                Func<Task<EvalResult<IReadOnlyList<Decimal128>>>> child = async () =>
+                {
+                    Volatile.Write(ref which, otherRegion ? 1 : 0);
+                    var pending = Evaluator.RunFlatAsync(new Expr.AlgorithmExpr(root!), hosts, null, null, CancellationToken.None);
+                    // RunFlatAsync executes its prefix through selection before returning.
+                    selected.TrySetResult(pending.IsCompleted);
+                    return await pending;
+                };
+                // The downloader never awaits the child. The ONLY difference between the
+                // scenarios: the suppression is disposed on this thread before the await below.
+                if (suppressFlow)
+                {
+                    using (ExecutionContext.SuppressFlow())
+                        independent = Task.Run(child);
+                }
+                else
+                {
+                    independent = Task.Run(child);
+                }
+                await releaseDownload.Task;
+                return ModuleSource;
+            },
+        };
+        root = (await SourceProvenance.ParseValidAsync(TwoRegionProgram, options)).Root;
+        var regionF = RegionOf(root, "F");
+        var regionG = RegionOf(root, "G");
+        var outer = Evaluator.RunFlatAsync(new Expr.AlgorithmExpr(root), hosts, null, null, CancellationToken.None);
+        bool completedAtSelection;
+        int fConsumers, gConsumers, gAttempts;
+        try
+        {
+            completedAtSelection = await selected.Task.WaitAsync(HangGuard);
+            // Still inside the held download: the controller has not released it.
+            fConsumers = regionF.InFlightConsumers;
+            gConsumers = regionG.InFlightConsumers;
+            gAttempts = regionG.MaterializationAttempts;
+        }
+        finally
+        {
+            // Neither assertion failure nor a watchdog leaves a worker behind.
+            releaseDownload.TrySetResult();
+            await outer.WaitAsync(HangGuard);
+            if (independent is not null)
+                await independent.WaitAsync(HangGuard);
+        }
+
+        EvalResult<IReadOnlyList<Decimal128>>? childResult = null;
+        var escaped = await Record.ExceptionAsync(async () => childResult = await independent!);
+        return new IndependentChildRun(root, hosts, regionF, regionG, completedAtSelection, fConsumers, gConsumers, gAttempts,
+            await outer, childResult, escaped);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task IndependentEvaluationStartedByDownloader_WithFlowedContext_IsRefusedDuringTheLoad_AlthoughNothingWaitsForIt(bool otherRegion)
+    {
+        // Contract pin (B16 host contract), formerly a required-success case: nothing waits for
+        // this child, and it is refused anyway, because the library cannot see that.
+        var run = await RunIndependentChild(otherRegion, suppressFlow: false);
+
+        Assert.True(run.ChildCompletedAtItsSelection, "the flowed child was not refused at its selection");
+        AssertReentrantSelectionRejected(run.Child, run.ChildEscaped);
+        // The refusal counted no consumer and started nothing.
+        Assert.Equal(1, run.FConsumersWhileHeld);
+        Assert.Equal(0, run.GConsumersWhileHeld);
+        Assert.Equal(0, run.GAttemptsWhileHeld);
+        // The load in progress published normally.
+        AssertValue(run.Outer);
+        Assert.Equal(1, run.RegionF.MaterializationAttempts);
+        Assert.Equal(0, run.RegionG.MaterializationAttempts);
+        AssertNoAbandonment(run.RegionF);
+        AssertNoAbandonment(run.RegionG);
+        await AssertGateFree(run.RegionF);
+
+        // The same selection, evaluated again from the test's own context after the load: served.
+        AssertValue(await Evaluator.RunFlatAsync(new Expr.AlgorithmExpr(run.Root), run.Hosts, null, null, CancellationToken.None)
+            .WaitAsync(HangGuard), otherRegion ? 8 : 7);
+        Assert.Equal(1, run.RegionF.MaterializationAttempts);
+        Assert.Equal(otherRegion ? 1 : 0, run.RegionG.MaterializationAttempts);
+        AssertNoAbandonment(run.RegionG);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task IndependentEvaluationStartedByDownloader_WithFlowSuppressed_WaitsForTheLoad_AndSucceeds(bool otherRegion)
+    {
+        // The supported pattern: the same child, scheduled without the downloader's context, is
+        // an ordinary concurrent consumer: it joins F's run, or G's run queues for the gate.
+        var run = await RunIndependentChild(otherRegion, suppressFlow: true);
+
+        Assert.False(run.ChildCompletedAtItsSelection, "an independent consumer was refused before the download was released");
+        Assert.Equal(otherRegion ? 1 : 2, run.FConsumersWhileHeld);
+        Assert.Equal(otherRegion ? 1 : 0, run.GConsumersWhileHeld);
+        Assert.Equal(0, run.GAttemptsWhileHeld);
+        AssertValue(run.Outer);
+        Assert.Null(run.ChildEscaped);
+        Assert.True(run.Child.HasValue);
+        AssertValue(run.Child.Value, otherRegion ? 8 : 7);
+        Assert.Equal(1, run.RegionF.MaterializationAttempts);
+        Assert.Equal(otherRegion ? 1 : 0, run.RegionG.MaterializationAttempts);
+        AssertNoAbandonment(run.RegionF);
+        AssertNoAbandonment(run.RegionG);
+        await AssertGateFree(run.RegionF);
+    }
+
+    [Fact]
+    public async Task IndependentEvaluation_SelectingWhileTheDownloaderIsStillInsideItsSynchronousCall_IsRefusedToo()
+    {
+        // Contract pin (ported from the Reviewer 2 probe): the downloader starts a flowed child,
+        // blocks only until the child's selection has run, then suspends on a separate
+        // controller. Neither waits for the other's result, and the child is still refused, so
+        // the verdict does not depend on whether the downloader has suspended yet.
+        using var selected = new ManualResetEventSlim();
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        Algorithm? root = null;
+        Task<EvalResult<IReadOnlyList<Decimal128>>>? child = null;
+        var calls = 0;
+        var options = new RunOptions
+        {
+            DownloadCode = async (_, _) =>
+            {
+                if (Interlocked.Increment(ref calls) > 1)
+                    return ModuleSource;
+                child = Task.Run(async () =>
+                {
+                    var pending = RunFlat(root!);
+                    selected.Set();
+                    return await pending;
+                });
+                Assert.True(selected.Wait(HangGuard), "hang guard: the child never selected");
+                await release.Task;
+                return ModuleSource;
             },
         };
         root = (await SourceProvenance.ParseValidAsync(Program, options)).Root;
         var region = RegionOf(root);
+        var outer = RunFlat(root);
+        try
+        {
+            Assert.True(selected.Wait(HangGuard), "hang guard: the child never selected");
+        }
+        finally
+        {
+            release.TrySetResult();
+            await outer.WaitAsync(HangGuard);
+            if (child is not null)
+                await child.WaitAsync(HangGuard);
+        }
 
-        AssertValue(await Task.Run(() => RunFlat(root)).WaitAsync(HangGuard));
-        var cancelled = Assert.IsAssignableFrom<OperationCanceledException>(nested);
-        Assert.Equal(nestedToken, cancelled.CancellationToken);
+        EvalResult<IReadOnlyList<Decimal128>>? childResult = null;
+        var escaped = await Record.ExceptionAsync(async () => childResult = await child!);
+        AssertReentrantSelectionRejected(childResult, escaped);
+        AssertValue(await outer);
         Assert.Equal(1, calls);
         Assert.Equal(1, region.MaterializationAttempts);
+        AssertNoAbandonment(region);
+        await AssertGateFree(region);
+        AssertValue(await RunFlat(root).WaitAsync(HangGuard));
+        Assert.Equal(1, region.MaterializationAttempts);
+    }
+
+    public enum SafeNestedSelection
+    {
+        /// <summary>The nested evaluation selects a region that is already materialized.</summary>
+        MaterializedRegion,
+
+        /// <summary>The nested evaluation selects code that loads nothing.</summary>
+        NonDeferredCode,
+    }
+
+    [Theory]
+    [InlineData(SafeNestedSelection.MaterializedRegion, 8)]
+    [InlineData(SafeNestedSelection.NonDeferredCode, 5)]
+    public async Task NestedEvaluationOfTheSameTree_ThatWaitsForNothing_SucceedsInsideTheDownload(SafeNestedSelection selection, int expected)
+    {
+        var which = 1;
+        var hosts = HostOperations.Create(HostOperation.Create("Which", (_, _) => new Result.Atom(Volatile.Read(ref which))));
+        Algorithm? root = null;
+        var downloader = new ReentrantDownloader
+        {
+            Nested = token => Evaluator.RunFlatAsync(new Expr.AlgorithmExpr(root!), hosts, null, null, token),
+            BeforeNested = () => Volatile.Write(ref which, selection == SafeNestedSelection.MaterializedRegion ? 1 : 2),
+        };
+        var options = new RunOptions
+        {
+            HostOperations = hosts,
+            DownloadCode = (url, token) => url == ModuleA
+                ? downloader.Download(token, ModuleSource)
+                : ValueTask.FromResult("public W = 8"),
+        };
+        root = (await SourceProvenance.ParseValidAsync(TwoRegionProgram, options)).Root;
+        var regionF = RegionOf(root, "F");
+        // G is materialized first, by an ordinary evaluation.
+        AssertValue(await Evaluator.RunFlatAsync(new Expr.AlgorithmExpr(root), hosts, null, null, CancellationToken.None)
+            .WaitAsync(HangGuard), 8);
+
+        Volatile.Write(ref which, 0);
+        AssertValue(await Task.Run(() => Evaluator.RunFlatAsync(new Expr.AlgorithmExpr(root), hosts, null, null, CancellationToken.None))
+            .WaitAsync(HangGuard));
+
+        Assert.True(downloader.NestedCompletedInsideTheDownload);
+        Assert.Null(downloader.NestedException);
+        AssertValue(downloader.NestedResult!.Value, expected);
+        Assert.True(regionF.IsMaterialized);
+        AssertNoAbandonment(regionF);
+    }
+
+    [Fact]
+    public async Task NestedEvaluationOfADifferentParsedTree_FromInsideTheDownload_IsIndependent()
+    {
+        // The nested program is a separate parse: its own loader, gate, and regions.
+        var innerOptions = new RunOptions { DownloadCode = (_, _) => ValueTask.FromResult("public V = 9") };
+        var inner = (await SourceProvenance.ParseValidAsync(Program, innerOptions)).Root;
+        var innerRegion = RegionOf(inner);
+        var downloader = new ReentrantDownloader { Nested = token => RunFlat(inner, token) };
+        var options = new RunOptions { DownloadCode = (_, token) => downloader.Download(token, ModuleSource) };
+        var root = (await SourceProvenance.ParseValidAsync(Program, options)).Root;
+
+        AssertValue(await Task.Run(() => RunFlat(root)).WaitAsync(HangGuard));
+
+        Assert.True(downloader.NestedCompletedInsideTheDownload);
+        Assert.Null(downloader.NestedException);
+        AssertValue(downloader.NestedResult!.Value, 9);
+        Assert.True(innerRegion.IsMaterialized);
+    }
+
+    [Fact]
+    public async Task OneEvaluationSelectingTwoRegionsInTurn_IsNotAReentry()
+    {
+        // The starter runs F's work inline; once that work returned, its gate turn is gone from
+        // the starter's context, so the same evaluation's later selection of G is ordinary.
+        var options = new RunOptions
+        {
+            DownloadCode = (url, _) => ValueTask.FromResult(url == ModuleA ? ModuleSource : "public W = 8"),
+        };
+        var source =
+            $"F(0) = 0\nF(1) = {{\n    N = load('{ModuleA}')\n    N.V\n}}\n" +
+            $"G(0) = 0\nG(1) = {{\n    M = load('{ModuleB}')\n    M.W\n}}\n" +
+            "F(1) + G(1)";
+        var root = (await SourceProvenance.ParseValidAsync(source, options)).Root;
+
+        AssertValue(await RunFlat(root).WaitAsync(HangGuard), 15);
+        Assert.True(RegionOf(root, "F").IsMaterialized);
+        Assert.True(RegionOf(root, "G").IsMaterialized);
+    }
+
+    public enum LeftBehind
+    {
+        /// <summary>Started with the download's flowed context, run after the download returned.</summary>
+        FlowedContextAfterTheTurn,
+
+        /// <summary>Started with execution-context flow suppressed, run while the download is in progress.</summary>
+        SuppressedFlowDuringTheTurn,
+    }
+
+    [Theory]
+    [InlineData(LeftBehind.FlowedContextAfterTheTurn)]
+    [InlineData(LeftBehind.SuppressedFlowDuringTheTurn)]
+    public async Task AnEvaluationTheDownloaderStartsButDoesNotAwait_IsNotRejected_OnceItIsOutsideTheTurn(LeftBehind mode)
+    {
+        var which = 0;
+        var hosts = HostOperations.Create(HostOperation.Create("Which", (_, _) => new Result.Atom(Volatile.Read(ref which))));
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        Algorithm? root = null;
+        Task<EvalResult<IReadOnlyList<Decimal128>>>? leftBehind = null;
+        var options = new RunOptions
+        {
+            HostOperations = hosts,
+            DownloadCode = (url, _) =>
+            {
+                if (url != ModuleA)
+                    return ValueTask.FromResult("public W = 8");
+                Func<Task<EvalResult<IReadOnlyList<Decimal128>>>> evaluateG = async () =>
+                {
+                    if (mode == LeftBehind.FlowedContextAfterTheTurn)
+                        await release.Task;
+                    Volatile.Write(ref which, 1);
+                    return await Evaluator.RunFlatAsync(new Expr.AlgorithmExpr(root!), hosts, null, null, CancellationToken.None);
+                };
+                if (mode == LeftBehind.SuppressedFlowDuringTheTurn)
+                {
+                    using (ExecutionContext.SuppressFlow())
+                        leftBehind = Task.Run(evaluateG);
+                    // G's run genuinely waits for the gate this download holds — an ordinary
+                    // wait that ends when this download returns, not a rejection.
+                    var waited = SpinWait.SpinUntil(() => RegionOf(root!, "G").InFlightConsumers == 1, HangGuard);
+                    Assert.True(waited, "the left-behind evaluation never started G's run");
+                }
+                else
+                {
+                    leftBehind = Task.Run(evaluateG);
+                }
+                return ValueTask.FromResult(ModuleSource);
+            },
+        };
+        root = (await SourceProvenance.ParseValidAsync(TwoRegionProgram, options)).Root;
+
+        AssertValue(await Task.Run(() => Evaluator.RunFlatAsync(new Expr.AlgorithmExpr(root), hosts, null, null, CancellationToken.None))
+            .WaitAsync(HangGuard));
+        release.SetResult();
+
+        AssertValue(await leftBehind!.WaitAsync(HangGuard), 8);
+        Assert.True(RegionOf(root, "G").IsMaterialized);
+        AssertNoAbandonment(RegionOf(root, "G"));
     }
 
     // ── 10. Seeded stress ───────────────────────────────────────────────────
@@ -534,15 +1626,17 @@ public class DeferredMaterializationCancellationTests
         // 0: synchronous; 1: synchronous, blocks honouring its token; 2: delays; 3: yields.
         var mode = Next(4);
         var throwing = Next(4) == 0;
+        // Held until the trial ends (see HeldRegistrations): a downloader that disposed its
+        // throwing registration on exit could unregister it before an abandoning Cancel() ran it.
+        using var callbacks = new HeldRegistrations();
         var options = new RunOptions
         {
             DownloadCode = (_, token) =>
             {
+                if (throwing)
+                    callbacks.Hold(token.Register(static () => throw new InvalidOperationException(StressCallbackFailure)));
                 if (mode >= 2)
-                    return SuspendingStressDownload(token, mode == 2 ? Next(4) : -1, throwing);
-                using var registration = throwing
-                    ? token.Register(static () => throw new InvalidOperationException(StressCallbackFailure))
-                    : default;
+                    return SuspendingStressDownload(token, mode == 2 ? Next(4) : -1);
                 if (mode == 1)
                 {
                     token.WaitHandle.WaitOne(Next(6));
@@ -605,6 +1699,16 @@ public class DeferredMaterializationCancellationTests
 
         await AssertGateFree(region);
         if (region.Loader.InProgressModuleCount != 0) Violation("in-progress module leak");
+        await WaitUntil(() => region.InFlightConsumers == 0, "an abandoned run never finished");
+        // B15: a callback failure is recorded only for a throwing downloader, and as its own.
+        if (region.LastAbandonmentFailure is { } failure)
+        {
+            if (!throwing) Violation("an abandonment failure without a throwing callback");
+            else if (failure.FirstCallbackFailureMessage != StressCallbackFailure) Violation("a foreign abandonment failure");
+            if (region.AbandonedRuns == 0) Violation("an abandonment failure without an abandoned run");
+        }
+        if (region.AbandonedRuns > region.MaterializationAttempts + consumerCount) Violation("abandonment over-counted");
+        var abandonedBeforeTheNextSelection = region.AbandonedRuns;
         try
         {
             var final = await RunFlat(root).WaitAsync(HangGuard);
@@ -615,15 +1719,14 @@ public class DeferredMaterializationCancellationTests
             Violation($"the next selection threw {error.GetType().Name}");
         }
         if (!region.IsMaterialized) Violation("the next selection did not materialize the region");
+        if (region.AbandonedRuns != abandonedBeforeTheNextSelection) Violation("a successful selection changed the abandonment count");
+        if (throwing && region.AbandonedRuns > 0) Count("abandoned-throwing");
         foreach (var cancellation in sources)
             cancellation.Dispose();
     }
 
-    private static async ValueTask<string> SuspendingStressDownload(CancellationToken token, int delay, bool throwing)
+    private static async ValueTask<string> SuspendingStressDownload(CancellationToken token, int delay)
     {
-        using var registration = throwing
-            ? token.Register(static () => throw new InvalidOperationException(StressCallbackFailure))
-            : default;
         if (delay < 0)
             await Task.Yield();
         else

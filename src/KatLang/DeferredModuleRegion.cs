@@ -49,6 +49,17 @@ internal sealed class DeferredModuleRegion
     private Algorithm? _materialized;
     private int _materializationAttempts;
     private MaterializationRun? _inFlight;
+    // How many runs their last consumer abandoned, and a compact summary of the failure a host
+    // token callback raised while the most recent one was cancelled (both guarded by the run
+    // lock): test-observable abandonment state, never a decision input. The summary holds
+    // strings and a count only — never the run, its tasks, token sources, or the exception
+    // graph — because the region lives as long as the elaborated tree.
+    private int _abandonedRuns;
+    private AbandonmentFailureSummary? _lastAbandonmentFailure;
+
+    // B16: the loader gate turns held by materialization work in the current execution
+    // context, innermost first (see HeldGateTurn).
+    private static readonly AsyncLocal<HeldGateTurn?> s_heldGateTurns = new();
     private ParameterPropertyCollisionValidator.ParameterBindings? _validation;
 
     internal DeferredModuleRegion(
@@ -169,6 +180,80 @@ internal sealed class DeferredModuleRegion
     /// </summary>
     internal int InFlightConsumers => Volatile.Read(ref _inFlight)?.Consumers ?? 0;
 
+    /// <summary>
+    /// Runs abandoned because their LAST consumer left before completion (each one's work was
+    /// cancelled exactly once by that leave); a leave that is not the last, and a run cancelled
+    /// only by the source-processing token, abandon nothing. Test-observable only, never a
+    /// decision input.
+    /// </summary>
+    internal int AbandonedRuns
+    {
+        get { lock (_runLock) return _abandonedRuns; }
+    }
+
+    /// <summary>
+    /// What the most recently abandoned run recorded while its last consumer's leave cancelled
+    /// it: a bounded summary of the failure a host token callback raised out of that
+    /// cancellation (see <see cref="AbandonmentFailureSummary"/>), or <c>null</c> when the
+    /// cancellation completed normally or no run was abandoned (<see cref="AbandonedRuns"/>
+    /// tells the two apart). Each abandonment starts a fresh record, a later failure of an
+    /// earlier run never overwrites it, and a successful retry leaves it as it is. Settled
+    /// once the leave's <c>Cancel()</c> has returned — the token registration that performs the
+    /// leave runs inside the host's own <c>Cancel()</c>. Test-observable only: the failure
+    /// belongs to the abandoned work, so it is never reported to a consumer or a host.
+    /// </summary>
+    internal AbandonmentFailureSummary? LastAbandonmentFailure
+    {
+        get { lock (_runLock) return _lastAbandonmentFailure; }
+    }
+
+    /// <summary>
+    /// A compact, immutable description of a host token-callback failure raised while an
+    /// abandoned run was cancelled: the type of the exception <c>Cancel()</c> threw (normally
+    /// <see cref="AggregateException"/>, nested once per linked token-source level), how many
+    /// callback failures it carried once flattened, and the first one's type and bounded
+    /// message. Strings and a count only, so it retains no exception, type, or host object.
+    /// </summary>
+    internal sealed record AbandonmentFailureSummary(
+        string FailureType,
+        int CallbackFailureCount,
+        string FirstCallbackFailureType,
+        string FirstCallbackFailureMessage)
+    {
+        /// <summary>The longest retained message or type name, in UTF-16 code units, before the truncation marker.</summary>
+        internal const int MaxMessageLength = 256;
+
+        internal static AbandonmentFailureSummary Of(Exception failure)
+        {
+            IReadOnlyList<Exception> callbacks = failure is AggregateException aggregate
+                ? aggregate.Flatten().InnerExceptions
+                : [failure];
+            var first = callbacks.Count > 0 ? callbacks[0] : failure;
+            string message;
+            try
+            {
+                // Message is host-overridable. Diagnostic capture must not turn a callback's
+                // failure into another exception escaping the host's Cancel().
+                message = first.Message ?? "callback exception message unavailable";
+            }
+            catch (Exception)
+            {
+                message = "callback exception message unavailable";
+            }
+            if (message.Length > MaxMessageLength)
+                message = string.Concat(message.AsSpan(0, ExprNameRenderer.SafePrefixLength(message, MaxMessageLength)), ExprNameRenderer.TruncationMarker);
+            return new(TypeName(failure), callbacks.Count, TypeName(first), message);
+        }
+
+        private static string TypeName(Exception exception)
+        {
+            var name = exception.GetType().FullName ?? exception.GetType().Name;
+            return name.Length > MaxMessageLength
+                ? string.Concat(name.AsSpan(0, ExprNameRenderer.SafePrefixLength(name, MaxMessageLength)), ExprNameRenderer.TruncationMarker)
+                : name;
+        }
+    }
+
     internal bool IsMaterialized => Volatile.Read(ref _materialized) is not null;
 
     internal bool TryGetMaterialized([NotNullWhen(true)] out Algorithm? body)
@@ -231,6 +316,27 @@ internal sealed class DeferredModuleRegion
     /// cancels the run belongs to the abandoned run: it never replaces a consumer's
     /// <see cref="OperationCanceledException"/> and never escapes into the host's own
     /// <c>Cancel()</c>.</para>
+    ///
+    /// <para><b>Reentrant selection (B16 host contract, owner decision 2026-11-10; see
+    /// <see cref="RunOptions.DownloadCode"/>, Reentrancy).</b> A load is in progress for the whole
+    /// gate turn its work holds: every downloader call and the parse and elaboration of what it
+    /// returns. A selection made in that turn's execution context — by the module downloader
+    /// the turn is running, or by anything that downloader runs or starts while its execution
+    /// context flows, synchronously or not — would wait for that turn: the same region's run
+    /// (whose completion follows the download), or the gate itself (any other region of the
+    /// loader). It is refused at once, without a token, as an ordinary
+    /// <see cref="EvalError.ModuleRegionMaterializationFailed"/> carrying one
+    /// <see cref="DiagnosticCode.LoadCycle"/> diagnostic — never as cancellation — after the
+    /// cache check (a materialized region is always served) and after the established
+    /// cancellation checks (the source-processing token, then the evaluation token). The
+    /// refused selection counts no consumer, makes no attempt and charges nothing, so the held
+    /// run, the gate, the cache, and later selections are unaffected. Concurrent consumers from
+    /// any other context, an evaluation of a different tree, and a context that outlived its
+    /// turn are never refused. The library cannot observe the reverse dependency (whether the
+    /// downloader waits for the evaluation), so the refusal prevents a possible cycle without
+    /// proving one: by contract it also refuses flowed work the downloader never waits for, and
+    /// such work must start without the downloader's flowed context or after the load. A cycle
+    /// the host builds outside that context is not caught.</para>
     /// </summary>
     internal async ValueTask<EvalResult<Algorithm>> MaterializeAsync(CancellationToken evaluationCancellationToken)
     {
@@ -247,6 +353,16 @@ internal sealed class DeferredModuleRegion
 
         Loader.SourceProcessingCancellationToken.ThrowIfCancellationRequested();
         evaluationCancellationToken.ThrowIfCancellationRequested();
+
+        // B16 host contract: a selection made in this loader's held gate turn's execution
+        // context — by the downloader that turn is running, or by anything it started while that
+        // context flowed — would wait for that very turn. Whether the downloader waits for the
+        // selection is host code the library cannot observe, so every such selection is refused
+        // now with an ordinary load-cycle error: a possible cycle is prevented, none is proven.
+        // Nothing is counted, started, or charged: the region, the gate, and the held run are
+        // untouched, and a later selection proceeds normally.
+        if (IsInsideHeldGateTurn(Loader.MaterializationGate))
+            return ReentrantMaterializationRejected();
 
         var consumer = JoinOrStartRun(out var starts);
         // Registered only once the consumer is counted: a token cancelled in the meantime runs
@@ -278,6 +394,76 @@ internal sealed class DeferredModuleRegion
     }
 
     /// <summary>
+    /// B16 — one loader gate turn held by materialization work, as seen from the execution
+    /// context that work runs in. <see cref="RunCoreAsync"/> pushes a turn right after acquiring
+    /// the gate and ends it before releasing it. The write is scoped to that async method, so
+    /// the only code that can observe the turn is code running in the work's own execution
+    /// context: the host downloader the work calls (the one piece of host code a gate turn
+    /// runs), and whatever that downloader runs or starts in its flowed context (synchronous
+    /// calls, await continuations, <see cref="Task.Run(Func{Task})"/> children). The starting
+    /// evaluation never sees it once the work has returned or suspended, and neither does
+    /// any consumer that joins from elsewhere.
+    ///
+    /// <para>Every materialization of the loader waits for its gate's current holder: a joiner
+    /// of the holder's run waits for its completion, and any other run waits for the gate
+    /// itself. A materialization requested while the current context still holds a turn on
+    /// the same gate therefore waits for that turn. It is a genuine wait-for cycle only when
+    /// the downloader also waits for that materialization, a reverse edge in host code that the
+    /// frame cannot observe; the host contract (<see cref="RunOptions.DownloadCode"/>,
+    /// Reentrancy) therefore refuses every selection made under a held turn, which prevents a
+    /// possible cycle without proving one. The frame lives exactly as long as the turn, so the
+    /// refusal covers the whole load (every downloader call, the parse and the elaboration),
+    /// not only a running callback: a later downloader call of the same load can wait for work
+    /// an earlier call started, and a frame that ended with its callback would miss that cycle.
+    /// Ending the
+    /// turn clears its gate reference, so a context captured during the turn and run after it
+    /// (a timer, a continuation the downloader left behind) is inert and retains no loader
+    /// state. <see cref="Enclosing"/> chains the turns of nested materializations of other
+    /// loaders that this context runs, so a cycle through a second tree is caught when it
+    /// passes through runs this context started.</para>
+    /// </summary>
+    private sealed class HeldGateTurn(SemaphoreSlim gate, HeldGateTurn? enclosing)
+    {
+        private SemaphoreSlim? _gate = gate;
+
+        public HeldGateTurn? Enclosing => enclosing;
+
+        public bool Holds(SemaphoreSlim gate) => ReferenceEquals(Volatile.Read(ref _gate), gate);
+
+        public void End() => Volatile.Write(ref _gate, null);
+    }
+
+    private static bool IsInsideHeldGateTurn(SemaphoreSlim gate)
+    {
+        for (var turn = s_heldGateTurns.Value; turn is not null; turn = turn.Enclosing)
+        {
+            if (turn.Holds(gate))
+                return true;
+        }
+
+        return false;
+    }
+
+    internal const string ReentrantMaterializationMessage =
+        "possible load cycle: an evaluation running in the execution context of a module download selected a branch " +
+        "of the same program whose modules are not loaded yet. They cannot load until the load in progress finishes, " +
+        "so the selection is refused. An evaluation that does not depend on the download must start outside the " +
+        "downloader's execution context or after that load has finished.";
+
+    // The structured failure of a selection refused by the B16 host contract: an ordinary materialization
+    // failure carrying one LoadCycle diagnostic, positioned like the region's own load failures
+    // (the import site for a family inside a module, otherwise the branch's first load directive).
+    private EvalError ReentrantMaterializationRejected()
+    {
+        LoadElaborationGuard.TryFindFirstUnresolvedLoad(RawBody, out var loadSite);
+        var diagnostic = new Diagnostic(ReentrantMaterializationMessage, DiagnosticSeverity.Error, ImportSite ?? loadSite)
+        {
+            Code = DiagnosticCode.LoadCycle,
+        };
+        return EvalError.ModuleRegionMaterializationFailed.From([diagnostic]);
+    }
+
+    /// <summary>
     /// One evaluation's membership in a <see cref="MaterializationRun"/>. Its leave is performed
     /// by whichever comes first — the evaluation token's registration or the consumer's own
     /// exit from <see cref="MaterializeAsync"/> — and exactly once.
@@ -302,8 +488,9 @@ internal sealed class DeferredModuleRegion
     /// before completion, which aborts the wait for the loader's turn or the load in progress.
     /// <see cref="Completion"/> exists before the work starts — the starting consumer runs the
     /// work outside the run lock, possibly inline for its whole duration, so a consumer that
-    /// joins meanwhile (from another thread, or from the starter's own stack through a
-    /// downloader that evaluates the same tree) always has a completion to wait on — and the
+    /// joins meanwhile from another thread always has a completion to wait on (a selection made
+    /// from inside the work's own gate turn is rejected before it joins — see
+    /// <see cref="HeldGateTurn"/>) — and the
     /// work completes it exactly once, with every outcome, after its own cleanup.
     /// </summary>
     private sealed class MaterializationRun
@@ -322,10 +509,6 @@ internal sealed class DeferredModuleRegion
         // that completes the work (the starter's, while it runs the work inline).
         public readonly TaskCompletionSource<EvalResult<Algorithm>> Completion =
             new(TaskCreationOptions.RunContinuationsAsynchronously);
-
-        // A host token callback that failed while the last consumer's leave cancelled the run.
-        // It belongs to the abandoned work, never to a consumer (guarded by the run lock).
-        public Exception? AbandonmentFailure;
     }
 
     // Joins the region's in-flight run or creates one. It never starts the work, so the lock
@@ -371,6 +554,7 @@ internal sealed class DeferredModuleRegion
     private void LeaveRun(MaterializationRun run)
     {
         bool abandon;
+        var abandonment = 0;
         lock (_runLock)
         {
             if (run.Consumers <= 0)
@@ -382,6 +566,9 @@ internal sealed class DeferredModuleRegion
             {
                 run.AbandonRequested = true;
                 run.CancellationInProgress = true;
+                // The abandonment transition, counted once; it starts a fresh record.
+                abandonment = ++_abandonedRuns;
+                _lastAbandonmentFailure = null;
             }
         }
 
@@ -397,8 +584,14 @@ internal sealed class DeferredModuleRegion
                 // A callback the downloader registered on its token threw. The failure belongs to
                 // the abandoned run: it must not replace the leaving consumer's cancellation, nor
                 // escape into the host's Cancel() when this leave runs inside a token callback.
+                // Only a bounded summary is kept, and only while this is still the most recent
+                // abandonment: the record never retains the exception graph or the run.
+                var summary = AbandonmentFailureSummary.Of(error);
                 lock (_runLock)
-                    run.AbandonmentFailure ??= error;
+                {
+                    if (_abandonedRuns == abandonment)
+                        _lastAbandonmentFailure = summary;
+                }
             }
             finally
             {
@@ -444,6 +637,10 @@ internal sealed class DeferredModuleRegion
         {
             var gate = Loader.MaterializationGate;
             await gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+            // B16: the turn is visible to the downloader this work calls and to what it starts in
+            // its flowed context, and to nothing else (the write is scoped to this async method).
+            var turn = new HeldGateTurn(gate, s_heldGateTurns.Value);
+            s_heldGateTurns.Value = turn;
             try
             {
                 if (TryGetMaterialized(out var ready))
@@ -504,6 +701,10 @@ internal sealed class DeferredModuleRegion
             }
             finally
             {
+                // End the turn BEFORE releasing the gate, so no context that captured it can
+                // be rejected once the gate is free.
+                turn.End();
+                s_heldGateTurns.Value = turn.Enclosing;
                 gate.Release();
             }
         }

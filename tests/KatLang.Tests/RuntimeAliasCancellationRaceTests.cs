@@ -333,7 +333,7 @@ public sealed class RuntimeAliasCancellationRaceTests
             // The real admission of an async run: preflight facts, prelude and root context.
             var cache = new RunScopedAsyncZeroArgPropertyResultCache();
             var preparation = PrepareAsyncTwinRunMethod.Invoke(null,
-                [program, cache, null, null, null, null, host.Operations, null, token])!;
+                [program, cache, null, null, null, null, host.Operations, null, null, token])!;
             host.RetainPreparation((IDisposable)preparation);
             var ctx = (Evaluator.EvalCtx)preparation.GetType().GetProperty("Ctx", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(preparation)!;
             var completion = host.Track(Task.Run(async () => await (ValueTask<EvalResult<Evaluator.CountedResult>>)EvalRootProgramCountedAsyncMethod.Invoke(null,

@@ -658,11 +658,83 @@ The loader's rewrite walk exists in two lock-step forms, routed per subtree:
   leave, so cancelling the last consumer cancels the run even while it runs inline on some
   consumer's thread: the downloader's token and the compile's checks observe it. A consumer
   whose own thread runs the work returns when the work next observes cancellation,
-  suspends, or ends. A host token callback that throws while a leave cancels the run is
-  recorded on the abandoned run; it never replaces a consumer's cancellation and never
-  escapes into the host's `Cancel()`. A downloader that synchronously evaluates the program
-  it is loading for joins its own run (or waits for the loader gate it holds) and ends only
-  through its own token. No `Task.Run`, yield, or thread is introduced.
+  suspends, or ends. A host token callback that throws while a leave cancels the run
+  belongs to the abandoned run; it never replaces a consumer's cancellation and never
+  escapes into the host's `Cancel()`. The region keeps a test-observable record of it: the
+  exact count of abandoned runs (`AbandonedRuns`, incremented once, at the last consumer's
+  leave) and a bounded summary of the most recent abandonment's callback failure
+  (`LastAbandonmentFailure`: the thrown type, the flattened callback-failure count, and the
+  first failure's type and message, each string bounded to 256 UTF-16 units plus a truncation
+  marker). An unavailable or throwing host exception message is replaced by a fixed summary;
+  diagnostic formatting never escapes into the host's cancellation. The record holds strings
+  and a count only, never the run, its tasks, token sources, or exception graph, because the
+  region lives as long as the tree. No `Task.Run`, yield, or thread is introduced.
+- Reentrant selection (B16; owner decisions of November 10 2026: fail fast, then the
+  conservative rule below adopted as the `RunOptions.DownloadCode` host contract). A region's
+  load is in progress for the whole gate turn its work holds: every downloader call it makes
+  and the parsing and elaboration of what they return, not only a running callback. Eager
+  loads during parsing are unaffected, because no evaluation of the tree exists yet. A
+  downloader can evaluate the very tree it is loading for: synchronously, after an `await`,
+  or in a task it starts with its execution context flowing. That evaluation can select a
+  branch of the same loader that isn't materialized yet. The selection would then wait for
+  the load in progress, either through the same region's run (whose completion follows the
+  load) or through the loader gate that run holds (any other region). If the downloader
+  waits for the evaluation, that is a wait-for cycle that no token breaks, and with
+  `CancellationToken.None` it hangs forever.
+  Right after acquiring the gate, the work pushes a gate-turn frame into an `AsyncLocal`,
+  scoped to the work's async method, and it ends the frame (clearing its gate reference)
+  before releasing the gate. Only the downloader, the one piece of host code a turn runs,
+  and what it starts in its flowed context can observe the frame; the frame chains the
+  turns of nested loads of other trees that this context started. The frame lasts as long as
+  the turn, not as long as one callback, because a later download of the same load can wait
+  for work an earlier download started. A selection whose context
+  carries a held turn on its own loader's gate is refused at once with an ordinary
+  `ModuleRegionMaterializationFailed` carrying one `LoadCycle` diagnostic
+  (`KatLangErrorCode.LoadCycle`, positioned at the branch's first load directive or its
+  import site), never as cancellation and without needing a token. Precedence: a
+  materialized region is always served, then a cancelled source-processing token wins, then
+  a cancelled evaluation token, then the refusal. The refusal counts no consumer, makes no
+  attempt and charges nothing, so the held run publishes normally and the same selection
+  succeeds once the load has finished. Never refused: code that loads nothing, a
+  materialized region, another parsed tree (another loader and gate), consumers from any
+  other execution context (they join the run or queue for the gate as before), one
+  evaluation selecting regions in turn, and a context captured during a turn and used after
+  it ended.
+  WHY A CONTRACT, NOT DETECTION. A wait-for cycle needs two edges: the selection waits for
+  the turn (library-observable) and the downloader waits for the selection (host code: a
+  blocking wait, or an `await` in the host's own state machine). The second edge is not
+  observable. A downloader that runs `Task.Run(() => evaluate(root))` and then blocks on that
+  task, and one that starts the same task and awaits an unrelated controller, are identical
+  at the selection, and in the cyclic case nothing happens after it, so the verdict must be
+  given there. Reviewer 2 executed the alternatives (narrowing to the synchronous downloader
+  frame hangs on the asynchronous-continuation cycle and still refuses an independent probe;
+  removing the guard hangs every real cycle; evidence in
+  `artifacts/validation/deferred-reentrancy-closure/reviewer2-unified/`). So the library
+  refuses every such selection: a refusal prevents a possible cycle and does not prove one,
+  and flowed work the downloader never waits for is refused too.
+  SUPPORTED PATTERN. Work a downloader starts that does not depend on the download must not
+  carry the downloader's execution context: from inside the delegate, suppress flow around
+  the scheduling call only (`using (ExecutionContext.SuppressFlow()) task = Task.Run(...);`,
+  undone on the same thread before any `await`). It then waits for the load like any other
+  concurrent evaluation. Suppressing flow also drops the caller's other ambient state
+  (culture, tracing) for that work. Work that keeps the downloader's context is accepted
+  only once the load has finished, and the delegate cannot observe that: the load goes on
+  after the delegate returns, through parsing, elaboration and any further download.
+  LIMITS. A downloader must never wait for an evaluation of the program it is loading for:
+  moving that evaluation out of the downloader's context removes the refusal and leaves the
+  deadlock. Waiting for an evaluation another context started, and a cycle through another
+  tree's load that this context only joined, are outside the guard. No deadlock freedom is
+  claimed. Source-processing cancellation is not a deadlock fix and is not linked into
+  joiner waits. `KatLangEngine.RunAsync` parses and evaluates one private tree per call, so
+  only a host that evaluates a retained root through the `Evaluator` async entry points can
+  meet the rule.
+  `DeferredMaterializationCancellationTests` § 9 pins the cycles (no token, uncancelled,
+  pre-cancelled, and source-cancelled tokens; an outer leave first; sync, `Task.Run`, and
+  async downloaders; a later download of the same load waiting for work an earlier download
+  started, which pins the frame's turn-long lifetime); § 9b pins the contract: flowed
+  independent work that nothing waits for is refused for both regions, including while the
+  downloader is still inside its synchronous call, while the same work scheduled under
+  `SuppressFlow` waits for the load and succeeds, and the safe paths above succeed.
 - The pre-scan and BOTH walks probe the runtime's execution-stack reserve at every
   level; exhaustion (for example a host thread below the documented 1 MiB envelope, or
   Debug async-frame slack over the debt model at an extreme composition) unwinds to one

@@ -354,8 +354,9 @@ public static partial class Evaluator
     /// The deferred-region routing fact of ONE async entry call, decided at most once, in the
     /// call's synchronous prefix (no host code runs and nothing is awaited before every
     /// consumer has read it, so it cannot go stale), and handed to the cache-pairing factory,
-    /// the route rule and the fast path's synchronous guard. It is never stored on the tree, a
-    /// cache, the options or any static field: routing stays answered by the tree.
+    /// the route rule, the fast path's synchronous guard and the twin path's cache-pairing guard.
+    /// It is never stored on the tree, a cache, the options or any static field: routing stays
+    /// answered by the tree.
     /// <c>null</c> — no walk — when an asynchronous host operation is configured: every
     /// consumer then short-circuits on that component before it would read the fact (and a
     /// consumer handed <c>null</c> walks the tree itself, so <c>null</c> is always safe).
@@ -378,7 +379,8 @@ public static partial class Evaluator
     private static void ThrowIfAsyncHostOperationsWithoutAsyncCapableCache(
         Expr expr,
         IZeroArgPropertyResultCache zeroArgPropertyResultCache,
-        HostOperations? hostOperations)
+        HostOperations? hostOperations,
+        bool? treeRequiresAsyncEvaluation)
     {
         if (zeroArgPropertyResultCache is IAsyncZeroArgPropertyResultCache)
             return;
@@ -390,7 +392,10 @@ public static partial class Evaluator
                 "for the run; use an async evaluation entry point that constructs one.");
         }
 
-        if (DeferredModuleRegion.RequiresAsyncEvaluation(expr))
+        // The call's once-decided tree fact when the route rule (or the entry) already read it;
+        // null — never the case on a route that reaches this check with a synchronous cache and
+        // no asynchronous host operation — walks the tree here, as before.
+        if (treeRequiresAsyncEvaluation ?? DeferredModuleRegion.RequiresAsyncEvaluation(expr))
         {
             throw new InvalidOperationException(
                 "A program with deferred module regions (conditional branches whose module dependencies load " +
@@ -440,6 +445,9 @@ public static partial class Evaluator
     /// family mirrors the generic strategies only, and limit verdicts are
     /// strategy-independent by the budget architecture (see <c>CreateRootCtx</c>), so
     /// this is an internal execution-strategy selection, never a semantic one.
+    /// <paramref name="treeRequiresAsyncEvaluation"/> is the call's tree fact as the route rule
+    /// left it (<see cref="RequiresAsyncEvaluationPath"/>), handed to the cache-pairing guard so
+    /// it does not walk the tree again; <c>null</c> lets the guard walk it.
     /// </summary>
     private static PreparedRun PrepareAsyncTwinRun(
         Expr expr,
@@ -450,9 +458,10 @@ public static partial class Evaluator
         EvaluationObservations? observations,
         HostOperations? hostOperations,
         long? randomSeed,
+        bool? treeRequiresAsyncEvaluation,
         CancellationToken cancellationToken)
     {
-        ThrowIfAsyncHostOperationsWithoutAsyncCapableCache(expr, zeroArgPropertyResultCache, hostOperations);
+        ThrowIfAsyncHostOperationsWithoutAsyncCapableCache(expr, zeroArgPropertyResultCache, hostOperations, treeRequiresAsyncEvaluation);
         cancellationToken.ThrowIfCancellationRequested();
 
         return PrepareAdmittedRun(
@@ -519,7 +528,8 @@ public static partial class Evaluator
         // Twin path: the same shared preparation as the internal synchronous Run(...);
         // only the dispatch below is twin-specific.
         using var preparation = PrepareAsyncTwinRun(
-            expr, zeroArgPropertyResultCache, loopDiagnostics, sequenceDiagnostics, limits, observations, hostOperations, randomSeed, cancellationToken);
+            expr, zeroArgPropertyResultCache, loopDiagnostics, sequenceDiagnostics, limits, observations, hostOperations, randomSeed,
+            treeRequiresAsyncEvaluation, cancellationToken);
         if (preparation.Error is { } preparationError)
             return preparationError;
 
@@ -563,7 +573,8 @@ public static partial class Evaluator
         // Twin path: the same shared preparation as RunCounted; only the dispatch
         // below is twin-specific.
         using var preparation = PrepareAsyncTwinRun(
-            expr, zeroArgPropertyResultCache, loopDiagnostics: null, sequenceDiagnostics: null, limits, observations: null, hostOperations, randomSeed, cancellationToken);
+            expr, zeroArgPropertyResultCache, loopDiagnostics: null, sequenceDiagnostics: null, limits, observations: null, hostOperations, randomSeed,
+            treeRequiresAsyncEvaluation, cancellationToken);
         if (preparation.Error is { } preparationError)
             return preparationError;
 
@@ -605,7 +616,8 @@ public static partial class Evaluator
         // Twin path: the same shared preparation as RunCountedWithTopLevelProperty;
         // only the dispatch below is twin-specific.
         using var preparation = PrepareAsyncTwinRun(
-            expr, zeroArgPropertyResultCache, loopDiagnostics: null, sequenceDiagnostics: null, limits, observations: null, hostOperations, randomSeed, cancellationToken);
+            expr, zeroArgPropertyResultCache, loopDiagnostics: null, sequenceDiagnostics: null, limits, observations: null, hostOperations, randomSeed,
+            treeRequiresAsyncEvaluation, cancellationToken);
         if (preparation.Error is { } preparationError)
             return preparationError;
 
@@ -673,7 +685,8 @@ public static partial class Evaluator
         // Twin path: the same shared preparation as RunCountedObserved; only the
         // dispatch below is twin-specific.
         using var preparation = PrepareAsyncTwinRun(
-            expr, cache, loopDiagnostics, sequenceDiagnostics, limits, observations, hostOperations, randomSeed, cancellationToken);
+            expr, cache, loopDiagnostics, sequenceDiagnostics, limits, observations, hostOperations, randomSeed,
+            treeRequiresAsyncEvaluation, cancellationToken);
         if (preparation.Error is { } preparationError)
             return (preparationError, preparation.Budget);
 

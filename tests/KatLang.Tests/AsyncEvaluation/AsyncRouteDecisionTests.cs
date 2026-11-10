@@ -329,6 +329,39 @@ public class AsyncRouteDecisionTests
         Assert.Equal(DeferredRegionCachePairingMessage, rejection.Message);
     }
 
+    /// <summary>
+    /// B13: the twin path's cache-pairing guard reads the fact the route rule left for the call
+    /// instead of walking the tree again; every twin funnel still raises it before the first
+    /// token observation, so a pre-cancelled token does not mask the wiring error.
+    /// </summary>
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task DeferredRegionRoot_WithASynchronousOnlyCache_EveryTwinFunnelRaisesThePairingGuard_BeforeCancellation(bool decided)
+    {
+        var root = await DeferredRegionRoot();
+        bool? fact = decided ? Evaluator.DecideTreeRequiresAsyncEvaluation(root, hostOperations: null) : null;
+        using var cancelled = new CancellationTokenSource();
+        cancelled.Cancel();
+
+        var funnels = new Func<Task>[]
+        {
+            async () => await Evaluator.RunAsync(root, new RunScopedZeroArgPropertyResultCache(),
+                treeRequiresAsyncEvaluation: fact, cancellationToken: cancelled.Token),
+            async () => await Evaluator.RunCountedAsync(root, new RunScopedZeroArgPropertyResultCache(),
+                cancellationToken: cancelled.Token),
+            async () => await Evaluator.RunCountedWithTopLevelPropertyAsync(root, "DisplayDecimals",
+                new RunScopedZeroArgPropertyResultCache(), treeRequiresAsyncEvaluation: fact, cancellationToken: cancelled.Token),
+            async () => await Evaluator.RunCountedObservedAsync(root, zeroArgPropertyResultCache: new RunScopedZeroArgPropertyResultCache(),
+                cancellationToken: cancelled.Token),
+        };
+        foreach (var funnel in funnels)
+        {
+            var rejection = await Assert.ThrowsAsync<InvalidOperationException>(funnel);
+            Assert.Equal(DeferredRegionCachePairingMessage, rejection.Message);
+        }
+    }
+
     // ── D. Engine cancellation ──────────────────────────────────────────────
 
     public static TheoryData<bool> AsynchronousOperationFlags() => [false, true];
