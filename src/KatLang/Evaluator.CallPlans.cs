@@ -1449,7 +1449,7 @@ public static partial class Evaluator
     /// Lean: <c>Result.containsCallRef</c>.
     /// </summary>
     internal static bool ContainsCallReference(Result value)
-        => ScanForCallReference(value, budget: null, ScanBudgetUse.None, observations: null, completed: null, out _);
+        => ScanForCallReference(value, budget: null, ScanBudgetUse.None, observations: null, completed: null, out _, out _);
 
     /// <summary>
     /// <see cref="ContainsCallReference(Result)"/> for one of SEVERAL values classified together, which may
@@ -1459,7 +1459,7 @@ public static partial class Evaluator
     /// forbidden. Both verdicts are reused across roots (the root-property observation snapshot).
     /// </summary>
     internal static bool ContainsCallReference(Result value, Dictionary<Result, bool> completed)
-        => ScanForCallReference(value, budget: null, ScanBudgetUse.None, observations: null, completed, out _);
+        => ScanForCallReference(value, budget: null, ScanBudgetUse.None, observations: null, completed, out _, out _);
 
     /// <summary>
     /// The HOST-ARGUMENT boundary (CallReference S1, J4; charged since SEC-01-FU): the
@@ -1480,7 +1480,7 @@ public static partial class Evaluator
         EvaluationBudget budget,
         ValueTraversalObservations? observations)
     {
-        var found = ScanForCallReference(value, budget, ScanBudgetUse.ChargeStructuralWork, observations, completed: null, out var limit);
+        var found = ScanForCallReference(value, budget, ScanBudgetUse.ChargeStructuralWork, observations, completed: null, out var limit, out _);
         return limit ?? (found ? new EvalError.TypeMismatch(CallReferenceLeavesRunMessage) : null);
     }
 
@@ -1529,6 +1529,8 @@ public static partial class Evaluator
     /// checkpoint (<see cref="RunExportBoundaryError"/>). A non-null <paramref name="completed"/> is the
     /// cross-scan memo of <see cref="ContainsCallReference(Result, Dictionary{Result, bool})"/>. The
     /// uncharged single-scan modes probe shallow structures in place (<see cref="ShallowProbeMaxItems"/>).
+    /// On a run-export refusal, <paramref name="exportedItemIndex"/> identifies the root structure's item
+    /// containing the first reference, from the scan's existing continuation path; otherwise it is -1.
     /// </summary>
     private static bool ScanForCallReference(
         Result value,
@@ -1536,9 +1538,11 @@ public static partial class Evaluator
         ScanBudgetUse budgetUse,
         ValueTraversalObservations? observations,
         Dictionary<Result, bool>? completed,
-        out EvalError? limit)
+        out EvalError? limit,
+        out int exportedItemIndex)
     {
         limit = null;
+        exportedItemIndex = -1;
         var exporting = budgetUse == ScanBudgetUse.ObserveCancellation;
         if (exporting)
             observations?.RecordRunExportScan();
@@ -1691,7 +1695,19 @@ public static partial class Evaluator
             }
 
             if (done)
+            {
+                if (found && exporting)
+                {
+                    exportedItemIndex = next - 1;
+                    // Stack enumeration ends at the root frame. Reuse that frame's current item
+                    // instead of rescanning each row (which would unfold sharing between rows).
+                    if (pending is not null)
+                        foreach (var ancestor in pending)
+                            exportedItemIndex = ancestor.Next - 1;
+                }
+
                 return found;
+            }
 
             if (descend is not null)
             {
@@ -1779,8 +1795,9 @@ public static partial class Evaluator
     /// the run token's <see cref="OperationCanceledException"/> — the outcome of the
     /// completion-boundary check that follows the export, only sooner.</para>
     /// </summary>
-    private static EvalError? RunExportBoundaryError(Result value, EvalCtx ctx)
+    private static EvalError? RunExportBoundaryError(Result value, EvalCtx ctx, out int exportedItemIndex)
     {
+        exportedItemIndex = -1;
         if (!ctx.Budget.RetainsInvocationPlans)
         {
             ctx.Observations?.StructuralTraversal?.RecordRunExportScanSkipped();
@@ -1788,32 +1805,121 @@ public static partial class Evaluator
         }
 
         return ScanForCallReference(value, ctx.Budget, ScanBudgetUse.ObserveCancellation,
-                ctx.Observations?.StructuralTraversal, completed: null, out _)
+                ctx.Observations?.StructuralTraversal, completed: null, out _, out exportedItemIndex)
             ? new EvalError.TypeMismatch(CallReferenceLeavesRunMessage)
             : null;
     }
 
-    /// <summary>The run result boundary applied to a run's counted outcome (<see cref="RunExportBoundaryError"/>).</summary>
-    internal static EvalResult<CountedResult> ExportRunValue(EvalResult<CountedResult> result, EvalCtx ctx)
-        => result.IsOk && RunExportBoundaryError(result.Value.Value, ctx) is { } refused ? refused : result;
+    /// <summary>
+    /// The run result boundary applied to a run's counted outcome (<see cref="RunExportBoundaryError"/>),
+    /// positioned at the written construct that exports the value (<see cref="RunExportSite"/>).
+    /// </summary>
+    internal static EvalResult<CountedResult> ExportRunValue(EvalResult<CountedResult> result, Expr? exported, EvalCtx ctx)
+        => result.IsOk && RunExportBoundaryError(result.Value.Value, ctx, out var exportedItemIndex) is { } refused
+            ? refused with { Span = RunExportSite(exported, result.Value.Value, exportedItemIndex) }
+            : result;
 
-    /// <summary>The run result boundary applied to a run's value outcome (<see cref="RunExportBoundaryError"/>).</summary>
-    internal static EvalResult<Result> ExportRunValue(EvalResult<Result> result, EvalCtx ctx)
-        => result.IsOk && RunExportBoundaryError(result.Value, ctx) is { } refused ? refused : result;
+    /// <summary>
+    /// The run result boundary applied to a run's value outcome (<see cref="RunExportBoundaryError"/>),
+    /// positioned at the written construct that exports the value (<see cref="RunExportSite"/>).
+    /// </summary>
+    internal static EvalResult<Result> ExportRunValue(EvalResult<Result> result, Expr? exported, EvalCtx ctx)
+        => result.IsOk && RunExportBoundaryError(result.Value, ctx, out var exportedItemIndex) is { } refused
+            ? refused with { Span = RunExportSite(exported, result.Value, exportedItemIndex) }
+            : result;
 
     /// <summary>
     /// The run result boundary applied to a run's output AND its named top-level property: both leave the
-    /// run, so both are checked (<see cref="RunExportBoundaryError"/>).
+    /// run, so both are checked (<see cref="RunExportBoundaryError"/>), the output first. An output refusal
+    /// is positioned like any run result (<see cref="RunExportSite"/>); a property refusal at the root's
+    /// written declaration of <paramref name="topLevelPropertyName"/> (<see cref="Property.FirstDeclarationSpan"/>,
+    /// the property's export site), falling back to the exported root's existing span when its imported
+    /// or host-built declaration has none.
     /// </summary>
-    internal static EvalResult<CountedRootProgramResult> ExportRunValue(EvalResult<CountedRootProgramResult> result, EvalCtx ctx)
+    internal static EvalResult<CountedRootProgramResult> ExportRunValue(
+        EvalResult<CountedRootProgramResult> result, Expr? exported, string? topLevelPropertyName, EvalCtx ctx)
     {
         if (!result.IsOk)
             return result;
-        if (RunExportBoundaryError(result.Value.Output.Value, ctx) is { } refusedOutput)
-            return refusedOutput;
-        return result.Value.TopLevelProperty is { } property && RunExportBoundaryError(property.Value, ctx) is { } refusedProperty
-            ? refusedProperty
+        if (RunExportBoundaryError(result.Value.Output.Value, ctx, out var exportedItemIndex) is { } refusedOutput)
+            return refusedOutput with { Span = RunExportSite(exported, result.Value.Output.Value, exportedItemIndex) };
+        return result.Value.TopLevelProperty is { } property && RunExportBoundaryError(property.Value, ctx, out _) is { } refusedProperty
+            ? refusedProperty with { Span = TopLevelPropertyExportSite(exported, topLevelPropertyName) }
             : result;
+    }
+
+    /// <summary>
+    /// THE EXPORT SITE of a refused run result (CR-6 positioning, 2026-11-10; C#-only diagnostics, Lean
+    /// errors carry no location): the WRITTEN construct whose value leaves the run, decided only after the
+    /// refusal, from the exported tree, the refused value and the scan's offending root item — evaluation
+    /// is never repeated and no span is invented. An absent row span falls back only to the exported
+    /// root's existing span (for example, a directly evaluated import view's local import site).
+    /// <list type="bullet">
+    ///   <item>A non-program root expression exports its own value: its span.</item>
+    ///   <item>A program root with ONE output row exports that row's value: the row's span, whatever the
+    ///   row is (a spread, a list, a sequence, a lifted call).</item>
+    ///   <item>A program root with several rows, none of them a spread, whose value is a sequence with one
+    ///   item per row (each surface row supplies exactly one item, Q-26): the span of the FIRST row, left
+    ///   to right, whose item contains a reference.</item>
+    ///   <item>Otherwise (a spread row among several, or an item count that does not match the rows) no
+    ///   single row can be named from the value, so the refusal is positioned at the output as a whole —
+    ///   the hull of the output rows — when every row has a span, else the exported root's existing span.</item>
+    /// </list>
+    /// The one DAG-safe export scan supplies the offending root item; no value is scanned again.
+    /// </summary>
+    private static SourceSpan? RunExportSite(Expr? exported, Result value, int exportedItemIndex)
+    {
+        if (exported is not Expr.AlgorithmExpr(var root))
+            return exported?.Span;
+
+        var rows = root.Output;
+        if (rows.Count == 0)
+            return exported.Span;
+        if (rows.Count == 1)
+            return rows[0].Span ?? exported.Span;
+
+        var spreadFree = true;
+        foreach (var row in rows)
+        {
+            if (row is Expr.SequenceSpread)
+            {
+                spreadFree = false;
+                break;
+            }
+        }
+
+        if (spreadFree && value is Result.SequenceValue(var items) && items.Count == rows.Count
+            && exportedItemIndex >= 0 && exportedItemIndex < rows.Count)
+            return rows[exportedItemIndex].Span ?? exported.Span;
+
+        SourceSpan? hull = null;
+        foreach (var row in rows)
+        {
+            if (row.Span is not { } rowSpan)
+                return exported.Span;
+            hull = hull is { } soFar ? soFar.Union(rowSpan) : rowSpan;
+        }
+
+        return hull;
+    }
+
+    /// <summary>
+    /// The export site of a refused named top-level property (<see cref="ExportRunValue(EvalResult{CountedRootProgramResult}, Expr?, string?, EvalCtx)"/>):
+    /// the program root's written declaration of that property, read through the ONE optional-anchor
+    /// reader <see cref="Property.FirstDeclarationSpan"/>; the root expression's existing span when
+    /// its declaration has none (an import view); absent when neither location is carried.
+    /// </summary>
+    private static SourceSpan? TopLevelPropertyExportSite(Expr? exported, string? topLevelPropertyName)
+    {
+        if (exported is not Expr.AlgorithmExpr(var root) || topLevelPropertyName is null)
+            return null;
+        foreach (var property in root.Properties)
+        {
+            if (property.Name == topLevelPropertyName)
+                return property.FirstDeclarationSpan ?? exported.Span;
+        }
+
+        return null;
     }
 
     // ── J7: the program gate of invocation-plan retention ──────────────────────────────────────────

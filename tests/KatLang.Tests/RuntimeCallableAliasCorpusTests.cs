@@ -35,6 +35,9 @@ namespace KatLang.Tests;
 /// re-runs the terminal row); an explicit call publishes under the TARGET's origin, never the alias's
 /// (OD-E — an alias owns no cache entry); and a transparent reference's written members are its
 /// target's (whole-algorithm transport).</para>
+/// <para>CR-6 positioning (2026-11-10) changed the cases whose <see cref="Case.Was"/> starts with
+/// <c>CR-6 positioning</c>: the run-export refusal keeps its kind and message and now carries the span of
+/// the written output row that exports the reference (<c>CallReferenceRunExportSpanTests</c>).</para>
 /// </summary>
 public class RuntimeCallableAliasCorpusTests
 {
@@ -113,7 +116,9 @@ public class RuntimeCallableAliasCorpusTests
         new("B11f-lifted-capture-of-a-formula", "Id(v) = v\nH = x + 0\nL = Capture(H).Algorithm\nL(4)", "err NotAnAlgorithm", "", Diagnostic: "while evaluating call to L: while evaluating call to Capture: while binding meta parameter 'operation': A meta parameter needs a supplied call computation: a written invocation with an argument list, such as `Step(0)`, `Box.Step(0)` or `x.F(1)`. The argument supplied for it is not one (a value, a property read, a bare callable or member path such as `Box.Step`, an existing call reference, and a computed callee are not captured). @[7:13, 7:14)", Steps: 1),
         new("B11g-lifted-link-explicit-call", "Id(v) = v\nH = x + 0\nN = Capture(Id(H + 0)).Algorithm(7)\nN(4)", "ok 7", "", Steps: 3),
         new("B11h-lifted-invoke", "Id(v) = v\nH = x + 0\nM = Capture(Id(H + 0)).Invoke()\nM(4)", "ok 4", "", Steps: 4),
-        new("B11i-lifted-reference-escapes", "Id(v) = v\nH = x + 0\nC = Capture(Id(H + 0))\nC(4)", "err TypeMismatch", "", Diagnostic: "Type mismatch: A call reference cannot leave its run: return a value computed from it, for example `R.Invoke()`. @", Steps: 2),
+        new("B11i-lifted-reference-escapes", "Id(v) = v\nH = x + 0\nC = Capture(Id(H + 0))\nC(4)", "err TypeMismatch", "", Diagnostic: "Type mismatch: A call reference cannot leave its run: return a value computed from it, for example `R.Invoke()`. @[8:1, 8:5)", Steps: 2, Was: "CR-6 positioning (2026-11-10): Span=null"),
+        new("B11n-lifted-reference-escapes-later-row", "Id(v) = v\nH = x + 0\nC = Capture(Id(H + 0))\n1, [C(4)]","err TypeMismatch", "", Diagnostic: "Type mismatch: A call reference cannot leave its run: return a value computed from it, for example `R.Invoke()`. @[8:4, 8:10)", Was: "CR-6 positioning (2026-11-10): Span=null"),
+        new("B11o-lifted-reference-escapes-nested", "Id(v) = v\nH = x + 0\nC = Capture(Id(H + 0))\n(1, [C(4)])","err TypeMismatch", "", Diagnostic: "Type mismatch: A call reference cannot leave its run: return a value computed from it, for example `R.Invoke()`. @[8:1, 8:12)", Was: "CR-6 positioning (2026-11-10): Span=null"),
         new("B11j-documented-lifted-formula", "Mk(t) = Capture(Square(t))\nA = Mk.Algorithm\nA(9)", "err ArityMismatch", "", Diagnostic: "while evaluating call to A: while evaluating dotCall .Algorithm of Mk(...): Property 'Square' expects 1 parameter, but was called with 0 arguments. @[5:17, 5:23)", Steps: 3),
         new("B11k-lifted-link-callback", "Id(v) = v\nH = x + 0\nL = Capture(Id(H + 0)).Algorithm\nApply(L, 4)", "err ArityMismatch", "", Diagnostic: "while evaluating call to Apply: while evaluating call to f: while evaluating dotCall .Algorithm of Capture(...): Property 'Id' expects 1 parameter, but was called with 0 arguments. @[7:13, 7:15)", Steps: 3),
         new("B11l-lifted-link-value-callee", "Z = 42\nH = x + 0\nL = Capture(Z(H + 0)).Algorithm\nL(4)", "ok 42", "", Steps: 3),

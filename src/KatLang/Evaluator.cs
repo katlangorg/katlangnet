@@ -3011,7 +3011,7 @@ public static partial class Evaluator
             : Eval(expr, ctx, []);
 
         // The run result boundary (CallReference S1): a call reference never leaves its run.
-        result = ExportRunValue(result, ctx);
+        result = ExportRunValue(result, expr, ctx);
 
         // A cancellation requested during the final operation must not be missed merely
         // because that operation has no later charging checkpoint (for example, the last
@@ -3098,7 +3098,7 @@ public static partial class Evaluator
         var ctx = preparation.Ctx;
         var result = ExportRunValue(expr is Expr.AlgorithmExpr(var alg)
             ? EvalRootProgramCounted(alg, expr.Span, ctx)
-            : EvalCounted(expr, ctx, []), ctx);
+            : EvalCounted(expr, ctx, []), expr, ctx);
 
         ctx.Budget.ObserveCancellation();
         return (result, ctx.Budget);
@@ -3132,7 +3132,7 @@ public static partial class Evaluator
         var ctx = preparation.Ctx;
         var result = ExportRunValue(expr is Expr.AlgorithmExpr(var alg)
             ? EvalRootProgramCounted(alg, expr.Span, ctx)
-            : EvalCounted(expr, ctx, []), ctx);
+            : EvalCounted(expr, ctx, []), expr, ctx);
 
         ctx.Budget.ObserveCancellation();
         return result;
@@ -3181,7 +3181,7 @@ public static partial class Evaluator
                     new CountedRootProgramResult(outputR.Value, TopLevelProperty: null));
         }
 
-        result = ExportRunValue(result, ctx);
+        result = ExportRunValue(result, expr, topLevelPropertyName, ctx);
         ctx.Budget.ObserveCancellation();
         return result;
     }

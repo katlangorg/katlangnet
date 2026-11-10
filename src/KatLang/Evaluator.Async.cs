@@ -539,7 +539,7 @@ public static partial class Evaluator
 
         // The run result boundary and the completion-boundary observation, exactly as on the
         // synchronous path.
-        result = ExportRunValue(result, ctx);
+        result = ExportRunValue(result, expr, ctx);
         ctx.Budget.ObserveCancellation();
         return result;
     }
@@ -570,7 +570,7 @@ public static partial class Evaluator
         var ctx = preparation.Ctx;
         var result = ExportRunValue(expr is Expr.AlgorithmExpr(var alg)
             ? await EvalRootProgramCountedAsync(alg, expr.Span, ctx).ConfigureAwait(false)
-            : await EvalCountedAsync(expr, ctx, []).ConfigureAwait(false), ctx);
+            : await EvalCountedAsync(expr, ctx, []).ConfigureAwait(false), expr, ctx);
 
         ctx.Budget.ObserveCancellation();
         return result;
@@ -625,7 +625,7 @@ public static partial class Evaluator
                     new CountedRootProgramResult(outputR.Value, TopLevelProperty: null));
         }
 
-        result = ExportRunValue(result, ctx);
+        result = ExportRunValue(result, expr, topLevelPropertyName, ctx);
         ctx.Budget.ObserveCancellation();
         return result;
     }
@@ -680,7 +680,7 @@ public static partial class Evaluator
         var ctx = preparation.Ctx;
         var result = ExportRunValue(expr is Expr.AlgorithmExpr(var alg)
             ? await EvalRootProgramCountedAsync(alg, expr.Span, ctx).ConfigureAwait(false)
-            : await EvalCountedAsync(expr, ctx, []).ConfigureAwait(false), ctx);
+            : await EvalCountedAsync(expr, ctx, []).ConfigureAwait(false), expr, ctx);
 
         ctx.Budget.ObserveCancellation();
         return (result, ctx.Budget);

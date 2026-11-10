@@ -1769,6 +1769,18 @@ captures demoted to ordinary caller bindings, and the J7 program gate
 `docs/design/language-rules/call-by-need.md` § Call references. Research record `experimental/features/callreference-s1-meta-invoke.md`. Full V3 (parser, binder, evaluator core,
 Result model, Lean).
 
+CR-6 export positioning (2026-11-10): C#-only diagnostics, no Lean change. The run-result refusal
+(`ExportRunValue`, Lean `exportRunValue`) keeps `TypeMismatch` with `callReferenceLeavesRunMessage` and
+its refusal conditions, and gains the `EvalError.Span` of the written export site
+(`Evaluator.RunExportSite`: the only output row, the first one-item row holding a reference, else the
+output-row hull; the root declaration of the named top-level property; a non-program root's span;
+an absent row or declaration span falls back to the exported root's existing span, such as a directly
+evaluated import view's local import site; absent where the tree carries neither). The one DAG-safe
+export scan retains the offending root item, so locating its row never rescans shared values.
+Lean's `Error` has no location and the C#↔Lean corpora compare
+innermost-error categories (`"type"`), so the location is outside the compared category.
+`CallReferenceRunExportSpanTests`, alias corpus `B11i`/`B11n`/`B11o`.
+
 S1 independent review (2026-10-17): C# lifetime/boundary correction, no Lean language change.
 All eight owning run entries dispose `PreparedRun` on every exit; `EvaluationBudget.RunEnded`
 and `CheckCallReferenceOwnership` refuse replay after success, ordinary failure or exception,

@@ -152,7 +152,7 @@ public class CallReferenceRunExportTests
         var scan = new ValueTraversalObservations();
         var ctx = Evaluator.EvalCtx.Empty with { Budget = budget, Services = Evaluator.RunServices.Unconfigured with { Observations = new EvaluationObservations { StructuralTraversal = scan } } };
 
-        var exported = Evaluator.ExportRunValue(EvalResult<Result>.Ok(value), ctx);
+        var exported = Evaluator.ExportRunValue(EvalResult<Result>.Ok(value), exported: null, ctx);
 
         Assert.Same(value, exported.Value);
         Assert.Equal(budget.RetainsInvocationPlans ? 1 : 0, scan.RunExportScanCount);
@@ -283,7 +283,7 @@ public class CallReferenceRunExportTests
         var value = new Evaluator.CountedResult(new Result.ListValue([Num(1)]), 1);
 
         var exported = Evaluator.ExportRunValue(
-            EvalResult<Evaluator.CountedRootProgramResult>.Ok(new Evaluator.CountedRootProgramResult(value, value)), ctx);
+            EvalResult<Evaluator.CountedRootProgramResult>.Ok(new Evaluator.CountedRootProgramResult(value, value)), exported: null, topLevelPropertyName: null, ctx);
 
         Assert.True(exported.IsOk);
         if (budget.RetainsInvocationPlans)
@@ -302,7 +302,7 @@ public class CallReferenceRunExportTests
         var property = new Evaluator.CountedResult(new Result.ListValue([Num(2), new Result.ListValue([reference])]), 1);
 
         var exported = Evaluator.ExportRunValue(
-            EvalResult<Evaluator.CountedRootProgramResult>.Ok(new Evaluator.CountedRootProgramResult(output, property)), ctx);
+            EvalResult<Evaluator.CountedRootProgramResult>.Ok(new Evaluator.CountedRootProgramResult(output, property)), exported: null, topLevelPropertyName: null, ctx);
 
         Assert.Equal(Evaluator.CallReferenceLeavesRunMessage, Assert.IsType<EvalError.TypeMismatch>(exported.Error).Message);
         Assert.Equal(2, scan.RunExportScanCount);
@@ -373,7 +373,7 @@ public class CallReferenceRunExportTests
         var rows = Enumerable.Range(0, 100).Select(_ => (Result)new Result.ListValue(Enumerable.Range(1, 100).Select(Num))).ToArray();
         var value = new Result.ListValue(rows);
 
-        var thrown = Assert.ThrowsAny<OperationCanceledException>(() => Evaluator.ExportRunValue(EvalResult<Result>.Ok(value), ctx));
+        var thrown = Assert.ThrowsAny<OperationCanceledException>(() => Evaluator.ExportRunValue(EvalResult<Result>.Ok(value), exported: null, ctx));
 
         Assert.Equal(cts.Token, thrown.CancellationToken);
         Assert.Equal(3, scan.RunExportScanCancellationCheckpoints);
@@ -406,7 +406,7 @@ public class CallReferenceRunExportTests
         var ctx = ExportCtx(scan);
         var value = new Result.ListValue(Enumerable.Range(0, 100).Select(_ => (Result)new Result.ListValue(Enumerable.Range(1, 100).Select(Num))));
 
-        Assert.True(Evaluator.ExportRunValue(EvalResult<Result>.Ok(value), ctx).IsOk);
+        Assert.True(Evaluator.ExportRunValue(EvalResult<Result>.Ok(value), exported: null, ctx).IsOk);
         Assert.Equal(100 + 100 * 100, scan.RunExportScanSlots);
         // A checkpoint follows every scan segment that completes a block of 256 slots (a segment adds ≤ 101).
         Assert.InRange(scan.RunExportScanCancellationCheckpoints, 100 * 101 / (256 + 101), 100 * 101 / 256);
@@ -422,7 +422,7 @@ public class CallReferenceRunExportTests
             node = new Result.ListValue([node, node]); // 41 nodes, 2^41 leaf paths
         var scan = new ValueTraversalObservations();
 
-        Assert.True(Evaluator.ExportRunValue(EvalResult<Result>.Ok(node), ExportCtx(scan)).IsOk);
+        Assert.True(Evaluator.ExportRunValue(EvalResult<Result>.Ok(node), exported: null, ExportCtx(scan)).IsOk);
         // 40 memoized nodes of 2 slots each; the shallow leaf-only base [1, 1] is probed in place
         // (SEC-01-FU3) at each of its 2 references. Every incoming edge to the other 39 nested nodes
         // also probes their first structural slot before either a frame resumes there or the memo hits.
@@ -439,7 +439,7 @@ public class CallReferenceRunExportTests
         var value = new Result.ListValue(Enumerable.Range(0, 10_000).Select(i => (Result)new Result.ListValue([Num(i), new Result.ListValue([Num(i)])])));
         var scan = new ValueTraversalObservations();
 
-        Assert.True(Evaluator.ExportRunValue(EvalResult<Result>.Ok(value), ExportCtx(scan)).IsOk);
+        Assert.True(Evaluator.ExportRunValue(EvalResult<Result>.Ok(value), exported: null, ExportCtx(scan)).IsOk);
         Assert.Equal(1, scan.RunExportScanPeakPendingFrames);
         Assert.Equal(50_000, scan.RunExportScanSlots); // includes the 10,000 stopping structural reads
         Assert.Equal(10_000, scan.RunExportScanMemoRegistrations);
@@ -455,7 +455,7 @@ public class CallReferenceRunExportTests
             value = new Result.SequenceValue([Num(i), value]);
         var scan = new ValueTraversalObservations();
 
-        var exported = Evaluator.ExportRunValue(EvalResult<Result>.Ok(value), ExportCtx(scan));
+        var exported = Evaluator.ExportRunValue(EvalResult<Result>.Ok(value), exported: null, ExportCtx(scan));
 
         Assert.Equal(Evaluator.CallReferenceLeavesRunMessage, Assert.IsType<EvalError.TypeMismatch>(exported.Error).Message);
         // The innermost (i, R) is probed in place (SEC-01-FU3); every enclosing level is a frame.
@@ -470,7 +470,7 @@ public class CallReferenceRunExportTests
         var value = new Result.ListValue(new Result[] { Num(0), reference }.Concat(suffix));
         var scan = new ValueTraversalObservations();
 
-        var exported = Evaluator.ExportRunValue(EvalResult<Result>.Ok(value), ExportCtx(scan));
+        var exported = Evaluator.ExportRunValue(EvalResult<Result>.Ok(value), exported: null, ExportCtx(scan));
 
         Assert.True(exported.IsError);
         Assert.Equal(2, scan.RunExportScanSlots);
@@ -486,7 +486,7 @@ public class CallReferenceRunExportTests
         var ctx = ExportCtx(scan);
         var value = new Result.ListValue(Enumerable.Range(0, 300).Select(i => (Result)new Result.ListValue([Num(i), Num(i)])));
 
-        Assert.True(Evaluator.ExportRunValue(EvalResult<Result>.Ok(value), ctx).IsOk);
+        Assert.True(Evaluator.ExportRunValue(EvalResult<Result>.Ok(value), exported: null, ctx).IsOk);
         Assert.Equal(0, ctx.Budget.ConsumedSteps);
         Assert.Equal(0, ctx.Budget.ConsumedStructuralWorkUnits);
         Assert.Equal(0, scan.StructuralWorkChargeCount);
@@ -549,7 +549,12 @@ public class CallReferenceRunExportTests
         if (succeeds)
             Assert.Equal("L[1, 25]", SemanticExplorerHarness.Neutral(Assert.IsType<RunResult.Success>(run).Value));
         else
-            Assert.Equal(KatLangErrorCode.TypeMismatch, Assert.IsType<RunResult.EvalFailure>(run).Errors[0].Code);
+        {
+            var error = Assert.Single(Assert.IsType<RunResult.EvalFailure>(run).Errors);
+            Assert.Equal(KatLangErrorCode.TypeMismatch, error.Code);
+            Assert.Equal("Type mismatch: " + Evaluator.CallReferenceLeavesRunMessage, error.Message);
+            Assert.Equal(new SourceSpan(new(6, 1), new(6, rows.Length + 1)), error.Span);
+        }
     }
 
     [Fact]
@@ -561,9 +566,17 @@ public class CallReferenceRunExportTests
 
         Assert.Equal("L[2, 2]", SemanticExplorerHarness.Neutral(Evaluator.Run(free, operations, null, null, CancellationToken.None).Value));
         Assert.Equal("L[2, 2]", SemanticExplorerHarness.Neutral((await Evaluator.RunAsync(free, operations, null, null, CancellationToken.None)).Value));
-        Assert.IsType<EvalError.TypeMismatch>(Evaluator.Run(escaping, operations, null, null, CancellationToken.None).Error);
-        Assert.IsType<EvalError.TypeMismatch>(Evaluator.RunFlat(escaping, operations, null, null, CancellationToken.None).Error);
-        Assert.IsType<EvalError.TypeMismatch>((await Evaluator.RunAsync(escaping, operations, null, null, CancellationToken.None)).Error);
+        foreach (var error in new[]
+        {
+            Evaluator.Run(escaping, operations, null, null, CancellationToken.None).Error,
+            Evaluator.RunFlat(escaping, operations, null, null, CancellationToken.None).Error,
+            (await Evaluator.RunAsync(escaping, operations, null, null, CancellationToken.None)).Error,
+            (await Evaluator.RunFlatAsync(escaping, operations, null, null, CancellationToken.None)).Error,
+        })
+        {
+            Assert.Equal(Evaluator.CallReferenceLeavesRunMessage, Assert.IsType<EvalError.TypeMismatch>(error).Message);
+            Assert.Equal(new SourceSpan(new(6, 1), new(6, 13)), error.Span);
+        }
         Assert.IsType<RunResult.Success>(KatLangEngine.Run("F(x) = [x, x]\nF(2)"));
     }
 
@@ -587,7 +600,7 @@ public class CallReferenceRunExportTests
             : new Result.ListValue([Num(i), Num(i + 1)])));
         var scan = new ValueTraversalObservations();
 
-        Assert.True(Evaluator.ExportRunValue(EvalResult<Result>.Ok(value), ExportCtx(scan)).IsOk);
+        Assert.True(Evaluator.ExportRunValue(EvalResult<Result>.Ok(value), exported: null, ExportCtx(scan)).IsOk);
         Assert.Equal(5000 * 3, scan.RunExportScanSlots);
         Assert.Equal(5000, scan.RunExportScanProbedStructures);
         Assert.Equal(0, scan.RunExportScanMemoRegistrations);
@@ -608,7 +621,7 @@ public class CallReferenceRunExportTests
         var value = new Result.ListValue(Enumerable.Repeat(shared, references));
         var scan = new ValueTraversalObservations();
 
-        Assert.True(Evaluator.ExportRunValue(EvalResult<Result>.Ok(value), ExportCtx(scan)).IsOk);
+        Assert.True(Evaluator.ExportRunValue(EvalResult<Result>.Ok(value), exported: null, ExportCtx(scan)).IsOk);
         if (width <= K)
         {
             // Never memoized: each reference re-inspects at most K slots.
@@ -657,7 +670,7 @@ public class CallReferenceRunExportTests
         var value = new Result.ListValue(new[] { nested }.Concat(Pairs(1000).Items));
         var scan = new ValueTraversalObservations();
 
-        var exported = Evaluator.ExportRunValue(EvalResult<Result>.Ok(value), ExportCtx(scan));
+        var exported = Evaluator.ExportRunValue(EvalResult<Result>.Ok(value), exported: null, ExportCtx(scan));
 
         var clean = kind == "clean-nested";
         Assert.Equal(clean, exported.IsOk);
@@ -698,7 +711,7 @@ public class CallReferenceRunExportTests
             node = i % 2 == 0 ? new Result.SequenceValue([node, node]) : new Result.ListValue([node, node]);
         var scan = new ValueTraversalObservations();
 
-        var exported = Evaluator.ExportRunValue(EvalResult<Result>.Ok(node), ExportCtx(scan));
+        var exported = Evaluator.ExportRunValue(EvalResult<Result>.Ok(node), exported: null, ExportCtx(scan));
 
         Assert.Equal(!referenceAtTheBase, exported.IsOk);
         Assert.Equal(depth - 1, scan.RunExportScanMemoRegistrations);
@@ -714,7 +727,7 @@ public class CallReferenceRunExportTests
     {
         var scan = new ValueTraversalObservations();
 
-        Assert.True(Evaluator.ExportRunValue(EvalResult<Result>.Ok(Pairs(1000)), ExportCtx(scan)).IsOk);
+        Assert.True(Evaluator.ExportRunValue(EvalResult<Result>.Ok(Pairs(1000)), exported: null, ExportCtx(scan)).IsOk);
         // One frame of 1000 probed pairs, 3 slots each: a checkpoint after every 86 pairs (258 slots),
         // not one unchecked 3000-slot segment.
         Assert.Equal(3000, scan.RunExportScanSlots);
@@ -729,7 +742,7 @@ public class CallReferenceRunExportTests
         var value = new Result.ListValue([new Result.ListValue([Num(1), Num(2), child])]);
         var scan = new ValueTraversalObservations();
 
-        Assert.True(Evaluator.ExportRunValue(EvalResult<Result>.Ok(value), ExportCtx(scan)).IsOk);
+        Assert.True(Evaluator.ExportRunValue(EvalResult<Result>.Ok(value), exported: null, ExportCtx(scan)).IsOk);
 
         // Root slot; three probe reads through child; child read again by the resumed frame;
         // then its one leaf. The stopping structural inspection is real work too.
@@ -756,7 +769,7 @@ public class CallReferenceRunExportTests
         var ctx = ExportCtx(scan, cts.Token);
 
         var thrown = Assert.ThrowsAny<OperationCanceledException>(
-            () => Evaluator.ExportRunValue(EvalResult<Result>.Ok(value), ctx));
+            () => Evaluator.ExportRunValue(EvalResult<Result>.Ok(value), exported: null, ctx));
 
         Assert.Equal(cts.Token, thrown.CancellationToken);
         // A failed shallow probe still inspects its whole K-slot prefix before the memo hit.
@@ -781,7 +794,7 @@ public class CallReferenceRunExportTests
         var ctx = ExportCtx(scan, cts.Token);
 
         var thrown = Assert.ThrowsAny<OperationCanceledException>(
-            () => Evaluator.ExportRunValue(EvalResult<Result>.Ok(Pairs(1000)), ctx));
+            () => Evaluator.ExportRunValue(EvalResult<Result>.Ok(Pairs(1000)), exported: null, ctx));
 
         Assert.Equal(cts.Token, thrown.CancellationToken);
         Assert.Equal(2 * 258, scan.RunExportScanSlots);
@@ -836,9 +849,9 @@ public class CallReferenceRunExportTests
         long Allocated(EvalResult<Result> value)
         {
             for (var i = 0; i < 3; i++)
-                Assert.True(Evaluator.ExportRunValue(value, ctx).IsOk);
+                Assert.True(Evaluator.ExportRunValue(value, exported: null, ctx).IsOk);
             var before = GC.GetAllocatedBytesForCurrentThread();
-            var exported = Evaluator.ExportRunValue(value, ctx);
+            var exported = Evaluator.ExportRunValue(value, exported: null, ctx);
             var allocated = GC.GetAllocatedBytesForCurrentThread() - before;
             Assert.True(exported.IsOk);
             return allocated;
