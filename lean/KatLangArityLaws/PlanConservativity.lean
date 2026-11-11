@@ -60,6 +60,12 @@ exhibits a META dispatch from a reference-free flight state that stores a refere
 refuting preservation for that proposed invariant under the current call domain. A META-free
 theorem needs allocation and call contracts restricted by admissible inputs, as well as the
 per-body proof; the present generic production instance does not supply them.
+`PlanConservativityAdmissible.lean` (November 11 2026) supplies the admissible contracts
+(`FormAdmissible`, `PlanCallsOn`, `PlanOutputs`; `production_fresh_plan_adm`, instantiated at
+`evaluating` ∧ `refFree` by `production_fresh_plan_refFree`) and discharges the `evaluating` half
+for every body (`PlanActiveCells.lean`); the reference-free half and every body's obliviousness
+remain open, and `refFree` itself is not kept by loop-only runs
+(`PlanConservativityAdmissibleGuards.loopRunStoresReference`).
 
 The remaining step-1 routes are in `PlanRouteBridge.lean`. The extension route IS the production
 dot evaluation (`ordinaryCall_extension_is_dot_call`, through the E-17 dot funnel). The member route
