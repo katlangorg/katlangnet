@@ -33,8 +33,11 @@ authoritative evaluator. Proved here, with standard axioms only:
   `BodyObliviousOn Q P a`, `PushClosed P`, `PlanCalls Q` and `P` at entry, in addition to the
   structural fresh-cell/route premises and VALUE completion. `ProductionDiscipline` is discharged
   by `productionDiscipline_holds`.
-* **STEP 1: `ordinaryCall` IS production** (no conservativity premise): `ordinaryCall_is_written_call`
-  (call and extension routes; completed runs of the written call), `resolved_call_is_production`
+* **STEP 1: `ordinaryCall` IS production** (no conservativity premise):
+  `ordinaryCall_is_written_call_named` (call and extension routes, the member call of a dot edge
+  included; completed runs of the written call, named by the route's own dispatch name
+  `NeedPlan.writtenDispatchName`), `ordinaryCall_is_written_call` (the same off the member call,
+  where that name is the written callee's), `resolved_call_is_production`
   (normalization + formation + dispatch = the production `evalResolvedCallCounted`, using
   `resolveAliasTarget_not_alias`: production alias resolution never returns an alias) and
   `written_call_is_evalCallCountedExpr` (a written call whose callee is no `X.Algorithm` link).
@@ -58,8 +61,24 @@ refuting preservation for that proposed invariant under the current call domain.
 theorem needs allocation and call contracts restricted by admissible inputs, as well as the
 per-body proof; the present generic production instance does not supply them.
 
-The `.Algorithm` route (whose callee phase records the plan's callee cell) and the
-dot MEMBER route's identification with the production dot evaluation are not covered by step 1.
+The remaining step-1 routes are in `PlanRouteBridge.lean`. The extension route IS the production
+dot evaluation (`ordinaryCall_extension_is_dot_call`, through the E-17 dot funnel). The member route
+IS the production dot evaluation too (`member_bridge`: one run from one entry state), since the E-18
+member-route correction of November 11 2026 named the planned member dispatch by its member
+(`NeedPlan.writtenDispatchName`) — for a plain first argument over a member-selecting receiver
+(a parameter head additionally requires a structure-normal supplied CALLABLE)
+and for every bundle over a state-inert receiver; an empty or spread-first bundle over any other
+receiver is stated relative to the origin agreement (`member_bridge_of_origin`) and not discharged.
+The `.Algorithm` route is only decomposed into production operations
+(`ordinaryCall_algorithm_is_production` equates it with the proof-local `algorithmPlanCall`, not the
+ordinary evaluator). Its receiver READ was a language-visible difference — a receiver without output
+failed with its own missing output under a property frame on the plan route — until the E-18
+receiver-read correction of November 11 2026 gave the plan's retained receiver cell the ordinary
+invocation receiver evaluator (`NeedInvocationRole`, `EvalBody.invocationReceiverValue` in
+`KatLang.lean`; `receiver_cell_reads_invocation_receiver`, `invocationReceiverValue_eq`; regression
+`algorithmReceiverFailureAgrees`). Exact final-state equality is still false
+(`algorithmHeapDiffers`: the plan allocates its link and receiver cells), so the outcome bridge needs
+an address-renaming simulation and is not stated. Step 1 is NOT complete.
 -/
 
 namespace KatLang.PlanConservativity
@@ -779,13 +798,19 @@ theorem resolved_call_is_production (callee : Algorithm) (args : OutputBundle) (
       rw [resolved_body_not_alias _ _ _ _ _ _ _ hg']
       rfl
 
-/-- The production ORDINARY written call of an effective shape under the error context `msg`:
-    `evalCallCountedExpr`'s callee and resolved-dispatch phases. -/
-def writtenCall (msg : String) (eff : NeedPlan.CallShape) : EvalM CountedResult := do
+/-- The production ORDINARY written call of an effective shape under the error context `msg`, its
+    dispatch named `name`: the production callee law, then the production `evalResolvedCallCounted`
+    with the written origin. -/
+def writtenCallNamed (msg : String) (eff : NeedPlan.CallShape) (name : String) : EvalM CountedResult := do
   let callee ← withCtx msg (resolveCalleeAlg eff.callee eff.caller)
   let result ← withCtx msg (evalResolvedCallCounted callee eff.args eff.caller eff.values
-    (openExprName eff.callee) (.written eff.callee eff.caller))
+    name (.written eff.callee eff.caller))
   pure (reCountValueBoundary result)
+
+/-- The production ORDINARY written call of an effective shape under the error context `msg`:
+    `evalCallCountedExpr`'s callee and resolved-dispatch phases, named by the written callee. -/
+def writtenCall (msg : String) (eff : NeedPlan.CallShape) : EvalM CountedResult :=
+  writtenCallNamed msg eff (openExprName eff.callee)
 
 theorem withCtx_incomplete {α : Type} (msg : String) (m : EvalM α) (t : EvalState)
     (h : (m.runState t).1 = .error .fuelExhausted) :
@@ -798,28 +823,43 @@ theorem withCtx_incomplete {α : Type} (msg : String) (m : EvalM α) (t : EvalSt
   rfl
 
 theorem dispatchNameIn_callable (needs : Array NeedCell) (a : Nat) (eff : NeedPlan.CallShape) (r : PlanRoute)
-    (ha : r ≠ .algorithm) : NeedPlan.dispatchNameIn needs a eff r = openExprName eff.callee := by
+    (ha : r ≠ .algorithm) : NeedPlan.dispatchNameIn needs a eff r = NeedPlan.writtenDispatchName eff r := by
   cases r <;> first | rfl | exact absurd rfl ha
 
 theorem dispatchOriginIn_callable (needs : Array NeedCell) (a : Nat) (eff : NeedPlan.CallShape) (r : PlanRoute)
     (ha : r ≠ .algorithm) : NeedPlan.dispatchOriginIn needs a eff r = .written eff.callee eff.caller := by
   cases r <;> first | rfl | exact absurd rfl ha
 
-/-- **STEP 1: `ordinaryCall` IS the production written call.** Along a call or extension route,
-    on every run where the production written call of the route's effective shape completes, the
-    proof-local `ordinaryCall productionPlanRoute` is exactly it: the production callee resolution,
-    then the production `evalResolvedCallCounted` over the effective bundle, under the plan's own
-    written-form context. -/
-theorem ordinaryCall_is_written_call (a : Nat) (shape : NeedPlan.CallShape) (r : PlanRoute)
+/-- Off the member call of a dot edge, a written route's dispatch name is its effective written
+    callee (`writtenDispatchName`'s only other case is the member name, E-18 member-route correction). -/
+theorem writtenDispatchName_callee (eff : NeedPlan.CallShape) (r : PlanRoute)
+    (hm : r = .call → eff.form = .call) : NeedPlan.writtenDispatchName eff r = openExprName eff.callee := by
+  cases r with
+  | call => simp [NeedPlan.writtenDispatchName, hm rfl]
+  | algorithm => rfl
+  | extension => rfl
+  | intrinsic => rfl
+
+/-- **STEP 1: `ordinaryCall` IS the production written call, named by its route.** Along a call or
+    extension route — the member call of a dot edge included — on every run where the production
+    written call of the route's effective shape completes, the proof-local
+    `ordinaryCall productionPlanRoute` is exactly it: the production callee resolution, then the
+    production `evalResolvedCallCounted` over the effective bundle, under the plan's own written-form
+    context, named by `NeedPlan.writtenDispatchName` (the member `N` for a member call `t.N(args)`,
+    the effective written callee otherwise). -/
+theorem ordinaryCall_is_written_call_named (a : Nat) (shape : NeedPlan.CallShape) (r : PlanRoute)
     (ha : r ≠ .algorithm) (hi : r ≠ .intrinsic) (s : EvalState)
-    (hcomp : ((writtenCall shape.ctxMsg (NeedPlan.effective shape r)).runState s).1 ≠ .error .fuelExhausted) :
+    (hcomp : ((writtenCallNamed shape.ctxMsg (NeedPlan.effective shape r)
+      (NeedPlan.writtenDispatchName (NeedPlan.effective shape r) r)).runState s).1 ≠ .error .fuelExhausted) :
     (ordinaryCall productionPlanRoute a shape r).runState s =
-      (writtenCall shape.ctxMsg (NeedPlan.effective shape r)).runState s := by
-  unfold ordinaryCall writtenCall at *
+      (writtenCallNamed shape.ctxMsg (NeedPlan.effective shape r)
+        (NeedPlan.writtenDispatchName (NeedPlan.effective shape r) r)).runState s := by
+  unfold ordinaryCall writtenCallNamed at *
   dsimp only at hcomp ⊢
   rw [calleeAlong_target productionPlanRoute a _ r ha hi]
   simp only [bind_run, dispatchName_run, dispatchOrigin_run, dispatchNameIn_callable _ a _ r ha,
     dispatchOriginIn_callable _ a _ r ha] at hcomp ⊢
+  generalize NeedPlan.writtenDispatchName (NeedPlan.effective shape r) r = name at hcomp ⊢
   generalize NeedPlan.effective shape r = eff at hcomp ⊢
   rcases h1 : (withCtx shape.ctxMsg (productionPlanRoute.target eff.callee eff.caller)).runState s with ⟨o1, t1⟩
   change (withCtx shape.ctxMsg (resolveCalleeAlg eff.callee eff.caller)).runState s = _ at h1
@@ -829,32 +869,53 @@ theorem ordinaryCall_is_written_call (a : Nat) (shape : NeedPlan.CallShape) (r :
   | ok callee =>
     dsimp only at hcomp ⊢
     have hin : ProductionCompletes (evalResolvedCallCounted callee eff.args eff.caller eff.values
-        (openExprName eff.callee) (.written eff.callee eff.caller)) t1 := by
+        name (.written eff.callee eff.caller)) t1 := by
       intro hinc
       apply hcomp
       have := withCtx_incomplete shape.ctxMsg _ t1 hinc
       revert this
       rcases (withCtx shape.ctxMsg (evalResolvedCallCounted callee eff.args eff.caller eff.values
-        (openExprName eff.callee) (.written eff.callee eff.caller))).runState t1 with ⟨o, t2⟩
+        name (.written eff.callee eff.caller))).runState t1 with ⟨o, t2⟩
       intro h; simp only at h; subst h; rfl
     have he := resolved_call_is_production callee eff.args eff.caller eff.values
-      (openExprName eff.callee) (.written eff.callee eff.caller) t1 hin
+      name (.written eff.callee eff.caller) t1 hin
     have hw : (withCtx shape.ctxMsg (do
         let normal ← productionPlanRoute.normalize callee eff.caller
         let cells ← NeedSupply.form productionPlanRoute.spread eff.caller eff.values eff.args
         productionPlanRoute.dispatch (.written eff.callee eff.caller) normal cells eff.caller eff.values
-          (openExprName eff.callee))).runState t1 =
+          name)).runState t1 =
         (withCtx shape.ctxMsg (evalResolvedCallCounted callee eff.args eff.caller eff.values
-          (openExprName eff.callee) (.written eff.callee eff.caller))).runState t1 := by
+          name (.written eff.callee eff.caller))).runState t1 := by
       have he' : (do
           let normal ← productionPlanRoute.normalize callee eff.caller
           let cells ← NeedSupply.form productionPlanRoute.spread eff.caller eff.values eff.args
           productionPlanRoute.dispatch (.written eff.callee eff.caller) normal cells eff.caller eff.values
-            (openExprName eff.callee)).runState t1 =
+            name).runState t1 =
           (evalResolvedCallCounted callee eff.args eff.caller eff.values
-            (openExprName eff.callee) (.written eff.callee eff.caller)).runState t1 := he
+            name (.written eff.callee eff.caller)).runState t1 := he
       rw [withCtx_run, withCtx_run, he']
     rw [hw]
+
+/-- **STEP 1: `ordinaryCall` IS the production written call.** Along a call or extension route
+    whose dispatch is named by its effective written callee — every such route but the member call
+    of a dot edge, which is named by its member (`hm`; E-18 member-route correction, November 11
+    2026: `ordinaryCall_is_written_call_named` states that case too, and
+    `PlanRouteBridge.member_bridge` identifies it with ordinary dot evaluation) —
+    on every run where the production written call of the route's effective shape completes, the
+    proof-local `ordinaryCall productionPlanRoute` is exactly it: the production callee resolution,
+    then the production `evalResolvedCallCounted` over the effective bundle, under the plan's own
+    written-form context. -/
+theorem ordinaryCall_is_written_call (a : Nat) (shape : NeedPlan.CallShape) (r : PlanRoute)
+    (ha : r ≠ .algorithm) (hi : r ≠ .intrinsic) (hm : r = .call → shape.form = .call) (s : EvalState)
+    (hcomp : ((writtenCall shape.ctxMsg (NeedPlan.effective shape r)).runState s).1 ≠ .error .fuelExhausted) :
+    (ordinaryCall productionPlanRoute a shape r).runState s =
+      (writtenCall shape.ctxMsg (NeedPlan.effective shape r)).runState s := by
+  have hname : NeedPlan.writtenDispatchName (NeedPlan.effective shape r) r =
+      openExprName (NeedPlan.effective shape r).callee :=
+    writtenDispatchName_callee _ r (fun h => by subst h; exact hm rfl)
+  unfold writtenCall at hcomp ⊢
+  rw [← hname] at hcomp ⊢
+  exact ordinaryCall_is_written_call_named a shape r ha hi s hcomp
 
 /-- For a written call `f(args)` whose callee is not an `X.Algorithm` link, the written call IS the
     production `evalCallCountedExpr` (re-counted at the value boundary), on every completed run. -/
@@ -867,7 +928,7 @@ theorem written_call_is_evalCallCountedExpr (f : Expr) (args : OutputBundle) (c 
       (EvalBody.evalCallCountedExpr evalUnbounded f args c v).runState s :=
     (production_unfolds (.evalCallCountedExpr f args c v) s hc).symm
   rw [map_run, hu]
-  unfold EvalBody.evalCallCountedExpr writtenCall
+  unfold EvalBody.evalCallCountedExpr writtenCall writtenCallNamed
   rw [hl]
   simp only [bind_run, resolveCalleeAlg, evalResolvedCallCounted, EvalRec.resolveCalleeAlg,
     EvalRec.evalResolvedCallCounted]
@@ -915,7 +976,7 @@ theorem production_value_is_evalCallCountedExpr_on (Q : EvalCall → Prop) (P : 
     cases o <;> simp
   have ho : (ordinaryCall productionPlanRoute a ⟨f, args, c, v, .call⟩ .call).runState (withState a .evaluating s) =
       (writtenCall (CtxMsg.call f) ⟨f, args, c, v, .call⟩).runState (withState a .evaluating s) :=
-    ordinaryCall_is_written_call a ⟨f, args, c, v, .call⟩ .call (by decide) (by decide)
+    ordinaryCall_is_written_call a ⟨f, args, c, v, .call⟩ .call (by decide) (by decide) (fun _ => rfl)
       (withState a .evaluating s) hne
   have he : (withState a .evaluating s).needs[a]? = some { cell with state := .evaluating } := by
     simp [withState, modify_get, hc]

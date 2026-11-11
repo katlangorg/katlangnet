@@ -2428,6 +2428,26 @@ inductive PlanRoute where
   | intrinsic
   deriving Repr, BEq, DecidableEq
 
+/-- META-S3-4, D-3 (E-18 receiver-read correction, November 11 2026): the part a cell plays in the
+    callee read of a PLANNED `.Algorithm` invocation `t.Algorithm(args)` / `(t.Algorithm)(args)`.
+    * `supplied` — every other cell: an ordinary supplied computation.
+    * `link` — the plan's canonical callee cell on the `.Algorithm` route, the link `t.Algorithm`
+      (`NeedPlan.calleeCell` marks it): its ONE receiver cell keeps the ordinary INVOCATION receiver
+      evaluator instead of being supplied as a new VALUE expression (`NeedLink.receiverCell`).
+      C#: `LinkSuspension.InvocationReceiver`.
+    * `receiver` — that retained receiver cell. Its suspension is the link's own written edge
+      `t.Algorithm` in the link's caller context, and its VALUE is the ordinary invocation receiver
+      read of `t` (`EvalBody.invocationReceiverValue`, exactly what evaluating `t.Algorithm(args)`
+      reads): the same failures, missing-output nesting and error context — never the supplied-VALUE
+      read of `t`, never an invocation plan of a receiver that is itself a written call.
+      C#: `InvocationReceiverSuspension`, read by `EvalInvocationReceiver`.
+    The role is written once, when the cell is established, and never changed. -/
+inductive NeedInvocationRole where
+  | supplied
+  | link
+  | receiver
+  deriving Repr, BEq, DecidableEq
+
 structure NeedCell where
   suspension : NeedSuspension
   state : NeedState := .suspended
@@ -2442,6 +2462,9 @@ structure NeedCell where
       lazily by the first channel that needs it (`NeedLink.receiverCell`) and shared by the
       link's VALUE and CALLABLE. -/
   receiver : Option Nat := none
+  /-- META-S3-4, D-3: the cell's part in a planned `.Algorithm` invocation's callee read
+      (`NeedInvocationRole`); `supplied` for every other cell. -/
+  invocation : NeedInvocationRole := .supplied
   deriving Repr
 
 /-- The parameter bindings saved by one lexical owner activation: its value
@@ -7799,6 +7822,14 @@ def addresses (spread : SpreadEval)
   pure ((← form spread ctx env args).map Prod.fst)
 end NeedSupply
 
+/-- The written shape of a `.Algorithm` LINK (META-S3-1, CR-14/CR-15): an argumentless dot edge
+    spelled `Algorithm`, as its receiver and fallback. Whether the edge is the intrinsic or a declared
+    member is decided at run time, member-first (`algorithmIntrinsicRoute`). -/
+def linkEdge? : Expr → Option (Expr × Expr)
+  | .dotMember receiver name fallback none =>
+    if name = "Algorithm" then some (receiver, fallback) else none
+  | _ => none
+
 /- Total invocation-plan control (CallReference M1.5, October 2026). ONE supplied call
     computation — a cell whose suspension is a written call `F(args)` with a lexical-name or
     parameter callee — is ONE invocation plan, identified by its need address and nothing else
@@ -7839,8 +7870,11 @@ structure Route where
       `resolveDotReceiver?` and `algorithmIntrinsicRoute`: identity resolution only; a runtime
       projection receiver is demanded through its own single-flight cell). -/
   classify : CallShape → EvalM PlanRoute
-  /-- META-S3-4: a cell's CALLABLE (production `projectNeedCallable`), used for the `.Algorithm`
-      route's callee cell — the link, whose receiver is demanded once per plan (D-3). -/
+  /-- META-S3-4: the callee a planned `.Algorithm` invocation reads from its callee cell — the link
+      `t.Algorithm` (production `plannedLinkCallable`: the link's ONE retained receiver cell, which
+      keeps the ordinary invocation receiver evaluator and is demanded once per plan — a parameter
+      receiver is read through that evaluator at each execution, its own cell holding the VALUE —
+      decoded, then the captured plan's callee cell's CALLABLE; D-3). -/
   project : Nat → EvalM (Option Algorithm)
 
 def setSupply (a : Nat) (supply : NeedPlanSupply) : EvalM Unit :=
@@ -7884,10 +7918,34 @@ def prepare (spread : NeedSupply.SpreadEval)
 def setCallee (a c : Nat) : EvalM Unit :=
   modify fun s => { s with needs := s.needs.modify a (fun cell => { cell with callee := some c }) }
 
+/-- Records cell `c`'s part in a planned `.Algorithm` invocation's callee read (D-3,
+    `NeedInvocationRole`). Written only on a cell its writer has just allocated. -/
+def setInvocation (c : Nat) (role : NeedInvocationRole) : EvalM Unit :=
+  modify fun s => { s with needs := s.needs.modify c (fun cell => { cell with invocation := role }) }
+
+/-- D-3: marks the callee cell `c` of a plan on the `.Algorithm` route — the link `t.Algorithm`, a
+    cell `supplyCallee` has just allocated — as an invocation link; nothing on any other route or
+    for a callee that is no link edge. -/
+def markCalleeLink (eff : CallShape) (r : PlanRoute) (c : Nat) : EvalM Unit :=
+  if r == .algorithm && (linkEdge? eff.callee).isSome then setInvocation c .link else pure ()
+
+/-- The cell of a plan's effective callee along its route `r` (CR-13): supplied in the captured
+    caller context through the ONE supplier (`supplyNeed`), so a parameter callee is that
+    parameter's existing cell (NEED-01). On the `.Algorithm` route the callee is the link
+    `t.Algorithm` — a dot edge, hence always a FRESH cell — and it is marked
+    `NeedInvocationRole.link` (D-3): its receiver cell keeps the ordinary invocation receiver
+    evaluator (`NeedLink.receiverCell`). No other callee cell is marked, whatever the classifier
+    answers. C#: `Evaluator.CalleeCellOf` (`LinkSuspension { InvocationReceiver = true }`). -/
+def supplyCallee (eff : CallShape) (r : PlanRoute) : EvalM Nat := do
+  let c ← supplyNeed eff.callee eff.caller eff.values
+  markCalleeLink eff r c
+  pure c
+
 /-- THE CANONICAL CALLEE CELL of plan `a` (META-S3-1, CR-13; META-S3-4: the callee of its ROUTE —
     the written callee, the argumentless member path, the link `t.Algorithm`, or an extension's
     fallback): supplied in the plan's captured caller context through the ONE supplier
-    (`supplyNeed`) — so a parameter callee is that parameter's existing cell (NEED-01) — and
+    (`supplyCallee` over `supplyNeed`) — so a parameter callee is that parameter's existing cell
+    (NEED-01), and the `.Algorithm` route's link is marked as an invocation link (D-3) — and
     recorded in the plan cell (`NeedCell.callee`); every later observation reads the record. Once
     the route is recorded, establishing it evaluates, prepares and demands nothing; establishing
     the ROUTE may demand a runtime-projection receiver (D-4). An intrinsic route is
@@ -7902,15 +7960,15 @@ def calleeCell (classify : CallShape → EvalM PlanRoute) (a : Nat) : EvalM Nat 
     | some shape =>
       let r ← routeOf classify a shape
       if r == .intrinsic then throw invocationRefusal
-      let eff := effective shape r
-      let c ← supplyNeed eff.callee eff.caller eff.values
+      let c ← supplyCallee (effective shape r) r
       setCallee a c
       pure c
 
 /-- The callee plan `a` invokes along route `r` over its effective shape `eff`: the ordinary callee
     law of the written callee (a call, a member path, an extension fallback), or — for the
-    `.Algorithm` route — the CALLABLE of the plan's canonical callee cell, the link (CR-14 c), so the
-    link's receiver is demanded once per plan (D-3). -/
+    `.Algorithm` route — the captured callee read from the plan's canonical callee cell, the link
+    (CR-14 c; `Route.project`, production `plannedLinkCallable`), so the link's receiver is read by
+    the ordinary invocation receiver evaluator and demanded once per plan (D-3). -/
 def calleeAlong (route : Route) (a : Nat) (eff : CallShape) : PlanRoute → EvalM Algorithm
   | .algorithm => do
     match ← route.project (← calleeCell route.classify a) with
@@ -7958,10 +8016,27 @@ where
         | some callee => go fuel callee
         | none => a
 
+/-- The name a WRITTEN route gives its dispatch (every route but `.Algorithm`, whose callee is the
+    captured plan's), decided by the written form alone. A MEMBER call `t.N(args)` — the `.call`
+    route of a dot edge — is named by the member `N`, exactly as ordinary dot evaluation names it
+    (`evalDotCallCounted`'s member arm passes `name`), so the planned and the ordinary member call
+    report the same `noMatchingBranch N` (E-18 member-route correction, November 11 2026; until
+    then the planned member route reported the argumentless path `openExprName (t.N)`). Every other
+    form names its effective written callee: a written call's callee (`(Box.G)(2)` keeps its path,
+    as `evalCallCountedExpr` names it) and an extension's fallback. The name reaches only
+    `noMatchingBranch`; it selects, binds and publishes nothing.
+    C#: `DispatchPlannedDotCounted`'s `CallDiagnosticName.FromKnown(dot.Name)`. -/
+def writtenDispatchName (eff : CallShape) : PlanRoute → String
+  | .call =>
+    match eff.form with
+    | .dot _ name _ => name
+    | .call => openExprName eff.callee
+  | _ => openExprName eff.callee
+
 /-- META-S3-4-DIAG (October 20 2026): the callee name plan `a`'s execution along route `r` passes
     to its dispatch, read from heap `needs` alone (total; no demand, projection or preparation).
-    Every route names its effective written callee (`openExprName eff.callee`) — the call's callee,
-    the argumentless member path, an extension's fallback — except the `.Algorithm` route: its
+    Every route names its written dispatch (`writtenDispatchName`: the call's callee, the MEMBER of
+    a member call, an extension's fallback) — except the `.Algorithm` route: its
     callee is the CAPTURED plan's callee, so it is named exactly as the ordinary intrinsic names a
     fresh call of it (`algorithmOfValue` / `algorithmCalleeOf`: `calleeName` of the decoded plan),
     and `R.Algorithm(1)` with `R = Capture(F(0))` reports `noMatchingBranch "F"`, never
@@ -7973,7 +8048,7 @@ def dispatchNameIn (needs : Array NeedCell) (a : Nat) (eff : CallShape) : PlanRo
     match ((needs[a]?).bind NeedCell.callee).bind (linkedPlanIn? needs) |>.bind (calleeNameIn? needs) with
     | some name => name
     | none => openExprName eff.callee
-  | _ => openExprName eff.callee
+  | r => writtenDispatchName eff r
 
 /-- `dispatchNameIn` over the current heap: a pure state read. -/
 def dispatchName (a : Nat) (eff : CallShape) (r : PlanRoute) : EvalM String := do
@@ -8062,14 +8137,6 @@ def calleeName (a : Nat) : EvalM String := do
 
 end NeedPlan
 
-/-- The written shape of a `.Algorithm` LINK (META-S3-1, CR-14/CR-15): an argumentless dot edge
-    spelled `Algorithm`, as its receiver and fallback. Whether the edge is the intrinsic or a declared
-    member is decided at run time, member-first (`algorithmIntrinsicRoute`). -/
-def linkEdge? : Expr → Option (Expr × Expr)
-  | .dotMember receiver name fallback none =>
-    if name = "Algorithm" then some (receiver, fallback) else none
-  | _ => none
-
 /-- Decodes the receiver VALUE of `.Algorithm` into the plan address of its call reference; any
     other value (an argument view included) is the intrinsic's kind rejection. Serial Lean has one
     run, so the C# ownership check has no counterpart. C#: `Evaluator.DecodeAlgorithmReceiver`. -/
@@ -8109,17 +8176,46 @@ def metaRepeatSetup {α : Type} (setup : EvalM α) (count : EvalM Int) : EvalM (
 
 /- THE LINK of a supplied `X.Algorithm` (META-S3-1, CR-15): one link cell whose receiver `X` is ONE
     receiver cell, established lazily and recorded in the link cell (`NeedCell.receiver`), so the
-    link's VALUE (`linkValue`) and its CALLABLE (`linkCallable`) demand the SAME receiver VALUE. -/
+    link's VALUE (`linkValue`) and its CALLABLE (`linkCallable`) demand the SAME receiver VALUE.
+    The callee link of a PLANNED `.Algorithm` invocation (`NeedInvocationRole.link`, META-S3-4 D-3)
+    is such a link whose receiver cell keeps the ordinary invocation receiver evaluator
+    (`supplyReceiver`, `NeedInvocationRole.receiver`); the plan's execution reads it through
+    `EvalBody.plannedLinkCallable`. -/
 namespace NeedLink
 
 /-- Records link `a`'s canonical receiver cell. -/
 def setReceiver (a r : Nat) : EvalM Unit :=
   modify fun s => { s with needs := s.needs.modify a (fun cell => { cell with receiver := some r }) }
 
+/-- Whether a link with invocation role `role` keeps the ordinary INVOCATION receiver evaluator for
+    its written receiver (D-3): only the callee link of a planned `.Algorithm` invocation
+    (`NeedInvocationRole.link`), and never for a PARAMETER receiver, which is always that
+    parameter's own cell. C#: the test of `LinkSuspension.NewReceiver`. -/
+def keepsInvocationReceiver (role : NeedInvocationRole) : Expr → Bool
+  | .param _ => false
+  | _ => role == .link
+
+/-- The receiver cell a link with invocation role `role` establishes for its written edge `source`
+    (receiver `receiver`) in its caller context (D-3). A SUPPLIED link — `X.Algorithm` written as an
+    argument — supplies its receiver as an ordinary computation through `supplyNeed`, and so does
+    every link for a PARAMETER receiver, which is that parameter's existing cell. The callee link of
+    a planned `.Algorithm` invocation (`keepsInvocationReceiver`) instead allocates ONE cell marked
+    `NeedInvocationRole.receiver` over the edge itself: its VALUE is the ordinary invocation
+    receiver read of `receiver` (`EvalBody.evalSuppliedAt`), not a supplied VALUE of it.
+    C#: `LinkSuspension.NewReceiver`. -/
+def supplyReceiver (role : NeedInvocationRole) (source receiver : Expr) (caller : EvalCtx)
+    (values : ValEnv) : EvalM Nat :=
+  if keepsInvocationReceiver role receiver then do
+    let r ← allocateNeed (.expression source caller values)
+    NeedPlan.setInvocation r .receiver
+    pure r
+  else supplyNeed receiver caller values
+
 /-- The canonical RECEIVER CELL of link `a`: the link's written receiver supplied in the link's
-    caller context through `supplyNeed` (a parameter receiver is its existing cell), established
-    by the first channel that needs it and recorded; evaluates nothing (`receiverCell_canonical`).
-    C#: `Evaluator.LinkSuspension.Receiver`. -/
+    caller context through `supplyReceiver` (a parameter receiver is its existing cell; the callee
+    link of a planned `.Algorithm` invocation keeps the invocation receiver evaluator, D-3),
+    established by the first channel that needs it and recorded; evaluates nothing
+    (`receiverCell_canonical`). C#: `Evaluator.LinkSuspension.Receiver`. -/
 def receiverCell (a : Nat) : EvalM Nat := do
   let some cell := (← get).needs[a]? | throw (Error.illegalInEval "invalid need address")
   match cell.receiver with
@@ -8129,11 +8225,16 @@ def receiverCell (a : Nat) : EvalM Nat := do
     | .expression source caller values =>
       match linkEdge? source with
       | some (receiver, _) =>
-        let r ← supplyNeed receiver caller values
+        let r ← supplyReceiver cell.invocation source receiver caller values
         setReceiver a r
         pure r
       | none => throw (Error.illegalInEval "not a link")
     | _ => throw (Error.illegalInEval "not a link")
+
+/-- Whether the cell at `address` is the retained receiver cell of a planned `.Algorithm`
+    invocation (`NeedInvocationRole.receiver`, D-3). A pure read. -/
+def isInvocationReceiver (address : Nat) : EvalM Bool := do
+  pure (((← get).needs[address]?).map NeedCell.invocation == some .receiver)
 
 /-- The callee cell BOTH channels of link `a` reach (CR-15): the link's ONE receiver cell, its VALUE
     through `demand`, decoded into its plan, then the plan's canonical callee cell. Production:
@@ -8992,11 +9093,57 @@ def classifyPlanRouteWith (resolveReceiver? : Expr → EvalCtx → EvalM (Option
     | .ok (.member _ _) => pure .call
     | .ok (.miss kind) => pure kind.planRoute
 
+/-- THE INVOCATION RECEIVER READ (META-S3-1 CR-14; META-S3-4 D-3): the VALUE of the receiver `X` of
+    an intrinsic `X.Algorithm` invocation, read exactly as the dot route reads it — `X`'s identity
+    first (`resolveDotReceiver?`), then, for an algorithm receiver, the call-reference intrinsics'
+    receiver read (`referenceReceiverValue`: alias target, the zero-argument demand law, a property
+    through its cache, a parameter through its cell), and for a value receiver its ordinary value;
+    either way a SUBORDINATE read, so a missing output it fails with is nested (Q-36). ONE
+    definition serves the ordinary callee `(X.Algorithm)(args)` (`algorithmCalleeOf`) and the
+    retained receiver cell of a PLANNED `.Algorithm` invocation (`evalSuppliedAt`,
+    `plannedLinkCallable`), so the two routes read the receiver alike.
+    C#: `Evaluator.EvalAlgorithmReceiver`. -/
+def EvalBody.invocationReceiverValue (rec : EvalRec) (receiver : Expr) (ctx : EvalCtx) (env : ValEnv) : EvalM Result := do
+  match <- rec.resolveDotReceiver? receiver ctx with
+  | none => withNestedMissingOutput (rec.eval receiver ctx env)
+  | some targetAlg => rec.referenceReceiverValue receiver targetAlg ctx env
+
+/-- The receiver VALUE a planned `.Algorithm` invocation reads (D-3), given its callee link's cell
+    `link` and that link's receiver cell `cell`: for a PARAMETER receiver, the ordinary invocation
+    receiver read of the written parameter in the link's caller context, at this execution — the
+    transported parameter cell keeps the VALUE, the read keeps the intrinsic's failure shape; for
+    every other receiver, the retained receiver cell's VALUE, demanded at most once for the plan.
+    C#: the receiver read of `Evaluator.ProjectPlannedAlgorithmCallee`. -/
+def EvalBody.plannedReceiverValue (rec : EvalRec) (link : NeedCell) (cell : Nat) : EvalM Result :=
+  match link.suspension with
+  | .expression source caller values =>
+      match linkEdge? source with
+      | some (.param x, _) => EvalBody.invocationReceiverValue rec (.param x) caller values
+      | _ => Prod.fst <$> rec.demandNeedRecursive cell
+  | _ => Prod.fst <$> rec.demandNeedRecursive cell
+
+/-- THE CALLEE READ OF A PLANNED `.Algorithm` INVOCATION (META-S3-4, D-3; E-18 receiver-read
+    correction, November 11 2026), from the plan's callee cell — the link `t.Algorithm` at `link`:
+    the link's ONE receiver cell is established (`NeedLink.receiverCell`); the receiver VALUE is that
+    cell's VALUE — the retained invocation receiver read, demanded at most once for the plan and
+    shared with the link's own VALUE and CALLABLE — or, for a PARAMETER receiver, the ordinary
+    invocation receiver read of the written parameter at this execution (its transported cell keeps
+    the VALUE; the read keeps the intrinsic's failure shape); then the decoded plan's canonical callee
+    cell and that cell's CALLABLE. The link's own CALLABLE memo is neither read nor written, and the
+    captured invocation is never executed (CR-16). C#: `Evaluator.ProjectPlannedAlgorithmCallee`. -/
+def EvalBody.plannedLinkCallable (rec : EvalRec) (link : Nat) : EvalM (Option Algorithm) := do
+  let cell <- NeedLink.receiverCell link
+  let some linkCell := (<- get).needs[link]? | throw (Error.illegalInEval "invalid need address")
+  let value <- EvalBody.plannedReceiverValue rec linkCell cell
+  let plan <- decodeCallRef value
+  let callee <- NeedPlan.calleeCell (classifyPlanRouteWith rec.resolveDotReceiver? rec.algorithmIntrinsicRoute) plan
+  rec.projectNeedCallable callee
+
 /-- The production invocation-plan route over an evaluator answer `rec`: the one route every
     recursive VALUE edge installs (`productionPlanRoute` is it at the production answer). -/
 def EvalRec.planRoute (rec : EvalRec) : NeedPlan.Route :=
   ⟨rec.resolveCalleeAlg, rec.needPlanNormalizeCallee, rec.evalSuppliedCallCounted, rec.evalSupplySpread,
-   classifyPlanRouteWith rec.resolveDotReceiver? rec.algorithmIntrinsicRoute, rec.projectNeedCallable⟩
+   classifyPlanRouteWith rec.resolveDotReceiver? rec.algorithmIntrinsicRoute, EvalBody.plannedLinkCallable rec⟩
 
 /-- The binder channels every binding site of the core passes (`bindingChannels` is it at the
     production answer): the two total shells over `rec`'s written-expression evaluator, plan route,
@@ -9900,13 +10047,22 @@ def EvalBody.algorithmIntrinsicRoute (rec : EvalRec) (receiver : Expr) (ctx : Ev
       rec.demandNeedRecursive address
 
   /-- The VALUE computation of the written expression supplied at `address` (the `ev` the production
-      VALUE shell installs): a supplied `X.Algorithm` LINK on the intrinsic route is `linkValue`
-      (CR-15; a declared member `Algorithm` keeps the ordinary evaluation), every other expression
-      `evalCounted`. C#: `Evaluator.EvalSuspendedValue` / `TryEvalLinkValue`. -/
+      VALUE shell installs): the retained receiver cell of a planned `.Algorithm` invocation
+      (`NeedInvocationRole.receiver`, D-3) is the ordinary invocation receiver read of its edge's
+      receiver (`EvalBody.invocationReceiverValue`), counted at its value boundary; a supplied
+      `X.Algorithm` LINK on the intrinsic route is `linkValue` (CR-15; a declared member `Algorithm`
+      keeps the ordinary evaluation); every other expression `evalCounted`.
+      C#: `Evaluator.EvalSuspendedValue` / `EvalInvocationReceiver` / `TryEvalLinkValue`. -/
   def EvalBody.evalSuppliedAt (rec : EvalRec) (address : Nat) (e : Expr) (ctx : EvalCtx) (env : ValEnv) : EvalM CountedResult := do
     match linkEdge? e with
     | some (receiver, _) =>
-        if <- rec.algorithmIntrinsicRoute receiver ctx then rec.linkValue address
+        -- D-3: the retained receiver cell of a planned `.Algorithm` invocation holds its link's
+        -- edge and is read by the ordinary invocation receiver evaluator — decided before the
+        -- link route. C#: the `InvocationReceiverSuspension` test opening `EvalSuspendedValue`.
+        if <- NeedLink.isInvocationReceiver address then
+          let value <- EvalBody.invocationReceiverValue rec receiver ctx env
+          pure (value, Result.valueCount value)
+        else if <- rec.algorithmIntrinsicRoute receiver ctx then rec.linkValue address
         else rec.evalCounted e ctx env
     | none => rec.evalCounted e ctx env
 
@@ -9955,10 +10111,7 @@ def EvalBody.algorithmIntrinsicRoute (rec : EvalRec) (receiver : Expr) (ctx : Ev
       `Evaluator.EvalAlgorithmCalleeCallCounted`. The third component is the decoded plan's canonical
       callee cell, the ORIGIN of the fresh call (CACHE-PUB-1). -/
   def EvalBody.algorithmCalleeOf (rec : EvalRec) (receiver : Expr) (ctx : EvalCtx) (env : ValEnv) : EvalM (Algorithm × String × Nat) := do
-    let value <-
-      match <- rec.resolveDotReceiver? receiver ctx with
-      | none => withNestedMissingOutput (rec.eval receiver ctx env)
-      | some targetAlg => rec.referenceReceiverValue receiver targetAlg ctx env
+    let value <- EvalBody.invocationReceiverValue rec receiver ctx env
     let plan <- decodeCallRef value
     let cell <- NeedPlan.calleeCell rec.planRoute.classify plan
     let callee <- rec.capturedCallee cell
@@ -12616,18 +12769,33 @@ def eval (e : Expr) (ctx : EvalCtx) (env : ValEnv) : EvalM Result :=
   evalUnbounded (.eval e ctx env)
 
 
+/-- The invocation receiver read over the production operations
+    (`EvalBody.invocationReceiverValue` at the production answer). -/
+def invocationReceiverValue (receiver : Expr) (ctx : EvalCtx) (env : ValEnv) : EvalM Result :=
+  EvalBody.invocationReceiverValue evalUnbounded receiver ctx env
+
+/-- The receiver VALUE read of a planned `.Algorithm` invocation over the production operations
+    (`EvalBody.plannedReceiverValue` at the production answer). -/
+def plannedReceiverValue (link : NeedCell) (cell : Nat) : EvalM Result :=
+  EvalBody.plannedReceiverValue evalUnbounded link cell
+
+/-- The callee read of a planned `.Algorithm` invocation over the production operations
+    (`EvalBody.plannedLinkCallable` at the production answer): the production route's `project`. -/
+def plannedLinkCallable (link : Nat) : EvalM (Option Algorithm) :=
+  EvalBody.plannedLinkCallable evalUnbounded link
+
 /-- First VALUE demand through the total completion shell, over the production operations (the
     total core under its fuel search, R7). -/
 def demandNeed (address : Nat) : EvalM CountedResult :=
   NeedDemand.step (evalSuppliedAt address)
     ⟨resolveCalleeAlg, NeedPlan.normalizeCallee, evalSuppliedCallCounted, evalSupplySpread,
-     classifyPlanRouteWith resolveDotReceiver? algorithmIntrinsicRoute, projectNeedCallable⟩
+     classifyPlanRouteWith resolveDotReceiver? algorithmIntrinsicRoute, plannedLinkCallable⟩
     demandNeedRecursive address
 
 /-- The production invocation-plan route: the one the recursive VALUE edge installs. -/
 def productionPlanRoute : NeedPlan.Route :=
   ⟨resolveCalleeAlg, NeedPlan.normalizeCallee, evalSuppliedCallCounted, evalSupplySpread,
-   classifyPlanRouteWith resolveDotReceiver? algorithmIntrinsicRoute, projectNeedCallable⟩
+   classifyPlanRouteWith resolveDotReceiver? algorithmIntrinsicRoute, plannedLinkCallable⟩
 
 /-- The channels every binder call site of the evaluator recursion core passes, at the production
     answer: `EvalRec.bindingChannels evalUnbounded` (`bindingChannels_is_core`, by `rfl`; the

@@ -84,6 +84,10 @@ def cellsOf (h : Array NeedCell) (source : Expr) : Nat :=
     | .expression e _ _ => reprStr e == reprStr source
     | _ => false).length
 
+/-- The cells with invocation role `role` (D-3, `NeedInvocationRole`). -/
+def roleCells (h : Array NeedCell) (role : NeedInvocationRole) : Nat :=
+  (h.toList.filter fun cell => cell.invocation == role).length
+
 def innermost : Error → Error
   | .withContext _ inner => innermost inner
   | e => e
@@ -221,13 +225,19 @@ def invoke (e : Expr) : Expr := dot e "Invoke" (some [])
   [dot (argsOf (.resolve "R")) "count" none, dot (.resolve "R") "Algorithm" (some [.num 3]), invoke (.resolve "R")])
   (.sequenceValue [.atom 1, .atom 30, .atom 20])
 -- D-3: the `.Algorithm` route's receiver `Mk(1)` is ONE retained cell for the plan, shared by its
--- VALUE, every invocation and its callee projection.
+-- VALUE, every invocation and its callee projection. Since the E-18 receiver-read correction
+-- (November 11 2026) that cell keeps the ordinary INVOCATION receiver evaluator: it holds the link's
+-- own edge `Mk(1).Algorithm` under `NeedInvocationRole.receiver` (so two cells hold the edge — the
+-- plan's callee link and its receiver), and the receiver `Mk(1)` is never supplied as a VALUE
+-- expression — in particular it is not an invocation plan of its own.
 #guard valueIs (run [("R", alg [] [] [] [callN "Capture" [dot (callN "Mk" [.num 1]) "Algorithm" (some [.num 3])]])]
   [invoke (.resolve "R"), dot (.resolve "R") "Algorithm" (some [.num 4]), invoke (.resolve "R")])
   (.sequenceValue [.atom 4, .atom 5, .atom 4])
-#guard cellsOf (heap [("R", alg [] [] [] [callN "Capture" [dot (callN "Mk" [.num 1]) "Algorithm" (some [.num 3])]])]
-  [invoke (.resolve "R"), dot (.resolve "R") "Algorithm" (some [.num 4]), invoke (.resolve "R")])
-  (callN "Mk" [.num 1]) == 1
+#guard
+  let h := heap [("R", alg [] [] [] [callN "Capture" [dot (callN "Mk" [.num 1]) "Algorithm" (some [.num 3])]])]
+    [invoke (.resolve "R"), dot (.resolve "R") "Algorithm" (some [.num 4]), invoke (.resolve "R")]
+  roleCells h .receiver == 1 && roleCells h .link == 1 &&
+    cellsOf h (dot (callN "Mk" [.num 1]) "Algorithm" none) == 2 && cellsOf h (callN "Mk" [.num 1]) == 0
 -- Distinct written invocations are distinct plans, even when spelled alike (CR-3).
 #guard valueIs (run [("Two", algWithParameters [metaParam "a", metaParam "b"] [] [] [eq (.param "a") (.param "b")])]
   [callN "Two" [dot (.resolve "Box") "G" (some [.num 1]), dot (.resolve "Box") "G" (some [.num 1])]])
@@ -337,13 +347,24 @@ def failedProjection (row : Expr) : Except Error Result := run failedProjectionD
 #guard failsWith (failedProjection (inId (grouped (.resolve "Held") [.num 1])))
   [ctxId, "while evaluating call to Held.Algorithm", "while evaluating call to min",
    "illegalInEval min requires a non-empty collection"]
--- A declared member `Algorithm` is the member route, outside this correction: the ordinary member
--- call names the member, the planned member route its argumentless path (unchanged here; C# names the
--- member in both, a separate member-route naming difference recorded in SEMANTIC-ALIGNMENT).
+-- A declared member `Algorithm` is the member route: the ordinary AND the planned member call name
+-- the MEMBER (`NeedPlan.writtenDispatchName`; E-18 member-route correction, November 11 2026 — until
+-- then the planned member route reported its argumentless path `Box5.Algorithm`, while C# named the
+-- member on both routes).
 #guard failsWith (diag [algoCall (.resolve "Box5") [.num 1]])
   ["while evaluating dotCall .Algorithm of Box5", "noMatchingBranch Algorithm"]
 #guard failsWith (diag [inId (algoCall (.resolve "Box5") [.num 1])])
-  [ctxId, "while evaluating dotCall .Algorithm of Box5", "noMatchingBranch Box5.Algorithm"]
+  [ctxId, "while evaluating dotCall .Algorithm of Box5", "noMatchingBranch Algorithm"]
+-- The same rule for an ordinary member family (`Pack.F`), ordinary and planned; the GROUPED member
+-- callee `(Pack.F)(1)` is a written call and keeps its path, on both routes.
+#guard failsWith (diag [dot (.resolve "Pack") "F" (some [.num 1])])
+  ["while evaluating dotCall .F of Pack", "noMatchingBranch F"]
+#guard failsWith (diag [inId (dot (.resolve "Pack") "F" (some [.num 1]))])
+  [ctxId, "while evaluating dotCall .F of Pack", "noMatchingBranch F"]
+#guard failsWith (diag [.call (dot (.resolve "Pack") "F" none) [.num 1]])
+  ["while evaluating call to Pack.F", "noMatchingBranch Pack.F"]
+#guard failsWith (diag [inId (.call (dot (.resolve "Pack") "F" none) [.num 1])])
+  [ctxId, "while evaluating call to Pack.F", "noMatchingBranch Pack.F"]
 -- Nested reconstructed META invocations: invoking the plan `op.Algorithm(op.Arguments*)` that `Op`
 -- captured (a plan on the `.Algorithm` route) names the callee `op` captured; projecting a captured
 -- `.Algorithm` invocation again names that plan's own written callee, never chased further.

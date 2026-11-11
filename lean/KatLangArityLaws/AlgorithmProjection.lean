@@ -29,6 +29,13 @@ invocation's original argument supply (CR-13..CR-16). The authoritative definiti
   `NeedCell.callee`;
 * `NeedLink.receiverCell` — a supplied `X.Algorithm` link's ONE receiver cell (CR-15), recorded in
   `NeedCell.receiver`;
+* `NeedPlan.supplyCallee` / `NeedLink.supplyReceiver` — the suppliers of those two cells. Since the
+  E-18 receiver-read correction (November 11 2026; META-S3-4 D-3) the callee link of a PLANNED
+  `.Algorithm` invocation is marked `NeedInvocationRole.link`, and its receiver cell — for a
+  non-parameter receiver — is ONE cell marked `NeedInvocationRole.receiver` over the link's own edge,
+  whose VALUE is the ordinary invocation receiver read (§ D-3 below; the read itself is
+  `PlanRouteBridge.receiver_cell_reads_invocation_receiver`). A supplied link, and every link over a
+  parameter receiver, keeps the pre-correction law (`receiverCell_establishes_ordinary`);
 * `NeedLink.decodeCallee` / `NeedLink.value` / `NeedLink.callable` — the link's two channels, both
   through the one receiver and the one callee cell;
 * `projectParameterWith` — the TYPED parameter projection of L2 (a failure is never absence).
@@ -169,6 +176,146 @@ theorem supply_heap_core (source : Expr) (ctx : EvalCtx) (env : ValEnv) (s : Eva
     rw [Array.getElem?_push]
     simp [Nat.ne_of_lt hlt, hc]
 
+/-! ## D-3 — the invocation roles of a planned `.Algorithm` invocation's callee read
+
+The two suppliers of the E-18 receiver-read correction (November 11 2026): `NeedPlan.supplyCallee`
+marks the `.Algorithm` route's fresh link cell, `NeedLink.supplyReceiver` gives that link ONE
+receiver cell that keeps the invocation receiver evaluator. Both are the ONE supply plus an
+`invocation`-field write on a cell they have just allocated: they never fail, keep the core of
+every existing cell, and leave every existing cell where it is. -/
+
+/-- A cell kept except for its `invocation` field keeps its core. -/
+theorem CoreKept.invocation (c : NeedCell) (role : NeedInvocationRole) :
+    CoreKept c { c with invocation := role } := ⟨rfl, rfl, rfl, rfl⟩
+
+/-- The invocation-link mark `supplyCallee` writes (D-3), as a state function: on the `.Algorithm`
+    route, for a callee that is a link edge; the identity otherwise. -/
+def markLink (eff : NeedPlan.CallShape) (r : PlanRoute) (c : Nat) (s : EvalState) : EvalState :=
+  if r == .algorithm && (linkEdge? eff.callee).isSome then withInvocation c .link s else s
+
+theorem markLink_core (eff : NeedPlan.CallShape) (r : PlanRoute) (c : Nat) (s : EvalState) :
+    HeapCore s.needs (markLink eff r c s).needs := by
+  unfold markLink
+  split
+  · exact HeapCore.memo _ c _ (fun cell => CoreKept.invocation cell .link)
+  · exact HeapCore.refl _
+
+/-- Off the `.Algorithm` route nothing is marked. -/
+theorem markLink_other (eff : NeedPlan.CallShape) (r : PlanRoute) (c : Nat) (s : EvalState)
+    (hr : r ≠ .algorithm) : markLink eff r c s = s := by
+  unfold markLink
+  have hb : (r == PlanRoute.algorithm) = false := by cases r <;> first | rfl | exact absurd rfl hr
+  simp [hb]
+
+/-- A callee that is no link edge — a name, a parameter, a member path not spelled `Algorithm` —
+    is never marked, whatever the route. -/
+theorem markLink_not_link (eff : NeedPlan.CallShape) (r : PlanRoute) (c : Nat) (s : EvalState)
+    (hl : linkEdge? eff.callee = none) : markLink eff r c s = s := by
+  unfold markLink
+  simp [hl]
+
+/-- The callee supplier is the ONE supply followed by the link mark. -/
+theorem supplyCallee_run (eff : NeedPlan.CallShape) (r : PlanRoute) (s : EvalState) :
+    (NeedPlan.supplyCallee eff r).runState s =
+      (match (supplyNeed eff.callee eff.caller eff.values).runState s with
+       | (.ok c, t) => (.ok c, markLink eff r c t)
+       | (.error e, t) => (.error e, t)) := by
+  simp only [NeedPlan.supplyCallee, bind_run]
+  rcases (supplyNeed eff.callee eff.caller eff.values).runState s with ⟨_ | c, t⟩
+  · rfl
+  · by_cases hb : (r == PlanRoute.algorithm && (linkEdge? eff.callee).isSome) = true
+    · simp only [markLink, NeedPlan.markCalleeLink, hb, ↓reduceIte, setInvocation_run]
+      rfl
+    · simp only [markLink, NeedPlan.markCalleeLink, hb]
+      rfl
+
+/-- The callee supplier never fails and keeps the core of every existing cell. -/
+theorem supplyCallee_heap_core (eff : NeedPlan.CallShape) (r : PlanRoute) (s : EvalState) :
+    ∃ c t, (NeedPlan.supplyCallee eff r).runState s = (.ok c, t) ∧ HeapCore s.needs t.needs := by
+  rw [supplyCallee_run]
+  obtain ⟨c, hc⟩ := supply_shape eff.callee eff.caller eff.values s
+  rcases hc with hc | ⟨hc, _⟩
+  · rw [hc]
+    exact ⟨c, _, rfl, markLink_core eff r c s⟩
+  · rw [hc]
+    exact ⟨s.needs.size, markLink eff r s.needs.size
+        { s with needs := s.needs.push { suspension := .expression eff.callee eff.caller eff.values } }, rfl,
+      (HeapCore.push s.needs _).trans (markLink_core eff r s.needs.size
+        { s with needs := s.needs.push { suspension := .expression eff.callee eff.caller eff.values } })⟩
+
+/-- A SUPPLIED link, and every link over a PARAMETER receiver, supplies its receiver through the
+    ONE supplier — exactly the pre-correction law. -/
+theorem supplyReceiver_ordinary (role : NeedInvocationRole) (source receiver : Expr) (caller : EvalCtx)
+    (values : ValEnv) (h : NeedLink.keepsInvocationReceiver role receiver = false) :
+    NeedLink.supplyReceiver role source receiver caller values = supplyNeed receiver caller values := by
+  simp [NeedLink.supplyReceiver, h]
+
+theorem keepsInvocationReceiver_supplied (receiver : Expr) :
+    NeedLink.keepsInvocationReceiver .supplied receiver = false := by
+  cases receiver <;> rfl
+
+theorem keepsInvocationReceiver_param (role : NeedInvocationRole) (name : Ident) :
+    NeedLink.keepsInvocationReceiver role (.param name) = false := rfl
+
+/-- The retained receiver cell of a planned `.Algorithm` invocation (D-3) as its link — written
+    `source` in the context `caller` / `values` — allocates it: the link's own edge, marked
+    `NeedInvocationRole.receiver`, suspended, unprojected and without records. -/
+def invocationReceiverCell (source : Expr) (caller : EvalCtx) (values : ValEnv) : NeedCell :=
+  { suspension := .expression source caller values, invocation := .receiver }
+
+/-- Marking the cell a push has just appended is pushing the marked cell. -/
+theorem push_then_mark (h : Array NeedCell) (source : Expr) (caller : EvalCtx) (values : ValEnv) :
+    (h.push { suspension := .expression source caller values }).modify h.size
+      (fun cell => { cell with invocation := .receiver }) =
+    h.push (invocationReceiverCell source caller values) := by
+  apply Array.ext_getElem?
+  intro i
+  simp only [Array.getElem?_modify, Array.getElem?_push]
+  by_cases hi : i = h.size
+  · subst hi; simp [invocationReceiverCell]
+  · have hi' : ¬ h.size = i := fun e => hi e.symm
+    simp [hi, hi']
+
+/-- **D-3, the retained invocation receiver cell.** The callee link of a planned `.Algorithm`
+    invocation allocates exactly ONE cell for a non-parameter receiver: the link's own written edge
+    in its caller context, marked `NeedInvocationRole.receiver`, suspended and unprojected
+    (`invocationReceiverCell`). Nothing is evaluated. -/
+theorem supplyReceiver_invocation (role : NeedInvocationRole) (source receiver : Expr) (caller : EvalCtx)
+    (values : ValEnv) (s : EvalState) (h : NeedLink.keepsInvocationReceiver role receiver = true) :
+    (NeedLink.supplyReceiver role source receiver caller values).runState s =
+      (.ok s.needs.size,
+        { s with needs := s.needs.push (invocationReceiverCell source caller values) }) := by
+  simp only [NeedLink.supplyReceiver, h, ↓reduceIte]
+  rw [← push_then_mark]
+  rfl
+
+/-- The receiver supplier never fails, keeps the core of every existing cell, and leaves every
+    existing cell at its address. -/
+theorem supplyReceiver_heap_core (role : NeedInvocationRole) (source receiver : Expr) (caller : EvalCtx)
+    (values : ValEnv) (s : EvalState) :
+    ∃ r t, (NeedLink.supplyReceiver role source receiver caller values).runState s = (.ok r, t) ∧
+      HeapCore s.needs t.needs ∧
+      (∀ (b : Nat) (c : NeedCell), s.needs[b]? = some c → t.needs[b]? = some c) := by
+  cases hk : NeedLink.keepsInvocationReceiver role receiver with
+  | false =>
+    rw [supplyReceiver_ordinary role source receiver caller values hk]
+    obtain ⟨r, hr⟩ := supply_shape receiver caller values s
+    rcases hr with hr | ⟨hr, _⟩
+    · exact ⟨r, s, hr, HeapCore.refl _, fun _ _ hc => hc⟩
+    · exact ⟨_, _, hr, (supply_heap_core receiver caller values s _ _ hr).1,
+        (supply_heap_core receiver caller values s _ _ hr).2⟩
+  | true =>
+    rw [supplyReceiver_invocation role source receiver caller values s hk]
+    refine ⟨_, _, rfl, HeapCore.push _ _, ?_⟩
+    intro b c hc
+    have hlt : b < s.needs.size := by
+      rcases Nat.lt_or_ge b s.needs.size with hl | hl
+      · exact hl
+      · rw [Array.getElem?_eq_none hl] at hc; cases hc
+    show (s.needs.push _)[b]? = some c
+    rw [Array.getElem?_push]
+    simp [Nat.ne_of_lt hlt, hc]
+
 /-! ## L3 / CR-13 — the canonical callee cell -/
 
 theorem setCallee_run (a c : Nat) (s : EvalState) :
@@ -185,8 +332,9 @@ theorem calleeCell_recorded (classify : NeedPlan.CallShape → EvalM PlanRoute)
 
 /-- The first observation of an unrecorded callee (META-S3-4): the plan's route (recorded, or
     classified now — `NeedPlan.routeOf`), then — on a callable route — the route's callee
-    (`NeedPlan.effective`) supplied in the captured caller context and recorded; an intrinsic route
-    is the refusal. -/
+    (`NeedPlan.effective`) supplied in the captured caller context (`NeedPlan.supplyCallee`: the ONE
+    supply, and on the `.Algorithm` route the link mark of D-3, `supplyCallee_run`) and recorded; an
+    intrinsic route is the refusal. -/
 theorem calleeCell_unrecorded (classify : NeedPlan.CallShape → EvalM PlanRoute)
     (a : Nat) (s : EvalState) (cell : NeedCell) (shape : NeedPlan.CallShape)
     (hc : s.needs[a]? = some cell) (h : cell.callee = none)
@@ -196,7 +344,7 @@ theorem calleeCell_unrecorded (classify : NeedPlan.CallShape → EvalM PlanRoute
        | (.error e, t) => (.error e, t)
        | (.ok r, t) =>
          if r = .intrinsic then (.error NeedPlan.invocationRefusal, t) else
-         match (supplyNeed (NeedPlan.effective shape r).callee shape.caller shape.values).runState t with
+         match (NeedPlan.supplyCallee (NeedPlan.effective shape r) r).runState t with
          | (.ok c, u) => (.ok c, { u with needs := u.needs.modify a (fun cell => { cell with callee := some c }) })
          | (.error e, u) => (.error e, u)) := by
   simp only [NeedPlan.calleeCell, bind_run, get_run, hc, h, hshape]
@@ -206,8 +354,8 @@ theorem calleeCell_unrecorded (classify : NeedPlan.CallShape → EvalM PlanRoute
     · subst hi; rfl
     · have hb : (r == PlanRoute.intrinsic) = false := by
         cases r <;> first | rfl | exact absurd rfl hi
-      simp only [hb, Bool.false_eq_true, ↓reduceIte, ite_eq_right hi, bind_run, effective_caller, effective_values]
-      rcases (supplyNeed (NeedPlan.effective shape r).callee shape.caller shape.values).runState t with ⟨_ | c, u⟩ <;> rfl
+      simp only [hb, Bool.false_eq_true, ↓reduceIte, ite_eq_right hi, bind_run]
+      rcases (NeedPlan.supplyCallee (NeedPlan.effective shape r) r).runState t with ⟨_ | c, u⟩ <;> rfl
 
 /-- The inert half of the first observation (META-S3-4): with the plan's route `r` recorded and
     callable, the first observation supplies the route's callee in the captured caller context and
@@ -218,7 +366,7 @@ theorem calleeCell_establishes (classify : NeedPlan.CallShape → EvalM PlanRout
     (hshape : NeedPlan.ofSuspension? cell.suspension = some shape) (hr : cell.route = some r)
     (hi : r ≠ .intrinsic) :
     (NeedPlan.calleeCell classify a).runState s =
-      (match (supplyNeed (NeedPlan.effective shape r).callee shape.caller shape.values).runState s with
+      (match (NeedPlan.supplyCallee (NeedPlan.effective shape r) r).runState s with
        | (.ok c, t) => (.ok c, { t with needs := t.needs.modify a (fun cell => { cell with callee := some c }) })
        | (.error e, t) => (.error e, t)) := by
   rw [calleeCell_unrecorded classify a s cell shape hc h hshape,
@@ -249,7 +397,7 @@ theorem calleeCell_route_first (classify : NeedPlan.CallShape → EvalM PlanRout
        | (.ok r, t) =>
          let (r, t) := recordRoute a r t
          if r = .intrinsic then (.error NeedPlan.invocationRefusal, t) else
-         match (supplyNeed (NeedPlan.effective shape r).callee shape.caller shape.values).runState t with
+         match (NeedPlan.supplyCallee (NeedPlan.effective shape r) r).runState t with
          | (.ok c, u) => (.ok c, { u with needs := u.needs.modify a (fun cell => { cell with callee := some c }) })
          | (.error e, u) => (.error e, u)) := by
   rw [calleeCell_unrecorded classify a s cell shape hc h hshape,
@@ -297,8 +445,8 @@ theorem calleeCell_canonical (classify : NeedPlan.CallShape → EvalM PlanRoute)
             by_cases hi : r = .intrinsic
             · rw [ite_eq_left hi] at h; cases h
             · rw [ite_eq_right hi] at h
-              have k2 := disciplined_supply (NeedPlan.effective shape r).callee shape.caller shape.values t1
-              generalize hsu : (supplyNeed (NeedPlan.effective shape r).callee shape.caller shape.values).runState t1 = su at h k2
+              have k2 := disciplined_supplyCallee (NeedPlan.effective shape r) r t1
+              generalize hsu : (NeedPlan.supplyCallee (NeedPlan.effective shape r) r).runState t1 = su at h k2
               rcases su with ⟨_ | c2, t2⟩
               · cases h
               · obtain ⟨c3, hc3, _⟩ := k2 a c1 hc1
@@ -335,18 +483,10 @@ theorem calleeCell_inert (classify : NeedPlan.CallShape → EvalM PlanRoute) (a 
           rw [calleeCell_intrinsic classify a s cell shape hc hcal hshape hr]
           exact HeapCore.refl _
         · rw [calleeCell_establishes classify a s cell shape r hc hcal hshape hr hi]
-          generalize hsrc : (NeedPlan.effective shape r).callee = src
-          cases hsup : (supplyNeed src shape.caller shape.values).runState s with
-          | mk o u =>
-            have hcore := supply_heap_core src shape.caller shape.values s
-            cases o with
-            | error e =>
-              show HeapCore s.needs u.needs
-              obtain ⟨r', hr'⟩ := supply_shape src shape.caller shape.values s
-              rcases hr' with hr' | ⟨hr', _⟩ <;> rw [hr'] at hsup <;> cases hsup
-            | ok c1 =>
-              show HeapCore s.needs (u.needs.modify a _)
-              exact (hcore c1 u hsup).1.trans (HeapCore.memo _ a _ (fun _ => ⟨rfl, rfl, rfl, rfl⟩))
+          obtain ⟨c1, u, hsup, hcore⟩ := supplyCallee_heap_core (NeedPlan.effective shape r) r s
+          rw [hsup]
+          show HeapCore s.needs (u.needs.modify a _)
+          exact hcore.trans (HeapCore.memo _ a _ (fun _ => ⟨rfl, rfl, rfl, rfl⟩))
 
 /-- **P6, parameter callee transport.** A plan whose route's callee is a PARAMETER bound to a
     supplied cell `p` has `p` itself as its callee cell — the parameter's existing cell (NEED-01),
@@ -362,8 +502,11 @@ theorem calleeCell_parameter_transport (classify : NeedPlan.CallShape → EvalM 
     (hfind : lookupAssoc name (activation.map ParameterActivation.needs |>.getD shape.caller.needEnv) = some p) :
     (NeedPlan.calleeCell classify a).runState s =
       (.ok p, { s with needs := s.needs.modify a (fun cell => { cell with callee := some p }) }) := by
-  rw [calleeCell_establishes classify a s cell shape r hc h hshape hr hi, hcallee,
+  rw [calleeCell_establishes classify a s cell shape r hc h hshape hr hi, supplyCallee_run,
+    effective_caller, effective_values, hcallee,
     KatLang.NeedControl.Allocation.supply_param_transports name shape.caller shape.values s activation p hact hfind]
+  dsimp only
+  rw [markLink_not_link _ r p s (by rw [hcallee]; rfl)]
 
 /-! ## CR-15 — the link's canonical receiver cell -/
 
@@ -379,12 +522,44 @@ theorem receiverCell_establishes (a : Nat) (s : EvalState) (cell : NeedCell)
     (hsusp : cell.suspension = .expression source caller values)
     (hlink : linkEdge? source = some (receiver, fallback)) :
     (NeedLink.receiverCell a).runState s =
-      (match (supplyNeed receiver caller values).runState s with
+      (match (NeedLink.supplyReceiver cell.invocation source receiver caller values).runState s with
        | (.ok r, t) => (.ok r, { t with needs := t.needs.modify a (fun cell => { cell with receiver := some r }) })
        | (.error e, t) => (.error e, t)) := by
   simp only [NeedLink.receiverCell, bind_run, get_run, hc, h, hsusp, hlink]
-  rcases (supplyNeed receiver caller values).runState s with ⟨o, t⟩
+  rcases (NeedLink.supplyReceiver cell.invocation source receiver caller values).runState s with ⟨o, t⟩
   cases o <;> rfl
+
+/-- A SUPPLIED link's first receiver observation is the pre-correction law: the receiver supplied
+    through the ONE supplier and recorded (`supplyReceiver_ordinary`). The same holds for every
+    link over a PARAMETER receiver. -/
+theorem receiverCell_establishes_ordinary (a : Nat) (s : EvalState) (cell : NeedCell)
+    (source receiver fallback : Expr) (caller : EvalCtx) (values : ValEnv)
+    (hc : s.needs[a]? = some cell) (h : cell.receiver = none)
+    (hsusp : cell.suspension = .expression source caller values)
+    (hlink : linkEdge? source = some (receiver, fallback))
+    (hk : NeedLink.keepsInvocationReceiver cell.invocation receiver = false) :
+    (NeedLink.receiverCell a).runState s =
+      (match (supplyNeed receiver caller values).runState s with
+       | (.ok r, t) => (.ok r, { t with needs := t.needs.modify a (fun cell => { cell with receiver := some r }) })
+       | (.error e, t) => (.error e, t)) := by
+  rw [receiverCell_establishes a s cell source receiver fallback caller values hc h hsusp hlink,
+    supplyReceiver_ordinary _ source receiver caller values hk]
+
+/-- **D-3, the planned `.Algorithm` invocation's receiver cell.** The first receiver observation
+    of an invocation link over a non-parameter receiver allocates ONE cell — the link's own edge,
+    marked `NeedInvocationRole.receiver` — records it, and evaluates nothing. -/
+theorem receiverCell_establishes_invocation (a : Nat) (s : EvalState) (cell : NeedCell)
+    (source receiver fallback : Expr) (caller : EvalCtx) (values : ValEnv)
+    (hc : s.needs[a]? = some cell) (h : cell.receiver = none)
+    (hsusp : cell.suspension = .expression source caller values)
+    (hlink : linkEdge? source = some (receiver, fallback))
+    (hk : NeedLink.keepsInvocationReceiver cell.invocation receiver = true) :
+    (NeedLink.receiverCell a).runState s =
+      (.ok s.needs.size,
+        { s with needs := (s.needs.push (invocationReceiverCell source caller values)).modify a
+                            (fun cell => { cell with receiver := some s.needs.size }) }) := by
+  rw [receiverCell_establishes a s cell source receiver fallback caller values hc h hsusp hlink,
+    supplyReceiver_invocation _ source receiver caller values s hk]
 
 /-- **CR-15, one receiver per link.** The link's receiver cell, once established, is the cell every
     later channel reads, and reading it changes nothing. -/
@@ -411,17 +586,14 @@ theorem receiverCell_canonical (a r : Nat) (s t : EvalState)
         | some pair =>
           obtain ⟨receiver, fallback⟩ := pair
           rw [receiverCell_establishes a s cell source receiver fallback caller values hc hrec hsusp hlink] at h
-          cases hsup : (supplyNeed receiver caller values).runState s with
-          | mk o u =>
-            rw [hsup] at h
-            cases o with
-            | error e => cases h
-            | ok r1 =>
-              cases h
-              have hkeep := (supply_heap_core _ _ _ s _ u hsup).2 a cell hc
-              apply receiverCell_recorded a r _ { cell with receiver := some r }
-              · simp [Array.getElem?_modify, hkeep]
-              · rfl
+          obtain ⟨r1, u, hsup, _, hkeepAll⟩ :=
+            supplyReceiver_heap_core cell.invocation source receiver caller values s
+          rw [hsup] at h
+          cases h
+          have hkeep := hkeepAll a cell hc
+          apply receiverCell_recorded a r _ { cell with receiver := some r }
+          · simp [Array.getElem?_modify, hkeep]
+          · rfl
       | ready v =>
         simp only [NeedLink.receiverCell, bind_run, get_run, hc, hrec, hsusp] at h
         cases h
@@ -452,17 +624,11 @@ theorem receiverCell_inert (a : Nat) (s : EvalState) :
         | some pair =>
           obtain ⟨receiver, fallback⟩ := pair
           rw [receiverCell_establishes a s cell source receiver fallback caller values hc hrec hsusp hlink]
-          cases hsup : (supplyNeed receiver caller values).runState s with
-          | mk o u =>
-            cases o with
-            | error e =>
-              show HeapCore s.needs u.needs
-              obtain ⟨r, hr⟩ := supply_shape receiver caller values s
-              rcases hr with hr | ⟨hr, _⟩ <;> rw [hr] at hsup <;> cases hsup
-            | ok r1 =>
-              show HeapCore s.needs (u.needs.modify a _)
-              exact (supply_heap_core _ _ _ s r1 u hsup).1.trans
-                (HeapCore.memo _ a _ (fun _ => ⟨rfl, rfl, rfl, rfl⟩))
+          obtain ⟨r1, u, hsup, hcore, _⟩ :=
+            supplyReceiver_heap_core cell.invocation source receiver caller values s
+          rw [hsup]
+          show HeapCore s.needs (u.needs.modify a _)
+          exact hcore.trans (HeapCore.memo _ a _ (fun _ => ⟨rfl, rfl, rfl, rfl⟩))
       | ready v =>
         simp only [NeedLink.receiverCell, bind_run, get_run, hc, hrec, hsusp]
         exact HeapCore.refl _

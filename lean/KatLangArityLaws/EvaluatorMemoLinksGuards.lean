@@ -102,8 +102,8 @@ def after : EvalState := (intervene.runState base).2
 -- The work was real: the heap grew and the crafted unprojected cell was published (a legitimate
 -- unprojected → projected transition), the suspended crafted cell's VALUE completed.
 #guard after.needs.size > base.needs.size
-#guard after.needs[n3]? matches some (NeedCell.mk _ _ (.projected (.ok none)) _ _ _ _)
-#guard after.needs[n4]? matches some (NeedCell.mk _ (.completed (.ok (.atom 15, 1))) _ _ _ _ _)
+#guard after.needs[n3]? matches some (NeedCell.mk _ _ (.projected (.ok none)) _ _ _ _ _)
+#guard after.needs[n4]? matches some (NeedCell.mk _ (.completed (.ok (.atom 15, 1))) _ _ _ _ _ _)
 -- The exact stored outcomes are reread by the production projection: identity `idA` (not `idB`),
 -- successful absence, the stored failure (not absence) — and the reread changes nothing.
 #guard match (projectNeedCallable n0).runState after with
@@ -129,7 +129,7 @@ def failing : EvalM Unit := do
 #guard match failing.runState base with
   | (.error (.withContext _ (.arityMismatch 1 0)), t) =>
     heapLinkKeptB base.needs t.needs && t.needs.size == base.needs.size + 1 &&
-    (t.needs[base.needs.size]? matches some (NeedCell.mk _ _ (.projected (.ok none)) _ _ _ _))
+    (t.needs[base.needs.size]? matches some (NeedCell.mk _ _ (.projected (.ok none)) _ _ _ _ _))
   | _ => false
 
 /-! ## 4 — established callee and receiver survive and are reused without establishment -/
@@ -252,7 +252,7 @@ theorem raw_callable_write_rejected : ¬ LinkDisc (rawPublish 0 (.ok none)) := b
 -- returns the stored failure (never absence) without running its callback, the accessors return
 -- the recorded addresses.
 #guard match (NeedProjection.step (fun _ => pure (some idB)) 0).runState recordedState with
-  | (.error .divByZero, t) => (t.needs[0]? matches some (NeedCell.mk _ _ (.projected (.error .divByZero)) _ _ (some 3) (some 4)))
+  | (.error .divByZero, t) => (t.needs[0]? matches some (NeedCell.mk _ _ (.projected (.error .divByZero)) _ _ (some 3) (some 4) _))
   | _ => false
 #guard match (NeedPlan.calleeCell (fun _ => throw .badArity) 0).runState recordedState with
   | (.ok 3, t) => t.needs.size == 1

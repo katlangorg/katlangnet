@@ -38,6 +38,11 @@ public class AlgorithmRouteDiagnosticNameTests
 
     private static readonly HostOperations Trace = HostOperations.Create(HostOperation.Create("trace", (args, _) => args[0], "x"));
 
+    // Async capability selects the async twins even when a receiver fails before any host call.
+    // A sync-only host set makes RunCountedObservedAsync fall back to the sync evaluator.
+    private static readonly HostOperations AsyncTrace = HostOperations.Create(
+        HostOperation.CreateAsync("trace", (args, _) => ValueTask.FromResult(args[0]), "x"));
+
     private static Expr Program(string row, HostOperations operations)
     {
         var parsed = Parser.Parse(Library + row, new RunOptions { HostOperations = operations });
@@ -48,7 +53,7 @@ public class AlgorithmRouteDiagnosticNameTests
     private static async Task<(EvalResult<Evaluator.CountedResult> Result, long Plans)> RunOn(string row, int mode)
     {
         var observations = new EvaluationObservations();
-        var operations = Trace;
+        var operations = mode == 2 ? AsyncTrace : Trace;
         var run = mode == 2
             ? await Evaluator.RunCountedObservedAsync(Program(row, operations), observations: observations, hostOperations: operations)
             : Evaluator.RunCountedObserved(Program(row, operations), enableOptimizations: mode == 1, observations: observations, hostOperations: operations);
@@ -123,10 +128,18 @@ public class AlgorithmRouteDiagnosticNameTests
             "while evaluating dotCall .Algorithm of Box5 @[15:1, 15:18) > NoMatchingBranch(Algorithm) @" },
         { "Id(Box5.Algorithm(1))", "NoMatchingBranch",
             "while evaluating call to Id @[15:4, 15:21) > while evaluating dotCall .Algorithm of Box5 @[15:4, 15:21) > NoMatchingBranch(Algorithm) @" },
-        //    An ordinary planned member call is named by its member name as well (outside META-S3-4-DIAG:
-        //    Lean's planned member route still names the path `Pack.F`, recorded in SEMANTIC-ALIGNMENT).
+        //    An ordinary member call is named by its member name, as the ordinary intrinsic row and as a plan
+        //    (Lean's planned member route named the path `Pack.F` until the E-18 member-route correction of
+        //    November 11 2026 aligned it: `NeedPlan.writtenDispatchName`). The GROUPED member callee is a
+        //    written call and keeps its path on both routes.
+        { "Pack.F(1)", "NoMatchingBranch",
+            "while evaluating dotCall .F of Pack @[15:1, 15:10) > NoMatchingBranch(F) @" },
         { "Id(Pack.F(1))", "NoMatchingBranch",
             "while evaluating call to Id @[15:4, 15:13) > while evaluating dotCall .F of Pack @[15:4, 15:13) > NoMatchingBranch(F) @" },
+        { "(Pack.F)(1)", "NoMatchingBranch",
+            "while evaluating call to Pack.F @[15:1, 15:12) > NoMatchingBranch(Pack.F) @" },
+        { "Id((Pack.F)(1))", "NoMatchingBranch",
+            "while evaluating call to Id @[15:4, 15:15) > while evaluating call to Pack.F @[15:4, 15:15) > NoMatchingBranch(Pack.F) @" },
         // 10. A nested reconstructed META invocation: `Op` captures `op.Algorithm(op.Arguments*)`, a plan on the
         //     `.Algorithm` route. Invoking it names the callee `op` captured, `F`; a further projection of it names
         //     the immediately captured plan's written callee `op.Algorithm`, never chased further.
@@ -165,6 +178,244 @@ public class AlgorithmRouteDiagnosticNameTests
             var (plan, plannedPlans) = await RunOn(planned, mode);
             Assert.Equal(plainPlans + 1, plannedPlans);
             Assert.Equal(InnermostName(plain.Error), InnermostName(plan.Error));
+        }
+    }
+
+    /// <summary>The planned member rows really run as invocation plans and name the member like the ordinary rows.</summary>
+    [Theory]
+    [InlineData("Pack.F(1)", "Id(Pack.F(1))", "F")]
+    [InlineData("Box5.Algorithm(1)", "Id(Box5.Algorithm(1))", "Algorithm")]
+    [InlineData("(Pack.F)(1)", "Id((Pack.F)(1))", "Pack.F")]
+    public async Task ThePlannedMemberCall_IsAPlan_AndNamesItsDispatchLikeTheOrdinaryForm(string ordinary, string planned, string name)
+    {
+        foreach (var mode in new[] { 0, 1, 2 })
+        {
+            var (plain, plainPlans) = await RunOn(ordinary, mode);
+            var (plan, plannedPlans) = await RunOn(planned, mode);
+            Assert.Equal(plainPlans + 1, plannedPlans);
+            Assert.Equal(name, InnermostName(plain.Error));
+            Assert.Equal(name, InnermostName(plan.Error));
+        }
+    }
+
+    // ── The receiver's own failure on the `.Algorithm` route (E-18, November 11 2026) ──────────────────
+
+    /// <summary>The context frames of a failure, then its payload — a missing output with its origin; no spans.</summary>
+    private static string Shape(EvalError error)
+    {
+        var frames = new List<string>();
+        while (error is EvalError.WithContext context)
+        {
+            frames.Add(context.Context);
+            error = context.Inner;
+        }
+        frames.Add(error is EvalError.MissingOutput missing
+            ? $"MissingOutput({(missing.IsNested ? "nested" : "own")})"
+            : error.GetType().Name);
+        return string.Join(" > ", frames);
+    }
+
+    /// <summary>
+    /// A receiver that fails BEFORE it yields a call reference — here one with no output — reports the same
+    /// failure whether <c>t.Algorithm(args)</c> runs as the ordinary intrinsic or as a retained invocation plan:
+    /// the plan's retained receiver cell keeps the ordinary invocation receiver evaluator
+    /// (<c>InvocationReceiverSuspension</c>, D-3), so the missing output is the intrinsic's NESTED receiver
+    /// failure on both routes, with no property frame of its own. Lean's planned route read the receiver as
+    /// an ordinary supplied VALUE (the receiver's OWN missing output under a property frame) until the E-18
+    /// receiver-read correction of November 11 2026 gave its plan the same retained invocation receiver cell
+    /// (<c>NeedInvocationRole</c>, <c>EvalBody.invocationReceiverValue</c>); the regression is
+    /// <c>PlanRouteBridgeGuards.algorithmReceiverFailureAgrees</c>.
+    /// </summary>
+    [Theory]
+    [InlineData("NoOut.Algorithm(0)", "Id(NoOut.Algorithm(0))", "while evaluating dotCall .Algorithm of NoOut")]
+    [InlineData("(NoOut.Algorithm)(0)", "Id((NoOut.Algorithm)(0))", "while evaluating call to NoOut.Algorithm")]
+    public async Task AReceiverWithoutOutput_FailsAlike_AsTheOrdinaryIntrinsicAndAsAPlan(string ordinary, string planned, string frame)
+    {
+        const string library = "NoOut = { V = 1 }\n";
+        foreach (var mode in new[] { 0, 1, 2 })
+        {
+            var (plain, plainPlans) = await RunOn(library + ordinary, mode);
+            var (plan, plannedPlans) = await RunOn(library + planned, mode);
+            Assert.True(plain.IsError && plan.IsError, $"{ordinary} mode {mode}: expected failures");
+            Assert.Equal(plainPlans + 1, plannedPlans);
+            Assert.Equal("MissingOutput", plain.Error.Code.ToString());
+            Assert.Equal("MissingOutput", plan.Error.Code.ToString());
+            Assert.Equal($"{frame} > MissingOutput(nested)", Shape(plain.Error));
+            Assert.Equal($"while evaluating call to Id > {frame} > MissingOutput(nested)", Shape(plan.Error));
+        }
+    }
+
+    // ── The planned route's receiver READ is the ordinary invocation receiver read (D-3) ───────────────
+    //
+    // E-18 receiver-read correction (November 11 2026): the cases Lean's planned `.Algorithm` route got wrong
+    // while its receiver cell was an ordinary supplied VALUE — a receiver without output, a member-path
+    // receiver, a nested `.Algorithm` receiver, a parameter receiver under a spread — and their neighbours.
+    // C# was the reference on every one of them; these tests pin that reference for the three engines, and
+    // `PlanRouteBridgeGuards` pins the same programs for Lean.
+
+    private const string ReceiverLibrary = """
+        NoOut = { V = 1 }
+        Lib = { Sub = { K = 3 } }
+        Inner = NoOut + 1
+        Al = NoOut
+        RA = R
+        Forced(a, b) = if(a > 0, b, b)
+        Ignore(meta op) = 0
+        Twice(meta op) = op.Invoke() + op.Invoke()
+        Both(meta op) = op.Algorithm(0) + op.Invoke()
+        Dup(x) = x + x
+        PO(r) = r.Algorithm(0)
+        PP(r) = Id(r.Algorithm(0))
+        PI(r) = Capture(r.Algorithm(0)).Invoke()
+        SO(r) = [r.Algorithm(0)*]
+        SJ(r) = [Id(r.Algorithm(0))*]
+        SI(r) = [Capture(r.Algorithm(0)).Invoke()*]
+        LinkOf(r) = Capture(r.Algorithm(0)).Algorithm(0)
+        PT(r) = Twice(r.Algorithm(0))
+
+        """;
+
+    private const string IdFrame = "while evaluating call to Id > ";
+    private const string InvokeFrame = "while evaluating dotCall .Invoke of Capture(...) > ";
+
+    /// <summary>An invocation whose RECEIVER read fails, and the ordinary intrinsic's failure shape.</summary>
+    public static TheoryData<string, string> ReceiverFailures => new()
+    {
+        // A receiver without output: the intrinsic's nested receiver failure, no property frame.
+        { "NoOut.Algorithm(0)", "while evaluating dotCall .Algorithm of NoOut > MissingOutput(nested)" },
+        { "(NoOut.Algorithm)(0)", "while evaluating call to NoOut.Algorithm > MissingOutput(nested)" },
+        // A member-path receiver: no frame of the path's own dot evaluation.
+        { "Lib.Sub.Algorithm(0)", "while evaluating dotCall .Algorithm of Lib.Sub > MissingOutput(nested)" },
+        { "{ V = 1 }.Algorithm(0)", "while evaluating dotCall .Algorithm of {...} > MissingOutput(nested)" },
+        // A missing output nested in the receiver's own evaluation keeps its frames.
+        { "Inner.Algorithm(0)", "while evaluating dotCall .Algorithm of Inner > while evaluating property NoOut > MissingOutput(nested)" },
+        { "Al.Algorithm(0)", "while evaluating dotCall .Algorithm of Al > while evaluating property NoOut > MissingOutput(nested)" },
+        // A receiver that is itself a written call is read as the ordinary call, never as a plan of its own.
+        { "Id(NoOut).Algorithm(0)", "while evaluating dotCall .Algorithm of Id(...) > while evaluating call to Id > while evaluating property NoOut > MissingOutput(nested)" },
+        // A nested reference failure: the receiver `R.Algorithm` is the intrinsic's bare VALUE read, with its
+        // own dot-call frame.
+        { "R.Algorithm.Algorithm(0)", "while evaluating dotCall .Algorithm of R.Algorithm > while evaluating dotCall .Algorithm of R > NoMatchingBranch" },
+        // A value receiver that is no call reference.
+        { "5.Algorithm(0)", "while evaluating dotCall .Algorithm of 5 > TypeMismatch" },
+    };
+
+    /// <summary>
+    /// The receiver's failure is the ordinary intrinsic's on every route: the top-level row (no plan), the
+    /// plan read through a parameter (<c>Id(row)</c>) and the plan executed afresh
+    /// (<c>Capture(row).Invoke()</c>) report the same context chain, payload and missing-output origin below
+    /// their own consumer frame — on the three engines.
+    /// </summary>
+    [Theory]
+    [MemberData(nameof(ReceiverFailures))]
+    public async Task AReceiverFailure_IsTheOrdinaryIntrinsicsFailure_AsAPlanReadAndAsAnInvocation(string row, string shape)
+    {
+        foreach (var mode in new[] { 0, 1, 2 })
+        {
+            var (plain, plainPlans) = await RunOn(ReceiverLibrary + row, mode);
+            var (read, readPlans) = await RunOn(ReceiverLibrary + $"Id({row})", mode);
+            var (invoked, invokedPlans) = await RunOn(ReceiverLibrary + $"Capture({row}).Invoke()", mode);
+            Assert.True(plain.IsError && read.IsError && invoked.IsError, $"{row} mode {mode}: expected failures");
+            Assert.Equal(plainPlans + 1, readPlans);
+            Assert.Equal(plainPlans + 1, invokedPlans);
+            Assert.Equal(shape, Shape(plain.Error));
+            Assert.Equal(IdFrame + shape, Shape(read.Error));
+            Assert.Equal(InvokeFrame + shape, Shape(invoked.Error));
+            Assert.Equal(plain.Error.Code, read.Error.Code);
+            Assert.Equal(plain.Error.Code, invoked.Error.Code);
+        }
+    }
+
+    /// <summary>
+    /// A spread distinguishes its operand's OWN missing output (<c>SpreadMissingOutput</c>) from a nested one.
+    /// The receiver's missing output is nested on every route, so the three consumers stay
+    /// <c>MissingOutput(nested)</c> under a spread.
+    /// </summary>
+    [Theory]
+    [InlineData("[NoOut.Algorithm(0)*]")]
+    [InlineData("[Id(NoOut.Algorithm(0))*]")]
+    [InlineData("[Capture(NoOut.Algorithm(0)).Invoke()*]")]
+    [InlineData("[Capture((NoOut.Algorithm)(0)).Invoke()*]")]
+    public async Task UnderASpread_TheReceiversMissingOutput_StaysNested_OnEveryRoute(string row)
+    {
+        foreach (var mode in new[] { 0, 1, 2 })
+        {
+            var (result, _) = await RunOn(ReceiverLibrary + row, mode);
+            Assert.True(result.IsError, $"{row} mode {mode}: expected a failure");
+            Assert.Equal("MissingOutput", result.Error.Code.ToString());
+            Assert.EndsWith(" > MissingOutput(nested)", Shape(result.Error), StringComparison.Ordinal);
+            Assert.DoesNotContain("property NoOut", Shape(result.Error), StringComparison.Ordinal);
+        }
+    }
+
+    /// <summary>
+    /// A PARAMETER receiver keeps its own cell (D-3), and the planned invocation still reads the WRITTEN
+    /// parameter through the ordinary invocation receiver evaluator: the ordinary row, the plan read through
+    /// a parameter, the plan invoked afresh, and each of them under a spread report the same receiver failure
+    /// — nested, with the frames the ordinary intrinsic gives it.
+    /// </summary>
+    [Theory]
+    [InlineData("NoOut", "while evaluating dotCall .Algorithm of r > while evaluating property NoOut > MissingOutput(nested)")]
+    [InlineData("{ V = 1 }", "while evaluating dotCall .Algorithm of r > while evaluating parameter r > MissingOutput(nested)")]
+    [InlineData("Lib.Sub", "while evaluating dotCall .Algorithm of r > while evaluating dotCall .Sub of Lib > MissingOutput(nested)")]
+    [InlineData("Inner", "while evaluating dotCall .Algorithm of r > while evaluating property NoOut > MissingOutput(nested)")]
+    public async Task AParameterReceiverFailure_IsTheOrdinaryIntrinsicsFailure_OnEveryRoute(string argument, string tail)
+    {
+        foreach (var mode in new[] { 0, 1, 2 })
+        {
+            foreach (var wrapper in new[] { "PO", "PP", "PI", "SO", "SJ", "SI" })
+            {
+                var (result, plans) = await RunOn(ReceiverLibrary + $"{wrapper}({argument})", mode);
+                Assert.True(result.IsError, $"{wrapper}({argument}) mode {mode}: expected a failure");
+                Assert.Equal("MissingOutput", result.Error.Code.ToString());
+                Assert.EndsWith(tail, Shape(result.Error), StringComparison.Ordinal);
+                Assert.Equal(wrapper is "PO" or "SO" ? 0 : 1, plans);
+            }
+        }
+    }
+
+    /// <summary>
+    /// The plan's CALLEE LINK observed through <c>.Algorithm</c> — not an execution of the plan — demands a
+    /// parameter receiver's transported cell (the link's own channel, D-3); the fresh call of the captured
+    /// callee succeeds over a forwarded call reference.
+    /// </summary>
+    [Theory]
+    [InlineData("LinkOf(NoOut)", false, "while evaluating call to LinkOf > while evaluating dotCall .Algorithm of Capture(...) > while evaluating property NoOut > MissingOutput(nested)")]
+    [InlineData("LinkOf(R)", true, "0")]
+    public async Task ThePlansCalleeLink_OverAParameterReceiver_ReadsTheTransportedCell(string row, bool succeeds, string expected)
+    {
+        foreach (var mode in new[] { 0, 1, 2 })
+        {
+            var (result, _) = await RunOn(ReceiverLibrary + row, mode);
+            Assert.Equal(succeeds, result.IsOk);
+            Assert.Equal(expected, succeeds ? InvocationRouteCorpus.Value(result.Value.Value) : Shape(result.Error));
+        }
+    }
+
+    /// <summary>
+    /// The receiver is read LAZILY and ONCE per plan (D-3). <c>Forced(tick(), R)</c> advances the run's
+    /// <c>tick()</c> counter each time it is evaluated, so the final <c>tick()</c> counts the receiver reads:
+    /// capture alone reads nothing; two <c>Invoke()</c>s, the plan's <c>.Algorithm</c> followed by an
+    /// <c>Invoke()</c>, and two reads of the plan's VALUE each read the receiver once; a PARAMETER receiver's
+    /// argument is evaluated once however often its plan executes (<c>PT</c>); two ordinary rows read it once
+    /// each. Successful invocations over an alias and over a forwarded parameter keep their values.
+    /// </summary>
+    [Theory]
+    [InlineData("Ignore(Forced(tick(), R).Algorithm(0)), tick()", "(0, 1)")]
+    [InlineData("Twice(Forced(tick(), R).Algorithm(0)), tick()", "(0, 2)")]
+    [InlineData("Both(Forced(tick(), R).Algorithm(0)), tick()", "(0, 2)")]
+    [InlineData("Dup(Forced(tick(), R).Algorithm(0)), tick()", "(0, 2)")]
+    [InlineData("Twice((Forced(tick(), R).Algorithm)(0)), tick()", "(0, 2)")]
+    [InlineData("PT(Forced(tick(), R)), tick()", "(0, 2)")]
+    [InlineData("Forced(tick(), R).Algorithm(0) + Forced(tick(), R).Algorithm(0), tick()", "(0, 3)")]
+    [InlineData("RA.Algorithm(0), Id(RA.Algorithm(0)), Capture(RA.Algorithm(0)).Invoke()", "(0, 0, 0)")]
+    [InlineData("PO(R), PP(R), PI(R), SO(R), SJ(R), SI(R)", "(0, 0, 0, [0], [0], [0])")]
+    public async Task TheRetainedReceiver_IsReadLazilyAndOncePerPlan_OnEveryEngine(string row, string expected)
+    {
+        foreach (var mode in new[] { 0, 1, 2 })
+        {
+            var (result, _) = await RunOn(ReceiverLibrary + row, mode);
+            Assert.True(result.IsOk, $"{row} mode {mode}: {(result.IsError ? Shape(result.Error) : "")}");
+            Assert.Equal(expected, InvocationRouteCorpus.Value(result.Value.Value));
         }
     }
 

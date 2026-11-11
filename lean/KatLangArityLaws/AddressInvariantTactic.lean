@@ -121,6 +121,9 @@ theorem CellV.with_callee {o : Option Nat} (ho : OptAddr h o) : CellV h { c with
   ⟨v.susp, v.state, v.plan, ho, v.receiver⟩
 theorem CellV.with_receiver {o : Option Nat} (ho : OptAddr h o) : CellV h { c with receiver := o } :=
   ⟨v.susp, v.state, v.plan, v.callee, ho⟩
+/-- D-3: the invocation role holds no address. -/
+theorem CellV.with_invocation (r : NeedInvocationRole) : CellV h { c with invocation := r } :=
+  ⟨v.susp, v.state, v.plan, v.callee, v.receiver⟩
 end CellUpd
 
 theorem ExcV.of_eq {α : Type} {Q : α → Array NeedCell → Prop} {r : Except Error α} {x : α}
@@ -368,7 +371,8 @@ macro "ht_cell_upd" : tactic => `(tactic| first
   | (apply CellV.with_callee)
   | (apply CellV.with_receiver)
   | (apply CellV.with_callable)
-  | (apply CellV.with_route))
+  | (apply CellV.with_route)
+  | (apply CellV.with_invocation))
 
 /-- The conclusion of a goal after all its binders. -/
 def htConclusion (ty : Lean.Expr) : Lean.Expr :=

@@ -19,6 +19,7 @@ writes is valid in the CURRENT heap (heap growth makes every earlier address val
 | `NeedPlan.routeOf`'s `setRoute` | `inv_modify`, `routeOf_spec` |
 | `NeedPlan.calleeCell`'s `setCallee` | `inv_modify`, `calleeCell_spec` |
 | `NeedLink.receiverCell`'s `setReceiver` | `inv_modify`, `receiverCell_spec` |
+| `NeedPlan.setInvocation` (D-3: `supplyCallee`'s link mark, `supplyReceiver`'s receiver mark; the role holds no address) | `inv_modify`, `calleeCell_spec`, `receiverCell_spec` |
 | `aliasBindingCellRecorded` (`aliasCells`) | `aliasBindingCellRecorded_spec` |
 | `recordParameterActivation` | `inv_activation`, `record_spec` |
 | property-cache publication | `inv_cache_insert`, used by `AddressInvariantBodies` |

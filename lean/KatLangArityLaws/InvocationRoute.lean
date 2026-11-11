@@ -52,8 +52,12 @@ Proved here over those definitions (the general plan laws are in `InvocationPlan
 * **Distinct plans, shared cells** — two written invocations are two plans
   (`written_invocations_distinct`); a rebuilt `op.Algorithm(op.Arguments*)` prepares the ORIGINAL
   argument cells of `op` (`ArgumentViewLaws.view_spread_slot`, restated as `rebuilt_supply_slot`).
-* **Dispatch names** (META-S3-4-DIAG, October 20 2026) — every route but `.Algorithm` keeps its
-  effective written callee (`dispatchName_ordinary`); the `.Algorithm` route names the CAPTURED
+* **Dispatch names** (META-S3-4-DIAG, October 20 2026; E-18 member-route correction, November 11
+  2026) — every route but `.Algorithm` names its WRITTEN dispatch (`dispatchName_written`,
+  `NeedPlan.writtenDispatchName`): a MEMBER call `t.N(args)` the member `N`, exactly as ordinary dot
+  evaluation names it (`dispatchName_member`), every other form its effective written callee
+  (`dispatchName_ordinary`: a written call's callee, an extension's fallback); the `.Algorithm`
+  route names the CAPTURED
   plan's callee (`dispatchName_algorithm`), which is exactly the ordinary intrinsic's `calleeName`
   (`planned_name_is_ordinary_name`); the name is a pure heap read (`dispatchName_inert`), and the
   correction changes nothing but the string dispatch receives (`executeAlong_changes_only_the_name`).
@@ -409,17 +413,38 @@ A plan's execution names its dispatch by `NeedPlan.dispatchName`, a pure read of
 with `R = Capture(F(0))` reported `noMatchingBranch "R.Algorithm"` while the ordinary intrinsic
 (`algorithmOfValue` / `algorithmCalleeOf`) and C# report `"F"`. -/
 
-/-- **Ordinary routes keep their names.** Every route but `.Algorithm` names its dispatch exactly as
-    before: its effective written callee — the call's callee, the argumentless member path, an
-    extension's fallback. -/
-theorem dispatchName_ordinary (needs : Array NeedCell) (a : Nat) (eff : NeedPlan.CallShape)
+/-- **Written routes are named by the written form alone.** Every route but `.Algorithm` names its
+    dispatch by `NeedPlan.writtenDispatchName`, which reads no heap. -/
+theorem dispatchName_written (needs : Array NeedCell) (a : Nat) (eff : NeedPlan.CallShape)
     (r : PlanRoute) (h : r ≠ .algorithm) :
-    NeedPlan.dispatchNameIn needs a eff r = openExprName eff.callee := by
+    NeedPlan.dispatchNameIn needs a eff r = NeedPlan.writtenDispatchName eff r := by
   cases r <;> first | rfl | exact absurd rfl h
 
+/-- **A member call is named by its member** (E-18 member-route correction, November 11 2026): the
+    `.call` route of a dot edge `t.N(args)` names its dispatch `N`, the name ordinary dot evaluation
+    passes for the same member call (`evalDotCallCounted`'s member arm) — never the argumentless
+    path `openExprName (t.N)` the plan's callee cell is written as. -/
+theorem dispatchName_member (needs : Array NeedCell) (a : Nat) (eff : NeedPlan.CallShape)
+    (t : Expr) (N : Ident) (fb : Expr) (h : eff.form = .dot t N fb) :
+    NeedPlan.dispatchNameIn needs a eff .call = N := by
+  simp [NeedPlan.dispatchNameIn, NeedPlan.writtenDispatchName, h]
+
+/-- **Every other written route keeps its effective written callee**: a written call's callee (its
+    member path included, `(Box.G)(2)`), an extension's fallback — every route but `.Algorithm`
+    except the member call of a dot edge (`dispatchName_member`). Before the E-18 member-route
+    correction this held for the member call as well. -/
+theorem dispatchName_ordinary (needs : Array NeedCell) (a : Nat) (eff : NeedPlan.CallShape)
+    (r : PlanRoute) (h : r ≠ .algorithm) (hm : r = .call → eff.form = .call) :
+    NeedPlan.dispatchNameIn needs a eff r = openExprName eff.callee := by
+  cases r with
+  | algorithm => exact absurd rfl h
+  | call => simp [NeedPlan.dispatchNameIn, NeedPlan.writtenDispatchName, hm rfl]
+  | extension => rfl
+  | intrinsic => rfl
+
 /-- **The `.Algorithm` route names the captured plan's callee.** When plan `a`'s callee cell is a
-    link whose recorded receiver completed with the call reference of plan `p` — the state
-    `NeedLink.callable` leaves behind once the callee phase obtained the link's CALLABLE — the
+    link whose recorded receiver completed with the call reference of plan `p` — the state the
+    planned callee read (or the link's CALLABLE projection) leaves after the receiver demand — the
     dispatch is named by `p`'s own callee name (`calleeNameIn?`: its route's effective callee). -/
 theorem dispatchName_algorithm (needs : Array NeedCell) (a l rc p k : Nat) (eff : NeedPlan.CallShape)
     (c cl cr : NeedCell) (n : String)
@@ -430,7 +455,7 @@ theorem dispatchName_algorithm (needs : Array NeedCell) (a l rc p k : Nat) (eff 
     NeedPlan.dispatchNameIn needs a eff .algorithm = n := by
   have hlink : NeedPlan.linkedPlanIn? needs l = some p := by
     unfold NeedPlan.linkedPlanIn?
-    rcases cl with ⟨_, _, _, _, _, _, receiver⟩
+    rcases cl with ⟨_, _, _, _, _, _, receiver, _⟩
     rcases cr with ⟨_, state, _, _, _, _, _⟩
     simp only at hrc hst
     subst hrc hst

@@ -116,11 +116,24 @@ theorem classifySpec_with {resolve : Expr → EvalCtx → EvalM (Option Algorith
   intro shape
   unfold classifyPlanRouteWith; ht_tac
 
+/-- D-3 (E-18 receiver-read correction): the planned `.Algorithm` invocation's callee read — the
+    production route's `project` — keeps the address invariant over any valid link address: the
+    link's receiver cell, the receiver VALUE (the retained cell's, or the invocation receiver read of
+    a parameter receiver in the link's own — valid — caller context), the decoded plan's callee cell
+    and its CALLABLE. -/
+theorem plannedLinkCallableSpec_rec (hrec : RecSound rec) :
+    ProjectSpec (EvalBody.plannedLinkCallable rec) := by
+  intro link
+  have hclassify : ClassifySpec (classifyPlanRouteWith rec.resolveDotReceiver? rec.algorithmIntrinsicRoute) :=
+    classifySpec_with (ctxSpec_dotReceiver hrec) (ctxSpec_intrinsicRoute hrec)
+  unfold EvalBody.plannedLinkCallable EvalBody.plannedReceiverValue EvalBody.invocationReceiverValue
+  ht_tac
+
 theorem routeSpec_rec (hrec : RecSound rec) : RouteSpec rec.planRoute :=
   ⟨fun e ctx => hrec (.resolveCalleeAlg e ctx), fun a ctx => hrec (.needPlanNormalizeCallee a ctx),
    fun origin callee cells ctx env name => hrec (.evalSuppliedCallCounted origin callee cells ctx env name),
    spreadSpec_rec hrec, classifySpec_with (ctxSpec_dotReceiver hrec) (ctxSpec_intrinsicRoute hrec),
-   projectSpec_rec hrec⟩
+   plannedLinkCallableSpec_rec hrec⟩
 
 theorem classifySpec_rec (hrec : RecSound rec) : ClassifySpec rec.planRoute.classify :=
   (routeSpec_rec hrec).classify

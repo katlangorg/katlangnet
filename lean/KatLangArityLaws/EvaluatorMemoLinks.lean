@@ -228,6 +228,35 @@ theorem linkDisc_mapM {α β : Type} (f : α → EvalM β) (hf : ∀ x, LinkDisc
 theorem link_modify (f : EvalState → EvalState) (h : ∀ s : EvalState, LinkHeapKept s.needs (f s).needs) :
     LinkDisc (modify f : EvalM Unit) := fun s => h s
 
+/-! ## D-3: the invocation-role writes of a planned `.Algorithm` invocation's callee read
+
+`NeedPlan.setInvocation` writes only the `invocation` field — none of the three FG-M1 fields — so
+the two suppliers of the E-18 receiver-read correction keep every entry fact. -/
+
+theorem linkDisc_setInvocation (c : Nat) (role : NeedInvocationRole) :
+    LinkDisc (NeedPlan.setInvocation c role) :=
+  link_modify _ (fun s => LinkHeapKept.modify _ c _ (fun _ _ => linkKept_of_same _ _ rfl rfl rfl))
+
+theorem linkDisc_markCalleeLink (eff : NeedPlan.CallShape) (r : PlanRoute) (c : Nat) :
+    LinkDisc (NeedPlan.markCalleeLink eff r c) := by
+  unfold NeedPlan.markCalleeLink
+  split
+  · exact linkDisc_setInvocation c .link
+  · exact linkDisc_pure _
+
+theorem linkDisc_supplyCallee (eff : NeedPlan.CallShape) (r : PlanRoute) :
+    LinkDisc (NeedPlan.supplyCallee eff r) :=
+  LinkDisc.bind (linkDisc_supply _ _ _) (fun c =>
+    LinkDisc.bind (linkDisc_markCalleeLink eff r c) (fun _ => linkDisc_pure _))
+
+theorem linkDisc_supplyReceiver (role : NeedInvocationRole) (source receiver : Expr) (caller : EvalCtx)
+    (values : ValEnv) : LinkDisc (NeedLink.supplyReceiver role source receiver caller values) := by
+  unfold NeedLink.supplyReceiver
+  split
+  · exact LinkDisc.bind (linkDisc_allocate _) (fun r =>
+      LinkDisc.bind (linkDisc_setInvocation r .receiver) (fun _ => linkDisc_pure _))
+  · exact linkDisc_supply _ _ _
+
 /-! ## Reads followed by writes (entry-anchored) -/
 
 def LinkAt {α : Type} (st : EvalState) (m : EvalM α) : Prop := LinkHeapKept st.needs (m.runState st).2.needs
@@ -426,8 +455,8 @@ theorem linkDisc_calleeCell (classify : NeedPlan.CallShape → EvalM PlanRoute)
         · dsimp only
           split
           · exact k1
-          · have k2 := linkDisc_supply (NeedPlan.effective shape r).callee shape.caller shape.values t
-            rcases hsu : (supplyNeed (NeedPlan.effective shape r).callee shape.caller shape.values).runState t
+          · have k2 := linkDisc_supplyCallee (NeedPlan.effective shape r) r t
+            rcases hsu : (NeedPlan.supplyCallee (NeedPlan.effective shape r) r).runState t
               with ⟨_ | x, u⟩ <;> rw [hsu] at k2
             · exact k1.trans k2
             · exact LinkHeapKept.modify_anchor (k1.trans k2) a _ (fun c0 c1 h0 kk => by
@@ -458,8 +487,9 @@ theorem linkDisc_receiverCell (a : Nat) : LinkDisc (NeedLink.receiverCell a) := 
         | some p =>
           rcases p with ⟨receiver, fallback⟩
           rw [receiverCell_establishes a s cell source receiver fallback caller values hc hrec hsusp hl]
-          have k := linkDisc_supply receiver caller values s
-          rcases hsu : (supplyNeed receiver caller values).runState s with ⟨_ | x, u⟩ <;> rw [hsu] at k
+          have k := linkDisc_supplyReceiver cell.invocation source receiver caller values s
+          rcases hsu : (NeedLink.supplyReceiver cell.invocation source receiver caller values).runState s
+            with ⟨_ | x, u⟩ <;> rw [hsu] at k
           · exact k
           · exact LinkHeapKept.modify_anchor k a _ (fun c0 c1 h0 kk => by
               rw [hc] at h0; cases h0
@@ -1283,6 +1313,12 @@ theorem EvalBody.algorithmCalleeOf_linkDisc (rec : EvalRec) (hrec : ∀ c, LinkD
     LinkDisc (EvalBody.algorithmCalleeOf rec receiver ctx env) := by
   unfold EvalBody.algorithmCalleeOf; link_tac
 
+/-- D-3 (E-18 receiver-read correction): the planned `.Algorithm` invocation's callee read — the
+    production route's `project` — keeps the FG-M1 entry facts. -/
+theorem EvalBody.plannedLinkCallable_linkDisc (rec : EvalRec) (hrec : ∀ c, LinkDisc (rec c)) (link : Nat) :
+    LinkDisc (EvalBody.plannedLinkCallable rec link) := by
+  unfold EvalBody.plannedLinkCallable; link_tac
+
 theorem EvalBody.evalSuppliedCallCounted_linkDisc (rec : EvalRec) (hrec : ∀ c, LinkDisc (rec c)) (origin : CalleeOrigin) (callee : Algorithm) (cells : List NeedSupply.Sourced) (ctx : EvalCtx) (env : ValEnv) (calleeName : String) :
     LinkDisc (EvalBody.evalSuppliedCallCounted rec origin callee cells ctx env calleeName) := by
   unfold EvalBody.evalSuppliedCallCounted; link_tac
@@ -1950,7 +1986,7 @@ theorem demandNeed_linkDisc (a : Nat) : LinkDisc (demandNeed a) := by
   · exact fun g c => evalUnbounded_linkDisc (.needPlanNormalizeCallee g c)
   · exact fun o g cells c v n => evalUnbounded_linkDisc (.evalSuppliedCallCounted o g cells c v n)
   · exact classify_linkDisc
-  · exact fun b => evalUnbounded_linkDisc (.projectNeedCallable b)
+  · exact fun b => EvalBody.plannedLinkCallable_linkDisc evalUnbounded evalUnbounded_linkDisc b
   · exact fun b => evalUnbounded_linkDisc (.demandNeedRecursive b)
 
 end KatLang.MemoLinks

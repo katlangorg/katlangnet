@@ -548,12 +548,30 @@ end Helpers
 
 /-! ### The production records over an evaluator answer -/
 
+/-- The invocation receiver read (D-3): the helper `algorithmCalleeOf`, `evalSuppliedAt` and
+    `plannedLinkCallable` share. -/
+theorem EvalBody.invocationReceiverValue_mono (receiver : Expr) (ctx : EvalCtx) (env : ValEnv) :
+    monotone (fun rec : EvalRec => EvalBody.invocationReceiverValue rec receiver ctx env) := by
+  unfold EvalBody.invocationReceiverValue; mono_tac
+
+/-- The receiver VALUE a planned `.Algorithm` invocation reads. -/
+theorem EvalBody.plannedReceiverValue_mono (link : NeedCell) (cell : Nat) :
+    monotone (fun rec : EvalRec => EvalBody.plannedReceiverValue rec link cell) := by
+  have := EvalBody.invocationReceiverValue_mono
+  unfold EvalBody.plannedReceiverValue; mono_tac
+
+/-- The planned `.Algorithm` invocation's callee read: the production route's `project`. -/
+theorem EvalBody.plannedLinkCallable_mono (link : Nat) :
+    monotone (fun rec : EvalRec => EvalBody.plannedLinkCallable rec link) := by
+  have := EvalBody.plannedReceiverValue_mono
+  unfold EvalBody.plannedLinkCallable; mono_tac
+
 theorem planRoute_mono {γ : Type} [PartialOrder γ] (recOf : γ → EvalRec) (h : monotone recOf) :
     RouteMono (fun x => (recOf x).planRoute) :=
   ⟨fun _ _ hxy _ _ => h _ _ hxy _, fun _ _ hxy _ _ => h _ _ hxy _,
    fun _ _ hxy _ _ _ _ _ _ => h _ _ hxy _, fun _ _ hxy _ _ _ => h _ _ hxy _,
    monotone_classifyPlanRouteWith _ (fun _ _ hxy _ _ => h _ _ hxy _) _ (fun _ _ hxy _ _ => h _ _ hxy _),
-   fun _ _ hxy _ => h _ _ hxy _⟩
+   fun _ _ hxy link => EvalBody.plannedLinkCallable_mono link _ _ (h _ _ hxy)⟩
 
 theorem planRoute_classify_mono : monotone (fun rec : EvalRec => rec.planRoute.classify) :=
   (planRoute_mono (fun rec : EvalRec => rec) (fun _ _ h => h)).classify
@@ -762,7 +780,7 @@ theorem EvalBody.demandNeedRecursive_mono (address : Nat) :
 
 theorem EvalBody.evalSuppliedAt_mono (address : Nat) (e : Expr) (ctx : EvalCtx) (env : ValEnv) :
     monotone (fun rec : EvalRec => EvalBody.evalSuppliedAt rec address e ctx env) := by
-  unfold EvalBody.evalSuppliedAt; mono_tac
+  have := EvalBody.invocationReceiverValue_mono; unfold EvalBody.evalSuppliedAt; mono_tac
 
 theorem EvalBody.linkValue_mono (address : Nat) :
     monotone (fun rec : EvalRec => EvalBody.linkValue rec address) := by
@@ -782,7 +800,8 @@ theorem EvalBody.referenceReceiverValue_mono (target : Expr) (targetAlg : Algori
 
 theorem EvalBody.algorithmCalleeOf_mono (receiver : Expr) (ctx : EvalCtx) (env : ValEnv) :
     monotone (fun rec : EvalRec => EvalBody.algorithmCalleeOf rec receiver ctx env) := by
-  have := planRoute_classify_mono; unfold EvalBody.algorithmCalleeOf; mono_tac
+  have := planRoute_classify_mono; have := EvalBody.invocationReceiverValue_mono
+  unfold EvalBody.algorithmCalleeOf; mono_tac
 
 -- CACHE-PUB-1: the origin-binding helpers the dispatch calls with the evaluator answer.
 theorem EvalBody.publicationBinding?_mono (owner : Algorithm) (binding : PropDef) (wired : Algorithm) (ctx : EvalCtx) :

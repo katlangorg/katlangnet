@@ -783,6 +783,19 @@ theorem EvalBody.algorithmCalleeOf_disciplined (rec : EvalRec) (hrec : ∀ c, Di
     Disciplined (EvalBody.algorithmCalleeOf rec receiver ctx env) := by
   unfold EvalBody.algorithmCalleeOf; disc_tac
 
+/-- D-3 (E-18 receiver-read correction): the invocation receiver read — shared by
+    `algorithmCalleeOf`, `evalSuppliedAt` and `plannedLinkCallable` — is disciplined. -/
+theorem EvalBody.invocationReceiverValue_disciplined (rec : EvalRec) (hrec : ∀ c, Disciplined (rec c)) (receiver : Expr) (ctx : EvalCtx) (env : ValEnv) :
+    Disciplined (EvalBody.invocationReceiverValue rec receiver ctx env) := by
+  unfold EvalBody.invocationReceiverValue; disc_tac
+
+/-- D-3: the planned `.Algorithm` invocation's callee read — the production route's `project` —
+    is disciplined: the link's receiver cell (an allocation and two records), the receiver VALUE,
+    the decoded plan's callee cell and its CALLABLE memo. -/
+theorem EvalBody.plannedLinkCallable_disciplined (rec : EvalRec) (hrec : ∀ c, Disciplined (rec c)) (link : Nat) :
+    Disciplined (EvalBody.plannedLinkCallable rec link) := by
+  unfold EvalBody.plannedLinkCallable; disc_tac
+
 theorem EvalBody.evalSuppliedCallCounted_disciplined (rec : EvalRec) (hrec : ∀ c, Disciplined (rec c)) (origin : CalleeOrigin) (callee : Algorithm) (cells : List NeedSupply.Sourced) (ctx : EvalCtx) (env : ValEnv) (calleeName : String) :
     Disciplined (EvalBody.evalSuppliedCallCounted rec origin callee cells ctx env calleeName) := by
   unfold EvalBody.evalSuppliedCallCounted; disc_tac
@@ -1282,7 +1295,7 @@ theorem productionDiscipline_holds : ProductionDiscipline :=
    fun b => evalUnbounded_disciplined (.demandNeedRecursive b),
    fun e c v => evalUnbounded_disciplined (.evalSupplySpread e c v),
    classify_disciplined,
-   fun b => evalUnbounded_disciplined (.projectNeedCallable b)⟩
+   fun b => EvalBody.plannedLinkCallable_disciplined evalUnbounded evalUnbounded_disciplined b⟩
 
 /-- The production VALUE demand is disciplined, now without any hypothesis. -/
 theorem production_value_disciplined' (a : Nat) : Disciplined (demandNeed a) :=

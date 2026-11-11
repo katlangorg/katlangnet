@@ -42,7 +42,9 @@ behavior matters, the assumption is a STRUCTURAL contract, never the conclusion:
 Not claimed here: the production bridge is R7's (`EvaluatorCore.lean`, the total core; there is
 no `partial` evaluator left), `ProductionDiscipline` is discharged in `EvaluatorDiscipline.lean`,
 and that the ordinary call is `ordinaryCall` is now a theorem for the call and extension routes on
-completed runs (`PlanConservativity.ordinaryCall_is_written_call`, `written_call_is_evalCallCountedExpr`).
+completed runs (`PlanConservativity.ordinaryCall_is_written_call_named`, `ordinaryCall_is_written_call`,
+`written_call_is_evalCallCountedExpr`; against dot evaluation `PlanRouteBridge.member_bridge` and
+`ordinaryCall_extension_is_dot_call`; the `.Algorithm` route stays unbridged, ledger E-18).
 That the recursive edge installs `productionPlanRoute` is `rfl` (`production_demand`,
 `EvaluatorCore.productionPlanRoute_is_core`). C# concurrency, cancellation, terminality and resource
 accounting are not modelled.
@@ -525,6 +527,23 @@ theorem keep_withCallee (s : EvalState) (a c : Nat) :
 theorem disciplined_setCallee (a c : Nat) : Disciplined (NeedPlan.setCallee a c) := by
   intro s; rw [setCallee_run]; exact keep_withCallee s a c
 
+/-- The invocation-role write of `NeedPlan.setInvocation` (D-3), as a state function. -/
+def withInvocation (c : Nat) (role : NeedInvocationRole) (s : EvalState) : EvalState :=
+  { s with needs := s.needs.modify c (fun cell => { cell with invocation := role }) }
+
+theorem setInvocation_run (c : Nat) (role : NeedInvocationRole) (s : EvalState) :
+    (NeedPlan.setInvocation c role).runState s = (.ok (), withInvocation c role s) := rfl
+
+/-- An invocation-role record keeps every cell: it writes neither suspension, VALUE, supply nor
+    route. -/
+theorem keep_withInvocation (s : EvalState) (c : Nat) (role : NeedInvocationRole) :
+    HeapKept s.needs (withInvocation c role s).needs :=
+  HeapKept.modify _ c _ (fun _ _ => ⟨rfl, fun _ h => h, fun _ h => h, fun _ h => h⟩)
+
+theorem disciplined_setInvocation (c : Nat) (role : NeedInvocationRole) :
+    Disciplined (NeedPlan.setInvocation c role) := by
+  intro s; rw [setInvocation_run]; exact keep_withInvocation s c role
+
 /-! ## The plan's ROUTE (META-S3-4): one record, written by the first classification -/
 
 theorem routeOf_invalid (classify : NeedPlan.CallShape → EvalM PlanRoute) (a : Nat)
@@ -594,16 +613,30 @@ theorem disciplined_routeOf (classify : NeedPlan.CallShape → EvalM PlanRoute)
       · exact k
       · exact k.trans (keep_recordRoute a r t)
 
+/-- The callee supplier is disciplined: at most one supplied cell (`supplyNeed`) and, on the
+    `.Algorithm` route, the invocation-link mark of that cell (D-3). -/
+theorem disciplined_markCalleeLink (eff : NeedPlan.CallShape) (r : PlanRoute) (c : Nat) :
+    Disciplined (NeedPlan.markCalleeLink eff r c) := by
+  unfold NeedPlan.markCalleeLink
+  split
+  · exact disciplined_setInvocation c .link
+  · exact disciplined_pure _
+
+theorem disciplined_supplyCallee (eff : NeedPlan.CallShape) (r : PlanRoute) :
+    Disciplined (NeedPlan.supplyCallee eff r) :=
+  Disciplined.bind (disciplined_supply _ _ _) (fun c =>
+    Disciplined.bind (disciplined_markCalleeLink eff r c) (fun _ => disciplined_pure _))
+
 /-- **The callee cell's establishment is disciplined**: the route (its classifier's discipline), at
-    most one supplied cell (`supplyNeed`) and the callee record. -/
+    most one supplied cell (`supplyCallee` over `supplyNeed`) and the callee record. -/
 theorem disciplined_calleeCell (classify : NeedPlan.CallShape → EvalM PlanRoute)
     (hclassify : ∀ shape, Disciplined (classify shape)) (a : Nat) :
     Disciplined (NeedPlan.calleeCell classify a) := by
-  have hjoin : ∀ (eff : NeedPlan.CallShape), Disciplined (do
-      let c ← supplyNeed eff.callee eff.caller eff.values
+  have hjoin : ∀ (eff : NeedPlan.CallShape) (r : PlanRoute), Disciplined (do
+      let c ← NeedPlan.supplyCallee eff r
       NeedPlan.setCallee a c
-      pure c : EvalM Nat) := fun eff =>
-    Disciplined.bind (disciplined_supply _ _ _) (fun c =>
+      pure c : EvalM Nat) := fun eff r =>
+    Disciplined.bind (disciplined_supplyCallee eff r) (fun c =>
       Disciplined.bind (disciplined_setCallee a c) (fun _ => disciplined_pure _))
   unfold NeedPlan.calleeCell
   refine Disciplined.bind disciplined_get (fun st => ?_)
@@ -618,8 +651,8 @@ theorem disciplined_calleeCell (classify : NeedPlan.CallShape → EvalM PlanRout
         refine Disciplined.bind (disciplined_routeOf classify hclassify a shape) (fun r => ?_)
         dsimp only
         split
-        next => exact Disciplined.bind (disciplined_throw _) (fun _ => hjoin _)
-        next => exact hjoin _
+        next => exact Disciplined.bind (disciplined_throw _) (fun _ => hjoin _ _)
+        next => exact hjoin _ _
   next => exact disciplined_throw _
 
 theorem disciplined_calleeAlong (route : NeedPlan.Route)
@@ -1099,7 +1132,7 @@ theorem production_demand (a : Nat) :
 
 theorem production_route :
     productionPlanRoute = ⟨resolveCalleeAlg, NeedPlan.normalizeCallee, evalSuppliedCallCounted, evalSupplySpread,
-      classifyPlanRouteWith resolveDotReceiver? algorithmIntrinsicRoute, projectNeedCallable⟩ := rfl
+      classifyPlanRouteWith resolveDotReceiver? algorithmIntrinsicRoute, plannedLinkCallable⟩ := rfl
 
 theorem production_reify (a : Nat) : reifyNeedCall a = NeedPlan.reify a := rfl
 
@@ -1223,7 +1256,9 @@ theorem production_value_executes_plan (a : Nat) (s : EvalState) (cell : NeedCel
     `prepare` and `step` proved disciplined here. It was stated as an explicit hypothesis while the
     evaluator was `partial` (before R7, whose total core Lean can unfold); it stays a named `Prop` so
     `productionDiscipline_holds` can discharge it, and `InvocationPlanGuards` still exercises it.
-    META-S3-4 adds the route classifier and the CALLABLE projection the plan route installs. -/
+    META-S3-4 adds the route classifier and the callee read the plan route installs
+    (`plannedLinkCallable`, D-3: the planned `.Algorithm` invocation's read of its callee link —
+    until the E-18 receiver-read correction of November 11 2026 the generic `projectNeedCallable`). -/
 def ProductionDiscipline : Prop :=
   (∀ a e c v, Disciplined (evalSuppliedAt a e c v)) ∧
   (∀ f c, Disciplined (resolveCalleeAlg f c)) ∧
@@ -1232,7 +1267,7 @@ def ProductionDiscipline : Prop :=
   (∀ b, Disciplined (demandNeedRecursive b)) ∧
   (∀ e c v, Disciplined (evalSupplySpread e c v)) ∧
   (∀ shape, Disciplined (classifyPlanRouteWith resolveDotReceiver? algorithmIntrinsicRoute shape)) ∧
-  (∀ b, Disciplined (projectNeedCallable b))
+  (∀ b, Disciplined (plannedLinkCallable b))
 
 theorem production_value_disciplined (hp : ProductionDiscipline) (a : Nat) :
     Disciplined (demandNeed a) :=
@@ -1410,9 +1445,23 @@ def Oblivious {α : Type} (a : Nat) (m : EvalM α) : Prop :=
     same dispatch `productionPlanRoute` installs) over the route's callee and effective bundle
     (META-S3-4: an extension is the call `F(t, args)`, `effective`). The correspondence with the
     total production definitions is proved for call and extension routes on completed runs in
-    `PlanConservativity.ordinaryCall_is_written_call`; the bridge to `evalCallCountedExpr` additionally
-    excludes an `X.Algorithm` callee. The `.Algorithm` route and the bridge to dot-member evaluation
-    remain open (ledger E-18). `InvocationPlanGuards.agrees` and `InvocationRouteGuards` give finite
+    `PlanConservativity.ordinaryCall_is_written_call_named` (named by the route's own dispatch name,
+    `NeedPlan.writtenDispatchName`: the member for a member call `t.N(args)`) and
+    `ordinaryCall_is_written_call` (off the member call, named by the written callee); the bridge to
+    `evalCallCountedExpr` additionally excludes an `X.Algorithm` callee. `PlanRouteBridge` adds the
+    route bridges to ordinary DOT evaluation (ledger E-18): the extension-dot equality, and — since
+    the E-18 member-route correction of November 11 2026 aligned the planned member dispatch name —
+    the member-dot equality `member_bridge` (one run from one entry state; a plain first argument
+    over a member-selecting receiver whose parameter head, if any, has a structure-normal supplied
+    CALLABLE, `member_bridge_inert` for every bundle over a state-inert
+    receiver). The `.Algorithm` route has only a plan-side decomposition. Its receiver READ is the
+    ordinary intrinsic's since the E-18 receiver-read correction of November 11 2026
+    (`receiver_cell_reads_invocation_receiver`, `invocationReceiverValue_eq`,
+    `algorithm_callee_is_planned_callee`; `algorithmReceiverFailureAgrees` is the regression of the
+    former outcome difference), but `algorithmHeapDiffers` refutes exact final-state equality — the
+    plan allocates its link and receiver cells — so an outcome bridge needs an address-renaming
+    simulation and step 1 remains incomplete there.
+    `InvocationPlanGuards.agrees`, `InvocationRouteGuards` and `PlanRouteBridgeGuards` give finite
     executable evidence. -/
 def ordinaryCall (route : NeedPlan.Route) (a : Nat)
     (shape : NeedPlan.CallShape) (r : PlanRoute) : EvalM CountedResult := do

@@ -540,8 +540,8 @@ theorem noncollector_parameter (name : Ident) (caller : EvalCtx) (s : EvalState)
 
 theorem source_expression_any_state (e : Expr) (ctx : EvalCtx) (env : ValEnv)
     (status : NeedState) (callable : NeedCallableState) (plan : NeedPlanSupply) (route : Option PlanRoute)
-    (callee receiver : Option Nat) (s : EvalState) (a : Nat)
-    (h : s.needs[a]? = some ⟨.expression e ctx env, status, callable, plan, route, callee, receiver⟩) :
+    (callee receiver : Option Nat) (invocation : NeedInvocationRole) (s : EvalState) (a : Nat)
+    (h : s.needs[a]? = some ⟨.expression e ctx env, status, callable, plan, route, callee, receiver, invocation⟩) :
     (needWrittenSource? a).runState s = (.ok (some e), s) := by
   rw [source_run]
   simp only [sourceAt, h]

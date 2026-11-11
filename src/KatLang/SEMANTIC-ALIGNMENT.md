@@ -1505,18 +1505,58 @@ callee cell, argument view and loop setup are route-aware; an intrinsic route is
 the structured refusal `NotAnAlgorithm "meta: not a callable invocation"` (Lean `NeedPlan.invocationRefusal`)
 for every route-dependent reference operation. The C# `.Algorithm`-route receiver cell
 (`InvocationReceiverSuspension`) reads through `EvalAlgorithmReceiver`, which keeps the ordinary
-checkpoint accounting (C#-only; Lean has no checkpoint counter). For a transported parameter receiver, each planned ordinary invocation also takes `EvalAlgorithmReceiver[Async]`: its ordinary value-receiver checkpoint and parameter error provenance, while retaining the original parameter cell. Lean's `ProductionDiscipline` gained
-the classifier and `projectNeedCallable` conjuncts (proved, `EvaluatorDiscipline.classify_disciplined`),
-and `CellKept` a route-stickiness field. The `.Algorithm` route's dispatch names the fresh call by the
+checkpoint accounting (C#-only; Lean has no checkpoint counter). That C# cell also keeps the ordinary
+intrinsic's receiver FAILURE, and since the E-18 RECEIVER-READ CORRECTION (2026-11-11; a Lean-only change to
+`KatLang.lean`, C# unchanged) so does Lean's: the plan's `.Algorithm`-route callee link is marked
+(`NeedInvocationRole.link`, written by `NeedPlan.supplyCallee`; C# `LinkSuspension.InvocationReceiver`), its ONE
+receiver cell for a non-parameter receiver is marked `NeedInvocationRole.receiver` over the link's own edge
+(`NeedLink.supplyReceiver`; C# `InvocationReceiverSuspension`) and evaluated by the ordinary invocation receiver
+read (`EvalBody.invocationReceiverValue`, the ONE definition `algorithmCalleeOf` also runs, installed by
+`EvalBody.evalSuppliedAt`; C# `EvalInvocationReceiver` → `EvalAlgorithmReceiver`), and the planned execution's
+callee read is `EvalBody.plannedLinkCallable`, the production route's `project` (C# `ProjectPlannedAlgorithmCallee`):
+it demands that retained cell, decodes it and projects the captured plan's callee cell. A SUPPLIED `X.Algorithm`
+link keeps its ordinarily supplied receiver in both engines. For a transported parameter receiver, each planned
+ordinary invocation takes the same read of the WRITTEN parameter (C# `EvalAlgorithmReceiver[Async]`: its ordinary
+value-receiver checkpoint and parameter error provenance; Lean `EvalBody.plannedReceiverValue`), while retaining the
+original parameter cell as the link's receiver. *History:* until the correction Lean's plan read the receiver as its
+link's receiver cell, an ordinary supplied VALUE (`supplyNeed`, read by `evalCounted`), and its callee was the
+generic CALLABLE projection of the link (`projectNeedCallable`). For a receiver without output (`Empty = { }`) Lean's
+PLANNED `Id(Empty.Algorithm(0))` reported `… > while evaluating dotCall .Algorithm of Empty > while evaluating
+property Empty > missing output` (at the plan itself the property's OWN missing output, which an invoked plan under
+a spread turned into `spreadMissingOutput`); a member-path receiver (`Lib.Sub.Algorithm(0)`) gained its own dot frame,
+a nested `R.Algorithm.Algorithm(0)` lost the receiver's dot frame, and a parameter receiver kept its transported
+cell's own origin — where the ordinary intrinsic in both engines and C#'s planned route report the receiver read's
+NESTED missing output with the intrinsic's frames (Lean `referenceReceiverValue`, Q-36). Laws:
+`AlgorithmProjection.lean` (`supplyCallee_run`, `supplyReceiver_invocation`, `receiverCell_establishes_invocation` /
+`_ordinary`; the canonical and inert laws restated over the two suppliers), `PlanRouteBridge.lean`
+(`invocationReceiverValue_eq`, `receiver_cell_reads_invocation_receiver`, `link_cell_keeps_its_evaluator`,
+`plannedReceiverValue_param` / `_cell`, `algorithm_callee_is_planned_callee`); guards `PlanRouteBridgeGuards`
+(`algorithmReceiverFailureAgrees` — the regression of the former witness `algorithmReceiverFailureDiffers` —
+`receiverCellAt`, `receiverMemoAt`, `paramReceiverAt`, the three-consumer and `tick()`-counted whole programs) and
+`InvocationRouteGuards` (the D-3 heap guard); C# `AlgorithmRouteDiagnosticNameTests`
+(`AReceiverWithoutOutput_FailsAlike_AsTheOrdinaryIntrinsicAndAsAPlan`,
+`AReceiverFailure_IsTheOrdinaryIntrinsicsFailure_AsAPlanReadAndAsAnInvocation`,
+`UnderASpread_TheReceiversMissingOutput_StaysNested_OnEveryRoute`,
+`AParameterReceiverFailure_IsTheOrdinaryIntrinsicsFailure_OnEveryRoute`,
+`TheRetainedReceiver_IsReadLazilyAndOncePerPlan_OnEveryEngine`). The outcome BRIDGE between the plan's `.Algorithm`
+route and the ordinary intrinsic is still not a theorem (ledger E-18, PC-1 below). Lean's `ProductionDiscipline` gained
+the classifier and the plan route's callee-read conjuncts (`plannedLinkCallable` since the receiver-read correction,
+`projectNeedCallable` before; proved, `EvaluatorDiscipline.classify_disciplined`,
+`EvalBody.plannedLinkCallable_disciplined`), and `CellKept` a route-stickiness field. The `.Algorithm` route's dispatch names the fresh call by the
 CAPTURED plan's callee in both engines (Lean `NeedPlan.dispatchName` / `dispatchNameIn`, the decoded plan's
 `calleeNameIn?` — the ordinary intrinsic's `calleeName`; C# `PlanCalleeName(captured)`): `Id(R.Algorithm(1))`
 with `R = Capture(F(0))` is `NoMatchingBranch "F"`, as the unplanned `R.Algorithm(1)` is. *History:* until
 META-S3-4-DIAG (2026-10-20) Lean named it by the reconstructed invocation's written callee (`openExprName`,
 `"R.Algorithm"`); laws `InvocationRoute.lean` (`dispatchName_algorithm`, `planned_name_is_ordinary_name`,
 `dispatchName_inert`, `executeAlong_changes_only_the_name`), guards `InvocationRouteGuards` § G, C#
-`InvocationRoute/AlgorithmRouteDiagnosticNameTests`. Still different, found then and out of that scope: a
-PLANNED member route names its dispatch by the argumentless member path in Lean (`Id(Box.F(1))`:
-`"Box.F"`) and by the member name in C# (`"F"`, as both engines' unplanned member call). The META refusal's C# rendering
+`InvocationRoute/AlgorithmRouteDiagnosticNameTests`. The member route was aligned on 2026-11-11
+(E-18 member-route correction; a Lean-only change, `NeedPlan.writtenDispatchName` in `KatLang.lean`, C# unchanged):
+a PLANNED member call `Id(Box.F(1))` names its dispatch by the MEMBER (`"F"`) in both engines, as both engines'
+unplanned member call does — until then Lean named it by the argumentless member path (`"Box.F"`). The name reaches
+only `noMatchingBranch`; it selects, binds and publishes nothing. The grouped member callee `(Box.F)(1)` is a
+written call and keeps its path on both routes in both engines. Laws `dispatchName_written`, `dispatchName_member`,
+`dispatchName_ordinary`; guards `InvocationRouteGuards` § G and `PlanRouteBridgeGuards.memberNameAgrees`; C#
+`AlgorithmRouteDiagnosticNameTests.ThePlannedMemberCall_IsAPlan_AndNamesItsDispatchLikeTheOrdinaryForm`. The META refusal's C# rendering
 names the new domain. Laws `KatLangArityLaws/InvocationRoute.lean`, guards `InvocationRouteGuards.lean`;
 C# `InvocationRoute/InvocationRouteCorpusTests`, `InvocationRouteTests`; report
 `experimental/features/meta-s3-4-implementation.md` (local). C#-only: J7, async route resolution,
@@ -3547,7 +3587,7 @@ whole-system G6 oracle, W14u, served regions and the projections below them, sam
 ownership-and-lookup.md` § Signature selection; design: `docs/design/static-structure-resolver-2026-10.md` § 10.
 NEED-04, repeated-name matching and `Same(x, x)` are untouched. V3.
 
-- **PC-1 — plan conservativity over reachable states (2026-11-09).** Lean proofs and guards only, NO language change, no change to `KatLang.lean` or C#. `lean/KatLangArityLaws/PlanConservativity.lean` adds the relativized callback contract `ObliviousOn P a`, invariant preservation `Keeps P`, the conditional simulation `fresh_plan_is_ordinary_call_on`, and two-run transfer through the total fuel core to production (`BodyKeeps`, `BodyObliviousOn`, `oblivious_fuel`, `oblivious_production`). Formation is conditional on its spread contracts and `PushClosed P`; the production instance also requires `PlanCalls Q` and `P` at entry, the structural fresh-cell/route premises and, for VALUE, completion. No non-trivial production invariant is discharged. Independently, the production ordinary-call bridge is proved for call and extension routes on completed runs (`ordinaryCall_is_written_call`, `resolved_call_is_production`, `written_call_is_evalCallCountedExpr`, the last excluding an `X.Algorithm` callee). The `.Algorithm` route and the bridge to dot-member evaluation remain open.
+- **PC-1 — plan conservativity over reachable states (2026-11-09).** Lean proofs and guards only, NO language change, no change to `KatLang.lean` or C#. `lean/KatLangArityLaws/PlanConservativity.lean` adds the relativized callback contract `ObliviousOn P a`, invariant preservation `Keeps P`, the conditional simulation `fresh_plan_is_ordinary_call_on`, and two-run transfer through the total fuel core to production (`BodyKeeps`, `BodyObliviousOn`, `oblivious_fuel`, `oblivious_production`). Formation is conditional on its spread contracts and `PushClosed P`; the production instance also requires `PlanCalls Q` and `P` at entry, the structural fresh-cell/route premises and, for VALUE, completion. No non-trivial production invariant is discharged. Independently, the production ordinary-call bridge is proved for call and extension routes on completed runs (`ordinaryCall_is_written_call`, `resolved_call_is_production`, `written_call_is_evalCallCountedExpr`, the last excluding an `X.Algorithm` callee). Route results were added on 2026-11-11 (`PlanRouteBridge.lean`, guards `PlanRouteBridgeGuards.lean`) and corrected the same day by the E-18 correction task, which made ONE `KatLang.lean` change — the planned member dispatch name (`NeedPlan.writtenDispatchName`, the META-S3-4-DIAG note above) — and no C# change. The extension ordinary call equals production dot evaluation under E-17's receiver/route premises. The MEMBER ordinary call equals the re-counted production dot evaluation `t.N(args)` as one run from one entry state (`member_bridge`: a plain first argument; receivers a name, an inline block, a member path, or a parameter whose supplied CALLABLE is structure-normal; `member_bridge_inert`: every bundle over a state-inert receiver), completion assumed of the production dot evaluation only; `ordinaryCall_is_written_call` gained the premise that the route is no member call of a dot edge, and `ordinaryCall_is_written_call_named` states every call and extension route with the route's own dispatch name. Remaining on the member route: empty or spread-first bundles over receivers whose navigation is not state-inert (references, runtime-target aliases, opened names, parameters), where the plan's written origin navigates the receiver a second time. The `.Algorithm` route's receiver-read difference the correction task found (`algorithmReceiverFailureDiffers`) was CORRECTED the same day by the E-18 receiver-read correction task — a second `KatLang.lean` change, to the plan's `.Algorithm` receiver read (`NeedInvocationRole`, `EvalBody.invocationReceiverValue`, `EvalBody.plannedLinkCallable`; recorded with META-S3-4 above), and no C# change. The plan's callee phase is now `NeedPlan.calleeCell` followed by the planned callee read (`algorithm_callee_is_planned_callee`, an `EvalM` equation), whose receiver VALUE is the retained cell's — whose evaluator IS the production invocation receiver read on completed runs (`receiver_cell_reads_invocation_receiver`), itself the identity probe followed by the dot intrinsic's own read (`invocationReceiverValue_eq`) — or, for a parameter receiver, that read of the written parameter (`plannedReceiverValue_param`), and whose tail (`decodeCallRef`, the decoded plan's callee cell, `capturedCallee`) is the direct intrinsic's. `ordinaryCall_algorithm_is_production` still only equates the plan-side operations with proof-local `algorithmPlanCall`. The two routes now AGREE on every guarded outcome (`algorithmReceiverFailureAgrees`, the regression of the former witness; receivers without output, member paths, nested links, calls, values, aliases and parameters; finite evidence), but an outcome THEOREM is still missing: exact final-state equality stays false (`algorithmHeapDiffers`: the plan allocates its link and receiver cells and records its callee), so it needs an address-renaming simulation of the evaluator and the stability of the receiver's identity resolution — which the retained cell performs once more — across the plan's extra cells. Step 1 remains incomplete on the `.Algorithm` route (no bridge theorem) and on the member-route class above; finite outcome guards are not a replacement for them.
 
   NEGATIVE RESULT: being `evaluating`, even with no stored `callRef a` / `argView a`, does not suffice. `PlanConservativityGuards.lean` builds a reachable META program that observes its own plan indirectly through its capturer's argument view: `R = Capture(Wrap(Inner((Capture(R.Arguments*).Invoke())*)))` with `first(R.Arguments)` has a cycle under 3 vs 5 context frames on the planned and ordinary routes; the whole program reaches the planned outcome. A second example reads its own argument view and gives the same value 6 with an extra ordinary-route heap cell. `obligations_fail_at` refutes the per-body obligations for any allocation-closed invariant containing an outcome counterexample, but the reference-exclusion predicates do not satisfy allocation closure. These examples do not refute conservativity for a plan that remains unobserved throughout execution.
 
