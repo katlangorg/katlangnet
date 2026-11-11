@@ -2056,6 +2056,39 @@ public class AstStructuralDepthProcessTests
         // bytes per level, so completing here means no native recursion follows the record graph.
         RunOnThreadWithStack(1_048_576, () => DeepRecordGraphs.AssertAll(DeepRecordGraphs.Depth));
 
+        // The one record outside the AST with a record-valued field of its own kind: an error
+        // context frame's inner error. 200,000 host-built frames overflowed the same routes (a
+        // run's own chains are bounded by its depth limit). Same child: one more native record
+        // equality, not one more process.
+        RunOnThreadWithStack(1_048_576, EvalErrorRecordEqualityTests.AssertDeepEqualityAndHashing);
+
+        WriteProbeMarker();
+    }
+
+    [Fact]
+    public async Task DeepHostRecords_NativeTextAndErrorMessages_AreStackSafe_InSubprocess()
+        => await RunProbeChild(nameof(NativeRecordTextAndErrorMessages_ProbeChild));
+
+    [Fact]
+    public void NativeRecordTextAndErrorMessages_ProbeChild()
+    {
+        if (Environment.GetEnvironmentVariable(ProbeChildEnvironment) != "1")
+            return;
+
+        // Compiler-generated record text recursed once per record-valued member it printed. Its
+        // own stack guard turned that into an InsufficientExecutionStackException long before
+        // 50,000 levels, so completing here on the documented minimum 1 MiB thread stack means
+        // the text of an expression chain, a scope chain and an error's context frames is written
+        // without native recursion.
+        RunOnThreadWithStack(1_048_576, NativeRecordTextTests.AssertDeepText);
+        RunOnThreadWithStack(1_048_576, NativeRecordTextTests.AssertReentrantHostFormatting);
+
+        // The other text of a context chain: the message KatLangError.FromEvalError reports. Its
+        // formatter made one native call per frame with no guard, so 200,000 host-built frames
+        // had about five bytes of this stack each. Same child: one more text of a deep host-built
+        // record, not one more process.
+        RunOnThreadWithStack(1_048_576, KatLangErrorChainFormattingTests.AssertDeepChains);
+
         WriteProbeMarker();
     }
 

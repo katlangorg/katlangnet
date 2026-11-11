@@ -174,7 +174,7 @@ public class KatLangErrorTotalityTests
     }
 
     /// <summary>Every public sealed variant of <typeparamref name="T"/>, built with every candidate combination.</summary>
-    private static List<T> BuildAll<T>(params Type[] excluded)
+    internal static List<T> BuildAll<T>(params Type[] excluded)
     {
         var built = new List<T>();
         var variants = typeof(T).Assembly.GetExportedTypes()

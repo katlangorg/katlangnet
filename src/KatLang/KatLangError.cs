@@ -337,29 +337,90 @@ public sealed class KatLangError
             + (others > 0 ? $" and {others} more." : ".");
     }
 
-    private static string FormatEvalError(EvalError error, Func<string, string>? renderFragment = null)
+    /// <summary>
+    /// The message of <paramref name="error"/>: a tailored message when the error has one of the
+    /// recognized shapes (<see cref="TryFormatRecognizedShape"/>), otherwise
+    /// <c>{context}: {message of the inner error}</c> for a context frame and the variant's own
+    /// message for every other error (<see cref="FormatUnframedEvalError"/>).
+    ///
+    /// <para>STACK-SAFE AND LINEAR. That definition is a recursion on the inner error, and it was
+    /// written as one: a native call per context frame, the text joined again at every level, and
+    /// three recognizers that search the whole remaining chain asked again at every level. A run's
+    /// own chains are bounded by its depth limit, but a host can build a longer one (this is the
+    /// formatter behind the public <see cref="FromEvalError"/>). The loop below produces the same
+    /// text — the same fragments, rendered in the same order — in one builder. The chain-searching
+    /// recognizers are asked ONCE, for the outermost error: each matches a chain exactly when some
+    /// frame of it has the shape, so one that found nothing in the whole chain finds nothing in
+    /// any inner part of it, and asking again below could never change the answer.</para>
+    /// </summary>
+    internal static string FormatEvalError(EvalError error, Func<string, string>? renderFragment = null)
     {
-        if (TryFormatDotCallUnknownName(error, out var formattedDotCallError))
-            return RenderFragment(formattedDotCallError, renderFragment);
-        if (TryFormatLocalOnlyProperty(error, out var formattedLocalOnlyProperty))
-            return RenderFragment(formattedLocalOnlyProperty, renderFragment);
-        if (TryFormatMissingOutput(error, out var formattedMissingOutput, renderFragment))
-            return formattedMissingOutput;
-        if (TryFormatLoopStateArityMismatch(error, out var formattedLoopStateArityMismatch))
-            return RenderFragment(formattedLoopStateArityMismatch, renderFragment);
-        if (TryFormatDeconstructionBindingMismatch(error, out var formattedDeconstructionMismatch))
-            return RenderFragment(formattedDeconstructionMismatch, renderFragment);
-        if (TryFormatStructuralPatternBindingMismatch(error, out var formattedStructuralPatternMismatch))
-            return RenderFragment(formattedStructuralPatternMismatch, renderFragment);
-        if (TryFormatArityMismatch(error, out var formattedArityMismatch))
-            return RenderFragment(formattedArityMismatch, renderFragment);
-        if (TryFormatUnresolvedImplicitParams(error, out var formattedImplicitParams))
-            return RenderFragment(formattedImplicitParams, renderFragment);
-        if (TryFormatReduceInitialAccumulator(error, out var formattedReduceInitialAccumulator))
-            return RenderFragment(formattedReduceInitialAccumulator, renderFragment);
-        if (TryFormatComputedDotCallee(error, out var formattedComputedDotCallee))
-            return RenderFragment(formattedComputedDotCallee, renderFragment);
+        if (TryFormatRecognizedShape(error, renderFragment, searchChain: true, out var recognized))
+            return recognized;
+        if (error is not EvalError.WithContext frame)
+            return FormatUnframedEvalError(error, renderFragment);
 
+        var builder = new System.Text.StringBuilder();
+        while (true)
+        {
+            builder.Append(RenderFragment(frame.Context, renderFragment)).Append(": ");
+            var inner = frame.Inner;
+            if (TryFormatRecognizedShape(inner, renderFragment, searchChain: false, out recognized))
+                return builder.Append(recognized).ToString();
+            if (inner is not EvalError.WithContext next)
+                return builder.Append(FormatUnframedEvalError(inner, renderFragment)).ToString();
+
+            frame = next;
+        }
+    }
+
+    /// <summary>
+    /// The shapes with a tailored message, tried in ONE fixed order: an error, or a context frame
+    /// around a particular inner error, that reads better as one sentence than as
+    /// <c>{context}: {inner message}</c>. Most look at the error and its inner error only. Three
+    /// search every frame of the chain (an assignment-deconstruction, a structural-pattern and a
+    /// reduce-accumulator frame may sit below ordinary call and property frames) and are tried only
+    /// when <paramref name="searchChain"/> is set; <see cref="FormatEvalError"/> sets it for the
+    /// outermost error alone. The order is the order the formatter always tried them in, and a
+    /// test restates the former per-frame recursion over this method to hold the loop to it.
+    /// </summary>
+    internal static bool TryFormatRecognizedShape(
+        EvalError error, Func<string, string>? renderFragment, bool searchChain, out string message)
+    {
+        // The missing-output messages are two lines, rendered fragment by fragment by their own
+        // builders; every other tailored message is one fragment, rendered here.
+        if (TryFormatDotCallUnknownName(error, out var fragment)
+            || TryFormatLocalOnlyProperty(error, out fragment))
+        {
+            message = RenderFragment(fragment, renderFragment);
+            return true;
+        }
+
+        if (TryFormatMissingOutput(error, out message, renderFragment))
+            return true;
+
+        if (TryFormatLoopStateArityMismatch(error, out fragment)
+            || (searchChain && TryFormatDeconstructionBindingMismatch(error, out fragment))
+            || (searchChain && TryFormatStructuralPatternBindingMismatch(error, out fragment))
+            || TryFormatArityMismatch(error, out fragment)
+            || TryFormatUnresolvedImplicitParams(error, out fragment)
+            || (searchChain && TryFormatReduceInitialAccumulator(error, out fragment))
+            || TryFormatComputedDotCallee(error, out fragment))
+        {
+            message = RenderFragment(fragment, renderFragment);
+            return true;
+        }
+
+        message = string.Empty;
+        return false;
+    }
+
+    /// <summary>
+    /// The own message of an error that is not a context frame (a frame is written by
+    /// <see cref="FormatEvalError"/>, which never passes one).
+    /// </summary>
+    internal static string FormatUnframedEvalError(EvalError error, Func<string, string>? renderFragment)
+    {
         string Text(string text) => RenderFragment(text, renderFragment);
 
         // Compiler-exhaustive over the closed EvalError hierarchy: a new variant
@@ -426,7 +487,9 @@ public sealed class KatLangError
                 + "KatLang ASTs must be acyclic: shared subtrees are allowed, but no node may reach itself through its own children",
             EvalError.ModuleRegionMaterializationFailed e => FormatModuleRegionMaterializationFailed(e, renderFragment),
             EvalError.ObservationPending => throw EvalError.ObservationPending.Escaped(),
-            EvalError.WithContext e => $"{Text(e.Context)}: {FormatEvalError(e.Inner, renderFragment)}",
+            // Written by FormatEvalError's loop; named here so that every future variant still
+            // requires a message above.
+            EvalError.WithContext => throw new System.Diagnostics.UnreachableException(),
         };
     }
 

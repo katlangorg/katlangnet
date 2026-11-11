@@ -1105,10 +1105,11 @@ public class NativeRecordEqualityTests(ITestOutputHelper output)
     }
 
     [Theory]
-    [InlineData(0)]
-    [InlineData(1)]
-    [InlineData(128)]
-    public void SharedLeafRecords_AreComparedAndHashedOncePerOperation(int depth)
+    [InlineData(0, false)]
+    [InlineData(1, false)]
+    [InlineData(128, false)]
+    [InlineData(0, true)]
+    public void SharedLeafRecords_AreComparedAndHashedOncePerOperation(int depth, bool wrapSingleChild)
     {
         // NativeCall's argument-name list is a shallow, reference-compared field. A shared leaf
         // must be memoized just like a recursive node, including a leaf read before the first
@@ -1121,7 +1122,7 @@ public class NativeRecordEqualityTests(ITestOutputHelper output)
             Expr graph = new Expr.Binary(BinaryOp.Add, leaf, leaf);
             for (var level = 0; level < depth; level++)
                 graph = new Expr.Binary(BinaryOp.Add, leaf, graph);
-            return graph;
+            return wrapSingleChild ? new Expr.Unary(UnaryOp.Minus, graph) : graph;
         }
 
         var left = Graph();
@@ -1302,13 +1303,13 @@ public class NativeRecordEqualityTests(ITestOutputHelper output)
     [Fact]
     public void SmallExpressions_AllocateNothingOrLittle()
     {
-        // Coarse bounds only (a strict zero would need a GC-isolated child): a record whose record
-        // children are leaves is compared and hashed without any traversal state; a small tree
-        // allocates an explicit stack and a memo per operation (about 5 KB for one comparison plus
-        // one hash of the 19 nested records below, measured November 2026).
+        // Coarse bounds only (a strict zero would need a GC-isolated child). Leaf-only children
+        // and a one-child root over the same shape need no traversal state. The mixed tree
+        // exercises the ordinary stack and memo.
         const int rounds = 2000;
         var bundle = new OutputBundle([new Expr.Num(1)]);
         Expr Flat() => new Expr.Binary(BinaryOp.Add, new Expr.Resolve("a"), new Expr.Num(2));
+        Expr Nested() => new Expr.Unary(UnaryOp.Minus, Flat());
         Expr Small()
         {
             Expr expr = new Expr.Call(new Expr.Resolve("F"), bundle);
@@ -1332,9 +1333,11 @@ public class NativeRecordEqualityTests(ITestOutputHelper output)
         }
 
         var flat = Measure(flatLeft, flatRight);
+        var nested = Measure(Nested(), Nested());
         var small = Measure(smallLeft, smallRight);
-        output.WriteLine($"equality + hash, {rounds} rounds: flat {flat} bytes ({flat / (double)rounds:0.0} per round), 19-record tree {small} bytes ({small / (double)rounds:0.0} per round)");
+        output.WriteLine($"equality + hash, {rounds} rounds: flat {flat} bytes, nested {nested} bytes, mixed {small} bytes");
         Assert.True(flat < 64 * 1024, $"a record over leaf children allocated {flat} bytes in {rounds} rounds");
+        Assert.True(nested < 64 * 1024, $"a one-child root over leaf-only children allocated {nested} bytes in {rounds} rounds");
         Assert.True(small < rounds * 8192L, $"a small tree allocated {small} bytes in {rounds} rounds");
     }
 }

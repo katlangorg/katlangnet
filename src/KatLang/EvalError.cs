@@ -1,3 +1,6 @@
+using System.Runtime.CompilerServices;
+using System.Text;
+
 namespace KatLang;
 
 /// <summary>
@@ -89,7 +92,7 @@ public closed record EvalError
     /// absorbs it (a demanded cell keeps it as its terminal completion and the run budget
     /// retains it), so nothing is evaluated after it and a successful run never reached one.
     /// </summary>
-    public bool IsResourceLimit => this switch
+    public bool IsResourceLimit => UnwrapContext() switch
     {
         EvaluationDepthExceeded
             or AstDepthLimitExceeded
@@ -100,9 +103,23 @@ public closed record EvalError
             or StringSizeLimitExceeded
             or StringMaterializationLimitExceeded
             or DisplayLengthLimitExceeded => true,
-        WithContext(_, var inner) => inner.IsResourceLimit,
+        // A host-built frame around a null inner error: the failure this property always had
+        // there, when it read the inner error's own classification.
+        null => throw new NullReferenceException(),
         _ => false,
     };
+
+    /// <summary>
+    /// The error below every <see cref="WithContext"/> frame, found without recursion: a host may
+    /// build a chain deeper than any stack. Null only for a host-built frame whose inner error is null.
+    /// </summary>
+    private EvalError UnwrapContext()
+    {
+        var terminal = this;
+        while (terminal is WithContext frame)
+            terminal = frame.Inner;
+        return terminal;
+    }
 
     /// <summary>
     /// Stable machine-readable classification of this error's semantic family —
@@ -124,13 +141,9 @@ public closed record EvalError
     {
         get
         {
-            var terminal = this;
-            while (terminal is WithContext withContext)
-                terminal = withContext.Inner;
-
-            return terminal switch
+            return UnwrapContext() switch
             {
-                // The loop has eliminated this variant; name it explicitly so
+                // Unwrapping has eliminated this variant; name it explicitly so
                 // every future terminal variant still requires a mapping below.
                 WithContext => throw new System.Diagnostics.UnreachableException(),
                 UnknownName => KatLangErrorCode.UnknownName,
@@ -602,6 +615,101 @@ public closed record EvalError
         {
             errorContext = ErrorContext;
             inner = Inner;
+        }
+
+        // ── Native record members without recursion on Inner ────────────────────────────────
+        // Synthesized record equality, hashing and text follow Inner once per frame on the caller's
+        // stack, and a host may build a chain deeper than any stack (a run's own chains are bounded
+        // by its depth limit). The three members below are the synthesized ones written as loops:
+        // the same fields through the same default comparers in the same order, the same hash
+        // value and the same text. A frame has ONE inner error, so the chain is a list — no shared
+        // paths to memoize, unlike the AST records of RecordGraphEquality. Only reflection can make
+        // a frame its own inner error; such a chain has no answer here (formerly a stack overflow).
+
+        /// <summary>Record equality, as synthesized, without recursion on <see cref="Inner"/>.</summary>
+        public bool Equals(WithContext? other)
+        {
+            var left = this;
+            var right = other;
+            while (!ReferenceEquals(left, right))
+            {
+                if (right is null || !left.FrameEquals(right))
+                    return false;
+
+                // The default comparer over the two inner errors: it calls this member again only
+                // when both are frames, which is the one case continued here instead.
+                if (left.Inner is not WithContext nextLeft || right.Inner is not WithContext nextRight)
+                    return RecordGraphEquality.FieldEquals(left.Inner, right.Inner);
+
+                (left, right) = (nextLeft, nextRight);
+            }
+
+            return true;
+        }
+
+        /// <summary>The fields declared before <see cref="Inner"/>: the base record's part, then the context.</summary>
+        private bool FrameEquals(WithContext other)
+            => base.Equals(other) && RecordGraphEquality.FieldEquals(ErrorContext, other.ErrorContext);
+
+        /// <inheritdoc />
+        public override int GetHashCode()
+        {
+            // Inner is the LAST field, so the synthesized hash is `frame part + Inner's hash`:
+            // the sum over the chain needs no continuation and no stack.
+            var hash = 0;
+            EvalError? inner = this;
+            while (inner is WithContext frame)
+            {
+                hash = unchecked(hash + frame.FrameHash());
+                inner = frame.Inner;
+            }
+
+            return unchecked(hash + EqualityComparer<EvalError>.Default.GetHashCode(inner!));
+        }
+
+        /// <summary>The synthesized hash of this frame with a zero inner hash folded in at <see cref="Inner"/>'s position.</summary>
+        private int FrameHash() => RecordGraphEquality.CombineChild(
+            RecordGraphEquality.Combine(base.GetHashCode(), ErrorContext), 0);
+
+        /// <summary>
+        /// The synthesized member list — <c>Span</c>, <c>IsResourceLimit</c>, <c>Code</c>,
+        /// <c>ErrorContext</c>, <c>Inner</c>, <c>Context</c> — with nested frames written into the
+        /// same builder instead of through one <c>ToString</c> per frame.
+        /// </summary>
+        protected override bool PrintMembers(StringBuilder builder)
+        {
+            // Formatting a context can invoke a caller-owned collection that re-enters
+            // ToString. Keep the stack check the generated base PrintMembers provided.
+            RuntimeHelpers.EnsureSufficientExecutionStack();
+
+            // Both inherited classifications are the terminal error's, for every frame alike:
+            // read once, they keep the text linear in the chain instead of quadratic.
+            var terminal = UnwrapContext();
+            var isResourceLimit = terminal.IsResourceLimit.ToString();
+            var code = terminal.Code.ToString();
+            Stack<WithContext>? parents = null;
+            var frame = this;
+            while (true)
+            {
+                builder.Append("Span = ").Append(frame.Span)
+                    .Append(", IsResourceLimit = ").Append(isResourceLimit)
+                    .Append(", Code = ").Append(code)
+                    .Append(", ErrorContext = ").Append(frame.ErrorContext)
+                    .Append(", Inner = ");
+
+                if (frame.Inner is not WithContext child)
+                    break;
+
+                (parents ??= new()).Push(frame);
+                // What the nested frame's synthesized ToString writes around its members.
+                builder.Append(nameof(WithContext)).Append(" { ");
+                frame = child;
+            }
+
+            builder.Append(frame.Inner).Append(", Context = ").Append(frame.Context);
+            while (parents is not null && parents.TryPop(out var parent))
+                builder.Append(" }, Context = ").Append(parent.Context);
+            return true;
         }
     }
 }

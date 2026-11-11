@@ -1,4 +1,5 @@
 using System.Numerics;
+using System.Text;
 
 namespace KatLang;
 
@@ -1760,6 +1761,8 @@ public closed record Expr
     /// <summary>Numeric negation or Boolean negation.</summary>
     public sealed record Unary(UnaryOp Op, Expr Operand) : Expr
     {
+        protected override bool PrintMembers(StringBuilder builder) => AstRecordText.PrintMembers(builder, this);
+
         /// <summary>Record equality, as synthesized, without recursion on <see cref="Operand"/>.</summary>
         public bool Equals(Unary? other)
             => ReferenceEquals(this, other) || (other is not null && RecordGraphEquality.AreEqual(this, other));
@@ -1778,6 +1781,8 @@ public closed record Expr
     /// <summary>Binary arithmetic or logical expression (never a comparison — see <see cref="Comparison"/>).</summary>
     public sealed record Binary(BinaryOp Op, Expr Left, Expr Right) : Expr
     {
+        protected override bool PrintMembers(StringBuilder builder) => AstRecordText.PrintMembers(builder, this);
+
         /// <summary>Record equality, as synthesized, without recursion on the operands.</summary>
         public bool Equals(Binary? other)
             => ReferenceEquals(this, other) || (other is not null && RecordGraphEquality.AreEqual(this, other));
@@ -1811,6 +1816,8 @@ public closed record Expr
     /// </summary>
     public sealed record Comparison(Expr First, IReadOnlyList<ComparisonLink> Links) : Expr
     {
+        protected override bool PrintMembers(StringBuilder builder) => AstRecordText.PrintMembers(builder, this);
+
         /// <summary>Record equality, as synthesized, without recursion on <see cref="First"/>; <see cref="Links"/> compares as a list.</summary>
         public bool Equals(Comparison? other)
             => ReferenceEquals(this, other) || (other is not null && RecordGraphEquality.AreEqual(this, other));
@@ -1848,6 +1855,8 @@ public closed record Expr
     /// </summary>
     public sealed record Index(Expr Target, OutputBundle Selectors) : Expr
     {
+        protected override bool PrintMembers(StringBuilder builder) => AstRecordText.PrintMembers(builder, this);
+
         /// <summary>Record equality, as synthesized, without recursion on <see cref="Target"/>.</summary>
         public bool Equals(Index? other)
             => ReferenceEquals(this, other) || (other is not null && RecordGraphEquality.AreEqual(this, other));
@@ -1892,6 +1901,8 @@ public closed record Expr
     /// </summary>
     public sealed record SequenceConstruct(Expr Left, Expr Right) : Expr
     {
+        protected override bool PrintMembers(StringBuilder builder) => AstRecordText.PrintMembers(builder, this);
+
         /// <summary>Record equality, as synthesized, without recursion on the two sides.</summary>
         public bool Equals(SequenceConstruct? other)
             => ReferenceEquals(this, other) || (other is not null && RecordGraphEquality.AreEqual(this, other));
@@ -1936,6 +1947,8 @@ public closed record Expr
         /// (e.g. collecting-parameter forwarding) stay spanless.
         /// </summary>
         public SourceSpan? SpreadMarkerSpan { get; init; }
+
+        protected override bool PrintMembers(StringBuilder builder) => AstRecordText.PrintMembers(builder, this);
 
         /// <summary>Record equality, as synthesized, without recursion on <see cref="Operand"/>.</summary>
         public bool Equals(SequenceSpread? other)
@@ -2150,6 +2163,8 @@ public closed record Expr
             return edge;
         }
 
+        protected override bool PrintMembers(StringBuilder builder) => AstRecordText.PrintMembers(builder, this);
+
         /// <summary>
         /// Record equality, as synthesized, without recursion on <see cref="Target"/> or
         /// <see cref="LexicalFallback"/>.
@@ -2220,6 +2235,8 @@ public closed record Expr
     /// </summary>
     public sealed record Grace(Expr Inner, int Weight) : Expr
     {
+        protected override bool PrintMembers(StringBuilder builder) => AstRecordText.PrintMembers(builder, this);
+
         /// <summary>Record equality, as synthesized, without recursion on <see cref="Inner"/>.</summary>
         public bool Equals(Grace? other)
             => ReferenceEquals(this, other) || (other is not null && RecordGraphEquality.AreEqual(this, other));
@@ -2252,6 +2269,8 @@ public closed record Expr
     /// </summary>
     public sealed record AlgorithmExpr(Algorithm Algorithm) : Expr
     {
+        protected override bool PrintMembers(StringBuilder builder) => AstRecordText.PrintMembers(builder, this);
+
         /// <summary>Record equality, as synthesized, without recursion on <see cref="Algorithm"/>.</summary>
         public bool Equals(AlgorithmExpr? other)
             => ReferenceEquals(this, other) || (other is not null && RecordGraphEquality.AreEqual(this, other));
@@ -2295,6 +2314,8 @@ public closed record Expr
     /// </summary>
     public sealed record Call(Expr Function, OutputBundle Args) : Expr
     {
+        protected override bool PrintMembers(StringBuilder builder) => AstRecordText.PrintMembers(builder, this);
+
         /// <summary>Record equality, as synthesized, without recursion on <see cref="Function"/>.</summary>
         public bool Equals(Call? other)
             => ReferenceEquals(this, other) || (other is not null && RecordGraphEquality.AreEqual(this, other));
@@ -3877,6 +3898,8 @@ public closed record Algorithm
         /// </summary>
         internal bool IsWrittenBlock { get; init; }
 
+        protected override bool PrintMembers(StringBuilder builder) => AstRecordText.PrintMembers(builder, this);
+
         /// <summary>
         /// Record equality, as synthesized, without recursion on the <see cref="Parent"/> chain; the
         /// pattern, open, property and output collections compare as collections.
@@ -4047,6 +4070,8 @@ public closed record Algorithm
             }
             return false;
         }
+
+        protected override bool PrintMembers(StringBuilder builder) => AstRecordText.PrintMembers(builder, this);
 
         /// <summary>
         /// Record equality, as synthesized, without recursion on the <see cref="Parent"/> chain; the
@@ -4264,6 +4289,8 @@ public closed record Algorithm
             get => _hasRuntimeTarget.Value;
             init => _hasRuntimeTarget = new(value);
         }
+
+        protected override bool PrintMembers(StringBuilder builder) => AstRecordText.PrintMembers(builder, this);
 
         /// <summary>
         /// Record equality, as synthesized, without recursion on the <see cref="Parent"/> chain or on
@@ -5442,6 +5469,8 @@ public sealed record ScopeCtx(
     IReadOnlyList<Property> Properties,
     IReadOnlyList<string> Parameters)
 {
+    private bool PrintMembers(StringBuilder builder) => AstRecordText.PrintMembers(builder, this);
+
     /// <summary>A scope whose algorithm binds no parameters.</summary>
     public ScopeCtx(
         ScopeCtx? Parent,

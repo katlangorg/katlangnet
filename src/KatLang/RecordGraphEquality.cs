@@ -3,7 +3,7 @@ using System.Runtime.InteropServices;
 namespace KatLang;
 
 /// <summary>
-/// NATIVE RECORD EQUALITY AND HASHING WITHOUT NATIVE RECURSION. The C# compiler synthesizes a
+/// STACK-SAFE NATIVE RECORD EQUALITY AND HASHING. The C# compiler synthesizes a
 /// record's <c>Equals</c> and <c>GetHashCode</c> as one call per field through
 /// <c>EqualityComparer&lt;TField&gt;.Default</c>, so a field whose type is itself a record recurses on
 /// the caller's stack: once per level of an expression chain, of a scope's parent chain, or of an
@@ -28,9 +28,8 @@ namespace KatLang;
 /// their own equality (reference identity unless a host type defines another), state slots
 /// transparent; and a record's hash is the value the synthesized member returned. This is NOT
 /// language equality: <see cref="Result.ValueComparer"/>, <c>ParameterPattern.ContractComparer</c>
-/// and the pattern match-equivalence index are separate and untouched. The walk visits fields in
-/// the generated order — a field is read only after everything before it compared equal — so a
-/// host collection with its own <c>Equals</c> is asked exactly when it was.</para>
+/// and the pattern match-equivalence index are separate and untouched. Field comparisons and
+/// hashing run in the generated order, including calls to a host collection's own methods.</para>
 ///
 /// <para><b>Shared nodes.</b> A host graph may reach one record through many parents. Within ONE
 /// top-level operation each ordered pair of record references is compared at most once and each
@@ -39,7 +38,8 @@ namespace KatLang;
 /// distinct records (pairs) and their fields, never to the paths that reach them; the generated
 /// members did the same work once per path. The memo is keyed by reference identity, allocated
 /// with the explicit stack at the first descent below the root's own children — a record whose
-/// record-valued fields hold only leaves or nulls needs neither — and discarded with the call.
+/// record-valued fields hold only leaves or nulls needs neither, and a one-child root can use
+/// the same leaf walk for its child when it has that shape — and discarded with the call.
 /// Equality also skips identical child references; hashing must still traverse their descendants.
 /// Nothing is stored on a record, so a caller-owned collection edited between two
 /// operations is read afresh by the second.</para>
@@ -125,7 +125,14 @@ internal static class RecordGraphEquality
 
                 if (pairs is null)
                 {
-                    // The first descent is always from the root pair.
+                    // The first descent is always from the root pair. A root with ONE record-valued
+                    // field over a record whose own children are leaves or nulls needs no state:
+                    // that child's members are the leaf walk above (one bounded native call, never
+                    // a descent: an unequal kind on the right ends it), and the root has no second
+                    // edge that could meet one of the child's pairs again.
+                    if (childCount == 1 && ChildrenAreLeaves(leftChild, nested))
+                        return leftChild.Equals(rightChild) && FieldsEqual(left, right, segment);
+
                     pairs = new Dictionary<ReferencePair, bool>(InitialMemoCapacity) { [new ReferencePair(left, right)] = false };
                     if (shallowLeft is not null)
                         pairs.Add(new ReferencePair(shallowLeft, shallowRight!), true);
@@ -207,7 +214,12 @@ internal static class RecordGraphEquality
                     {
                         if (hashes is null)
                         {
-                            // The first descent is always from the root.
+                            // The first descent is always from the root. As in AreEqual: a one-child
+                            // root over a record with only leaf children folds that child's own
+                            // (stateless) hash and the fields after it, and is done.
+                            if (childCount == 1 && ChildrenAreLeaves(child, nested))
+                                return HashAfterChild(node, index, hash, child.GetHashCode());
+
                             hashes = new Dictionary<object, int?>(InitialMemoCapacity, ReferenceEqualityComparer.Instance) { [node] = null };
                             if (shallowNode is not null)
                                 hashes.Add(shallowNode, shallowHash);
@@ -264,6 +276,21 @@ internal static class RecordGraphEquality
         ScopeCtx scope => scope.Parent,
         _ => throw NotARecordNode(node),
     };
+
+    // Whether every record-valued field of `node` holds a leaf record or null, read from the stored
+    // references alone (no field is compared or hashed here). Such a record's own Equals and
+    // GetHashCode run this walk without a stack or a memo, keep the generated field order and reuse
+    // a leaf that both of its fields hold. A leaf has no record-valued field, so no cycle hides here.
+    private static bool ChildrenAreLeaves(object node, int childCount)
+    {
+        for (var index = 0; index < childCount; index++)
+        {
+            if (Child(node, index) is { } child && ChildCount(child) != 0)
+                return false;
+        }
+
+        return true;
+    }
 
     private static bool FieldsEqual(object left, object right, int segment) => left switch
     {
