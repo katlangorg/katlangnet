@@ -436,6 +436,92 @@ public closed record ParameterPattern
     public abstract string DisplayName { get; }
 
     /// <summary>
+    /// THE DISPLAY TEXT OF A STRUCTURAL PATTERN, written once for the three structural kinds: the
+    /// items' display names joined by <c>", "</c> inside the kind's delimiters — <c>(…)</c> for a
+    /// sequence pattern, <c>[…]</c> for a list pattern, none for the unpacking receiver — exactly
+    /// the text of the per-level <c>string.Join</c> it replaces. Written into ONE builder with an
+    /// explicit stack: parameter patterns are host-constructible to arbitrary depth, and neither
+    /// <see cref="DisplayName"/> nor the record-generated <c>ToString</c> that prints it may
+    /// recurse on the caller's stack (the per-level join also copied every nested text once per
+    /// enclosing level). The text is per occurrence by definition: a host-built pattern that
+    /// shares a node along many paths prints it once per path, so the work is the size of the
+    /// text. Never a cache: a host that mutates a retained items list reads the current text.
+    /// </summary>
+    private protected static string StructuralDisplayName(ParameterPattern structure)
+    {
+        var text = new System.Text.StringBuilder();
+        if (!TryOpenDisplayGroup(structure, text, out var items, out var closer))
+            throw new InvalidOperationException("A capture pattern has no structural display.");
+
+        // The groups whose remaining items wait for a nested group to be written.
+        Stack<(IReadOnlyList<ParameterPattern> Items, int Next, char Closer)>? suspended = null;
+        var next = 0;
+        while (true)
+        {
+            // Enumerable.Select used to reject a null items list as "source", including
+            // one reached through a nested group. Keep that host-visible exception.
+            ArgumentNullException.ThrowIfNull(items, "source");
+            if (next < items.Count)
+            {
+                if (next > 0)
+                    text.Append(", ");
+                var item = items[next++];
+                if (TryOpenDisplayGroup(item, text, out var nestedItems, out var nestedCloser))
+                {
+                    (suspended ??= new Stack<(IReadOnlyList<ParameterPattern>, int, char)>()).Push((items, next, closer));
+                    (items, next, closer) = (nestedItems, 0, nestedCloser);
+                }
+                else
+                {
+                    // A capture leaf, whose text is its declaration's. A null item of a
+                    // host-built list is the NullReferenceException it always was.
+                    text.Append(item.DisplayName);
+                }
+
+                continue;
+            }
+
+            if (closer != NoDisplayDelimiter)
+                text.Append(closer);
+            if (suspended is null || !suspended.TryPop(out var outer))
+                return text.ToString();
+            (items, next, closer) = outer;
+        }
+    }
+
+    /// <summary>The closer of a structural kind written without delimiters (the unpacking receiver).</summary>
+    private const char NoDisplayDelimiter = '\0';
+
+    /// <summary>
+    /// Writes the opening delimiter of a structural pattern and yields its items and closer;
+    /// <c>false</c>, writing nothing, for a capture leaf.
+    /// </summary>
+    private static bool TryOpenDisplayGroup(
+        ParameterPattern pattern,
+        System.Text.StringBuilder text,
+        out IReadOnlyList<ParameterPattern> items,
+        out char closer)
+    {
+        switch (pattern)
+        {
+            case SequenceValueParameterPattern sequence:
+                text.Append('(');
+                (items, closer) = (sequence.Items, ')');
+                return true;
+            case ListValueParameterPattern list:
+                text.Append('[');
+                (items, closer) = (list.Items, ']');
+                return true;
+            case UnpackingParameterPattern unpacking:
+                (items, closer) = (unpacking.Items, NoDisplayDelimiter);
+                return true;
+            default:
+                (items, closer) = ([], NoDisplayDelimiter);
+                return false;
+        }
+    }
+
+    /// <summary>
     /// The capture declarations this pattern binds, left to right and depth first
     /// (Lean: <c>ParameterPattern.captures</c>). A capture leaf yields the declaration it
     /// holds; a structural pattern yields the flattened captures of its items. Never a
@@ -1493,7 +1579,8 @@ public sealed record SequenceValueParameterPattern(IReadOnlyList<ParameterPatter
         init => _source = new(value);
     }
 
-    public override string DisplayName => $"({string.Join(", ", Items.Select(static item => item.DisplayName))})";
+    /// <summary>The written form <c>(p1, …, pn)</c>, rendered without recursion (<see cref="ParameterPattern.StructuralDisplayName"/>).</summary>
+    public override string DisplayName => StructuralDisplayName(this);
 
     /// <summary>
     /// Left-to-right depth-first capture flatten of <see cref="Items"/>
@@ -1522,7 +1609,8 @@ public sealed record ListValueParameterPattern(IReadOnlyList<ParameterPattern> I
         init => _source = new(value);
     }
 
-    public override string DisplayName => $"[{string.Join(", ", Items.Select(static item => item.DisplayName))}]";
+    /// <summary>The written form <c>[p1, …, pn]</c>, rendered without recursion (<see cref="ParameterPattern.StructuralDisplayName"/>).</summary>
+    public override string DisplayName => StructuralDisplayName(this);
 
     /// <summary>
     /// Left-to-right depth-first capture flatten of <see cref="Items"/>
@@ -1548,7 +1636,8 @@ public sealed record ListValueParameterPattern(IReadOnlyList<ParameterPattern> I
 public sealed record UnpackingParameterPattern(IReadOnlyList<ParameterPattern> Items)
     : ParameterPattern
 {
-    public override string DisplayName => string.Join(", ", Items.Select(static item => item.DisplayName));
+    /// <summary>The written target list <c>p1, …, pn</c>, rendered without recursion (<see cref="ParameterPattern.StructuralDisplayName"/>).</summary>
+    public override string DisplayName => StructuralDisplayName(this);
 
     /// <summary>
     /// Left-to-right depth-first capture flatten of <see cref="Items"/>
@@ -2352,7 +2441,69 @@ public closed record Pattern
     /// </list>
     /// </summary>
     public IReadOnlyList<string>? TryGetOrdinaryClauseParams()
-        => TryGetOrdinaryClauseParameters()?.Select(static parameter => parameter.Name).ToList();
+        => IsLiteralFreeClauseHead() ? OrdinaryClauseBinderNames() : null;
+
+    /// <summary>
+    /// The binder names of a literal-free head, one per occurrence in written order — exactly the
+    /// capture names of <see cref="TryGetOrdinaryClauseParameterPatterns"/>, duplicates included —
+    /// read without building a parameter pattern and with OUTPUT-SENSITIVE work on a host-built
+    /// head that shares structural nodes. SHARED-DAG RULE: the names of a structural node's first
+    /// complete expansion occupy a contiguous range of the result, remembered by reference
+    /// identity for this call only; a later occurrence copies that range (an empty one included)
+    /// without reading the subtree again. Work is linear in the distinct nodes and edges plus the
+    /// names returned; for a tree — every parsed head — no node is met twice and the walk is that
+    /// of <see cref="BoundNames"/>. Iterative: a host head may be arbitrarily deep.
+    /// </summary>
+    private List<string> OrdinaryClauseBinderNames()
+    {
+        const int Enter = -1;
+        var names = new List<string>();
+        if (this is Bind(var onlyName))
+        {
+            names.Add(onlyName);
+            return names;
+        }
+
+        // (pattern, Enter) visits a pattern; (group, n) closes a group whose expansion began
+        // when the result held n names.
+        var pending = new Stack<(Pattern Pattern, int Start)>();
+        Dictionary<Pattern, (int Start, int Count)>? completed = null;
+        pending.Push((this, Enter));
+        while (pending.TryPop(out var entry))
+        {
+            var (pattern, start) = entry;
+            if (start != Enter)
+            {
+                (completed ??= new Dictionary<Pattern, (int, int)>(ReferenceEqualityComparer.Instance))[pattern] = (start, names.Count - start);
+                continue;
+            }
+
+            if (pattern is Bind(var name))
+            {
+                names.Add(name);
+                continue;
+            }
+
+            // A literal binds nothing (none is reachable in a literal-free head).
+            if (ClauseGroupItems(pattern) is not { } items)
+                continue;
+
+            if (completed is not null && completed.TryGetValue(pattern, out var range))
+            {
+                // The source range is complete and precedes the copy; read through the list,
+                // so capacity growth cannot invalidate it.
+                for (var index = 0; index < range.Count; index++)
+                    names.Add(names[range.Start + index]);
+                continue;
+            }
+
+            pending.Push((pattern, names.Count));
+            for (var index = items.Count - 1; index >= 0; index--)
+                pending.Push((items[index], Enter));
+        }
+
+        return names;
+    }
 
     internal IReadOnlyList<Bind>? TryGetOrdinaryClauseBindings()
         => this switch
@@ -2361,57 +2512,181 @@ public closed record Pattern
             _ => TryGetFlatMultiBinderBindings(),
         };
 
+    /// <summary>The items of a structural clause pattern — a sequence or a list — or null for a binder or a literal.</summary>
+    private static IReadOnlyList<Pattern>? ClauseGroupItems(Pattern pattern) => pattern switch
+    {
+        SequenceValue(var sequenceItems) => sequenceItems,
+        ListValue(var listItems) => listItems,
+        _ => null,
+    };
+
+    /// <summary>
+    /// Whether this clause head holds NO literal at any depth: the ordinary-clause verdict
+    /// (<see cref="TryGetOrdinaryClauseParameterPatterns"/> is non-null exactly then; Lean:
+    /// <c>Pattern.plainClauseParameterPatterns?</c> is <c>some</c>), decided without building a
+    /// parameter pattern. Walked with an explicit stack — a host head may be arbitrarily deep —
+    /// and stopped at the first literal. SHARED-DAG RULE (expand once): a host-built head may
+    /// share a nested group along many paths, so each one is expanded at most once (reference
+    /// identity; a group met again held no literal the first time or is still waiting to be
+    /// read), and the work is linear in the head's distinct nodes and edges. Allocation-free for
+    /// a head whose items are binders and literals.
+    /// </summary>
+    internal bool IsLiteralFreeClauseHead()
+    {
+        // A top-level sequence pattern IS the head's own argument list; any other head is one
+        // parameter position.
+        if (this is not SequenceValue(var items))
+        {
+            if (this is Bind)
+                return true;
+            if (ClauseGroupItems(this) is not { } onlyGroupItems)
+                return false;
+            items = onlyGroupItems;
+        }
+
+        Stack<IReadOnlyList<Pattern>>? pending = null;
+        HashSet<Pattern>? expanded = null;
+        while (true)
+        {
+            for (var index = 0; index < items.Count; index++)
+            {
+                var item = items[index];
+                if (item is Bind)
+                    continue;
+                if (ClauseGroupItems(item) is not { } nested)
+                    return false;
+                if (nested.Count > 0
+                    && (expanded ??= new HashSet<Pattern>(ReferenceEqualityComparer.Instance)).Add(item))
+                    (pending ??= new Stack<IReadOnlyList<Pattern>>()).Push(nested);
+            }
+
+            if (pending is null || !pending.TryPop(out items!))
+                return true;
+        }
+    }
+
     /// <summary>
     /// One clause-head item as the parameter pattern it declares — a binder as a capture, a
     /// structural pattern as the same kind over its converted items — or <c>false</c> when the
     /// item holds a literal at any depth (a literal-holding item declares no literal-free
-    /// pattern). Shared by the ordinary-clause classification below and by bare forwarding's
-    /// branch-head contracts (<c>ImplicitArgumentResolver.BareForwardingSources</c>).
+    /// pattern). ONE RECORD PER OCCURRENCE: a host-built head that shares a group along many
+    /// paths is expanded into the tree it denotes, exactly as the parser's tree is converted
+    /// (the result of <see cref="Algorithm.ElaborateClauseGroup"/> is public, and two
+    /// occurrences of one group are distinct records there). Built with an explicit stack: a
+    /// host head may be arbitrarily deep.
     /// </summary>
     internal static bool TryCreateOrdinaryClauseParameterPattern(
         Pattern pattern,
         [System.Diagnostics.CodeAnalysis.NotNullWhen(true)] out ParameterPattern? parameterPattern)
     {
-        if (pattern is Bind binder)
-        {
-            parameterPattern = new CaptureParameterPattern(new ParameterDeclaration(binder.Name, binder.NameSpan, binder.ParameterKind)
-            {
-                CollectMarkerSpan = binder.CollectMarkerSpan,
-                IsRecoveryPlaceholder = binder.IsRecoveryPlaceholder,
-            });
-            return true;
-        }
+        Dictionary<Pattern, ParameterPattern?>? none = null;
+        parameterPattern = CreateOrdinaryClauseParameterPattern(pattern, keepSharing: false, ref none);
+        return parameterPattern is not null;
+    }
 
-        var (structuralItems, isList, groupSpan) = pattern switch
+    /// <summary>
+    /// <see cref="TryCreateOrdinaryClauseParameterPattern"/> for a consumer that reads the result
+    /// only as a CONTRACT — kind, shape, names and collecting kinds
+    /// (<see cref="ParameterPattern.ContractComparer"/>) — and never hands it on: bare
+    /// forwarding's branch-head contracts (<c>ImplicitArgumentResolver.BareForwardingSources</c>).
+    /// SHARED-DAG RULE (convert once): a group the head shares along many paths becomes ONE
+    /// record, remembered in <paramref name="convertedGroups"/> by reference identity together
+    /// with every group found to hold a literal, so one memo serves all the items of a head with
+    /// work linear in its distinct nodes and edges. The shared result denotes the same tree as
+    /// the per-occurrence one: equal contracts, equal contract hashes, equal captures in order.
+    /// The memo is the caller's and call-local; nothing is attached to a pattern.
+    /// </summary>
+    internal static bool TryCreateOrdinaryClauseParameterPatternKeepingSharing(
+        Pattern pattern,
+        ref Dictionary<Pattern, ParameterPattern?>? convertedGroups,
+        [System.Diagnostics.CodeAnalysis.NotNullWhen(true)] out ParameterPattern? parameterPattern)
+    {
+        parameterPattern = CreateOrdinaryClauseParameterPattern(pattern, keepSharing: true, ref convertedGroups);
+        return parameterPattern is not null;
+    }
+
+    /// <summary>
+    /// The one conversion behind both entry points: an iterative post-order build in which a
+    /// group is created when its last item has been converted, so its items list is complete
+    /// before any record holds it. <paramref name="convertedGroups"/> is read and written only
+    /// when <paramref name="keepSharing"/> is set; a null entry records a group that holds a
+    /// literal.
+    /// </summary>
+    private static ParameterPattern? CreateOrdinaryClauseParameterPattern(
+        Pattern pattern,
+        bool keepSharing,
+        ref Dictionary<Pattern, ParameterPattern?>? convertedGroups)
+    {
+        if (pattern is Bind binder)
+            return CaptureOf(binder);
+        if (ClauseGroupItems(pattern) is not { } items)
+            return null;
+        if (keepSharing && convertedGroups is not null && convertedGroups.TryGetValue(pattern, out var known))
+            return known;
+
+        // The enclosing groups whose remaining items wait for the current group to complete.
+        Stack<(Pattern Group, IReadOnlyList<Pattern> Items, List<ParameterPattern> Converted)>? suspended = null;
+        var group = pattern;
+        var converted = new List<ParameterPattern>(items.Count);
+        while (true)
         {
-            SequenceValue sequence => (sequence.Items, false, sequence.Span),
-            ListValue list => (list.Items, true, list.Span),
-            _ => ((IReadOnlyList<Pattern>?)null, false, (SourceSpan?)null),
-        };
-        if (structuralItems is not null)
-        {
-            var childPatterns = new List<ParameterPattern>(structuralItems.Count);
-            foreach (var item in structuralItems)
+            if (converted.Count < items.Count)
             {
-                if (!TryCreateOrdinaryClauseParameterPattern(item, out var childPattern))
+                var item = items[converted.Count];
+                if (item is Bind itemBinder)
                 {
-                    parameterPattern = null;
-                    return false;
+                    converted.Add(CaptureOf(itemBinder));
+                    continue;
                 }
 
-                childPatterns.Add(childPattern);
+                if (ClauseGroupItems(item) is { } nestedItems)
+                {
+                    if (!keepSharing || convertedGroups is null || !convertedGroups.TryGetValue(item, out var knownItem))
+                    {
+                        (suspended ??= new Stack<(Pattern, IReadOnlyList<Pattern>, List<ParameterPattern>)>()).Push((group, items, converted));
+                        (group, items, converted) = (item, nestedItems, new List<ParameterPattern>(nestedItems.Count));
+                        continue;
+                    }
+
+                    if (knownItem is not null)
+                    {
+                        converted.Add(knownItem);
+                        continue;
+                    }
+                }
+
+                // A literal, or a group already known to hold one: every group still open holds
+                // it too.
+                if (keepSharing)
+                {
+                    convertedGroups ??= new Dictionary<Pattern, ParameterPattern?>(ReferenceEqualityComparer.Instance);
+                    convertedGroups[group] = null;
+                    while (suspended is not null && suspended.TryPop(out var open))
+                        convertedGroups[open.Group] = null;
+                }
+
+                return null;
             }
 
             // Each structural pattern keeps its KIND: a sequence pattern stays a sequence
             // pattern and a list pattern a list pattern (Lean: `Pattern.parameterPattern?`).
-            parameterPattern = isList
-                ? new ListValueParameterPattern(childPatterns) { Source = PatternGroupSource.Written(groupSpan) }
-                : new SequenceValueParameterPattern(childPatterns) { Source = PatternGroupSource.Written(groupSpan) };
-            return true;
+            ParameterPattern completed = group is ListValue list
+                ? new ListValueParameterPattern(converted) { Source = PatternGroupSource.Written(list.Span) }
+                : new SequenceValueParameterPattern(converted) { Source = PatternGroupSource.Written(((SequenceValue)group).Span) };
+            if (keepSharing)
+                (convertedGroups ??= new Dictionary<Pattern, ParameterPattern?>(ReferenceEqualityComparer.Instance))[group] = completed;
+            if (suspended is null || !suspended.TryPop(out var outer))
+                return completed;
+            (group, items, converted) = outer;
+            converted.Add(completed);
         }
 
-        parameterPattern = null;
-        return false;
+        static CaptureParameterPattern CaptureOf(Bind binder)
+            => new(new ParameterDeclaration(binder.Name, binder.NameSpan, binder.ParameterKind)
+            {
+                CollectMarkerSpan = binder.CollectMarkerSpan,
+                IsRecoveryPlaceholder = binder.IsRecoveryPlaceholder,
+            });
     }
 
     /// <summary>
@@ -2421,15 +2696,25 @@ public closed record Pattern
     /// wraps a lone structural pattern in the head's argument list). Recursive structural patterns
     /// keep their kind. Lean: <c>Pattern.plainClauseParameterPatterns?</c>.
     /// </summary>
+    /// <remarks>
+    /// The verdict is decided first (<see cref="IsLiteralFreeClauseHead"/>), so a head that holds
+    /// a literal builds nothing and is refused with work linear in its distinct nodes. An ordinary
+    /// head is then converted with one record per occurrence
+    /// (<see cref="TryCreateOrdinaryClauseParameterPattern"/>): output-sized work, which for a
+    /// host-built head that shares groups is the size of its expanded tree.
+    /// </remarks>
     internal IReadOnlyList<ParameterPattern>? TryGetOrdinaryClauseParameterPatterns()
     {
+        if (!IsLiteralFreeClauseHead())
+            return null;
+
         if (this is not SequenceValue(var items))
             return TryCreateOrdinaryClauseParameterPattern(this, out var single) ? [single] : null;
 
         var parameterPatterns = new List<ParameterPattern>(items.Count);
-        foreach (var item in items)
+        for (var index = 0; index < items.Count; index++)
         {
-            if (!TryCreateOrdinaryClauseParameterPattern(item, out var parameterPattern))
+            if (!TryCreateOrdinaryClauseParameterPattern(items[index], out var parameterPattern))
                 return null;
 
             parameterPatterns.Add(parameterPattern);
@@ -2438,11 +2723,6 @@ public closed record Pattern
         return parameterPatterns;
     }
 
-    internal IReadOnlyList<ParameterDeclaration>? TryGetOrdinaryClauseParameters()
-        => TryGetOrdinaryClauseParameterPatterns() is { } patterns
-            ? ParameterPattern.FlattenCaptures(patterns)
-            : null;
-
     /// <summary>
     /// True when a sole clause head requires conditional whole-argument
     /// semantics instead of ordinary user-call binding. Front-ends must still
@@ -2450,8 +2730,13 @@ public closed record Pattern
     /// binder head can still belong to a multi-clause family that remains
     /// conditional.
     /// </summary>
+    /// <remarks>
+    /// Answered by <see cref="IsLiteralFreeClauseHead"/>: no parameter pattern is built, the walk
+    /// does not recurse, and a host-built head that shares groups is decided with work linear in
+    /// its distinct nodes.
+    /// </remarks>
     public bool RequiresConditionalClauseSemantics()
-        => TryGetOrdinaryClauseParameterPatterns() is null;
+        => !IsLiteralFreeClauseHead();
 
     /// <summary>
     /// Check whether two patterns are match-equivalent, i.e., they match

@@ -3469,10 +3469,13 @@ internal static partial class ImplicitArgumentResolver
             // pattern is one single parameter position.
             var items = head is Pattern.SequenceValue(var topLevelItems) ? topLevelItems : [head];
             var patterns = new List<ParameterPattern>(items.Count);
+            // The patterns are read below as contracts only and never leave this class, so a group
+            // a host-built head shares along many paths is converted once for the whole head.
+            Dictionary<Pattern, ParameterPattern?>? convertedGroups = null;
             foreach (var item in items)
             {
                 // An item that holds a literal at any depth declares no literal-free contract.
-                if (Pattern.TryCreateOrdinaryClauseParameterPattern(item, out var pattern))
+                if (Pattern.TryCreateOrdinaryClauseParameterPatternKeepingSharing(item, ref convertedGroups, out var pattern))
                     patterns.Add(pattern);
             }
 

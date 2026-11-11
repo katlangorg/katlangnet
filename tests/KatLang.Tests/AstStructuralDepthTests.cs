@@ -602,6 +602,188 @@ public class AstStructuralDepthTests
         Assert.Equal(new[] { "a", "b", "a" }, mixed.BoundNames());
     }
 
+    private const int HostPatternDepth = 200_000;
+
+    /// <summary>A capture under <see cref="HostPatternDepth"/> groups, each built by <paramref name="wrap"/> from its level (innermost 0) and its content.</summary>
+    private static ParameterPattern DeepParameterPattern(Func<int, ParameterPattern, ParameterPattern> wrap)
+    {
+        ParameterPattern deep = new CaptureParameterPattern("x");
+        for (var level = 0; level < HostPatternDepth; level++)
+            deep = wrap(level, deep);
+        return deep;
+    }
+
+    private static Pattern DeepClauseHead(Pattern leaf, bool lists = false)
+    {
+        var deep = leaf;
+        for (var level = 0; level < HostPatternDepth; level++)
+            deep = lists && level % 2 == 1 ? new Pattern.ListValue([deep]) : new Pattern.SequenceValue([deep]);
+        return deep;
+    }
+
+    [Fact]
+    public void ParameterPatternDisplayName_IsIterative_AndKeepsTheWrittenText()
+    {
+        // Each of these reads crashed the process while the display joined its items
+        // level by level: one stack frame, and one copy of the nested text, per level.
+        var sequences = DeepParameterPattern(static (_, inner) => new SequenceValueParameterPattern([inner])).DisplayName;
+        Assert.Equal(2 * HostPatternDepth + 1, sequences.Length);
+        Assert.True(sequences.AsSpan(0, HostPatternDepth).IndexOfAnyExcept('(') < 0);
+        Assert.Equal('x', sequences[HostPatternDepth]);
+        Assert.True(sequences.AsSpan(HostPatternDepth + 1).IndexOfAnyExcept(')') < 0);
+
+        var lists = DeepParameterPattern(static (_, inner) => new ListValueParameterPattern([inner])).DisplayName;
+        Assert.Equal(2 * HostPatternDepth + 1, lists.Length);
+        Assert.True(lists.AsSpan(0, HostPatternDepth).IndexOfAnyExcept('[') < 0);
+        Assert.True(lists.AsSpan(HostPatternDepth + 1).IndexOfAnyExcept(']') < 0);
+
+        // The unpacking receiver writes no delimiters at any depth.
+        Assert.Equal("x", DeepParameterPattern(static (_, inner) => new UnpackingParameterPattern([inner])).DisplayName);
+
+        // Mixed kinds with a sibling at every level: "(a, [a, (a, … x)])", separators included.
+        var a = new CaptureParameterPattern("a");
+        var mixed = DeepParameterPattern((level, inner) => level % 2 == 0
+            ? new ListValueParameterPattern([a, inner])
+            : new SequenceValueParameterPattern([a, inner])).DisplayName;
+        Assert.Equal(5 * HostPatternDepth + 1, mixed.Length);
+        Assert.StartsWith("(a, [a, (a, [a, ", mixed, StringComparison.Ordinal);
+        Assert.Equal("(a, [a, x])", mixed.Substring(4 * HostPatternDepth - 8, 11));
+        Assert.True(mixed.AsSpan(4 * HostPatternDepth + 1).SequenceEqual(string.Concat(Enumerable.Repeat("])", HostPatternDepth / 2))));
+
+        Assert.Equal(
+            "(a, [b, *c], ())",
+            new SequenceValueParameterPattern(
+            [
+                new CaptureParameterPattern("a"),
+                new ListValueParameterPattern([new CaptureParameterPattern("b"), new CaptureParameterPattern("c", null, ParameterKind.Collecting)]),
+                new SequenceValueParameterPattern([]),
+            ]).DisplayName);
+    }
+
+    [Theory]
+    [InlineData("sequence")]
+    [InlineData("list")]
+    [InlineData("unpacking")]
+    public void ParameterPatternToString_IsStackSafe_AndKeepsTheRecordLayout(string kind)
+    {
+        // The compiler-generated record text prints DisplayName, so it overflowed with it.
+        ParameterPattern Wrap(int _, ParameterPattern inner) => kind switch
+        {
+            "sequence" => new SequenceValueParameterPattern(new List<ParameterPattern> { inner }),
+            "list" => new ListValueParameterPattern(new List<ParameterPattern> { inner }),
+            _ => new UnpackingParameterPattern(new List<ParameterPattern> { inner }),
+        };
+        var deep = DeepParameterPattern(Wrap);
+        var text = deep.ToString();
+        var prefix = deep.GetType().Name + " { DisplayName = ";
+        const string Suffix = ", Captures = System.Collections.Generic.List`1[KatLang.ParameterDeclaration], ContainsCollectingCapture = False, "
+            + "Items = System.Collections.Generic.List`1[KatLang.ParameterPattern] }";
+        var display = kind == "unpacking"
+            ? "x"
+            : new string(kind == "sequence" ? '(' : '[', HostPatternDepth) + "x"
+                + new string(kind == "sequence" ? ')' : ']', HostPatternDepth);
+        Assert.Equal(prefix + display + Suffix, text);
+
+        // The other record members a host may call on such a pattern stay shallow as well:
+        // equality and hashing compare the items list by reference.
+        Assert.True(deep.Equals(deep));
+        Assert.False(deep.Equals(Wrap(0, deep)));
+        _ = deep.GetHashCode();
+
+        // A clause pattern prints its items list, never its items: constant work at any depth.
+        var head = DeepClauseHead(new Pattern.Bind("leaf"));
+        Assert.Equal("SequenceValue { Items = KatLang.Pattern[] }", new Pattern.SequenceValue(new Pattern[] { head }).ToString());
+        Assert.True(head.Equals(head));
+        _ = head.GetHashCode();
+    }
+
+    [Fact]
+    public void PatternRequiresConditionalClauseSemantics_IsIterative()
+    {
+        // Formerly answered by building the ordinary parameter patterns recursively.
+        Assert.False(DeepClauseHead(new Pattern.Bind("leaf")).RequiresConditionalClauseSemantics());
+        Assert.False(DeepClauseHead(new Pattern.Bind("leaf"), lists: true).RequiresConditionalClauseSemantics());
+        Assert.False(DeepClauseHead(new Pattern.SequenceValue([])).RequiresConditionalClauseSemantics());
+        Assert.True(DeepClauseHead(new Pattern.LitInt(0)).RequiresConditionalClauseSemantics());
+        Assert.True(DeepClauseHead(new Pattern.LitString("s"), lists: true).RequiresConditionalClauseSemantics());
+        Assert.True(DeepClauseHead(new Pattern.LitBool(true)).RequiresConditionalClauseSemantics());
+
+        // A literal beside the deep part is found without descending.
+        Assert.True(new Pattern.SequenceValue([DeepClauseHead(new Pattern.Bind("leaf")), new Pattern.LitInt(1)])
+            .RequiresConditionalClauseSemantics());
+    }
+
+    [Fact]
+    public void PatternTryGetOrdinaryClauseParams_IsIterative_AndPreservesOrder()
+    {
+        Assert.Equal("leaf", Assert.Single(DeepClauseHead(new Pattern.Bind("leaf")).TryGetOrdinaryClauseParams()!));
+        Assert.Equal("leaf", Assert.Single(DeepClauseHead(new Pattern.Bind("leaf"), lists: true).TryGetOrdinaryClauseParams()!));
+        Assert.Empty(DeepClauseHead(new Pattern.ListValue([])).TryGetOrdinaryClauseParams()!);
+        Assert.Null(DeepClauseHead(new Pattern.LitInt(0)).TryGetOrdinaryClauseParams());
+
+        var deep = DeepClauseHead(new Pattern.Bind("leaf"));
+        var mixed = new Pattern.SequenceValue(
+        [
+            new Pattern.Bind("a"),
+            deep,
+            new Pattern.ListValue([new Pattern.Bind("b"), new Pattern.Bind("a")]),
+            deep,
+        ]);
+        Assert.Equal(new[] { "a", "leaf", "b", "a", "leaf" }, mixed.TryGetOrdinaryClauseParams());
+        Assert.Null(new Pattern.SequenceValue([new Pattern.Bind("a"), new Pattern.LitInt(1)]).TryGetOrdinaryClauseParams());
+    }
+
+    [Fact]
+    public void ElaborateClauseGroup_IsIterative_OnADeepClauseHead()
+    {
+        var body = new Algorithm.User(null, [], [], [], [new Expr.Num(1)]);
+        var span = new SourceSpan(1, 2, 1, 6);
+        var leaf = new Pattern.Bind("leaf") { NameSpan = span, ParameterKind = ParameterKind.Collecting };
+
+        // An ordinary head becomes the body's explicit parameter list, one record per level. This
+        // head's outermost level is a list pattern, so the whole head is ONE parameter position.
+        var ordinary = Assert.IsType<Algorithm.User>(
+            Algorithm.ElaborateClauseDefinition(DeepClauseHead(leaf, lists: true), body));
+        Assert.True(ordinary.HasExplicitParameterList);
+        Assert.Equal("leaf", Assert.Single(ordinary.Params));
+        var levels = 0;
+        var current = Assert.Single(ordinary.ParameterPatterns);
+        while (current is not CaptureParameterPattern)
+        {
+            // Every level keeps its kind (the head alternates them, lists at the odd levels).
+            var level = HostPatternDepth - 1 - levels;
+            Assert.True(level % 2 == 1 ? current is ListValueParameterPattern : current is SequenceValueParameterPattern);
+            current = Assert.Single(ParameterPattern.StructuralItems(current)!);
+            levels++;
+        }
+
+        Assert.Equal(HostPatternDepth, levels);
+        var capture = (CaptureParameterPattern)current;
+        Assert.Equal("leaf", capture.Name);
+        Assert.Equal(span, capture.Span);
+        Assert.Equal(ParameterKind.Collecting, capture.Kind);
+
+        // The same through the group entry point, and a deep literal head stays a clause family.
+        Assert.IsType<Algorithm.User>(Algorithm.ElaborateClauseGroup([new CondBranch(DeepClauseHead(leaf), body)]));
+        var literalHead = DeepClauseHead(new Pattern.LitInt(0));
+        var family = Assert.IsType<Algorithm.Conditional>(Algorithm.ElaborateClauseGroup([new CondBranch(literalHead, body)]));
+        Assert.Same(literalHead, Assert.Single(family.Branches).Pattern);
+        var twoClauses = Assert.IsType<Algorithm.Conditional>(Algorithm.ElaborateClauseGroup(
+        [
+            new CondBranch(DeepClauseHead(leaf), body),
+            new CondBranch(literalHead, body),
+        ]));
+        Assert.Equal(2, twoClauses.Branches.Count);
+
+        // The resolver's use of the same conversion (bare forwarding's branch-head contracts)
+        // cannot be given a head this deep: StackSafePatternHelperTests pins that the run's
+        // structural gate refuses it first.
+        Dictionary<Pattern, ParameterPattern?>? memo = null;
+        Assert.True(Pattern.TryCreateOrdinaryClauseParameterPatternKeepingSharing(DeepClauseHead(leaf), ref memo, out var kept));
+        Assert.Equal("leaf", Assert.Single(kept!.Captures).Name);
+        Assert.False(Pattern.TryCreateOrdinaryClauseParameterPatternKeepingSharing(literalHead, ref memo, out _));
+    }
+
     // ── Front-end gate is larger than the evaluation gate ───────────────────────
 
     [Fact]
