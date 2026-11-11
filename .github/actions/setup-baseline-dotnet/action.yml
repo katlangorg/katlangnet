@@ -17,6 +17,6 @@ runs:
 
     # setup-dotnet maps latestMajor in global.json to LTS, which can be older than sdk.version.
     - name: Install the exact baseline SDK
-      uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+      uses: actions/setup-dotnet@0f4a354dd5547a28c70b7853dbd95d5b67886e73 # v6.1.0
       with:
         dotnet-version: ${{ steps.sdk.outputs.version }}
