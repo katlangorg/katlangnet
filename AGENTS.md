@@ -386,6 +386,12 @@ A V3 run is not release publishing, a benchmark campaign, or unbounded fuzzing; 
   `contents: write`; workflows use no user-managed secrets. External actions
   are pinned to immutable commit SHAs and `.github/dependabot.yml` proposes
   reviewable GitHub Actions pin updates.
+- Every .NET job installs its SDK through the local action
+  `.github/actions/setup-baseline-dotnet`, which passes the exact `global.json`
+  `sdk.version` to `setup-dotnet`; that action's own `global-json-file` input
+  maps `rollForward: latestMajor` to the LTS channel, which can be older than
+  the baseline. A local action's directory must be listed in
+  `.github/dependabot.yml`, whose `/` covers only the workflows.
 
 
 ## Public API Baseline And Release Version

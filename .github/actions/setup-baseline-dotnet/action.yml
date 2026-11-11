@@ -1,0 +1,22 @@
+name: Set up the baseline .NET SDK
+description: Install the exact SDK version declared in the repository's global.json
+
+runs:
+  using: composite
+  steps:
+    - name: Read the baseline SDK version
+      id: sdk
+      shell: pwsh
+      run: |
+        $config = Get-Content -LiteralPath (Join-Path $env:GITHUB_WORKSPACE 'global.json') -Raw | ConvertFrom-Json
+        $version = $config.sdk.version
+        if ([string]::IsNullOrWhiteSpace($version)) {
+            throw 'global.json must declare sdk.version.'
+        }
+        Add-Content -LiteralPath $env:GITHUB_OUTPUT -Value "version=$version"
+
+    # setup-dotnet maps latestMajor in global.json to LTS, which can be older than sdk.version.
+    - name: Install the exact baseline SDK
+      uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+      with:
+        dotnet-version: ${{ steps.sdk.outputs.version }}

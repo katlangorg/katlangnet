@@ -1,7 +1,10 @@
 version: 2
 updates:
   - package-ecosystem: github-actions
-    directory: /
+    # "/" covers .github/workflows and a root action.yml only, so each local action is listed.
+    directories:
+      - /
+      - /.github/actions/setup-baseline-dotnet
     schedule:
       interval: monthly
     open-pull-requests-limit: 5

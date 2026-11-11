@@ -16,7 +16,12 @@ public class ContinuousIntegrationPolicyTests
 {
     private const string ValidatePath = ".github/workflows/validate.yml";
     private const string ReleasePath = ".github/workflows/release.yml";
+    private const string DotNetSetupPath = ".github/actions/setup-baseline-dotnet";
     private const string LeanInstallPath = "scripts/install-lean-toolchain.sh";
+
+    // Every local action a workflow may use. Its steps run inside the calling job, so the
+    // pinning, cache, failure-masking and Dependabot policies extend to each entry.
+    private static readonly string[] LocalActionPaths = [DotNetSetupPath];
 
     private static readonly string[] LeanTargets =
     [
@@ -350,17 +355,23 @@ public class ContinuousIntegrationPolicyTests
     }
 
     [Fact]
-    public void EveryActionUse_IsPinnedToACommentedCommitSha()
+    public void EveryExternalActionUse_IsPinnedToACommentedCommitSha()
     {
-        var uses = Regex.Matches(WorkflowText(), @"(?m)^\s*uses:\s*(?<action>[^@\s]+)@(?<revision>[^\s#]+)\s+#\s+(?<version>v\S+)\s*$");
+        var source = WorkflowAndLocalActionText();
+        // `uses:` is a step key, alone on its line or opening the step (`- uses:`).
+        var uses = Regex.Matches(source, @"(?m)^ *(?:- +)?uses: *(?<reference>[^\n]*)$");
         Assert.True(uses.Count > 0, "expected pinned action uses");
         foreach (Match use in uses)
         {
-            Assert.Matches("^[0-9a-f]{40}$", use.Groups["revision"].Value);
-            Assert.Matches(@"^v[0-9]+\.[0-9]+\.[0-9]+$", use.Groups["version"].Value);
+            var reference = use.Groups["reference"].Value;
+            if (LocalActionPaths.Any(path => reference == $"./{path}"))
+                continue;
+
+            Assert.Matches(@"^[^@\s]+@[0-9a-f]{40}\s+#\s+v[0-9]+\.[0-9]+\.[0-9]+$", reference);
         }
 
-        Assert.Equal(Regex.Matches(WorkflowText(), @"(?m)^\s*uses:").Count, uses.Count);
+        // No `uses:` is written in a form the scan above cannot read.
+        Assert.Equal(Regex.Matches(source, @"\buses\s*:").Count, uses.Count);
     }
 
     [Fact]
@@ -379,7 +390,8 @@ public class ContinuousIntegrationPolicyTests
     [Fact]
     public void Workflows_StartWithoutBuildCaches()
     {
-        var source = WorkflowText();
+        // setup-dotnet's `cache:` input belongs to the local setup action, so the scan includes it.
+        var source = WorkflowAndLocalActionText();
         Assert.DoesNotContain("actions/cache", source, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotMatch(@"(?m)^\s+cache:", source);
     }
@@ -398,6 +410,35 @@ public class ContinuousIntegrationPolicyTests
         Assert.Equal("11.0.100", sdk.GetProperty("version").GetString());
         Assert.Equal("latestMajor", sdk.GetProperty("rollForward").GetString());
         Assert.False(sdk.GetProperty("allowPrerelease").GetBoolean());
+    }
+
+    [Fact]
+    public void DotNetSetup_InstallsTheExactGlobalJsonSdkVersion()
+    {
+        var source = Text($"{DotNetSetupPath}/action.yml");
+        Assert.Contains("(Join-Path $env:GITHUB_WORKSPACE 'global.json') -Raw | ConvertFrom-Json", source, StringComparison.Ordinal);
+        Assert.Contains("$version = $config.sdk.version", source, StringComparison.Ordinal);
+        Assert.Contains("-Value \"version=$version\"", source, StringComparison.Ordinal);
+        Assert.Contains("uses: actions/setup-dotnet@", source, StringComparison.Ordinal);
+        Assert.Contains("dotnet-version: ${{ steps.sdk.outputs.version }}", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("global-json-file:", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("uses: actions/setup-dotnet@", WorkflowText(), StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData(ValidatePath, "dotnet-validation", "./scripts/validate-all.ps1 -Phase DotNet")]
+    [InlineData(ValidatePath, StackSuiteJob, "./scripts/validate-stack-suites.ps1")]
+    [InlineData(ValidatePath, StandaloneBuildJob, "./scripts/build-standalone-tools.ps1")]
+    [InlineData(ReleasePath, "dotnet-validation", "./scripts/validate-all.ps1 -Phase DotNet")]
+    [InlineData(ReleasePath, StackSuiteJob, "./scripts/validate-stack-suites.ps1")]
+    [InlineData(ReleasePath, "build", "dotnet publish ")]
+    public void DotNetJobs_SetUpTheBaselineSdkBeforeBuilding(string workflow, string job, string command)
+    {
+        var section = JobSection(Text(workflow), job);
+        var checkout = section.IndexOf("uses: actions/checkout@", StringComparison.Ordinal);
+        var setup = section.IndexOf($"uses: ./{DotNetSetupPath}", StringComparison.Ordinal);
+        var build = section.IndexOf(command, StringComparison.Ordinal);
+        Assert.True(checkout >= 0 && setup > checkout && build > setup, $"Expected checkout, SDK setup, and build in order in {workflow} ({job}).");
     }
 
     [Fact]
@@ -432,6 +473,20 @@ public class ContinuousIntegrationPolicyTests
         Assert.Single(Regex.Matches(source, @"package-ecosystem:").Cast<Match>());
         Assert.Contains("package-ecosystem: github-actions", source, StringComparison.Ordinal);
         Assert.Contains("interval: monthly", source, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Dependabot_CoversTheWorkflowsAndEveryLocalAction()
+    {
+        // The directory "/" covers .github/workflows and a root action.yml only: a pin
+        // inside a local action is proposed for update only when its directory is listed.
+        var source = Text(".github/dependabot.yml");
+        Assert.DoesNotMatch(@"(?m)^\s*directory:", source);
+        var list = Regex.Match(source, @"(?m)^    directories:\n(?<entries>(?:      - [^\n]*\n)+)");
+        Assert.True(list.Success, "dependabot.yml must list the directories it updates.");
+        var directories = Regex.Matches(list.Groups["entries"].Value, @"(?m)^      - (?<directory>[^\n]*)$")
+            .Select(match => match.Groups["directory"].Value);
+        Assert.Equal(LocalActionPaths.Select(path => $"/{path}").Prepend("/"), directories);
     }
 
     [Fact]
@@ -552,7 +607,7 @@ public class ContinuousIntegrationPolicyTests
     public void ValidateWorkflow_UploadsDiagnosticsEvenAfterAFailure_WithoutMaskingIt()
     {
         var source = Text(ValidatePath);
-        Assert.DoesNotContain("continue-on-error", WorkflowText(), StringComparison.Ordinal);
+        Assert.DoesNotContain("continue-on-error", WorkflowAndLocalActionText(), StringComparison.Ordinal);
         foreach (var (phase, artifact) in new[] { ("DotNet", "dotnet-validation-diagnostics"), ("Lean", "lean-validation-diagnostics") })
         {
             var run = source.IndexOf($"validate-all.ps1 -Phase {phase}", StringComparison.Ordinal);
@@ -560,7 +615,7 @@ public class ContinuousIntegrationPolicyTests
             Assert.True(run > 0 && upload > run, $"the {artifact} upload must follow the {phase} validation step");
             var step = source[source.LastIndexOf("- name:", upload, StringComparison.Ordinal)..upload];
             Assert.Contains("if: ${{ always() }}", step, StringComparison.Ordinal);
-            // Revision pinning is covered by EveryActionUse_IsPinnedToACommentedCommitSha.
+            // Revision pinning is covered by EveryExternalActionUse_IsPinnedToACommentedCommitSha.
             Assert.Contains("uses: actions/upload-artifact@", step, StringComparison.Ordinal);
         }
         Assert.Equal(2, Regex.Matches(source, @"(?m)^          path: artifacts/validation/$").Count);
@@ -626,7 +681,6 @@ public class ContinuousIntegrationPolicyTests
         Assert.Matches(@"(?m)^    timeout-minutes: 30$", section);
         Assert.Single(Regex.Matches(section, Regex.Escape(StackSuiteInvocation)).Cast<Match>());
         Assert.DoesNotContain("validate-all.ps1", section, StringComparison.Ordinal);
-        Assert.Contains("global-json-file: global.json", section, StringComparison.Ordinal);
     }
 
     [Theory]
@@ -850,7 +904,6 @@ public class ContinuousIntegrationPolicyTests
         Assert.Single(Regex.Matches(section, Regex.Escape(StandaloneBuildInvocation)).Cast<Match>());
         Assert.DoesNotContain("validate-all.ps1", section, StringComparison.Ordinal);
         Assert.DoesNotContain("validate-stack-suites.ps1", section, StringComparison.Ordinal);
-        Assert.Contains("global-json-file: global.json", section, StringComparison.Ordinal);
         Assert.DoesNotContain("needs:", section, StringComparison.Ordinal);
         Assert.DoesNotContain("continue-on-error", section, StringComparison.Ordinal);
     }
@@ -969,6 +1022,9 @@ public class ContinuousIntegrationPolicyTests
 
     private static string WorkflowText()
         => Text(ValidatePath) + "\n" + Text(ReleasePath);
+
+    private static string WorkflowAndLocalActionText()
+        => string.Join("\n", LocalActionPaths.Select(path => Text($"{path}/action.yml")).Prepend(WorkflowText()));
 
     private static string Text(string relativePath)
         => File.ReadAllText(Absolute(relativePath)).ReplaceLineEndings("\n");
