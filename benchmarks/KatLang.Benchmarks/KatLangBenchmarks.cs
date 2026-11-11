@@ -425,6 +425,11 @@ public class SequencePipelineDispatchBenchmarks
 /// reach a loop step, so the S1 pipeline fuses again and the P1 loop forms one plan instead of 2001. Prepared
 /// evaluation with both optimizations enabled (the production configuration); allocated bytes/op is the
 /// secondary metric. Filter: <c>--filter *PerSitePlanRetention*</c>.
+/// <para>Builtin-aware transport (2026-11-10): the <c>if</c> and <c>count</c> callee loops supply one call
+/// per transition to a callee that hands its parameter only to a value-only builtin, so the run forms one
+/// plan. Each stands beside its planned baseline, the same program plus an unread local property that
+/// transports the parameter to a user callable: the supplied call stays a plan (1001 per run) while the
+/// evaluation takes the same steps, so the pair's difference is the cost of the retained plans.</para>
 /// </summary>
 [MemoryDiagnoser]
 [SimpleJob(launchCount: 1, warmupCount: 3, iterationCount: 8)]
@@ -436,6 +441,10 @@ public class PerSitePlanRetentionBenchmarks
 	private static readonly BenchmarkScenario SuppliedPipelineControlScenario = BenchmarkScenarioCatalog.PerSiteSuppliedPipelineControl;
 	private static readonly BenchmarkScenario NestedIdLoop1000Scenario = BenchmarkScenarioCatalog.PerSiteNestedIdLoop1000;
 	private static readonly BenchmarkScenario NestedIdControl1000Scenario = BenchmarkScenarioCatalog.PerSiteNestedIdControl1000;
+	private static readonly BenchmarkScenario IfCalleeLoop1000Scenario = BenchmarkScenarioCatalog.PerSiteIfCalleeLoop1000;
+	private static readonly BenchmarkScenario IfCalleePlannedBaseline1000Scenario = BenchmarkScenarioCatalog.PerSiteIfCalleePlannedBaseline1000;
+	private static readonly BenchmarkScenario CountCalleeLoop1000Scenario = BenchmarkScenarioCatalog.PerSiteCountCalleeLoop1000;
+	private static readonly BenchmarkScenario CountCalleePlannedBaseline1000Scenario = BenchmarkScenarioCatalog.PerSiteCountCalleePlannedBaseline1000;
 
 	[Benchmark]
 	public IReadOnlyList<Decimal128> SuppliedPipelineLoopProgram()
@@ -455,5 +464,25 @@ public class PerSitePlanRetentionBenchmarks
 	[Benchmark]
 	public IReadOnlyList<Decimal128> NestedIdControl1000()
 		=> KatLangBenchmarkRunner.RunPrepared(NestedIdControl1000Scenario, BenchmarkCacheMode.Stage1,
+			BenchmarkLoopMode.Optimized, BenchmarkSequencePipelineMode.Optimized);
+
+	[Benchmark]
+	public IReadOnlyList<Decimal128> IfCalleeLoop1000()
+		=> KatLangBenchmarkRunner.RunPrepared(IfCalleeLoop1000Scenario, BenchmarkCacheMode.Stage1,
+			BenchmarkLoopMode.Optimized, BenchmarkSequencePipelineMode.Optimized);
+
+	[Benchmark]
+	public IReadOnlyList<Decimal128> IfCalleePlannedBaseline1000()
+		=> KatLangBenchmarkRunner.RunPrepared(IfCalleePlannedBaseline1000Scenario, BenchmarkCacheMode.Stage1,
+			BenchmarkLoopMode.Optimized, BenchmarkSequencePipelineMode.Optimized);
+
+	[Benchmark]
+	public IReadOnlyList<Decimal128> CountCalleeLoop1000()
+		=> KatLangBenchmarkRunner.RunPrepared(CountCalleeLoop1000Scenario, BenchmarkCacheMode.Stage1,
+			BenchmarkLoopMode.Optimized, BenchmarkSequencePipelineMode.Optimized);
+
+	[Benchmark]
+	public IReadOnlyList<Decimal128> CountCalleePlannedBaseline1000()
+		=> KatLangBenchmarkRunner.RunPrepared(CountCalleePlannedBaseline1000Scenario, BenchmarkCacheMode.Stage1,
 			BenchmarkLoopMode.Optimized, BenchmarkSequencePipelineMode.Optimized);
 }

@@ -1,31 +1,33 @@
-using BenchmarkDotNet.Running;
-
 namespace KatLang.Benchmarks;
 
 public static class Program
 {
-	public static void Main(string[] args)
+	/// <summary>
+	/// The benchmark host. The exit code is 0 for the diagnostic runners and for a BenchmarkDotNet run in
+	/// which at least one benchmark case succeeded; see <see cref="BenchmarkHostExit"/> for the nonzero codes.
+	/// </summary>
+	public static int Main(string[] args)
 	{
 		if (BenchmarkCacheStatsDiagnosticRunner.TryRun(args))
 		{
-			return;
+			return BenchmarkHostExit.Success;
 		}
 
 		if (BenchmarkLoopStatsDiagnosticRunner.TryRun(args))
 		{
-			return;
+			return BenchmarkHostExit.Success;
 		}
 
 		if (BenchmarkSequenceStatsDiagnosticRunner.TryRun(args))
 		{
-			return;
+			return BenchmarkHostExit.Success;
 		}
 
 		if (AsyncStackCapacityDiagnosticRunner.TryRun(args))
 		{
-			return;
+			return BenchmarkHostExit.Success;
 		}
 
-		BenchmarkSwitcher.FromAssembly(typeof(Program).Assembly).Run(args, PinnedProjectToolchain.CreateConfig());
+		return BenchmarkHostRun.Run(args);
 	}
 }

@@ -1,0 +1,10 @@
+# Planned baseline of persite-count-callee-loop-1000: the local property Keep hands F's parameter to a user
+# callable, so the supplied range(1, 3) stays an invocation plan. Keep is never read: the executed work is the same.
+Pass(v) = v
+F(xs) = {
+    Keep = Pass(xs)
+    count(xs)
+}
+S(n) = n + F(range(1, 3)) - 2, n < 1000
+
+S(0).while

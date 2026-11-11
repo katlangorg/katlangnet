@@ -1,0 +1,11 @@
+# Planned baseline of persite-if-callee-loop-1000: the local property Keep hands F's parameter to a user
+# callable, so the supplied G(n) stays an invocation plan. Keep is never read: the executed work is the same.
+G(y) = y * 2
+Pass(v) = v
+F(x) = {
+    Keep = Pass(x)
+    if(x > 0, x, 0)
+}
+S(n) = n + F(G(n)) - 2 * n + 1, n < 1000
+
+S(0).while

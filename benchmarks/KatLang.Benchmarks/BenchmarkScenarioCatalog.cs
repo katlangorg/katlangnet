@@ -274,6 +274,50 @@ internal static class BenchmarkScenarioCatalog
 			resourceName: "KatLang.Benchmarks.Scenarios.persite-nested-id-control-1000.kat",
 			expectedAtoms: [1000m]));
 
+	private static readonly Lazy<BenchmarkScenario> PerSiteIfCalleeLoop1000Scenario =
+		new(() => Load(
+			id: "persite-if-callee-loop-1000",
+			displayName: "Per-site if callee loop 1000",
+			description: "Builtin-aware transport workload: F(x) = if(x > 0, x, 0) receives the supplied G(n) once per loop transition; F hands its parameter only to the value-only builtin if, so the supplied call is not a plan (1 plan per run, the loop step).",
+			origin: "Builtin-aware per-site transport (B9, 0eed993a, 2026-11-10).",
+			resourceName: "KatLang.Benchmarks.Scenarios.persite-if-callee-loop-1000.kat",
+			expectedAtoms: [1000m]));
+
+	private static readonly Lazy<BenchmarkScenario> PerSiteIfCalleePlannedBaseline1000Scenario =
+		new(() => Load(
+			id: "persite-if-callee-planned-baseline-1000",
+			displayName: "Per-site if callee planned baseline 1000",
+			description: "Non-eligible twin of the if callee loop: an unread local property Keep = Pass(x) transports F's parameter to a user callable, so the supplied G(n) stays a plan (1001 plans per run) while the executed work is the same.",
+			origin: "Builtin-aware per-site transport (B9, 0eed993a, 2026-11-10).",
+			resourceName: "KatLang.Benchmarks.Scenarios.persite-if-callee-planned-baseline-1000.kat",
+			expectedAtoms: [1000m]));
+
+	private static readonly Lazy<BenchmarkScenario> PerSiteCountCalleeLoop1000Scenario =
+		new(() => Load(
+			id: "persite-count-callee-loop-1000",
+			displayName: "Per-site count callee loop 1000",
+			description: "Builtin-aware transport workload: F(xs) = count(xs) receives the supplied range(1, 3) once per loop transition; F hands its parameter only to the value-only builtin count, so the supplied call is not a plan (1 plan per run, the loop step).",
+			origin: "Builtin-aware per-site transport (B9, 0eed993a, 2026-11-10).",
+			resourceName: "KatLang.Benchmarks.Scenarios.persite-count-callee-loop-1000.kat",
+			expectedAtoms: [1000m]));
+
+	private static readonly Lazy<BenchmarkScenario> PerSiteCountCalleePlannedBaseline1000Scenario =
+		new(() => Load(
+			id: "persite-count-callee-planned-baseline-1000",
+			displayName: "Per-site count callee planned baseline 1000",
+			description: "Non-eligible twin of the count callee loop: an unread local property Keep = Pass(xs) transports F's parameter to a user callable, so the supplied range(1, 3) stays a plan (1001 plans per run) while the executed work is the same.",
+			origin: "Builtin-aware per-site transport (B9, 0eed993a, 2026-11-10).",
+			resourceName: "KatLang.Benchmarks.Scenarios.persite-count-callee-planned-baseline-1000.kat",
+			expectedAtoms: [1000m]));
+
+	public static BenchmarkScenario PerSiteIfCalleeLoop1000 => PerSiteIfCalleeLoop1000Scenario.Value;
+
+	public static BenchmarkScenario PerSiteIfCalleePlannedBaseline1000 => PerSiteIfCalleePlannedBaseline1000Scenario.Value;
+
+	public static BenchmarkScenario PerSiteCountCalleeLoop1000 => PerSiteCountCalleeLoop1000Scenario.Value;
+
+	public static BenchmarkScenario PerSiteCountCalleePlannedBaseline1000 => PerSiteCountCalleePlannedBaseline1000Scenario.Value;
+
 	public static BenchmarkScenario PerSiteSuppliedPipelineLoopProgram => PerSiteSuppliedPipelineLoopProgramScenario.Value;
 
 	public static BenchmarkScenario PerSiteSuppliedPipelineControl => PerSiteSuppliedPipelineControlScenario.Value;

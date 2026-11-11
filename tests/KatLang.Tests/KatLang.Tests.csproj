@@ -78,4 +78,13 @@
     <Compile Include="..\..\fuzz\KatLang.ParserFuzz\Editor\*.cs" Link="Editor\%(Filename)%(Extension)" />
   </ItemGroup>
 
+  <!--
+    The benchmark host's exit-code decision is shared as source too: benchmarks/KatLang.Benchmarks is an
+    executable that depends on BenchmarkDotNet, while BenchmarkHostExitTests must pin exactly the decision
+    the host runs. Only this one file is shared, and it is free of BenchmarkDotNet types.
+  -->
+  <ItemGroup>
+    <Compile Include="..\..\benchmarks\KatLang.Benchmarks\BenchmarkHostExit.cs" Link="Benchmarks\BenchmarkHostExit.cs" />
+  </ItemGroup>
+
 </Project>
