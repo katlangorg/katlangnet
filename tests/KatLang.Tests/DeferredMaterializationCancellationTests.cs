@@ -1577,6 +1577,633 @@ public class DeferredMaterializationCancellationTests
         AssertNoAbandonment(RegionOf(root, "G"));
     }
 
+    // ── 9c. Cycles through a second parsed program (B16) ────────────────────
+    //
+    // Another parsed program has its own loader, turn and regions, so the refusal reaches it only
+    // through the execution context: a load's turn frame chains the frames its STARTING context
+    // already carried (HeldGateTurn.Enclosing). Program 1's download evaluates program 2, that
+    // selection starts program 2's load, and program 2's download evaluates program 1 again. The
+    // last selection would wait for program 1's load, which waits for all of the above; it is
+    // refused at once, without a token. Nothing else pins the chaining: every other test has one
+    // loader, or a second program whose downloader evaluates nothing.
+    //
+    // A load that ANOTHER execution context started contributes no frame to the evaluations that
+    // wait for it. The same two downloaders therefore close a wait-for cycle when two unrelated
+    // evaluations start the two loads: neither selection is refused, nothing has a timeout, and
+    // the cycle is ended by cancelling a waiting evaluation's own token, not by cancelling the
+    // evaluations that started the loads. That is a documented limit of the host contract
+    // (RunOptions.DownloadCode, Reentrancy), not a guarantee: those cases pin what a host
+    // observes today and how a bounded token recovers, and they are re-specified if the refusal
+    // is ever widened. Every wait is bounded: each download's wait for its evaluation by the
+    // watchdog, the cycle by a short token armed once it is closed.
+
+    // Outlasts the downloads' own watchdogs, so a chain that waits instead of being refused fails
+    // on the refusal assertions and never on the test's wait for the outer evaluation.
+    private static readonly TimeSpan ChainGuard = HangGuard + HangGuard;
+
+    // The bound a host would put on an evaluation its downloader waits for.
+    private static readonly TimeSpan ShortBound = TimeSpan.FromMilliseconds(100);
+
+    public enum HostForm
+    {
+        /// <summary>Sync-over-async: the downloader evaluates on its own thread and blocks on the result.</summary>
+        BlockingOnTheDownloaderThread,
+
+        /// <summary>Sync-over-async: the downloader blocks on <see cref="Task.Run(Func{Task})"/> (another thread, flowed context).</summary>
+        BlockingOnTaskRun,
+
+        /// <summary>An asynchronous downloader awaits the evaluation after a genuine suspension.</summary>
+        AwaitingAfterASuspension,
+    }
+
+    /// <summary>
+    /// The downloader of one cross-program scenario. Its first download of the F module evaluates
+    /// another program in the given host form and waits for it, then serves the module like every
+    /// later call. The wait is watchdog-bounded: an evaluation that never ends is left behind,
+    /// the download returns anyway, and everything unwinds.
+    /// </summary>
+    private sealed class NestingDownloader(HostForm form)
+    {
+        private readonly TaskCompletionSource _entered = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private readonly TaskCompletionSource<bool> _selected = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private readonly TaskCompletionSource _returned = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private int _calls;
+
+        /// <summary>The evaluation the first download runs and waits for.</summary>
+        public Func<Task<EvalResult<IReadOnlyList<Decimal128>>>>? Nested { get; set; }
+
+        /// <summary>When set, the first download waits for it before it evaluates anything.</summary>
+        public Task? Hold { get; set; }
+
+        /// <summary>Runs inside the first download, after its evaluation ended (or the watchdog fired).</summary>
+        public Action? AfterNested { get; set; }
+
+        /// <summary>Completes when the first download is running.</summary>
+        public Task Entered => _entered.Task;
+
+        /// <summary>
+        /// Completes when the evaluation's selection has run, with whether the evaluation had
+        /// already ended by then. The async entry point executes its prefix through selection
+        /// before it returns, so <c>true</c> is a selection refused at once and <c>false</c> one
+        /// that waits.
+        /// </summary>
+        public Task<bool> Selected => _selected.Task;
+
+        /// <summary>Completes when the first download is about to return its module.</summary>
+        public Task Returned => _returned.Task;
+
+        public int Calls => Volatile.Read(ref _calls);
+
+        public CancellationToken Token { get; private set; }
+
+        public bool TokenCancelledOnReturn { get; private set; }
+
+        public bool NestedEndedInsideTheDownload { get; private set; }
+
+        public EvalResult<IReadOnlyList<Decimal128>>? NestedResult { get; private set; }
+
+        public Exception? NestedException { get; private set; }
+
+        public ValueTask<string> Download(string source, CancellationToken token)
+        {
+            if (Interlocked.Increment(ref _calls) > 1)
+                return ValueTask.FromResult(source);
+            Token = token;
+            return form == HostForm.AwaitingAfterASuspension
+                ? new ValueTask<string>(DownloadAwaiting(source, token))
+                : ValueTask.FromResult(DownloadBlocking(source, token));
+        }
+
+        private Task<EvalResult<IReadOnlyList<Decimal128>>> Evaluate()
+        {
+            var pending = Nested!();
+            _selected.TrySetResult(pending.IsCompleted);
+            return pending;
+        }
+
+        private string DownloadBlocking(string source, CancellationToken token)
+        {
+            _entered.TrySetResult();
+            // Hang guard only: a hold nobody releases is abandoned, and the test fails on what follows.
+            Hold?.Wait(HangGuard);
+            var nested = form == HostForm.BlockingOnTaskRun ? Task.Run(() => Evaluate()) : Evaluate();
+            // Watchdog only: an evaluation that waits instead of ending is left behind, and ends
+            // once this download has returned.
+            NestedEndedInsideTheDownload = ((IAsyncResult)nested).AsyncWaitHandle.WaitOne(HangGuard);
+            if (NestedEndedInsideTheDownload)
+                NestedException = Record.Exception(() => NestedResult = nested.GetAwaiter().GetResult());
+            return Return(source, token);
+        }
+
+        private async Task<string> DownloadAwaiting(string source, CancellationToken token)
+        {
+            _entered.TrySetResult();
+            // A genuine suspension first: the evaluation runs on a continuation, on whatever
+            // thread resumes it, with the download's flowed context.
+            await Task.Yield();
+            if (Hold is { } hold)
+            {
+                // Hang guard only, as in the blocking form.
+                try { await hold.WaitAsync(HangGuard); }
+                catch (TimeoutException) { }
+            }
+
+            var nested = Evaluate();
+            try
+            {
+                NestedResult = await nested.WaitAsync(HangGuard);
+                NestedEndedInsideTheDownload = true;
+            }
+            catch (TimeoutException) when (!nested.IsCompleted)
+            {
+                // Watchdog only, as in the blocking form.
+            }
+            catch (Exception error)
+            {
+                NestedException = error;
+                NestedEndedInsideTheDownload = true;
+            }
+
+            return Return(source, token);
+        }
+
+        private string Return(string source, CancellationToken token)
+        {
+            AfterNested?.Invoke();
+            TokenCancelledOnReturn = token.IsCancellationRequested;
+            _returned.TrySetResult();
+            return source;
+        }
+    }
+
+    /// <summary>
+    /// One separately parsed two-region program of a cross-program scenario: its own loader,
+    /// turn, regions, branch selector and downloader, and module values no other program has.
+    /// Every program loads the same two URLs, which stay independent: a module cache belongs to
+    /// one parse.
+    /// </summary>
+    private sealed class CrossProgram
+    {
+        private int _which;
+        private int _otherModuleDownloads;
+
+        private CrossProgram(int index, HostForm form)
+        {
+            F = 7 + 10 * index;
+            G = 8 + 10 * index;
+            Downloader = new NestingDownloader(form);
+            Hosts = HostOperations.Create(HostOperation.Create("Which", (_, _) => new Result.Atom(Volatile.Read(ref _which))));
+        }
+
+        /// <summary>The value of the F branch, whose module the nesting downloader serves.</summary>
+        public int F { get; }
+
+        /// <summary>The value of the G branch.</summary>
+        public int G { get; }
+
+        public NestingDownloader Downloader { get; }
+
+        public HostOperations Hosts { get; }
+
+        public Algorithm Root { get; private set; } = null!;
+
+        public DeferredModuleRegion RegionF { get; private set; } = null!;
+
+        public DeferredModuleRegion RegionG { get; private set; } = null!;
+
+        public ModuleLoader Loader => RegionF.Loader;
+
+        /// <summary>Downloads of the G module, which no scenario nests anything in.</summary>
+        public int OtherModuleDownloads => Volatile.Read(ref _otherModuleDownloads);
+
+        /// <summary>Which branch the next evaluation of this program selects.</summary>
+        public void Select(bool otherRegion) => Volatile.Write(ref _which, otherRegion ? 1 : 0);
+
+        public Task<EvalResult<IReadOnlyList<Decimal128>>> Evaluate(CancellationToken cancellationToken = default)
+            => Evaluator.RunFlatAsync(new Expr.AlgorithmExpr(Root), Hosts, null, null, cancellationToken);
+
+        public static async Task<CrossProgram> Parse(int index, HostForm form)
+        {
+            var program = new CrossProgram(index, form);
+            var options = new RunOptions
+            {
+                HostOperations = program.Hosts,
+                DownloadCode = (url, token) =>
+                {
+                    if (url == ModuleA)
+                        return program.Downloader.Download($"public V = {program.F}", token);
+                    Interlocked.Increment(ref program._otherModuleDownloads);
+                    return ValueTask.FromResult($"public W = {program.G}");
+                },
+            };
+            program.Root = (await SourceProvenance.ParseValidAsync(TwoRegionProgram, options)).Root;
+            program.RegionF = RegionOf(program.Root, "F");
+            program.RegionG = RegionOf(program.Root, "G");
+            Assert.Same(program.RegionF.Loader, program.RegionG.Loader);
+            return program;
+        }
+    }
+
+    private static async Task AssertNothingLeftBehind(CrossProgram program)
+    {
+        Assert.Equal(0, program.RegionF.InFlightConsumers);
+        Assert.Equal(0, program.RegionG.InFlightConsumers);
+        await AssertGateFree(program.RegionF);
+        Assert.Equal(0, program.Loader.InProgressModuleCount);
+    }
+
+    [Theory]
+    [InlineData(HostForm.BlockingOnTheDownloaderThread, false)]
+    [InlineData(HostForm.BlockingOnTheDownloaderThread, true)]
+    [InlineData(HostForm.BlockingOnTaskRun, false)]
+    [InlineData(HostForm.BlockingOnTaskRun, true)]
+    [InlineData(HostForm.AwaitingAfterASuspension, false)]
+    [InlineData(HostForm.AwaitingAfterASuspension, true)]
+    public async Task CrossProgramChain_StartedInTheDownloaderContext_SelectingTheFirstProgramAgain_FailsFastWithALoadCycle_WithoutAToken(
+        HostForm form, bool otherRegion)
+    {
+        var first = await CrossProgram.Parse(0, form);
+        var second = await CrossProgram.Parse(1, form);
+        Assert.NotSame(first.Loader.MaterializationGate, second.Loader.MaterializationGate);
+        // Program 1's download evaluates program 2: that selection STARTS program 2's load, in
+        // the download's execution context.
+        first.Downloader.Nested = () => second.Evaluate();
+        // Program 2's download evaluates program 1 again: the branch being loaded (it would join
+        // that load's run) or the other one (it would queue for the turn that load holds). No
+        // evaluation has a token.
+        second.Downloader.Nested = () =>
+        {
+            first.Select(otherRegion);
+            return first.Evaluate();
+        };
+        int firstFConsumers = -1, firstGConsumers = -1, firstGAttempts = -1, secondFConsumers = -1;
+        second.Downloader.AfterNested = () =>
+        {
+            firstFConsumers = first.RegionF.InFlightConsumers;
+            firstGConsumers = first.RegionG.InFlightConsumers;
+            firstGAttempts = first.RegionG.MaterializationAttempts;
+            secondFConsumers = second.RegionF.InFlightConsumers;
+        };
+
+        AssertValue(await Task.Run(() => first.Evaluate()).WaitAsync(ChainGuard), first.F);
+
+        // The innermost selection was refused at once, as a load cycle of program 1.
+        Assert.True(await second.Downloader.Selected.WaitAsync(HangGuard),
+            "the selection waited for the load whose downloads wait for it instead of being refused at once");
+        Assert.True(second.Downloader.NestedEndedInsideTheDownload, "the refused selection did not end inside the download");
+        AssertReentrantSelectionRejected(second.Downloader.NestedResult, second.Downloader.NestedException);
+        // It counted nothing on either load in progress, and cancelled neither.
+        Assert.Equal(1, firstFConsumers);
+        Assert.Equal(0, firstGConsumers);
+        Assert.Equal(0, firstGAttempts);
+        Assert.Equal(1, secondFConsumers);
+        Assert.False(first.Downloader.TokenCancelledOnReturn);
+        Assert.False(second.Downloader.TokenCancelledOnReturn);
+        // Both loads completed normally: program 2 was served to program 1's download, and
+        // program 1 published.
+        Assert.True(first.Downloader.NestedEndedInsideTheDownload, "program 2's evaluation did not end inside the download");
+        Assert.Null(first.Downloader.NestedException);
+        AssertValue(first.Downloader.NestedResult!.Value, second.F);
+        Assert.Equal(1, first.Downloader.Calls);
+        Assert.Equal(1, second.Downloader.Calls);
+        Assert.True(first.RegionF.IsMaterialized);
+        Assert.True(second.RegionF.IsMaterialized);
+        Assert.Equal(1, first.RegionF.MaterializationAttempts);
+        Assert.Equal(1, second.RegionF.MaterializationAttempts);
+        Assert.False(first.RegionG.IsMaterialized);
+        Assert.Equal(0, first.RegionG.MaterializationAttempts);
+        AssertNoAbandonment(first.RegionF);
+        AssertNoAbandonment(first.RegionG);
+        AssertNoAbandonment(second.RegionF);
+        await AssertNothingLeftBehind(first);
+        await AssertNothingLeftBehind(second);
+
+        // Recovery: independent later evaluations are served, and so is the refused selection
+        // itself now that the loads have finished.
+        AssertValue(await first.Evaluate().WaitAsync(HangGuard), otherRegion ? first.G : first.F);
+        Assert.Equal(otherRegion ? 1 : 0, first.RegionG.MaterializationAttempts);
+        first.Select(otherRegion: false);
+        AssertValue(await first.Evaluate().WaitAsync(HangGuard), first.F);
+        AssertValue(await second.Evaluate().WaitAsync(HangGuard), second.F);
+        Assert.Equal(1, first.RegionF.MaterializationAttempts);
+        Assert.Equal(1, second.RegionF.MaterializationAttempts);
+        Assert.Equal(1, first.Downloader.Calls);
+        Assert.Equal(1, second.Downloader.Calls);
+        AssertNoAbandonment(first.RegionG);
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(1)]
+    [InlineData(2)]
+    public async Task CrossProgramChain_ThroughThreePrograms_RefusesALoadOfEveryProgramTheContextIsLoading(int reloaded)
+    {
+        var programs = new CrossProgram[3];
+        for (var index = 0; index < programs.Length; index++)
+            programs[index] = await CrossProgram.Parse(index, HostForm.BlockingOnTheDownloaderThread);
+        programs[0].Downloader.Nested = () => programs[1].Evaluate();
+        programs[1].Downloader.Nested = () => programs[2].Evaluate();
+        // The innermost download selects a branch this context is already loading: two links out
+        // (the whole chain of frames is searched), one link out, or its own program's.
+        programs[2].Downloader.Nested = () => programs[reloaded].Evaluate();
+
+        AssertValue(await Task.Run(() => programs[0].Evaluate()).WaitAsync(ChainGuard), programs[0].F);
+
+        Assert.True(await programs[2].Downloader.Selected.WaitAsync(HangGuard),
+            "the selection waited for a load this context holds instead of being refused at once");
+        Assert.True(programs[2].Downloader.NestedEndedInsideTheDownload, "the refused selection did not end inside the download");
+        AssertReentrantSelectionRejected(programs[2].Downloader.NestedResult, programs[2].Downloader.NestedException);
+        // Every load in progress completed normally, innermost first.
+        Assert.Null(programs[1].Downloader.NestedException);
+        AssertValue(programs[1].Downloader.NestedResult!.Value, programs[2].F);
+        Assert.Null(programs[0].Downloader.NestedException);
+        AssertValue(programs[0].Downloader.NestedResult!.Value, programs[1].F);
+        foreach (var program in programs)
+        {
+            Assert.True(program.RegionF.IsMaterialized);
+            Assert.Equal(1, program.RegionF.MaterializationAttempts);
+            Assert.Equal(1, program.Downloader.Calls);
+            Assert.False(program.Downloader.TokenCancelledOnReturn);
+            AssertNoAbandonment(program.RegionF);
+            await AssertNothingLeftBehind(program);
+        }
+
+        // Recovery: the refused selection is served now.
+        AssertValue(await programs[reloaded].Evaluate().WaitAsync(HangGuard), programs[reloaded].F);
+        Assert.Equal(1, programs[reloaded].RegionF.MaterializationAttempts);
+    }
+
+    public enum CrossProgramWait
+    {
+        /// <summary>The evaluation selects the branch the other context is loading: it joins that load's run.</summary>
+        JoinsTheRun,
+
+        /// <summary>It selects the program's other branch: its own run queues for the loader turn that load holds.</summary>
+        QueuesForTheTurn,
+    }
+
+    /// <summary>
+    /// The two-program wait-for cycle through loads that other execution contexts started. Two
+    /// unrelated evaluations start the two programs' loads; each download is held until both
+    /// loads are in progress, then evaluates the OTHER program and waits for it. Program 1's
+    /// download evaluates program 2 under the caller's token, program 2's download evaluates
+    /// program 1 with no token.
+    /// </summary>
+    private sealed class CrossProgramCycle
+    {
+        private readonly TaskCompletionSource _bothLoading = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public required CrossProgram First { get; init; }
+
+        public required CrossProgram Second { get; init; }
+
+        /// <summary>The evaluation that started program 1's load.</summary>
+        public Task<EvalResult<IReadOnlyList<Decimal128>>> FirstStarter { get; private set; } = null!;
+
+        /// <summary>The evaluation that started program 2's load.</summary>
+        public Task<EvalResult<IReadOnlyList<Decimal128>>> SecondStarter { get; private set; } = null!;
+
+        public static async Task<CrossProgramCycle> Start(
+            HostForm form,
+            CrossProgramWait wait,
+            CancellationToken waitingToken,
+            CancellationToken firstStarterToken = default,
+            CancellationToken secondStarterToken = default)
+        {
+            var cycle = new CrossProgramCycle
+            {
+                First = await CrossProgram.Parse(0, form),
+                Second = await CrossProgram.Parse(1, form),
+            };
+            var (first, second) = (cycle.First, cycle.Second);
+            first.Downloader.Hold = cycle._bothLoading.Task;
+            second.Downloader.Hold = cycle._bothLoading.Task;
+            first.Downloader.Nested = () =>
+            {
+                second.Select(otherRegion: wait == CrossProgramWait.QueuesForTheTurn);
+                return second.Evaluate(waitingToken);
+            };
+            second.Downloader.Nested = () => first.Evaluate();
+            // Each from the test's own context: neither load's turn is visible to the other's.
+            cycle.FirstStarter = Task.Run(() => first.Evaluate(firstStarterToken));
+            cycle.SecondStarter = Task.Run(() => second.Evaluate(secondStarterToken));
+            return cycle;
+        }
+
+        public async Task AssertClosed(CrossProgramWait wait)
+        {
+            await First.Downloader.Entered.WaitAsync(HangGuard);
+            await Second.Downloader.Entered.WaitAsync(HangGuard);
+            // Both loads are in progress, each started by its own evaluation, each holding its turn.
+            Assert.Equal(1, First.RegionF.InFlightConsumers);
+            Assert.Equal(1, Second.RegionF.InFlightConsumers);
+            _bothLoading.SetResult();
+
+            // Neither selection is refused: each is an ordinary consumer of a load that another
+            // context started, so it waits.
+            Assert.False(await First.Downloader.Selected.WaitAsync(HangGuard),
+                "the evaluation of program 2 was refused or served at its selection instead of waiting for the load in progress");
+            Assert.False(await Second.Downloader.Selected.WaitAsync(HangGuard),
+                "the evaluation of program 1 was refused or served at its selection instead of waiting for the load in progress");
+            Assert.Equal(2, First.RegionF.InFlightConsumers);
+            Assert.Equal(wait == CrossProgramWait.JoinsTheRun ? 2 : 1, Second.RegionF.InFlightConsumers);
+            Assert.Equal(wait == CrossProgramWait.JoinsTheRun ? 0 : 1, Second.RegionG.InFlightConsumers);
+            Assert.Equal(0, Second.RegionG.MaterializationAttempts);
+            // The cycle is closed: each load holds its turn and waits for its download, each
+            // download for its evaluation, each evaluation for the other program's load.
+            Assert.Equal(0, First.Loader.MaterializationGate.CurrentCount);
+            Assert.Equal(0, Second.Loader.MaterializationGate.CurrentCount);
+            Assert.False(FirstStarter.IsCompleted);
+            Assert.False(SecondStarter.IsCompleted);
+            Assert.False(First.Downloader.Returned.IsCompleted);
+            Assert.False(Second.Downloader.Returned.IsCompleted);
+            Assert.Equal(1, First.RegionF.MaterializationAttempts);
+            Assert.Equal(1, Second.RegionF.MaterializationAttempts);
+        }
+
+        /// <summary>
+        /// Neither an assertion failure nor a watchdog leaves a worker behind: everything is
+        /// released, and the downloads' own watchdogs bound whatever still waits.
+        /// </summary>
+        public async Task Drain(CancellationTokenSource waiting)
+        {
+            _bothLoading.TrySetResult();
+            waiting.Cancel();
+            var pending = new List<Task> { FirstStarter, SecondStarter };
+            foreach (var downloader in new[] { First.Downloader, Second.Downloader })
+            {
+                if (downloader.Entered.IsCompleted)
+                    pending.Add(downloader.Returned);
+            }
+
+            await Record.ExceptionAsync(() => Task.WhenAll(pending).WaitAsync(ChainGuard));
+        }
+    }
+
+    [Theory]
+    [InlineData(HostForm.BlockingOnTheDownloaderThread, CrossProgramWait.JoinsTheRun)]
+    [InlineData(HostForm.BlockingOnTheDownloaderThread, CrossProgramWait.QueuesForTheTurn)]
+    [InlineData(HostForm.AwaitingAfterASuspension, CrossProgramWait.JoinsTheRun)]
+    [InlineData(HostForm.AwaitingAfterASuspension, CrossProgramWait.QueuesForTheTurn)]
+    public async Task CrossProgramCycle_ThroughLoadsOtherContextsStarted_IsNotRefused_AndWaitsUntilAWaitingEvaluationsBoundedTokenEndsIt(
+        HostForm form, CrossProgramWait wait)
+    {
+        using var bounded = new CancellationTokenSource();
+        var cycle = await CrossProgramCycle.Start(form, wait, bounded.Token);
+        var (first, second) = (cycle.First, cycle.Second);
+        try
+        {
+            await cycle.AssertClosed(wait);
+
+            // The bound is armed only now, so the outcome never depends on how long closing the
+            // cycle took. If the token did not end the wait, the download's watchdog would, and
+            // the next assertions fail.
+            bounded.CancelAfter(ShortBound);
+            await first.Downloader.Returned.WaitAsync(HangGuard);
+            Assert.True(first.Downloader.NestedEndedInsideTheDownload, "the bounded token did not end the waiting evaluation");
+            // The waiting evaluation ended as its own cancellation: it could not have ended otherwise.
+            Assert.Null(first.Downloader.NestedResult);
+            var cancelled = Assert.IsAssignableFrom<OperationCanceledException>(first.Downloader.NestedException);
+            Assert.Equal(bounded.Token, cancelled.CancellationToken);
+
+            // One broken edge unwinds the whole cycle: program 1's download returned, its load
+            // published and served the tokenless evaluation that waited for it, program 2's
+            // download returned in turn, and both starting evaluations completed.
+            AssertValue(await cycle.FirstStarter.WaitAsync(HangGuard), first.F);
+            AssertValue(await cycle.SecondStarter.WaitAsync(HangGuard), second.F);
+            Assert.True(second.Downloader.NestedEndedInsideTheDownload, "the tokenless evaluation did not end inside the download");
+            Assert.Null(second.Downloader.NestedException);
+            AssertValue(second.Downloader.NestedResult!.Value, first.F);
+            // Only that one evaluation was cancelled: no load was, and nothing was downloaded twice.
+            Assert.False(first.Downloader.TokenCancelledOnReturn);
+            Assert.False(second.Downloader.TokenCancelledOnReturn);
+            Assert.Equal(1, first.Downloader.Calls);
+            Assert.Equal(1, second.Downloader.Calls);
+            Assert.True(first.RegionF.IsMaterialized);
+            Assert.True(second.RegionF.IsMaterialized);
+            Assert.Equal(1, first.RegionF.MaterializationAttempts);
+            Assert.Equal(1, second.RegionF.MaterializationAttempts);
+            AssertNoAbandonment(first.RegionF);
+            AssertNoAbandonment(first.RegionG);
+            AssertNoAbandonment(second.RegionF);
+            if (wait == CrossProgramWait.JoinsTheRun)
+            {
+                // Its leave was not the last on the run it had joined.
+                AssertNoAbandonment(second.RegionG);
+            }
+            else
+            {
+                // It was the only consumer of the run it had queued for the turn: that run was
+                // abandoned there, before it downloaded anything.
+                AssertAbandonedCleanly(second.RegionG);
+                Assert.False(second.RegionG.IsMaterialized);
+                Assert.Equal(0, second.OtherModuleDownloads);
+            }
+
+            await AssertNothingLeftBehind(first);
+            await AssertNothingLeftBehind(second);
+
+            // Recovery: the cancelled selection itself is served now, from a fresh run where its
+            // own was abandoned, and so is every other selection.
+            AssertValue(await second.Evaluate().WaitAsync(HangGuard), wait == CrossProgramWait.JoinsTheRun ? second.F : second.G);
+            Assert.True(wait == CrossProgramWait.JoinsTheRun || second.RegionG.IsMaterialized);
+            Assert.Equal(wait == CrossProgramWait.JoinsTheRun ? 0 : 1, second.OtherModuleDownloads);
+            second.Select(otherRegion: false);
+            AssertValue(await second.Evaluate().WaitAsync(HangGuard), second.F);
+            AssertValue(await first.Evaluate().WaitAsync(HangGuard), first.F);
+            Assert.Equal(1, first.RegionF.MaterializationAttempts);
+            Assert.Equal(1, second.RegionF.MaterializationAttempts);
+            await AssertNothingLeftBehind(first);
+            await AssertNothingLeftBehind(second);
+        }
+        finally
+        {
+            await cycle.Drain(bounded);
+        }
+    }
+
+    [Fact]
+    public async Task CrossProgramCycle_ThroughLoadsOtherContextsStarted_OutlivesTheEvaluationsThatStartedThoseLoads()
+    {
+        // Cancelling the evaluations that STARTED the two loads does not end the cycle. Each
+        // leaves with its own token, but neither load is abandoned, because the other program's
+        // waiting evaluation still counts as its consumer; so no downloader token is cancelled,
+        // both turns stay held, and only a waiting evaluation's own token breaks an edge.
+        using var firstStarter = new CancellationTokenSource();
+        using var secondStarter = new CancellationTokenSource();
+        using var bounded = new CancellationTokenSource();
+        var cycle = await CrossProgramCycle.Start(HostForm.AwaitingAfterASuspension, CrossProgramWait.JoinsTheRun,
+            bounded.Token, firstStarter.Token, secondStarter.Token);
+        var (first, second) = (cycle.First, cycle.Second);
+        try
+        {
+            await cycle.AssertClosed(CrossProgramWait.JoinsTheRun);
+
+            firstStarter.Cancel();
+            secondStarter.Cancel();
+            // No thread is inside a download in this host form, so each starter returns at once.
+            var firstError = await Assert.ThrowsAnyAsync<OperationCanceledException>(() => cycle.FirstStarter.WaitAsync(HangGuard));
+            Assert.Equal(firstStarter.Token, firstError.CancellationToken);
+            var secondError = await Assert.ThrowsAnyAsync<OperationCanceledException>(() => cycle.SecondStarter.WaitAsync(HangGuard));
+            Assert.Equal(secondStarter.Token, secondError.CancellationToken);
+
+            // The cycle is still closed: one consumer left on each load, nothing abandoned or
+            // cancelled, both turns held, both downloads still waiting.
+            Assert.Equal(1, first.RegionF.InFlightConsumers);
+            Assert.Equal(1, second.RegionF.InFlightConsumers);
+            AssertNoAbandonment(first.RegionF);
+            AssertNoAbandonment(second.RegionF);
+            Assert.False(first.Downloader.Token.IsCancellationRequested);
+            Assert.False(second.Downloader.Token.IsCancellationRequested);
+            Assert.Equal(0, first.Loader.MaterializationGate.CurrentCount);
+            Assert.Equal(0, second.Loader.MaterializationGate.CurrentCount);
+            Assert.False(first.Downloader.Returned.IsCompleted);
+            Assert.False(second.Downloader.Returned.IsCompleted);
+            Assert.False(first.RegionF.IsMaterialized);
+            Assert.False(second.RegionF.IsMaterialized);
+
+            // The waiting evaluation's bounded token ends it.
+            bounded.CancelAfter(ShortBound);
+            await first.Downloader.Returned.WaitAsync(HangGuard);
+            await second.Downloader.Returned.WaitAsync(HangGuard);
+            Assert.True(first.Downloader.NestedEndedInsideTheDownload, "the bounded token did not end the waiting evaluation");
+            var cancelled = Assert.IsAssignableFrom<OperationCanceledException>(first.Downloader.NestedException);
+            Assert.Equal(bounded.Token, cancelled.CancellationToken);
+            // Program 1's load still had the tokenless evaluation as a consumer: it published
+            // and served it.
+            Assert.True(second.Downloader.NestedEndedInsideTheDownload, "the tokenless evaluation did not end inside the download");
+            Assert.Null(second.Downloader.NestedException);
+            AssertValue(second.Downloader.NestedResult!.Value, first.F);
+            Assert.False(first.Downloader.TokenCancelledOnReturn);
+            Assert.True(first.RegionF.IsMaterialized);
+            Assert.Equal(1, first.RegionF.MaterializationAttempts);
+            AssertNoAbandonment(first.RegionF);
+            // The cancelled evaluation was the last consumer of program 2's load: its leave
+            // abandoned that run, which cancelled its downloader token and published nothing.
+            Assert.True(second.Downloader.TokenCancelledOnReturn);
+            AssertAbandonedCleanly(second.RegionF);
+            await AssertNothingLeftBehind(first);
+            await AssertNothingLeftBehind(second);
+            Assert.False(second.RegionF.IsMaterialized);
+            Assert.Equal(1, second.RegionF.MaterializationAttempts);
+
+            // Recovery: the abandoned load is retried by a fresh run, the published one is served.
+            AssertValue(await second.Evaluate().WaitAsync(HangGuard), second.F);
+            Assert.Equal(2, second.RegionF.MaterializationAttempts);
+            Assert.Equal(2, second.Downloader.Calls);
+            AssertAbandonedCleanly(second.RegionF);
+            AssertValue(await first.Evaluate().WaitAsync(HangGuard), first.F);
+            Assert.Equal(1, first.RegionF.MaterializationAttempts);
+            Assert.Equal(1, first.Downloader.Calls);
+            await AssertNothingLeftBehind(first);
+            await AssertNothingLeftBehind(second);
+        }
+        finally
+        {
+            await cycle.Drain(bounded);
+        }
+    }
+
     // ── 10. Seeded stress ───────────────────────────────────────────────────
 
     private const string StressCallbackFailure = "deferred-materialization stress callback failure";

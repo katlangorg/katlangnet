@@ -723,18 +723,56 @@ The loader's rewrite walk exists in two lock-step forms, routed per subtree:
   LIMITS. A downloader must never wait for an evaluation of the program it is loading for:
   moving that evaluation out of the downloader's context removes the refusal and leaves the
   deadlock. Waiting for an evaluation another context started, and a cycle through another
-  tree's load that this context only joined, are outside the guard. No deadlock freedom is
-  claimed. Source-processing cancellation is not a deadlock fix and is not linked into
-  joiner waits. `KatLangEngine.RunAsync` parses and evaluates one private tree per call, so
-  only a host that evaluates a retained root through the `Evaluator` async entry points can
-  meet the rule.
+  tree's load that this context did not start (CROSS-TREE CYCLES below), are outside the
+  guard. No deadlock freedom is claimed. Source-processing cancellation is not a deadlock
+  fix and is not linked into joiner waits. `KatLangEngine.RunAsync` parses and evaluates one
+  private tree per call, so only a host that evaluates a retained root through the
+  `Evaluator` async entry points can meet the rule.
+  CROSS-TREE CYCLES (characterized November 11 2026; the contract is unchanged). Across
+  trees the guard covers exactly the loads this context STARTED. Tree 1's downloader
+  evaluates tree 2; that selection starts tree 2's run in the downloader's context, so tree
+  2's turn frame chains tree 1's (`HeldGateTurn.Enclosing`), and a selection of tree 1 made
+  by tree 2's downloader is refused as `LoadCycle` without a token, through any number of
+  trees, whether it would join tree 1's run or queue for tree 1's gate. A run that ANOTHER
+  context started pushed its frame in that starter's context only, so an evaluation that
+  waits for it, as a joiner of the run or as the starter of another region's run queued for
+  that gate, carries no frame for it and is an ordinary consumer.
+  Who can reach the uncaught cycle: a host that retains two or more parsed trees, evaluates
+  them through the `Evaluator` async entry points, gives them downloaders that each wait for
+  an evaluation of the other tree, and lets independent contexts (two concurrent requests)
+  start the two loads. Each downloader's evaluation then waits for the run the other context
+  started: tree 1's run waits for its download, the download for the evaluation of tree 2,
+  that evaluation for tree 2's run, and symmetrically back. Started from one context alone,
+  the same downloaders get the refusal instead.
+  What the host observes: no refusal and no timeout. The waiting selections are counted
+  consumers (or queued runs), both gates stay held, and no evaluation completes; blocking
+  downloaders keep their threads. Cancelling an evaluation that STARTED one of the runs need
+  not end it: the starter leaves with its own token (and returns, unless its thread is inside
+  a blocking download), but a run that the other tree's waiting evaluation has JOINED keeps
+  that consumer, so it is not abandoned, its downloader token is not cancelled, and an
+  evaluation that was given only that token keeps waiting; when both runs are joined,
+  cancelling both starters ends nothing. The cycle ends when a waiting evaluation's OWN
+  evaluation token is cancelled (a joiner waits with that token; a queued run is abandoned at
+  the gate by its last consumer's leave), or when a downloader stops waiting. It then unwinds
+  as an ordinary cancellation of that one evaluation: each run publishes, or is abandoned and
+  retried by a fresh run, the gates are released, and nothing is retained.
+  How a host avoids it: never let a downloader wait for an evaluation of another retained
+  tree whose own downloads can lead back to an evaluation of the tree being loaded. A host
+  that cannot rule that out gives every evaluation a downloader waits for a deadline of its
+  own (a token linked to the downloader's token and cancelled after a timeout) and stops
+  waiting when it fires.
   `DeferredMaterializationCancellationTests` § 9 pins the cycles (no token, uncancelled,
   pre-cancelled, and source-cancelled tokens; an outer leave first; sync, `Task.Run`, and
   async downloaders; a later download of the same load waiting for work an earlier download
   started, which pins the frame's turn-long lifetime); § 9b pins the contract: flowed
   independent work that nothing waits for is refused for both regions, including while the
   downloader is still inside its synchronous call, while the same work scheduled under
-  `SuppressFlow` waits for the load and succeeds, and the safe paths above succeed.
+  `SuppressFlow` waits for the load and succeeds, and the safe paths above succeed; § 9c pins
+  the cross-tree cases: the started chain refused through two and three trees (blocking,
+  `Task.Run`, and async downloaders; the region being loaded and the other one), and the
+  cycle through runs other contexts started, which is not refused, outlives the cancellation
+  of both starting evaluations, and is ended by a waiting evaluation's bounded token with
+  the gates free and every region reusable afterwards.
 - The pre-scan and BOTH walks probe the runtime's execution-stack reserve at every
   level; exhaustion (for example a host thread below the documented 1 MiB envelope, or
   Debug async-frame slack over the debt model at an extreme composition) unwinds to one

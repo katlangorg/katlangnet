@@ -126,11 +126,37 @@ public sealed class RunOptions
     /// evaluation of the program it is loading for. Moving that evaluation out of the
     /// downloader's execution context removes the refusal and leaves the deadlock. KatLang
     /// also does not catch a downloader waiting for an evaluation that another context started,
-    /// or a cycle through another program's load that this context only joined; it makes no
-    /// claim of deadlock freedom. <see cref="KatLangEngine.RunAsync(string, RunOptions?)"/>
-    /// parses and evaluates its own private tree on every call, so only a host that evaluates
-    /// a retained parsed tree through the <see cref="Evaluator"/> asynchronous entry points can
-    /// meet this rule.</para>
+    /// or a cycle through another program's load that this context did not start (described
+    /// next); it makes no claim of deadlock freedom.
+    /// <see cref="KatLangEngine.RunAsync(string, RunOptions?)"/> parses and evaluates its own
+    /// private tree on every call, so only a host that evaluates a retained parsed tree through
+    /// the <see cref="Evaluator"/> asynchronous entry points can meet this rule.</para>
+    /// <para><b>Cycles through another program.</b> Across parsed programs the refusal covers
+    /// exactly the loads this execution context started. When this program's downloader
+    /// evaluates a second retained program, that evaluation starts the second program's load,
+    /// and that load's downloader evaluates this program again, the last selection is refused
+    /// as described above, through any number of programs. A load that another execution
+    /// context started is different: an evaluation that selects its branch, or another
+    /// not-yet-loaded branch of that program, is an ordinary consumer and waits for it. A host
+    /// can therefore deadlock when it retains two or more parsed programs whose downloaders
+    /// each wait for an evaluation of the other, and independent execution contexts (two
+    /// concurrent requests, say) start their loads: each downloader's evaluation then waits for
+    /// the load the other context started. Started from one context alone, the same downloaders
+    /// get the refusal instead. In the deadlock no selection is refused and nothing times out:
+    /// the evaluations never complete, and blocking downloaders keep their threads. Cancelling
+    /// an evaluation that started one of the loads need not end it. That evaluation leaves (it
+    /// returns once no downloader blocks its thread), but a load that the other program's
+    /// waiting evaluation has joined keeps that evaluation as a consumer and is not abandoned;
+    /// the token this delegate received then stays uncancelled, and an evaluation that was
+    /// given only that token keeps waiting. The deadlock ends when a waiting evaluation is
+    /// cancelled through an evaluation token of its own, or when a delegate stops waiting. It
+    /// then unwinds as an ordinary cancellation of that one evaluation: each load completes or
+    /// is abandoned like any other, and every branch stays loadable.</para>
+    /// <para>To avoid it, never let a downloader wait for an evaluation of another retained
+    /// program whose own downloads can lead back to an evaluation of the program being loaded.
+    /// A host that cannot rule that out must give every evaluation a downloader waits for a
+    /// deadline of its own (a token linked to the delegate's token and cancelled after a
+    /// timeout), and stop waiting when it fires.</para>
     /// </summary>
     public Func<string, CancellationToken, ValueTask<string>>? DownloadCode { get; init; }
 
