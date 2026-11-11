@@ -13,7 +13,7 @@ namespace KatLang.ParserFuzz;
 /// semantic-corpus [--supervised] [--out DIR] [--only PREFIX] [--deadline-seconds N]
 /// semantic-worker DESCRIPTOR RESULT [--exact-source]     (child process of a supervised run)
 /// semantic-reduce DESCRIPTOR|CASE-ID OUT [--max-attempts N] [--supervised]   (SemanticReduction.RunReduce)
-/// semantic-campaign --seeds FIRST[..LAST] [--cases-per-seed N] [--max-cases N] [--max-seconds N] [--no-reduce] [--out DIR]   (SemanticCampaign)
+/// semantic-campaign --seeds FIRST[..LAST] [--recipe seed|seed-nested] [--cases-per-seed N] [--max-cases N] [--max-seconds N] [--no-reduce] [--out DIR]   (SemanticCampaign)
 /// </code>
 ///
 /// <para><b>Modes.</b> The default RECIPE mode rebuilds the case from its generator, recipe version

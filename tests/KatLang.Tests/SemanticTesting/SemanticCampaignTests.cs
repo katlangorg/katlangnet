@@ -1,5 +1,6 @@
 using System.Collections.Immutable;
 using System.Globalization;
+using System.Text.Json;
 using KatLang.ParserFuzz;
 using Xunit.Abstractions;
 
@@ -12,7 +13,9 @@ namespace KatLang.Tests.SemanticTesting;
 /// the block moves alone; a campaign over a tiny seed range is deterministic and stops at its case
 /// and time budgets; a planted failure (the runner's inert observation seam) is found, persisted with
 /// its signature and reduced — in process, through the command's argument parsing, and once through
-/// supervised children.
+/// supervised children. <c>--recipe seed-nested</c> searches the nested-pattern recipe the same way:
+/// its campaign is deterministic and records its recipe, its ids replay through
+/// <c>semantic-replay</c>, and a planted nested failure is found, persisted and reduced.
 /// </summary>
 public class SemanticCampaignTests(ITestOutputHelper output)
 {
@@ -403,6 +406,272 @@ public class SemanticCampaignTests(ITestOutputHelper output)
         }
     }
 
+    // ── Recipes ─────────────────────────────────────────────────────────────
+
+    /// <summary>The planted nested shape: the OUTER-LIST nested pattern head <c>[(a, *rest), z]</c>.</summary>
+    private const string NestedTrigger = "[(";
+
+    /// <summary>The nested ids of the first fixed-corpus seed; indices 0-3 are the fixed corpus's own nested cases.</summary>
+    private const string NestedIds = "sem2b/v1/seed-nested/5EED2B000001/";
+
+    private static SemanticCaseResult NestedFaultyRun(SemanticCase c)
+        => SemanticRunner.Run(c, c.Source.Contains(NestedTrigger, StringComparison.Ordinal) ? SemanticReductionTests.WrongValue : null);
+
+    /// <summary>
+    /// <c>--recipe</c>: the default is <c>seed</c> (its default output directory keeps its name), both
+    /// recipe names parse, the nested default output directory is prefixed by its recipe, an unknown
+    /// name is a usage problem, and every recipe name is the id segment <c>TryBuilder</c> rebuilds.
+    /// </summary>
+    [Fact]
+    public void TheRecipeOption_DefaultsToSeed_AndEveryRecipeNameIsARebuildableIdSegment()
+    {
+        Assert.Equal(["seed", "seed-nested"], SemanticCorpus.SeededRecipes.ToArray());
+        Assert.True(SemanticCampaign.TryParse(["semantic-campaign", "--seeds", "0x10..12"], out var byDefault, out var problem), problem);
+        Assert.Equal(SemanticCorpus.SeedRecipe, byDefault.Recipe);
+        Assert.True(SemanticCampaign.TryParse(["semantic-campaign", "--seeds", "0x10..12", "--recipe", "seed"], out var named, out problem), problem);
+        Assert.Equal(SemanticCorpus.SeedRecipe, named.Recipe);
+        Assert.Contains("/artifacts/semantic-campaign/10-12x16-", named.OutputDirectory.Replace('\\', '/'), StringComparison.Ordinal);
+
+        Assert.True(SemanticCampaign.TryParse(["semantic-campaign", "--recipe", "seed-nested", "--seeds", "0x10..12"], out var nested, out problem), problem);
+        Assert.Equal(SemanticCorpus.NestedSeedRecipe, nested.Recipe);
+        Assert.Equal((0x10UL, 0x12UL, 3L * SemanticCampaignOptions.DefaultCasesPerSeed), (nested.FirstSeed, nested.LastSeed, nested.PlannedCases));
+        Assert.Contains("/artifacts/semantic-campaign/seed-nested-10-12x16-", nested.OutputDirectory.Replace('\\', '/'), StringComparison.Ordinal);
+        Assert.Null(nested.Problem());
+        Assert.Equal(SemanticCampaign.Plan(byDefault).ToArray(), SemanticCampaign.Plan(nested).ToArray()); // the plan is recipe-independent
+
+        Assert.False(SemanticCampaign.TryParse(["semantic-campaign", "--seeds", "1", "--recipe", "nested"], out _, out problem));
+        Assert.Contains("seed, seed-nested", problem, StringComparison.Ordinal);
+        Assert.Contains("[--recipe seed|seed-nested]", SemanticCampaign.Usage, StringComparison.Ordinal);
+        Assert.NotNull((byDefault with { Recipe = "nested" }).Problem()); // the seam path is validated too
+
+        foreach (var recipe in SemanticCorpus.SeededRecipes)
+        {
+            var id = SemanticCampaign.CaseId(0x10, 3, recipe);
+            Assert.Equal("sem2b/v1/" + recipe + "/10/3", id);
+            Assert.True(SemanticCorpus.TryBuilder(id, SemanticRecipe.RecipeVersion, out var builder, out problem), problem);
+            Assert.Equal(id, builder.CaseId);
+        }
+
+        Assert.Equal(SemanticCampaign.CaseId(0x10, 3), SemanticCampaign.CaseId(0x10, 3, SemanticCorpus.SeedRecipe));
+    }
+
+    /// <summary>
+    /// <c>--recipe seed-nested</c> plans the same (seed, index) pairs as the default and executes exactly
+    /// the nested recipe's own cases, in order. Two runs write byte-identical summaries and the same
+    /// files; the summary records the recipe and differs from the default recipe's summary over the same
+    /// range and budget ONLY by the recipe name (the <c>recipe</c> field and the ids). An unknown recipe
+    /// is refused before anything is written.
+    /// </summary>
+    [Fact]
+    public void ANestedCampaign_ExecutesTheNestedRecipesOwnCases_AndIsDeterministic()
+    {
+        var root = Directory.CreateTempSubdirectory("katlang-sem2c-campaign-nested-");
+        try
+        {
+            var executed = new List<SemanticCase>();
+            SemanticCampaignOptions Nested(string name) => Tiny(Path.Combine(root.FullName, name)) with
+            {
+                Recipe = SemanticCorpus.NestedSeedRecipe,
+                InProcessRunner = c =>
+                {
+                    executed.Add(c);
+                    return SemanticRunner.Run(c);
+                },
+            };
+
+            var first = SemanticCampaign.Run(Nested("a"), TextWriter.Null);
+            var second = SemanticCampaign.Run(Nested("b"), TextWriter.Null);
+            var seeded = SemanticCampaign.Run(Tiny(Path.Combine(root.FullName, "seed")), TextWriter.Null);
+            output.WriteLine(first.Describe());
+
+            string[] ids = [NestedIds + "0", NestedIds + "1", "sem2b/v1/seed-nested/5EED2B000002/0"];
+            Assert.Equal([.. ids, .. ids], executed.Select(c => c.CaseId).ToArray());
+            (ulong Seed, int Index)[] pairs = [(Seed, 0), (Seed, 1), (Seed + 1, 0)];
+            foreach (var ((seed, index), ran) in pairs.Zip(executed))
+            {
+                Assert.Equal(SemanticCampaign.CaseId(seed, index, SemanticCorpus.NestedSeedRecipe), ran.CaseId);
+                Assert.Equal(SemanticDescriptor.Write(SemanticCorpus.NestedSeededCase(seed, index)), SemanticDescriptor.Write(ran));
+                Assert.Contains(ran.Features, f => f == "nested-pattern");
+            }
+
+            Assert.Equal(SemanticCorpus.NestedSeedRecipe, first.Options.Recipe);
+            Assert.Equal((4L, 3, 3), (first.Planned, first.Executed, first.Passed));
+            Assert.Equal(SemanticCampaignStop.CaseBudget, first.Stop);
+            Assert.Equal(ids[2], first.LastCovered);
+            Assert.Equal("sem2b/v1/seed-nested/5EED2B000002/1", first.FirstUncovered);
+            Assert.Empty(first.Failures);
+            Assert.Equal(first.Verdicts, second.Verdicts);
+
+            var a = File.ReadAllText(Path.Combine(root.FullName, "a", SemanticCampaign.SummaryFile));
+            Assert.Equal(a, File.ReadAllText(Path.Combine(root.FullName, "b", SemanticCampaign.SummaryFile)));
+            Assert.Equal(Listing(Path.Combine(root.FullName, "a")), Listing(Path.Combine(root.FullName, "b")));
+            Assert.Equal([SemanticCampaign.SummaryFile], Listing(Path.Combine(root.FullName, "a")));
+            Assert.Contains("\"recipe\": \"seed-nested\"", a, StringComparison.Ordinal);
+            Assert.Contains("\"firstUncovered\": \"sem2b/v1/seed-nested/5EED2B000002/1\"", a, StringComparison.Ordinal);
+
+            // The default recipe over the same range: the same summary apart from the recipe name.
+            var s = File.ReadAllText(Path.Combine(root.FullName, "seed", SemanticCampaign.SummaryFile));
+            Assert.Equal(SemanticCorpus.SeedRecipe, seeded.Options.Recipe);
+            Assert.Contains("\"recipe\": \"seed\"", s, StringComparison.Ordinal);
+            Assert.DoesNotContain("seed-nested", s, StringComparison.Ordinal);
+            Assert.Equal(s, a.Replace("seed-nested", "seed", StringComparison.Ordinal));
+
+            var refused = Path.Combine(root.FullName, "refused");
+            Assert.Throws<ArgumentException>(() => SemanticCampaign.Run(Tiny(refused) with { Recipe = "nested" }, TextWriter.Null));
+            Assert.False(Directory.Exists(refused));
+        }
+        finally
+        {
+            root.Delete(recursive: true);
+        }
+    }
+
+    /// <summary>
+    /// Every id a nested campaign plans is an ordinary recipe id: <c>semantic-export</c> writes its
+    /// descriptor from the id alone, and <c>semantic-replay</c> replays that descriptor in recipe mode
+    /// (rebuilt from the id and drift-checked) and from its exact sources.
+    /// </summary>
+    [Fact]
+    public void TheIdsOfANestedCampaign_ReplayThroughSemanticReplay()
+    {
+        var root = Directory.CreateTempSubdirectory("katlang-sem2c-campaign-nested-replay-");
+        try
+        {
+            var options = Tiny("unused") with { Recipe = SemanticCorpus.NestedSeedRecipe, CasesPerSeed = 3 };
+            var ids = SemanticCampaign.Plan(options).Select(p => SemanticCampaign.CaseId(p.Seed, p.Index, options.Recipe)).ToArray();
+            Assert.Equal(6, ids.Length);
+            foreach (var id in ids)
+            {
+                Assert.StartsWith("sem2b/v1/seed-nested/", id, StringComparison.Ordinal);
+                var file = Path.Combine(root.FullName, SemanticReplay.SafeName(id) + ".json");
+                Assert.Equal(0, SemanticReplay.RunExport(["semantic-export", id, file]));
+                var outcome = SemanticReplay.Replay(File.ReadAllText(file), SemanticReplay.Mode.Recipe);
+                Assert.True(outcome.Passed, outcome.Report);
+                Assert.Equal(id, outcome.CaseId);
+                Assert.StartsWith("[recipe] ", outcome.Report, StringComparison.Ordinal);
+            }
+
+            Assert.Equal(ids.Length, Directory.GetFiles(root.FullName, "*.json").Length);
+            Assert.Equal(0, SemanticReplay.RunReplay(["semantic-replay", root.FullName]));
+            Assert.Equal(0, SemanticReplay.RunReplay(["semantic-replay", "--exact-source", root.FullName]));
+        }
+        finally
+        {
+            root.Delete(recursive: true);
+        }
+    }
+
+    /// <summary>
+    /// A planted nested failure is found, persisted and reduced through the COMMAND with
+    /// <c>--recipe seed-nested</c>. Of the four nested cases of seed 5EED2B000001, indices 1 and 3 carry
+    /// the outer-list pattern: index 1 (a success) fails with a wrong value, index 3 (the
+    /// wrong-inner-kind runtime failure) with a wrong outcome; indices 0 and 2 (outer sequence) pass.
+    /// Each failure names its recipe in the summary and in its signature sidecar, its descriptor
+    /// replays through <c>semantic-replay</c> and reproduces its signature under the fault, and its
+    /// reduction is a strictly smaller NESTED case with the same signature and the two-context stack
+    /// cut to the single list context every nested case has (measured: 97 -> 82 and 95 -> 66
+    /// characters). The default recipe over the same range searches no nested id.
+    /// </summary>
+    [Fact]
+    public void APlantedNestedFailure_IsFoundPersistedAndReduced_ThroughTheCommand()
+    {
+        var root = Directory.CreateTempSubdirectory("katlang-sem2c-campaign-nested-planted-");
+        try
+        {
+            var outDir = Path.Combine(root.FullName, "out");
+            var log = new StringWriter();
+            var exit = SemanticCampaign.RunCampaign(
+                ["semantic-campaign", "--recipe", "seed-nested", "--seeds", "5EED2B000001", "--cases-per-seed", "4", "--max-attempts", "200", "--out", outDir],
+                log, o => o with { InProcessRunner = NestedFaultyRun });
+            output.WriteLine(log.ToString());
+            Assert.Equal(1, exit);
+            Assert.Contains("semantic-campaign: recipe seed-nested, seeds 5EED2B000001..5EED2B000001 x 4:", log.ToString(), StringComparison.Ordinal);
+
+            var summary = File.ReadAllText(Path.Combine(outDir, SemanticCampaign.SummaryFile));
+            output.WriteLine(summary);
+            using var document = JsonDocument.Parse(summary);
+            var json = document.RootElement;
+            Assert.Equal("seed-nested", json.GetProperty("recipe").GetString());
+            Assert.Equal((4, 2, 2), (json.GetProperty("executed").GetInt32(), json.GetProperty("passed").GetInt32(), json.GetProperty("failed").GetInt32()));
+            Assert.Equal("completed", json.GetProperty("stop").GetString());
+            Assert.Equal(NestedIds + "3", json.GetProperty("lastCovered").GetString());
+            var failures = json.GetProperty("failures").EnumerateArray().ToArray();
+            Assert.Equal(2, failures.Length);
+
+            (string Index, string Facet)[] planted = [("1", "value"), ("3", "outcome")];
+            foreach (var ((index, facet), failure) in planted.Zip(failures))
+            {
+                var id = NestedIds + index;
+                var signature = Planted with { Facet = facet };
+                Assert.Equal(id, failure.GetProperty("caseId").GetString());
+                Assert.Equal("seed-nested", failure.GetProperty("recipe").GetString());
+                Assert.Equal(facet, failure.GetProperty("signature").GetProperty("facet").GetString());
+
+                // The persisted descriptor is an ordinary recipe descriptor that fails the planted way.
+                var safe = SemanticReplay.SafeName(id);
+                Assert.Equal("failures/" + safe + ".json", failure.GetProperty("descriptor").GetString());
+                var descriptor = File.ReadAllText(Path.Combine(outDir, "failures", safe + ".json"));
+                Assert.True(SemanticDescriptor.TryParse(descriptor, out var parsed, out var problem), problem);
+                Assert.Equal(id, parsed.Case.CaseId);
+                Assert.Equal("Mismatch", parsed.RecordedVerdict);
+                Assert.Contains(NestedTrigger, parsed.Case.Source, StringComparison.Ordinal);
+                Assert.Equal(signature, SemanticFailureSignature.Of(SemanticReplay.Replay(descriptor, SemanticReplay.Mode.Recipe, SemanticReductionTests.WrongValue).Result!));
+
+                using var sidecar = JsonDocument.Parse(File.ReadAllText(Path.Combine(outDir, "failures", safe + ".signature.json")));
+                Assert.Equal(id, sidecar.RootElement.GetProperty("caseId").GetString());
+                Assert.Equal("seed-nested", sidecar.RootElement.GetProperty("recipe").GetString());
+                Assert.Equal(facet, sidecar.RootElement.GetProperty("signature").GetProperty("facet").GetString());
+
+                // The reduction: a strictly smaller nested case, same signature, rebuilt from its v1 record.
+                var reduction = failure.GetProperty("reduction");
+                Assert.Equal(nameof(SemanticReductionStatus.Reduced), reduction.GetProperty("status").GetString());
+                var recordPath = Path.Combine(outDir, reduction.GetProperty("record").GetString()!);
+                Assert.True(SemanticReduction.TryParseRecord(File.ReadAllText(recordPath), out var record, out problem), problem);
+                Assert.Equal(id, record.OriginalCaseId);
+                Assert.Equal(signature, record.Signature);
+                Assert.Equal(nameof(SemanticReductionStatus.Reduced), record.Status);
+                Assert.False(record.Supervised);
+                Assert.True(record.ReducedSize.CompareTo(record.OriginalSize) < 0);
+                Assert.True(record.ReducedSize.Declarations < record.OriginalSize.Declarations, "no context declaration was removed");
+                Assert.StartsWith("sem2b/v1/reduced/seed-nested/5EED2B000001/" + index + "/", record.ReducedCaseId, StringComparison.Ordinal);
+                Assert.Equal(record.ReducedCaseId, reduction.GetProperty("reducedCaseId").GetString());
+                Assert.Equal(record.OriginalSize.SourceLength, reduction.GetProperty("originalSourceLength").GetInt32());
+                Assert.Equal(record.ReducedSize.SourceLength, reduction.GetProperty("reducedSourceLength").GetInt32());
+                Assert.True(SemanticReduction.TryRebuild(record, out var reduced, out problem), problem);
+                output.WriteLine($"{id}: {record.OriginalSize.SourceLength} -> {record.ReducedSize.SourceLength}\n{reduced.Source}");
+                Assert.Contains(NestedTrigger, reduced.Source, StringComparison.Ordinal);
+                Assert.Contains(reduced.Features, f => f == "nested-pattern");
+                Assert.Equal(["ctx-list"], reduced.Features.Where(f => f.StartsWith("ctx-", StringComparison.Ordinal)).ToArray());
+                Assert.Equal(signature, SemanticFailureSignature.Of(NestedFaultyRun(reduced)));
+                Assert.True(File.Exists(recordPath[..^".reduction.json".Length] + ".json"));
+            }
+
+            // Campaign sidecars are metadata: directory replay selects the two descriptors, which pass without the fault.
+            Assert.Equal(2, Directory.GetFiles(Path.Combine(outDir, "failures"), "*.signature.json").Length);
+            Assert.Equal(0, SemanticReplay.RunReplay(["semantic-replay", Path.Combine(outDir, "failures")]));
+            Assert.False(Directory.Exists(Path.Combine(outDir, "work")), "an in-process campaign dispatches no worker");
+
+            // Without the fault the same nested range passes.
+            Assert.Equal(0, SemanticCampaign.RunCampaign(
+                ["semantic-campaign", "--recipe", "seed-nested", "--seeds", "5EED2B000001", "--cases-per-seed", "4", "--out", Path.Combine(root.FullName, "clean")],
+                TextWriter.Null, o => o with { InProcessRunner = static c => SemanticRunner.Run(c) }));
+
+            // The default recipe over the same range and fault searches the seed/ ids, never a nested one.
+            var seedOut = Path.Combine(root.FullName, "seed");
+            _ = SemanticCampaign.RunCampaign(
+                ["semantic-campaign", "--seeds", "5EED2B000001", "--cases-per-seed", "4", "--no-reduce", "--out", seedOut],
+                TextWriter.Null, o => o with { InProcessRunner = NestedFaultyRun });
+            var seedSummary = File.ReadAllText(Path.Combine(seedOut, SemanticCampaign.SummaryFile));
+            Assert.Contains("\"recipe\": \"seed\"", seedSummary, StringComparison.Ordinal);
+            Assert.Contains("\"lastCovered\": \"sem2b/v1/seed/5EED2B000001/3\"", seedSummary, StringComparison.Ordinal);
+            Assert.DoesNotContain("seed-nested", seedSummary, StringComparison.Ordinal);
+        }
+        finally
+        {
+            root.Delete(recursive: true);
+        }
+    }
+
     [Theory]
     [InlineData("")]
     [InlineData("--seeds xyz")]
@@ -412,6 +681,8 @@ public class SemanticCampaignTests(ITestOutputHelper output)
     [InlineData("--seeds 1 --bogus 2")]
     [InlineData("--seeds 0..FFFFFF")]
     [InlineData("--seeds 1 --deadline-seconds 4294968")]
+    [InlineData("--seeds 1 --recipe nested")]
+    [InlineData("--seeds 1 --recipe SEED-NESTED")]
     public void UsageErrors_ExitWithTwo_AndWriteNothing(string arguments)
     {
         var root = Directory.CreateTempSubdirectory("katlang-sem2c-campaign-usage-");

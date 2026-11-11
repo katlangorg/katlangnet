@@ -35,6 +35,12 @@ internal sealed record SemanticCampaignOptions
 
     public required ulong LastSeed { get; init; }
 
+    /// <summary>
+    /// The seeded recipe searched (<c>--recipe</c>): one of <see cref="SemanticCorpus.SeededRecipes"/>,
+    /// the id segment of every planned case. The default is the compositional <c>seed</c> recipe.
+    /// </summary>
+    public string Recipe { get; init; } = SemanticCorpus.SeedRecipe;
+
     public int CasesPerSeed { get; init; } = DefaultCasesPerSeed;
 
     /// <summary>The case budget: at most this many cases are EXECUTED (reduction candidates are not counted).</summary>
@@ -75,6 +81,7 @@ internal sealed record SemanticCampaignOptions
     /// <summary>The bounds a campaign refuses to start without (null when valid).</summary>
     public string? Problem()
     {
+        if (!SemanticCorpus.SeededRecipes.Contains(Recipe)) return "--recipe must be one of: " + SemanticCampaign.RecipeNames;
         if (LastSeed < FirstSeed) return "the seed range is empty (LAST < FIRST)";
         if (LastSeed - FirstSeed >= MaxSeedRange) return $"the seed range exceeds {MaxSeedRange.ToString(CultureInfo.InvariantCulture)} seeds";
         if (CasesPerSeed is < 1 or > MaxCasesPerSeed) return $"--cases-per-seed must be 1..{MaxCasesPerSeed.ToString(CultureInfo.InvariantCulture)}";
@@ -88,9 +95,10 @@ internal sealed record SemanticCampaignOptions
     }
 }
 
-/// <summary>One failing case of a campaign and what became of its reduction.</summary>
+/// <summary>One failing case of a campaign, the recipe it was planned from, and what became of its reduction.</summary>
 internal sealed record SemanticCampaignFailure(
     string CaseId,
+    string Recipe,
     SemanticVerdict Verdict,
     SemanticFailureSignature Signature,
     string Descriptor,
@@ -125,13 +133,14 @@ internal sealed record SemanticCampaignResult(
     {
         var uncovered = FirstUncovered is null ? "" : " first-uncovered=" + FirstUncovered;
         return string.Create(CultureInfo.InvariantCulture,
-            $"semantic-campaign: seeds {Options.FirstSeed:X}..{Options.LastSeed:X} x {Options.CasesPerSeed}: planned={Planned} executed={Executed} passed={Passed} failed={Failures.Length} stop={SemanticCampaign.StopName(Stop)}{uncovered} elapsed={Elapsed.TotalSeconds:F1}s");
+            $"semantic-campaign: recipe {Options.Recipe}, seeds {Options.FirstSeed:X}..{Options.LastSeed:X} x {Options.CasesPerSeed}: planned={Planned} executed={Executed} passed={Passed} failed={Failures.Length} stop={SemanticCampaign.StopName(Stop)}{uncovered} elapsed={Elapsed.TotalSeconds:F1}s");
     }
 }
 
 /// <summary>
 /// <c>semantic-campaign</c> (SEM-2C, fuzz/README.md § Campaigns): a BOUNDED, deterministic search for
-/// failing generated cases. It enumerates the seeded recipe ids <c>sem2b/v1/seed/&lt;seed&gt;/&lt;index&gt;</c>
+/// failing generated cases. It enumerates the ids <c>sem2b/v1/&lt;recipe&gt;/&lt;seed&gt;/&lt;index&gt;</c> of ONE
+/// seeded recipe (<c>--recipe seed|seed-nested</c>, default <c>seed</c>; <see cref="SemanticCorpus.SeededRecipes"/>)
 /// for every seed of an inclusive hex range and every index below the cases-per-seed count, in that
 /// order, runs each under <see cref="SemanticSupervisor"/> (recipe mode, one child at a time, the
 /// descriptor persisted before dispatch), persists every failure with its signature, and — unless
@@ -160,7 +169,13 @@ internal static class SemanticCampaign
         _ => throw new ArgumentOutOfRangeException(nameof(stop)),
     };
 
-    /// <summary>The planned case ids in campaign order (seed ascending, then index ascending).</summary>
+    /// <summary>The recipe names <c>--recipe</c> accepts, for messages.</summary>
+    internal static string RecipeNames => string.Join(", ", SemanticCorpus.SeededRecipes);
+
+    /// <summary>
+    /// The planned (seed, index) pairs in campaign order (seed ascending, then index ascending); the
+    /// recipe (<see cref="SemanticCampaignOptions.Recipe"/>) turns each pair into its case id.
+    /// </summary>
     internal static IEnumerable<(ulong Seed, int Index)> Plan(SemanticCampaignOptions options)
     {
         for (var seed = options.FirstSeed; ; seed++)
@@ -170,7 +185,9 @@ internal static class SemanticCampaign
         }
     }
 
-    internal static string CaseId(ulong seed, int index) => SemanticCorpus.SeededBuilder(seed, index).CaseId;
+    /// <summary>The id of one planned case; the default recipe is the option's default.</summary>
+    internal static string CaseId(ulong seed, int index, string recipe = SemanticCorpus.SeedRecipe)
+        => SemanticCorpus.SeededBuilder(recipe, seed, index).CaseId;
 
     /// <summary>Runs one campaign. The output directory must not exist or must be empty.</summary>
     internal static SemanticCampaignResult Run(SemanticCampaignOptions options, TextWriter log)
@@ -201,7 +218,7 @@ internal static class SemanticCampaign
 
         foreach (var (seed, index) in Plan(options))
         {
-            var builder = SemanticCorpus.SeededBuilder(seed, index);
+            var builder = SemanticCorpus.SeededBuilder(options.Recipe, seed, index);
             if (timeExhausted || clock() >= options.MaxTime)
             {
                 stop = SemanticCampaignStop.TimeBudget;
@@ -234,11 +251,11 @@ internal static class SemanticCampaign
             var descriptor = Path.Combine(failuresDir, safe + ".json");
             var signatureFile = Path.Combine(failuresDir, safe + ".signature.json");
             File.WriteAllText(descriptor, SemanticDescriptor.Write(semanticCase, result));
-            File.WriteAllText(signatureFile, WriteSignature(semanticCase.CaseId, signature, result));
+            File.WriteAllText(signatureFile, WriteSignature(semanticCase.CaseId, options.Recipe, signature, result));
             log.WriteLine($"FAILURE {semanticCase.CaseId}: [{signature}] {(result.Findings.IsEmpty ? "-" : result.Findings[0])}");
             log.WriteLine($"  descriptor={descriptor}");
 
-            var failure = new SemanticCampaignFailure(semanticCase.CaseId, result.Verdict, signature, Relative(outDir, descriptor),
+            var failure = new SemanticCampaignFailure(semanticCase.CaseId, options.Recipe, result.Verdict, signature, Relative(outDir, descriptor),
                 Relative(outDir, signatureFile), null, null, null, null, null, null, 0, 0, options.Reduce ? null : "disabled (--no-reduce)");
             if (options.Reduce)
             {
@@ -347,10 +364,13 @@ internal static class SemanticCampaign
     // ── Summary ─────────────────────────────────────────────────────────────
 
     /// <summary>
-    /// The <c>kl-sem2c-campaign</c> v1 summary. It names the plan, the bounds, what was covered and every
-    /// failure with its artifacts (paths relative to the output directory, <c>/</c>-separated). It carries
-    /// no clock reading and no absolute path, so a campaign stopped by its case budget (or completed)
-    /// writes the same bytes on every run.
+    /// The <c>kl-sem2c-campaign</c> v1 summary. It names the plan (recipe, seed range, cases per seed),
+    /// the bounds, what was covered and every failure with its recipe and artifacts (paths relative to
+    /// the output directory, <c>/</c>-separated). It carries no clock reading and no absolute path, so
+    /// for a fixed recipe, seed range and bounds a campaign stopped by its case budget (or completed)
+    /// writes the same bytes on every run. <c>recipe</c> (on the summary, on each failure and in the
+    /// signature sidecar) is an ADDITIVE v1 field: a document without it was written before
+    /// <c>--recipe</c> existed and describes a <c>seed</c> campaign.
     /// </summary>
     internal static string WriteSummary(SemanticCampaignResult result)
     {
@@ -363,6 +383,7 @@ internal static class SemanticCampaign
             w.WriteNumber("formatVersion", SummaryFormatVersion);
             w.WriteString("generator", SemanticRecipe.GeneratorId);
             w.WriteNumber("recipeVersion", SemanticRecipe.RecipeVersion);
+            w.WriteString("recipe", o.Recipe);
             w.WriteString("firstSeed", o.FirstSeed.ToString("X", CultureInfo.InvariantCulture));
             w.WriteString("lastSeed", o.LastSeed.ToString("X", CultureInfo.InvariantCulture));
             w.WriteNumber("casesPerSeed", o.CasesPerSeed);
@@ -387,6 +408,7 @@ internal static class SemanticCampaign
             {
                 w.WriteStartObject();
                 w.WriteString("caseId", f.CaseId);
+                w.WriteString("recipe", f.Recipe);
                 w.WriteString("verdict", f.Verdict.ToString());
                 WriteSignatureObject(w, f.Signature);
                 w.WriteString("descriptor", f.Descriptor);
@@ -413,8 +435,8 @@ internal static class SemanticCampaign
         return Encoding.UTF8.GetString(stream.ToArray()) + "\n";
     }
 
-    /// <summary>The per-failure signature sidecar: the case id, the signature and the first finding.</summary>
-    internal static string WriteSignature(string caseId, SemanticFailureSignature signature, SemanticCaseResult result)
+    /// <summary>The per-failure signature sidecar: the case id, its recipe, the signature and the first finding.</summary>
+    internal static string WriteSignature(string caseId, string recipe, SemanticFailureSignature signature, SemanticCaseResult result)
     {
         using var stream = new MemoryStream();
         using (var w = new Utf8JsonWriter(stream, WriterOptions))
@@ -423,6 +445,7 @@ internal static class SemanticCampaign
             w.WriteString("format", SummaryFormat + "-signature");
             w.WriteNumber("formatVersion", SummaryFormatVersion);
             w.WriteString("caseId", caseId);
+            w.WriteString("recipe", recipe);
             WriteSignatureObject(w, signature);
             WriteNullable(w, "firstFinding", result.Findings.IsDefaultOrEmpty ? null : result.Findings[0]);
             w.WriteEndObject();
@@ -499,9 +522,9 @@ internal static class SemanticCampaign
 
     // ── Command ─────────────────────────────────────────────────────────────
 
-    internal const string Usage =
-        "usage: semantic-campaign --seeds FIRST[..LAST] [--cases-per-seed N] [--max-cases N] [--max-seconds N] " +
-        "[--deadline-seconds N] [--max-attempts N] [--no-reduce] [--out DIR]";
+    internal static readonly string Usage =
+        "usage: semantic-campaign --seeds FIRST[..LAST] [--recipe " + string.Join("|", SemanticCorpus.SeededRecipes) + "] " +
+        "[--cases-per-seed N] [--max-cases N] [--max-seconds N] [--deadline-seconds N] [--max-attempts N] [--no-reduce] [--out DIR]";
 
     /// <summary>
     /// <c>semantic-campaign</c>. Exit codes: 0 — every executed case passed (the summary says whether
@@ -557,6 +580,7 @@ internal static class SemanticCampaign
         options = null!;
         ulong? first = null;
         ulong? last = null;
+        var recipe = SemanticCorpus.SeedRecipe;
         var casesPerSeed = SemanticCampaignOptions.DefaultCasesPerSeed;
         var maxCases = SemanticCampaignOptions.DefaultMaxCases;
         var maxSeconds = SemanticCampaignOptions.DefaultMaxSeconds;
@@ -599,6 +623,15 @@ internal static class SemanticCampaign
 
                     (first, last) = (a, b);
                     break;
+                case "--recipe":
+                    if (!SemanticCorpus.SeededRecipes.Contains(value))
+                    {
+                        problem = $"--recipe '{value}' is not one of: {RecipeNames}";
+                        return false;
+                    }
+
+                    recipe = value;
+                    break;
                 case "--cases-per-seed" when TryCount(value, out casesPerSeed):
                 case "--max-cases" when TryCount(value, out maxCases):
                 case "--max-seconds" when TryCount(value, out maxSeconds):
@@ -624,13 +657,14 @@ internal static class SemanticCampaign
         {
             FirstSeed = first.Value,
             LastSeed = last.Value,
+            Recipe = recipe,
             CasesPerSeed = casesPerSeed,
             MaxCases = maxCases,
             MaxTime = TimeSpan.FromSeconds(maxSeconds),
             Deadline = TimeSpan.FromSeconds(deadlineSeconds),
             MaxAttempts = maxAttempts,
             Reduce = reduce,
-            OutputDirectory = outDir ?? DefaultOutputDirectory(first.Value, last.Value, casesPerSeed),
+            OutputDirectory = outDir ?? DefaultOutputDirectory(first.Value, last.Value, casesPerSeed, recipe),
         };
         problem = "";
         return true;
@@ -638,12 +672,15 @@ internal static class SemanticCampaign
 
     /// <summary>
     /// <c>&lt;repository&gt;/artifacts/semantic-campaign/&lt;FIRST&gt;-&lt;LAST&gt;x&lt;N&gt;-&lt;UTC stamp&gt;</c> (git-ignored)
-    /// when the current directory is inside a checkout, otherwise under the temporary directory.
+    /// when the current directory is inside a checkout, otherwise under the temporary directory. The
+    /// default <c>seed</c> recipe keeps that name; any other recipe prefixes it
+    /// (<c>seed-nested-&lt;FIRST&gt;-…</c>), so two recipes over one range never share a directory.
     /// </summary>
-    internal static string DefaultOutputDirectory(ulong first, ulong last, int casesPerSeed)
+    internal static string DefaultOutputDirectory(ulong first, ulong last, int casesPerSeed, string recipe)
     {
+        var prefix = recipe == SemanticCorpus.SeedRecipe ? "" : recipe + "-";
         var name = string.Create(CultureInfo.InvariantCulture,
-            $"{first:X}-{last:X}x{casesPerSeed}-{DateTime.UtcNow:yyyyMMdd'T'HHmmss'Z'}");
+            $"{prefix}{first:X}-{last:X}x{casesPerSeed}-{DateTime.UtcNow:yyyyMMdd'T'HHmmss'Z'}");
         for (var dir = new DirectoryInfo(Environment.CurrentDirectory); dir is not null; dir = dir.Parent)
         {
             if (Directory.Exists(Path.Combine(dir.FullName, ".git")) || File.Exists(Path.Combine(dir.FullName, ".git")))

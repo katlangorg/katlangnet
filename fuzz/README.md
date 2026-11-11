@@ -1785,6 +1785,8 @@ $fuzz = "fuzz/KatLang.ParserFuzz/bin/Debug/net11.0/KatLang.ParserFuzz.exe"
 
 # a bounded supervised search over seeded ids; every failure persisted and reduced (§ Campaigns)
 & $fuzz semantic-campaign --seeds 5EED2C000001..5EED2C000010 --cases-per-seed 16 --max-cases 256 --max-seconds 600
+# the same search over the nested-pattern recipe (seed-nested/<hex>/<index> ids)
+& $fuzz semantic-campaign --recipe seed-nested --seeds 5EED2C000001..5EED2C000010 --cases-per-seed 16 --max-cases 256 --max-seconds 600
 ```
 
 Exit codes: 0 — every selected case passed; 1 — a failure (mismatch, drift, front end, harness,
@@ -1941,14 +1943,26 @@ execution instead of two.
 tool and is not part of CI.
 
 ```text
-semantic-campaign --seeds FIRST[..LAST] [--cases-per-seed N] [--max-cases N] [--max-seconds N]
-                  [--deadline-seconds N] [--max-attempts N] [--no-reduce] [--out DIR]
+semantic-campaign --seeds FIRST[..LAST] [--recipe seed|seed-nested] [--cases-per-seed N] [--max-cases N]
+                  [--max-seconds N] [--deadline-seconds N] [--max-attempts N] [--no-reduce] [--out DIR]
 ```
 
-* **Plan.** The seeded recipe ids `sem2b/v1/seed/<seed>/<index>` for every seed of the inclusive
-  hexadecimal range (at most 65,536 seeds) and every index below `--cases-per-seed` (default 16), in
-  seed-then-index order. These are ordinary recipe ids: any of them replays, exports and reduces by
-  id. The fixed corpus's seeds are `5EED2B000001`–`5EED2B000006`; choose others to search new cases.
+* **Plan.** The ids `sem2b/v1/<recipe>/<seed>/<index>` of ONE seeded recipe for every seed of the
+  inclusive hexadecimal range (at most 65,536 seeds) and every index below `--cases-per-seed`
+  (default 16), in seed-then-index order. These are ordinary recipe ids: any of them replays, exports
+  and reduces by id. The fixed corpus's seeds are `5EED2B000001`–`5EED2B000006`; choose others to
+  search new cases.
+* **Recipe.** `--recipe seed` (the default, so an invocation without the option is unchanged) searches
+  the compositional recipe: 1–3 fragments from any family in nested contexts. `--recipe seed-nested`
+  searches the nested-pattern production (§ Families and interactions). The names are
+  `SemanticCorpus.SeededRecipes`, the id segments `SemanticCorpus.TryBuilder` rebuilds, so a planned
+  id is always a replayable one; any other name is a usage error (exit 2). One campaign searches one
+  recipe; the (seed, index) plan is the same for both. The nested recipe is FINITE: it has 3,472
+  distinct programs (2 pattern orders × (28 success shapes of 2–4 traced or waited values + 3 failing
+  widths) × 56 stacks of one or two contexts; digits are not chosen). The seed and index sample that
+  space with replacement and unevenly, so a random campaign approaches it
+  slowly: 8,400 cases reach about 2,400 of the programs and 96,000 reach all of them (counted by
+  generation alone over seeds from `5EED2C110001`, 24 indices each, 2026-11-11).
 * **Execution.** Each case runs in a bounded `semantic-worker` child in RECIPE mode, one at a time,
   under the unchanged `SemanticSupervisor` (per-execution `--deadline-seconds`, default 60; crash
   isolation; bounded output). The descriptor is written before dispatch.
@@ -1967,33 +1981,43 @@ semantic-campaign --seeds FIRST[..LAST] [--cases-per-seed N] [--max-cases N] [--
   reduced descriptor and `kl-sem2b-reduction` v1 record are written. A failure whose reducer run
   passes or produces a different signature is reported as not reproduced; no reduction is written
   for a different failure.
-* **Determinism.** No randomness or unordered iteration takes part. For a fixed range and bounds,
-  a campaign that completes or stops at its case budget writes byte-identical summaries and the same
-  files; only a time-budget stop depends on the machine.
+* **Determinism.** No randomness or unordered iteration takes part. For a fixed recipe, range and
+  bounds, a campaign that completes or stops at its case budget writes byte-identical summaries and
+  the same files; only a time-budget stop depends on the machine.
 * **Output.** `--out` must be a new or empty directory. In a checkout, Git's index is checked too:
   tracked paths are refused even when absent from disk (Git must be available for that check).
   Refused or unwritable output returns exit 2. The default is
   `<checkout>/artifacts/semantic-campaign/<FIRST>-<LAST>x<N>-<UTC stamp>` (git-ignored), or a
-  temporary directory outside a checkout. Layout:
+  temporary directory outside a checkout; a recipe other than `seed` prefixes the name
+  (`seed-nested-<FIRST>-…`). Layout:
 
   ```text
   campaign.json                         kl-sem2c-campaign v1 summary (no clock, no absolute path)
   failures/<id>.json                    the failing kl-sem2b-case v1 descriptor with its result
-  failures/<id>.signature.json          its signature and first finding
+  failures/<id>.signature.json          its recipe, signature and first finding
   reduced/<id>/<reduced id>.json        the reduced descriptor (unless --no-reduce)
   reduced/<id>/<reduced id>.reduction.json
   reduced/<id>/evidence/                the reduction's candidate children
   work/<id>.json(.result.json, ...)     a FAILING case's worker evidence (passing evidence is removed)
   ```
 
-  `campaign.json` names the plan and bounds, `planned`, `executed`, `passed`, `failed`, `stop`,
-  `lastCovered`, `firstUncovered`, verdict counts, and each failure with its signature and artifact
-  paths (relative to the output directory), reduction status, sizes and attempts.
+  `campaign.json` names the plan (`recipe`, `firstSeed`, `lastSeed`, `casesPerSeed`) and bounds,
+  `planned`, `executed`, `passed`, `failed`, `stop`, `lastCovered`, `firstUncovered`, verdict counts,
+  and each failure with its `recipe`, signature and artifact paths (relative to the output
+  directory), reduction status, sizes and attempts. `recipe` — on the summary, on each failure and
+  in the signature sidecar — is an additive v1 field: a document without it was written before the
+  option existed and describes a `seed` campaign. The failing `kl-sem2b-case` descriptor is
+  unchanged; its `caseId` already carries the recipe segment.
 * **Seams.** `SemanticCampaignOptions.InProcessRunner`, `WorkerCommand` and `Clock` are internal
   test seams; the command never sets them. `SemanticCampaignTests` covers determinism and both
   budgets on a two-seed range, a planted failure found, persisted and reduced through the command,
   `--no-reduce`, usage refusals, changed rerun signatures, and supervised campaigns whose
-  `dotnet vstest` children find and reduce the planted shape.
+  `dotnet vstest` children find and reduce the planted shape. For `--recipe seed-nested` it covers
+  the option and its default, a deterministic nested campaign that executes exactly the nested
+  recipe's cases and whose summary differs from the default recipe's only by the recipe name, nested
+  ids exported and replayed through `semantic-replay`, and a planted failure on the outer-list
+  pattern (`[(`) found twice in seed `5EED2B000001` (a wrong value and a wrong outcome), persisted
+  with its recipe and reduced to a single-context nested case (97 → 82 and 95 → 66 characters).
 
 ### Extending it
 
@@ -2015,12 +2039,13 @@ semantic-campaign --seeds FIRST[..LAST] [--cases-per-seed N] [--max-cases N] [--
 
 ### Remaining work (SEM-2C)
 
-Campaigns over more than the `seed/` recipe (nested-seeded and systematic ids, more
-families per case), spans inside productions (operation lists, patterns) so the reducer can drop one
+Campaigns over more than the two seeded recipes (systematic ids, more families per case), an
+exhaustive enumeration of the finite nested recipe in place of random sampling (§ Campaigns,
+Recipe), spans inside productions (operation lists, patterns) so the reducer can drop one
 operation rather than a whole production, fault injection beyond the apparatus checks here, and Lean
 evidence beyond the identity-prelude members. Automatic reduction of generated failures, its
-structure-aware span moves (§ Reduction) and the bounded `semantic-campaign` (§ Campaigns) are
-implemented. Every valid generated case now has a per-case Lean guard on
+structure-aware span moves (§ Reduction) and the bounded `semantic-campaign` over both seeded
+recipes (§ Campaigns) are implemented. Every valid generated case now has a per-case Lean guard on
 its identity-prelude member (§ Per-case Lean guards); the host-operation base program, host events,
 async and optimizer paths, and the two transformation members still rest on C# profile parity plus
 the independent constructed anchors. The thin optimizer loop paths now have named cases and an

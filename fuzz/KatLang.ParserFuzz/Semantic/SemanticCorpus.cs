@@ -308,10 +308,31 @@ internal static class SemanticCorpus
 
     internal static SemanticCase NestedSeededCase(ulong seed, int index) => NestedSeededBuilder(seed, index).Build();
 
+    /// <summary>The compositional seeded recipe: the id segment of <c>seed/&lt;hex&gt;/&lt;index&gt;</c>.</summary>
+    internal const string SeedRecipe = "seed";
+
+    /// <summary>The nested-pattern seeded recipe: the id segment of <c>seed-nested/&lt;hex&gt;/&lt;index&gt;</c>.</summary>
+    internal const string NestedSeedRecipe = "seed-nested";
+
+    /// <summary>
+    /// The seeded recipes, each named by the id segment of its cases. <see cref="TryBuilder"/> and
+    /// <c>semantic-campaign --recipe</c> share this list and <see cref="SeededBuilder(string, ulong, int)"/>,
+    /// so every id a campaign plans is an id that replay, export and reduction rebuild.
+    /// </summary>
+    internal static readonly ImmutableArray<string> SeededRecipes = [SeedRecipe, NestedSeedRecipe];
+
+    /// <summary>The builder of <c>&lt;recipe&gt;/&lt;hex&gt;/&lt;index&gt;</c> for one of <see cref="SeededRecipes"/>.</summary>
+    internal static SemanticCaseBuilder SeededBuilder(string recipe, ulong seed, int index) => recipe switch
+    {
+        SeedRecipe => SeededBuilder(seed, index),
+        NestedSeedRecipe => NestedSeededBuilder(seed, index),
+        _ => throw new ArgumentOutOfRangeException(nameof(recipe), recipe, "unknown seeded recipe"),
+    };
+
     /// <summary>The builder of <c>seed/&lt;hex&gt;/&lt;index&gt;</c>: its own SplitMix64 stream by default, any chooser on request.</summary>
     internal static SemanticCaseBuilder SeededBuilder(ulong seed, int index)
     {
-        var localId = "seed/" + seed.ToString("X", CultureInfo.InvariantCulture) + "/" + index.ToString(CultureInfo.InvariantCulture);
+        var localId = SeedRecipe + "/" + seed.ToString("X", CultureInfo.InvariantCulture) + "/" + index.ToString(CultureInfo.InvariantCulture);
         return new SemanticCaseBuilder(localId, () => SemanticChooser.Seeded(seed, index), g =>
         {
             var count = 1 + g.Pick("compose.count", 3);
@@ -346,7 +367,7 @@ internal static class SemanticCorpus
     /// <summary>The builder of <c>seed-nested/&lt;hex&gt;/&lt;index&gt;</c>.</summary>
     internal static SemanticCaseBuilder NestedSeededBuilder(ulong seed, int index)
     {
-        var localId = "seed-nested/" + seed.ToString("X", CultureInfo.InvariantCulture) + "/" + index.ToString(CultureInfo.InvariantCulture);
+        var localId = NestedSeedRecipe + "/" + seed.ToString("X", CultureInfo.InvariantCulture) + "/" + index.ToString(CultureInfo.InvariantCulture);
         return new SemanticCaseBuilder(localId, () => SemanticChooser.Seeded(seed, index), g =>
         {
             var outer = g.Pick("nested.outer", 2) == 1;
@@ -405,7 +426,7 @@ internal static class SemanticCorpus
         }
 
         var local = caseId[SemanticRecipe.CasePrefix.Length..];
-        if (local.StartsWith("seed/", StringComparison.Ordinal) || local.StartsWith("seed-nested/", StringComparison.Ordinal))
+        if (SeededRecipes.FirstOrDefault(r => local.StartsWith(r + "/", StringComparison.Ordinal)) is { } recipe)
         {
             var parts = local.Split('/');
             if (parts.Length != 3
@@ -417,7 +438,7 @@ internal static class SemanticCorpus
                 return false;
             }
 
-            builder = parts[0] == "seed-nested" ? NestedSeededBuilder(seed, index) : SeededBuilder(seed, index);
+            builder = SeededBuilder(recipe, seed, index);
             problem = "";
             return true;
         }
