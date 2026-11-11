@@ -23,6 +23,11 @@ namespace KatLang;
 /// (reference identity for a token or a note, whatever <c>Equals</c> it defines).
 /// Keeping the exclusion here also leaves the compiler responsible for comparing
 /// and copying every structural field of the carrier, including any added later.
+/// (A carrier whose equality follows a record-valued field writes its own
+/// <c>Equals</c>/<c>GetHashCode</c> over <see cref="RecordGraphEquality"/>, which
+/// must not recurse; it still compares and hashes each slot exactly as the compiler
+/// would, and <c>NativeRecordEqualityTests</c> holds it to the synthesized contract
+/// field by field.)
 /// A default slot carries <c>default(T)</c> — null for every reference payload.</para>
 /// </summary>
 internal readonly struct RuntimeStateSlot<T>(T value) : IEquatable<RuntimeStateSlot<T>>

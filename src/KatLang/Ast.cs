@@ -1666,6 +1666,45 @@ public closed record Expr
 
     private Expr() { }
 
+    // ── Native record equality over record-valued fields (RecordGraphEquality) ──
+    // A variant that holds an expression or an algorithm describes its fields through the five
+    // members below and declares Equals(T) and GetHashCode() over the iterative walk: synthesized
+    // record equality would recurse once per level of a host-built chain. Every other variant
+    // keeps its synthesized members, which are shallow. Field order is declaration order, exactly
+    // as the compiler compares and hashes. NativeRecordEqualityTests holds each of these records to
+    // the synthesized contract field by field (it reads the fields from metadata), so a field
+    // added to one of them and left out of its members below fails there.
+
+    /// <summary>The number of this record's own record-valued fields (0 for a variant with none).</summary>
+    internal int RecordChildCount() => this switch
+    {
+        Unary or Comparison or Index or SequenceSpread or Grace or AlgorithmExpr or Call => 1,
+        Binary or SequenceConstruct or DotCall => 2,
+        Param or Num or StringLiteral or InterpolatedString or BoolLiteral or EmptySequence
+            or ListLiteral or Resolve or Capture or NativeCall => 0,
+    };
+
+    /// <summary>The record-valued field at <paramref name="index"/>, in declaration order; possibly null.</summary>
+    internal virtual object? RecordChild(int index) => throw RecordGraphEquality.NoRecordChildren(this);
+
+    /// <summary>
+    /// Whether one segment of this record's fields equals <paramref name="other"/>'s, a record of the
+    /// same variant: segment 0 is the base record's part and the fields declared before the first
+    /// record-valued field, segment <c>i</c> the fields declared after record-valued field
+    /// <c>i - 1</c> and before the next.
+    /// </summary>
+    internal virtual bool RecordFieldsEqual(Expr other, int segment) => throw RecordGraphEquality.NoRecordChildren(this);
+
+    /// <summary>The synthesized hash over segment 0: the base record's part and the fields before the first record-valued field.</summary>
+    internal virtual int RecordHashStart() => throw RecordGraphEquality.NoRecordChildren(this);
+
+    /// <summary>
+    /// <paramref name="hash"/> with record-valued field <paramref name="index"/>'s completed
+    /// <paramref name="childHash"/> folded in, and then the fields of the segment that follows it.
+    /// </summary>
+    internal virtual int RecordHashAfterChild(int index, int hash, int childHash)
+        => RecordGraphEquality.CombineChild(hash, childHash);
+
     /// <summary>Refers to a parameter declared in the enclosing algorithm.</summary>
     public sealed record Param(string Name) : Expr;
 
@@ -1719,10 +1758,40 @@ public closed record Expr
     public sealed record BoolLiteral(bool Value) : Expr;
 
     /// <summary>Numeric negation or Boolean negation.</summary>
-    public sealed record Unary(UnaryOp Op, Expr Operand) : Expr;
+    public sealed record Unary(UnaryOp Op, Expr Operand) : Expr
+    {
+        /// <summary>Record equality, as synthesized, without recursion on <see cref="Operand"/>.</summary>
+        public bool Equals(Unary? other)
+            => ReferenceEquals(this, other) || (other is not null && RecordGraphEquality.AreEqual(this, other));
+
+        /// <inheritdoc />
+        public override int GetHashCode() => RecordGraphEquality.HashOf(this);
+
+        internal override object? RecordChild(int index) => Operand;
+
+        internal override bool RecordFieldsEqual(Expr other, int segment)
+            => segment != 0 || (base.Equals(other) && RecordGraphEquality.FieldEquals(Op, ((Unary)other).Op));
+
+        internal override int RecordHashStart() => RecordGraphEquality.Combine(base.GetHashCode(), Op);
+    }
 
     /// <summary>Binary arithmetic or logical expression (never a comparison — see <see cref="Comparison"/>).</summary>
-    public sealed record Binary(BinaryOp Op, Expr Left, Expr Right) : Expr;
+    public sealed record Binary(BinaryOp Op, Expr Left, Expr Right) : Expr
+    {
+        /// <summary>Record equality, as synthesized, without recursion on the operands.</summary>
+        public bool Equals(Binary? other)
+            => ReferenceEquals(this, other) || (other is not null && RecordGraphEquality.AreEqual(this, other));
+
+        /// <inheritdoc />
+        public override int GetHashCode() => RecordGraphEquality.HashOf(this);
+
+        internal override object? RecordChild(int index) => index == 0 ? Left : Right;
+
+        internal override bool RecordFieldsEqual(Expr other, int segment)
+            => segment != 0 || (base.Equals(other) && RecordGraphEquality.FieldEquals(Op, ((Binary)other).Op));
+
+        internal override int RecordHashStart() => RecordGraphEquality.Combine(base.GetHashCode(), Op);
+    }
 
     /// <summary>
     /// A COMPARISON CHAIN: <c>First op1 x1 op2 x2 …</c>, the ONE representation of
@@ -1740,7 +1809,25 @@ public closed record Expr
     /// terminates it (later operands are not evaluated). A host-built chain with no
     /// links evaluates its first operand and is <c>true</c>. Lean: <c>Expr.comparison</c>.
     /// </summary>
-    public sealed record Comparison(Expr First, IReadOnlyList<ComparisonLink> Links) : Expr;
+    public sealed record Comparison(Expr First, IReadOnlyList<ComparisonLink> Links) : Expr
+    {
+        /// <summary>Record equality, as synthesized, without recursion on <see cref="First"/>; <see cref="Links"/> compares as a list.</summary>
+        public bool Equals(Comparison? other)
+            => ReferenceEquals(this, other) || (other is not null && RecordGraphEquality.AreEqual(this, other));
+
+        /// <inheritdoc />
+        public override int GetHashCode() => RecordGraphEquality.HashOf(this);
+
+        internal override object? RecordChild(int index) => First;
+
+        internal override bool RecordFieldsEqual(Expr other, int segment)
+            => segment == 0 ? base.Equals(other) : RecordGraphEquality.FieldEquals(Links, ((Comparison)other).Links);
+
+        internal override int RecordHashStart() => base.GetHashCode();
+
+        internal override int RecordHashAfterChild(int index, int hash, int childHash)
+            => RecordGraphEquality.Combine(RecordGraphEquality.CombineChild(hash, childHash), Links);
+    }
 
     /// <summary>
     /// VARIADIC POSTFIX SELECTION <c>Target[s1, ..., sn]</c> (October 2026; the retired colon form
@@ -1759,7 +1846,25 @@ public closed record Expr
     /// value boundary: a selected value is never opened; <c>*</c> opens it). A selection has no
     /// callable identity. Lean: <c>Expr.index</c>.
     /// </summary>
-    public sealed record Index(Expr Target, OutputBundle Selectors) : Expr;
+    public sealed record Index(Expr Target, OutputBundle Selectors) : Expr
+    {
+        /// <summary>Record equality, as synthesized, without recursion on <see cref="Target"/>.</summary>
+        public bool Equals(Index? other)
+            => ReferenceEquals(this, other) || (other is not null && RecordGraphEquality.AreEqual(this, other));
+
+        /// <inheritdoc />
+        public override int GetHashCode() => RecordGraphEquality.HashOf(this);
+
+        internal override object? RecordChild(int index) => Target;
+
+        internal override bool RecordFieldsEqual(Expr other, int segment)
+            => segment == 0 ? base.Equals(other) : RecordGraphEquality.FieldEquals(Selectors, ((Index)other).Selectors);
+
+        internal override int RecordHashStart() => base.GetHashCode();
+
+        internal override int RecordHashAfterChild(int index, int hash, int childHash)
+            => RecordGraphEquality.Combine(RecordGraphEquality.CombineChild(hash, childHash), Selectors);
+    }
 
     /// <summary>
     /// INTERNAL sequence-join node retained for semantic AST compatibility
@@ -1785,7 +1890,21 @@ public closed record Expr
     /// zero origin sites and that its semantics stay pinned and Lean-aligned.
     /// Lean: <c>Expr.sequenceConstruct</c>.
     /// </summary>
-    public sealed record SequenceConstruct(Expr Left, Expr Right) : Expr;
+    public sealed record SequenceConstruct(Expr Left, Expr Right) : Expr
+    {
+        /// <summary>Record equality, as synthesized, without recursion on the two sides.</summary>
+        public bool Equals(SequenceConstruct? other)
+            => ReferenceEquals(this, other) || (other is not null && RecordGraphEquality.AreEqual(this, other));
+
+        /// <inheritdoc />
+        public override int GetHashCode() => RecordGraphEquality.HashOf(this);
+
+        internal override object? RecordChild(int index) => index == 0 ? Left : Right;
+
+        internal override bool RecordFieldsEqual(Expr other, int segment) => segment != 0 || base.Equals(other);
+
+        internal override int RecordHashStart() => base.GetHashCode();
+    }
 
     /// <summary>
     /// Empty sequence value <c>()</c>. Repeated ordinary parentheses around the
@@ -1817,6 +1936,25 @@ public closed record Expr
         /// (e.g. collecting-parameter forwarding) stay spanless.
         /// </summary>
         public SourceSpan? SpreadMarkerSpan { get; init; }
+
+        /// <summary>Record equality, as synthesized, without recursion on <see cref="Operand"/>.</summary>
+        public bool Equals(SequenceSpread? other)
+            => ReferenceEquals(this, other) || (other is not null && RecordGraphEquality.AreEqual(this, other));
+
+        /// <inheritdoc />
+        public override int GetHashCode() => RecordGraphEquality.HashOf(this);
+
+        internal override object? RecordChild(int index) => Operand;
+
+        internal override bool RecordFieldsEqual(Expr other, int segment)
+            => segment == 0
+                ? base.Equals(other)
+                : RecordGraphEquality.FieldEquals(SpreadMarkerSpan, ((SequenceSpread)other).SpreadMarkerSpan);
+
+        internal override int RecordHashStart() => base.GetHashCode();
+
+        internal override int RecordHashAfterChild(int index, int hash, int childHash)
+            => RecordGraphEquality.Combine(RecordGraphEquality.CombineChild(hash, childHash), SpreadMarkerSpan);
     }
 
     /// <summary>
@@ -2011,6 +2149,52 @@ public closed record Expr
             _argumentlessEdge = new(new ArgumentlessEdgeMemo(this, edge));
             return edge;
         }
+
+        /// <summary>
+        /// Record equality, as synthesized, without recursion on <see cref="Target"/> or
+        /// <see cref="LexicalFallback"/>.
+        /// </summary>
+        public bool Equals(DotCall? other)
+            => ReferenceEquals(this, other) || (other is not null && RecordGraphEquality.AreEqual(this, other));
+
+        /// <inheritdoc />
+        public override int GetHashCode() => RecordGraphEquality.HashOf(this);
+
+        internal override object? RecordChild(int index) => index == 0 ? Target : LexicalFallback;
+
+        internal override bool RecordFieldsEqual(Expr other, int segment)
+        {
+            var dot = (DotCall)other;
+            return segment switch
+            {
+                0 => base.Equals(other),
+                1 => RecordGraphEquality.FieldEquals(Name, dot.Name)
+                    && RecordGraphEquality.FieldEquals(Args, dot.Args)
+                    && RecordGraphEquality.FieldEquals(_inferredFallbackProvenance, dot._inferredFallbackProvenance)
+                    && RecordGraphEquality.FieldEquals(MemberSpan, dot.MemberSpan),
+                _ => RecordGraphEquality.FieldEquals(ElaboratedMissSelection, dot.ElaboratedMissSelection)
+                    && RecordGraphEquality.FieldEquals(_provisionalMiss, dot._provisionalMiss)
+                    && RecordGraphEquality.FieldEquals(_argumentlessEdge, dot._argumentlessEdge),
+            };
+        }
+
+        internal override int RecordHashStart() => base.GetHashCode();
+
+        internal override int RecordHashAfterChild(int index, int hash, int childHash)
+        {
+            hash = RecordGraphEquality.CombineChild(hash, childHash);
+            if (index == 0)
+            {
+                hash = RecordGraphEquality.Combine(hash, Name);
+                hash = RecordGraphEquality.Combine(hash, Args);
+                hash = RecordGraphEquality.Combine(hash, _inferredFallbackProvenance);
+                return RecordGraphEquality.Combine(hash, MemberSpan);
+            }
+
+            hash = RecordGraphEquality.Combine(hash, ElaboratedMissSelection);
+            hash = RecordGraphEquality.Combine(hash, _provisionalMiss);
+            return RecordGraphEquality.Combine(hash, _argumentlessEdge);
+        }
     }
 
     /// <summary>
@@ -2034,7 +2218,25 @@ public closed record Expr
     /// semantics never observe it.
     /// Not part of the Lean specification.
     /// </summary>
-    public sealed record Grace(Expr Inner, int Weight) : Expr;
+    public sealed record Grace(Expr Inner, int Weight) : Expr
+    {
+        /// <summary>Record equality, as synthesized, without recursion on <see cref="Inner"/>.</summary>
+        public bool Equals(Grace? other)
+            => ReferenceEquals(this, other) || (other is not null && RecordGraphEquality.AreEqual(this, other));
+
+        /// <inheritdoc />
+        public override int GetHashCode() => RecordGraphEquality.HashOf(this);
+
+        internal override object? RecordChild(int index) => Inner;
+
+        internal override bool RecordFieldsEqual(Expr other, int segment)
+            => segment == 0 ? base.Equals(other) : RecordGraphEquality.FieldEquals(Weight, ((Grace)other).Weight);
+
+        internal override int RecordHashStart() => base.GetHashCode();
+
+        internal override int RecordHashAfterChild(int index, int hash, int childHash)
+            => RecordGraphEquality.Combine(RecordGraphEquality.CombineChild(hash, childHash), Weight);
+    }
 
     /// <summary>
     /// An algorithm used in expression position, exposing ALGORITHM IDENTITY:
@@ -2048,7 +2250,21 @@ public closed record Expr
     /// algorithm-level declarations written inside parentheses.
     /// Lean: <c>Expr.algorithmExpr</c>.
     /// </summary>
-    public sealed record AlgorithmExpr(Algorithm Algorithm) : Expr;
+    public sealed record AlgorithmExpr(Algorithm Algorithm) : Expr
+    {
+        /// <summary>Record equality, as synthesized, without recursion on <see cref="Algorithm"/>.</summary>
+        public bool Equals(AlgorithmExpr? other)
+            => ReferenceEquals(this, other) || (other is not null && RecordGraphEquality.AreEqual(this, other));
+
+        /// <inheritdoc />
+        public override int GetHashCode() => RecordGraphEquality.HashOf(this);
+
+        internal override object? RecordChild(int index) => Algorithm;
+
+        internal override bool RecordFieldsEqual(Expr other, int segment) => segment != 0 || base.Equals(other);
+
+        internal override int RecordHashStart() => base.GetHashCode();
+    }
 
     /// <summary>
     /// A surviving parenthesized capture boundary over an
@@ -2077,7 +2293,25 @@ public closed record Expr
     /// channel and, where permitted, the algorithm channel (dual-view binding).
     /// Lean: <c>call : Expr → OutputBundle → Expr</c>.
     /// </summary>
-    public sealed record Call(Expr Function, OutputBundle Args) : Expr;
+    public sealed record Call(Expr Function, OutputBundle Args) : Expr
+    {
+        /// <summary>Record equality, as synthesized, without recursion on <see cref="Function"/>.</summary>
+        public bool Equals(Call? other)
+            => ReferenceEquals(this, other) || (other is not null && RecordGraphEquality.AreEqual(this, other));
+
+        /// <inheritdoc />
+        public override int GetHashCode() => RecordGraphEquality.HashOf(this);
+
+        internal override object? RecordChild(int index) => Function;
+
+        internal override bool RecordFieldsEqual(Expr other, int segment)
+            => segment == 0 ? base.Equals(other) : RecordGraphEquality.FieldEquals(Args, ((Call)other).Args);
+
+        internal override int RecordHashStart() => base.GetHashCode();
+
+        internal override int RecordHashAfterChild(int index, int hash, int childHash)
+            => RecordGraphEquality.Combine(RecordGraphEquality.CombineChild(hash, childHash), Args);
+    }
 
     /// <summary>
     /// Native function call. Evaluates a C# function using parameter values from the environment.
@@ -3038,6 +3272,32 @@ public closed record Algorithm
     // above (a declaration token's ordinary Equals, dictionaries, and LINQ all retain
     // reference identity).
 
+    // ── Native record equality over record-valued fields (RecordGraphEquality) ──
+    // The scope-owning variants hold a parent scope, and an alias its target expression: they
+    // describe their fields through the members below, exactly as Expr's variants do, and declare
+    // Equals(T) and GetHashCode() over the iterative walk. A builtin keeps its synthesized members.
+
+    /// <summary>The number of this record's own record-valued fields (0 for a variant with none).</summary>
+    internal int RecordChildCount() => this switch
+    {
+        User or Conditional => 1,
+        Alias => 2,
+        Builtin => 0,
+    };
+
+    /// <summary>The record-valued field at <paramref name="index"/>, in declaration order; possibly null.</summary>
+    internal virtual object? RecordChild(int index) => throw RecordGraphEquality.NoRecordChildren(this);
+
+    /// <summary>Whether one segment of this record's fields equals <paramref name="other"/>'s (see <see cref="Expr.RecordFieldsEqual"/>).</summary>
+    internal virtual bool RecordFieldsEqual(Algorithm other, int segment) => throw RecordGraphEquality.NoRecordChildren(this);
+
+    /// <summary>The synthesized hash over segment 0 (see <see cref="Expr.RecordHashStart"/>).</summary>
+    internal virtual int RecordHashStart() => throw RecordGraphEquality.NoRecordChildren(this);
+
+    /// <summary>The hash with a record-valued field and the segment after it folded in (see <see cref="Expr.RecordHashAfterChild"/>).</summary>
+    internal virtual int RecordHashAfterChild(int index, int hash, int childHash)
+        => RecordGraphEquality.CombineChild(hash, childHash);
+
     /// <summary>
     /// The ONE diagnostic-transparency test: true for an algorithm the FRONT END synthesized
     /// as assignment-deconstruction plumbing rather than one the programmer wrote — the
@@ -3616,6 +3876,54 @@ public closed record Algorithm
         /// braces are different algorithms; Lean receives only the resulting alias kind.
         /// </summary>
         internal bool IsWrittenBlock { get; init; }
+
+        /// <summary>
+        /// Record equality, as synthesized, without recursion on the <see cref="Parent"/> chain; the
+        /// pattern, open, property and output collections compare as collections.
+        /// </summary>
+        public bool Equals(User? other)
+            => ReferenceEquals(this, other) || (other is not null && RecordGraphEquality.AreEqual(this, other));
+
+        /// <inheritdoc />
+        public override int GetHashCode() => RecordGraphEquality.HashOf(this);
+
+        internal override object? RecordChild(int index) => Parent;
+
+        internal override bool RecordFieldsEqual(Algorithm other, int segment)
+        {
+            var user = (User)other;
+            return segment == 0
+                ? base.Equals(other) && RecordGraphEquality.FieldEquals(_completedStructure, user._completedStructure)
+                : RecordGraphEquality.FieldEquals(ParameterPatterns, user.ParameterPatterns)
+                    && RecordGraphEquality.FieldEquals(Opens, user.Opens)
+                    && RecordGraphEquality.FieldEquals(Properties, user.Properties)
+                    && RecordGraphEquality.FieldEquals(Output, user.Output)
+                    && RecordGraphEquality.FieldEquals(HasExplicitParameterList, user.HasExplicitParameterList)
+                    && RecordGraphEquality.FieldEquals(_forwardingParameterStart, user._forwardingParameterStart)
+                    && RecordGraphEquality.FieldEquals(_assignmentGroup, user._assignmentGroup)
+                    && RecordGraphEquality.FieldEquals(_assignmentTargetIndex, user._assignmentTargetIndex)
+                    && RecordGraphEquality.FieldEquals(AssignmentDeconstructionRowIndex, user.AssignmentDeconstructionRowIndex)
+                    && RecordGraphEquality.FieldEquals(IsModuleElaborated, user.IsModuleElaborated)
+                    && RecordGraphEquality.FieldEquals(IsWrittenBlock, user.IsWrittenBlock);
+        }
+
+        internal override int RecordHashStart() => RecordGraphEquality.Combine(base.GetHashCode(), _completedStructure);
+
+        internal override int RecordHashAfterChild(int index, int hash, int childHash)
+        {
+            hash = RecordGraphEquality.CombineChild(hash, childHash);
+            hash = RecordGraphEquality.Combine(hash, ParameterPatterns);
+            hash = RecordGraphEquality.Combine(hash, Opens);
+            hash = RecordGraphEquality.Combine(hash, Properties);
+            hash = RecordGraphEquality.Combine(hash, Output);
+            hash = RecordGraphEquality.Combine(hash, HasExplicitParameterList);
+            hash = RecordGraphEquality.Combine(hash, _forwardingParameterStart);
+            hash = RecordGraphEquality.Combine(hash, _assignmentGroup);
+            hash = RecordGraphEquality.Combine(hash, _assignmentTargetIndex);
+            hash = RecordGraphEquality.Combine(hash, AssignmentDeconstructionRowIndex);
+            hash = RecordGraphEquality.Combine(hash, IsModuleElaborated);
+            return RecordGraphEquality.Combine(hash, IsWrittenBlock);
+        }
     }
 
     /// <summary>
@@ -3738,6 +4046,35 @@ public closed record Algorithm
                     return true;
             }
             return false;
+        }
+
+        /// <summary>
+        /// Record equality, as synthesized, without recursion on the <see cref="Parent"/> chain; the
+        /// open and branch collections compare as collections.
+        /// </summary>
+        public bool Equals(Conditional? other)
+            => ReferenceEquals(this, other) || (other is not null && RecordGraphEquality.AreEqual(this, other));
+
+        /// <inheritdoc />
+        public override int GetHashCode() => RecordGraphEquality.HashOf(this);
+
+        internal override object? RecordChild(int index) => Parent;
+
+        internal override bool RecordFieldsEqual(Algorithm other, int segment)
+        {
+            var family = (Conditional)other;
+            return segment == 0
+                ? base.Equals(other) && RecordGraphEquality.FieldEquals(_completedStructure, family._completedStructure)
+                : RecordGraphEquality.FieldEquals(Opens, family.Opens) && RecordGraphEquality.FieldEquals(Branches, family.Branches);
+        }
+
+        internal override int RecordHashStart() => RecordGraphEquality.Combine(base.GetHashCode(), _completedStructure);
+
+        internal override int RecordHashAfterChild(int index, int hash, int childHash)
+        {
+            hash = RecordGraphEquality.CombineChild(hash, childHash);
+            hash = RecordGraphEquality.Combine(hash, Opens);
+            return RecordGraphEquality.Combine(hash, Branches);
         }
     }
 
@@ -3926,6 +4263,52 @@ public closed record Algorithm
         {
             get => _hasRuntimeTarget.Value;
             init => _hasRuntimeTarget = new(value);
+        }
+
+        /// <summary>
+        /// Record equality, as synthesized, without recursion on the <see cref="Parent"/> chain or on
+        /// <see cref="Target"/>; the open and property collections compare as collections.
+        /// </summary>
+        public bool Equals(Alias? other)
+            => ReferenceEquals(this, other) || (other is not null && RecordGraphEquality.AreEqual(this, other));
+
+        /// <inheritdoc />
+        public override int GetHashCode() => RecordGraphEquality.HashOf(this);
+
+        internal override object? RecordChild(int index) => index == 0 ? Parent : Target;
+
+        internal override bool RecordFieldsEqual(Algorithm other, int segment)
+        {
+            var alias = (Alias)other;
+            return segment switch
+            {
+                0 => base.Equals(other)
+                    && RecordGraphEquality.FieldEquals(_completedStructure, alias._completedStructure)
+                    && RecordGraphEquality.FieldEquals(IsReference, alias.IsReference),
+                1 => RecordGraphEquality.FieldEquals(Opens, alias.Opens) && RecordGraphEquality.FieldEquals(Properties, alias.Properties),
+                _ => RecordGraphEquality.FieldEquals(IsModuleElaborated, alias.IsModuleElaborated)
+                    && RecordGraphEquality.FieldEquals(_resolvedTarget, alias._resolvedTarget)
+                    && RecordGraphEquality.FieldEquals(_resolvedStructure, alias._resolvedStructure)
+                    && RecordGraphEquality.FieldEquals(_hasRuntimeTarget, alias._hasRuntimeTarget),
+            };
+        }
+
+        internal override int RecordHashStart()
+            => RecordGraphEquality.Combine(RecordGraphEquality.Combine(base.GetHashCode(), _completedStructure), IsReference);
+
+        internal override int RecordHashAfterChild(int index, int hash, int childHash)
+        {
+            hash = RecordGraphEquality.CombineChild(hash, childHash);
+            if (index == 0)
+            {
+                hash = RecordGraphEquality.Combine(hash, Opens);
+                return RecordGraphEquality.Combine(hash, Properties);
+            }
+
+            hash = RecordGraphEquality.Combine(hash, IsModuleElaborated);
+            hash = RecordGraphEquality.Combine(hash, _resolvedTarget);
+            hash = RecordGraphEquality.Combine(hash, _resolvedStructure);
+            return RecordGraphEquality.Combine(hash, _hasRuntimeTarget);
         }
     }
 }
@@ -5093,15 +5476,37 @@ public sealed record ScopeCtx(
     /// members (<see cref="Owner"/>, <see cref="Activation"/>) are deliberately excluded:
     /// two rebuilt scopes of one declaring scope are equal whichever call they belong to.
     /// </summary>
+    /// <remarks>
+    /// The <see cref="Parent"/> chain is followed by <see cref="RecordGraphEquality"/> on an explicit
+    /// stack — a host-built chain is as deep as the host makes it — in the order this member always
+    /// used: the parent first, then <see cref="Opens"/>, <see cref="Properties"/> and
+    /// <see cref="Parameters"/>, each as a collection.
+    /// </remarks>
     public bool Equals(ScopeCtx? other)
-        => ReferenceEquals(this, other)
-            || (other is not null
-                && EqualityComparer<ScopeCtx?>.Default.Equals(Parent, other.Parent)
-                && EqualityComparer<IReadOnlyList<Expr>>.Default.Equals(Opens, other.Opens)
-                && EqualityComparer<IReadOnlyList<Property>>.Default.Equals(Properties, other.Properties)
-                && EqualityComparer<IReadOnlyList<string>>.Default.Equals(Parameters, other.Parameters));
+        => ReferenceEquals(this, other) || (other is not null && RecordGraphEquality.AreEqual(this, other));
 
-    public override int GetHashCode()
-        => HashCode.Combine(Parent, Opens, Properties, Parameters);
+    /// <summary>
+    /// <c>HashCode.Combine(Parent, Opens, Properties, Parameters)</c>, with the parent's hash
+    /// computed without recursion: the same value as before for every scope.
+    /// </summary>
+    public override int GetHashCode() => RecordGraphEquality.HashOf(this);
+
+    /// <summary>The one record-valued field equality follows: <see cref="Parent"/>.</summary>
+    internal const int RecordChildCount = 1;
+
+    /// <summary>Segment 0 (before the parent) holds nothing; segment 1 is the three collections.</summary>
+    internal bool RecordFieldsEqual(ScopeCtx other, int segment)
+        => segment == 0
+            || (RecordGraphEquality.FieldEquals(Opens, other.Opens)
+                && RecordGraphEquality.FieldEquals(Properties, other.Properties)
+                && RecordGraphEquality.FieldEquals(Parameters, other.Parameters));
+
+    /// <summary>
+    /// This scope's hash given its parent's (0 for no parent). <see cref="HashCode.Combine{T1, T2, T3, T4}"/>
+    /// reads its first component as <c>value?.GetHashCode() ?? 0</c>, and an <see cref="int"/> hashes to
+    /// itself, so passing the parent's hash is passing the parent.
+    /// </summary>
+    internal int RecordHashAfterParent(int parentHash)
+        => HashCode.Combine(parentHash, Opens, Properties, Parameters);
 
 }

@@ -2040,6 +2040,26 @@ public class AstStructuralDepthProcessTests
     }
 
     [Fact]
+    public async Task DeepHostAsts_NativeRecordEqualityAndHashing_AreStackSafe_InSubprocess()
+        => await RunProbeChild(nameof(NativeRecordEqualityAndHashing_ProbeChild));
+
+    [Fact]
+    public void NativeRecordEqualityAndHashing_ProbeChild()
+    {
+        if (Environment.GetEnvironmentVariable(ProbeChildEnvironment) != "1")
+            return;
+
+        // Compiler-generated record equality and hashing recursed once per record-valued field
+        // they followed: 200,000 levels of any such field overflowed this process on Equals, ==,
+        // != and GetHashCode alike, and so did a hash set or a dictionary keyed by the record.
+        // The documented minimum supported 1 MiB thread stack leaves a recursive walk about five
+        // bytes per level, so completing here means no native recursion follows the record graph.
+        RunOnThreadWithStack(1_048_576, () => DeepRecordGraphs.AssertAll(DeepRecordGraphs.Depth));
+
+        WriteProbeMarker();
+    }
+
+    [Fact]
     public async Task AlternatingJoinsAndNestedBuiltins_StayStructured_InSubprocess()
         => await RunProbeChild(nameof(AlternatingJoinsAndNestedBuiltins_ProbeChild));
 
