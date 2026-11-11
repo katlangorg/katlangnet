@@ -15,10 +15,11 @@ contracts of the recursive answer discharged here once (`spreadSpec_rec`, `route
 `channelsSpec_rec`, …) and the bodies with state-reading/writing control proved with the same
 combinators by hand where noted.
 
-The opaque `partial` helpers the bodies reach (`peelSequenceSpreadLayers`,
-`sequenceConstructLeavesLoop`, `requiredParameterOwner?` through `capturedParameterActivation?`,
-`scopeChainContains`, `reprStr` keys), and the total `activeDeclaration?`, return address-free
-data; every proof here holds for ARBITRARY values of them (no equation about them is used).
+The pure helpers the bodies reach (`peelSequenceSpreadLayers`, `sequenceConstructLeavesLoop`,
+`requiredParameterOwner?` through `capturedParameterActivation?`, `scopeChainContains`, `reprStr`
+keys, `activeDeclaration?` — total since E-6 Tier 3, formerly opaque `partial` helpers) return
+address-free data; every proof here holds for ARBITRARY values of them (no equation about them is
+used).
 -/
 
 namespace KatLang.AddressInvariant

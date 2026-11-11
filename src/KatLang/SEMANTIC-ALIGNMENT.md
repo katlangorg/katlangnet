@@ -1457,6 +1457,37 @@ never computed by a proof, and the bodies reach the remaining
 incomplete runs are related by outcome only (`PublicRunBridge.Incomplete`). Ledger rows E-5 (public instance, now no remaining
 bridge for Lean) and E-6 (Production Lean). The R7-FU-01 entry above is history. Evidence `artifacts/validation/e6-tier2/`.
 
+E-6 Tier 3 — the remaining leaves and printers of the public run are total; the admitted set (2026-11-11; Lean definitions
+change FORM only, V3; no language, C#, `Error`, `EvalM`, evaluator-body or generated-artifact change). In `lean/KatLang.lean`
+the last 15 `partial` definitions are well-founded or structural: `lookupInParentsDirect`, `requiredParameterOwner?` (the
+parent's match named for the termination proof), `lookupLexicalDirect` (never recursive), the `cache*Shape` group (an optional
+parent through the new `cacheParentShape`, dot-call arguments matched, instead of `Option.map`), `scopeChainContains`,
+`sequenceConstructLeavesLoop` (measure `Σ (2 · sizeOf e + 1)` over the pending list), `peelSequenceSpread`,
+`peelSequenceSpreadLayers`, `holeMayRenderLeadingBrace`, `exprDiagnosticName` (its `where` helpers measured one above their
+operand; a block's rows through `attach`), `postElabInvariant` / `postElabInvariantAlg` (`List.all` attached by a LOCAL
+`wf_preprocess` lemma). `partial def` sites: 15 → 0. The derived `Repr` of the nested inductives (`Pattern`,
+`ParameterPattern`, `Result` and the seven types of the AST block), which `deriving` compiles to opaque `partial` printers, is
+written out total with the derived instance names, term for term the handler's output (§ Total `Repr` printers;
+`reprCtorFormat`, `reprFormatList`, `List.repr_eq_reprFormatList`); the four FG-I1 `sizeOf` lemmas moved before the printers,
+unchanged. Opacity frontier of `runResultM` (`artifacts/validation/e6-tier3/scripts/OpacityFrontier.lean`): KatLang
+opaque 11 → 0 (kernel), 30 → 0 (implementation); core opaque on the kernel path 7 → 9, the two newcomers
+(`Std.Internal.idOpaque`, `WellFounded.opaqueFix`) visible behind the now transparent `exprDiagnosticName` string escaping;
+`reprStr` still runs core's opaque `Std.Format.pretty`. New modules (built by the glob, standard axioms only):
+`KatLangArityLaws/TotalLeaves.lean` (the changed former bodies as equations, kernel `rfl` computations of the structural
+leaves), `KatLangArityLaws/AdmittedSet.lean` — `Admitted e` (host provenance coherent and `AdmittedExpr e [] e.aliasCount`,
+the mutual declarative predicates `AdmittedAlgorithm` / `AdmittedScope` / `AdmittedExpr` over every node and child the
+validator walks), `validate_ok_iff` (from any entry state the validation returns `ok` exactly on `Admitted`),
+`validate_error_iff`, `validateAlgorithm_ok_iff`, `public_refused`, `public_admitted`, `public_incomplete_iff_root` and
+`public_incomplete_from_empty` (the R7-FU-01 plan's stretch corollary in outcome form: from `EvalState.empty` the public outcome
+is incomplete exactly when the identified tree is admitted and the root step is incomplete at every fuel; it presupposes no
+Q-82 answer) — and `TotalLeavesGuards.lean`. Preservation: the equations; a bounded comparison (verbatim frozen `partial`
+copies of the 15 leaves and the printers re-derived by `deriving instance Repr`, against the total ones, over all 3128
+generated corpus programs plus the 11 validator fixtures, raw and identified, every subterm and every wired algorithm and scope
+chain, printers at two precedences and three widths, and the run results): 3139 trees, 56,470 subterms, 15,372 wired algorithms,
+0 disagreements; a one-field layout mutation of a printer is detected. NOT claimed: printer equality as a theorem (the derived
+printers are opaque); a characterization of identification against the admitted set; anything about C#. Q-82 stays open.
+Ledger row E-6. Evidence `artifacts/validation/e6-tier3/`.
+
 META-S3-4 — generalized META capture of written invocations (2026-10-20; an INTENTIONAL language
 extension, owner decisions D-1A/D-2A/D-4, consequences D-3/D-5; Lean first, then C#). The capture domain
 is syntactic in both engines (Lean `NeedPlan.callShape?` with `CallForm`, C# `IsPlannableCall`): a call

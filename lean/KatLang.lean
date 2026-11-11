@@ -154,6 +154,48 @@ structure CallableParameter where
   kind : ParameterKind := .normal
   deriving Repr, BEq
 
+/-! ### Total `Repr` printers (E-6 Tier 3, November 2026)
+
+`deriving Repr` compiles a NESTED inductive (one with a `List`/`Option` field of its own type)
+to `partial` printers, kernel-opaque. The structural cache and identity keys read these printers
+through `reprStr` (`sameDeclaringScope`'s fallback, the host-provenance scan, the property and
+call caches), so they sat on `runResultM`'s kernel path as opaque premises. `Pattern`,
+`ParameterPattern`, `Result` and the seven types of the AST block (`Expr`, `ComparisonLink`,
+`InterpolationLink`, `PropDef`, `CondBranch`, `Algorithm`, `ScopeCtx`) therefore carry WRITTEN
+printers: well-founded, total, and term for term the derived handler's output (Lean 4.35,
+`set_option trace.Elab.Deriving.repr`): a constructor `C a₁ … aₙ` is `reprCtorFormat`, a
+structure is `Format.bracket "{ " … " }"` over its `field := value` rows, a field of the type's
+own family is printed by the family's own printer at the derived precedence, and a list or
+optional field by `List.repr` / `Option.repr` over those printers (`reprFormatList`). The
+instance names are the derived ones. Equality with the derived printers is checked, not proved —
+the derived printers are opaque — by the differential comparison of the E-6 Tier 3 report
+(`artifacts/validation/e6-tier3/`), which re-derives them in a scratch module. -/
+
+/-- `List.repr` over already-printed items (`List.repr_eq_reprFormatList`). -/
+def reprFormatList : List Std.Format → Std.Format
+  | [] => "[]"
+  | items => Std.Format.bracket "[" (Std.Format.joinSep items ("," ++ Std.Format.line)) "]"
+
+/-- The derived printer of one constructor application `name a₁ … aₙ` over its already-printed
+    arguments at precedence `prec` (the `deriving Repr` handler's constructor arm). -/
+def reprCtorFormat (name : String) (args : List Std.Format) (prec : Nat) : Std.Format :=
+  Repr.addAppParen
+    (Std.Format.group (Std.Format.nest (if prec ≥ max_prec then 1 else 2)
+      (args.foldl (fun acc arg => acc ++ Std.Format.line ++ arg) (Std.Format.text name))))
+    prec
+
+/-- `List.repr` is `reprFormatList` over the items printed at precedence 0. -/
+theorem List.repr_eq_reprFormatList {α : Type} [Repr α] (l : List α) (n : Nat) :
+    List.repr l n = reprFormatList (l.map (fun x => reprPrec x 0)) := by
+  cases l with
+  | nil => rfl
+  | cons x xs =>
+    simp only [List.repr, reprFormatList, List.map_cons]
+    cases xs with
+    | nil => rfl
+    | cons y ys =>
+      simp only [Std.Format.joinSep, List.map_cons, List.foldl_cons, List.foldl_map]; rfl
+
 /-- A parameter pattern of the ORDINARY pattern language: a capture, or a
     structural pattern whose delimiter selects the value kind it destructures —
     `sequenceValue` is the parenthesized sequence pattern `(p1, …, pn)`, which
@@ -181,7 +223,22 @@ inductive ParameterPattern where
   | sequenceValue : List ParameterPattern -> ParameterPattern
   | listValue : List ParameterPattern -> ParameterPattern
   | unpacking : List ParameterPattern -> ParameterPattern
-  deriving Repr, BEq
+  deriving BEq
+
+/-- The `Repr` printer of `ParameterPattern`: total, the derived one written out (§ Total `Repr`
+    printers above). -/
+def reprParameterPatternPrec : ParameterPattern → Nat → Std.Format
+  | .capture a, prec => reprCtorFormat "KatLang.ParameterPattern.capture" [reprArg a] prec
+  | .sequenceValue a, prec => reprCtorFormat "KatLang.ParameterPattern.sequenceValue"
+      [reprFormatList (a.map (fun p => reprParameterPatternPrec p 0))] prec
+  | .listValue a, prec => reprCtorFormat "KatLang.ParameterPattern.listValue"
+      [reprFormatList (a.map (fun p => reprParameterPatternPrec p 0))] prec
+  | .unpacking a, prec => reprCtorFormat "KatLang.ParameterPattern.unpacking"
+      [reprFormatList (a.map (fun p => reprParameterPatternPrec p 0))] prec
+termination_by p => sizeOf p
+decreasing_by all_goals (have := List.sizeOf_lt_of_mem ‹_ ∈ _›; simp only [ParameterPattern.sequenceValue.sizeOf_spec, ParameterPattern.listValue.sizeOf_spec, ParameterPattern.unpacking.sizeOf_spec]; omega)
+
+instance instReprParameterPattern : Repr ParameterPattern := ⟨reprParameterPatternPrec⟩
 
 structure CallableSignature where
   name : Ident
@@ -967,7 +1024,23 @@ inductive Pattern where
   | litBool   : Bool -> Pattern      -- matches only Result.bool b (C#: Pattern.LitBool)
   | sequenceValue     : List Pattern -> Pattern   -- `(p1, …, pn)`: sequence values only (C#: Pattern.SequenceValue)
   | listValue         : List Pattern -> Pattern   -- `[p1, …, pn]`: list values only (C#: Pattern.ListValue)
-  deriving Repr, BEq
+  deriving BEq
+
+/-- The `Repr` printer of `Pattern`: total, the derived one written out (§ Total `Repr`
+    printers). -/
+def reprPatternPrec : Pattern → Nat → Std.Format
+  | .bind a, prec => reprCtorFormat "KatLang.Pattern.bind" [reprArg a] prec
+  | .litInt a, prec => reprCtorFormat "KatLang.Pattern.litInt" [reprArg a] prec
+  | .litString a, prec => reprCtorFormat "KatLang.Pattern.litString" [reprArg a] prec
+  | .litBool a, prec => reprCtorFormat "KatLang.Pattern.litBool" [reprArg a] prec
+  | .sequenceValue a, prec => reprCtorFormat "KatLang.Pattern.sequenceValue"
+      [reprFormatList (a.map (fun p => reprPatternPrec p 0))] prec
+  | .listValue a, prec => reprCtorFormat "KatLang.Pattern.listValue"
+      [reprFormatList (a.map (fun p => reprPatternPrec p 0))] prec
+termination_by p => sizeOf p
+decreasing_by all_goals (have := List.sizeOf_lt_of_mem ‹_ ∈ _›; simp only [Pattern.sequenceValue.sizeOf_spec, Pattern.listValue.sizeOf_spec]; omega)
+
+instance instReprPattern : Repr Pattern := ⟨reprPatternPrec⟩
 
 namespace Pattern
   /-- Collect all binder names in a pattern (left-to-right). -/
@@ -1389,14 +1462,12 @@ mutual
     -- NOTE: load('url') is surface-only syntax, represented as Call(Resolve("load"), ...)
     -- in the parser and elaborated to algorithmExpr(...) by the load elaboration pass.
     -- It is NOT a core Expr constructor.  See load elaboration section below.
-    deriving Repr
 
   /-- One link of a comparison chain: the operator that compares the PREVIOUS
       operand of the chain with `operand`. C#: `ComparisonLink`. -/
   structure ComparisonLink where
     op      : ComparisonOp
     operand : Expr
-    deriving Repr
 
   /-- One link of an interpolated string: an interpolation `hole` and the
       already-decoded literal `text` written after it (possibly empty).
@@ -1404,7 +1475,6 @@ mutual
   structure InterpolationLink where
     hole : Expr
     text : String
-    deriving Repr
 
   /-- Property definition with visibility metadata. -/
   structure PropDef where
@@ -1414,7 +1484,6 @@ mutual
     exposure : PropExposure := .exported
     identity : Option PropertyIdentity := none
     requiredOwnerDepths : Option (List (Ident × Option Nat)) := none
-    deriving Repr
 
   /-- A branch of a conditional algorithm: a pattern and a body algorithm.
       The pattern is the complete input specification of the branch.
@@ -1428,7 +1497,6 @@ mutual
   structure CondBranch where
     pattern : Pattern
     body    : Algorithm
-    deriving Repr
 
     /-- User-defined algorithm with properties, parameters, opens, and output.
 
@@ -1546,7 +1614,6 @@ mutual
         (declarationId : Option PropertyIdentity := none) ->
         (reference : Bool := true) ->
         Algorithm
-    deriving Repr
 
   /-- A lexical scope level as the evaluator wires it. `params` are the parameter names
       the level's algorithm binds — its own parameters, or, on the family scope a
@@ -1568,8 +1635,162 @@ mutual
         (activation : Option Nat) ->
         (declarationId : Option PropertyIdentity) ->
         ScopeCtx
-    deriving Repr
 end
+
+theorem InterpolationLink.sizeOf_hole_lt (link : InterpolationLink) :
+    sizeOf link.hole < sizeOf link := by cases link; simp; omega
+theorem ComparisonLink.sizeOf_operand_lt (link : ComparisonLink) :
+    sizeOf link.operand < sizeOf link := by cases link; simp; omega
+theorem CondBranch.sizeOf_body_lt (branch : CondBranch) :
+    sizeOf branch.body < sizeOf branch := by cases branch; simp; omega
+theorem PropDef.sizeOf_alg_lt (property : PropDef) :
+    sizeOf property.alg < sizeOf property := by cases property; simp; omega
+
+/-- The printers of the AST block decrease on every field they print. -/
+macro "repr_decreasing" : tactic => `(tactic| (
+  all_goals first
+    | (simp only [Expr.unary.sizeOf_spec, Expr.binary.sizeOf_spec, Expr.comparison.sizeOf_spec,
+        Expr.index.sizeOf_spec, Expr.sequenceConstruct.sizeOf_spec, Expr.sequenceSpread.sizeOf_spec,
+        Expr.call.sizeOf_spec, Expr.dotMember.sizeOf_spec, Expr.algorithmExpr.sizeOf_spec,
+        Option.some.sizeOf_spec]; omega)
+    | (have := ComparisonLink.sizeOf_operand_lt ‹_›; omega)
+    | (have := InterpolationLink.sizeOf_hole_lt ‹_›; omega)
+    | (have := PropDef.sizeOf_alg_lt ‹_›; omega)
+    | (have := CondBranch.sizeOf_body_lt ‹_›; omega)
+    | (have := List.sizeOf_lt_of_mem ‹_ ∈ _›; simp_all only [Expr.interpolatedString.sizeOf_spec,
+        Expr.comparison.sizeOf_spec, Expr.index.sizeOf_spec, Expr.listLiteral.sizeOf_spec,
+        Expr.capture.sizeOf_spec, Expr.call.sizeOf_spec, Expr.dotMember.sizeOf_spec,
+        Algorithm.mk.sizeOf_spec, Algorithm.conditional.sizeOf_spec, Algorithm.alias.sizeOf_spec,
+        ScopeCtx.mk.sizeOf_spec, Option.some.sizeOf_spec]; omega)
+    | (simp only [Algorithm.mk.sizeOf_spec, Algorithm.conditional.sizeOf_spec,
+        Algorithm.alias.sizeOf_spec, ScopeCtx.mk.sizeOf_spec, Option.some.sizeOf_spec]; omega)))
+
+/- The `Repr` printers of the AST block: total, the derived ones written out (§ Total `Repr`
+   printers, before `ParameterPattern`). Each `reprArg` of a field outside the block is the
+   derived call itself; a field of the block is printed by the block's printer at the
+   precedence the derived arm uses (`max_prec` for a constructor argument, `0` for a structure
+   field or a list item), a list of the block's types by `reprFormatList`, an optional one as
+   `Option.repr` at `max_prec`. -/
+mutual
+  def reprExprPrec : Expr → Nat → Std.Format
+    | .param a, prec => reprCtorFormat "KatLang.Expr.param" [reprArg a] prec
+    | .num a, prec => reprCtorFormat "KatLang.Expr.num" [reprArg a] prec
+    | .stringLiteral a, prec => reprCtorFormat "KatLang.Expr.stringLiteral" [reprArg a] prec
+    | .interpolatedString a links, prec => reprCtorFormat "KatLang.Expr.interpolatedString"
+        [reprArg a, reprFormatList (links.map (fun l => reprInterpolationLinkPrec l 0))] prec
+    | .boolLiteral a, prec => reprCtorFormat "KatLang.Expr.boolLiteral" [reprArg a] prec
+    | .unary op a, prec => reprCtorFormat "KatLang.Expr.unary" [reprArg op, reprExprPrec a max_prec] prec
+    | .binary op a b, prec => reprCtorFormat "KatLang.Expr.binary"
+        [reprArg op, reprExprPrec a max_prec, reprExprPrec b max_prec] prec
+    | .comparison first links, prec => reprCtorFormat "KatLang.Expr.comparison"
+        [reprExprPrec first max_prec, reprFormatList (links.map (fun l => reprComparisonLinkPrec l 0))] prec
+    | .index a bs, prec => reprCtorFormat "KatLang.Expr.index"
+        [reprExprPrec a max_prec, reprFormatList (bs.map (fun b => reprExprPrec b 0))] prec
+    | .sequenceConstruct a b, prec => reprCtorFormat "KatLang.Expr.sequenceConstruct"
+        [reprExprPrec a max_prec, reprExprPrec b max_prec] prec
+    | .emptySequence a, prec => reprCtorFormat "KatLang.Expr.emptySequence" [reprArg a] prec
+    | .sequenceSpread a, prec => reprCtorFormat "KatLang.Expr.sequenceSpread" [reprExprPrec a max_prec] prec
+    | .listLiteral items, prec => reprCtorFormat "KatLang.Expr.listLiteral"
+        [reprFormatList (items.map (fun x => reprExprPrec x 0))] prec
+    | .resolve a, prec => reprCtorFormat "KatLang.Expr.resolve" [reprArg a] prec
+    | .algorithmExpr a, prec => reprCtorFormat "KatLang.Expr.algorithmExpr" [reprAlgorithmPrec a max_prec] prec
+    | .capture rows, prec => reprCtorFormat "KatLang.Expr.capture"
+        [reprFormatList (rows.map (fun x => reprExprPrec x 0))] prec
+    | .call f args, prec => reprCtorFormat "KatLang.Expr.call"
+        [reprExprPrec f max_prec, reprFormatList (args.map (fun x => reprExprPrec x 0))] prec
+    | .dotMember target name fallback args, prec => reprCtorFormat "KatLang.Expr.dotMember"
+        [reprExprPrec target max_prec, reprArg name, reprExprPrec fallback max_prec,
+          match args with
+          | none => "none"
+          | some args => Repr.addAppParen
+              ("some " ++ reprFormatList (args.map (fun x => reprExprPrec x 0))) max_prec] prec
+  termination_by e => sizeOf e
+  decreasing_by repr_decreasing
+
+  def reprComparisonLinkPrec (x : ComparisonLink) (_prec : Nat) : Std.Format :=
+    Std.Format.bracket "{ "
+      (Std.Format.nil ++ "op" ++ " := " ++ (Std.Format.group (Std.Format.nest 6 (repr (x.op)))) ++ "," ++
+        Std.Format.line ++ "operand" ++ " := " ++
+        (Std.Format.group (Std.Format.nest 11 (reprExprPrec x.operand 0))))
+      " }"
+  termination_by sizeOf x
+  decreasing_by repr_decreasing
+
+  def reprInterpolationLinkPrec (x : InterpolationLink) (_prec : Nat) : Std.Format :=
+    Std.Format.bracket "{ "
+      (Std.Format.nil ++ "hole" ++ " := " ++ (Std.Format.group (Std.Format.nest 8 (reprExprPrec x.hole 0))) ++
+        "," ++ Std.Format.line ++ "text" ++ " := " ++
+        (Std.Format.group (Std.Format.nest 8 (repr (x.text)))))
+      " }"
+  termination_by sizeOf x
+  decreasing_by repr_decreasing
+
+  def reprPropDefPrec (x : PropDef) (_prec : Nat) : Std.Format :=
+    Std.Format.bracket "{ "
+      (Std.Format.nil ++ "name" ++ " := " ++ (Std.Format.group (Std.Format.nest 8 (repr (x.name)))) ++ "," ++
+        Std.Format.line ++ "alg" ++ " := " ++
+        (Std.Format.group (Std.Format.nest 7 (reprAlgorithmPrec x.alg 0))) ++ "," ++
+        Std.Format.line ++ "isPublic" ++ " := " ++
+        (Std.Format.group (Std.Format.nest 12 (repr (x.isPublic)))) ++ "," ++
+        Std.Format.line ++ "exposure" ++ " := " ++
+        (Std.Format.group (Std.Format.nest 12 (repr (x.exposure)))) ++ "," ++
+        Std.Format.line ++ "identity" ++ " := " ++
+        (Std.Format.group (Std.Format.nest 12 (repr (x.identity)))) ++ "," ++
+        Std.Format.line ++ "requiredOwnerDepths" ++ " := " ++
+        (Std.Format.group (Std.Format.nest 23 (repr (x.requiredOwnerDepths)))))
+      " }"
+  termination_by sizeOf x
+  decreasing_by repr_decreasing
+
+  def reprCondBranchPrec (x : CondBranch) (_prec : Nat) : Std.Format :=
+    Std.Format.bracket "{ "
+      (Std.Format.nil ++ "pattern" ++ " := " ++ (Std.Format.group (Std.Format.nest 11 (repr (x.pattern)))) ++
+        "," ++ Std.Format.line ++ "body" ++ " := " ++
+        (Std.Format.group (Std.Format.nest 8 (reprAlgorithmPrec x.body 0))))
+      " }"
+  termination_by sizeOf x
+  decreasing_by repr_decreasing
+
+  def reprAlgorithmPrec : Algorithm → Nat → Std.Format
+    | .mk parent ps opens props output id, prec => reprCtorFormat "KatLang.Algorithm.mk"
+        [reprParentPrec parent, reprArg ps, reprFormatList (opens.map (fun x => reprExprPrec x 0)),
+          reprFormatList (props.map (fun p => reprPropDefPrec p 0)),
+          reprFormatList (output.map (fun x => reprExprPrec x 0)), reprArg id] prec
+    | .builtin b, prec => reprCtorFormat "KatLang.Algorithm.builtin" [reprArg b] prec
+    | .conditional parent opens branches id, prec => reprCtorFormat "KatLang.Algorithm.conditional"
+        [reprParentPrec parent, reprFormatList (opens.map (fun x => reprExprPrec x 0)),
+          reprFormatList (branches.map (fun b => reprCondBranchPrec b 0)), reprArg id] prec
+    | .alias parent opens props target id reference, prec => reprCtorFormat "KatLang.Algorithm.alias"
+        [reprParentPrec parent, reprFormatList (opens.map (fun x => reprExprPrec x 0)),
+          reprFormatList (props.map (fun p => reprPropDefPrec p 0)), reprExprPrec target max_prec,
+          reprArg id, reprArg reference] prec
+  termination_by a => sizeOf a
+  decreasing_by repr_decreasing
+
+  /-- An optional parent scope as a constructor argument: `Option.repr` at `max_prec`. -/
+  def reprParentPrec : Option ScopeCtx → Std.Format
+    | none => "none"
+    | some scope => Repr.addAppParen ("some " ++ reprScopeCtxPrec scope max_prec) max_prec
+  termination_by p => sizeOf p
+  decreasing_by repr_decreasing
+
+  def reprScopeCtxPrec : ScopeCtx → Nat → Std.Format
+    | .mk parent params opens props output branches activation id, prec => reprCtorFormat "KatLang.ScopeCtx.mk"
+        [reprParentPrec parent, reprArg params, reprFormatList (opens.map (fun x => reprExprPrec x 0)),
+          reprFormatList (props.map (fun p => reprPropDefPrec p 0)),
+          reprFormatList (output.map (fun x => reprExprPrec x 0)),
+          reprFormatList (branches.map (fun b => reprCondBranchPrec b 0)), reprArg activation, reprArg id] prec
+  termination_by s => sizeOf s
+  decreasing_by repr_decreasing
+end
+
+instance instReprExpr : Repr Expr := ⟨reprExprPrec⟩
+instance instReprComparisonLink : Repr ComparisonLink := ⟨reprComparisonLinkPrec⟩
+instance instReprInterpolationLink : Repr InterpolationLink := ⟨reprInterpolationLinkPrec⟩
+instance instReprPropDef : Repr PropDef := ⟨reprPropDefPrec⟩
+instance instReprCondBranch : Repr CondBranch := ⟨reprCondBranchPrec⟩
+instance instReprAlgorithm : Repr Algorithm := ⟨reprAlgorithmPrec⟩
+instance instReprScopeCtx : Repr ScopeCtx := ⟨reprScopeCtxPrec⟩
 
 /-- An ordered sequence of original written expression slots with no lexical
     ownership of its own: no parent scope, no parameters, no properties, no
@@ -1685,7 +1906,23 @@ inductive Result where
   -- ordering), equal only to itself (`Result.beq`), and never leaves its run
   -- (`containsCallRef`). C#: `Result.CallReference` with `IsArgumentView`.
   | argView : Nat -> Result
-  deriving Repr
+
+/-- The `Repr` printer of `Result`: total, the derived one written out (§ Total `Repr`
+    printers). -/
+def reprResultPrec : Result → Nat → Std.Format
+  | .atom a, prec => reprCtorFormat "KatLang.Result.atom" [reprArg a] prec
+  | .str a, prec => reprCtorFormat "KatLang.Result.str" [reprArg a] prec
+  | .bool a, prec => reprCtorFormat "KatLang.Result.bool" [reprArg a] prec
+  | .sequenceValue a, prec => reprCtorFormat "KatLang.Result.sequenceValue"
+      [reprFormatList (a.map (fun r => reprResultPrec r 0))] prec
+  | .listValue a, prec => reprCtorFormat "KatLang.Result.listValue"
+      [reprFormatList (a.map (fun r => reprResultPrec r 0))] prec
+  | .callRef a, prec => reprCtorFormat "KatLang.Result.callRef" [reprArg a] prec
+  | .argView a, prec => reprCtorFormat "KatLang.Result.argView" [reprArg a] prec
+termination_by r => sizeOf r
+decreasing_by all_goals (have := List.sizeOf_lt_of_mem ‹_ ∈ _›; simp only [Result.sequenceValue.sizeOf_spec, Result.listValue.sizeOf_spec]; omega)
+
+instance instReprResult : Repr Result := ⟨reprResultPrec⟩
 
 /- VALUE EQUALITY of results (`==`): structural equality — the same constructor with equal
     payloads, sequence and list items compared in order. Written out (S5, October 2026) instead
@@ -3013,15 +3250,6 @@ def staticAliasTarget? : Nat -> List Algorithm -> Algorithm -> Option Algorithm
       | some (next, nextChain) => staticAliasTarget? fuel nextChain next
       | none => none
 
-theorem InterpolationLink.sizeOf_hole_lt (link : InterpolationLink) :
-    sizeOf link.hole < sizeOf link := by cases link; simp; omega
-theorem ComparisonLink.sizeOf_operand_lt (link : ComparisonLink) :
-    sizeOf link.operand < sizeOf link := by cases link; simp; omega
-theorem CondBranch.sizeOf_body_lt (branch : CondBranch) :
-    sizeOf branch.body < sizeOf branch := by cases branch; simp; omega
-theorem PropDef.sizeOf_alg_lt (property : PropDef) :
-    sizeOf property.alg < sizeOf property := by cases property; simp; omega
-
 /-- Identification descends only into proper subterms of the tree it is given. -/
 macro "identify_decreasing" : tactic => `(tactic| (
   simp_wf
@@ -3519,17 +3747,34 @@ end Algorithm
 -- Lexical lookup (direct parents only)
 --------------------------------------------------------------------------------
 
-partial def lookupInParentsDirect (sc : ScopeCtx) (name : Ident) : Option Algorithm :=
+/-- A level's parent is a proper subterm of the level. -/
+theorem ScopeCtx.sizeOf_parent_lt (scope : ScopeCtx) : sizeOf scope.parent < sizeOf scope := by
+  cases scope; simp only [ScopeCtx.parent, ScopeCtx.mk.sizeOf_spec]; omega
+
+/-- A parent reached through `ScopeCtx.parent` is a proper subterm of the level. -/
+theorem ScopeCtx.sizeOf_lt_of_parent_eq {scope parent : ScopeCtx} (h : scope.parent = some parent) :
+    sizeOf parent < sizeOf scope := by
+  have := ScopeCtx.sizeOf_parent_lt scope
+  rw [h] at this; simp only [Option.some.sizeOf_spec] at this; omega
+
+/-- The nearest level of the chain `sc` whose properties declare `name`, wired under that level.
+    TOTAL (E-6 Tier 3, November 2026; formerly `partial`): well-founded on the finite parent
+    chain; the former body (`KatLangArityLaws/TotalLeaves`, `lookupInParentsDirect_equation`) is
+    unchanged but for the name `h` of the parent's equation. -/
+def lookupInParentsDirect (sc : ScopeCtx) (name : Ident) : Option Algorithm :=
   match lookupPropAny (ScopeCtx.props sc) name with
   | some child => some (Algorithm.withParent (some sc) child)
   | none =>
-      match ScopeCtx.parent sc with
+      match _h : ScopeCtx.parent sc with
       | some sc' => lookupInParentsDirect sc' name
       | none     => none
+termination_by sizeOf sc
+decreasing_by exact ScopeCtx.sizeOf_lt_of_parent_eq _h
 
 /-- Direct lexical lookup: local + parent chain only (no opens).
-    Used to resolve open expressions safely (avoids cycles). -/
-partial def lookupLexicalDirect (a : Algorithm) (name : Ident) : Option Algorithm :=
+    Used to resolve open expressions safely (avoids cycles). Not recursive: formerly marked
+    `partial` but compiled as an ordinary definition; now plainly total. -/
+def lookupLexicalDirect (a : Algorithm) (name : Ident) : Option Algorithm :=
   match Algorithm.lookupProp a name with
   | some child => some (Algorithm.childOf a child)
   | none =>
@@ -3543,18 +3788,26 @@ partial def lookupLexicalDirect (a : Algorithm) (name : Ident) : Option Algorith
 
 /-- The scope owning parameter `name` as seen from `scope`: the nearest level, that scope
     itself first, whose parameters bind the name — the same nearest-owner walk that
-    elaborated the captured reference (C#: `Evaluator.RequiredParameterOwner`). -/
-partial def requiredParameterOwner? (scope : ScopeCtx) (name : Ident) : Option ScopeCtx :=
+    elaborated the captured reference (C#: `Evaluator.RequiredParameterOwner`). TOTAL (E-6
+    Tier 3, November 2026; formerly `partial`): well-founded on the finite parent chain, the
+    former body as its equation (`requiredParameterOwner?_equation`). -/
+def requiredParameterOwner? (scope : ScopeCtx) (name : Ident) : Option ScopeCtx :=
   if (ScopeCtx.params scope).contains name then some scope
   else
-    match ScopeCtx.parent scope with
+    match _h : ScopeCtx.parent scope with
     | some parent => requiredParameterOwner? parent name
     | none => none
+termination_by sizeOf scope
+decreasing_by exact ScopeCtx.sizeOf_lt_of_parent_eq _h
 
 /- Runtime declaration/activation identity is not an exported-property cache determinant.
-    Preserve the established structural cache law (C#: StructuralOwnerIdentity). -/
+    Preserve the established structural cache law (C#: StructuralOwnerIdentity).
+    TOTAL (E-6 Tier 3, November 2026; formerly `partial`): well-founded on the tree
+    (`validation_decreasing`); `List.map` sees its element's membership, and an optional child
+    (a parent scope, dot-call arguments) is matched explicitly instead of `Option.map`. The
+    former bodies are equations (`KatLangArityLaws/TotalLeaves`). -/
 mutual
-  partial def cacheExprShape : Expr -> Expr
+  def cacheExprShape : Expr -> Expr
     | .param n => .param n
     | .resolve n => .resolve n
     | .num n => .num n
@@ -3578,27 +3831,44 @@ mutual
     | .algorithmExpr a => .algorithmExpr (cacheAlgorithmShape a)
     | .call f args => .call (cacheExprShape f) (args.map cacheExprShape)
     | .dotMember target name fallback args => .dotMember (cacheExprShape target) name
-        (cacheExprShape fallback) (args.map (List.map cacheExprShape))
+        (cacheExprShape fallback) (match args with
+          | none => none
+          | some args => some (args.map cacheExprShape))
+  termination_by e => sizeOf e
+  decreasing_by validation_decreasing
 
-  partial def cacheAlgorithmShape : Algorithm -> Algorithm
+  def cacheAlgorithmShape : Algorithm -> Algorithm
     | .builtin b => .builtin b
     | .mk parent parameters opens props output _ =>
-        .mk (parent.map cacheScopeShape) parameters (opens.map cacheExprShape)
+        .mk (cacheParentShape parent) parameters (opens.map cacheExprShape)
           (props.map cachePropertyShape) (output.map cacheExprShape)
     | .conditional parent opens branches _ =>
-        .conditional (parent.map cacheScopeShape) (opens.map cacheExprShape)
+        .conditional (cacheParentShape parent) (opens.map cacheExprShape)
           (branches.map fun b => { b with body := cacheAlgorithmShape b.body })
     | .alias parent opens props target _ reference =>
-        .alias (parent.map cacheScopeShape) (opens.map cacheExprShape)
+        .alias (cacheParentShape parent) (opens.map cacheExprShape)
           (props.map cachePropertyShape) (cacheExprShape target) none reference
+  termination_by a => sizeOf a
+  decreasing_by validation_decreasing
 
-  partial def cacheScopeShape : ScopeCtx -> ScopeCtx
+  /-- `Option.map cacheScopeShape`, the optional parent matched explicitly. -/
+  def cacheParentShape : Option ScopeCtx -> Option ScopeCtx
+    | none => none
+    | some parent => some (cacheScopeShape parent)
+  termination_by p => sizeOf p
+  decreasing_by validation_decreasing
+
+  def cacheScopeShape : ScopeCtx -> ScopeCtx
     | .mk parent _ opens props _ _ _ _ =>
-        .mk (parent.map cacheScopeShape) [] (opens.map cacheExprShape)
+        .mk (cacheParentShape parent) [] (opens.map cacheExprShape)
           (props.map cachePropertyShape) [] [] none none
+  termination_by s => sizeOf s
+  decreasing_by validation_decreasing
 
-  partial def cachePropertyShape (p : PropDef) : PropDef :=
+  def cachePropertyShape (p : PropDef) : PropDef :=
     { p with alg := cacheAlgorithmShape p.alg }
+  termination_by sizeOf p
+  decreasing_by validation_decreasing
 end
 
 /-- Known declaration identities compare the declaration/component view, binder view and parent chain. Walking
@@ -3656,13 +3926,18 @@ def scopeInContext (a : Algorithm) (ctx : EvalCtx) : ScopeCtx :=
 def childOfInContext (parent child : Algorithm) (ctx : EvalCtx) : Algorithm :=
   child.withParent (some (scopeInContext parent ctx))
 
-partial def scopeChainContains (level : Option ScopeCtx) (owner : ScopeCtx) : Bool :=
+/-- Whether some ACTIVATED level of the chain `level` is the same declaring scope as `owner` under
+    compatible activations. TOTAL (E-6 Tier 3, November 2026; formerly `partial`): well-founded on
+    the finite parent chain; the body is the former one. -/
+def scopeChainContains (level : Option ScopeCtx) (owner : ScopeCtx) : Bool :=
   match level with
   | none => false
   | some scope =>
       (sameDeclaringScope scope owner && scope.activation.isSome &&
         compatibleActivations (some owner) (some scope)) ||
       scopeChainContains scope.parent owner
+termination_by sizeOf level
+decreasing_by have := ScopeCtx.sizeOf_parent_lt scope; simp only [Option.some.sizeOf_spec]; omega
 
 def lexicalChainContains (ctx : EvalCtx) (owner : ScopeCtx) : Bool :=
   scopeChainContains (siteScope? ctx) owner
@@ -4419,13 +4694,18 @@ def runTick : EvalM CountedResult := do
   pure (Result.atom (Int.ofNat (state.tickCounter + 1)), 1)
 
 /-- Flatten a `sequenceConstruct` subtree into its ordered leaves without changing
-    sequence-value/block values inside those leaves. -/
-partial def sequenceConstructLeavesLoop : List Expr -> List Expr -> List Expr
+    sequence-value/block values inside those leaves. TOTAL (E-6 Tier 3, November 2026; formerly
+    `partial`): well-founded on the pending work weighted by size — splitting a node
+    `left ; right` into its two halves lowers `Σ (2 · sizeOf e + 1)` by one, emitting a leaf
+    by its weight. The body is the former one. -/
+def sequenceConstructLeavesLoop : List Expr -> List Expr -> List Expr
   | [], acc => acc.reverse
   | current :: rest, acc =>
       match current with
       | .sequenceConstruct left right => sequenceConstructLeavesLoop (left :: right :: rest) acc
       | leaf => sequenceConstructLeavesLoop rest (leaf :: acc)
+termination_by pending _ => (pending.map (fun e => 2 * sizeOf e + 1)).sum
+decreasing_by all_goals (simp only [List.map_cons, List.sum_cons, Expr.sequenceConstruct.sizeOf_spec]; omega)
 
 def sequenceConstructLeaves (expr : Expr) : List Expr :=
   sequenceConstructLeavesLoop [expr] []
@@ -4446,14 +4726,15 @@ def sequenceConstructLeaves (expr : Expr) : List Expr :=
     next layer open one more boundary (`[[7]]**` is `7`, like
     `([[7]]*)*`). This is NOT binary spine flattening: there is no right
     operand, it only unwraps the single-operand chain. -/
-partial def peelSequenceSpread : Expr -> Expr
+def peelSequenceSpread : Expr -> Expr
   | .sequenceSpread operand => peelSequenceSpread operand
   | e => e
 
 /-- Peel directly-nested spreads while counting the written layers.
     Returns the innermost non-spread operand and the number of `.sequenceSpread` layers
-    (at least 1 when called on a spread node). -/
-partial def peelSequenceSpreadLayers : Expr -> Nat -> Expr × Nat
+    (at least 1 when called on a spread node). TOTAL (E-6 Tier 3, November 2026; formerly
+    `partial`, like `peelSequenceSpread`): each step peels a proper subterm. -/
+def peelSequenceSpreadLayers : Expr -> Nat -> Expr × Nat
   | .sequenceSpread operand, n => peelSequenceSpreadLayers operand (n + 1)
   | e, n => (e, n)
 
@@ -4851,12 +5132,26 @@ def escapeDoubleQuotedText (text : String) : String :=
     | '}' => "}}"
     | other => other.toString)
 
+/-- A row of an algorithm's output is a proper subterm of the algorithm. -/
+theorem Algorithm.sizeOf_lt_of_mem_output {a : Algorithm} {x : Expr} (h : x ∈ a.output) :
+    sizeOf x < sizeOf a := by
+  cases a with
+  | mk p ps op pr out id =>
+    simp only [Algorithm.output] at h
+    have := List.sizeOf_lt_of_mem h; simp only [Algorithm.mk.sizeOf_spec]; omega
+  | builtin b => cases h
+  | conditional p op bs id => cases h
+  | alias p op pr target id r =>
+    simp only [Algorithm.output, List.mem_singleton] at h; subst h
+    simp only [Algorithm.alias.sizeOf_spec]; omega
+
 /-- Whether an interpolation hole's operand-shape name could BEGIN with a brace: a block at the
     left end of the operator and postfix spine (`{...}.X`, `{...} + 2`, the block itself). Such a
     hole is written with spaces, `"{ {...}.X }"`, so `{{` never reads back as a literal brace.
     Conservative — a space inside a hole never changes it. C#:
-    `ExprNameRenderer.MayRenderLeadingBrace`. -/
-partial def holeMayRenderLeadingBrace : Expr -> Bool
+    `ExprNameRenderer.MayRenderLeadingBrace`. TOTAL (E-6 Tier 3, November 2026; formerly
+    `partial`): structural, each step a proper subterm. -/
+def holeMayRenderLeadingBrace : Expr -> Bool
   | .algorithmExpr _ => true
   | .binary _ left _ => holeMayRenderLeadingBrace left
   | .comparison first _ => holeMayRenderLeadingBrace first
@@ -4870,8 +5165,13 @@ partial def holeMayRenderLeadingBrace : Expr -> Bool
   render bare, and every operand keeps parentheses exactly where the precedence
   ladder needs them (`bindingTier` against the slot tiers above), so the text
   reads back as the AST it was rendered from — nested binaries, comparison
-  chains, and prefix operators included. -/
-partial def exprDiagnosticName : Expr -> String
+  chains, and prefix operators included. TOTAL (E-6 Tier 3, November 2026; formerly
+  `partial`): well-founded on the expression, with the two `where` helpers measured one above
+  the expression they render (`2 · sizeOf e` for the name, `2 · sizeOf e + 1` for a helper), so a
+  helper may render its own operand and the name may call a helper on a proper subterm; a block's
+  rows are subterms of the block (`Algorithm.sizeOf_lt_of_mem_output`). The body is the former
+  one. -/
+def exprDiagnosticName : Expr -> String
   | .param name => name
   | .num value => toString value
   -- A string renders as source: single-quoted when its text can be written that way,
@@ -4939,7 +5239,7 @@ partial def exprDiagnosticName : Expr -> String
   -- Exact list literal `[a, b, c]`.
   | .listLiteral items => "[" ++ String.intercalate ", " (items.map exprDiagnosticName) ++ "]"
   | .resolve name => name
-  | .algorithmExpr algorithm => "(" ++ String.intercalate ", " ((Algorithm.output algorithm).map exprDiagnosticName) ++ ")"
+  | .algorithmExpr algorithm => "(" ++ String.intercalate ", " ((Algorithm.output algorithm).attach.map (fun ⟨row, _⟩ => exprDiagnosticName row)) ++ ")"
   | .capture rows => "(" ++ String.intercalate ", " (rows.map exprDiagnosticName) ++ ")"
   -- Postfix targets keep every grouping boundary that would rebind: binary and
   -- comparison nodes, unary operators, and negative numeric literals alike.
@@ -4949,14 +5249,32 @@ partial def exprDiagnosticName : Expr -> String
       postfixTargetName target ++ "." ++ name
   | .dotMember target name _ (some _) =>
       postfixTargetName target ++ "." ++ name ++ "(...)"
+termination_by e => 2 * sizeOf e
+decreasing_by
+  all_goals first
+    | (simp only [Expr.unary.sizeOf_spec, Expr.binary.sizeOf_spec, Expr.comparison.sizeOf_spec,
+        Expr.index.sizeOf_spec, Expr.sequenceConstruct.sizeOf_spec, Expr.sequenceSpread.sizeOf_spec,
+        Expr.call.sizeOf_spec, Expr.dotMember.sizeOf_spec]; omega)
+    | (have := List.sizeOf_lt_of_mem ‹_ ∈ _›; have := InterpolationLink.sizeOf_hole_lt ‹_›
+       simp only [Expr.interpolatedString.sizeOf_spec]; omega)
+    | (have := List.sizeOf_lt_of_mem ‹_ ∈ _›; have := ComparisonLink.sizeOf_operand_lt ‹_›
+       simp only [Expr.comparison.sizeOf_spec]; omega)
+    | (have := List.sizeOf_lt_of_mem ‹_ ∈ _›
+       simp only [Expr.index.sizeOf_spec, Expr.listLiteral.sizeOf_spec, Expr.capture.sizeOf_spec]; omega)
+    | (have := Algorithm.sizeOf_lt_of_mem_output ‹_ ∈ _›
+       simp only [Expr.algorithmExpr.sizeOf_spec]; omega)
 where
   /-- One operand of a comparison chain, parenthesized when it binds looser than
       `comparisonOperandTier`. -/
   comparisonOperandName (operand : Expr) : String :=
     parenthesizeWhenLooser comparisonOperandTier operand (exprDiagnosticName operand)
+  termination_by 2 * sizeOf operand + 1
+  decreasing_by omega
   /-- The target of a call or dot edge is written at the postfix tier. -/
   postfixTargetName (target : Expr) : String :=
     parenthesizeWhenLooser postfixTier target (exprDiagnosticName target)
+  termination_by 2 * sizeOf target + 1
+  decreasing_by omega
 
 /-- The binary operand-shape name `left op right` — delegates to the `.binary`
   arm of `exprDiagnosticName` so the two can never disagree (in particular on
@@ -8025,10 +8343,12 @@ that be incomplete, with ever more fuel from the same entry state (`searchFuel`,
 is therefore exactly the outcome of the total core at some fuel; a divergent program still
 diverges (the search never ends at run time; the kernel-level fallback of `evalUnbounded` is
 never reached by compiled code). Between a public run and the evaluator bodies, identification,
-root wiring (FG-I1) and the pre-evaluation validation (E-6 Tier 2) are total. What stays `partial`
-on that path is the leaves the bodies reach (for example `sequenceConstructLeavesLoop`,
-`exprDiagnosticName`, the `cache*Shape` normalizers) and the derived `Repr` printers, which
-the validation and the bodies reach through `reprStr`. -/
+root wiring (FG-I1) and the pre-evaluation validation (E-6 Tier 2) are total, and since E-6 Tier 3
+(November 2026) so are the leaves the bodies reach (`sequenceConstructLeavesLoop`,
+`exprDiagnosticName`, the `cache*Shape` normalizers, the lexical lookups, …) and the `Repr`
+printers the validation and the bodies reach through `reprStr` (§ Total `Repr` printers): no
+`partial` definition remains in this file. What stays kernel-opaque on that path is core only —
+`Std.Format.pretty`'s layout loop (inside `reprStr`) and the string primitives. -/
 
 namespace EvalM
 
@@ -13606,13 +13926,33 @@ infixr:75 " ^ " => fun a b => Expr.binary BinaryOp.pow a b
   They neither execute acquisition nor prove the C# loader, deferred-region schedule
   or refusal policy. Successful materialized regions contain no unresolved load.
 -/
+
+/-- `List.all`'s well-founded preprocessing step, the sibling of core's `List.map_wfParam`: the
+    walked list is attached so that a recursive call in the predicate sees its element's
+    membership. Used LOCALLY by the total `postElabInvariant` block only. -/
+theorem list_all_wfParam {α : Type} {xs : List α} {f : α → Bool} :
+    (wfParam xs).all f = xs.attach.unattach.all f := by
+  simp [wfParam]
+
+/-- The second step of `list_all_wfParam` (core's `List.map_unattach` for `List.all`). -/
+theorem list_all_unattach {α : Type} {P : α → Prop} {xs : List (Subtype P)} {f : α → Bool} :
+    xs.unattach.all f = xs.all fun ⟨x, h⟩ =>
+      binderNameHint x f <| binderNameHint h () <| f (wfParam x) := by
+  induction xs with
+  | nil => rfl
+  | cons x xs ih => cases x; simp only [List.unattach_cons, List.all_cons, ih]; rfl
+
+/- TOTAL (E-6 Tier 3, November 2026; formerly `partial`): well-founded on the tree, `List.all`
+   seeing its element's membership (`list_all_wfParam`, local to this block). The bodies are the
+   former ones. -/
+attribute [local wf_preprocess] list_all_wfParam list_all_unattach in
 mutual
 /-- Post-elaboration invariant: returns true iff the expression tree contains
     no unresolved load calls (`call (resolve "load") _`) and every dot edge
     satisfies the elaborated dot-edge contract. Runtime `Expr.stringLiteral`
     nodes are allowed as ordinary first-class values.
     This structural predicate is not a proof of C# load elaboration or hosting. -/
-partial def postElabInvariant : Expr -> Bool
+def postElabInvariant : Expr -> Bool
   | .stringLiteral _ => true
   -- Holes are ordinary expressions: a `load` call or an incoherent dot edge inside one
   -- violates the invariant like anywhere else (the wildcard below would hide them).
@@ -13647,10 +13987,12 @@ partial def postElabInvariant : Expr -> Bool
   | .algorithmExpr alg => postElabInvariantAlg alg
   | .capture rows    => rows.all postElabInvariant
   | _                => true  -- param, num, resolve
+termination_by e => sizeOf e
+decreasing_by validation_decreasing
 
 /-- Algorithm-level post-elaboration invariant: all contained expressions
   satisfy `postElabInvariant`. -/
-partial def postElabInvariantAlg : Algorithm -> Bool
+def postElabInvariantAlg : Algorithm -> Bool
   | .builtin _ => true
   | .mk _ _ opens props output _ =>
       opens.all postElabInvariant &&
@@ -13663,6 +14005,8 @@ partial def postElabInvariantAlg : Algorithm -> Bool
       opens.all postElabInvariant &&
       props.all (fun p => postElabInvariantAlg p.alg) &&
       postElabInvariant target
+termination_by a => sizeOf a
+decreasing_by validation_decreasing
 end
 
 end KatLang

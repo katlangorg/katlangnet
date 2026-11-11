@@ -26,11 +26,12 @@ FG-I1 identification and wiring are total; since this module's task the validati
   every `AddressInvariant.Inv` entry state the public run ends in an `Inv` state, and a completed
   value is address-valid there; `public_inv_from_empty`.
 
-What stays parametric: the prefix still reaches the derived `Repr` (opaque: the deriving
-handler compiles a nested inductive to a `partial` printer) through `reprStr` in
-`HostProvenanceScan.level` during validation and `sameDeclaringScope`'s fallback on the root
-wiring's scope-comparison path. The validator frame proofs never compute it: they read only
-`hostProvenanceViolation?`'s three outcome shapes. Nothing here claims the public run
+What stays parametric: the prefix reaches `reprStr` in `HostProvenanceScan.level` during
+validation and in `sameDeclaringScope`'s fallback on the root wiring's scope-comparison path. The
+`Repr` printers it calls are total since E-6 Tier 3 (written out, `lean/KatLang.lean` § Total
+`Repr` printers); the core layout `Std.Format.pretty` inside `reprStr` stays kernel-opaque. The
+validator frame proofs never compute it: they read only `hostProvenanceViolation?`'s three outcome
+shapes. Which trees the validation accepts is `AdmittedSet` (E-6 Tier 3). Nothing here claims the public run
 never returns the incomplete outcome (Constitution Q-82, open): incomplete runs are related by
 outcome only, through `PublicRunBridge.Incomplete`.
 -/

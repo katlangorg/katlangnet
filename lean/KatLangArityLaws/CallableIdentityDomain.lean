@@ -157,8 +157,9 @@ theorem broader_than_equal_profiles :
 /-! ## The residual: printed declarations separate presence -/
 
 /-- THE ONE RESIDUAL OF FULL TRANSITIVITY: the printed declaration of an identified scope never
-    equals the printed declaration of an anonymous one. The derived `Repr` and the core printer
-    are opaque, and no kernel proof of this proposition is supplied. It is an explicit premise
+    equals the printed declaration of an anonymous one. The `Repr` printers are total (written
+    out since E-6 Tier 3) but the core layout `Std.Format.pretty` is opaque, and no kernel proof
+    of this proposition is supplied. It is an explicit premise
     here and in `CallableIdentityProvenance.sitePresence_of_separating`. Executable evidence:
     `NestedRepeatedNameGuards`, `CallableIdentityProvenanceGuards`. -/
 def ReprSeparatesPresence : Prop :=

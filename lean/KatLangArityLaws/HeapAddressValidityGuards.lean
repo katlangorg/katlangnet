@@ -6,7 +6,8 @@ open KatLang NeedSupply KatLang.HeapAddressValidity KatLang.NeedControl.Allocati
 # FG-H1 guards: witnesses and counterexamples for heap-address validity
 
 Positive witnesses run the ACTUAL production helpers on concrete states (kernel `rfl` where the
-helper reduces, `#guard` where it passes through the opaque `requiredParameterOwner?`) and apply
+helper reduces, `#guard` where it passes through `requiredParameterOwner?`, opaque when these
+guards were written and well-founded since E-6 Tier 3, so still not kernel-reduced) and apply
 the universal theorems of `HeapAddressValidity.lean` to them. Negative witnesses show each key
 premise is necessary: dropping it makes the corresponding universal statement FALSE
 (`¬ Sound …` theorems), and a reversed collector order is rejected although every member is

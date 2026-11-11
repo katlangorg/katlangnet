@@ -40,13 +40,15 @@ and the public run keeps the address invariant from every `Inv` entry state (`pu
 `public_inv_from_empty`). What identification and root wiring do to identities is
 `CallableIdentityProvenance` § Entry and preparation.
 
-NOT claimed here: the admitted set (which trees validation accepts); any entry-state invariant at
-the public root call beyond `Inv` (e.g. "no stored incomplete outcome"); that a public incomplete
-outcome means divergence (in the kernel it means that the root call is incomplete at every fuel
-from the ENTRY state — validation never yields it and returns its entry state — and a crafted
-entry state can re-raise a stored one); transitive opacity-freedom (validation still reaches the
-derived `Repr` printers through `reprStr`, and the evaluator bodies reach the remaining `partial`
-leaves). Not a Lean/C# claim
+NOT claimed here: the admitted set (which trees validation accepts — `AdmittedSet`, E-6 Tier 3,
+with the public run over it: `public_refused`, `public_admitted`, `public_incomplete_iff_root`);
+any entry-state invariant at the public root call beyond `Inv` (e.g. "no stored incomplete
+outcome"); that a public incomplete outcome means divergence (in the kernel it means that the root
+call is incomplete at every fuel from the ENTRY state — validation never yields it and returns its
+entry state — and a crafted entry state can re-raise a stored one); transitive opacity-freedom in
+core (since E-6 Tier 3 no KatLang constant on the path is opaque — the leaves and the `Repr`
+printers are total — but `reprStr` still runs core's `partial` layout `Std.Format.pretty`). Not a
+Lean/C# claim
 and not a relation to the retired `partial` evaluator. The incomplete STATES are unrelated
 (production keeps its entry state, the core forgets it), so incomplete runs are related by
 outcome only.
