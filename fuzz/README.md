@@ -96,8 +96,8 @@ the harness never asserts that malformed input is rejected.
 
 ## Prerequisites
 
-* The **.NET SDK pinned by `global.json`** (currently .NET 11) on Windows, to build,
-  publish, and replay the `net11.0` harness.
+* A **stable .NET 11 or later SDK** on Windows to build and publish the `net11.0`
+  harness, and the **.NET 11 runtime** for framework-dependent replay.
 * The **.NET 10 runtime**, which the pinned `SharpFuzz.CommandLine` 2.3.0 instrumenter runs
   on (the package ships `net8.0`/`net9.0`/`net10.0` builds; with the .NET 11 SDK the
   `net10.0` build is selected). Roll-forward is disabled for the tool, so a machine with only
@@ -243,7 +243,7 @@ the tracked `Testcases/` seeds are read-only. Crash/timeout artifacts are writte
 
 ### Manual / Linux-native equivalent
 
-If you already have a Linux box with the pinned .NET SDK, the .NET 10 runtime, and clang,
+If you already have a Linux box with a stable .NET 11 or later SDK, the .NET 10 runtime, and clang,
 publish + instrument there (from the repository root) and run the driver directly:
 
 ```bash

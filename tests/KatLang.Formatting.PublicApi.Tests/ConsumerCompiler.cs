@@ -2,7 +2,6 @@ using System.Diagnostics;
 using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Text;
-using System.Text.Json;
 using System.Text.RegularExpressions;
 
 namespace KatLang.Formatting.PublicApi.Tests;
@@ -12,11 +11,10 @@ internal sealed record CompilerDiagnostic(string Code, string Message, int? Line
 internal sealed record CompilationResult(int ExitCode, string Output, IReadOnlyList<CompilerDiagnostic> Diagnostics);
 
 /// <summary>
-/// Compiles small CONSUMER programs against the built KatLang assembly with the pinned
-/// SDK's own C# compiler (<c>global.json</c> — the one SDK authority), exactly as a NuGet
-/// consumer meets the package: this test project is deliberately not a friend assembly,
-/// and neither is the probe, so what the compiler accepts or refuses here is the public
-/// contract. Shared by the closed-hierarchy probes (<see cref="ClosedHierarchyContractTests"/>)
+/// Compiles small CONSUMER programs against the built KatLang assembly with the build
+/// SDK's own C# compiler, exactly as a NuGet consumer meets the package. This test
+/// project and its probes compile against the public contract as external consumers.
+/// Shared by the closed-hierarchy probes (<see cref="ClosedHierarchyContractTests"/>)
 /// and the variant-ownership probes (<see cref="AlgorithmPublicSurfaceTests"/>).
 /// </summary>
 internal static class ConsumerCompiler
@@ -30,8 +28,7 @@ internal static class ConsumerCompiler
 
     /// <summary>
     /// Compiles <paramref name="source"/> as a library against the KatLang assembly
-    /// under test with <c>csc.dll</c> of the SDK pinned in <c>global.json</c>, the
-    /// compiler that built the assembly. Nullable annotations are on and
+    /// under test with the SDK compiler recorded at build time. Nullable annotations are on and
     /// <c>CS8509</c>/<c>CS8655</c> are errors, as in the repository's projects.
     /// </summary>
     internal static CompilationResult Compile(string source, string probeName)
@@ -72,7 +69,7 @@ internal static class ConsumerCompiler
                 CreateNoWindow = true,
             };
             startInfo.ArgumentList.Add("exec");
-            startInfo.ArgumentList.Add(PinnedCompilerPath());
+            startInfo.ArgumentList.Add(CompilerPath());
             startInfo.ArgumentList.Add("@" + responsePath);
             startInfo.Environment["DOTNET_NOLOGO"] = "1";
 
@@ -132,24 +129,16 @@ internal static class ConsumerCompiler
         return File.Exists(candidate) ? candidate : "dotnet";
     }
 
-    /// <summary>
-    /// <c>csc.dll</c> of the SDK version pinned by the repository's <c>global.json</c>:
-    /// the probes must use the compiler that built the assembly, not whichever
-    /// newest SDK happens to be installed. A missing pinned SDK is a blocked test,
-    /// never a pass.
-    /// </summary>
-    private static string PinnedCompilerPath()
+    private static string CompilerPath()
     {
-        var globalJson = Path.Combine(RepoRoot.Find(), "global.json");
-        using var document = JsonDocument.Parse(File.ReadAllText(globalJson));
-        var version = document.RootElement.GetProperty("sdk").GetProperty("version").GetString()
-            ?? throw new InvalidOperationException("global.json pins no SDK version.");
+        var compiler = typeof(ConsumerCompiler).Assembly.GetCustomAttributes<AssemblyMetadataAttribute>()
+            .SingleOrDefault(attribute => attribute.Key == "ConsumerCompilerPath")?.Value
+            ?? throw new InvalidOperationException("The test build did not record its SDK compiler path.");
 
-        var compiler = Path.Combine(DotnetRoot(), "sdk", version, "Roslyn", "bincore", "csc.dll");
         if (!File.Exists(compiler))
         {
             throw new InvalidOperationException(
-                $"The pinned SDK {version} (global.json) has no compiler at '{compiler}'; the consumer compile probes cannot run.");
+                $"The build SDK's compiler at '{compiler}' is unavailable. Rebuild the tests with an installed SDK.");
         }
 
         return compiler;

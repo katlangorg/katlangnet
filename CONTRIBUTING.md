@@ -8,10 +8,11 @@ project for everyone.
 
 ## Build Prerequisites
 
-Install the .NET 11 RC3 SDK version pinned in [global.json](global.json).
-SDK roll-forward is disabled, so local builds require that exact version;
-CI and release workflows install it from the same file. Projects continue
-to target `net11.0`.
+Install a stable .NET SDK version 11.0.100 or later. [global.json](global.json)
+selects the highest eligible SDK installed on your machine. CI and release
+workflows provision the baseline SDK from the same file. The projects target
+`net11.0`, and running the framework-dependent builds or tests requires the
+.NET 11 runtime.
 
 ## License of Contributions
 

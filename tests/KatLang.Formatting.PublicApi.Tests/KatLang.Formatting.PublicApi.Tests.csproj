@@ -18,6 +18,10 @@
     <Using Include="KatLang.TestInfrastructure" />
   </ItemGroup>
 
+  <ItemGroup>
+    <AssemblyMetadata Include="ConsumerCompilerPath" Value="$([MSBuild]::NormalizePath('$(RoslynCoreAssembliesPath)', 'csc.dll'))" />
+  </ItemGroup>
+
   <!--
     The regeneration contract (write the artifact, then fail by design) and the
     registry of KATLANG_REGENERATE_* flags are compiled in as SHARED SOURCE from

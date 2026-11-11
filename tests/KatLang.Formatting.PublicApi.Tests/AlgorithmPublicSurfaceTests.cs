@@ -10,7 +10,7 @@ namespace KatLang.Formatting.PublicApi.Tests;
 /// with properties, a clause family with an output, a user algorithm with branches, a
 /// callable alias with a parameter list or an output — nor set payload through a
 /// base-typed value. Lean's inductive cannot represent those states;
-/// here they are COMPILE errors, witnessed by the pinned SDK's own compiler, never runtime
+/// here they are COMPILE errors, witnessed by the build SDK's own compiler, never runtime
 /// exceptions. The same compiler must accept every legitimate construction and update, so
 /// the negative verdicts cannot be vacuous.
 ///

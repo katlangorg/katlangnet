@@ -6,9 +6,8 @@ namespace KatLang.Formatting.PublicApi.Tests;
 /// <summary>
 /// Pins the C# <c>closed</c> contract of KatLang's finite variant hierarchies
 /// against the COMPILED public assembly, exactly as a NuGet consumer meets it:
-/// small consumer programs are compiled with the pinned SDK's own C# compiler
-/// (<c>global.json</c> — the one SDK authority) against the built
-/// <c>KatLang.dll</c>, and the compiler's verdict is the assertion.
+/// small consumer programs are compiled with the build SDK's own C# compiler
+/// against the built <c>KatLang.dll</c>, and the compiler's verdict is the assertion.
 ///
 /// <para>Why a compile probe and not reflection alone: a <c>private</c> or
 /// <c>private protected</c> ordinary constructor never closed these record
@@ -315,8 +314,6 @@ public class ClosedHierarchyContractTests
 
         return $"    public static int Classify{root.Name}({FullName(root)} value) => value switch\n    {{\n{string.Concat(arms)}    }};\n";
     }
-
-    // ── The pinned SDK's compiler ───────────────────────────────────────────
 
     private static CompilationResult Compile(string source, string probeName) => ConsumerCompiler.Compile(source, probeName);
 }

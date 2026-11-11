@@ -26,7 +26,7 @@
     unaffected.
 
 .NOTES
-    Requires: the .NET SDK pinned by global.json (Windows) plus the .NET 10 runtime, which the
+    Requires: a stable .NET 11 or later SDK (Windows) plus the .NET 10 runtime, which the
     pinned SharpFuzz.CommandLine tool runs on; a WSL distro with clang (e.g. Ubuntu); internet
     access on first run (to fetch the driver source and to restore the pinned local tools;
     later runs reuse the restored tool from the NuGet cache).

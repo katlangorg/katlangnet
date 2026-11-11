@@ -217,7 +217,7 @@ public class NumericSemanticLawReviewTests
     [Fact]
     public void DenseQuantumMean_HasABoundedAllocationCost_WithoutATimingThreshold()
     {
-        // The accumulator on the pinned SDK allocates about 60 MiB; the 96 MiB
+        // The accumulator measured about 60 MiB; the 96 MiB
         // allowance includes evaluator overhead. The old per-quantum full-span Pow10 loop
         // allocates over 116 MiB even before evaluator overhead. This is a fixture
         // regression budget, not a new language resource limit or a speed assertion.

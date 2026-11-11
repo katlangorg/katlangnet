@@ -385,23 +385,19 @@ public class ContinuousIntegrationPolicyTests
     }
 
     [Fact]
-    public void GlobalJson_PinsTheExactSdkWithoutRollForward()
+    public void GlobalJson_AllowsStableDotNet11AndLaterSdks()
     {
-        // The file is the repository's ONE SDK authority: both workflows install
-        // through `global-json-file: global.json`, so deleting it does not merely
-        // free local SDK selection — it breaks CI's setup step outright, and every
-        // machine silently falls back to whatever SDK happens to be newest. Say so
-        // here rather than surfacing a bare FileNotFoundException.
+        // Both workflows install the baseline SDK from global.json. The CLI uses
+        // the same file to select the highest installed stable SDK at or above it.
         Assert.True(
             File.Exists(Absolute("global.json")),
-            "global.json is the repository's pinned SDK selection and is installed by both "
-            + "workflows via global-json-file; update its version rather than removing it.");
+            "global.json defines the repository's SDK policy and supplies the baseline SDK to both workflows.");
 
         using var document = JsonDocument.Parse(Text("global.json"));
         var sdk = document.RootElement.GetProperty("sdk");
-        Assert.Equal("11.0.100-rc.3.26522.148", sdk.GetProperty("version").GetString());
-        Assert.Equal("disable", sdk.GetProperty("rollForward").GetString());
-        Assert.True(sdk.GetProperty("allowPrerelease").GetBoolean());
+        Assert.Equal("11.0.100", sdk.GetProperty("version").GetString());
+        Assert.Equal("latestMajor", sdk.GetProperty("rollForward").GetString());
+        Assert.False(sdk.GetProperty("allowPrerelease").GetBoolean());
     }
 
     [Fact]

@@ -4,7 +4,7 @@ namespace KatLang.Formatting.PublicApi.Tests;
 
 /// <summary>
 /// Pins the public location model (public API cleanup Task 3b) exactly as a NuGet consumer
-/// meets it, with the pinned SDK's own compiler: <see cref="SourcePosition"/> and
+/// meets it, with the build SDK's own compiler: <see cref="SourcePosition"/> and
 /// <see cref="SourceSpan"/> are constructible, readable value types; <see cref="Diagnostic.Span"/>
 /// and <see cref="KatLangError.Span"/> are nullable structured spans; <see cref="Token.Span"/> is a
 /// derived span; and the retired flattened coordinate channels are gone, so old code fails to
