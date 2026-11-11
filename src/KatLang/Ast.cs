@@ -3794,18 +3794,12 @@ public closed record Algorithm
         /// Check whether the property list contains duplicate property names.
         /// Returns the first duplicate name found, or null if all names are unique.
         /// Lean: Algorithm.findDuplicatePropName (the <c>.mk</c> case; the other
-        /// constructors have no properties).
+        /// constructors have no properties). Allocation-free for a short property list
+        /// (<see cref="AlgorithmAccessors.FirstDuplicatePropertyName"/>): the evaluator asks on
+        /// every body evaluation.
         /// </summary>
         public string? FindDuplicatePropName()
-        {
-            var seen = new HashSet<string>();
-            foreach (var p in Properties)
-            {
-                if (!seen.Add(p.Name))
-                    return p.Name;
-            }
-            return null;
-        }
+            => AlgorithmAccessors.FirstDuplicatePropertyName(Properties);
 
         private readonly object? _assignmentGroup;
         private readonly int _assignmentTargetIndex;
@@ -4970,10 +4964,14 @@ internal static class AlgorithmValidation
     /// <summary>
     /// Observation overload of <see cref="FindFirstPreEvaluationViolation(Expr)"/>: the base walker's
     /// passive counters record the walk (scaling regressions only); the verdict is identical.
+    /// <paramref name="nodeCountHint"/> is the capacity the walk's reference tables start with — the
+    /// evaluator passes the node count its structural preflight just counted over this graph — and
+    /// changes no verdict either: a count that is too small grows as before, and 0 is the former behavior.
     /// </summary>
-    internal static PreEvaluationAstViolation? FindFirstPreEvaluationViolation(Expr expr, FrontEndTraversalObservations? observations)
+    internal static PreEvaluationAstViolation? FindFirstPreEvaluationViolation(
+        Expr expr, FrontEndTraversalObservations? observations, int nodeCountHint = 0)
     {
-        var walker = new PreEvaluationValidationWalker(stopAfterFirst: true, checkConditionalBranchArities: true)
+        var walker = new PreEvaluationValidationWalker(stopAfterFirst: true, checkConditionalBranchArities: true, nodeCountHint)
         {
             TraversalObservations = observations,
         };
@@ -4981,7 +4979,8 @@ internal static class AlgorithmValidation
         return walker.Violations.Count > 0 ? walker.Violations[0] : null;
     }
 
-    private sealed class PreEvaluationValidationWalker(bool stopAfterFirst, bool checkConditionalBranchArities) : AstWalker
+    private sealed class PreEvaluationValidationWalker(
+        bool stopAfterFirst, bool checkConditionalBranchArities, int nodeCountHint = 0) : AstWalker
     {
         /// <summary>
         /// Lean's default diagnostic label for a conditional reached outside a
@@ -5006,8 +5005,10 @@ internal static class AlgorithmValidation
 
         // Node-local invariants remain reference-memoized. Alias cycles also depend on the
         // enclosing property chain, so only subtrees reaching an alias need a contextual visit.
-        private readonly HashSet<object> _visited = new(ReferenceEqualityComparer.Instance);
-        private readonly Dictionary<object, bool> _aliasReach = new(ReferenceEqualityComparer.Instance);
+        // `nodeCountHint` is capacity only: the node count the evaluator's structural preflight just
+        // counted over this graph (0 for every other caller), so both tables start at their final size.
+        private readonly HashSet<object> _visited = new(nodeCountHint, ReferenceEqualityComparer.Instance);
+        private readonly Dictionary<object, bool> _aliasReach = new(nodeCountHint, ReferenceEqualityComparer.Instance);
         private readonly Dictionary<int, HashSet<object>> _scopedVisits = [];
 
         private bool FirstVisit(object node)

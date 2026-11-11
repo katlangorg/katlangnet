@@ -14,8 +14,10 @@ namespace KatLang.Tests;
 /// the three engines, every other pattern level (a repeated name, a collecting capture, META, a
 /// structural pattern, a literal head) keeps the general path's own rule, and the environment is a
 /// fresh array in written order. (The family drivers bind a FLAT literal head through an equivalent
-/// direct path, pinned against this binder by <see cref="FamilyLiteralHeadBindingTests"/>.) The strict
-/// allocation counts run in isolated child processes.
+/// direct path, pinned against this binder by <see cref="FamilyLiteralHeadBindingTests"/>; an ordinary
+/// call binds a flat plain capture head straight from the stored patterns before this binder is reached,
+/// pinned against it by <see cref="FlatCaptureHeadBindingTests"/>.) The strict allocation counts run in
+/// isolated child processes; the benchmark-shaped call workloads have coarse per-unit bounds.
 /// </summary>
 public class OrdinaryCallBindingAllocationTests
 {
@@ -268,6 +270,65 @@ public class OrdinaryCallBindingAllocationTests
         Assert.Equal(3, requests.Count);
         Assert.Equal(3, requests.Select(static request => request.ValueEnvironmentIdentity).Distinct().Count());
         Assert.Equal(1, observations.GenericLoopStepBindingPreparationCount);
+    }
+
+    // ── Program-level bounds (coarse, in-process) ───────────────────────────────────────────────────
+
+    private const int ChainedCalls = 201;
+
+    private static string Chain(string call) => string.Join(" + ", Enumerable.Repeat(call, ChainedCalls));
+
+    // The three call workloads of EvaluatorIdentityStateBenchmarks, with their units per run.
+    private static (string Source, int Units) Workload(string name) => name switch
+    {
+        "ParameterizedCall" => ("Inc(v) = v + 1\n" + Chain("Inc(0)") + "\n", ChainedCalls),
+        "ConditionalCall" => ("F(0) = 100\nF(x) = x + 1\n" + Chain("F(1)") + "\n", ChainedCalls),
+        "RecursiveFamily" => ("Fib(0) = 0\nFib(1) = 1\nFib(n) = Fib(n - 1) + Fib(n - 2)\nFib(15)\n", 1973),
+        _ => throw new ArgumentOutOfRangeException(nameof(name)),
+    };
+
+    /// <summary>
+    /// Bytes per unit of the benchmark's three call workloads, through the benchmark's own entry
+    /// (<c>Evaluator.Run</c> with a fresh run cache): everything one run allocates, the run-level
+    /// pre-evaluation tables included, divided by its calls. Measured on 2026-11-11 on the Debug
+    /// test build (x64, .NET 11), before and after the call-binding follow-up (a flat capture head
+    /// bound from the stored patterns, one names projection per call, no per-body duplicate-name
+    /// set) and the presized pre-evaluation tables: ParameterizedCall 4,991.1 → 2,819.9,
+    /// ConditionalCall 4,987.9 → 3,960.8, RecursiveFamily 2,371.0 → 2,305.3 (a Release build:
+    /// 3,710.7 → 2,531.5, 3,707.3 → 2,680.2, 1,587.1 → 1,521.4). Each bound is the new value plus
+    /// headroom, so losing the direct head binding or the table sizing fails its row, as does a
+    /// per-body set on the recursive family; the exact per-piece counts are the isolated child
+    /// tests of <see cref="FlatCaptureHeadBindingTests"/>. Each window is the minimum of five runs,
+    /// so one background-GC quantum moves a 201-call figure by at most about 41 bytes. Coarse
+    /// in-process bounds, not strict counts.
+    /// </summary>
+    [Theory]
+    [InlineData("ParameterizedCall", 2_950)]
+    [InlineData("ConditionalCall", 4_100)]
+    [InlineData("RecursiveFamily", 2_340)]
+    public void CallWorkload_AllocationPerUnit_StaysBelowTheMeasuredBound(string workload, int bound)
+    {
+        var (source, units) = Workload(workload);
+        var program = new Expr.AlgorithmExpr(SourceProvenance.ParseValid(source).Root);
+        Result Run()
+        {
+            var result = Evaluator.Run(program, new KatLang.Evaluation.Caching.RunScopedZeroArgPropertyResultCache(), enableLoopOptimization: true, loopDiagnostics: null);
+            Assert.False(result.IsError, result.IsError ? result.Error.ToString() : null);
+            return result.Value;
+        }
+
+        for (var i = 0; i < 3; i++)
+            _ = Run();
+        var minimum = long.MaxValue;
+        for (var i = 0; i < 5; i++)
+        {
+            var before = GC.GetAllocatedBytesForCurrentThread();
+            _ = Run();
+            minimum = Math.Min(minimum, GC.GetAllocatedBytesForCurrentThread() - before);
+        }
+
+        var perUnit = minimum / (double)units;
+        Assert.True(perUnit < bound, $"{workload}: {perUnit:F1} bytes per unit (bound {bound})");
     }
 
     // ── Strict allocation counts (isolated child processes) ─────────────────────────────────────────

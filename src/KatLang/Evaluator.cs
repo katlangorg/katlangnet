@@ -2730,11 +2730,12 @@ public static partial class Evaluator
     /// (<see cref="AstStructuralPreflight.MayCaptureCalls"/>) and its runtime-alias reach
     /// (<see cref="AstStructuralPreflight.MayReachRuntimeAlias"/>).
     /// </summary>
-    private static EvalError? StructuralPreflight(Expr expr, EvaluationLimits? limits, out AstStructuralPreflight.AdmittedProgramFacts facts)
+    private static EvalError? StructuralPreflight(
+        Expr expr, EvaluationLimits? limits, int nodeCountHint, out AstStructuralPreflight.AdmittedProgramFacts facts)
     {
         var effectiveLimit = (limits ?? EvaluationLimits.Default).EffectiveMaxAstDepth;
         return AstStructuralPreflight.CheckAdmittedProgram(
-                expr, effectiveLimit, AstConsumerProfile.EvaluatorIterativeJoinSpines, out facts) is { } rejection
+                expr, effectiveLimit, AstConsumerProfile.EvaluatorIterativeJoinSpines, out facts, nodeCountHint) is { } rejection
             ? AstStructuralPreflight.ToEvalError(rejection, effectiveLimit)
             : null;
     }
@@ -2768,11 +2769,15 @@ public static partial class Evaluator
     /// asynchronous host-operation rejection above. An async entry's synchronous fast path
     /// hands in the fact it already decided for this call (<paramref name="treeRequiresAsyncEvaluation"/>,
     /// always <c>false</c> there), so the tree is walked once per run; every other caller passes
-    /// <c>null</c> and the tree is walked here.
+    /// <c>null</c> and the tree is walked here. A walk made here also reports how many distinct nodes
+    /// it visited (<paramref name="nodeCountHint"/>, 0 when no walk was made): a capacity hint for
+    /// the admission tables built over the same graph next, never a decision.
     /// </summary>
-    private static void ThrowIfDeferredModuleRegionsOnSynchronousEntry(Expr expr, bool? treeRequiresAsyncEvaluation)
+    private static void ThrowIfDeferredModuleRegionsOnSynchronousEntry(
+        Expr expr, bool? treeRequiresAsyncEvaluation, out int nodeCountHint)
     {
-        if (treeRequiresAsyncEvaluation ?? DeferredModuleRegion.RequiresAsyncEvaluation(expr))
+        nodeCountHint = 0;
+        if (treeRequiresAsyncEvaluation ?? DeferredModuleRegion.RequiresAsyncEvaluationCounting(expr, out nodeCountHint))
         {
             throw new InvalidOperationException(
                 "The program contains conditional branches whose module dependencies load on demand " +
@@ -2802,12 +2807,12 @@ public static partial class Evaluator
     /// <c>EvaluatorOpenChainStackProcessTests.OneNameOpenChain_ProbeChild</c> pins (it is the only
     /// spanless refusal there, about 140 KiB and less on Windows x64).</para>
     /// </summary>
-    private static EvalError? PreEvaluationValidationError(Expr expr)
+    private static EvalError? PreEvaluationValidationError(Expr expr, int nodeCountHint)
     {
         PreEvaluationAstViolation? violation;
         try
         {
-            violation = AlgorithmValidation.FindFirstPreEvaluationViolation(expr);
+            violation = AlgorithmValidation.FindFirstPreEvaluationViolation(expr, observations: null, nodeCountHint);
         }
         catch (FrontEndStackExhaustedException)
         {
@@ -2912,7 +2917,7 @@ public static partial class Evaluator
         // token stops the run before the structural preflight spends O(tree) work.
         cancellationToken.ThrowIfCancellationRequested();
         ThrowIfAsynchronousHostOperationsOnSynchronousEntry(hostOperations);
-        ThrowIfDeferredModuleRegionsOnSynchronousEntry(expr, treeRequiresAsyncEvaluation);
+        ThrowIfDeferredModuleRegionsOnSynchronousEntry(expr, treeRequiresAsyncEvaluation, out var nodeCountHint);
 
         return PrepareAdmittedRun(
             expr,
@@ -2926,6 +2931,7 @@ public static partial class Evaluator
             hostOperations,
             randomSeed,
             asynchronousRun: false,
+            nodeCountHint,
             cancellationToken);
     }
 
@@ -2955,6 +2961,7 @@ public static partial class Evaluator
         HostOperations? hostOperations,
         long? randomSeed,
         bool asynchronousRun,
+        int nodeCountHint,
         CancellationToken cancellationToken)
     {
         // Creating the budget is field initialization plus the run's random-stream
@@ -2965,13 +2972,17 @@ public static partial class Evaluator
         // resolved through the async resolution adapter, never synchronously).
         if (asynchronousRun) budget.MarkAsynchronousRun();
 
-        if (StructuralPreflight(expr, limits, out var programFacts) is { } structuralError)
+        // The two admission passes build reference-identity tables over the whole graph. Each is
+        // sized from the node count an earlier walk of this run already produced (the entry guard's
+        // for the preflight, the preflight's for the validation walk): capacity only, so every pass
+        // still makes its own complete walk and its own decisions.
+        if (StructuralPreflight(expr, limits, nodeCountHint, out var programFacts) is { } structuralError)
         {
             budget.ObserveCancellation();
             return PreparedRun.Rejected(structuralError, budget);
         }
 
-        if (PreEvaluationValidationError(expr) is { } validationError)
+        if (PreEvaluationValidationError(expr, programFacts.NodeCount) is { } validationError)
         {
             budget.ObserveCancellation();
             return PreparedRun.Rejected(validationError, budget);

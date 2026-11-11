@@ -435,9 +435,11 @@ public static partial class Evaluator
         var bindingsR = BindZeroArgumentSupply(algorithm, ctx);
         if (bindingsR.IsError) return bindingsR.Error;
 
-        var boundCtx = WithNeedBindings(ctx, bindingsR.Value!, algorithm.Params);
-        var boundValues = ShadowValEnv(valEnv, algorithm.Params);
-        return EvalAlgOutputCountedCore(algorithm, boundCtx, boundValues);
+        // ONE projection of the names: it shadows both inherited tiers and enters the body.
+        var names = algorithm.Params;
+        var boundCtx = WithNeedBindings(ctx, bindingsR.Value!, names);
+        var boundValues = ShadowValEnv(valEnv, names);
+        return EvalBoundUserBodyCounted(algorithm, boundCtx, boundValues, names);
     }
 
     /// <summary>
@@ -561,9 +563,11 @@ public static partial class Evaluator
         if (OutputRowsAccessError(algorithm) is { } accessError)
             return accessError;
 
-        var boundCtx = WithNeedBindings(ctx, bindingsR.Value!, algorithm.Params);
-        var boundValues = ShadowValEnv(valEnv, algorithm.Params);
-        var bodyCtx = EnterAlgorithmBody(algorithm, boundCtx, boundValues,
+        // ONE projection of the names: it shadows both inherited tiers and enters the body.
+        var names = algorithm.Params;
+        var boundCtx = WithNeedBindings(ctx, bindingsR.Value!, names);
+        var boundValues = ShadowValEnv(valEnv, names);
+        var bodyCtx = EnterAlgorithmBody(algorithm, boundCtx, boundValues, names,
             inheritedBindingIdentity: PropertyReadBindingIdentity(algorithm, ctx, valEnv));
         var preparedR = EvalOutputRowsPreparedCore(algorithm.Output, bodyCtx, boundCtx, boundValues);
         return preparedR.IsError

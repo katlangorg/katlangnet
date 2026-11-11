@@ -287,8 +287,9 @@ internal static class AstStructuralPreflight
         object root,
         int maxDepth,
         AstConsumerProfile profile,
-        out AdmittedProgramFacts facts)
-        => CheckCore(root, maxDepth, profile, observations: null, detectCallCapture: true, deferredMemo: null, out facts, out _);
+        out AdmittedProgramFacts facts,
+        int nodeCountHint = 0)
+        => CheckCore(root, maxDepth, profile, observations: null, detectCallCapture: true, deferredMemo: null, out facts, out _, nodeCountHint);
 
     /// <summary>
     /// Completed, context-independent subtree facts for ONE run's deferred-body checks. Only
@@ -331,10 +332,13 @@ internal static class AstStructuralPreflight
     /// distinct nodes when the walk reached EVERY node through exactly one edge (the admitted graph is a TREE: no
     /// shared node, no cycle), and 0 otherwise — the conservative answer. A per-site run reuses it to walk the
     /// program without a per-node memo (<c>Evaluator.InheritedTransportNames</c>); it decides nothing else.
+    /// <see cref="NodeCount"/> is the number of distinct nodes this walk visited, shared or not: the size
+    /// its own reference table reached. The evaluator hands it to the pre-evaluation validation walk as
+    /// the capacity of that walk's tables over the same graph; it decides nothing.
     /// </summary>
     internal readonly record struct AdmittedProgramFacts(
         bool MayCaptureCalls, bool MayReachRuntimeAlias, bool HasDeferredModuleRegion, bool HasMetaBinder = false,
-        int TreeNodeCount = 0)
+        int TreeNodeCount = 0, int NodeCount = 0)
     {
         /// <summary>The J7 gate fired only through the builtin loops: no user META binder, no deferred region.</summary>
         internal bool IsLoopOnly => MayCaptureCalls && !HasMetaBinder && !HasDeferredModuleRegion;
@@ -393,7 +397,8 @@ internal static class AstStructuralPreflight
         bool detectCallCapture,
         DeferredAdmissionMemo? deferredMemo,
         out AdmittedProgramFacts facts,
-        out int rootHeight)
+        out int rootHeight,
+        int nodeCountHint = 0)
     {
         var mayCaptureCalls = false;
         var mayReachRuntimeAlias = false;
@@ -440,7 +445,9 @@ internal static class AstStructuralPreflight
         // structural equality would recursively walk the tree this guard exists to
         // reject.
         const int OnStack = OnStackHeight;
-        var heights = new Dictionary<object, int>(ReferenceEqualityComparer.Instance);
+        // `nodeCountHint` is capacity only (an earlier walk's node count over this graph, or 0): the
+        // table starts at its final size instead of doubling up to it.
+        var heights = new Dictionary<object, int>(nodeCountHint, ReferenceEqualityComparer.Instance);
 
         var rootWeight = NodeWeight(root, profile);
         if (rootWeight > maxDepth)
@@ -556,7 +563,7 @@ internal static class AstStructuralPreflight
 
         rootHeight = heights[root];
         facts = new AdmittedProgramFacts(mayCaptureCalls, mayReachRuntimeAlias, hasDeferredRegion, hasMetaBinder,
-            TreeNodeCount: reachedTwice ? 0 : heights.Count);
+            TreeNodeCount: reachedTwice ? 0 : heights.Count, NodeCount: heights.Count);
         return null;
     }
 

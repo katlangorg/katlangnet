@@ -882,6 +882,46 @@ public static partial class Evaluator
     }
 
     /// <summary>
+    /// The ordinary call's direct path for a FLAT PLAIN CAPTURE HEAD (2026-11 allocation
+    /// attribution): at most <see cref="FlatUniqueNameBindingWidth"/> stored patterns, each a plain
+    /// capture (<see cref="ParameterKind.Normal"/>: not collecting, not META), their names pairwise
+    /// distinct by ordinal comparison, and exactly as many supplied cells. Pattern <c>i</c> binds
+    /// supplied cell <c>i</c>, in written order; nothing is demanded or projected. Returns
+    /// <c>null</c> for every other head and every other supply count: the caller then translates
+    /// the patterns and binds as before, its cardinality report included.
+    /// <para>The stored list is read on every call and nothing derived from it is kept, so a host
+    /// that edits its caller-owned pattern list between calls is observed exactly as the translated
+    /// path observes it.</para>
+    /// <para>EQUIVALENCE with the translated path on such a head: <see cref="NeedParameterPatterns"/>
+    /// maps capture <c>i</c> to the plain name pattern <c>i</c>; a level without a collecting capture
+    /// accepts exactly its own count; and <see cref="BindAcceptedNeedPatterns"/> then binds no pattern
+    /// as the empty environment, one name as the one-binding environment, and two or more unique
+    /// names through <see cref="FlatUniqueNameBindings"/> — the environments built here, in the same
+    /// shapes. Pinned by <c>FlatCaptureHeadBindingTests</c>.</para>
+    /// </summary>
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+    private static NeedEnv? BindFlatCaptureHead(IReadOnlyList<ParameterPattern> patterns, IReadOnlyList<NeedCell> supply)
+    {
+        var count = patterns.Count;
+        if (count > FlatUniqueNameBindingWidth || supply.Count != count)
+            return null;
+        for (var i = 0; i < count; i++)
+        {
+            if (patterns[i] is not CaptureParameterPattern { Kind: ParameterKind.Normal, Name: { } name })
+                return null;
+            for (var j = 0; j < i; j++)
+                if (string.Equals(((CaptureParameterPattern)patterns[j]).Name, name, StringComparison.Ordinal))
+                    return null;
+        }
+        if (count == 0) return [];
+        if (count == 1) return [(((CaptureParameterPattern)patterns[0]).Name, supply[0])];
+        var env = new (string Name, NeedCell Cell)[count];
+        for (var i = 0; i < env.Length; i++)
+            env[i] = (((CaptureParameterPattern)patterns[i]).Name, supply[i]);
+        return env;
+    }
+
+    /// <summary>
     /// Whether a clause head is a FLAT LITERAL LEVEL (allocation-free): one to
     /// <see cref="FlatUniqueNameBindingWidth"/> patterns, at least one a literal, every other a plain
     /// unique name (not collecting, not META, no children); the supply count equals the pattern
@@ -1458,19 +1498,67 @@ public static partial class Evaluator
         Algorithm callee, IReadOnlyList<NeedCell> supply, EvalCtx ctx, ValEnv values, CallDiagnosticName name, bool variadicArityStyle,
         IReadOnlyList<Expr?>? occurrences = null, bool valueBoundary = true)
     {
-        // The call's ONE top-level cardinality decision, reported in the call's own shape.
-        var patterns = NeedParameterPatterns(callee.ParameterPatterns);
-        if (!NeedAcceptsCardinality(patterns, supply.Count)) return NeedCallArityError(callee, patterns, supply.Count, name, ctx, variadicArityStyle);
-        var bindings = BindAcceptedNeedPatterns(patterns, supply, ctx, asynchronous: false, family: false, occurrences).GetAwaiter().GetResult();
-        // An argument the binder inspects is a SUBORDINATE computation of the call (Q-36).
-        if (bindings.IsError) return NestMissingOutput(bindings.Error);
+        // A flat plain capture head with a matching supply count binds straight from the stored
+        // patterns (BindFlatCaptureHead). Every other head, and every other supply count, is translated.
+        var env = BindFlatCaptureHead(callee.ParameterPatterns, supply);
+        if (env is null)
+        {
+            // The call's ONE top-level cardinality decision, reported in the call's own shape.
+            var patterns = NeedParameterPatterns(callee.ParameterPatterns);
+            if (!NeedAcceptsCardinality(patterns, supply.Count)) return NeedCallArityError(callee, patterns, supply.Count, name, ctx, variadicArityStyle);
+            var bindings = BindAcceptedNeedPatterns(patterns, supply, ctx, asynchronous: false, family: false, occurrences).GetAwaiter().GetResult();
+            // An argument the binder inspects is a SUBORDINATE computation of the call (Q-36).
+            if (bindings.IsError) return NestMissingOutput(bindings.Error);
+            env = bindings.Value!;
+        }
         if (callee.Output.Count == 0) return new EvalError.MissingOutput();
+        // ONE projection of the names per call: it shadows the inherited tiers and enters the body.
         var names = callee.Params;
         // A value view's zero-supply invocation reads its binding cell (L-RUN, M4★): never a rerun of the row.
         var output = ValueViewCell(callee, ctx) is { } viewCell
             ? viewCell.Demand()
-            : EvalAlgOutputCounted(callee, WithNeedBindings(ctx, bindings.Value!, names), ShadowValEnv(values, names));
+            : EvalBoundUserBodyCounted(callee, WithNeedBindings(ctx, env, names), ShadowValEnv(values, names), names);
         return valueBoundary ? ReCountValueBoundary(output) : output;
+    }
+
+    /// <summary>
+    /// The body of a callee whose parameters a binding boundary has bound:
+    /// <see cref="EvalAlgOutputCounted"/> over the bound context, entered with the parameter names
+    /// that boundary ALREADY projected to shadow the inherited tiers. <c>Params</c> is a fresh
+    /// projection on every read, so reading it again at body entry cost one more array per call
+    /// (2026-11 allocation attribution); nothing is stored, and each call still projects its own.
+    /// <para>For a user algorithm without a deferred region the shared core is exactly these steps:
+    /// the access errors (<see cref="OutputRowsAccessError"/>, in the core's order), one entered
+    /// context, the rows. <paramref name="names"/> must be the callee's <c>Params</c> read at this
+    /// call, which is what the core's own entry reads. A deferred body, which materializes first,
+    /// and every other callee keep the shared core. Lean: <c>evalAlgOutputCounted</c>.</para>
+    /// </summary>
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+    private static EvalResult<CountedResult> EvalBoundUserBodyCounted(
+        Algorithm callee, EvalCtx ctx, ValEnv values, IReadOnlyList<string> names)
+    {
+        if (callee is not Algorithm.User { DeferredRegion: null })
+            return EvalAlgOutputCountedCore(callee, ctx, values);
+        if (OutputRowsAccessError(callee) is { } accessError)
+            return accessError;
+        var prepared = EvalOutputRowsPreparedCore(callee.Output, EnterAlgorithmBody(callee, ctx, values, names), ctx, values);
+        return prepared.IsError
+            ? prepared.Error
+            : EvalResult<CountedResult>.Ok(prepared.Value.Counted);
+    }
+
+    /// <summary>MIRROR OF <see cref="EvalBoundUserBodyCounted"/> — keep in lock-step.</summary>
+    private static async ValueTask<EvalResult<CountedResult>> EvalBoundUserBodyCountedAsync(
+        Algorithm callee, EvalCtx ctx, ValEnv values, IReadOnlyList<string> names)
+    {
+        if (callee is not Algorithm.User { DeferredRegion: null })
+            return await EvalAlgOutputCountedCoreAsync(callee, ctx, values).ConfigureAwait(false);
+        if (OutputRowsAccessError(callee) is { } accessError)
+            return accessError;
+        var prepared = await EvalOutputRowsPreparedCoreAsync(callee.Output, EnterAlgorithmBody(callee, ctx, values, names), ctx, values).ConfigureAwait(false);
+        return prepared.IsError
+            ? prepared.Error
+            : EvalResult<CountedResult>.Ok(prepared.Value.Counted);
     }
 
     private static async ValueTask<EvalResult<CountedResult>> EvalNeedUserBody(
@@ -1488,20 +1576,26 @@ public static partial class Evaluator
         CallDiagnosticName name, bool asynchronous, bool variadicArityStyle, IReadOnlyList<Expr?>? occurrences = null,
         bool valueBoundary = true)
     {
-        var patterns = NeedParameterPatterns(callee.ParameterPatterns);
-        if (!NeedAcceptsCardinality(patterns, supply.Count)) return NeedCallArityError(callee, patterns, supply.Count, name, ctx, variadicArityStyle);
-        var bindings = await BindAcceptedNeedPatterns(patterns, supply, ctx, asynchronous, family: false, occurrences).ConfigureAwait(false);
-        // An argument the binder inspects is a SUBORDINATE computation of the call (Q-36).
-        if (bindings.IsError) return NestMissingOutput(bindings.Error);
+        // MIRROR OF EvalNeedUserSupplyCounted — keep in lock-step, the flat direct path included.
+        var env = BindFlatCaptureHead(callee.ParameterPatterns, supply);
+        if (env is null)
+        {
+            var patterns = NeedParameterPatterns(callee.ParameterPatterns);
+            if (!NeedAcceptsCardinality(patterns, supply.Count)) return NeedCallArityError(callee, patterns, supply.Count, name, ctx, variadicArityStyle);
+            var bindings = await BindAcceptedNeedPatterns(patterns, supply, ctx, asynchronous, family: false, occurrences).ConfigureAwait(false);
+            // An argument the binder inspects is a SUBORDINATE computation of the call (Q-36).
+            if (bindings.IsError) return NestMissingOutput(bindings.Error);
+            env = bindings.Value!;
+        }
         if (callee.Output.Count == 0) return new EvalError.MissingOutput();
         var names = callee.Params;
-        var boundCtx = WithNeedBindings(ctx, bindings.Value!, names);
+        var boundCtx = WithNeedBindings(ctx, env, names);
         var boundValues = ShadowValEnv(values, names);
         var output = ValueViewCell(callee, ctx) is { } viewCell
             ? await DemandCell(viewCell, asynchronous).ConfigureAwait(false)
             : asynchronous
-                ? await EvalAlgOutputCountedCoreAsync(callee, boundCtx, boundValues).ConfigureAwait(false)
-                : EvalAlgOutputCounted(callee, boundCtx, boundValues);
+                ? await EvalBoundUserBodyCountedAsync(callee, boundCtx, boundValues, names).ConfigureAwait(false)
+                : EvalBoundUserBodyCounted(callee, boundCtx, boundValues, names);
         return valueBoundary ? ReCountValueBoundary(output) : output;
     }
 

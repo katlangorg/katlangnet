@@ -795,6 +795,16 @@ internal sealed class DeferredModuleRegion
     /// any subtree, carries its placeholders and their regions with it.
     /// </summary>
     internal static bool RequiresAsyncEvaluation(Expr expr)
+        => RequiresAsyncEvaluationCounting(expr, out _);
+
+    /// <summary>
+    /// <see cref="RequiresAsyncEvaluation"/>, also reporting how many distinct nodes the walk
+    /// visited: the whole graph when the answer is <c>false</c> (the walk then met every node the
+    /// structural preflight enumerates), fewer when it stopped at a placeholder. The count is only a
+    /// CAPACITY HINT for the reference-identity tables the run builds over the same graph next
+    /// (<c>Evaluator.PrepareSynchronousRun</c>); nothing is decided from it.
+    /// </summary>
+    internal static bool RequiresAsyncEvaluationCounting(Expr expr, out int visitedNodeCount)
     {
         var pending = new Stack<object>();
         var visited = new HashSet<object>(ReferenceEqualityComparer.Instance);
@@ -805,12 +815,16 @@ internal sealed class DeferredModuleRegion
                 continue;
 
             if (node is Algorithm { DeferredRegion: not null })
+            {
+                visitedNodeCount = visited.Count;
                 return true;
+            }
 
             for (var index = 0; AstStructuralPreflight.TryGetChild(node, index, out var child); index++)
                 pending.Push(child);
         }
 
+        visitedNodeCount = visited.Count;
         return false;
     }
 

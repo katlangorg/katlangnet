@@ -476,6 +476,8 @@ public static partial class Evaluator
             hostOperations,
             randomSeed,
             asynchronousRun: true,
+            // The twin's guard walks no tree here, so the preflight has no earlier count to size from.
+            nodeCountHint: 0,
             cancellationToken);
     }
 
@@ -1862,9 +1864,10 @@ public static partial class Evaluator
         var bindingsR = BindZeroArgumentSupply(algorithm, ctx);
         if (bindingsR.IsError) return bindingsR.Error;
 
-        var boundCtx = WithNeedBindings(ctx, bindingsR.Value!, algorithm.Params);
-        var boundValues = ShadowValEnv(valEnv, algorithm.Params);
-        return await EvalAlgOutputCountedCoreAsync(algorithm, boundCtx, boundValues)
+        var names = algorithm.Params;
+        var boundCtx = WithNeedBindings(ctx, bindingsR.Value!, names);
+        var boundValues = ShadowValEnv(valEnv, names);
+        return await EvalBoundUserBodyCountedAsync(algorithm, boundCtx, boundValues, names)
             .ConfigureAwait(false);
     }
 
@@ -1927,9 +1930,10 @@ public static partial class Evaluator
         if (OutputRowsAccessError(algorithm) is { } accessError)
             return accessError;
 
-        var boundCtx = WithNeedBindings(ctx, bindingsR.Value!, algorithm.Params);
-        var boundValues = ShadowValEnv(valEnv, algorithm.Params);
-        var bodyCtx = EnterAlgorithmBody(algorithm, boundCtx, boundValues,
+        var names = algorithm.Params;
+        var boundCtx = WithNeedBindings(ctx, bindingsR.Value!, names);
+        var boundValues = ShadowValEnv(valEnv, names);
+        var bodyCtx = EnterAlgorithmBody(algorithm, boundCtx, boundValues, names,
             inheritedBindingIdentity: PropertyReadBindingIdentity(algorithm, ctx, valEnv));
         var preparedR = await EvalOutputRowsPreparedCoreAsync(algorithm.Output, bodyCtx, boundCtx, boundValues).ConfigureAwait(false);
         return preparedR.IsError

@@ -190,14 +190,19 @@ public class ExpressionSpineFrameCapacityTests
     /// the Debug test build (x64): with the former sixteen-frame buffer (16 × 56 + 24 = 920 bytes) the
     /// slope was 1,558.5 bytes synchronously and 3,887.4 on the twin; with the two-frame buffer
     /// (2 × 56 + 24 = 136 bytes) it is 774.5 and 3,103.4 — exactly the 784-byte difference on both.
-    /// Each bound sits near the midpoint, so restoring sixteen frames on either machine fails its row
-    /// while unrelated noise does not: each window is the minimum of five runs over 256 spine runs,
-    /// so one background-GC quantum moves the slope by at most about 32 bytes. A coarse in-process
-    /// ratio, not a strict count.
+    /// Most of that slope was never the spine: it was the run's pre-evaluation reference tables,
+    /// which grew by doubling over the larger tree. Since 2026-11-11 those tables are sized from the
+    /// node count an earlier walk of the same run produced, and the slopes are 540.8 and 3,036.5
+    /// (the twin's entry walks no tree first, so only its validation tables are sized); sixteen
+    /// frames would make them 1,324.8 and 3,820.5. The synchronous bound sits between the sized and
+    /// the unsized slope, so it fails both when sixteen frames return and when the sizing is lost;
+    /// the twin's sits near the midpoint to sixteen frames. Unrelated noise fails neither: each
+    /// window is the minimum of five runs over 256 spine runs, so one background-GC quantum moves
+    /// the slope by at most about 32 bytes. A coarse in-process ratio, not a strict count.
     /// </summary>
     [Theory]
-    [InlineData(false, 1_150)]
-    [InlineData(true, 3_500)]
+    [InlineData(false, 660)]
+    [InlineData(true, 3_400)]
     public void PerSpineRunAllocation_StaysBelowTheFormerSixteenFrameBuffer(bool asyncTwin, int bound)
     {
         var withSpine = PropertyProgram("1 + 1");

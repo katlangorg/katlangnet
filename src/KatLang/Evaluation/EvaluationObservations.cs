@@ -170,8 +170,11 @@ internal sealed class EvaluationObservations
     private readonly Dictionary<Evaluator.InvocationPlan, int> _planSupplyFormations = new(ReferenceEqualityComparer.Instance);
 
     // Called by the plan's ONE supply publication (Evaluator.PublishPlanSupply) before the outcome is
-    // published, so a reader that sees the outcome also sees the count. Locked: references may prepare
-    // plans of one run from several threads.
+    // published, so a reader that sees the outcome also sees the count. A run is ONE sequential flow
+    // (EvaluationBudget: a continuation may resume it on another thread, but no two operations of one
+    // run execute at once), so a run never contends for this lock. It stays for the internal test
+    // seams that wait on, and read, one plan's preparation from other threads while the run is
+    // suspended (CallPlanRetentionTests): the count and its per-plan entry move together for them.
     internal void RecordPlanSupplyFormation(Evaluator.InvocationPlan plan)
     {
         lock (_planSupplyFormations)

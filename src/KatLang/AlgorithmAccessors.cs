@@ -176,13 +176,46 @@ internal static class AlgorithmAccessors
         };
     }
 
-    private static string? FirstDuplicatePropertyName(IReadOnlyList<Property> properties)
+    /// <summary>
+    /// Longest property list <see cref="FirstDuplicatePropertyName"/> scans pairwise; a longer one
+    /// uses a set.
+    /// </summary>
+    internal const int LinearDuplicatePropertyScanLimit = 16;
+
+    /// <summary>
+    /// The name of the first property, in declaration order, whose name an EARLIER property of the
+    /// list already has (ordinal comparison), or <c>null</c> when every name is unique. Lean:
+    /// <c>Algorithm.findDuplicatePropName</c>.
+    /// <para>The evaluator asks this on every body evaluation, where the list is usually empty or
+    /// short, so up to <see cref="LinearDuplicatePropertyScanLimit"/> properties are compared
+    /// pairwise without allocating (2026-11 allocation attribution: the former per-call set was one
+    /// heap object per call even for an empty list). A longer list uses a set sized for it. Both
+    /// forms meet the properties in declaration order and stop at the same one.</para>
+    /// </summary>
+    internal static string? FirstDuplicatePropertyName(IReadOnlyList<Property> properties)
     {
-        var seen = new HashSet<string>(StringComparer.Ordinal);
-        foreach (var property in properties)
+        var count = properties.Count;
+        if (count <= LinearDuplicatePropertyScanLimit)
         {
-            if (!seen.Add(property.Name))
-                return property.Name;
+            for (var index = 0; index < count; index++)
+            {
+                var name = properties[index].Name;
+                for (var earlier = 0; earlier < index; earlier++)
+                {
+                    if (string.Equals(properties[earlier].Name, name, StringComparison.Ordinal))
+                        return name;
+                }
+            }
+
+            return null;
+        }
+
+        var seen = new HashSet<string>(count, StringComparer.Ordinal);
+        for (var index = 0; index < count; index++)
+        {
+            var name = properties[index].Name;
+            if (!seen.Add(name))
+                return name;
         }
 
         return null;
