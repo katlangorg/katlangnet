@@ -921,11 +921,11 @@ public class KatLangEngineTests
     }
 
     [Fact]
-    public void RunResult_ToDisplayString_DisplayDecimals_FormatsGlobalDecimalOutput()
+    public void RunResult_ToDisplayString_MaxDecimalPlaces_FormatsGlobalDecimalOutput()
     {
         var result = KatLangEngine.Run(
             """
-            DisplayDecimals = 3
+            MaxDecimalPlaces = 3
 
             Math.Pi
             """);
@@ -938,13 +938,13 @@ public class KatLangEngineTests
     [InlineData(1, "3.1")]
     [InlineData(2, "3.14")]
     [InlineData(6, "3.141593")]
-    public void RunResult_ToDisplayString_DisplayDecimals_RoundsAtCommonPlaces(
+    public void RunResult_ToDisplayString_MaxDecimalPlaces_RoundsAtCommonPlaces(
         int decimals,
         string expected)
     {
         var result = KatLangEngine.Run(
             $$"""
-            DisplayDecimals = {{decimals}}
+            MaxDecimalPlaces = {{decimals}}
 
             Math.Pi
             """);
@@ -958,30 +958,38 @@ public class KatLangEngineTests
     /// happened to use — ties-to-even on .NET 11 RC1 (<c>0.125</c> at two places printed
     /// <c>0.12</c>) where the preview runtime rounded away from zero. KatLang owns the
     /// rounding: a midpoint rounds AWAY FROM ZERO, the same rule as <c>Math.Round</c>, so
-    /// the displayed digits and <c>Math.Round(x, n)</c> always agree.
+    /// the displayed digits and <c>Math.Round(x, n)</c> always agree. A maximum alone shows the
+    /// rounded value with no trailing zeros (<paramref name="expected"/>); the same count as
+    /// minimum and maximum shows it at exactly that many places (<paramref name="fixedPlaces"/>).
     /// </summary>
     [Theory]
-    [InlineData(2, "0.125", "0.13")]
-    [InlineData(2, "0.135", "0.14")]
-    [InlineData(2, "0.145", "0.15")]
-    [InlineData(2, "-0.125", "-0.13")]
-    [InlineData(2, "1.005", "1.01")]
-    [InlineData(2, "2.345", "2.35")]
-    [InlineData(2, "2.675", "2.68")]
-    [InlineData(0, "0.5", "1")]
-    [InlineData(0, "1.5", "2")]
-    [InlineData(0, "2.5", "3")]
-    [InlineData(0, "-0.5", "-1")]
-    [InlineData(0, "-2.5", "-3")]
-    [InlineData(2, "-0.001", "-0.00")]
-    [InlineData(1, "0.05", "0.1")]
-    public void RunResult_ToDisplayString_DisplayDecimals_RoundsTiesAwayFromZero_LikeMathRound(
+    [InlineData(2, "0.125", "0.13", "0.13")]
+    [InlineData(2, "0.135", "0.14", "0.14")]
+    [InlineData(2, "0.145", "0.15", "0.15")]
+    [InlineData(2, "-0.125", "-0.13", "-0.13")]
+    [InlineData(2, "1.005", "1.01", "1.01")]
+    [InlineData(2, "2.345", "2.35", "2.35")]
+    [InlineData(2, "2.675", "2.68", "2.68")]
+    [InlineData(0, "0.5", "1", "1")]
+    [InlineData(0, "1.5", "2", "2")]
+    [InlineData(0, "2.5", "3", "3")]
+    [InlineData(0, "-0.5", "-1", "-1")]
+    [InlineData(0, "-2.5", "-3", "-3")]
+    [InlineData(2, "-0.001", "-0", "-0.00")]
+    [InlineData(1, "0.05", "0.1", "0.1")]
+    [InlineData(2, "0.095", "0.1", "0.10")]
+    [InlineData(2, "9.995", "10", "10.00")]
+    public void RunResult_ToDisplayString_MaxDecimalPlaces_RoundsTiesAwayFromZero_LikeMathRound(
         int decimals,
         string literal,
-        string expected)
+        string expected,
+        string fixedPlaces)
     {
-        var displayed = KatLangEngine.Run($"DisplayDecimals = {decimals}\n{literal}").ToDisplayString();
+        var displayed = KatLangEngine.Run($"MaxDecimalPlaces = {decimals}\n{literal}").ToDisplayString();
         Assert.Equal(expected, displayed);
+        Assert.Equal(
+            fixedPlaces,
+            KatLangEngine.Run($"MinDecimalPlaces = {decimals}\nMaxDecimalPlaces = {decimals}\n{literal}").ToDisplayString());
 
         // The same digits Math.Round produces for a value that has them.
         var rounded = Assert.IsType<RunResult.Success>(KatLangEngine.Run($"Math.Round({literal}, {decimals})"));
@@ -991,11 +999,11 @@ public class KatLangEngineTests
     }
 
     [Fact]
-    public void RunResult_ToDisplayString_DisplayDecimals_FormatsNestedNumericLeaves()
+    public void RunResult_ToDisplayString_MaxDecimalPlaces_FormatsNestedNumericLeaves()
     {
         var result = KatLangEngine.Run(
             """
-            DisplayDecimals = 3
+            MaxDecimalPlaces = 3
 
             (Math.Pi, Math.Exp(1))
             """);
@@ -1004,11 +1012,11 @@ public class KatLangEngineTests
     }
 
     [Fact]
-    public void RunResult_ToDisplayString_DisplayDecimals_FormatsDeepNestedNumericLeaves()
+    public void RunResult_ToDisplayString_MaxDecimalPlaces_FormatsDeepNestedNumericLeaves()
     {
         var result = KatLangEngine.Run(
             """
-            DisplayDecimals = 2
+            MaxDecimalPlaces = 2
 
             (Math.Pi, (Math.Exp(1), Math.Pi * 10))
             """);
@@ -1017,26 +1025,26 @@ public class KatLangEngineTests
     }
 
     [Fact]
-    public void RunResult_ToDisplayString_DisplayDecimals_RemainsReadableProperty()
+    public void RunResult_ToDisplayString_MaxDecimalPlaces_RemainsReadableProperty()
     {
         var result = KatLangEngine.Run(
             """
-            DisplayDecimals = 6
+            MaxDecimalPlaces = 6
 
-            DisplayDecimals
+            MaxDecimalPlaces
             """);
 
         Assert.Equal("6", result.ToDisplayString());
     }
 
     [Fact]
-    public void RunResult_ToDisplayString_DisplayDecimals_CanBeUsedInsideExpression()
+    public void RunResult_ToDisplayString_MaxDecimalPlaces_CanBeUsedInsideExpression()
     {
         var result = KatLangEngine.Run(
             """
-            DisplayDecimals = 6
+            MaxDecimalPlaces = 6
 
-            A = DisplayDecimals + 1
+            A = MaxDecimalPlaces + 1
 
             A
             """);
@@ -1045,12 +1053,12 @@ public class KatLangEngineTests
     }
 
     [Fact]
-    public void RunResult_ToDisplayString_DisplayDecimals_OnlyUsesTopLevelProperty()
+    public void RunResult_ToDisplayString_MaxDecimalPlaces_OnlyUsesTopLevelProperty()
     {
         var result = KatLangEngine.Run(
             """
             A = {
-                DisplayDecimals = 2
+                MaxDecimalPlaces = 2
 
                 Math.Pi
             }
@@ -1096,10 +1104,10 @@ public class KatLangEngineTests
                 "3.141592653589793238462643383279503",
                 KatLangEngine.Run("Math.Pi").ToDisplayString());
 
-            // DisplayDecimals path stays invariant too.
+            // MaxDecimalPlaces path stays invariant too.
             Assert.Equal(
                 "3.14",
-                KatLangEngine.Run("DisplayDecimals = 2\nMath.Pi").ToDisplayString());
+                KatLangEngine.Run("MaxDecimalPlaces = 2\nMath.Pi").ToDisplayString());
 
             // Diagnostics that render values keep the invariant form.
             var failure = Assert.IsType<RunResult.EvalFailure>(KatLangEngine.Run("[1.5] + 1"));
@@ -1108,11 +1116,11 @@ public class KatLangEngineTests
     }
 
     [Fact]
-    public void RunResult_ToDisplayString_DisplayDecimals_FormatsMixedNumericOutputRows()
+    public void RunResult_ToDisplayString_MaxDecimalPlaces_FormatsMixedNumericOutputRows()
     {
         var result = KatLangEngine.Run(
             """
-            DisplayDecimals = 4
+            MaxDecimalPlaces = 4
 
             Math.Pi
             Math.Exp(1)
@@ -1122,16 +1130,16 @@ public class KatLangEngineTests
     }
 
     [Fact]
-    public void RunResult_ToDisplayString_DisplayDecimals_FormatsScaledZero()
+    public void RunResult_ToDisplayString_DecimalPlaces_FormatScaledZeroByItsValue()
     {
-        var result = KatLangEngine.Run(
-            """
-            DisplayDecimals = 6
+        const string scaledZero = "0.000000000000000000000000000";
 
-            0.000000000000000000000000000
-            """);
-
-        Assert.Equal("0.000000", result.ToDisplayString());
+        // No setting: the stored quantum is shown. Any setting: the text depends on the value
+        // only — a maximum alone shows the plain zero, and a minimum pads it to exactly that count.
+        Assert.Equal(scaledZero, KatLangEngine.Run(scaledZero).ToDisplayString());
+        Assert.Equal("0", KatLangEngine.Run($"MaxDecimalPlaces = 6\n\n{scaledZero}").ToDisplayString());
+        Assert.Equal("0.000000", KatLangEngine.Run($"MinDecimalPlaces = 6\n\n{scaledZero}").ToDisplayString());
+        Assert.Equal("0.000000", KatLangEngine.Run($"MinDecimalPlaces = 6\nMaxDecimalPlaces = 6\n\n{scaledZero}").ToDisplayString());
     }
 
     [Theory]
@@ -1139,40 +1147,54 @@ public class KatLangEngineTests
     [InlineData("(0 - 9e6144) * 10", "-Infinity")]   // ... and to -Infinity
     [InlineData("Math.Sqrt(-1)", "NaN")]             // domain violation
     [InlineData("Math.Ln(0)", "-Infinity")]
-    public void RunResult_ToDisplayString_DisplayDecimals_KeepsKatLangSpellingForNonFiniteResults(
+    public void RunResult_ToDisplayString_MaxDecimalPlaces_KeepsKatLangSpellingForNonFiniteResults(
         string expression, string expectedDisplay)
     {
         // The public language surface, not only the renderer: a non-finite result
         // produced by ordinary evaluation keeps KatLang's canonical spelling when
-        // DisplayDecimals is in effect, instead of falling through to the runtime's
+        // MaxDecimalPlaces is in effect, instead of falling through to the runtime's
         // fixed-point formatting of special values.
-        var source = $"DisplayDecimals = 2\n\n{expression}";
+        var source = $"MaxDecimalPlaces = 2\n\n{expression}";
         Assert.Equal(expectedDisplay, Assert.IsType<RunResult.Success>(KatLangEngine.Run(source)).ToDisplayString());
+
+        // A minimum alone, and a fixed two places, leave it alone as well: never padded.
+        Assert.Equal(
+            expectedDisplay,
+            Assert.IsType<RunResult.Success>(KatLangEngine.Run($"MinDecimalPlaces = 2\n\n{expression}")).ToDisplayString());
 
         // Nested inside a sequence value and a list, the same owner applies.
         Assert.Equal(
             $"(1.50, {expectedDisplay}, [{expectedDisplay}])",
             Assert.IsType<RunResult.Success>(KatLangEngine.Run(
-                $"DisplayDecimals = 2\n\n(1.5, {expression}, [{expression}])")).ToDisplayString());
+                $"MinDecimalPlaces = 2\nMaxDecimalPlaces = 2\n\n(1.5, {expression}, [{expression}])")).ToDisplayString());
     }
 
     [Fact]
-    public void RunResult_ToDisplayString_DisplayDecimals_KeepsTheSignedZeroFixedPointDistinction()
+    public void RunResult_ToDisplayString_DecimalPlaces_KeepTheSignOfZero_WhateverItsQuantum()
     {
-        // `-0` carries an integral quantum and stays plain; `-0.0` carries a
-        // fractional quantum and takes the requested precision. Neither is
-        // normalized into the other.
-        Assert.Equal("-0", KatLangEngine.Run("DisplayDecimals = 2\n\n-0").ToDisplayString());
-        Assert.Equal("-0.00", KatLangEngine.Run("DisplayDecimals = 2\n\n-0.0").ToDisplayString());
-        Assert.Equal("0.00", KatLangEngine.Run("DisplayDecimals = 2\n\n0.0").ToDisplayString());
+        // With a setting present the text depends on the VALUE, not on the stored quantum: `-0`
+        // and `-0.0` display alike, and the sign is kept. A maximum alone never pads; a minimum
+        // pads the whole-number zero too.
+        Assert.Equal("-0", KatLangEngine.Run("MaxDecimalPlaces = 2\n\n-0").ToDisplayString());
+        Assert.Equal("-0", KatLangEngine.Run("MaxDecimalPlaces = 2\n\n-0.0").ToDisplayString());
+        Assert.Equal("0", KatLangEngine.Run("MaxDecimalPlaces = 2\n\n0.0").ToDisplayString());
+
+        Assert.Equal("-0.00", KatLangEngine.Run("MinDecimalPlaces = 2\n\n-0").ToDisplayString());
+        Assert.Equal("-0.00", KatLangEngine.Run("MinDecimalPlaces = 2\n\n-0.0").ToDisplayString());
+        Assert.Equal("0.00", KatLangEngine.Run("MinDecimalPlaces = 2\n\n0.0").ToDisplayString());
+
+        // Without a setting the stored quantum is shown, exactly as before.
+        Assert.Equal("-0", KatLangEngine.Run("-0").ToDisplayString());
+        Assert.Equal("-0.0", KatLangEngine.Run("-0.0").ToDisplayString());
+        Assert.Equal("0.0", KatLangEngine.Run("0.0").ToDisplayString());
     }
 
     [Fact]
-    public void RunResult_ToDisplayString_DisplayDecimals_PreservesPrecisionForCalculations()
+    public void RunResult_ToDisplayString_MaxDecimalPlaces_PreservesPrecisionForCalculations()
     {
         var result = KatLangEngine.Run(
             """
-            DisplayDecimals = 2
+            MaxDecimalPlaces = 2
 
             A = Math.Pi
 
@@ -1185,7 +1207,7 @@ public class KatLangEngineTests
     }
 
     [Fact]
-    public void RunResult_ToDisplayString_DisplayDecimalsAbsent_UsesExistingDefaultRendering()
+    public void RunResult_ToDisplayString_MaxDecimalPlacesAbsent_UsesExistingDefaultRendering()
     {
         var result = KatLangEngine.Run("Math.Pi");
 
@@ -1193,23 +1215,72 @@ public class KatLangEngineTests
     }
 
     [Theory]
-    [InlineData("DisplayDecimals = -1\nMath.Pi", "non-negative integer")]
-    [InlineData("DisplayDecimals = 1.5\nMath.Pi", "integer")]
-    [InlineData("DisplayDecimals = 'x'\nMath.Pi", "single numeric value")]
-    [InlineData("DisplayDecimals = 2, 3\nMath.Pi", "single numeric value")]
-    [InlineData("DisplayDecimals = (2, 3)\nMath.Pi", "single numeric value")]
-    [InlineData("DisplayDecimals = 100\nMath.Pi", "between 0 and 99")]
-    [InlineData("DisplayDecimals = 1000000000\nMath.Pi", "between 0 and 99")]
-    public void Run_DisplayDecimals_InvalidGlobalDecimals_ReturnsEvalFailure(
+    [InlineData("MaxDecimalPlaces = -1\nMath.Pi", "non-negative integer")]
+    [InlineData("MaxDecimalPlaces = 1.5\nMath.Pi", "integer")]
+    [InlineData("MaxDecimalPlaces = 'x'\nMath.Pi", "single numeric value")]
+    [InlineData("MaxDecimalPlaces = 2, 3\nMath.Pi", "single numeric value")]
+    [InlineData("MaxDecimalPlaces = (2, 3)\nMath.Pi", "single numeric value")]
+    [InlineData("MaxDecimalPlaces = 100\nMath.Pi", "between 0 and 99")]
+    [InlineData("MaxDecimalPlaces = 1000000000\nMath.Pi", "between 0 and 99")]
+    [InlineData("MinDecimalPlaces = -1\nMath.Pi", "non-negative integer")]
+    [InlineData("MinDecimalPlaces = 1.5\nMath.Pi", "integer")]
+    [InlineData("MinDecimalPlaces = 'x'\nMath.Pi", "single numeric value")]
+    [InlineData("MinDecimalPlaces = 2, 3\nMath.Pi", "single numeric value")]
+    [InlineData("MinDecimalPlaces = (2, 3)\nMath.Pi", "single numeric value")]
+    [InlineData("MinDecimalPlaces = 100\nMath.Pi", "between 0 and 99")]
+    [InlineData("MinDecimalPlaces = 1000000000\nMath.Pi", "between 0 and 99")]
+    public void Run_DecimalPlaces_InvalidSourceValue_ReturnsEvalFailure(
         string source,
         string expectedMessage)
     {
+        SourceProvenance.ParseValid(source);
         var result = KatLangEngine.Run(source);
 
         var failure = Assert.IsType<RunResult.EvalFailure>(result);
         var error = Assert.Single(failure.Errors);
-        Assert.Contains("DisplayDecimals", error.Message, StringComparison.Ordinal);
+        Assert.Equal(KatLangErrorCode.IllegalInEval, error.Code);
+        Assert.Contains(source[..source.IndexOf(' ', StringComparison.Ordinal)] + " must be ", error.Message, StringComparison.Ordinal);
         Assert.Contains(expectedMessage, error.Message, StringComparison.Ordinal);
+        Assert.Equal(new SourceSpan(1, 1, 1, 17), error.Span);
+    }
+
+    [Fact]
+    public void RunResult_ToDisplayString_MinDecimalPlaces_PadsEveryNumericLeaf_AndNeverRounds()
+    {
+        var result = KatLangEngine.Run(
+            """
+            MinDecimalPlaces = 2
+
+            (10, (2.5, [1.234567, -3]), 'text', true)
+            """);
+
+        Assert.Equal("(10.00, (2.50, [1.234567, -3.00]), text, true)", result.ToDisplayString());
+    }
+
+    [Fact]
+    public void RunResult_ToDisplayString_MinDecimalPlaces_RemainsAReadableProperty()
+    {
+        // An ordinary property: readable, usable in an expression, and — like every number of
+        // the run — displayed under the setting it supplies.
+        Assert.Equal("2.00", KatLangEngine.Run("MinDecimalPlaces = 2\n\nMinDecimalPlaces").ToDisplayString());
+        Assert.Equal("3.00", KatLangEngine.Run("MinDecimalPlaces = 2\n\nA = MinDecimalPlaces + 1\n\nA").ToDisplayString());
+    }
+
+    [Fact]
+    public void RunResult_ToDisplayString_MinDecimalPlaces_OnlyUsesTopLevelProperty()
+    {
+        var result = KatLangEngine.Run(
+            """
+            A = {
+                MinDecimalPlaces = 2
+
+                10
+            }
+
+            A
+            """);
+
+        Assert.Equal("10", result.ToDisplayString());
     }
 
     [Fact]

@@ -7,14 +7,16 @@ internal static class HelpText
 {
     // The transport bounds quoted under --allow-loading are HttpSourceDownloader's
     // MaxResponseBodyBytes and DownloadTimeout, and the range quoted under
-    // --display-decimals is KatLang's RunOptions.MaxDisplayDecimals; the help tests pin
-    // them to those constants.
+    // --min-decimal-places and --max-decimal-places is KatLang's
+    // RunOptions.DecimalPlacesLimit; the help tests pin them to those constants.
     public const string Usage = """
         Usage:
           katlang run <file> [--allow-loading] [--random-seed <integer>]
-                             [--display-decimals <integer>]
+                             [--min-decimal-places <integer>]
+                             [--max-decimal-places <integer>]
           katlang eval <source> [--allow-loading] [--random-seed <integer>]
-                                [--display-decimals <integer>]
+                                [--min-decimal-places <integer>]
+                                [--max-decimal-places <integer>]
           katlang check <file> [--allow-loading]
 
         Options:
@@ -42,14 +44,32 @@ internal static class HelpText
                              not evaluate. KatLang randomness is not
                              cryptographically secure.
 
-          --display-decimals <integer>
-                             Display filter: digits shown after the decimal
-                             point in displayed numbers, from 0 through 99.
-                             A program's own DisplayDecimals property is a
-                             filter too; when both are set, the smaller
-                             count applies. Display only: values,
-                             calculations, and comparisons are unchanged.
+          --min-decimal-places <integer>
+                             The fewest digits shown after the decimal point
+                             in displayed numbers, from 0 through 99: a
+                             number with fewer is padded with zeros (10 shows
+                             as 10.00 at 2). It never rounds. A program's own
+                             MinDecimalPlaces property is a minimum too; when
+                             both are set, the smaller count applies.
                              Not valid for check, which does not evaluate.
+
+          --max-decimal-places <integer>
+                             The most digits shown after the decimal point in
+                             displayed numbers, from 0 through 99: a number
+                             with more is rounded, ties away from zero. It
+                             never pads. A program's own MaxDecimalPlaces
+                             property is a maximum too; when both are set,
+                             the smaller count applies.
+                             Not valid for check, which does not evaluate.
+
+                             The two options are independent, and both are
+                             display only: values, calculations, and
+                             comparisons are unchanged. With either one set,
+                             zeros at the end of the decimal part are shown
+                             only when the minimum asks for them. Set both to
+                             the same count for a fixed number of places
+                             (2 and 2 for money). A minimum above the maximum
+                             is an error.
 
           --version          Show the KatLang version.
           --help             Show help.

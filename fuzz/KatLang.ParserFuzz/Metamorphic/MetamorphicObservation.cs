@@ -43,7 +43,7 @@ internal enum MetamorphicFacets
     /// <summary>The run's own budget counters.</summary>
     OperationalCounters = 1 << 6,
 
-    /// <summary>The engine's top-level property channel (<c>DisplayDecimals</c>).</summary>
+    /// <summary>The engine's top-level property channel (<c>MinDecimalPlaces</c>, <c>MaxDecimalPlaces</c>).</summary>
     TopLevelProperty = 1 << 7,
 
     /// <summary>What <c>Evaluator.RunCountedObserved</c> projects — the Phase 1/2 default.</summary>

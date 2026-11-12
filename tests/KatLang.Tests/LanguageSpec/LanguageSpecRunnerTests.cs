@@ -393,10 +393,15 @@ public class LanguageSpecRunnerTests
             "closed-list-strict-value-forwarding",
             "native-flat-callback-binding",
             // Final audit (September 2026): Decimal128-only observations (quantum-visible
-            // sort stability, the DisplayDecimals tie rule, near-1 logarithm accuracy).
+            // sort stability, the MaxDecimalPlaces tie rule, near-1 logarithm accuracy).
             "order-is-stable",
-            "display-decimals-rounds-ties-away-from-zero",
+            "max-decimal-places-rounds-ties-away-from-zero",
             "logarithm-near-one-is-accurate",
+            // The decimal-places display rule (owner decision 2026-11-12): C#-only host
+            // presentation over fractional Decimal128 values; Lean models no rendering.
+            "min-decimal-places-pads-and-never-rounds",
+            "equal-min-and-max-decimal-places-fix-the-places",
+            "decimal-places-show-the-value-not-the-stored-digits",
             // Numeric audit #6 (September 2026): the correctly rounded exact mean and the
             // sign-symmetric delegated power are Decimal128 accuracy properties.
             "avg-is-the-correctly-rounded-exact-mean",
@@ -435,7 +440,7 @@ public class LanguageSpecRunnerTests
     {
         const int MinimumEncoderDerivedCases = 344;
         const int MaximumHandAuthoredOverrides = 0;
-        const int MaximumCSharpOnlyCases = 22;
+        const int MaximumCSharpOnlyCases = 24;
 
         var derived = Cases.Count(c => c.DerivedLeanProgram is not null);
         var overrides = Cases.Count(c => c.LeanProgramOverride is not null);

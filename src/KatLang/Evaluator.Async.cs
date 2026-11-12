@@ -590,14 +590,16 @@ public static partial class Evaluator
     }
 
     /// <summary>
-    /// Async twin of the internal <see cref="RunCountedWithTopLevelProperty"/> — the funnel
-    /// <see cref="KatLangEngine.RunAsync"/> evaluates through. <paramref name="treeRequiresAsyncEvaluation"/>
+    /// Async twin of the internal <see cref="RunCountedWithTopLevelProperties"/> — the funnel
+    /// <see cref="KatLangEngine.RunAsync"/> evaluates through, with the same ordered reads of
+    /// <paramref name="topLevelPropertyNames"/> after a successful output and the same
+    /// first-failure stop. <paramref name="treeRequiresAsyncEvaluation"/>
     /// is the caller's once-per-call tree fact (<see cref="DecideTreeRequiresAsyncEvaluation"/>);
     /// <c>null</c> lets the route rule decide it, still once.
     /// </summary>
-    internal static async ValueTask<EvalResult<CountedRootProgramResult>> RunCountedWithTopLevelPropertyAsync(
+    internal static async ValueTask<EvalResult<CountedRootProgramResult>> RunCountedWithTopLevelPropertiesAsync(
         Expr expr,
-        string topLevelPropertyName,
+        IReadOnlyList<string> topLevelPropertyNames,
         IZeroArgPropertyResultCache zeroArgPropertyResultCache,
         EvaluationLimits? limits = null,
         HostOperations? hostOperations = null,
@@ -606,16 +608,16 @@ public static partial class Evaluator
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(zeroArgPropertyResultCache);
-        ArgumentException.ThrowIfNullOrWhiteSpace(topLevelPropertyName);
+        RequireTopLevelPropertyNames(topLevelPropertyNames);
 
         if (!RequiresAsyncEvaluationPath(expr, zeroArgPropertyResultCache, hostOperations, ref treeRequiresAsyncEvaluation))
         {
-            return RunCountedWithTopLevelProperty(
-                expr, topLevelPropertyName, zeroArgPropertyResultCache, limits, hostOperations, randomSeed,
+            return RunCountedWithTopLevelProperties(
+                expr, topLevelPropertyNames, zeroArgPropertyResultCache, limits, hostOperations, randomSeed,
                 treeRequiresAsyncEvaluation, cancellationToken);
         }
 
-        // Twin path: the same shared preparation as RunCountedWithTopLevelProperty;
+        // Twin path: the same shared preparation as RunCountedWithTopLevelProperties;
         // only the dispatch below is twin-specific.
         using var preparation = PrepareAsyncTwinRun(
             expr, zeroArgPropertyResultCache, loopDiagnostics: null, sequenceDiagnostics: null, limits, observations: null, hostOperations, randomSeed,
@@ -627,7 +629,7 @@ public static partial class Evaluator
         EvalResult<CountedRootProgramResult> result;
         if (expr is Expr.AlgorithmExpr(var alg))
         {
-            result = await EvalRootProgramCountedWithTopLevelPropertyAsync(alg, expr.Span, ctx, topLevelPropertyName)
+            result = await EvalRootProgramCountedWithTopLevelPropertiesAsync(alg, expr.Span, ctx, topLevelPropertyNames)
                 .ConfigureAwait(false);
         }
         else
@@ -636,10 +638,10 @@ public static partial class Evaluator
             result = outputR.IsError
                 ? outputR.Error
                 : EvalResult<CountedRootProgramResult>.Ok(
-                    new CountedRootProgramResult(outputR.Value, TopLevelProperty: null));
+                    new CountedRootProgramResult(outputR.Value, new CountedResult?[topLevelPropertyNames.Count]));
         }
 
-        result = ExportRunValue(result, expr, topLevelPropertyName, ctx);
+        result = ExportRunValue(result, expr, topLevelPropertyNames, ctx);
         ctx.Budget.ObserveCancellation();
         return result;
     }
@@ -758,12 +760,12 @@ public static partial class Evaluator
         return MissingImplicitArguments<CountedResult>(wired, blockSpan);
     }
 
-    /// <summary>MIRROR OF <see cref="EvalRootProgramCountedWithTopLevelProperty"/> — keep in lock-step.</summary>
-    private static async ValueTask<EvalResult<CountedRootProgramResult>> EvalRootProgramCountedWithTopLevelPropertyAsync(
+    /// <summary>MIRROR OF <see cref="EvalRootProgramCountedWithTopLevelProperties"/> — keep in lock-step.</summary>
+    private static async ValueTask<EvalResult<CountedRootProgramResult>> EvalRootProgramCountedWithTopLevelPropertiesAsync(
         Algorithm alg,
         SourceSpan? span,
         EvalCtx ctx,
-        string topLevelPropertyName)
+        IReadOnlyList<string> topLevelPropertyNames)
     {
         var wired = WireToCaller(ctx, alg);
         if (!AcceptsZeroSuppliedArguments(wired))
@@ -787,10 +789,18 @@ public static partial class Evaluator
             return outputR.Error;
         }
 
-        var propertyR = await EvalTopLevelZeroArgPropertyCountedAsync(wired, topLevelPropertyName, ctx, []).ConfigureAwait(false);
-        return propertyR.IsError
-            ? propertyR.Error
-            : EvalResult<CountedRootProgramResult>.Ok(new CountedRootProgramResult(outputR.Value, propertyR.Value));
+        // In the given order; the first failing read is the run's failure and no later name is read.
+        var properties = new CountedResult?[topLevelPropertyNames.Count];
+        for (var i = 0; i < properties.Length; i++)
+        {
+            var propertyR = await EvalTopLevelZeroArgPropertyCountedAsync(wired, topLevelPropertyNames[i], ctx, []).ConfigureAwait(false);
+            if (propertyR.IsError)
+                return propertyR.Error;
+
+            properties[i] = propertyR.Value;
+        }
+
+        return EvalResult<CountedRootProgramResult>.Ok(new CountedRootProgramResult(outputR.Value, properties));
     }
 
     /// <summary>MIRROR OF <see cref="EvalTopLevelZeroArgPropertyCounted"/> — keep in lock-step.</summary>

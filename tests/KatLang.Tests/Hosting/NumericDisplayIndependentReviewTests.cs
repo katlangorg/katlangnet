@@ -106,24 +106,24 @@ public sealed class NumericDisplayIndependentReviewTests
     public async Task RetainedResultsAndSharedFormatter_StayIndependentAcrossUnfilteredAndFailedRuns()
     {
         var formatter = new AtomFormatter();
-        var shared = new RunOptions { DefaultDisplayDecimals = 5, RandomSeed = 31 };
+        var shared = new RunOptions { MaxDecimalPlaces = 5, RandomSeed = 31 };
         var runs = new List<(RunResult.Success Run, int? Decimals, string Text)>();
         foreach (var (source, options, decimals, text) in new (string, RunOptions, int?, string)[]
         {
-            ("DisplayDecimals = 7\n1.55555", shared, 5, "1.55555"),
+            ("MaxDecimalPlaces = 7\n1.55555", shared, 5, "1.55555"),
             ("1.55555", new RunOptions(), null, "1.55555"),
-            ("DisplayDecimals = 2\n1.55555", shared, 2, "1.56"),
+            ("MaxDecimalPlaces = 2\n1.55555", shared, 2, "1.56"),
             ("1.55555", shared, 5, "1.55555"),
         })
         {
             var run = Assert.IsType<RunResult.Success>(await KatLangEngine.RunAsync(source, options));
             runs.Add((run, decimals, text));
-            Assert.IsType<RunResult.EvalFailure>(await KatLangEngine.RunAsync("DisplayDecimals = 100\n1", shared));
-            Assert.Equal(5, shared.DefaultDisplayDecimals);
+            Assert.IsType<RunResult.EvalFailure>(await KatLangEngine.RunAsync("MaxDecimalPlaces = 100\n1", shared));
+            Assert.Equal(5, shared.MaxDecimalPlaces);
         }
         foreach (var (run, decimals, text) in runs.AsEnumerable().Reverse())
         {
-            Assert.Equal(decimals, run.DisplayOptions.Decimals);
+            Assert.Equal(decimals, run.DisplayOptions.MaxDecimalPlaces);
             Assert.Equal(text, formatter.Format(run));
             Assert.Equal(text, run.ToDisplayString());
             // A per-call length cap must preserve the already composed precision.
@@ -149,10 +149,10 @@ public sealed class NumericDisplayIndependentReviewTests
             entered[lane].SetResult();
             return await gates[lane].Task;
         }, "lane"));
-        var shared = new RunOptions { DefaultDisplayDecimals = 5, HostOperations = operations };
+        var shared = new RunOptions { MaxDecimalPlaces = 5, HostOperations = operations };
         var formatter = new AtomFormatter();
         var pending = Enumerable.Range(0, 3).Select(i => KatLangEngine.RunAsync(
-            $"DisplayDecimals = Digits({i})\n1.55555\n2.55555", shared)).ToArray();
+            $"MaxDecimalPlaces = Digits({i})\n1.55555\n2.55555", shared)).ToArray();
         try
         {
             await Task.WhenAll(entered.Select(g => g.Task)).WaitAsync(Timeout);
@@ -161,7 +161,7 @@ public sealed class NumericDisplayIndependentReviewTests
             {
                 gates[i].SetResult(new Result.Atom(new[] { 7, 2, 5 }[i]));
                 var run = Assert.IsType<RunResult.Success>(await pending[i].WaitAsync(Timeout));
-                Assert.Equal(new[] { 5, 2, 5 }[i], run.DisplayOptions.Decimals);
+                Assert.Equal(new[] { 5, 2, 5 }[i], run.DisplayOptions.MaxDecimalPlaces);
             }
         }
         finally
@@ -172,7 +172,7 @@ public sealed class NumericDisplayIndependentReviewTests
         Assert.Equal("1.56|2.56", formatter.Format(complete[1]));
         Assert.Equal("1.55555|2.55555", formatter.Format(complete[0]));
         Assert.Equal("1.55555|2.55555", formatter.Format(complete[2]));
-        Assert.Equal(5, shared.DefaultDisplayDecimals);
+        Assert.Equal(5, shared.MaxDecimalPlaces);
     }
 
     [Fact]
@@ -189,18 +189,18 @@ public sealed class NumericDisplayIndependentReviewTests
             int? source = setting switch { "" => null, "1 + 1" => 2, "-0" => 0, "{ 7 }" => 7,
                 _ => int.Parse(setting, CultureInfo.InvariantCulture) };
             var effective = new[] { source, host }.OfType<int>().Order().Cast<int?>().FirstOrDefault();
-            var code = setting.Length == 0 ? body : $"DisplayDecimals = {setting}\n{body}";
+            var code = setting.Length == 0 ? body : $"MaxDecimalPlaces = {setting}\n{body}";
             SourceProvenance.ParseValid(code);
             foreach (var twin in new[] { false, true })
             {
-                var options = new RunOptions { DefaultDisplayDecimals = host,
+                var options = new RunOptions { MaxDecimalPlaces = host,
                     HostOperations = twin ? HostOperations.Create(HostOperation.CreateAsync("unused", (_, _) =>
                         ValueTask.FromResult<Result>(new Result.Atom(0)))) : null };
                 var run = Assert.IsType<RunResult.Success>(await KatLangEngine.RunAsync(code, options));
-                Assert.Equal(effective, run.DisplayOptions.Decimals);
+                Assert.Equal(effective, run.DisplayOptions.MaxDecimalPlaces);
                 Assert.Equal(exact, NumericRepresentativeSelectionTests.Exact(run.Value));
                 var reference = Assert.IsType<RunResult.Success>(KatLangEngine.Run(body,
-                    new RunOptions { DefaultDisplayDecimals = effective }));
+                    new RunOptions { MaxDecimalPlaces = effective }));
                 foreach (var formatter in new[] { OutputFormatters.Exact, OutputFormatters.Readable, OutputFormatters.Concise })
                     Assert.Equal(formatter.Format(reference), formatter.Format(run));
                 foreach (var limit in new[] { 1, 8, 40, 99 })

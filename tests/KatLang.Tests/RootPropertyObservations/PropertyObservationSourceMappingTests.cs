@@ -26,7 +26,7 @@ public class PropertyObservationSourceMappingTests
         "A = 1\nF = {\n    A = 2\n    A\n}\nF + A",
         "x, y = 1, 2\nx + y",
         "A = 5\nB = A\nB",
-        "X = 1 / 3\nDisplayDecimals = 2\nX",
+        "X = 1 / 3\nMaxDecimalPlaces = 2\nX",
         "Describe(0) = 'zero'\nDescribe(n) = 'other'\nD = Describe(0)\nD",
         "Only(*xs) = 7\nLong = Only +\n    1\nLong",
         Meta + "R = Capture(Square(5))\nL = [R, 1]\nR.Invoke() + count(L)",

@@ -353,10 +353,11 @@ Random numbers follow the same rule: with `Roll = randomInt(1, 7)`, `Roll` is on
 
 ### Displayed Decimal Places
 
-A property named `DisplayDecimals` at the top level of a program is a display filter: it limits how many decimal places the program's results show:
+Two properties at the top level of a program decide how many digits its results show after the decimal point: `MinDecimalPlaces`, the fewest, and `MaxDecimalPlaces`, the most:
 
 ```
-DisplayDecimals = 4
+MinDecimalPlaces = 2
+MaxDecimalPlaces = 4
 
 pi
 1 / 7
@@ -368,13 +369,41 @@ pi
 ```
 3.1416
 0.1429
-2.5000
-10
+2.50
+10.00
 ```
 
-Numbers with decimal places are rounded or padded to exactly that many places, while a number without decimal places, such as the `10` of `5 * 2`, is shown as it is. The setting changes only the display: calculations and comparisons still use the full values. It must be a whole number from 0 to 99.
+A number with more decimal places than the maximum is rounded to it, and one with fewer than the minimum is filled up with zeros — a whole number too, such as the `10` of `5 * 2`. A digit exactly in the middle rounds away from zero, so `0.125` shown with two places is `0.13`.
 
-The program that runs your code can apply a display filter of its own, such as the command-line option `--display-decimals`. When both are present, the smaller count is used: with the program above, `--display-decimals 2` shows `3.14`, `0.14` and `2.50`, while `--display-decimals 6` still shows four places. Only a `DisplayDecimals` written at the top level of the program is a filter; anywhere else it is an ordinary name.
+These are three different things:
+
+- **Precision** is how exactly a number is calculated. KatLang calculates with 34 significant digits, and no display setting changes that: calculations and comparisons always use the full value.
+- **The maximum** limits how many of those digits are shown after the decimal point.
+- **The minimum** says how many are shown at least.
+
+The two settings are independent, and either one can be used alone. With only a maximum nothing is filled up: `MaxDecimalPlaces = 4` shows `10` as `10`. With only a minimum nothing is rounded: `MinDecimalPlaces = 2` shows `1.234567` as `1.234567`. For a fixed number of decimal places, set both to the same value — for money, two and two:
+
+```
+MinDecimalPlaces = 2
+MaxDecimalPlaces = 2
+
+Price = 19.99
+
+Price * 3
+Price * 3 / 7
+1200
+```
+
+**Results:**
+```
+59.97
+8.57
+1200.00
+```
+
+Each setting must be a whole number from 0 to 99, and the minimum must not be greater than the maximum; either mistake is an error. When neither is set, a number is shown with the digits it has, so a result written as `2.50` stays `2.50`. As soon as one of them is set, zeros at the end of the decimal part are shown only when the minimum asks for them.
+
+The program that runs your code can have settings of its own, such as the command-line options `--min-decimal-places` and `--max-decimal-places`. Each one is combined with the program's property of the same name, and the smaller number is used: with the first program above, `--max-decimal-places 3` shows `3.142`, `0.143`, `2.50` and `10.00`, while `--max-decimal-places 6` still shows at most four places. Only a `MinDecimalPlaces` or `MaxDecimalPlaces` written at the top level of the program is a setting; anywhere else it is an ordinary name.
 
 ---
 
@@ -770,7 +799,7 @@ A string is written on one line and cannot contain a single quote. Single quotes
 
 ### Results Are Values, Not Messages
 
-KatLang is a language for calculation, and a result is the calculated value itself, not a sentence about it. There is no `+` for text — `'a' + 'b'` is an error — and no other way to build one string out of several values, so a number is never turned into part of a string. It stays a number, with its full precision, and display settings such as `DisplayDecimals` still apply to it:
+KatLang is a language for calculation, and a result is the calculated value itself, not a sentence about it. There is no `+` for text — `'a' + 'b'` is an error — and no other way to build one string out of several values, so a number is never turned into part of a string. It stays a number, with its full precision, and the display settings `MinDecimalPlaces` and `MaxDecimalPlaces` still apply to it:
 
 ```
 Price = 19.99
@@ -918,7 +947,7 @@ true
 
 It is a built-in dot operation rather than a call, so it exists only in dot form — `string(42)` is not defined. By the rule above, an algorithm with its own member named `string` uses that member, and a definition of your own named `string` is a separate thing, reached only by the call `string(...)`.
 
-Empty parentheses are allowed, as in `42.string()`. `.string` gives all of a number's digits, whatever `DisplayDecimals` says, and it works on a number only: text, Booleans, sequences, and lists have no `.string`.
+Empty parentheses are allowed, as in `42.string()`. `.string` gives all of a number's digits, whatever `MinDecimalPlaces` and `MaxDecimalPlaces` say, and it works on a number only: text, Booleans, sequences, and lists have no `.string`.
 
 ---
 

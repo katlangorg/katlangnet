@@ -6,9 +6,10 @@ namespace KatLang.Formatting;
 /// <see cref="RunResult.ToDisplayString"/> — one implementation, two entry
 /// points — so its output is byte-for-byte identical to canonical display:
 /// platform newline row separators, canonical sequence and list punctuation,
-/// culture-invariant numbers, the run's effective display decimals
-/// (the <c>DisplayDecimals</c> and <see cref="RunOptions.DefaultDisplayDecimals"/> filters, composed by
-/// their minimum), raw unquoted strings
+/// culture-invariant numbers, the run's effective decimal places
+/// (the root's <c>MinDecimalPlaces</c> / <c>MaxDecimalPlaces</c> properties and
+/// <see cref="RunOptions.MinDecimalPlaces"/> / <see cref="RunOptions.MaxDecimalPlaces"/>, each setting
+/// composed with its counterpart by their minimum), raw unquoted strings
 /// (every character preserved verbatim, including <c>_</c>), and the shared
 /// bounded overflow behavior.
 ///

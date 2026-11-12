@@ -318,7 +318,7 @@ Before emitting code, verify silently:
 - Range tests are written as one comparison chain (`a < b < c`, `low <= x <= high`): the chain compares each adjacent pair, evaluates every operand once, and is the idiomatic spelling; `a < b and b < c` is equivalent for a plain value but evaluates `b` twice.
 - `/` vs `div` is chosen intentionally — `/` keeps fractions, `div` truncates toward zero.
 - `avg` returns the decimal arithmetic mean (the exact total divided by the count, rounded once) and is used freely for fractional means.
-- Display-precision requests use a top-level `DisplayDecimals = n`.
+- Display-precision requests use the top-level `MaxDecimalPlaces = n` (at most `n` decimal places) and `MinDecimalPlaces = n` (at least `n`); both set to the same `n` show exactly `n` places.
 - Math arities are correct in every spelling, especially `log(value, base)`, `pow(x, y)`, `atan2(y, x)`, `round(value, digits)`, `random(start, end)`, and `randomInt(start, end)` (identically for `Math.Log`, `Math.Pow`, `Math.Atan2`, `Math.Round`, `Math.Random`, and `Math.RandomInt`).
 - Numeric literals use lowercase `e`, digits on both sides of the dot, and optional `_` separators.
 - Strings are single-line, single-quoted raw literals: no double quotes, no escapes, no interpolation.
@@ -496,7 +496,7 @@ KatLang string literals are first-class runtime values written in single quotes:
 ### Results Are Values, Not Messages
 
 - KatLang is for calculation: output the calculated value itself. Do not wrap a number in explanatory text, and do not add code whose only purpose is to label an output — the host shows each result beside the expression that produced it.
-- A number that is output as a number keeps its precision and takes the host's numeric formatting (`DisplayDecimals`); text cannot.
+- A number that is output as a number keeps its precision and takes the host's numeric formatting (`MinDecimalPlaces`, `MaxDecimalPlaces`); text cannot.
 - Use a string only where a text VALUE is the data: a category, a code, a verdict, a name. When such a value belongs beside a number, they are separate outputs or separate items (`Score, Verdict`), never one built string.
 - Never invent a replacement for interpolation: no `+` on strings, no `format`, `print`, `concat` or `join` function, and no "text-building" helper algorithm.
 
@@ -1423,27 +1423,40 @@ BETTER — specific branch first:
     - `atan2(y, x)` / `Math.Atan2(y, x)` is the two-argument arctangent in standard `atan2(y, x)` order (`y` first, then `x`).
 - Single-argument logarithms: `ln(x)` / `Math.Ln(x)` is the natural logarithm (base e); `lg(x)` / `Math.Lg(x)` is the base-10 logarithm.
 
-## Display Precision (DisplayDecimals)
+## Display Precision (MinDecimalPlaces, MaxDecimalPlaces)
 
-`DisplayDecimals = n` is a special top-level property: a display filter that limits how many digits after the decimal point are shown in the displayed result.
+Two special top-level properties decide how many digits after the decimal point the displayed result shows. Keep three things apart: numeric PRECISION is how exactly a value is calculated, and KatLang always calculates with full precision; `MaxDecimalPlaces` limits how many decimal places are SHOWN; `MinDecimalPlaces` says how many are shown at least.
 
-- It must be a top-level property (a plain top-level definition, not nested inside another algorithm); anywhere else `DisplayDecimals` is an ordinary name with no display effect.
-- `n` is an integer from `0` to `99`.
-- It is a filter, not an absolute setting: the host that runs the program (the CLI's `--display-decimals`, an application's display setting) may apply a display filter of its own, and then the smaller count is shown. Without a host filter, `n` decides.
-- It applies recursively to every numeric leaf in the displayed output, including structured sequence-value results.
-- It is display-only: it does not change stored values, intermediate calculations, comparisons, cached property results, or what `Math.Round` would produce.
-- Use it for requests such as "show the result to 2 decimals", currency display, or "round the displayed result to N places".
+- `MaxDecimalPlaces = n`: a number with more than `n` decimal places is displayed rounded to `n` places (a tie rounds away from zero). It never pads.
+- `MinDecimalPlaces = n`: a number with fewer than `n` decimal places is displayed padded with zeros, whole numbers included (`10` shows as `10.00` at 2). It never rounds.
+- They are independent: either may be used alone, and neither supplies a value for the other. For a FIXED number of places set both to the same value — `MinDecimalPlaces = 2` with `MaxDecimalPlaces = 2` for money.
+- Each must be a top-level property (a plain top-level definition, not nested inside another algorithm); anywhere else the name is an ordinary name with no display effect.
+- `n` is an integer from `0` to `99`, and the minimum must not be greater than the maximum; either mistake is an error.
+- With either one set, zeros at the end of the decimal part are shown only when the minimum asks for them (`2.50` shows as `2.5` under `MaxDecimalPlaces = 4`); with neither set, a number shows the digits it has.
+- They are not absolute settings: the host that runs the program (the CLI's `--min-decimal-places` / `--max-decimal-places`, an application's display setting) may have settings of its own. Each is combined with the program's property of the same name, and the smaller count is used. Without a host setting, `n` decides.
+- They apply recursively to every numeric leaf in the displayed output, including structured sequence-value results; strings and Booleans are untouched.
+- They are display-only: they do not change stored values, intermediate calculations, comparisons, cached property results, `.string`, or what `Math.Round` would produce.
+- Use `MaxDecimalPlaces` for requests such as "round the displayed result to N places" or "show at most N decimals"; use both, with the same value, for "show exactly N decimals" and for currency display.
 - Use `Math.Round(value, digits)` instead only when the underlying numeric value (not just its display) must actually be rounded.
 
-Example:
+Example (at most two decimal places):
 
-    DisplayDecimals = 2
+    MaxDecimalPlaces = 2
     (Math.Pi, Math.Exp(1))
 
 This displays `(3.14, 2.72)` while the stored values keep full precision.
 
+Example (exactly two decimal places, the money idiom):
+
+    MinDecimalPlaces = 2
+    MaxDecimalPlaces = 2
+    (19.99 * 3, 1200)
+
+This displays `(59.97, 1200.00)`.
+
 Do not invent unsupported display forms — none of these exist:
 
+    DisplayDecimals = n
     value.displayDecimals(n)
     displayDecimals(value, n)
     Display = { Decimals = n }
@@ -1683,7 +1696,7 @@ Many(), Many(()), Many((), 3), Many([(1, 2)]*)
 
 === BEGIN GENERATED: katlang-spec-examples (DO NOT EDIT BY HAND) ===
 
-Verified reference examples (176 of the 538-case canonical language specification,
+Verified reference examples (176 of the 541-case canonical language specification,
 tests/KatLang.Tests/LanguageSpec/LanguageSpecCorpus.cs). Every program and expected
 output below is executed against the KatLang engine and (where representable)
 guarded against the Lean model on every build. Treat these as ground truth for the

@@ -10,7 +10,7 @@ namespace KatLang;
 /// <summary>
 /// The LOW-LEVEL evaluator: evaluates a host-built <see cref="Expr"/> exactly as supplied —
 /// without parsing, module loading, front-end elaboration, or the engine's reading of the
-/// root's <c>DisplayDecimals</c> display filter — and returns the structured value or error as an
+/// root's <c>MinDecimalPlaces</c> / <c>MaxDecimalPlaces</c> display settings — and returns the structured value or error as an
 /// <see cref="EvalResult{T}"/>. It is not a source runner: source text goes through
 /// <see cref="KatLangEngine"/> (or <see cref="Parser"/> to elaborate without evaluating), and
 /// an elaborated <see cref="ParseResult.Root"/> may be evaluated here only when it has no
@@ -3168,9 +3168,18 @@ public static partial class Evaluator
         return result;
     }
 
-    internal static EvalResult<CountedRootProgramResult> RunCountedWithTopLevelProperty(
+    /// <summary>
+    /// The counted run plus the root's named top-level properties — the funnel
+    /// <see cref="KatLangEngine.Run"/> evaluates through. After the output SUCCEEDS, each name in
+    /// <paramref name="topLevelPropertyNames"/> is read in the given order by the ordinary cached
+    /// zero-argument VALUE read of the same run (same budget, property cache, random stream, host
+    /// operations and cancellation token); a name the root does not declare reads as <c>null</c>
+    /// without touching the cache. The FIRST failing read fails the run with its own error and no
+    /// later name is attempted; a failed output reads none.
+    /// </summary>
+    internal static EvalResult<CountedRootProgramResult> RunCountedWithTopLevelProperties(
         Expr expr,
-        string topLevelPropertyName,
+        IReadOnlyList<string> topLevelPropertyNames,
         IZeroArgPropertyResultCache zeroArgPropertyResultCache,
         EvaluationLimits? limits = null,
         HostOperations? hostOperations = null,
@@ -3194,13 +3203,13 @@ public static partial class Evaluator
         if (preparation.Error is { } preparationError)
             return preparationError;
 
-        ArgumentException.ThrowIfNullOrWhiteSpace(topLevelPropertyName);
+        RequireTopLevelPropertyNames(topLevelPropertyNames);
 
         var ctx = preparation.Ctx;
         EvalResult<CountedRootProgramResult> result;
         if (expr is Expr.AlgorithmExpr(var alg))
         {
-            result = EvalRootProgramCountedWithTopLevelProperty(alg, expr.Span, ctx, topLevelPropertyName);
+            result = EvalRootProgramCountedWithTopLevelProperties(alg, expr.Span, ctx, topLevelPropertyNames);
         }
         else
         {
@@ -3208,12 +3217,24 @@ public static partial class Evaluator
             result = outputR.IsError
                 ? outputR.Error
                 : EvalResult<CountedRootProgramResult>.Ok(
-                    new CountedRootProgramResult(outputR.Value, TopLevelProperty: null));
+                    new CountedRootProgramResult(outputR.Value, new CountedResult?[topLevelPropertyNames.Count]));
         }
 
-        result = ExportRunValue(result, expr, topLevelPropertyName, ctx);
+        result = ExportRunValue(result, expr, topLevelPropertyNames, ctx);
         ctx.Budget.ObserveCancellation();
         return result;
+    }
+
+    /// <summary>
+    /// The argument contract of the top-level property names shared by
+    /// <see cref="RunCountedWithTopLevelProperties"/> and its async twin: a non-null list of
+    /// non-blank names.
+    /// </summary>
+    private static void RequireTopLevelPropertyNames(IReadOnlyList<string> topLevelPropertyNames)
+    {
+        ArgumentNullException.ThrowIfNull(topLevelPropertyNames);
+        for (var i = 0; i < topLevelPropertyNames.Count; i++)
+            ArgumentException.ThrowIfNullOrWhiteSpace(topLevelPropertyNames[i], nameof(topLevelPropertyNames));
     }
 
     private static EvalResult<Result> EvalRootProgram(Algorithm alg, SourceSpan? span, EvalCtx ctx)
@@ -3262,11 +3283,11 @@ public static partial class Evaluator
         return MissingImplicitArguments<CountedResult>(wired, blockSpan);
     }
 
-    private static EvalResult<CountedRootProgramResult> EvalRootProgramCountedWithTopLevelProperty(
+    private static EvalResult<CountedRootProgramResult> EvalRootProgramCountedWithTopLevelProperties(
         Algorithm alg,
         SourceSpan? span,
         EvalCtx ctx,
-        string topLevelPropertyName)
+        IReadOnlyList<string> topLevelPropertyNames)
     {
         var wired = WireToCaller(ctx, alg);
         if (!AcceptsZeroSuppliedArguments(wired))
@@ -3290,10 +3311,18 @@ public static partial class Evaluator
             return outputR.Error;
         }
 
-        var propertyR = EvalTopLevelZeroArgPropertyCounted(wired, topLevelPropertyName, ctx, []);
-        return propertyR.IsError
-            ? propertyR.Error
-            : EvalResult<CountedRootProgramResult>.Ok(new CountedRootProgramResult(outputR.Value, propertyR.Value));
+        // In the given order; the first failing read is the run's failure and no later name is read.
+        var properties = new CountedResult?[topLevelPropertyNames.Count];
+        for (var i = 0; i < properties.Length; i++)
+        {
+            var propertyR = EvalTopLevelZeroArgPropertyCounted(wired, topLevelPropertyNames[i], ctx, []);
+            if (propertyR.IsError)
+                return propertyR.Error;
+
+            properties[i] = propertyR.Value;
+        }
+
+        return EvalResult<CountedRootProgramResult>.Ok(new CountedRootProgramResult(outputR.Value, properties));
     }
 
     private static EvalResult<CountedResult?> EvalTopLevelZeroArgPropertyCounted(

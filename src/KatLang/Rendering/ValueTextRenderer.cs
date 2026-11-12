@@ -131,45 +131,100 @@ internal static class ValueTextRenderer
     internal static string FormatBool(bool value) => value ? "true" : "false";
 
     /// <summary>
-    /// Formats one numeric atom for display. Formatting is presentation only —
-    /// the computed Decimal128 value is never truncated or re-rounded by the
-    /// runtime, so the default rendering shows the value's full precision and
-    /// quantum exactly as computed (invariant culture: <c>NaN</c>,
-    /// <c>Infinity</c>, <c>-Infinity</c>, and <c>-0</c> render literally).
-    /// An effective display-decimals count — the minimum of the run's present
-    /// display filters, a program root's <c>DisplayDecimals</c> property and the
-    /// host's <see cref="RunOptions.DefaultDisplayDecimals"/>, composed once per run
-    /// by the engine — opts into fixed-point presentation through this one method,
-    /// whichever filter supplied it; whole numbers
-    /// carrying an integral quantum stay plain there, mirroring the previous
-    /// scale-zero rule, and a non-finite value keeps its canonical spelling on
-    /// this path too — KatLang owns <c>NaN</c> / <c>Infinity</c> /
-    /// <c>-Infinity</c> everywhere a number is shown, so a special value never
-    /// reaches the runtime's fixed-point formatter. A finite signed zero is an
-    /// ordinary fixed-point value here: <c>-0</c> (integral quantum) stays
-    /// <c>-0</c>, while <c>-0.0</c> takes the requested precision (<c>-0.00</c>
-    /// at two decimals), exactly like every other finite value with a fraction.
+    /// Formats one numeric atom for display — the ONE implementation every rendering surface
+    /// uses. Formatting is presentation only: the computed Decimal128 value is never truncated or
+    /// re-rounded by the runtime.
+    /// <list type="number">
+    ///   <item>With NO decimal-places setting from any origin, the text is the canonical display
+    ///   (<see cref="FormatNumberInvariant"/>): the value's full precision and quantum exactly as
+    ///   computed, so <c>2.5000</c> stays <c>2.5000</c>. This path is taken before anything else
+    ///   and does no other work.</item>
+    ///   <item>A non-finite value keeps its canonical spelling (<c>NaN</c>, <c>Infinity</c>,
+    ///   <c>-Infinity</c>) whatever is set — KatLang owns those spellings everywhere a number is
+    ///   shown.</item>
+    ///   <item>Otherwise (<see cref="FormatDecimalPlaces"/>) the effective pair — each setting the
+    ///   minimum of its present origins, the program root's property and the host's
+    ///   <see cref="RunOptions"/> value, composed by the engine — decides the text from the numeric
+    ///   VALUE alone, never from its stored quantum.</item>
+    /// </list>
     /// </summary>
     internal static string FormatAtom(Decimal128 value, DisplayOptions displayOptions)
     {
-        if (displayOptions.Decimals is not { } decimals)
+        if (!displayOptions.HasDecimalPlaces)
             return FormatNumberInvariant(value);
 
-        // Non-finite values have no fixed-point layout; their spelling belongs to
-        // the one canonical owner, never to the "F" formatter below.
+        // Non-finite values have no positional layout; their spelling belongs to the one
+        // canonical owner.
         if (!Decimal128.IsFinite(value))
             return FormatNumberInvariant(value);
 
-        if (Decimal128.IsInteger(value) && Decimal128.GetQuantum(value) >= Decimal128.One)
-            return FormatNumberInvariant(value);
+        return FormatDecimalPlaces(value, displayOptions.MinDecimalPlaces, displayOptions.MaxDecimalPlaces);
+    }
 
-        // KatLang owns the rounding as well as the digits: a midpoint rounds AWAY FROM
-        // ZERO, the rule `Math.Round` applies (`0.125` at two places is `0.13`, `2.5` at
-        // none is `3`), so the runtime's fixed-point formatter — whose tie rule changed
-        // between runtime releases — only ever lays out an already-rounded value.
-        var rounded = Decimal128.Round(value, decimals, MidpointRounding.AwayFromZero);
-        var format = "F" + decimals.ToString(CultureInfo.InvariantCulture);
-        return rounded.ToString(format, CultureInfo.InvariantCulture);
+    /// <summary>
+    /// The decimal-places display of one FINITE number under an effective pair with at least one
+    /// setting present:
+    /// <list type="number">
+    ///   <item>when <paramref name="maxDecimalPlaces"/> is present, round to that many places with
+    ///   midpoints AWAY FROM ZERO (<c>0.125</c> at two places is <c>0.13</c>, <c>2.5</c> at none
+    ///   is <c>3</c>) — KatLang owns the rounding, so no runtime formatter's tie rule is
+    ///   involved;</item>
+    ///   <item>write the result positionally with the FEWEST fractional digits that represent it
+    ///   exactly, so trailing fractional zeros are removed even when they were stored
+    ///   (<c>2.5000</c> is <c>2.5</c>, <c>10.00</c> is <c>10</c>);</item>
+    ///   <item>pad with zeros up to <paramref name="minDecimalPlaces"/> places (none when it is
+    ///   absent), integers included (<c>10</c> at a minimum of two is <c>10.00</c>);</item>
+    ///   <item>write no decimal point when there are no fractional digits;</item>
+    ///   <item>keep the sign, including for a zero and for a value that rounds to zero
+    ///   (<c>-0.004</c> at two and two is <c>-0.00</c>).</item>
+    /// </list>
+    /// Neither setting supplies the other: an absent maximum rounds nothing and an absent minimum
+    /// pads nothing. The work is exact — one Decimal128 rounding and digit-level text edits of the
+    /// canonical positional spelling, with no binary floating point and no numeric conversion.
+    /// </summary>
+    private static string FormatDecimalPlaces(Decimal128 value, int? minDecimalPlaces, int? maxDecimalPlaces)
+    {
+        // A value that already carries at most `max` fractional digits IS its own rounding to
+        // `max` places, so only a value with more of them is rounded. The quantum exponent `q`
+        // is exact (see FormatNumberInvariant); `-q` is the number of fractional digits stored.
+        var rounded = value;
+        if (maxDecimalPlaces is { } max && Decimal128.ILogB(Decimal128.GetQuantum(value)) < -max)
+            rounded = Decimal128.Round(value, max, MidpointRounding.AwayFromZero);
+
+        // The canonical positional spelling carries the stored quantum: its fractional digits may
+        // end in zeros. `kept` is the length of the text without them (and without a decimal point
+        // left bare), and `fractionalDigits` the digits that remain after the point.
+        var text = FormatNumberInvariant(rounded);
+        var kept = text.Length;
+        var fractionalDigits = 0;
+        var point = text.IndexOf('.');
+        if (point >= 0)
+        {
+            while (text[kept - 1] == '0')
+                kept--;
+
+            fractionalDigits = kept - point - 1;
+            if (fractionalDigits == 0)
+                kept = point;
+        }
+
+        var padding = Math.Max(0, (minDecimalPlaces ?? 0) - fractionalDigits);
+        if (padding == 0)
+            return kept == text.Length ? text : text[..kept];
+
+        var needsPoint = fractionalDigits == 0;
+        return string.Create(
+            kept + (needsPoint ? 1 : 0) + padding,
+            (text, kept, needsPoint),
+            static (destination, state) =>
+            {
+                state.text.AsSpan(0, state.kept).CopyTo(destination);
+                var next = state.kept;
+                if (state.needsPoint)
+                    destination[next++] = '.';
+
+                destination[next..].Fill('0');
+            });
     }
 
     /// <summary>

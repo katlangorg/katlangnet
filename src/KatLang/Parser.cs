@@ -717,7 +717,8 @@ public sealed class Parser
     /// makes operation names resolve as they will during evaluation; the evaluation-only
     /// members (<see cref="RunOptions.EvaluationLimits"/>,
     /// <see cref="RunOptions.EvaluationCancellationToken"/>, <see cref="RunOptions.RandomSeed"/>,
-    /// <see cref="RunOptions.DefaultDisplayDecimals"/>) are ignored. Module loading is
+    /// <see cref="RunOptions.MinDecimalPlaces"/>, <see cref="RunOptions.MaxDecimalPlaces"/>) are
+    /// ignored. Module loading is
     /// ASYNC-ONLY, so this entry point requires a downloader-less configuration: when
     /// <paramref name="options"/> is null or <see cref="RunOptions.DownloadCode"/> is null,
     /// <c>load</c> syntax is rejected with a diagnostic.

@@ -453,8 +453,8 @@ public class CanonicalNumberTextTests
         var value = N(literal);
         var atom = new Result.Atom(value);
 
-        // 1. Canonical display (no DisplayDecimals).
-        Assert.Equal(expected, ValueTextRenderer.FormatAtom(value, new DisplayOptions(null, null, int.MaxValue)));
+        // 1. Canonical display (no decimal-places setting).
+        Assert.Equal(expected, ValueTextRenderer.FormatAtom(value, DisplayOptions.Canonical(int.MaxValue)));
 
         // 2. The public run-result display surface.
         Assert.Equal(expected, Assert.IsType<RunResult.Success>(KatLangEngine.Run(literal)).ToDisplayString());
@@ -479,59 +479,77 @@ public class CanonicalNumberTextTests
             Semantics.ConditionalBranchHeadFormatter.Format("F", new Pattern.LitInt(value)));
     }
 
-    [Fact]
-    public void DisplayDecimals_WholeNumberArm_UsesTheSameOwner()
-    {
-        // `DisplayDecimals` opts into fixed-point presentation, but a whole number
-        // carrying an integral quantum stays on the canonical spelling — including the
-        // values whose canonical spelling the runtime would have written exponentially.
-        var options = new DisplayOptions(SourceDecimals: 2, HostDecimals: null, MaxDisplayLength: int.MaxValue);
-        Assert.Equal("10000000000000000000000000000000000", ValueTextRenderer.FormatAtom(N("1e34"), options));
-        Assert.Equal("0", ValueTextRenderer.FormatAtom(N("0e3"), options));
+    /// <summary>A display configuration whose effective pair is exactly the given one.</summary>
+    private static DisplayOptions Places(int? min, int? max)
+        => new(
+            SourceMinDecimalPlaces: min,
+            SourceMaxDecimalPlaces: max,
+            HostMinDecimalPlaces: null,
+            HostMaxDecimalPlaces: null,
+            MaxDisplayLength: int.MaxValue);
 
-        // A fractional value still takes the requested fixed-point presentation.
-        Assert.Equal("1.50", ValueTextRenderer.FormatAtom(N("1.5"), options));
+    [Fact]
+    public void DecimalPlaces_WholeNumbers_UseTheSameOwner()
+    {
+        // A decimal-places setting selects the value-based display, whose digits still come from
+        // the ONE canonical owner — including the values whose canonical spelling the runtime
+        // would have written exponentially. A maximum alone never pads.
+        var maxTwo = Places(null, 2);
+        Assert.Equal("10000000000000000000000000000000000", ValueTextRenderer.FormatAtom(N("1e34"), maxTwo));
+        Assert.Equal("0", ValueTextRenderer.FormatAtom(N("0e3"), maxTwo));
+        Assert.Equal("1.5", ValueTextRenderer.FormatAtom(N("1.5"), maxTwo));
+        Assert.Equal("1.5", ValueTextRenderer.FormatAtom(N("1.50"), maxTwo));
+
+        // A minimum pads every finite number, whole numbers included: the former exemption of
+        // whole numbers carrying an integral quantum is gone.
+        var fixedTwo = Places(2, 2);
+        Assert.Equal("10000000000000000000000000000000000.00", ValueTextRenderer.FormatAtom(N("1e34"), fixedTwo));
+        Assert.Equal("0.00", ValueTextRenderer.FormatAtom(N("0e3"), fixedTwo));
+        Assert.Equal("1.50", ValueTextRenderer.FormatAtom(N("1.5"), fixedTwo));
     }
 
     [Fact]
-    public void DisplayDecimals_NonFiniteValues_KeepTheKatLangOwnedSpelling()
+    public void DecimalPlaces_NonFiniteValues_KeepTheKatLangOwnedSpelling()
     {
-        // A non-finite value has no fixed-point layout. With `DisplayDecimals` set it
-        // must still be spelled by the ONE canonical owner — never by handing NaN or an
-        // infinity to the runtime's "F" formatter — so the spelling cannot drift with a
-        // runtime's fixed-point conventions for special values.
-        var options = new DisplayOptions(SourceDecimals: 2, HostDecimals: null, MaxDisplayLength: int.MaxValue);
-        Assert.Equal("NaN", ValueTextRenderer.FormatAtom(Decimal128.NaN, options));
-        Assert.Equal("NaN", ValueTextRenderer.FormatAtom(-Decimal128.NaN, options));
-        Assert.Equal("Infinity", ValueTextRenderer.FormatAtom(Decimal128.PositiveInfinity, options));
-        Assert.Equal("-Infinity", ValueTextRenderer.FormatAtom(Decimal128.NegativeInfinity, options));
+        // A non-finite value has no positional layout. With any decimal-places setting present —
+        // a minimum, a maximum, or both — it must still be spelled by the ONE canonical owner,
+        // never rounded, stripped, or padded, so the spelling cannot drift with a runtime's
+        // conventions for special values.
+        foreach (var options in new[] { Places(2, null), Places(null, 2), Places(2, 2), Places(0, 99) })
+        {
+            Assert.Equal("NaN", ValueTextRenderer.FormatAtom(Decimal128.NaN, options));
+            Assert.Equal("NaN", ValueTextRenderer.FormatAtom(-Decimal128.NaN, options));
+            Assert.Equal("Infinity", ValueTextRenderer.FormatAtom(Decimal128.PositiveInfinity, options));
+            Assert.Equal("-Infinity", ValueTextRenderer.FormatAtom(Decimal128.NegativeInfinity, options));
 
-        // Identical to the canonical (no DisplayDecimals) spelling.
-        Assert.Equal(
-            ValueTextRenderer.FormatNumberInvariant(Decimal128.NaN),
-            ValueTextRenderer.FormatAtom(Decimal128.NaN, options));
-        Assert.Equal(
-            ValueTextRenderer.FormatNumberInvariant(Decimal128.NegativeInfinity),
-            ValueTextRenderer.FormatAtom(Decimal128.NegativeInfinity, options));
+            // Identical to the canonical (no setting) spelling.
+            Assert.Equal(
+                ValueTextRenderer.FormatNumberInvariant(Decimal128.NaN),
+                ValueTextRenderer.FormatAtom(Decimal128.NaN, options));
+            Assert.Equal(
+                ValueTextRenderer.FormatNumberInvariant(Decimal128.NegativeInfinity),
+                ValueTextRenderer.FormatAtom(Decimal128.NegativeInfinity, options));
+        }
     }
 
     [Theory]
-    [InlineData("-0", "-0", "-0")]
-    [InlineData("-0.0", "-0.0", "-0.00")]
-    [InlineData("0", "0", "0")]
-    [InlineData("0.0", "0.0", "0.00")]
-    [InlineData("-0e3", "-0", "-0")]
-    [InlineData("-0.00", "-0.00", "-0.00")]
-    public void DisplayDecimals_SignedZero_KeepsTheFixedPointDistinction(
-        string literal, string canonical, string fixedPoint)
+    [InlineData("-0", "-0", "-0", "-0.00")]
+    [InlineData("-0.0", "-0.0", "-0", "-0.00")]
+    [InlineData("0", "0", "0", "0.00")]
+    [InlineData("0.0", "0.0", "0", "0.00")]
+    [InlineData("-0e3", "-0", "-0", "-0.00")]
+    [InlineData("-0.00", "-0.00", "-0", "-0.00")]
+    public void DecimalPlaces_SignedZero_KeepsItsSign_AndDependsOnTheValueOnly(
+        string literal, string canonical, string maxTwo, string fixedTwo)
     {
-        // A finite signed zero is an ordinary fixed-point value, deliberately: `-0`
-        // carries an integral quantum and stays on the whole-number arm, while `-0.0`
-        // carries a fractional quantum and respects the selected display precision.
-        // `-0.0` is NOT normalized to `-0`.
-        var options = new DisplayOptions(SourceDecimals: 2, HostDecimals: null, MaxDisplayLength: int.MaxValue);
+        // Canonical display shows a zero's stored quantum. Once a decimal-places setting is
+        // present the text depends on the numeric VALUE only: every negative zero is `-0` under a
+        // maximum alone and `-0.00` at a fixed two places, whatever quantum it carries, and the
+        // sign is never dropped.
         var value = N(literal);
         Assert.Equal(canonical, ValueTextRenderer.FormatNumberInvariant(value));
-        Assert.Equal(fixedPoint, ValueTextRenderer.FormatAtom(value, options));
+        Assert.Equal(canonical, ValueTextRenderer.FormatAtom(value, DisplayOptions.Canonical(int.MaxValue)));
+        Assert.Equal(maxTwo, ValueTextRenderer.FormatAtom(value, Places(null, 2)));
+        Assert.Equal(fixedTwo, ValueTextRenderer.FormatAtom(value, Places(2, 2)));
     }
 }

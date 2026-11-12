@@ -295,21 +295,138 @@ public class HostApiContractTests
     [Fact]
     public void ReusedOptions_CarryNoStateFromEarlierRuns()
     {
-        var options = new RunOptions { RandomSeed = 11, DefaultDisplayDecimals = 2 };
+        var options = new RunOptions { RandomSeed = 11, MaxDecimalPlaces = 2 };
         const string program = "Math.RandomInt(1, 1000), 1 / 7";
         var first = KatLangEngine.Run(program, options).ToDisplayString();
 
-        // A run whose program declares its own (stricter) DisplayDecimals filter, then a failing
-        // run, between two identical runs: neither leaves anything behind in the shared options
-        // object. The two filters compose by their minimum (Q-10 D-F).
-        Assert.Equal("0.1", KatLangEngine.Run("DisplayDecimals = 1\n1 / 7", options).ToDisplayString());
-        Assert.Equal("0.14", KatLangEngine.Run("DisplayDecimals = 6\n1 / 7", options).ToDisplayString());
+        // A run whose program declares its own (smaller) MaxDecimalPlaces, then a failing run,
+        // between two identical runs: neither leaves anything behind in the shared options
+        // object. The source and host maximums compose by their minimum (Q-10 D-F).
+        Assert.Equal("0.1", KatLangEngine.Run("MaxDecimalPlaces = 1\n1 / 7", options).ToDisplayString());
+        Assert.Equal("0.14", KatLangEngine.Run("MaxDecimalPlaces = 6\n1 / 7", options).ToDisplayString());
         Assert.IsType<RunResult.EvalFailure>(KatLangEngine.Run("1 / 0", options));
 
         Assert.Equal(first, KatLangEngine.Run(program, options).ToDisplayString());
         Assert.EndsWith("0.14", first, StringComparison.Ordinal);
         Assert.Equal(11, options.RandomSeed);
-        Assert.Equal(2, options.DefaultDisplayDecimals);
+        Assert.Equal(2, options.MaxDecimalPlaces);
+        Assert.Null(options.MinDecimalPlaces);
+    }
+
+    // ── Decimal places: the host half of the contract, through the public surface only ──
+
+    [Fact]
+    public void DecimalPlaces_AreTwoIndependentNullableHostSettings_WithOneRangeOwner()
+    {
+        Assert.Equal(99, RunOptions.DecimalPlacesLimit);
+
+        var none = new RunOptions();
+        Assert.Null(none.MinDecimalPlaces);
+        Assert.Null(none.MaxDecimalPlaces);
+
+        // Neither is defaulted from the other; 0 is a real setting, distinct from null.
+        Assert.Null(new RunOptions { MinDecimalPlaces = 2 }.MaxDecimalPlaces);
+        Assert.Null(new RunOptions { MaxDecimalPlaces = 2 }.MinDecimalPlaces);
+        Assert.Equal(0, new RunOptions { MinDecimalPlaces = 0 }.MinDecimalPlaces);
+        Assert.Equal(RunOptions.DecimalPlacesLimit, new RunOptions { MaxDecimalPlaces = RunOptions.DecimalPlacesLimit }.MaxDecimalPlaces);
+
+        // Each value's own range is checked when the options are initialized: rejected, never clamped.
+        foreach (var invalid in new[] { -1, RunOptions.DecimalPlacesLimit + 1, int.MinValue, int.MaxValue })
+        {
+            Assert.Equal(
+                nameof(RunOptions.MinDecimalPlaces),
+                Assert.Throws<ArgumentOutOfRangeException>(() => new RunOptions { MinDecimalPlaces = invalid }).ParamName);
+            Assert.Equal(
+                nameof(RunOptions.MaxDecimalPlaces),
+                Assert.Throws<ArgumentOutOfRangeException>(() => new RunOptions { MaxDecimalPlaces = invalid }).ParamName);
+        }
+    }
+
+    [Fact]
+    public async Task DecimalPlaces_AnInconsistentHostPair_IsRejectedWhereARunBegins_NotAtInitialization()
+    {
+        // Initialization never judges the pair, in either order ...
+        var inconsistent = new RunOptions { MinDecimalPlaces = 5, MaxDecimalPlaces = 3 };
+        _ = new RunOptions { MaxDecimalPlaces = 3, MinDecimalPlaces = 5 };
+
+        // ... a run does, before parsing: the same exception for a source that cannot even parse,
+        // thrown by the synchronous entry points and delivered through the task by the async ones.
+        foreach (var source in new[] { "1 / 3", "1 +" })
+        {
+            Assert.Equal("options", Assert.Throws<ArgumentException>(() => KatLangEngine.Run(source, inconsistent)).ParamName);
+            Assert.Throws<ArgumentException>(() => KatLangEngine.EvaluateToAtoms(source, inconsistent));
+            var pending = KatLangEngine.RunAsync(source, inconsistent);
+            await Assert.ThrowsAsync<ArgumentException>(() => pending);
+            await Assert.ThrowsAsync<ArgumentException>(() => KatLangEngine.EvaluateToAtomsAsync(source, inconsistent));
+        }
+
+        // The parser does not evaluate or display, so it ignores both settings.
+        Assert.False(Parser.Parse("1 / 3", inconsistent).HasErrors);
+
+        // Equal values are a fixed number of places, not a conflict.
+        Assert.Equal("0.33", KatLangEngine.Run("1 / 3", new RunOptions { MinDecimalPlaces = 2, MaxDecimalPlaces = 2 }).ToDisplayString());
+    }
+
+    [Fact]
+    public void DecimalPlaces_AConflictAcrossOrigins_IsTheRunsStructuredFailure()
+    {
+        // The host supplies only a maximum; the program declares only a minimum above it.
+        var failure = Assert.IsType<RunResult.EvalFailure>(
+            KatLangEngine.Run("MinDecimalPlaces = 4\n1 / 7", new RunOptions { MaxDecimalPlaces = 2 }));
+        var error = Assert.Single(failure.Errors);
+        Assert.Equal(KatLangErrorCode.IllegalInEval, error.Code);
+        Assert.Contains("the minimum is 4 (from the program)", error.Message, StringComparison.Ordinal);
+        Assert.Contains("the maximum is 2 (from the host)", error.Message, StringComparison.Ordinal);
+        Assert.Equal(new SourceSpan(new SourcePosition(1, 1), new SourcePosition(1, 17)), error.Span);
+
+        // The program's own pair: the same failure whatever the host supplies.
+        foreach (var options in new RunOptions?[] { null, new() { MinDecimalPlaces = 0 }, new() { MaxDecimalPlaces = 99 } })
+        {
+            var own = Assert.IsType<RunResult.EvalFailure>(
+                KatLangEngine.Run("MinDecimalPlaces = 5\nMaxDecimalPlaces = 3\n1 / 7", options));
+            Assert.Equal(KatLangErrorCode.IllegalInEval, Assert.Single(own.Errors).Code);
+        }
+    }
+
+    [Fact]
+    public void WithHostDecimalPlaces_ReappliesBothHostSettings_WithoutRunningAgain()
+    {
+        var calls = 0;
+        var operations = HostOperations.Create(HostOperation.Create("Count", (_, _) =>
+        {
+            calls++;
+            return new Result.Atom(10);
+        }));
+        var original = Assert.IsType<RunResult.Success>(
+            KatLangEngine.Run("MinDecimalPlaces = 1\nCount(), 1 / 7", new RunOptions { HostOperations = operations }));
+        Assert.Equal(1, calls);
+
+        var fixedTwo = Assert.IsType<RunResult.Success>(original.WithHostDecimalPlaces(null, 2));
+        Assert.Equal(
+            KatLangEngine.Run("MinDecimalPlaces = 1\n10, 1 / 7", new RunOptions { MaxDecimalPlaces = 2 }).ToDisplayString(),
+            fixedTwo.ToDisplayString());
+        Assert.Same(original.Value, fixedTwo.Value);
+        Assert.Same(original.Atoms, fixedTwo.Atoms);
+        Assert.Same(original.Root, fixedTwo.Root);
+
+        // The pair REPLACES the previous host pair; null removes a host setting.
+        Assert.Equal(original.ToDisplayString(), fixedTwo.WithHostDecimalPlaces(null, null).ToDisplayString());
+
+        // A conflicting effective pair is the EvalFailure a fresh run returns; the original stays usable.
+        var conflict = Assert.IsType<RunResult.EvalFailure>(original.WithHostDecimalPlaces(null, 0));
+        Assert.Equal(KatLangErrorCode.IllegalInEval, Assert.Single(conflict.Errors).Code);
+        Assert.Same(conflict, conflict.WithHostDecimalPlaces(null, 5));
+        Assert.IsType<RunResult.Success>(original.WithHostDecimalPlaces(0, 5));
+
+        // Host arguments are validated for every variant: the range, and the host's own pair.
+        foreach (var run in new RunResult[] { original, conflict, KatLangEngine.Run("1 +") })
+        {
+            Assert.Equal("min", Assert.Throws<ArgumentOutOfRangeException>(() => run.WithHostDecimalPlaces(-1, null)).ParamName);
+            Assert.Equal("max", Assert.Throws<ArgumentOutOfRangeException>(() => run.WithHostDecimalPlaces(null, 100)).ParamName);
+            Assert.Throws<ArgumentException>(() => run.WithHostDecimalPlaces(5, 3));
+        }
+
+        Assert.Equal(1, calls);
     }
 
     // ── The package a consumer receives ──────────────────────────────────────
@@ -334,7 +451,10 @@ public class HostApiContractTests
             "M:KatLang.KatLangEngine.EvaluateToAtoms(System.String,KatLang.RunOptions)",
             "T:KatLang.RunOptions",
             "P:KatLang.RunOptions.RandomSeed",
-            "P:KatLang.RunOptions.DefaultDisplayDecimals",
+            "P:KatLang.RunOptions.MinDecimalPlaces",
+            "P:KatLang.RunOptions.MaxDecimalPlaces",
+            "F:KatLang.RunOptions.DecimalPlacesLimit",
+            "M:KatLang.RunResult.WithHostDecimalPlaces(System.Nullable{System.Int32},System.Nullable{System.Int32})",
             "P:KatLang.RunOptions.EvaluationCancellationToken",
             "P:KatLang.RunOptions.SourceProcessingCancellationToken",
             "P:KatLang.RunOptions.AllowedHosts",

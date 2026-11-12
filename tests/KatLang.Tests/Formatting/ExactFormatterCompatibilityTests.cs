@@ -35,9 +35,9 @@ public class ExactFormatterCompatibilityTests
         "('a', 'b')",
         "('neto', 1473.8)",
         "0.5 + 0.5",
-        "DisplayDecimals = 2\n1.5",
-        "DisplayDecimals = 3\nMath.Pi",
-        "DisplayDecimals = 6\n0.000000000000000000000000000",
+        "MaxDecimalPlaces = 2\n1.5",
+        "MaxDecimalPlaces = 3\nMath.Pi",
+        "MaxDecimalPlaces = 6\n0.000000000000000000000000000",
         "SalaryExpenses(amount, recurring, reimbursed) = amount, recurring, reimbursed\n\nSalaryExpenses(3800, 1, 0)\n''\nSalaryExpenses(50, 0, 0)",
         "E = ()\nE*, 997", // zero spread contribution beside one explicit control
         "E = ()\nE*", // an attached line-final spread of the empty sequence: no rows (issue #183)

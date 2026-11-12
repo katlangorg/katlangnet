@@ -138,9 +138,9 @@ public class FormattingOptionsTests
         });
 
     [Fact]
-    public void DisplayDecimals_AppliesToEveryFormatter()
+    public void MaxDecimalPlaces_AppliesToEveryFormatter()
     {
-        const string source = "DisplayDecimals = 2\n\n(Math.Pi, Math.Exp(1))";
+        const string source = "MaxDecimalPlaces = 2\n\n(Math.Pi, Math.Exp(1))";
         var run = KatLangEngine.Run(source);
         var options = new OutputFormattingOptions { NewLine = "\n" };
 
@@ -150,12 +150,25 @@ public class FormattingOptionsTests
     }
 
     [Fact]
-    public void DisplayDecimals_NonFiniteValues_KeepKatLangSpellingInEveryFormatter()
+    public void MinDecimalPlaces_AppliesToEveryFormatter()
+    {
+        // A minimum alone pads (whole numbers included) and never rounds.
+        const string source = "MinDecimalPlaces = 2\n\n(1, 2.5, 1.234)";
+        var run = KatLangEngine.Run(source);
+        var options = new OutputFormattingOptions { NewLine = "\n" };
+
+        Assert.Equal("(1.00, 2.50, 1.234)", OutputFormatters.Exact.Format(run));
+        Assert.Equal("(1.00, 2.50, 1.234)", OutputFormatters.Readable.Format(run, options));
+        Assert.Equal("1.00 2.50 1.234", OutputFormatters.Concise.Format(run, options));
+    }
+
+    [Fact]
+    public void DecimalPlaces_NonFiniteValues_KeepKatLangSpellingInEveryFormatter()
     {
         // Every formatter renders atoms through the one canonical owner, so a
-        // non-finite value under DisplayDecimals is spelled NaN / Infinity /
-        // -Infinity on each of them — never a runtime fixed-point rendering.
-        const string source = "DisplayDecimals = 2\n\n(Math.Sqrt(-1), 9e6144 * 10, Math.Ln(0), 1.5)";
+        // non-finite value under a fixed two places is spelled NaN / Infinity /
+        // -Infinity on each of them — never rounded, padded, or a runtime rendering.
+        const string source = "MinDecimalPlaces = 2\nMaxDecimalPlaces = 2\n\n(Math.Sqrt(-1), 9e6144 * 10, Math.Ln(0), 1.5)";
         var run = KatLangEngine.Run(source);
         var options = new OutputFormattingOptions { NewLine = "\n" };
 

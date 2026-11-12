@@ -152,8 +152,8 @@ public class ExplicitParameterOutputValidationTests
         AssertBareRejection(Evaluator.RunCounted(program(), new RunScopedZeroArgPropertyResultCache()));
         AssertBareRejection(Evaluator.RunCountedObserved(program()).Result);
         AssertBareRejection(Evaluator.RunCountedObserved(program(), enableOptimizations: false).Result);
-        AssertBareRejection(Evaluator.RunCountedWithTopLevelProperty(
-            program(), topLevelPropertyName, UncachedZeroArgPropertyResultCache.Instance));
+        AssertBareRejection(Evaluator.RunCountedWithTopLevelProperties(
+            program(), [topLevelPropertyName], UncachedZeroArgPropertyResultCache.Instance));
         AssertBareRejection(Evaluator.RunObserved(program(), new EvaluationObservations(), enableOptimizations: false));
         AssertBareRejection(Evaluator.RunObserved(program(), new EvaluationObservations(), enableOptimizations: true));
     }
@@ -188,8 +188,8 @@ public class ExplicitParameterOutputValidationTests
         Assert.Equal(0, observedCache.Requests);
 
         var topLevelCache = new CountingZeroArgPropertyResultCache();
-        AssertBareRejection(Evaluator.RunCountedWithTopLevelProperty(
-            PropertyPlacement(), "G", topLevelCache));
+        AssertBareRejection(Evaluator.RunCountedWithTopLevelProperties(
+            PropertyPlacement(), ["G"], topLevelCache));
         Assert.Equal(0, topLevelCache.Requests);
     }
 

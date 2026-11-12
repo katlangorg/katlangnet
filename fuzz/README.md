@@ -671,7 +671,7 @@ One source through two of eight registered surfaces:
 | `evaluator-run-counted` | outcome, structured error, value, emitted count |
 | `evaluator-run` | outcome, structured error, value (no emitted count at all) |
 | `evaluator-run-flat` | outcome, structured error, host atoms |
-| `evaluator-run-counted-with-top-level-property` | the above, plus the `DisplayDecimals` channel |
+| `evaluator-run-counted-with-top-level-property` | the above, plus the engine's top-level property channel (`MinDecimalPlaces`, then `MaxDecimalPlaces`) |
 | `engine-run` | outcome, value, emitted count, host atoms, rendered text |
 | `engine-evaluate-to-atoms` | outcome, host atoms |
 | `engine-exact-formatter` | outcome, value, emitted count, host atoms, rendered text |

@@ -8163,20 +8163,73 @@ public static class LanguageSpecCorpus
         },
         new()
         {
-            Id = "display-decimals-rounds-ties-away-from-zero",
+            Id = "max-decimal-places-rounds-ties-away-from-zero",
             Category = "arithmetic",
-            Source = "DisplayDecimals = 2\n0.125, 0.375, -0.125, 2.5",
+            Source = "MaxDecimalPlaces = 2\n0.125, 0.375, -0.125, 2.5",
             Outcome = SpecOutcome.Evaluates,
-            ExpectedDisplay = "0.13\n0.38\n-0.13\n2.50",
+            ExpectedDisplay = "0.13\n0.38\n-0.13\n2.5",
             ExpectedRaw = "S[0.125, 0.375, -0.125, 2.5]",
             ExpectedEmittedCount = 4,
-            LeanExclusionReason = "Fractional Decimal128 literals and the DisplayDecimals presentation option are outside the Lean Int numeric model; LeanAstEncoder refuses fractional numbers by design.",
+            LeanExclusionReason = "Fractional Decimal128 literals and the MaxDecimalPlaces presentation setting are outside the Lean Int numeric model; LeanAstEncoder refuses fractional numbers by design.",
             Probes =
             [
-                new SpecProbe("DisplayDecimals = 0\n0.5, 1.5, 2.5, -0.5", "ok raw=S[0.5, 1.5, 2.5, -0.5] n=4"),
+                new SpecProbe("MaxDecimalPlaces = 0\n0.5, 1.5, 2.5, -0.5", "ok raw=S[0.5, 1.5, 2.5, -0.5] n=4"),
                 new SpecProbe("Math.Round(0.125, 2), Math.Round(2.5, 0), Math.Round(-2.5, 0)", "ok raw=S[0.13, 3, -3] n=3"),
             ],
-            Explanation = "`DisplayDecimals` presents each numeric leaf rounded to the requested places with midpoints rounded AWAY FROM ZERO — the rule `Math.Round` applies — so `0.125` shows as `0.13` and `-0.125` as `-0.13`. Display never re-rounds the computed value: the raw values keep their digits, only the presentation changes. KatLang owns this rule; it does not follow the host runtime's fixed-point formatter, whose tie rule has changed between releases.",
+            Explanation = "`MaxDecimalPlaces` shows each numeric leaf with at most the requested places, rounding midpoints AWAY FROM ZERO — the rule `Math.Round` applies — so `0.125` shows as `0.13` and `-0.125` as `-0.13`. A maximum never pads: `2.5` stays `2.5`. Display never re-rounds the computed value: the raw values keep their digits, only the presentation changes. KatLang owns this rule; it does not follow the host runtime's fixed-point formatter, whose tie rule has changed between releases.",
+        },
+        new()
+        {
+            Id = "min-decimal-places-pads-and-never-rounds",
+            Category = "arithmetic",
+            Source = "MinDecimalPlaces = 2\n10, 2.5, 1.234567, 0",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "10.00\n2.50\n1.234567\n0.00",
+            ExpectedRaw = "S[10, 2.5, 1.234567, 0]",
+            ExpectedEmittedCount = 4,
+            LeanExclusionReason = "Fractional Decimal128 literals and the MinDecimalPlaces presentation setting are outside the Lean Int numeric model; LeanAstEncoder refuses fractional numbers by design, and Lean models no rendering.",
+            Probes =
+            [
+                // The property is an ordinary one: readable, and its own value is a number of the run.
+                new SpecProbe("MinDecimalPlaces = 2\nMinDecimalPlaces + 1, 10 == 10.00", "ok raw=S[3, true] n=2"),
+            ],
+            Explanation = "`MinDecimalPlaces` shows each numeric leaf with at least the requested places, padding with zeros — whole numbers included, so `10` shows as `10.00` and `0` as `0.00`. A minimum never rounds: with no maximum set, `1.234567` keeps all its digits. The two settings are independent; neither supplies a value for the other. The values themselves are unchanged.",
+        },
+        new()
+        {
+            Id = "equal-min-and-max-decimal-places-fix-the-places",
+            Category = "arithmetic",
+            Source = "MinDecimalPlaces = 2\nMaxDecimalPlaces = 2\n1.234567, 10, 9.9996, -0.004",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "1.23\n10.00\n10.00\n-0.00",
+            ExpectedRaw = "S[1.234567, 10, 9.9996, -0.004]",
+            ExpectedEmittedCount = 4,
+            LeanExclusionReason = "Fractional Decimal128 literals and the decimal-places presentation settings are outside the Lean Int numeric model; LeanAstEncoder refuses fractional numbers by design, and Lean models no rendering.",
+            Probes =
+            [
+                // A wider pair rounds to the maximum and pads only to the minimum.
+                new SpecProbe("MinDecimalPlaces = 2\nMaxDecimalPlaces = 4\n(1.234567, 10, 0.125).count, 9.9996 < 10", "ok raw=S[3, true] n=2"),
+            ],
+            Explanation = "A fixed number of places is written by setting both to the same value: with `MinDecimalPlaces = 2` and `MaxDecimalPlaces = 2` every number shows exactly two places — `1.234567` as `1.23`, `10` as `10.00`. Rounding carries across the decimal point (`9.9996` shows as `10.00`), and a value that rounds to zero keeps its sign (`-0.004` shows as `-0.00`). Only the display changes: `9.9996` is still less than `10`. A minimum above the maximum is an error.",
+        },
+        new()
+        {
+            Id = "decimal-places-show-the-value-not-the-stored-digits",
+            Category = "arithmetic",
+            Source = "MaxDecimalPlaces = 4\n10.00, 2.5000, 1.234567, 0.125",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "10\n2.5\n1.2346\n0.125",
+            ExpectedRaw = "S[10.00, 2.5000, 1.234567, 0.125]",
+            ExpectedEmittedCount = 4,
+            LeanExclusionReason = "Fractional Decimal128 literals, their stored quantum and the decimal-places presentation settings are outside the Lean Int numeric model; LeanAstEncoder refuses fractional numbers by design, and Lean models no rendering.",
+            Probes =
+            [
+                // No setting: the stored digits are shown and are what `.string` gives.
+                new SpecProbe("10.00, 2.5000, (2.5000).string", "ok raw=S[10.00, 2.5000, '2.5000'] n=3"),
+                // `.string` ignores every display setting; an explicit 0 is a real setting.
+                new SpecProbe("MinDecimalPlaces = 0\n(2.5000).string, 2.5000 == 2.5", "ok raw=S['2.5000', true] n=2"),
+            ],
+            Explanation = "Once a decimal-places setting is present, a number is displayed by its VALUE: zeros stored at the end of the decimal part are not shown unless the minimum asks for them, so under `MaxDecimalPlaces = 4` the written `10.00` shows as `10` and `2.5000` as `2.5`, while `1.234567` is rounded to `1.2346`. Without any setting a number shows the digits it carries (`2.5000` stays `2.5000`). `.string` always gives a number's own digits and ignores every display setting.",
         },
         new()
         {

@@ -218,7 +218,7 @@ public class CallReferenceS1ReviewTests
             "value" => Evaluator.Run(root, operations, null, null, default).IsOk,
             "counted" => Evaluator.RunCounted(root, new RunScopedZeroArgPropertyResultCache(), hostOperations: operations).IsOk,
             "observed" => Evaluator.RunCountedObserved(root, hostOperations: operations).Result.IsOk,
-            "property" => Evaluator.RunCountedWithTopLevelProperty(root, "Top",
+            "property" => Evaluator.RunCountedWithTopLevelProperties(root, ["Top"],
                 new RunScopedZeroArgPropertyResultCache(), hostOperations: operations).IsOk,
             "async-value" => (await Evaluator.RunAsync(root, new RunScopedAsyncZeroArgPropertyResultCache(),
                 hostOperations: operations)).IsOk,
@@ -226,7 +226,7 @@ public class CallReferenceS1ReviewTests
                 hostOperations: operations)).IsOk,
             "async-observed" => (await Evaluator.RunCountedObservedAsync(root,
                 zeroArgPropertyResultCache: new RunScopedAsyncZeroArgPropertyResultCache(), hostOperations: operations)).Result.IsOk,
-            "async-property" => (await Evaluator.RunCountedWithTopLevelPropertyAsync(root, "Top",
+            "async-property" => (await Evaluator.RunCountedWithTopLevelPropertiesAsync(root, ["Top"],
                 new RunScopedAsyncZeroArgPropertyResultCache(), hostOperations: operations)).IsOk,
             _ => throw new ArgumentException("unknown entry", nameof(entry)),
         };

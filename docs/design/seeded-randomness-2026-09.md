@@ -142,8 +142,8 @@ EvalNativeCall / EvalNativeCallAsync → ApplyMathNative(name, args, ctx.Budget.
 ```
 
 - One source per evaluator run, shared by every nested call, callback, loop
-  frame, property evaluation, the engine's `DisplayDecimals` source-filter read, and both
-  random operations in every spelling; context copies, loop frames, callback
+  frame, property evaluation, the engine's `MinDecimalPlaces` and `MaxDecimalPlaces`
+  source-setting reads, and both random operations in every spelling; context copies, loop frames, callback
   contexts, and async suspension/resumption never duplicate or reset it.
 - `RunOptions`, `EvaluationLimits`, and `HostOperations` hold immutable
   configuration only; no static, thread-local, `AsyncLocal`, or seed-keyed cache
@@ -179,7 +179,7 @@ or ambient default.
 ## 8. Version-stability policy
 
 For a given KatLang version: the same program (loaded module contents and the
-root's `DisplayDecimals` filter included), the same seed, and the same semantically
+root's `MinDecimalPlaces` / `MaxDecimalPlaces` settings included), the same seed, and the same semantically
 executed KatLang path produce the same random values on every supported
 platform. Synchronous versus asynchronous entry points, optimizer strategies
 (planned loops, fused sequence pipelines), and unrelated `EvaluationLimits` that
@@ -199,12 +199,15 @@ decided by the ordinary evaluation rules (explicit spreads at supply formation,
 then supplied arguments in first-demand order under Model C, at-most-once
 written arguments, lazy `if` branches, the zero-argument property cache, explicit
 `A()` re-evaluation, callbacks in sequence order, output rows before the
-engine's read of the root's `DisplayDecimals` source filter). A host display
-filter (`RunOptions.DefaultDisplayDecimals`, CLI `--display-decimals`) is never
-evaluated and draws nothing, so configuring one never alters the stream; a
-declared root `DisplayDecimals` property keeps its stream position — it is read
-after successful output whatever the host filter is, the two filters composing
-by their minimum only afterwards (Q-10, D-F).
+engine's read of the root's `MinDecimalPlaces` source setting, and that read
+before its read of `MaxDecimalPlaces`, whatever order the program declares them
+in). A host decimal-places setting (`RunOptions.MinDecimalPlaces` /
+`RunOptions.MaxDecimalPlaces`, CLI `--min-decimal-places` /
+`--max-decimal-places`) is never evaluated and draws nothing, so configuring one
+never alters the stream; a declared root `MinDecimalPlaces` or `MaxDecimalPlaces`
+property keeps its stream position — it is read after successful output whatever
+the host settings are, each setting composing with its host counterpart by their
+minimum only afterwards (Q-10 D-F, extended to both settings on 2026-11-12).
 
 The exact stream is NOT promised across KatLang versions: it may change when the
 generator, a sampling algorithm, or evaluation semantics deliberately change,

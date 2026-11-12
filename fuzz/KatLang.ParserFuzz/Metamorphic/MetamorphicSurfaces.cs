@@ -25,7 +25,7 @@ internal enum MetamorphicSurface
     /// <summary><c>Evaluator.RunFlat</c> — the host-atom projection only.</summary>
     EvaluatorRunFlat,
 
-    /// <summary><c>Evaluator.RunCountedWithTopLevelProperty</c> — counted result plus the property channel.</summary>
+    /// <summary><c>Evaluator.RunCountedWithTopLevelProperties</c> — counted result plus the property channel.</summary>
     EvaluatorRunCountedWithTopLevelProperty,
 
     /// <summary><c>KatLangEngine.Run</c> — the public façade: front end, top-level property, host atoms, rendering.</summary>
@@ -436,8 +436,8 @@ internal static class MetamorphicSurfaces
     {
         if (!TryParse(source, ref reason, out var block)) return false;
 
-        var result = Evaluator.RunCountedWithTopLevelProperty(
-            block, EngineTopLevelPropertyName, new RunScopedZeroArgPropertyResultCache(), profile.Limits);
+        var result = Evaluator.RunCountedWithTopLevelProperties(
+            block, EngineTopLevelPropertyNames, new RunScopedZeroArgPropertyResultCache(), profile.Limits);
 
         var semantic = SemanticOf(
             result.IsError, result.IsError ? result.Error : null,
@@ -445,10 +445,15 @@ internal static class MetamorphicSurfaces
             result.IsError ? null : result.Value.Output.EmittedCount);
 
         // The property channel is compared as text, so it carries the injective, ValueComparer-
-        // canonical identity rather than the legacy neutral text (which can collide, SEM-2A).
-        var property = result.IsError || result.Value.TopLevelProperty is not { } counted
-            ? "absent"
-            : MetamorphicStructuralIdentity.Encode(counted.Value) + "#" + counted.EmittedCount.ToString(CultureInfo.InvariantCulture);
+        // canonical identity rather than the legacy neutral text (which can collide, SEM-2A):
+        // one entry per engine property, in the engine's read order, "absent" where the root
+        // declares none (and for every entry of a failed run).
+        var property = string.Join(
+            "|",
+            Enumerable.Range(0, EngineTopLevelPropertyNames.Length).Select(index =>
+                result.IsError || result.Value.TopLevelProperties[index] is not { } counted
+                    ? "absent"
+                    : MetamorphicStructuralIdentity.Encode(counted.Value) + "#" + counted.EmittedCount.ToString(CultureInfo.InvariantCulture)));
 
         observation = Bare(semantic, profile, definition) with
         {
@@ -559,8 +564,12 @@ internal static class MetamorphicSurfaces
         return true;
     }
 
-    /// <summary>The engine's top-level property channel name, mirrored for the evaluator surface.</summary>
-    private const string EngineTopLevelPropertyName = "DisplayDecimals";
+    /// <summary>
+    /// The engine's top-level property channel — the two decimal-places settings, in the engine's
+    /// read order — mirrored for the evaluator surface. An immutable table: the harness holds no
+    /// static mutable state.
+    /// </summary>
+    private static readonly ImmutableArray<string> EngineTopLevelPropertyNames = ["MinDecimalPlaces", "MaxDecimalPlaces"];
 
     private static MetamorphicOperationalObservation FromEngineRun(
         RunResult run,

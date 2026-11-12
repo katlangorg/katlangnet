@@ -212,9 +212,9 @@ public class EvaluationCancellationTests
         Assert.Equal(cts.Token, fromCounted.CancellationToken);
 
         var fromCountedWithTopLevelProperty = Assert.Throws<OperationCanceledException>(() =>
-            Evaluator.RunCountedWithTopLevelProperty(
+            Evaluator.RunCountedWithTopLevelProperties(
                 ast,
-                "A",
+                ["A"],
                 new RunScopedZeroArgPropertyResultCache(),
                 limits: null,
                 cancellationToken: cts.Token));
@@ -630,7 +630,7 @@ public class EvaluationCancellationTests
     public void UncancelledToken_IsInertAtThePublicEngine()
     {
         using var cts = new CancellationTokenSource();
-        const string Program = "DisplayDecimals = 2\nf(0) = 0\nf(n) = f(n - 1)\n1 / 3, f(6)";
+        const string Program = "MaxDecimalPlaces = 2\nf(0) = 0\nf(n) = f(n - 1)\n1 / 3, f(6)";
 
         var bare = KatLangEngine.Run(Program);
         var tokened = KatLangEngine.Run(

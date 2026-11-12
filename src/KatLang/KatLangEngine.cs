@@ -7,27 +7,55 @@ namespace KatLang;
 
 /// <summary>
 /// One result's display configuration, carried by its <see cref="RunResult"/> so every rendering
-/// surface of that result reads the same values. It keeps the run's two presentation FILTERS
-/// apart: <see cref="SourceDecimals"/> is the program root's own <c>DisplayDecimals</c> property
-/// exactly as the engine evaluated and validated it (<c>null</c> when the root declares none),
-/// and <see cref="HostDecimals"/> is the host filter — <see cref="RunOptions.DefaultDisplayDecimals"/>,
-/// or the one <see cref="RunResult.WithHostDisplayDecimals"/> re-applied (<c>null</c> for none);
-/// <see cref="MaxDisplayLength"/> is the run's display-length bound. The EFFECTIVE count,
-/// <see cref="Decimals"/>, is never stored: every read derives it from the two filters through
-/// <see cref="KatLangEngine.CombineDisplayDecimals"/>, so replacing the host filter cannot leave
-/// a stale composition behind. The source filter is decided once per run; the host filter is the
-/// one part a host may re-apply to a completed result.
+/// surface of that result reads the same values. It keeps the run's FOUR decimal-places inputs
+/// apart, one per setting and origin: <see cref="SourceMinDecimalPlaces"/> and
+/// <see cref="SourceMaxDecimalPlaces"/> are the program root's own <c>MinDecimalPlaces</c> and
+/// <c>MaxDecimalPlaces</c> properties exactly as the engine evaluated and validated them
+/// (<c>null</c> when the root declares none), and <see cref="HostMinDecimalPlaces"/> and
+/// <see cref="HostMaxDecimalPlaces"/> are the host settings — <see cref="RunOptions.MinDecimalPlaces"/>
+/// and <see cref="RunOptions.MaxDecimalPlaces"/>, or the pair
+/// <see cref="RunResult.WithHostDecimalPlaces"/> re-applied (<c>null</c> for none);
+/// <see cref="MaxDisplayLength"/> is the run's display-length bound. The EFFECTIVE pair,
+/// <see cref="MinDecimalPlaces"/> and <see cref="MaxDecimalPlaces"/>, is never stored: every read
+/// derives it from the four inputs through <see cref="KatLangEngine.CombineDecimalPlaces"/>, so
+/// replacing the host settings cannot leave a stale composition behind. The source settings are
+/// decided once per run; the host settings are the one part a host may re-apply to a completed
+/// result.
 /// </summary>
-internal readonly record struct DisplayOptions(int? SourceDecimals, int? HostDecimals, int MaxDisplayLength)
+internal readonly record struct DisplayOptions(
+    int? SourceMinDecimalPlaces,
+    int? SourceMaxDecimalPlaces,
+    int? HostMinDecimalPlaces,
+    int? HostMaxDecimalPlaces,
+    int MaxDisplayLength)
 {
-    public static DisplayOptions Default { get; } = new(null, null, EvaluationLimits.MaxSupportedDisplayLength);
+    public static DisplayOptions Default { get; } = Canonical(EvaluationLimits.MaxSupportedDisplayLength);
+
+    /// <summary>The configuration with no decimal-places setting from any origin: canonical display.</summary>
+    public static DisplayOptions Canonical(int maxDisplayLength) => new(null, null, null, null, maxDisplayLength);
 
     /// <summary>
-    /// The effective display-decimals count: the minimum of the present filters, or <c>null</c>
-    /// (canonical full-precision display) when neither is present — the ONE composition law,
-    /// <see cref="KatLangEngine.CombineDisplayDecimals"/>, applied on every read.
+    /// True when some origin supplies some decimal-places setting. With none, a number keeps its
+    /// canonical display (its stored digits) and the decimal-places formatting is never entered.
     /// </summary>
-    public int? Decimals => KatLangEngine.CombineDisplayDecimals(SourceDecimals, HostDecimals);
+    public bool HasDecimalPlaces
+        => SourceMinDecimalPlaces.HasValue || SourceMaxDecimalPlaces.HasValue
+            || HostMinDecimalPlaces.HasValue || HostMaxDecimalPlaces.HasValue;
+
+    /// <summary>
+    /// The effective minimum of displayed decimal places: the minimum of the present
+    /// <c>MinDecimalPlaces</c> settings, or <c>null</c> when no origin sets one (nothing is padded)
+    /// — the ONE composition law, <see cref="KatLangEngine.CombineDecimalPlaces"/>, applied on
+    /// every read.
+    /// </summary>
+    public int? MinDecimalPlaces => KatLangEngine.CombineDecimalPlaces(SourceMinDecimalPlaces, HostMinDecimalPlaces);
+
+    /// <summary>
+    /// The effective maximum of displayed decimal places: the minimum of the present
+    /// <c>MaxDecimalPlaces</c> settings, or <c>null</c> when no origin sets one (nothing is
+    /// rounded) — the same ONE composition law, applied on every read.
+    /// </summary>
+    public int? MaxDecimalPlaces => KatLangEngine.CombineDecimalPlaces(SourceMaxDecimalPlaces, HostMaxDecimalPlaces);
 }
 
 /// <summary>
@@ -148,7 +176,7 @@ public closed record RunResult
     /// proof that it was never calculated.</para>
     /// <para>The snapshot is ancillary host data, not part of the result's identity: it takes no part
     /// in this record's equality, hashing, or printing, and a <c>with</c> copy (including
-    /// <see cref="WithHostDisplayDecimals"/>) shares it. Render an available value with
+    /// <see cref="WithHostDecimalPlaces"/>) shares it. Render an available value with
     /// <see cref="RenderPropertyValue"/>.</para>
     /// </summary>
     public PropertyObservations? PropertyObservations
@@ -346,75 +374,84 @@ public closed record RunResult
     };
 
     /// <summary>
-    /// Returns this completed run with <paramref name="hostDisplayDecimals"/> as its HOST display
-    /// filter, without evaluating anything again: the one sanctioned re-application of display
-    /// configuration to a finished result. A host whose display setting changes after a run — a
-    /// playground's "display decimals" control, for example — keeps the result and re-renders the
-    /// one this method returns instead of running the program again.
-    /// <para><b>Equivalence.</b> For any source and options, the returned result renders
-    /// identically — through <see cref="ToDisplayString"/>, <see cref="RenderDisplay"/>, and every
+    /// Returns this completed run with <paramref name="min"/> and <paramref name="max"/> as its
+    /// HOST decimal-places settings, without evaluating anything again: the one sanctioned
+    /// re-application of display configuration to a finished result. A host whose display setting
+    /// changes after a run — a playground's "decimal places" controls, for example — keeps the
+    /// result and re-renders the one this method returns instead of running the program again.
+    /// <para><b>Equivalence.</b> The returned result is what the same run would have returned with
+    /// <see cref="RunOptions.MinDecimalPlaces"/> set to <paramref name="min"/>,
+    /// <see cref="RunOptions.MaxDecimalPlaces"/> set to <paramref name="max"/> and every other
+    /// option unchanged, through <see cref="KatLangEngine.Run(string, RunOptions?)"/> and
+    /// <see cref="KatLangEngine.RunAsync(string, RunOptions?)"/> alike: it renders identically —
+    /// through <see cref="ToDisplayString"/>, <see cref="RenderDisplay"/>, and every
     /// <see cref="Formatting.OutputFormatter"/>, built-in or custom, under any
     /// <see cref="Formatting.OutputFormattingOptions"/>, overflow
-    /// (<see cref="DisplayRendering.LimitExceeded"/>) included — to the result of the same run made
-    /// with <see cref="RunOptions.DefaultDisplayDecimals"/> set to
-    /// <paramref name="hostDisplayDecimals"/> and every other option unchanged, through
-    /// <see cref="KatLangEngine.Run(string, RunOptions?)"/> and
-    /// <see cref="KatLangEngine.RunAsync(string, RunOptions?)"/> alike. It holds because the host
-    /// filter takes no part in evaluation — it is never evaluated, uses no budget, draws no random
-    /// value, invokes no host operation, and adds no cancellation checkpoint — so both runs
-    /// evaluate identically wherever evaluation is reproducible (an unseeded random draw or a
+    /// (<see cref="DisplayRendering.LimitExceeded"/>) included. It holds because the host settings
+    /// take no part in evaluation — they are never evaluated, use no budget, draw no random value,
+    /// invoke no host operation, and add no cancellation checkpoint — so both runs evaluate
+    /// identically wherever evaluation is reproducible (an unseeded random draw or a
     /// nondeterministic host operation can differ between any two runs, whatever their display
     /// settings).</para>
     /// <para><b>Per variant.</b> A <see cref="Success"/> returns a NEW <see cref="Success"/> that
     /// shares this one's <see cref="Success.Root"/>, <see cref="Success.Value"/>,
     /// <see cref="Success.Atoms"/>, and output rows (<see cref="Success.OutputRows"/>) and differs
-    /// only in its host filter — and so in its effective count. Its source filter — the program
-    /// root's own <c>DisplayDecimals</c>, exactly as the run evaluated and validated it — and its
-    /// display-length bound are kept. The new host filter REPLACES the previous one rather than
-    /// composing with it, so chained calls keep only the last, and re-applying the filter a result
-    /// was produced with changes nothing. A <see cref="NoProgramOutput"/>,
+    /// only in its host settings — and so in its effective pair. Its source settings — the program
+    /// root's own <c>MinDecimalPlaces</c> and <c>MaxDecimalPlaces</c>, exactly as the run evaluated
+    /// and validated them — and its display-length bound are kept. BOTH host settings are
+    /// REPLACED rather than composed with the previous ones, so chained calls keep only the last,
+    /// a <c>null</c> removes that host setting, and re-applying the pair a result was produced with
+    /// changes nothing. When the new effective minimum exceeds the new effective maximum — the
+    /// program declares only <c>MinDecimalPlaces = 4</c> and <paramref name="max"/> is <c>2</c>,
+    /// for example — the result is the <see cref="EvalFailure"/> that run would have returned
+    /// (<see cref="KatLangErrorCode.IllegalInEval"/>, positioned at the program's declaration),
+    /// carrying this run's root and property observations; the conflict is never repaired by
+    /// clamping, swapping, or dropping a value. A <see cref="NoProgramOutput"/>,
     /// <see cref="ParseFailure"/>, or <see cref="EvalFailure"/> renders independently of every
-    /// display filter, so it is returned unchanged as this same instance — including the
-    /// <see cref="EvalFailure"/> of an invalid root <c>DisplayDecimals</c>, which no host filter
-    /// excuses.</para>
+    /// display setting, so it is returned unchanged as this same instance — including the
+    /// <see cref="EvalFailure"/> of an invalid root setting, which no host setting excuses.</para>
+    /// <para><b>Re-apply from the original success.</b> Because a conflicting pair yields an
+    /// <see cref="EvalFailure"/>, which every later call returns unchanged, a host keeps the
+    /// <see cref="Success"/> its run returned and applies each new pair to THAT result — never to
+    /// the result of an earlier re-application.</para>
     /// <para><b>Purity.</b> Nothing is evaluated, charged, drawn, invoked, or observed for
     /// cancellation, and this result is never modified, so the method is safe to call
     /// concurrently on a shared result.</para>
     /// </summary>
-    /// <param name="hostDisplayDecimals">
-    /// The host display filter: an upper bound from <c>0</c> through
-    /// <see cref="RunOptions.MaxDisplayDecimals"/> on displayed decimal places, or <c>null</c> for no
-    /// host filter, which never means zero places. Validated exactly like
-    /// <see cref="RunOptions.DefaultDisplayDecimals"/>.
+    /// <param name="min">
+    /// The host minimum of displayed decimal places, from <c>0</c> through
+    /// <see cref="RunOptions.DecimalPlacesLimit"/>, or <c>null</c> for no host minimum, which never
+    /// means zero places. Validated exactly like <see cref="RunOptions.MinDecimalPlaces"/>.
+    /// </param>
+    /// <param name="max">
+    /// The host maximum of displayed decimal places, from <c>0</c> through
+    /// <see cref="RunOptions.DecimalPlacesLimit"/>, or <c>null</c> for no host maximum. Validated
+    /// exactly like <see cref="RunOptions.MaxDecimalPlaces"/>.
     /// </param>
     /// <returns>
-    /// A new <see cref="Success"/> carrying the given host filter, or this same instance for every
-    /// other variant.
+    /// For a <see cref="Success"/>: a new <see cref="Success"/> carrying the given host settings,
+    /// or the <see cref="EvalFailure"/> of a conflicting effective pair. This same instance for
+    /// every other variant.
     /// </returns>
     /// <exception cref="ArgumentOutOfRangeException">
-    /// <paramref name="hostDisplayDecimals"/> is negative or greater than
-    /// <see cref="RunOptions.MaxDisplayDecimals"/> — rejected, never clamped, for every variant.
+    /// <paramref name="min"/> or <paramref name="max"/> is negative or greater than
+    /// <see cref="RunOptions.DecimalPlacesLimit"/> — rejected, never clamped, for every variant.
     /// </exception>
-    public RunResult WithHostDisplayDecimals(int? hostDisplayDecimals)
+    /// <exception cref="ArgumentException">
+    /// <paramref name="min"/> exceeds <paramref name="max"/> — the host's own pair is inconsistent,
+    /// exactly the configuration a run rejects before parsing; rejected for every variant.
+    /// </exception>
+    public RunResult WithHostDecimalPlaces(int? min, int? max)
     {
-        if (hostDisplayDecimals is < 0 or > RunOptions.MaxDisplayDecimals)
-        {
-            throw new ArgumentOutOfRangeException(
-                nameof(hostDisplayDecimals),
-                hostDisplayDecimals,
-                $"Host display decimals must be between 0 and {RunOptions.MaxDisplayDecimals}.");
-        }
+        RunOptions.ThrowIfDecimalPlacesOutOfRange(min, nameof(min));
+        RunOptions.ThrowIfDecimalPlacesOutOfRange(max, nameof(max));
+        RunOptions.ThrowIfHostDecimalPlacesConflict(min, max, nameof(min));
 
         // Compiler-exhaustive over the closed hierarchy: a new variant must decide here whether
-        // its rendering depends on the host filter. A record copy shares every payload reference
-        // (root, value, atoms, emitted count) and replaces only the host filter; the source filter
-        // and the display-length bound travel unchanged, and the effective count is derived.
+        // its rendering depends on the host settings.
         return this switch
         {
-            Success success => success with
-            {
-                DisplayOptions = success.DisplayOptions with { HostDecimals = hostDisplayDecimals },
-            },
+            Success success => KatLangEngine.ReapplyHostDecimalPlaces(success, min, max),
             NoProgramOutput or ParseFailure or EvalFailure => this,
         };
     }
@@ -425,9 +462,10 @@ public closed record RunResult
     /// property's body would display: one row per emitted slot
     /// (<see cref="PropertyValueObservation.EmittedCount"/>; <c>P = 1, 2</c> is two rows, whereas the
     /// output row <c>P</c> reads it as one sequence value), the canonical value text, this result's
-    /// effective display decimals, and its display-length bound with the same overflow response as
-    /// <see cref="RenderDisplay"/>. Only a <see cref="Success"/> carries display decimals —
-    /// the program's own <c>DisplayDecimals</c> composed with the host filter — so the values of a
+    /// effective decimal places, and its display-length bound with the same overflow response as
+    /// <see cref="RenderDisplay"/>. Only a <see cref="Success"/> carries decimal-places settings —
+    /// the program's own <c>MinDecimalPlaces</c> and <c>MaxDecimalPlaces</c>, each composed with the
+    /// host setting of the same name — so the values of a
     /// <see cref="NoProgramOutput"/> or <see cref="EvalFailure"/> render at canonical full precision.
     /// Presentation only: nothing is evaluated, charged, or observed for cancellation.
     /// </summary>
@@ -547,7 +585,7 @@ public closed record RunResult
 ///     Console.WriteLine(success.ToDisplayString()); // 3
 /// </code>
 /// <para>Everything a run can be configured with — resource limits, cancellation, host
-/// operations, module loading, a random seed, and a host display filter — is supplied
+/// operations, module loading, a random seed, and the host decimal-places settings — is supplied
 /// per run through one <see cref="RunOptions"/> object. <see cref="RunAsync"/> is the
 /// asynchronous counterpart and the entry point for module loading and asynchronous host
 /// operations; <see cref="EvaluateToAtoms"/> is a numeric-only convenience.</para>
@@ -555,12 +593,20 @@ public closed record RunResult
 /// complete front end without evaluating (validation and editor tooling), and
 /// <see cref="Evaluator"/> evaluates a host-built <see cref="Expr"/> exactly as supplied —
 /// without parsing, module loading, front-end elaboration, or the engine's reading of the
-/// program root's <c>DisplayDecimals</c> presentation filter — so it is not a source
-/// runner.</para>
+/// program root's <c>MinDecimalPlaces</c> and <c>MaxDecimalPlaces</c> presentation settings — so
+/// it is not a source runner.</para>
 /// </summary>
 public static class KatLangEngine
 {
-    private const string DisplayDecimalsPropertyName = "DisplayDecimals";
+    private const string MinDecimalPlacesPropertyName = "MinDecimalPlaces";
+    private const string MaxDecimalPlacesPropertyName = "MaxDecimalPlaces";
+
+    /// <summary>
+    /// The program root's own properties the engine reads after a successful output, in READ
+    /// ORDER: the minimum first, then the maximum. Never mutated.
+    /// </summary>
+    private static readonly string[] DecimalPlacesPropertyNames =
+        [MinDecimalPlacesPropertyName, MaxDecimalPlacesPropertyName];
 
     /// <summary>
     /// Parse and evaluate KatLang source code, returning a unified <see cref="RunResult"/>.
@@ -581,7 +627,10 @@ public static class KatLangEngine
     /// </exception>
     /// <exception cref="ArgumentNullException"><paramref name="source"/> is null.</exception>
     /// <exception cref="ArgumentException">
-    /// <see cref="RunOptions.AllowedHosts"/> contains a null, empty, or whitespace-only entry.
+    /// <see cref="RunOptions.AllowedHosts"/> contains a null, empty, or whitespace-only entry, or
+    /// <see cref="RunOptions.MinDecimalPlaces"/> exceeds <see cref="RunOptions.MaxDecimalPlaces"/>
+    /// (the host's own pair is inconsistent; thrown before any parsing or evaluation, never
+    /// reported as a source diagnostic).
     /// </exception>
     /// <exception cref="InvalidOperationException">
     /// <see cref="RunOptions.HostOperations"/> contains an ASYNCHRONOUS operation, or
@@ -603,6 +652,7 @@ public static class KatLangEngine
     public static RunResult Run(string source, RunOptions? options = null)
     {
         ArgumentNullException.ThrowIfNull(source);
+        RequireConsistentHostDecimalPlaces(options);
         var hostOperations = options?.HostOperations;
         // Fail fast on a configuration this synchronous entry point can never honor:
         // an asynchronous host operation completes only by suspending evaluation.
@@ -617,7 +667,7 @@ public static class KatLangEngine
 
         var limits = options?.EvaluationLimits ?? EvaluationLimits.Default;
         var evaluationCancellationToken = options?.EvaluationCancellationToken ?? default;
-        var diagnosticDisplayOptions = new DisplayOptions(null, null, limits.EffectiveMaxDisplayLength);
+        var diagnosticDisplayOptions = DisplayOptions.Canonical(limits.EffectiveMaxDisplayLength);
         var frontEndResult = FrontEndPipeline.Process(source, options);
 
         if (frontEndResult.HasErrors)
@@ -635,18 +685,20 @@ public static class KatLangEngine
         var zeroArgPropertyResultCache = new RunScopedZeroArgPropertyResultCache(observationSink);
 
         // One budget for the whole run: the program output and the root's own
-        // DisplayDecimals property (the source display filter) are evaluated under the
-        // same run-scoped budget, so neither can reset or escape the other's accounting —
-        // and they share the run's one random stream (RunOptions.RandomSeed), its
-        // zero-argument property cache and its cancellation token, the output rows first
-        // and DisplayDecimals afterwards, in exactly that evaluation order. The read
-        // happens whatever the host filter is: RunOptions.DefaultDisplayDecimals takes no
-        // part in evaluation and is consumed afterwards, composed with the source filter
-        // by their minimum (ProjectEvaluationOutcome → ResolveDisplayOptions →
-        // CombineDisplayDecimals).
-        var evalResult = Evaluator.RunCountedWithTopLevelProperty(
+        // MinDecimalPlaces and MaxDecimalPlaces properties (the source decimal-places
+        // settings) are evaluated under the same run-scoped budget, so none can reset or
+        // escape another's accounting — and they share the run's one random stream
+        // (RunOptions.RandomSeed), its zero-argument property cache and its cancellation
+        // token, the output rows first, then MinDecimalPlaces, then MaxDecimalPlaces, in
+        // exactly that evaluation order (a failing read stops the run: the next is not
+        // attempted). The reads happen whatever the host settings are:
+        // RunOptions.MinDecimalPlaces and RunOptions.MaxDecimalPlaces take no part in
+        // evaluation and are consumed afterwards, each composed with the source setting of
+        // the same name by their minimum (ProjectEvaluationOutcome → ResolveDisplayOptions
+        // → CombineDecimalPlaces).
+        var evalResult = Evaluator.RunCountedWithTopLevelProperties(
             new Expr.AlgorithmExpr(frontEndResult.ElaboratedRoot),
-            DisplayDecimalsPropertyName,
+            DecimalPlacesPropertyNames,
             zeroArgPropertyResultCache,
             options?.EvaluationLimits,
             hostOperations,
@@ -658,7 +710,8 @@ public static class KatLangEngine
                 frontEndResult,
                 evalResult,
                 limits,
-                options?.DefaultDisplayDecimals,
+                options?.MinDecimalPlaces,
+                options?.MaxDecimalPlaces,
                 diagnosticDisplayOptions,
                 evaluationCancellationToken),
             observationSink);
@@ -706,7 +759,8 @@ public static class KatLangEngine
     /// </exception>
     /// <exception cref="ArgumentNullException"><paramref name="source"/> is null.</exception>
     /// <exception cref="ArgumentException">
-    /// <see cref="RunOptions.AllowedHosts"/> contains a null, empty, or whitespace-only entry.
+    /// <see cref="RunOptions.AllowedHosts"/> contains a null, empty, or whitespace-only entry, or
+    /// <see cref="RunOptions.MinDecimalPlaces"/> exceeds <see cref="RunOptions.MaxDecimalPlaces"/>.
     /// </exception>
     /// <remarks>
     /// Program failures are structured <see cref="RunResult"/> variants exactly as for
@@ -720,10 +774,11 @@ public static class KatLangEngine
         // acquisition and the evaluation calls are awaited, through the async front-end
         // pipeline and the evaluator's async entry points.
         ArgumentNullException.ThrowIfNull(source);
+        RequireConsistentHostDecimalPlaces(options);
         var hostOperations = options?.HostOperations;
         var limits = options?.EvaluationLimits ?? EvaluationLimits.Default;
         var evaluationCancellationToken = options?.EvaluationCancellationToken ?? default;
-        var diagnosticDisplayOptions = new DisplayOptions(null, null, limits.EffectiveMaxDisplayLength);
+        var diagnosticDisplayOptions = DisplayOptions.Canonical(limits.EffectiveMaxDisplayLength);
         var frontEndResult = await FrontEndPipeline.ProcessAsync(source, options).ConfigureAwait(false);
 
         if (frontEndResult.HasErrors)
@@ -747,11 +802,11 @@ public static class KatLangEngine
         var zeroArgPropertyResultCache = Evaluator.CreateRunScopedZeroArgPropertyResultCache(
             program, hostOperations, observationSink, treeRequiresAsyncEvaluation);
 
-        // One budget for the whole run, exactly as in Run; the host display filter is
-        // likewise consumed only afterwards, by the shared projection.
-        var evalResult = await Evaluator.RunCountedWithTopLevelPropertyAsync(
+        // One budget for the whole run, exactly as in Run; the host decimal-places settings
+        // are likewise consumed only afterwards, by the shared projection.
+        var evalResult = await Evaluator.RunCountedWithTopLevelPropertiesAsync(
             program,
-            DisplayDecimalsPropertyName,
+            DecimalPlacesPropertyNames,
             zeroArgPropertyResultCache,
             options?.EvaluationLimits,
             hostOperations,
@@ -764,7 +819,8 @@ public static class KatLangEngine
                 frontEndResult,
                 evalResult,
                 limits,
-                options?.DefaultDisplayDecimals,
+                options?.MinDecimalPlaces,
+                options?.MaxDecimalPlaces,
                 diagnosticDisplayOptions,
                 evaluationCancellationToken),
             observationSink);
@@ -825,7 +881,8 @@ public static class KatLangEngine
         FrontEndResult frontEndResult,
         EvalResult<Evaluator.CountedRootProgramResult> evalResult,
         EvaluationLimits limits,
-        int? hostDisplayFilter,
+        int? hostMinDecimalPlaces,
+        int? hostMaxDecimalPlaces,
         DisplayOptions diagnosticDisplayOptions,
         CancellationToken evaluationCancellationToken)
     {
@@ -849,9 +906,10 @@ public static class KatLangEngine
         // result, so ToDisplayString and every formatter stay bounded and agree without
         // RunResult having to reach back for the RunOptions.
         var displayOptionsResult = ResolveDisplayOptions(
-            evalResult.Value.TopLevelProperty,
-            FindTopLevelPropertyDeclarationSpan(frontEndResult.ElaboratedRoot, DisplayDecimalsPropertyName),
-            hostDisplayFilter,
+            frontEndResult.ElaboratedRoot,
+            evalResult.Value.TopLevelProperties,
+            hostMinDecimalPlaces,
+            hostMaxDecimalPlaces,
             limits.EffectiveMaxDisplayLength);
         if (displayOptionsResult.IsError)
         {
@@ -911,7 +969,8 @@ public static class KatLangEngine
     /// </exception>
     /// <exception cref="ArgumentNullException"><paramref name="source"/> is null.</exception>
     /// <exception cref="ArgumentException">
-    /// <see cref="RunOptions.AllowedHosts"/> contains a null, empty, or whitespace-only entry.
+    /// <see cref="RunOptions.AllowedHosts"/> contains a null, empty, or whitespace-only entry, or
+    /// <see cref="RunOptions.MinDecimalPlaces"/> exceeds <see cref="RunOptions.MaxDecimalPlaces"/>.
     /// </exception>
     /// <exception cref="InvalidOperationException">
     /// The options require the asynchronous entry point (see <see cref="Run(string, RunOptions?)"/>).
@@ -965,69 +1024,109 @@ public static class KatLangEngine
     }
 
     /// <summary>
-    /// The ONE place a completed run's effective display configuration is decided, shared by
+    /// The ONE place a completed run's display configuration is decided, shared by
     /// <see cref="Run"/> and <see cref="RunAsync"/>; the <see cref="RunResult"/> carries the
-    /// outcome, so every rendering surface of that result reads the same value. A run has two
-    /// independent presentation FILTERS, each an upper bound on displayed decimal places:
+    /// outcome, so every rendering surface of that result reads the same values. A run has two
+    /// independent presentation SETTINGS — the minimum and the maximum of displayed decimal places
+    /// — and each can come from two origins:
     /// <list type="bullet">
-    ///   <item>the SOURCE filter — the program root's own declared <c>DisplayDecimals</c>
-    ///   property: <paramref name="sourceSetting"/> is its evaluated value, validated here
-    ///   (one numeric value, integral, <c>0</c> through <see cref="RunOptions.MaxDisplayDecimals"/>);
-    ///   an invalid value is its own diagnostic whatever the host configured, because the host
-    ///   filter never replaces or excuses the source one (a declared property whose EVALUATION
-    ///   failed never reaches this point: the run has already failed with that error);</item>
-    ///   <item>the HOST filter — <paramref name="hostFilter"/>
-    ///   (<see cref="RunOptions.DefaultDisplayDecimals"/>, range-checked when the options were
-    ///   initialized).</item>
+    ///   <item>the SOURCE setting — the program root's own declared <c>MinDecimalPlaces</c> /
+    ///   <c>MaxDecimalPlaces</c> property: <paramref name="sourceSettings"/> holds their evaluated
+    ///   values in read order (minimum, maximum), validated here (one numeric value, integral,
+    ///   <c>0</c> through <see cref="RunOptions.DecimalPlacesLimit"/>); an invalid value is its own
+    ///   diagnostic whatever the host configured, because a host setting never replaces or excuses
+    ///   a source one (a declared property whose EVALUATION failed never reaches this point: the
+    ///   run has already failed with that error);</item>
+    ///   <item>the HOST setting — <paramref name="hostMinDecimalPlaces"/> and
+    ///   <paramref name="hostMaxDecimalPlaces"/> (<see cref="RunOptions.MinDecimalPlaces"/> and
+    ///   <see cref="RunOptions.MaxDecimalPlaces"/>, each range-checked when the options were
+    ///   initialized and checked as a pair at the engine entry point).</item>
     /// </list>
-    /// Both are composed by <see cref="CombineDisplayDecimals"/>: an absent filter imposes no
-    /// limit, both present give their minimum, neither gives canonical rendering.
-    /// <para>Absence is structural, never a value: the evaluator's one top-level property
-    /// probe returns <c>null</c> exactly when the root declares no such property, so a declared
-    /// <c>0</c>, a declared invalid value, and no declaration stay three distinct states, and a
-    /// <c>null</c> host filter means no host filter — never zero places. The host filter is pure
-    /// configuration consumed after evaluation — it is never evaluated, so nothing about the
-    /// run but this display value depends on it.</para>
+    /// The order is fixed: validate the source minimum, validate the source maximum, check the
+    /// source pair, compose each setting with the host setting of the same name
+    /// (<see cref="CombineDecimalPlaces"/>: an absent setting imposes nothing, both present give
+    /// their minimum), check the effective pair. A minimum above a maximum — the program's own
+    /// pair, or the effective pair across origins — is an error
+    /// (<see cref="DecimalPlacesConflict"/>), never repaired by clamping, swapping, or dropping a
+    /// value; neither setting ever supplies a value for the other.
+    /// <para>Absence is structural, never a value: the evaluator's top-level property probe
+    /// returns <c>null</c> exactly when the root declares no such property, so a declared
+    /// <c>0</c>, a declared invalid value, and no declaration stay three distinct states for each
+    /// property, and a <c>null</c> host setting means no host setting — never zero places. The
+    /// host settings are pure configuration consumed after evaluation — they are never evaluated,
+    /// so nothing about the run but its display depends on them.</para>
     /// </summary>
     private static EvalResult<DisplayOptions> ResolveDisplayOptions(
-        Evaluator.CountedResult? sourceSetting,
-        SourceSpan? span,
-        int? hostFilter,
+        Algorithm root,
+        IReadOnlyList<Evaluator.CountedResult?> sourceSettings,
+        int? hostMinDecimalPlaces,
+        int? hostMaxDecimalPlaces,
         int maxDisplayLength)
     {
-        int? sourceFilter = null;
-        if (sourceSetting is { } counted)
-        {
-            var value = counted.Value.AsNum();
-            if (counted.EmittedCount != 1 || value is null)
-                return DisplayDecimalsError("DisplayDecimals must be a single numeric value.", span);
+        if (ValidateSourceDecimalPlaces(root, MinDecimalPlacesPropertyName, sourceSettings[0], out var sourceMin) is { } invalidMin)
+            return invalidMin;
 
-            if (value.Value < 0)
-                return DisplayDecimalsError("DisplayDecimals must be a non-negative integer.", span);
+        if (ValidateSourceDecimalPlaces(root, MaxDecimalPlacesPropertyName, sourceSettings[1], out var sourceMax) is { } invalidMax)
+            return invalidMax;
 
-            if (!Decimal128.IsInteger(value.Value))
-                return DisplayDecimalsError("DisplayDecimals must be an integer.", span);
+        // The program's own pair first, whatever the host settings are: a host setting never
+        // excuses an invalid source configuration.
+        if (DecimalPlacesConflict(root, new DisplayOptions(sourceMin, sourceMax, null, null, maxDisplayLength)) is { } sourceConflict)
+            return sourceConflict;
 
-            if (value.Value > RunOptions.MaxDisplayDecimals)
-                return DisplayDecimalsError($"DisplayDecimals must be between 0 and {RunOptions.MaxDisplayDecimals}.", span);
-
-            // Validated integral and within [0, MaxDisplayDecimals], so the narrowing is exact.
-            sourceFilter = (int)value.Value;
-        }
-
-        return EvalResult<DisplayOptions>.Ok(new DisplayOptions(sourceFilter, hostFilter, maxDisplayLength));
+        var displayOptions = new DisplayOptions(
+            sourceMin, sourceMax, hostMinDecimalPlaces, hostMaxDecimalPlaces, maxDisplayLength);
+        return DecimalPlacesConflict(root, displayOptions) is { } effectiveConflict
+            ? effectiveConflict
+            : EvalResult<DisplayOptions>.Ok(displayOptions);
     }
 
     /// <summary>
-    /// The ONE composition law of the two display-decimals filters (Q-10, D-F): every present
-    /// filter is an upper bound on displayed decimal places, so the effective count is the
-    /// minimum of the present ones; an absent filter (<c>null</c>) imposes no limit, and with
-    /// neither present the result is <c>null</c> — canonical full-precision rendering. Both
-    /// inputs are already validated counts in <c>0</c> through
-    /// <see cref="RunOptions.MaxDisplayDecimals"/>.
+    /// Validates one evaluated source decimal-places property: one numeric value, integral,
+    /// non-negative, at most <see cref="RunOptions.DecimalPlacesLimit"/> — rejected, never
+    /// clamped, with <see cref="EvalError.IllegalInEval"/> at the property's declaration.
+    /// <paramref name="value"/> is <c>null</c> exactly when the root declares no such property
+    /// (<paramref name="setting"/> is <c>null</c>).
     /// </summary>
-    internal static int? CombineDisplayDecimals(int? sourceFilter, int? hostFilter)
-        => (sourceFilter, hostFilter) switch
+    private static EvalError? ValidateSourceDecimalPlaces(
+        Algorithm root,
+        string name,
+        Evaluator.CountedResult? setting,
+        out int? value)
+    {
+        value = null;
+        if (setting is not { } counted)
+            return null;
+
+        var number = counted.Value.AsNum();
+        if (counted.EmittedCount != 1 || number is null)
+            return DecimalPlacesError(root, name, $"{name} must be a single numeric value.");
+
+        if (number.Value < 0)
+            return DecimalPlacesError(root, name, $"{name} must be a non-negative integer.");
+
+        if (!Decimal128.IsInteger(number.Value))
+            return DecimalPlacesError(root, name, $"{name} must be an integer.");
+
+        if (number.Value > RunOptions.DecimalPlacesLimit)
+            return DecimalPlacesError(root, name, $"{name} must be between 0 and {RunOptions.DecimalPlacesLimit}.");
+
+        // Validated integral and within [0, DecimalPlacesLimit], so the narrowing is exact.
+        value = (int)number.Value;
+        return null;
+    }
+
+    /// <summary>
+    /// The ONE composition law of a decimal-places setting's two origins (Q-10 D-F, extended to
+    /// both settings on 2026-11-12), used for <c>MinDecimalPlaces</c> and for
+    /// <c>MaxDecimalPlaces</c> alike: the effective value is the minimum of the present ones; an
+    /// absent setting (<c>null</c>) imposes nothing, and with neither present the result is
+    /// <c>null</c> — that setting stays absent. Neither origin overrides the other, and neither
+    /// setting ever supplies a value for the other. Both inputs are already validated counts in
+    /// <c>0</c> through <see cref="RunOptions.DecimalPlacesLimit"/>.
+    /// </summary>
+    internal static int? CombineDecimalPlaces(int? sourceSetting, int? hostSetting)
+        => (sourceSetting, hostSetting) switch
         {
             ({ } source, { } host) => Math.Min(source, host),
             ({ } source, null) => source,
@@ -1035,8 +1134,88 @@ public static class KatLangEngine
             (null, null) => null,
         };
 
-    private static EvalError DisplayDecimalsError(string message, SourceSpan? span)
-        => new EvalError.IllegalInEval(message) { Span = span };
+    /// <summary>
+    /// The ONE consistency check of a pair of decimal-places settings: the pair
+    /// <paramref name="displayOptions"/> composes — the program's own pair when it carries no host
+    /// setting, the effective pair otherwise — is an error when its minimum exceeds its maximum,
+    /// and <c>null</c> (no error) when either is absent or they are ordered. The failure is
+    /// <see cref="EvalError.IllegalInEval"/>; its message names both values and where each came
+    /// from (the program or the host; a value both origins supply equally is the program's), and it
+    /// is positioned at the declaration of the source property supplying a conflicting value:
+    /// <c>MinDecimalPlaces</c> when the minimum is the program's, otherwise
+    /// <c>MaxDecimalPlaces</c>. Two complete, self-consistent pairs never conflict, so with a
+    /// consistent host pair (the engine entry point's check) at least one conflicting value is
+    /// always the program's.
+    /// </summary>
+    internal static EvalError? DecimalPlacesConflict(Algorithm root, DisplayOptions displayOptions)
+    {
+        if (displayOptions.MinDecimalPlaces is not { } min
+            || displayOptions.MaxDecimalPlaces is not { } max
+            || min <= max)
+        {
+            return null;
+        }
+
+        // The composition is a minimum, so an effective value is the program's exactly when the
+        // program's own setting equals it — including the tie with an equal host setting.
+        var minFromProgram = displayOptions.SourceMinDecimalPlaces == min;
+        var maxFromProgram = displayOptions.SourceMaxDecimalPlaces == max;
+        return DecimalPlacesError(
+            root,
+            minFromProgram ? MinDecimalPlacesPropertyName : MaxDecimalPlacesPropertyName,
+            $"{MinDecimalPlacesPropertyName} must not exceed {MaxDecimalPlacesPropertyName}: " +
+            $"the minimum is {min} (from the {DecimalPlacesOrigin(minFromProgram)}) " +
+            $"and the maximum is {max} (from the {DecimalPlacesOrigin(maxFromProgram)}).");
+    }
+
+    private static string DecimalPlacesOrigin(bool fromProgram) => fromProgram ? "program" : "host";
+
+    /// <summary>
+    /// <see cref="RunResult.WithHostDecimalPlaces"/> for a <see cref="RunResult.Success"/>: the
+    /// result the same run would have produced with the given (already validated) host settings.
+    /// The source settings and the display-length bound travel unchanged and the effective pair is
+    /// derived, so the outcome is decided by the same <see cref="DecimalPlacesConflict"/> a fresh
+    /// run applies last. Nothing is evaluated.
+    /// </summary>
+    internal static RunResult ReapplyHostDecimalPlaces(
+        RunResult.Success success,
+        int? hostMinDecimalPlaces,
+        int? hostMaxDecimalPlaces)
+    {
+        var displayOptions = success.DisplayOptions with
+        {
+            HostMinDecimalPlaces = hostMinDecimalPlaces,
+            HostMaxDecimalPlaces = hostMaxDecimalPlaces,
+        };
+
+        if (DecimalPlacesConflict(success.Root, displayOptions) is { } conflict)
+        {
+            return new RunResult.EvalFailure(success.Root, [KatLangError.FromEvalError(conflict)])
+            {
+                DisplayOptions = DisplayOptions.Canonical(displayOptions.MaxDisplayLength),
+                PropertyObservations = success.PropertyObservations,
+            };
+        }
+
+        // A record copy shares every payload reference (root, value, atoms, emitted count).
+        return success with { DisplayOptions = displayOptions };
+    }
+
+    /// <summary>
+    /// The host's own pair, checked where a run begins — before parsing or evaluation — because
+    /// two init-only properties cannot validate each other at initialization: each init accessor
+    /// sees one property at a time, so a pair that is replaced one property after the other may
+    /// pass through an inconsistent intermediate pair on the way to a valid final one. Each
+    /// value's own range check stays in its init accessor.
+    /// </summary>
+    private static void RequireConsistentHostDecimalPlaces(RunOptions? options)
+    {
+        if (options is not null)
+            RunOptions.ThrowIfHostDecimalPlacesConflict(options.MinDecimalPlaces, options.MaxDecimalPlaces, nameof(options));
+    }
+
+    private static EvalError DecimalPlacesError(Algorithm root, string propertyName, string message)
+        => new EvalError.IllegalInEval(message) { Span = FindTopLevelPropertyDeclarationSpan(root, propertyName) };
 
     private static bool IsTopLevelNoProgramOutput(EvalError error)
         => error is EvalError.WithContext

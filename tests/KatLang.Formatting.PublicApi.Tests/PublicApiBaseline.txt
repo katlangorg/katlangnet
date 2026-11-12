@@ -1916,14 +1916,15 @@ public sealed record KatLang.Result.Str : KatLang.Result, System.IEquatable<KatL
   operator public static bool op_Inequality(KatLang.Result.Str? left, KatLang.Result.Str? right)
 
 public sealed class KatLang.RunOptions
-  const    public const int MaxDisplayDecimals = 99
+  const    public const int DecimalPlacesLimit = 99
   ctor     public RunOptions()
   property public System.Collections.Generic.IEnumerable<string>? AllowedHosts { get; init; }
-  property public int? DefaultDisplayDecimals { get; init; }
   property public System.Func<string, System.Threading.CancellationToken, System.Threading.Tasks.ValueTask<string>>? DownloadCode { get; init; }
   property public System.Threading.CancellationToken EvaluationCancellationToken { get; init; }
   property public KatLang.EvaluationLimits? EvaluationLimits { get; init; }
   property public KatLang.HostOperations? HostOperations { get; init; }
+  property public int? MaxDecimalPlaces { get; init; }
+  property public int? MinDecimalPlaces { get; init; }
   property public bool ObservePropertyValues { get; init; }
   property public long? RandomSeed { get; init; }
   property public System.Threading.CancellationToken SourceProcessingCancellationToken { get; init; }
@@ -1945,7 +1946,7 @@ public closed record KatLang.RunResult : System.IEquatable<KatLang.RunResult>
   method   public KatLang.DisplayRendering RenderPropertyValue(KatLang.PropertyValueObservation observation)
   method   public string ToDisplayString()
   method   public override string ToString()
-  method   public KatLang.RunResult WithHostDisplayDecimals(int? hostDisplayDecimals)
+  method   public KatLang.RunResult WithHostDecimalPlaces(int? min, int? max)
   operator public static bool op_Equality(KatLang.RunResult? left, KatLang.RunResult? right)
   operator public static bool op_Inequality(KatLang.RunResult? left, KatLang.RunResult? right)
 

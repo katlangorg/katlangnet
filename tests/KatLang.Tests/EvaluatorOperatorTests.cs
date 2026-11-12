@@ -423,12 +423,12 @@ public class EvaluatorOperatorTests
 
     // Display formatting must not affect equality: equality compares numeric values,
     // so 1.2 and 1.20 are equal regardless of rendered decimal scale. The leading
-    // DisplayDecimals directive (a display-only setting) does not change this.
+    // MaxDecimalPlaces directive (a display-only setting) does not change this.
     [Fact]
     public void Eval_Equal_DecimalScaleDoesNotAffectValueEquality_ReturnsOne()
         => AssertEvalBool(
             """
-            DisplayDecimals = 0
+            MaxDecimalPlaces = 0
             1.2 == 1.20
             """,
             true);

@@ -50,7 +50,7 @@ public class PropertyObservationApiContractTests
         var observed = Run(Source);
         var copy = observed with { };
         Assert.Same(observed.PropertyObservations, copy.PropertyObservations);
-        Assert.Same(observed.PropertyObservations, observed.WithHostDisplayDecimals(1).PropertyObservations);
+        Assert.Same(observed.PropertyObservations, observed.WithHostDecimalPlaces(null, 1).PropertyObservations);
     }
 
     [Fact]
@@ -109,7 +109,7 @@ public class PropertyObservationApiContractTests
         foreach (var (source, name, body) in new[]
         {
             ("P = 1, 'two', [3, (4, 5)]\nP", "P", "1, 'two', [3, (4, 5)]"),
-            ("X = 2 / 3\nDisplayDecimals = 3\nX", "X", "DisplayDecimals = 3\n2 / 3"),
+            ("X = 2 / 3\nMaxDecimalPlaces = 3\nX", "X", "MaxDecimalPlaces = 3\n2 / 3"),
             ("S = 'text'\nS", "S", "'text'"),
             ("E = ()\nE", "E", "()"),
             ("Q = (1, 2)\nQ", "Q", "(1, 2)"),

@@ -206,7 +206,9 @@ internal static class EvaluatorInvariants
     // ── Public engine parity ─────────────────────────────────────────────────
     private static void CheckEngineParity(string source, Algorithm root, EvalResult<Evaluator.CountedResult> counted, RunResult engine)
     {
-        bool hasDisplayDecimals = root.Properties.Any(p => p.Name == "DisplayDecimals");
+        // The engine's own channel: the root's decimal-places settings, which the raw evaluator
+        // never reads.
+        bool hasDecimalPlacesSetting = root.Properties.Any(p => p.Name is "MinDecimalPlaces" or "MaxDecimalPlaces");
 
         if (counted.IsError)
         {
@@ -218,11 +220,12 @@ internal static class EvaluatorInvariants
             return;
         }
 
-        // counted succeeded: the engine must succeed too, unless DisplayDecimals itself is
-        // invalid (a documented production rule that turns success into EvalFailure).
+        // counted succeeded: the engine must succeed too, unless a declared decimal-places
+        // setting is invalid, fails, or the declared pair is inconsistent (a documented
+        // production rule that turns success into EvalFailure).
         if (engine is not RunResult.Success success)
         {
-            if (hasDisplayDecimals && engine is RunResult.EvalFailure) return;
+            if (hasDecimalPlacesSetting && engine is RunResult.EvalFailure) return;
             throw new EvaluatorInvariantException(
                 $"Counted evaluation succeeded but engine returned {engine.GetType().Name}.");
         }

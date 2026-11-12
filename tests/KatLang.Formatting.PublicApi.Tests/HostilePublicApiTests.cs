@@ -22,7 +22,9 @@ public class HostilePublicApiTests
     }
 
     [Theory]
-    [InlineData("DisplayDecimals = -1\n1", 100)]
+    [InlineData("MaxDecimalPlaces = -1\n1", 100)]
+    [InlineData("MinDecimalPlaces = -1\n1", 100)]
+    [InlineData("MinDecimalPlaces = 5\nMaxDecimalPlaces = 3\n1", 100)]
     [InlineData("A = [1, 2]\n[A, A]", 3)]
     public async Task EveryEngineFailurePath_PublishesReadOnlyErrors(string source, int maxItems)
     {
@@ -30,11 +32,21 @@ public class HostilePublicApiTests
         foreach (var run in new[] { KatLangEngine.Run(source, options), await KatLangEngine.RunAsync(source, options) })
         {
             var failure = Assert.IsType<RunResult.EvalFailure>(run);
-            var expectedCode = source.StartsWith("DisplayDecimals", StringComparison.Ordinal)
+            var expectedCode = source.Contains("DecimalPlaces", StringComparison.Ordinal)
                 ? KatLangErrorCode.IllegalInEval : KatLangErrorCode.CollectionSizeLimitExceeded;
             Assert.Equal(expectedCode, Assert.Single(failure.Errors).Code);
             RejectMutation(failure.Errors);
         }
+    }
+
+    [Fact]
+    public void AConflictFailureFromReapplication_PublishesReadOnlyErrors()
+    {
+        var success = Assert.IsType<RunResult.Success>(KatLangEngine.Run("MinDecimalPlaces = 4\n1 / 7"));
+        var failure = Assert.IsType<RunResult.EvalFailure>(success.WithHostDecimalPlaces(null, 2));
+
+        Assert.Equal(KatLangErrorCode.IllegalInEval, Assert.Single(failure.Errors).Code);
+        RejectMutation(failure.Errors);
     }
 
     [Fact]
@@ -88,7 +100,7 @@ public class HostilePublicApiTests
             await gate.Task.WaitAsync(token);
             return new Result.Bool(true);
         }));
-        var options = new RunOptions { HostOperations = operations, RandomSeed = 42, DefaultDisplayDecimals = 2 };
+        var options = new RunOptions { HostOperations = operations, RandomSeed = 42, MaxDecimalPlaces = 2 };
         const string source = "Wait(), Math.RandomInt(1, 1000), 1 / 7";
         var tasks = Enumerable.Range(0, 12).Select(_ => KatLangEngine.RunAsync(source, options)).ToArray();
         Assert.Equal(tasks.Length, entered);
@@ -98,9 +110,9 @@ public class HostilePublicApiTests
         var expected = Assert.IsType<RunResult.Success>(runs[0]).ToDisplayString();
         Assert.All(runs, run => Assert.Equal(expected, Assert.IsType<RunResult.Success>(run).ToDisplayString()));
         Assert.EndsWith("0.14", expected, StringComparison.Ordinal);
-        // The program's own filter composes with the shared host filter by their minimum (Q-10 D-F).
-        Assert.Equal("0.14", (await KatLangEngine.RunAsync("DisplayDecimals = 6\n1 / 7", options)).ToDisplayString());
-        Assert.Equal("0.1", (await KatLangEngine.RunAsync("DisplayDecimals = 1\n1 / 7", options)).ToDisplayString());
+        // The program's own maximum composes with the shared host maximum by their minimum (Q-10 D-F).
+        Assert.Equal("0.14", (await KatLangEngine.RunAsync("MaxDecimalPlaces = 6\n1 / 7", options)).ToDisplayString());
+        Assert.Equal("0.1", (await KatLangEngine.RunAsync("MaxDecimalPlaces = 1\n1 / 7", options)).ToDisplayString());
         Assert.IsType<RunResult.EvalFailure>(await KatLangEngine.RunAsync("1 / 0", options));
         Assert.Equal(expected, (await KatLangEngine.RunAsync(source, options)).ToDisplayString());
     }

@@ -497,7 +497,7 @@ public class UnsupportedDoubleQuotedStringTests
         Assert.Equal([new Result.Str("Total"), new Result.Atom(11)], items);
 
         // So numeric display settings still reach the number.
-        var shown = Assert.IsType<RunResult.Success>(KatLangEngine.Run("DisplayDecimals = 2\n'Total', 10 / 4"));
+        var shown = Assert.IsType<RunResult.Success>(KatLangEngine.Run("MinDecimalPlaces = 2\n'Total', 10 / 4"));
         Assert.Equal("Total\n2.50", shown.ToDisplayString().ReplaceLineEndings("\n"));
     }
 

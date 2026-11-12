@@ -1,3 +1,4 @@
-DisplayDecimals = 8
+MinDecimalPlaces = 2
+MaxDecimalPlaces = 8
 range(1, 3000).map(Half)
 Half(x) = x / 3

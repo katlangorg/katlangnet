@@ -300,11 +300,15 @@ public class SignedZeroExtremaTests
     }
 
     [Theory]
-    [InlineData("DisplayDecimals = 2\nmax((-0, 0))", "0")]
-    [InlineData("DisplayDecimals = 2\nmin((0, -0))", "-0")]
-    [InlineData("DisplayDecimals = 2\nmax((-0.0, 0.0))", "0.00")]
-    [InlineData("DisplayDecimals = 2\nmin((0.0, -0.0))", "-0.00")]
-    public void DisplayDecimals_KeepsTheExtremumSign_WithoutAPlusSign(string source, string display)
+    [InlineData("MaxDecimalPlaces = 2\nmax((-0, 0))", "0")]
+    [InlineData("MaxDecimalPlaces = 2\nmin((0, -0))", "-0")]
+    [InlineData("MaxDecimalPlaces = 2\nmax((-0.0, 0.0))", "0")]
+    [InlineData("MaxDecimalPlaces = 2\nmin((0.0, -0.0))", "-0")]
+    [InlineData("MinDecimalPlaces = 2\nmax((-0, 0))", "0.00")]
+    [InlineData("MinDecimalPlaces = 2\nmin((0, -0))", "-0.00")]
+    [InlineData("MinDecimalPlaces = 2\nmax((-0.0, 0.0))", "0.00")]
+    [InlineData("MinDecimalPlaces = 2\nmin((0.0, -0.0))", "-0.00")]
+    public void DecimalPlaces_KeepTheExtremumSign_WithoutAPlusSign(string source, string display)
         => Assert.Equal(display, Assert.IsType<RunResult.Success>(KatLangEngine.Run(source)).ToDisplayString());
 
     // ── Non-finite neighbors keep their IEEE extremum behavior ───────────────────────────

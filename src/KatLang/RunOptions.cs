@@ -2,20 +2,22 @@ namespace KatLang;
 
 /// <summary>
 /// Per-run configuration for <see cref="KatLangEngine"/> and <see cref="Parser"/>: resource
-/// limits, cancellation, host operations, module loading, a random seed, a host display
-/// filter, and passive root-property observation — every option a run has, in one place.
+/// limits, cancellation, host operations, module loading, a random seed, the host
+/// decimal-places settings, and passive root-property observation — every option a run has, in
+/// one place.
 /// <para><b>Defaults.</b> <c>new RunOptions()</c> — and a <c>null</c> options argument, which
 /// means the same — runs with <see cref="KatLang.EvaluationLimits.Default"/> and
 /// <see cref="KatLang.SourceProcessingLimits.Default"/>, no cancellation, no host operations,
 /// no module loading (a program using <c>load</c> gets a diagnostic and nothing is fetched),
-/// fresh entropy for random operations, no host display filter (canonical full-precision
-/// display unless the program root declares its own <c>DisplayDecimals</c> filter), and no
-/// property observation.</para>
+/// fresh entropy for random operations, no host decimal-places setting (canonical
+/// full-precision display unless the program root declares its own <c>MinDecimalPlaces</c> or
+/// <c>MaxDecimalPlaces</c>), and no property observation.</para>
 /// <para><b>Lifetime.</b> Every member is init-only; collection inputs are snapshotted when the
 /// object is initialized. Configuration is safe to share across sequential and
 /// concurrent runs: each run creates its own budgets, caches, and random stream, and no run
-/// changes the options. Allowed-host entries are validated at parse/run entry; display precision
-/// and limit settings are validated during initialization. Delegate closures and cancellation
+/// changes the options. Allowed-host entries are validated at parse/run entry; each decimal-places
+/// setting and every limit setting is validated during initialization, and the decimal-places
+/// PAIR (a minimum never above the maximum) where a run begins. Delegate closures and cancellation
 /// sources remain host-owned mutable state, so shared delegates must support concurrent calls.
 /// A host that
 /// cancels runs individually creates one options object per run and shares the heavier parts
@@ -25,19 +27,22 @@ namespace KatLang;
 public sealed class RunOptions
 {
     /// <summary>
-    /// The largest valid display-decimals count: the upper bound of the inclusive range
-    /// <c>0</c> through <c>99</c> shared by both display filters — a program root's own
-    /// <c>DisplayDecimals</c> property and <see cref="DefaultDisplayDecimals"/>. It is a VALIDITY
-    /// bound, not a clamping ceiling like the <c>MaxSupported*</c> limits: a count outside the
-    /// range is rejected, never clamped — a program's <c>DisplayDecimals</c> property with a
-    /// diagnostic, <see cref="DefaultDisplayDecimals"/> with <see cref="ArgumentOutOfRangeException"/>.
-    /// Like the public <c>MaxSupported*</c> constants, this is a versioned contract bound,
-    /// not a runtime capability query. Consumers compile the constant into their assemblies;
-    /// if a future release changes the bound, recompile consumers to use the new value.
+    /// The largest valid count of displayed decimal places: the upper bound of the inclusive range
+    /// <c>0</c> through <c>99</c> shared by every decimal-places setting — a program root's own
+    /// <c>MinDecimalPlaces</c> and <c>MaxDecimalPlaces</c> properties, <see cref="MinDecimalPlaces"/>
+    /// and <see cref="MaxDecimalPlaces"/> here, and <see cref="RunResult.WithHostDecimalPlaces"/>.
+    /// It is a VALIDITY bound, not a clamping ceiling like the <c>MaxSupported*</c> limits: a count
+    /// outside the range is rejected, never clamped — a program's property with a diagnostic, a
+    /// host setting with <see cref="ArgumentOutOfRangeException"/>. It counts decimal PLACES, which
+    /// are not significant digits. Like the public <c>MaxSupported*</c> constants, this is a
+    /// versioned contract bound, not a runtime capability query. Consumers compile the constant
+    /// into their assemblies; if a future release changes the bound, recompile consumers to use
+    /// the new value.
     /// </summary>
-    public const int MaxDisplayDecimals = 99;
+    public const int DecimalPlacesLimit = 99;
 
-    private readonly int? _defaultDisplayDecimals;
+    private readonly int? _minDecimalPlaces;
+    private readonly int? _maxDecimalPlaces;
     private readonly IReadOnlyList<string>? _allowedHosts;
 
     /// <summary>
@@ -275,12 +280,13 @@ public sealed class RunOptions
     /// distinct value names a distinct stream (<c>-5</c> and <c>5</c> differ; the seed's
     /// bit pattern is used as-is, never folded, hashed, or truncated).
     /// <para><b>Reproducibility contract.</b> For a given KatLang version: the same program
-    /// (loaded module contents and the root's own <c>DisplayDecimals</c> property, which
-    /// <see cref="KatLangEngine"/> evaluates after the output whatever the host display filter
-    /// is, included), the same seed, and the same semantically executed KatLang
+    /// (loaded module contents and the root's own <c>MinDecimalPlaces</c> and
+    /// <c>MaxDecimalPlaces</c> properties, which <see cref="KatLangEngine"/> evaluates after the
+    /// output in that order, whatever the host settings are, included), the same seed, and the
+    /// same semantically executed KatLang
     /// path produce the same random values on every supported platform. A
-    /// <see cref="DefaultDisplayDecimals"/> host filter is never evaluated and draws
-    /// nothing, so configuring one changes no random value. Both random
+    /// <see cref="MinDecimalPlaces"/> or <see cref="MaxDecimalPlaces"/> host setting is never
+    /// evaluated and draws nothing, so configuring one changes no random value. Both random
     /// operations, in every spelling, consume ONE run-scoped stream in actual evaluation
     /// order, so the values depend on which random calls execute and in what order —
     /// removing an earlier random call generally changes every later value (a call can
@@ -315,70 +321,148 @@ public sealed class RunOptions
     public long? RandomSeed { get; init; }
 
     /// <summary>
-    /// Optional HOST DISPLAY FILTER: an upper bound on how many digits after the decimal point
-    /// displayed numbers show — an integer from <c>0</c> through <see cref="MaxDisplayDecimals"/>,
-    /// or <c>null</c> (the default) for no host filter. <c>0</c> is a real filter — no digits
-    /// after the decimal point, so <c>2.5</c> shows as <c>3</c> — distinct from <c>null</c>, which
-    /// imposes no limit and never means zero places. (The name predates the filter model: the
-    /// value is a filter composed with the program's own, not a fallback below it.)
-    /// <para><b>Composition with the source filter.</b> A program root's own
-    /// <c>DisplayDecimals</c> property is the run's SOURCE display filter. Both filters have the
-    /// same role and compose by their minimum:
-    /// <list type="bullet">
-    ///   <item>neither present — canonical full-precision display;</item>
-    ///   <item>only the source filter — its value;</item>
-    ///   <item>only this host filter — this value;</item>
-    ///   <item>both — the smaller of the two (source <c>7</c> with host <c>5</c> shows 5 places;
-    ///   source <c>5</c> with host <c>7</c> shows 5 places).</item>
-    /// </list>
-    /// The host filter never replaces, suppresses, or excuses the source filter: a declared
-    /// root <c>DisplayDecimals</c> is still evaluated and validated with any host filter
-    /// configured, so an invalid or failing one still fails the run with its own error, even
-    /// when this filter is stricter.</para>
-    /// <para><b>Display only.</b> The effective count selects fixed-point presentation —
-    /// midpoint rounding away from zero, culture-invariant digits, the canonical <c>NaN</c> /
-    /// <c>Infinity</c> / <c>-Infinity</c> spellings, and the signed-zero rule — and nothing
-    /// else: stored values and their Decimal128 representations, <c>.string</c>, calculations,
-    /// comparisons, cached property values, callbacks, control flow,
+    /// Optional HOST MINIMUM of displayed decimal places: the fewest digits shown after the
+    /// decimal point — an integer from <c>0</c> through <see cref="DecimalPlacesLimit"/>, or
+    /// <c>null</c> (the default) for no host minimum. A number with fewer places is padded with
+    /// zeros (<c>10</c> shows as <c>10.00</c> under a minimum of 2, integers included). <c>0</c> is
+    /// a real setting, distinct from <c>null</c>: it pads nothing, but like every present setting
+    /// it selects the numeric display below, which removes stored trailing zeros (<c>2.5000</c>
+    /// shows as <c>2.5</c>).
+    /// <para><b>Composition.</b> A program root's own <c>MinDecimalPlaces</c> property is the
+    /// run's SOURCE minimum; this is the HOST minimum. The two compose by their MINIMUM, exactly
+    /// like the two maximums (<see cref="MaxDecimalPlaces"/>): neither present — no minimum; one
+    /// present — its value; both — the smaller. Neither origin overrides the other, and a host
+    /// setting never replaces, suppresses, or excuses a source one: a declared root
+    /// <c>MinDecimalPlaces</c> is still evaluated and validated with any host setting configured,
+    /// so an invalid or failing one still fails the run with its own error.</para>
+    /// <para><b>Independent of the maximum.</b> Neither setting supplies a value for the other.
+    /// With only a minimum set there is no maximum, so nothing is rounded (a minimum of 2 shows
+    /// <c>1.234567</c> as <c>1.234567</c>); with only a maximum set nothing is padded. A fixed
+    /// number of places is written by setting both to the same value (2 and 2 show
+    /// <c>1.234567</c> as <c>1.23</c> and <c>10</c> as <c>10.00</c>).</para>
+    /// <para><b>Consistency.</b> A minimum above a maximum is an error, never repaired by
+    /// clamping, swapping, or dropping a value. An init accessor sees ONE property at a time, so
+    /// it cannot judge a pair that is still being assembled — replacing an earlier pair (1, 3)
+    /// with (5, 7) one property after the other passes through (5, 3). The PAIR is therefore
+    /// checked where a run begins, not here: <see cref="KatLangEngine.Run(string, RunOptions?)"/>
+    /// and <see cref="KatLangEngine.RunAsync(string, RunOptions?)"/> reject an options object whose
+    /// minimum exceeds its maximum with <see cref="ArgumentException"/> before parsing or
+    /// evaluation (never as a source diagnostic), so the order in which the two properties are
+    /// initialized never matters and a valid final state never throws. A program's
+    /// own inconsistent pair, and an effective pair that conflicts only across origins (a program
+    /// declaring only <c>MinDecimalPlaces = 4</c>, run with a host maximum of 2), are the run's
+    /// <see cref="RunResult.EvalFailure"/> (<see cref="KatLangErrorCode.IllegalInEval"/>).</para>
+    /// <para><b>Display only.</b> With at least one effective setting present, a finite number is
+    /// rounded to the effective maximum when there is one (midpoints away from zero), written
+    /// positionally with the fewest fractional digits that represent it exactly, and padded with
+    /// zeros up to the effective minimum; it has no decimal point when it has no fractional digits,
+    /// and keeps its sign — also a zero, and a value that rounds to zero. <c>NaN</c>,
+    /// <c>Infinity</c> and <c>-Infinity</c> keep their canonical spellings. With no setting from
+    /// any origin, display is canonical: a number's stored digits, trailing zeros included. Nothing
+    /// else changes: stored values and their Decimal128 representations, <c>.string</c>,
+    /// calculations, comparisons, cached property values, callbacks, control flow,
     /// <see cref="RunResult.Success.Value"/>, <see cref="RunResult.Success.Atoms"/>, and
-    /// diagnostics are unchanged. The run's result carries its effective setting, so every
-    /// rendering surface of that result agrees under the same display-length bound:
+    /// diagnostics are unchanged. The run's result carries its settings, so every rendering
+    /// surface of that result agrees under the same display-length bound:
     /// <see cref="RunResult.ToDisplayString"/> and <see cref="RunResult.RenderDisplay"/>, and every
     /// <see cref="Formatting.OutputFormatter"/> — built-in or custom, through
     /// <see cref="Formatting.BoundedOutputWriter.AppendAtom"/>.</para>
     /// <para><b>Host configuration, not a property.</b> Nothing is injected into the program.
-    /// The filter is not a KatLang declaration, so name resolution, shadowing, collisions,
+    /// The setting is not a KatLang declaration, so name resolution, shadowing, collisions,
     /// source spans, diagnostics, and editor tooling see the program exactly as written
     /// (<see cref="Parser.Parse(string, RunOptions?)"/> and <see cref="Parser.ParseAsync"/>
-    /// ignore this property; a program reading an undeclared <c>DisplayDecimals</c> never sees
+    /// ignore this property; a program reading an undeclared <c>MinDecimalPlaces</c> never sees
     /// it), and it is never evaluated: it consumes no evaluation budget, draws no random
     /// value, invokes no host operation, adds no cancellation checkpoint, and creates no
-    /// zero-argument property cache entry. A declared root <c>DisplayDecimals</c> property
-    /// keeps its ordinary evaluation — after the program output, under the same run budget,
-    /// random stream, cancellation token, and property cache — whether or not a host filter
-    /// is configured.</para>
+    /// zero-argument property cache entry. A declared root <c>MinDecimalPlaces</c> or
+    /// <c>MaxDecimalPlaces</c> property keeps its ordinary evaluation — after the program output,
+    /// the minimum first, under the same run budget, random stream, cancellation token, and
+    /// property cache — whether or not a host setting is configured.</para>
     /// <para>This is immutable configuration, safe to share across concurrent and sequential
-    /// runs; no run's <c>DisplayDecimals</c> property ever changes it.</para>
+    /// runs; no run's own property ever changes it.</para>
     /// </summary>
     /// <exception cref="ArgumentOutOfRangeException">
-    /// The value is negative or greater than <see cref="MaxDisplayDecimals"/>. It is thrown
-    /// when the options object is initialized, so an invalid default never reaches a
+    /// The value is negative or greater than <see cref="DecimalPlacesLimit"/>. It is thrown
+    /// when the options object is initialized, so an out-of-range setting never reaches a
     /// synchronous or asynchronous entry point.
     /// </exception>
-    public int? DefaultDisplayDecimals
+    public int? MinDecimalPlaces
     {
-        get => _defaultDisplayDecimals;
+        get => _minDecimalPlaces;
         init
         {
-            if (value is < 0 or > MaxDisplayDecimals)
-            {
-                throw new ArgumentOutOfRangeException(
-                    nameof(DefaultDisplayDecimals),
-                    value,
-                    $"Default display decimals must be between 0 and {MaxDisplayDecimals}.");
-            }
+            ThrowIfDecimalPlacesOutOfRange(value, nameof(MinDecimalPlaces));
+            _minDecimalPlaces = value;
+        }
+    }
 
-            _defaultDisplayDecimals = value;
+    /// <summary>
+    /// Optional HOST MAXIMUM of displayed decimal places: the most digits shown after the decimal
+    /// point — an integer from <c>0</c> through <see cref="DecimalPlacesLimit"/>, or <c>null</c>
+    /// (the default) for no host maximum. A number with more places is rounded, midpoints away
+    /// from zero. <c>0</c> is a real setting — no digits after the decimal point, so <c>2.5</c>
+    /// shows as <c>3</c> — distinct from <c>null</c>, which imposes no limit and never means zero
+    /// places; and <see cref="DecimalPlacesLimit"/> is not "no maximum" either, because every
+    /// present setting selects the numeric display that removes stored trailing zeros.
+    /// <para><b>Composition.</b> A program root's own <c>MaxDecimalPlaces</c> property is the
+    /// run's SOURCE maximum; this is the HOST maximum. Both have the same role and compose by their
+    /// minimum:
+    /// <list type="bullet">
+    ///   <item>neither present — no maximum, nothing is rounded;</item>
+    ///   <item>only the source maximum — its value;</item>
+    ///   <item>only this host maximum — this value;</item>
+    ///   <item>both — the smaller of the two (source <c>7</c> with host <c>5</c> shows at most 5
+    ///   places; source <c>5</c> with host <c>7</c> shows at most 5 places).</item>
+    /// </list>
+    /// The host maximum never replaces, suppresses, or excuses the source one.</para>
+    /// <para>Everything else — independence from the minimum, the pair's consistency and where it
+    /// is checked, the display rule, and the fact that this is host configuration and never a
+    /// binding — is stated once on <see cref="MinDecimalPlaces"/> and holds here unchanged.</para>
+    /// </summary>
+    /// <exception cref="ArgumentOutOfRangeException">
+    /// The value is negative or greater than <see cref="DecimalPlacesLimit"/>. It is thrown
+    /// when the options object is initialized, so an out-of-range setting never reaches a
+    /// synchronous or asynchronous entry point.
+    /// </exception>
+    public int? MaxDecimalPlaces
+    {
+        get => _maxDecimalPlaces;
+        init
+        {
+            ThrowIfDecimalPlacesOutOfRange(value, nameof(MaxDecimalPlaces));
+            _maxDecimalPlaces = value;
+        }
+    }
+
+    /// <summary>
+    /// The ONE range check of a host decimal-places value (<c>null</c> or <c>0</c> through
+    /// <see cref="DecimalPlacesLimit"/>), shared by the two init accessors and
+    /// <see cref="RunResult.WithHostDecimalPlaces"/>: rejected, never clamped.
+    /// </summary>
+    internal static void ThrowIfDecimalPlacesOutOfRange(int? value, string paramName)
+    {
+        if (value is < 0 or > DecimalPlacesLimit)
+        {
+            throw new ArgumentOutOfRangeException(
+                paramName,
+                value,
+                $"A decimal-places setting must be between 0 and {DecimalPlacesLimit}.");
+        }
+    }
+
+    /// <summary>
+    /// The ONE pair check of the host decimal-places settings, shared by the engine entry points
+    /// and <see cref="RunResult.WithHostDecimalPlaces"/>: a host minimum above the host maximum is
+    /// a host argument error, never repaired and never a source diagnostic. An absent setting
+    /// conflicts with nothing.
+    /// </summary>
+    internal static void ThrowIfHostDecimalPlacesConflict(int? min, int? max, string paramName)
+    {
+        if (min > max)
+        {
+            throw new ArgumentException(
+                $"The host minimum of displayed decimal places ({min}) must not exceed the host maximum ({max}).",
+                paramName);
         }
     }
 

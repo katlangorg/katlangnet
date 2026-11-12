@@ -367,13 +367,13 @@ public class NumericSemanticLawReviewTests
         {
             var sources = new[] { "avg((1,1e34,-1e34))", "(-1.0000000000000000001)^10000000000000000001", "range(1.0,3)" };
             var expected = sources.Select(s => Run(s).Value).ToArray();
-            var badSources = new[] { "pow(-0, -0.5)", "DisplayDecimals = 99\npow(-0, -0.5)" };
+            var badSources = new[] { "pow(-0, -0.5)", "MaxDecimalPlaces = 99\npow(-0, -0.5)" };
             var failures = badSources.Select(s => Assert.IsType<RunResult.EvalFailure>(KatLangEngine.Run(s)).ToDisplayString()).ToArray();
             foreach (var culture in new[] { "en-US", "de-DE", "ar-SA" })
             foreach (var places in new int?[] { null, 0, 99 })
             {
                 CultureInfo.CurrentCulture = CultureInfo.CurrentUICulture = CultureInfo.GetCultureInfo(culture);
-                var options = new RunOptions { DefaultDisplayDecimals = places };
+                var options = new RunOptions { MaxDecimalPlaces = places };
                 for (var i = 0; i < sources.Length; i++)
                     Assert.True(Result.ValueComparer.Equals(expected[i], Run(sources[i], options).Value), sources[i]);
                 for (var i = 0; i < badSources.Length; i++)

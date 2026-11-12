@@ -316,24 +316,24 @@ public class ZeroArgPropertyResultCacheTests
     {
         var source = """
             Source = Math.RandomInt(0, 10)
-            DisplayDecimals = Source
+            MaxDecimalPlaces = Source
 
-            DisplayDecimals
+            MaxDecimalPlaces
             """;
         var innerCache = new RunScopedZeroArgPropertyResultCache();
         var cache = new RecordingZeroArgPropertyResultCache(innerCache);
 
-        var result = Evaluator.RunCountedWithTopLevelProperty(
+        var result = Evaluator.RunCountedWithTopLevelProperties(
             new Expr.AlgorithmExpr(SourceProvenance.ParseValid(source).Root),
-            "DisplayDecimals",
+            ["MaxDecimalPlaces"],
             cache);
         var snapshot = innerCache.GetSnapshot();
         var countedLexical = snapshot.GetAccessKind(ZeroArgPropertyAccessKind.CountedLexical);
 
         Assert.False(result.IsError);
-        Assert.NotNull(result.Value.TopLevelProperty);
-        Assert.Equal(result.Value.Output.Value, result.Value.TopLevelProperty.Value.Value);
-        // `DisplayDecimals = Source` is a reference (M4★), which owns no entry: both reads — the
+        Assert.NotNull(result.Value.TopLevelProperties[0]);
+        Assert.Equal(result.Value.Output.Value, result.Value.TopLevelProperties[0].Value.Value);
+        // `MaxDecimalPlaces = Source` is a reference (M4★), which owns no entry: both reads — the
         // output row and the engine's top-level property read — are Source's ONE entry.
         Assert.Equal(["Source", "Source"], cache.Requests.Select(request => request.Binding.Name));
         Assert.All(cache.Requests, request =>
@@ -351,9 +351,9 @@ public class ZeroArgPropertyResultCacheTests
     [Fact]
     public void Evaluator_RunCountedWithTopLevelProperty_AbsentPropertyMakesNoCacheRequest()
     {
-        // The engine's DisplayDecimals channel on a program that declares none: the one probe
+        // The engine's MaxDecimalPlaces channel on a program that declares none: the one probe
         // reports ABSENCE without touching the cache, so the run's only cache traffic is the
-        // program's own. RunOptions.DefaultDisplayDecimals is consumed after this, never here.
+        // program's own. RunOptions.MaxDecimalPlaces is consumed after this, never here.
         var source = """
             A = Math.RandomInt(0, 10)
 
@@ -362,15 +362,80 @@ public class ZeroArgPropertyResultCacheTests
         var innerCache = new RunScopedZeroArgPropertyResultCache();
         var cache = new RecordingZeroArgPropertyResultCache(innerCache);
 
-        var result = Evaluator.RunCountedWithTopLevelProperty(
+        var result = Evaluator.RunCountedWithTopLevelProperties(
             new Expr.AlgorithmExpr(SourceProvenance.ParseValid(source).Root),
-            "DisplayDecimals",
+            ["MaxDecimalPlaces"],
             cache);
 
         Assert.False(result.IsError);
-        Assert.Null(result.Value.TopLevelProperty);
+        Assert.Null(result.Value.TopLevelProperties[0]);
         Assert.Equal(["A", "A"], cache.Requests.Select(request => request.Binding.Name));
         Assert.Equal(1, innerCache.GetSnapshot().Stores);
+    }
+
+    /// <summary>
+    /// The engine reads TWO root properties after the output, in the requested order, each by the
+    /// ordinary cached read of the same run: an entry the output already established is reused,
+    /// an undeclared name makes no cache request, and the results keep the request order.
+    /// </summary>
+    [Fact]
+    public void Evaluator_RunCountedWithTopLevelProperties_ReadsEachNameInOrder_ThroughTheOneCache()
+    {
+        var source = """
+            MaxDecimalPlaces = Math.RandomInt(5, 9) + 0
+            MinDecimalPlaces = Math.RandomInt(0, 4) + 0
+
+            MaxDecimalPlaces
+            """;
+        var innerCache = new RunScopedZeroArgPropertyResultCache();
+        var cache = new RecordingZeroArgPropertyResultCache(innerCache);
+
+        var result = Evaluator.RunCountedWithTopLevelProperties(
+            new Expr.AlgorithmExpr(SourceProvenance.ParseValid(source).Root),
+            ["MinDecimalPlaces", "Absent", "MaxDecimalPlaces"],
+            cache);
+
+        Assert.False(result.IsError);
+        var properties = result.Value.TopLevelProperties;
+        Assert.Equal(3, properties.Count);
+        Assert.NotNull(properties[0]);
+        Assert.Null(properties[1]);
+        Assert.NotNull(properties[2]);
+        // The output row established MaxDecimalPlaces's entry; the engine's later read reuses it.
+        Assert.Equal(result.Value.Output.Value, properties[2]!.Value.Value);
+        Assert.Equal(
+            ["MaxDecimalPlaces", "MinDecimalPlaces", "MaxDecimalPlaces"],
+            cache.Requests.Select(request => request.Binding.Name));
+        var snapshot = innerCache.GetSnapshot();
+        Assert.Equal(3, snapshot.TotalRequests);
+        Assert.Equal(1, snapshot.Hits);
+        Assert.Equal(2, snapshot.Misses);
+        Assert.Equal(2, snapshot.Stores);
+    }
+
+    /// <summary>The first failing read is the run's failure and no later name is requested.</summary>
+    [Fact]
+    public void Evaluator_RunCountedWithTopLevelProperties_StopsAtTheFirstFailingRead()
+    {
+        var source = """
+            MinDecimalPlaces = 1 / 0
+            MaxDecimalPlaces = Math.RandomInt(5, 9) + 0
+
+            1
+            """;
+        var innerCache = new RunScopedZeroArgPropertyResultCache();
+        var cache = new RecordingZeroArgPropertyResultCache(innerCache);
+
+        var result = Evaluator.RunCountedWithTopLevelProperties(
+            new Expr.AlgorithmExpr(SourceProvenance.ParseValid(source).Root),
+            ["MinDecimalPlaces", "MaxDecimalPlaces"],
+            cache);
+
+        Assert.True(result.IsError);
+        Assert.IsType<EvalError.DivByZero>(Unwrap(result.Error));
+        Assert.Equal(["MinDecimalPlaces"], cache.Requests.Select(request => request.Binding.Name));
+
+        static EvalError Unwrap(EvalError error) => error is EvalError.WithContext context ? Unwrap(context.Inner) : error;
     }
 
     [Fact]

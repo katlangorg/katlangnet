@@ -1144,7 +1144,7 @@ public class BudgetConservationTests
     /// The same at the PUBLIC façade, where a host actually reuses configuration:
     /// <see cref="KatLangEngine"/> is static and builds fresh run state per call, and one
     /// <see cref="RunOptions"/> object drives every run here — including the extra
-    /// <c>DisplayDecimals</c> evaluation, which charges the same run budget.
+    /// <c>MaxDecimalPlaces</c> evaluation, which charges the same run budget.
     /// </summary>
     [Fact]
     public void PublicEngine_FailedRuns_DoNotChangeALaterRunsVerdict()
@@ -1166,9 +1166,9 @@ public class BudgetConservationTests
         Assert.True(after.IsSuccess);
         Assert.Equal(expected.ToDisplayString(), after.ToDisplayString());
 
-        // A program with a DisplayDecimals property charges the same budget twice over;
+        // A program with a MaxDecimalPlaces property charges the same budget twice over;
         // neither charge may escape into the next run.
-        var withDisplay = $"DisplayDecimals = 2\n{boundaryProgram}";
+        var withDisplay = $"MaxDecimalPlaces = 2\n{boundaryProgram}";
         var displayExpected = KatLangEngine.Run(withDisplay, options);
         Assert.True(KatLangEngine.Run("A = A\nA", options).IsFailure);
         Assert.Equal(displayExpected.ToDisplayString(), KatLangEngine.Run(withDisplay, options).ToDisplayString());

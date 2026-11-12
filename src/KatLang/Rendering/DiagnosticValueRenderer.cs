@@ -58,7 +58,7 @@ internal static class DiagnosticValueRenderer
     /// renderer's own cap so the record cannot be mistaken for a display configuration.
     /// </summary>
     private static readonly DisplayOptions DiagnosticDisplayOptions =
-        new(SourceDecimals: null, HostDecimals: null, MaxDisplayLength: MaxRenderedValueLength);
+        DisplayOptions.Canonical(MaxRenderedValueLength);
 
     /// <summary>Renders one value as a bounded diagnostic fragment.</summary>
     internal static string Render(Result value) => Render(value, out _);

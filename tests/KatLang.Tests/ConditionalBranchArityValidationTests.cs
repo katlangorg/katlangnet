@@ -399,8 +399,8 @@ public class ConditionalBranchArityValidationTests
             Evaluator.RunCountedObserved(Malformed(), enableOptimizations: false).Result,
             "F", 1, 2);
         AssertBranchArityMismatch(
-            Evaluator.RunCountedWithTopLevelProperty(
-                Malformed(), "F", UncachedZeroArgPropertyResultCache.Instance),
+            Evaluator.RunCountedWithTopLevelProperties(
+                Malformed(), ["F"], UncachedZeroArgPropertyResultCache.Instance),
             "F", 1, 2);
         AssertBranchArityMismatch(
             Evaluator.RunObserved(Malformed(), new EvaluationObservations(), enableOptimizations: false),
@@ -425,8 +425,8 @@ public class ConditionalBranchArityValidationTests
             Valid(), enableOptimizations: false).Result.IsError);
         Assert.False(Evaluator.RunCountedObserved(
             Valid(), enableOptimizations: true).Result.IsError);
-        Assert.False(Evaluator.RunCountedWithTopLevelProperty(
-            Valid(), "Missing", UncachedZeroArgPropertyResultCache.Instance).IsError);
+        Assert.False(Evaluator.RunCountedWithTopLevelProperties(
+            Valid(), ["Missing"], UncachedZeroArgPropertyResultCache.Instance).IsError);
     }
 
     [Fact]

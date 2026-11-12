@@ -95,25 +95,25 @@ public class CallReferenceRunExportSpanTests
     }
 
     [Fact]
-    public async Task ADisplayDecimalsReference_IsPositionedAtThePropertyDeclaration()
+    public async Task AMaxDecimalPlacesReference_IsPositionedAtThePropertyDeclaration()
     {
-        var source = Prelude + "\nR = Capture(Square(5))\nDisplayDecimals = [R]\n1";
+        var source = Prelude + "\nR = Capture(Square(5))\nMaxDecimalPlaces = [R]\n1";
         var root = SourceProvenance.ParseValid(source).Root;
-        var declaration = Assert.IsType<SourceSpan>(root.Properties.Single(static p => p.Name == "DisplayDecimals").FirstDeclarationSpan);
-        Assert.Equal("[6:1, 6:16)", declaration.ToString()); // the declaration anchor of `DisplayDecimals = [R]`
+        var declaration = Assert.IsType<SourceSpan>(root.Properties.Single(static p => p.Name == "MaxDecimalPlaces").FirstDeclarationSpan);
+        Assert.Equal("[6:1, 6:17)", declaration.ToString()); // the declaration anchor of `MaxDecimalPlaces = [R]`
         var expected = Expected(declaration.ToString());
 
         Assert.Equal(expected, Render(KatLangEngine.Run(source)));
         Assert.Equal(expected, Render(await KatLangEngine.RunAsync(source)));
-        var direct = Evaluator.RunCountedWithTopLevelProperty(
-            new Expr.AlgorithmExpr(root), "DisplayDecimals", new RunScopedZeroArgPropertyResultCache());
+        var direct = Evaluator.RunCountedWithTopLevelProperties(
+            new Expr.AlgorithmExpr(root), ["MaxDecimalPlaces"], new RunScopedZeroArgPropertyResultCache());
         Assert.Equal(expected, Render(direct.Error));
     }
 
     [Fact]
-    public void AnEscapingOutput_WinsOverAnEscapingDisplayDecimals()
+    public void AnEscapingOutput_WinsOverAnEscapingMaxDecimalPlaces()
         => Assert.Equal(Expected("[7:1, 7:2)"),
-            Render(KatLangEngine.Run(Prelude + "\nR = Capture(Square(5))\nDisplayDecimals = [R]\nR")));
+            Render(KatLangEngine.Run(Prelude + "\nR = Capture(Square(5))\nMaxDecimalPlaces = [R]\nR")));
 
     [Fact]
     public async Task ADeferredModulesReference_IsPositionedAtItsRow()
@@ -141,7 +141,7 @@ public class CallReferenceRunExportSpanTests
     public async Task ADirectlyEvaluatedImport_UsesItsWrittenImportSpan(bool propertyOnly)
     {
         const string source = "open 'https://katlang.org/cr6-export.kat'";
-        var module = Prelude + "\nR = Capture(Square(5))\n" + (propertyOnly ? "DisplayDecimals = [R]\n1" : "[R]");
+        var module = Prelude + "\nR = Capture(Square(5))\n" + (propertyOnly ? "MaxDecimalPlaces = [R]\n1" : "[R]");
         var parsed = await Parser.ParseAsync(source, new RunOptions { DownloadCode = (_, _) => ValueTask.FromResult(module) });
         Assert.False(parsed.HasErrors, string.Join(Environment.NewLine, parsed.Diagnostics.Select(static d => d.Message)));
         var imported = Assert.IsType<Expr.AlgorithmExpr>(Assert.Single(parsed.Root.Opens));
@@ -152,11 +152,11 @@ public class CallReferenceRunExportSpanTests
 
         if (propertyOnly)
         {
-            var result = Evaluator.RunCountedWithTopLevelProperty(
-                imported, "DisplayDecimals", new RunScopedZeroArgPropertyResultCache());
+            var result = Evaluator.RunCountedWithTopLevelProperties(
+                imported, ["MaxDecimalPlaces"], new RunScopedZeroArgPropertyResultCache());
             Assert.Equal(expected, Render(result.Error));
-            var twin = await Evaluator.RunCountedWithTopLevelPropertyAsync(
-                imported, "DisplayDecimals", new RunScopedAsyncZeroArgPropertyResultCache());
+            var twin = await Evaluator.RunCountedWithTopLevelPropertiesAsync(
+                imported, ["MaxDecimalPlaces"], new RunScopedAsyncZeroArgPropertyResultCache());
             Assert.Equal(expected, Render(twin.Error));
         }
         else
@@ -170,7 +170,7 @@ public class CallReferenceRunExportSpanTests
         // Detaching the local import site leaves no written coordinate anywhere in the import view.
         var detached = imported with { Span = null };
         var detachedError = propertyOnly
-            ? Evaluator.RunCountedWithTopLevelProperty(detached, "DisplayDecimals", new RunScopedZeroArgPropertyResultCache()).Error
+            ? Evaluator.RunCountedWithTopLevelProperties(detached, ["MaxDecimalPlaces"], new RunScopedZeroArgPropertyResultCache()).Error
             : Evaluator.Run(detached).Error;
         Assert.IsType<EvalError.TypeMismatch>(detachedError);
         Assert.Null(detachedError.Span);

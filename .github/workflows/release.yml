@@ -264,9 +264,14 @@ jobs:
               throw "Unexpected Math smoke output: '$mathOutput'."
           }
 
-          $displayOutput = Invoke-Smoke -Arguments @('eval', '--display-decimals', '2', '1 / 3')
+          $displayOutput = Invoke-Smoke -Arguments @('eval', '--max-decimal-places', '2', '1 / 3')
           if ($displayOutput -cne '0.33') {
-              throw "Unexpected --display-decimals smoke output: '$displayOutput'."
+              throw "Unexpected --max-decimal-places smoke output: '$displayOutput'."
+          }
+
+          $paddedOutput = Invoke-Smoke -Arguments @('eval', '--min-decimal-places', '2', '10')
+          if ($paddedOutput -cne '10.00') {
+              throw "Unexpected --min-decimal-places smoke output: '$paddedOutput'."
           }
 
       - name: Package and verify release archive

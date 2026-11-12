@@ -652,8 +652,8 @@ public class EvaluationLimitsTests
         [
             ("Evaluator.Run", !Evaluator.Run(expr, limits).IsError),
             ("Evaluator.RunCounted", !Evaluator.RunCounted(expr, UncachedZeroArgPropertyResultCache.Instance, limits).IsError),
-            ("Evaluator.RunCountedWithTopLevelProperty",
-                !Evaluator.RunCountedWithTopLevelProperty(expr, "DisplayDecimals", UncachedZeroArgPropertyResultCache.Instance, limits).IsError),
+            ("Evaluator.RunCountedWithTopLevelProperties",
+                !Evaluator.RunCountedWithTopLevelProperties(expr, ["MaxDecimalPlaces"], UncachedZeroArgPropertyResultCache.Instance, limits).IsError),
             ("KatLangEngine.Run", KatLangEngine.Run(source, options) is RunResult.Success),
             ("KatLangEngine.EvaluateToAtoms", atomsCompleted),
         ];

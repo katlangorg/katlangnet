@@ -67,9 +67,9 @@ public class UnsupportedDoubleQuotedStringCliTests
     }
 
     [Fact]
-    public async Task Eval_ANumberBesideText_StillTakesDisplayDecimals()
+    public async Task Eval_ANumberBesideText_StillTakesTheDecimalPlaces()
     {
-        var result = await Cli.InvokeAsync("eval", "--display-decimals", "2", "'Total', 1.5");
+        var result = await Cli.InvokeAsync("eval", "--min-decimal-places", "2", "'Total', 1.5");
 
         Assert.Equal(0, result.ExitCode);
         Assert.Equal("Total\n1.50", result.TrimmedOutput);

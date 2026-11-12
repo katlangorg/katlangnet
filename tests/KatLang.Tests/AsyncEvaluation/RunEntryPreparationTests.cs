@@ -71,13 +71,13 @@ public class RunEntryPreparationTests
             Require(Evaluator.Run(program)),
             Require(Evaluator.RunCounted(program, syncCache)),
             Require(Evaluator.RunCountedObserved(program).Result),
-            Require(Evaluator.RunCountedWithTopLevelProperty(program, "X", syncCache)),
+            Require(Evaluator.RunCountedWithTopLevelProperties(program, ["X"], syncCache)),
 
             // The four async twin phases (an async-capable cache forces the twin path).
             Require(await Evaluator.RunAsync(program, new PassThroughAsyncZeroArgPropertyResultCache())),
             Require(await Evaluator.RunCountedAsync(program, new PassThroughAsyncZeroArgPropertyResultCache())),
-            Require(await Evaluator.RunCountedWithTopLevelPropertyAsync(
-                program, "X", new PassThroughAsyncZeroArgPropertyResultCache())),
+            Require(await Evaluator.RunCountedWithTopLevelPropertiesAsync(
+                program, ["X"], new PassThroughAsyncZeroArgPropertyResultCache())),
             Require((await Evaluator.RunCountedObservedAsync(
                 program, zeroArgPropertyResultCache: new PassThroughAsyncZeroArgPropertyResultCache())).Result),
         ];
@@ -323,8 +323,8 @@ public class RunEntryPreparationTests
 
         using (var cts = new CancellationTokenSource())
         {
-            var thrown = Assert.Throws<OperationCanceledException>(() => Evaluator.RunCountedWithTopLevelProperty(
-                program, "Missing", new CancellingAfterAccessCache(cts), cancellationToken: cts.Token));
+            var thrown = Assert.Throws<OperationCanceledException>(() => Evaluator.RunCountedWithTopLevelProperties(
+                program, ["Missing"], new CancellingAfterAccessCache(cts), cancellationToken: cts.Token));
             Assert.Equal(cts.Token, thrown.CancellationToken);
         }
     }
@@ -349,9 +349,9 @@ public class RunEntryPreparationTests
         using (var cts = new CancellationTokenSource())
         {
             var thrown = await Assert.ThrowsAnyAsync<OperationCanceledException>(async () =>
-                await Evaluator.RunCountedWithTopLevelPropertyAsync(
+                await Evaluator.RunCountedWithTopLevelPropertiesAsync(
                     program,
-                    "Missing",
+                    ["Missing"],
                     new CancellingAfterAsyncZeroArgPropertyResultCache(cancelAfterAccess: 1, cts),
                     cancellationToken: cts.Token));
             Assert.Equal(cts.Token, thrown.CancellationToken);
@@ -423,15 +423,15 @@ public class RunEntryPreparationTests
         var deep = AstStructuralDepthTests.UnarySpine(10_000);
 
         // The synchronous funnel validates the AST before the top-level property name.
-        var sync = Evaluator.RunCountedWithTopLevelProperty(
-            deep, " ", new RunScopedZeroArgPropertyResultCache());
+        var sync = Evaluator.RunCountedWithTopLevelProperties(
+            deep, [" "], new RunScopedZeroArgPropertyResultCache());
         Assert.IsType<EvalError.AstDepthLimitExceeded>(Require(sync));
 
         // The async wrapper has always validated the name at method entry, before
         // routing into the twin preparation and therefore before structural preflight.
         await Assert.ThrowsAsync<ArgumentException>(async () =>
-            await Evaluator.RunCountedWithTopLevelPropertyAsync(
-                deep, " ", new PassThroughAsyncZeroArgPropertyResultCache()));
+            await Evaluator.RunCountedWithTopLevelPropertiesAsync(
+                deep, [" "], new PassThroughAsyncZeroArgPropertyResultCache()));
     }
 
     [Fact]

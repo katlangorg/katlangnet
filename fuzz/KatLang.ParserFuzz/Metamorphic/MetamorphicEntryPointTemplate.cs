@@ -78,7 +78,7 @@ internal static class MetamorphicEntryPointTemplate
         new("empty-list", "[]"),
         new("string-success", "'abc'"),
         new("mixed-rows", "[1, 'ab', [2, 3]], (4, 5)"),
-        new("top-level-property", "DisplayDecimals = 2\n1.5"),
+        new("top-level-property", "MinDecimalPlaces = 1\nMaxDecimalPlaces = 2\n1.5"),
         new("evaluator-failure", "min([])"),
         new("arity-failure", $"{F}(a, b) = a + b\n{F}(1)"),
         new("resource-failure-collection", "range(1, 200000).count"),

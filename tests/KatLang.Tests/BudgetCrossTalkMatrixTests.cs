@@ -275,14 +275,14 @@ public class BudgetCrossTalkMatrixTests
             var r = Evaluator.RunObserved(c.Ast, new EvaluationObservations(), enableOptimizations: true, l);
             return r.IsError ? Failure(r.Error) : Ok(r.Value);
         }),
-        new("Evaluator.RunCountedWithTopLevelProperty", false, static (c, l) =>
+        new("Evaluator.RunCountedWithTopLevelProperties", false, static (c, l) =>
         {
-            var r = Evaluator.RunCountedWithTopLevelProperty(
-                c.Ast, c.TopLevelPropertyName, new RunScopedZeroArgPropertyResultCache(), l);
+            var r = Evaluator.RunCountedWithTopLevelProperties(
+                c.Ast, [c.TopLevelPropertyName], new RunScopedZeroArgPropertyResultCache(), l);
             return r.IsError
                 ? Failure(r.Error)
                 : Ok(r.Value.Output.Value,
-                    $"|{r.Value.Output.EmittedCount}|{(r.Value.TopLevelProperty is { } p ? RenderValue(p.Value) : "<none>")}");
+                    $"|{r.Value.Output.EmittedCount}|{(r.Value.TopLevelProperties[0] is { } p ? RenderValue(p.Value) : "<none>")}");
         }),
         new("KatLangEngine.Run", true, static (c, l) => EngineVerdict(c, l)),
     ];
@@ -292,7 +292,7 @@ public class BudgetCrossTalkMatrixTests
     /// classify every configuration identically. Two public surfaces are deliberately
     /// outside this set — they are still individually checked for cross-talk:
     /// <list type="bullet">
-    ///   <item><c>RunCountedWithTopLevelProperty</c> additionally evaluates a named
+    ///   <item><c>RunCountedWithTopLevelProperties</c> additionally evaluates a named
     ///   top-level property, so it legitimately charges more and may stop at a budget the
     ///   others clear.</item>
     ///   <item><c>KatLangEngine.Run</c> reports failures as formatted messages rather than

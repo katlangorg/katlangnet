@@ -782,8 +782,10 @@ public class TutorialSemanticContractTests
         // "There is no `+` for text ... a number is never turned into part of a string."
         RunFailure("'a' + 'b'", KatLangErrorCode.TypeMismatch);
 
-        // "It stays a number ... display settings such as `DisplayDecimals` still apply to it."
-        Assert.Equal("Total\n59.970", Display("DisplayDecimals = 3\n'Total', 19.99 * 3"));
+        // "It stays a number ... the display settings `MinDecimalPlaces` and `MaxDecimalPlaces`
+        // still apply to it."
+        Assert.Equal("Total\n59.970", Display("MinDecimalPlaces = 3\n'Total', 19.99 * 3"));
+        Assert.Equal("Total\n59.97\n8.57", Display("MinDecimalPlaces = 2\nMaxDecimalPlaces = 2\n'Total', 19.99 * 3, 19.99 * 3 / 7"));
 
         // "A text value that belongs to the result ... is an output of its own beside the numbers."
         var outputs = Assert.IsType<Result.SequenceValue>(

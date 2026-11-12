@@ -244,8 +244,8 @@ public class CallReferenceRunExportTests
     public async Task TheOutputAndTheNamedProperty_AreBothProtected(string rows, bool succeeds)
     {
         var source = Prelude + "\nR = Capture(Square(5))\n" + rows;
-        var sync = Evaluator.RunCountedWithTopLevelProperty(Program(source), "P", new RunScopedZeroArgPropertyResultCache());
-        var asynchronous = await Evaluator.RunCountedWithTopLevelPropertyAsync(Program(source), "P", new RunScopedAsyncZeroArgPropertyResultCache());
+        var sync = Evaluator.RunCountedWithTopLevelProperties(Program(source), ["P"], new RunScopedZeroArgPropertyResultCache());
+        var asynchronous = await Evaluator.RunCountedWithTopLevelPropertiesAsync(Program(source), ["P"], new RunScopedAsyncZeroArgPropertyResultCache());
 
         foreach (var result in new[] { sync, asynchronous })
         {
@@ -253,7 +253,7 @@ public class CallReferenceRunExportTests
             if (succeeds)
             {
                 Assert.Equal(Num(26), result.Value.Output.Value);
-                Assert.Equal(Num(25), result.Value.TopLevelProperty!.Value.Value);
+                Assert.Equal(Num(25), result.Value.TopLevelProperties[0]!.Value.Value);
             }
             else
             {
@@ -266,9 +266,9 @@ public class CallReferenceRunExportTests
     }
 
     [Fact]
-    public void APublicRun_RefusesAReferenceInTheDisplayDecimalsProperty()
+    public void APublicRun_RefusesAReferenceInTheMaxDecimalPlacesProperty()
     {
-        var run = KatLangEngine.Run(Prelude + "\nR = Capture(Square(5))\nDisplayDecimals = [R]\n1");
+        var run = KatLangEngine.Run(Prelude + "\nR = Capture(Square(5))\nMaxDecimalPlaces = [R]\n1");
         var failure = Assert.IsType<RunResult.EvalFailure>(run);
         Assert.Equal(KatLangErrorCode.TypeMismatch, failure.Errors[0].Code);
     }
@@ -283,7 +283,7 @@ public class CallReferenceRunExportTests
         var value = new Evaluator.CountedResult(new Result.ListValue([Num(1)]), 1);
 
         var exported = Evaluator.ExportRunValue(
-            EvalResult<Evaluator.CountedRootProgramResult>.Ok(new Evaluator.CountedRootProgramResult(value, value)), exported: null, topLevelPropertyName: null, ctx);
+            EvalResult<Evaluator.CountedRootProgramResult>.Ok(new Evaluator.CountedRootProgramResult(value, [value])), exported: null, topLevelPropertyNames: null, ctx);
 
         Assert.True(exported.IsOk);
         if (budget.RetainsInvocationPlans)
@@ -302,7 +302,7 @@ public class CallReferenceRunExportTests
         var property = new Evaluator.CountedResult(new Result.ListValue([Num(2), new Result.ListValue([reference])]), 1);
 
         var exported = Evaluator.ExportRunValue(
-            EvalResult<Evaluator.CountedRootProgramResult>.Ok(new Evaluator.CountedRootProgramResult(output, property)), exported: null, topLevelPropertyName: null, ctx);
+            EvalResult<Evaluator.CountedRootProgramResult>.Ok(new Evaluator.CountedRootProgramResult(output, [property])), exported: null, topLevelPropertyNames: null, ctx);
 
         Assert.Equal(Evaluator.CallReferenceLeavesRunMessage, Assert.IsType<EvalError.TypeMismatch>(exported.Error).Message);
         Assert.Equal(2, scan.RunExportScanCount);

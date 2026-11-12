@@ -16,11 +16,16 @@ internal enum CliCommandKind
 /// The command options a command line wrote, each ABSENT by default, so <c>default</c> is
 /// exactly "no command option was written". That is the test <c>--help</c> and
 /// <c>--version</c> use to stand alone, so a new option joins it by being a field here, never
-/// by being listed again. <see cref="RandomSeed"/> (<c>--random-seed</c>) and
-/// <see cref="DisplayDecimals"/> (<c>--display-decimals</c>) configure evaluation and are
-/// present only for the evaluating commands (<c>run</c> and <c>eval</c>).
+/// by being listed again. <see cref="RandomSeed"/> (<c>--random-seed</c>),
+/// <see cref="MinDecimalPlaces"/> (<c>--min-decimal-places</c>) and
+/// <see cref="MaxDecimalPlaces"/> (<c>--max-decimal-places</c>) configure evaluation and its
+/// display, and are present only for the evaluating commands (<c>run</c> and <c>eval</c>).
 /// </summary>
-internal readonly record struct CliOptions(bool AllowLoading, long? RandomSeed, int? DisplayDecimals);
+internal readonly record struct CliOptions(
+    bool AllowLoading,
+    long? RandomSeed,
+    int? MinDecimalPlaces,
+    int? MaxDecimalPlaces);
 
 /// <summary>
 /// A fully parsed command line. <see cref="Argument"/> is the single positional
@@ -43,7 +48,7 @@ internal sealed record CommandLineParseResult(CliInvocation? Invocation, string?
 
 /// <summary>
 /// The whole v1 grammar:
-/// <c>katlang (run &lt;file&gt; | eval &lt;source&gt;) [--allow-loading] [--random-seed &lt;integer&gt;] [--display-decimals &lt;integer&gt;]</c>,
+/// <c>katlang (run &lt;file&gt; | eval &lt;source&gt;) [--allow-loading] [--random-seed &lt;integer&gt;] [--min-decimal-places &lt;integer&gt;] [--max-decimal-places &lt;integer&gt;]</c>,
 /// <c>katlang check &lt;file&gt; [--allow-loading]</c>,
 /// plus the standalone <c>--help</c> and <c>--version</c> flags. It is small
 /// enough that a hand-written parser is clearer — and dependency-free — compared
@@ -54,7 +59,8 @@ internal sealed record CommandLineParseResult(CliInvocation? Invocation, string?
 /// independently of their order. Every option may be written at most once. ONLY a
 /// <c>--</c> prefix marks an option; everything after the terminator is positional.</para>
 ///
-/// <para>The value-taking options (<c>--random-seed</c>, <c>--display-decimals</c>) share ONE value
+/// <para>The value-taking options (<c>--random-seed</c>, <c>--min-decimal-places</c>,
+/// <c>--max-decimal-places</c>) share ONE value
 /// rule (<see cref="TryTakeValue"/>) and ONE integer spelling (<see cref="IntegerValueStyle"/>).
 /// The value is the NEXT token only (<c>--random-seed=5</c> is an unknown option like any other
 /// unrecognized <c>--</c> spelling). A following token that is missing, the bare <c>--</c>
@@ -65,10 +71,15 @@ internal sealed record CommandLineParseResult(CliInvocation? Invocation, string?
 /// (<see cref="NumberStyles.AllowLeadingSign"/>), so <c>+5</c> and <c>05</c> spell 5;
 /// decimals, exponents, hex, digit separators, whitespace, and overflow are rejected, and so is
 /// an integer outside the option's range — <c>--random-seed</c> accepts every signed 64-bit
-/// integer, <c>--display-decimals</c> exactly KatLang's display-decimals range
-/// (0 through <see cref="RunOptions.MaxDisplayDecimals"/>), never clamped. A value is parsed and
+/// integer, the two decimal-places options exactly KatLang's decimal-places range
+/// (0 through <see cref="RunOptions.DecimalPlacesLimit"/>), never clamped. A value is parsed and
 /// validated where it appears, BEFORE the command it applies to is known, so a malformed value
 /// is reported ahead of <c>check</c>'s refusal of the option.</para>
+///
+/// <para>The two decimal-places options are independent: either may be written alone, and neither
+/// supplies a value for the other. Written together for <c>run</c> or <c>eval</c> with the minimum
+/// above the maximum they are a usage error here — decided last, after <c>check</c>'s refusal of
+/// the options — and never clamped, swapped, or dropped.</para>
 /// </summary>
 internal static class CommandLine
 {
@@ -76,7 +87,8 @@ internal static class CommandLine
 
     public const string AllowLoadingOption = "--allow-loading";
     public const string RandomSeedOption = "--random-seed";
-    public const string DisplayDecimalsOption = "--display-decimals";
+    public const string MinDecimalPlacesOption = "--min-decimal-places";
+    public const string MaxDecimalPlacesOption = "--max-decimal-places";
     public const string HelpOption = "--help";
     public const string VersionOption = "--version";
 
@@ -88,7 +100,8 @@ internal static class CommandLine
         var positionals = new List<string>();
         var allowLoading = false;
         long? randomSeed = null;
-        int? displayDecimals = null;
+        int? minDecimalPlaces = null;
+        int? maxDecimalPlaces = null;
         var helpCount = 0;
         var versionCount = 0;
         var optionsEnded = false;
@@ -132,23 +145,15 @@ internal static class CommandLine
 
                     randomSeed = seed;
                     break;
-                case DisplayDecimalsOption:
-                    if (displayDecimals is not null)
-                        return SpecifiedMoreThanOnce(DisplayDecimalsOption);
+                case MinDecimalPlacesOption:
+                    if (TakeDecimalPlaces(args, ref index, MinDecimalPlacesOption, ref minDecimalPlaces) is { } minError)
+                        return minError;
 
-                    if (!TryTakeValue(args, ref index, out var decimalsText))
-                        return RequiresAValue(DisplayDecimalsOption);
+                    break;
+                case MaxDecimalPlacesOption:
+                    if (TakeDecimalPlaces(args, ref index, MaxDecimalPlacesOption, ref maxDecimalPlaces) is { } maxError)
+                        return maxError;
 
-                    // KatLang owns the range (RunOptions.MaxDisplayDecimals, shared with the
-                    // DisplayDecimals property); checking it here makes an out-of-range count
-                    // a usage error like any malformed value, never an exception or a clamp.
-                    if (!int.TryParse(decimalsText, IntegerValueStyle, CultureInfo.InvariantCulture, out var decimals)
-                        || decimals is < 0 or > RunOptions.MaxDisplayDecimals)
-                    {
-                        return RequiresAnIntegerBetween(DisplayDecimalsOption, 0, RunOptions.MaxDisplayDecimals, decimalsText);
-                    }
-
-                    displayDecimals = decimals;
                     break;
                 case HelpOption:
                     helpCount++;
@@ -161,7 +166,7 @@ internal static class CommandLine
             }
         }
 
-        var options = new CliOptions(allowLoading, randomSeed, displayDecimals);
+        var options = new CliOptions(allowLoading, randomSeed, minDecimalPlaces, maxDecimalPlaces);
 
         if (helpCount > 1)
             return SpecifiedMoreThanOnce(HelpOption);
@@ -211,19 +216,65 @@ internal static class CommandLine
         if (positionals.Count > 2)
             return CommandLineParseResult.Fail($"unexpected argument '{positionals[2]}'.");
 
-        // --random-seed and --display-decimals configure evaluation; `check` validates without
-        // evaluating (and so displays nothing), so they have nothing to apply to there and
-        // are refused rather than ignored — the seed first when both were written.
+        // --random-seed and the two decimal-places options configure evaluation and its
+        // display; `check` validates without evaluating (and so displays nothing), so they
+        // have nothing to apply to there and are refused rather than ignored — the seed
+        // first, then the minimum, then the maximum, when several were written.
         if (kind == CliCommandKind.Check)
         {
             if (randomSeed is not null)
                 return NotValidForCheck(RandomSeedOption);
 
-            if (displayDecimals is not null)
-                return NotValidForCheck(DisplayDecimalsOption);
+            if (minDecimalPlaces is not null)
+                return NotValidForCheck(MinDecimalPlacesOption);
+
+            if (maxDecimalPlaces is not null)
+                return NotValidForCheck(MaxDecimalPlacesOption);
+        }
+
+        // The pair is checked only when BOTH were written: neither option supplies a value
+        // for the other. A minimum above the maximum is a usage error here, before any
+        // source is read — never clamped, swapped, or dropped. (`check` has already refused
+        // either option above.)
+        if (minDecimalPlaces > maxDecimalPlaces)
+        {
+            return CommandLineParseResult.Fail(
+                $"option '{MinDecimalPlacesOption}' must not exceed option '{MaxDecimalPlacesOption}'; " +
+                $"got {minDecimalPlaces.Value.ToString(CultureInfo.InvariantCulture)} and " +
+                $"{maxDecimalPlaces.Value.ToString(CultureInfo.InvariantCulture)}.");
         }
 
         return CommandLineParseResult.Ok(new CliInvocation(kind, positionals[1], options));
+    }
+
+    /// <summary>
+    /// Takes the value of one decimal-places option — written at most once, through the shared
+    /// value rule and integer spelling — into <paramref name="places"/>. KatLang owns the range
+    /// (<see cref="RunOptions.DecimalPlacesLimit"/>, shared with the program's own
+    /// <c>MinDecimalPlaces</c> / <c>MaxDecimalPlaces</c> properties); checking it here makes an
+    /// out-of-range count a usage error like any malformed value, never an exception or a clamp.
+    /// Returns the usage error, or <c>null</c> when the value was taken.
+    /// </summary>
+    private static CommandLineParseResult? TakeDecimalPlaces(
+        IReadOnlyList<string> args,
+        ref int index,
+        string option,
+        ref int? places)
+    {
+        if (places is not null)
+            return SpecifiedMoreThanOnce(option);
+
+        if (!TryTakeValue(args, ref index, out var text))
+            return RequiresAValue(option);
+
+        if (!int.TryParse(text, IntegerValueStyle, CultureInfo.InvariantCulture, out var value)
+            || value is < 0 or > RunOptions.DecimalPlacesLimit)
+        {
+            return RequiresAnIntegerBetween(option, 0, RunOptions.DecimalPlacesLimit, text);
+        }
+
+        places = value;
+        return null;
     }
 
     /// <summary>

@@ -189,15 +189,15 @@ public class AsyncRouteDecisionTests
     [Fact]
     public void EngineFunnel_FactoryThenTopLevelPropertyTwin_ReadsTheGraphAsOftenAsTheSynchronousFunnel()
     {
-        const string topLevel = "DisplayDecimals";
+        const string topLevel = "MaxDecimalPlaces";
         static string Neutral(EvalResult<Evaluator.CountedRootProgramResult> r)
             => r.IsError
                 ? $"err {SemanticExplorerHarness.ErrorCategory(r.Error)}"
                 : $"ok raw={SemanticExplorerHarness.Neutral(r.Value.Output.Value)}";
 
         var syncReads = ReadsOf(
-            root => Neutral(Evaluator.RunCountedWithTopLevelProperty(
-                root, topLevel, new RunScopedZeroArgPropertyResultCache())),
+            root => Neutral(Evaluator.RunCountedWithTopLevelProperties(
+                root, [topLevel], new RunScopedZeroArgPropertyResultCache())),
             out var syncOutcome);
 
         // Exactly the engine's sequence: decide once, pair the cache, route with the same fact.
@@ -209,8 +209,8 @@ public class AsyncRouteDecisionTests
                 var cache = Evaluator.CreateRunScopedZeroArgPropertyResultCache(
                     root, hostOperations: null, observationSink: null, fact);
                 Assert.IsType<RunScopedZeroArgPropertyResultCache>(cache);
-                return Evaluator.RunCountedWithTopLevelPropertyAsync(
-                    root, topLevel, cache, treeRequiresAsyncEvaluation: fact, cancellationToken: CancellationToken.None);
+                return Evaluator.RunCountedWithTopLevelPropertiesAsync(
+                    root, [topLevel], cache, treeRequiresAsyncEvaluation: fact, cancellationToken: CancellationToken.None);
             },
             Neutral,
             out var engineOutcome);
@@ -218,8 +218,8 @@ public class AsyncRouteDecisionTests
         // An internal caller passing no fact: the route rule decides it once and the fast
         // path's guard reuses it.
         var undecidedReads = ReadsOfInline(
-            root => Evaluator.RunCountedWithTopLevelPropertyAsync(
-                root, topLevel, new RunScopedZeroArgPropertyResultCache()),
+            root => Evaluator.RunCountedWithTopLevelPropertiesAsync(
+                root, [topLevel], new RunScopedZeroArgPropertyResultCache()),
             Neutral,
             out var undecidedOutcome);
 
@@ -289,7 +289,7 @@ public class AsyncRouteDecisionTests
         var syncRejection = Assert.Throws<InvalidOperationException>(() => Evaluator.Run(root));
         Assert.Equal(SynchronousDeferredRegionMessage, syncRejection.Message);
         var countedRejection = Assert.Throws<InvalidOperationException>(
-            () => Evaluator.RunCountedWithTopLevelProperty(root, "DisplayDecimals", new RunScopedZeroArgPropertyResultCache()));
+            () => Evaluator.RunCountedWithTopLevelProperties(root, ["MaxDecimalPlaces"], new RunScopedZeroArgPropertyResultCache()));
         Assert.Equal(SynchronousDeferredRegionMessage, countedRejection.Message);
 
         // Public entry: the once-decided fact pairs the async-capable cache, which routes to the twin path.
@@ -301,9 +301,9 @@ public class AsyncRouteDecisionTests
         Assert.Equal("ok raw=2", AsyncEvaluationHarness.NeutralOf(result));
 
         // Engine funnel, as KatLangEngine.RunAsync drives it.
-        var engineResult = await AsyncEvaluationHarness.Complete(Evaluator.RunCountedWithTopLevelPropertyAsync(
+        var engineResult = await AsyncEvaluationHarness.Complete(Evaluator.RunCountedWithTopLevelPropertiesAsync(
             root,
-            "DisplayDecimals",
+            ["MaxDecimalPlaces"],
             Evaluator.CreateRunScopedZeroArgPropertyResultCache(root, hostOperations: null, observationSink: null, fact),
             treeRequiresAsyncEvaluation: fact,
             cancellationToken: CancellationToken.None));
@@ -320,9 +320,9 @@ public class AsyncRouteDecisionTests
         bool? fact = decided ? Evaluator.DecideTreeRequiresAsyncEvaluation(root, hostOperations: null) : null;
 
         var rejection = await Assert.ThrowsAsync<InvalidOperationException>(async () =>
-            await Evaluator.RunCountedWithTopLevelPropertyAsync(
+            await Evaluator.RunCountedWithTopLevelPropertiesAsync(
                 root,
-                "DisplayDecimals",
+                ["MaxDecimalPlaces"],
                 new RunScopedZeroArgPropertyResultCache(),
                 treeRequiresAsyncEvaluation: fact,
                 cancellationToken: CancellationToken.None));
@@ -350,7 +350,7 @@ public class AsyncRouteDecisionTests
                 treeRequiresAsyncEvaluation: fact, cancellationToken: cancelled.Token),
             async () => await Evaluator.RunCountedAsync(root, new RunScopedZeroArgPropertyResultCache(),
                 cancellationToken: cancelled.Token),
-            async () => await Evaluator.RunCountedWithTopLevelPropertyAsync(root, "DisplayDecimals",
+            async () => await Evaluator.RunCountedWithTopLevelPropertiesAsync(root, ["MaxDecimalPlaces"],
                 new RunScopedZeroArgPropertyResultCache(), treeRequiresAsyncEvaluation: fact, cancellationToken: cancelled.Token),
             async () => await Evaluator.RunCountedObservedAsync(root, zeroArgPropertyResultCache: new RunScopedZeroArgPropertyResultCache(),
                 cancellationToken: cancelled.Token),

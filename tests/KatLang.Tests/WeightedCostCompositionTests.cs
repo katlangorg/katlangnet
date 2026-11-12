@@ -406,10 +406,10 @@ public class WeightedCostCompositionTests
                 () => Describe(Evaluator.RunCountedObserved(tree, enableOptimizations: true).Result)),
             ("RunCountedObservedUnoptimized",
                 () => Describe(Evaluator.RunCountedObserved(tree, enableOptimizations: false).Result)),
-            ("RunCountedWithTopLevelProperty",
-                () => Describe(Evaluator.RunCountedWithTopLevelProperty(
+            ("RunCountedWithTopLevelProperties",
+                () => Describe(Evaluator.RunCountedWithTopLevelProperties(
                     tree,
-                    "X",
+                    ["X"],
                     new Evaluation.Caching.RunScopedZeroArgPropertyResultCache()))),
         ];
     }

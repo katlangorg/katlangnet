@@ -10,7 +10,8 @@ namespace KatLang.Evaluation;
 ///
 /// <para>Exactly one instance is created per top-level run and shared by reference
 /// through every copied <c>EvalCtx</c>, so nested calls, callbacks, properties, loops,
-/// and the engine's <c>DisplayDecimals</c> source-filter read all charge the same budget, draw
+/// and the engine's reads of the root's <c>MinDecimalPlaces</c> and <c>MaxDecimalPlaces</c>
+/// source settings all charge the same budget, draw
 /// from the same random stream, and none of them can reset either. It is never static,
 /// never global, and never reused across independent runs, so two runs — including
 /// concurrent runs that share one <see cref="RunOptions"/> or

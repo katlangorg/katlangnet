@@ -42,7 +42,7 @@ public class MetamorphicPhase4AuditTests
         ("list", "[1, [2, 3]]", true),
         ("empty-sequence", "()", true),
         ("string", "'abc'", true),
-        ("top-level-property", "DisplayDecimals = 2\n1.5", true),
+        ("top-level-property", "MinDecimalPlaces = 1\nMaxDecimalPlaces = 2\n1.5", true),
         ("semantic-failure", "min([])", true),
         ("resource-failure", "range(1, 200000).count", true),
         ("no-program-output", "MmA = 1", true),

@@ -11,7 +11,8 @@ namespace KatLang.Tests.Randomness;
 /// arguments after explicit spreads are formed (Model C, NEED-03/07), at-most-once
 /// evaluation of written arguments (including the patterned-call
 /// regression class), lazy <c>if</c> branches, callbacks in sequence order,
-/// deconstruction, and the engine's output-then-<c>DisplayDecimals</c> order.
+/// deconstruction, and the engine's order: the output, then <c>MinDecimalPlaces</c>, then
+/// <c>MaxDecimalPlaces</c>.
 ///
 /// <para>Every program draws through <c>R = Math.RandomInt(0, 4294967296)</c>: a 2^32
 /// span divides 2^128, so each <c>R()</c> is exactly one un-rejected 128-bit draw
@@ -186,40 +187,101 @@ public class SeededEvaluationOrderTests
         Assert.Equal([d[0], d[1]], Run("C(0) = R()\nC(x) = R() * 0 - 1\nC(0), R()"));
     }
 
-    // ── DisplayDecimals ───────────────────────────────────────────────────────
+    // ── MinDecimalPlaces and MaxDecimalPlaces ─────────────────────────────────
 
     [Fact]
-    public void DisplayDecimals_IsEvaluatedAfterTheOutputRows_AndOccupiesTheLaterStreamPosition()
+    public void MaxDecimalPlaces_IsEvaluatedAfterTheOutputRows_AndOccupiesTheLaterStreamPosition()
     {
         var words = Words(Seed);
         var expectedFraction = ReferenceRandomOracle.Random(words, D(0), D(1));
         var expectedDecimals = ReferenceRandomOracle.RandomInt(words, 2, 5);
 
-        var success = Success("Math.Random(0, 1)\nDisplayDecimals = Math.RandomInt(2, 5)", Seed);
+        var success = Success("Math.Random(0, 1)\nMaxDecimalPlaces = Math.RandomInt(2, 5)", Seed);
 
         Assert.True(expectedFraction == Assert.Single(success.Atoms));
-        Assert.Equal((int)expectedDecimals, success.DisplayOptions.Decimals);
+        Assert.Equal((int)expectedDecimals, success.DisplayOptions.MaxDecimalPlaces);
+        Assert.Null(success.DisplayOptions.MinDecimalPlaces);
         var rendered = Display(success);
-        Assert.Equal((int)expectedDecimals, rendered.Length - rendered.IndexOf('.', StringComparison.Ordinal) - 1);
-        Assert.Equal(rendered, Display(Success("Math.Random(0, 1)\nDisplayDecimals = Math.RandomInt(2, 5)", Seed)));
+        AssertRoundedTo(expectedFraction, (int)expectedDecimals, rendered);
+        Assert.Equal(rendered, Display(Success("Math.Random(0, 1)\nMaxDecimalPlaces = Math.RandomInt(2, 5)", Seed)));
     }
 
     [Fact]
-    public void DisplayDecimals_ReadByAnOutputRow_IsDrawnThereAndReusedByTheEngine()
+    public void MinDecimalPlaces_IsEvaluatedAfterTheOutputRows_AndOccupiesTheLaterStreamPosition()
+    {
+        var words = Words(Seed);
+        var expectedFraction = ReferenceRandomOracle.Random(words, D(0), D(1));
+        var expectedPlaces = ReferenceRandomOracle.RandomInt(words, 60, 65);
+
+        var success = Success("Math.Random(0, 1)\nMinDecimalPlaces = Math.RandomInt(60, 65)", Seed);
+
+        Assert.True(expectedFraction == Assert.Single(success.Atoms));
+        Assert.Equal((int)expectedPlaces, success.DisplayOptions.MinDecimalPlaces);
+        Assert.Null(success.DisplayOptions.MaxDecimalPlaces);
+        // A minimum alone never rounds: the drawn fraction is shown exactly, padded with zeros
+        // to the drawn count (a Decimal128 carries at most 34 fractional digits here).
+        var rendered = Display(success);
+        Assert.Equal((int)expectedPlaces, rendered.Length - rendered.IndexOf('.', StringComparison.Ordinal) - 1);
+        Assert.True(expectedFraction == Decimal128.Parse(rendered, System.Globalization.CultureInfo.InvariantCulture));
+    }
+
+    /// <summary>
+    /// The engine reads <c>MinDecimalPlaces</c> and THEN <c>MaxDecimalPlaces</c>, whatever order
+    /// the program declares them in: the minimum takes the stream position after the output's
+    /// draw and the maximum the one after that.
+    /// </summary>
+    [Theory]
+    [InlineData("Math.Random(0, 1)\nMinDecimalPlaces = Math.RandomInt(0, 4)\nMaxDecimalPlaces = Math.RandomInt(5, 9)")]
+    [InlineData("Math.Random(0, 1)\nMaxDecimalPlaces = Math.RandomInt(5, 9)\nMinDecimalPlaces = Math.RandomInt(0, 4)")]
+    [InlineData("MaxDecimalPlaces = Math.RandomInt(5, 9)\nMinDecimalPlaces = Math.RandomInt(0, 4)\nMath.Random(0, 1)")]
+    public void BothDecimalPlaces_AreDrawnAfterTheOutput_TheMinimumBeforeTheMaximum(string source)
+    {
+        var words = Words(Seed);
+        var expectedFraction = ReferenceRandomOracle.Random(words, D(0), D(1));
+        var expectedMin = ReferenceRandomOracle.RandomInt(words, 0, 4);
+        var expectedMax = ReferenceRandomOracle.RandomInt(words, 5, 9);
+
+        var success = Success(source, Seed);
+
+        Assert.True(expectedFraction == Assert.Single(success.Atoms));
+        Assert.Equal((int)expectedMin, success.DisplayOptions.MinDecimalPlaces);
+        Assert.Equal((int)expectedMax, success.DisplayOptions.MaxDecimalPlaces);
+        AssertRoundedTo(expectedFraction, (int)expectedMax, Display(success));
+    }
+
+    /// <summary>
+    /// The displayed text is <paramref name="value"/> rounded to at most <paramref name="places"/>
+    /// places, midpoints away from zero — compared as a NUMBER, because a maximum alone shows no
+    /// trailing zeros, so the digit count is at most, not exactly, the maximum.
+    /// </summary>
+    private static void AssertRoundedTo(Decimal128 value, int places, string rendered)
+    {
+        var fractionalDigits = rendered.Contains('.', StringComparison.Ordinal)
+            ? rendered.Length - rendered.IndexOf('.', StringComparison.Ordinal) - 1
+            : 0;
+        Assert.InRange(fractionalDigits, 0, places);
+        Assert.True(
+            Decimal128.Round(value, places, MidpointRounding.AwayFromZero)
+                == Decimal128.Parse(rendered, System.Globalization.CultureInfo.InvariantCulture),
+            rendered);
+    }
+
+    [Fact]
+    public void MaxDecimalPlaces_ReadByAnOutputRow_IsDrawnThereAndReusedByTheEngine()
     {
         var words = Words(Seed);
         var expectedDecimals = ReferenceRandomOracle.RandomInt(words, 2, 5);
         var expectedFraction = ReferenceRandomOracle.Random(words, D(0), D(1));
 
-        var success = Success("DisplayDecimals = Math.RandomInt(2, 5)\nDisplayDecimals, Math.Random(0, 1)", Seed);
+        var success = Success("MaxDecimalPlaces = Math.RandomInt(2, 5)\nMaxDecimalPlaces, Math.Random(0, 1)", Seed);
 
         Assert.Equal(2, success.Atoms.Count);
         Assert.True(expectedDecimals == success.Atoms[0]);
         Assert.True(expectedFraction == success.Atoms[1]);
         // The engine's later property read is a cache hit: the same value, no new draw
         // (a fresh draw would have taken the fraction's stream position instead).
-        Assert.Equal((int)expectedDecimals, success.DisplayOptions.Decimals);
+        Assert.Equal((int)expectedDecimals, success.DisplayOptions.MaxDecimalPlaces);
         var fractionRow = Display(success).Split('\n')[1];
-        Assert.Equal((int)expectedDecimals, fractionRow.Length - fractionRow.IndexOf('.', StringComparison.Ordinal) - 1);
+        AssertRoundedTo(expectedFraction, (int)expectedDecimals, fractionRow);
     }
 }

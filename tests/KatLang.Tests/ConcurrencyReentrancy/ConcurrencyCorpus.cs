@@ -197,12 +197,20 @@ public static class ConcurrencyCorpus
     public static readonly RunOptions SharedSeededOptions = new() { RandomSeed = 20260914 };
 
     /// <summary>ONE display-default options instance deliberately aliased into both
-    /// lanes of a display-default case: <see cref="RunOptions.DefaultDisplayDecimals"/>
+    /// lanes of a display-default case: <see cref="RunOptions.MaxDecimalPlaces"/>
     /// is immutable configuration, and the effective setting it composes with a program's
-    /// own <c>DisplayDecimals</c> lives on that run's result only.</summary>
-    public static readonly RunOptions SharedDisplayDefaultOptions = new() { DefaultDisplayDecimals = 3 };
+    /// own <c>MaxDecimalPlaces</c> lives on that run's result only.</summary>
+    public static readonly RunOptions SharedDisplayDefaultOptions = new() { MaxDecimalPlaces = 3 };
 
-    /// <summary>Two fractional rows whose display text depends on the run's effective display decimals.</summary>
+    /// <summary>ONE options instance carrying BOTH host decimal-places settings, aliased into both
+    /// lanes of a display-default case: each setting composes with a program's own property of the
+    /// same name on that run's result only.</summary>
+    public static readonly RunOptions SharedDecimalPlacesPairOptions = new() { MinDecimalPlaces = 1, MaxDecimalPlaces = 3 };
+
+    /// <summary>A whole number and a fraction: a minimum pads the first, a maximum rounds the second.</summary>
+    public const string WholeAndFractionRows = "10, 1 / 7";
+
+    /// <summary>Two fractional rows whose display text depends on the run's effective decimal places.</summary>
     public const string FractionRows = "1 / 7, 2 / 3";
 
     public static IReadOnlyList<ConcurrencyPairCase> PairCases { get; } =
@@ -271,7 +279,7 @@ public static class ConcurrencyCorpus
         {
             Id = "cross/plain-vs-engine",
             Scenario = ConcurrencyScenario.CrossEntryPoint,
-            Invariant = "A raw evaluator run beside a full engine run (its own front end, DisplayDecimals property probe, and display) do not interact.",
+            Invariant = "A raw evaluator run beside a full engine run (its own front end, MinDecimalPlaces / MaxDecimalPlaces property probes, and display) do not interact.",
             ProgramA = Scalar, EntryA = EvalEntryPoint.RunPlain,
             ProgramB = MultiOut, EntryB = EvalEntryPoint.EngineRun,
         },
@@ -567,9 +575,9 @@ public static class ConcurrencyCorpus
         {
             Id = "display/two-defaults-same-program",
             Scenario = ConcurrencyScenario.DisplayDefault,
-            Invariant = "Two concurrent engine runs of the same program with different RunOptions.DefaultDisplayDecimals (2 and 8): each result carries its own effective DisplayOptions (KatLangEngine.ResolveDisplayOptions per run), so each lane displays exactly its own count.",
-            ProgramA = FractionRows, EntryA = EvalEntryPoint.EngineRun, OptionsA = new RunOptions { DefaultDisplayDecimals = 2 },
-            ProgramB = FractionRows, EntryB = EvalEntryPoint.EngineRun, OptionsB = new RunOptions { DefaultDisplayDecimals = 8 },
+            Invariant = "Two concurrent engine runs of the same program with different RunOptions.MaxDecimalPlaces (2 and 8): each result carries its own effective DisplayOptions (KatLangEngine.ResolveDisplayOptions per run), so each lane rounds to exactly its own maximum.",
+            ProgramA = FractionRows, EntryA = EvalEntryPoint.EngineRun, OptionsA = new RunOptions { MaxDecimalPlaces = 2 },
+            ProgramB = FractionRows, EntryB = EvalEntryPoint.EngineRun, OptionsB = new RunOptions { MaxDecimalPlaces = 8 },
             ExpectedClassA = "engine ok n=2 display=0.14\\n0.67",
             ExpectedClassB = "engine ok n=2 display=0.14285714\\n0.66666667",
         },
@@ -577,18 +585,48 @@ public static class ConcurrencyCorpus
         {
             Id = "display/shared-default-beside-declared-filter",
             Scenario = ConcurrencyScenario.DisplayDefault,
-            Invariant = "ONE RunOptions { DefaultDisplayDecimals = 3 } instance aliased into two concurrent engine runs, lane B declaring its own stricter DisplayDecimals = 2: the composed filter (Q-10 D-F, the minimum of the two) decides only lane B's own result and nothing is written back into the shared options, so lane A keeps the host filter.",
+            Invariant = "ONE RunOptions { MaxDecimalPlaces = 3 } instance aliased into two concurrent engine runs, lane B declaring its own smaller MaxDecimalPlaces = 2: the composed maximum (Q-10 D-F, the minimum of the two) decides only lane B's own result and nothing is written back into the shared options, so lane A keeps the host maximum.",
             ProgramA = FractionRows, EntryA = EvalEntryPoint.EngineRun, OptionsA = SharedDisplayDefaultOptions,
-            ProgramB = $"DisplayDecimals = 2\n{FractionRows}", EntryB = EvalEntryPoint.EngineRun, OptionsB = SharedDisplayDefaultOptions,
+            ProgramB = $"MaxDecimalPlaces = 2\n{FractionRows}", EntryB = EvalEntryPoint.EngineRun, OptionsB = SharedDisplayDefaultOptions,
             ExpectedClassA = "engine ok n=2 display=0.143\\n0.667",
             ExpectedClassB = "engine ok n=2 display=0.14\\n0.67",
+        },
+        new()
+        {
+            Id = "display/two-minimums-same-program",
+            Scenario = ConcurrencyScenario.DisplayDefault,
+            Invariant = "Two concurrent engine runs of the same program with different RunOptions.MinDecimalPlaces (1 and 4): each result carries its own effective DisplayOptions, so each lane pads to exactly its own minimum and neither rounds (no maximum is derived from a minimum).",
+            ProgramA = WholeAndFractionRows, EntryA = EvalEntryPoint.EngineRun, OptionsA = new RunOptions { MinDecimalPlaces = 1 },
+            ProgramB = WholeAndFractionRows, EntryB = EvalEntryPoint.EngineRun, OptionsB = new RunOptions { MinDecimalPlaces = 4 },
+            ExpectedClassA = "engine ok n=2 display=10.0\\n0.1428571428571428571428571428571429",
+            ExpectedClassB = "engine ok n=2 display=10.0000\\n0.1428571428571428571428571428571429",
+        },
+        new()
+        {
+            Id = "display/shared-pair-beside-declared-pair",
+            Scenario = ConcurrencyScenario.DisplayDefault,
+            Invariant = "ONE RunOptions { MinDecimalPlaces = 1, MaxDecimalPlaces = 3 } instance aliased into two concurrent engine runs, lane B declaring its own pair (MinDecimalPlaces = 0, MaxDecimalPlaces = 2): each setting composes with its counterpart of the same name by their minimum (Q-10 D-F) on lane B's own result only, and nothing is written back into the shared options, so lane A keeps the host pair.",
+            ProgramA = WholeAndFractionRows, EntryA = EvalEntryPoint.EngineRun, OptionsA = SharedDecimalPlacesPairOptions,
+            ProgramB = $"MinDecimalPlaces = 0\nMaxDecimalPlaces = 2\n{WholeAndFractionRows}", EntryB = EvalEntryPoint.EngineRun, OptionsB = SharedDecimalPlacesPairOptions,
+            ExpectedClassA = "engine ok n=2 display=10.0\\n0.143",
+            ExpectedClassB = "engine ok n=2 display=10\\n0.14",
+        },
+        new()
+        {
+            Id = "display/declared-minimum-beside-shared-pair",
+            Scenario = ConcurrencyScenario.DisplayDefault,
+            Invariant = "ONE RunOptions { MinDecimalPlaces = 1, MaxDecimalPlaces = 3 } instance aliased into two concurrent engine runs, lane B declaring only MinDecimalPlaces = 5, which the shared host minimum lowers to 1: lane B's effective pair is (1, 3) like lane A's, and lane B's own source setting never reaches lane A or the shared options.",
+            ProgramA = WholeAndFractionRows, EntryA = EvalEntryPoint.EngineRun, OptionsA = SharedDecimalPlacesPairOptions,
+            ProgramB = $"MinDecimalPlaces = 5\n{WholeAndFractionRows}", EntryB = EvalEntryPoint.EngineRun, OptionsB = SharedDecimalPlacesPairOptions,
+            ExpectedClassA = "engine ok n=2 display=10.0\\n0.143",
+            ExpectedClassB = "engine ok n=2 display=10.0\\n0.143",
         },
         new()
         {
             Id = "display/default-beside-seeded-stream",
             Scenario = ConcurrencyScenario.DisplayDefault,
             Invariant = "A seeded run with a display default beside the same seeded run without one: the default is consumed after evaluation and draws nothing, so neither lane's stream or display is perturbed by the other.",
-            ProgramA = SeededRandom, EntryA = EvalEntryPoint.EngineRun, OptionsA = new RunOptions { RandomSeed = 20260914, DefaultDisplayDecimals = 4 },
+            ProgramA = SeededRandom, EntryA = EvalEntryPoint.EngineRun, OptionsA = new RunOptions { RandomSeed = 20260914, MaxDecimalPlaces = 4 },
             ProgramB = SeededRandom, EntryB = EvalEntryPoint.EngineRun, OptionsB = SharedSeededOptions,
             ExpectedClassA = "engine ok", ExpectedClassB = "engine ok",
         },

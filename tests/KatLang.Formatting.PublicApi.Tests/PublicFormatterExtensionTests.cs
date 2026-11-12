@@ -31,7 +31,7 @@ public class PublicFormatterExtensionTests
     public void CustomFormatter_HonorsRunNumberAndDisplayLimitsByConstruction()
     {
         var formatter = new ShapeFormatter();
-        var rounded = KatLangEngine.Run("DisplayDecimals = 2\nMath.Pi");
+        var rounded = KatLangEngine.Run("MaxDecimalPlaces = 2\nMath.Pi");
         Assert.Equal("A:3.14", formatter.Format(rounded));
 
         var boundedRun = KatLangEngine.Run(
@@ -46,18 +46,18 @@ public class PublicFormatterExtensionTests
     }
 
     [Fact]
-    public void CustomFormatter_ReceivesTheRunsEffectiveDisplayDecimals()
+    public void CustomFormatter_ReceivesTheRunsEffectiveMaxDecimalPlaces()
     {
-        // BoundedOutputWriter.AppendAtom reads the ONE effective setting the run composed: the
-        // host filter alone, the program's DisplayDecimals filter alone, and — when both are
+        // BoundedOutputWriter.AppendAtom reads the ONE effective maximum the run composed: the
+        // host maximum alone, the program's MaxDecimalPlaces alone, and — when both are
         // present — the smaller of the two (Q-10 D-F), exactly as canonical display does.
         var formatter = new ShapeFormatter();
-        var hostFilter = new RunOptions { DefaultDisplayDecimals = 3 };
+        var hostFilter = new RunOptions { MaxDecimalPlaces = 3 };
 
         var hostOnly = KatLangEngine.Run("1 / 7", hostFilter);
-        var sourceOnly = KatLangEngine.Run("DisplayDecimals = 6\n1 / 7");
-        var hostStricter = KatLangEngine.Run("DisplayDecimals = 6\n1 / 7", hostFilter);
-        var sourceStricter = KatLangEngine.Run("DisplayDecimals = 2\n1 / 7", hostFilter);
+        var sourceOnly = KatLangEngine.Run("MaxDecimalPlaces = 6\n1 / 7");
+        var hostStricter = KatLangEngine.Run("MaxDecimalPlaces = 6\n1 / 7", hostFilter);
+        var sourceStricter = KatLangEngine.Run("MaxDecimalPlaces = 2\n1 / 7", hostFilter);
         var neither = KatLangEngine.Run("1 / 7");
 
         Assert.Equal("A:0.143", formatter.Format(hostOnly));
@@ -70,27 +70,68 @@ public class PublicFormatterExtensionTests
             Assert.Equal("A:" + run.ToDisplayString(), formatter.RenderDisplay(run).Text);
     }
 
+    [Fact]
+    public void CustomFormatter_ReceivesTheRunsEffectiveMinDecimalPlaces_AndTheFixedPlacesPair()
+    {
+        // The same one writer applies the minimum: it pads (whole numbers too) and never rounds,
+        // composes with the program's own by the smaller count, and with a maximum of the same
+        // value gives a fixed number of places.
+        var formatter = new ShapeFormatter();
+        var hostMinimum = new RunOptions { MinDecimalPlaces = 3 };
+
+        var hostOnly = KatLangEngine.Run("2.5", hostMinimum);
+        var sourceOnly = KatLangEngine.Run("MinDecimalPlaces = 6\n2.5");
+        var hostSmaller = KatLangEngine.Run("MinDecimalPlaces = 6\n2.5", hostMinimum);
+        var sourceSmaller = KatLangEngine.Run("MinDecimalPlaces = 2\n2.5", hostMinimum);
+        var whole = KatLangEngine.Run("10", hostMinimum);
+        var unrounded = KatLangEngine.Run("1.234567", hostMinimum);
+        var fixedPlaces = KatLangEngine.Run("1.234567", new RunOptions { MinDecimalPlaces = 2, MaxDecimalPlaces = 2 });
+        var split = KatLangEngine.Run("MinDecimalPlaces = 2\n10", new RunOptions { MaxDecimalPlaces = 2 });
+
+        Assert.Equal("A:2.500", formatter.Format(hostOnly));
+        Assert.Equal("A:2.500000", formatter.Format(sourceOnly));
+        Assert.Equal("A:2.500", formatter.Format(hostSmaller));
+        Assert.Equal("A:2.50", formatter.Format(sourceSmaller));
+        Assert.Equal("A:10.000", formatter.Format(whole));
+        Assert.Equal("A:1.234567", formatter.Format(unrounded));
+        Assert.Equal("A:1.23", formatter.Format(fixedPlaces));
+        Assert.Equal("A:10.00", formatter.Format(split));
+
+        foreach (var run in new[] { hostOnly, sourceOnly, hostSmaller, sourceSmaller, whole, unrounded, fixedPlaces, split })
+            Assert.Equal("A:" + run.ToDisplayString(), formatter.RenderDisplay(run).Text);
+
+        // Re-applying host settings to a finished result reaches the custom formatter too.
+        Assert.Equal("A:2.5", formatter.Format(sourceSmaller.WithHostDecimalPlaces(0, null)));
+        Assert.Equal("A:1.2346", formatter.Format(unrounded.WithHostDecimalPlaces(null, 4)));
+    }
+
     [Theory]
     [InlineData(0)]
-    [InlineData(RunOptions.MaxDisplayDecimals)]
+    [InlineData(RunOptions.DecimalPlacesLimit)]
     public void CustomFormatter_DisplayDefaultBoundariesAndLimits_UseOnlyPublicApi(int decimals)
     {
         var formatter = new ShapeFormatter();
-        var host = new RunOptions { DefaultDisplayDecimals = decimals };
+        var host = new RunOptions { MaxDecimalPlaces = decimals };
         var hosted = Assert.IsType<RunResult.Success>(KatLangEngine.Run("0.125", host));
-        var declared = Assert.IsType<RunResult.Success>(KatLangEngine.Run($"DisplayDecimals = {decimals}\n0.125"));
-        // Both filters present: the smaller one decides, whichever side supplies it (Q-10 D-F).
-        var sourceDecides = Assert.IsType<RunResult.Success>(KatLangEngine.Run($"DisplayDecimals = {decimals}\n0.125",
-            new RunOptions { DefaultDisplayDecimals = RunOptions.MaxDisplayDecimals }));
+        var declared = Assert.IsType<RunResult.Success>(KatLangEngine.Run($"MaxDecimalPlaces = {decimals}\n0.125"));
+        // Both maximums present: the smaller one decides, whichever side supplies it (Q-10 D-F).
+        var sourceDecides = Assert.IsType<RunResult.Success>(KatLangEngine.Run($"MaxDecimalPlaces = {decimals}\n0.125",
+            new RunOptions { MaxDecimalPlaces = RunOptions.DecimalPlacesLimit }));
         var hostDecides = Assert.IsType<RunResult.Success>(KatLangEngine.Run(
-            $"DisplayDecimals = {RunOptions.MaxDisplayDecimals}\n0.125", host));
-        var expected = decimals == 0 ? "A:0" : "A:0.125" + new string('0', 96);
+            $"MaxDecimalPlaces = {RunOptions.DecimalPlacesLimit}\n0.125", host));
+        // A maximum rounds and never pads: 0 rounds 0.125 away, 99 leaves its three digits.
+        var expected = decimals == 0 ? "A:0" : "A:0.125";
         foreach (var run in new[] { hosted, declared, sourceDecides, hostDecides })
             Assert.Equal(expected, formatter.Format(run));
 
+        // The same boundaries as a MINIMUM pad instead: 0 pads nothing, 99 pads to 99 places.
+        var padded = decimals == 0 ? "A:0.125" : "A:0.125" + new string('0', 96);
+        Assert.Equal(padded, formatter.Format(KatLangEngine.Run("0.125", new RunOptions { MinDecimalPlaces = decimals })));
+        Assert.Equal(padded, formatter.Format(KatLangEngine.Run($"MinDecimalPlaces = {decimals}\n0.125")));
+
         var bounded = KatLangEngine.Run("0.125", new RunOptions
         {
-            DefaultDisplayDecimals = decimals,
+            MaxDecimalPlaces = decimals,
             EvaluationLimits = new EvaluationLimits { MaxDisplayLength = 2 },
         });
         var rendering = formatter.RenderDisplay(bounded, new OutputFormattingOptions { MaxDisplayLength = 1000 });

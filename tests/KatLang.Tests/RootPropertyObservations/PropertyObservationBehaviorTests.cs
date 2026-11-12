@@ -91,22 +91,33 @@ public class PropertyObservationBehaviorTests
     }
 
     [Fact]
-    public void DisplayDecimals_ReadByTheEngine_IsObservedAfterTheOutput_AndFiltersRendering()
+    public void MaxDecimalPlaces_ReadByTheEngine_IsObservedAfterTheOutput_AndFiltersRendering()
     {
-        var result = Run("X = 1 / 3\nDisplayDecimals = 2\nX");
+        var result = Run("X = 1 / 3\nMaxDecimalPlaces = 2\nX");
 
         Assert.Equal("0.33", result.ToDisplayString());
-        Assert.Equal("X=0.33#1; DisplayDecimals=2#1", Describe(result));
+        Assert.Equal("X=0.33#1; MaxDecimalPlaces=2#1", Describe(result));
     }
 
     [Fact]
-    public void HostDisplayFilter_AppliesToObservedValues_AndWithHostDisplayDecimalsSharesTheSnapshot()
+    public void BothDecimalPlaces_ReadByTheEngine_AreObservedInReadOrder_TheMinimumFirst()
     {
-        var options = new RunOptions { ObservePropertyValues = true, DefaultDisplayDecimals = 1 };
+        // Declared maximum-first; the engine reads the minimum first, so it is published first.
+        var result = Run("X = 1 / 3\nMaxDecimalPlaces = 2\nMinDecimalPlaces = 1\nX");
+
+        Assert.Equal("0.33", result.ToDisplayString());
+        // Observed values render with the run's own settings: the minimum pads the integers.
+        Assert.Equal("X=0.33#1; MinDecimalPlaces=1.0#1; MaxDecimalPlaces=2.0#1", Describe(result));
+    }
+
+    [Fact]
+    public void HostDisplayFilter_AppliesToObservedValues_AndWithHostDecimalPlacesSharesTheSnapshot()
+    {
+        var options = new RunOptions { ObservePropertyValues = true, MaxDecimalPlaces = 1 };
         var result = KatLangEngine.Run("X = 1 / 3\nX", options);
         Assert.Equal("0.3", result.RenderPropertyValue(Single(result, "X")).Text);
 
-        var widened = result.WithHostDisplayDecimals(4);
+        var widened = result.WithHostDecimalPlaces(null, 4);
         Assert.Same(result.PropertyObservations, widened.PropertyObservations);
         Assert.Equal("0.3333", widened.RenderPropertyValue(Single(widened, "X")).Text);
     }
@@ -256,12 +267,12 @@ public class PropertyObservationBehaviorTests
     }
 
     [Fact]
-    public void InvalidDisplayDecimals_FailsTheRun_WithTheObservedValuesBeforeIt()
+    public void InvalidMaxDecimalPlaces_FailsTheRun_WithTheObservedValuesBeforeIt()
     {
-        var result = Run("X = 1\nDisplayDecimals = 0.5\nX");
+        var result = Run("X = 1\nMaxDecimalPlaces = 0.5\nX");
 
         Assert.IsType<RunResult.EvalFailure>(result);
-        Assert.Equal("X=1#1; DisplayDecimals=0.5#1", Describe(result));
+        Assert.Equal("X=1#1; MaxDecimalPlaces=0.5#1", Describe(result));
     }
 
     // ── 5. Null / empty contract ─────────────────────────────────────────────────────────────
@@ -307,7 +318,7 @@ public class PropertyObservationBehaviorTests
         "B = 2\nA = 1 / 0\nB + A",
         "x, y = 1, 2\nx + y",
         "P = 1, 2\nQ = trace(P.count)\nQ, P",
-        "X = 1 / 3\nDisplayDecimals = 2\nX",
+        "X = 1 / 3\nMaxDecimalPlaces = 2\nX",
         "Rate = 2\nStep(s) = s * Rate\nStep(trace(1)).repeat(3)",
         "Total = range(1, 50).filter{n mod 3 == 0}.count\nTotal",
     };

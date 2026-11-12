@@ -929,7 +929,7 @@ public class AstStructuralDepthTests
     public static TheoryData<string> GuardedEntryPoints => new(
         "Run", "RunWithLimits", "RunFlat", "RunFlatWithLimits",
         "RunCounted", "RunCountedWithCache", "RunCountedObservedOptimized",
-        "RunCountedObservedUnoptimized", "RunCountedWithTopLevelProperty");
+        "RunCountedObservedUnoptimized", "RunCountedWithTopLevelProperties");
 
     [Theory]
     [MemberData(nameof(GuardedEntryPoints))]
@@ -947,7 +947,7 @@ public class AstStructuralDepthTests
             "RunCountedWithCache" => Require(Evaluator.RunCounted(deep, cache)),
             "RunCountedObservedOptimized" => Require(Evaluator.RunCountedObserved(deep, enableOptimizations: true).Result),
             "RunCountedObservedUnoptimized" => Require(Evaluator.RunCountedObserved(deep, enableOptimizations: false).Result),
-            "RunCountedWithTopLevelProperty" => Require(Evaluator.RunCountedWithTopLevelProperty(deep, "X", cache)),
+            "RunCountedWithTopLevelProperties" => Require(Evaluator.RunCountedWithTopLevelProperties(deep, ["X"], cache)),
             _ => throw new InvalidOperationException(entryPoint),
         };
 

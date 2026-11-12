@@ -533,11 +533,14 @@ public sealed class CliApplicationTests
     // companion `run` assertion below expects, and these cases would fail.
     [InlineData("1 / 0\n", "Division by zero")]
     [InlineData("Undefined\n", "implicit parameter")]
-    // The engine's post-output read of the root's DisplayDecimals source filter (Q-10 D-F)
-    // is evaluation too: `check` never runs it, so an invalid or failing source filter is
-    // reported by `run`/`eval` only.
-    [InlineData("DisplayDecimals = 1 / 0\n1 / 7\n", "Division by zero")]
-    [InlineData("DisplayDecimals = 100\n1 / 7\n", "DisplayDecimals must be between 0 and 99.")]
+    // The engine's post-output reads of the root's MinDecimalPlaces and MaxDecimalPlaces
+    // source settings (Q-10 D-F) are evaluation too: `check` never runs them, so an invalid,
+    // failing or inconsistent source setting is reported by `run`/`eval` only.
+    [InlineData("MaxDecimalPlaces = 1 / 0\n1 / 7\n", "Division by zero")]
+    [InlineData("MaxDecimalPlaces = 100\n1 / 7\n", "MaxDecimalPlaces must be between 0 and 99.")]
+    [InlineData("MinDecimalPlaces = 1 / 0\n1 / 7\n", "Division by zero")]
+    [InlineData("MinDecimalPlaces = 100\n1 / 7\n", "MinDecimalPlaces must be between 0 and 99.")]
+    [InlineData("MinDecimalPlaces = 3\nMaxDecimalPlaces = 1\n1 / 7\n", "MinDecimalPlaces must not exceed MaxDecimalPlaces")]
     public async Task Check_ValidatesWithoutEvaluating(string source, string evaluationOnlyDiagnostic)
     {
         using var file = new TempSourceFile(source);
@@ -1034,7 +1037,7 @@ public sealed class CliApplicationTests
     [InlineData(new[] { "eval", "1", "--random-seed", "1", "--random-seed", "1" }, "option '--random-seed' was specified more than once.")]
     [InlineData(new[] { "eval", "1", "--random-seed" }, "option '--random-seed' requires a value.")]
     [InlineData(new[] { "eval", "1", "--random-seed", "--allow-loading" }, "option '--random-seed' requires a value.")]
-    [InlineData(new[] { "eval", "1", "--random-seed", "--display-decimals", "2" }, "option '--random-seed' requires a value.")]
+    [InlineData(new[] { "eval", "1", "--random-seed", "--max-decimal-places", "2" }, "option '--random-seed' requires a value.")]
     [InlineData(new[] { "eval", "1", "--random-seed", "--" }, "option '--random-seed' requires a value.")]
     // A following non-option token is always TRIED as the value (single dashes and
     // words alike): the command name is not skipped over to find a number.
@@ -1171,7 +1174,7 @@ public sealed class CliApplicationTests
     }
 
     /// <summary>
-    /// Seeding is host configuration only. Unlike <c>DisplayDecimals</c>, KatLang has no seeding
+    /// Seeding is host configuration only. Unlike <c>MaxDecimalPlaces</c>, KatLang has no seeding
     /// property: a program's own <c>RandomSeed</c> is an ordinary declaration that
     /// <c>--random-seed</c> neither reads nor yields to, and that seeds nothing on its own.
     /// </summary>
@@ -1220,15 +1223,16 @@ public sealed class CliApplicationTests
         Assert.DoesNotContain("--random-seed=", help);
     }
 
-    // ── Display decimals ────────────────────────────────────────────────────
+    // ── Decimal places: the maximum ─────────────────────────────────────────
 
     /// <summary>Fractions, a midpoint, a list, and a sequence, so the count shows everywhere.</summary>
     private const string FractionSource = "1 / 7, 2 / 3, (2.5, [-2.5])";
 
     /// <summary>
-    /// The CLI adds no display semantics of its own: <c>--display-decimals</c> is exactly
-    /// <see cref="RunOptions.DefaultDisplayDecimals"/>, so the package's own display under that
-    /// default is the expectation, never a re-implemented rounding.
+    /// The CLI adds no display semantics of its own: <c>--min-decimal-places</c> and
+    /// <c>--max-decimal-places</c> are exactly <see cref="RunOptions.MinDecimalPlaces"/> and
+    /// <see cref="RunOptions.MaxDecimalPlaces"/>, so the package's own display under those
+    /// settings is the expectation, never a re-implemented rounding.
     /// </summary>
     private static string EngineDisplay(string source, RunOptions options)
         => KatLangEngine.Run(source, options).ToDisplayString().ReplaceLineEndings("\n");
@@ -1237,33 +1241,39 @@ public sealed class CliApplicationTests
     [InlineData("0")]
     [InlineData("3")]
     [InlineData("99")]
-    public async Task Eval_DisplayDecimals_IsKatLangsHostDefault(string token)
+    public async Task Eval_MaxDecimalPlaces_IsKatLangsHostMaximum(string token)
     {
         var decimals = int.Parse(token, CultureInfo.InvariantCulture);
 
-        var result = await Cli.InvokeAsync("eval", FractionSource, "--display-decimals", token);
+        var result = await Cli.InvokeAsync("eval", FractionSource, "--max-decimal-places", token);
 
         Assert.Equal(Success, result.ExitCode);
         Assert.Equal("", result.Error);
-        Assert.Equal(EngineDisplay(FractionSource, new RunOptions { DefaultDisplayDecimals = decimals }), result.TrimmedOutput);
+        Assert.Equal(EngineDisplay(FractionSource, new RunOptions { MaxDecimalPlaces = decimals }), result.TrimmedOutput);
     }
 
     [Fact]
-    public async Task Eval_DisplayDecimals_RendersThroughThePackagesRules()
+    public async Task Eval_MaxDecimalPlaces_RendersThroughThePackagesRules()
     {
-        Assert.Equal("0.143", (await Cli.InvokeAsync("eval", "--display-decimals", "3", "1 / 7")).TrimmedOutput);
+        Assert.Equal("0.143", (await Cli.InvokeAsync("eval", "--max-decimal-places", "3", "1 / 7")).TrimmedOutput);
 
         // 0 is a real setting: midpoints round away from zero, like Math.Round.
-        Assert.Equal("3\n-3", (await Cli.InvokeAsync("eval", "2.5, -2.5", "--display-decimals", "0")).TrimmedOutput);
+        Assert.Equal("3\n-3", (await Cli.InvokeAsync("eval", "2.5, -2.5", "--max-decimal-places", "0")).TrimmedOutput);
 
-        // Special values keep their spelling; -0 stays -0 while -0.0 takes the places.
+        // Special values keep their spelling. A maximum alone never pads, and the text depends
+        // on the value only: -0 and -0.0 are both -0, sign kept.
         Assert.Equal(
-            "NaN\nInfinity\n-Infinity\n-0\n-0.00000",
-            (await Cli.InvokeAsync("eval", "Math.Sqrt(-1), 9e6144 * 10, Math.Ln(0), -0, -0.0", "--display-decimals", "5")).TrimmedOutput);
+            "NaN\nInfinity\n-Infinity\n-0\n-0",
+            (await Cli.InvokeAsync("eval", "Math.Sqrt(-1), 9e6144 * 10, Math.Ln(0), -0, -0.0", "--max-decimal-places", "5")).TrimmedOutput);
+
+        // A maximum rounds and never pads: whole numbers stay plain and stored zeros are removed.
+        Assert.Equal(
+            "10\n2.5\n1.2346",
+            (await Cli.InvokeAsync("eval", "10, 2.5000, 1.234567", "--max-decimal-places", "4")).TrimmedOutput);
     }
 
     [Fact]
-    public async Task OmittedDisplayDecimals_KeepsCanonicalOutput()
+    public async Task OmittedMaxDecimalPlaces_KeepsCanonicalOutput()
     {
         var result = await Cli.InvokeAsync("eval", FractionSource);
 
@@ -1273,22 +1283,21 @@ public sealed class CliApplicationTests
     }
 
     /// <summary>
-    /// Q-10 D-F: the option is the HOST display filter and a program's own
-    /// <c>DisplayDecimals</c> is the SOURCE filter; both are upper bounds, so the smaller
-    /// count applies — the option never overrides the program, and the program never overrides
-    /// the option.
+    /// Q-10 D-F: the option is the HOST maximum and a program's own <c>MaxDecimalPlaces</c> is
+    /// the SOURCE maximum; they compose by their minimum, so the smaller count applies — the
+    /// option never overrides the program, and the program never overrides the option.
     /// </summary>
     [Theory]
     [InlineData("0", "0")]
     [InlineData("3", "0.143")]
     [InlineData("6", "0.142857")]
     [InlineData("99", "0.142857")]
-    public async Task ProgramsOwnDisplayDecimals_ComposesWithTheOption_ByMinimum(string token, string expected)
+    public async Task ProgramsOwnMaxDecimalPlaces_ComposesWithTheOption_ByMinimum(string token, string expected)
     {
-        using var file = new TempSourceFile("DisplayDecimals = 6\n1 / 7\n");
+        using var file = new TempSourceFile("MaxDecimalPlaces = 6\n1 / 7\n");
 
-        var eval = await Cli.InvokeAsync("eval", "DisplayDecimals = 6\n1 / 7", "--display-decimals", token);
-        var run = await Cli.InvokeAsync("run", file.Path, "--display-decimals", token);
+        var eval = await Cli.InvokeAsync("eval", "MaxDecimalPlaces = 6\n1 / 7", "--max-decimal-places", token);
+        var run = await Cli.InvokeAsync("run", file.Path, "--max-decimal-places", token);
 
         Assert.Equal(Success, eval.ExitCode);
         Assert.Equal(expected, eval.TrimmedOutput);
@@ -1313,9 +1322,9 @@ public sealed class CliApplicationTests
     public async Task DisplayFilters_ComposeByMinimum_ExactlyLikeTheEngine(int? source, string? flag, string expected)
     {
         var program = source is { } decimals
-            ? $"DisplayDecimals = {decimals.ToString(CultureInfo.InvariantCulture)}\n1 / 7"
+            ? $"MaxDecimalPlaces = {decimals.ToString(CultureInfo.InvariantCulture)}\n1 / 7"
             : "1 / 7";
-        string[] args = flag is null ? ["eval", program] : ["eval", program, "--display-decimals", flag];
+        string[] args = flag is null ? ["eval", program] : ["eval", program, "--max-decimal-places", flag];
 
         var result = await Cli.InvokeAsync(args);
 
@@ -1325,20 +1334,20 @@ public sealed class CliApplicationTests
         Assert.Equal(
             EngineDisplay(program, new RunOptions
             {
-                DefaultDisplayDecimals = flag is null ? null : int.Parse(flag, CultureInfo.InvariantCulture),
+                MaxDecimalPlaces = flag is null ? null : int.Parse(flag, CultureInfo.InvariantCulture),
             }),
             result.TrimmedOutput);
     }
 
     /// <summary>
     /// A stricter flag never makes a declared source filter harmless: the program's
-    /// <c>DisplayDecimals</c> is still evaluated and validated after the output, so an invalid,
+    /// <c>MaxDecimalPlaces</c> is still evaluated and validated after the output, so an invalid,
     /// out-of-range or failing one fails <c>eval</c> and <c>run</c> exactly as without the flag.
     /// </summary>
     [Theory]
-    [InlineData("DisplayDecimals = 100\n1 / 7", "DisplayDecimals must be between 0 and 99.")]
-    [InlineData("DisplayDecimals = 1.5\n1 / 7", "DisplayDecimals must be an integer.")]
-    [InlineData("DisplayDecimals = 1 / 0\n1 / 7", "Division by zero")]
+    [InlineData("MaxDecimalPlaces = 100\n1 / 7", "MaxDecimalPlaces must be between 0 and 99.")]
+    [InlineData("MaxDecimalPlaces = 1.5\n1 / 7", "MaxDecimalPlaces must be an integer.")]
+    [InlineData("MaxDecimalPlaces = 1 / 0\n1 / 7", "Division by zero")]
     public async Task InvalidSourceFilter_StillFails_UnderAStricterFlag(string source, string message)
     {
         using var file = new TempSourceFile(source + "\n");
@@ -1346,9 +1355,9 @@ public sealed class CliApplicationTests
         var without = await Cli.InvokeAsync("eval", source);
         foreach (var args in new[]
                  {
-                     new[] { "eval", source, "--display-decimals", "5" },
-                     new[] { "eval", source, "--display-decimals", "0" },
-                     new[] { "run", file.Path, "--display-decimals", "5" },
+                     new[] { "eval", source, "--max-decimal-places", "5" },
+                     new[] { "eval", source, "--max-decimal-places", "0" },
+                     new[] { "run", file.Path, "--max-decimal-places", "5" },
                  })
         {
             var result = await Cli.InvokeAsync(args);
@@ -1358,7 +1367,7 @@ public sealed class CliApplicationTests
             Assert.Equal(without.ExitCode, result.ExitCode);
         }
 
-        Assert.Equal(without.TrimmedError, (await Cli.InvokeAsync("eval", source, "--display-decimals", "5")).TrimmedError);
+        Assert.Equal(without.TrimmedError, (await Cli.InvokeAsync("eval", source, "--max-decimal-places", "5")).TrimmedError);
     }
 
     /// <summary>
@@ -1369,51 +1378,56 @@ public sealed class CliApplicationTests
     [Fact]
     public async Task EffectfulSourceFilter_IsStillEvaluated_AndComposesWithTheFlag()
     {
-        const string program = "Math.Random(0, 1)\nDisplayDecimals = Math.RandomInt(6, 9)";
+        const string program = "Math.Random(0, 1)\nMaxDecimalPlaces = Math.RandomInt(6, 9)";
         var engine = Assert.IsType<RunResult.Success>(KatLangEngine.Run(program, new RunOptions { RandomSeed = 42 }));
-        var drawn = DecimalPlaces(engine.ToDisplayString().ReplaceLineEndings("\n"));
-        Assert.InRange(drawn, 6, 8);
+
+        // The source maximum is the stream's SECOND draw. A program that also prints it makes
+        // the same two draws in the same order, so its second atom is the drawn count.
+        var printed = Assert.IsType<RunResult.Success>(KatLangEngine.Run(
+            "Math.Random(0, 1), MaxDecimalPlaces\nMaxDecimalPlaces = Math.RandomInt(6, 9)", new RunOptions { RandomSeed = 42 }));
+        Assert.Equal(engine.Atoms[0], printed.Atoms[0]);
+        var drawn = (int)printed.Atoms[1];
+        Assert.InRange(drawn, 6, 9);
 
         var noFlag = await Cli.InvokeAsync("eval", program, "--random-seed", "42");
-        var stricter = await Cli.InvokeAsync("eval", program, "--random-seed", "42", "--display-decimals", "5");
-        var looser = await Cli.InvokeAsync("eval", program, "--random-seed", "42", "--display-decimals", "10");
+        var stricter = await Cli.InvokeAsync("eval", program, "--random-seed", "42", "--max-decimal-places", "5");
+        var looser = await Cli.InvokeAsync("eval", program, "--random-seed", "42", "--max-decimal-places", "10");
 
         foreach (var result in new[] { noFlag, stricter, looser })
             Assert.Equal(Success, result.ExitCode);
         Assert.Equal(engine.ToDisplayString().ReplaceLineEndings("\n"), noFlag.TrimmedOutput);
-        Assert.Equal(drawn, DecimalPlaces(noFlag.TrimmedOutput));
-        Assert.Equal(5, DecimalPlaces(stricter.TrimmedOutput));
-        Assert.Equal(drawn, DecimalPlaces(looser.TrimmedOutput));
         Assert.Equal(noFlag.TrimmedOutput, looser.TrimmedOutput);
 
-        // The output draws the stream's first word in every case: the source filter draws
-        // afterwards, so the shown number is the same draw at every filter.
+        // The output draws the stream's first word in every case: the source maximum draws
+        // afterwards, so the shown number is the same draw under every setting — displayed at
+        // the drawn maximum when it is the smaller count, and at the flag's when that is.
         var outputOnly = Assert.IsType<RunResult.Success>(KatLangEngine.Run("Math.Random(0, 1)", new RunOptions { RandomSeed = 42 }));
         Assert.Equal(outputOnly.Atoms, engine.Atoms);
         Assert.Equal(
-            EngineDisplay("Math.Random(0, 1)", new RunOptions { RandomSeed = 42, DefaultDisplayDecimals = 5 }),
+            EngineDisplay("Math.Random(0, 1)", new RunOptions { RandomSeed = 42, MaxDecimalPlaces = drawn }),
+            noFlag.TrimmedOutput);
+        Assert.Equal(
+            EngineDisplay("Math.Random(0, 1)", new RunOptions { RandomSeed = 42, MaxDecimalPlaces = 5 }),
             stricter.TrimmedOutput);
-
-        static int DecimalPlaces(string text) => text.Length - text.IndexOf('.', StringComparison.Ordinal) - 1;
     }
 
     [Fact]
-    public async Task InvalidDisplayDecimalsProperty_StillFails_TheOptionIsNoRecovery()
+    public async Task InvalidMaxDecimalPlacesProperty_StillFails_TheOptionIsNoRecovery()
     {
-        const string source = "DisplayDecimals = -1\n1 / 7";
+        const string source = "MaxDecimalPlaces = -1\n1 / 7";
 
-        var withOption = await Cli.InvokeAsync("eval", source, "--display-decimals", "3");
+        var withOption = await Cli.InvokeAsync("eval", source, "--max-decimal-places", "3");
         var without = await Cli.InvokeAsync("eval", source);
 
         Assert.Equal(Failure, withOption.ExitCode);
         Assert.Equal("", withOption.Output);
-        Assert.Contains("DisplayDecimals must be a non-negative integer.", withOption.TrimmedError);
+        Assert.Contains("MaxDecimalPlaces must be a non-negative integer.", withOption.TrimmedError);
         Assert.Equal(without.ExitCode, withOption.ExitCode);
         Assert.Equal(without.TrimmedError, withOption.TrimmedError);
     }
 
     [Fact]
-    public async Task Run_DisplayDecimals_ReadsAUtf8FileByRelativePathWithSpaces()
+    public async Task Run_MaxDecimalPlaces_ReadsAUtf8FileByRelativePathWithSpaces()
     {
         // A path RELATIVE to the process's current directory (never changed here), through a
         // directory and a file name with spaces, holding non-ASCII UTF-8 text.
@@ -1426,11 +1440,11 @@ public sealed class CliApplicationTests
             var relative = Path.GetRelativePath(Environment.CurrentDirectory, path);
             Assert.False(Path.IsPathRooted(relative));
 
-            var result = await Cli.InvokeAsync("run", "--display-decimals", "4", relative);
+            var result = await Cli.InvokeAsync("run", "--max-decimal-places", "4", relative);
 
             Assert.Equal(Success, result.ExitCode);
             Assert.Equal("", result.Error);
-            // Strings are never touched; every number takes the four places.
+            // Strings are never touched; every number is rounded to at most four places.
             Assert.Equal("π ≈ 3.14159\n3.1416\n0.1429", result.TrimmedOutput);
         }
         finally
@@ -1454,15 +1468,15 @@ public sealed class CliApplicationTests
     [InlineData("-")]
     [InlineData("2147483648")]           // int.MaxValue + 1
     [InlineData("99999999999999999999")] // beyond long
-    public async Task DisplayDecimals_InvalidValues_AreUsageErrors_BeforeAnyEvaluation(string value)
+    public async Task MaxDecimalPlaces_InvalidValues_AreUsageErrors_BeforeAnyEvaluation(string value)
     {
         // `Missing` would be an evaluation diagnostic if the program ran; it never does.
-        var result = await Cli.InvokeAsync("eval", "Missing", "--display-decimals", value);
+        var result = await Cli.InvokeAsync("eval", "Missing", "--max-decimal-places", value);
 
         Assert.Equal(Failure, result.ExitCode);
         Assert.Equal("", result.Output);
         Assert.Equal(
-            $"katlang: option '--display-decimals' requires an integer between 0 and {RunOptions.MaxDisplayDecimals}; got '{value}'.\n"
+            $"katlang: option '--max-decimal-places' requires an integer between 0 and {RunOptions.DecimalPlacesLimit}; got '{value}'.\n"
             + "Run 'katlang --help' for usage.",
             result.TrimmedError);
     }
@@ -1472,25 +1486,25 @@ public sealed class CliApplicationTests
     [InlineData("02", 2)]
     [InlineData("-0", 0)]
     [InlineData("+0", 0)]
-    public async Task DisplayDecimals_AcceptsTheSameIntegerSpellingsAsSeed(string token, int decimals)
+    public async Task MaxDecimalPlaces_AcceptsTheSameIntegerSpellingsAsSeed(string token, int decimals)
     {
-        var result = await Cli.InvokeAsync("eval", FractionSource, "--display-decimals", token);
+        var result = await Cli.InvokeAsync("eval", FractionSource, "--max-decimal-places", token);
 
         Assert.Equal(Success, result.ExitCode);
-        Assert.Equal(EngineDisplay(FractionSource, new RunOptions { DefaultDisplayDecimals = decimals }), result.TrimmedOutput);
+        Assert.Equal(EngineDisplay(FractionSource, new RunOptions { MaxDecimalPlaces = decimals }), result.TrimmedOutput);
     }
 
     [Theory]
-    [InlineData(new[] { "eval", "1", "--display-decimals" }, "option '--display-decimals' requires a value.")]
-    [InlineData(new[] { "eval", "1", "--display-decimals", "--random-seed", "5" }, "option '--display-decimals' requires a value.")]
-    [InlineData(new[] { "eval", "--display-decimals", "--", "1" }, "option '--display-decimals' requires a value.")]
-    [InlineData(new[] { "eval", "1", "--display-decimals", "2", "--display-decimals", "2" }, "option '--display-decimals' was specified more than once.")]
-    [InlineData(new[] { "eval", "1", "--display-decimals=2" }, "unknown option '--display-decimals=2'.")]
-    [InlineData(new[] { "--help", "--display-decimals", "2" }, "option '--help' cannot be combined with other arguments.")]
-    [InlineData(new[] { "--display-decimals", "2", "--version" }, "option '--version' cannot be combined with other arguments.")]
-    [InlineData(new[] { "eval", "--display-decimals", "2" }, "'eval' requires a <source> argument.")]
-    [InlineData(new[] { "run", "--display-decimals", "2" }, "'run' requires a <file> argument.")]
-    public async Task DisplayDecimals_MalformedInvocations_ReportUsageErrors(string[] args, string expected)
+    [InlineData(new[] { "eval", "1", "--max-decimal-places" }, "option '--max-decimal-places' requires a value.")]
+    [InlineData(new[] { "eval", "1", "--max-decimal-places", "--random-seed", "5" }, "option '--max-decimal-places' requires a value.")]
+    [InlineData(new[] { "eval", "--max-decimal-places", "--", "1" }, "option '--max-decimal-places' requires a value.")]
+    [InlineData(new[] { "eval", "1", "--max-decimal-places", "2", "--max-decimal-places", "2" }, "option '--max-decimal-places' was specified more than once.")]
+    [InlineData(new[] { "eval", "1", "--max-decimal-places=2" }, "unknown option '--max-decimal-places=2'.")]
+    [InlineData(new[] { "--help", "--max-decimal-places", "2" }, "option '--help' cannot be combined with other arguments.")]
+    [InlineData(new[] { "--max-decimal-places", "2", "--version" }, "option '--version' cannot be combined with other arguments.")]
+    [InlineData(new[] { "eval", "--max-decimal-places", "2" }, "'eval' requires a <source> argument.")]
+    [InlineData(new[] { "run", "--max-decimal-places", "2" }, "'run' requires a <file> argument.")]
+    public async Task MaxDecimalPlaces_MalformedInvocations_ReportUsageErrors(string[] args, string expected)
     {
         var result = await Cli.InvokeAsync(args);
 
@@ -1500,28 +1514,28 @@ public sealed class CliApplicationTests
     }
 
     [Fact]
-    public async Task DisplayDecimals_TriesTheNextToken_NeverSkipsTheCommandToFindOne()
+    public async Task MaxDecimalPlaces_TriesTheNextToken_NeverSkipsTheCommandToFindOne()
     {
-        var result = await Cli.InvokeAsync("--display-decimals", "eval", "1");
+        var result = await Cli.InvokeAsync("--max-decimal-places", "eval", "1");
 
         Assert.Equal(Failure, result.ExitCode);
         Assert.Contains(
-            $"option '--display-decimals' requires an integer between 0 and {RunOptions.MaxDisplayDecimals}; got 'eval'.",
+            $"option '--max-decimal-places' requires an integer between 0 and {RunOptions.DecimalPlacesLimit}; got 'eval'.",
             result.TrimmedError);
     }
 
     [Fact]
-    public async Task Check_RefusesDisplayDecimals_BecauseCheckDoesNotEvaluate()
+    public async Task Check_RefusesMaxDecimalPlaces_BecauseCheckDoesNotEvaluate()
     {
         using var file = new TempSourceFile("1 / 7\n");
-        const string refusal = "katlang: option '--display-decimals' is not valid for 'check': check does not evaluate.\n"
+        const string refusal = "katlang: option '--max-decimal-places' is not valid for 'check': check does not evaluate.\n"
             + "Run 'katlang --help' for usage.";
 
         foreach (var args in new[]
                  {
-                     new[] { "check", file.Path, "--display-decimals", "2" },
-                     new[] { "--display-decimals", "0", "check", file.Path },
-                     new[] { "check", "--display-decimals", "99", file.Path, "--allow-loading" },
+                     new[] { "check", file.Path, "--max-decimal-places", "2" },
+                     new[] { "--max-decimal-places", "0", "check", file.Path },
+                     new[] { "check", "--max-decimal-places", "99", file.Path, "--allow-loading" },
                  })
         {
             var result = await Cli.InvokeAsync(args);
@@ -1539,11 +1553,11 @@ public sealed class CliApplicationTests
     }
 
     [Fact]
-    public async Task Check_MalformedDisplayDecimals_IsReportedBeforeTheApplicabilityRefusal()
+    public async Task Check_MalformedMaxDecimalPlaces_IsReportedBeforeTheApplicabilityRefusal()
     {
         using var file = new TempSourceFile("1 / 7\n");
 
-        var result = await Cli.InvokeAsync("check", file.Path, "--display-decimals", "abc");
+        var result = await Cli.InvokeAsync("check", file.Path, "--max-decimal-places", "abc");
 
         Assert.Equal(Failure, result.ExitCode);
         Assert.Contains("requires an integer between", result.TrimmedError);
@@ -1551,31 +1565,31 @@ public sealed class CliApplicationTests
     }
 
     [Fact]
-    public async Task Check_WithRandomSeedAndDisplayDecimals_RefusesTheSeedFirst()
+    public async Task Check_WithRandomSeedAndMaxDecimalPlaces_RefusesTheSeedFirst()
     {
         using var file = new TempSourceFile("1 / 7\n");
 
-        var result = await Cli.InvokeAsync("check", file.Path, "--display-decimals", "2", "--random-seed", "5");
+        var result = await Cli.InvokeAsync("check", file.Path, "--max-decimal-places", "2", "--random-seed", "5");
 
         Assert.Equal(Failure, result.ExitCode);
         Assert.Contains("option '--random-seed' is not valid for 'check'", result.TrimmedError);
     }
 
     [Fact]
-    public async Task DisplayDecimals_MayAppearAnywhere_AndComposesWithRandomSeedAndLoading()
+    public async Task MaxDecimalPlaces_MayAppearAnywhere_AndComposesWithRandomSeedAndLoading()
     {
         using var file = new TempSourceFile(RandomSource);
-        var expected = EngineDisplay(RandomSource, new RunOptions { RandomSeed = 42, DefaultDisplayDecimals = 3 });
+        var expected = EngineDisplay(RandomSource, new RunOptions { RandomSeed = 42, MaxDecimalPlaces = 3 });
 
         foreach (var args in new[]
                  {
-                     new[] { "--display-decimals", "3", "--random-seed", "42", "run", file.Path },
-                     new[] { "run", "--random-seed", "42", "--display-decimals", "3", file.Path },
-                     new[] { "run", file.Path, "--display-decimals", "3", "--random-seed", "42" },
-                     new[] { "--random-seed", "42", "run", file.Path, "--display-decimals", "3", "--allow-loading" },
-                     new[] { "--allow-loading", "--display-decimals", "3", "run", "--random-seed", "42", "--", file.Path },
-                     new[] { "eval", RandomSource, "--random-seed", "42", "--display-decimals", "3" },
-                     new[] { "eval", RandomSource, "--display-decimals", "3", "--random-seed", "42" },
+                     new[] { "--max-decimal-places", "3", "--random-seed", "42", "run", file.Path },
+                     new[] { "run", "--random-seed", "42", "--max-decimal-places", "3", file.Path },
+                     new[] { "run", file.Path, "--max-decimal-places", "3", "--random-seed", "42" },
+                     new[] { "--random-seed", "42", "run", file.Path, "--max-decimal-places", "3", "--allow-loading" },
+                     new[] { "--allow-loading", "--max-decimal-places", "3", "run", "--random-seed", "42", "--", file.Path },
+                     new[] { "eval", RandomSource, "--random-seed", "42", "--max-decimal-places", "3" },
+                     new[] { "eval", RandomSource, "--max-decimal-places", "3", "--random-seed", "42" },
                  })
         {
             var result = await Cli.InvokeAsync(args);
@@ -1587,17 +1601,17 @@ public sealed class CliApplicationTests
     }
 
     [Fact]
-    public async Task DisplayDecimals_ChangesNoSeededValue()
+    public async Task MaxDecimalPlaces_ChangesNoSeededValue()
     {
         // The same seed draws the same values whatever is displayed: the package's own atoms
         // are identical, and only the rendered digits differ.
         var plain = Assert.IsType<RunResult.Success>(KatLangEngine.Run(RandomSource, new RunOptions { RandomSeed = 42 }));
         var shown = Assert.IsType<RunResult.Success>(
-            KatLangEngine.Run(RandomSource, new RunOptions { RandomSeed = 42, DefaultDisplayDecimals = 3 }));
+            KatLangEngine.Run(RandomSource, new RunOptions { RandomSeed = 42, MaxDecimalPlaces = 3 }));
         Assert.Equal(plain.Atoms, shown.Atoms);
 
         var seeded = await Cli.InvokeAsync("eval", RandomSource, "--random-seed", "42");
-        var seededAndShown = await Cli.InvokeAsync("eval", RandomSource, "--random-seed", "42", "--display-decimals", "3");
+        var seededAndShown = await Cli.InvokeAsync("eval", RandomSource, "--random-seed", "42", "--max-decimal-places", "3");
 
         Assert.Equal(SeededEngineDisplay(RandomSource, 42), seeded.TrimmedOutput);
         Assert.Equal(shown.ToDisplayString().ReplaceLineEndings("\n"), seededAndShown.TrimmedOutput);
@@ -1605,14 +1619,14 @@ public sealed class CliApplicationTests
     }
 
     [Fact]
-    public async Task DisplayDecimals_AndAllowLoading_AreOrthogonal()
+    public async Task MaxDecimalPlaces_AndAllowLoading_AreOrthogonal()
     {
         const string url = "https://katlang.org/demo/cli-display-lib.kat";
         const string source = $"open '{url}'\nThird, Val / 7";
         var modules = new Dictionary<string, string> { [url] = "public Third = 1 / 3\npublic Val = 1" };
 
         var loader = new RecordingDownloader(modules);
-        var loaded = await Cli.InvokeWithDownloaderAsync(loader.DownloadAsync, "eval", source, "--allow-loading", "--display-decimals", "2");
+        var loaded = await Cli.InvokeWithDownloaderAsync(loader.DownloadAsync, "eval", source, "--allow-loading", "--max-decimal-places", "2");
 
         Assert.Equal(Success, loaded.ExitCode);
         Assert.Equal("0.33\n0.14", loaded.TrimmedOutput);
@@ -1620,7 +1634,7 @@ public sealed class CliApplicationTests
 
         // Loading stays disabled without its flag, display option or no display option.
         var gated = new RecordingDownloader(modules);
-        var unloaded = await Cli.InvokeWithDownloaderAsync(gated.DownloadAsync, "eval", source, "--display-decimals", "2");
+        var unloaded = await Cli.InvokeWithDownloaderAsync(gated.DownloadAsync, "eval", source, "--max-decimal-places", "2");
 
         Assert.Equal(Failure, unloaded.ExitCode);
         Assert.Equal("", unloaded.Output);
@@ -1629,51 +1643,368 @@ public sealed class CliApplicationTests
     }
 
     [Fact]
-    public async Task DoubleDash_KeepsDisplayDecimalsTokensPositional()
+    public async Task DoubleDash_KeepsMaxDecimalPlacesTokensPositional()
     {
         using var file = new TempSourceFile("1 / 7\n");
 
         // An option BEFORE the terminator applies to source after it that begins with two dashes.
-        var dashed = await Cli.InvokeAsync("eval", "--display-decimals", "2", "--", "--1 / 3");
+        var dashed = await Cli.InvokeAsync("eval", "--max-decimal-places", "2", "--", "--1 / 3");
         Assert.Equal(Success, dashed.ExitCode);
         Assert.Equal("0.33", dashed.TrimmedOutput);
 
         // After the terminator the spelling is a positional: a third positional for run ...
-        var run = await Cli.InvokeAsync("run", file.Path, "--", "--display-decimals", "2");
+        var run = await Cli.InvokeAsync("run", file.Path, "--", "--max-decimal-places", "2");
         Assert.Equal(Failure, run.ExitCode);
-        Assert.Contains("unexpected argument '--display-decimals'.", run.TrimmedError);
+        Assert.Contains("unexpected argument '--max-decimal-places'.", run.TrimmedError);
 
         // ... and SOURCE for eval: never an option, never a missing value.
-        var eval = await Cli.InvokeAsync("eval", "--", "--display-decimals");
+        var eval = await Cli.InvokeAsync("eval", "--", "--max-decimal-places");
         Assert.Equal(Failure, eval.ExitCode);
         Assert.DoesNotContain("requires a value", eval.TrimmedError);
         Assert.DoesNotContain("unknown option", eval.TrimmedError);
         Assert.Contains("implicit parameter", eval.TrimmedError);
     }
 
+    // ── Decimal places: the minimum, and the pair ───────────────────────────
+
+    [Theory]
+    [InlineData("0")]
+    [InlineData("2")]
+    [InlineData("99")]
+    public async Task Eval_MinDecimalPlaces_IsKatLangsHostMinimum(string token)
+    {
+        var places = int.Parse(token, CultureInfo.InvariantCulture);
+
+        var result = await Cli.InvokeAsync("eval", FractionSource, "--min-decimal-places", token);
+
+        Assert.Equal(Success, result.ExitCode);
+        Assert.Equal("", result.Error);
+        Assert.Equal(EngineDisplay(FractionSource, new RunOptions { MinDecimalPlaces = places }), result.TrimmedOutput);
+    }
+
     [Fact]
-    public async Task Help_DocumentsTheDisplayDecimalsOption()
+    public async Task Eval_MinDecimalPlaces_PadsAndNeverRounds()
+    {
+        // A minimum alone: whole numbers are padded too, and nothing is rounded.
+        Assert.Equal(
+            "10.00\n2.50\n1.234567\n-0.00",
+            (await Cli.InvokeAsync("eval", "10, 2.5, 1.234567, -0", "--min-decimal-places", "2")).TrimmedOutput);
+
+        // An explicit 0 is a real setting, not "no setting": it pads nothing, but it selects
+        // the value-based display, which removes stored trailing zeros. Without the option the
+        // stored digits are shown.
+        Assert.Equal("10\n2.5", (await Cli.InvokeAsync("eval", "10.00, 2.5000", "--min-decimal-places", "0")).TrimmedOutput);
+        Assert.Equal("10.00\n2.5000", (await Cli.InvokeAsync("eval", "10.00, 2.5000")).TrimmedOutput);
+    }
+
+    [Theory]
+    [InlineData("2", "4", "10.00\n2.50\n1.2346\n0.125")]
+    [InlineData("2", "2", "10.00\n2.50\n1.23\n0.13")]
+    [InlineData("0", "99", "10\n2.5\n1.234567\n0.125")]
+    [InlineData("0", "0", "10\n3\n1\n0")]
+    public async Task Eval_BothDecimalPlaces_ComposeInAnyOrder(string min, string max, string expected)
+    {
+        const string source = "10, 2.5, 1.234567, 0.125";
+        using var file = new TempSourceFile(source + "\n");
+
+        foreach (var args in new[]
+                 {
+                     new[] { "eval", source, "--min-decimal-places", min, "--max-decimal-places", max },
+                     new[] { "--max-decimal-places", max, "eval", "--min-decimal-places", min, source },
+                     new[] { "run", "--max-decimal-places", max, file.Path, "--min-decimal-places", min },
+                 })
+        {
+            var result = await Cli.InvokeAsync(args);
+
+            Assert.Equal(Success, result.ExitCode);
+            Assert.Equal("", result.Error);
+            Assert.Equal(expected, result.TrimmedOutput);
+        }
+
+        Assert.Equal(
+            EngineDisplay(source, new RunOptions
+            {
+                MinDecimalPlaces = int.Parse(min, CultureInfo.InvariantCulture),
+                MaxDecimalPlaces = int.Parse(max, CultureInfo.InvariantCulture),
+            }),
+            expected);
+    }
+
+    /// <summary>
+    /// The minimum composes like the maximum: the option is the HOST minimum, a program's own
+    /// <c>MinDecimalPlaces</c> the SOURCE minimum, and the smaller count applies.
+    /// </summary>
+    [Theory]
+    [InlineData(null, "2.500")]
+    [InlineData("1", "2.5")]
+    [InlineData("3", "2.500")]
+    [InlineData("5", "2.500")]
+    [InlineData("0", "2.5")]
+    public async Task ProgramsOwnMinDecimalPlaces_ComposesWithTheOption_ByMinimum(string? token, string expected)
+    {
+        const string program = "MinDecimalPlaces = 3\n2.5";
+        string[] args = token is null ? ["eval", program] : ["eval", program, "--min-decimal-places", token];
+
+        var result = await Cli.InvokeAsync(args);
+
+        Assert.Equal(Success, result.ExitCode);
+        Assert.Equal(expected, result.TrimmedOutput);
+    }
+
+    /// <summary>
+    /// Neither option supplies a value for the other, and each composes only with the program's
+    /// property of the same name: a program minimum with only a maximum option keeps both.
+    /// </summary>
+    [Fact]
+    public async Task PartialSettingsAcrossOrigins_AreKeptApart()
+    {
+        var result = await Cli.InvokeAsync("eval", "MinDecimalPlaces = 2\n10, 1.234567", "--max-decimal-places", "4");
+
+        Assert.Equal(Success, result.ExitCode);
+        Assert.Equal("10.00\n1.2346", result.TrimmedOutput);
+    }
+
+    [Theory]
+    [InlineData("-1")]
+    [InlineData("100")]
+    [InlineData("1.5")]
+    [InlineData("abc")]
+    [InlineData("")]
+    [InlineData(" 5")]
+    [InlineData("5 ")]
+    [InlineData("0x10")]
+    [InlineData("1e1")]
+    [InlineData("1,0")]
+    [InlineData("+")]
+    [InlineData("-")]
+    [InlineData("2147483648")]           // int.MaxValue + 1
+    [InlineData("99999999999999999999")] // beyond long
+    public async Task MinDecimalPlaces_InvalidValues_AreUsageErrors_BeforeAnyEvaluation(string value)
+    {
+        // `Missing` would be an evaluation diagnostic if the program ran; it never does.
+        var result = await Cli.InvokeAsync("eval", "Missing", "--min-decimal-places", value);
+
+        Assert.Equal(Failure, result.ExitCode);
+        Assert.Equal("", result.Output);
+        Assert.Equal(
+            $"katlang: option '--min-decimal-places' requires an integer between 0 and {RunOptions.DecimalPlacesLimit}; got '{value}'.\n"
+            + "Run 'katlang --help' for usage.",
+            result.TrimmedError);
+    }
+
+    [Theory]
+    [InlineData(new[] { "eval", "1", "--min-decimal-places" }, "option '--min-decimal-places' requires a value.")]
+    [InlineData(new[] { "eval", "1", "--min-decimal-places", "--max-decimal-places", "5" }, "option '--min-decimal-places' requires a value.")]
+    [InlineData(new[] { "eval", "--min-decimal-places", "--", "1" }, "option '--min-decimal-places' requires a value.")]
+    [InlineData(new[] { "eval", "1", "--min-decimal-places", "2", "--min-decimal-places", "2" }, "option '--min-decimal-places' was specified more than once.")]
+    [InlineData(new[] { "eval", "1", "--min-decimal-places", "2", "--max-decimal-places", "3", "--min-decimal-places", "1" }, "option '--min-decimal-places' was specified more than once.")]
+    [InlineData(new[] { "eval", "1", "--min-decimal-places=2" }, "unknown option '--min-decimal-places=2'.")]
+    [InlineData(new[] { "--help", "--min-decimal-places", "2" }, "option '--help' cannot be combined with other arguments.")]
+    [InlineData(new[] { "--min-decimal-places", "2", "--version" }, "option '--version' cannot be combined with other arguments.")]
+    [InlineData(new[] { "eval", "--min-decimal-places", "2" }, "'eval' requires a <source> argument.")]
+    [InlineData(new[] { "run", "--min-decimal-places", "2" }, "'run' requires a <file> argument.")]
+    public async Task MinDecimalPlaces_MalformedInvocations_ReportUsageErrors(string[] args, string expected)
+    {
+        var result = await Cli.InvokeAsync(args);
+
+        Assert.Equal(Failure, result.ExitCode);
+        Assert.Equal("", result.Output);
+        Assert.Equal($"katlang: {expected}\nRun 'katlang --help' for usage.", result.TrimmedError);
+    }
+
+    /// <summary>
+    /// Both options written with the minimum above the maximum: a usage error at command-line
+    /// parsing, in either order and before the source is read — the file named for <c>run</c>
+    /// does not exist, and the source given to <c>eval</c> would fail if it ran. Never clamped,
+    /// swapped, or dropped.
+    /// </summary>
+    [Theory]
+    [InlineData("5", "3")]
+    [InlineData("1", "0")]
+    [InlineData("99", "98")]
+    public async Task MinAboveMax_IsAUsageError_BeforeTheSourceIsRead(string min, string max)
+    {
+        var expected =
+            $"katlang: option '--min-decimal-places' must not exceed option '--max-decimal-places'; got {min} and {max}.\n"
+            + "Run 'katlang --help' for usage.";
+        var missingFile = Path.Combine(Path.GetTempPath(), $"katlang-missing-{Guid.NewGuid():N}.kat");
+
+        foreach (var args in new[]
+                 {
+                     new[] { "eval", "1 / 0", "--min-decimal-places", min, "--max-decimal-places", max },
+                     new[] { "eval", "--max-decimal-places", max, "--min-decimal-places", min, "1 / 0" },
+                     new[] { "run", missingFile, "--min-decimal-places", min, "--max-decimal-places", max },
+                     new[] { "--max-decimal-places", max, "--min-decimal-places", min, "run", missingFile, "--allow-loading" },
+                 })
+        {
+            var result = await Cli.InvokeAsync(args);
+
+            Assert.Equal(Failure, result.ExitCode);
+            Assert.Equal("", result.Output);
+            Assert.Equal(expected, result.TrimmedError);
+        }
+    }
+
+    [Theory]
+    [InlineData("0", "0")]
+    [InlineData("3", "3")]
+    [InlineData("99", "99")]
+    [InlineData("0", "99")]
+    public async Task MinNotAboveMax_IsAccepted_IncludingEqualValuesAndTheBoundaries(string min, string max)
+    {
+        var result = await Cli.InvokeAsync("eval", "1 / 8", "--min-decimal-places", min, "--max-decimal-places", max);
+
+        Assert.Equal(Success, result.ExitCode);
+        Assert.Equal("", result.Error);
+        Assert.Equal(
+            EngineDisplay("1 / 8", new RunOptions
+            {
+                MinDecimalPlaces = int.Parse(min, CultureInfo.InvariantCulture),
+                MaxDecimalPlaces = int.Parse(max, CultureInfo.InvariantCulture),
+            }),
+            result.TrimmedOutput);
+    }
+
+    /// <summary>
+    /// A conflict that exists only ACROSS origins — a program declaring only a minimum, run with
+    /// only a maximum option below it (and the mirror image) — is not a usage error: the options
+    /// are consistent, the program runs, and the run fails with KatLang's own diagnostic.
+    /// </summary>
+    [Theory]
+    [InlineData("MinDecimalPlaces = 4\n1 / 7", "--max-decimal-places", "2",
+        "MinDecimalPlaces must not exceed MaxDecimalPlaces: the minimum is 4 (from the program) and the maximum is 2 (from the host).")]
+    [InlineData("MaxDecimalPlaces = 2\n1 / 7", "--min-decimal-places", "4",
+        "MinDecimalPlaces must not exceed MaxDecimalPlaces: the minimum is 4 (from the host) and the maximum is 2 (from the program).")]
+    [InlineData("MinDecimalPlaces = 4\nMaxDecimalPlaces = 2\n1 / 7", "--max-decimal-places", "9",
+        "MinDecimalPlaces must not exceed MaxDecimalPlaces: the minimum is 4 (from the program) and the maximum is 2 (from the program).")]
+    public async Task ConflictAcrossOrigins_IsTheRunsOwnFailure_NotAUsageError(string source, string option, string value, string message)
+    {
+        using var file = new TempSourceFile(source + "\n");
+
+        foreach (var args in new[] { new[] { "eval", source, option, value }, new[] { "run", file.Path, option, value } })
+        {
+            var result = await Cli.InvokeAsync(args);
+
+            Assert.Equal(Failure, result.ExitCode);
+            Assert.Equal("", result.Output);
+            Assert.Contains(message, result.TrimmedError);
+            Assert.DoesNotContain("Run 'katlang --help' for usage.", result.TrimmedError);
+        }
+    }
+
+    [Fact]
+    public async Task Check_RefusesBothDecimalPlacesOptions_TheSeedFirst_ThenTheMinimum_ThenTheMaximum()
+    {
+        using var file = new TempSourceFile("1 / 7\n");
+        static string Refusal(string option)
+            => $"katlang: option '{option}' is not valid for 'check': check does not evaluate.\n"
+               + "Run 'katlang --help' for usage.";
+
+        var minimum = await Cli.InvokeAsync("check", file.Path, "--min-decimal-places", "2");
+        Assert.Equal(Failure, minimum.ExitCode);
+        Assert.Equal("", minimum.Output);
+        Assert.Equal(Refusal("--min-decimal-places"), minimum.TrimmedError);
+
+        // Both written, in either order: the minimum is refused first.
+        foreach (var args in new[]
+                 {
+                     new[] { "check", file.Path, "--max-decimal-places", "4", "--min-decimal-places", "2" },
+                     new[] { "--min-decimal-places", "2", "check", "--max-decimal-places", "4", file.Path },
+                 })
+        {
+            Assert.Equal(Refusal("--min-decimal-places"), (await Cli.InvokeAsync(args)).TrimmedError);
+        }
+
+        // The refusal of the option comes before the pair check: an inconsistent pair for check
+        // is still reported as the option that check does not take.
+        var inconsistent = await Cli.InvokeAsync("check", file.Path, "--min-decimal-places", "5", "--max-decimal-places", "3");
+        Assert.Equal(Failure, inconsistent.ExitCode);
+        Assert.Equal(Refusal("--min-decimal-places"), inconsistent.TrimmedError);
+
+        // The seed is refused before either.
+        var seeded = await Cli.InvokeAsync(
+            "check", file.Path, "--max-decimal-places", "3", "--min-decimal-places", "5", "--random-seed", "5");
+        Assert.Equal(Refusal("--random-seed"), seeded.TrimmedError);
+
+        // A malformed value is still reported where it appears, ahead of the refusal.
+        var malformed = await Cli.InvokeAsync("check", file.Path, "--min-decimal-places", "abc");
+        Assert.Contains("requires an integer between", malformed.TrimmedError);
+        Assert.DoesNotContain("not valid for 'check'", malformed.TrimmedError);
+    }
+
+    // ── The removed --display-decimals option and DisplayDecimals property ──
+
+    [Theory]
+    [InlineData(new[] { "eval", "1 / 3", "--display-decimals", "2" }, "unknown option '--display-decimals'.")]
+    [InlineData(new[] { "--display-decimals", "2", "eval", "1 / 3" }, "unknown option '--display-decimals'.")]
+    [InlineData(new[] { "eval", "1 / 3", "--display-decimals" }, "unknown option '--display-decimals'.")]
+    [InlineData(new[] { "eval", "1 / 3", "--display-decimals=2" }, "unknown option '--display-decimals=2'.")]
+    [InlineData(new[] { "check", "x.kat", "--display-decimals", "2" }, "unknown option '--display-decimals'.")]
+    public async Task DisplayDecimalsOption_IsAnUnknownOption_WithNoSpecialHint(string[] args, string expected)
+    {
+        var result = await Cli.InvokeAsync(args);
+
+        Assert.Equal(Failure, result.ExitCode);
+        Assert.Equal("", result.Output);
+        Assert.Equal($"katlang: {expected}\nRun 'katlang --help' for usage.", result.TrimmedError);
+    }
+
+    [Fact]
+    public async Task RootDisplayDecimalsProperty_IsAnOrdinaryProperty_WithNoDisplayEffect()
+    {
+        // The name has no display meaning: the output is canonical, the property is readable like
+        // any other, and a value that the old setting would have rejected fails nothing.
+        Assert.Equal("0.3333333333333333333333333333333333\n2.5000",
+            (await Cli.InvokeAsync("eval", "DisplayDecimals = 2\n1 / 3, 2.5000")).TrimmedOutput);
+        Assert.Equal("2.5\n-1", (await Cli.InvokeAsync("eval", "DisplayDecimals = -1\n2.5, DisplayDecimals")).TrimmedOutput);
+        Assert.Equal("2.5", (await Cli.InvokeAsync("eval", "DisplayDecimals = 1 / 0\n2.5")).TrimmedOutput);
+    }
+
+    [Fact]
+    public async Task Help_DocumentsTheDecimalPlacesOptions()
     {
         var result = await Cli.InvokeAsync("--help");
         var help = result.TrimmedOutput;
 
         Assert.Equal(Success, result.ExitCode);
-        Assert.Contains("katlang run <file> [--allow-loading] [--random-seed <integer>]\n                     [--display-decimals <integer>]\n", help);
-        Assert.Contains("katlang eval <source> [--allow-loading] [--random-seed <integer>]\n                        [--display-decimals <integer>]\n", help);
+        Assert.Contains(
+            "katlang run <file> [--allow-loading] [--random-seed <integer>]\n"
+            + "                     [--min-decimal-places <integer>]\n"
+            + "                     [--max-decimal-places <integer>]\n", help);
+        Assert.Contains(
+            "katlang eval <source> [--allow-loading] [--random-seed <integer>]\n"
+            + "                        [--min-decimal-places <integer>]\n"
+            + "                        [--max-decimal-places <integer>]\n", help);
         Assert.Contains("katlang check <file> [--allow-loading]\n", help + "\n");
-        Assert.DoesNotContain("check <file> [--allow-loading] [--display-decimals", help);
+        Assert.DoesNotContain("check <file> [--allow-loading] [--m", help);
 
-        // The quoted range is KatLang's own, and the text says what the option is — a
-        // display filter composed with the program's own by the smaller count (Q-10 D-F),
-        // never an override in either direction — never "significant digits".
-        Assert.Contains($"from 0 through {RunOptions.MaxDisplayDecimals}.", help);
-        Assert.Contains("Display filter:", help);
-        Assert.Contains("DisplayDecimals property is a", help);
-        Assert.Contains("when both are set, the smaller", help);
+        // The quoted range is KatLang's own, once per option, and the text says what each
+        // option is — a minimum that pads and never rounds, a maximum that rounds and never
+        // pads, each composed with the program's own by the smaller count (Q-10 D-F), never an
+        // override in either direction — never "significant digits".
+        Assert.Equal(2, help.Split($"from 0 through {RunOptions.DecimalPlacesLimit}:").Length - 1);
+        Assert.Contains("  --min-decimal-places <integer>\n", help);
+        Assert.Contains("  --max-decimal-places <integer>\n", help);
+        Assert.Contains("It never rounds.", help);
+        Assert.Contains("never pads.", help);
+        Assert.Contains("MinDecimalPlaces property is a minimum too", help);
+        Assert.Contains("A program's own MaxDecimalPlaces", help);
+        Assert.Equal(2, help.Split("the smaller count applies.").Length - 1);
         Assert.DoesNotContain("overrides", help);
-        Assert.Contains("Display only", help);
+        Assert.Contains("display only", help);
         Assert.DoesNotContain("significant", help, StringComparison.OrdinalIgnoreCase);
-        Assert.Equal(2, help.Split("Not valid for check").Length - 1);
+
+        // The two are independent, the fixed-places idiom is taught, and the conflict is named.
+        Assert.Contains("The two options are independent", help);
+        Assert.Contains("the same count for a fixed number of places", help);
+        Assert.Contains("A minimum above the maximum", help);
+
+        // --random-seed and both decimal-places options are refused by check.
+        Assert.Equal(3, help.Split("Not valid for check").Length - 1);
+
+        // The removed option and property are not taught.
+        Assert.DoesNotContain("display-decimals", help, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("DisplayDecimals", help);
 
         // The layout stays within an 80-column terminal.
         Assert.All(help.Split('\n'), line => Assert.True(line.Length <= 80, $"help line exceeds 80 columns: '{line}'"));

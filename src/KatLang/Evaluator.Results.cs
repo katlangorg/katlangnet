@@ -78,9 +78,15 @@ public static partial class Evaluator
         CountedResult Counted,
         IReadOnlyList<Result> OutputSlots);
 
+    /// <summary>
+    /// A root program's counted output plus the values of the root's requested top-level
+    /// properties: <see cref="TopLevelProperties"/> has one entry per requested name, in request
+    /// order, <c>null</c> exactly where the root declares no such property (and everywhere for a
+    /// non-program expression). The list is owned by the finished run and never mutated.
+    /// </summary>
     internal readonly record struct CountedRootProgramResult(
         CountedResult Output,
-        CountedResult? TopLevelProperty);
+        IReadOnlyList<CountedResult?> TopLevelProperties);
 
     /// <summary>
     /// Evaluated bounds for the inclusive integer <c>range(start, stop)</c>

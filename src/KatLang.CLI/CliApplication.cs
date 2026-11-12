@@ -119,10 +119,12 @@ public static class CliApplication
         // open '<url>' under its own host and module policy; without it,
         // DownloadCode stays null and KatLang itself rejects loading source with
         // a diagnostic. The evaluation options (run/eval only; the parser refused
-        // them for check) are KatLang's own: --random-seed is RunOptions.RandomSeed
-        // and --display-decimals is RunOptions.DefaultDisplayDecimals, the host display
-        // filter that KatLang composes with a program's own DisplayDecimals filter by
-        // their minimum. The CLI adds no randomness or display semantics of its own:
+        // them for check) are KatLang's own: --random-seed is RunOptions.RandomSeed,
+        // and --min-decimal-places / --max-decimal-places are RunOptions.MinDecimalPlaces /
+        // RunOptions.MaxDecimalPlaces, the host decimal-places settings that KatLang
+        // composes with a program's own MinDecimalPlaces / MaxDecimalPlaces properties,
+        // each by their minimum. An option that was not written stays null — the CLI never
+        // derives one setting from the other. The CLI adds no randomness or display semantics of its own:
         // every result below is rendered by the package from the run's own display
         // configuration.
         var options = new RunOptions
@@ -131,7 +133,8 @@ public static class CliApplication
                 ? loadingDownloader ?? HttpSourceDownloader.Shared.DownloadAsync
                 : null,
             RandomSeed = invocation.Options.RandomSeed,
-            DefaultDisplayDecimals = invocation.Options.DisplayDecimals,
+            MinDecimalPlaces = invocation.Options.MinDecimalPlaces,
+            MaxDecimalPlaces = invocation.Options.MaxDecimalPlaces,
             SourceProcessingCancellationToken = cancellationToken,
             EvaluationCancellationToken = cancellationToken,
         };

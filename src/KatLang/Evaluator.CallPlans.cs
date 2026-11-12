@@ -1831,23 +1831,35 @@ public static partial class Evaluator
             : result;
 
     /// <summary>
-    /// The run result boundary applied to a run's output AND its named top-level property: both leave the
-    /// run, so both are checked (<see cref="RunExportBoundaryError"/>), the output first. An output refusal
-    /// is positioned like any run result (<see cref="RunExportSite"/>); a property refusal at the root's
-    /// written declaration of <paramref name="topLevelPropertyName"/> (<see cref="Property.FirstDeclarationSpan"/>,
+    /// The run result boundary applied to a run's output AND its named top-level properties: all leave the
+    /// run, so all are checked (<see cref="RunExportBoundaryError"/>), the output first and then the
+    /// properties in request order. An output refusal is positioned like any run result
+    /// (<see cref="RunExportSite"/>); a property refusal at the root's written declaration of that name in
+    /// <paramref name="topLevelPropertyNames"/> (<see cref="Property.FirstDeclarationSpan"/>,
     /// the property's export site), falling back to the exported root's existing span when its imported
     /// or host-built declaration has none.
     /// </summary>
     internal static EvalResult<CountedRootProgramResult> ExportRunValue(
-        EvalResult<CountedRootProgramResult> result, Expr? exported, string? topLevelPropertyName, EvalCtx ctx)
+        EvalResult<CountedRootProgramResult> result, Expr? exported, IReadOnlyList<string>? topLevelPropertyNames, EvalCtx ctx)
     {
         if (!result.IsOk)
             return result;
         if (RunExportBoundaryError(result.Value.Output.Value, ctx, out var exportedItemIndex) is { } refusedOutput)
             return refusedOutput with { Span = RunExportSite(exported, result.Value.Output.Value, exportedItemIndex) };
-        return result.Value.TopLevelProperty is { } property && RunExportBoundaryError(property.Value, ctx, out _) is { } refusedProperty
-            ? refusedProperty with { Span = TopLevelPropertyExportSite(exported, topLevelPropertyName) }
-            : result;
+
+        var properties = result.Value.TopLevelProperties;
+        for (var i = 0; i < properties.Count; i++)
+        {
+            if (properties[i] is { } property && RunExportBoundaryError(property.Value, ctx, out _) is { } refusedProperty)
+            {
+                return refusedProperty with
+                {
+                    Span = TopLevelPropertyExportSite(exported, topLevelPropertyNames is null ? null : topLevelPropertyNames[i]),
+                };
+            }
+        }
+
+        return result;
     }
 
     /// <summary>
@@ -1906,7 +1918,7 @@ public static partial class Evaluator
     }
 
     /// <summary>
-    /// The export site of a refused named top-level property (<see cref="ExportRunValue(EvalResult{CountedRootProgramResult}, Expr?, string?, EvalCtx)"/>):
+    /// The export site of a refused named top-level property (<see cref="ExportRunValue(EvalResult{CountedRootProgramResult}, Expr?, IReadOnlyList{string}?, EvalCtx)"/>):
     /// the program root's written declaration of that property, read through the ONE optional-anchor
     /// reader <see cref="Property.FirstDeclarationSpan"/>; the root expression's existing span when
     /// its declaration has none (an import view); absent when neither location is carried.

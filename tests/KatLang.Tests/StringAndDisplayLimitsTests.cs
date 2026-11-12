@@ -323,7 +323,8 @@ public class StringAndDisplayLimitsTests
     [InlineData("[1, 2, 3]", "[1, 2, 3]")]
     [InlineData("[(1, 2), [3, [4]]]", "[(1, 2), [3, [4]]]")]
     [InlineData("[[], ()]", "[[], ()]")]
-    [InlineData("DisplayDecimals = 2\n1.5", "1.50")]
+    [InlineData("MinDecimalPlaces = 2\n1.5", "1.50")]
+    [InlineData("MaxDecimalPlaces = 2\n1.555", "1.56")]
     public void Rendering_BelowTheLimit_IsUnchanged(string source, string expected)
     {
         Assert.Equal(expected, Display(source));

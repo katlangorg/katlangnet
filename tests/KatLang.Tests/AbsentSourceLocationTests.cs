@@ -23,7 +23,7 @@ namespace KatLang.Tests;
 /// <para>The one reader is now <c>Property.FirstDeclarationSpan</c>, and every consumer of an
 /// optional declaration anchor goes through it: the generic zero-argument property access and
 /// its async twin, the top-level property demand and its async twin, the planned loop
-/// temporary, the engine's <c>DisplayDecimals</c> anchor, and the import site. These tests pin
+/// temporary, the engine's <c>MaxDecimalPlaces</c> anchor, and the import site. These tests pin
 /// both halves — a real declaration span still WINS, and a missing one stays absent until a
 /// legitimate enclosing span attaches — across the deconstruction, planner, host-built,
 /// imported, sync and async paths, on the structured span AND the rendered diagnostic.</para>
@@ -250,7 +250,7 @@ public class AbsentSourceLocationTests
             ],
             Output: [new Expr.Resolve("A")]));
 
-    /// <summary>A host-built root whose spanless <c>DisplayDecimals</c> cannot take zero arguments.</summary>
+    /// <summary>A host-built root whose spanless <c>MaxDecimalPlaces</c> cannot take zero arguments.</summary>
     private static Expr HostBuiltTopLevelProperty()
         => new Expr.AlgorithmExpr(new Algorithm.User(
             Parent: null,
@@ -259,7 +259,7 @@ public class AbsentSourceLocationTests
             Properties:
             [
                 new Property(
-                    "DisplayDecimals",
+                    "MaxDecimalPlaces",
                     new Algorithm.User(
                         Parent: null,
                         ParameterPatterns: [new CaptureParameterPattern(new ParameterDeclaration("n"))],
@@ -288,9 +288,9 @@ public class AbsentSourceLocationTests
     [Fact]
     public void HostBuiltSpanlessTopLevelProperty_RejectedZeroArgumentDemand_StaysSpanless()
     {
-        var error = ErrorOf(Evaluator.RunCountedWithTopLevelProperty(
+        var error = ErrorOf(Evaluator.RunCountedWithTopLevelProperties(
             HostBuiltTopLevelProperty(),
-            "DisplayDecimals",
+            ["MaxDecimalPlaces"],
             new RunScopedZeroArgPropertyResultCache()));
 
         Assert.Equal(KatLangErrorCode.ArityMismatch, error.Code);
@@ -302,8 +302,8 @@ public class AbsentSourceLocationTests
     {
         var cache = new SuspendingAsyncZeroArgPropertyResultCache();
         var error = ErrorOf(await AsyncEvaluationHarness.Complete(
-            Evaluator.RunCountedWithTopLevelPropertyAsync(
-                HostBuiltTopLevelProperty(), "DisplayDecimals", cache)));
+            Evaluator.RunCountedWithTopLevelPropertiesAsync(
+                HostBuiltTopLevelProperty(), ["MaxDecimalPlaces"], cache)));
 
         Assert.Equal(KatLangErrorCode.ArityMismatch, error.Code);
         AssertAbsent(error);
@@ -330,25 +330,25 @@ public class AbsentSourceLocationTests
     [Fact]
     public void WrittenTopLevelPropertyDeclaration_StampsTheRejectedDemandWithItsOwnSpan()
     {
-        const string source = "DisplayDecimals(n) = n\n1 / 3";
+        const string source = "MaxDecimalPlaces(n) = n\n1 / 3";
         var error = SingleError(KatLangEngine.Run(source));
 
         Assert.Equal(KatLangErrorCode.ArityMismatch, error.Code);
         AssertLegitimateOrAbsent(error, source);
-        Assert.Equal(new SourceSpan(1, 1, 1, 16), error.Span);
+        Assert.Equal(new SourceSpan(1, 1, 1, 17), error.Span);
     }
 
     [Fact]
     public async Task WrittenTopLevelPropertyDeclaration_AsyncTwin_KeepsThatSameSpan()
     {
-        const string source = "DisplayDecimals(n) = n\n1 / 3";
+        const string source = "MaxDecimalPlaces(n) = n\n1 / 3";
         var cache = new SuspendingAsyncZeroArgPropertyResultCache();
         var error = ErrorOf(await AsyncEvaluationHarness.Complete(
-            Evaluator.RunCountedWithTopLevelPropertyAsync(
-                AsyncEvaluationHarness.Ast(source), "DisplayDecimals", cache)));
+            Evaluator.RunCountedWithTopLevelPropertiesAsync(
+                AsyncEvaluationHarness.Ast(source), ["MaxDecimalPlaces"], cache)));
 
         AssertLegitimateOrAbsent(error, source);
-        Assert.Equal(new SourceSpan(1, 1, 1, 16), error.Span);
+        Assert.Equal(new SourceSpan(1, 1, 1, 17), error.Span);
     }
 
     // ── 5. The public error contract, swept ──────────────────────────────────────────

@@ -343,8 +343,8 @@ public class SeededRandomnessTests
         AssertSameAtoms(expected, Unwrap(Evaluator.RunObserved(program, new EvaluationObservations(), randomSeed: Seed)).ToHostAtoms());
         AssertSameAtoms(
             expected,
-            Unwrap(Evaluator.RunCountedWithTopLevelProperty(
-                program, "DisplayDecimals", new RunScopedZeroArgPropertyResultCache(), randomSeed: Seed)).Output.Value.ToHostAtoms());
+            Unwrap(Evaluator.RunCountedWithTopLevelProperties(
+                program, ["MaxDecimalPlaces"], new RunScopedZeroArgPropertyResultCache(), randomSeed: Seed)).Output.Value.ToHostAtoms());
     }
 
     [Fact]
@@ -370,7 +370,7 @@ public class SeededRandomnessTests
     [Fact]
     public async Task RandomSeedProperty_IsAnOrdinaryProperty_ThatSeedsNothing()
     {
-        // Seeding is host configuration only. Unlike DisplayDecimals, no top-level property
+        // Seeding is host configuration only. Unlike MaxDecimalPlaces, no top-level property
         // configures the run, so a program's own RandomSeed is an ordinary declaration: it
         // parses cleanly, reads as its value, draws nothing, and neither replaces the host's
         // seed nor seeds an unseeded run.
