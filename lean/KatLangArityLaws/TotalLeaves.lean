@@ -12,10 +12,14 @@ inductives, which were the last KatLang constants kernel-opaque on `runResultM`'
 * well-founded or structural now: `lookupInParentsDirect`, `lookupLexicalDirect` (never recursive),
   `requiredParameterOwner?`, the `cache*Shape` group, `scopeChainContains`,
   `sequenceConstructLeavesLoop`, `peelSequenceSpread`, `peelSequenceSpreadLayers`,
-  `holeMayRenderLeadingBrace`, `exprDiagnosticName` (with its two `where` helpers),
+  `exprDiagnosticName` (with its two `where` helpers),
   `postElabInvariant` / `postElabInvariantAlg`;
 * written total printers, the derived ones term for term: `Pattern`, `ParameterPattern`, `Result`
-  and the seven types of the AST block (`lean/KatLang.lean` § Total `Repr` printers).
+  and the types of the AST block (`lean/KatLang.lean` § Total `Repr` printers).
+
+(Two of the definitions this task made total, the interpolation hole test
+`holeMayRenderLeadingBrace` and the printer of `InterpolationLink`, left the model with string
+interpolation: STR-03, November 2026.)
 
 Names, signatures, bodies and check order are unchanged. Where a total body differs in FORM from
 the former `partial` one — a parent's equation named for the termination proof, an optional child
@@ -129,7 +133,5 @@ The structural leaves reduce in the kernel (`rfl`): the formerly opaque peel and
 
 example : peelSequenceSpreadLayers (.sequenceSpread (.sequenceSpread (.num 1))) 0 = (.num 1, 2) := rfl
 example : peelSequenceSpread (.sequenceSpread (.sequenceSpread (.param "x"))) = .param "x" := rfl
-example : holeMayRenderLeadingBrace (.binary .add (.algorithmExpr (.builtin .ifBuiltin)) (.num 2)) = true := rfl
-example : holeMayRenderLeadingBrace (.binary .add (.num 2) (.algorithmExpr (.builtin .ifBuiltin))) = false := rfl
 
 end KatLang.TotalLeaves

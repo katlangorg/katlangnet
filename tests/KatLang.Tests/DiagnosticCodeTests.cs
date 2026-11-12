@@ -186,23 +186,12 @@ public class DiagnosticCodeTests
         { "open-target-private-step", "Lib = { Sub = { public X = 1 } }\nA = {\n    open Lib.Sub\n    1\n}\nA", DiagnosticCode.UnresolvedOpenTarget },
         { "open-target-block-head-missing-member", "A = {\n    open { public S = 1 }.Missing\n    1\n}\nA", DiagnosticCode.UnresolvedOpenTarget },
         { "load-elaboration-unavailable", "open 'https://katlang.org/lib.kat'\n1", DiagnosticCode.LoadElaborationUnavailable },
-        // STR-02: double-quoted strings and interpolation.
-        { "unterminated-double-quoted-string", "\"abc", DiagnosticCode.UnterminatedStringLiteral },
-        { "unterminated-string-inside-a-hole", "\"{x\"", DiagnosticCode.UnterminatedStringLiteral },
-        { "invalid-string-escape", "\"a\\qb\"", DiagnosticCode.InvalidStringEscape },
-        { "carriage-return-escape-is-unsupported", "\"a\\rb\"", DiagnosticCode.InvalidStringEscape },
-        { "unmatched-brace-in-string", "\"a}b\"", DiagnosticCode.UnmatchedBraceInString },
-        { "unterminated-interpolation-hole", "\"a {x", DiagnosticCode.UnterminatedInterpolationHole },
-        { "empty-interpolation-hole", "\"a{}b\"", DiagnosticCode.InvalidInterpolationHole },
-        { "interpolation-hole-comma", "\"{1, 2}\"", DiagnosticCode.InvalidInterpolationHole },
-        { "interpolation-hole-colon", "P = 1, 2\n\"{P:0}\"", DiagnosticCode.InvalidInterpolationHole },
-        { "interpolation-hole-equals", "\"{x = 1}\"", DiagnosticCode.InvalidInterpolationHole },
-        { "interpolation-hole-trailing-token", "a = 1\nb = 2\n\"{a b}\"", DiagnosticCode.InvalidInterpolationHole },
-        { "interpolation-hole-leading-comma", "\"{, 1}\"", DiagnosticCode.InvalidInterpolationHole },
-        { "interpolation-hole-comment", "\"{1 # note}\"", DiagnosticCode.InvalidInterpolationHole },
-        { "interpolation-hole-bare-spread", "A = (1, 2)\n\"{A*}\"", DiagnosticCode.MisplacedSpread },
-        { "interpolated-clause-pattern", "F(\"a{x}\") = 1\nF('a')", DiagnosticCode.InterpolationNotAllowedHere },
-        { "interpolated-open-target", "open \"https://katlang.org/{1}.kat\"\n1", DiagnosticCode.InterpolationNotAllowedHere },
+        // STR-03: a double quote outside a comment or a single-quoted string.
+        { "double-quoted-string", "\"abc\"", DiagnosticCode.UnsupportedDoubleQuotedString },
+        { "unterminated-double-quoted-run", "\"abc", DiagnosticCode.UnsupportedDoubleQuotedString },
+        { "double-quoted-interpolation", "x = 1\n\"Total: {x}\"", DiagnosticCode.UnsupportedDoubleQuotedString },
+        { "double-quoted-clause-pattern", "F(\"a\") = 1\nF('a')", DiagnosticCode.UnsupportedDoubleQuotedString },
+        { "double-quoted-open-target", "open \"https://katlang.org/lib.kat\"\n1", DiagnosticCode.UnsupportedDoubleQuotedString },
     };
 
     [Theory]

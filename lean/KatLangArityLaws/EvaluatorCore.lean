@@ -235,14 +235,6 @@ variable {γ : Type} [PartialOrder γ]
   | nil => unfold selectWith; mono_cb_tac
   | cons c rest ih => unfold selectWith; mono_cb_tac
 
-@[partial_fixpoint_monotone] theorem monotone_interpolateWith
-    (value : γ → Expr → EvalM Result) (h : monotone value) (acc : String)
-    (links : List InterpolationLink) :
-    monotone (fun x => interpolateWith (value x) acc links) := by
-  induction links generalizing acc with
-  | nil => unfold interpolateWith; mono_cb_tac
-  | cons l rest ih => unfold interpolateWith; mono_cb_tac
-
 @[partial_fixpoint_monotone] theorem monotone_selectViewWith {α : Type}
     (demand : γ → α → EvalM Result) (hd : monotone demand)
     (cellsOf : γ → EvalM (List NeedSupply.Sourced)) (hc : monotone cellsOf)

@@ -744,46 +744,50 @@ public class TutorialSemanticContractTests
         Assert.Equal("(1, 2)", Display("A = (1, 2)\nX = { A* }\n\nX"));
     }
 
-    // ── "Building Text with Interpolation" (STR-02) ──
+    // ── "Text Is Written as It Is" and "Results Are Values, Not Messages" (STR-03) ──
 
-    private const string InterpolatedReport =
-        "Report = \"{name}: {points} points, {if(points >= 5, 'pass', 'fail')}\"\n\nReport('Ada', 9)\nReport('Bob', 3)";
+    private const string RawTextProgram = "x = 5\n'{x}'\n'C:\\temp'\n'say \"hi\"'";
 
     [Fact]
-    public void HoleNames_AreTheEnclosingAlgorithmsInferredParameters_InFirstOccurrenceOrder()
+    public void StringText_IsExactlyWhatIsWritten_AndNothingInsideItIsEvaluated()
     {
-        var parsed = SourceProvenance.ParseValid(InterpolatedReport);
-        var report = PropertyOf(parsed.Root, "Report").Value;
-        Assert.Equal(["name", "points"], report.Params);
+        // "its text is exactly what is written between the single quotes ... there are no escapes"
+        var parsed = SourceProvenance.ParseValid(RawTextProgram);
+        Assert.Equal(
+            ["{x}", "C:\\temp", "say \"hi\""],
+            parsed.Root.Output.Select(row => Assert.IsType<Expr.StringLiteral>(row).Value));
+        Assert.Equal("{x}\nC:\\temp\nsay \"hi\"", Display(RawTextProgram));
 
-        // The `points` in the third hole is Report's own inferred parameter, not a scope of the hole.
+        // "Nothing inside it is evaluated": the braces name nothing, so the `x` inside the string is
+        // no reference to the property `x` and the program keeps no parameter.
         var model = SemanticModelBuilder.Build(parsed.Parsed);
-        var column = InterpolatedReport.IndexOf("points >=", StringComparison.Ordinal) + 1;
-        var reference = model.FindResolutionAt(new SourcePosition(1, column));
-        Assert.NotNull(reference);
-        Assert.Equal("points", reference.Occurrence.Name);
-        Assert.Equal(IdentifierClassification.ImplicitParameterReference, reference.Classification);
-
-        Assert.Equal("Ada: 9 points, pass\nBob: 3 points, fail", Display(InterpolatedReport));
+        Assert.Null(model.FindResolutionAt(new SourcePosition(2, 3)));
+        Assert.Empty(parsed.Root.Params);
     }
 
     [Fact]
-    public void InterpolationTextIsExactDigits_TheHoleRestrictionsAreParseErrors_AndTextHasNoPlus()
+    public void DoubleQuotesAreAnError_TextHasNoPlus_AndANumberBesideTextStaysANumber()
     {
-        // "A number appears with exactly its digits ... DisplayDecimals never change the text."
-        Assert.Equal("1.50\n1.500", Display("DisplayDecimals = 3\n\"{1.50}\"\n1.5"));
-
-        // "A hole holds one expression ... a `:` directly inside a hole is an error."
-        foreach (var source in new[] { "a = 1\nb = 2\n\"{a, b}\"", "xs = [1]\n\"{xs:0}\"" })
+        // "a double quote outside a string or a comment is an error, and there is no string interpolation"
+        foreach (var source in new[] { "\"text\"", "x = 5\n\"Total: {x}\"" })
         {
-            var failure = Assert.IsType<RunResult.ParseFailure>(KatLangEngine.Run(source));
-            Assert.Contains(failure.Errors, e => e.Code == KatLangErrorCode.InvalidInterpolationHole);
+            var diagnostic = FrontEndRejection(
+                source, DiagnosticCode.UnsupportedDoubleQuotedString, KatLangErrorCode.UnsupportedDoubleQuotedString);
+            Assert.Contains("single quotes", diagnostic.Message, StringComparison.Ordinal);
         }
 
-        Assert.Equal("1", Display("xs = [1]\n\"{(xs[0])}\""));
+        // Inside a string or a comment a double quote is ordinary text.
+        Assert.Equal("say \"hi\"", Display("'say \"hi\"' # a \"comment\""));
 
-        // "There is still no `+` for text."
+        // "There is no `+` for text ... a number is never turned into part of a string."
         RunFailure("'a' + 'b'", KatLangErrorCode.TypeMismatch);
-        Assert.Equal("ab", Display("x = 'a'\ny = 'b'\n\"{x}{y}\""));
+
+        // "It stays a number ... display settings such as `DisplayDecimals` still apply to it."
+        Assert.Equal("Total\n59.970", Display("DisplayDecimals = 3\n'Total', 19.99 * 3"));
+
+        // "A text value that belongs to the result ... is an output of its own beside the numbers."
+        var outputs = Assert.IsType<Result.SequenceValue>(
+            RunSuccess("Score = 72\nScore, if(Score >= 50, 'pass', 'fail')").Value);
+        Assert.Equal([new Result.Atom(72), new Result.Str("pass")], outputs.Items);
     }
 }

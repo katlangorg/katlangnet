@@ -239,12 +239,6 @@ internal sealed partial class ModuleLoader
 
             Expr.Comparison comparison => RewriteComparison(comparison),
 
-            // The holes are the only location-bearing children; the decoded texts carry none.
-            Expr.InterpolatedString interpolated => AstHelpers.RewriteInterpolationLinks(interpolated.Links, Rewrite) is var links
-                && ReferenceEquals(links, interpolated.Links) && interpolated.Span is null
-                ? interpolated
-                : interpolated with { Links = links, Span = null },
-
             Expr.Index index => (Rewrite(index.Target), RewriteBundle(index.Selectors)) is var (target, selectors)
                 && ReferenceEquals(target, index.Target) && ReferenceEquals(selectors, index.Selectors) && index.Span is null
                 ? index

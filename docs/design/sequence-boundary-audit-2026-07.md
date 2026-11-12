@@ -4,6 +4,8 @@
 
 > **Syntax note (2026-10-12):** selection is now variadic postfix selection `x[i]` (`docs/design/language-rules/sequences-lists-and-calls.md` § Variadic postfix selection); the colon form `x:i` is retired with a migration diagnostic. Read a historical `x:i` below as `x[i]` and `x:i:j` as `x[i][j]`; the corpus and both generated artifacts use the bracket spelling.
 
+> **Syntax note (2026-11-11):** string interpolation and double-quoted strings were removed from KatLang (STR-03, `docs/design/language-rules/syntax.md` § Strings). The only string literal is the raw single-quoted `'text'`; a double quote in code is the lexical error `UnsupportedDoubleQuotedString`. Passages below that mention interpolation, holes or double-quoted literals are dated records of the removed feature; §5.1 states the current corpus counts.
+
 Status: completed audit + durable validator. This document is the Phase-1
 receiver/boundary review deliverable for the small-state arity-semantics
 validator, and the reference for the invariants that validator enforces.
@@ -138,7 +140,7 @@ caching cannot change observable counts or structure (validated).
 
 Neutral encoding: `S[...]` = sequence value (raw structure), `n` = emitted
 count at the observed boundary, `E:x` = typed error. Full per-cell data for
-all 2,671 surface cases is in the machine-readable report
+all 2,564 surface cases is in the machine-readable report
 (`SemanticExplorerReport.json`, written next to the test assembly on every
 run) and pinned per-case in `lean/SemanticExplorerCases.lean`. The matrix
 below is the required-values digest; Lean/C# agreement is per the generated
@@ -348,8 +350,8 @@ list-pattern counterparts now pin this kind-specific law.)*
 ## 5. Lean/C# differential results
 
 The generated artifact pins every Lean-representable corpus case
-(**2,660 surface cases** as of this update — the surface corpus minus its 11
-parse-level cases such as `(3,)`, `A.spread == A.spread`, `1 ; 2`, `open count, Lib`, `open Lib.S` through a private `S`, and a written `X` that `open L1, L2` provides twice, which
+(**2,551 surface cases** as of this update — the surface corpus minus its 13
+parse-level cases such as `(3,)`, `A.spread == A.spread`, `1 ; 2`, `open count, Lib`, `open Lib.S` through a private `S`, a written `X` that `open L1, L2` provides twice, and the rejected double-quoted strings of STR-03, which
 are C#-only typed outcomes since Lean has no surface parser — plus **19**
 direct internal-node cases; see §5.1 for the full accounting). Encoding
 notes:
@@ -401,12 +403,12 @@ parse-level set) is enforced by
 
 | Suite / artifact | Exact count | Included | Excluded | Source of truth |
 |---|---:|---|---|---|
-| Surface corpus (= C# semantic report surface section) | 2,671 | 2,312 template cases (68 receiver templates x 34 values) + 359 specials; outcomes 2,131 ok / 529 err / 11 parse-error | internal-node cases; anchor pins | `SemanticExplorerCorpus.AllCases()`; report `partition.surfaceCases` |
-| Lean-representable surface differential | 2,660 | the 2,671 above minus the 11 parse-level cases (eleven deliberate parse-error specials — the 34 `indexNeg__*` cases became Lean-representable with variadic postfix selection, October 2026, since `x[-1]` is an ordinary selector slot evaluating to `BadIndex` where `x:-1` was a parse error — the builtin open target `open count, Lib` among them since the final audit of September 2026, the private dotted open step `open Lib.S` since the name-resolution audit #8, and the three written open ambiguities since Q-29 A-U, October 2026) | parse-level cases (Lean has no surface parser) | report `partition.leanRepresentable`; artifact header/footer |
+| Surface corpus (= C# semantic report surface section) | 2,564 | 2,210 template cases (65 receiver templates x 34 values) + 354 specials; outcomes 2,024 ok / 527 err / 13 parse-error | internal-node cases; anchor pins | `SemanticExplorerCorpus.AllCases()`; report `partition.surfaceCases` |
+| Lean-representable surface differential | 2,551 | the 2,564 above minus the 13 parse-level cases (thirteen deliberate parse-error specials — the 34 `indexNeg__*` cases became Lean-representable with variadic postfix selection, October 2026, since `x[-1]` is an ordinary selector slot evaluating to `BadIndex` where `x:-1` was a parse error — the builtin open target `open count, Lib` among them since the final audit of September 2026, the private dotted open step `open Lib.S` since the name-resolution audit #8, the three written open ambiguities since Q-29 A-U, October 2026, and the two rejected double-quoted strings `doubleQuotedStringRejected` / `doubleQuotedInterpolationRejected` since STR-03, November 2026) | parse-level cases (Lean has no surface parser) | report `partition.leanRepresentable`; artifact header/footer |
 | Internal `SequenceConstruct` corpus | 19 | direct-AST `internal__sc_*` cases (four lone-item spread-leaf cases and one output-less spread leaf added by the spread-leaf fix, October 2026) | everything source-driven | `SemanticExplorerCorpus.InternalNodeCases()`; report `partition.internalNodeCases` |
-| Generated Lean case guards | 2,679 | 2,660 surface + 19 internal-node (one `#guard` per case), plus two partition-count guards | nothing (header states the split) | `SemanticExplorerCases.lean` header/footer |
+| Generated Lean case guards | 2,570 | 2,551 surface + 19 internal-node (one `#guard` per case), plus two partition-count guards | nothing (header states the split) | `SemanticExplorerCases.lean` header/footer |
 | C# semantic report internal-node section | 19 | id, relation, internal + surface observations per case | — | report `internalNodeCases` |
-| Parser/elaboration reachability sweep | 2,671 attempted, 2,660 scanned | every corpus source that parses (post-`FrontEndPipeline` ASTs) | the 11 deliberate parse-error cases (skipped) | `EntireSemanticExplorerCorpus_ParsesWithoutSequenceConstruct` |
+| Parser/elaboration reachability sweep | 2,564 attempted, 2,551 scanned | every corpus source that parses (post-`FrontEndPipeline` ASTs) | the 13 deliberate parse-error cases (skipped) | `EntireSemanticExplorerCorpus_ParsesWithoutSequenceConstruct` |
 | Containment test invocations | 68 | parser theories, corpus sweep, AST-family pins, visitor-preservation facts, direct-node pins (13 rows) and their async-twin theory (13), the spread-leaf written-form agreement theory (6), difference facts, the two lone-builtin-argument facts, and the call-function `NotAnAlgorithm` payload pin (recounted October 2026: 44 at `a366f888`, where the row still said 42 because string interpolation had added two surface forms without updating it; the spread-leaf fix adds 24) | explorer/anchor tests (counted separately) | `dotnet test --filter FullyQualifiedName~SequenceConstructContainmentTests` |
 | Explorer-related test invocations | 44 | 37 explorer/anchor pins + four artifact freshness/comparability/partition/accounting facts + three cross-harness/containment/formatting guards matched by the filter | — | `dotnet test --filter FullyQualifiedName~SemanticExplorer` |
 | Full .NET solution | 6,338 (6,330 main-suite + 8 formatting public-API invocations, as of this audit; the suite grows — the live run is authoritative) | everything incl. all of the above | — | `dotnet test .\KatLang.slnx -p:UseSharedCompilation=false` |
@@ -442,7 +444,16 @@ seven `interpolation*` specials (nesting, inference order, lifting, the first
 failing hole, a hole without output, unquoted nested strings, a hole-free
 double-quoted literal), and changed no existing observation; display-collision
 checking skips string results exactly as the display round trip always has
-(a string displays without quotes by design). The October 2026 loop cardinality law
+(a string displays without quotes by design). **STR-03 notice (decided 2026-11-11):
+string interpolation and double-quoted strings were removed from the language.**
+The three `interpolation*` templates (102 cases) and the seven `interpolation*`
+specials left the corpus with the feature, and two parse-level specials
+(`doubleQuotedStringRejected`, `doubleQuotedInterpolationRejected`) pin the
+rejected-quote rule, C#-only because Lean has no surface lexer; the table above
+states the resulting counts (2,564 surface cases, 13 parse-level exclusions,
+2,551 Lean-representable cases), and no surviving observation changed. Earlier
+paragraphs of this document that mention interpolation describe the removed
+feature and are kept as history. The October 2026 loop cardinality law
 (Q-24 + Q-26) added twelve loop specials (`loopResult*`, `loopZeroSlotResult`,
 `repeatedNameStep*`, `structuralStep*`, `historyStepSpreadRowEqualsDirectCall`,
 `nestedLoopStepRow*`, `callbackBodyLoopIsOneValue`) and changed one existing

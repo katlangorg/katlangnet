@@ -413,7 +413,7 @@ public class Decimal128NearOneLogarithmTests
         }
     }
 
-    // ── Changed results: display, `.string` and interpolation ─────────────
+    // ── Changed results: display and `.string` ────────────────────────────
 
     /// <summary>
     /// Two results that changed in DEC-RC2-1, each now the correctly rounded value (the series
@@ -424,17 +424,15 @@ public class Decimal128NearOneLogarithmTests
     [Theory]
     [InlineData("Math.Lg(0.5)", "-0.301029995663981195213738894724493")]
     [InlineData("Math.Acos(0.99999)", "0.004472139681787927172339666304852682")]
-    public void ChangedResults_ReachDisplayStringAndInterpolationUnchangedByTheRenderer(string source, string text)
+    public void ChangedResults_ReachDisplayAndStringUnchangedByTheRenderer(string source, string text)
     {
         // Canonical coefficient/exponent are observable independently of display:
         // Lg(0.5)'s trailing zero now reduces its quantum from 1e-34 to 1e-33.
         AssertSameBits(Decimal128.Parse(text, CultureInfo.InvariantCulture), EvalSingle(source), source);
         Assert.Equal(text, Assert.IsType<RunResult.Success>(KatLangEngine.Run(source)).ToDisplayString());
-        // Text results compared as KatLang strings (display does not quote them).
+        // The text result compared as a KatLang string (display does not quote it).
         Assert.Equal("true", Assert.IsType<RunResult.Success>(
             KatLangEngine.Run($"X = {source}\nX.string == '{text}'")).ToDisplayString());
-        Assert.Equal("true", Assert.IsType<RunResult.Success>(
-            KatLangEngine.Run($"X = {source}\n\"<{{X}}>\" == '<{text}>'")).ToDisplayString());
     }
 
     [Fact]

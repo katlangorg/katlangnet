@@ -90,8 +90,6 @@ public class TickBuiltinTests
     [InlineData("tick() - tick()", "-1")]
     [InlineData("[tick(), tick()], (tick(), tick())", "S[L[1, 2], S[3, 4]]")]
     [InlineData("A = tick()\nB = tick()\nB, A, B", "S[1, 2, 1]")]
-    // A string hole is one ordinary value read.
-    [InlineData("\"{tick()}-{tick()}\"", "'1-2'")]
     // Each `map` callback invocation is a fresh call of the transform.
     [InlineData("map([10, 20, 30], { x + tick() })", "L[11, 22, 33]")]
     // `reduce` demands its initial value first, then each step.
@@ -109,7 +107,6 @@ public class TickBuiltinTests
     [InlineData("F(x) = x + 1\nF(tick)")]
     [InlineData("count([tick])")]
     [InlineData("if(true, tick, 0)")]
-    [InlineData("\"{tick}\"")]
     public async Task ABareValueDemand_RequiresTheExplicitInvocation_AndTicksNothing(string source)
     {
         var outcome = await ErrAsync(source);

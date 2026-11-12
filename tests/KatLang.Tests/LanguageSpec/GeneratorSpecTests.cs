@@ -144,7 +144,6 @@ public class LanguageSpecArtifactsGeneratorPromptTests
             Exempt("open 'https://katlang.org/lib.kat'             # shorthand for open load(...)", NetworkLoad),
             Exempt("Lib = load(Url)                                # invalid: URL must be a literal, not a variable", RejectedLoad),
             Exempt("load('https://katlang.org/lib.kat')            # invalid: load is not allowed as runtime output", RejectedLoad),
-            Exempt("Lib = load(\"https://katlang.org/{name}.kat\")   # invalid: a URL is fixed text, never interpolated", RejectedLoad),
             Rejects("F(y) = 2             # invalid: same pattern shape as F(x) (duplicate branch)", DuplicateBranchProgram, KatLangErrorCode.DuplicateBranchPattern),
             Shows("Equal(x, x) = 1      # repeated-binder equality: matches only when both arguments are equal", EqualFamilyProgram, "1\n0"),
             Shows("Equal(x, y) = 0      # valid: distinct from the (x, x) equality constraint", EqualFamilyProgram, "1\n0"),
@@ -243,7 +242,6 @@ public class LanguageSpecArtifactsGeneratorPromptTests
             Exempt("open 'https://katlang.org/lib.kat'              # shorthand for open load(...)", NetworkLoad),
             Exempt("Lib = load(Url)                                  # invalid: URL must be a literal, not a variable", RejectedLoad),
             Exempt("load('https://katlang.org/lib.kat')              # invalid: load is not allowed as runtime output", RejectedLoad),
-            Exempt("Lib = load(\"https://katlang.org/{name}.kat\")     # invalid: a URL is fixed text, never interpolated", RejectedLoad),
         ],
     };
 
@@ -340,21 +338,28 @@ public class LanguageSpecArtifactsGeneratorPromptTests
 
     [Theory]
     [MemberData(nameof(PromptFilePaths))]
-    public void PromptFile_TeachesStringInterpolation_AndNoLongerForbidsDoubleQuotes(string relativePath)
+    public void PromptFile_TeachesOnlyRawSingleQuotedStrings_AndNeverInterpolation(string relativePath)
     {
         var content = File.ReadAllText(Path.Combine(RepoRoot.Find(), relativePath));
+        var handWritten = content[..content.IndexOf(BeginMarker, StringComparison.Ordinal)];
 
-        // STR-02: double-quoted strings, their escapes and interpolation are taught...
-        Assert.Contains("interpolation hole", content, StringComparison.Ordinal);
-        Assert.Contains("\"Hello, {name}!\"", content, StringComparison.Ordinal);
-        Assert.Contains("{{", content, StringComparison.Ordinal);
-        Assert.Contains("no format specifiers", content, StringComparison.Ordinal);
+        // STR-03: one string literal form, and results are values rather than built text.
+        Assert.Contains("Single quotes are the ONLY string syntax", handWritten, StringComparison.Ordinal);
+        Assert.Contains("There is NO string interpolation", handWritten, StringComparison.Ordinal);
+        Assert.Contains("output the calculated value itself", handWritten, StringComparison.Ordinal);
+        Assert.Contains("Never invent a replacement for interpolation", handWritten, StringComparison.Ordinal);
 
-        // ...and the superseded claims (STR-01's single-quote-only strings, concatenation as the
-        // unsupported exemplar) are gone.
-        Assert.DoesNotContain("there are no double-quoted strings", content, StringComparison.OrdinalIgnoreCase);
-        Assert.DoesNotContain("Do not invent double-quoted strings", content, StringComparison.Ordinal);
-        Assert.DoesNotContain("string concatenation is not available", content, StringComparison.Ordinal);
+        // The removed features are not taught: no hole, no escape set, no doubled brace, no
+        // double-quoted example, and no advice to label an output by building text.
+        Assert.DoesNotContain("interpolation hole", handWritten, StringComparison.Ordinal);
+        Assert.DoesNotContain("interpolated string", handWritten, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("Hello, {name}!", handWritten, StringComparison.Ordinal);
+        Assert.DoesNotContain("through interpolation", handWritten, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("use double quotes", handWritten, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("{{", handWritten, StringComparison.Ordinal);
+
+        // The only double-quoted forms the hand-written guidance shows are named as errors.
+        Assert.Contains("Double-quoted strings do not exist", handWritten, StringComparison.Ordinal);
     }
 
     private static string ReplaceOrAppendBlock(string content, string block)

@@ -388,7 +388,7 @@ public class ExprNameRendererTests
 
     public static TheoryData<string> DeepShapes => new(
         "join", "spread", "binaryLeft", "binaryRight", "unary", "index",
-        "dotcall", "call", "gracePost", "list", "blockOutput", "interpolation");
+        "dotcall", "call", "gracePost", "list", "blockOutput");
 
     private static Expr BuildDeepShape(string shape, int levels)
     {
@@ -408,7 +408,6 @@ public class ExprNameRendererTests
                 "gracePost" => new Expr.Grace(expr, 1),
                 "list" => new Expr.ListLiteral([expr]),
                 "blockOutput" => new Expr.AlgorithmExpr(new Algorithm.User(null, [], [], [], [expr])),
-                "interpolation" => new Expr.InterpolatedString("<", [new InterpolationLink(expr, ">")]),
                 _ => throw new InvalidOperationException(shape),
             };
         }
@@ -523,57 +522,77 @@ public class ExprNameRendererTests
     }
 
     [Fact]
-    public void Golden_StringsAndInterpolatedStrings_RenderAsKatLangSource()
+    public void Golden_Strings_RenderSingleQuotedExactlyAsStored()
     {
-        var a = new Expr.Resolve("a");
-        static Expr Interp(string head, params (Expr Hole, string Text)[] links)
-            => new Expr.InterpolatedString(head, [.. links.Select(l => new InterpolationLink(l.Hole, l.Text))]);
-
-        // A string that can be single-quoted stays single-quoted (raw, braces included); one
-        // with a quote or a line break renders double-quoted with exactly its escapes.
+        // A written literal reads back as written: raw text, braces and backslashes included.
         Assert.Equal("'{x}'", Open(new Expr.StringLiteral("{x}")));
-        Assert.Equal("\"it's\"", Open(new Expr.StringLiteral("it's")));
-        Assert.Equal("\"a\\nb\"", Open(new Expr.StringLiteral("a\nb")));
-        Assert.Equal("\"it's {{x}}\\t\\\\\"", Open(new Expr.StringLiteral("it's {x}\t\\")));
+        Assert.Equal("'C:" + @"\" + "temp'", Open(new Expr.StringLiteral("C:" + @"\" + "temp")));
+        Assert.Equal("'say \"hi\"'", Open(new Expr.StringLiteral("say \"hi\"")));
+        Assert.Equal("''", Open(new Expr.StringLiteral("")));
 
-        // An interpolated string renders as written: text re-escaped, holes in operand shape,
-        // a selection hole bare (it writes no hole-level `:`), a block hole spaced.
-        Assert.Equal("\"x{a}y\"", Open(Interp("x", (a, "y"))));
-        Assert.Equal("\"{{{a}}}\"", Open(Interp("{", (a, "}"))));
-        Assert.Equal("\"{a[0]}\"", Open(Interp("", (new Expr.Index(a, [new Expr.Num(0)]), ""))));
-        Assert.Equal("\"{-a[0]}\"", Open(Interp("", (new Expr.Unary(UnaryOp.Minus, new Expr.Index(a, [new Expr.Num(0)])), ""))));
-        Assert.Equal("\"{[a[0]]}\"", Open(Interp("", (new Expr.ListLiteral([new Expr.Index(a, [new Expr.Num(0)])]), ""))));
-        var blockWithProperty = new Algorithm.User(null, [], [], [new Property("P", new Algorithm.User(null, [], [], [], [new Expr.Num(1)]))], []);
-        Assert.Equal("\"{ {...} }\"", Open(Interp("", (new Expr.AlgorithmExpr(blockWithProperty), ""))));
-        // A plain block renders as its output group (the established diagnostic-name rule), still spaced.
-        Assert.Equal("\"{ (1) }\"", Open(Interp("", (new Expr.AlgorithmExpr(new Algorithm.User(null, [], [], [], [new Expr.Num(1)])), ""))));
-        // Any hole whose name could BEGIN with a brace — a block at the left end of its spine — is
-        // spaced too, so `{{` never reads back as a literal brace; a block further right needs nothing.
-        var block = new Expr.AlgorithmExpr(blockWithProperty);
-        Assert.Equal("\"x{ {...}.X }\"", Open(Interp("x", (new Expr.DotCall(block, "X", null), ""))));
-        Assert.Equal("\"{ {...} + 2 }\"", Open(Interp("", (new Expr.Binary(BinaryOp.Add, block, new Expr.Num(2)), ""))));
-        Assert.Equal("\"{ {...} == 1 }\"", Open(Interp("", (EvaluatorTestSupport.Compare(ComparisonOp.Eq, block, new Expr.Num(1)), ""))));
-        Assert.Equal("\"{2 + {...}}}}\"", Open(Interp("", (new Expr.Binary(BinaryOp.Add, new Expr.Num(2), block), "}"))));
-        Assert.Equal("\"{a + 1}\"", Open(Interp("", (new Expr.Binary(BinaryOp.Add, a, new Expr.Num(1)), ""))));
-        Assert.Equal("\"<{\"[{a}]\"}>\"", Open(Interp("<", (Interp("[", (a, "]")), ">"))));
-        Assert.Equal("\"a\\\"b\\n\"", Open(Interp("a\"b\n")));
+        // A diagnostic name is not KatLang source and need not read back: a host-built literal
+        // holding text no written literal can hold is shown as it is, in the same single quotes.
+        Assert.Equal("'it's'", Open(new Expr.StringLiteral("it's")));
+        Assert.Equal("'a\nb'", Open(new Expr.StringLiteral("a\nb")));
+        Assert.Equal("'a\r\n\tb'", Open(new Expr.StringLiteral("a\r\n\tb")));
+    }
+
+    /// <summary>
+    /// A host-built literal can hold text no written literal can: an apostrophe, a line break, a
+    /// terminal control sequence, an invisible format character. The name renders
+    /// without failing in every mode, stays bounded, and the public terminal-safe rendering of a
+    /// diagnostic that quotes it (<see cref="Rendering.TerminalSafeText"/>) shows every such code unit
+    /// visibly: one line, nothing a terminal could act on.
+    /// </summary>
+    [Theory]
+    [InlineData("it's")]
+    [InlineData("line\nbreak")]
+    [InlineData("cr\r\nlf")]
+    [InlineData("esc\u001B[2J\u001B[31mred")]
+    [InlineData("bel\u0007 nul\u0000 del\u007F")]
+    [InlineData("rlo\u202E zwsp\u200B ls\u2028")]
+    [InlineData("'''")]
+    public void HostBuiltStringText_RendersWithoutFailure_AndIsEscapedAtTheTerminalBoundary(string text)
+    {
+        var literal = new Expr.StringLiteral(text);
+        foreach (var mode in Enum.GetValues<ExprNameMode>())
+        {
+            var rendered = ExprNameRenderer.Render(literal, mode);
+            Assert.Equal("'" + text + "'", rendered);
+            Assert.Equal(rendered, ExprNameRenderer.Render(literal, mode));
+        }
+
+        // The name inside a real diagnostic: a sequence operand of `+` fails with a context that
+        // names the whole expression, the string literal included (the same route as
+        // Golden_EvaluatorErrorMessages_AreUnchangedAtOrdinaryDepth).
+        var operand = new Expr.SequenceConstruct(literal, new Expr.Num(2));
+        var result = Evaluator.Run(new Expr.Binary(BinaryOp.Add, operand, new Expr.Num(1)));
+        Assert.True(result.IsError);
+        var context = Assert.IsType<EvalError.WithContext>(result.Error).ErrorContext.ToString();
+        Assert.Equal("while evaluating `('" + text + "', 2) + 1`", context);
+        var error = KatLangError.FromEvalError(result.Error);
+        Assert.Contains("'" + text + "'", error.ToString(), StringComparison.Ordinal);
+
+        var safe = error.ToTerminalSafeString();
+        Assert.DoesNotContain('\n', safe);
+        Assert.DoesNotContain('\r', safe);
+        Assert.DoesNotContain(safe, static ch => char.IsControl(ch) || char.IsSurrogate(ch)
+            || char.GetUnicodeCategory(ch) is System.Globalization.UnicodeCategory.Format
+                or System.Globalization.UnicodeCategory.LineSeparator
+                or System.Globalization.UnicodeCategory.ParagraphSeparator);
+        Assert.Equal(safe, error.ToTerminalSafeString());
     }
 
     [Fact]
-    public void WideInterpolations_RenderWithinTheOutputBound()
+    public void AHugeHostBuiltString_RendersWithinTheOutputBound()
     {
-        var links = Enumerable.Range(0, 50_000).Select(i => new InterpolationLink(new Expr.Num(i), "-")).ToArray();
-        var wide = new Expr.InterpolatedString("start", links);
-        foreach (var mode in new[] { ExprNameMode.Open, ExprNameMode.DiagnosticName })
+        // Brace and backslash runs included: nothing is escaped, so nothing can expand the text.
+        foreach (var filler in new[] { '{', '}', '\\', '\'', '"', '\n' })
         {
-            var rendered = ExprNameRenderer.Render(wide, mode);
+            var rendered = Open(new Expr.StringLiteral(new string(filler, 100_000)));
             Assert.EndsWith(ExprNameRenderer.TruncationMarker, rendered);
-            Assert.True(rendered.Length <= ExprNameRenderer.MaxRenderedNameLength + 1);
-            Assert.StartsWith("\"start{0}-{1}-", rendered);
+            Assert.True(rendered.Length <= ExprNameRenderer.MaxRenderedNameLength + ExprNameRenderer.TruncationMarker.Length);
         }
-
-        var hugeText = Open(new Expr.InterpolatedString(new string('{', 100_000), []));
-        Assert.True(hugeText.Length <= ExprNameRenderer.MaxRenderedNameLength + 1);
     }
 
     [Fact]

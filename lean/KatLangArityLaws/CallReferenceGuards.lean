@@ -243,8 +243,6 @@ def xx : Expr := mul (.param "x") (.param "x")
 #guard isTypeMismatch (runResult (program refR [.resolve "R"])) callReferenceLeavesRunMessage
 #guard isTypeMismatch (runResult (program refR [.listLiteral [.num 1, .resolve "R"]])) callReferenceLeavesRunMessage
 #guard isTypeMismatch (runResult (program refR [.resolve "R", .num 1])) callReferenceLeavesRunMessage
-#guard isTypeMismatch (runResult (program refR [.interpolatedString "v=" [{ hole := .resolve "R", text := "" }]]))
-  callReferenceHasNoTextMessage
 #guard isTypeMismatchAny (runResult (program refR [add (.resolve "R") (.num 1)]))
 #guard isTypeMismatchAny (runResult (program refR [.dotCall (.resolve "R") "string" none]))
 

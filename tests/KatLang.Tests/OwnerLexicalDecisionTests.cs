@@ -54,12 +54,11 @@ public class OwnerLexicalDecisionTests
     }
 
     [Fact]
-    public void LiteralBackslashesAndDoubleQuotedEscapes_StayDistinctFromPhysicalContinuation()
+    public void LiteralBackslashes_StayDistinctFromPhysicalContinuation()
     {
-        var raw = SourceProvenance.ParseSyntaxValidRoot("'a\\nb'");
-        Assert.Equal("a\\nb", Assert.IsType<Expr.StringLiteral>(Assert.Single(raw.Output)).Value);
-        var escaped = SourceProvenance.ParseSyntaxValidRoot("\"a\\nb\\\\c\"");
-        Assert.Equal("a\nb\\c", Assert.IsType<Expr.StringLiteral>(Assert.Single(escaped.Output)).Value);
+        // A string has no escapes: a backslash and the letter after it are two characters of text.
+        var raw = SourceProvenance.ParseSyntaxValidRoot("'a\\nb\\\\c'");
+        Assert.Equal("a\\nb\\\\c", Assert.IsType<Expr.StringLiteral>(Assert.Single(raw.Output)).Value);
         var (_, diagnostics) = Lexer.Tokenize("'a\\\nb'");
         Assert.Contains(diagnostics, d => d.Code == DiagnosticCode.UnterminatedStringLiteral);
     }

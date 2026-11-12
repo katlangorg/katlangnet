@@ -31,15 +31,17 @@ public sealed class PublicTerminalSafeDiagnosticConsumerTests
     private const char Cr = (char)0x0D;
     private const char Backslash = (char)0x5C;
     private const char Quote = (char)0x22;
+    private const char LineSeparator = (char)0x2028;
 
     private static string U(int codeUnit) => Backslash + "u" + codeUnit.ToString("X4", CultureInfo.InvariantCulture);
 
     /// <summary>
     /// An evaluation failure whose quoted string carries a clear-screen sequence, an OSC title,
-    /// a forged diagnostic line (KatLang's <c>\n</c> escape), and a bidirectional override.
+    /// a forged diagnostic line (behind a Unicode LINE SEPARATOR, the line break a written
+    /// single-quoted string can hold), and a bidirectional override.
     /// </summary>
     private static readonly string HostileEvaluation =
-        $"if({Quote}x{Esc}[2J{Esc}]0;pwned{Bel}{Backslash}n[1:1] FORGED{(char)0x202E}{Quote}, 1, 2)";
+        $"if('x{Esc}[2J{Esc}]0;pwned{Bel}{LineSeparator}[1:1] FORGED{(char)0x202E}', 1, 2)";
 
     /// <summary>A front-end failure at a control character followed by a colour sequence.</summary>
     private static readonly string HostileParse = $"1 +{Esc}[31m{(char)0x202E}";
@@ -113,7 +115,7 @@ public sealed class PublicTerminalSafeDiagnosticConsumerTests
         Assert.Equal(KatLangErrorCode.TypeMismatch, error.Code);
         Assert.StartsWith("[1:1] ", safe);
         Assert.DoesNotContain(Lf, safe);
-        Assert.Contains($"x{U(0x1B)}[2J{U(0x1B)}]0;pwned{U(0x07)}{U(0x0A)}[1:1] FORGED{U(0x202E)}", safe);
+        Assert.Contains($"x{U(0x1B)}[2J{U(0x1B)}]0;pwned{U(0x07)}{U(0x2028)}[1:1] FORGED{U(0x202E)}", safe);
         AssertTerminalSafe(safe);
         Assert.Equal(message, error.Message);
         Assert.Contains(Esc, error.ToString());

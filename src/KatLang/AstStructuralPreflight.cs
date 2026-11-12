@@ -684,13 +684,7 @@ internal static class AstStructuralPreflight
         if (node is OutputBundle or ImplicitSignatureTemplate)
             return 0;
 
-        // An interpolated string is a node of the iterative expression-spine machine
-        // (IsExpressionSpineNode below: a hole that is no spine kind is a charged re-entry
-        // edge), but every recursive consumer around evaluation — the front-end walks, the
-        // validation walk, the renderers — passes through the node AND its link per hole, so
-        // it is charged a capture's two units on every profile (calibrated by the
-        // interpolation nesting probes).
-        if (node is Expr.Capture or Expr.Call or Expr.InterpolatedString)
+        if (node is Expr.Capture or Expr.Call)
             return 2;
 
         if (node is Expr.DotCall argsBearingDotCall && argsBearingDotCall.Args is not null)
@@ -770,11 +764,10 @@ internal static class AstStructuralPreflight
     /// slots, a <see cref="Expr.Comparison"/>'s link operands, and a list's later elements are
     /// siblings on separate paths: the preflight already judges each path independently,
     /// so a wide-but-shallow expression such as <c>1 + f(2) + g(3)</c> pays nothing along
-    /// its long spine path. An interpolated string's holes are evaluated one after another
-    /// the same way.</para>
+    /// its long spine path.</para>
     /// </summary>
     private static bool IsExpressionSpineNode(Expr expr)
-        => expr is Expr.Unary or Expr.Binary or Expr.Comparison or Expr.Index or Expr.ListLiteral or Expr.InterpolatedString;
+        => expr is Expr.Unary or Expr.Binary or Expr.Comparison or Expr.Index or Expr.ListLiteral;
 
     /// <summary>
     /// Cost of ONE re-entry from the iterative join machinery into generic recursive
@@ -1113,24 +1106,9 @@ internal static class AstStructuralPreflight
             Expr.Call call => PickCallChild(index, call, out child),
             Expr.DotCall dotCall => PickDotCallChild(index, dotCall, out child),
             Expr.ListLiteral listLiteral => PickFromList(index, listLiteral.Items, out child),
-            Expr.InterpolatedString interpolated => PickInterpolationChild(index, interpolated, out child),
             Expr.Param or Expr.Num or Expr.StringLiteral or Expr.BoolLiteral or Expr.EmptySequence
                 or Expr.Resolve or Expr.NativeCall => PickNone(out child),
         };
-
-    /// <summary>Each hole of an interpolated string, in written order.</summary>
-    private static bool PickInterpolationChild(int index, Expr.InterpolatedString interpolated, out object child)
-    {
-        var links = interpolated.Links;
-        if (index < links.Count)
-        {
-            child = links[index].Hole;
-            return true;
-        }
-
-        child = null!;
-        return false;
-    }
 
     /// <summary>The first operand, then each link's operand in chain order.</summary>
     /// <summary>

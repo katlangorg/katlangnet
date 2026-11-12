@@ -239,9 +239,6 @@ public abstract class AstWalker
             case Expr.ListLiteral:
                 VisitListItems(expr);
                 break;
-            case Expr.InterpolatedString:
-                VisitInterpolationHoles(expr);
-                break;
             case Expr.DotCall(var target, _, var args):
                 VisitExpr(target);
                 if (expr is Expr.DotCall dotCall)
@@ -302,13 +299,6 @@ public abstract class AstWalker
     // left in VisitExpr also makes it a method with loops, which tiered PGO jits as
     // INSTRUMENTED Tier-0 code on first call — measured in Release at ~1.4 KB per
     // validation level instead of ~0.9 KB, enough to overflow the 384 KiB spine pin.
-    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
-    private void VisitInterpolationHoles(Expr expr)
-    {
-        foreach (var link in ((Expr.InterpolatedString)expr).Links)
-            VisitExpr(link.Hole);
-    }
-
     [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
     private void VisitComparisonOperands(Expr expr)
     {

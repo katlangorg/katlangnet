@@ -266,7 +266,7 @@ public class Utf16LexerContractTests
     public void SingleQuotedStringLiteralsHaveNoEscapeSequences()
     {
         // A backslash inside a single-quoted literal is an ordinary code unit; there is no
-        // escaping at all (double-quoted strings have their own escapes, below).
+        // escaping at all, and no other string form.
         var (tokens, diagnostics) = Lexer.Tokenize(@"'a\nb'");
         Assert.Empty(diagnostics);
         Assert.Equal("a\\nb", Assert.Single(tokens, t => t.Kind == TokenKind.StringLiteral).StringValue);
@@ -312,60 +312,60 @@ public class Utf16LexerContractTests
         Assert.NotEqual(Evaluate("'\u00E9'"), Evaluate("'e\u0301'"));
     }
 
-    // ── Double-quoted strings (STR-02) ───────────────────────────────────────
+    // ── Rejected double-quoted runs (STR-03) ────────────────────────────────────
 
     [Fact]
-    public void DoubleQuotedStrings_DecodeExactlyTheirEscapes_AndReportEveryOtherBackslash()
+    public void DoubleQuotedRuns_AreNeverDecoded_AndEndAtTheFirstLaterDoubleQuote()
     {
-        var (tokens, diagnostics) = Lexer.Tokenize("\"q\\\" b\\\\ n\\n t\\t {{x}}\"");
-        Assert.Empty(diagnostics);
-        Assert.Equal("q\" b\\ n\n t\t {x}", Assert.Single(tokens, t => t.Kind == TokenKind.StringLiteral).StringValue);
+        // Nothing inside a rejected run is interpreted: a backslash escapes nothing, so the run
+        // ends at the very next double quote, and braces are ordinary text.
+        var (tokens, diagnostics) = Lexer.Tokenize("\"q" + "\\" + "\" b\"");
+        Assert.Equal(
+            [(TokenKind.StringLiteral, "q" + "\\"), (TokenKind.Identifier, "b"), (TokenKind.StringLiteral, ""), (TokenKind.EndOfFile, null)],
+            tokens.Select(t => (t.Kind, t.StringValue)));
+        Assert.Equal(
+            [new SourceSpan(1, 1, 1, 5), new SourceSpan(1, 7, 1, 8)],
+            diagnostics.Select(d => Assert.NotNull(d.Span)));
+        Assert.All(diagnostics, d => Assert.Equal(DiagnosticCode.UnsupportedDoubleQuotedString, d.Code));
 
-        // `\r` and every other escape are diagnostics, never a silent backslash; the token
-        // keeps the written characters for recovery.
-        foreach (var escape in new[] { "\\r", "\\q", "\\0", "\\u", "\\x", "\\{", "\\'" })
-        {
-            var (escapeTokens, escapeDiagnostics) = Lexer.Tokenize($"\"a{escape}b\"");
-            var diagnostic = Assert.Single(escapeDiagnostics);
-            Assert.Equal(DiagnosticCode.InvalidStringEscape, diagnostic.Code);
-            Assert.Equal(new SourceSpan(1, 3, 1, 5), diagnostic.Span);
-            Assert.Equal($"a{escape}b", Assert.Single(escapeTokens, t => t.Kind == TokenKind.StringLiteral).StringValue);
-        }
+        var (braces, braceDiagnostics) = Lexer.Tokenize("\"{{x}} {y} }\"");
+        Assert.Equal("{{x}} {y} }", Assert.Single(braces, t => t.Kind == TokenKind.StringLiteral).StringValue);
+        Assert.Equal(new SourceSpan(1, 1, 1, 14), Assert.Single(braceDiagnostics).Span);
     }
 
     [Fact]
-    public void DoubleQuotedStrings_EndAtTheirQuote_OrAreOneUnterminatedTokenToTheLineEnd()
+    public void DoubleQuotedRuns_EndAtTheirQuote_OrAreOneTokenToTheLineEnd()
     {
-        foreach (var source in new[] { "\"ab", "\"ab\ncd\"", "\"ab\rcd\"", "\"a{x", "\"a{x}b", "\"a{\"in", "\"a\\\"" })
+        foreach (var source in new[] { "\"ab", "\"ab\ncd\"", "\"ab\rcd\"", "\"a{x", "\"a{x}b", "\"a{'in", "\"a" + "\\" })
         {
             var (tokens, diagnostics) = Lexer.Tokenize(source);
             var lineEnd = source.IndexOfAny(['\n', '\r']) is var at and >= 0 ? at : source.Length;
             var token = tokens[0];
             Assert.Equal(TokenKind.StringLiteral, token.Kind);
             Assert.Equal((0, lineEnd), (token.Position, token.Length));
-            // A quote after the line end opens a string of its own (exactly like a single quote),
+            Assert.Equal(source[1..lineEnd], token.StringValue);
+            // A quote after the line end opens a run of its own (exactly like a single quote),
             // so only the diagnostics inside the first token's extent belong to it.
             var diagnostic = Assert.Single(diagnostics, d =>
                 Assert.NotNull(d.Span).Start.Line == 1 && d.Span.Value.Start.Column <= lineEnd + 1);
-            Assert.True(
-                diagnostic.Code is DiagnosticCode.UnterminatedStringLiteral or DiagnosticCode.UnterminatedInterpolationHole,
-                $"{source}: {diagnostic.Code}");
-            Assert.Equal(1, Assert.NotNull(diagnostic.Span).Start.Line);
-            Assert.Equal(lineEnd + 1, diagnostic.Span.Value.End.Column);
+            Assert.Equal(DiagnosticCode.UnsupportedDoubleQuotedString, diagnostic.Code);
+            Assert.Equal(new SourceSpan(1, 1, 1, lineEnd + 1), diagnostic.Span);
+            Assert.DoesNotContain(diagnostics, d => d.Code == DiagnosticCode.UnterminatedStringLiteral
+                && Assert.NotNull(d.Span).Start.Line == 1);
         }
     }
 
     [Fact]
-    public void DoubleQuotedStrings_CarryTheirCodeUnitsThroughTextAndHoles()
+    public void DoubleQuotedRuns_CarryTheirCodeUnitsInTheRecoveryToken()
     {
-        // Isolated surrogates, NUL and a no-break space are ordinary text in a double-quoted
-        // string, and a hole's string value is inserted verbatim: nothing validates or replaces a
-        // code unit on the way to the value, and Length counts UTF-16 code units.
-        Assert.Equal("\uD83D\uDE00", Evaluate("\"\uD83D\uDE00\""));
-        Assert.Equal("\uD83D|\uDE00", Evaluate("\"\uD83D|{'\uDE00'}\""));
-        Assert.Equal("\u0000\u00A0", Evaluate("\"\u0000\u00A0\""));
-        Assert.Equal(4, Evaluate("\"{'\uD83D\uDE00'}{'\uD83D\uDE00'}\"").Length);
-        Assert.Equal(2, Evaluate("\"e\u0301\"").Length);
+        // Isolated surrogates, NUL and a no-break space are ordinary text of a rejected run too:
+        // nothing validates or replaces a code unit, and the span counts UTF-16 code units.
+        foreach (var text in new[] { "\uD83D\uDE00", "\uD83D", "\uDE00\uD83D", "\u0000\u00A0", "e\u0301" })
+        {
+            var (tokens, diagnostics) = Lexer.Tokenize("\"" + text + "\"");
+            Assert.Equal(text, Assert.Single(tokens, t => t.Kind == TokenKind.StringLiteral).StringValue);
+            Assert.Equal(new SourceSpan(1, 1, 1, text.Length + 3), Assert.Single(diagnostics).Span);
+        }
     }
 
     // ── Comments ─────────────────────────────────────────────────────────────

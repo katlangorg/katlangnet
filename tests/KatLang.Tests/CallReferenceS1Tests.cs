@@ -574,13 +574,6 @@ public class CallReferenceS1Tests
             Observe(Prelude + "\nR = Capture(Square(5))\n" + rows).Outcome);
 
     [Theory]
-    [InlineData("\"v={R}\"")]
-    [InlineData("\"v={[1, R]}\"")]
-    public void Interpolation_RefusesAReference(string row)
-        => Assert.Equal("err TypeMismatch: " + Evaluator.CallReferenceHasNoTextMessage,
-            Observe(Prelude + "\nR = Capture(Square(5))\n" + row).Outcome);
-
-    [Theory]
     [InlineData("R + 1")]
     [InlineData("R < R")]
     [InlineData("if(R, 1, 2)")]

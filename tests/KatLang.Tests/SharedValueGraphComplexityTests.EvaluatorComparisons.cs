@@ -139,7 +139,7 @@ public partial class SharedValueGraphComplexityTests
         // Scalars, one shared reference, different kinds or counts, empties, and short strings are
         // decided in O(1) by the context-free comparer: no unit, no charge, no expansion.
         var (result, budget, traversal) = RunObserved(
-            "W = range(1, 300)\n1 == 1, 1.5 == 1.50, true == 1, \"ab\" == \"ab\", W == W, [1, 2] == (1, 2), [1] == [1, 2], [] == [], () == ()");
+            "W = range(1, 300)\n1 == 1, 1.5 == 1.50, true == 1, 'ab' == 'ab', W == W, [1, 2] == (1, 2), [1] == [1, 2], [] == [], () == ()");
         Assert.False(result.IsError, result.IsError ? result.Error.ToString() : null);
         Assert.Equal(0, budget.ConsumedStructuralWorkUnits);
         Assert.Equal(0, traversal.StructuralWorkChargeCount);
@@ -438,7 +438,7 @@ public partial class SharedValueGraphComplexityTests
     [Fact]
     public void EvaluatorEquality_LanguageLevelSemanticsAreUnchanged()
         => EvaluatorTestSupport.AssertEvalBools(
-            "1.5 == 1.50, -0 == 0, true == 1, true != false, \"ab\" == \"ab\", [1, 2] == (1, 2), [] == [], () == (), [[1], (2, 3)] == [[1], (2, 3)], [[1], (2, 3)] == [[1], [2, 3]]",
+            "1.5 == 1.50, -0 == 0, true == 1, true != false, 'ab' == 'ab', [1, 2] == (1, 2), [] == [], () == (), [[1], (2, 3)] == [[1], (2, 3)], [[1], (2, 3)] == [[1], [2, 3]]",
             true, true, false, true, true, false, true, true, true, false);
 
     // ── T13: string payload is charged by length ───────────────────────────────────────────
@@ -453,9 +453,9 @@ public partial class SharedValueGraphComplexityTests
         {
             var text = new string('k', length - 1) + (equal ? "k" : "j");
             var literal = new string('k', length);
-            var head = nested ? $"[\"{literal}\", unused]" : $"\"{literal}\"";
+            var head = nested ? $"['{literal}', unused]" : $"'{literal}'";
             var argument = nested ? "[Text, 0]" : "Text";
-            var source = $"Text = \"{text}\"\nF({head}) = 1\nF(other) = effect(1)\nF({argument})";
+            var source = $"Text = '{text}'\nF({head}) = 1\nF(other) = effect(1)\nF({argument})";
             foreach (var route in AllRoutes)
             {
                 var effects = new EffectLog();
@@ -479,7 +479,7 @@ public partial class SharedValueGraphComplexityTests
     public async Task LiteralStringPattern_ObservesCancellationAtItsPayloadCharge()
     {
         var text = new string('k', LongLength);
-        var source = $"Text = \"{text}\"\nF(\"{text}\") = 1\nF(other) = effect(1)\nF(Text)";
+        var source = $"Text = '{text}'\nF('{text}') = 1\nF(other) = effect(1)\nF(Text)";
         foreach (var route in AllRoutes)
         {
             using var cts = new CancellationTokenSource();
@@ -698,7 +698,7 @@ public partial class SharedValueGraphComplexityTests
         // Each cached text is one Result.Str reused twice; the two texts are independently built.
         // The nested lists create the first structural memo entry between the two string visits.
         var text = new string('k', 16_449);
-        var source = $"A = \"{text}\"\nB = \"{text}\"\n{body}";
+        var source = $"A = '{text}'\nB = '{text}'\n{body}";
         foreach (var route in AllRoutes)
         {
             var (result, budget, traversal) = await RunComparisonOn(route, source);

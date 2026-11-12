@@ -67,12 +67,11 @@ public sealed class AliasUnifyFourthReviewRegressionTests
     }
 
     [Fact]
-    public async Task AReferenceAndACarrier_InStringAndInterpolationConsumers_ReadTheTargetsOneEntry()
+    public async Task AReferenceAndACarrier_InStringConsumers_ReadTheTargetsOneEntry()
     {
-        // FU2 J8: `.string` and an interpolation hole are VALUE consumers of the target's one entry; the explicit calls
-        // stay fresh.
-        const string source = "P = tock()\nA = P\nD = {\n    P\n}\nA.string, D.string, \"{A}{D}\", A(), D()";
-        await OkAsync(source, "S['1', '1', '11', 2, 3]", ThreeTicks);
+        // FU2 J8: `.string` is a VALUE consumer of the target's one entry; the explicit calls stay fresh.
+        const string source = "P = tock()\nA = P\nD = {\n    P\n}\nA.string, D.string, A(), D()";
+        await OkAsync(source, "S['1', '1', 2, 3]", ThreeTicks);
         Assert.Equal("P=0#1", Publications(source));
     }
 

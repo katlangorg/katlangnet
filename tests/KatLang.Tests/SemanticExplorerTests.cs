@@ -240,9 +240,8 @@ public class SemanticExplorerTests
     private static void CheckDisplayCollisions(List<Finding> findings)
     {
         // Strings display without quotes by documented design (the same exemption as the
-        // round trip): an interpolated string's text is the human-readable text of a value
-        // (STR-02, VAL-12 — not a serialization), so `"{[0]}"` displays exactly like `[0]`.
-        // Display injectivity is a property of the non-string value space.
+        // round trip), so a string can display exactly like another value's text (`'[0]'` and
+        // `[0]`). Display injectivity is a property of the non-string value space.
         var byDisplay = Observations.Values
             .Where(o => o.Outcome == "ok" && !ContainsString(o.Value!))
             .GroupBy(o => o.Display!);

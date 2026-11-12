@@ -324,13 +324,6 @@ theorem disc_selectViewWith {α : Type} (demand : α → EvalM Result) (hd : ∀
   | nil => unfold selectViewWith; disc_tac_base
   | cons c rest ih => unfold selectViewWith; disc_tac_base
 
-theorem disc_interpolateWith (value : Expr → EvalM Result) (h : ∀ e, Disciplined (value e))
-    (acc : String) (links : List InterpolationLink) :
-    Disciplined (interpolateWith value acc links) := by
-  induction links generalizing acc with
-  | nil => unfold interpolateWith; disc_tac_base
-  | cons l rest ih => unfold interpolateWith; disc_tac_base
-
 /-- Capabilities whose every field is disciplined. -/
 structure CapsDisc (caps : NeedCapabilities EvalM) : Prop where
   value : ∀ a, Disciplined (caps.value a)
@@ -621,7 +614,6 @@ macro "disc_tac" : tactic => `(tactic| without_info_trees ((try disc_unfold_rec)
   | (with_reducible apply disc_discover)
   | (with_reducible apply disc_selectWith)
   | (with_reducible apply disc_selectViewWith)
-  | (with_reducible apply disc_interpolateWith)
   | (with_reducible apply disc_bindPatterns)
   | (with_reducible apply disc_selectFamily)
   | (with_reducible apply disc_collectSingleAtomicNumbers)

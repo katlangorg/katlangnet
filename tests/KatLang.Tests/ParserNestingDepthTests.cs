@@ -70,8 +70,6 @@ public class ParserNestingDepthTests
     [InlineData("[", "]", 127)]  // 127 x 3 + 2 = 383 <= 384
     [InlineData("A[", "]", 127)] // nested selections: each selector slot holds the next selection
     [InlineData("A[0, ", "]", 127)] // a sibling selector before each nested one charges nothing extra
-    [InlineData("\"{", "}\"", 95)] // interpolation holes (STR-02): 2 base + 2 surcharge, like groups
-    [InlineData("(\"{", "}\")", 47)] // a group and a hole per cycle: 47 x 8 + 2 = 378; 48 x 8 + 2 = 386
     public void StructuralBoundary_AtMaximumParses_OneBeyondDiagnoses(string open, string close, int max)
     {
         AssertParses(Rep(open, max) + "1" + Rep(close, max));

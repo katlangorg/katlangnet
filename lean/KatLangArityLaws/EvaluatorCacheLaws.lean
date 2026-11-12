@@ -489,13 +489,6 @@ theorem pres_selectViewWith {α : Type} (demand : α → EvalM Result) (hd : ∀
   | nil => unfold selectViewWith; pres_tac_mid
   | cons c rest ih => unfold selectViewWith; pres_tac_mid
 
-theorem pres_interpolateWith (value : Expr → EvalM Result) (h : ∀ e, Preserves R (value e))
-    (acc : String) (links : List InterpolationLink) :
-    Preserves R (interpolateWith value acc links) := by
-  induction links generalizing acc with
-  | nil => unfold interpolateWith; pres_tac_mid
-  | cons l rest ih => unfold interpolateWith; pres_tac_mid
-
 /-- Capabilities whose every field is disciplined. -/
 structure CapsPres (R : EvalState → EvalState → Prop) (caps : NeedCapabilities EvalM) : Prop where
   value : ∀ a, Preserves R (caps.value a)
@@ -732,7 +725,6 @@ macro "pres_tac" : tactic => `(tactic| without_info_trees ((try pres_unfold_rec)
   | (with_reducible apply pres_discover)
   | (with_reducible apply pres_selectWith)
   | (with_reducible apply pres_selectViewWith)
-  | (with_reducible apply pres_interpolateWith)
   | (with_reducible apply pres_bindPatterns)
   | (with_reducible apply pres_selectFamily)
   | (with_reducible apply pres_collectSingleAtomicNumbers)

@@ -149,7 +149,7 @@ public enum DiagnosticCode
 
     /// <summary>
     /// A spread expression used as a scalar operand (a unary, binary or comparison
-    /// operand, or a whole interpolation hole) instead of a whole expression-list slot
+    /// operand) instead of a whole expression-list slot
     /// (a selector slot of a postfix selection is such a slot: <c>Data[Indexes*]</c>).
     /// </summary>
     MisplacedSpread = 20,
@@ -439,60 +439,15 @@ public enum DiagnosticCode
     /// </summary>
     AmbiguousOpen = 52,
 
-    // ── Double-quoted strings and interpolation (STR-02) ────────────────────
-
-    /// <summary>
-    /// A backslash in the text of a double-quoted string that does not begin one of the
-    /// supported escapes: <c>\"</c> (a double quote), <c>\\</c> (a backslash), <c>\n</c> (a line
-    /// feed) and <c>\t</c> (a tab). Every other escape — <c>\r</c> included — is an error, never
-    /// a silent literal backslash, so a future escape can be added without changing the meaning
-    /// of a valid program. Single-quoted strings have no escapes at all, so a backslash is
-    /// ordinary text there. Reported over the backslash and the character after it.
-    /// </summary>
-    InvalidStringEscape = 53,
-
-    /// <summary>
-    /// A lone <c>}</c> in the text of a double-quoted string. In that text <c>{</c> opens an
-    /// interpolation hole and <c>}</c> closes one, so a literal brace is written doubled:
-    /// <c>{{</c> for <c>{</c> and <c>}}</c> for <c>}</c>. Reported over the brace.
-    /// </summary>
-    UnmatchedBraceInString = 54,
-
-    /// <summary>
-    /// An interpolation hole opened with <c>{</c> inside a double-quoted string is not closed
-    /// before the end of its line. A string and every hole in it lie on one physical line, so
-    /// the hole needs its <c>}</c> and the string its closing <c>"</c> on the same line.
-    /// Reported from the hole's <c>{</c> to the end of the line; the whole unterminated string
-    /// is then one string token, and nothing inside it is reported again.
-    /// </summary>
-    UnterminatedInterpolationHole = 55,
-
-    /// <summary>
-    /// An interpolation hole that is not exactly one expression: an empty hole (<c>"{}"</c>),
-    /// a hole holding several expressions or a trailing token (<c>"{a, b}"</c>, <c>"{a b}"</c>),
-    /// a hole-level <c>:</c> (interpolation has no format specifiers; a selection is written with
-    /// brackets, <c>"{xs[0]}"</c>) or <c>=</c>, or a <c>#</c> inside a hole (a comment would
-    /// swallow the rest of the line). Reported at the offending token.
-    /// </summary>
-    InvalidInterpolationHole = 56,
-
-    /// <summary>
-    /// A double-quoted string WITH an interpolation hole stands where the grammar needs fixed
-    /// text: a clause-head literal pattern or an <c>open</c> target. Such a string is computed
-    /// when it is evaluated, so it is an expression only. A double-quoted string with no hole
-    /// is an ordinary string literal and is valid in both positions. Reported over the string.
-    /// </summary>
-    InterpolationNotAllowedHere = 57,
+    // 53-57 were the double-quoted string and interpolation diagnostics (STR-02), removed with
+    // those features (STR-03, November 2026). The values are retired, never reused.
 
     /// <summary>
     /// The RETIRED colon selection (October 2026): <c>:</c> is not KatLang syntax. Selection is
     /// written with postfix brackets on the receiver's line — <c>Pair[0]</c> for <c>Pair:0</c>,
     /// <c>Grid[0][1]</c> for <c>Grid:0:1</c>, <c>Data()[0]</c> for <c>Data():0</c>. Reported over
     /// the <c>:</c> and its old selector (a same-line <c>expr:selector</c>, recovered as the
-    /// equivalent selection) or at a <c>:</c> with no receiver. A <c>:</c> that begins an
-    /// interpolation hole or follows the hole's completed expression is
-    /// <see cref="InvalidInterpolationHole"/> instead (a <c>:</c> where the hole's expression still
-    /// needs an operand, <c>"{a + :0}"</c>, stays this code).
+    /// equivalent selection) or at a <c>:</c> with no receiver.
     /// </summary>
     RetiredColonSelection = 58,
 
@@ -526,4 +481,17 @@ public enum DiagnosticCode
     /// binding named <c>load</c> is ordinary and never reported.
     /// </summary>
     UnboundLoadReference = 62,
+
+    /// <summary>
+    /// A double quote outside a comment or a single-quoted string (STR-03, November 2026).
+    /// KatLang has ONE string literal form, raw single-quoted text (<c>'text'</c>): double-quoted
+    /// strings and string interpolation are not KatLang syntax. Reported once per scanned run,
+    /// over the whole run: from the double quote through the next double quote on the same
+    /// physical line (both included), or to the end of that line when there is none — an unclosed
+    /// run is this code alone, never also <see cref="UnterminatedStringLiteral"/>. Nothing inside
+    /// the run is interpreted (no escape, no brace), and the run is recovered as one string
+    /// literal that can never become a module URL. A double quote inside a single-quoted string
+    /// (<c>'say "hi"'</c>) or a comment is ordinary text.
+    /// </summary>
+    UnsupportedDoubleQuotedString = 63,
 }

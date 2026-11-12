@@ -49,7 +49,7 @@ public class NativeRecordEqualityTests(ITestOutputHelper output)
         internal static readonly Type[] Families =
         [
             typeof(Expr), typeof(Algorithm), typeof(ScopeCtx), typeof(Property), typeof(CondBranch),
-            typeof(ComparisonLink), typeof(InterpolationLink), typeof(Pattern), typeof(ParameterPattern),
+            typeof(ComparisonLink), typeof(Pattern), typeof(ParameterPattern),
             typeof(ParameterDeclaration),
         ];
 
@@ -264,13 +264,6 @@ public class NativeRecordEqualityTests(ITestOutputHelper output)
             new List<ComparisonLink> { new(ComparisonOp.Lt, new Expr.Num(3)) },
         ];
 
-        private readonly IReadOnlyList<InterpolationLink>[] _interpolations =
-        [
-            Array.Empty<InterpolationLink>(),
-            new[] { new InterpolationLink(new Expr.Resolve("h"), "t") },
-            new[] { new InterpolationLink(new Expr.Resolve("h"), "t") },
-        ];
-
         private readonly IReadOnlyList<Expr>[] _opens = [Array.Empty<Expr>(), new Expr[] { new Expr.Resolve("M") }, new Expr[] { new Expr.Resolve("M") }];
         private readonly IReadOnlyList<Property>[] _properties;
         private readonly IReadOnlyList<ParameterPattern>[] _patterns =
@@ -336,7 +329,7 @@ public class NativeRecordEqualityTests(ITestOutputHelper output)
             return algorithm;
         }
 
-        private Expr Leaf() => _random.Next(10) switch
+        private Expr Leaf() => _random.Next(9) switch
         {
             0 => new Expr.Num(_random.Next(3)),
             1 => new Expr.Param(_random.Next(2) == 0 ? "p" : "q"),
@@ -346,8 +339,7 @@ public class NativeRecordEqualityTests(ITestOutputHelper output)
             5 => new Expr.EmptySequence(_random.Next(2)),
             6 => new Expr.ListLiteral(Pick(_bundles)),
             7 => new Expr.Capture(Pick(_bundles)),
-            8 => new Expr.NativeCall("Sin", Pick(_names)),
-            _ => new Expr.InterpolatedString("head", Pick(_interpolations)),
+            _ => new Expr.NativeCall("Sin", Pick(_names)),
         };
 
         public Expr Expr(int depth)
@@ -413,7 +405,6 @@ public class NativeRecordEqualityTests(ITestOutputHelper output)
         Expr.Param param => param with { },
         Expr.Num number => number with { },
         Expr.StringLiteral text => text with { },
-        Expr.InterpolatedString interpolated => interpolated with { },
         Expr.BoolLiteral flag => flag with { },
         Expr.EmptySequence empty => empty with { },
         Expr.ListLiteral list => list with { },
@@ -527,7 +518,6 @@ public class NativeRecordEqualityTests(ITestOutputHelper output)
             new Algorithm.Alias(scope, opens, properties, leaf) { IsReference = false },
             scope,
             new ComparisonLink(ComparisonOp.Ne, leaf),
-            new InterpolationLink(leaf, "text"),
             new Property("Q", new Algorithm.Alias(null, [], [], leaf), IsPublic: true),
             new CondBranch(new Pattern.Bind("n"), new Algorithm.Alias(null, [], [], leaf)),
         ];
@@ -1554,9 +1544,6 @@ internal static class DeepRecordGraphs
         Assert.True(new ComparisonLink(ComparisonOp.Lt, left).Equals(new ComparisonLink(ComparisonOp.Lt, equal)), "ComparisonLink, equal");
         Assert.False(new ComparisonLink(ComparisonOp.Lt, left).Equals(new ComparisonLink(ComparisonOp.Lt, different)), "ComparisonLink, different");
         Assert.True(new ComparisonLink(ComparisonOp.Lt, left).GetHashCode() == new ComparisonLink(ComparisonOp.Lt, equal).GetHashCode(), "ComparisonLink hash");
-        Assert.True(new InterpolationLink(left, "t") == new InterpolationLink(equal, "t"), "InterpolationLink ==");
-        Assert.True(new InterpolationLink(left, "t") != new InterpolationLink(different, "t"), "InterpolationLink !=");
-        Assert.True(new InterpolationLink(left, "t").GetHashCode() == new InterpolationLink(equal, "t").GetHashCode(), "InterpolationLink hash");
 
         Algorithm Alias(Expr target) => new Algorithm.Alias(null, NoOpens, NoProperties, target);
         Assert.True(new Property("P", Alias(left)).Equals(new Property("P", Alias(equal))), "Property, equal");

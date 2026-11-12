@@ -17,7 +17,7 @@ of `FiniteLoopCorrespondence.lean`.
 The classes are syntactic and stated on a row's OWN constructor, so they hold from every state,
 in every context, for every supply: the evaluator arm of such a row fixes the count itself.
 
-* `scalarRow` — a literal (`7`, `'a'`, `true`), `()`, an interpolated string, and every unary,
+* `scalarRow` — a literal (`7`, `'a'`, `true`), `()`, and every unary,
   binary and comparison operator WHATEVER ITS OPERANDS: `x + 1`, `-x`, `not b`, `x < n`,
   `F(x) * 2`, `xs[0] + y`. Such a row completes with one canonical scalar (or `()`) at a
   value-boundary count (`scalarRow_canonical`).
@@ -282,11 +282,11 @@ theorem construct_bounded (e : Expr) (ctx : EvalCtx) (env : ValEnv) :
 /-! ## 3. The surface row classes -/
 
 /-- SCALAR ROWS: a row whose OWN evaluator arm forms one canonical scalar value (or `()`),
-    whatever its operands are: literals, `()`, interpolated strings, and the unary, binary and
+    whatever its operands are: literals, `()`, and the unary, binary and
     comparison operators. Operands are unrestricted: `x + 1`, `F(x) * 2`, `x < n` are scalar rows
     for parameters `x`, `n` and any call `F(x)`. -/
 def scalarRow : Expr → Bool
-  | .num _ | .stringLiteral _ | .boolLiteral _ | .emptySequence _ | .interpolatedString _ _
+  | .num _ | .stringLiteral _ | .boolLiteral _ | .emptySequence _
   | .unary _ _ | .binary _ _ _ | .comparison _ _ => true
   | _ => false
 
@@ -316,7 +316,6 @@ theorem scalarRow_canonical (e : Expr) (h : scalarRow e = true) (ctx : EvalCtx) 
   cases e <;> simp [scalarRow] at h <;> dsimp only [EvalBody.evalCounted]
   · exact okSat_pure (canon_atom _)
   · exact okSat_pure (canon_str _)
-  · exact okSat_nested (okSat_bind fun _ => okSat_pure (canon_str _))
   · exact okSat_pure (canon_bool _)
   · exact okSat_nested (unary_canonical _ _ _ _)
   · exact okSat_nested (binary_canonical _ _ _ _ _)

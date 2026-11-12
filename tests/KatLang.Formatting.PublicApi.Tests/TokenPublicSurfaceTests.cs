@@ -44,7 +44,6 @@ public class TokenPublicSurfaceTests
         ("FactoryIdentifier", "_ = Token.CreateIdentifier(\"a\", 0, 1, 1, 1);", [("CS0117", "'Token' does not contain a definition for 'CreateIdentifier'")]),
         ("FactoryStringLiteral", "_ = Token.CreateStringLiteral(\"a\", 0, 3, 1, 1);", [("CS0117", "'Token' does not contain a definition for 'CreateStringLiteral'")]),
         ("FactoryComment", "_ = Token.CreateComment(\"a\", 0, 2, 1, 1);", [("CS0117", "'Token' does not contain a definition for 'CreateComment'")]),
-        ("FactoryInterpolatedStringText", "_ = Token.CreateInterpolatedStringText(\"a\", 0, 1, 1, 1);", [("CS0117", "'Token' does not contain a definition for 'CreateInterpolatedStringText'")]),
         ("FactoryCreate", "_ = Token.Create(TokenKind.Plus, 0, 1, 1, 1);", [("CS0117", "'Token' does not contain a definition for 'Create'")]),
         ("FactoryEndOfFile", "_ = Token.EndOfFile(0, 1, 1);", [("CS0117", "'Token' does not contain a definition for 'EndOfFile'")]),
         ("FactoryBad", "_ = Token.Bad(0, 1, 1, 1);", [("CS0117", "'Token' does not contain a definition for 'Bad'")]),
@@ -263,7 +262,7 @@ public class TokenPublicSurfaceTests
             .Where(m => m.IsAssembly && m.ReturnType == typeof(Token))
             .Select(m => m.Name)
             .OrderBy(n => n, StringComparer.Ordinal);
-        Assert.Equal(["Bad", "Create", "CreateComment", "CreateIdentifier", "CreateInterpolatedStringText", "CreateNumber", "CreateStringLiteral", "EndOfFile"], factories);
+        Assert.Equal(["Bad", "Create", "CreateComment", "CreateIdentifier", "CreateNumber", "CreateStringLiteral", "EndOfFile"], factories);
 
         // The supported source of tokens stays public.
         var tokenize = typeof(Lexer).GetMethod("Tokenize", BindingFlags.Public | BindingFlags.Static, [typeof(string)]);

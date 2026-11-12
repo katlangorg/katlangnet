@@ -148,8 +148,11 @@ public class DifferentialObservationTests
             .GroupBy(m => m.Groups[1].Value).ToDictionary(g => g.Key, g => g.Count());
         var minimums = new Dictionary<string, int> {
             // X-29 / Q-36: the own/nested spread specials pin both categories at a spread operand.
+            // STR-03 (2026-11-11): missingOutput 17 -> 16. The one guard that left is the special
+            // `interpolationHoleWithoutOutput`, whose consumer (an interpolation hole) no longer exists;
+            // the other sixteen are unchanged. No other kind lost a guard below its minimum.
             ["arity"] = 180, ["index"] = 90, ["div0"] = 12, ["spreadMissingOutput"] = 8,
-            ["ambiguousOpen"] = 3, ["badArity"] = 3, ["missingOutput"] = 17,
+            ["ambiguousOpen"] = 3, ["badArity"] = 3, ["missingOutput"] = 16,
             ["localOnlyProperty"] = 1, ["unresolvedImplicitParams"] = 1 };
         foreach (var (kind, minimum) in minimums)
             Assert.True(kinds.GetValueOrDefault(kind) >= minimum, $"Supplementary {kind} guards shrank below {minimum}.");

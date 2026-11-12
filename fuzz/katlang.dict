@@ -71,16 +71,22 @@ clause_head="f(x) = "
 cond_literal="(0) = "
 string_lit="'x'"
 
-# ── Double-quoted strings and interpolation (STR-02) ─────────────────────────
+# ── Rejected double quotes (STR-03): recovery boundaries ─────────────────────
+# Double-quoted strings and string interpolation are NOT KatLang syntax. A double
+# quote outside a comment or a single-quoted string is one lexical error, recovered
+# as a run to the next double quote on its line (or to the end of the line). These
+# seeds keep the malformed-input coverage of that rule: closed and unclosed runs,
+# brace and backslash content, a run before a line break, and the positions where
+# a rejected string must never become a module URL.
 dq_empty="\"\""
 dq_text="\"a\""
-dq_hole="\"a{x}b\""
-dq_hole_open="\"{"
-dq_hole_close="}\""
-dq_nested="\"{\"{1}\"}\""
-dq_brace_escape="{{"
-dq_brace_escape_close="}}"
-dq_escape_quote="\\\""
-dq_escape_backslash="\\\\"
-dq_escape_newline="\\n"
-dq_escape_tab="\\t"
+dq_brace_run="\"a{x}b\""
+dq_unterminated="\"a"
+dq_unterminated_brace="\"a{x"
+dq_backslash_run="\"a\\\""
+dq_before_newline="\"a\x0A"
+dq_open_target="open \"u\""
+dq_load_target="load(\"u\")"
+dq_pattern="f(\"a\") = "
+sq_holding_dquote="'a\"b'"
+sq_holding_braces="'{x}'"

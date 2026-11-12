@@ -101,7 +101,6 @@ theorem Expr.aliasCount_equation (e : Expr) :
       | .sequenceConstruct left right => left.aliasCount + right.aliasCount
       | .sequenceSpread operand => operand.aliasCount
       | .listLiteral items => (items.map Expr.aliasCount).sum
-      | .interpolatedString _ links => (links.map (fun link => link.hole.aliasCount)).sum
       | .capture rows => (rows.map Expr.aliasCount).sum
       | .call fn args => fn.aliasCount + (args.map Expr.aliasCount).sum
       | .dotMember target _ fallback args? =>
@@ -195,8 +194,6 @@ theorem validateExprTree_equation (e : Expr) (chain : List Algorithm) (aliases :
       | .param _ => pure ()
       | .num _ => pure ()
       | .stringLiteral _ => pure ()
-      | .interpolatedString _ links =>
-          links.forM (fun link => validateExprTree link.hole chain aliases)
       | .boolLiteral _ => pure ()
       | .resolve _ => pure ()
       | .unary _ operand =>
@@ -241,7 +238,6 @@ theorem validateExprTree_equation (e : Expr) (chain : List Algorithm) (aliases :
 theorem scanHostProvenanceExpr_equation (e : Expr) :
     scanHostProvenanceExpr e = (match e with
       | .algorithmExpr a => scanHostProvenanceAlgorithm a
-      | .interpolatedString _ links => links.forM (scanHostProvenanceExpr ·.hole)
       | .unary _ operand => scanHostProvenanceExpr operand
       | .binary _ left right => do scanHostProvenanceExpr left; scanHostProvenanceExpr right
       | .comparison first links => do

@@ -260,7 +260,6 @@ public class FuzzCampaignHostileReviewTests
         Expr.Comparison comparison => comparison with { First = Rewrite(comparison.First), Links = comparison.Links.Select(l => l with { Operand = Rewrite(l.Operand) }).ToArray() },
         Expr.Index index => index with { Target = Rewrite(index.Target), Selectors = new(index.Selectors.Select(Rewrite).ToArray()) },
         Expr.ListLiteral list => list with { Items = new(list.Items.Select(Rewrite).ToArray()) },
-        Expr.InterpolatedString interpolated => interpolated with { Links = interpolated.Links.Select(l => l with { Hole = Rewrite(l.Hole) }).ToArray() },
         Expr.SequenceSpread spread => spread with { Operand = Rewrite(spread.Operand) },
         Expr.SequenceConstruct join => join with { Left = Rewrite(join.Left), Right = Rewrite(join.Right) },
         Expr.Grace grace => grace with { Inner = Rewrite(grace.Inner) },

@@ -83,7 +83,6 @@ public class UnboundLoadReferenceTests
     [InlineData("Ignore(x) = 42\nIgnore(load)", 2, 8)]
     [InlineData("F(x) = load\n1", 1, 8)]
     [InlineData("F(x) = x + load\n1", 1, 12)]
-    [InlineData("Y = \"{load}\"\n1", 1, 7)]
     [InlineData("Y = [load, 1]\n1", 1, 6)]
     [InlineData("F = {\n  G(y) = y\n  G(load)\n}\n1", 3, 5)]
     [InlineData("F(0) = 1\nF(n) = load\nF(0)", 2, 8)]

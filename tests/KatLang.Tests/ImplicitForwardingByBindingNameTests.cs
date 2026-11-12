@@ -959,7 +959,6 @@ public class ImplicitForwardingByBindingNameTests
                 Expr.SequenceConstruct construct => [construct.Left, construct.Right],
                 Expr.ListLiteral list => list.Items,
                 Expr.Capture capture => capture.Body,
-                Expr.InterpolatedString interpolated => interpolated.Links.Select(static link => link.Hole),
                 Expr.Grace grace => [grace.Inner],
                 _ => [],
             };

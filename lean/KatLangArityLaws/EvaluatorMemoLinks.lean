@@ -882,13 +882,6 @@ theorem link_selectViewWith {α : Type} (demand : α → EvalM Result) (hd : ∀
   | nil => unfold selectViewWith; link_tac_base
   | cons c rest ih => unfold selectViewWith; link_tac_base
 
-theorem link_interpolateWith (value : Expr → EvalM Result) (h : ∀ e, LinkDisc (value e))
-    (acc : String) (links : List InterpolationLink) :
-    LinkDisc (interpolateWith value acc links) := by
-  induction links generalizing acc with
-  | nil => unfold interpolateWith; link_tac_base
-  | cons l rest ih => unfold interpolateWith; link_tac_base
-
 /-- Capabilities whose every field is link-disciplined. -/
 structure CapsLink (caps : NeedCapabilities EvalM) : Prop where
   value : ∀ a, LinkDisc (caps.value a)
@@ -1151,7 +1144,6 @@ macro "link_tac" : tactic => `(tactic| without_info_trees ((try link_unfold_rec)
   | (with_reducible apply link_discover)
   | (with_reducible apply link_selectWith)
   | (with_reducible apply link_selectViewWith)
-  | (with_reducible apply link_interpolateWith)
   | (with_reducible apply link_bindPatterns)
   | (with_reducible apply link_selectFamily)
   | (with_reducible apply link_collectSingleAtomicNumbers)

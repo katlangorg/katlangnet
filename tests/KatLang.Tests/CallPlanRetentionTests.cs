@@ -525,7 +525,7 @@ public partial class InvocationPlanTests
     /// <summary>
     /// Programs dense in call-shaped supplied arguments: recursion through <c>if</c> branches, variadic
     /// and spread supplies, callbacks with nested supplied calls, loops, families, aliases, opened and
-    /// parameter callees, explicit fresh property calls, selection, interpolation, unused and deep failures.
+    /// parameter callees, explicit fresh property calls, selection, `.string`, unused and deep failures.
     /// </summary>
     public static TheoryData<string> CallHeavySources => new()
     {
@@ -537,7 +537,7 @@ public partial class InvocationPlanTests
         "Step(k) = k + 1, k < 10\nG(x) = x\nG(while(Step(trace(0))))",
         "Fib(0) = 0\nFib(1) = 1\nFib(n) = Fib(n - 1) + Fib(n - 2)\nG(x) = x\nG(Fib(trace(10)))",
         "F(v) = v / 0\nH(x) = x + 1\nG(x) = x\nG(H(F(trace(3))))",
-        "F(v) = v + 1\nG(x) = \"{x}!\"\nG(F(trace(2)))",
+        "F(v) = v + 1\nG(x) = x.string\nG(F(trace(2)))",
         "F(v) = (v, v + 1)\nG(x) = x[1]\nG(F(trace(2)))",
         "F(v) = (v, v)\nAdd2(a, b) = a + b\nG(x) = x\nG(Add2(F(trace(4))*))",
         "P = tock()\nG(x) = (x, x)\nG(P()), P, P, G(P())",

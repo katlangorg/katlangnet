@@ -117,9 +117,9 @@ public class ClauseFamilyCollisionSecurityTests
         var builder = new StringBuilder();
         for (var i = 0; i < count; i++)
         {
-            builder.Append("F(\"").Append(CollidingString(i)).Append("\") = ").Append(i).Append('\n');
+            builder.Append("F('").Append(CollidingString(i)).Append("') = ").Append(i).Append('\n');
             if (duplicatesEvery > 0 && i % duplicatesEvery == duplicatesEvery - 1)
-                builder.Append("F(\"").Append(CollidingString(i / 2)).Append("\") = 0\n");
+                builder.Append("F('").Append(CollidingString(i / 2)).Append("') = 0\n");
         }
         return builder.Append("F(1)").ToString();
     }
@@ -355,11 +355,11 @@ public class ClauseFamilyCollisionSecurityTests
     [InlineData("F(1.5) = 1\nF(1.50) = 2\nF(1.5)", 1)]
     [InlineData("F(10) = 1\nF(10.0) = 2\nF(10)", 1)]
     [InlineData("F(1) = 1\nF(2) = 2\nF(1)", 0)]
-    [InlineData("F(\"a\") = 1\nF(\"a\") = 2\nF(1)", 1)]
-    [InlineData("F(\"a\") = 1\nF(\"A\") = 2\nF(1)", 0)]
+    [InlineData("F('a') = 1\nF('a') = 2\nF(1)", 1)]
+    [InlineData("F('a') = 1\nF('A') = 2\nF(1)", 0)]
     [InlineData("F(true) = 1\nF(true) = 2\nF(true)", 1)]
     [InlineData("F(true) = 1\nF(false) = 2\nF(true)", 0)]
-    [InlineData("F(1) = 1\nF(true) = 2\nF(\"1\") = 3\nF(1)", 0)]
+    [InlineData("F(1) = 1\nF(true) = 2\nF('1') = 3\nF(1)", 0)]
     [InlineData("F((x, [y, 1])) = 1\nF((p, [q, 1.0])) = 2\nF(1)", 1)]
     [InlineData("F((x, y)) = 1\nF([x, y]) = 2\nF(1)", 0)]
     [InlineData("F((x, y)) = 1\nF((x, y, z)) = 2\nF(1)", 0)]
@@ -375,9 +375,9 @@ public class ClauseFamilyCollisionSecurityTests
     {
         var precomposed = new string([(char)0x00E9]);
         var decomposed = new string(['e', (char)0x0301]);
-        var distinct = $"F(\"{precomposed}\") = 1\nF(\"{decomposed}\") = 2\nF(1)";
+        var distinct = $"F('{precomposed}') = 1\nF('{decomposed}') = 2\nF(1)";
         Assert.DoesNotContain(Parser.ParseSyntax(distinct).Diagnostics, d => d.Code == DiagnosticCode.DuplicateBranchPattern);
-        var same = $"F(\"{decomposed}\") = 1\nF(\"{decomposed}\") = 2\nF(1)";
+        var same = $"F('{decomposed}') = 1\nF('{decomposed}') = 2\nF(1)";
         Assert.Single(Parser.ParseSyntax(same).Diagnostics, d => d.Code == DiagnosticCode.DuplicateBranchPattern);
     }
 
@@ -422,8 +422,8 @@ public class ClauseFamilyCollisionSecurityTests
     public void InterleavedFamilies_KeepExactDiagnosticsAndFirstSeenOrder()
     {
         const string source =
-            "Z(0) = 0\nA(\"x\") = 1\nZ(1) = 1\nA(\"y\") = 2\nZ(0) = 9\nM(a, a) = 0\nA(\"x\") = 3\n" +
-            "M(b, c) = 1\nZ(2) = 2\nM(q, q) = 2\nA(\"z\") = 4\nZ(1.0) = 5\nZ(1), A(\"x\"), M(1, 1)";
+            "Z(0) = 0\nA('x') = 1\nZ(1) = 1\nA('y') = 2\nZ(0) = 9\nM(a, a) = 0\nA('x') = 3\n" +
+            "M(b, c) = 1\nZ(2) = 2\nM(q, q) = 2\nA('z') = 4\nZ(1.0) = 5\nZ(1), A('x'), M(1, 1)";
         var result = Parser.ParseSyntax(source);
         Assert.Equal(
             [
@@ -531,7 +531,7 @@ public class ClauseFamilyCollisionSecurityTests
     [Fact]
     public void CancellationRequestedDuringOneLongString_StopsBeforeItsKeyCompletes()
     {
-        var text = $"F(0) = 0\nF(\"{new string('a', 40_000)}\") = 1\nF(0)";
+        var text = $"F(0) = 0\nF('{new string('a', 40_000)}') = 1\nF(0)";
         using var source = new CancellationTokenSource();
         var observations = new PatternComparisonObservations
         {

@@ -8249,228 +8249,94 @@ public static class LanguageSpecCorpus
             ],
             Explanation = "For an integral exponent `n`, `(-b) ^ n` is `b ^ n` for even `n` and `-(b ^ n)` for odd `n`, whichever computation the exponent routes through: a base whose magnitude is within `0.99 <= |b| <= 1.01` takes the near-one power for a fractional exponent, an exponent beyond `long`, or a negative exponent whose positive power overflows, and a negative base there takes its magnitude's power with the exponent's parity sign.",
         },
-        // ==================== STR-02: string interpolation ====================
+        // ==================== STR-03: one string literal form ====================
         new()
         {
-            Id = "string-interpolation-basic",
+            Id = "string-single-quoted-text-is-raw",
             Category = "strings",
-            Source = "name = 'KatLang'\nversion = 2\n\"Hello, {name} {version}!\"",
+            Source = "'{x}'\n'C:\\temp'\n'say \"hi\"'",
             Outcome = SpecOutcome.Evaluates,
-            ExpectedDisplay = "Hello, KatLang 2!",
-            ExpectedRaw = "'Hello, KatLang 2!'",
-            ExpectedEmittedCount = 1,
+            ExpectedDisplay = "{x}\nC:\\temp\nsay \"hi\"",
+            ExpectedRaw = "S['{x}', 'C:\\temp', 'say \"hi\"']",
+            ExpectedEmittedCount = 3,
             Probes =
             [
-                new SpecProbe("n = 3\n\"{n}{n + 1}\" == '34'", "ok raw=true n=1"),
-                new SpecProbe("\"{1}{2}{3}\"", "ok raw='123' n=1"),
-            ],
-            IncludeInGeneratorPrompt = true,
-            Explanation = "A double-quoted string may contain interpolation holes: `{expression}` is replaced by the text of the expression's value, so `\"Hello, {name}!\"` builds one string value. Each hole holds one ordinary expression of the enclosing algorithm.",
-        },
-        new()
-        {
-            Id = "string-interpolation-structural-text",
-            Category = "strings",
-            Source = "\"{(1, [2, ()])} {[]} {true} {-5}\"",
-            Outcome = SpecOutcome.Evaluates,
-            ExpectedDisplay = "(1, [2, ()]) [] true -5",
-            ExpectedRaw = "'(1, [2, ()]) [] true -5'",
-            ExpectedEmittedCount = 1,
-            Probes =
-            [
-                new SpecProbe("\"{()}|{[]}|{[()]}|{[[]]}\"", "ok raw='()|[]|[()]|[[]]' n=1"),
-                new SpecProbe("xs = [1, 2]\n\"{xs}\"", "ok raw='[1, 2]' n=1"),
-                new SpecProbe("P = 1, 2\n\"{P}\"", "ok raw='(1, 2)' n=1"),
-            ],
-            IncludeInGeneratorPrompt = true,
-            Explanation = "Every value kind has a structural text: a number its canonical digits, a Boolean `true` or `false`, a sequence `(a, b)`, a list `[a, b]`, and the empty sequence `()` and empty list `[]` stay distinct. A hole is never spread or flattened: a list stays one bracketed value.",
-        },
-        new()
-        {
-            Id = "string-interpolation-strings-unquoted",
-            Category = "strings",
-            Source = "\"{['one, two', 'three']} {('a', ['b'])}\"",
-            Outcome = SpecOutcome.Evaluates,
-            ExpectedDisplay = "[one, two, three] (a, [b])",
-            ExpectedRaw = "'[one, two, three] (a, [b])'",
-            ExpectedEmittedCount = 1,
-            Probes =
-            [
-                new SpecProbe("\"{'{x}'}\"", "ok raw='{x}' n=1"),
-            ],
-            IncludeInGeneratorPrompt = true,
-            Explanation = "Sequences and lists are valid interpolation results, and string values remain unquoted at every nesting level, so the text is meant for people, not a serialization: `['one, two', 'three']` shows as `[one, two, three]`. An inserted string is never re-read as source, so braces it contains stay text.",
-        },
-        new()
-        {
-            Id = "string-double-quoted-escapes",
-            Category = "strings",
-            Source = "\"say \\\"hi\\\" {{ok}} \\\\\"",
-            Outcome = SpecOutcome.Evaluates,
-            ExpectedDisplay = "say \"hi\" {ok} \\",
-            ExpectedRaw = "'say \"hi\" {ok} \\'",
-            ExpectedEmittedCount = 1,
-            Probes =
-            [
-                new SpecProbe("\"a\\nb\" == 'a\\nb'", "ok raw=false n=1"),
                 new SpecProbe("'a\\nb'", "ok raw='a\\nb' n=1"),
+                new SpecProbe("'{x}' == '{x}'", "ok raw=true n=1"),
+                new SpecProbe("count('C:\\temp')", "ok raw=1 n=1"),
             ],
             IncludeInGeneratorPrompt = true,
-            Explanation = "A double-quoted string has exactly six escapes: `\\\"` (a double quote), `\\\\` (a backslash), `\\n` (a line feed), `\\t` (a tab), `{{` and `}}` (literal braces). A single-quoted string is unchanged: no escapes and no holes, so `'a\\nb'` keeps its backslash.",
+            Explanation = "A string is written in single quotes, and its text is exactly what is written between them: there are no escapes and no interpolation, so braces, backslashes and double quotes are ordinary characters. `'{x}'` is the three characters `{x}`, and `'a\\nb'` keeps its backslash.",
         },
         new()
         {
-            Id = "string-double-quoted-without-holes-is-a-literal",
+            Id = "string-literal-pattern-selects-a-clause",
             Category = "strings",
-            Source = "\"abc\" == 'abc'\nF(\"x\") = 1\nF(y) = 2\nF('x')",
+            Source = "Greeting('en') = 'Hello'\nGreeting('lv') = 'Sveiki'\nGreeting(x) = '?'\n\nGreeting('lv')\nGreeting('de')\nGreeting(5)",
             Outcome = SpecOutcome.Evaluates,
-            ExpectedDisplay = "true\n1",
-            ExpectedRaw = "S[true, 1]",
-            ExpectedEmittedCount = 2,
-            Explanation = "A double-quoted string without holes is an ordinary string literal, equal to the single-quoted spelling of the same text, and it may stand wherever a literal is required: a clause-head pattern, an `open` target, a `load` URL.",
-        },
-        new()
-        {
-            Id = "string-interpolation-nested",
-            Category = "strings",
-            Source = "x = 1\n\"<{\"[{x + 1}]\"}>\"",
-            Outcome = SpecOutcome.Evaluates,
-            ExpectedDisplay = "<[2]>",
-            ExpectedRaw = "'<[2]>'",
-            ExpectedEmittedCount = 1,
-            Explanation = "A hole holds any expression, an interpolated string included, so interpolation nests.",
-        },
-        new()
-        {
-            Id = "string-interpolation-hole-inference-order",
-            Category = "strings",
-            Source = "F = \"{b}-{a}-{b}\"\nF(1, 2)",
-            Outcome = SpecOutcome.Evaluates,
-            ExpectedDisplay = "1-2-1",
-            ExpectedRaw = "'1-2-1'",
-            ExpectedEmittedCount = 1,
+            ExpectedDisplay = "Sveiki\n?\n?",
+            ExpectedRaw = "S['Sveiki', '?', '?']",
+            ExpectedEmittedCount = 3,
             Probes =
             [
-                new SpecProbe("F = \"{b}-{~a}\"\nF(1, 2)", "ok raw='2-1' n=1"),
+                new SpecProbe("'ab' != 'ba'", "ok raw=true n=1"),
+                new SpecProbe("'1' == 1", "ok raw=false n=1"),
             ],
+            Explanation = "A string in a clause head is a literal pattern: the clause is selected only for exactly that text. Any other value, a different string or a number, falls through to a later clause.",
+        },
+        new()
+        {
+            Id = "string-and-number-stay-separate-items",
+            Category = "strings",
+            Source = "Total = 3 + 8\n'Total', Total\n['a', 1, 'b']",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "Total\n11\n[a, 1, b]",
+            ExpectedRaw = "S['Total', 11, L['a', 1, 'b']]",
+            ExpectedEmittedCount = 3,
+            Probes =
+            [
+                new SpecProbe("'a' + 'b'", "err type"),
+                new SpecProbe("count(['a', 1, 'b'])", "ok raw=3 n=1"),
+                new SpecProbe("Total = 3 + 8\n('Total', Total)[1] + 1", "ok raw=12 n=1"),
+            ],
+            Explanation = "A string is a value like any other: it can stand beside numbers in a sequence or a list, and each item keeps its own kind. Nothing turns a number into text or joins items into one string, so a number beside a string is still a number, and `+` on strings is a type error.",
+        },
+        new()
+        {
+            Id = "string-double-quotes-are-not-supported",
+            Category = "strings",
+            Source = "\"Hello\"",
+            Outcome = SpecOutcome.ParseError,
+            ExpectedDiagnosticCode = DiagnosticCode.UnsupportedDoubleQuotedString,
+            ExpectedParseDiagnosticFragment = "Write text in single quotes",
             IncludeInGeneratorPrompt = true,
-            Explanation = "A hole is an ordinary operand of the enclosing algorithm, never a scope of its own: its free names become that algorithm's implicit parameters in order of first occurrence, and Grace in a hole reorders them as anywhere else.",
+            LeanExclusionReason = "The diagnostic is a C# lexical rule; Lean has no lexer or surface parser (STR-03).",
+            Notes = "C#-only by construction (parse-level partition): the diagnostic is a lexical rule and Lean has no lexer or surface parser (STR-03), so no Lean equivalent is fabricated.",
+            Explanation = "KatLang has one string literal form, single quotes. A double quote outside a single-quoted string or a comment is an error: write `'Hello'`.",
         },
         new()
         {
-            Id = "string-interpolation-hole-lifts-a-formula",
+            Id = "string-interpolation-is-not-supported",
             Category = "strings",
-            Source = "Inc(x) = x + 1\nG = \"v{Inc}\"\nG(4)",
-            Outcome = SpecOutcome.Evaluates,
-            ExpectedDisplay = "v5",
-            ExpectedRaw = "'v5'",
-            ExpectedEmittedCount = 1,
-            Explanation = "A hole is a value position: a callable that requires arguments, named in a hole of a formula, is lifted into a call exactly like an operand, so `G` gains `Inc`'s parameter.",
-        },
-        new()
-        {
-            Id = "string-interpolation-selection-in-a-hole",
-            Category = "strings",
-            Source = "xs = [10, 20]\n\"{xs[1]} {(xs[1])} {[xs[0]]}\"",
-            Outcome = SpecOutcome.Evaluates,
-            ExpectedDisplay = "20 20 [10]",
-            ExpectedRaw = "'20 20 [10]'",
-            ExpectedEmittedCount = 1,
-            Explanation = "A selection in a hole is written with postfix brackets exactly as anywhere else and needs no grouping, `{xs[1]}`: a redundant group `{(xs[1])}` is the same selection, while `{[xs[0]]}` is a list holding it.",
-        },
-        new()
-        {
-            Id = "string-interpolation-hole-failure",
-            Category = "strings",
-            Source = "\"a{1}b{10 div 0}c\"",
-            Outcome = SpecOutcome.EvalError,
-            ExpectedErrorCategory = "div0",
-            Explanation = "Holes are evaluated left to right, each exactly once, and the first failing hole is the failure of the whole string: no later hole is evaluated.",
-        },
-        new()
-        {
-            Id = "string-interpolation-hole-without-output",
-            Category = "strings",
-            Source = "B = {\n    A = 1\n}\n\"{B}\"",
-            Outcome = SpecOutcome.EvalError,
-            ExpectedErrorCategory = "missingOutput",
-            Explanation = "A hole needs a value: an algorithm without output in a hole is its ordinary missing-output error.",
-        },
-        new()
-        {
-            Id = "string-interpolation-decimal-number-text",
-            Category = "strings",
-            Source = "DisplayDecimals = 2\n\"{1.50} {1 / 4} {1.5}\"\n1.5",
-            Outcome = SpecOutcome.Evaluates,
-            ExpectedDisplay = "1.50 0.25 1.5\n1.50",
-            ExpectedRaw = "S['1.50 0.25 1.5', 1.5]",
-            ExpectedEmittedCount = 2,
-            LeanExclusionReason = "Fractional Decimal128 values and their quantum are outside the Lean Int numeric model (the encoder refuses fractional literals), and `DisplayDecimals` is an engine presentation filter; the integer text of a hole is Lean-guarded by string-interpolation-structural-text.",
-            Explanation = "A number in a hole is its canonical text, exactly the text `.string` gives it — its written quantum included — and never a display format: `DisplayDecimals` rounds only how a number result is displayed, never the text inside a string.",
-        },
-        new()
-        {
-            Id = "string-interpolation-empty-hole-is-an-error",
-            Category = "strings",
-            Source = "\"a{}b\"",
+            Source = "x = 5\n\"Total: {x}\"",
             Outcome = SpecOutcome.ParseError,
-            ExpectedDiagnosticCode = DiagnosticCode.InvalidInterpolationHole,
-            Explanation = "A hole holds exactly one expression, so an empty hole is an error. Write `{{` and `}}` for literal braces.",
+            ExpectedDiagnosticCode = DiagnosticCode.UnsupportedDoubleQuotedString,
+            ExpectedParseDiagnosticFragment = "string interpolation are not supported",
+            IncludeInGeneratorPrompt = true,
+            LeanExclusionReason = "The diagnostic is a C# lexical rule; Lean has no lexer or surface parser (STR-03).",
+            Notes = "C#-only by construction (parse-level partition): the diagnostic is a lexical rule and Lean has no lexer or surface parser (STR-03), so no Lean equivalent is fabricated.",
+            Explanation = "There is no string interpolation: text is never built from values. Return the value itself; where a text value is needed beside it, the two are separate items.",
         },
         new()
         {
-            Id = "string-interpolation-hole-level-colon-is-an-error",
+            Id = "string-double-quote-run-ends-with-its-line",
             Category = "strings",
-            Source = "xs = [10, 20]\n\"{xs:1}\"",
+            Source = "A = \"abc\nB = 2\nB",
             Outcome = SpecOutcome.ParseError,
-            ExpectedDiagnosticCode = DiagnosticCode.InvalidInterpolationHole,
-            ExpectedParseDiagnosticFragment = "format specifiers",
-            Explanation = "A top-level `:` in a hole is refused: interpolation has no format specifiers, and `:` is no selection anywhere — a selection is written with brackets, `{xs[1]}`.",
-        },
-        new()
-        {
-            Id = "string-interpolation-hole-holds-one-expression",
-            Category = "strings",
-            Source = "a = 1\nb = 2\n\"{a, b}\"",
-            Outcome = SpecOutcome.ParseError,
-            ExpectedDiagnosticCode = DiagnosticCode.InvalidInterpolationHole,
-            Explanation = "A comma cannot separate several expressions in one hole: write one hole per value, `\"{a}, {b}\"`, or one sequence value in parentheses, `\"{(a, b)}\"`.",
-        },
-        new()
-        {
-            Id = "string-unsupported-escape-is-an-error",
-            Category = "strings",
-            Source = "\"a\\qb\"",
-            Outcome = SpecOutcome.ParseError,
-            ExpectedDiagnosticCode = DiagnosticCode.InvalidStringEscape,
-            Explanation = "Only the six escapes of a double-quoted string exist; any other backslash sequence, `\\r` included, is an error rather than a silent backslash.",
-        },
-        new()
-        {
-            Id = "string-lone-closing-brace-is-an-error",
-            Category = "strings",
-            Source = "\"a}b\"",
-            Outcome = SpecOutcome.ParseError,
-            ExpectedDiagnosticCode = DiagnosticCode.UnmatchedBraceInString,
-            Explanation = "A `}` in the text of a double-quoted string closes no hole; a literal brace is written `}}`.",
-        },
-        new()
-        {
-            Id = "string-interpolation-not-a-pattern",
-            Category = "strings",
-            Source = "F(\"v{1}\") = 1\nF(y) = 2\nF('v1')",
-            Outcome = SpecOutcome.ParseError,
-            ExpectedDiagnosticCode = DiagnosticCode.InterpolationNotAllowedHere,
-            Explanation = "A clause-head literal pattern needs fixed text, so it cannot be an interpolated string; a double-quoted string without holes is a literal pattern.",
-        },
-        new()
-        {
-            Id = "string-interpolation-hole-closes-on-its-line",
-            Category = "strings",
-            Source = "\"{1 +\n2}\"",
-            Outcome = SpecOutcome.ParseError,
-            ExpectedDiagnosticCode = DiagnosticCode.UnterminatedInterpolationHole,
-            Explanation = "A string, its holes included, is written on one line: there are no multiline strings and no multiline holes.",
+            ExpectedDiagnosticCode = DiagnosticCode.UnsupportedDoubleQuotedString,
+            LeanExclusionReason = "The diagnostic is a C# lexical rule; Lean has no lexer or surface parser (STR-03).",
+            Notes = "C#-only by construction (parse-level partition): the diagnostic is a lexical rule and Lean has no lexer or surface parser (STR-03), so no Lean equivalent is fabricated.",
+            Explanation = "An unclosed double quote is the same error and reaches only to the end of its line, so the declarations on later lines are still read as written.",
         },
         // ==================== call references (CallReference S1) ====================
         new()
@@ -8556,7 +8422,7 @@ public static class LanguageSpecCorpus
             ExpectedErrorCategory = "type",
             Probes =
             [
-                new SpecProbe("Square(x) = x * x\nCapture(meta op) = op\nR = Capture(Square(5))\n\"{R}\"", "err type"),
+                new SpecProbe("Square(x) = x * x\nCapture(meta op) = op\nR = Capture(Square(5))\nR.string", "err type"),
                 new SpecProbe("Square(x) = x * x\nCapture(meta op) = op\nR = Capture(Square(5))\nR + 1", "err type"),
             ],
             Explanation = "A call reference is used inside the program: a program result that contains one, and text built from one, are errors. Output a value computed from it, such as `R.Invoke()`.",

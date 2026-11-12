@@ -284,7 +284,7 @@ public sealed class LoopConditionFirstTests
         "S(x) = 1 / 0, mark(false)\nS(1).while",
         "Spin(x) = x + 1, true\nS(x) = Spin(x).while, mark(false)\nS(1).while",
         "W(x) = if(x == 2, (), x + 1)\nS(x) = W(x)*, mark(x != true)\nS(1).while",
-        "S(x) = \"{x}ab\", x == ''\nS('').while",
+        "S(x) = if(x == '', 'ab', 'abab'), x == ''\nS('').while",
         Capture + "S(r, k) = {\n  V = r.Invoke()\n  r, k + V, k < 14\n}\nS(R, 0).while[1]",
     };
 
@@ -312,7 +312,9 @@ public sealed class LoopConditionFirstTests
 
     [Theory]
     [InlineData("S(k, v) = mark(k + 1), [k, k], mark(k < 1)\nS(0, ()).while[1]", false)]
-    [InlineData("S(k, s) = k + 1, mark(\"{s}ab\"), mark(k < 2)\nS(0, '').while[1]", true)]
+    // The string slot grows by one character a round ('100', '1000', then '10000' in the stopping
+    // round), so the per-value ceiling of 4 passes only if the stopping round builds no value.
+    [InlineData("S(k, s) = k + 1, mark((10 ^ (k + 2)).string), mark(k < 2)\nS(0, '').while[1]", true)]
     public async Task MaterializationEdges_AgreeOnEveryRoute(string source, bool strings)
     {
         var (complete, budget) = await AllRoutesAsync(source);

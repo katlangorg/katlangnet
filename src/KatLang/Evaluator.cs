@@ -668,7 +668,6 @@ public static partial class Evaluator
         Expr.Param => "param",
         Expr.Num => "num",
         Expr.StringLiteral => "stringLiteral",
-        Expr.InterpolatedString => "interpolatedString",
         Expr.BoolLiteral => "boolLiteral",
         Expr.Unary => "unary",
         Expr.Binary => "binary",
@@ -2216,9 +2215,7 @@ public static partial class Evaluator
     /// the planned loop's string constant. Every producer charges the length ceiling and the
     /// cumulative string budget through the one reservation
     /// (<see cref="Evaluation.EvaluationBudget.TryReserveString"/>) BEFORE the value is
-    /// created. An interpolated string builds its text from parts, so it checks each piece
-    /// against the same budget before appending it and then makes the same one reservation
-    /// (<c>InterpolatedTextBuilder</c>).
+    /// created.
     /// </summary>
     internal static EvalResult<Result> MakeStringResult(EvalCtx ctx, string text, SourceSpan? span = null)
         => ctx.Budget.TryReserveString(text.Length) is { } limitError
@@ -2400,7 +2397,6 @@ public static partial class Evaluator
             Expr.NativeCall => new EvalError.NotAnAlgorithm("native call") { Span = expr.Span },
             Expr.Grace => new EvalError.NotAnAlgorithm("grace expression") { Span = expr.Span },
             Expr.StringLiteral => new EvalError.NotAnAlgorithm("string literal") { Span = expr.Span },
-            Expr.InterpolatedString => new EvalError.NotAnAlgorithm("interpolated string") { Span = expr.Span },
             Expr.BoolLiteral => new EvalError.NotAnAlgorithm("Boolean literal") { Span = expr.Span },
         };
     }

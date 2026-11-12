@@ -30,7 +30,6 @@ def loopWhile (step : Expr) : Expr := callN "while" [step]
 #guard scalarRow (lt (.param "x") 3)
 #guard scalarRow (.unary .minus (.param "x"))
 #guard scalarRow (mul (callN "F" [.param "x"]) (.num 2))
-#guard scalarRow (.interpolatedString "v=" [⟨.param "x", ""⟩])
 #guard scalarRow (.emptySequence 0)
 #guard valueRow (.capture [.param "b", .param "a"])
 #guard valueRow (.index (.param "xs") [.num 0])
@@ -151,7 +150,6 @@ def decls : List (Ident × Algorithm) :=
    ("Fam", famStep),
    ("Neg", alg ["x"] [] [] [.unary .minus (.param "x")]),
    ("Not", alg ["x"] [] [] [.unary .not (.param "x")]),
-   ("Txt", alg ["x"] [] [] [.interpolatedString "v=" [⟨.param "x", ""⟩]]),
    ("Lit", alg ["x"] [] [] [.stringLiteral "a", .boolLiteral true]),
    ("Unit", alg ["x"] [] [] [.emptySequence 0]),
    ("Twice", alg ["x"] [] [] [add (.param "x") (.num 1), mul (.param "x") (.num 2)]),
@@ -191,7 +189,6 @@ def valueIs (r : Except Error Result) (v : Result) : Bool := obs r == reprStr v
 #guard sameAsCall (callN "Next" [.num 1])
 #guard sameAsCall (callN "Neg" [.num 3])
 #guard sameAsCall (callN "Not" [.boolLiteral true])
-#guard sameAsCall (callN "Txt" [.num 7])
 #guard sameAsCall (callN "Lit" [.num 0])
 #guard sameAsCall (callN "Unit" [.num 0])
 #guard sameAsCall (callN "Twice" [.num 4])

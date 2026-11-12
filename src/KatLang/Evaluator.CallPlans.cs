@@ -1413,7 +1413,7 @@ public static partial class Evaluator
     internal const string InvokeRequiresArgumentListMessage =
         "`Invoke` is a call-reference operation, not a property: write `R.Invoke()`.";
 
-    /// <summary>Text conversion (interpolation, display) of a value that contains a call reference.</summary>
+    /// <summary>Text conversion (display) of a value that contains a call reference.</summary>
     internal const string CallReferenceHasNoTextMessage =
         "A call reference has no text: use a value computed from it, for example `R.Invoke()`.";
 
@@ -1778,7 +1778,7 @@ public static partial class Evaluator
     /// only in a run that RETAINS plans (<see cref="SupplyCell"/> under
     /// <see cref="EvaluationBudget.RetainsInvocationPlans"/>: the J7 gate or a test seam, decided once before
     /// evaluation and never switched off). No reference enters a run from outside: every run result,
-    /// host-operation argument and interpolation refuses one, a host-operation return holding one is a host
+    /// host-operation argument refuses one, a host-operation return holding one is a host
     /// contract violation (<c>Result.AdmitHostOperationValue</c> throws), the property cache is keyed by run,
     /// and hosts cannot construct one. So a run that does not retain plans holds no reference anywhere, and
     /// its result is exported as is, with no traversal. Every retaining run — META-capable programs,

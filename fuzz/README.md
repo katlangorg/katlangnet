@@ -1235,7 +1235,7 @@ The contract this target rests on — written down in `Utf16LexerContractTests`,
 | U+200B, U+200D, U+FEFF | Category `Cf`, **not** whitespace: they become bad tokens. A BOM mid-file is a diagnostic, not trivia. |
 | Non-ASCII letters | Identifier characters (Latvian, Greek, Cyrillic, ideographic, and letter-like symbols). |
 | Non-ASCII decimal digits | Start a number token (`char.IsDigit` is true) that `Decimal128.TryParse` then rejects under the invariant culture. |
-| String literals | Single quotes: **no escape sequences at all**; ended by `'`, `'\n'` or `'\r'`. Double quotes (STR-02): the escapes `\"` `\\` `\n` `\t` and the doubled braces `{{` `}}`, a single `{` opening an interpolation hole of ordinary code; ended by `\"`, or unterminated at `'\n'`, `'\r'` or end of input as ONE string token. A hole-free double-quoted string is a `StringLiteral` token carrying its DECODED text; one with a hole is `InterpolatedStringStart` … `InterpolatedStringEnd` with decoded `InterpolatedStringText` runs. |
+| String literals | Single quotes only (STR-03): **no escape sequences at all**; ended by `'`, `'\n'` or `'\r'`. A double quote outside a comment or a single-quoted string is NOT syntax: it is `UnsupportedDoubleQuotedString`, recovered as ONE `StringLiteral` token running to the next `\"` on the line, or to `'\n'`, `'\r'` or end of input, with nothing inside interpreted and exactly one diagnostic over the run. |
 | Comments | `#` to `'\n'` or `'\r'`. There is no block-comment form. |
 
 ### Invariants
@@ -1253,11 +1253,14 @@ adds is all about the code-unit model:
    from its offset by `SourceSpanValidator.LineColumnAt` — the lexer tracks them incrementally while
    scanning, this derives them from the source, and they must agree. One shared helper, one model,
    used by the raw, frontend and UTF-16 layers alike.
-4. **Exact source slices.** Identifier, comment and single-quoted string-literal token text must be
-   the exact source slice (minus `#` or the quotes); a double-quoted literal and an interpolated
-   text run must be the exact DECODED slice (an independent decoder of `\"` `\\` `\n` `\t` `{{` `}}`;
-   an unterminated double-quoted string keeps the raw slice after its quote). This is what catches a
-   normalization or a replacement character introduced anywhere on the path.
+4. **Exact source slices.** Identifier, comment and string token text must be the exact source
+   slice (minus `#` or the delimiters) — a string token is a single-quoted literal or the recovery
+   token of a rejected double-quoted run, neither is ever decoded, and neither holds its own
+   delimiter. This is what catches a normalization or a replacement character introduced anywhere
+   on the path.
+4a. **Rejected double quotes.** Every double-quoted run is one string token beside exactly one
+   `UnsupportedDoubleQuotedString` diagnostic over the token's whole extent, in source order, and is
+   never also an unterminated string literal (`Utf16Executor.CheckRejectedDoubleQuotedRuns`).
 5. **Bounded diagnostics.** Total diagnostics are bounded linearly in source length, and the number
    sharing one `(line, column)` is bounded by `Parser.MaxNestingDepth`.
 6. **Determinism and isolation.** A/A and A/B/A on every input, plus a reversed-order sweep in the
@@ -1451,7 +1454,7 @@ a bounded edit. Nothing grows with an encoded integer; bytes past the prefix are
 Layered, and Lean is deliberately not among them:
 
 * **Lexer** — token spans and (line, column), and comment/string token regions the classifier must
-  not overlap (an interpolated string's text runs and delimiters included; its holes are code).
+  not overlap (the recovery token of a rejected double-quoted run included: nothing inside it is code).
 * **Parser / front end** — the AST the model is built from; the model must not invent an occurrence,
   and every occurrence's source slice must equal its reported name.
 * **Runtime metadata** — `BuiltinRegistry` supplies the allowed builtin names and fixed-arity plain

@@ -57,14 +57,14 @@ public class DeferredCompileStackProcessTests
     /// <summary>
     /// Shapes admitted by the structural gates: nested blocks, braces, lists, groups, calls,
     /// builtin calls, clause families, operator / dot / selector chains (which build deep trees
-    /// during iterative parsing), a wide flat comparison chain, prefix operators, interpolation
-    /// holes, opens of blocks and clause-head patterns.
+    /// during iterative parsing), a wide flat comparison chain, prefix operators, opens of
+    /// blocks and clause-head patterns.
     /// </summary>
     internal static readonly (string Shape, int Depth)[] Shapes =
     [
         ("block", 90), ("brace", 90), ("list", 120), ("group", 90), ("call", 100), ("ifc", 80),
         ("family", 40), ("plus", 250), ("dot", 95), ("cmp", 250), ("index", 250), ("neg", 150),
-        ("interp", 40), ("openb", 40), ("pattern", 80),
+        ("openb", 40), ("pattern", 80),
     ];
 
     /// <summary>
@@ -102,7 +102,6 @@ public class DeferredCompileStackProcessTests
             case "cmp": return Chain(inner, " == 0", depth);
             case "index": return Chain(inner, "[0]", depth);
             case "neg": for (var i = 0; i < depth; i++) e = "-" + e; return e;
-            case "interp": for (var i = 0; i < depth; i++) e = "\"{" + e + "}\""; return e;
             case "openb": for (var i = 0; i < depth; i++) e = "{ open { public W = " + e + " }\nW }"; return e;
             case "pattern":
             {

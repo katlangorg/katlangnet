@@ -27,9 +27,6 @@ public sealed class PublicTerminalSafeDiagnosticTests
     /// <summary>The visible escape the policy renders for one UTF-16 code unit.</summary>
     private static string U(int codeUnit) => Backslash + "u" + codeUnit.ToString("X4", CultureInfo.InvariantCulture);
 
-    /// <summary>A KatLang double-quoted string's line-break escape, spelled without a C# escape.</summary>
-    private static readonly string KatLangNewLineEscape = Backslash + "n";
-
     /// <summary>
     /// Nothing a terminal could act on, or that hides or reorders text, except a line break —
     /// LF or CRLF — which in a safe rendering is always KatLang's own.
@@ -164,13 +161,21 @@ public sealed class PublicTerminalSafeDiagnosticTests
         Assert.True(echoed >= 3, $"{name}: only {echoed} programs echoed the string");
     }
 
-    // ── S3: a source-controlled newline cannot forge a diagnostic line ─────
+    // ── S3: a newline in a string VALUE cannot forge a diagnostic line ─────
 
     [Fact]
     public void EngineValueDiagnostic_CannotForgeADiagnosticLine()
     {
-        var source = "if(\"safe" + KatLangNewLineEscape + "[1:1] no error" + KatLangNewLineEscape + "Did you mean 'x'?\", 1, 2)";
-        var error = SingleEvalError(source);
+        // No written string holds a line break (a single-quoted literal ends with its line and
+        // has no escapes), so the hostile text arrives the way it can: as a host operation's result.
+        var forged = $"safe{Lf}[1:1] no error{Lf}Did you mean 'x'?";
+        var options = new RunOptions
+        {
+            HostOperations = HostOperations.Create(HostOperation.Create("Text", (_, _) => new Result.Str(forged))),
+        };
+        const string source = "if(Text(), 1, 2)";
+        Assert.False(Parser.Parse(source, options).HasErrors, "the hostile program must parse cleanly");
+        var error = Assert.Single(Assert.IsType<RunResult.EvalFailure>(KatLangEngine.Run(source, options)).Errors);
         Assert.Equal(KatLangErrorCode.TypeMismatch, error.Code);
         Assert.Contains($"safe{Lf}[1:1] no error{Lf}Did you mean 'x'?", error.ToString());
 

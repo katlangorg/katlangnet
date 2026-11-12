@@ -80,7 +80,6 @@ public class NativeRecordTextTests
 
         // The records that only ENTER one: a synthesized frame around the writer.
         Assert.Equal(GeneratedText(new ComparisonLink(ComparisonOp.Lt, mixed)), new ComparisonLink(ComparisonOp.Lt, mixed).ToString());
-        Assert.Equal($"InterpolationLink {{ Hole = {text}, Text = t }}", new InterpolationLink(mixed, "t").ToString());
 
         // A shared child is written at each occurrence.
         var twice = new Expr.Binary(BinaryOp.Add, mixed, mixed).ToString();

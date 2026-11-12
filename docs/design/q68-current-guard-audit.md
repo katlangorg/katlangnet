@@ -17,6 +17,8 @@ no production code.
 
 Detailed, reproducible evidence (ignored, local): `artifacts/validation/q68-current-guard-audit/`.
 
+> **STR-03 notice (2026-11-11):** string interpolation and double-quoted strings were later removed from KatLang. The `Strings` interpolation-hole guards this audit counts and classifies were deleted with the feature (`lean/CoreTests/Strings.lean` now guards the one raw single-quoted form and `.string`). The inventory below is the dated 2026-10-20 record and is not recounted.
+
 ## 1. Baseline
 
 - Checkout `D:\Projects\katlangnet`, branch `main`, HEAD `2908ddaa` ("Prove scoped S6a repeated-name

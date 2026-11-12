@@ -1270,7 +1270,6 @@ theorem probe_is_projected_structure : ∀ (target : Expr) (ctx : EvalCtx) (s s'
       exact (hvalue _ (by nofun) (by nofun) (by nofun) hprobe').elim
     | .num v => exact (hvalue _ (by nofun) (by nofun) (by nofun) hprobe').elim
     | .stringLiteral v => exact (hvalue _ (by nofun) (by nofun) (by nofun) hprobe').elim
-    | .interpolatedString h l => exact (hvalue _ (by nofun) (by nofun) (by nofun) hprobe').elim
     | .boolLiteral b => exact (hvalue _ (by nofun) (by nofun) (by nofun) hprobe').elim
     | .unary op e => exact (hvalue _ (by nofun) (by nofun) (by nofun) hprobe').elim
     | .binary op e₁ e₂ => exact (hvalue _ (by nofun) (by nofun) (by nofun) hprobe').elim
@@ -1311,7 +1310,6 @@ theorem headParam_none_of_not_paramHeaded : ∀ (target : Expr), target.isParamH
   | .dotMember _ _ _ (some _), _ => rfl
   | .num _, _ => rfl
   | .stringLiteral _, _ => rfl
-  | .interpolatedString _ _, _ => rfl
   | .boolLiteral _, _ => rfl
   | .unary _ _, _ => rfl
   | .binary _ _ _, _ => rfl

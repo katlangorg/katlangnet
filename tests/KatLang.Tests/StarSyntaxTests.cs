@@ -182,8 +182,6 @@ public class StarSyntaxTests
 
     [Theory]
     [InlineData("a = 2\na *\n'x'")]
-    [InlineData("a = 2\na *\n\"x\"")]
-    [InlineData("a = 2\na *\n\"{a}\"")]
     [InlineData("a = 2\na *\n[1]")]
     public void StringOrListOnTheNextLine_IsAMultiplicationOperand_AfterADetachedStar_AndFailsAtRuntime(string source)
     {
@@ -198,8 +196,6 @@ public class StarSyntaxTests
 
     [Theory]
     [InlineData("a = 2\na*\n'x'", "2\nx")]
-    [InlineData("a = 2\na*\n\"x\"", "2\nx")]
-    [InlineData("a = 2\na*\n\"{a}\"", "2\n2")]
     [InlineData("a = 2\na*\n[1]", "2\n[1]")]
     public void StringOrListOnTheNextLine_IsItsOwnRow_AfterAnAttachedStar(string source, string expected)
         => Assert.Equal(expected, Display(source));
@@ -471,7 +467,7 @@ public class StarSyntaxTests
     public void DetachedLineFinalStar_AnnouncesMultiplication_AcrossEveryFollowingTokenKind()
     {
         const string preamble = "A=4\nB=6\n";
-        foreach (var follower in new[] { "B", "6", "'x'", "\"x\"", "(B)", "[B]", "{B}", "-B", "not B", "~B", "B=1", "F(x)=x", "x,y=1,2", "open B", "public B=1" })
+        foreach (var follower in new[] { "B", "6", "'x'", "(B)", "[B]", "{B}", "-B", "not B", "~B", "B=1", "F(x)=x", "x,y=1,2", "open B", "public B=1" })
         {
             var parsed = Parser.ParseSyntax(preamble + "A *\n" + follower);
             Assert.Equal(BinaryOp.Mul, Assert.IsType<Expr.Binary>(parsed.Root.Output[0]).Op);
@@ -492,7 +488,7 @@ public class StarSyntaxTests
     public void AttachedLineFinalStar_CompletesASpread_AcrossEveryFollowingTokenKind()
     {
         const string preamble = "A=4\nB=6\n";
-        foreach (var follower in new[] { "B", "6", "'x'", "\"x\"", "(B)", "[B]", "{B}", "-B", "not B", "~B", "B=1", "F(x)=x", "x,y=1,2", "open B", "public B=1" })
+        foreach (var follower in new[] { "B", "6", "'x'", "(B)", "[B]", "{B}", "-B", "not B", "~B", "B=1", "F(x)=x", "x,y=1,2", "open B", "public B=1" })
         {
             var parsed = Parser.ParseSyntax(preamble + "A*\n" + follower);
             Assert.IsType<Expr.SequenceSpread>(parsed.Root.Output[0]);
@@ -568,8 +564,6 @@ public class StarSyntaxTests
         // multiplication by a string — a runtime type error, never a spread of
         // `a` followed by an adjacent string item.
         Assert.NotEmpty(FailureErrors("a = 2\na* 'x'"));
-        Assert.NotEmpty(FailureErrors("a = 2\na* \"x\""));
-        Assert.NotEmpty(FailureErrors("a = 2\na* \"{a}\""));
     }
 
     [Fact]

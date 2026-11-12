@@ -475,10 +475,6 @@ internal sealed class LeanAstEncoding
         // `{ op, operand }` link per written comparison, never nested binaries.
         Expr.Comparison(var first, var links) =>
             $"(.comparison {Arg(first)} [{EncodeList(links, EncodeComparisonLink)}])",
-        // An interpolated string encodes as the alternating form it is: the decoded head text
-        // and one `{ hole, text }` link per hole, in written order.
-        Expr.InterpolatedString(var head, var links) =>
-            $"(.interpolatedString {Quote(head)} [{EncodeList(links, EncodeInterpolationLink)}])",
         Expr.Index(var target, var selectors) => $"(.index {Arg(target)} [{EncodeList(selectors, EncodeExpr)}])",
         // INTERNAL node: the parser never produces it, but the internal-node
         // differential cases hand-construct it, and their Lean text is derived
@@ -787,9 +783,6 @@ internal sealed class LeanAstEncoding
     private string EncodeComparisonLink(ComparisonLink link)
         => $"{{ op := .{EncodeComparisonOp(link.Op)}, operand := {Arg(link.Operand)} }}";
 
-    private string EncodeInterpolationLink(InterpolationLink link)
-        => $"{{ hole := {Arg(link.Hole)}, text := {Quote(link.Text)} }}";
-
     private static string EncodeComparisonOp(ComparisonOp op) => op switch
     {
         ComparisonOp.Lt => "lt",
@@ -889,7 +882,7 @@ internal sealed class LeanAstEncoding
     /// <summary>
     /// Lean string-literal spelling for names and string values. Backslash and
     /// quote are escaped, and a line feed and a tab take Lean's <c>\n</c> / <c>\t</c>
-    /// (a double-quoted KatLang string can hold them through its escapes); every other
+    /// (a written literal can hold a raw tab, a host-built value either); every other
     /// control character has no reviewed spelling here and is refused. Also the
     /// spelling of the expected neutral text embedded in a generated <c>#guard</c>.
     /// </summary>

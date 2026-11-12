@@ -32,13 +32,6 @@ public enum UnaryOp { Minus, Not }
 /// </summary>
 public sealed record ComparisonLink(ComparisonOp Op, Expr Operand);
 
-/// <summary>
-/// One link of an interpolated string: an interpolation <paramref name="Hole"/> and the
-/// already-decoded literal <paramref name="Text"/> written after it (possibly empty).
-/// Lean: <c>InterpolationLink</c>.
-/// </summary>
-public sealed record InterpolationLink(Expr Hole, string Text);
-
 // ── Built-in identifiers (Lean: Builtin) ────────────────────────────────────
 
 /// <summary>
@@ -1681,7 +1674,7 @@ public closed record Expr
     {
         Unary or Comparison or Index or SequenceSpread or Grace or AlgorithmExpr or Call => 1,
         Binary or SequenceConstruct or DotCall => 2,
-        Param or Num or StringLiteral or InterpolatedString or BoolLiteral or EmptySequence
+        Param or Num or StringLiteral or BoolLiteral or EmptySequence
             or ListLiteral or Resolve or Capture or NativeCall => 0,
     };
 
@@ -1727,28 +1720,6 @@ public closed record Expr
             init => _isRecoveryLiteral = new(value);
         }
     }
-
-    /// <summary>
-    /// An INTERPOLATED STRING <c>"head{hole1}text1…{holeN}textN"</c>: a double-quoted string
-    /// with at least one interpolation hole (a double-quoted string with none is an ordinary
-    /// <see cref="StringLiteral"/>). <see cref="Head"/> and every link's text are already
-    /// decoded. Each hole is ONE ordinary expression of the ENCLOSING algorithm — not a scope,
-    /// not an argument slot, not a declaration site — in a VALUE role, so its free names are the
-    /// enclosing owner's names and a callable that requires arguments lifts there like any
-    /// operand.
-    /// <para><b>Evaluation (VAL-12).</b> The node is an ordinary expression: as a call argument
-    /// it is one suspended computation like any other. When its value is demanded, the holes are
-    /// evaluated LEFT TO RIGHT, each EXACTLY ONCE per evaluation of the node, and each value is
-    /// converted to text as soon as it is available, by the one structural value text
-    /// (<see cref="Rendering.ValueTextRenderer.AppendCanonicalValue"/>): a number's canonical
-    /// text (never display text), <c>true</c>/<c>false</c>, a string verbatim — unquoted at every
-    /// nesting level — and sequences and lists with their parentheses and brackets (<c>()</c> and
-    /// <c>[]</c> included). The first failure ends the evaluation (later holes are never
-    /// evaluated); otherwise the result is ONE string value. An interpolated string has no
-    /// callable identity. A host-built node with no links evaluates to its head.</para>
-    /// Lean: <c>Expr.interpolatedString</c>.
-    /// </summary>
-    public sealed record InterpolatedString(string Head, IReadOnlyList<InterpolationLink> Links) : Expr;
 
     /// <summary>
     /// The reserved Boolean literal <c>true</c> / <c>false</c>. Evaluates to

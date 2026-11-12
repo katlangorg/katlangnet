@@ -17,18 +17,28 @@ namespace KatLang.Tests;
 /// </summary>
 public class MetamorphicStructuralIdentityTests
 {
-    /// <summary><c>["a', 'b", "c"]</c> — a list of TWO strings.</summary>
-    private const string TwoStrings = "[\"a', 'b\", \"c\"]";
+    /// <summary>
+    /// A list of TWO strings, the first being <c>a', 'b</c>. No program can write it (STR-03: a string
+    /// literal is raw single-quoted text and cannot hold a single quote), so it is a host-built value
+    /// whose observation is constructed exactly as every value-projecting surface constructs one.
+    /// </summary>
+    private static readonly Result TwoStringsValue =
+        new Result.ListValue([new Result.Str("a', 'b"), new Result.Str("c")]);
 
-    /// <summary><c>["a", "b", "c"]</c> — a list of THREE strings.</summary>
-    private const string ThreeStrings = "[\"a\", \"b\", \"c\"]";
+    /// <summary><c>['a', 'b', 'c']</c> — a list of THREE strings, as a program writes it.</summary>
+    private const string ThreeStrings = "['a', 'b', 'c']";
+
+    /// <summary>The observation a surface would hand back for the two-string list: the counters of a
+    /// real run of the three-string program, with the value projection of the two-string list.</summary>
+    private static MetamorphicOperationalObservation TwoStringsObservedLike(MetamorphicOperationalObservation real)
+        => real with { Semantic = Of(TwoStringsValue) };
 
     // ── T1: the original collision ───────────────────────────────────────────
 
     [Fact]
     public void T1_OriginalCollision_IsRejectedByTheRealComparisonPath()
     {
-        var twoStrings = new Result.ListValue([new Result.Str("a', 'b"), new Result.Str("c")]);
+        var twoStrings = TwoStringsValue;
         var threeStrings = new Result.ListValue([new Result.Str("a"), new Result.Str("b"), new Result.Str("c")]);
 
         // 1. The historical neutral text still collides, byte for byte, in both mirrors.
@@ -42,11 +52,14 @@ public class MetamorphicStructuralIdentityTests
         // 3. So does the durable identity.
         Assert.NotEqual(MetamorphicStructuralIdentity.Encode(twoStrings), MetamorphicStructuralIdentity.Encode(threeStrings));
 
-        // 4. The real programs, executed and compared exactly as the fuzz target does.
-        var testCase = CrossSourceCase(TwoStrings, ThreeStrings);
-        var execution = MetamorphicExecutor.Execute(testCase);
-        Assert.True(execution.Accepted, execution.RejectionReason);
-        Assert.Equal(execution.Left!.Semantic.Structure, execution.Right!.Semantic.Structure);
+        // 4. The real three-string program, executed exactly as the fuzz target does, against the
+        //    two-string list's observation (which no program can produce any more), through the
+        //    real comparator.
+        var testCase = CrossSourceCase(ThreeStrings, ThreeStrings);
+        var executed = MetamorphicExecutor.Execute(testCase);
+        Assert.True(executed.Accepted, executed.RejectionReason);
+        var execution = (Left: TwoStringsObservedLike(executed.Left!), Right: executed.Right!);
+        Assert.Equal(execution.Left.Semantic.Structure, execution.Right.Semantic.Structure);
         Assert.True(Result.ValueComparer.Equals(twoStrings, execution.Left.Semantic.Value!));
         Assert.True(Result.ValueComparer.Equals(threeStrings, execution.Right.Semantic.Value!));
 
@@ -58,10 +71,8 @@ public class MetamorphicStructuralIdentityTests
         Assert.NotEqual(mismatch.LeftValue, mismatch.RightValue);
 
         // The pre-SEM-2A records have only the same neutral text and count: the old comparator
-        // accepted them. They cannot establish equality and must now be refused. (This Phase 1
-        // case also claims materialization equality, which happens
-        // to differ for these two lists — 2 against 3 items — so the semantic verdict is isolated
-        // by declaring no operational relation.)
+        // accepted them. They cannot establish equality and must now be refused. (The semantic
+        // verdict is isolated by declaring no operational relation.)
         var semanticOnly = testCase with { OperationalRelation = MetamorphicOperationalRelation.NotCompared };
         var legacyLeft = execution.Left with { Semantic = Legacy(execution.Left.Semantic) };
         var legacyRight = execution.Right with { Semantic = Legacy(execution.Right.Semantic) };
@@ -78,8 +89,8 @@ public class MetamorphicStructuralIdentityTests
         // paths; both must reject the colliding pair as well.
         var entry = MetamorphicFacetsCase(MetamorphicSemanticRelation.SameStructuredOutcome);
         var isolation = MetamorphicFacetsCase(MetamorphicSemanticRelation.IndependentRunStable);
-        var left = ObserveThrough(MetamorphicSurface.EvaluatorRun, TwoStrings);
         var right = ObserveThrough(MetamorphicSurface.EvaluatorRun, ThreeStrings);
+        var left = TwoStringsObservedLike(right);
 
         Assert.Equal(MetamorphicMismatchKind.SemanticStructure, Require(MetamorphicComparator.Compare(entry, left, right)).Kind);
         var isolated = Require(MetamorphicComparator.Compare(isolation, left, right));
@@ -149,8 +160,8 @@ public class MetamorphicStructuralIdentityTests
     [InlineData("[1, 2]", "[2, 1]")]
     [InlineData("[[1], 2]", "[1, [2]]")]
     [InlineData("[1]", "[true]")]
-    [InlineData("[\"1\"]", "[1]")]
-    [InlineData("[\"true\"]", "[true]")]
+    [InlineData("['1']", "[1]")]
+    [InlineData("['true']", "[true]")]
     public void T2_T3_T4_T5_RealProgramsWithDifferentValuesAreRejectedThroughTheExecutor(string left, string right)
     {
         var testCase = CrossSourceCase(left, right);
@@ -471,8 +482,8 @@ public class MetamorphicStructuralIdentityTests
         Assert.StartsWith(MetamorphicStructuralIdentity.Version + ":", Expected, StringComparison.Ordinal);
 
         // Two independent runs of one program produce the same identity.
-        var first = ObserveThrough(MetamorphicSurface.EvaluatorRunCountedObserved, "[1.5, \"x\", true, [[], ()]]");
-        var second = ObserveThrough(MetamorphicSurface.EvaluatorRunCountedObserved, "[1.5, \"x\", true, [[], ()]]");
+        var first = ObserveThrough(MetamorphicSurface.EvaluatorRunCountedObserved, "[1.5, 'x', true, [[], ()]]");
+        var second = ObserveThrough(MetamorphicSurface.EvaluatorRunCountedObserved, "[1.5, 'x', true, [[], ()]]");
         Assert.NotSame(first.Semantic.Value, second.Semantic.Value);
         Assert.Equal(first.Semantic.StructuralIdentity, second.Semantic.StructuralIdentity);
         Assert.Equal(first, second);
@@ -601,7 +612,7 @@ public class MetamorphicStructuralIdentityTests
     {
         foreach (var surface in MetamorphicSurfaces.All)
         {
-            var observation = ObserveThrough(surface.Surface, "[\"a', 'b\", 1.50, true, ()]");
+            var observation = ObserveThrough(surface.Surface, "['a, b', 1.50, true, ()]");
             var semantic = observation.Semantic;
             if (surface.Facets.HasFlag(MetamorphicFacets.Structure))
             {

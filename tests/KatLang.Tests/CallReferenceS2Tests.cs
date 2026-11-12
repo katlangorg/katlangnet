@@ -466,12 +466,6 @@ public class CallReferenceS2Tests
     public void ARunResultContainingAView_IsRefusedAtTheRunBoundary(string rows)
         => Assert.Equal(TypeError(Evaluator.CallReferenceLeavesRunMessage), Run("R = Capture(Add(10, 20))\n" + rows));
 
-    [Theory]
-    [InlineData("\"v={R.Arguments}\"")]
-    [InlineData("\"v={[1, R.Arguments]}\"")]
-    public void Interpolation_RefusesAView(string row)
-        => Assert.Equal(TypeError(Evaluator.CallReferenceHasNoTextMessage), Run("R = Capture(Add(10, 20))\n" + row));
-
     [Fact]
     public void AHostOperation_NeverReceivesAView()
     {

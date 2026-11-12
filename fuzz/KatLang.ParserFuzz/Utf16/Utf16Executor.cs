@@ -1,5 +1,4 @@
 using System.Globalization;
-using System.Text;
 using KatLang;
 
 namespace KatLang.ParserFuzz;
@@ -104,6 +103,7 @@ internal static class Utf16Executor
 
         phase = Utf16Phase.TokenInvariants;
         CheckTokens(source, tokens);
+        CheckRejectedDoubleQuotedRuns(source, tokens, lexDiagnostics);
 
         phase = Utf16Phase.ParseSyntax;
         var syntax = Parser.ParseSyntax(source);
@@ -253,13 +253,23 @@ internal static class Utf16Executor
                     $"Comment token text is not its source slice after '#': token={HexOf(token.StringValue ?? "")} " +
                     $"source={HexOf(slice[1..])}");
 
-            case TokenKind.StringLiteral when slice[0] == '\'':
+            case TokenKind.StringLiteral:
                 {
-                    // A single-quoted literal's value is the text between the quotes; a terminated
-                    // literal has both, an unterminated one only the opening quote. Single-quoted
-                    // strings have no escape sequences.
-                    var terminated = slice.Length >= 2 && slice[^1] == '\'';
+                    // A string token's value is the exact text between its delimiters: single quotes
+                    // for a literal, double quotes for the recovery token of a rejected double-quoted
+                    // run (STR-03), whose text is likewise never decoded. A terminated token has both
+                    // delimiters, an unterminated one only the opening one. There are no escape
+                    // sequences, so the text never holds the token's own delimiter.
+                    var quote = slice[0];
+                    if (quote is not ('\'' or '"'))
+                        throw new Utf16InvariantException(
+                            $"String token {Describe(token)} begins with neither quote kind: {HexOf(slice)}");
+
+                    var terminated = slice.Length >= 2 && slice[^1] == quote;
                     var expected = terminated ? slice[1..^1] : slice[1..];
+                    if (expected.Contains(quote))
+                        throw new Utf16InvariantException(
+                            $"String token {Describe(token)} ran past its own delimiter: {HexOf(slice)}");
                     if (!string.Equals(token.StringValue, expected, StringComparison.Ordinal))
                         throw new Utf16InvariantException(
                             $"String-literal value is not its exact source slice: token={HexOf(token.StringValue ?? "")} " +
@@ -267,99 +277,64 @@ internal static class Utf16Executor
                     break;
                 }
 
-            case TokenKind.StringLiteral:
-                {
-                    // A double-quoted literal (STR-02): a terminated hole-free string carries its
-                    // DECODED text; an unterminated one (its line ended inside the string or one of
-                    // its holes) carries the raw text after the opening quote.
-                    var terminated = slice.Length >= 2 && slice[^1] == '"'
-                        && TryDecodeHoleFreeText(slice[1..^1], out _);
-                    var expected = terminated && TryDecodeHoleFreeText(slice[1..^1], out var decoded) ? decoded : slice[1..];
-                    if (!string.Equals(token.StringValue, expected, StringComparison.Ordinal))
-                        throw new Utf16InvariantException(
-                            $"Double-quoted string value is not its decoded source text: token={HexOf(token.StringValue ?? "")} " +
-                            $"source={HexOf(expected)} (terminated={terminated})");
-                    break;
-                }
-
-            case TokenKind.InterpolatedStringText when !string.Equals(token.StringValue, DecodeText(slice), StringComparison.Ordinal):
-                throw new Utf16InvariantException(
-                    $"Interpolated text value is not its decoded source run: token={HexOf(token.StringValue ?? "")} " +
-                    $"source={HexOf(slice)}");
-
             default:
                 break;
         }
     }
 
     /// <summary>
-    /// An independent decoder of double-quoted string text: the escapes <c>\"</c>, <c>\\</c>,
-    /// <c>\n</c>, <c>\t</c> and the doubled braces; an unsupported escape and a lone <c>}</c> keep
-    /// their written characters (the lexer reports them).
+    /// A double quote outside a comment or a single-quoted string is rejected, never read (STR-03):
+    /// every double-quoted run is ONE string token beside ONE
+    /// <see cref="DiagnosticCode.UnsupportedDoubleQuotedString"/> diagnostic over the token's whole
+    /// extent, in source order, and a run is never also an unterminated string literal. The lexer's
+    /// diagnostic list is bounded, so past the bound the stored reports are a prefix of the runs.
+    /// Internal so the audit can run it over a doctored stream.
     /// </summary>
-    private static string DecodeText(string raw)
+    internal static void CheckRejectedDoubleQuotedRuns(
+        string source, IReadOnlyList<Token> tokens, IReadOnlyList<Diagnostic> lexDiagnostics)
     {
-        var decoded = new StringBuilder(raw.Length);
-        for (var i = 0; i < raw.Length; i++)
+        var runs = new List<Token>();
+        foreach (var token in tokens)
         {
-            if (i + 1 < raw.Length)
-            {
-                var pair = raw.AsSpan(i, 2);
-                char? single = pair switch
-                {
-                    "\\\"" => '"', "\\\\" => '\\', "\\n" => '\n', "\\t" => '\t', "{{" => '{', "}}" => '}', _ => null,
-                };
-                if (single is { } c)
-                {
-                    decoded.Append(c);
-                    i++;
-                    continue;
-                }
-
-                if (raw[i] == '\\')
-                {
-                    decoded.Append(raw[i]).Append(raw[i + 1]);
-                    i++;
-                    continue;
-                }
-            }
-
-            decoded.Append(raw[i]);
+            if (token.Kind == TokenKind.StringLiteral && source[token.Position] == '"')
+                runs.Add(token);
         }
 
-        return decoded.ToString();
-    }
-
-    /// <summary>
-    /// Decodes the content between a double-quoted string's quotes when it is a whole hole-free
-    /// string: false when a lone <c>{</c> (a hole), an unescaped <c>"</c>, or a trailing backslash
-    /// shows the content is not one terminated hole-free string.
-    /// </summary>
-    private static bool TryDecodeHoleFreeText(string content, out string decoded)
-    {
-        decoded = "";
-        for (var i = 0; i < content.Length; i++)
+        var reports = new List<Diagnostic>();
+        var truncated = false;
+        foreach (var diagnostic in lexDiagnostics)
         {
-            var c = content[i];
-            if (c == '\\')
-            {
-                if (i + 1 >= content.Length) return false;
-                i++;
-                continue;
-            }
-
-            if (c == '{')
-            {
-                if (i + 1 < content.Length && content[i + 1] == '{') { i++; continue; }
-                return false;
-            }
-
-            if (c == '}' && i + 1 < content.Length && content[i + 1] == '}') { i++; continue; }
-            if (c == '"') return false;
+            if (diagnostic.Code == DiagnosticCode.UnsupportedDoubleQuotedString)
+                reports.Add(diagnostic);
+            else if (diagnostic.Code == DiagnosticCode.DiagnosticCountExceeded)
+                truncated = true;
         }
 
-        decoded = DecodeText(content);
-        return true;
+        if (truncated ? reports.Count > runs.Count : reports.Count != runs.Count)
+            throw new Utf16InvariantException(
+                $"{Num(runs.Count)} double-quoted runs but {Num(reports.Count)} unsupported-double-quote diagnostics " +
+                $"(truncated={truncated}).");
+
+        for (var i = 0; i < reports.Count; i++)
+        {
+            if (reports[i].Span != runs[i].Span)
+                throw new Utf16InvariantException(
+                    $"Unsupported-double-quote diagnostic {Num(i)} does not cover its run: " +
+                    $"diagnostic={SourceSpanValidator.Describe(reports[i].Span)} token={Describe(runs[i])}");
+        }
+
+        var runSpans = new HashSet<SourceSpan>();
+        foreach (var run in runs)
+            runSpans.Add(run.Span);
+        foreach (var diagnostic in lexDiagnostics)
+        {
+            if (diagnostic.Code == DiagnosticCode.UnterminatedStringLiteral
+                && diagnostic.Span is { } span && runSpans.Contains(span))
+            {
+                throw new Utf16InvariantException(
+                    $"The double-quoted run at {SourceSpanValidator.Describe(span)} is also reported as an unterminated string literal.");
+            }
+        }
     }
 
     /// <summary>

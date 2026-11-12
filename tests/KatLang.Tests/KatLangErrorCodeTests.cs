@@ -362,7 +362,9 @@ public class KatLangErrorCodeTests
     {
         // Names and numeric values are public contract: append-only. This pin
         // fails on any renumbering, rename, or removal; extend it when
-        // appending a new family.
+        // appending a new family. The ONE reviewed removal is STR-03 (November 2026):
+        // the double-quoted string and interpolation families 53-57 left with their
+        // features. Their values stay retired — a gap, never reused.
         var expected = new Dictionary<string, int>
         {
             ["Unspecified"] = 0,
@@ -418,17 +420,16 @@ public class KatLangErrorCodeTests
             ["UnliftableClauseFamily"] = 50,
             ["UnforwardableCallable"] = 51,
             ["AmbiguousOpen"] = 52,
-            ["InvalidStringEscape"] = 53,
-            ["UnmatchedBraceInString"] = 54,
-            ["UnterminatedInterpolationHole"] = 55,
-            ["InvalidInterpolationHole"] = 56,
-            ["InterpolationNotAllowedHere"] = 57,
             ["RetiredColonSelection"] = 58,
             ["InvalidMetaParameter"] = 59,
             ["SelfDependentInferredParameters"] = 60,
             ["StaticStructureLimitExceeded"] = 61,
             ["UnboundLoadReference"] = 62,
+            ["UnsupportedDoubleQuotedString"] = 63,
         };
+
+        // The retired STR-02 values are no member's value.
+        Assert.DoesNotContain(Enum.GetValues<DiagnosticCode>(), v => (int)v is >= 53 and <= 57);
 
         var actual = Enum.GetValues<DiagnosticCode>().ToDictionary(v => v.ToString(), v => (int)v);
         Assert.Equal(expected, actual);
@@ -514,17 +515,16 @@ public class KatLangErrorCodeTests
             ["UnliftableClauseFamily"] = 72,
             ["UnforwardableCallable"] = 73,
             ["DemandCycle"] = 74,
-            ["InvalidStringEscape"] = 75,
-            ["UnmatchedBraceInString"] = 76,
-            ["UnterminatedInterpolationHole"] = 77,
-            ["InvalidInterpolationHole"] = 78,
-            ["InterpolationNotAllowedHere"] = 79,
             ["RetiredColonSelection"] = 80,
             ["InvalidMetaParameter"] = 81,
             ["SelfDependentInferredParameters"] = 82,
             ["StaticStructureLimitExceeded"] = 83,
             ["UnboundLoadReference"] = 84,
+            ["UnsupportedDoubleQuotedString"] = 85,
         };
+
+        // The retired STR-02 values (75-79) are no member's value.
+        Assert.DoesNotContain(Enum.GetValues<KatLangErrorCode>(), v => (int)v is >= 75 and <= 79);
 
         var actual = Enum.GetValues<KatLangErrorCode>().ToDictionary(v => v.ToString(), v => (int)v);
         Assert.Equal(expected, actual);

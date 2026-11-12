@@ -181,8 +181,6 @@ def pairs : Expr := callF "Add" [.sequenceSpread (callF "Pair" [])]
 -- Run, text and operator boundaries.
 #guard isTypeMismatch (run add1020 [args R]) callReferenceLeavesRunMessage
 #guard isTypeMismatch (run add1020 [.listLiteral [.num 1, args R]]) callReferenceLeavesRunMessage
-#guard isTypeMismatch (run add1020 [.interpolatedString "v=" [{ hole := args R, text := "" }]])
-  callReferenceHasNoTextMessage
 #guard isTypeMismatchAny (run add1020 [add (args R) (.num 1)])
 
 -- The no-view premise of `openSpreadItems_eq_reopen` is about EVERY opening, not the operand's

@@ -129,12 +129,14 @@ public sealed record SpecCase
     public string? LeanProgram => LeanProgramOverride ?? DerivedLeanProgram;
 
     /// <summary>
-    /// Required exactly when a non-parse-error case has no
+    /// Required when a non-parse-error case has no
     /// <see cref="LeanProgram"/>: why the case is C#-only (an intentional
     /// model divergence such as decimal semantics outside the Lean Int core,
     /// or a shape the encoder deliberately does not cover). The derivation
     /// step skips excluded cases, so this is also the explicit unsupported
     /// inventory — a case can never silently leave the Lean partition.
+    /// Parse-error cases may also state their lexical/front-end exclusion here
+    /// (required for STR-03); they remain in the parse-level partition.
     /// </summary>
     public string? LeanExclusionReason { get; init; }
 

@@ -570,7 +570,7 @@ public static partial class Evaluator
     /// declares the name as a top-level capture (its result is that parameter's VALUE: <c>Id(x) = x</c>).
     /// Everything else counts as transport: a whole argument slot of a call or dot-call bundle, a dot receiver
     /// (<c>p.while</c>, <c>p.F(…)</c>), a callee or lexical fallback, a spread operand, a selector slot, a list or
-    /// capture element, an alias target or property row (bare forwarding), an interpolation hole, a Grace
+    /// capture element, an alias target or property row (bare forwarding), a Grace
     /// wrapper and an <c>open</c>. Parent-scope links are not followed (a parameter's occurrences lie inside its
     /// owner). A pure function of the immutable node, memoized per run by reference identity
     /// (<see cref="EvaluationBudget.TransportedNames"/>): a shared subgraph is expanded once, so the work is

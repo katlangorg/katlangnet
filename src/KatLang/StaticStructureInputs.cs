@@ -108,7 +108,6 @@ internal sealed class StaticInputGraph
                 yield return new(target); foreach (var selector in selectors) yield return new(selector); break;
             case Expr.ListLiteral(var items): foreach (var item in items) yield return new(item); break;
             case Expr.Capture(var items): foreach (var item in items) yield return new(item); break;
-            case Expr.InterpolatedString(_, var links): foreach (var link in links) yield return new(link.Hole); break;
             case Expr.Resolve or Expr.AlgorithmExpr or Expr.Num or Expr.Param or Expr.StringLiteral or Expr.BoolLiteral or Expr.EmptySequence or Expr.NativeCall:
                 break;
             default: throw new InvalidOperationException($"Unhandled static input expression: {expression.GetType().Name}");

@@ -235,16 +235,6 @@ public class PostfixSelectionSyntaxTests
         Assert.Equal(KatLangErrorCode.RetiredColonSelection, Assert.Single(result.Errors).Code);
     }
 
-    [Fact]
-    public void AHoleLevelColon_StaysTheHolesOwnDiagnostic_WhileBracketSelectionWorksInAHole()
-    {
-        var diagnostic = Assert.Single(SourceProvenance.ExpectFrontEndError("xs = [1]\n\"{xs:0}\""));
-        Assert.Equal(DiagnosticCode.InvalidInterpolationHole, diagnostic.Code);
-        Assert.Contains("\"{xs[0]}\"", diagnostic.Message, StringComparison.Ordinal);
-        Assert.Equal("1, 2 and ()", KatLangEngine.Run("xs = [1, 2]\n\"{xs[0]}, {xs[1]} and {xs[]}\"").ToDisplayString().Trim('\''));
-        Assert.Equal("(2, 1)", KatLangEngine.Run("xs = [1, 2]\n\"{xs[1, 0]}\"").ToDisplayString().Trim('\''));
-    }
-
     // ── Elaboration: inference, Grace, lifting, open ─────────────────────────
 
     [Theory]

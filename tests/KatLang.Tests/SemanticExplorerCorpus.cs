@@ -318,16 +318,6 @@ public static class SemanticExplorerCorpus
             v => $"F(*a) = a\nF({v.Source}**)"),
         new("captureStacked",
             v => $"x = ({v.Source}**)\nx"),
-        // STR-02 interpolation: a hole converts its VALUE to structural text — never spread,
-        // flattened, or quoted — so every corpus value is pinned, on both sides of the
-        // differential, through a hole written directly, through a property read twice, and
-        // through a parameter (VAL-12; Lean `Result.canonicalText`).
-        new("interpolation",
-            v => $"\"<{{{v.Source}}}>\""),
-        new("interpolationViaProp",
-            v => $"x = {v.Source}\n\"{{x}}|{{x}}\""),
-        new("interpolationViaParam",
-            v => $"F(a) = \"[{{a}}]\"\nF({v.Source})"),
     ];
 
     // ----- Specials -----------------------------------------------------------
@@ -341,15 +331,6 @@ public static class SemanticExplorerCorpus
 
     private static readonly IReadOnlyList<(string Id, string Source, string? LeanExclusionReason)> Specials =
     [
-        // STR-02 interpolation specials: nesting, the hole as a value role of the enclosing
-        // owner (inference order, lifting), the first failing hole, and a hole without output.
-        Special("interpolationNested", "x = 1\n\"<{\"[{x + 1}]\"}>\""),
-        Special("interpolationInferenceOrder", "F = \"{b}-{a}-{b}\"\nF(1, 2)"),
-        Special("interpolationLiftsAFormula", "Inc(x) = x + 1\nG = \"v{Inc}\"\nG(4)"),
-        Special("interpolationFirstFailureStops", "\"a{1}b{10 div 0}c{([][0])}\""),
-        Special("interpolationHoleWithoutOutput", "B = {\n    A = 1\n}\n\"{B}\""),
-        Special("interpolationStringsUnquoted", "\"{['one, two', 'three']} {('a', ['b'])}\""),
-        Special("interpolationHoleFreeIsLiteral", "\"abc\" == 'abc'"),
         Special("multiProp", "P = 1, 2, 3\nP"),
         Special("multiPropCall", "P = 1, 2, 3\nP()"),
         Special("multiPropCount", "P = 1, 2, 3\ncount(P)"),
@@ -561,6 +542,14 @@ public static class SemanticExplorerCorpus
             "An unterminated list is a KatLang surface-parser diagnostic; Lean models only the elaborated AST."),
         Special("listDefinitionInside", "[x = 1]",
             "A definition inside a list is a KatLang surface-parser diagnostic; Lean models only the elaborated AST."),
+        // STR-03 (November 2026): KatLang has one string literal form, raw single-quoted text. A
+        // double quote outside a comment or a single-quoted string is rejected by the LEXER, which
+        // exists in C# only, so both probes are C#-only by construction: no Lean equivalent exists
+        // and none is fabricated.
+        Special("doubleQuotedStringRejected", "\"abc\"",
+            "A double-quoted string is a KatLang lexer diagnostic (STR-03, UnsupportedDoubleQuotedString); lexing is implemented in C# only, and Lean models only the elaborated AST."),
+        Special("doubleQuotedInterpolationRejected", "x = 1\n\"Total: {x}\"",
+            "String interpolation is not KatLang syntax: its double-quoted run is a KatLang lexer diagnostic (STR-03, UnsupportedDoubleQuotedString); lexing is implemented in C# only, and Lean models only the elaborated AST."),
         Special("listLoneCollectingAssignment", "*items = [1, 2, 3]"),
         // ── Builtins that had Lean guards and C# tests but no SHARED case ────
         // `while`, `first`, `last`, `min`, `max`, and `orderDesc` were the only

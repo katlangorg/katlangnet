@@ -2736,10 +2736,6 @@ internal static class PropertyDependencyGraphBuilder
             Expr.ListLiteral(var listItems) => CollectSummarySeed(
                 listItems, localPropertySummaries, ownedHere, memos, inTransparentContext),
 
-            // Holes are expressions of the enclosing algorithm, like list elements (VAL-12).
-            Expr.InterpolatedString(_, var interpolationLinks)
-                => interpolationLinks.Aggregate(new SummarySeed(), (seed, link) => seed.Absorb(Seed(link.Hole))),
-
             Expr.AlgorithmExpr(var algorithm) => CollectSharedAlgorithmSummarySeed(algorithm, memos),
 
             // A capture owns no names: its rows walk with an empty

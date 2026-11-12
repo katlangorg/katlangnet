@@ -869,13 +869,6 @@ theorem act_selectViewWith {α : Type} (demand : α → EvalM Result) (hd : ∀ 
   | nil => unfold selectViewWith; act_tac_base
   | cons c rest ih => unfold selectViewWith; act_tac_base
 
-theorem act_interpolateWith (value : Expr → EvalM Result) (h : ∀ e, ActDisc (value e))
-    (acc : String) (links : List InterpolationLink) :
-    ActDisc (interpolateWith value acc links) := by
-  induction links generalizing acc with
-  | nil => unfold interpolateWith; act_tac_base
-  | cons l rest ih => unfold interpolateWith; act_tac_base
-
 /-- Capabilities whose every field is mark-preserving. -/
 structure CapsAct (caps : NeedCapabilities EvalM) : Prop where
   value : ∀ a, ActDisc (caps.value a)
@@ -1138,7 +1131,6 @@ macro "act_tac" : tactic => `(tactic| without_info_trees ((try act_unfold_rec) <
   | (with_reducible apply act_discover)
   | (with_reducible apply act_selectWith)
   | (with_reducible apply act_selectViewWith)
-  | (with_reducible apply act_interpolateWith)
   | (with_reducible apply act_bindPatterns)
   | (with_reducible apply act_selectFamily)
   | (with_reducible apply act_collectSingleAtomicNumbers)

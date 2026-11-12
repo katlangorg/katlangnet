@@ -161,6 +161,10 @@ public class SemanticExplorerLeanArtifactTests
                 "special__trailingComma",
                 "special__listUnterminated",
                 "special__listDefinitionInside",
+                // STR-03 (November 2026): a double quote outside a comment or a single-quoted
+                // string is a lexer diagnostic; lexing is C#-only, so no Lean program exists.
+                "special__doubleQuotedStringRejected",
+                "special__doubleQuotedInterpolationRejected",
                 // Front-end rejection of an `open` target that would need a call: Lean states
                 // the same rule at open resolution, but this case never reaches evaluation.
                 "special__providerRequiringArgumentsCannotBeOpened",

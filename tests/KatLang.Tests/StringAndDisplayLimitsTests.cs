@@ -9,12 +9,12 @@ namespace KatLang.Tests;
 /// <para>Lengths are UTF-16 code units throughout, matching <see cref="string.Length"/>,
 /// the source-span column model, and CLR string storage.</para>
 ///
-/// <para>String INTERPOLATION (STR-02) is the one way source builds a longer string —
-/// <c>'a' + 'b'</c> is still a type error — and it makes the per-string ceiling a real
-/// compact-source boundary (<c>D(s) = "{s}{s}"</c> doubles per call); its running checks
-/// and single reservation are pinned by <c>InterpolationLimitsTests</c>. The RENDERED-output
-/// limit closes the other compact-source path: display flattens a value recursively, so a
-/// value that is legal under every evaluation limit can still render enormously.</para>
+/// <para>Source cannot build a longer string from parts — <c>'a' + 'b'</c> is a type error and
+/// there is no other text-building form — so a written program's strings are bounded by its
+/// literals and by <c>.string</c>; the per-string ceiling and the cumulative budget are the
+/// defence for host-returned strings and hand-built ASTs. The RENDERED-output limit closes
+/// the compact-source path that remains: display flattens a value recursively, so a value
+/// that is legal under every evaluation limit can still render enormously.</para>
 /// </summary>
 public class StringAndDisplayLimitsTests
 {
@@ -238,13 +238,14 @@ public class StringAndDisplayLimitsTests
     }
 
     [Fact]
-    public void StringPlusStringIsStillATypeMismatch_InterpolationIsTheOnlyConcatenation()
+    public void StringPlusStringIsATypeMismatch_AndNoWrittenFormConcatenates()
     {
-        // `+` never concatenates: building text from parts is interpolation (STR-02), whose
-        // growth the per-string ceiling and the cumulative budget bound (InterpolationLimitsTests).
+        // `+` never concatenates, and KatLang has no other way to build text from parts (STR-03):
+        // the two strings stay two values.
         var error = ErrorOf("'ab' + 'cd'");
         Assert.Contains("Strings only support", Assert.IsType<EvalError.TypeMismatch>(error).Message);
-        Assert.Equal("abcd", Assert.IsType<Result.Str>(Eval("\"{'ab'}{'cd'}\"").Value).Value);
+        var pair = Assert.IsType<Result.SequenceValue>(Eval("('ab', 'cd')").Value);
+        Assert.Equal([new Result.Str("ab"), new Result.Str("cd")], pair.Items);
     }
 
     // ── Unicode ──────────────────────────────────────────────────────────────

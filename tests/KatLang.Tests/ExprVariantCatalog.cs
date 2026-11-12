@@ -55,7 +55,6 @@ internal static class ExprVariantCatalog
             [nameof(Expr.Param)] = new Expr.Param("p"),
             [nameof(Expr.Num)] = leaf,
             [nameof(Expr.StringLiteral)] = new Expr.StringLiteral("s"),
-            [nameof(Expr.InterpolatedString)] = new Expr.InterpolatedString("a", [new InterpolationLink(leaf, "b")]),
             [nameof(Expr.BoolLiteral)] = new Expr.BoolLiteral(true),
             [nameof(Expr.Unary)] = new Expr.Unary(UnaryOp.Minus, leaf),
             [nameof(Expr.Binary)] = new Expr.Binary(BinaryOp.Add, leaf, leaf),
@@ -134,9 +133,8 @@ internal static class ExprVariantCatalog
 
     /// <summary>
     /// An expression, algorithm, or bundle child — directly, as a list of expressions, or as a
-    /// list of LINK records that themselves carry an expression (a comparison chain's links,
-    /// an interpolated string's holes), so a variant whose children sit inside link records is
-    /// never mistaken for a leaf.
+    /// list of LINK records that themselves carry an expression (a comparison chain's links),
+    /// so a variant whose children sit inside link records is never mistaken for a leaf.
     /// </summary>
     private static bool CarriesExpressionChildren(Type type)
         => typeof(Expr).IsAssignableFrom(type)
@@ -182,7 +180,7 @@ public class ExprVariantCatalogTests
             {
                 nameof(Expr.AlgorithmExpr), nameof(Expr.Binary), nameof(Expr.Call), nameof(Expr.Capture),
                 nameof(Expr.Comparison), nameof(Expr.DotCall), nameof(Expr.Grace), nameof(Expr.Index),
-                nameof(Expr.InterpolatedString), nameof(Expr.ListLiteral),
+                nameof(Expr.ListLiteral),
                 nameof(Expr.SequenceConstruct), nameof(Expr.SequenceSpread), nameof(Expr.Unary),
             },
             ExprVariantCatalog.StructurallyCompositeVariantNames);

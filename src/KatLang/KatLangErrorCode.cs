@@ -340,20 +340,8 @@ public enum KatLangErrorCode
     /// <summary>A supplied computation depends on its own in-progress VALUE demand.</summary>
     DemandCycle = 74,
 
-    /// <summary>Front-end <see cref="DiagnosticCode.InvalidStringEscape"/>.</summary>
-    InvalidStringEscape = 75,
-
-    /// <summary>Front-end <see cref="DiagnosticCode.UnmatchedBraceInString"/>.</summary>
-    UnmatchedBraceInString = 76,
-
-    /// <summary>Front-end <see cref="DiagnosticCode.UnterminatedInterpolationHole"/>.</summary>
-    UnterminatedInterpolationHole = 77,
-
-    /// <summary>Front-end <see cref="DiagnosticCode.InvalidInterpolationHole"/>.</summary>
-    InvalidInterpolationHole = 78,
-
-    /// <summary>Front-end <see cref="DiagnosticCode.InterpolationNotAllowedHere"/>.</summary>
-    InterpolationNotAllowedHere = 79,
+    // 75-79 were the double-quoted string and interpolation codes (STR-02), removed with those
+    // features (STR-03, November 2026). The values are retired, never reused.
 
     /// <summary>Front-end <see cref="DiagnosticCode.RetiredColonSelection"/>.</summary>
     RetiredColonSelection = 80,
@@ -369,4 +357,7 @@ public enum KatLangErrorCode
 
     /// <summary>Front-end <see cref="DiagnosticCode.UnboundLoadReference"/>.</summary>
     UnboundLoadReference = 84,
+
+    /// <summary>Front-end <see cref="DiagnosticCode.UnsupportedDoubleQuotedString"/>.</summary>
+    UnsupportedDoubleQuotedString = 85,
 }

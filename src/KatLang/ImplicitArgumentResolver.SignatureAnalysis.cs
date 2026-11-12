@@ -180,12 +180,6 @@ internal static partial class ImplicitArgumentResolver
                     WalkLiftingRoles(row, LiftingRole.Value, null, ref sink);
                 break;
 
-            case Expr.InterpolatedString(_, var interpolationLinks):
-                // An interpolation hole is a VALUE use of the enclosing owner (VAL-12).
-                foreach (var link in interpolationLinks)
-                    WalkLiftingRoles(link.Hole, LiftingRole.Value, null, ref sink);
-                break;
-
             case Expr.DotCall dotCall:
             {
                 var kind = sink.EdgeKind(dotCall, out var mayKind, out var decidingLink);

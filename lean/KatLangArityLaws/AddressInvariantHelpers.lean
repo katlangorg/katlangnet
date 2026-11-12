@@ -9,7 +9,7 @@ open KatLang.CallPlan (bind_run get_run pure_run modify_run throw_run lift_run e
 * Every pure operation the evaluator applies to results only rearranges, wraps or drops the
   results it is given, or builds address-free values, so it maps valid results to valid results
   (`RV.normalize`, `countedTopLevelValues_valid`, `openSpreadItems_valid`, …).
-* The recursive helpers with callbacks (`selectWith`, `selectViewWith`, `interpolateWith`,
+* The recursive helpers with callbacks (`selectWith`, `selectViewWith`,
   `OutputRows.formLeftToRight`, `WhileRound.discover`) keep `Inv` whenever their callbacks keep
   it under the caller's own precondition (a callback contract `∀ x, SoundI (P ∧ …) (cb x) Q`,
   which `ht_tac` proves inline at the call site).
@@ -441,18 +441,6 @@ theorem selectViewWith_spec {P : Array NeedCell → Prop} {demand : Nat → Eval
     SoundI P (selectViewWith demand cellsOf demandCell selectors) (fun xs h => RLV h xs) :=
   fun hP => selectViewWith_aux hP hd hc hdc hreq hP
 
-theorem interpolateWith_aux {P : Array NeedCell → Prop} (hP : HMono P) {value : Expr → EvalM Result}
-    (hv : ∀ e, SoundI P (value e) (fun _ _ => True)) (acc : String) (links : List InterpolationLink) :
-    SoundI P (interpolateWith value acc links) (fun _ _ => True) := by
-  induction links generalizing acc with
-  | nil => unfold interpolateWith; ht_tac
-  | cons l rest ih => unfold interpolateWith; ht_tac
-
-theorem interpolateWith_spec {P : Array NeedCell → Prop} {value : Expr → EvalM Result} {acc : String}
-    {links : List InterpolationLink} (hv : ∀ e, SoundI P (value e) (fun _ _ => True)) :
-    SoundI P (interpolateWith value acc links) (fun _ _ => True) :=
-  fun hP => interpolateWith_aux hP hv acc links hP
-
 theorem formLeftToRight_aux {P : Array NeedCell → Prop} (hP : HMono P) {form : Expr → EvalM (List Result)}
     (hf : ∀ e, SoundI P (form e) (fun xs h => RLV h xs)) (rows : List Expr) :
     SoundI P (OutputRows.formLeftToRight form rows) (fun xs h => RLV h xs) := by
@@ -494,7 +482,7 @@ theorem discover_spec {P : Array NeedCell → Prop} {form : Expr → EvalM (List
     SoundI P (WhileRound.discover form rows) (fun r h => OptRowsV h r) :=
   fun hP => discover_aux hP hf rows hP
 
-attribute [ht_spec] selectWith_spec selectViewWith_spec interpolateWith_spec formLeftToRight_spec discover_spec
+attribute [ht_spec] selectWith_spec selectViewWith_spec formLeftToRight_spec discover_spec
 
 /-! ## The alias write points -/
 

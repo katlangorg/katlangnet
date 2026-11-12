@@ -205,7 +205,6 @@ decreasing_by validation_decreasing
     subexpression is admitted — dot-call fallbacks and arguments included. -/
 def AdmittedExpr (e : Expr) (chain : List Algorithm) (aliases : Nat) : Prop :=
   match e with
-  | .interpolatedString _ links => ∀ link ∈ links, AdmittedExpr link.hole chain aliases
   | .unary _ operand | .sequenceSpread operand => AdmittedExpr operand chain aliases
   | .binary _ left right | .sequenceConstruct left right =>
       AdmittedExpr left chain aliases ∧ AdmittedExpr right chain aliases

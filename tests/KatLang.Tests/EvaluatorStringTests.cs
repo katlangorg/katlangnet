@@ -347,7 +347,7 @@ public class EvaluatorStringTests
     [Fact]
     public void Eval_String_AddStringsFails()
     {
-        // 'a' + 'b' should fail (no + on strings; text is built by interpolation)
+        // 'a' + 'b' should fail (no + on strings)
         AssertEvalFailsWithTypeMismatch("'a' + 'b'", "only support == and !=");
     }
 

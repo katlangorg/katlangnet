@@ -185,7 +185,7 @@ public class LanguageSpecRunnerTests
             if (specCase.LeanExclusionReason is { } reason)
             {
                 Assert.False(string.IsNullOrWhiteSpace(reason),
-                    $"{specCase.Id}: LeanExclusionReason must explain the reviewed model divergence.");
+                    $"{specCase.Id}: LeanExclusionReason must explain why the case is outside the Lean model.");
             }
 
             if (specCase.LeanProgram is not null)
@@ -193,10 +193,11 @@ public class LanguageSpecRunnerTests
                 Assert.True(specCase.LeanExclusionReason is null,
                     $"{specCase.Id}: LeanExclusionReason must be null when LeanProgram is set.");
             }
-            else if (specCase.Outcome != SpecOutcome.ParseError)
+            else if (specCase.Outcome != SpecOutcome.ParseError
+                || specCase.ExpectedDiagnosticCode == DiagnosticCode.UnsupportedDoubleQuotedString)
             {
                 Assert.True(specCase.LeanExclusionReason is not null,
-                    $"{specCase.Id}: a non-parse-error case without a LeanProgram must state a LeanExclusionReason.");
+                    $"{specCase.Id}: non-parse-error cases and STR-03 lexical rejections must state a LeanExclusionReason.");
             }
         }
     }
@@ -344,16 +345,13 @@ public class LanguageSpecRunnerTests
             "open-identical-inline-blocks-two-providers",
             "ambiguous-open-written-use-is-static",
             "inline-headed-open-paths-keep-distinct-providers",
-            // String interpolation (STR-02, October 2026): the hole restrictions, the escape set,
-            // the brace rule, the one-line rule and the literal-only positions are lexer and
-            // parser diagnostics — parse-level by construction (Lean has no surface parser).
-            "string-interpolation-empty-hole-is-an-error",
-            "string-interpolation-hole-level-colon-is-an-error",
-            "string-interpolation-hole-holds-one-expression",
-            "string-unsupported-escape-is-an-error",
-            "string-lone-closing-brace-is-an-error",
-            "string-interpolation-not-a-pattern",
-            "string-interpolation-hole-closes-on-its-line",
+            // One string literal form (STR-03, November 2026): a double quote outside a comment or
+            // a single-quoted string is a LEXER diagnostic — C#-only and parse-level by construction
+            // (lexing is implemented in C# alone; Lean has no lexer or surface parser, and no Lean
+            // equivalent is fabricated for it).
+            "string-double-quotes-are-not-supported",
+            "string-interpolation-is-not-supported",
+            "string-double-quote-run-ends-with-its-line",
             // M4★ (ALIAS-UNIFY-1 second review): OD-D's target chase and a member miss decide what a
             // closed body's certain fallback name is checked against — front-end rejections,
             // parse-level by construction.
@@ -410,10 +408,6 @@ public class LanguageSpecRunnerTests
             // Decimal128-tier observations; Int has one representation per value.
             "repeated-name-keeps-first-equally-rich-representative",
             "decimal-literal-patterns-match-by-value",
-            // STR-02 (October 2026): the text of a fractional number in a hole is its Decimal128
-            // canonical text, quantum included, whatever DisplayDecimals says; integer hole text
-            // is Lean-guarded.
-            "string-interpolation-decimal-number-text",
         ];
 
         Assert.Equal(
@@ -422,7 +416,7 @@ public class LanguageSpecRunnerTests
                 .Select(c => c.Id).OrderBy(id => id, StringComparer.Ordinal));
         Assert.Equal(
             expectedModelDivergences.OrderBy(id => id, StringComparer.Ordinal),
-            Cases.Where(c => c.LeanExclusionReason is not null)
+            Cases.Where(c => c.Outcome != SpecOutcome.ParseError && c.LeanExclusionReason is not null)
                 .Select(c => c.Id).OrderBy(id => id, StringComparer.Ordinal));
     }
 
@@ -445,7 +439,9 @@ public class LanguageSpecRunnerTests
 
         var derived = Cases.Count(c => c.DerivedLeanProgram is not null);
         var overrides = Cases.Count(c => c.LeanProgramOverride is not null);
-        var excluded = Cases.Count(c => c.LeanExclusionReason is not null);
+        // A parse-level case may document its lexical exclusion explicitly (STR-03),
+        // but still belongs only to the parse-level partition, never to model divergences.
+        var excluded = Cases.Count(c => c.Outcome != SpecOutcome.ParseError && c.LeanExclusionReason is not null);
         var parseLevel = Cases.Count(c => c.Outcome == SpecOutcome.ParseError);
         var leanGuarded = Cases.Count(c => c.IsLeanRepresentable);
 
@@ -454,7 +450,7 @@ public class LanguageSpecRunnerTests
             + $"{derived} encoder-derived + {overrides} hand-authored overrides + "
             + $"{excluded} explicit C#-only exclusions + {parseLevel} parse-level cases; "
             + $"Lean-guarded partition = {leanGuarded}. Excluded reasons: "
-            + string.Join("; ", Cases.Where(c => c.LeanExclusionReason is not null)
+            + string.Join("; ", Cases.Where(c => c.Outcome != SpecOutcome.ParseError && c.LeanExclusionReason is not null)
                 .Select(c => $"{c.Id}: {c.LeanExclusionReason}"))
             + ". Override reasons: "
             + string.Join("; ", Cases.Where(c => c.LeanProgramOverride is not null)
@@ -478,7 +474,7 @@ public class LanguageSpecRunnerTests
     [Fact]
     public void Schema_ProbeNeutralsAreWellFormed()
     {
-        var neutralPattern = new Regex(@"^(ok raw=.+ n=\d+|err [A-Za-z0-9]+)$", RegexOptions.Singleline); // a string value may hold a line feed (STR-02)
+        var neutralPattern = new Regex(@"^(ok raw=.+ n=\d+|err [A-Za-z0-9]+)$");
         foreach (var specCase in Cases)
         {
             var seenProbes = new HashSet<string>(StringComparer.Ordinal);

@@ -64,12 +64,10 @@ public class ExpressionSpineFrameCapacityTests
         // The selection frame, then the nested selector's frames (selection is zero-based).
         "index" => (Tens + $"xs[{RightSum(depth - 1)}]", $"ok {(depth + 1) * 10} n=1"),
         "list" => (Repeat("[", depth) + "1" + Repeat("]", depth), "ok " + Repeat("[", depth) + "1" + Repeat("]", depth) + " n=1"),
-        // The interpolation frame, then the nested hole's frames.
-        "interpolation" => ($"\"v{{{RightSum(depth - 1)}}}\"", $"ok 'v{depth}' n=1"),
         _ => throw new ArgumentOutOfRangeException(nameof(kind)),
     };
 
-    private static readonly string[] Kinds = ["binary-right", "binary-left", "unary", "comparison", "index", "list", "interpolation"];
+    private static readonly string[] Kinds = ["binary-right", "binary-left", "unary", "comparison", "index", "list"];
 
     private static readonly int[] Depths = [1, 2, 3, 4, 5, 6, 7, 8, 9, 17, 33];
 
@@ -117,9 +115,9 @@ public class ExpressionSpineFrameCapacityTests
         // selection fails; the error is positioned at its written selector slot.
         { "xs = [1, 2, 3]\nxs[1 + (1 + (1 + (1 + (1 + 1))))]", "err BadIndex | Bad index @[2:4, 2:33)" },
         { "xs = [1, 2, 3]\nxs[" + RightSum(32) + "]", "err BadIndex | Bad index @[2:4, 2:197)" },
-        // The interpolation frame, the selection frame, five selector frames.
-        { "xs = [1, 2]\n\"{xs[1 + (1 + (1 + (1 + (1 + 1))))]}\"", "err BadIndex | Bad index @[2:6, 2:35)" },
-        { "xs = [1, 2]\n\"{xs[" + RightSum(32) + "]}\"", "err BadIndex | Bad index @[2:6, 2:199)" },
+        // A list frame, the selection frame, five selector frames.
+        { "xs = [1, 2]\n[xs[1 + (1 + (1 + (1 + (1 + 1))))]]", "err BadIndex | Bad index @[2:5, 2:34)" },
+        { "xs = [1, 2]\n[xs[" + RightSum(32) + "]]", "err BadIndex | Bad index @[2:5, 2:198)" },
         // A failure at the deepest frame's own apply step, under 17 frames (the operand is a string).
         { Repeat("-(", 17) + "'a'" + Repeat(")", 17), "err TypeMismatch | Type mismatch: operator `-` expects a numeric scalar operand, but the operand was a string: 'a' @[1:32, 1:40)" },
         // A failure whose operand is evaluated at the bottom of 32 frames and decorated on the way out.
@@ -190,6 +188,8 @@ public class ExpressionSpineFrameCapacityTests
     /// the Debug test build (x64): with the former sixteen-frame buffer (16 × 56 + 24 = 920 bytes) the
     /// slope was 1,558.5 bytes synchronously and 3,887.4 on the twin; with the two-frame buffer
     /// (2 × 56 + 24 = 136 bytes) it is 774.5 and 3,103.4 — exactly the 784-byte difference on both.
+    /// (The frame has since lost its interpolation text field — STR-03, 2026-11-11 — which only
+    /// lowers every figure here; the bounds are unchanged.)
     /// Most of that slope was never the spine: it was the run's pre-evaluation reference tables,
     /// which grew by doubling over the larger tree. Since 2026-11-11 those tables are sized from the
     /// node count an earlier walk of the same run produced, and the slopes are 540.8 and 3,036.5

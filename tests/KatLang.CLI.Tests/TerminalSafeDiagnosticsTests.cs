@@ -412,7 +412,12 @@ public sealed class TerminalSafeDiagnosticsTests
     [Fact]
     public async Task EvaluationError_CannotForgeAnotherDiagnosticLine()
     {
-        const string source = "if(\"safe\\n[1:1] FORGED\\nDid you mean 'fake'?\", 1, 2)";
+        // A written string is raw single-quoted text on one line, so it can hold no line feed; the
+        // line breaks a source CAN put inside a string are the Unicode ones (LINE SEPARATOR, NEL),
+        // which a terminal or log viewer may still render as a new line.
+        var lineSeparator = (char)0x2028;
+        var nextLine = (char)0x85;
+        var source = $"if('safe{lineSeparator}[1:1] FORGED{nextLine}Did you mean fake?', 1, 2)";
         Assert.False(Parser.Parse(source).HasErrors);
 
         var cli = await Cli.InvokeAsync("eval", source);
@@ -420,12 +425,12 @@ public sealed class TerminalSafeDiagnosticsTests
         Assert.Equal(Failure, cli.ExitCode);
         Assert.Equal("", cli.Output);
         Assert.Single(cli.TrimmedError.Split('\n'));
-        Assert.Contains($"safe{U(10)}[1:1] FORGED{U(10)}Did you mean 'fake'?", cli.TrimmedError);
+        Assert.Contains($"safe{U(0x2028)}[1:1] FORGED{U(0x85)}Did you mean fake?", cli.TrimmedError);
         AssertSafeStderr(cli);
         var run = Assert.IsType<RunResult.EvalFailure>(KatLangEngine.Run(source));
         var diagnostic = Assert.Single(run.Errors);
         Assert.Equal(KatLangErrorCode.TypeMismatch, diagnostic.Code);
-        Assert.Contains("safe\n[1:1] FORGED\nDid you mean 'fake'?", diagnostic.Message);
+        Assert.Contains($"safe{lineSeparator}[1:1] FORGED{nextLine}Did you mean fake?", diagnostic.Message);
         Assert.Equal(TerminalSafeText.EscapeLine(run.ToDisplayString()), cli.TrimmedError);
     }
 
@@ -443,7 +448,7 @@ public sealed class TerminalSafeDiagnosticsTests
     public static TheoryData<string> PublicRenderingPrograms => new()
     {
         $"if('a{Esc}[2J{Csi8}31m{(char)0x202E}', 1, 2)",
-        "if(\"safe" + (char)0x5C + "n[1:1] FORGED\", 1, 2)",
+        $"if('safe{(char)0x2028}[1:1] FORGED', 1, 2)",
         $"1 +{Esc}[31m{(char)0x202E}",
         "Value = 1\nValeu + 1",
         "F(x) = x\nG(y) = F\nG(1)",

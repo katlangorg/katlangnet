@@ -445,9 +445,6 @@ public class PerSiteInvocationPlanRetentionTests
             [new Expr.AlgorithmExpr(new Algorithm.User(null, [], [], [], [new Expr.Param("s")]))]);
         Assert.True(Evaluator.TransportedNamesOf(closure, EvaluationBudget.Create(null)).Contains("s"));
         Assert.Contains("s", Of("W(s) = Id(s)\nId(x) = x", "W"));
-        var interpolating = new Algorithm.User(null, [new CaptureParameterPattern("s")], [], [],
-            [new Expr.InterpolatedString("", [new InterpolationLink(new Expr.Param("s"), "!")])]);
-        Assert.True(Evaluator.TransportedNamesOf(interpolating, EvaluationBudget.Create(null)).Contains("s"));
         // An own-parameter row is a value position; a host-operation call reads its names as transport.
         var hostCall = new Algorithm.User(null, [new CaptureParameterPattern("s")], [], [],
             [new Expr.Param("s"), new Expr.NativeCall("op", ["s"])]);

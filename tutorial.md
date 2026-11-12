@@ -699,7 +699,7 @@ To choose among fixed values or shapes, see [Pattern Matching](#pattern-matching
 
 ## Text
 
-Text values — strings — are written in single or double quotes and displayed without them:
+Text values — strings — are written in single quotes and displayed without them:
 
 ```
 Greeting = 'hello'
@@ -748,58 +748,52 @@ B
 C
 ```
 
-### Double Quotes and Escapes
+### Text Is Written as It Is
 
-A single-quoted string is raw: its text is exactly what is written between the quotes. A double-quoted string may also contain **escapes** — `\"` for a double quote, `\\` for a backslash, `\n` for a line break, `\t` for a tab — and `{{` and `}}` for literal braces; any other backslash sequence is an error. Without interpolation, described next, the two spellings are the same string:
+A string is raw: its text is exactly what is written between the single quotes. Nothing inside it is evaluated and there are no escapes, so braces, backslashes, and double quotes are ordinary characters:
 
+<!-- spec:string-single-quoted-text-is-raw -->
 ```
-"She said \"hi\""
-"abc" == 'abc'
+'{x}'
 'C:\temp'
+'say "hi"'
 ```
 
 **Results:**
 ```
-She said "hi"
-true
+{x}
 C:\temp
+say "hi"
 ```
 
-A string is written on one line; `\n` puts a line break inside it.
+A string is written on one line and cannot contain a single quote. Single quotes are the only way to write text: a double quote outside a string or a comment is an error, and there is no string interpolation — nothing written as `"Total: {x}"` is ever read as text with a value inside it.
 
-### Building Text with Interpolation
+### Results Are Values, Not Messages
 
-Inside double quotes, `{expression}` is an **interpolation hole**: the expression is evaluated and its value is inserted as text.
-
-<!-- spec:string-interpolation-basic -->
-```
-name = 'KatLang'
-version = 2
-"Hello, {name} {version}!"
-```
-
-**Result:** `Hello, KatLang 2!`
-
-A hole holds one ordinary expression of the surrounding algorithm, so it can calculate, call, and choose, and a name the algorithm does not define becomes its parameter, in the order the names first appear:
+KatLang is a language for calculation, and a result is the calculated value itself, not a sentence about it. There is no `+` for text — `'a' + 'b'` is an error — and no other way to build one string out of several values, so a number is never turned into part of a string. It stays a number, with its full precision, and display settings such as `DisplayDecimals` still apply to it:
 
 ```
-Report = "{name}: {points} points, {if(points >= 5, 'pass', 'fail')}"
+Price = 19.99
+Quantity = 3
 
-Report('Ada', 9)
-Report('Bob', 3)
+Price * Quantity
+```
+
+**Result:** `59.97`
+
+A calculator that runs KatLang can show each result next to the expression that produced it, so the program text already says what the number means. A text value that belongs to the result, such as a verdict or a category, is an output of its own beside the numbers:
+
+```
+Score = 72
+
+Score, if(Score >= 50, 'pass', 'fail')
 ```
 
 **Results:**
 ```
-Ada: 9 points, pass
-Bob: 3 points, fail
+72
+pass
 ```
-
-The holes are evaluated from left to right, each once, and the result is one string. A number appears with exactly its digits — `"{1.50}"` is `1.50` — and `true` and `false` appear as words; display settings such as `DisplayDecimals` never change the text inside a string. A hole holds one expression, so `"{a, b}"` is an error (write `"{a}, {b}"`), and there are no format specifiers: a `:` inside a hole is an error. An interpolated string cannot stand where fixed text is required, such as a [pattern](#matching-text) or a [`load`](#loading-external-algorithms) URL.
-
-There is still no `+` for text: `'a' + 'b'` is an error, while `"{x}{y}"` joins two values.
-
-On the command line, a program that contains double quotes needs shell quoting that keeps them — in a POSIX shell, `katlang eval '"Total: {2 + 3}"'` — or can be stored in a file and run with `katlang run`.
 
 The next chapter shows how to turn a number into text, and [Pattern Matching](#pattern-matching) shows how to choose among text values.
 
@@ -924,7 +918,7 @@ true
 
 It is a built-in dot operation rather than a call, so it exists only in dot form — `string(42)` is not defined. By the rule above, an algorithm with its own member named `string` uses that member, and a definition of your own named `string` is a separate thing, reached only by the call `string(...)`.
 
-Empty parentheses are allowed, as in `42.string()`. `.string` gives all of a number's digits, whatever `DisplayDecimals` says. Interpolation produces the same text — `"{42}"` is `42` — and works for every other value too ([Building Text with Interpolation](#building-text-with-interpolation)).
+Empty parentheses are allowed, as in `42.string()`. `.string` gives all of a number's digits, whatever `DisplayDecimals` says, and it works on a number only: text, Booleans, sequences, and lists have no `.string`.
 
 ---
 
@@ -1337,26 +1331,6 @@ F(([10, 20], 30))
 - A **list** is a collection that keeps its exact shape, even with one item or none. Use lists for data such as measurements, scores, or the rows of a table.
 
 The collection operations of the next chapters accept both, and those that produce a collection return a list.
-
-### Sequences and Lists as Text
-
-Interpolation turns a sequence or a list into text with its brackets, keeping every level, and text inside it appears without quotes:
-
-<!-- spec:string-interpolation-structural-text -->
-```
-"{(1, [2, ()])} {[]} {true} {-5}"
-```
-
-**Result:** `(1, [2, ()]) [] true -5`
-
-<!-- spec:string-interpolation-strings-unquoted -->
-```
-"{['one, two', 'three']} {('a', ['b'])}"
-```
-
-**Result:** `[one, two, three] (a, [b])`
-
-The text is meant for reading, not for storing data: as the second example shows, a comma inside a string cannot be told apart from the commas between items.
 
 ---
 
@@ -2179,7 +2153,7 @@ Expense('apples', 3)
 2.40
 ```
 
-`true` and `false` can be matched in the same way. A double-quoted string without holes is the same pattern as its single-quoted spelling (`Price("apples")`), but an interpolated string cannot be a pattern, because a pattern needs fixed text.
+`true` and `false` can be matched in the same way.
 
 ### Matching Structure
 
@@ -2740,7 +2714,7 @@ X + 3
 
 A loaded algorithm is called a **module**, and it is self-contained. Its names mean what they mean inside the module itself, or the built-in names — never what the loading program happens to define, so a program's own `sum` or `Rate` cannot change a library's results. A name the module uses without defining it becomes a parameter of the member that uses it: if the module's `public Price = Base * 1.2` does not define `Base`, then `Price` takes `Base` as a parameter and the program writes `Lib.Price(10)`.
 
-One address is one module, however often it is loaded and however its URL is spelled: `open 'url'`, `Lib = load('url')` followed by `open Lib`, and `Lib.X` all use the same module. Reading one of its members gives one stored value, as for any property, and an explicit call of a member is still fresh. Two different addresses are two modules, even if they contain the same text. A URL is fixed text: it may be written in double quotes without holes, but never built with interpolation.
+One address is one module, however often it is loaded and however its URL is spelled: `open 'url'`, `Lib = load('url')` followed by `open Lib`, and `Lib.X` all use the same module. Reading one of its members gives one stored value, as for any property, and an explicit call of a member is still fresh. Two different addresses are two modules, even if they contain the same text. A URL is fixed text, written as a string in single quotes: a program never computes it.
 
 Loading is off unless the program that runs your code allows it — the command-line tool needs the option `--allow-loading` — and a program that loads without permission is rejected. A module URL must use `https` and a host that it allows, by default `katlang.org` and its subdomains.
 
@@ -3374,8 +3348,8 @@ Written as `X = A*` followed by the row `X`, the program prints the same `(1, 2)
 - **Parentheses group, braces define.** `(n + 1)` is the expression `n + 1`; `{n + 1}` is an algorithm, with `n` as its parameter unless `n` is defined around it.
 - **Indentation never groups.** Only braces give an algorithm several rows; an indented line is an ordinary row of the algorithm around it.
 - **`()`, `[]`, and `{}` are different.** They are the empty sequence, the empty list, and an algorithm without output.
-- **A brace in double quotes opens a hole.** Write `{{` and `}}` for literal braces in a double-quoted string, or use single quotes, where braces and backslashes are plain text.
-- **A hole holds one expression.** `"{a, b}"` is an error; write `"{a}, {b}"` or `"{(a, b)}"`.
+- **Text is written in single quotes only.** `"text"` is an error, and so is `"Total: {x}"`: there are no double-quoted strings and no interpolation. Write `'text'`, and return a value as itself instead of wrapping it in a message.
+- **Nothing inside a string is special.** In `'{x}'` and `'C:\temp'` the braces and the backslash are plain text; a string has no escapes.
 - **A local helper that reads nothing from the call has one value.** Write `Roll()` or `randomInt(1, 7)` to roll again in each call ([Local Definitions](#local-definitions)).
 - **Clauses cannot collect.** `*name` works only in a single definition without literal patterns. Walk through a list with `xs[0]` and `xs.skip(1)`, or use `reduce` ([Rules for Clauses](#rules-for-clauses)).
 - **A conditional algorithm treats its arguments as values.** Put the name of a formula that needs inputs in braces: `Times(3, {Inc}, 0)` ([Rules for Clauses](#rules-for-clauses)).
@@ -3415,7 +3389,7 @@ Error messages use a few words of their own:
 - Math functions are computed to full precision and never rounded to "nice" values. `pi` is π rounded to 34 digits, so `sin(pi)` is a tiny number of about `-1.16e-34` rather than `0`. Irrational results such as `sin(1)` are approximations at 34 digits, correct to roughly the last digit or two. Compare such results with a tolerance, or `round` them.
 - Division by zero is an error, and so is raising zero to a negative power (`0 ^ -1`).
 - A single list or sequence holds at most 100,000 items by default.
-- A single string holds at most 1,000,000 characters (UTF-16 code units) by default; interpolation that would build a longer one stops with an error.
+- A single string holds at most 1,000,000 characters (UTF-16 code units) by default.
 
 ---
 
@@ -3460,9 +3434,7 @@ Postfix forms bind tighter than every operator above them, `^` included.
 | `x, y = value` | Deconstruction: bind several names at once |
 | `Name(meta p) = expression` | `p` captures the written call instead of its value |
 | `load('url')` | Load an algorithm from a URL; a special form, not a keyword |
-| `'text'` | String; raw — no escapes, no holes |
-| `"text"` | String with the escapes `\"` `\\` `\n` `\t`, and `{{` `}}` for braces |
-| `"text {expression} text"` | Interpolated string: each hole's value inserted as text |
+| `'text'` | String: raw text on one line, with no escapes and no interpolation; the only way to write text |
 | `# ...` | Comment |
 
 ### Built-in Operations
