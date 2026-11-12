@@ -74,17 +74,42 @@ member-route correction of November 11 2026 named the planned member dispatch by
 (`NeedPlan.writtenDispatchName`) — for a plain first argument over a member-selecting receiver
 (a parameter head additionally requires a structure-normal supplied CALLABLE)
 and for every bundle over a state-inert receiver; an empty or spread-first bundle over any other
-receiver is stated relative to the origin agreement (`member_bridge_of_origin`) and not discharged.
-The `.Algorithm` route is only decomposed into production operations
+receiver is stated relative to the origin agreement (`member_bridge_of_origin`), which
+`MemberStability.lean` discharges wherever the receiver's navigation is settled when the origin is
+read (`member_bridge_settled`, the whole-run invariant `NavStable`; a permanent witness shows the
+premise necessary). The `.Algorithm` route is decomposed into production operations here
 (`ordinaryCall_algorithm_is_production` equates it with the proof-local `algorithmPlanCall`, not the
-ordinary evaluator). Its receiver READ was a language-visible difference — a receiver without output
+ordinary evaluator) and bridged CONDITIONALLY in `PlanAlgorithmBridge.lean`. Its receiver READ was a
+language-visible difference — a receiver without output
 failed with its own missing output under a property frame on the plan route — until the E-18
 receiver-read correction of November 11 2026 gave the plan's retained receiver cell the ordinary
 invocation receiver evaluator (`NeedInvocationRole`, `EvalBody.invocationReceiverValue` in
 `KatLang.lean`; `receiver_cell_reads_invocation_receiver`, `invocationReceiverValue_eq`; regression
-`algorithmReceiverFailureAgrees`). Exact final-state equality is still false
-(`algorithmHeapDiffers`: the plan allocates its link and receiver cells), so the outcome bridge needs
-an address-renaming simulation and is not stated. Step 1 is NOT complete.
+`algorithmReceiverFailureAgrees`). Exact final-state equality is false
+(`algorithmHeapDiffers`: the plan allocates its link and receiver cells) and so is unconditional
+outcome agreement (`PlanRouteBridgeGuards.SelfObservation.outcomeDiffers`: 9 against 10 when the
+run observes the plan's own callee record), so the `.Algorithm` bridge is stated under the
+insertion relation of `HeapInsertion.lean` and relative to the non-observation contract
+`PlanAlgorithmBridge.InsertedOn`, whose production discharge is the META-free programme's. E-18
+stays OPEN.
+
+M2 after the review repair: the tail contract is asked only from the ADMISSIBLE tail entries of
+a receiver value (`PlanAlgorithmBridge.After`) — the old universal premise, refuted by
+`PlanAlgorithmBridgeGuards.tailContractSelfReferenceDiffers`, is gone, and the self-reference is
+excluded by `self_reference_records_callee`; every bridge concludes the COMPLETE relation
+`HeapInsertion.Inserted` (`Frame` by `production_frame`, from an explicit preservation obligation);
+and `PlanAlgorithmBridgeInstances` applies the final theorems, every premise kernel-proved, to
+reached states for a successful and for a failing receiver read in both written forms.
+`PlanAlgorithmBridgeParameterInstances` additionally applies both final parameter bridge theorems
+to successful reference-valued reads in an own-parameter supply context, with every premise
+kernel-proved, repeated-demand memo reuse and a shifted callee allocation. The closing pass
+(`PlanAlgorithmBridgeSourceInstances` and its four companion modules) applies the final theorems
+to GENUINE SOURCE PROGRAMS in both written forms: the full `R.Algorithm(0)` positive control, a
+structured failure, a captured-reference receiver, an alias, an effectful receiver with memo
+sharing, an address-bearing result and a captured-ancestor parameter receiver — every premise
+proved; the run equations by proof-producing evaluation (`cbv`) over the production definitions,
+since the kernel cannot evaluate through the well-founded helpers. M2's instance obligation is
+closed; the production DISCHARGE of the contract stays the META-free programme's.
 -/
 
 namespace KatLang.PlanConservativity

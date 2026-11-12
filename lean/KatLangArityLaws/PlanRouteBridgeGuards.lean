@@ -32,9 +32,16 @@ compares outcomes AND final states.
 * **`.Algorithm` route**, at the plan's own flight (cell `evaluating`, route recorded by `routeOf`):
   the plan-side decomposition `ordinaryCall_algorithm_is_production` (`algorithmAt`) and the heap
   facts of `algorithm_tail_name_origin` (`tailAt`). Its correspondence with the ordinary intrinsic is
-  NOT a theorem: `algorithmHeapDiffers`, a permanent witness, shows full-state equality false even
-  when both runs start at the SAME flight state and return `(0, 1)` — only the plan side allocates
-  the link and receiver cells and records its callee.
+  CONDITIONAL (`PlanAlgorithmBridge.lean`: the insertion relation and the non-observation contract;
+  kernel-checked applications in `PlanAlgorithmBridgeInstances`, the remaining scenarios decided by
+  `PlanAlgorithmBridgeGuards`), and two permanent witnesses here say why:
+  - `algorithmHeapDiffers` — full-state equality is false even when both runs start at the SAME
+    flight state and return `(0, 1)`: only the plan side allocates the link and receiver cells and
+    records its callee;
+  - `SelfObservation.outcomeDiffers` (M0) — unconditional OUTCOME agreement is false too, even up to
+    address renaming: 9 after two ticks against 10 after three, in both written forms, when the run
+    observes the plan's own callee record through a stored reference (with two controls and the
+    whole-program value).
 * **The receiver read (D-3; E-18 receiver-read correction, November 11 2026).** The plan's retained
   receiver cell keeps the ordinary invocation receiver evaluator, so the two routes report ONE
   outcome — finite evidence, on every receiver tried:
@@ -400,6 +407,154 @@ def algorithmHeapDiffers : Bool :=
     | _ => false
 
 #guard algorithmHeapDiffers
+
+/-! ### The self-observation witness (M0, November 11 2026)
+
+**Unconditional outcome agreement is FALSE for the `.Algorithm` route, even up to address
+renaming.** A permanent witness beside `algorithmHeapDiffers`, reached by a real run from
+`EvalState.empty`:
+
+    PWrap(x) = x      PEcho(x) = x      PForced(a, b) = if(a > 0, b, b)
+    PK = Capture(PEcho(1))
+    R  = Capture(PWrap(P))
+    P  = PForced(tick(), PK).Algorithm(Capture(R.Arguments*).Algorithm(7) + tick())
+
+`count(R.Arguments)` prepares the `PWrap` plan, so the cell `a` holding `P` exists, suspended and
+fresh; `Capture(R.Arguments*)` inside `P` reifies `a` ITSELF. At `a`'s flight (cell `evaluating`,
+route `.algorithm` recorded, callee unrecorded) the plan's `ordinaryCall` and the production
+evaluation of the same written call, from the SAME state, both complete — with DIFFERENT outcomes:
+
+* the plan side records its callee link in `a` (`NeedPlan.calleeCell`) and reads the receiver once
+  per plan (`EvalBody.plannedReceiverValue`); when the argument takes `.Algorithm` of the stored
+  `callRef a` it finds that record and the memoized receiver: 9, after 2 ticks;
+* production never touches `a`, so the same `.Algorithm` establishes the link then and reads the
+  receiver a second time: 10, after 3 ticks.
+
+The grouped form `(Rcv.Algorithm)(args)` behaves the same. Controls: without self-observation the
+outcomes agree and the plan side has exactly two more cells (the insertion relation of
+`PlanAlgorithmBridge`); with a PURE receiver and self-observation the outcomes and heap sizes agree,
+but the link sits at a different address — production allocates it mid-tail. The whole program
+`first(R.Arguments)` returns 9: the state is reached by a real run, and the public VALUE is the
+plan route's. Hence the `.Algorithm` bridge is stated RELATIVE to a non-observation contract
+(`PlanAlgorithmBridge.InsertedOn`), never unconditionally. -/
+
+namespace SelfObservation
+
+open KatLang.PlanConservativityGuards (reached cellOf callN addE argsOf program firstOf)
+
+def tickE : Expr := .call (.resolve "tick") []
+def R : Expr := .resolve "R"
+/-- `Capture(R.Arguments*)`: the reference to the plan under test itself. -/
+def selfRef : Expr := callN "Capture" [.sequenceSpread (argsOf R)]
+/-- `PForced(tick(), PK)`: a receiver whose every evaluation advances the tick counter. -/
+def effectfulReceiver : Expr := callN "PForced" [tickE, .resolve "PK"]
+def pureReceiver : Expr := .resolve "PK"
+
+def base : List (Ident × Algorithm) :=
+  [("PWrap", alg ["x"] [] [] [.param "x"]),
+   ("PEcho", alg ["x"] [] [] [.param "x"]),
+   ("PForced", alg ["a", "b"] [] []
+      [.call (.resolve "if") [.compare .gt (.param "a") (.num 0), .param "b", .param "b"]]),
+   ("PK", alg [] [] [] [callN "Capture" [callN "PEcho" [.num 1]]])]
+
+def declsFor (plan : Expr) : List (Ident × Algorithm) :=
+  base ++ [("R", alg [] [] [] [callN "Capture" [callN "PWrap" [plan]]])]
+
+/-- Both sides of the comparison at the flight of the cell holding `plan`. -/
+structure Sides where
+  a : Nat
+  entry : EvalState
+  planned : Except Error CountedResult × EvalState
+  produced : Except Error CountedResult × EvalState
+
+/-- The plan's `ordinaryCall` and the production evaluation of the same written call, both from the
+    flight state of the reached cell holding `plan` — a suspended, fresh, unrouted cell whose flight
+    records the `.algorithm` route (anything else is `none`: no guard below is vacuous). -/
+def sides (plan : Expr) : Option Sides :=
+  match reached (declsFor plan) with
+  | none => none
+  | some s =>
+    match cellOf s plan with
+    | none => none
+    | some a =>
+      match s.needs[a]?, flight s a with
+      | some { suspension := .expression e caller values, state := .suspended, plan := .unprepared,
+               route := none, callee := none, .. }, some (shape, .algorithm, x) =>
+        some ⟨a, x, (ordinaryCall productionPlanRoute a shape .algorithm).runState x,
+          (reCountValueBoundary <$> evalCounted e caller values).runState x⟩
+      | _, _ => none
+
+/-- A run that COMPLETES with the single atom `v` after `ticks` executions of `tick()`. -/
+def completesWith (r : Except Error CountedResult × EvalState) (v : Int) (ticks : Nat) : Bool :=
+  (match r.1 with
+   | .ok (.atom n, 1) => n == v
+   | _ => false) && r.2.tickCounter == ticks
+
+def calleeOf (t : Sides) (r : Except Error CountedResult × EvalState) : Option Nat :=
+  (r.2.needs[t.a]?).bind NeedCell.callee
+
+/-- `<self>.Algorithm(7) + tick()`: observes the plan's own callee record, then reads the counter. -/
+def observingArg : Expr := addE (algoCall selfRef [.num 7]) tickE
+def plainArg : Expr := addE (.num 7) tickE
+
+/-- The witness, dot form: an effectful receiver, the argument observes the plan's own callee record. -/
+def witnessDot : Expr := algoCall effectfulReceiver [observingArg]
+/-- The witness, grouped form `(Rcv.Algorithm)(args)`. -/
+def witnessGrouped : Expr := grouped effectfulReceiver [observingArg]
+/-- Control: the same effectful receiver, no self-observation. -/
+def controlPlain : Expr := algoCall effectfulReceiver [plainArg]
+def controlPlainGrouped : Expr := grouped effectfulReceiver [plainArg]
+/-- Control: a pure receiver, self-observation. -/
+def controlPure : Expr := algoCall pureReceiver [observingArg]
+
+/-- **THE WITNESS.** From one flight state, with no tick executed yet, both runs complete: the
+    plan's ordinary call with 9 after 2 ticks, production with 10 after 3. -/
+def outcomeDiffers (plan : Expr) : Bool :=
+  match sides plan with
+  | some t =>
+    t.entry.tickCounter == 0 && completesWith t.planned 9 2 && completesWith t.produced 10 3 &&
+      reprStr t.planned.1 != reprStr t.produced.1
+  | none => false
+
+#guard outcomeDiffers witnessDot
+#guard outcomeDiffers witnessGrouped
+
+/-- **Control 1: no self-observation.** The outcomes agree (9, 2 ticks) and the plan side has
+    exactly two more cells — its link and the link's receiver cell — and the callee record. -/
+def controlAgrees (plan : Expr) : Bool :=
+  match sides plan with
+  | some t =>
+    t.entry.tickCounter == 0 && completesWith t.planned 9 2 && completesWith t.produced 9 2 &&
+      reprStr t.planned.1 == reprStr t.produced.1 &&
+      t.planned.2.needs.size == t.produced.2.needs.size + 2 &&
+      calleeOf t t.planned == some t.entry.needs.size && (calleeOf t t.produced).isNone
+  | none => false
+
+#guard controlAgrees controlPlain
+#guard controlAgrees controlPlainGrouped
+
+/-- **Control 2: a pure receiver, self-observation.** The outcomes (8, 1 tick) and the heap sizes
+    agree; both sides record a callee link for `a`, at DIFFERENT addresses — the plan side at the
+    flight's heap size, production later, when the argument's `.Algorithm` establishes it. -/
+def pureReceiverAgrees : Bool :=
+  match sides controlPure with
+  | some t =>
+    t.entry.tickCounter == 0 && completesWith t.planned 8 1 && completesWith t.produced 8 1 &&
+      t.planned.2.needs.size == t.produced.2.needs.size &&
+      calleeOf t t.planned == some t.entry.needs.size &&
+      (match calleeOf t t.produced with
+       | some c => t.entry.needs.size < c
+       | none => false)
+  | none => false
+
+#guard pureReceiverAgrees
+
+-- The whole program reaches the witness state and returns the PLAN route's value, in both forms.
+#guard valueIs (runResult (program (declsFor witnessDot) [firstOf (argsOf R)])) (.atom 9)
+#guard valueIs (runResult (program (declsFor witnessGrouped) [firstOf (argsOf R)])) (.atom 9)
+#guard valueIs (runResult (program (declsFor controlPlain) [firstOf (argsOf R)])) (.atom 9)
+
+end SelfObservation
 
 /-! ### The receiver read (D-3): the E-18 receiver-read correction -/
 

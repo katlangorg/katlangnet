@@ -15,9 +15,10 @@ memo/link fields, so the local reread laws (`NeedControl.Projection.projected_st
 intervening operation. This module adds the COMPANION relation
 
 * `LinkKept c c'`: a completed CALLABLE outcome (`NeedCell.callable = .projected o` — identity,
-  successful absence or failure, compared by Lean equality on the whole outcome), a recorded
-  canonical callee cell (`NeedCell.callee = some x`) and a recorded receiver cell
-  (`NeedCell.receiver = some x`) of `c` are all still present, unchanged, in `c'`;
+  successful absence or failure, compared by Lean equality on the whole outcome), an IN-FLIGHT
+  CALLABLE mark (`NeedCell.callable = .projecting`, E-18 step 1), a recorded canonical callee cell
+  (`NeedCell.callee = some x`) and a recorded receiver cell (`NeedCell.receiver = some x`) of `c`
+  are all still present, unchanged, in `c'`;
 * `LinkHeapKept h h'`: every cell of `h` is still present at its address in `h'`, `LinkKept`;
 * `LinkDisc m`: `m` relates EVERY entry heap to its exit heap by `LinkHeapKept` (successful and
   ordinary-error runs alike: `EvalM.runState` keeps the state of both),
@@ -33,9 +34,20 @@ link may be established; the guarded writers write only from those entry states:
 | writer | field | write condition at its entry read |
 | --- | --- | --- |
 | `NeedProjection.step` | `callable` (`projecting`, then `projected o`) | entry `callable = .unprojected` |
+| `NeedProjection.step`, re-entered | none: an entry `projecting` mark is `demandCycle`, a `projected` one is returned | — |
 | `NeedPlan.calleeCell` → `setCallee` | `callee` | entry `callee = none` (route/supply run in between) |
 | `NeedLink.receiverCell` → `setReceiver` | `receiver` | entry `receiver = none` (only `supplyNeed` in between) |
 | VALUE / plan / route / allocation | other fields, or a push | frame |
+
+IN-FLIGHT MARKS (E-18 step 1). A cell that is `projecting` when an operation BEGINS is still
+`projecting` when it ends, whatever the operation and its outcome (`LinkKept.projecting`): the one
+writer of the field reads the entry mark first and writes only from `unprojected`, so an operation
+nested in a flight can neither complete nor restart that flight — re-entering it is the
+`demandCycle` failure, which writes nothing. The flight's OWN step is no exception to the relation:
+its entry mark is `unprojected`, so the clause says nothing of the cell it publishes
+(`linkDisc_projectionStep` is entry-anchored). The clause is NOT vacuous: it constrains every
+operation started from a state with a mark in flight — exactly the states an alias route decision
+that re-enters a flight is run from (`NavigationReread`, `NavigationRereadGuards`).
 
 A value first written INSIDE a re-entrant callback of such a writer (e.g. a callee recorded by
 the route classifier's own nested observation) may be overwritten by the enclosing writer's later
@@ -48,23 +60,25 @@ namespace KatLang.MemoLinks
 
 /-! ## The relation -/
 
-/-- The three FG-M1 facts of a cell that must survive: a completed CALLABLE outcome, a recorded
-    callee cell and a recorded receiver cell. -/
+/-- The FG-M1 facts of a cell that must survive: a completed CALLABLE outcome, an IN-FLIGHT
+    CALLABLE mark, a recorded callee cell and a recorded receiver cell. -/
 structure LinkKept (c c' : NeedCell) : Prop where
   callable : ∀ o, c.callable = .projected o → c'.callable = .projected o
+  projecting : c.callable = .projecting → c'.callable = .projecting
   callee : ∀ x, c.callee = some x → c'.callee = some x
   receiver : ∀ x, c.receiver = some x → c'.receiver = some x
 
-theorem LinkKept.refl (c : NeedCell) : LinkKept c c := ⟨fun _ h => h, fun _ h => h, fun _ h => h⟩
+theorem LinkKept.refl (c : NeedCell) : LinkKept c c :=
+  ⟨fun _ h => h, fun h => h, fun _ h => h, fun _ h => h⟩
 
 theorem LinkKept.trans {c d e : NeedCell} (h1 : LinkKept c d) (h2 : LinkKept d e) : LinkKept c e :=
-  ⟨fun o h => h2.callable o (h1.callable o h), fun x h => h2.callee x (h1.callee x h),
-    fun x h => h2.receiver x (h1.receiver x h)⟩
+  ⟨fun o h => h2.callable o (h1.callable o h), fun h => h2.projecting (h1.projecting h),
+    fun x h => h2.callee x (h1.callee x h), fun x h => h2.receiver x (h1.receiver x h)⟩
 
 /-- A write that leaves the three fields alone keeps them. -/
 theorem linkKept_of_same (c c' : NeedCell) (hc : c'.callable = c.callable)
     (he : c'.callee = c.callee) (hr : c'.receiver = c.receiver) : LinkKept c c' :=
-  ⟨fun _ h => hc ▸ h, fun _ h => he ▸ h, fun _ h => hr ▸ h⟩
+  ⟨fun _ h => hc ▸ h, fun h => hc ▸ h, fun _ h => he ▸ h, fun _ h => hr ▸ h⟩
 
 def LinkHeapKept (h h' : Array NeedCell) : Prop :=
   ∀ (a : Nat) (c : NeedCell), h[a]? = some c → ∃ c', h'[a]? = some c' ∧ LinkKept c c'
@@ -406,7 +420,8 @@ theorem linkDisc_projectionStep (project : NeedSuspension → EvalM (Option Algo
       have k1 : LinkHeapKept s.needs (KatLang.NeedControl.Projection.setCallable a .projecting s).needs :=
         LinkHeapKept.modify _ a _ (fun c hc' => by
           rw [hc] at hc'; cases hc'
-          exact ⟨fun o h => (by rw [hs] at h; cases h), fun _ h => h, fun _ h => h⟩)
+          exact ⟨fun o h => (by rw [hs] at h; cases h), fun h => (by simp [hs] at h),
+            fun _ h => h, fun _ h => h⟩)
       have k2 := hp cell.suspension (KatLang.NeedControl.Projection.setCallable a .projecting s)
       generalize hr : (project cell.suspension).runState
         (KatLang.NeedControl.Projection.setCallable a .projecting s) = r at k2
@@ -417,7 +432,8 @@ theorem linkDisc_projectionStep (project : NeedSuspension → EvalM (Option Algo
         rw [KatLang.NeedControl.Projection.unprojected_publishes project a s t cell outcome hc hs hr hinc]
         exact LinkHeapKept.modify_anchor k12 a _ (fun c0 c1 h0 kk => by
           rw [hc] at h0; cases h0
-          exact ⟨fun o h => (by rw [hs] at h; cases h), kk.callee, kk.receiver⟩)
+          exact ⟨fun o h => (by rw [hs] at h; cases h), fun h => (by simp [hs] at h),
+            kk.callee, kk.receiver⟩)
       | true =>
         have hrun : (NeedProjection.step project a).runState s = (.error .fuelExhausted, t) := by
           simp only [NeedProjection.step, bind_run, get_run, hc, hs, EvalM.modify_runState]
@@ -461,7 +477,7 @@ theorem linkDisc_calleeCell (classify : NeedPlan.CallShape → EvalM PlanRoute)
             · exact k1.trans k2
             · exact LinkHeapKept.modify_anchor (k1.trans k2) a _ (fun c0 c1 h0 kk => by
                 rw [hc] at h0; cases h0
-                exact ⟨kk.callable, fun y h => (by rw [hcal] at h; cases h), kk.receiver⟩)
+                exact ⟨kk.callable, kk.projecting, fun y h => (by rw [hcal] at h; cases h), kk.receiver⟩)
 
 /-- **Receiver establishment keeps entry facts**: the one supply between the read and the record. -/
 theorem linkDisc_receiverCell (a : Nat) : LinkDisc (NeedLink.receiverCell a) := by
@@ -493,7 +509,7 @@ theorem linkDisc_receiverCell (a : Nat) : LinkDisc (NeedLink.receiverCell a) := 
           · exact k
           · exact LinkHeapKept.modify_anchor k a _ (fun c0 c1 h0 kk => by
               rw [hc] at h0; cases h0
-              exact ⟨kk.callable, kk.callee, fun y h => (by rw [hrec] at h; cases h)⟩)
+              exact ⟨kk.callable, kk.projecting, kk.callee, fun y h => (by rw [hrec] at h; cases h)⟩)
       | ready v =>
         apply hother (.illegalInEval "not a link")
         simp only [NeedLink.receiverCell, bind_run, get_run, hc, hrec, hsusp]; rfl

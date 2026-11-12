@@ -1459,8 +1459,10 @@ def Oblivious {α : Type} (a : Nat) (m : EvalM α) : Prop :=
     (`receiver_cell_reads_invocation_receiver`, `invocationReceiverValue_eq`,
     `algorithm_callee_is_planned_callee`; `algorithmReceiverFailureAgrees` is the regression of the
     former outcome difference), but `algorithmHeapDiffers` refutes exact final-state equality — the
-    plan allocates its link and receiver cells — so an outcome bridge needs an address-renaming
-    simulation and step 1 remains incomplete there.
+    plan allocates its link and receiver cells — and `SelfObservation.outcomeDiffers` refutes
+    unconditional outcome agreement, so the `.Algorithm` bridge is the CONDITIONAL one of
+    `PlanAlgorithmBridge.lean` (the insertion relation of `HeapInsertion.lean`, the non-observation
+    contract `InsertedOn`).
     `InvocationPlanGuards.agrees`, `InvocationRouteGuards` and `PlanRouteBridgeGuards` give finite
     executable evidence. -/
 def ordinaryCall (route : NeedPlan.Route) (a : Nat)

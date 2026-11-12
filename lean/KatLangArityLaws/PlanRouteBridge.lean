@@ -47,7 +47,12 @@ about COMPLETED runs and every theorem carries its route premises explicitly.
     `t.N(xs*)`) the two origins name the same binding whenever the receiver's navigation is
     state-inert (`member_bridge_inert`, `NavInert`, `written_origin_is_bound`).
   `member_bridge_of_origin` is the general statement, relative to that origin agreement.
-* **The `.Algorithm` route: ONE receiver read, and a plan-side decomposition — NOT a bridge.** Since
+  `MemberStability.lean` (E-18 step 1, M1) discharges it for EVERY bundle wherever the receiver's
+  navigation is settled when the origin is read (`member_bridge_settled`), through the whole-run
+  stability invariant `NavStable` (`member_bridge_stable`), with a closed instance for a parameter
+  receiver (`member_bridge_param_stable`).
+* **The `.Algorithm` route: ONE receiver read, and a plan-side decomposition; its bridge is
+  CONDITIONAL and lives in `PlanAlgorithmBridge.lean`** (E-18 step 1, M2). Since
   the E-18 RECEIVER-READ CORRECTION (November 11 2026; `KatLang.lean`: `NeedInvocationRole`,
   `EvalBody.invocationReceiverValue`, `EvalBody.plannedLinkCallable`) the plan reads its receiver as
   the ordinary intrinsic does:
@@ -78,10 +83,46 @@ about COMPLETED runs and every theorem carries its route premises explicitly.
   `evalCallCountedExpr`). `algorithm_tail_name_origin` identifies the plan's heap-read name and origin
   with the captured plan's `calleeName` and callee cell once the link's receiver is decoded.
 
+M2 after the review repair: the tail contract is asked only from the ADMISSIBLE tail entries of
+a receiver value (`PlanAlgorithmBridge.After`) — the old universal premise, refuted by
+`PlanAlgorithmBridgeGuards.tailContractSelfReferenceDiffers`, is gone, and the self-reference is
+excluded by `self_reference_records_callee`; every bridge concludes the COMPLETE relation
+`HeapInsertion.Inserted` (`Frame` by `production_frame`, from an explicit preservation obligation);
+and `PlanAlgorithmBridgeInstances` applies the final theorems, every premise kernel-proved, to
+reached states for a successful and for a failing receiver read in both written forms.
+`PlanAlgorithmBridgeParameterInstances` additionally applies both final parameter bridge theorems
+to successful reference-valued reads in an own-parameter supply context, with every premise
+kernel-proved, repeated-demand memo reuse and a shifted callee allocation. The closing pass
+(`PlanAlgorithmBridgeSourceInstances` and its four companion modules) applies the final theorems
+to GENUINE SOURCE PROGRAMS in both written forms: the full `R.Algorithm(0)` positive control, a
+structured failure, a captured-reference receiver, an alias, an effectful receiver with memo
+sharing, an address-bearing result and a captured-ancestor parameter receiver — every premise
+proved; the run equations by proof-producing evaluation (`cbv`) over the production definitions,
+since the kernel cannot evaluate through the well-founded helpers.
+
+The MEMBER route's closing pass: `MemberBridgeSourceInstances` (and three companions) applies
+`MemberStability.member_bridge_settled` to genuine source programs over every receiver class and
+bundle kind, and `MemberSettled` DERIVES settled navigation from the production probe — the lexical
+lookup is state-free (opened names included), a transparent reference's chase to a named target
+is unfolded, member steps and parameter heads compose (`MemberSettledInstances` applies it).
+The M1 completion pass replaces the shape-by-shape unfolding by ONE theorem:
+`NavigationReread.navigation_reread` (a completed, non-minting identity navigation is re-read from
+every navigation extension) and `NavigationSettled.member_bridge_of_probe` — the member bridge from
+the production probe over runtime-target aliases, path-row references, chains, nested and
+parameter-rooted paths (`MemberRereadInstances` applies it to 26 source instances).
+
 ## Boundary
 
-**The `.Algorithm` route is not bridged — no longer because the outcomes differ, but because the
-heaps do.** The language-visible difference the E-18 correction task found — the plan read its
+**The `.Algorithm` route has no UNCONDITIONAL bridge, and cannot have one.** Exact final-state
+equality is false (`algorithmHeapDiffers`), and so is outcome agreement, even up to address
+renaming: `PlanRouteBridgeGuards.SelfObservation.outcomeDiffers` (M0, November 11 2026) reaches a
+flight state from which the plan's ordinary call returns 9 after two ticks and production returns 10
+after three, in both written forms — the run observes the plan's own callee record through a stored
+`callRef`. `PlanAlgorithmBridge.lean` proves the bridge that is true: both written forms against
+their production entries, under the structural insertion relation of `HeapInsertion.lean`, RELATIVE
+to an explicit non-observation contract (`PlanAlgorithmBridge.InsertedOn`); the contract's discharge
+on production states belongs to the META-free programme. The receiver READ is no longer part of
+the difference: the language-visible one the E-18 correction task found — the plan read its
 receiver as an ordinary supplied VALUE (`supplyNeed`, `evalCounted receiver`), so a receiver without
 output (`Empty = { }`, `Empty.Algorithm(0)`) failed with its OWN missing output under `while
 evaluating property Empty` where the ordinary intrinsic and C# report the NESTED, unframed one — is
@@ -89,31 +130,26 @@ CORRECTED in `KatLang.lean` (the receiver-read correction above; C#'s
 `InvocationReceiverSuspension`, rule D-3). `PlanRouteBridgeGuards.algorithmReceiverFailureAgrees` is
 the regression of the former witness `algorithmReceiverFailureDiffers`, and the guards find the two
 routes' outcomes equal on every receiver tried: without output, member paths, nested `.Algorithm`
-links, written calls, values, transparent references and parameters. That is finite evidence. What
-an outcome THEOREM still needs:
-* `algorithmHeapDiffers` (a permanent witness) — exact final-state equality is FALSE: from the SAME
-  reached flight state for `R.Algorithm(0)` both return `(0, 1)`, while only the plan side records
-  the outer callee and it has two more need cells (the link and its receiver cell). The bridge must
-  be stated up to a heap relation, and because the plan allocates those cells BEFORE the receiver
-  read and the tail run, every address they allocate is shifted while results can carry addresses
-  (`callRef`, `argView`): an address-RENAMING simulation of the whole evaluator, not a relation that
-  ignores extra cells.
-* The retained cell's read resolves the receiver's identity once more (`invocationReceiverValue_eq`:
-  probe, then read), where the dot-form intrinsic reads after the ONE probe that also selected the
-  edge. The bridge needs that second resolution to answer alike from the plan's state — the memo
-  stability of CALLABLE projection and of the alias chase that the member route's remaining class
-  needs too.
-* The receiver cell's completion shell around the read (`evaluating`, then the memoized outcome),
-  and the heap-read dispatch name and origin (`algorithm_tail_name_origin`) from the state the callee
-  phase leaves.
+links, written calls, values, transparent references and parameters. That is finite evidence; the
+THEOREM is the conditional bridge of `PlanAlgorithmBridge.lean`, which proves inside it what this
+module only named as needed:
+* the heap relation — `algorithmHeapDiffers`' two states differ by exactly the two cells the plan
+  allocates BEFORE the receiver read and the tail run, by the plan cell's callee record and by the
+  shift of every later address, results included (`HeapInsertion.embed`);
+* the ONE identity probe per side — production's own probe and the probe inside the plan's retained
+  receiver cell are the same shared computation (`dot_is_core`, `invocationReceiverValue_eq`), so
+  no memo-stability argument is needed for it;
+* the receiver cell's completion shell (`planned_value_run`) and the heap-read dispatch name and
+  origin (`plan_tail_run`, over `algorithm_tail_name_origin`).
 
-**The member route's remaining class**: an empty or spread-first bundle over a receiver whose
-navigation is not state-inert — a transparent reference or a runtime-target alias (its structure is
-a chase), a name resolved through `open`, a parameter (its first projection writes the cell's
-CALLABLE memo). There the plan's written origin navigates the receiver a second time when the origin
-is read, and no theorem shows that the second navigation finds the bound member; the guards find
-agreement. That every supplied CALLABLE is structure-normal on reachable heaps (the parameter
-receiver's premise) is likewise not proved as a heap invariant.
+**The member route's remaining class** is closed in `MemberStability.lean` relative to settled
+navigation, and that premise is NECESSARY: `MemberStabilityGuards.memberOriginRemintsRuntimeIdentity`
+reaches a state — a runtime-target alias whose `.Algorithm` receiver is a dot result — where an empty
+or spread-first bundle makes the plan's final state differ from production's by one minted runtime
+declaration identity. Still not proved: stability of a transparent reference, a runtime-target alias
+or an opened name FROM ITS PROBE (they are instances of `member_bridge_settled`, whose premise the
+guards decide), and structure-normality of every supplied CALLABLE as a heap invariant (the
+parameter theorems take it as a decidable premise).
 
 Only completed runs; C# evidence stays finite.
 -/

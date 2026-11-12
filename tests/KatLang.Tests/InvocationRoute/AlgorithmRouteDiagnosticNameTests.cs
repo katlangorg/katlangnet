@@ -419,6 +419,46 @@ public class AlgorithmRouteDiagnosticNameTests
         }
     }
 
+    // ── A plan that observes its OWN callee record through a stored reference (E-18 step 1, M0) ─────────
+    //
+    // `W = Capture(PWrap(P))`, where the argument `P` of the captured call is itself a planned `.Algorithm`
+    // invocation whose argument takes `.Algorithm` of `Capture(W.Arguments*)` — a reference to the cell
+    // holding `P` itself. Lean's proof-local comparison at that cell's flight (`PlanRouteBridgeGuards`,
+    // `SelfObservation.outcomeDiffers`) finds the plan's ordinary call returning 9 after two ticks and the
+    // ordinary production evaluation of the same written call, from the same state, 10 after three: the
+    // plan records its callee link in its own cell and reads the receiver once per plan, so the nested
+    // `.Algorithm` finds that record and the memoized receiver. The PUBLIC value is the plan route's.
+
+    private const string SelfObservationLibrary = """
+        PWrap(x) = x
+        PEcho(x) = x
+        PForced(a, b) = if(a > 0, b, b)
+        PK = Capture(PEcho(1))
+
+        """;
+
+    /// <summary>
+    /// The whole program of the E-18 M0 witness returns the PLAN route's value on every engine: the
+    /// self-observing invocation reads its effectful receiver once (9, not the 10 a second receiver read
+    /// would give), in the dot form and in the grouped form; without self-observation the value is the same
+    /// 9, and with a pure receiver 8.
+    /// </summary>
+    [Theory]
+    [InlineData("W = Capture(PWrap(PForced(tick(), PK).Algorithm(Capture(W.Arguments*).Algorithm(7) + tick())))", "9")]
+    [InlineData("W = Capture(PWrap((PForced(tick(), PK).Algorithm)(Capture(W.Arguments*).Algorithm(7) + tick())))", "9")]
+    [InlineData("W = Capture(PWrap(PForced(tick(), PK).Algorithm(7 + tick())))", "9")]
+    [InlineData("W = Capture(PWrap(PK.Algorithm(Capture(W.Arguments*).Algorithm(7) + tick())))", "8")]
+    public async Task APlanObservingItsOwnCalleeRecord_ReadsItsReceiverOncePerPlan_OnEveryEngine(string declaration, string expected)
+    {
+        foreach (var mode in new[] { 0, 1, 2 })
+        {
+            var (result, plans) = await RunOn(SelfObservationLibrary + declaration + "\nfirst(W.Arguments)", mode);
+            Assert.True(result.IsOk, $"{declaration} mode {mode}: {(result.IsError ? Shape(result.Error) : "")}");
+            Assert.Equal(expected, InvocationRouteCorpus.Value(result.Value.Value));
+            Assert.True(plans > 0, $"{declaration} mode {mode}: the captured argument must be a retained invocation plan");
+        }
+    }
+
     private const string FailedProjectionLibrary = "Bad = min([])\nHeld = Mk(Bad.Algorithm)\n";
 
     public static TheoryData<string> FailedProjections => new()

@@ -100,7 +100,8 @@ theorem ActivationPrefix.lookup {s t : EvalState} (h : ActivationPrefix s t) {id
   exact List.getElem?_append_left (by simpa using hid)
 
 instance : StateRel ActivationPrefix := ⟨ActivationPrefix.refl, ActivationPrefix.trans⟩
-instance : WriteFrame ActivationPrefix := ⟨fun _ _ _ _ h => ActivationPrefix.of_eq h, ActivationPrefix.push⟩
+instance : WriteFrame ActivationPrefix :=
+  WriteFrame.ofThreeFields ActivationPrefix.trans (fun _ _ _ _ h => ActivationPrefix.of_eq h) ActivationPrefix.push
 
 /-- The property access writes only the cache and the owner set: its own writes keep the array,
     its calculation extends it. -/
@@ -493,8 +494,9 @@ instance : StateRel Retained :=
    fun h k => ⟨h.1.trans k.1, StateRel.trans h.2 k.2⟩⟩
 
 instance : WriteFrame Retained :=
-  ⟨fun s t hc ha hl => ⟨ActivationPrefix.of_eq hl, WriteFrame.keep s t hc ha hl⟩,
-   fun s a => ⟨ActivationPrefix.push s a, WriteFrame.push s a⟩⟩
+  WriteFrame.ofThreeFields (fun h k => StateRel.trans h k)
+    (fun s t hc ha hl => ⟨ActivationPrefix.of_eq hl, FieldFrame.frame s t hc ha⟩)
+    (fun s a => ⟨ActivationPrefix.push s a, FieldFrame.frame s _ rfl rfl⟩)
 
 /-- Every production operation, from every state, whatever its outcome, retains. -/
 theorem production_retained (c : EvalCall) : Preserves Retained (evalUnbounded c) :=

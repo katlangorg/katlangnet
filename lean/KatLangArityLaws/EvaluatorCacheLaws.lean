@@ -7,10 +7,15 @@ open KatLang KatLang.EvaluatorCore
 # R7: whole-run property-cache discipline (Q-37)
 
 A FIELD-FRAMED relation depends on a state only through its property cache and its active owner
-set. A `WriteFrame` relation is weaker: it accepts every write that keeps those two fields and the
-lexical-activation array, and every single activation append; each field-framed relation is one
-(`instance : WriteFrame`), and so is the activation-prefix relation of
-`KatLangArityLaws/OwnerContextStability.lean`, which is NOT field-framed. Every evaluator body
+set. A `WriteFrame` relation is weaker: it accepts every write that keeps those two fields, the
+lexical-activation array, the recorded alias binding cells and the runtime-declaration counter;
+every single activation append; the alias table's one writer (a record under a key absent at an
+earlier related state); and the counter's one writer (one advance). Each field-framed relation is
+one (`instance : WriteFrame`), and so are the activation-prefix relation of
+`KatLangArityLaws/OwnerContextStability.lean`, which is NOT field-framed, and the alias-record
+relation `NavKept` of `KatLangArityLaws/MemberStability.lean` (E-18, November 2026), for which the
+frame was extended from three kept fields to five: a relation that PROTECTS the alias table could
+not accept every write keeping only the first three. Every evaluator body
 except the one that writes the two cache fields
 (`EvalBody.evalZeroArgPropertyAccessCounted`) preserves every `WriteFrame` relation whenever its
 recursive answer does (`evalStep_preserves_other`, one theorem per body, `EvalBody.*_pres`;
@@ -55,18 +60,42 @@ class FieldFrame (R : EvalState → EvalState → Prop) : Prop where
     t.activeZeroArgProperties = s.activeZeroArgProperties → R s t
 
 /-- What the evaluator bodies other than the property access need of a relation: it accepts every
-    write that keeps the property cache, the active owner set and the lexical-activation array,
-    and every single append to that array (`recordParameterActivation`, the array's one writer).
-    A field-framed relation is one; a relation about the activation array can be one without
-    being field-framed. -/
+    write that keeps the property cache, the active owner set, the lexical-activation array, the
+    recorded alias binding cells and the runtime-declaration counter (`keep`); every single append
+    to the activation array (`push`: `recordParameterActivation`, the array's one writer); the
+    record of an alias binding cell under a key that was ABSENT at an earlier related state
+    (`aliasAfter`: `aliasBindingCellRecorded`, the table's one writer, which records only after its
+    own lookup found nothing); and one advance of the runtime-declaration counter (`mint`:
+    `identifyRuntimeAlgorithm`, its one writer). A field-framed relation is one; so is a relation
+    about the activation array, and so is a relation that PROTECTS the recorded alias cells and
+    the counter (`MemberStability.NavKept`) — which the weaker frame of every write keeping only
+    the first three fields could not be. -/
 class WriteFrame (R : EvalState → EvalState → Prop) : Prop where
   keep : ∀ s t, t.zeroArgPropertyCache = s.zeroArgPropertyCache →
     t.activeZeroArgProperties = s.activeZeroArgProperties →
-    t.lexicalActivations = s.lexicalActivations → R s t
+    t.lexicalActivations = s.lexicalActivations →
+    t.aliasCells = s.aliasCells → t.nextRuntimeDeclaration = s.nextRuntimeDeclaration → R s t
   push : ∀ s a, R s { s with lexicalActivations := s.lexicalActivations.push a }
+  aliasAfter : ∀ s t (key : String) (address : Nat), R s t → lookupAssoc key s.aliasCells = none →
+    R s { t with aliasCells := (key, address) :: t.aliasCells }
+  mint : ∀ s, R s { s with nextRuntimeDeclaration := s.nextRuntimeDeclaration + 1 }
 
-instance {R : EvalState → EvalState → Prop} [FieldFrame R] : WriteFrame R :=
-  ⟨fun s t hc ha _ => FieldFrame.frame s t hc ha, fun s _ => FieldFrame.frame s _ rfl rfl⟩
+/-- A relation that accepts EVERY write keeping the property cache, the owner set and the
+    activation array, and every activation append, is write-framed if it is transitive: the alias
+    record and the counter advance keep those three fields. -/
+theorem WriteFrame.ofThreeFields {R : EvalState → EvalState → Prop}
+    (trans : ∀ {s t u}, R s t → R t u → R s u)
+    (keep : ∀ s t, t.zeroArgPropertyCache = s.zeroArgPropertyCache →
+      t.activeZeroArgProperties = s.activeZeroArgProperties →
+      t.lexicalActivations = s.lexicalActivations → R s t)
+    (push : ∀ s a, R s { s with lexicalActivations := s.lexicalActivations.push a }) : WriteFrame R :=
+  ⟨fun s t hc ha hl _ _ => keep s t hc ha hl, push,
+    fun _ t _ _ h _ => trans h (keep t _ rfl rfl rfl), fun s => keep s _ rfl rfl rfl⟩
+
+instance {R : EvalState → EvalState → Prop} [StateRel R] [FieldFrame R] : WriteFrame R :=
+  ⟨fun s t hc ha _ _ _ => FieldFrame.frame s t hc ha, fun s _ => FieldFrame.frame s _ rfl rfl,
+    fun _ t _ _ h _ => StateRel.trans h (FieldFrame.frame t _ rfl rfl),
+    fun s => FieldFrame.frame s _ rfl rfl⟩
 
 /-- `m` relates the one entry state `st` (read by a preceding `get`) to its exit state. -/
 def PresAt {α : Type} (R : EvalState → EvalState → Prop) (st : EvalState) (m : EvalM α) : Prop :=
@@ -339,7 +368,8 @@ macro_rules | `(tactic| pres_rel_close) => `(tactic| fail "no relation-specific 
 
 /-- A framed write: a goal `R s t` whose `t` keeps the cache, the owner set and the activations, or
     appends one activation (a body entry unfolded in place). -/
-macro "pres_frame" : tactic => `(tactic| first | (apply WriteFrame.keep <;> rfl) | exact WriteFrame.push _ _)
+macro "pres_frame" : tactic =>
+  `(tactic| first | (apply WriteFrame.keep <;> rfl) | exact WriteFrame.push _ _ | exact WriteFrame.mint _)
 
 set_option hygiene false in
 /-- Syntax-directed preservation of a write-framed relation, base form (framework lemmas only). -/
@@ -388,11 +418,93 @@ theorem pres_bindParameters (names : List Ident) (ctx : EvalCtx) :
 theorem pres_recordActivation (names : List Ident) (ctx : EvalCtx) (env : ValEnv) :
     Preserves R (recordParameterActivation names ctx env) :=
   fun s => WriteFrame.push s _
-theorem pres_identifyRuntime (a : Algorithm) : Preserves R (identifyRuntimeAlgorithm a) := by
-  unfold identifyRuntimeAlgorithm; pres_tac_base
+theorem pres_identifyRuntime (a : Algorithm) : Preserves R (identifyRuntimeAlgorithm a) :=
+  fun s => WriteFrame.mint s
 theorem pres_valueViewCell (a : Algorithm) : Preserves R (valueViewCell? a) := by
   unfold valueViewCell?; pres_tac_base
 end Helpers
+
+set_option hygiene false in
+/-- `pres_tac_base` with the allocation and activation writers (the alias-cell writer's own
+    helpers; `pres_tac_mid` adds that writer). -/
+macro "pres_tac_alloc" : tactic => `(tactic| without_info_trees ((try pres_unfold_rec) <;> repeat' (first
+  | pres_rec
+  | pres_hyp
+  | pres_absurd
+  | (with_reducible apply pres_get_bind)
+  | (with_reducible apply PresAt.get_bind)
+  | (with_reducible apply PresAt.bind)
+  | ((with_reducible apply PresAt.set); first | pres_frame | pres_rel_close)
+  | (with_reducible apply pres_bind)
+  | (with_reducible apply pres_pure)
+  | (with_reducible apply pres_get)
+  | (with_reducible apply pres_throw)
+  | (with_reducible apply pres_raw_throw)
+  | (with_reducible apply pres_raw_pure)
+  | (with_reducible apply pres_allocate)
+  | (with_reducible apply pres_recordActivation)
+  | split
+  | pres_intro
+  | pres_zeta
+  | pres_whnf_core
+  | pres_unfold_head
+  | (with_reducible apply PresAt.of_pres))))
+
+section AliasWriter
+variable {R : EvalState → EvalState → Prop} [StateRel R] [WriteFrame R]
+
+theorem pres_enterAlgorithmBody (a : Algorithm) (ctx : EvalCtx) (env : ValEnv) :
+    Preserves R (enterAlgorithmBody a ctx env) := by
+  unfold enterAlgorithmBody; pres_tac_alloc
+
+theorem pres_capturedActivation (name : Ident) (ctx : EvalCtx) :
+    Preserves R (capturedParameterActivation? name ctx) := by
+  unfold capturedParameterActivation?; pres_tac_alloc
+
+theorem pres_supplyNeed (source : Expr) (caller : EvalCtx) (values : ValEnv) :
+    Preserves R (supplyNeed source caller values) := by
+  unfold supplyNeed
+  split
+  · exact pres_bind (pres_capturedActivation _ _) (fun activation => by
+      split
+      · exact pres_pure _
+      · exact pres_allocate _)
+  · exact pres_allocate _
+
+/-- **The alias-cell table's ONE writer.** It records a binding cell only after its own lookup of
+    the key found nothing, and nothing between the lookup and the record touches the table: so the
+    record is a write `WriteFrame.aliasAfter` accepts. A hit changes nothing. -/
+theorem pres_aliasBindingCellRecorded (wired : Algorithm) (target : Expr) (ctx : EvalCtx) :
+    Preserves R (aliasBindingCellRecorded wired target ctx) := by
+  intro s
+  have hpre : Preserves R (enterAlgorithmBody wired ctx [] >>= fun declaringCtx => supplyNeed target declaringCtx []) :=
+    pres_bind (pres_enterAlgorithmBody wired ctx []) (fun declaringCtx => pres_supplyNeed target declaringCtx [])
+  have k := hpre s
+  have hget : (get : EvalM EvalState).runState s = (.ok s, s) := rfl
+  cases hl : lookupAssoc (aliasCellKey wired) s.aliasCells with
+  | some address =>
+    have hrun : (aliasBindingCellRecorded wired target ctx).runState s = (.ok address, s) := by
+      simp only [aliasBindingCellRecorded, EvalM.bind_runState, hget, hl]
+      rfl
+    rw [hrun]
+    exact StateRel.refl s
+  | none =>
+    have hrun : ((aliasBindingCellRecorded wired target ctx).runState s).2 =
+        (match (enterAlgorithmBody wired ctx [] >>= fun declaringCtx => supplyNeed target declaringCtx []).runState s with
+         | (.ok address, t) => { t with aliasCells := (aliasCellKey wired, address) :: t.aliasCells }
+         | (.error _, t) => t) := by
+      simp only [aliasBindingCellRecorded, EvalM.bind_runState, hget, hl]
+      rcases (enterAlgorithmBody wired ctx []).runState s with ⟨_ | declaringCtx, t₁⟩
+      · rfl
+      · dsimp only
+        rcases (supplyNeed target declaringCtx []).runState t₁ with ⟨_ | address, t₂⟩ <;> rfl
+    rw [hrun]
+    rcases hr : (enterAlgorithmBody wired ctx [] >>= fun declaringCtx => supplyNeed target declaringCtx []).runState s
+      with ⟨_ | address, t⟩
+    · rw [hr] at k; exact k
+    · rw [hr] at k; exact WriteFrame.aliasAfter s t _ _ k hl
+
+end AliasWriter
 
 set_option hygiene false in
 /-- Syntax-directed preservation of a write-framed relation, with the state-writing helpers. -/
@@ -419,6 +531,7 @@ macro "pres_tac_mid" : tactic => `(tactic| without_info_trees ((try pres_unfold_
   | (with_reducible apply pres_bindParameters)
   | (with_reducible apply pres_recordActivation)
   | (with_reducible apply pres_identifyRuntime)
+  | (with_reducible apply pres_aliasBindingCellRecorded)
   | (with_reducible apply pres_valueViewCell)
   | (with_reducible apply pres_evalError)
   | (with_reducible apply pres_lift)
@@ -712,6 +825,7 @@ macro "pres_tac" : tactic => `(tactic| without_info_trees ((try pres_unfold_rec)
   | (with_reducible apply pres_bindParameters)
   | (with_reducible apply pres_recordActivation)
   | (with_reducible apply pres_identifyRuntime)
+  | (with_reducible apply pres_aliasBindingCellRecorded)
   | (with_reducible apply pres_valueViewCell)
   | (with_reducible apply pres_evalError)
   | (with_reducible apply pres_lift)
