@@ -10,8 +10,8 @@ namespace KatLang.Formatting;
 /// applications): <c>exact</c> — canonical display, byte-identical to
 /// <see cref="RunResult.ToDisplayString"/>; <c>readable</c> — structurally
 /// faithful pretty-printer (every delimiter preserved, layout improved);
-/// <c>concise</c> — conservative layout that hides only provably safe
-/// sequence parentheses. Lookup uses ORDINAL, case-sensitive comparison, and
+/// <c>concise</c> uses spaces and indentation in place of sequence
+/// punctuation where the layout permits. Lookup uses ordinal, case-sensitive comparison, and
 /// unknown ids deterministically fall back to <see cref="Exact"/> unless the
 /// caller supplies another fallback.</para>
 ///
@@ -44,7 +44,7 @@ public static class OutputFormatters
     /// <summary>The structure-preserving pretty-printer, id <c>readable</c>.</summary>
     public static OutputFormatter Readable => BuiltInsById["readable"];
 
-    /// <summary>The conservative low-punctuation formatter, id <c>concise</c>.</summary>
+    /// <summary>The low-punctuation formatter, id <c>concise</c>.</summary>
     public static OutputFormatter Concise => BuiltInsById["concise"];
 
     /// <summary>

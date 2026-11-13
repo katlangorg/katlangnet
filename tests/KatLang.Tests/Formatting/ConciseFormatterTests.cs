@@ -63,16 +63,16 @@ public class ConciseFormatterTests
         => Assert.Equal("[(1, 2), 3]", Format("[(1, 2), 3]"));
 
     [Fact]
-    public void WhitespaceBearingString_ForcesParentheses()
-        => Assert.Equal("('a b', 1)", Format("('a b', 1)"));
+    public void InteriorSpaceString_DoesNotForceParentheses()
+        => Assert.Equal("'a b' 1", Format("('a b', 1)"));
 
-    [Fact]
-    public void CommaBearingString_ForcesParentheses()
-        => Assert.Equal("('a,b', 1)", Format("('a,b', 1)"));
-
-    [Fact]
-    public void WhitespaceOnlyString_ForcesParentheses()
-        => Assert.Equal("('   ', 1)", Format("('   ', 1)"));
+    [Theory]
+    [InlineData("(' a', 1)", "' a' 1")]
+    [InlineData("('a ', 1)", "'a ' 1")]
+    [InlineData("('a,b', 1)", "'a,b' 1")]
+    [InlineData("('   ', 1)", "'   ' 1")]
+    public void QuotedStrings_KeepTheirContentOnAJoinedLine(string source, string expected)
+        => Assert.Equal(expected, Format(source));
 
     [Fact]
     public void AdjacentNestedSequences_KeepParenthesesWhenBlocksWouldMerge()
@@ -117,16 +117,16 @@ public class ConciseFormatterTests
         => Assert.Equal("a '' b", Format("('a', '', 'b')"));
 
     [Fact]
-    public void UnquotedEmptyString_ForcesParentheses()
-        => Assert.Equal("(a, , b)", Format("('a', '', 'b')", Options(delimiters: StringDelimiterMode.Never)));
+    public void UnquotedEmptyString_CanJoinALine()
+        => Assert.Equal("a  b", Format("('a', '', 'b')", Options(delimiters: StringDelimiterMode.Never)));
 
     [Fact]
     public void NumericLookingString_IsQuotedAndJoinable()
         => Assert.Equal("'123' 5", Format("('123', 5)"));
 
     [Fact]
-    public void NumericLookingString_UnderNever_RetainsSequenceParentheses()
-        => Assert.Equal("(123, 5)", Format("('123', 5)", Options(delimiters: StringDelimiterMode.Never)));
+    public void NumericLookingString_UnderNever_JoinsWithoutQuotes()
+        => Assert.Equal("123 5", Format("('123', 5)", Options(delimiters: StringDelimiterMode.Never)));
 
     [Fact]
     public void StructureLookingString_IsQuotedAndJoinable()
@@ -199,17 +199,8 @@ public class ConciseFormatterTests
     [Fact]
     public void PairLinesInsideRetainedParentheses_KeepCanonicalCommas()
         => Assert.Equal(
-            "(\n  'a b', 1,\n  'c d', 2\n)",
-            Format("('a b', 1, 'c d', 2)", Options(width: 12)));
-
-    [Fact]
-    public void UnquotableHostString_ForcesSequenceParentheses()
-    {
-        var value = new Result.SequenceValue([new Result.Str("can't"), new Result.Atom(1)]);
-        var success = new RunResult.Success(new Algorithm.User(null, [], [], [], []), value, []);
-
-        Assert.Equal("(can't, 1)", OutputFormatters.Concise.Format(success, Options()));
-    }
+            "(\n  'a,b', 1,\n  'c,d', 2\n)",
+            Format("('a,b', 1, 'c,d', 2)", Options(width: 12, spacing: 0)));
 
     [Theory]
     [InlineData('\u0085')] // NEXT LINE
@@ -217,10 +208,7 @@ public class ConciseFormatterTests
     [InlineData('\u2029')] // PARAGRAPH SEPARATOR
     public void PairRun_WithAUnicodeLineSeparatorLabel_FallsBackToOneItemPerLine(char separator)
     {
-        // Not a safe concise token (whitespace), so no space join or pair
-        // block forms; the retained-parentheses fallback must not group
-        // pair lines either, because the separator breaks the rendered
-        // line even inside quotes.
+        // The separator breaks the rendered line even inside quotes.
         var value = new Result.SequenceValue(
         [
             new Result.Str("a"), new Result.Atom(1),

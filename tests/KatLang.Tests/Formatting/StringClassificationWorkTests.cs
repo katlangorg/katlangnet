@@ -7,7 +7,7 @@ namespace KatLang.Tests.Formatting;
 
 /// <summary>
 /// Security finding F4: string classification during Readable/Concise layout
-/// (quoting, token safety, line breaks) must cost work bounded per rendering
+/// (quoting, rendered length, line breaks) must cost work bounded per rendering
 /// call — independent of how many times a string is referenced and of how many
 /// distinct strings defeat the bounded identity cache — while ordinary output
 /// stays byte-identical and budget exhaustion only ever selects a conservative,
@@ -485,36 +485,40 @@ public class StringClassificationWorkTests
         }
     }
 
-    private sealed record FactsCase(string Text, bool TokenSafeNever, bool TokenSafeQuoted, bool NeedsQuotes, bool CanQuote, bool LineBreak);
+    private sealed record FactsCase(string Text, bool NeedsQuotes, bool CanQuote, bool LineBreak);
 
     private static IEnumerable<FactsCase> FactsCases()
     {
-        // TokenSafeQuoted is the same for WhenNeeded and Always: a delimited
-        // token is self-bounding, but whitespace, controls, commas, format
-        // characters, unpaired surrogates, and unquotable content stay unsafe.
-        yield return new("neto", true, true, false, true, false);
-        yield return new("net_salary", true, true, false, true, false);
-        yield return new("1_000", false, true, true, true, false);
-        yield return new("-1.5e3", false, true, true, true, false);
-        yield return new("NaN", false, true, true, true, false);
-        yield return new("-Infinity", false, true, true, true, false);
-        yield return new("", false, true, true, true, false);
-        yield return new("a b", false, false, true, true, false);
-        yield return new("a\tb", false, false, true, true, false);
-        yield return new("a,b", false, false, true, true, false);
-        yield return new("(p)", false, true, true, true, false);
-        yield return new("[q]", false, true, true, true, false);
-        yield return new("it's", false, false, true, false, false);
-        yield return new(Ch(0x200B) + "zw", false, false, true, true, false);
-        yield return new("a" + Ch(0x202E) + "b", false, false, true, true, false);
-        yield return new("a" + Ch(0xD83D) + Ch(0xDE00) + "b", true, true, false, true, false);
-        yield return new("a" + Ch(0xD800) + "b", false, false, true, true, false);
-        yield return new("a" + Ch(0xDC00) + "b", false, false, true, true, false);
-        yield return new("a\rb", false, false, true, false, true);
-        yield return new("a\nb", false, false, true, false, true);
-        yield return new("a" + Ch(0x0085) + "b", false, false, true, true, true);
-        yield return new("a" + Ch(0x2028) + "b", false, false, true, true, true);
-        yield return new("a" + Ch(0x2029) + "b", false, false, true, true, true);
+        yield return new("neto", false, true, false);
+        yield return new("net_salary", false, true, false);
+        yield return new("1_000", true, true, false);
+        yield return new("-1.5e3", true, true, false);
+        yield return new("NaN", true, true, false);
+        yield return new("-Infinity", true, true, false);
+        yield return new("", true, true, false);
+        yield return new("a b", true, true, false);
+        yield return new("a   b", true, true, false);
+        yield return new(" ab", true, true, false);
+        yield return new("ab ", true, true, false);
+        yield return new("   ", true, true, false);
+        yield return new("a (b)", true, true, false);
+        yield return new("a" + Ch(0x00A0) + "b", true, true, false);
+        yield return new("a 1", true, true, false);
+        yield return new("a\tb", true, true, false);
+        yield return new("a,b", true, true, false);
+        yield return new("(p)", true, true, false);
+        yield return new("[q]", true, true, false);
+        yield return new("it's", true, false, false);
+        yield return new(Ch(0x200B) + "zw", true, true, false);
+        yield return new("a" + Ch(0x202E) + "b", true, true, false);
+        yield return new("a" + Ch(0xD83D) + Ch(0xDE00) + "b", false, true, false);
+        yield return new("a" + Ch(0xD800) + "b", true, true, false);
+        yield return new("a" + Ch(0xDC00) + "b", true, true, false);
+        yield return new("a\rb", true, false, true);
+        yield return new("a\nb", true, false, true);
+        yield return new("a" + Ch(0x0085) + "b", true, true, true);
+        yield return new("a" + Ch(0x2028) + "b", true, true, true);
+        yield return new("a" + Ch(0x2029) + "b", true, true, true);
     }
 
     [Fact]
@@ -527,9 +531,11 @@ public class StringClassificationWorkTests
             foreach (var sample in FactsCases())
             {
                 // Letter padding preserves every character-class fact; the
-                // numeric, atom-spelling and empty cases are whole-string rules
-                // and are checked short only (padding makes them plain text).
-                var wholeStringRule = sample.Text.Length == 0 || char.IsAsciiDigit(sample.Text[^1]) || sample.Text is "NaN" or "-Infinity";
+                // numeric, atom-spelling, empty and leading/trailing-space
+                // cases are whole-string rules and are checked short only
+                // (padding makes them plain text or interior spaces).
+                var wholeStringRule = sample.Text.Length == 0 || char.IsAsciiDigit(sample.Text[^1]) || sample.Text is "NaN" or "-Infinity"
+                    || sample.Text[0] == ' ' || sample.Text[^1] == ' ';
                 var texts = wholeStringRule ? [sample.Text] : new[] { sample.Text, padding + sample.Text, sample.Text + padding };
                 foreach (var text in texts)
                 {
@@ -539,14 +545,12 @@ public class StringClassificationWorkTests
                         StringDelimiterMode.WhenNeeded => sample.NeedsQuotes && sample.CanQuote,
                         _ => false,
                     };
-                    var expectedSafe = mode == StringDelimiterMode.Never ? sample.TokenSafeNever : sample.TokenSafeQuoted;
 
                     // First call computes (and caches long strings); second is the cached answer.
                     for (var call = 0; call < 2; call++)
                     {
                         Assert.True(policy.TryClassify(text, out var facts));
                         var label = $"{mode} '{Escape(text)}' call {call}";
-                        Assert.True(expectedSafe == facts.IsTokenSafe, $"IsTokenSafe {label}");
                         Assert.True(usesQuotes == facts.UsesDelimiters, $"UsesDelimiters {label}");
                         Assert.True(sample.LineBreak == facts.ContainsLineBreak, $"ContainsLineBreak {label}");
                         Assert.Equal(text.Length + (usesQuotes ? 2 : 0), facts.TokenLength);
@@ -565,17 +569,17 @@ public class StringClassificationWorkTests
     [InlineData(StringDelimiterMode.Never)]
     [InlineData(StringDelimiterMode.WhenNeeded)]
     [InlineData(StringDelimiterMode.Always)]
-    public void LongAmbiguousStrings_KeepConciseParentheses_LikeShortOnes(StringDelimiterMode mode)
+    public void LineBreaks_KeepConciseParentheses_ForShortAndLongStrings(StringDelimiterMode mode)
     {
         // The long (cached) path makes the same structural decision as the
-        // short path: one unsafe string keeps the root parentheses.
+        // short path: a line break in a string keeps the sequence delimiters.
         var padding = new string('p', DelimitedStringTextPolicy.LongStringLength);
-        foreach (var unsafeText in new[] { "a b", "a,b", "a" + Ch(0x200B) + "b", "a" + Ch(0xD800) + "b" })
+        foreach (var multiline in new[] { "a\rb", "a\nb", "a" + Ch(0x0085) + "b", "a" + Ch(0x2028) + "b", "a" + Ch(0x2029) + "b" })
         {
-            foreach (var text in new[] { unsafeText, padding + unsafeText })
+            foreach (var text in new[] { multiline, padding + multiline })
             {
                 var value = Seq(Str("ok"), Str(text), Num(1));
-                var options = new OutputFormattingOptions { NewLine = "\n", StringDelimiters = mode, PreferredLineWidth = 1 };
+                var options = new OutputFormattingOptions { NewLine = "\n", StringDelimiters = mode, PreferredLineWidth = 100 };
                 var (completed, written, _) = Observe(value, options, concise: true);
 
                 Assert.True(completed);

@@ -292,14 +292,12 @@ public class NaturalStructureLayoutTests
     }
 
     [Fact]
-    public void UnsafeNestedPairChild_RetainsSequencePunctuation()
+    public void NestedPairChild_WithRawComma_UsesIndentedPairLines()
     {
-        // 'net salary' is not a safe raw token under Never, so the nested pair
-        // child keeps canonical parentheses and separators.
-        const string source = "(('id', 1), ('net salary', 1473.8, 'tax', 500))";
+        const string source = "(('id', 1), ('net,salary', 1473.8, 'tax', 500))";
         var text = OutputFormatters.Concise.Format(KatLangEngine.Run(source), Acceptance(spacing: 1));
 
-        Assert.Equal("id 1\n(\n  net salary, 1473.8,\n  tax, 500\n)", text);
+        Assert.Equal("id 1\n  net,salary 1473.8\n  tax 500", text);
         Assert.DoesNotContain("'", text, StringComparison.Ordinal);
     }
 

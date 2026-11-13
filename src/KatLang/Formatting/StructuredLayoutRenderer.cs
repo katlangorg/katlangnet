@@ -34,15 +34,14 @@ namespace KatLang.Formatting;
 /// separators, quotes, and newlines included — goes through the bounded
 /// writer, which preserves the all-or-nothing display-limit contract.</para>
 ///
-/// <para>String classification (quoting, token safety, line breaks) goes
+/// <para>String classification (quoting, length, line breaks) goes
 /// through the session's <see cref="DelimitedStringTextPolicy"/>, whose work is
 /// bounded per rendering call independently of how often a string is
-/// referenced (security finding F4). Every predicate checks the cheap
-/// raw-length bound BEFORE asking for a classification, and treats "not
-/// classified within budget" as "not established": the layout then keeps
-/// delimiters (a paren-hidden block, space join, or pair line is never formed
-/// on an unproven token) and an unmeasured value does not fit inline. Because
-/// a lookahead decision (the zero-spacing root gate) must agree with the
+/// referenced (security finding F4). Layout checks the raw-length bound
+/// before classifying a string to fit it on a line. When the classifier runs out
+/// of budget, the layout keeps delimiters and treats unmeasured values as too
+/// wide for inline rendering. Because a lookahead decision (the zero-spacing
+/// root gate) must agree with the
 /// decision taken later in the same row, a row during which the budget first
 /// ran out is rewound and rendered again against the then-stable classifier
 /// (cached facts only), so every row is laid out by ONE consistent
@@ -242,7 +241,7 @@ internal static class StructuredLayoutRenderer
                     return WriteSpaceJoinedLine(rootSequence.Items, 0);
 
                 if ((_rootSpacing > 0 || HasIndentedPairBlockItem(rootSequence.Items))
-                    && BlockItemsAreSafe(rootSequence.Items))
+                    && BlockItemsAreSingleLine(rootSequence.Items))
                 {
                     _frames.Push(new Frame
                     {
@@ -391,12 +390,12 @@ internal static class StructuredLayoutRenderer
                     // hide its parentheses only when the indentation uniquely
                     // preserves the structure: it must hang off a preceding
                     // single-line sibling, must not merge with an adjacent
-                    // block-shaped sibling, and all of its immediate items must
-                    // be safe block lines.
+                    // block-shaped sibling, and each immediate string must fit
+                    // on a single physical line.
                     var subBlockEligible = _indentSize > 0
                         && frame.PrevItemWasLine
                         && !NextItemIsBlockCandidate(frame)
-                        && BlockItemsAreSafe(childItems);
+                        && BlockItemsAreSingleLine(childItems);
 
                     frame.Next++;
                     frame.PrevItemWasLine = false;
@@ -486,8 +485,8 @@ internal static class StructuredLayoutRenderer
 
         /// <summary>
         /// A child that renders as an indented concise pair block: two or more
-        /// safe alternating string/value pairs, with visible indentation
-        /// available to carry the nesting.
+        /// alternating string/value pairs that each fit on one line, with
+        /// indentation available to show the nesting.
         /// </summary>
         private bool IsPairBlockChild(IReadOnlyList<Result> items, int level)
             => _indentSize > 0 && items.Count >= 4 && IsConcisePairRun(items, level + 1);
@@ -515,8 +514,7 @@ internal static class StructuredLayoutRenderer
         private bool RendersAsBlockLine(Result item)
             => item switch
             {
-                // Block-item strings are pre-checked safe tokens, so leaves
-                // always occupy exactly one line.
+                // The root block checks its string items for line breaks.
                 Result.Atom or Result.Str or Result.Bool => true,
                 Result.SequenceValue { Items.Count: >= 2 } sequence
                     => CanSpaceJoinTokens(sequence.Items, 0)
@@ -549,50 +547,17 @@ internal static class StructuredLayoutRenderer
         }
 
         /// <summary>
-        /// Whether all tokens can form a whole-line space join. Returns false
-        /// when any item lacks a safe single-token representation under the
-        /// active string policy (see
-        /// <see cref="DelimitedStringTextPolicy.StringFacts.IsTokenSafe"/> — the decision
-        /// is per concrete value, never a global mode switch) or the joined
-        /// line would exceed the preferred width. Atom tokens are always safe
-        /// (canonical invariant number text contains no whitespace or commas);
-        /// structural items never join, so nested sequences and lists keep
-        /// their own delimiters.
+        /// Whether these scalars fit on one space-separated line.
         /// </summary>
         private bool CanSpaceJoinTokens(IReadOnlyList<Result> items, int level)
         {
-            var columns = ColumnsOf(level);
-            long total = columns + items.Count - 1;
-            if (total > _width) return false;
+            var available = (long)_width - ColumnsOf(level) - (items.Count - 1);
+            if (available < 0) return false;
 
             foreach (var item in items)
             {
-                long tokenLength;
-                switch (item)
-                {
-                    case Result.Atom(var number):
-                        tokenLength = ValueTextRenderer.FormatAtom(number, _displayOptions).Length;
-                        break;
-                    case Result.Bool(var flag):
-                        tokenLength = ValueTextRenderer.FormatBool(flag).Length;
-                        break;
-                    case Result.Str(var text):
-                        // Raw content length is a lower bound under every
-                        // delimiter policy. Apply it before asking the policy
-                        // whether quotes are needed/possible, because that
-                        // classification may scan the string.
-                        if (total + text.Length > _width) return false;
-                        if (!_strings.TryClassify(text, out var facts)) return false;
-                        tokenLength = facts.TokenLength;
-                        if (total + tokenLength > _width) return false;
-                        if (!facts.IsTokenSafe) return false;
-                        break;
-                    default:
-                        return false;
-                }
-
-                total += tokenLength;
-                if (total > _width) return false;
+                if (SingleLineScalarLength(item, available) is not { } length) return false;
+                available -= length;
             }
 
             return true;
@@ -611,24 +576,15 @@ internal static class StructuredLayoutRenderer
         }
 
         /// <summary>
-        /// Immediate-item safety of a paren-hidden block: every string item
-        /// must be a safe standalone token under the active policy
-        /// (<see cref="DelimitedStringTextPolicy.StringFacts.IsTokenSafe"/>);
-        /// a string not classified within the work budget is not proven safe
-        /// and keeps the parentheses exactly like an unsafe one. An unsafe
-        /// string — a blank line, a line whose content mimics several items or
-        /// a separator, or raw text indistinguishable from other syntax —
-        /// keeps the parentheses instead. Non-string items are safe here:
-        /// atoms and bracketed/parenthesized structures carry their own
-        /// boundaries, and nested sequences make their own decision one level
-        /// deeper.
+        /// A paren-hidden block uses line breaks to separate immediate items.
+        /// Nested structures make their own layout decision one level deeper.
         /// </summary>
-        private bool BlockItemsAreSafe(IReadOnlyList<Result> items)
+        private bool BlockItemsAreSingleLine(IReadOnlyList<Result> items)
         {
             foreach (var item in items)
             {
                 if (item is Result.Str(var text)
-                    && !(_strings.TryClassify(text, out var facts) && facts.IsTokenSafe))
+                    && (!_strings.TryClassify(text, out var facts) || facts.ContainsLineBreak))
                 {
                     return false;
                 }
@@ -670,32 +626,31 @@ internal static class StructuredLayoutRenderer
         }
 
         /// <summary>
-        /// The rendered token length of one pair-position scalar, or null when
-        /// it is unsafe or exceeds the supplied cap. String content length is
-        /// checked before any delimiter/safety scan.
+        /// The rendered length of a scalar that fits on one line, including
+        /// any quotes. Check raw string length before classifying its content.
         /// </summary>
-        private long? SafePairTokenLength(Result item, long maxLength)
+        private long? SingleLineScalarLength(Result item, long available)
         {
-            if (maxLength < 0) return null;
+            if (available < 0) return null;
 
             switch (item)
             {
                 case Result.Atom(var number):
                     var atomLength = ValueTextRenderer.FormatAtom(number, _displayOptions).Length;
-                    return atomLength <= maxLength ? atomLength : null;
+                    return atomLength <= available ? atomLength : null;
                 case Result.Bool(var flag):
                     var flagLength = ValueTextRenderer.FormatBool(flag).Length;
-                    return flagLength <= maxLength ? flagLength : null;
+                    return flagLength <= available ? flagLength : null;
                 case Result.Str(var text):
-                    if (text.Length > maxLength) return null;
-                    if (!_strings.TryClassify(text, out var facts) || !facts.IsTokenSafe) return null;
-                    return facts.TokenLength <= maxLength ? facts.TokenLength : null;
+                    if (text.Length > available) return null;
+                    if (!_strings.TryClassify(text, out var facts) || facts.ContainsLineBreak) return null;
+                    return facts.TokenLength <= available ? facts.TokenLength : null;
                 default:
                     return null;
             }
         }
 
-        /// <summary>Pair-run eligibility for a concise block: safe label and value tokens, every pair line within width.</summary>
+        /// <summary>Whether every pair fits on one line in a concise block.</summary>
         private bool IsConcisePairRun(IReadOnlyList<Result> items, int level)
         {
             Dictionary<int, bool>? levels = null;
@@ -729,13 +684,11 @@ internal static class StructuredLayoutRenderer
         private bool ComputeConcisePairRun(IReadOnlyList<Result> items, int level)
         {
             if (!IsStructuralPairRun(items)) return false;
-            var columns = ColumnsOf(level);
+            var available = (long)_width - ColumnsOf(level) - 1;
             for (var i = 0; i < items.Count; i += 2)
             {
-                var available = (long)_width - columns;
-                if (SafePairTokenLength(items[i], available - 1) is not { } labelLength) return false;
-                if (SafePairTokenLength(items[i + 1], available - labelLength - 1) is not { } valueLength) return false;
-                if (columns + labelLength + 1 + valueLength > _width) return false;
+                if (SingleLineScalarLength(items[i], available) is not { } labelLength) return false;
+                if (SingleLineScalarLength(items[i + 1], available - labelLength) is null) return false;
             }
 
             return true;
@@ -752,56 +705,21 @@ internal static class StructuredLayoutRenderer
 
         /// <summary>
         /// Pair-run eligibility for a delimited sequence frame: every
-        /// comma-separated pair line within width. Token safety is not
-        /// required here — the retained commas and parentheses delimit the
-        /// items exactly like any other delimited content. Line-break
-        /// characters ARE excluded: CR and LF can never be quoted (KatLang
-        /// has no escapes), and the Unicode layout separators NEL, LINE
-        /// SEPARATOR, and PARAGRAPH SEPARATOR break the rendered line even
-        /// inside quotes — either way the pair line would split into several
-        /// physical lines, breaking the one-line-per-pair shape. Raw lengths
-        /// are checked before any classification, and a string not classified
-        /// within the work budget ends the pair run (one item per line).
+        /// comma-separated pair fits on a single line, including any trailing comma.
         /// </summary>
         private bool IsCommaPairRun(IReadOnlyList<Result> items, int level)
         {
             if (!IsStructuralPairRun(items)) return false;
-            var columns = ColumnsOf(level);
+            var available = (long)_width - ColumnsOf(level) - 2;
             for (var i = 0; i < items.Count; i += 2)
             {
                 var separator = i + 2 >= items.Count ? 0 : 1;
-                var labelText = ((Result.Str)items[i]).Value;
-                var fixedLength = (long)columns + 2 + separator;
-                if (fixedLength + labelText.Length > _width) return false;
-                if (!_strings.TryClassify(labelText, out var label) || label.ContainsLineBreak) return false;
-                var labelLength = label.TokenLength;
-                if (fixedLength + labelLength > _width) return false;
-
-                var valueLength = items[i + 1] switch
-                {
-                    Result.Atom(var number) => ValueTextRenderer.FormatAtom(number, _displayOptions).Length,
-                    Result.Bool(var flag) => ValueTextRenderer.FormatBool(flag).Length,
-                    Result.Str(var text) => SingleLineTokenLength(text, _width - fixedLength - labelLength),
-                    _ => long.MaxValue / 2,
-                };
-                if (fixedLength + labelLength + valueLength > _width) return false;
+                var pairWidth = available - separator;
+                if (SingleLineScalarLength(items[i], pairWidth) is not { } labelLength) return false;
+                if (SingleLineScalarLength(items[i + 1], pairWidth - labelLength) is null) return false;
             }
 
             return true;
-        }
-
-        /// <summary>
-        /// A pair-value string's rendered length when it stays on one visual
-        /// line, or an oversized sentinel when its raw length cannot fit
-        /// <paramref name="available"/> columns, it breaks the line, or it was
-        /// not classified within the work budget.
-        /// </summary>
-        private long SingleLineTokenLength(string text, long available)
-        {
-            if (text.Length > available) return long.MaxValue / 2;
-            return _strings.TryClassify(text, out var facts) && !facts.ContainsLineBreak
-                ? facts.TokenLength
-                : long.MaxValue / 2;
         }
 
         /// <summary>Opens a multiline delimited structure: the opening token on its own line, items one level deeper.</summary>

@@ -3,17 +3,8 @@ using KatLang.Formatting;
 namespace KatLang.Tests.Formatting;
 
 /// <summary>
-/// The <see cref="StringDelimiterMode.Never"/> contract for the <c>concise</c>
-/// formatter: the mode suppresses added string quote delimiters ONLY — it does
-/// not disable structural delimiter removal. Concise decides elision per
-/// concrete value from the exact raw token representation: safe raw labels
-/// (<c>neto</c>, <c>net_salary</c>) still participate, while ambiguous raw
-/// strings conservatively keep the containing sequence's canonical
-/// parentheses and separators. The suite also pins the SPREAD salary program
-/// end to end under the acceptance preset (width 100, indent 2, "\n", zero
-/// root spacing, Never): spread discards the outer salary structure, so every
-/// row formats independently and flat — the natural structured program is
-/// pinned separately in <see cref="NaturalStructureLayoutTests"/>.
+/// Concise with raw strings, including the spread salary program under the
+/// acceptance preset. Spread emits each pair as an independent row.
 /// </summary>
 public class ConciseNeverModeTests
 {
@@ -137,41 +128,28 @@ public class ConciseNeverModeTests
     [InlineData("('trailing_', 3)", "trailing_ 3")]
     [InlineData("(1, 2, 3)", "1 2 3")]
     [InlineData("('neto:', 1473.8)", "neto: 1473.8")]
+    [InlineData("('net salary', 1473.8)", "net salary 1473.8")]
+    [InlineData("('net  salary', 1473.8)", "net  salary 1473.8")]
+    [InlineData("('a b c', 'd e')", "a b c d e")]
     public void SafeRawTokens_SpaceJoinUnderNever(string source, string expected)
         => Assert.Equal(expected, Concise(source));
 
-    // ── Ambiguous raw strings retain the containing sequence ────────────────
+    [Theory]
+    [InlineData("('', 1)", " 1")]
+    [InlineData("('123', 4)", "123 4")]
+    [InlineData("('-2', 1)", "-2 1")]
+    [InlineData("('+7', 1)", "+7 1")]
+    [InlineData("('1.5', 1)", "1.5 1")]
+    [InlineData("('1e5', 1)", "1e5 1")]
+    [InlineData("('()', 1)", "() 1")]
+    [InlineData("('[1, 2]', 1)", "[1, 2] 1")]
+    public void RawStrings_JoinWithoutReinterpretingTheirContent(string source, string expected)
+        => Assert.Equal(expected, Concise(source));
 
     [Theory]
-    [InlineData("('', 1)", "(, 1)")]
-    [InlineData("('net salary', 1473.8)", "(net salary, 1473.8)")]
-    [InlineData("(' leading', 1)", "( leading, 1)")]
-    [InlineData("('trailing ', 1)", "(trailing , 1)")]
-    [InlineData("('a,b', 1)", "(a,b, 1)")]
-    [InlineData("('a(b)', 1)", "(a(b), 1)")]
-    [InlineData("('a[b]', 1)", "(a[b], 1)")]
-    [InlineData("('123', 4)", "(123, 4)")]
-    [InlineData("('-2', 1)", "(-2, 1)")]
-    [InlineData("('+7', 1)", "(+7, 1)")]
-    [InlineData("('1.5', 1)", "(1.5, 1)")]
-    [InlineData("('1e5', 1)", "(1e5, 1)")]
-    [InlineData("('()', 1)", "((), 1)")]
-    [InlineData("('[1, 2]', 1)", "([1, 2], 1)")]
-    public void AmbiguousRawStrings_RetainCanonicalSequencePunctuation(string source, string expected)
-    {
-        var text = Concise(source);
-        Assert.Equal(expected, text);
-
-        // Never forbids added delimiters: content stays verbatim, unquoted.
-        Assert.DoesNotContain("'", text, StringComparison.Ordinal);
-    }
-
-    [Theory]
-    [InlineData("a\tb")]
     [InlineData("a\rb")]
     [InlineData("a\nb")]
-    [InlineData("can't")]
-    public void HostOnlyUnsafeStrings_RetainPunctuationAndContent(string raw)
+    public void MultilineStrings_RetainPunctuationAndContent(string raw)
     {
         var value = new Result.SequenceValue([new Result.Str(raw), new Result.Atom(1)]);
         var success = new RunResult.Success(new Algorithm.User(null, [], [], [], []), value, []);
@@ -295,7 +273,7 @@ public class ConciseNeverModeTests
     // ── Policy comparison on one value ──────────────────────────────────────
 
     [Fact]
-    public void DelimiterModes_ChangeQuotingButNotStructuralSafetyRules()
+    public void DelimiterModes_QuoteJoinedStringsIndependently()
     {
         static string With(string source, StringDelimiterMode mode)
             => OutputFormatters.Concise.Format(
@@ -307,9 +285,8 @@ public class ConciseNeverModeTests
         Assert.Equal("neto 1", With("('neto', 1)", StringDelimiterMode.WhenNeeded));
         Assert.Equal("'neto' 1", With("('neto', 1)", StringDelimiterMode.Always));
 
-        // A numeric-looking string is only safe once quoting makes it
-        // self-bounding; raw rendering conservatively retains the sequence.
-        Assert.Equal("(123, 5)", With("('123', 5)", StringDelimiterMode.Never));
+        // Quoting distinguishes a numeric-looking string from the atom.
+        Assert.Equal("123 5", With("('123', 5)", StringDelimiterMode.Never));
         Assert.Equal("'123' 5", With("('123', 5)", StringDelimiterMode.WhenNeeded));
         Assert.Equal("'123' 5", With("('123', 5)", StringDelimiterMode.Always));
 
@@ -355,7 +332,7 @@ public class ConciseNeverModeTests
 
     [Theory]
     [InlineData("('neto', 1473.8)", "neto 1473.8")]   // removed punctuation, spaces replacing commas
-    [InlineData("('123', 5)", "(123, 5)")]            // retained punctuation
+    [InlineData("[(123, 5)]", "[(123, 5)]")]           // retained punctuation
     [InlineData("1\n''\n2", "1\n\n2")]                // explicit blank row
     public void PresetOutputs_SweepTheDisplayLimitAllOrNothing(string source, string natural)
     {
@@ -410,12 +387,12 @@ public class ConciseNeverModeTests
     }
 
     [Theory]
-    [InlineData(true)]   // unsafe character first: safety scan exits immediately
-    [InlineData(false)]  // unsafe character last: one full scan at most
-    public void LargeUnsafeStrings_RetainPunctuationBounded(bool unsafeFirst)
+    [InlineData(true)]
+    [InlineData(false)]
+    public void LongMultilineStrings_RetainPunctuationBounded(bool breakFirst)
     {
         var body = new string('a', 200_000);
-        var raw = unsafeFirst ? "," + body : body + ",";
+        var raw = breakFirst ? "\n" + body : body + "\n";
         var text = OutputFormatters.Concise.Format(SequenceWithString(raw), Preset());
 
         Assert.Equal(raw.Length + 11, text.Length);
@@ -427,9 +404,9 @@ public class ConciseNeverModeTests
     }
 
     [Fact]
-    public void LargeUnsafeString_UnderTinyLimit_StaysAllocationBounded()
+    public void LongMultilineString_UnderTinyLimit_StaysAllocationBounded()
     {
-        var success = SequenceWithString("," + new string('a', 200_000));
+        var success = SequenceWithString("\n" + new string('a', 200_000));
         var options = Preset(maxDisplayLength: 16);
 
         _ = OutputFormatters.Concise.Format(success, options);
@@ -442,22 +419,18 @@ public class ConciseNeverModeTests
         Assert.True(text.Length <= 16);
         Assert.True(
             allocated < 64_000,
-            $"tiny-limit formatting of a large unsafe string allocated {allocated} bytes");
+            $"tiny-limit formatting of a large multiline string allocated {allocated} bytes");
     }
 
     [Fact]
-    public void FittingUnsafeString_IsScannedOnceAndRetainsPunctuation()
+    public void FittingMultilineString_RetainsPunctuation()
     {
-        // Fits the (large) width, so the safety scan actually runs and must
-        // find the late unsafe character in one early-exit pass; the row then
-        // falls back to the canonical inline form "(" + raw + ", 1)".
-        var raw = new string('a', 5_000) + ",";
+        var raw = new string('a', 5_000) + "\n";
         var text = OutputFormatters.Concise.Format(
             SequenceWithString(raw),
             Preset(width: OutputFormattingOptions.MaxSupportedPreferredLineWidth, spacing: 1));
 
-        Assert.Equal(raw.Length + 5, text.Length);
-        Assert.StartsWith("(", text, StringComparison.Ordinal);
+        Assert.Equal($"({raw}, 1)", text);
     }
 
     [Fact]

@@ -22,20 +22,8 @@ public enum StringDelimiterMode
     /// An empty string renders as an empty text run (which on its own output
     /// row is a visually blank line).
     ///
-    /// <para>This mode suppresses added string quote delimiters ONLY — it does
-    /// not force the <c>concise</c> formatter to retain all sequence
-    /// punctuation. Concise independently removes sequence punctuation where
-    /// the concrete raw item representations preserve safe boundaries: ordinary
-    /// raw labels such as <c>neto</c> or <c>net_salary</c> still participate in
-    /// delimiter removal, while an ambiguous raw string (empty,
-    /// whitespace-bearing, comma-bearing, structural-looking, quote-bearing,
-    /// numeric-looking, control-bearing, invisible Unicode format characters
-    /// such as bidi controls or zero-width spaces, or unpaired surrogates)
-    /// makes the CONTAINING sequence keep its parentheses and
-    /// canonical separators — the best available boundary information when
-    /// quoting is forbidden. Lists always keep their brackets, empty sequences
-    /// stay visible as <c>()</c>, root and nesting boundaries take priority
-    /// over compactness, and no punctuation is ever invented.</para>
+    /// <para>Concise uses the raw string's width and line breaks to choose a
+    /// layout. Different values can produce the same display text.</para>
     /// </summary>
     Never,
 
@@ -52,7 +40,8 @@ public enum StringDelimiterMode
     /// (bidi controls, zero-width spaces, byte-order marks, soft hyphens), and
     /// unpaired surrogates. Quoting whitespace-bearing strings keeps one string
     /// such as <c>'income tax'</c> visibly distinct from two adjacent values
-    /// laid out as <c>income tax</c>.
+    /// laid out as <c>income tax</c>. A quoted string can join a Concise line
+    /// when it fits, as in <c>'income tax' 3</c>.
     /// </summary>
     WhenNeeded,
 

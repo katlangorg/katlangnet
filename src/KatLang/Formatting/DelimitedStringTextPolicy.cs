@@ -219,89 +219,15 @@ internal sealed class DelimitedStringTextPolicy : IStringTextPolicy
     }
 
     /// <summary>
-    /// Every fact the layout needs about one string, computed by the original
-    /// predicates (a constant number of linear passes), so a cached answer is
-    /// exactly the answer a fresh computation would give for this mode.
+    /// Layout measures the same quoted or raw text that emission writes.
     /// </summary>
     private StringFacts Compute(string value)
     {
-        var needsDelimiters = NeedsDelimiters(value);
-        var canDelimit = CanDelimitFaithfully(value);
-        var usesDelimiters = _mode switch
-        {
-            StringDelimiterMode.Always => canDelimit,
-            StringDelimiterMode.WhenNeeded => needsDelimiters && canDelimit,
-            _ => false,
-        };
-
+        var usesDelimiters = UsesDelimiters(value);
         return new StringFacts(
             usesDelimiters ? (long)value.Length + 2 : value.Length,
             usesDelimiters,
-            IsTokenSafe(value, needsDelimiters, canDelimit, usesDelimiters),
             value.AsSpan().ContainsAny(LineBreakChars));
-    }
-
-    /// <summary>
-    /// Whether this string can stand as ONE safe Concise token in a layout
-    /// that removed the surrounding sequence punctuation — text that cannot be
-    /// confused with a separator, a neighbouring token, structural
-    /// punctuation, or canonical atom output. This is a per-value structural
-    /// decision, deliberately separate from the quoting policy itself: the
-    /// delimiter mode only changes WHAT the rendered token is, and safety is
-    /// judged on that exact token.
-    ///
-    /// <para>Under <see cref="StringDelimiterMode.Never"/> the token is the
-    /// raw content, so it is safe exactly when the content would never need
-    /// delimiters: non-empty, no whitespace or control characters, none of
-    /// <c>, ( ) [ ] '</c>, no invisible Unicode format characters or unpaired
-    /// surrogates, and not numeric-looking. Ordinary labels such as
-    /// <c>neto</c> or <c>net_salary</c> are safe; ambiguous raw strings make
-    /// the CONTAINING sequence keep its parentheses instead of being quoted
-    /// (<c>Never</c> forbids added delimiters) or altered.</para>
-    ///
-    /// <para>Under the quoting modes a delimited token is self-bounding, so
-    /// only content that still blurs line/join boundaries (whitespace,
-    /// control characters, commas, invisible format characters, unpaired
-    /// surrogates) or that needs delimiters it cannot faithfully receive
-    /// remains unsafe. The scan is early-exit and never copies the string;
-    /// measurement and emission share the same quoting decision, so they
-    /// cannot disagree.</para>
-    /// </summary>
-    private bool IsTokenSafe(string value, bool needsDelimiters, bool canDelimit, bool usesDelimiters)
-    {
-        if (_mode == StringDelimiterMode.Never)
-            return !needsDelimiters;
-
-        if (value.Length == 0)
-            return usesDelimiters;
-
-        if (needsDelimiters && !canDelimit)
-            return false;
-
-        for (var i = 0; i < value.Length; i++)
-        {
-            var c = value[i];
-            if (char.IsWhiteSpace(c) || char.IsControl(c) || c == ',')
-                return false;
-            if (char.IsSurrogate(c))
-            {
-                // A well-formed surrogate pair is ordinary content (emoji and
-                // other supplementary characters); an UNPAIRED surrogate is
-                // invalid text that must stay delimited.
-                if (char.IsHighSurrogate(c) && i + 1 < value.Length && char.IsLowSurrogate(value[i + 1]))
-                {
-                    i++;
-                    continue;
-                }
-
-                return false;
-            }
-
-            if (char.GetUnicodeCategory(c) == UnicodeCategory.Format)
-                return false;
-        }
-
-        return true;
     }
 
     private bool UsesDelimiters(string value) => _mode switch
@@ -314,7 +240,7 @@ internal sealed class DelimitedStringTextPolicy : IStringTextPolicy
     private static bool CanDelimitFaithfully(string value)
         => !value.AsSpan().ContainsAny(UnquotableChars);
 
-    private static bool NeedsDelimiters(string value)
+    private static bool NeedsDelimiters(ReadOnlySpan<char> value)
     {
         if (value.Length == 0)
             return true;
@@ -341,8 +267,7 @@ internal sealed class DelimitedStringTextPolicy : IStringTextPolicy
 
             // Unicode format characters (bidi controls, zero-width spaces,
             // BOM/ZWNBSP, soft hyphen, word joiner, ...) are invisible or
-            // visually reordering: raw content containing them must never
-            // stand as an undelimited token.
+            // visually reordering, so WhenNeeded quotes strings containing them.
             if (char.GetUnicodeCategory(c) == UnicodeCategory.Format)
                 return true;
         }
@@ -358,10 +283,10 @@ internal sealed class DelimitedStringTextPolicy : IStringTextPolicy
     /// numeric-looking rule exists to prevent. Case-sensitive: <c>nan</c> is ordinary
     /// text, because the atom never renders that way.
     /// </summary>
-    private static bool IsNonFiniteAtomSpelling(string value)
+    private static bool IsNonFiniteAtomSpelling(ReadOnlySpan<char> value)
         => value is "NaN" or "Infinity" or "-Infinity";
 
-    private static bool LooksNumeric(string value)
+    private static bool LooksNumeric(ReadOnlySpan<char> span)
     {
         // Syntax recognition, not numeric conversion: overflow-sized and
         // exponent-form text is still visually numeric and should stay
@@ -370,7 +295,6 @@ internal sealed class DelimitedStringTextPolicy : IStringTextPolicy
         // digit separators are recognized between digits because that is
         // KatLang's number-literal grammar (the lexer's ScanDigits rule), so
         // raw text such as `1_000` reads as a number and stays delimited.
-        var span = value.AsSpan();
         var i = 0;
         if (i < span.Length && span[i] is '+' or '-') i++;
 
@@ -436,7 +360,6 @@ internal sealed class DelimitedStringTextPolicy : IStringTextPolicy
     internal readonly record struct StringFacts(
         long TokenLength,
         bool UsesDelimiters,
-        bool IsTokenSafe,
         bool ContainsLineBreak);
 
     private sealed class MeasuringView(DelimitedStringTextPolicy owner) : IStringTextPolicy
