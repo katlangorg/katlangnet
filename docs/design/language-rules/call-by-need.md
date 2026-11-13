@@ -173,6 +173,18 @@ member, and the second is re-read without allocating; B2 has not been re-propose
 `NavigationSourceDomainWitnessTests` checks the seven Lean encodings against clean source elaboration,
 the five public-entry outcomes, and the capturing dotted dependency the fragment misses.
 
+E-18 B2 preparation, pass 2 (2026-11-13; proof only): `NavigationSourceDomain.exposureFull`
+and `SourceDomain` add a bounded selection extension, not complete static exposure. Independent
+review's `SelectionGaps` proves that a repeated provider, an open-provided dotted head and a reference
+chain beyond `selFuel` can hide a reader's required ancestor parameter; C# source witnesses mark the
+reader local-only. The static input-domain minimum remains OPEN. The local-only premise is statable:
+through the owner-activated gate a selected parameter-row member is owned when its metadata passes
+the modeled check and its wired chain agrees with the static stack
+(`NavigationOwnership.paramRowOwned_of_exposed`). Shape agreement is unproved for general production
+states. One procedure (`NavigationPilot.agree_tac`) closes eight bodies relative to explicit
+verification conditions, so criterion 2 is not met and B2 is DEFERRED. No whole-run `NavRuns` premise
+is discharged; no evaluator, C# production, key or minting change is made.
+
 ## Argument views: `R.Arguments` (CallReference S2, 2026-10-17)
 
 S2 adds the lazy, read-only ARGUMENT VIEW of a call reference. Lean is authoritative (`Result.argView`, `argumentsOfValue`, `NeedPlan.viewCells` / `viewSupply`, `selectViewWith`, `argumentViewBuiltin`, `openSpreadItems` / `openSupplySpread`, `NeedSupply.SpreadEval` with production `evalSupplySpread`); laws `KatLangArityLaws/ArgumentView.lean`, guards `ArgumentViewGuards.lean`.

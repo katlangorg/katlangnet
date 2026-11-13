@@ -11,18 +11,24 @@ open KatLang.NavigationContract KatLang.NavigationSourceDomain
 `NavigationSourceDomain` states the static premises of navigation admissibility as predicates of a
 program expression. This module checks them on trees, and bounds what they can be used for.
 
-## 1. Host-built trees outside the domain (`HostBuilt`)
+## 1. Host-built trees outside the domain (`HostBuilt`, `ExposureFragment`, `OpenedFragment`)
 
 * `NavigationContractGuards.MisExposed` — a parameter-row member marked `exported` — is NOT
-  exposure-complete; the same tree with the member marked local-only is.
+  exposure-complete, in either mode; the same tree with the member marked local-only is in the
+  source domain.
 * A tree with a `.param` no level binds is not `paramsBound`.
+* `ExposureFragment` / `OpenedFragment` — a member whose only dependency is a member it selects by a
+  static dotted path (`Lib.Q`) or through an `open` (`open Lib` / `Q`), with that dependency's
+  requirement removed from its metadata: the direct-lexical fragment (`SourceLike`) accepts the
+  corrupted tree, the full closure (`SourceDomain`) refuses it and accepts the corrected one.
 
-## 2. Source trees inside the domain (`OutsideContainer`, `EscapedContainer`)
+## 2. Source trees inside the domain (`OutsideContainer`, `EscapedContainer`, `FrontEnd`)
 
-The two reached-state fixtures and five public-entry guards below are the C# front end's own
-elaborated trees of the quoted sources, encoded by `LeanAstEncoder`. Maintained C# fidelity tests
-check those seven encodings (`NavigationSourceDomainWitnessTests`). Each reached-state fixture
-is `SourceLike`; the separate `ExposureFragment` example is intentionally host-corrupted.
+The two reached-state fixtures, five public-entry guards and the four `FrontEnd` programs below are
+the C# front end's own elaborated trees of the quoted sources, encoded by `LeanAstEncoder`.
+Maintained C# fidelity tests check those eleven encodings (`NavigationSourceDomainWitnessTests`).
+Each is in `SourceDomain`; the `ExposureFragment` and `OpenedFragment` examples are intentionally
+host-corrupted.
 
 ## 3. The two former counterexamples, under the anchoring of a container's chain
 
@@ -114,6 +120,16 @@ theorem well_exposed_is_sourceLike : SourceLike (MisExposed.program MisExposed.l
 theorem well_exposed_is_deep : DeepSourceLike (MisExposed.program MisExposed.localOnly) :=
   ⟨by cbv, by cbv⟩
 
+/-- The full closure refuses the exported parameter-row member too … -/
+theorem mis_exposed_is_not_full : exposureFull (MisExposed.program .exported) = false := by cbv
+
+theorem mis_exposed_is_not_sourceDomain : ¬ SourceDomain (MisExposed.program .exported) :=
+  fun h => by have := h.exposed; rw [mis_exposed_is_not_full] at this; cases this
+
+/-- … and accepts the local-only one. -/
+theorem well_exposed_is_sourceDomain : SourceDomain (MisExposed.program MisExposed.localOnly) :=
+  ⟨by cbv, by cbv⟩
+
 /-- `F = { A = y ⏎ 0 }` with no level binding `y`: a `.param` without an owner. -/
 def unbound : Expr :=
   .algorithmExpr (alg [] [] [privateProp "F" (alg [] []
@@ -124,14 +140,17 @@ theorem unbound_is_not_bound : paramsBound unbound = false := by cbv
 theorem unbound_is_not_sourceLike : ¬ SourceLike unbound :=
   fun h => by have := h.bound; rw [unbound_is_not_bound] at this; cases this
 
+theorem unbound_is_not_sourceDomain : ¬ SourceDomain unbound :=
+  fun h => by have := h.bound; rw [unbound_is_not_bound] at this; cases this
+
 end HostBuilt
 
-/-! ## The exposure check's unmodelled structural-dependency boundary
+/-! ## A dotted dependency: the fragment cannot see it, the full closure does
 
 The direct-lexical closure is a NECESSARY FRAGMENT, not full exposure completeness. `Lib.Q`
-requires `F`'s `y`, although `Lib`'s own output does not. The check does not select `Q` through
-`Lib`; it accepts even a host-corrupted exported `A = Lib.Q + 0`. Full source-domain exposure
-must also propagate selected dotted/opened members' requirements. That prerequisite is OPEN.
+requires `F`'s `y`, although `Lib`'s own output does not. The fragment does not select `Q` through
+`Lib`, so it accepts a host-corrupted exported `A = Lib.Q + 0` (the B2 preparation review's finding
+F1). The full closure selects `Q` by the static path and refuses the corrupted tree.
 -/
 
 namespace ExposureFragment
@@ -153,7 +172,181 @@ theorem misses_dotted_requirement : SourceLike (program .exported) := ⟨by cbv,
 theorem admits_corrected_requirement : SourceLike (program (.localCapturedAncestorParams ["y"])) :=
   ⟨by cbv, by cbv⟩
 
+/-- **The full closure refuses the corrupted tree** … -/
+theorem full_refuses_missing_dotted_requirement : exposureFull (program .exported) = false := by cbv
+
+theorem corrupted_is_not_sourceDomain : ¬ SourceDomain (program .exported) :=
+  fun h => by have := h.exposed; rw [full_refuses_missing_dotted_requirement] at this; cases this
+
+/-- … and accepts the corrected one. -/
+theorem corrected_is_sourceDomain : SourceDomain (program (.localCapturedAncestorParams ["y"])) :=
+  ⟨by cbv, by cbv⟩
+
 end ExposureFragment
+
+/-! ## An opened dependency
+
+`A = { open Lib ⏎ Q + 0 }` reads `Lib.Q` through its own `open`: no level declares `Q`, so the
+lexical lookup falls to the opens (`lookupOpenPropertiesInChain`), and `A` requires what `Q`
+declares. The fragment counts nothing for an opened name.
+-/
+
+namespace OpenedFragment
+
+def program (exposure : PropExposure) : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "F" (alg ["y"] []
+    [privateProp "Lib" (alg [] []
+      [{ (publicLocalProp "Q" (.localCapturedAncestorParams ["y"]) (.alias none [] [] (.param "y"))) with
+          requiredOwnerDepths := some [("y", some 1)] }] [.num 1]),
+     { (privateLocalProp "A" exposure (alg [] [.resolve "Lib"] []
+         [.binary .add (.resolve "Q") (.num 0)])) with
+         requiredOwnerDepths := if exposure.isExported then none else some [("y", some 0)] }]
+    [.param "y"])] [.num 0])
+
+theorem fragment_misses_opened_requirement : SourceLike (program .exported) := ⟨by cbv, by cbv⟩
+
+theorem full_refuses_missing_opened_requirement : exposureFull (program .exported) = false := by cbv
+
+theorem corrected_is_sourceDomain : SourceDomain (program (.localCapturedAncestorParams ["y"])) :=
+  ⟨by cbv, by cbv⟩
+
+end OpenedFragment
+
+/-! ## Source trees with a selected dependency (`FrontEnd`)
+
+The corpora hold no program whose member depends on another only through a static dotted path, and
+two whose member depends on one only through an `open` (`case_ownership_open_*`). These four
+programs are the C# front end's own trees (`NavigationSourceDomainWitnessTests` checks the
+encodings): `A` reads `F`'s `y` only through a selection, the front end marks `A` local-only with
+`y`, each is in `SourceDomain`, each runs to `5` (C# agrees), and the same tree with `A`
+host-corrupted to exported passes the fragment and fails the full closure.
+-/
+
+namespace FrontEnd
+
+/-- `LeanAstEncoder`'s encoding of the front end's tree of
+
+        F(y) = {
+          Lib = {
+            public Q = y
+            1
+          }
+          A = Lib.Q + 0
+          A
+        }
+        F(5)
+
+    `A` reads `F`'s `y` only through a static dotted path; the front end marks it local-only. -/
+def dotted : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "F" (alg ["y"] [] [privateProp "Lib" (alg [] [] [{ (publicLocalProp "Q" (.localCapturedAncestorParams ["y"]) (.alias none [] [] (.param "y"))) with requiredOwnerDepths := some [("y", some 1)] }] [.num 1]), { (privateLocalProp "A" (.localCapturedAncestorParams ["y"]) (alg [] [] [] [(.binary .add (.dotCall (.resolve "Lib") "Q" none) (.num 0))])) with requiredOwnerDepths := some [("y", some 0)] }] [.resolve "A"])] [(.call (.resolve "F") [.num 5])])
+
+theorem dotted_sourceDomain : SourceDomain dotted := ⟨by cbv, by cbv⟩
+
+/-- The same tree with `A` host-corrupted to exported: the fragment accepts it, the full closure does not. -/
+def dottedExported : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "F" (alg ["y"] [] [privateProp "Lib" (alg [] [] [{ (publicLocalProp "Q" (.localCapturedAncestorParams ["y"]) (.alias none [] [] (.param "y"))) with requiredOwnerDepths := some [("y", some 1)] }] [.num 1]), privateProp "A" (alg [] [] [] [(.binary .add (.dotCall (.resolve "Lib") "Q" none) (.num 0))])] [.resolve "A"])] [(.call (.resolve "F") [.num 5])])
+
+theorem dotted_exported_refused : exposureComplete dottedExported = true ∧ exposureFull dottedExported = false := by
+  cbv
+  all_goals (repeat' (first | rfl | constructor))
+
+#guard (match runResult dotted with | .ok (.atom 5) => true | _ => false)
+
+/-- `LeanAstEncoder`'s encoding of the front end's tree of
+
+        F(y) = {
+          Lib = {
+            public Sub = {
+              public Q = y
+              1
+            }
+            1
+          }
+          A = Lib.Sub.Q + 0
+          A
+        }
+        F(5)
+
+    `A` reads `F`'s `y` only through a two-step static dotted path; the front end marks it local-only. -/
+def nested : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "F" (alg ["y"] [] [privateProp "Lib" (alg [] [] [publicProp "Sub" (alg [] [] [{ (publicLocalProp "Q" (.localCapturedAncestorParams ["y"]) (.alias none [] [] (.param "y"))) with requiredOwnerDepths := some [("y", some 2)] }] [.num 1])] [.num 1]), { (privateLocalProp "A" (.localCapturedAncestorParams ["y"]) (alg [] [] [] [(.binary .add (.dotCall (.dotCall (.resolve "Lib") "Sub" none) "Q" none) (.num 0))])) with requiredOwnerDepths := some [("y", some 0)] }] [.resolve "A"])] [(.call (.resolve "F") [.num 5])])
+
+theorem nested_sourceDomain : SourceDomain nested := ⟨by cbv, by cbv⟩
+
+/-- The same tree with `A` host-corrupted to exported: the fragment accepts it, the full closure does not. -/
+def nestedExported : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "F" (alg ["y"] [] [privateProp "Lib" (alg [] [] [publicProp "Sub" (alg [] [] [{ (publicLocalProp "Q" (.localCapturedAncestorParams ["y"]) (.alias none [] [] (.param "y"))) with requiredOwnerDepths := some [("y", some 2)] }] [.num 1])] [.num 1]), privateProp "A" (alg [] [] [] [(.binary .add (.dotCall (.dotCall (.resolve "Lib") "Sub" none) "Q" none) (.num 0))])] [.resolve "A"])] [(.call (.resolve "F") [.num 5])])
+
+theorem nested_exported_refused : exposureComplete nestedExported = true ∧ exposureFull nestedExported = false := by
+  cbv
+  all_goals (repeat' (first | rfl | constructor))
+
+#guard (match runResult nested with | .ok (.atom 5) => true | _ => false)
+
+/-- `LeanAstEncoder`'s encoding of the front end's tree of
+
+        F(y) = {
+          Lib = {
+            public Sub = {
+              public Q = y
+              1
+            }
+            1
+          }
+          L = Lib.Sub
+          A = L.Q + 0
+          A
+        }
+        F(5)
+
+    `A` reads `F`'s `y` only through a dotted path through a transparent reference (`L = Lib.Sub`); the front end marks it local-only. -/
+def reference : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "F" (alg ["y"] [] [privateProp "Lib" (alg [] [] [publicProp "Sub" (alg [] [] [{ (publicLocalProp "Q" (.localCapturedAncestorParams ["y"]) (.alias none [] [] (.param "y"))) with requiredOwnerDepths := some [("y", some 2)] }] [.num 1])] [.num 1]), privateProp "L" (.alias none [] [] ((.dotCall (.resolve "Lib") "Sub" none))), { (privateLocalProp "A" (.localCapturedAncestorParams ["y"]) (alg [] [] [] [(.binary .add (.dotCall (.resolve "L") "Q" none) (.num 0))])) with requiredOwnerDepths := some [("y", some 0)] }] [.resolve "A"])] [(.call (.resolve "F") [.num 5])])
+
+theorem reference_sourceDomain : SourceDomain reference := ⟨by cbv, by cbv⟩
+
+/-- The same tree with `A` host-corrupted to exported: the fragment accepts it, the full closure does not. -/
+def referenceExported : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "F" (alg ["y"] [] [privateProp "Lib" (alg [] [] [publicProp "Sub" (alg [] [] [{ (publicLocalProp "Q" (.localCapturedAncestorParams ["y"]) (.alias none [] [] (.param "y"))) with requiredOwnerDepths := some [("y", some 2)] }] [.num 1])] [.num 1]), privateProp "L" (.alias none [] [] ((.dotCall (.resolve "Lib") "Sub" none))), privateProp "A" (alg [] [] [] [(.binary .add (.dotCall (.resolve "L") "Q" none) (.num 0))])] [.resolve "A"])] [(.call (.resolve "F") [.num 5])])
+
+theorem reference_exported_refused : exposureComplete referenceExported = true ∧ exposureFull referenceExported = false := by
+  cbv
+  all_goals (repeat' (first | rfl | constructor))
+
+#guard (match runResult reference with | .ok (.atom 5) => true | _ => false)
+
+/-- `LeanAstEncoder`'s encoding of the front end's tree of
+
+        F(y) = {
+          Lib = {
+            public Q = y
+            1
+          }
+          A = {
+            open Lib
+            Q + 0
+          }
+          A
+        }
+        F(5)
+
+    `A` reads `F`'s `y` only through a name its own `open` provides; the front end marks it local-only. -/
+def opened : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "F" (alg ["y"] [] [privateProp "Lib" (alg [] [] [{ (publicLocalProp "Q" (.localCapturedAncestorParams ["y"]) (.alias none [] [] (.param "y"))) with requiredOwnerDepths := some [("y", some 1)] }] [.num 1]), { (privateLocalProp "A" (.localCapturedAncestorParams ["y"]) (alg [] [.resolve "Lib"] [] [(.binary .add (.resolve "Q") (.num 0))])) with requiredOwnerDepths := some [("y", some 0)] }] [.resolve "A"])] [(.call (.resolve "F") [.num 5])])
+
+theorem opened_sourceDomain : SourceDomain opened := ⟨by cbv, by cbv⟩
+
+/-- The same tree with `A` host-corrupted to exported: the fragment accepts it, the full closure does not. -/
+def openedExported : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "F" (alg ["y"] [] [privateProp "Lib" (alg [] [] [{ (publicLocalProp "Q" (.localCapturedAncestorParams ["y"]) (.alias none [] [] (.param "y"))) with requiredOwnerDepths := some [("y", some 1)] }] [.num 1]), privateProp "A" (alg [] [.resolve "Lib"] [] [(.binary .add (.resolve "Q") (.num 0))])] [.resolve "A"])] [(.call (.resolve "F") [.num 5])])
+
+theorem opened_exported_refused : exposureComplete openedExported = true ∧ exposureFull openedExported = false := by
+  cbv
+  all_goals (repeat' (first | rfl | constructor))
+
+#guard (match runResult opened with | .ok (.atom 5) => true | _ => false)
+
+end FrontEnd
 
 /-! ## Shared definitions of the reached-state fixtures -/
 
@@ -208,6 +401,8 @@ def program : Expr :=
 
 /-- The source tree is in the assumed source domain … -/
 theorem sourceLike : SourceLike program := ⟨by cbv, by cbv⟩
+
+theorem sourceDomain : SourceDomain program := ⟨by cbv, by cbv⟩
 
 /-- … and outside the restricted one: the exported container `p` declares a capturing member. -/
 theorem not_deep : exposureDeep program = false := by cbv
@@ -299,6 +494,8 @@ def program : Expr :=
 
 theorem sourceLike : SourceLike program := ⟨by cbv, by cbv⟩
 
+theorem sourceDomain : SourceDomain program := ⟨by cbv, by cbv⟩
+
 theorem not_deep : exposureDeep program = false := by cbv
 
 def root : Algorithm := rootOf program
@@ -389,6 +586,8 @@ def shadowedRead : Expr :=
 
 theorem shadowedRead_sourceLike : SourceLike shadowedRead := ⟨by cbv, by cbv⟩
 
+theorem shadowedRead_sourceDomain : SourceDomain shadowedRead := ⟨by cbv, by cbv⟩
+
 -- THE READ IS THE OWNER'S BINDING: the value of `F`'s `y`, 1 (before the anchoring, `G`'s 99).
 #guard (match runResult shadowedRead with | .ok (.atom 1) => true | _ => false)
 
@@ -413,5 +612,67 @@ def rootRead : Expr :=
 #guard (match runResult rootRead with
   | .error e => (match innermost e with | .localOnlyProperty _ "Q" _ => true | _ => false)
   | .ok _ => false)
+
+/-! ## Selection gaps in the candidate domain (independent review, 2026-11-13)
+
+`exposureFull` extends the lexical fragment but is not complete exposure. These source-valid routes
+are omitted by its static selector: one provider opened twice, a dotted receiver head supplied by an
+open, and a transparent-reference chain beyond `selFuel`. The front end marks each reader `A`
+local-only with required `y` (`NavigationSourceDomainWitnessTests`); the candidate domain accepts
+both that metadata and its host-corrupted exported counterpart. These are counterexamples to the
+completeness of the PREDICATE, not to the production evaluator or the proposed runtime invariant.
+-/
+
+namespace SelectionGaps
+
+/-- Source tree of `A = { open Lib, Lib ⏎ Q + 0 }` inside `F(y)`, where `Lib.Q = y`.
+    The front end deduplicates the provider; `openedAt` incorrectly counts two hits. -/
+def duplicateOpened : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "F" (alg ["y"] [] [privateProp "Lib" (alg [] [] [{ (publicLocalProp "Q" (.localCapturedAncestorParams ["y"]) (.alias none [] [] (.param "y"))) with requiredOwnerDepths := some [("y", some 1)] }] [.num 1]), { (privateLocalProp "A" (.localCapturedAncestorParams ["y"]) (alg [] [.resolve "Lib", .resolve "Lib"] [] [(.binary .add (.resolve "Q") (.num 0))])) with requiredOwnerDepths := some [("y", some 0)] }] [.resolve "A"])] [(.call (.resolve "F") [.num 5])])
+
+def duplicateOpenedExported : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "F" (alg ["y"] [] [privateProp "Lib" (alg [] [] [{ (publicLocalProp "Q" (.localCapturedAncestorParams ["y"]) (.alias none [] [] (.param "y"))) with requiredOwnerDepths := some [("y", some 1)] }] [.num 1]), privateProp "A" (alg [] [.resolve "Lib", .resolve "Lib"] [] [(.binary .add (.resolve "Q") (.num 0))])] [.resolve "A"])] [(.call (.resolve "F") [.num 5])])
+
+theorem duplicate_opened_sourceDomain : SourceDomain duplicateOpened := ⟨by cbv, by cbv⟩
+
+/-- Missing `y` is not detected: the selector mistakes repeated targets for ambiguity. -/
+theorem duplicate_opened_exported_admitted : SourceDomain duplicateOpenedExported := ⟨by cbv, by cbv⟩
+
+#guard (match runResult duplicateOpened with | .ok (.atom 5) => true | _ => false)
+
+/-- Source tree of `A = { open Lib ⏎ Box.Q + 0 }`, where `Lib.Box.Q = y`.
+    Ordinary lexical lookup resolves `Box` through the open; `walkPath` only searches properties. -/
+def openedReceiver : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "F" (alg ["y"] [] [privateProp "Lib" (alg [] [] [publicProp "Box" (alg [] [] [{ (publicLocalProp "Q" (.localCapturedAncestorParams ["y"]) (.alias none [] [] (.param "y"))) with requiredOwnerDepths := some [("y", some 2)] }] [.num 1])] [.num 1]), { (privateLocalProp "A" (.localCapturedAncestorParams ["y"]) (alg [] [.resolve "Lib"] [] [(.binary .add (.dotCall (.resolve "Box") "Q" none) (.num 0))])) with requiredOwnerDepths := some [("y", some 0)] }] [.resolve "A"])] [(.call (.resolve "F") [.num 5])])
+
+def openedReceiverExported : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "F" (alg ["y"] [] [privateProp "Lib" (alg [] [] [publicProp "Box" (alg [] [] [{ (publicLocalProp "Q" (.localCapturedAncestorParams ["y"]) (.alias none [] [] (.param "y"))) with requiredOwnerDepths := some [("y", some 2)] }] [.num 1])] [.num 1]), privateProp "A" (alg [] [.resolve "Lib"] [] [(.binary .add (.dotCall (.resolve "Box") "Q" none) (.num 0))])] [.resolve "A"])] [(.call (.resolve "F") [.num 5])])
+
+theorem opened_receiver_sourceDomain : SourceDomain openedReceiver := ⟨by cbv, by cbv⟩
+
+/-- Missing `y` is not detected when the dotted receiver head is open-provided. -/
+theorem opened_receiver_exported_admitted : SourceDomain openedReceiverExported := ⟨by cbv, by cbv⟩
+
+#guard (match runResult openedReceiver with | .ok (.atom 5) => true | _ => false)
+
+/-- A source-shaped receiver chain longer than the model's fixed fuel, with no cycle.
+    The C# witness separately checks the 65-link source program and its local-only reader. -/
+def longChain (exposure : PropExposure) : Expr :=
+  let name (i : Nat) := "L" ++ toString i
+  let links := (List.range (selFuel + 1)).map fun i =>
+    privateProp (name i) (.alias none [] [] (.resolve (if i = 0 then "Lib" else name (i-1))))
+  .algorithmExpr (alg [] [] [privateProp "F" (alg ["y"] []
+    ([privateProp "Lib" (alg [] []
+      [{ (publicLocalProp "Q" (.localCapturedAncestorParams ["y"]) (.alias none [] [] (.param "y"))) with
+          requiredOwnerDepths := some [("y", some 1)] }] [.num 1])] ++ links ++
+     [{ (privateLocalProp "A" exposure (alg [] [] []
+         [.binary .add (.dotCall (.resolve (name selFuel)) "Q" none) (.num 0)])) with
+         requiredOwnerDepths := if exposure.isExported then none else some [("y", some 0)] }])
+    [.resolve "A"])] [.call (.resolve "F") [.num 5]])
+
+theorem long_chain_exported_admitted : SourceDomain (longChain .exported) := ⟨by cbv, by cbv⟩
+theorem long_chain_sourceDomain : SourceDomain (longChain (.localCapturedAncestorParams ["y"])) := ⟨by cbv, by cbv⟩
+
+end SelectionGaps
 
 end KatLang.NavigationSourceDomainGuards

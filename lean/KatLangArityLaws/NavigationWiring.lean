@@ -14,7 +14,8 @@ activation that binds every parameter of the level. This module proves, helper b
 that fact comes from and that every wiring helper of the evaluator keeps it. Nothing here is about
 the CELL clause's `ParamRowOwned`: the B2 preparation found a source program that broke it; since
 the anchoring of a container's chain (2026-11-13) that program keeps it
-(`NavigationSourceDomainGuards`), and it is not proved in general.
+(`NavigationSourceDomainGuards`), and it is not proved in general. Where the owner-activated gate
+gives it, and the premise that needs, is `NavigationOwnership`.
 
 ## 1. The written tree carries no activation index (`identify_noAct`)
 
@@ -35,6 +36,11 @@ the static fact the three uses that take a parent from the written tree need (be
 | 5. `lookupInParentsDirect` / `lookupInParentsStructuralProperty` — the level as found | a level of the chain walked (`backed_lookupInParentsDirect`, `backed_lookupInParentsStructuralProperty`) |
 | 6. `Algorithm.forOpens` — an algorithm over a chain level | that level (`backed_forOpens`) |
 | 7. a builtin argument without a cell — used as given | host-only (the hand-built fixture seam: a source call supplies every argument through a cell); the written chain is activation-free (§ 1) |
+
+Re-verified at 75c3f1f2 (the anchoring, B2 preparation pass 2): the seven categories are unchanged;
+the static `Algorithm.childOf` of use 3 has three sites (`lookupLexicalDirect`,
+`wireOpenBlockToGlobalScope`'s unparented arm, and the host-only `flatBinderUserEquivalent?`), and
+`open Name` now resolves on `scopeInContext` of the head in both engines (use 5).
 
 In-context wiring (`scopeInContext`, `childOfInContext`, `wireToCaller` on a non-empty stack) picks a
 level of the site chain or the parent's own over its anchored chain, whose levels are kept levels,

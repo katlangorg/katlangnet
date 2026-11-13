@@ -35,6 +35,12 @@ container's chain (owner decision 2026-11-13) that program's member is owned
 (`NavigationSourceDomainGuards.OutsideContainer.reached_member_is_owned`), but the condition is not
 proved for every member production wires. So the pilot is PARTIAL: the mechanism gives both halves
 from one judgment, and member navigation is not closed. No whole-run claim follows from this module.
+
+Pass 2 (2026-11-13, under the anchoring): `NavigationPilot` adds the syntax-directed PROCEDURE
+(`agree_tac`) and runs it over eight bodies, each relative to explicit verification conditions;
+`NavigationOwnership.algOK_member` reduces the member edge's condition to backed chains and the
+local-only premise (static exposure plus shape agreement). Still partial: the conditions are not
+discharged for a concrete admitting contract.
 -/
 
 namespace KatLang.NavigationRelational

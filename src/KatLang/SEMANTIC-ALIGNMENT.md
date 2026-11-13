@@ -3633,8 +3633,9 @@ E-18 B2 preparation (2026-11-12; Lean proofs, guards and proof-boundary document
 evaluator-definition, identity-key, minting or C# change; full V3 required by this brief).
 `NavigationSourceDomain.lean` states the static input domain as decidable predicates of a program
 expression, used as hypotheses and never as a rejecting check: `paramsBound`, `exposureComplete`
-(a direct-lexical value-level fragment) and `exposureDeep`. Full static exposure completeness remains
-OPEN: the fragment does not propagate selected dotted/opened members' requirements. The review's
+(a direct-lexical value-level fragment) and `exposureDeep`. Full static exposure completeness remained
+OPEN in that pass: the fragment does not propagate selected dotted/opened members' requirements (stated in
+pass 2, below). The review's
 `ExposureFragment.misses_dotted_requirement` proves that it accepts a host-corrupted exported
 `A = Lib.Q + 0` even when `Q` requires an ancestor parameter. `NavigationSourceDomainWitnessTests`
 checks that the C# front end marks that `A` local-only, checks all seven source/Lean encodings, and
@@ -3658,6 +3659,36 @@ one judgment gives both halves of `Contract.BodySound` (`bodySound_of_agree`), a
 three navigation bodies relative to explicit call-site conditions; the member edge's condition holds
 on those programs but is not proved for every member. B2 remains NO-GO until it is re-proposed under
 the anchoring. Ledger E-18 remains OPEN.
+
+E-18 B2 preparation, pass 2 (2026-11-13, under the anchoring; Lean proofs, guards, C# witness tests and
+documentation only, no evaluator-definition, identity-key, minting or C# production change).
+`NavigationSourceDomain.exposureFull` extends the direct-lexical fragment with a bounded static
+selection model; `SourceDomain` combines it with `paramsBound`. It rejects the earlier simple dotted
+and opened corruptions, and the four `FrontEnd` witnesses and reported 3,689 corpus encodings satisfy
+it. It is NOT complete member exposure. Independent review's `SelectionGaps` admits incorrectly
+exported readers on three valid routes: one provider opened twice (`openedAt` does not deduplicate),
+a dotted head supplied by an open (`walkPath` searches direct properties only), and a transparent
+reference chain beyond `selFuel = 64`. C# source-fidelity/outcome tests pin the first two trees and
+their local-only readers, plus the 65-link source's local-only requirement. No new source/evaluator
+counterexample follows; the static contract's minimum deliverable F1 remains OPEN. A complete
+selection relation and its C# front-end correspondence remain to be established.
+`NavigationOwnership.lean` makes the local-only premise
+statable: a member selected through the owner-activated gate of `memberAccessible?` whose metadata passes
+the exposure check at its static stack (`declared_paramRow`: a parameter-row member declares its row at
+the nearest binder) is `ParamRowOwned` when the in-context chain agrees with that stack
+(`paramRowOwned_of_exposed`; `ShapeAgrees` is needed only for position metadata); `algOK_member` reduces
+the pilot's member-edge condition to backed chains and that premise; `ReqActivated` states the proposed
+invariant for the ungated lexical route and gives the cell clause without a gate. Neither shape agreement
+of every chain production builds nor the preservation of `ReqActivated` is proved: that PROVENANCE
+invariant is the open half. `NavigationPilot.lean` adds ONE syntax-directed procedure, `agree_tac`, run
+unchanged over eight bodies (the structure chase, the alias chase, the receiver probe with member
+navigation and the lexical name head, the structural projection, lexical lookup with `open` resolution,
+binder entry, family dispatch and body entry; 3 to 5 proof lines each). Each theorem holds for every
+ordered contract relative to explicit verification conditions — call-site preconditions and relational
+contracts of `aliasBindingCell`, `resolveAliasStepWith`, `bindNeedPatterns`, `selectNeedFamilyBranch`,
+`enterAlgorithmBody` and three other helpers, 26 in all — with the trivial result predicate. By the
+predeclared threshold (pass 1's, unchanged) that is a PARTIAL pilot: criterion 2 is not met, and B2 is
+DEFERRED. Ledger E-18 remains OPEN.
 
 - **PC-2 — admissible plan-conservativity contracts and the active mark (2026-11-11).** Lean proofs and guards only, NO language change, no change to `KatLang.lean` or C#. `lean/KatLangArityLaws/PlanConservativityAdmissible.lean` supplies restricted contracts for PC-1's first obstacle: the allocation contract `FormAdmissible P ctx env R` (only formation's own pushes — a suspended expression cell of the plan's caller, a Ready cell of an `R` item) and the call domain `PlanCallsOn Q RT RN eff r` with output contracts `PlanOutputs` (only the plan's own callee resolution and written spread expressions (`.sequenceSpread e ∈ eff.args`), normalization of `RT` callees, dispatch of `RN` callees — a `meta` callee can be excluded) replace `PushClosed` and `PlanCalls`; `production_fresh_plan_adm` and its VALUE forms keep the M1.5 conclusion verbatim, `production_fresh_plan_on_of_adm` re-derives the PC-1 theorem, and `production_fresh_plan_refFree` conditionally instantiates it at `evaluating` ∧ `refFree` (`ActiveRefFree a`), where `formAdmissible_activeRefFree` proves the allocation contract for a reference-free captured environment. `lean/KatLangArityLaws/PlanActiveCells.lean` proves, for all 104 `EvalCall` bodies by the FG-M1 procedure, that an `evaluating` cell stays `evaluating` across every production operation (`evalUnbounded_actDisc`; `keeps_active_production`, `keeps_production_active` reduce any `Active a ∧ R` keeping obligation to its `R` half). NEGATIVE RESULT: `StoredRefFree` is not an inductive invariant of LOOP-ONLY runs — Lean's `repeat`/`while` bind their step through the builtin `meta step` parameter and store a Ready `callRef` of the step cell (`PlanConservativityAdmissibleGuards.loopRunStoresReference`, using only `Inc` and `Loop` declarations, with `hasRefToSuspendedPlan` pinning a reference to a still-unevaluated step plan); the simulation and non-reachability of the plan's cell both hold in this guard, without proving sufficiency of non-reachability. The loop-covering invariant needs input restrictions and value-tracking body proofs. Guards: `admissibleAt` (finite entry checks, not the body/output contracts or syntactic META-freedom; it also admits the META body `UseRef`) holds with the simulation's conclusion on the META-free corpus and the loop-only `Loop(5)` and fails at both META counterexamples, which stay as refutations; no META-free counterexample was found. Still OPEN: the reference-exclusion invariant's preservation, `BodyObliviousOn` for any body, and the output contracts. The META owner question is unchanged. Ledger E-18 stays Conditional + Guard + C# test, OPEN. V3.
 
