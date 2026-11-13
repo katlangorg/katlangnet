@@ -2166,6 +2166,28 @@ public class SemanticModelTests
         Assert.Same(property, dotResolution.ResolvedProperty);
     }
 
+    [Theory]
+    [InlineData("Lib = { public Sub = { public Q = 1\n y }\n 0 }\n L = Lib.Sub\n A = L.Q + 0", false)]
+    [InlineData("A = { public Sub = { public Q = 1\n y } }.Sub.Q + 0", false)]
+    [InlineData("Lib = { public Sub = { public Q = 1\n y }\n 0 }\n L = Lib.Sub\n A = { open L\n Q + 0 }", false)]
+    [InlineData("open Lib.Sub\n Lib = { public Sub = { public Q = 1\n y }\n 0 }\n A = Q + 0", false)]
+    [InlineData("A = { public Q = 1\n y + 0 }.Q + 0", true)]
+    [InlineData("Lib = { public Q = 1\n y }\n L = Lib\n A = L.Q + 0", true)]
+    public void Build_StaticAccessChecks_PublishExposureWithoutChangingMemberResolution(string declarations, bool exported)
+    {
+        var source = "F(y) = {\n " + declarations + "\n A\n}\nF.A";
+        var parsed = SourceProvenance.ParseValid(source);
+        var model = SemanticModelBuilder.Build(parsed.Parsed);
+        var property = SingleProperty(model, "A");
+        Assert.Equal(exported ? PropertyExposure.Exported : PropertyExposure.LocalOnlyCapturedAncestorParameters,
+            property.Exposure);
+        Assert.Equal(exported, property.IsExported);
+        var dotResolution = ResolutionAt(model, source.Count(c => c == '\n') + 1, 3);
+        Assert.Equal(IdentifierClassification.PropertyReference, dotResolution.Classification);
+        Assert.Same(property, dotResolution.ResolvedProperty);
+        Assert.Equal(property.Declaration?.Span, dotResolution.ResolvedDeclaration?.Span);
+    }
+
     [Fact]
     public void Build_OuterParametersStayOnAlgorithmMetadata()
     {

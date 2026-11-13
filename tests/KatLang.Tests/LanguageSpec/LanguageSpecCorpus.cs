@@ -4050,6 +4050,112 @@ public static class LanguageSpecCorpus
         },
         new()
         {
+            Id = "dot-local-only-reference-target-walk",
+            Category = "access-boundaries",
+            Source = "F(y) = {\n  Lib = {\n    public Sub = {\n      public Q = 1\n      y\n    }\n    0\n  }\n  L = Lib.Sub\n  A = L.Q + 0\n  A\n}\nF(5), F.A",
+            Outcome = SpecOutcome.EvalError,
+            ExpectedErrorCategory = "localOnlyProperty",
+            Probes =
+            [
+                new SpecProbe("F(y) = {\n  Lib = {\n    public Sub = {\n      public T = {\n        public Q = 1\n      }\n      y\n    }\n    0\n  }\n  L0 = Lib.Sub\n  M = L0.T\n  A = M.Q + 0\n  A\n}\nF(5), F.A", "err localOnlyProperty"),
+                new SpecProbe("F(y) = {\n  Lib = {\n    public Sub = {\n      public Q = 1\n      y\n    }\n    0\n  }\n  L0 = Lib.Sub\n  L1 = L0\n  L2 = L1\n  A = L2.Q + 0\n  A\n}\nF(5), F.A", "err localOnlyProperty"),
+                new SpecProbe("F(y) = {\n  Lib = {\n    public Sub = {\n      public G(x) = x\n      y\n    }\n    0\n  }\n  L = Lib.Sub\n  A = L.G(1) + 0\n  A\n}\nF(5), F.A", "err localOnlyProperty"),
+            ],
+            Notes = "E-18 exposure access checks (owner decision 2026-11-13): exposure charges exactly the access checks and value reads the evaluator performs on static selections.",
+            Explanation = "Reading through a transparent reference charges what its TARGET WALK selects: `L = Lib.Sub` selects `Sub` in `L`'s own scope, checking its accessibility, so `A = L.Q + 0` requires `F`'s `y` exactly like `A = Lib.Sub.Q + 0`. `A` is local-only, so the escaped `F.A` is refused naming `A`, and `F(5)` leaves no exported cache entry for it to reuse (formerly `1, 1`). The reference's own VALUE is never charged (`dot-exported-value-only-reference`).",
+        },
+        new()
+        {
+            Id = "dot-local-only-inline-block-head",
+            Category = "access-boundaries",
+            Source = "F(y) = {\n  A = {\n    public Sub = {\n      public Q = 1\n      y\n    }\n  }.Sub.Q + 0\n  A\n}\nF(5), F.A",
+            Outcome = SpecOutcome.EvalError,
+            ExpectedErrorCategory = "localOnlyProperty",
+            Probes =
+            [
+                new SpecProbe("F(y) = {\n  Lib = {\n    public Sub = {\n      public Q = 1\n      public G(x) = x\n      y\n    }\n    0\n  }\n  A = { public Sub = { public G(x) = x\n y } }.Sub.G(1) + 0\n  A\n}\nF(5), F.A", "err localOnlyProperty"),
+            ],
+            Notes = "E-18 exposure access checks (owner decision 2026-11-13): exposure charges exactly the access checks and value reads the evaluator performs on static selections.",
+            Explanation = "A path whose head is an inline block selects its members like a name-headed path: the evaluator checks `Sub`'s accessibility, so `A = { public Sub = { public Q = 1 ⏎ y } }.Sub.Q + 0` requires `F`'s `y` and is local-only; `F(5), F.A` is refused naming `A` (formerly `1, 1`). The block's own VALUE is not read when a member is selected (`dot-exported-inline-block-head-member`).",
+        },
+        new()
+        {
+            Id = "open-local-only-through-reference",
+            Category = "access-boundaries",
+            Source = "F(y) = {\n  Lib = {\n    public Sub = {\n      public Q = 1\n      y\n    }\n    0\n  }\n  L = Lib.Sub\n  A = {\n    open L\n    Q + 0\n  }\n  A\n}\nF(5), F.A",
+            Outcome = SpecOutcome.EvalError,
+            ExpectedErrorCategory = "localOnlyProperty",
+            Probes =
+            [
+                new SpecProbe("F(y) = {\n  Lib = {\n    public Sub = {\n      public Q = 1\n      y\n    }\n    0\n  }\n  L = Lib.Sub\n  Other = {\n    public Z = 3\n  }\n  A = {\n    open L, Other\n    Z + 0\n  }\n  A\n}\nF(5), F.A", "err localOnlyProperty"),
+            ],
+            Notes = "E-18 exposure access checks (owner decision 2026-11-13): exposure charges exactly the access checks and value reads the evaluator performs on static selections.",
+            Explanation = "Opening a transparent reference resolves its target walk, and the evaluator checks every member it selects: `open L` with `L = Lib.Sub` charges `Sub`, so `A = { open L ⏎ Q + 0 }` requires `F`'s `y`. The walk is charged even when that target does not provide the name: every open of a level the lookup reaches is resolved first.",
+        },
+        new()
+        {
+            Id = "open-local-only-enclosing-level",
+            Category = "access-boundaries",
+            Source = "F(y) = {\n  open Lib.Sub\n  Lib = {\n    public Sub = {\n      public Q = 1\n      y\n    }\n    0\n  }\n  A = Q + 0\n  A\n}\nF(5), F.A",
+            Outcome = SpecOutcome.EvalError,
+            ExpectedErrorCategory = "localOnlyProperty",
+            Probes =
+            [
+                new SpecProbe("F(y) = {\n  open Lib.Sub, Other\n  Lib = {\n    public Sub = {\n      public Q = 1\n      y\n    }\n    0\n  }\n  Other = {\n    public X = 2\n  }\n  A = X + 0\n  A\n}\nF(5), F.A", "err localOnlyProperty"),
+                new SpecProbe("F(y) = {\n  open Lib.Sub\n  Lib = {\n    public Sub = {\n      public Q = 1\n      public G(x) = x\n      public T = {\n        public Q = 1\n      }\n      y\n    }\n    0\n  }\n  X = 2\n  A = X + 0\n  A\n}\nF(5), F.A", "ok raw=S[2, 2] n=2"),
+            ],
+            Notes = "E-18 exposure access checks (owner decision 2026-11-13): exposure charges exactly the access checks and value reads the evaluator performs on static selections.",
+            Explanation = "A name looked up through an ENCLOSING level's opens charges the walk of every open target of every level the lookup consulted: `F(y) = { open Lib.Sub ⏎ … ⏎ A = Q + 0 }` checks `Sub`'s accessibility while resolving the open, so `A` requires `y` and `F(5), F.A` is refused naming `A` (formerly `1, 1`), also when the open target does not provide the name.",
+        },
+        new()
+        {
+            Id = "dot-exported-inline-block-head-member",
+            Category = "access-boundaries",
+            Source = "F(y) = {\n  A = {\n    public Q = 1\n    y + 0\n  }.Q + 0\n  A\n}\nF(5), F.A",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "1\n1",
+            ExpectedRaw = "S[1, 1]",
+            ExpectedEmittedCount = 2,
+            Probes =
+            [
+                new SpecProbe("F(y) = {\n  B = {\n    public Q = 1\n    y + 0\n  }\n  A = B.Q + 0\n  A\n}\nF(5), F.A", "ok raw=S[1, 1] n=2"),
+                new SpecProbe("F(y) = {\n  A = {\n    public Q = 1\n    y + 0\n  }.Missing + 0\n  Missing(r) = 2\n  Lib = {\n    public Sub = {\n      public Q = 1\n      public G(x) = x\n      public T = {\n        public Q = 1\n      }\n      y\n    }\n    0\n  }\n  A\n}\nF(5), F.A", "err localOnlyProperty"),
+            ],
+            Notes = "E-18 exposure access checks (owner decision 2026-11-13): exposure charges exactly the access checks and value reads the evaluator performs on static selections.",
+            Explanation = "An inline block head whose member is selected is not READ: `A = { public Q = 1 ⏎ y + 0 }.Q + 0` requires nothing of `F`, exactly like the named spelling `B = { … }` / `A = B.Q + 0`, so `F.A` is `1` outside the call (formerly refused naming `A`). A path whose first step selects nothing reads the block's value and charges it.",
+        },
+        new()
+        {
+            Id = "dot-exported-value-only-reference",
+            Category = "access-boundaries",
+            Source = "F(y) = {\n  Lib = {\n    public Q = 1\n    y\n  }\n  L = Lib\n  A = L.Q + 0\n  A\n}\nF(5), F.A",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "1\n1",
+            ExpectedRaw = "S[1, 1]",
+            ExpectedEmittedCount = 2,
+            Notes = "E-18 exposure access checks (owner decision 2026-11-13): exposure charges exactly the access checks and value reads the evaluator performs on static selections.",
+            Explanation = "A member-less reference to a lexically found name selects nothing itself: with `Lib = { public Q = 1 ⏎ y }` and `L = Lib`, `A = L.Q + 0` reads the selected `Q` only, never `Lib`'s or `L`'s value, so `A` stays exported and `F.A` is `1`.",
+        },
+        new()
+        {
+            Id = "open-exported-runtime-reference",
+            Category = "access-boundaries",
+            Source = "F(y) = {\n  open L, Other\n  L = y\n  Other = { public Q = 1 }\n  A = Q + 0\n  A\n}\nF(5), F.A",
+            Outcome = SpecOutcome.Evaluates,
+            ExpectedDisplay = "1\n1",
+            ExpectedRaw = "S[1, 1]",
+            ExpectedEmittedCount = 2,
+            Probes =
+            [
+                new SpecProbe("F(y) = {\n  open L1, Other\n  L0 = y\n  L1 = L0\n  Other = { public Q = 1 }\n  A = Q + 0\n  A\n}\nF(5), F.A", "ok raw=S[1, 1] n=2"),
+                new SpecProbe("F(y) = {\n  open L, Other\n  L = y.C\n  Other = { public Q = 1 }\n  A = Q + 0\n  A\n}\nF(5), F.A", "ok raw=S[1, 1] n=2"),
+                new SpecProbe("F(y) = {\n  L = y\n  Q(r) = 1\n  A = L.Q + 0\n  A\n}\nF(5), F.A", "err localOnlyProperty"),
+            ],
+            Notes = "E-18 exposure access checks, owner decision 3 (2026-11-13): opening a runtime reference charges nothing; a dot path through one does.",
+            Explanation = "A RUNTIME reference — a parameter row such as `L = y`, a parameter-rooted path, an `.Algorithm` link, or a static chain naming one — is its own namespace when opened (`openStructure`): the open neither establishes its target nor reads its row, so `A = Q + 0`, which `Other` provides, requires nothing; `A` stays exported and `F.A` is `1`. A dot path THROUGH the reference (`A = L.Q + 0` falling back to `Q(L)`) reads the receiver at run time, so that reader requires `y` and its escaped read is refused.",
+        },
+        new()
+        {
             Id = "open-distinct-declarations-stay-distinct-providers",
             Category = "name-resolution",
             Source = $"open {new string('N', 520)}A, {new string('N', 520)}B\n{new string('N', 520)}A = {{ public X = 1 }}\n{new string('N', 520)}B = {{ public X = 1 }}\nX",

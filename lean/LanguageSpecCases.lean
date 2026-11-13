@@ -14,11 +14,11 @@ This is bounded differential validation over the Lean-guarded partition,
 not a formal verification of the evaluators.
 
 Partition (machine-checked by the `specCaseIds.length` guard below):
-- specification surface cases: 541
+- specification surface cases: 548
 - excluded parse-level cases (Lean has no surface parser): 76
 - excluded C#-only cases (each carries an explicit reason in the corpus): 24
-- Lean-guarded cases: 441
-- probe observations (C#-only by design): 1510
+- Lean-guarded cases: 448
+- probe observations (C#-only by design): 1522
 - internal-node cases live in the semantic-explorer corpus, not here: see
   lean/SemanticExplorerCases.lean
 
@@ -1266,6 +1266,41 @@ def case_dot_local_only_member_outside_owner : Expr :=
   .algorithmExpr (alg [] [] [privateProp "Outer" (alg ["n"] [] [privateProp "Inner" (alg [] [] [{ (publicLocalProp "X" (.localCapturedAncestorParams ["n"]) (.alias none [] [] (.param "n"))) with requiredOwnerDepths := some [("n", some 1)] }] [])] [(.dotCall (.resolve "Inner") "X" none)])] [(.dotCall (.dotCall (.resolve "Outer") "Inner" none) "X" none)])
 #guard obs case_dot_local_only_member_outside_owner == "err localOnlyProperty"
 
+-- dot-local-only-reference-target-walk [access-boundaries]: F(y) = { \n   Lib = { \n     public Sub = { \n       public Q = 1 \n       y \n     } \n     0 \n   } \n   L = Lib.Sub \n   A = L.Q + 0 \n   A \n } \n F(5), F.A
+def case_dot_local_only_reference_target_walk : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "F" (alg ["y"] [] [privateProp "Lib" (alg [] [] [{ (publicLocalProp "Sub" (.localCapturedAncestorParams ["y"]) (.alias none [] [publicProp "Q" (alg [] [] [] [.num 1])] (.param "y") none false)) with requiredOwnerDepths := some [("y", some 1)] }] [.num 0]), { (privateLocalProp "L" (.localCapturedAncestorParams ["y"]) (.alias none [] [] ((.dotCall (.resolve "Lib") "Sub" none)))) with requiredOwnerDepths := some [("y", some 0)] }, { (privateLocalProp "A" (.localCapturedAncestorParams ["y"]) (alg [] [] [] [(.binary .add (.dotCall (.resolve "L") "Q" none) (.num 0))])) with requiredOwnerDepths := some [("y", some 0)] }] [.resolve "A"])] [(.call (.resolve "F") [.num 5]), (.dotCall (.resolve "F") "A" none)])
+#guard obs case_dot_local_only_reference_target_walk == "err localOnlyProperty"
+
+-- dot-local-only-inline-block-head [access-boundaries]: F(y) = { \n   A = { \n     public Sub = { \n       public Q = 1 \n       y \n     } \n   }.Sub.Q + 0 \n   A \n } \n F(5), F.A
+def case_dot_local_only_inline_block_head : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "F" (alg ["y"] [] [{ (privateLocalProp "A" (.localCapturedAncestorParams ["y"]) (alg [] [] [] [(.binary .add (.dotCall (.dotCall (.algorithmExpr (alg [] [] [{ (publicLocalProp "Sub" (.localCapturedAncestorParams ["y"]) (.alias none [] [publicProp "Q" (alg [] [] [] [.num 1])] (.param "y") none false)) with requiredOwnerDepths := some [("y", some 2)] }] [])) "Sub" none) "Q" none) (.num 0))])) with requiredOwnerDepths := some [("y", some 0)] }] [.resolve "A"])] [(.call (.resolve "F") [.num 5]), (.dotCall (.resolve "F") "A" none)])
+#guard obs case_dot_local_only_inline_block_head == "err localOnlyProperty"
+
+-- open-local-only-through-reference [access-boundaries]: F(y) = { \n   Lib = { \n     public Sub = { \n       public Q = 1 \n       y \n     } \n     0 \n   } \n   L = Lib.Sub \n   A = { \n     open L \n     Q + 0 \n   } \n   A \n } \n F(5), F.A
+def case_open_local_only_through_reference : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "F" (alg ["y"] [] [privateProp "Lib" (alg [] [] [{ (publicLocalProp "Sub" (.localCapturedAncestorParams ["y"]) (.alias none [] [publicProp "Q" (alg [] [] [] [.num 1])] (.param "y") none false)) with requiredOwnerDepths := some [("y", some 1)] }] [.num 0]), { (privateLocalProp "L" (.localCapturedAncestorParams ["y"]) (.alias none [] [] ((.dotCall (.resolve "Lib") "Sub" none)))) with requiredOwnerDepths := some [("y", some 0)] }, { (privateLocalProp "A" (.localCapturedAncestorParams ["y"]) (alg [] [.resolve "L"] [] [(.binary .add (.resolve "Q") (.num 0))])) with requiredOwnerDepths := some [("y", some 0)] }] [.resolve "A"])] [(.call (.resolve "F") [.num 5]), (.dotCall (.resolve "F") "A" none)])
+#guard obs case_open_local_only_through_reference == "err localOnlyProperty"
+
+-- open-local-only-enclosing-level [access-boundaries]: F(y) = { \n   open Lib.Sub \n   Lib = { \n     public Sub = { \n       public Q = 1 \n       y \n     } \n     0 \n   } \n   A = Q + 0 \n   A \n } \n F(5), F.A
+def case_open_local_only_enclosing_level : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "F" (alg ["y"] [(.dotCall (.resolve "Lib") "Sub" none)] [privateProp "Lib" (alg [] [] [{ (publicLocalProp "Sub" (.localCapturedAncestorParams ["y"]) (.alias none [] [publicProp "Q" (alg [] [] [] [.num 1])] (.param "y") none false)) with requiredOwnerDepths := some [("y", some 1)] }] [.num 0]), { (privateLocalProp "A" (.localCapturedAncestorParams ["y"]) (alg [] [] [] [(.binary .add (.resolve "Q") (.num 0))])) with requiredOwnerDepths := some [("y", some 0)] }] [.resolve "A"])] [(.call (.resolve "F") [.num 5]), (.dotCall (.resolve "F") "A" none)])
+#guard obs case_open_local_only_enclosing_level == "err localOnlyProperty"
+
+-- dot-exported-inline-block-head-member [access-boundaries]: F(y) = { \n   A = { \n     public Q = 1 \n     y + 0 \n   }.Q + 0 \n   A \n } \n F(5), F.A
+def case_dot_exported_inline_block_head_member : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "F" (alg ["y"] [] [privateProp "A" (alg [] [] [] [(.binary .add (.dotCall (.algorithmExpr (alg [] [] [publicProp "Q" (alg [] [] [] [.num 1])] [(.binary .add (.param "y") (.num 0))])) "Q" none) (.num 0))])] [.resolve "A"])] [(.call (.resolve "F") [.num 5]), (.dotCall (.resolve "F") "A" none)])
+#guard obs case_dot_exported_inline_block_head_member == "ok raw=S[1, 1] n=2"
+
+-- dot-exported-value-only-reference [access-boundaries]: F(y) = { \n   Lib = { \n     public Q = 1 \n     y \n   } \n   L = Lib \n   A = L.Q + 0 \n   A \n } \n F(5), F.A
+def case_dot_exported_value_only_reference : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "F" (alg ["y"] [] [{ (privateLocalProp "Lib" (.localCapturedAncestorParams ["y"]) (.alias none [] [publicProp "Q" (alg [] [] [] [.num 1])] (.param "y") none false)) with requiredOwnerDepths := some [("y", some 0)] }, { (privateLocalProp "L" (.localCapturedAncestorParams ["y"]) (.alias none [] [] (.resolve "Lib"))) with requiredOwnerDepths := some [("y", some 0)] }, privateProp "A" (alg [] [] [] [(.binary .add (.dotCall (.resolve "L") "Q" none) (.num 0))])] [.resolve "A"])] [(.call (.resolve "F") [.num 5]), (.dotCall (.resolve "F") "A" none)])
+#guard obs case_dot_exported_value_only_reference == "ok raw=S[1, 1] n=2"
+
+-- open-exported-runtime-reference [access-boundaries]: F(y) = { \n   open L, Other \n   L = y \n   Other = { public Q = 1 } \n   A = Q + 0 \n   A \n } \n F(5), F.A
+def case_open_exported_runtime_reference : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "F" (alg ["y"] [.resolve "L", .resolve "Other"] [{ (privateLocalProp "L" (.localCapturedAncestorParams ["y"]) (.alias none [] [] (.param "y"))) with requiredOwnerDepths := some [("y", some 0)] }, privateProp "Other" (alg [] [] [publicProp "Q" (alg [] [] [] [.num 1])] []), privateProp "A" (alg [] [] [] [(.binary .add (.resolve "Q") (.num 0))])] [.resolve "A"])] [(.call (.resolve "F") [.num 5]), (.dotCall (.resolve "F") "A" none)])
+#guard obs case_open_exported_runtime_reference == "ok raw=S[1, 1] n=2"
+
 -- open-two-spellings-one-provider [name-resolution]: Lib = { \n     public Sub = { \n         public X = 1 \n     } \n     public R = { \n         open Sub, Lib.Sub \n         X \n     } \n } \n Lib.R
 def case_open_two_spellings_one_provider : Expr :=
   .algorithmExpr (alg [] [] [privateProp "Lib" (alg [] [] [publicProp "Sub" (alg [] [] [publicProp "X" (alg [] [] [] [.num 1])] []), publicProp "R" (.alias none [.resolve "Sub", (.dotCall (.resolve "Lib") "Sub" none)] [] (.resolve "X") none false)] [])] [(.dotCall (.resolve "Lib") "R" none)])
@@ -2408,7 +2443,7 @@ def case_receiver_expansion_consumed_members_are_no_return : Expr :=
   .algorithmExpr (alg [] [] [privateProp "Q" (alg [] [] [publicProp "V" (alg [] [] [] [.num 5])] []), privateProp "B" (alg [] [] [publicProp "M" (.alias none [] [] (.resolve "B")), publicProp "N" (.alias none [] [] (.resolve "Q"))] [.num 0]), privateProp "C" (.alias none [] [] ((.dotCall (.dotCall (.dotCall (.resolve "B") "M" none) "M" none) "N" none)))] [(.dotCall (.resolve "C") "V" none)])
 #guard obs case_receiver_expansion_consumed_members_are_no_return == "ok raw=5 n=1"
 
--- 441 canonical Lean-guarded specification cases.
+-- 448 canonical Lean-guarded specification cases.
 
 /--
 Machine-checked Lean-guarded partition count: the id list is built by the
@@ -2629,6 +2664,13 @@ def specCaseIds : List String := [
   "closed-list-may-fallback-name-is-runtime",
   "open-local-only-member-inside-owner",
   "dot-local-only-member-outside-owner",
+  "dot-local-only-reference-target-walk",
+  "dot-local-only-inline-block-head",
+  "open-local-only-through-reference",
+  "open-local-only-enclosing-level",
+  "dot-exported-inline-block-head-member",
+  "dot-exported-value-only-reference",
+  "open-exported-runtime-reference",
   "open-two-spellings-one-provider",
   "ambiguous-open-unused-overlap-is-valid",
   "dot-chain-structural-member-beats-extension",
@@ -2858,6 +2900,6 @@ def specCaseIds : List String := [
   "receiver-expansion-return-through-a-self-member",
   "receiver-expansion-consumed-members-are-no-return"
 ]
-#guard specCaseIds.length == 441
+#guard specCaseIds.length == 448
 
 end LanguageSpecCases

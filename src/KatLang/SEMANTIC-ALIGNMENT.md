@@ -2120,7 +2120,7 @@ In owner summaries below, `Evaluator.cs` denotes the synchronous `Evaluator` par
 | `CallableBindingPlan` | C# metadata only | `CallableBindingPlan.cs` | `CallableBindingPlanTests`, parity tests | No, unless it changes observable runtime behavior |
 | Semantic model / editor | C# tooling only for PRESENTATION, but its name resolution must select the same declaration the evaluator does (see the lookup row) — against the SAME prelude: a result parsed with host operations carries them (`ParseResult.HostOperations`) and the model resolves against the host-extended prelude, listing the operations as prelude names (`SemanticModel.PreludeSymbols`); it lists DOCUMENT-OWNED sites only — a load-elaborated module subtree contributes no sites at any depth and document references to imported members resolve to locationless targets (K7-SEM-R1) | `src/KatLang/Semantics/*` | `SemanticModelTests`, `SemanticModelDeclarationRegistrationTests`, `LookupCoherenceTests`, `NameResolutionAuditTests` | No |
 | Diagnostic wording only | C# presentation only | `KatLangError.cs` etc. | diagnostic tests | No, if error kind/structured payload unchanged |
-| Member accessibility (local-only members are local-context-dependent) and the open PROVIDER rule | `lean/KatLang.lean` `memberAccessible?` (with `requiredParameterOwner?`, `lexicalChainContains`, `ScopeCtx.params`, the conditional call's binder-carrying family scope) applied after selection by `evalDotCallCounted`, `resolveDotReceiver`, `resolveAlgForOpen` dotted steps, and `lookupOpenProperties`; `Algorithm.requiresArguments` in `resolveOpen`; `PropExposure.localCapturedAncestorParams names` as the INPUT the C# front end computes | `Evaluator.IsAccessibleFrom` (same four sites, sync and async twins), `Evaluator.ResolveOpen`, `ScopeCtx.Parameters`, `ChildOfConditionalCall`, `Property.RequiredAncestorParameters` (`PropertyExposureResolver` + the `PendingReference` summary channel, which settles an escaping name one open LEVEL at a time — `OpenCandidate.ProviderLevel` — charging nothing when two providers of the deciding level make the evaluator's `ambiguousOpen`, and resolves against the run's host-extended prelude), `OpenProviderValidator` (front-end `DiagnosticCode.IllegalInOpen` and `DiagnosticCode.UnresolvedOpenTarget`) | `LocalMemberAccessTests`, `LookupCoherenceTests` `exposure.*`, `LookupTwinEquivalenceTests`, `PropertyExposureResolverTests`, `DotCallFallbackExposureTests`, LanguageSpec `open-local-only-*` / `dot-local-only-*` / `open-parameterized-provider-rejected`, CoreTests `memberAccess*` in `NameOwnership.lean` | Yes for the accessibility law, the provider rule, and selection-by-visibility; the front-end diagnostic and the required-name COMPUTATION are C#-only |
+| Member accessibility (local-only members are local-context-dependent) and the open PROVIDER rule | `lean/KatLang.lean` `memberAccessible?` (with `requiredParameterOwner?`, `lexicalChainContains`, `ScopeCtx.params`, the conditional call's binder-carrying family scope) applied after selection by `evalDotCallCounted`, `resolveDotReceiver`, `resolveAlgForOpen` dotted steps, and `lookupOpenProperties`; `Algorithm.requiresArguments` in `resolveOpen`; `PropExposure.localCapturedAncestorParams names` as the INPUT the C# front end computes | `Evaluator.IsAccessibleFrom` (same four sites, sync and async twins), `Evaluator.ResolveOpen`, `ScopeCtx.Parameters`, `ChildOfConditionalCall`, `Property.RequiredAncestorParameters` (`PropertyExposureResolver` + the `PendingReference` summary channel, which settles an escaping name one open LEVEL at a time — `OpenCandidate.ProviderLevel` — charging nothing when two providers of the deciding level make the evaluator's `ambiguousOpen`, and resolves against the run's host-extended prelude; since E-18 F1 (owner decision 2026-11-13) it charges a reader exactly the access checks and value reads the evaluator performs on static selections: a crossed transparent reference's target-walk selections through `ChargeReferenceCrossing` and the memoized `SummaryMemo.ReferenceTerminal`, an inline-block-headed path through `PendingSelection.BlockHead`, and the open walks of every level a lookup consults through `PendingSelection.OpenWalks`, settled once per consulted level for every reader (`PendingResolution.SharedOpenWalksLevel`, C1); opening a runtime reference charges nothing (`ReferenceTerminal` opened mode, OD-C)), `OpenProviderValidator` (front-end `DiagnosticCode.IllegalInOpen` and `DiagnosticCode.UnresolvedOpenTarget`) | `LocalMemberAccessTests`, `LookupCoherenceTests` `exposure.*`, `LookupTwinEquivalenceTests`, `PropertyExposureResolverTests`, `DotCallFallbackExposureTests`, `ExposureAccessCheckTests`, `ExposureAccessCheckComplexityTests`, LanguageSpec `open-local-only-*` / `dot-local-only-*` / `dot-exported-*` / `open-exported-runtime-reference` / `open-parameterized-provider-rejected`, Lean `NavigationSourceDomainGuards.AccessChecks`, CoreTests `memberAccess*` in `NameOwnership.lean` | Yes for the accessibility law, the provider rule, and selection-by-visibility; the front-end diagnostic and the required-name COMPUTATION are C#-only |
 | Runtime declaration / activation / scope-owner identity (the state the accessibility law and captured-parameter reads consult) | `lean/KatLang.lean` FIELDS: `Algorithm.declarationId` (assigned once per written declaration by `identifyPropertyAlgorithm` at run preparation, preserved by `withParent`), `ScopeCtx.declarationId`/`ScopeCtx.activation` (plus the owner's `output`/`branches` components), `EvalCtx.headScope` (set by `enterAlgorithmBody`, cleared by `push`), `EvalState.lexicalActivations` (one fresh index per `recordParameterActivation`) | The same facts as fields of the runtime model, never a side table: `Algorithm.Declaration` (a reference-equal `DeclarationIdentity` token in a private equality-transparent storage slot minted by the `User`/`Conditional` constructors and carried by every record copy — a `with` copy is a VIEW of the same declaration; null for `Builtin`), `ScopeCtx.Owner`/`ScopeCtx.Activation` (set by `AsScopeCtx`, `EnterAlgorithmBody`, and `ChildOfConditionalCall`; a host-built scope has neither), `Evaluator.EvalCtx.HeadScope` (set by `EnterAlgorithmBody`, reset by `Push`; `SiteScope` = Lean `siteScope?`), `ParameterActivation` (one fresh reference-identified object per parameterized body entry or clause match, replacing the array index) | `EvaluatorIdentityStateTests` (representation, three execution paths, preflight, lifetime; each behavioural case names the wrong representation it fails under), `LocalMemberAccessTests`, `ZeroArgPropertyCacheScopeTests`, `LookupTwinEquivalenceTests`, `AsyncTwinDifferentialTests`, `PublicApiBaselineTests` | No — C# representation of Lean-modeled fields; a change to WHAT the fields mean (when an identity is minted, what an activation captures, which scope carries it) is the accessibility/cache rows above and needs Lean |
 | Zero-argument property cache semantics | `lean/KatLang.lean` per-run zero-parameter property cache, the `A` vs `A()` rule, and the cache SCOPE law (`zeroArgPropertyCacheKey`: an exported property has one value per run per declaring scope; a local-only property one value per binding context) | evaluator/cache code (`ZeroArgPropertyCacheKey.FromExecution`, planned-loop temp reads), builtin argument resolution (`ResolveArgAlgsWithSequenceSpread`), the `.string` receiver read (`EvalDotStringReceiverAlgOutput`) | evaluator/cache tests (`ZeroArgPropertyCacheScopeTests`, `OutermostPropertyCachePublicationTests`, `ZeroArgPropertyResultCacheTests`, `CacheKeyDifferentialTests`, `PropertyCacheConsumerTransparencyTests`, `DotCallValueBoundaryTests.BuiltinReceiver_IsDemandedLikeTheBuiltinsWrittenArgument`), Lean `CoreTests` (`zeroArg*`, `PropertyCacheConsumers`, `PropertyCachePublication`), `KatLangArityLaws/CacheReentrancyGuards` | Yes for property-style access vs explicit-call behavior, for the PUBLICATION law (Q-37, October 11 2026: the outermost successful property-style evaluation of a key owns its entry; re-entrant reads never publish), for the scope law (what reuses across calls, callbacks, iterations, opens), and for CONSUMER TRANSPARENCY (September 27 2026: a zero-parameter property is evaluated once per run per resolved binding, cache identity is the binding never the spelling, and how the value is consumed does not affect caching — a builtin VALUE slot in the written, dotted, or grouped spelling, the `.string` receiver, a user call, a forwarded parameter, and a callback all read the one entry; Lean: a builtin's arguments are the call's need cells — `formNeedSupply` / `supplyNeed`, read by `demandNeed` — and `evalDotStringReceiverValue`); no for C# cache instrumentation |
 | Evaluation/rendering resource limits | None — host runtime policy outside the mathematical core | `EvaluationLimits.cs`, `Evaluation/EvaluationBudget.cs`, checked construction in `Evaluator.cs` and loop optimizers, `KatLangEngine.cs`, `RunOptions.cs` | `EvaluationLimitsTests`, `BudgetConservationTests`, `ResourceLimitTerminalityTests`, `BudgetCrossTalkMatrixTests`, `CollectionMaterializationLimitsTests`, `StringAndDisplayLimitsTests`, `OperationalMetamorphicTests`, `MetamorphicFuzzHarnessTests`, `MetamorphicPhase2FamilyTests`, `MetamorphicPhase3FamilyTests`, `StrategyNeutralBudgetParityTests`, `LimitConfigurationTransparencyTests` | No — including RESOURCE LIMITS ARE TERMINAL FOR THE RUN (Q-02): a C# host rule with no Lean counterpart whose guarantee is that every completing run equals the unlimited, Lean-described one; and LIMITS OBSERVE A RUN, THEY NEVER CHOOSE HOW IT RUNS (Q-09b): every execution strategy charges every budget identically, so no limit selects a strategy, while host-stack headroom stays host policy (Q-09a) |
@@ -3689,6 +3689,129 @@ contracts of `aliasBindingCell`, `resolveAliasStepWith`, `bindNeedPatterns`, `se
 `enterAlgorithmBody` and three other helpers, 26 in all — with the trivial result predicate. By the
 predeclared threshold (pass 1's, unchanged) that is a PARTIAL pilot: criterion 2 is not met, and B2 is
 DEFERRED. Ledger E-18 remains OPEN.
+
+E-18 F1 candidate (2026-11-13; Lean model, guards, C# witness tests and documentation only, no
+evaluator-definition, identity-key, minting or C# production change). `NavigationSourceDomain.exposureFull`
+extends the candidate static-exposure fragment, over an inventory of static selections the evaluator
+performs, written before the change: a name by the full lookup (direct chain, then the prelude, then
+the opens level by level, providers deduplicated by the resolved declaration's static key through
+transparent references; one provider selects, two or more select nothing and stop, a failing target
+fails the level); a dotted path with that head, each receiver through its structure (a transparent
+reference's target resolved in the reference's own scope by the full lookup, opens included); a
+selected member charges only itself, an edge selecting nothing (a miss, a runtime receiver) its
+receiver and its fallback; open targets direct-lexically, with public steps, through `openStructure`;
+a loaded module cut at the prelude; runtime-only routes nothing. An alias cycle is production's
+refusal (the runtime route while deciding an `.Algorithm` row); fuel exhaustion fails the member's
+check closed. The fuel `selFuel` is derived from the program; its sufficiency is argued in the module
+note, not proved. `SelectionGaps`' three exported readers are now refused (`*_exported_refused`), and
+`SelectionRoutes` adds a source control and a refused host-built counterfactual for the guarded
+modeled route (an open-provided reference target, `open Sub, Lib.Sub`, two providers through a
+possible fallback, a nested open-provided head, an outer open, a selected member of a local-only
+receiver, the prelude before opens, the module cut). The completed predicate also admits two valid
+source trees the bounded extension refused (`selectedMemberOnly`, `moduleCut`). All 441
+LanguageSpec, 2,570 SemanticExplorer and 678 SemanticGenerated encodings satisfy `paramsBound` and
+`exposureFull`. The independent review supersedes the candidate's F1 CLOSED verdict: `walkSteps`
+drops intermediate selected members' requirements (`Lib.Sub.Q` can omit `Sub`'s `y`). It also found
+a C# under-exposure: `L = Lib.Sub; A = L.Q + 0` exports `A` although the alias route selects the
+local-only `Sub`; reading `F.A` outside `F(y)` fails there with `LocalOnlyProperty` in both engines.
+The brief's front-end stop rule fired, so F1 is STOPPED pending an owner decision; no production or
+evaluator definition is changed. `SourceDomain` remains a candidate fragment. C# correspondence
+and agreement of the parallel selector with the evaluator's monadic lookups remain ASSUMED. B2
+remains DEFERRED (criterion 2), no `NavRuns` premise or B2 criterion is discharged, and E-18 is OPEN.
+
+E-18 exposure access checks and F1 closure (2026-11-13; owner decision of 2026-11-13, which broadened
+the R2 decision after the stopped R2 run's finding S1). THE C# EXPOSURE PASS CHARGES A READER EXACTLY
+THE ACCESS CHECKS AND VALUE READS THE EVALUATOR PERFORMS ON STATIC SELECTIONS: every member of a
+written path whatever its head (a name, a redundant group, an inline block), every selection of a
+crossed transparent reference's target walk (made in the reference's own scope, through chains), and
+the walk of every open target of every level the reader's lookup consults, up to and including the
+deciding one, the open-provided member as before; never a lexically found head's or reference's VALUE,
+nor an inline block head's VALUE when a member is selected (a relaxation of the former block-output
+charge). Production change, C# exposure only (no evaluator, accessibility rule, anchoring, cache key
+or minting change): `PropertyExposureResolver.ChargeReferenceCrossing` at the head crossings of
+`ResolvePublishedReference` and `ChargePublishedOpenPath`, member-less chains through the memoized,
+path-compressed `SummaryMemo.ReferenceTerminal` (completed facts only: the reference's static target
+and the owner walk in its own scope); `PendingSelection.BlockHead` for inline-block-headed paths
+(`PropertyDependencyGraphBuilder.TryGetBlockMemberPath`); `PendingSelection.OpenWalks`, one reference
+per consulted level, settled in the open loop and emitted by `SummaryMemo.SelectedReferences` when an
+open-provided bare name is rebound to its provider (which formerly dropped the walks), filtered by
+`OpenWalksMayCharge` so a level whose targets cannot charge adds no frame. Observable changes, the same
+in both engines (both trust the metadata; the Lean evaluator agrees on all 141 outcomes of the 47 runnable probe programs): in 28 of the 49
+probe programs the under-charged reader becomes local-only, so the escaped `F.A` is refused naming `A` and `F(5), F.A`
+no longer reuses the call's exported entry; the block-head over-charge `A = { public Q = 1 ⏎ y + 0 }.Q
++ 0` becomes exported (`F.A` is 1). Left as reported over-charges: the eager charge of an algorithm's
+own dotted open targets when no lookup reaches them (`A = { open Lib.Sub ⏎ 1 }`). Lean:
+`NavigationSourceDomain`'s selections return their TRAIL (`Hit`) and `exposureFull` charges every
+declaration on it (`trailRequirements`), closing the review's R1; `NavigationSourceDomainGuards.
+AccessChecks` admits one fixed source tree per under-charged class plus the chain, refuses the pre-fix
+front end's tree of each (`*_hostBuilt_refused`) and the review's `intermediateCorrupt`, and admits the
+exported controls and the block-head relaxation. Every existing guard keeps its verdict; all 447
+LanguageSpec, 2,570 SemanticExplorer and 678 SemanticGenerated encodings satisfy `paramsBound` and
+`exposureFull`. F1 is CLOSED: `SourceDomain` is the static exposure contract of the selection model.
+C# correspondence, agreement of the model with the evaluator's monadic lookups, and fuel sufficiency
+remain ASSUMED (argued, exercised by the guards, the witness tests and the corpora). B2 remains
+DEFERRED, no `NavRuns` premise or B2 criterion is discharged, and E-18 is OPEN. Tests:
+`ExposureAccessCheckTests`, `ExposureAccessCheckComplexityTests`, `NavigationSourceDomainWitnessTests`
+(scope `AccessChecks`), LanguageSpec `dot-local-only-reference-target-walk`,
+`dot-local-only-inline-block-head`, `open-local-only-through-reference`,
+`open-local-only-enclosing-level`, `dot-exported-inline-block-head-member`,
+`dot-exported-value-only-reference`.
+
+Independent exposure review (2026-11-13): `ExposureAccessCheckTests` also forces the actual async
+twin (an unconfigured `RunAsync` uses the sync fast path), covers an open-provided reference target
+head and a host-built family's unused open-target walk, and pins the value-only open control.
+`SemanticModelTests.Build_StaticAccessChecks_PublishExposureWithoutChangingMemberResolution`
+checks that editor metadata follows the final exposure while structural resolution still selects
+the same declaration. An additional conservative over-charge was found and retained as the brief
+requires: with `open L, Other`, `L = y` and `Other = { public Q = 1 }`, `A = Q + 0` is local-only on
+`y` although `openStructure` keeps L's own namespace without reading its parameter row. This is
+separate from the permitted eager own-open-list charge and is not an extra access check of the
+evaluator. Removing either over-charge needs a follow-up; it does not weaken the post-fixed exposure
+contract or discharge any B2 premise.
+
+Independent review closing verdict: **STOPPED; F1 DEFER**. The preceding F1 CLOSED claim is
+superseded because the required open-list work bound fails for readers with their own parameters.
+Changing the complexity fixture's `A_i = Q_i + 0` to `A_i(z) = Q_i + 0` retains the correct `y`
+requirements but takes 1,350 / 5,200 / 20,400 settlement frames at 25 / 50 / 100 opens and readers
+(the parameterless forms take 126 / 251 / 501). `OpenWalksOf` carries each reader's distinct
+`BoundOwners` into the settlement identity, so the same level's walks are settled again per reader.
+The cache identity is left unchanged under the brief's prohibition on cache-key and key-representation
+changes. The selection model and the functional fixes remain in place; criterion 5 and overall F1
+acceptance are unresolved. Evidence: `artifacts/validation/e18-exposure-access-checks-20261113/review/`.
+
+C1/I28 follow-up (2026-11-13, owner decisions of 2026-11-13): **EXPOSURE FIXED; F1 CLOSED**, superseding
+the review's closing verdict above. The owner clarified that the freeze covered the evaluator's caches,
+not the exposure pass's own keys. C1: an `OpenWalks` reference is answered by one unbound settlement of
+the consulted level's walks at that level, shared by every reader whatever its bound owners
+(`PendingResolution.SharedOpenWalksLevel`). The answer is exact under three conditions: the walks'
+anchoring passes no level of the reader's chain below the level (`OpenWalkAnchorsBelow`, completed
+facts only), no bound owner is at or above the level, and the unbound result saw no cycle cut and stands
+from every site there. Otherwise the reader settles the walks itself, as before. The `Lib.Mid.Sub`
+discharge witness keeps `Mid` exported and `A` local-only on `p`. The reproduction takes 175 / 350 /
+700 frames; the per-reader seam `OpenWalksPerReaderForTesting` still takes 1,350 / 5,200 / 20,400. The
+parameterized-block, clause-branch and unused-target families are linear too, and a nested-level family
+settles each level's walks once (`ExposureAccessCheckComplexityTests`, with the equivalence theory
+against the seam). I28 was a regression of the candidate and is removed: opening a runtime reference
+(target no static path) charges nothing, while a dot path through one keeps its charge
+(`open-exported-runtime-reference`, `AccessChecks.runtimeReferenceOpen_sourceDomain`). The eager
+own-open-list charge (I25) is the one over-charge left. C# correspondence, model/evaluator agreement and
+fuel sufficiency remain assumptions; B2 stays DEFERRED. Evidence: `artifacts/validation/e18-c1-i28-20261113/`.
+
+Independent C1/I28 review (2026-11-14): **exposure acceptance STOPPED; F1 DEFER; B2 DEFERRED**,
+superseding the C1/I28 closure claim above. The optimized path does not meet decision 2 for readers
+on a target path: scaling the `Lib.Mid.Sub` discharge witness with M opens and M parameterized
+readers inside `Mid` costs 3,522 / 11,972 / 43,872 settlement frames at M = 25 / 50 / 100.
+`SharedOpenWalksLevel` refuses reuse when the walks anchor below the opening level, and the fallback
+repeats the walks per reader. Metadata stays correct (`Mid` exported; every `A_i` local-only on `p`).
+A separate F1 predicate counterexample is now confirmed: opening `L = Lib.Sub.Algorithm` checks
+`Sub` before the runtime intrinsic route, but `walkSteps` loses the static prefix on `runtime` and
+`structureOf` opens the reference with an empty trail. `SourceDomain` admits the host-built tree
+with `A` exported; both evaluators reject `F.A` at `Sub`. The source front end correctly makes `A`
+local-only. This is not a Lean/C# evaluator disagreement and does not authorize changing either
+runtime. Required work bounds and full static selection remain unresolved. Reproductions and
+fresh review checks: `artifacts/validation/e18-c1-i28-20261114-review/`. No B2 criterion or general
+`NavRuns` premise is discharged; C# correspondence, model/evaluator agreement and fuel sufficiency
+remain assumptions.
 
 - **PC-2 — admissible plan-conservativity contracts and the active mark (2026-11-11).** Lean proofs and guards only, NO language change, no change to `KatLang.lean` or C#. `lean/KatLangArityLaws/PlanConservativityAdmissible.lean` supplies restricted contracts for PC-1's first obstacle: the allocation contract `FormAdmissible P ctx env R` (only formation's own pushes — a suspended expression cell of the plan's caller, a Ready cell of an `R` item) and the call domain `PlanCallsOn Q RT RN eff r` with output contracts `PlanOutputs` (only the plan's own callee resolution and written spread expressions (`.sequenceSpread e ∈ eff.args`), normalization of `RT` callees, dispatch of `RN` callees — a `meta` callee can be excluded) replace `PushClosed` and `PlanCalls`; `production_fresh_plan_adm` and its VALUE forms keep the M1.5 conclusion verbatim, `production_fresh_plan_on_of_adm` re-derives the PC-1 theorem, and `production_fresh_plan_refFree` conditionally instantiates it at `evaluating` ∧ `refFree` (`ActiveRefFree a`), where `formAdmissible_activeRefFree` proves the allocation contract for a reference-free captured environment. `lean/KatLangArityLaws/PlanActiveCells.lean` proves, for all 104 `EvalCall` bodies by the FG-M1 procedure, that an `evaluating` cell stays `evaluating` across every production operation (`evalUnbounded_actDisc`; `keeps_active_production`, `keeps_production_active` reduce any `Active a ∧ R` keeping obligation to its `R` half). NEGATIVE RESULT: `StoredRefFree` is not an inductive invariant of LOOP-ONLY runs — Lean's `repeat`/`while` bind their step through the builtin `meta step` parameter and store a Ready `callRef` of the step cell (`PlanConservativityAdmissibleGuards.loopRunStoresReference`, using only `Inc` and `Loop` declarations, with `hasRefToSuspendedPlan` pinning a reference to a still-unevaluated step plan); the simulation and non-reachability of the plan's cell both hold in this guard, without proving sufficiency of non-reachability. The loop-covering invariant needs input restrictions and value-tracking body proofs. Guards: `admissibleAt` (finite entry checks, not the body/output contracts or syntactic META-freedom; it also admits the META body `UseRef`) holds with the simulation's conclusion on the META-free corpus and the loop-only `Loop(5)` and fails at both META counterexamples, which stay as refutations; no META-free counterexample was found. Still OPEN: the reference-exclusion invariant's preservation, `BodyObliviousOn` for any body, and the output contracts. The META owner question is unchanged. Ledger E-18 stays Conditional + Guard + C# test, OPEN. V3.
 

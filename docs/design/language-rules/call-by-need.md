@@ -185,6 +185,75 @@ states. One procedure (`NavigationPilot.agree_tac`) closes eight bodies relative
 verification conditions, so criterion 2 is not met and B2 is DEFERRED. No whole-run `NavRuns` premise
 is discharged; no evaluator, C# production, key or minting change is made.
 
+E-18 F1 candidate (2026-11-13; proof only; independent review STOPPED): `exposureFull` and `SourceDomain`
+extend the static-exposure fragment (the full lookup with the prelude
+before opens and providers deduplicated by declaration, dotted heads and reference targets resolved
+through opens, a selected member charging only itself, open targets through `openStructure`, the
+module cut, runtime-only routes charging nothing); fuel is derived from the program and exhaustion
+fails closed. The review's three `SelectionGaps` readers are refused, and `SelectionRoutes` pins a
+source control and a refused counterfactual for the guarded routes. They do not cover every static
+selection: intermediate members' requirements are dropped. The independent review found a C#
+under-exposure as well: `L = Lib.Sub; A = L.Q + 0` exports `A` although the alias route selects
+`Sub`, which requires the enclosing `y`. This fires the brief's front-end stop rule; F1 is STOPPED
+pending an owner decision, and `SourceDomain` remains a candidate fragment. C# correspondence and
+the fuel's sufficiency stay assumptions; B2 stays DEFERRED and no `NavRuns` premise is discharged.
+
+E-18 F1 CLOSED (2026-11-13, owner decision of 2026-11-13; C# exposure fix plus Lean model): the C#
+exposure pass now charges a reader exactly the access checks and value reads the evaluator performs on
+static selections — every path member whatever its head (inline blocks included), a crossed transparent
+reference's target-walk selections through chains, every open target of every level a lookup consults
+— and never a lexically found head's, reference's or block head's VALUE when a member is selected. Under-
+charged readers became local-only (an escaped `F.A` is refused naming `A`; `F(5), F.A` no longer reuses
+the call's exported entry); an inline-block head whose member is selected became exported.
+`exposureFull` charges every declaration on a selection's trail (R1 closed), the review's
+`intermediateCorrupt` and the pre-fix trees of every under-charged class are refused
+(`NavigationSourceDomainGuards.AccessChecks`), and every corpus case satisfies the predicate.
+`SourceDomain` is no longer a candidate fragment. C# correspondence, model/evaluator agreement and the
+fuel's sufficiency stay assumptions; B2 stays DEFERRED and no `NavRuns` premise is discharged.
+
+Independent review (2026-11-13) additionally found a conservative runtime-reference open charge:
+inside `F(y)`, `open L, Other`, `L = y`, `Other = { public Q = 1 }`, `A = Q + 0` makes `A` local-only
+on `y`, although opening L keeps its own namespace and does not read `y`. Per the brief this
+over-charge is reported and left, alongside the eager own-open-list charge; neither is required
+by the evaluator's access checks. `ExposureAccessCheckTests` pins it and forces the actual async
+twin for the source matrix. The post-fixed static contract permits extra declared requirements;
+C# correspondence, model/evaluator agreement, fuel sufficiency and B2 remain at the boundaries above.
+
+The review's closing verdict supersedes F1 CLOSED above: **F1 DEFER**, exposure acceptance **STOPPED**.
+The required linear open-walk charging fails when each reader has its own unused parameter:
+`A_i(z) = Q_i + 0` yields 1,350 / 5,200 / 20,400 settlement frames at 25 / 50 / 100 opens and readers,
+with the same correct capture metadata. Reader-specific bound owners prevent the level's walk from
+being shared. The brief freezes cache keys and their representation, so that identity was not changed.
+The functional repairs and selection-model predicates remain; the work-bound closing criterion is open.
+
+C1/I28 follow-up (2026-11-13, owner decisions of 2026-11-13): **EXPOSURE FIXED, F1 CLOSED**; this supersedes
+the STOPPED / F1 DEFER verdict above. The freeze covered the evaluator's caches, not the exposure pass's
+own keys. C1: a consulted level's open walks are settled once, at that level and with no bound owners,
+and every reader that consults the level reuses the result (`PendingResolution.SharedOpenWalksLevel`). A
+reader settles them itself, as before, when the result could differ for it: when the walks anchor through a
+level on the reader's own chain (`Lib.Mid.Sub` read inside `Mid`), when a bound owner lies at or above the
+level, or when the shared result depends on its site. The reproduction now costs 175 / 350 / 700 frames
+(formerly 1,350 / 5,200 / 20,400), and an internal per-reader seam proves the published metadata identical.
+I28 was a regression of the candidate, not an inherited over-charge: opening a RUNTIME reference charges
+nothing, because `openStructure` opens its own namespace (OD-C). The `L = y` row above is exported again,
+and `F(5), F.A` is `1, 1`. A dot path through a runtime reference keeps its charge. The eager own-open-list
+charge (I25) is the only over-charge left. C# correspondence, model/evaluator agreement and fuel
+sufficiency stay assumptions; B2 stays DEFERRED and no `NavRuns` premise is discharged.
+
+Independent C1/I28 review (2026-11-14): **exposure acceptance STOPPED; F1 DEFER; B2 DEFERRED**,
+superseding the closure claim above. The four measured C1 families cover the sharing fast path;
+scaling the `Lib.Mid.Sub` discharge witness with parameterized readers still takes
+3,522 / 11,972 / 43,872 settlement frames at widths 25 / 50 / 100, exceeding the unchanged 2.5
+doubling bound. The per-reader fallback repeats walks instead of reusing them before discharging
+requirements. The Lean predicate also loses a static prefix when an open reference's target is
+`Lib.Sub.Algorithm` and `Algorithm` is the intrinsic: `Sub` is access-checked, but its trail is lost
+on `Sel.runtime`. A host-built encoding with `A` exported is admitted by `SourceDomain`, although
+both evaluators reject its escaped read at `Sub`. C# correctly marks the source reader local-only.
+The I28 parameter-row fix remains; neither finding permits a change to the evaluator or its caches.
+Reproductions and fresh review checks are in `artifacts/validation/e18-c1-i28-20261114-review/`.
+C# correspondence, model/evaluator agreement and fuel sufficiency remain assumptions; no general
+`NavRuns` premise or B2 criterion is discharged.
+
 ## Argument views: `R.Arguments` (CallReference S2, 2026-10-17)
 
 S2 adds the lazy, read-only ARGUMENT VIEW of a call reference. Lean is authoritative (`Result.argView`, `argumentsOfValue`, `NeedPlan.viewCells` / `viewSupply`, `selectViewWith`, `argumentViewBuiltin`, `openSpreadItems` / `openSupplySpread`, `NeedSupply.SpreadEval` with production `evalSupplySpread`); laws `KatLangArityLaws/ArgumentView.lean`, guards `ArgumentViewGuards.lean`.

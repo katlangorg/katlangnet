@@ -38,7 +38,9 @@ every chain the evaluator builds; it is the open half (§ 3).
 A direct lexical hit is never gated (`memberAccessible?`'s documentation: a name found on the site's
 own chain is inside every owner of what it captures). For it the proposed invariant is
 `ReqActivated C S name a`: the algorithm `a`, on the runtime chain `C` that agrees with its static
-stack `S`, has every requirement collected by the bounded selection model on an ACTIVATED level of `C`. It gives the cell
+stack `S`, has every requirement collected by the candidate static selection model
+(`reqAlg ⟨false, true⟩`, the requirements `exposureFull` checks; the independent E-18 F1 review found
+omitted intermediate selections and fired the front-end stop rule) on an ACTIVATED level of `C`. It gives the cell
 clause directly (`paramRowOwned_of_reqActivated`), with no gate.
 
 ## 3. NOT proved here

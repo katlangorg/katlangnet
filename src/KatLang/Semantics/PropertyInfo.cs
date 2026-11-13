@@ -314,6 +314,11 @@ public sealed record PropertyInfo
 
     public bool IsPublic { get; }
 
+    /// <summary>
+    /// The completed front-end exposure of this declaration, including requirements from static
+    /// member selections, reference target walks and consulted open targets. Structural member
+    /// resolution still selects the declaration when this is local-only; the evaluator checks access.
+    /// </summary>
     public PropertyExposure Exposure { get; }
 
     public IReadOnlyList<PropertyParameterInfo> Parameters

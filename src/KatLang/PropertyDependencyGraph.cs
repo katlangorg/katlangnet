@@ -44,24 +44,36 @@ internal sealed record PropertyDependencySummaryNode(
 internal sealed class PendingReference : IEquatable<PendingReference>
 {
     public PendingReference(string head, IReadOnlyList<string> members, IReadOnlyList<OpenCandidate> candidates,
-        IReadOnlyList<Algorithm>? boundOwners = null, CompletedStructureContext? origin = null, bool openPath = false)
+        IReadOnlyList<Algorithm>? boundOwners = null, CompletedStructureContext? origin = null, bool openPath = false,
+        PendingSelection selection = PendingSelection.Lexical)
     {
         Origin = origin;
         OpenPath = openPath;
+        Selection = selection;
         Head = head;
         Members = members;
         Candidates = candidates;
         BoundOwners = boundOwners ?? [];
-        ResolutionKey = KeyParts([origin is null ? "" : $"completed:{origin.Identity}:{openPath}", head, KeyParts(members), KeyParts(candidates.Select(static candidate => candidate.ContentKey))]);
+        var originKey = origin is null ? "" : selection == PendingSelection.Lexical
+            ? $"completed:{origin.Identity}:{openPath}" : $"completed:{origin.Identity}:{openPath}:{selection}";
+        ResolutionKey = KeyParts([originKey, head, KeyParts(members), KeyParts(candidates.Select(static candidate => candidate.ContentKey))]);
         var boundKey = string.Join(",", BoundOwners.Select(OwnerQualifiedParameter.OwnerKey).Order());
         ContentKey = KeyParts([ResolutionKey, boundKey]);
-        ShapeBoundKey = KeyParts([origin is null ? "" : $"completed:{origin.Identity}:{openPath}", head, KeyParts(members), KeyParts(candidates.Select(static candidate => candidate.ShapeKey)), boundKey]);
+        ShapeBoundKey = KeyParts([originKey, head, KeyParts(members), KeyParts(candidates.Select(static candidate => candidate.ShapeKey)), boundKey]);
     }
 
     internal CompletedStructureContext? Origin { get; }
     internal bool OpenPath { get; }
+
+    /// <summary>
+    /// What the head denotes (see <see cref="PendingSelection"/>): a name looked up lexically from <see cref="Origin"/>
+    /// (the default), the first member SELECTED from <see cref="Origin"/>'s own body (an inline-block head), or the
+    /// open-target walks of the level <see cref="Origin"/> is.
+    /// </summary>
+    internal PendingSelection Selection { get; }
+
     internal PendingReference At(CompletedStructureContext origin) => Origin is not null ? this
-        : new(Head, Members, Candidates, BoundOwners, origin, OpenPath);
+        : new(Head, Members, Candidates, BoundOwners, origin, OpenPath, Selection);
 
     public string Head { get; }
 
@@ -84,7 +96,7 @@ internal sealed class PendingReference : IEquatable<PendingReference>
     /// </summary>
     internal string IdFreeContentKey
         => KeyParts([
-            KeyParts([Origin is null ? "" : $"completed:#:{OpenPath}", Head, KeyParts(Members), KeyParts(Candidates.Select(static candidate => candidate.ContentKey))]),
+            KeyParts([Origin is null ? "" : Selection == PendingSelection.Lexical ? $"completed:#:{OpenPath}" : $"completed:#:{OpenPath}:{Selection}", Head, KeyParts(Members), KeyParts(Candidates.Select(static candidate => candidate.ContentKey))]),
             string.Join(",", BoundOwners.Select(static _ => "#"))]);
 
     /// <summary>
@@ -98,7 +110,7 @@ internal sealed class PendingReference : IEquatable<PendingReference>
         => string.Concat(parts.Select(static part => $"{part.Length}:{part}"));
 
     public PendingReference WithCandidates(IReadOnlyList<OpenCandidate> candidates)
-        => new(Head, Members, candidates, BoundOwners, Origin, OpenPath);
+        => new(Head, Members, candidates, BoundOwners, Origin, OpenPath, Selection);
 
     /// <summary>
     /// This reference with each resolved candidate's seed united with the matching candidate's seed of
@@ -118,18 +130,42 @@ internal sealed class PendingReference : IEquatable<PendingReference>
                 : Candidates[i];
         }
 
-        return new(Head, Members, candidates, BoundOwners, Origin, OpenPath);
+        return new(Head, Members, candidates, BoundOwners, Origin, OpenPath, Selection);
     }
 
     public PendingReference BoundBy(Algorithm owner, bool ownerHasParameters)
         => !ownerHasParameters || BoundOwners.Any(a => ReferenceEquals(a, owner))
-            ? this : new(Head, Members, Candidates, [.. BoundOwners, owner], Origin, OpenPath);
+            ? this : new(Head, Members, Candidates, [.. BoundOwners, owner], Origin, OpenPath, Selection);
 
     public bool Equals(PendingReference? other) => other is not null && ContentKey == other.ContentKey;
 
     public override bool Equals(object? obj) => Equals(obj as PendingReference);
 
     public override int GetHashCode() => ContentKey.GetHashCode(StringComparison.Ordinal);
+}
+
+/// <summary>
+/// What a <see cref="PendingReference"/>'s head denotes. Each kind is one evaluator selection route the exposure
+/// pass charges exactly (owner decision 2026-11-13: a reader is charged the access checks and value reads the
+/// evaluator performs on static selections, and nothing else).
+/// </summary>
+internal enum PendingSelection
+{
+    /// <summary>A name looked up from the origin: the owner walk, then the opens of the levels it consults.</summary>
+    Lexical,
+
+    /// <summary>
+    /// The head is the first member SELECTED from the origin's own body, an inline block written as a path head
+    /// (<c>{ … }.Sub.Q</c>): the evaluator access-checks every member of the path and never reads the block's VALUE
+    /// unless the first step selects nothing (the fallback or intrinsic reads it).
+    /// </summary>
+    BlockHead,
+
+    /// <summary>
+    /// The walks of every open target of the level the origin is: a lookup that reaches that level resolves all of
+    /// its opens (<c>resolveAllOpens</c>) before it looks for the name, so each target's selections are checked.
+    /// </summary>
+    OpenWalks,
 }
 
 /// <summary>
@@ -178,7 +214,8 @@ internal sealed class PendingReferenceSet : IReadOnlyCollection<PendingReference
                     return;
                 // A narrower bound set is another shape: it may meet a reference to unite with.
                 Remove(existing);
-                reference = new(existing.Head, existing.Members, existing.Candidates, common, existing.Origin, existing.OpenPath);
+                reference = new(existing.Head, existing.Members, existing.Candidates, common, existing.Origin, existing.OpenPath,
+                    existing.Selection);
                 continue;
             }
 
@@ -1741,14 +1778,22 @@ internal static class PropertyDependencyGraphBuilder
             return level;
         }
 
-        internal PendingReference SelectedReference(PendingReference reference)
+        /// <summary>
+        /// The references that settle <paramref name="reference"/>: the reference rebound to the declaration Q1 selects
+        /// for its head and, when that head is a bare name an open provides, the open-target walks of every level the
+        /// lookup consulted, up to and including the deciding one (<see cref="PendingSelection.OpenWalks"/>). The
+        /// evaluator resolves all of a consulted level's opens before it looks for the name, so their selections are
+        /// checked whether or not they provide it; rebinding to the provider alone would drop them.
+        /// </summary>
+        internal IEnumerable<PendingReference> SelectedReferences(PendingReference reference)
         {
             if (reference.Origin is not null) UseContext();
-            if (reference is not { Origin: { } origin, OpenPath: false, Candidates.Count: 0 }
-                || origin.Facts.Facts(origin.Key)?.Body is null) return reference;
+            if (reference is not { Origin: { } origin, OpenPath: false, Selection: PendingSelection.Lexical, Candidates.Count: 0 }
+                || origin.Facts.Facts(origin.Key)?.Body is null) return [reference];
             var scope = LookupScope(origin);
             var owned = ElaboratedScopeLookup.SelectOwnedDeclaration(scope, reference.Head, ElaboratedScopeLookup.OwnParameterBindings.Instance);
             CompletedStructureContext? selected = null;
+            ElaboratedPropertyScope? deciding = null;
             if (owned.TryGetProperty(out var declaring, out _)) selected = declaring.CompletedContext;
             else if (owned.Kind == OwnedDeclarationKind.None && reference.Members.Count == 0)
             {
@@ -1759,19 +1804,33 @@ internal static class PropertyDependencyGraphBuilder
                 // licenses this bridge, even when one currently published provider offers it.
                 for (var at = scope; at is not null; at = at.Parent)
                     if (at.CompletedContext is not { } context || context.Facts.Facts(context.Key) is not { Body: not null } facts
-                        || facts.Providers.Any(provider => provider.Kind == StaticFactKind.Unknown)) return reference;
+                        || facts.Providers.Any(provider => provider.Kind == StaticFactKind.Unknown)) return [reference];
                 selected = ElaboratedScopeLookup.LookupSingleOpenMember(scope, reference.Head)?.MemberLevel.CompletedContext;
+                if (selected is not null) deciding = ElaboratedScopeLookup.SelectFirstOpenLevel(scope, reference.Head).Level;
             }
-            return selected is null || ReferenceEquals(selected.Key, origin.Key) ? reference
-                : new(reference.Head, reference.Members, reference.Candidates, reference.BoundOwners, selected);
+            if (selected is null || ReferenceEquals(selected.Key, origin.Key)) return [reference];
+            PendingReference rebound = new(reference.Head, reference.Members, reference.Candidates, reference.BoundOwners, selected);
+            if (deciding is null) return [rebound];
+            var references = new List<PendingReference> { rebound };
+            for (var at = scope; at is not null; at = at.Parent)
+            {
+                if (OpenWalksMayCharge(at))
+                    references.Add(OpenWalksOf(at.CompletedContext!, reference.BoundOwners));
+                if (ReferenceEquals(at, deciding)) break;
+            }
+            return references;
         }
+
+        /// <summary>The open-target walks of the level <paramref name="opening"/> is (<see cref="PendingSelection.OpenWalks"/>).</summary>
+        internal static PendingReference OpenWalksOf(CompletedStructureContext opening, IReadOnlyList<Algorithm>? boundOwners = null)
+            => new(string.Empty, [], [], boundOwners, opening, openPath: true, PendingSelection.OpenWalks);
 
         // Project a completed Q1 owner selection onto THIS live Q8 equation map. Context-bearing
         // paths, open choices and bound-owner exclusions keep their full symbolic representation.
         internal bool SelectsLocalMember(PendingReference reference, CompletedStructureContext level)
         {
             if (reference.Origin is not null) UseContext();
-            if (reference is not { Origin: { } origin, OpenPath: false, Members.Count: 0, Candidates.Count: 0, BoundOwners.Count: 0 }
+            if (reference is not { Origin: { } origin, OpenPath: false, Selection: PendingSelection.Lexical, Members.Count: 0, Candidates.Count: 0, BoundOwners.Count: 0 }
                 || !ReferenceEquals(origin.Facts, level.Facts) || origin.Facts.Facts(origin.Key)?.Body is null)
                 return false;
             var scope = LookupScope(origin);
@@ -1782,6 +1841,89 @@ internal static class PropertyDependencyGraphBuilder
         }
 
         internal FrontEndTraversalObservations? Observations => observations;
+
+        private Dictionary<(StaticLookupFacts Facts, int Version, StaticScopeKey Key, bool Opened), (StaticScopeKey Key, string Name, StaticScopeKey Declaring)?>? _referenceTerminals;
+        private Dictionary<(StaticLookupFacts Facts, int Version, StaticScopeKey Key), bool>? _openWalkCharges;
+
+        /// <summary>
+        /// The reference whose VALUE requirement is what crossing the declaration <paramref name="key"/> (its name
+        /// <paramref name="name"/>, declared at <paramref name="declaring"/>) as a receiver or open head charges, or null
+        /// when the crossing selects nothing. A transparent reference's target walk selects in the reference's own scope
+        /// (<c>aliasStepNavigateWith</c>, <c>openNavigateWith</c>), access-checking each member it selects: a target
+        /// that selects a member, or whose head the owner walk does not find (an open provides it), selects exactly
+        /// what the reference's VALUE requires, its head's value never being read. A member-less target naming a
+        /// lexically found declaration selects nothing itself, so the walk follows it while it is a reference; a
+        /// declaration that is not a transparent reference ends it with nothing charged. When the crossing OPENS the
+        /// reference (<paramref name="opened"/>: an <c>open</c> head), a reference whose target is no static path — a
+        /// runtime reference: a parameter row, a parameter-rooted path, an <c>.Algorithm</c> link, or a static chain
+        /// that names one — also ends it with nothing charged: <c>openStructure</c> opens such a reference's OWN
+        /// namespace, never establishing its target or reading its row (OD-C; owner decision 3, 2026-11-13). A
+        /// receiver crossing keeps it as its terminal, since the evaluator reads that receiver at run time. Completed
+        /// facts only; static chains end (OD-D) and a revisited key ends the walk. Every key a walk passes records the
+        /// terminal, per completed view, version and mode, so a chain of N links costs O(N) over all of its crossings.
+        /// </summary>
+        internal (StaticScopeKey Key, string Name, StaticScopeKey Declaring)? ReferenceTerminal(StaticLookupFacts facts,
+            StaticScopeKey key, string name, StaticScopeKey declaring, bool opened)
+        {
+            var terminals = _referenceTerminals ??= new();
+            var version = facts.ViewVersion;
+            HashSet<StaticScopeKey>? walked = null;
+            (StaticScopeKey Key, string Name, StaticScopeKey Declaring)? terminal = null;
+            while (true)
+            {
+                ObserveCancellation();
+                if (terminals.TryGetValue((facts, version, key, opened), out var known)) { terminal = known; break; }
+                (walked ??= new(ReferenceEqualityComparer.Instance)).Add(key);
+                if (facts.Facts(key)?.Body is not Algorithm.Alias { IsReference: true } reference) break;
+                // The evaluator's own test (OpenStructure): only a static-path target is followed when opened.
+                if (opened && !StaticAliasTargets.IsStaticPath(reference.Target)) break;
+                if (reference.Target.UnwrapGraceOperand() is Expr.Resolve(var head)
+                    && ElaboratedScopeLookup.SelectOwnedDeclaration(RequirementLevel(facts.Context(key)), head,
+                        ElaboratedScopeLookup.OwnParameterBindings.Instance).TryGetProperty(out var level, out var hit)
+                    && level.CompletedContext?.Key is { } next && facts.Member(next, hit.Property.Name) is { } nextKey)
+                {
+                    if (walked.Contains(nextKey)) break;
+                    (key, name, declaring) = (nextKey, hit.Property.Name, next);
+                    continue;
+                }
+                terminal = (key, name, declaring);
+                break;
+            }
+            foreach (var passed in walked ?? []) terminals[(facts, version, passed, opened)] = terminal;
+            return terminal;
+        }
+
+        /// <summary>
+        /// Whether the open target <paramref name="target"/> of the level <paramref name="opening"/> can charge its walk:
+        /// a dotted target selects members; a member-less one charges only when its head is a transparent reference
+        /// whose target walk selects (<see cref="ReferenceTerminal"/>, opened: a runtime reference selects nothing). A
+        /// block head is rooted at the prelude, so nothing of the reader's chain is visible inside it.
+        /// </summary>
+        internal bool OpenTargetMayCharge(ElaboratedPropertyScope opening, Expr target)
+        {
+            if (target.OpenTargetHead(out var steps) is not Expr.Resolve(var head)) return false;
+            if (steps.Count > 0) return true;
+            return opening.CompletedContext is { Facts: var facts }
+                && ElaboratedScopeLookup.ResolveOpenProviderHead(opening, new Expr.Resolve(head), out var declaring) is not null
+                && declaring.CompletedContext?.Key is { } declaringKey && facts.Member(declaringKey, head) is { } headKey
+                && ReferenceTerminal(facts, headKey, head, declaringKey, opened: true) is not null;
+        }
+
+        /// <summary>Whether any open target of <paramref name="opening"/> can charge its walk, once per level and view.</summary>
+        internal bool OpenWalksMayCharge(ElaboratedPropertyScope opening)
+        {
+            if (opening.Opens.Count == 0 || opening.CompletedContext is not { } context) return false;
+            var charges = _openWalkCharges ??= new();
+            var key = (context.Facts, context.Facts.ViewVersion, context.Key);
+            if (!charges.TryGetValue(key, out var known))
+            {
+                known = false;
+                foreach (var target in opening.Opens)
+                    if (OpenTargetMayCharge(opening, target)) { known = true; break; }
+                charges.Add(key, known);
+            }
+            return known;
+        }
 
         // Pure anchoring of an immutable completed seed. The exact source version and the entire
         // intervening owner path (declaring -> ancestor) decide it; no live requirement set is cached.
@@ -2074,7 +2216,7 @@ internal static class PropertyDependencyGraphBuilder
                 summarySiblingDependencyIndices.OrderBy(static idx => idx).ToArray(),
                 summaryVisiblePropertyDependencyNames.OrderBy(static name => name, StringComparer.Ordinal).ToArray(),
                 summarySeed.RequiredAncestorOwnedParameterNames.OrderBy(static name => name, StringComparer.Ordinal).ToArray(),
-                summarySeed.PendingReferences.Select(buildMemos.SharedMemo.SelectedReference)
+                summarySeed.PendingReferences.SelectMany(buildMemos.SharedMemo.SelectedReferences)
                     .Distinct().OrderBy(static pending => pending.ContentKey, StringComparer.Ordinal).ToArray(),
                 summarySeed.OwnerQualifiedParameters.ToArray());
         }
@@ -2536,6 +2678,39 @@ internal static class PropertyDependencyGraphBuilder
     }
 
     /// <summary>
+    /// The static member path of a dot chain whose head is an INLINE BLOCK (<c>{ … }.Sub.Q</c>, the same spine as
+    /// <see cref="TryGetStaticMemberPath"/>), with the block's completed context. The evaluator selects the path's
+    /// members from the block wired under the reading scope, checking each one's accessibility, and reads the block's
+    /// VALUE only when the first step selects nothing, so the path is charged like a name-headed one
+    /// (<see cref="PendingSelection.BlockHead"/>). False without a published completed body for the block (its output
+    /// is then charged as before) and for a loaded module's root, which is rooted at the prelude.
+    /// </summary>
+    private static bool TryGetBlockMemberPath(Expr.DotCall dotCall, SummaryWalkMemos memos,
+        out CompletedStructureContext block, out string[] members)
+    {
+        block = null!;
+        members = [];
+        if (memos.CompletedContext is not { } parent) return false;
+        var reversed = new List<string> { dotCall.Name };
+        var current = dotCall.Target.UnwrapGraceOperand();
+        while (current is Expr.DotCall { Args: null } edge)
+        {
+            reversed.Add(edge.Name);
+            current = edge.Target.UnwrapGraceOperand();
+        }
+
+        if (current is not Expr.AlgorithmExpr(var body) || body.IsModuleRoot || body is not (Algorithm.User or Algorithm.Alias))
+            return false;
+        var context = memos.SharedMemo.RequirementContext(ChildContext(parent, body), body)!;
+        if (context.Facts.Facts(context.Key) is not { Body: not null }) return false;
+        memos.SharedMemo.UseContext();
+        reversed.Reverse();
+        block = context;
+        members = [.. reversed];
+        return true;
+    }
+
+    /// <summary>
     /// The opens walk of a level: a named target charges the navigated provider path
     /// (<c>open A</c> needs only A's identity; <c>open A.B</c> charges the
     /// requirements of the navigated member <c>B</c>), an inline-headed target charges
@@ -2846,7 +3021,10 @@ internal static class PropertyDependencyGraphBuilder
     {
         var seed = TryGetStaticMemberPath(dotCall, out var pathHead, out var pathMembers)
             ? new SummarySeed(pendingReferences: [new PendingReference(pathHead, pathMembers, [])])
-            : CollectSummarySeed(dotCall.Target, localPropertySummaries, ownedHere, memos, inTransparentContext);
+            : TryGetBlockMemberPath(dotCall, memos, out var block, out var blockMembers)
+                ? new SummarySeed(pendingReferences: [new PendingReference(blockMembers[0], blockMembers[1..], [],
+                    origin: block, selection: PendingSelection.BlockHead)])
+                : CollectSummarySeed(dotCall.Target, localPropertySummaries, ownedHere, memos, inTransparentContext);
 
         if (dotCall.LexicalFallbackMayBeSelected())
         {
@@ -2910,7 +3088,7 @@ internal static class PropertyDependencyGraphBuilder
                 var seed = baseSeeds[i];
                 if (seed.PendingReferences.Count > 0)
                 {
-                    var references = seed.PendingReferences.Select(memos.SharedMemo.SelectedReference).ToArray();
+                    var references = seed.PendingReferences.SelectMany(memos.SharedMemo.SelectedReferences).ToArray();
                     if (!references.SequenceEqual(seed.PendingReferences))
                     {
                         seed = seed.Clone();

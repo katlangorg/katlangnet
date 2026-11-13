@@ -626,6 +626,21 @@ internal sealed class FrontEndTraversalObservations
     }
 
     /// <summary>
+    /// Open-walk settlements COMPUTED (<c>PendingSelection.OpenWalks</c>; reuses from the share or a run's cache add
+    /// none), per open level key (identity) — <see cref="OpenWalksSettlementsWithBoundOwners"/> of them with bound owners
+    /// (a reader's own settlement rather than the level's shared one).
+    /// </summary>
+    internal Dictionary<object, long> OpenWalksSettlements { get; } = new(ReferenceEqualityComparer.Instance);
+
+    public long OpenWalksSettlementsWithBoundOwners { get; private set; }
+
+    internal void RecordOpenWalksSettlement(object level, bool withBoundOwners)
+    {
+        OpenWalksSettlements[level] = checked(OpenWalksSettlements.GetValueOrDefault(level) + 1);
+        if (withBoundOwners) OpenWalksSettlementsWithBoundOwners = checked(OpenWalksSettlementsWithBoundOwners + 1);
+    }
+
+    /// <summary>
     /// Nested settlements kept in the exposure run's share (<c>PropertyExposureResolver.SettlementShare</c>):
     /// one per completed settlement that saw no cycle cut and read no summary of the level in progress.
     /// </summary>
