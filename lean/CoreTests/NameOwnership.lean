@@ -388,6 +388,137 @@ def memberAccessOutsideOwnerRefused : Bool :=
 
 #guard memberAccessOutsideOwnerRefused
 
+-- E-18 anchoring (owner decision 2026-11-13). A container fetched OUTSIDE its owner's call —
+-- the static path `F.p` at the root — and read inside a call of that owner is read in THAT call:
+-- its member's captured parameter is the call's binding, whoever reads it, never a same-named
+-- binding of the reader or of a caller between them. A container written inside one call stays
+-- that call's and is refused in another.
+
+/-- `p = { Q = y ⏎ 1 }` as the front end elaborates it inside `F(b, y)`: exported, because its own
+    value needs nothing, with a member that captures `F`'s `y`. -/
+def anchoredContainer : KatLang.PropDef :=
+  privateProp "p" (alg [] [] [{ (privateLocalProp "Q" (.localCapturedAncestorParams ["y"])
+    (.alias none [] [] (.param "y"))) with requiredOwnerDepths := some [("y", some 1)] }] [.num 1])
+
+/-- `F(b, y) = { p = { Q = y ⏎ 1 } ⏎ helpers ⏎ row }` with the root rows `rows`. -/
+def anchoredProgram (helpers : List KatLang.PropDef) (row : Expr) (rows : List Expr) : Expr :=
+  .algorithmExpr (alg [] [] [privateProp "F" (alg ["b", "y"] [] (anchoredContainer :: helpers) [row])] rows)
+
+/-- `F(F.p, n)`: the container fetched at the root, then carried into a call. -/
+def callWithStaticContainer (n : Int) : Expr :=
+  .call (.resolve "F") [.dotCall (.resolve "F") "p" none, .num n]
+
+/-- `b.Q` / `F(F.p, 5)`: the carried-in container reads the call's `y`. -/
+def anchoredCarriedIn : Bool :=
+  match runResult (anchoredProgram [] (.dotCall (.param "b") "Q" none) [callWithStaticContainer 5]) with
+  | .ok (.atom 5) => true
+  | _ => false
+
+#guard anchoredCarriedIn
+
+/-- `G(g, y) = g.Q ⏎ G(b, 99)` / `F(F.p, 5)`: the reader's own parameter of the same name is never
+    read (before the anchoring this was the reader's 99). -/
+def anchoredIgnoresTheReadersBinding : Bool :=
+  let g := privateProp "G" (alg ["g", "y"] [] [] [.dotCall (.param "g") "Q" none])
+  match runResult (anchoredProgram [g] (.call (.resolve "G") [.param "b", .num 99])
+      [callWithStaticContainer 5]) with
+  | .ok (.atom 5) => true
+  | _ => false
+
+#guard anchoredIgnoresTheReadersBinding
+
+/-- `G(g) = g.Q ⏎ H(h, y) = G(h) ⏎ H(b, 99)` / `F(F.p, 5)`: nor a caller's between the owner and
+    the reader (before the anchoring, 99 again). -/
+def anchoredIgnoresACallersBinding : Bool :=
+  let g := privateProp "G" (alg ["g"] [] [] [.dotCall (.param "g") "Q" none])
+  let h := privateProp "H" (alg ["h", "y"] [] [] [.call (.resolve "G") [.param "h"]])
+  match runResult (anchoredProgram [g, h] (.call (.resolve "H") [.param "b", .num 99])
+      [callWithStaticContainer 5]) with
+  | .ok (.atom 5) => true
+  | _ => false
+
+#guard anchoredIgnoresACallersBinding
+
+/-- `b.Q` / `F(F.p, 5), F(F.p, 9)`: the one static container reads each call's own `y`. -/
+def anchoredPerCall : Bool :=
+  match runResult (anchoredProgram [] (.dotCall (.param "b") "Q" none)
+      [callWithStaticContainer 5, callWithStaticContainer 9]) with
+  | .ok (.sequenceValue [.atom 5, .atom 9]) => true
+  | _ => false
+
+#guard anchoredPerCall
+
+/-- `c = { Q = y ⏎ 1 }` written inside `p(k)`, a member of `F(b, y)` whose body is `rows`, with
+    `G(g, y) = g.Q` beside `p`, and the root row `F.p(0)`. -/
+def staticOwnerAboveAnActivation (q : KatLang.PropDef) (rows : List Expr) : Expr :=
+  let c := privateProp "c" (alg [] [] [q] [.num 1])
+  let p := privateProp "p" (alg ["k"] [] [c] rows)
+  let g := privateProp "G" (alg ["g", "y"] [] [] [.dotCall (.param "g") "Q" none])
+  let f := alg ["b", "y"] [] [p, g] [.call (.resolve "G") [.param "b", .num 99]]
+  .algorithmExpr (alg [] [] [privateProp "F" f, privateProp "Id" (alg ["x"] [] [] [.param "x"])]
+    [Expr.dotCall (.resolve "F") "p" (some [.num 0])])
+
+/-- `F(b, y) = { p(k) = { c = { Q = y ⏎ 1 } ⏎ F(c, 5) } ⏎ G(g, y) = g.Q ⏎ G(b, 99) }` / `F.p(0)`: `c`
+    is written inside a call of `p`, but `p` was fetched outside every call of `F`, so `c`'s chain
+    holds an ACTIVATED `p` above a STATIC `F`. An activation's context is never changed, so that `F`
+    stays static and the read is refused (before the anchoring it was the reader's 99). -/
+def staticOwnerAboveAnActivationIsRefused : Bool :=
+  let q := { (privateLocalProp "Q" (.localCapturedAncestorParams ["y"]) (.alias none [] [] (.param "y"))) with
+    requiredOwnerDepths := some [("y", some 2)] }
+  match runResult (staticOwnerAboveAnActivation q [.call (.resolve "F") [.resolve "c", .num 5]]) with
+  | .error err => innermostRefusesCapturedMember "Q" ["y"] err
+  | _ => false
+
+#guard staticOwnerAboveAnActivationIsRefused
+
+/-- The same container read in two calls, `F(c, 5), F(c, 9)`, through a runtime alias `Q = y.Id`
+    (`Id(x) = x`): refused too, so no alias cell or cache entry of the one activation of `p` is ever
+    shared between the two calls of `F`. -/
+def staticOwnerAboveAnActivationTwoCallsIsRefused : Bool :=
+  let q := { (privateLocalProp "Q" (.localCapturedAncestorParams ["y"])
+      (.alias none [] [] (.dotCall (.param "y") "Id" none))) with requiredOwnerDepths := some [("y", some 2)] }
+  match runResult (staticOwnerAboveAnActivation q
+      [.call (.resolve "F") [.resolve "c", .num 5], .call (.resolve "F") [.resolve "c", .num 9]]) with
+  | .error err => innermostRefusesCapturedMember "Q" ["y"] err
+  | _ => false
+
+#guard staticOwnerAboveAnActivationTwoCallsIsRefused
+
+/-- `P = F.p` / `F(y) = { p = { Q = y ⏎ 1 } ⏎ G(y) = P.Q ⏎ G(99) }` / `F(7)`: a root alias of the
+    static path is anchored the same way (before the anchoring, `G`'s 99), exactly as the path
+    written inside `F` (`F.p.Q`) always was. -/
+def anchoredThroughARootAlias : Bool :=
+  let q := { (privateLocalProp "Q" (.localCapturedAncestorParams ["y"]) (.alias none [] [] (.param "y"))) with
+    requiredOwnerDepths := some [("y", some 1)] }
+  let g := { (privateLocalProp "G" (.localCapturedAncestorParams ["y"])
+    (alg ["y"] [] [] [.dotCall (.resolve "P") "Q" none])) with requiredOwnerDepths := some [("y", some 0)] }
+  let f := alg ["y"] [] [privateProp "p" (alg [] [] [q] [.num 1]), g] [.call (.resolve "G") [.num 99]]
+  let program := alg [] [] [privateProp "P" (.alias none [] [] (.dotCall (.resolve "F") "p" none)),
+    privateProp "F" f] [.call (.resolve "F") [.num 7]]
+  match runResult (.algorithmExpr program) with
+  | .ok (.atom 7) => true
+  | _ => false
+
+#guard anchoredThroughARootAlias
+
+/-- The boundary: `H(f, n) = if(n != 0, H({ X = n }, 0), f.X)` / `H({ X = 0 }, 5)`. The block is
+    written inside `H(·, 5)`, so its chain holds that activation, which is never re-anchored: read
+    inside `H(·, 0)` it is refused. -/
+def anchoringKeepsAnotherCallsContainer : Bool :=
+  let x := { (privateLocalProp "X" (.localCapturedAncestorParams ["n"]) (.alias none [] [] (.param "n"))) with
+    requiredOwnerDepths := some [("n", some 1)] }
+  let body := Expr.call (.resolve "if")
+    [.comparison (.param "n") [{ op := .ne, operand := .num 0 }],
+     .call (.resolve "H") [.algorithmExpr (alg [] [] [x] []), .num 0],
+     .dotCall (.param "f") "X" none]
+  let program := alg [] [] [privateProp "H" (alg ["f", "n"] [] [] [body])]
+    [.call (.resolve "H") [.algorithmExpr (alg [] [] [privateProp "X" (alg [] [] [] [.num 0])] []), .num 5]]
+  match runResult (.algorithmExpr program) with
+  | .error err => innermostRefusesCapturedMember "X" ["n"] err
+  | _ => false
+
+#guard anchoringKeepsAnotherCallsContainer
+
 /-- The same escape through `open Outer.Inner` written at the root, with `Inner`
     declared `public` so the dotted step's own visibility rule is satisfied and
     the provider is genuinely reached. The provider needs no call, so the open

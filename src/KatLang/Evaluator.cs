@@ -443,6 +443,11 @@ public static partial class Evaluator
     /// captures survive shadowing; diagnostic names alone use the host nearest-owner convention.
     /// Each required declaration and activation, including captured parents of static providers,
     /// must occur on the site's lexical chain. A live unrelated dynamic binding never qualifies.
+    /// The owners are read on the container's chain in context (<see cref="ScopeInContext"/>), the
+    /// chain the member is then wired under, where a static owner level is anchored to its
+    /// activation on the site chain, and each must be ACTIVATED there: a static owner anchoring
+    /// cannot reach (one above an activated level of the container's chain) refuses the access. So
+    /// an accepted member reads its owner's bindings.
     /// Direct lexical hits already select on that chain. Lean: memberAccessible?.
     /// </summary>
     private static bool IsAccessibleFrom(Property member, Algorithm container, EvalCtx ctx)
@@ -462,6 +467,7 @@ public static partial class Evaluator
                     owner = owner.Parent;
                 if (requirement.OwnerDepth < 0 || owner is null
                     || !owner.Parameters.Contains(requirement.Name, StringComparer.Ordinal)
+                    || owner.Activation is null
                     || !LexicalChainContains(ctx, owner))
                     return false;
             }
@@ -469,7 +475,9 @@ public static partial class Evaluator
         }
         foreach (var name in member.RequiredAncestorParameters)
         {
-            if (RequiredParameterOwner(declaringScope, name) is not { } owner || !LexicalChainContains(ctx, owner))
+            if (RequiredParameterOwner(declaringScope, name) is not { } owner
+                || owner.Activation is null
+                || !LexicalChainContains(ctx, owner))
                 return false;
         }
 
@@ -521,13 +529,8 @@ public static partial class Evaluator
     {
         while (left is not null && right is not null)
         {
-            if (!SameDeclarationBody(left, right)
-                || !IsSameScopeComponent(left.Opens, right.Opens)
-                || !IsSameScopeComponent(left.Properties, right.Properties)
-                || !SameParameterNames(left.Parameters, right.Parameters))
-            {
+            if (!IsSameDeclaringLevel(left, right))
                 return false;
-            }
 
             left = left.Parent;
             right = right.Parent;
@@ -535,6 +538,13 @@ public static partial class Evaluator
 
         return left is null && right is null;
     }
+
+    /// <summary>One level of <see cref="IsSameDeclaringScope"/>: the declaration and the binder view, parents aside.</summary>
+    private static bool IsSameDeclaringLevel(ScopeCtx left, ScopeCtx right)
+        => SameDeclarationBody(left, right)
+            && IsSameScopeComponent(left.Opens, right.Opens)
+            && IsSameScopeComponent(left.Properties, right.Properties)
+            && SameParameterNames(left.Parameters, right.Parameters);
 
     /// <summary>
     /// Evaluator-created scopes carry the identity of their algorithm declaration across wiring
@@ -2274,9 +2284,12 @@ public static partial class Evaluator
                     // open never requires the opened algorithm itself to be public.
                     // It only requires the algorithm to be available in the current context.
                     // open imports only public members (enforced later by LookupOpens).
-                    if (ctx.CallStack.Count > 0)
+                    // The target is wired on the head's scope IN CONTEXT — its activated head scope —
+                    // as every lexical lookup wires a property of the head (Lean: `resolveOpen`'s
+                    // `.resolve` arm, `lookupInParentsDirect (scopeInContext a ctx) n`).
+                    if (ctx.Head is { } head)
                     {
-                        var found = LookupLexicalDirect(ctx.CallStack[0], name, ctx.Budget);
+                        var found = LookupInParentsDirect(ScopeInContext(head, ctx), name, ctx.Budget);
                         if (found is not null)
                         {
                             if (found is Algorithm.Builtin)

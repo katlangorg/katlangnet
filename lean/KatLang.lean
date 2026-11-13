@@ -3850,10 +3850,55 @@ def activeDeclaration? (required : ScopeCtx) : Option ScopeCtx -> Option ScopeCt
       if sameDeclaringScope required scope && compatibleActivations (some required) (some scope)
       then some scope else activeDeclaration? required parent
 
+/-- The nearest ACTIVATED, identified level of the chain `level` that is the same declaring scope as
+    `required` under compatible activations: the activation `anchorChain` anchors a static level to.
+    Unactivated and anonymous levels are never candidates, so the search compares identities only.
+    C#: the candidate test of `Evaluator.AnchorParents`, which tries only the site level at the
+    candidate's own height (the one level `sameDeclaringScope` can accept). -/
+def activatedDeclaration? (required : ScopeCtx) : Option ScopeCtx -> Option ScopeCtx
+  | none => none
+  | some (.mk parent ps op props out branches activation id) =>
+      let scope := ScopeCtx.mk parent ps op props out branches activation id
+      if activation.isSome && id.isSome && sameDeclaringScope required scope &&
+          compatibleActivations (some required) (some scope)
+      then some scope else activatedDeclaration? required parent
+
+/-- THE ANCHORED CHAIN (E-18; owner decision 2026-11-13): the parent chain of a container read in
+    the site's context. Walking up from the container, an ACTIVATED level, an anonymous level and a
+    host level (whose identity is its token, an object reference in C#) are kept, with everything
+    above them; an identified STATIC level whose declaration is activated on the site chain
+    (`activatedDeclaration?`) is that activation; any other level is kept and re-parented onto its
+    anchored parent. So a member selected from a container obtained outside its owner's call — a
+    static path such as `F.p`, or such a value carried into the call — reads the owner activation
+    its reader is inside, never a same-named binding of the reader. An activation's own context is
+    never changed — its identity keys property caches and alias cells — so a container written
+    inside one call stays that call's, and a static owner ABOVE an activated level stays static:
+    `memberAccessible?` refuses a member whose required owner is not activated on its own chain.
+    C#: `Evaluator.AnchorParents`. -/
+def anchorChain (site : Option ScopeCtx) : Option ScopeCtx -> Option ScopeCtx
+  | none => none
+  | some (.mk parent ps op props out branches activation id) =>
+      if activation.isSome || id.isNone || (PropertyIdentity.hostToken? id).isSome then
+        some (.mk parent ps op props out branches activation id)
+      else
+        match activatedDeclaration? (.mk parent ps op props out branches activation id) site with
+        | some active => some active
+        | none => some (.mk (anchorChain site parent) ps op props out branches activation id)
+
+/-- The declaring scope of `a` IN the context `ctx`: the active level of `a`'s own declaration on
+    the site chain when there is one (static navigation may name the declaration of a currently
+    active lexical ancestor, and the head's own scope is its head scope); otherwise `a`'s own level
+    over its ANCHORED parent chain (`anchorChain`). Every structural member selection wires through
+    it (`childOfInContext`), and `memberAccessible?` judges the same chain. -/
 def scopeInContext (a : Algorithm) (ctx : EvalCtx) : ScopeCtx :=
   let scope := a.asScopeCtx
   if scope.activation.isSome then scope
-  else (activeDeclaration? scope (siteScope? ctx)).getD scope
+  else
+    match activeDeclaration? scope (siteScope? ctx) with
+    | some active => active
+    | none =>
+        .mk (anchorChain (siteScope? ctx) a.parent) a.params a.opens a.props a.output a.branches none
+          a.declarationId
 
 def childOfInContext (parent child : Algorithm) (ctx : EvalCtx) : Algorithm :=
   child.withParent (some (scopeInContext parent ctx))
@@ -3991,8 +4036,13 @@ def spreadCollectorSlice? (operand : Expr) (caller : EvalCtx) : EvalM (Option (L
     An exported member is accessible everywhere. Captured requirements retain exact owner
     positions across shadowing; names alone use the legacy nearest-owner host convention.
     Each owner must be the same declaration and activation in the site's lexical chain,
-    including captured ancestors of a static provider. Reads use that owner's snapshot
-    rather than a shadowing dynamic binding. An absent owner refuses the access.
+    including captured ancestors of a static provider. The owners are read on the container's
+    chain IN CONTEXT (`scopeInContext`), the very chain the member is then wired under
+    (`childOfInContext`), where a static owner level is anchored to its activation on the site
+    chain (`anchorChain`), and each must be ACTIVATED there: a static owner that anchoring cannot
+    reach (one above an activated level of the container's chain) refuses the access. So an
+    accepted member's reads use its owner's snapshot, never a shadowing dynamic binding. An absent
+    owner refuses the access.
     `.localConditional` is never assigned to a `PropDef`; declared by a host, it is
     inaccessible. C#: `Evaluator.IsAccessibleFrom`. -/
 def memberAccessible? (ctx : EvalCtx) (container : Algorithm) (p : PropDef) : Bool :=
@@ -4007,11 +4057,12 @@ def memberAccessible? (ctx : EvalCtx) (container : Algorithm) (p : PropDef) : Bo
           match p.requiredOwnerDepths with
           | some requirements => requirements.all fun (name, depth) =>
               match depth >>= declaringScope.ancestor? with
-              | some owner => owner.params.contains name && lexicalChainContains ctx owner
+              | some owner =>
+                  owner.params.contains name && owner.activation.isSome && lexicalChainContains ctx owner
               | none => false
           | none => required.all fun name =>
               match requiredParameterOwner? declaringScope name with
-              | some owner => lexicalChainContains ctx owner
+              | some owner => owner.activation.isSome && lexicalChainContains ctx owner
               | none => false
 
 

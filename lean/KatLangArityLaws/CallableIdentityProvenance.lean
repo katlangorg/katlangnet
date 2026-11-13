@@ -471,6 +471,65 @@ theorem sitePresence_of_separating (hsep : ReprSeparatesPresence) (required : Sc
           simp only [sameDeclaringScope, beq_iff_eq] at hs
           exact absurd hs (hsep _ _ rfl rfl)
 
+/-- The production `activatedDeclaration?` returns an identified level of the chain it was given. -/
+theorem activatedDeclaration_some (required : ScopeCtx) : ∀ (level : Option ScopeCtx) (x : ScopeCtx),
+    activatedDeclaration? required level = some x →
+      x ∈ chainLevels level ∧ x.declarationId.isSome = true
+  | none, _, h => by simp [activatedDeclaration?] at h
+  | some (.mk p ps op props out branches activation id), x, h => by
+      simp only [activatedDeclaration?] at h
+      split at h
+      · rename_i hif
+        cases h
+        simp only [Bool.and_eq_true] at hif
+        exact ⟨by simp [chainLevels], hif.1.1.2⟩
+      · obtain ⟨m, hs⟩ := activatedDeclaration_some required p x h
+        exact ⟨by simp only [chainLevels]; exact List.mem_cons_of_mem _ m, hs⟩
+
+/-- A level of a following site chain follows. -/
+theorem chainFollows_of_site (T : PresenceTable) {site : Option ScopeCtx}
+    (hsite : ∀ s, site = some s → ChainFollows T s) {x : ScopeCtx} (m : x ∈ chainLevels site) :
+    ChainFollows T x := by
+  cases hsc : site with
+  | none => rw [hsc] at m; simp [chainLevels] at m
+  | some s =>
+    rw [hsc] at m
+    exact chainFollows_of_mem T s x (hsite s hsc) m
+
+/-- The ANCHORED chain of a follower follows on a following site, and every level keeps its
+    presence: a kept level is the chain's own, an anchored level is an identified site level
+    replacing an identified one, and a re-parented level's new parent has the old one's presence. -/
+theorem anchorChain_follows (T : PresenceTable) {site : Option ScopeCtx}
+    (hsite : ∀ s, site = some s → ChainFollows T s) : ∀ (p : ScopeCtx), ChainFollows T p →
+      ∃ q, anchorChain site (some p) = some q ∧ ChainFollows T q ∧
+        q.declarationId.isSome = p.declarationId.isSome
+  | .mk parent ps op props out branches activation id, hp => by
+      -- A re-parented level follows: its new parent has the old parent's presence.
+      have hre : ChainFollows T (.mk (anchorChain site parent) ps op props out branches activation id) := by
+        cases parent with
+        | none => simpa only [anchorChain] using hp
+        | some pp =>
+          simp only [ChainFollows] at hp
+          obtain ⟨q, hq, hfq, hpq⟩ := anchorChain_follows T hsite pp hp.2
+          rw [hq]
+          simp only [ChainFollows]
+          refine ⟨fun h => ?_, hfq⟩
+          rw [hp.1 h]
+          cases hq' : q.declarationId <;> cases hpp' : pp.declarationId <;> simp_all
+      simp only [anchorChain]
+      split
+      · exact ⟨_, rfl, hp, rfl⟩
+      · rename_i hstop
+        have hid : id.isSome = true := by
+          cases id with
+          | none => simp at hstop
+          | some _ => rfl
+        split
+        · rename_i active hact
+          obtain ⟨m, hpres⟩ := activatedDeclaration_some _ _ _ hact
+          exact ⟨active, rfl, chainFollows_of_site T hsite m, by rw [hpres]; exact hid.symm⟩
+        · exact ⟨_, rfl, hre, rfl⟩
+
 /-- `scopeInContext` of a follower follows and keeps its presence, under the site premise. -/
 theorem scopeInContext_follows (T : PresenceTable) (a : Algorithm) (ctx : EvalCtx)
     (ha : Follows T a) (hsite : ∀ s, siteScope? ctx = some s → ChainFollows T s)
@@ -482,16 +541,30 @@ theorem scopeInContext_follows (T : PresenceTable) (a : Algorithm) (ctx : EvalCt
   have hnone : a.asScopeCtx.activation = none := rfl
   simp only [hnone, Option.isSome_none, Bool.false_eq_true, ite_false]
   cases hact : activeDeclaration? a.asScopeCtx (siteScope? ctx) with
-  | none => exact ⟨hself, rfl⟩
+  | none =>
+    refine ⟨?_, rfl⟩
+    cases hpar : a.parent with
+    | none =>
+      have h0 : a.asScopeCtx = .mk none a.params a.opens a.props a.output a.branches none
+          a.declarationId := by
+        simp only [Algorithm.asScopeCtx, hpar]
+      rw [h0] at hself
+      simpa only [anchorChain] using hself
+    | some pp =>
+      have h0 : a.asScopeCtx = .mk (some pp) a.params a.opens a.props a.output a.branches none
+          a.declarationId := by
+        simp only [Algorithm.asScopeCtx, hpar]
+      rw [h0] at hself
+      simp only [ChainFollows] at hself
+      obtain ⟨q, hq, hfq, hpq⟩ := anchorChain_follows T hsite pp hself.2
+      rw [hq]
+      simp only [ChainFollows]
+      refine ⟨fun h => ?_, hfq⟩
+      rw [hself.1 h]
+      cases hq' : q.declarationId <;> cases hpp' : pp.declarationId <;> simp_all
   | some x =>
     obtain ⟨m, hs⟩ := activeDeclaration_some _ _ _ hact
-    simp only [Option.getD_some]
-    refine ⟨?_, hp x m hs⟩
-    cases hsc : siteScope? ctx with
-    | none => rw [hsc] at m; simp [chainLevels] at m
-    | some s =>
-      rw [hsc] at m
-      exact chainFollows_of_mem T s x (hsite s hsc) m
+    refine ⟨chainFollows_of_site T hsite m, hp x m hs⟩
 
 /-- `childOfInContext`: the production contextual child wiring. -/
 theorem follows_childOfInContext (T : PresenceTable) (parent child : Algorithm) (ctx : EvalCtx)
@@ -681,7 +754,7 @@ theorem wireToCaller_entry (a : Algorithm) :
     rw [show siteScope? { callStack := [preludeAlg] } = some preludeAlg.asScopeCtx from rfl]
     exact hself
   have hact : preludeAlg.asScopeCtx.activation = none := rfl
-  simp only [hact, Option.isSome_none, Bool.false_eq_true, ite_false, h, Option.getD_some]
+  simp only [hact, Option.isSome_none, Bool.false_eq_true, ite_false, h]
 
 /-- The table recording only the root declaration, wired under the anonymous prelude. -/
 def entryTable (a : Algorithm) : PresenceTable := fun k => k == declKey a.declarationId

@@ -158,6 +158,21 @@ Parameter occurrences must be bound and member exposure complete; Lean preflight
 `NavigationContractGuards.MisExposed` is a host-built counterexample, not a source-program defect.
 No evaluator definition, key, runtime identity or C# behavior changes; ledger E-18 stays OPEN.
 
+E-18 B2 preparation (2026-11-12; proof only): `NavigationSourceDomain.lean` states parameter binding
+and a direct-lexical exposure fragment as predicates (`paramsBound`, `exposureComplete`; `SourceLike`).
+Full static exposure completeness remains OPEN: selected dotted/opened members' dependencies are not
+propagated by the fragment (`NavigationSourceDomainGuards.ExposureFragment`).
+`NavigationWiring.lean` proves the activation clause's context wiring. These facts did NOT suffice for the
+cell clause: `NavigationSourceDomainGuards.OutsideContainer` and `EscapedContainer` were SOURCE
+programs on which a capturing member, reached through a container navigated outside its owner's
+activation, was read from the reading context's own tier — and, where that tier did not bind the
+parameter, by a navigation whose first two consecutive chases each allocated a cell. B2 was NO-GO as
+formulated. The owner decided on 2026-11-13 to anchor such a container's chain at the reading site
+([`ownership-and-lookup.md` § Open, exposure, and accessibility]): both programs now reach an owned
+member, and the second is re-read without allocating; B2 has not been re-proposed.
+`NavigationSourceDomainWitnessTests` checks the seven Lean encodings against clean source elaboration,
+the five public-entry outcomes, and the capturing dotted dependency the fragment misses.
+
 ## Argument views: `R.Arguments` (CallReference S2, 2026-10-17)
 
 S2 adds the lazy, read-only ARGUMENT VIEW of a call reference. Lean is authoritative (`Result.argView`, `argumentsOfValue`, `NeedPlan.viewCells` / `viewSupply`, `selectViewWith`, `argumentViewBuiltin`, `openSpreadItems` / `openSupplySpread`, `NeedSupply.SpreadEval` with production `evalSupplySpread`); laws `KatLangArityLaws/ArgumentView.lean`, guards `ArgumentViewGuards.lean`.

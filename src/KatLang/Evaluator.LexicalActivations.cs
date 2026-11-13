@@ -229,7 +229,8 @@ public static partial class Evaluator
     /// navigation may name the declaration of a currently active lexical ancestor, and then
     /// the active level — same declaration, compatible captured activations — is that scope,
     /// never a dynamically live unrelated caller. The head's own declaring scope in context is
-    /// its head scope. Lean: <c>scopeInContext</c>.
+    /// its head scope. Otherwise the algorithm's own level over its ANCHORED parent chain
+    /// (<see cref="AnchorParents"/>). Lean: <c>scopeInContext</c>.
     /// </summary>
     private static ScopeCtx ScopeInContext(Algorithm algorithm, EvalCtx ctx)
     {
@@ -240,13 +241,134 @@ public static partial class Evaluator
             return ctx.HeadScope ?? AsScopeCtx(algorithm);
 
         var scope = AsScopeCtx(algorithm);
-        for (var level = SiteScope(ctx); level is not null; level = level.Parent)
+        var siteScope = SiteScope(ctx);
+        var siteLength = 0;
+        var siteHasActivation = false;
+        for (var level = siteScope; level is not null; level = level.Parent)
         {
             if (IsSameDeclaringScope(scope, level) && CompatibleActivations(scope, level))
                 return level;
+            siteLength++;
+            siteHasActivation |= level.Activation is not null && level.Declaration is not null;
+        }
+
+        // Without an activated declaration on the site chain no level can be anchored.
+        return siteHasActivation ? AnchorParents(scope, siteScope!, siteLength) : scope;
+    }
+
+    /// <summary>
+    /// THE ANCHORED CHAIN (E-18; owner decision 2026-11-13): <paramref name="scope"/> over its
+    /// parent chain read in the site's context. Walking up, an ACTIVATED level and a level with no
+    /// declaration (a host-constructed scope, whose identity is the object itself, or a builtin's)
+    /// are kept with everything above them; a static level whose declaration is activated on the
+    /// site chain, under compatible captured activations, is that activated site level, and the
+    /// levels below it are re-parented onto it. So a member selected from a container obtained
+    /// outside its owner's call reads the owner activation its reader is inside, never a same-named
+    /// binding of the reader. An activation's own context is never changed — its identity keys
+    /// property caches and alias cells — so a static owner above an activated level stays static
+    /// and <see cref="IsAccessibleFrom"/> refuses its members. Lean: <c>anchorChain</c> with
+    /// <c>activatedDeclaration?</c>.
+    /// <para>IMPLEMENTATION-ONLY OPTIMIZATION of Lean's search, which tries every site level for
+    /// every static level. Two scopes can be the same declaring scope only when their chains are
+    /// equally long (<see cref="IsSameDeclaringScope"/> walks both to their ends together), so each
+    /// level is compared with the one site level at its own height. A declaration comparison that
+    /// fails above its level rules out every level up to that point. Every level of the walk is
+    /// static, so a captured-activation disagreement lies above the walk, on every remaining chain
+    /// alike, and ends it. Each level is therefore compared once and the walk is linear in the two
+    /// chains. It is iterative, because a chain is as deep as lexical nesting, and allocates
+    /// nothing unless a level is anchored.</para>
+    /// </summary>
+    private static ScopeCtx AnchorParents(ScopeCtx scope, ScopeCtx siteScope, int siteLength)
+    {
+        var length = 0;
+        for (var level = scope.Parent; level is not null; level = level.Parent)
+            length++;
+
+        // `twin` is the site level at the height of `level`; `deeper` counts the levels of the
+        // chain that lie below the whole site chain and so have none.
+        ScopeCtx? twin = siteScope;
+        for (var drop = siteLength - length; drop > 0; drop--)
+            twin = twin!.Parent;
+        var deeper = Math.Max(0, length - siteLength);
+
+        var count = 0;
+        ScopeCtx? ruledOutThrough = null;
+        for (var level = scope.Parent; level is not null; level = level.Parent)
+        {
+            count++;
+            if (level.Activation is not null || level.Declaration is null)
+                return scope;
+            if (deeper > 0)
+            {
+                deeper--;
+                continue;
+            }
+
+            var candidate = twin!;
+            twin = candidate.Parent;
+            if (ruledOutThrough is not null)
+            {
+                // A comparison below failed at `ruledOutThrough`, which lies on this level's chain.
+                if (ReferenceEquals(level, ruledOutThrough))
+                    ruledOutThrough = null;
+                continue;
+            }
+
+            if (candidate.Activation is null
+                || candidate.Declaration is null
+                || !IsSameDeclaringLevel(level, candidate))
+                continue;
+            if (FirstDeclaringMismatch(level.Parent, candidate.Parent) is { } mismatch)
+            {
+                ruledOutThrough = mismatch;
+                continue;
+            }
+
+            return CompatibleActivations(level, candidate) ? Reparent(scope, count, candidate) : scope;
         }
 
         return scope;
+    }
+
+    /// <summary>
+    /// <paramref name="scope"/> with the <paramref name="count"/>-th level of its parent chain
+    /// replaced by <paramref name="anchor"/>: <paramref name="scope"/> and the levels between are
+    /// re-parented, keeping their owners and activations.
+    /// </summary>
+    private static ScopeCtx Reparent(ScopeCtx scope, int count, ScopeCtx anchor)
+    {
+        var below = new ScopeCtx[count];
+        var current = scope;
+        for (var i = 0; i < count; i++)
+        {
+            below[i] = current;
+            current = current.Parent!;
+        }
+
+        var parent = anchor;
+        for (var i = count - 1; i >= 0; i--)
+            parent = below[i] with { Parent = parent };
+        return parent;
+    }
+
+    /// <summary>
+    /// The first level of <paramref name="left"/>'s chain at which it and <paramref name="right"/>'s
+    /// chain, walked in step, stop being the same declaring scope, or null when they are the same
+    /// declaring scope: <see cref="IsSameDeclaringScope"/> of two chains of equal length, which is
+    /// how the one caller (<see cref="AnchorParents"/>) aligns them.
+    /// </summary>
+    private static ScopeCtx? FirstDeclaringMismatch(ScopeCtx? left, ScopeCtx? right)
+    {
+        while (left is not null && right is not null)
+        {
+            if (!IsSameDeclaringLevel(left, right))
+                return left;
+            left = left.Parent;
+            right = right.Parent;
+        }
+
+        System.Diagnostics.Debug.Assert(left is null && right is null, "AnchorParents compares chains of equal length.");
+        return left;
     }
 
     /// <summary>

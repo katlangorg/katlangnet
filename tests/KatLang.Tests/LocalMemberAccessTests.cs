@@ -142,6 +142,59 @@ public class LocalMemberAccessTests
         await AssertSyncAndAsyncAgree(source);
     }
 
+    // ── E-18 anchoring (owner decision 2026-11-13): a container fetched OUTSIDE its owner's call,
+    // then read inside a call of that owner, reads that call's binding — never a same-named binding
+    // of the reader or of a caller between them. Lean: `anchorChain`, CoreTests `anchored*`. ────────
+
+    private const string StaticContainerOwner = "F(b, y) = {\n    p = {\n        Q = y\n        1\n    }\n";
+
+    [Theory]
+    [InlineData("    b.Q\n}\nF(F.p, 5)", "5")]
+    // The reader's own parameter of the same name (formerly 99).
+    [InlineData("    G(g, y) = g.Q\n    G(b, 99)\n}\nF(F.p, 5)", "5")]
+    // A caller's between the owner and the reader (formerly 99).
+    [InlineData("    G(g) = g.Q\n    H(h, y) = G(h)\n    H(b, 99)\n}\nF(F.p, 5)", "5")]
+    // One static container, each call's own binding.
+    [InlineData("    b.Q\n}\nF(F.p, 5), F(F.p, 9)", "S[5, 9]")]
+    public async Task StaticContainer_ReadInsideItsOwnersCall_ReadsThatCallsBinding(string tail, string expected)
+        => await AssertOnEveryRoute(StaticContainerOwner + tail, expected);
+
+    [Theory]
+    // `c` is written inside a call of `p`, but `p` was fetched outside every call of `F`: `c`'s chain
+    // holds an activated `p` above a static `F`. An activation's context is never changed, so that
+    // `F` stays static and reading `Q` is refused (formerly the reader's 99) …
+    [InlineData("    p(k) = {\n        c = {\n            Q = y\n            1\n        }\n        F(c, 5)\n    }\n")]
+    // … also through a runtime alias read in two calls of `F`, which must never share the one
+    // activation of `p`'s alias cell or cache between them.
+    [InlineData("    p(k) = {\n        c = {\n            Q = y.Id\n            1\n        }\n        F(c, 5), F(c, 9)\n    }\n")]
+    public async Task StaticOwnerAboveAnActivatedLevel_IsRefused(string member)
+    {
+        var source = "Id(x) = x\nF(b, y) = {\n" + member + "    G(g, y) = g.Q\n    G(b, 99)\n}\nF.p(0)";
+        SourceProvenance.ParseValid(source);
+        var observation = await SixRouteAgreement.OnEveryRouteAsync(source);
+        Assert.Equal("err", observation.Kind);
+        Assert.StartsWith("LocalOnlyProperty:", Assert.Single(observation.Errors), StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData("P.Q")]
+    [InlineData("F.p.Q")]
+    public async Task RootAliasOfAStaticContainer_IsAnchoredLikeThePathWrittenInsideTheOwner(string read)
+    {
+        // `P = F.p` is fetched at the root; `F.p.Q` is written inside F. Both read F's 7, never G's 99.
+        var source = $"P = F.p\nF(y) = {{\n    p = {{\n        Q = y\n        1\n    }}\n    G(y) = {read}\n    G(99)\n}}\nF(7)";
+        await AssertOnEveryRoute(source, "7");
+    }
+
+    /// <summary>A clean parse, then one value on all six execution routes (<see cref="SixRouteAgreement"/>).</summary>
+    private static async Task AssertOnEveryRoute(string source, string expected)
+    {
+        SourceProvenance.ParseValid(source);
+        var observation = await SixRouteAgreement.OnEveryRouteAsync(source);
+        Assert.Equal("ok", observation.Kind);
+        Assert.Equal(expected, observation.Value);
+    }
+
     private static string Display(string source)
         => Assert.IsType<RunResult.Success>(KatLangEngine.Run(source)).ToDisplayString().ReplaceLineEndings("\n");
 
