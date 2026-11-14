@@ -187,11 +187,10 @@ internal sealed class ValueTraversalObservations
     /// Number of structure NODES descended into across the <c>Result.TryLanguageAtoms</c>
     /// collections this observer measured: the top-level structure of each collection, plus every
     /// nested NON-EMPTY sequence or list value descended into. Leaves and empty structures record
-    /// nothing, and a structure already proven to contribute no atoms is skipped at later shared
-    /// occurrences, so an atomLESS graph stays bounded by its distinct reachable structure nodes —
-    /// never its paths. Atom-BEARING shared nodes are deliberately re-descended per occurrence
-    /// (their atoms are collected per path, under the collector's atom bound), so this count is
-    /// node-bounded only where no atom is contributed.
+    /// nothing, and a nested structure whose descent completed is never descended again in the
+    /// same collection — a later shared occurrence replays its recorded run of atoms instead
+    /// (<see cref="LanguageAtomsRunReplayCount"/>) — so for ONE collection this stays bounded by
+    /// the distinct reachable structure nodes, atom-bearing or not, never by the paths.
     /// </summary>
     public long LanguageAtomsStructureExpansionCount { get; private set; }
 
@@ -199,15 +198,78 @@ internal sealed class ValueTraversalObservations
         => LanguageAtomsStructureExpansionCount = checked(LanguageAtomsStructureExpansionCount + 1);
 
     /// <summary>
+    /// Number of child SLOTS the <c>Result.TryLanguageAtoms</c> collections this observer measured
+    /// read: one per item of every structure descended into (the top-level structure included),
+    /// whatever the item is. A replayed or skipped occurrence reads none of its slots, so for ONE
+    /// collection this is at most the total slot count of the distinct structures reached.
+    /// </summary>
+    public long LanguageAtomsSlotInspectionCount { get; private set; }
+
+    internal void RecordLanguageAtomsSlotInspection()
+        => LanguageAtomsSlotInspectionCount = checked(LanguageAtomsSlotInspectionCount + 1);
+
+    /// <summary>
+    /// Number of nested structure occurrences the <c>Result.TryLanguageAtoms</c> collections this
+    /// observer measured answered from their run memo instead of descending: a non-empty run is
+    /// copied from the output (possibly truncated at the atom bound), and an empty one — a
+    /// structure proven atomless — is skipped.
+    /// </summary>
+    public long LanguageAtomsRunReplayCount { get; private set; }
+
+    internal void RecordLanguageAtomsRunReplay()
+        => LanguageAtomsRunReplayCount = checked(LanguageAtomsRunReplayCount + 1);
+
+    /// <summary>
+    /// Number of cancellation checkpoints the <c>Result.TryLanguageAtoms</c> collections this
+    /// observer measured reached: one each time at least
+    /// <see cref="Result.ValueSemanticComparer.UnitsPerCharge"/> units (slot reads plus replayed
+    /// atoms) accumulated, recorded just BEFORE the collection observes its budget's token. A
+    /// checkpoint charges nothing and is reached whether or not a budget was supplied.
+    /// </summary>
+    public long LanguageAtomsCancellationCheckpointCount { get; private set; }
+
+    internal void RecordLanguageAtomsCancellationCheckpoint()
+        => LanguageAtomsCancellationCheckpointCount = checked(LanguageAtomsCancellationCheckpointCount + 1);
+
+    /// <summary>
     /// Number of structure NODES descended into across the <c>Result.TryToHostAtoms</c>
     /// projections this observer measured, with exactly the
     /// <see cref="LanguageAtomsStructureExpansionCount"/> accounting: leaves and empty structures
-    /// record nothing, structures proven atomless are skipped at later shared occurrences, and
-    /// atom-bearing shared nodes are deliberately re-descended per occurrence under the
-    /// projection's atom bound.
+    /// record nothing, and a nested structure whose descent completed is replayed, never
+    /// re-descended, at its later shared occurrences.
     /// </summary>
     public long HostAtomsStructureExpansionCount { get; private set; }
 
     internal void RecordHostAtomsStructureExpansion()
         => HostAtomsStructureExpansionCount = checked(HostAtomsStructureExpansionCount + 1);
+
+    /// <summary>
+    /// Number of child SLOTS the <c>Result.TryToHostAtoms</c> projections this observer measured
+    /// read, with exactly the <see cref="LanguageAtomsSlotInspectionCount"/> accounting.
+    /// </summary>
+    public long HostAtomsSlotInspectionCount { get; private set; }
+
+    internal void RecordHostAtomsSlotInspection()
+        => HostAtomsSlotInspectionCount = checked(HostAtomsSlotInspectionCount + 1);
+
+    /// <summary>
+    /// Number of nested structure occurrences the <c>Result.TryToHostAtoms</c> projections this
+    /// observer measured answered from their run memo, with exactly the
+    /// <see cref="LanguageAtomsRunReplayCount"/> accounting.
+    /// </summary>
+    public long HostAtomsRunReplayCount { get; private set; }
+
+    internal void RecordHostAtomsRunReplay()
+        => HostAtomsRunReplayCount = checked(HostAtomsRunReplayCount + 1);
+
+    /// <summary>
+    /// Number of cancellation checkpoints the <c>Result.TryToHostAtoms</c> projections this
+    /// observer measured reached, with exactly the
+    /// <see cref="LanguageAtomsCancellationCheckpointCount"/> cadence, each recorded just BEFORE
+    /// the projection observes its cancellation token.
+    /// </summary>
+    public long HostAtomsCancellationCheckpointCount { get; private set; }
+
+    internal void RecordHostAtomsCancellationCheckpoint()
+        => HostAtomsCancellationCheckpointCount = checked(HostAtomsCancellationCheckpointCount + 1);
 }

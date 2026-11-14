@@ -219,7 +219,10 @@ public static partial class Evaluator
     /// <c>atoms</c> result construction. Unlike every other collection builtin its output
     /// is not bounded by its input's item count, so the traversal itself is bounded and
     /// abandoned as soon as it passes the limit — no oversized intermediate is ever built,
-    /// and no unbounded counting prepass is needed.
+    /// and no unbounded counting prepass is needed. The walk replays shared structures
+    /// instead of re-descending them and observes the run's cancellation token during the
+    /// walk, but charges no step or structural unit (that cost policy is a separate decision).
+    /// The one helper of the generic and async routes.
     /// </summary>
     private static EvalResult<CountedResult> MakeLanguageAtomsResult(
         EvalCtx ctx,
@@ -230,7 +233,7 @@ public static partial class Evaluator
         if (IsArgumentView(value))
             return ArgumentViewUnsupported(BuiltinId.@atoms);
         var limit = ctx.Budget.MaxCollectionItems;
-        if (!value.TryLanguageAtoms(limit, out var atoms))
+        if (!value.TryLanguageAtomsObserved(limit, ctx.Observations?.StructuralTraversal, out var atoms, ctx.Budget))
             return AtSpanIfMissing(new EvalError.CollectionSizeLimitExceeded(limit, limit + 1L), span);
 
         return MakeCollectionListResult(ctx, atoms.Select(static n => (Result)new Result.Atom(n)).ToList(), span);

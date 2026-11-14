@@ -3455,9 +3455,11 @@ public static partial class Evaluator
     /// and <see cref="RunFlatAsync(Expr, EvaluationLimits?, CancellationToken)"/> (it
     /// awaits nothing). Same rule as the engine: the host projection is bounded, so a
     /// successful evaluation cannot be followed by an unbounded flattening allocation.
-    /// The trailing observation exists because host flattening belongs to the flat run
-    /// operation and may walk a bounded but wide value graph after core evaluation has
-    /// completed.
+    /// Host flattening belongs to the flat run operation and may walk a bounded but wide
+    /// value graph after core evaluation has completed, so the projection observes the
+    /// token DURING the walk (every 256 slot reads or replayed atoms) and once more after
+    /// it. The refusal stays the bare <see cref="EvalError.CollectionSizeLimitExceeded"/>
+    /// hosts of this entry family may type-match.
     /// </summary>
     private static EvalResult<IReadOnlyList<Decimal128>> ProjectFlatHostAtoms(
         EvalResult<Result> evaluation, EvaluationLimits? limits, CancellationToken cancellationToken)
@@ -3465,7 +3467,7 @@ public static partial class Evaluator
         if (evaluation.IsError) return evaluation.Error;
 
         var limit = (limits ?? EvaluationLimits.Default).EffectiveMaxCollectionItems;
-        var result = evaluation.Value.TryToHostAtoms(limit, out var atoms)
+        var result = evaluation.Value.TryToHostAtoms(limit, out var atoms, cancellationToken)
             ? EvalResult<IReadOnlyList<Decimal128>>.Ok(atoms)
             : new EvalError.CollectionSizeLimitExceeded(limit, limit + 1L);
 

@@ -446,7 +446,11 @@ public closed record EvalError
     /// Also reported when the HOST-ATOM PROJECTION of a successful run's whole output
     /// (engine results, the flat entry points) exceeds the same limit; there
     /// <c>Requested</c> is the lower bound limit + 1 (the projection stops counting at
-    /// the limit) and the error carries no source span.
+    /// the limit) and the error carries no source span. The engine
+    /// (<see cref="KatLangEngine.Run"/>/<see cref="KatLangEngine.RunAsync"/>) wraps it in a
+    /// <see cref="WithContext"/> frame naming the projection, so its message does not blame a
+    /// collection the program built (the code is unchanged); the flat entry points return it
+    /// bare.
     /// Also reported, with the supply's full size as <c>Requested</c>, when a TRANSIENT item supply
     /// (a call's arguments, a selection's selectors, a loop step's rows) would retain more
     /// items after spread expansion than the same limit; the expansion is never built.

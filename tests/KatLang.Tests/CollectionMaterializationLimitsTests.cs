@@ -539,6 +539,49 @@ public class CollectionMaterializationLimitsTests
         Assert.Contains("Collection size limit", failure.Errors[0].Message);
     }
 
+    [Fact]
+    public async Task EngineHostAtomProjection_Refusal_NamesTheProjectionNotAProgramCollection()
+    {
+        // Every collection the program builds fits the default limit — A holds 60,000 items and
+        // the root list two — so the direct evaluator succeeds. Only the engine's eager host-atom
+        // projection of the whole result (120,000 atoms) exceeds it, and the message must say so
+        // instead of reading as if the program had requested a 100,001-item collection.
+        const string source = "A = range(1, 60000)\n[A, A]";
+        var limit = EvaluationLimits.Default.EffectiveMaxCollectionItems;
+        Assert.True(limit is > 60_000 and < 120_000);
+
+        var expr = new Expr.AlgorithmExpr(SourceProvenance.ParseValid(source).Root);
+        var direct = Evaluator.Run(expr);
+        Assert.False(direct.IsError, $"Expected the direct evaluator to succeed: {(direct.IsError ? direct.Error : null)}");
+
+        var expectedMessage =
+            $"while projecting the result to host atoms (RunResult.Success.Atoms): "
+            + $"Collection size limit of {limit} items was exceeded; requested {limit + 1L} items";
+        foreach (var outcome in new[] { KatLangEngine.Run(source), await KatLangEngine.RunAsync(source) })
+        {
+            var failure = Assert.IsType<RunResult.EvalFailure>(outcome);
+            var error = Assert.Single(failure.Errors);
+            Assert.Equal(KatLangErrorCode.CollectionSizeLimitExceeded, error.Code);
+            Assert.Null(error.Span);
+            Assert.Equal(expectedMessage, error.Message);
+
+            // The structured payload is unchanged below the one context frame.
+            var frame = Assert.IsType<EvalError.WithContext>(error.Source);
+            Assert.Equal(KatLangEngine.HostAtomProjectionContext, frame.Context);
+            Assert.Null(frame.Span);
+            var inner = Assert.IsType<EvalError.CollectionSizeLimitExceeded>(frame.Inner);
+            Assert.Equal(limit, inner.Limit);
+            Assert.Equal(limit + 1L, inner.Requested);
+            Assert.True(frame.IsResourceLimit);
+        }
+
+        // The flat entry family keeps the bare error hosts may type-match.
+        var flat = Evaluator.RunFlat(expr);
+        Assert.True(flat.IsError, "Expected the flat host projection to be refused.");
+        var bare = Assert.IsType<EvalError.CollectionSizeLimitExceeded>(flat.Error);
+        Assert.Equal(limit + 1L, bare.Requested);
+    }
+
     // ── Interaction with the existing limits ─────────────────────────────────
 
     [Fact]

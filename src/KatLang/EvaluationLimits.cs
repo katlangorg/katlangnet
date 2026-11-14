@@ -351,7 +351,8 @@ public sealed record EvaluationLimits
     /// collections can project into more atoms than any one of them holds. A projection
     /// past the bound is reported as <see cref="EvalError.CollectionSizeLimitExceeded"/>
     /// with <c>Requested</c> = limit + 1 (a lower bound: the projection stops counting at
-    /// the limit) and no source span, after the evaluation itself succeeded.</para>
+    /// the limit) and no source span, after the evaluation itself succeeded; the engine
+    /// wraps it in a context frame naming the projection.</para>
     /// </summary>
     /// <exception cref="ArgumentOutOfRangeException">The value is zero or negative.</exception>
     public int? MaxCollectionItems

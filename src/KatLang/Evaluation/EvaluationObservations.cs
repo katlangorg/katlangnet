@@ -21,6 +21,8 @@ internal sealed class EvaluationObservations
     /// Optional observer handed to every operation comparer the run's <c>contains</c> and
     /// <c>distinct</c> evaluations create (SEC-02), so a language-level test can read the
     /// structural pair/hash expansions and budget charges of those walks across the whole run.
+    /// The run's <c>atoms</c> collections record their slot reads, run replays and cancellation
+    /// checkpoints into it too (<c>Result.TryLanguageAtomsObserved</c>).
     /// Supplied by the measuring test; <c>null</c> records nothing.
     /// </summary>
     public ValueTraversalObservations? StructuralTraversal { get; init; }

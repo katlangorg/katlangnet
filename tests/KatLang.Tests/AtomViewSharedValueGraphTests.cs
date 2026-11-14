@@ -15,10 +15,14 @@ namespace KatLang.Tests;
 /// evaluation step budget bounds it: the blow-up happens inside ONE value-level operation.
 ///
 /// <para><c>Result.TryLanguageAtoms</c> and <c>Result.TryToHostAtoms</c> must keep collecting
-/// atoms per path (their contract, bounded by <c>maxItems</c>), so they memoize only structures
-/// proven to contribute NO atoms — the nodes whose revisits the atom bound can never stop. (The
-/// former first-atom truth search no longer exists: truth is Boolean-only, decided by
-/// <see cref="Result.AsBool"/> without any traversal, so there is nothing left to bound there.)</para>
+/// atoms per path (their contract, bounded by <c>maxItems</c>), but their WORK must not be
+/// per path: each memoizes every completed nested structure's run of atoms and REPLAYS it at
+/// later shared occurrences (an atomless structure's empty run is skipped), so a walk reads
+/// each distinct nested structure's slots once and otherwise only copies output. They observe
+/// host cancellation every <see cref="Result.ValueSemanticComparer.UnitsPerCharge"/> units of
+/// that work without charging anything. (The former first-atom truth search no longer exists:
+/// truth is Boolean-only, decided by <see cref="Result.AsBool"/> without any traversal, so
+/// there is nothing left to bound there.)</para>
 ///
 /// <para>Work counts are exact and deterministic, measured through the passive operation-scoped
 /// <see cref="ValueTraversalObservations"/>; timing is deliberately not a pass/fail signal.
@@ -233,10 +237,10 @@ public class AtomViewSharedValueGraphTests
             deepHost.HostAtomsStructureExpansionCount - shallowHost.HostAtomsStructureExpansionCount);
     }
 
-    // ── Collectors: per-path atom output is preserved; only zero-atom nodes are skipped ──────
+    // ── Collectors: per-path atom output is preserved; shared runs are replayed ──────────────
 
     [Fact]
-    public void LanguageAtoms_AtomBearingSharedNodes_AreReDescendedPerOccurrence()
+    public void LanguageAtoms_AtomBearingSharedNodes_AreReplayedNotReDescended()
     {
         var inner = List(Atom(2));
         var shared = Seq(Atom(1), inner);
@@ -246,13 +250,17 @@ public class AtomViewSharedValueGraphTests
         Assert.True(value.TryLanguageAtomsObserved(long.MaxValue, observations, out var atoms));
 
         // Atoms are collected once per PATH — that is the collector's contract — so the shared
-        // atom-bearing node contributes twice and is descended twice; the memo may never skip it.
+        // atom-bearing node contributes twice; its second occurrence REPLAYS the run its first
+        // descent recorded. Root, shared and inner are descended once each: 4 + 2 + 1 slots.
         Assert.Equal([1m, 2m, 1m, 2m, 3m], atoms);
-        Assert.Equal(5, observations.LanguageAtomsStructureExpansionCount);
+        Assert.Equal(3, observations.LanguageAtomsStructureExpansionCount);
+        Assert.Equal(1, observations.LanguageAtomsRunReplayCount);
+        Assert.Equal(7, observations.LanguageAtomsSlotInspectionCount);
+        Assert.Equal(0, observations.LanguageAtomsCancellationCheckpointCount);
     }
 
     [Fact]
-    public void HostAtoms_AtomBearingSharedNodes_AreReDescendedPerOccurrence()
+    public void HostAtoms_AtomBearingSharedNodes_AreReplayedNotReDescended()
     {
         var inner = List(Atom(2));
         var shared = Seq(Atom(1), inner);
@@ -262,7 +270,422 @@ public class AtomViewSharedValueGraphTests
         Assert.True(value.TryToHostAtomsObserved(long.MaxValue, observations, out var atoms));
 
         Assert.Equal([1m, 2m, 1m, 2m, 3m], atoms);
-        Assert.Equal(5, observations.HostAtomsStructureExpansionCount);
+        Assert.Equal(3, observations.HostAtomsStructureExpansionCount);
+        Assert.Equal(1, observations.HostAtomsRunReplayCount);
+        Assert.Equal(7, observations.HostAtomsSlotInspectionCount);
+        Assert.Equal(0, observations.HostAtomsCancellationCheckpointCount);
+    }
+
+    /// <summary>
+    /// The audit's wide shape, built directly: <c>W = [1, true × (width - 1)]</c> and
+    /// <c>D = [W × width]</c>. One atom per occurrence of W, so the output is <c>width</c> ones,
+    /// but a per-occurrence walk reads all of W's slots at every occurrence — width² reads.
+    /// </summary>
+    private static Result WideSharedValue(int width, out Result shared)
+    {
+        var wideItems = new Result[width];
+        wideItems[0] = Atom(1);
+        for (var i = 1; i < width; i++)
+            wideItems[i] = new Result.Bool(true);
+        shared = List(wideItems);
+
+        var outerItems = new Result[width];
+        Array.Fill(outerItems, shared);
+        return List(outerItems);
+    }
+
+    /// <summary>
+    /// The audit's chain shape: <c>N0 = [1]</c>, <c>Nk = [N(k-1), true × width]</c> for k up to
+    /// <paramref name="height"/>, and <c>D = [N(height) × repeats]</c>. Each chain node is reached
+    /// once per occurrence of the top, so a per-occurrence walk re-reads the whole chain each time.
+    /// </summary>
+    private static Result SharedChainValue(int height, int width, int repeats)
+    {
+        var node = List(Atom(1));
+        for (var level = 1; level <= height; level++)
+        {
+            var items = new Result[width + 1];
+            items[0] = node;
+            for (var i = 1; i <= width; i++)
+                items[i] = new Result.Bool(true);
+            node = List(items);
+        }
+
+        var outerItems = new Result[repeats];
+        Array.Fill(outerItems, node);
+        return List(outerItems);
+    }
+
+    /// <summary>
+    /// The slots a per-OCCURRENCE walk would read: every slot of every structure on every path,
+    /// computed in O(distinct nodes) by a reference-identity DP, never by walking the paths. On
+    /// shapes with no atomless nested structure this is exactly the former collectors' work.
+    /// </summary>
+    private static long PerPathSlotReads(Result value)
+    {
+        var memo = new Dictionary<Result, long>(ReferenceEqualityComparer.Instance);
+        return Reads(value);
+
+        long Reads(Result node)
+        {
+            IReadOnlyList<Result> items;
+            switch (node)
+            {
+                case Result.SequenceValue(var sequenceItems): items = sequenceItems; break;
+                case Result.ListValue(var listItems): items = listItems; break;
+                default: return 0;
+            }
+
+            if (memo.TryGetValue(node, out var known)) return known;
+            long total = items.Count;
+            foreach (var item in items)
+                total += Reads(item);
+            memo[node] = total;
+            return total;
+        }
+    }
+
+    [Fact]
+    public void Collectors_WideSharedValue_ReadEachDistinctSlotOnce()
+    {
+        const int width = 10_000;
+        var value = WideSharedValue(width, out _);
+        var expected = Enumerable.Repeat((Decimal128)1, width).ToArray();
+        // What the per-occurrence walk read before replay: width + width², about 1e8.
+        Assert.Equal(width + (long)width * width, PerPathSlotReads(value));
+
+        var language = Observations();
+        Assert.True(value.TryLanguageAtomsObserved(long.MaxValue, language, out var languageAtoms));
+        Assert.Equal(expected, languageAtoms);
+        // D's slots plus W's slots, each read once; the other width - 1 occurrences replay W's
+        // one-atom run. The bound the audit asks for is 2 × width + a constant.
+        Assert.Equal(2L * width, language.LanguageAtomsSlotInspectionCount);
+        Assert.True(language.LanguageAtomsSlotInspectionCount <= 2L * width + 16);
+        Assert.Equal(2, language.LanguageAtomsStructureExpansionCount);
+        Assert.Equal(width - 1, language.LanguageAtomsRunReplayCount);
+        // Slot reads plus replayed atoms, one checkpoint per 256 units.
+        Assert.Equal((2L * width + (width - 1)) / Result.ValueSemanticComparer.UnitsPerCharge,
+            language.LanguageAtomsCancellationCheckpointCount);
+
+        var host = Observations();
+        Assert.True(value.TryToHostAtomsObserved(long.MaxValue, host, out var hostAtoms));
+        Assert.Equal(expected, hostAtoms);
+        Assert.Equal(2L * width, host.HostAtomsSlotInspectionCount);
+        Assert.Equal(2, host.HostAtomsStructureExpansionCount);
+        Assert.Equal(width - 1, host.HostAtomsRunReplayCount);
+        Assert.Equal((2L * width + (width - 1)) / Result.ValueSemanticComparer.UnitsPerCharge,
+            host.HostAtomsCancellationCheckpointCount);
+    }
+
+    [Fact]
+    public void Collectors_SharedChain_WorkIsLinearInHeightTimesWidthPlusRepeats()
+    {
+        const int height = 16, width = 1_000, repeats = 1_000;
+        var value = SharedChainValue(height, width, repeats);
+        var expected = Enumerable.Repeat((Decimal128)1, repeats).ToArray();
+        // Each chain level holds its child plus width Booleans; N0 holds one atom.
+        long distinctSlots = (long)height * (width + 1) + 1 + repeats;
+        // Before replay: every occurrence of the top re-read the whole chain.
+        Assert.Equal(repeats + (long)repeats * (distinctSlots - repeats), PerPathSlotReads(value));
+
+        var language = Observations();
+        Assert.True(value.TryLanguageAtomsObserved(long.MaxValue, language, out var languageAtoms));
+        Assert.Equal(expected, languageAtoms);
+        Assert.Equal(distinctSlots, language.LanguageAtomsSlotInspectionCount);
+        Assert.True(language.LanguageAtomsSlotInspectionCount <= (long)height * width + repeats + 64);
+        Assert.Equal(height + 2, language.LanguageAtomsStructureExpansionCount);
+        Assert.Equal(repeats - 1, language.LanguageAtomsRunReplayCount);
+
+        var host = Observations();
+        Assert.True(value.TryToHostAtomsObserved(long.MaxValue, host, out var hostAtoms));
+        Assert.Equal(expected, hostAtoms);
+        Assert.Equal(distinctSlots, host.HostAtomsSlotInspectionCount);
+        Assert.True(host.HostAtomsSlotInspectionCount <= (long)height * width + repeats + 64);
+        Assert.Equal(height + 2, host.HostAtomsStructureExpansionCount);
+        Assert.Equal(repeats - 1, host.HostAtomsRunReplayCount);
+    }
+
+    [Fact]
+    public void Collectors_ReplayAtTheAtomBound_AppendsExactlyTheRemainingRoom()
+    {
+        // W = [1, 2, 3] shared three times: 9 atoms. Every budget that ends inside a REPLAYED
+        // occurrence must yield exactly the per-path prefix and a refusal.
+        var shared = List(Atom(1), Atom(2), Atom(3));
+        var value = Seq(shared, Atom(0), shared, shared);
+        var naive = NaiveAtoms(value);
+        Assert.Equal(10, naive.Count);
+
+        for (long budget = 0; budget <= naive.Count + 1; budget++)
+        {
+            var fits = naive.Count <= budget;
+            var prefix = naive.Take((int)Math.Min(budget, naive.Count)).ToArray();
+
+            var language = Observations();
+            Assert.Equal(fits, value.TryLanguageAtomsObserved(budget, language, out var languageAtoms));
+            Assert.Equal(prefix, languageAtoms);
+
+            var host = Observations();
+            Assert.Equal(fits, value.TryToHostAtomsObserved(budget, host, out var hostAtoms));
+            Assert.Equal(prefix, hostAtoms);
+
+            // The shared list is descended at most once; a budget that lets the walk reach its
+            // second occurrence (the first four atoms fit) replays it, the last replay possibly
+            // truncated to the remaining room.
+            Assert.Equal(budget >= 4, language.LanguageAtomsRunReplayCount > 0);
+            Assert.Equal(budget >= 4, host.HostAtomsRunReplayCount > 0);
+            Assert.True(language.LanguageAtomsStructureExpansionCount <= 2);
+            Assert.True(host.HostAtomsStructureExpansionCount <= 2);
+        }
+    }
+
+    // ── Collectors: seeded differential over random shared DAGs ──────────────────────────────
+
+    /// <summary>
+    /// A random shared DAG: a pool of leaves (atoms, strings, Booleans, empty structures) grows
+    /// by sequence and list nodes whose children are drawn from the WHOLE pool, so later nodes
+    /// share earlier ones at many depths. The last node is the root.
+    /// </summary>
+    private static Result RandomSharedDag(Random random)
+    {
+        var pool = new List<Result>
+        {
+            Atom(random.Next(-3, 10)),
+            Atom(random.Next(-3, 10)),
+            Str("s"),
+            new Result.Bool(random.Next(2) == 0),
+            Seq(),
+            List(),
+        };
+
+        var nodes = random.Next(1, 12);
+        for (var i = 0; i < nodes; i++)
+        {
+            var width = random.Next(0, 5);
+            var items = new Result[width];
+            for (var j = 0; j < width; j++)
+            {
+                // Bias towards recent nodes so the DAG gets depth, and towards fresh atoms so
+                // runs have distinct contents.
+                items[j] = random.Next(4) switch
+                {
+                    0 => Atom(random.Next(-3, 10)),
+                    1 => pool[random.Next(Math.Max(0, pool.Count - 3), pool.Count)],
+                    _ => pool[random.Next(pool.Count)],
+                };
+            }
+
+            pool.Add(random.Next(2) == 0 ? Seq(items) : List(items));
+        }
+
+        return pool[^1];
+    }
+
+    /// <summary>Total slots of the distinct structures reachable from <paramref name="value"/>.</summary>
+    private static long DistinctStructureSlots(Result value, out int distinctStructures)
+    {
+        var seen = new HashSet<Result>(ReferenceEqualityComparer.Instance);
+        var pending = new Stack<Result>();
+        pending.Push(value);
+        long slots = 0;
+        while (pending.Count > 0)
+        {
+            var node = pending.Pop();
+            IReadOnlyList<Result> items;
+            switch (node)
+            {
+                case Result.SequenceValue(var sequenceItems): items = sequenceItems; break;
+                case Result.ListValue(var listItems): items = listItems; break;
+                default: continue;
+            }
+
+            if (!seen.Add(node)) continue;
+            slots += items.Count;
+            foreach (var item in items)
+                pending.Push(item);
+        }
+
+        distinctStructures = seen.Count;
+        return slots;
+    }
+
+    [Fact]
+    public void Collectors_RandomSharedDags_MatchTheNaiveFlatteningAtEveryBudget()
+    {
+        var random = new Random(0x5EED_A70);
+        var cases = 0;
+        var replayedCases = 0;
+        for (var trial = 0; trial < 2_000; trial++)
+        {
+            var value = RandomSharedDag(random);
+            // Only values whose path expansion the naive oracle can afford.
+            if (PerPathSlotReads(value) > 20_000) continue;
+
+            var naive = NaiveAtoms(value);
+            var total = naive.Count;
+            var slots = DistinctStructureSlots(value, out var structures);
+            long[] budgets = [0, 1, total - 1, total, total + 1, random.Next(0, total + 2)];
+            foreach (var budget in budgets.Where(static b => b >= 0).Distinct())
+            {
+                cases++;
+                var fits = total <= budget;
+                var prefix = naive.Take((int)Math.Min(budget, total)).ToArray();
+
+                var language = Observations();
+                Assert.Equal(fits, value.TryLanguageAtomsObserved(budget, language, out var languageAtoms));
+                Assert.Equal(prefix, languageAtoms);
+                Assert.True(language.LanguageAtomsSlotInspectionCount <= slots);
+                Assert.True(language.LanguageAtomsStructureExpansionCount <= structures);
+                Assert.True(value.TryLanguageAtoms(budget, out var unobservedLanguage) == fits);
+                Assert.Equal(prefix, unobservedLanguage);
+
+                var host = Observations();
+                Assert.Equal(fits, value.TryToHostAtomsObserved(budget, host, out var hostAtoms));
+                Assert.Equal(prefix, hostAtoms);
+                Assert.True(host.HostAtomsSlotInspectionCount <= slots);
+                Assert.True(host.HostAtomsStructureExpansionCount <= structures);
+                Assert.True(value.TryToHostAtoms(budget, out var unobservedHost) == fits);
+                Assert.Equal(prefix, unobservedHost);
+
+                if (language.LanguageAtomsRunReplayCount > 0) replayedCases++;
+            }
+        }
+
+        // The generator must actually exercise sharing and replay, not only trees.
+        Assert.True(cases > 2_000, $"only {cases} differential cases");
+        Assert.True(replayedCases > 500, $"only {replayedCases} cases replayed a run");
+    }
+
+    // ── Collectors: host cancellation is observed DURING the walk, never charged ─────────────
+
+    [Fact]
+    public void HostAtoms_PreCancelledToken_ThrowsAtTheFirstCheckpointOfAWideWalk()
+    {
+        const int width = 10_000;
+        var value = WideSharedValue(width, out _);
+        using var source = new CancellationTokenSource();
+        source.Cancel();
+
+        var observations = Observations();
+        var thrown = Assert.ThrowsAny<OperationCanceledException>(
+            () => value.TryToHostAtomsObserved(long.MaxValue, observations, out _, source.Token));
+        Assert.Equal(source.Token, thrown.CancellationToken);
+        // Inside the walk, at its first checkpoint: never after reading every slot.
+        Assert.Equal(1, observations.HostAtomsCancellationCheckpointCount);
+        Assert.Equal(Result.ValueSemanticComparer.UnitsPerCharge, observations.HostAtomsSlotInspectionCount);
+        Assert.True(observations.HostAtomsSlotInspectionCount <= Result.ValueSemanticComparer.UnitsPerCharge + width);
+    }
+
+    [Fact]
+    public void LanguageAtoms_PreCancelledBudget_ThrowsAtTheFirstCheckpointOfAWideWalk()
+    {
+        const int width = 10_000;
+        var value = WideSharedValue(width, out _);
+        using var source = new CancellationTokenSource();
+        source.Cancel();
+        var budget = KatLang.Evaluation.EvaluationBudget.Create(null, cancellationToken: source.Token);
+
+        var observations = Observations();
+        var thrown = Assert.ThrowsAny<OperationCanceledException>(
+            () => value.TryLanguageAtomsObserved(long.MaxValue, observations, out _, budget));
+        Assert.Equal(source.Token, thrown.CancellationToken);
+        Assert.Equal(1, observations.LanguageAtomsCancellationCheckpointCount);
+        Assert.Equal(Result.ValueSemanticComparer.UnitsPerCharge, observations.LanguageAtomsSlotInspectionCount);
+        Assert.True(observations.LanguageAtomsSlotInspectionCount <= Result.ValueSemanticComparer.UnitsPerCharge + width);
+
+        // Observing charges nothing.
+        Assert.Equal(0, budget.ConsumedSteps);
+        Assert.Equal(0, budget.ConsumedStructuralWorkUnits);
+    }
+
+    [Fact]
+    public void Collectors_ReplayedAtomsCountTowardsTheCheckpoint()
+    {
+        // 3 + 100 slot reads never reach 256 on their own; the two replays of W's 100-atom run
+        // do, so the checkpoint falls during the SECOND replay.
+        var shared = List(Enumerable.Range(0, 100).Select(static i => Atom(i)).ToArray());
+        var value = List(shared, shared, shared);
+
+        var language = Observations();
+        Assert.True(value.TryLanguageAtomsObserved(long.MaxValue, language, out var languageAtoms));
+        Assert.Equal(300, languageAtoms.Count);
+        Assert.Equal(103, language.LanguageAtomsSlotInspectionCount);
+        Assert.Equal(1, language.LanguageAtomsCancellationCheckpointCount);
+
+        using var source = new CancellationTokenSource();
+        source.Cancel();
+        var host = Observations();
+        Assert.ThrowsAny<OperationCanceledException>(
+            () => value.TryToHostAtomsObserved(long.MaxValue, host, out _, source.Token));
+        Assert.Equal(103, host.HostAtomsSlotInspectionCount);
+        Assert.Equal(2, host.HostAtomsRunReplayCount);
+        Assert.Equal(1, host.HostAtomsCancellationCheckpointCount);
+
+        var budget = KatLang.Evaluation.EvaluationBudget.Create(null, cancellationToken: source.Token);
+        var cancelledLanguage = Observations();
+        Assert.ThrowsAny<OperationCanceledException>(
+            () => value.TryLanguageAtomsObserved(long.MaxValue, cancelledLanguage, out _, budget));
+        Assert.Equal(103, cancelledLanguage.LanguageAtomsSlotInspectionCount);
+        Assert.Equal(2, cancelledLanguage.LanguageAtomsRunReplayCount);
+    }
+
+    [Theory]
+    [InlineData(100, 30, int.MaxValue)]
+    [InlineData(1_000, 2, int.MaxValue)]
+    [InlineData(1_000, 4, int.MaxValue)]
+    [InlineData(1_000, 4, 1_500)]
+    [InlineData(1_000, 4, 2_000)]
+    [InlineData(256, 5, int.MaxValue)]
+    public void Collectors_ReplayCancellationCadence_PreservesEvery256UnitBoundary(
+        int width, int repeats, int maxItems)
+    {
+        var shared = List(Enumerable.Range(0, width).Select(static i => Atom(i)).ToArray());
+        var value = List(Enumerable.Repeat(shared, repeats).ToArray());
+        var naive = NaiveAtoms(value);
+        var fits = naive.Count <= maxItems;
+        var outputCount = Math.Min(naive.Count, maxItems);
+        var prefix = naive.Take(outputCount).ToArray();
+        // The first occurrence reads width slots; each later one copies width atoms. A
+        // refusal also reads the slot for the occurrence whose next atom would exceed the
+        // bound, including when the preceding replay exactly filled the available room.
+        var slots = width + (fits ? repeats : maxItems / width + 1L);
+        var copiedAtoms = outputCount - width;
+        var checkpoints = (slots + copiedAtoms) / Result.ValueSemanticComparer.UnitsPerCharge;
+
+        var language = Observations();
+        var budget = KatLang.Evaluation.EvaluationBudget.Create(null);
+        Assert.Equal(fits, value.TryLanguageAtomsObserved(maxItems, language, out var languageAtoms, budget));
+        Assert.Equal(prefix, languageAtoms);
+        Assert.Equal(slots, language.LanguageAtomsSlotInspectionCount);
+        Assert.Equal(checkpoints, language.LanguageAtomsCancellationCheckpointCount);
+        Assert.Equal(0, budget.ConsumedSteps);
+        Assert.Equal(0, budget.ConsumedStructuralWorkUnits);
+        Assert.Equal(0, budget.MaterializedItems);
+
+        var host = Observations();
+        Assert.Equal(fits, value.TryToHostAtomsObserved(maxItems, host, out var hostAtoms));
+        Assert.Equal(prefix, hostAtoms);
+        Assert.Equal(slots, host.HostAtomsSlotInspectionCount);
+        Assert.Equal(checkpoints, host.HostAtomsCancellationCheckpointCount);
+    }
+
+    [Fact]
+    public void Collectors_UncancelledTokenAndBudget_AreInert()
+    {
+        var value = SharedChainValue(4, 300, 50);
+        using var source = new CancellationTokenSource();
+        var budget = KatLang.Evaluation.EvaluationBudget.Create(null, cancellationToken: source.Token);
+
+        Assert.True(value.TryLanguageAtoms(long.MaxValue, out var plainLanguage));
+        Assert.True(value.TryLanguageAtoms(long.MaxValue, out var budgetedLanguage, budget));
+        Assert.Equal(plainLanguage, budgetedLanguage);
+        Assert.Equal(0, budget.ConsumedSteps);
+        Assert.Equal(0, budget.ConsumedStructuralWorkUnits);
+        Assert.Equal(0, budget.MaterializedItems);
+
+        Assert.True(value.TryToHostAtoms(long.MaxValue, out var plainHost));
+        Assert.True(value.TryToHostAtoms(long.MaxValue, out var tokenHost, source.Token));
+        Assert.Equal(plainHost, tokenHost);
+        Assert.Equal(NaiveAtoms(value), tokenHost);
     }
 
     [Fact]
@@ -566,6 +989,74 @@ public class AtomViewSharedValueGraphTests
         if (counted.IsError)
             Assert.Fail($"Expected counted success but got error: {counted.Error}");
         Assert.Empty(counted.Value.Value.ToHostAtoms());
+    }
+
+    /// <summary>
+    /// The audit's program: <c>D</c> holds 40,000 references to ONE <c>W</c> of one atom and
+    /// 39,999 Booleans. A per-occurrence walk of D reads 1.6e9 slots — about 30 s inside one
+    /// <c>atoms</c> step, and again in the engine's eager host projection of a root <c>D</c> —
+    /// while every evaluation limit, even a 200,000-step budget, sees a small program.
+    /// </summary>
+    private const string AuditWideProgram = """
+        F(i) = true
+        T = map(range(1, 39999), F)
+        W = [1, T*]
+        K(i) = W
+        D = map(range(1, 40000), K)
+        """;
+
+    private const int AuditWidth = 40_000;
+
+    private static EvaluationLimits AuditLimits => new() { MaxSteps = 200_000 };
+
+    [Fact]
+    public void Engine_AtomsBuiltinOverTheAuditWideValue_ReplaysTheSharedRow()
+    {
+        var source = AuditWideProgram + "\ncount(atoms(D))";
+        var success = Assert.IsType<RunResult.Success>(
+            KatLangEngine.Run(source, new RunOptions { EvaluationLimits = AuditLimits }));
+        Assert.Equal([(Decimal128)AuditWidth], success.Atoms);
+
+        // The same program through the observed evaluator: the atoms builtin records into the
+        // run's structural observer. D's slots and W's slots are read once each; the other
+        // occurrences of W replay its one-atom run.
+        var traversal = Observations();
+        var observed = Evaluator.RunCountedObserved(
+            new Expr.AlgorithmExpr(SourceProvenance.ParseValid(source).Root),
+            AuditLimits,
+            observations: new EvaluationObservations { StructuralTraversal = traversal });
+        if (observed.Result.IsError)
+            Assert.Fail($"Expected success but got error: {observed.Result.Error}");
+        Assert.Equal([(Decimal128)AuditWidth], observed.Result.Value.Value.ToHostAtoms());
+        Assert.Equal(2L * AuditWidth, traversal.LanguageAtomsSlotInspectionCount);
+        Assert.Equal(2, traversal.LanguageAtomsStructureExpansionCount);
+        Assert.Equal(AuditWidth - 1, traversal.LanguageAtomsRunReplayCount);
+        Assert.Equal(
+            (2L * AuditWidth + (AuditWidth - 1)) / Result.ValueSemanticComparer.UnitsPerCharge,
+            traversal.LanguageAtomsCancellationCheckpointCount);
+    }
+
+    [Fact]
+    public void Engine_HostProjectionOfTheAuditWideValue_ReplaysTheSharedRow()
+    {
+        var success = Assert.IsType<RunResult.Success>(
+            KatLangEngine.Run(AuditWideProgram + "\nD", new RunOptions { EvaluationLimits = AuditLimits }));
+        Assert.Equal(Enumerable.Repeat((Decimal128)1, AuditWidth), success.Atoms);
+
+        // The engine's own projection carries no observer; re-project the very value it
+        // projected through the observed twin. It is one list of 40,000 references to one W.
+        var root = Assert.IsType<Result.ListValue>(success.Value);
+        Assert.Equal(AuditWidth, root.Items.Count);
+        Assert.All(root.Items, item => Assert.Same(root.Items[0], item));
+        Assert.Equal(AuditWidth + (long)AuditWidth * AuditWidth, PerPathSlotReads(success.Value));
+
+        var host = Observations();
+        Assert.True(success.Value.TryToHostAtomsObserved(
+            EvaluationLimits.Default.EffectiveMaxCollectionItems, host, out var atoms));
+        Assert.Equal(success.Atoms, atoms);
+        Assert.Equal(2L * AuditWidth, host.HostAtomsSlotInspectionCount);
+        Assert.Equal(2, host.HostAtomsStructureExpansionCount);
+        Assert.Equal(AuditWidth - 1, host.HostAtomsRunReplayCount);
     }
 
     [Fact]

@@ -514,7 +514,12 @@ internal sealed class EvaluationBudget
     /// expressions charge the generic evaluator's expression-work checkpoints
     /// (<see cref="TryChargeExpressionNodeWork"/>). A long structural value walk inside one
     /// <c>contains</c> or <c>distinct</c> passes one per small block of child inspections or frame completions
-    /// (<see cref="TryChargeStructuralWork"/>, SEC-02).</para>
+    /// (<see cref="TryChargeStructuralWork"/>, SEC-02). Two uncharged value walks call it
+    /// directly once per <see cref="Result.ValueSemanticComparer.UnitsPerCharge"/> units: the
+    /// <c>atoms</c> collection inside its one builtin step (<c>Result.TryLanguageAtoms</c>, slot
+    /// reads plus replayed atoms) and the once-per-run result export scan (inspected slots). The
+    /// engine's and the flat entry points' host-atom projection runs after evaluation and
+    /// observes the same token itself, at the same cadence and once more after the walk.</para>
     /// </summary>
     internal void ObserveCancellation() => _cancellationToken.ThrowIfCancellationRequested();
 

@@ -227,7 +227,9 @@ public closed record RunResult
         /// Eager, read-only numeric projection through sequences and lists; Booleans and
         /// strings are omitted. Its size is bounded by the run's effective
         /// <see cref="EvaluationLimits.MaxCollectionItems"/>; exceeding that bound produces
-        /// an evaluation failure instead of a success. Display uses <see cref="OutputRows"/>.
+        /// an evaluation failure instead of a success, with code
+        /// <see cref="KatLangErrorCode.CollectionSizeLimitExceeded"/>, no span, and a message
+        /// naming this projection. Display uses <see cref="OutputRows"/>.
         /// </summary>
         public IReadOnlyList<Decimal128> Atoms { get; }
 
@@ -872,6 +874,14 @@ public static class KatLangEngine
             : outcome with { PropertyObservations = observationSink.Complete() };
 
     /// <summary>
+    /// The context frame around a refused host-atom projection
+    /// (<see cref="RunResult.Success.Atoms"/>), so the failure does not read as if a
+    /// collection the program built had exceeded the limit.
+    /// </summary>
+    internal const string HostAtomProjectionContext =
+        "while projecting the result to host atoms (RunResult.Success.Atoms)";
+
+    /// <summary>
     /// Shared post-evaluation projection for <see cref="Run"/> and
     /// <see cref="RunAsync"/>: error classification, display-configuration resolution
     /// (<see cref="ResolveDisplayOptions"/>), bounded host-atom projection, and success
@@ -924,15 +934,25 @@ public static class KatLangEngine
         // Host-atom projection is part of the run's materialization accounting: it opens
         // BOTH sequence and list boundaries recursively, so a modest result value can
         // project into an enormous host list. Bounding it here means a successful
-        // evaluation cannot be followed by an unbounded allocation on the way out.
+        // evaluation cannot be followed by an unbounded allocation on the way out. The walk
+        // replays shared structures instead of re-descending them and observes the
+        // evaluation token during the walk as well as after it.
         var hostAtomLimit = limits.EffectiveMaxCollectionItems;
-        var projected = evalResult.Value.Output.Value.TryToHostAtoms(hostAtomLimit, out var hostAtoms);
+        var projected = evalResult.Value.Output.Value.TryToHostAtoms(
+            hostAtomLimit, out var hostAtoms, evaluationCancellationToken);
         evaluationCancellationToken.ThrowIfCancellationRequested();
         if (!projected)
         {
+            // The refused collection is the engine's own projection (RunResult.Success.Atoms),
+            // not one the program built — every collection the program built fit the limit —
+            // so the message says so. The context frame changes neither the code
+            // (CollectionSizeLimitExceeded: KatLangError.Code resolves through frames) nor the
+            // span (none). RunFlat keeps its bare error, which hosts may type-match.
             return new RunResult.EvalFailure(
                 frontEndResult.ElaboratedRoot,
-                [KatLangError.FromEvalError(new EvalError.CollectionSizeLimitExceeded(hostAtomLimit, hostAtomLimit + 1L))])
+                [KatLangError.FromEvalError(new EvalError.WithContext(
+                    HostAtomProjectionContext,
+                    new EvalError.CollectionSizeLimitExceeded(hostAtomLimit, hostAtomLimit + 1L)))])
             {
                 DisplayOptions = diagnosticDisplayOptions,
             };

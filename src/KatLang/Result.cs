@@ -46,21 +46,29 @@ namespace KatLang;
 /// structural hashing computes each node's hash at most once, the
 /// <see cref="Normalize"/> rebuild computes each node's normal form at most
 /// once, and the bounded atom collectors
-/// (<see cref="TryLanguageAtoms"/>, <see cref="TryToHostAtoms"/>) skip every
-/// structure node a completed descent has proven to contribute no atoms. The
+/// (<see cref="TryLanguageAtoms"/>, <see cref="TryToHostAtoms"/>) descend each
+/// nested structure node at most once: a completed descent records the node's
+/// run of atoms (where it starts in the output and how long it is), and every
+/// later shared occurrence REPLAYS that run from the output instead of
+/// re-descending (an atomless node's empty run is simply skipped). The
 /// collectors' atom OUTPUT stays per-path by contract, bounded by their
-/// <c>maxItems</c> parameter; the memo is what keeps atomLESS shared subgraphs
-/// — which that bound can never stop — from being re-walked exponentially.
-/// Each memo is the one deliberate exception to the O(nesting depth) rule
-/// above: it is O(distinct nodes or pairs actually reached), never O(paths),
-/// and it is allocated lazily so flat values still allocate none. Memo state
-/// belongs to one call and is discarded with it; no hash, comparison result,
-/// normal form, or atom fact is ever cached on a <see cref="Result"/>. The one
-/// wider lifetime is an evaluator OPERATION comparer (SEC-02,
-/// <c>CreateOperationComparer</c>): one <c>contains</c> or <c>distinct</c>
-/// evaluation shares one equality/hash memo across all its items, keeps only
-/// completed verdicts and hashes, charges its walks to the run's budget, and
-/// drops the memo when the builtin returns.</para>
+/// <c>maxItems</c> parameter (a replay that would pass it appends exactly the
+/// prefix the per-path walk would have); their WORK is per distinct nested
+/// node plus the output, so neither an atomLESS shared subgraph — which that
+/// bound can never stop — nor a wide atom-bearing one reached through many
+/// paths is re-walked per path. Each memo is the one deliberate exception to
+/// the O(nesting depth) rule above: it is O(distinct nodes or pairs actually
+/// reached), never O(paths), and it is allocated lazily so flat values still
+/// allocate none. Memo state belongs to one call and is discarded with it; no
+/// hash, comparison result, normal form, or atom run is ever cached on a
+/// <see cref="Result"/>. The one wider lifetime is an evaluator OPERATION
+/// comparer (SEC-02, <c>CreateOperationComparer</c>): one <c>contains</c> or
+/// <c>distinct</c> evaluation shares one equality/hash memo across all its
+/// items, keeps only completed verdicts and hashes, charges its walks to the
+/// run's budget, and drops the memo when the builtin returns. The atom
+/// collectors charge nothing but observe host cancellation once per
+/// <see cref="ValueSemanticComparer.UnitsPerCharge"/> slot reads and replayed
+/// atoms.</para>
 ///
 /// <para>A value-PRODUCING walk must also preserve sharing, or it converts a
 /// compact DAG into the exponentially larger tree its paths spell out and hands
@@ -734,25 +742,42 @@ public closed record Result
     /// atom count per level while adding only two item slots — so its result cannot be
     /// bounded by counting the input. Stopping the traversal early keeps the intermediate
     /// list bounded too, which a count-first prepass would not. The atom bound alone cannot
-    /// bound VISITS, because a shared subgraph that contributes no atoms never advances the
-    /// count; those subgraphs are skipped through the atomless-node memo (see the DAG note
-    /// on the class), so graph visits stay bounded independently of the paths.</para>
+    /// bound the WORK: re-descending a shared structure re-reads every slot below it while
+    /// adding only its atoms, and an atomless one adds none, so a per-occurrence walk is
+    /// O(paths × width) whatever the bound. Every completed nested structure's run of atoms
+    /// is therefore memoized and REPLAYED at its later shared occurrences (see the DAG note
+    /// on the class): each distinct nested structure's slots are read once, and everything
+    /// else the walk does is copying the atoms it outputs.</para>
+    ///
+    /// <para>A non-null <paramref name="budget"/> (the <c>atoms</c> builtin passes its run's)
+    /// is observed for host cancellation once per
+    /// <see cref="ValueSemanticComparer.UnitsPerCharge"/> units of work — slot reads plus
+    /// replayed atoms — without charging any step, item, or structural-work counter.</para>
     /// </summary>
-    internal bool TryLanguageAtoms(long maxItems, out IReadOnlyList<Decimal128> atoms)
-        => TryLanguageAtomsCore(maxItems, observations: null, out atoms);
+    internal bool TryLanguageAtoms(
+        long maxItems, out IReadOnlyList<Decimal128> atoms, Evaluation.EvaluationBudget? budget = null)
+        => TryLanguageAtomsCore(maxItems, observations: null, budget, out atoms);
 
     /// <summary>
-    /// <see cref="TryLanguageAtoms"/> with a passive observer recording the structural work
-    /// the collection walk performs. The observer changes neither the collected atoms, the
-    /// verdict, the memoization, nor the traversal order, and belongs to one measured
-    /// operation. Used only by the shared-value-graph complexity regressions.
+    /// <see cref="TryLanguageAtoms"/> with an optional passive observer recording the structural
+    /// work the collection walk performs. The observer changes neither the collected atoms, the
+    /// verdict, the memoization, the cancellation checkpoints, nor the traversal order, and
+    /// belongs to one measured operation; the <c>atoms</c> builtin passes its run's
+    /// <c>EvaluationObservations.StructuralTraversal</c>, which is <c>null</c> in every ordinary
+    /// run. Used only by the shared-value-graph complexity regressions.
     /// </summary>
     internal bool TryLanguageAtomsObserved(
-        long maxItems, ValueTraversalObservations observations, out IReadOnlyList<Decimal128> atoms)
-        => TryLanguageAtomsCore(maxItems, observations, out atoms);
+        long maxItems,
+        ValueTraversalObservations? observations,
+        out IReadOnlyList<Decimal128> atoms,
+        Evaluation.EvaluationBudget? budget = null)
+        => TryLanguageAtomsCore(maxItems, observations, budget, out atoms);
 
     private bool TryLanguageAtomsCore(
-        long maxItems, ValueTraversalObservations? observations, out IReadOnlyList<Decimal128> atoms)
+        long maxItems,
+        ValueTraversalObservations? observations,
+        Evaluation.EvaluationBudget? budget,
+        out IReadOnlyList<Decimal128> atoms)
     {
         var collected = new List<Decimal128>();
         atoms = collected;
@@ -778,17 +803,21 @@ public closed record Result
 
         // Indexed continuation frames (see the depth note on the class): the collected list
         // is the required output, and every open structure keeps its OWN frame — carrying
-        // the node and the collected count at its entry — so a completed structure that
-        // contributed no atoms is recognized and memoized (see the DAG note). Atoms are
-        // deliberately collected per PATH — that is this collector's contract, bounded by
-        // maxItems — so only zero-atom nodes are safe to skip at a later shared occurrence:
-        // skipping them changes no output, and they are exactly the nodes whose revisits the
-        // atom bound can never stop.
+        // the node and the collected count at its entry — so a completed structure's run of
+        // atoms, collected[start .. start + length), is recognized and memoized (see the DAG
+        // note). Atoms are deliberately collected per PATH — that is this collector's
+        // contract, bounded by maxItems — and a structure's atoms do not depend on where it
+        // is reached, so a later shared occurrence REPLAYS the recorded run instead of
+        // re-descending: the same atoms in the same order, copied from the output itself.
+        // A length-0 run is the former atomless-node memo and is skipped outright.
         var suspended = new Stack<(Result Node, IReadOnlyList<Result> Items, int Next, int CollectedAtEntry)>();
-        HashSet<Result>? atomless = null;
+        Dictionary<Result, (int Start, int Length)>? runs = null;
         Result node = this;
         var next = 0;
         var collectedAtEntry = 0;
+        // Slot reads plus replayed atoms since the last cancellation checkpoint. Observing
+        // cancellation charges nothing: the run already paid for the value when it built it.
+        long uncheckedUnits = 0;
 
         while (true)
         {
@@ -796,13 +825,10 @@ public closed record Result
             {
                 if (suspended.Count == 0) return true;
 
-                // The structure completed without contributing an atom, so no later
-                // occurrence can contribute one either: record it and skip it from now on.
-                if (collected.Count == collectedAtEntry)
-                {
-                    atomless ??= new HashSet<Result>(ReferenceEqualityComparer.Instance);
-                    atomless.Add(node);
-                }
+                // The structure completed, so every later occurrence contributes exactly this
+                // run. Recorded once: an acyclic value never reaches an open frame's node again.
+                runs ??= new Dictionary<Result, (int Start, int Length)>(ReferenceEqualityComparer.Instance);
+                runs[node] = (collectedAtEntry, collected.Count - collectedAtEntry);
 
                 (node, items, next, collectedAtEntry) = suspended.Pop();
                 continue;
@@ -810,34 +836,70 @@ public closed record Result
 
             var child = items[next];
             next++;
+            observations?.RecordLanguageAtomsSlotInspection();
+            if (++uncheckedUnits >= ValueSemanticComparer.UnitsPerCharge)
+            {
+                uncheckedUnits = 0;
+                observations?.RecordLanguageAtomsCancellationCheckpoint();
+                budget?.ObserveCancellation();
+            }
 
+            IReadOnlyList<Result> childItems;
             switch (child)
             {
                 case Atom(var n):
                     if (collected.Count >= maxItems) return false;
                     collected.Add(n);
+                    continue;
+                case SequenceValue(var sequenceItems):
+                    childItems = sequenceItems;
                     break;
-                case SequenceValue(var childItems):
-                    if (childItems.Count > 0 && (atomless is null || !atomless.Contains(child)))
-                    {
-                        observations?.RecordLanguageAtomsStructureExpansion();
-                        suspended.Push((node, items, next, collectedAtEntry));
-                        (node, items, next, collectedAtEntry) = (child, childItems, 0, collected.Count);
-                    }
-
-                    break;
-                case ListValue(var childItems):
-                    if (childItems.Count > 0 && (atomless is null || !atomless.Contains(child)))
-                    {
-                        observations?.RecordLanguageAtomsStructureExpansion();
-                        suspended.Push((node, items, next, collectedAtEntry));
-                        (node, items, next, collectedAtEntry) = (child, childItems, 0, collected.Count);
-                    }
-
+                case ListValue(var listItems):
+                    childItems = listItems;
                     break;
                 default:
-                    break; // strings and any other non-numeric leaves contribute no atoms
+                    continue; // strings and any other non-numeric leaves contribute no atoms
             }
+
+            if (childItems.Count == 0) continue;
+
+            if (runs is not null && runs.TryGetValue(child, out var run))
+            {
+                observations?.RecordLanguageAtomsRunReplay();
+                if (run.Length == 0) continue;
+
+                // Exactly what re-descending would append: the whole run when it fits, else
+                // its first `room` atoms and then the refusal its next atom would cause.
+                var room = maxItems - collected.Count;
+                var copied = run.Length <= room ? run.Length : (int)Math.Max(room, 0L);
+                // Capacity first, so the span over the list's own storage stays valid while
+                // AddRange copies the earlier run to the end. Split at each checkpoint so
+                // even one long replay is cancellable and leftover units are never dropped.
+                collected.EnsureCapacity(checked(collected.Count + copied));
+                for (var replayed = 0; replayed < copied;)
+                {
+                    var chunk = (int)Math.Min(copied - replayed,
+                        ValueSemanticComparer.UnitsPerCharge - uncheckedUnits);
+                    ReadOnlySpan<Decimal128> replay = System.Runtime.InteropServices.CollectionsMarshal
+                        .AsSpan(collected).Slice(run.Start + replayed, chunk);
+                    collected.AddRange(replay);
+                    replayed += chunk;
+                    uncheckedUnits += chunk;
+                    if (uncheckedUnits >= ValueSemanticComparer.UnitsPerCharge)
+                    {
+                        uncheckedUnits = 0;
+                        observations?.RecordLanguageAtomsCancellationCheckpoint();
+                        budget?.ObserveCancellation();
+                    }
+                }
+
+                if (copied < run.Length) return false;
+                continue;
+            }
+
+            observations?.RecordLanguageAtomsStructureExpansion();
+            suspended.Push((node, items, next, collectedAtEntry));
+            (node, items, next, collectedAtEntry) = (child, childItems, 0, collected.Count);
         }
     }
 
@@ -865,26 +927,42 @@ public closed record Result
     ///
     /// <para>The host projection opens BOTH sequence and list boundaries recursively, so
     /// like <see cref="TryLanguageAtoms"/> it can produce far more atoms than the value has
-    /// item slots, and like it the atom bound alone cannot bound VISITS: shared subgraphs
-    /// that contribute no atoms are skipped through the atomless-node memo (see the DAG note
-    /// on the class). It is a separate traversal from the language-level collector on
-    /// purpose: the two are distinct contracts and must not drift through shared code.</para>
+    /// item slots, and like it the atom bound alone cannot bound the WORK: every completed
+    /// nested structure's run of atoms is memoized and REPLAYED at its later shared
+    /// occurrences (see the DAG note on the class), so each distinct nested structure's slots
+    /// are read once and the rest is copying output. It is a separate traversal from the
+    /// language-level collector on purpose: the two are distinct contracts and must not drift
+    /// through shared code.</para>
+    ///
+    /// <para><paramref name="cancellationToken"/> (the engine and the flat entry points pass
+    /// their evaluation token; the projection runs after evaluation, outside any budget) is
+    /// observed once per <see cref="ValueSemanticComparer.UnitsPerCharge"/> units of work —
+    /// slot reads plus replayed atoms — so a host can stop a wide projection mid-walk.
+    /// Nothing is charged.</para>
     /// </summary>
-    internal bool TryToHostAtoms(long maxItems, out IReadOnlyList<Decimal128> atoms)
-        => TryToHostAtomsCore(maxItems, observations: null, out atoms);
+    internal bool TryToHostAtoms(
+        long maxItems, out IReadOnlyList<Decimal128> atoms, CancellationToken cancellationToken = default)
+        => TryToHostAtomsCore(maxItems, observations: null, out atoms, cancellationToken);
 
     /// <summary>
     /// <see cref="TryToHostAtoms"/> with a passive observer recording the structural work
     /// the projection walk performs. The observer changes neither the produced atoms, the
-    /// verdict, the memoization, nor the traversal order, and belongs to one measured
-    /// operation. Used only by the shared-value-graph complexity regressions.
+    /// verdict, the memoization, the cancellation checkpoints, nor the traversal order, and
+    /// belongs to one measured operation. Used only by the shared-value-graph complexity
+    /// regressions.
     /// </summary>
     internal bool TryToHostAtomsObserved(
-        long maxItems, ValueTraversalObservations observations, out IReadOnlyList<Decimal128> atoms)
-        => TryToHostAtomsCore(maxItems, observations, out atoms);
+        long maxItems,
+        ValueTraversalObservations observations,
+        out IReadOnlyList<Decimal128> atoms,
+        CancellationToken cancellationToken = default)
+        => TryToHostAtomsCore(maxItems, observations, out atoms, cancellationToken);
 
     private bool TryToHostAtomsCore(
-        long maxItems, ValueTraversalObservations? observations, out IReadOnlyList<Decimal128> atoms)
+        long maxItems,
+        ValueTraversalObservations? observations,
+        out IReadOnlyList<Decimal128> atoms,
+        CancellationToken cancellationToken = default)
     {
         // The host projection is PUBLISHED (RunResult.Success.Atoms, Evaluator.RunFlat): hand out
         // a read-only view of the list being filled, so no consumer can change it through a cast.
@@ -914,17 +992,21 @@ public closed record Result
 
         // Indexed continuation frames (see the depth note on the class): the collected list
         // is the required output, and every open structure keeps its OWN frame — carrying
-        // the node and the collected count at its entry — so a completed structure that
-        // contributed no atoms is recognized and memoized (see the DAG note). Atoms are
-        // deliberately collected per PATH — that is this projection's contract, bounded by
-        // maxItems — so only zero-atom nodes are safe to skip at a later shared occurrence:
-        // skipping them changes no output, and they are exactly the nodes whose revisits the
-        // atom bound can never stop.
+        // the node and the collected count at its entry — so a completed structure's run of
+        // host atoms, collected[start .. start + length), is recognized and memoized (see the
+        // DAG note). Atoms are deliberately produced per PATH — that is this projection's
+        // contract, bounded by maxItems — and a structure's atoms do not depend on where it
+        // is reached, so a later shared occurrence REPLAYS the recorded run instead of
+        // re-descending: the same atoms in the same order, copied from the output itself.
+        // A length-0 run is the former atomless-node memo and is skipped outright.
         var suspended = new Stack<(Result Node, IReadOnlyList<Result> Items, int Next, int CollectedAtEntry)>();
-        HashSet<Result>? atomless = null;
+        Dictionary<Result, (int Start, int Length)>? runs = null;
         Result node = this;
         var next = 0;
         var collectedAtEntry = 0;
+        // Slot reads plus replayed atoms since the last cancellation checkpoint. The projection
+        // runs after evaluation over a value the run already paid for, so it charges nothing.
+        long uncheckedUnits = 0;
 
         while (true)
         {
@@ -932,13 +1014,10 @@ public closed record Result
             {
                 if (suspended.Count == 0) return true;
 
-                // The structure completed without contributing an atom, so no later
-                // occurrence can contribute one either: record it and skip it from now on.
-                if (collected.Count == collectedAtEntry)
-                {
-                    atomless ??= new HashSet<Result>(ReferenceEqualityComparer.Instance);
-                    atomless.Add(node);
-                }
+                // The structure completed, so every later occurrence contributes exactly this
+                // run. Recorded once: an acyclic value never reaches an open frame's node again.
+                runs ??= new Dictionary<Result, (int Start, int Length)>(ReferenceEqualityComparer.Instance);
+                runs[node] = (collectedAtEntry, collected.Count - collectedAtEntry);
 
                 (node, items, next, collectedAtEntry) = suspended.Pop();
                 continue;
@@ -946,36 +1025,72 @@ public closed record Result
 
             var child = items[next];
             next++;
+            observations?.RecordHostAtomsSlotInspection();
+            if (++uncheckedUnits >= ValueSemanticComparer.UnitsPerCharge)
+            {
+                uncheckedUnits = 0;
+                observations?.RecordHostAtomsCancellationCheckpoint();
+                cancellationToken.ThrowIfCancellationRequested();
+            }
 
+            IReadOnlyList<Result> childItems;
             switch (child)
             {
                 case Atom(var n):
                     if (collected.Count >= maxItems) return false;
                     collected.Add(n);
-                    break;
+                    continue;
                 case Str:
+                    continue;
+                case SequenceValue(var sequenceItems):
+                    childItems = sequenceItems;
                     break;
-                case SequenceValue(var childItems):
-                    if (childItems.Count > 0 && (atomless is null || !atomless.Contains(child)))
-                    {
-                        observations?.RecordHostAtomsStructureExpansion();
-                        suspended.Push((node, items, next, collectedAtEntry));
-                        (node, items, next, collectedAtEntry) = (child, childItems, 0, collected.Count);
-                    }
-
-                    break;
-                case ListValue(var childItems):
-                    if (childItems.Count > 0 && (atomless is null || !atomless.Contains(child)))
-                    {
-                        observations?.RecordHostAtomsStructureExpansion();
-                        suspended.Push((node, items, next, collectedAtEntry));
-                        (node, items, next, collectedAtEntry) = (child, childItems, 0, collected.Count);
-                    }
-
+                case ListValue(var listItems):
+                    childItems = listItems;
                     break;
                 default:
-                    break;
+                    continue;
             }
+
+            if (childItems.Count == 0) continue;
+
+            if (runs is not null && runs.TryGetValue(child, out var run))
+            {
+                observations?.RecordHostAtomsRunReplay();
+                if (run.Length == 0) continue;
+
+                // Exactly what re-descending would produce: the whole run when it fits, else
+                // its first `room` atoms and then the refusal its next atom would cause.
+                var room = maxItems - collected.Count;
+                var copied = run.Length <= room ? run.Length : (int)Math.Max(room, 0L);
+                // Capacity first, so the span over the list's own storage stays valid while
+                // AddRange copies the earlier run to the end. Split at each checkpoint so
+                // even one long replay is cancellable and leftover units are never dropped.
+                collected.EnsureCapacity(checked(collected.Count + copied));
+                for (var replayed = 0; replayed < copied;)
+                {
+                    var chunk = (int)Math.Min(copied - replayed,
+                        ValueSemanticComparer.UnitsPerCharge - uncheckedUnits);
+                    ReadOnlySpan<Decimal128> replay = System.Runtime.InteropServices.CollectionsMarshal
+                        .AsSpan(collected).Slice(run.Start + replayed, chunk);
+                    collected.AddRange(replay);
+                    replayed += chunk;
+                    uncheckedUnits += chunk;
+                    if (uncheckedUnits >= ValueSemanticComparer.UnitsPerCharge)
+                    {
+                        uncheckedUnits = 0;
+                        observations?.RecordHostAtomsCancellationCheckpoint();
+                        cancellationToken.ThrowIfCancellationRequested();
+                    }
+                }
+
+                if (copied < run.Length) return false;
+                continue;
+            }
+
+            observations?.RecordHostAtomsStructureExpansion();
+            suspended.Push((node, items, next, collectedAtEntry));
+            (node, items, next, collectedAtEntry) = (child, childItems, 0, collected.Count);
         }
     }
 
