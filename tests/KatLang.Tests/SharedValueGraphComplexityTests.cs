@@ -773,10 +773,13 @@ public partial class SharedValueGraphComplexityTests
         Assert.False(comparer.Equals(unequal, left));
         Assert.True(comparer.Equals(equal, left));
 
-        // (left, equal), (left, unequal), (unequal, left) and (equal, left) are four ordered pair
-        // walks; each repeat expands only the narrow root, whose child pair is a memo answer.
+        // (left, equal), (left, unequal) and (unequal, left) are three ordered pair walks; each repeat
+        // expands only the narrow root, whose child pair is a memo answer. Reference classes are
+        // symmetric (unequal pairs stay ordered), so (equal, left) is answered by the classes the
+        // (left, equal) walk recorded: its narrow root too. The exact-pair memo was ordered and
+        // re-walked it in full (2·FullWalk + 2·MismatchWalk + 2 = 168 expansions; now 127).
         Assert.Equal(
-            2 * FullWalk(DeepDepth) + 2 * MismatchWalk(DeepDepth) + 2,
+            FullWalk(DeepDepth) + 2 * MismatchWalk(DeepDepth) + 3,
             observations.EqualityPairExpansionCount);
     }
 

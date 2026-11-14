@@ -42,7 +42,13 @@ namespace KatLang;
 /// PATHS is exponential on legally built values. Every walk a shared node can
 /// blow up therefore memoizes by REFERENCE IDENTITY for the duration of ONE
 /// top-level operation: structural equality in <see cref="ValueComparer"/>
-/// expands each ordered <c>(left, right)</c> reference pair at most once,
+/// expands each ordered <c>(left, right)</c> reference pair at most once; the
+/// evaluator's charged equality walks (<see cref="EvaluatorValueEquals"/> and
+/// the SEC-02 operation comparer) go further and keep EQUAL knowledge as
+/// equivalence classes of references (<see cref="ReferenceClasses"/>, union–find),
+/// so a pair whose two references are already known equal through any chain is
+/// skipped, and two equal values whose internal sharing differs (no node-to-node
+/// correspondence) cost O(|A| + |B|) instead of |A|·|B| reference pairs;
 /// structural hashing computes each node's hash at most once, the
 /// <see cref="Normalize"/> rebuild computes each node's normal form at most
 /// once, and the bounded atom collectors
@@ -57,14 +63,16 @@ namespace KatLang;
 /// node plus the output, so neither an atomLESS shared subgraph — which that
 /// bound can never stop — nor a wide atom-bearing one reached through many
 /// paths is re-walked per path. Each memo is the one deliberate exception to
-/// the O(nesting depth) rule above: it is O(distinct nodes or pairs actually
-/// reached), never O(paths), and it is allocated lazily so flat values still
+/// the O(nesting depth) rule above: it is O(distinct nodes actually reached)
+/// — O(distinct pairs reached) for the context-free comparer's per-call equality
+/// walk and the operation comparer's retained unequal/string verdicts — never
+/// O(paths), and it is allocated lazily so flat values still
 /// allocate none. Memo state belongs to one call and is discarded with it; no
 /// hash, comparison result, normal form, or atom run is ever cached on a
 /// <see cref="Result"/>. The one wider lifetime is an evaluator OPERATION
 /// comparer (SEC-02, <c>CreateOperationComparer</c>): one <c>contains</c> or
 /// <c>distinct</c> evaluation shares one equality/hash memo across all its
-/// items, keeps only completed verdicts and hashes, charges its walks to the
+/// items, keeps only completed knowledge and hashes, charges its walks to the
 /// run's budget, and drops the memo when the builtin returns. The atom
 /// collectors charge nothing but observe host cancellation once per
 /// <see cref="ValueSemanticComparer.UnitsPerCharge"/> slot reads and replayed
@@ -1308,11 +1316,17 @@ public closed record Result
     /// <para>An OPERATION comparer (<see cref="CreateOperationComparer"/>, SEC-02) runs operation
     /// twins of the two walks (<see cref="EqualsInOperation"/>, <see cref="HashInOperation"/>) over an
     /// <see cref="OperationMemo"/>: the memos then span every call of one evaluator operation, the
-    /// walks retain COMPLETED verdicts and hashes of the pairs and nodes worth retaining, and every
-        /// child slot inspected and expanded structure completed is charged to the run's budget in small blocks. The per-call walks
-    /// below are unchanged by it. Without it, the memos died
+    /// walks retain COMPLETED knowledge and hashes of the pairs and nodes worth retaining, and every
+    /// child slot inspected and expanded structure completed is charged to the run's budget in small
+    /// blocks. The per-call walks below are unchanged by it. Without it, the memos died
     /// with each top-level call, so <c>contains</c> over N references to one deep value re-walked it
     /// N times — O(N × D) uncharged, uncancellable work from O(N + D) construction.</para>
+    ///
+    /// <para>The evaluator's equality walks (the operation walk and the single-comparison walk,
+    /// <see cref="EqualsSingleWalk"/>) keep EQUAL knowledge as equivalence classes of references
+    /// (<see cref="ReferenceClasses"/>), not as exact pairs. Their equal structural memo is O(distinct nodes reached),
+    /// so two equal values whose internal sharing differs cost O(|A| + |B|), never |A|·|B| pairs.
+    /// The per-call walk of the context-free <see cref="ValueComparer"/> still keeps exact pairs.</para>
     /// </summary>
     internal sealed class ValueSemanticComparer : IEqualityComparer<Result>
     {
@@ -1793,24 +1807,52 @@ public closed record Result
         /// top-level dispatch in <see cref="Equals(Result?, Result?)"/> already matched. Same verdict
         /// as the per-call walk there, and the same left-to-right order and early mismatch return.
         ///
-        /// <para>OPERATION MEMO. Verdicts outlive the comparison, so the memo records how each
-        /// retained pair ENDED: a pair is EQUAL when its frame completes and, on a mismatch, the
-        /// mismatching pair and every retained pair still open above it are UNEQUAL (each of their
-        /// children includes the unequal pair below it); every other pair it entered had completed.
-        /// The walk keeps every frame for this — no tail-descent drop, one frame per open level,
-        /// still O(depth) — and the frame records whether its pair was seeded.</para>
+        /// <para>OPERATION MEMO. Knowledge outlives the comparison. EQUAL knowledge is
+        /// <see cref="OperationMemo.Classes"/>, equivalence classes of references
+        /// (<see cref="ReferenceClasses"/>), so a pair is skipped whenever its two references already
+        /// share a class, not only when that exact pair was met before. UNEQUAL knowledge is the exact
+        /// pairs of
+        /// <see cref="OperationMemo.UnequalPairs"/>: on a mismatch, the mismatching pair and every
+        /// retained pair still open above it (each of their children includes the unequal pair below
+        /// it). The walk keeps every frame for this — no tail-descent drop, one frame per open level,
+        /// still O(depth) — and the frame records whether its pair was recorded and by which union.</para>
         ///
-        /// <para>WHAT IS RETAINED. A nested pair is retained when it DESCENDS into a nested pair:
-        /// only such a pair can be reached again along many paths of a shared DAG, so it is seeded IN
-        /// PROGRESS at its first descent (which also keeps an invariant-violating cyclic graph total,
-        /// exactly as in the per-call walk) and finalized at completion or mismatch. A pair that
-        /// never descends — its children are leaves, empties, or memo answers — is retained only when
-        /// it is at least <see cref="RetainedWidth"/> wide; a narrower one costs fewer inspections to
-        /// re-walk than to remember. The top-level pair is retained by width alone: a repeated
+        /// <para>WHAT IS RECORDED, AND WHEN — exactly the points of <see cref="EqualsSingleWalk"/>, so
+        /// both walks make the same class decisions in the same order. A nested pair is recorded when
+        /// it ENTERS at least <see cref="RetainedWidth"/> wide, or else at its first DESCENT into a
+        /// nested pair: only such a pair can be reached again along many paths of a shared DAG, and a
+        /// narrower all-leaf one costs fewer inspections to re-walk than to remember. Recording is a
+        /// TENTATIVE union, which also skips an open ancestor coinductively and keeps an
+        /// invariant-violating cyclic graph total, exactly as in the per-call walk. When the walk
+        /// returns true, every tentative union is committed. When it returns false, they are all
+        /// undone and the pairs whose levels COMPLETED are re-linked: only the OPEN levels were assumed
+        /// equal (see the correctness note below). The top-level pair is never recorded while its
+        /// walk runs; it is recorded EQUAL or UNEQUAL afterwards by width alone. A repeated narrow
         /// top-level pair's re-walk inspects its own children, each a leaf, a memo answer, or a narrow
         /// leaf pair, so it is bounded by RetainedWidth² whatever lies below. That keeps the memo at
         /// zero entries for ordinary shallow collections while every deep or wide repetition is
         /// answered from it.</para>
+        ///
+        /// <para>CORRECTNESS (both walks; values are finite and acyclic). Leaf equality is an
+        /// equivalence: <c>Decimal128.Equals</c> (NaN is one value; quantum and the sign of zero are
+        /// ignored), ordinal strings, Booleans, and call-reference identity. Only pairs of one kind and
+        /// count are ever recorded. (1) SOUND. A class skip happens only for a child pair (c, d) of the
+        /// current level. Every OPEN recorded level is an ancestor (P, Q) on the walk's path, so c is a
+        /// strict descendant of every open P and d of every open Q. Suppose every other recorded pair
+        /// is truly equal: committed classes by induction over earlier walks, completed levels by
+        /// induction over this one. Equal values have equal heights. A chain of unions from c to d
+        /// that used an open link would have to enter its first open link at the Q end
+        /// (h(Q) = h(c) &lt; h(every P)) and leave its last open link at the P end (h(P) = h(d)). Then
+        /// h(c) &lt; h(P) = h(d) &lt; h(Q) = h(c), a contradiction. So every skip joins two truly
+        /// equal values, and every level that completes, even in a walk that later returns false,
+        /// is truly equal. (2) COMPLETE. A walk descends only along real path pairs, so on equal values
+        /// it never meets a mismatch. If it returns true, the closure of its unions with the equal
+        /// leaf pairs is a bisimulation, and bisimilar finite acyclic values are equal. Hence the
+        /// verdict is exactly <see cref="ValueComparer"/>'s and Lean's <c>resultValueEq</c>. On
+        /// values whose sharing differs, the units, and the work done before a mismatch is reached,
+        /// may differ from an exact-pair memo's. The verdict never does. In one comparison whose two
+        /// sides' sharing corresponds node to node, every class is one recorded pair, so the walk is
+        /// exactly the exact-pair walk.</para>
         /// </summary>
         private bool EqualsInOperation(Result x, Result y, IReadOnlyList<Result> leftItems, IReadOnlyList<Result> rightItems)
         {
@@ -1824,16 +1866,21 @@ public closed record Result
         private bool EqualsInOperationWalk(
             OperationMemo op, Result x, Result y, IReadOnlyList<Result> leftItems, IReadOnlyList<Result> rightItems)
         {
-            // A top-level pair is never in progress outside its own walk, so a retained entry is a verdict.
-            var pairs = op.Verdicts;
-            if (pairs is not null && pairs.TryGetValue(new ReferencePair(x, y), out var known))
-                return known == PairState.Equal;
+            // No walk is open between comparisons, so the committed classes and the unequal pairs
+            // are completed knowledge.
+            var classes = op.Classes;
+            if (classes is not null && classes.Same(x, y))
+                return true;
+            if (op.UnequalPairs is { } known && known.Contains(new ReferencePair(x, y)))
+                return false;
 
             observations?.RecordEqualityPairExpansion();
 
             // Allocated at the first descent, so a flat pair needs no frame stack at all.
             Stack<EqualityFrame>? suspended = null;
-            var (leftNode, rightNode, seeded, next) = (x, y, false, 0);
+            // The current level's pair, whether it was recorded, and its tentative union (if any).
+            // The top-level pair is never recorded during its own walk.
+            var (leftNode, rightNode, recorded, union, next) = (x, y, false, ReferenceClasses.NoUnion, 0);
 
             while (true)
             {
@@ -1842,10 +1889,19 @@ public closed record Result
                     // A singleton chain can finish thousands of frames without inspecting another
                     // child. Account for completion too, so that unwind remains cancellable.
                     op.Charge(observations);
-                    if (seeded || leftItems.Count >= RetainedWidth)
-                        (pairs ??= op.Verdicts ??= [])[new ReferencePair(leftNode, rightNode)] = PairState.Equal;
-                    if (suspended is not { Count: not 0 }) return true;
-                    (leftNode, rightNode, leftItems, rightItems, next, seeded) = suspended.Pop();
+                    if (union != ReferenceClasses.NoUnion)
+                        classes!.MarkCompleted(union);
+                    if (suspended is not { Count: not 0 })
+                    {
+                        // EQUAL: every tentative union belongs to a completed level. A wide top-level
+                        // pair is then recorded too, so a repetition is answered without a walk.
+                        classes?.Commit();
+                        if (leftItems.Count >= RetainedWidth)
+                            (classes ??= op.Classes = new ReferenceClasses()).Union(x, y);
+                        return true;
+                    }
+
+                    (leftNode, rightNode, leftItems, rightItems, next, recorded, union) = suspended.Pop();
                     continue;
                 }
 
@@ -1860,54 +1916,62 @@ public closed record Result
                     case ChildPair.Equal:
                         continue;
                     case ChildPair.Unequal:
-                        return Mismatch(op, leftNode, rightNode, leftItems.Count, seeded, suspended);
+                        return Mismatch(op, leftNode, rightNode, leftItems.Count, recorded, suspended);
                 }
 
-                // A retained verdict answers the pair. IN PROGRESS means the pair is open above —
-                // reachable only through an invalid cyclic graph — and is skipped coinductively.
-                if (pairs is not null && pairs.TryGetValue(new ReferencePair(left, right), out var state))
-                {
-                    if (state == PairState.Unequal) return Mismatch(op, leftNode, rightNode, leftItems.Count, seeded, suspended);
+                // One class: known equal (or, only through an invalid cyclic graph, an open ancestor,
+                // skipped coinductively). A retained unequal pair is a mismatch.
+                if (classes is not null && classes.Same(left, right))
                     continue;
-                }
+                if (op.UnequalPairs is { } unequal && unequal.Contains(new ReferencePair(left, right)))
+                    return Mismatch(op, leftNode, rightNode, leftItems.Count, recorded, suspended);
 
-                if (!seeded && suspended is { Count: not 0 })
+                // Recorded at its first descent (a nested pair narrower than RetainedWidth).
+                if (!recorded && suspended is { Count: not 0 })
                 {
-                    // A preceding string inspection may already have created the shared verdict
-                    // dictionary. Adopt it instead of replacing its retained payload verdicts.
-                    (pairs ??= op.Verdicts ??= [])[new ReferencePair(leftNode, rightNode)] = PairState.InProgress;
-                    seeded = true;
+                    union = (classes ??= op.Classes = new ReferenceClasses()).UnionTentatively(leftNode, rightNode);
+                    recorded = true;
                 }
 
                 observations?.RecordEqualityPairExpansion();
 
                 observations?.RecordEqualityFrameSuspension();
-                (suspended ??= new Stack<EqualityFrame>()).Push(new EqualityFrame(leftNode, rightNode, leftItems, rightItems, next, seeded));
-                (leftNode, rightNode, leftItems, rightItems, next, seeded) = (left, right, childLeft, childRight, 0, false);
+                (suspended ??= new Stack<EqualityFrame>()).Push(
+                    new EqualityFrame(leftNode, rightNode, leftItems, rightItems, next, recorded, union));
+                (leftNode, rightNode, leftItems, rightItems, next) = (left, right, childLeft, childRight, 0);
+
+                // Recorded on entry when at least RetainedWidth wide.
+                recorded = childLeft.Count >= RetainedWidth;
+                union = recorded
+                    ? (classes ??= op.Classes = new ReferenceClasses()).UnionTentatively(left, right)
+                    : ReferenceClasses.NoUnion;
             }
         }
 
         /// <summary>
         /// The <c>false</c> of an operation walk that found a mismatch, after retaining it: the
-        /// mismatching pair and every pair still open above it are UNEQUAL where retained (seeded,
-        /// or at least <see cref="RetainedWidth"/> wide). Every seeded pair is open on this path, so
-        /// none is left in progress. Every frame is charged, so the unwind stays cancellable.
+        /// mismatching pair and every pair still open above it are UNEQUAL where retained (recorded,
+        /// or at least <see cref="RetainedWidth"/> wide). The walk's tentative unions are then rolled
+        /// back, keeping only those of COMPLETED levels: the open ones were assumptions this verdict
+        /// refutes. Every frame is charged, so the unwind stays cancellable.
         /// </summary>
         private bool Mismatch(
-            OperationMemo op, Result leftNode, Result rightNode, int count, bool seeded, Stack<EqualityFrame>? suspended)
+            OperationMemo op, Result leftNode, Result rightNode, int count, bool recorded, Stack<EqualityFrame>? suspended)
         {
             op.Charge(observations);
-            if (seeded || count >= RetainedWidth)
-                (op.Verdicts ??= [])[new ReferencePair(leftNode, rightNode)] = PairState.Unequal;
-            if (suspended is null)
-                return false;
-            foreach (var frame in suspended)
+            if (recorded || count >= RetainedWidth)
+                (op.UnequalPairs ??= []).Add(new ReferencePair(leftNode, rightNode));
+            if (suspended is not null)
             {
-                op.Charge(observations);
-                if (frame.Seeded || frame.Left.Count >= RetainedWidth)
-                    (op.Verdicts ??= [])[new ReferencePair(frame.LeftNode, frame.RightNode)] = PairState.Unequal;
+                foreach (var frame in suspended)
+                {
+                    op.Charge(observations);
+                    if (frame.Recorded || frame.Left.Count >= RetainedWidth)
+                        (op.UnequalPairs ??= []).Add(new ReferencePair(frame.LeftNode, frame.RightNode));
+                }
             }
 
+            op.Classes?.Rollback();
             return false;
         }
 
@@ -1917,13 +1981,17 @@ public closed record Result
         /// and charged units of <see cref="EqualsInOperationWalk"/>, with only the state that one
         /// comparison can read.
         ///
-        /// <para>EXPANDED, NOT FINALIZED. The walk returns <c>false</c> at its first mismatch, so a pair
-        /// it meets again after expanding it has finished equal — or is open above it, which only an
-        /// invalid cyclic graph allows and which is skipped coinductively. A pair is therefore recorded
-        /// as expanded — in a set, like the per-call walk's memo — once: when it is seeded (the moment
-        /// it first descends into a nested pair, as above) or entered (when at least
-        /// <see cref="RetainedWidth"/> wide). No in-progress state, no finalization, no unequal
-        /// verdict, and the top-level pair is never recorded.</para>
+        /// <para>RECORDED, NOT FINALIZED. The walk returns <c>false</c> at its first mismatch, and its
+        /// memo dies with it, so it needs no verdicts, only equivalence classes of references
+        /// (<see cref="ReferenceClasses"/>, committed layer only). A pair whose two references share a
+        /// class is skipped: known equal, or an open ancestor, which only an invalid cyclic graph
+        /// allows and which is skipped coinductively. A pair is recorded (its two references united)
+        /// once, at the same points as in the operation walk: when it is seeded (the moment it first
+        /// descends into a nested pair) or entered (when at least <see cref="RetainedWidth"/> wide).
+        /// No in-progress state, no finalization, no unequal verdict, and the top-level pair is never
+        /// recorded. The memo is O(distinct nodes reached): two equal values with different internal
+        /// sharing no longer cost |A|·|B| pairs (see the correctness note on
+        /// <see cref="EqualsInOperation"/>).</para>
         ///
         /// <para>TAIL DESCENT WITH COUNTED COMPLETIONS. Since nothing is finalized, a parent whose last
         /// child is being descended into keeps no frame: its completion is added to the child's
@@ -1942,9 +2010,9 @@ public closed record Result
             // Allocated at the first descent that leaves siblings behind, so a flat pair or a chain
             // descended through last children needs no frame stack at all.
             Stack<SingleFrame>? suspended = null;
-            // The expanded pairs, the per-call walk's memo shape: the walk needs no verdict, only
-            // whether a pair was already expanded. Allocated at the first record.
-            HashSet<ReferencePair>? expanded = null;
+            // The classes of recorded references: the walk needs no verdict, only whether a pair is
+            // already known equal. Allocated at the first record.
+            ReferenceClasses? classes = null;
             // The current level's own pair, read only while the level is unsettled (not yet recorded);
             // the top-level pair is settled from the start, since it is never recorded.
             Result leftNode = null!, rightNode = null!;
@@ -1976,13 +2044,13 @@ public closed record Result
                         return SingleMismatch(op, observations, levels, suspended);
                 }
 
-                // Recorded once expanded: equal (or an open cyclic ancestor, skipped coinductively).
-                if (expanded is not null && expanded.Contains(new ReferencePair(left, right)))
+                // One class: known equal (or an open cyclic ancestor, skipped coinductively).
+                if (classes is not null && classes.Same(left, right))
                     continue;
 
                 if (!settled)
                 {
-                    (expanded ??= []).Add(new ReferencePair(leftNode, rightNode));
+                    (classes ??= new ReferenceClasses()).Union(leftNode, rightNode);
                     settled = true;
                 }
 
@@ -2002,7 +2070,7 @@ public closed record Result
                 (leftNode, rightNode, leftItems, rightItems, next) = (left, right, childLeft, childRight, 0);
                 settled = childLeft.Count >= RetainedWidth;
                 if (settled)
-                    (expanded ??= []).Add(new ReferencePair(left, right));
+                    (classes ??= new ReferenceClasses()).Union(left, right);
             }
         }
 
@@ -2085,8 +2153,10 @@ public closed record Result
         /// texts of different lengths are decided by the length check and two references to one text
         /// by identity, both free; two distinct equal-length texts are charged
         /// <c>length / </c><see cref="StringCharsPerUnit"/> units before the one native comparison. A
-        /// verdict worth at least <see cref="RetainedWidth"/> units is retained by reference pair, so
-        /// a repeated long comparison of the same two values is answered without re-reading them.
+        /// verdict worth at least <see cref="RetainedWidth"/> units is retained by reference pair in
+        /// the operation's own string-verdict dictionary (<see cref="OperationMemo.StringVerdicts"/>,
+        /// apart from the structural memo since the SEC-02-FU2 mixed-value repair), so a repeated long
+        /// comparison of the same two values is answered without re-reading them.
         /// </summary>
         private static bool StringEqualsInOperation(
             OperationMemo op, Result x, Result y, string left, string right, ValueTraversalObservations? observations)
@@ -2097,13 +2167,13 @@ public closed record Result
                 return StringComparer.Ordinal.Equals(left, right);
 
             var retained = units >= RetainedWidth;
-            if (retained && op.Verdicts is { } pairs && pairs.TryGetValue(new ReferencePair(x, y), out var known))
-                return known == PairState.Equal;
+            if (retained && op.StringVerdicts is { } verdicts && verdicts.TryGetValue(new ReferencePair(x, y), out var known))
+                return known;
 
             op.Charge(units, observations);
             var equal = StringComparer.Ordinal.Equals(left, right);
             if (retained)
-                (op.Verdicts ??= [])[new ReferencePair(x, y)] = equal ? PairState.Equal : PairState.Unequal;
+                (op.StringVerdicts ??= [])[new ReferencePair(x, y)] = equal;
             return equal;
         }
 
@@ -2131,14 +2201,18 @@ public closed record Result
             return hash;
         }
 
-        /// <summary>One suspended pair of an operation equality walk.</summary>
+        /// <summary>
+        /// One suspended pair of an operation equality walk: whether the pair was recorded, and its
+        /// tentative union (<see cref="ReferenceClasses.NoUnion"/> when none was made).
+        /// </summary>
         private readonly record struct EqualityFrame(
             Result LeftNode,
             Result RightNode,
             IReadOnlyList<Result> Left,
             IReadOnlyList<Result> Right,
             int Next,
-            bool Seeded);
+            bool Recorded,
+            int Union);
 
         /// <summary>
         /// One suspended level of the single-comparison walk: a parent with children still to visit,
@@ -2291,29 +2365,28 @@ public closed record Result
         }
 
         /// <summary>
-        /// How a retained pair of an operation comparer's memo stands: <see cref="InProgress"/> from
-        /// its first descent until its walk finalizes it as <see cref="Equal"/> or
-        /// <see cref="Unequal"/>. A finished walk leaves no pair in progress.
-        /// </summary>
-        private enum PairState : byte
-        {
-            InProgress = 0,
-            Equal = 1,
-            Unequal = 2,
-        }
-
-        /// <summary>
         /// The state of ONE operation comparer (SEC-02): the cross-call reference memos and the
         /// work-charging link to the owning run's budget. Created per evaluator operation and
         /// discarded with it — never static, never shared between operations, runs, or threads, and
-        /// never attached to a <see cref="Result"/>. Its memos grow with the distinct pairs and
-        /// nodes the walks actually expand, never with paths, and every entry corresponds to
-        /// at least one charged unit, so the step budget bounds the memo as well as the work.
+        /// never attached to a <see cref="Result"/>. Equal structural knowledge and node hashes grow
+        /// with the distinct nodes the walks actually reach. Unequal structural verdicts (at most one
+        /// per frame unwound on a mismatch) and string verdicts still grow with the distinct inspected
+        /// pairs. No memo grows with unfolded paths, and every entry follows charged work, so the
+        /// step budget bounds the memo as well as the work.
         /// </summary>
         private sealed class OperationMemo(Evaluation.EvaluationBudget budget)
         {
-            /// <summary>Equality verdicts by ordered reference pair: completed ones, plus the open path of the running walk.</summary>
-            internal Dictionary<ReferencePair, PairState>? Verdicts;
+            /// <summary>
+            /// Equal knowledge: equivalence classes of references (committed, plus the running walk's
+            /// tentative unions) (see <see cref="EqualsInOperation"/>).
+            /// </summary>
+            internal ReferenceClasses? Classes;
+
+            /// <summary>Unequal structural verdicts by ordered reference pair.</summary>
+            internal HashSet<ReferencePair>? UnequalPairs;
+
+            /// <summary>Retained long-string verdicts by ordered reference pair (SEC-02-FU).</summary>
+            internal Dictionary<ReferencePair, bool>? StringVerdicts;
 
             /// <summary>Completed structure hashes by reference, plus the open path of the running walk.</summary>
             internal Dictionary<Result, int>? NodeHashes;
@@ -2397,7 +2470,9 @@ public closed record Result
 
             internal void Release()
             {
-                Verdicts = null;
+                Classes = null;
+                UnequalPairs = null;
+                StringVerdicts = null;
                 NodeHashes = null;
                 StringHashes = null;
                 released = true;

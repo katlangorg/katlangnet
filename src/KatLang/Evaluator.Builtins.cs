@@ -2095,8 +2095,8 @@ public static partial class Evaluator
     ///
     /// <para>The scan stops at the first match. Its comparisons share ONE operation comparer
     /// (SEC-02, <see cref="Result.CreateOperationComparer"/>): the same value equality as
-    /// <see cref="Result.ValueComparer"/>, with reference-pair verdicts reused across the whole
-    /// scan and the walks' work charged to the run's budget.</para>
+    /// <see cref="Result.ValueComparer"/>, with equality knowledge (classes of equal references, unequal pairs) reused
+    /// across the whole scan and the walks' work charged to the run's budget.</para>
     /// </summary>
     private static EvalResult<CountedResult> EvalContainsCounted(
         EvalCtx ctx,
@@ -2154,7 +2154,7 @@ public static partial class Evaluator
     /// value, and sequence/list values structurally by their elements.
     ///
     /// <para>Every hash and duplicate comparison shares ONE operation comparer (SEC-02,
-    /// <see cref="Result.CreateOperationComparer"/>): node hashes and pair verdicts are reused
+    /// <see cref="Result.CreateOperationComparer"/>): node hashes and equality knowledge are reused
     /// across the whole collection, and the walks' work is charged to the run's budget before
     /// the kept items are materialized.</para>
     /// </summary>

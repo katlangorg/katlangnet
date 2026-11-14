@@ -68,7 +68,7 @@ public partial class SharedValueGraphComplexityTests
         "singleton", "singleton-mismatch", "head", "head-mismatch", "tail", "tail-mismatch",
         "tree", "tree-mismatch", "dag", "dag-mismatch", "wide", "wide-mismatch",
         "repeated-wide", "repeated-wide-mismatch", "kind-mismatch-deep", "long-string-deep", "long-string-deep-mismatch",
-        "empty-children",
+        "empty-children", "differently-shared", "differently-shared-mismatch", "isomorphic-shared",
     ];
 
     private static (Result Left, Result Right) WalkShape(string shape) => shape switch
@@ -93,6 +93,11 @@ public partial class SharedValueGraphComplexityTests
         "long-string-deep" => (TailChainOf(new Result.Str(new string('k', 5_000))), TailChainOf(new Result.Str(new string('k', 5_000)))),
         "long-string-deep-mismatch" => (TailChainOf(new Result.Str(new string('k', 5_000))), TailChainOf(new Result.Str(new string('k', 4_999) + "z"))),
         "empty-children" => (List(List(), Seq(), List(List(), Atom(1))), List(List(), Seq(), List(List(), Atom(1)))),
+        // Reference classes: the witness of SharedValueGraphComplexityTests.ReferenceClasses.cs, small
+        // enough for the context-free comparer's exact-pair walk here.
+        "differently-shared" => (Register(64, 12, ShiftRegister), Register(64, 12, Mixing)),
+        "differently-shared-mismatch" => (Register(64, 12, ShiftRegister), Register(64, 12, Mixing, mismatchAt: 63)),
+        "isomorphic-shared" => (Register(64, 12, ShiftRegister), Register(64, 12, ShiftRegister)),
         _ => throw new ArgumentOutOfRangeException(nameof(shape)),
     };
 
@@ -127,8 +132,9 @@ public partial class SharedValueGraphComplexityTests
     [Fact]
     public void LongStringVerdicts_SurviveTheFirstStructuralMemoEntry()
     {
-        // String payload verdicts and structural verdicts share the operation's dictionary. The
-        // first string creates it before the first structural descent seeds a retained pair.
+        // String payload verdicts once shared the operation's structural verdict dictionary, and the
+        // first structural record could replace it. The first string here is retained before the
+        // first structural descent records a pair; it must survive that record.
         var leftText = new Result.Str(new string('k', 16_449));
         var rightText = new Result.Str(new string('k', 16_449));
         var left = List(leftText, List(List(Atom(1))), leftText);

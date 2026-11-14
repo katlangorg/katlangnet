@@ -25,6 +25,7 @@ public class GcIsolatedAllocationTests
                 "KatLang.Tests.OrdinaryCallBindingAllocationTests.FlatUniqueLevel_BindingAllocatesExactlyTheResultArray_GcIsolatedChild",
                 "KatLang.Tests.OrdinaryCallLookupTests.Lookups_AllocateNothing_AtAnyTier_GcIsolatedChild",
                 "KatLang.Tests.ScopeVisibilityRepresentationTests.Queries_AllocateIndependentlyOfTheScopeWidth_GcIsolatedChild",
+                "KatLang.Tests.SharedValueGraphComplexityTests.ReferenceClasses_OneComparison_OfTheDifferentlySharedPair_AllocatesUnderEightMegabytes_GcIsolatedChild",
                 "KatLang.Tests.SharedValueGraphComplexityTests.ScalarFastPath_AllocatesNothing_GcIsolatedChild",
                 "KatLang.Tests.WideDeconstructionScalabilityTests.TargetMetadata_DoesNotAllocateBeyondTheHelperRecord_GcIsolatedChild",
             ],
