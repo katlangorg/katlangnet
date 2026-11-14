@@ -51,7 +51,14 @@ internal sealed class ParameterActivation
     /// </summary>
     internal Dictionary<Evaluator.AliasTargetKey, NeedCell> AliasBindingCells => AliasMemos.BindingCells;
 
-    // Both alias memos hang off ONE lazily created holder (published first-wins, so racing binding-cell
+    /// <summary>
+    /// The settled <c>.Algorithm</c> ROUTE DECISIONS of runtime-row aliases declared under this activation
+    /// (<see cref="Evaluation.EvaluationBudget.AliasRouteDecisions"/>), keyed like
+    /// <see cref="AliasBindingCells"/> and forgotten with the activation.
+    /// </summary>
+    internal Dictionary<Evaluator.AliasTargetKey, Evaluator.AliasRouteDecision> AliasRouteDecisions => AliasMemos.RouteDecisions;
+
+    // The alias memos hang off ONE lazily created holder (published first-wins, so racing binding-cell
     // establishments meet in one dictionary): an activation that never meets an alias pays one null field.
     private AliasMemo AliasMemos
         => Volatile.Read(ref _aliasMemos)
@@ -69,6 +76,13 @@ internal sealed class ParameterActivation
             => Volatile.Read(ref _bindingCells)
                ?? Interlocked.CompareExchange(ref _bindingCells, [], null)
                ?? _bindingCells!;
+
+        private Dictionary<Evaluator.AliasTargetKey, Evaluator.AliasRouteDecision>? _routeDecisions;
+
+        public Dictionary<Evaluator.AliasTargetKey, Evaluator.AliasRouteDecision> RouteDecisions
+            => Volatile.Read(ref _routeDecisions)
+               ?? Interlocked.CompareExchange(ref _routeDecisions, [], null)
+               ?? _routeDecisions!;
     }
 
     /// <summary>

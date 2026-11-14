@@ -593,7 +593,7 @@ public static partial class Evaluator
                 : EvalResult<AliasTerminal>.Ok(new AliasTerminal(resolved.Value.ResolvedAlgorithm, null, IsRuntime: false, resolved.Value.CrossesCarrier));
         }
 
-        var selected = ResolveStaticPath(ctx.CallStack[0], (Expr.DotCall)reference, ctx, null, out var hop);
+        var selected = ResolveStaticPath(ctx.CallStack[0], (Expr.DotCall)reference, ctx, out var hop);
         if (selected.IsError)
             return selected.Error;
         return selected.Value is Algorithm.Alias alias

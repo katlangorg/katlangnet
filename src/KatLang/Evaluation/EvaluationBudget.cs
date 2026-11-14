@@ -83,6 +83,14 @@ internal sealed class EvaluationBudget
     internal long ResolutionRetries => Interlocked.Read(ref _resolutionRetries);
     internal void NoteResolutionRetry() => Interlocked.Increment(ref _resolutionRetries);
 
+    // Test observation only: the alias-chase WORK of this run (Evaluator.ChaseAlias) — every alias step a chase
+    // visited, every `.Algorithm` route decision navigated (on a chase's stack or by IsAlgorithmIntrinsicRoute)
+    // or reused from its settled decision, and every parked chase a ResolveAsync retry resumed — so a chain can
+    // be pinned to work linear in its links.
+    private long _aliasChaseVisits;
+    internal long AliasChaseVisits => Interlocked.Read(ref _aliasChaseVisits);
+    internal void NoteAliasChaseVisit() => Interlocked.Increment(ref _aliasChaseVisits);
+
     internal EvalError? CheckContinuation()
     {
         Volatile.Read(ref _requiredSourceCancellation)?.Throw();
@@ -408,6 +416,22 @@ internal sealed class EvaluationBudget
            ?? _aliasBindingCells!;
 
     private Dictionary<Evaluator.AliasTargetKey, NeedCell>? _aliasBindingCells;
+
+    /// <summary>
+    /// The run's settled <c>.Algorithm</c> ROUTE DECISIONS (C# implementation-only) of runtime-row aliases
+    /// declared OUTSIDE every activation, keyed like <see cref="AliasBindingCells"/> by the alias's declaration
+    /// and the resolving identity of its declaring scope chain; one declared under an activation keeps its
+    /// decision on that activation (<see cref="ParameterActivation.AliasRouteDecisions"/>). Only a decision whose
+    /// navigation met no cycle or static failure and only PUBLISHED projections (success or failure) is recorded,
+    /// so it is the decision any later navigation computes (<c>Evaluator.AliasChaseMachine</c>). First-wins under
+    /// the dictionary's own lock.
+    /// </summary>
+    internal Dictionary<Evaluator.AliasTargetKey, Evaluator.AliasRouteDecision> AliasRouteDecisions
+        => Volatile.Read(ref _aliasRouteDecisions)
+           ?? Interlocked.CompareExchange(ref _aliasRouteDecisions, [], null)
+           ?? _aliasRouteDecisions!;
+
+    private Dictionary<Evaluator.AliasTargetKey, Evaluator.AliasRouteDecision>? _aliasRouteDecisions;
 
     /// <summary>
     /// <b>Whether this run may reach a runtime-target alias</b> (FWD-02, META-S3-2): decided ONCE before

@@ -22,6 +22,11 @@ namespace KatLang;
 // retry-stable cells (supplied and parameter cells, cells retained by stable owners — Guard B in
 // NeedCell), so the set is finite and the resolution ends after at most one step per reachable
 // pair. Guard A below fails loud if a recorded pair is ever reported pending again.
+//
+// A retry re-runs the whole resolver, but an untainted alias chase the previous attempt suspended at the projection
+// it reported pending resumes there (ResolutionRecord.ParkedChase, Evaluator.AliasChaseMachine): the chain
+// above that projection is not walked again, so a resolution that determines one link per retry stays
+// linear in the chain (implementation-only; the resolver's result is unchanged).
 public static partial class Evaluator
 {
     /// <summary>

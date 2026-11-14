@@ -1,5 +1,6 @@
 using KatLang.Evaluation;
 using KatLang.Semantics;
+using Xunit.Abstractions;
 
 namespace KatLang.Tests;
 
@@ -24,7 +25,7 @@ namespace KatLang.Tests;
 /// in the declaration scope, negative controls, recursion, resource accounting, diagnostics, the editor
 /// model, long chains and host-built cycles.</para>
 /// </summary>
-public class CallableAliasBindingIndirectionTests
+public class CallableAliasBindingIndirectionTests(ITestOutputHelper output)
 {
     private static Task<RepeatedNameConstraintTests.Observation> OnEveryRoute(string source, long? seed = null)
         => RepeatedNameConstraintTests.OnEveryRouteAsync(source, seed);
@@ -700,6 +701,300 @@ public class CallableAliasBindingIndirectionTests
     {
         var source = "Inc(x) = x + 1\n" + Chain(1_000, "A", "Inc") + "map(range(1, 20), A999).sum, A999(1)";
         Assert.Equal("ok S[230, 2]", await Outcome(source));
+    }
+
+    private const string BoxDeclaration = "Box = {\n  public M = Box\n  public V = 7\n}\n";
+
+    /// <summary>
+    /// <c>A{length} = Box</c>, then <c>A{i} = A{i+1}.M</c> down to <c>A1</c> — or, <paramref name="mixed"/>,
+    /// every even link a plain name <c>A{i} = A{i+1}</c> — and <c>A1.V</c>: every member link's receiver is the
+    /// next ALIAS, read through its static structure. The direct spelling <c>Box.M.M…M.V</c> is refused by the
+    /// structural depth gate, whose advice (named intermediate properties) is exactly this chain.
+    /// </summary>
+    private static string MemberPathChain(int length, bool mixed)
+        => BoxDeclaration + $"A{length} = Box\n"
+            + string.Concat(Enumerable.Range(1, length - 1).Reverse().Select(i =>
+                mixed && i % 2 == 0 ? $"A{i} = A{i + 1}\n" : $"A{i} = A{i + 1}.M\n"))
+            + "A1.V";
+
+    public static TheoryData<int, bool> MemberPathChainCases()
+    {
+        var data = new TheoryData<int, bool>();
+        foreach (var length in new[] { 2, 10, 100, 1_000, 10_000 })
+        {
+            data.Add(length, false);
+            data.Add(length, true);
+        }
+
+        return data;
+    }
+
+    /// <summary>
+    /// The ASYNC TWIN itself (<see cref="Evaluator.RunCountedObservedAsync"/> with a run-scoped async property
+    /// cache, as the route matrix's forced-twin route runs it). The default async entry dispatches a program
+    /// with no asynchronous host operation to the SYNCHRONOUS evaluator, so calling it alone never enters the
+    /// twin; the returned budget's <see cref="EvaluationBudget.IsAsynchronousRun"/> says which evaluator ran.
+    /// </summary>
+    private static (EvalResult<Evaluator.CountedResult> Result, EvaluationBudget Budget) OnForcedAsyncTwin(Expr program)
+    {
+        var run = Evaluator.RunCountedObservedAsync(program,
+            zeroArgPropertyResultCache: new Evaluation.Caching.RunScopedAsyncZeroArgPropertyResultCache());
+        // These programs have no asynchronous host work: finish inline on the constrained-stack thread.
+        Assert.True(run.IsCompletedSuccessfully);
+        return run.GetAwaiter().GetResult();
+    }
+
+    /// <summary>
+    /// A member-path link's ALIAS receiver is chased on the chase's own explicit stack, never as a nested host
+    /// frame (before: about 480 links exhausted the host stack on every route, aliases charging no depth), and
+    /// its static end is remembered under the binding that selected it — so the first read remembers every link.
+    /// Every route runs on a 1 MiB thread: the engine, its default async entry (which dispatches these programs
+    /// to the synchronous evaluator, as its budget shows), the generic evaluator and the forced async twin.
+    /// </summary>
+    [Theory]
+    [MemberData(nameof(MemberPathChainCases))]
+    public void MemberPathAliasChains_NormalizeOnAOneMebibyteStack(int length, bool mixed)
+    {
+        var source = MemberPathChain(length, mixed);
+        var engine = OnOneMebibyteStack(() => KatLangEngine.Run(source));
+        Assert.Equal([7m], Assert.IsType<RunResult.Success>(engine).Atoms);
+        var engineAsync = OnOneMebibyteStack(() => KatLangEngine.RunAsync(source).GetAwaiter().GetResult());
+        Assert.Equal([7m], Assert.IsType<RunResult.Success>(engineAsync).Atoms);
+
+        var program = new Expr.AlgorithmExpr(SourceProvenance.ParseValid(source).Root);
+        var (dispatched, dispatchedBudget) = OnOneMebibyteStack(() => Evaluator.RunCountedObservedAsync(program).AsTask().GetAwaiter().GetResult());
+        Assert.False(dispatched.IsError, dispatched.IsError ? dispatched.Error.ToString() : null);
+        Assert.False(dispatchedBudget.IsAsynchronousRun);
+
+        var (generic, budget) = OnOneMebibyteStack(() => Evaluator.RunCountedObserved(program, enableOptimizations: false));
+        Assert.False(generic.IsError, generic.IsError ? generic.Error.ToString() : null);
+        Assert.Equal(new Result.Atom(7), generic.Value.Value);
+        // Every receiver binding A2…A{length}, and Box's M: one static end per link, all from the first read.
+        Assert.Equal(length, budget.AliasTargets.Count);
+
+        var (twin, twinBudget) = OnOneMebibyteStack(() => OnForcedAsyncTwin(program));
+        Assert.True(twinBudget.IsAsynchronousRun);
+        Assert.False(twin.IsError, twin.IsError ? twin.Error.ToString() : null);
+        Assert.Equal(new Result.Atom(7), twin.Value.Value);
+        Assert.Equal(length, twinBudget.AliasTargets.Count);
+    }
+
+    /// <summary>
+    /// Linear work: the structure context is ONE visited set with an undo log (never a copy per nested receiver)
+    /// and each receiver's end is remembered once, so doubling the chain at most doubles the chase's visits.
+    /// </summary>
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void MemberPathAliasChains_ChaseInLinearWork(bool mixed)
+    {
+        (long Visits, int Targets) Measure(int length)
+        {
+            var program = new Expr.AlgorithmExpr(SourceProvenance.ParseValid(MemberPathChain(length, mixed)).Root);
+            var (result, budget) = OnOneMebibyteStack(() => Evaluator.RunCountedObserved(program, enableOptimizations: false));
+            Assert.False(result.IsError, result.IsError ? result.Error.ToString() : null);
+            return (budget.AliasChaseVisits, budget.AliasTargets.Count);
+        }
+
+        var half = Measure(5_000);
+        var full = Measure(10_000);
+        Assert.True(full.Visits < 2.5 * half.Visits, $"visits: 5,000 links {half.Visits}, 10,000 links {full.Visits}");
+        Assert.True(full.Targets < 2.5 * half.Targets, $"alias targets: 5,000 links {half.Targets}, 10,000 links {full.Targets}");
+        Assert.True(full.Visits <= 2 * 10_000, $"visits: {full.Visits} for 10,000 links");
+    }
+
+    /// <summary>
+    /// <c>A{length} = Box</c> (whose output fails with an arity mismatch), then <c>A{i} = A{i+1}.Algorithm</c>:
+    /// every link's route decision reads the next alias's STRUCTURE, a nested chase on the chase's own stack, and
+    /// the bare read <c>A1</c> reports the receiver's failure through the last link.
+    /// </summary>
+    private static string AlgorithmLinkChain(int length)
+        => "Box = {\n  public M = Box\n  public V = 7\n  V(1)\n}\n" + $"A{length} = Box\n"
+            + string.Concat(Enumerable.Range(1, length - 1).Reverse().Select(i => $"A{i} = A{i + 1}.Algorithm\n"))
+            + "A1";
+
+    private const string AlgorithmLinkChainOutcome
+        = "err ArityMismatch: while evaluating dotCall .Algorithm of A2: Callable `V` expects 0 arguments, but was called with 1 argument.";
+
+    /// <summary>
+    /// An <c>.Algorithm</c>-link chain's route decisions nest no host frame (before: about 300 links exhausted a
+    /// 1 MiB stack on every route), and its outcome is the 3-link chain's on every route, including at the
+    /// required 10,000 links. The separate work guard checks that eliminating host recursion also eliminates
+    /// repeated suffix chases. The forced async twin also runs on a 1 MiB thread.
+    /// </summary>
+    [Theory]
+    [InlineData(3)]
+    [InlineData(1_000)]
+    [InlineData(10_000)]
+    public async Task AlgorithmLinkChains_ReportTheSameArityMismatchOnEveryRoute(int length)
+    {
+        var source = AlgorithmLinkChain(length);
+        Assert.Equal(AlgorithmLinkChainOutcome, await Outcome(source));
+        var engine = Assert.IsType<RunResult.EvalFailure>(OnOneMebibyteStack(() => KatLangEngine.Run(source)));
+        Assert.Equal(KatLangErrorCode.ArityMismatch, Assert.Single(engine.Errors).Code);
+
+        var program = new Expr.AlgorithmExpr(SourceProvenance.ParseValid(source).Root);
+        var (twin, twinBudget) = OnOneMebibyteStack(() => OnForcedAsyncTwin(program));
+        Assert.True(twinBudget.IsAsynchronousRun);
+        Assert.True(twin.IsError);
+        var twinError = KatLangError.FromEvalError(twin.Error);
+        Assert.Equal(AlgorithmLinkChainOutcome, $"err {twinError.Code}: {twinError.Message}");
+    }
+
+    /// <summary>
+    /// LINEAR TOTAL WORK, separately on the generic evaluator and on the forced async twin. The chase work counter
+    /// (<see cref="EvaluationBudget.AliasChaseVisits"/>) counts every alias step visited, every route decision
+    /// navigated or reused — on a chase's stack and by each binding cell's own projection — and every parked chase
+    /// a <c>ResolveAsync</c> retry resumed. Each link's binding cell re-decides its own route in a fresh chase, and
+    /// the twin's resolution is retried once per link, so without settled route decisions and resumed chases the
+    /// work is quadratic (12,507,502 units at 5,000 links on the generic evaluator); with them it is a few units
+    /// per link.
+    /// </summary>
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void AlgorithmLinkChains_ChaseInLinearWork(bool forcedAsyncTwin)
+    {
+        (long Work, long Retries, int Targets) Measure(int length)
+        {
+            var program = new Expr.AlgorithmExpr(SourceProvenance.ParseValid(AlgorithmLinkChain(length)).Root);
+            var (result, budget) = OnOneMebibyteStack(() => forcedAsyncTwin
+                ? OnForcedAsyncTwin(program)
+                : Evaluator.RunCountedObserved(program, enableOptimizations: false));
+            Assert.Equal(forcedAsyncTwin, budget.IsAsynchronousRun);
+            Assert.True(result.IsError);
+            Assert.Equal(KatLangErrorCode.ArityMismatch, KatLangError.FromEvalError(result.Error).Code);
+            return (budget.AliasChaseVisits, budget.ResolutionRetries, budget.AliasTargets.Count);
+        }
+
+        var half = Measure(5_000);
+        var full = Measure(10_000);
+        var detail = $"work: 5,000 links {half.Work}, 10,000 links {full.Work}; retries: {half.Retries}, {full.Retries}; "
+            + $"alias targets: {half.Targets}, {full.Targets}";
+        output.WriteLine($"{(forcedAsyncTwin ? "forced async twin" : "generic")}: {detail}");
+        Assert.True(full.Work < 2.5 * half.Work, detail);
+        Assert.True(full.Work <= 16 * 10_000, detail);
+        // The twin's resolution really is retried once per link, each retry resuming its parked chase; the
+        // generic evaluator never retries.
+        Assert.True(forcedAsyncTwin ? full.Retries >= 10_000 - 1 : full.Retries == 0, detail);
+    }
+
+    /// <summary>
+    /// SETTLED ROUTE DECISIONS are recorded only for a clean navigation — never for one that met an alias cycle or
+    /// a flow-local <see cref="EvalError.DemandCycle"/> — on the generic evaluator and the forced async twin alike;
+    /// every route reports the outcome the evaluator reported before decisions were settled.
+    /// </summary>
+    public static TheoryData<string, string, int> RouteDecisionCases() => new()
+    {
+        // Every link of a clean chain settles its decision (A1…A9), reading sticky, published failures.
+        { AlgorithmLinkChain(10), AlgorithmLinkChainOutcome, 9 },
+        // Cycles through route decisions settle nothing.
+        { "A = A.Algorithm\nA", DemandCycleThrough("A"), 0 },
+        { "A = B.Algorithm\nB = A\nB, A", DemandCycleThrough("B"), 0 },
+        { "C3 = C1.Algorithm\nC2 = C3.Algorithm\nC1 = C2.Algorithm\nC1, C2", DemandCycleThrough("C2"), 0 },
+    };
+
+    private static string DemandCycleThrough(string receiver)
+        => $"err DemandCycle: while evaluating dotCall .Algorithm of {receiver}: Demand cycle: the argument depends on its own value while it is being evaluated.";
+
+    [Theory]
+    [MemberData(nameof(RouteDecisionCases))]
+    public async Task AlgorithmRouteDecisions_SettleOnlyCleanNavigations(string source, string expected, int settled)
+    {
+        Assert.Equal(expected, await Outcome(source));
+        var program = new Expr.AlgorithmExpr(SourceProvenance.ParseValid(source).Root);
+        var (_, generic) = Evaluator.RunCountedObserved(program, enableOptimizations: false);
+        Assert.Equal(settled, generic.AliasRouteDecisions.Count);
+        var (_, twin) = OnForcedAsyncTwin(program);
+        Assert.True(twin.IsAsynchronousRun);
+        Assert.Equal(settled, twin.AliasRouteDecisions.Count);
+    }
+
+    private const string DeclaredAlgorithmBox = "Box = {\n  public M = Box\n  public Algorithm = 5\n  public V = 7\n}\n";
+
+    private const string DeclaredAlgorithmChain = DeclaredAlgorithmBox + "A4 = Box\nA3 = A4.Algorithm\nA2 = A3.Algorithm\nA1 = A2.Algorithm\n";
+
+    private const string NotACallReference = "Type mismatch: `Algorithm` requires a call reference, got numeric value 5";
+
+    /// <summary>
+    /// Reused decisions keep DECLARED <c>Algorithm</c> member precedence (<c>A3</c> selects the member, a static
+    /// step; the links above take the intrinsic), repeated and aliased reads, and an activation's own
+    /// aliases (the decision lives on the activation), on every route — the outcomes of the evaluator before
+    /// route decisions were settled.
+    /// </summary>
+    public static TheoryData<string, string> RouteReuseCases() => new()
+    {
+        { DeclaredAlgorithmChain + "A1", $"err TypeMismatch: while evaluating dotCall .Algorithm of A2: {NotACallReference}" },
+        { DeclaredAlgorithmChain + "A1, A1, A2", $"err TypeMismatch: while evaluating dotCall .Algorithm of A2: {NotACallReference}" },
+        { DeclaredAlgorithmChain + "A1(2)", $"err TypeMismatch: while evaluating call to A1: {NotACallReference}" },
+        { DeclaredAlgorithmChain + "B = A1\nB, A1", $"err TypeMismatch: while evaluating dotCall .Algorithm of A2: {NotACallReference}" },
+        { DeclaredAlgorithmChain + "A4.Algorithm, A1.Algorithm", $"err TypeMismatch: while evaluating dotCall .Algorithm of A1: {NotACallReference}" },
+        { DeclaredAlgorithmBox + "W(k) = {\n  A2 = Box\n  A1 = A2.Algorithm\n  A1\n}\nW(1), W(2)", "ok S[5, 5]" },
+    };
+
+    [Theory]
+    [MemberData(nameof(RouteReuseCases))]
+    public async Task AlgorithmRouteDecisions_ReuseKeepsEveryOutcome(string source, string expected)
+        => Assert.Equal(expected, await Outcome(source));
+
+    [Fact]
+    public void AlgorithmRouteDecisions_RetryRechecksAnUnpublishedEarlierOutcome()
+    {
+        // A resolution's recorded re-entry failure loses to a later published outcome (NEED-09).
+        // If another projection was pending in between, a parked chase must not retain the route
+        // decision based on that failure. Compare its retry with a fresh walk of the same facts.
+        var ctx = Evaluator.EvalCtx.Empty;
+        ctx.Budget.DecideRuntimeAliasReach(true, false);
+        var declared = new Algorithm.User(null, [], [], [], [new Expr.Num(7)]);
+        var receiver = new Algorithm.User(null, [], [], [new Property("Algorithm", declared)], [new Expr.Num(0)]);
+        var supplied = NeedCell.WithRuntimeProjection(
+            () => throw new InvalidOperationException("No VALUE demand"),
+            () => throw new InvalidOperationException("No VALUE demand"),
+            () => EvalResult<Algorithm?>.Ok(receiver),
+            () => new(EvalResult<Algorithm?>.Ok(receiver)), budget: ctx.Budget);
+        ctx = ctx.WithNeedEnv([("f", supplied)]);
+        var head = new Algorithm.Alias(null, [], [], new Expr.Param("f"));
+        var link = new Algorithm.Alias(null, [], [], new Expr.DotCall(new Expr.Resolve("H"), "Algorithm"));
+        var parent = new ScopeCtx(null, [], [new Property("H", head)], ["f"])
+        {
+            Activation = ParameterActivation.Capture(["f"], ctx, []),
+        };
+        link = link with { Parent = parent };
+        var resolve = typeof(Evaluator).GetMethod("ResolveAliasTarget",
+            System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.NonPublic)!;
+        EvalResult<Algorithm> Chase()
+            => (EvalResult<Algorithm>)resolve.Invoke(null, [link, ctx, null])!;
+        var record = new NeedCell.ResolutionRecord();
+        record.RecordCallable(supplied, new EvalError.DemandCycle());
+        var scope = NeedCell.EnterObservation(record);
+        try
+        {
+            var pending = Chase();
+            Assert.True(pending.IsError && NeedCell.IsObservationPending(pending.Error));
+            Assert.Same(Evaluator.AliasBindingCell(link, ctx), scope.Pending);
+        }
+        finally { NeedCell.ExitObservation(scope); }
+
+        Assert.Empty(parent.Activation.AliasRouteDecisions);
+
+        // Simulate the earlier flight completing before the pending projection's retry.
+        Assert.Same(receiver, supplied.ProjectCallable().Value);
+        var cell = Evaluator.AliasBindingCell(link, ctx);
+        record.RecordCallable(cell, cell.ProjectCallable());
+        scope = NeedCell.EnterObservation(record);
+        EvalResult<Algorithm> retried;
+        try { retried = Chase(); }
+        finally { NeedCell.ExitObservation(scope); }
+        record.ParkedChase = null;
+        scope = NeedCell.EnterObservation(record);
+        EvalResult<Algorithm> fresh;
+        try { fresh = Chase(); }
+        finally { NeedCell.ExitObservation(scope); }
+        Assert.True(fresh.IsError);
+        Assert.IsType<EvalError.IllegalInEval>(fresh.Error);
+        output.WriteLine($"fresh: {fresh.Error}; retry: {(retried.IsError ? retried.Error.ToString() : "callable identity")}");
+        Assert.Equal(fresh, retried);
+        Assert.False(Assert.Single(parent.Activation.AliasRouteDecisions).Value.IsRuntime);
     }
 
     /// <summary>

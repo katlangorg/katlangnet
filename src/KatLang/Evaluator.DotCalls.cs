@@ -347,16 +347,16 @@ public static partial class Evaluator
     /// than a written value shape (the <c>.string</c> intrinsic uses it to
     /// select the depth-charged value-demand funnel exactly as for a bare
     /// <see cref="Expr.Resolve"/> receiver).</para>
-    /// <paramref name="routeVisited"/>, an alias step's route decision's chase set (<see cref="IsRuntimeAliasStep"/>),
-    /// is the visited set every alias STRUCTURE read on the path starts from. Lean: <c>resolveDotReceiver</c>
-    /// (and <c>aliasRouteIsIntrinsicWith</c> for a route decision).
+    /// An alias step's <c>.Algorithm</c> route decision navigates the same receiver on its chase's own
+    /// stack (<see cref="AliasChaseMachine.NavigateRoute"/>, its lock-step mirror). Lean:
+    /// <c>resolveDotReceiver</c> (and <c>aliasRouteIsIntrinsicWith</c> for a route decision).
     /// </summary>
     private static EvalResult<Algorithm> ResolveDotReceiver(
-        Expr target, EvalCtx ctx, out bool isStructuralMember, HashSet<AliasChaseVisit>? routeVisited = null)
+        Expr target, EvalCtx ctx, out bool isStructuralMember)
     {
         isStructuralMember = false;
         if (target is not Expr.DotCall { Args: null } edge)
-            return ResolveReceiverHead(target, ctx, routeVisited);
+            return ResolveReceiverHead(target, ctx);
 
         // Host-stack backstop, one per chain link (Q-09a): the navigation recurses once per
         // argumentless edge, and evaluation of a deferred branch can reach it deep on the
@@ -364,7 +364,7 @@ public static partial class Evaluator
         if (!RuntimeHelpers.TryEnsureSufficientExecutionStack())
             return new EvalError.EvaluationStackExhausted();
 
-        var receiverResult = ResolveDotReceiver(edge.Target, ctx, out _, routeVisited);
+        var receiverResult = ResolveDotReceiver(edge.Target, ctx, out _);
         if (receiverResult.IsError)
         {
             return IsAbsentIdentity(receiverResult.Error)
@@ -381,7 +381,7 @@ public static partial class Evaluator
 
             var wired = ChildOfInContext(receiver, member.Value, ctx);
             if (wired is Algorithm.Alias)
-                return NavigatedAliasMemberStructure(target, wired, ctx, out isStructuralMember, routeVisited);
+                return NavigatedAliasMemberStructure(target, wired, ctx, out isStructuralMember);
             isStructuralMember = true;
             return EvalResult<Algorithm>.Ok(wired);
         }
@@ -402,10 +402,10 @@ public static partial class Evaluator
     /// </summary>
     [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
     private static EvalResult<Algorithm> NavigatedAliasMemberStructure(
-        Expr target, Algorithm wired, EvalCtx ctx, out bool isStructuralMember, HashSet<AliasChaseVisit>? routeVisited)
+        Expr target, Algorithm wired, EvalCtx ctx, out bool isStructuralMember)
     {
         isStructuralMember = false;
-        var structure = ResolveAliasStructure((Algorithm.Alias)wired, ctx, binding: null, routeVisited);
+        var structure = ResolveAliasStructure((Algorithm.Alias)wired, ctx, binding: null);
         if (structure.IsError)
             return AtSpanIfMissing(structure.Error, target.Span);
         if (structure.Value is not { } member)

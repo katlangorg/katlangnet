@@ -252,6 +252,13 @@ internal sealed class NeedCell : NeedNode
             outcome = default;
             return false;
         }
+
+        /// <summary>
+        /// An untainted alias chase this resolution's previous attempt suspended at the runtime projection it reported
+        /// pending (<c>Evaluator.AliasChaseMachine</c>, C# implementation-only): the retry resumes it there
+        /// instead of re-walking the chain above that projection. Flow-local, like every outcome here.
+        /// </summary>
+        internal object? ParkedChase { get; set; }
     }
 
     /// <summary>
@@ -413,6 +420,24 @@ internal sealed class NeedCell : NeedNode
     internal bool HasCallableMemo
     {
         get { lock (_gate) return _callable is not null; }
+    }
+
+    /// <summary>
+    /// Whether <paramref name="outcome"/>, just returned by <see cref="ProjectCallable"/>, IS this cell's PUBLISHED
+    /// CALLABLE outcome — the sticky outcome every later observer reads first, success or failure — rather than
+    /// an unpublished outcome (a resolution's recorded-only result, a flow-local <see cref="EvalError.DemandCycle"/>,
+    /// a pending observation or terminal answer). An alias chase settles a route decision only when every
+    /// projection it read was published (<c>Evaluator.AliasChaseMachine</c>).
+    /// </summary>
+    internal bool IsPublishedCallable(EvalResult<Algorithm?> outcome)
+    {
+        lock (_gate)
+        {
+            return _callable is { } published
+                && (published.IsError
+                    ? outcome.IsError && ReferenceEquals(published.Error, outcome.Error)
+                    : outcome.IsOk && ReferenceEquals(published.Value, outcome.Value));
+        }
     }
 
     // Test observation only: whether this cell's CALLABLE is a runtime projection, how many of

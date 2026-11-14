@@ -164,22 +164,26 @@ public static partial class Evaluator
     /// <see cref="EvalDotCallCounted"/> decides it: <c>true</c> on a structural miss (a value receiver
     /// included) — the intrinsic — and <c>false</c> when the receiver declares <c>Algorithm</c> (a member,
     /// or a branch-only member whose error the ordinary route reports). Identity navigation only; a
-    /// receiver navigation failure is the route's error. <paramref name="routeVisited"/> is an alias step's
-    /// STRUCTURE context — a structure chase's own steps, empty for an invocation or VALUE chase
-    /// (<see cref="IsRuntimeAliasStep"/>; Lean <c>aliasRouteIsIntrinsicWith</c>, <c>aliasStructureContext</c>). Lean:
-    /// <c>algorithmIntrinsicRoute</c>.
+    /// receiver navigation failure is the route's error. An alias step's route decision navigates the
+    /// receiver on its chase's own stack, within the chase's STRUCTURE context — a structure chase's own
+    /// steps, empty for an invocation or VALUE chase (<see cref="AliasChaseMachine.NavigateRoute"/>; Lean
+    /// <c>aliasRouteIsIntrinsicWith</c>, <c>aliasStructureContext</c>) — and decides through the same
+    /// <see cref="IsAlgorithmIntrinsicEdge"/>. Lean: <c>algorithmIntrinsicRoute</c>.
     /// </summary>
-    private static EvalResult<bool> IsAlgorithmIntrinsicRoute(Expr.DotCall edge, EvalCtx ctx, HashSet<AliasChaseVisit>? routeVisited = null)
+    private static EvalResult<bool> IsAlgorithmIntrinsicRoute(Expr.DotCall edge, EvalCtx ctx)
     {
-        var receiver = ResolveDotReceiver(edge.Target, ctx, out _, routeVisited);
+        ctx.Budget.NoteAliasChaseVisit();
+        var receiver = ResolveDotReceiver(edge.Target, ctx, out _);
         if (receiver.IsError && !IsAbsentIdentity(receiver.Error))
             return receiver.Error;
-        // The ONE dot-edge decision (META-S3-4): the intrinsic exactly on its miss; a declared member,
-        // an inaccessible member or a branch-only member is the ordinary callee, whose own route reports it.
-        return EvalResult<bool>.Ok(
-            SelectDotEdge(edge, receiver.IsError ? null : receiver.Value, ctx, out var route, out _) is null
-            && route == DotEdgeRoute.AlgorithmIntrinsic);
+        return EvalResult<bool>.Ok(IsAlgorithmIntrinsicEdge(edge, receiver.IsError ? null : receiver.Value, ctx));
     }
+
+    // The ONE dot-edge decision (META-S3-4) of an edge spelled `Algorithm` over its navigated receiver (null
+    // = a value receiver): the intrinsic exactly on its miss; a declared member, an inaccessible member or a
+    // branch-only member is the ordinary callee, whose own route reports it.
+    private static bool IsAlgorithmIntrinsicEdge(Expr.DotCall edge, Algorithm? receiver, EvalCtx ctx)
+        => SelectDotEdge(edge, receiver, ctx, out var route, out _) is null && route == DotEdgeRoute.AlgorithmIntrinsic;
 
     // A bare VALUE read of the callee cell, after which the run's continuation is observed again (a cell
     // demand never absorbs a terminal run, as for an argument-view selection).
